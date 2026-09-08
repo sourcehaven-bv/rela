@@ -90,6 +90,34 @@ func NewDeclarative(p *Policy, g Graph, gq store.GraphQueryer, opts ...Declarati
 	if gq == nil {
 		return nil, errors.New("acl: NewDeclarative: graphQueryer must be non-nil")
 	}
+	// Split world grants here as well as in [Policy.Validate]. Validate is
+	// the LOAD chokepoint; this constructor is the SERVE chokepoint, and a
+	// policy can reach the second without passing the first — NewDeclarative
+	// does not call Validate, and callers construct a Policy directly
+	// (internal/visibility/visibilitytest, appbuild.NewFromCollaborators,
+	// every test literal). Left unsplit, `world:published` stays inline in
+	// Read where roleGrantsRead never matches it and the client ceiling
+	// mis-clamps it — silently, and in the fail-open direction under a deny
+	// ceiling (RR-LWE222).
+	//
+	// normalizeWorldGrants is idempotent, so paying it twice is free — a
+	// policy that came through Validate has no prefixed entries left in
+	// Read and this is a no-op scan.
+	//
+	// It can only fail on a malformed grant (`world:` with no name, or
+	// `world:*`), which for a Validate-loaded policy is already impossible.
+	// Failing construction is right for the paths that skip Validate: the
+	// alternative is serving reads against a grant nobody could interpret.
+	if err := p.normalizeWorldGrants(); err != nil {
+		return nil, fmt.Errorf("acl: NewDeclarative: %w", err)
+	}
+	// State-grant GRAMMAR is deliberately NOT re-checked here, unlike the
+	// world split above. The split must run because a policy that skipped
+	// Validate would otherwise serve reads with an uninterpretable grant
+	// sitting in the wrong field. A malformed state grant has no such
+	// failure mode: GrantsVerbOnState treats an unparseable entry as
+	// granting nothing, so the policy is already fail-closed and Validate
+	// remains the place that says so with a useful message.
 	d := &Declarative{policy: p, graph: g, graphQueryer: gq}
 	for _, opt := range opts {
 		opt(d)
@@ -166,7 +194,7 @@ func (d *Declarative) ResolvePrincipal(ctx context.Context, rawUser string) (str
 //
 // **The returned *Policy must be treated as immutable** (RR-9GN3).
 // The resolver caches no policy state; every AuthorizeWrite reads
-// fields back through this pointer. Mutating Roles, Assignments,
+// fields back through this face. Mutating Roles, Assignments,
 // or any nested map invalidates the resolver's safety guarantees
 // from the next call onward, including the unstamped-principal
 // check and the delegate-X gates. Callers that need a mutated
@@ -222,7 +250,7 @@ func (d *Declarative) AuthorizeWrite(ctx context.Context, req WriteRequest) Deci
 		}
 	}
 
-	r, err := d.ForPrincipal(principal.From(ctx))
+	r, err := d.requestFor(ctx)
 	if err != nil {
 		return Decision{
 			Allow:    false,
@@ -232,6 +260,31 @@ func (d *Declarative) AuthorizeWrite(ctx context.Context, req WriteRequest) Deci
 		}
 	}
 	return r.AuthorizeWrite(ctx, req)
+}
+
+// requestFor returns the per-operation [Request] for ctx: the one the
+// operation's entry point attached via [WithRequest] when it is bound to
+// THIS policy and to ctx's principal, else a fresh one for ctx's principal.
+//
+// Reusing the attached scope is what keeps write authorization O(1) in graph
+// traffic per operation. A Request memoizes the principal's membership walk;
+// opening a new one per AuthorizeWrite re-ran that walk for every verb of
+// every row on a list page — six membership queries per row, more SQL than
+// the page itself (TKT-1U8XYN baseline). The two guards are what make reuse
+// safe: a Request from another Declarative would evaluate another tenant's
+// policy, and one bound to a different principal (the provisioning seam
+// re-stamps ctx, see dataentry.enterWrite) would evaluate the wrong identity.
+// Both cases fall back to a fresh scope, which is exactly the old behavior.
+func (d *Declarative) requestFor(ctx context.Context) (*Request, error) {
+	p := principal.From(ctx)
+	// Equal compares the whole principal — identity AND the verified claims
+	// (type, scopes, roles) the Request's client ceiling was compiled from —
+	// so a scope-attenuated client can never borrow a wider scope bound to
+	// the same user by an earlier layer.
+	if r := FromContext(ctx); r != nil && r.d == d && r.principal.Equal(p) {
+		return r, nil
+	}
+	return d.ForPrincipal(p)
 }
 
 // (roleGrantsWrite removed in TKT-4LQMWP — write grants are now per-verb;

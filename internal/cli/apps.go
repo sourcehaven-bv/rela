@@ -31,11 +31,15 @@ func (c *AppsNewCmd) Run() error {
 
 	out.WriteSuccess("Created app %q", result.ID)
 	out.WriteMessage("  %s", result.IndexAbs)
+	out.WriteMessage("  %s", result.CSSAbs)
+	out.WriteMessage("  %s", result.JSAbs)
 	out.WriteMessage("")
 	out.WriteMessage("Next steps:")
-	out.WriteMessage("  - Edit %s", result.IndexAbs)
+	out.WriteMessage("  - Edit %s and %s", result.JSAbs, result.CSSAbs)
 	out.WriteMessage("  - Run the data-entry server and open /app/%s", result.ID)
 	out.WriteMessage("  - The app calls rela.list/get/create/... via window.rela; see the")
 	out.WriteMessage("    Custom apps section of the data-entry guide for the full bridge API.")
+	out.WriteMessage("  - Keep styles and code in these files: the app CSP blocks inline")
+	out.WriteMessage("    <script>/<style> and style=\"\" attributes.")
 	return nil
 }

@@ -49,6 +49,21 @@ func (allowAnySender) RecipientPolicy() RecipientPolicy {
 	return RecipientPolicy{Configured: true, AllowAny: true}
 }
 
+// MailBaseURL forwards the wrapped sender's base URL, if it has one.
+//
+// Wrapping a sender in a struct that embeds only MailSender ERASES every other
+// optional capability it implemented, because the type assertion in
+// baseURLFor sees the wrapper. Production does not have this problem — the real
+// LuaSender implements both capabilities on one type — but a test double that
+// silently dropped the base URL would make link-resolution tests fail for a
+// reason that has nothing to do with the code under test.
+func (s allowAnySender) MailBaseURL() string {
+	if c, ok := s.MailSender.(BaseURLCarrier); ok {
+		return c.MailBaseURL()
+	}
+	return ""
+}
+
 // newMailRuntime builds a reader runtime with the given sender wired.
 func newMailRuntime(t *testing.T, sender MailSender) (*Runtime, *strings.Builder) {
 	t.Helper()

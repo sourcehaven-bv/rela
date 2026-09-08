@@ -12,9 +12,17 @@ import (
 
 // --- RelationReader ---
 
+// defaultTailKey addresses the DEFAULT-tail edge of a triple. Get,
+// update, and delete are default-tail-only in Step 1 (TKT-DOFYR1) —
+// see store.RelationData.FromFace; state-tailed edges are removed
+// via the entity cascades.
+func defaultTailKey(from, relType, to string) string {
+	return relKey(from, "", relType, to)
+}
+
 func (s *FSStore) GetRelation(_ context.Context, from, relType, to string) (*entity.Relation, error) {
 	s.mu.RLock()
-	key := from + "--" + relType + "--" + to
+	key := defaultTailKey(from, relType, to)
 	_, ok := s.relations[key]
 	s.mu.RUnlock()
 
@@ -32,22 +40,19 @@ func (s *FSStore) GetRelation(_ context.Context, from, relType, to string) (*ent
 func (s *FSStore) ListRelations(_ context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error] {
 	s.mu.RLock()
 
-	type relKey struct {
-		from, typ, to string
-	}
-	matches := make([]relKey, 0)
+	match := storeutil.NewRelationMatcher(q)
+	matches := make([]relationMeta, 0)
 	for _, key := range s.relationOrder {
-		if !matchRelationKey(s, key, q) {
+		if !matchRelationKey(s, key, match) {
 			continue
 		}
-		rm := s.relations[key]
-		matches = append(matches, relKey{rm.From, rm.Type, rm.To})
+		matches = append(matches, s.relations[key])
 	}
 	s.mu.RUnlock()
 
 	return func(yield func(*entity.Relation, error) bool) {
 		for _, m := range matches {
-			r, err := s.loadRelation(m.from, m.typ, m.to)
+			r, err := s.loadRelationMeta(m)
 			if err != nil {
 				if !yield(nil, err) {
 					return
@@ -68,21 +73,20 @@ func (s *FSStore) ListRelationsPage(_ context.Context, q store.RelationQuery) (s
 	}
 
 	s.mu.RLock()
+	match := storeutil.NewRelationMatcher(q)
 	keys := storeutil.PaginateSortedKeys(s.relationOrder, cursorKey, q.Limit, func(key string) bool {
-		return matchRelationKey(s, key, q)
+		return matchRelationKey(s, key, match)
 	})
 
-	type relKey struct{ from, typ, to string }
-	pairs := make([]relKey, 0, len(keys.Keys))
+	pairs := make([]relationMeta, 0, len(keys.Keys))
 	for _, key := range keys.Keys {
-		rm := s.relations[key]
-		pairs = append(pairs, relKey{rm.From, rm.Type, rm.To})
+		pairs = append(pairs, s.relations[key])
 	}
 	s.mu.RUnlock()
 
 	items := make([]*entity.Relation, 0, len(pairs))
 	for _, p := range pairs {
-		r, err := s.loadRelation(p.from, p.typ, p.to)
+		r, err := s.loadRelationMeta(p)
 		if err != nil {
 			return store.Page[*entity.Relation]{}, err
 		}
@@ -93,21 +97,20 @@ func (s *FSStore) ListRelationsPage(_ context.Context, q store.RelationQuery) (s
 
 // matchRelationKey reports whether the relation at key in s.relations
 // matches q. Callers must hold s.mu (at least for reading).
-func matchRelationKey(s *FSStore, key string, q store.RelationQuery) bool {
+func matchRelationKey(s *FSStore, key string, match func(*entity.Relation) bool) bool {
 	rm := s.relations[key]
-	r := &entity.Relation{From: rm.From, Type: rm.Type, To: rm.To}
-	return storeutil.MatchRelation(r, q)
+	r := &entity.Relation{From: rm.From, FromFace: rm.FromFace, Type: rm.Type, To: rm.To}
+	return match(r)
 }
 
 func (s *FSStore) CountRelations(_ context.Context, q store.RelationQuery) (int, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
+	match := storeutil.NewRelationMatcher(q)
 	count := 0
 	for _, key := range s.relationOrder {
-		rm := s.relations[key]
-		r := &entity.Relation{From: rm.From, Type: rm.Type, To: rm.To}
-		if storeutil.MatchRelation(r, q) {
+		if matchRelationKey(s, key, match) {
 			count++
 		}
 	}
@@ -127,16 +130,27 @@ func (s *FSStore) createRelation(
 	if err := storeutil.ValidateRelationType(relType); err != nil {
 		return nil, err
 	}
+	if data != nil {
+		if err := storeutil.ValidateProperties(data.Properties); err != nil {
+			return nil, err
+		}
+	}
+
+	var fp entity.Face
+	if data != nil {
+		fp = data.FromFace
+	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	key := from + "--" + relType + "--" + to
+	key := relKey(from, fp, relType, to)
 	if _, exists := s.relations[key]; exists {
 		return nil, store.ErrConflict
 	}
 
 	r := entity.NewRelation(from, relType, to)
+	r.FromFace = fp
 	r.UpdatedAt = time.Now()
 	if data != nil {
 		r.Content = data.Content
@@ -154,7 +168,7 @@ func (s *FSStore) createRelation(
 	}
 
 	// Update index.
-	s.relations[key] = relationMeta{From: from, Type: relType, To: to}
+	s.relations[key] = relationMeta{From: from, Type: relType, To: to, FromFace: fp}
 	s.relationOrder = storeutil.SortedInsert(s.relationOrder, key)
 
 	s.emit(store.Event{
@@ -162,6 +176,7 @@ func (s *FSStore) createRelation(
 		RelationType: relType,
 		From:         from,
 		To:           to,
+		Face:         fp,
 	})
 	return r.Clone(), nil
 }
@@ -169,10 +184,13 @@ func (s *FSStore) createRelation(
 func (s *FSStore) updateRelation(
 	_ context.Context, from, relType, to string, data store.RelationData,
 ) (*entity.Relation, error) {
+	if err := storeutil.ValidateProperties(data.Properties); err != nil {
+		return nil, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	key := from + "--" + relType + "--" + to
+	key := defaultTailKey(from, relType, to)
 	if _, ok := s.relations[key]; !ok {
 		return nil, store.ErrNotFound
 	}
@@ -208,17 +226,27 @@ func (s *FSStore) updateRelation(
 	return r.Clone(), nil
 }
 
-func (s *FSStore) deleteRelation(_ context.Context, from, relType, to string) error {
+func (s *FSStore) deleteRelation(ctx context.Context, from, relType, to string) error {
+	return s.deleteRelationState(ctx, from, "", relType, to)
+}
+
+// deleteRelationState removes the edge with EXACTLY this tail. The tail is
+// part of a relation's identity, so addressing the wrong one deletes a
+// different edge rather than failing (TKT-C1XUA8).
+func (s *FSStore) deleteRelationState(
+	_ context.Context, from string, p entity.Face, relType, to string,
+) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	key := from + "--" + relType + "--" + to
-	if _, ok := s.relations[key]; !ok {
+	key := relKey(from, p, relType, to)
+	rm, ok := s.relations[key]
+	if !ok {
 		return store.ErrNotFound
 	}
 
 	// Delete file.
-	fileKey := s.layout.relationFileKey(from, relType, to)
+	fileKey := s.layout.relationFileKeyMeta(rm)
 	if err := s.rooted.Remove(fileKey); err != nil {
 		return err
 	}
@@ -233,6 +261,7 @@ func (s *FSStore) deleteRelation(_ context.Context, from, relType, to string) er
 		RelationType: relType,
 		From:         from,
 		To:           to,
+		Face:         p,
 	})
 	return nil
 }

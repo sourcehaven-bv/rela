@@ -447,3 +447,112 @@ describe('KanbanView info regions (header/footer)', () => {
     wrapper.unmount()
   })
 })
+
+// An unoccupied workflow state must remain a visible, droppable column
+// (TKT-R7H6G1) — vanishing it hides part of the workflow from the reader and
+// removes the only place a card can be dragged INTO that state.
+//
+// This is pinned because the pressure is toward removing it: the presentation
+// pass that lightened the empty column (transparent background, dashed border,
+// content-fit height) is exactly the kind of change that could go one step
+// further and drop the column. These tests fail if it ever does.
+describe('KanbanView empty columns', () => {
+  it('renders a column with no cards, with its placeholder and a zero count', async () => {
+    const wrapper = await mountBoard([], [], {}, {
+      columns: [
+        { value: 'todo', label: 'Todo' },
+        { value: 'done', label: 'Done' },
+      ],
+    })
+
+    // One entity, in `todo` only — `done` is genuinely unoccupied.
+    const columns = wrapper.findAll('.kanban-column')
+    expect(columns).toHaveLength(2)
+
+    const done = columns[1]
+    expect(done.find('.empty-column').exists()).toBe(true)
+    expect(done.find('.empty-column').text()).toBe('No items')
+    expect(done.find('.column-count').text()).toBe('0')
+    // Still a labelled section — the lightened styling must not cost it its
+    // place in the accessibility tree.
+    expect(done.element.tagName).toBe('SECTION')
+    expect(done.attributes('aria-labelledby')).toBe('kanban-col-done')
+    wrapper.unmount()
+  })
+
+  it('accepts a drop on an empty column, moving the card into that state', async () => {
+    const ticket = makeTicket('T-1')
+    const wrapper = await mountBoard([], [ticket], {}, {
+      columns: [
+        { value: 'todo', label: 'Todo' },
+        { value: 'done', label: 'Done' },
+      ],
+    })
+
+    const done = wrapper.findAll('.kanban-column')[1]
+    expect(done.find('.empty-column').exists()).toBe(true)
+
+    // Drag the card out of `todo` and drop it on the empty `done` column. The
+    // drop handler lives on the column <section>, so the placeholder <li>
+    // inside it never intercepts the gesture.
+    await wrapper.find('.kanban-card').trigger('dragstart', {
+      dataTransfer: { setData: vi.fn(), effectAllowed: '' },
+    })
+    await done.trigger('dragover')
+    await done.trigger('drop')
+    await flushPromises()
+
+    expect(updateEntityMock).toHaveBeenCalledTimes(1)
+    const [, , payload] = updateEntityMock.mock.calls[0]
+    expect(payload).toMatchObject({ properties: { status: 'done' } })
+    wrapper.unmount()
+  })
+
+  // TKT-R7H6G1: with no explicit `columns:`, the board used to derive them from
+  // the values PRESENT in the loaded rows, in insertion order. That made the
+  // board a picture of the data rather than of the workflow.
+  describe('default columns come from the declared enum', () => {
+    // mountBoard seeds a default kanban with an explicit `columns:`; the
+    // default path is what is under test, so drop it and widen the enum.
+    const noExplicitColumns = { columns: undefined }
+    function widenStatusEnum() {
+      useSchemaStore().entityTypes.set(ENTITY_TYPE, {
+        name: ENTITY_TYPE,
+        label: 'Ticket',
+        properties: {
+          title: { type: 'string', values: null },
+          status: { type: 'enum', values: ['todo', 'doing', 'done'] },
+        },
+      } as never)
+    }
+
+    it('renders a column for a status nobody is currently in', async () => {
+      // Only `doing` is occupied. The other two must still get a column, or a
+      // card cannot be dragged back to them.
+      const t = makeTicket('T-1')
+      t.properties.status = 'doing'
+      const wrapper = await mountBoard([], [t], {}, noExplicitColumns)
+      widenStatusEnum()
+      await flushPromises()
+
+      const headings = wrapper.findAll('.kanban-column .column-title').map((h) => h.text())
+      expect(headings).toEqual(['todo', 'doing', 'done'])
+      wrapper.unmount()
+    })
+
+    it('follows declaration order, not the order rows arrived in', async () => {
+      // Rows arrive done-first; the board must not follow them.
+      const a = makeTicket('T-1')
+      a.properties.status = 'done'
+      const b = makeTicket('T-2')
+      b.properties.status = 'todo'
+      const wrapper = await mountBoard([], [a, b], {}, noExplicitColumns)
+      widenStatusEnum()
+      await flushPromises()
+
+      const headings = wrapper.findAll('.kanban-column .column-title').map((h) => h.text())
+      expect(headings).toEqual(['todo', 'doing', 'done'])
+      wrapper.unmount()
+    })
+  })
+})

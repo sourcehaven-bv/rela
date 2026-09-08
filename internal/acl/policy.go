@@ -58,6 +58,49 @@ const PermHistoryRead = "history:read"
 // documented in docs/acl-security.md alongside it.
 const PermHistoryReadRedacted = "history:read-redacted"
 
+// Comment permissions gate the commentary layer (internal/comments), which
+// lives alongside the graph rather than in it. They are resolved PER TARGET
+// ENTITY via [Request.HoldsPermissionForEntity], so a role conferred by an
+// ownership relation to the commented-on entity grants them — "the assignee
+// may comment on their own ticket" needs no special case.
+//
+// Read is floored by the target's own read verdict: a principal who cannot
+// read an entity cannot read its comments however these grants read, because
+// otherwise a comment thread becomes an existence oracle for entities the
+// principal is denied.
+const (
+	// PermCommentRead permits listing an entity's comments.
+	PermCommentRead = "comment:read"
+
+	// PermCommentAdd permits adding a comment.
+	PermCommentAdd = "comment:add"
+
+	// PermCommentUpdateOwn permits editing or resolving a comment the
+	// principal authored.
+	PermCommentUpdateOwn = "comment:update-own"
+
+	// PermCommentUpdateAny permits editing or resolving anyone's comment — a
+	// moderator capability. Implies [PermCommentUpdateOwn].
+	PermCommentUpdateAny = "comment:update-any"
+
+	// PermCommentDeleteOwn permits deleting a comment the principal authored.
+	PermCommentDeleteOwn = "comment:delete-own"
+
+	// PermCommentDeleteAny permits deleting anyone's comment — a moderator
+	// capability. Implies [PermCommentDeleteOwn].
+	PermCommentDeleteAny = "comment:delete-any"
+)
+
+// mutatingCommentPerms are the comment permissions that require a covering
+// [PermCommentRead], mirroring the entity-verb rule that update/delete imply
+// read. [PermCommentAdd] is deliberately absent: write-only commenting (leave
+// a remark, cannot read the thread) is a coherent posture, exactly as
+// create-without-read is for entities.
+var mutatingCommentPerms = []string{
+	PermCommentUpdateOwn, PermCommentUpdateAny,
+	PermCommentDeleteOwn, PermCommentDeleteAny,
+}
+
 // BuiltinPermissions returns every global named permission rela itself ships
 // and consumes. These are granted through a role's `permissions:` list exactly
 // like the operator-defined delegate-X permissions, but — unlike those — they
@@ -70,7 +113,12 @@ const PermHistoryReadRedacted = "history:read-redacted"
 // added here; the alternative — each consumer hardcoding its own list — is
 // what let history:read be reported as dead config while it was in use.
 func BuiltinPermissions() []string {
-	return []string{PermHistoryRead, PermHistoryReadRedacted}
+	return []string{
+		PermHistoryRead, PermHistoryReadRedacted,
+		PermCommentRead, PermCommentAdd,
+		PermCommentUpdateOwn, PermCommentUpdateAny,
+		PermCommentDeleteOwn, PermCommentDeleteAny,
+	}
 }
 
 // Policy is the declarative ACL configuration parsed from `acl.yaml`
@@ -381,6 +429,29 @@ type RoleDef struct {
 	Read        []string `yaml:"read"`
 	Permissions []string `yaml:"permissions"`
 
+	// Worlds holds the world names this role may read, SPLIT OUT of Read
+	// at policy load by [Policy.normalizeWorldGrants]. It carries no yaml
+	// tag: the wire spelling is `read: [world:published]` (design doc
+	// §8.1), and the split happens so that every existing consumer of Read
+	// — roleGrantsRead, grantForRole, filterTypes, aclaudit's verbLists —
+	// keeps seeing a list of nothing but entity types.
+	//
+	// The split is load-bearing, not cosmetic. Left inline, a world token
+	// is intersected with a client ceiling's TYPE allow/deny list by
+	// [filterTypes]: silently DROPPED under an allowlist ceiling (the
+	// token is not an entity type, so it fails the permits check) and
+	// silently KEPT under a deny ceiling (it matches no denied type). Both
+	// directions are wrong, and one of them is wrong in the operator's
+	// favor. aclaudit's B1-undeclared-type would also report every world
+	// grant as an undeclared entity type, at High.
+	//
+	// An EMPTY Worlds means the default world only — the default world is
+	// the ABSENCE of a grant, never an entry. That is what keeps existing
+	// acl.yaml files meaning exactly what they meant, and it is why a
+	// ceiling cannot express "deny the default world" by intersection; see
+	// [compiledCeiling.permitsWorld].
+	Worlds []string `yaml:"-"`
+
 	Fields    map[string][]FieldGrant    `yaml:"fields"`
 	Visible   map[string][]FieldGrant    `yaml:"visible"`
 	Options   map[string][]OptionGrant   `yaml:"options"`
@@ -403,6 +474,24 @@ func (r RoleDef) IsPrivileged() bool {
 // `target`. Op selects the verb list: Create / Update / Delete; Rename
 // routes through Update (it is a modification). Read is handled
 // separately via roleGrantsRead. An unknown op grants nothing.
+//
+// STATE GRANTS GRANT NOTHING HERE, deliberately.
+//
+// This is the TYPE-granular question — "may this role write this type at
+// all" — and its remaining callers ask exactly that: the provisioner
+// create-check (Policy.principalGrantsCreate) and the who-can reporting
+// in access.go, both of which report per type and have no face in hand.
+//
+// It is NO LONGER the write-authorization path. Since TKT-C1XUA8,
+// decideFromAttrs calls [GrantsVerbOnState] with the subject's face, so
+// the live path is face-granular and a state grant authorizes exactly the
+// face it names.
+//
+// A state-shaped entry is skipped rather than matched on its type half,
+// because matching would answer "yes" to a question about the DEFAULT face
+// on the strength of a grant that names only `page@draft` — a grant
+// widening by being made more specific. Skipping keeps this function's
+// answer a lower bound: everything it grants is genuinely granted.
 func grantsVerb(role RoleDef, op Op, target string) bool {
 	var list []string
 	switch op {
@@ -416,6 +505,9 @@ func grantsVerb(role RoleDef, op Op, target string) bool {
 		return false
 	}
 	for _, t := range list {
+		if isStateGrant(t) {
+			continue // see the doc comment: fail closed until the write path is face-aware
+		}
 		if t == "*" || t == target {
 			return true
 		}
@@ -433,6 +525,21 @@ type FieldGrant struct {
 	When  string `yaml:"when,omitempty"`
 }
 
+// UnmarshalYAML rejects unknown keys. See [rejectUnknownGrantKeys] for why
+// leniency here fails OPEN rather than closed.
+func (g *FieldGrant) UnmarshalYAML(node *yaml.Node) error {
+	if err := rejectUnknownGrantKeys(node, "fields/visible", "field", "when"); err != nil {
+		return err
+	}
+	type raw FieldGrant
+	var out raw
+	if err := node.Decode(&out); err != nil {
+		return err
+	}
+	*g = FieldGrant(out)
+	return nil
+}
+
 // OptionGrant grants a single enum option on a field. Used to filter
 // the option set the SPA renders and to gate writes that set the
 // field to that option.
@@ -440,6 +547,20 @@ type OptionGrant struct {
 	Field  string `yaml:"field"`
 	Option string `yaml:"option"`
 	When   string `yaml:"when,omitempty"`
+}
+
+// UnmarshalYAML rejects unknown keys. See [rejectUnknownGrantKeys].
+func (g *OptionGrant) UnmarshalYAML(node *yaml.Node) error {
+	if err := rejectUnknownGrantKeys(node, "options", "field", "option", "when"); err != nil {
+		return err
+	}
+	type raw OptionGrant
+	var out raw
+	if err := node.Decode(&out); err != nil {
+		return err
+	}
+	*g = OptionGrant(out)
+	return nil
 }
 
 // RelationGrant grants relation-level affordances for one relation
@@ -458,6 +579,56 @@ type RelationGrant struct {
 	Fields   []FieldGrant `yaml:"fields,omitempty"`
 	Visible  []FieldGrant `yaml:"visible,omitempty"`
 	When     string       `yaml:"when,omitempty"`
+}
+
+// UnmarshalYAML rejects unknown keys. See [rejectUnknownGrantKeys].
+func (g *RelationGrant) UnmarshalYAML(node *yaml.Node) error {
+	if err := rejectUnknownGrantKeys(node, "relations",
+		"relation", "create", "remove", "fields", "visible", "when"); err != nil {
+		return err
+	}
+	type raw RelationGrant
+	var out raw
+	if err := node.Decode(&out); err != nil {
+		return err
+	}
+	*g = RelationGrant(out)
+	return nil
+}
+
+// rejectUnknownGrantKeys fails the policy load when an affordance grant
+// mapping carries a key outside want.
+//
+// yaml.v3 drops a key it cannot map, and for these three structs that fails
+// OPEN. Every one of them carries a `when:` conditioning the grant on a
+// predicate, and an absent When means "grant unconditionally"
+// (PolicyResolver.compile returns a nil program) — so a misspelling of that
+// key silently promotes "editors may see salary IF they are HR" to "editors
+// may see salary". That is a read-side disclosure on the `visible:` block,
+// not merely a wider write gate.
+//
+// The sibling keys are not the motivation but are covered for free: a dropped
+// `field:`/`option:`/`relation:` is already caught downstream, because ""
+// matches no declared property and internal/affordances rejects it by name.
+// Rejecting here simply moves that report to the line that is wrong.
+//
+// Nil: node is never nil — yaml.v3 only calls UnmarshalYAML with a live node.
+func rejectUnknownGrantKeys(node *yaml.Node, block string, want ...string) error {
+	if node.Kind != yaml.MappingNode {
+		return nil // let the normal decode produce the type error
+	}
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		key := node.Content[i].Value
+		if !slices.Contains(want, key) {
+			// Report the source line, not an index: the caller decodes each
+			// grant on its own, so any counter here would number the KEYS of
+			// one mapping and read as if it named the offending grant.
+			return fmt.Errorf(
+				"%s grant at line %d: unknown key %q (want %s)",
+				block, node.Content[i].Line, key, strings.Join(want, ", "))
+		}
+	}
+	return nil
 }
 
 // RelationWriteGrant declares, for ONE relation type, the ACL permission that
@@ -667,9 +838,55 @@ func roleHasAffordanceGrants(role RoleDef) bool {
 // `docs/server-security.md` for the full hardening pattern. The UC1 example
 // policy in features_test.go is intentionally minimal and would be
 // wide-open if copy-pasted into a deployment.
+// # The gate is all-verbs, deliberately
+//
+// [RoleRelationDef.RequiresPermission] is a single permission covering
+// every write verb on the type — there is no per-verb form, and one is
+// not an oversight. The escalation this gate exists to stop is a
+// CREATE (`alice --member-of--> admins`), so a policy that gated only
+// some verbs would read as hardened while stopping nothing; and
+// revoking a conferred edge is an availability attack, so `delete` is
+// not safely un-gated either. Per-verb create/update/delete
+// permissions exist for relation types that do NOT confer roles — see
+// [RelationWriteGrant] (`relation_grants:`), which is refused on any
+// type carrying this gate precisely so the two cannot disagree.
 type RoleRelationDef struct {
 	Confers            string `yaml:"confers"`
 	RequiresPermission string `yaml:"requires_permission"`
+}
+
+// UnmarshalYAML rejects unknown keys rather than silently dropping them.
+// This struct's fields are a closed set, and yaml.v3 ignores anything it
+// cannot map — so `create: add-member` under a `role_relations:` entry
+// would load clean and leave the relation UNGATED, which fails open on
+// the one gate whose whole job is tamper-resistance.
+//
+// The write-verb keys get their own message: an operator reaching for
+// them has a coherent intent (per-verb relation permissions), it is just
+// spelled `relation_grants:` and only applies to relation types that do
+// not confer a role. "unknown key" would read as a typo and hide that.
+func (d *RoleRelationDef) UnmarshalYAML(unmarshal func(any) error) error {
+	var raw map[string]string
+	if err := unmarshal(&raw); err != nil {
+		return err
+	}
+	for _, k := range slices.Sorted(maps.Keys(raw)) {
+		switch k {
+		case "confers", "requires_permission":
+		case "create", "update", "delete", "read":
+			return fmt.Errorf(
+				"role_relations: %q is not supported — `requires_permission:` gates ALL "+
+					"write verbs on a role-conferring relation, by design. Per-verb "+
+					"permissions are `relation_grants:`, which is refused on a type that "+
+					"confers a role", k)
+		default:
+			return fmt.Errorf(
+				"role_relations: unknown key %q (want confers, requires_permission)", k)
+		}
+	}
+	d.Confers = raw["confers"]
+	d.RequiresPermission = raw["requires_permission"]
+	return nil
 }
 
 // knownPolicyKeys is the allowlist used for unknown-key warnings.
@@ -966,6 +1183,17 @@ func (g RelationWriteGrant) validate(relType string) error {
 // on-demand `rela acl audit` linter — see internal/aclaudit and
 // TKT-TS0J5K — which can rank findings by severity and cross-check the
 // metamodel, neither of which fits a boot gate.
+//
+// ONE EXCEPTION, added by TKT-DN37J2: a policy that grants read on a
+// non-default world while leaving a self-promotion path open is REFUSED
+// here ([Policy.WorldGrantRefusalReason]). It is an escalation foot-gun,
+// so it looks like it belongs to the linter — but the linter is advisory
+// by construction and this is a shipping gate the content-states design
+// requires, docs/acl-security.md promises operators in writing, and
+// TKT-T31NKT made a hard acceptance criterion. It qualifies for the boot
+// gate on the terms the paragraph above sets out: it needs no metamodel
+// and no store, only the policy. The un-worlded case still warns and
+// boots, exactly as before.
 // validateUnmatchedPrincipal checks the unmatched_principal enum and its
 // dependency on the principal_property lookup. Extracted from [Policy.Validate]
 // to keep that function's cognitive complexity in bounds.
@@ -998,6 +1226,15 @@ func (p *Policy) validateUnmatchedPrincipal() error {
 func (p *Policy) Validate() error {
 	p.normalizeAssertedRoles()
 	p.normalizeClientAttenuation()
+	// Runs before every check below, because those checks read the grant
+	// lists and must see them in their split form: Read holding only
+	// entity types, Worlds holding the world names.
+	if err := p.normalizeWorldGrants(); err != nil {
+		return err
+	}
+	if err := p.validateStateGrants(); err != nil {
+		return err
+	}
 	p.normalizeRelationWriteGrants()
 
 	if err := p.validateUnmatchedPrincipal(); err != nil {
@@ -1045,30 +1282,102 @@ func (p *Policy) Validate() error {
 					"it already applies to every principal", claim, EveryoneRole)
 		}
 	}
+	if err := p.validateWriteReadCoverage(); err != nil {
+		return err
+	}
+
+	// The membership-gate refusal is the LAST check, so a policy that is
+	// structurally broken fails on that first — a refusal naming an
+	// escalation path is confusing advice for a policy that does not parse.
+	//
+	// This is a deliberate, narrow exception to the "Validate is a pure
+	// structural gate" contract stated above. It earns the exception by
+	// being a security invariant expressible in policy alone (no metamodel,
+	// no store), and by firing only for policies that grant read on a
+	// non-default world — see [Policy.WorldGrantRefusalReason].
+	if reason := p.WorldGrantRefusalReason(); reason != "" {
+		return fmt.Errorf("refusing to load: %s", reason)
+	}
+	return nil
+}
+
+// validateWriteReadCoverage enforces the write⊆read invariant (TKT-4LQMWP):
+// Update and Delete require read coverage of the type, Create is exempt.
+// Extracted from [Policy.Validate] to keep that function's cognitive
+// complexity in bounds, the same way validateUnmatchedPrincipal was.
+func (p *Policy) validateWriteReadCoverage() error {
 	for name, role := range p.Roles {
-		// Update and Delete require read coverage: you must be able to read a
-		// type to modify or remove it (TKT-4LQMWP, was the write⊆read invariant
-		// RR-W2J6). Create is EXEMPT — a role may create a type it cannot read,
-		// reading back only what it authored via a role-conferring relation.
-		for _, verb := range []struct {
-			name  string
-			types []string
-		}{{"update", role.Update}, {"delete", role.Delete}} {
-			for _, t := range verb.types {
-				if !roleGrantsRead(role, t) {
-					hint := fmt.Sprintf("add %q (or \"*\")", t)
-					if t == "*" {
-						hint = `add "*"`
-					}
-					return fmt.Errorf(
-						"roles.%s: grants %s on %q without a covering read grant; "+
-							"%s to the role's read list — a principal must be able to "+
-							"read every type it can %s (create is exempt)",
-						name, verb.name, t, hint, verb.name)
-				}
-			}
+		if err := validateVerbReadCoverage(name, role); err != nil {
+			return err
+		}
+		if err := validateCommentPerms(name, role); err != nil {
+			return err
 		}
 	}
+	return nil
+}
+
+// validateVerbReadCoverage enforces that Update and Delete imply read: you must
+// be able to read a type to modify or remove it (TKT-4LQMWP, was the
+// write⊆read invariant RR-W2J6).
+//
+// Create is EXEMPT — a role may create a type it cannot read, reading back only
+// what it authored via a role-conferring relation.
+func validateVerbReadCoverage(name string, role RoleDef) error {
+	for _, verb := range []struct {
+		name  string
+		types []string
+	}{{"update", role.Update}, {"delete", role.Delete}} {
+		for _, t := range verb.types {
+			// Compare on the TYPE half. A state-shaped grant
+			// (`update: ["policy@draft"]`) still requires read coverage of
+			// `policy` — the face narrows WHICH FACE is writable, not which
+			// type — so checking the joined string would reject every state
+			// grant with a hint telling the operator to add "policy@draft" to
+			// their read list, which is not a thing a read list can hold.
+			target := grantTypeOf(t)
+			if roleGrantsRead(role, target) {
+				continue
+			}
+			hint := fmt.Sprintf("add %q (or \"*\")", target)
+			if target == "*" {
+				hint = `add "*"`
+			}
+			return fmt.Errorf(
+				"roles.%s: grants %s on %q without a covering read grant; "+
+					"%s to the role's read list — a principal must be able to "+
+					"read every type it can %s (create is exempt)",
+				name, verb.name, t, hint, verb.name)
+		}
+	}
+	return nil
+}
+
+// validateCommentPerms applies the covering-read rule to the commentary layer:
+// a role that may edit or delete comments must be able to read them.
+//
+// Without it a policy granting only comment:delete-any loads cleanly and lets
+// its holder remove comments it can never see — an unauditable capability and a
+// usability trap. [PermCommentAdd] is exempt for the same reason `create` is
+// exempt from the entity-verb rule: write-only commenting is a coherent posture.
+//
+// Evaluated PER ROLE. Roles union at request time, but nothing guarantees a
+// principal holding this role also holds one that grants the read, so a role
+// carrying a mutating permission alone is misconfigured on its own terms.
+func validateCommentPerms(name string, role RoleDef) error {
+	if slices.Contains(role.Permissions, PermCommentRead) {
+		return nil
+	}
+	for _, perm := range mutatingCommentPerms {
+		if slices.Contains(role.Permissions, perm) {
+			return fmt.Errorf(
+				"roles.%s: grants %q without %q; add %q to the role's "+
+					"permissions list — a principal must be able to read "+
+					"the comments it can change (%q is exempt)",
+				name, perm, PermCommentRead, PermCommentRead, PermCommentAdd)
+		}
+	}
+
 	return nil
 }
 
@@ -1201,8 +1510,10 @@ func (p *Policy) validateProvisionerGrant(userType string) error {
 
 // principalGrantsCreate reports whether principalUser is assigned — via
 // `assignments` or `asserted_role_assignments` — a defined role that grants
-// create on target. Mirrors the resolution grantsVerb performs at write time,
-// but for the single provisioner-load check.
+// create on target. Type-granular, which is the right question here: the
+// provisioner creates DEFAULT-face user entities, and a face-specific grant
+// would not be one it could act on. (The write path itself became
+// face-granular in TKT-C1XUA8; this deliberately did not.)
 func (p *Policy) principalGrantsCreate(principalUser, target string) bool {
 	roleGrants := func(roleName string) bool {
 		role, ok := p.Roles[roleName]

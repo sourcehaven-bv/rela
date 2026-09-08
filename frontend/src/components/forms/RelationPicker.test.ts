@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
+import { createRouter, createMemoryHistory } from 'vue-router'
 import RelationPicker from './RelationPicker.vue'
 import { useSchemaStore } from '@/stores/schema'
 import { useEntitiesStore } from '@/stores/entities'
@@ -438,5 +439,103 @@ describe('RelationPicker incoming label resolution', () => {
     await flushPromises()
     expect(wrapper.find('label').text()).toContain('Blocks')
     wrapper.unmount()
+  })
+})
+
+// BUG-3: the picker offers entities that may have several faces, and gave no
+// indication which one a row was. The badge names the face — but only when it
+// is a surprise.
+describe('RelationPicker — face badge (BUG-3)', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+  })
+
+  function faced(id: string, world?: Entity['_world']): Entity {
+    return { id, type: 'ticket', properties: {}, _title: id, _world: world }
+  }
+
+  it('badges a row whose face is a within-chain STAND-IN', async () => {
+    // `chain_position > 0` means the world's first choice did not exist and a
+    // later candidate stood in — a draft standing in for published. That is
+    // exactly the substitution content states exist to make visible.
+    const wrapper = await mountPicker(
+      ['TKT-1'],
+      [faced('TKT-1', { name: 'published', face: '', via: 'chain', chain_position: 1 })]
+    )
+    expect(wrapper.find('.selected-entity .world-badge').exists()).toBe(true)
+  })
+
+  it('badges a row that fell back to the default face', async () => {
+    const wrapper = await mountPicker(
+      ['TKT-1'],
+      [faced('TKT-1', { name: 'published', face: '', via: 'fallback-default' })]
+    )
+    expect(wrapper.find('.selected-entity .world-badge').exists()).toBe(true)
+  })
+
+  it('does NOT badge a row that is the world PRIME', async () => {
+    // chain_position 0 is the world's first choice — the ordinary case. A badge
+    // here would fire on every row and train the reader to ignore it.
+    const wrapper = await mountPicker(
+      ['TKT-1'],
+      [
+        faced('TKT-1', {
+          name: 'published',
+          face: 'published',
+          via: 'chain',
+          chain_position: 0,
+        }),
+      ]
+    )
+    expect(wrapper.find('.selected-entity .world-badge').exists()).toBe(false)
+  })
+
+  it('does NOT badge in the default world, where every row is the default face', async () => {
+    const wrapper = await mountPicker(['TKT-1'], [faced('TKT-1', undefined)])
+    expect(wrapper.find('.selected-entity .world-badge').exists()).toBe(false)
+  })
+
+  // The badge is only honest if the QUERY it decorates is world-aware: a badge
+  // over rows chosen without regard to worlds labels the wrong thing
+  // confidently. This is the prerequisite the diagnosis calls out.
+  it('scopes the candidate query to the active world', async () => {
+    seedSchema()
+    seedCandidates([])
+    const entitiesStore = useEntitiesStore()
+    // A real router, because the world is read from the URL. Mocking `$route`
+    // does not reach `useRoute()`, which resolves through provide/inject.
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: '/:pathMatch(.*)*', component: { template: '<div/>' } }],
+    })
+    await router.push('/form?world=published')
+    await router.isReady()
+
+    const field: FormFieldOrRelation = { relation: 'affects', label: 'Affects' }
+    mount(RelationPicker, {
+      props: { field, entityType: 'ticket', value: [] },
+      global: { plugins: [router] },
+      attachTo: document.body,
+    })
+    await flushPromises()
+    expect(entitiesStore.fetchList).toHaveBeenCalledWith(
+      'ticket',
+      expect.objectContaining({ world: 'published' })
+    )
+  })
+
+  it('places the badge AFTER the title, so the type chip still leads', async () => {
+    const wrapper = await mountPicker(
+      ['TKT-1'],
+      [faced('TKT-1', { name: 'published', face: '', via: 'chain', chain_position: 1 })]
+    )
+    const row = wrapper.find('.selected-entity')
+    const order = Array.from(row.element.children).map((el) => el.className)
+    const typeIdx = order.findIndex((c) => c.includes('entity-type'))
+    const labelIdx = order.findIndex((c) => c.includes('entity-label'))
+    const badgeIdx = order.findIndex((c) => c.includes('world-badge'))
+    expect(typeIdx).toBeGreaterThanOrEqual(0)
+    expect(badgeIdx).toBeGreaterThan(labelIdx)
+    expect(labelIdx).toBeGreaterThan(typeIdx)
   })
 })

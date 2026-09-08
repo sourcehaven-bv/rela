@@ -79,8 +79,8 @@ func TestRootedFS_Resolve_Accepts(t *testing.T) {
 				t.Fatalf("expected ok for %q, got %v", k, err)
 			}
 			want := filepath.Join(rfs.root, k)
-			if full != want {
-				t.Fatalf("resolve(%q) = %q, want %q", k, full, want)
+			if full.String() != want {
+				t.Fatalf("resolve(%q) = %q, want %q", k, full.String(), want)
 			}
 		})
 	}
@@ -132,7 +132,7 @@ func TestRootedFS_ResolvedPath_StaysInsideRoot(t *testing.T) {
 		if err != nil {
 			t.Fatalf("resolve(%q): %v", k, err)
 		}
-		rel, err := filepath.Rel(rfs.root, full)
+		rel, err := filepath.Rel(rfs.root, full.String())
 		if err != nil {
 			t.Fatalf("rel: %v", err)
 		}
@@ -468,18 +468,18 @@ func FuzzResolve(f *testing.F) {
 		if err != nil {
 			return // rejection is fine — we only assert on acceptances
 		}
-		rel, relErr := filepath.Rel(rfs.root, full)
+		rel, relErr := filepath.Rel(rfs.root, full.String())
 		if relErr != nil {
-			t.Fatalf("filepath.Rel(%q, %q): %v", rfs.root, full, relErr)
+			t.Fatalf("filepath.Rel(%q, %q): %v", rfs.root, full.String(), relErr)
 		}
 		// rel must not be ".." and must not step up out of root.
 		if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			t.Fatalf("resolved %q escapes root: rel=%q full=%q", key, rel, full)
+			t.Fatalf("resolved %q escapes root: rel=%q full=%q", key, rel, full.String())
 		}
 		// full must be root itself or a path inside root.
 		sep := string(filepath.Separator)
-		if full != rfs.root && !strings.HasPrefix(full, rfs.root+sep) {
-			t.Fatalf("resolved %q not prefixed by root: full=%q root=%q", key, full, rfs.root)
+		if full.String() != rfs.root && !strings.HasPrefix(full.String(), rfs.root+sep) {
+			t.Fatalf("resolved %q not prefixed by root: full=%q root=%q", key, full.String(), rfs.root)
 		}
 	})
 }

@@ -910,3 +910,22 @@ describe('CalendarView event ordering', () => {
     expect(titles).toEqual(['Meeting M-crosses', 'Meeting M-morning'])
   })
 })
+
+// The grid is that world's projection, like a list or a board. It used to
+// send no world at all: `?world=published` showed the DEFAULT faces' dates
+// under a read-only framing, with the create button still offered.
+describe('CalendarView under a world', () => {
+  it('sends the world with every source query', async () => {
+    setup({ responses: { task: [] }, query: { world: 'site-nl' } })
+    await flushPromises()
+    const params = listAllEntitiesMock.mock.calls[0][1] as Record<string, string>
+    expect(params.world).toBe('site-nl')
+  })
+
+  it('sends no world param in the default world', async () => {
+    setup({ responses: { task: [] } })
+    await flushPromises()
+    const params = listAllEntitiesMock.mock.calls[0][1] as Record<string, string>
+    expect(params.world).toBeUndefined()
+  })
+})

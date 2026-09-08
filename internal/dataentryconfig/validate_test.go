@@ -2397,6 +2397,83 @@ views:
 	}
 }
 
+// TestValidateApp_DefaultWorld pins the LOAD-TIME refusal.
+//
+// This matters more than an ordinary config typo: an unvalidated
+// `default_world` would silently serve the DEFAULT world to every request
+// and look exactly like the feature was never configured — no error, no
+// warning, just the wrong faces everywhere. Failing the load is the only
+// signal an operator gets.
+func TestValidateApp_DefaultWorld(t *testing.T) {
+	meta := &metamodel.Metamodel{
+		Version: "1.0",
+		Worlds: map[string]metamodel.WorldDef{
+			"published": {Select: []string{"published"}, Otherwise: "exclude"},
+			"site-nl":   {Select: []string{"nl", "en"}, Otherwise: "default"},
+		},
+	}
+
+	tests := []struct {
+		name    string
+		world   string
+		meta    *metamodel.Metamodel
+		wantErr string
+	}{
+		{name: "unset is fine", world: "", meta: meta},
+		{name: "declared world accepted", world: "published", meta: meta},
+		{
+			// `default` is implicit and total — never declared under `worlds:`,
+			// so it must be accepted without being found there.
+			name: "the reserved default world is accepted", world: "default", meta: meta,
+		},
+		{
+			name:  "a typo is refused, and the error names what IS declared",
+			world: "publsihed", meta: meta,
+			wantErr: `"publsihed" is not a declared world`,
+		},
+		{
+			name:  "set with no metamodel is refused rather than assumed valid",
+			world: "published", meta: nil,
+			wantErr: "no metamodel is available",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &Config{App: AppConfig{DefaultWorld: tt.world}}
+			errs := validateApp(cfg, tt.meta)
+			if tt.wantErr == "" {
+				if len(errs) != 0 {
+					t.Fatalf("validateApp(default_world=%q) = %v, want no errors", tt.world, errs)
+				}
+				return
+			}
+			if len(errs) == 0 {
+				t.Fatalf("validateApp(default_world=%q) = no errors, want %q", tt.world, tt.wantErr)
+			}
+			if !strings.Contains(errs[0], tt.wantErr) {
+				t.Errorf("validateApp(default_world=%q) = %q, want it to contain %q",
+					tt.world, errs[0], tt.wantErr)
+			}
+		})
+	}
+
+	t.Run("the refusal lists the declared worlds", func(t *testing.T) {
+		// The operator needs to see what they COULD have written; an error that
+		// only says "not declared" sends them hunting through schema.yaml.
+		cfg := &Config{App: AppConfig{DefaultWorld: "nope"}}
+		errs := validateApp(cfg, meta)
+		if len(errs) == 0 {
+			t.Fatal("expected a refusal")
+		}
+		for _, w := range []string{"published", "site-nl"} {
+			if !strings.Contains(errs[0], w) {
+				t.Errorf("error %q does not name the declared world %q", errs[0], w)
+			}
+		}
+	})
+}
+
 func TestValidateApp_PlantUMLServerURL(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -2417,7 +2494,10 @@ func TestValidateApp_PlantUMLServerURL(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := &Config{App: AppConfig{PlantUMLServerURL: tt.url}}
-			errs := validateApp(cfg)
+			// nil metamodel: this table only exercises plantuml_server_url,
+			// and the default_world arm short-circuits on an empty value
+			// before it would need one.
+			errs := validateApp(cfg, nil)
 			if tt.wantErr == "" {
 				if len(errs) != 0 {
 					t.Fatalf("validateApp(%q) = %v, want no errors", tt.url, errs)
@@ -2863,5 +2943,79 @@ func TestValidateConfig_UnambiguousDirection_AllSurfaces(t *testing.T) {
 	}
 	if err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta); err != nil {
 		t.Fatalf("unambiguous bindings should validate without an explicit direction, got: %v", err)
+	}
+}
+
+// TestValidateLists_CreateWorld pins the load-time refusal of a mistyped
+// `create_world`.
+//
+// A typo silently opens the create form in the LIST's own world — precisely
+// the behavior the key exists to override, and indistinguishable from never
+// having set it. Same failure shape as app.default_world above.
+//
+// What is deliberately NOT validated: whether the target world resolves a face
+// for this type. Linking to another world always works, and a create writes
+// the DEFAULT face regardless — it names no face, and no world reaches a
+// write — so there is no combination to reject. The real gate is ACL, which is
+// per-principal and therefore not a load-time question.
+func TestValidateLists_CreateWorld(t *testing.T) {
+	meta := &metamodel.Metamodel{
+		Version: "1.0",
+		Entities: map[string]metamodel.EntityDef{
+			"policy": {
+				Properties: map[string]metamodel.PropertyDef{"title": {Type: "string"}},
+			},
+		},
+		Worlds: map[string]metamodel.WorldDef{
+			"published": {Select: []string{"published"}, Otherwise: "exclude"},
+			"editorial": {Select: []string{"draft"}, Otherwise: "default"},
+		},
+	}
+
+	tests := []struct {
+		name        string
+		createWorld string
+		wantErr     string
+	}{
+		{name: "unset is fine — the form opens in the list's own world"},
+		{name: "a declared world is accepted", createWorld: "editorial"},
+		{
+			// `default` is implicit and total, never listed under `worlds:`.
+			name: "the reserved default world is accepted", createWorld: "default",
+		},
+		{
+			name:        "a typo is refused, and the error names what IS declared",
+			createWorld: "editorail",
+			wantErr:     `create_world "editorail" is not a declared world`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &Config{Lists: map[string]List{
+				"policies": {
+					EntityType:  "policy",
+					Title:       "Policies",
+					CreateForm:  "new_policy",
+					CreateWorld: tt.createWorld,
+					Columns:     []ListColumn{{Property: "title"}},
+				},
+			}}
+			errs := validateLists(cfg, meta)
+			if tt.wantErr == "" {
+				if len(errs) != 0 {
+					t.Fatalf("validateLists(create_world=%q) = %v, want no errors", tt.createWorld, errs)
+				}
+				return
+			}
+			if len(errs) == 0 {
+				t.Fatalf("validateLists(create_world=%q) = no errors, want %q", tt.createWorld, tt.wantErr)
+			}
+			joined := strings.Join(errs, "\n")
+			if !strings.Contains(joined, tt.wantErr) {
+				t.Errorf("validateLists(create_world=%q) = %q, want it to contain %q",
+					tt.createWorld, joined, tt.wantErr)
+			}
+		})
 	}
 }

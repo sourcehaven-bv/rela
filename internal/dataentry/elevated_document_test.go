@@ -44,7 +44,7 @@ func elevatedDoc() dataentryconfig.DocumentConfig {
 }
 
 // TestElevatedDocument_ClosedSwitch is the table that pins the gate across
-// every ACL implementation, including both the value and pointer forms of the
+// every ACL implementation, including both the value and face forms of the
 // nop/read-only types.
 //
 // The default arm is the point: an implementation nobody taught the switch
@@ -61,9 +61,9 @@ func TestElevatedDocument_ClosedSwitch(t *testing.T) {
 	}{
 		{name: "nil ACL denies (wiring bug fails closed)", aclImpl: nil},
 		{name: "NopACL value denies", aclImpl: acl.NopACL{}},
-		{name: "NopACL pointer denies", aclImpl: &acl.NopACL{}},
+		{name: "NopACL face denies", aclImpl: &acl.NopACL{}},
 		{name: "ReadOnlyACL value denies", aclImpl: acl.ReadOnlyACL{}},
-		{name: "ReadOnlyACL pointer denies", aclImpl: &acl.ReadOnlyACL{}},
+		{name: "ReadOnlyACL face denies", aclImpl: &acl.ReadOnlyACL{}},
 		{name: "nil *Declarative denies", aclImpl: (*acl.Declarative)(nil)},
 		{name: "unknown implementation denies (default arm)", aclImpl: stubACL{}},
 	} {

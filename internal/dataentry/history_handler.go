@@ -82,11 +82,54 @@ func handleV1History(a *App, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(parts) >= 3 && parts[2] != "" {
-		serveHistoryVersion(a, w, r, reader, typeName, entityID, parts[2])
+	// Narrow the reader to the FACE the request's world resolves (BUG-2).
+	// Versioning is per-face, so a world-bound page asking for "the history"
+	// means the history of the face on screen — serving the default face's
+	// instead is the wrong record presented as the right one.
+	//
+	// This runs AFTER authorizeHistoryRead, so the face is only ever resolved
+	// for a caller already cleared to read the entity.
+	face, present, ferr := historyFace(r.Context(), a.store, entityID)
+	if ferr != nil {
+		writeGateError(w, r, ferr)
 		return
 	}
-	serveHistoryTimeline(w, r, reader, entityID)
+	if !present {
+		// The world resolves no face for this entity, so there is no history
+		// in this world. An EMPTY timeline, not a 404: the entity exists and
+		// this caller may read it (the gate above said so), and a 404 here
+		// would contradict the entity view, which answers the same question
+		// with `_world_absent` and the default face.
+		writeV1JSON(w, http.StatusOK, map[string]any{
+			"id": entityID, "versions": []map[string]any{}, "world_face_absent": true,
+		})
+		return
+	}
+	// The row gate in authorizeHistoryRead is face-blind; the face being
+	// served — the default one, or the world's resolution — must pass the
+	// face half too, or a `type@published` principal reads the draft's
+	// timeline and snapshots here while the entity GET 404s.
+	if !faceReadable(r.Context(), typeName, face) {
+		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
+		return
+	}
+	scoped, capable := faceHistoryReader(reader, face)
+	if !capable {
+		// The backend has entity history but not the FACE-scoped capability, so
+		// it cannot answer this question. Refuse rather than serving the
+		// default face's history under a world — a wrong record is worse than a
+		// named refusal (the same posture the 501 above takes).
+		writeV1Error(w, r, http.StatusNotImplemented, "history_face_unsupported",
+			"The active storage backend cannot serve per-face version history",
+			"omit ?world= to read the default face's history")
+		return
+	}
+
+	if len(parts) >= 3 && parts[2] != "" {
+		serveHistoryVersion(a, w, r, scoped, typeName, entityID, parts[2])
+		return
+	}
+	serveHistoryTimeline(w, r, scoped, entityID, face)
 }
 
 // authorizeHistoryRead returns true if the caller may read this entity's
@@ -130,7 +173,8 @@ func authorizeHistoryRead(a *App, w http.ResponseWriter, r *http.Request, typeNa
 
 // serveHistoryTimeline writes the version metadata list (oldest first).
 func serveHistoryTimeline(
-	w http.ResponseWriter, r *http.Request, reader store.HistoryReader, entityID string,
+	w http.ResponseWriter, r *http.Request, reader store.HistoryReader,
+	entityID string, face entityPkg.Face,
 ) {
 	metas, err := reader.ListVersions(r.Context(), entityID)
 	if err != nil {
@@ -139,8 +183,12 @@ func serveHistoryTimeline(
 		writeGateError(w, r, err)
 		return
 	}
+	ctx := r.Context()
+	// The source ids named by copy origins are ROWS, so they are gated
+	// against this reader's own verdict before any of them reaches the wire.
+	sources := gateOriginSources(ctx, readGateFromContext(ctx), metas)
 	versions := make([]map[string]any, 0, len(metas))
-	for _, m := range metas {
+	for i, m := range metas {
 		row := map[string]any{
 			"version":    m.Version,
 			"op":         m.Op,
@@ -154,9 +202,20 @@ func serveHistoryTimeline(
 		if m.TriggeredBy != "" {
 			row["triggered_by"] = m.TriggeredBy
 		}
+		// Omitted entirely for a direct edit — the absence is the signal that
+		// a human typed this version, and `principal` above says who.
+		if o := originWire(m.Origin, sources[i]); o != nil {
+			row["origin"] = o
+		}
 		versions = append(versions, row)
 	}
-	writeV1JSON(w, http.StatusOK, map[string]any{"id": entityID, "versions": versions})
+	// The response NAMES the face it belongs to. A record that does not name
+	// its subject invites the reader to assume the obvious one, which is
+	// precisely how the default face's history passed for a published page's.
+	// Empty means the default face, matching the face's own zero value.
+	writeV1JSON(w, http.StatusOK, map[string]any{
+		"id": entityID, "versions": versions, "face": face.String(),
+	})
 }
 
 // serveHistoryVersion writes one version's full snapshot, redacted through the
@@ -226,12 +285,18 @@ func serveHistoryVersion(a *App,
 		wire = a.serializer.forWire(affordances.WithHistoricalSubject(ctx), snapEntity, nil, meta, plural)
 	}
 
-	writeV1JSON(w, http.StatusOK, map[string]any{
+	payload := map[string]any{
 		"id":         entityID,
 		"version":    snap.Version,
 		"op":         snap.Op,
 		"created_at": snap.CreatedAt,
 		"principal":  map[string]string{"user": snap.PrincipalUser, "tool": snap.PrincipalTool},
 		"entity":     wire,
-	})
+	}
+	// Same gate as the timeline, over the single meta this snapshot carries.
+	sources := gateOriginSources(ctx, readGateFromContext(ctx), []store.VersionMeta{snap.VersionMeta})
+	if o := originWire(snap.Origin, sources[0]); o != nil {
+		payload["origin"] = o
+	}
+	writeV1JSON(w, http.StatusOK, payload)
 }

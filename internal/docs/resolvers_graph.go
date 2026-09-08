@@ -1,13 +1,17 @@
 package docs
 
 import (
+	"fmt"
 	"slices"
 	"sort"
+	"strings"
 
 	lua "github.com/yuin/gopher-lua"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/mermaid"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
 )
 
@@ -284,4 +288,230 @@ func sortedRelNames(rels map[string]metamodel.RelationDef) []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// luaResolution renders how ONE world resolves the seeded entities of a type:
+// which face each entity answers with, and which are excluded entirely.
+//
+// # Why a diagram rather than a table
+//
+// `shows{world=...}` ASSERTS the outcome, which is what keeps the page honest,
+// but a reader meeting worlds for the first time needs to see the shape: the
+// same set of entities, resolved differently, with some of them absent. The
+// assertion proves it; this shows it.
+//
+// Rendered from the same resolution the store performs, not from a hand-drawn
+// figure — so a diagram cannot illustrate behavior the code stopped having.
+func (dr *docRuntime) luaResolution(ls *lua.LState) int {
+	tbl := argTable(ls)
+	typ := fieldString(ls, tbl, "type")
+	world := fieldString(ls, tbl, "world")
+	if typ == "" {
+		return dr.luaFail(ls, "resolution: `type` is required")
+	}
+	if _, ok := dr.meta.GetEntityDef(typ); !ok {
+		return dr.luaFail(ls, "resolution: no such entity type %q (declared: %s)",
+			typ, strings.Join(declaredTypes(dr.meta), ", "))
+	}
+	scope, err := dr.worldScope(world)
+	if err != nil {
+		return dr.luaFail(ls, "resolution: %v", err)
+	}
+
+	ids, err := dr.entityIDs(typ, store.WorldScope{})
+	if err != nil {
+		return dr.luaFail(ls, "resolution: %v", err)
+	}
+	// What the world answers with, per entity. An id absent here is one the
+	// projection dropped.
+	selected := map[string]entity.Face{}
+	for e, lerr := range dr.store.ListEntities(dr.ctx, store.EntityQuery{Type: typ, World: scope}) {
+		if lerr != nil {
+			return dr.luaFail(ls, "resolution: %v", lerr)
+		}
+		selected[e.ID] = e.Face
+	}
+
+	g, err := dr.buildResolutionGraph(typ, world, ids, selected)
+	if err != nil {
+		return dr.luaFail(ls, "resolution: %v", err)
+	}
+	dr.emit(mermaidBlock(g))
+	return 0
+}
+
+// resolutionStyles are the three states a face can be in under a projection.
+// Color carries the same information as the label, never information the label
+// omits — a reader who cannot distinguish them loses nothing.
+var resolutionStyles = map[string]string{
+	"world":    "fill:#e8eefc,stroke:#3b5bdb,stroke-width:2px",
+	"chosen":   "fill:#dff0d8,stroke:#3c763d,stroke-width:2px",
+	"unchosen": "fill:#f5f5f5,stroke:#bbb,color:#777",
+	"dropped":  "fill:#fdecea,stroke:#c9302c,stroke-dasharray:4 3",
+}
+
+// buildResolutionGraph draws every FACE of every seeded entity of one type,
+// marks which face the world selected, and carries the relations between them.
+//
+// The earlier version drew a star from the world to one node per entity, which
+// showed the outcome but hid two things a reader needs: that an entity HAS
+// other faces the projection passed over, and that the faces are connected. A
+// content-scoped edge belongs to one face, so "which edges come along" is part
+// of what a world decides.
+func (dr *docRuntime) buildResolutionGraph(
+	typ, world string, ids []string, selected map[string]entity.Face,
+) (string, error) {
+	var nodes []mermaid.Node
+
+	// nodeKey addresses one face of one entity; faceOf records which faces
+	// exist so an edge can be drawn only between faces actually present.
+	nodeKey := func(id string, f entity.Face) string { return id + "\x00" + f.String() }
+	present := map[string]bool{}
+	// subject marks nodes that are faces of the type being projected, as
+	// opposed to neighbors pulled in by a relation.
+	subject := map[string]bool{}
+
+	for _, id := range ids {
+		faces, err := dr.facesOf(typ, id)
+		if err != nil {
+			return "", err
+		}
+		sel, kept := selected[id]
+		for _, f := range faces {
+			name := metamodel.DeclaredFace(dr.meta, typ, f.String())
+			if name == "" {
+				name = "(unnamed)"
+			}
+			class := "unchosen"
+			switch {
+			case !kept:
+				class = "dropped"
+			case f == sel:
+				class = "chosen"
+			}
+			nodes = append(nodes, mermaid.Node{
+				Key: nodeKey(id, f), Text: id + " @" + name, Class: class,
+			})
+			present[nodeKey(id, f)] = true
+			subject[nodeKey(id, f)] = true
+		}
+	}
+
+	relNodes, relEdges, err := dr.resolutionRelations(typ, ids, selected, present, nodeKey)
+	if err != nil {
+		return "", err
+	}
+	nodes = append(nodes, relNodes...)
+	edges := relEdges
+
+	// Anchor every face to a world node.
+	//
+	// Without this a projection over entities that happen to have no relations
+	// is a set of ISOLATED nodes, which mermaid stacks in one tall column with
+	// the boxes marooned in whitespace — the figure that should be easiest to
+	// read renders worst. The edge also carries the fact the diagram is about:
+	// which face this world chose, and why the others are here.
+	label := world
+	if label == "" {
+		label = "default"
+	}
+	worldKey := "\x00world"
+	anchors := make([]mermaid.Edge, 0, len(nodes))
+	for _, n := range nodes {
+		// Neighbors reached by a relation are context, not subjects of this
+		// projection — anchoring them would claim the world passed over a face
+		// of a type it was never asked about.
+		if !subject[n.Key] {
+			continue
+		}
+		switch n.Class {
+		case "chosen":
+			anchors = append(anchors, mermaid.Edge{FromKey: worldKey, ToKey: n.Key, Label: "selects"})
+		case "unchosen":
+			// Connected too, or it floats: "this face exists and the world
+			// passed over it" is half of what the diagram is showing.
+			anchors = append(anchors, mermaid.Edge{FromKey: worldKey, ToKey: n.Key, Label: "passes over", Dashed: true})
+		case "dropped":
+			anchors = append(anchors, mermaid.Edge{FromKey: worldKey, ToKey: n.Key, Label: "no face here", Dashed: true})
+		}
+	}
+	all := append([]mermaid.Node{{Key: worldKey, Text: label + " world", Class: "world"}}, nodes...)
+	return mermaid.Graph(all, append(anchors, edges...)) +
+		mermaid.ClassDefs(resolutionStyles), nil
+}
+
+// facesOf lists the faces one entity actually has, bare-id row first.
+func (dr *docRuntime) facesOf(typ, id string) ([]entity.Face, error) {
+	var out []entity.Face
+	def, ok := dr.meta.GetEntityDef(typ)
+	if !ok {
+		return nil, fmt.Errorf("no such entity type %q", typ)
+	}
+	// The bare-id row, then each declared face that exists on this entity.
+	if _, err := dr.store.GetEntityState(dr.ctx, id, entity.Face("")); err == nil {
+		out = append(out, entity.Face(""))
+	}
+	for _, name := range sortedFaceNames(def) {
+		stored := entity.Face(metamodel.StoredFace(dr.meta, typ, name))
+		if stored.IsDefault() {
+			continue // already emitted as the bare-id row
+		}
+		if _, err := dr.store.GetEntityState(dr.ctx, id, stored); err == nil {
+			out = append(out, stored)
+		}
+	}
+	return out, nil
+}
+
+// mermaidBlock fences a mermaid source string as a Markdown code block, the
+// form every renderer keys on. Emitting the source bare renders it as a
+// paragraph of graph syntax rather than a diagram.
+func mermaidBlock(src string) string {
+	return "```mermaid\n" + src + "```\n\n"
+}
+
+// resolutionRelations draws the edges between the faces on a resolution
+// diagram, pulling in neighbor nodes the projection did not already place.
+//
+// Split from buildResolutionGraph to keep each half readable: one decides what
+// the world did with every face, this one decides what that means for the
+// edges between them.
+//
+// An identity-scoped edge has no tail, so it hangs off the entity's bare-id
+// face and is drawn dashed — "shared by every face" without a second color for
+// a reader to decode.
+func (dr *docRuntime) resolutionRelations(
+	typ string, ids []string, selected map[string]entity.Face,
+	present map[string]bool, nodeKey func(string, entity.Face) string,
+) ([]mermaid.Node, []mermaid.Edge, error) {
+	var nodes []mermaid.Node
+	var edges []mermaid.Edge
+	for _, id := range ids {
+		faces, err := dr.facesOf(typ, id)
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, f := range faces {
+			tail := f
+			for r, rerr := range dr.store.ListRelations(dr.ctx, store.RelationQuery{
+				From: id, FromFace: &tail,
+			}) {
+				if rerr != nil {
+					return nil, nil, rerr
+				}
+				// The head is an entity, not a face: draw to whichever face of
+				// the target the projection chose, else its bare-id row.
+				to := nodeKey(r.To, selected[r.To])
+				if !present[to] {
+					nodes = append(nodes, mermaid.Node{Key: to, Text: r.To, Class: "unchosen"})
+					present[to] = true
+				}
+				edges = append(edges, mermaid.Edge{
+					FromKey: nodeKey(id, f), ToKey: to,
+					Label: r.Type, Dashed: tail.IsDefault(),
+				})
+			}
+		}
+	}
+	return nodes, edges, nil
 }

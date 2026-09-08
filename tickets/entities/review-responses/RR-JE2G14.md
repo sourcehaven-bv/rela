@@ -39,7 +39,7 @@ resolution: |
   (4) Unknown permission string: validation should check it against acl.yaml's
   known permissions when a policy is configured. Carried into implementation.
   
-  Pinned by AC7 (table-driven over every ACL impl incl. pointer forms) and AC8
+  Pinned by AC7 (table-driven over every ACL impl incl. face forms) and AC8
   (NopACL refusal).
 severity: significant
 status: addressed

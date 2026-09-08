@@ -16,6 +16,7 @@ import (
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/statemachine"
@@ -39,8 +40,16 @@ import (
 // [acl.EntitySubject.ID] so the v1 ACL can evaluate entity-aware
 // local-role grants (e.g. "alice can edit TKT-042 because she's
 // assigned to it").
-func translateVerb(verb, entityType, entityID string) acl.WriteRequest {
-	subject := acl.EntitySubject{Type: entityType, ID: entityID}
+//
+// face names the CONTENT STATE being acted on, and is REQUIRED rather
+// than optional: an affordance must answer the same question the write
+// will (BUG-Y0GNSB). Passing the zero face where a real one applies
+// reports `update: true` on a face the principal cannot write, which is
+// how the escalation this fixes stayed invisible in the API response.
+// Pass the face off the entity being described; the zero value is
+// correct only for a genuinely unfaced entity or a per-collection verb.
+func translateVerb(verb, entityType, entityID string, face entityPkg.Face) acl.WriteRequest {
+	subject := acl.EntitySubject{Type: entityType, ID: entityID, Face: face}
 	switch verb {
 	case "create":
 		return acl.WriteRequest{Op: acl.OpCreate, Subject: subject}
@@ -105,6 +114,12 @@ type affordanceService struct {
 	meta     func() *metamodel.Metamodel
 	// getEntity resolves an entity by ID for relation-source attribution.
 	getEntity func(ctx context.Context, id string) (*entityPkg.Entity, bool)
+	// copies lists the copy affordances available from one face (RULING 9's
+	// promote / translate buttons). OPTIONAL, unlike the accessors above: nil
+	// when the entity manager does not expose the capability, in which case
+	// `_copies` is omitted rather than sent empty — see computeCopyOffers.
+	// Wired by wireCopies, in production and in the test rebind alike.
+	copies copyOffersFunc
 	// currentEdgesByPeer returns the current edges of entityID for a relation
 	// type/direction, keyed by peer ID. Used to diff desired-vs-current edges.
 	currentEdgesByPeer func(
@@ -128,7 +143,7 @@ var perCollectionVerbs = []string{"create"}
 func (svc affordanceService) computeActions(ctx context.Context, e *entityPkg.Entity) map[string]bool {
 	out := make(map[string]bool, len(perItemVerbs))
 	for _, v := range perItemVerbs {
-		out[v] = svc.acl().AuthorizeWrite(ctx, translateVerb(v, e.Type, e.ID)).Allow
+		out[v] = svc.acl().AuthorizeWrite(ctx, translateVerb(v, e.Type, e.ID, e.Face)).Allow
 	}
 	return out
 }
@@ -138,7 +153,7 @@ func (svc affordanceService) computeActions(ctx context.Context, e *entityPkg.En
 func (svc affordanceService) computeCollectionActions(ctx context.Context, entityType string) map[string]bool {
 	out := make(map[string]bool, len(perCollectionVerbs))
 	for _, v := range perCollectionVerbs {
-		out[v] = svc.acl().AuthorizeWrite(ctx, translateVerb(v, entityType, "")).Allow
+		out[v] = svc.acl().AuthorizeWrite(ctx, translateVerb(v, entityType, "", "")).Allow
 	}
 	return out
 }
@@ -1191,6 +1206,11 @@ func (svc affordanceService) attachEntityAffordances(ctx context.Context, e *ent
 	if transitions := svc.computeTransitions(ctx, e, verdicts); transitions != nil {
 		result.Transitions = &transitions
 	}
+	if offers := svc.computeCopyOffers(ctx, e); offers != nil {
+		result.Copies = &offers
+	}
+	faces := svc.computeFaces(ctx, e)
+	result.Faces = &faces
 	// Pass the same verdicts so a policy-hidden `file` property's attachments
 	// are omitted from `_attachments` — otherwise the hidden-field boundary
 	// the rest of the response maintains would leak the file's metadata and a
@@ -1247,6 +1267,137 @@ func (svc affordanceService) computeAttachments(
 			Size:        info.Size,
 			ContentType: contentTypeForFilename(info.FileName),
 			Href:        selfHref + "/_attachments/" + info.Property + "/" + url.PathEscape(info.FileName),
+		})
+	}
+	return out
+}
+
+// computeFaces lists the entity's OTHER content states — the input to a
+// "view the published face" / "go to draft" link.
+//
+// # Why this asks the store per declared face
+//
+// A face NAME is config (declared in schema.yaml, public). Whether THIS
+// entity has that face is data, and the store is the only thing that knows.
+// There is no bulk face-enumeration API on purpose: the answer rides the
+// entity response, which the caller was already cleared to read, so it
+// inherits that gate rather than needing one of its own.
+//
+// Cost is bounded by the type's declared face count — two or three in
+// practice, and a miss is a map lookup in fs/mem. It runs on per-entity
+// responses only, never on list rows, so it cannot become an N+1 over a page.
+//
+// # Face readability IS checked; world readability is not
+//
+// These are two different grants and only one of them belongs here. A
+// `type@face` read grant is per-type and per-face, so whether the caller may
+// read the OTHER face is a real question with a per-entity answer — and
+// naming a face they may not read discloses that it exists, which is what
+// such a grant withholds. So each candidate face is gated below, before the
+// store is probed for it.
+//
+// World-read is the one deliberately absent. It is a GLOBAL, role-level grant
+// (acl.Request.PermitsWorld takes a world name and nothing else) that the
+// client already has from `/_schema`.worlds. Re-answering it per face would
+// be a per-instance check for a question with a per-principal answer.
+//
+// Returns an empty (non-nil) slice when the type declares no other faces,
+// which is a real answer: "this entity has no other faces". That differs from
+// the `_copies` convention, where nil means "capability not wired" — here
+// there is no capability to be unwired, since store and meta are always
+// present on this service.
+func (svc affordanceService) computeFaces(
+	ctx context.Context, e *entityPkg.Entity,
+) []v1.Face {
+	out := []v1.Face{}
+	if e == nil || svc.store == nil {
+		return out
+	}
+	m := svc.meta()
+	if m == nil {
+		return out
+	}
+	def, ok := m.GetEntityDef(e.Type)
+	if !ok {
+		return out
+	}
+	current := e.Face.String()
+	for name := range def.Faces {
+		stored := metamodel.StoredFace(m, e.Type, name)
+		if stored == current {
+			continue // the face being served is not somewhere else to go
+		}
+		// A face the principal may not read is not somewhere they can go
+		// either — and probing it would disclose its existence, which a
+		// `type@face` grant withholds. Checked BEFORE the store probe.
+		if !faceReadable(ctx, e.Type, entityPkg.Face(stored)) {
+			continue
+		}
+		if _, err := svc.store.GetEntityState(ctx, e.ID, entityPkg.Face(stored)); err != nil {
+			continue // no such face on this entity — the common case
+		}
+		// The operator's `label:` when declared, else the coordinate name.
+		// Both are operator-authored config, so neither discloses anything
+		// the schema endpoint does not already serve.
+		out = append(out, v1.Face{Face: stored, Label: metamodel.FaceLabel(m, e.Type, stored)})
+	}
+	// Sorted by the DECLARED name, not the label: the order must not shuffle
+	// when an operator edits display text, and a label is optional so sorting
+	// by it would interleave labeled and unlabeled faces arbitrarily.
+	sort.Slice(out, func(i, j int) bool {
+		return metamodel.DeclaredFace(m, e.Type, out[i].Face) <
+			metamodel.DeclaredFace(m, e.Type, out[j].Face)
+	})
+	return out
+}
+
+// copyOffersFunc lists the copy affordances available from one face, as
+// [entitymanager.CopyAffordances.CopiesForSource] does. A named type so the
+// wiring site and the affordance service agree on one signature.
+type copyOffersFunc func(
+	ctx context.Context, entityType, face, sourceID string,
+) ([]entitymanager.CopyOffer, error)
+
+// computeCopyOffers lists the copy affordances available from e's current
+// face — RULING 9's promote and translate buttons (TKT-F2D5U5).
+//
+// # Omitted, never silently empty
+//
+// Returns nil when the capability is not wired or the query fails, so
+// `_copies` is OMITTED rather than sent as `[]`. An empty list is a legitimate
+// answer ("this face declares no copies"), so emitting one for a missing
+// capability would render a wiring gap as a domain fact — the visible symptom
+// being "the promote button never appears", which sends someone hunting
+// through schema.yaml for a definition that is correctly declared. A failure
+// is logged for the same reason: an unlogged omission would look like "no
+// copies here".
+//
+// The verdicts come from the kernel's own authorization path, not a
+// re-derivation here, which is what stops this hint drifting from what the
+// write actually does. This service must never compute invocability itself.
+//
+// The face is e's stored face: an affordance is offered FROM the face being
+// viewed, so a promote appears on the draft and not on the published face.
+func (svc affordanceService) computeCopyOffers(
+	ctx context.Context, e *entityPkg.Entity,
+) []v1.CopyOffer {
+	if svc.copies == nil || e == nil {
+		return nil
+	}
+	offers, err := svc.copies(ctx, e.Type, e.Face.String(), e.ID)
+	if err != nil {
+		slog.Warn("dataentry: computing copy offers failed; _copies omitted",
+			"entity", e.ID, "type", e.Type, "err", err)
+		return nil
+	}
+	out := make([]v1.CopyOffer, 0, len(offers))
+	for _, o := range offers {
+		out = append(out, v1.CopyOffer{
+			Name:       o.Name,
+			Label:      o.Label,
+			TargetFace: o.TargetFace,
+			Allowed:    o.Allowed,
+			Reason:     o.Reason,
 		})
 	}
 	return out

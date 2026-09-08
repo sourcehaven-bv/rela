@@ -13,7 +13,11 @@ package graphquerynaive
 
 import (
 	"context"
+	"fmt"
 	"iter"
+	"slices"
+	"sort"
+	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/propmatch"
@@ -48,11 +52,13 @@ const depthCap = DepthCap
 // the iterator.
 func Run(ctx context.Context, r Reader, q store.GraphQuery) iter.Seq2[*entity.Entity, error] {
 	return func(yield func(*entity.Entity, error) bool) {
-		candidates, err := collectByType(ctx, r, q.EntityType)
+		candidates, err := collectByType(ctx, r, q)
 		if err != nil {
 			yield(nil, err)
 			return
 		}
+		paged := len(q.OrderBy) > 0 || q.Limit > 0 || q.Offset > 0
+		var matched []*entity.Entity
 		for _, e := range candidates {
 			ok, err := matches(ctx, r, e, q)
 			if err != nil {
@@ -61,18 +67,95 @@ func Run(ctx context.Context, r Reader, q store.GraphQuery) iter.Seq2[*entity.En
 				}
 				continue
 			}
-			if ok {
+			if !ok {
+				continue
+			}
+			if !paged {
 				if !yield(e, nil) {
 					return
 				}
+				continue
+			}
+			matched = append(matched, e)
+		}
+		if !paged {
+			return
+		}
+		// Ordering and paging apply to the matched set as a whole, so they
+		// wait until every candidate has been judged.
+		Order(matched, q.OrderBy)
+		for _, e := range Page(matched, q.Offset, q.Limit) {
+			if !yield(e, nil) {
+				return
 			}
 		}
 	}
 }
 
+// Order sorts rows in place by specs with GraphQuery.OrderBy's semantics:
+// byte-wise on each property's string form, a row missing the property
+// sorting as the largest value (last ascending, first descending — SQL's
+// default null placement), id ascending as the final tiebreak. A stable
+// sort, so equal keys keep store order.
+func Order(rows []*entity.Entity, specs []store.OrderSpec) {
+	if len(specs) == 0 {
+		return
+	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		for _, spec := range specs {
+			vi, oki := sortValue(rows[i], spec.Property)
+			vj, okj := sortValue(rows[j], spec.Property)
+			if oki != okj {
+				// The present value is smaller than the absent one.
+				return oki != spec.Descending
+			}
+			if !oki {
+				continue
+			}
+			si, sj := fmt.Sprint(vi), fmt.Sprint(vj)
+			if si == sj {
+				continue
+			}
+			if spec.Descending {
+				return si > sj
+			}
+			return si < sj
+		}
+		return rows[i].ID < rows[j].ID
+	})
+}
+
+// sortValue reads a sort key the way SQL's `->>` does: a key that is
+// missing OR holds JSON null is "no value" (SQL NULL, the largest), never
+// the text "<nil>". Without this a null-valued property sorted between
+// dates and absent rows in Go while PostgreSQL put it last.
+func sortValue(e *entity.Entity, property string) (any, bool) {
+	v, ok := e.Properties[property]
+	if !ok || v == nil {
+		return nil, false
+	}
+	return v, true
+}
+
+// Page returns the window rows[offset : offset+limit] (limit 0 = to the
+// end), clamped to the slice.
+func Page[T any](rows []T, offset, limit int) []T {
+	if offset < 0 {
+		offset = 0
+	}
+	if offset >= len(rows) {
+		return nil
+	}
+	end := len(rows)
+	if limit > 0 && offset+limit < end {
+		end = offset + limit
+	}
+	return rows[offset:end]
+}
+
 // Count returns (matched, total) for q against r.
 func Count(ctx context.Context, r Reader, q store.GraphQuery) (matched, total int, err error) {
-	candidates, err := collectByType(ctx, r, q.EntityType)
+	candidates, err := collectByType(ctx, r, q)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -101,7 +184,7 @@ func MatchingIDs(ctx context.Context, r Reader, q store.GraphQuery, ids []string
 	if len(out) == 0 {
 		return out, nil
 	}
-	for e, err := range r.ListEntities(ctx, store.EntityQuery{Type: q.EntityType}) {
+	for e, err := range r.ListEntities(ctx, store.EntityQuery{Type: q.EntityType, World: q.World, FaceIn: q.FaceIn}) {
 		if err != nil {
 			return nil, err
 		}
@@ -117,14 +200,98 @@ func MatchingIDs(ctx context.Context, r Reader, q store.GraphQuery, ids []string
 	return out, nil
 }
 
-func collectByType(ctx context.Context, r Reader, typ string) ([]*entity.Entity, error) {
+// collectByType seeds the candidate set: the entities the query may
+// RETURN, so it carries the world (store.GraphQuery.World). The relation
+// walks in matches() deliberately do NOT — who an entity is related to
+// must not depend on the reader's world.
+//
+// Passing the world here is load-bearing rather than cosmetic. The ACL
+// read path swaps an EntityQuery for a GraphQuery as soon as a policy
+// query exists (internal/visibility/pushdown.go), so dropping it would
+// make a world-scoped list silently degrade to unscoped for exactly the
+// gated principals: under `otherwise: exclude` the entities the world
+// meant to hide become visible, and a published world serves drafts.
+//
+// FaceIn travels for the same reason: it is the ACL's face allowlist, and a
+// backend that drops it FAILS OPEN (store.EntityQuery.FaceIn) — a principal
+// granted `read: [page@published]` would match the draft face here while the
+// plain list beside it correctly hid it.
+func collectByType(ctx context.Context, r Reader, q store.GraphQuery) ([]*entity.Entity, error) {
+	if len(q.Any) > 0 && !q.World.IsDefaultWorld() {
+		return collectBranchPrimes(ctx, r, q)
+	}
 	var out []*entity.Entity
-	for e, err := range r.ListEntities(ctx, store.EntityQuery{Type: typ}) {
+	for e, err := range r.ListEntities(ctx, store.EntityQuery{
+		Type: q.EntityType, World: q.World, FaceIn: q.FaceIn,
+	}) {
 		if err != nil {
 			return nil, err
 		}
 		out = append(out, e)
 	}
+	return out, nil
+}
+
+// collectBranchPrimes is collectByType for a world-scoped query carrying
+// [store.GraphQuery.Any]: every stored state of the type is a candidate,
+// each branch's face set is applied to the CANDIDATES (the same
+// before-the-rank position FaceIn takes, so a face a branch withholds falls
+// through to the next chain coordinate rather than vanishing), and the
+// survivors resolve through [store.ResolveWorldPrimes]. The relation half of
+// a branch is a property of the entity, not of a face, so it is evaluated
+// once per id.
+//
+// Ranking in the store's ListEntities cannot be used here because a branch
+// filter is per (entity, face) and must run BEFORE that ranking — the SQL
+// backends put it in the same WHERE clause the world's DISTINCT ON ranks
+// over, and this is the in-Go equivalent.
+func collectBranchPrimes(ctx context.Context, r Reader, q store.GraphQuery) ([]*entity.Entity, error) {
+	rows := map[string]*entity.Entity{}
+	var cands []store.WorldCandidate
+	branchHolds := map[string][]bool{} // per id, per branch: the relation half
+	for e, err := range r.ListEntities(ctx, store.EntityQuery{
+		Type: q.EntityType, AllStates: true, FaceIn: q.FaceIn,
+	}) {
+		if err != nil {
+			return nil, err
+		}
+		holds, seen := branchHolds[e.ID]
+		if !seen {
+			holds = make([]bool, len(q.Any))
+			for i, br := range q.Any {
+				ok := true
+				if br.HasInbound != nil {
+					var mErr error
+					ok, mErr = matchesPredicate(ctx, r, e, *br.HasInbound, store.DirectionIncoming)
+					if mErr != nil {
+						return nil, mErr
+					}
+				}
+				holds[i] = ok
+			}
+			branchHolds[e.ID] = holds
+		}
+		eligible := false
+		for i, br := range q.Any {
+			if holds[i] && (len(br.FaceIn) == 0 || slices.Contains(br.FaceIn, e.Face)) {
+				eligible = true
+				break
+			}
+		}
+		if !eligible {
+			continue
+		}
+		rows[e.ID+entity.StateRefSeparator+e.Face.String()] = e
+		cands = append(cands, store.WorldCandidate{ID: e.ID, Type: e.Type, Face: e.Face})
+	}
+	primes := store.ResolveWorldPrimes(q.World, cands)
+	out := make([]*entity.Entity, 0, len(primes))
+	for id, res := range primes {
+		if e, ok := rows[id+entity.StateRefSeparator+res.Face.String()]; ok {
+			out = append(out, e)
+		}
+	}
+	slices.SortFunc(out, func(a, b *entity.Entity) int { return strings.Compare(a.ID, b.ID) })
 	return out, nil
 }
 
@@ -147,7 +314,33 @@ func matches(ctx context.Context, r Reader, e *entity.Entity, q store.GraphQuery
 			return ok, err
 		}
 	}
+	if len(q.Any) > 0 {
+		// Under a world the candidates were already branch-filtered before
+		// ranking (collectBranchPrimes); re-checking the prime here is a
+		// no-op there and the whole check for the default world.
+		return matchesAny(ctx, r, e, q.Any)
+	}
 	return true, nil
+}
+
+// matchesAny reports whether at least one branch holds for e's stored face.
+func matchesAny(ctx context.Context, r Reader, e *entity.Entity, branches []store.GraphBranch) (bool, error) {
+	for _, br := range branches {
+		if len(br.FaceIn) > 0 && !slices.Contains(br.FaceIn, e.Face) {
+			continue
+		}
+		if br.HasInbound != nil {
+			ok, err := matchesPredicate(ctx, r, e, *br.HasInbound, store.DirectionIncoming)
+			if err != nil {
+				return false, err
+			}
+			if !ok {
+				continue
+			}
+		}
+		return true, nil
+	}
+	return false, nil
 }
 
 // matchesProps reports whether every predicate holds (AND). Emptiness

@@ -1,5 +1,7 @@
 package acl
 
+import "github.com/Sourcehaven-BV/rela/internal/entity"
+
 // Subject is what's being written. Sealed: only EntitySubject and
 // RelationSubject implement it (via the unexported isSubject method).
 // The sum exists so RelationSubject can carry both endpoints
@@ -9,9 +11,11 @@ package acl
 // The sealed sum, visually:
 //
 //	Subject (sealed)
-//	├── EntitySubject   { Type, ID }
+//	├── EntitySubject   { Type, ID, Face }
+//	│                   (Face zero = default face)
 //	│       used for: Create / Update / Delete / Rename of an entity
 //	└── RelationSubject { Type, FromType, FromID }
+//	                    (default tail only — see authorizeRelationWrite)
 //	        used for: Create / Delete of a relation
 //
 // A nil Subject is a programmer error. AuthorizeWrite panics so the
@@ -28,6 +32,23 @@ type Subject interface{ isSubject() }
 type EntitySubject struct {
 	Type string
 	ID   string
+
+	// Face names the CONTENT STATE (face) being written; the zero value
+	// is the default state (TKT-C1XUA8).
+	//
+	// The zero value is what makes this field safe to add under every
+	// existing caller: a write that does not name a face addresses the
+	// default one, and [GrantsVerbOnState] treats a bare-type grant as
+	// covering exactly that. So every grant in every existing acl.yaml
+	// keeps its meaning, which is the property
+	// TestExistingGrantsUnchangedByFaceField pins.
+	//
+	// Why the subject and not the Op: a copy is not a new verb (the copy's
+	// own guard is the real gate), and adding one would need grant syntax
+	// nobody has asked for in four switch sites. What changes between
+	// writing a draft and writing a published face is WHICH FACE, which is
+	// a property of the subject.
+	Face entity.Face
 }
 
 func (EntitySubject) isSubject() {}

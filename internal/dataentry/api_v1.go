@@ -31,7 +31,49 @@ import (
 
 // --- API v1 Types ---
 
-func (a *App) toV1PropertyDef(meta *metamodel.Metamodel, propDef metamodel.PropertyDef) v1.PropertyDef {
+// toV1EntityType renders one entity type for the wire.
+//
+// Shared by BOTH schema surfaces — the `entities` map of `/api/v1/_schema`
+// and the single-type `/api/v1/_schema/types/{name}` — which previously each
+// built the shape inline. Two copies of a serializer is two places to add a
+// field and one place to forget it: the `faces` key (TKT-WRLDAPI item 3)
+// would have been exactly such a field, since a client that discovers a
+// type's content states from one endpoint and not the other has no way to
+// tell which answer is authoritative. Extracted so they cannot drift.
+//
+// A free function, like its sibling toV1CustomType: it is a pure transform
+// over its arguments and touches no App state. toV1PropertyDef was converted
+// alongside it for the same reason — it never used its receiver either, and
+// App sits at its plimsoll method cap precisely because methods accrete there
+// by habit rather than by need.
+func toV1EntityType(
+	meta *metamodel.Metamodel, name string, def metamodel.EntityDef,
+) v1.EntityType {
+	et := v1.EntityType{
+		Label:       def.Label,
+		Plural:      def.GetPlural(name),
+		Description: def.Description,
+		Primary:     def.GetPrimaryProperty(),
+		IDType:      def.GetIDType(),
+		Properties:  make(map[string]v1.PropertyDef, len(def.Properties)),
+		Faces:       schemaFaceDefs(def),
+		BareFace:    def.BareFace,
+		// Whether this type accepts comments (TKT-FIO205). Policy, not
+		// permission: it tells the SPA whether to offer a comment affordance
+		// at all, never that the caller may use it.
+		Commentable: metamodel.NewCommentPolicy(meta).Commentable(name),
+	}
+	if prefixes := def.GetIDPrefixes(); len(prefixes) > 0 {
+		et.IDPrefix = prefixes[0]
+		et.IDPrefixes = prefixes
+	}
+	for propName, propDef := range def.Properties {
+		et.Properties[propName] = toV1PropertyDef(meta, propDef)
+	}
+	return et
+}
+
+func toV1PropertyDef(meta *metamodel.Metamodel, propDef metamodel.PropertyDef) v1.PropertyDef {
 	pd := v1.PropertyDef{
 		Type:        propDef.Type,
 		Required:    propDef.Required,
@@ -111,8 +153,10 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/_openapi.json", a.handleV1OpenAPI)
 	mux.HandleFunc("/api/v1/_commands", a.handleV1Commands)
 	mux.HandleFunc("/api/v1/_transforms", a.export.handleV1Transforms)
+	mux.HandleFunc("/api/v1/_comments/", a.comments.handleV1Comments)
 	mux.HandleFunc("/api/v1/_templates/", a.handleV1Templates)
 	mux.HandleFunc("/api/v1/_views/", a.views.handleV1Views)
+	a.registerCopyRoutes(mux)
 	mux.HandleFunc("/api/v1/_gantts/", a.gantt.handleV1Gantt)
 	mux.HandleFunc("/api/v1/_action/", a.write.handleV1Action)
 	mux.HandleFunc("/api/v1/_apps/", a.handleV1App)
@@ -285,13 +329,45 @@ var errListLoad = errors.New("list load failed")
 // search_failed at the call site); ACL query failures are wrapped in
 // errACLListQuery so call sites map them via writeGateError. Everything
 // else degrades to an empty/whole set as the list endpoint always did.
+// listPage returns one page of the list plus the scoped total. A request the
+// store can page by itself (listpushdown.go) costs one count and one bounded
+// read; everything else takes the whole-type Go pipeline and slices it.
+func (a *App) listPage(
+	ctx context.Context, typeName string, query map[string][]string, page, perPage int,
+) (rows []*entityPkg.Entity, total int, err error) {
+	if !worldFromContext(ctx).blocksAllReads() {
+		rqr := readGateFromContext(ctx).ReadQuery(ctx, typeName)
+		isRelationKey := relationFilterClassifier(a.Meta(), a.Cfg(), typeName)
+		if plan, ok := planListPushdown(
+			a.Meta(), typeName, query, rqr, worldScopeFrom(ctx), page, perPage, isRelationKey,
+		); ok {
+			return plan.run(ctx, a.Services().Store)
+		}
+	}
+	all, err := a.scopedSortedEntities(ctx, typeName, query)
+	if err != nil {
+		return nil, 0, err
+	}
+	total = len(all)
+	start := min((page-1)*perPage, total)
+	end := min(start+perPage, total)
+	return all[start:end], total, nil
+}
+
 func (a *App) scopedSortedEntities(
 	ctx context.Context,
 	typeName string,
 	query map[string][]string,
 ) ([]*entityPkg.Entity, error) {
+	// A denied world yields nothing, via the SAME empty-result path a
+	// genuinely-empty world takes — so the two are identical on the wire.
+	if worldFromContext(ctx).blocksAllReads() {
+		return []*entityPkg.Entity{}, nil
+	}
 	rqr := readGateFromContext(ctx).ReadQuery(ctx, typeName)
 
+	// Content-free rows throughout (rowcontent.go): the pipeline below reads
+	// properties only, and the served page loads bodies afterwards if asked.
 	var entities []*entityPkg.Entity
 	switch {
 	case rqr.DenyAll:
@@ -300,22 +376,42 @@ func (a *App) scopedSortedEntities(
 		// Inline iteration rather than listFromStoreByTypes: that
 		// helper swallows iterator errors into a partial slice, and
 		// the list pipeline must fail loud on both verdict paths.
-		for e, err := range a.Services().Store.ListEntities(ctx, store.EntityQuery{Type: typeName}) {
+		// World scope on BOTH verdict branches. Carrying it on only one is
+		// the RR-GQWRLD fail-open: AllowAll takes this EntityQuery branch
+		// and every ACL-gated principal takes the GraphQuery branch below,
+		// so a world stamped on one silently degrades to the default world
+		// for exactly one of the two populations.
+		// FaceIn rides on BOTH branches for exactly the reason World does
+		// (TKT-O7R2A1): a face allowlist carried on only the GraphQuery
+		// would leave the AllowAll population — the most privileged — with
+		// no face narrowing, and the two paths would disagree.
+		for h, err := range store.ListEntityHeaders(ctx, a.Services().Store, store.EntityQuery{
+			Type:   typeName,
+			World:  worldScopeFrom(ctx),
+			FaceIn: rqr.Faces,
+		}) {
 			if err != nil {
 				return nil, fmt.Errorf("%w: %w", errListLoad, err)
 			}
-			entities = append(entities, e)
+			entities = append(entities, headerEntity(h))
 		}
 	case rqr.Query == nil:
 		// Defensive: a zero ReadQueryResult would otherwise alias
 		// AllowAll. Fail loud instead of silently widening the list.
 		return nil, fmt.Errorf("%w: zero ReadQueryResult for type %q", errACLListQuery, typeName)
 	default:
-		for e, err := range a.Services().Store.GraphQuery(ctx, *rqr.Query) {
+		// COPY before stamping: the ACL layer may cache or reuse a
+		// ReadQueryResult per principal, so mutating *rqr.Query in place
+		// would leak one request's world into the next caller's — the same
+		// cross-request scope bleed visibility.listPushdown guards against.
+		wq := *rqr.Query
+		wq.World = worldScopeFrom(ctx)
+		wq.FaceIn = rqr.Faces
+		for h, err := range store.GraphQueryHeaders(ctx, a.Services().Store, wq) {
 			if err != nil {
 				return nil, fmt.Errorf("%w: %w", errACLListQuery, err)
 			}
-			entities = append(entities, e)
+			entities = append(entities, headerEntity(h))
 		}
 	}
 
@@ -471,16 +567,100 @@ func (a *App) applyRelationFilters(
 		}
 
 		direction, _ := cfg.RelationFilterDirection(typeName, relation)
+		matched, merr := matchRelationFilterMany(ctx, a.Services(), entities, relation, direction, want)
+		if merr != nil {
+			return nil, fmt.Errorf("%w: relation filter %q: %w", errListLoad, relation, merr)
+		}
 		filtered := entities[:0]
 		for _, e := range entities {
-			matched := a.matchRelationFilter(ctx, e.ID, relation, direction, want)
-			if (operator == "eq" && matched) || (operator == "ne" && !matched) {
+			if (operator == "eq" && matched[e.ID]) || (operator == "ne" && !matched[e.ID]) {
 				filtered = append(filtered, e)
 			}
 		}
 		entities = filtered
 	}
 	return entities, nil
+}
+
+// matchRelationFilterMany evaluates a relation filter for every row at once
+// (TKT-1U8XYN): one relation query for all rows, one content-free header
+// read for every distinct neighbor, one gate probe per neighbor type. It
+// replaced a per-row helper that ran one relation query plus one entity load
+// per neighbor for each row. The verdict per row is unchanged — the row
+// matches when at least one READABLE neighbor over the relation carries the
+// wanted display title (RR-HK1XNO) — but the cost no longer grows with the
+// type's row count times its fan-out. A free function taking its read seam,
+// not an App method — App sits at its load line (see worldneighbors.go).
+//
+// A store failure is returned, never folded into an empty verdict map: an
+// empty map reads as "no row matches", which for a `ne` filter admits EVERY
+// row — a backend fault would silently widen a filter whose job is to narrow.
+func matchRelationFilterMany(
+	ctx context.Context, svc Services, rows []*entityPkg.Entity,
+	relation string, direction dataentryconfig.Direction, want string,
+) (map[string]bool, error) {
+	matched := make(map[string]bool, len(rows))
+	if len(rows) == 0 {
+		return matched, nil
+	}
+	ids := make([]string, 0, len(rows))
+	for _, e := range rows {
+		ids = append(ids, e.ID)
+	}
+	q := store.RelationQuery{EntityIDs: ids, Type: relation, Direction: relationDirection(direction)}
+	neighborsOf := make(map[string][]string, len(rows)) // row id → neighbor ids
+	var neighborIDs []string
+	seen := make(map[string]struct{})
+	for r, err := range svc.Store.ListRelations(ctx, q) {
+		if err != nil {
+			return nil, err
+		}
+		rowID, targetID := r.From, r.To
+		if direction.IsIncoming() {
+			rowID, targetID = r.To, r.From
+		}
+		neighborsOf[rowID] = append(neighborsOf[rowID], targetID)
+		if _, dup := seen[targetID]; !dup {
+			seen[targetID] = struct{}{}
+			neighborIDs = append(neighborIDs, targetID)
+		}
+	}
+	if len(neighborIDs) == 0 {
+		return matched, nil
+	}
+
+	// Which neighbors carry the wanted title, by type — then gate per type.
+	candidatesByType := map[string][]string{}
+	for h, err := range store.ListEntityHeaders(ctx, svc.Store, store.EntityQuery{IDs: neighborIDs}) {
+		if err != nil {
+			return nil, err
+		}
+		if svc.Meta.DisplayTitle(h.ID, h.Type, h.Properties) == want {
+			candidatesByType[h.Type] = append(candidatesByType[h.Type], h.ID)
+		}
+	}
+	readable := make(map[string]bool)
+	gate := readGateFromContext(ctx)
+	for typ, cids := range candidatesByType {
+		perm, err := gate.PermitsReadMany(ctx, typ, cids)
+		if err != nil {
+			continue
+		}
+		for _, id := range cids {
+			if perm[id] {
+				readable[id] = true
+			}
+		}
+	}
+	for rowID, targets := range neighborsOf {
+		for _, t := range targets {
+			if readable[t] {
+				matched[rowID] = true
+				break
+			}
+		}
+	}
+	return matched, nil
 }
 
 // parseRelationFilterKey parses a `filter[<rel>]` or `filter[<rel>][<op>]` key
@@ -507,71 +687,6 @@ func parseRelationFilterKey(key string) (relation, operator string, ok bool) {
 	return parts[0], operator, true
 }
 
-// matchRelationFilter reports whether entityID has an edge of the given
-// relation+direction to a neighbor the caller can READ whose display title
-// equals want. It gates neighbor entities through the read gate so a hidden
-// neighbor cannot be used as a title-match inference channel (RR-HK1XNO), and
-// short-circuits as soon as a readable neighbor's title matches (RR-38K7K9).
-//
-// Neighbors are gated in batches grouped by type via readGate.PermitsReadMany
-// (one call per neighbor type on the row), rather than a per-neighbor gate
-// call. When the sibling helper App.visibleRelationIDs (TKT-ODHV2D) merges,
-// this should converge on it.
-func (a *App) matchRelationFilter(
-	ctx context.Context, entityID, relation string, direction dataentryconfig.Direction, want string,
-) bool {
-	svc := a.Services()
-	q := store.RelationQuery{
-		EntityID:  entityID,
-		Type:      relation,
-		Direction: relationDirection(direction),
-	}
-
-	// Load each neighbor once, keeping only those whose title matches want.
-	// Group the candidates by type so the read gate can batch per type.
-	candidatesByType := map[string][]string{}
-	entByID := map[string]*entityPkg.Entity{}
-	for r, err := range svc.Store.ListRelations(ctx, q) {
-		if err != nil {
-			return false
-		}
-		targetID := r.To
-		if direction.IsIncoming() {
-			targetID = r.From
-		}
-		if _, seen := entByID[targetID]; seen {
-			continue
-		}
-		e, err := svc.Store.GetEntity(ctx, targetID)
-		if err != nil {
-			continue // dangling relation
-		}
-		entByID[targetID] = e
-		if svc.Meta.DisplayTitle(e.ID, e.Type, e.Properties) == want {
-			candidatesByType[e.Type] = append(candidatesByType[e.Type], targetID)
-		}
-	}
-	if len(candidatesByType) == 0 {
-		return false
-	}
-
-	// A row matches iff at least one title-matching neighbor is READABLE. Gate
-	// only the title-matching candidates (the minimal set) per type.
-	gate := readGateFromContext(ctx)
-	for typ, ids := range candidatesByType {
-		perm, err := gate.PermitsReadMany(ctx, typ, ids)
-		if err != nil {
-			continue
-		}
-		for _, id := range ids {
-			if perm[id] {
-				return true // readable title match (RR-HK1XNO honored)
-			}
-		}
-	}
-	return false
-}
-
 // queryGet returns the first value for key from a raw query map, or "".
 // url.Values.Get over a plain map[string][]string without allocating.
 func queryGet(query map[string][]string, key string) string {
@@ -583,25 +698,23 @@ func queryGet(query map[string][]string, key string) string {
 
 func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeName, plural string) {
 	query := r.URL.Query()
+	page, perPage := parseV1Pagination(query)
 
-	entities, err := a.scopedSortedEntities(r.Context(), typeName, query)
+	entities, total, err := a.listPage(r.Context(), typeName, query, page, perPage)
 	if err != nil {
 		writeListPipelineError(w, r, err)
 		return
 	}
+	end := (page-1)*perPage + len(entities)
 
-	// Pagination
-	total := len(entities)
-	page, perPage := parseV1Pagination(query)
-	start := (page - 1) * perPage
-	end := start + perPage
-	if start > total {
-		start = total
+	// Bodies are opt-in for a collection (rowcontent.go): one read per
+	// distinct face on the page, never for the rows that were paged out.
+	if wantContent(query) {
+		if err := loadRowContent(r.Context(), a.Services().Store, entities); err != nil {
+			writeListPipelineError(w, r, fmt.Errorf("%w: %w", errListLoad, err))
+			return
+		}
 	}
-	if end > total {
-		end = total
-	}
-	entities = entities[start:end]
 
 	// Check if includes are requested (for relation columns)
 	includes := query.Get("include")
@@ -612,22 +725,17 @@ func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeN
 	// name) so that `direction: incoming` relation columns have a wire key to
 	// resolve against. The SPA computes the same inverse key and reads the
 	// source entities from the ?include=* peers. See MECHANISM.md.
-	outgoingByRow := make([][]*entityPkg.Relation, len(entities))
-	incomingByRow := make([][]*entityPkg.Relation, len(entities))
-	var pageNeighborIDs []string
-	for i, e := range entities {
-		outgoingByRow[i] = a.reader.outgoingRelations(r.Context(), e.ID)
-		incomingByRow[i] = a.reader.incomingRelations(r.Context(), e.ID)
-		pageNeighborIDs = append(pageNeighborIDs, neighborIDsOf(outgoingByRow[i], incomingByRow[i])...)
+	//
+	// Each row's links come from THAT ROW'S OWN FACE, in every world
+	// including the default one — see [servedFacePageEdges].
+	outgoingByRow, incomingByRow, visibleNeighbors, werr := servedFacePageEdges(
+		r.Context(), a.reader, a.worldNeighbors, a.visibleReader, entities)
+	if werr != nil {
+		// Infrastructure failure, not an empty page. See the same arm on the
+		// single-entity GET.
+		writeGateError(w, r, werr)
+		return
 	}
-
-	// Gate neighbor IDs for the WHOLE page in one type-batched pass
-	// (RR-HJV8CP + RR-FRK1): a neighbor's ID may appear in a row's relations
-	// map only if its entity is visible to the caller, so `relations` and the
-	// visibility-filtered `included` map can never disagree. Outgoing targets
-	// (edge.To) and incoming sources (edge.From) are gated together — an
-	// entity's visibility is direction-independent.
-	visibleNeighbors := visibleRelationIDs(r.Context(), a.reader, a.visibleReader, pageNeighborIDs)
 
 	// Build response - always include relations for relation column support
 	data := make([]v1.Entity, 0, len(entities))
@@ -640,6 +748,20 @@ func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeN
 			visibleNeighbors,
 			a.Meta(), plural,
 		)
+		// Face provenance per ROW (BUG-3). Under a chain a row that fell back
+		// to a later candidate is byte-identical to a first-choice hit — same
+		// id, same title — and only `_world` separates them. Without it a
+		// picker or list cannot say which face a row is, which is the whole
+		// distinction content states exist to make visible.
+		//
+		// nil under the default world, so an ordinary list response is
+		// unchanged: every row resolves to its default face there, and a block
+		// on every row would be noise that also implies a world was applied.
+		// Same choice loadViewEntities' provenanceFor makes, for the same
+		// reason (see [viewWorld.provenanceFor]).
+		if !worldScopeFrom(r.Context()).IsDefaultWorld() {
+			v1Entity.World = worldProvenance(r.Context(), a.Meta(), e)
+		}
 		data = append(data, v1Entity)
 
 		// Resolve includes if requested
@@ -762,7 +884,40 @@ func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName
 
 	// Single per-entity serialization: strips hidden + attaches
 	// `_fields` / `_relations` per docs/data-entry/api-reference.md.
-	result := a.serializer.forWire(ctx, entity, a.reader.outgoingRelations(ctx, entity.ID), a.Meta(), plural)
+	//
+	// The edges OF THE FACE BEING SERVED, in every world including the
+	// default one — see [servedFaceEdges]. Each link resolves through the
+	// SAME world as the entry, per neighbor, independently (RULING 12): a
+	// published view links to published faces, and a link whose head has no
+	// face in this world is ABSENT rather than pointing at a 404.
+	//
+	// There is deliberately no default-world arm reaching the bare-id
+	// reader. That arm returned the UNION of every face's content-scoped
+	// edges, so a draft carried the published face's links too — the
+	// mixed-face response that reads as correct because the entity looks
+	// right and only its links are wrong.
+	outgoing, visibleNeighbors, werr := servedFaceEdges(
+		ctx, a.reader, a.worldNeighbors, a.visibleReader, entity)
+	if werr != nil {
+		// A neighbor-resolution fault is an infrastructure failure, not an
+		// empty link set. Rendering it as "this world links to nothing"
+		// would hide an outage behind a page that looks like a
+		// correctly-sparse published face (RR-4TFZNL).
+		writeGateError(w, r, werr)
+		return
+	}
+	result := a.serializer.forWireScoped(ctx, entity, outgoing, visibleNeighbors, a.Meta(), plural)
+
+	// Face provenance (TKT-WRLDAPI item 2). Attached HERE rather than inside
+	// forWire, even though forWire is the shared per-entity serializer,
+	// because this is the only path whose Face is the STORE's answer to a
+	// world query. Its other callers would produce a label the code cannot
+	// back: the history handler serializes a snapshot built by
+	// entityPkg.New(), whose Face is always zero, so a historical version
+	// of a PUBLISHED face would report the default coordinate. An affordance
+	// map that lies is a trap for every future consumer (Ruling 11); so is a
+	// provenance block.
+	result.World = worldProvenance(ctx, a.Meta(), entity)
 
 	// Handle includes for related entities
 	if includes := query.Get("include"); includes != "" {
@@ -770,7 +925,14 @@ func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName
 	}
 
 	// ETag for caching (visible-only path; deny-path above emits no ETag).
-	etag := a.computeEntityETag(ctx, entity)
+	//
+	// The edges computed for the BODY above are reused rather than re-read.
+	// Under a world, re-deriving them costs a second head-resolution query,
+	// two more relation queries and a second ACL pass per request — the
+	// RR-FRK1 duplication this PR is careful to avoid one function over — and
+	// it also opens a window in which the validator could describe a
+	// different edge set than the body it is validating.
+	etag := entityETagWithEdges(entity, outgoing)
 	w.Header().Set("ETag", etag)
 
 	// Check If-None-Match
@@ -860,7 +1022,14 @@ func (a *App) handleV1EntityRelations(w http.ResponseWriter, r *http.Request, ty
 
 	s := a.State()
 	entity, found := a.reader.getEntity(r.Context(), entityID)
-	if !found || entity.Type != typeName {
+	// The gate above authorized by (type, id), which a `type@face` grant is
+	// invisible to, and this reader is the raw store — so the face half is owed
+	// here (TKT-O7R2A1). It matters even though the response carries no body:
+	// a content-scoped relation belongs to ONE face, so serving the default
+	// face's edges discloses the structure of a face the grant withholds.
+	if !found || entity.Type != typeName ||
+		!faceReadable(r.Context(), entity.Type, entity.Face) {
+
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
 		return
 	}
@@ -1066,7 +1235,10 @@ func (a *App) handleV1GetRelationType(w http.ResponseWriter, r *http.Request, ty
 	}
 
 	entity, found := a.reader.getEntity(r.Context(), entityID)
-	if !found || entity.Type != typeName {
+	// Face half of the grant, as in handleV1EntityRelations.
+	if !found || entity.Type != typeName ||
+		!faceReadable(r.Context(), entity.Type, entity.Face) {
+
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
 		return
 	}
@@ -1167,26 +1339,11 @@ func (a *App) handleV1Schema(w http.ResponseWriter, r *http.Request) {
 		Entities:  make(map[string]v1.EntityType),
 		Relations: make(map[string]v1.RelationType),
 		Types:     make(map[string]v1.CustomType),
+		Worlds:    schemaWorlds(r.Context(), s.Meta),
 	}
 
 	for name, def := range s.Meta.Entities {
-		et := v1.EntityType{
-			Label:       def.Label,
-			Plural:      def.GetPlural(name),
-			Description: def.Description,
-			Primary:     def.GetPrimaryProperty(),
-			IDType:      def.GetIDType(),
-			Properties:  make(map[string]v1.PropertyDef),
-		}
-		prefixes := def.GetIDPrefixes()
-		if len(prefixes) > 0 {
-			et.IDPrefix = prefixes[0]
-			et.IDPrefixes = prefixes
-		}
-		for propName, propDef := range def.Properties {
-			et.Properties[propName] = a.toV1PropertyDef(s.Meta, propDef)
-		}
-		schema.Entities[name] = et
+		schema.Entities[name] = toV1EntityType(s.Meta, name, def)
 	}
 
 	for name, def := range s.Meta.Relations {
@@ -1207,7 +1364,7 @@ func (a *App) handleV1Schema(w http.ResponseWriter, r *http.Request) {
 		if len(def.Properties) > 0 {
 			rt.Properties = make(map[string]v1.PropertyDef, len(def.Properties))
 			for propName, propDef := range def.Properties {
-				rt.Properties[propName] = a.toV1PropertyDef(s.Meta, propDef)
+				rt.Properties[propName] = toV1PropertyDef(s.Meta, propDef)
 			}
 		}
 		if def.OutgoingOrderProperty() != "" || def.IncomingOrderProperty() != "" {
@@ -1248,22 +1405,7 @@ func (a *App) handleV1SchemaRoutes(w http.ResponseWriter, r *http.Request) {
 			writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity type not found", "")
 			return
 		}
-		et := v1.EntityType{
-			Label:       def.Label,
-			Plural:      def.GetPlural(typeName),
-			Description: def.Description,
-			Primary:     def.GetPrimaryProperty(),
-			IDType:      def.GetIDType(),
-			Properties:  make(map[string]v1.PropertyDef),
-		}
-		if prefixes := def.GetIDPrefixes(); len(prefixes) > 0 {
-			et.IDPrefix = prefixes[0]
-			et.IDPrefixes = prefixes
-		}
-		for propName, propDef := range def.Properties {
-			et.Properties[propName] = a.toV1PropertyDef(s.Meta, propDef)
-		}
-		writeV1JSON(w, http.StatusOK, et)
+		writeV1JSON(w, http.StatusOK, toV1EntityType(s.Meta, typeName, def))
 
 	case path == "relations":
 		writeV1JSON(w, http.StatusOK, s.Meta.Relations)
@@ -1499,6 +1641,10 @@ func (a *App) handleV1Config(w http.ResponseWriter, r *http.Request) {
 			Name:              s.Cfg.App.Name,
 			Description:       s.Cfg.App.Description,
 			PlantUMLServerURL: s.Cfg.App.PlantUMLServerURL,
+			DefaultWorld:      s.Cfg.App.DefaultWorld,
+			// The same nil check the history handler gates on, so the
+			// affordance and the endpoint cannot disagree.
+			HistoryEnabled: a.versions != nil,
 		},
 		AboutDescription: aboutDescription(s),
 		Styles:           s.StyleMap,
@@ -1550,6 +1696,14 @@ func (a *App) handleV1Search(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		entities = filtered
+	}
+	// Search rows are content-free (rowcontent.go); bodies are opt-in and
+	// bounded by the search result cap.
+	if wantContent(r.URL.Query()) {
+		if err := loadRowContent(r.Context(), a.Services().Store, entities); err != nil {
+			writeListPipelineError(w, r, fmt.Errorf("%w: %w", errListLoad, err))
+			return
+		}
 	}
 
 	meta := a.State().Meta
@@ -1663,6 +1817,18 @@ func flattenIssues(sections []AnalysisSection) []visibleIssue {
 
 // --- Helper Functions ---
 
+// resolveV1Includes expands `?include=` into the `included` map.
+//
+// Candidate collection is world-aware (TKT-WRLDAPI item 4): under a
+// non-default world the neighbors come from the world-scoped seam, so an
+// included peer is THAT world's face of the neighbor and a neighbor with no
+// face in this world is absent. Under the default world it is the ungated
+// reader, byte-identical to before.
+//
+// Everything after collection — the batched ACL gate, nested recursion,
+// serialization — is shared by both paths deliberately. The world decides
+// WHICH entities are candidates; it does not change how they are gated or
+// rendered, and forking that would be two visibility rules to keep in step.
 func (a *App) resolveV1Includes(ctx context.Context, entity *entityPkg.Entity, includes string) map[string]v1.Entity {
 	s := a.State()
 	included := make(map[string]v1.Entity)
@@ -1673,53 +1839,40 @@ func (a *App) resolveV1Includes(ctx context.Context, entity *entityPkg.Entity, i
 	// must respect the per-entity visibility rule) AND RR-FRK1 (a
 	// hub entity with 50 neighbors must not cost 50 GraphCount
 	// round-trips).
-	var candidates []*entityPkg.Entity
+	//
 	// nestedFor maps target.ID → the remaining nested-include
 	// expression (e.g. "implements.requires" → "requires" stored
-	// against the implements target). Recurses after the visibility
-	// filter so hidden neighbors don't trigger hidden nested probes.
-	nestedFor := make(map[string]string)
-
-	if includes == "*" { //nolint:nestif // include-all vs. named-include expansion is inherently nested; flattening would obscure the two-mode logic.
-		for _, edge := range a.reader.outgoingRelations(ctx, entity.ID) {
-			if target, found := a.reader.getEntity(ctx, edge.To); found {
-				candidates = append(candidates, target)
-			}
-		}
-		for _, edge := range a.reader.incomingRelations(ctx, entity.ID) {
-			if source, found := a.reader.getEntity(ctx, edge.From); found {
-				candidates = append(candidates, source)
-			}
-		}
-	} else {
-		for part := range strings.SplitSeq(includes, ",") {
-			part = strings.TrimSpace(part)
-			if part == "" {
-				continue
-			}
-			relParts := strings.SplitN(part, ".", 2)
-			relType := relParts[0]
-			for _, edge := range a.reader.outgoingRelations(ctx, entity.ID) {
-				if edge.Type != relType {
-					continue
-				}
-				target, found := a.reader.getEntity(ctx, edge.To)
-				if !found {
-					continue
-				}
-				candidates = append(candidates, target)
-				if len(relParts) > 1 {
-					nestedFor[target.ID] = relParts[1]
-				}
-			}
-		}
+	// against the implements target). Recursion happens after the
+	// visibility filter so hidden neighbors don't trigger hidden nested
+	// probes.
+	candidates, nestedFor, err := includeCandidates(ctx, a.reader, a.worldNeighbors, entity, includes)
+	if err != nil {
+		// The include channel is a best-effort affordance (see
+		// filterVisibleIncludes): the authoritative read is the explicit GET.
+		// A world-resolution fault drops the block and logs rather than
+		// failing the whole entity response — but it must not be silent, or
+		// an outage reads as "this entity has no neighbors in this world".
+		slog.Warn("dataentry: resolving world-scoped includes failed; include block omitted",
+			"entity", entity.ID, "include", includes, "err", err)
+		return nil
 	}
 
 	visible := a.filterVisibleIncludes(ctx, candidates)
 	for _, target := range visible {
 		entityDef := s.Meta.Entities[target.Type]
 		plural := entityDef.GetPlural(target.Type)
-		included[target.ID] = a.serializer.forWireRelated(ctx, target, nil, nil, nil, a.Meta(), plural)
+		wired := a.serializer.forWireRelated(ctx, target, nil, nil, nil, a.Meta(), plural)
+		// Per-neighbor provenance (QA F-6b). Each included target was resolved
+		// through the world INDEPENDENTLY of its source, so one entity's
+		// neighbors can mix a chain hit with a stand-in — and a client cannot
+		// tell which without being told. The detail view badges exactly this:
+		// "the link leads somewhere English", which the payload previously had
+		// no way to say.
+		//
+		// Same helper the entity root and list rows use, so the three surfaces
+		// cannot disagree about what a face resolution was.
+		wired.World = worldProvenance(ctx, a.Meta(), target)
+		included[target.ID] = wired
 
 		if nested, ok := nestedFor[target.ID]; ok {
 			maps.Copy(included, a.resolveV1Includes(ctx, target, nested))
@@ -1957,24 +2110,36 @@ func applyV1Sorting(entities []*entityPkg.Entity, query map[string][]string) []*
 	sorted := make([]*entityPkg.Entity, len(entities))
 	copy(sorted, entities)
 
-	sort.Slice(sorted, func(i, j int) bool {
+	// Byte-wise on the string form, a row WITHOUT the property sorting as
+	// the largest value (last ascending, first descending), id as the final
+	// tiebreak — the same order a store pages by (store.GraphQuery.OrderBy),
+	// so a request served either way reads the same. That replaced the
+	// accident of comparing "<nil>" as text, which put missing values
+	// between digits and letters.
+	sort.SliceStable(sorted, func(i, j int) bool {
 		for _, spec := range sortSpecs {
-			vi := sorted[i].Properties[spec.Property]
-			vj := sorted[j].Properties[spec.Property]
-
+			// A JSON null is "no value" here as it is in SQL (`->>` yields
+			// NULL), so both paths place it with the absent rows.
+			vi, oki := sorted[i].Properties[spec.Property]
+			vj, okj := sorted[j].Properties[spec.Property]
+			oki, okj = oki && vi != nil, okj && vj != nil
+			if oki != okj {
+				return oki != spec.IsDescending()
+			}
+			if !oki {
+				continue
+			}
 			si := fmt.Sprintf("%v", vi)
 			sj := fmt.Sprintf("%v", vj)
-
 			if si == sj {
 				continue
 			}
-
 			if spec.IsDescending() {
 				return si > sj
 			}
 			return si < sj
 		}
-		return false
+		return sorted[i].ID < sorted[j].ID
 	})
 
 	return sorted
@@ -2029,7 +2194,39 @@ func addPaginationLinks(w http.ResponseWriter, _ *http.Request, page, perPage, t
 	w.Header().Set("Link", strings.Join(links, ", "))
 }
 
+// computeEntityETag reads the entity's edges itself. Callers that ALREADY hold
+// the edges they served should use [entityETagWithEdges] instead — see the
+// duplication note at the single-entity GET's call site.
 func (a *App) computeEntityETag(ctx context.Context, e *entityPkg.Entity) string {
+	edges, err := etagEdges(ctx, a.reader, a.worldNeighbors, a.visibleReader, e)
+	if err != nil {
+		return etagUnresolved(ctx, e)
+	}
+	return entityETagWithEdges(e, edges)
+}
+
+// etagUnresolved is the validator for an entity whose edges could not be
+// resolved. See the sentinel rationale on [entityETagWithEdges].
+func etagUnresolved(ctx context.Context, e *entityPkg.Entity) string {
+	slog.Warn("dataentry: ETag: world-scoped edge read failed; "+
+		"folding a sentinel so the validator matches nothing",
+		"entity", e.ID, "world", worldFromContext(ctx).name)
+	return entityETagWithEdges(e, []*entityPkg.Relation{
+		{Type: "!unresolved", To: "!unresolved"},
+	})
+}
+
+// entityETagWithEdges hashes e together with the edges the response actually
+// carried.
+//
+// Taking the edges as a PARAMETER rather than reading them is what keeps the
+// validator and the body describing the same document: the GET computes them
+// once, for both.
+//
+// A package function, not a method: it needs nothing from App, and App is
+// pinned at its plimsoll cap. (The ETag split briefly took it to 105, which is
+// the load line doing its job — see the App type doc.)
+func entityETagWithEdges(e *entityPkg.Entity, edges []*entityPkg.Relation) string {
 	h := sha256.New()
 	_, _ = h.Write([]byte(e.ID))
 	_, _ = h.Write([]byte(e.Type))
@@ -2046,10 +2243,30 @@ func (a *App) computeEntityETag(ctx context.Context, e *entityPkg.Entity) string
 		_, _ = fmt.Fprintf(h, "=%v;", e.Properties[k])
 	}
 
+	// Fold the served FACE into the hash — not the world NAME. Two worlds that
+	// resolve the same id to different faces get different validators, so a
+	// published-world GET cannot answer 304 against a draft-derived one (the
+	// cross-world cache poisoning this fold exists for). Two worlds serving
+	// the SAME face share one, which is correct: the bytes are the same. And
+	// a write, which addresses the stored face directly and refuses `?world=`,
+	// computes the same fold — so an If-Match taken from a GET that showed
+	// the bare face matches the PATCH of it, while one taken from a GET that
+	// showed `published` refuses a write aimed at the draft. Folding the
+	// world name instead made every world-bound If-Match a permanent 412.
+	_, _ = h.Write([]byte("f:" + e.Face.String() + ";"))
+
 	// Fold outgoing relations into the hash so PATCHes that only change
 	// edges also change the ETag — otherwise If-Match / If-None-Match
 	// round-trips poison client caches.
-	edges := a.reader.outgoingRelations(ctx, e.ID)
+	//
+	// The edges are the caller's, and must be the ones the response BODY
+	// carried. Until TKT-WRLDAPI item 4 a world-bound response carried no
+	// relations at all, so nothing was folded under a world; now it carries
+	// world-resolved ones, and folding nothing would mean an edge change under
+	// a world never moved the ETag — a stale 304 on a response whose links had
+	// changed. Folding DEFAULT-world edges instead is the mirror bug: a draft
+	// edit would invalidate a published validator, and publishing a face would
+	// not.
 	edgeKeys := make([]string, 0, len(edges))
 	for _, edge := range edges {
 		edgeKeys = append(edgeKeys, edge.Type+"|"+edge.To)
@@ -2543,5 +2760,6 @@ func sectionEntityToV1(e SectionEntityData) v1.ViewEntity {
 		fa := e.FieldVerdicts
 		v1Ent.FieldAffordances = &fa
 	}
+	v1Ent.World = e.World
 	return v1Ent
 }

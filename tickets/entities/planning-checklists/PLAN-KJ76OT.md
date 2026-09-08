@@ -39,7 +39,7 @@ only min_outgoing + scope today).
 
 OUT of scope:
 
-- Any world/pointer concept (TKT-9KZGJO). The parameterisation is SHAPED
+- Any world/face concept (TKT-9KZGJO). The parameterisation is SHAPED
 so a future world parameter changes subject population / counting scope /
 violation identity in one place, but no world field/hook is added now.
 - `collectEntities`'s log-and-return-partial behaviour on ListEntities

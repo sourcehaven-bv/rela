@@ -17,6 +17,10 @@ type staticConfig map[string][]byte
 
 func (c staticConfig) Load(_ context.Context, name string) ([]byte, error) { return c[name], nil }
 
+// List reports no directory-shaped config: these tests exercise the
+// mail-template path, which reads named files only.
+func (c staticConfig) List(_ context.Context, _ string) ([]string, error) { return nil, nil }
+
 func TestRunScheduledTemplateSendsRenderedRecipientMessage(t *testing.T) {
 	t.Parallel()
 	st := memstore.New()

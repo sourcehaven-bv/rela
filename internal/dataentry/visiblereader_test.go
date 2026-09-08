@@ -47,6 +47,8 @@ func (configGate) SearchScope(context.Context, []string) map[string]search.TypeS
 
 func (configGate) HoldsPermission(context.Context, string) bool { return false }
 
+func (configGate) PermitsWorld(context.Context, string) (bool, error) { return true, nil }
+
 func seedReader(t *testing.T) visibleReader {
 	t.Helper()
 	st := memstore.New()

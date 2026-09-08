@@ -27,6 +27,135 @@ type GraphQuery struct {
 	Props       []PropPredicate    // entity's own properties match (AND)
 	HasInbound  *RelationPredicate // entity has matching relation FROM (expanded) endpoints
 	HasOutbound *RelationPredicate // entity has matching relation TO (expanded) endpoints
+
+	// World scopes the RESULT to each entity's prime under the compiled
+	// world, exactly as [EntityQuery.World] does. The zero value is the
+	// default world.
+	//
+	// It must live here as well as on EntityQuery, not only there: the
+	// ACL read path swaps an EntityQuery for a GraphQuery the moment a
+	// policy query exists (internal/visibility/pushdown.go), and the
+	// AllowAll principal takes the EntityQuery branch. A world carried
+	// on only one of the two would make the list path and the
+	// single-entity path disagree — and would do so precisely for the
+	// privileged principal.
+	//
+	// Scoping applies to the entities the query RETURNS. Relation
+	// predicates walk the graph's identity structure and are NOT
+	// world-resolved: who an entity is related to must not depend on the
+	// reader's world.
+	World WorldScope
+
+	// FaceIn is [EntityQuery.FaceIn], carried here for the same reason World
+	// is: the ACL read path swaps an EntityQuery for a GraphQuery the moment
+	// a policy query exists, and the AllowAll principal takes the EntityQuery
+	// branch. A face set on only one of the two would make the list path and
+	// the single-entity path disagree — and would do so precisely for the
+	// privileged principal.
+	FaceIn []entity.Face
+
+	// Any is a disjunction of per-branch predicates, ANDed with everything
+	// above: an entity matches when at least one branch holds. Nil means no
+	// branch constraint.
+	//
+	// It exists for relation-conferred roles whose face grants differ. The
+	// ACL compiles `owns → author {read: [policy@draft]}` and `reviews →
+	// reviewer {read: [policy@published]}` into two branches, so a principal
+	// who merely REVIEWS an entity is held to the reviewer's faces rather
+	// than to the union of every conferring role's — the union was a laundering
+	// of one relation's faces through another. Like FaceIn, a branch's face
+	// set is applied to the CANDIDATE rows before world ranking, so the
+	// answer is exact at the store and paging, counts and search stay honest
+	// with no post-filter.
+	Any []GraphBranch
+
+	// OrderBy, Limit and Offset page a ROW query (GraphQuery,
+	// GraphQueryHeaders) inside the backend (TKT-1U8XYN), so a list page
+	// costs one bounded read instead of a whole-type scan sorted and sliced
+	// in Go. GraphCount and MatchingIDs IGNORE all three — a count answers
+	// for the matched set, and a page must never change it.
+	//
+	// OrderBy sorts by the STRING form of each property, byte-wise (the
+	// data-entry list comparator's semantics), then by id ascending as the
+	// tiebreak. A row WITHOUT the property sorts as if it held the largest
+	// value: last ascending, first descending — SQL's default null
+	// placement, kept on purpose so one index serves both directions. It is
+	// meant for scalar string-shaped properties (string, enum, date); a
+	// caller sorting anything else stays on its own comparator. Limit 0
+	// means unbounded; Offset counts rows in the ordered result.
+	OrderBy []OrderSpec
+	Limit   int
+	Offset  int
+}
+
+// OrderSpec is one GraphQuery sort key.
+type OrderSpec struct {
+	Property   string
+	Descending bool
+}
+
+// GraphHeaderQueryer is the content-free projection of [GraphQueryer]:
+// the same predicate evaluation, yielding [EntityHeader] rows without the
+// markdown body. OPTIONAL — type-asserted like [HeaderReader], with
+// [GraphQueryHeaders] as the generic fallback — because it exists purely to
+// keep bodies from crossing the wire on backends where that is a real cost
+// (TKT-1U8XYN): a list page needs a type's ids and properties to filter,
+// sort and paginate, never its bodies.
+type GraphHeaderQueryer interface {
+	GraphQueryHeaders(ctx context.Context, q GraphQuery) iter.Seq2[EntityHeader, error]
+}
+
+// MatchedCounter is the half of [GraphQueryer.GraphCount] a paged list needs:
+// the number of rows q matches, and nothing about the type's total.
+// OPTIONAL, type-asserted with [CountMatched] as the generic fallback. It
+// exists because GraphCount answers two questions with two statements, and
+// the second — the unscoped total — is both the one a gated handler must not
+// expose (RR-SSPCCI) and, under a world, a count(DISTINCT) over every row of
+// the table (TKT-1U8XYN: 35 ms of a list page's 80).
+type MatchedCounter interface {
+	CountMatched(ctx context.Context, q GraphQuery) (int, error)
+}
+
+// CountMatched returns how many rows q matches on any GraphQueryer, using
+// the backend's [MatchedCounter] when it has one and GraphCount's matched
+// half otherwise. OrderBy/Limit/Offset on q are ignored, as GraphCount does.
+func CountMatched(ctx context.Context, gq GraphQueryer, q GraphQuery) (int, error) {
+	if mc, ok := gq.(MatchedCounter); ok {
+		return mc.CountMatched(ctx, q)
+	}
+	matched, _, err := gq.GraphCount(ctx, q)
+	return matched, err
+}
+
+// GraphQueryHeaders runs q as a content-free query on any GraphQueryer.
+//
+// Uses the backend's native [GraphHeaderQueryer] when it has one, so the
+// body never leaves the backend; otherwise falls back to
+// [GraphQueryer.GraphQuery] and projects each row as it is yielded. As with
+// [ListEntityHeaders], the fallback bounds retention, not transfer.
+func GraphQueryHeaders(ctx context.Context, gq GraphQueryer, q GraphQuery) iter.Seq2[EntityHeader, error] {
+	if hq, ok := gq.(GraphHeaderQueryer); ok {
+		return hq.GraphQueryHeaders(ctx, q)
+	}
+	return func(yield func(EntityHeader, error) bool) {
+		for e, err := range gq.GraphQuery(ctx, q) {
+			if err != nil {
+				yield(EntityHeader{}, err)
+				return
+			}
+			if !yield(HeaderOf(e), nil) {
+				return
+			}
+		}
+	}
+}
+
+// GraphBranch is one arm of [GraphQuery.Any]: a relation predicate and the
+// faces it grants. A nil FaceIn grants every face; a nil HasInbound holds for
+// every entity of the type (the branch is then only a face set).
+type GraphBranch struct {
+	HasInbound *RelationPredicate
+	FaceIn     []entity.Face
 }
 
 // PropOp is the comparison a [PropPredicate] applies. Deliberately only

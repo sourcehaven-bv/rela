@@ -117,10 +117,70 @@ func validateNextActionSource(
 		}
 	}
 
+	errs = append(errs, validateNextActionWorlds(where, s, meta)...)
+
 	for i, o := range s.Actions {
 		errs = append(errs, validateNextActionOffer(where, i, o, cfg)...)
 	}
 	return errs
+}
+
+// validateNextActionWorlds checks that source_world and every entry in
+// visible_worlds names a DECLARED world.
+//
+// An undeclared name must fail the load rather than silently never matching,
+// and the two keys fail that way for different reasons — which is why both are
+// checked even though only one of them touches the store:
+//
+//   - source_world: an unknown world cannot be compiled to a scope, so the
+//     source would fall back to querying the default world. That is the exact
+//     behavior the key exists to override, and is indistinguishable from never
+//     having set it.
+//   - visible_worlds: an unknown name simply never equals the world a reader
+//     is browsing, so the suggestion silently never appears anywhere. For an
+//     advisory surface that is the worst failure mode there is — nothing looks
+//     broken and the operator concludes the feature does not work.
+//
+// Same shape as list.create_world and app.default_world (validate.go). Only
+// the NAME is checked: whether the world resolves a face for any type the
+// query touches is a per-entity, per-principal question that load time cannot
+// answer, and the read gate answers it at request time anyway.
+//
+// The reserved name "default" is always legal — it names the implicit default
+// world, which is not listed in meta.Worlds.
+func validateNextActionWorlds(where string, s NextActionSource, meta *metamodel.Metamodel) []string {
+	var errs []string
+	if err := checkDeclaredWorld(where, "source_world", s.SourceWorld, meta); err != "" {
+		errs = append(errs, err)
+	}
+	for i, w := range s.VisibleWorlds {
+		// Indexed so an operator with several entries knows which one.
+		if err := checkDeclaredWorld(where, fmt.Sprintf("visible_worlds[%d]", i), w, meta); err != "" {
+			errs = append(errs, err)
+		}
+	}
+	return errs
+}
+
+// checkDeclaredWorld returns an error message when world is set but not
+// declared, or "" when it is fine. Empty and the reserved default name pass.
+func checkDeclaredWorld(where, key, world string, meta *metamodel.Metamodel) string {
+	if world == "" || world == metamodel.DefaultWorldName {
+		return ""
+	}
+	if meta == nil {
+		return fmt.Sprintf("%s: %s is set, but no metamodel is available to validate it against", where, key)
+	}
+	if _, ok := meta.Worlds[world]; ok {
+		return ""
+	}
+	declared := make([]string, 0, len(meta.Worlds))
+	for name := range meta.Worlds {
+		declared = append(declared, name)
+	}
+	sort.Strings(declared)
+	return fmt.Sprintf("%s: %s %q is not a declared world (schema.yaml declares: %s)",
+		where, key, world, strings.Join(declared, ", "))
 }
 
 // validateNextActionCandidateSource checks the three mutually exclusive ways

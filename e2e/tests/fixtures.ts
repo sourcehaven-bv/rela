@@ -190,6 +190,13 @@ export interface ApiHelpers {
   ): Promise<EntityResponse>;
   deleteEntity(plural: string, id: string): Promise<void>;
   listEntities(plural: string, query?: string): Promise<PaginatedResponse>;
+  /** Replace an entity's markdown BODY. Separate from updateEntity, which
+   *  carries only properties. */
+  setEntityContent(plural: string, id: string, content: string): Promise<EntityResponse>;
+  /** A target's comment thread (TKT-FIO205). Comments live outside the entity
+   *  store, so seeding and cleanup do not ride entity CRUD. */
+  listComments(type: string, id: string): Promise<{ comments: { id: string }[] }>;
+  deleteComment(type: string, id: string, commentId: string): Promise<void>;
   createRelation(
     fromPlural: string,
     fromId: string,
@@ -393,6 +400,10 @@ function createTestProject(): string {
     path.join(tmpDir, "apps", "e2e-demo", "index.html"),
     E2E_DEMO_APP_HTML,
   );
+  fs.writeFileSync(
+    path.join(tmpDir, "apps", "e2e-demo", "app.js"),
+    E2E_DEMO_APP_JS,
+  );
   for (const [rel, content] of Object.entries(SEED_ENTITIES)) {
     fs.writeFileSync(path.join(tmpDir, rel), content);
   }
@@ -510,7 +521,13 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
   },
 
   serverUrl: async ({ testProject, serverBinary }, use, testInfo) => {
-    const { proc, url, logs } = await spawnServer(serverBinary, testProject);
+    // A resolvable identity. Most specs do not care, but comments REFUSE an
+    // unstamped principal rather than recording "unknown" (TKT-FIO205): a
+    // comment nobody is recorded as writing can never satisfy an *-own
+    // permission check, so it could be neither edited nor deleted.
+    const { proc, url, logs } = await spawnServer(serverBinary, testProject, {
+      RELA_DATAENTRY_USER: "e2e@example.com",
+    });
     try {
       await use(url);
     } finally {
@@ -672,6 +689,19 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
       async listEntities(plural, query) {
         const p = query ? `${plural}?${query}` : plural;
         return (await call("GET", p)).json();
+      },
+      async setEntityContent(plural, id, content) {
+        // Separate from updateEntity, which sends only `properties`: a comment
+        // spec needs to rewrite the BODY to exercise anchor drift.
+        return (await call("PATCH", `${plural}/${id}`, { content })).json();
+      },
+      // Comments (TKT-FIO205) live outside the entity store, so seeding and
+      // cleanup need their own helpers rather than riding entity CRUD.
+      async listComments(type, id) {
+        return (await call("GET", `_comments/${type}/${id}`)).json();
+      },
+      async deleteComment(type, id, commentId) {
+        await call("DELETE", `_comments/${type}/${id}/${commentId}`);
       },
       async setRelationMeta(fromPlural, fromId, relation, toType, toId, meta) {
         // Modern JSON:API relations body: upsert the edge with its meta. A PATCH
@@ -989,6 +1019,13 @@ relations:
     from: [task]
     to: [bug]
     inverse: fixedBy
+
+# Commenting (TKT-FIO205). Enabled for every type so the comment specs can use
+# whichever seed entity is convenient; the ACL is untouched, so the default
+# no-policy deployment applies and every principal may comment.
+comments:
+  enabled: true
+  on: ["*"]
 `;
 
 const DATA_ENTRY_YAML = `
@@ -1327,6 +1364,10 @@ views:
             widget: checkbox
           - property: title
             widget: textarea
+      # The entry's markdown body. Needed by the comment specs: a text-range
+      # anchor has nothing to attach to unless the body actually renders.
+      - source: entry
+        display: content
       - heading: "Implements"
         source: implemented
         display: list
@@ -1470,55 +1511,61 @@ const E2E_DEMO_APP_HTML = `<!doctype html>
          the path-scoped CSP (connect-src 'none' + scoped img-src) must block it.
          Result lands in [data-testid=csp-probe]: 'blocked' if the boundary holds. -->
     <div data-testid="csp-probe">pending</div>
-    <script>
-      var cspEl = document.querySelector('[data-testid=csp-probe]');
-      (function probeCSP() {
-        // 1) connect-src 'none' must reject a direct fetch to the API.
-        fetch('/api/v1/features/FEAT-001')
-          .then(function () { cspEl.textContent = 'LEAK: fetch reached /api/'; })
-          .catch(function () {
-            // 2) img-src is path-scoped to the app, so an /api/ image must fail.
-            var img = new Image();
-            img.onload = function () { cspEl.textContent = 'LEAK: img loaded /api/'; };
-            img.onerror = function () { cspEl.textContent = 'blocked'; };
-            img.src = '/api/v1/features/FEAT-001';
-          });
-      })();
-      function ready(fn) {
-        var done = false;
-        function go() { if (!done) { done = true; fn(); } }
-        window.addEventListener('rela:ready', go, { once: true });
-        setTimeout(go, 1000);
-      }
-      var statusEl = document.querySelector('[data-testid=status]');
-      var countEl = document.querySelector('[data-testid=feature-count]');
-      var linkResultEl = document.querySelector('[data-testid=link-result]');
-
-      ready(async function () {
-        try {
-          var res = await window.rela.list({ type: 'feature', params: { per_page: 200 } });
-          var n = (res && res.data ? res.data.length : 0);
-          countEl.textContent = String(n);
-          statusEl.textContent = 'loaded';
-        } catch (e) {
-          statusEl.textContent = 'error: ' + (e && e.message ? e.message : e);
-        }
-      });
-
-      document.querySelector('[data-testid=link-btn]').addEventListener('click', async function () {
-        linkResultEl.textContent = 'linking';
-        try {
-          await window.rela.relationCreate({
-            type: 'feature', id: 'FEAT-001', relation: 'blocks', targetId: 'FEAT-002',
-          });
-          linkResultEl.textContent = 'linked';
-        } catch (e) {
-          linkResultEl.textContent = 'error: ' + (e && e.message ? e.message : e);
-        }
-      });
-    </script>
+    <script src="app.js"></script>
   </body>
 </html>`;
+
+/** The e2e demo app's script, served as a sibling file.
+ *
+ *  A separate file, not an inline <script>: the app CSP carries no
+ *  'unsafe-inline' (TKT-JO125X), so an inline block would be blocked and this
+ *  app would do nothing — every apps.spec.ts assertion would fail on a blank
+ *  page rather than on the behaviour under test. */
+const E2E_DEMO_APP_JS = `var cspEl = document.querySelector('[data-testid=csp-probe]');
+(function probeCSP() {
+  // 1) connect-src 'none' must reject a direct fetch to the API.
+  fetch('/api/v1/features/FEAT-001')
+    .then(function () { cspEl.textContent = 'LEAK: fetch reached /api/'; })
+    .catch(function () {
+      // 2) img-src is path-scoped to the app, so an /api/ image must fail.
+      var img = new Image();
+      img.onload = function () { cspEl.textContent = 'LEAK: img loaded /api/'; };
+      img.onerror = function () { cspEl.textContent = 'blocked'; };
+      img.src = '/api/v1/features/FEAT-001';
+    });
+})();
+function ready(fn) {
+  var done = false;
+  function go() { if (!done) { done = true; fn(); } }
+  window.addEventListener('rela:ready', go, { once: true });
+  setTimeout(go, 1000);
+}
+var statusEl = document.querySelector('[data-testid=status]');
+var countEl = document.querySelector('[data-testid=feature-count]');
+var linkResultEl = document.querySelector('[data-testid=link-result]');
+
+ready(async function () {
+  try {
+    var res = await window.rela.list({ type: 'feature', params: { per_page: 200 } });
+    var n = (res && res.data ? res.data.length : 0);
+    countEl.textContent = String(n);
+    statusEl.textContent = 'loaded';
+  } catch (e) {
+    statusEl.textContent = 'error: ' + (e && e.message ? e.message : e);
+  }
+});
+
+document.querySelector('[data-testid=link-btn]').addEventListener('click', async function () {
+  linkResultEl.textContent = 'linking';
+  try {
+    await window.rela.relationCreate({
+      type: 'feature', id: 'FEAT-001', relation: 'blocks', targetId: 'FEAT-002',
+    });
+    linkResultEl.textContent = 'linked';
+  } catch (e) {
+    linkResultEl.textContent = 'error: ' + (e && e.message ? e.message : e);
+  }
+});`;
 
 /** Document script rendered by rela-server when visiting
  *  /entity/feature/FEAT-001?doc=feature-overview. Emits a single link to

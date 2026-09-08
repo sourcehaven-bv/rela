@@ -23,15 +23,65 @@ func TestScreenshot_NoCapturer_FailsLoud(t *testing.T) {
 	}
 }
 
-// Only view="form" is supported; entity/list fail loud (no browser needed).
+// A view with no readiness marker fails loud rather than hanging.
+//
+// The supported set is an ALLOWLIST, not a passthrough: each entry routes in
+// the SPA and stamps a `form-state-*` / `page-state-*` marker the capture
+// polls. A view without one gives the gate nothing to wait for, so it could
+// only time out — a slow, confusing failure in place of an immediate, clear
+// one. (Before the list/entity/create/search views grew markers, this test
+// asserted that only `form` was allowed.)
 func TestScreenshot_UnsupportedView_FailsLoud(t *testing.T) {
 	t.Parallel()
-	for _, view := range []string{"entity", "list", "kanban"} {
+	for _, view := range []string{"nonsense", "settings", "conflicts", "relation-history"} {
 		src := "```rela\nscreenshot{ view=\"" + view + "\", type=\"risico\", entity=\"r1\", out=\"f.png\" }\n```\n"
 		_, err := Build(context.Background(), src, Options{Meta: fixtureMeta(t), Capturer: stubCapturer{}})
-		if err == nil || !strings.Contains(err.Error(), "not supported") {
+		if err == nil || !strings.Contains(err.Error(), "unknown view") {
 			t.Errorf("view=%q should fail loud, got: %v", view, err)
 		}
+	}
+}
+
+// Each supported view demands the arguments it actually needs, and says which.
+func TestScreenshot_PerViewRequiredArgs(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		island  string
+		wantErr string
+	}{
+		{
+			name:    "a list needs a list id, not an entity",
+			island:  `screenshot{ view="list", out="f.png" }`,
+			wantErr: "`list` is required",
+		},
+		{
+			// An idle search screen shows nothing for a reason unrelated to
+			// whatever the figure is illustrating.
+			name:    "a search needs a query",
+			island:  `screenshot{ view="search", out="f.png" }`,
+			wantErr: "`q` is required",
+		},
+		{
+			name:    "a create form needs a type or a form id",
+			island:  `screenshot{ view="create", out="f.png" }`,
+			wantErr: "`type` or `form` is required",
+		},
+		{
+			name:    "a detail view needs an entity",
+			island:  `screenshot{ view="entity", type="risico", out="f.png" }`,
+			wantErr: "`entity` is required",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			src := "```rela\n" + tc.island + "\n```\n"
+			_, err := Build(context.Background(), src, Options{Meta: fixtureMeta(t), Capturer: stubCapturer{}})
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("want %q, got: %v", tc.wantErr, err)
+			}
+		})
 	}
 }
 

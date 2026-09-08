@@ -89,6 +89,7 @@ type Summary struct {
 	UniqueViolations       int
 	Gaps                   int
 	Cardinality            int
+	States                 int
 	PropertyErrors         int
 	ValidationErrors       int
 	ValidationWarnings     int
@@ -171,6 +172,10 @@ func (s *Service) FindOrphansWithScope(ctx context.Context, opts Options) []*ent
 
 // FindDuplicates returns groups of entities with similar titles,
 // filtered by scope.
+// Deliberately the default query, not allStatesQuery: duplicate detection asks
+// whether two ENTITIES are the same thing, and an entity's translations are not
+// duplicates of each other. Widening would report every faced entity as a
+// duplicate of itself.
 func (s *Service) FindDuplicates(ctx context.Context, opts Options) []DuplicateGroup {
 	entities := filterByScope(collectEntities(ctx, s.deps.Store, store.EntityQuery{}), opts.Scope)
 
@@ -206,6 +211,10 @@ func (s *Service) FindDuplicates(ctx context.Context, opts Options) []DuplicateG
 // contains collisions, which the constraint does not retroactively clean.
 // List properties are skipped (a natural key is a scalar), matching the
 // write-path check.
+// Deliberately the default query, not allStatesQuery: a `unique:` natural key
+// identifies an ENTITY, and its states share that identity by construction —
+// they are the same entity. Widening would make every faced entity collide with
+// itself.
 func (s *Service) FindUniqueViolations(ctx context.Context, opts Options) []UniqueViolation {
 	// (type, property) pairs the metamodel declares unique + non-list.
 	type uniqueProp struct{ entityType, property string }
@@ -273,6 +282,9 @@ func (s *Service) FindUniqueViolations(ctx context.Context, opts Options) []Uniq
 
 // FindGaps returns gaps in ID sequences, filtered by scope. Excludes
 // entity types with manual (string) IDs.
+// Deliberately the default query, not allStatesQuery: a gap is "this entity is
+// missing an expected link", asked once per entity. Reporting the same gap once
+// per state would be noise, not coverage.
 func (s *Service) FindGaps(ctx context.Context, opts Options) []GapResult {
 	meta := s.deps.Meta
 	stringIDPrefixes := make(map[string]bool)
@@ -417,17 +429,18 @@ func (s *Service) checkCardinality(
 	// pinning tests guard.
 	type subject struct {
 		id    string
+		face  entity.Face
 		count int
 	}
 	var subjects []subject
 	for _, subjectType := range spec.subjectTypes {
-		entities := collectEntities(ctx, s.deps.Store, store.EntityQuery{Type: subjectType})
+		entities := collectEntities(ctx, s.deps.Store, store.EntityQuery{Type: subjectType, AllStates: true})
 		for _, e := range filterByScope(entities, scope) {
-			count, err := s.countRelations(ctx, e.ID, spec.relName, spec.direction)
+			count, err := s.countRelationsFor(ctx, e, spec)
 			if err != nil {
 				return nil, fmt.Errorf("analysis: count %s %q relations of %s: %w", dirWord, spec.relName, e.ID, err)
 			}
-			subjects = append(subjects, subject{id: e.ID, count: count})
+			subjects = append(subjects, subject{id: e.ID, face: e.Face, count: count})
 		}
 	}
 
@@ -474,6 +487,36 @@ func (s *Service) countRelations(
 	})
 }
 
+// countRelationsFor counts a subject's edges at the granularity the relation's
+// SCOPE implies (TKT-4Y6CMV).
+//
+// A content-scoped edge belongs to one state on its tail side — a draft may
+// implement a different control set than the published face — so its bound is
+// a claim about that state and must be counted per face. Counting by bare id
+// gives every state of an entity the same total, which lets one face's edge
+// satisfy another face's `min_outgoing` and reports a clean graph while the
+// published face genuinely has none.
+//
+// An identity-scoped edge belongs to the whole entity, so it is counted once
+// per entity exactly as before. The tail filter is applied only on the OUTGOING
+// direction, because that is the side a content scope pins; an incoming bound
+// counts edges arriving at the entity regardless of which state they left.
+func (s *Service) countRelationsFor(
+	ctx context.Context, e *entity.Entity, spec cardinalitySpec,
+) (int, error) {
+	def, ok := s.deps.Meta.Relations[spec.relName]
+	if !ok || !def.Scope.IsContent() || spec.direction != store.DirectionOutgoing {
+		return s.countRelations(ctx, e.ID, spec.relName, spec.direction)
+	}
+	face := e.Face
+	return s.deps.Store.CountRelations(ctx, store.RelationQuery{
+		EntityID:  e.ID,
+		Direction: spec.direction,
+		Type:      spec.relName,
+		FromFace:  &face,
+	})
+}
+
 // --- Custom validations ---
 
 // newValidationService wires a validation service against the
@@ -491,7 +534,7 @@ func (s *Service) newValidationService() *validation.Service {
 // RunValidations executes all custom validation rules from the
 // metamodel, filtered by scope.
 func (s *Service) RunValidations(ctx context.Context, opts Options) ValidationResult {
-	return s.newValidationService().Check(ctx, collectEntities(ctx, s.deps.Store, store.EntityQuery{}), opts.Scope)
+	return s.newValidationService().Check(ctx, collectEntities(ctx, s.deps.Store, allStatesQuery()), opts.Scope)
 }
 
 // RunValidationsFiltered executes custom validation rules matching
@@ -513,7 +556,7 @@ func (s *Service) RunValidationsFiltered(
 		}
 	}
 
-	return svc.CheckRules(ctx, collectEntities(ctx, s.deps.Store, store.EntityQuery{}), opts.Scope, ruleNames)
+	return svc.CheckRules(ctx, collectEntities(ctx, s.deps.Store, allStatesQuery()), opts.Scope, ruleNames)
 }
 
 // matchesFilter returns true if the rule matches the filter criteria.
@@ -543,12 +586,17 @@ func (s *Service) AnalyzeAll(ctx context.Context, opts Options) (*Summary, error
 	if err != nil {
 		return nil, err
 	}
+	states, err := s.CheckStates(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
 	summary := &Summary{
 		Orphans:          len(s.FindOrphansWithScope(ctx, opts)),
 		Duplicates:       len(s.FindDuplicates(ctx, opts)),
 		UniqueViolations: len(s.FindUniqueViolations(ctx, opts)),
 		Gaps:             len(s.FindGaps(ctx, opts)),
 		Cardinality:      len(cardinality),
+		States:           len(states),
 	}
 
 	for _, pe := range schema.ValidateEntityProperties(ctx, s.deps.Store, s.deps.Meta) {
@@ -665,4 +713,21 @@ func normalizeTitle(s string) string {
 	s = strings.TrimSpace(s)
 	fields := strings.Fields(s)
 	return strings.Join(fields, " ")
+}
+
+// allStatesQuery is the query for an analysis that asks about CONTENT.
+//
+// Each content state (face) of an entity is a separate stored row holding its
+// own property values, so a check about whether content conforms must see all
+// of them. Leaving AllStates false — the zero value, "default-state rows only"
+// — makes such a check report a clean run over data it never loaded, which is
+// worse than no check because it is a claim (TKT-4Y6CMV).
+//
+// NOT every analysis wants this. A question about an entity's IDENTITY — is
+// this a duplicate of that one, is this natural key unique, is this entity
+// orphaned — is asked once per entity, and widening it would report the same
+// entity once per state. Those keep the default query deliberately; see their
+// call sites.
+func allStatesQuery() store.EntityQuery {
+	return store.EntityQuery{AllStates: true}
 }

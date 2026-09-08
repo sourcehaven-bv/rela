@@ -215,10 +215,27 @@ type Exec struct {
 // forEachEntity runs fn over every entity of typ (collect-then-write, the
 // normalize.go pattern: never mutate while iterating). Entities fn reports
 // changed are written back in Tx batches; in dry-run they are only counted.
+//
+// # Every content state, not just the bare row
+//
+// The query sets AllStates, so a step sees each FACE of an entity as its own
+// row. Without it (the zero value means default-state rows only) a project
+// using faces got half-migrated: `rename_property` would rewrite the bare row
+// and leave every `@nl` row on the old name, silently (TKT-O0A8FO).
+//
+// This is the flag's documented purpose — "storage-inspection ... for
+// infrastructure that must see rows exactly as they are stored" — and a
+// migration is exactly that: it rewrites storage truth, and every row of a
+// family conforms to the same schema. It is emphatically NOT world resolution,
+// which is a read-path concern about choosing one face to show.
+//
+// Write-back stays correct because store.UpdateEntity is addressed by the
+// entity's own Face: updating a face row leaves the bare row untouched and does
+// not collapse the family.
 func (x *Exec) forEachEntity(
 	ctx context.Context, typ string, fn func(e *entity.Entity) (bool, error), res *StepResult,
 ) error {
-	q := store.EntityQuery{}
+	q := store.EntityQuery{AllStates: true}
 	if typ != "*" {
 		q.Type = typ
 	}

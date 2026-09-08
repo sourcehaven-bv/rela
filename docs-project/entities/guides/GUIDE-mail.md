@@ -284,6 +284,66 @@ feature-detect. A delivery failure returns `(nil, err)` and never raises: a
 script that mails a summary at the end of a run should not lose the run because
 the mail server was rebooting.
 
+### Rendering a branded message from a script
+
+Passing `html` to `mail.send` means writing email HTML by hand, and email HTML
+is its own dialect — Outlook drops `padding` on anything that is not a table
+cell, most clients drop `margin`, and a `<div>` layout that looks right in your
+browser can collapse in a recipient's inbox. `mail.render` gives you the same
+template the declarative digests use, so you describe the message and rela
+produces the markup:
+
+```lua
+local html, text = mail.render{
+  subject = "Wekelijks MT",
+  lang    = "nl",
+  intro   = "Automatisch samengesteld op " .. os.date("%Y-%m-%d") .. ".",
+  sections = {
+    {
+      title   = "Open acties",
+      columns = {"Taak", "Deadline"},
+      rows    = {{"Leveranciersbeoordeling", "2026-09-01"}},
+      links   = {"/entity/taak/TASK-DEMO"},
+    },
+    { title = "Toelichting", body = "Een **korte** toelichting." },
+  },
+  footer = "Automatisch verzonden door Atlas.",
+}
+
+mail.send{to = "maaike@example.nl", subject = "Wekelijks MT", html = html, text = text}
+```
+
+It returns both parts, so the `text/plain` alternative comes for free rather
+than being something you remember to write.
+
+| Field | Meaning |
+| --- | --- |
+| `subject` | Required. Also rendered as the message heading. |
+| `lang` | BCP-47 tag for this message (`"nl"`, `"en-GB"`). Optional. |
+| `intro`, `footer` | Markdown, rendered above and below the sections. |
+| `sections` | Array. Each has `title`, `body` (markdown), and/or `columns` + `rows`. |
+| `links` | Per-section, one href per row. Only the first column links. |
+
+Notes worth knowing:
+
+- **`intro`, `body` and `footer` are markdown; `rows` cells are not.** A cell is
+  a value, so it is escaped rather than parsed — a title containing `*` stays a
+  literal asterisk.
+- **Rows are matched to the header width.** A short row is padded and an
+  over-long one truncated, so one bad row cannot break the table's columns.
+- **Links are vetted.** Absolute `http(s)://` passes; a root-relative `/path` is
+  resolved against `base_url`. Anything else (including `javascript:`) is
+  dropped and the text renders unlinked.
+- **There is no `html` or `css` field, deliberately.** Everything you pass is
+  sanitized, which is the whole point of the binding. If you genuinely need raw
+  markup, that is what `mail.send{html = ...}` is still for.
+- **It works with no `mail.yaml`.** Rendering needs no transport, so a script
+  can render a message to log or inspect it. Only `mail.send` needs mail
+  configured.
+- **A malformed call raises** rather than returning an error — unlike
+  `mail.send`, nothing here depends on the network, so a failure is a bug in the
+  script rather than a fact about the world.
+
 ### Who may receive mail
 
 `mail.send` takes its `to` from the script, so without a constraint a script
@@ -368,6 +428,7 @@ mail_templates:
     subject: "Tasks due {{today}}"
     intro: "Items visible to you that need attention."
     address_property: email
+    lang: en
     sections:
       - title: "Overdue"
         entity_type: task
@@ -396,14 +457,23 @@ checks template keys, schema references, filters, scheduled template
 references, and the recipient address property. Runtime validates the current
 address again.
 
+`lang:` is optional and **per template**, not per deployment — one instance can
+send a Dutch digest and an English one, and each says what it is. It sets the
+`lang` attribute on the rendered mail, which affects screen-reader pronunciation
+and some clients' offer to translate. A malformed tag is refused at load rather
+than at send. Omit it to fall back to the deployment default (`en`). Note this
+*labels* content, it does not translate it: the text still has to be written in
+the language you name.
+
 Pending task + occurrence + recipient identities suppress concurrent duplicate
 work. A retry after a completed child can send again, and SMTP has its own
 acknowledgement crash window, so delivery is at-least-once rather than exactly-once.
 
 Automation-triggered templates are planned separately.
 
-**Sending from Lua** will add a `mail.send` binding for anything the declarative
-form does not cover.
+For anything the declarative form does not cover, a script can build the same
+message shape with [`mail.render`](#rendering-a-branded-message-from-a-script)
+and send it with `mail.send`.
 
 For local verification, point SMTP at a capture tool such as
 [Mailpit](https://mailpit.axllent.org/) or use the memory transport below.

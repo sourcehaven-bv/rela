@@ -885,7 +885,7 @@ func assertAIError(t *testing.T, err error) *Error {
 }
 
 // Static check: chatRequestWire should round-trip with omitempty for
-// pointer fields. This is a regression guard against accidentally
+// face fields. This is a regression guard against accidentally
 // changing the field types.
 func TestChatRequestWire_OmitEmpty(t *testing.T) {
 	body, err := json.Marshal(chatRequestWire{

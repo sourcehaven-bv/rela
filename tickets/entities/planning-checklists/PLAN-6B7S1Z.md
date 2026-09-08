@@ -162,7 +162,7 @@ pgstore-local stamping, DB-gated tests).
 
 **Documentation Impact:**
 
-- [x] CLAUDE.md — content-versioning bullet: Attribution ctx carrier as second boundary-populated input; NULL fallback; rename-neutrality; pointer to TKT-0IGI4V for the flush
+- [x] CLAUDE.md — content-versioning bullet: Attribution ctx carrier as second boundary-populated input; NULL fallback; rename-neutrality; face to TKT-0IGI4V for the flush
 - [x] docs postgres-backend guide — attribution semantics + fallback
 - [ ] ~~docs/metamodel.md~~ (N/A)
 - [ ] ~~docs/cli-reference.md~~ (N/A)

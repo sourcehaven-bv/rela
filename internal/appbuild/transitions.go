@@ -2,11 +2,15 @@ package appbuild
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // transitionGuard adapts the ACL to the [statemachine.Guard] the transition
@@ -65,6 +69,23 @@ type TransitionWiring struct {
 	Enforcer *statemachine.Set
 	Guard    statemachine.Guard
 	Graph    statemachine.GraphLookup
+
+	// ReadGate and Visibility are the COPY path's two read gates. They live
+	// here rather than beside the copy code because they share this bundle's
+	// single job: give every wiring site one way to build the collaborators,
+	// so a site cannot silently omit one.
+	//
+	// They were previously assembled inline in buildEntityManager and
+	// hand-copied into the test fixture, which is how the fixture came to
+	// pass a policy-backed ACL with both gates nil — the exact
+	// forgotten-wiring state entitymanager.New now refuses (#1437).
+	//
+	// Nil: never — CompileTransitions always populates both. Their POSTURE
+	// follows resolvedACL (inert without a policy, fail-closed with one),
+	// which is what keeps the no-policy CLI case working without leaving a
+	// nil for a wiring site to inherit by accident.
+	ReadGate   entitymanager.CopyReadGate
+	Visibility entitymanager.CopyReader
 }
 
 // CompileTransitions builds the executable state machines from the metamodel
@@ -82,10 +103,117 @@ func CompileTransitions(meta *metamodel.Metamodel, st store.Store, resolvedACL a
 	if err != nil {
 		return TransitionWiring{}, err
 	}
-	_, policyActive := resolvedACL.(*acl.Declarative)
+	declarative, policyActive := resolvedACL.(*acl.Declarative)
+	// The cross-entity copy reads its source through the caller's FIELD
+	// redaction too — the same redactor the API read path uses, so a
+	// `visible:`-hidden property cannot travel into a new entity.
+	copyRedactor, err := buildFieldRedactor(meta, st, declarative)
+	if err != nil {
+		return TransitionWiring{}, fmt.Errorf("copy redactor: %w", err)
+	}
 	return TransitionWiring{
-		Enforcer: set,
-		Guard:    transitionGuard{policyActive: policyActive},
-		Graph:    transitionGraph{st: st},
+		Enforcer:   set,
+		Guard:      transitionGuard{policyActive: policyActive},
+		Graph:      transitionGraph{st: st},
+		ReadGate:   copyReadGate{policyActive: policyActive},
+		Visibility: copyVisibility{st: st, redact: copyRedactor, policyActive: policyActive},
 	}, nil
+}
+
+// copyReadGate answers "may this principal READ the copy's source", the first
+// of authorizeCopy's three checks (TKT-WRLDAPI item 5).
+//
+// # Same shape and same tiering as [transitionGuard], deliberately
+//
+// It resolves the [acl.Request] from the context per call, because the gate is
+// per-PRINCIPAL while Deps is built once at startup. The three tiers match:
+//
+//   - No policy at all: inert, permits. Every other read on such a deployment
+//     is raw too (CLI, demos), so gating this one would be theater.
+//   - A policy IS configured but no Request is on the context: FAIL CLOSED.
+//     That is a served path that lost its Request-attach middleware, or a
+//     background job on a bare ctx — a policy-backed deployment must not open
+//     a governed read because plumbing broke.
+//
+// # Why this had to be wired at all
+//
+// Before item 5 nothing in appbuild set any Copy* dep, so entitymanager's
+// `CopyReadGate` was nil in EVERY deployment — while its own godoc says "what
+// it must never be is absent on a deployment that HAS a policy". A copy's
+// source read then took the no-policy branch, so an unguarded cross-entity
+// copy read with no row gate and no redaction.
+type copyReadGate struct{ policyActive bool }
+
+func (g copyReadGate) PermitsReadFace(
+	ctx context.Context, entityType, entityID string, face entity.Face,
+) (bool, error) {
+	req := acl.FromContext(ctx)
+	if req == nil {
+		return !g.policyActive, nil
+	}
+	return req.PermitsReadFace(ctx, entityType, entityID, face)
+}
+
+// copyVisibility is the CALLER'S read gate for CROSS-ENTITY copies: it returns
+// the source as that principal may see it, so a redacted field cannot travel
+// into an entity with a different audience (design doc §9.2).
+//
+// Same-entity copies deliberately do NOT use this — they run elevated, because
+// hidden fields belong to the same entity under the same policy, and routing
+// them through a redacting read would destroy the fields the principal cannot
+// see (the read-modify-write bug the codebase forbids everywhere).
+//
+// Nil-Request tiering matches [copyReadGate]: inert without a policy, and with
+// a policy present but no Request it reports NOT FOUND rather than handing back
+// an ungated entity — the fail-closed direction for a read.
+//
+// It is the caller's gate in all three respects a read gate has: the ROW
+// (PermitsRead), the FACE (a `type@face` grant that excludes the source face
+// is a miss), and the FIELDS (`visible:` redaction through the same
+// [visibility.FieldRedactor] the API's read path uses). An earlier cut did
+// only the row and read the default face raw, so a cross-entity copy from a
+// non-bare face read the wrong face, and `visible:`-hidden properties
+// traveled into the new entity — the exact bypass this form exists to
+// prevent, and one the unit tests could not see because they injected a
+// redacting fake.
+type copyVisibility struct {
+	st           store.Store
+	redact       visibility.FieldRedactor
+	policyActive bool
+}
+
+func (v copyVisibility) Get(
+	ctx context.Context, entityType, id string, face entity.Face,
+) (*entity.Entity, bool, error) {
+	req := acl.FromContext(ctx)
+	if req == nil {
+		if v.policyActive {
+			// Fail closed: absent rather than ungated. Indistinguishable from
+			// a genuine miss, which is what every read gate here promises.
+			return nil, false, nil
+		}
+		e, err := v.st.GetEntityState(ctx, id, face)
+		if err != nil {
+			return nil, false, nil //nolint:nilerr // a miss is not-found, matching the gated path
+		}
+		return e, true, nil
+	}
+	permitted, err := req.PermitsReadFace(ctx, entityType, id, face)
+	if err != nil {
+		return nil, false, err
+	}
+	if !permitted {
+		return nil, false, nil
+	}
+	e, err := v.st.GetEntityState(ctx, id, face)
+	if err != nil {
+		return nil, false, nil //nolint:nilerr // a miss is not-found
+	}
+	if hidden := v.redact.HiddenProperties(ctx, e); len(hidden) > 0 {
+		e = e.Clone()
+		for name := range hidden {
+			delete(e.Properties, name)
+		}
+	}
+	return e, true, nil
 }

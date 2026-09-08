@@ -176,6 +176,12 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 				}
 			})
 	}
+	// The copy surface is wired through the SAME helper production uses, so
+	// `_copies` rides test-app entity responses exactly as it does in NewApp.
+	// The construction only errors on a nil service, which a real manager
+	// cannot produce — same clean-boot swallow as the logo/palette stores.
+	copyOffers, copiesHandler, _ := wireCopies(svc.EntityManager())
+	app.copies = copiesHandler
 	app.affordances = affordanceService{
 		acl:                func() acl.ACL { return app.acl },
 		resolver:           func() FieldVerdictResolver { return app.fieldResolver },
@@ -183,6 +189,7 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 		meta:               func() *metamodel.Metamodel { return app.State().Meta },
 		getEntity:          app.reader.getEntity,
 		currentEdgesByPeer: app.currentEdgesByPeer,
+		copies:             copyOffers,
 	}
 	app.serializer = entitySerializer{affordances: app.affordances}
 	// viewReader mirrors the production wiring (NewApp) so view-pipeline reads
@@ -193,21 +200,12 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 	// Rebuild the sync handler (manifest-only) over the rebound store. The record
 	// write path was retired in TKT-8P1TM7, so there is no writeMu/provision here.
 	app.sync = newSyncHandler(svc.Store())
-	// viewsHandler mirrors production wiring (see NewApp): fixed service
-	// handles by value, schema/services closures, and App's shared read gate.
-	app.views = &viewsHandler{
-		schema:      app.State,
-		store:       svc.Store(),
-		reader:      app.reader,
-		serializer:  app.serializer,
-		affordances: app.affordances,
-		viewReader:  app.viewReader,
-		services:    app.Services,
-		logo:        app.logo,
-		gateRead:    app.gateReadOrNotFound,
-		// Late-bound, as in NewApp: tests reassign app.acl after construction.
-		aclImpl: func() acl.ACL { return app.acl },
-	}
+	// The SAME constructor production uses, not a copy of it. The literal
+	// that stood here called itself a mirror of NewApp's wiring and then
+	// drifted from it — a field added in production was missing here, leaving
+	// a nil closure that panicked on the first request through the view
+	// surface. Sharing the constructor makes that class of drift unavailable.
+	app.views = newViewsHandler(app, svc.Store(), app.logo)
 	// appearanceHandler mirrors production wiring (see NewApp): built after
 	// the logo/palette/settings services and viewReader it captures.
 	app.appearance = newAppearanceHandler(app)
@@ -258,6 +256,11 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 	if app.export, exportErr = newExportHandler(app); exportErr != nil {
 		panic(exportErr)
 	}
+
+	// Comments handler over the app's current services (mirrors NewApp). The
+	// SERVICE inside stays nil until a test calls SetComments, which is the
+	// "commenting disabled" state the 404 routes depend on.
+	app.comments = newCommentsHandler(app)
 
 	// writeHandler mirrors production wiring (see NewApp): closures for the
 	// swappable acl/audit collaborators, values for the fixed service handles,
@@ -336,14 +339,14 @@ func reseedStore(dst, src store.Store) {
 
 // newAppFromParts builds an App with a populated Schema snapshot for
 // tests that previously used the struct-literal pattern
-// `&App{Cfg: cfg, meta: meta, g: g}`. The App.state pointer must be
+// `&App{Cfg: cfg, meta: meta, g: g}`. The App.state face must be
 // populated because handlers now read from it; a nil snapshot would
 // nil-deref inside a.State().
 //
 // Populates the co-derived Schema fields with safe defaults (UserDefaults,
 // Palette, UserPalette, OpenAPIGen) so handlers that touch the
 // less-common fields don't nil-deref in tests that didn't ask for them.
-func newAppFromParts(cfg *Config, meta *metamodel.Metamodel, f *fixture) *App {
+func newAppFromParts(cfg *Config, meta *metamodel.Metamodel, f *fixture, opts ...appbuildtest.Option) *App {
 	app := &App{
 		scriptEngine:  script.NewEngine(),
 		fieldResolver: NopFieldVerdictResolver{},
@@ -357,7 +360,7 @@ func newAppFromParts(cfg *Config, meta *metamodel.Metamodel, f *fixture) *App {
 		fs := storage.NewMemFS()
 		ctx := &project.Context{Root: "/project", CacheDir: "/project/.rela"}
 		_ = fs.MkdirAll(ctx.CacheDir, 0o755)
-		svc := appbuildtest.New(meta, appbuildtest.WithFS(fs, ctx))
+		svc := appbuildtest.New(meta, append([]appbuildtest.Option{appbuildtest.WithFS(fs, ctx)}, opts...)...)
 		rebindApp(app, fs, ctx, svc)
 		seedFromFixture(app.store, f)
 	}

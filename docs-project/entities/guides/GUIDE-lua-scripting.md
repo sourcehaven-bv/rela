@@ -998,6 +998,35 @@ A delivery failure **never raises**: a script that mails a summary at the end of
 a run must not lose the run because the mail server was rebooting. Argument
 errors do raise — a missing recipient is a bug in the script that no retry fixes.
 
+`mail.render` builds the body parts for you, so you do not have to write email
+HTML by hand:
+
+```lua
+local html, text = mail.render{
+  subject  = "Wekelijks MT",
+  lang     = "nl",                     -- optional BCP-47 tag
+  intro    = "Automatisch samengesteld.",
+  sections = {
+    { title = "Open acties", columns = {"Taak", "Deadline"},
+      rows = {{"Leveranciersbeoordeling", "2026-09-01"}},
+      links = {"/entity/taak/TASK-DEMO"} },
+    { title = "Toelichting", body = "Een **korte** toelichting." },
+  },
+  footer = "Automatisch verzonden.",
+}
+mail.send{to = "maaike@example.nl", subject = "Wekelijks MT", html = html, text = text}
+```
+
+It returns both parts, rendered through the same branded, client-tested template
+the declarative digests use — table-based layout, inlined CSS, Outlook
+fallbacks. `intro`/`body`/`footer` are markdown and are **sanitized**; `rows`
+cells are escaped values, not markdown; row links are limited to `http(s)` or a
+`/`-relative path resolved against `base_url`.
+
+There is deliberately no `html` or `css` field: the sanitizing is the point.
+`mail.render` needs no mail configuration (it only formats), and a malformed
+call **raises**, since nothing here depends on the network.
+
 See the [Outbound Mail](mail.md) guide for transports, including
 `transport: script`, which lets you supply the provider mapping yourself.
 

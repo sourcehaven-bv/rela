@@ -85,14 +85,49 @@ func listPushdown(
 		// but redaction is NOT (RR-OXE47R). A principal with global read on
 		// a type may still be denied individual FIELDS, so "may read every
 		// row" must never be shortcut into "may see every property".
-		return redactingSeq(ctx, raw.ListEntities(ctx, q), redact), true
+		//
+		// The FACE filter is not a no-op either, and this branch never builds
+		// a GraphQuery — so it rides on the EntityQuery here or the most
+		// privileged principals get no face narrowing at all (TKT-O7R2A1).
+		// Nil Faces means every face, which is what a `read: ["*"]` wildcard
+		// yields, so the common case is unchanged.
+		allowQ := q
+		allowQ.FaceIn = rqr.Faces
+		return redactingSeq(ctx, raw.ListEntities(ctx, allowQ), redact), true
 	case rqr.Query == nil:
 		// Neither allow, deny, nor query: an unrepresentable state. Treat as
 		// a fault and fall back rather than guessing, mirroring
 		// acl.PermitsReadMany, which errors here.
 		return nil, false
 	}
-	return redactingSeq(ctx, gq.GraphQuery(ctx, *rqr.Query), redact), true
+	// Carry the WORLD from the EntityQuery onto the composed GraphQuery
+	// (TKT-WAV8XP PR-D). This is the seam the whole two-mechanism design
+	// turns on: pushdown reaches PAST every decorator to the raw store,
+	// so a world that rides only on the decorator silently degrades to
+	// the default world exactly here — and exactly for ACL-gated
+	// principals, since AllowAll takes the EntityQuery branch above.
+	//
+	// That is not hypothetical: it is the fail-open PR-B's review found
+	// (RR-GQWRLD), where `otherwise: exclude` stopped excluding and a
+	// published world served drafts. `internal/acl` cannot set this
+	// itself — arch-lint forbids it importing metamodel, so it cannot
+	// compile a WorldScope — which is why the copy happens at this
+	// wiring seam instead. Pinned by the decorator/pushdown parity test.
+	// COPY the composed query before stamping the world. The ACL layer
+	// may cache or reuse the ReadQueryResult per principal, so mutating
+	// *rqr.Query in place would leak one request's world into the next
+	// caller's — a cross-request scope bleed. The copy is shallow, which
+	// is exactly right here: World is a value field, so assigning it
+	// touches only this copy, while the predicate faces it shares
+	// (HasInbound/HasOutbound/Props) are read-only downstream.
+	worldQuery := *rqr.Query
+	worldQuery.World = q.World
+	// The face allowlist travels with the world, for the same reason and on
+	// the same copy: it is computed by the ACL layer but composed here, and
+	// mutating rqr.Query in place would leak one principal's face set into
+	// the next caller's (TKT-O7R2A1).
+	worldQuery.FaceIn = rqr.Faces
+	return redactingSeq(ctx, gq.GraphQuery(ctx, worldQuery), redact), true
 }
 
 // redactingSeq applies the field redactor to every row of src.
@@ -127,4 +162,21 @@ func (g DeclarativeGate) ReadQueryFor(
 		return acl.ReadQueryResult{}, err
 	}
 	return r.ReadQuery(ctx, entityType), nil
+}
+
+// PermittedFaces implements [FaceGate] from the same ReadQueryResult
+// [DeclarativeGate.ReadQueryFor] pushes into a list query.
+//
+// ONE source, two consumers: the list path pushes these faces down into the
+// store query, and [PolicyReader] applies them to rows it has already loaded.
+// Deriving the set independently in either place is how the two come to
+// disagree about which faces a principal may read.
+func (g DeclarativeGate) PermittedFaces(
+	ctx context.Context, entityType string,
+) ([]entity.Face, error) {
+	r, err := g.request(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return r.ReadQuery(ctx, entityType).Faces, nil
 }

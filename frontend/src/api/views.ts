@@ -1,5 +1,5 @@
 import { api } from './client'
-import type { Entity, FieldAffordance } from '@/types'
+import type { Entity, EntityWorld, FieldAffordance } from '@/types'
 
 // Field data for view sections
 export interface ViewSectionField {
@@ -60,6 +60,16 @@ export interface ViewEntity {
   hasContent: boolean
   _props?: Record<string, unknown>
   _fields?: Record<string, FieldAffordance>
+  // Which face this world served for THIS entity, and which rule chose it
+  // (TKT-WRLDAPI item 4b). Per-neighbour: each collection entity resolves
+  // through the world independently, so one section can mix `chain` and
+  // `fallback-default` entries.
+  //
+  // Absent under the default world — there is no provenance to report when no
+  // resolution was applied. Under a non-default world it is present, and
+  // `via: 'fallback-default'` is the case worth surfacing: the reader is
+  // seeing a SUBSTITUTE face, not the one the world asked for.
+  _world?: EntityWorld
 }
 
 // Table cell data
@@ -137,11 +147,46 @@ export interface ViewResponse {
   entry: Entity
   sections: ViewSection[]
   mentions?: Record<string, Mention>
+  /**
+   * The entity EXISTS but has no face in the requested world — the ordinary
+   * state of an unpublished draft under a filtering world, not an error.
+   *
+   * The server answers 200 rather than a 4xx precisely so this page has
+   * something to offer: `entry` carries the face that DOES exist (the default
+   * face, which is where writes land), with its `_faces` and copy offers. A
+   * 4xx would be swallowed by the error path and the user who just created
+   * something would be told it does not exist — which is what happened, and
+   * why the demo accumulated duplicate policies.
+   *
+   * `sections` is empty here: a section is a traversal through the requested
+   * world, and that world resolves nothing for this entity.
+   */
+  _world_absent?: boolean
+  /** The world that has no face for this entity, for naming it in the UI. */
+  _world_absent_name?: string
 }
 
 // Fetch executed view data for an entity. The backend looks up the
 // configured ViewConfig by entry.type, or synthesizes a default when
 // none is registered.
-export async function fetchView(entityType: string, entityId: string): Promise<ViewResponse> {
-  return api.get<ViewResponse>(`/_views/${entityType}/${entityId}`)
+/**
+ * fetchView reads the entity view — the detail page's data.
+ *
+ * `world` selects which FACE the entry resolves to, and resolves every
+ * collection entity through the same world (TKT-WRLDAPI item 4b). Pass
+ * `undefined` for the default world so the param is omitted rather than sent
+ * empty; `useWorld().worldParam` is already shaped for that.
+ *
+ * Each collection entity carries `_world` provenance under a non-default
+ * world — which face was served and which rule chose it. That distinction is
+ * not decoration: "the Dutch page" and "the English page, because no Dutch
+ * page exists" arrive byte-identically, and only `_world.via` separates them.
+ */
+export async function fetchView(
+  entityType: string,
+  entityId: string,
+  world?: string,
+): Promise<ViewResponse> {
+  const params = world ? { world } : undefined
+  return api.get<ViewResponse>(`/_views/${entityType}/${entityId}`, params)
 }

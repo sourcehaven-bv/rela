@@ -82,24 +82,35 @@ test.describe('Open in a new tab', () => {
     await popup.close();
   });
 
-  test('header nav affordances (Prev/Next, Edit, History) open in a new tab', async ({
+  test('header nav affordances (Prev/Next, Edit) open in a new tab', async ({
     appPage,
   }) => {
     // Navigation buttons that trigger no mutation are links too. Delete stays a
     // <button> on purpose — it mutates, so a new tab makes no sense for it.
+    //
+    // History is deliberately NOT asserted here. It renders only when
+    // `/_config`.history_enabled is true, which requires a backend exposing the
+    // optional version-history capability — postgres only. This suite runs the
+    // default fsstore build, where the flag is correctly false and the link is
+    // correctly absent; asserting it would pin an affordance that is *supposed*
+    // to disappear on this backend. The flag/handler pair is pinned instead by
+    // TestConfigHistoryEnabled_AgreesWithTheHandler.
     const listPage = new ListPage(appPage);
     await listPage.navigateToList('features');
     await listPage.clickRow(0);
     await expect(appPage).toHaveURL(/\/entity\//);
 
     const detail = new EntityPage(appPage);
-    const history = detail.navLink('History');
-    await expect(history).toBeVisible();
+    // `.first()` on purpose: Edit renders twice (desktop header + mobile
+    // actions), and the desktop one carries a <kbd>E</kbd> shortcut hint, so
+    // its accessible name is "Edit E" rather than "Edit".
+    const edit = detail.editButton;
+    await expect(edit).toBeVisible();
 
     const before = appPage.url();
-    const popup = await detail.openInNewTab(history);
+    const popup = await detail.openInNewTab(edit);
 
-    await expect(popup).toHaveURL(/\/history\//);
+    await expect(popup).toHaveURL(/\/form\//);
     expect(appPage.url()).toBe(before);
     await popup.close();
 

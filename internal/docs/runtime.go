@@ -71,10 +71,20 @@ type Options struct {
 // metamodel + policy (read), an ephemeral seeded memstore (read+write), the
 // output buffer statement islands append to, and the strict flag.
 //
-// The Tier-B injected capabilities live on [tierBBindings] rather than here, so
-// screenshot{} and api{} cannot reach the metamodel, policy, store or tracer.
+// Verb clusters live on their own types rather than here, each reaching only
+// what it needs: [tierBBindings] (screenshot{}/api{} — no metamodel, policy,
+// store or tracer), [seedBindings] (the create()/link() write side), and
+// [aclBindings] (the policy-reading verbs — no tracer).
 //
-//plimsoll:max-methods=31
+// 29 after the ACL extraction, down from 34. This type is a facade over the doc
+// language, so the count tracks how many doc.* verbs exist rather than how
+// tangled the type is — but that is a reason to keep moving clusters OUT, not a
+// reason to let it grow. The graph verbs (luaGraph/luaResolution and their
+// helpers) and the schema verbs (luaTyperef/luaValues/luaFaces/...) are the two
+// clusters left; extracting either takes this to ~20. Ratchet down as they
+// move; do not raise it.
+//
+//plimsoll:max-methods=29
 type docRuntime struct {
 	meta   *metamodel.Metamodel
 	policy *acl.Policy
@@ -99,6 +109,12 @@ type docRuntime struct {
 	// it (the auto-id counter and the replay op log). Read-side islands reach
 	// the recorded ops through seed.ops; nothing else may touch its internals.
 	seed *seedBindings
+
+	// acl owns the verbs that read the ACL policy: the descriptive tables
+	// (roles_matrix{}, worlds_matrix{}) and the write-side assertions
+	// (refuses{}, permits{}). Split out so the policy is not reachable from
+	// verbs that have no business seeing it.
+	acl *aclBindings
 
 	// tierB holds the injected, may-be-nil Tier-B capabilities (the browser
 	// Capturer behind screenshot{} and the APIClient behind api{}) with the
@@ -187,6 +203,13 @@ func Build(ctx context.Context, src string, opts Options) (string, error) {
 		ctx:          ctx,
 		emit:         dr.emit,
 		fail:         dr.luaFail,
+		// Resolving a world name needs the metamodel, which Tier-B deliberately
+		// cannot reach; the runtime does the lookup and hands back only the
+		// verdict.
+		validateWorld: func(name string) error {
+			_, err := dr.worldScope(name)
+			return err
+		},
 		// A closure, not a captured slice: registration happens once, before
 		// any island runs, so a snapshot taken here would always be empty. It
 		// also defers reading dr.seed itself, which is assigned below. The
@@ -196,7 +219,15 @@ func Build(ctx context.Context, src string, opts Options) (string, error) {
 	}
 	// Wired after dr exists: the seeder reports failures through the runtime's
 	// pending-BuildError channel, which only dr can own.
-	dr.seed = &seedBindings{store: st, ctx: ctx, fail: dr.luaFail}
+	dr.seed = &seedBindings{store: st, meta: opts.Meta, ctx: ctx, fail: dr.luaFail}
+	dr.acl = &aclBindings{
+		policy: opts.Policy,
+		meta:   opts.Meta,
+		store:  st,
+		ctx:    ctx,
+		emit:   dr.emit,
+		fail:   dr.luaFail,
+	}
 
 	// A reader runtime gives us the sandbox (no io/os) plus rela.* read bindings;
 	// we layer the doc.* module (emit + resolvers + raw-store seed) on top. The
@@ -216,7 +247,9 @@ func Build(ctx context.Context, src string, opts Options) (string, error) {
 		rlua.WithCapabilities(rlua.TrustedCapabilities()))
 	defer rt.Close()
 	dr.rt = rt
-	dr.registerModule()
+	// reads{}/hidden{} authorize with dr.ctx: a gopher-lua callback takes no
+	// ctx parameter, so the build-scoped one is the only one they can reach.
+	dr.registerModule() //nolint:contextcheck // runtime ctx bound at construction via WithContext
 
 	var sw seamWriter
 	for _, seg := range segs {

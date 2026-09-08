@@ -69,19 +69,44 @@ func checkUngatedMembership(p *acl.Policy) []Finding {
 	return f
 }
 
-// A2 — a role-relation confers a privileged role but is not gated by
-// requires_permission: anyone who can write that edge self-grants the role.
+// A2 — a role-relation confers an escalation-relevant role but is not gated
+// by requires_permission: anyone who can write that edge self-grants the role.
+//
+// # Why this shares acl.Policy.RoleRelationEscalates with the boot refusal
+//
+// The predicate lives on acl.Policy and is called by BOTH this finding and
+// [acl.Policy.WorldGrantRefusalReason]'s second arm, so the advisory view and
+// the enforcement view cannot disagree about the condition — TKT-T31NKT's
+// shared-predicate property (which A1 above already has), extended to A2 by
+// Ruling 8.
+//
+// # The criterion is WIDER than IsPrivileged, deliberately
+//
+// RoleRelationEscalates uses acl's roleIsEscalationRelevant: any write verb,
+// any permission, OR a read grant on a NON-DEFAULT WORLD. That last term is
+// what A1's symmetry note above does not have, and it matters here:
+//
+//	owns:   { confers: viewer }          # ungated
+//	viewer: { read: [world:published] }  # IsPrivileged: FALSE
+//
+// One `owns` write self-grants a published-world read. Keying on
+// IsPrivileged alone would leave that silent while the server refuses to
+// boot on it — an audit reporting clean on a policy that cannot start.
+//
+// This does NOT reintroduce the read-only false positive A1's note fights
+// (RR-LXI3NW / RR-UR0LJU / RR-EG5D3E). A role holding only ordinary read
+// grants is still not escalation-relevant and still produces no finding;
+// only a non-default WORLD grant counts, and only because worlds are the
+// thing a draft/published split exists to keep separate. Pinned by
+// TestA2_ReadOnlyRoleStillSilent and
+// TestRefusalIsWiderThanOrEqualToA2.
 func checkUngatedRoleRelations(p *acl.Policy) []Finding {
 	var f []Finding
 	for _, rel := range sortedRelTypes(p) {
-		def := p.RoleRelations[rel]
-		role, ok := p.Roles[def.Confers]
-		if !ok || !isPrivileged(role) {
+		if !p.RoleRelationEscalates(rel) {
 			continue
 		}
-		if def.RequiresPermission != "" {
-			continue // gated — fine
-		}
+		def := p.RoleRelations[rel]
 		f = append(f, Finding{
 			Rule: "A2-ungated-role-relation", Severity: High, Subject: rel,
 			Detail: fmt.Sprintf("role-relation %q confers the privileged role %q but is not gated by "+

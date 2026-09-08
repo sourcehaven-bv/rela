@@ -1,0 +1,214 @@
+name: Staging Build
+
+# Build the postgres server tarball from an ARBITRARY ref and publish it as an
+# expiring workflow artifact. This is what lets the atlas staging environment
+# run a PR or a branch before anything is released.
+#
+# DELIBERATELY NOT A RELEASE. No tag is pushed and no GitHub release object is
+# created:
+#
+#   * scripts/generate-version-tag.sh keeps ONE build counter shared by stable
+#     and -alpha tags ("an alpha and a stable release must never land on the
+#     same tag string"). A staging build that tagged would consume release
+#     numbers and interleave with real versions.
+#   * a staging build is not a release candidate — it is a throwaway artifact
+#     whose only consumer is the staging host. Nothing should be able to
+#     resolve it as "the latest release" (which is exactly the mistake that
+#     left v0.8 / v0.12 looking published with zero assets).
+#
+# GoReleaser therefore runs in --snapshot mode, which builds every archive
+# without publishing anything. The artifact expires on its own after 7 days;
+# there is no prune job to maintain.
+#
+# Release path is unchanged: Tag Release (tag-release.yml) → v* tag →
+# release.yml. The --alpha / prerelease mechanism there stays available for
+# genuine prerelease cuts and is NOT repurposed for staging.
+#
+# Consuming the result — see the devops repo's staging-atlas env. A workflow
+# artifact is NOT anonymously downloadable, unlike a release asset, so the
+# operator fetches it with `gh run download` and hands the tarball to Ansible;
+# roles/atlas's own sha256 + SPA gates still apply on the host.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch, tag, or SHA to build"
+        required: true
+        default: develop
+  # Labelling a PR `staging` builds its head automatically, so trying a PR on
+  # the staging host does not need a separate manual dispatch.
+  pull_request:
+    types: [labeled, synchronize]
+
+permissions:
+  contents: read
+
+concurrency:
+  # One staging build per ref. Cancelling is right here (unlike the release
+  # path): only the newest build of a ref is ever wanted.
+  group: staging-build-${{ github.event.inputs.ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build staging artifact
+    # Only run the PR path when the `staging` label is actually present —
+    # `types: [synchronize]` fires on every push to every PR otherwise.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.pull_request.labels.*.name, 'staging')
+    # 26.04 to match ci.yml / release.yml: the command sandbox needs
+    # unprivileged user namespaces, which 24.04 restricts via AppArmor.
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Build exactly what was asked for. On the PR path this is the merge
+          # ref, which is what CI tests too.
+          ref: ${{ github.event.inputs.ref || github.ref }}
+          # GoReleaser needs history + tags to derive a base version for the
+          # snapshot template below.
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: "1.26.6"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      # rela-server embeds the Vue SPA via //go:embed from the gitignored
+      # internal/dataentry/static/v2/. Without this build the embed resolves to
+      # an empty tree and the binary exits at startup with "embedded SPA is
+      # missing index.html" (BUG-2YZ575) — while the Go build stays green.
+      # Same step as release.yml; the guards below are why it can't be dropped.
+      - name: Build Vue frontend
+        run: |
+          cd frontend
+          npm ci
+          npm run build
+
+      - name: Verify SPA build output
+        run: |
+          ./scripts/check-embedded-spa-test.sh
+          ./scripts/check-embedded-spa.sh tree internal/dataentry/static/v2
+          # app_editor_dist keeps a committed .gitkeep, so its embed glob always
+          # matches and a missing bundle is not even a build error.
+          test -s internal/dataentry/app_editor_dist/rela-editor.js \
+            || { echo "FAIL: app editor bundle missing or empty" >&2; exit 1; }
+
+      # Version carries the source commit so a staging host can be traced back
+      # to what produced it. The -alpha- pre-release component keeps it valid
+      # semver (GoReleaser rejects non-semver) and sorts BELOW the equivalent
+      # stable version, so nothing can mistake it for a release.
+      - name: Compute staging version
+        id: version
+        run: |
+          set -euo pipefail
+          base="$(./scripts/generate-version-tag.sh)"   # vYY.M.BUILD, not pushed
+          sha="$(git rev-parse --short HEAD)"
+          version="${base#v}-alpha-${sha}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "Staging version: $version (no tag will be created)"
+
+      # --snapshot builds every archive and publishes nothing (it implies
+      # skipping publish/announce, so no --skip is needed). The version comes
+      # from .goreleaser.yaml's snapshot.version_template, which reads
+      # STAGING_VERSION — GORELEASER_CURRENT_TAG is IGNORED in snapshot mode,
+      # so setting it here would silently do nothing.
+      #
+      # That version drives the archive filename, so the asset lands as
+      # rela-postgres_<version>_linux_amd64.tar.gz — the exact shape
+      # roles/atlas expects.
+      - name: Run GoReleaser (snapshot; publishes nothing)
+        uses: goreleaser/goreleaser-action@v7.2.3
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean --snapshot
+        env:
+          STAGING_VERSION: ${{ steps.version.outputs.version }}
+
+      # Artifact-level guard, same as release.yml: assert the binary that was
+      # actually PACKAGED embeds the SPA. The tree check above validates the
+      # working directory; this validates what ships. Without it, dropping or
+      # reordering the frontend build would silently produce a tarball that
+      # takes the staging host down at startup.
+      - name: Verify packaged binary embeds the SPA
+        run: |
+          set -euo pipefail
+          archive=$(find dist -maxdepth 1 -name 'rela-postgres_*_linux_amd64.tar.gz' | head -1)
+          if [ -z "$archive" ]; then
+            echo "FAIL: no rela-postgres_*_linux_amd64.tar.gz in dist/" >&2
+            exit 1
+          fi
+          dir=$(mktemp -d)
+          tar xzf "$archive" -C "$dir" rela-server-postgres
+          ./scripts/check-embedded-spa.sh binary "$dir/rela-server-postgres" \
+            internal/dataentry/static/v2
+          rm -rf "$dir"
+          echo "Packaged binary embeds the SPA: $(basename "$archive")"
+
+      # The digest the deploy pins. roles/atlas passes it to get_url's
+      # `checksum:`, which hard-fails the task on a mismatch, so publishing it
+      # next to the tarball is what makes the staging deploy verifiable rather
+      # than merely convenient.
+      - name: Stage artifact + sha256
+        id: stage
+        run: |
+          set -euo pipefail
+          mkdir -p staging-out
+          archive=$(find dist -maxdepth 1 -name 'rela-postgres_*_linux_amd64.tar.gz' | head -1)
+          cp "$archive" staging-out/
+          name=$(basename "$archive")
+          ( cd staging-out && sha256sum "$name" > "${name}.sha256" )
+          sha=$(awk '{print $1}' < "staging-out/${name}.sha256")
+          echo "sha256=$sha" >> "$GITHUB_OUTPUT"
+          echo "asset=$name" >> "$GITHUB_OUTPUT"
+
+      - name: Upload staging artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: rela-postgres-staging-${{ steps.version.outputs.version }}
+          path: staging-out/
+          # Expiry is the whole retention policy — no prune job. A pin older
+          # than this is not reproducible from CI; re-dispatch on the same ref.
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Summary
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          ASSET: ${{ steps.stage.outputs.asset }}
+          SHA256: ${{ steps.stage.outputs.sha256 }}
+          # Quoted into env rather than interpolated into the script body:
+          # github.ref is repo-controlled here, but keeping every ${{ }} out of
+          # `run:` is the rule that makes injection review cheap.
+          REF: ${{ github.event.inputs.ref || github.ref }}
+          RUN_ID: ${{ github.run_id }}
+          REPO: ${{ github.repository }}
+        run: |
+          {
+            echo "### Staging build :package:"
+            echo ""
+            echo "**Ref:** \`$REF\`"
+            echo "**Version:** \`$VERSION\` (no tag, no release)"
+            echo "**Asset:** \`$ASSET\`"
+            echo "**sha256:** \`$SHA256\`"
+            echo ""
+            echo "Artifact expires in 7 days. Deploy to staging with:"
+            echo ""
+            echo '```'
+            echo "gh run download $RUN_ID --repo $REPO --dir /tmp/rela-staging"
+            echo "cd <devops>/staging-atlas"
+            echo "just deploy-rela $VERSION $SHA256"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

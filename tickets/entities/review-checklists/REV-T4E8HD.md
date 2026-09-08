@@ -21,6 +21,6 @@ status: done
 ## Verification
 
 - [x] The grep claim is now true: `grep -rn "visibility.Unrestricted"` returns all six ungated sites.
-- [x] Pass-through pinned behaviorally, not by pointer identity (memstore returns defensive copies, so identity was the wrong property).
+- [x] Pass-through pinned behaviorally, not by face identity (memstore returns defensive copies, so identity was the wrong property).
 - [x] Method-set enumerated by name rather than type-asserting `store.Store` — the latter only fires if the whole store is re-embedded and stays silent when a single write method is added.
 - [x] PR: https://github.com/sourcehaven-bv/rela/pull/1208

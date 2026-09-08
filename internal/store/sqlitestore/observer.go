@@ -50,12 +50,37 @@ func (s *Store) notifyPut(e *entity.Entity) {
 	}
 }
 
-func (s *Store) notifyDelete(id string) {
+// notifyFaceDelete announces the removal of ONE face.
+//
+// The two observer kinds are mutually exclusive per call, per
+// [store.FaceObserver]: a face-aware observer is told precisely which face
+// went, while a bare-id observer hears nothing here — it is served by
+// notifyLastFaceDelete once the family is empty, preserving the pre-states
+// contract that a bare-id delete means "the entity is gone".
+func (s *Store) notifyFaceDelete(id string, p entity.Face) {
 	if s.txPending != nil {
-		s.txPending.add(func(root *Store) { root.notifyDelete(id) })
+		s.txPending.add(func(root *Store) { root.notifyFaceDelete(id, p) })
 		return
 	}
 	for _, o := range s.root().observers {
+		if fo, ok := o.(store.FaceObserver); ok {
+			_ = fo.EntityFaceDelete(id, p)
+		}
+	}
+}
+
+// notifyLastFaceDelete tells the bare-id observers the entity is gone.
+// Face-aware observers are skipped: they already received one notifyFaceDelete
+// per face and would otherwise see the last one twice.
+func (s *Store) notifyLastFaceDelete(id string) {
+	if s.txPending != nil {
+		s.txPending.add(func(root *Store) { root.notifyLastFaceDelete(id) })
+		return
+	}
+	for _, o := range s.root().observers {
+		if _, ok := o.(store.FaceObserver); ok {
+			continue
+		}
 		_ = o.EntityDelete(id)
 	}
 }

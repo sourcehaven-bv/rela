@@ -18,7 +18,7 @@ status: done
 IN:
 1. `metamodel.TransitionDef.Label` (new optional YAML `label`) — display text for the *move* (transitions are actions, not states).
 2. `statemachine`: carry label on compiled edge + `TransitionVerdict.Label`; add `Set.EntryValue(type, prop)` read accessor.
-3. Wire: `v1.Entity._transitions` (`map[field][]Transition{to,label,guard,allowed,reason}`), pointer/closed-world like `_fields`.
+3. Wire: `v1.Entity._transitions` (`map[field][]Transition{to,label,guard,allowed,reason}`), face/closed-world like `_fields`.
 4. dataentry: optional `TransitionResolver` interface, type-asserted in `attachEntityAffordances`; per-entity responses only. Create-lock via dry-run `_fields[field].writable=false` + entry value.
 5. New SPA `StatusControl.vue`: shows only ALLOWED transitions, labeled by action label; commit-on-select via useAutoSave. FieldRenderer routes machine field → StatusControl, else SelectWidget (fallback).
 6. Create form: machine field locked to initial value.

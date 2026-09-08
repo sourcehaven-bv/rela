@@ -854,6 +854,34 @@ Relations define how entity types can be connected:
 | `max_outgoing` | Maximum outgoing relations per from-side entity |
 | `min_incoming` | Minimum incoming relations per to-side entity   |
 | `max_incoming` | Maximum incoming relations per to-side entity   |
+| `scope`        | `identity` (default) or `content` — what the relation attaches to under content states (see below) |
+
+### Relation scope (`scope:`)
+
+With content states (an entity holding several faces such as `draft` and
+`published`), every relation type declares what its edges attach to:
+
+```yaml
+relations:
+  owned-by:    { scope: identity }   # attaches to the entity; shared by all states
+  references:  { scope: content }    # attaches to a specific state (its tail side)
+```
+
+- **`identity`** (the default): the edge belongs to the entity as a
+  whole. Ownership, containment, and membership are identity facts — a
+  draft does not get a different owner than its published face by
+  accident. A project that never uses content states behaves identically
+  with or without the declaration.
+- **`content`**: the edge belongs to one state on its **source** side; a
+  draft may reference different targets than the published face. Targets
+  are always entity-level — a relation can never point *at* a specific
+  state of its target.
+
+Unknown values are a load error. The declaration is consumed by worlds, which
+serve a face's own content-scoped edges and resolve each neighbour through the
+same world, and by copy definitions, which may copy content-scoped edges but
+never identity-scoped ones. See
+[Content States and Worlds](#content-states-and-worlds).
 
 ### Example Relation
 
@@ -972,6 +1000,234 @@ relations:
     to: [requirement, decision]
     symmetric: true
 ```
+
+## Content States and Worlds
+
+An entity type can declare **faces**: several content states of one entity,
+such as `draft` and `published`, or `en` and `nl`. A **world** is a named rule
+that picks one face per entity for a reader. A **copy** moves content from one
+face to another under a permission guard. This section is the key reference
+for all three declarations. The guide
+[How To Publish Content with Faces and Worlds](content-states.md) walks through
+a complete setup, and the
+[Data Entry Web App guide](data-entry.md#worlds-in-the-web-app-and-api) covers
+the HTTP API and the web app.
+
+All three declarations are optional. A schema with no `faces:`, `worlds:`, or
+`copies:` behaves exactly as it did before, and a project can mix types that
+declare faces with types that do not.
+
+### Declaring faces
+
+```yaml
+entities:
+  policy:
+    label: Policy
+    bare_face: draft           # POL-1 and POL-1@draft are one row
+    faces:
+      draft:     { label: "Draft" }
+      published: { label: "Published" }
+  ticket:
+    label: Ticket              # no faces: one state, present in every world
+```
+
+| Key | Meaning |
+| --- | --- |
+| `faces` | A map from face name to face definition. A type without it has exactly one state, and that state appears in every world. |
+| `faces.<name>.label` | Display text for the web app. Falls back to the face name. It has no effect on resolution. |
+| `bare_face` | The declared face that the bare entity id addresses. It must name a declared face. Omitting it leaves the entity's own row without a name and makes every declared face a separate suffixed row, which is legal but rarely intended. |
+
+`bare_face:` names a row that already exists: every entity has a row under its
+bare id whether or not the type declares faces, so adding `faces:` to a type
+migrates nothing.
+
+A face name is a run of lowercase letters and digits, with further runs joined
+by single hyphens: `draft`, `published`, `in-review`. Uppercase letters,
+underscores, a leading digit, doubled hyphens, and `+` are rejected when the
+schema loads. World names use the same grammar, because both reach URLs and
+`acl.yaml` grants.
+
+### Declaring worlds
+
+```yaml
+worlds:
+  published:
+    select: published
+    overrides:
+      guide: [en]                 # guides have no published face; English is it
+    otherwise: exclude
+    banner: "Published — this is what readers see"
+  editorial:
+    select: [draft, published]    # first existing face wins
+    otherwise: default
+  site-nl:
+    select: [nl, en]
+    otherwise: default
+```
+
+| Key | Meaning |
+| --- | --- |
+| `select` | The face to show, or an ordered list. The first face the entity has wins. A single name and a one-element list mean the same thing. |
+| `overrides` | A map from entity type to a chain that replaces `select` for that type. It replaces the chain rather than extending it. |
+| `otherwise` | **Required.** What happens to an entity whose type declares faces but that has none the chain names: `exclude` leaves it out of the world, `default` shows its bare face. |
+| `banner` | Optional text the web app shows on every page in this world. Empty shows no announcement. The read-only note and the way back to the default world are not configurable. |
+| `primary_for` | Optional. The faces this world is the canonical home of. Needed only when two worlds lead with the same face for a type. See below. |
+| `edits` | Accepted and validated as a declared face name. Not used yet. |
+
+A world resolves each entity to **at most one** face, using three rules in
+order:
+
+1. The type declares no faces, so the entity appears with its only state.
+2. The entity has a face the chain names, so the first such face in chain
+   order is shown.
+3. Otherwise, `otherwise:` decides: `exclude` or `default`.
+
+Rule 2 is why publishing works. If `POL-1` has no `published` face, it does not
+exist in the `published` world. Absence is the publication bit.
+
+A chain may name the face that `bare_face:` points at. That face is stored
+under the bare id rather than as a separate row, but naming it in a chain
+selects it by rule 2 like any other face, and the response reports the chain
+position it matched at.
+
+`otherwise:` has no default, and a world without it does not load. The two
+values are opposites and both are reasonable: a public world wants `exclude`,
+an internal one usually wants `default`. Guessing wrong would mean a
+`published` world quietly serving a draft, so the schema has to say which one
+it means.
+
+Every project also has an implicit **default world**, in which every entity
+appears with its bare face. It needs no declaration, it always exists, and the
+name `default` is reserved so nothing can shadow it. Reading any other world
+requires a `world:<name>` grant in `acl.yaml`; see the
+[ACL: Authorization Overview](acl-overview.md#scoping-a-grant-to-a-content-state).
+
+#### Load-time checks on worlds
+
+The loader refuses the whole schema, and reports every problem it finds, when
+a world:
+
+- declares neither `select:` nor `overrides:`, which would resolve every faced
+  entity through `otherwise:` alone;
+- omits `otherwise:`, or gives it a value other than `exclude` or `default`;
+- names a face in `select:` that no entity type declares;
+- names, in `overrides:`, an unknown type, a type that declares no faces, an
+  empty chain, or a face that type does not declare;
+- names a face in `edits:` or `primary_for:` that it does not qualify for;
+- is called `default` in any capitalization, or has a name outside the face
+  grammar.
+
+### `primary_for:` — only when two worlds lead the same face
+
+A face switcher in the web app ("go to the Dutch version") has to name a
+**world**, because `?world=` is how a face is read and a bare face is not a
+world. Which world serves a face is normally inferred: it is the world whose
+chain **leads** with that face. `site-nl` selecting `[nl, en]` is the world
+that serves `nl`. It is not the world that serves `en`, which it only falls
+back to.
+
+That inference is unambiguous until two worlds lead the same face for the same
+type. Then it is a genuine tie, and `primary_for:` breaks it:
+
+```yaml
+worlds:
+  site-nl:
+    select: [nl, en]
+    otherwise: default
+    primary_for: nl        # the canonical home of the Dutch face
+  editorial-nl:
+    select: [nl]
+    otherwise: exclude
+```
+
+Two rules are enforced at load:
+
+- **An undeclared tie is an error.** If several worlds lead a face *and resolve
+  it identically*, and none claims it, the schema does not load. Picking one
+  would depend on the order the configuration happened to serialize in.
+- **A claim may only confirm, never contradict.** Naming a face this world does
+  not lead is an error, because the resulting control would navigate to a world
+  where the face is not primary.
+
+Sharing a chain head is **not** by itself a tie. Two worlds may lead the same
+face and differ in `otherwise:`, such as a published world where absence means
+"not published" beside a lenient sibling that substitutes instead. That pair
+loads without a declaration, and the face switcher omits the face unless one
+world claims it.
+
+The key sits on the **world**, not on the face, because `overrides:` makes the
+answer per type and face: one world can lead `en` for `guide` while another
+leads it for `policy`.
+
+### Relation scope under faces
+
+Every relation type declares whether its edges belong to the entity or to one
+face, with the `scope:` key described under [Relations](#relation-scope-scope).
+When a reader in a world looks at an entity's relations, the edges are those
+of the face being served, and each neighbour is resolved through the same
+world on its own.
+
+### Declaring copies
+
+Ordinary writes address the bare face. A non-bare face is written only through
+a **copy definition** that names it as a target and carries its own permission
+guard, which is what makes publishing an authorized operation rather than a
+field edit.
+
+```yaml
+copies:
+  publish:
+    from: policy@draft
+    to: policy@published
+    label: Publish
+    fields: all
+    relations:
+      implements: replace
+    guard:
+      permission: publish-policy
+```
+
+| Key | Meaning |
+| --- | --- |
+| `from` | The source face, as `type` or `type@face`. |
+| `to` | The target face. When it names a non-bare face, `guard:` is mandatory. |
+| `label` | Display text for the action in the web app. Plain text, no interpolation. Falls back to the definition name. |
+| `fields` | `all` to copy every declared property, or a map from target property to source expression using the `{{...}}` interpolation grammar. A copy between different types requires an explicit map. |
+| `relations` | A map from relation type to `merge` (add the edges the target lacks) or `replace` (swap the target face's edges of that type). Only `scope: content` relation types can be listed. An omitted type is not copied. |
+| `guard.permission` | The ACL permission a caller must hold on the source entity. **Required** when `to` names a non-bare face. |
+
+A request invokes a definition by name and never supplies a mapping. See
+[Invoking a copy](data-entry.md#invoking-a-copy) for the HTTP surface.
+
+#### Load-time checks on copies
+
+The loader refuses a copy definition that:
+
+- targets a non-bare face without a `guard.permission`, because an unguarded
+  definition would open the face to anyone who can name the copy;
+- names a face or type that the schema does not declare;
+- copies no fields, or declares both `fields: all` and a field map;
+- uses `fields: all` on a copy into a different entity. That copy reads
+  through the caller's visibility, so copying every field would write a
+  redacted entity;
+- lists an identity-scoped relation type, because such an edge is shared by
+  every face and copying it could duplicate an edge that confers roles;
+- sets `guard.when`, which is not implemented yet. A condition that is written
+  but never evaluated is refused rather than ignored.
+
+A copy runs as one store transaction and is audited after it commits. The
+PostgreSQL backend rolls back a failed copy. On the filesystem and in-memory
+backends the transaction is a write lock only, so a failure part-way through
+can leave a partially written target face.
+
+### Checking stored states
+
+`rela analyze states` reports state rows the schema does not account for, for
+example rows left behind after a `faces:` entry was renamed or removed. A face
+is checked against **its own entity type**: a `draft` row on a type that
+declares no faces is reported even if another type declares `draft`. This is
+detection only. To move rows between faces, use the `rename_face` step of the
+[data migration system](data-migration.md#renaming-a-content-state).
 
 ## Default Metamodel
 
@@ -1301,6 +1557,7 @@ validations:
   - name: rule-identifier # Unique name for the rule
     description: "Human-readable description shown in output"
     entity_type: requirement # Optional: limit to specific type
+    faces: [published] # Optional: limit to specific content states
     when: # Optional: IF these conditions match...
       - "status=accepted"
     then: # THEN these must be true
@@ -1313,9 +1570,42 @@ validations:
 ### How Validation Rules Work
 
 1. **Select entities**: If `entity_type` is specified, only those entities are checked
-2. **Apply when filter**: If `when` is specified, only entities satisfying ALL when conditions are subject to the rule
-3. **Check then conditions**: Matched entities must satisfy ALL `then` conditions
-4. **Report violations**: Entities that match `when` but don't satisfy `then` are reported
+2. **Select content states**: Every state is checked by default. If `faces` is
+   specified, only those states are (see below)
+3. **Apply when filter**: If `when` is specified, only entities satisfying ALL when conditions are subject to the rule
+4. **Check then conditions**: Matched entities must satisfy ALL `then` conditions
+5. **Report violations**: Entities that match `when` but don't satisfy `then` are reported
+
+### `faces:` — scoping a rule to content states
+
+If a type declares `faces:`, each state is a separate row and **every one is
+validated**. A rule with no `faces:` key therefore applies to all of them,
+including the bare face.
+
+That default is deliberate: a rule is a correctness claim, and the safe
+direction for a claim is to check more rather than less. A rule that silently
+skipped a state would let `rela validate` report a clean run over data it never
+looked at — worse than no check, because it is a claim.
+
+Set `faces:` when the rule is genuinely about particular states:
+
+```yaml
+validations:
+  - name: published-policy-needs-owner
+    entity_type: policy
+    faces: [published]
+    then: ["owner!="]
+```
+
+Without the scope, that rule reports every unfinished draft as a violation, and
+a validator that cries wolf gets ignored.
+
+Name faces as you declared them — the bare face by its declared name, not as an
+empty value. A face no type declares is a **load error**: the rule would match
+nothing and pass forever while appearing to guard something.
+
+Violations report which state they are about, so an entity with a valid bare
+face and an invalid translation is unambiguous in the output.
 
 ### `when:` vs `when_condition:` — two dialects, on purpose
 
@@ -1693,8 +1983,41 @@ Automations fire based on entity changes:
 | `created`          | Fires when entity is created              | `true`                 |
 | `relation_created` | Fires when this relation type is created  | `implements`           |
 | `relation_removed` | Fires when this relation type is removed  | `implements`           |
+| `faces`            | Content states to watch (default: all)    | `[published]`          |
 | `when`             | Property conditions that must match (AND) | `["kind=enhancement"]` |
 | `condition`        | Predicate expression that must hold (AND) | `"days_between(entity.due, today()) <= 7"` |
+
+### Scoping an automation to content states
+
+If a type declares `faces:`, each state is a separate row and an automation
+fires on **every one of them** by default. That is the existing behaviour and
+the honest reading of an unscoped rule — "when a ticket's status becomes done"
+is a statement about tickets, and a translated ticket is still a ticket.
+
+What it costs is multiplied side effects. An automation that creates a checklist
+entity will create one per state, which is rarely what an operator means. Use
+`faces:` when the automation is about particular states:
+
+```yaml
+automations:
+  - name: announce-publication
+    on:
+      entity: policy
+      property: status
+      becomes: approved
+      faces: [published]
+    do:
+      - set: announced_at
+        value: "{{today}}"
+```
+
+Name faces as you declared them — the bare face by its declared name, not as an
+empty value. A face the triggering type does not declare is a **load error**:
+the trigger would never fire, silently disabling the automation it was meant to
+narrow.
+
+An action writes back to the state that triggered it, so an automation firing on
+a translation updates that translation and not its sibling.
 
 ### Conditional Triggers
 

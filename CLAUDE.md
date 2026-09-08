@@ -70,6 +70,15 @@
   scopes)`), so a bug fails toward less access — except in the compilation
   step, which is why that has direct unit tests rather than only
   end-to-end ones.
+
+  **What this rule does NOT forbid**: adding a new allowlist DIMENSION to
+  the compiled result. The prohibition is on subtractive evaluation — a
+  `deny` the evaluator applies per row — not on the query carrying more
+  allowlists. `ReadQueryResult` already carries a type verdict and a
+  composed `GraphQuery`; a per-face allowlist (TKT-FACEREAD) is the same
+  shape: computed from grants at compile time, pushed down as an
+  additional predicate, still additive. It costs one predicate per
+  backend, not a re-derivation of the evaluator.
 - **Read-out paths go through visibility wrappers, base readers stay
   ungated.** Read-side ACL (entity row-gating + field-level `visible:`
   redaction) is enforced by `internal/visibility` decorators
@@ -216,6 +225,44 @@
   value interpolated into CSS — palette tokens included — must be allowlisted).
   Reversing either is a silent downgrade, not a build failure.
 
+  **`lua` may import `mailrender`, and that does NOT invert the `mail → lua`
+  arrow.** `mail.render` (TKT-1GA2PG) builds a `mailrender.Message` from a
+  script table so a Lua author gets the hardened template instead of
+  hand-writing HTML for `mail.send`. The arch-lint rule forbidding
+  `lua → mail` is untouched and still holds; `mailrender` is a *different*
+  component and a true leaf (`go list -deps` shows zero internal imports), so
+  the two arrows cannot form a cycle. The binding must never grow an `html:` or
+  `css:` field — that would reintroduce the sanitizer bypass it exists to give
+  authors an alternative to.
+
+  **Email CSS is not web CSS, and the template's shape encodes that.** Section
+  headings and the empty-section note are single-cell tables, and vertical gaps
+  are spacer rows, because Outlook Windows honors `padding` only on table cells
+  and `margin` is unsupported or partial across Gmail, Outlook, Yahoo and AOL.
+  A `<div>` with padding renders fine wherever you are likely to test it and
+  collapses where you are not. `internal/mailrender/compat_test.go` scores the
+  rendered output against a **vendored, pinned** Can I Email dataset
+  (`testdata/caniemail.min.json`) and fails on a regression — treat it as a
+  floor, not proof the mail looks right.
+
+  **Dark mode is defensive, and `<meta name="color-scheme">` is deliberately
+  absent.** Clients split three ways: some leave mail alone (Apple Mail, Gmail
+  desktop, Yahoo, AOL), some partially invert and honor `prefers-color-scheme`
+  (the Outlook family), and some fully invert and rewrite the query to
+  `@media none` so they cannot be targeted at all (Gmail iOS/Android, Outlook
+  Windows). The `@media` block serves the middle group; the palette (mid-tone
+  borders, no pure white on pure black) serves the third. Adding the meta tag
+  looks like a free win and is the trap: it opts Apple Mail *into* inverting,
+  making a currently-correct rendering worse. A test asserts its absence.
+
+  **A message's language belongs on `Message`, never on `Options`.** `Options`
+  is renderer-scoped branding and a `Renderer` is built once per deployment, so
+  an `Options.Lang` would stamp one language on every mail an instance sends —
+  and a Dutch digest and an English one cannot both be right. `Options` carries
+  only the *default*. The tag is validated in `mailrender` (shape-only BCP-47,
+  rejected not escaped) because it arrives from both operator config and
+  untrusted Lua, and validating at either call site would leave the other open.
+
   The SMTP password lives in **`.rela/secrets.yaml`** under `smtp_password` —
   the same store Lua scripts read, because an SMTP credential is no different
   in kind from the API tokens already kept there. `password_env` in
@@ -232,6 +279,23 @@
   there is no signal handler, so pending mail is lost on every restart with no
   drain. Mail is notification, never a system of record. A durable queue with
   swappable backends is IDEA-WIJ2H1.
+- **Collection reads are content-free, batched per page, and paged in the
+  store when they can be** (TKT-1U8XYN). A list, search, kanban or scope
+  pipeline reads `store.EntityHeader` rows (`ListEntityHeaders`,
+  `GraphQueryHeaders`) and never a body it will not render; a body is loaded
+  for the served rows only, on `include_content=true`. Per-row lookups are
+  the defect this rule exists to prevent: a page loads its edges with ONE
+  `RelationQuery.EntityIDs` query, its neighbours with ONE header batch, a
+  table section its relation columns with one query per (column, row type).
+  Write authorization reuses the request's `acl.Request` (the membership walk
+  runs once per operation, not once per verb per row). When the request's
+  shape allows it, the list handler pushes paging, ordering and equality
+  filters into `store.GraphQuery` (`listpushdown.go`) and takes the scoped
+  count through `store.CountMatched`, never `GraphCount`'s total. New read
+  paths pin their cost with a `storetest.Counting` budget test asserting the
+  count is the same at 10 and 50 rows. Measure on the postgres backend with
+  `rela-server -verbose` (`Server-Timing`, one `request` log line each) against
+  `prototypes/perf/project` seeded by `rela dev seed`.
 - **Boundaries are enforced.** `just arch-lint` checks package import
   rules; run it before PR.
 
@@ -613,6 +677,14 @@ Rules when touching this:
   rows). Migration steps must stay idempotent — re-run IS the crash
   recovery. The Lua step is a pure transform (patch in, patch out, engine
   applies); never hand it a write handle.
+- **Perf seeding** (TKT-1U8XYN, `internal/perfseed`, `rela dev seed`) is the
+  fourth raw-store exception, under the same terms: operator shell, attributed
+  (`perf-seed` tool), one `perf-seed` audit record, and it refuses a non-empty
+  store. Because nothing above the store runs, the generator keeps the
+  invariants the store cannot: ids minted by construction and validated, the
+  single `unique:` property unique by construction, every edge endpoint
+  emitted by the same generator. Do not route it through entitymanager to
+  "fix" that — 20k automations per seed is the cost it exists to avoid.
 - DSN is read from the `RELA_DATABASE_URL` env var **only** — there is no
   `--database-url` flag, so the credential never lands in `ps`/shell history.
   `appbuild.Discover` reads the env into `appbuild.Config.DatabaseURL`; the
@@ -727,10 +799,23 @@ matters.
 
 ## Security
 
-`govulncheck` runs on every PR touching `go.mod` / `go.sum` (the `vulncheck`
-job in `ci.yml`) and weekly from `security.yml`. Known-unfixable vulns are
-filtered via `scripts/govulncheck-filtered.sh` — keep `IGNORED_OSVS` in sync
-with `scripts/govulncheck-fixable.sh`. Run locally: `just govulncheck`.
+`govulncheck` runs **daily** from `security.yml`, which auto-opens an
+auto-merging `go get` PR when a fix exists and files a tracking issue when one
+does not. It also gates releases (the `security` job in `release.yml`) — a
+release must not ship a known vulnerability.
+
+It deliberately does **not** run on the PR path. A vulnerability in an
+already-merged dependency is not a defect in whatever PR happens to be in
+flight, and gating there blocks unrelated work: the old `ci.yml` job scanned
+only on a `go.mod`/`go.sum` diff, but the merge queue runs on `merge_group`
+(not `pull_request`) and took the unconditional-scan branch — so an advisory
+would pass on the PR and then dequeue it from the merge queue. Don't
+reintroduce a blocking vulnerability check on PRs; raise the scan cadence
+instead.
+
+Known-unfixable vulns are filtered via `scripts/govulncheck-filtered.sh` —
+keep `IGNORED_OSVS` in sync with `scripts/govulncheck-fixable.sh`. Run
+locally: `just govulncheck`.
 
 ## Commands
 

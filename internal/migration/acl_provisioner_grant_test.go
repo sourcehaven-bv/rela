@@ -330,3 +330,40 @@ func TestACLProvisionerGrant_Registered(t *testing.T) {
 	}
 	t.Fatal("acl-provisioner-grant is not registered for FileTypeACL")
 }
+
+// TestACLProvisionerGrant_PreservesStateShapedGrant pins RR-H98VX0.
+//
+// The grant list is REPLACED wholesale when the migration decides the role
+// does not already grant create on the user type (SetMapNode swaps the
+// value node for a fresh one-element list). So a create grant written in
+// the state-shaped form `person@draft` (TKT-DN37J2) must be recognized as
+// already granting create on `person` — otherwise the migration silently
+// destroys it, AND any unrelated entries beside it.
+func TestACLProvisionerGrant_PreservesStateShapedGrant(t *testing.T) {
+	src := provisionLookup + "unmatched_principal: provision\n" +
+		"roles:\n  provisioner-system:\n    create: [person@draft, ticket]\n" +
+		"assignments:\n  system:provisioner: provisioner-system\n"
+
+	m := &migration.ACLProvisionerGrantMigration{}
+	var root yaml.Node
+	if err := yaml.Unmarshal([]byte(src), &root); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if m.Detect(&root) {
+		t.Fatal("a state-shaped create grant on the user type already grants " +
+			"create on that type; the migration must not fire")
+	}
+
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(&root); err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	out := buf.String()
+	for _, want := range []string{"person@draft", "ticket"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("migration destroyed the grant %q; result:\n%s", want, out)
+		}
+	}
+}

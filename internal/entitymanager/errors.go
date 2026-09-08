@@ -77,6 +77,15 @@ var ErrEntityAlreadyExists = errors.New("entity already exists")
 // storage layer cannot persist one ID as two types).
 var ErrTypeImmutable = errors.New("entity type is immutable on update; body type differs from the stored type")
 
+// ErrFaceImmutable is the face-axis twin of [ErrTypeImmutable], and exists
+// for the identical reason (BUG-Y0GNSB). The store keys a write on
+// stateKey(ID, Face), so a body that names a face different from the stored
+// one is not editing the record it addressed — it is redirecting the write
+// to a sibling face. Since the ACL subject is bound to the stored face,
+// allowing the divergence would mean authorizing against one face and
+// writing another. Surfaced by the sync handler as HTTP 422, like its twin.
+var ErrFaceImmutable = errors.New("entity face is immutable on update; body face differs from the stored face")
+
 // ErrRelationAlreadyExists is returned by [Manager.CreateRelation]
 // when the (from, type, to) tuple already exists.
 var ErrRelationAlreadyExists = errors.New("relation already exists")

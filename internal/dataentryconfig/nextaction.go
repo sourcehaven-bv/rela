@@ -23,6 +23,8 @@ package dataentryconfig
 //
 // See RES-09YLLL for the full design and the decisions behind it.
 
+import "github.com/Sourcehaven-BV/rela/internal/metamodel"
+
 // NextActionBand is one priority tier. Bands are declared by the OPERATOR as
 // an ordered list; list order IS priority order, highest first.
 //
@@ -222,6 +224,75 @@ type NextActionSource struct {
 	// or the source as a whole. Empty means [DeferScopeEntity], except for a
 	// pick_one source — see [NextActionSource.ResolvedDeferScope].
 	DeferScope NextActionDeferScope `yaml:"defer_scope,omitempty" json:"defer_scope,omitempty"`
+
+	// SourceWorld is the world this source's CANDIDATE QUERY runs in — which
+	// face of each entity the query looks at, and which entities it can see
+	// at all. Empty means the default world.
+	//
+	// Next-actions almost always answer "what is unfinished?", and unfinished
+	// work is exactly what a publication world like `published` excludes. A
+	// source scoped naively to whatever world the user happens to be browsing
+	// would therefore be reliably empty in the world most people browse. So
+	// the query world is DECLARED BY THE OPERATOR, per source, and is never
+	// taken from the request: `source_world: editorial` says "look for stalled
+	// work in the editorial world" regardless of where the reader is standing.
+	//
+	// ORTHOGONAL to VisibleWorlds. This one decides WHAT IS FOUND; that one
+	// decides WHERE IT MAY BE SHOWN. A source may query `editorial` and be
+	// visible everywhere, or query one world and surface only in another.
+	// They are two keys rather than one for the same reason Query and
+	// Condition are: a single key would have to guess which of two unrelated
+	// meanings an operator intended, and would guess quietly.
+	//
+	// ACL is unchanged and unconditional: candidates still arrive through the
+	// caller's read gate, so a source naming a world cannot surface an entity
+	// this principal may not read. A principal holding no read grant for the
+	// named world contributes NO candidates from this source — see
+	// dataentry.nextActionSourceWorld for why that is a skip and not an error.
+	SourceWorld string `yaml:"source_world,omitempty" json:"source_world,omitempty"`
+
+	// VisibleWorlds is an ALLOW LIST of worlds in which this suggestion may be
+	// DISPLAYED. Empty (the default) matches EVERY world.
+	//
+	// Purely presentational: "only show this while the user is browsing
+	// `editorial`". It says nothing about which entities were found — that is
+	// SourceWorld — and it is NOT a confidentiality boundary. A suggestion
+	// omitted here is omitted because it would be noise in that world, not
+	// because its content is secret; the content was already bounded by the
+	// read gate before this key was consulted, and every entity it names
+	// remains reachable through the ordinary read API. Never rely on this list
+	// to conceal anything.
+	//
+	// Empty means all-worlds rather than no-worlds because the safe direction
+	// for an advisory surface is to keep working: an operator who has not
+	// thought about worlds gets today's behavior, and one who lists a world
+	// has said something deliberate. The reserved name `default` names the
+	// default world.
+	VisibleWorlds []string `yaml:"visible_worlds,omitempty" json:"visible_worlds,omitempty"`
+}
+
+// VisibleInWorld reports whether a suggestion from this source may be shown to
+// a reader currently browsing the world named `world` (the reserved name
+// "default" for the default world).
+//
+// An empty VisibleWorlds matches every world — see the field doc. This is a
+// PRESENTATION filter only; it is never the reason content is safe to serve.
+func (s NextActionSource) VisibleInWorld(world string) bool {
+	if len(s.VisibleWorlds) == 0 {
+		return true
+	}
+	if world == "" {
+		world = metamodel.DefaultWorldName
+	}
+	for _, w := range s.VisibleWorlds {
+		if w == "" {
+			w = metamodel.DefaultWorldName
+		}
+		if w == world {
+			return true
+		}
+	}
+	return false
 }
 
 // NextActionDeferScope is what "not now" applies to.

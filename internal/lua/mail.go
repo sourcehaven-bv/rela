@@ -2,6 +2,11 @@
 //
 //	mail.send{to = ..., subject = ..., html = ..., text = ...}
 //	  -> (true, nil) | (nil, err_table)
+//	mail.render{subject = ..., sections = {...}} -> html, text
+//
+// mail.render is the structured alternative to composing `html` by hand; it
+// lives in mailrender.go, which documents why it exists and why it has no
+// raw-HTML field.
 //
 // The binding is a THIN pass to the configured [MailSender]. It does not
 // render, does not template, and does not know a transport from a hole in the
@@ -95,6 +100,10 @@ func registerMailModule(r *Runtime) {
 	// substantive fix; suppressing the finding at twelve unrelated call sites
 	// would be the cosmetic one.
 	r.L.SetField(tbl, "send", r.L.NewFunction(r.luaMailSend))
+	// mail.render is pure formatting with no transport, so it is registered on
+	// the same terms as send and works even when mail is unconfigured — see
+	// the doc on mailrender.go.
+	r.L.SetField(tbl, "render", r.L.NewFunction(mailRenderFunc(r.mailSender)))
 	r.L.SetGlobal("mail", tbl)
 }
 

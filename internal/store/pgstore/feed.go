@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync/atomic"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -130,9 +131,13 @@ func notifyPayload(origin, schema string, ev store.Event) string {
 	var a, b, c string
 	switch ev.Op {
 	case store.EventEntityCreated, store.EventEntityUpdated, store.EventEntityDeleted:
-		a = ev.EntityID
+		// The id slot carries the STATE reference in its boundary
+		// serialization (TKT-DOFYR1): "PAGE-1" or "PAGE-1@draft". '@' is
+		// distinct from the '\x1f' field separator, and the codec is the
+		// one legal producer of the joined form at a wire boundary.
+		a = entity.FormatStateRef(ev.EntityID, ev.Face)
 	case store.EventRelationCreated, store.EventRelationUpdated, store.EventRelationDeleted:
-		a, b, c = ev.From, ev.RelationType, ev.To
+		a, b, c = entity.FormatStateRef(ev.From, ev.Face), ev.RelationType, ev.To
 	}
 	// EntityType is carried for entity events so the listener can rebuild a
 	// faithful event; relations don't carry a type beyond RelationType.
@@ -160,9 +165,17 @@ func parseFeedPayload(payload string) (feedEvent, bool) {
 	ev := store.Event{Op: feOp}
 	switch kind {
 	case "e":
-		ev.EntityType, ev.EntityID = entType, a
+		id, ptr, err := entity.ParseStateRef(a)
+		if err != nil {
+			return feedEvent{}, false // malformed → catch-up, never a bad event
+		}
+		ev.EntityType, ev.EntityID, ev.Face = entType, id, ptr
 	case "r":
-		ev.From, ev.RelationType, ev.To = a, b, c
+		from, fp, err := entity.ParseStateRef(a)
+		if err != nil {
+			return feedEvent{}, false
+		}
+		ev.From, ev.Face, ev.RelationType, ev.To = from, fp, b, c
 	}
 	return feedEvent{origin: origin, schema: schema, ev: ev}, true
 }

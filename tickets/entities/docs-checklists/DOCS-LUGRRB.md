@@ -15,7 +15,7 @@ status: done
 
 ## Project Documentation
 
-- [x] CLAUDE.md content-versioning bullet updated: the two sanctioned boundary-populated attribution routes (VersionInput + Attribution ctx carrier), the NULL→version-sweep fallback, and the TKT-0IGI4V pointer for author-boundary segmentation
+- [x] CLAUDE.md content-versioning bullet updated: the two sanctioned boundary-populated attribution routes (VersionInput + Attribution ctx carrier), the NULL→version-sweep fallback, and the TKT-0IGI4V face for author-boundary segmentation
 
 ## External Documentation
 

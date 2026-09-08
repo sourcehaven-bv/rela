@@ -1,24 +1,24 @@
 ---
 id: RES-NH3P12
 type: research
-title: 'Metamodel-declared pointers (draft/published): storage model and ACL integration'
-summary: Store pointers as a per-entity ref table (name → vseq) on the injected VersionService, declared per type in metamodel.yaml; make the pointer the ACL SUBJECT via a per-pointer read verdict (`type@pointer`) in acl.yaml, so the built-in `everyone` role reads `published` while unqualified grants cover the live row. Reject gating pointer reads on the live entity's read verdict — the history precedent — because it inverts the desired public/private relationship.
+title: 'Metamodel-declared faces (draft/published): storage model and ACL integration'
+summary: Store faces as a per-entity ref table (name → vseq) on the injected VersionService, declared per type in metamodel.yaml; make the face the ACL SUBJECT via a per-face read verdict (`type@face`) in acl.yaml, so the built-in `everyone` role reads `published` while unqualified grants cover the live row. Reject gating face reads on the live entity's read verdict — the history precedent — because it inverts the desired public/private relationship.
 status: done
 ---
 
 ## Problem
 
-We want an entity type to declare named **pointers** — e.g. `draft` and
+We want an entity type to declare named **faces** — e.g. `draft` and
 `published` — each selecting one immutable version of an entity. Two questions:
 
-1. **Storage.** Where do per-type pointer *declarations* live, and where
-does per-entity pointer *state* (which version each pointer selects) live?
+1. **Storage.** Where do per-type face *declarations* live, and where
+does per-entity face *state* (which version each face selects) live?
 2. **ACL.** How does the read side grant `everyone` (incl.
-unauthenticated) read of the `published` pointer while `draft` stays
+unauthenticated) read of the `published` face while `draft` stays
 visible/editable only to authors — without the two leaking into each other?
 
-This matters now because the surrounding design (versions + pointers +
-proposals) hinges on whether pointer-scoped ACL is expressible in the *existing*
+This matters now because the surrounding design (versions + faces +
+proposals) hinges on whether face-scoped ACL is expressible in the *existing*
 declarative policy or needs a new axis. If it needs a new axis, that is the
 expensive part and should be discovered before any surface design.
 
@@ -27,7 +27,7 @@ expensive part and should be discovered before any surface design.
 ### Versioning storage
 
 `internal/store/pgstore/migrations/0004_versions.sql:51` — postgres-only, and
-already close to what pointers need:
+already close to what faces need:
 
 ```sql
 CREATE TABLE entity_versions (
@@ -53,7 +53,7 @@ Four structural facts that constrain the design:
 - **`vseq` is a stable global ordinal** — a pointer is just a named
 `vseq`. The human-facing "version N" is a read-time `row_number()` over a
 lineage, *deliberately not stored* (no app-side max+1 race, `0004:38-42`). **A
-pointer must therefore reference `vseq`, never the ordinal.**
+face must therefore reference `vseq`, never the ordinal.**
 - **No FK from version rows to `entities`** (`0004:6-8`) — history
 deliberately survives entity deletion. So a pointer table FK'ing
 `entity_versions` inherits that independence for free.
@@ -108,11 +108,11 @@ call site (`var reader store.HistoryReader = svc.Versions`). Build-tag selected:
 interface otherwise** (`appbuild/versionsweep_nosweep.go:19` — typed-nil would
 defeat consumers' nil checks).
 
-**Pointers therefore belong on `VersionService` (or a sibling injected service),
+**Faces therefore belong on `VersionService` (or a sibling injected service),
 not on `store.Store`.**
 
 Also relevant: the same file notes *"fsstore already gets content versioning
-from git."* That is the portability escape hatch for pointers on non-postgres
+from git."* That is the portability escape hatch for faces on non-postgres
 builds — a pointer is conceptually a git ref.
 
 ### Read-side ACL
@@ -156,7 +156,7 @@ no `When`**. Row read is all-or-nothing per type, refined only by
 role-conferring relations.
 2. **`store.GraphQuery` is relation-shaped only**
 (`internal/store/graphquery.go:20`) — `EntityType`, `HasInbound`, `HasOutbound`.
-**No property predicate.** "Rows whose `published` pointer is set" cannot be
+**No property predicate.** "Rows whose `published` face is set" cannot be
 pushed down today.
 
 ### ACL policy lives in `acl.yaml`, and there is no `visible:` in the metamodel
@@ -194,14 +194,14 @@ role-conferring relation rather than being baked into the permission noun.
 
 `authorizeHistoryRead` (`internal/dataentry/history_handler.go:103`) gates a
 version read on the **live entity's** read verdict. Correct for history (history
-is *about* the live entity) and exactly **wrong** for pointers: the entire point
+is *about* the live entity) and exactly **wrong** for faces: the entire point
 is that `published` be readable by principals who may NOT read the live row.
 
 ### Search seam
 
 `search.TypeScope` (`internal/search/types.go:97`) is `{AllowAll bool; Query
 *store.GraphQuery}`, server-derived, resolved fail-closed by `ResolveTypeScope`
-(exact → wildcard → deny; nil map denies everything). Any pointer perspective
+(exact → wildcard → deny; nil map denies everything). Any face perspective
 must eventually adopt this shape — and inherits the relation-only `GraphQuery`
 constraint.
 
@@ -215,12 +215,12 @@ constraint.
 
 ## Options
 
-### Storage of pointer state
+### Storage of face state
 
-**S1. Pointer table keyed (entity_id, name) → vseq.**
+**S1. Face table keyed (entity_id, name) → vseq.**
 
 ```sql
-CREATE TABLE entity_pointers (
+CREATE TABLE entity_faces (
     entity_id     TEXT COLLATE "C" NOT NULL,
     name          TEXT NOT NULL,
     vseq          BIGINT NOT NULL,
@@ -237,20 +237,20 @@ CREATE TABLE entity_pointers (
 history's independence from entity deletion (no FK to `entities`), which is
 right — a published version should survive a live-row delete. Attribution
 columns mirror the existing version-row convention.
-- **Cons.** New table; postgres-only. Pointer-scoped list reads become a
+- **Cons.** New table; postgres-only. Face-scoped list reads become a
 join against candidates.
 - **Effort.** Small — one migration, methods on the injected service.
 
-**S2. Pointer as a property on the live entity** (`published_vseq: 1234`).
+**S2. Face as a property on the live entity** (`published_vseq: 1234`).
 
 - **Pros.** No new table; portable to fs/mem.
 - **Cons.** Conflates content with control state — and *circularly*, since
-each version snapshot would capture the pointer value pointing at a version.
+each version snapshot would capture the face value pointing at a version.
 Writable through the ordinary update path (one field grant away from forgery).
 No FK integrity. Pollutes the metamodel's user-facing property namespace.
 - **Effort.** Small, but the coupling is disqualifying.
 
-**S3. Pointer as a relation** (`entity --published--> version-entity`).
+**S3. Face as a relation** (`entity --published--> version-entity`).
 
 - **Pros.** The *only* option expressible in `store.GraphQuery` today
 (`HasOutbound`), so ACL scope pushdown and search scope would work with zero
@@ -262,20 +262,20 @@ is a large, distorting change.
 - **Effort.** Large. Not recommended, but recorded because it is the only
 option that fits the existing query language exactly.
 
-### Declaration of pointers
+### Declaration of faces
 
-**D1. `pointers:` block on `EntityDef` in `metamodel.yaml`**
+**D1. `faces:` block on `EntityDef` in `metamodel.yaml`**
 (`internal/metamodel/types.go:218`).
 
 ```yaml
 entities:
   page:
-    pointers:
+    faces:
       draft:     {default: true}
       published: {}
 ```
 
-- **Pros.** Pointers are a *shape* fact — which lifecycle rails a type has
+- **Pros.** Faces are a *shape* fact — which lifecycle rails a type has
 — so the metamodel is the right home, consistent with `statemachine` transitions
 already living there. Available to `analyze_*`, the SPA, and docs generation
 without reading `acl.yaml`.
@@ -283,17 +283,17 @@ without reading `acl.yaml`.
 who-may-read in `acl.yaml`. (This is the existing convention, not a new wart.)
 - **Effort.** Small.
 
-**D2. Declare pointers in `acl.yaml`.**
+**D2. Declare faces in `acl.yaml`.**
 
 - **Pros.** One file.
 - **Cons.** Wrong layer — `acl.yaml` is optional and its absence means
-allow-all, so a project without a policy would have no pointers at all. Makes a
+allow-all, so a project without a policy would have no faces at all. Makes a
 structural concept contingent on an authorization file.
 - **Effort.** Small, but architecturally wrong.
 
 ### ACL integration — the real question
 
-**A1. Gate the pointer read on the live entity's read verdict** (the history
+**A1. Gate the face read on the live entity's read verdict** (the history
 precedent).
 
 - **Pros.** Zero new concepts.
@@ -301,7 +301,7 @@ precedent).
 live row to see `published`, which simultaneously exposes the draft.
 - **Effort.** Trivial, but it does not solve the problem.
 
-**A2. Global named permission per pointer** (`pointer:read:published`),
+**A2. Global named permission per face** (`face:read:published`),
 following `PermHistoryRead`.
 
 - **Pros.** Exact existing precedent; `permissions:` and `HoldsPermission`
@@ -312,31 +312,31 @@ could add per-entity refinement via role-conferring relations, but not
 per-*type* granularity.
 - **Effort.** Small.
 
-**A3. Make the pointer part of the read SUBJECT — a per-pointer read verdict.**
+**A3. Make the face part of the read SUBJECT — a per-face read verdict.**
 Qualify the type in a role's read grant, and resolve a separate
-`ReadQueryResult` per (type, pointer):
+`ReadQueryResult` per (type, face):
 
 ```yaml
 roles:
   everyone:
-    read: ["page@published"]      # public sees only the published pointer
+    read: ["page@published"]      # public sees only the published face
   author:
     read: ["page"]                # unqualified = the live/working row
 ```
 
-Resolution: a read carrying pointer P for type T consults the grant for `T@P`;
+Resolution: a read carrying face P for type T consults the grant for `T@P`;
 an unqualified grant covers the live row only. `readQuery` gains a pointer
 parameter; `AllowAll`/`DenyAll`/`Query` semantics carry over verbatim.
 
 - **Pros.** Directly expresses the requirement. Preserves the *shape* of
 the gate — the three-valued result and the pushdown query — so
 `visibility.Reader`, `search.TypeScope`, and fail-closed `ResolveTypeScope` all
-keep working with a widened key. Per-type AND per-pointer granularity.
+keep working with a widened key. Per-type AND per-face granularity.
 `everyone` supplies "public" with no new identity concept. Composes with field
 redaction unchanged.
 - **Cons.** Widens the read-gate signature, so every call site threads a
-pointer (defaulting to live). Grant-syntax change in `acl.yaml`. Needs
-cross-file validation that `T@P` names a declared pointer (precedent exists:
+face (defaulting to live). Grant-syntax change in `acl.yaml`. Needs
+cross-file validation that `T@P` names a declared face (precedent exists:
 `Policy.ValidateAgainstMetamodel`, and `internal/aclaudit` for the advisory tier
 — note arch-lint forbids `acl → metamodel`, so the cross-check belongs in
 `aclaudit`, not `acl`).
@@ -344,7 +344,7 @@ cross-file validation that `T@P` names a declared pointer (precedent exists:
 
 **A4. Add `When` to read grants.**
 
-- **Pros.** Most general; pointer state becomes one predicate among many.
+- **Pros.** Most general; face state becomes one predicate among many.
 - **Cons.** A conditional read grant cannot be compiled into a
 `GraphQuery`, so it degrades to per-row evaluation on list reads — exactly the
 unbounded-hot-path pattern `internal/entitymanager/CLAUDE.md` forbids, and it
@@ -353,9 +353,9 @@ forfeits the SQL pushdown that makes list reads tractable.
 
 ## Recommendation
 
-**S1 + D1 + A3**: pointer state in a dedicated `entity_pointers` table reached
-through the injected `VersionService`; pointer *declarations* on `EntityDef` in
-`metamodel.yaml`; ACL via a per-pointer read verdict (`type@pointer`) in
+**S1 + D1 + A3**: face state in a dedicated `entity_faces` table reached
+through the injected `VersionService`; face *declarations* on `EntityDef` in
+`metamodel.yaml`; ACL via a per-face read verdict (`type@face`) in
 `acl.yaml`.
 
 Why:
@@ -366,9 +366,9 @@ pushdown and contradicts the no-predicates-on-the-read-path rule. A3 keeps the
 three-valued `ReadQueryResult` intact — which is precisely what lets
 `visibility.Reader` and `search.TypeScope` keep working unchanged.
 - **S1 keeps versions immutable and control state separate.** Because the
-base is immutable, pointer resolution is a pure function — no locking, no
+base is immutable, face resolution is a pure function — no locking, no
 snapshot-coherence problem. The FK makes the invariant the database's job.
-- **D1 puts shape in the shape file.** Pointers must exist even when
+- **D1 puts shape in the shape file.** Faces must exist even when
 `acl.yaml` is absent (allow-all); D2 cannot provide that.
 
 If effort must be cut, **A2 is the honest fallback**: it works, it follows an
@@ -378,17 +378,17 @@ grant syntax differs, so choosing A2 first means migrating policies later.
 
 ### Tradeoffs accepted
 
-1. **Postgres-only initially.** Pointers ride on versioning. Non-postgres
+1. **Postgres-only initially.** Faces ride on versioning. Non-postgres
 builds get a nil `VersionService` and would serve only the live row — same
 posture as history today. The git-backed fsstore path is a plausible later
 analogue (a pointer *is* a ref) but is not free.
 2. **Read-gate signature widening.** Every read call site gains a pointer
 parameter defaulting to live. Mechanical but broad; the bulk of the effort.
 3. **Cross-file validation.** `T@P` grants must be checked against declared
-pointers; a typo (`page@publised`) would otherwise silently deny. Lives in
+faces; a typo (`page@publised`) would otherwise silently deny. Lives in
 `aclaudit` (arch-lint forbids `acl → metamodel`).
 4. **Search on a pointer is deferred.** `TypeScope` inherits the
-relation-only `GraphQuery` constraint. Recommend excluding pointer-scoped search
+relation-only `GraphQuery` constraint. Recommend excluding face-scoped search
 from v1 and documenting it — "why doesn't my published page show up in search"
 is a predictable complaint.
 5. **`everyone` ≠ anonymous.** It includes authenticated principals. Correct
@@ -406,7 +406,7 @@ the project files). **MCP is a network-facing surface and is not.**
 
 A draft/published split is a *confidentiality* feature. Shipping it while MCP
 serves every entity ungated means the draft is protected in the SPA and readable
-over MCP. This is not a pointer-design problem, but it is a gating prerequisite
+over MCP. This is not a face-design problem, but it is a gating prerequisite
 for the feature's security claim, and should become a ticket in its own right
 rather than being discovered at review.
 
@@ -426,19 +426,19 @@ signals it.
 or the live row?** TKT-73C6B2 established that historical field redaction
 **fails closed**: the live store no longer holds the as-of-version edges a
 conditional `visible:` grant needs, so any `when:`-conditioned grant whose
-subject-world inputs can't be affirmed hides the field. A pointer read hits the
+subject-world inputs can't be affirmed hides the field. A face read hits the
 identical wall.
 
-Either accept fail-closed redaction on pointer reads (consistent with history,
+Either accept fail-closed redaction on face reads (consistent with history,
 but `published` content may over-redact — bad for a public surface, where
 over-redaction is user-visible breakage rather than a safe default), or require
-pointer-scoped `visible:` grants to be unconditional. Settle this before
+face-scoped `visible:` grants to be unconditional. Settle this before
 implementation.
 
 Related, and worth deciding at the same time: **relations have no field-level
 redaction at all** (`FilterRelations` is row-gating only), and **bodies are
 never redacted** (`policyreader.go:162-168` — the `visible:` universe is
 metamodel-declared properties, so `Content` passes through verbatim). For a
-genuinely public `published` pointer, the body is the main payload, so "no body
+genuinely public `published` face, the body is the main payload, so "no body
 redaction" is a more consequential limit here than it is on today's
 authenticated surfaces.

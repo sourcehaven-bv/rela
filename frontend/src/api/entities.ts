@@ -125,10 +125,18 @@ export async function listAllEntities(
   }
 }
 
+// getEntity reads one entity. `world` selects which face is served, and it
+// COMBINES with `include`: TKT-WRLDAPI item 4 made neighbor resolution
+// world-scoped, so an included peer is that world's face of the neighbor and a
+// neighbor with no face in the world is simply absent.
+//
+// The two were mutually exclusive until then (422 world_include_unsupported),
+// which is why callers may still carry code shaped around avoiding the
+// combination.
 export async function getEntity(
   type: string,
   id: string,
-  params?: { include?: string; fields?: string }
+  params?: { include?: string; fields?: string; world?: string }
 ): Promise<Entity> {
   const path = `/${getPlural(type)}/${id}`
   const res = await api.get<Entity>(path, params)
@@ -327,9 +335,17 @@ export async function deleteRelation(
  * Fetch the single advisory suggestion to show now, or null when nothing is
  * owed. A null suggestion is the NORMAL, frequent answer for a well-configured
  * system — not an error, and not an empty state worth apologising for.
+ *
+ * `world` is the world the reader is BROWSING, and it supplies the display
+ * world only: the server consults it against each source's `visible_worlds:`
+ * allow list. It scopes no read — which world a source queries is
+ * `source_world:`, operator config that a caller cannot reach past.
  */
-export async function getNextAction(signal?: AbortSignal): Promise<NextActionResponse> {
-  return api.get<NextActionResponse>('/_next_action', undefined, signal)
+export async function getNextAction(
+  world?: string,
+  signal?: AbortSignal
+): Promise<NextActionResponse> {
+  return api.get<NextActionResponse>('/_next_action', world ? { world } : undefined, signal)
 }
 
 /**

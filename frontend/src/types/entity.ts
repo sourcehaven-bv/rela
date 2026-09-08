@@ -67,6 +67,21 @@ export interface Entity {
   // re-enforces every transition (attempt-and-recover). See
   // docs/data-entry/api-reference.md.
   _transitions?: Record<string, TransitionOption[]>
+  // Provenance of the face this response served (TKT-WRLDAPI). Present on
+  // per-entity GETs under any world INCLUDING the default one, where it reads
+  // `{name:'default', via:'unscoped'}`. Absent on list rows and on the
+  // `_views` ENTRY — under `_views` only COLLECTION entities carry it
+  // (internal/dataentry/sections.go is the single call site), so a detail page
+  // wanting entry provenance reads it from the entity GET.
+  _world?: EntityWorld
+  // Declared copies offered for this face (TKT-WRLDAPI item 5). Rides the
+  // entity response alongside `_actions` rather than a separate endpoint.
+  // `[]` is a real answer ("this face offers no copies"); absent means the
+  // server computed none (no copy service wired). Both render nothing, but
+  // only `[]` means the question was asked.
+  _copies?: CopyOffer[]
+  // Other content states this entity has. See Face.
+  _faces?: Face[]
   inaccessible?: InaccessibleField[]
   // Soft-validation findings on mutation responses (DEC-HWZHA).
   // Present on PATCH/POST results; absent on GETs.
@@ -105,6 +120,95 @@ export interface TransitionOption {
   to: string
   label?: string
   guard?: string
+  allowed: boolean
+  reason?: string
+}
+
+// EntityWorld is the provenance of a resolved face: which world was asked
+// for, which coordinate was served, and WHICH RULE chose it. Mirrors
+// v1.EntityWorld (internal/apiwire/v1/responses.go).
+//
+// `via` is the load-bearing field, and the reason this type exists rather
+// than a bare world name. Under a world with `otherwise: default`, "the
+// Dutch page" and "the English page, because no Dutch page exists" arrive
+// BYTE-IDENTICALLY — same id, same body, same everything. Only `via`
+// separates them:
+//
+//   - 'unscoped'         — this world applies no resolution to this type, so
+//                          the entity contributes its default state. The
+//                          default world resolves everything this way.
+//   - 'chain'            — SOME coordinate the world selects exists. Note
+//                          this does NOT say which: see `chain_position`.
+//   - 'fallback-default' — no selected coordinate exists and the world's
+//                          `otherwise: default` stood the default state in.
+//                          The reader is seeing a SUBSTITUTE.
+//
+// There is deliberately no 'excluded': a world that excludes an entity
+// produces no response to carry provenance on. It is a 404, indistinguishable
+// from a genuine miss, because existence in a world IS the publication bit.
+export interface EntityWorld {
+  name: string
+  face: string
+  via: 'unscoped' | 'chain' | 'fallback-default'
+
+  /**
+   * 0-based index, within the world's candidate chain for this entity type,
+   * of the coordinate actually served. Present only when `via` is 'chain'.
+   *
+   * `via` alone cannot answer "did I get the world's first choice". Under
+   * `select: [published, draft]` a real published face and a draft standing
+   * in for a missing one BOTH report 'chain', so a reader shown draft bytes
+   * under a `published` world had no way to tell — observed live, with the
+   * page framing the draft as read-only published content.
+   *
+   * 0 is the world's first choice. Anything greater is a WITHIN-CHAIN
+   * FALLBACK and must be labelled as a substitute, exactly as
+   * 'fallback-default' is.
+   *
+   * Optional so a response from an older server (which omits it) is not
+   * mistaken for position 0 — the strongest claim the field makes.
+   */
+  chain_position?: number
+}
+
+// Face is one content state this entity HAS, other than the one being served.
+// Mirrors v1.Face.
+//
+// Existence only — no readability flag, deliberately. World-read is a GLOBAL,
+// role-level grant already held from `/_schema`.worlds, so a per-face flag
+// would re-answer a question asked once for the whole session. A face the
+// principal cannot read still appears; clicking it lands on the ordinary row
+// gate, the same answer a typed URL gives.
+export interface Face {
+  // The STORED coordinate ("" is the default face) — what a client sends back
+  // when addressing the face.
+  face: string
+  // The declared face name, for display.
+  label?: string
+}
+
+// CopyOffer is one declared `copies:` definition offered for the face being
+// viewed. Mirrors v1.CopyOffer.
+//
+// `allowed` is a HINT, never a boundary — the same contract as `_actions` and
+// `TransitionOption`. The invoke endpoint re-authorizes through the kernel, so
+// a client that ignores this and POSTs anyway gets the same 403 it would have
+// received regardless. It is computed by running the kernel's own
+// authorization path, so it cannot drift from what the write does.
+//
+// The UI renders only allowed offers, which makes `reason` advisory (a
+// tooltip for a debugging operator), not a gate.
+export interface CopyOffer {
+  // The `copies:` key, and the ONLY thing a client sends back to invoke it.
+  // A request names a definition; it never supplies one.
+  name: string
+  // Operator-configured display text; falls back to `name` when unset.
+  label: string
+  // The declared target (`policy@published`) — for a UI that wants to say
+  // what the action will produce. Always another face of the SAME entity:
+  // the server offers no cross-entity definitions, so an invoke needs no
+  // target id.
+  targetFace: string
   allowed: boolean
   reason?: string
 }
@@ -210,6 +314,15 @@ export interface ListParams {
   sort?: string
   fields?: string
   include?: string
+  // world selects which FACE of each entity is served, and which entities
+  // appear at all — an entity with no face in the requested world is omitted
+  // entirely, because existence in a world IS the publication bit.
+  //
+  // Absent means the default world. Note the backend refuses `world` combined
+  // with `q` (422), and honors it only on `/{plural}`, `/{plural}/{id}`,
+  // `/_views/{type}/{id}` and `/_history/{type}/{id}` — see
+  // internal/dataentry/world.go's worldCapablePath.
+  world?: string
   [key: `filter[${string}]`]: string | undefined
 }
 

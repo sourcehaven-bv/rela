@@ -37,6 +37,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
 	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/caldavalias"
+	"github.com/Sourcehaven-BV/rela/internal/comments"
 	"github.com/Sourcehaven-BV/rela/internal/computed"
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -58,6 +59,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/userstate/memuserstate"
 	"github.com/Sourcehaven-BV/rela/internal/validator"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
+	"github.com/Sourcehaven-BV/rela/internal/worlds"
 )
 
 // Services exposes the focused collaborators a project entry point
@@ -95,13 +97,24 @@ import (
 // Develop raised this to 26; the three recipient-scoped scheduler methods
 // take it to 29. They are exported because scheduler consumes them through
 // narrow capability interfaces; they do not add general Services getters.
+// Comments() (TKT-FIO205) takes it to 31: the commentary service is chosen and
+// constructed here and handed to the App at the wiring site, exactly like
+// CalDAVAliases() and UserState(). It is one more instance of the pattern this
+// comment already describes — a new subsystem composed by the facade — not a
+// new kind of growth, and the fix remains splitting the bundle (TKT-N0IKN9)
+// rather than hiding the getter.
 //
-//plimsoll:max-exported-methods=30
+//plimsoll:max-exported-methods=31
 type Services struct {
 	fs    storage.FS
 	paths *project.Context
 	meta  *metamodel.Metamodel
 	store store.Store
+	// worlds is the compiled world set, carried so a caller can build a
+	// world-bound read surface (WorldSurface). Tenant-independent and
+	// metamodel-derived, like meta — it is copied from the SharedBase
+	// rather than recompiled per assembly.
+	worlds worlds.Compiled
 	// versions is the content-versioning service (history reads, version writes,
 	// purge), a separate concern injected by the backend recipe — nil on builds
 	// without versioning (fs/mem; fsstore uses git). Consumers bind the narrow
@@ -124,9 +137,13 @@ type Services struct {
 	// durable PostgreSQL on the postgres build. Torn down in Close.
 	jobQueue      jobs.Queue
 	caldavAliases *caldavalias.Service
-	scriptEngine  *script.Engine
-	searchCloser  io.Closer
-	acl           acl.ACL
+	// comments is the commentary layer (internal/comments). Nil when the
+	// metamodel declares no `comments:` block — the feature then does not
+	// exist, and the data-entry app serves no comment routes.
+	comments     *comments.Service
+	scriptEngine *script.Engine
+	searchCloser io.Closer
+	acl          acl.ACL
 	// aclDeclarative is set when buildACL constructs a Declarative; nil
 	// for NopACL, ReadOnlyACL, or when Declarative construction fails.
 	aclDeclarative *acl.Declarative
@@ -312,6 +329,14 @@ func (s *Services) Jobs() jobs.Client { return s.jobQueue }
 // service is always constructed (an empty table is the normal first-run state),
 // so consumers need no nil check.
 func (s *Services) CalDAVAliases() *caldavalias.Service { return s.caldavAliases }
+
+// Comments returns the commentary service, or nil when the metamodel declares
+// no enabled `comments:` block.
+//
+// Nil means the feature does not exist for this project: the data-entry app
+// serves no comment routes and no storage is created. Callers must nil-check
+// rather than assume a usable service.
+func (s *Services) Comments() *comments.Service { return s.comments }
 
 // LuaReadDeps materializes the read-only Lua capability bundle with
 // UNRESTRICTED reads — the operator-trust-boundary wiring used by the CLI
@@ -722,6 +747,14 @@ func NewFromCollaborators(c Collaborators) (*Services, error) {
 		}
 		visible = v
 	}
+	// Compile worlds from the supplied metamodel so this construction path
+	// offers the same world surface as the base-assembly path. A failure
+	// here is a metamodel error and must surface, not silently yield a
+	// Services whose WorldSurface always 404s.
+	compiledWorlds, err := worlds.Compile(c.Meta)
+	if err != nil {
+		return nil, fmt.Errorf("appbuild.NewFromCollaborators: compile worlds: %w", err)
+	}
 	fieldRedactor, err := buildFieldRedactor(c.Meta, c.Store, c.Declarative)
 	if err != nil {
 		return nil, fmt.Errorf("appbuild.NewFromCollaborators: %w", err)
@@ -730,6 +763,7 @@ func NewFromCollaborators(c Collaborators) (*Services, error) {
 		fs:              c.FS,
 		paths:           c.Paths,
 		meta:            c.Meta,
+		worlds:          compiledWorlds,
 		store:           c.Store,
 		searcher:        c.Searcher,
 		visibleSearcher: visible,
@@ -1021,6 +1055,67 @@ func buildACL(policy *acl.Policy, meta *metamodel.Metamodel, st store.Store) (ac
 // The condition comes from [acl.Policy.MembershipSelfPromotionOpen], the same
 // predicate behind the `rela acl audit` A1-ungated-membership finding, so the
 // boot warning and the linter can never disagree.
+// warnUndeclaredFaces logs a startup warning when the store holds
+// content-state rows that no metamodel declaration can account for: data
+// a schema change (or hand edit) stranded. Warning, never a refusal — a
+// schema edit must not brick the project; `rela analyze states` lists the
+// rows and the data-migration system (FEAT-T3EF5A) is the remedy.
+//
+// SCOPE (TKT-WAV8XP): the probe only runs for a project where NO entity
+// type declares faces. Under TKT-DOFYR1 that was every project, so the
+// probe was unconditional; now a project that declares content states has
+// legitimate state rows, and counting them would warn about perfectly
+// declared drafts on every boot. Warning fatigue on a boot diagnostic is
+// how the genuinely stranded case stops being noticed, so the coarse
+// probe steps aside for the precise one: `analyze states` subtracts the
+// declared set PER TYPE and is authoritative for those projects.
+//
+// The probe is two COUNTs, not a scan — and therefore NOT a snapshot:
+// on a live multi-writer store (the pg listener starts in Open, before
+// assemble) a write between the counts can skew the number either way,
+// including suppressing the warning on a busy boot. The count is
+// ADVISORY; the authoritative report is `rela analyze states`. A store
+// error only skips the warning (boot diagnostics must not fail the
+// boot) with a Debug trace so the absence is explainable.
+func warnUndeclaredFaces(st store.Store, meta *metamodel.Metamodel, projectRoot string) {
+	if declaresFaces(meta) {
+		return
+	}
+	ctx := context.Background()
+	all, err := st.CountEntities(ctx, store.EntityQuery{AllStates: true})
+	if err != nil {
+		slog.Debug("appbuild: content-state probe failed; skipping warning", "error", err)
+		return
+	}
+	defaults, err := st.CountEntities(ctx, store.EntityQuery{})
+	if err != nil {
+		slog.Debug("appbuild: content-state probe failed; skipping warning", "error", err)
+		return
+	}
+	if states := all - defaults; states > 0 {
+		slog.Warn("appbuild: store holds content-state rows that no metamodel declaration accounts for",
+			"project", projectRoot,
+			"state_rows", states,
+			"detail", "rela analyze states",
+			"remedy", "detection only in this version; the data-migration system is the remedy")
+	}
+}
+
+// declaresFaces reports whether any entity type declares content
+// states, i.e. whether the coarse two-COUNT probe above would produce
+// false positives for this project.
+func declaresFaces(meta *metamodel.Metamodel) bool {
+	if meta == nil {
+		return false
+	}
+	for _, def := range meta.Entities {
+		if len(def.Faces) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 func warnUngatedMembership(policy *acl.Policy) {
 	if !policy.MembershipSelfPromotionOpen() {
 		return
@@ -1104,6 +1199,36 @@ func Discover(startDir string, scriptEngine *script.Engine, opts ...Option) (*Se
 	if err != nil {
 		return nil, fmt.Errorf("discover project: %w", err)
 	}
+	return buildAt(fs, paths, scriptEngine, opts...)
+}
+
+// At is [Discover] for a caller that already knows the project root: it
+// resolves dir AS the root instead of walking up from it (TKT-SK2QQW).
+//
+// The distinction matters for anything that BUILT the directory it is about to
+// open — the docs capture server standing up a throwaway fixture project being
+// the case this exists for. Discovery would walk out of that temp directory and,
+// if the temp path happened to sit under a real project, open THAT one: seeding
+// fixture entities into a live database and taking its single-writer lock. The
+// failure is silent and depends on where TMPDIR points.
+//
+// Everything downstream is identical to Discover — same audit sink, same DSN
+// resolution, same caller responsibility for stamping the principal.
+func At(dir string, scriptEngine *script.Engine, opts ...Option) (*Services, error) {
+	fs := storage.NewSafeFS(storage.NewOsFS())
+	paths, err := project.At(dir, fs)
+	if err != nil {
+		return nil, fmt.Errorf("open project at %s: %w", dir, err)
+	}
+	return buildAt(fs, paths, scriptEngine, opts...)
+}
+
+// buildAt is the shared tail of [Discover] and [At]: everything after the
+// project root is resolved. Split so the two entry points cannot drift in what
+// they wire — only in HOW they answer "which directory is the root".
+func buildAt(
+	fs storage.FS, paths *project.Context, scriptEngine *script.Engine, opts ...Option,
+) (*Services, error) {
 	// Shared startup path for cli, mcp, scheduler and the data-entry server —
 	// warns at most once per process.
 	project.WarnIfLegacySchema(paths)
@@ -1157,7 +1282,19 @@ type SharedBase struct {
 	acl       acl.ACL
 	aclPolicy *acl.Policy
 	meta      *metamodel.Metamodel
+	worlds    worlds.Compiled
 }
+
+// Worlds returns the compiled world scopes this base was built from.
+//
+// Compiled once here because compilation is metamodel-derived and therefore
+// tenant-independent — the same reason `meta` lives on the base. It is
+// compiled at boot so an invalid face name fails startup rather than the
+// first request that needs a world.
+//
+// Consumed through [CompiledWorlds], which the data-entry app's `SetWorlds`
+// uses to resolve a `?world=` name to its scope (TKT-WAV8XP PR-D).
+func (b *SharedBase) Worlds() worlds.Compiled { return b.worlds }
 
 // Meta returns the loaded metamodel this base was built from. Exposed so a host
 // holding one base can answer "what schema am I serving?" without assembling a
@@ -1217,7 +1354,19 @@ func prepare(cfg Config, opts []Option) (*SharedBase, error) {
 		return nil, fmt.Errorf("load metamodel: %w", err)
 	}
 
-	return &SharedBase{cfg: cfg, opts: o, acl: resolvedACL, aclPolicy: aclPolicy, meta: meta}, nil
+	// Compile the declared worlds here, at assembly, so a bad face name is
+	// a startup failure rather than a lurking runtime one. The loader checks
+	// world STRUCTURE; the face GRAMMAR is checked here because metamodel
+	// may not import entity under arch-lint (TKT-WAV8XP, internal/worlds).
+	compiledWorlds, err := worlds.Compile(meta)
+	if err != nil {
+		return nil, fmt.Errorf("compile worlds: %w", err)
+	}
+
+	return &SharedBase{
+		cfg: cfg, opts: o, acl: resolvedACL, aclPolicy: aclPolicy,
+		meta: meta, worlds: compiledWorlds,
+	}, nil
 }
 
 // assemble runs the build-agnostic back half: it takes the opened store
@@ -1272,6 +1421,54 @@ func (b *SharedBase) Assemble(
 	visible search.VisibleSearcher, searchCloser io.Closer,
 ) (*Services, error) {
 	return assemble(b, st, searcher, visible, searchCloser)
+}
+
+// buildEntityManager assembles the write-path manager from the collaborators
+// assemble has already derived. Extracted purely to keep assemble within the
+// funlen budget; it makes no decisions of its own.
+func buildEntityManager(
+	base *SharedBase, st store.Store, aliases entitymanager.AliasRewriter,
+	templater entitymanager.TemplateLoader, resolvedACL acl.ACL,
+	autoEngine *automation.Engine, cascadeRunner *autocascade.Runner,
+	readDeps lua.ReadDeps, versions store.VersionService, tw TransitionWiring,
+	computedSet *computed.Set,
+) (*entitymanager.Manager, error) {
+	mgr, err := entitymanager.New(entitymanager.Deps{
+		AliasRewriter:           aliases,
+		Store:                   st,
+		Meta:                    base.meta,
+		Templater:               templater,
+		Audit:                   base.cfg.Audit,
+		ACL:                     resolvedACL,
+		Automations:             autoEngine,
+		Cascade:                 cascadeRunner,
+		ScriptRunner:            cascadeScriptRunner(base.cfg.ScriptEngine, readDeps, st, base.cfg.Audit),
+		VersionRecorder:         versionRecorderFor(versions),
+		RelationVersionRecorder: relationVersionRecorderFor(versions),
+		Computed:                computedSet,
+		Transitions:             tw.Enforcer,
+		FieldGate:               entitymanager.AllowAllFieldGate{},
+		TransitionGuard:         tw.Guard,
+		TransitionGraph:         tw.Graph,
+		// The copy deps (TKT-WRLDAPI item 5). Before this, NONE of the three
+		// was wired in any deployment — so every guarded copy 403'd
+		// ("no guard is wired") and every copy's source read took the
+		// no-policy branch, which CopyReadGate's own godoc says must never
+		// happen on a deployment that has a policy.
+		//
+		// CopyGuard reuses tw.Guard: entitymanager.CopyGuard and
+		// statemachine.Guard are the same shape ON PURPOSE, so a copy's
+		// `guard:` and a transition's ask the identical question of the
+		// identical implementation and cannot drift into asking different
+		// ones.
+		CopyGuard:      tw.Guard,
+		CopyReadGate:   tw.ReadGate,
+		CopyVisibility: tw.Visibility,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("build entitymanager: %w", err)
+	}
+	return mgr, nil
 }
 
 // resolveVisibleSearcher derives an ACL-scoped searcher when the caller did not
@@ -1371,41 +1568,6 @@ func cascadeReadDeps(
 	}
 }
 
-// buildEntityManager wires the entity manager from the services assemble has
-// already resolved. Split out of assemble purely to keep that function within
-// the funlen budget; the grouping is the entitymanager's dependency set.
-func buildEntityManager(
-	base *SharedBase, st store.Store, aliases entitymanager.AliasRewriter,
-	templater templating.Templater, readDeps lua.ReadDeps,
-	resolvedACL acl.ACL, autoEngine *automation.Engine,
-	cascadeRunner *autocascade.Runner, versions store.VersionService,
-	tw TransitionWiring, computedSet *computed.Set,
-) (*entitymanager.Manager, error) {
-	cfg := base.cfg
-	mgr, err := entitymanager.New(entitymanager.Deps{
-		AliasRewriter:           aliases,
-		Store:                   st,
-		Meta:                    base.meta,
-		Templater:               templater,
-		Audit:                   cfg.Audit,
-		ACL:                     resolvedACL,
-		Automations:             autoEngine,
-		Cascade:                 cascadeRunner,
-		ScriptRunner:            cascadeScriptRunner(cfg.ScriptEngine, readDeps, st, cfg.Audit),
-		VersionRecorder:         versionRecorderFor(versions),
-		RelationVersionRecorder: relationVersionRecorderFor(versions),
-		Transitions:             tw.Enforcer,
-		Computed:                computedSet,
-		FieldGate:               entitymanager.AllowAllFieldGate{},
-		TransitionGuard:         tw.Guard,
-		TransitionGraph:         tw.Graph,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("build entitymanager: %w", err)
-	}
-	return mgr, nil
-}
-
 func assemble(
 	base *SharedBase, st store.Store, searcher search.Searcher,
 	visible search.VisibleSearcher, searchCloser io.Closer,
@@ -1417,6 +1579,7 @@ func assemble(
 		return nil, err
 	}
 
+	warnUndeclaredFaces(st, base.meta, base.cfg.Paths.Root)
 	resolvedACL, aclDeclarative, fieldRedactor, err := resolveACLAndRedactor(base, st)
 	if err != nil {
 		return nil, err
@@ -1455,8 +1618,20 @@ func assemble(
 		return nil, err
 	}
 
-	mgr, err := buildEntityManager(base, st, aliases, templater, readDeps,
-		resolvedACL, autoEngine, cascadeRunner, versions, tw, computedSet)
+	// Comments are keyed by target entity id, so the service must learn about
+	// renames and deletes. It rides the AliasRewriter hook rather than
+	// store.EntityObserver for the reason that hook documents: stores fire the
+	// observer with the error discarded, which is fine for a rebuildable search
+	// index but not for records that exist ONLY in the comment store.
+	commentSvc, err := buildComments(cfg.FS, cfg.Paths, base.meta)
+	if err != nil {
+		return nil, err
+	}
+
+	// Upstream's parameter order (readDeps after cascadeRunner) with the
+	// comment fanout wrapping the alias rewriter.
+	mgr, err := buildEntityManager(base, st, newAliasFanout(aliases, commentSvc), templater, resolvedACL,
+		autoEngine, cascadeRunner, readDeps, versions, tw, computedSet)
 	if err != nil {
 		return nil, err
 	}
@@ -1488,6 +1663,7 @@ func assemble(
 		fs:              cfg.FS,
 		paths:           cfg.Paths,
 		meta:            base.meta,
+		worlds:          base.worlds,
 		store:           st,
 		versions:        versions,
 		searcher:        searcher,
@@ -1501,6 +1677,7 @@ func assemble(
 		stateKV:         stateKV,
 		jobQueue:        jobQueue,
 		caldavAliases:   aliases,
+		comments:        commentSvc,
 		scriptEngine:    cfg.ScriptEngine,
 		searchCloser:    searchCloser,
 		acl:             resolvedACL,
@@ -1522,6 +1699,7 @@ type versionRecorder struct {
 func (r versionRecorder) RecordVersion(ctx context.Context, v entitymanager.VersionRecord) error {
 	return r.w.WriteVersion(ctx, store.VersionInput{
 		EntityID:      v.EntityID,
+		Face:          v.Face,
 		Op:            v.Op,
 		PrevID:        v.PrevID,
 		Type:          v.Type,

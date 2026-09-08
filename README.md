@@ -79,6 +79,7 @@ go build -o rela ./cmd/rela
 | [Concepts](docs/concepts.md) | Architecture traceability fundamentals |
 | [CLI Reference](docs/cli-reference.md) | Complete command reference |
 | [Metamodel Reference](docs/metamodel.md) | Configure entity types and relations |
+| [How To Publish Content with Faces and Worlds](docs/content-states.md) | Give an entity type several content states (draft, published, translations), declare worlds that pick one face per reader, and publish through a guarded copy |
 | [Export Guide](docs/export.md) | Export, import, and data integration |
 | [Best Practices](docs/best-practices.md) | Maintenance tips and team workflows |
 | [MCP Server](docs/mcp-server.md) | AI assistant integration via MCP |
@@ -99,6 +100,7 @@ go build -o rela ./cmd/rela
 | [CalDAV: syncing to-dos with Apple Reminders and other clients](docs/caldav.md) | Sync to-do collections two-way with Apple Reminders and other CalDAV clients |
 | [CalDAV to-do (VTODO) client compatibility](docs/caldav-clients.md) | Which task apps speak VTODO, and what each does with formatted descriptions |
 | [Data Migration](docs/data-migration.md) | Detect schema shape changes and migrate stored content with generated, reviewable migrations |
+| [Comments: Annotating Entities, Fields and Text](docs/comments.md) | Enable commenting, control who may comment, and understand how anchors survive edits |
 
 ### Tutorials
 

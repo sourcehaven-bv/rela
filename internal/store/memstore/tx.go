@@ -55,6 +55,15 @@ func (m *MemStore) DeleteEntity(ctx context.Context, id string, cascade bool) (*
 	return m.deleteEntity(ctx, id, cascade)
 }
 
+// DeleteEntityState implements store.EntityWriter.
+// Returns store.ErrNotFound if that face does not exist.
+func (m *MemStore) DeleteEntityState(
+	ctx context.Context, id string, p entity.Face,
+) (*store.DeleteResult, error) {
+	defer m.lockTx()()
+	return m.deleteEntityState(ctx, id, p)
+}
+
 // RenameEntity implements store.EntityWriter.
 // Returns store.ErrNotFound if oldID is absent, store.ErrConflict if
 // newID exists.
@@ -83,6 +92,14 @@ func (m *MemStore) UpdateRelation(
 func (m *MemStore) DeleteRelation(ctx context.Context, from, relType, to string) error {
 	defer m.lockTx()()
 	return m.deleteRelation(ctx, from, relType, to)
+}
+
+// DeleteRelationState implements store.RelationWriter.
+func (m *MemStore) DeleteRelationState(
+	ctx context.Context, from string, p entity.Face, relType, to string,
+) error {
+	defer m.lockTx()()
+	return m.deleteRelationState(ctx, from, p, relType, to)
 }
 
 // AttachFile implements store.AttachmentManager.
@@ -120,6 +137,12 @@ func (t txStore) DeleteEntity(ctx context.Context, id string, cascade bool) (*st
 	return t.deleteEntity(ctx, id, cascade)
 }
 
+func (t txStore) DeleteEntityState(
+	ctx context.Context, id string, p entity.Face,
+) (*store.DeleteResult, error) {
+	return t.deleteEntityState(ctx, id, p)
+}
+
 func (t txStore) RenameEntity(ctx context.Context, oldID, newID string) (*store.RenameResult, error) {
 	return t.renameEntity(ctx, oldID, newID)
 }
@@ -138,6 +161,12 @@ func (t txStore) UpdateRelation(
 
 func (t txStore) DeleteRelation(ctx context.Context, from, relType, to string) error {
 	return t.deleteRelation(ctx, from, relType, to)
+}
+
+func (t txStore) DeleteRelationState(
+	ctx context.Context, from string, p entity.Face, relType, to string,
+) error {
+	return t.deleteRelationState(ctx, from, p, relType, to)
 }
 
 func (t txStore) AttachFile(ctx context.Context, entityID, property, fileName string, r io.Reader) error {

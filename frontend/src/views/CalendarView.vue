@@ -25,6 +25,7 @@ import { beginOptimistic, rollbackOptimistic, settleOptimistic } from '@/queries
 import { useSchemaStore } from '@/stores/schema'
 import { useUIStore } from '@/stores/ui'
 import { actionAllowed } from '@/utils/affordancesWarning'
+import { useWorld } from '@/composables/useWorld'
 import { renderMarkdown } from '@/utils/markdown'
 import { buildFilterKey, parseWhereClause } from '@/utils/filters'
 import { viewHeaderMarkdown, viewFooterMarkdown } from '@/types/config'
@@ -57,6 +58,7 @@ const props = defineProps<{ id: string }>()
 const router = useRouter()
 const schemaStore = useSchemaStore()
 const uiStore = useUIStore()
+const { isWorldBound, worldParam } = useWorld()
 const queryCache = useQueryCache()
 
 const config = computed(() => schemaStore.getCalendar(props.id) as CalendarConfig | undefined)
@@ -178,12 +180,17 @@ const hasRelationFields = computed(
   () => config.value?.event?.fields?.some((f) => !!f.relation) ?? false
 )
 
+// The world rides every source query: the grid is that world's projection,
+// exactly as a list or a board is. Without it a `?world=published` calendar
+// showed the DEFAULT faces' dates under a read-only framing.
 const sourceQueries = computed(() =>
   (config.value?.sources ?? []).map((source) => ({
     source,
-    params: hasRelationFields.value
-      ? { ...paramsFor(source), include: '*' }
-      : paramsFor(source),
+    params: {
+      ...paramsFor(source),
+      ...(worldParam.value ? { world: worldParam.value } : {}),
+      ...(hasRelationFields.value ? { include: '*' } : {}),
+    },
   }))
 )
 
@@ -215,6 +222,14 @@ const initialLoad = ref(true)
 /** A refetch is in flight. Drives a subtle busy hint, never a blanked grid. */
 const refreshing = ref(false)
 const loadError = ref('')
+
+// pageState mirrors DynamicForm's `form-state-*` contract: a stable signal
+// that this screen has finished resolving, so a screenshot{} capture can wait
+// for it rather than hanging until its timeout.
+const pageState = computed<'pending' | 'loaded' | 'error'>(() => {
+  if (loadError.value) return 'error'
+  return initialLoad.value ? 'pending' : 'loaded'
+})
 
 /**
  * Sequence number of the newest refetch.
@@ -391,8 +406,16 @@ function goToday() {
   anchor.value = todayIn(timezone.value)
 }
 
+// ANDs in `!isWorldBound`, for the reason KanbanView's canUpdate documents:
+// `_actions` knows nothing about the request's world, and a non-default world
+// is READ-ONLY on this API. The stake is the same as on a board — the write is
+// triggered by a DRAG, so an event that accepts the gesture and animates to a
+// new day has already told the reader their change landed. Since a bare write
+// carries no `?world=`, the server has no parameter to refuse: the reschedule
+// would silently hit the DEFAULT face of an entity the reader is viewing
+// through a world.
 function canUpdate(entity: Entity): boolean {
-  return actionAllowed(entity, 'update')
+  return actionAllowed(entity, 'update') && !isWorldBound.value
 }
 
 /**
@@ -432,7 +455,10 @@ function createNew() {
  * unrelated data and hiding a button the user may legitimately use.
  */
 function canCreate(): boolean {
-  return !!config.value?.create_form
+  // ANDs in the world like canUpdate: a create lands in the default world, so
+  // a "+ New" on a world-bound calendar offers a write this request cannot
+  // carry (the same reasoning KanbanView's canCreate documents).
+  return !!config.value?.create_form && !isWorldBound.value
 }
 
 // --- Drag to reschedule ---
@@ -545,7 +571,7 @@ function onDragEnd() {
 </script>
 
 <template>
-  <div class="calendar-view">
+  <div class="calendar-view" :data-testid="`page-state-${pageState}`">
     <header class="page-header">
       <div class="header-left">
         <h1>{{ config?.title || props.id }}</h1>

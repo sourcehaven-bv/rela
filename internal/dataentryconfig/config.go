@@ -85,9 +85,12 @@ func (d Direction) IsIncoming() bool {
 // ratchet target: each exported field IS one top-level key of
 // data-entry.yaml, so the count tracks the config format's documented
 // sections (a new view kind legitimately adds one) rather than god-object
-// accretion. Splitting it would churn the YAML shape for no design gain.
+// accretion. Splitting it would churn the YAML shape for no design gain —
+// a breaking change to every project's config file, made to satisfy a lint.
+// A genuinely new top-level key therefore raises the pin by one; `webhooks`
+// (TKT-1EM4KL) is the most recent.
 //
-//plimsoll:max-fields=21
+//plimsoll:max-fields=22
 type Config struct {
 	Version     string                       `yaml:"version"`
 	App         AppConfig                    `yaml:"app"`
@@ -107,6 +110,7 @@ type Config struct {
 	Dashboard   *DashboardConfig             `yaml:"dashboard,omitempty"`
 	Commands    map[string]CommandConfig     `yaml:"commands,omitempty"`
 	Actions     map[string]Action            `yaml:"actions,omitempty"`
+	Webhooks    map[string]Webhook           `yaml:"webhooks,omitempty" json:"webhooks,omitempty"`
 	Navigation  []NavigationEntry            `yaml:"navigation"`
 
 	// NextActionBands is the operator's ordered priority vocabulary; list
@@ -161,6 +165,57 @@ type Action struct {
 type AppConfig struct {
 	Name        string `yaml:"name"`
 	Description string `yaml:"description"`
+	// DefaultWorld names the world a request lands in when the URL carries no
+	// `?world=`. Empty (the default) means the default world — the raw stored
+	// faces, which is right for an authoring tool and wrong for a reader.
+	//
+	// An ISMS wants `published` here: browsing shows what is in force, and a
+	// draft is reached deliberately by naming an editorial world. Without it
+	// the two are inverted — the draft is what you land on, and the published
+	// policy is the thing you need to know a URL parameter to see.
+	//
+	// # Why per-deployment and not per-list
+	//
+	// A world is ONE consistent view of the whole graph, and per-type
+	// variation already lives inside it (`overrides:` on the world, keyed by
+	// entity type). So a mixed project — policies plus a multilingual blog —
+	// needs one setting, not a matrix: `published` with
+	// `overrides: {blog-post: [en]}` serves each type through its own chain.
+	//
+	// # Presentation, not policy
+	//
+	// This is a browsing default, so it lives with the app config rather than
+	// in schema.yaml beside the world definitions. It changes which face a
+	// bare URL resolves to; it grants nothing. The world's read grant is
+	// re-checked per request exactly as it is for an explicit `?world=`, so
+	// pointing this at a world the caller may not read yields that world's
+	// ordinary denial, not an escalation.
+	//
+	// # Applied by the SERVER, for every client
+	//
+	// Enforced in dataentry's attachWorld/resolveWorld, so `curl` and the SPA
+	// land in the same world for the same URL. This was SPA-only at first —
+	// serialized to `/_schema` and applied in useWorld.ts — and that was a
+	// defect: a face-scoped role read NOTHING from the raw API despite a
+	// valid grant, which reads as a broken ACL rather than a missing
+	// parameter.
+	//
+	// Two limits keep it from breaking things it should not touch. It applies
+	// only to READ methods (a write addresses a face by id and never rides a
+	// world), and only to routes that can serve a non-default world — most
+	// cannot, so a blanket default would turn every bare request to
+	// relations/attachments/exports into a 422. An explicit `?world=default`
+	// remains the way to ask for the raw stored faces.
+	//
+	// The CLI and MCP do NOT honor it yet: their reads still reach the store
+	// through unscoped call sites, so applying a world there would serve
+	// default-world data under a published-world request. See the `--world`
+	// note in internal/cli/kong.go.
+	//
+	// Validated at load: naming an undeclared world is a startup error, since
+	// a typo would otherwise silently serve the default world to everyone and
+	// look like the feature was never configured.
+	DefaultWorld string `yaml:"default_world,omitempty" json:"default_world,omitempty"`
 	// MaxAttachmentBytes optionally overrides the product-wide default
 	// per-attachment upload cap (see dataentry.DefaultMaxAttachmentBytes).
 	// Zero or unset means use the default. Set this lower for
@@ -530,10 +585,29 @@ type List struct {
 	Filters        []FilterConfig  `yaml:"filters" json:"filters,omitempty"`
 	FilterControls []FilterControl `yaml:"filter_controls" json:"filter_controls,omitempty"`
 	CreateForm     string          `yaml:"create_form" json:"create_form,omitempty"`
-	EditForm       string          `yaml:"edit_form" json:"edit_form,omitempty"`
-	DetailView     string          `yaml:"detail_view" json:"detail_view,omitempty"`
-	PageSize       int             `yaml:"page_size" json:"page_size,omitempty"`
-	Actions        []string        `yaml:"actions,omitempty" json:"actions,omitempty"`
+	// CreateWorld is the world the create button opens its form in, for when a
+	// new entity belongs in a DIFFERENT face than the one this list shows.
+	//
+	// An ISMS list rendered in `published` creates a DRAFT: nobody authors
+	// straight into the published face. Without this the form would inherit the
+	// list's world, write the published face, and publish by the act of
+	// creating.
+	//
+	// It is on the list's create BUTTON rather than on the form because the
+	// form is generic — the same `new_policy` form is reachable from several
+	// places, and which face a new entity starts in is a property of the
+	// workflow that opened it, not of the field layout. The form receives the
+	// world as a runtime parameter.
+	//
+	// Empty: the form opens in the list's own world (the ordinary case, where a
+	// list shows the same face you author into). Validated at load against the
+	// declared worlds, and against whether the target world actually resolves a
+	// face for this type — see validateCreateWorld.
+	CreateWorld string   `yaml:"create_world,omitempty" json:"create_world,omitempty"`
+	EditForm    string   `yaml:"edit_form" json:"edit_form,omitempty"`
+	DetailView  string   `yaml:"detail_view" json:"detail_view,omitempty"`
+	PageSize    int      `yaml:"page_size" json:"page_size,omitempty"`
+	Actions     []string `yaml:"actions,omitempty" json:"actions,omitempty"`
 
 	// ExportRender is an optional Lua script (relative path under scripts/,
 	// e.g. "docs/ticket_report.lua") that renders THIS LIST for export. When

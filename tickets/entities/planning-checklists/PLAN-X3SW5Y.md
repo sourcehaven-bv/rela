@@ -218,7 +218,7 @@ section.
 - `card.permission` — operator-authored `data-entry.yaml`, trusted-ish config.
 Any non-empty string is accepted; an unknown name yields a card nobody sees (the
 RR-2KZEXF failure mode). Not validated here; documented as a gotcha with a
-pointer to the roles' `permissions:` list, matching what TKT-TXDK8U did.
+face to the roles' `permissions:` list, matching what TKT-TXDK8U did.
 - Principal identity — from the existing request middleware, unchanged.
 - No new user-supplied input. `card.query` is not newly trusted: it is
 neither parsed nor executed by the new endpoint, which returns config only.
@@ -261,7 +261,7 @@ policy is proved.
 |---|---|---|
 | 1 | `TestDashboardPermission_UngatedCardsAlwaysShown` | Ungated card present for alice, bob, and NopACL. |
 | 2 | `TestDashboardPermission_HolderSeesGatedCard` / `_NonHolderFiltered` | alice sees the gated card; bob's response omits it and keeps the ungated ones, in order. |
-| 3 | `TestDashboardPermission_NopACLShowsEverything`, `_ReadOnlyShowsEverything` (subtests "value form" / "pointer form") | Gated cards render under both no-policy ACLs. |
+| 3 | `TestDashboardPermission_NopACLShowsEverything`, `_ReadOnlyShowsEverything` (subtests "value form" / "face form") | Gated cards render under both no-policy ACLs. |
 | 3 | `TestDashboardPermission_ReadOnlyArmIsExplicit` | **The RR-CWWJGW canary.** Attach a gate denying *every* permission, assert read-only still shows the card. Fails if the explicit arm is removed. Mutation-verify both directions. |
 | 4 | `TestDashboardPermission_NilACLHides` | `aclImpl = nil` ⇒ gated card hidden, ungated unaffected. |
 | 5 | `TestDashboardPermission_FilterIsPresentationOnly` | bob (data-permitted, permission-denied): card hidden **yet `_search` for that query returns rows > 0**. carol (permission-held, data-denied): card shown **yet `_search` returns 0 rows**. The row counts are the assertion, not the status code. |
