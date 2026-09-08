@@ -27,7 +27,7 @@ type Schema struct {
 
 // schemaProvider publishes the current [Schema] via an atomic.Pointer: readers
 // Load lock-free, the watcher's reload path swaps a freshly-derived Schema in
-// atomically. Owning the pointer here (rather than as a bare field on App)
+// atomically. Owning the face here (rather than as a bare field on App)
 // keeps the state-publish mechanics and the reload derivation in one place.
 type schemaProvider struct {
 	ptr atomic.Pointer[Schema]

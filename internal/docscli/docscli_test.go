@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/docs"
+	"github.com/Sourcehaven-BV/rela/internal/docscapture"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 )
@@ -59,8 +60,8 @@ func writeManual(t *testing.T, dir, body string) string {
 // returns an error, so docs.Options.CapturerErr is set and a screenshot{} manual
 // fails loud. Assign it to BuildCmd.newCapturer (a per-command field, so tests
 // stay t.Parallel()-safe — no shared global).
-func noBrowser(reason string) func() (docs.Capturer, error) {
-	return func() (docs.Capturer, error) { return nil, errors.New(reason) }
+func noBrowser(reason string) func(*docscapture.SharedProject) (docs.Capturer, error) {
+	return func(*docscapture.SharedProject) (docs.Capturer, error) { return nil, errors.New(reason) }
 }
 
 // stubCapturer is a no-op capturer so a screenshot-free manual never touches a
@@ -71,7 +72,7 @@ func (stubCapturer) Capture(context.Context, docs.CaptureSpec) (string, error) {
 func (stubCapturer) Close() error                                              { return nil }
 
 // okCapturer is a capturer factory that returns the no-op stub.
-func okCapturer() (docs.Capturer, error) { return stubCapturer{}, nil }
+func okCapturer(*docscapture.SharedProject) (docs.Capturer, error) { return stubCapturer{}, nil }
 
 // A screenshot-free manual resolves to Markdown on stdout without ever
 // constructing a browser capturer.
@@ -196,7 +197,7 @@ func TestBuild_OutputIsDir(t *testing.T) {
 	dir := t.TempDir()
 	manual := writeManual(t, dir,
 		"# Manual\n\n```rela\nscreenshot{ type = \"risico\", entity = \"r1\", out = \"f.png\" }\n```\n")
-	failIfBuilt := func() (docs.Capturer, error) {
+	failIfBuilt := func(*docscapture.SharedProject) (docs.Capturer, error) {
 		t.Error("capturer resolved — Run reached the build before rejecting the --out directory")
 		return stubCapturer{}, nil
 	}

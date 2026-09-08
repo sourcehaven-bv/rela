@@ -15,7 +15,7 @@ func TestSplit(t *testing.T) {
 		{
 			name:     "frontmatter and body",
 			content:  "---\nid: REQ-001\ntype: requirement\n---\n\n# Heading\n\nContent here.\n",
-			wantFM:   "id: REQ-001\ntype: requirement",
+			wantFM:   "id: REQ-001\ntype: requirement\n",
 			wantBody: "# Heading\n\nContent here.",
 		},
 		{
@@ -33,13 +33,22 @@ func TestSplit(t *testing.T) {
 		{
 			name:     "only frontmatter",
 			content:  "---\nid: REQ-001\n---\n",
-			wantFM:   "id: REQ-001",
+			wantFM:   "id: REQ-001\n",
+			wantBody: "",
+		},
+		{
+			// BUG-NWQA0E: the last frontmatter line keeps its terminator, so a
+			// clip block scalar ("|") as the final property still ends in
+			// the newline the file has. Without it "0\n" read back as "0".
+			name:     "final block scalar keeps its trailing newline",
+			content:  "---\nid: REQ-001\np: |\n    0\n---\n",
+			wantFM:   "id: REQ-001\np: |\n    0\n",
 			wantBody: "",
 		},
 		{
 			name:     "CRLF line endings are normalized",
 			content:  "---\r\nid: REQ-001\r\n---\r\n\r\nBody line\r\n",
-			wantFM:   "id: REQ-001",
+			wantFM:   "id: REQ-001\n",
 			wantBody: "Body line",
 		},
 	}
@@ -66,8 +75,8 @@ func TestSplit_LongLineExceeds64KB(t *testing.T) {
 	content := "---\nid: REQ-001\n---\n\n" + bigValue + "\n"
 
 	fm, body := Split(content)
-	if fm != "id: REQ-001" {
-		t.Errorf("frontmatter = %q, want id: REQ-001", fm)
+	if fm != "id: REQ-001\n" {
+		t.Errorf("frontmatter = %q, want id: REQ-001\\n", fm)
 	}
 	if body != bigValue {
 		t.Errorf("body length = %d, want %d (long line was truncated or dropped)", len(body), bigLineSize)

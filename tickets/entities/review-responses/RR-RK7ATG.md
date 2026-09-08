@@ -12,7 +12,7 @@ severity: minor
 resolution: |-
     Downgraded critical -> minor. The finding's premise ('the form stays interactive — nothing in the plan disables it') was asserted without checking the markup, and is wrong.
 
-    ConfirmModal (frontend/src/components/ui/ConfirmModal.vue:91) renders a full-screen .modal-overlay backdrop. While a dialog is open the rest of the form is not mouse-reachable, so the 'user toggles a second trigger field during the async gap' scenario cannot occur by pointer.
+    ConfirmModal (frontend/src/components/ui/ConfirmModal.vue:91) renders a full-screen .modal-overlay backdrop. While a dialog is open the rest of the form is not mouse-reachable, so the 'user toggles a second trigger field during the async gap' scenario cannot occur by face.
 
     Residual risk is narrow: keyboard focus could in principle reach a control behind the overlay if focus is not trapped, and a same-field re-toggle could re-enter the gate. Both are closed by a single re-entry guard — hold a pendingGate flag and have the gate return early (ignoring the change) while a dialog is outstanding.
 

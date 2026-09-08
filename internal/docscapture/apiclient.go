@@ -25,18 +25,22 @@ import (
 // creates entities as it goes, so a later api{} must see entities created after
 // the server started.
 //
+// It does not own that project — the DOCUMENT does, via SharedProject, which
+// the screenshot{}/page{} capturer reaches too. That sharing is what makes a
+// write issued here visible to a later figure.
+//
 // Nil: never returned by New; the zero value is not usable — use NewAPIClient.
 type APIClient struct {
-	projectDir string
+	shared *SharedProject
 
 	mu     sync.Mutex
 	proj   *project
 	closed bool
 }
 
-// NewAPIClient returns a client serving the given project.
-func NewAPIClient(projectDir string) *APIClient {
-	return &APIClient{projectDir: projectDir}
+// NewAPIClient returns a client serving the document's shared temp project.
+func NewAPIClient(shared *SharedProject) *APIClient {
+	return &APIClient{shared: shared}
 }
 
 // Do issues one request, standing the server up on first use.
@@ -54,35 +58,19 @@ func (c *APIClient) Do(ctx context.Context, req docs.APIRequest) (docs.APIRespon
 		return docs.APIResponse{}, errors.New("api{}: client is closed")
 	}
 
-	if c.proj == nil {
-		dir := req.ProjectDir
-		if dir == "" {
-			dir = c.projectDir
-		}
-		if dir == "" {
-			return docs.APIResponse{}, errors.New("api{}: no project directory to serve " +
-				"(build with --project)")
-		}
-		p, err := standUp(ctx, dir, req.Seed, false)
-		if err != nil {
-			return docs.APIResponse{}, err
-		}
-		c.proj = p
-	} else if err := c.proj.syncSeed(ctx, req.Seed); err != nil {
-		return docs.APIResponse{}, fmt.Errorf("api{}: seeding: %w", err)
+	if c.shared == nil {
+		return docs.APIResponse{}, errors.New("api{}: no shared project wired")
 	}
+	// No SPA needed: api{} talks to the data-entry router directly, so a manual
+	// with only api{} assertions runs with no built frontend.
+	p, err := c.shared.acquire(ctx, req.ProjectDir, req.Seed, false)
+	if err != nil {
+		return docs.APIResponse{}, fmt.Errorf("api{}: %w", err)
+	}
+	c.proj = p
 
-	// An unknown role silently resolves to a user with UPDATE grants, so a
-	// typo'd `as=` would run as the editor and the assertion would pass for the
-	// wrong reason. Only validated when the project HAS assignments to check
-	// against.
-	if req.As != "" && len(c.proj.byRole) > 0 {
-		if _, ok := c.proj.byRole[req.As]; !ok {
-			return docs.APIResponse{}, fmt.Errorf(
-				"as=%q: no principal is assigned that role in acl.yaml, and an unknown role "+
-					"falls back to a privileged default — so this request would run as someone "+
-					"else. Known roles: %s", req.As, strings.Join(knownRoles(c.proj.byRole), ", "))
-		}
+	if err := c.proj.requireKnownRole(req.As); err != nil {
+		return docs.APIResponse{}, err
 	}
 
 	method := req.Method
@@ -94,9 +82,9 @@ func (c *APIClient) Do(ctx context.Context, req docs.APIRequest) (docs.APIRespon
 		body = strings.NewReader(req.Body)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, method, c.proj.server.URL+req.Path, body)
-	if err != nil {
-		return docs.APIResponse{}, fmt.Errorf("api{path=%q}: %w", req.Path, err)
+	httpReq, rerr := http.NewRequestWithContext(ctx, method, c.proj.server.URL+req.Path, body)
+	if rerr != nil {
+		return docs.APIResponse{}, fmt.Errorf("api{path=%q}: %w", req.Path, rerr)
 	}
 	if req.Body != "" {
 		httpReq.Header.Set("Content-Type", "application/json")
@@ -108,27 +96,26 @@ func (c *APIClient) Do(ctx context.Context, req docs.APIRequest) (docs.APIRespon
 		httpReq.Header.Set(roleHeader, req.As)
 	}
 
-	resp, err := c.proj.server.Client().Do(httpReq)
-	if err != nil {
-		return docs.APIResponse{}, fmt.Errorf("api{path=%q}: %w", req.Path, err)
+	resp, derr := c.proj.server.Client().Do(httpReq)
+	if derr != nil {
+		return docs.APIResponse{}, fmt.Errorf("api{path=%q}: %w", req.Path, derr)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	raw, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return docs.APIResponse{}, fmt.Errorf("api{path=%q}: reading body: %w", req.Path, err)
+	raw, berr := io.ReadAll(resp.Body)
+	if berr != nil {
+		return docs.APIResponse{}, fmt.Errorf("api{path=%q}: reading body: %w", req.Path, berr)
 	}
 	return docs.APIResponse{Status: resp.StatusCode, Body: string(raw), Header: resp.Header}, nil
 }
 
-// Close tears down the temp project and server if one was stood up.
+// Close marks the client unusable. It does NOT tear down the temp project:
+// that belongs to the document's SharedProject, which the capturer may still
+// be using and which the wiring site closes when the document finishes.
 func (c *APIClient) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.closed = true
-	if c.proj != nil {
-		c.proj.close()
-		c.proj = nil
-	}
+	c.proj = nil
 	return nil
 }

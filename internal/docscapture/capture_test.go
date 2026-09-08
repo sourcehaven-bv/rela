@@ -43,7 +43,7 @@ func protoDir(t *testing.T) string {
 // A seeded ticket's edit form captures to a valid PNG.
 func TestCapture_Form(t *testing.T) {
 	requireBrowser(t)
-	capr, err := New()
+	capr, err := New(NewSharedProject(""))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -72,7 +72,7 @@ func TestCapture_Form(t *testing.T) {
 // An arrow annotation anchored to a real field succeeds; an unknown field fails.
 func TestCapture_AnnotationAndFailLoud(t *testing.T) {
 	requireBrowser(t)
-	capr, err := New()
+	capr, err := New(NewSharedProject(""))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -112,7 +112,7 @@ func TestCapture_AnnotationAndFailLoud(t *testing.T) {
 // must pick up the new entity (regression for the seed-staleness bug).
 func TestCapture_SeedGrowsAcrossIslands(t *testing.T) {
 	requireBrowser(t)
-	capr, err := New()
+	capr, err := New(NewSharedProject(""))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -149,7 +149,7 @@ func TestCapture_SeedGrowsAcrossIslands(t *testing.T) {
 // and NOT eat the capture timeout (DR-S4 / the fail-OPEN hole the spike hit).
 func TestCapture_UnrenderableEntity_FailsLoud(t *testing.T) {
 	requireBrowser(t)
-	capr, err := New()
+	capr, err := New(NewSharedProject(""))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -178,7 +178,7 @@ func TestCapture_UnrenderableEntity_FailsLoud(t *testing.T) {
 // fails loud.
 func TestCapture_Crop(t *testing.T) {
 	requireBrowser(t)
-	capr, err := New()
+	capr, err := New(NewSharedProject(""))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

@@ -32,6 +32,12 @@ type Capabilities struct {
 	// tests are skipped.
 	Attachments bool
 
+	// Observers builds a store with observers registered, for
+	// [RunObserverTests]. Nil skips that suite — but every production backend
+	// supports observers, so nil is only right for a store that genuinely
+	// has none.
+	Observers ObserverFactory
+
 	// TxRollback declares that the backend provides the STRONG Tx contract
 	// (DEC-8UIL0): an error from fn discards the transaction's writes, and no
 	// events are delivered until commit. Setting it runs RunTxRollbackTests as
@@ -167,6 +173,8 @@ func RunAll(t *testing.T, f Factory, sf SearchFactory, vsf VisibleSearchFactory,
 	t.Run("Relation", func(t *testing.T) { RunRelationTests(t, f) })
 	t.Run("Query", func(t *testing.T) { RunQueryTests(t, f) })
 	t.Run("GraphQuery", func(t *testing.T) { RunGraphQueryTests(t, f) })
+	t.Run("GraphHeaders", func(t *testing.T) { RunGraphHeaderTests(t, f) })
+	t.Run("GraphPaging", func(t *testing.T) { RunGraphPagingTests(t, f) })
 	t.Run("Pagination", func(t *testing.T) { RunPaginationTests(t, f) })
 	if sf != nil {
 		t.Run("Search", func(t *testing.T) { RunSearchTests(t, sf) })
@@ -176,6 +184,13 @@ func RunAll(t *testing.T, f Factory, sf SearchFactory, vsf VisibleSearchFactory,
 	}
 	if caps.Attachments {
 		t.Run("Attachment", func(t *testing.T) { RunAttachmentTests(t, f) })
+	}
+	t.Run("States", func(t *testing.T) { RunStateTests(t, f) })
+	// World resolution is part of the store contract, not an optional
+	// capability: every backend resolves EntityQuery.World (TKT-WAV8XP).
+	t.Run("Worlds", func(t *testing.T) { RunWorldTests(t, f) })
+	if caps.Observers != nil {
+		t.Run("Observers", func(t *testing.T) { RunObserverTests(t, caps.Observers) })
 	}
 	t.Run("Watcher", func(t *testing.T) { RunWatcherTests(t, f) })
 	t.Run("Validation", func(t *testing.T) { RunValidationTests(t, f) })

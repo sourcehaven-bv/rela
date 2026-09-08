@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { useSchemaStore } from './schema'
+import type { WorldInfo } from '@/types/schema'
 
 // Mock the API
 vi.mock('@/api/schema', () => ({
@@ -46,6 +47,85 @@ describe('Schema Store', () => {
   })
 
   describe('load', () => {
+    it('loads the per-caller world map from /_schema', async () => {
+      // Pins the WIRING, not just the getter. Deleting the
+      // `worlds.value = new Map(...)` line survives every component test,
+      // because those seed the store directly — verified by mutation. The
+      // only test that can catch it is one that goes through load().
+      const { getSchema, getConfig } = await import('@/api/schema')
+      vi.mocked(getSchema).mockResolvedValue({
+        entities: {},
+        relations: {},
+        types: {},
+        worlds: {
+          default: { readable: true, default: true },
+          published: { readable: false, select: ['published'], otherwise: 'exclude' },
+        },
+      })
+      vi.mocked(getConfig).mockResolvedValue({
+        app: { name: 'Test App' },
+        forms: {},
+        lists: {},
+        views: {},
+        kanbans: {},
+        navigation: [],
+      })
+
+      const store = useSchemaStore()
+      await store.load()
+
+      expect(store.worlds.size).toBe(2)
+      // `false` is the load-bearing value — the server never omits `readable`
+      // precisely so a denial is distinguishable from an old server.
+      expect(store.worldReadable('published')).toBe(false)
+      expect(store.worldReadable('default')).toBe(true)
+      // The empty name is how the SPA spells the default world.
+      expect(store.worldReadable('')).toBe(true)
+      // An undeclared world is readable, not denied: absence means "unknown",
+      // and manufacturing a denial would hide a working affordance.
+      expect(store.worldReadable('no-such-world')).toBe(true)
+    })
+
+    // history_enabled is a per-DEPLOYMENT capability (postgres-only content
+    // versioning), and it is the FLAG DIRECTION that matters here.
+    //
+    // Absent must mean FALSE, unlike `readable` above where unknown means
+    // permitted. The directions differ because the mistakes differ: hiding a
+    // working History button is a missing feature someone reports, while
+    // showing one on every fs deployment is a control that can only 501 —
+    // the affordance-that-lies shape.
+    //
+    // This goes through load() deliberately. Component tests seed the store
+    // directly, so they cannot catch a parse that reads the flag the wrong
+    // way round; only a test that runs the real assignment can.
+    describe('history_enabled from /_config', () => {
+      async function loadWithApp(app: Record<string, unknown>) {
+        const { getSchema, getConfig } = await import('@/api/schema')
+        vi.mocked(getSchema).mockResolvedValue({
+          entities: {}, relations: {}, types: {},
+        } as never)
+        vi.mocked(getConfig).mockResolvedValue({
+          app: { name: 'Test App', ...app },
+          forms: {}, lists: {}, views: {}, kanbans: {}, navigation: [],
+        } as never)
+        const store = useSchemaStore()
+        await store.load()
+        return store
+      }
+
+      it('is true when the server says so', async () => {
+        expect((await loadWithApp({ history_enabled: true })).historyEnabled).toBe(true)
+      })
+
+      it('is false when the server says so', async () => {
+        expect((await loadWithApp({ history_enabled: false })).historyEnabled).toBe(false)
+      })
+
+      it('is FALSE when the server omits it (a server too old to answer)', async () => {
+        expect((await loadWithApp({})).historyEnabled).toBe(false)
+      })
+    })
+
     it('loads schema and config from API', async () => {
       const { getSchema, getConfig } = await import('@/api/schema')
 
@@ -231,6 +311,183 @@ describe('Schema Store', () => {
       expect(store.app).toEqual({ name: 'rela' })
       expect(store.styles).toEqual({})
       expect(store.navigation).toEqual([])
+    })
+  })
+
+  describe('worldForFace', () => {
+    // Maps a stored POINTER to the world that serves it. `?world=` is the
+    // read-selection grammar this API has; a bare face is not a world, and
+    // sending one yields 400 unknown_world (measured: ?world=nl for a project
+    // whose world is site-nl).
+    async function loadWorlds(worlds: Record<string, WorldInfo>) {
+      const { getSchema, getConfig } = await import('@/api/schema')
+      vi.mocked(getSchema).mockResolvedValue({
+        entities: {},
+        relations: {},
+        types: {},
+        worlds,
+      })
+      vi.mocked(getConfig).mockResolvedValue({
+        app: { name: 'Test App' },
+        forms: {},
+        lists: {},
+        views: {},
+        kanbans: {},
+        navigation: [],
+      })
+      const store = useSchemaStore()
+      await store.load()
+      return store
+    }
+
+    it('matches the chain HEAD, not mere membership', async () => {
+      // The rule that is easy to get wrong. site-nl is [nl, en], so `en`
+      // appears in its chain as a FALLBACK — that does not make site-nl the
+      // world which serves English. Matching on membership would route an
+      // English face to the Dutch site.
+      const store = await loadWorlds({
+        default: { readable: true, default: true },
+        'site-nl': { readable: true, select: ['nl', 'en'], otherwise: 'default' },
+      })
+      expect(store.worldForFace('blog-post', 'nl')).toBe('site-nl')
+      expect(store.worldForFace('blog-post', 'en')).toBeUndefined()
+    })
+
+    it('prefers a per-type override over the world own select', async () => {
+      // The resolver honours `overrides` ahead of `select`, so this must too.
+      // Here `published` selects the `published` face generally but serves
+      // blog-posts through `en` — so a policy face and a blog face map to the
+      // SAME world through different chains.
+      const store = await loadWorlds({
+        default: { readable: true, default: true },
+        published: {
+          readable: true,
+          select: ['published'],
+          overrides: { 'blog-post': ['en'] },
+          otherwise: 'exclude',
+        },
+      })
+      expect(store.worldForFace('policy', 'published')).toBe('published')
+      expect(store.worldForFace('blog-post', 'en')).toBe('published')
+      // The override REPLACES select for that type, so the generic chain no
+      // longer applies to it.
+      expect(store.worldForFace('blog-post', 'published')).toBeUndefined()
+    })
+
+    // TKT-MFVH03: two worlds heading the same face used to be resolved by map
+    // iteration order — insertion order, a property of how the config
+    // serialized rather than of what the operator meant.
+    it('uses primary_for to break a tie between two worlds heading the face', async () => {
+      const store = await loadWorlds({
+        default: { readable: true, default: true },
+        'site-nl': {
+          readable: true,
+          select: ['nl', 'en'],
+          otherwise: 'default',
+          primary_for: ['nl'],
+        },
+        'editorial-nl': { readable: true, select: ['nl'], otherwise: 'exclude' },
+      })
+      expect(store.worldForFace('guide', 'nl')).toBe('site-nl')
+    })
+
+    it('is insensitive to the order the tied worlds arrive in', async () => {
+      // The same two worlds, declared the other way round. Before the fix this
+      // flipped the answer; the claim must decide it, not the ordering.
+      const store = await loadWorlds({
+        default: { readable: true, default: true },
+        'editorial-nl': { readable: true, select: ['nl'], otherwise: 'exclude' },
+        'site-nl': {
+          readable: true,
+          select: ['nl', 'en'],
+          otherwise: 'default',
+          primary_for: ['nl'],
+        },
+      })
+      expect(store.worldForFace('guide', 'nl')).toBe('site-nl')
+    })
+
+    it('returns undefined for an unresolved tie rather than picking one', async () => {
+      // The server refuses such a schema at load, so this is belt-and-braces —
+      // but returning SOMETHING here is precisely the old bug, and the caller
+      // already knows how to omit an affordance for undefined.
+      const store = await loadWorlds({
+        default: { readable: true, default: true },
+        'site-nl': { readable: true, select: ['nl', 'en'], otherwise: 'default' },
+        'editorial-nl': { readable: true, select: ['nl'], otherwise: 'exclude' },
+      })
+      expect(store.worldForFace('guide', 'nl')).toBeUndefined()
+    })
+
+    it('ignores a claim on a face the world does not head', async () => {
+      // `en` is site-nl FALLBACK. The server rejects this schema, so the only
+      // question here is that the client does not honour the claim anyway.
+      const store = await loadWorlds({
+        default: { readable: true, default: true },
+        'site-nl': {
+          readable: true,
+          select: ['nl', 'en'],
+          otherwise: 'default',
+          primary_for: ['en'],
+        },
+      })
+      expect(store.worldForFace('guide', 'en')).toBeUndefined()
+    })
+
+    it('omits the affordance when two distinguishable worlds lead the face', async () => {
+      // Same head, different `otherwise:` — the server ACCEPTS this pair (they
+      // answer different questions about entities lacking the face), so no
+      // declaration is forced. But nothing says which one a face-switch means,
+      // so the affordance is omitted rather than guessed.
+      const store = await loadWorlds({
+        default: { readable: true, default: true },
+        published: { readable: true, select: ['published'], otherwise: 'exclude' },
+        lenient: { readable: true, select: ['published'], otherwise: 'default' },
+      })
+      expect(store.worldForFace('note', 'published')).toBeUndefined()
+    })
+
+    it('honours a claim even between distinguishable worlds', async () => {
+      const store = await loadWorlds({
+        default: { readable: true, default: true },
+        published: {
+          readable: true,
+          select: ['published'],
+          otherwise: 'exclude',
+          primary_for: ['published'],
+        },
+        lenient: { readable: true, select: ['published'], otherwise: 'default' },
+      })
+      expect(store.worldForFace('note', 'published')).toBe('published')
+    })
+
+    it('returns undefined when no declared world heads the face', async () => {
+      // undefined is load-bearing: the caller omits the affordance rather than
+      // inventing a `?world=` the server will reject. A falsy-but-defined ''
+      // would be read as "the default world" and navigate somewhere wrong.
+      const store = await loadWorlds({
+        default: { readable: true, default: true },
+        published: { readable: true, select: ['published'], otherwise: 'exclude' },
+      })
+      expect(store.worldForFace('policy', 'archived')).toBeUndefined()
+    })
+
+    it("maps the default face to '' — the world param is omitted", async () => {
+      const store = await loadWorlds({
+        default: { readable: true, default: true },
+        published: { readable: true, select: ['published'], otherwise: 'exclude' },
+      })
+      expect(store.worldForFace('policy', '')).toBe('')
+    })
+
+    it('never returns the reserved default world for a real face', async () => {
+      // `default` is total and implicit; it heads no face chain. Returning
+      // it would send `?world=default`, which is a different request from
+      // omitting the param on a deployment with app.default_world set.
+      const store = await loadWorlds({
+        default: { readable: true, default: true, select: ['draft'] },
+      })
+      expect(store.worldForFace('policy', 'draft')).toBeUndefined()
     })
   })
 

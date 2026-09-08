@@ -109,8 +109,8 @@ func gatedServer(t *testing.T) (*Server, context.Context) {
 		ProjectRoot:   t.TempDir(),
 	}
 
-	srv := &Server{deps: deps, logger: slog.New(slog.DiscardHandler)}
-	srv.handlerSet = deps.handlers()
+	srv := &Server{logger: slog.New(slog.DiscardHandler)}
+	setDeps(srv, deps)
 	return srv, principal.With(ctx, principal.Principal{User: "alice", Tool: principal.ToolMCP})
 }
 
@@ -345,7 +345,7 @@ func TestACL_Resources_AreGated(t *testing.T) {
 	t.Parallel()
 	s, ctx := gatedServer(t)
 
-	_, err := s.schemaRes.handleReadEntity(ctx, readResourceReq("rela://entity/feature/"+hiddenID))
+	_, err := group(s, selSchemaRes).handleReadEntity(ctx, readResourceReq("rela://entity/feature/"+hiddenID))
 	if err == nil {
 		t.Error("LEAK: resource read of a hidden entity succeeded")
 	} else if strings.Contains(err.Error(), hiddenTitle) {
@@ -353,7 +353,7 @@ func TestACL_Resources_AreGated(t *testing.T) {
 	}
 
 	// A readable entity still works, so the gate is not simply refusing all.
-	if _, err := s.schemaRes.handleReadEntity(ctx, readResourceReq("rela://entity/ticket/"+visibleID)); err != nil {
+	if _, err := group(s, selSchemaRes).handleReadEntity(ctx, readResourceReq("rela://entity/ticket/"+visibleID)); err != nil {
 		t.Errorf("readable entity denied through resource path: %v", err)
 	}
 }
@@ -365,11 +365,11 @@ func TestACL_Trace_HiddenRootIsNotAnOracle(t *testing.T) {
 	t.Parallel()
 	s, ctx := gatedServer(t)
 
-	hidden, err := s.trace.handleTraceFrom(ctx, makeToolRequest(map[string]any{"id": hiddenID}))
+	hidden, err := group(s, selTrace).handleTraceFrom(ctx, makeToolRequest(map[string]any{"id": hiddenID}))
 	if err != nil {
 		t.Fatalf("trace_from(hidden): %v", err)
 	}
-	absent, err := s.trace.handleTraceFrom(ctx, makeToolRequest(map[string]any{"id": "NO-SUCH-ID"}))
+	absent, err := group(s, selTrace).handleTraceFrom(ctx, makeToolRequest(map[string]any{"id": "NO-SUCH-ID"}))
 	if err != nil {
 		t.Fatalf("trace_from(absent): %v", err)
 	}

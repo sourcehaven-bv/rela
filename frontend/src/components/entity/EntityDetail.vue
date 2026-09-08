@@ -1,11 +1,14 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount, onUnmounted } from 'vue'
-import { RouterLink, useRouter, type RouteLocationRaw } from 'vue-router'
+import { RouterLink, useRoute, useRouter, type RouteLocationRaw } from 'vue-router'
 import { useSchemaStore, useUIStore } from '@/stores'
 import { useScopeNavigation } from '@/composables'
 import { useBackTarget } from '@/composables/useBackTarget'
 import { isCancelledFetch } from '@/composables/usePageData'
 import { fetchView, getCommands, getErrorMessage } from '@/api'
+import { useWorld, worldQuery, DEFAULT_WORLD } from '@/composables/useWorld'
+import { entityRef, refBareId, refFace } from '@/utils/entityRef'
+import { worldText, type WorldTextVars } from '@/utils/worldText'
 import type { ViewEntity, ViewResponse, ViewSection, ViewSectionField } from '@/api'
 import type { Entity } from '@/types'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
@@ -36,9 +39,23 @@ import type { WidgetRoutingHint } from '@/widgets/types'
 import type { PropertyDef } from '@/types'
 import type { Component } from 'vue'
 import DocumentsPanel from '@/components/entity/DocumentsPanel.vue'
+import CommentsPanel from '@/components/entity/CommentsPanel.vue'
+import CommentIndicator from '@/components/entity/CommentIndicator.vue'
+import TextSelectionComment from '@/components/entity/TextSelectionComment.vue'
+import TextCommentPopover from '@/components/entity/TextCommentPopover.vue'
+import BlockCommentOverlay from '@/components/entity/BlockCommentOverlay.vue'
+import { listComments, type Comment } from '@/api/comments'
+import { shouldFlipPopover } from '@/utils/popoverFlip'
+import { applyHighlights, type HighlightRange } from '@/utils/commentHighlight'
 import CommandModal from '@/components/entity/CommandModal.vue'
 import ExportMenu from '@/components/entity/ExportMenu.vue'
 import { entityExportUrl } from '@/api/transforms'
+import CopyMenu from '@/components/entity/CopyMenu.vue'
+import FaceMenu from '@/components/entity/FaceMenu.vue'
+import WorldBadge from '@/components/entity/WorldBadge.vue'
+import WorldBanner from '@/components/common/WorldBanner.vue'
+import { invokeCopy } from '@/api/copies'
+import type { CopyOffer, Face } from '@/types'
 import SectionEditForm, { type SectionEditField } from '@/components/forms/SectionEditForm.vue'
 import AutoSaveIndicator from '@/components/forms/AutoSaveIndicator.vue'
 import {
@@ -76,21 +93,98 @@ const props = withDefaults(
 )
 
 const router = useRouter()
+const route = useRoute()
 const schemaStore = useSchemaStore()
 const uiStore = useUIStore()
 const { confirm } = useConfirm()
+// The world is read from the URL, the same source EntityList reads, so a
+// detail page reached from a world-bound list stays in that world and a
+// deep link round-trips.
+const { world, isWorldBound, worldParam, setWorld } = useWorld()
+
+// --- No face in the requested world -------------------------------------
+//
+// The entity exists and this caller may read it; the world they asked for
+// simply has no face of it. That is the ordinary state of every unpublished
+// draft, and it used to render as "Error — entry entity not found", which sent
+// people off to create the thing a second time.
+//
+// The server answers 200 with `_world_absent` and the DEFAULT face, so this
+// page shows real content with a banner explaining which world is missing it
+// and how to get to the face that exists. Crucially the page is NOT read-only
+// in this state — what is on screen is the default face, addressed by its
+// bare id, so the ordinary world banner (which announces read-only-ness)
+// must not render alongside it.
+const worldAbsent = computed(() => viewData.value?._world_absent === true)
+
+// --- The address of the row on screen -------------------------------------
+//
+//     view[entity@face]  --Edit-->  form[entity@face]  --Save-->  PATCH entity@face
+//
+// Every write this page makes goes to `servedRef`: the coordinate the server
+// reports in the entry's `_self`, face included. Under a world the bare id
+// resolves to whichever face the world picks, so the bare id is not a stable
+// address for what is on screen — `_self` is, and the server accepts it on
+// GET, PATCH and DELETE alike (TKT-SLFURL). Whether a write is ALLOWED is
+// `_actions`, which the server computes for that same face. Together those
+// two replace the page-level "read-only under a world" lock this component
+// used to apply: that lock re-derived a decision the server had already made,
+// got it wrong for every type without faces and for every chain hit on the
+// bare face, and contradicted the very `_actions` it was overriding (atlas
+// worlds issues 2, 3, 4, 10).
+//
+// Before the entry has loaded, the route's own id is the best address there
+// is; it may itself carry a face (`/entity/policy/POL-1@published`).
+const servedRef = computed(() => (entry.value ? entityRef(entry.value) : props.entityId))
+// The face on screen, '' for the bare face. A fact read off the response,
+// never derived from the world.
+const servedFace = computed(() => refFace(servedRef.value))
+// The bare id, for surfaces addressed per ENTITY rather than per row:
+// documents, commands, history, scope navigation.
+const bareEntityId = computed(() => refBareId(props.entityId))
 
 // Scope navigation (prev/next within a list) and back affordance
 // (return_to / from precedence). Two parallel concerns: scope-nav walks
 // a list; backTarget answers "where do I go back to". Both can be active
 // at once.
-const { scopeNav, loadScopeNav, scopeTarget, navigateScope } = useScopeNavigation(() => props.entityId)
+// Scope navigation is per ENTITY (`_position` walks a list by bare id).
+const { scopeNav, loadScopeNav, scopeTarget, navigateScope } = useScopeNavigation(
+  () => bareEntityId.value
+)
 const backTarget = useBackTarget()
 
 // State
 const loading = ref(true)
 const error = ref<string | null>(null)
+
+// pageState mirrors DynamicForm's `form-state-*` contract: a stable signal
+// that this screen has finished resolving, so a screenshot can wait for it
+// rather than hanging until its capture timeout.
+const pageState = computed<'pending' | 'loaded' | 'error'>(() => {
+  if (error.value) return 'error'
+  return loading.value ? 'pending' : 'loaded'
+})
 const viewData = ref<ViewResponse | null>(null)
+const loadedCommands = ref<Command[]>([])
+
+// Commands are SUPPRESSED while a NON-BARE face is on screen, and this is a
+// stop-gap with a known expiry rather than a design.
+//
+// A command pipes a rendered view to an operator shell script's stdin. The
+// server passes `defaultViewWorld()` explicitly at that call site
+// (internal/dataentry/commands.go), so while the reader looks at the published
+// face the script receives the BARE face's content — and it receives it "past
+// any layer that could observe it", as that comment says.
+//
+// What a face-bound command should MEAN is deliberately another ticket. But
+// until it has one, rendering the buttons is the affordance-that-lies shape:
+// the page would be promising an action whose input is not what is on screen.
+// A page showing the bare face — under any world — is exactly what the script
+// gets, so the buttons render there.
+//
+// Gated HERE rather than on the two button sites (desktop header + mobile
+// overflow) so a third render site cannot be added without inheriting it.
+const commands = computed<Command[]>(() => (servedFace.value ? [] : loadedCommands.value))
 
 // Prev/next within a list re-fetches this component in place. Blanking the
 // page to a centred spinner on every step was the worst layout shift in
@@ -101,14 +195,10 @@ const viewData = ref<ViewResponse | null>(null)
 // already on screen, stepping to a neighbour holds it until the next
 // resolves, so nothing is shown at all. (2) On a genuine cold load, the
 // gate still suppresses anything quicker than the navigation delay.
-const showBlockLoader = useDelayedPending(
-  () => loading.value && !viewData.value,
-  {
-    delay: PENDING_TIMINGS.navDelayMs,
-    minDuration: PENDING_TIMINGS.navMinDurationMs,
-  }
-)
-const commands = ref<Command[]>([])
+const showBlockLoader = useDelayedPending(() => loading.value && !viewData.value, {
+  delay: PENDING_TIMINGS.navDelayMs,
+  minDuration: PENDING_TIMINGS.navMinDurationMs,
+})
 const showOverflowMenu = ref(false)
 
 const commandModalRef = ref<InstanceType<typeof CommandModal> | null>(null)
@@ -118,9 +208,15 @@ const commandModalRef = ref<InstanceType<typeof CommandModal> | null>(null)
 // support cmd/ctrl/middle-click — unlike Delete, which stays a <button>.
 // Each is the single source of truth for its destination, shared with the
 // keyboard shortcut so both routes agree.
-const historyTarget = computed(
-  () => `/history/${props.entityType}/${props.entityId}`
-)
+//
+// History is PER-FACE (`entity_versions` is keyed by content state), so the
+// world has to ride along: dropping it sent the reader to the DEFAULT face's
+// history from a world-bound page — a genuinely different record, presented as
+// the right one with nothing on screen naming the face (BUG-2).
+const historyTarget = computed<RouteLocationRaw>(() => ({
+  path: `/history/${props.entityType}/${bareEntityId.value}`,
+  query: worldParam.value ? { world: worldParam.value } : {},
+}))
 
 const contentRef = ref<HTMLElement | null>(null)
 
@@ -151,16 +247,29 @@ const isInaccessible = computed(() => (entry.value?.inaccessible?.length ?? 0) >
 
 // Affordance gates: `_actions` map from the server. `false` → hide;
 // anything else → render. See frontend/src/utils/affordancesWarning.ts.
-const canUpdate = computeActionAllowed(entry, 'update')
+const mayUpdate = computeActionAllowed(entry, 'update')
+const mayDelete = computeActionAllowed(entry, 'delete')
+
+// `_actions` alone. The server computes the map for the FACE it served, and
+// every write from this page is addressed to that face (`servedRef`), so the
+// verdict and the write agree by construction — under a world as in the
+// default one. A stand-in face no grant covers reports `update: false`, and
+// that is what hides Edit; a chain hit on the bare face reports `true`, and
+// Edit shows. There is nothing left for the page to AND in.
+const canUpdate = computed(() => mayUpdate.value)
+const canDelete = computed(() => mayDelete.value)
 
 // Nil: undefined when editing is unavailable (no configured form, an
-// inaccessible/git-crypt entity, or no update permission). The template then
-// renders nothing rather than a link to a page that would refuse the write.
+// inaccessible/git-crypt entity, or no update permission on the face on
+// screen). The template then renders nothing rather than a link to a page
+// that would refuse the write.
+//
+// The form opens on the ADDRESS of the row on screen, face included, so
+// what you look at is what you edit is what you save.
 const editTarget = computed<RouteLocationRaw | undefined>(() => {
   if (!editFormId.value || isInaccessible.value || !canUpdate.value) return undefined
-  return { name: 'form-edit', params: { id: editFormId.value, entityId: props.entityId } }
+  return { name: 'form-edit', params: { id: editFormId.value, entityId: servedRef.value } }
 })
-const canDelete = computeActionAllowed(entry, 'delete')
 
 // The entry's content section gets a custom renderer (mermaid + interactive
 // checkboxes) instead of the generic section render-path. Other content
@@ -177,6 +286,65 @@ const entryContentSection = computed(() => {
   if (!sections) return null
   return sections.find(isEntryContentSection) || null
 })
+
+// Section ids offered as comment anchor targets (TKT-FIO205). `sectionId` is
+// the operator-authored name from data-entry.yaml, which is why it is anchorable
+// at all: it is a NAME, not an offset, so it survives edits to the entity body.
+const commentSectionIds = computed(
+  () => viewData.value?.sections?.map((s) => s.sectionId).filter(Boolean) ?? []
+)
+
+// ─── Per-field comments (TKT-FIO205) ─────────────────────────────────────
+//
+// Fetched ONCE per entity and grouped by anchor ref, not once per field: a
+// per-field request would be N round-trips for N properties, and the server
+// already returns the whole thread in one call.
+const comments = ref<Comment[]>([])
+
+const commentsEnabled = computed(
+  () => schemaStore.getEntityType(props.entityType)?.commentable === true
+)
+
+const commentsByProperty = computed(() => {
+  const byRef = new Map<string, Comment[]>()
+  for (const c of comments.value) {
+    if (c.anchor.kind !== 'property') continue
+    const bucket = byRef.get(c.anchor.ref)
+    if (bucket) bucket.push(c)
+    else byRef.set(c.anchor.ref, [c])
+  }
+  return byRef
+})
+
+function commentsForProperty(name: string): Comment[] {
+  return commentsByProperty.value.get(name) ?? []
+}
+
+/**
+ * The entity id addressed for comments, carrying the resolved face.
+ *
+ * Comments are per content state (FEAT-9CD2MX): a remark on the draft is not a
+ * remark on the published version. The view response reports which face the
+ * world actually served, so the thread follows the content on screen rather
+ * than always addressing the default face.
+ */
+const commentEntityId = computed(() => {
+  const face = viewData.value?.entry?._world?.face
+  return face ? `${props.entityId}@${face}` : props.entityId
+})
+
+async function loadComments() {
+  if (!commentsEnabled.value) return
+  try {
+    comments.value = await listComments(props.entityType, commentEntityId.value)
+  } catch {
+    // A failure here means "cannot read the target, or commenting is off" —
+    // the server makes those indistinguishable on purpose. Either way there is
+    // no thread to show, and the page's primary content must still render, so
+    // this degrades to "no comments" rather than surfacing an error.
+    comments.value = []
+  }
+}
 
 const checkboxStats = computed(() => {
   const c = entryContentSection.value?.content
@@ -202,14 +370,32 @@ const refResolver = computed<EntityRefResolver | undefined>(() => {
   }
 })
 
-const renderedEntryContent = computed(() =>
-  entryContentSection.value
-    ? renderMarkdown(entryContentSection.value.content || '', {
-        refResolver: refResolver.value,
-        interactive: true,
-      })
-    : ''
+// Text-anchored comments as source ranges (TKT-FIO205 stage 2). Offsets are
+// resolved server-side per read; a detached anchor has none and is simply not
+// highlighted (it still shows in the panel).
+const textHighlights = computed<HighlightRange[]>(() =>
+  comments.value
+    .filter((c) => c.anchor.kind === 'text' && c.anchor.start != null && c.anchor.end != null)
+    .map((c) => ({
+      id: c.id,
+      start: c.anchor.start as number,
+      end: c.anchor.end as number,
+      uncertain: c.anchor.uncertain,
+    }))
 )
+
+const renderedEntryContent = computed(() => {
+  if (!entryContentSection.value) return ''
+  // Marks are inserted into the SOURCE before rendering: the server's offsets
+  // are source coordinates, and re-finding the text in the rendered DOM would
+  // mean re-implementing the matcher against a document the renderer (and then
+  // mermaid) has already transformed.
+  const source = applyHighlights(entryContentSection.value.content || '', textHighlights.value)
+  return renderMarkdown(source, {
+    refResolver: refResolver.value,
+    interactive: true,
+  })
+})
 
 // Re-renders re-process mermaid diagrams inside the content body. Checkbox
 // clicks are handled via delegation on contentRef (see contentClick), which
@@ -251,7 +437,9 @@ const entryProperties = computed<Record<string, unknown>>(() => entry.value?.pro
 const pinEntityForFlush = ref<{ type: string; id: string } | null>(null)
 const contentAutoSave = useAutoSave({
   getEntityType: () => pinEntityForFlush.value?.type ?? props.entityType,
-  getEntityId: () => pinEntityForFlush.value?.id ?? props.entityId,
+  // The row's ADDRESS, face included: a checkbox toggled on the published
+  // face must land on the published face. The pin holds an address too.
+  getEntityId: () => pinEntityForFlush.value?.id ?? servedRef.value,
   contentDebounceMs: 100,
   formData: entryProperties as unknown as import('vue').Ref<Record<string, unknown>>,
   contentRef: entryContent as unknown as import('vue').Ref<string>,
@@ -279,6 +467,29 @@ const contentAutoSave = useAutoSave({
 
 function contentClick(event: MouseEvent) {
   const target = event.target as HTMLElement | null
+
+  // The chip beside a highlighted link opens that link's thread. Checked first
+  // because it sits inside the mark it belongs to.
+  const chip = target?.closest<HTMLElement>('[data-comment-chip]')
+  if (chip) {
+    event.preventDefault()
+    openTextComment(chip.dataset.commentId, chip)
+    return
+  }
+
+  // A LINK inside a highlight keeps its own click: navigation is the primary
+  // action, and the chip above is how that thread is reached instead.
+  if (target?.closest('a[href]')) return
+
+  // Any other comment highlight opens its thread. Checked before the checkbox
+  // branch because both are delegated from the same handler.
+  const mark = target?.closest<HTMLElement>('mark[data-comment-id]')
+  if (mark) {
+    event.preventDefault()
+    openTextComment(mark.dataset.commentId, mark)
+    return
+  }
+
   const checkbox = target?.closest<HTMLInputElement>('input[type="checkbox"][data-cb-idx]')
   if (!checkbox) return
   event.preventDefault()
@@ -289,10 +500,76 @@ function contentClick(event: MouseEvent) {
   handleCheckboxToggle(idx)
 }
 
+/**
+ * The text comment whose thread is open, plus where to anchor its popover.
+ *
+ * Held here rather than in the highlight itself: the marks live inside v-html
+ * output, so there is no component per highlight to own the state.
+ */
+const openTextCommentId = ref<string | null>(null)
+const textCommentAnchorEl = ref<HTMLElement | null>(null)
+
+function openTextComment(id: string | undefined, el: HTMLElement) {
+  if (!id) return
+  // Clicking the open highlight again closes it, matching the field indicators.
+  if (openTextCommentId.value === id) {
+    closeTextComment()
+    return
+  }
+  openTextCommentId.value = id
+  textCommentAnchorEl.value = el
+}
+
+function closeTextComment() {
+  openTextCommentId.value = null
+  textCommentAnchorEl.value = null
+}
+
+/**
+ * The whole thread at the clicked highlight — every comment resolving to the
+ * same range, not just the one whose id is on the mark.
+ *
+ * Replies are separate comments sharing an anchor (stage 1 has no threading),
+ * so they resolve to the SAME range and only the first one gets a mark. Keying
+ * the popover on the mark's id alone showed a single comment and made a saved
+ * reply look lost.
+ */
+const openTextComments = computed(() => {
+  const clicked = comments.value.find((c) => c.id === openTextCommentId.value)
+  if (!clicked) return []
+  const { start, end } = clicked.anchor
+  if (start == null || end == null) return [clicked]
+  return comments.value.filter(
+    (c) => c.anchor.kind === 'text' && c.anchor.start === start && c.anchor.end === end
+  )
+})
+
+/**
+ * Where to place the thread popover, in coordinates relative to the body.
+ *
+ * Read from the clicked element rather than tracked reactively: the mark is
+ * re-created on every render of the body, so a stored reference would go stale.
+ */
+const textCommentPos = computed(() => {
+  const el = textCommentAnchorEl.value
+  const host = contentRef.value
+  if (!el || !host) return null
+  const r = el.getBoundingClientRect()
+  const h = host.getBoundingClientRect()
+  return { top: r.bottom - h.top + 6, left: Math.max(0, r.left - h.left) }
+})
+
 function handleCheckboxToggle(index: number) {
   const current = entry.value
   const view = viewData.value
   if (!current || !view) return
+  // A checkbox click is a WRITE (it schedules a content PATCH to the row's
+  // address). Checkboxes render inside markdown and cannot be hidden by a
+  // `v-if` the way a button can, so the affordance gate lives at the handler.
+  if (!canUpdate.value) {
+    uiStore.warning('Update not permitted for this entity')
+    return
+  }
   let newContent: string
   try {
     newContent = toggleCheckboxInSource(current.content || '', index)
@@ -371,7 +648,7 @@ async function loadCommands() {
   commandsAbort = new AbortController()
   const localAbort = commandsAbort
   try {
-    commands.value = await getCommands(
+    loadedCommands.value = await getCommands(
       { pageType: 'entity', entityType: props.entityType },
       localAbort.signal
     )
@@ -379,7 +656,7 @@ async function loadCommands() {
     if (localAbort.signal.aborted) return
     if (isCancelledFetch(err)) return
     console.error('Failed to load commands:', err)
-    commands.value = []
+    loadedCommands.value = []
   }
 }
 
@@ -409,14 +686,21 @@ async function loadView() {
   // quick.
   const settleRouteLoad = beginRouteLoad()
   try {
-    viewData.value = await fetchView(props.entityType, props.entityId)
+    // The world rides the request, so the entry resolves to that world's face
+    // and every collection entity resolves through the same world, per
+    // neighbour (TKT-WRLDAPI item 4b). Without it this page rendered draft
+    // content while the selector said "published" — the API was correct and
+    // the page simply never asked.
+    viewData.value = await fetchView(props.entityType, props.entityId, worldParam.value)
     if (viewData.value?.entry) {
       // Seed the autosave baseline so the first toggle's no-op
       // suppression can compare against server state without waiting
       // for the response of a sentinel PATCH.
       contentAutoSave.recordServerSnapshot(viewData.value.entry)
     }
-    await Promise.all([loadCommands(), loadScopeNav()])
+    // loadComments swallows its own failures (see its doc): a comment-service
+    // problem must not fail the entity view it decorates.
+    await Promise.all([loadCommands(), loadScopeNav(), loadComments()])
   } catch (err) {
     if (isCancelledFetch(err)) return
     error.value = getErrorMessage(err, 'Failed to load entity')
@@ -436,14 +720,22 @@ function editEntity() {
     uiStore.error('No edit form configured for this entity type')
     return
   }
-  router.push({ name: 'form-edit', params: { id: editFormId.value, entityId: props.entityId } })
+  router.push({ name: 'form-edit', params: { id: editFormId.value, entityId: servedRef.value } })
 }
 
 async function requestDelete() {
   if (!entry.value) return
+  // Addressed to the row on screen. On the bare face that is the entity; on
+  // a non-bare face it is that face only (the server's rule for `ID@face`),
+  // and the confirm says so — "delete" must not read as "unpublish" or the
+  // reverse.
+  const face = servedFace.value
   const ok = await confirm({
-    title: 'Delete Entity?',
-    message: `Are you sure you want to delete '${props.entityId}'? This action cannot be undone.`,
+    title: face ? 'Delete Face?' : 'Delete Entity?',
+    message: face
+      ? `Are you sure you want to delete the ${faceLabel(face)} face of '${bareEntityId.value}'? ` +
+        'Its other faces are kept. This action cannot be undone.'
+      : `Are you sure you want to delete '${bareEntityId.value}'? This action cannot be undone.`,
     confirmLabel: 'Delete',
     danger: true,
     onConfirm: withConfirmError(
@@ -452,7 +744,7 @@ async function requestDelete() {
         // canonical CRUD path; keep using it.
         const { useEntitiesStore } = await import('@/stores')
         const entitiesStore = useEntitiesStore()
-        await entitiesStore.remove(props.entityType, props.entityId)
+        await entitiesStore.remove(props.entityType, servedRef.value)
       },
       'Failed to delete entity',
       uiStore
@@ -462,6 +754,271 @@ async function requestDelete() {
   uiStore.success('Entity deleted successfully')
   router.push(backTargetAfterDelete())
 }
+
+// --- Copy affordances (RULING 9) ---------------------------------------
+//
+// Offers ride the entity response as `_copies`, so there is nothing to fetch:
+// they arrive with the view and refresh with it. CopyMenu renders only the
+// allowed ones, as absent rather than disabled.
+//
+// The server's verdict, as-is. Offers are computed for the face it SERVED
+// and the invoke names the source by id, so a promote offered on the bare
+// face copies the bytes on screen. An earlier revision blanked the list on
+// every world-bound page, which hid a correctly-offered promote on a chain
+// hit on the bare face (atlas worlds issue 4).
+//
+// Always an array. The wire keeps `_copies` absent (no capability) distinct
+// from `[]` (none declared), but this page renders nothing for both, so the
+// distinction is collapsed HERE, once, rather than carried into every reader.
+const copyOffers = computed<CopyOffer[]>(() => entry.value?._copies ?? [])
+
+// Faces render on EVERY screen, world-bound or not — a reader wants the way
+// back to the draft, an author wants to see what readers see, and the
+// multilingual case has no privileged direction. Each entry is a plain link
+// to the face's ADDRESS (`_faces[].ref`, e.g. `POL-1@published`), which the
+// server serves literally under any world — so the menu never has to work
+// out which declared world happens to lead with a face, and never offers a
+// dead control for a face no world heads.
+const faceOptions = computed<Face[] | undefined>(() => entry.value?._faces)
+
+// The face's address, for an older server that sends no `ref`: the stored
+// coordinate appended to the bare id is that face's spelling for every
+// non-bare face; the bare face has only the bare id.
+function faceAddress(f: Face): string {
+  if (f.ref) return f.ref
+  return f.face ? `${bareEntityId.value}@${f.face}` : bareEntityId.value
+}
+
+function goToFace(f: Face) {
+  const ref = faceAddress(f)
+  // The REST of the query is preserved — `from`/`scope` keep the back button
+  // and prev/next working, and the world stays what it was: an explicit
+  // address is literal under any world, so switching face never has to switch
+  // world.
+  const query = { ...route.query }
+  if (!ref.includes('@')) {
+    // A bare address is literal only in the default world (under any other,
+    // the world resolves it). That is the ONE case where the face switch has
+    // to name the world — spelled `default` when a configured default would
+    // otherwise apply, dropped when it would not, exactly as setWorld does.
+    if (schemaStore.defaultWorld) query.world = DEFAULT_WORLD
+    else delete query.world
+  }
+  router.push({ path: `/entity/${props.entityType}/${ref}`, query })
+}
+
+const copyBusy = ref(false)
+
+async function runCopy(offer: CopyOffer) {
+  // Every offer is same-entity (the server filters cross-entity definitions
+  // out), so the invoke names the definition and the source and nothing else.
+  //
+  // Capture the subject. `copyBusy` only disables THIS menu's button — the
+  // scope-nav shortcuts (P/N), the back button and the sidebar stay live, so
+  // the page can be showing a different entity by the time the invoke
+  // resolves. Without this the success toast names a face on the entity the
+  // user has already left, and `loadView()` fires a second, pointless fetch
+  // for the one they are now on. Same shape as `pinEntityForFlush` below.
+  const subject = bareEntityId.value
+  const label = offer.label || offer.name
+  copyBusy.value = true
+  try {
+    const res = await invokeCopy(offer.name, subject)
+    // The toast is the operator's `on_success.message`, or the copy's own
+    // label — the button the reader just pressed — never rela's "Created the
+    // X face" (TKT-5SZG2L). `{face}` here is the face WRITTEN, which
+    // `res.face` reports as a stored coordinate.
+    const message =
+      worldText(offer.onSuccess?.message, {
+        ...textVars.value,
+        face: faceLabel(res.face),
+      }) || label
+    if (bareEntityId.value !== subject) {
+      // Still worth telling them it succeeded — they asked for it — but name
+      // the entity, since the page in front of them is no longer the subject.
+      uiStore.success(`${message} (${subject})`)
+      return
+    }
+    uiStore.success(message)
+    await landAfterCopy(offer, subject, res.face)
+  } catch (err) {
+    // The kernel re-authorizes, so a 403 here is not a contradiction of
+    // `allowed` — it is the boundary doing its job on a hint that went stale
+    // (a permission revoked between render and click). Report it plainly, and
+    // name the subject if the user has since navigated away — an unqualified
+    // "Copy failed" beside an unrelated entity reads as that entity failing.
+    const detail = getErrorMessage(err, 'Copy failed')
+    uiStore.error(bareEntityId.value === subject ? detail : `${subject}: ${detail}`)
+  } finally {
+    copyBusy.value = false
+  }
+}
+
+// landAfterCopy navigates per the copy's `on_success.landing`. The default is
+// the face WRITTEN (an editor who adopts a policy usually wants to see the
+// adopted text), addressed as `ID@face` so it is literal under any world; a
+// copy into the bare face reloads in place, since the bare address would
+// re-resolve. `stay` reloads in place; a world lands the bare id in that
+// world; a face lands on that face's address. Either way the offers
+// recompute, since a face that now exists may no longer be offered.
+//
+// The server validates a landing at load, so a `world`/`face` arm with no
+// name is not a state this deployment produces — but a response is data,
+// and the guard is what keeps a hand-crafted or older one from navigating
+// to a literal `ID@undefined`. A mode this build does not know reloads in
+// place rather than passing for `written`: the landing was a declaration,
+// and "written" would be this code inventing one.
+async function landAfterCopy(offer: CopyOffer, subject: string, writtenFace: string) {
+  const landing = offer.onSuccess?.landing
+  const path = `/entity/${props.entityType}/${subject}`
+  const toFace = (face: string) =>
+    router.push({ path: `${path}@${face}`, query: { ...route.query } })
+  switch (landing?.mode ?? 'written') {
+    case 'written':
+      if (writtenFace) toFace(writtenFace)
+      else await loadView()
+      return
+    case 'stay':
+      await loadView()
+      return
+    case 'world':
+      if (landing?.world) {
+        router.push({
+          path,
+          query: worldQuery(landing.world, route.query, schemaStore.defaultWorld),
+        })
+      } else {
+        await loadView()
+      }
+      return
+    case 'face':
+      if (landing?.face) toFace(landing.face)
+      else await loadView()
+      return
+    default:
+      await loadView()
+  }
+}
+
+// The operator's announcement for the world on screen, or '' to announce
+// nothing. Config, not data — served identically to every principal.
+const worldBanner = computed<string>(
+  () => (world.value ? schemaStore.worlds.get(world.value)?.banner : '') || ''
+)
+
+// --- Operator chrome text ------------------------------------------------
+//
+// The page has NO sentence of its own about worlds or faces. Every one it
+// used to have ("Read-only in this world — edit from Concept", "This entity
+// has no published face yet", "Created the published face") was rela's
+// storage vocabulary shown to a reader who never chose those words. What an
+// operator declares in schema.yaml renders verbatim (placeholders
+// substituted); what they do not declare renders nothing (TKT-5SZG2L).
+
+// The declared label of a face, by its DECLARED name (the vocabulary the
+// address and `_world.face` use). '' when the type names none.
+function faceLabelOf(declared: string): string {
+  const faces = typeDef.value?.faces
+  if (!faces) return declared
+  return faces[declared]?.label || declared
+}
+
+// A face's display label by STORED coordinate ('' is the bare face), for the
+// copy result, which reports what it wrote as stored.
+function faceLabel(stored: string): string {
+  return schemaStore.faceLabel(props.entityType, stored) || stored
+}
+
+const bareFaceLabel = computed<string>(() => schemaStore.faceLabel(props.entityType, ''))
+
+const textVars = computed<WorldTextVars>(() => ({
+  face: faceLabelOf(servedFace.value || (typeDef.value?.bare_face ?? '')),
+  bare_face: bareFaceLabel.value,
+  world: world.value,
+  title: entryTitle.value,
+}))
+
+const worldInfo = computed(() => (world.value ? schemaStore.worlds.get(world.value) : undefined))
+
+// The note for a NON-BARE face the principal may not write, in the
+// operator's words for THAT face (`faces.<name>.messages.read_only`). A bare
+// face without `update` is an ordinary permission denial; a non-bare face
+// WITH `update` (a translator on `nl`) is simply editable; neither gets a
+// note. No button either: the face menu already reaches the bare face.
+const readOnlyNote = computed<string>(() => {
+  if (worldAbsent.value || !servedFace.value || mayUpdate.value) return ''
+  const declared = typeDef.value?.faces?.[servedFace.value]
+  return worldText(declared?.messages?.read_only, textVars.value)
+})
+
+// The note for an entity with no face in this world, in the world's words.
+const absentNote = computed<string>(() => {
+  if (!worldAbsent.value) return ''
+  return worldText(worldInfo.value?.messages?.absent, textVars.value)
+})
+
+// `on_absent.redirect`: the operator would rather send the reader somewhere
+// than explain an absence. Fires on every VIEW the page loads, not on the
+// absent flag: scope-nav from one absent entity to the next keeps the flag
+// true throughout, and a watcher on it would fire for the first entity
+// only. Fires on the schema too, since `worldInfo` is empty until the store
+// has loaded and a redirect must not depend on which fetch won. The target
+// is a declared world, spelled through setWorld so `default` becomes the
+// right query for this deployment.
+//
+// The loader refuses a redirect chain that returns to a visited world, so a
+// loop is not a state this deployment produces. The set below is the
+// client's own guard for a schema it did not validate: every world this
+// page has redirected from or to, for this entity, is never a target again.
+// A loop therefore stops after one hop, a chain `a → b → c` still runs, and
+// a schema reload cannot push the same hop twice.
+const redirectVisited = new Set<string>()
+watch(
+  () => props.entityId,
+  () => redirectVisited.clear()
+)
+watch([viewData, worldInfo], ([, info]) => {
+  if (!worldAbsent.value) return
+  const target = info?.on_absent?.redirect
+  if (!target) return
+  const norm = (w: string) => (w === DEFAULT_WORLD ? '' : w)
+  if (redirectVisited.has(norm(target))) return
+  redirectVisited.add(norm(world.value))
+  redirectVisited.add(norm(target))
+  setWorld(norm(target))
+})
+
+// --- The header's mobile home ------------------------------------------
+//
+// Every header affordance that is not Edit or Delete lives in the mobile
+// overflow menu, and these computeds are what make that checkable in one
+// place. Three features (FaceMenu, CopyMenu, History) each shipped to the
+// desktop row alone, so at phone width they vanished entirely — not degraded
+// layout, lost functionality: no way to publish a policy or switch language.
+
+// History is a per-DEPLOYMENT capability, not a permission. Postgres has
+// version history; fs and mem do not, and their `/_history` answers a named
+// 501. Rendering the button regardless is the affordance-that-lies shape, so
+// it is ABSENT when the capability is — never disabled, which would still
+// advertise a feature this deployment cannot provide.
+const showHistory = computed(() => schemaStore.historyEnabled)
+
+// The same filters the menu components apply to their own props, so the
+// mobile rows and the desktop menus offer an identical set. Duplicating the
+// PREDICATE would let the two drift; duplicating the call does not.
+const overflowFaces = computed<Face[]>(() => faceOptions.value ?? [])
+const overflowCopies = computed<CopyOffer[]>(() => copyOffers.value.filter((o) => o.allowed))
+
+// Whether the overflow button renders at all. One expression, read by both
+// the button and its contents: a fourth affordance is added here and cannot
+// then be reachable on desktop only.
+const hasOverflow = computed(
+  () =>
+    commands.value.length > 0 ||
+    overflowFaces.value.length > 0 ||
+    overflowCopies.value.length > 0 ||
+    showHistory.value
+)
 
 function backTargetAfterDelete(): string {
   if (backTarget.value) return backTarget.value.to
@@ -475,16 +1032,32 @@ function backTargetAfterDelete(): string {
 // entityTarget is the single source of truth for a section entry's destination,
 // bound to the RouterLinks below so a cmd/middle-clicked tab lands exactly where
 // a plain click does.
+//
+// The WORLD rides along, for the same reason historyTarget carries it (BUG-2):
+// a neighbour followed from a world-bound page must resolve in that world, or
+// the reader silently lands on the DEFAULT face of an entity whose row they
+// just saw badged as a fallback (TKT-6NCSSC).
+//
+// A cellLink is left alone: it is a server-resolved per-column target that may
+// point outside the entity routes entirely, so appending a world to it would
+// be inventing a parameter its destination never declared.
+//
 // Nil: returns undefined when the entry has no resolvable route (empty type),
 // and the template renders plain text instead of an anchor.
-function entityTarget(entity: { id: string; type: string }, cellLink?: string): string | undefined {
-  return entityDetailHref(entity, { cellLink }) || undefined
+function entityTarget(
+  entity: { id: string; type: string },
+  cellLink?: string
+): RouteLocationRaw | undefined {
+  const path = entityDetailHref(entity, { cellLink })
+  if (!path) return undefined
+  if (cellLink) return path
+  return worldParam.value ? { path, query: { world: worldParam.value } } : path
 }
 
 function navigateToEntity(entity: { id: string; type: string }, cellLink?: string) {
-  const path = entityDetailHref(entity, { cellLink })
-  if (!path) return
-  router.push(path)
+  const target = entityTarget(entity, cellLink)
+  if (!target) return
+  router.push(target)
 }
 
 // Click handler for the section-table cell anchors. Those are real <a href>
@@ -495,15 +1068,18 @@ function navigateToEntity(entity: { id: string; type: string }, cellLink?: strin
 function onCellLinkClick(
   event: MouseEvent,
   entity: { id: string; type: string },
-  cellLink?: string,
+  cellLink?: string
 ) {
   if (shouldDeferToBrowser(event)) return
   event.preventDefault()
   navigateToEntity(entity, cellLink)
 }
 
-function navigateToEdit(formId: string, entityId: string) {
-  router.push({ name: 'form-edit', params: { id: formId, entityId } })
+// A row's form opens on the row's ADDRESS: under a world a collection row is a
+// neighbour's RESOLVED face, and its bare id would edit a state the page is
+// not showing.
+function navigateToEdit(formId: string, row: { id: string; _self?: string }) {
+  router.push({ name: 'form-edit', params: { id: formId, entityId: entityRef(row) } })
 }
 
 // Look up a schema PropertyDef for an entity type's property. Returns
@@ -603,6 +1179,8 @@ function memoBuildSectionEditFields(section: ViewSection, ent: Entity): SectionE
 }
 
 function sectionShouldRouteToInlineEdit(section: ViewSection, ent: Entity): boolean {
+  // Writability is per field (`_fields`), computed by the server for the
+  // face on screen; the inline form writes to that face's address.
   return sectionShouldRouteToInlineEditPure(section.fields, ent, getPropertyDef)
 }
 
@@ -616,6 +1194,16 @@ function sectionShouldRouteToInlineEdit(section: ViewSection, ent: Entity): bool
 // suppressed the generic <h2> for a headingless properties section we'd
 // end up with NO heading at all and a bare indicator. Gating on the same
 // truthiness keeps the two guards in agreement (RR-32ARO9).
+// True when the shared <h2> above actually renders, i.e. when this section can
+// be named by that heading element via aria-labelledby. When it does not render
+// (a properties section drawing its own heading row, or a headingless section)
+// the section falls back to aria-label from the heading text, so a section is
+// never left as an unnamed region.
+function sectionRendersGenericHeading(section: ViewSection): boolean {
+  if (sectionRendersOwnHeading(section)) return false
+  return !!section.heading || (section === entryContentSection.value && !!checkboxStats.value)
+}
+
 function sectionRendersOwnHeading(section: ViewSection): boolean {
   const ent = entry.value
   return (
@@ -667,6 +1255,9 @@ const INLINE_EDIT_ROW_CAP = 100
 // Thin SFC adapter — the cap-behaviour logic lives in the pure module
 // so it's unit-testable without mounting EntityDetail.
 function rowShouldRouteToInlineEdit(ent: ViewEntity, rowCount: number): boolean {
+  // Per-field verdicts from the server, as for the entry. Under a world each
+  // row is a NEIGHBOUR's resolved face, and its inline form writes to the
+  // row's own address (`_self`), so the edit lands on the face on screen.
   return rowShouldRouteToInlineEditPure(ent, rowCount, INLINE_EDIT_ROW_CAP, getPropertyDef)
 }
 
@@ -773,6 +1364,24 @@ onBeforeUnmount(() => {
 
 onUnmounted(() => document.removeEventListener('click', closeOverflow))
 
+// Switching WORLD reloads the view, but is deliberately NOT folded into the
+// entity watcher below.
+//
+// That watcher flushes pending autosaves against the PREVIOUS entity's
+// identity before loading the next one. A world change is the SAME entity seen
+// through a different world, so there is no previous identity to pin and no
+// cross-entity flush to arrange — running that machinery would capture the
+// current entity as its own "previous" and commit a flush nobody asked for.
+//
+// What a world change does need is a refetch, because the face being displayed
+// changes even though the id does not.
+watch(
+  () => worldParam.value,
+  () => {
+    loadView()
+  }
+)
+
 // Watch for route changes
 watch(
   () => [props.entityType, props.entityId],
@@ -795,7 +1404,7 @@ watch(
 </script>
 
 <template>
-  <div class="entity-detail">
+  <div class="entity-detail" :data-testid="`page-state-${pageState}`">
     <!-- Deliberately empty while loading below the threshold: no spinner,
          no reserved block, no layout spring. The ActivityBar carries the
          navigation case; this only paints for a slow cold load. -->
@@ -819,26 +1428,70 @@ watch(
       <div v-if="backTarget || scopeNav" class="scope-nav mobile-topbar">
         <BackButton v-if="backTarget" :target="backTarget" />
         <template v-if="scopeNav">
-          <RouterLink
-            v-if="scopeTarget('prev')"
-            class="scope-nav-btn"
-            :to="scopeTarget('prev')!"
-          >
+          <RouterLink v-if="scopeTarget('prev')" class="scope-nav-btn" :to="scopeTarget('prev')!">
             ← Prev <kbd>P</kbd>
           </RouterLink>
           <span v-else class="scope-nav-btn disabled">← Prev</span>
           <span class="scope-nav-progress">[{{ scopeNav.current }}/{{ scopeNav.total }}]</span>
           <span class="scope-nav-label">{{ scopeNav.label }}</span>
-          <RouterLink
-            v-if="scopeTarget('next')"
-            class="scope-nav-btn"
-            :to="scopeTarget('next')!"
-          >
+          <RouterLink v-if="scopeTarget('next')" class="scope-nav-btn" :to="scopeTarget('next')!">
             Next → <kbd>N</kbd>
           </RouterLink>
           <span v-else class="scope-nav-btn disabled">Next →</span>
         </template>
       </div>
+
+      <!--
+        The world banner, mirroring EntityList's. It says which world is being
+        shown, that the page is read-only here, and offers the way back to the
+        default world — which is where every write lands, since the API refuses
+        `?world=` on a write.
+
+        "Go to draft" is a plain navigation to the same id with no `?world=`,
+        shown only when this principal may read the default world — a global
+        role-level grant already reported per world by `/_schema`.worlds, so
+        the check costs no extra request. It does NOT predict whether the
+        specific ENTITY is readable there; that is the row gate's job and it
+        answers on arrival, exactly as it would for a typed URL.
+
+        There is deliberately no WorldBadge on the ENTRY: `_views` attaches
+        `_world` to collection entities only (sections.go is the single call
+        site), so a badge here would have nothing to render. The entry's own
+        provenance is available on the entity GET, but this page reads the view
+        — wiring a second request for a badge is not worth it. Collection
+        entities, where the fallback-vs-real distinction actually bites, carry
+        the badge below.
+      -->
+      <!--
+        No face in the requested world: the page shows the BARE face, which is
+        writable and where a promote starts from, so this banner must not read
+        as read-only. It carries the world's announcement and the operator's
+        `messages.absent` and nothing else — no rela sentence, no button (the
+        face menu reaches every other face by address). With neither declared
+        it does not render at all.
+      -->
+      <WorldBanner
+        v-if="worldAbsent && (worldBanner || absentNote)"
+        variant="absent"
+        :label="worldBanner"
+      >
+        {{ absentNote }}
+      </WorldBanner>
+
+      <!--
+        The ANNOUNCEMENT is operator config: `banner:` on the world in
+        schema.yaml. The NOTE is the operator's `faces.<name>.messages.read_only`
+        for a non-bare face on screen that this principal may not write (see
+        readOnlyNote). Neither declared: nothing renders — the world does not
+        make a page read-only, only a grant does, and a denial looks like any
+        other denial.
+      -->
+      <WorldBanner
+        v-if="!worldAbsent && ((isWorldBound && worldBanner) || readOnlyNote)"
+        :label="isWorldBound ? worldBanner : ''"
+      >
+        {{ readOnlyNote }}
+      </WorldBanner>
 
       <header class="detail-header">
         <div class="header-info">
@@ -855,14 +1508,27 @@ watch(
           >
             {{ cmd.label }}
           </button>
-          <RouterLink
-            v-if="editTarget"
-            class="btn btn-secondary"
-            :to="editTarget"
-          >
+          <FaceMenu :faces="faceOptions" @select="goToFace" />
+          <!--
+            Copy affordances (RULING 9). Renders nothing when no offer is
+            allowed — a denied copy is ABSENT, not disabled — and nothing under
+            a world, where copyOffers is empty; see its comment for why.
+          -->
+          <CopyMenu :offers="copyOffers" :busy="copyBusy" @invoke="runCopy" />
+          <RouterLink v-if="editTarget" class="btn btn-secondary" :to="editTarget">
             Edit <kbd>E</kbd>
           </RouterLink>
-          <RouterLink class="btn btn-secondary" :to="historyTarget">History</RouterLink>
+          <!--
+            Gated on a DEPLOYMENT capability, not a permission: version history
+            is postgres-only, and on fs/mem `/_history` answers a named 501. An
+            ungated link could therefore only fail. Absent, not disabled — a
+            greyed-out control still advertises a feature this deployment does
+            not have. The mobile block below gates on the SAME flag; both sites
+            must, which is the trap this header just walked into three times.
+          -->
+          <RouterLink v-if="showHistory" class="btn btn-secondary" :to="historyTarget"
+            >History</RouterLink
+          >
           <ExportMenu :url-for="(t: string) => entityExportUrl(entityType, entityId, t)" />
           <button v-if="canDelete" class="btn btn-danger" @click="requestDelete">
             Delete <kbd>Del</kbd>
@@ -894,7 +1560,22 @@ watch(
               <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
             </svg>
           </button>
-          <div v-if="commands.length" class="overflow-menu-wrapper">
+          <!--
+            The overflow menu is the mobile home for EVERY header affordance
+            that is not Edit or Delete. It used to hold commands only, so the
+            world-era additions — FaceMenu, CopyMenu, History — were reachable
+            on desktop and simply GONE on a phone: you could not publish a
+            policy or switch language at all, with nothing on screen saying
+            those actions exist.
+
+            `hasOverflow` is one computed rather than a chain of `||` inline,
+            so adding a fourth affordance means extending one expression that
+            both the button and its contents read. The three-times-repeated
+            omission was each author adding a control where they were already
+            working; a single list is what makes "does this have a mobile
+            home?" answerable in one place.
+          -->
+          <div v-if="hasOverflow" class="overflow-menu-wrapper">
             <button
               class="btn btn-secondary mobile-overflow-btn"
               aria-label="More actions"
@@ -911,6 +1592,33 @@ watch(
               >
                 {{ cmd.label }}
               </button>
+              <!--
+                Faces and copies are rendered as flat rows here rather than as
+                the FaceMenu/CopyMenu components: those open a nested dropdown,
+                and a dropdown inside a dropdown on a phone is unusable. The
+                affordance is the same and the handlers are shared, so a copy
+                invoked from here goes through the identical guard.
+              -->
+              <button
+                v-for="f in overflowFaces"
+                :key="`face-${f.face}`"
+                class="overflow-menu-item"
+                @click="goToFace(f)"
+              >
+                View {{ f.label || f.face || 'default' }}
+              </button>
+              <button
+                v-for="o in overflowCopies"
+                :key="`copy-${o.name}`"
+                class="overflow-menu-item"
+                :disabled="copyBusy"
+                @click="runCopy(o)"
+              >
+                {{ o.label || o.name }}
+              </button>
+              <RouterLink v-if="showHistory" class="overflow-menu-item" :to="historyTarget">
+                History
+              </RouterLink>
             </div>
           </div>
         </div>
@@ -956,12 +1664,16 @@ watch(
           :id="section.sectionId"
           :key="section.sectionId"
           class="view-section"
+          :aria-labelledby="
+            sectionRendersGenericHeading(section) ? `${section.sectionId}-heading` : undefined
+          "
+          :aria-label="
+            sectionRendersGenericHeading(section) ? undefined : section.heading || undefined
+          "
         >
           <h2
-            v-if="
-              !sectionRendersOwnHeading(section) &&
-              (section.heading || (section === entryContentSection && checkboxStats))
-            "
+            v-if="sectionRendersGenericHeading(section)"
+            :id="`${section.sectionId}-heading`"
             class="section-heading"
           >
             {{ section.heading }}
@@ -988,10 +1700,10 @@ watch(
               entry &&
               sectionShouldRouteToInlineEdit(section, entry)
             "
-            :key="`${entry.type}/${entry.id}`"
+            :key="`${entry.type}/${servedRef}`"
             :heading="section.heading"
             :entity-type="entry.type"
-            :entity-id="entry.id"
+            :entity-id="servedRef"
             :initial-values="entry.properties"
             :attachments="entry._attachments"
             :fields="memoBuildSectionEditFields(section, entry)"
@@ -1003,23 +1715,74 @@ watch(
           <PropertyDisplay
             v-else-if="section.display === 'properties'"
             :properties="mapFieldsToProperties(section.fields)"
-          />
+          >
+            <!-- Comment affordance per field (TKT-FIO205). Filled only here:
+                 the same component renders list cells and kanban cards, where
+                 a comment control would be noise. -->
+            <template v-if="commentsEnabled" #label-affordance="{ property, index }">
+              <CommentIndicator
+                :entity-type="entityType"
+                :entity-id="commentEntityId"
+                :anchor="{ kind: 'property', ref: property.name }"
+                :comments="commentsForProperty(property.name)"
+                :flip="shouldFlipPopover(section.fields, index)"
+                @changed="loadComments"
+              />
+            </template>
+          </PropertyDisplay>
 
           <!-- Entry content with mermaid + interactive checkboxes.
                Function ref instead of string ref because this template lives
                inside a v-for: Vue would otherwise collect template-refs of
                the same name into an array per iteration. -->
-          <div
-            v-else-if="section === entryContentSection"
-            :ref="
-              (el) => {
-                contentRef = el as HTMLElement | null
-              }
-            "
-            class="content-body md-body"
-            @click="contentClick"
-            v-html="renderedEntryContent"
-          />
+          <div v-else-if="section === entryContentSection" class="entry-content-host">
+            <div
+              :ref="
+                (el) => {
+                  contentRef = el as HTMLElement | null
+                }
+              "
+              class="content-body md-body"
+              :data-comment-source="entryContentSection.content || ''"
+              @click="contentClick"
+              v-html="renderedEntryContent"
+            />
+            <!-- Select-to-comment over the body (TKT-FIO205 stage 2). Absolute
+                 within .entry-content-host, so its offsets are relative to the
+                 body rather than the viewport. -->
+            <TextSelectionComment
+              v-if="commentsEnabled"
+              :entity-type="entityType"
+              :entity-id="commentEntityId"
+              :container="contentRef"
+              @added="loadComments"
+            />
+
+            <!-- Comment affordances for blocks that cannot be text-selected:
+                 images and mermaid/PlantUML diagrams. They anchor to the
+                 block's SOURCE markdown, so they ride the same `text` kind. -->
+            <BlockCommentOverlay
+              v-if="commentsEnabled"
+              :entity-type="entityType"
+              :entity-id="commentEntityId"
+              :container="contentRef"
+              :render-key="renderedEntryContent"
+              :comments="comments"
+              @added="loadComments"
+            />
+
+            <!-- The thread for a clicked highlight. Anchored to the mark, which
+                 lives in v-html output and so has no component of its own. -->
+            <TextCommentPopover
+              v-if="commentsEnabled && textCommentPos && openTextComments.length > 0"
+              :entity-type="entityType"
+              :entity-id="commentEntityId"
+              :comments="openTextComments"
+              :position="textCommentPos"
+              @changed="loadComments"
+              @close="closeTextComment"
+            />
+          </div>
 
           <!-- Other content sections (e.g. content cards from a configured view). -->
           <div
@@ -1052,6 +1815,18 @@ watch(
                   <span class="entity-title">{{ ent.title }}</span>
                   <span class="entity-id">{{ ent.id }}</span>
                 </component>
+                <!--
+                  Per-neighbour provenance (RULING 12/14). Each collection
+                  entity resolved through the world INDEPENDENTLY, so one
+                  section can mix `chain` and `fallback-default` — the badge is
+                  per row, not per section. Renders nothing under the default
+                  world.
+
+                  Outside the link wrapper: the badge is provenance ABOUT the
+                  row, not part of the link's accessible name — folding it in
+                  would make the link read "Guide GUIDE-1 nl".
+                -->
+                <WorldBadge :world="ent._world" :entity-type="ent.type" />
               </header>
               <div
                 v-if="ent.hasContent"
@@ -1085,20 +1860,22 @@ watch(
                   <span class="entity-title">{{ ent.title }}</span>
                   <span class="entity-id">{{ ent.id }}</span>
                 </component>
+                <!-- Per-neighbour provenance; see the first WorldBadge above. -->
+                <WorldBadge :world="ent._world" :entity-type="ent.type" />
                 <button
                   v-if="ent.editFormId"
                   class="edit-btn"
                   title="Edit"
-                  @click.stop="navigateToEdit(ent.editFormId, ent.id)"
+                  @click.stop="navigateToEdit(ent.editFormId, ent)"
                 >
                   &times;
                 </button>
               </header>
               <SectionEditForm
                 v-if="rowShouldRouteToInlineEdit(ent, section.entities?.length ?? 0)"
-                :key="`${ent.type}/${ent.id}`"
+                :key="`${ent.type}/${entityRef(ent)}`"
                 :entity-type="ent.type"
-                :entity-id="ent.id"
+                :entity-id="entityRef(ent)"
                 :initial-values="ent._props ?? {}"
                 :fields="memoBuildRowEditFields(ent)"
                 :on-property-applied="handleRowPropertyApplied"
@@ -1154,11 +1931,13 @@ watch(
                 <span class="entity-title">{{ ent.title }}</span>
                 <span class="entity-id">{{ ent.id }}</span>
               </component>
+              <!-- Per-neighbour provenance; see the first WorldBadge above. -->
+              <WorldBadge :world="ent._world" :entity-type="ent.type" />
               <SectionEditForm
                 v-if="rowShouldRouteToInlineEdit(ent, section.entities?.length ?? 0)"
-                :key="`${ent.type}/${ent.id}`"
+                :key="`${ent.type}/${entityRef(ent)}`"
                 :entity-type="ent.type"
-                :entity-id="ent.id"
+                :entity-id="entityRef(ent)"
                 :initial-values="ent._props ?? {}"
                 :fields="memoBuildRowEditFields(ent)"
                 :on-property-applied="handleRowPropertyApplied"
@@ -1251,7 +2030,9 @@ watch(
                           v-if="row.editFormId"
                           class="icon-btn"
                           title="Edit"
-                          @click="navigateToEdit(row.editFormId, row.entityId)"
+                          @click="
+                            navigateToEdit(row.editFormId, { id: row.entityId, _self: row._self })
+                          "
                         >
                           &#9998;
                         </button>
@@ -1315,7 +2096,9 @@ watch(
                       v-if="row.editFormId"
                       class="icon-btn"
                       title="Edit"
-                      @click="navigateToEdit(row.editFormId, row.entityId)"
+                      @click="
+                        navigateToEdit(row.editFormId, { id: row.entityId, _self: row._self })
+                      "
                     >
                       &#9998;
                     </button>
@@ -1331,9 +2114,20 @@ watch(
              container's flex `gap` for free instead of duplicating that
              spacing via its own margin. -->
         <DocumentsPanel :entity-type="entityType" :entity-id="entityId" />
+
+        <!-- Comment thread. Self-gating: renders nothing unless the schema
+             marks this type commentable, so a project with no `comments:`
+             block sees the page it always saw. -->
+        <CommentsPanel
+          :entity-type="entityType"
+          :entity-id="commentEntityId"
+          :comments="comments"
+          :section-ids="commentSectionIds"
+          @changed="loadComments"
+        />
       </div>
 
-      <CommandModal ref="commandModalRef" :entity-id="entityId" />
+      <CommandModal ref="commandModalRef" :entity-id="bareEntityId" />
     </template>
 
     <div v-else class="error-state">
@@ -1347,6 +2141,56 @@ watch(
 </template>
 
 <style scoped>
+/* Positioning context for the select-to-comment popup, so its coordinates are
+ * relative to the body rather than the viewport (which would drift on scroll). */
+.entry-content-host {
+  position: relative;
+}
+
+/* Text-anchored comment highlights (TKT-FIO205 stage 2).
+ *
+ * :deep() because the marks are inserted into v-html output, which scoped-style
+ * hashing does not reach. */
+.content-body :deep(mark[data-comment-id]) {
+  /* Yellow, the annotation convention — and distinct from the accent blue that
+   * already marks links and interactive chrome in the body. */
+  background: color-mix(in srgb, var(--comment-highlight) 32%, transparent);
+  border-bottom: 2px solid var(--comment-highlight);
+  border-radius: 2px;
+  padding: 0 1px;
+  color: inherit;
+  cursor: pointer;
+}
+
+/* A highlighted LINK keeps its own click: navigation is the primary action and
+ * a mark must not swallow it. The chip beside it opens the thread instead. */
+.content-body :deep(mark[data-comment-id] a) {
+  cursor: pointer;
+}
+
+.content-body :deep(.comment-chip) {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: super;
+  margin-left: 2px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--comment-highlight);
+  color: var(--text-color);
+  font-size: 10px;
+  line-height: 1.5;
+  cursor: pointer;
+}
+
+/* An uncertain anchor resolved below the exact band: the text may have moved,
+ * so it reads as provisional rather than as a confirmed location. */
+.content-body :deep(mark[data-comment-uncertain]) {
+  background: color-mix(in srgb, var(--warning-color) 34%, transparent);
+  border-bottom-style: dashed;
+  border-bottom-color: var(--warning-color);
+}
+
 .entity-detail {
   max-width: 1200px;
   padding: 0 0 24px;
@@ -1636,6 +2480,10 @@ watch(
   gap: var(--space-lg);
 }
 
+/* Mirrors EntityList's world banner so the two surfaces read as one feature.
+   Horizontal here (the detail page has the width and the note is shorter),
+   with the leave-world button on the trailing edge. */
+
 .entity-card {
   padding: 16px;
   background: var(--card-bg);
@@ -1908,5 +2756,4 @@ watch(
     padding-bottom: 16px;
   }
 }
-
 </style>

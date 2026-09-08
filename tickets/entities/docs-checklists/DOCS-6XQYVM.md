@@ -18,7 +18,7 @@ status: done
 - [x] New `docs/data-migration.md` — shape hash, gate tiers, rename blind spot, file format, step reference, Lua contract, workflow, GC/grace, two-hash rationale
 - [x] `docs/cli-reference.md` — `rela migrate status|gen|data|gc` section with flags and CI usage
 - [x] `docs/postgres-backend.md` — per-tenant migration state, version capture on destructive steps, GC sweep controls
-- [x] `docs/metamodel.md` — schema-evolution pointer in "After Modifying the Metamodel"
+- [x] `docs/metamodel.md` — schema-evolution face in "After Modifying the Metamodel"
 - [x] `CLAUDE.md` — data-migration rule block (two hashes, third sanctioned raw-write exception, idempotency, pure-transform Lua)
 - [x] `.go-arch-lint.yml` — datamigration component, dependency rules, documented gopher-lua vendor allowance
 

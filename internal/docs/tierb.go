@@ -45,6 +45,12 @@ type tierBBindings struct {
 	// --out); empty ⇒ PNGs written next to the cwd and referenced by basename.
 	outDir string
 
+	// validateWorld reports whether a declared world NAME exists, for the
+	// screenshot{world=...} argument. Injected as a callback rather than a
+	// metamodel handle: resolving a world needs the metamodel, and reaching it
+	// from here would restore exactly the coupling this split removed.
+	validateWorld func(name string) error
+
 	// seed returns the seed ops recorded SO FAR by create()/link(). It is a
 	// function, not a captured slice: registration happens once before any
 	// island runs, and the ops accumulate as the manual executes, so a value

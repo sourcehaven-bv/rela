@@ -31,7 +31,7 @@ type Entity struct {
 	// `_actions` precedent).
 	FieldAffordances *map[string]FieldAffordance `json:"_fields,omitempty"`
 	// RelationAffordances carries per-relation-type affordances on
-	// per-entity GET responses. Same pointer / closed-world semantics
+	// per-entity GET responses. Same face / closed-world semantics
 	// as FieldAffordances.
 	RelationAffordances *map[string]RelationAffordance `json:"_relations,omitempty"`
 	// Redacted names the properties withheld from `Properties` by
@@ -53,7 +53,7 @@ type Entity struct {
 	// genuine secret, and this list only ever rides a response the caller was
 	// already authorized to read.
 	//
-	// Same pointer / closed-world semantics as FieldAffordances: present
+	// Same face / closed-world semantics as FieldAffordances: present
 	// (possibly empty) on per-entity responses — `[]` meaning "evaluated,
 	// nothing redacted" — and nil on list rows and other non-per-entity
 	// shapes, which carry no write affordances. Names are sorted for a
@@ -64,25 +64,90 @@ type Entity struct {
 	// metamodel `max` > 1). The value is always an array — even a
 	// single-attachment property reports a 1-element list — matching how
 	// rela's `list:` properties and `_relations` are always arrays. Only
-	// properties that actually carry a file appear. Same pointer /
+	// properties that actually carry a file appear. Same face /
 	// closed-world semantics as FieldAffordances: present (possibly empty)
 	// on every per-entity response (GET, PATCH, POST create, clone — the
 	// ones that run serializeEntityForWire), nil on list rows and other
 	// non-per-entity shapes. The SPA's file widget reads this to render the
 	// download links / previews instead of the raw stored path string(s).
 	Attachments *map[string][]Attachment `json:"_attachments,omitempty"`
+	// World carries the PROVENANCE of the face in this response: which world
+	// resolved it, which coordinate it was stored at, and which resolution
+	// rule chose it (TKT-WRLDAPI item 2).
+	//
+	// It exists because the bytes alone do not say. Under a world with a
+	// fallback chain, "the Dutch face" and "the English face, because no
+	// Dutch face exists" arrive byte-identically — same id, same type, same
+	// shape — and a client rendering a publication badge, offering a
+	// translate affordance, or deciding whether an edit is safe has to tell
+	// them apart. Re-deriving it client-side would require the chain, the
+	// per-type overrides and the fallback policy, which is a second
+	// implementation of the semantics that decide which face a reader sees.
+	//
+	// Present on the single-entity GET ONLY — deliberately NOT on every
+	// per-entity response the way FieldAffordances is. The distinction is
+	// worth stating because a client will otherwise look for it on a PATCH:
+	//
+	//   - Writes are refused a `?world=` outright (worlds are read-only on
+	//     this API; a write names its face by id instead), so a create /
+	//     update / clone response answers for the face that was addressed
+	//     and never for a world — a provenance block would be noise.
+	//   - A history snapshot is rebuilt from a stored version and carries no
+	//     face, so labeling it would state a coordinate the code cannot
+	//     back — the "affordance map that lies" failure, one layer down.
+	//   - Views, attachments and restore are not world-capable routes.
+	//
+	// The single-entity GET is the only response whose face is the
+	// store's actual answer to a world query, which is why it is the only
+	// one that carries this.
+	World *EntityWorld `json:"_world,omitempty"`
 	// Transitions maps a state-machine-typed property name to the LIST of its
 	// outgoing transitions resolved for the requesting principal on this entity
 	// (TKT-3G93B8): each carries the target value, an optional action label,
 	// the guard permission (if any), whether the principal may perform it right
 	// now, and — when not — which gate blocked it. Only properties whose type is
 	// a state machine appear; a plain enum field has no entry, and the SPA falls
-	// back to the ordinary enum control. Same pointer / closed-world semantics as
+	// back to the ordinary enum control. Same face / closed-world semantics as
 	// FieldAffordances: present (possibly empty) on every per-entity response
 	// (GET / PATCH / POST create / clone) when the resolver can answer
 	// transitions, nil on list rows and when no state machines are wired. It is a
 	// UI hint, never authorization — the write path re-enforces every transition.
 	Transitions *map[string][]Transition `json:"_transitions,omitempty"`
+	// Copies lists the declared copy definitions available FROM this entity's
+	// current face — the promote / translate affordances (RULING 9). See
+	// [CopyOffer] for the per-entry contract (a UI hint, never a boundary).
+	//
+	// It rides the entity response alongside [Entity.Actions] because that is
+	// how every other affordance in this app is delivered: computed at read
+	// time from data the client already fetched, rather than requiring a
+	// second request keyed on (type, face, id). An earlier revision shipped
+	// a `GET /_copies` list endpoint; it was removed for exactly that reason.
+	//
+	// Same pointer semantics as FieldAffordances: present (possibly empty) on
+	// per-entity responses, nil on list rows — and nil when the server has no
+	// copy capability wired at all, so a wiring gap never reads as "this face
+	// declares no copies".
+	Copies *[]CopyOffer `json:"_copies,omitempty"`
+	// Faces lists the OTHER content states this entity actually has, so a
+	// draft can link to its published face and vice versa.
+	//
+	// Existence only — no readability flag. Whether a principal may read a
+	// world is a GLOBAL, role-level grant (acl.Request.PermitsWorld takes a
+	// world name and nothing else), already served by `/_schema`.worlds; a
+	// per-face flag here would re-answer a question the client has already
+	// asked once for the whole session.
+	//
+	// The CURRENT face is excluded: this answers "where else can I go", and
+	// the face you are on is not somewhere else.
+	//
+	// Face names are operator-authored config and public. WHICH faces a
+	// given entity has is DATA, so this rides the entity's own read gate —
+	// it appears only on a response the caller was already cleared to read.
+	// Do not add a bulk endpoint that answers it outside that gate.
+	//
+	// Same face / closed-world semantics as the other affordance maps:
+	// present (possibly empty) on per-entity responses, nil on list rows.
+	Faces *[]Face `json:"_faces,omitempty"`
 	// Warnings lists soft-condition findings surfaced by the write
 	// path. Populated only by mutation responses (PATCH); read paths
 	// leave it nil. Each warning has a stable `code`, an RFC 6901
@@ -153,6 +218,85 @@ type InaccessibleField struct {
 	Reason string `json:"reason"`
 }
 
+// EntityWorld is the provenance of a resolved face — see [Entity.World] for
+// why a client needs it.
+//
+// It describes the RESOLUTION that produced this response, never the entity's
+// other faces. A client learns which coordinate it is looking at; it learns
+// nothing about which coordinates exist for this id. That distinction is the
+// existence oracle the read gate closes, and this shape stays on the safe
+// side of it deliberately.
+type EntityWorld struct {
+	// Name is the world this response was resolved in — `default` for the
+	// implicit total world. Matches a key of [Schema.Worlds].
+	Name string `json:"name"`
+	// Face is the coordinate the served state was stored at. EMPTY means
+	// the default state, which is not the same claim as "the default world":
+	// a fallback under `otherwise: default` also serves the default state.
+	// Via is what separates those, which is why Face alone is not enough.
+	Face string `json:"face"`
+	// Via names the resolution rule that chose this face:
+	//
+	//   - "unscoped"         — this world applies no per-type resolution, so
+	//                          the entity contributes its default state.
+	//                          Covers BOTH a type that declares no content
+	//                          states and the total default world, which
+	//                          resolves everything this way — the default
+	//                          world is exactly "no resolution applied", and
+	//                          worldreader.Rule reports it identically.
+	//   - "chain"            — a coordinate the world SELECTS exists; this is
+	//                          the face the world asked for.
+	//   - "fallback-default" — no selected coordinate exists, and the world's
+	//                          `otherwise: default` stood the default state
+	//                          in. The reader is seeing a substitute.
+	//
+	// The third value is the load-bearing one: it is the difference between
+	// "published" and "not published, showing you the draft".
+	//
+	// There is deliberately no "excluded" value. A world that excludes an
+	// entity produces no response to carry provenance on — it is a 404,
+	// indistinguishable from a genuine miss, because existence in a world IS
+	// the publication bit.
+	//
+	// Via alone does NOT tell a reader whether they got the world's FIRST
+	// choice — see [EntityWorld.ChainPosition], which is the field for that.
+	Via string `json:"via"`
+
+	// ChainPosition is the 0-based index, within the world's candidate chain
+	// for this entity type, of the coordinate actually served. It is present
+	// only when Via is "chain"; the other rules did not resolve through the
+	// chain at all.
+	//
+	// # Why Via is not enough on its own
+	//
+	// "chain" means SOME coordinate the world selects exists — never which.
+	// Under `select: [published, draft]` a genuine published hit and a
+	// fallback to the draft both report "chain" identically, so a reader
+	// shown draft bytes under a `published` world had no way to know. That
+	// was the leak content states exist to prevent, reported on a live demo:
+	// the page said "read-only" and offered "Go to draft" while already
+	// showing the draft.
+	//
+	// Position 0 is the world's first choice — what it asked for. Any
+	// position > 0 is a WITHIN-CHAIN FALLBACK: a later candidate stood in
+	// because every earlier one is absent. That is a substitute exactly as
+	// "fallback-default" is, and clients must label it as one.
+	//
+	// # Why a position and not a boolean
+	//
+	// A chain is a ranked preference, not a pair. `select: [nl, en, de]`
+	// serving `de` is a different statement from serving `en`, and the
+	// operator vocabulary a UI needs ("showing German, no Dutch or English
+	// available") needs the rank, not just "not first". A boolean would have
+	// to be widened the first time a chain has three entries.
+	//
+	// It is a pointer so that ABSENT and 0 stay distinguishable: 0 is the
+	// strongest claim this field makes (the world got exactly what it asked
+	// for), and a plain int would make every non-chain rule report it by
+	// default. Omitted from the wire when nil.
+	ChainPosition *int `json:"chain_position,omitempty"`
+}
+
 // ListResponse is the response for listing entities.
 type ListResponse struct {
 	Data    []Entity        `json:"data"`
@@ -173,6 +317,108 @@ type Schema struct {
 	Entities  map[string]EntityType   `json:"entities"`
 	Relations map[string]RelationType `json:"relations"`
 	Types     map[string]CustomType   `json:"types,omitempty"`
+	// Worlds enumerates the declared worlds a client may pass to `?world=`,
+	// keyed by world name, plus the implicit `default` world (TKT-WRLDAPI).
+	//
+	// Present even for a project declaring no `worlds:` block, where it holds
+	// the single `default` entry: a client needs to distinguish "this server
+	// has no other worlds" from "this server is too old to tell me", and an
+	// omitted key cannot say the first.
+	Worlds map[string]World `json:"worlds,omitempty"`
+}
+
+// World is the JSON representation of one declared world — a named
+// resolution function picking at most one content state per entity (design
+// doc §4.1).
+//
+// # The declared set is NOT filtered per principal
+//
+// Every world the schema declares appears here for every caller. World names
+// are operator-authored config living in `schema.yaml`, routinely a public
+// repo, so their contents are already disclosed and CLAUDE.md is explicit
+// that code must not contort to conceal a config name. What IS per-principal
+// is [World.Readable] — which says whether this caller may SELECT the world,
+// never whether it exists.
+//
+// The distinction is load-bearing: what a world CONTAINS is secret (a denied
+// world serves an empty result, never a 403, precisely so it cannot be told
+// apart from a world holding nothing), while the fact that the operator
+// declared a world named `published` is not.
+//
+// This carries no per-ENTITY information. Which faces a given entity has is
+// exactly the existence oracle the read gate closes, and nothing here
+// narrows it: a type's declared coordinates ([EntityType.Faces]) say what
+// the schema permits, never what any row holds.
+// Note the field set is deliberately incomplete: a world's `edits:` key
+// (which state edits made from it land in) is NOT surfaced. It is a
+// write-side concept, and the affordance a client actually needs — "which
+// faces can I create from here" — is a separate gated query over the
+// declared copy definitions (Ruling 9), not something derivable from a world.
+type World struct {
+	// Select is the ordered candidate chain: the first coordinate that
+	// EXISTS for an entity is the face served. Empty for the default world,
+	// which resolves every entity to its default state by construction.
+	Select []string `json:"select,omitempty"`
+	// Overrides replaces Select for the named entity types, keyed by type.
+	Overrides map[string][]string `json:"overrides,omitempty"`
+	// Otherwise is the rule-3 policy for a type that declares faces but
+	// none this world selects: `exclude` (contributes nothing) or `default`
+	// (falls back to the type's default state). Empty for the default world,
+	// which never reaches rule 3.
+	Otherwise string `json:"otherwise,omitempty"`
+	// PrimaryFor names the faces this world is the canonical home of — the
+	// operator's tie-break when several worlds head the same face for a type
+	// (TKT-MFVH03). Absent for every unambiguous schema, which is all of them
+	// until a second world leads a face someone already leads.
+	//
+	// A client resolving "which world serves this face" infers it from the
+	// chains and consults this only to break a tie. It cannot CONTRADICT the
+	// chains — the server refuses such a schema at load — so a client may
+	// trust that a claimed face is one this world actually heads.
+	//
+	// Config, not data: like Select and Banner, this is operator-authored and
+	// public, served identically to every principal.
+	PrimaryFor []string `json:"primary_for,omitempty"`
+	// Banner is operator-authored text announcing this world to a reader
+	// ("DRAFT — not in force"). Empty means announce nothing — a language
+	// world needs no banner, an editorial one does.
+	//
+	// Display-only, and it gates ONLY the announcement: a non-default world
+	// is read-only on this API regardless, so the read-only note and the way
+	// back to the default face are not suppressible by config.
+	//
+	// Config, not data: world names and their banners are operator-authored
+	// and public, so this is served identically to every principal.
+	Banner string `json:"banner,omitempty"`
+	// Messages is the operator's wording for what this world changes on a
+	// screen (TKT-5SZG2L). Each entry is optional and an absent one renders
+	// nothing: the web app has no sentence of its own for any of them.
+	// Placeholders `{face}`, `{bare_face}`, `{world}` and `{title}` are
+	// substituted by the client. Mirrors metamodel.WorldMessages.
+	Messages *WorldMessages `json:"messages,omitempty"`
+	// OnAbsent is the behavior for an entity with no face in this world.
+	// Mirrors metamodel.WorldOnAbsent.
+	OnAbsent *WorldOnAbsent `json:"on_absent,omitempty"`
+	// Readable reports whether THIS caller may select the world via
+	// `?world=`. False means a request naming it is served an empty result
+	// rather than a 403 — so a client that respects this flag shows the user
+	// an honest selector instead of a world that silently returns nothing.
+	//
+	// A UI hint, never a boundary: the server re-checks the grant on every
+	// request (`resolveWorld`), so a client ignoring this learns nothing it
+	// could not learn by asking.
+	//
+	// NO omitempty, unlike Default below, and the asymmetry is deliberate:
+	// `false` is the load-bearing answer here — it is precisely what a
+	// selector needs — and an omitted key would be indistinguishable from a
+	// server too old to compute it. `default: false`, by contrast, is noise
+	// on every declared world.
+	Readable bool `json:"readable"`
+	// Default marks the implicit default world — today's graph, total by
+	// construction, always present and always selectable. Spelled as a flag
+	// rather than left for the client to infer from the reserved name, so a
+	// selector can label it without hardcoding the string.
+	Default bool `json:"default,omitempty"`
 }
 
 // EntityType is the JSON representation of an entity type.
@@ -185,6 +431,83 @@ type EntityType struct {
 	IDPrefix    string                 `json:"id_prefix,omitempty"`
 	IDPrefixes  []string               `json:"id_prefixes,omitempty"`
 	Properties  map[string]PropertyDef `json:"properties"`
+	// Faces declares this type's content-state coordinates, keyed by
+	// coordinate name ("draft", "published", "en", "nl"). ABSENT for the
+	// common case of a type with no content states, which contributes its
+	// single default state to every world.
+	//
+	// This is SCHEMA, not data: it says which coordinates the operator
+	// declared for the type, never which faces any particular entity holds.
+	// Two entities of the same type report identical faces whether one has
+	// a published face and the other does not.
+	//
+	// DO NOT add the per-entity variant here — "which faces does THIS id
+	// have" is the existence oracle the row gate exists to close, since
+	// existence in a world IS the publication bit. An "other faces" indicator
+	// is a real product need (Ruling 9 item 8), but it has to omit faces the
+	// viewer may not read, which makes it a gated per-entity query rather
+	// than a field on the type's schema.
+	Faces map[string]FaceDef `json:"faces,omitempty"`
+	// BareFace names which declared face the bare id addresses, mirroring
+	// `bare_face:` in the schema. Empty when the type declares no faces, or
+	// when it declares faces but names none of them as the bare one.
+	BareFace string `json:"bare_face,omitempty"`
+	// Commentable reports that this type accepts comments (TKT-FIO205), so the
+	// SPA knows whether to offer a comment affordance at all. Policy, not
+	// permission: it says commenting is POSSIBLE here, never that the current
+	// principal may do it — the `comment:*` grants answer that, and the server
+	// re-authorizes every call regardless of what this flag says.
+	//
+	// Omitted when false, so a project with no `comments:` block serves a
+	// schema byte-identical to one built before the feature existed.
+	Commentable bool `json:"commentable,omitempty"`
+}
+
+// WorldMessages is the operator's chrome text for one world. See
+// [World.Messages].
+type WorldMessages struct {
+	// Absent is the detail-page note for an entity with no face in the world.
+	Absent string `json:"absent,omitempty"`
+	// Projection is the list/board note for a type that declares faces.
+	Projection string `json:"projection,omitempty"`
+	// StandIn is the badge text for a stand-in row or card; empty means no
+	// badge.
+	StandIn string `json:"stand_in,omitempty"`
+}
+
+// WorldOnAbsent is the behavior for an entity with no face in a world.
+type WorldOnAbsent struct {
+	// Redirect names the world the client navigates to instead of rendering
+	// the absent page. Validated at schema load.
+	Redirect string `json:"redirect,omitempty"`
+}
+
+// FaceMessages is the operator's chrome text for one face. See
+// [FaceDef.Messages].
+type FaceMessages struct {
+	// ReadOnly is the note for a page or form showing this face while the
+	// reader may not write it. Empty renders nothing.
+	ReadOnly string `json:"read_only,omitempty"`
+}
+
+// Face is the JSON representation of one declared content state,
+// mirroring metamodel.FaceDef.
+//
+// Near-empty by design: a state is IDENTIFIED by its coordinate, and the only
+// knob beyond identity is display text. Per-state ACL hints and retention are
+// not added speculatively.
+type FaceDef struct {
+	// Label is the operator's display text for this face, omitted when
+	// undeclared so a client falls back to the coordinate name (which is
+	// itself operator-authored config).
+	//
+	// Display-only. This is the TYPE's vocabulary, so a client can name a
+	// face it has not fetched — a "return to the default face" button must
+	// say "Go to English" before it has loaded anything English.
+	Label string `json:"label,omitempty"`
+	// Messages is the operator's chrome text about this face (TKT-5SZG2L).
+	// Nil when none is declared. Mirrors metamodel.FaceMessages.
+	Messages *FaceMessages `json:"messages,omitempty"`
 }
 
 // PropertyDef is the JSON representation of a property definition.
@@ -297,6 +620,30 @@ type AppConfig struct {
 	// when PlantUML rendering is disabled. The SPA treats a non-empty value as
 	// the on switch for ```plantuml diagram rendering.
 	PlantUMLServerURL string `json:"plantuml_server_url,omitempty"`
+	// DefaultWorld names the world a request lands in when no `?world=` is
+	// given. Empty means the default world (raw stored faces).
+	//
+	// A browsing default, not a grant: the world's read permission is
+	// re-checked per request exactly as for an explicit `?world=`, so this
+	// can only change which face a bare URL resolves to, never who may see
+	// it. Validated at load against the declared worlds.
+	DefaultWorld string `json:"default_world,omitempty"`
+	// HistoryEnabled reports whether THIS DEPLOYMENT can serve version
+	// history. Content versioning is a postgres-only, OPTIONAL store
+	// capability (TKT-9INY0Y): fsstore and memstore do not implement
+	// store.HistoryReader, and `/_history/...` answers them with a named
+	// 501 (`history_unsupported`).
+	//
+	// It rides `/_config` because the capability is per-DEPLOYMENT, not
+	// per-entity — putting it on every entity response would repeat one
+	// constant on every row, and the SPA loads this config once.
+	//
+	// It exists so a client can render the affordance ABSENT rather than
+	// present-and-broken. An ungated History button on an fs deployment can
+	// only 501, which is the affordance-that-lies shape this app refuses
+	// elsewhere (a denied copy is absent, not disabled). Not a permission —
+	// history is still ACL-gated per entity when the capability exists.
+	HistoryEnabled bool `json:"history_enabled"`
 }
 
 // Error is an RFC 7807 Problem Details response.
@@ -316,7 +663,8 @@ type FieldError struct {
 	Detail string      `json:"detail"`
 }
 
-// ErrorSource points to the location of an error.
+// ErrorSource points to the location of an error: an RFC 6901 JSON pointer
+// into the request body.
 type ErrorSource struct {
 	Pointer string `json:"pointer"`
 }
@@ -543,6 +891,22 @@ type ViewResponse struct {
 	Entry    Entity             `json:"entry"`
 	Sections []ViewSection      `json:"sections"`
 	Mentions map[string]Mention `json:"mentions,omitempty"`
+	// WorldAbsent marks a response for an entity that EXISTS but has no face
+	// in the requested world — the ordinary state of an unpublished draft
+	// under a filtering world, not an error.
+	//
+	// It is a 200 rather than a 4xx deliberately. The caller was already
+	// cleared to read this entity (the row gate runs before view execution and
+	// is world-independent by guard rule 1), and the useful response is not
+	// "no" but "not here — here is where it is": `Entry` carries the face that
+	// DOES exist, with its `_faces` and `_world`, so the page can offer a way
+	// through instead of rendering a dead end. Rendered as an error, the SPA
+	// discards the body and the user is told the thing they just created does
+	// not exist.
+	//
+	// Omitted when false, so an ordinary view response is byte-identical to
+	// what it was before this field existed.
+	WorldAbsent bool `json:"_world_absent,omitempty"`
 }
 
 // ViewSection represents a section with resolved data.
@@ -593,6 +957,31 @@ type ViewEntity struct {
 	HasContent       bool                        `json:"hasContent"`
 	Props            map[string]any              `json:"_props,omitempty"`
 	FieldAffordances *map[string]FieldAffordance `json:"_fields,omitempty"`
+	// World is the PROVENANCE of this collection entity's face — which world
+	// resolved it, which coordinate it was stored at, and which rule chose it
+	// (TKT-WRLDAPI item 4b).
+	//
+	// This is the slot the per-neighbor provenance deferred in item 4 belongs
+	// in, and the reason 4b exists. A view collection carries whole ENTITIES,
+	// unlike the entity GET's `relations` map, which carries bare id strings
+	// and so had nowhere to put this without a wire-type change.
+	//
+	// It lets a client distinguish "the Dutch page" from "the English page,
+	// because no Dutch face exists" for each item in a collection — the same
+	// question [Entity.World] answers for a single entity, which arrives
+	// byte-identically either way and cannot be re-derived client-side without
+	// the chain and the fallback policy.
+	//
+	// Present only under a NON-DEFAULT world. Under the default world every
+	// entity resolves to its default state by definition, so a provenance
+	// block would be noise on every row of every existing view.
+	World *EntityWorld `json:"_world,omitempty"`
+	// Self addresses the ROW this collection entity is, face included — the
+	// same contract as [Entity.Self]. Under a world a collection entity is a
+	// neighbour's RESOLVED face, so a client that edits it in place (a row's
+	// inline edit, its Edit button) must write to this address and not to
+	// the bare id, or it edits a state the page is not showing.
+	Self string `json:"_self,omitempty"`
 }
 
 // ViewColumn represents a column definition.
@@ -610,6 +999,9 @@ type ViewRow struct {
 	EditFormID string     `json:"editFormId,omitempty"`
 	Cells      []ViewCell `json:"cells"`
 	Content    string     `json:"content,omitempty"`
+	// Self addresses the ROW this entry describes, face included — the same
+	// contract as [Entity.Self]. See [ViewEntity.Self].
+	Self string `json:"_self,omitempty"`
 }
 
 // ViewCell represents a table cell.
@@ -704,6 +1096,101 @@ type Mention struct {
 	Title              string `json:"title"`
 	Inaccessible       bool   `json:"inaccessible,omitempty"`
 	InaccessibleReason string `json:"inaccessible_reason,omitempty"`
+}
+
+// Face is one content state an entity has, other than the one being served.
+// See [Entity.Faces] for why it carries no readability flag.
+type Face struct {
+	// Face is the STORED coordinate — "" for the default face. It is what
+	// a client sends back as `?world=`-adjacent addressing, so it must be the
+	// stored form, not the declared name (a `bare_face` face's declared
+	// name maps to ""; see metamodel.StoredFace).
+	Face string `json:"face"`
+	// Label is the display text for this face: the operator's
+	// `faces.<name>.label:` when declared, else the declared face name
+	// itself. Empty only when the coordinate has no declared name at all.
+	//
+	// Display-only, like [CopyOffer.Label] — a client addresses the face by
+	// Face and never by this string.
+	Label string `json:"label,omitempty"`
+	// Ref is the face's ADDRESS: the path segment that reads this row
+	// literally under any world — `POL-1@published`, and `POL-1@draft` for
+	// the bare face when the type declares a `bare_face` name.
+	//
+	// It exists so a client can offer "view the published face" as a plain
+	// link, without deriving which declared world happens to lead with that
+	// face — a derivation that needs the chain, the per-type overrides and a
+	// tie-break rule, and that produced a dead control for any face no world
+	// headed. A bare face with no declared name has no explicit spelling and
+	// falls back to the bare id, which is literal only in the default world.
+	Ref string `json:"ref,omitempty"`
+}
+
+// CopyOffer is one declared copy definition offered for a source face
+// (TKT-WRLDAPI item 5), as the SPA needs it to render RULING 9's affordances.
+type CopyOffer struct {
+	// Name is the `copies:` key and the ONLY thing a client may send back to
+	// invoke it. A request names a definition; it never supplies one.
+	Name string `json:"name"`
+	// Label is the operator-configured display text, falling back to Name.
+	// Display-only.
+	Label string `json:"label"`
+	// TargetFace is the declared target (`policy@published`), for a UI that
+	// wants to say what the action will produce. Always another face of the
+	// SAME entity: cross-entity definitions are not offered (see
+	// entitymanager.CopiesForSource), so an invoke needs no target id.
+	TargetFace string `json:"targetFace"`
+	// Allowed reports whether the requesting principal may invoke this copy on
+	// this source right now.
+	//
+	// A HINT, never a boundary — the same contract as `_actions`. The invoke
+	// endpoint re-authorizes through the kernel, so a client that ignores this
+	// and POSTs anyway receives the same 403 it would have received regardless.
+	// It is computed by running the kernel's own authorization path, not a
+	// parallel implementation, so it cannot drift from what the write does.
+	Allowed bool `json:"allowed"`
+	// Reason names why Allowed is false, for a tooltip. Empty when allowed.
+	// Advisory, and never carries content from an entity the caller cannot
+	// read.
+	Reason string `json:"reason,omitempty"`
+	// OnSuccess is the operator's follow-through for this copy: the toast
+	// and where the client lands (TKT-5SZG2L). Nil when nothing is declared,
+	// in which case the client shows the copy's label and lands on the face
+	// written. Mirrors metamodel.CopyOnSuccess.
+	OnSuccess *CopyOnSuccess `json:"onSuccess,omitempty"`
+}
+
+// CopyOnSuccess is the operator's follow-through for a successful copy.
+type CopyOnSuccess struct {
+	// Message is the confirmation toast; empty means the copy's label.
+	Message string `json:"message,omitempty"`
+	// Landing is where the client goes afterwards.
+	Landing CopyLanding `json:"landing"`
+}
+
+// CopyLanding is a copy's landing target, mirroring metamodel.CopyLanding
+// with the default spelled out so a client never has to infer it.
+type CopyLanding struct {
+	// Mode is "written" (the face the copy wrote), "stay" (reload in
+	// place), "world" or "face" (see the field of that name).
+	Mode  string `json:"mode"`
+	World string `json:"world,omitempty"`
+	Face  string `json:"face,omitempty"`
+}
+
+// CopyResult reports what an invoked copy produced.
+type CopyResult struct {
+	// Definition is the name that was invoked.
+	Definition string `json:"definition"`
+	// EntityID is the entity whose face was written.
+	EntityID string `json:"entityId"`
+	// Face is the coordinate of the face that was written. Empty means the
+	// default state.
+	Face string `json:"face"`
+	// Created is true when the copy brought the target face into existence
+	// rather than overwriting one — the difference between "published for the
+	// first time" and "re-published".
+	Created bool `json:"created"`
 }
 
 // GanttResponse is the payload of GET /api/v1/_gantts/{id}: the gated,

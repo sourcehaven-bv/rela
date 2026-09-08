@@ -149,7 +149,7 @@ func TestDashboardPermission_NopACLShowsEverything(t *testing.T) {
 		impl acl.ACL
 	}{
 		{"value form", acl.NopACL{}},
-		{"pointer form", &acl.NopACL{}},
+		{"face form", &acl.NopACL{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			app.acl = tc.impl
@@ -175,7 +175,7 @@ func TestDashboardPermission_ReadOnlyShowsEverything(t *testing.T) {
 		impl acl.ACL
 	}{
 		{"value form", acl.ReadOnlyACL{}},
-		{"pointer form", &acl.ReadOnlyACL{}},
+		{"face form", &acl.ReadOnlyACL{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			app.acl = tc.impl

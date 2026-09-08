@@ -25,6 +25,8 @@ import { beginOptimistic, rollbackOptimistic, settleOptimistic } from '@/queries
 import { useSchemaStore } from '@/stores/schema'
 import { useUIStore } from '@/stores/ui'
 import { actionAllowed } from '@/utils/affordancesWarning'
+import { entityRef } from '@/utils/entityRef'
+import { useWorld } from '@/composables/useWorld'
 import { renderMarkdown } from '@/utils/markdown'
 import { buildFilterKey, parseWhereClause } from '@/utils/filters'
 import { viewHeaderMarkdown, viewFooterMarkdown } from '@/types/config'
@@ -57,6 +59,7 @@ const props = defineProps<{ id: string }>()
 const router = useRouter()
 const schemaStore = useSchemaStore()
 const uiStore = useUIStore()
+const { worldParam } = useWorld()
 const queryCache = useQueryCache()
 
 const config = computed(() => schemaStore.getCalendar(props.id) as CalendarConfig | undefined)
@@ -178,12 +181,17 @@ const hasRelationFields = computed(
   () => config.value?.event?.fields?.some((f) => !!f.relation) ?? false
 )
 
+// The world rides every source query: the grid is that world's projection,
+// exactly as a list or a board is. Without it a `?world=published` calendar
+// showed the DEFAULT faces' dates under a read-only framing.
 const sourceQueries = computed(() =>
   (config.value?.sources ?? []).map((source) => ({
     source,
-    params: hasRelationFields.value
-      ? { ...paramsFor(source), include: '*' }
-      : paramsFor(source),
+    params: {
+      ...paramsFor(source),
+      ...(worldParam.value ? { world: worldParam.value } : {}),
+      ...(hasRelationFields.value ? { include: '*' } : {}),
+    },
   }))
 )
 
@@ -215,6 +223,14 @@ const initialLoad = ref(true)
 /** A refetch is in flight. Drives a subtle busy hint, never a blanked grid. */
 const refreshing = ref(false)
 const loadError = ref('')
+
+// pageState mirrors DynamicForm's `form-state-*` contract: a stable signal
+// that this screen has finished resolving, so a screenshot{} capture can wait
+// for it rather than hanging until its timeout.
+const pageState = computed<'pending' | 'loaded' | 'error'>(() => {
+  if (loadError.value) return 'error'
+  return initialLoad.value ? 'pending' : 'loaded'
+})
 
 /**
  * Sequence number of the newest refetch.
@@ -391,6 +407,10 @@ function goToday() {
   anchor.value = todayIn(timezone.value)
 }
 
+// From `_actions` alone, under every world — the reasoning KanbanView's
+// canUpdate documents. The reschedule writes to the event's ADDRESS
+// (`entityRef`), face included, so the verdict the server computed for the
+// face on screen and the row the drag edits are one and the same.
 function canUpdate(entity: Entity): boolean {
   return actionAllowed(entity, 'update')
 }
@@ -450,7 +470,8 @@ const dragged = ref<{ event: CalendarEvent; from: CalendarDay } | null>(null)
 
 const { mutate: reschedule } = useMutation({
   mutation: ({ event, updates }: { event: CalendarEvent; updates: Record<string, string> }) =>
-    updateEntity(event.entityType, event.entity.id, { properties: updates }),
+    // To the event's ADDRESS, face included — see utils/entityRef.
+    updateEntity(event.entityType, entityRef(event.entity), { properties: updates }),
   onMutate({ event, updates }) {
     return beginOptimistic(
       queryCache,
@@ -545,7 +566,7 @@ function onDragEnd() {
 </script>
 
 <template>
-  <div class="calendar-view">
+  <div class="calendar-view" :data-testid="`page-state-${pageState}`">
     <header class="page-header">
       <div class="header-left">
         <h1>{{ config?.title || props.id }}</h1>

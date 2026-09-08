@@ -23,6 +23,7 @@ import (
 	"log/slog"
 	"os"
 	"path"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -30,6 +31,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/store/storeutil"
 )
 
 // recentHashCapacity bounds how many recently-written file hashes are
@@ -42,7 +44,16 @@ const recentHashCapacity = 4096
 // Rooted is the primary write/read surface — every data I/O flows
 // through it, so path validation sits in one auditable place.
 // FS remains for raw operations that legitimately need absolute
-// paths (watcher self-echo reads from fsnotify events).
+// paths (watcher self-echo reads from fsnotify events). It is expected
+// to be the bottom-most FS — the one whose WriteFile puts bytes on disk
+// (SafeFS in production, MemFS in tests) — because [New] installs the
+// store's self-echo recorder on it through the postWriteObservable
+// capability. Not enforced by the type system (a decorator that swallows
+// OnPostWrite would look identical); the runtime consequence of an FS
+// without the capability is that the store still opens (the CLI never
+// watches) but [FSStore.StartWatching] returns
+// [ErrWatchNeedsObservableFS] rather than deliver every self-write back
+// as an external edit (BUG-S24X52).
 //
 // EntitiesKey/RelationsKey/AttachmentsKey/CacheKey are root-relative
 // forward-slash keys (e.g. "entities", ".rela"), not absolute paths.
@@ -72,17 +83,43 @@ type Config struct {
 	Observers []store.EntityObserver
 }
 
-// entityMeta is the lightweight in-memory representation of an entity.
+// entityMeta is the lightweight in-memory representation of an entity
+// state. The index key for a meta is stateKey(ID, Face) — the bare
+// ID for the default state, the "ID@face" serialization otherwise —
+// which is also the filename stem.
 type entityMeta struct {
 	ID   string
 	Type string
+	Face entity.Face // zero = default state
 }
 
 // relationMeta is the lightweight in-memory representation of a relation.
+// FromFace is the state-specific tail (zero = default); it is part of
+// the relation's identity and therefore of its index key and filename
+// (relKey) — two edges on the same triple with different tails are two
+// relations (TKT-DOFYR1).
 type relationMeta struct {
-	From string
-	Type string
-	To   string
+	From     string
+	Type     string
+	To       string
+	FromFace entity.Face
+}
+
+// stateKey is the index key and filename stem for an entity state:
+// the bare id for the default state, the codec serialization otherwise.
+func stateKey(id string, p entity.Face) string {
+	return entity.FormatStateRef(id, p)
+}
+
+// relKey is the index key and filename stem for a relation. The FROM
+// slot carries the tail face via the codec serialization; the
+// face grammar forbids "--", so the key stays unambiguous.
+func relKey(from string, fp entity.Face, relType, to string) string {
+	return entity.FormatStateRef(from, fp) + "--" + relType + "--" + to
+}
+
+func (rm relationMeta) key() string {
+	return relKey(rm.From, rm.FromFace, rm.Type, rm.To)
 }
 
 // attachMeta tracks attachment metadata in memory.
@@ -107,8 +144,33 @@ type attachMeta struct {
 // the interface size as the non-interface public methods
 // (FormatEntity/Relation, Start/StopWatching) move to composed helpers.
 //
-//plimsoll:max-methods=81
-//plimsoll:max-exported-methods=33
+// (95 → 102 / 33 → 34 with content states, TKT-DOFYR1: GetEntityState
+// joined the mandated store.Store interface, and the state-family
+// helpers — loadEntityMeta/loadRelationMeta/relationFileKeyMeta/
+// stateFamily/emitFamilyDeleted/rewriteRelationFiles — serve that
+// contract change. Interface growth, not internal sprawl; keep
+// ratcheting the pre-existing surplus down per TKT-N0IKN9.)
+//
+// (+2 methods / +2 exported with per-face delete, TKT-C1XUA8:
+// DeleteEntityState and DeleteRelationState joined the mandated
+// store.Store interface. Required-interface exception, not accreted
+// API — the counts ratchet only if store.Store itself narrows.)
+//
+// +1 (TKT-9KZGJO): per-face index notification joined the observer
+// dispatch when indexers stopped skipping non-default faces. One
+// method, on the store that already owns observer fan-out — not
+// accreted API.
+//
+// The fileLayout + mdCodec extractions (TKT-Y683LJ) then moved the
+// key-resolution and markdown-codec groups off FSStore, so the
+// content-states surface above sits on a smaller base.
+//
+// (92 → 92 / 36 → 35, BUG-S24X52: exported RecordWrite deleted — New
+// installs the unexported recordSelfWrite on the FS directly, so no
+// external caller needs an entry point.)
+//
+//plimsoll:max-methods=92
+//plimsoll:max-exported-methods=35
 type FSStore struct {
 	// rooted is the validated-key I/O surface. Every read, write,
 	// directory op, and remove that operates on files under the
@@ -165,21 +227,33 @@ type FSStore struct {
 	// echoes tracks the hash of bytes most recently written by
 	// this store so the external-change watcher can distinguish
 	// its own writes (self-echoes) from genuine external edits.
-	// Fed by SafeFS.OnPostWrite with the bytes that landed on disk.
+	// Fed by the FS's post-write observer (installed in New) with
+	// the bytes that landed on disk.
 	echoes *echoTracker
+	// echoWiringErr is nil when New installed the self-echo recorder
+	// on the FS, else the error StartWatching returns: a watcher
+	// without echo suppression is a bug, not a degraded mode
+	// (BUG-S24X52). Immutable after New — read without mu.
+	echoWiringErr error
+	// unwireEchoes uninstalls the recorder; Close calls it so a
+	// closed store stops feeding its LRU from a shared FS.
+	// Nil: accepted — set only when wiring succeeded.
+	unwireEchoes func()
+}
+
+// postWriteObservable is the capability fsstore needs from its FS to
+// learn the bytes that actually landed on disk: SafeFS in production,
+// MemFS in tests. Declared here, at the consumer, and discovered by
+// type assertion in [New] so the wiring lives with the type that owns
+// the echo tracker — the previous home (app.FSFactory) lost it in a
+// refactor and nothing noticed (BUG-S24X52). The returned remover is
+// what lets Close uninstall exactly this store's recorder.
+type postWriteObservable interface {
+	OnPostWrite(storage.WriteObserver) (remove func())
 }
 
 // compile-time interface check
 var _ store.Store = (*FSStore)(nil)
-
-// RecordWrite is the post-write observer entry point. Typically
-// wired via SafeFS.OnPostWrite(store.RecordWrite). The watcher
-// uses the recorded hash to suppress self-echoes.
-//
-// Signature matches storage.WriteObserver.
-func (s *FSStore) RecordWrite(path string, content []byte) {
-	s.echoes.Recorded(path, content)
-}
 
 // New creates a new filesystem-backed store. It scans the entities and
 // relations directories to build the in-memory index, and loads or rebuilds
@@ -237,7 +311,33 @@ func New(cfg Config) (*FSStore, error) {
 	}
 	s.loadAttachmentsIndex()
 
+	// Self-echo recording is installed here, not by the caller: the
+	// watcher's correctness depends on it, and a construction site
+	// that forgets is indistinguishable from one that works until the
+	// watcher runs. Installed LAST so a failed open leaves nothing on
+	// the caller's FS. An FS without the capability is tolerated at
+	// open (CLI paths never watch) and refused at StartWatching.
+	if obs, ok := cfg.FS.(postWriteObservable); ok {
+		s.unwireEchoes = obs.OnPostWrite(s.recordSelfWrite)
+	} else {
+		s.echoWiringErr = ErrWatchNeedsObservableFS
+	}
+
 	return s, nil
+}
+
+// recordSelfWrite is the post-write observer New installs. It records
+// only writes under this store's own entities/relations directories:
+// the FS may be shared by several stores (rela-desktop project
+// switches, a multi-project host), and a hash recorded for another
+// store's file would be a wasted LRU slot at best and, for two stores
+// over ONE root, would suppress the other store's genuine write as an
+// echo. Two live stores over one root is unsupported regardless —
+// their indexes diverge — but the recorder must not make it quieter.
+func (s *FSStore) recordSelfWrite(path string, data []byte) {
+	if s.isEntityPath(path) || s.isRelationPath(path) {
+		s.echoes.Recorded(path, data)
+	}
 }
 
 // loadAttachmentsIndex walks the attachments directory and populates
@@ -333,15 +433,39 @@ func (s *FSStore) LastModified(_ context.Context) (time.Time, error) {
 }
 
 // notifyPut notifies all observers that an entity was created or updated.
+// Every FACE is announced (TKT-9KZGJO): the search indexers key documents
+// per face, so a state write indexes its own document instead of
+// overwriting the default one. The Step 1 skip that dropped non-default
+// faces here is gone.
 func (s *FSStore) notifyPut(e *entity.Entity) {
 	for _, o := range s.observers {
 		_ = o.EntityPut(e)
 	}
 }
 
-// notifyDelete notifies all observers that an entity was removed.
-func (s *FSStore) notifyDelete(id string) {
+// notifyFaceDelete announces the removal of ONE face.
+//
+// The two observer kinds are mutually exclusive per call, per
+// [store.FaceObserver]: a face-aware observer is told precisely which
+// face went, while a bare-id observer hears nothing here — it is served
+// by notifyLastFaceDelete once the family is empty, preserving the
+// pre-worlds contract that a bare-id delete means "the entity is gone".
+func (s *FSStore) notifyFaceDelete(id string, p entity.Face) {
 	for _, o := range s.observers {
+		if fo, ok := o.(store.FaceObserver); ok {
+			_ = fo.EntityFaceDelete(id, p)
+		}
+	}
+}
+
+// notifyLastFaceDelete tells the bare-id observers the entity is gone.
+// Face-aware observers are skipped: they already received one
+// notifyFaceDelete per face and would otherwise see the last one twice.
+func (s *FSStore) notifyLastFaceDelete(id string) {
+	for _, o := range s.observers {
+		if _, ok := o.(store.FaceObserver); ok {
+			continue
+		}
 		_ = o.EntityDelete(id)
 	}
 }
@@ -381,6 +505,25 @@ func (s *FSStore) cleanupTempFiles() {
 			_ = s.rooted.Remove(p)
 		}
 	}
+}
+
+// sortStateKeys sorts entity state keys ("id" or "id@face") by the
+// (bare id, face) tuple, the ordering every entityOrder mutation
+// uses (storeutil.SortedInsertFunc / SortedRemoveFunc with
+// storeutil.CompareStateKeys).
+//
+// The index CONSTRUCTION paths must use the same comparator as the
+// mutation paths or the slice is sorted one way and binary-searched
+// another: SortedRemoveFunc then misses a key that is present and
+// panics, on the ordinary default-world delete path after any process
+// restart. Plain sortStrings is wrong here because '@' (0x40) sorts
+// after the digits (0x30-0x39), so PAGE-10's family lands inside
+// PAGE-1's. See storeutil.CompareStateKeys.
+//
+// relationOrder is NOT sorted with this — relations carry no face,
+// so plain string order is correct there.
+func sortStateKeys(keys []string) {
+	slices.SortFunc(keys, storeutil.CompareStateKeys)
 }
 
 // sortStrings sorts a string slice in place.

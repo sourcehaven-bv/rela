@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 )
 
 // TestNegativeControls is the suite's positive control: every row is a mistake
@@ -114,6 +116,110 @@ func TestNegativeControls(t *testing.T) {
 	}
 }
 
+// TestNegativeControls_Read covers reads{}/hidden{}, which need the FACED
+// fixture (fixtureMeta declares no faces, so no face claim could be made
+// against it).
+//
+// The rows here guard the failure that motivated the verb. The worlds fixture's
+// reader holds `read: [policy@published]`; dropping the `@published` widens it
+// to every face, and NOTHING in the write-side assertions notices — every
+// refuses{} still passes, because being unable to write a draft was never what
+// concealed it. Only a read claim turns that red.
+func TestNegativeControls_Read(t *testing.T) {
+	tests := []struct {
+		name    string
+		body    string
+		wantErr string
+		why     string
+	}{
+		{
+			name:    "hidden about an id that was never seeded",
+			body:    `hidden{who="pub", type="policy", id="POL-404"}`,
+			wantErr: "would pass against any policy",
+			why:     "a nonexistent row is hidden from everyone, so the claim holds against any policy",
+		},
+		{
+			name:    "typo'd principal in a read claim",
+			body:    `hidden{who="typo-nobody", type="policy", id="POL-1"}`,
+			wantErr: "no such principal",
+			why:     "an unassigned principal reads nothing, so hidden{} would pass forever",
+		},
+		{
+			name:    "typo'd entity type in a read claim",
+			body:    `reads{who="pub", type="polcy", id="POL-1"}`,
+			wantErr: "no such entity type",
+		},
+		{
+			name:    "a read claim naming no row",
+			body:    `reads{who="pub", type="policy"}`,
+			wantErr: "`who`, `type` and `id` are all required",
+			why:     "a claim without a subject asserts nothing about the policy",
+		},
+		{
+			name:    "a field-redaction claim is refused rather than checked against a no-op redactor",
+			body:    `reads{who="pub", type="policy", id="POL-1", face="published", redacted={"title"}}`,
+			wantErr: "unknown key redacted",
+			why:     "docs cannot import the real redactor, so such a claim could only pass vacuously",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			src := "```rela\n" + readSeed + tc.body + "\n```\n"
+			_, err := Build(context.Background(), src, Options{
+				Meta:   worldFixtureMeta(t),
+				Policy: readFixturePolicy(),
+			})
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("this is a LEGITIMATE claim and must build: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("this mistake was accepted, so the assertion is vacuous.\n  why it matters: %s", tc.why)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("failed for the wrong reason: want %q, got:\n%v", tc.wantErr, err)
+			}
+		})
+	}
+}
+
+// TestReadClaimCatchesAWidenedFaceGrant is the negative control the whole
+// read-side verb exists for, run as a MUTATION of the policy rather than of the
+// manual: it widens `policy@published` to a bare `policy` grant and asserts
+// that the write-side claims stay green while the read-side claim turns red.
+//
+// Without this, "the read side needs its own verb" is an argument. With it, it
+// is a failing build.
+func TestReadClaimCatchesAWidenedFaceGrant(t *testing.T) {
+	widened := readFixturePolicy()
+	widened.Roles["reader"] = acl.RoleDef{Read: []string{"policy", "control"}}
+
+	t.Run("the write-side claim still passes, so it cannot catch this", func(t *testing.T) {
+		src := "```rela\n" + readSeed + `refuses{who="pub", op="update", type="policy"}` + "\n```\n"
+		if _, err := Build(context.Background(), src, Options{
+			Meta: worldFixtureMeta(t), Policy: widened,
+		}); err != nil {
+			t.Fatalf("the write claim should be unaffected by a read grant: %v", err)
+		}
+	})
+
+	t.Run("the read-side claim turns red", func(t *testing.T) {
+		src := "```rela\n" + readSeed + `hidden{who="pub", type="policy", id="POL-1"}` + "\n```\n"
+		_, err := Build(context.Background(), src, Options{
+			Meta: worldFixtureMeta(t), Policy: widened,
+		})
+		if err == nil {
+			t.Fatal("a widened face grant went undetected — the read claim is vacuous")
+		}
+		if !strings.Contains(err.Error(), "disclosure") {
+			t.Fatalf("want a disclosure failure, got:\n%v", err)
+		}
+	})
+}
+
 // The api{} negative controls need a client, so they live in their own table.
 func TestNegativeControls_API(t *testing.T) {
 	tests := []struct {
@@ -137,6 +243,19 @@ func TestNegativeControls_API(t *testing.T) {
 			name:    "a call that claims nothing",
 			body:    `api{path="/a"}`,
 			wantErr: "asserts nothing",
+		},
+		{
+			name:    "absent= with no status claim beside it",
+			body:    `api{path="/a", absent={"secret"}}`,
+			wantErr: "absent= needs a status= claim",
+			why: "an error body contains none of the strings either, so absent= alone " +
+				"passes on a 500 while proving nothing about a successful response",
+		},
+		{
+			name:    "has= given a bare string instead of a list",
+			body:    `api{path="/a", status=403, has="denied"}`,
+			wantErr: "has must be a list",
+			why:     "a bare value reads as an empty list, asserting nothing at all",
 		},
 	}
 

@@ -85,6 +85,38 @@ const (
 	// `op == "acl-query"`.
 	OpACLQuery = "acl-query"
 
+	// OpHistoryReveal records that a holder of acl.PermHistoryReadRedacted
+	// read a historical entity version with the redaction OVERRIDDEN --
+	// TKT-LVSPSB. The permission exists so a small audited group can see
+	// frozen field values (salary/PII class, TKT-73C6B2) that are hidden from
+	// ordinary readers; without this record, "who saw which hidden historical
+	// values, and when" was unanswerable, since internal/audit otherwise logs
+	// only writes.
+	//
+	// Separate op rather than a flag on an existing one, for the same reason
+	// OpACLBypassRead is separate from OpACLBypass: folding a read into an
+	// existing op silently changes what every stored query for that op means.
+	//
+	// Distinct from OpACLBypassRead despite the family resemblance -- no
+	// bypass_acl closure is involved, and reusing that op would pollute a
+	// forensic query about elevated automation with ordinary auditor traffic.
+	// Unlike OpACLBypassRead this record DOES carry a Subject: a bypass
+	// closure's read set is unbounded (one admin.list_entities can walk the
+	// graph), while a reveal is one entity at one version -- bounded, known,
+	// and worth naming.
+	//
+	// Recorded ONLY on the reveal arm: an ordinary, redacted history read
+	// emits nothing. A record that appeared for every read would bury the
+	// privileged ones it exists to surface.
+	//
+	// Subject names the entity (Type from the stored SNAPSHOT, never the
+	// caller-supplied URL segment, so the recorded type cannot be spoofed);
+	// Summary carries the version. The revealed VALUES are never recorded, and
+	// neither are the revealed field NAMES -- that list is a map of what the
+	// policy hides, which is close to the thing being protected. Isolate with
+	// `op == "history-reveal"`.
+	OpHistoryReveal = "history-reveal"
+
 	// OpPurgeVersion records an operator hard-delete of version snapshot rows
 	// (TKT-BW6UUL) — the deliberate, irreversible exception to append-only
 	// history, for compliance redaction. Subject names the entity/relation whose
@@ -93,6 +125,19 @@ const (
 	// (that would defeat the purge); this record is the surviving forensic trail
 	// showing who purged what and why. Isolate with `op == "purge-version"`.
 	OpPurgeVersion = "purge-version"
+
+	// OpCopyState records one invocation of a declared COPY DEFINITION —
+	// a mapped write of one entity content state (face) into another
+	// (TKT-C1XUA8). Subject names the TARGET face; Summary carries the
+	// definition name, the source and target faces, and whether the target
+	// was created.
+	//
+	// Shaped after OpPurgeVersion: it records WHAT was done to WHICH
+	// subject and never the copied content. Unlike purge, it does NOT
+	// bypass the Manager — a copy IS an entity write, so it goes through
+	// the same audit hook that reads attribution from ctx and cannot be
+	// forged by a caller.
+	OpCopyState = "copy-state"
 
 	// OpDataMigration records one applied data-migration file (TKT-0C57FS):
 	// a bulk store-level rewrite that deliberately bypasses the
@@ -108,6 +153,12 @@ const (
 	// declares. Summary carries the ledger keys and counts, never content.
 	// Isolate with `op == "data-gc"`.
 	OpDataGC = "data-gc"
+
+	// OpPerfSeed records a `rela dev seed` run: a raw-store bulk load of
+	// generated data (internal/perfseed). One record per run with the
+	// profile, scale, seed and counts — never the content, which is
+	// reproducible from those anyway.
+	OpPerfSeed = "perf-seed"
 )
 
 // Subject identifies what an op acted on. Exactly one of {Type, ID}
@@ -132,7 +183,7 @@ type Subject struct {
 // Record is one audit row in the JSONL stream.
 //
 // Subject / Before / After are pointers so encoding/json can honor
-// omitempty — non-pointer struct fields would marshal as
+// omitempty — non-face struct fields would marshal as
 // `"subject":{}` even when zero. Rename ops populate Before/After
 // and leave Subject nil; every other op populates Subject and
 // leaves Before/After nil.

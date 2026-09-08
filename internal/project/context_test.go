@@ -255,17 +255,118 @@ func TestContextExists(t *testing.T) {
 func TestContextEntityTemplatePath(t *testing.T) {
 	ctx := newContext("/test")
 
-	got := ctx.EntityTemplatePath("requirement")
+	got, err := ctx.EntityTemplatePath("requirement")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	want := "/test/" + TemplatesDir + "/" + EntityTemplatesDir + "/requirement.md"
 	if got != want {
 		t.Errorf("expected %s, got %s", want, got)
 	}
 }
 
+func TestContextEntityTemplateVariantPath(t *testing.T) {
+	ctx := newContext("/test")
+	dir := "/test/" + TemplatesDir + "/" + EntityTemplatesDir
+
+	t.Run("empty variant falls back to the type template", func(t *testing.T) {
+		got, err := ctx.EntityTemplateVariantPath("requirement", "")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if want := dir + "/requirement.md"; got != want {
+			t.Errorf("expected %s, got %s", want, got)
+		}
+	})
+
+	t.Run("variant", func(t *testing.T) {
+		got, err := ctx.EntityTemplateVariantPath("requirement", "detailed")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if want := dir + "/requirement--detailed.md"; got != want {
+			t.Errorf("expected %s, got %s", want, got)
+		}
+	})
+}
+
+// TestContextTemplatePaths_TypeNameBlocklist pins the local guard on TYPE
+// names and, just as importantly, what it does NOT reject. Type names are
+// metamodel names, and metamodel.ValidateSchemaName documents that shipped
+// schemas legitimately use dashes, dots, internal spaces and non-ASCII — an
+// allowlist here would break templates (including the DEFAULT template) for
+// such a type. Only what could leave the directory is refused.
+func TestContextTemplatePaths_TypeNameBlocklist(t *testing.T) {
+	ctx := newContext("/test")
+	accepted := []string{"requirement", "review-response", "some property", "v1.2", "café", "user_story"}
+	rejected := []string{"", ".", "..", "../etc", "a/b", "a\\b", "a\x00b", " lead", "trail ", "tab\tbed"}
+
+	for _, name := range accepted {
+		t.Run("accept/"+name, func(t *testing.T) {
+			if _, err := ctx.EntityTemplatePath(name); err != nil {
+				t.Errorf("EntityTemplatePath(%q): %v (a valid metamodel name must be accepted)", name, err)
+			}
+			if _, err := ctx.EntityTemplateVariantPath(name, "detailed"); err != nil {
+				t.Errorf("EntityTemplateVariantPath(%q, detailed): %v", name, err)
+			}
+			if _, err := ctx.RelationTemplatePath(name); err != nil {
+				t.Errorf("RelationTemplatePath(%q): %v", name, err)
+			}
+		})
+	}
+	for _, name := range rejected {
+		t.Run("reject/"+name, func(t *testing.T) {
+			if _, err := ctx.EntityTemplatePath(name); err == nil {
+				t.Errorf("EntityTemplatePath(%q) = nil error, want rejection", name)
+			}
+			if _, err := ctx.EntityTemplateVariantPath(name, "detailed"); err == nil {
+				t.Errorf("EntityTemplateVariantPath(%q, detailed) = nil error, want rejection", name)
+			}
+			if _, err := ctx.EntityTemplateVariantPath(name, ""); err == nil {
+				t.Errorf("EntityTemplateVariantPath(%q, \"\") = nil error, want rejection", name)
+			}
+			if _, err := ctx.RelationTemplatePath(name); err == nil {
+				t.Errorf("RelationTemplatePath(%q) = nil error, want rejection", name)
+			}
+		})
+	}
+}
+
+// TestContextEntityTemplateVariantPath_VariantAllowlist pins the VARIANT half,
+// which is an identifier allowlist kept identical to
+// automation.isValidTemplateName. The variant reaches here from automation's
+// {{new.kind}} interpolation — an API-settable entity property — and the
+// joined path goes to a raw storage.FS that validates nothing.
+func TestContextEntityTemplateVariantPath_VariantAllowlist(t *testing.T) {
+	ctx := newContext("/test")
+	for _, v := range []string{"detailed", "bug-report", "v2_draft", "A1"} {
+		if _, err := ctx.EntityTemplateVariantPath("requirement", v); err != nil {
+			t.Errorf("variant %q: %v, want accepted", v, err)
+		}
+	}
+	for _, v := range []string{"../../../../etc/passwd", "..", "a/b", "a\\b", "a\x00b", "a b", "a.b", "café"} {
+		if _, err := ctx.EntityTemplateVariantPath("requirement", v); err == nil {
+			t.Errorf("variant %q = nil error, want rejection", v)
+		}
+	}
+	// Empty variant is the documented "no variant" case and falls back to the
+	// type template.
+	got, err := ctx.EntityTemplateVariantPath("requirement", "")
+	if err != nil {
+		t.Fatalf("empty variant: %v", err)
+	}
+	if want := "/test/" + TemplatesDir + "/" + EntityTemplatesDir + "/requirement.md"; got != want {
+		t.Errorf("empty variant = %s, want %s", got, want)
+	}
+}
+
 func TestContextRelationTemplatePath(t *testing.T) {
 	ctx := newContext("/test")
 
-	got := ctx.RelationTemplatePath("satisfies")
+	got, err := ctx.RelationTemplatePath("satisfies")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	want := "/test/" + TemplatesDir + "/" + RelationTemplatesDir + "/satisfies.md"
 	if got != want {
 		t.Errorf("expected %s, got %s", want, got)

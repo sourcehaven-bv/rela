@@ -81,7 +81,7 @@ func (c *ValidateCmd) Run(ctx context.Context) error {
 		if discoverErr != nil {
 			return fmt.Errorf("validate scheduled mail recipients: %w", discoverErr)
 		}
-		defer mailSvc.Close() //nolint:contextcheck // Services.Close has no context-bearing variant.
+		defer mailSvc.Close()
 		if validateErr := mailSvc.ValidateScheduledMailRecipients(ctx); validateErr != nil {
 			fmt.Printf("  ✗ scheduled mail recipients: %v\n", validateErr)
 			hasErrors = true

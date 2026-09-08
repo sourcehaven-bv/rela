@@ -22,7 +22,7 @@ section stating the scoping — `everyone` = all verified principals; the
 public-read worlds scenario assumes the proxy; anonymous access is explicitly
 out of scope and would be an additive later feature (synthetic principal at the
 proxy or a dedicated wiring-bound public surface).
-2. Update `.ignored/pointer-design.md` §12.3 / §14 to point at DEC-PEYCJZ
+2. Update `.ignored/face-design.md` §12.3 / §14 to point at DEC-PEYCJZ
 (done by the architect at decision time — verify).
 
 No code. The worlds ACL model is unchanged: read grants stay world-shaped, and

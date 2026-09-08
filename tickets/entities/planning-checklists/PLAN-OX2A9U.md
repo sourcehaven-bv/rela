@@ -27,7 +27,7 @@ IN scope (v1):
 - Gate: hash compare → adopt / notice / warn, at startup AND on metamodel hot-reload (A4), verdict via atomic.Pointer; wired in appbuild for server + write-capable CLI.
 - GC sweep goroutine with server lifecycle (version-sweep pattern) + manual `gc --apply` + scheduler-invokable engine; audit sink as nil-rejected constructor dep (A8).
 - Works on fsstore, memstore, pgstore; pg parts (advisory locks) tagged like existing recipes.
-- Docs: new `docs/data-migration.md`, updates to cli-reference, postgres-backend, CLAUDE.md pointer.
+- Docs: new `docs/data-migration.md`, updates to cli-reference, postgres-backend, CLAUDE.md face.
 
 NOT in scope (v1):
 - `split_property`/`merge_property` declarative ops (Lua covers).
@@ -124,7 +124,7 @@ Modified:
 - `internal/appbuild/` — gate wiring (startup + reload subscription); GC sweep lifecycle wiring (fs + pg recipes; audit sink injection per A8; version-capture capability pass-through per A1).
 - `internal/store/pgstore` — advisory lock key export or small capability for migration/GC lock (no schema change; no new tables).
 - `internal/scheduler` or scheduler docs — GC engine invokable as scheduled task (may be docs-only if engine is exported).
-- `docs/cli-reference.md`, `docs/postgres-backend.md`, `CLAUDE.md` (pointer + rules), `.testcoverage.yml` (floor for new package), arch-lint rules (datamigration may import store/metamodel/state/script; nothing may import it except cli/appbuild).
+- `docs/cli-reference.md`, `docs/postgres-backend.md`, `CLAUDE.md` (face + rules), `.testcoverage.yml` (floor for new package), arch-lint rules (datamigration may import store/metamodel/state/script; nothing may import it except cli/appbuild).
 
 Dependencies: `internal/metamodel`, `internal/store` (+ `storetest`),
 `internal/state`, `internal/schema` (pre-flight),
@@ -224,7 +224,7 @@ Effort: **l** (matches ticket property). Stage (a) ~s, (b) ~m, (c) ~s.
 **Documentation Impact:**
 
 - [x] New `docs/data-migration.md` — concepts (shape hash, tiers, grace period), file format, step reference, workflows (gen → review → apply), GC policy.
-- [x] docs/metamodel.md — pointer: schema evolution section.
+- [x] docs/metamodel.md — face: schema evolution section.
 - [x] docs/cli-reference.md — `rela migrate status|gen|data|gc`.
 - [x] docs/postgres-backend.md — multi-tenant migration state, locks, sweep interplay, version capture.
 - [x] CLAUDE.md — the two-hash rule (ShapeProjection vs RenderProjection), raw-write sanctioned-exception note.

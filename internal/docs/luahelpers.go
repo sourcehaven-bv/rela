@@ -46,6 +46,29 @@ func fieldStringDefault(ls *lua.LState, tbl *lua.LTable, key, def string) string
 	return def
 }
 
+// fieldBoolDefault reads a boolean field, returning def when the key is absent.
+//
+// Distinct from [fieldBool] because the assertion verbs' `emit` key defaults to
+// TRUE: rendering the evidence is the default and `emit=false` is the opt-out.
+// fieldBool cannot express that — it reads an absent key and an explicit
+// `emit=false` identically, which would make the opt-out unreachable.
+//
+// A non-boolean value (`emit="no"`) is treated as absent rather than as false,
+// so it takes the default. That direction is deliberate: the failure of a
+// mistyped opt-out is a visible extra table, not a silently un-rendered claim.
+// the only bool key with a non-false default today.
+//
+//nolint:unparam // key mirrors fieldStringDefault's shape; `emit` is simply
+func fieldBoolDefault(ls *lua.LState, tbl *lua.LTable, key string, def bool) bool {
+	if tbl == nil {
+		return def
+	}
+	if b, ok := ls.GetField(tbl, key).(lua.LBool); ok {
+		return bool(b)
+	}
+	return def
+}
+
 // fieldBool reads a boolean field from a table, false when absent.
 func fieldBool(ls *lua.LState, tbl *lua.LTable, key string) bool {
 	if tbl == nil {

@@ -1,6 +1,8 @@
 package sqlitestore
 
 import (
+	"github.com/Sourcehaven-BV/rela/internal/store/storeutil"
+
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -27,6 +29,12 @@ import (
 // "{}" rather than NULL so every row has a valid JSON document and json_extract
 // never has to special-case a missing column.
 func marshalProps(p map[string]any) (string, error) {
+	// The one place properties become JSON here (entity and relation rows);
+	// see pgstore's marshalProps for why the text gate sits at the
+	// serializer rather than at each caller (BUG-X7ICNM).
+	if err := storeutil.ValidateProperties(p); err != nil {
+		return "", err
+	}
 	if len(p) == 0 {
 		return "{}", nil
 	}

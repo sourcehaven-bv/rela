@@ -54,22 +54,108 @@ func insertVersion(ctx context.Context, q DBTX, in store.VersionInput, contentHa
 	if in.Op == store.VersionOpRename && in.PrevID != "" {
 		prev = &in.PrevID
 	}
+	o := originColumns(in.Origin)
 	const ins = `
 		INSERT INTO entity_versions
-		    (entity_id, op, prev_id, type, content, properties, content_hash,
-		     schema_hash, principal_user, principal_tool, triggered_by)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
+		    (entity_id, face, op, prev_id, type, content, properties, content_hash,
+		     schema_hash, principal_user, principal_tool, triggered_by,
+		     origin_kind, origin_source, origin_source_face, origin_source_type,
+		     origin_definition)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`
 	_, err = q.Exec(ctx, ins,
-		in.EntityID, string(in.Op), prev, in.Type, in.Content, props, contentHash,
-		in.SchemaHash, in.PrincipalUser, in.PrincipalTool, in.TriggeredBy)
+		in.EntityID, string(in.Face), string(in.Op), prev, in.Type, in.Content,
+		props, contentHash,
+		in.SchemaHash, in.PrincipalUser, in.PrincipalTool, in.TriggeredBy,
+		o.kind, o.source, o.sourceFace, o.sourceType, o.definition)
 	return err
 }
 
-// contentHashOf computes the canonical content hash of a snapshot, matching the
-// live entity hash so a sweep can compare against the current entity's hash.
+// originCols is a store.Origin as nullable SQL values. Grouped in a struct
+// rather than returned as five bare *string results: five same-typed returns
+// at a call site are a swap waiting to happen, and the columns travel together
+// through every query in this package.
+type originCols struct {
+	kind       *string
+	source     *string
+	sourceFace *string
+	sourceType *string
+	definition *string
+}
+
+// originColumns splits a store.Origin into its nullable SQL values. A zero
+// Origin is all-NULL — the "direct edit" encoding (see migration 0013). An
+// empty component of a NON-zero origin also stays NULL, so "not applicable"
+// and "empty string" do not collide.
+func originColumns(o store.Origin) originCols {
+	if o.IsZero() {
+		return originCols{}
+	}
+	var c originCols
+	k := string(o.Kind)
+	c.kind = &k
+	if o.Source != "" {
+		c.source = &o.Source
+	}
+	if o.SourceFace != "" {
+		c.sourceFace = &o.SourceFace
+	}
+	if o.SourceType != "" {
+		c.sourceType = &o.SourceType
+	}
+	if o.Definition != "" {
+		c.definition = &o.Definition
+	}
+	return c
+}
+
+// scanOrigin assembles a store.Origin from its nullable columns. All-NULL
+// yields the zero Origin, i.e. a direct edit.
+func scanOrigin(c originCols) store.Origin {
+	var o store.Origin
+	if c.kind != nil {
+		o.Kind = store.OriginKind(*c.kind)
+	}
+	if c.source != nil {
+		o.Source = *c.source
+	}
+	if c.sourceFace != nil {
+		o.SourceFace = *c.sourceFace
+	}
+	if c.sourceType != nil {
+		o.SourceType = *c.sourceType
+	}
+	if c.definition != nil {
+		o.Definition = *c.definition
+	}
+	return o
+}
+
+// originColumnCount is how many SQL columns an originCols occupies, so callers
+// can size a scan-target slice without calling scanTargets twice.
+const originColumnCount = 5
+
+// scanTargets returns the address list for scanning origin columns, in
+// the column order every SELECT in this package uses.
+func (c *originCols) scanTargets() []any {
+	return []any{&c.kind, &c.source, &c.sourceFace, &c.sourceType, &c.definition}
+}
+
+// contentHashOf hashes a version's content the same way the live entity is
+// hashed, so the sweep's dedup and purge's live-row check compare like with
+// like.
+//
+// The FACE IS PART OF THE HASH, and that is load-bearing (TKT-C1XUA8).
+// canonical.HashEntity folds it in when non-zero, so two faces holding
+// byte-identical content hash DIFFERENTLY. Dropping it here — as this
+// function did while only the default face was versioned, where it made no
+// difference — would silently defeat that: the sweep's dedup would compare a
+// published capture against the draft's identical hash and skip it, producing
+// a MISSING version rather than a duplicate, and a purge ForceLive tombstone
+// on one face would suppress a legitimate capture on its sibling.
 func contentHashOf(in store.VersionInput) string {
 	return canonical.HashEntity(entity.Entity{
 		ID:         in.EntityID,
+		Face:       in.Face,
 		Type:       in.Type,
 		Properties: in.Properties,
 		Content:    in.Content,
@@ -96,7 +182,21 @@ func contentHashOf(in store.VersionInput) string {
 //
 // lineageCTE is the shared recursive term producing (entity_id, hi) rows where
 // hi is the exclusive vseq upper bound for that id in this lineage (NULL = no
-// upper bound, i.e. the head id). $1 is the queried id.
+// upper bound, i.e. the head id). $1 is the queried id, $2 the FACE (face).
+//
+// # The face is a filter, not a hop (TKT-C1XUA8)
+//
+// A rename re-keys the WHOLE state family in one UPDATE (rekeyStateFamily), so
+// every face is renamed together and a face's coordinate is CONSTANT along its
+// lineage. The walk therefore still follows prev_id links only, with the
+// face carried as a filter.
+//
+// The subtle part is that the filter must reach INSIDE the two max(vseq)
+// subselects, not just the outer join. Those compute the rename fence, and
+// left unscoped they would answer from ANY face's rename rows — so face
+// draft's boundary could be set by face published's rename, silently
+// truncating or extending draft's history. Scoping the join alone looks
+// correct and is not.
 const lineageCTE = `
 	WITH RECURSIVE lin(entity_id, lo, hi) AS (
 	    -- Head: the queried id. Its CURRENT lifecycle starts strictly after the
@@ -107,7 +207,8 @@ const lineageCTE = `
 	    -- entity_versions.entity_id (both recursive terms must agree, else 42P21).
 	    SELECT CAST($1 AS text) COLLATE "C",
 	           COALESCE((SELECT max(vseq) FROM entity_versions
-	                     WHERE prev_id = $1 AND op = 'rename'), 0),
+	                     WHERE prev_id = $1 AND op = 'rename'
+	                       AND face = CAST($2 AS text) COLLATE "C"), 0),
 	           CAST(NULL AS bigint)
 	    UNION
 	    -- Each hop: the rename row that renamed some predecessor INTO the current
@@ -117,11 +218,13 @@ const lineageCTE = `
 	    -- doubly-reused predecessor id is also fenced. Guard cycles via hi.
 	    SELECT r.prev_id,
 	           COALESCE((SELECT max(vseq) FROM entity_versions
-	                     WHERE prev_id = r.prev_id AND op = 'rename' AND vseq < r.vseq), 0),
+	                     WHERE prev_id = r.prev_id AND op = 'rename' AND vseq < r.vseq
+	                       AND face = CAST($2 AS text) COLLATE "C"), 0),
 	           r.vseq
 	    FROM lin
 	    JOIN entity_versions r
 	      ON r.entity_id = lin.entity_id
+	     AND r.face = CAST($2 AS text) COLLATE "C"
 	     AND r.op = 'rename'
 	     AND r.prev_id IS NOT NULL
 	     AND (lin.hi IS NULL OR r.vseq < lin.hi)
@@ -134,18 +237,31 @@ const lineageCTE = `
 func lineageWhere() string {
 	return `
 		JOIN lin ON lin.entity_id = ev.entity_id
+		         AND ev.face = CAST($2 AS text) COLLATE "C"
 		         AND ev.vseq > lin.lo
 		         AND (lin.hi IS NULL OR ev.vseq < lin.hi)`
 }
 
 // ListVersions implements store.HistoryReader.
 func (v *VersionStore) ListVersions(ctx context.Context, id string) ([]store.VersionMeta, error) {
+	return v.ListStateVersions(ctx, id, "")
+}
+
+// ListStateVersions implements store.StateHistoryReader: the same fenced
+// lineage walk, for one face. The zero face is the default face, which is
+// what makes ListVersions a delegation rather than a second query.
+func (v *VersionStore) ListStateVersions(
+	ctx context.Context, id string, p entity.Face,
+) ([]store.VersionMeta, error) {
 	sel := lineageCTE + `
 		SELECT DISTINCT ev.vseq, ev.op, ev.prev_id, ev.type, ev.content_hash, ev.schema_hash,
-		       ev.principal_user, ev.principal_tool, ev.triggered_by, ev.created_at
+		       ev.principal_user, ev.principal_tool, ev.triggered_by,
+		       ev.origin_kind, ev.origin_source, ev.origin_source_face,
+		       ev.origin_source_type, ev.origin_definition,
+		       ev.created_at
 		FROM entity_versions ev` + lineageWhere() + `
 		ORDER BY ev.vseq ASC`
-	rows, err := v.db.Query(ctx, sel, id)
+	rows, err := v.db.Query(ctx, sel, id, string(p))
 	if err != nil {
 		return nil, err
 	}
@@ -174,29 +290,48 @@ func (v *VersionStore) ListVersions(ctx context.Context, id string) ([]store.Ver
 // relative to a ListVersions read taken at the same time — the lineage is
 // append-only, so an ordinal a caller already holds stays valid, but callers
 // should treat it as a cursor into a specific ListVersions result.
-func (v *VersionStore) GetVersion(ctx context.Context, id string, version int) (*store.VersionSnapshot, error) {
+func (v *VersionStore) GetVersion(
+	ctx context.Context, id string, version int,
+) (*store.VersionSnapshot, error) {
+	return v.GetStateVersion(ctx, id, "", version)
+}
+
+// GetStateVersion implements store.StateHistoryReader. See GetVersion for the
+// ordinal's cursor semantics; they are unchanged, but the ordinal is over the
+// FACE's lineage, so version 1 of draft and version 1 of published are
+// different snapshots.
+func (v *VersionStore) GetStateVersion(
+	ctx context.Context, id string, p entity.Face, version int,
+) (*store.VersionSnapshot, error) {
 	if version < 1 {
 		return nil, store.ErrNotFound
 	}
 	sel := lineageCTE + `
 		SELECT ev.op, ev.prev_id, ev.type, ev.content_hash, ev.schema_hash,
-		       ev.principal_user, ev.principal_tool, ev.triggered_by, ev.created_at,
+		       ev.principal_user, ev.principal_tool, ev.triggered_by,
+		       ev.origin_kind, ev.origin_source, ev.origin_source_face,
+		       ev.origin_source_type, ev.origin_definition,
+		       ev.created_at,
 		       ev.content, ev.properties, sv.projection
 		FROM entity_versions ev` + lineageWhere() + `
 		JOIN schema_versions sv ON sv.hash = ev.schema_hash
 		ORDER BY ev.vseq ASC
-		OFFSET $2 LIMIT 1`
-	row := v.db.QueryRow(ctx, sel, id, version-1)
+		OFFSET $3 LIMIT 1`
+	row := v.db.QueryRow(ctx, sel, id, string(p), version-1)
 
 	var (
 		snap  store.VersionSnapshot
 		op    string
 		prev  *string
 		props []byte
+		oc    originCols
 	)
-	err := row.Scan(&op, &prev, &snap.Type, &snap.ContentHash, &snap.SchemaHash,
-		&snap.PrincipalUser, &snap.PrincipalTool, &snap.TriggeredBy, &snap.CreatedAt,
-		&snap.Content, &props, &snap.Projection)
+	scanArgs := make([]any, 0, 12+originColumnCount)
+	scanArgs = append(scanArgs, &op, &prev, &snap.Type, &snap.ContentHash, &snap.SchemaHash,
+		&snap.PrincipalUser, &snap.PrincipalTool, &snap.TriggeredBy)
+	scanArgs = append(scanArgs, oc.scanTargets()...)
+	scanArgs = append(scanArgs, &snap.CreatedAt, &snap.Content, &props, &snap.Projection)
+	err := row.Scan(scanArgs...)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
@@ -205,6 +340,7 @@ func (v *VersionStore) GetVersion(ctx context.Context, id string, version int) (
 	}
 	snap.Version = version
 	snap.Op = store.VersionOp(op)
+	snap.Origin = scanOrigin(oc)
 	if prev != nil {
 		snap.PrevID = *prev
 	}
@@ -223,13 +359,19 @@ func scanVersionMeta(row scanner) (store.VersionMeta, error) {
 		vseq    int64
 		op      string
 		prev    *string
+		oc      originCols
 		created time.Time
 	)
-	if err := row.Scan(&vseq, &op, &prev, &m.Type, &m.ContentHash, &m.SchemaHash,
-		&m.PrincipalUser, &m.PrincipalTool, &m.TriggeredBy, &created); err != nil {
+	scanArgs := make([]any, 0, 10+originColumnCount)
+	scanArgs = append(scanArgs, &vseq, &op, &prev, &m.Type, &m.ContentHash, &m.SchemaHash,
+		&m.PrincipalUser, &m.PrincipalTool, &m.TriggeredBy)
+	scanArgs = append(scanArgs, oc.scanTargets()...)
+	scanArgs = append(scanArgs, &created)
+	if err := row.Scan(scanArgs...); err != nil {
 		return store.VersionMeta{}, err
 	}
 	m.Op = store.VersionOp(op)
+	m.Origin = scanOrigin(oc)
 	if prev != nil {
 		m.PrevID = *prev
 	}

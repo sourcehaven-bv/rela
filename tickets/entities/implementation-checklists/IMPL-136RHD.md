@@ -41,7 +41,7 @@ unset one does, on the same response.
 ## Quality
 
 - [x] Follows project patterns — `_redacted` mirrors the existing
-`Inaccessible` field and the `_fields`/`_relations` closed-world pointer
+`Inaccessible` field and the `_fields`/`_relations` closed-world face
 semantics; the predicate lives in the already-tested `utils/affordances`
 - [x] No silent failures — the change's whole point is replacing a silent
 inference with an explicit signal

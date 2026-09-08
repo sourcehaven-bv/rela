@@ -92,9 +92,9 @@ type Options struct {
 // supported "no store" value.
 //
 // The method count is the MANDATED store.Store interface, not accreted sprawl:
-// 26 of the exported methods are the interface itself, and the rest are the
-// documented optional capabilities (HeaderReader) plus the constructor-adjacent
-// accessors. It ratchets with the interface, exactly as memstore's and
+// all but one of the exported methods are the interface itself, and the
+// remaining one is the constructor-adjacent JournalMode accessor. It ratchets
+// with the interface, exactly as memstore's and
 // fsstore's directives do — a "required interface" exception rather than a
 // target to reduce. Anything ADDED beyond the interface should raise the
 // question this line exists to ask.
@@ -105,8 +105,15 @@ type Options struct {
 // had), and checkSchemaVersion carries the user_version guard. The EXPORTED
 // count has not moved, which is the number that actually measures coupling.
 //
-//plimsoll:max-methods=43
-//plimsoll:max-exported-methods=29
+// The content-states surface (TKT-DOFYR1 / TKT-C1XUA8 / TKT-WAV8XP) is the
+// latest interface growth: GetEntityState, DeleteEntityState and
+// DeleteRelationState are store.Store methods, and each brought its own locked
+// helper plus the family/relation scan helpers the family-wide semantics need.
+// Interface-driven again, so the numbers move with store.Store rather than
+// with this type.
+//
+//plimsoll:max-methods=53
+//plimsoll:max-exported-methods=32
 type Store struct {
 	db   *sql.DB
 	opts Options
@@ -341,13 +348,32 @@ func (s *Store) verifyBusyTimeout(ctx context.Context) error {
 // JournalMode reports the journal mode actually in effect.
 func (s *Store) JournalMode() string { return s.journalMode }
 
+// schemaSQL is created unconditionally at Open. There is no migration
+// mechanism here and none is needed yet: this package is not wired into a
+// binary, so no database it created is in the field. When one ships, a
+// versioned migration step must land BEFORE the first release — a column
+// added to these CREATE statements afterwards is silently absent from every
+// existing file, and STRICT tables fail the first write rather than the open.
 const schemaSQL = `
 CREATE TABLE IF NOT EXISTS entities (
-	id          TEXT PRIMARY KEY,
+	id          TEXT NOT NULL,
+	-- face is the content-state coordinate (TKT-DOFYR1); '' is the DEFAULT
+	-- state, so a faceless project stores exactly the rows it always did.
+	--
+	-- '' NOT NULL rather than NULL, matching pgstore: the face joins the
+	-- primary key, and PK columns cannot be NULL. One convention everywhere —
+	-- Go zero value, omitted frontmatter key, '' column.
+	--
+	-- The store only ever EQUALITY-MATCHES this value (see entity.Face), so
+	-- one plain TEXT column suffices and keeps suffixing when multi-axis
+	-- coordinates arrive: worlds compile to sets of concrete coordinates
+	-- before they reach a store.
+	face        TEXT NOT NULL DEFAULT '',
 	type        TEXT NOT NULL,
 	properties  TEXT NOT NULL DEFAULT '{}',
 	content     TEXT NOT NULL DEFAULT '',
-	updated_at  TEXT NOT NULL
+	updated_at  TEXT NOT NULL,
+	PRIMARY KEY (id, face)
 ) STRICT;
 CREATE INDEX IF NOT EXISTS entities_type_idx ON entities(type);
 -- Entity IDs are case-insensitive IDENTITIES (BUG-3RCWNS): "abc" and "ABC"
@@ -359,16 +385,26 @@ CREATE INDEX IF NOT EXISTS entities_type_idx ON entities(type);
 -- The backends must agree on identity to stay substitutable: fsstore writes
 -- "<id>.md" and so inherits the host filesystem's case folding, which would
 -- silently drop one of the pair on macOS or Windows.
-CREATE UNIQUE INDEX IF NOT EXISTS entities_id_lower_key ON entities(lower(id));
+--
+-- The face joins the key here too (pgstore's 0011 migration does the same):
+-- states of ONE id legitimately share lower(id), so uniqueness is per
+-- (lower(id), face). What the index does NOT catch — ('ABC','') alongside an
+-- existing ('abc','draft') — is rejected by the write path's family probe
+-- instead: a state requires ITS OWN default row, and 'abc' has none.
+CREATE UNIQUE INDEX IF NOT EXISTS entities_id_lower_key ON entities(lower(id), face);
 
 CREATE TABLE IF NOT EXISTS relations (
 	from_id    TEXT NOT NULL,
+	-- from_face is the state-specific TAIL (design doc §2.3). There is
+	-- deliberately no to_face: heads stay entity-level, which is what makes
+	-- cross-world dangling references impossible.
+	from_face  TEXT NOT NULL DEFAULT '',
 	rel_type   TEXT NOT NULL,
 	to_id      TEXT NOT NULL,
 	properties TEXT NOT NULL DEFAULT '{}',
 	content    TEXT NOT NULL DEFAULT '',
 	updated_at TEXT NOT NULL,
-	PRIMARY KEY (from_id, rel_type, to_id)
+	PRIMARY KEY (from_id, from_face, rel_type, to_id)
 ) STRICT;
 CREATE INDEX IF NOT EXISTS relations_from_idx ON relations(from_id);
 CREATE INDEX IF NOT EXISTS relations_to_idx   ON relations(to_id);

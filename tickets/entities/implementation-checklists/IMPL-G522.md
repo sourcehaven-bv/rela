@@ -52,7 +52,7 @@ status: done
   (`TestResolver_LocalRole_HasRole`), global-role
   (`TestResolver_HasGlobalRole`), YAML empty/null/absent
   (`TestLoadPolicy_AffordanceGrants_OptInIsKeyPresence`),
-  `*bool` forms (`TestLoadPolicy_RelationGrant_CreateRemovePointers`).
+  `*bool` forms (`TestLoadPolicy_RelationGrant_CreateRemoveFaces`).
 
 **Verification Evidence:**
 

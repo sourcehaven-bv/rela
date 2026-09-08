@@ -141,7 +141,7 @@ func containedPath(base, path string) (string, error) {
 	// as the empty base above, reached by a different route (a config default
 	// that resolves to "/", or a caller passing it deliberately). Refuse it:
 	// there is no legitimate reason to scope a clone to the whole filesystem.
-	if absBase == string(filepath.Separator) {
+	if isFilesystemRoot(filepath.VolumeName(absBase), absBase, filepath.Separator) {
 		return "", errors.New("clone base directory must not be the filesystem root")
 	}
 
@@ -155,6 +155,49 @@ func containedPath(base, path string) (string, error) {
 		return "", fmt.Errorf("clone path %q escapes base directory %q", path, base)
 	}
 	return abs, nil
+}
+
+// isFilesystemRoot reports whether cleanedPath is a volume root: the volume
+// name followed by a separator and nothing else, or — on Windows only — a
+// volume name with nothing after it at all. The three arguments describe ONE
+// platform's view of one path: pass [filepath.VolumeName](p), an absolute p
+// passed through [filepath.Clean], and [filepath.Separator].
+//
+// Taking them as parameters rather than reaching for the filepath package
+// directly is deliberate, and is what makes the Windows case testable
+// (TKT-T7G7LT / issue #1498). All three differ per platform, and a test running
+// on Linux cannot obtain the Windows values from its own filepath: Linux sees
+// `C:\` as an ordinary relative filename with no volume, and its Separator is
+// '/'. A test written against a path alone would therefore report coverage of a
+// branch it never entered. Handed the triple a Windows filepath would produce,
+// this function performs exactly the comparison it performs there.
+//
+// The volume term is NOT dead weight on Unix, even though it always reads as
+// "". [filepath.VolumeName] returns "" on every non-Windows platform, so the
+// first clause degenerates to `cleanedPath == "/"` — the original Unix-only
+// check from issue #1270, subsumed rather than duplicated. On Windows it
+// catches a drive root (`C:` + `\`) and the trailing-separator spelling of a
+// share root (`\\host\share` + `\`).
+//
+// The second clause exists because [filepath.Clean] does NOT always leave a
+// trailing separator on a Windows root. When the entire path is the volume —
+// `\\host\share`, `\\?\UNC\host\share`, `\\?\C:` — Clean returns it verbatim
+// (there is no remainder to root), so the first clause misses it while
+// [filepath.Rel] goes on to treat it as an absolute base and reports every path
+// on the share as contained. Rel says so itself: it rewrites an empty
+// post-volume base to a separator "for any targetpath matching `\\host\share`".
+// A bare volume is therefore a root in fact, and refusing it is the whole point
+// of this guard.
+//
+// Nil: never returns an error — a pure comparison over three strings.
+func isFilesystemRoot(volumeName, cleanedPath string, separator rune) bool {
+	if volumeName != "" && cleanedPath == volumeName {
+		// Windows only: on Unix volumeName is always "", and an empty
+		// cleanedPath is not a root (Clean never yields one, and the guard
+		// must not claim otherwise).
+		return true
+	}
+	return cleanedPath == volumeName+string(separator)
 }
 
 // credentialFileMode is owner-only: the credentials file holds the access token

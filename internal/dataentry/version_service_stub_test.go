@@ -3,6 +3,7 @@ package dataentry
 import (
 	"context"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -21,6 +22,18 @@ func (stubVersionService) ListVersions(context.Context, string) ([]store.Version
 
 func (stubVersionService) GetVersion(context.Context, string, int) (*store.VersionSnapshot, error) {
 	panic("stubVersionService.GetVersion not implemented")
+}
+
+func (stubVersionService) ListStateVersions(
+	context.Context, string, entity.Face,
+) ([]store.VersionMeta, error) {
+	panic("stubVersionService.ListStateVersions not implemented")
+}
+
+func (stubVersionService) GetStateVersion(
+	context.Context, string, entity.Face, int,
+) (*store.VersionSnapshot, error) {
+	panic("stubVersionService.GetStateVersion not implemented")
 }
 
 func (stubVersionService) WriteVersion(context.Context, store.VersionInput) error {

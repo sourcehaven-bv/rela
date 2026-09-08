@@ -42,6 +42,8 @@ interface DragSetup {
   timezone?: string
   /** Anchor date for the view; defaults to August 2026. */
   date?: string
+  /** Bind the view to a non-default world (adds `?world=`). */
+  world?: string
 }
 
 // See CalendarView.test.ts: an un-unmounted view keeps reacting to the shared
@@ -51,7 +53,9 @@ const mounted: { unmount: () => void }[] = []
 function setup(opts: DragSetup) {
   const pinia = createPinia()
   setActivePinia(pinia)
-  routeQuery.value = { date: opts.date ?? '2026-08-22' }
+  routeQuery.value = opts.world
+    ? { date: opts.date ?? '2026-08-22', world: opts.world }
+    : { date: opts.date ?? '2026-08-22' }
 
   const schemaStore = useSchemaStore()
   schemaStore.entityTypes.set('task', {
@@ -406,5 +410,64 @@ describe('multi-day drag', () => {
     // All five days of the span lift together, so the user can see what they
     // picked up rather than only the segment under the cursor.
     expect(wrapper.findAll('.calendar-chip--dragging')).toHaveLength(5)
+  })
+})
+
+// BUG-Y0GNSB follow-up (point 4). CalendarView had no world awareness at all:
+// it imported neither useWorld nor isWorldBound, so a world-bound calendar
+// still let a reader drag an event to another day.
+//
+// The consequence is the same one that makes a board dangerous, and worse than
+// a dud button: the write is a GESTURE. The chip animates to the new day, so
+// the reader has been told their change landed. And because a bare write
+// carries no `?world=`, the server has no parameter to refuse — it returns 200
+// having written the DEFAULT face of an entity the reader was viewing through
+// a world. No error surfaces anywhere.
+// Under a world the drag writes to the event's ADDRESS (`_self`, face
+// included), so the affordance is `_actions` alone — the server computes it
+// for the face on screen. The world itself no longer withdraws the drag.
+describe('drag under a world', () => {
+  const allowed: Entity = {
+    id: 'T-1',
+    type: 'task',
+    properties: { title: 'A', due: '2026-08-22' },
+    relations: {},
+    _actions: { update: true },
+    _self: '/api/v1/tasks/T-1@published',
+  }
+
+  it('is draggable under the DEFAULT world', async () => {
+    const wrapper = setup({ entities: [allowed] })
+    await flushPromises()
+
+    expect(wrapper.find('.calendar-chip').attributes('draggable')).toBe('true')
+  })
+
+  it('stays draggable under a world when _actions permits it', async () => {
+    const wrapper = setup({ entities: [allowed], world: 'published' })
+    await flushPromises()
+
+    expect(wrapper.find('.calendar-chip').attributes('draggable')).toBe('true')
+  })
+
+  it('writes to the ADDRESS the server reported, face included', async () => {
+    // The row the reader dragged is the published face; the bare id would
+    // reschedule a state the calendar is not showing.
+    const wrapper = setup({ entities: [allowed], world: 'published' })
+    await flushPromises()
+
+    await dragFirstChipTo(wrapper, '25')
+
+    expect(updateEntityMock).toHaveBeenCalledWith('task', 'T-1@published', expect.anything())
+  })
+
+  it('refuses the drag when the served face is not writable', async () => {
+    const wrapper = setup({
+      entities: [{ ...allowed, _actions: { update: false } }],
+      world: 'published',
+    })
+    await flushPromises()
+
+    expect(wrapper.find('.calendar-chip').attributes('draggable')).toBe('false')
   })
 })

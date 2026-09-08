@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	lua "github.com/yuin/gopher-lua"
@@ -42,8 +43,22 @@ type CaptureSpec struct {
 	// Type is the entity type; Entity is the entity id to render.
 	Type   string
 	Entity string
-	// Form is the data-entry.yaml form id for View=="form" (default derived).
+	// Form is the data-entry.yaml form id for View=="form"/"create" (derived
+	// from Type when empty: edit_<type> / new_<type>).
 	Form string
+	// List is the data-entry.yaml list id for View=="list".
+	List string
+	// Query is the search term for View=="search".
+	Query string
+	// World is the `?world=` the page is opened in. Empty ⇒ the app's
+	// configured default_world, i.e. what a user gets by just navigating.
+	//
+	// Screenshots are how a reader SEES that a world changes what a page
+	// shows, so a manual comparing two worlds needs to open the same page
+	// twice. Validated against the declared worlds before capture, because a
+	// typo would silently render the default and the figure would illustrate
+	// the opposite of its caption.
+	World string
 	// As is the role to render as (mapped to a principal assigned that role);
 	// empty ⇒ the harness picks a default role that can read.
 	As string
@@ -58,6 +73,27 @@ type CaptureSpec struct {
 	Pad int
 	// Annotations to draw before capture.
 	Arrows []Annotation
+
+	// AwaitVersions is how many version rows View=="history" must show before
+	// the capture is taken. Zero ⇒ capture whatever is on screen.
+	//
+	// # Why a wait is needed at all, and why it is a COUNT
+	//
+	// On the postgres backend create/update versions are captured by a
+	// DEBOUNCED reconciliation sweep, not synchronously with the write (see the
+	// pgstore sweep). So a history page opened immediately after an edit
+	// legitimately shows an empty timeline: the version exists in the future,
+	// not in the database. A capture taken then photographs "No versions
+	// recorded yet" under a caption promising a history — the manual would be
+	// lying, and lying intermittently, which is worse than failing.
+	//
+	// Waiting on the RENDERED ROW COUNT rather than on a duration is what makes
+	// this deterministic. A sleep encodes a guess about sweep cadence that is
+	// wrong on a slow machine and wasteful on a fast one; a count is the actual
+	// condition the figure depends on. It is also self-verifying: a manual that
+	// claims three versions and gets two FAILS the build rather than quietly
+	// publishing a figure that contradicts its own prose.
+	AwaitVersions int
 
 	// OutPath is the absolute PNG path to write.
 	OutPath string
@@ -83,6 +119,11 @@ type Annotation struct {
 	Kind string // "arrow" (default) | "box"
 }
 
+// Screenshots share the document's ONE temp project with api{} and page{}, and
+// islands run top-to-bottom, so a figure renders whatever earlier islands
+// wrote — including a real write issued through api{}. See the ordering notes
+// on [docRuntime.luaAPI] for what that does and does not guarantee.
+//
 // luaScreenshot is the screenshot{} island resolver. It emits a Markdown image
 // reference and writes the PNG next to the manual output via the injected
 // Capturer. Fails loud when no Capturer is wired (browser support absent).
@@ -103,6 +144,12 @@ func (b *tierBBindings) luaScreenshot(ls *lua.LState) int {
 		return b.luaFail(ls, "screenshot: no browser capturer available — %s", reason)
 	}
 
+	if w := fieldString(ls, tbl, "world"); w != "" {
+		if err := b.validateWorld(w); err != nil {
+			return b.luaFail(ls, "screenshot: %v", err)
+		}
+	}
+
 	spec := CaptureSpec{
 		ProjectDir: b.projectDir,
 		Seed:       b.seed(),
@@ -111,22 +158,39 @@ func (b *tierBBindings) luaScreenshot(ls *lua.LState) int {
 		Entity:     fieldString(ls, tbl, "entity"),
 		Form:       fieldString(ls, tbl, "form"),
 		As:         fieldString(ls, tbl, "as"),
+		World:      fieldString(ls, tbl, "world"),
+		List:       fieldString(ls, tbl, "list"),
+		Query:      fieldString(ls, tbl, "q"),
 		Clip:       fieldString(ls, tbl, "clip"),
 		Pad:        fieldInt(ls, tbl, "pad", defaultCropPad),
 		Arrows:     b.readAnnotations(ls, tbl),
+
+		AwaitVersions: fieldInt(ls, tbl, "await_versions", 0),
 	}
-	// Only the edit form is supported today: its readiness (and the load-error
-	// gate) is signaled by a stable form-state marker. The entity/list views
-	// have no equivalent readiness signal yet, so reject them loudly rather than
-	// hang until the capture timeout.
-	if spec.View != "form" {
-		return b.luaFail(ls, "screenshot: view=%q is not supported yet — only view=\"form\" (the edit form)", spec.View)
+	// Every view the SPA routes and stamps a readiness marker on. A view with
+	// no marker has nothing for the capture to poll and could only hang until
+	// the timeout, so unknown ones are rejected loudly.
+	if !supportedView(spec.View) {
+		return b.luaFail(ls, "screenshot: unknown view %q — one of %s",
+			spec.View, strings.Join(supportedViews, ", "))
 	}
-	if spec.Type == "" {
-		return b.luaFail(ls, "screenshot: `type` is required")
+	// Each view needs different arguments, and asking for the wrong one is the
+	// difference between a clear refusal and a capture of the wrong screen. The
+	// rules are shared with page{} so the two verbs cannot disagree about what
+	// names a screen.
+	if err := requireViewArgs(spec); err != nil {
+		return b.luaFail(ls, "screenshot: %v", err)
 	}
-	if spec.Entity == "" {
-		return b.luaFail(ls, "screenshot: `entity` is required (the id of a seeded entity to render)")
+
+	// `await_versions` waits on the history timeline's rendered rows, which only
+	// the history view has. Silently ignoring it elsewhere would let an author
+	// believe a capture waits for something when it does not.
+	if spec.AwaitVersions != 0 && spec.View != "history" {
+		return b.luaFail(ls, "screenshot{view=%q}: `await_versions` applies only to "+
+			"view=\"history\" — no other screen has a version timeline to wait for", spec.View)
+	}
+	if spec.AwaitVersions < 0 {
+		return b.luaFail(ls, "screenshot{await_versions=%d}: must be positive", spec.AwaitVersions)
 	}
 
 	out := fieldString(ls, tbl, "out")
@@ -200,3 +264,14 @@ func (b *tierBBindings) relOutPath(png string) string {
 	}
 	return filepath.Base(png)
 }
+
+// supportedViews are the screen kinds a capture can wait for: each routes in
+// the SPA and stamps a readiness marker (`form-state-*` or `page-state-*`) the
+// renderability gate polls. A view without one could only hang until the
+// capture timeout, which is why this is an allowlist rather than a passthrough.
+var supportedViews = []string{
+	"analyze", "calendar", "create", "dashboard", "entity",
+	"form", "history", "kanban", "list", "search",
+}
+
+func supportedView(v string) bool { return slices.Contains(supportedViews, v) }

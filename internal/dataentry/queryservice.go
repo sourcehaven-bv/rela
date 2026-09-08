@@ -12,6 +12,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/search/searchparser"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // queryService owns the search-query pipeline: the `/_search` and
@@ -100,6 +101,31 @@ func newQueryService(app *App) *queryService {
 // pre-TKT-BA8BSX version swallowed both error classes into silently
 // truncated results.
 func (q *queryService) executeQuery(ctx context.Context, query string) ([]*entity.Entity, error) {
+	return q.executeQueryPrefiltered(ctx, query, nil)
+}
+
+// executeQueryPrefiltered is executeQuery with extra store predicates ANDed
+// into the no-free-text branch's pushdown.
+//
+// `extra` is for a caller that will apply a FURTHER authoritative filter of
+// its own over the result — the next-action engine's `condition:` — and has
+// lowered the store-safe part of it (queryplan.ConditionPrefilters). The
+// contract is the same belt-and-braces one as the query's own pushdown: the
+// predicates may only ever remove rows the caller's Go pass would also
+// remove, so the outcome is identical to fetching everything, minus the I/O.
+// Nothing here evaluates them; a caller that passes a predicate it does not
+// also enforce has widened nothing but has narrowed on its own authority.
+//
+// They are ignored on the free-text branch, which runs through the search
+// index rather than a type-scoped store list. That branch is also
+// relevance-CAPPED (maxFreeTextSearchResults) before any caller's pass runs,
+// so a selection predicate over it would be lossy; the only caller with a
+// condition — the next-action engine — is refused a free-text query at load
+// (conditionlint) for exactly that reason, and this comment is the reminder
+// for the next one.
+func (q *queryService) executeQueryPrefiltered(
+	ctx context.Context, query string, extra []store.PropPredicate,
+) ([]*entity.Entity, error) {
 	sq := searchparser.ParseQuery(query)
 	if sq.IsEmpty() {
 		return nil, nil
@@ -141,6 +167,7 @@ func (q *queryService) executeQuery(ctx context.Context, query string) ([]*entit
 		// pre-pushdown behavior — the store can only ever remove rows the Go
 		// pass would also have removed — while still winning the I/O.
 		pushed := pushdownPrefilters(sq.PropertyFilters, svc.Meta, sq.EntityTypes)
+		pushed = append(pushed, extra...)
 		candidates, err = visibleListByTypes(ctx, svc, sq.EntityTypes, scope, pushed)
 	}
 	if err != nil {
@@ -189,7 +216,7 @@ func (q *queryService) runVisibleFreeTextSearch(
 		Types: sq.EntityTypes,
 		Limit: limit,
 	}
-	out := make([]*entity.Entity, 0)
+	var hits []search.Hit
 	for hit, err := range searchVisibleHits(ctx, q.visibleSearcher(), q.affordances(), sQuery, scope) {
 		if err != nil {
 			if errors.Is(err, search.ErrScope) {
@@ -197,14 +224,26 @@ func (q *queryService) runVisibleFreeTextSearch(
 			}
 			return nil, fmt.Errorf("free-text search: %w", err)
 		}
-		e, getErr := svc.Store.GetEntity(ctx, hit.ID)
-		if getErr != nil {
-			// Stale index hit (entity deleted between index query and
-			// store read). Skip silently — the result stays a coherent
-			// set of currently-existing entities.
-			continue
+		hits = append(hits, hit)
+	}
+	// Load the FACE each hit matched, not the bare id, in ONE read per
+	// distinct face rather than one per hit (TKT-1U8XYN). Under the default
+	// world every hit carries the zero face and this is one query. The
+	// searcher already resolved which face matched; a bare-id re-read would
+	// render default-face bytes for a hit scored against another face the
+	// moment /_search stops being world-refused by the route allowlist.
+	loaded, err := loadHitHeaders(ctx, svc.Store, hits)
+	if err != nil {
+		return nil, fmt.Errorf("free-text search: %w", err)
+	}
+	// Emit in ranked hit order; a hit the store no longer has (deleted
+	// between index query and read) is skipped so the result stays a
+	// coherent set of currently-existing entities.
+	out := make([]*entity.Entity, 0, len(hits))
+	for _, hit := range hits {
+		if e, ok := loaded[rowKey{hit.ID, hit.Face}]; ok {
+			out = append(out, e)
 		}
-		out = append(out, e)
 	}
 	return out, nil
 }
@@ -220,6 +259,18 @@ func (q *queryService) runVisibleFreeTextSearch(
 // executeQuery path: a list is already type-scoped, so any `type:` token from
 // the query string is intentionally ignored — we always pin the type to the
 // list's type to keep the surface predictable.
+//
+// The search is WORLD-SCOPED off ctx, and that is what makes `?q=` safe to
+// combine with `?world=` at all (TKT-9KZGJO step 5). The scope decides which
+// FACE of each entity the text is matched against, so a `published`-world
+// search never matches on draft-only text; an entity the world excludes
+// resolves to no face and cannot appear. A denied world yields nothing here
+// for the same reason the list itself does — see the blocksAllReads guard.
+//
+// attachWorld refused `?world=` combined with `?q=` outright
+// (`world_search_unsupported`) until that step landed. Do not restore that
+// refusal without also reverting this threading: a bare refusal would leave the
+// per-world index built and unreachable.
 func (q *queryService) freeTextIDsForType(
 	ctx context.Context, query, typeName string,
 ) (freeTextIDsForTypeResult, error) {
@@ -233,13 +284,20 @@ func (q *queryService) freeTextIDsForType(
 	}
 	sq.EntityTypes = []string{typeName}
 
-	hits, err := runFreeTextSearchE(ctx, q.services(), sq, maxFreeTextSearchResults)
+	// A denied world must find NOTHING, and saying so here rather than relying
+	// on the caller is deliberate. scopedSortedEntities returns early on a
+	// denied handle today, so this is unreachable through it — but a denied
+	// handle carries the ZERO scope (resolveWorld never built one), and a zero
+	// scope IS the default world. Any future caller reaching this without the
+	// early return would therefore get a full default-world search under a
+	// world the principal may not read. Fail closed at the seam that would leak.
+	if worldFromContext(ctx).blocksAllReads() {
+		return freeTextIDsForTypeResult{IDs: nil, HasFilter: true}, nil
+	}
+
+	ids, err := freeTextIDs(ctx, q.services(), sq, worldScopeFrom(ctx), maxFreeTextSearchResults)
 	if err != nil {
 		return freeTextIDsForTypeResult{}, err
-	}
-	ids := make(map[string]struct{}, len(hits))
-	for _, e := range hits {
-		ids[e.ID] = struct{}{}
 	}
 	return freeTextIDsForTypeResult{IDs: ids, HasFilter: true}, nil
 }
@@ -274,4 +332,35 @@ func (q *queryService) matchesPropertyFilters(e *entity.Entity, filters []*filte
 	}
 	matched, err := filter.MatchAll(entityRecord(e), filters, entDef, s.Meta)
 	return err == nil && matched
+}
+
+// loadHitHeaders reads the content-free rows the hits name, grouped by
+// face: default-face hits in one IDs query, each other face in one
+// AllStates query narrowed to that face on the way out. Returns only rows
+// that exist, as content-free entities (see rowcontent.go).
+func loadHitHeaders(ctx context.Context, st store.Store, hits []search.Hit) (map[rowKey]*entity.Entity, error) {
+	byFace := make(map[entity.Face][]string)
+	seen := make(map[rowKey]struct{}, len(hits))
+	for _, h := range hits {
+		k := rowKey{h.ID, h.Face}
+		if _, dup := seen[k]; dup {
+			continue
+		}
+		seen[k] = struct{}{}
+		byFace[h.Face] = append(byFace[h.Face], h.ID)
+	}
+	out := make(map[rowKey]*entity.Entity, len(seen))
+	for face, ids := range byFace {
+		q := store.EntityQuery{IDs: ids, AllStates: !face.IsDefault()}
+		for h, err := range store.ListEntityHeaders(ctx, st, q) {
+			if err != nil {
+				return nil, err
+			}
+			if h.Face != face {
+				continue // AllStates over-returns the family's other faces
+			}
+			out[rowKey{h.ID, h.Face}] = headerEntity(h)
+		}
+	}
+	return out, nil
 }

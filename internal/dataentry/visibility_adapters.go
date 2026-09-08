@@ -26,6 +26,16 @@ func (ctxRowGate) PermitsReadMany(ctx context.Context, entityType string, ids []
 	return readGateFromContext(ctx).PermitsReadMany(ctx, entityType, ids)
 }
 
+// PermittedFaces implements [visibility.FaceGate], from the same ctx-resolved
+// gate the two row methods use.
+//
+// Without this the wrapper would row-gate but not face-gate, which was a
+// cross-principal content leak: the view surface served a draft body to a
+// principal granted only `policy@published` (TKT-O7R2A1).
+func (ctxRowGate) PermittedFaces(ctx context.Context, entityType string) ([]entityPkg.Face, error) {
+	return readGateFromContext(ctx).ReadQuery(ctx, entityType).Faces, nil
+}
+
 // affRedactor adapts the dataentry affordance service to
 // [visibility.FieldRedactor]. The aff closure (not a captured value)
 // keeps test builders free to swap App.affordances after construction.

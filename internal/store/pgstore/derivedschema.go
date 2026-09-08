@@ -63,6 +63,8 @@ const derivedUniquePrefix = "rela_derived_uniq__"
 // derivedQueryPrefix is owned exclusively by the static-query index rule.
 const derivedQueryPrefix = "rela_derived_query__"
 
+const derivedListPrefix = "rela_derived_list__"
+
 // uniqueIndexName is the deterministic index name for a (type, property) unique
 // rule. Deterministic across processes and versions (no per-run entropy) so the
 // drop side of reconcile is safe: an index whose name is not recomputed from the
@@ -73,6 +75,43 @@ const derivedQueryPrefix = "rela_derived_query__"
 func uniqueIndexName(entityType, property string) string {
 	sum := sha256.Sum256([]byte(entityType + "\x00" + property))
 	return derivedUniquePrefix + hex.EncodeToString(sum[:16])
+}
+
+// listIndexName hashes the whole list shape: filters, a separator that no
+// property name can contain, then the ordered sort keys — so the same keys
+// in a different role or order name a different index.
+func listIndexName(spec store.DerivedObjectSpec) string {
+	h := sha256.New()
+	_, _ = h.Write([]byte(spec.Type))
+	for _, property := range spec.Properties {
+		_, _ = h.Write([]byte{'\x00'})
+		_, _ = h.Write([]byte(property))
+	}
+	_, _ = h.Write([]byte{'\x01'})
+	for _, property := range spec.OrderBy {
+		_, _ = h.Write([]byte{'\x00'})
+		_, _ = h.Write([]byte(property))
+	}
+	return derivedListPrefix + hex.EncodeToString(h.Sum(nil)[:16])
+}
+
+// createListIndexDDL is the shape a pushed list page (listpushdown.go)
+// scans: type first (a parameter in the query, so it must be a column, not
+// a partial-index guard), the equality-filtered properties, the sort keys
+// under the collation the page orders by, and id as the tiebreak; partial on
+// the default face, which every list page filters on literally.
+func createListIndexDDL(name string, spec store.DerivedObjectSpec) string {
+	columns := make([]string, 0, 2+len(spec.Properties)+len(spec.OrderBy))
+	columns = append(columns, "type")
+	for _, property := range spec.Properties {
+		columns = append(columns, "(properties->>"+quoteLiteral(property)+")")
+	}
+	for _, property := range spec.OrderBy {
+		columns = append(columns, "((properties->>"+quoteLiteral(property)+`) COLLATE "C")`)
+	}
+	columns = append(columns, "id")
+	return "CREATE INDEX IF NOT EXISTS " + quoteIdent(name) + " ON entities (" +
+		strings.Join(columns, ", ") + ") WHERE face = ''"
 }
 
 func queryIndexName(entityType string, properties []string) string {
@@ -211,7 +250,82 @@ func (s *Store) Reconcile(
 	if err != nil {
 		return nil, err
 	}
-	return append(outcomes, queryOutcomes...), nil
+	outcomes = append(outcomes, queryOutcomes...)
+	listOutcomes, err := reconcileListIndexes(ctx, conn, desired, opts)
+	if err != nil {
+		return nil, err
+	}
+	return append(outcomes, listOutcomes...), nil
+}
+
+// reconcileListIndexes is reconcileQueryIndexes for [store.DerivedListIndex]
+// specs, under its own name prefix so the two families never drop each
+// other's indexes.
+func reconcileListIndexes(
+	ctx context.Context, conn *pgxpool.Conn, desired []store.DerivedObjectSpec, opts store.ReconcileOptions,
+) ([]store.DerivedObjectOutcome, error) {
+	desiredByName := make(map[string]store.DerivedObjectSpec)
+	var outcomes []store.DerivedObjectOutcome
+	for _, spec := range desired {
+		if spec.Kind != store.DerivedListIndex {
+			continue
+		}
+		if !safeDDLName(spec.Type) || len(spec.OrderBy) == 0 {
+			outcomes = append(outcomes, unenforced(spec, "invalid list index shape"))
+			continue
+		}
+		valid := true
+		for _, property := range append(append([]string(nil), spec.Properties...), spec.OrderBy...) {
+			if !safeDDLName(property) {
+				valid = false
+				break
+			}
+		}
+		if !valid {
+			outcomes = append(outcomes, unenforced(spec, "unsafe property name for DDL"))
+			continue
+		}
+		desiredByName[listIndexName(spec)] = spec
+	}
+
+	actual, err := listOwnedIndexes(ctx, conn, derivedListPrefix)
+	if err != nil {
+		return nil, fmt.Errorf("pgstore: reconcile: list list-indexes: %w", err)
+	}
+	for name := range actual {
+		if _, ok := desiredByName[name]; ok {
+			continue
+		}
+		out := store.DerivedObjectOutcome{
+			Spec: store.DerivedObjectSpec{Kind: store.DerivedListIndex}, State: store.DerivedDropped,
+			Reason: "index " + name + " no longer declared", WouldChange: opts.DryRun,
+		}
+		if !opts.DryRun {
+			if _, dropErr := conn.Exec(ctx, `DROP INDEX IF EXISTS `+quoteIdent(name)); dropErr != nil {
+				return nil, fmt.Errorf("pgstore: reconcile: drop %s: %w", name, dropErr)
+			}
+		}
+		outcomes = append(outcomes, out)
+	}
+	for _, name := range sortedNames(desiredByName) {
+		spec := desiredByName[name]
+		if _, ok := actual[name]; ok {
+			outcomes = append(outcomes, store.DerivedObjectOutcome{Spec: spec, State: store.DerivedEnforced})
+			continue
+		}
+		if opts.DryRun {
+			outcomes = append(outcomes, store.DerivedObjectOutcome{
+				Spec: spec, State: store.DerivedCreated, WouldChange: true,
+			})
+			continue
+		}
+		if _, createErr := conn.Exec(ctx, createListIndexDDL(name, spec)); createErr != nil {
+			outcomes = append(outcomes, unenforced(spec, "index could not be created: "+createErr.Error()))
+			continue
+		}
+		outcomes = append(outcomes, store.DerivedObjectOutcome{Spec: spec, State: store.DerivedCreated})
+	}
+	return outcomes, nil
 }
 
 func reconcileQueryIndexes(
@@ -354,9 +468,24 @@ func createUniqueIndex(
 	// a dry-run's prediction drifts from what a create actually does. They can't
 	// share one string (this interpolates quoted literals; that binds $1/$2), so
 	// keep them identical by hand.
+	// face = '': FAMILY-SCOPED. `unique: true` is a natural-key rule
+	// over the DEFAULT world (TKT-DOFYR1) — a copied state sharing its
+	// family's value must not violate it. Migration 0011 dropped the
+	// face-unaware predecessors so this predicate always applies.
+	//
+	// TRAP (TKT-WAV8XP PR-C, RULING 4): this one STRUCTURALLY CANNOT be
+	// worlded, which is a stronger statement than "we chose not to".
+	// It is a PARTIAL INDEX predicate baked into the index definition at
+	// CREATE time; a partial index cannot reference a runtime parameter,
+	// so there is no expression here that could take a per-query
+	// WorldScope even in principle. A world-aware uniqueness rule would
+	// need a different mechanism entirely (one index per world, or a
+	// deferred constraint trigger) — not an edit to this predicate.
+	// Stated explicitly because it is the question a reader re-opens
+	// every time they sweep this file.
 	ddl := fmt.Sprintf(
 		`CREATE UNIQUE INDEX IF NOT EXISTS %s ON entities (type, (properties->>%s)) `+
-			`WHERE type = %s AND properties->>%s <> '' AND properties->>%s IS NOT NULL`,
+			`WHERE type = %s AND properties->>%s <> '' AND properties->>%s IS NOT NULL AND face = ''`,
 		quoteIdent(name),
 		quoteLiteral(spec.Property),
 		quoteLiteral(spec.Type),
@@ -416,7 +545,7 @@ func uniqueViolators(
 	const countQ = `
 		SELECT count(*) FROM (
 			SELECT 1 FROM entities
-			WHERE type = $1 AND properties->>$2 <> '' AND properties->>$2 IS NOT NULL
+			WHERE type = $1 AND properties->>$2 <> '' AND properties->>$2 IS NOT NULL AND face = ''
 			GROUP BY properties->>$2
 			HAVING count(*) > 1
 		) g`
@@ -432,7 +561,7 @@ func uniqueViolators(
 	const sampleQ = `
 		SELECT properties->>$2 AS val
 		FROM entities
-		WHERE type = $1 AND properties->>$2 <> '' AND properties->>$2 IS NOT NULL
+		WHERE type = $1 AND properties->>$2 <> '' AND properties->>$2 IS NOT NULL AND face = ''
 		GROUP BY properties->>$2
 		HAVING count(*) > 1
 		ORDER BY count(*) DESC
@@ -456,7 +585,7 @@ func uniqueViolators(
 // SetUniqueSpecProvider records the current metamodel's unique (type, property)
 // pairs so the write path can attribute a derived-unique-index violation to a
 // property (see mapUniqueViolation). The wiring layer calls it once at
-// store-open. It is published via an atomic pointer and is safe to call
+// store-open. It is published via an atomic face and is safe to call
 // concurrently with writes (a metamodel reload could re-publish here), but the
 // current wiring does NOT re-invoke it on a live schema reload — see
 // [Store.Reconcile]'s note on boot-only reconciliation. Passing nil clears it

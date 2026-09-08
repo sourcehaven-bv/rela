@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -172,4 +173,47 @@ func TestCondition_MissingMatcherFailsClosed(t *testing.T) {
 
 func idFor(i int) string {
 	return "T-" + string(rune('a'+i%26)) + string(rune('a'+i/26))
+}
+
+// A per-user condition evaluated for a caller with no identity skips THAT
+// source and nothing else: the identity-free source in the lower band still
+// resolves, and the outcome does not depend on which band the short-circuit
+// reaches first.
+func TestCondition_IdentityRequiredSkipsOnlyThatSource(t *testing.T) {
+	cfg := &dataentryconfig.Config{
+		NextActionBands: []dataentryconfig.NextActionBand{{ID: "mine"}, {ID: "ambient"}},
+		NextActions: map[string]dataentryconfig.NextActionSource{
+			"assigned": {Band: "mine", Query: "type:task", Condition: "is_current_user(entity.assignee)", Suggest: "mine"},
+			"anything": {Band: "ambient", Query: "type:task", Suggest: "anything"},
+		},
+	}
+	fn := func(_ context.Context, _ string, _ dataentryconfig.NextActionSource) ([]nextaction.Candidate, error) {
+		return []nextaction.Candidate{{Entity: entity.New("T-1", "task")}}, nil
+	}
+	st := memuserstate.New()
+	t.Cleanup(func() { _ = st.Close() })
+	needsIdentity := &matchIDs{err: nextaction.ErrIdentityRequired}
+	eng, err := nextaction.New(cfg, st, fn, nextaction.WithMatchers(func(id string) (nextaction.Matcher, bool) {
+		if id == "assigned" {
+			return needsIdentity, true
+		}
+		return nil, false
+	}))
+	require.NoError(t, err)
+
+	sug, ok, err := eng.Resolve(context.Background(), "anon", time.Now())
+	require.NoError(t, err, "an unidentified caller must not fail the resolve")
+	require.True(t, ok)
+	require.Equal(t, "anything", sug.Source, "the identity-free source still resolves")
+	require.Equal(t, 1, needsIdentity.seen, "the per-user source was consulted once and then skipped")
+
+	// Any OTHER matcher error still propagates: a broken condition must not
+	// be mistaken for an unidentified caller.
+	broken := &matchIDs{err: errors.New("boom")}
+	eng, err = nextaction.New(cfg, st, fn, nextaction.WithMatchers(func(string) (nextaction.Matcher, bool) {
+		return broken, true
+	}))
+	require.NoError(t, err)
+	_, _, err = eng.Resolve(context.Background(), "anon", time.Now())
+	require.ErrorContains(t, err, "boom")
 }

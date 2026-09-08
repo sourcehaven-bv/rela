@@ -28,23 +28,38 @@ func (dr *docRuntime) registerModule() {
 		"count":        dr.luaCount,
 		"typeref":      dr.luaTyperef,
 		"values":       dr.luaValues,
+		"faces":        dr.luaFaces,
 		"relations":    dr.luaRelations,
 		"entity":       dr.luaEntity,
 		"lifecycle":    dr.luaLifecycle,
 		"graph":        dr.luaGraph,
-		"roles_matrix": dr.luaRolesMatrix,
-		"description":  dr.luaDescription,
+		"resolution":   dr.luaResolution,
+		"roles_matrix": dr.acl.luaRolesMatrix,
+		// Worlds are a NAVIGATION fact, not a verb — see luaWorldsMatrix.
+		"worlds_matrix": dr.acl.luaWorldsMatrix,
+		"description":   dr.luaDescription,
 		// Seed (raw store — no entitymanager, no validation).
 		"create": dr.seed.luaCreate,
+		"face":   dr.seed.luaFace,
 		"link":   dr.seed.luaLink,
+		"edit":   dr.seed.luaEdit,
 		// Tier B — browser capture (fails loud when no capturer is wired).
 		"screenshot": dr.tierB.luaScreenshot,
+		// page{} asserts about the RENDERED page, sharing screenshot{}'s
+		// standing-up work. See assert_page.go.
+		"page": func(ls *lua.LState) int { return luaPage(dr, ls) },
 
 		// Assertions (TKT-DOCASSERT): a manual proves its own claims.
 		"shows":   dr.luaShows,
-		"refuses": dr.luaRefuses,
-		"permits": dr.luaPermits,
-		"api":     dr.tierB.luaAPI,
+		"refuses": dr.acl.luaRefuses,
+		"permits": dr.acl.luaPermits,
+		// Read-side gating: what a PRINCIPAL may see, which shows{} (no
+		// principal) and refuses{} (write path) cannot express.
+		// The ctx these reach is dr.ctx, the build-scoped one every binding
+		// here uses: a gopher-lua callback cannot take a context parameter.
+		"reads":  func(ls *lua.LState) int { return luaReads(dr, ls) },
+		"hidden": func(ls *lua.LState) int { return luaHidden(dr, ls) },
+		"api":    dr.tierB.luaAPI,
 	}
 	for name, fn := range fns {
 		nf := L.NewFunction(fn)

@@ -17,7 +17,7 @@ status: done
 
 - [x] User-facing guide updated — `docs-project/entities/guides/GUIDE-rela-docs.md` gained a **Screenshots** section (args table, `as=` roles, the Chrome + built-SPA prerequisites, fail-loud behavior); regenerated to `docs/rela-docs.md` via `just docs`
 - [x] Example manual updated — `prototypes/data-entry/manual/tickets-manual.md` gained a `screenshot{}` figure that builds end-to-end
-- [x] CLAUDE.md — ~~pointer to internal/docscapture~~ (N/A: the doc-language subsystem is documented in its own guide + package godoc; no new cross-cutting convention beyond what the guide covers)
+- [x] CLAUDE.md — ~~face to internal/docscapture~~ (N/A: the doc-language subsystem is documented in its own guide + package godoc; no new cross-cutting convention beyond what the guide covers)
 
 ## External Documentation
 

@@ -49,7 +49,17 @@ func visibleSearchFactory(t *testing.T) (store.Store, search.Searcher, search.Vi
 }
 
 func TestConformance(t *testing.T) {
-	storetest.RunAll(t, factory, searchFactory, visibleSearchFactory, storetest.Capabilities{Attachments: true})
+	storetest.RunAll(t, factory, searchFactory, visibleSearchFactory, storetest.Capabilities{
+		Attachments: true,
+		Observers: func(t *testing.T, obs ...store.EntityObserver) store.Store {
+			t.Helper()
+			cfg := newConfig(storage.NewMemFS())
+			cfg.Observers = obs
+			s, err := fsstore.New(cfg)
+			require.NoError(t, err)
+			return s
+		},
+	})
 }
 
 func FuzzRelationKeyCollision(f *testing.F) {

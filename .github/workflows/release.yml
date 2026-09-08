@@ -152,28 +152,21 @@ jobs:
             goarch: arm64
             ext: ""
             cgo_ldflags: "-framework UniformTypeIdentifiers"
-            build_tags: "desktop,production"
+            build_tags: "production"
           - runner: macos-latest
             os_name: darwin
             arch: amd64
             goarch: amd64
             ext: ""
             cgo_ldflags: "-framework UniformTypeIdentifiers"
-            build_tags: "desktop,production"
-          - runner: ubuntu-latest
-            os_name: linux
-            arch: amd64
-            goarch: amd64
-            ext: ""
-            cgo_ldflags: ""
-            build_tags: "desktop,production,webkit2_41"
+            build_tags: "production"
           - runner: windows-latest
             os_name: windows
             arch: amd64
             goarch: amd64
             ext: ".exe"
             cgo_ldflags: ""
-            build_tags: "desktop,production"
+            build_tags: "production"
     steps:
       - uses: actions/checkout@v7
 

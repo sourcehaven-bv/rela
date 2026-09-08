@@ -37,6 +37,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
 	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/caldavalias"
+	"github.com/Sourcehaven-BV/rela/internal/comments"
 	"github.com/Sourcehaven-BV/rela/internal/computed"
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -58,6 +59,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/userstate/memuserstate"
 	"github.com/Sourcehaven-BV/rela/internal/validator"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
+	"github.com/Sourcehaven-BV/rela/internal/worlds"
 )
 
 // Services exposes the focused collaborators a project entry point
@@ -95,13 +97,30 @@ import (
 // Develop raised this to 26; the three recipient-scoped scheduler methods
 // take it to 29. They are exported because scheduler consumes them through
 // narrow capability interfaces; they do not add general Services getters.
+// Comments() (TKT-FIO205) takes it to 31: the commentary service is chosen and
+// constructed here and handed to the App at the wiring site, exactly like
+// CalDAVAliases() and UserState(). It is one more instance of the pattern this
+// comment already describes — a new subsystem composed by the facade — not a
+// new kind of growth, and the fix remains splitting the bundle (TKT-N0IKN9)
+// rather than hiding the getter.
 //
-//plimsoll:max-exported-methods=30
+// 30 → 33 (TKT-NU247U): [Services.CloseAssembly] and [Services.Base], the two
+// halves of re-assembling a base against an already-open store, plus the
+// getter develop added alongside them. All are lifecycle operations on THIS
+// bundle rather than new getters onto its contents, so they belong here and
+// not on a narrower type.
+//
+//plimsoll:max-exported-methods=33
 type Services struct {
 	fs    storage.FS
 	paths *project.Context
 	meta  *metamodel.Metamodel
 	store store.Store
+	// worlds is the compiled world set, carried so a caller can build a
+	// world-bound read surface (WorldSurface). Tenant-independent and
+	// metamodel-derived, like meta — it is copied from the SharedBase
+	// rather than recompiled per assembly.
+	worlds worlds.Compiled
 	// versions is the content-versioning service (history reads, version writes,
 	// purge), a separate concern injected by the backend recipe — nil on builds
 	// without versioning (fs/mem; fsstore uses git). Consumers bind the narrow
@@ -124,9 +143,13 @@ type Services struct {
 	// durable PostgreSQL on the postgres build. Torn down in Close.
 	jobQueue      jobs.Queue
 	caldavAliases *caldavalias.Service
-	scriptEngine  *script.Engine
-	searchCloser  io.Closer
-	acl           acl.ACL
+	// comments is the commentary layer (internal/comments). Nil when the
+	// metamodel declares no `comments:` block — the feature then does not
+	// exist, and the data-entry app serves no comment routes.
+	comments     *comments.Service
+	scriptEngine *script.Engine
+	searchCloser io.Closer
+	acl          acl.ACL
 	// aclDeclarative is set when buildACL constructs a Declarative; nil
 	// for NopACL, ReadOnlyACL, or when Declarative construction fails.
 	aclDeclarative *acl.Declarative
@@ -152,8 +175,17 @@ type Services struct {
 	// during single-threaded wiring. Constructing here, once, preserves that.
 	fieldRedactor visibility.FieldRedactor
 
+	// base is the SharedBase this Services was assembled from. Retained so a
+	// host can build a successor base from the same Config (see
+	// [Services.Base]). Nil for a NewFromCollaborators-built Services.
+	base *SharedBase
+
 	closeOnce sync.Once
 	closeErr  error
+	// assemblyCloseOnce guards the per-assembly teardown so that a
+	// CloseAssembly followed by a Close (the reload path's final shutdown)
+	// stops the background services exactly once.
+	assemblyCloseOnce sync.Once
 }
 
 // FS returns the project filesystem.
@@ -161,6 +193,15 @@ func (s *Services) FS() storage.FS { return s.fs }
 
 // Paths returns the project context (root, metamodel path, etc.).
 func (s *Services) Paths() *project.Context { return s.paths }
+
+// Base returns the [SharedBase] this Services was assembled from, or nil when
+// it was built by [NewFromCollaborators] (which takes pre-built collaborators
+// and so has no base).
+//
+// Exposed for hosts that re-assemble: a schema hot-reload needs the base's
+// [SharedBase.Config] to build a successor base against the same project
+// inputs (TKT-NU247U).
+func (s *Services) Base() *SharedBase { return s.base }
 
 // Meta returns the loaded metamodel.
 func (s *Services) Meta() *metamodel.Metamodel { return s.meta }
@@ -312,6 +353,14 @@ func (s *Services) Jobs() jobs.Client { return s.jobQueue }
 // service is always constructed (an empty table is the normal first-run state),
 // so consumers need no nil check.
 func (s *Services) CalDAVAliases() *caldavalias.Service { return s.caldavAliases }
+
+// Comments returns the commentary service, or nil when the metamodel declares
+// no enabled `comments:` block.
+//
+// Nil means the feature does not exist for this project: the data-entry app
+// serves no comment routes and no storage is created. Callers must nil-check
+// rather than assume a usable service.
+func (s *Services) Comments() *comments.Service { return s.comments }
 
 // LuaReadDeps materializes the read-only Lua capability bundle with
 // UNRESTRICTED reads — the operator-trust-boundary wiring used by the CLI
@@ -722,6 +771,14 @@ func NewFromCollaborators(c Collaborators) (*Services, error) {
 		}
 		visible = v
 	}
+	// Compile worlds from the supplied metamodel so this construction path
+	// offers the same world surface as the base-assembly path. A failure
+	// here is a metamodel error and must surface, not silently yield a
+	// Services whose WorldSurface always 404s.
+	compiledWorlds, err := worlds.Compile(c.Meta)
+	if err != nil {
+		return nil, fmt.Errorf("appbuild.NewFromCollaborators: compile worlds: %w", err)
+	}
 	fieldRedactor, err := buildFieldRedactor(c.Meta, c.Store, c.Declarative)
 	if err != nil {
 		return nil, fmt.Errorf("appbuild.NewFromCollaborators: %w", err)
@@ -730,6 +787,7 @@ func NewFromCollaborators(c Collaborators) (*Services, error) {
 		fs:              c.FS,
 		paths:           c.Paths,
 		meta:            c.Meta,
+		worlds:          compiledWorlds,
 		store:           c.Store,
 		searcher:        c.Searcher,
 		visibleSearcher: visible,
@@ -1021,6 +1079,67 @@ func buildACL(policy *acl.Policy, meta *metamodel.Metamodel, st store.Store) (ac
 // The condition comes from [acl.Policy.MembershipSelfPromotionOpen], the same
 // predicate behind the `rela acl audit` A1-ungated-membership finding, so the
 // boot warning and the linter can never disagree.
+// warnUndeclaredFaces logs a startup warning when the store holds
+// content-state rows that no metamodel declaration can account for: data
+// a schema change (or hand edit) stranded. Warning, never a refusal — a
+// schema edit must not brick the project; `rela analyze states` lists the
+// rows and the data-migration system (FEAT-T3EF5A) is the remedy.
+//
+// SCOPE (TKT-WAV8XP): the probe only runs for a project where NO entity
+// type declares faces. Under TKT-DOFYR1 that was every project, so the
+// probe was unconditional; now a project that declares content states has
+// legitimate state rows, and counting them would warn about perfectly
+// declared drafts on every boot. Warning fatigue on a boot diagnostic is
+// how the genuinely stranded case stops being noticed, so the coarse
+// probe steps aside for the precise one: `analyze states` subtracts the
+// declared set PER TYPE and is authoritative for those projects.
+//
+// The probe is two COUNTs, not a scan — and therefore NOT a snapshot:
+// on a live multi-writer store (the pg listener starts in Open, before
+// assemble) a write between the counts can skew the number either way,
+// including suppressing the warning on a busy boot. The count is
+// ADVISORY; the authoritative report is `rela analyze states`. A store
+// error only skips the warning (boot diagnostics must not fail the
+// boot) with a Debug trace so the absence is explainable.
+func warnUndeclaredFaces(st store.Store, meta *metamodel.Metamodel, projectRoot string) {
+	if declaresFaces(meta) {
+		return
+	}
+	ctx := context.Background()
+	all, err := st.CountEntities(ctx, store.EntityQuery{AllStates: true})
+	if err != nil {
+		slog.Debug("appbuild: content-state probe failed; skipping warning", "error", err)
+		return
+	}
+	defaults, err := st.CountEntities(ctx, store.EntityQuery{})
+	if err != nil {
+		slog.Debug("appbuild: content-state probe failed; skipping warning", "error", err)
+		return
+	}
+	if states := all - defaults; states > 0 {
+		slog.Warn("appbuild: store holds content-state rows that no metamodel declaration accounts for",
+			"project", projectRoot,
+			"state_rows", states,
+			"detail", "rela analyze states",
+			"remedy", "detection only in this version; the data-migration system is the remedy")
+	}
+}
+
+// declaresFaces reports whether any entity type declares content
+// states, i.e. whether the coarse two-COUNT probe above would produce
+// false positives for this project.
+func declaresFaces(meta *metamodel.Metamodel) bool {
+	if meta == nil {
+		return false
+	}
+	for _, def := range meta.Entities {
+		if len(def.Faces) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 func warnUngatedMembership(policy *acl.Policy) {
 	if !policy.MembershipSelfPromotionOpen() {
 		return
@@ -1104,6 +1223,36 @@ func Discover(startDir string, scriptEngine *script.Engine, opts ...Option) (*Se
 	if err != nil {
 		return nil, fmt.Errorf("discover project: %w", err)
 	}
+	return buildAt(fs, paths, scriptEngine, opts...)
+}
+
+// At is [Discover] for a caller that already knows the project root: it
+// resolves dir AS the root instead of walking up from it (TKT-SK2QQW).
+//
+// The distinction matters for anything that BUILT the directory it is about to
+// open — the docs capture server standing up a throwaway fixture project being
+// the case this exists for. Discovery would walk out of that temp directory and,
+// if the temp path happened to sit under a real project, open THAT one: seeding
+// fixture entities into a live database and taking its single-writer lock. The
+// failure is silent and depends on where TMPDIR points.
+//
+// Everything downstream is identical to Discover — same audit sink, same DSN
+// resolution, same caller responsibility for stamping the principal.
+func At(dir string, scriptEngine *script.Engine, opts ...Option) (*Services, error) {
+	fs := storage.NewSafeFS(storage.NewOsFS())
+	paths, err := project.At(dir, fs)
+	if err != nil {
+		return nil, fmt.Errorf("open project at %s: %w", dir, err)
+	}
+	return buildAt(fs, paths, scriptEngine, opts...)
+}
+
+// buildAt is the shared tail of [Discover] and [At]: everything after the
+// project root is resolved. Split so the two entry points cannot drift in what
+// they wire — only in HOW they answer "which directory is the root".
+func buildAt(
+	fs storage.FS, paths *project.Context, scriptEngine *script.Engine, opts ...Option,
+) (*Services, error) {
 	// Shared startup path for cli, mcp, scheduler and the data-entry server —
 	// warns at most once per process.
 	project.WarnIfLegacySchema(paths)
@@ -1157,12 +1306,57 @@ type SharedBase struct {
 	acl       acl.ACL
 	aclPolicy *acl.Policy
 	meta      *metamodel.Metamodel
+	worlds    worlds.Compiled
+	// reassembly marks a base built to re-assemble against an ALREADY-OPEN
+	// store, so [assemble] skips the store-open-only steps. Set by
+	// [SharedBase.ForReassembly]; false for a base that will open its own store.
+	reassembly bool
 }
+
+// IsReassembly reports whether this base is marked to re-assemble against an
+// already-open store (see [SharedBase.ForReassembly]).
+func (b *SharedBase) IsReassembly() bool { return b.reassembly }
+
+// ForReassembly returns a copy of this base marked as re-assembling against a
+// store that is already open — the schema hot-reload case (TKT-NU247U).
+//
+// It skips the store-open-only work in [SharedBase.Assemble]: today that is
+// the postgres derived-schema reconciliation, which issues DDL and is
+// documented boot-only on `pgstore.Store.Reconcile`. Everything metamodel-
+// derived is still rebuilt, which is the point of reloading.
+//
+// Use it for EVERY assembly after the first against a given store. A base
+// used to open a store must not be marked.
+func (b *SharedBase) ForReassembly() *SharedBase {
+	next := *b
+	next.reassembly = true
+	return &next
+}
+
+// Worlds returns the compiled world scopes this base was built from.
+//
+// Compiled once here because compilation is metamodel-derived and therefore
+// tenant-independent — the same reason `meta` lives on the base. It is
+// compiled at boot so an invalid face name fails startup rather than the
+// first request that needs a world.
+//
+// Consumed through [CompiledWorlds], which the data-entry app's `SetWorlds`
+// uses to resolve a `?world=` name to its scope (TKT-WAV8XP PR-D).
+func (b *SharedBase) Worlds() worlds.Compiled { return b.worlds }
 
 // Meta returns the loaded metamodel this base was built from. Exposed so a host
 // holding one base can answer "what schema am I serving?" without assembling a
 // Services first.
 func (b *SharedBase) Meta() *metamodel.Metamodel { return b.meta }
+
+// Config returns the validated [Config] this base was built from.
+//
+// Exposed so a host can build a SUCCESSOR base from the same inputs — which is
+// how a schema hot-reload re-reads `schema.yaml` without re-discovering the
+// project (TKT-NU247U). The returned value is a copy of a struct of handles;
+// mutating it does not affect this base, but the FS, ScriptEngine and Audit it
+// names are shared, which is exactly what makes the successor equivalent.
+func (b *SharedBase) Config() Config { return b.cfg }
 
 // Paths returns the project context this base was built from.
 func (b *SharedBase) Paths() *project.Context { return b.cfg.Paths }
@@ -1217,7 +1411,19 @@ func prepare(cfg Config, opts []Option) (*SharedBase, error) {
 		return nil, fmt.Errorf("load metamodel: %w", err)
 	}
 
-	return &SharedBase{cfg: cfg, opts: o, acl: resolvedACL, aclPolicy: aclPolicy, meta: meta}, nil
+	// Compile the declared worlds here, at assembly, so a bad face name is
+	// a startup failure rather than a lurking runtime one. The loader checks
+	// world STRUCTURE; the face GRAMMAR is checked here because metamodel
+	// may not import entity under arch-lint (TKT-WAV8XP, internal/worlds).
+	compiledWorlds, err := worlds.Compile(meta)
+	if err != nil {
+		return nil, fmt.Errorf("compile worlds: %w", err)
+	}
+
+	return &SharedBase{
+		cfg: cfg, opts: o, acl: resolvedACL, aclPolicy: aclPolicy,
+		meta: meta, worlds: compiledWorlds,
+	}, nil
 }
 
 // assemble runs the build-agnostic back half: it takes the opened store
@@ -1272,6 +1478,54 @@ func (b *SharedBase) Assemble(
 	visible search.VisibleSearcher, searchCloser io.Closer,
 ) (*Services, error) {
 	return assemble(b, st, searcher, visible, searchCloser)
+}
+
+// buildEntityManager assembles the write-path manager from the collaborators
+// assemble has already derived. Extracted purely to keep assemble within the
+// funlen budget; it makes no decisions of its own.
+func buildEntityManager(
+	base *SharedBase, st store.Store, aliases entitymanager.AliasRewriter,
+	templater entitymanager.TemplateLoader, resolvedACL acl.ACL,
+	autoEngine *automation.Engine, cascadeRunner *autocascade.Runner,
+	readDeps lua.ReadDeps, versions store.VersionService, tw TransitionWiring,
+	computedSet *computed.Set,
+) (*entitymanager.Manager, error) {
+	mgr, err := entitymanager.New(entitymanager.Deps{
+		AliasRewriter:           aliases,
+		Store:                   st,
+		Meta:                    base.meta,
+		Templater:               templater,
+		Audit:                   base.cfg.Audit,
+		ACL:                     resolvedACL,
+		Automations:             autoEngine,
+		Cascade:                 cascadeRunner,
+		ScriptRunner:            cascadeScriptRunner(base.cfg.ScriptEngine, readDeps, st, base.cfg.Audit),
+		VersionRecorder:         versionRecorderFor(versions),
+		RelationVersionRecorder: relationVersionRecorderFor(versions),
+		Computed:                computedSet,
+		Transitions:             tw.Enforcer,
+		FieldGate:               entitymanager.AllowAllFieldGate{},
+		TransitionGuard:         tw.Guard,
+		TransitionGraph:         tw.Graph,
+		// The copy deps (TKT-WRLDAPI item 5). Before this, NONE of the three
+		// was wired in any deployment — so every guarded copy 403'd
+		// ("no guard is wired") and every copy's source read took the
+		// no-policy branch, which CopyReadGate's own godoc says must never
+		// happen on a deployment that has a policy.
+		//
+		// CopyGuard reuses tw.Guard: entitymanager.CopyGuard and
+		// statemachine.Guard are the same shape ON PURPOSE, so a copy's
+		// `guard:` and a transition's ask the identical question of the
+		// identical implementation and cannot drift into asking different
+		// ones.
+		CopyGuard:      tw.Guard,
+		CopyReadGate:   tw.ReadGate,
+		CopyVisibility: tw.Visibility,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("build entitymanager: %w", err)
+	}
+	return mgr, nil
 }
 
 // resolveVisibleSearcher derives an ACL-scoped searcher when the caller did not
@@ -1371,45 +1625,10 @@ func cascadeReadDeps(
 	}
 }
 
-// buildEntityManager wires the entity manager from the services assemble has
-// already resolved. Split out of assemble purely to keep that function within
-// the funlen budget; the grouping is the entitymanager's dependency set.
-func buildEntityManager(
-	base *SharedBase, st store.Store, aliases entitymanager.AliasRewriter,
-	templater templating.Templater, readDeps lua.ReadDeps,
-	resolvedACL acl.ACL, autoEngine *automation.Engine,
-	cascadeRunner *autocascade.Runner, versions store.VersionService,
-	tw TransitionWiring, computedSet *computed.Set,
-) (*entitymanager.Manager, error) {
-	cfg := base.cfg
-	mgr, err := entitymanager.New(entitymanager.Deps{
-		AliasRewriter:           aliases,
-		Store:                   st,
-		Meta:                    base.meta,
-		Templater:               templater,
-		Audit:                   cfg.Audit,
-		ACL:                     resolvedACL,
-		Automations:             autoEngine,
-		Cascade:                 cascadeRunner,
-		ScriptRunner:            cascadeScriptRunner(cfg.ScriptEngine, readDeps, st, cfg.Audit),
-		VersionRecorder:         versionRecorderFor(versions),
-		RelationVersionRecorder: relationVersionRecorderFor(versions),
-		Transitions:             tw.Enforcer,
-		Computed:                computedSet,
-		FieldGate:               entitymanager.AllowAllFieldGate{},
-		TransitionGuard:         tw.Guard,
-		TransitionGraph:         tw.Graph,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("build entitymanager: %w", err)
-	}
-	return mgr, nil
-}
-
 func assemble(
 	base *SharedBase, st store.Store, searcher search.Searcher,
 	visible search.VisibleSearcher, searchCloser io.Closer,
-) (*Services, error) {
+) (svc *Services, retErr error) {
 	cfg := base.cfg
 
 	visible, err := resolveVisibleSearcher(visible, searcher, st)
@@ -1417,6 +1636,7 @@ func assemble(
 		return nil, err
 	}
 
+	warnUndeclaredFaces(st, base.meta, base.cfg.Paths.Root)
 	resolvedACL, aclDeclarative, fieldRedactor, err := resolveACLAndRedactor(base, st)
 	if err != nil {
 		return nil, err
@@ -1454,9 +1674,31 @@ func assemble(
 	if err != nil {
 		return nil, err
 	}
+	// buildRuntimeServices STARTS the job queue (worker pool; on postgres a
+	// connection pool too), so every error path below this point must stop it.
+	// Boot could get away without this — a failed boot exits the process — but
+	// assembly is now also a RELOAD path (TKT-NU247U): a schema that loads yet
+	// fails to assemble would otherwise leak one queue per save.
+	defer func() {
+		if retErr != nil {
+			closeJobQueue(jobQueue)
+		}
+	}()
 
-	mgr, err := buildEntityManager(base, st, aliases, templater, readDeps,
-		resolvedACL, autoEngine, cascadeRunner, versions, tw, computedSet)
+	// Comments are keyed by target entity id, so the service must learn about
+	// renames and deletes. It rides the AliasRewriter hook rather than
+	// store.EntityObserver for the reason that hook documents: stores fire the
+	// observer with the error discarded, which is fine for a rebuildable search
+	// index but not for records that exist ONLY in the comment store.
+	commentSvc, err := buildComments(cfg.FS, cfg.Paths, base.meta)
+	if err != nil {
+		return nil, err
+	}
+
+	// Upstream's parameter order (readDeps after cascadeRunner) with the
+	// comment fanout wrapping the alias rewriter.
+	mgr, err := buildEntityManager(base, st, newAliasFanout(aliases, commentSvc), templater, resolvedACL,
+		autoEngine, cascadeRunner, readDeps, versions, tw, computedSet)
 	if err != nil {
 		return nil, err
 	}
@@ -1473,7 +1715,19 @@ func assemble(
 	// indexes so uniqueness is enforced atomically, and publish the current
 	// unique pairs so a violation can be attributed to a property (TKT-3Q0GP1).
 	// Failures degrade to warnings — a derived-schema problem never fails boot.
-	reconcileDerivedSchemaIfSupported(context.Background(), st, base)
+	//
+	// STORE-OPEN ONLY, skipped on re-assembly. `pgstore.Store.Reconcile` is
+	// documented boot-only and says re-reconciling on a live reload "needs its
+	// own debounce/lock policy for issuing DDL off a file watcher" — that
+	// policy does not exist, so a reload must not issue DDL. Two things would
+	// go wrong if it did: CREATE/DROP INDEX on every editor autosave, and a
+	// metamodel saved mid-edit that still parses but has lost a `unique:`
+	// declaration would DROP the live index (desired-state reconciliation
+	// treats absent as delete). A `unique:` added without a restart stays
+	// enforced by the application scan; `rela db reconcile` applies it.
+	if !base.reassembly {
+		reconcileDerivedSchemaIfSupported(context.Background(), st, base)
+	}
 
 	// Evaluate the data-migration gate (adopt compatible schema-shape
 	// changes, warn on incompatible ones) and start the drift GC sweep
@@ -1481,13 +1735,36 @@ func assemble(
 	// per-assembled, like the search closer.
 	background := startBackgroundServices(base, st, stateKV, versions)
 
+	return newServices(
+		base, st, background, searcher, visible, searchCloser, mgr, tr, val,
+		templater, cfgLoader, stateKV, jobQueue, aliases, commentSvc, versions,
+		resolvedACL, aclDeclarative, fieldRedactor,
+	), nil
+}
+
+// newServices bundles the assembled collaborators into the Services value.
+// It is pure field assignment, split out of assemble so that function stays
+// within its length budget: the bundle grows with every new collaborator,
+// and that growth should not push the assembly logic over the limit.
+func newServices(
+	base *SharedBase, st store.Store, background backgroundServices,
+	searcher search.Searcher, visible search.VisibleSearcher, searchCloser io.Closer,
+	mgr *entitymanager.Manager, tr tracer.Tracer, val validator.Validator,
+	templater templating.Templater, cfgLoader config.Loader, stateKV state.KV,
+	jobQueue jobs.Queue, aliases *caldavalias.Service, commentSvc *comments.Service,
+	versions store.VersionService, resolvedACL acl.ACL, aclDeclarative *acl.Declarative,
+	fieldRedactor visibility.FieldRedactor,
+) *Services {
+	cfg := base.cfg
 	return &Services{
+		base:            base,
 		gcStop:          background.gcStop,
 		mailStop:        background.mailStop,
 		mail:            background.mail,
 		fs:              cfg.FS,
 		paths:           cfg.Paths,
 		meta:            base.meta,
+		worlds:          base.worlds,
 		store:           st,
 		versions:        versions,
 		searcher:        searcher,
@@ -1501,6 +1778,7 @@ func assemble(
 		stateKV:         stateKV,
 		jobQueue:        jobQueue,
 		caldavAliases:   aliases,
+		comments:        commentSvc,
 		scriptEngine:    cfg.ScriptEngine,
 		searchCloser:    searchCloser,
 		acl:             resolvedACL,
@@ -1508,7 +1786,7 @@ func assemble(
 		aclPolicy:       base.aclPolicy,
 		audit:           cfg.Audit,
 		fieldRedactor:   fieldRedactor,
-	}, nil
+	}
 }
 
 // versionRecorder adapts a store.VersionWriter to the entitymanager's
@@ -1522,6 +1800,7 @@ type versionRecorder struct {
 func (r versionRecorder) RecordVersion(ctx context.Context, v entitymanager.VersionRecord) error {
 	return r.w.WriteVersion(ctx, store.VersionInput{
 		EntityID:      v.EntityID,
+		Face:          v.Face,
 		Op:            v.Op,
 		PrevID:        v.PrevID,
 		Type:          v.Type,
@@ -1596,8 +1875,81 @@ func relationVersionRecorderFor(vs store.VersionService) entitymanager.RelationV
 // lives here rather than once per build-tagged jobqueue_*.go file.
 const jobQueueShutdownTimeout = 5 * time.Second
 
-// Close releases resources held by Services: store first (so any
-// in-flight observer callbacks complete), then the search backend.
+// CloseAssembly stops the resources this Services started during its own
+// [SharedBase.Assemble] — the mail worker, the data-migration GC sweep and the
+// background-job queue — and leaves the store and search backend running.
+//
+// It exists for ONE caller shape: a host that re-assembles a base against a
+// store it already owns, and must retire the superseded Services without
+// tearing down the store underneath the new one. The MCP schema hot-reload
+// (TKT-NU247U) is that caller — every Assemble starts a fresh job queue with
+// its own worker pool (on postgres, a second connection pool and a LISTEN
+// connection too), so reloading without this would leak one per schema edit.
+//
+// It is NOT a lighter Close. The store and searcher outlive this call by
+// design, so a caller that owns them must still close them separately —
+// [Services.Close] on the LAST assembled Services does that, and running both
+// is safe because each runs its teardown exactly once.
+//
+// Safe to call repeatedly, and concurrently with Close: the shared sync.Once
+// runs the teardown exactly once. Calling Close after CloseAssembly still
+// closes the store and search backend.
+//
+// It is NOT safe against a concurrent [Services.Jobs] — the teardown clears
+// the queue handle, and that field carries no lock. Retire an assembly only
+// once nothing is reaching for its background services.
+func (s *Services) CloseAssembly() {
+	s.assemblyCloseOnce.Do(s.stopBackgroundServices)
+}
+
+// stopBackgroundServices stops the per-assembly background workers. Shared by
+// [Services.Close] and [Services.CloseAssembly] so the two teardown paths
+// cannot drift on WHICH services count as per-assembly — the distinction the
+// whole seam rests on.
+//
+// Mail goes first: the worker may still be delivering and its drain is
+// bounded, so stopping it before anything else gives in-flight sends their
+// best chance without risking a hung shutdown.
+func (s *Services) stopBackgroundServices() {
+	if s.mailStop != nil {
+		s.mailStop()
+		s.mailStop = nil
+	}
+	if s.gcStop != nil {
+		s.gcStop()
+		s.gcStop = nil
+	}
+	if s.jobQueue != nil {
+		closeJobQueue(s.jobQueue)
+		s.jobQueue = nil
+	}
+}
+
+// closeJobQueue stops q within the shutdown budget. Shared by the teardown
+// path and by assemble's error path, so a queue is never dropped un-closed.
+//
+// Nil: accepted (no-op).
+func closeJobQueue(q jobs.Queue) {
+	if q == nil {
+		return
+	}
+	// Bounded: a queue that will not drain must not wedge shutdown.
+	ctx, cancel := context.WithTimeout(context.Background(), jobQueueShutdownTimeout)
+	defer cancel()
+	if err := q.Close(ctx); err != nil {
+		slog.Warn("appbuild: failed to close job queue", "error", err)
+	}
+}
+
+// Close releases resources held by Services: the per-assembly background
+// services first, then the store (so any in-flight observer callbacks
+// complete), then the search backend.
+//
+// The job queue is now drained BEFORE the store closes, where it used to be
+// closed after. That ordering is the safer one on its own merits — a job
+// handler may read or write the store, and draining first means a worker
+// cannot be left running against a closed one — and it is what lets
+// [Services.CloseAssembly] share this teardown.
 //
 // Safe to call repeatedly and from multiple goroutines; the close
 // sequence runs exactly once. Subsequent calls return the same nil
@@ -1605,17 +1957,10 @@ const jobQueueShutdownTimeout = 5 * time.Second
 // failures are slog.Warn'd).
 func (s *Services) Close() error {
 	s.closeOnce.Do(func() {
-		// Mail first: the worker may still be delivering, and its drain is
-		// bounded, so stopping it before the store closes gives in-flight
-		// sends their best chance without risking a hung shutdown.
-		if s.mailStop != nil {
-			s.mailStop()
-			s.mailStop = nil
-		}
-		if s.gcStop != nil {
-			s.gcStop()
-			s.gcStop = nil
-		}
+		// Shared with CloseAssembly, and guarded by its own sync.Once, so a
+		// Close following a CloseAssembly does not stop these twice.
+		s.assemblyCloseOnce.Do(s.stopBackgroundServices)
+
 		if s.store != nil {
 			if lc, ok := s.store.(store.Lifecycle); ok {
 				if err := lc.Close(); err != nil {
@@ -1626,15 +1971,6 @@ func (s *Services) Close() error {
 		if s.searchCloser != nil {
 			_ = s.searchCloser.Close()
 			s.searchCloser = nil
-		}
-		if s.jobQueue != nil {
-			// Bounded: a queue that will not drain must not wedge shutdown.
-			ctx, cancel := context.WithTimeout(context.Background(), jobQueueShutdownTimeout)
-			if err := s.jobQueue.Close(ctx); err != nil {
-				slog.Warn("appbuild: failed to close job queue", "error", err)
-			}
-			cancel()
-			s.jobQueue = nil
 		}
 	})
 	return s.closeErr

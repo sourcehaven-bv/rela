@@ -338,7 +338,7 @@ OUT of scope:
 8. **CLI + example + docs** — `rela docs build <manual>` in `internal/cli`
    (register in `requiresProject`), `--strict` flag, `--output` path; an example
    manual under `prototypes/data-entry/` (reuse the phase-1 corpus); a
-   `docs/rela-docs.md` guide (via the source-guide pipeline) + CLAUDE.md pointer.
+   `docs/rela-docs.md` guide (via the source-guide pipeline) + CLAUDE.md face.
 
 **Files to modify / add:**
 - ADD `internal/mermaid/{statediagram.go,graph.go,label.go,*_test.go}` (neutral
@@ -490,7 +490,7 @@ OUT of scope:
 - [x] A new `docs/rela-docs.md` guide — the doc language: island syntax, the
   resolver reference, the seed/memstore model, fail-loud/`--strict`. Authored via
   the source-guide pipeline if one applies, else a plain doc.
-- [x] CLAUDE.md — a short pointer to the doc-language + `internal/docs` +
+- [x] CLAUDE.md — a short face to the doc-language + `internal/docs` +
   `internal/mermaid` (new subsystems).
 - [x] The committed **example manual** doubles as living documentation.
 - [x] ~~docs/metamodel.md~~ (N/A: no metamodel changes — phase-1 fields already exist).

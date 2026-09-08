@@ -14,21 +14,52 @@ import (
 type viewResult struct {
 	Entry       *entity.Entity
 	Collections map[string][]*entity.Entity
+	// World is the world this result was executed in, carried so the section
+	// builders can label each entity's face provenance (TKT-WRLDAPI item 4b).
+	//
+	// On the RESULT rather than threaded through every builder because the
+	// answer is the same for every entity in the result — the world resolved
+	// them all — and because a builder that took a world parameter it did not
+	// otherwise need would invite someone to pass a different one.
+	World viewWorld
 }
 
 // executeView runs a view's traversal rules and returns the result.
-func (h *viewsHandler) executeView(ctx context.Context, view ViewConfig, entryID string) (*viewResult, error) {
-	entry, err := h.store.GetEntity(ctx, entryID)
+//
+// It is a SHARED ENGINE, not the `_views` handler's private helper: three
+// surfaces call it (the `_views` route, `_sidepanel` via executeSidePanel, and
+// the command runner's `kind: view`). That is why the world arrives as an
+// explicit PARAMETER rather than being read off ctx — see [viewWorld].
+//
+// entryID is an ADDRESS (`ID` or `ID@face`, see [entityRef]); an address the
+// grammar rejects is the same not-found a missing entry is.
+func (h *viewsHandler) executeView(
+	ctx context.Context, view ViewConfig, entryID string, w viewWorld,
+) (*viewResult, error) {
+	ref, ok := parseEntityRef(h.schema().Meta, view.Entry.Type, entryID)
+	if !ok {
+		return nil, errViewEntryNotFound(entryID)
+	}
+	return h.executeViewRef(ctx, view, ref, w)
+}
+
+// executeViewRef is [viewsHandler.executeView] for an already-parsed entry
+// address.
+func (h *viewsHandler) executeViewRef(
+	ctx context.Context, view ViewConfig, entryRef entityRef, w viewWorld,
+) (*viewResult, error) {
+	entry, err := h.viewEntry(ctx, entryRef, w)
 	if err != nil {
-		return nil, fmt.Errorf("entry entity not found: %s", entryID)
+		return nil, err
 	}
 	if entry.Type != view.Entry.Type {
-		return nil, fmt.Errorf("entry entity %s is type %s, expected %s", entryID, entry.Type, view.Entry.Type)
+		return nil, fmt.Errorf("entry entity %s is type %s, expected %s", entryRef, entry.Type, view.Entry.Type)
 	}
 
 	result := &viewResult{
 		Entry:       entry,
 		Collections: map[string][]*entity.Entity{"entry": {entry}},
+		World:       w,
 	}
 
 	// Multi-pass traversal (up to 10 passes until stable)
@@ -36,7 +67,7 @@ func (h *viewsHandler) executeView(ctx context.Context, view ViewConfig, entryID
 	for range maxPasses {
 		before := countViewEntities(result.Collections)
 		for _, rule := range view.Traverse {
-			h.applyViewTraverse(ctx, rule, result)
+			h.applyViewTraverse(ctx, rule, result, w)
 		}
 		if countViewEntities(result.Collections) == before {
 			break
@@ -70,7 +101,9 @@ func (h *viewsHandler) executeView(ctx context.Context, view ViewConfig, entryID
 	return result, nil
 }
 
-func (h *viewsHandler) applyViewTraverse(ctx context.Context, rule ViewTraverse, result *viewResult) {
+func (h *viewsHandler) applyViewTraverse(
+	ctx context.Context, rule ViewTraverse, result *viewResult, w viewWorld,
+) {
 	// Gather source entities
 	var sources []*entity.Entity
 	if rule.From == "*" {
@@ -87,28 +120,56 @@ func (h *viewsHandler) applyViewTraverse(ctx context.Context, rule ViewTraverse,
 		sources = entities
 	}
 
-	// Traverse from each source
+	// Traverse from each source, collecting NEIGHBOR IDS rather than entities.
+	//
+	// Splitting id-collection from entity-loading is what makes the world path
+	// affordable: ids are cheap and the recursive walk needs them anyway to
+	// decide where to step next, while LOADING an entity under a world costs a
+	// resolution. Collect the whole rule's ids first, then resolve once.
 	maxRecursionDepth := 10
-	var found []*entity.Entity
+	sourceIDs := make([]string, 0, len(sources))
 	for _, src := range sources {
-		if rule.Recursive {
-			maxD := rule.MaxDepth
-			if maxD <= 0 {
-				maxD = maxRecursionDepth
-			}
-			found = append(found, h.traverseViewRecursive(ctx, src.ID, rule, 0, maxD, map[string]bool{})...)
-		} else {
-			found = append(found, h.traverseViewOnce(ctx, src.ID, rule)...)
+		sourceIDs = append(sourceIDs, src.ID)
+	}
+	var foundIDs []string
+	if rule.Recursive {
+		maxD := rule.MaxDepth
+		if maxD <= 0 {
+			maxD = maxRecursionDepth
 		}
+		foundIDs = h.traverseViewBreadthFirst(ctx, sourceIDs, rule, maxD)
+	} else {
+		// One relation query for every source at once (TKT-1U8XYN), in the
+		// same order the per-source loop produced: sources in collection
+		// order, each source's edges in store order.
+		foundIDs = h.traverseViewMany(ctx, sourceIDs, rule)
 	}
 
-	// Apply where filter if specified
+	// ONE resolution for the whole rule application, not one per hop.
+	//
+	// The per-hop shape would be an N+1 multiplied by the 10-pass fixpoint and
+	// again by the recursive walk's depth — materially worse than the per-row
+	// cost item 4 documented as known. Batching here is a design choice made up
+	// front rather than an optimisation deferred (see the PR body).
+	found := h.loadViewEntities(ctx, foundIDs, w)
+
+	// Apply where filter if specified.
+	//
+	// RULING 16: this runs against the RESOLVED FACES, because `found` now
+	// holds whatever face the world selected. A `where:` filtering on draft
+	// values while the page renders published content would contradict its own
+	// page. filterEntities itself needed no change — it reads e.Properties off
+	// whatever it is handed, so feeding it faces makes it filter faces.
 	if rule.Where != "" {
 		filtered, err := h.filterEntities(found, rule.Where)
 		if err == nil {
 			found = filtered
 		}
-		// On error, continue with unfiltered results (silent failure for robustness)
+		// On error, continue with unfiltered results (silent failure for
+		// robustness). This SILENTLY WIDENS a construct whose job is to narrow
+		// — tracked as BUG-WHEREWIDE, decided (RULING 17) to become a load-time
+		// error. Deliberately not fixed here: it predates worlds and deserves
+		// its own change rather than riding along in a world PR.
 	}
 
 	// Deduplicate into collection
@@ -127,54 +188,78 @@ func (h *viewsHandler) applyViewTraverse(ctx context.Context, rule ViewTraverse,
 	}
 }
 
-func (h *viewsHandler) traverseViewOnce(ctx context.Context, sourceID string, rule ViewTraverse) []*entity.Entity {
-	st := h.store
-	var out []*entity.Entity
-
+// traverseViewMany is [viewsHandler.traverseViewOnce] for many sources in ONE
+// relation query. The result is ordered as the per-source calls would have
+// been concatenated: by source in the given order, then by the store's edge
+// order within a source. A source with no edges contributes nothing.
+func (h *viewsHandler) traverseViewMany(ctx context.Context, sourceIDs []string, rule ViewTraverse) []string {
+	if len(sourceIDs) == 0 {
+		return nil
+	}
 	var relType string
 	var direction store.Direction
-	var useTarget bool // true: collect edge.To; false: collect edge.From
+	var useTarget bool
 	switch {
 	case rule.Follow != "":
-		relType = rule.Follow
-		direction = store.DirectionOutgoing
-		useTarget = true
+		relType, direction, useTarget = rule.Follow, store.DirectionOutgoing, true
 	case rule.FollowIncoming != "":
-		relType = rule.FollowIncoming
-		direction = store.DirectionIncoming
-		useTarget = false
+		relType, direction, useTarget = rule.FollowIncoming, store.DirectionIncoming, false
 	default:
 		return nil
 	}
-
-	q := store.RelationQuery{EntityID: sourceID, Type: relType, Direction: direction}
-	for r, err := range st.ListRelations(ctx, q) {
+	bySource := make(map[string][]string, len(sourceIDs))
+	q := store.RelationQuery{EntityIDs: sourceIDs, Type: relType, Direction: direction}
+	for r, err := range h.store.ListRelations(ctx, q) {
 		if err != nil {
 			break
 		}
-		targetID := r.To
+		sourceID, targetID := r.From, r.To
 		if !useTarget {
-			targetID = r.From
+			sourceID, targetID = r.To, r.From
 		}
-		if e, err := st.GetEntity(ctx, targetID); err == nil {
-			out = append(out, e)
+		if targetID != "" {
+			bySource[sourceID] = append(bySource[sourceID], targetID)
 		}
+	}
+	var out []string
+	for _, id := range sourceIDs {
+		out = append(out, bySource[id]...)
 	}
 	return out
 }
 
-func (h *viewsHandler) traverseViewRecursive(
-	ctx context.Context, sourceID string, rule ViewTraverse, depth, maxDepth int, visited map[string]bool,
-) []*entity.Entity {
-	if depth >= maxDepth || visited[sourceID] {
-		return nil
+// traverseViewBreadthFirst walks the relation graph from every source at
+// once, one relation query per level (TKT-1U8XYN) instead of one per visited
+// node, up to maxDepth levels. It returns the neighbor IDS found, level by
+// level; like traverseViewMany it loads no entities. A node is expanded at
+// most once, but an id reached again is still reported — the caller dedupes
+// when it loads the collection, exactly as it did for the former depth-first
+// walk, and the recursive tests pin the SET of ids, not their order.
+func (h *viewsHandler) traverseViewBreadthFirst(
+	ctx context.Context, sourceIDs []string, rule ViewTraverse, maxDepth int,
+) []string {
+	visited := make(map[string]bool, len(sourceIDs))
+	frontier := make([]string, 0, len(sourceIDs))
+	for _, id := range sourceIDs {
+		if visited[id] {
+			continue
+		}
+		visited[id] = true
+		frontier = append(frontier, id)
 	}
-	visited[sourceID] = true
-	immediate := h.traverseViewOnce(ctx, sourceID, rule)
-	var all []*entity.Entity
-	all = append(all, immediate...)
-	for _, e := range immediate {
-		all = append(all, h.traverseViewRecursive(ctx, e.ID, rule, depth+1, maxDepth, visited)...)
+	all := make([]string, 0, len(frontier))
+	for depth := 0; depth < maxDepth && len(frontier) > 0; depth++ {
+		found := h.traverseViewMany(ctx, frontier, rule)
+		all = append(all, found...)
+		next := make([]string, 0, len(found))
+		for _, id := range found {
+			if visited[id] {
+				continue
+			}
+			visited[id] = true
+			next = append(next, id)
+		}
+		frontier = next
 	}
 	return all
 }

@@ -24,7 +24,7 @@ consequences: |-
 
     ## Response shape additions
 
-    Write endpoints that perform the work despite warnings return their normal 200 body augmented with a `warnings: []` array. Each warning is a structured object: `{code, path, detail}` where `code` is a stable identifier matching what `analyze_*` would surface, `path` is a JSON-pointer-style location, and `detail` is human-readable. Empty array (or omitted field) means no warnings.
+    Write endpoints that perform the work despite warnings return their normal 200 body augmented with a `warnings: []` array. Each warning is a structured object: `{code, path, detail}` where `code` is a stable identifier matching what `analyze_*` would surface, `path` is a JSON-face-style location, and `detail` is human-readable. Empty array (or omitted field) means no warnings.
 
     ## Scope of this decision
 

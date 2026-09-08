@@ -46,6 +46,31 @@ All top-level fields are optional. Field absence means "leave alone".
 | `content` | Markdown body. **Upsert**: present (including empty string) replaces; absent leaves alone. |
 | `relations` | Map of relation type → desired-state wrapper. See below. |
 
+## Collection rows are content-free
+
+`GET /api/v1/{plural}` and `GET /api/v1/_search` return each row's `id`,
+`type`, `_title`, `properties`, relations and affordances, but **not** its
+markdown body: `content` is absent from collection rows. A list, kanban or
+dashboard renders titles and properties, and shipping every row's body made a
+100-row page half a megabyte and the dashboard's count cards tens of megabytes
+at 20k entities (TKT-1U8XYN). On the PostgreSQL backend the bodies never leave
+the database — the server reads content-free headers for the whole pipeline
+(filter, sort, paginate) and loads bodies only for the rows it serves, only
+when asked.
+
+Ask with `include_content=true` (any value `strconv.ParseBool` accepts; anything
+else is `false`):
+
+```text
+GET /api/v1/tickets?page=1&per_page=25&include_content=true
+GET /api/v1/_search?q=type:ticket&include_content=true
+```
+
+The per-entity `GET /api/v1/{plural}/{id}`, `_views` and `?include=` peers are
+unchanged: they always carry `content`, as do ETags computed over it. A row
+whose entity has an empty body looks the same with or without the flag, which
+is the reason the field is omitted rather than sent empty.
+
 ## Relations field
 
 Each value of the `relations` map is one of TWO shapes:
@@ -461,7 +486,7 @@ signal. (Reading absence as redaction is what made every unset property
 permanently unreachable in the edit form — BUG-MLT9DE. The SPA now renders a
 configured field unless `_redacted` names it.)
 
-`_redacted` carries the same closed-world pointer semantics as `_fields` /
+`_redacted` carries the same closed-world present/absent semantics as `_fields` /
 `_relations`: present (possibly empty — "evaluated, nothing hidden") on
 per-entity responses, absent on list rows, which carry no write affordances.
 Names are sorted.
@@ -609,7 +634,7 @@ with an **empty list** (`"status": []`): the key's presence is what tells the SP
 rather than a full enum select that would offer illegal targets. The map is
 **absent entirely** when the server wires no state machines (no policy /
 non-machine metamodel / older server), the same "feature not available" signal
-`_fields` uses via its pointer. Like every affordance map it is a **UI hint,
+`_fields` uses via its own absence. Like every affordance map it is a **UI hint,
 never authorization**: the write path re-enforces the transition (guard 403,
 legality / precondition 422), so a stale verdict simply surfaces the existing
 structured error (attempt-and-recover).
@@ -721,7 +746,7 @@ Per-entity responses carry an `_attachments` map keyed by property name.
 The value is **always a list** — even a single-attachment property reports
 a one-element array, matching how `list:` properties and `_relations` are
 always arrays. Only `file` properties that actually carry a file appear.
-Same closed-world / pointer semantics as `_fields` / `_relations`: present
+Same closed-world present/absent semantics as `_fields` / `_relations`: present
 (possibly empty) on every per-entity response (GET, PATCH, POST create,
 clone), absent on list rows.
 

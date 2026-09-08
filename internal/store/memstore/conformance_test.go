@@ -39,7 +39,17 @@ func fuzzFactory() store.Store {
 }
 
 func TestConformance(t *testing.T) {
-	storetest.RunAll(t, factory, searchFactory, visibleSearchFactory, storetest.Capabilities{Attachments: true})
+	storetest.RunAll(t, factory, searchFactory, visibleSearchFactory, storetest.Capabilities{
+		Attachments: true,
+		Observers: func(t *testing.T, obs ...store.EntityObserver) store.Store {
+			t.Helper()
+			opts := make([]memstore.Option, 0, len(obs))
+			for _, o := range obs {
+				opts = append(opts, memstore.WithObserver(o))
+			}
+			return memstore.New(opts...)
+		},
+	})
 }
 
 func FuzzRelationKeyCollision(f *testing.F) {

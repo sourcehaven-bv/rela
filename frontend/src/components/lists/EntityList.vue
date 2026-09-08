@@ -7,11 +7,15 @@ import { useListKeyboard } from '@/composables/useListKeyboard'
 import { useListSelection } from '@/composables/useListSelection'
 import { useListActions } from '@/composables/useListActions'
 import { useUrlFilterSync } from '@/composables/useUrlFilterSync'
+import { useWorld } from '@/composables/useWorld'
+import { useCreateTarget } from '@/composables/useCreateTarget'
 import { listEntities, deleteEntity, getErrorMessage } from '@/api'
 import { entityKeys } from '@/queries/entities'
 import { beginOptimisticRemove, rollbackOptimistic } from '@/queries/optimisticList'
 import { toApiOperator, filterStateToApiParams } from '@/utils/filters'
 import { entityDetailHref } from '@/utils/entityRoute'
+import { entityRef, refFace } from '@/utils/entityRef'
+import { worldText } from '@/utils/worldText'
 import { safeInternalHref, shouldDeferToBrowser } from '@/utils/openIntent'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
 import { renderMarkdown } from '@/utils/markdown'
@@ -28,6 +32,8 @@ import SearchBox from './SearchBox.vue'
 import AdHocFilterMenu from './AdHocFilterMenu.vue'
 import BackButton from '@/components/common/BackButton.vue'
 import ExportMenu from '@/components/entity/ExportMenu.vue'
+import WorldBadge from '@/components/entity/WorldBadge.vue'
+import WorldBanner from '@/components/common/WorldBanner.vue'
 import { listExportUrl } from '@/api/transforms'
 import { useBackTarget } from '@/composables/useBackTarget'
 import { useConfirm } from '@/composables/useConfirm'
@@ -91,6 +97,17 @@ const meta = computed<ListMeta>(
 // The block spinner is therefore reached only on a cold first load.
 // Pinned by the "pagination keeps previous rows" tests.
 const loading = computed(() => listQueryRef.value?.isPending.value ?? true)
+
+// pageState is a stable, test-visible signal of whether this screen has
+// finished resolving — the same contract DynamicForm's `form-state-*` marker
+// provides, generalized so a screenshot can wait for ANY screen rather than
+// only an edit form. Without it a capture has nothing to poll and can only
+// hang until its timeout, which is why screenshot{} used to refuse every view
+// but the form.
+const pageState = computed<'pending' | 'loaded' | 'error'>(() => {
+  if (loadError.value) return 'error'
+  return loading.value ? 'pending' : 'loaded'
+})
 const loadError = computed(() => {
   const err = listQueryRef.value?.error.value
   return err ? getErrorMessage(err, 'Failed to load entities') : null
@@ -112,6 +129,16 @@ const collectionActions = computed<Record<string, boolean> | undefined>(
 function canCreate(): boolean {
   return actionAllowed({ _actions: collectionActions.value }, 'create')
 }
+// From `_actions` alone, under every world. The server computes the map for
+// the FACE it served (a stand-in published face reports `update: false`
+// unless a grant names that face), and every write this list makes goes to
+// that row's address (`entityRef`), so the verdict and the write agree by
+// construction. An earlier revision ANDed in `!isWorldBound` here, which made
+// every list read-only under a configured `default_world` — including lists
+// of types that declare no faces at all (atlas worlds issue 2).
+//
+// canUpdate gates the bulk-action bar (via anySelectedAllowsUpdate); canDelete
+// gates the row delete button AND the Delete/Backspace shortcut.
 function canDelete(entity: Entity): boolean {
   return actionAllowed(entity, 'delete')
 }
@@ -142,6 +169,12 @@ const { resolvedActions, processing: actionProcessing, executeAction, triggerAct
   listId: listIdRef,
   selectedIds,
   entities,
+  // A bulk `set` writes the ROW on screen. Selection is keyed by entity id,
+  // so the address is looked up per row at execution time.
+  addressOf: (entityId) => {
+    const row = entities.value.find((e) => e.id === entityId)
+    return row ? entityRef(row) : entityId
+  },
   onClearSelection: () => clearActionSelection(),
   onRequestConfirm: (action, actionId, triggerEl) => {
     void requestActionConfirm(action, actionId, triggerEl)
@@ -186,6 +219,42 @@ function staticFilterProperties(): Set<string> {
 
 // User-selected filters and free-text search synced bidirectionally with the URL.
 const { filters, q: searchQuery, writeToQuery } = useUrlFilterSync({ staticFilterProperties })
+
+// The selected world (`?world=`). A list is one of only two surfaces the API
+// can serve under a non-default world — see worldCapablePath in
+// internal/dataentry/world.go.
+const { world, isWorldBound, worldParam } = useWorld()
+
+// The world's projection note, in the operator's words (`messages.projection`)
+// and only on a list of a type that declares faces: a type without faces has
+// one state in every world, so nothing on its list is filtered by the world
+// and the note would be false. Nothing declared, nothing rendered — the app
+// has no sentence of its own for this (TKT-5SZG2L).
+const listTypeHasFaces = computed(() => {
+  const def = schemaStore.getEntityType(listConfig.value?.entity ?? '')
+  return Object.keys(def?.faces ?? {}).length > 0
+})
+const projectionNote = computed<string>(() => {
+  if (!listTypeHasFaces.value) return ''
+  const info = world.value ? schemaStore.worlds.get(world.value) : undefined
+  return worldText(info?.messages?.projection, { world: world.value })
+})
+
+// The create button's destination — see useCreateTarget for why a create
+// button carries a world of its own. Whether it SHOWS is `_actions.create`.
+const { target: createFormTarget } = useCreateTarget(
+  computed(() => listConfig.value?.create_form),
+  computed(() => listConfig.value?.create_world),
+  worldParam,
+)
+
+// The operator's announcement for the world on screen, or '' to announce
+// nothing. Config, not data — `/_schema`.worlds is served identically to every
+// principal, so this discloses nothing per-caller. Same computed as
+// EntityDetail's, deliberately spelled the same way in both.
+const worldBanner = computed<string>(
+  () => (world.value ? schemaStore.worlds.get(world.value)?.banner : '') || '',
+)
 const searchBoxRef = ref<InstanceType<typeof SearchBox> | null>(null)
 const filterMenuRef = ref<InstanceType<typeof AdHocFilterMenu> | null>(null)
 
@@ -212,14 +281,16 @@ const { selectedIndex, clearSelection } = useListKeyboard({
     if (entity) navigateToEntity(entity)
   },
   onEdit: (index) => {
+    // The form opens on the row's ADDRESS, face included, so an edit from a
+    // world-bound list edits the face the row showed and not its bare id.
     const entity = entities.value[index]
     if (entity && listConfig.value?.edit_form) {
-      router.push(`/form/${listConfig.value.edit_form}/${entity.id}`)
+      router.push(`/form/${listConfig.value.edit_form}/${entityRef(entity)}`)
     }
   },
   onCreate: () => {
-    if (listConfig.value?.create_form) {
-      router.push(`/form/${listConfig.value.create_form}`)
+    if (createFormTarget.value) {
+      router.push(createFormTarget.value)
     }
   },
   onDelete: (index) => {
@@ -332,6 +403,18 @@ const queryParams = computed((): ListParams => {
   }
 
   // Free-text search: backend intersects ?q= results with the typed list.
+  //
+  // Sent under a world too. This was suppressed while the index held only
+  // DEFAULT-face documents, because a hit under `?world=published` would then
+  // have been a draft leaking onto a published surface. The index is keyed per
+  // face now and a world IS the search scope (TKT-9KZGJO): the backend matches
+  // each entity's prime in the requested world, so the hits are that world's
+  // and an entity with no face there cannot appear.
+  //
+  // `world` is already on `params` above, so nothing extra is needed here —
+  // but do not reintroduce a client-side suppression: the scoping is the
+  // server's to enforce, and a UI that quietly drops `q` would look like a
+  // search returning nothing rather than one that was never run.
   if (searchQuery.value) {
     paramsRecord.q = searchQuery.value
   }
@@ -348,9 +431,24 @@ const queryParams = computed((): ListParams => {
     params.sort = defaultSort
   }
 
-  // Include related entities for relation columns
+  // Include related entities for relation columns — under a world too.
+  //
+  // This used to be suppressed under a world, because neighbor resolution went
+  // through the ungated, default-world reader and a published row would have
+  // arrived wrapped in DRAFT neighbors. Two facts in that reasoning are now
+  // false: TKT-WRLDAPI item 4 made neighbor resolution WORLD-SCOPED (an
+  // included peer is that world's face; a neighbor with no face in the world
+  // is absent), and the backend no longer "omits relations entirely on
+  // world-bound reads" — it resolves them per neighbour.
+  //
+  // So suppressing it now costs relation columns their content for no reason.
+  // See the same orphan in stores/entities.ts for the general shape.
   if (hasRelationColumns.value) {
     params.include = '*'
+  }
+
+  if (worldParam.value) {
+    params.world = worldParam.value
   }
 
   return params
@@ -483,6 +581,32 @@ function resolveLinkTarget(link: string, entityType: string, entityId: string): 
   return ''
 }
 
+// The column whose cell carries the row's link, if the list config declares
+// one. Hoisted out of entityTarget so the template can share the same
+// answer: the badge below rides the row's TITLE, and "the title" and "the
+// thing you click" must be the same cell or the badge would sit beside an
+// unrelated value.
+const linkColumn = computed(() => listConfig.value?.columns?.find((col) => col.link))
+
+// The column the per-row WorldBadge attaches to.
+//
+// A world badge is a statement about the ROW, not about any one property, so
+// it must appear exactly ONCE per row — one badge per cell would repeat the
+// same fact across every column. It rides the title because that is what a
+// reader scans and what they click through to.
+//
+// `link` names the title column when the list config declares one; otherwise
+// the first column is the title by the same convention the mobile card layout
+// already uses (`listConfig.columns[0]` is its card title).
+const badgeColumn = computed(() => linkColumn.value ?? listConfig.value?.columns?.[0])
+
+// Whether this cell is the one that carries the row's badge. Compared by
+// object identity: listConfig.columns is a stable array, so the column objects
+// are the same references the template iterates.
+function isBadgeColumn(column: object): boolean {
+  return badgeColumn.value === column
+}
+
 // entityTarget is the SINGLE source of truth for a row's destination — used both
 // by the row's plain-click push AND by the title cell's RouterLink `to`.
 // Building the href separately would silently drop the query below: the tab
@@ -532,10 +656,17 @@ function entityTarget(entity: Entity): RouteLocationRaw | undefined {
     query.q = searchQuery.value
   }
 
+  // The world rides along too (TKT-6NCSSC). A row followed from a world-bound
+  // list must resolve in that world; without this the reader lands on the
+  // DEFAULT face of an entity whose row they just saw carrying a fallback
+  // badge. Same rule the detail page's neighbour links and historyTarget follow.
+  if (worldParam.value) {
+    query.world = worldParam.value
+  }
+
   // Check for column-level link first (use first column with link)
-  const columnWithLink = listConfig.value?.columns?.find((col) => col.link)
-  const columnLink = columnWithLink?.link
-    ? resolveLinkTarget(columnWithLink.link, entity.type, entity.id)
+  const columnLink = linkColumn.value?.link
+    ? resolveLinkTarget(linkColumn.value.link, entity.type, entity.id)
     : ''
 
   // entityDetailHref returns columnLink when set, otherwise the
@@ -733,7 +864,9 @@ function handleDelete(entity: Entity, event: Event) {
 // param variant (other pages/filters where the entity might appear)
 // refetches and reconciles with the server.
 const { mutate: deleteEntityMutation } = useMutation({
-  mutation: ({ entity }: { entity: Entity }) => deleteEntity(entity.type, entity.id),
+  // Addressed to the ROW: on a bare face this deletes the entity, on a
+  // non-bare face it removes that face only (the server's rule for `ID@face`).
+  mutation: ({ entity }: { entity: Entity }) => deleteEntity(entity.type, entityRef(entity)),
   onMutate({ entity }: { entity: Entity }) {
     return beginOptimisticRemove(
       queryCache,
@@ -756,9 +889,17 @@ const { mutate: deleteEntityMutation } = useMutation({
 })
 
 async function requestDelete(entity: Entity) {
+  // Addressed to the row. On a bare face that is the entity; on a non-bare
+  // face it is that face only (the server's rule for `ID@face`), and the
+  // confirm says so — "delete" must not read as "unpublish" or the reverse.
+  const face = refFace(entityRef(entity))
+  const faceLabel = face ? schemaStore.faceLabel(entity.type, face) || face : ''
   const ok = await confirm({
-    title: 'Delete Entity?',
-    message: `Are you sure you want to delete '${entity.id}'? This action cannot be undone.`,
+    title: face ? 'Delete Face?' : 'Delete Entity?',
+    message: face
+      ? `Are you sure you want to delete the ${faceLabel} face of '${entity.id}'? ` +
+        'Its other faces are kept. This action cannot be undone.'
+      : `Are you sure you want to delete '${entity.id}'? This action cannot be undone.`,
     confirmLabel: 'Delete',
     danger: true,
   })
@@ -809,17 +950,17 @@ watch(searchQuery, () => {
 </script>
 
 <template>
-  <div v-if="listConfig" class="entity-list">
+  <div v-if="listConfig" class="entity-list" :data-testid="`page-state-${pageState}`">
     <header class="list-header mobile-topbar mobile-topbar--with-menu">
       <div class="header-left">
         <BackButton v-if="backTarget" :target="backTarget" />
-        <h1>{{ listConfig.title || listConfig.entity }}</h1>
+        <h1 id="entity-list-heading">{{ listConfig.title || listConfig.entity }}</h1>
       </div>
       <div class="header-actions">
         <ExportMenu :url-for="listExportUrlFor" />
         <RouterLink
-          v-if="listConfig.create_form && canCreate()"
-          :to="`/form/${listConfig.create_form}`"
+          v-if="createFormTarget && canCreate()"
+          :to="createFormTarget"
           class="btn btn-primary"
         >
           + New <kbd>N</kbd>
@@ -840,7 +981,32 @@ watch(searchQuery, () => {
       </span>
     </div>
 
+    <!--
+      Gated on `!loadError`: the banner ASSERTS "you are looking at world X",
+      and it must not make that claim over an error state. An unknown world is
+      a 400 (unknown_world), so a banner rendered beside the error read
+      "Showing the nonexistent world" above a message saying no such world is
+      declared — the page contradicting itself, and in the direction that
+      reads as a designed property rather than a mistake.
+    -->
+    <!--
+      Both halves are operator config: the ANNOUNCEMENT (`banner:` on the
+      world) and the NOTE (`messages.projection`, rendered only on a list of a
+      faced type). Neither declared: no banner at all.
+    -->
+    <WorldBanner v-if="isWorldBound && !loadError && (worldBanner || projectionNote)" :label="worldBanner">
+      {{ projectionNote }}
+    </WorldBanner>
+
     <div class="search-row">
+      <!--
+        Rendered under a world too. It was OMITTED while search could not be
+        world-scoped, because a box that returned default-world hits on a
+        published page would have surfaced drafts. Search is scoped to the
+        world now, so the affordance is real: it searches the same faces this
+        list shows, and an entity absent from the world is absent from its
+        search. The banner above says so.
+      -->
       <SearchBox
         ref="searchBoxRef"
         :model-value="searchQuery"
@@ -906,8 +1072,8 @@ watch(searchQuery, () => {
           Clear search
         </button>
         <RouterLink
-          v-else-if="listConfig.create_form"
-          :to="`/form/${listConfig.create_form}`"
+          v-else-if="createFormTarget && canCreate()"
+          :to="createFormTarget"
           class="btn btn-secondary"
         >
           Create one
@@ -937,6 +1103,10 @@ watch(searchQuery, () => {
             </RouterLink>
             <span v-else class="mobile-card-title text-wrap-anywhere text-clamp-2">
               {{ getFormattedCellValue(entity, listConfig.columns[0]) }}
+              <!-- Same per-row provenance as the table below, on the card's
+                   title. A narrow screen is not a reason to drop the one
+                   signal separating a real face from a stand-in. -->
+              <WorldBadge :world="entity._world" :entity-type="entity.type" />
             </span>
             <button
               v-if="canDelete(entity)"
@@ -979,7 +1149,7 @@ watch(searchQuery, () => {
 
       <!-- Desktop table layout -->
       <div v-else class="table-scroll-wrapper">
-      <table class="entity-table">
+      <table class="entity-table" aria-labelledby="entity-list-heading">
         <thead>
           <tr v-if="hasSelection" class="action-header-row">
             <th class="select-column">
@@ -1006,7 +1176,7 @@ watch(searchQuery, () => {
             </th>
           </tr>
           <tr v-else>
-            <th v-if="hasActions" class="select-column">
+            <th v-if="hasActions" scope="col" class="select-column">
               <input
                 type="checkbox"
                 :checked="false"
@@ -1016,6 +1186,7 @@ watch(searchQuery, () => {
             <th
               v-for="column in listConfig.columns"
               :key="column.property || column.relation"
+              scope="col"
               :class="{
                 sortable: column.sortable !== false && column.property,
                 sorted: getSortInfo(column.property || '').index >= 0,
@@ -1029,7 +1200,7 @@ watch(searchQuery, () => {
                 {{ getSortInfo(column.property || '').direction === 'desc' ? '▼' : '▲' }}
               </span>
             </th>
-            <th class="actions-column"/>
+            <th scope="col" class="actions-column"/>
           </tr>
         </thead>
         <TransitionGroup tag="tbody" name="row">
@@ -1088,6 +1259,19 @@ watch(searchQuery, () => {
               <span v-else>
                 {{ getFormattedCellValue(entity, column) }}
               </span>
+              <!--
+                Per-ROW face provenance, on the title cell only (see
+                `badgeColumn`). Each row resolved through the world
+                independently, so one list can mix a first-choice hit and a
+                stand-in — and the two are otherwise byte-identical, which is
+                the whole reason the badge exists.
+
+                Only the STAND-IN rows render anything: WorldBadge is a no-op
+                for a first-choice hit and under the default world (where
+                `_world` is absent entirely), so a typical list shows no badges
+                at all and the ones it does show are the exceptions.
+              -->
+              <WorldBadge v-if="isBadgeColumn(column)" :world="entity._world" :entity-type="entity.type" />
             </td>
             <td class="actions-cell">
               <button
@@ -1201,6 +1385,7 @@ watch(searchQuery, () => {
   margin-top: 12px;
   margin-bottom: 12px;
 }
+
 
 .filter-chip {
   display: inline-flex;

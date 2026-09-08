@@ -199,9 +199,9 @@ func TestNavPermission_ReadOnlyShowsEverything(t *testing.T) {
 	}{
 		// Both forms: AuthorizeWrite has a value receiver, so &ReadOnlyACL{}
 		// also satisfies acl.ACL, and matching only the value form has
-		// previously let a pointer slip into a default arm in this package.
+		// previously let a face slip into a default arm in this package.
 		{"value form", acl.ReadOnlyACL{}},
-		{"pointer form", &acl.ReadOnlyACL{}},
+		{"face form", &acl.ReadOnlyACL{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			app := newTestAppV1(t)

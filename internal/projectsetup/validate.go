@@ -16,6 +16,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/scheduler"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/worlds"
 )
 
 // ValidateResult contains the outcome of validating project configuration.
@@ -58,10 +59,21 @@ func ValidateWithFS(startDir string, fs storage.FS) (*ValidateResult, error) {
 
 	// Validate metamodel
 	mm, _, err := metamodel.Load(ctx.SchemaPath, fs)
-	if err != nil {
+	switch {
+	case err != nil:
 		result.MetamodelError = err
-	} else {
-		if _, compileErr := computed.Compile(mm); compileErr != nil {
+	default:
+		// Two compilers, both mandatory. The loader checks world STRUCTURE; the
+		// face-name GRAMMAR is enforced by worlds.Compile, because metamodel may
+		// not import entity under arch-lint (TKT-WAV8XP). computed.Compile is
+		// the same shape for computed properties. Splitting validation across
+		// packages means every entry point must call every half — and this is
+		// the command whose entire job is answering "is my schema valid?".
+		// Without these it reports a green light on a schema that fails at
+		// startup.
+		if _, compileErr := worlds.Compile(mm); compileErr != nil {
+			result.MetamodelError = compileErr
+		} else if _, compileErr := computed.Compile(mm); compileErr != nil {
 			result.MetamodelError = compileErr
 		} else {
 			result.MetamodelValid = true

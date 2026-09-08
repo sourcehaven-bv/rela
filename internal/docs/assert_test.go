@@ -217,7 +217,7 @@ func TestUnknownKeysAreRefused(t *testing.T) {
 		{
 			name:    "shows: the message lists the known keys",
 			body:    `shows{type="risico", exactl={}}`,
-			wantErr: "Known keys: absent, contains, exactly, type",
+			wantErr: "Known keys: absent, contains, emit, exactly, type",
 		},
 		{
 			name:    "shows: several typos are reported together",

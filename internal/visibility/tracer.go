@@ -280,6 +280,13 @@ func (t *VisibleTracer) HasCycle(ctx context.Context, startID string) bool {
 func (t *VisibleTracer) permittedIDs(ctx context.Context, byType map[string][]string) map[string]bool {
 	allowed := make(map[string]bool)
 	for typeName, ids := range byType {
+		// The base tracer reads every node's DEFAULT face (store.GetEntity),
+		// so a `type@face` grant that excludes the default face hides the
+		// whole type here — the row gate alone would surface draft titles
+		// and properties to a published-only principal.
+		if !FaceAllowed(ctx, t.gate, typeName, "") {
+			continue
+		}
 		perm, err := t.gate.PermitsReadMany(ctx, typeName, ids)
 		if err != nil {
 			slog.Warn("visibility: tracer PermitsReadMany failed; dropping type fail-closed",

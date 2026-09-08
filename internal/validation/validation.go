@@ -6,6 +6,7 @@ package validation
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sync"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -22,6 +23,16 @@ type Violation struct {
 	Severity    string // "error" or "warning"
 	EntityID    string
 	EntityTitle string
+
+	// Face names the content state this violation is about, as the
+	// operator DECLARED it — so the bare face reports its declared name
+	// rather than the empty string it is stored under.
+	//
+	// Empty for a type that declares no faces, where there is no state to
+	// name. Load-bearing for a faced type: an entity's states are separate
+	// rows validated separately, so an id alone cannot say which one is
+	// wrong (TKT-4Y6CMV).
+	Face string
 
 	// Detail carries optional structured specifics about *why* this
 	// violation fired, for surfacing beyond the flat Description. For
@@ -387,6 +398,14 @@ func (s *Service) checkEntityAgainstRule(
 		return entityResult{}
 	}
 
+	// `faces:` narrows the rule to specific content states. Checked before any
+	// condition runs: a rule scoped away from this row is not "a rule that
+	// found nothing", it is a rule that does not apply, and evaluating its
+	// conditions would waste work and muddy the distinction.
+	if !ruleAppliesToFace(rule, s.declaredFaceOf(e)) {
+		return entityResult{}
+	}
+
 	// Check 'when' conditions - if they don't match, rule doesn't apply.
 	// Evaluated through the predicate condition engine (TKT-J4IR1G): the
 	// filter clauses are transpiled + compiled once and cached.
@@ -408,7 +427,7 @@ func (s *Service) checkEntityAgainstRule(
 	// Check 'then' conditions - if they don't satisfy, it's a violation.
 	if len(thenFilters) > 0 {
 		if satisfies, err := s.matchFilters(e, thenFilters); err != nil || !satisfies {
-			return entityResult{Violations: []Violation{newViolation(rule, e, rule.Description)}}
+			return entityResult{Violations: []Violation{s.newViolation(rule, e, rule.Description)}}
 		}
 	}
 	if rule.ThenCondition != "" {
@@ -417,7 +436,7 @@ func (s *Service) checkEntityAgainstRule(
 		// that fails to match. A malformed expression never reaches
 		// here: compileRuleConditions abandons the rule first.
 		if satisfies, err := s.matchCondition(e, rule.ThenCondition); err != nil || !satisfies {
-			return entityResult{Violations: []Violation{newViolation(rule, e, rule.Description)}}
+			return entityResult{Violations: []Violation{s.newViolation(rule, e, rule.Description)}}
 		}
 	}
 
@@ -442,7 +461,7 @@ func (s *Service) checkEntityAgainstRule(
 	// headers as structured Detail (nil when the failure is a pattern
 	// or checklist miss, which carry no actionable literal detail).
 	if rule.Content != nil && !CheckContentRule(e.Content, rule.Content) {
-		v := newViolation(rule, e, rule.Description)
+		v := s.newViolation(rule, e, rule.Description)
 		if missing := MissingRequiredHeaders(e.Content, rule.Content); len(missing) > 0 {
 			v.Detail = missing
 		}
@@ -455,8 +474,12 @@ func (s *Service) checkEntityAgainstRule(
 // newViolation constructs a Violation tagged with the rule's metadata.
 // description overrides rule.Description for Lua-sourced violations
 // (which carry their own custom messages).
-func newViolation(rule metamodel.ValidationRule, e *entity.Entity, description string) Violation {
+//
+// A method rather than a free function so it can resolve the entity's stored
+// face back to the name the operator declared — see declaredFaceOf.
+func (s *Service) newViolation(rule metamodel.ValidationRule, e *entity.Entity, description string) Violation {
 	return Violation{
+		Face:        s.declaredFaceOf(e),
 		RuleName:    rule.Name,
 		Description: description,
 		Severity:    rule.GetSeverity(),
@@ -482,6 +505,7 @@ func (s *Service) runLuaForEntity(
 	violations := make([]Violation, len(luaViolations))
 	for i, lv := range luaViolations {
 		violations[i] = Violation{
+			Face:        s.declaredFaceOf(e),
 			RuleName:    rule.Name,
 			Description: lv.Message,
 			Severity:    lv.Severity,
@@ -490,4 +514,40 @@ func (s *Service) runLuaForEntity(
 		}
 	}
 	return violations, nil
+}
+
+// declaredFaceOf names the content state a row belongs to, as the operator
+// wrote it in `faces:`.
+//
+// The bare face is STORED as the empty coordinate, so reporting e.Face
+// verbatim would leave a violation on the bare row indistinguishable from one
+// on a type that has no faces at all — and both from each other when an entity
+// has several states. Mapping back to the declared name is what makes a
+// violation actionable (TKT-4Y6CMV).
+//
+// Returns "" for a type that declares no faces: there is no state to name, and
+// an invented one would be noise on every unfaced project.
+func (s *Service) declaredFaceOf(e *entity.Entity) string {
+	if e == nil || s.deps.Meta == nil {
+		return ""
+	}
+	def, ok := s.deps.Meta.GetEntityDef(e.Type)
+	if !ok || len(def.Faces) == 0 {
+		return ""
+	}
+	return metamodel.DeclaredFace(s.deps.Meta, e.Type, e.Face.String())
+}
+
+// ruleAppliesToFace reports whether a rule scoped with `faces:` covers the
+// given declared face.
+//
+// An empty scope means every state — see ValidationRule.Faces for why that is
+// the default. An unfaced type reports an empty face and is matched only by an
+// unscoped rule, which is right: a rule naming states cannot be about a type
+// that has none.
+func ruleAppliesToFace(rule metamodel.ValidationRule, declared string) bool {
+	if len(rule.Faces) == 0 {
+		return true
+	}
+	return slices.Contains(rule.Faces, declared)
 }
