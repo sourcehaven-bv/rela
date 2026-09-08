@@ -64,10 +64,7 @@ const singleInstanceID = "com.sourcehaven.rela-desktop"
 // would simply never match. It is therefore obfuscation of a local channel,
 // not a secret — which is the whole threat model here.
 //
-// independently and never negotiate, so it cannot be random or fetched. It
-// obfuscates a local IPC channel; it is not an authentication secret.
-//
-//nolint:gosec // G101: hardcoded by necessity — the two processes derive this
+//nolint:gosec // G101: hardcoded by necessity, per the paragraph above
 var SingleInstanceSecret = "rela-desktop/single-instance/v1"
 
 // singleInstanceKey derives the 32-byte key Wails expects.
@@ -90,10 +87,14 @@ type Desktop struct {
 	// ctx carries the desktop Principal for the life of the process. Under
 	// Wails v2 this doubled as the runtime handle; v3 separates the two, so
 	// this is now only an attribution context.
-	ctx               context.Context            //nolint:containedctx // lives for the struct lifetime
-	wails             *application.App           // Wails v3 runtime handle
-	win               *application.WebviewWindow // main window
-	mu                sync.RWMutex
+	ctx   context.Context            //nolint:containedctx // lives for the struct lifetime
+	wails *application.App           // Wails v3 runtime handle
+	win   *application.WebviewWindow // main window
+	mu    sync.RWMutex
+	// registry holds every loaded project. The single-project fields below
+	// still track the active one; they are the "no project loaded" path and
+	// the welcome page's view of the world.
+	registry          *projectRegistry
 	app               *dataentry.App
 	svc               *appbuild.Services // per-project services; closed on next LoadProject
 	handler           http.Handler
@@ -1003,7 +1004,7 @@ func main() {
 		prefs = &desktop.Preferences{}
 	}
 
-	d := &Desktop{prefs: prefs}
+	d := &Desktop{prefs: prefs, registry: newProjectRegistry()}
 
 	// Which project to open — resolved now, but NOT loaded yet. Opening the
 	// store here would mean a redundant second instance takes the sqlite and
