@@ -2,8 +2,10 @@ package dataentry
 
 import (
 	"context"
+	"log/slog"
 
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // neighborIDsOf collects the DISTINCT neighbor entity IDs referenced by a
@@ -67,17 +69,22 @@ func neighborIDsOf(outgoing, incoming []*entityPkg.Relation) []string {
 func visibleRelationIDs(
 	ctx context.Context, reader entityReader, visible visibleReader, neighborIDs []string,
 ) map[string]bool {
-	candidates := make([]*entityPkg.Entity, 0, len(neighborIDs))
-	for _, id := range neighborIDs {
-		if e, found := reader.getEntity(ctx, id); found {
-			candidates = append(candidates, e)
+	if len(neighborIDs) == 0 {
+		return map[string]bool{}
+	}
+	// ONE content-free read for the page's neighbor set (TKT-1U8XYN): the
+	// gate needs each neighbor's type and id, never its body, and a header
+	// batch is what store.EntityQuery.IDs exists for. An id the store no
+	// longer has (a dangling edge) is simply absent, as the per-id lookup's
+	// not-found was.
+	candidates := make([]store.EntityHeader, 0, len(neighborIDs))
+	for h, err := range store.ListEntityHeaders(ctx, reader.store, store.EntityQuery{IDs: neighborIDs}) {
+		if err != nil {
+			slog.Warn("dataentry: visibleRelationIDs: header batch failed; neighbors dropped fail-closed",
+				"neighbors", len(neighborIDs), "err", err)
+			return map[string]bool{}
 		}
+		candidates = append(candidates, h)
 	}
-
-	vis := visible.filterVisible(ctx, candidates)
-	out := make(map[string]bool, len(vis))
-	for _, e := range vis {
-		out[e.ID] = true
-	}
-	return out
+	return visible.visibleHeaderIDs(ctx, candidates)
 }

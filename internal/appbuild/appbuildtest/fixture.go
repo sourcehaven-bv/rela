@@ -189,6 +189,11 @@ func New(meta *metamodel.Metamodel, opts ...Option) *appbuild.Services {
 		// be unwired in BOTH places at once (TKT-WRLDAPI item 5). If you add a
 		// dep to buildEntityManager, add it here too.
 		//
+		// The authorization deps are the ones where drift is dangerous rather
+		// than merely confusing, so they no longer rely on this note: each is
+		// either required by entitymanager.New or taken from the shared
+		// appbuild.TransitionWiring below.
+		//
 		// Mirrors the production wiring in appbuild.assemble: elevated reads
 		// are granted here so an integration test exercises the same
 		// capability set a real deployment has (TKT-ACSBSA). Still inert
@@ -203,15 +208,22 @@ func New(meta *metamodel.Metamodel, opts ...Option) *appbuild.Services {
 		FieldGate:       entitymanager.AllowAllFieldGate{},
 		TransitionGuard: tw.Guard,
 		TransitionGraph: tw.Graph,
-		// The copy deps (TKT-WRLDAPI item 5). CopyGuard reuses tw.Guard for
-		// the same reason production does: entitymanager.CopyGuard and
+		// The copy deps (TKT-WRLDAPI item 5), all three taken from the same
+		// TransitionWiring production uses. CopyGuard reuses tw.Guard for the
+		// reason production does: entitymanager.CopyGuard and
 		// statemachine.Guard are deliberately the same shape, so the two
 		// cannot drift into asking different questions.
 		//
-		// CopyReadGate / CopyVisibility are left nil here, which is the
-		// no-policy posture — this fixture's default ACL is NopACL and every
-		// other read it performs is raw too.
-		CopyGuard: tw.Guard,
+		// These were previously left nil here on the reasoning that this
+		// fixture's default ACL is NopACL and its other reads are raw too.
+		// That held for the default and broke for WithACL(declarative): a
+		// test could get a policy-backed manager whose copy path still read
+		// its source ungated — the forgotten-wiring state entitymanager.New
+		// now refuses (#1437). Taking all three from tw makes the posture
+		// follow the ACL, exactly as in production.
+		CopyGuard:      tw.Guard,
+		CopyReadGate:   tw.ReadGate,
+		CopyVisibility: tw.Visibility,
 	})
 	if err != nil {
 		panic(fmt.Sprintf("appbuildtest.New: build entitymanager: %v", err))
