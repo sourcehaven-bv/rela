@@ -441,6 +441,23 @@ func (s *FSStore) stateFamily(id string) (family []entityMeta, related []relatio
 			related = append(related, rm)
 		}
 	}
+	// s.relations is a map, so range order is randomized. Sort by the same
+	// (from, type, to, face) identity the key is built from: a partially
+	// failed cascade must remove — and therefore report — the same relations
+	// in the same order on every run, or DeletedRelations is nondeterministic.
+	sort.Slice(related, func(i, j int) bool {
+		a, b := related[i], related[j]
+		if a.From != b.From {
+			return a.From < b.From
+		}
+		if a.Type != b.Type {
+			return a.Type < b.Type
+		}
+		if a.To != b.To {
+			return a.To < b.To
+		}
+		return a.FromFace < b.FromFace
+	})
 	return family, related
 }
 
