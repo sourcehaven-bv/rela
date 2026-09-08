@@ -32,7 +32,7 @@ func TestBuiltSPAHasBodyTag(t *testing.T) {
 // so every bound call fails with "Wails runtime unavailable" and multi-window
 // silently does nothing. Both injected surfaces must load it.
 func TestInjectedScriptLoadsWailsRuntime(t *testing.T) {
-	out := string(injectMultiWindow([]byte("<html><body>app</body></html>")))
+	out := string(injectMultiWindow([]byte("<html><body>app</body></html>"), ""))
 	require.Contains(t, out, `src="/wails/runtime.js"`,
 		"the runtime must be loaded or window.wails is undefined")
 	assert.Less(t, strings.Index(out, "/wails/runtime.js"), strings.Index(out, "main.Desktop.OpenWindow"),
@@ -72,7 +72,7 @@ func TestSafeRoute(t *testing.T) {
 
 func TestInjectMultiWindow(t *testing.T) {
 	t.Run("script goes before the closing body tag", func(t *testing.T) {
-		out := string(injectMultiWindow([]byte("<html><body><p>hi</p></body></html>")))
+		out := string(injectMultiWindow([]byte("<html><body><p>hi</p></body></html>"), ""))
 		assert.Contains(t, out, "main.Desktop.OpenWindow")
 		assert.Less(t, strings.Index(out, "OpenWindow"), strings.Index(out, "</body>"),
 			"script must be inside body")
@@ -81,11 +81,11 @@ func TestInjectMultiWindow(t *testing.T) {
 
 	t.Run("document without a body tag is unchanged", func(t *testing.T) {
 		in := []byte(`{"json":true}`)
-		assert.Equal(t, in, injectMultiWindow(in))
+		assert.Equal(t, in, injectMultiWindow(in, ""))
 	})
 
 	t.Run("uses the last body tag", func(t *testing.T) {
-		out := string(injectMultiWindow([]byte("<body>a</body><!-- </body> -->")))
+		out := string(injectMultiWindow([]byte("<body>a</body><!-- </body> -->"), ""))
 		assert.Equal(t, 1, strings.Count(out, "main.Desktop.OpenWindow"))
 	})
 }
@@ -178,4 +178,24 @@ func TestWindowNamesAreUnique(t *testing.T) {
 		require.False(t, seen[name], "duplicate window name %s", name)
 		seen[name] = true
 	}
+}
+
+// A project served under /p/<id>/ must tell the SPA its base, or every
+// root-absolute API call lands on the active project instead.
+func TestInjectMultiWindow_DeclaresBase(t *testing.T) {
+	t.Run("prefixed project emits a base tag", func(t *testing.T) {
+		out := string(injectMultiWindow([]byte("<html><body>app</body></html>"), "/p/abc123"))
+		assert.Contains(t, out, `<meta name="rela-base" content="/p/abc123/">`,
+			"base must carry a trailing slash so relative joins work")
+	})
+
+	t.Run("active project at the root emits no base tag", func(t *testing.T) {
+		out := string(injectMultiWindow([]byte("<html><body>app</body></html>"), ""))
+		assert.NotContains(t, out, "rela-base")
+	})
+
+	t.Run("base is escaped", func(t *testing.T) {
+		out := string(injectMultiWindow([]byte("<html><body>a</body></html>"), `/p/a"><script>x`))
+		assert.NotContains(t, out, `"><script>x`, "a crafted id must not break out of the attribute")
+	})
 }
