@@ -57,7 +57,35 @@ func NewEvaluatorWithClock(meta *metamodel.Metamodel, now func() time.Time) *Eva
 // funcs) — no current_user / has_role (deferred). A compile error is
 // returned to the caller (surface it once, at load/flag-parse time).
 func (e *Evaluator) Compile(entityType, source string) (*predicate.Program, error) {
-	key := entityType + "\x00" + source
+	return e.compile(entityType, source, false)
+}
+
+// CompileWithCurrentUser is [Evaluator.Compile] for a REQUEST-SCOPED
+// surface: the Env additionally carries current_user and its sugar (see
+// [DeclareCurrentUser]), so `is_current_user(entity.assignee)` compiles.
+//
+// It is a separate entry point rather than a flag on Compile because the
+// two profiles must not be confused at a call site. A program compiled
+// here REQUIRES an identity to evaluate — [Evaluator.MatchesAs] returns
+// [ErrNoCurrentUser] without one — so only a caller that can guarantee a
+// resolved principal may use it. Everything compiled through Compile
+// stays principal-free and evaluable with context.Background(), which is
+// what internal/validation does.
+func (e *Evaluator) CompileWithCurrentUser(entityType, source string) (*predicate.Program, error) {
+	return e.compile(entityType, source, true)
+}
+
+func (e *Evaluator) compile(entityType, source string, withUser bool) (*predicate.Program, error) {
+	// The profile is part of the cache key. Without it the two Envs would
+	// collide: whichever spelling compiled first would be served to the
+	// other, so a validation rule could silently receive a Program that
+	// expects a current_user binding it will never get (or vice versa,
+	// masking the load error that is the whole point of the split).
+	profile := "base"
+	if withUser {
+		profile = "user"
+	}
+	key := profile + "\x00" + entityType + "\x00" + source
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if prog, ok := e.cache[key]; ok {
@@ -73,6 +101,11 @@ func (e *Evaluator) Compile(entityType, source string) (*predicate.Program, erro
 	}
 	if err := Declare(env); err != nil {
 		return nil, err
+	}
+	if withUser {
+		if err := DeclareCurrentUser(env); err != nil {
+			return nil, err
+		}
 	}
 	prog, err := predicate.Compile(env, source)
 	if err != nil {
@@ -105,6 +138,33 @@ func (e *Evaluator) CompileFilter(entityType string, filters []*filter.Filter) (
 func (e *Evaluator) Matches(
 	ctx context.Context, prog *predicate.Program, entityType, id string, props map[string]any,
 ) (bool, error) {
+	return e.matches(ctx, prog, entityType, id, props, false)
+}
+
+// MatchesAs evaluates a Program compiled by [Evaluator.CompileWithCurrentUser],
+// binding the query identity carried by ctx (see [WithQueryIdentity]).
+//
+// The identity is bound only when the program needs it (see
+// [RequiresCurrentUser]); a condition that never mentions the current
+// user evaluates exactly as [Evaluator.Matches] would, so one
+// request-scoped matcher serves both kinds without the caller telling
+// them apart.
+//
+// Returns [ErrNoCurrentUser] if the program needs an identity and ctx
+// carries none. That is a hard failure rather than a non-match: a caller
+// that reached this point has already accepted a condition referencing
+// the current user, and the honest outcomes are "the right rows" or "an
+// error" — never "somebody else's rows".
+func (e *Evaluator) MatchesAs(
+	ctx context.Context, prog *predicate.Program, entityType, id string, props map[string]any,
+) (bool, error) {
+	return e.matches(ctx, prog, entityType, id, props, true)
+}
+
+func (e *Evaluator) matches(
+	ctx context.Context, prog *predicate.Program, entityType, id string,
+	props map[string]any, withUser bool,
+) (bool, error) {
 	def, ok := e.meta.GetEntityDef(entityType)
 	if !ok {
 		return false, fmt.Errorf("predicatefns: unknown entity type %q", entityType)
@@ -115,6 +175,11 @@ func (e *Evaluator) Matches(
 	}
 	if err := Bind(b, e.now()); err != nil {
 		return false, err
+	}
+	if withUser && RequiresCurrentUser(prog) {
+		if err := BindCurrentUser(ctx, b); err != nil {
+			return false, err
+		}
 	}
 	v, err := prog.Eval(ctx, b)
 	if err != nil {

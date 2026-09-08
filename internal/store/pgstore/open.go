@@ -27,11 +27,10 @@ func Open(ctx context.Context, dsn string) (store.Store, search.Searcher, io.Clo
 		// ParseConfig parses (not connects); pgx redacts the password in errors.
 		return nil, nil, nil, fmt.Errorf("parse database DSN: %w", err)
 	}
-	// Attach the query tracer only when slog Debug is enabled. Avoids
-	// the per-query context-value alloc in production where Debug is off.
-	if debugEnabled(ctx) {
-		cfg.ConnConfig.Tracer = debugQueryTracer{}
-	}
+	// The tracer is always attached; it decides per statement whether to
+	// account (stats on the context) or log (Debug enabled) and otherwise
+	// costs one context lookup. See queryTracer.
+	cfg.ConnConfig.Tracer = queryTracer{}
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("connect to database: %w", err)

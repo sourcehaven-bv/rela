@@ -32,7 +32,7 @@ func TestNewServer_RejectsIncompleteDeps(t *testing.T) {
 	withPrincipal := WithPrincipal(principal.Principal{User: "test", Tool: principal.ToolMCP})
 
 	// makeTestServer builds a complete Deps; reuse it as the baseline.
-	complete := makeTestServer(t).deps
+	complete := makeTestServer(t).deps()
 	if _, err := NewServer(complete, "0.0.0", withPrincipal); err != nil {
 		t.Fatalf("complete Deps should construct: %v", err)
 	}
@@ -51,7 +51,7 @@ func TestNewServer_RejectsIncompleteDeps(t *testing.T) {
 	for field, zero := range mutators {
 		t.Run(field, func(t *testing.T) {
 			t.Parallel()
-			deps := makeTestServer(t).deps
+			deps := makeTestServer(t).deps()
 			zero(&deps)
 			if _, err := NewServer(deps, "0.0.0", withPrincipal); err == nil {
 				t.Fatalf("expected error when %s is zero", field)

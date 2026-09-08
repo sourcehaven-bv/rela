@@ -2,9 +2,11 @@ package appbuild
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -67,6 +69,23 @@ type TransitionWiring struct {
 	Enforcer *statemachine.Set
 	Guard    statemachine.Guard
 	Graph    statemachine.GraphLookup
+
+	// ReadGate and Visibility are the COPY path's two read gates. They live
+	// here rather than beside the copy code because they share this bundle's
+	// single job: give every wiring site one way to build the collaborators,
+	// so a site cannot silently omit one.
+	//
+	// They were previously assembled inline in buildEntityManager and
+	// hand-copied into the test fixture, which is how the fixture came to
+	// pass a policy-backed ACL with both gates nil — the exact
+	// forgotten-wiring state entitymanager.New now refuses (#1437).
+	//
+	// Nil: never — CompileTransitions always populates both. Their POSTURE
+	// follows resolvedACL (inert without a policy, fail-closed with one),
+	// which is what keeps the no-policy CLI case working without leaving a
+	// nil for a wiring site to inherit by accident.
+	ReadGate   entitymanager.CopyReadGate
+	Visibility entitymanager.CopyReader
 }
 
 // CompileTransitions builds the executable state machines from the metamodel
@@ -84,11 +103,20 @@ func CompileTransitions(meta *metamodel.Metamodel, st store.Store, resolvedACL a
 	if err != nil {
 		return TransitionWiring{}, err
 	}
-	_, policyActive := resolvedACL.(*acl.Declarative)
+	declarative, policyActive := resolvedACL.(*acl.Declarative)
+	// The cross-entity copy reads its source through the caller's FIELD
+	// redaction too — the same redactor the API read path uses, so a
+	// `visible:`-hidden property cannot travel into a new entity.
+	copyRedactor, err := buildFieldRedactor(meta, st, declarative)
+	if err != nil {
+		return TransitionWiring{}, fmt.Errorf("copy redactor: %w", err)
+	}
 	return TransitionWiring{
-		Enforcer: set,
-		Guard:    transitionGuard{policyActive: policyActive},
-		Graph:    transitionGraph{st: st},
+		Enforcer:   set,
+		Guard:      transitionGuard{policyActive: policyActive},
+		Graph:      transitionGraph{st: st},
+		ReadGate:   copyReadGate{policyActive: policyActive},
+		Visibility: copyVisibility{st: st, redact: copyRedactor, policyActive: policyActive},
 	}, nil
 }
 

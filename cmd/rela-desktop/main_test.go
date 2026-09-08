@@ -1,14 +1,19 @@
 package main
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 
+	"github.com/Sourcehaven-BV/rela/internal/desktop"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
@@ -281,5 +286,223 @@ func TestGenerateDataEntryConfig_YAMLSpecialChars(t *testing.T) {
 		}
 		// Sorted alphabetically by the generator.
 		assert.ElementsMatch(t, []string{`back\slash`, "newline\nprop", "tab\tprop"}, propNames)
+	}
+}
+
+// TestProjectDirFromArgs covers argv parsing for a second instance launch.
+// The second process's cwd — not this one's — anchors a relative -project.
+func TestProjectDirFromArgs(t *testing.T) {
+	tmpDir := t.TempDir()
+	proj := filepath.Join(tmpDir, "myproject")
+	require.NoError(t, os.MkdirAll(proj, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(proj, "schema.yaml"), []byte("entities: {}"), 0o644))
+
+	notProj := filepath.Join(tmpDir, "notaproject")
+	require.NoError(t, os.MkdirAll(notProj, 0o755))
+
+	tests := []struct {
+		name       string
+		args       []string
+		workingDir string
+		want       string
+	}{
+		{
+			name: "no args",
+			args: []string{"rela-desktop"},
+			want: "",
+		},
+		{
+			name: "separate value, absolute",
+			args: []string{"rela-desktop", "-project", proj},
+			want: proj,
+		},
+		{
+			name: "double dash form",
+			args: []string{"rela-desktop", "--project", proj},
+			want: proj,
+		},
+		{
+			name: "equals form",
+			args: []string{"rela-desktop", "-project=" + proj},
+			want: proj,
+		},
+		{
+			name: "double dash equals form",
+			args: []string{"rela-desktop", "--project=" + proj},
+			want: proj,
+		},
+		{
+			name:       "relative resolves against the second instance's cwd",
+			args:       []string{"rela-desktop", "-project", "myproject"},
+			workingDir: tmpDir,
+			want:       proj,
+		},
+		{
+			name:       "dot resolves to the launching cwd",
+			args:       []string{"rela-desktop", "-project", "."},
+			workingDir: proj,
+			want:       proj,
+		},
+		{
+			name: "directory that is not a rela project is ignored",
+			args: []string{"rela-desktop", "-project", notProj},
+			want: "",
+		},
+		{
+			name: "flag with no value is ignored",
+			args: []string{"rela-desktop", "-project"},
+			want: "",
+		},
+		{
+			name: "unrelated flags are ignored",
+			args: []string{"rela-desktop", "-verbose"},
+			want: "",
+		},
+		{
+			name: "last occurrence wins",
+			args: []string{"rela-desktop", "-project", notProj, "-project", proj},
+			want: proj,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := projectDirFromArgs(tc.args, tc.workingDir)
+			// Symlinked temp dirs (/var vs /private/var on macOS) make a raw
+			// string compare flaky; compare resolved paths instead.
+			if tc.want == "" {
+				require.Empty(t, got)
+				return
+			}
+			require.NotEmpty(t, got)
+			wantEval, err := filepath.EvalSymlinks(tc.want)
+			require.NoError(t, err)
+			gotEval, err := filepath.EvalSymlinks(got)
+			require.NoError(t, err)
+			require.Equal(t, wantEval, gotEval)
+		})
+	}
+}
+
+// The Desktop struct IS the Wails asset-server handler: every SPA asset and
+// every API call reaches the Go router through this one method. These tests
+// pin that seam without needing a webview, so a regression in the v3 asset
+// wiring is caught in CI rather than by launching the app.
+func TestDesktopServeHTTP_WelcomePageWhenNoProject(t *testing.T) {
+	d := &Desktop{prefs: &desktop.Preferences{}}
+
+	rec := httptest.NewRecorder()
+	d.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", http.NoBody))
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	body := rec.Body.String()
+	assert.Contains(t, body, "Rela Desktop", "should be the welcome page")
+	assert.Contains(t, body, "Open Project", "welcome page must offer a project picker")
+}
+
+// A failed load must surface its error on the welcome page rather than
+// silently showing an empty picker.
+func TestDesktopServeHTTP_ShowsLoadError(t *testing.T) {
+	d := &Desktop{prefs: &desktop.Preferences{}, loadErr: "sentinel-load-failure"}
+
+	rec := httptest.NewRecorder()
+	d.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", http.NoBody))
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Contains(t, rec.Body.String(), "sentinel-load-failure")
+}
+
+// Once a project is loaded, every request must be delegated to the project
+// router — including API paths, which is what the SPA actually talks to.
+func TestDesktopServeHTTP_DelegatesToProjectHandler(t *testing.T) {
+	var gotPath string
+	d := &Desktop{
+		prefs: &desktop.Preferences{},
+		handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			gotPath = r.URL.Path
+			w.WriteHeader(http.StatusTeapot)
+		}),
+	}
+
+	for _, path := range []string{"/", "/api/v1/entities", "/assets/app.js"} {
+		t.Run(path, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			d.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, http.NoBody))
+
+			assert.Equal(t, http.StatusTeapot, rec.Code, "must reach the project handler")
+			assert.Equal(t, path, gotPath, "path must be passed through unchanged")
+		})
+	}
+}
+
+// The welcome page drives the Go backend through window.go.main.Desktop, which
+// Wails v2 injected and v3 does not. The page carries a shim rebuilding that
+// namespace over the v3 runtime; if the shim or a method name is dropped, the
+// buttons silently stop working. Assert both the shim and every method it
+// exposes are actually bound on Desktop.
+func TestWelcomePageBindingsExist(t *testing.T) {
+	rec := httptest.NewRecorder()
+	serveWelcomePage(rec, &desktop.Preferences{}, "")
+	page := rec.Body.String()
+
+	// Assert on the executable line, not the surrounding comment: window._wails
+	// is a real object (flags + invoke) that does NOT carry Call, so reaching
+	// for it fails silently at runtime. Matching prose would pass either way.
+	require.Contains(t, page, `src="/wails/runtime.js"`,
+		"v3 does not inject its runtime; the page must request it or window.wails is undefined")
+	assert.Less(t, strings.Index(page, "/wails/runtime.js"), strings.Index(page, "window.go.main.Desktop"),
+		"the runtime must load before the shim that uses it")
+
+	require.Contains(t, page, "function rt() { return window.wails && window.wails.Call",
+		"the runtime accessor must read window.wails; window._wails has no Call")
+
+	// Every method the page invokes must exist on *Desktop.
+	for _, method := range []string{
+		"OpenProject", "OpenRecentProject", "GetSetupInfo",
+		"GenerateDataEntryConfig", "GetDefaultCloneDir", "PickCloneDirectory",
+		"HasGitHubToken", "CloneProject", "OpenClonedProject",
+		"InitRelaProject", "StartGitHubAuth", "CompleteGitHubAuth",
+	} {
+		t.Run(method, func(t *testing.T) {
+			assert.Contains(t, page, "Desktop."+method,
+				"welcome page should call Desktop.%s", method)
+			_, ok := reflect.TypeFor[*Desktop]().MethodByName(method)
+			assert.True(t, ok, "Desktop must expose bound method %s", method)
+		})
+	}
+}
+
+// The open panel accepts files as well as directories, because a .rela bundle
+// is a package and so classifies as a file. A selection may therefore be a
+// file inside a project rather than the project itself.
+func TestProjectRootOf(t *testing.T) {
+	tmp := t.TempDir()
+
+	proj := filepath.Join(tmp, "myproject")
+	require.NoError(t, os.MkdirAll(proj, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(proj, "schema.yaml"), []byte("entities: {}"), 0o644))
+
+	bundle := filepath.Join(tmp, "bundle.rela")
+	require.NoError(t, os.MkdirAll(bundle, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(bundle, "schema.yaml"), []byte("entities: {}"), 0o644))
+
+	loose := filepath.Join(tmp, "loose.txt")
+	require.NoError(t, os.WriteFile(loose, []byte("x"), 0o644))
+
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"a project directory is unchanged", proj, proj},
+		{"a .rela bundle is unchanged", bundle, bundle},
+		{"a file inside a project resolves to the project", filepath.Join(proj, "schema.yaml"), proj},
+		{"a file outside any project is unchanged", loose, loose},
+		{"a non-project directory is unchanged", tmp, tmp},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, projectRootOf(tc.in))
+		})
 	}
 }

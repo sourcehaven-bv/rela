@@ -50,6 +50,22 @@ func (er entityReader) getEntity(ctx context.Context, id string) (*entity.Entity
 	return e, true
 }
 
+// getEntityRef looks up the ROW an address names: the bare face for a bare
+// id, the named state for `ID@face`.
+//
+// The write handlers used to hand the raw path segment to getEntity, which
+// works on fsstore and memstore only because their index key IS the state
+// reference (FormatStateRef), and never on pgstore, whose lookup is by
+// (id, face) column. Parsing the address and asking for the state by name
+// is the backend-independent spelling.
+func (er entityReader) getEntityRef(ctx context.Context, ref entityRef) (*entity.Entity, bool) {
+	e, err := er.store.GetEntityState(ctx, ref.ID, ref.Face)
+	if err != nil {
+		return nil, false
+	}
+	return e, true
+}
+
 // entityType returns the type of the entity with the given ID, or empty
 // string if it can't be resolved. The relation GET handlers call it on a
 // relation endpoint's ID to emit a `type` field per edge, so SPA clients can
@@ -80,6 +96,45 @@ func (er entityReader) outgoingRelations(ctx context.Context, id string) []*enti
 // as outgoingRelations.
 func (er entityReader) incomingRelations(ctx context.Context, id string) []*entity.Relation {
 	return er.relations(ctx, id, store.DirectionIncoming)
+}
+
+// pageRelations loads every edge touching any of entities in ONE query and
+// splits them per row: outgoing[i] holds the edges whose source is
+// entities[i], incoming[i] those whose target is. Index-aligned with
+// entities; a row with no edges keeps a nil entry. An edge between two page
+// rows appears in both rows' slices, once each — the same result the former
+// per-row outgoing+incoming pair produced (TKT-1U8XYN).
+func (er entityReader) pageRelations(
+	ctx context.Context, entities []*entity.Entity,
+) (outgoing, incoming [][]*entity.Relation) {
+	outgoing = make([][]*entity.Relation, len(entities))
+	incoming = make([][]*entity.Relation, len(entities))
+	if len(entities) == 0 {
+		return outgoing, incoming
+	}
+	rowIdx := make(map[string]int, len(entities))
+	ids := make([]string, 0, len(entities))
+	for i, e := range entities {
+		if _, dup := rowIdx[e.ID]; dup {
+			continue
+		}
+		rowIdx[e.ID] = i
+		ids = append(ids, e.ID)
+	}
+	rels, err := listRelationsCtx(ctx, er.store, store.RelationQuery{EntityIDs: ids, Direction: store.DirectionBoth})
+	if err != nil {
+		slog.Warn("dataentry: entityReader: listing page relations failed; result truncated",
+			"rows", len(ids), "err", err)
+	}
+	for _, r := range rels {
+		if i, ok := rowIdx[r.From]; ok {
+			outgoing[i] = append(outgoing[i], r)
+		}
+		if i, ok := rowIdx[r.To]; ok {
+			incoming[i] = append(incoming[i], r)
+		}
+	}
+	return outgoing, incoming
 }
 
 func (er entityReader) relations(ctx context.Context, id string, dir store.Direction) []*entity.Relation {

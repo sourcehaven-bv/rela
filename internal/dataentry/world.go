@@ -307,6 +307,76 @@ func worldCapablePath(path string) bool {
 		!strings.Contains(trimmed, "/_")
 }
 
+// refuseWorldConfigError writes the 400 for a malformed or undeclared
+// `?world=` and reports true, or reports false for every other outcome.
+//
+// The two it handles are CONFIG errors: they are true of a request on any
+// route, for any principal, and are settled without consulting the grant. That
+// is why they come first — and why they must not be shadowed by the
+// route-capability 422 that follows. An operator who typos a world name is
+// better served by `no world named "pubished" is declared` than by a refusal
+// telling them the route cannot serve worlds at all, especially since a typo
+// is likeliest on the routes they are experimenting with.
+//
+// Nil: `err` is accepted — a nil or unrelated error reports false, which is
+// what makes this usable as a guard rather than an arm of a switch.
+func refuseWorldConfigError(w http.ResponseWriter, r *http.Request, requested string, err error) bool {
+	switch {
+	case errors.Is(err, errWorldDuplicated):
+		writeV1Error(w, r, http.StatusBadRequest, "duplicate_world",
+			"more than one ?world= parameter", "pass it exactly once")
+		return true
+	case errors.Is(err, errWorldUnknown):
+		// A config name, not a secret: name it. See resolveWorld.
+		writeV1Error(w, r, http.StatusBadRequest, "unknown_world",
+			fmt.Sprintf("no world named %q is declared", requested),
+			"check the `worlds:` block in schema.yaml")
+		return true
+	}
+	return false
+}
+
+// refuseWorldIncapablePath writes the `world_unsupported` 422 and reports true
+// when `requested` names a non-default world on a route [worldCapablePath]
+// refuses. It reports false — write nothing, carry on — for the default world
+// or a capable route.
+//
+// # Why this is decided BEFORE the grant check's outcome
+//
+// Whether a route can serve a non-default world is a property of the ROUTE. It
+// does not depend on the principal, and it must not be allowed to: this check
+// used to live inside `if !handle.isDefault()`, downstream of [resolveWorld],
+// where a DENIED world never reached it. `errWorldDenied` short-circuits
+// straight to the handler so the ordinary empty result renders — so a
+// principal WITHOUT the world grant sailed past a refusal that a principal
+// WITH it received, and landed on a world-blind route that answered with full
+// DEFAULT-world content (BUG-CV8L3B, confirmed on `_analyze`).
+//
+// That disclosed content the world exists to withhold, and made the two grant
+// outcomes distinguishable — the oracle [resolveWorld] rules out. Deciding on
+// the requested name closes both: permitted and denied reach this refusal
+// identically, so it cannot itself become an oracle, and a denied handle flows
+// only into routes that are world-scoped and tested.
+//
+// Keyed on the NAME rather than a resolved handle deliberately. A denied
+// handle carries the ZERO scope, and a zero scope IS the default world, so
+// `handle.isDefault()` cannot distinguish "no world asked for" from "a world
+// asked for and refused" — the same trap [queryService.freeTextIDsForType]
+// documents at its own seam. That is also why the empty name passes through:
+// `?world=` is explicit but means the default world.
+func refuseWorldIncapablePath(w http.ResponseWriter, r *http.Request, requested string) bool {
+	if requested == "" || requested == defaultWorldName {
+		return false
+	}
+	if worldCapablePath(r.URL.Path) {
+		return false
+	}
+	writeV1Error(w, r, http.StatusUnprocessableEntity, "world_unsupported",
+		errWorldUnsupported.Error(),
+		"this endpoint serves the default world only; omit ?world=")
+	return true
+}
+
 // isWorldCapableViewPath matches `_views/{type}/{id}` — the entity view, whose
 // whole read path was world-scoped in TKT-WRLDAPI item 4b.
 //
@@ -452,17 +522,18 @@ func attachWorld(next http.Handler, a *App) http.Handler {
 		if !explicit {
 			requested = configured
 		}
+		// Two guards, then one dispatch. The ORDER is the security property:
+		// both guards answer without consulting the grant, so neither can
+		// distinguish principals, and the arms below — which do consult it —
+		// cannot reach a route a permitted world would have been refused on.
+		// See [refuseWorldIncapablePath].
+		if refuseWorldConfigError(w, r, requested, err) {
+			return
+		}
+		if refuseWorldIncapablePath(w, r, requested) {
+			return
+		}
 		switch {
-		case errors.Is(err, errWorldDuplicated):
-			writeV1Error(w, r, http.StatusBadRequest, "duplicate_world",
-				"more than one ?world= parameter", "pass it exactly once")
-			return
-		case errors.Is(err, errWorldUnknown):
-			// A config name, not a secret: name it. See resolveWorld.
-			writeV1Error(w, r, http.StatusBadRequest, "unknown_world",
-				fmt.Sprintf("no world named %q is declared", requested),
-				"check the `worlds:` block in schema.yaml")
-			return
 		case errors.Is(err, errWorldDenied):
 			// NOT a 403, and NOT a synthetic body either. The request
 			// continues with a handle marked `denied`, so the ORDINARY
@@ -475,6 +546,9 @@ func attachWorld(next http.Handler, a *App) http.Handler {
 			// X-Total-Count, so the bare body announced the denial on the
 			// first byte — turning the thing designed to close an existence
 			// oracle into one.
+			//
+			// Continuing is only safe on a route that can honor a world at
+			// all, which is what the guard above establishes.
 			next.ServeHTTP(w, r.WithContext(withWorld(r.Context(),
 				worldHandle{name: requested, denied: true})))
 			return
@@ -482,36 +556,6 @@ func attachWorld(next http.Handler, a *App) http.Handler {
 			// Infrastructure failure, not a denial.
 			writeGateError(w, r, err)
 			return
-		}
-		if !handle.isDefault() {
-			if !worldCapablePath(r.URL.Path) {
-				writeV1Error(w, r, http.StatusUnprocessableEntity, "world_unsupported",
-					errWorldUnsupported.Error(),
-					"this endpoint serves the default world only; omit ?world=")
-				return
-			}
-			// `?include=` was REFUSED here until TKT-WRLDAPI item 4. It no
-			// longer is: neighbor resolution is world-scoped now, so an
-			// included peer is this world's face of the neighbor and a
-			// neighbor with no face in this world is absent (RULING 12).
-			// The refusal existed because every neighbor read went through
-			// the ungated, default-world entityReader; the world-capable
-			// handlers no longer reach it. Do not restore the refusal
-			// without also reverting worldneighbors.go — a bare refusal
-			// here would leave the resolution built and unreachable.
-			// `?q=` was REFUSED here (world_search_unsupported) until
-			// TKT-9KZGJO step 5. It no longer is: a world IS the search
-			// scope now — search.Query carries a store.WorldScope, both
-			// backends index per face and resolve each entity's prime
-			// before matching, and freeTextIDsForType stamps the request's
-			// world onto the query. A `published`-world search therefore
-			// matches published text and an entity the world excludes has
-			// no face to match at all.
-			//
-			// Do not restore the refusal without also reverting that
-			// threading: a bare refusal here would leave the per-world
-			// index built and unreachable, which is the shape the
-			// `?include=` note above records for neighbor resolution.
 		}
 		next.ServeHTTP(w, r.WithContext(withWorld(r.Context(), handle)))
 	})

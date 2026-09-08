@@ -25,6 +25,7 @@ import { beginOptimistic, rollbackOptimistic, settleOptimistic } from '@/queries
 import { useSchemaStore } from '@/stores/schema'
 import { useUIStore } from '@/stores/ui'
 import { actionAllowed } from '@/utils/affordancesWarning'
+import { entityRef } from '@/utils/entityRef'
 import { useWorld } from '@/composables/useWorld'
 import { renderMarkdown } from '@/utils/markdown'
 import { buildFilterKey, parseWhereClause } from '@/utils/filters'
@@ -58,7 +59,7 @@ const props = defineProps<{ id: string }>()
 const router = useRouter()
 const schemaStore = useSchemaStore()
 const uiStore = useUIStore()
-const { isWorldBound, worldParam } = useWorld()
+const { worldParam } = useWorld()
 const queryCache = useQueryCache()
 
 const config = computed(() => schemaStore.getCalendar(props.id) as CalendarConfig | undefined)
@@ -406,16 +407,12 @@ function goToday() {
   anchor.value = todayIn(timezone.value)
 }
 
-// ANDs in `!isWorldBound`, for the reason KanbanView's canUpdate documents:
-// `_actions` knows nothing about the request's world, and a non-default world
-// is READ-ONLY on this API. The stake is the same as on a board — the write is
-// triggered by a DRAG, so an event that accepts the gesture and animates to a
-// new day has already told the reader their change landed. Since a bare write
-// carries no `?world=`, the server has no parameter to refuse: the reschedule
-// would silently hit the DEFAULT face of an entity the reader is viewing
-// through a world.
+// From `_actions` alone, under every world — the reasoning KanbanView's
+// canUpdate documents. The reschedule writes to the event's ADDRESS
+// (`entityRef`), face included, so the verdict the server computed for the
+// face on screen and the row the drag edits are one and the same.
 function canUpdate(entity: Entity): boolean {
-  return actionAllowed(entity, 'update') && !isWorldBound.value
+  return actionAllowed(entity, 'update')
 }
 
 /**
@@ -455,10 +452,7 @@ function createNew() {
  * unrelated data and hiding a button the user may legitimately use.
  */
 function canCreate(): boolean {
-  // ANDs in the world like canUpdate: a create lands in the default world, so
-  // a "+ New" on a world-bound calendar offers a write this request cannot
-  // carry (the same reasoning KanbanView's canCreate documents).
-  return !!config.value?.create_form && !isWorldBound.value
+  return !!config.value?.create_form
 }
 
 // --- Drag to reschedule ---
@@ -476,7 +470,8 @@ const dragged = ref<{ event: CalendarEvent; from: CalendarDay } | null>(null)
 
 const { mutate: reschedule } = useMutation({
   mutation: ({ event, updates }: { event: CalendarEvent; updates: Record<string, string> }) =>
-    updateEntity(event.entityType, event.entity.id, { properties: updates }),
+    // To the event's ADDRESS, face included — see utils/entityRef.
+    updateEntity(event.entityType, entityRef(event.entity), { properties: updates }),
   onMutate({ event, updates }) {
     return beginOptimistic(
       queryCache,

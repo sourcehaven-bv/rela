@@ -31,11 +31,23 @@ import (
 //     are not a cross-origin channel.)
 //   - form-action 'none' + the iframe sandbox (no allow-top-navigation) block
 //     form-POST and navigation exfiltration.
+//   - script-src/style-src carry NO 'unsafe-inline', so an app's scripts and
+//     styles must be separate files. This is not part of the data boundary —
+//     an app already runs with allow-scripts and could execute anything it
+//     ships. It is defense in depth AGAINST THE APP'S OWN BUGS: if an app
+//     builds DOM from entity data with innerHTML, a <script> smuggled through
+//     that data is blocked here rather than executed. `rela apps new`
+//     scaffolds separate app.css/app.js so a generated app works under this
+//     unchanged (TKT-JO125X); an app author who inlines gets a CSP violation
+//     in the console, not silent breakage of the host.
+//
+// Note this also blocks style="" attributes, which would need 'unsafe-hashes'
+// to permit. Apps use classes instead.
 func appCSP(base string) string {
 	return strings.Join([]string{
 		"default-src 'none'",
-		"script-src " + base + " 'unsafe-inline'",
-		"style-src " + base + " 'unsafe-inline'",
+		"script-src " + base,
+		"style-src " + base,
 		"img-src " + base + " data: blob:",
 		"font-src " + base,
 		"connect-src 'none'",
@@ -141,6 +153,10 @@ func (a *App) handleV1App(w http.ResponseWriter, r *http.Request) {
 		// iframe (re)load. appContentTypes[".js"] is the single source for the
 		// content-type so it can't drift.
 		serveCachedAsset(w, r, appContentTypes[".js"], appEditorJSETag(), appEditorSource())
+		return
+	}
+	if entry == appEditorCSSEntry {
+		serveCachedAsset(w, r, appContentTypes[".css"], appEditorCSSETag(), appEditorCSSSource())
 		return
 	}
 	if entry == appEditorFontEntry {

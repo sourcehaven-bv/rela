@@ -57,9 +57,12 @@ func (s *Services) RunScheduledTemplate(ctx context.Context, name, recipientID s
 	}
 
 	deps := s.ScheduledLuaWriteDeps()
-	model, err := mailtemplate.Build(ctx, s.meta, deps.VisibleReader, tmpl, time.Now())
+	model, contributed, err := mailtemplate.Build(ctx, s.meta, deps.VisibleReader, tmpl, time.Now())
 	if err != nil {
 		return err
+	}
+	if tmpl.RequireVisibleContent && contributed == 0 {
+		return skipEmptyContent(ctx, name, recipientID)
 	}
 	renderer, err := mailrender.New(&mailrender.Options{BaseURL: s.mail.config.BaseURL})
 	if err != nil {
@@ -73,6 +76,27 @@ func (s *Services) RunScheduledTemplate(ctx context.Context, name, recipientID s
 		To:      []mail.Address{{Email: parsed.Address, Name: parsed.Name}},
 		Subject: model.Subject, HTML: html, Text: text, RenderedFor: recipientID,
 	})
+}
+
+// skipEmptyContent records a send suppressed by
+// [mailtemplate.Template.RequireVisibleContent].
+//
+// Info, not Warn: suppression is the operator's configured intent, so nothing
+// is broken and no action is available. It logs at all so an operator asking
+// "why did this recipient get no mail?" can raise the level and find out —
+// distinguishing "no matching data" from "no data this recipient may see".
+//
+// Only the template and recipient are named. What was filtered must never
+// appear here: the whole point is that this recipient may not see it.
+//
+// Returns nil, matching [skipBadAddress] — a suppressed send is a completed
+// job, not a failure. Template child jobs are enqueued RetryBounded
+// (internal/scheduler/foreach.go), so returning an error would re-render on
+// every attempt and never succeed.
+func skipEmptyContent(ctx context.Context, template, recipientID string) error {
+	slog.InfoContext(ctx, "scheduled mail has no visible content; skipping",
+		"template", template, "recipient", recipientID)
+	return nil
 }
 
 func skipBadAddress(ctx context.Context, recipientID, property string) error {

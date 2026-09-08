@@ -1,6 +1,9 @@
 package predicate
 
-import "sort"
+import (
+	"fmt"
+	"sort"
+)
 
 // Program is a compiled predicate, ready for repeated evaluation.
 //
@@ -13,6 +16,8 @@ type Program struct {
 	resultTyp   Type
 	env         *Env
 	attributes  map[string]map[string]struct{}
+	vars        map[string]struct{}
+	funcs       map[string]struct{}
 	sqlPortable bool
 }
 
@@ -33,17 +38,44 @@ func (p *Program) Attributes(recordVar string) []string {
 	return out
 }
 
+// References reports whether the program reads the variable at all —
+// bare (passed whole to a host function) or through an attribute. It is
+// the question a caller asks before deciding whether a binding for it is
+// REQUIRED: a program that never names a variable evaluates identically
+// with or without one.
+func (p *Program) References(varName string) bool {
+	_, ok := p.vars[varName]
+	return ok
+}
+
+// Functions returns the host functions the program calls, sorted. Like
+// [Program.Attributes] it is exact: calls are resolved statically, so a
+// caller can decide from this alone whether the program depends on a
+// binding one of them closes over.
+func (p *Program) Functions() []string {
+	out := make([]string, 0, len(p.funcs))
+	for name := range p.funcs {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // SQLPortable reports whether every node and host function in the program has
 // declared target-neutral semantics suitable for a future SQL lowering.
 func (p *Program) SQLPortable() bool { return p.sqlPortable }
 
 func (p *Program) inspect() {
 	p.attributes = map[string]map[string]struct{}{}
+	p.vars = map[string]struct{}{}
+	p.funcs = map[string]struct{}{}
 	p.sqlPortable = true
 	var visit func(node)
 	visit = func(n node) {
 		switch x := n.(type) {
-		case *constNode, *varNode:
+		case *constNode:
+		case *varNode:
+			p.vars[x.name] = struct{}{}
 		case *attrNode:
 			if v, ok := x.obj.(*varNode); ok {
 				if p.attributes[v.name] == nil {
@@ -53,6 +85,7 @@ func (p *Program) inspect() {
 			}
 			visit(x.obj)
 		case *callNode:
+			p.funcs[x.name] = struct{}{}
 			if sig, ok := p.env.lookupFunc(x.name); !ok || !sig.SQLPortable {
 				p.sqlPortable = false
 			}
@@ -77,6 +110,14 @@ func (p *Program) inspect() {
 		case *concatNode:
 			visit(x.lhs)
 			visit(x.rhs)
+		default:
+			// The node set is sealed (sealedNode), so this is reachable only
+			// from a new node type added without extending this walk. Failing
+			// loudly is the point: References/Functions/Attributes are exact
+			// dependency sets that callers use to decide whether a binding is
+			// REQUIRED, and a node silently skipped here would make a program
+			// look independent of a variable it reads.
+			panic(fmt.Sprintf("predicate: inspect: unhandled node type %T", n))
 		}
 	}
 	visit(p.root)

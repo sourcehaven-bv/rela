@@ -142,6 +142,8 @@ type SectionEntityData struct {
 	// World is the face-provenance of this entity under the view's world
 	// (TKT-WRLDAPI item 4b). Nil under the default world.
 	World *v1.EntityWorld
+	// Self addresses the row, face included — see [v1.ViewEntity.Self].
+	Self string
 }
 
 // SectionColumnData holds a resolved table cell for template rendering.
@@ -161,6 +163,8 @@ type SectionRowData struct {
 	EditFormID string
 	Cells      []SectionColumnData
 	Content    string
+	// Self addresses the row, face included — see [v1.ViewRow.Self].
+	Self string
 }
 
 // GroupData holds a group of rows/entities for grouped table/card display.
@@ -240,11 +244,23 @@ func (h *viewsHandler) buildSectionEntityData(
 		Props:         h.affordances.copyVisibleProperties(ctx, e),
 		FieldVerdicts: h.affordances.computeFieldAffordances(ctx, e),
 		World:         w.provenanceFor(s.Meta, e),
+		Self:          rowSelfHref(s.Meta, e),
 	}
 	for _, f := range secFields {
 		sed.Fields = append(sed.Fields, buildSectionFieldData(f, e, eDef, sectionRender))
 	}
 	return sed
+}
+
+// rowSelfHref is [selfHref] for a collection row, resolving the type's plural
+// from the metamodel. A row whose type the metamodel does not know (a stale
+// stored row) gets no address rather than a made-up one.
+func rowSelfHref(m *metamodel.Metamodel, e *entity.Entity) string {
+	def, ok := m.GetEntityDef(e.Type)
+	if !ok {
+		return ""
+	}
+	return selfHref(def.GetPlural(e.Type), e, m)
 }
 
 // buildSections builds template-ready section data from view sections and a view result.
@@ -292,19 +308,23 @@ func (h *viewsHandler) buildSections(ctx context.Context, sections []ViewSection
 				}
 			case "table":
 				sd.Columns = sec.Columns
+				// Relation columns are resolved for the WHOLE section up front —
+				// one relation query per (column, row type) and one header batch
+				// for every target — instead of one relation query plus one
+				// entity load per row per column (TKT-1U8XYN).
+				relValues := h.resolveRelationColumns(ctx, s, sec.Columns, entities)
 				buildRow := func(e *entity.Entity) SectionRowData {
 					eDef, _ := s.Meta.GetEntityDef(e.Type)
-					row := SectionRowData{EntityID: e.ID, EntityType: e.Type, EditFormID: h.editFormForType(e.Type)}
-					for _, col := range sec.Columns {
+					row := SectionRowData{
+						EntityID: e.ID, EntityType: e.Type, EditFormID: h.editFormForType(e.Type),
+						Self: rowSelfHref(s.Meta, e),
+					}
+					for ci, col := range sec.Columns {
 						cell := SectionColumnData{
 							Link: resolveLinkTarget(col.Link, e.Type, e.ID), EntityID: e.ID, EntityType: e.Type,
 						}
 						if col.Relation != "" {
-							// The row entity's own type anchors the inference: a
-							// section's rows come from a traversal, so the type is
-							// only known per row, not from the section declaration.
-							dir := resolveConfigDirection(s, e.Type, col.Relation, col.Direction)
-							cell.Values = h.resolveRelationColumnValues(ctx, e.ID, col.Relation, dir)
+							cell.Values = relValues[e.ID][ci]
 						} else {
 							var pd metamodel.PropertyDef
 							if eDef != nil {

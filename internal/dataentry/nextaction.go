@@ -38,8 +38,34 @@ import (
 //     Uses the ungated count deliberately: see countCandidates.
 //   - Context -> not reachable from the dashboard; a context-aware source is
 //     resolved against the entity being viewed, which is a later surface.
-func (a *App) nextActionCandidates() nextaction.CandidateFunc {
-	return func(ctx context.Context, src dataentryconfig.NextActionSource) ([]nextaction.Candidate, error) {
+//
+// # The condition rides along with the query
+//
+// A source's `condition:` is evaluated per candidate by the engine (the
+// authoritative pass), but its store-evaluable conjuncts — `entity.assignee ==
+// current_user.id`, the is_current_user / has_current_user sugar, string
+// literals — are ALSO pushed into the candidate query here, through the
+// [ConditionPrefilterer] capability of that source's matcher. That is what
+// turns "tickets assigned to me" from a scan of every ticket into an indexed
+// lookup, and it is sound for the same reason the query's own pushdown is: the
+// store can only ever remove rows the engine's condition pass would also have
+// removed. `meta` and `lookup` are the request's snapshot and matcher lookup,
+// captured once by the caller.
+//
+// `meta` is the SAME snapshot the matchers were compiled against, which is
+// the coherence that matters: the condition's pre-filter and its Go pass must
+// agree on property types. executeQuery gates the QUERY's own pushdown against
+// the read bundle's metamodel, resolved separately; a reload landing between
+// the two can make one request mix snapshots for the two pushdowns, but each
+// pushdown is coherent with its own authoritative pass, and a gate can only
+// decline to push, never widen — so the divergence is tolerated rather than
+// threaded through queryService.
+func (a *App) nextActionCandidates(
+	meta *metamodel.Metamodel, lookup nextaction.MatcherFunc,
+) nextaction.CandidateFunc {
+	return func(
+		ctx context.Context, id string, src dataentryconfig.NextActionSource,
+	) ([]nextaction.Candidate, error) {
 		// The SOURCE world is resolved per source, before any read, and
 		// REPLACES whatever world the request carried. See
 		// nextActionSourceWorld for why the caller's `?world=` must not reach
@@ -57,7 +83,7 @@ func (a *App) nextActionCandidates() nextaction.CandidateFunc {
 		case src.Count != "":
 			return a.countCandidates(ctx, src.Count, src.CountUngated)
 		case src.Query != "":
-			return a.queryCandidates(ctx, src.Query)
+			return a.queryCandidates(ctx, src.Query, nextActionPrefilters(ctx, meta, lookup, id, src))
 		default:
 			// A context-aware source has no dashboard candidates. Not an
 			// error: the same config serves both surfaces, and each ignores
@@ -65,6 +91,60 @@ func (a *App) nextActionCandidates() nextaction.CandidateFunc {
 			return nil, nil
 		}
 	}
+}
+
+// ConditionPrefilterer is the OPTIONAL capability of a next-action
+// [nextaction.Matcher] whose compiled `condition:` can be partly lowered to
+// store predicates.
+//
+// Consumer-side (see docs/architecture/consumer-side-interfaces.md): dataentry
+// declares the one method it needs and the composition root's matcher
+// (appbuild.NextActionMatchers) supplies it. The predicate engine that knows
+// how to do the lowering sits above this package, which is why the method
+// takes the request ctx — the identity `current_user` resolves to is derived
+// from the principal on it by the implementation, and the SAME derivation
+// serves the matcher's Match, so the pre-filter and the authoritative pass
+// can never compare against two different identities.
+//
+// Returned predicates are ANDed into the candidate query. The contract is the
+// one every pushdown in this package carries: they may only remove rows the
+// matcher's Match would also reject. A matcher without this capability simply
+// gets an unpushed query, with the same result. The matcher knows which entity
+// types its condition was compiled against, so it needs no query here.
+//
+// One asymmetry is load-bearing for that contract: the pre-filter compares RAW
+// store values, while Match sees the candidate AFTER field redaction
+// (redactedForSuggestion). That is sound only because redaction REMOVES a
+// hidden property — it binds Nil, and every current-user form is false on Nil —
+// so the Go pass is strictly narrower than the pre-filter, never wider. A
+// change that made a hidden property bind to something truthy, or that ran the
+// condition before redaction, would break this; pinned by
+// TestNextAction_HiddenPropertyMakesCurrentUserConditionFalse.
+type ConditionPrefilterer interface {
+	Prefilters(ctx context.Context, meta *metamodel.Metamodel) []store.PropPredicate
+}
+
+// nextActionPrefilters lowers a source's condition, or returns nil when there
+// is nothing to push: no condition, no matcher wired, or a matcher without the
+// capability.
+//
+// A free function rather than an App method: App is at its plimsoll cap.
+func nextActionPrefilters(
+	ctx context.Context, meta *metamodel.Metamodel, lookup nextaction.MatcherFunc,
+	id string, src dataentryconfig.NextActionSource,
+) []store.PropPredicate {
+	if src.Condition == "" || lookup == nil || meta == nil {
+		return nil
+	}
+	m, ok := lookup(id)
+	if !ok || m == nil {
+		return nil
+	}
+	p, ok := m.(ConditionPrefilterer)
+	if !ok {
+		return nil
+	}
+	return p.Prefilters(ctx, meta)
 }
 
 // nextActionSourceWorld rebinds ctx to the world a source's QUERY runs in,
@@ -213,8 +293,13 @@ func (a *App) nextActionOptions() nextaction.OptionFunc {
 // text. Without this an operator writing `suggest: "{title} needs a look"` on
 // a type whose title is hidden by `visible:` would put the hidden value on
 // the wire — the BUG-R9EHKV leak class, through a new door.
-func (a *App) queryCandidates(ctx context.Context, query string) ([]nextaction.Candidate, error) {
-	entities, err := a.queries.executeQuery(ctx, query)
+//
+// `prefilters` are the condition's store-evaluable conjuncts (see
+// nextActionPrefilters); nil pushes only the query's own filters.
+func (a *App) queryCandidates(
+	ctx context.Context, query string, prefilters []store.PropPredicate,
+) ([]nextaction.Candidate, error) {
+	entities, err := a.queries.executeQueryPrefiltered(ctx, query, prefilters)
 	if err != nil {
 		return nil, fmt.Errorf("next-action query %q: %w", query, err)
 	}
@@ -343,12 +428,29 @@ func (a *App) SetNextActionMatchers(fn NextActionMatcherFunc) error {
 }
 
 // NextActionMatcherFunc compiles the `condition:` of every configured source
-// against the current metamodel, returning a per-source lookup plus one
-// message per problem.
+// against the current metamodel, returning a per-source lookup, the
+// per-request scope binder the matchers evaluate under, and one message per
+// problem.
 //
 // The consumer-side seam for the predicate compiler: this package must not
 // import it (arch-lint keeps the condition/policy engine above the data-entry
 // app), so the composition root supplies an implementation.
+//
+// The scope result is spelled as the bare func type (not [NextActionRequestScope])
+// so a composition root that cannot import this package still satisfies the
+// seam; the named type is the same signature under a name for the handler.
 type NextActionMatcherFunc func(
 	cfg *dataentryconfig.Config, meta *metamodel.Metamodel,
-) (func(sourceID string) (nextaction.Matcher, bool), []string)
+) (func(sourceID string) (nextaction.Matcher, bool), func(context.Context) (context.Context, error), []string)
+
+// NextActionRequestScope binds request-scoped evaluation state — today the
+// identity `current_user` resolves to — onto ctx ONCE per resolve, before the
+// engine runs. Every matcher and pre-filter then reads what it stamped, so a
+// resolve over N candidates derives the identity once, not N times, and the
+// pre-filter and the authoritative pass cannot see two different identities.
+//
+// Nil: accepted — a compiler with no request-scoped state returns nil and the
+// handler resolves on the request ctx as is. An error is a refusal of the
+// whole request (the binder found the request's identity inconsistent), and
+// the handler reports it rather than resolving without a scope.
+type NextActionRequestScope func(ctx context.Context) (context.Context, error)

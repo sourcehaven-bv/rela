@@ -13,8 +13,10 @@ package graphquerynaive
 
 import (
 	"context"
+	"fmt"
 	"iter"
 	"slices"
+	"sort"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -55,6 +57,8 @@ func Run(ctx context.Context, r Reader, q store.GraphQuery) iter.Seq2[*entity.En
 			yield(nil, err)
 			return
 		}
+		paged := len(q.OrderBy) > 0 || q.Limit > 0 || q.Offset > 0
+		var matched []*entity.Entity
 		for _, e := range candidates {
 			ok, err := matches(ctx, r, e, q)
 			if err != nil {
@@ -63,13 +67,90 @@ func Run(ctx context.Context, r Reader, q store.GraphQuery) iter.Seq2[*entity.En
 				}
 				continue
 			}
-			if ok {
+			if !ok {
+				continue
+			}
+			if !paged {
 				if !yield(e, nil) {
 					return
 				}
+				continue
+			}
+			matched = append(matched, e)
+		}
+		if !paged {
+			return
+		}
+		// Ordering and paging apply to the matched set as a whole, so they
+		// wait until every candidate has been judged.
+		Order(matched, q.OrderBy)
+		for _, e := range Page(matched, q.Offset, q.Limit) {
+			if !yield(e, nil) {
+				return
 			}
 		}
 	}
+}
+
+// Order sorts rows in place by specs with GraphQuery.OrderBy's semantics:
+// byte-wise on each property's string form, a row missing the property
+// sorting as the largest value (last ascending, first descending — SQL's
+// default null placement), id ascending as the final tiebreak. A stable
+// sort, so equal keys keep store order.
+func Order(rows []*entity.Entity, specs []store.OrderSpec) {
+	if len(specs) == 0 {
+		return
+	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		for _, spec := range specs {
+			vi, oki := sortValue(rows[i], spec.Property)
+			vj, okj := sortValue(rows[j], spec.Property)
+			if oki != okj {
+				// The present value is smaller than the absent one.
+				return oki != spec.Descending
+			}
+			if !oki {
+				continue
+			}
+			si, sj := fmt.Sprint(vi), fmt.Sprint(vj)
+			if si == sj {
+				continue
+			}
+			if spec.Descending {
+				return si > sj
+			}
+			return si < sj
+		}
+		return rows[i].ID < rows[j].ID
+	})
+}
+
+// sortValue reads a sort key the way SQL's `->>` does: a key that is
+// missing OR holds JSON null is "no value" (SQL NULL, the largest), never
+// the text "<nil>". Without this a null-valued property sorted between
+// dates and absent rows in Go while PostgreSQL put it last.
+func sortValue(e *entity.Entity, property string) (any, bool) {
+	v, ok := e.Properties[property]
+	if !ok || v == nil {
+		return nil, false
+	}
+	return v, true
+}
+
+// Page returns the window rows[offset : offset+limit] (limit 0 = to the
+// end), clamped to the slice.
+func Page[T any](rows []T, offset, limit int) []T {
+	if offset < 0 {
+		offset = 0
+	}
+	if offset >= len(rows) {
+		return nil
+	}
+	end := len(rows)
+	if limit > 0 && offset+limit < end {
+		end = offset + limit
+	}
+	return rows[offset:end]
 }
 
 // Count returns (matched, total) for q against r.
