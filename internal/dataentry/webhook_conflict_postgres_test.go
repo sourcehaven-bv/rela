@@ -278,7 +278,7 @@ func TestWebhookConflict_LoserRefindsAndProceeds(t *testing.T) {
 	//
 	// Driving the real router is the point. The previous version of this test
 	// called st.CreateEntity directly and asserted the store's behaviour, so it
-	// could not observe that the pipeline never recognises the conflict — which
+	// could not observe that the pipeline never recognizes the conflict — which
 	// is exactly the defect it was supposed to guard (RR-HI9QIU / RR-SG8P1N).
 	const deliveries = 8
 	var wg sync.WaitGroup

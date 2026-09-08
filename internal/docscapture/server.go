@@ -154,7 +154,7 @@ func standUp(ctx context.Context, projectDir string, seed []docs.SeedOp, needSPA
 	// can't mutate the fixture; an `edit` goes through the entitymanager, which
 	// is what makes it a real, versioned write (see docs.ApplySeedWith).
 	if serr := docs.ApplySeedWith(seedCtx, svc.Store(), svc.EntityManager(), seed); serr != nil {
-		svc.Close() //nolint:contextcheck // teardown is not request-scoped; Close takes no ctx
+		svc.Close()
 		scratchCleanup()
 		_ = os.RemoveAll(tmp)
 		return nil, fmt.Errorf("seed temp project: %w", serr)
@@ -168,7 +168,7 @@ func standUp(ctx context.Context, projectDir string, seed []docs.SeedOp, needSPA
 		svc.State(),
 	)
 	if err != nil {
-		svc.Close() //nolint:contextcheck // teardown is not request-scoped; Close takes no ctx
+		svc.Close()
 		scratchCleanup()
 		_ = os.RemoveAll(tmp)
 		return nil, fmt.Errorf("build data-entry app: %w", err)
@@ -179,7 +179,7 @@ func standUp(ctx context.Context, projectDir string, seed []docs.SeedOp, needSPA
 	// world-scoped page, which is the thing a worlds manual most needs to show.
 	app.SetWorlds(appbuild.CompiledWorlds(svc))
 	if err := dataentry.SetWorldNeighbors(app, svc.Store(), appbuild.RelationScopes(svc)); err != nil {
-		svc.Close() //nolint:contextcheck // teardown is not request-scoped; Close takes no ctx
+		svc.Close()
 		scratchCleanup()
 		_ = os.RemoveAll(tmp)
 		return nil, fmt.Errorf("wire world neighbors: %w", err)
@@ -193,13 +193,13 @@ func standUp(ctx context.Context, projectDir string, seed []docs.SeedOp, needSPA
 	// the suggestion card would photograph an empty page and a page{} claim
 	// about it would fail for a reason that has nothing to do with worlds.
 	if err := app.SetUserState(svc.UserState()); err != nil {
-		svc.Close() //nolint:contextcheck // teardown is not request-scoped; Close takes no ctx
+		svc.Close()
 		scratchCleanup()
 		_ = os.RemoveAll(tmp)
 		return nil, fmt.Errorf("wire next-action state: %w", err)
 	}
 	if err := app.SetNextActionMatchers(appbuild.NextActionMatchers); err != nil {
-		svc.Close() //nolint:contextcheck // teardown is not request-scoped; Close takes no ctx
+		svc.Close()
 		scratchCleanup()
 		_ = os.RemoveAll(tmp)
 		return nil, fmt.Errorf("wire next-action matchers: %w", err)

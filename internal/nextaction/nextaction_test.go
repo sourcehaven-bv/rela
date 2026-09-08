@@ -34,7 +34,7 @@ func staticCandidates(
 	bySource map[string][]*entity.Entity,
 ) (fn nextaction.CandidateFunc, queriedSuggests *[]string) {
 	var queried []string
-	fn = func(_ context.Context, src dataentryconfig.NextActionSource) ([]nextaction.Candidate, error) {
+	fn = func(_ context.Context, _ string, src dataentryconfig.NextActionSource) ([]nextaction.Candidate, error) {
 		// Identify the source by its Suggest, which the fixtures make unique.
 		queried = append(queried, src.Suggest)
 		var out []nextaction.Candidate
@@ -323,7 +323,7 @@ func TestInterpolation(t *testing.T) {
 			src.Suggest = tc.suggest
 			cfg.NextActions["urgent"] = src
 
-			fn := func(_ context.Context, s dataentryconfig.NextActionSource) ([]nextaction.Candidate, error) {
+			fn := func(_ context.Context, _ string, s dataentryconfig.NextActionSource) ([]nextaction.Candidate, error) {
 				if s.Suggest != tc.suggest {
 					return nil, nil
 				}
@@ -399,7 +399,7 @@ func TestResolve_EntitylessSource(t *testing.T) {
 			"first-run": {Band: "blocking", Count: "client == 0", Suggest: "Start with a client?"},
 		},
 	}
-	fn := func(_ context.Context, _ dataentryconfig.NextActionSource) ([]nextaction.Candidate, error) {
+	fn := func(_ context.Context, _ string, _ dataentryconfig.NextActionSource) ([]nextaction.Candidate, error) {
 		return []nextaction.Candidate{{Entity: nil}}, nil
 	}
 	eng, st := newEngine(t, cfg, fn)

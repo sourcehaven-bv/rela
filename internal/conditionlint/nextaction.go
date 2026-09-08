@@ -26,6 +26,12 @@ type NextActionPrograms map[string]*predicate.Program
 // fail at startup instead of silently suppressing a suggestion forever — the
 // failure mode this whole feature exists to remove.
 //
+// The Env is the REQUEST-SCOPED profile (predicatefns.Evaluator.CompileWithCurrentUser):
+// a next-action resolves for one principal, so a condition may name
+// `current_user` and the `is_current_user` / `has_current_user` sugar. A
+// condition that does so is evaluated only against a request carrying an
+// identity — see [NextActionMatcher.Match].
+//
 // Returns the programs keyed by source id, plus one message per problem. A
 // source with no `condition:` is absent from the result, which the engine
 // reads as "keep every candidate".
@@ -72,7 +78,7 @@ func compileNextActionSource(
 		// only type-checks against one of them would silently drop the
 		// other's candidates. Same rule as the pushdown's
 		// stringComparableOnEveryType: valid everywhere, or refused.
-		prog, err := ev.Compile(t, src.Condition)
+		prog, err := ev.CompileWithCurrentUser(t, src.Condition)
 		if err != nil {
 			problems = append(problems, fmt.Sprintf(
 				"%s: condition does not compile against entity type %q: %v", where, t, err))
@@ -109,6 +115,17 @@ func conditionEntityTypes(src dataentryconfig.NextActionSource) ([]string, error
 			// rather than guessing.
 			return nil, errors.New(
 				"condition requires the query to name at least one entity type (e.g. \"type:task ...\")")
+		}
+		if sq.HasFreeText() {
+			// A free-text query runs through the search index, which caps
+			// hits by relevance BEFORE the engine applies the condition. A
+			// selection predicate after a cap is lossy (a match ranked past
+			// the cut silently never fires) — the very failure the
+			// condition-before-cap rule in internal/nextaction exists to
+			// prevent, so refuse the combination rather than under-report.
+			return nil, errors.New(
+				"condition is not supported with free text in the query " +
+					"(search results are capped before the condition runs); use prop: filters")
 		}
 		return sq.EntityTypes, nil
 	}

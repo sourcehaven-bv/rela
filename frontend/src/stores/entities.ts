@@ -220,11 +220,17 @@ export const useEntitiesStore = defineStore('entities', () => {
   // `site-nl` serves for an entity with no Dutch face. Re-deriving which
   // worlds fall through to the edited face would mean teaching the SPA the
   // resolution rules; dropping them is cheap, and the next read refetches.
+  //
+  // Keyed on the BARE id: a write addressed to `POL-1@published` changes what
+  // every world resolving to that face serves for `POL-1`, so the faced and
+  // the bare entries alike are dropped — every spelling of this entity
+  // except the one the caller is about to overwrite.
   function invalidateEntityWorlds(type: string, id: string) {
     const defaultKey = cacheKey(type, id)
-    const prefix = `${type}:${id}:`
+    const bare = id.includes('@') ? id.slice(0, id.indexOf('@')) : id
+    const prefixes = [`${type}:${bare}:`, `${type}:${bare}@`]
     for (const key of cache.value.keys()) {
-      if (key.startsWith(prefix) && key !== defaultKey) {
+      if (key !== defaultKey && prefixes.some((p) => key.startsWith(p))) {
         cache.value.delete(key)
       }
     }

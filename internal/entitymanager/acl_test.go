@@ -426,7 +426,11 @@ role_relations:
 	}
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		FieldGate: entitymanager.AllowAllFieldGate{},
-		Store:     store, Meta: meta, Templater: nopTemplater{},
+		// Not a copy test: opt out of the copy read gates explicitly, which is
+		// what New requires of a policy-backed Deps (#1437).
+		CopyReadGate:   entitymanager.AllowAllCopyReadGate{},
+		CopyVisibility: allowAllCopyVisibility(t, store),
+		Store:          store, Meta: meta, Templater: nopTemplater{},
 		Audit: sink, ACL: declarative, Transitions: statemachine.EmptySet(),
 	})
 	if err != nil {
@@ -578,7 +582,11 @@ assignments:
 	}
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		FieldGate: entitymanager.AllowAllFieldGate{},
-		Store:     store, Meta: meta, Templater: nopTemplater{},
+		// Not a copy test: opt out of the copy read gates explicitly, which is
+		// what New requires of a policy-backed Deps (#1437).
+		CopyReadGate:   entitymanager.AllowAllCopyReadGate{},
+		CopyVisibility: allowAllCopyVisibility(t, store),
+		Store:          store, Meta: meta, Templater: nopTemplater{},
 		Audit: sink, ACL: declarative, Transitions: statemachine.EmptySet(),
 	})
 	if err != nil {

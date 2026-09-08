@@ -220,7 +220,6 @@ func (r *Registry) Acquire(ctx context.Context, orgID string) (*Lease, error) {
 		res.refs++
 		r.recency.MoveToFront(res.element)
 		r.mu.Unlock()
-		//nolint:contextcheck // teardown is not request-scoped; Services.Close takes no ctx
 		closeServices(t, svc)
 		return &Lease{Tenant: res.tenant, svc: res.svc, registry: r}, nil
 	}
@@ -233,7 +232,6 @@ func (r *Registry) Acquire(ctx context.Context, orgID string) (*Lease, error) {
 	// Eviction must NOT inherit this request's context. The tenant being closed
 	// is a different tenant from the one being served, so canceling the
 	// request must not abandon another tenant's pool half-torn-down.
-	//nolint:contextcheck // teardown is not request-scoped; Services.Close takes no ctx
 	closeAll(evicted)
 	return &Lease{Tenant: t, svc: svc, registry: r}, nil
 }

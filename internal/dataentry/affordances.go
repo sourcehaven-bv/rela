@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -1215,7 +1216,10 @@ func (svc affordanceService) attachEntityAffordances(ctx context.Context, e *ent
 	// are omitted from `_attachments` — otherwise the hidden-field boundary
 	// the rest of the response maintains would leak the file's metadata and a
 	// working download href.
-	attachments := svc.computeAttachments(ctx, e, result.Self, verdicts)
+	// Attachments hang off the ENTITY, not the face — every store keys them
+	// by bare id — so their hrefs are built from the bare address even when
+	// `_self` names a face. A faced href would 404 on the download route.
+	attachments := svc.computeAttachments(ctx, e, bareSelfHref(result.Self), verdicts)
 	result.Attachments = &attachments
 }
 
@@ -1339,7 +1343,16 @@ func (svc affordanceService) computeFaces(
 		// The operator's `label:` when declared, else the coordinate name.
 		// Both are operator-authored config, so neither discloses anything
 		// the schema endpoint does not already serve.
-		out = append(out, v1.Face{Face: stored, Label: metamodel.FaceLabel(m, e.Type, stored)})
+		//
+		// The address is spelled with the DECLARED name so the bare face
+		// gets an explicit form too (`POL-1@draft`), which is what makes it
+		// literal under a world that would otherwise resolve `POL-1` away
+		// from it. A bare face with no declared name has no such spelling.
+		out = append(out, v1.Face{
+			Face:  stored,
+			Label: metamodel.FaceLabel(m, e.Type, stored),
+			Ref:   faceRef(m, e, stored),
+		})
 	}
 	// Sorted by the DECLARED name, not the label: the order must not shuffle
 	// when an operator edits display text, and a label is optional so sorting
@@ -1349,6 +1362,24 @@ func (svc affordanceService) computeFaces(
 			metamodel.DeclaredFace(m, e.Type, out[j].Face)
 	})
 	return out
+}
+
+// bareSelfHref strips the face from a `_self` href (`.../POL-1@published` →
+// `.../POL-1`). Neither a plural nor an id may contain the separator, so the
+// first one is the face's.
+func bareSelfHref(self string) string {
+	return strings.SplitN(self, entityPkg.StateRefSeparator, 2)[0]
+}
+
+// faceRef spells the explicit address of e's face at the stored coordinate:
+// `ID@<declared name>`, or the bare id when the coordinate has no declared
+// name. See [v1.Face.Ref].
+func faceRef(m *metamodel.Metamodel, e *entityPkg.Entity, stored string) string {
+	declared := metamodel.DeclaredFace(m, e.Type, stored)
+	if declared == "" {
+		return e.ID
+	}
+	return e.ID + entityPkg.StateRefSeparator + declared
 }
 
 // copyOffersFunc lists the copy affordances available from one face, as
@@ -1398,7 +1429,36 @@ func (svc affordanceService) computeCopyOffers(
 			TargetFace: o.TargetFace,
 			Allowed:    o.Allowed,
 			Reason:     o.Reason,
+			OnSuccess:  copyOnSuccessWire(o.OnSuccess),
 		})
 	}
 	return out
+}
+
+// copyOnSuccessWire projects a copy's declared follow-through onto the wire,
+// nil when nothing was declared so an undeclared block is omitted rather than
+// sent as an empty object. The landing's default is spelled out as
+// `written`, so a client never infers it from an absent field.
+func copyOnSuccessWire(s metamodel.CopyOnSuccess) *v1.CopyOnSuccess {
+	if s.Message == "" && s.Landing.IsZero() {
+		return nil
+	}
+	// The arms are mutually exclusive by construction — the loader refuses a
+	// landing naming both a world and a face (validateCopyLanding) rather
+	// than resolving it by precedence, and this projection must not quietly
+	// introduce the precedence the loader declined to. So the arms test the
+	// full shape, and an impossible combination falls to `written`.
+	l := s.Landing
+	landing := v1.CopyLanding{Mode: metamodel.LandingWritten}
+	switch {
+	case l.Mode != "":
+		landing.Mode = l.Mode
+	case l.World != "" && l.Face == "":
+		landing.Mode = "world"
+		landing.World = l.World
+	case l.Face != "" && l.World == "":
+		landing.Mode = "face"
+		landing.Face = l.Face
+	}
+	return &v1.CopyOnSuccess{Message: s.Message, Landing: landing}
 }

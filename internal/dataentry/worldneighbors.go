@@ -32,6 +32,11 @@ import (
 // mixed-face bug that reads as correct. Emitting nothing was the honest
 // placeholder; it is not the answer, and RULING 12 closed it.
 //
+// attachWorld refused `?include=` on a world-bound request outright until
+// TKT-WRLDAPI item 4, for that reason. Do not restore that refusal without also
+// reverting this file: a bare refusal would leave the resolution below built
+// and unreachable.
+//
 // # Two reads, not one
 //
 // Resolving a link is TWO steps, and collapsing them is the trap:
