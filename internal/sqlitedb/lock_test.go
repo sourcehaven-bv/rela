@@ -1,13 +1,14 @@
-package sqlitestore_test
+package sqlitedb_test
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
 
-	"github.com/Sourcehaven-BV/rela/internal/store/sqlitestore"
+	"github.com/Sourcehaven-BV/rela/internal/sqlitedb"
 )
 
 // TestSecondOpenIsRefused is the single-writer guarantee (DEC-LFSYNY).
@@ -20,13 +21,13 @@ import (
 func TestSecondOpenIsRefused(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "locked.db")
 
-	first, err := sqlitestore.Open(sqlitestore.Options{Path: path})
+	first, err := sqlitedb.Open(context.Background(), sqlitedb.Options{Path: path})
 	if err != nil {
 		t.Fatalf("first open: %v", err)
 	}
 	defer first.Close()
 
-	_, err = sqlitestore.Open(sqlitestore.Options{Path: path})
+	_, err = sqlitedb.Open(context.Background(), sqlitedb.Options{Path: path})
 	if err == nil {
 		t.Fatal("second open succeeded; the store must refuse a concurrent opener")
 	}
@@ -47,7 +48,7 @@ func TestSecondOpenIsRefused(t *testing.T) {
 func TestLockReleasedOnClose(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "reopen.db")
 
-	first, err := sqlitestore.Open(sqlitestore.Options{Path: path})
+	first, err := sqlitedb.Open(context.Background(), sqlitedb.Options{Path: path})
 	if err != nil {
 		t.Fatalf("first open: %v", err)
 	}
@@ -55,7 +56,7 @@ func TestLockReleasedOnClose(t *testing.T) {
 		t.Fatalf("close: %v", err)
 	}
 
-	second, reopenErr := sqlitestore.Open(sqlitestore.Options{Path: path})
+	second, reopenErr := sqlitedb.Open(context.Background(), sqlitedb.Options{Path: path})
 	if reopenErr != nil {
 		t.Fatalf("reopen after close was refused: %v", reopenErr)
 	}
@@ -66,7 +67,7 @@ func TestLockReleasedOnClose(t *testing.T) {
 // available, so a failure here means either the guard regressed or the test is
 // running somewhere SQLite is genuinely unsafe — both worth failing on.
 func TestWALIsEnabled(t *testing.T) {
-	s, err := sqlitestore.Open(sqlitestore.Options{
+	s, err := sqlitedb.Open(context.Background(), sqlitedb.Options{
 		Path: filepath.Join(t.TempDir(), "wal.db"),
 	})
 	if err != nil {

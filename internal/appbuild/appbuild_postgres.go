@@ -38,7 +38,7 @@ func New(cfg Config, opts ...Option) (*Services, error) {
 	if !ok {
 		return nil, errors.New("appbuild: postgres store does not implement search.VisibleSearcher")
 	}
-	return assemble(base, st, searcher, visible, closer)
+	return assemble(base, st, searcher, visible, closer, nil)
 }
 
 // openBackend delegates pool construction, migration, and store+search wiring

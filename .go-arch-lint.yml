@@ -130,6 +130,11 @@ components:
   graphquerynaive:  { in: internal/store/graphquerynaive }
   pgstore:          { in: internal/store/pgstore }
   sqlitestore:      { in: internal/store/sqlitestore }
+  # Owns the SQLite database FILE — opening, PRAGMAs, the single-writer lock,
+  # the schema ladder. Deliberately NOT under internal/store: a rela database
+  # holds the entity graph AND the operator's config, and neither owns the
+  # other or the file they share. Both are handed the opened handle.
+  sqlitedb:         { in: internal/sqlitedb }
   storeutil:        { in: internal/store/storeutil }
 
   # Project bootstrap utilities
@@ -149,6 +154,9 @@ components:
   secrets:          { in: internal/secrets }
   cache:            { in: internal/cache }
   config:           { in: internal/config }
+  # Serves operator config from a SQL table. A config package, not a storage
+  # one: it touches no entity, relation or graph — just rows keyed by path.
+  configsql:        { in: internal/config/configsql }
   git:              { in: internal/git }
   output:           { in: internal/output }
   project:          { in: internal/project }
@@ -225,8 +233,9 @@ vendors:
   fsnotify:    { in: github.com/fsnotify/fsnotify }
   pgx:         { in: github.com/jackc/pgx/** }
   # modernc.org/sqlite: the pure-Go (no cgo) SQLite driver. Granted ONLY to
-  # sqlitestore, so the default and postgres builds cannot link it — the same
-  # isolation rule pgx and bleve carry.
+  # sqlitedb, which opens the database and registers the driver, so the default
+  # and postgres builds cannot link it — the same isolation rule pgx and bleve
+  # carry.
   sqlite:      { in: modernc.org/sqlite }
   singleflight: { in: golang.org/x/sync/singleflight }
   semaphore:   { in: golang.org/x/sync/semaphore }
@@ -329,7 +338,9 @@ deps:
       - clisync
       - cmdexec
       - config
+      - configsql
       - dataentryconfig
+      - sqlitedb
       - datamigration
       - entitymanager
       - filter
@@ -542,6 +553,12 @@ deps:
   # any tag, so both backends' deps must be allow-listed here.
   appbuild:
     mayDependOn:
+      # The sqlite recipe OPENS the database and hands the same handle to both
+      # the store and the config loader, so it names all three. Owning the file
+      # here is what keeps a store from owning config, or config from owning a
+      # store — they only share a file.
+      - configsql
+      - sqlitedb
       # Mail is optional infrastructure the composition root wires and owns the
       # lifecycle of (start in assemble, stop in Close), exactly like the
       # data-migration GC sweep. Consumers take the mail.Sender seam, not this
@@ -1166,13 +1183,14 @@ deps:
       # should have to justify widening this list.
       - entity
       - graphquerynaive
+      - sqlitedb
       - store
       - storeutil
     canUse:
+      # Only for *sqlite.Error, to tell a constraint violation from any other
+      # failure. Opening the database — and registering the driver — is
+      # sqlitedb's.
       - sqlite
-      # x/sys for flock/LockFileEx: the single-writer sidecar lock. Go's stdlib
-      # exposes no portable advisory file lock.
-      - xsys
   storeutil:
     mayDependOn:
       - store
@@ -1186,6 +1204,18 @@ deps:
   config:
     mayDependOn:
       - storage
+  configsql:
+    # Only config, for the Loader interface it implements. No store, no
+    # metamodel, no driver: it takes a *sql.DB the caller already opened, so
+    # the sqlite driver grant stays with the package that registers it.
+    mayDependOn:
+      - config
+  sqlitedb:
+    canUse:
+      - sqlite
+      # x/sys for flock/LockFileEx: the single-writer sidecar lock. Go's
+      # stdlib exposes no portable advisory file lock.
+      - xsys
   git:
     canUse:
       - gogit

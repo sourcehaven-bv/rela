@@ -1,6 +1,6 @@
 //go:build !windows
 
-package sqlitestore
+package sqlitedb
 
 import (
 	"errors"
