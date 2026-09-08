@@ -257,6 +257,11 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 		panic(exportErr)
 	}
 
+	// Comments handler over the app's current services (mirrors NewApp). The
+	// SERVICE inside stays nil until a test calls SetComments, which is the
+	// "commenting disabled" state the 404 routes depend on.
+	app.comments = newCommentsHandler(app)
+
 	// writeHandler mirrors production wiring (see NewApp): closures for the
 	// swappable acl/audit collaborators, values for the fixed service handles,
 	// and App's shared read/write helpers so both paths stay identical.
@@ -344,7 +349,7 @@ func reseedStore(dst, src store.Store) {
 // Populates the co-derived Schema fields with safe defaults (UserDefaults,
 // Palette, UserPalette, OpenAPIGen) so handlers that touch the
 // less-common fields don't nil-deref in tests that didn't ask for them.
-func newAppFromParts(cfg *Config, meta *metamodel.Metamodel, f *fixture) *App {
+func newAppFromParts(cfg *Config, meta *metamodel.Metamodel, f *fixture, opts ...appbuildtest.Option) *App {
 	app := &App{
 		scriptEngine:  script.NewEngine(),
 		fieldResolver: NopFieldVerdictResolver{},
@@ -358,7 +363,7 @@ func newAppFromParts(cfg *Config, meta *metamodel.Metamodel, f *fixture) *App {
 		fs := storage.NewMemFS()
 		ctx := &project.Context{Root: "/project", CacheDir: "/project/.rela"}
 		_ = fs.MkdirAll(ctx.CacheDir, 0o755)
-		svc := appbuildtest.New(meta, appbuildtest.WithFS(fs, ctx))
+		svc := appbuildtest.New(meta, append([]appbuildtest.Option{appbuildtest.WithFS(fs, ctx)}, opts...)...)
 		rebindApp(app, fs, ctx, svc)
 		seedFromFixture(app.store, f)
 	}

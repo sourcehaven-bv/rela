@@ -1,9 +1,25 @@
+# Go vulnerability scanning lives HERE, not on the PR path.
+#
+# ci.yml used to carry a `Vulnerability Check` job. It only scanned when a PR
+# changed go.mod/go.sum, but the merge queue runs on `merge_group` rather than
+# `pull_request`, which took the unconditional-scan branch. So an advisory
+# published against an existing dependency would pass on the PR (skipped in
+# ~6s), then fail in the queue and dequeue a change that had nothing to do with
+# dependencies. That is what happened to #1520: two x/crypto/ssh advisories,
+# already latent on develop, blocked a path-validation PR twice.
+#
+# A vulnerability in an already-merged dependency is not a defect in the PR that
+# happens to be in flight, so it should not block it. This workflow scans on a
+# schedule and opens an auto-merging fix PR instead — which is also what
+# actually resolves the vulnerability, rather than just reporting it.
 name: Security Scan
 
 on:
   schedule:
-    # Run weekly on Monday at 9:00 UTC
-    - cron: "0 9 * * 1"
+    # Daily at 9:00 UTC. This is now the primary gate on Go vulnerabilities,
+    # so the cadence here is the window in which a newly-published advisory
+    # sits unnoticed. Weekly made that window up to 7 days.
+    - cron: "0 9 * * *"
   workflow_dispatch: # Allow manual trigger
 
 permissions:
@@ -113,7 +129,7 @@ jobs:
           git add go.mod go.sum
           git commit -m "chore(deps): govulncheck auto-update for fixable vulnerabilities
 
-          Automated by the weekly Security Scan workflow. See run:
+          Automated by the daily Security Scan workflow. See run:
           ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           git push -u origin "$BRANCH"
 
@@ -128,7 +144,7 @@ jobs:
             --head "$BRANCH" \
             --title "chore(deps): govulncheck auto-update" \
             --label security,automated,dependencies \
-            --body "Auto-applied \`go get\` updates to resolve vulnerabilities found by the weekly scan. Verified locally that post-update \`govulncheck\` is clean. Enabled auto-merge once CI passes.")
+            --body "Auto-applied \`go get\` updates to resolve vulnerabilities found by the daily scan. Verified locally that post-update \`govulncheck\` is clean. Enabled auto-merge once CI passes.")
 
           gh pr merge "$PR_URL" --auto --squash
 
@@ -148,7 +164,7 @@ jobs:
           LOG=$(tail -c 8000 /tmp/vulncheck.log 2>/dev/null || echo '(no log captured)')
 
           BODY=$(cat <<'BODY_EOF'
-          The weekly `govulncheck` scan found actionable vulnerabilities that the auto-update workflow could not resolve (no upstream fix, or update did not clear the finding).
+          The daily `govulncheck` scan found actionable vulnerabilities that the auto-update workflow could not resolve (no upstream fix, or update did not clear the finding).
 
           Scan run: __RUN_URL__
 
@@ -166,7 +182,7 @@ jobs:
           - If upstream has a fix that the auto-update script missed, upgrade manually.
           - If no fix is available, add the OSV id to `IGNORED_OSVS` in `scripts/govulncheck-filtered.sh` and `scripts/govulncheck-fixable.sh` with a justification and tracking link.
 
-          This issue will be updated by subsequent weekly runs rather than duplicated.
+          This issue will be updated by subsequent daily runs rather than duplicated.
           BODY_EOF
           )
           BODY=${BODY//__RUN_URL__/$RUN_URL}

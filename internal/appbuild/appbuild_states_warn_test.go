@@ -1,9 +1,15 @@
 // The fixtures are hand-written ENTITY FILES, which only the fs-backed
-// build loads — under `-tags postgres` entities live in the database
-// and the on-disk files are never read, so the probe counts zero and
-// the warning legitimately stays silent. The warning logic itself is
-// backend-agnostic (two CountEntities calls); the fs build covers it.
-//go:build !postgres && !memorybackend
+// build loads. Under `-tags postgres` or `-tags sqlite` entities live in
+// the database and the on-disk files are never read, so the probe counts
+// zero and the warning legitimately stays silent. The warning logic itself
+// is backend-agnostic (two CountEntities calls); the fs build covers it.
+//
+// The sqlite exclusion is BUG-LL3C07: the tag was `!postgres`, which swept
+// sqlite in when that backend arrived, and the resulting failure sat on
+// develop unnoticed because CI built the sqlite tag without ever running its
+// tests. Both halves are fixed — the exclusion here, and a CI job that would
+// have caught it.
+//go:build !postgres && !memorybackend && !sqlite
 
 package appbuild_test
 

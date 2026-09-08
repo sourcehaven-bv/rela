@@ -169,7 +169,20 @@ type appEntityWriter interface {
 // the count actually moves, so it is recorded here rather than in either
 // branch.
 //
-//plimsoll:max-methods=87
+// 87 → 88 for SetComments (TKT-FIO205). The commentary routes themselves live
+// on commentsHandler (the exportHandler pattern), so the subsystem cost App
+// exactly one method: the public wiring setter, which belongs here alongside
+// SetCalDAVAliases and SetUserState. Still a ratchet target — see TKT-N0IKN9.
+//
+// SetComments is also App's 21st EXPORTED method, one past the default line of
+// 20. It is a wiring setter in the established shape (SetCalDAVAliases,
+// SetUserState, SetWorlds), and the alternative — reaching into App from
+// appbuild to assign the field — would trade a named seam for a hidden one.
+// The routes themselves are on commentsHandler, so the public surface grew by
+// exactly the one setter. Ratchet target, as above.
+//
+//plimsoll:max-methods=88
+//plimsoll:max-exported-methods=21
 type App struct {
 	// Primitives — immutable after NewApp.
 	fs    storage.FS
@@ -191,7 +204,6 @@ type App struct {
 	// (a collection with no way to remember client-created resources would
 	// duplicate every to-do on the next sync).
 	caldavAliases *caldavalias.Service
-
 	// worlds resolves a `?world=` name to its compiled scope. Nil until
 	// [App.SetWorlds] is called, in which case the App serves the default
 	// world only and refuses any other `?world=` — see world.go.
@@ -208,7 +220,12 @@ type App struct {
 	// `worlds` because the two are injected from different places: the world
 	// LOOKUP is a compiled map, this is a store-backed capability.
 	worldNeighbors *worldNeighbors
-	searcher       search.Searcher
+	// comments owns the commentary routes (TKT-FIO205). Always non-nil; the
+	// SERVICE inside it is nil when the metamodel declares no enabled
+	// `comments:` block, which is the "feature absent" signal — the routes 404
+	// and no storage is touched.
+	comments *commentsHandler
+	searcher search.Searcher
 	// visibleSearcher is the ACL-scoped search seam (TKT-BA8BSX):
 	// executeQuery routes free-text searches through it so /_search
 	// and the _position search scope only ever see hits the request
@@ -1139,6 +1156,11 @@ func NewApp(
 	}
 	app.export = export
 	app.export.probeTransforms()
+
+	// commentsHandler owns the commentary routes, likewise extracted to keep
+	// App under its method cap. Built unconditionally: the SERVICE it wraps is
+	// installed later by SetComments and stays nil when commenting is off.
+	app.comments = newCommentsHandler(app)
 
 	// attachmentHandler owns the entity-attachment routes. Constructed after
 	// the runner wiring above so it captures the resolved runner. The acl/
