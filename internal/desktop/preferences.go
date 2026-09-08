@@ -18,6 +18,11 @@ const (
 	preferencesFile = "preferences.json"
 	// maxRecentProjects is the maximum number of recent projects to keep.
 	maxRecentProjects = 10
+
+	// minWindowDimension rejects degenerate saved geometry (a window collapsed
+	// to a sliver, or a zero value from an older preferences file) that would
+	// otherwise restore as an unusable window.
+	minWindowDimension = 200
 )
 
 // RecentProject records a recently opened project.
@@ -27,12 +32,31 @@ type RecentProject struct {
 	LastOpened time.Time `json:"last_opened"`
 }
 
+// WindowState records the main window's geometry between runs. A zero value
+// means "no saved state" and the caller should fall back to its default size;
+// Valid reports that distinction so callers need not repeat the check.
+type WindowState struct {
+	Width     int  `json:"width"`
+	Height    int  `json:"height"`
+	X         int  `json:"x"`
+	Y         int  `json:"y"`
+	Maximized bool `json:"maximized,omitempty"`
+}
+
+// Valid reports whether the state holds usable dimensions. Position is not
+// checked: a window may legitimately sit at 0,0, and an off-screen position
+// is corrected by the window manager rather than by us.
+func (w WindowState) Valid() bool {
+	return w.Width >= minWindowDimension && w.Height >= minWindowDimension
+}
+
 // Preferences stores desktop application preferences.
 type Preferences struct {
 	LastProject    string          `json:"last_project,omitempty"`
 	RecentProjects []RecentProject `json:"recent_projects"`
 	GitHubToken    string          `json:"github_token,omitempty"`
 	CloneDir       string          `json:"clone_dir,omitempty"` // default directory for cloning
+	Window         WindowState     `json:"window,omitzero"`
 }
 
 // Load reads preferences from the user's config directory.
