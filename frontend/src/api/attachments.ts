@@ -6,9 +6,12 @@
 import axios from 'axios'
 import { getPlural } from './entities'
 import type { Entity } from '@/types'
+import { apiUrl } from './base'
 
 function propertyUrl(entityType: string, entityId: string, property: string): string {
-  return `/api/v1/${getPlural(entityType)}/${encodeURIComponent(entityId)}/_attachments/${encodeURIComponent(property)}`
+  return apiUrl(
+    `/api/v1/${getPlural(entityType)}/${encodeURIComponent(entityId)}/_attachments/${encodeURIComponent(property)}`,
+  )
 }
 
 // AttachmentError carries the HTTP status so callers can distinguish a
