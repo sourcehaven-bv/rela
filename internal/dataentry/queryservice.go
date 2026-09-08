@@ -101,6 +101,31 @@ func newQueryService(app *App) *queryService {
 // pre-TKT-BA8BSX version swallowed both error classes into silently
 // truncated results.
 func (q *queryService) executeQuery(ctx context.Context, query string) ([]*entity.Entity, error) {
+	return q.executeQueryPrefiltered(ctx, query, nil)
+}
+
+// executeQueryPrefiltered is executeQuery with extra store predicates ANDed
+// into the no-free-text branch's pushdown.
+//
+// `extra` is for a caller that will apply a FURTHER authoritative filter of
+// its own over the result — the next-action engine's `condition:` — and has
+// lowered the store-safe part of it (queryplan.ConditionPrefilters). The
+// contract is the same belt-and-braces one as the query's own pushdown: the
+// predicates may only ever remove rows the caller's Go pass would also
+// remove, so the outcome is identical to fetching everything, minus the I/O.
+// Nothing here evaluates them; a caller that passes a predicate it does not
+// also enforce has widened nothing but has narrowed on its own authority.
+//
+// They are ignored on the free-text branch, which runs through the search
+// index rather than a type-scoped store list. That branch is also
+// relevance-CAPPED (maxFreeTextSearchResults) before any caller's pass runs,
+// so a selection predicate over it would be lossy; the only caller with a
+// condition — the next-action engine — is refused a free-text query at load
+// (conditionlint) for exactly that reason, and this comment is the reminder
+// for the next one.
+func (q *queryService) executeQueryPrefiltered(
+	ctx context.Context, query string, extra []store.PropPredicate,
+) ([]*entity.Entity, error) {
 	sq := searchparser.ParseQuery(query)
 	if sq.IsEmpty() {
 		return nil, nil
@@ -142,6 +167,7 @@ func (q *queryService) executeQuery(ctx context.Context, query string) ([]*entit
 		// pre-pushdown behavior — the store can only ever remove rows the Go
 		// pass would also have removed — while still winning the I/O.
 		pushed := pushdownPrefilters(sq.PropertyFilters, svc.Meta, sq.EntityTypes)
+		pushed = append(pushed, extra...)
 		candidates, err = visibleListByTypes(ctx, svc, sq.EntityTypes, scope, pushed)
 	}
 	if err != nil {

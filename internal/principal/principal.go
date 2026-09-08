@@ -496,6 +496,13 @@ func With(ctx context.Context, p Principal) context.Context {
 	return context.WithValue(ctx, principalKey{}, p)
 }
 
+// Unknown is the placeholder user (and tool) for a ctx that carries no
+// identity, and for a transport that could not determine one — the data-entry
+// server without an identity source stamps it explicitly. It is an
+// ATTRIBUTION default, adequate for an audit record; it is not a user, and a
+// consumer comparing an identity against graph data must treat it as absent.
+const Unknown = "unknown"
+
 // From returns the Principal carried by ctx, or
 // Principal{User:"unknown", Tool:"unknown"} if none was stamped.
 // Returning a default rather than panicking keeps downstream consumers
@@ -509,7 +516,7 @@ func From(ctx context.Context) Principal {
 		// consumer mutate what another is about to authorize against.
 		return v.Clone()
 	}
-	return Principal{User: "unknown", Tool: "unknown"}
+	return Principal{User: Unknown, Tool: Unknown}
 }
 
 // Stamped returns the Principal carried by ctx and whether one was actually
@@ -546,7 +553,7 @@ func Stamped(ctx context.Context) (Principal, bool) {
 func SystemUser() string {
 	u := strings.TrimSpace(os.Getenv("USER"))
 	if u == "" {
-		return "unknown"
+		return Unknown
 	}
 	return u
 }

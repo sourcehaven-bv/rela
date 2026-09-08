@@ -1828,10 +1828,67 @@ Rules worth knowing:
   "dew" on record`. A condition that silently matched nothing would be
   indistinguishable from a source with nothing to say.
 - **Not available on a `count` source** — there is no entity to test.
+- **Not available with free text in `query`** (`type:task urgent`). Free-text
+  results are capped by relevance before the condition runs, so a condition
+  matching only a hit past the cut would silently never fire. Select with
+  `prop:` filters instead.
 
 The available functions are the ones automations use: `days_between`,
 `date_add`, `rrule_next`, `today`, plus `match`, `regex`, `contains` and
 `len`. See [metamodel.md](metamodel.md) for their signatures.
+
+##### Per-user sources: `current_user`
+
+A next action resolves for one signed-in person, so a condition may refer to
+them. Three spellings, all meaning the same identity:
+
+```yaml
+next_actions:
+  my-stale-tickets:
+    band: attention
+    query: "type:ticket prop:status=open"
+    condition: "is_current_user(entity.assignee) and days_between(entity.updated, today()) > 14"
+    suggest: "{title} has been yours for two weeks without movement."
+  watching:
+    band: ambient
+    query: "type:ticket prop:status=blocked"
+    condition: "has_current_user(entity.watchers)"
+    suggest: "{title} — something you watch is blocked."
+```
+
+- `entity.assignee == current_user.id` — plain equality against the current
+  user's id.
+- `is_current_user(entity.assignee)` — the same, for a string property. Reads
+  better, and is what to write when the property may be unset (an unset
+  property is simply "not me", never an error).
+- `has_current_user(entity.watchers)` — membership, for a **list** property:
+  true when the current user is one of the values. (Lists cannot be compared
+  with `==`; this is the way to ask.)
+
+`current_user.id` is the user **entity id** when your ACL policy declares a
+`user_entity_type` and the signed-in principal resolves to one of its
+entities, so it compares directly against a property that holds an entity id.
+Without that, it is the raw principal (the header or JWT subject), and the
+property must hold that string instead. `current_user.tool` (`data-entry`,
+`mcp`, …) is available for diagnostics and is never a permission input.
+
+**Fail-closed.** A per-user condition on a request that carries no identity —
+a deployment without an identity source, for example — makes that source
+contribute nothing for the request, with a warning in the server log naming
+the source. It is never evaluated against a placeholder identity, so it can
+never match "everyone's unset rows" or another user's. Other sources are
+unaffected, and a condition that does not mention the current user keeps
+working unauthenticated.
+
+**Pushed to the store.** The current-user forms (and plain string equalities)
+in a top-level `and` chain are lowered into the candidate query as a
+pre-filter, so "tickets assigned to me" is an indexed lookup rather than a scan
+of every ticket. On PostgreSQL the scalar ones (`==`, `is_current_user`) also
+join the derived static-query index for that source; membership
+(`has_current_user`) is pushed but not indexed. Anything under `or`/`not`, or
+a typed comparison, stays Go-side — still correct, just not pre-filtered. The
+full condition is always evaluated per candidate; pushdown only narrows what
+is fetched.
 
 #### `key_props` and re-triggering
 

@@ -46,6 +46,42 @@ func TestStaticIndexSpecsCollectsAndCanonicalizesStaticQueries(t *testing.T) {
 	}
 }
 
+// A next-action condition's pushable equalities join the query's in ONE
+// composite index, because the runtime pushes both into the same store
+// query. Memberships and unpushable shapes contribute no column, and a
+// condition that does not compile contributes nothing at all.
+func TestStaticIndexSpecsIncludeNextActionConditionEqualities(t *testing.T) {
+	t.Parallel()
+	cfg := &dataentryconfig.Config{
+		NextActions: map[string]dataentryconfig.NextActionSource{
+			"mine": {
+				Query:     "type:task prop:status=open",
+				Condition: "is_current_user(entity.owner) and contains(entity.tags, 'x')",
+			},
+			"watched": {
+				Query:     "type:task prop:status=open",
+				Condition: "has_current_user(entity.tags)",
+			},
+			"broken": {
+				Query:     "type:task prop:owner=alice",
+				Condition: "entity.nope == 1",
+			},
+			"ordered": {
+				Query:     "type:task",
+				Condition: "entity.count >= 3 and entity.owner == current_user.id",
+			},
+		},
+	}
+	want := []store.DerivedObjectSpec{
+		{Kind: store.DerivedQueryIndex, Type: "task", Properties: []string{"owner"}},
+		{Kind: store.DerivedQueryIndex, Type: "task", Properties: []string{"owner", "status"}},
+		{Kind: store.DerivedQueryIndex, Type: "task", Properties: []string{"status"}},
+	}
+	if got := StaticIndexSpecs(cfg, testMeta()); !reflect.DeepEqual(got, want) {
+		t.Fatalf("StaticIndexSpecs() = %#v, want %#v", got, want)
+	}
+}
+
 func TestStaticIndexSpecsSkipsUnsupportedShapes(t *testing.T) {
 	t.Parallel()
 	queries := []string{
@@ -72,6 +108,27 @@ func TestLoadStaticIndexSpecsRejectsIncompleteConfig(t *testing.T) {
 	t.Parallel()
 	if got, err := LoadStaticIndexSpecs([]byte("dashboard: ["), testMeta()); err == nil || got != nil {
 		t.Fatalf("LoadStaticIndexSpecs() = %#v, %v; want nil specs and an error", got, err)
+	}
+}
+
+// LoadStaticIndexSpecs must refuse a config whose next-action condition
+// does not compile, exactly as the server does at load — otherwise
+// `rela db reconcile` would converge to a desired set the server never
+// derives.
+func TestLoadStaticIndexSpecsRejectsBrokenCondition(t *testing.T) {
+	t.Parallel()
+	data := []byte(`
+next_action_bands:
+  - id: b
+next_actions:
+  s:
+    band: b
+    query: "type:task prop:status=open"
+    condition: "entity.nope == 1"
+    suggest: "x"
+`)
+	if _, err := LoadStaticIndexSpecs(data, testMeta()); err == nil {
+		t.Fatal("expected an error for a non-compiling condition")
 	}
 }
 
