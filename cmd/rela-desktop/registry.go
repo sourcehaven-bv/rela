@@ -4,8 +4,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
+	"log/slog"
 	"net/http"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 
@@ -202,4 +205,52 @@ func splitProjectPath(p string) (id, rest string, ok bool) {
 		return id, "/", true
 	}
 	return id, "/" + rest, true
+}
+
+// projectsPath is the desktop shell's own endpoint, served ahead of any
+// project's router.
+//
+// It lives here rather than in internal/dataentry because the registry is a
+// property of the shell: rela-server will answer the same question from its
+// own configuration, and dataentry has no business knowing how a host mounts
+// projects.
+const projectsPath = "/api/v1/_projects"
+
+// projectSummary is one entry in the switcher.
+type projectSummary struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Root   string `json:"root"`
+	Href   string `json:"href"`
+	Active bool   `json:"active"`
+}
+
+// serveProjects lists the open projects, most recently opened last, for the
+// switcher to render. Sorted by name so the order does not shift under the
+// user as projects are opened and closed.
+func (d *Desktop) serveProjects(w http.ResponseWriter, _ *http.Request) {
+	all := d.registry.all()
+	active := d.registry.activeProject()
+
+	out := make([]projectSummary, 0, len(all))
+	for _, p := range all {
+		out = append(out, projectSummary{
+			ID:     p.id,
+			Name:   p.name,
+			Root:   p.root,
+			Href:   projectPrefix + p.id + "/",
+			Active: active != nil && active.id == p.id,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Name != out[j].Name {
+			return out[i].Name < out[j].Name
+		}
+		return out[i].ID < out[j].ID // stable when two projects share a name
+	})
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(out); err != nil {
+		slog.Debug("could not write project list", "error", err)
+	}
 }

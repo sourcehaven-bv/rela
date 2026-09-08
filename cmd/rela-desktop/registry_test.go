@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -224,4 +225,54 @@ func TestServeHTTP_DoesNotMutateCallerRequest(t *testing.T) {
 	d.ServeHTTP(httptest.NewRecorder(), req)
 
 	assert.Equal(t, "/p/aaa/list/x", req.URL.Path, "the caller's request must be untouched")
+}
+
+// The switcher asks for the project list, and must get the same answer from
+// any window — including one served under a project prefix.
+func TestServeProjects(t *testing.T) {
+	d := &Desktop{prefs: &desktop.Preferences{}, registry: newProjectRegistry()}
+	d.registry.add(&loadedProject{id: "bbb", root: "/b", name: "Beta"})
+	d.registry.add(&loadedProject{id: "aaa", root: "/a", name: "Alpha"})
+
+	decode := func(t *testing.T, path string) []projectSummary {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		d.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, http.NoBody))
+		require.Equal(t, http.StatusOK, rec.Code)
+		var out []projectSummary
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+		return out
+	}
+
+	t.Run("lists every open project", func(t *testing.T) {
+		got := decode(t, projectsPath)
+		require.Len(t, got, 2)
+		// Sorted by name, so the order does not shift as projects open/close.
+		assert.Equal(t, "Alpha", got[0].Name)
+		assert.Equal(t, "Beta", got[1].Name)
+		assert.Equal(t, "/p/aaa/", got[0].Href)
+	})
+
+	t.Run("marks the active project", func(t *testing.T) {
+		got := decode(t, projectsPath)
+		active := map[string]bool{}
+		for _, p := range got {
+			active[p.ID] = p.Active
+		}
+		// "aaa" was added last, so it is active.
+		assert.True(t, active["aaa"])
+		assert.False(t, active["bbb"])
+	})
+
+	t.Run("reachable from inside a prefixed window", func(t *testing.T) {
+		got := decode(t, "/p/bbb"+projectsPath)
+		assert.Len(t, got, 2, "a switcher in a prefixed window needs the same list")
+	})
+
+	t.Run("empty registry returns an empty list, not null", func(t *testing.T) {
+		empty := &Desktop{prefs: &desktop.Preferences{}, registry: newProjectRegistry()}
+		rec := httptest.NewRecorder()
+		empty.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, projectsPath, http.NoBody))
+		assert.JSONEq(t, "[]", rec.Body.String(), "null would break a .map() in the switcher")
+	})
 }

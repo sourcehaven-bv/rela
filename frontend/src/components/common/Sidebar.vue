@@ -16,6 +16,7 @@ import {
   IconWarning,
 } from '@/utils/icons'
 import NavIcon from './NavIcon.vue'
+import ProjectSwitcher from './ProjectSwitcher.vue'
 import { apiUrl } from '@/api/base'
 
 const schemaStore = useSchemaStore()
@@ -163,6 +164,11 @@ async function handleAction(item: SidebarItem, ev?: Event) {
       <button class="collapse-btn" @click="uiStore.toggleSidebar">
         {{ uiStore.sidebarCollapsed ? '→' : '←' }}
       </button>
+    </div>
+
+    <!-- Only renders when the host has more than one project open. -->
+    <div v-if="!uiStore.sidebarCollapsed" class="sidebar-switcher">
+      <ProjectSwitcher />
     </div>
 
     <!-- Fixed top items: Search and Analysis -->
@@ -354,6 +360,10 @@ async function handleAction(item: SidebarItem, ev?: Event) {
 
 .collapse-btn:hover {
   opacity: 1;
+}
+
+.sidebar-switcher {
+  padding: 0 12px 8px;
 }
 
 .sidebar-top-items {

@@ -865,6 +865,13 @@ func (d *Desktop) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	loadErr := d.loadErr
 	d.mu.RUnlock()
 
+	// The shell's own endpoints answer before any project's router, and from
+	// any window: a switcher in a prefixed window still asks for the list.
+	if p := r.URL.Path; p == projectsPath || strings.HasSuffix(p, projectsPath) {
+		d.serveProjects(w, r)
+		return
+	}
+
 	// A /p/<id>/ request names its project explicitly; anything else is served
 	// by the active one, which is what the welcome page and any window opened
 	// without a prefix expect.
