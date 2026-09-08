@@ -4,8 +4,8 @@ type: automated-measure
 title: 'Test: scheduler e2e waits for the state file, not just the task side effect'
 description: 'Regression for BUG-PRFSTS: the scheduler e2e cases must wait for .rela/scheduler-state.json, the run''s LAST write, before cancelling and returning. Waiting only on the note the task creates lets saveState race t.TempDir cleanup and fail with "directory not empty". Fails as an intermittent teardown error rather than an assertion, so treat any such flake here as this regression.'
 kind: test
-location: internal/appbuild/scheduler_e2e_test.go (TestSchedulerCmd_EndToEnd, schedulerSettled)
-status: proposed
+location: internal/appbuild/scheduler_e2e_test.go (TestSchedulerCmd_EndToEnd, TestScheduler_EndToEnd_RepeatedRunsAccumulate, runSchedulerTwice, schedulerSettled, lastRunAfter)
+status: active
 ---
 
 ## What it prevents
@@ -31,7 +31,18 @@ The race is timing-dependent, so repetition is the check — and it must run on
 Linux, where it was observed:
 
 ```bash
-go test -tags sqlite -run TestSchedulerCmd -count=50 ./internal/appbuild/
+go test -tags sqlite -run TestScheduler -count=50 ./internal/appbuild/
 ```
 
+`-run TestScheduler` rather than `TestSchedulerCmd`: both the command test and
+`TestScheduler_EndToEnd_RepeatedRunsAccumulate (via runSchedulerTwice)` carry a barrier, and only the wider
+pattern covers both.
+
 Any "TempDir RemoveAll cleanup ... directory not empty" is this regression.
+
+Note that `schedulerSettled` alone is NOT a valid barrier for the second run in
+`TestScheduler_EndToEnd_RepeatedRunsAccumulate (via runSchedulerTwice)`: `rewindLastRun` leaves `"tick"` in
+the state file, so it is already true before that run starts. That case uses
+`lastRunAfter`, which waits for the stamp to move strictly forward. A future
+edit that "simplifies" it back to `schedulerSettled` silently removes the
+barrier while leaving the test green.

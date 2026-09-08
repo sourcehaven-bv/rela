@@ -11,7 +11,7 @@ description: >-
   RemoveAll races the state write into a directory it has already scanned.
   Observed on the ubuntu SQLite Backend job; does not reproduce on macOS.
 priority: low
-status: backlog
+status: done
 why1: TestSchedulerCmd_EndToEnd failed in CI on a PR that touches neither appbuild nor the scheduler.
 why2: t.TempDir's RemoveAll found .rela non-empty, so a file appeared in it after cleanup began.
 why3: The scheduler wrote .rela/scheduler-state.json after the test had stopped waiting.
@@ -69,18 +69,30 @@ it.
 `cancel()` does not close the window: `Run` returns on `ctx.Done()`, but the
 in-flight `runDueTasks` call that is mid-`recordSuccess` is not joined by it.
 
-## Fix direction
+## Fix applied
 
-Two options, in preference order:
+Option 1: the tests now wait for the state file as well as the note, since it
+is the run's real completion marker and `schedulerSettled` already reads it for
+the other cases in this file.
 
-1. Wait for the state file as well as the note — it is the run's real
-   completion marker, and `schedulerSettled` already reads it for the other
-   cases in this file.
-2. Have `Run` join in-flight task execution before returning, so `cancel()`
-   plus the `<-done` the test already does is a genuine barrier. This is the
-   stronger fix — it makes every caller safe rather than this one test — but it
-   changes shutdown semantics and deserves its own review.
+`TestSchedulerCmd_EndToEnd` gains a second `require.Eventually` on
+`schedulerSettled`. The second run in `TestScheduler_EndToEnd_RepeatedRunsAccumulate (via runSchedulerTwice)`
+needed more care: `rewindLastRun` leaves `"tick"` in the file, so
+`schedulerSettled` is ALREADY TRUE before that run starts and would have been a
+no-op barrier. `lastRunAfter` waits for the stamp to move strictly forward off
+the rewound value instead.
 
-Option 1 fixes the flake; option 2 fixes the class. Neither is urgent: the
-failure is a test-teardown artefact and no production path removes the
-directory it is writing into.
+Load-bearingness was measured, not assumed: instrumented, the new barrier
+blocked in 25 of 25 runs and was a no-op in 0.
+
+## Fix NOT applied, and why
+
+Option 2 — having `Run` join in-flight task execution before returning, so
+`cancel()` plus `<-done` is a genuine barrier for every caller rather than just
+these tests — is the stronger fix and remains open. It changes production
+shutdown semantics and deserves its own review, so it is deliberately out of
+scope here.
+
+That means the underlying asymmetry survives: `Run` still returns while a
+`runDueTasks` call may be mid-`recordSuccess`. Only the tests are now defended
+against it.
