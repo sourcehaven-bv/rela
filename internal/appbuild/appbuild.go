@@ -1735,6 +1735,27 @@ func assemble(
 	// per-assembled, like the search closer.
 	background := startBackgroundServices(base, st, stateKV, versions)
 
+	return newServices(
+		base, st, background, searcher, visible, searchCloser, mgr, tr, val,
+		templater, cfgLoader, stateKV, jobQueue, aliases, commentSvc, versions,
+		resolvedACL, aclDeclarative, fieldRedactor,
+	), nil
+}
+
+// newServices bundles the assembled collaborators into the Services value.
+// It is pure field assignment, split out of assemble so that function stays
+// within its length budget: the bundle grows with every new collaborator,
+// and that growth should not push the assembly logic over the limit.
+func newServices(
+	base *SharedBase, st store.Store, background backgroundServices,
+	searcher search.Searcher, visible search.VisibleSearcher, searchCloser io.Closer,
+	mgr *entitymanager.Manager, tr tracer.Tracer, val validator.Validator,
+	templater templating.Templater, cfgLoader config.Loader, stateKV state.KV,
+	jobQueue jobs.Queue, aliases *caldavalias.Service, commentSvc *comments.Service,
+	versions store.VersionService, resolvedACL acl.ACL, aclDeclarative *acl.Declarative,
+	fieldRedactor visibility.FieldRedactor,
+) *Services {
+	cfg := base.cfg
 	return &Services{
 		base:            base,
 		gcStop:          background.gcStop,
@@ -1765,7 +1786,7 @@ func assemble(
 		aclPolicy:       base.aclPolicy,
 		audit:           cfg.Audit,
 		fieldRedactor:   fieldRedactor,
-	}, nil
+	}
 }
 
 // versionRecorder adapts a store.VersionWriter to the entitymanager's
