@@ -67,6 +67,10 @@ func (c *mockConfig) Load(_ context.Context, name string) ([]byte, error) {
 	return data, nil
 }
 
+// List reports no directory-shaped config: the scheduler reads
+// schedules.yaml by name and nothing else.
+func (c *mockConfig) List(_ context.Context, _ string) ([]string, error) { return nil, nil }
+
 type mockState struct{ m *mockWorkspace }
 
 func (s *mockState) Get(_ context.Context, key string) ([]byte, error) {

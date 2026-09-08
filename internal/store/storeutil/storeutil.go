@@ -308,6 +308,24 @@ func StateTypeMismatchError(id string, p entity.Face, got, want string) error {
 // which is today's behavior for faceless projects; non-nil matches
 // by equality only (the store never inspects face contents).
 func MatchRelation(r *entity.Relation, q store.RelationQuery) bool {
+	return NewRelationMatcher(q)(r)
+}
+
+// NewRelationMatcher compiles q once — the EntityIDs set in particular —
+// into a predicate for a scan. A loop over N relations must use this rather
+// than [MatchRelation], which would rebuild the batch set per row.
+func NewRelationMatcher(q store.RelationQuery) func(*entity.Relation) bool {
+	var set map[string]struct{}
+	if q.EntityIDs != nil {
+		set = make(map[string]struct{}, len(q.EntityIDs))
+		for _, id := range q.EntityIDs {
+			set[id] = struct{}{}
+		}
+	}
+	return func(r *entity.Relation) bool { return matchRelation(r, q, set) }
+}
+
+func matchRelation(r *entity.Relation, q store.RelationQuery, set map[string]struct{}) bool {
 	if q.Type != "" && r.Type != q.Type {
 		return false
 	}
@@ -320,23 +338,29 @@ func MatchRelation(r *entity.Relation, q store.RelationQuery) bool {
 	if q.To != "" && r.To != q.To {
 		return false
 	}
-	if q.EntityID != "" {
-		switch q.Direction {
-		case store.DirectionOutgoing:
-			if r.From != q.EntityID {
-				return false
-			}
-		case store.DirectionIncoming:
-			if r.To != q.EntityID {
-				return false
-			}
-		default: // DirectionBoth
-			if r.From != q.EntityID && r.To != q.EntityID {
-				return false
-			}
+	if q.EntityID != "" && !endpointMatches(r, q.Direction, func(id string) bool { return id == q.EntityID }) {
+		return false
+	}
+	if q.EntityIDs != nil {
+		if !endpointMatches(r, q.Direction, func(id string) bool { _, ok := set[id]; return ok }) {
+			return false
 		}
 	}
 	return true
+}
+
+// endpointMatches reports whether the endpoint(s) Direction selects on r
+// satisfy want: the source for outgoing, the target for incoming, either
+// for both.
+func endpointMatches(r *entity.Relation, dir store.Direction, want func(id string) bool) bool {
+	switch dir {
+	case store.DirectionOutgoing:
+		return want(r.From)
+	case store.DirectionIncoming:
+		return want(r.To)
+	default: // DirectionBoth
+		return want(r.From) || want(r.To)
+	}
 }
 
 // ValidateEntityQuery rejects a query whose fields contradict each

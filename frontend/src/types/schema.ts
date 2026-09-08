@@ -28,8 +28,15 @@ export interface WorldInfo {
   primary_for?: string[]
   // Operator-authored text announcing this world ("DRAFT — not in force").
   // Empty/absent means announce nothing — a language world needs no banner.
-  // Gates ONLY the announcement: a non-default world is read-only regardless.
   banner?: string
+  // The operator's wording for what this world changes on a screen
+  // (TKT-5SZG2L). Each entry is optional and an absent one renders NOTHING:
+  // the app has no sentence of its own for any of them. Placeholders
+  // `{face}`, `{bare_face}`, `{world}`, `{title}` — see utils/worldText.
+  messages?: WorldMessages
+  // Behaviour for an entity with no face in this world: `redirect` names the
+  // world the app navigates to instead of rendering the page.
+  on_absent?: { redirect?: string }
   // Whether this caller may select the world via `?world=`.
   //
   // A UI HINT about SELECTION, never a boundary: the server re-checks the
@@ -68,6 +75,12 @@ export interface EntityType {
   // Which declared face the bare id addresses, mirroring `bare_face:` in
   // the schema. Empty when the type declares no faces, or names none.
   bare_face?: string
+  // Whether this type accepts comments (TKT-FIO205). Policy, not permission:
+  // it decides whether to render a comment affordance at all, never whether
+  // the current user may use it — the server re-authorizes every call, so a
+  // UI that shows the box to someone without `comment:add` gets a 403, not a
+  // write.
+  commentable?: boolean
 }
 
 // FaceInfo mirrors v1.FaceDef — one declared content state of a type.
@@ -80,6 +93,20 @@ export interface FaceInfo {
   // Absent means fall back to the face name, which is itself
   // operator-authored config and so an honest, if terse, display string.
   label?: string
+  // The operator's chrome text about this face (TKT-5SZG2L). `read_only` is
+  // the note for a page or form showing this face while the reader may not
+  // write it; absent renders nothing.
+  messages?: { read_only?: string }
+}
+
+// WorldMessages mirrors v1.WorldMessages. See WorldInfo.messages.
+export interface WorldMessages {
+  // Detail-page note for an entity with no face in the world.
+  absent?: string
+  // List/board note for a type that declares faces.
+  projection?: string
+  // Badge text for a stand-in row or card; absent means no badge.
+  stand_in?: string
 }
 
 export interface PropertyDef {

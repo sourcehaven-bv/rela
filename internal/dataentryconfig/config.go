@@ -147,8 +147,8 @@ type Action struct {
 	Set         map[string]string `yaml:"set,omitempty" json:"set,omitempty"`
 
 	// Capabilities declares which ambient capabilities this action's script
-	// may reach — http, ai, write_file, and named secrets (TKT-YH52OM).
-	// Omitting it grants NONE of them.
+	// may reach — http, ai, mail, write_file, and named secrets (TKT-YH52OM,
+	// TKT-JVHSOZ). Omitting it grants NONE of them.
 	//
 	// An action is invoked over HTTP by whoever may POST /_action/{id}, so it
 	// is not an operator-shell surface: the grant has to be written down by
@@ -230,6 +230,9 @@ type AppConfig struct {
 	// leaves the browser. Deliberately not defaulted to the public
 	// plantuml.com server: that would silently publish private diagram source
 	// to a third party. Operators opt in by configuring a server they trust.
+	// For the same reason http:// is accepted only for loopback hosts (the
+	// local-sidecar case, where there is no network segment to observe); any
+	// other host must use https, since the source travels inside the URL.
 	PlantUMLServerURL string `yaml:"plantuml_server_url,omitempty" json:"plantuml_server_url,omitempty"`
 	// DisableCustomInjection turns off referencing the operator's
 	// custom/custom.css and custom/custom.js from the SPA shell, guaranteeing a

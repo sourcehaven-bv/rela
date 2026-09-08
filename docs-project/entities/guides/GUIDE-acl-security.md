@@ -899,6 +899,21 @@ caches from leaking one principal's view to another:
   `Vary: <that header>` — defense in depth for any cache layer that
   ignores `no-store`.
 
+### Query accounting is a Debug-only diagnostic
+
+With `-verbose`, every API response carries a `Server-Timing` header with the
+number of SQL statements the request issued and their summed database time,
+and the log gets one `request` record per request (see
+`docs/postgres-backend.md`, "Observing query cost"). Below Debug neither
+exists. The gate is a security property, not a convenience: on a path that
+still resolves neighbors one by one, the statement count varies with rows the
+principal cannot see, so a machine-readable count on every response would be
+an existence channel of exactly the kind the row-level rule above forbids.
+Wall time is already observable by any client and is accepted as coarse
+timing exposure; the statement count is not, and stays an operator tool.
+Do not enable `-verbose` on a multi-principal deployment to "get metrics" —
+put the numbers in the log, not on the wire.
+
 ### Sidebar menu structure is principal-independent
 
 The sidebar's *structure* (groups, labels, links) reveals metamodel
@@ -1269,6 +1284,18 @@ entirely (the snapshot already contains every field; the reveal just skips the
 strip). Grant it only to trusted audit/compliance roles — it exposes fields the
 live `visible:` policy would redact. A non-holder always sees the fail-closed
 redaction described above.
+
+**Every reveal is audited** (`history-reveal`) *under a configured policy*, so
+"who saw which hidden historical values, and when" is answerable after the fact.
+With no `acl.yaml` there is nothing to reveal — no field is redacted — so those
+reads are not recorded; otherwise every history read in an unconfigured
+deployment would log a reveal that revealed nothing. The row names the entity
+and the version read, and the principal who read it — it does *not* record the
+revealed values, nor which fields were revealed (that list is itself a map of
+what the policy hides). Ordinary redacted history reads are **not** recorded:
+they disclose nothing this permission governs, and logging them would bury the
+privileged reads the row exists to surface. Isolate reveals with `op ==
+"history-reveal"`.
 
 **Relation history is governed by the current live world — deliberately unlike
 entity history.** Where *entity* history reconstructs the moment of capture and

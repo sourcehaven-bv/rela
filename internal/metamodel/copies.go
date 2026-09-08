@@ -166,7 +166,48 @@ func validateCopy(m *Metamodel, name string, def CopyDef) []string {
 
 	errs = append(errs, validateCopyFields(m, name, def, to)...)
 	errs = append(errs, validateCopyRelations(m, name, def, to)...)
+	errs = append(errs, validateCopyLanding(m, name, def, to)...)
 	return errs
+}
+
+// validateCopyLanding checks `on_success.landing`: a scalar must be `written`
+// or `stay`; a world must be declared (or `default`); a face must be one the
+// TARGET type declares, since the page lands on the entity the copy wrote.
+// Naming both a world and a face is refused rather than resolved by a
+// precedence rule nobody would remember.
+func validateCopyLanding(m *Metamodel, name string, def CopyDef, to CopyTarget) []string {
+	l := def.OnSuccess.Landing
+	if l.IsZero() {
+		return nil
+	}
+	bad := func(format string, args ...any) []string {
+		return []string{fmt.Sprintf("copy %q: `on_success.landing` "+format, append([]any{name}, args...)...)}
+	}
+	if l.Mode != "" {
+		if l.Mode != LandingWritten && l.Mode != LandingStay {
+			return bad("must be %q, %q, `{world: <name>}` or `{face: <name>}` (got %q)",
+				LandingWritten, LandingStay, l.Mode)
+		}
+		return nil
+	}
+	if l.World != "" && l.Face != "" {
+		return bad("names both a world and a face — pick one")
+	}
+	if l.World != "" && l.World != DefaultWorldName {
+		if _, ok := m.Worlds[l.World]; !ok {
+			return bad("names world %q, which is not declared", l.World)
+		}
+	}
+	if l.Face != "" {
+		def, ok := m.Entities[to.Type]
+		if !ok {
+			return nil // the endpoint check already reported the type
+		}
+		if _, declared := def.Faces[l.Face]; !declared {
+			return bad("names face %q, which type %q does not declare", l.Face, to.Type)
+		}
+	}
+	return nil
 }
 
 // validateCopyEndpoint checks that a target names a declared type and, when

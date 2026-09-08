@@ -1,0 +1,354 @@
+version: "1.0"
+app:
+  name: "Perf portfolio"
+  description: "ISMS + delivery portfolio at scale, for measuring read paths"
+  default_world: published
+styles:
+  task_status:
+    todo: gray
+    doing: blue
+    review: orange
+    done: green
+  priority:
+    low: gray
+    medium: blue
+    high: orange
+    critical: red
+  risk_level:
+    low: green
+    medium: orange
+    high: red
+lists:
+  tasks:
+    entity_type: task
+    title: "Tasks"
+    description: "Every task, with its assignee and project resolved per row"
+    create_form: new_task
+    edit_form: edit_task
+    columns:
+      - {property: title, sortable: true, link: detail}
+      - {property: status, sortable: true}
+      - {property: priority, sortable: true}
+      - {property: due, sortable: true}
+      - {relation: assigned-to, label: "Assignee", direction: outgoing}
+      - {relation: contains, direction: incoming, label: "Part of"}
+    filter_controls:
+      - {property: status, widget: multi-select}
+      - {property: priority, widget: select}
+      - {relation: assigned-to, label: "Assignee", direction: outgoing}
+    sort:
+      - {property: due, direction: asc}
+  open_tasks:
+    entity_type: task
+    title: "Open tasks"
+    description: "Static filter on status, sorted by priority"
+    columns:
+      - {property: title, sortable: true, link: detail}
+      - {property: priority, sortable: true}
+      - {property: due, sortable: true}
+      - {relation: assigned-to, label: "Assignee", direction: outgoing}
+    filters:
+      - {property: status, operator: "!=", value: done}
+    sort:
+      - {property: priority, direction: desc}
+      - {property: due, direction: asc}
+  projects:
+    entity_type: project
+    title: "Projects"
+    columns:
+      - {property: title, sortable: true, link: detail}
+      - {property: status, sortable: true}
+      - {property: planned_start, sortable: true}
+      - {property: planned_end, sortable: true}
+      - {relation: leads, direction: incoming, label: "Lead"}
+      - {relation: owns, direction: incoming, label: "Owner"}
+    filter_controls:
+      - {property: status, widget: multi-select}
+  people:
+    entity_type: person
+    title: "People"
+    columns:
+      - {property: title, sortable: true, link: detail}
+      - {property: role_title, sortable: true}
+      - {property: salary, sortable: true}
+      - {relation: member-of, label: "Team", direction: outgoing}
+    filter_controls:
+      - {relation: member-of, label: "Team", direction: outgoing}
+  policies:
+    entity_type: policy
+    title: "Policies"
+    description: "Shown at the face the world resolves"
+    create_form: new_policy
+    create_world: editorial
+    columns:
+      - {property: title, sortable: true, link: detail}
+      - {property: status, sortable: true}
+      - {property: owner, sortable: true}
+      - {relation: implements, label: "Controls", direction: outgoing}
+    filter_controls:
+      - {property: status, widget: multi-select}
+  documents:
+    entity_type: document
+    title: "Documents"
+    columns:
+      - {property: title, sortable: true, link: detail}
+      - {property: category, sortable: true}
+      - {relation: references, label: "References", direction: outgoing}
+    filter_controls:
+      - {property: category, widget: select}
+  risks:
+    entity_type: risk
+    title: "Risks"
+    columns:
+      - {property: title, sortable: true, link: detail}
+      - {property: level, sortable: true}
+      - {property: status, sortable: true}
+      - {relation: mitigates, direction: incoming, label: "Mitigated by"}
+    filter_controls:
+      - {property: level, widget: multi-select}
+      - {property: status, widget: multi-select}
+  controls:
+    entity_type: control
+    title: "Controls"
+    columns:
+      - {property: title, sortable: true, link: detail}
+      - {property: family, sortable: true}
+      - {property: status, sortable: true}
+      - {relation: implements, direction: incoming, label: "Policies"}
+forms:
+  new_task:
+    entity_type: task
+    title: "New task"
+    body: true
+    fields:
+      - {property: title}
+      - {property: status}
+      - {property: priority}
+      - {property: start}
+      - {property: due}
+      - {property: estimate}
+    relations:
+      - {relation: assigned-to, direction: outgoing, label: "Assignee"}
+      - {relation: contains, direction: incoming, label: "Part of"}
+  edit_task:
+    entity_type: task
+    title: "Edit task"
+    body: true
+    fields:
+      - {property: title}
+      - {property: status}
+      - {property: priority}
+      - {property: start}
+      - {property: due}
+      - {property: estimate}
+    relations:
+      - {relation: assigned-to, direction: outgoing, label: "Assignee"}
+      - {relation: depends-on, direction: outgoing, widget: multi-select, label: "Depends on"}
+  new_policy:
+    entity_type: policy
+    title: "New policy"
+    body: true
+    fields:
+      - {property: title}
+      - {property: status}
+      - {property: owner}
+      - {property: version}
+    relations:
+      - {relation: implements, direction: outgoing, widget: multi-select, label: "Implements"}
+      - {relation: owned-by, direction: outgoing, label: "Owned by"}
+views:
+  project:
+    title: "Project"
+    entry: {type: project}
+    traverse:
+      - {from: entry, follow: contains, collect_as: children}
+      - {from: entry, follow: contains, recursive: true, max_depth: 4, collect_as: all_work}
+      - {from: entry, follow_incoming: leads, collect_as: leads}
+      - {from: entry, follow_incoming: owns, collect_as: owners}
+      - {from: all_work, follow: assigned-to, collect_as: staff}
+    sections:
+      - {heading: "Project", source: entry, display: properties, fields: [{property: status}, {property: planned_start}, {property: planned_end}, {property: target_date}, {property: budget}]}
+      - {source: entry, display: content}
+      - heading: "Lead"
+        source: leads
+        display: list
+        fields: [{property: title}, {property: role_title}]
+      - heading: "Work"
+        source: children
+        display: table
+        columns:
+          - {property: title, link: detail}
+          - {property: status}
+          - {property: priority}
+          - {property: due}
+          - {relation: assigned-to, label: "Assignee"}
+          - {relation: depends-on, direction: outgoing, label: "Depends on"}
+        empty_message: "No work planned"
+      - heading: "Everyone involved"
+        source: staff
+        display: table
+        columns:
+          - {property: title, link: detail}
+          - {property: role_title}
+          - {relation: member-of, label: "Team"}
+  task:
+    title: "Task"
+    entry: {type: task}
+    traverse:
+      - {from: entry, follow_incoming: contains, collect_as: parent}
+      - {from: entry, follow: contains, collect_as: subtasks}
+      - {from: entry, follow: depends-on, collect_as: dependencies}
+      - {from: entry, follow_incoming: depends-on, collect_as: dependents}
+      - {from: entry, follow: assigned-to, collect_as: assignee}
+    sections:
+      - {heading: "Task", source: entry, display: properties, fields: [{property: status}, {property: priority}, {property: start}, {property: due}, {property: estimate}]}
+      - {source: entry, display: content}
+      - {heading: "Assignee", source: assignee, display: list, fields: [{property: title}, {property: role_title}]}
+      - {heading: "Part of", source: parent, display: list, fields: [{property: title}, {property: status}], link: detail}
+      - heading: "Subtasks"
+        source: subtasks
+        display: table
+        columns: [{property: title, link: detail}, {property: status}, {relation: assigned-to, label: "Assignee"}]
+      - heading: "Depends on"
+        source: dependencies
+        display: table
+        columns: [{property: title, link: detail}, {property: status}, {property: due}, {relation: assigned-to, label: "Assignee"}]
+      - heading: "Blocks"
+        source: dependents
+        display: table
+        columns: [{property: title, link: detail}, {property: status}, {property: due}]
+  policy:
+    title: "Policy"
+    entry: {type: policy}
+    traverse:
+      - {from: entry, follow: implements, collect_as: controls}
+      - {from: controls, follow: mitigates, collect_as: risks}
+      - {from: entry, follow: owned-by, collect_as: owner}
+      - {from: entry, follow_incoming: references, collect_as: cited_by}
+    sections:
+      - {heading: "Policy", source: entry, display: properties, fields: [{property: status}, {property: owner}, {property: version}]}
+      - {source: entry, display: content}
+      - {heading: "Owned by", source: owner, display: list, fields: [{property: title}]}
+      - heading: "Implements"
+        source: controls
+        display: table
+        columns: [{property: title, link: detail}, {property: family}, {property: status}, {relation: mitigates, label: "Mitigates"}]
+      - heading: "Risks addressed"
+        source: risks
+        display: table
+        columns: [{property: title, link: detail}, {property: level}, {property: status}]
+      - heading: "Cited by"
+        source: cited_by
+        display: table
+        columns: [{property: title, link: detail}, {property: category}]
+  person:
+    title: "Person"
+    entry: {type: person}
+    traverse:
+      - {from: entry, follow: member-of, collect_as: team}
+      - {from: entry, follow_incoming: assigned-to, collect_as: tasks}
+      - {from: entry, follow: leads, collect_as: projects}
+    sections:
+      - {heading: "Person", source: entry, display: properties, fields: [{property: email}, {property: role_title}, {property: salary}, {property: started}]}
+      - {heading: "Team", source: team, display: list, fields: [{property: title}, {property: department}]}
+      - heading: "Assigned work"
+        source: tasks
+        display: table
+        columns: [{property: title, link: detail}, {property: status}, {property: priority}, {property: due}, {relation: contains, direction: incoming, label: "Part of"}]
+      - heading: "Leads"
+        source: projects
+        display: table
+        columns: [{property: title, link: detail}, {property: status}]
+kanbans:
+  task_board:
+    entity_type: task
+    title: "Task board"
+    column_property: status
+    columns:
+      - {value: todo, label: "To do"}
+      - {value: doing, label: "Doing"}
+      - {value: review, label: "Review"}
+      - {value: done, label: "Done"}
+    card:
+      title: title
+      fields:
+        - {property: priority}
+        - {property: due}
+    filter_controls:
+      - {property: priority, widget: multi-select}
+      - {relation: assigned-to, label: "Assignee", direction: outgoing}
+  policy_pipeline:
+    entity_type: policy
+    title: "Policy pipeline"
+    column_property: status
+    columns:
+      - {value: to-do, label: "To do"}
+      - {value: doing, label: "Doing"}
+      - {value: done, label: "Done"}
+    card:
+      title: title
+      fields:
+        - {property: owner}
+dashboard:
+  title: "Portfolio"
+  description: "Counts and breakdowns over the whole graph"
+  cards:
+    - {title: "Tasks", query: "type:task", display: count}
+    - {title: "Open tasks", query: "type:task prop:status!=done", display: count}
+    - {title: "Tasks by status", query: "type:task", display: breakdown, group_by: status}
+    - {title: "Tasks by priority", query: "type:task", display: breakdown, group_by: priority}
+    - {title: "Projects by status", query: "type:project", display: breakdown, group_by: status}
+    - {title: "Risks by level", query: "type:risk", display: breakdown, group_by: level}
+    - {title: "Open risks", query: "type:risk prop:status=open", display: count}
+    - title: "Critical work"
+      query: "type:task prop:priority=critical prop:status!=done"
+      display: table
+      columns: [{property: title, link: detail}, {property: due}]
+      sort: [{property: due, direction: asc}]
+      limit: 8
+    - {title: "Policies", query: "type:policy", display: breakdown, group_by: status}
+gantts:
+  delivery:
+    title: "Delivery plan"
+    hierarchy: [contains]
+    default_depth: 2
+    sources:
+      project: {start: planned_start, end: planned_end, committed: target_date}
+      task: {start: start, end: due}
+    tooltip:
+      fields:
+        - {property: status}
+        - {property: priority}
+next_action_bands:
+  - {id: overdue, label: "Overdue", prominence: banner}
+  - {id: upkeep, label: "Upkeep", prominence: notice}
+next_actions:
+  overdue-critical:
+    band: overdue
+    query: "type:task prop:priority=critical prop:status!=done prop:due<2026-06-01"
+    suggest: "{title} is critical and past due."
+    cooldown: 1h
+    actions:
+      - {navigate: "/entity/task/{id}", label: "Open"}
+      - {snooze: ["1d"]}
+  finished-draft:
+    band: upkeep
+    source_world: editorial
+    query: "type:policy prop:status=done"
+    suggest: "The draft of {title} is done. Publish it?"
+    cooldown: 1h
+    actions:
+      - {navigate: "/entity/policy/{id}?world=editorial", label: "Open the draft"}
+      - {snooze: ["1d"]}
+navigation:
+  - {label: "Tasks", list: tasks}
+  - {label: "Open tasks", list: open_tasks}
+  - {label: "Task board", kanban: task_board}
+  - {label: "Projects", list: projects}
+  - {label: "Delivery", gantt: delivery}
+  - {label: "People", list: people}
+  - {label: "Policies", list: policies}
+  - {label: "Pipeline", kanban: policy_pipeline}
+  - {label: "Documents", list: documents}
+  - {label: "Risks", list: risks}
+  - {label: "Controls", list: controls}

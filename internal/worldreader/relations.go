@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"iter"
+	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -121,6 +122,87 @@ func (rr *RelationReader) Neighbors(
 		}
 	}); err != nil {
 		return nil, err
+	}
+	return out, nil
+}
+
+// NeighborsForPage is [RelationReader.Neighbors] for a whole page of
+// resolved rows in ONE identity query plus one content query per distinct
+// face on the page, instead of two queries per row (TKT-1U8XYN). The result
+// is index-aligned with rows: rows[i]'s edges are out[i], in the same order
+// Neighbors would return them (identity edges, then content edges, each in
+// store order), and a row the world excludes keeps a nil entry.
+//
+// The per-row contract is preserved exactly: a content edge counts for a row
+// only when the edge's tail face IS that row's face, so an edge between two
+// page rows resolved at different faces lands on the row whose face it
+// carries and not on the other — precisely what the per-row content query
+// (`FromFace = prime`) did.
+func (rr *RelationReader) NeighborsForPage(
+	ctx context.Context, rows []Resolved, dir store.Direction,
+) ([][]*entity.Relation, error) {
+	out := make([][]*entity.Relation, len(rows))
+	rowIdx := make(map[string]int, len(rows))
+	ids := make([]string, 0, len(rows))
+	byFace := make(map[entity.Face][]string)
+	for i, res := range rows {
+		if !res.Found || res.Entity == nil {
+			continue
+		}
+		id := res.Entity.ID
+		rowIdx[id] = i
+		ids = append(ids, id)
+		byFace[res.Face] = append(byFace[res.Face], id)
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	// assign hands rel to the row(s) at its selected endpoint(s); face, when
+	// non-nil, restricts that to rows resolved at exactly that face.
+	assign := func(rel *entity.Relation, face *entity.Face) {
+		give := func(id string) {
+			i, ok := rowIdx[id]
+			if !ok || (face != nil && rows[i].Face != *face) {
+				return
+			}
+			out[i] = append(out[i], rel)
+		}
+		switch dir {
+		case store.DirectionOutgoing:
+			give(rel.From)
+		case store.DirectionIncoming:
+			give(rel.To)
+		default:
+			give(rel.From)
+			if rel.To != rel.From {
+				give(rel.To)
+			}
+		}
+	}
+
+	identityQ := store.RelationQuery{Direction: dir, FromFace: nil, EntityIDs: ids}
+	if err := collect(rr.lister.ListRelations(ctx, identityQ), func(rel *entity.Relation) {
+		if !rr.classes.IsContentScoped(rel.Type) {
+			assign(rel, nil)
+		}
+	}); err != nil {
+		return nil, err
+	}
+	faces := make([]entity.Face, 0, len(byFace))
+	for f := range byFace {
+		faces = append(faces, f)
+	}
+	slices.Sort(faces)
+	for _, f := range faces {
+		face := f
+		contentQ := store.RelationQuery{Direction: dir, FromFace: &face, EntityIDs: byFace[f]}
+		if err := collect(rr.lister.ListRelations(ctx, contentQ), func(rel *entity.Relation) {
+			if rr.classes.IsContentScoped(rel.Type) {
+				assign(rel, &face)
+			}
+		}); err != nil {
+			return nil, err
+		}
 	}
 	return out, nil
 }

@@ -99,6 +99,15 @@ type Store interface {
 	// it ever was. Drives cooldown.
 	LastShown(ctx context.Context, key Key) (at time.Time, ok bool, err error)
 
+	// SnoozedUntilMany is SnoozedUntil for a batch: the live snooze deadline
+	// per key that has one, in one round-trip (TKT-1U8XYN — the next-action
+	// engine judges every candidate of a source and paid two lookups each).
+	// A key with no live snooze is absent from the result.
+	SnoozedUntilMany(ctx context.Context, keys []Key, now time.Time) (map[Key]time.Time, error)
+
+	// LastShownMany is LastShown for a batch; keys never shown are absent.
+	LastShownMany(ctx context.Context, keys []Key) (map[Key]time.Time, error)
+
 	// MarkShown records that the suggestion was surfaced at `at`.
 	MarkShown(ctx context.Context, key Key, at time.Time) error
 

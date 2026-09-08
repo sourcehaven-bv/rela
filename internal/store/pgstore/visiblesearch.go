@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"iter"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -277,7 +278,8 @@ func buildVisibleSearchSQL(
 	if q.Text != "" {
 		needle := strings.ToLower(q.Text)
 		sb.WriteString(" AND e.search_text LIKE '%' || " + b.arg(escapeLike(needle)) + ` || '%' ESCAPE '\'`)
-		orderBy = " ORDER BY similarity(e.search_text, " + b.arg(needle) + ") DESC, e.id ASC"
+		orderBy = " ORDER BY similarity(left(e.search_text, " + strconv.Itoa(searchRankPrefix) + "), " +
+			b.arg(needle) + ") DESC, e.id ASC"
 	}
 	if len(q.Types) > 0 {
 		sb.WriteString(" AND e.type = ANY(" + b.arg(q.Types) + ")")

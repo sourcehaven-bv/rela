@@ -56,9 +56,33 @@ The server communicates over stdio using JSON-RPC. It automatically discovers th
 
 ## File Watching
 
-The server watches `entities/`, `relations/`, and `schema.yaml` for changes. When files are
-created, modified, or deleted, the graph is re-synced automatically and connected clients are
-notified via `notifications/resources/list_changed`. Changes are debounced with a 200ms window.
+The stdio server watches two things, for two different reasons. Both are debounced
+with a 200ms window.
+
+**`entities/` and `relations/`** — the store re-syncs the graph when files are created,
+modified or deleted, so an external edit (a `git pull`, another tool, your editor) is
+visible to the next read.
+
+**`schema.yaml`** — the server reloads the schema in place. A restart is not needed
+after adding an entity type, extending an enum, adding a `to:` target on a relation,
+or changing a validation rule: the next tool call sees the new schema, `create_entity`
+included.
+
+The reload rebuilds the whole metamodel-derived stack — the validator, the entity
+manager and its automations, transitions and computed properties — not just the
+schema the read tools report. Refreshing only the read surfaces would leave writes
+validating against the old schema, which is harder to diagnose than no reload at all.
+The store and the search index are reused, so a schema edit costs no reindex and
+loses none of the session's writes.
+
+If the new schema does not parse, the server logs a warning and keeps serving the
+last one that did. A save taken mid-edit is routinely unparseable and must not end
+the session.
+
+There is no `notifications/resources/list_changed` on either path. The resource SET
+(a static list plus two URI templates) never changes at runtime, and the Go SDK emits
+that notification only when the set changes. Clients re-read on demand and see current
+data, because every read goes to the store.
 
 ## Tools
 
@@ -243,9 +267,10 @@ allowlist is not built yet.
 - **Stateless.** Protocol revision `2026-07-28` removes sessions, and the
   Go SDK only reaches it in stateless mode. `GET` and `DELETE` return 405;
   only `POST` carries messages.
-- **No change notifications.** `resources/list_changed` has no stateless
-  equivalent, so there is no file watcher. Clients re-read on demand and
-  always see current data, because every read hits the store.
+- **No file watcher.** Server→client notifications need a session, so the
+  remote transport starts neither the store watcher nor the schema reload.
+  Reads always see current data (every read hits the store), but a
+  `schema.yaml` edit needs a restart here, unlike on stdio.
 - **No IdP auto-discovery yet.** RFC 9728 Protected Resource Metadata is not
   served, and the 401 carries a `WWW-Authenticate` challenge only when your
   assertion header is literally `Authorization`. Point your client at the IdP

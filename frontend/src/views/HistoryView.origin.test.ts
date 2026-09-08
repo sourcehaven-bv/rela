@@ -64,13 +64,14 @@ function meta(over: Partial<VersionMeta> = {}): VersionMeta {
   }
 }
 
-async function mountWith(versions: VersionMeta[]) {
+async function mountWith(versions: VersionMeta[], entity: Record<string, unknown> = {}) {
   mockList.mockResolvedValue({ versions, face: '', worldFaceAbsent: false })
   mockGetEntity.mockResolvedValue({
     id: 'POL-1',
     type: 'policy',
     content: '',
     properties: {},
+    ...entity,
   } as never)
   mockGetVersion.mockResolvedValue({
     id: 'POL-1',
@@ -149,10 +150,12 @@ describe('HistoryView copy provenance', () => {
   })
 })
 
-// A restore is a WRITE, and under a world the timeline is the resolved face's
-// while the restore lands on the default face — the mismatch every other write
-// affordance refuses on a world-bound page. It used to render regardless.
-describe('HistoryView restore under a world', () => {
+// A restore is a WRITE to the BARE id (the restore route takes no face), so it
+// is offered only while the timeline is the bare face's — which is what the
+// served row's `_self` says, not the world. Under a world that resolved to the
+// bare face, restoring puts back exactly what is shown; under one that served
+// a NON-bare face, restoring would land that face's version on the bare one.
+describe('HistoryView restore follows the face on screen', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
@@ -160,19 +163,27 @@ describe('HistoryView restore under a world', () => {
   })
 
   it('offers Restore in the default world (the control)', async () => {
-    mockGetEntity.mockResolvedValue({
-      id: 'POL-1', type: 'policy', content: '', properties: {}, _actions: { update: true },
-    } as never)
-    const w = await mountWith([meta({ op: 'update' })])
+    const w = await mountWith([meta({ op: 'update' })], {
+      _actions: { update: true }, _self: '/api/v1/policys/POL-1',
+    })
     expect(w.text()).toContain('Restore')
   })
 
-  it('withdraws Restore under a world', async () => {
+  it('offers Restore under a world that served the BARE face', async () => {
+    // The world is not what withdraws the affordance; the face is. A chain hit
+    // on the bare face restores what it shows.
+    mockRouteQuery.value = { world: 'editorial' }
+    const w = await mountWith([meta({ op: 'update' })], {
+      _actions: { update: true }, _self: '/api/v1/policys/POL-1',
+    })
+    expect(w.text()).toContain('Restore')
+  })
+
+  it('withdraws Restore while a NON-bare face is on screen', async () => {
     mockRouteQuery.value = { world: 'published' }
-    mockGetEntity.mockResolvedValue({
-      id: 'POL-1', type: 'policy', content: '', properties: {}, _actions: { update: true },
-    } as never)
-    const w = await mountWith([meta({ op: 'update' })])
+    const w = await mountWith([meta({ op: 'update' })], {
+      _actions: { update: true }, _self: '/api/v1/policys/POL-1@published',
+    })
     expect(w.text()).not.toContain('Restore')
   })
 })

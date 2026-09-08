@@ -53,6 +53,28 @@ const DefaultCooldown = 24 * time.Hour
 // the pick. Engine-owned, not configurable — see the package doc.
 const DefaultCandidateCap = 20
 
+// ErrIdentityRequired is wrapped by a [Matcher] whose condition names the
+// current user when the request carries no usable identity — a per-user
+// source resolved for an unauthenticated caller.
+//
+// The engine treats it as a per-source SKIP, not a failure: the source
+// contributes no candidates for that request and a warning is logged (see
+// the engine's condition pass). Propagating it would fail the whole resolve —
+// every band, every other source — and only when the short-circuit happened
+// to reach that source, so the same config would 500 for one caller and
+// answer for another. Contributing nothing is deterministic, fails closed
+// (no rows, never somebody else's), and matches how a source whose world
+// the caller may not read is handled.
+var ErrIdentityRequired = errors.New("nextaction: condition requires an identified principal")
+
+// ErrIdentityConflict is returned by a wiring site's request-scope binder
+// when the request carries TWO identities that disagree — one stamped by a
+// boundary and one derived from the principal. Unlike [ErrIdentityRequired]
+// this is not an unauthenticated caller but two layers disagreeing about who
+// is calling, so it is a refusal of the whole request: evaluating for either
+// would be evaluating for the wrong one.
+var ErrIdentityConflict = errors.New("nextaction: query identity on the context disagrees with the request principal")
+
 // Candidate is one entity a source proposes, already ACL-filtered by the
 // caller's reader.
 type Candidate struct {
@@ -106,10 +128,17 @@ type Matcher interface {
 // site so this package depends on no store, searcher or ACL type: it is the
 // consumer-side interface that keeps the engine testable without a graph.
 //
+// It receives the source's config id as well as the source, because the
+// wiring site pairs the candidate query with that source's compiled
+// `condition:` (looked up by id — see [MatcherFunc]) to push the condition's
+// store-evaluable conjuncts into the same query. The engine still runs the
+// whole condition over what comes back; the id only lets the fetch be
+// narrower.
+//
 // Implementations MUST apply the caller's read gate. The engine never sees
 // an entity the principal may not read, which is also why there is no cache
 // here — see [Engine.Resolve].
-type CandidateFunc func(ctx context.Context, src dataentryconfig.NextActionSource) ([]Candidate, error)
+type CandidateFunc func(ctx context.Context, id string, src dataentryconfig.NextActionSource) ([]Candidate, error)
 
 // Suggestion is the resolved hint.
 type Suggestion struct {
@@ -353,6 +382,14 @@ func (e *Engine) applyCondition(
 	out := make([]Candidate, 0, len(cands))
 	for _, c := range cands {
 		match, err := m.Match(ctx, c.Entity)
+		if errors.Is(err, ErrIdentityRequired) {
+			// A per-user condition for a caller with no identity: this
+			// source has nothing to say to them. Skip it — see the
+			// sentinel's doc for why this is not propagated.
+			slog.Warn("nextaction: source skipped, its condition needs an identified principal",
+				"source", id)
+			return nil, nil
+		}
 		if err != nil {
 			return nil, fmt.Errorf("nextaction: condition for %q: %w", id, err)
 		}
@@ -368,7 +405,7 @@ func (e *Engine) applyCondition(
 func (e *Engine) eligibleFromSource(
 	ctx context.Context, user, id string, src dataentryconfig.NextActionSource, bandID string, now time.Time,
 ) ([]Suggestion, error) {
-	cands, err := e.candidates(ctx, src)
+	cands, err := e.candidates(ctx, id, src)
 	if err != nil {
 		return nil, fmt.Errorf("nextaction: candidates for %q: %w", id, err)
 	}
@@ -390,40 +427,41 @@ func (e *Engine) eligibleFromSource(
 		cands = cands[:e.cap]
 	}
 
-	out := make([]Suggestion, 0, len(cands))
+	sugs := make([]Suggestion, 0, len(cands))
+	keys := make([]userstate.Key, 0, len(cands))
 	for _, c := range cands {
 		sug := buildSuggestion(id, bandID, src, c)
 		sug.Key.User = user
-
-		suppressed, err := e.suppressed(ctx, sug.Key, src, now)
-		if err != nil {
-			return nil, err
+		sugs = append(sugs, sug)
+		keys = append(keys, sug.Key)
+	}
+	// Two round-trips for the whole candidate set instead of two per
+	// candidate (TKT-1U8XYN); the verdict per key is suppressed's.
+	snoozed, err := e.state.SnoozedUntilMany(ctx, keys, now)
+	if err != nil {
+		return nil, fmt.Errorf("nextaction: snooze lookup for %q: %w", id, err)
+	}
+	shown, err := e.state.LastShownMany(ctx, keys)
+	if err != nil {
+		return nil, fmt.Errorf("nextaction: last-shown lookup for %q: %w", id, err)
+	}
+	out := make([]Suggestion, 0, len(sugs))
+	for _, sug := range sugs {
+		if _, ok := snoozed[sug.Key]; ok {
+			continue
 		}
-		if !suppressed {
-			out = append(out, sug)
+		lastShown, everShown := shown[sug.Key]
+		if everShown && inCooldown(src, lastShown, now) {
+			continue
 		}
+		out = append(out, sug)
 	}
 	return out, nil
 }
 
-// suppressed reports whether a snooze or a cooldown hides this suggestion.
-func (e *Engine) suppressed(
-	ctx context.Context, k userstate.Key, src dataentryconfig.NextActionSource, now time.Time,
-) (bool, error) {
-	if _, snoozed, err := e.state.SnoozedUntil(ctx, k, now); err != nil {
-		return false, fmt.Errorf("nextaction: snooze lookup for %q: %w", k.Source, err)
-	} else if snoozed {
-		return true, nil
-	}
-
-	lastShown, everShown, err := e.state.LastShown(ctx, k)
-	if err != nil {
-		return false, fmt.Errorf("nextaction: last-shown lookup for %q: %w", k.Source, err)
-	}
-	if !everShown {
-		return false, nil
-	}
-
+// inCooldown reports whether a suggestion shown at lastShown is still
+// within its source's cooldown at now.
+func inCooldown(src dataentryconfig.NextActionSource, lastShown, now time.Time) bool {
 	cooldown := DefaultCooldown
 	if src.Cooldown != "" {
 		// Already validated at config load; a parse failure here means the
@@ -433,7 +471,7 @@ func (e *Engine) suppressed(
 			cooldown = d
 		}
 	}
-	return now.Before(lastShown.Add(cooldown)), nil
+	return now.Before(lastShown.Add(cooldown))
 }
 
 // sourceIDsForBand returns the ids in a band, sorted for determinism. Sort

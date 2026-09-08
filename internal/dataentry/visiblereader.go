@@ -107,6 +107,60 @@ func (vr visibleReader) getVisible(ctx context.Context, entityType, id string) (
 	return e, true, nil
 }
 
+// getVisibleRef is [visibleReader.getVisible] for a parsed address.
+//
+// A bare address takes the ordinary path: the request's world resolves it. An
+// EXPLICIT address (`ID@face`, including the bare face by its declared name)
+// is served literally, whatever world the request is in — the caller named
+// the row, so there is nothing for the world to resolve (see [entityRef]).
+//
+// The gates are the same two the world path applies, in the same order: the
+// face-blind row gate on the BARE id first (a suffixed string handed to a
+// query-shaped policy matches nothing, which would 404 every explicit address
+// under a non-wildcard grant), then the face gate on the row that came back.
+// A denied face returns the (nil,false,nil) a missing one produces, so a
+// `type@face` grant still withholds the existence of what it withholds.
+//
+// A denied WORLD blocks the read as well, even though the address does not
+// use the world: a principal who may not select `?world=editorial` must get
+// the same empty answer whatever they append to the path, or the world grant
+// would be bypassable by spelling the face.
+func (vr visibleReader) getVisibleRef(
+	ctx context.Context, entityType string, ref entityRef,
+) (*entitypkg.Entity, bool, error) {
+	if !ref.Explicit {
+		return vr.getVisible(ctx, entityType, ref.ID)
+	}
+	if worldFromContext(ctx).blocksAllReads() {
+		return nil, false, nil
+	}
+	ok, err := readGateFromContext(ctx).PermitsRead(ctx, entityType, ref.ID)
+	if err != nil {
+		return nil, false, err
+	}
+	if !ok {
+		return nil, false, nil
+	}
+	e, gerr := vr.store.GetEntityState(ctx, ref.ID, ref.Face)
+	if gerr != nil {
+		// A store miss is not-found, as on the default-world branch of
+		// getVisible: GetEntityState reports ErrNotFound for a missing state
+		// even when sibling states exist, which is exactly "no such row".
+		// Anything else is an infrastructure fault; it still answers
+		// not-found (the inherited GetEntity contract) but is logged so an
+		// outage does not read as "no such face" with no operator signal.
+		if !errors.Is(gerr, store.ErrNotFound) {
+			slog.Warn("dataentry: reading an addressed face failed; answering not-found",
+				"type", entityType, "ref", ref.String(), "err", gerr)
+		}
+		return nil, false, nil
+	}
+	if !faceReadable(ctx, entityType, e.Face) {
+		return nil, false, nil
+	}
+	return e, true, nil
+}
+
 // faceReadable reports whether this principal's read grants cover the given
 // content state.
 //
@@ -183,6 +237,46 @@ var errWorldEntityAbsent = errors.New("entity has no face in this world")
 //
 // This is the extraction of the former App.filterVisibleIncludes; behavior is
 // preserved, including the nil return for empty input.
+// visibleHeaderIDs is the row-gate half of filterVisible over content-free
+// headers: the set of candidate ids the principal may read, probed once per
+// distinct type. No redaction is involved because only ids leave here — the
+// caller uses the set to decide which neighbor ids may appear in a
+// relations map, never to serve a property.
+func (vr visibleReader) visibleHeaderIDs(ctx context.Context, candidates []store.EntityHeader) map[string]bool {
+	out := make(map[string]bool, len(candidates))
+	if len(candidates) == 0 {
+		return out
+	}
+	gate := readGateFromContext(ctx)
+	byType := make(map[string][]string)
+	for _, c := range candidates {
+		byType[c.Type] = append(byType[c.Type], c.ID)
+	}
+	allowed := make(map[string]bool, len(candidates))
+	for typeName, ids := range byType {
+		perm, err := gate.PermitsReadMany(ctx, typeName, ids)
+		if err != nil {
+			slog.Warn("dataentry: visibleReader.visibleHeaderIDs: PermitsReadMany failed; dropping type",
+				"type", typeName, "candidates", len(ids), "err", err)
+			continue
+		}
+		for id, ok := range perm {
+			if ok {
+				allowed[id] = true
+			}
+		}
+	}
+	// The face grant is the other half of filterVisible's gate (TKT-O7R2A1);
+	// a header carries its Face, so applying it here keeps the two gates
+	// from drifting when a caller one day passes AllStates or a World.
+	for _, c := range candidates {
+		if allowed[c.ID] && faceReadable(ctx, c.Type, c.Face) {
+			out[c.ID] = true
+		}
+	}
+	return out
+}
+
 func (vr visibleReader) filterVisible(ctx context.Context, candidates []*entitypkg.Entity) []*entitypkg.Entity {
 	if len(candidates) == 0 {
 		return nil

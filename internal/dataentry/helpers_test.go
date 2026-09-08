@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
+
 	"golang.org/x/net/html"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -686,7 +688,7 @@ func TestResolveRelationColumnValue(t *testing.T) {
 	app := newAppFromParts(nil, meta, g)
 
 	t.Run("resolves multiple targets", func(t *testing.T) {
-		got := app.views.resolveRelationColumnValues(context.Background(), assessment.ID, "assessmentBy", "")
+		got := relationColumnValuesFor(context.Background(), app, assessment.ID, "assessment", "assessmentBy", "")
 		want := []string{"Alice", "Bob"}
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("got %v, want %v", got, want)
@@ -694,7 +696,7 @@ func TestResolveRelationColumnValue(t *testing.T) {
 	})
 
 	t.Run("filters by relation type", func(t *testing.T) {
-		got := app.views.resolveRelationColumnValues(context.Background(), assessment.ID, "otherRel", "")
+		got := relationColumnValuesFor(context.Background(), app, assessment.ID, "assessment", "otherRel", "")
 		want := []string{"Alice"}
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("got %v, want %v", got, want)
@@ -702,21 +704,21 @@ func TestResolveRelationColumnValue(t *testing.T) {
 	})
 
 	t.Run("returns empty for no matching relations", func(t *testing.T) {
-		got := app.views.resolveRelationColumnValues(context.Background(), assessment.ID, "nonexistent", "")
+		got := relationColumnValuesFor(context.Background(), app, assessment.ID, "assessment", "nonexistent", "")
 		if len(got) != 0 {
 			t.Errorf("got %v, want empty slice", got)
 		}
 	})
 
 	t.Run("returns empty for unknown entity", func(t *testing.T) {
-		got := app.views.resolveRelationColumnValues(context.Background(), "UNKNOWN", "assessmentBy", "")
+		got := relationColumnValuesFor(context.Background(), app, "UNKNOWN", "assessment", "assessmentBy", "")
 		if len(got) != 0 {
 			t.Errorf("got %v, want empty slice", got)
 		}
 	})
 
 	t.Run("direction outgoing explicit", func(t *testing.T) {
-		got := app.views.resolveRelationColumnValues(context.Background(), assessment.ID, "assessmentBy", "outgoing")
+		got := relationColumnValuesFor(context.Background(), app, assessment.ID, "assessment", "assessmentBy", "outgoing")
 		want := []string{"Alice", "Bob"}
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("got %v, want %v", got, want)
@@ -726,7 +728,7 @@ func TestResolveRelationColumnValue(t *testing.T) {
 	t.Run("direction incoming returns sources", func(t *testing.T) {
 		// PER-001 has an incoming edge from ASS-001 via assessmentBy
 		// Assessment title is not required, so falls back to ID
-		got := app.views.resolveRelationColumnValues(context.Background(), person1.ID, "assessmentBy", "incoming")
+		got := relationColumnValuesFor(context.Background(), app, person1.ID, "person", "assessmentBy", "incoming")
 		want := []string{assessment.ID}
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("got %v, want %v", got, want)
@@ -735,7 +737,7 @@ func TestResolveRelationColumnValue(t *testing.T) {
 
 	t.Run("direction incoming returns multiple sources", func(t *testing.T) {
 		// PER-001 is target of both assessmentBy and otherRel from ASS-001
-		got := app.views.resolveRelationColumnValues(context.Background(), person1.ID, "otherRel", "incoming")
+		got := relationColumnValuesFor(context.Background(), app, person1.ID, "person", "otherRel", "incoming")
 		want := []string{assessment.ID}
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("got %v, want %v", got, want)
@@ -743,7 +745,7 @@ func TestResolveRelationColumnValue(t *testing.T) {
 	})
 
 	t.Run("direction incoming no matches", func(t *testing.T) {
-		got := app.views.resolveRelationColumnValues(context.Background(), assessment.ID, "assessmentBy", "incoming")
+		got := relationColumnValuesFor(context.Background(), app, assessment.ID, "assessment", "assessmentBy", "incoming")
 		if len(got) != 0 {
 			t.Errorf("got %v, want empty slice", got)
 		}
@@ -1136,4 +1138,18 @@ func TestCompareValues_DatetimeMismatch(t *testing.T) {
 			}
 		})
 	}
+}
+
+// relationColumnValuesFor is the single-row probe the batched section
+// resolver replaced: the display titles of one entity's neighbors over
+// relation in direction (outgoing when empty).
+func relationColumnValuesFor(
+	ctx context.Context, app *App, entityID, entityType, relation string, direction dataentryconfig.Direction,
+) []string {
+	if direction == "" {
+		direction = dataentryconfig.DirectionOutgoing
+	}
+	cols := []dataentryconfig.ListColumn{{Relation: relation, Direction: direction}}
+	rows := []*entity.Entity{{ID: entityID, Type: entityType}}
+	return app.views.resolveRelationColumns(ctx, app.views.schema(), cols, rows)[entityID][0]
 }

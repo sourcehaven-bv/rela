@@ -1175,3 +1175,203 @@ func TestDefaultWorld_GrantIsRecheckedAndDenialIsEmpty(t *testing.T) {
 		}
 	})
 }
+
+// --- BUG-CV8L3B: a denied world must not outrun the route allowlist ------
+
+// appForWorldGrant builds an App serving one ticket, with `published`
+// declared and the principal holding the world grant or not.
+//
+// The seeded title is what a leak looks like: a route that answers a denied
+// `?world=published` with default-world content spells it out in the body.
+func appForWorldGrant(t *testing.T, granted bool) *App {
+	t.Helper()
+	app := newTestAppV1(t)
+	seedEntity(app, &entity.Entity{
+		ID: "TKT-900", Type: "ticket",
+		Properties: map[string]any{"title": "secretdraft"},
+	})
+	role := acl.RoleDef{Read: []string{"ticket"}}
+	if granted {
+		role.Worlds = []string{"published"}
+	}
+	app.acl = mustNewACL(t, &acl.Policy{
+		Roles:       map[string]acl.RoleDef{"viewer": role},
+		Assignments: map[string]string{"alice": "viewer"},
+	}, app.store)
+	app.SetWorlds(stubWorlds{
+		names:          map[string]bool{"published": true},
+		resolveDefault: true,
+	})
+	app.SetPrincipalResolver(func(*http.Request) principal.Principal {
+		return principal.Principal{User: "alice", Tool: principal.ToolDataEntry}
+	})
+	return app
+}
+
+// TestAttachWorld_DeniedWorldRefusedLikePermitted realizes
+// AM-world-denied-matches-permitted-refusal, pinning BUG-CV8L3B.
+//
+// On a route outside worldCapablePath's allowlist, an explicit `?world=` must
+// produce the SAME response whether or not the principal holds the world
+// grant. Before the fix the denied case short-circuited past the refusal — a
+// principal WITHOUT the grant got 200 and the default world's content, while
+// one WITH it got 422.
+//
+// Asserting the two are IDENTICAL rather than merely "the denied one leaks
+// nothing" is the point. It catches the disclosure and the grant oracle with
+// one assertion, and it keeps failing for any future divergence between the
+// paths — not only for this one.
+func TestAttachWorld_DeniedWorldRefusedLikePermitted(t *testing.T) {
+	t.Parallel()
+	for _, path := range []string{
+		// The confirmed leak: world-blind, and it renders entity titles.
+		"/api/v1/_analyze?world=published",
+		// Underscore routes refused wholesale by the allowlist.
+		"/api/v1/_documents/report?world=published",
+		"/api/v1/_position?world=published",
+		// A sub-resource of an entity — the third-segment refusal.
+		"/api/v1/tickets/TKT-900/relations?world=published",
+		"/api/v1/tickets/TKT-900/_export?world=published",
+	} {
+		t.Run(path, func(t *testing.T) {
+			t.Parallel()
+			serve := func(granted bool) *httptest.ResponseRecorder {
+				app := appForWorldGrant(t, granted)
+				rec := httptest.NewRecorder()
+				app.NewRouter().ServeHTTP(rec,
+					httptest.NewRequest(http.MethodGet, path, http.NoBody))
+				return rec
+			}
+			permitted, denied := serve(true), serve(false)
+
+			if denied.Code != permitted.Code {
+				t.Errorf("status differs: permitted=%d denied=%d — the response "+
+					"tells the caller whether they hold the world grant\n"+
+					"  permitted: %s\n  denied:    %s",
+					permitted.Code, denied.Code,
+					permitted.Body.String(), denied.Body.String())
+			}
+			if denied.Body.String() != permitted.Body.String() {
+				t.Errorf("body differs — a denied world must be indistinguishable "+
+					"from a permitted one on a route that refuses both\n"+
+					"  permitted: %s\n  denied:    %s",
+					permitted.Body.String(), denied.Body.String())
+			}
+			if denied.Code != http.StatusUnprocessableEntity {
+				t.Errorf("a non-world-capable route must refuse ?world= with 422 "+
+					"world_unsupported; got %d %s", denied.Code, denied.Body)
+			}
+			if strings.Contains(denied.Body.String(), "secretdraft") {
+				t.Error("LEAK: a denied world was served DEFAULT-world content — " +
+					"the draft the world exists to withhold")
+			}
+		})
+	}
+}
+
+// TestAttachWorld_DeniedWorldStillReachesCapableRoutes is the other half of
+// the fix, and the reason it is scoped to the allowlist rather than made a
+// blanket refusal.
+//
+// A denied world on a route that CAN serve one must still reach the handler,
+// so the ordinary empty result renders with its real meta/_actions/headers.
+// Refusing here instead would announce the denial on the first byte — the
+// existence oracle the denied handle exists to close.
+func TestAttachWorld_DeniedWorldStillReachesCapableRoutes(t *testing.T) {
+	t.Parallel()
+	app := appForWorldGrant(t, false)
+	rec := httptest.NewRecorder()
+	app.NewRouter().ServeHTTP(rec,
+		httptest.NewRequest(http.MethodGet, "/api/v1/tickets?world=published", http.NoBody))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("a denied world on a world-capable route renders as an ordinary "+
+			"empty result, not a refusal; got %d %s", rec.Code, rec.Body)
+	}
+	if strings.Contains(rec.Body.String(), "secretdraft") {
+		t.Error("the principal holds no grant for world:published, so the list " +
+			"must be empty")
+	}
+}
+
+// TestRefuseWorldIncapablePath_EmptyWorldIsTheDefaultWorld pins the one
+// spelling of the default world that [TestAttachWorld_DefaultWorldIsUnaffected]
+// does not cover: an EXPLICIT but empty `?world=` on a route the allowlist
+// refuses.
+//
+// It looks like a dead branch and is not. `?world=` makes `explicit` true, so
+// the request survives attachWorld's `!explicit && configured == ""` early
+// return and reaches the refusal with `requested == ""` — which
+// [resolveWorld] treats as the default world. Without the empty check,
+// `?world=` would 422 a request that means "the world I already had", and a
+// client appending an unset parameter would break every refused route.
+//
+// The sibling spelling `?world=default` is already covered on
+// `/tickets/TKT-1/relations` by that test; this is the gap beside it.
+func TestRefuseWorldIncapablePath_EmptyWorldIsTheDefaultWorld(t *testing.T) {
+	t.Parallel()
+	app := &App{worlds: stubWorlds{names: map[string]bool{"published": true}}}
+	for _, path := range []string{
+		"/api/v1/_analyze?world=",
+		"/api/v1/tickets/TKT-1/relations?world=",
+	} {
+		t.Run(path, func(t *testing.T) {
+			t.Parallel()
+			rec := serveWorldRequest(t, app, path)
+			if rec.Code != http.StatusOK {
+				t.Errorf("an empty ?world= names the default world, which every "+
+					"route serves; got %d %s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+// TestRefuseWorldIncapablePath_DoesNotShadowConfigErrors pins the refusal's
+// PLACE in attachWorld's ladder, which the fix for BUG-CV8L3B chose
+// deliberately.
+//
+// A duplicate or unknown `?world=` is a config error true of every route, so
+// it must answer identically on a world-capable and a world-incapable one.
+// Hoisting the 422 above them (the first attempt) traded `no world named
+// "bogus" is declared` — the diagnostic that tells an operator they typoed a
+// name — for a vaguer refusal, on exactly the routes where they are most
+// likely to be experimenting.
+//
+// The security property does not need that hoist: both 400s are reached
+// without consulting the grant, so neither can distinguish the two principals.
+func TestRefuseWorldIncapablePath_DoesNotShadowConfigErrors(t *testing.T) {
+	t.Parallel()
+	app := &App{worlds: stubWorlds{names: map[string]bool{"published": true}}}
+	for _, tc := range []struct {
+		name  string
+		query string
+		want  string
+	}{
+		{"duplicate", "?world=a&world=b", "duplicate_world"},
+		{"unknown", "?world=bogus", "unknown_world"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			capable := serveWorldRequest(t, app, "/api/v1/tickets"+tc.query)
+			incapable := serveWorldRequest(t, app, "/api/v1/_analyze"+tc.query)
+
+			if capable.Code != http.StatusBadRequest || incapable.Code != http.StatusBadRequest {
+				t.Fatalf("a config error is a 400 on every route; capable=%d incapable=%d",
+					capable.Code, incapable.Code)
+			}
+			if !strings.Contains(incapable.Body.String(), tc.want) {
+				t.Errorf("the world-incapable route must still report %s rather than "+
+					"shadowing it with world_unsupported; got %s",
+					tc.want, incapable.Body)
+			}
+			// `instance` legitimately echoes the request path, so the two
+			// bodies differ there and only there — compare the diagnosis.
+			if !strings.Contains(capable.Body.String(), tc.want) {
+				t.Errorf("a config error must not depend on the route's world "+
+					"capability: the capable route reported something else\n"+
+					"  capable:   %s\n  incapable: %s",
+					capable.Body.String(), incapable.Body.String())
+			}
+		})
+	}
+}
