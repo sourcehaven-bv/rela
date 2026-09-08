@@ -83,6 +83,23 @@ func TestNew_WithDeclarative_WiresBothACLAndDeclarative(t *testing.T) {
 		t.Fatalf("acl.NewDeclarative: %v", err)
 	}
 
+	// Constructing at all is the assertion for #1437: this is the only
+	// fixture path that reaches entitymanager.New with a POLICY-backed ACL, so
+	// a fixture that left CopyReadGate / CopyVisibility nil panics here rather
+	// than quietly handing back a manager whose copy path reads its source
+	// ungated. appbuild's TestCompileTransitions_AlwaysSuppliesCopyGates proves
+	// the bundle offers the gates; this proves the fixture CONSUMES them —
+	// which is the half that actually broke, since the gates were available
+	// and simply not passed.
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("building the fixture with a compiled policy must succeed. A "+
+				"panic here means a wiring site stopped taking the copy gates from "+
+				"appbuild.TransitionWiring — restore them rather than relaxing the "+
+				"guard in entitymanager.New (#1437).\ngot: %v", r)
+		}
+	}()
+
 	svc := appbuildtest.New(meta, appbuildtest.WithDeclarative(d))
 	if svc.ACL() != acl.ACL(d) {
 		t.Errorf("svc.ACL() = %T, want the supplied *acl.Declarative", svc.ACL())

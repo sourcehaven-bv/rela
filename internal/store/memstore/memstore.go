@@ -517,6 +517,9 @@ func (m *MemStore) createEntity(_ context.Context, e *entity.Entity) error {
 	if err := validateID(e.ID); err != nil {
 		return err
 	}
+	if err := storeutil.ValidateProperties(e.Properties); err != nil {
+		return err
+	}
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -561,6 +564,9 @@ func (m *MemStore) createEntity(_ context.Context, e *entity.Entity) error {
 }
 
 func (m *MemStore) updateEntity(_ context.Context, e *entity.Entity) error {
+	if err := storeutil.ValidateProperties(e.Properties); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -911,10 +917,11 @@ func (m *MemStore) GetRelation(_ context.Context, from, relType, to string) (*en
 
 func (m *MemStore) ListRelations(_ context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error] {
 	m.mu.RLock()
+	match := storeutil.NewRelationMatcher(q)
 	snapshot := make([]*entity.Relation, 0)
 	for _, key := range m.relationOrder {
 		r := m.relations[key]
-		if !matchRelation(r, q) {
+		if !match(r) {
 			continue
 		}
 		snapshot = append(snapshot, r.Clone())
@@ -939,8 +946,9 @@ func (m *MemStore) ListRelationsPage(_ context.Context, q store.RelationQuery) (
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
+	match := storeutil.NewRelationMatcher(q)
 	keys := storeutil.PaginateSortedKeys(m.relationOrder, cursorKey, q.Limit, func(key string) bool {
-		return matchRelation(m.relations[key], q)
+		return match(m.relations[key])
 	})
 
 	items := make([]*entity.Relation, 0, len(keys.Keys))
@@ -952,15 +960,14 @@ func (m *MemStore) ListRelationsPage(_ context.Context, q store.RelationQuery) (
 	return store.Page[*entity.Relation]{Items: items, NextCursor: keys.NextCursor}, nil
 }
 
-var matchRelation = storeutil.MatchRelation
-
 func (m *MemStore) CountRelations(_ context.Context, q store.RelationQuery) (int, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
+	match := storeutil.NewRelationMatcher(q)
 	count := 0
 	for _, key := range m.relationOrder {
-		if matchRelation(m.relations[key], q) {
+		if match(m.relations[key]) {
 			count++
 		}
 	}
@@ -979,6 +986,11 @@ func (m *MemStore) createRelation(
 	}
 	if err := storeutil.ValidateRelationType(relType); err != nil {
 		return nil, err
+	}
+	if data != nil {
+		if err := storeutil.ValidateProperties(data.Properties); err != nil {
+			return nil, err
+		}
 	}
 
 	m.mu.Lock()
@@ -1018,6 +1030,9 @@ func (m *MemStore) createRelation(
 func (m *MemStore) updateRelation(
 	_ context.Context, from, relType, to string, data store.RelationData,
 ) (*entity.Relation, error) {
+	if err := storeutil.ValidateProperties(data.Properties); err != nil {
+		return nil, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 

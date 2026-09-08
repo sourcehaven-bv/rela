@@ -23,7 +23,7 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.10.0
-	github.com/mattn/go-runewidth v0.0.28
+	github.com/mattn/go-runewidth v0.0.29
 	github.com/microcosm-cc/bluemonday v1.0.27
 	github.com/mitchellh/go-wordwrap v1.0.1
 	github.com/modelcontextprotocol/go-sdk v1.7.0
@@ -33,7 +33,7 @@ require (
 	github.com/teekennedy/goldmark-markdown v0.5.1
 	github.com/wailsapp/wails/v2 v2.15.0
 	github.com/wneessen/go-mail v0.8.1
-	github.com/yuin/goldmark v1.8.5
+	github.com/yuin/goldmark v1.8.6
 	github.com/yuin/gopher-lua v1.1.2
 	go.uber.org/goleak v1.3.0
 	golang.org/x/image v0.45.0
@@ -41,7 +41,7 @@ require (
 	golang.org/x/sync v0.22.0
 	golang.org/x/sys v0.47.0
 	gopkg.in/yaml.v3 v3.0.1
-	modernc.org/sqlite v1.57.0
+	modernc.org/sqlite v1.58.0
 )
 
 require (
@@ -51,6 +51,7 @@ require (
 	github.com/ProtonMail/go-crypto v1.1.6 // indirect
 	github.com/PuerkitoBio/goquery v1.12.0 // indirect
 	github.com/RoaringBitmap/roaring/v2 v2.14.5 // indirect
+	github.com/agnivade/levenshtein v1.1.1 // indirect
 	github.com/alecthomas/chroma/v2 v2.20.0 // indirect
 	github.com/andybalholm/cascadia v1.3.3 // indirect
 	github.com/atotto/clipboard v0.1.4 // indirect
@@ -159,6 +160,7 @@ require (
 	github.com/tkrajina/go-reflector v0.5.8 // indirect
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
 	github.com/valyala/fasttemplate v1.2.2 // indirect
+	github.com/vloothuis/textanchor v0.2.0 // indirect
 	github.com/wailsapp/go-webview2 v1.0.22 // indirect
 	github.com/wailsapp/mimetype v1.4.1 // indirect
 	github.com/xanzy/ssh-agent v0.3.3 // indirect
@@ -177,9 +179,9 @@ require (
 	golang.org/x/time v0.15.0 // indirect
 	google.golang.org/protobuf v1.36.6 // indirect
 	gopkg.in/warnings.v0 v0.1.2 // indirect
-	modernc.org/libc v1.74.4 // indirect
+	modernc.org/libc v1.75.6 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
-	modernc.org/memory v1.11.0 // indirect
+	modernc.org/memory v1.12.1 // indirect
 )
 
 // neoq's make-job-id-bigint migration hardcoded `public.neoq_jobs_id_seq`

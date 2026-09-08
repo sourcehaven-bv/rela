@@ -1176,6 +1176,12 @@ sort:
 
 You can also sort by the virtual properties `id` (entity ID) and `modified` (file modification time).
 
+Values compare as text, byte by byte. An entity that lacks the sort property
+sorts as if it held the largest value: after every entity that has one when
+ascending, before them when descending. On the PostgreSQL backend a sorted list
+page is served straight from an index when the sort keys are string-shaped
+properties (see the PostgreSQL guide on derived list indexes).
+
 If no sort is configured, the list falls back to the entity type's `default_sort` from the metamodel,
 or sorts by ID ascending.
 

@@ -183,6 +183,46 @@ var errWorldEntityAbsent = errors.New("entity has no face in this world")
 //
 // This is the extraction of the former App.filterVisibleIncludes; behavior is
 // preserved, including the nil return for empty input.
+// visibleHeaderIDs is the row-gate half of filterVisible over content-free
+// headers: the set of candidate ids the principal may read, probed once per
+// distinct type. No redaction is involved because only ids leave here — the
+// caller uses the set to decide which neighbor ids may appear in a
+// relations map, never to serve a property.
+func (vr visibleReader) visibleHeaderIDs(ctx context.Context, candidates []store.EntityHeader) map[string]bool {
+	out := make(map[string]bool, len(candidates))
+	if len(candidates) == 0 {
+		return out
+	}
+	gate := readGateFromContext(ctx)
+	byType := make(map[string][]string)
+	for _, c := range candidates {
+		byType[c.Type] = append(byType[c.Type], c.ID)
+	}
+	allowed := make(map[string]bool, len(candidates))
+	for typeName, ids := range byType {
+		perm, err := gate.PermitsReadMany(ctx, typeName, ids)
+		if err != nil {
+			slog.Warn("dataentry: visibleReader.visibleHeaderIDs: PermitsReadMany failed; dropping type",
+				"type", typeName, "candidates", len(ids), "err", err)
+			continue
+		}
+		for id, ok := range perm {
+			if ok {
+				allowed[id] = true
+			}
+		}
+	}
+	// The face grant is the other half of filterVisible's gate (TKT-O7R2A1);
+	// a header carries its Face, so applying it here keeps the two gates
+	// from drifting when a caller one day passes AllStates or a World.
+	for _, c := range candidates {
+		if allowed[c.ID] && faceReadable(ctx, c.Type, c.Face) {
+			out[c.ID] = true
+		}
+	}
+	return out
+}
+
 func (vr visibleReader) filterVisible(ctx context.Context, candidates []*entitypkg.Entity) []*entitypkg.Entity {
 	if len(candidates) == 0 {
 		return nil

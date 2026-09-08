@@ -279,6 +279,23 @@
   there is no signal handler, so pending mail is lost on every restart with no
   drain. Mail is notification, never a system of record. A durable queue with
   swappable backends is IDEA-WIJ2H1.
+- **Collection reads are content-free, batched per page, and paged in the
+  store when they can be** (TKT-1U8XYN). A list, search, kanban or scope
+  pipeline reads `store.EntityHeader` rows (`ListEntityHeaders`,
+  `GraphQueryHeaders`) and never a body it will not render; a body is loaded
+  for the served rows only, on `include_content=true`. Per-row lookups are
+  the defect this rule exists to prevent: a page loads its edges with ONE
+  `RelationQuery.EntityIDs` query, its neighbours with ONE header batch, a
+  table section its relation columns with one query per (column, row type).
+  Write authorization reuses the request's `acl.Request` (the membership walk
+  runs once per operation, not once per verb per row). When the request's
+  shape allows it, the list handler pushes paging, ordering and equality
+  filters into `store.GraphQuery` (`listpushdown.go`) and takes the scoped
+  count through `store.CountMatched`, never `GraphCount`'s total. New read
+  paths pin their cost with a `storetest.Counting` budget test asserting the
+  count is the same at 10 and 50 rows. Measure on the postgres backend with
+  `rela-server -verbose` (`Server-Timing`, one `request` log line each) against
+  `prototypes/perf/project` seeded by `rela dev seed`.
 - **Boundaries are enforced.** `just arch-lint` checks package import
   rules; run it before PR.
 
@@ -660,6 +677,14 @@ Rules when touching this:
   rows). Migration steps must stay idempotent — re-run IS the crash
   recovery. The Lua step is a pure transform (patch in, patch out, engine
   applies); never hand it a write handle.
+- **Perf seeding** (TKT-1U8XYN, `internal/perfseed`, `rela dev seed`) is the
+  fourth raw-store exception, under the same terms: operator shell, attributed
+  (`perf-seed` tool), one `perf-seed` audit record, and it refuses a non-empty
+  store. Because nothing above the store runs, the generator keeps the
+  invariants the store cannot: ids minted by construction and validated, the
+  single `unique:` property unique by construction, every edge endpoint
+  emitted by the same generator. Do not route it through entitymanager to
+  "fix" that — 20k automations per seed is the cost it exists to avoid.
 - DSN is read from the `RELA_DATABASE_URL` env var **only** — there is no
   `--database-url` flag, so the credential never lands in `ps`/shell history.
   `appbuild.Discover` reads the env into `appbuild.Config.DatabaseURL`; the
@@ -774,10 +799,23 @@ matters.
 
 ## Security
 
-`govulncheck` runs on every PR touching `go.mod` / `go.sum` (the `vulncheck`
-job in `ci.yml`) and weekly from `security.yml`. Known-unfixable vulns are
-filtered via `scripts/govulncheck-filtered.sh` — keep `IGNORED_OSVS` in sync
-with `scripts/govulncheck-fixable.sh`. Run locally: `just govulncheck`.
+`govulncheck` runs **daily** from `security.yml`, which auto-opens an
+auto-merging `go get` PR when a fix exists and files a tracking issue when one
+does not. It also gates releases (the `security` job in `release.yml`) — a
+release must not ship a known vulnerability.
+
+It deliberately does **not** run on the PR path. A vulnerability in an
+already-merged dependency is not a defect in whatever PR happens to be in
+flight, and gating there blocks unrelated work: the old `ci.yml` job scanned
+only on a `go.mod`/`go.sum` diff, but the merge queue runs on `merge_group`
+(not `pull_request`) and took the unconditional-scan branch — so an advisory
+would pass on the PR and then dequeue it from the merge queue. Don't
+reintroduce a blocking vulnerability check on PRs; raise the scan cadence
+instead.
+
+Known-unfixable vulns are filtered via `scripts/govulncheck-filtered.sh` —
+keep `IGNORED_OSVS` in sync with `scripts/govulncheck-fixable.sh`. Run
+locally: `just govulncheck`.
 
 ## Commands
 

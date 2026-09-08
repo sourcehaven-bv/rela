@@ -9,7 +9,8 @@ why2: No warning is emitted because the store holds no content-state rows.
 why3: The store holds no rows because the fixture seeds markdown files into the project directory, which is how fsstore discovers entities — the sqlite backend reads .rela/rela.db and never looks at them.
 why4: The backend-specific fixture went unnoticed because the test was written against the default build and inherited by the sqlite build unchanged.
 why5: It stayed broken because ci.yml exercises the sqlite tag only through go build and go list -deps; no job runs `go test -tags sqlite`, so the entire sqlite test surface is ungated on every PR.
-status: backlog
+prevention: 'Two changes, and the second is the one that matters. (1) The test now excludes the sqlite tag explicitly, matching the exclusion it already had for postgres for the identical reason. (2) A `Run sqlite-tagged tests` step in the Backends CI job runs `go test -tags sqlite` over internal/store, internal/appbuild and internal/cli — verified to fail against the reverted fix, so the class of defect is now caught rather than the instance. The general lesson: a build tag that CI only COMPILES is untested, and adding a backend under an existing `!postgres` exclusion silently opts it into every fs-shaped fixture.'
+status: done
 ---
 
 ## Symptom

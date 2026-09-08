@@ -74,3 +74,36 @@ func TestLoadStaticIndexSpecsRejectsIncompleteConfig(t *testing.T) {
 		t.Fatalf("LoadStaticIndexSpecs() = %#v, %v; want nil specs and an error", got, err)
 	}
 }
+
+// A list with a sort gets a list index over its equality filters then its
+// sort keys; a list without a sort, or with a key the store cannot order
+// byte-for-byte, gets none (TKT-1U8XYN).
+func TestStaticIndexSpecsDerivesListIndexes(t *testing.T) {
+	t.Parallel()
+	cfg := &dataentryconfig.Config{
+		Lists: map[string]dataentryconfig.List{
+			"open": {
+				EntityType: "task",
+				Filters:    []dataentryconfig.FilterConfig{{Property: "status", Operator: "=", Value: "open"}},
+				Sort:       []dataentryconfig.SortSpec{{Property: "owner", Direction: "desc"}},
+			},
+			"all":      {EntityType: "task", Sort: []dataentryconfig.SortSpec{{Property: "owner"}}},
+			"unsorted": {EntityType: "task"},
+			"typed":    {EntityType: "task", Sort: []dataentryconfig.SortSpec{{Property: "count"}}},
+			"listkey":  {EntityType: "task", Sort: []dataentryconfig.SortSpec{{Property: "tags"}}},
+			"nefilter": {
+				EntityType: "task",
+				Filters:    []dataentryconfig.FilterConfig{{Property: "status", Operator: "!=", Value: "done"}},
+				Sort:       []dataentryconfig.SortSpec{{Property: "owner"}},
+			},
+		},
+	}
+	want := []store.DerivedObjectSpec{
+		{Kind: store.DerivedListIndex, Type: "task", Properties: nil, OrderBy: []string{"owner"}},
+		{Kind: store.DerivedListIndex, Type: "task", Properties: []string{"status"}, OrderBy: []string{"owner"}},
+	}
+	got := StaticIndexSpecs(cfg, testMeta())
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("StaticIndexSpecs() = %#v, want %#v", got, want)
+	}
+}

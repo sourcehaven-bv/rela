@@ -25,6 +25,17 @@
  * renaming or revaluing the four contract steps is not.
  */
 :root {
+  /* Comment-highlight yellow (TKT-FIO205).
+   *
+   * SPA-only, so it lives here rather than in tokens.css: that file is copied
+   * byte-identically into the Go binary and served to custom apps, and a
+   * commenting colour is not part of that frozen contract.
+   *
+   * Yellow because it is the annotation convention, and because the accent
+   * blue already marks links and interactive chrome inside a rendered body —
+   * a blue highlight over a blue link read as one thing. */
+  --comment-highlight: #f5c518;
+
   /* Spacing — 4px base. Covers the observed 4/6/8/12/16/24/32/48 cluster
    * without the rem/px mixing. Use these for padding, margin, and gap. */
   --space-3xs: 2px;
@@ -105,6 +116,10 @@
  * as tokens.css (App.vue toggles the class on <html>). Exercised by the two
  * migrated call sites below, so this branch is not dead code. */
 :root.dark {
+  /* Lifted and slightly desaturated: the light yellow over a dark surface is
+   * harsh, and the highlight sits behind body text that must stay readable. */
+  --comment-highlight: #d4a72c;
+
   --shadow-sm: 0 1px 3px rgb(0 0 0 / 30%);
   --shadow-md: 0 2px 8px rgb(0 0 0 / 40%);
   --shadow-lg: 0 4px 12px rgb(0 0 0 / 45%);
