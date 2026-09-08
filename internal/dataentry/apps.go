@@ -50,6 +50,12 @@ const appCSSEntry = "_rela.css"
 // that use the editor pay its bundle. Reserved (underscore-prefixed).
 const appEditorEntry = "_rela-editor.js"
 
+// appEditorCSSEntry is the reserved per-app path that serves the <rela-editor>
+// stylesheet. A file, not an inline <style>: the app CSP has no
+// 'unsafe-inline', so a runtime-injected style element would be blocked and the
+// editor would render unstyled.
+const appEditorCSSEntry = "_rela-editor.css"
+
 // appEditorFontEntry is the reserved per-app path that serves the Font Awesome
 // glyph webfont the editor's toolbar uses. The bundle's @font-face points here
 // (a same-base URL), so the app CSP's `font-src <base>` permits it without

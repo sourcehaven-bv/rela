@@ -228,31 +228,42 @@ func TestSafeFS_OnPostWrite_NoObserverIsFineByDefault(t *testing.T) {
 	}
 }
 
-func TestSafeFS_OnPostWrite_ReplacesPreviousObserver(t *testing.T) {
+func TestSafeFS_OnPostWrite_FanOutAndRemove(t *testing.T) {
 	dir := t.TempDir()
 	sfs := NewSafeFS(NewOsFS())
 
 	var aCalls, bCalls int
-	sfs.OnPostWrite(func(_ string, _ []byte) { aCalls++ })
+	removeA := sfs.OnPostWrite(func(_ string, _ []byte) { aCalls++ })
 	sfs.OnPostWrite(func(_ string, _ []byte) { bCalls++ })
 
-	path := filepath.Join(dir, "replaced.txt")
+	path := filepath.Join(dir, "fanout.txt")
 	if err := sfs.WriteFile(path, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if aCalls != 0 {
-		t.Errorf("replaced observer still fired: aCalls = %d", aCalls)
-	}
-	if bCalls != 1 {
-		t.Errorf("current observer fired %d times, want 1", bCalls)
+	if aCalls != 1 || bCalls != 1 {
+		t.Errorf("both observers must fire once: a=%d b=%d", aCalls, bCalls)
 	}
 
-	// nil clears the observer.
-	sfs.OnPostWrite(nil)
+	// Removing one observer leaves the other installed; a second
+	// removal is a harmless no-op.
+	removeA()
+	removeA()
 	if err := sfs.WriteFile(path, []byte("y"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if bCalls != 1 {
-		t.Errorf("cleared observer still fired: bCalls = %d", bCalls)
+	if aCalls != 1 {
+		t.Errorf("removed observer still fired: aCalls = %d", aCalls)
+	}
+	if bCalls != 2 {
+		t.Errorf("remaining observer fired %d times, want 2", bCalls)
+	}
+
+	// nil installs nothing and its remover does nothing.
+	sfs.OnPostWrite(nil)()
+	if err := sfs.WriteFile(path, []byte("z"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if bCalls != 3 {
+		t.Errorf("nil install disturbed the registry: bCalls = %d", bCalls)
 	}
 }

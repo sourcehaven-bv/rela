@@ -74,7 +74,7 @@ Per-AC status:
 |----|-------------|--------|
 | 1 — redacted distinguishable from unset | `TestScriptReads_RedactedIsDistinguishableFromUnset` | PASS — both read `nil`, only the hidden one reports redacted |
 | 2 — value still unreachable | `TestScriptReads_RedactedNeverCarriesValues` | PASS — `100000` appears nowhere via `redacted`, `properties`, or `prop()` |
-| 3 — nothing-hidden unchanged | `TestRedact_NothingHiddenIsUnchanged` | PASS — original pointer returned, no marker |
+| 3 — nothing-hidden unchanged | `TestRedact_NothingHiddenIsUnchanged` | PASS — original face returned, no marker |
 | 4 — validator does not skip | `TestRedactedDoesNotLock` + `TestRedact_DoesNotLock` | PASS — `IsLocked()` false, so `validator.go:198` cannot skip it |
 | 5 — no bogus git-crypt 422 | same `IsLocked()` invariant (`write_handler.go:335` keys on it) | PASS |
 

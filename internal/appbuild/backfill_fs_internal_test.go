@@ -40,11 +40,11 @@ func seedEntities(t *testing.T, st store.Store, n int) {
 // return. The limit is generous so the query never truncates the answer.
 func indexedCount(t *testing.T, idx *bleveindex.Index, limit int) int {
 	t.Helper()
-	ids, err := idx.Search("backfillmarker", limit)
+	faces, err := idx.Search("backfillmarker", limit, store.DefaultWorld())
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
-	return len(ids)
+	return len(faces)
 }
 
 // backfillBleve streams entities through fixed-size batches rather than

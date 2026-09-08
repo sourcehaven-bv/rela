@@ -27,7 +27,27 @@ type Trigger struct {
 	Created         bool
 	RelationCreated string
 	RelationRemoved string
-	When            []*filter.Filter // Property conditions that must all match
+	// Faces limits the trigger to specific content states, named as declared
+	// in `faces:`. Empty means EVERY state, including the bare one.
+	//
+	// # Why the default is every state
+	//
+	// It is the behavior that already exists — an automation fires on a face
+	// row today exactly as it does on a bare one — so any other default would
+	// silently change what every existing automation does.
+	//
+	// It is also the honest reading of an unscoped rule: "when a ticket's
+	// status becomes done" is a statement about tickets, and a translated
+	// ticket is still a ticket.
+	//
+	// The risk it carries is multiplied SIDE EFFECTS. An automation that
+	// creates a checklist entity now creates one per state, which is rarely
+	// what an operator means. That is what this key is for, and why the
+	// `create_entity` action's `if_exists: skip` matters more in a faced
+	// project than an unfaced one.
+	Faces []string
+
+	When []*filter.Filter // Property conditions that must all match
 
 	// Condition is a predicate expression ANDed with every When clause.
 	// Kept as SOURCE, not a parsed filter: routing it through
@@ -53,8 +73,8 @@ type Action struct {
 	// unlocks (TKT-D8T148, TKT-Y3JVFK).
 	AllowACLBypass metamodel.ACLBypass
 	// Capabilities is the action's `capabilities:` block (TKT-YH52OM): which
-	// ambient capabilities (http/ai/write_file/named secrets) the script may
-	// reach. Zero value grants none.
+	// ambient capabilities (http/ai/mail/write_file/named secrets) the script
+	// may reach. Zero value grants none.
 	Capabilities metamodel.Capabilities
 }
 
@@ -174,15 +194,15 @@ type LuaToExecute struct {
 	// bypass_acl capabilities are unlocked.
 	AllowACLBypass metamodel.ACLBypass
 	// Capabilities is the action's `capabilities:` block (TKT-YH52OM): which
-	// ambient capabilities (http/ai/write_file/named secrets) the script may
-	// reach. Zero value grants none.
+	// ambient capabilities (http/ai/mail/write_file/named secrets) the script
+	// may reach. Zero value grants none.
 	Capabilities metamodel.Capabilities
 }
 
 // CapabilityFields exposes the grant as plain values so consumers that may not
 // import metamodel (autocascade) still read it through the single translation
 // seam rather than copying fields by hand. See metamodel.Capabilities.Fields.
-func (l LuaToExecute) CapabilityFields() (http, ai, writeFile bool, secrets []string) {
+func (l LuaToExecute) CapabilityFields() (http, ai, mail, writeFile bool, secrets []string) {
 	return l.Capabilities.Fields()
 }
 

@@ -211,20 +211,88 @@ type Watcher interface {
 // Server and point at the fields' methods. The remaining handlers genuinely
 // span deps — the next TKT-N0IKN9 slice.
 //
-//plimsoll:max-methods=25
+// 25 → 27 (TKT-NU247U): [Server.ReloadDeps] and the unexported deps accessor.
+// Both are the reload seam itself — ReloadDeps is the capability, and deps()
+// is what makes every handler read the CURRENT snapshot instead of one baked
+// in at construction. The six handler-group accessors that would also have
+// landed here are free functions ([group], [setDeps], [bind]) precisely to
+// keep this number from moving further; ratchet it back down with the
+// remaining handler clusters.
+//
+//plimsoll:max-methods=27
 type Server struct {
 	mcp       *mcpgo.Server
-	deps      Deps
 	logger    *slog.Logger
 	principal principal.Principal
 
-	// Extracted handler groups (TKT-YUETL7, TKT-MGNE5L) — built from deps
-	// by Deps.handlers. Embedded so the groups stay addressable as
-	// s.trace/s.export/... Identity is NOT threaded into them: every
-	// handler reads the principal from its ctx, stamped by
-	// principalMiddleware.
-	handlerSet
+	// state publishes the reloadable (Deps, handlerSet) pair. Read it per
+	// request via [Server.deps] / the s.<group>() accessors, never by
+	// caching the result across a call — a schema hot-reload (TKT-NU247U)
+	// swaps the whole snapshot between requests.
+	//
+	// Handler groups are NOT embedded fields any more. They used to be, and
+	// registerTools passed method values like `group(s, selTrace).handleTraceFrom`
+	// straight to AddTool — which binds the group BY VALUE at registration
+	// time, so a reloaded snapshot would never reach an already-registered
+	// tool. Registration now goes through closures that resolve the current
+	// snapshot per call; see registerTools.
+	state snapshotProvider
 }
+
+// setDeps derives and publishes the snapshot for d. Used by [NewServer], by
+// [Server.ReloadDeps], and by test helpers building a Server literal — one
+// call, so the deps and their handler groups cannot be set inconsistently.
+//
+// A free function rather than a method to keep Server under its plimsoll load
+// line; it is package-internal wiring, not part of the type's surface.
+func setDeps(s *Server, d Deps) { s.state.publish(newSnapshot(d)) }
+
+// deps returns the currently published dependency bundle.
+func (s *Server) deps() Deps { return s.state.current().deps }
+
+// ReloadDeps atomically republishes the server against a freshly built
+// dependency bundle, so subsequent requests observe the new metamodel and the
+// services derived from it.
+//
+// This is how `rela mcp` picks up a `schema.yaml` edit without a restart
+// (TKT-NU247U): the wiring site rebuilds the metamodel-derived service stack
+// against the SAME store and searcher, then hands the new Deps here. The
+// registered tool/resource/prompt SET is unchanged — only what the handlers
+// read through — so no capability renegotiation is involved.
+//
+// An invalid bundle is refused and the previous one stays published: a reload
+// driven by a file watcher must never be able to leave a running server
+// without a usable metamodel.
+//
+// Safe to call while requests are in flight. A request that has already
+// resolved the snapshot completes against it; the next one sees the new
+// bundle.
+func (s *Server) ReloadDeps(d Deps) error {
+	if err := d.validate(); err != nil {
+		return err
+	}
+	setDeps(s, d)
+	return nil
+}
+
+// group resolves one handler group out of the CURRENT snapshot. Callers pass a
+// selector over [handlerSet]; see [bind] for why the resolution has to happen
+// per request rather than once at registration.
+//
+// A free function rather than six accessor methods on Server: Server sits near
+// its plimsoll load line, and six one-line getters would spend that budget on
+// indirection rather than on capability.
+func group[G any](s *Server, sel func(handlerSet) G) G {
+	return sel(s.state.current().handlers)
+}
+
+// Selectors for the handler groups, used with [group] and [bind].
+func selTypes(h handlerSet) typeResolver              { return h.types }
+func selTrace(h handlerSet) traceHandler              { return h.trace }
+func selExport(h handlerSet) exportHandler            { return h.export }
+func selLua(h handlerSet) luaHandler                  { return h.lua }
+func selSchemaRes(h handlerSet) schemaResourceHandler { return h.schemaRes }
+func selPrompts(h handlerSet) promptHandler           { return h.prompts }
 
 // handlerSet is the extracted handler groups a [Server] carries.
 //
@@ -313,7 +381,6 @@ func (s *Server) principalMiddleware(next mcpgo.MethodHandler) mcpgo.MethodHandl
 // non-empty `principal.Principal{User: ..., Tool: ...}`.
 func NewServer(deps Deps, version string, opts ...Option) (*Server, error) {
 	s := &Server{
-		deps:   deps,
 		logger: slog.Default().With("component", "mcp"),
 	}
 	for _, opt := range opts {
@@ -325,7 +392,7 @@ func NewServer(deps Deps, version string, opts ...Option) (*Server, error) {
 	if err := deps.validate(); err != nil {
 		return nil, err
 	}
-	s.handlerSet = deps.handlers()
+	setDeps(s, deps)
 
 	// Capabilities are inferred by the go-sdk from the features actually
 	// registered below (tools/resources/prompts each gain listChanged when
@@ -409,13 +476,13 @@ func (s *Server) Serve(ctx context.Context) error {
 	// resource list is not proactively invalidated — acceptable, and
 	// aligned with the direction of the 2026-07-28 spec, which requires an
 	// explicit subscriptions/listen opt-in for these notifications anyway.
-	if err := s.deps.Watcher.Start(func() {
+	if err := s.deps().Watcher.Start(func() {
 		s.logger.Info("graph re-synced from file changes")
 	}); err != nil {
 		s.logger.Warn("file watcher not started", "error", err)
 	}
 
-	defer s.deps.Watcher.Stop()
+	defer s.deps().Watcher.Stop()
 
 	return s.mcp.Run(ctx, &mcpgo.StdioTransport{})
 }

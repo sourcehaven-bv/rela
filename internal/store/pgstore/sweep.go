@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -239,7 +240,10 @@ func (s *sweep) tick(ctx context.Context) error {
 // row's last_edited_by_* columns (nil = no recorded editor) so the captured
 // version is attributed to the real author (TKT-ZIRMGM).
 type sweepCandidate struct {
-	id         string
+	id string
+	// face is the face this candidate row is; zero = the default face.
+	// It keys the version alongside the id (TKT-C1XUA8).
+	face       string
 	typ        string
 	content    string
 	props      []byte
@@ -247,6 +251,12 @@ type sweepCandidate struct {
 	hasVersion bool
 	editorUser *string
 	editorTool *string
+	// origin carries the row's origin_* columns (all nil = a direct edit), so
+	// the captured version records HOW the bytes got there. The sweep cannot
+	// reconstruct this — a copy's write context is long gone by the time a
+	// tick runs — which is exactly why the write boundary stamps the row
+	// (see migration 0013).
+	origin originCols
 }
 
 // selectCandidates returns up to Batch entities that have settled (updated_at
@@ -271,22 +281,41 @@ func (s *sweep) selectCandidates(ctx context.Context, conn *pgxpool.Conn) ([]swe
 	//     against. Deduping against a pre-delete version would wrongly skip
 	//     re-creating an entity with identical bytes, leaving its timeline
 	//     ending in `delete` while it is live.
+	// PER-STATE (TKT-C1XUA8): the Step-1 skip (`e.face = ''`) is gone —
+	// every face is swept, and entity_versions now keys
+	// (entity_id, face, vseq) so faces cannot interleave in one lineage.
+	//
+	// BOTH LATERALs and the delete-fence subselect are scoped
+	// `ev.face = e.face`, and that is the load-bearing detail rather
+	// than a tidiness one. Scoping only the outer row would leave the inner
+	// probes answering from ANY face: the published capture would dedup
+	// against the draft's identical content_hash and be silently dropped —
+	// a MISSING version, not a duplicate — and one face's delete would reset
+	// another face's lifecycle boundary.
+	//
+	// The content hash also folds in the face (contentHashOf), so two
+	// faces with byte-identical content hash differently. That is the
+	// structural half of the same guarantee; the SQL scoping is the other.
 	const q = `
-		SELECT e.id, e.type, e.content, e.properties,
+		SELECT e.id, e.face, e.type, e.content, e.properties,
 		       e.last_edited_by_user, e.last_edited_by_tool,
+		       e.origin_kind, e.origin_source, e.origin_source_face,
+		       e.origin_source_type, e.origin_definition,
 		       lvc.content_hash,
 		       (lv.vseq IS NOT NULL AND lv.op <> 'delete') AS live_lineage
 		FROM entities e
 		LEFT JOIN LATERAL (
 		    SELECT vseq, op, created_at FROM entity_versions ev
-		    WHERE ev.entity_id = e.id ORDER BY ev.vseq DESC LIMIT 1
+		    WHERE ev.entity_id = e.id AND ev.face = e.face
+		    ORDER BY ev.vseq DESC LIMIT 1
 		) lv ON true
 		LEFT JOIN LATERAL (
 		    SELECT content_hash FROM entity_versions ev
-		    WHERE ev.entity_id = e.id
+		    WHERE ev.entity_id = e.id AND ev.face = e.face
 		      AND ev.vseq > COALESCE(
 		          (SELECT max(vseq) FROM entity_versions d
-		           WHERE d.entity_id = e.id AND d.op = 'delete'), 0)
+		           WHERE d.entity_id = e.id AND d.face = e.face
+		             AND d.op = 'delete'), 0)
 		    ORDER BY ev.vseq DESC LIMIT 1
 		) lvc ON true
 		WHERE (e.updated_at < now() - make_interval(secs => $1)
@@ -309,8 +338,12 @@ func (s *sweep) selectCandidates(ctx context.Context, conn *pgxpool.Conn) ([]swe
 			c          sweepCandidate
 			latestHash *string // NULL when there is no version in the current lifecycle
 		)
-		if err := rows.Scan(&c.id, &c.typ, &c.content, &c.props,
-			&c.editorUser, &c.editorTool, &latestHash, &c.hasVersion); err != nil {
+		scanArgs := make([]any, 0, 9+originColumnCount)
+		scanArgs = append(scanArgs, &c.id, &c.face, &c.typ, &c.content, &c.props,
+			&c.editorUser, &c.editorTool)
+		scanArgs = append(scanArgs, c.origin.scanTargets()...)
+		scanArgs = append(scanArgs, &latestHash, &c.hasVersion)
+		if err := rows.Scan(scanArgs...); err != nil {
 			return nil, err
 		}
 		if latestHash != nil {
@@ -336,6 +369,7 @@ func (s *sweep) captureOne(
 	principalUser, principalTool := sweepAttribution(c.editorUser, c.editorTool)
 	in := store.VersionInput{
 		EntityID:      c.id,
+		Face:          entity.Face(c.face),
 		Type:          c.typ,
 		Content:       c.content,
 		Properties:    props,
@@ -343,10 +377,22 @@ func (s *sweep) captureOne(
 		Projection:    projJSON,
 		PrincipalUser: principalUser,
 		PrincipalTool: principalTool,
+		// Copied verbatim off the live row, never guessed: all-NULL columns
+		// mean the last write was a direct edit, and that stays the zero
+		// Origin rather than becoming a literal "manual".
+		Origin: scanOrigin(c.origin),
 	}
 	contentHash := contentHashOf(in)
 	// Dedup only within the current lifecycle: latestHash is empty when there is
 	// no post-delete version, so a re-creation with identical bytes still records.
+	//
+	// ORIGIN IS DELIBERATELY NOT IN THE HASH. History records content changes,
+	// not write events, and folding provenance in would mint a version whose
+	// content is byte-identical to its predecessor purely because the writer
+	// differed. The visible consequence is that a NO-OP copy (target already
+	// equals source) records no version — correct under this contract, and the
+	// audit log (audit.OpCopyState) is where every copy INVOCATION is recorded
+	// whether or not it changed anything.
 	if c.latestHash != "" && contentHash == c.latestHash {
 		return nil
 	}
@@ -381,8 +427,10 @@ func sweepAttribution(editorUser, editorTool *string) (user, tool string) {
 // of its latest existing version in that lineage (empty if none). editorUser/
 // editorTool mirror sweepCandidate's attribution columns.
 type relationSweepCandidate struct {
-	recordID   int64
-	from       string
+	recordID int64
+	from     string
+	// fromFace is the state-specific TAIL of the edge; zero = default.
+	fromFace   string
 	relType    string
 	to         string
 	content    string
@@ -406,8 +454,19 @@ type relationSweepCandidate struct {
 func (s *sweep) selectRelationCandidates(
 	ctx context.Context, conn *pgxpool.Conn,
 ) ([]relationSweepCandidate, error) {
+	// PER-STATE (TKT-C1XUA8): the Step-1 skip (`r.from_face = ''`) is
+	// gone, symmetric with the entity scan above.
+	//
+	// This side needed less than the entity side: rel_record_id is minted
+	// per ROW and each tail is its own row since 0011, so lineages were
+	// already fenced per face and could not merge. What the tail is needed
+	// for is the rename STITCH, which matches a predecessor by the triple
+	// (prev_from, rel_type, prev_to) and cannot otherwise tell a
+	// state-tailed edge from a default-tail one — hence from_face on
+	// relation_versions and in the stitch's predicate.
 	const q = `
-		SELECT r.rel_record_id, r.from_id, r.rel_type, r.to_id, r.content, r.properties,
+		SELECT r.rel_record_id, r.from_id, r.from_face, r.rel_type, r.to_id,
+		       r.content, r.properties,
 		       r.last_edited_by_user, r.last_edited_by_tool,
 		       lv.content_hash,
 		       (lv.vseq IS NOT NULL) AS has_version
@@ -433,7 +492,7 @@ func (s *sweep) selectRelationCandidates(
 			c          relationSweepCandidate
 			latestHash *string // NULL when the lineage has no version yet
 		)
-		if err := rows.Scan(&c.recordID, &c.from, &c.relType, &c.to,
+		if err := rows.Scan(&c.recordID, &c.from, &c.fromFace, &c.relType, &c.to,
 			&c.content, &c.props, &c.editorUser, &c.editorTool,
 			&latestHash, &c.hasVersion); err != nil {
 			return nil, err
@@ -459,6 +518,7 @@ func (s *sweep) captureRelation(
 	principalUser, principalTool := sweepAttribution(c.editorUser, c.editorTool)
 	in := store.RelationVersionInput{
 		RecordID:      c.recordID,
+		FromFace:      entity.Face(c.fromFace),
 		From:          c.from,
 		Type:          c.relType,
 		To:            c.to,

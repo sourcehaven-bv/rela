@@ -54,6 +54,28 @@ func TestAppCSP_PathScopedNoEgress(t *testing.T) {
 			t.Errorf("%s must use an absolute scheme://host source, got %q", dir, seg)
 		}
 	}
+	// No 'unsafe-inline' on script-src/style-src: an app's code and styles are
+	// separate files, so a <script> or an onerror= smuggled in through the
+	// app's own innerHTML bug is blocked rather than executed (TKT-JO125X,
+	// issue #1025). `rela apps new` scaffolds app.js/app.css for this reason;
+	// re-adding 'unsafe-inline' here silently removes the protection, hence
+	// the assertion rather than a comment.
+	for _, dir := range []string{"script-src", "style-src"} {
+		idx := strings.Index(csp, dir+" ")
+		if idx < 0 {
+			continue // missing-directive is already reported above
+		}
+		seg := csp[idx:]
+		if end := strings.Index(seg, ";"); end >= 0 {
+			seg = seg[:end]
+		}
+		if strings.Contains(seg, "unsafe-inline") {
+			t.Errorf("%s must not allow 'unsafe-inline': %q", dir, seg)
+		}
+		if strings.Contains(seg, "unsafe-eval") {
+			t.Errorf("%s must not allow 'unsafe-eval': %q", dir, seg)
+		}
+	}
 	// Exfil channels closed.
 	for _, want := range []string{"form-action 'none'", "base-uri 'none'", "frame-ancestors 'self'"} {
 		if !strings.Contains(csp, want) {
@@ -564,9 +586,37 @@ func TestHandleV1App(t *testing.T) {
 		}
 	})
 
+	t.Run("serves the reserved _rela-editor.css stylesheet", func(t *testing.T) {
+		withTestEditorAssets(t)
+		w := doRequest(t, app, http.MethodGet, "/api/v1/_apps/demo/_rela-editor.css")
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", w.Code)
+		}
+		if w.Body.Len() == 0 {
+			t.Error("editor stylesheet is empty")
+		}
+		if ct := w.Header().Get("Content-Type"); ct != "text/css; charset=utf-8" {
+			t.Errorf("stylesheet Content-Type = %q, want text/css; charset=utf-8", ct)
+		}
+		// This endpoint exists BECAUSE style-src carries no 'unsafe-inline':
+		// the bundle links this file instead of injecting a <style>, which the
+		// browser would block (element present, .sheet null, editor unstyled —
+		// verified in-browser, TKT-JO125X). A same-path <link> is an ordinary
+		// resource load that style-src <base> already permits, so this needs no
+		// CSP widening — unlike the font, it is not cross-origin (a stylesheet
+		// link from the app document is same-origin with the app's own path).
+		csp := w.Header().Get("Content-Security-Policy")
+		if !strings.Contains(csp, "style-src ") || !strings.Contains(csp, "/api/v1/_apps/demo/") {
+			t.Errorf("style-src must path-scope the app (covers _rela-editor.css): %q", csp)
+		}
+		if strings.Contains(csp, "unsafe-inline") {
+			t.Errorf("style-src must not regain 'unsafe-inline': %q", csp)
+		}
+	})
+
 	t.Run("editor assets carry an ETag and 304 on If-None-Match", func(t *testing.T) {
 		withTestEditorAssets(t)
-		for _, entry := range []string{"_rela-editor.js", "_rela-editor.woff2"} {
+		for _, entry := range []string{"_rela-editor.js", "_rela-editor.css", "_rela-editor.woff2"} {
 			w := doRequest(t, app, http.MethodGet, "/api/v1/_apps/demo/"+entry)
 			etag := w.Header().Get("ETag")
 			if etag == "" {
@@ -687,12 +737,17 @@ func editorBundleBuilt() bool { return len(appEditorSource()) > 0 }
 func withTestEditorAssets(t *testing.T) {
 	t.Helper()
 	const fakeJS = `(function(){customElements.define('rela-editor',class extends HTMLElement{});` +
-		`/* @font-face url(` + appEditorFontEntry + `) */})();`
+		`var h='` + appEditorCSSEntry + `';})();`
+	const fakeCSS = `.CodeMirror{font-family:monospace}` +
+		`@font-face{font-family:FontAwesome;src:url(` + appEditorFontEntry + `)}`
 	fakeFont := []byte("wOF2-test-font-bytes")
-	origJS, origFont := appEditorSource, appEditorFontSource
+	origJS, origFont, origCSS := appEditorSource, appEditorFontSource, appEditorCSSSource
 	appEditorSource = func() []byte { return []byte(fakeJS) }
 	appEditorFontSource = func() []byte { return fakeFont }
-	t.Cleanup(func() { appEditorSource, appEditorFontSource = origJS, origFont })
+	appEditorCSSSource = func() []byte { return []byte(fakeCSS) }
+	t.Cleanup(func() {
+		appEditorSource, appEditorFontSource, appEditorCSSSource = origJS, origFont, origCSS
+	})
 }
 
 // TestAppEditorBundleEmbedded verifies the editor bundle + font, WHEN BUILT,
@@ -706,8 +761,20 @@ func TestAppEditorBundleEmbedded(t *testing.T) {
 	if !strings.Contains(string(js), "rela-editor") {
 		t.Error("editor bundle does not define the rela-editor custom element")
 	}
-	if !strings.Contains(string(js), appEditorFontEntry) {
-		t.Errorf("editor bundle must reference the reserved font path %q (its @font-face)", appEditorFontEntry)
+	// The bundle LINKS its stylesheet rather than inlining it: an injected
+	// <style> is blocked by the app CSP (no 'unsafe-inline') and the editor
+	// renders unstyled. Assert the reference so a build that reverts to
+	// inlining fails here rather than silently shipping a broken editor.
+	if !strings.Contains(string(js), appEditorCSSEntry) {
+		t.Errorf("editor bundle must reference the reserved stylesheet path %q", appEditorCSSEntry)
+	}
+	css := appEditorCSSSource()
+	if len(css) == 0 {
+		t.Fatal("editor stylesheet not embedded")
+	}
+	// The @font-face moved into the stylesheet along with the rest of the CSS.
+	if !strings.Contains(string(css), appEditorFontEntry) {
+		t.Errorf("editor stylesheet must reference the reserved font path %q (its @font-face)", appEditorFontEntry)
 	}
 	if len(appEditorFontSource()) == 0 {
 		t.Fatal("editor woff2 font not embedded")

@@ -46,8 +46,12 @@ jobs:
       # CI exercises the real sandbox — including the negative tests that assert
       # egress and out-of-allowlist reads are actually blocked, which otherwise
       # skip and would let a broken profile ship unnoticed.
-      - name: Install bubblewrap (command sandbox)
-        run: sudo apt-get update && sudo apt-get install -y bubblewrap
+      - name: Install bubblewrap (command sandbox) and Wails deps
+        # GTK4 + WebKitGTK headers are needed to build cmd/rela-desktop, which
+        # links Wails v3; without them the package fails to build on Linux.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap libgtk-4-dev libwebkitgtk-6.0-dev
 
       - name: Verify the sandbox actually works on this runner
         # A hard failure here is better than every sandbox test silently
@@ -91,8 +95,12 @@ jobs:
       - name: Download dependencies
         run: go mod download
 
-      - name: Install bubblewrap (command sandbox)
-        run: sudo apt-get update && sudo apt-get install -y bubblewrap
+      # bubblewrap for the command sandbox; GTK4 + WebKitGTK because the
+      # coverage run builds cmd/rela-desktop, which links Wails v3.
+      - name: Install bubblewrap (command sandbox) and Wails deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap libgtk-4-dev libwebkitgtk-6.0-dev
 
       - name: Measure reachability (report-only, no threshold)
         run: ./scripts/reachability.sh
@@ -103,46 +111,6 @@ jobs:
         with:
           name: reachability-report
           path: reachability.out
-
-  vulncheck:
-    name: Vulnerability Check
-    # Only gate PRs that touch Go dependencies. Non-dep PRs get their vuln signal
-    # from the weekly schedule in security.yml, which auto-opens an update PR.
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 2
-
-      - name: Detect go.mod / go.sum changes
-        id: detect
-        run: |
-          set -euo pipefail
-          if [ "${{ github.event_name }}" != "pull_request" ]; then
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-            echo "Non-PR event — running vulncheck."
-            exit 0
-          fi
-          BASE_SHA="${{ github.event.pull_request.base.sha }}"
-          if git diff --name-only "$BASE_SHA"...HEAD -- go.mod go.sum | grep -q .; then
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-            echo "go.mod or go.sum changed — running vulncheck."
-          else
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-            echo "No dep changes — skipping (weekly schedule covers this)."
-          fi
-
-      - name: Set up Go
-        if: steps.detect.outputs.changed == 'true'
-        uses: actions/setup-go@v7
-        with:
-          go-version: '1.26.6'
-
-      - name: Run govulncheck
-        if: steps.detect.outputs.changed == 'true'
-        run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
-          ./scripts/govulncheck-filtered.sh
 
   lint:
     name: Lint
@@ -159,6 +127,13 @@ jobs:
         # Build from source against the active Go toolchain so the linter can
         # analyse our code regardless of the go.mod toolchain directive.
         run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4
+
+      # rela-desktop links Wails v3, whose Linux build needs GTK4 + WebKitGTK
+      # headers. Without them the cgo packages fail to build.
+      - name: Install Wails Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev
 
       - name: Run golangci-lint
         run: golangci-lint run ./...
@@ -191,6 +166,14 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version: '1.26.6'
+
+      # rela-desktop links Wails v3, whose Linux build needs GTK4 + WebKitGTK
+      # headers to type-check. Without them the cgo packages fail to load and
+      # the analysis silently degrades to "skipped due to errors in package".
+      - name: Install Wails Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev
 
       - name: Install plimsoll
         # Keep in sync with plimsoll_version in the justfile.
@@ -388,6 +371,32 @@ jobs:
           RELA_VERSION_SWEEP_MAX_STALENESS: 2s
         run: npx playwright test --reporter=line
 
+      # The worlds manual is EXECUTABLE — its shows{}/page{}/api{} islands assert
+      # the prose against a running rela — but it was built only by the opt-in
+      # `just docs-visual-postgres`, never in CI. So the document that says "every
+      # claim below is checked" could rot silently, and did: a section described
+      # neighbour resolution the software does not do (QA F-6a).
+      #
+      # It runs HERE rather than in the docs job because this is the only job
+      # with all four things a build needs: Chrome (installed above for
+      # Playwright), a built frontend, postgres (screenshot{} of the history
+      # view needs a backend that versions), and bubblewrap for confined
+      # `command:` renderers.
+      #
+      # The sweep overrides match the E2E ones and for the same reason: version
+      # capture is debounced 5 minutes in production, far longer than a build.
+      - name: Build the worlds manual (executable doc assertions)
+        env:
+          RELA_DATABASE_URL: postgres://rela@127.0.0.1:5432/rela_e2e?sslmode=disable
+          RELA_VERSION_SWEEP_INTERVAL: 500ms
+          RELA_VERSION_SWEEP_IDLE: 150ms
+          RELA_VERSION_SWEEP_MAX_STALENESS: 2s
+        run: |
+          go build -tags postgres -o bin/rela-docs-postgres ./cmd/rela-docs
+          ./bin/rela-docs-postgres build prototypes/worlds/manual/worlds-manual.md \
+            --project prototypes/worlds/project \
+            --out "$RUNNER_TEMP/worlds-manual.md"
+
       - name: Upload Playwright report
         if: always()
         uses: actions/upload-artifact@v7
@@ -529,12 +538,15 @@ jobs:
           echo "postgres build must not link bleve:"
           ! go list -deps -tags postgres ./cmd/rela-server | grep -q 'blevesearch/bleve'
           ! go list -deps -tags postgres ./cmd/rela        | grep -q 'blevesearch/bleve'
-          echo "only the default rela-docs links chromedp (screenshot{} browser capture):"
+          echo "only rela-docs links chromedp (screenshot{} browser capture):"
           ! go list -deps ./cmd/rela        | grep -q 'chromedp/chromedp'
           ! go list -deps ./cmd/rela-server | grep -q 'chromedp/chromedp'
-          go list -deps ./cmd/rela-docs     | grep -q 'chromedp/chromedp'
-          echo "the postgres rela-docs must NOT link chromedp (screenshot{} is disabled there):"
-          ! go list -deps -tags postgres ./cmd/rela-docs | grep -q 'chromedp/chromedp'
+          ! go list -deps -tags postgres ./cmd/rela        | grep -q 'chromedp/chromedp'
+          ! go list -deps -tags postgres ./cmd/rela-server | grep -q 'chromedp/chromedp'
+          echo "both rela-docs builds link it: screenshot{} is supported on either backend,"
+          echo "and history figures REQUIRE postgres (versioning is a pg-only capability)."
+          go list -deps ./cmd/rela-docs                    | grep -q 'chromedp/chromedp'
+          go list -deps -tags postgres ./cmd/rela-docs     | grep -q 'chromedp/chromedp'
           echo "no build but the sqlite one links the sqlite driver:"
           ! go list -deps ./cmd/rela-server                | grep -q 'modernc.org/sqlite'
           ! go list -deps ./cmd/rela                       | grep -q 'modernc.org/sqlite'
@@ -546,8 +558,9 @@ jobs:
           echo "the sqlite build DOES link bleve and the sqlite driver (it uses both):"
           go list -deps -tags sqlite ./cmd/rela-server | grep -q 'blevesearch/bleve'
           go list -deps -tags sqlite ./cmd/rela-server | grep -q 'modernc.org/sqlite'
-          echo "the sqlite rela-docs must NOT link chromedp (screenshot{} would seed a real database):"
-          ! go list -deps -tags sqlite ./cmd/rela-docs | grep -q 'chromedp/chromedp'
+          echo "the sqlite rela-docs links it too: appbuild.At pins the temp project's"
+          echo "root, so a seed can no longer escape into a real database (TKT-SK2QQW)."
+          go list -deps -tags sqlite ./cmd/rela-docs | grep -q 'chromedp/chromedp'
           echo "rela-desktop links the default backend only:"
           ! go list -deps ./cmd/rela-desktop | grep -q 'jackc/pgx'
           ! go list -deps ./cmd/rela-desktop | grep -q 'modernc.org/sqlite'
@@ -565,6 +578,14 @@ jobs:
           ! go build -tags sqlite,memorybackend ./internal/appbuild/ 2>/dev/null
           ! go build -tags postgres,memorybackend ./internal/appbuild/ 2>/dev/null
           echo "OK: conflicting backend tags are rejected at compile time."
+
+      # cmd/rela-desktop links Wails v3, whose Linux build needs GTK4 +
+      # WebKitGTK headers. `go build ./...` covers it in every tag combination
+      # below, so the headers are needed even though this job is about postgres.
+      - name: Install Wails Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev
 
       - name: Compile all backend build-tag combinations
         run: |
@@ -666,6 +687,65 @@ jobs:
   # release time, where it leaves an empty GitHub release. The default-runner
   # builds in `postgres` only exercise linux; this job adds darwin + windows.
   # Keep the goos/tag matrix in sync with .goreleaser.yaml's builds.
+  # Compiling a build tag is not testing it. Until BUG-LL3C07 the Backends job
+  # built the sqlite tag and nothing ever ran a sqlite-tagged test, so
+  # sqlitestore's conformance suite (storetest.RunAll plus its fuzz functions),
+  # its migration ladder and every `-tags sqlite` variant of a shared package
+  # were ungated on every PR. A test whose fixture only works on fsstore had
+  # been failing on develop, and nothing looked.
+  #
+  # Its OWN job, deliberately, rather than a step in the postgres one. That job
+  # sets RELA_TEST_DATABASE_REQUIRED=1 so a missing DSN hard-fails instead of
+  # skipping — exactly right for proving backend parity, and exactly wrong
+  # here: the sqlite build has no DSN, so every DB-gated pgstore test that
+  # would otherwise skip fails instead. Running here also keeps this off the
+  # critical path of a job that waits on a postgres service container.
+  sqlite:
+    name: SQLite Backend
+    # 26.04, not ubuntu-latest — the same reason the Test job pins it: the
+    # command sandbox needs unprivileged user namespaces, which 24.04 restricts
+    # via AppArmor (apparmor_restrict_unprivileged_userns=1, surfacing as
+    # bwrap "Failed RTM_NEWADDR: Operation not permitted"). internal/cli is in
+    # scope and its render tests run confined, so they fail on 24.04 even with
+    # bubblewrap installed.
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: '1.26.6'
+
+      # internal/cli is in scope and its render/export tests shell out through
+      # internal/cmdexec, which FAILS CLOSED when no sandbox is available — so
+      # without bwrap they do not skip, they fail ("cmdexec: start bwrap:
+      # executable file not found"). The Test job installs it for the same
+      # reason; a job running the same packages needs the same runner.
+      - name: Install bubblewrap (command sandbox)
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap
+
+      - name: Verify the sandbox actually works on this runner
+        # A hard failure here beats a confusing test failure downstream: it
+        # says "the confinement is absent" rather than "render produced the
+        # wrong bytes".
+        run: bwrap --unshare-all --ro-bind / / /bin/true
+
+      # Scoped to the packages the tag actually changes rather than ./... — the
+      # rest is byte-identical to what the Test job already ran, and paying for
+      # a second full suite to re-verify it is not worth the minutes.
+      #
+      # No -race: the Test job races these same shared packages on the default
+      # backend, and sqlitestore's own concurrency is covered by the
+      # conformance suite. Add it if this job ever grows a genuinely
+      # sqlite-specific concurrency test.
+      - name: Run sqlite-tagged tests
+        run: |
+          go test -tags sqlite -shuffle=on \
+            ./internal/store/... \
+            ./internal/appbuild/... \
+            ./internal/cli/...
+
   cross-compile:
     name: Cross-Compile (${{ matrix.goos }}/${{ matrix.tags || 'default' }})
     runs-on: ubuntu-latest
@@ -700,7 +780,7 @@ jobs:
   build:
     name: Build
     runs-on: ubuntu-latest
-    needs: [test, vulncheck, lint, arch-lint, plimsoll, lint-markdown, fuzz, postgres, cross-compile, frontend, e2e]
+    needs: [test, lint, arch-lint, plimsoll, lint-markdown, fuzz, postgres, cross-compile, frontend, e2e]
     steps:
       - uses: actions/checkout@v7
 

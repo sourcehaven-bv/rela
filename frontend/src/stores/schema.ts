@@ -9,6 +9,7 @@ import type {
   PropertyDef,
   RelationType,
   CustomType,
+  WorldInfo,
   FormConfig,
   ListConfig,
   ViewConfig,
@@ -29,6 +30,19 @@ export const useSchemaStore = defineStore('schema', () => {
   const entityTypes = ref<Map<string, EntityType>>(new Map())
   const relationTypes = ref<Map<string, RelationType>>(new Map())
   const customTypes = ref<Map<string, CustomType>>(new Map())
+  // Declared worlds and, per world, whether THIS caller may select it
+  // (`/_schema`.worlds). Empty on a server too old to serve it — which is
+  // why `worldReadable` below treats an unknown world as readable rather
+  // than hiding an affordance against a map that was never populated.
+  const worlds = ref<Map<string, WorldInfo>>(new Map())
+  // The operator's browsing default: the world a request lands in when the
+  // URL names none. '' means the raw default faces. See AppConfig.DefaultWorld.
+  const defaultWorld = ref<string>('')
+  // Whether this deployment can serve version history at all (postgres-only;
+  // see AppConfig.history_enabled). Drives whether the History affordance
+  // renders, so it defaults to FALSE — an unset flag hides a button rather
+  // than shipping one that can only 501.
+  const historyEnabled = ref<boolean>(false)
   const forms = ref<Map<string, FormConfig>>(new Map())
   const lists = ref<Map<string, ListConfig>>(new Map())
   const views = ref<Map<string, ViewConfig>>(new Map())
@@ -79,6 +93,109 @@ export const useSchemaStore = defineStore('schema', () => {
 
   // Getters
   const getEntityType = computed(() => (name: string) => entityTypes.value.get(name))
+  // Whether this caller may select the named world (`''`/`'default'` = the
+  // default world). Drives affordances that NAVIGATE to a world, so it must
+  // not manufacture a denial the server would not make.
+  //
+  // Unknown world → TRUE. A world absent from the map means either a server
+  // too old to serve `worlds` or a schema not yet loaded, and in both cases
+  // the request would in fact be served. Defaulting to false would hide a
+  // working affordance and read as a permission problem — a wrong answer in
+  // the direction nobody can debug. Ignoring a real denial merely reproduces
+  // what the URL bar already does: the server re-checks on every request and
+  // renders a denial as an empty result.
+  // worldForFace maps a stored POINTER to the world that serves it for a given
+  // entity type — the input a face-switcher needs, because `?world=` is the
+  // read-selection grammar this API has and a bare face is not a world.
+  //
+  // A world resolves the WHOLE graph consistently (relations included, RULING
+  // 12), so jumping by face would show a Dutch body wrapped in English
+  // links. Matching on the world's chain is what keeps the switch coherent.
+  //
+  // Match rules, in order:
+  //   - a per-type `overrides` chain wins over the world's own `select`, since
+  //     that is what the resolver does;
+  //   - the face must be the chain's HEAD, not merely present: `site-nl` is
+  //     [nl, en], so `en` appearing as a fallback does not make it the world
+  //     that serves English;
+  //   - "" (the default face) is the default world, which needs no parameter.
+  //
+  // When SEVERAL worlds head the same face, the operator breaks the tie with
+  // `primary_for:` on the world (TKT-MFVH03). The server refuses at load both
+  // an undeclared tie and a claim on a face the world does not head, so by the
+  // time this runs a tie has exactly one claimant — but this does not ASSUME
+  // that: it iterates deterministically and returns undefined if the schema
+  // somehow arrives ambiguous, because the old behaviour (return whichever the
+  // map yielded first) was the bug.
+  //
+  // Returns undefined when no declared world heads that face, or when a tie is
+  // unresolved — the caller should then omit the affordance rather than invent
+  // a parameter the server will reject with `unknown_world`.
+  const worldForFace = computed(() => (entityType: string, face: string) => {
+    if (!face) return ''
+    const heads: string[] = []
+    for (const [name, info] of worlds.value) {
+      if (name === 'default') continue
+      const chain = info.overrides?.[entityType] ?? info.select ?? []
+      if (chain[0] === face) heads.push(name)
+    }
+    if (heads.length === 0) return undefined
+    if (heads.length === 1) return heads[0]
+
+    // Sorted so the answer cannot depend on map insertion order.
+    heads.sort()
+
+    // Several worlds lead this face. Two shapes reach here, and both resolve
+    // the same way:
+    //
+    //   - INDISTINGUISHABLE worlds (same head, same `otherwise:`). The server
+    //     refuses these unless one claims the face, so a claimant normally
+    //     exists.
+    //   - DISTINGUISHABLE worlds (same head, different `otherwise:`) — a
+    //     `published` world where absence is the publication bit beside a
+    //     lenient sibling that substitutes instead. The server accepts that
+    //     pair without a declaration, because `otherwise:` already answers a
+    //     different question; but it does not say which one a face-SWITCH
+    //     means, and neither do the chains.
+    //
+    // So: one claimant wins, anything else omits the affordance. Returning a
+    // world here on a hunch is what this whole ticket removed.
+    const claimants = heads.filter((name) => worlds.value.get(name)?.primary_for?.includes(face))
+    return claimants.length === 1 ? claimants[0] : undefined
+  })
+
+  const worldReadable = computed(() => (name: string) => {
+    const key = !name ? 'default' : name
+    const w = worlds.value.get(key)
+    return w ? w.readable : true
+  })
+
+  // faceLabel is the display text for one face of a type, from the STORED
+  // coordinate a caller has in hand. Mirrors metamodel.FaceLabel in Go, and
+  // the two must agree: the server labels the faces an entity HAS (`_faces`),
+  // this labels a face the client only knows from the TYPE — the return-to-
+  // default button has to say "Go to English" before fetching anything.
+  //
+  // The zero coordinate resolves through the `default: true` face, which is
+  // the case worth stating: a naive `faces['']` lookup finds nothing, so
+  // the default face would render unlabelled while every sibling is labelled.
+  //
+  // Returns '' when the type declares no name for that coordinate — a type
+  // with no `faces:` at all, or one that names no `bare_face`. The
+  // caller supplies its own last-resort wording; inventing "default" here
+  // would put a UI word in a schema lookup.
+  const faceLabel = computed(() => (entityType: string, face: string) => {
+    const def = entityTypes.value.get(entityType)
+    const faces = def?.faces
+    if (!faces) return face
+    // The empty coordinate is the bare-id row, and the type says which
+    // declared name refers to it. This used to scan for a `default` flag on
+    // each face, which meant the answer depended on key order if two ever
+    // carried it; `bare_face` is a single field and cannot.
+    const declared = face || def?.bare_face || ''
+    if (!declared) return ''
+    return faces[declared]?.label || declared
+  })
   const getRelationType = computed(() => (name: string) => relationTypes.value.get(name))
   // Look up a relation type's inverse name (e.g., "blocks" → "blockedBy").
   // Returns undefined when the relation has no declared inverse. Used by
@@ -132,6 +249,26 @@ export const useSchemaStore = defineStore('schema', () => {
       // Property references a custom type → labels live on that custom type.
       const ct = def.type ? customTypes.value.get(def.type) : undefined
       return ct?.labels
+    })
+  }
+
+  // The DECLARED values of an enum property, in declaration order — the
+  // client-side mirror of dataentryconfig.GetValidEnumValues: inline `values:`
+  // first, else the values of the named custom type the property references.
+  //
+  // Declaration ORDER is the point. It is the operator's statement of the
+  // workflow, so a consumer defaulting a column/swimlane list to it renders the
+  // workflow rather than whatever the current rows happen to contain
+  // (TKT-R7H6G1).
+  function enumValuesForProperty(
+    property: string,
+    entityType?: string | EntityType,
+  ): string[] | undefined {
+    return scanPropertyDefs(property, entityType, (def) => {
+      if (!def) return undefined
+      if (def.values?.length) return def.values
+      const ct = def.type ? customTypes.value.get(def.type) : undefined
+      return ct?.values?.length ? ct.values : undefined
     })
   }
 
@@ -273,6 +410,7 @@ export const useSchemaStore = defineStore('schema', () => {
       entityTypes.value = new Map(Object.entries(schemaData.entities || {}))
       relationTypes.value = new Map(Object.entries(schemaData.relations || {}))
       customTypes.value = new Map(Object.entries(schemaData.types || {}))
+      worlds.value = new Map(Object.entries(schemaData.worlds || {}))
 
       // Feed the API layer's plural registry so it doesn't have to import
       // this store (B1a). Mirror the server's GetPlural fallback (type+'s')
@@ -285,6 +423,8 @@ export const useSchemaStore = defineStore('schema', () => {
 
       // Config
       app.value = configData.app || { name: 'rela' }
+      defaultWorld.value = configData.app?.default_world || ''
+      historyEnabled.value = configData.app?.history_enabled === true
       aboutDescription.value = configData.about_description || ''
       styles.value = configData.styles || {}
       forms.value = new Map(Object.entries(configData.forms || {}))
@@ -347,6 +487,7 @@ export const useSchemaStore = defineStore('schema', () => {
     entityTypes,
     relationTypes,
     customTypes,
+    worlds,
     forms,
     lists,
     views,
@@ -374,6 +515,11 @@ export const useSchemaStore = defineStore('schema', () => {
     // Getters
     getEntityType,
     getRelationType,
+    worldReadable,
+    defaultWorld,
+    worldForFace,
+    faceLabel,
+    historyEnabled,
     getInverseName,
     getForm,
     getList,
@@ -384,6 +530,7 @@ export const useSchemaStore = defineStore('schema', () => {
     getGantt,
     getAction,
     getEnumLabel,
+    enumValuesForProperty,
     resolveOptionLabels,
     stylesForProperty,
     entityTypeList,

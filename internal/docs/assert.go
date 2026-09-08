@@ -7,7 +7,9 @@ import (
 
 	lua "github.com/yuin/gopher-lua"
 
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/worlds"
 )
 
 // shows{} asserts what a manual's prose claims, against the seeded graph.
@@ -49,8 +51,22 @@ func (dr *docRuntime) luaShows(ls *lua.LState) int {
 		return dr.luaFail(ls, "shows: `type` is required — it names the set being asserted about")
 	}
 
-	if rejectUnknownKeys(dr, ls, "shows", tbl, "type", "contains", "absent", "exactly") {
+	if rejectUnknownKeys(dr, ls, "shows", tbl, "type", "contains", "absent", "exactly", "world", "emit") {
 		return 0
+	}
+	show := fieldBoolDefault(ls, tbl, "emit", true)
+
+	// The world the claim is made in. Empty means the DEFAULT world, which is
+	// the whole graph — every entity, at its default face.
+	//
+	// This is the argument the worlds epic exists for: `absent=` under a
+	// filtering world is how a manual states "an unpublished draft is not in
+	// the reader's view", which is the publication bit itself and the one
+	// claim most worth pinning.
+	world := fieldString(ls, tbl, "world")
+	scope, werr := dr.worldScope(world)
+	if werr != nil {
+		return dr.luaFail(ls, "shows: %v", werr)
 	}
 
 	contains, cerr := claimList(tbl, "contains")
@@ -77,25 +93,102 @@ func (dr *docRuntime) luaShows(ls *lua.LState) int {
 	if _, ok := dr.meta.Entities[typ]; !ok {
 		return dr.luaFail(ls, "shows{type=%q}: no such entity type in the schema. An unknown "+
 			"type reads as an empty set, so absent= and exactly={} would pass no matter what "+
-			"the code did. Declared types: %s", typ, strings.Join(declaredTypes(dr), ", "))
+			"the code did. Declared types: %s", typ, strings.Join(declaredTypes(dr.meta), ", "))
 	}
 
-	got, err := dr.entityIDs(typ)
+	got, err := dr.entityIDs(typ, scope)
 	if err != nil {
 		return dr.luaFail(ls, "shows{type=%q}: %v", typ, err)
 	}
 
-	if msg := checkShows(typ, got, contains, absent, exactly, hasExactly); msg != "" {
+	if msg := checkShows(describeSubject(typ, world), got, contains, absent, exactly, hasExactly); msg != "" {
 		return dr.luaFail(ls, "%s", msg)
 	}
+
+	emitEvidence(dr.emit, show, showsEvidence(typ, world, got, absent, len(dr.meta.Worlds) > 0))
 	return 0
+}
+
+// showsEvidence states what the world answered, as a sentence plus the list.
+//
+// The rendered list is what was FOUND, not what was claimed. Echoing the claim
+// back would render identically whether the code agreed or not, which is the
+// vacuous shape this package refuses everywhere else — here it would be a
+// vacuous FIGURE rather than a vacuous check, and a reader cannot tell the
+// difference by looking.
+func showsEvidence(typ, world string, got, absent []string, faced bool) evidence {
+	// A project that declares no worlds has no "default world" to speak of —
+	// naming one there is jargon a reader must first be taught in order to
+	// discard. The sentence adapts rather than making every manual pay for a
+	// feature only some use.
+	claim := fmt.Sprintf("`%s` resolves to **%s**.", typ, joinIDs(got))
+	if world != "" || faced {
+		claim = fmt.Sprintf("In %s, `%s` resolves to **%s**.",
+			worldPhrase(world), typ, joinIDs(got))
+	}
+	ev := evidence{claim: claim}
+	// An absent= claim is the publication bit itself, so it is restated rather
+	// than left for the reader to infer from a list that does not mention it.
+	// "POL-2 is not here" is the sentence the paragraph above is making; the
+	// id list alone only implies it.
+	if len(absent) > 0 {
+		ev.note = fmt.Sprintf("Not present, and not discoverable: %s.", strings.Join(absent, ", "))
+	}
+	return ev
+}
+
+// worldScope compiles a declared world name to the scope a store query takes.
+//
+// An empty name is the default world — the zero WorldScope, which every backend
+// reads as "no resolution applied: every entity at its default face". That is a
+// real answer, not a missing one, so it is not an error.
+//
+// An UNDECLARED name is an error. A world that resolves nothing looks exactly
+// like a world where nothing is published, so a typo would make `absent=` pass
+// for the wrong reason — the vacuous-pass shape this whole feature refuses.
+func (dr *docRuntime) worldScope(name string) (store.WorldScope, error) {
+	if name == "" || name == metamodel.DefaultWorldName {
+		return store.WorldScope{}, nil
+	}
+	compiled, err := worlds.Compile(dr.meta)
+	if err != nil {
+		return store.WorldScope{}, fmt.Errorf("compiling worlds: %w", err)
+	}
+	scope, ok := compiled.Lookup(name)
+	if !ok {
+		return store.WorldScope{}, fmt.Errorf(
+			"no world named %q is declared (schema.yaml declares: %s)",
+			name, strings.Join(declaredWorlds(dr), ", "))
+	}
+	return scope, nil
+}
+
+// declaredWorlds lists the schema's world names for a failure message.
+func declaredWorlds(dr *docRuntime) []string {
+	out := make([]string, 0, len(dr.meta.Worlds))
+	for name := range dr.meta.Worlds {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// describeSubject names what a failure is about: the type, and the world when
+// one was named. "policy in the published world" reads as the sentence the
+// manual made, where a bare type name would leave the reader guessing which
+// view the claim was about.
+func describeSubject(typ, world string) string {
+	if world == "" {
+		return typ
+	}
+	return fmt.Sprintf("%s in the %s world", typ, world)
 }
 
 // declaredTypes lists schema entity types for a failure message, so a typo is
 // fixable without opening schema.yaml.
-func declaredTypes(dr *docRuntime) []string {
-	out := make([]string, 0, len(dr.meta.Entities))
-	for name := range dr.meta.Entities {
+func declaredTypes(m *metamodel.Metamodel) []string {
+	out := make([]string, 0, len(m.Entities))
+	for name := range m.Entities {
 		out = append(out, name)
 	}
 	sort.Strings(out)
@@ -139,9 +232,9 @@ func claimList(tbl *lua.LTable, key string) ([]string, error) {
 
 // entityIDs lists the seeded ids of one type, sorted so a failure message is
 // stable and diffable.
-func (dr *docRuntime) entityIDs(typ string) ([]string, error) {
+func (dr *docRuntime) entityIDs(typ string, scope store.WorldScope) ([]string, error) {
 	var ids []string
-	for e, err := range dr.store.ListEntities(dr.ctx, store.EntityQuery{Type: typ}) {
+	for e, err := range dr.store.ListEntities(dr.ctx, store.EntityQuery{Type: typ, World: scope}) {
 		if err != nil {
 			return nil, err
 		}
@@ -158,7 +251,7 @@ func (dr *docRuntime) entityIDs(typ string) ([]string, error) {
 // and so the failure TEXT is itself under test — a doctest's value is its
 // failure output, and prose that only appears on a red build is prose nobody
 // proofreads.
-func checkShows(typ string, got, contains, absent, exactly []string, hasExactly bool) string {
+func checkShows(subject string, got, contains, absent, exactly []string, hasExactly bool) string {
 	have := make(map[string]bool, len(got))
 	for _, id := range got {
 		have[id] = true
@@ -196,7 +289,7 @@ func checkShows(typ string, got, contains, absent, exactly []string, hasExactly 
 	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "shows{type=%q} failed", typ)
+	fmt.Fprintf(&b, "shows{%s} failed", subject)
 	if len(missing) > 0 {
 		fmt.Fprintf(&b, "\n  missing:  %s", strings.Join(dedupe(missing), ", "))
 	}
@@ -206,7 +299,7 @@ func checkShows(typ string, got, contains, absent, exactly []string, hasExactly 
 	// The seeded set is printed on every failure, not just the exact-match one.
 	// Most confusion when a world assertion fails is not knowing what was
 	// actually there — the claim is easy to re-read, the state is not.
-	fmt.Fprintf(&b, "\n  seeded %s: %s", typ, joinOrNone(got))
+	fmt.Fprintf(&b, "\n  seeded %s: %s", subject, joinOrNone(got))
 	return b.String()
 }
 
@@ -247,9 +340,6 @@ func hasField(tbl *lua.LTable, key string) bool {
 //
 // Rejecting unknown keys is safe here because these tables are a closed
 // vocabulary — an assertion has no user-extensible options.
-//
-// It takes a [luaFailer] rather than the whole runtime so the Tier-B bindings,
-// which hold only their own injected capabilities, can share it.
 func rejectUnknownKeys(dr luaFailer, ls *lua.LState, verb string, tbl *lua.LTable, known ...string) bool {
 	allowed := make(map[string]bool, len(known))
 	for _, k := range known {

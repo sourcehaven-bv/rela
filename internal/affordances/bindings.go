@@ -57,6 +57,11 @@ type bindingContext struct {
 	// userID is the principal's identity as it appears on role-relation
 	// edges and current_user.id.
 	userID string
+	// userFuncs are the is_current_user / has_current_user implementations
+	// closed over identity(), built ONCE per binding context: newBindings
+	// runs per grant per role per entity on the list-render path, and the
+	// identity does not change across those calls.
+	userFuncs map[string]predicate.FuncFunc
 
 	// outgoing caches the entity's outgoing-edge counts, loaded once
 	// on first host-func use (has_relation / count_relations) so a
@@ -94,8 +99,15 @@ func (bc *bindingContext) newBindings(meta *metamodel.Metamodel) (*predicate.Bin
 	if err := b.SetVar("entity", bc.entityRecord(meta)); err != nil {
 		return nil, err
 	}
+	// See bindingContext.identity: an unidentified caller binds an EMPTY
+	// id, and PolicyResolver.passes has already refused any grant whose
+	// clause reads it. The sugar below closes over the same value and never
+	// matches on empty (predicatefns.CurrentUserBindings), so even a clause
+	// that slipped past that refusal could not match an entity whose
+	// property holds the placeholder.
+	identity := bc.identity()
 	if err := b.SetVar("current_user", predicate.NewRecord(map[string]predicate.Value{
-		"id":   predicate.NewString(bc.userID),
+		"id":   predicate.NewString(identity),
 		"tool": predicate.NewString(bc.principal.Tool),
 	})); err != nil {
 		return nil, err
@@ -116,7 +128,34 @@ func (bc *bindingContext) newBindings(meta *metamodel.Metamodel) (*predicate.Bin
 			return nil, err
 		}
 	}
+	// Bound from the same identity as current_user.id above — this
+	// package's own resolved principal, not the query-identity context —
+	// so the sugar and the explicit comparison agree whichever way
+	// identity arrived, including the no-identity case.
+	for name, fn := range bc.userFuncs {
+		if err := b.SetFunc(name, fn); err != nil {
+			return nil, err
+		}
+	}
 	return b, nil
+}
+
+// identity is the value current_user.id binds to: the principal's user, or
+// "" when the caller is not identified.
+//
+// The attribution placeholder is not a user. A data-entry server without an
+// identity source stamps principal.Unknown on every request, and an unstamped
+// ctx reads as the same placeholder; binding either literally would let
+// `entity.owner == current_user.id` — an AUTHORIZATION input here, gating
+// visible: and actions — match an entity whose owner property happens to hold
+// "unknown". Both read as no identity, and a `when:` that needs one is refused
+// in passes, which is the same fail-closed reading the query path gets from
+// predicatefns.ErrNoCurrentUser.
+func (bc *bindingContext) identity() string {
+	if bc.userID == principal.Unknown {
+		return ""
+	}
+	return bc.userID
 }
 
 // entityRecord coerces the entity's properties into a predicate.Record

@@ -15,7 +15,7 @@ status: done
 
 - [x] Change is test-only; no production wiring touched (verified via `git diff --stat`)
 - [x] Security contract preserved — the test still fails if the policy-less path returns a gated or deny reader
-- [x] Assertion now pins observable behaviour (type + pass-through read) rather than pointer identity
+- [x] Assertion now pins observable behaviour (type + pass-through read) rather than face identity
 - [x] ~~cranky-code-reviewer agent run~~ (N/A: 8-line single-assertion test fix with a documented root cause)
 
 ## Verification
@@ -26,7 +26,7 @@ status: done
 **PR:** https://github.com/sourcehaven-bv/rela/pull/1228
 
 **Summary:** `TestScriptReadSeam_PolicylessProjectStaysUnrestricted` asserted
-pointer identity with `app.store`, which #1208 invalidated by naming the ungated
+face identity with `app.store`, which #1208 invalidated by naming the ungated
 path `visibility.Unrestricted`. Production behaviour was correct throughout —
 only the assertion was stale, and it reddened the shared `Test` job on every
 open PR including all 9 approved dependabot bumps. Fixed by asserting the

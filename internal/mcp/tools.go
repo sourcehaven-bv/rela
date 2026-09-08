@@ -18,9 +18,9 @@ func (s *Server) registerTools() {
 	s.mcp.AddTool(toolDeleteRelation(), s.handleDeleteRelation)
 
 	// Trace tools
-	s.mcp.AddTool(toolTraceFrom(), s.trace.handleTraceFrom)
-	s.mcp.AddTool(toolTraceTo(), s.trace.handleTraceTo)
-	s.mcp.AddTool(toolFindPath(), s.trace.handleFindPath)
+	s.mcp.AddTool(toolTraceFrom(), bind(s, selTrace, traceHandler.handleTraceFrom))
+	s.mcp.AddTool(toolTraceTo(), bind(s, selTrace, traceHandler.handleTraceTo))
+	s.mcp.AddTool(toolFindPath(), bind(s, selTrace, traceHandler.handleFindPath))
 
 	// Analysis tools
 	s.mcp.AddTool(toolAnalyzeOrphans(), s.handleAnalyzeOrphans)
@@ -32,18 +32,18 @@ func (s *Server) registerTools() {
 
 	// Schema tools (get_metamodel intentionally shares get_schema's
 	// handler — see toolGetMetamodel)
-	s.mcp.AddTool(toolGetSchema(), s.schemaRes.handleGetSchema)
-	s.mcp.AddTool(toolGetMetamodel(), s.schemaRes.handleGetSchema)
-	s.mcp.AddTool(toolListEntityTypes(), s.schemaRes.handleListEntityTypes)
-	s.mcp.AddTool(toolListRelationTypes(), s.schemaRes.handleListRelationTypes)
+	s.mcp.AddTool(toolGetSchema(), bind(s, selSchemaRes, schemaResourceHandler.handleGetSchema))
+	s.mcp.AddTool(toolGetMetamodel(), bind(s, selSchemaRes, schemaResourceHandler.handleGetSchema))
+	s.mcp.AddTool(toolListEntityTypes(), bind(s, selSchemaRes, schemaResourceHandler.handleListEntityTypes))
+	s.mcp.AddTool(toolListRelationTypes(), bind(s, selSchemaRes, schemaResourceHandler.handleListRelationTypes))
 
 	// Utility tools
-	s.mcp.AddTool(toolExport(), s.export.handleExport)
+	s.mcp.AddTool(toolExport(), bind(s, selExport, exportHandler.handleExport))
 
 	// Lua scripting tools
-	s.mcp.AddTool(toolLuaEval(), s.lua.handleLuaEval)
-	s.mcp.AddTool(toolLuaRun(), s.lua.handleLuaRun)
-	s.mcp.AddTool(toolLuaList(), s.lua.handleLuaList)
+	s.mcp.AddTool(toolLuaEval(), bind(s, selLua, luaHandler.handleLuaEval))
+	s.mcp.AddTool(toolLuaRun(), bind(s, selLua, luaHandler.handleLuaRun))
+	s.mcp.AddTool(toolLuaList(), bind(s, selLua, luaHandler.handleLuaList))
 }
 
 // --- Tool Definitions ---

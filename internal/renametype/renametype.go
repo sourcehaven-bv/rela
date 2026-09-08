@@ -98,9 +98,15 @@ func (s *Service) Rename(oldType, newType, newPlural string) (int, error) {
 			count, err)
 	}
 
-	oldTemplatePath := paths.EntityTemplatePath(oldType)
+	oldTemplatePath, err := paths.EntityTemplatePath(oldType)
+	if err != nil {
+		return count, fmt.Errorf("resolve template path for %s (entity files already renamed): %w", oldType, err)
+	}
+	newTemplatePath, err := paths.EntityTemplatePath(newType)
+	if err != nil {
+		return count, fmt.Errorf("resolve template path for %s (entity files already renamed): %w", newType, err)
+	}
 	if _, err := fs.Stat(oldTemplatePath); err == nil {
-		newTemplatePath := paths.EntityTemplatePath(newType)
 		if err := fs.MkdirAll(paths.EntityTemplatesDir, 0o755); err != nil {
 			return count, fmt.Errorf("create template dir %s (entity files already renamed): %w",
 				paths.EntityTemplatesDir, err)

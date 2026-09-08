@@ -354,7 +354,11 @@ describe('DynamicForm — attachments on create', () => {
       await stage(wrapper, 'screenshot', textFile('huge.bin'))
       await submit(wrapper)
 
-      expect(push).toHaveBeenCalledWith('/entity/bug/BUG-7')
+      // A route object, not a bare path: post-create navigation carries the
+      // world so a create made under one lands on that world's face of the new
+      // entity (TKT-WAV8XP). `query` is empty here — no world is active in
+      // this test — but the SHAPE is the object form.
+      expect(push).toHaveBeenCalledWith({ path: '/entity/bug/BUG-7', query: {} })
     })
 
     it('attempts every file and names each failure (RR-Z7C3CY)', async () => {

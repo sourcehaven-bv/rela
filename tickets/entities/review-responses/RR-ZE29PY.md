@@ -4,7 +4,7 @@ type: review-response
 title: 'CSS drift: header .section-heading duplicates EntityDetail''s, silent divergence risk'
 finding: .section-edit-form-header .section-heading hand-copies EntityDetail's .section-heading; scoped styles can't cross components so a future edit to one silently diverges the Properties heading from sibling headings.
 severity: significant
-resolution: Added reciprocal KEEP-IN-SYNC pointer comments in both SectionEditForm.vue (.section-edit-form-header .section-heading) and EntityDetail.vue (.section-heading), each referencing RR-ZE29PY. Values confirmed matching (18px/600, var(--text-color), border via row). Lifting to shared styles deferred as beyond ticket scope.
+resolution: Added reciprocal KEEP-IN-SYNC face comments in both SectionEditForm.vue (.section-edit-form-header .section-heading) and EntityDetail.vue (.section-heading), each referencing RR-ZE29PY. Values confirmed matching (18px/600, var(--text-color), border via row). Lifting to shared styles deferred as beyond ticket scope.
 status: addressed
 ---
 

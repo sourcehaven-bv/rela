@@ -26,5 +26,58 @@
     <true/>
     <key>NSSupportsAutomaticGraphicsSwitching</key>
     <true/>
+
+    <!-- A .rela project is a DIRECTORY, so it is declared as a package: a
+         bundle Finder shows as one openable document rather than descending
+         into. UTTypeConformsTo com.apple.package is what does that; without
+         it a double-click just opens the folder.
+
+         The type is "exported" because rela defines it; an app that merely
+         consumes someone else's format would use UTImportedTypeDeclarations.
+
+         com.apple.package also conforms to public.directory, so "Show Package
+         Contents" still works for anyone who needs to look inside. -->
+    <key>UTExportedTypeDeclarations</key>
+    <array>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>com.sourcehaven.rela.project</string>
+            <key>UTTypeDescription</key>
+            <string>Rela Project</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>com.apple.package</string>
+            </array>
+            <key>UTTypeIconFile</key>
+            <string>rela-desktop</string>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>rela</string>
+                </array>
+            </dict>
+        </dict>
+    </array>
+
+    <key>CFBundleDocumentTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeName</key>
+            <string>Rela Project</string>
+            <key>CFBundleTypeRole</key>
+            <string>Editor</string>
+            <key>LSTypeIsPackage</key>
+            <true/>
+            <key>CFBundleTypeIconFile</key>
+            <string>rela-desktop</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>com.sourcehaven.rela.project</string>
+            </array>
+            <key>LSHandlerRank</key>
+            <string>Owner</string>
+        </dict>
+    </array>
 </dict>
 </plist>

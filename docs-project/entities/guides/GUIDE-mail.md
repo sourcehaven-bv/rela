@@ -53,7 +53,7 @@ exactly as before — an absent config is a normal state, not an error.
 | `password_env` | no | **Name of an environment variable** holding the credential. Optional — see below |
 | `account_id` | for http | Provider account the API endpoint is scoped to |
 | `script` | for script | Project-relative path to a `.lua` send script |
-| `capabilities` | for script | What the send script may reach — see below |
+| `capabilities` | for script | What the **send script** may reach — `http` and `secrets` only. Not the same as a script's own `mail:` grant; see below |
 | `from` | yes | Envelope and header sender |
 | `from_name` | no | Display name for the sender |
 | `timeout_seconds` | no | Per-send timeout. Defaults to `30` |
@@ -190,6 +190,18 @@ Absolute paths and paths escaping the project are refused at load: a send script
 runs with outbound HTTP and a credential, so where it comes from is worth being
 strict about.
 
+This `capabilities:` block accepts **`http` and `secrets` only.** `ai` and
+`write_file` are refused — a mail transport has no business spending money on
+inference or writing files. There is no `mail:` key either, and that is not an
+oversight: a send script is the *implementation* of `mail.send`, so requiring it
+to hold the `mail` capability would be circular. It is authorized to mail by the
+fact that `mail.yaml` names it.
+
+Note the direction this runs in. Naming a script here does **not** let it call
+`mail.send` on other messages — the runtime it gets has no sender wired at all,
+so such a call returns `not_configured`. It is handed one message, by rela, and
+its job is to deliver that one.
+
 ### What the script gets
 
 A global `message` table:
@@ -277,12 +289,95 @@ end
 ```
 
 It delivers through whichever transport the project configured, and only to a
-recipient you allowed — see below. The binding is **always present**,
-even with no `mail.yaml` — when mail is off it returns
-`err.kind == "not_configured"` rather than vanishing, so a script can
-feature-detect. A delivery failure returns `(nil, err)` and never raises: a
-script that mails a summary at the end of a run should not lose the run because
-the mail server was rebooting.
+recipient you allowed — see below.
+
+**The script must be granted the `mail` capability.** Mail is an outbound
+channel, so it is gated like `http` and `ai`: a script that was not granted it
+gets `err.kind == "denied"` and nothing reaches the transport.
+
+```yaml
+# data-entry.yaml (also schema.yaml automations, schedules.yaml tasks)
+actions:
+  send_digest:
+    script: digest.lua
+    capabilities:
+      mail: true
+```
+
+The binding itself is **always present**, even without the grant and even with
+no `mail.yaml`, so a script can feature-detect rather than crash: an
+unauthorized call returns `denied`, an unconfigured one `not_configured`. A
+delivery failure returns `(nil, err)` and never raises — a script that mails a
+summary at the end of a run should not lose the run because the mail server was
+rebooting.
+
+> **Two different `capabilities:` blocks, do not confuse them.** The block above
+> sits next to an ordinary script and controls whether *that script* may call
+> `mail.send`. The `capabilities:` block in `.rela/mail.yaml`
+> ([The script transport](#the-script-transport) below) is a different thing
+> entirely: it controls what the **send script** — the one implementing a
+> transport — may reach, and it has no `mail:` key at all, because a script
+> whose whole job is delivering mail is authorized to do so by definition.
+
+### Rendering a branded message from a script
+
+Passing `html` to `mail.send` means writing email HTML by hand, and email HTML
+is its own dialect — Outlook drops `padding` on anything that is not a table
+cell, most clients drop `margin`, and a `<div>` layout that looks right in your
+browser can collapse in a recipient's inbox. `mail.render` gives you the same
+template the declarative digests use, so you describe the message and rela
+produces the markup:
+
+```lua
+local html, text = mail.render{
+  subject = "Wekelijks MT",
+  lang    = "nl",
+  intro   = "Automatisch samengesteld op " .. os.date("%Y-%m-%d") .. ".",
+  sections = {
+    {
+      title   = "Open acties",
+      columns = {"Taak", "Deadline"},
+      rows    = {{"Leveranciersbeoordeling", "2026-09-01"}},
+      links   = {"/entity/taak/TASK-DEMO"},
+    },
+    { title = "Toelichting", body = "Een **korte** toelichting." },
+  },
+  footer = "Automatisch verzonden door Atlas.",
+}
+
+mail.send{to = "maaike@example.nl", subject = "Wekelijks MT", html = html, text = text}
+```
+
+It returns both parts, so the `text/plain` alternative comes for free rather
+than being something you remember to write.
+
+| Field | Meaning |
+| --- | --- |
+| `subject` | Required. Also rendered as the message heading. |
+| `lang` | BCP-47 tag for this message (`"nl"`, `"en-GB"`). Optional. |
+| `intro`, `footer` | Markdown, rendered above and below the sections. |
+| `sections` | Array. Each has `title`, `body` (markdown), and/or `columns` + `rows`. |
+| `links` | Per-section, one href per row. Only the first column links. |
+
+Notes worth knowing:
+
+- **`intro`, `body` and `footer` are markdown; `rows` cells are not.** A cell is
+  a value, so it is escaped rather than parsed — a title containing `*` stays a
+  literal asterisk.
+- **Rows are matched to the header width.** A short row is padded and an
+  over-long one truncated, so one bad row cannot break the table's columns.
+- **Links are vetted.** Absolute `http(s)://` passes; a root-relative `/path` is
+  resolved against `base_url`. Anything else (including `javascript:`) is
+  dropped and the text renders unlinked.
+- **There is no `html` or `css` field, deliberately.** Everything you pass is
+  sanitized, which is the whole point of the binding. If you genuinely need raw
+  markup, that is what `mail.send{html = ...}` is still for.
+- **It works with no `mail.yaml`.** Rendering needs no transport, so a script
+  can render a message to log or inspect it. Only `mail.send` needs mail
+  configured.
+- **A malformed call raises** rather than returning an error — unlike
+  `mail.send`, nothing here depends on the network, so a failure is a bug in the
+  script rather than a fact about the world.
 
 ### Who may receive mail
 
@@ -368,6 +463,7 @@ mail_templates:
     subject: "Tasks due {{today}}"
     intro: "Items visible to you that need attention."
     address_property: email
+    lang: en
     sections:
       - title: "Overdue"
         entity_type: task
@@ -396,14 +492,63 @@ checks template keys, schema references, filters, scheduled template
 references, and the recipient address property. Runtime validates the current
 address again.
 
+`lang:` is optional and **per template**, not per deployment — one instance can
+send a Dutch digest and an English one, and each says what it is. It sets the
+`lang` attribute on the rendered mail, which affects screen-reader pronunciation
+and some clients' offer to translate. A malformed tag is refused at load rather
+than at send. Omit it to fall back to the deployment default (`en`). Note this
+*labels* content, it does not translate it: the text still has to be written in
+the language you name.
+
+### Skipping recipients with nothing to read
+
+Because each message is rendered under its own recipient's visibility, a
+recipient whose sections are all empty after filtering still receives a message
+— one that reads only "Nothing to show.". Recurring empty mail is how a digest
+gets ignored, so a template can opt out of sending one:
+
+```yaml
+mail_templates:
+  overdue_digest:
+    subject: "Tasks due {{today}}"
+    address_property: email
+    require_visible_content: true
+    sections:
+      - entity_type: task
+        where: ["status != done", "due < today"]
+        columns: [title, due]
+```
+
+The send is suppressed when **no section received content** for that recipient
+— whether the entities did not match, or matched but are not visible to them.
+
+This counts entities that actually *contribute* content, which is not the same
+as entities that matched. A `detail` section whose entity has an empty body
+renders nothing, so it does not keep the mail alive; `{{count}}`, which
+interpolates the number of *matched* entities, is unaffected either way.
+
+The default is off, so existing templates are unchanged: a template with no
+matches still sends, which is right when its `intro` carries the message. For
+the same reason `rela validate` rejects `require_visible_content` on a template
+with no `sections:` at all — that combination could never send anything, so it
+fails at load rather than going quiet in production.
+
+Note this is a routing convenience, not an access control. It only narrows the
+audience where visibility is already scoped — if every recipient can read the
+entities a section selects, every recipient still gets mail. And a suppressed
+send is logged at `INFO` (naming the template and recipient, never the filtered
+content), so "why did this person get no mail?" is answerable by raising the log
+level rather than by reading the ACL.
+
 Pending task + occurrence + recipient identities suppress concurrent duplicate
 work. A retry after a completed child can send again, and SMTP has its own
 acknowledgement crash window, so delivery is at-least-once rather than exactly-once.
 
 Automation-triggered templates are planned separately.
 
-**Sending from Lua** will add a `mail.send` binding for anything the declarative
-form does not cover.
+For anything the declarative form does not cover, a script can build the same
+message shape with [`mail.render`](#rendering-a-branded-message-from-a-script)
+and send it with `mail.send`.
 
 For local verification, point SMTP at a capture tool such as
 [Mailpit](https://mailpit.axllent.org/) or use the memory transport below.
@@ -459,6 +604,14 @@ TLS at a relay.
 
 **A send script fails with "attempt to call a nil value" on `http`.** You did not
 grant the capability. Add `capabilities: {http: true}` to `mail.yaml`.
+
+**`mail.send` returns `err.kind == "denied"`.** The *calling* script has no
+`mail` capability. Add `mail: true` to that script's `capabilities:` block —
+in `data-entry.yaml`, `schema.yaml` or `schedules.yaml`, wherever the script is
+declared. This is **not** `mail.yaml`: the block there configures the send
+script, not the caller. Since the gate defaults closed, a script that mailed
+before an upgrade needs the grant added; the server also logs a warning at
+startup naming any data-entry action that appears to be affected.
 
 **A send script reads `nil` for a secret it expects.** The key is not in
 `capabilities.secrets`. That list is exact — a key you did not name is absent,

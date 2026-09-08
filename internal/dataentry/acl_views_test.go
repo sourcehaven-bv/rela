@@ -145,7 +145,7 @@ func TestACLViews_RedactsHiddenPrimaryTitle(t *testing.T) {
 
 // TestACLViews_RelationColumnRedactsHiddenNeighborTitle pins the review finding
 // on BUG-R9EHKV's table-cell surface: a table section's relation column resolves
-// neighbor titles via resolveRelationColumnValues, which fetched the target raw
+// neighbor titles via the section relation-column resolver, which fetched the target raw
 // from the store and titled it against raw properties — leaking a hidden
 // neighbor's display value. The fix routes the targets through viewReader.Filter
 // (row-gate + redact), so a hidden primary falls back to the id. This surface is
@@ -170,7 +170,7 @@ func TestACLViews_RelationColumnRedactsHiddenNeighborTitle(t *testing.T) {
 	}, app.store)
 	app.acl = d
 
-	titles := app.views.resolveRelationColumnValues(gateCtxFor(aliceCtx(), t, d), "TKT-001", "implements", dataentryconfig.DirectionOutgoing)
+	titles := relationColumnValuesFor(gateCtxFor(aliceCtx(), t, d), app, "TKT-001", "ticket", "implements", dataentryconfig.DirectionOutgoing)
 	for _, tt := range titles {
 		if strings.Contains(tt, "SECRET-FEATURE") {
 			t.Errorf("LEAK: hidden neighbor display value in relation column: %v", titles)
@@ -197,7 +197,7 @@ func TestACLViews_RelationColumnDropsUnreadableNeighbor(t *testing.T) {
 	}, app.store)
 	app.acl = d
 
-	titles := app.views.resolveRelationColumnValues(gateCtxFor(aliceCtx(), t, d), "TKT-001", "implements", dataentryconfig.DirectionOutgoing)
+	titles := relationColumnValuesFor(gateCtxFor(aliceCtx(), t, d), app, "TKT-001", "ticket", "implements", dataentryconfig.DirectionOutgoing)
 	if len(titles) != 0 {
 		t.Errorf("unreadable neighbor leaked into relation column: %v", titles)
 	}

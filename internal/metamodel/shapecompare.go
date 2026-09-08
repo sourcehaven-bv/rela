@@ -140,6 +140,94 @@ func compareEntityShapes(r *ShapeReport, from, to map[string]EntityShape) {
 			continue
 		}
 		compareProperties(r, name, from[name].Properties, toShape.Properties, nil)
+		compareFaces(r, name, from[name], toShape)
+	}
+}
+
+// compareFaces classifies a change to a type's content states (TKT-O0A8FO).
+//
+// A face is a stored COORDINATE, so these deltas move rows rather than values —
+// which is why they are tiered by what happens to the rows that already exist,
+// not by whether the schema got bigger.
+func compareFaces(r *ShapeReport, typeName string, from, to EntityShape) {
+	fromSet := make(map[string]bool, len(from.Faces))
+	for _, f := range from.Faces {
+		fromSet[f] = true
+	}
+	toSet := make(map[string]bool, len(to.Faces))
+	for _, f := range to.Faces {
+		toSet[f] = true
+	}
+
+	var removed, added []string
+	for _, f := range from.Faces {
+		if !toSet[f] {
+			removed = append(removed, f)
+		}
+	}
+	for _, f := range to.Faces {
+		if !fromSet[f] {
+			added = append(added, f)
+		}
+	}
+
+	// A REMOVED face orphans every row stored at that coordinate: no world can
+	// select it and no read addresses it. Drift rather than needs-migration —
+	// the rows are intact and readable as storage, exactly the "deletions orphan
+	// data (GC territory)" case the tier describes.
+	for _, f := range removed {
+		r.add(TierDrift, "face_removed", typeName+"."+f, fmt.Sprintf(
+			"entity %q no longer declares face %q: rows stored at that coordinate become "+
+				"unreachable (no world selects them) until migrated or GC'd", typeName, f))
+	}
+
+	// An ADDED face is additive on its own — nothing is stored there yet.
+	for _, f := range added {
+		r.add(TierAdditive, "face_added", typeName+"."+f,
+			fmt.Sprintf("entity %q declares new face %q", typeName, f))
+	}
+
+	// One removed beside one added is very likely a RENAME spelled as
+	// delete+add, and the same hint compareEntityShapes gives for types applies:
+	// the rows are still there under the old coordinate and a migration can move
+	// them, but only before a GC removes them.
+	if len(removed) == 1 && len(added) == 1 {
+		r.Deltas = append(r.Deltas, ShapeDelta{
+			Tier: TierDrift, Kind: "possible_face_rename",
+			Subject: typeName + "." + added[0], Counterpart: typeName + "." + removed[0],
+			Detail: fmt.Sprintf(
+				"entity %q: face %q removed and %q added — if this is a rename, generate a "+
+					"migration (rela migrate gen) before the old rows are GC'd",
+				typeName, removed[0], added[0]),
+		})
+	}
+
+	// Repointing bare_face is the sharp one, and it is NEEDS-MIGRATION rather
+	// than drift. The bare face is stored as the ZERO coordinate, so changing
+	// which declared face that means silently relabels every existing bare row:
+	// the content that was the type's only content becomes a different state,
+	// and the state it used to be is now empty. No row moves, no value changes,
+	// and nothing looks wrong — which is exactly why the store must not adopt
+	// this shape on its own.
+	if from.BareFace != to.BareFace {
+		switch {
+		case from.BareFace == "":
+			// Flat → faced. Harmless only if the new bare face is the one the
+			// existing rows should become; the operator has to say so.
+			r.add(TierMigration, "bare_face_introduced", typeName, fmt.Sprintf(
+				"entity %q gained `bare_face: %s`: every existing row is stored at the zero "+
+					"coordinate and would silently become that face. Confirm with a migration "+
+					"that this is the state they belong to", typeName, to.BareFace))
+		case to.BareFace == "":
+			r.add(TierMigration, "bare_face_removed", typeName, fmt.Sprintf(
+				"entity %q no longer declares `bare_face`: rows at the zero coordinate belong "+
+					"to no declared face", typeName))
+		default:
+			r.add(TierMigration, "bare_face_changed", typeName, fmt.Sprintf(
+				"entity %q: `bare_face` moved from %q to %q — every existing bare row is "+
+					"relabelled from one state to the other in place, and %q becomes empty",
+				typeName, from.BareFace, to.BareFace, from.BareFace))
+		}
 	}
 }
 

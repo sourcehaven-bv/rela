@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -160,7 +161,7 @@ func TestLoadPolicy_MalformedYAML_ReturnsParseError(t *testing.T) {
 
 // Affordance grants round-trip into the typed shape the resolver
 // consumes: per-field write/visibility, per-option, per-relation
-// with create/remove pointers and meta-field grants.
+// with create/remove faces and meta-field grants.
 func TestLoadPolicy_AffordanceGrants(t *testing.T) {
 	t.Parallel()
 	const yaml = `
@@ -319,7 +320,7 @@ func TestLoadPolicy_AffordanceGrants_OptInIsKeyPresence(t *testing.T) {
 
 // Create/Remove *bool must distinguish explicit true, explicit
 // false, and unset across the YAML forms operators actually write.
-func TestLoadPolicy_RelationGrant_CreateRemovePointers(t *testing.T) {
+func TestLoadPolicy_RelationGrant_CreateRemoveFaces(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name       string
@@ -405,6 +406,158 @@ func TestLoadPolicy_BlankRoleRelationsKey_Rejected(t *testing.T) {
 				t.Fatalf("LoadPolicy: expected error on blank role_relations key; got nil")
 			}
 		})
+	}
+}
+
+// A write-verb key under a `role_relations:` entry is refused at load rather
+// than silently dropped. yaml.v3 ignores unmappable keys, so before this guard
+// `create: add-member` loaded clean and left the relation UNGATED — a fail-open
+// on the one gate whose job is tamper-resistance. The verb keys get a message
+// naming `relation_grants:`, since an operator reaching for them has a coherent
+// intent that is simply spelled elsewhere.
+func TestLoadPolicy_RoleRelationsVerbKey_Rejected(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name    string
+		yaml    string
+		wantSub string
+	}{
+		{"create", "role_relations:\n  member-of:\n    create: add-member\n", "relation_grants"},
+		{"update", "role_relations:\n  member-of:\n    update: edit-member\n", "relation_grants"},
+		{"delete", "role_relations:\n  member-of:\n    delete: rm-member\n", "relation_grants"},
+		{"read", "role_relations:\n  member-of:\n    read: see-member\n", "relation_grants"},
+		{
+			"unknown key",
+			"role_relations:\n  member-of:\n    confer: editor\n",
+			"unknown key",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			path := writeTempPolicy(t, tc.yaml)
+			_, err := acl.LoadPolicy(path)
+			if err == nil {
+				t.Fatalf("LoadPolicy: expected error on role_relations %s key; got nil", tc.name)
+			}
+			if !strings.Contains(err.Error(), tc.wantSub) {
+				t.Errorf("LoadPolicy error = %q, want it to mention %q", err, tc.wantSub)
+			}
+		})
+	}
+}
+
+// The supported keys still load, so the strict unmarshaller did not narrow the
+// real surface: both fields must survive a round-trip.
+func TestLoadPolicy_RoleRelationsSupportedKeys(t *testing.T) {
+	t.Parallel()
+	path := writeTempPolicy(t,
+		"role_relations:\n  member-of:\n    confers: editor\n    requires_permission: delegate-membership\n")
+	p, err := acl.LoadPolicy(path)
+	if err != nil {
+		t.Fatalf("LoadPolicy: %v", err)
+	}
+	got := p.RoleRelations["member-of"]
+	if got.Confers != "editor" {
+		t.Errorf("Confers = %q, want %q", got.Confers, "editor")
+	}
+	if got.RequiresPermission != "delegate-membership" {
+		t.Errorf("RequiresPermission = %q, want %q", got.RequiresPermission, "delegate-membership")
+	}
+}
+
+// An unknown key inside an affordance grant is refused at load. The motivating
+// case is a misspelled `when:`: yaml.v3 drops it, an absent When compiles to a
+// nil program, and a nil program means "grant unconditionally" — so the typo
+// silently promotes a conditional grant to an unconditional one. On `visible:`
+// that is a read-side disclosure.
+func TestLoadPolicy_AffordanceGrantUnknownKey_Rejected(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name    string
+		yaml    string
+		wantSub string
+	}{
+		{
+			"fields when typo",
+			"roles:\n  e:\n    read: [t]\n    fields:\n      t:\n        - field: salary\n          whenx: \"x\"\n",
+			`unknown key "whenx"`,
+		},
+		{
+			"visible when typo",
+			"roles:\n  e:\n    read: [t]\n    visible:\n      t:\n        - field: salary\n          whenx: \"x\"\n",
+			`unknown key "whenx"`,
+		},
+		{
+			"options when typo",
+			"roles:\n  e:\n    read: [t]\n    options:\n      t:\n        - field: status\n          option: done\n          whenx: \"x\"\n",
+			`unknown key "whenx"`,
+		},
+		{
+			"relations when typo",
+			"roles:\n  e:\n    read: [t]\n    relations:\n      t:\n        - relation: blocks\n          whenx: \"x\"\n",
+			`unknown key "whenx"`,
+		},
+		{
+			"relations create typo",
+			"roles:\n  e:\n    read: [t]\n    relations:\n      t:\n        - relation: blocks\n          crate: false\n",
+			`unknown key "crate"`,
+		},
+		{
+			"nested relation fields when typo",
+			"roles:\n  e:\n    read: [t]\n    relations:\n      t:\n        - relation: blocks\n          fields:\n            - field: note\n              whenx: \"x\"\n",
+			`unknown key "whenx"`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			path := writeTempPolicy(t, tc.yaml)
+			_, err := acl.LoadPolicy(path)
+			if err == nil {
+				t.Fatalf("LoadPolicy: expected error on %s; got nil", tc.name)
+			}
+			if !strings.Contains(err.Error(), tc.wantSub) {
+				t.Errorf("LoadPolicy error = %q, want it to mention %q", err, tc.wantSub)
+			}
+		})
+	}
+}
+
+// The supported keys still round-trip, so the strict unmarshallers did not
+// narrow the real surface — in particular RelationGrant's pointer fields must
+// keep distinguishing "unset" from an explicit false.
+func TestLoadPolicy_AffordanceGrantSupportedKeys(t *testing.T) {
+	t.Parallel()
+	path := writeTempPolicy(t,
+		"roles:\n  e:\n    read: [t]\n"+
+			"    fields:\n      t:\n        - field: salary\n          when: \"true\"\n"+
+			"    options:\n      t:\n        - field: status\n          option: done\n          when: \"true\"\n"+
+			"    relations:\n      t:\n        - relation: blocks\n          create: false\n"+
+			"          fields:\n            - field: note\n              when: \"true\"\n")
+	p, err := acl.LoadPolicy(path)
+	if err != nil {
+		t.Fatalf("LoadPolicy: %v", err)
+	}
+	role := p.Roles["e"]
+	if got := role.Fields["t"][0]; got.Field != "salary" || got.When != "true" {
+		t.Errorf("FieldGrant = %+v, want {salary true}", got)
+	}
+	if got := role.Options["t"][0]; got.Field != "status" || got.Option != "done" || got.When != "true" {
+		t.Errorf("OptionGrant = %+v, want {status done true}", got)
+	}
+	rg := role.Relations["t"][0]
+	if rg.Relation != "blocks" {
+		t.Errorf("RelationGrant.Relation = %q, want %q", rg.Relation, "blocks")
+	}
+	if rg.Create == nil || *rg.Create {
+		t.Errorf("RelationGrant.Create = %v, want explicit false (not nil)", rg.Create)
+	}
+	if rg.Remove != nil {
+		t.Errorf("RelationGrant.Remove = %v, want nil (unset)", rg.Remove)
+	}
+	if got := rg.Fields[0]; got.Field != "note" || got.When != "true" {
+		t.Errorf("nested FieldGrant = %+v, want {note true}", got)
 	}
 }
 

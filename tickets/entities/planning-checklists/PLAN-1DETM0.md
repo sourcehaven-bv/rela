@@ -164,7 +164,7 @@ switch mirroring `authorizeCommand`, used IN ADDITION to the existing
 `gateDocumentPermission` for elevated documents only:
   - `nil` ACL → deny (wiring bug fails closed).
   - `NopACL` → **deny** (diverges from `authorizeCommand`; see Security).
-  - `ReadOnlyACL` (value AND pointer) → deny.
+  - `ReadOnlyACL` (value AND face) → deny.
   - `*Declarative` → nil-check, then `Permission != ""` AND held.
   - `default` → deny.
 - The gate runs BEFORE the renderer, preserving the existing
@@ -286,7 +286,7 @@ capability); `read` on an automation action → reads elevate, writes do not.
 | Risk | Severity | Mitigation |
 |---|---|---|
 | **Elevated script echoes raw rows** (RR-LWD8N3) | **High** | Not enforceable under Option A; trust boundary documented in acl-security.md + godoc. Option C is the structural answer if the pattern recurs |
-| **Gate written against the read gate fails open** (RR-CWWJGW/RR-JE2G14) | **High** | Closed switch on ACL impl, mirroring authorizeCommand; table test over every impl incl. pointer forms |
+| **Gate written against the read gate fails open** (RR-CWWJGW/RR-JE2G14) | **High** | Closed switch on ACL impl, mirroring authorizeCommand; table test over every impl incl. face forms |
 | **NopACL deployment serves elevated docs ungated** | **High** | Refuse at config load; AC8 |
 | Widening `bypass_acl` registration lets a future wiring site grant reads accidentally | Medium | nil-reader stays DENY; opt-in must be explicit config; AC1/AC3 pin the handle shape |
 | Elevated renders are expensive and unbounded | Medium | Pre-existing (RR-P4E9GL, TKT-OGR566); note, do not solve here |

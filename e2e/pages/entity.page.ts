@@ -333,6 +333,55 @@ export class EntityPage extends BasePage {
     return this.page.locator('.cb-stats');
   }
 
+  // --- mermaid body-content helpers ---
+
+  /** Rendered mermaid diagrams inside the content body. */
+  get mermaidDiagrams(): Locator {
+    return this.contentBody.locator('.mermaid-diagram');
+  }
+
+  /** Wait for the first mermaid diagram to finish rendering. Rendering is
+   *  async (mermaid measures text in the live DOM before emitting SVG), so a
+   *  bare count() races it. */
+  async waitForMermaidDiagram() {
+    await expect(this.mermaidDiagrams.first()).toBeVisible({ timeout: 15_000 });
+  }
+
+  /** Text of every node label in the first diagram. Flowchart labels are
+   *  XHTML inside <foreignObject>; sequence labels are SVG <text>. */
+  async mermaidLabelTexts(): Promise<string[]> {
+    return this.mermaidDiagrams.first().locator('foreignObject, text').allTextContents();
+  }
+
+  /** Number of mermaid `.nodeLabel` wrappers inside the first diagram's
+   *  labels. Zero means the label MARKUP was stripped even if text survived. */
+  async mermaidLabelElementCount(): Promise<number> {
+    return this.mermaidDiagrams.first().locator('foreignObject .nodeLabel').count();
+  }
+
+  /** Number of <br> elements inside the first diagram's labels — a
+   *  multi-line node label that survived sanitization keeps its line break. */
+  async mermaidLabelLineBreakCount(): Promise<number> {
+    return this.mermaidDiagrams.first().locator('foreignObject br').count();
+  }
+
+  /** Names of every on* attribute anywhere inside the first diagram. */
+  async mermaidEventHandlerAttributes(): Promise<string[]> {
+    return this.mermaidDiagrams.first().evaluate((root) =>
+      Array.from(root.querySelectorAll('*')).flatMap((el) =>
+        Array.from(el.attributes)
+          .map((a) => a.name)
+          .filter((n) => /^on/i.test(n)),
+      ),
+    );
+  }
+
+  /** Embedded-media elements inside the first diagram. A label is text; any
+   *  of these came from a hostile label and must have been stripped. */
+  async mermaidEmbeddedMediaCount(): Promise<number> {
+    return this.mermaidDiagrams.first().locator('img, iframe, object, embed, video, audio').count();
+  }
+
   async hasCheckboxStats(): Promise<boolean> {
     return this.checkboxStats.isVisible().catch(() => false);
   }

@@ -113,10 +113,9 @@ func TestACLWrite_DeleteOnHiddenIs404(t *testing.T) {
 
 // patchEntityAs runs handleV1UpdateEntity with the gate ctx attached.
 // typeName/plural are accepted for symmetry with deleteEntityAs and
-// getEntityAs; today's tests only exercise tickets, but the helper
-// surface keeps the door open to fixtures with other types.
-//
-//nolint:unparam // typeName always "ticket" today — see godoc.
+// getEntityAs. The `unparam` suppression that used to sit here ("typeName
+// always ticket today") is gone: acl_facedid_write_test.go passes "policy",
+// so the parameter now genuinely varies.
 func patchEntityAs(ctx context.Context, t *testing.T, app *App, d *acl.Declarative,
 	typeName, plural, entityID, body string, hdr http.Header,
 ) *httptest.ResponseRecorder {

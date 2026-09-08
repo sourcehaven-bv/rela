@@ -30,8 +30,12 @@ type commandHandler struct {
 	projectRoot func() string
 	// schemaFile yields the resolved schema basename for the command stdin
 	// payload. Optional: nil falls back to the canonical name.
-	schemaFile  func() string
-	executeView func(ctx context.Context, view ViewConfig, entryID string) (*viewResult, error)
+	schemaFile func() string
+	// executeView runs a view for `kind: view` commands. The viewWorld
+	// parameter is passed explicitly by the caller (always defaultViewWorld()
+	// here — see commands.go), never read from ctx: this handler's output
+	// leaves the process.
+	executeView func(ctx context.Context, view ViewConfig, entryID string, w viewWorld) (*viewResult, error)
 
 	// aclImpl yields the active ACL, consulted by authorizeCommand to gate
 	// execution (TKT-MJ02AO). A closure, not a value, for the same reason as

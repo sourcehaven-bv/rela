@@ -11,6 +11,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
+	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 )
@@ -661,6 +662,7 @@ func (r *PolicyResolver) bindingFor(ctx context.Context, e *entity.Entity) (bc *
 		userID:      p.User,
 		resolver:    r,
 	}
+	bc.userFuncs = predicatefns.CurrentUserBindings(bc.identity())
 	return bc, roles
 }
 
@@ -810,6 +812,17 @@ func (r *PolicyResolver) passes(
 ) bool {
 	if prog == nil {
 		return true
+	}
+	// A clause that reads the current user cannot be honored for a caller
+	// who has none: an unidentified caller is not "the user with the empty
+	// id", and `entity.owner == current_user.id` against an owner that is
+	// itself empty would otherwise GRANT. Refuse the grant — the direction
+	// every other identity gap in this codebase takes — rather than
+	// evaluate it against a placeholder. Only the `everyone` role can bring
+	// an unidentified caller here at all (resolveViaDeclarative), so this
+	// costs an anonymous-readable workspace exactly its per-user clauses.
+	if bc.identity() == "" && predicatefns.RequiresCurrentUser(prog) {
+		return false
 	}
 	b, err := bc.newBindings(r.meta)
 	if err != nil {

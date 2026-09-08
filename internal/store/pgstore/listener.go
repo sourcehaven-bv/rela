@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -265,11 +266,36 @@ func (l *listener) catchUp(ctx context.Context, watermark int64) int64 {
 	// Table set MUST match primeWatermark (entities + relations + deletions).
 	// `typ` carries the entity type so events are structurally identical to the
 	// NOTIFY path; `deleted` distinguishes a tombstone from a live row.
+	// The a slot carries the state reference in its codec serialization
+	// (TKT-DOFYR1): live rows join (id, face) / (from_id, from_face)
+	// the same way tombstones' id_a was written, so catchUpEvent parses
+	// one shape. The SQL concatenation mirrors entity.FormatStateRef
+	// exactly (bare id when the face is ''); both components are
+	// already canonical, so no other form can be produced.
 	const q = `
 		SELECT kind, a, b, c, typ, deleted, seq FROM (
-			SELECT 'e' AS kind, id AS a, '' AS b, '' AS c, type AS typ, false AS deleted, seq FROM entities
+			-- TRAP (TKT-WAV8XP PR-C, RULING 4): the face tests below have
+			-- INVERTED POLARITY versus every other face literal in this
+			-- package. They are NOT a read scope and NOT a default-world
+			-- filter: this scan is deliberately UNFILTERED (note the absence
+			-- of any WHERE face clause), and the CASE expressions are
+			-- face-aware SERIALIZATION — they rebuild the state ref
+			-- (bare id when the face is empty, id@face otherwise) so
+			-- catch-up rows match the shape tombstones were written in.
+			--
+			-- Mislabeling these "default world" and adding a world arm
+			-- BREAKS THE CHANGE FEED: the catch-up would stop reporting
+			-- non-default states, so a cross-process writer's state edits
+			-- would silently never reach other processes' subscribers, and
+			-- the watermark would advance past them so the miss is
+			-- unrecoverable rather than merely delayed.
+			SELECT 'e' AS kind,
+			       id || CASE WHEN face = '' THEN '' ELSE '@' || face END AS a,
+			       '' AS b, '' AS c, type AS typ, false AS deleted, seq FROM entities
 			UNION ALL
-			SELECT 'r', from_id, rel_type, to_id, '', false, seq FROM relations
+			SELECT 'r',
+			       from_id || CASE WHEN from_face = '' THEN '' ELSE '@' || from_face END,
+			       rel_type, to_id, '', false, seq FROM relations
 			UNION ALL
 			SELECT kind, id_a, id_b, id_c, typ, true, seq FROM deletions
 		) t
@@ -315,16 +341,23 @@ func (l *listener) catchUp(ctx context.Context, watermark int64) int64 {
 // row (deleted) reports the corresponding Deleted event so consumers mirror the
 // removal.
 func catchUpEvent(kind, a, b, c, typ string, deleted bool) store.Event {
+	// The a slot is a codec-serialized state reference; an unparseable
+	// value degrades to a bare id with the zero face (a re-snapshot
+	// by id is still the right consumer response).
+	id, ptr, err := entity.ParseStateRef(a)
+	if err != nil {
+		id, ptr = a, ""
+	}
 	if kind == "r" {
 		if deleted {
-			return store.Event{Op: store.EventRelationDeleted, From: a, RelationType: b, To: c}
+			return store.Event{Op: store.EventRelationDeleted, From: id, Face: ptr, RelationType: b, To: c}
 		}
-		return store.Event{Op: store.EventRelationUpdated, From: a, RelationType: b, To: c}
+		return store.Event{Op: store.EventRelationUpdated, From: id, Face: ptr, RelationType: b, To: c}
 	}
 	if deleted {
-		return store.Event{Op: store.EventEntityDeleted, EntityType: typ, EntityID: a}
+		return store.Event{Op: store.EventEntityDeleted, EntityType: typ, EntityID: id, Face: ptr}
 	}
-	return store.Event{Op: store.EventEntityUpdated, EntityType: typ, EntityID: a}
+	return store.Event{Op: store.EventEntityUpdated, EntityType: typ, EntityID: id, Face: ptr}
 }
 
 // dropConn closes a broken connection. Callers set their conn to nil afterward

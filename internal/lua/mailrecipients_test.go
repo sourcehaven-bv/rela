@@ -31,9 +31,10 @@ func sendTo(t *testing.T, policy RecipientPolicy, addr string) (*recordingMailSe
 	sender := policySender{recordingMailSender: rec, policy: policy}
 	rt := NewReader(ReadDeps{}, &bytes.Buffer{},
 		WithMailSender(sender),
-		// NOTE: once TKT-JVHSOZ (the caps.Mail gate) merges, this needs
-		// WithCapabilities(Capabilities{Mail: true}) too — the two controls
-		// are independent and a send must pass BOTH.
+		// The caps.Mail gate (TKT-JVHSOZ) and the recipient allowlist are
+		// independent controls and a send must pass BOTH. Granted here so
+		// these tests exercise the allowlist rather than re-testing the gate.
+		WithCapabilities(Capabilities{Mail: true}),
 	)
 	t.Cleanup(rt.Close)
 	err := rt.RunString(`
@@ -138,7 +139,8 @@ func TestRecipients_DenialDoesNotLeakTheAllowlist(t *testing.T) {
 // operator's blessing.
 func TestRecipients_SenderWithoutPolicyDenies(t *testing.T) {
 	sender := &recordingMailSender{} // deliberately NOT a policySender
-	rt := NewReader(ReadDeps{}, &bytes.Buffer{}, WithMailSender(sender))
+	rt := NewReader(ReadDeps{}, &bytes.Buffer{}, WithMailSender(sender),
+		WithCapabilities(Capabilities{Mail: true}))
 	t.Cleanup(rt.Close)
 
 	err := rt.RunString(`

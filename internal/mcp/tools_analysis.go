@@ -20,12 +20,12 @@ func (s *Server) handleAnalyzeOrphans(
 	args := newToolRequest(request)
 	entityType := args.GetString("type", "")
 
-	orphanIDs, _ := s.deps.Tracer.FindOrphans(ctx)
+	orphanIDs, _ := s.deps().Tracer.FindOrphans(ctx)
 
-	st := s.deps.Store
+	st := s.deps().Store
 	resolved := ""
 	if entityType != "" {
-		resolved = s.types.resolveType(entityType)
+		resolved = group(s, selTypes).resolveType(entityType)
 	}
 
 	type orphanInfo struct {
@@ -71,7 +71,7 @@ func (s *Server) handleAnalyzeCardinality(
 ) (*mcpgo.CallToolResult, error) {
 	violations := make([]cardinalityViolation, 0) //nolint:prealloc // capacity unknown
 
-	for relName, relDef := range s.deps.Meta.Relations {
+	for relName, relDef := range s.deps().Meta.Relations {
 		violations = append(violations, s.checkCardinalityForRelation(ctx, relName, relDef)...)
 	}
 
@@ -106,7 +106,7 @@ func (s *Server) checkCardinalityBound(
 ) []cardinalityViolation {
 	var violations []cardinalityViolation
 
-	st := s.deps.Store
+	st := s.deps().Store
 	for _, entityType := range entityTypes {
 		for e, err := range st.ListEntities(ctx, store.EntityQuery{Type: entityType}) {
 			if err != nil {
@@ -163,13 +163,13 @@ func (s *Server) handleAnalyzeUnique(
 ) (*mcpgo.CallToolResult, error) {
 	violations := make([]uniqueViolation, 0)
 
-	for typeName, def := range s.deps.Meta.Entities {
+	for typeName, def := range s.deps().Meta.Entities {
 		for propName, pd := range def.PropertyDefs() {
 			if !pd.Unique || pd.List {
 				continue
 			}
 			byValue := map[string][]string{}
-			for e, err := range s.deps.Store.ListEntities(ctx, store.EntityQuery{Type: typeName}) {
+			for e, err := range s.deps().Store.ListEntities(ctx, store.EntityQuery{Type: typeName}) {
 				if err != nil {
 					break
 				}
@@ -213,8 +213,8 @@ func (s *Server) handleAnalyzeProperties(
 		Errors       []string `json:"errors"`
 	}
 
-	meta := s.deps.Meta
-	st := s.deps.Store
+	meta := s.deps().Meta
+	st := s.deps().Store
 	var allEntityErrors []entityErrors
 
 	// Validate entity properties
@@ -237,7 +237,7 @@ func (s *Server) handleAnalyzeProperties(
 	}
 
 	// Validate relation properties
-	relErrors := schema.ValidateRelationProperties(ctx, s.deps.Store, s.deps.Meta)
+	relErrors := schema.ValidateRelationProperties(ctx, s.deps().Store, s.deps().Meta)
 	allRelationErrors := make([]relationErrors, 0, len(relErrors))
 	for _, rpe := range relErrors {
 		errStrings := make([]string, len(rpe.Errors))
@@ -288,7 +288,7 @@ func (s *Server) handleAnalyzeProperties(
 func (s *Server) handleAnalyzeValidations(
 	ctx context.Context, _ *mcpgo.CallToolRequest,
 ) (*mcpgo.CallToolResult, error) {
-	rules := s.deps.Meta.Validations
+	rules := s.deps().Meta.Validations
 	if len(rules) == 0 {
 		return textResult("No custom validation rules defined in metamodel"), nil
 	}
@@ -299,7 +299,7 @@ func (s *Server) handleAnalyzeValidations(
 		Violations []string `json:"violations"`
 	}
 
-	validator := s.deps.Validator
+	validator := s.deps().Validator
 	var results []ruleResult
 	for _, rule := range rules {
 		ids, err := validator.CheckRule(ctx, rule)
@@ -336,8 +336,8 @@ func (s *Server) handleAnalyzeSchema(
 
 	dataEntry := s.loadDataEntryConfig(ctx)
 
-	counter := schema.NewStoreCounter(ctx, s.deps.Store)
-	analysis := schema.Analyze(s.deps.Meta, counter, dataEntry, threshold)
+	counter := schema.NewStoreCounter(ctx, s.deps().Store)
+	analysis := schema.Analyze(s.deps().Meta, counter, dataEntry, threshold)
 
 	if !analysis.HasIssues() {
 		return textResult("All schema types are in use"), nil
@@ -364,7 +364,7 @@ func (s *Server) handleAnalyzeSchema(
 
 // loadDataEntryConfig loads data-entry.yaml if it exists.
 func (s *Server) loadDataEntryConfig(ctx context.Context) *dataentryconfig.Config {
-	data, err := s.deps.Config.Load(ctx, dataentryconfig.ConfigFile)
+	data, err := s.deps().Config.Load(ctx, dataentryconfig.ConfigFile)
 	if err != nil {
 		return nil
 	}

@@ -55,6 +55,15 @@ const CHECK_TYPES = [
 
 // State
 const loading = ref(true)
+
+// pageState mirrors DynamicForm's `form-state-*` contract: a stable signal
+// that this screen has finished resolving, so a screenshot{} capture can wait
+// for it rather than hanging until its timeout.
+const loadError = ref(false)
+const pageState = computed<'pending' | 'loaded' | 'error'>(() => {
+  if (loadError.value) return 'error'
+  return loading.value ? 'pending' : 'loaded'
+})
 const result = ref<AnalyzeResult | null>(null)
 const filterSeverity = ref<'all' | 'error' | 'warning'>('all')
 const filterCheckType = ref<string>('')
@@ -113,10 +122,12 @@ function shouldShowIssues(checkKey: string): boolean {
 // Methods
 async function loadAnalysis() {
   loading.value = true
+  loadError.value = false
   try {
     result.value = await analyze()
   } catch (err) {
     console.error('Analyze error:', err)
+    loadError.value = true
   } finally {
     loading.value = false
   }
@@ -129,7 +140,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <PageLayout class="analyze-view">
+  <PageLayout class="analyze-view" :data-testid="`page-state-${pageState}`">
     <template v-if="backTarget" #scope-nav>
       <BackButton :target="backTarget" />
     </template>
@@ -166,9 +177,14 @@ onMounted(() => {
 
       <!-- Check type cards -->
       <div class="check-cards">
-        <div v-for="checkType in CHECK_TYPES" :key="checkType.key" class="check-card">
+        <section
+          v-for="checkType in CHECK_TYPES"
+          :key="checkType.key"
+          class="check-card"
+          :aria-labelledby="`check-${checkType.key}-title`"
+        >
           <div class="check-header">
-            <h3 class="check-title">
+            <h3 :id="`check-${checkType.key}-title`" class="check-title">
               {{ checkType.label }}
               <span class="check-count" :class="{ 'has-issues': getCheckCount(checkType.key) > 0 }">
                 {{ getCheckCount(checkType.key) }}{{ isTruncated(checkType.key) ? '+' : '' }}
@@ -196,7 +212,7 @@ onMounted(() => {
               :issues="getFilteredIssuesForCheck(checkType.key)"
             />
           </template>
-        </div>
+        </section>
       </div>
     </template>
   </PageLayout>

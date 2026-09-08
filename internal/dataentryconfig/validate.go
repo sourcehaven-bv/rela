@@ -2,6 +2,7 @@ package dataentryconfig
 
 import (
 	"fmt"
+	"net"
 	"net/url"
 	"path/filepath"
 	"regexp"
@@ -35,6 +36,7 @@ var validTopLevelKeys = map[string]bool{
 	"dashboard":    true,
 	"commands":     true,
 	"actions":      true,
+	"webhooks":     true,
 	"navigation":   true,
 	"palette":      true,
 
@@ -340,7 +342,8 @@ func ValidateConfig(data []byte, cfg *Config, meta *metamodel.Metamodel) error {
 	errs = append(errs, validateDashboard(cfg, meta)...)
 	errs = append(errs, validateCommands(cfg, meta)...)
 	errs = append(errs, validateActions(cfg, meta)...)
-	errs = append(errs, validateApp(cfg)...)
+	errs = append(errs, validateWebhooks(cfg, meta)...)
+	errs = append(errs, validateApp(cfg, meta)...)
 	errs = append(errs, validateDocuments(cfg)...)
 	errs = append(errs, validateFeeds(cfg, meta)...)
 	errs = append(errs, validateCalDAV(cfg, meta)...)
@@ -853,6 +856,30 @@ func validateLists(cfg *Config, meta *metamodel.Metamodel) []string {
 		}
 
 		errs = append(errs, validateExportRenderShape("list", listID, list.ExportRender)...)
+
+		// A typo here would silently open the create form in the list's own
+		// world — the exact behavior the key exists to override, and
+		// indistinguishable from never having set it. Same reasoning as
+		// app.default_world (validateApp).
+		//
+		// Only the NAME is checked. Whether the target world resolves a face
+		// for this type is deliberately NOT validated: linking to another
+		// world always works, and a create writes the DEFAULT face regardless
+		// (§9.4), so there is no combination to reject. The real gate is ACL —
+		// the button renders only if the principal may read the target world,
+		// which is per-principal and therefore not a load-time question.
+		if w := list.CreateWorld; w != "" && w != metamodel.DefaultWorldName {
+			if _, ok := meta.Worlds[w]; !ok {
+				declared := make([]string, 0, len(meta.Worlds))
+				for name := range meta.Worlds {
+					declared = append(declared, name)
+				}
+				sort.Strings(declared)
+				errs = append(errs, fmt.Sprintf(
+					"list %q: create_world %q is not a declared world (schema.yaml declares: %s)",
+					listID, w, strings.Join(declared, ", ")))
+			}
+		}
 
 		// Validate columns
 		for i, c := range list.Columns {
@@ -1978,8 +2005,32 @@ func validateCommands(cfg *Config, meta *metamodel.Metamodel) []string {
 // into an <img src>, so a malformed or non-http scheme (e.g. javascript:,
 // data:, protocol-relative //host, or a bare host) is rejected at load time
 // rather than reaching a user's browser. Empty is valid (PlantUML disabled).
-func validateApp(cfg *Config) []string {
+//
+// http:// is additionally restricted to loopback. The SPA encodes the diagram
+// source into the URL it fetches, so a cleartext request publishes that source
+// to anyone on the path — and diagram source is ordinary private content. On
+// loopback there is no network segment to observe, which is why the common
+// "PlantUML as a local sidecar" deployment stays valid; anywhere else, the
+// operator can use TLS.
+func validateApp(cfg *Config, meta *metamodel.Metamodel) []string {
 	var errs []string
+	// A typo here would silently serve the DEFAULT world to every request and
+	// look exactly like the feature was never configured — no error, no
+	// warning, just the wrong faces. So an undeclared name fails the load.
+	if w := cfg.App.DefaultWorld; w != "" && w != metamodel.DefaultWorldName {
+		if meta == nil {
+			errs = append(errs, "app.default_world: set, but no metamodel is available to validate it against")
+		} else if _, ok := meta.Worlds[w]; !ok {
+			declared := make([]string, 0, len(meta.Worlds))
+			for name := range meta.Worlds {
+				declared = append(declared, name)
+			}
+			sort.Strings(declared)
+			errs = append(errs, fmt.Sprintf(
+				"app.default_world: %q is not a declared world (schema.yaml declares: %s)",
+				w, strings.Join(declared, ", ")))
+		}
+	}
 	if raw := cfg.App.PlantUMLServerURL; raw != "" {
 		u, err := url.Parse(raw)
 		switch {
@@ -1990,9 +2041,39 @@ func validateApp(cfg *Config) []string {
 				"app.plantuml_server_url: scheme must be http or https, got %q", u.Scheme))
 		case u.Host == "":
 			errs = append(errs, "app.plantuml_server_url: must include a host")
+		case u.Scheme == "http" && !isLoopbackHost(u.Hostname()):
+			errs = append(errs, fmt.Sprintf(
+				"app.plantuml_server_url: http:// sends diagram source in cleartext; "+
+					"use https:// (http is allowed only for loopback), got host %q", u.Hostname()))
 		}
 	}
 	return errs
+}
+
+// isLoopbackHost reports whether host (a URL's Hostname(), so already stripped
+// of port, userinfo and IPv6 brackets) names the local machine.
+//
+// A single trailing dot is stripped first: "localhost." is the fully-qualified
+// form of the same name, and refusing it would reject a legitimate local setup.
+//
+// The IP case is delegated to net.IP.IsLoopback, which covers all of 127.0.0.0/8
+// and ::1 (in any spelling, including the IPv4-mapped ::ffff:127.0.0.1) rather
+// than just the two addresses people usually write. The name case matches
+// "localhost" exactly and case-insensitively: a suffix or prefix test would
+// accept "localhost.evil.com" and "127.0.0.1.evil.com", which resolve wherever
+// their owner points them. Any other name — including one that happens to
+// resolve to 127.0.0.1 today — is treated as remote, because resolution can
+// change and validation runs at config-load time.
+//
+// Errs toward refusing: an unusual spelling of a loopback address (the decimal
+// "2130706433", say) is rejected rather than parsed, which costs an operator a
+// clearer URL and never permits cleartext to a remote host.
+func isLoopbackHost(host string) bool {
+	host = strings.TrimSuffix(host, ".")
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return strings.EqualFold(host, "localhost")
 }
 
 // Invariant: every document must have entity_type set, and exactly one of

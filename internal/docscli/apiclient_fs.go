@@ -14,6 +14,6 @@ import (
 // Unlike NewCapturer this pulls in no browser: the client only issues HTTP
 // requests against the data-entry router, so api{} assertions run wherever the
 // Go tests do, with no built frontend and no Chrome.
-func NewAPIClient(projectDir string) (docs.APIClient, error) {
-	return docscapture.NewAPIClient(projectDir), nil
+func NewAPIClient(shared *docscapture.SharedProject) (docs.APIClient, error) {
+	return docscapture.NewAPIClient(shared), nil
 }

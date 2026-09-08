@@ -2,6 +2,56 @@ export interface Schema {
   entities: Record<string, EntityType>
   relations: Record<string, RelationType>
   types: Record<string, CustomType>
+  // Every DECLARED world plus the implicit `default`, each marked with
+  // whether THIS caller may select it (TKT-WRLDAPI item 1). Absent on a
+  // server too old to compute it.
+  //
+  // The declared SET is principal-independent — world names are
+  // operator-authored schema.yaml config, so their existence is already
+  // disclosed and the server does not filter them per principal. Only
+  // `readable` varies by caller.
+  worlds?: Record<string, WorldInfo>
+}
+
+// WorldInfo mirrors v1.World. See internal/dataentry/schemaworlds.go.
+export interface WorldInfo {
+  select?: string[]
+  overrides?: Record<string, string[]>
+  otherwise?: string
+  // Faces this world is the canonical home of — the operator's tie-break when
+  // several worlds head the same face for a type (TKT-MFVH03). Absent for an
+  // unambiguous schema, which is the normal case.
+  //
+  // It can only CONFIRM the chains: the server refuses at load a claim on a
+  // face the world does not head, so a client may trust a claimed face is one
+  // this world leads.
+  primary_for?: string[]
+  // Operator-authored text announcing this world ("DRAFT — not in force").
+  // Empty/absent means announce nothing — a language world needs no banner.
+  banner?: string
+  // The operator's wording for what this world changes on a screen
+  // (TKT-5SZG2L). Each entry is optional and an absent one renders NOTHING:
+  // the app has no sentence of its own for any of them. Placeholders
+  // `{face}`, `{bare_face}`, `{world}`, `{title}` — see utils/worldText.
+  messages?: WorldMessages
+  // Behaviour for an entity with no face in this world: `redirect` names the
+  // world the app navigates to instead of rendering the page.
+  on_absent?: { redirect?: string }
+  // Whether this caller may select the world via `?world=`.
+  //
+  // A UI HINT about SELECTION, never a boundary: the server re-checks the
+  // grant on every request, and a denial is served as an EMPTY RESULT rather
+  // than a 403 — deliberately, so it stays indistinguishable from a world
+  // holding nothing readable. That is exactly why a client should respect
+  // this flag: ignoring it means offering a world that silently returns
+  // nothing, which reads as "nothing is published yet".
+  //
+  // Never omitted by the server (no `omitempty`), so `false` is
+  // distinguishable from a server too old to compute it.
+  readable: boolean
+  // Marks the implicit default world. Spelled as a flag so a client need not
+  // hardcode the reserved name.
+  default?: boolean
 }
 
 export interface EntityType {
@@ -16,6 +66,47 @@ export interface EntityType {
   default_sort?: SortSpec[]
   color?: string
   border_color?: string
+  // Declared content-state coordinates for this type, keyed by the face
+  // name. Absent for the common faceless type. Mirrors v1.EntityType.
+  //
+  // SCHEMA, not data: which faces the TYPE declares, never which faces a
+  // given entity holds. `_faces` on an entity response answers that.
+  faces?: Record<string, FaceInfo>
+  // Which declared face the bare id addresses, mirroring `bare_face:` in
+  // the schema. Empty when the type declares no faces, or names none.
+  bare_face?: string
+  // Whether this type accepts comments (TKT-FIO205). Policy, not permission:
+  // it decides whether to render a comment affordance at all, never whether
+  // the current user may use it — the server re-authorizes every call, so a
+  // UI that shows the box to someone without `comment:add` gets a 403, not a
+  // write.
+  commentable?: boolean
+}
+
+// FaceInfo mirrors v1.FaceDef — one declared content state of a type.
+//
+// Which face the bare id addresses is NOT here: it is `bare_face` on the
+// entity type, because it is one fact about the type rather than a flag each
+// face could contradict.
+export interface FaceInfo {
+  // The operator's display text for this face ("Nederlands" for `nl`).
+  // Absent means fall back to the face name, which is itself
+  // operator-authored config and so an honest, if terse, display string.
+  label?: string
+  // The operator's chrome text about this face (TKT-5SZG2L). `read_only` is
+  // the note for a page or form showing this face while the reader may not
+  // write it; absent renders nothing.
+  messages?: { read_only?: string }
+}
+
+// WorldMessages mirrors v1.WorldMessages. See WorldInfo.messages.
+export interface WorldMessages {
+  // Detail-page note for an entity with no face in the world.
+  absent?: string
+  // List/board note for a type that declares faces.
+  projection?: string
+  // Badge text for a stand-in row or card; absent means no badge.
+  stand_in?: string
 }
 
 export interface PropertyDef {

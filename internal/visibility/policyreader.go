@@ -59,6 +59,12 @@ func (r *PolicyReader) Get(ctx context.Context, entityType, id string) (*entity.
 		// indistinguishable miss.
 		return nil, false, nil
 	}
+	// The face gate, necessarily AFTER the load: an entity's face is not known
+	// until the row exists. Same indistinguishable miss, so a denied face
+	// cannot be used to discover which faces exist.
+	if !FaceAllowed(ctx, r.gate, entityType, e.Face) {
+		return nil, false, nil
+	}
 	return r.redacted(ctx, e), true, nil
 }
 
@@ -81,7 +87,7 @@ func (r *PolicyReader) Filter(ctx context.Context, candidates []*entity.Entity) 
 
 	out := make([]*entity.Entity, 0, len(candidates))
 	for _, c := range candidates {
-		if c != nil && allowed[c.ID] {
+		if c != nil && allowed[c.ID] && FaceAllowed(ctx, r.gate, c.Type, c.Face) {
 			out = append(out, r.redacted(ctx, c))
 		}
 	}
@@ -115,7 +121,7 @@ func (r *PolicyReader) FilterHeaders(
 
 	out := make([]store.EntityHeader, 0, len(candidates))
 	for _, c := range candidates {
-		if allowed[c.ID] {
+		if allowed[c.ID] && FaceAllowed(ctx, r.gate, c.Type, c.Face) {
 			out = append(out, RedactHeader(ctx, r.redact, c))
 		}
 	}
@@ -182,7 +188,7 @@ func (r *PolicyReader) permittedIDs(ctx context.Context, byType map[string][]str
 }
 
 // redacted returns e with hidden properties stripped. When nothing is
-// hidden the ORIGINAL pointer is returned (read-out contract: callers
+// hidden the ORIGINAL face is returned (read-out contract: callers
 // must not mutate) — this keeps the no-policy path allocation-free and
 // byte-identical to a raw read. When redaction applies, the struct is
 // shallow-copied with a fresh filtered Properties map; property VALUES
@@ -208,7 +214,7 @@ func (r *PolicyReader) redacted(ctx context.Context, e *entity.Entity) *entity.E
 }
 
 // Redact returns e with the properties hidden from the ctx principal
-// stripped, per red. When nothing is hidden the ORIGINAL pointer is
+// stripped, per red. When nothing is hidden the ORIGINAL face is
 // returned (read-only contract); otherwise a shallow struct copy with a
 // fresh filtered Properties map (the redacted() contract above — see its
 // godoc for the copy semantics and the body-redaction TODO).

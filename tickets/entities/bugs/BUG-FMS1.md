@@ -71,7 +71,7 @@ unblocked).
 None of these need a global RWMutex with request-scoped locking:
 
 - `Workspace` already has its own `Workspace.mu` and exposes `RLock()` / `RUnlock()` for consumers that need a consistent metamodel + graph snapshot. The dataentry layer's `meta`/`g` aliases are pure caching that can be replaced by direct `a.ws.Meta()` / `a.ws.Graph()` calls.
-- `Cfg`, `styleMap`, `palette`, etc. are exactly the case `atomic.Pointer[T]` was designed for: rarely-changing snapshot, hot read path. A handler does one atomic load at entry and reads from that pointer for the whole request — guaranteed consistent, zero contention, writer just does `Store`.
+- `Cfg`, `styleMap`, `palette`, etc. are exactly the case `atomic.Pointer[T]` was designed for: rarely-changing snapshot, hot read path. A handler does one atomic load at entry and reads from that face for the whole request — guaranteed consistent, zero contention, writer just does `Store`.
 - Mutating handlers don't need to take a global write lock at all — they should call `a.ws.CreateEntity(...)` etc., and the workspace serializes those internally.
 
 ## Acceptance criteria

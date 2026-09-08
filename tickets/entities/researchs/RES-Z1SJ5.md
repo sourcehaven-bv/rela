@@ -114,7 +114,7 @@ cross-process on postgres it is already unprotected.
 ### Option A — Status quo: keep the mutex app-level, move it with the write nucleus
 
 **Mechanics.** M5.4 extracts the write handlers; the new struct owns `writeMu`;
-sync/attachment/action/webhook handlers keep pointer-sharing it. No semantic
+sync/attachment/action/webhook handlers keep face-sharing it. No semantic
 change of any kind.
 
 **Fixes:** nothing new. Preserves in-process protection against 1, 4, 5 for

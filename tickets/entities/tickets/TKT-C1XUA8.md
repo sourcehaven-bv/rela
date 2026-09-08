@@ -27,3 +27,14 @@ Guard machinery shared with the statemachine (`requires_permission`, `when:`,
 enforcer, 403/422 sentinels), separate declaration. Per-entity checks via
 `HoldsPermissionForEntity`. No Manager bypass (purge's shape explicitly
 rejected).
+
+**Owed from Step 1 (decided 2026-08-20, PR-B of TKT-DOFYR1):** per-state
+content versioning. The Step-1 pg sweep deliberately captures DEFAULT faces
+only (`WHERE face = ''`, entities AND relations scans) — capturing state
+rows under the bare-id lineage would interleave faces in one history and
+freeze per-state purge/stitch/addressing semantics before any consumer
+exists. This ticket's copy kernel is that consumer: design per-state history
+here (face column on entity_versions via forward-only migration, lineage
+fencing per (id, face), the doc's copy-vs-sweep dedup check) or explicitly
+re-defer with a reason. The deliberate-skip comments in sweep.go name this
+ticket.

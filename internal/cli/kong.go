@@ -67,13 +67,33 @@ var (
 // out of scope for a secrets-hygiene change. `secrets` is itself a sub-struct
 // holding its subcommand, so it adds one field rather than one per verb.
 //
-//plimsoll:max-fields=47
+// Raised 47 → 48 for `dev` (TKT-1U8XYN), a sub-struct grouping developer
+// tooling (`dev seed` today), so later developer commands nest under it
+// rather than adding fields here.
+//
+//plimsoll:max-fields=48
 type CLI struct {
 	// Global flags.
 	Project string `help:"Project directory (default: auto-detect from cwd)." env:"RELA_PROJECT"`
 	Output  string `help:"Output format (table, json)." short:"o" default:"table"`
 	Verbose bool   `help:"Verbose output." short:"v"`
 	Quiet   bool   `help:"Quiet output."   short:"q"`
+
+	// NO --world flag, deliberately (TKT-DN37J2 PR-C).
+	//
+	// The CLI's read paths reach the store through ~29 unscoped call sites
+	// and `readServices` hands commands a raw store.Store. A `--world` flag
+	// added before those are scoped would parse, print nothing unusual, and
+	// serve the DEFAULT world — an operator asking for `--world published`
+	// would get drafts, silently. That is the "plumbed-but-ungated" shape
+	// this arc has refused twice (Q10, and the search refusal in Ruling 3):
+	// a flag that appears to work is worse than an absent one.
+	//
+	// The HTTP API is world-capable because its reads funnel through two
+	// seams that PR-C scoped end to end. The CLI has no equivalent
+	// chokepoint yet. When it does, `--world` belongs here, wiring-bound
+	// with no grant check — the operator's shell is the trust boundary, as
+	// for `db migrate` and `history-purge`.
 
 	// Subcommands.
 	Version    VersionCmd    `cmd:"" help:"Print version information."`
@@ -83,6 +103,7 @@ type CLI struct {
 	Completion CompletionCmd `cmd:"" help:"Generate shell completion scripts."`
 	Mcp        McpCmd        `cmd:"" name:"mcp" help:"Start the MCP server."`
 	Db         DBCmd         `cmd:"" name:"db" help:"Manage the PostgreSQL schema (postgres build)."`
+	Dev        DevCmd        `cmd:"" help:"Developer tooling (seed generated data)."`
 	Flow       FlowCmd       `cmd:"" help:"Run an interactive Lua flow."`
 	Validate   ValidateCmd   `cmd:"" help:"Validate project configuration files."`
 
@@ -244,7 +265,8 @@ func requiresProject(cmd string) bool {
 		"detach", "import", "normalize", "script", "scheduler",
 		"rename", "analyze", "acl", "attach", "attachments", "gc", "renumber",
 		"sync", "history", "restore", "secrets",
-		"relation-history", "relation-restore", "history-purge", "relation-history-purge":
+		"relation-history", "relation-restore", "history-purge", "relation-history-purge",
+		"dev":
 		return true
 	case "migrate":
 		// Bare `rela migrate` (config-file migration) deliberately gets NO

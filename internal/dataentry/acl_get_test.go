@@ -238,6 +238,10 @@ func TestACLGet_WriteGateErrorMapping(t *testing.T) {
 // PermitsRead / PermitsReadMany. Used by error-mapping tests;
 // production sites use aclReadGate.
 type fakeGate struct {
+	// denyWorlds names worlds this gate refuses; worldErr makes the gate
+	// itself fail, which must be distinguishable from a denial.
+	denyWorlds      map[string]bool
+	worldErr        error
 	permitsErr      error
 	holdsPermission bool
 }
@@ -266,6 +270,16 @@ func (g fakeGate) SearchScope(context.Context, []string) map[string]search.TypeS
 }
 
 func (g fakeGate) HoldsPermission(context.Context, string) bool { return g.holdsPermission }
+
+// PermitsWorld defaults to permitting every world so existing tests, which
+// never select one, are unaffected. Tests that exercise world denial set
+// denyWorlds.
+func (g fakeGate) PermitsWorld(_ context.Context, world string) (bool, error) {
+	if g.worldErr != nil {
+		return false, g.worldErr
+	}
+	return !g.denyWorlds[world], nil
+}
 
 // principalCtx returns a context carrying a stamped data-entry
 // principal for `user`. RR-MILH: replaces the previous parameterless

@@ -671,7 +671,7 @@ func TestCreate_PassesManagerAsMutator(t *testing.T) {
 	if scripts.mutator == nil {
 		t.Fatal("scripts.mutator = nil; Manager did not populate Request.Mutator")
 	}
-	// The mutator IS the Manager. Same-pointer-comparison verifies
+	// The mutator IS the Manager. Same-face-comparison verifies
 	// Manager passes itself rather than constructing an adapter.
 	if scripts.mutator != autocascade.Mutator(mgr) {
 		t.Errorf("mutator = %p, want manager %p", scripts.mutator, mgr)
@@ -791,7 +791,7 @@ func TestRename_AppliesAndRewritesRelations(t *testing.T) {
 	mgr, _ := newManager(t, nil)
 	ctx := context.Background()
 	req := createReq(t, mgr, "Original")
-	dec := createDec(t, mgr, "Pointer")
+	dec := createDec(t, mgr, "Face")
 	if _, err := mgr.CreateRelation(ctx, dec.ID, "addresses", req.ID, entity.RelationOptions{}); err != nil {
 		t.Fatalf("create relation: %v", err)
 	}

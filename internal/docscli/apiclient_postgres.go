@@ -3,18 +3,25 @@
 package docscli
 
 import (
-	"errors"
-
 	"github.com/Sourcehaven-BV/rela/internal/docs"
+	"github.com/Sourcehaven-BV/rela/internal/docscapture"
 )
 
-// NewAPIClient is unavailable on the postgres build, for exactly the reason
-// NewCapturer is: the assertion server stands up a project via
-// appbuild.Discover, which on this build binds pgstore to the shared
-// RELA_DATABASE_URL — so seeding a "throwaway" fixture would write into the
-// real database. api{} fails loud here rather than contaminating live data.
-// (Tier-A resolvers, and the store-free shows{}/refuses{}/permits{}
-// assertions, still work on the postgres build.)
-func NewAPIClient(_ string) (docs.APIClient, error) {
-	return nil, errors.New("api{} is not available on the postgres build (it would seed into the live database); run `rela-docs build` from the default build")
+// NewAPIClient builds the client serving api{} assertions on the postgres
+// build. Like NewCapturer it used to refuse, and for the same reason: the
+// assertion server stands up a project via appbuild.Discover, which here binds
+// pgstore to the shared RELA_DATABASE_URL.
+//
+// It is now scoped by the same mechanism — a private scratch schema per
+// DOCUMENT, dropped CASCADE at teardown (see docscapture.scratchBackend) — so
+// an api{} assertion on this build reads and writes only its own fixture. The
+// schema is per document rather than per consumer because the client and the
+// capturer share one project.
+//
+// That matters beyond parity with the capturer: api{} is how a manual DRIVES a
+// write through the real entitymanager, which is what makes version history
+// exist in the first place. A seed verb writes to the raw store and is never
+// versioned; an api{} PATCH is a genuine edit and is.
+func NewAPIClient(shared *docscapture.SharedProject) (docs.APIClient, error) {
+	return docscapture.NewAPIClient(shared), nil
 }

@@ -47,7 +47,7 @@ compiler-enforced signature change + green `internal/cli` tests.
 patterns extracted to a helper / constant / type where it sharpens the contract
 (don't extract for its own sake; CLAUDE.md "three similar lines is better than a
 premature abstraction" still holds)
-- [x] No security issues introduced (no world/pointer hook added — the spec is shaped for TKT-9KZGJO but carries no world field)
+- [x] No security issues introduced (no world/face hook added — the spec is shaped for TKT-9KZGJO but carries no world field)
 - [x] No silent failures (the change REMOVES a silent failure; remaining `collectEntities` under-count logging is documented out-of-scope in PLAN-KJ76OT)
 - [x] No debug code left behind
 
