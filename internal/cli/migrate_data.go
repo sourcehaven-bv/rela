@@ -4,10 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
+	"io/fs"
 	"path/filepath"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/datamigration"
 	relaerrors "github.com/Sourcehaven-BV/rela/internal/errors"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -20,8 +21,30 @@ import (
 // command path — bare `rela migrate` stays service-free).
 
 // loadDataMigrations parses the project's migrations/ directory.
-func loadDataMigrations(svc *writeServices) ([]*datamigration.File, error) {
-	return datamigration.LoadDir(os.DirFS(svc.Paths.Root))
+//
+// Reads through the injected [config.Loader] rather than os.DirFS so a project
+// whose config lives somewhere other than the filesystem — a self-contained
+// SQLite file — still has a migration chain.
+func loadDataMigrations(ctx context.Context, svc *writeServices) ([]*datamigration.File, error) {
+	fsys, err := newConfigFS(ctx, svc)
+	if err != nil {
+		return nil, err
+	}
+	return datamigration.LoadDir(fsys)
+}
+
+// newConfigFS views the project's config as an fs.FS, bound to ctx.
+//
+// The error is a wiring failure (a nil Config), not a runtime condition, but
+// it is returned rather than panicked on for the reason CLAUDE.md gives: the
+// call sites already thread errors, and a startup error names the problem
+// where a panic only names the symptom.
+func newConfigFS(ctx context.Context, svc *writeServices) (fs.FS, error) {
+	v, err := config.NewFSView(svc.Config)
+	if err != nil {
+		return nil, err
+	}
+	return v.WithContext(ctx)
 }
 
 // migrationLock builds the per-store lock the same way appbuild does, so
@@ -64,7 +87,7 @@ func (c *MigrateStatusCmd) Run(ctx context.Context, svc *writeServices) error {
 			fmt.Printf("  [%s] %s\n", tier, d.Detail)
 		}
 	}
-	files, err := loadDataMigrations(svc)
+	files, err := loadDataMigrations(ctx, svc)
 	if err != nil {
 		return err
 	}
@@ -116,7 +139,7 @@ func (c *MigrateGenCmd) Run(ctx context.Context, svc *writeServices) error {
 	if err != nil {
 		return err
 	}
-	existing, err := loadDataMigrations(svc)
+	existing, err := loadDataMigrations(ctx, svc)
 	if err != nil {
 		return err
 	}
@@ -172,7 +195,7 @@ func (c *MigrateDataCmd) Run(ctx context.Context, svc *writeServices) error {
 	if err != nil {
 		return err
 	}
-	files, err := loadDataMigrations(svc)
+	files, err := loadDataMigrations(ctx, svc)
 	if err != nil {
 		return err
 	}
@@ -191,12 +214,25 @@ func (c *MigrateDataCmd) Run(ctx context.Context, svc *writeServices) error {
 		return nil
 	}
 
+	// Same seam as loadDataMigrations: a `lua:` step's script is
+	// operator-authored config, so it resolves wherever the rest of the
+	// project's config does.
+	//
+	// Bound to ctx, which is the point of doing it here rather than reusing a
+	// background view: the runner already binds a `lua:` step's VM to this
+	// context so a runaway migration is interruptible, and reading the script
+	// through an uncancellable FS would defeat half of that.
+	scriptFS, err := newConfigFS(ctx, svc)
+	if err != nil {
+		return err
+	}
+
 	runner, err := datamigration.NewRunner(datamigration.Deps{
 		Store:    svc.Store,
 		Meta:     svc.Meta,
 		State:    svc.State,
 		Audit:    svc.Audit,
-		ScriptFS: os.DirFS(svc.Paths.Root),
+		ScriptFS: scriptFS,
 		Versions: versionCaptureFor(svc),
 		Lock:     lock,
 	})
