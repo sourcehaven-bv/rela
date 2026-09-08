@@ -1,3 +1,4 @@
+import { apiUrl } from './base'
 export interface SettingsPropertyDef {
   name: string
   type: string
@@ -71,7 +72,7 @@ export interface SettingsData {
 }
 
 export async function getSettings(): Promise<SettingsData> {
-  const response = await fetch('/api/v1/_settings')
+  const response = await fetch(apiUrl('/api/v1/_settings'))
   if (!response.ok) {
     throw new Error('Failed to load settings')
   }
@@ -79,7 +80,7 @@ export async function getSettings(): Promise<SettingsData> {
 }
 
 export async function saveSettings(userDefaults: UserDefaults): Promise<void> {
-  const response = await fetch('/api/v1/_settings', {
+  const response = await fetch(apiUrl('/api/v1/_settings'), {
     method: 'PUT',
     headers: {
       'Content-Type': 'application/json',
@@ -92,7 +93,7 @@ export async function saveSettings(userDefaults: UserDefaults): Promise<void> {
 }
 
 export async function getPalette(): Promise<PaletteConfig> {
-  const response = await fetch('/api/v1/_palette')
+  const response = await fetch(apiUrl('/api/v1/_palette'))
   if (!response.ok) {
     throw new Error('Failed to load palette')
   }
@@ -100,7 +101,7 @@ export async function getPalette(): Promise<PaletteConfig> {
 }
 
 export async function savePalette(palette: PaletteConfig): Promise<void> {
-  const response = await fetch('/api/v1/_palette', {
+  const response = await fetch(apiUrl('/api/v1/_palette'), {
     method: 'PUT',
     headers: {
       'Content-Type': 'application/json',

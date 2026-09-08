@@ -1,6 +1,7 @@
 import { Marked, type Tokens } from 'marked'
 import mermaid from 'mermaid'
 import DOMPurify from 'dompurify'
+import { relaBase } from '@/api/base'
 
 // Initialize mermaid with strict security
 mermaid.initialize({
@@ -136,7 +137,7 @@ function rewriteEntityRefToken(token: unknown, resolve: EntityRefResolver): void
   const visibleTitle = hit.title || (hit.inaccessible ? token.text : '')
   if (!visibleTitle) return
 
-  const href = `/entity/${hit.type}/${token.text}`
+  const href = relaBase() + `entity/${hit.type}/${token.text}`
   // Inaccessible targets get a trailing lock affordance; keep the
   // readable title when one was supplied (the lock only conveys "the
   // underlying file is encrypted") and only fall back to the bare ID
