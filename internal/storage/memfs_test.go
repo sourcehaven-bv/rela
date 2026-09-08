@@ -231,7 +231,7 @@ func TestMemFS_OnPostWriteFiresWithOnDiskBytes(t *testing.T) {
 		path string
 		data []byte
 	}
-	m.OnPostWrite(func(p string, d []byte) {
+	remove := m.OnPostWrite(func(p string, d []byte) {
 		cp := make([]byte, len(d))
 		copy(cp, d)
 		calls = append(calls, struct {
@@ -250,13 +250,13 @@ func TestMemFS_OnPostWriteFiresWithOnDiskBytes(t *testing.T) {
 		t.Errorf("observer got %q, want %q", calls[0].data, "observed")
 	}
 
-	// Replace with nil clears the observer.
-	m.OnPostWrite(nil)
+	// The returned remover uninstalls the observer.
+	remove()
 	if err := m.WriteFile("/obs2.txt", []byte("ignored"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if len(calls) != 1 {
-		t.Errorf("cleared observer fired: calls = %d", len(calls))
+		t.Errorf("removed observer fired: calls = %d", len(calls))
 	}
 }
 
