@@ -506,3 +506,22 @@ func (s failingListStore) ListEntities(context.Context, store.EntityQuery) iter.
 		yield(nil, errors.New("synthetic list failure"))
 	}
 }
+
+// The pushed page path (listpushdown.go) reads through GraphCount and
+// GraphQuery, and the header projection through ListEntityHeaders; a store
+// that fails to load fails on every one of them.
+func (s failingListStore) GraphCount(context.Context, store.GraphQuery) (matched, total int, err error) {
+	return 0, 0, errors.New("synthetic list failure")
+}
+
+func (s failingListStore) GraphQuery(context.Context, store.GraphQuery) iter.Seq2[*entity.Entity, error] {
+	return func(yield func(*entity.Entity, error) bool) {
+		yield(nil, errors.New("synthetic list failure"))
+	}
+}
+
+func (s failingListStore) ListEntityHeaders(context.Context, store.EntityQuery) iter.Seq2[store.EntityHeader, error] {
+	return func(yield func(store.EntityHeader, error) bool) {
+		yield(store.EntityHeader{}, errors.New("synthetic list failure"))
+	}
+}

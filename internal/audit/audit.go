@@ -121,6 +121,12 @@ const (
 	// declares. Summary carries the ledger keys and counts, never content.
 	// Isolate with `op == "data-gc"`.
 	OpDataGC = "data-gc"
+
+	// OpPerfSeed records a `rela dev seed` run: a raw-store bulk load of
+	// generated data (internal/perfseed). One record per run with the
+	// profile, scale, seed and counts — never the content, which is
+	// reproducible from those anyway.
+	OpPerfSeed = "perf-seed"
 )
 
 // Subject identifies what an op acted on. Exactly one of {Type, ID}

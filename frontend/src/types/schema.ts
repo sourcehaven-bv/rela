@@ -68,6 +68,12 @@ export interface EntityType {
   // Which declared face the bare id addresses, mirroring `bare_face:` in
   // the schema. Empty when the type declares no faces, or names none.
   bare_face?: string
+  // Whether this type accepts comments (TKT-FIO205). Policy, not permission:
+  // it decides whether to render a comment affordance at all, never whether
+  // the current user may use it — the server re-authorizes every call, so a
+  // UI that shows the box to someone without `comment:add` gets a 403, not a
+  // write.
+  commentable?: boolean
 }
 
 // FaceInfo mirrors v1.FaceDef — one declared content state of a type.
