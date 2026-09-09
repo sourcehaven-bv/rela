@@ -66,3 +66,18 @@ reads through the config seam now, and its no-op twin took the same signature.
 `.rela/audit/` and `.rela/search/` are still directories beside the database.
 The search index is derived and rebuilds on open, so it is arguably fine to
 leave; the audit log is not derived and needs its own decision.
+
+## Note on the config-loader parameter
+
+`reconcileDerivedSchemaIfSupported` gained a `config.Loader` parameter here, so
+it reads `data-entry.yaml` through the config seam rather than the filesystem.
+A packaged project carries that file in its database, and reading the file
+directly would find nothing there, silently dropping every derived static-query
+index with no error to explain the missing indexes.
+
+That parameter has to be threaded through the postgres-tagged test file too.
+`widen_assertions_postgres_test.go` only compiles under `-tags postgres`, so a
+default or sqlite build passes with those call sites stale; only the Postgres
+Backend job catches it. Worth remembering when changing a signature that any
+build-tagged file touches: vet all three tag combinations, not just the one the
+change is about.
