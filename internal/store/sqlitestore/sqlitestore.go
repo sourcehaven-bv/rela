@@ -1,5 +1,9 @@
-// Package sqlitestore implements [store.Store] on an embedded SQLite database
-// via the pure-Go modernc.org/sqlite driver (no cgo).
+// Package sqlitestore implements [store.Store] on an embedded SQLite database.
+//
+// It BORROWS a handle opened by [sqlitedb], which owns the file: the pool, the
+// single-writer lock and the schema ladder are all that package's. A rela
+// database holds the entity graph AND the operator's config, so neither owns
+// the other; this package's job is the graph.
 //
 // It targets the SINGLE-PROCESS deployment — the desktop app and a single
 // rela-server — and sits between fsstore and pgstore: it gives up fsstore's
@@ -9,7 +13,7 @@
 //
 // # Single writer, enforced
 //
-// Single-process is not an assumption this package hopes holds; [Open] takes an
+// Single-process is not an assumption this package hopes holds; sqlitedb.Open takes an
 // exclusive lock on a sidecar file and refuses to start when another process
 // holds it. That matters because rela's `unique:` enforcement is an
 // untransacted scan in entitymanager: with two processes writing the same
@@ -35,60 +39,23 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"sync"
 	"time"
 
-	_ "modernc.org/sqlite" // registers the "sqlite" driver
-
+	"github.com/Sourcehaven-BV/rela/internal/sqlitedb"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
-// timeFmt is the on-disk timestamp format. RFC3339Nano keeps the timezone,
-// which is load-bearing: a naive timestamp parses back to a time that compares
-// wrong against every consumer's clock, and store.Freshness is consumed by
-// index-rebuild logic that does exactly that comparison.
+// timeFmt is the on-disk timestamp format for entity and relation rows.
+// RFC3339Nano keeps the timezone, which is load-bearing: a naive timestamp
+// parses back to a time that compares wrong against every consumer's clock,
+// and store.Freshness is consumed by index-rebuild logic that does exactly
+// that comparison.
 const timeFmt = time.RFC3339Nano
-
-// defaultBusyTimeout is how long a writer waits for the write lock before
-// giving up. Generous on purpose — with the in-process write mutex below, a
-// queued writer normally waits on the mutex rather than spending this budget,
-// so reaching it means genuine contention worth waiting out.
-const defaultBusyTimeout = 5 * time.Second
-
-// defaultMaxOpenConns sizes the pool. Must be > 1: see the package doc on pool
-// starvation.
-const defaultMaxOpenConns = 8
-
-// Options configures a store. The zero value is valid for every field except
-// Path.
-type Options struct {
-	// Path is the database file. Required.
-	Path string
-
-	// BusyTimeout is how long a blocked writer waits. Zero uses
-	// defaultBusyTimeout.
-	BusyTimeout time.Duration
-
-	// MaxOpenConns caps the connection pool. Zero uses defaultMaxOpenConns.
-	// Values below 2 are raised to 2 — a pool of one deadlocks any Tx that
-	// runs concurrently with a read.
-	MaxOpenConns int
-
-	// AllowNonWAL permits opening a database where WAL could not be enabled.
-	//
-	// Default false, and that default is the point: WAL needs shared memory,
-	// so it silently stays "delete" on most network and sync filesystems
-	// (iCloud, Dropbox, SMB) — where SQLite is unsafe and the sidecar lock is
-	// unreliable too. A desktop user who puts a project in iCloud otherwise
-	// gets corruption with no diagnostic. Set this only for a deliberate,
-	// understood exception.
-	AllowNonWAL bool
-}
 
 // Store is a SQLite-backed [store.Store].
 //
-// Nil: never returned nil by [Open]; a nil *Store is a programming error, not a
+// Nil: never returned nil by sqlitedb.Open; a nil *Store is a programming error, not a
 // supported "no store" value.
 //
 // The method count is the MANDATED store.Store interface, not accreted sprawl:
@@ -102,8 +69,20 @@ type Options struct {
 // Two bumps since the first draft, both from review and both unexported
 // helpers rather than new API: wrapping DeleteEntity in a transaction split it
 // into an exported method plus a locked helper (the shape RenameEntity already
-// had), and checkSchemaVersion carries the user_version guard. The EXPORTED
+// had), and the schema guard carried the user_version check. The EXPORTED
 // count has not moved, which is the number that actually measures coupling.
+//
+// The count came back DOWN when the connection was split out (TKT-S1EVV7):
+// opening, PRAGMA verification and the migration ladder are Conn's, not the
+// store's. Ratcheting the directive down with it is the point — see
+// TKT-N0IKN9.
+//
+// Then back up by one for ProjectFiles, which is the exception the numbers
+// exist to make you argue for rather than take silently. It is a one-line
+// accessor over the pool the store already holds, and it has to be ON the
+// store: the wiring site discovers the store-backed config layer by type
+// assertion, so an accessor reachable only from Conn would make that assertion
+// fail with no error anywhere. Still a net -2 against the pre-split count.
 //
 // The content-states surface (TKT-DOFYR1 / TKT-C1XUA8 / TKT-WAV8XP) is the
 // latest interface growth: GetEntityState, DeleteEntityState and
@@ -112,18 +91,10 @@ type Options struct {
 // Interface-driven again, so the numbers move with store.Store rather than
 // with this type.
 //
-//plimsoll:max-methods=53
-//plimsoll:max-exported-methods=32
+//plimsoll:max-methods=51
+//plimsoll:max-exported-methods=33
 type Store struct {
-	db   *sql.DB
-	opts Options
-
-	// journalMode is what PRAGMA journal_mode actually reported, not what was
-	// requested.
-	journalMode string
-
-	// lock is the sidecar single-writer lock; released by Close.
-	lock *processLock
+	db *sql.DB
 
 	// observers receive derived-state callbacks. Fixed at construction — see
 	// WithObserver.
@@ -164,262 +135,33 @@ type pendingEvents struct {
 	notes []func(*Store)
 }
 
-// Open opens (creating if absent) the SQLite database at opts.Path, using the
-// background context for the schema and PRAGMA verification it performs.
+// New builds a store on an already-opened database.
 //
-// Nil: never returns a nil Store with a nil error.
-func Open(opts Options, options ...Option) (*Store, error) {
-	return OpenContext(context.Background(), opts, options...)
-}
-
-// OpenContext is [Open] with a caller-supplied context governing the
-// startup work — the PRAGMA read-back and the schema creation.
+// It BORROWS the handle rather than owning it: the file — the pool, the
+// single-writer lock, the schema — belongs to [sqlitedb.DB], and closing the
+// store does not close the database. That inversion is deliberate. A rela
+// database holds two unrelated things, the entity graph and the operator's
+// config, and neither should own the other or the file they share; the caller
+// opens once and hands the same handle to both.
 //
-// Separate from Open because the context bounds only opening: it does NOT
-// govern the returned store, whose own methods each take their own. A caller
-// that passed a request context here and expected it to cancel later writes
-// would be wrong, so the two are kept visibly distinct.
+// It also mirrors pgstore, whose New likewise takes an injected pool that the
+// wiring site owns and closes.
 //
-// Nil: never returns a nil Store with a nil error.
-func OpenContext(ctx context.Context, opts Options, options ...Option) (*Store, error) {
-	if opts.Path == "" {
-		return nil, errors.New("sqlitestore: Options.Path is required")
+// Nil: rejected — a nil database is a wiring mistake, and failing here beats a
+// panic on the first query.
+func New(db *sqlitedb.DB, options ...Option) (*Store, error) {
+	if db == nil {
+		return nil, errors.New("sqlitestore: nil database")
 	}
-	if opts.BusyTimeout <= 0 {
-		opts.BusyTimeout = defaultBusyTimeout
+	s := &Store{
+		db:   db.DB(),
+		subs: map[int]chan store.Event{},
 	}
-	if opts.MaxOpenConns < 2 {
-		opts.MaxOpenConns = defaultMaxOpenConns
-	}
-
-	// Take the single-writer lock BEFORE opening the database, so a second
-	// process is refused before it can write anything.
-	lock, err := acquireProcessLock(opts.Path)
-	if err != nil {
-		return nil, err
-	}
-
-	db, err := sql.Open("sqlite", dsn(opts))
-	if err != nil {
-		_ = lock.release()
-		return nil, fmt.Errorf("sqlitestore: open %s: %w", opts.Path, err)
-	}
-	db.SetMaxOpenConns(opts.MaxOpenConns)
-
-	s := &Store{db: db, opts: opts, lock: lock, subs: map[int]chan store.Event{}}
 	for _, opt := range options {
 		opt(s)
 	}
-	if err := s.init(ctx); err != nil {
-		_ = db.Close()
-		_ = lock.release()
-		return nil, err
-	}
 	return s, nil
 }
-
-// dsn builds the connection string. Every PRAGMA is a DSN parameter so it
-// applies to EVERY pooled connection — see the package doc.
-func dsn(opts Options) string {
-	return fmt.Sprintf(
-		"%s?_pragma=busy_timeout(%d)&_pragma=journal_mode(WAL)"+
-			"&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(1)",
-		opts.Path, opts.BusyTimeout.Milliseconds())
-}
-
-// init verifies the connection settings actually took and creates the schema.
-func (s *Store) init(ctx context.Context) error {
-	if err := s.db.QueryRowContext(ctx, "PRAGMA journal_mode").Scan(&s.journalMode); err != nil {
-		return fmt.Errorf("sqlitestore: read journal_mode: %w", err)
-	}
-	if s.journalMode != "wal" && !s.opts.AllowNonWAL {
-		return fmt.Errorf(
-			"sqlitestore: WAL could not be enabled (journal_mode=%q) for %s — "+
-				"this usually means the file is on a network or file-sync "+
-				"filesystem (iCloud, Dropbox, SMB), where SQLite is not safe. "+
-				"Move the project to local storage, or set AllowNonWAL if you "+
-				"understand the risk",
-			s.journalMode, s.opts.Path)
-	}
-
-	if err := s.verifyBusyTimeout(ctx); err != nil {
-		return err
-	}
-	if _, err := s.db.ExecContext(ctx, schemaSQL); err != nil {
-		return fmt.Errorf("sqlitestore: create schema: %w", err)
-	}
-	return s.checkSchemaVersion(ctx)
-}
-
-// schemaVersion is the shape of the tables this binary expects. Bump it
-// whenever schemaSQL changes shape, and add the migration that carries an
-// existing database forward.
-const schemaVersion = 1
-
-// SchemaVersion reports the table shape this binary expects, so the CLI can
-// show a real number rather than prose.
-func SchemaVersion() int { return schemaVersion }
-
-// checkSchemaVersion stamps the version on a fresh database and refuses one
-// written by a newer binary.
-//
-// The marker matters more than it looks. schemaSQL is CREATE TABLE IF NOT
-// EXISTS, which is a silent NO-OP against an existing table of a DIFFERENT
-// shape — so without a version an old database opens happily and then fails at
-// the first query with "no such column", at runtime, on user data, with nothing
-// pointing at the schema. Stamping from the start is what makes a real
-// migration ladder possible later; retrofitting one means sniffing
-// pragma_table_info to guess which shape you are looking at, because neither
-// version ever recorded itself.
-//
-// Forward-only and fail-loud, matching pgstore.Migrate: a database from a
-// newer binary is refused rather than opened and silently mis-read.
-func (s *Store) checkSchemaVersion(ctx context.Context) error {
-	var found int
-	if err := s.db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&found); err != nil {
-		return fmt.Errorf("sqlitestore: read user_version: %w", err)
-	}
-
-	switch {
-	case found == schemaVersion:
-		return nil
-	case found == 0:
-		// Either brand new, or written before versions were stamped. Both are
-		// this shape, so claim it.
-		if _, err := s.db.ExecContext(ctx,
-			fmt.Sprintf("PRAGMA user_version = %d", schemaVersion)); err != nil {
-			return fmt.Errorf("sqlitestore: stamp user_version: %w", err)
-		}
-		return nil
-	case found > schemaVersion:
-		return fmt.Errorf(
-			"sqlitestore: %s was written by a newer rela (schema version %d, "+
-				"this binary understands %d); upgrade rela rather than "+
-				"downgrading the database",
-			s.opts.Path, found, schemaVersion)
-	default:
-		// An older shape with no migration to carry it forward. Refusing is
-		// the honest answer: opening would mean querying columns that may not
-		// exist, and failing later with a much worse error.
-		return fmt.Errorf(
-			"sqlitestore: %s has schema version %d but this binary expects %d, "+
-				"and no migration is available; this backend does not yet have "+
-				"a migration ladder",
-			s.opts.Path, found, schemaVersion)
-	}
-}
-
-// verifyBusyTimeout confirms the PRAGMA reached more than one connection.
-//
-// This exists because the failure it guards is SILENT: a per-connection PRAGMA
-// applied to a single pooled connection reads back correctly while leaving
-// every other connection at 0. Pinning two connections open simultaneously
-// forces database/sql to open a genuinely different one, so a regression here
-// (someone "simplifying" the DSN back to a db.Exec) fails at Open rather than
-// as mysterious SQLITE_BUSY under load.
-func (s *Store) verifyBusyTimeout(ctx context.Context) error {
-	first, err := s.db.Conn(ctx)
-	if err != nil {
-		return fmt.Errorf("sqlitestore: verify busy_timeout: %w", err)
-	}
-	defer first.Close()
-	second, err := s.db.Conn(ctx)
-	if err != nil {
-		return fmt.Errorf("sqlitestore: verify busy_timeout: %w", err)
-	}
-	defer second.Close()
-
-	want := s.opts.BusyTimeout.Milliseconds()
-	for i, c := range []*sql.Conn{first, second} {
-		var got int64
-		if err := c.QueryRowContext(ctx, "PRAGMA busy_timeout").Scan(&got); err != nil {
-			return fmt.Errorf("sqlitestore: verify busy_timeout: %w", err)
-		}
-		if got != want {
-			return fmt.Errorf(
-				"sqlitestore: busy_timeout is %dms on connection %d, want %dms — "+
-					"PRAGMAs must be set via DSN _pragma= parameters, not db.Exec",
-				got, i, want)
-		}
-	}
-	return nil
-}
-
-// JournalMode reports the journal mode actually in effect.
-func (s *Store) JournalMode() string { return s.journalMode }
-
-// schemaSQL is created unconditionally at Open. There is no migration
-// mechanism here and none is needed yet: this package is not wired into a
-// binary, so no database it created is in the field. When one ships, a
-// versioned migration step must land BEFORE the first release — a column
-// added to these CREATE statements afterwards is silently absent from every
-// existing file, and STRICT tables fail the first write rather than the open.
-const schemaSQL = `
-CREATE TABLE IF NOT EXISTS entities (
-	id          TEXT NOT NULL,
-	-- face is the content-state coordinate (TKT-DOFYR1); '' is the DEFAULT
-	-- state, so a faceless project stores exactly the rows it always did.
-	--
-	-- '' NOT NULL rather than NULL, matching pgstore: the face joins the
-	-- primary key, and PK columns cannot be NULL. One convention everywhere —
-	-- Go zero value, omitted frontmatter key, '' column.
-	--
-	-- The store only ever EQUALITY-MATCHES this value (see entity.Face), so
-	-- one plain TEXT column suffices and keeps suffixing when multi-axis
-	-- coordinates arrive: worlds compile to sets of concrete coordinates
-	-- before they reach a store.
-	face        TEXT NOT NULL DEFAULT '',
-	type        TEXT NOT NULL,
-	properties  TEXT NOT NULL DEFAULT '{}',
-	content     TEXT NOT NULL DEFAULT '',
-	updated_at  TEXT NOT NULL,
-	PRIMARY KEY (id, face)
-) STRICT;
-CREATE INDEX IF NOT EXISTS entities_type_idx ON entities(type);
--- Entity IDs are case-insensitive IDENTITIES (BUG-3RCWNS): "abc" and "ABC"
--- cannot coexist. Enforced as a unique index on lower(id) rather than by
--- changing the column collation, exactly as pgstore does — the primary key
--- stays byte-exact so every id lookup keeps its semantics and index usage, and
--- casing is still PRESERVED on the row. Only the uniqueness rule widens.
---
--- The backends must agree on identity to stay substitutable: fsstore writes
--- "<id>.md" and so inherits the host filesystem's case folding, which would
--- silently drop one of the pair on macOS or Windows.
---
--- The face joins the key here too (pgstore's 0011 migration does the same):
--- states of ONE id legitimately share lower(id), so uniqueness is per
--- (lower(id), face). What the index does NOT catch — ('ABC','') alongside an
--- existing ('abc','draft') — is rejected by the write path's family probe
--- instead: a state requires ITS OWN default row, and 'abc' has none.
-CREATE UNIQUE INDEX IF NOT EXISTS entities_id_lower_key ON entities(lower(id), face);
-
-CREATE TABLE IF NOT EXISTS relations (
-	from_id    TEXT NOT NULL,
-	-- from_face is the state-specific TAIL (design doc §2.3). There is
-	-- deliberately no to_face: heads stay entity-level, which is what makes
-	-- cross-world dangling references impossible.
-	from_face  TEXT NOT NULL DEFAULT '',
-	rel_type   TEXT NOT NULL,
-	to_id      TEXT NOT NULL,
-	properties TEXT NOT NULL DEFAULT '{}',
-	content    TEXT NOT NULL DEFAULT '',
-	updated_at TEXT NOT NULL,
-	PRIMARY KEY (from_id, from_face, rel_type, to_id)
-) STRICT;
-CREATE INDEX IF NOT EXISTS relations_from_idx ON relations(from_id);
-CREATE INDEX IF NOT EXISTS relations_to_idx   ON relations(to_id);
-
-CREATE TABLE IF NOT EXISTS attachments (
-	entity_id  TEXT NOT NULL,
-	property   TEXT NOT NULL,
-	file_name  TEXT NOT NULL,
-	data       BLOB NOT NULL,
-	size       INTEGER NOT NULL,
-	updated_at TEXT NOT NULL,
-	PRIMARY KEY (entity_id, property, file_name)
-) STRICT;
-CREATE INDEX IF NOT EXISTS attachments_entity_idx ON attachments(entity_id);
-`
 
 // --- execution seam -------------------------------------------------------
 
@@ -445,8 +187,11 @@ func (s *Store) write(ctx context.Context, q string, args ...any) (sql.Result, e
 
 // --- Lifecycle ------------------------------------------------------------
 
-// Close tears down the pool, closes every subscriber channel and releases the
-// single-writer lock. A transaction view never closes the shared pool.
+// Close releases this store's subscribers.
+//
+// It does NOT close the database: the store borrows a handle owned by
+// [sqlitedb.DB], and the wiring site that opened the file closes it. A
+// transaction view closes nothing at all.
 func (s *Store) Close() error {
 	if s.parent != nil {
 		return nil
@@ -458,9 +203,5 @@ func (s *Store) Close() error {
 	}
 	s.subMu.Unlock()
 
-	err := s.db.Close()
-	if lockErr := s.lock.release(); lockErr != nil && err == nil {
-		err = lockErr
-	}
-	return err
+	return nil
 }
