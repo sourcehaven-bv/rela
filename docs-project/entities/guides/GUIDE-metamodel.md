@@ -482,7 +482,8 @@ entities:
   requirement:
     label: Requirement
     id_prefix: REQ-
-    # id_type: short  # This is the default
+    id_type: short  # State it explicitly: an entity with no id_type is
+                    # treated as legacy syntax and refused at load.
 
   # Sequential IDs for numbered tracking
   decision:
