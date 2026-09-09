@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"path/filepath"
 
-	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/sqlitedb"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -50,9 +49,11 @@ func New(cfg Config, opts ...Option) (*Services, error) {
 		return nil, err
 	}
 
-	// Files first, then whatever config this database carries. Built here
-	// because the handle belongs to this recipe, not to the store.
-	cfgLoader, err := layerProjectConfig(config.NewFSLoader(cfg.FS, cfg.Paths.Root), db)
+	// Both overrides come from the one handle this recipe opened: the config
+	// the database carries (layered behind the files) and the runtime state it
+	// holds. Built here rather than in assemble because the handle is this
+	// recipe's, not the store's.
+	overrides, err := backendServices(cfg, db)
 	if err != nil {
 		_ = closer.Close()
 		return nil, err
@@ -60,7 +61,7 @@ func New(cfg Config, opts ...Option) (*Services, error) {
 
 	// nil VisibleSearcher → assemble derives the generic search.NewVisible
 	// wrapper. Only the postgres recipe has a native implementation.
-	return assemble(base, st, searcher, nil, closer, cfgLoader)
+	return assemble(base, st, searcher, nil, closer, overrides)
 }
 
 // openBackend opens the SQLite store and the bleve-backed searcher.

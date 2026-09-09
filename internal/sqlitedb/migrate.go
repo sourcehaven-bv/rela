@@ -12,7 +12,7 @@ import (
 // schemaVersion is the shape of the tables this binary expects. Bump it
 // whenever schemaSQL changes shape, and append the step that carries an
 // existing database forward to [migrations].
-const schemaVersion = 2
+const schemaVersion = 3
 
 // SchemaVersion reports the table shape this binary expects, so the CLI can
 // show a real number rather than prose.
@@ -65,6 +65,14 @@ var migrations = []migration{
 		// used to live only beside it on disk.
 		to:    2,
 		apply: sqlSteps(projectFilesDDL),
+	},
+	{
+		// v2 → v3: state_kv, the runtime state that used to live in files
+		// under .rela/ — the render cache, user settings, the operator's logo
+		// and theme, the CalDAV alias table. Beside the database rather than
+		// inside it, those would be left behind when the file is shipped.
+		to:    3,
+		apply: sqlSteps(stateKVDDL),
 	},
 }
 

@@ -165,6 +165,11 @@ components:
   # Serves operator config from a SQL table. A config package, not a storage
   # one: it touches no entity, relation or graph — just rows keyed by path.
   configsql:        { in: internal/config/configsql }
+  # Stores runtime state in a SQL table. A state package, not a storage one,
+  # and a sibling of configsql for the same reason: neither is the entity
+  # graph, and both would otherwise live in files BESIDE the database and be
+  # left behind when the single file is shipped.
+  statesql:         { in: internal/state/statesql }
   git:              { in: internal/git }
   output:           { in: internal/output }
   project:          { in: internal/project }
@@ -578,6 +583,7 @@ deps:
       # store — they only share a file.
       - configsql
       - sqlitedb
+      - statesql
       # Mail is optional infrastructure the composition root wires and owns the
       # lifecycle of (start in assemble, stop in Close), exactly like the
       # data-migration GC sweep. Consumers take the mail.Sender seam, not this
@@ -1269,6 +1275,11 @@ deps:
     # the sqlite driver grant stays with the package that registers it.
     mayDependOn:
       - config
+  # statesql has NO internal deps, so it has no entry here. It deliberately
+  # does not import state: that package WRAPS this one (state.ValidatedKV
+  # applies the key rules), so naming it would invert the dependency.
+  # Conformance is proved by state/statetest instead, which checks behavior
+  # rather than shape.
   sqlitedb:
     canUse:
       - sqlite

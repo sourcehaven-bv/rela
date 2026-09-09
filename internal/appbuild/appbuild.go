@@ -1477,7 +1477,7 @@ func (b *SharedBase) Assemble(
 	st store.Store, searcher search.Searcher,
 	visible search.VisibleSearcher, searchCloser io.Closer,
 ) (*Services, error) {
-	return assemble(b, st, searcher, visible, searchCloser, nil)
+	return assemble(b, st, searcher, visible, searchCloser, backendOverrides{})
 }
 
 // buildEntityManager assembles the write-path manager from the collaborators
@@ -1625,17 +1625,35 @@ func cascadeReadDeps(
 	}
 }
 
+// backendOverrides are the services a recipe supplies because they come from
+// something only that recipe holds — today, a database handle it opened.
+//
+// A struct rather than more parameters on [assemble]: every field is
+// optional, they arrive together from one recipe, and appending a third
+// positional nil to four call sites is how a signature becomes unreadable.
+// The zero value means "derive everything from the filesystem", which is what
+// the fs, memory and postgres recipes pass.
+type backendOverrides struct {
+	// projectConfig replaces the filesystem config loader. The sqlite recipe
+	// supplies one because its database may CARRY the project's config, which
+	// it layers behind the files.
+	projectConfig config.Loader
+
+	// stateKV replaces the filesystem state store. Supplied for the same
+	// reason and from the same handle: state written beside the database
+	// rather than inside it would be left behind when the file is shipped.
+	stateKV state.KV
+}
+
 // assemble builds the services bundle from an opened store.
 //
-// projectConfig, when non-nil, replaces the filesystem config loader. Only the
-// sqlite recipe supplies one: it opens a database that may CARRY the project's
-// config, and layers that behind the files. Passed in rather than derived here
-// because the database handle belongs to the recipe that opened it, and
-// assemble is deliberately build-agnostic.
+// Overrides are passed in rather than derived here because they come from a
+// database handle that belongs to the recipe that opened it, and assemble is
+// deliberately build-agnostic.
 func assemble(
 	base *SharedBase, st store.Store, searcher search.Searcher,
 	visible search.VisibleSearcher, searchCloser io.Closer,
-	projectConfig config.Loader,
+	overrides backendOverrides,
 ) (svc *Services, retErr error) {
 	cfg := base.cfg
 
@@ -1657,7 +1675,7 @@ func assemble(
 
 	tr := tracer.New(st)
 	templater := templating.NewFSTemplater(cfg.FS, cfg.Paths)
-	cfgLoader := projectConfig
+	cfgLoader := overrides.projectConfig
 	if cfgLoader == nil {
 		cfgLoader = config.NewFSLoader(cfg.FS, cfg.Paths.Root)
 	}
@@ -1681,7 +1699,14 @@ func assemble(
 	// here and threaded into the recorders and the Services bundle.
 	versions := versionServiceFor(st)
 
-	stateKV, aliases, jobQueue, err := buildRuntimeServices(cfg.FS, cfg.Paths, base, stateKVFor(st))
+	// A recipe-supplied state store wins over the per-backend one, which wins
+	// over the filesystem. Same precedence as the config loader, and for the
+	// same reason.
+	backendKV := overrides.stateKV
+	if backendKV == nil {
+		backendKV = stateKVFor(st)
+	}
+	stateKV, aliases, jobQueue, err := buildRuntimeServices(cfg.FS, cfg.Paths, base, backendKV)
 	if err != nil {
 		return nil, err
 	}
@@ -1737,7 +1762,7 @@ func assemble(
 	// treats absent as delete). A `unique:` added without a restart stays
 	// enforced by the application scan; `rela db reconcile` applies it.
 	if !base.reassembly {
-		reconcileDerivedSchemaIfSupported(context.Background(), st, base)
+		reconcileDerivedSchemaIfSupported(context.Background(), st, base, cfgLoader)
 	}
 
 	// Evaluate the data-migration gate (adopt compatible schema-shape

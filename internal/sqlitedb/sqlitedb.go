@@ -318,6 +318,7 @@ CREATE TABLE IF NOT EXISTS attachments (
 ) STRICT;
 CREATE INDEX IF NOT EXISTS attachments_entity_idx ON attachments(entity_id);
 ` + projectFilesDDL + `
+` + stateKVDDL + `
 `
 
 // projectFilesDDL carries the operator-authored config — schema.yaml,
@@ -340,5 +341,23 @@ const projectFilesDDL = `
 CREATE TABLE IF NOT EXISTS project_files (
 	path       TEXT PRIMARY KEY,
 	content    BLOB NOT NULL,
+	updated_at TEXT NOT NULL
+) STRICT;`
+
+// stateKVDDL carries rela's runtime state: the document render cache, user
+// settings, the operator's logo and theme, the CalDAV alias table.
+//
+// Keys are opaque strings — validation is state.ValidatedKV's job at the
+// wiring site, so both backends accept exactly the same keys and neither can
+// drift. BLOB because a logo is bytes, not text.
+//
+// Shared between schemaSQL (fresh databases) and the v2→v3 migration
+// (existing ones), for the same reason projectFilesDDL is: two copies drift,
+// and a fresh database ending up with a different shape from a migrated one
+// is the failure the version stamp exists to prevent.
+const stateKVDDL = `
+CREATE TABLE IF NOT EXISTS state_kv (
+	key        TEXT PRIMARY KEY,
+	value      BLOB NOT NULL,
 	updated_at TEXT NOT NULL
 ) STRICT;`
