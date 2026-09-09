@@ -64,10 +64,7 @@ const singleInstanceID = "com.sourcehaven.rela-desktop"
 // would simply never match. It is therefore obfuscation of a local channel,
 // not a secret — which is the whole threat model here.
 //
-// independently and never negotiate, so it cannot be random or fetched. It
-// obfuscates a local IPC channel; it is not an authentication secret.
-//
-//nolint:gosec // G101: hardcoded by necessity — the two processes derive this
+//nolint:gosec // G101: hardcoded by necessity, per the paragraph above
 var SingleInstanceSecret = "rela-desktop/single-instance/v1"
 
 // singleInstanceKey derives the 32-byte key Wails expects.
@@ -90,10 +87,14 @@ type Desktop struct {
 	// ctx carries the desktop Principal for the life of the process. Under
 	// Wails v2 this doubled as the runtime handle; v3 separates the two, so
 	// this is now only an attribution context.
-	ctx               context.Context            //nolint:containedctx // lives for the struct lifetime
-	wails             *application.App           // Wails v3 runtime handle
-	win               *application.WebviewWindow // main window
-	mu                sync.RWMutex
+	ctx   context.Context            //nolint:containedctx // lives for the struct lifetime
+	wails *application.App           // Wails v3 runtime handle
+	win   *application.WebviewWindow // main window
+	mu    sync.RWMutex
+	// registry holds every loaded project. The single-project fields below
+	// still track the active one; they are the "no project loaded" path and
+	// the welcome page's view of the world.
+	registry          *projectRegistry
 	app               *dataentry.App
 	svc               *appbuild.Services // per-project services; closed on next LoadProject
 	handler           http.Handler
@@ -353,6 +354,11 @@ func (d *Desktop) failLoad(err error) string {
 // is holding a store the caller believes it replaced.
 func (d *Desktop) releaseLoadedProject() {
 	d.mu.Lock()
+	if d.app != nil {
+		// Drop it from the registry too, or /p/<id>/ keeps routing to a
+		// handler whose store is about to close.
+		d.registry.remove(projectID(d.app.ProjectRoot()))
+	}
 	prevSvc := d.svc
 	prevStopScheduler := d.stopScheduler
 	d.svc = nil
@@ -370,7 +376,16 @@ func (d *Desktop) releaseLoadedProject() {
 	}
 }
 
+// LoadProject loads a project, replacing whichever project is currently open.
+// Bound to the frontend, so it keeps the string-error convention.
 func (d *Desktop) LoadProject(dir string) string {
+	return d.loadProject(dir, false)
+}
+
+// loadProject opens dir. When keepExisting is set the currently-loaded project
+// is left running, which is what opening a second window needs; otherwise it
+// is released first — the ordering that matters, see releaseLoadedProject.
+func (d *Desktop) loadProject(dir string, keepExisting bool) string {
 	fs, projCtx, err := discoverProject(dir)
 	if err != nil {
 		return d.failLoad(err)
@@ -389,7 +404,11 @@ func (d *Desktop) LoadProject(dir string) string {
 		return "needs_setup"
 	}
 
-	d.releaseLoadedProject()
+	// Opening a project in a NEW window must not close the one already open;
+	// replacing the current project must. Both share the load below.
+	if !keepExisting {
+		d.releaseLoadedProject()
+	}
 
 	auditSink, auditErr := audit.NewFilesystem(filepath.Join(projCtx.CacheDir, "audit"))
 	if auditErr != nil {
@@ -426,21 +445,35 @@ func (d *Desktop) LoadProject(dir string) string {
 	if err != nil {
 		return d.failLoad(err)
 	}
+	handler := app.NewRouter()
+
+	// Start background scheduler for the new project.
+	schedCtx, schedCancel := context.WithCancel(context.Background())
+
 	d.mu.Lock()
 	// The previous project's scheduler and services were already stopped and
 	// closed above, before the new store was opened — see the comment there.
 	d.svc = svc
 	d.app = app
-	d.handler = app.NewRouter()
+	d.handler = handler
 	d.loadErr = ""
 	d.pendingSetupDir = ""
 	d.pendingSetupFS = nil
 	d.pendingSetupPaths = nil
-
-	// Start background scheduler for the new project.
-	schedCtx, schedCancel := context.WithCancel(context.Background())
 	d.stopScheduler = schedCancel
 	d.mu.Unlock()
+
+	// Register it so /p/<id>/ can reach it, and so a later Open Project on the
+	// same directory can focus this project rather than loading a second copy.
+	d.registry.add(&loadedProject{
+		id:            projectID(app.ProjectRoot()),
+		root:          app.ProjectRoot(),
+		name:          app.ProjectName(),
+		app:           app,
+		svc:           svc,
+		handler:       handler,
+		stopScheduler: schedCancel,
+	})
 
 	scheduler.StartBackground(schedCtx, svc, slog.Default())
 
@@ -832,10 +865,38 @@ func (d *Desktop) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	loadErr := d.loadErr
 	d.mu.RUnlock()
 
+	// The shell's own endpoints answer before any project's router, and from
+	// any window: a switcher in a prefixed window still asks for the list.
+	if p := r.URL.Path; p == projectsPath || strings.HasSuffix(p, projectsPath) {
+		d.serveProjects(w, r)
+		return
+	}
+
+	// A /p/<id>/ request names its project explicitly; anything else is served
+	// by the active one, which is what the welcome page and any window opened
+	// without a prefix expect.
+	base := ""
+	if id, rest, ok := splitProjectPath(r.URL.Path); ok {
+		p := d.registry.get(id)
+		if p == nil {
+			// An unknown id means a stale window or a hand-typed URL. Serving
+			// the welcome page is more useful than a bare 404: the project may
+			// simply have been closed.
+			serveWelcomePage(w, d.prefs, "That project is not open.")
+			return
+		}
+		h = p.handler
+		base = projectPrefix + id
+		// Route within the project as if it were mounted at the root; the
+		// project's own mux knows nothing about the prefix.
+		r = r.Clone(r.Context())
+		r.URL.Path = rest
+	}
+
 	if h != nil {
-		// Buffer HTML so the multi-window script can be appended; everything
-		// else, including SSE, streams through untouched.
-		inj := &htmlInjector{ResponseWriter: w}
+		// Buffer HTML so the multi-window script and base tag can be appended;
+		// everything else, including SSE, streams through untouched.
+		inj := &htmlInjector{ResponseWriter: w, base: base}
 		h.ServeHTTP(inj, r)
 		inj.finish()
 		return
@@ -851,11 +912,33 @@ func (d *Desktop) openProjectFromMenu(_ *application.Context) {
 	if err != nil || dir == "" {
 		return
 	}
-	if errMsg := d.LoadProject(projectRootOf(dir)); errMsg != "" {
+	root := projectRootOf(dir)
+
+	// Already open? Bring its window forward instead of loading it twice.
+	if p := d.registry.byRoot(root); p != nil {
+		if errMsg := d.OpenWindow(projectPrefix+p.id+"/", p.name); errMsg != "" {
+			d.errorDialog("Failed to open window", errMsg)
+		}
+		return
+	}
+
+	// Keep the current project running: Open Project adds a project, it does
+	// not replace the one the user is looking at.
+	if errMsg := d.loadProject(root, true); errMsg != "" {
 		d.errorDialog("Failed to open project", errMsg)
 		return
 	}
-	d.reloadWindow()
+
+	p := d.registry.byRoot(root)
+	if p == nil {
+		// needs_setup returns "" without registering; fall back to reloading
+		// so the current window shows the setup prompt.
+		d.reloadWindow()
+		return
+	}
+	if errMsg := d.OpenWindow(projectPrefix+p.id+"/", p.name); errMsg != "" {
+		d.errorDialog("Failed to open window", errMsg)
+	}
 }
 
 // cloneFromGitMenu handles File > Clone from Git from the native menu bar.
@@ -1003,7 +1086,7 @@ func main() {
 		prefs = &desktop.Preferences{}
 	}
 
-	d := &Desktop{prefs: prefs}
+	d := &Desktop{prefs: prefs, registry: newProjectRegistry()}
 
 	// Which project to open — resolved now, but NOT loaded yet. Opening the
 	// store here would mean a redundant second instance takes the sqlite and

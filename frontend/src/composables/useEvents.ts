@@ -46,6 +46,7 @@ const BASE_RECONNECT_DELAY = 1000 // 1 second base
 
 // Custom event handlers registry
 type EventHandler = (data: EntityEventData) => void
+import { apiUrl } from '@/api/base'
 const eventHandlers: Map<SSEEventType, Set<EventHandler>> = new Map()
 
 /**
@@ -92,7 +93,7 @@ export function useEvents() {
     }
 
     try {
-      eventSource = new EventSource('/api/v1/_events')
+      eventSource = new EventSource(apiUrl('/api/v1/_events'))
 
       eventSource.onopen = () => {
         reconnectAttempts = 0

@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"html"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -42,13 +43,24 @@ const (
 // The path is validated rather than trusted: it is interpolated into the
 // window URL, and the frontend is the one surface that takes user content.
 // Returns an error string (empty on success), matching the other bound methods.
-func (d *Desktop) OpenWindow(path, title string) string {
+func (d *Desktop) OpenWindow(path, title string, base ...string) string {
 	if d.wails == nil {
 		return "application not ready"
 	}
 	route, err := safeRoute(path)
 	if err != nil {
 		return err.Error()
+	}
+
+	// Links inside a document are origin-relative, so a link clicked in a
+	// window served under /p/<id>/ must reopen under that same project. The
+	// caller passes its own base; absent or "/", the route is used as-is.
+	if len(base) > 0 {
+		b, berr := safeBase(base[0])
+		if berr != nil {
+			return berr.Error()
+		}
+		route = joinBase(b, route)
 	}
 
 	if title == "" {
@@ -129,8 +141,17 @@ const multiWindowScript = `
 (function () {
   if (!window.wails || !window.wails.Call) return; // browser: leave as-is
 
+  // The base this page is served under ("/p/<id>/", or "/" at the root).
+  // A link in the document is origin-relative ("/form/x"), so the window we
+  // open has to be told which project that path belongs to — otherwise a
+  // second project's link opens against the active one.
+  function relaBase() {
+    var m = document.querySelector('meta[name="rela-base"]');
+    return (m && m.content) || "/";
+  }
+
   function openWindow(path, title) {
-    window.wails.Call.ByName("main.Desktop.OpenWindow", path, title || "")
+    window.wails.Call.ByName("main.Desktop.OpenWindow", path, title || "", relaBase())
       .catch(function (e) { console.error("OpenWindow failed:", e); });
   }
   window.relaOpenWindow = openWindow;
@@ -177,16 +198,26 @@ const multiWindowScript = `
 </script>
 `
 
-// injectMultiWindow appends the multi-window script to an HTML document.
+// injectMultiWindow appends the multi-window script to an HTML document, and
+// declares the project base the SPA should prefix its requests with.
 // Non-HTML responses pass through untouched.
-func injectMultiWindow(body []byte) []byte {
+//
+// The base is a <meta> tag rather than an inline <script> deliberately: the
+// SPA shell is served without a CSP today, but router.go records that as a
+// property that could lapse, and a meta tag needs no 'unsafe-inline'.
+func injectMultiWindow(body []byte, base string) []byte {
 	const closing = "</body>"
 	idx := strings.LastIndex(string(body), closing)
 	if idx < 0 {
 		return body
 	}
-	out := make([]byte, 0, len(body)+len(multiWindowScript))
+	meta := ""
+	if base != "" {
+		meta = `<meta name="rela-base" content="` + html.EscapeString(base) + `/">`
+	}
+	out := make([]byte, 0, len(body)+len(multiWindowScript)+len(meta))
 	out = append(out, body[:idx]...)
+	out = append(out, meta...)
 	out = append(out, multiWindowScript...)
 	out = append(out, body[idx:]...)
 	return out
@@ -197,6 +228,9 @@ func injectMultiWindow(body []byte) []byte {
 // through, because buffering a long-lived event stream would hang the client.
 type htmlInjector struct {
 	http.ResponseWriter
+	// base is the project's URL prefix ("/p/<id>"), empty when serving the
+	// active project at the root. Emitted for the SPA to read at boot.
+	base        string
 	buf         []byte
 	isHTML      bool
 	wroteHeader bool
@@ -246,9 +280,37 @@ func (h *htmlInjector) finish() {
 	if !h.isHTML {
 		return
 	}
-	body := injectMultiWindow(h.buf)
+	body := injectMultiWindow(h.buf, h.base)
 	h.ResponseWriter.WriteHeader(h.status)
 	if _, err := h.ResponseWriter.Write(body); err != nil {
 		slog.Debug("could not write injected body", "error", err)
 	}
+}
+
+// safeBase validates a base supplied by the frontend. It is interpolated into
+// a window URL, so it gets the same treatment as a route: same-origin absolute
+// path only, no protocol-relative escape, no control characters.
+func safeBase(base string) (string, error) {
+	if base == "" || base == "/" {
+		return "/", nil
+	}
+	if _, err := safeRoute(base); err != nil {
+		return "", err
+	}
+	if !strings.HasSuffix(base, "/") {
+		base += "/"
+	}
+	return base, nil
+}
+
+// joinBase mounts an origin-relative route under a base, without doubling the
+// separator and without prefixing a route that already carries it.
+func joinBase(base, route string) string {
+	if base == "/" {
+		return route
+	}
+	if strings.HasPrefix(route, base) {
+		return route // already prefixed; do not double it
+	}
+	return strings.TrimSuffix(base, "/") + route
 }

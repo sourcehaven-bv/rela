@@ -722,8 +722,13 @@ jobs:
       # without bwrap they do not skip, they fail ("cmdexec: start bwrap:
       # executable file not found"). The Test job installs it for the same
       # reason; a job running the same packages needs the same runner.
-      - name: Install bubblewrap (command sandbox)
-        run: sudo apt-get update && sudo apt-get install -y bubblewrap
+      # bubblewrap for the command sandbox; GTK4 + WebKitGTK because
+      # `go test -tags sqlite ./...` includes cmd/rela-desktop, which links
+      # Wails v3.
+      - name: Install bubblewrap (command sandbox) and Wails deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap libgtk-4-dev libwebkitgtk-6.0-dev
 
       - name: Verify the sandbox actually works on this runner
         # A hard failure here beats a confusing test failure downstream: it

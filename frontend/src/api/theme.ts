@@ -1,3 +1,4 @@
+import { apiUrl } from './base'
 // Theme asset API: user-uploaded sidebar logo + portable theme
 // packages. The backend persists logo bytes under `.rela/theme/logo`
 // and serves them with a content-hash query param so any update
@@ -21,7 +22,7 @@ export interface LogoUploadError extends Error {
 export async function uploadLogo(file: File): Promise<UploadLogoResponse> {
   const form = new FormData()
   form.append('logo', file)
-  const response = await fetch('/api/v1/_theme/logo', {
+  const response = await fetch(apiUrl('/api/v1/_theme/logo'), {
     method: 'PUT',
     body: form,
   })
@@ -37,7 +38,7 @@ export async function uploadLogo(file: File): Promise<UploadLogoResponse> {
 /** Remove the current logo. Idempotent: succeeds even when no logo is
  *  currently set. */
 export async function removeLogo(): Promise<void> {
-  const response = await fetch('/api/v1/_theme/logo', { method: 'DELETE' })
+  const response = await fetch(apiUrl('/api/v1/_theme/logo'), { method: 'DELETE' })
   if (!response.ok && response.status !== 204) {
     const data = await response.json().catch(() => ({ error: 'Remove failed' }))
     throw new Error(data.error || `Remove failed (${response.status})`)
@@ -56,7 +57,7 @@ export interface ImportThemeResponse {
 /** Download the current palette + logo as a `.relatheme` zip via an
  *  invisible anchor click. The browser handles the actual save. */
 export async function exportTheme(): Promise<void> {
-  const response = await fetch('/api/v1/_theme/export', { method: 'GET' })
+  const response = await fetch(apiUrl('/api/v1/_theme/export'), { method: 'GET' })
   if (!response.ok) {
     const data = await response.json().catch(() => ({ error: 'Export failed' }))
     throw new Error(data.error || `Export failed (${response.status})`)
@@ -89,7 +90,7 @@ export async function exportTheme(): Promise<void> {
 export async function importTheme(file: File): Promise<ImportThemeResponse> {
   const form = new FormData()
   form.append('file', file)
-  const response = await fetch('/api/v1/_theme/import', {
+  const response = await fetch(apiUrl('/api/v1/_theme/import'), {
     method: 'POST',
     body: form,
   })
