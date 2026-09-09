@@ -57,6 +57,100 @@ func TestDeleteEntity_RelationRemoveError_FailsSecure(t *testing.T) {
 	require.NoError(t, err, "relation must survive a failed cascade delete")
 }
 
+// TestDeleteEntity_PartialCascade_ReportsWhatWasRemoved pins issue #929, the
+// residual edge case #888's fail-secure ordering left behind: when a cascade
+// aborts partway, the relation files already off disk STAY off disk (fsstore's
+// Tx is a write mutex with no rollback), so the store must report them.
+//
+// Without this the caller's audit loop reads a nil result and the log denies a
+// deletion that really happened.
+//
+// The failure is injected on the SECOND relation specifically, so the assertion
+// distinguishes "reports what it removed" from "reports everything" and from
+// "reports nothing".
+func TestDeleteEntity_PartialCascade_ReportsWhatWasRemoved(t *testing.T) {
+	mem := storage.NewMemFS()
+	ctx := context.Background()
+
+	s1 := openStore(t, mem)
+	require.NoError(t, s1.CreateEntity(ctx, entity.New("REQ-1", "requirement")))
+	require.NoError(t, s1.CreateEntity(ctx, entity.New("SOL-1", "solution")))
+	require.NoError(t, s1.CreateEntity(ctx, entity.New("SOL-2", "solution")))
+	for _, from := range []string{"SOL-1", "SOL-2"} {
+		_, err := s1.CreateRelation(ctx, from, "implements", "REQ-1", nil)
+		require.NoError(t, err)
+	}
+	require.NoError(t, s1.Close())
+
+	// Fail on SOL-2's relation file only. Relations are visited in index
+	// order, so SOL-1's is removed first and SOL-2's aborts the loop.
+	errFS := storage.NewErrorFS(mem)
+	errFS.RemoveError = errors.New("simulated I/O failure")
+	errFS.RemoveErrorOn = func(path string) bool {
+		return strings.Contains(path, "/relations/") && strings.Contains(path, "SOL-2")
+	}
+	rooted, err := storage.NewRootedFS(errFS, "/")
+	require.NoError(t, err)
+	cfg := newConfig(mem)
+	cfg.FS = errFS
+	cfg.Rooted = rooted
+	s2, err := fsstore.New(cfg)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, s2.Close()) }()
+
+	res, err := s2.DeleteEntity(ctx, "REQ-1", true)
+	require.Error(t, err, "the cascade must still fail")
+
+	// The partial result names exactly the relation that came off disk.
+	require.NotNil(t, res, "a partial cascade must report what it removed")
+	require.Len(t, res.DeletedRelations, 1,
+		"want only the relation actually removed, not all of them and not none")
+	assert.Equal(t, "SOL-1", res.DeletedRelations[0].From)
+	assert.Empty(t, res.DeletedEntities,
+		"the entity survived, so claiming it was deleted would be the opposite error")
+
+	// Reality check: the removal really did stick, and the rest survived.
+	_, err = s2.GetRelation(ctx, "SOL-1", "implements", "REQ-1")
+	require.Error(t, err, "SOL-1's relation file was removed and stays removed")
+	_, err = s2.GetRelation(ctx, "SOL-2", "implements", "REQ-1")
+	require.NoError(t, err, "SOL-2's relation must survive")
+	_, err = s2.GetEntity(ctx, "REQ-1")
+	require.NoError(t, err, "the entity must survive a failed cascade delete")
+}
+
+// TestDeleteEntity_PartialCascade_FirstRelationFails covers the boundary: when
+// the FIRST relation fails, nothing was removed, so the result must name no
+// relations. A caller auditing from it must emit nothing (issue #929).
+func TestDeleteEntity_PartialCascade_FirstRelationFails(t *testing.T) {
+	mem := storage.NewMemFS()
+	ctx := context.Background()
+
+	s1 := openStore(t, mem)
+	require.NoError(t, s1.CreateEntity(ctx, entity.New("REQ-1", "requirement")))
+	require.NoError(t, s1.CreateEntity(ctx, entity.New("SOL-1", "solution")))
+	_, err := s1.CreateRelation(ctx, "SOL-1", "implements", "REQ-1", nil)
+	require.NoError(t, err)
+	require.NoError(t, s1.Close())
+
+	errFS := storage.NewErrorFS(mem)
+	errFS.RemoveError = errors.New("simulated I/O failure")
+	errFS.RemoveErrorOn = func(path string) bool { return strings.Contains(path, "/relations/") }
+	rooted, err := storage.NewRootedFS(errFS, "/")
+	require.NoError(t, err)
+	cfg := newConfig(mem)
+	cfg.FS = errFS
+	cfg.Rooted = rooted
+	s2, err := fsstore.New(cfg)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, s2.Close()) }()
+
+	res, err := s2.DeleteEntity(ctx, "REQ-1", true)
+	require.Error(t, err)
+	require.NotNil(t, res)
+	assert.Empty(t, res.DeletedRelations, "nothing was removed, so nothing may be reported")
+	assert.Empty(t, res.DeletedEntities)
+}
+
 // --- Orphaned temp file cleanup ---
 
 func TestRecovery_OrphanedEntityTempFile(t *testing.T) {
@@ -441,4 +535,45 @@ func isNotExist(err error) bool {
 		return false
 	}
 	return strings.Contains(err.Error(), "not exist") || strings.Contains(err.Error(), "no such file")
+}
+
+// TestDeleteEntity_AttachmentDirFailure_StillSucceeds pins that a failure to
+// remove the attachment directory does NOT fail the delete (TKT-A23L87).
+//
+// By that point the entity file and every relation file are already gone, so
+// the delete has materially succeeded. Returning an error would tell the
+// caller it failed and leave the audit log denying a deletion that happened —
+// the exact failure mode #929 exists to remove, one layer down. An orphaned
+// attachment directory is the lesser evil and `analyze` already reports those.
+func TestDeleteEntity_AttachmentDirFailure_StillSucceeds(t *testing.T) {
+	mem := storage.NewMemFS()
+	ctx := context.Background()
+
+	s1 := openStore(t, mem)
+	require.NoError(t, s1.CreateEntity(ctx, entity.New("REQ-1", "requirement")))
+	require.NoError(t, s1.AttachFile(ctx, "REQ-1", "spec", "a.txt", strings.NewReader("x")))
+	require.NoError(t, s1.Close())
+
+	// Fail only inside the attachment tree, so relations and the entity file
+	// come off disk normally and the attachment cleanup is what breaks.
+	errFS := storage.NewErrorFS(mem)
+	errFS.RemoveError = errors.New("simulated I/O failure")
+	errFS.RemoveErrorOn = func(p string) bool { return strings.Contains(p, "/attachments/") }
+	rooted, err := storage.NewRootedFS(errFS, "/")
+	require.NoError(t, err)
+	cfg := newConfig(mem)
+	cfg.FS = errFS
+	cfg.Rooted = rooted
+	s2, err := fsstore.New(cfg)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, s2.Close()) }()
+
+	res, err := s2.DeleteEntity(ctx, "REQ-1", true)
+	require.NoError(t, err, "attachment cleanup failure must not fail the delete")
+	require.NotNil(t, res)
+	require.Len(t, res.DeletedEntities, 1,
+		"the entity was removed, so it must be reported — anything else is the under-reporting #929 fixes")
+
+	_, err = s2.GetEntity(ctx, "REQ-1")
+	require.Error(t, err, "the entity really is gone")
 }

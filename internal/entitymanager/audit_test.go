@@ -3,6 +3,7 @@ package entitymanager_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/statemachine"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
 
@@ -1019,5 +1021,215 @@ func TestAudit_OuterLabelSurvivesCascade(t *testing.T) {
 	}
 	if cascaded != 2 {
 		t.Errorf("want 2 cascaded records (checklist entity + has-checklist relation), got %d", cascaded)
+	}
+}
+
+// partialCascadeStore is a store whose cascade DeleteEntity fails but reports
+// the relations it removed first — the shape a non-transactional backend
+// produces when a cascade aborts partway (fsstore, issue #929).
+//
+// Tx hands the callback THIS store rather than delegating, so the manager's
+// delete runs against the failing method. Everything else is promoted from the
+// embedded real store, so the pre-delete reads the manager performs still work.
+type partialCascadeStore struct {
+	store.Store
+	removed []*entity.Relation
+	err     error
+}
+
+func (p *partialCascadeStore) Tx(_ context.Context, fn func(store.Store) error) error {
+	return fn(p)
+}
+
+func (p *partialCascadeStore) DeleteEntity(
+	_ context.Context, _ string, _ bool,
+) (*store.DeleteResult, error) {
+	// DeletedEntities deliberately empty: the entity survived.
+	return &store.DeleteResult{DeletedRelations: p.removed}, p.err
+}
+
+// TestAudit_PartialCascadeDelete_AuditsWhatWasRemoved pins issue #929: when a
+// cascade delete fails partway, the relations already removed from disk must
+// still reach the audit log.
+//
+// fsstore's Tx is a write mutex with no rollback, so those removals stick. The
+// manager previously returned on the store error before reaching its audit
+// loop, so the log denied a deletion that had really happened.
+//
+// Two assertions carry the ticket:
+//   - the removed relation IS recorded, with the same
+//     `cascade:delete-entity:<id>` label the success path uses, so a partial
+//     and a complete cascade are indistinguishable except by row count;
+//   - NO delete-entity record is emitted. The entity survived, and a log
+//     claiming otherwise would be the opposite error — over-reporting is as
+//     broken as under-reporting, and harder to notice.
+func TestAudit_PartialCascadeDelete_AuditsWhatWasRemoved(t *testing.T) {
+	t.Parallel()
+	mem := audit.NewMemory()
+
+	// Seed the REAL relation, not just a fabricated one in the double: the
+	// manager collects the incident set and runs authorizeCascadeRelations
+	// before it ever calls the store, so a store double reporting a deletion
+	// of a relation the manager just observed did not exist would exercise a
+	// shape fsstore cannot produce — and would pass even with the ACL gate
+	// deleted.
+	backing := memstore.New()
+	bg := context.Background()
+	for _, e := range []*entity.Entity{
+		entity.New("REQ-1", "requirement"),
+		entity.New("CL-1", "checklist"),
+	} {
+		if err := backing.CreateEntity(bg, e); err != nil {
+			t.Fatalf("seed %s: %v", e.ID, err)
+		}
+	}
+	rel, rerr := backing.CreateRelation(bg, "REQ-1", "has-checklist", "CL-1", nil)
+	if rerr != nil {
+		t.Fatalf("seed relation: %v", rerr)
+	}
+
+	failing := &partialCascadeStore{
+		Store:   backing,
+		removed: []*entity.Relation{rel},
+		err:     errors.New("simulated I/O failure on the second relation"),
+	}
+
+	mgr, err := entitymanager.New(entitymanager.Deps{
+		Store:       failing,
+		Meta:        parseMeta(t),
+		Templater:   nopTemplater{},
+		Audit:       mem,
+		ACL:         acl.NopACL{},
+		Transitions: statemachine.EmptySet(),
+		FieldGate:   entitymanager.AllowAllFieldGate{},
+	})
+	if err != nil {
+		t.Fatalf("entitymanager.New: %v", err)
+	}
+
+	ctx := ctxWithPrincipal("alice", principal.ToolCLI)
+	if _, derr := mgr.DeleteEntity(ctx, "REQ-1", true); derr == nil {
+		t.Fatal("DeleteEntity must still return the store error")
+	}
+
+	var relRecords, entityRecords int
+	for _, r := range mem.Records() {
+		switch r.Op {
+		case audit.OpDeleteRelation:
+			relRecords++
+			if r.TriggeredBy != "cascade:delete-entity:REQ-1" {
+				t.Errorf("partial-cascade relation delete: want TriggeredBy=%q, got %q",
+					"cascade:delete-entity:REQ-1", r.TriggeredBy)
+			}
+		case audit.OpDeleteEntity:
+			entityRecords++
+		}
+	}
+
+	if relRecords != 1 {
+		t.Errorf("want 1 delete-relation record for the relation actually removed, got %d", relRecords)
+	}
+	if entityRecords != 0 {
+		t.Errorf("want NO delete-entity record — the entity survived — got %d", entityRecords)
+	}
+}
+
+// TestAudit_PartialCascadeDelete_ReplacePathAlsoAudits pins that the
+// if_exists:replace route through cascadeHost.DeleteEntity gets the same
+// partial-cascade treatment as the direct Manager.DeleteEntity path
+// (issue #929).
+//
+// The two are separate call sites into the same store method, so fixing only
+// one would mean an operator sees the removed relation logged for a direct
+// delete and NOT for a replace — the same failure wearing a different hat.
+//
+// Driven through the real automation so it exercises cascadeHost rather than a
+// test-only export: the replace action needs an existing checklist to
+// supersede, which is what the seeded relation provides.
+func TestAudit_PartialCascadeDelete_ReplacePathAlsoAudits(t *testing.T) {
+	t.Parallel()
+	mem := audit.NewMemory()
+	bg := context.Background()
+
+	backing := memstore.New()
+	for _, e := range []*entity.Entity{
+		entity.New("REQ-1", "requirement"),
+		entity.New("CL-1", "checklist"),
+	} {
+		if err := backing.CreateEntity(bg, e); err != nil {
+			t.Fatalf("seed %s: %v", e.ID, err)
+		}
+	}
+	// The existing edge the replace action will find and supersede.
+	if _, err := backing.CreateRelation(bg, "REQ-1", "has-checklist", "CL-1", nil); err != nil {
+		t.Fatalf("seed relation: %v", err)
+	}
+
+	failing := &partialCascadeStore{
+		Store:   backing,
+		removed: []*entity.Relation{entity.NewRelation("REQ-1", "has-checklist", "CL-1")},
+		err:     errors.New("simulated I/O failure on the second relation"),
+	}
+
+	autos := []automation.Automation{{
+		Name: "replace-checklist",
+		On: automation.Trigger{
+			Entity:   []string{"requirement"},
+			Property: "status",
+			Becomes:  "accepted",
+		},
+		Do: []automation.Action{{
+			CreateEntity: &automation.CreateEntityAction{
+				Type:     "checklist",
+				Relation: "has-checklist",
+				IfExists: automation.IfExistsReplace,
+			},
+		}},
+	}}
+	engine := automation.NewEngine(autos)
+	runner, rerr := autocascade.New(autocascade.Deps{Engine: engine})
+	if rerr != nil {
+		t.Fatalf("autocascade.New: %v", rerr)
+	}
+	mgr, err := entitymanager.New(entitymanager.Deps{
+		Store:       failing,
+		Meta:        parseMeta(t),
+		Templater:   nopTemplater{},
+		Audit:       mem,
+		ACL:         acl.NopACL{},
+		Transitions: statemachine.EmptySet(),
+		FieldGate:   entitymanager.AllowAllFieldGate{},
+		Automations: engine,
+		Cascade:     runner,
+	})
+	if err != nil {
+		t.Fatalf("entitymanager.New: %v", err)
+	}
+
+	ctx := ctxWithPrincipal("alice", principal.ToolCLI)
+	req := entity.New("REQ-1", "requirement")
+	req.SetString("status", "accepted")
+	if _, uerr := mgr.UpdateEntity(ctx, req); uerr != nil {
+		t.Fatalf("UpdateEntity: %v", uerr)
+	}
+
+	var relRecords, entityRecords int
+	for _, r := range mem.Records() {
+		switch r.Op {
+		case audit.OpDeleteRelation:
+			relRecords++
+			if r.TriggeredBy != "cascade:delete-entity:CL-1" {
+				t.Errorf("replace-path partial cascade: want TriggeredBy=%q, got %q",
+					"cascade:delete-entity:CL-1", r.TriggeredBy)
+			}
+		case audit.OpDeleteEntity:
+			entityRecords++
+		}
+	}
+	if relRecords != 1 {
+		t.Errorf("want 1 delete-relation record from the replace path, got %d", relRecords)
+	}
+	if entityRecords != 0 {
+		t.Errorf("want NO delete-entity record — the superseded entity survived — got %d", entityRecords)
 	}
 }
