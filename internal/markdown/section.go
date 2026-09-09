@@ -9,16 +9,25 @@ import (
 	"github.com/yuin/goldmark/text"
 )
 
-// AppendToSection appends line to the end of the markdown section headed by
+// AppendToSection appends block to the end of the markdown section headed by
 // title, returning the new document content. Matching is on the heading's
 // flattened text, case-insensitively, ignoring surrounding whitespace — an
 // operator writing `section: Notifications` should not have to know whether the
 // document spells it `## Notifications` or `### notifications`.
 //
+// block MAY SPAN SEVERAL LINES. It is split on newlines and inserted as
+// separate lines, so the returned document's line indices stay meaningful to a
+// caller that counts them.
+//
+// Constraining a block to one line is the CALLER's job, because only the caller
+// knows which parts of it are trusted. The webhook caller flattens each
+// interpolated value while leaving the operator's own template shape intact, so
+// a payload cannot forge structure here but an operator can still write it.
+//
 // # A missing section is CREATED, not an error
 //
 // When no heading matches, the section is appended to the end of the document
-// as a new `## <title>` followed by line. This is deliberate and is the whole
+// as a new `## <title>` followed by block. This is deliberate and is the whole
 // reason the function cannot fail on a well-formed document.
 //
 // The motivating caller is an inbound webhook (TKT-1EM4KL) receiving a
@@ -38,21 +47,21 @@ import (
 //
 // # Placement within a found section
 //
-// line is inserted after the LAST content line of the section — immediately
+// block is inserted after the LAST content line of the section — immediately
 // before the next heading of the same or higher level, or at end of document if
 // the section runs to the end. Trailing blank lines inside the section are
-// preserved *after* the inserted line, so repeated appends accumulate in
+// preserved *after* the inserted block, so repeated appends accumulate in
 // chronological order and do not drift a blank-line separator downward.
 //
 // A nested subsection belongs to its parent, so appending to `## Notifications`
-// with a `### Details` beneath it places the line after `### Details`'s content,
+// with a `### Details` beneath it places the block after `### Details`'s content,
 // still inside `## Notifications`. That keeps "append to this section" meaning
 // the whole section.
-func AppendToSection(content, title, line string) string {
+func AppendToSection(content, title, block string) string {
 	if strings.TrimSpace(title) == "" {
 		// No section named: append to the document body. Nothing to locate,
 		// and inventing a heading with an empty name would be worse.
-		return appendLines(content, line)
+		return appendLines(content, block)
 	}
 
 	lines := splitContentLines(content)
@@ -61,7 +70,7 @@ func AppendToSection(content, title, line string) string {
 		// Section absent — create it. See the doc comment: for the webhook
 		// caller an error here would discard an unretried alert.
 		body := appendLines(content, "## "+strings.TrimSpace(title))
-		return appendLines(body, line)
+		return appendLines(body, block)
 	}
 
 	end := sectionEnd(content, start, level)
@@ -79,7 +88,11 @@ func AppendToSection(content, title, line string) string {
 	// allocation-size-overflow rule — not reachable here, since `lines` is a
 	// split of a string already in memory, but the arithmetic is what the rule
 	// keys on and removing it is cheaper than justifying it forever.
-	return strings.Join(slices.Insert(lines, insert, line), "\n")
+	// Split block rather than inserting it as one element carrying embedded
+	// newlines: identical output through Join either way, but insert and end
+	// are LINE INDICES, and a multi-line block occupying one index would put
+	// any later index arithmetic off by its internal newline count.
+	return strings.Join(slices.Insert(lines, insert, splitContentLines(block)...), "\n")
 }
 
 // findHeading returns the 0-based line index of the first heading whose
