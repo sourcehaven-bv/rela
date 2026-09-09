@@ -177,13 +177,29 @@ func buildSearchSQL(needle string, limit int, w store.WorldScope) (sqlText strin
 		sqlText += ` ORDER BY id ASC`
 	} else {
 		args = append(args, needle)
-		sqlText += ` ORDER BY similarity(search_text, $` + strconv.Itoa(len(args)) + `) DESC, id ASC`
+		sqlText += ` ORDER BY ` + rankExpr("search_text", len(args)) + ` DESC, id ASC`
 	}
 	if limit > 0 {
 		args = append(args, limit)
 		sqlText += ` LIMIT $` + strconv.Itoa(len(args))
 	}
 	return sqlText, args
+}
+
+// searchRankPrefix is how much of search_text similarity ranking looks at:
+// the id and the string properties (title first among them alphabetically
+// in most schemas) that lead the column, not the body behind them. A
+// trigram similarity over every candidate's whole body cost seconds on a
+// common word at 20k rows (TKT-1U8XYN); a reader searching "telemetry"
+// wants the entities ABOUT telemetry ranked first, which is what the
+// prefix says, and every row that mentions it still matches — matching
+// is the LIKE over the whole column, ranking is this prefix.
+const searchRankPrefix = 1024
+
+// rankExpr is the ranking expression both search builders order by; they
+// must agree (see buildVisibleSearchSQL's ordered-subsequence contract).
+func rankExpr(col string, needleArg int) string {
+	return `similarity(left(` + col + `, ` + strconv.Itoa(searchRankPrefix) + `), $` + strconv.Itoa(needleArg) + `)`
 }
 
 // Close releases backend resources. The handle is owned by the wiring layer,

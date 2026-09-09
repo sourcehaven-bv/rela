@@ -8,6 +8,7 @@ import {
   attachmentErrorReason,
   AttachmentError,
 } from '@/api/attachments'
+import { apiUrl } from '@/api/base'
 
 const props = defineProps<WidgetProps>()
 
@@ -196,15 +197,15 @@ function onDrop(event: DragEvent) {
       <li v-for="att in files" :key="att.id" class="file-item">
         <a
           v-if="isImage(att)"
-          :href="att.href"
+          :href="apiUrl(att.href)"
           target="_blank"
           rel="noopener"
           class="file-preview-link"
         >
-          <img :src="att.href" :alt="att.filename" class="file-preview" />
+          <img :src="apiUrl(att.href)" :alt="att.filename" class="file-preview" />
         </a>
         <div class="file-meta">
-          <a :href="att.href" :download="att.filename" class="file-name">{{ att.filename }}</a>
+          <a :href="apiUrl(att.href)" :download="att.filename" class="file-name">{{ att.filename }}</a>
           <span class="file-size">{{ formatSize(att.size) }}</span>
           <button
             v-if="canEdit"

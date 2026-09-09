@@ -100,14 +100,11 @@ func formatDocumentOrdered(fm map[string]any, content string, keyOrder []string)
 		sb.WriteString(frontmatterDelimiter)
 		sb.WriteString("\n")
 
-		var yamlBytes []byte
-		var err error
-
-		if len(keyOrder) > 0 {
-			yamlBytes, err = marshalOrdered(fm, keyOrder)
-		} else {
-			yamlBytes, err = yaml.Marshal(fm)
-		}
+		// Both branches go through marshalOrdered: with an empty keyOrder it
+		// emits every key alphabetically, which is what yaml.Marshal of a map
+		// already did, but through markdown.KeyNode and markdown.ValueToNode
+		// so the round-trip guards apply to a write that carries no order.
+		yamlBytes, err := marshalOrdered(fm, keyOrder)
 		if err != nil {
 			return "", err
 		}
@@ -136,9 +133,7 @@ func marshalOrdered(data map[string]any, keyOrder []string) ([]byte, error) {
 		if !ok {
 			continue
 		}
-		node.Content = append(node.Content,
-			&yaml.Node{Kind: yaml.ScalarNode, Value: key},
-		)
+		node.Content = append(node.Content, markdown.KeyNode(key))
 		valNode, err := valueToNode(val)
 		if err != nil {
 			return nil, err
@@ -156,9 +151,7 @@ func marshalOrdered(data map[string]any, keyOrder []string) ([]byte, error) {
 	sort.Strings(remaining)
 
 	for _, key := range remaining {
-		node.Content = append(node.Content,
-			&yaml.Node{Kind: yaml.ScalarNode, Value: key},
-		)
+		node.Content = append(node.Content, markdown.KeyNode(key))
 		valNode, err := valueToNode(data[key])
 		if err != nil {
 			return nil, err
@@ -169,12 +162,12 @@ func marshalOrdered(data map[string]any, keyOrder []string) ([]byte, error) {
 	return yaml.Marshal(node)
 }
 
+// valueToNode delegates to markdown.ValueToNode so entity writes (here) and
+// relation writes (internal/markdown) cannot disagree about how a value is
+// encoded. They were separate copies until BUG-B1RA3J, where fixing one and
+// re-running the fuzz target still failed.
 func valueToNode(val any) (*yaml.Node, error) {
-	var node yaml.Node
-	if err := node.Encode(val); err != nil {
-		return nil, err
-	}
-	return &node, nil
+	return markdown.ValueToNode(val)
 }
 
 // --- markdown content formatting ---

@@ -862,8 +862,34 @@ Key properties:
   batched `MatchingIDs` probes — in-process, cheap). The postgres
   build composes visibility into the search SQL itself
   (`pgstore.SearchVisible`): hidden rows never leave the database,
-  the `LIMIT` is post-visibility, and there is no hidden-row work to
+  the `LIMIT` is post-visibility, and there is no hidden-ROW work to
   measure through timing.
+- **That last point is about rows, not fields.** Entity-level
+  filtering is pushed into the query, so a hidden row costs nothing
+  observable. Property-level `visible:` redaction is different: it
+  runs in Go over rows that were already fetched, so a response
+  carrying redacted fields does marginally more work than one that
+  does not. Redaction is **not constant-time**, and that is a
+  deliberate trade rather than an oversight.
+
+  Pushing it into the store would mean expressing per-principal
+  `visible:` grants — including ones conditional on graph predicates
+  like `has_relation` — as a query, reimplemented for every backend.
+  That is a permanent, backend-multiplied correctness burden on the
+  most security-sensitive code in the tree, bought against a signal
+  measured in the microseconds a redaction loop takes over an
+  already-loaded row, by an attacker who must already hold a valid
+  principal and already know which field to probe.
+
+  Worth stating plainly: this residual signal exists *because* rela
+  does field-level redaction at all. Most applications have no
+  central point where entity access is decided, and no field-level
+  visibility to speak of — a "hidden" field is one the template
+  happens not to render. Here the enforcement is structural
+  (`internal/dataentry/visiblereader.go` holds the store privately
+  and exposes only gated reads, precisely so gating cannot be
+  forgotten), and the timing edge is what remains after the hard
+  part is solved.
 - **Candidate-window caveat (bleve only).** The bleve backend caps
   candidate retrieval at 10000 hits; on the default build, "true
   top-1000 of the visible corpus" holds within that window. The
@@ -898,6 +924,21 @@ caches from leaking one principal's view to another:
 - When `--principal-header` is configured, responses also carry
   `Vary: <that header>` — defense in depth for any cache layer that
   ignores `no-store`.
+
+### Query accounting is a Debug-only diagnostic
+
+With `-verbose`, every API response carries a `Server-Timing` header with the
+number of SQL statements the request issued and their summed database time,
+and the log gets one `request` record per request (see
+`docs/postgres-backend.md`, "Observing query cost"). Below Debug neither
+exists. The gate is a security property, not a convenience: on a path that
+still resolves neighbors one by one, the statement count varies with rows the
+principal cannot see, so a machine-readable count on every response would be
+an existence channel of exactly the kind the row-level rule above forbids.
+Wall time is already observable by any client and is accepted as coarse
+timing exposure; the statement count is not, and stays an operator tool.
+Do not enable `-verbose` on a multi-principal deployment to "get metrics" —
+put the numbers in the log, not on the wire.
 
 ### Sidebar menu structure is principal-independent
 
@@ -1269,6 +1310,18 @@ entirely (the snapshot already contains every field; the reveal just skips the
 strip). Grant it only to trusted audit/compliance roles — it exposes fields the
 live `visible:` policy would redact. A non-holder always sees the fail-closed
 redaction described above.
+
+**Every reveal is audited** (`history-reveal`) *under a configured policy*, so
+"who saw which hidden historical values, and when" is answerable after the fact.
+With no `acl.yaml` there is nothing to reveal — no field is redacted — so those
+reads are not recorded; otherwise every history read in an unconfigured
+deployment would log a reveal that revealed nothing. The row names the entity
+and the version read, and the principal who read it — it does *not* record the
+revealed values, nor which fields were revealed (that list is itself a map of
+what the policy hides). Ordinary redacted history reads are **not** recorded:
+they disclose nothing this permission governs, and logging them would bury the
+privileged reads the row exists to surface. Isolate reveals with `op ==
+"history-reveal"`.
 
 **Relation history is governed by the current live world — deliberately unlike
 entity history.** Where *entity* history reconstructs the moment of capture and

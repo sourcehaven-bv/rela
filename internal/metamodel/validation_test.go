@@ -1163,7 +1163,9 @@ func TestValidationError_IsSoft(t *testing.T) {
 }
 
 func TestValidateIDPrefix(t *testing.T) {
-	valid := []string{"TKT-", "TKT", "tkt-", "MY-TYPE-", "a_b-", "A1-", "_x-"}
+	// "a_b-" stays valid: an underscore is legal in an entity ID, just not as
+	// its first character — which is what "_x-" below now pins.
+	valid := []string{"TKT-", "TKT", "tkt-", "MY-TYPE-", "a_b-", "A1-"}
 	for _, p := range valid {
 		if err := ValidateIDPrefix(p); err != nil {
 			t.Errorf("ValidateIDPrefix(%q) = %v, want nil", p, err)
@@ -1183,6 +1185,9 @@ func TestValidateIDPrefix(t *testing.T) {
 		{"a b-", "space"},
 		{"héllo-", "non-ASCII"},
 		{"x\x00-", "control character"},
+		{"_x-", "leading underscore: entity.ValidateID refuses the minted ID"},
+		{"_", "underscore-only base (FuzzGenerateShortID repro, issue #993)"},
+		{"-x", "leading dash: entity.ValidateID refuses the minted ID"},
 	}
 	for _, tc := range invalid {
 		if err := ValidateIDPrefix(tc.prefix); err == nil {

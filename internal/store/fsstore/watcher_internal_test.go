@@ -29,10 +29,9 @@ func newTestStore(t *testing.T) (*FSStore, *storage.MemFS) {
 		},
 	})
 	require.NoError(t, err)
-	// Mirror production wiring: subscribe the store's RecordWrite to
-	// the filesystem's post-write hook so the watcher's self-echo
-	// LRU sees the bytes that actually landed.
-	fs.OnPostWrite(s.RecordWrite)
+	// New installs the self-echo recorder on the MemFS itself
+	// (BUG-S24X52) — no manual OnPostWrite here, so these tests
+	// exercise the same wiring production gets.
 	return s, fs
 }
 
@@ -239,4 +238,98 @@ func TestHasPathPrefix(t *testing.T) {
 		assert.Equalf(t, c.want, hasPathPrefix(c.path, c.dir),
 			"hasPathPrefix(%q, %q)", c.path, c.dir)
 	}
+}
+
+// TestNewInstallsSelfEchoRecorder pins that New itself wires the
+// echo tracker to the FS's post-write observer (BUG-S24X52): a write
+// made through the store, replayed to the reconciler as if fsnotify
+// had reported it, is recognized as a self-echo and produces no
+// second event. newTestStore deliberately does NOT call OnPostWrite.
+func TestNewInstallsSelfEchoRecorder(t *testing.T) {
+	s, fs := newTestStore(t)
+	ch, cancel := s.Subscribe(16)
+	defer cancel()
+
+	require.NoError(t, s.CreateEntity(context.Background(), &entity.Entity{
+		ID: "REQ-1", Type: "requirement",
+		Properties: map[string]any{"title": "one"},
+	}))
+	require.Len(t, drainEvents(ch), 1, "the store's own Created event")
+
+	path := "/entities/requirements/REQ-1.md"
+	_, err := fs.ReadFile(path)
+	require.NoError(t, err, "the write must have landed on the FS")
+
+	s.handleExternalEvents([]storage.ChangeEvent{{Path: path, Op: storage.OpModify}})
+	assert.Empty(t, drainEvents(ch), "a self-write replayed by the watcher must be suppressed")
+	require.NoError(t, s.echoWiringErr)
+}
+
+// TestTwoStoresOnOneFSKeepTheirOwnEchoes pins the fan-out contract
+// (BUG-S24X52 review C1): opening a second store on the same FS must
+// not evict the first store's recorder, and each store records only
+// writes under its own root.
+func TestTwoStoresOnOneFSKeepTheirOwnEchoes(t *testing.T) {
+	fs := storage.NewMemFS()
+	open := func(root string) *FSStore {
+		t.Helper()
+		require.NoError(t, fs.MkdirAll(root, 0o755))
+		rooted, err := storage.NewRootedFS(fs, root)
+		require.NoError(t, err)
+		s, err := New(Config{
+			FS: fs, Rooted: rooted,
+			EntitiesKey: "entities", RelationsKey: "relations", CacheKey: ".rela",
+			Schemas: map[string]store.EntityTypeSchema{"requirement": {Plural: "requirements"}},
+		})
+		require.NoError(t, err)
+		return s
+	}
+	s1 := open("/a")
+	s2 := open("/b")
+	defer s2.Close()
+
+	ch1, cancel1 := s1.Subscribe(16)
+	defer cancel1()
+	require.NoError(t, s1.CreateEntity(context.Background(), &entity.Entity{ID: "REQ-1", Type: "requirement"}))
+	require.Len(t, drainEvents(ch1), 1)
+
+	p1 := "/a/entities/requirements/REQ-1.md"
+	data, err := fs.ReadFile(p1)
+	require.NoError(t, err)
+	assert.True(t, s1.echoes.IsEcho(p1, data), "s1 must still be recording after s2 opened")
+	assert.False(t, s2.echoes.IsEcho(p1, data), "s2 must not record a write under s1's root")
+
+	s1.handleExternalEvents([]storage.ChangeEvent{{Path: p1, Op: storage.OpModify}})
+	assert.Empty(t, drainEvents(ch1), "s1's own write replayed must be suppressed even with s2 alive")
+
+	// Close uninstalls: a later write at s1's path is no longer recorded.
+	require.NoError(t, s1.Close())
+	require.NoError(t, fs.WriteFile(p1, []byte("---\nid: REQ-1\ntype: requirement\n---\nlater\n"), 0o644))
+	assert.False(t, s1.echoes.IsEcho(p1, []byte("---\nid: REQ-1\ntype: requirement\n---\nlater\n")),
+		"a closed store must not keep recording")
+}
+
+// opaqueFS hides MemFS's OnPostWrite so the store sees an FS that
+// cannot be observed — the shape a bare OsFS has.
+type opaqueFS struct{ storage.FS }
+
+func TestStartWatchingRefusesUnobservableFS(t *testing.T) {
+	fs := opaqueFS{storage.NewMemFS()}
+	rooted, err := storage.NewRootedFS(fs, "/")
+	require.NoError(t, err)
+	s, err := New(Config{
+		FS:           fs,
+		Rooted:       rooted,
+		EntitiesKey:  "entities",
+		RelationsKey: "relations",
+		CacheKey:     ".rela",
+		Schemas: map[string]store.EntityTypeSchema{
+			"requirement": {Plural: "requirements"},
+		},
+	})
+	require.NoError(t, err, "opening without an observable FS is allowed (CLI paths never watch)")
+	require.ErrorIs(t, s.echoWiringErr, ErrWatchNeedsObservableFS)
+
+	err = s.StartWatching()
+	require.ErrorIs(t, err, ErrWatchNeedsObservableFS)
 }

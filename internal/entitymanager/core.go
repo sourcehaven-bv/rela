@@ -254,11 +254,19 @@ func collectAllIDs(ctx context.Context, st store.Store) ([]string, error) {
 func collectIncidentRelations(
 	ctx context.Context, st store.Store, id string, dir store.Direction,
 ) ([]*entity.Relation, error) {
-	out := make([]*entity.Relation, 0)
-	for r, err := range st.ListRelations(ctx, store.RelationQuery{
+	return collectRelations(ctx, st, store.RelationQuery{
 		EntityID:  id,
 		Direction: dir,
-	}) {
+	})
+}
+
+// collectRelations drains a relation query into a slice, failing on the
+// first store error rather than returning a partial set.
+func collectRelations(
+	ctx context.Context, st store.Store, q store.RelationQuery,
+) ([]*entity.Relation, error) {
+	out := make([]*entity.Relation, 0)
+	for r, err := range st.ListRelations(ctx, q) {
 		if err != nil {
 			return nil, err
 		}

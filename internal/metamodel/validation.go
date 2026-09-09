@@ -58,10 +58,11 @@ func ValidateSchemaName(name string) error {
 // fail entity ID validation (BUG-RHFHTH). Generated short/sequential
 // IDs have the shape <base>-<suffix>, where base is the prefix with
 // one trailing dash trimmed — so the base must be non-empty, contain
-// only [A-Za-z0-9_-], and neither contain nor end in a dash run that
-// would re-create the forbidden "--" sequence (reserved as the
-// relation key separator). Enforced at metamodel load;
-// entity.GenerateShortID assumes a load-validated prefix.
+// only [A-Za-z0-9_-], start with a letter or digit, and neither
+// contain nor end in a dash run that would re-create the forbidden
+// "--" sequence (reserved as the relation key separator). Enforced at
+// metamodel load; entity.GenerateShortID assumes a load-validated
+// prefix.
 func ValidateIDPrefix(prefix string) error {
 	base := strings.TrimSuffix(prefix, "-")
 	if base == "" {
@@ -75,6 +76,19 @@ func ValidateIDPrefix(prefix string) error {
 		return fmt.Errorf(
 			"id_prefix %q would generate IDs with consecutive dashes (\"--\" is the relation key separator)",
 			prefix)
+	}
+	// entity.ValidateID requires an ID to start with a letter or digit, and
+	// the prefix is that ID's first characters — so a prefix leading with "-"
+	// or "_" mints IDs the store then refuses (BUG-TOXQAA / issue #993, found
+	// by FuzzGenerateShortID with prefix "_"). This is the same class as the
+	// "--" rule above: a load-time gate on the prefix, so the failure names
+	// the schema line that caused it rather than surfacing later as a
+	// rejected write. Spelled out rather than folded into validIDPrefixBase
+	// so the message can say which character is at fault.
+	if base[0] == '-' || base[0] == '_' {
+		return fmt.Errorf(
+			"id_prefix %q must start with a letter or digit (entity IDs may not begin with %q)",
+			prefix, base[0:1])
 	}
 	return nil
 }

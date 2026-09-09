@@ -37,6 +37,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
 	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/caldavalias"
+	"github.com/Sourcehaven-BV/rela/internal/comments"
 	"github.com/Sourcehaven-BV/rela/internal/computed"
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -96,8 +97,20 @@ import (
 // Develop raised this to 26; the three recipient-scoped scheduler methods
 // take it to 29. They are exported because scheduler consumes them through
 // narrow capability interfaces; they do not add general Services getters.
+// Comments() (TKT-FIO205) takes it to 31: the commentary service is chosen and
+// constructed here and handed to the App at the wiring site, exactly like
+// CalDAVAliases() and UserState(). It is one more instance of the pattern this
+// comment already describes — a new subsystem composed by the facade — not a
+// new kind of growth, and the fix remains splitting the bundle (TKT-N0IKN9)
+// rather than hiding the getter.
 //
-//plimsoll:max-exported-methods=30
+// 30 → 33 (TKT-NU247U): [Services.CloseAssembly] and [Services.Base], the two
+// halves of re-assembling a base against an already-open store, plus the
+// getter develop added alongside them. All are lifecycle operations on THIS
+// bundle rather than new getters onto its contents, so they belong here and
+// not on a narrower type.
+//
+//plimsoll:max-exported-methods=33
 type Services struct {
 	fs    storage.FS
 	paths *project.Context
@@ -130,9 +143,13 @@ type Services struct {
 	// durable PostgreSQL on the postgres build. Torn down in Close.
 	jobQueue      jobs.Queue
 	caldavAliases *caldavalias.Service
-	scriptEngine  *script.Engine
-	searchCloser  io.Closer
-	acl           acl.ACL
+	// comments is the commentary layer (internal/comments). Nil when the
+	// metamodel declares no `comments:` block — the feature then does not
+	// exist, and the data-entry app serves no comment routes.
+	comments     *comments.Service
+	scriptEngine *script.Engine
+	searchCloser io.Closer
+	acl          acl.ACL
 	// aclDeclarative is set when buildACL constructs a Declarative; nil
 	// for NopACL, ReadOnlyACL, or when Declarative construction fails.
 	aclDeclarative *acl.Declarative
@@ -158,8 +175,17 @@ type Services struct {
 	// during single-threaded wiring. Constructing here, once, preserves that.
 	fieldRedactor visibility.FieldRedactor
 
+	// base is the SharedBase this Services was assembled from. Retained so a
+	// host can build a successor base from the same Config (see
+	// [Services.Base]). Nil for a NewFromCollaborators-built Services.
+	base *SharedBase
+
 	closeOnce sync.Once
 	closeErr  error
+	// assemblyCloseOnce guards the per-assembly teardown so that a
+	// CloseAssembly followed by a Close (the reload path's final shutdown)
+	// stops the background services exactly once.
+	assemblyCloseOnce sync.Once
 }
 
 // FS returns the project filesystem.
@@ -167,6 +193,15 @@ func (s *Services) FS() storage.FS { return s.fs }
 
 // Paths returns the project context (root, metamodel path, etc.).
 func (s *Services) Paths() *project.Context { return s.paths }
+
+// Base returns the [SharedBase] this Services was assembled from, or nil when
+// it was built by [NewFromCollaborators] (which takes pre-built collaborators
+// and so has no base).
+//
+// Exposed for hosts that re-assemble: a schema hot-reload needs the base's
+// [SharedBase.Config] to build a successor base against the same project
+// inputs (TKT-NU247U).
+func (s *Services) Base() *SharedBase { return s.base }
 
 // Meta returns the loaded metamodel.
 func (s *Services) Meta() *metamodel.Metamodel { return s.meta }
@@ -318,6 +353,14 @@ func (s *Services) Jobs() jobs.Client { return s.jobQueue }
 // service is always constructed (an empty table is the normal first-run state),
 // so consumers need no nil check.
 func (s *Services) CalDAVAliases() *caldavalias.Service { return s.caldavAliases }
+
+// Comments returns the commentary service, or nil when the metamodel declares
+// no enabled `comments:` block.
+//
+// Nil means the feature does not exist for this project: the data-entry app
+// serves no comment routes and no storage is created. Callers must nil-check
+// rather than assume a usable service.
+func (s *Services) Comments() *comments.Service { return s.comments }
 
 // LuaReadDeps materializes the read-only Lua capability bundle with
 // UNRESTRICTED reads — the operator-trust-boundary wiring used by the CLI
@@ -1264,6 +1307,30 @@ type SharedBase struct {
 	aclPolicy *acl.Policy
 	meta      *metamodel.Metamodel
 	worlds    worlds.Compiled
+	// reassembly marks a base built to re-assemble against an ALREADY-OPEN
+	// store, so [assemble] skips the store-open-only steps. Set by
+	// [SharedBase.ForReassembly]; false for a base that will open its own store.
+	reassembly bool
+}
+
+// IsReassembly reports whether this base is marked to re-assemble against an
+// already-open store (see [SharedBase.ForReassembly]).
+func (b *SharedBase) IsReassembly() bool { return b.reassembly }
+
+// ForReassembly returns a copy of this base marked as re-assembling against a
+// store that is already open — the schema hot-reload case (TKT-NU247U).
+//
+// It skips the store-open-only work in [SharedBase.Assemble]: today that is
+// the postgres derived-schema reconciliation, which issues DDL and is
+// documented boot-only on `pgstore.Store.Reconcile`. Everything metamodel-
+// derived is still rebuilt, which is the point of reloading.
+//
+// Use it for EVERY assembly after the first against a given store. A base
+// used to open a store must not be marked.
+func (b *SharedBase) ForReassembly() *SharedBase {
+	next := *b
+	next.reassembly = true
+	return &next
 }
 
 // Worlds returns the compiled world scopes this base was built from.
@@ -1281,6 +1348,15 @@ func (b *SharedBase) Worlds() worlds.Compiled { return b.worlds }
 // holding one base can answer "what schema am I serving?" without assembling a
 // Services first.
 func (b *SharedBase) Meta() *metamodel.Metamodel { return b.meta }
+
+// Config returns the validated [Config] this base was built from.
+//
+// Exposed so a host can build a SUCCESSOR base from the same inputs — which is
+// how a schema hot-reload re-reads `schema.yaml` without re-discovering the
+// project (TKT-NU247U). The returned value is a copy of a struct of handles;
+// mutating it does not affect this base, but the FS, ScriptEngine and Audit it
+// names are shared, which is exactly what makes the successor equivalent.
+func (b *SharedBase) Config() Config { return b.cfg }
 
 // Paths returns the project context this base was built from.
 func (b *SharedBase) Paths() *project.Context { return b.cfg.Paths }
@@ -1414,19 +1490,6 @@ func buildEntityManager(
 	readDeps lua.ReadDeps, versions store.VersionService, tw TransitionWiring,
 	computedSet *computed.Set,
 ) (*entitymanager.Manager, error) {
-	// A policy is "active" when the resolved ACL is the declarative one — the
-	// same test CompileTransitions applies, spelled here rather than widened
-	// onto TransitionWiring so the copy deps do not depend on the transition
-	// wiring's shape.
-	declarative, policyActive := resolvedACL.(*acl.Declarative)
-	// The cross-entity copy reads the source through the caller's FIELD
-	// redaction too — the same redactor the API read path uses, so a
-	// `visible:`-hidden property cannot travel into a new entity.
-	copyRedactor, err := buildFieldRedactor(base.meta, st, declarative)
-	if err != nil {
-		return nil, fmt.Errorf("build entitymanager: copy redactor: %w", err)
-	}
-
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		AliasRewriter:           aliases,
 		Store:                   st,
@@ -1456,8 +1519,8 @@ func buildEntityManager(
 		// identical implementation and cannot drift into asking different
 		// ones.
 		CopyGuard:      tw.Guard,
-		CopyReadGate:   copyReadGate{policyActive: policyActive},
-		CopyVisibility: copyVisibility{st: st, redact: copyRedactor, policyActive: policyActive},
+		CopyReadGate:   tw.ReadGate,
+		CopyVisibility: tw.Visibility,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("build entitymanager: %w", err)
@@ -1591,7 +1654,7 @@ func assemble(
 	base *SharedBase, st store.Store, searcher search.Searcher,
 	visible search.VisibleSearcher, searchCloser io.Closer,
 	overrides backendOverrides,
-) (*Services, error) {
+) (svc *Services, retErr error) {
 	cfg := base.cfg
 
 	visible, err := resolveVisibleSearcher(visible, searcher, st)
@@ -1647,8 +1710,30 @@ func assemble(
 	if err != nil {
 		return nil, err
 	}
+	// buildRuntimeServices STARTS the job queue (worker pool; on postgres a
+	// connection pool too), so every error path below this point must stop it.
+	// Boot could get away without this — a failed boot exits the process — but
+	// assembly is now also a RELOAD path (TKT-NU247U): a schema that loads yet
+	// fails to assemble would otherwise leak one queue per save.
+	defer func() {
+		if retErr != nil {
+			closeJobQueue(jobQueue)
+		}
+	}()
 
-	mgr, err := buildEntityManager(base, st, aliases, templater, resolvedACL,
+	// Comments are keyed by target entity id, so the service must learn about
+	// renames and deletes. It rides the AliasRewriter hook rather than
+	// store.EntityObserver for the reason that hook documents: stores fire the
+	// observer with the error discarded, which is fine for a rebuildable search
+	// index but not for records that exist ONLY in the comment store.
+	commentSvc, err := buildComments(cfg.FS, cfg.Paths, base.meta)
+	if err != nil {
+		return nil, err
+	}
+
+	// Upstream's parameter order (readDeps after cascadeRunner) with the
+	// comment fanout wrapping the alias rewriter.
+	mgr, err := buildEntityManager(base, st, newAliasFanout(aliases, commentSvc), templater, resolvedACL,
 		autoEngine, cascadeRunner, readDeps, versions, tw, computedSet)
 	if err != nil {
 		return nil, err
@@ -1666,7 +1751,19 @@ func assemble(
 	// indexes so uniqueness is enforced atomically, and publish the current
 	// unique pairs so a violation can be attributed to a property (TKT-3Q0GP1).
 	// Failures degrade to warnings — a derived-schema problem never fails boot.
-	reconcileDerivedSchemaIfSupported(context.Background(), st, base, cfgLoader)
+	//
+	// STORE-OPEN ONLY, skipped on re-assembly. `pgstore.Store.Reconcile` is
+	// documented boot-only and says re-reconciling on a live reload "needs its
+	// own debounce/lock policy for issuing DDL off a file watcher" — that
+	// policy does not exist, so a reload must not issue DDL. Two things would
+	// go wrong if it did: CREATE/DROP INDEX on every editor autosave, and a
+	// metamodel saved mid-edit that still parses but has lost a `unique:`
+	// declaration would DROP the live index (desired-state reconciliation
+	// treats absent as delete). A `unique:` added without a restart stays
+	// enforced by the application scan; `rela db reconcile` applies it.
+	if !base.reassembly {
+		reconcileDerivedSchemaIfSupported(context.Background(), st, base, cfgLoader)
+	}
 
 	// Evaluate the data-migration gate (adopt compatible schema-shape
 	// changes, warn on incompatible ones) and start the drift GC sweep
@@ -1674,7 +1771,29 @@ func assemble(
 	// per-assembled, like the search closer.
 	background := startBackgroundServices(base, st, stateKV, versions)
 
+	return newServices(
+		base, st, background, searcher, visible, searchCloser, mgr, tr, val,
+		templater, cfgLoader, stateKV, jobQueue, aliases, commentSvc, versions,
+		resolvedACL, aclDeclarative, fieldRedactor,
+	), nil
+}
+
+// newServices bundles the assembled collaborators into the Services value.
+// It is pure field assignment, split out of assemble so that function stays
+// within its length budget: the bundle grows with every new collaborator,
+// and that growth should not push the assembly logic over the limit.
+func newServices(
+	base *SharedBase, st store.Store, background backgroundServices,
+	searcher search.Searcher, visible search.VisibleSearcher, searchCloser io.Closer,
+	mgr *entitymanager.Manager, tr tracer.Tracer, val validator.Validator,
+	templater templating.Templater, cfgLoader config.Loader, stateKV state.KV,
+	jobQueue jobs.Queue, aliases *caldavalias.Service, commentSvc *comments.Service,
+	versions store.VersionService, resolvedACL acl.ACL, aclDeclarative *acl.Declarative,
+	fieldRedactor visibility.FieldRedactor,
+) *Services {
+	cfg := base.cfg
 	return &Services{
+		base:            base,
 		gcStop:          background.gcStop,
 		mailStop:        background.mailStop,
 		mail:            background.mail,
@@ -1695,6 +1814,7 @@ func assemble(
 		stateKV:         stateKV,
 		jobQueue:        jobQueue,
 		caldavAliases:   aliases,
+		comments:        commentSvc,
 		scriptEngine:    cfg.ScriptEngine,
 		searchCloser:    searchCloser,
 		acl:             resolvedACL,
@@ -1702,7 +1822,7 @@ func assemble(
 		aclPolicy:       base.aclPolicy,
 		audit:           cfg.Audit,
 		fieldRedactor:   fieldRedactor,
-	}, nil
+	}
 }
 
 // versionRecorder adapts a store.VersionWriter to the entitymanager's
@@ -1791,8 +1911,81 @@ func relationVersionRecorderFor(vs store.VersionService) entitymanager.RelationV
 // lives here rather than once per build-tagged jobqueue_*.go file.
 const jobQueueShutdownTimeout = 5 * time.Second
 
-// Close releases resources held by Services: store first (so any
-// in-flight observer callbacks complete), then the search backend.
+// CloseAssembly stops the resources this Services started during its own
+// [SharedBase.Assemble] — the mail worker, the data-migration GC sweep and the
+// background-job queue — and leaves the store and search backend running.
+//
+// It exists for ONE caller shape: a host that re-assembles a base against a
+// store it already owns, and must retire the superseded Services without
+// tearing down the store underneath the new one. The MCP schema hot-reload
+// (TKT-NU247U) is that caller — every Assemble starts a fresh job queue with
+// its own worker pool (on postgres, a second connection pool and a LISTEN
+// connection too), so reloading without this would leak one per schema edit.
+//
+// It is NOT a lighter Close. The store and searcher outlive this call by
+// design, so a caller that owns them must still close them separately —
+// [Services.Close] on the LAST assembled Services does that, and running both
+// is safe because each runs its teardown exactly once.
+//
+// Safe to call repeatedly, and concurrently with Close: the shared sync.Once
+// runs the teardown exactly once. Calling Close after CloseAssembly still
+// closes the store and search backend.
+//
+// It is NOT safe against a concurrent [Services.Jobs] — the teardown clears
+// the queue handle, and that field carries no lock. Retire an assembly only
+// once nothing is reaching for its background services.
+func (s *Services) CloseAssembly() {
+	s.assemblyCloseOnce.Do(s.stopBackgroundServices)
+}
+
+// stopBackgroundServices stops the per-assembly background workers. Shared by
+// [Services.Close] and [Services.CloseAssembly] so the two teardown paths
+// cannot drift on WHICH services count as per-assembly — the distinction the
+// whole seam rests on.
+//
+// Mail goes first: the worker may still be delivering and its drain is
+// bounded, so stopping it before anything else gives in-flight sends their
+// best chance without risking a hung shutdown.
+func (s *Services) stopBackgroundServices() {
+	if s.mailStop != nil {
+		s.mailStop()
+		s.mailStop = nil
+	}
+	if s.gcStop != nil {
+		s.gcStop()
+		s.gcStop = nil
+	}
+	if s.jobQueue != nil {
+		closeJobQueue(s.jobQueue)
+		s.jobQueue = nil
+	}
+}
+
+// closeJobQueue stops q within the shutdown budget. Shared by the teardown
+// path and by assemble's error path, so a queue is never dropped un-closed.
+//
+// Nil: accepted (no-op).
+func closeJobQueue(q jobs.Queue) {
+	if q == nil {
+		return
+	}
+	// Bounded: a queue that will not drain must not wedge shutdown.
+	ctx, cancel := context.WithTimeout(context.Background(), jobQueueShutdownTimeout)
+	defer cancel()
+	if err := q.Close(ctx); err != nil {
+		slog.Warn("appbuild: failed to close job queue", "error", err)
+	}
+}
+
+// Close releases resources held by Services: the per-assembly background
+// services first, then the store (so any in-flight observer callbacks
+// complete), then the search backend.
+//
+// The job queue is now drained BEFORE the store closes, where it used to be
+// closed after. That ordering is the safer one on its own merits — a job
+// handler may read or write the store, and draining first means a worker
+// cannot be left running against a closed one — and it is what lets
+// [Services.CloseAssembly] share this teardown.
 //
 // Safe to call repeatedly and from multiple goroutines; the close
 // sequence runs exactly once. Subsequent calls return the same nil
@@ -1800,17 +1993,10 @@ const jobQueueShutdownTimeout = 5 * time.Second
 // failures are slog.Warn'd).
 func (s *Services) Close() error {
 	s.closeOnce.Do(func() {
-		// Mail first: the worker may still be delivering, and its drain is
-		// bounded, so stopping it before the store closes gives in-flight
-		// sends their best chance without risking a hung shutdown.
-		if s.mailStop != nil {
-			s.mailStop()
-			s.mailStop = nil
-		}
-		if s.gcStop != nil {
-			s.gcStop()
-			s.gcStop = nil
-		}
+		// Shared with CloseAssembly, and guarded by its own sync.Once, so a
+		// Close following a CloseAssembly does not stop these twice.
+		s.assemblyCloseOnce.Do(s.stopBackgroundServices)
+
 		if s.store != nil {
 			if lc, ok := s.store.(store.Lifecycle); ok {
 				if err := lc.Close(); err != nil {
@@ -1821,15 +2007,6 @@ func (s *Services) Close() error {
 		if s.searchCloser != nil {
 			_ = s.searchCloser.Close()
 			s.searchCloser = nil
-		}
-		if s.jobQueue != nil {
-			// Bounded: a queue that will not drain must not wedge shutdown.
-			ctx, cancel := context.WithTimeout(context.Background(), jobQueueShutdownTimeout)
-			if err := s.jobQueue.Close(ctx); err != nil {
-				slog.Warn("appbuild: failed to close job queue", "error", err)
-			}
-			cancel()
-			s.jobQueue = nil
 		}
 	})
 	return s.closeErr

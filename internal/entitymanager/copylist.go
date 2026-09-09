@@ -49,6 +49,10 @@ type CopyOffer struct {
 	// Allowed is true. Advisory: it explains a denial the server already made,
 	// and never carries content from an entity the caller cannot read.
 	Reason string
+	// OnSuccess is the definition's operator-declared follow-through (toast
+	// text and landing), passed through as declared. Display and navigation
+	// only; the kernel never consults it.
+	OnSuccess metamodel.CopyOnSuccess
 }
 
 // CopiesForSource lists the copy definitions whose `from:` addresses the face
@@ -133,6 +137,7 @@ func CopiesForSource(
 			Name:       name,
 			Label:      copyOfferLabel(name, def),
 			TargetFace: def.To,
+			OnSuccess:  def.OnSuccess,
 		}
 		offer.Allowed, offer.Reason = copyInvocable(ctx, m, name, def, sourceID)
 		out = append(out, offer)

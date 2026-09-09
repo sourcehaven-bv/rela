@@ -1596,7 +1596,7 @@ If you see an error like this when running any rela command:
 
 ```text
 schema.yaml uses deprecated syntax:
-  - Rename id_type values: "sequential" → "auto", "string" → "manual"
+  - Rename id_type values: "auto" → "sequential", "string" → "manual"
 
 Run 'rela migrate' to update your project files.
 ```
@@ -1842,6 +1842,53 @@ attachments with it, so there is no separate attachment GC pass.
 rela gc --temp-files            # Remove orphaned temp files
 rela gc --temp-files --dry-run  # Preview what would be removed
 ```
+
+---
+
+### rela dev seed
+
+Fill an **empty** project store with generated data for performance work.
+
+```bash
+rela dev seed [flags]
+```
+
+The data comes from a deterministic generator (`internal/perfseed`) shaped for
+the perf demo project in `prototypes/perf/project`: teams, people, projects,
+tasks, controls, risks, policies with draft/published faces and documents with
+en/nl faces, plus the relations between them. The same `--seed` and `--scale`
+always produce the same graph, on every backend — on the default build it
+writes markdown files, on the postgres build it writes straight into the
+database named by `RELA_DATABASE_URL`.
+
+This is a raw store write: no automations, validations or ACL run, the writes
+are attributed to the operator with tool `perf-seed`, and the run leaves one
+`perf-seed` audit record. It refuses a store that already holds entities so a
+second run cannot sit beside real data.
+
+**Flags:**
+
+| Flag        | Description                                                                 |
+| ----------- | --------------------------------------------------------------------------- |
+| `--profile` | Which graph to generate; only `perf` exists today                           |
+| `--scale`   | Size multiplier in (0, 10]; `1` is roughly 20k entities and 45k relations   |
+| `--seed`    | PRNG seed (default 1)                                                       |
+| `--batch`   | Writes per transaction (default 500)                                        |
+| `--force`   | Seed even though the store already holds entities                           |
+
+**Examples:**
+
+```bash
+cp -R prototypes/perf/project /tmp/perf && cd /tmp/perf
+rela dev seed --scale 0.05                 # a few hundred entities as markdown files
+
+export RELA_DATABASE_URL='postgres://rela@localhost/rela_perf?sslmode=disable'
+rela-postgres dev seed --project prototypes/perf/project --scale 1
+```
+
+The filesystem backend writes one file per row and indexes each for search,
+so keep the scale small there; the full graph is meant for PostgreSQL, where
+scale 1 loads in well under a minute.
 
 ---
 

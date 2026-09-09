@@ -1,6 +1,8 @@
 package storetest
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -126,5 +128,90 @@ func RunValidationTests(t *testing.T, f Factory) {
 		got, err := s.GetEntity(ctx(), "ABC")
 		require.NoError(t, err)
 		assert.Equal(t, "ABC", got.ID)
+	})
+
+	// Invalid UTF-8 in a property value must be REFUSED, identically, by
+	// every backend (BUG-X7ICNM). Before this rule fsstore refused it (YAML
+	// cannot represent it), pgstore and sqlitestore silently substituted
+	// U+FFFD and reported success, and memstore kept the bytes. The rule is
+	// storeutil.ValidateProperties; these cases pin that each write path
+	// actually calls it, at the nesting the store fuzz target generates.
+	// A property NAME beginning with git's conflict marker must round-trip on
+	// every backend (BUG-TOXQAA / issue #993). fsstore wrote it as a YAML
+	// mapping key at column 0, so the file it had just written scanned as an
+	// unresolved merge and every later read refused it — the entity was
+	// unreadable and silently absent from the validator and the search index,
+	// while memstore and pgstore round-tripped it fine. The fix is in the
+	// markdown emitter (the key is quoted), not a new validity rule: the value
+	// is representable, so a serialization limit must not decide what an
+	// entity may contain. These cases pin that the backends agree.
+	t.Run("RoundTripsConflictMarkerPropertyName", func(t *testing.T) {
+		s := f(t)
+
+		for i, name := range []string{"<<<<<<<", "<<<<<<< HEAD", "x<<<<<<<"} {
+			id := fmt.Sprintf("E-cm%d", i)
+			e := entity.New(id, "t")
+			e.Properties[name] = "v"
+			require.NoErrorf(t, s.CreateEntity(ctx(), e), "create with property %q", name)
+
+			got, err := s.GetEntity(ctx(), id)
+			require.NoErrorf(t, err, "read back entity with property %q", name)
+			assert.Equalf(t, "v", got.Properties[name], "property %q lost its value", name)
+		}
+	})
+
+	t.Run("RejectsInvalidUTF8Properties", func(t *testing.T) {
+		const bad = "\n\xc80" // the fuzzer's original payload
+		s := f(t)
+
+		shapes := map[string]any{
+			"string":     bad,
+			"slice":      []string{"ok", bad},
+			"nested map": map[string]any{"v": bad},
+		}
+		for name, val := range shapes {
+			e := entity.New("E-"+strings.ReplaceAll(name, " ", "-"), "t")
+			e.Properties["p"] = val
+			err := s.CreateEntity(ctx(), e)
+			require.Errorf(t, err, "create with %s invalid UTF-8 must fail", name)
+			assert.Contains(t, err.Error(), "invalid UTF-8")
+			_, err = s.GetEntity(ctx(), e.ID)
+			assert.ErrorIs(t, err, store.ErrNotFound, "a refused create must persist nothing")
+		}
+
+		good := entity.New("E-good", "t")
+		good.SetString("p", "héllo ☃")
+		require.NoError(t, s.CreateEntity(ctx(), good))
+		got, err := s.GetEntity(ctx(), "E-good")
+		require.NoError(t, err)
+		assert.Equal(t, "héllo ☃", got.GetString("p"), "valid non-ASCII must round-trip untouched")
+
+		upd := got.Clone()
+		upd.SetString("p", bad)
+		err = s.UpdateEntity(ctx(), upd)
+		require.Error(t, err, "update with invalid UTF-8 must fail")
+		assert.Contains(t, err.Error(), "invalid UTF-8")
+		got, err = s.GetEntity(ctx(), "E-good")
+		require.NoError(t, err)
+		assert.Equal(t, "héllo ☃", got.GetString("p"), "a refused update must leave the stored value alone")
+
+		require.NoError(t, s.CreateEntity(ctx(), entity.New("E-other", "t")))
+		_, err = s.CreateRelation(ctx(), "E-good", "rel", "E-other",
+			&store.RelationData{Properties: map[string]any{"p": bad}})
+		require.Error(t, err, "relation create with invalid UTF-8 must fail")
+		assert.Contains(t, err.Error(), "invalid UTF-8")
+		_, err = s.GetRelation(ctx(), "E-good", "rel", "E-other")
+		assert.ErrorIs(t, err, store.ErrNotFound)
+
+		_, err = s.CreateRelation(ctx(), "E-good", "rel", "E-other",
+			&store.RelationData{Properties: map[string]any{"p": "ok"}})
+		require.NoError(t, err)
+		_, err = s.UpdateRelation(ctx(), "E-good", "rel", "E-other",
+			store.RelationData{Properties: map[string]any{"p": bad}})
+		require.Error(t, err, "relation update with invalid UTF-8 must fail")
+		assert.Contains(t, err.Error(), "invalid UTF-8")
+		r, err := s.GetRelation(ctx(), "E-good", "rel", "E-other")
+		require.NoError(t, err)
+		assert.Equal(t, "ok", r.Properties["p"], "a refused relation update must leave the stored value alone")
 	})
 }

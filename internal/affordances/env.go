@@ -14,10 +14,15 @@ import (
 //     through ("data-entry", "mcp", "cli", ...). It is NOT a user
 //     classification; gate by role via has_role / has_global_role,
 //     not by inspecting current_user.tool (M1).
-var userRecordType = predicate.RecordType{
-	"id":   predicate.StringType,
-	"tool": predicate.StringType,
-}
+//
+// Aliased to [predicatefns.CurrentUserType] rather than redeclared:
+// affordance `when:` and a query condition are one language to the
+// operator writing them, so a field added to one and not the other
+// would be a silent divergence between two surfaces that look
+// identical. This package still binds the VALUE itself (bindings.go),
+// because its identity comes from its own resolver rather than the
+// query-identity context.
+var userRecordType = predicatefns.CurrentUserType
 
 // buildEnv constructs the predicate environment for one entity type:
 // the `entity` record (materialized from the metamodel), `current_user`,
@@ -59,6 +64,14 @@ func buildEnv(meta *metamodel.Metamodel, entityType string) (*predicate.Env, err
 		if err := env.DeclareFunc(f.name, f.sig); err != nil {
 			return nil, err
 		}
+	}
+	// The current-user sugar comes from the shared package so an
+	// affordance `when:` and a query condition mean the same thing by
+	// the same code. Note this env deliberately does NOT take the whole
+	// predicatefns stdlib (no match/regex/today) — the ACL surface is
+	// intentionally narrower.
+	if err := predicatefns.DeclareCurrentUserFuncs(env); err != nil {
+		return nil, err
 	}
 	return env, nil
 }

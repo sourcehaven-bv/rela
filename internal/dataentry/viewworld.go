@@ -133,18 +133,25 @@ func (w viewWorld) isDefault() bool { return !w.denied && w.scope.IsDefaultWorld
 // by a check that does not consult the world.
 
 func (h *viewsHandler) viewEntry(
-	ctx context.Context, entryID string, w viewWorld,
+	ctx context.Context, entry entityRef, w viewWorld,
 ) (*entityPkg.Entity, error) {
+	entryID := entry.ID
 	if w.denied {
 		// Byte-identical to a permitted world in which the entity has no
 		// face: `_world_absent` over the default face. That is the only
 		// answer that does not disclose the denial.
+		//
+		// An EXPLICIT address gets the same answer: the world grant must not
+		// be bypassable by spelling the face (see visibleReader.getVisibleRef).
 		return nil, errNoFaceInWorld
 	}
-	if w.isDefault() {
-		e, err := h.store.GetEntity(ctx, entryID)
+	if w.isDefault() || entry.Explicit {
+		// An explicit address (`ID@face`) is served literally under every
+		// world — the caller named the row, so there is nothing to resolve
+		// (see entityRef). Under the default world every address is literal.
+		e, err := h.store.GetEntityState(ctx, entry.ID, entry.Face)
 		if err != nil {
-			return nil, errViewEntryNotFound(entryID)
+			return nil, errViewEntryNotFound(entry.String())
 		}
 		// The row gate one layer up cleared the ENTITY; it says nothing about
 		// which FACE this principal may read (TKT-O7R2A1). Without this the
@@ -254,40 +261,31 @@ func (h *viewsHandler) loadViewEntities(
 	}
 	byID := make(map[string]*entityPkg.Entity, len(ids))
 
-	if w.isDefault() {
-		// Point reads, as before. The default world has no chain to resolve, so
-		// a batch query would buy nothing and would change the error handling
-		// of a path this ticket must leave byte-identical.
-		for _, id := range ids {
-			if _, seen := byID[id]; seen {
-				continue
-			}
-			if e, err := h.store.GetEntity(ctx, id); err == nil {
-				byID[id] = e
-			}
+	// ONE batched read for every world, the default one included
+	// (TKT-1U8XYN): the default world's query carries a zero WorldScope, so
+	// the store serves default rows exactly as the former per-id GetEntity
+	// loop did, without a round-trip per collected id. An id the store no
+	// longer has is simply absent, as the per-id not-found was.
+	unique := make([]string, 0, len(ids))
+	seen := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		if _, dup := seen[id]; dup {
+			continue
 		}
-	} else {
-		unique := make([]string, 0, len(ids))
-		seen := make(map[string]struct{}, len(ids))
-		for _, id := range ids {
-			if _, dup := seen[id]; dup {
-				continue
-			}
-			seen[id] = struct{}{}
-			unique = append(unique, id)
+		seen[id] = struct{}{}
+		unique = append(unique, id)
+	}
+	for e, err := range h.store.ListEntities(ctx, store.EntityQuery{
+		IDs:   unique,
+		World: w.scope,
+	}) {
+		if err != nil {
+			slog.Warn("dataentry: view traversal: loading collected entities failed; "+
+				"collection truncated",
+				"world", w.name, "ids", len(unique), "err", err)
+			break
 		}
-		for e, err := range h.store.ListEntities(ctx, store.EntityQuery{
-			IDs:   unique,
-			World: w.scope,
-		}) {
-			if err != nil {
-				slog.Warn("dataentry: view traversal: world resolution failed; "+
-					"collection truncated",
-					"world", w.name, "ids", len(unique), "err", err)
-				break
-			}
-			byID[e.ID] = e
-		}
+		byID[e.ID] = e
 	}
 
 	out := make([]*entityPkg.Entity, 0, len(byID))
@@ -427,10 +425,9 @@ func (h *viewsHandler) writeWorldAbsentView(
 	m := h.schema().Meta
 	def := m.Entities[e.Type]
 	resp := v1.ViewResponse{
-		Entry:           h.serializer.forWire(ctx, e, rels, m, def.GetPlural(e.Type)),
-		Sections:        []v1.ViewSection{},
-		WorldAbsent:     true,
-		WorldAbsentName: worldFromContext(ctx).name,
+		Entry:       h.serializer.forWire(ctx, e, rels, m, def.GetPlural(e.Type)),
+		Sections:    []v1.ViewSection{},
+		WorldAbsent: true,
 	}
 	writeV1JSON(w, http.StatusOK, resp)
 }

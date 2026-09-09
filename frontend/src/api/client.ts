@@ -1,5 +1,6 @@
 import axios, { type AxiosInstance, type AxiosResponse } from 'axios'
 import { toApiError } from './errors'
+import { apiUrl } from './base'
 
 // The error types and helpers live in errors.ts; re-export so existing
 // `from '@/api'` / `from '@/api/client'` importers keep working.
@@ -10,7 +11,7 @@ class ApiClient {
 
   constructor() {
     this.client = axios.create({
-      baseURL: '/api/v1',
+      baseURL: apiUrl('/api/v1'),
       headers: {
         'Content-Type': 'application/json',
       },

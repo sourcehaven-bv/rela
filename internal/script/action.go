@@ -166,6 +166,22 @@ func CheckActionScriptExists(projectRoot, scriptPath string) error {
 	return err
 }
 
+// ReadActionScript returns an action script's source, for callers that want to
+// INSPECT it at config-load time rather than run it.
+//
+// Same load as [CheckActionScriptExists] — which already reads the whole body
+// and throws it away — differing only in handing the bytes back. Two functions
+// rather than one because the two callers want different things from a
+// failure: existence-checking is fatal at boot, whereas a lint that cannot read
+// a script should stay quiet rather than block startup over a file it was only
+// going to look at.
+//
+// Nil: never returns a nil error with an empty body for a readable script; an
+// empty script file yields ("", nil).
+func ReadActionScript(projectRoot, scriptPath string) (string, error) {
+	return loadActionScript(projectRoot, scriptPath)
+}
+
 // openLocalScript loads a script file from {projectRoot}/{subdir}/{scriptPath}
 // using os.OpenRoot for traversal-resistant access. Returns the opened root
 // (which the caller must Close), the script content, and any error.

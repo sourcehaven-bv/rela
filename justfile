@@ -35,13 +35,60 @@ build-server-e2e: build-frontend-e2e
 build-desktop: build-frontend
     @echo "Building rela-desktop..."
     @mkdir -p {{build_dir}}
-    CGO_ENABLED=1 CGO_LDFLAGS="-framework UniformTypeIdentifiers" go build -tags desktop,production -trimpath -ldflags "-s -w" -o {{build_dir}}/rela-desktop ./cmd/rela-desktop
+    CGO_ENABLED=1 CGO_LDFLAGS="-framework UniformTypeIdentifiers" go build -tags production -trimpath -ldflags "-s -w" -o {{build_dir}}/rela-desktop ./cmd/rela-desktop
+
+# Build and install the desktop app into /Applications
+[macos]
+install-desktop: build-desktop
+    #!/usr/bin/env bash
+    # Assembles the same .app bundle the release workflow builds — binary +
+    # .icns + Info.plist, ad-hoc signed — then registers it with Launch
+    # Services so .rela bundles open with it. Ad-hoc signing (-s -) matches
+    # CI: enough to run locally, but NOT enough for native notifications,
+    # which need a real Developer ID.
+    set -euo pipefail
+    APP="/Applications/Rela Desktop.app"
+    if pgrep -f "Rela Desktop.app" >/dev/null 2>&1; then
+        echo "Quitting the running Rela Desktop..."
+        osascript -e 'quit app "Rela Desktop"' 2>/dev/null || killall rela-desktop 2>/dev/null || true
+        sleep 2
+    fi
+    echo "Installing to $APP..."
+    rm -rf "$APP"
+    mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+    cp {{build_dir}}/rela-desktop "$APP/Contents/MacOS/rela-desktop"
+    cp build/package/macos/rela-desktop.icns "$APP/Contents/Resources/"
+    sed "s/VERSION_PLACEHOLDER/dev/g" build/package/macos/Info.plist > "$APP/Contents/Info.plist"
+    codesign --force --deep -s - "$APP"
+    /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$APP"
+    touch "$APP"
+    echo "Installed. Open from /Applications, or: open -a 'Rela Desktop'"
+
+# Build and install the desktop app into LOCALAPPDATA
+[windows]
+install-desktop: build-frontend
+    #!/usr/bin/env bash
+    # Windows needs no CGO (Wails v3 defaults CGO_ENABLED=0 there) and has no
+    # bundle format, so this does not reuse build-desktop's macOS-only flags.
+    set -euo pipefail
+    DEST="${LOCALAPPDATA:-$HOME/AppData/Local}/Rela Desktop"
+    echo "Installing to $DEST..."
+    mkdir -p "$DEST"
+    CGO_ENABLED=0 go build -tags production -trimpath -ldflags "-s -w" \
+        -o "$DEST/rela-desktop.exe" ./cmd/rela-desktop
+    echo "Installed to $DEST/rela-desktop.exe"
+    echo "File associations need the MSI (build/package/windows/rela-desktop.wxs)."
+
+# Desktop builds target macOS and Windows only
+[linux]
+install-desktop:
+    @echo "Linux is not a desktop target — see .github/workflows/release.yml." && exit 1
 
 # Build the desktop app with debug/devtools support for E2E testing
 build-desktop-debug: build-frontend
     @echo "Building rela-desktop (debug)..."
     @mkdir -p {{build_dir}}
-    CGO_ENABLED=1 CGO_LDFLAGS="-framework UniformTypeIdentifiers" go build -tags desktop -o {{build_dir}}/rela-desktop ./cmd/rela-desktop
+    CGO_ENABLED=1 CGO_LDFLAGS="-framework UniformTypeIdentifiers" go build -o {{build_dir}}/rela-desktop ./cmd/rela-desktop
 
 # Build the PostgreSQL-backed CLI binary (rela-postgres)
 build-cli-postgres:
@@ -486,20 +533,44 @@ _icon-pngs:
         rsvg-convert -w $size -h $size -b '#031b75' {{logo_svg}} -o {{icon_tmp}}/icon_${size}.png; \
     done
 
+# Generate the macOS icon art: a rounded-rect ("squircle") on transparent
+# margin. macOS draws app icons inside its own grid, so full-bleed art gets
+# inset again and reads as a small square inside a larger one. Apple's grid
+# puts a rounded-rect at 824/1024 of the canvas, so the art is scaled to ~80%
+# and centred, with the remaining ~10% each side left transparent.
+#
+# Windows and Linux want full-bleed art and keep using the _icon-pngs output.
+_icon-macos-pngs: _icon-pngs
+    @echo "Generating macOS squircle PNGs..."
+    @for size in 16 32 64 128 256 512 1024; do \
+        inner=$(( size * 824 / 1024 )); \
+        radius=$(( inner * 2237 / 10000 )); \
+        magick {{icon_tmp}}/icon_${size}.png -alpha set -resize ${inner}x${inner}! \
+            {{icon_tmp}}/art_${size}.png; \
+        magick -size ${inner}x${inner} xc:none -fill white \
+            -draw "roundrectangle 0,0,$((inner-1)),$((inner-1)),${radius},${radius}" \
+            {{icon_tmp}}/mask_${size}.png; \
+        magick {{icon_tmp}}/art_${size}.png {{icon_tmp}}/mask_${size}.png \
+            -alpha set -compose DstIn -composite \
+            -compose Over \
+            -background none -gravity center -extent ${size}x${size} \
+            {{icon_tmp}}/mac_${size}.png; \
+    done
+
 # Generate macOS .icns (requires macOS iconutil)
-_icon-icns: _icon-pngs
+_icon-icns: _icon-macos-pngs
     @echo "Generating macOS .icns..."
     @mkdir -p {{icon_tmp}}/rela-desktop.iconset
-    @cp {{icon_tmp}}/icon_16.png   {{icon_tmp}}/rela-desktop.iconset/icon_16x16.png
-    @cp {{icon_tmp}}/icon_32.png   {{icon_tmp}}/rela-desktop.iconset/icon_16x16@2x.png
-    @cp {{icon_tmp}}/icon_32.png   {{icon_tmp}}/rela-desktop.iconset/icon_32x32.png
-    @cp {{icon_tmp}}/icon_64.png   {{icon_tmp}}/rela-desktop.iconset/icon_32x32@2x.png
-    @cp {{icon_tmp}}/icon_128.png  {{icon_tmp}}/rela-desktop.iconset/icon_128x128.png
-    @cp {{icon_tmp}}/icon_256.png  {{icon_tmp}}/rela-desktop.iconset/icon_128x128@2x.png
-    @cp {{icon_tmp}}/icon_256.png  {{icon_tmp}}/rela-desktop.iconset/icon_256x256.png
-    @cp {{icon_tmp}}/icon_512.png  {{icon_tmp}}/rela-desktop.iconset/icon_256x256@2x.png
-    @cp {{icon_tmp}}/icon_512.png  {{icon_tmp}}/rela-desktop.iconset/icon_512x512.png
-    @cp {{icon_tmp}}/icon_1024.png {{icon_tmp}}/rela-desktop.iconset/icon_512x512@2x.png
+    @cp {{icon_tmp}}/mac_16.png   {{icon_tmp}}/rela-desktop.iconset/icon_16x16.png
+    @cp {{icon_tmp}}/mac_32.png   {{icon_tmp}}/rela-desktop.iconset/icon_16x16@2x.png
+    @cp {{icon_tmp}}/mac_32.png   {{icon_tmp}}/rela-desktop.iconset/icon_32x32.png
+    @cp {{icon_tmp}}/mac_64.png   {{icon_tmp}}/rela-desktop.iconset/icon_32x32@2x.png
+    @cp {{icon_tmp}}/mac_128.png  {{icon_tmp}}/rela-desktop.iconset/icon_128x128.png
+    @cp {{icon_tmp}}/mac_256.png  {{icon_tmp}}/rela-desktop.iconset/icon_128x128@2x.png
+    @cp {{icon_tmp}}/mac_256.png  {{icon_tmp}}/rela-desktop.iconset/icon_256x256.png
+    @cp {{icon_tmp}}/mac_512.png  {{icon_tmp}}/rela-desktop.iconset/icon_256x256@2x.png
+    @cp {{icon_tmp}}/mac_512.png  {{icon_tmp}}/rela-desktop.iconset/icon_512x512.png
+    @cp {{icon_tmp}}/mac_1024.png {{icon_tmp}}/rela-desktop.iconset/icon_512x512@2x.png
     @iconutil -c icns {{icon_tmp}}/rela-desktop.iconset -o build/package/macos/rela-desktop.icns
 
 # Generate Windows .ico (requires imagemagick)
