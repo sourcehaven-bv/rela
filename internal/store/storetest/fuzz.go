@@ -229,6 +229,8 @@ func FuzzCloneNestedValues(f *testing.F, factory FuzzFactory) {
 	f.Add("tags", 0)  // []string
 	f.Add("meta", 1)  // map[string]interface{}
 	f.Add("items", 2) // []interface{}
+	f.Add("\x00", 1)  // property key the shared rule rejects: NUL
+	f.Add("\xbc", 1)  // property key the shared rule rejects: invalid UTF-8
 
 	f.Fuzz(func(t *testing.T, propName string, valueType int) {
 		if entity.IsReservedEntityKey(propName) {
@@ -240,7 +242,11 @@ func FuzzCloneNestedValues(f *testing.F, factory FuzzFactory) {
 
 		e := entity.New("T-1", "ticket")
 
-		switch valueType % 3 {
+		// Go's % keeps the sign, so a negative valueType matched no case and
+		// the entity went in with NO property, making the clone assertions
+		// below vacuous. Same defect, fixed separately in
+		// FuzzPropertyValuesTypeZoo.
+		switch ((valueType % 3) + 3) % 3 {
 		case 0:
 			e.Properties[propName] = []string{"a", "b", "c"}
 		case 1:
@@ -249,7 +255,28 @@ func FuzzCloneNestedValues(f *testing.F, factory FuzzFactory) {
 			e.Properties[propName] = []any{"x", "y"}
 		}
 
-		require.NoError(t, s.CreateEntity(bg, e))
+		// Directional oracle — see createEntityOrSkip. A property key the
+		// shared rule rejects (NUL, invalid UTF-8) is a correct refusal, not
+		// a clone defect: assert the store refused for that reason and stop,
+		// rather than reporting the refusal as a crash. want is a pre-write
+		// clone so the oracle's input is independent of anything the store
+		// does to the map, matching FuzzPropertyValuesTypeZoo.
+		want := e.Clone()
+		err := s.CreateEntity(bg, e)
+		if ruleErr := storeutil.ValidateProperties(want.Properties); ruleErr != nil {
+			assert.ErrorContains(t, err, ruleErr.Error(),
+				"shared rule rejects key %q; every store must, for that reason", propName)
+			return
+		}
+		// A stricter backend may refuse a name the shared rule accepts —
+		// ValidateProperty's empty-and-"/" rule is enforced unevenly
+		// (BUG-CQYD5X). Tolerated, not asserted either way, so an accepted
+		// name still reaches the clone assertions below; skipping these
+		// names outright would drop live inputs this target does exercise,
+		// since it never calls PropertyValues, where that divergence lives.
+		if err != nil {
+			return
+		}
 
 		clone, err := s.GetEntity(bg, "T-1")
 		require.NoError(t, err)
