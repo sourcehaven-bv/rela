@@ -382,12 +382,40 @@ entity. The `editor` role from Step 4 holds `publish-policy`, so editors can
 publish. The permission is resolved per entity, so a role conferred through an
 ownership relation satisfies it without a global grant.
 
-The guard is the whole write check only for a copy into a non-bare face. A copy
-whose target is the **bare** face (a `revert` from `policy@published` back to
-`policy@draft`, say) is an edit of the draft, so the caller also needs the
-ordinary `update` grant on it. A copy into a different entity needs `create` on
-the target when it does not exist yet and `update` when it does, and a target
-that exists under another type is refused.
+For a guarded copy **between two faces of one entity**, the guard is the whole
+write check: the caller needs the guard permission and nothing else, in either
+direction. The operator wrote both endpoints in `schema.yaml`, so the caller
+chooses nothing, and the permission names exactly who may move that content.
+
+This is what lets the bare face be the *published* one: declare
+`bare_face: published`, keep the draft at `@draft`, and a reader without a face
+address gets the published text while the only route into it is the guarded
+promote. Requiring `update` as well would defeat that, since the same grant
+makes the face editable by hand.
+
+Everything else needs the ordinary write grant:
+
+- An **unguarded** same-entity copy. Only a non-bare target makes a guard
+  mandatory, so a `revert` from `policy@published` back to `policy@draft` can be
+  declared without one; that copy is an ordinary edit of the draft and needs
+  `update` on it.
+- A copy whose two endpoints are the **same face** (`from: policy`,
+  `to: policy`). It moves nothing between faces, so it is an ordinary in-place
+  edit however it is guarded.
+- A copy into a **different entity**, guard or not, because there the caller
+  names the target: `create` when it does not exist yet, `update` when it does.
+  A target that exists under another type is refused.
+
+The caller always needs read access to the source face. A guard says "you may
+perform this promotion", not "you may read this document".
+
+`fields: all` is a **full replace** of the target face, not a merge. A
+same-entity copy reads the source unredacted, so it writes every property
+including ones the caller cannot see, and any property that exists only on the
+target is dropped. For a promote that is the point — publishing the whole
+document is the operation — but with `bare_face: published` the target is also
+the row ordinary writes and `unique:` keys live on. Carry any target-only
+property on the source face, or map fields explicitly instead.
 
 The following table lists the keys a copy accepts:
 
@@ -399,7 +427,7 @@ The following table lists the keys a copy accepts:
 | `on_success` | Optional. `message:` is the confirmation the web app shows (default: the copy's label; `{face}` names the face written); `landing:` is where it goes afterwards: `written` (default), `stay`, `{world: name}` or `{face: name}`. |
 | `fields` | `all` to copy every property, or a map of target property to source expression. A copy between different types requires an explicit map. |
 | `relations` | A map of relation type to `merge` (add missing edges) or `replace` (swap the target face's edges). Only `scope: content` relation types can be listed. An omitted type is not copied. |
-| `guard.permission` | The permission required on the source entity. **Required** when `to` names a non-bare face. |
+| `guard.permission` | The permission required on the source entity. **Required** when `to` names a non-bare face. On a copy between two faces of one entity it replaces the ordinary `update`/`create` check. |
 
 The loader enforces several rules so that a definition that resolves wrongly
 never reaches a reader. A copy into a non-bare face without a `guard.permission`

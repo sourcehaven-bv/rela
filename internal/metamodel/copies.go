@@ -148,6 +148,12 @@ func validateCopy(m *Metamodel, name string, def CopyDef) []string {
 	// definition into a guarded face would make the whole face writable by
 	// anyone who can name the definition, which is the opposite of what
 	// declaring it was supposed to buy.
+	//
+	// It is also the only way such a definition can ever be authorized:
+	// nobody holds `update` on a guarded face by design, so the ordinary
+	// write check can never pass there and an unguarded definition would be
+	// dead on arrival. Refusing at load says so, instead of leaving the
+	// operator a copy that always returns 403.
 	targetsGuardedFace := to.Face != "" && StoredFace(m, to.Type, to.Face) != ""
 	if targetsGuardedFace && def.Guard.Permission == "" {
 		bad("targets the guarded face %q@%q but declares no `guard: {permission: ...}` — "+
