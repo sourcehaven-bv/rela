@@ -501,3 +501,41 @@ type denyAllACL struct{ acl.NopACL }
 func (denyAllACL) AuthorizeWrite(_ context.Context, _ acl.WriteRequest) acl.Decision {
 	return acl.Decision{Allow: false, RuleKind: "test", Reason: "denied for test"}
 }
+
+// TestCopiesForSource_GuardedCopyIntoTheBareFaceIsOffered is the affordance
+// half of the guard-is-the-authorization rule.
+//
+// `unpublish-page` is guarded and targets the BARE face. The write check used
+// to key its same-entity exemption on the target face rather than on the
+// guard, so this copy demanded `update` on the type — and under a read-only
+// ACL the button was both refused and, because the hint runs the real
+// authorization path, shown as disabled. A deployment whose bare face is the
+// ADOPTED text has no other route into it, so that was the whole control
+// becoming unusable rather than one button greying out.
+func TestCopiesForSource_GuardedCopyIntoTheBareFaceIsOffered(t *testing.T) {
+	ctx := context.Background()
+	mgr, st := newCopyListManager(t, allowGuard{allow: true}, withACL(acl.ReadOnlyACL{}))
+	seedPage(ctx, t, st)
+	if err := st.CreateEntity(ctx, &entity.Entity{
+		ID: "PAGE-1", Type: "page", Face: "published",
+		Properties: map[string]any{"title": "Published"},
+	}); err != nil {
+		t.Fatalf("seed published face: %v", err)
+	}
+
+	offers := mustOffers(ctx, t, mgr, "page", "published", "PAGE-1")
+	if len(offers) != 1 || offers[0].Name != "unpublish-page" {
+		t.Fatalf("expected the unpublish offer, got %v", offerNames(offers))
+	}
+	if !offers[0].Allowed {
+		t.Errorf("a guarded copy into the bare face is authorized by its guard; "+
+			"got Allowed=false reason=%q", offers[0].Reason)
+	}
+
+	// The hint must agree with the write, as RULING 11 requires.
+	if _, err := mgr.CopyState(ctx, entitymanager.CopyRequest{
+		Definition: "unpublish-page", SourceID: "PAGE-1",
+	}); err != nil {
+		t.Errorf("the write must agree with the hint; got %v", err)
+	}
+}
