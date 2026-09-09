@@ -828,18 +828,40 @@ func (s *dropEntitiesStep) Run(ctx context.Context, x *Exec) (StepResult, error)
 			if errors.Is(err, store.ErrNotFound) {
 				continue
 			}
+			// A FAILED cascade still leaves relations off disk: the store
+			// reports what it managed to remove ALONGSIDE the error, and
+			// those rows are gone whether or not this step continues. Capture
+			// them before returning, or the migration's audit trail denies a
+			// deletion that really happened (TKT-A23L87) -- the same omission
+			// this ticket fixes on the entitymanager paths.
+			captureCascaded(ctx, x, del, &res)
 			return res, err
 		}
-		for _, r := range del.DeletedRelations {
-			// The relation is already gone (the store cascade-deleted it);
-			// capture is best-effort here, logged inside the capturer's
-			// error path via the returned error.
-			if cerr := x.captureRelationDelete(ctx, r); cerr != nil {
-				res.Notes = append(res.Notes, cerr.Error())
-			}
-		}
+		captureCascaded(ctx, x, del, &res)
 	}
 	return res, nil
+}
+
+// captureCascaded records the relations a cascade delete removed, on both the
+// success and the failure path -- the store reports what came off disk either
+// way, and a partially failed cascade is exactly when the audit trail matters
+// most (TKT-A23L87).
+//
+// Capture is best-effort: a failure appends to res.Notes rather than replacing
+// the caller's error, because when this runs on the failure path the cascade
+// error is the one worth surfacing.
+//
+// del is nil when the store failed before removing anything, and on a backend
+// whose Tx rolls the whole cascade back; both are a no-op.
+func captureCascaded(ctx context.Context, x *Exec, del *store.DeleteResult, res *StepResult) {
+	if del == nil {
+		return
+	}
+	for _, r := range del.DeletedRelations {
+		if cerr := x.captureRelationDelete(ctx, r); cerr != nil {
+			res.Notes = append(res.Notes, cerr.Error())
+		}
+	}
 }
 
 // ---- drop_relations ----
