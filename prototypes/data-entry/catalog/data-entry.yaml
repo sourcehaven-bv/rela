@@ -104,7 +104,7 @@ lists:
       - property: name
         label: "Product"
         sortable: true
-        link: true
+        link: detail
       - property: sku
         sortable: true
       - property: price
@@ -129,7 +129,7 @@ lists:
     title: "In Stock"
     columns:
       - property: name
-        link: true
+        link: detail
         sortable: true
       - property: sku
       - property: price
@@ -150,7 +150,7 @@ lists:
     title: "Low & Out of Stock"
     columns:
       - property: name
-        link: true
+        link: detail
         sortable: true
       - property: sku
       - property: availability
@@ -172,7 +172,7 @@ lists:
       - property: name
         label: "Brand"
         sortable: true
-        link: true
+        link: detail
       - property: country
         sortable: true
       - property: website

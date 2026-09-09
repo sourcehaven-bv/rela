@@ -1602,7 +1602,7 @@ If you see an error like this when running any rela command:
 
 ```text
 schema.yaml uses deprecated syntax:
-  - Rename id_type values: "sequential" → "auto", "string" → "manual"
+  - Rename id_type values: "auto" → "sequential", "string" → "manual"
 
 Run 'rela migrate' to update your project files.
 ```

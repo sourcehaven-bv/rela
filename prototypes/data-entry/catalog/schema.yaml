@@ -13,6 +13,7 @@ entities:
   product:
     label: Product
     id_prefix: "PRD-"
+    id_type: short
     properties:
       name:
         type: string
