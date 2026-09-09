@@ -3,6 +3,14 @@ name: No Session Trailer
 on:
   pull_request:
     types: [opened, synchronize, reopened, edited]
+  # Required for the merge queue: this check is required on develop, and a
+  # required check that never reports on the ephemeral `gh-readonly-queue/...`
+  # ref leaves the entry in AWAITING_CHECKS until the queue times out, then
+  # requeues it forever. On merge_group there is no pull_request payload, so
+  # the reusable workflow falls back to scanning HEAD~1..HEAD -- which is the
+  # squashed candidate commit, exactly what would land on develop.
+  merge_group:
+    branches: [main, develop]
 
 permissions:
   contents: read
