@@ -15,7 +15,7 @@ import (
 func facedMeta(rules ...metamodel.ValidationRule) *metamodel.Metamodel {
 	return &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{"guide": {
-			Label: "Guide", BareFace: "en",
+			Label:      "Guide",
 			Faces:      map[string]metamodel.FaceDef{"en": {}, "nl": {}},
 			Properties: map[string]metamodel.PropertyDef{"title": {Type: "string", Required: true}},
 		}},
@@ -23,15 +23,16 @@ func facedMeta(rules ...metamodel.ValidationRule) *metamodel.Metamodel {
 	}
 }
 
-// A validation rule must evaluate every content state, not only the bare row.
-// Before this, loadCandidates left EntityQuery.AllStates at its zero value —
-// "default-state rows only" — so a face missing a required property produced
-// ZERO violations and `rela validate` reported a clean run (TKT-4Y6CMV).
-func TestValidate_SeesNonBareFaces(t *testing.T) {
+// A validation rule must evaluate every content state, not only the row at the
+// zero coordinate. Before this, loadCandidates left EntityQuery.AllStates at
+// its zero value — "default-state rows only" — so a face missing a required
+// property produced ZERO violations and `rela validate` reported a clean run
+// (TKT-4Y6CMV).
+func TestValidate_SeesEveryFace(t *testing.T) {
 	ctx := t.Context()
 	st := memstore.New()
-	// Bare row is fine; the nl face is missing the required title.
-	mustCreate(t, st, &entity.Entity{ID: "G-1", Type: "guide",
+	// The en face is fine; the nl face is missing the required title.
+	mustCreate(t, st, &entity.Entity{ID: "G-1", Type: "guide", Face: entity.Face("en"),
 		Properties: map[string]any{"title": "ok"}})
 	mustCreate(t, st, &entity.Entity{ID: "G-1", Type: "guide", Face: entity.Face("nl"),
 		Properties: map[string]any{}})
@@ -55,30 +56,6 @@ func TestValidate_SeesNonBareFaces(t *testing.T) {
 	// two rows here and only one of them is in violation.
 	if got.Face != "nl" {
 		t.Errorf("Face = %q, want nl — a violation that cannot name its state is unactionable", got.Face)
-	}
-}
-
-// The bare face is stored as the EMPTY coordinate, so a violation on it must
-// report the type's declared bare_face name rather than an empty string —
-// otherwise the two rows are indistinguishable in the output.
-func TestValidate_BareFaceViolationNamesTheDeclaredFace(t *testing.T) {
-	ctx := t.Context()
-	st := memstore.New()
-	mustCreate(t, st, &entity.Entity{ID: "G-2", Type: "guide", Properties: map[string]any{}})
-
-	rule := metamodel.ValidationRule{Name: "title-required", EntityType: "guide", Then: []string{"title!="}}
-	meta := facedMeta(rule)
-	v := validator.New(st, meta, lua.ReadDeps{Meta: meta})
-
-	full, err := v.CheckRuleFull(ctx, rule)
-	if err != nil {
-		t.Fatalf("CheckRuleFull: %v", err)
-	}
-	if len(full.Violations) != 1 {
-		t.Fatalf("got %d violations, want 1", len(full.Violations))
-	}
-	if got := full.Violations[0].Face; got != "en" {
-		t.Errorf("Face = %q, want en (the declared bare_face), not the empty stored coordinate", got)
 	}
 }
 
@@ -116,7 +93,8 @@ func TestValidate_RuleScopedToOneFace(t *testing.T) {
 	ctx := t.Context()
 	st := memstore.New()
 	// Both states are missing the title; only the scoped one should be reported.
-	mustCreate(t, st, &entity.Entity{ID: "G-3", Type: "guide", Properties: map[string]any{}})
+	mustCreate(t, st, &entity.Entity{ID: "G-3", Type: "guide", Face: entity.Face("en"),
+		Properties: map[string]any{}})
 	mustCreate(t, st, &entity.Entity{ID: "G-3", Type: "guide", Face: entity.Face("nl"),
 		Properties: map[string]any{}})
 
@@ -132,19 +110,20 @@ func TestValidate_RuleScopedToOneFace(t *testing.T) {
 		t.Fatalf("CheckRuleFull: %v", err)
 	}
 	if len(full.Violations) != 1 {
-		t.Fatalf("got %d violations, want exactly 1 — the scope must exclude the bare face", len(full.Violations))
+		t.Fatalf("got %d violations, want exactly 1 — the scope must exclude the en face", len(full.Violations))
 	}
 	if got := full.Violations[0].Face; got != "nl" {
 		t.Errorf("Face = %q, want nl", got)
 	}
 }
 
-// Scoping to the BARE face works too, and must be written as its declared
-// name — the empty stored coordinate is not the spelling an operator uses.
-func TestValidate_RuleScopedToTheBareFace(t *testing.T) {
+// Scoping works the same way for either face — no face is privileged, so the
+// rule below is the mirror image of the one above and must behave identically.
+func TestValidate_RuleScopedToTheOtherFace(t *testing.T) {
 	ctx := t.Context()
 	st := memstore.New()
-	mustCreate(t, st, &entity.Entity{ID: "G-4", Type: "guide", Properties: map[string]any{}})
+	mustCreate(t, st, &entity.Entity{ID: "G-4", Type: "guide", Face: entity.Face("en"),
+		Properties: map[string]any{}})
 	mustCreate(t, st, &entity.Entity{ID: "G-4", Type: "guide", Face: entity.Face("nl"),
 		Properties: map[string]any{}})
 
@@ -175,7 +154,6 @@ entities:
   guide:
     label: Guide
     id_prefix: GUIDE
-    bare_face: en
     faces: {en: {}, nl: {}}
     properties:
       title: {type: string}

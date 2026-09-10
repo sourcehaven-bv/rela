@@ -535,7 +535,7 @@ func (s *Service) declaredFaceOf(e *entity.Entity) string {
 	if !ok || len(def.Faces) == 0 {
 		return ""
 	}
-	return metamodel.DeclaredFace(s.deps.Meta, e.Type, e.Face.String())
+	return e.Face.String()
 }
 
 // ruleAppliesToFace reports whether a rule scoped with `faces:` covers the

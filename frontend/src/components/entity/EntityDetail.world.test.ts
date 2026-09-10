@@ -316,7 +316,6 @@ describe('EntityDetail world binding', () => {
         label: 'Policy',
         properties: { title: { type: 'string', values: null } },
         faces: { draft: { label: 'Concept' }, published: { label: 'Vastgesteld', messages: { read_only: text } } },
-        bare_face: 'draft',
       } as never)
     }
 
@@ -330,13 +329,13 @@ describe('EntityDetail world binding', () => {
     })
 
     it("explains a read-only face in the operator's words, placeholders substituted", async () => {
-      seedReadOnlyText('Dit is {face} van {title}. Bewerken doe je in {bare_face}.')
+      seedReadOnlyText('Dit is {face} van {title}.')
       mockRoute.query = { world: 'published' }
       const w = await mountDetail(viewResponse(standIn()))
       rendersProof(w)
       const banner = w.find('.world-banner')
       expect(banner.exists()).toBe(true)
-      expect(banner.text()).toBe('Dit is Vastgesteld van Access Control Policy. Bewerken doe je in Concept.')
+      expect(banner.text()).toBe('Dit is Vastgesteld van Access Control Policy.')
       // No button: the face menu is the way to the bare face (issue 5).
       expect(banner.find('button').exists()).toBe(false)
     })
@@ -361,40 +360,34 @@ describe('EntityDetail world binding', () => {
 
     // `faces.<name>.messages.notice` (TKT-NLWZLX): text about the DOCUMENT
     // rather than the reader, so it renders whatever `_actions` says. The
-    // page it exists for is the writable draft — which `read_only` can never
+    // page it exists for is the WRITABLE draft — which `read_only` can never
     // reach, because a face writable by definition never satisfies its guard.
-    //
-    // `draft` is this fixture's BARE face, deliberately: an ISMS whose bare
-    // face is the concept is the canonical setup, and a notice gated on the
-    // served face being non-bare would be inert there.
     function seedFaceMessages(faces: Record<string, { label?: string; messages?: object }>) {
       useSchemaStore().entityTypes.set(entityType, {
         name: entityType,
         label: 'Policy',
         properties: { title: { type: 'string', values: null } },
         faces,
-        bare_face: 'draft',
       } as never)
     }
 
+    // The case the key exists for, and the one that isolates its single
+    // distinguishing guard: a face the reader MAY write. Reintroducing
+    // readOnlyNote's `mayUpdate` term would break this and nothing else.
     it('shows a notice on a face the reader MAY write', async () => {
       seedFaceMessages({
         draft: { label: 'Concept', messages: { notice: 'Nog niet vastgesteld.' } },
         published: { label: 'Vastgesteld' },
       })
-      // The bare draft, fully writable: Edit renders AND the notice does.
-      const w = await mountDetail(viewResponse())
+      const w = await mountDetail(viewResponse(writableFace({ _self: '/api/v1/policys/POL-1@draft' })))
       rendersProof(w)
       expect(button(w, 'Edit')).toBeDefined()
       expect(w.find('.world-banner').text()).toBe('Nog niet vastgesteld.')
     })
 
-    // The cell that isolates the two guards from each other. The writable
-    // case above is the BARE face and every non-bare case below is read-only,
-    // so without this one a wholesale copy of readOnlyNote's guard
-    // (`!servedFace || mayUpdate`) would report only that the bare case
-    // broke, never that writable-non-bare had stopped working.
-    it('shows a notice on a NON-BARE face the reader may write', async () => {
+    // A second writable face, on the language axis rather than the editorial
+    // one — the faces are peers, and a notice is about whichever is served.
+    it('shows a notice on a translated face the reader may write', async () => {
       seedFaceMessages({
         draft: { label: 'Concept' },
         nl: { label: 'Nederlands', messages: { notice: 'Vertaling in uitvoering.' } },
@@ -408,7 +401,7 @@ describe('EntityDetail world binding', () => {
 
     it('renders nothing when the face declares no notice', async () => {
       seedFaceMessages({ draft: { label: 'Concept' }, published: { label: 'Vastgesteld' } })
-      const w = await mountDetail(viewResponse())
+      const w = await mountDetail(viewResponse(writableFace({ _self: '/api/v1/policys/POL-1@draft' })))
       rendersProof(w)
       expect(w.find('.world-banner').exists()).toBe(false)
     })
@@ -418,7 +411,7 @@ describe('EntityDetail world binding', () => {
         draft: { label: 'Concept', messages: { notice: '{face} van {title}' } },
         published: { label: 'Vastgesteld' },
       })
-      const w = await mountDetail(viewResponse())
+      const w = await mountDetail(viewResponse(writableFace({ _self: '/api/v1/policys/POL-1@draft' })))
       rendersProof(w)
       // The face LABEL and the display title, not the coordinate or the id.
       expect(w.find('.world-banner').text()).toBe('Concept van Access Control Policy')
@@ -457,41 +450,38 @@ describe('EntityDetail world binding', () => {
       expect(w.find('.world-banner').text()).toBe('Alleen dit')
     })
 
-    // A type declaring `faces:` but no `bare_face:` is legal (the loader
-    // permits it; the docs call it "rarely intended"). Its bare row is then
-    // in NO declared face, so there is nothing for a per-face notice to be
-    // about — `onScreenFace` resolves to '' and the banner stays away.
+    // The only remaining way a detail page has no face on screen: a type that
+    // declares no `faces:` at all. BUG-HC6I2T removed `bare_face`, so a faced
+    // type stores no bare row and always serves a named face — `!servedFace`
+    // now means "faceless type", nothing else.
     //
-    // Worth pinning rather than leaving to `?? ''`: the tempting "fix" is to
-    // fall back to the first declared face, which is what `DeclaredFace` in
-    // copies.go removed for depending on map order. Here it would print one
-    // arbitrary face's legal status onto a row that holds no face at all.
-    it('says nothing on a bare row of a faced type that names no bare_face', async () => {
+    // Worth pinning rather than leaving to the falsy check: the tempting
+    // "fix" is to fall back to a first declared face, which is what
+    // `DeclaredFace` was removed for (it depended on map order). Here that
+    // would print one arbitrary face's legal status onto a page whose type
+    // has no faces to speak of.
+    it('says nothing on a type that declares no faces', async () => {
       useSchemaStore().entityTypes.set(entityType, {
         name: entityType,
         label: 'Policy',
         properties: { title: { type: 'string', values: null } },
-        faces: {
-          draft: { label: 'Concept', messages: { notice: 'SHOULD-NOT-RENDER' } },
-          published: { label: 'Vastgesteld', messages: { notice: 'NOR-THIS' } },
-        },
-        // No bare_face: the bare id addresses no declared face.
+        // No `faces:` — one unnamed state, stored under the bare id.
       } as never)
       const w = await mountDetail(viewResponse())
       rendersProof(w)
-      expect(w.text()).not.toContain('SHOULD-NOT-RENDER')
-      expect(w.text()).not.toContain('NOR-THIS')
       expect(w.find('.world-banner').exists()).toBe(false)
 
-      // Positive control: the SAME fixture with a bare_face does render, so
-      // the absence above is about the missing bare_face and not about a
-      // fixture that could never have produced a banner.
+      // Positive control: the same mount against a FACED type does render,
+      // so the absence above is about the type declaring no faces rather
+      // than a fixture that could never have produced a banner.
       seedFaceMessages({
-        draft: { label: 'Concept', messages: { notice: 'SHOULD-NOT-RENDER' } },
+        draft: { label: 'Concept', messages: { notice: 'RENDERS-HERE' } },
         published: { label: 'Vastgesteld' },
       })
-      const control = await mountDetail(viewResponse())
-      expect(control.find('.world-banner').text()).toBe('SHOULD-NOT-RENDER')
+      const control = await mountDetail(
+        viewResponse(writableFace({ _self: '/api/v1/policys/POL-1@draft' })),
+      )
+      expect(control.find('.world-banner').text()).toBe('RENDERS-HERE')
     })
 
     it('says nothing about a face when the world served none', async () => {
@@ -506,7 +496,10 @@ describe('EntityDetail world binding', () => {
         messages: { absent: 'Geen vastgestelde versie.' },
       } as never)
       mockRoute.query = { world: 'published' }
-      const w = await mountDetail({ ...viewResponse(), _world_absent: true } as ViewResponse)
+      const w = await mountDetail({
+        ...viewResponse(writableFace({ _self: '/api/v1/policys/POL-1@draft' })),
+        _world_absent: true,
+      } as ViewResponse)
       rendersProof(w)
       expect(w.text()).not.toContain('SHOULD-NOT-RENDER')
       // Positive control: the absent banner DID render, so the absence above
@@ -720,7 +713,6 @@ describe('EntityDetail world binding', () => {
         label: 'Policy',
         properties: { title: { type: 'string', values: null } },
         faces: { draft: {}, published: { label: 'Vastgesteld' } },
-        bare_face: 'draft',
       } as never)
       invokeCopyMock.mockResolvedValue(copyResult())
       const w = await mountDetail(viewResponse({
@@ -1251,10 +1243,10 @@ describe('EntityDetail world binding', () => {
       })
     })
 
-    it('names the default world for a bare face that has NO explicit address', async () => {
-      // A type with faces but no `bare_face` name: the bare row is literal
-      // only in the default world, spelled `default` when a configured
-      // default would otherwise apply.
+    it('names the default world for a row with NO explicit address', async () => {
+      // A row at the zero coordinate — the single state of a type declaring
+      // no faces. Its bare address is literal only in the default world,
+      // spelled `default` when a configured default would otherwise apply.
       useSchemaStore().defaultWorld = 'published'
       mockRoute.query = { world: 'site-nl' }
       const w = await mountDetail(viewResponse({

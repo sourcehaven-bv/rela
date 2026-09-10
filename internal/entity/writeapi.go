@@ -21,6 +21,17 @@ type CreateOptions struct {
 	Prefix string
 	// Variant selects an entity template variant (empty = default).
 	Variant string
+	// Face is the content state to create, for a type that declares
+	// `faces:`. Required for such a type and rejected for one without
+	// (BUG-HC6I2T): a faced type stores no row at the zero coordinate, so
+	// there is no default to fall back to and a silently-chosen face would
+	// be a write to a row the caller did not name.
+	//
+	// The value is the face as declared in `faces:`, which IS its stored
+	// coordinate. Callers resolve it from the address they were given; they
+	// must never derive it from a world, because a world resolves through a
+	// chain with a fallback and a write must name its target directly.
+	Face Face
 	// SkipAutomation suppresses on-create automations. Defaults to false.
 	SkipAutomation bool
 }

@@ -203,9 +203,10 @@ func (s *FSStore) HighestID(_ context.Context, prefix string) (int, error) {
 	highest := 0
 	pfx := prefix + "-"
 	for _, meta := range s.entities {
-		if !meta.Face.IsDefault() {
-			continue // states share the base id's number
-		}
+		// Every face is scanned. States share their family's number, so
+		// seeing a family more than once is harmless — max is idempotent —
+		// while skipping non-default faces made a faced type invisible to
+		// the generator entirely (BUG-HC6I2T).
 		id := meta.ID
 		if !strings.HasPrefix(id, pfx) {
 			continue
@@ -253,6 +254,19 @@ func (s *FSStore) PropertyValues(_ context.Context, property string, limit int) 
 // family, not one exact key (a rename may change its own casing, and
 // its states must not self-collide either). Wider than the historical
 // exact-key skip on purpose.
+// familyMember returns any stored state of a bare id, for the invariants
+// that need one row of the family and do not care which (TKT-DOFYR1). Map
+// iteration order makes the choice arbitrary, which is sound precisely
+// because every state of a family shares the property being read.
+func familyMember(index map[string]entityMeta, id string) (entityMeta, bool) {
+	for _, m := range index {
+		if m.ID == id {
+			return m, true
+		}
+	}
+	return entityMeta{}, false
+}
+
 func idTaken(index map[string]entityMeta, id, except string) bool {
 	folded := storeutil.FoldID(id)
 	exceptFolded := ""
@@ -291,17 +305,13 @@ func (s *FSStore) createEntity(_ context.Context, e *entity.Entity) error {
 			return store.ErrConflict
 		}
 	} else {
-		// Row-family invariants (TKT-DOFYR1, design doc §6): a
-		// non-default state requires its default row (no headless
-		// states) and must share the family's type. Enforced at the
-		// store so every direct writer hits one choke point; the LOAD
-		// path deliberately tolerates violations found on disk.
-		def, ok := s.entities[e.ID]
-		if !ok {
-			return storeutil.HeadlessStateError(e.ID)
-		}
-		if def.Type != e.Type {
-			return storeutil.StateTypeMismatchError(e.ID, e.Face, e.Type, def.Type)
+		// Row-family invariant (TKT-DOFYR1, design doc §6): a state must
+		// share the family's type. Enforced at the store so every direct
+		// writer hits one choke point. Any sibling answers, since no face
+		// heads a family (BUG-HC6I2T removed the rule that a state required
+		// the zero-coordinate row).
+		if sib, ok := familyMember(s.entities, e.ID); ok && sib.Type != e.Type {
+			return storeutil.StateTypeMismatchError(e.ID, e.Face, e.Type, sib.Type)
 		}
 		if _, exists := s.entities[key]; exists {
 			return store.ErrConflict
@@ -633,17 +643,6 @@ func (s *FSStore) deleteEntityState(
 	meta, ok := s.entities[key]
 	if !ok {
 		return nil, store.ErrNotFound
-	}
-
-	// Refuse to orphan the family: a family with no default row has no
-	// defined meaning and world fallback resolves against it. Deleting the
-	// LAST face is fine — nothing is left to orphan.
-	if p.IsDefault() {
-		if n := s.familySize(id); n > 1 {
-			return nil, fmt.Errorf(
-				"%w: cannot delete the default face of %s while %d other state(s) remain",
-				store.ErrInvalidQuery, id, n-1)
-		}
 	}
 
 	e, err := s.loadEntityMeta(meta)

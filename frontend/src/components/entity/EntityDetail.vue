@@ -923,27 +923,14 @@ function faceLabelOf(declared: string): string {
   return faces[declared]?.label || declared
 }
 
-// A face's display label by STORED coordinate ('' is the bare face), for the
-// copy result, which reports what it wrote as stored.
+// A face's display label by its coordinate, for the copy result, which
+// reports what it wrote.
 function faceLabel(stored: string): string {
   return schemaStore.faceLabel(props.entityType, stored) || stored
 }
 
-const bareFaceLabel = computed<string>(() => schemaStore.faceLabel(props.entityType, ''))
-
-// The face on screen by DECLARED name, bare face included — the vocabulary
-// `faces:` is keyed by. `servedFace` is '' for a bare-addressed row, which is
-// an address fact, not a claim that no face is on screen; the type's
-// `bare_face` names the one that is. '' only for a type that declares faces
-// but no `bare_face` (legal, rarely intended), where no face IS on screen.
-//
-// Declared above `textVars` so `{face}` and any note about that face resolve
-// through the SAME expression rather than two copies kept in step by hand.
-const onScreenFace = computed<string>(() => servedFace.value || (typeDef.value?.bare_face ?? ''))
-
 const textVars = computed<WorldTextVars>(() => ({
-  face: faceLabelOf(onScreenFace.value),
-  bare_face: bareFaceLabel.value,
+  face: faceLabelOf(servedFace.value),
   world: world.value,
   title: entryTitle.value,
 }))
@@ -964,12 +951,14 @@ const readOnlyNote = computed<string>(() => {
 // The note about the DOCUMENT on screen, in the operator's words for its
 // face (`faces.<name>.messages.notice`) — "this is a draft, not in force".
 //
-// Deliberately NOT gated on `mayUpdate`, which is what separates it from
-// readOnlyNote above: a draft is not in force for the editor rewriting it
+// Deliberately NOT gated on `mayUpdate`, which is the ONE thing separating it
+// from readOnlyNote above: a draft is not in force for the editor rewriting it
 // either, and a face writable by definition could never satisfy that guard.
-// Nor is it gated on the face being NON-bare, which readOnlyNote is: an ISMS
-// whose bare face IS the draft is the canonical case, and skipping it there
-// would leave the feature inert on the very page it exists for.
+// That is the whole reason this is a second key rather than a relaxed first.
+//
+// `!servedFace` means the type declares no faces at all (BUG-HC6I2T removed
+// `bare_face`, so a faced type stores no bare row and always serves a named
+// face). No face on screen, nothing for a per-face note to be about.
 //
 // The `worldAbsent` term is BELT-AND-BRACES, not the mechanism: the banner's
 // own `v-if` already gates on `!worldAbsent`, so removing this term changes
@@ -977,8 +966,8 @@ const readOnlyNote = computed<string>(() => {
 // caller rendering this note outside that banner inherits the silence rather
 // than announcing a face the world never served.
 const noticeNote = computed<string>(() => {
-  if (worldAbsent.value || !onScreenFace.value) return ''
-  const declared = typeDef.value?.faces?.[onScreenFace.value]
+  if (worldAbsent.value || !servedFace.value) return ''
+  const declared = typeDef.value?.faces?.[servedFace.value]
   return worldText(declared?.messages?.notice, textVars.value)
 })
 

@@ -361,6 +361,18 @@ func (s *flakyProbeStore) GetEntity(ctx context.Context, id string) (*entity.Ent
 	return s.Store.GetEntity(ctx, id)
 }
 
+// GetEntityState carries the same fault: ApplyEntity probes the face the body
+// names (BUG-HC6I2T), so stubbing GetEntity alone would inject nothing.
+func (s *flakyProbeStore) GetEntityState(
+	ctx context.Context, id string, p entity.Face,
+) (*entity.Entity, error) {
+	if id == s.failID && !s.failed {
+		s.failed = true
+		return nil, s.failErr
+	}
+	return s.Store.GetEntityState(ctx, id, p)
+}
+
 // TestApplyEntity_ExistenceProbeFailsClosed is the critical RR-review
 // regression: a transient (non-NotFound) error from the existence GetEntity
 // must abort, NOT be silently treated as "create" (which would authorize the

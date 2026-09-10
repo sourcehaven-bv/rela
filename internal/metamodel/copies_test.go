@@ -11,9 +11,8 @@ func copyFixture(copies map[string]CopyDef) *Metamodel {
 	m := &Metamodel{
 		Entities: map[string]EntityDef{
 			"page": {
-				Label:    "Page",
-				BareFace: "draft",
-				Faces:    map[string]FaceDef{"draft": {}, "published": {}},
+				Label: "Page",
+				Faces: map[string]FaceDef{"draft": {}, "published": {}},
 				Properties: map[string]PropertyDef{
 					"title":  {Type: "string"},
 					"status": {Type: "string"},

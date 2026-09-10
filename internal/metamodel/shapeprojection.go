@@ -56,14 +56,6 @@ type EntityShape struct {
 	// order the operator can mean something by, faces are addressed by name and
 	// their declaration order is not observable in stored data.
 	Faces []string `json:"faces,omitempty"`
-
-	// BareFace names which declared face the bare id addresses. It belongs in
-	// the shape for a reason the face list alone does not cover: it decides
-	// WHICH rows are stored under the zero coordinate. Repointing it at a
-	// different face relabels every existing bare row without touching the
-	// face list, which is the flat→faces trap — the content that was your only
-	// content silently becomes a different state.
-	BareFace string `json:"bare_face,omitempty"`
 }
 
 // PropertyShape is the data-shape projection of one property definition:
@@ -112,7 +104,6 @@ func (m *Metamodel) ShapeProjection() ShapeProjection {
 		es := EntityShape{
 			Properties: make(map[string]PropertyShape, len(def.Properties)),
 			Faces:      sortedKeys(def.Faces),
-			BareFace:   def.BareFace,
 		}
 		for pname, pdef := range def.Properties {
 			es.Properties[pname] = propertyShape(pdef)
@@ -189,7 +180,6 @@ func (p ShapeProjection) Hash() string {
 		h.str(name)
 		hashPropertyShapes(h, es.Properties)
 		h.strList(es.Faces)
-		h.str(es.BareFace)
 	}
 
 	h.str("relations")

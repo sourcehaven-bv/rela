@@ -21,10 +21,14 @@ type StateFinding struct {
 	//     when some OTHER type declares `draft`. Remedy is the future
 	//     data migration system (FEAT-T3EF5A, DEC-0VGTF3) — detection
 	//     only.
-	//   - "headless-family": states exist with no default row (the
-	//     write path rejects this; the load path tolerates it on disk).
-	//   - "state-type-mismatch": a state's type diverges from its
-	//     family's default (same tolerance rationale).
+	//   - "state-type-mismatch": rows of one entity disagree about its
+	//     type. The write path refuses this at every face, so it can
+	//     only come from disk edits, which the load path tolerates.
+	//
+	// There is no "headless-family" finding. It reported a family with no
+	// zero-coordinate row, which was corrupt while one face was privileged
+	// by storage and is the ORDINARY shape of a faced entity now
+	// (BUG-HC6I2T) — the write path mandates it.
 	Code string `json:"code"`
 	// Subject is the face value (undeclared-face) or the bare
 	// entity id (family findings).
@@ -51,10 +55,14 @@ type stateRow struct {
 }
 
 // stateFamily groups one bare id's rows during the CheckStates scan.
+//
+// famType is read from the FIRST row seen, whichever face that is: every row
+// of a family shares its type, so any of them answers, and no face is
+// privileged (BUG-HC6I2T). Which row is first does not matter — a divergence
+// is reported the same way whichever side of it is taken as the baseline.
 type stateFamily struct {
-	defaultType string
-	hasDefault  bool
-	states      []stateRow
+	famType string
+	states  []stateRow
 }
 
 // collectStateFamilies scans raw storage truth into per-id families,
@@ -80,12 +88,10 @@ func (s *Service) collectStateFamilies(
 			families[h.ID] = f
 			order = append(order, h.ID)
 		}
-		if h.Face.IsDefault() {
-			f.hasDefault = true
-			f.defaultType = h.Type
-		} else {
-			f.states = append(f.states, stateRow{face: h.Face, typ: h.Type})
+		if f.famType == "" {
+			f.famType = h.Type
 		}
+		f.states = append(f.states, stateRow{face: h.Face, typ: h.Type})
 	}
 	sort.Strings(order)
 	return families, order, nil
@@ -168,7 +174,7 @@ func (s *Service) CheckStates(ctx context.Context, opts Options) ([]StateFinding
 					agg.examples = append(agg.examples, entity.FormatStateRef(id, st.face))
 				}
 			}
-			if f.hasDefault && st.typ != f.defaultType {
+			if st.typ != f.famType {
 				mismatched = append(mismatched, entity.FormatStateRef(id, st.face))
 			}
 		}
@@ -180,19 +186,7 @@ func (s *Service) CheckStates(ctx context.Context, opts Options) ([]StateFinding
 				Code: "state-type-mismatch", Subject: id, Count: len(mismatched),
 				Examples: mismatched[:min(len(mismatched), maxStateExamples)],
 				Detail: fmt.Sprintf("%d state(s) of entity %s diverge from its type %q",
-					len(mismatched), id, f.defaultType),
-			})
-		}
-		if !f.hasDefault {
-			examples := make([]string, 0, min(len(f.states), maxStateExamples))
-			for _, st := range f.states[:min(len(f.states), maxStateExamples)] {
-				examples = append(examples, entity.FormatStateRef(id, st.face))
-			}
-			findings = append(findings, StateFinding{
-				Code: "headless-family", Subject: id, Count: len(f.states),
-				Examples: examples,
-				Detail: fmt.Sprintf("entity %s has %d state(s) but no default state — "+
-					"the write path rejects this shape; it can only come from disk edits", id, len(f.states)),
+					len(mismatched), id, f.famType),
 			})
 		}
 	}

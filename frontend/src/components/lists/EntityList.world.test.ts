@@ -472,9 +472,9 @@ describe('EntityList world binding', () => {
           id: 'POL-4',
           type: entityType,
           properties: { title: 'Joiners Policy' },
-          _world: { name: 'editorial', face: '', via: 'fallback-default' },
+          _world: { name: 'editorial', face: 'draft', via: 'fallback-default' },
         },
-      ], '{bare_face}')
+      ], '{face}')
       expect(wrapper.text()).toContain('Joiners Policy')
 
       const badge = wrapper.find('.world-badge')

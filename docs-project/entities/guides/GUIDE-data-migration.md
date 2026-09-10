@@ -116,19 +116,50 @@ whole graph, so dependent computed properties cannot retain stale values.
 id — it is a separate field — so no id is rewritten and relations keep their
 endpoints, exactly as with `rename_entity_type`.
 
-Two things behave differently from an ordinary rename, both because the face
-named by `bare_face:` is stored as the *empty* coordinate rather than under its
-own name:
+A face's declared name is its stored coordinate, so a rename is always a
+named-to-named move and there are no special cases. A rename whose source and
+destination are the same name is a no-op and the step does nothing.
 
-- **Renaming the bare face** while it stays the bare face is a no-op in storage
-  terms: both spellings address the same coordinate, and the step does nothing.
-- **Renaming a named face onto the bare face is refused.** The store requires
-  that a face row cannot exist without its bare row, so the destination is
-  always occupied — which makes this a *merge*, not a rename. Decide which
-  content wins and express it as a drop plus a rename.
+A rename onto an occupied coordinate is refused: the entity has content at
+both, so this is a *merge* rather than a rename, and moving would destroy one
+side. Decide which content wins and express it as a drop plus a rename.
 
-A rename onto any other occupied coordinate is refused for the same reason: the
-entity has content at both, and moving would destroy one of them.
+### Adding or removing faces on a type that holds data
+
+Gaining or losing `faces:` needs a migration, and the classifier says so:
+`faces_introduced` and `faces_removed` are both needs-migration findings rather
+than drift.
+
+The reason is that a type declaring no faces keeps its single state at the
+**zero coordinate**, while a type declaring `faces:` keeps every state under a
+face name and nothing at the zero coordinate. Adding faces to a populated type
+therefore leaves every existing row at a coordinate that names no declared
+face. Nothing looks broken — no row moved and no value changed — which is
+exactly why the store will not adopt the shape on its own: only you can say
+which face the existing content became.
+
+`rename_face` cannot express this move. It requires a declared face name on
+both sides, and the zero coordinate is not one, so a project crossing this
+boundary with data in it needs the rows rewritten out of band before the new
+schema is adopted. Plan the change on an empty type where you can, and treat a
+populated one as a data-export-and-reimport rather than a step in a migration
+file.
+
+Removing faces is the mirror: rows sitting at named faces belong to no declared
+face afterwards, and the type's single state is a coordinate none of them
+occupies.
+
+Two consequences are worth checking at the same time, because neither produces
+a load error:
+
+- **Write grants in `acl.yaml` stop matching.** A bare `update: [policy]`
+  addresses the zero coordinate, so once `policy` declares faces the grant
+  reaches nothing. Rewrite it to name each face — `update: [policy@draft]` —
+  and run `rela acl audit`, which reports the bare form as
+  `B12-bare-grant-on-faced-type`.
+- **Creates must name a face.** A `POST` that omits one is refused with
+  `face_required` once the type is faced. See the
+  [Content States guide](content-states.md) for the request shape.
 
 ### The Lua escape hatch
 

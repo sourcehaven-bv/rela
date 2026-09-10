@@ -95,7 +95,7 @@ func luaReadClaim(dr *docRuntime, ls *lua.LState, wantVisible bool) int {
 	// from everyone, so the claim would hold against any policy — including one
 	// that grants the world. Checked against the RAW store, which is the only
 	// place "does this exist at all" can be answered without a gate.
-	if _, err := dr.store.GetEntity(dr.ctx, target); err != nil {
+	if _, err := seedRowOf(dr.ctx, dr.store, target); err != nil {
 		return dr.luaFail(ls, "%s{id=%q}: no such entity in the seeded graph. A row that does "+
 			"not exist is hidden from every principal, so this claim would pass against any "+
 			"policy. Seeded %s: %s", verb, target, typ, joinIDs(seededIDs(dr, typ)))
