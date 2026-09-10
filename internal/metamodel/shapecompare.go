@@ -507,3 +507,38 @@ func propertyShapesSimilar(a, b map[string]PropertyShape) bool {
 func (r *ShapeReport) add(tier ShapeTier, kind, subject, detail string) {
 	r.Deltas = append(r.Deltas, ShapeDelta{Tier: tier, Kind: kind, Subject: subject, Detail: detail})
 }
+
+// migrationDeltaKinds is every delta kind [CompareShapes] can raise at
+// [TierMigration] — the changes that cannot be adopted without an
+// operator-authored migration.
+//
+// It is a hand-maintained list, kept honest by
+// TestMigrationDeltaKinds_MatchesTheClassifier, which scans this file's own
+// r.add/addValueDelta call sites and fails when the two disagree. A scan
+// cannot BE the implementation (the kinds are string literals spread across
+// several comparison functions, some behind helpers), but it can prove the
+// list complete.
+//
+// Consumers use it to check that they can answer everything the classifier can
+// demand: internal/datamigration maps each kind to the step kinds that resolve
+// it, so a new kind cannot ship detection without either remediation or a
+// visible exemption.
+var migrationDeltaKinds = []string{
+	"bare_face_changed",
+	"bare_face_introduced",
+	"bare_face_removed",
+	"enum_values_replaced",
+	"property_format_changed",
+	"property_list_changed",
+	"property_type_changed",
+	"relation_cardinality_tightened",
+	"relation_endpoint_narrowed",
+	"relation_symmetry_changed",
+}
+
+// MigrationDeltaKinds returns every delta kind classified [TierMigration],
+// sorted. See [migrationDeltaKinds] for why the list is maintained by hand and
+// how it is kept in step with the classifier.
+func MigrationDeltaKinds() []string {
+	return slices.Clone(migrationDeltaKinds)
+}

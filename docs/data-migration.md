@@ -88,7 +88,7 @@ recovery mechanism, so a step that finds nothing left to do does nothing.
 | `rename_entity_type: {from, to}` | rewrites `type:` on every entity of the old type (IDs are unchanged) |
 | `rename_relation_type: {from, to}` | recreates each relation under the new type, then deletes the old (relation history starts a new lifetime) |
 | `rename_face: {entity, from, to}` | moves every row stored at one content state to another (IDs are unchanged) |
-| `confirm_face: {entity, property, mapping}` | confirms which content state the already-existing rows become when a type gains `bare_face:`; writes nothing |
+| `confirm_face: {entity, property?, mapping?}` | confirms which content state the already-existing rows become when a type gains `bare_face:`; writes nothing, and is **required** in any file spanning that change |
 | `map_values: {entity, property, mapping}` | remaps enum values (scalar and list properties); unmapped values are left and reported |
 | `set_default: {entity, property, value, only_missing}` | backfills a value (`only_missing` defaults to true) |
 | `recompute_computed: {entity}` | recomputes all materialized computed properties for an entity type in dependency order |
@@ -157,16 +157,41 @@ Two consequences worth stating plainly:
   face is refused, because rows cannot go there: a row can never leave the bare
   coordinate (the store refuses to delete a family's default row while a
   sibling exists, and refuses a named row with no default row under it). If a
-  value's rows belong somewhere else, this schema does not fit your data —
-  make that face the `bare_face:`, or separate those rows first with
-  `drop_entities`.
+  value's rows belong somewhere else, this schema does not fit your data — make
+  that face the `bare_face:`. There is no step that moves a subset of rows;
+  `drop_entities` deletes an entire entity type and is not a way to separate
+  them.
 - **Put it before any `drop_property` of the property it reads.** The wrong
   order is refused at parse time, since it would leave the step confirming
   nothing.
 
+When the type has no enum to key on, confirm the whole type at once:
+
+```yaml
+- confirm_face: {entity: article}
+```
+
+You get no per-value question, so this is the weaker form — use it when there
+genuinely is no property that encoded the old distinction, not to skip the
+check. `property:` and `mapping:` go together; giving one without the other is
+refused.
+
+**A file that spans this schema change and does not confirm it is rejected.**
+That is the point of the step: before it existed, such a file parsed, applied,
+advanced the marker and reported the schema in sync while every row silently
+changed state. `rela migrate gen` therefore drafts a real (uncommented)
+`confirm_face` step, pre-filled with the only answer the store permits. Your
+job when reviewing the draft is to notice when that answer is *wrong* and fix
+the schema.
+
 Assigning *different* rows to *different* faces is a separate operation: it
 needs a second row per entity rather than a move, so it is a copy, not a
 reassignment. That is not built yet.
+
+Repointing `bare_face:` between two faces that already exist
+(`bare_face_changed`) is not covered by this step either — the type already has
+named-face rows, so the newly-bare coordinate may already be occupied. Use
+`rename_face`, which detects that collision.
 
 ### The Lua escape hatch
 

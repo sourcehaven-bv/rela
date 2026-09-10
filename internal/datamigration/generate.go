@@ -170,22 +170,24 @@ func draftActiveStep(
 	}
 }
 
-// draftFaceStep emits the confirm_face skeleton for a bare_face delta.
+// draftFaceStep emits the confirm_face step for a bare_face_introduced delta.
 //
 // The delta means every existing row sits at the zero coordinate and takes on
 // the newly declared bare face. Nothing moves — the store keeps every entity on
 // its bare coordinate — so the migration's job is to have the operator CONFIRM
 // that the relabel is the intended one, value by value.
 //
-// Every value is pre-listed with the declared bare face already filled in,
-// because that is provably where those rows land. The point is not to make the
-// operator guess a destination: it is to make them look at each value and
-// decide whether "these rows are now <bare face>" is actually true. Where it is
-// not, the schema is wrong, and the comment says so.
+// Emitted LIVE, not commented, and that is forced rather than chosen:
+// validateDeltasResolved refuses a file spanning this delta with no
+// confirm_face step, so a commented skeleton would produce a draft that cannot
+// parse. The draft is therefore a real step pre-filled with the only answer
+// the store permits (every value becomes the declared bare face), under a TODO
+// telling the operator what to check before running it.
 //
-// Emitted COMMENTED. An unedited draft must not silently confirm a state nobody
-// looked at, and Generate round-trips its own output through ParseFile, so a
-// live step here would also have to be valid on sight.
+// That ordering matters for the defect this fixes. Applying an unreviewed draft
+// now confirms exactly what the schema already says; the operator's work is to
+// notice when that is WRONG — a value whose rows do not belong in the new bare
+// face — and change the schema. Previously there was nothing to notice.
 func draftFaceStep(w *strings.Builder, d metamodel.ShapeDelta, current, live metamodel.ShapeProjection) {
 	typeName := d.Subject
 	es, ok := live.Entities[typeName]
@@ -193,58 +195,84 @@ func draftFaceStep(w *strings.Builder, d metamodel.ShapeDelta, current, live met
 		return
 	}
 
-	prop, values := faceCandidateProperty(current, typeName)
+	prop, values, byElimination := faceCandidateProperty(current, typeName)
 	if prop == "" {
+		// No enum to key on: emit the whole-type form. It still has to be a
+		// real step — validateDeltasResolved refuses a file spanning this
+		// delta without one — but there is no per-value question to pose.
 		fmt.Fprintf(w, "  # TODO — %q now has faces (%s) and every existing row becomes %q.\n",
 			typeName, strings.Join(es.Faces, ", "), es.BareFace)
-		fmt.Fprintf(w, "  #        No enum property was found to key a confirmation on. Check by hand that\n")
-		fmt.Fprintf(w, "  #        %q is the right state for the rows you already have.\n", es.BareFace)
+		fmt.Fprintf(w, "  #        No enum property was found to key a per-value check on, so confirm the\n")
+		fmt.Fprintf(w, "  #        whole type: satisfy yourself that %q is right for the rows you already\n", es.BareFace)
+		fmt.Fprintf(w, "  #        have. If it is not, change `bare_face:` rather than editing this step.\n")
+		fmt.Fprintf(w, "  - confirm_face: {entity: %s}\n", typeName)
 		return
 	}
 
 	fmt.Fprintf(w, "  # TODO — %q gained faces (%s). Every existing row stays on the bare coordinate and\n",
 		typeName, strings.Join(es.Faces, ", "))
-	fmt.Fprintf(w, "  #        so becomes %q; rows cannot be moved off it. UNCOMMENT to confirm, after\n", es.BareFace)
-	fmt.Fprintf(w, "  #        checking EACH %s value below really does belong in %q.\n", prop, es.BareFace)
-	fmt.Fprintf(w, "  #        If one of them does not, this schema is wrong for your data: make that face\n")
-	fmt.Fprintf(w, "  #        the `bare_face:`, or separate those rows first.\n")
+	if byElimination {
+		fmt.Fprintf(w, "  #        so becomes %q; rows cannot be moved off it.\n", es.BareFace)
+		fmt.Fprintf(w, "  #        NOTE: %q is the type's only enum, chosen by elimination — it may have\n", prop)
+		fmt.Fprintf(w, "  #        nothing to do with content state. Key this on a different property, or\n")
+		fmt.Fprintf(w, "  #        drop `property:`/`mapping:` to confirm the whole type at once.\n")
+		fmt.Fprintf(w, "  #        Otherwise check EACH value below really does belong in %q.\n", es.BareFace)
+		fmt.Fprintf(w, "  #        Keep this step BEFORE any drop_property of %s — it reads those values.\n", prop)
+		fmt.Fprintf(w, "  - confirm_face:\n      entity: %s\n      property: %s\n      mapping:\n", typeName, prop)
+		for _, v := range values {
+			fmt.Fprintf(w, "        %s: %s\n", quoteYAML(v), quoteYAML(es.BareFace))
+		}
+		return
+	}
+	fmt.Fprintf(w, "  #        so becomes %q; rows cannot be moved off it. Check EACH %s value below\n", es.BareFace, prop)
+	fmt.Fprintf(w, "  #        really does belong in %q before running this.\n", es.BareFace)
+	fmt.Fprintf(w, "  #        If one of them does not, this schema is wrong for your data: change\n")
+	fmt.Fprintf(w, "  #        `bare_face:` rather than editing the mapping below.\n")
 	fmt.Fprintf(w, "  #        Keep this step BEFORE any drop_property of %s — it reads those values.\n", prop)
-	fmt.Fprintf(w, "  # - confirm_face:\n  #     entity: %s\n  #     property: %s\n  #     mapping:\n", typeName, prop)
+	fmt.Fprintf(w, "  - confirm_face:\n      entity: %s\n      property: %s\n      mapping:\n", typeName, prop)
 	for _, v := range values {
-		fmt.Fprintf(w, "  #       %s: %s\n", quoteYAML(v), quoteYAML(es.BareFace))
+		fmt.Fprintf(w, "        %s: %s\n", quoteYAML(v), quoteYAML(es.BareFace))
 	}
 }
 
 // faceCandidateProperty picks the enum property most likely to have encoded the
 // content state before faces existed, and returns it with its value set.
 //
-// A property literally named "status" or "state" wins; otherwise the single
-// enum property, when there is exactly one. With several unnamed candidates the
-// generator declines rather than guessing — a wrong guess here produces a
-// plausible-looking skeleton keyed on the wrong property, which is harder to
-// notice than no skeleton at all.
+// A property literally named "status" or "state" is a confident match. A single
+// unnamed enum is a WEAK one — "the type has exactly one enum" is evidence of a
+// small schema, not of relevance, and the candidate may well be `priority` or
+// `language`. It is still offered, because a skeleton keyed on the wrong
+// property is easy to correct and a missing skeleton leaves the operator with
+// nothing, but byElimination reports which kind of guess it was so the draft
+// can say so rather than presenting both with equal confidence.
+//
+// With several unnamed candidates the generator declines: there is no basis to
+// choose, and picking one would be a coin flip dressed as a recommendation.
 func faceCandidateProperty(
 	current metamodel.ShapeProjection, typeName string,
-) (prop string, values []string) {
+) (prop string, values []string, byElimination bool) {
 	es, ok := current.Entities[typeName]
 	if !ok {
-		return "", nil
+		return "", nil, false
 	}
 	var candidates []string
-	for _, prop := range sortedPropKeys(es.Properties) {
-		if len(enumValuesIn(current, typeName, prop)) > 0 {
-			candidates = append(candidates, prop)
+	for _, p := range sortedPropKeys(es.Properties) {
+		if es.Properties[p].List {
+			continue // a multi-valued key cannot answer "which face"
+		}
+		if len(enumValuesIn(current, typeName, p)) > 0 {
+			candidates = append(candidates, p)
 		}
 	}
 	for _, name := range []string{"status", "state"} {
 		if slices.Contains(candidates, name) {
-			return name, enumValuesIn(current, typeName, name)
+			return name, enumValuesIn(current, typeName, name), false
 		}
 	}
 	if len(candidates) == 1 {
-		return candidates[0], enumValuesIn(current, typeName, candidates[0])
+		return candidates[0], enumValuesIn(current, typeName, candidates[0]), true
 	}
-	return "", nil
+	return "", nil, false
 }
 
 // draftCleanupComment emits the commented-out optional cleanup for one

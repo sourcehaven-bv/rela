@@ -1,6 +1,7 @@
 package datamigration
 
 import (
+	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -327,9 +328,11 @@ func TestGenerate_DraftsConfirmFaceForBareFaceIntroduced(t *testing.T) {
 	if !strings.Contains(got, "TODO") {
 		t.Errorf("the face step must be marked TODO, not applied blind:\n%s", got)
 	}
-	// Commented: an unedited draft must not confirm a state nobody looked at.
-	if !strings.Contains(got, "# - confirm_face:") {
-		t.Errorf("the skeleton must be commented until the operator confirms it:\n%s", got)
+	// Emitted LIVE, not commented. validateDeltasResolved refuses a file
+	// spanning this delta without a confirm_face step, so a commented skeleton
+	// would be a draft that cannot parse.
+	if strings.Contains(got, "# - confirm_face:") {
+		t.Errorf("the step must be live, not commented — a commented draft cannot parse:\n%s", got)
 	}
 }
 
@@ -362,7 +365,129 @@ func TestGenerate_FaceDraftWithoutEnumExplainsItself(t *testing.T) {
 	if draft == nil {
 		t.Fatal("expected a draft")
 	}
-	if got := string(draft.Content); !strings.Contains(got, "No enum property was found") {
-		t.Errorf("draft should explain why it could not draft a confirm_face:\n%s", got)
+	got := string(draft.Content)
+	if !strings.Contains(got, "No enum property was found") {
+		t.Errorf("draft should explain why there is no per-value check:\n%s", got)
+	}
+	// It must still emit a real step: the file would not parse without one.
+	if !strings.Contains(got, "- confirm_face: {entity: person}") {
+		t.Errorf("draft should emit the whole-type confirm_face form:\n%s", got)
+	}
+	if _, err := ParseFile(draft.FileName, draft.Content); err != nil {
+		t.Errorf("the no-enum draft must parse: %v", err)
+	}
+}
+
+// The enforcement that actually closes BUG-TMGWIN. A file spanning the delta
+// with no confirm_face step is the do-nothing migration that caused the bug:
+// it parsed, applied, advanced the marker and reported the schema in sync.
+func TestParseFile_RefusesUnconfirmedBareFaceAdoption(t *testing.T) {
+	_, err := ParseFile("0001-faces.yaml", mustFileYAML(t, metaV1(), facedV1(), "  []\n"))
+	if err == nil {
+		t.Fatal("expected a parse error: the file spans a bare_face_introduced edge and confirms nothing")
+	}
+	if !strings.Contains(err.Error(), "confirm_face") {
+		t.Errorf("error should name the missing step, got: %v", err)
+	}
+
+	// A step for a DIFFERENT entity does not satisfy the delta either.
+	toMeta := facedV1()
+	pdef := toMeta.Entities["person"]
+	pdef.Faces = map[string]metamodel.FaceDef{"draft": {}, "published": {}}
+	pdef.BareFace = "published"
+	toMeta.Entities["person"] = pdef
+	_, err = ParseFile("0002-faces.yaml", mustFileYAML(t, metaV1(), toMeta, confirmAllPublished))
+	if err == nil {
+		t.Fatal("expected a parse error: person's adoption is unconfirmed")
+	}
+	if !strings.Contains(err.Error(), `"person"`) {
+		t.Errorf("error should name the unconfirmed entity, got: %v", err)
+	}
+}
+
+// The mapping between what CompareShapes can DEMAND and what the step
+// vocabulary can DELIVER must stay complete. A new TierMigration delta kind
+// that nobody lists here would otherwise ship detection with no remediation
+// and no exemption — the shape of BUG-TMGWIN's root cause
+// (AM-migration-delta-kinds-have-resolving-steps).
+func TestResolvingSteps_CoversEveryMigrationDeltaKind(t *testing.T) {
+	for _, kind := range metamodel.MigrationDeltaKinds() {
+		if _, listed := resolvingSteps[kind]; !listed {
+			t.Errorf("delta kind %q is classified TierMigration but is not in resolvingSteps — "+
+				"either name a step that resolves it, or list it with an empty value and say why", kind)
+		}
+	}
+}
+
+// A list-typed enum cannot key a confirmation: Run reads the property as a
+// string, so every row would land in the unaccounted bucket and be reported as
+// uncovered. Refuse the question rather than answer it wrongly.
+func TestConfirmFace_RefusesListTypedKey(t *testing.T) {
+	from := metaV1()
+	def := from.Entities["task"]
+	props := maps.Clone(def.Properties)
+	props["status"] = metamodel.PropertyDef{Type: "status", List: true}
+	def.Properties = props
+	from.Entities["task"] = def
+
+	to := facedV1()
+	tdef := to.Entities["task"]
+	tprops := maps.Clone(tdef.Properties)
+	tprops["status"] = metamodel.PropertyDef{Type: "status", List: true}
+	tdef.Properties = tprops
+	to.Entities["task"] = tdef
+
+	_, err := ParseFile("0001-faces.yaml", mustFileYAML(t, from, to, confirmAllPublished))
+	if err == nil {
+		t.Fatal("expected a parse error: a list-typed property cannot key a confirmation")
+	}
+	if !strings.Contains(err.Error(), "list-typed") {
+		t.Errorf("error should say the property is list-typed, got: %v", err)
+	}
+}
+
+// The whole-type form, for a type with no enum to key on.
+func TestConfirmFace_WholeTypeForm(t *testing.T) {
+	steps := "  - confirm_face: {entity: task}\n"
+	f, err := ParseFile("0001-faces.yaml", mustFileYAML(t, metaV1(), facedV1(), steps))
+	if err != nil {
+		t.Fatalf("the whole-type form should parse: %v", err)
+	}
+
+	st := seedStore(t)
+	r := newTestRunner(t, Deps{Store: st, State: newFakeKV(), Audit: audit.NewMemory()})
+	res, err := r.Run(t.Context(), []*File{f}, true)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	notes := strings.Join(res.Files[0].Steps[0].Notes, "\n")
+	if !strings.Contains(notes, "confirmed 3 row(s)") {
+		t.Errorf("expected the confirmed count, got: %q", notes)
+	}
+
+	// property without mapping, and vice versa, are both incoherent.
+	for _, bad := range []string{
+		"  - confirm_face: {entity: task, property: status}\n",
+		"  - confirm_face:\n      entity: task\n      mapping:\n        open: published\n",
+	} {
+		if _, err := ParseFile("0001-faces.yaml", mustFileYAML(t, metaV1(), facedV1(), bad)); err == nil {
+			t.Errorf("expected a parse error for a half-specified step: %s", bad)
+		}
+	}
+}
+
+// A confirmation covering no rows is vacuous and must not look like a
+// successful one.
+func TestConfirmFace_EmptyStoreSaysNothingToConfirm(t *testing.T) {
+	st := memstore.New()
+	r := newTestRunner(t, Deps{Store: st, State: newFakeKV(), Audit: audit.NewMemory()})
+	f := mustParse(t, "0001-faces.yaml", mustFileYAML(t, metaV1(), facedV1(), confirmAllPublished))
+	res, err := r.Run(t.Context(), []*File{f}, true)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	notes := strings.Join(res.Files[0].Steps[0].Notes, "\n")
+	if !strings.Contains(notes, "nothing to confirm") {
+		t.Errorf("an empty store should say so plainly, got: %q", notes)
 	}
 }

@@ -411,8 +411,16 @@ type confirmFaceStep struct {
 	Mapping  map[string]string `yaml:"mapping"`
 }
 
-func (s *confirmFaceStep) Kind() string   { return "confirm_face" }
-func (s *confirmFaceStep) Target() string { return s.Entity + "." + s.Property + " → face" }
+func (s *confirmFaceStep) Kind() string { return "confirm_face" }
+
+// Target avoids an arrow: the step's central claim is that nothing moves, and
+// an "x → y" label in the run table would say the opposite.
+func (s *confirmFaceStep) Target() string {
+	if s.Property == "" {
+		return s.Entity + " (confirm bare face)"
+	}
+	return s.Entity + "." + s.Property + " (confirm bare face)"
+}
 
 // Validate proves the mapping total over the property's value set, and that
 // every value lands on the face the rows will actually occupy.
@@ -421,8 +429,12 @@ func (s *confirmFaceStep) Target() string { return s.Entity + "." + s.Property +
 // today, and the step is meant to run before that property is dropped. The
 // faces come from the TO-shape, which is the schema being confirmed.
 func (s *confirmFaceStep) Validate(from, to metamodel.ShapeProjection) error {
-	if s.Entity == "" || s.Property == "" || len(s.Mapping) == 0 {
-		return errors.New("entity, property and a non-empty mapping are required")
+	if s.Entity == "" {
+		return errors.New("entity is required")
+	}
+	if (s.Property == "") != (len(s.Mapping) == 0) {
+		return errors.New("property and mapping go together: give both to confirm value by value, " +
+			"or neither to confirm the whole type at once")
 	}
 	if !entityInShape(to, s.Entity) {
 		return fmt.Errorf("entity %q is not in the to-schema", s.Entity)
@@ -435,9 +447,28 @@ func (s *confirmFaceStep) Validate(from, to metamodel.ShapeProjection) error {
 		return fmt.Errorf("entity %q declares no `bare_face:` in the to-schema, so the rows at the zero "+
 			"coordinate belong to no declared face — there is nothing to confirm them as", s.Entity)
 	}
+	if s.Property == "" {
+		// Whole-type form: no property keys the confirmation, so there is
+		// nothing further to check. Used when the type has no enum to key on
+		// (the generator emits this shape) — the operator is still stating
+		// that the bare face is right for the rows they have, they just have
+		// no per-value question to answer.
+		return nil
+	}
+
 	if !entityPropInShape(from, s.Entity, s.Property) {
 		return fmt.Errorf("property %s.%s is not in the from-schema — confirm_face reads the values rows "+
 			"carry TODAY, so the property must exist before the migration", s.Entity, s.Property)
+	}
+	if ps := from.Entities[s.Entity].Properties[s.Property]; ps.List {
+		// A row carrying several values at once has no single answer to "which
+		// face does this become", and Run reads the property as a string — so
+		// without this every row would land in the unaccounted bucket and be
+		// reported as invalid data. Refuse the question rather than answer it
+		// wrongly.
+		return fmt.Errorf("property %s.%s is list-typed: a row holding several values has no single "+
+			"face, so it cannot key a confirmation. Confirm the whole type instead (omit `property:` "+
+			"and `mapping:`)", s.Entity, s.Property)
 	}
 
 	values := enumValuesIn(from, s.Entity, s.Property)
@@ -462,9 +493,9 @@ func (s *confirmFaceStep) Validate(from, to metamodel.ShapeProjection) error {
 			// different face cannot be kept.
 			return fmt.Errorf("%s = %q is mapped to face %q, but every existing row is stored at the zero "+
 				"coordinate and becomes %q (the declared `bare_face:`). A row cannot be moved off the bare "+
-				"coordinate — the store refuses to delete a family's default row. Either make %q the "+
-				"`bare_face:` so these rows land there, or handle these rows separately (drop_entities, or "+
-				"a follow-up that adds a second row per entity)",
+				"coordinate — the store refuses to delete a family's default row. Make %q the `bare_face:` "+
+				"if that is where these rows belong; otherwise this schema does not fit the data and the "+
+				"rows need handling outside this migration",
 				s.Property, key, face, es.BareFace, face)
 		}
 	}
@@ -505,14 +536,15 @@ func (s *confirmFaceStep) Run(ctx context.Context, x *Exec) (StepResult, error) 
 			continue // already on a named face; the confirmation is about bare rows
 		}
 		confirmed++
+		if s.Property == "" {
+			continue // whole-type form: no per-value question to answer
+		}
 		v, ok := e.Properties[s.Property].(string)
 		if !ok {
 			unaccounted[""]++
 			continue
 		}
 		if _, ok := s.Mapping[v]; !ok {
-			// Validate proved the mapping total over the DECLARED value set,
-			// so this is a stored value outside it: pre-existing invalid data.
 			unaccounted[v]++
 		}
 	}
@@ -520,16 +552,29 @@ func (s *confirmFaceStep) Run(ctx context.Context, x *Exec) (StepResult, error) 
 	// Affected stays ZERO: the run report renders it as "changed N record(s)",
 	// and this step changes none — the relabel is the schema change itself.
 	// The count belongs in a note, where it reads as what it is.
-	res.Notes = append(res.Notes, fmt.Sprintf(
-		"confirmed %d row(s) become the bare face; no rows were written", confirmed))
+	if confirmed == 0 {
+		// Vacuous rather than successful, and the two must not look alike: a
+		// confirmation covering no rows tells the operator their data is not
+		// where they think it is.
+		res.Notes = append(res.Notes, "no rows at the bare coordinate — nothing to confirm")
+	} else {
+		res.Notes = append(res.Notes, fmt.Sprintf(
+			"confirmed %d row(s) become the bare face; no rows were written", confirmed))
+	}
 
 	for _, value := range slices.Sorted(maps.Keys(unaccounted)) {
 		label := value
 		if label == "" {
 			label = "(unset or non-string)"
 		}
+		// Deliberately describes what was OBSERVED, not why. Validate proves
+		// the mapping total over the DECLARED value set, so the usual cause is
+		// stored data outside it — but an earlier step in the same file (a
+		// map_values, a lua transform) can also move rows out from under the
+		// mapping, and asserting "invalid data" would send the operator
+		// chasing the wrong thing.
 		res.Notes = append(res.Notes, fmt.Sprintf(
-			"%d row(s) with %s = %s are not covered by the mapping (value is outside the declared set)",
+			"%d row(s) with %s = %s are not covered by the mapping",
 			unaccounted[value], s.Property, label))
 	}
 	return res, nil
@@ -548,10 +593,13 @@ func enumValuesIn(p metamodel.ShapeProjection, typ, prop string) []string {
 	if !ok {
 		return nil
 	}
+	// Cloned: the projection is shared (one value is handed to every assembled
+	// Services), so handing a caller a live handle into it invites an aliasing
+	// bug for no gain at this call volume.
 	if len(ps.Values) > 0 {
-		return ps.Values
+		return slices.Clone(ps.Values)
 	}
-	return p.Types[ps.Type]
+	return slices.Clone(p.Types[ps.Type])
 }
 
 // ---- rename_relation_type ----
