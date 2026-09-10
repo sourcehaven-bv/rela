@@ -186,6 +186,7 @@ worlds:
       page: [published]
     otherwise: default
     edits: draft
+    create: draft
     banner: "DRAFT — not in force"
     primary_for: published
     messages:
@@ -209,6 +210,7 @@ worlds:
 		"Overrides": len(def.Overrides["page"]) == 1 && def.Overrides["page"][0] == "published",
 		"Otherwise": string(def.Otherwise) == "default",
 		"Edits":     def.Edits == "draft",
+		"Create":    def.Create == "draft",
 		"Banner":    def.Banner == "DRAFT — not in force",
 		// Written as a bare scalar above, so this also pins the oneOrMany
 		// spelling: `primary_for: published` must decode to a one-element

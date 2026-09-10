@@ -453,6 +453,26 @@ type WorldDef struct {
 	// declared face so a typo surfaces now rather than then.
 	Edits string `yaml:"edits,omitempty"`
 
+	// Create names the face a create issued from this world lands in.
+	//
+	// A create names no face of its own: the form is generic and the same
+	// form is reachable from several places, so which state a new entity
+	// starts in is a property of the workflow that opened it. A faced type
+	// has no default row to fall back to (BUG-HC6I2T), so without this key
+	// a create from a world-bound list has no target at all and the server
+	// refuses it with `face_required`.
+	//
+	// It is a SINGLE declared face, never a chain. `select:` may answer with
+	// a fallback, which is why a write never rides a world (see
+	// dataentry.attachWorld); this names one row directly, so that objection
+	// does not apply. Deriving the face from `select[0]` would be actively
+	// wrong: an ISMS world heading its ADOPTED face would then publish by
+	// the act of creating, which is the bug this key exists to avoid.
+	//
+	// Empty means a create from this world names no face, which a faced type
+	// refuses. Validated at load against the declared faces.
+	Create string `yaml:"create,omitempty"`
+
 	// PrimaryFor declares the faces this world is the canonical home of,
 	// breaking a tie when SEVERAL worlds head the same face for a type
 	// (TKT-MFVH03).
@@ -591,6 +611,7 @@ func (w *WorldDef) UnmarshalYAML(node *yaml.Node) error {
 		Overrides map[string]oneOrMany `yaml:"overrides,omitempty"`
 		Otherwise Otherwise            `yaml:"otherwise,omitempty"`
 		Edits     string               `yaml:"edits,omitempty"`
+		Create    string               `yaml:"create,omitempty"`
 		Banner    string               `yaml:"banner,omitempty"`
 		// oneOrMany like Select: the common case is a single face, and
 		// `primary_for: nl` should not have to be written as a list.
@@ -605,6 +626,7 @@ func (w *WorldDef) UnmarshalYAML(node *yaml.Node) error {
 	w.Select = raw.Select
 	w.Otherwise = raw.Otherwise
 	w.Edits = raw.Edits
+	w.Create = raw.Create
 	w.Banner = raw.Banner
 	w.PrimaryFor = raw.PrimaryFor
 	w.Messages = raw.Messages

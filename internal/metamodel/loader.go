@@ -747,6 +747,7 @@ func validateWorlds(m *Metamodel) []string {
 		}
 		errs = append(errs, validateWorldChains(m, worldName, world)...)
 		errs = append(errs, validateWorldEdits(m, worldName, world)...)
+		errs = append(errs, validateWorldCreate(m, worldName, world)...)
 		errs = append(errs, validateWorldPrimaryFor(m, worldName, world)...)
 		errs = append(errs, validateWorldOnAbsent(m, worldName, world)...)
 	}
@@ -1014,6 +1015,24 @@ func validateWorldEdits(m *Metamodel, worldName string, world WorldDef) []string
 	return []string{fmt.Sprintf(
 		"world %q: `edits:` names face %q, which no entity type declares",
 		worldName, world.Edits)}
+}
+
+// validateWorldCreate checks the `create:` target names a declared face.
+//
+// Same shape as validateWorldEdits: only the NAME is checked. Whether a given
+// type declares that face is deliberately not a load-time question — a world
+// spans every type, and a type that does not declare the face simply cannot be
+// created from this world, which the create path reports per request.
+func validateWorldCreate(m *Metamodel, worldName string, world WorldDef) []string {
+	if world.Create == "" {
+		return nil
+	}
+	if anyTypeDeclaresFace(m, world.Create) {
+		return nil
+	}
+	return []string{fmt.Sprintf(
+		"world %q: `create:` names face %q, which no entity type declares",
+		worldName, world.Create)}
 }
 
 // anyTypeDeclaresFace reports whether any entity type declares ptr.

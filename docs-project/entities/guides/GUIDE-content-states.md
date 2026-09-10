@@ -222,6 +222,7 @@ The following table summarizes the keys a world accepts:
 | `messages` | Optional. The web app's wording for what this world changes on a screen: `absent` (a detail page for an entity with no face here; placeholders `{face}`, `{world}`, `{title}`), `projection` (a list or board note; `{world}` only), `stand_in` (the badge on a row served a stand-in; `{face}`, `{world}`). An undeclared entry shows nothing. |
 | `on_absent` | Optional. `redirect: <world>` sends a reader who opens an entity with no face here to that world instead of showing the page. |
 | `primary_for` | Optional. Breaks a tie when two worlds lead with the same face for a type. See the Metamodel Reference. |
+| `create` | The face a create issued from this world lands in. A faced type has no default row, so a create from a world without this key is refused. Not derived from `select`: a world heading the ADOPTED face would otherwise publish by the act of creating. |
 | `edits` | Accepted and validated as a declared face name, but not used yet. |
 
 `otherwise:` has no default and a world without it does not load. The two

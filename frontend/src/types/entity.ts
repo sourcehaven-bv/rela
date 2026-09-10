@@ -285,6 +285,11 @@ export interface InaccessibleField {
 export interface CreateEntity {
   id?: string
   prefix?: string
+  // The world the create was issued from. The server resolves it to the face
+  // `worlds.<name>.create` names; a faced type has no default row, so without
+  // it the create is refused. Rides the body because `?world=` is refused on
+  // every write (a read chain can answer with a fallback).
+  world?: string
   properties: Record<string, unknown>
   content?: string
   // Modern JSON:API §9 wrapper shape only. The legacy IDs-only form
