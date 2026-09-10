@@ -488,6 +488,11 @@ type FaceMessages struct {
 	// ReadOnly is the note for a page or form showing this face while the
 	// reader may not write it. Empty renders nothing.
 	ReadOnly string `json:"read_only,omitempty"`
+	// Notice is the note for a page showing this face whatever the reader
+	// may do with it — a draft is not in force even for the editor
+	// rewriting it. Empty renders nothing. Independent of ReadOnly; both
+	// may be set, and the detail page renders Notice first.
+	Notice string `json:"notice,omitempty"`
 }
 
 // Face is the JSON representation of one declared content state,

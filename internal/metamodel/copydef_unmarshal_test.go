@@ -265,8 +265,8 @@ entities:
     id_prefix: PAGE
     bare_face: en
     faces:
-      en: {label: English}
-      nl: {label: Nederlands, messages: {read_only: "Alleen lezen"}}
+      en: {label: English, messages: {notice: "Nog niet vertaald"}}
+      nl: {label: Nederlands, messages: {read_only: "Alleen lezen", notice: "Concept"}}
     properties:
       title: {type: string}
 `
@@ -287,6 +287,12 @@ entities:
 		"EntityDef.BareFace": def.BareFace == "en",
 		"Label":              def.Faces["en"].Label == "English" && def.Faces["nl"].Label == "Nederlands",
 		"Messages":           def.Faces["nl"].Messages.ReadOnly == "Alleen lezen" && def.Faces["en"].Messages.ReadOnly == "",
+		// `notice` is asserted per entry, not ANDed, so a failure names which
+		// one dropped it. On `en` it is the ONLY message declared, which is
+		// the case that catches a shadow struct carrying `read_only` and
+		// forgetting `notice`.
+		"Messages.Notice[en]": def.Faces["en"].Messages.Notice == "Nog niet vertaald",
+		"Messages.Notice[nl]": def.Faces["nl"].Messages.Notice == "Concept",
 	}
 	for name, ok := range checks {
 		if !ok {

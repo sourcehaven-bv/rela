@@ -174,5 +174,5 @@ func faceMessagesWire(m metamodel.FaceMessages) *v1.FaceMessages {
 	if m == (metamodel.FaceMessages{}) {
 		return nil
 	}
-	return &v1.FaceMessages{ReadOnly: m.ReadOnly}
+	return &v1.FaceMessages{ReadOnly: m.ReadOnly, Notice: m.Notice}
 }
