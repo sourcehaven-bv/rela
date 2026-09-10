@@ -2,6 +2,7 @@
 id: AM-delete-face-race-leaves-no-orphan
 type: automated-measure
 title: Delete of one face racing a create on another leaves no orphaned face
+description: TestDeleteEntity_RacingStateCreateLeavesNoHeadlessFace drives a delete of one face concurrently with a create on another face of the same family and asserts the store is left consistent. Currently skipped pending BUG-22XSH3; removing the skip is the verification.
 kind: test
 location: internal/store/pgstore/deleterace_test.go
 status: proposed
