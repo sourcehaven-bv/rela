@@ -232,7 +232,7 @@ func authorizeHistoryRead(a *App, w http.ResponseWriter, r *http.Request, typeNa
 	// nonexistent id is an indistinguishable 404. A type mismatch is ALSO a 404
 	// (indistinguishable), so the URL type can't be used to borrow another
 	// type's read verdict.
-	if live, found := a.liveHistorySubject(ctx, typeName, ref); found {
+	if live, found := liveHistorySubject(ctx, a.reader, a.visibleReader, typeName, ref); found {
 		if live.Type != typeName {
 			writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 			return false
@@ -435,12 +435,20 @@ func serveHistoryVersion(a *App,
 // genuinely deleted entity and for one the world excludes: in the latter case
 // the face gate below withholds the timeline anyway.
 //
+// Takes the two readers rather than an *App because those are the only
+// collaborators it needs, which also keeps it off App's method set (the type
+// is at its plimsoll load line, and a gating helper is not what that budget is
+// for).
+//
 // Nil: never returned with found=true.
-func (a *App) liveHistorySubject(ctx context.Context, typeName string, ref entityRef) (*entityPkg.Entity, bool) {
+func liveHistorySubject(
+	ctx context.Context, reader entityReader, visible visibleReader,
+	typeName string, ref entityRef,
+) (*entityPkg.Entity, bool) {
 	if ref.Explicit {
-		return a.reader.getEntityRef(ctx, ref)
+		return reader.getEntityRef(ctx, ref)
 	}
-	e, err := a.visibleReader.getWorldEntity(ctx, typeName, ref.ID)
+	e, err := visible.getWorldEntity(ctx, typeName, ref.ID)
 	if err != nil {
 		return nil, false
 	}
