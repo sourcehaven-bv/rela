@@ -25,7 +25,6 @@ entities:
   page:
     label: Page
     id_prefix: PAGE
-    bare_face: draft
     faces:
       draft: {}
       published: {}
@@ -149,7 +148,7 @@ func TestCopy_SameEntityIsElevated_HiddenFieldsSurvive(t *testing.T) {
 
 	// A draft holding a field the caller cannot read.
 	err := st.CreateEntity(ctx, &entity.Entity{
-		ID: "PAGE-1", Type: "page",
+		ID: "PAGE-1", Type: "page", Face: entity.Face("draft"),
 		Properties: map[string]any{"title": "Draft", "secret": "classified"},
 	})
 	require(err == nil, "seed draft: %v", err)
@@ -238,7 +237,6 @@ entities:
   page:
     label: Page
     id_prefix: PAGE
-    bare_face: draft
     faces:
       draft: {}
       published: {}
@@ -285,7 +283,7 @@ copies:
 			mgr, st := newGuarded(t, tc.guard)
 			ctx := context.Background()
 			if err := st.CreateEntity(ctx, &entity.Entity{
-				ID: "PAGE-1", Type: "page",
+				ID: "PAGE-1", Type: "page", Face: entity.Face("draft"),
 				Properties: map[string]any{"title": "Draft"},
 			}); err != nil {
 				t.Fatalf("seed: %v", err)
@@ -371,7 +369,8 @@ func TestCopy_GuardedFaceIsWritableOnlyViaDefinition(t *testing.T) {
 	ctx := principal.With(context.Background(),
 		principal.Principal{User: "alice", Tool: principal.ToolCLI})
 	if err := st.CreateEntity(ctx, &entity.Entity{
-		ID: "PAGE-1", Type: "page", Properties: map[string]any{"title": "Draft"},
+		ID: "PAGE-1", Type: "page", Face: entity.Face("draft"),
+		Properties: map[string]any{"title": "Draft"},
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -478,7 +477,7 @@ func TestCopy_StrangerCannotPromote(t *testing.T) {
 	seed := principal.With(context.Background(),
 		principal.Principal{User: "alice", Tool: principal.ToolCLI})
 	if err := st.CreateEntity(seed, &entity.Entity{
-		ID: "PAGE-1", Type: "page",
+		ID: "PAGE-1", Type: "page", Face: entity.Face("draft"),
 		Properties: map[string]any{"title": "Draft", "secret": "classified"},
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
@@ -495,26 +494,29 @@ func TestCopy_StrangerCannotPromote(t *testing.T) {
 	}
 }
 
-// TestCopy_EdgesLandOnTheStoredTail pins the phantom-tail failure.
+// TestCopy_EdgesLandOnTheTargetFace pins where a copy's edges land.
 //
-// A face marked `bare_face` IS the zero coordinate — it names which
-// declared coordinate the default state answers to, it does not create a
-// second row. So a copy INTO the default face must write its edges at the
-// zero tail. Using the DECLARED name instead produces edges at a tail no
-// face lives at: orphaned, invisible to the face they belong to, and
-// invisible to a `replace` that queries the correct tail — so stale edges
-// survive too. Silent in both directions.
+// A copy writes the target FACE, and its edges belong to that face: they must
+// carry the target's tail, and a `replace` must clear the stale ones already
+// there. Getting the tail wrong produces edges orphaned from the face they
+// belong to AND invisible to the `replace` that should have removed the old
+// ones — silent in both directions.
 //
-// This also covers relation copying at all, plus `replace`, neither of which
-// had a test.
-func TestCopy_EdgesLandOnTheStoredTail(t *testing.T) {
+// This is also the only coverage of relation copying at all, alongside
+// TestCopyReplace_DeletesTheTargetTailNotTheDefaultFacesEdge, which pins the
+// delete side.
+//
+// Historical note: this test used to assert that edges land at the ZERO tail,
+// because `bare_face: draft` made `draft` the zero coordinate. BUG-HC6I2T
+// removed that mapping — a face's declared name IS its stored coordinate — so
+// the assertion is now simply that they land at "draft".
+func TestCopy_EdgesLandOnTheTargetFace(t *testing.T) {
 	const meta = `
 version: "1"
 entities:
   page:
     label: Page
     id_prefix: PAGE
-    bare_face: draft
     faces:
       draft: {}
       published: {}
@@ -537,6 +539,8 @@ copies:
     fields: all
     relations:
       cites: replace
+    guard:
+      permission: revise-page
 `
 	st := memstore.New()
 	m, err := metamodel.Parse([]byte(meta))
@@ -548,6 +552,7 @@ copies:
 		Audit: audit.Nop{}, ACL: acl.NopACL{},
 		Transitions: statemachine.EmptySet(),
 		FieldGate:   entitymanager.AllowAllFieldGate{},
+		CopyGuard:   allowGuard{allow: true},
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)
@@ -559,22 +564,23 @@ copies:
 			t.Fatalf("seed %s: %v", id, err)
 		}
 	}
-	// The draft (default) face cites SPEC-12; the published face cites SPEC-9.
+	draft := entity.Face("draft")
+	published := entity.Face("published")
+	// The draft face cites SPEC-12; the published face cites SPEC-9.
 	if err := st.CreateEntity(ctx, &entity.Entity{
-		ID: "PAGE-1", Type: "page", Properties: map[string]any{"title": "Draft"},
+		ID: "PAGE-1", Type: "page", Face: draft,
+		Properties: map[string]any{"title": "Draft"},
 	}); err != nil {
 		t.Fatalf("seed draft: %v", err)
 	}
-	published := entity.Face("published")
 	if err := st.CreateEntity(ctx, &entity.Entity{
 		ID: "PAGE-1", Type: "page", Face: published,
 		Properties: map[string]any{"title": "Published"},
 	}); err != nil {
 		t.Fatalf("seed published: %v", err)
 	}
-	zero := entity.Face("")
 	if _, err := st.CreateRelation(ctx, "PAGE-1", "cites", "SPEC-12",
-		&store.RelationData{FromFace: zero}); err != nil {
+		&store.RelationData{FromFace: draft}); err != nil {
 		t.Fatalf("seed draft edge: %v", err)
 	}
 	if _, err := st.CreateRelation(ctx, "PAGE-1", "cites", "SPEC-9",
@@ -582,38 +588,37 @@ copies:
 		t.Fatalf("seed published edge: %v", err)
 	}
 
-	// Revise: published -> draft. `draft` is the DEFAULT face, so the
-	// target tail is the ZERO coordinate.
+	// Revise: published -> draft.
 	if _, err := mgr.CopyState(ctx, entitymanager.CopyRequest{
 		Definition: "revise-page", SourceID: "PAGE-1",
 	}); err != nil {
 		t.Fatalf("revise: %v", err)
 	}
 
-	var atZero, atDeclared, stale int
+	var atTarget, atZero, stale int
 	for rel, err := range st.ListRelations(ctx, store.RelationQuery{From: "PAGE-1"}) {
 		if err != nil {
 			t.Fatalf("list: %v", err)
 		}
 		switch {
-		case rel.FromFace == "" && rel.To == "SPEC-9":
-			atZero++
-		case rel.FromFace == "draft":
-			atDeclared++
-		case rel.FromFace == "" && rel.To == "SPEC-12":
+		case rel.FromFace == draft && rel.To == "SPEC-9":
+			atTarget++
+		case rel.FromFace == draft && rel.To == "SPEC-12":
 			stale++
+		case rel.FromFace.IsDefault():
+			atZero++
 		}
 	}
-	if atDeclared != 0 {
-		t.Errorf("%d edge(s) landed at the DECLARED tail %q — that face is the "+
-			"type's default, so it IS the zero coordinate and no face lives there; "+
-			"the edges are orphaned from the face they belong to", atDeclared, "draft")
+	if atZero != 0 {
+		t.Errorf("%d edge(s) landed at the ZERO tail — `page` declares faces, so "+
+			"no face lives there and those edges are orphaned from the face they "+
+			"belong to", atZero)
 	}
 	if stale != 0 {
 		t.Errorf("`replace` left %d stale edge(s) at the target tail — it queried "+
 			"the wrong tail, found nothing, and deleted nothing", stale)
 	}
-	if atZero != 1 {
-		t.Errorf("want the copied edge at the zero tail, got %d", atZero)
+	if atTarget != 1 {
+		t.Errorf("want the copied edge at the target face's tail, got %d", atTarget)
 	}
 }

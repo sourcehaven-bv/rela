@@ -36,7 +36,7 @@ type viewResult struct {
 func (h *viewsHandler) executeView(
 	ctx context.Context, view ViewConfig, entryID string, w viewWorld,
 ) (*viewResult, error) {
-	ref, ok := parseEntityRef(h.schema().Meta, view.Entry.Type, entryID)
+	ref, ok := parseEntityRef(entryID)
 	if !ok {
 		return nil, errViewEntryNotFound(entryID)
 	}

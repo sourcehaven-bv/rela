@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
+	"strings"
 )
 
 // ShapeTier classifies one schema-shape delta by its impact on stored data.
@@ -202,32 +203,29 @@ func compareFaces(r *ShapeReport, typeName string, from, to EntityShape) {
 		})
 	}
 
-	// Repointing bare_face is the sharp one, and it is NEEDS-MIGRATION rather
-	// than drift. The bare face is stored as the ZERO coordinate, so changing
-	// which declared face that means silently relabels every existing bare row:
-	// the content that was the type's only content becomes a different state,
-	// and the state it used to be is now empty. No row moves, no value changes,
-	// and nothing looks wrong — which is exactly why the store must not adopt
-	// this shape on its own.
-	if from.BareFace != to.BareFace {
-		switch {
-		case from.BareFace == "":
-			// Flat → faced. Harmless only if the new bare face is the one the
-			// existing rows should become; the operator has to say so.
-			r.add(TierMigration, "bare_face_introduced", typeName, fmt.Sprintf(
-				"entity %q gained `bare_face: %s`: every existing row is stored at the zero "+
-					"coordinate and would silently become that face. Confirm with a migration "+
-					"that this is the state they belong to", typeName, to.BareFace))
-		case to.BareFace == "":
-			r.add(TierMigration, "bare_face_removed", typeName, fmt.Sprintf(
-				"entity %q no longer declares `bare_face`: rows at the zero coordinate belong "+
-					"to no declared face", typeName))
-		default:
-			r.add(TierMigration, "bare_face_changed", typeName, fmt.Sprintf(
-				"entity %q: `bare_face` moved from %q to %q — every existing bare row is "+
-					"relabelled from one state to the other in place, and %q becomes empty",
-				typeName, from.BareFace, to.BareFace, from.BareFace))
-		}
+	// Gaining or losing faces is NEEDS-MIGRATION, not drift, because the zero
+	// coordinate is not a face (BUG-HC6I2T): it is where a type with no faces
+	// stores its single state.
+	//
+	// Flat -> faced leaves every existing row at a coordinate that now names no
+	// declared face. Nothing looks wrong — no row moved and no value changed —
+	// which is exactly why the store must not adopt this shape on its own: the
+	// operator has to say which face the existing content became.
+	//
+	// Faced -> flat is the mirror: rows at named faces belong to no declared
+	// face afterwards, and the type's single state is a coordinate none of them
+	// occupies.
+	switch {
+	case len(from.Faces) == 0 && len(to.Faces) > 0:
+		r.add(TierMigration, "faces_introduced", typeName, fmt.Sprintf(
+			"entity %q gained faces (%s): existing rows are stored at the zero coordinate, "+
+				"which names no face. Migrate them to the face they belong to",
+			typeName, strings.Join(to.Faces, ", ")))
+	case len(from.Faces) > 0 && len(to.Faces) == 0:
+		r.add(TierMigration, "faces_removed", typeName, fmt.Sprintf(
+			"entity %q no longer declares faces: rows at %s belong to no declared face, "+
+				"and the type's single state is a coordinate none of them occupies",
+			typeName, strings.Join(from.Faces, ", ")))
 	}
 }
 

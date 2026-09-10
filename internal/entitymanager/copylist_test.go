@@ -25,7 +25,6 @@ entities:
   page:
     label: Page
     id_prefix: PAGE
-    bare_face: draft
     faces:
       draft: {}
       published: {}
@@ -112,7 +111,8 @@ func newCopyListManager(
 func seedPage(ctx context.Context, t *testing.T, st store.Store) {
 	t.Helper()
 	if err := st.CreateEntity(ctx, &entity.Entity{
-		ID: "PAGE-1", Type: "page", Properties: map[string]any{"title": "Draft"},
+		ID: "PAGE-1", Type: "page", Face: entity.Face("draft"),
+		Properties: map[string]any{"title": "Draft"},
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -145,21 +145,18 @@ func offerNames(offers []entitymanager.CopyOffer) []string {
 // both on either face — and a UI would render an "unpublish" button on a draft
 // that has never been published.
 //
-// The draft case is the load-bearing one: draft is the `bare_face`, so its
-// STORED coordinate is the zero face while its DECLARED name is "draft".
-// Comparing declared strings would fail to match `page@draft` against the
-// bare face. That is why the implementation compares through
-// metamodel.StoredFace.
+// A face's declared name IS its stored coordinate (BUG-HC6I2T), so the match
+// is a direct string comparison against the row's face — there is no
+// declared-vs-stored translation left to get wrong.
 func TestCopiesForSource_MatchesTheFaceNotJustTheType(t *testing.T) {
 	mgr, _ := newCopyListManager(t, allowGuard{allow: true})
 	ctx := context.Background()
 
-	t.Run("bare face offers the copy declared on its declared name", func(t *testing.T) {
-		got := mustOffers(ctx, t, mgr, "page", "", "PAGE-1")
+	t.Run("draft face offers only its own copy", func(t *testing.T) {
+		got := mustOffers(ctx, t, mgr, "page", "draft", "PAGE-1")
 		if len(got) != 1 || got[0].Name != "promote-page" {
-			t.Fatalf("the BARE face must match `from: page@draft` — draft is "+
-				"bare_face, so its stored coordinate is the zero face; got %v",
-				offerNames(got))
+			t.Fatalf("the draft face must match `from: page@draft` and nothing "+
+				"else; got %v", offerNames(got))
 		}
 		if got[0].TargetFace != "page@published" {
 			t.Errorf("TargetFace = %q, want the declared target", got[0].TargetFace)
@@ -202,7 +199,7 @@ func TestCopiesForSource_ListsDeniedDefinitionsWithAllowedFalse(t *testing.T) {
 	t.Run("guard grants", func(t *testing.T) {
 		mgr, st := newCopyListManager(t, allowGuard{allow: true})
 		seedPage(ctx, t, st)
-		got := mustOffers(ctx, t, mgr, "page", "", "PAGE-1")
+		got := mustOffers(ctx, t, mgr, "page", "draft", "PAGE-1")
 		if len(got) != 1 || !got[0].Allowed {
 			t.Fatalf("a permitted copy must be Allowed; got %+v", got)
 		}
@@ -214,7 +211,7 @@ func TestCopiesForSource_ListsDeniedDefinitionsWithAllowedFalse(t *testing.T) {
 	t.Run("guard denies: still listed, Allowed=false", func(t *testing.T) {
 		mgr, st := newCopyListManager(t, allowGuard{allow: false})
 		seedPage(ctx, t, st)
-		got := mustOffers(ctx, t, mgr, "page", "", "PAGE-1")
+		got := mustOffers(ctx, t, mgr, "page", "draft", "PAGE-1")
 		if len(got) != 1 {
 			t.Fatalf("a DENIED definition must still be listed — its name is "+
 				"config, not a secret; got %v", offerNames(got))
@@ -230,7 +227,7 @@ func TestCopiesForSource_ListsDeniedDefinitionsWithAllowedFalse(t *testing.T) {
 	t.Run("no guard wired: fails closed, still listed", func(t *testing.T) {
 		mgr, st := newCopyListManager(t, nil)
 		seedPage(ctx, t, st)
-		got := mustOffers(ctx, t, mgr, "page", "", "PAGE-1")
+		got := mustOffers(ctx, t, mgr, "page", "draft", "PAGE-1")
 		if len(got) != 1 || got[0].Allowed {
 			t.Errorf("a guarded copy with no guard wired must report "+
 				"Allowed=false, matching the kernel's fail-closed rule; got %+v", got)
@@ -276,7 +273,7 @@ func TestCopiesForSource_AllowedAgreesWithInvoke(t *testing.T) {
 			mgr, st := newCopyListManager(t, tc.guard)
 			seedPage(ctx, t, st)
 
-			offers := mustOffers(ctx, t, mgr, "page", "", "PAGE-1")
+			offers := mustOffers(ctx, t, mgr, "page", "draft", "PAGE-1")
 			if len(offers) != 1 {
 				t.Fatalf("expected one offer, got %v", offerNames(offers))
 			}
@@ -313,7 +310,6 @@ entities:
   page:
     label: Page
     id_prefix: PAGE
-    bare_face: draft
     faces:
       draft: {}
       published: {}
@@ -337,7 +333,7 @@ copies:
 `
 	mgr, _ := newCopyListManager(t, allowGuard{allow: true}, withMeta(labelMeta))
 
-	got := mustOffers(context.Background(), t, mgr, "page", "", "PAGE-1")
+	got := mustOffers(context.Background(), t, mgr, "page", "draft", "PAGE-1")
 	byName := map[string]string{}
 	for _, o := range got {
 		byName[o.Name] = o.Label
@@ -357,9 +353,9 @@ copies:
 func TestCopiesForSource_StableOrder(t *testing.T) {
 	mgr, _ := newCopyListManager(t, allowGuard{allow: true})
 	ctx := context.Background()
-	first := offerNames(mustOffers(ctx, t, mgr, "page", "", "PAGE-1"))
+	first := offerNames(mustOffers(ctx, t, mgr, "page", "draft", "PAGE-1"))
 	for range 8 {
-		got := offerNames(mustOffers(ctx, t, mgr, "page", "", "PAGE-1"))
+		got := offerNames(mustOffers(ctx, t, mgr, "page", "draft", "PAGE-1"))
 		if len(got) != len(first) {
 			t.Fatalf("unstable length: %v vs %v", got, first)
 		}
@@ -415,7 +411,7 @@ func TestCopiesForSource_AffordanceProbeEmitsNoAuditRecords(t *testing.T) {
 		withAudit(rec), withACL(denyAllACL{}))
 	seedPage(ctx, t, st)
 
-	mustOffers(ctx, t, mgr, "page", "", "PAGE-1")
+	mustOffers(ctx, t, mgr, "page", "draft", "PAGE-1")
 
 	if n := rec.count(); n != 0 {
 		t.Errorf("a read-only affordance query wrote %d audit record(s). "+
@@ -447,7 +443,7 @@ func TestCopiesForSource_CrossEntityIsNotOffered(t *testing.T) {
 	// Same-entity offers are unaffected: the filter is by shape, not a blanket
 	// narrowing. Without this the test above would pass against a build that
 	// offered nothing at all.
-	if got := mustOffers(ctx, t, mgr, "page", "", "PAGE-1"); len(got) != 1 {
+	if got := mustOffers(ctx, t, mgr, "page", "draft", "PAGE-1"); len(got) != 1 {
 		t.Fatalf("same-entity definitions must still be offered; got %v",
 			offerNames(got))
 	}

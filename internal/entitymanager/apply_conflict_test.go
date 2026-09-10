@@ -45,6 +45,14 @@ func (s *raceCreateStore) GetEntity(_ context.Context, _ string) (*entity.Entity
 	return nil, store.ErrNotFound
 }
 
+// GetEntityState is the probe ApplyEntity actually uses (BUG-HC6I2T); it must
+// report the same absence or the create intent is never resolved.
+func (s *raceCreateStore) GetEntityState(
+	_ context.Context, _ string, _ entity.Face,
+) (*entity.Entity, error) {
+	return nil, store.ErrNotFound
+}
+
 // TestApplyEntity_CreateConflict_RejectsAndDoesNotClobber pins that a
 // create-intent ApplyEntity whose durable CreateEntity conflicts (a concurrent
 // create of the same id) is REJECTED with ErrEntityAlreadyExists and never
@@ -150,6 +158,13 @@ type raceUpdateStore struct {
 }
 
 func (s *raceUpdateStore) GetEntity(_ context.Context, _ string) (*entity.Entity, error) {
+	return s.stored, nil
+}
+
+// GetEntityState is the probe ApplyEntity actually uses (BUG-HC6I2T).
+func (s *raceUpdateStore) GetEntityState(
+	_ context.Context, _ string, _ entity.Face,
+) (*entity.Entity, error) {
 	return s.stored, nil
 }
 

@@ -139,7 +139,7 @@ func (h *exportHandler) handleV1ExportEntity(w http.ResponseWriter, r *http.Requ
 	// non-bare address is answered with the same not-found a missing entity
 	// gets rather than with the bare face's document under a faced name.
 	// Exporting a non-bare face is a follow-up (TKT-5SZG2L records the gap).
-	ref, ok := parseEntityRef(h.meta(), typeName, entityID)
+	ref, ok := parseEntityRef(entityID)
 	if !ok || !ref.Face.IsDefault() {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 		return

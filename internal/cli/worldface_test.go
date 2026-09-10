@@ -63,9 +63,8 @@ func TestHasFace(t *testing.T) {
 	t.Parallel()
 	m := &metamodel.Metamodel{Entities: map[string]metamodel.EntityDef{
 		"page": {
-			Aliases:  []string{"pg"},
-			BareFace: "draft",
-			Faces:    map[string]metamodel.FaceDef{"draft": {}, "published": {}},
+			Aliases: []string{"pg"},
+			Faces:   map[string]metamodel.FaceDef{"draft": {}, "published": {}},
 		},
 		"ticket": {}, // no faces block at all
 	}}
@@ -100,6 +99,48 @@ func TestHasFace(t *testing.T) {
 		t.Parallel()
 		var nilM *metamodel.Metamodel
 		if (&metamodelReader{m: nilM}).HasFace("page", "draft") {
+			t.Error("a nil metamodel declares nothing")
+		}
+	})
+}
+
+// TestHasFaces covers the adapter's "does this type declare any states"
+// lookup — the one B12 consumes to decide a bare grant reaches nothing.
+// The alias case matters for the same reason it does above.
+func TestHasFaces(t *testing.T) {
+	t.Parallel()
+	m := &metamodel.Metamodel{Entities: map[string]metamodel.EntityDef{
+		"page": {
+			Aliases: []string{"pg"},
+			Faces:   map[string]metamodel.FaceDef{"draft": {}, "published": {}},
+		},
+		"ticket": {},                                      // no faces block at all
+		"note":   {Faces: map[string]metamodel.FaceDef{}}, // empty block is not a declaration
+	}}
+	m.InitAliases()
+	tests := []struct {
+		name       string
+		entityType string
+		want       bool
+	}{
+		{"a faced type", "page", true},
+		{"ALIAS resolves to the canonical type", "pg", true},
+		{"no faces block", "ticket", false},
+		{"an empty faces block declares none", "note", false},
+		{"undeclared type", "nosuchtype", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := (&metamodelReader{m: m}).HasFaces(tc.entityType); got != tc.want {
+				t.Errorf("HasFaces(%q) = %v, want %v", tc.entityType, got, tc.want)
+			}
+		})
+	}
+	t.Run("nil metamodel", func(t *testing.T) {
+		t.Parallel()
+		var nilM *metamodel.Metamodel
+		if (&metamodelReader{m: nilM}).HasFaces("page") {
 			t.Error("a nil metamodel declares nothing")
 		}
 	})

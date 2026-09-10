@@ -307,9 +307,14 @@ type EntityDef struct {
 	DisplayProperty string `yaml:"display_property,omitempty"`
 
 	// Faces declares this type's content states (TKT-WAV8XP, design
-	// doc §4.1). The map key is the face coordinate ("draft",
-	// "published"); exactly one entry may set `bare_face`, naming
-	// the state stored under the zero face.
+	// doc §4.1). The map key IS the face coordinate ("draft",
+	// "published") — declared name and stored coordinate are the same
+	// string, with no face privileged by where it is stored.
+	//
+	// No face is addressed by the bare id. A type declaring faces has
+	// no bare row to write, so every write to it names a face
+	// (BUG-HC6I2T); the zero coordinate survives only as the identity
+	// row a faceless type stores its single state in.
 	//
 	// ABSENT (the common case) means the type has no content states: it
 	// contributes its single default state to EVERY world, needing no
@@ -318,32 +323,6 @@ type EntityDef struct {
 	// needs no special handling — and why a project that never writes
 	// this key behaves byte-identically to the pre-worlds system.
 	Faces map[string]FaceDef `yaml:"faces,omitempty"`
-
-	// BareFace names which declared face the BARE ID addresses: with
-	// `bare_face: draft`, `POL-1` and `POL-1@draft` are the same row.
-	//
-	// # It names a row, it does not create one
-	//
-	// Every entity already has a row stored under the ZERO coordinate —
-	// that is what a bare id resolves to, and it exists whether or not
-	// this key is set (§2.1: there are exactly N states and nothing
-	// else). All this says is which declared NAME refers to it. Leave it
-	// unset and the declared faces are all suffixed rows, while the
-	// entity's own row has no name at all — legal, and almost never what
-	// an operator means.
-	//
-	// # Why it lives on the TYPE rather than on a face
-	//
-	// It was `bare_face` on each FaceDef, which needed a load-time
-	// check that at most one face claimed it, and read as a statement
-	// about precedence — "the default face" sounds like the important
-	// one, when in an ISMS it is the DRAFT while the published face is
-	// the one in force. On the type the constraint is structural (a
-	// single key cannot be set twice) and the name says what it does.
-	//
-	// Empty on a type declaring faces is legal but unusual; empty on a
-	// type declaring none is the ordinary case and means nothing.
-	BareFace string `yaml:"bare_face,omitempty"`
 }
 
 // FaceDef declares one content state of an entity type.
@@ -461,7 +440,7 @@ type WorldDef struct {
 	// # Why this is needed at all
 	//
 	// "Which world serves this face?" is the question a face-switcher asks:
-	// the read grammar is `?world=`, and a bare face is not a world, so an
+	// the read grammar is `?world=`, and a face is not a world, so an
 	// affordance offering "go to the Dutch version" must name a world. The
 	// answer is INFERRED from the compiled chains — the world whose chain
 	// HEADS that face — and for every schema written so far the inference is
@@ -521,8 +500,9 @@ type WorldDef struct {
 	Messages WorldMessages `yaml:"messages,omitempty"`
 
 	// OnAbsent decides what happens when a reader opens an entity that has
-	// no face in this world. Absent: the page shows the bare face, with
-	// [WorldMessages.Absent] if declared. See [WorldOnAbsent].
+	// no face in this world. Absent: the page shows whatever the world's
+	// `otherwise:` resolves to, with [WorldMessages.Absent] if declared.
+	// See [WorldOnAbsent].
 	OnAbsent WorldOnAbsent `yaml:"on_absent,omitempty"`
 }
 
@@ -530,8 +510,8 @@ type WorldDef struct {
 //
 // Each string is plain text with an allowlisted set of placeholders the web
 // app substitutes — [ChromePlaceholders]: `{face}` (the served face's
-// label), `{bare_face}` (the type's bare face label), `{world}` (this
-// world's name), `{title}` (the entity's display title). Anything else in
+// label), `{world}` (this world's name), `{title}` (the entity's display
+// title). Anything else in
 // braces is left as written. No markup, no conditionals — the text is the
 // operator's sentence, and rendering it is the whole feature.
 //
@@ -541,9 +521,8 @@ type WorldDef struct {
 // which it substitutes.
 type WorldMessages struct {
 	// Absent is shown on a detail page for an entity that has no face in
-	// this world (the page shows the bare face). Empty shows nothing.
-	// Substitutes `{face}` (the bare face, which is what is on screen),
-	// `{bare_face}`, `{world}` and `{title}`.
+	// this world. Empty shows nothing. Substitutes `{face}` (the face
+	// actually on screen), `{world}` and `{title}`.
 	Absent string `yaml:"absent,omitempty"`
 	// Projection is the note on a list or board of a type that declares
 	// faces — that entities with no face here are not listed. Empty shows
@@ -552,7 +531,7 @@ type WorldMessages struct {
 	// StandIn is the badge text on a row or card whose face is a stand-in
 	// for the world's first choice (a within-chain fallback or an
 	// `otherwise: default` substitution) — typically `{face}`. Empty renders
-	// no badge at all. Substitutes `{face}`, `{bare_face}` and `{world}`.
+	// no badge at all. Substitutes `{face}` and `{world}`.
 	StandIn string `yaml:"stand_in,omitempty"`
 }
 
@@ -562,7 +541,7 @@ type WorldMessages struct {
 // frontend/src/utils/worldText.ts; a test in internal/dataentry pins the two
 // to each other, because a name added on one side only renders literally on
 // screen with no failure anywhere.
-var ChromePlaceholders = []string{"face", "bare_face", "world", "title"}
+var ChromePlaceholders = []string{"face", "world", "title"}
 
 // WorldOnAbsent is the behavior for an entity with no face in a world.
 type WorldOnAbsent struct {

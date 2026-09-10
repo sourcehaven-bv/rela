@@ -27,15 +27,16 @@ import (
 // path treated the whole string as an id, so under a configured
 // `default_world` (the documented ISMS setup) the server's own `_self` 404'd
 // on a GET. A client following `_self` broke on the read, and no form could
-// ever open a non-bare face. These tests pin the contract that closes it:
+// ever open a face. These tests pin the contract that closes it:
 //
 //   - `ID@face` reads the named row literally under EVERY world;
-//   - `ID@<bare_face>` is the explicit spelling of the bare row;
+//   - a faced type has no bare address at all (BUG-HC6I2T), so every one of
+//     its rows is reached by name and an unsuffixed id names none of them;
 //   - a PATCH or DELETE addressed to a face touches that face only;
 //   - the row gate keys on the bare id and the face gate on the face, so a
 //     `type@face` grant withholds exactly what it withheld before.
 
-// facedMeta declares `policy` with a draft (bare) and a published face, an
+// facedMeta declares `policy` with a draft and a published face, an
 // identity-scoped `implements` and a content-scoped `cites` relation to
 // `feature`, so a PATCH can be tested against both scopes.
 func facedMeta(t *testing.T) *metamodel.Metamodel {
@@ -48,7 +49,6 @@ entities:
   policy:
     label: Policy
     id_prefix: POL
-    bare_face: draft
     faces:
       draft: {}
       published: { label: Published }
@@ -136,7 +136,9 @@ func seedPolicyFaces(t *testing.T, st store.Store) {
 	t.Helper()
 	ctx := context.Background()
 	for _, e := range []*entity.Entity{
-		{ID: "POL-1", Type: "policy", Properties: map[string]any{"title": "DRAFT TEXT"}},
+		// `policy` declares faces, so it stores NO row at the zero
+		// coordinate: the draft lives at `draft` like any other face.
+		{ID: "POL-1", Type: "policy", Face: "draft", Properties: map[string]any{"title": "DRAFT TEXT"}},
 		{ID: "POL-1", Type: "policy", Face: "published", Properties: map[string]any{"title": "PUBLISHED TEXT"}},
 		{ID: "FEAT-1", Type: "feature", Properties: map[string]any{"title": "f"}},
 	} {
@@ -161,24 +163,26 @@ func getRouted(t *testing.T, app *App, path string) (status int, got v1.Entity, 
 }
 
 func TestParseEntityRef(t *testing.T) {
-	m := facedMeta(t)
 	for _, tc := range []struct {
 		raw  string
 		want entityRef
 		ok   bool
 	}{
+		// An unsuffixed id names the zero coordinate, which for a faced
+		// type is no row at all — the request's world turns it into one.
 		{"POL-1", entityRef{ID: "POL-1"}, true},
 		{"POL-1@published", entityRef{ID: "POL-1", Face: "published", Explicit: true}, true},
-		// The bare face by its declared name is the bare row, spelled out.
-		{"POL-1@draft", entityRef{ID: "POL-1", Face: "", Explicit: true}, true},
-		// An undeclared name maps to itself; the store decides existence.
+		// No face is privileged: `draft` is a coordinate like `published`.
+		{"POL-1@draft", entityRef{ID: "POL-1", Face: "draft", Explicit: true}, true},
+		// An undeclared name is taken as it is spelled; the store decides
+		// existence, so a row under a since-dropped face stays addressable.
 		{"POL-1@nope", entityRef{ID: "POL-1", Face: "nope", Explicit: true}, true},
 		{"POL-1@@", entityRef{}, false},
 		{"POL-1@Published", entityRef{}, false},
 		{"POL-1@a@b", entityRef{}, false},
 		{"not an id", entityRef{}, false},
 	} {
-		got, ok := parseEntityRef(m, "policy", tc.raw)
+		got, ok := parseEntityRef(tc.raw)
 		if ok != tc.ok || got != tc.want {
 			t.Errorf("parseEntityRef(%q) = %+v, %v; want %+v, %v", tc.raw, got, ok, tc.want, tc.ok)
 		}
@@ -206,12 +210,13 @@ func TestFacedAddress_GetServesTheNamedFaceUnderAnyWorld(t *testing.T) {
 	}{
 		// The row `_self` names, under the world that used to 404 it.
 		{"/api/v1/policys/POL-1@published", "PUBLISHED TEXT", "/api/v1/policys/POL-1@published", "published"},
-		// The bare face by its declared name: literal, even though the
-		// world resolves the bare id away from it.
-		{"/api/v1/policys/POL-1@draft", "DRAFT TEXT", "/api/v1/policys/POL-1", "draft"},
+		// The draft is literal too, even though the world resolves the
+		// unsuffixed id away from it. `_self` names the row that was
+		// served, so it round-trips to the same face.
+		{"/api/v1/policys/POL-1@draft", "DRAFT TEXT", "/api/v1/policys/POL-1@draft", "draft"},
 		// Both spellings under the explicit default world too.
 		{"/api/v1/policys/POL-1@published?world=default", "PUBLISHED TEXT", "/api/v1/policys/POL-1@published", "published"},
-		{"/api/v1/policys/POL-1@draft?world=default", "DRAFT TEXT", "/api/v1/policys/POL-1", "draft"},
+		{"/api/v1/policys/POL-1@draft?world=default", "DRAFT TEXT", "/api/v1/policys/POL-1@draft", "draft"},
 	} {
 		code, got, body := getRouted(t, app, tc.path)
 		if code != http.StatusOK {
@@ -270,7 +275,7 @@ func TestFacedAddress_RejectsWhatCannotNameARow(t *testing.T) {
 func TestFacedAddress_ViewServesTheNamedFace(t *testing.T) {
 	app, _ := facedApp(t, nil)
 	for _, tc := range []struct{ path, title, self string }{
-		{"/api/v1/_views/policy/POL-1@draft", "DRAFT TEXT", "/api/v1/policys/POL-1"},
+		{"/api/v1/_views/policy/POL-1@draft", "DRAFT TEXT", "/api/v1/policys/POL-1@draft"},
 		{"/api/v1/_views/policy/POL-1@published", "PUBLISHED TEXT", "/api/v1/policys/POL-1@published"},
 		{"/api/v1/_views/policy/POL-1@published?world=default", "PUBLISHED TEXT", "/api/v1/policys/POL-1@published"},
 	} {
@@ -306,7 +311,10 @@ func TestFacedAddress_PatchWritesTheNamedFace(t *testing.T) {
 	app, d := facedApp(t, func(st store.Store) *acl.Declarative {
 		return mustNewACL(t, &acl.Policy{
 			Roles: map[string]acl.RoleDef{"editor": {
-				Read: []string{"*"}, Create: []string{"*"}, Update: []string{"policy", "policy@published"},
+				// Both faces by NAME: a bare `policy` grant covers only the
+				// zero coordinate, which a faced type stores no row at.
+				Read: []string{"*"}, Create: []string{"*"},
+				Update: []string{"policy@draft", "policy@published"},
 			}},
 			Assignments: map[string]string{"bob": "editor"},
 		}, st)
@@ -330,19 +338,19 @@ func TestFacedAddress_PatchWritesTheNamedFace(t *testing.T) {
 	if err != nil || pub.Properties["title"] != "PUBLISHED v2" {
 		t.Errorf("published face after PATCH: %v %v, want PUBLISHED v2", pub, err)
 	}
-	draft, err := app.store.GetEntity(ctx, "POL-1")
+	draft, err := app.store.GetEntityState(ctx, "POL-1", "draft")
 	if err != nil || draft.Properties["title"] != "DRAFT TEXT" {
 		t.Errorf("the draft must be untouched by a write to the published face; got %v %v", draft, err)
 	}
 
-	// The bare face by its declared name is the bare row.
+	// The draft is addressed and written by name, like every other face.
 	rec = patchEntityAs(bob, t, app, d, "policy", "policys", "POL-1@draft",
 		`{"properties":{"title":"DRAFT v2"}}`, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("PATCH POL-1@draft = %d, want 200 (%s)", rec.Code, rec.Body)
 	}
-	if draft, _ = app.store.GetEntity(ctx, "POL-1"); draft.Properties["title"] != "DRAFT v2" {
-		t.Errorf("POL-1@draft must write the bare row; got %v", draft.Properties["title"])
+	if draft, _ = app.store.GetEntityState(ctx, "POL-1", "draft"); draft.Properties["title"] != "DRAFT v2" {
+		t.Errorf("POL-1@draft must write the draft row; got %v", draft.Properties["title"])
 	}
 
 	// A content-scoped edge attaches to a face's tail, and the relation
@@ -369,10 +377,12 @@ func TestFacedAddress_PatchWritesTheNamedFace(t *testing.T) {
 		t.Errorf("an identity-scoped relation through a face address = %d %s, want 200", rec.Code, rec.Body)
 	}
 	// The response describes the row that was written: the published face's
-	// own edges, not the union of every face's. The draft's `cites` edge
-	// seeded below must not appear beside the published face.
+	// own edges, not the union of every tail's. store.CreateRelation takes no
+	// face, so the edge seeded below tails at the ZERO coordinate — a tail no
+	// face of this type occupies, which is exactly what makes it a clean
+	// negative: it must not appear beside the published face.
 	if _, err := app.store.CreateRelation(ctx, "POL-1", "cites", "FEAT-1", nil); err != nil {
-		t.Fatalf("seed draft-tail edge: %v", err)
+		t.Fatalf("seed zero-coordinate-tail edge: %v", err)
 	}
 	rec = patchEntityAs(bob, t, app, d, "policy", "policys", "POL-1@published",
 		`{"properties":{"title":"PUBLISHED v3"}}`, nil)
@@ -430,39 +440,45 @@ func TestFacedAddress_WritesDenyAsNotFound(t *testing.T) {
 				tc.name, existing.Body, missing.Body)
 		}
 	}
-	if _, err := app.store.GetEntity(context.Background(), "POL-1"); err != nil {
+	if _, err := app.store.GetEntityState(context.Background(), "POL-1", "draft"); err != nil {
 		t.Errorf("the denied delete must not have removed the draft: %v", err)
 	}
 }
 
 // TestFacedAddress_DeleteRemovesOnlyTheFace: DELETE `ID@face` is the unpublish
 // the address grammar makes expressible, authorized on the face it removes.
+//
+// A grant is per-face and a BARE type grant covers only the zero coordinate
+// (acl.GrantsVerbOnState), which a faced type never stores a row at — so
+// alice's `policy` grant reaches neither face here. That is the point of the
+// pairing below: she is the principal who may delete nothing, bob the one
+// granted both faces by name.
 func TestFacedAddress_DeleteRemovesOnlyTheFace(t *testing.T) {
 	app, d := facedApp(t, func(st store.Store) *acl.Declarative {
 		return mustNewACL(t, &acl.Policy{
 			Roles: map[string]acl.RoleDef{
-				"bare":      {Read: []string{"*"}, Delete: []string{"policy"}},
-				"publisher": {Read: []string{"*"}, Delete: []string{"policy", "policy@published"}},
+				"drafter":   {Read: []string{"*"}, Delete: []string{"policy@draft"}},
+				"publisher": {Read: []string{"*"}, Delete: []string{"policy@draft", "policy@published"}},
 			},
-			Assignments: map[string]string{"alice": "bare", "bob": "publisher"},
+			Assignments: map[string]string{"alice": "drafter", "bob": "publisher"},
 		}, st)
 	})
 	ctx := context.Background()
 	alice := principal.With(ctx, principal.Principal{User: "alice", Tool: principal.ToolDataEntry})
 	bob := principal.With(ctx, principal.Principal{User: "bob", Tool: principal.ToolDataEntry})
 
-	// The affordance and the write agree: alice's bare grant does not cover
-	// the published face, and the map says so before she tries.
+	// The affordance and the write agree: alice's draft-only grant does not
+	// cover the published face, and the map says so before she tries.
 	rec := getEntityAs(alice, t, app, d, "policy", "policys", "POL-1@published", "")
 	var got v1.Entity
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode: %v (%d %s)", err, rec.Code, rec.Body)
 	}
 	if got.Actions["delete"] {
-		t.Errorf("_actions.delete on the published face must be false for a bare grant")
+		t.Errorf("_actions.delete on the published face must be false for a draft-only grant")
 	}
 	if rec = deleteEntityAs(alice, t, app, d, "policy", "policys", "POL-1@published"); rec.Code != http.StatusForbidden {
-		t.Errorf("DELETE POL-1@published with a bare grant = %d, want 403", rec.Code)
+		t.Errorf("DELETE POL-1@published with a draft-only grant = %d, want 403", rec.Code)
 	}
 	if _, err := app.store.GetEntityState(ctx, "POL-1", "published"); err != nil {
 		t.Fatalf("the denied delete must not have removed the face: %v", err)
@@ -474,19 +490,23 @@ func TestFacedAddress_DeleteRemovesOnlyTheFace(t *testing.T) {
 	if _, err := app.store.GetEntityState(ctx, "POL-1", "published"); err == nil {
 		t.Errorf("the published face must be gone")
 	}
-	if _, err := app.store.GetEntity(ctx, "POL-1"); err != nil {
-		t.Errorf("deleting a face must leave the entity standing: %v", err)
+	// The claim the whole test is named for: removing one face leaves the
+	// entity's other faces standing.
+	if _, err := app.store.GetEntityState(ctx, "POL-1", "draft"); err != nil {
+		t.Errorf("deleting a face must leave the entity's other faces standing: %v", err)
 	}
 	if rec = deleteEntityAs(bob, t, app, d, "policy", "policys", "POL-1@published"); rec.Code != http.StatusNotFound {
 		t.Errorf("a second DELETE of the removed face = %d, want 404", rec.Code)
 	}
 
-	// The bare face by name is the entity: deleting it is deleting the entity.
+	// The draft is a face like any other: its DELETE removes that row and no
+	// more. With the published face already gone the entity has no rows left,
+	// but nothing here addressed the entity — only its last face.
 	if rec = deleteEntityAs(bob, t, app, d, "policy", "policys", "POL-1@draft"); rec.Code != http.StatusNoContent {
 		t.Fatalf("DELETE POL-1@draft = %d, want 204 (%s)", rec.Code, rec.Body)
 	}
-	if _, err := app.store.GetEntity(ctx, "POL-1"); err == nil {
-		t.Errorf("POL-1@draft names the bare row, so the entity must be gone")
+	if _, err := app.store.GetEntityState(ctx, "POL-1", "draft"); err == nil {
+		t.Errorf("the draft face must be gone")
 	}
 }
 

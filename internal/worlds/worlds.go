@@ -165,34 +165,19 @@ func validateWorldNames(m *metamodel.Metamodel) []error {
 }
 
 // declaredFaces validates every declared face name against the codec
-// grammar and returns the STORED COORDINATE each name addresses, keyed by
+// grammar and returns the coordinate each name addresses, keyed by
 // entity type. Types declaring no faces are absent from the result — that
 // absence is what rule 1 compiles to.
 //
-// # A declared NAME is not a stored COORDINATE (BUG-DFLTCHAIN)
-//
-// The two differ for exactly one name per type: the one marked
-// `bare_face`. A default-marked state is stored under the ZERO face —
-// the bare id addresses it (design doc §2.1) — so `page@draft` where `draft`
-// is the default names a row that does not exist. There are exactly N states
-// and nothing else; marking a name default does not mint a second row.
-//
-// This function used to parse names literally and skip that step, so a world
-// naming its type's default coordinate compiled to a chain entry NO ROW COULD
-// EVER MATCH. Under `otherwise: exclude` the entity vanished from a world
-// that had explicitly selected it; under `otherwise: default` it was served
-// via the fallback and mislabelled as such. Both failed silently, with a
-// config that reads correctly.
-//
-// So the mapping goes through [metamodel.StoredFace], the one definition
-// of "declared name -> stored coordinate" — the same function the copy kernel
-// applies (internal/entitymanager/copy.go). Two functions answering that
-// question differently is the root cause; there is now one.
-//
-// Note the ORDER: grammar is checked on the DECLARED name, then the name is
-// mapped. Validating the mapped value instead would run [entity.ParseFace]
-// over the empty string for every default coordinate, which it correctly
-// rejects — turning a valid schema into a load error.
+// A name maps to itself: a face's declared name IS the coordinate its row is
+// stored at (BUG-HC6I2T), so there is nothing to look up and no way for a
+// world's chain to name a row that cannot exist. It used to differ for the
+// one face a type marked `bare_face`, and getting that mapping wrong in one
+// of the two places that performed it was BUG-DFLTCHAIN: a world naming its
+// type's default face compiled to a chain entry no row could ever match, and
+// the entity silently vanished from a world that had explicitly selected it.
+// Removing the privileged face removed the mapping, and with it the chance
+// for two implementations of it to disagree.
 func declaredFaces(m *metamodel.Metamodel) (map[string]map[string]entity.Face, []error) {
 	var errs []error
 	out := make(map[string]map[string]entity.Face)
@@ -208,9 +193,7 @@ func declaredFaces(m *metamodel.Metamodel) (map[string]map[string]entity.Face, [
 					"entity %q: invalid face name %q: %w", typeName, name, err))
 				continue
 			}
-			// The declared name passed the grammar; the COORDINATE it
-			// addresses is what a chain must carry.
-			parsed[name] = entity.Face(metamodel.StoredFace(m, typeName, name))
+			parsed[name] = entity.Face(name)
 		}
 		out[typeName] = parsed
 	}

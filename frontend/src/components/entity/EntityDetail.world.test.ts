@@ -316,7 +316,6 @@ describe('EntityDetail world binding', () => {
         label: 'Policy',
         properties: { title: { type: 'string', values: null } },
         faces: { draft: { label: 'Concept' }, published: { label: 'Vastgesteld', messages: { read_only: text } } },
-        bare_face: 'draft',
       } as never)
     }
 
@@ -330,13 +329,13 @@ describe('EntityDetail world binding', () => {
     })
 
     it("explains a read-only face in the operator's words, placeholders substituted", async () => {
-      seedReadOnlyText('Dit is {face} van {title}. Bewerken doe je in {bare_face}.')
+      seedReadOnlyText('Dit is {face} van {title}.')
       mockRoute.query = { world: 'published' }
       const w = await mountDetail(viewResponse(standIn()))
       rendersProof(w)
       const banner = w.find('.world-banner')
       expect(banner.exists()).toBe(true)
-      expect(banner.text()).toBe('Dit is Vastgesteld van Access Control Policy. Bewerken doe je in Concept.')
+      expect(banner.text()).toBe('Dit is Vastgesteld van Access Control Policy.')
       // No button: the face menu is the way to the bare face (issue 5).
       expect(banner.find('button').exists()).toBe(false)
     })
@@ -565,7 +564,6 @@ describe('EntityDetail world binding', () => {
         label: 'Policy',
         properties: { title: { type: 'string', values: null } },
         faces: { draft: {}, published: { label: 'Vastgesteld' } },
-        bare_face: 'draft',
       } as never)
       invokeCopyMock.mockResolvedValue(copyResult())
       const w = await mountDetail(viewResponse({
@@ -1096,10 +1094,10 @@ describe('EntityDetail world binding', () => {
       })
     })
 
-    it('names the default world for a bare face that has NO explicit address', async () => {
-      // A type with faces but no `bare_face` name: the bare row is literal
-      // only in the default world, spelled `default` when a configured
-      // default would otherwise apply.
+    it('names the default world for a row with NO explicit address', async () => {
+      // A row at the zero coordinate — the single state of a type declaring
+      // no faces. Its bare address is literal only in the default world,
+      // spelled `default` when a configured default would otherwise apply.
       useSchemaStore().defaultWorld = 'published'
       mockRoute.query = { world: 'site-nl' }
       const w = await mountDetail(viewResponse({

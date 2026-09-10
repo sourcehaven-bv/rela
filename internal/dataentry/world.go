@@ -9,7 +9,6 @@ import (
 
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -490,8 +489,9 @@ func attachWorld(next http.Handler, a *App) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		// A write addresses the face its ID names — `POL-1` the bare face,
-		// `POL-1@published` the published one — but it never takes a
+		// A write addresses the row its ID names — `POL-1@published` one
+		// face of a faced type, `POL-1` the single state of a type
+		// declaring none — but it never takes a
 		// world. A world is a read-side routing rule that can answer with a
 		// FALLBACK face, so a write riding that indirection would save the
 		// wrong state's content: `PATCH ...?world=published` would silently
@@ -588,14 +588,13 @@ func attachWorld(next http.Handler, a *App) http.Handler {
 //
 // # Why the ZERO coordinate in a chain is not a problem
 //
-// A chain CAN contain the zero coordinate, and an earlier version of this
-// comment asserted the opposite. `internal/worlds` maps each declared name
-// through `entity.ParseFace` — but ParseFace validates the NAME, and
-// what lands in the chain is `metamodel.StoredFace`, which maps a
-// `bare_face` name to "" (that is where the default face genuinely
-// lives — design doc §2.1, there are exactly N states and no extra row). So
-// `select: [published, draft]` with `draft` marked default compiles to
-// `Chain: ["published", ""]`.
+// A [store.WorldScope] chain CAN carry the zero coordinate. Nothing a schema
+// compiles to does so today — a declared name IS its stored coordinate
+// (BUG-HC6I2T) and `entity.ParseFace` rejects the empty name — but the scope
+// is a plain store type any caller may construct, so the totality of the
+// mapping must not rest on the chain being zero-free. An earlier version of
+// this comment rested on the opposite claim and was wrong for a different
+// reason; the argument below holds either way.
 //
 // Totality does not need that invariant, because a zero coordinate in the
 // chain is matched BY POSITION everywhere it matters, ahead of the fallback:
@@ -616,30 +615,14 @@ func attachWorld(next http.Handler, a *App) http.Handler {
 // `otherwise: exclude` the store returns NOTHING, so there is no response to
 // label and the handler has already rendered a 404.
 //
-// # Why the face is DECLARED, not stored
-//
-// The wire's `face` is the name an operator wrote in `faces:`, not the
-// coordinate the store keys on. Those differ for exactly one face — the one
-// named by `bare_face:`, which IS the zero coordinate (design doc §2.1) and
-// therefore serializes as "". Reporting the raw coordinate meant a row
-// resolved to the bare face came back with an EMPTY face and `via: "chain"`,
-// which no client can render: it is the world's first choice, correctly
-// labeled as a chain hit, that cannot say WHICH face it is. Every consumer
-// then fell back to printing the WORLD name, so `site-nl` serving an English
-// page announced "site-nl" where "en" belonged (TKT-PI17Z6).
-//
-// [metamodel.DeclaredFace] is the inverse of the StoredFace mapping the world
-// chain is compiled through, so this reads back the operator's own name rather
-// than inventing one. It returns "" when there genuinely is no declared name
-// (a type with faces but no `bare_face:`, or an undeclared coordinate) — the
-// honest answer, and unchanged from today for those cases.
-//
-// m may be nil; DeclaredFace then leaves the coordinate as-is, so a caller
-// without a metamodel degrades to the previous behavior rather than failing.
+// The wire's `face` is the coordinate the row is stored at, which is also the
+// name the operator wrote in `faces:` — a face has one spelling and the two
+// cannot diverge (BUG-HC6I2T). It is empty only for a type declaring no faces,
+// whose single state lives at the zero coordinate and has no name.
 //
 // Returns nil for a nil entity, so a caller may pass a not-found result
 // through without branching.
-func worldProvenance(ctx context.Context, m *metamodel.Metamodel, e *entity.Entity) *v1.EntityWorld {
+func worldProvenance(ctx context.Context, e *entity.Entity) *v1.EntityWorld {
 	if e == nil {
 		return nil
 	}
@@ -651,7 +634,7 @@ func worldProvenance(ctx context.Context, m *metamodel.Metamodel, e *entity.Enti
 	rule, position := resolutionRuleAt(handle.scope, e.Type, e.Face)
 	return &v1.EntityWorld{
 		Name:          name,
-		Face:          metamodel.DeclaredFace(m, e.Type, e.Face.String()),
+		Face:          e.Face.String(),
 		Via:           rule,
 		ChainPosition: position,
 	}

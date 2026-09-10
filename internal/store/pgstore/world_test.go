@@ -180,13 +180,13 @@ func TestWorldSQL_AliasQualifiesEveryColumnReference(t *testing.T) {
 }
 
 func TestWorldSQL_ZeroInChainRanksAboveTheFallback(t *testing.T) {
-	// A chain contains the ZERO coordinate whenever a world names the type's
-	// DEFAULT face — internal/worlds stores metamodel.StoredFace, which maps
-	// a `bare_face` name to "". Under `otherwise: default` that emits TWO
-	// `face = ''` arms: the chain entry at rank i, and the fallback at rank
-	// len(chain). CASE takes the first match, so the arms must be emitted in
-	// that order or a selected default face would be labeled a fallback and,
-	// worse, out-ranked by nothing while ranking below its own chain position.
+	// The ZERO coordinate is where a type declaring no faces stores its single
+	// state, and it ranks in a chain like any other coordinate. Under
+	// `otherwise: default` a chain carrying it emits TWO `face = ''` arms: the
+	// chain entry at rank i, and the fallback at rank len(chain). CASE takes
+	// the first match, so the arms must be emitted in that order or a selected
+	// row would be labeled a fallback and, worse, out-ranked by nothing while
+	// ranking below its own chain position.
 	var args []any
 	rank, _ := worldSQL(store.NewWorldScope(map[string]store.TypeResolution{
 		"page": {
