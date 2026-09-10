@@ -220,14 +220,23 @@ func validateDeltasResolved(name string, f *File) error {
 	return nil
 }
 
-// validateStepOrder checks the constraints no single step can see, because
-// they are about one step's position relative to another.
+// validateStepOrder checks step ordering WITHIN one file. It is deliberately
+// narrow, and the narrowness is worth stating so nobody reads it as a general
+// guarantee.
 //
-// Today that is one rule: confirm_face reads a property's values to state which
-// face the existing rows become, so a drop_property that erases that property
-// must not come first. Ordering is the operator's to choose, but this order is
-// never intentional — it leaves the step reporting on nothing, which turns an
+// One rule: confirm_face reads a property's values to state which face the
+// existing rows become, so a drop_property that erases that property must not
+// come first. Ordering is the operator's to choose, but this order is never
+// intentional — it leaves the step reporting on nothing, which turns an
 // informed confirmation back into the empty ceremony it exists to replace.
+//
+// What it does NOT catch: the same pair split across two files (each file is
+// parsed alone; that case is caught incidentally, because the second file's
+// from-shape no longer declares the property), or a lua/map_values step that
+// changes the values out from under the confirmation. Catching those means
+// reading scripts and tracking value flow between steps — a value-provenance
+// feature, not an ordering check. The map_values case is why confirm_face's
+// uncovered-row note describes what it saw rather than asserting a cause.
 func validateStepOrder(name string, steps []Step) error {
 	type dropped struct {
 		entity, property string

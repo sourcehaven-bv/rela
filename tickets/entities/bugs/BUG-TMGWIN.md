@@ -11,7 +11,7 @@ why3: The gate's demand is satisfied structurally rather than semantically. Comp
 why4: The data-migration system was built around property- and type-level shape deltas. Faces were included in ShapeProjection and in the classifier (so the change is correctly DETECTED as needing migration) but never in the step vocabulary (so it cannot be RESOLVED). Detection and remediation were designed against different lists.
 why5: A gate can demand an operator action that the system provides no primitive to perform, and nothing catches the mismatch. DEC-0VGTF3 recorded that face re-keying would ride the general data-migration system as "one migration operation among several"; the system shipped without it, and no check ties a TierMigration delta kind to a step kind capable of resolving it. Every delta the classifier can raise needs a corresponding way to answer it.
 prevention: 'Add a confirm_face step so the classifier''s demand can actually be answered, and pair it with a structural guard: every TierMigration delta kind must map to at least one step kind that can resolve it, asserted by a test over both lists so a future delta kind cannot ship detection without remediation. The deeper lesson is that the remediation had to be designed against what the STORE permits, not against what the classifier''s wording implied: the obvious reading of ''confirm which state they belong to'' is a per-row assignment, which the row-family invariants make impossible.'
-status: review
+status: done
 ---
 
 ## Summary

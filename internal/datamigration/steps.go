@@ -521,7 +521,9 @@ func (s *confirmFaceStep) Validate(from, to metamodel.ShapeProjection) error {
 // account for.
 //
 // Writing nothing makes it trivially idempotent, which the engine requires of
-// every step.
+// every step. It also makes x.Apply moot — this is the one step that behaves
+// identically in a dry run, deliberately, rather than by having missed the
+// flag.
 func (s *confirmFaceStep) Run(ctx context.Context, x *Exec) (StepResult, error) {
 	res := StepResult{Kind: s.Kind(), Target: s.Target()}
 
