@@ -181,6 +181,32 @@ func (h *writeHandler) enterWrite(r *http.Request) *http.Request {
 // An empty (or all-whitespace) face is the zero coordinate, not an error: a
 // create that names no face is a different request from one that does, and the
 // manager decides whether the type allows it.
+// createFace picks the face a create body names, from `face` or `world`.
+//
+// A world names the face a create from it lands in (`worlds.<name>.create`).
+// It rides the BODY, not `?world=`: the query parameter is a read-side routing
+// rule that attachWorld refuses on every write, because a chain can answer
+// with a FALLBACK. `create:` names one declared face directly, so resolving it
+// here targets a row rather than a chain.
+//
+// The two spellings are exclusive rather than ranked. They can disagree, and
+// silently honoring either would write a row the caller did not ask for.
+func (h *writeHandler) createFace(
+	w http.ResponseWriter, r *http.Request, face, world, typeName string,
+	def *metamodel.EntityDef,
+) (string, bool) {
+	world = strings.TrimSpace(world)
+	if world == "" {
+		return face, true
+	}
+	if face != "" {
+		writeV1Error(w, r, http.StatusUnprocessableEntity, "validation_failed",
+			"name either `face` or `world`, not both", "/world")
+		return "", false
+	}
+	return h.createFaceForWorld(w, r, world, typeName, def)
+}
+
 // createFaceForWorld resolves a world named in a create body to the face that
 // world creates into (`worlds.<name>.create`).
 //
@@ -291,23 +317,9 @@ func (h *writeHandler) handleV1CreateEntity(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// A world names the face a create from it lands in (`worlds.<name>.create`).
-	// It rides the BODY, not `?world=`: the query parameter is a read-side
-	// routing rule that attachWorld refuses on every write, because a chain can
-	// answer with a fallback. `create:` names one declared face directly, so
-	// resolving it here targets a row rather than a chain.
-	rawFace := req.Face
-	if world := strings.TrimSpace(req.World); world != "" {
-		if req.Face != "" {
-			writeV1Error(w, r, http.StatusUnprocessableEntity, "validation_failed",
-				"name either `face` or `world`, not both", "/world")
-			return
-		}
-		face, ok := h.createFaceForWorld(w, r, world, typeName, &entityDef)
-		if !ok {
-			return
-		}
-		rawFace = face
+	rawFace, faceOK := h.createFace(w, r, req.Face, req.World, typeName, &entityDef)
+	if !faceOK {
+		return
 	}
 
 	createOpts, optsOK := parseCreateOpts(w, r, &entityDef, req.ID, req.Prefix, rawFace)
@@ -459,6 +471,7 @@ func (h *writeHandler) handleV1DryRunCreate(w http.ResponseWriter, r *http.Reque
 	rawDryFace := req.Face
 	if world := strings.TrimSpace(req.World); world != "" && req.Face == "" &&
 		len(entityDef.Faces) > 0 {
+
 		if wdef, declared := s.Meta.Worlds[world]; declared {
 			rawDryFace = wdef.Create
 		}

@@ -135,7 +135,7 @@ func TestCreateWorld_Refusals(t *testing.T) {
 }
 
 // TestCreateWorld_FaceAndWorldAreExclusive refuses a request naming both
-// rather than picking one. They can disagree, and silently honouring either
+// rather than picking one. They can disagree, and silently honoring either
 // would write a row the caller did not ask for.
 func TestCreateWorld_FaceAndWorldAreExclusive(t *testing.T) {
 	rec := postCreate(t, facedCreateApp(t), "tickets",
@@ -160,7 +160,7 @@ func TestCreateWorld_ExplicitFaceStillWins(t *testing.T) {
 		t.Fatalf("an explicit face must still create; got %d %s", rec.Code, rec.Body)
 	}
 	if self := createdSelf(t, rec); !strings.HasSuffix(self, "@published") {
-		t.Errorf("the named face must be honoured; _self = %q", self)
+		t.Errorf("the named face must be honored; _self = %q", self)
 	}
 }
 
@@ -181,9 +181,9 @@ func TestCreateWorld_DryRunAgreesWithTheCreate(t *testing.T) {
 		t.Fatalf("dry-run must answer; got %d %s", dry.Code, dry.Body)
 	}
 
-	real := postCreate(t, app, "tickets", body)
-	if real.Code != http.StatusCreated {
-		t.Fatalf("create must succeed; got %d %s", real.Code, real.Body)
+	live := postCreate(t, app, "tickets", body)
+	if live.Code != http.StatusCreated {
+		t.Fatalf("create must succeed; got %d %s", live.Code, live.Body)
 	}
 
 	var dryGot struct {
@@ -192,7 +192,7 @@ func TestCreateWorld_DryRunAgreesWithTheCreate(t *testing.T) {
 	if err := json.Unmarshal(dry.Body.Bytes(), &dryGot); err != nil {
 		t.Fatalf("decode dry-run: %v (body %s)", err, dry.Body)
 	}
-	self := createdSelf(t, real)
+	self := createdSelf(t, live)
 	if dryGot.Face != "" && !strings.HasSuffix(self, "@"+dryGot.Face) {
 		t.Errorf("the dry-run judged face %q but the create wrote %q — the form "+
 			"would gate fields against a row it is not writing",
