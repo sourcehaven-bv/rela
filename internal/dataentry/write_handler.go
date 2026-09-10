@@ -181,6 +181,54 @@ func (h *writeHandler) enterWrite(r *http.Request) *http.Request {
 // An empty (or all-whitespace) face is the zero coordinate, not an error: a
 // create that names no face is a different request from one that does, and the
 // manager decides whether the type allows it.
+// createFaceForWorld resolves a world named in a create body to the face that
+// world creates into (`worlds.<name>.create`).
+//
+// Two refusals, both 422 and both naming the schema key the operator must fix:
+// a world that is not declared, and a declared world with no `create:`. The
+// second is deliberately not silent — falling back to a faceless create would
+// hand the request to the manager, which refuses a faced type with
+// `face_required` and names no world, leaving the operator to guess which of
+// the two settings was missing.
+//
+// The default world is not special here: it declares no `create:` either, so a
+// create from it names no face, which is exactly right for a faceless type and
+// refused for a faced one.
+func (h *writeHandler) createFaceForWorld(
+	w http.ResponseWriter, r *http.Request, world, typeName string, def *metamodel.EntityDef,
+) (string, bool) {
+	// A type declaring no faces has exactly one state and no name for it, so
+	// the world contributes nothing: the create is faceless whichever world it
+	// came from. Returning early keeps a world-bound list working for the
+	// faceless types on it, which is most of them.
+	if len(def.Faces) == 0 {
+		return "", true
+	}
+	// `default` is implicit and total, so it is never in the Worlds map
+	// ([metamodel.DefaultWorldName]). It declares no `create:` and cannot: it
+	// is the absence of a world, and a faced type has no default row.
+	if world == metamodel.DefaultWorldName {
+		writeV1Error(w, r, http.StatusUnprocessableEntity, "validation_failed",
+			fmt.Sprintf("the default world names no face, so %s must be created "+
+				"from a world declaring `create:`, or name a `face` directly",
+				typeName), "/world")
+		return "", false
+	}
+	wdef, declared := h.schema().Meta.Worlds[world]
+	if !declared {
+		writeV1Error(w, r, http.StatusUnprocessableEntity, "unknown_world",
+			fmt.Sprintf("no world named %q is declared", world), "/world")
+		return "", false
+	}
+	if wdef.Create == "" {
+		writeV1Error(w, r, http.StatusUnprocessableEntity, "validation_failed",
+			fmt.Sprintf("world %q declares no `create:` face, so a create cannot be "+
+				"issued from it", world), "/world")
+		return "", false
+	}
+	return wdef.Create, true
+}
+
 func parseCreateOpts(
 	w http.ResponseWriter, r *http.Request, def *metamodel.EntityDef, id, prefix, rawFace string,
 ) (entityPkg.CreateOptions, bool) {
@@ -214,6 +262,7 @@ func (h *writeHandler) handleV1CreateEntity(w http.ResponseWriter, r *http.Reque
 		ID         string            `json:"id,omitempty"`
 		Prefix     string            `json:"prefix,omitempty"`
 		Face       string            `json:"face,omitempty"`
+		World      string            `json:"world,omitempty"`
 		Properties map[string]any    `json:"properties"`
 		Content    string            `json:"content,omitempty"`
 		Relations  v1.RelationsField `json:"relations"`
@@ -242,7 +291,26 @@ func (h *writeHandler) handleV1CreateEntity(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	createOpts, optsOK := parseCreateOpts(w, r, &entityDef, req.ID, req.Prefix, req.Face)
+	// A world names the face a create from it lands in (`worlds.<name>.create`).
+	// It rides the BODY, not `?world=`: the query parameter is a read-side
+	// routing rule that attachWorld refuses on every write, because a chain can
+	// answer with a fallback. `create:` names one declared face directly, so
+	// resolving it here targets a row rather than a chain.
+	rawFace := req.Face
+	if world := strings.TrimSpace(req.World); world != "" {
+		if req.Face != "" {
+			writeV1Error(w, r, http.StatusUnprocessableEntity, "validation_failed",
+				"name either `face` or `world`, not both", "/world")
+			return
+		}
+		face, ok := h.createFaceForWorld(w, r, world, typeName, &entityDef)
+		if !ok {
+			return
+		}
+		rawFace = face
+	}
+
+	createOpts, optsOK := parseCreateOpts(w, r, &entityDef, req.ID, req.Prefix, rawFace)
 	if !optsOK {
 		return
 	}
@@ -366,6 +434,7 @@ func (h *writeHandler) handleV1DryRunCreate(w http.ResponseWriter, r *http.Reque
 		ID         string         `json:"id,omitempty"`
 		Prefix     string         `json:"prefix,omitempty"`
 		Face       string         `json:"face,omitempty"`
+		World      string         `json:"world,omitempty"`
 		Properties map[string]any `json:"properties"`
 		Content    string         `json:"content,omitempty"`
 	}
@@ -383,12 +452,24 @@ func (h *writeHandler) handleV1DryRunCreate(w http.ResponseWriter, r *http.Reque
 	reqID := strings.TrimSpace(req.ID)
 	reqPrefix := strings.TrimSpace(req.Prefix)
 
+	// `world` resolves to a face exactly as it does on the real create, so a
+	// keystroke verdict is computed against the row the submit would write.
+	// A refusal here is advisory like the rest of this endpoint: it leaves
+	// dryFace empty rather than answering 422, and the real POST reports it.
+	rawDryFace := req.Face
+	if world := strings.TrimSpace(req.World); world != "" && req.Face == "" &&
+		len(entityDef.Faces) > 0 {
+		if wdef, declared := s.Meta.Worlds[world]; declared {
+			rawDryFace = wdef.Create
+		}
+	}
+
 	// A face that is not a face at all is advisory here, like the ID warning
 	// below: the create form should say so while typing rather than only at
 	// submit. Whether the type declares it is ValidateCreate's question.
 	var dryFace entityPkg.Face
 	var faceWarning *Warning
-	if raw := strings.TrimSpace(req.Face); raw != "" {
+	if raw := strings.TrimSpace(rawDryFace); raw != "" {
 		parsed, perr := entityPkg.ParseFace(raw)
 		if perr != nil {
 			faceWarning = &Warning{Code: "face_invalid", Path: "/face", Detail: perr.Error()}

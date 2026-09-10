@@ -42,6 +42,19 @@ describe('dryRunCreateEntity (TKT-3I5U)', () => {
     expect('relations' in sent).toBe(false)
   })
 
+  // The dry-run gates fields per keystroke, so it must be judged against the
+  // SAME face the submit will write. The server maps `world` through
+  // `worlds.<name>.create`; sending it on one call and not the other would
+  // gate the form against a row it is not writing.
+  it('forwards the world so the verdict matches the create', async () => {
+    await dryRunCreateEntity('ticket', {
+      properties: { title: 'x' },
+      world: 'editorial',
+    })
+    const [, body] = vi.mocked(api.post).mock.calls[0]
+    expect((body as Record<string, unknown>).world).toBe('editorial')
+  })
+
   it('forwards an AbortSignal for stale-drop', async () => {
     const controller = new AbortController()
     await dryRunCreateEntity('ticket', { properties: {} }, controller.signal)

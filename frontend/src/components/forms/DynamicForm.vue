@@ -753,7 +753,12 @@ async function refreshStagedAffordances() {
   try {
     const candidate = await dryRunCreateEntity(
       formConfig.value.entity,
-      { properties: { ...formData.value }, content: content.value || undefined },
+      {
+        properties: { ...formData.value },
+        content: content.value || undefined,
+        // Same face the submit will write, so the verdict matches the create.
+        world: worldParam.value || undefined,
+      },
       controller.signal
     )
     // A newer request superseded this one between await points — discard.
@@ -1140,6 +1145,7 @@ async function handleSubmit() {
     const payload: {
       id?: string
       prefix?: string
+      world?: string
       properties: Record<string, unknown>
       relations: ModernRelationsField
       content?: string
@@ -1166,6 +1172,11 @@ async function handleSubmit() {
     // userTouched-preserve rule, so a revealed-then-hidden field is not
     // persisted (TKT-CHLAJ).
     payload.properties = pruneWizardHidden(visibleWritablePropertiesForCommit())
+    // The world the create button opened this form in decides which face the
+    // new entity starts in — the server maps it through `worlds.<name>.create`.
+    // A faced type has no default row to fall back to, so omitting this is a
+    // refusal rather than a silent default (BUG-HC6I2T).
+    if (worldParam.value) payload.world = worldParam.value
     Object.assign(payload, idControls.buildPayloadFields())
     const entity = await entitiesStore.create(formConfig.value.entity, payload)
     createdEntityId.value = entity.id
@@ -1237,12 +1248,11 @@ async function handleSubmit() {
 
     // Navigate to return_to or entity detail.
     //
-    // The world rides along. A create always writes the entity's DEFAULT face
-    // — it names no face, and no world reaches a write — so under a filtering
-    // `default_world` the new entity has no face in the ambient world and
-    // landing there showed "not in this world" for something just created.
-    // The list's `create_world` says which world to land in; useWorld picked it
-    // off the `?world=` the create button carried.
+    // The world rides along to the redirect as well as into the create body:
+    // it is what chose the new entity's face, so it is also the world that
+    // face is visible in. Landing without it showed "not in this world" for
+    // something just created. The list's `create_world` says which world that
+    // is; useWorld picked it off the `?world=` the create button carried.
     if (returnTo.value) {
       router.push(returnTo.value)
     } else {

@@ -6,12 +6,14 @@ import type { RouteLocationRaw } from 'vue-router'
  *
  * ## Why a create button has a world of its own
  *
- * A create always writes the entity's DEFAULT face: it names no face, and a
- * world is a read-side routing rule that no write passes through. So under a
- * filtering `default_world` the new entity has no face in the world on screen,
- * and landing the author there showed "not in this world" for something they
- * had just made. That is how a demo ended up with POL-002 AND POL-003: the
- * natural response to "not found" is to create it again.
+ * A create names the world it was issued from, and the server maps that to a
+ * face through `worlds.<name>.create` — a faced type has no default row to
+ * fall back to (BUG-HC6I2T). The world therefore decides two things: which
+ * face the new entity starts in, and where the author lands afterwards. Under
+ * a filtering `default_world` a create that landed in the wrong face showed
+ * "not in this world" for something just made. That is how a demo ended up
+ * with POL-002 AND POL-003: the natural response to "not found" is to create
+ * it again.
  *
  * `create_world` on the LIST says which world to open the form in. It is on the
  * list's create button rather than on the form because the form is generic —
