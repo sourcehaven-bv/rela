@@ -76,9 +76,29 @@ entities:
 `POL-1@draft` are the same row, so a newly created policy *is* its own draft.
 The `label:` on each face is display text for the web app and has no effect on
 resolution. When you omit it, the face name is shown instead. A face may also
-carry `messages: {read_only: "..."}`, the sentence the web app shows on a page
-or form that reached this face while the reader may not write it; without it
-the page shows no explanation, as for any other permission denial.
+carry `messages:`, the operator's own words about that face. There are two
+keys, and they differ in who the sentence is about. `read_only` is about the
+**reader** — shown on a page or form that reached this face while they may not
+write it; without it the page shows no explanation, as for any other permission
+denial. `notice` is about the **document** — shown on a detail page whatever
+the reader may do with it:
+
+```yaml
+faces:
+  draft:
+    label: Draft
+    messages:
+      notice: 'This policy is a draft and has not been adopted.'
+  published:
+    label: Published
+    messages:
+      read_only: 'This is the adopted version. Edit the draft instead.'
+```
+
+The distinction matters because a draft is writable by definition, so it can
+never satisfy `read_only`'s condition — marking a draft as not-yet-in-force is
+what `notice` is for. Both may be declared on one face, and the page then shows
+`notice` first.
 
 `bare_face:` names a row that already exists. Every entity has one row stored
 under its bare id, whether or not the type declares faces, so adding `faces:`
@@ -528,7 +548,11 @@ never chose.
   published face), and the same editor looking at the draft, in whichever
   world, edits the draft. A page showing a face the reader may not write
   carries that face's `messages.read_only` if one is declared, and otherwise
-  nothing; the bare face is one click away through the face switcher.
+  nothing; the bare face is one click away through the face switcher. A page
+  showing a face that declares `messages.notice` carries that sentence whether
+  or not the reader may write it — it describes the document, not the
+  permission — and both appear together, `notice` first, when a face declares
+  both.
 - A **View Published** button, or a menu when there are several faces, lets
   the reader switch to the entity's other faces by address, staying in the
   world they are browsing. It renders on every screen that has faces,
