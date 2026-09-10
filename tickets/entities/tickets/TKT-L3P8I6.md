@@ -1,60 +1,29 @@
 ---
 id: TKT-L3P8I6
 type: ticket
-title: bare_face_changed can strand rows at an occupied coordinate, and no step enforces a check
+title: 'OBSOLETE: bare_face_changed no longer exists (bare_face removed in BUG-HC6I2T)'
 kind: enhancement
 priority: medium
 effort: m
-status: backlog
+status: wont-fix
 ---
 
-## Description
+## Obsolete
 
-Repointing `bare_face:` between two faces that BOTH already exist is a different
-problem from adopting the first one, and it is not covered by `confirm_face`
-(FEAT-H2GSOJ).
+Closed without work. BUG-HC6I2T (#1557) removed `bare_face` as a modelling key
+entirely, so the `bare_face_changed` delta this ticket was about no longer
+exists. `CompareShapes` now raises only `faces_introduced` and `faces_removed`.
 
-When a type already has named-face rows, changing which face the zero coordinate
-means can strand data. With `bare_face: published` → `bare_face: draft` and an
-entity holding both a bare row and a named `draft` row:
+The hazard it described — repointing which face the zero coordinate means, and
+stranding rows at an occupied destination — cannot arise, because the zero
+coordinate is no longer a face. A type with no faces stores its single state
+there; a type with faces stores each row under its own face name.
 
-- `StoredFace(task, "draft")` now resolves to the empty coordinate, so the bare
-row impersonates `draft`;
-- the pre-existing named `draft` row becomes unreachable through the
-declared-face API, an orphan awaiting GC;
-- `published` resolves to the coordinate `"published"`, which holds nothing.
+The remaining faced-schema gap is `faces_removed`, tracked in TKT-1YBNQJ.
 
-`renameFaceStep.Run` detects exactly this collision and refuses it, naming the
-entity. Nothing enforces the equivalent for a `bare_face` repoint.
+## Original description
 
-## Current state
-
-`confirm_face` is deliberately NOT required for `bare_face_changed`
-(`resolvingSteps` in `internal/datamigration/file.go` lists it with an empty
-value and a reason). Enforcing it would be wrong twice over: the step does not
-look for occupied destinations, and it would break the legitimate
-`rename_face`-based migrations that handle this case today.
-
-So the delta is detected, `migrate gen` drafts a `confirm_face` skeleton for it
-via the shared drafting case, and an operator who fills that in gets a
-confirmation that does not check the thing that matters.
-
-## What it probably needs
-
-Either:
-
-- a check in `confirm_face` that refuses when the newly-bare face already has
-named rows, pointing at `rename_face`; or
-- a distinct step for the repoint that carries `rename_face`'s collision
-detection; or
-- narrowing the generator so `bare_face_changed` drafts `rename_face` guidance
-rather than a `confirm_face` skeleton.
-
-The third is the cheapest and probably right: the drafting case is currently
-shared with `bare_face_introduced` only because both mention `bare_face`, which
-is not a good enough reason.
-
-## Scope note
-
-Found during the code review of BUG-TMGWIN rather than in the field. No known
-occurrence; a type would need faces AND a repoint AND pre-existing named rows.
+Repointing `bare_face:` between two faces that both already exist could strand
+data: the bare row would start impersonating the newly-bare face while the
+pre-existing named row for it became unreachable. `rename_face` detected that
+collision; `confirm_face` did not.

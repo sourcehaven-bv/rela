@@ -1,7 +1,7 @@
 ---
 id: TKT-1YBNQJ
 type: ticket
-title: bare_face_removed still drafts an empty migration, the same gap confirm_face closed for adoption
+title: 'faces_removed drafts an empty migration: no step moves rows back when a type loses its faces'
 kind: enhancement
 priority: medium
 effort: s
@@ -10,38 +10,38 @@ status: backlog
 
 ## Description
 
-`bare_face_removed` is classified `TierMigration` with the message "rows at the
-zero coordinate belong to no declared face", but no step can answer it and `rela
-migrate gen` drafts `steps: []`. This is the residue of BUG-TMGWIN:
-`confirm_face` closed the *adoption* direction (`bare_face_introduced`, and
-`bare_face_changed` which reuses the same drafting case), and this is the
-remaining sibling in the same switch (`shapecompare.go:212-226`).
+`faces_removed` is classified `TierMigration` with the message "rows at <faces>
+belong to no declared face, and the type's single state is a coordinate none of
+them occupies", but no step can answer it and `rela migrate gen` drafts `steps:
+[]`.
 
-Verified against a scratch project: removing `faces:`/`bare_face:` from a type
-that has rows generates a file whose only content is `steps: []`, which then
-applies and reports the schema in sync.
+This is the mirror of the gap `migrate_face` closed for adoption (BUG-TMGWIN /
+FEAT-H2GSOJ). It is listed in `resolvingSteps` with an empty value and a written
+reason, so the exemption is visible rather than silent; the guard test will fail
+if anyone removes the entry without adding a resolving step.
 
-## Why it is lower severity than the adoption case
+## Why it is harder than the adoption direction
 
-Going faced → flat is the safe direction. The bare rows keep their content and
-become the type's only rows again; what is lost is the *meaning* attached to the
-bare coordinate, not the data. The adoption case silently changed what every row
-claimed to be, which is why it was fixed first.
+Adoption is a fan-out with one right answer per row: each row sits at the zero
+coordinate and moves to the face its data names. Removal is a **fan-in**. An
+entity may hold content at several faces, and dropping `faces:` leaves all of
+them addressing nothing while the type's single state is the zero coordinate
+none of them occupies.
 
-The named-face rows are the real question here. They do not disappear when the
-schema stops declaring faces — they become undeclared stored faces, which is the
-drift the GC eventually sweeps.
+So a step has to decide which face's content becomes the surviving row, and what
+happens to the others. That is a merge, not a move, and the answer is
+per-project: the newest? a named one? refuse when they differ?
 
 ## What it probably needs
 
-Not a new step kind, most likely. The honest answer is either:
+A `merge_faces`-shaped step naming the winning face explicitly, e.g. `{entity:
+article, keep: published}`, refusing when a row has content at a face that is
+not the winner unless the operator says to discard it. Worth designing alongside
+FEAT-JZCGZW, which has the same shape in reverse.
 
-- a `confirm_face` variant that acknowledges the removal (the rows' state is now
-nothing), or
-- generator guidance pointing at `drop_entities` for the named-face rows, if the
-operator means to discard them.
+## Note
 
-Worth deciding rather than leaving the delta unanswerable, since an unanswerable
-`TierMigration` delta is exactly what
-AM-migration-delta-kinds-have-resolving-steps is meant to make impossible. That
-guard, once written, will fail on this.
+Originally filed against `bare_face_removed`. BUG-HC6I2T renamed the delta to
+`faces_removed` and changed what it means: the zero coordinate is no longer a
+face, so there is no longer a privileged row that survives by default. That made
+this case harder, not easier — retitled and rewritten accordingly.

@@ -1,65 +1,56 @@
 ---
 id: FEAT-JZCGZW
 type: feature
-title: 'copy_face migration step: give selected entities a second row on a named face'
-summary: A migration step that creates a named-face row alongside an entity's bare row, for entities selected by a property value. This is the copy operation that per-row face assignment actually requires, since the store keeps every entity on its bare coordinate and a row can never be moved off it.
-description: 'Follow-up to FEAT-H2GSOJ. confirm_face states which face the existing bare rows become, which is all a move-based step could ever do given the store''s row-family invariants. Giving different entities different faces needs a second row per entity rather than a reassignment, so it is a copy: create a named-face row alongside the bare row, for entities matching a condition. The open design questions are what content the new row carries (a duplicate of the bare row, or a transform) and what the bare row then means, since it remains the family head and keeps whatever bare_face names.'
+title: 'copy_face migration step: give an entity a second row on another face'
+summary: A migration step that creates an additional named-face row alongside an entity's existing one. Distinct from migrate_face, which moves a row to exactly one face; this is for seeding a second content state (a draft copy of published content) during a migration.
+description: Follow-up to FEAT-H2GSOJ. migrate_face moves each row to exactly one face, which is the right answer for adopting faces on existing data. copy_face is the different operation of giving an entity content at TWO faces at once. Its original rationale (that a row could not be moved at all, so per-row assignment had to be a copy) was removed by BUG-HC6I2T; what remains is the narrower and genuinely useful case of seeding a draft alongside published content. The open questions are what content the copy carries and whether a declarative step is the right shape at all, given the lua step already transforms properties.
 priority: medium
 status: proposed
 ---
 
-## Why this is a separate step
+## What changed
 
-`confirm_face` (FEAT-H2GSOJ) states which face the existing bare rows become.
-That is the whole of what a move-based step could do, because the store's
-row-family invariants (TKT-DOFYR1) keep every entity on its bare coordinate:
+This was originally proposed because a row could not be moved off the zero
+coordinate at all, so "give different entities different faces" had to be
+expressed as a copy. **BUG-HC6I2T removed that constraint**, and FEAT-H2GSOJ now
+ships `migrate_face`, which moves rows properly. The original motivation is
+gone.
 
-- a family's default row cannot be deleted while a sibling face remains, and
-- a named-face row cannot exist without a default row ("headless").
-
-So "put these rows on `draft` and those on `published`" is not a reassignment at
-all. It is a request for a **second row** on the named face, alongside the bare
-row that necessarily stays. That is a copy, and it deserves its own step rather
-than being smuggled into a confirmation.
+What remains is narrower: giving an entity content at **two** faces at once —
+seeding a `draft` copy alongside `published` content, so editors have somewhere
+to work without touching what readers see.
 
 ## Sketch
 
 ```yaml
 - copy_face:
     entity: article
-    property: status
-    face: draft
-    when_values: [draft, in-review]
+    from: published
+    to: draft
 ```
 
-Entities whose `status` is `draft` or `in-review` gain a `@draft` row; their
-bare row is untouched and still carries whatever `bare_face:` names.
+Every `article` with a `published` row gains a `draft` row with the same
+content. The source is untouched.
 
-## Open design questions
+## Open questions
 
-These are the reason this is not built yet, not incidental details.
+- **Is a declarative step the right shape?** A copy is only useful if the copy
+differs from the source in some way, and the moment it does, the operator wants
+a transform — which the `lua` step already provides, and which a fixed-shape
+step cannot express. A verbatim copy may be too narrow to earn a step of its
+own.
+- **What happens when the destination is occupied?** `rename_face` refuses a
+collision unless the content is identical (its crash-convergence contract). A
+copy should reuse that rather than re-derive it.
+- **Is this migration work at all?** Seeding a draft state looks more like
+something an automation or a one-off script does than a schema migration. A
+migration exists to make stored data fit a new schema; content that was never
+there is not a conformance problem.
 
-- **What content does the new row carry?** A verbatim duplicate of the bare row
-is the obvious default and is probably right for adoption. A transform (drop
-some properties, change a status) is more useful and much harder to specify
-declaratively.
-- **What does the bare row then mean?** It remains the family head and keeps the
-`bare_face:` identity. For an entity that is conceptually "only a draft", the
-result is a published row and a draft row with the same content, which may not
-be what the operator wanted. This needs to be stated plainly in the docs, or the
-step will produce a surprise.
-- **Idempotence.** Re-running must converge. A destination row holding identical
-content is the previous run's copy; anything else is a genuine collision.
-`rename_face` already has this contract (`sameContent`) and it should be reused
-rather than re-derived.
-- **Selection syntax.** `when_values:` on a single enum keeps the parse-time
-exhaustiveness story that made `confirm_face` safe. A general `where:` predicate
-through `internal/predicate` is more expressive but gives up the closed value
-set, so unmatched rows become discoverable only by running it.
+That last question is the one to settle first. If the answer is no, close this
+rather than build it.
 
-## Prior art in tree
+## Priority
 
-`renameFaceStep.Run` already does create-at-coordinate with a collision check
-and a crash-convergence test. A copy is that minus the delete, which is the
-easier half — the difficulty here is entirely in the semantics above, not the
-mechanics.
+Lowered: no known caller. The case that motivated the original filing is handled
+by `migrate_face`.
