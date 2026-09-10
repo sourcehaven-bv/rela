@@ -22,7 +22,12 @@ roles:
     read: ["*", "world:published", "world:editorial", "world:site-nl"]
     permissions: [manage-roles, publish-policy]
     create: ["*"]
-    update: ["*"]
+    # `*` grants only the DEFAULT face by design (BUG-Y0GNSB): a wildcard must
+    # not silently reach a face an operator meant to guard. A type declaring
+    # `faces:` therefore needs its faces named, and since BUG-HC6I2T there is
+    # no default face for one to fall back on. The editor may edit drafts; the
+    # published face stays reachable only through the guarded `publish` copy.
+    update: ["*", "policy@draft", "guide@en", "guide@nl", "procedure@en", "procedure@nl"]
     delete: ["*"]
 
   reader:

@@ -419,3 +419,30 @@ func anyFaceOf(ctx context.Context, st store.Store, id string) (*entity.Entity, 
 	}
 	return nil, store.ErrNotFound
 }
+
+// getEntityByRef resolves an entity ADDRESS — either a bare id or the fused
+// boundary form `ID@face` — to the row it names.
+//
+// Store.GetEntity is GetEntityState(id, zero) in every backend, so it can only
+// ever answer for the zero coordinate. A type declaring `faces:` stores no row
+// there (BUG-HC6I2T removed the privileged face), which means a caller handed
+// `POL-1@draft` and passing it straight to GetEntity gets ErrNotFound for a row
+// that plainly exists.
+//
+// Fails closed on a non-not-found error, for the same reason [anyFaceOf] does:
+// a caller's not-found branch typically returns before authorizing, so a
+// transient store error reported as "absent" would skip an ACL check.
+//
+// Nil: never returned with a nil error.
+func (m *Manager) getEntityByRef(ctx context.Context, ref string) (*entity.Entity, error) {
+	base, face, perr := entity.ParseStateRef(ref)
+	if perr != nil {
+		// Not a parseable ref: let the store answer for the literal id, which
+		// preserves the error the caller would have seen before.
+		return m.deps.Store.GetEntity(ctx, ref)
+	}
+	if face.IsDefault() {
+		return m.deps.Store.GetEntity(ctx, base)
+	}
+	return m.deps.Store.GetEntityState(ctx, base, face)
+}

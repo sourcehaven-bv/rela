@@ -20,10 +20,11 @@ in-memory bleve index (documented on `bleveindex.NewMem`) and takes ~15 minutes
 on this machine. It is pre-existing, arrived in #1337, and reproduces
 identically on clean develop with this branch stashed.
 
-- all packages except `dataentry`: EXIT=0, 103 packages, no failures
-- `dataentry` minus that one test: EXIT=0, 74s, 1272 of 1273 tests
+- all packages except `dataentry`: EXIT=0, no failures
+- `dataentry`: EXIT=0, 39s
+- `pgstore` + `jobs` against a live Postgres: EXIT=0, zero skips
 - `just lint`: 0 issues; `just arch-lint`: no warnings
-- `just comment-lint`: clean across 13923 comments
+- `just comment-lint`: clean across 14003 comments
 - `just docs-check`: passes once the regenerated docs are committed
 
 The one test not run locally is unmodified by this branch and runs in CI.
@@ -71,6 +72,45 @@ a per-face counting bug. It was a fixture error — an edge tailed on a face wit
 no entity row is counted by nobody. Both the store and `countRelationsFor` were
 correct. The test is now mutation-verified in both directions.
 
+## Read paths reached by removing the privileged face
+
+Removing `bare_face` changed what a BARE ADDRESS means, so read surfaces that
+resolved an address through the zero coordinate stopped answering for a faced
+type. The worlds manual is the executable check — its `api{}`, `screenshot{}`
+and `hidden{}` islands assert prose against a running rela — and it found six.
+All six are fixed and the manual now exits 0 against Postgres.
+
+Two needed production changes rather than a corrected assertion:
+
+- **`PatchEntity` could not address a face.** Its doc comment already claimed
+`ID@face` worked; no backend's `GetEntity` ever parsed one. `getEntityByRef`
+makes the comment true. The ACL subject also had to switch to the resolved
+`stored.ID`, or the fused string would have become the row-gate key and
+disagreed with every other write path.
+- **History 404'd on a live entity.** `authorizeHistoryRead` resolved the
+subject through a face-blind `getEntity`, so a faced type found no row at the
+zero coordinate and fell through to the deleted-entity branch, which demands the
+global `history:read`. It now resolves the address the way the entity GET does,
+via `visibleReader.getWorldEntity`.
+
+The history fix raised a design question worth recording, because the obvious
+version of it is wrong. A world with `otherwise: default` answers a missing face
+with a STAND-IN — right for a reader, since English beats a blank page for
+someone who asked for Dutch, and misleading for a timeline, because a history
+labelled only by face looks like the one you asked for. The timeline response
+therefore carries `via` (`chain` with `chain_position`, `fallback-default`, or
+`unscoped`), computed by the same `resolutionRuleAt` the entity endpoint uses so
+the two surfaces cannot disagree about one resolution.
+`TestHistoryTimeline_LabelsHowTheFaceWasChosen` pins all three rules and is
+mutation-verified.
+
+Note on reach: `TestPatch_AddressesTheFaceTheRefNames` passes with its fix
+reverted, because memstore and fsstore key on `FormatStateRef(id, face)` and so
+resolve a fused id by string coincidence. Only pgstore, which queries `id = $1
+AND face = $2`, genuinely fails; that was confirmed against a live database. The
+test pins the ACL half, and says so in a comment rather than letting a green run
+imply more.
+
 ## Acceptance Verification
 
 - [x] Each acceptance criterion tested (reference planning checklist)
@@ -111,7 +151,7 @@ changes a documented modelling key, so the guides would otherwise describe a key
 the loader no longer accepts. Updated `GUIDE-content-states`, `GUIDE-metamodel`,
 `GUIDE-acl-overview`, `GUIDE-acl-security`, `GUIDE-data-entry`,
 `GUIDE-data-migration` and `CON-content-states`, with `docs/*.md` regenerated
-from them.
+from them. `GUIDE-content-states` also documents the history `via` field.
 
 ## Final Checks
 

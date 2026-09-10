@@ -100,7 +100,7 @@ func TestAuthorizeHistoryRead_AbsentEntityNoPermissionIs404(t *testing.T) {
 	req = req.WithContext(withReadGate(context.Background(), fakeGate{holdsPermission: false}))
 	rec := httptest.NewRecorder()
 
-	ok := authorizeHistoryRead(app, rec, req, "ticket", "GONE-1")
+	ok := authorizeHistoryRead(app, rec, req, "ticket", entityRef{ID: "GONE-1"})
 	if ok {
 		t.Fatal("authorizeHistoryRead should deny an absent entity when the caller lacks history:read")
 	}
@@ -118,7 +118,7 @@ func TestAuthorizeHistoryRead_AbsentEntityWithPermissionAllowed(t *testing.T) {
 	req = req.WithContext(withReadGate(context.Background(), fakeGate{holdsPermission: true}))
 	rec := httptest.NewRecorder()
 
-	if !authorizeHistoryRead(app, rec, req, "ticket", "GONE-1") {
+	if !authorizeHistoryRead(app, rec, req, "ticket", entityRef{ID: "GONE-1"}) {
 		t.Fatalf("history:read holder should be allowed to read deleted-entity history; body=%s", rec.Body.String())
 	}
 }

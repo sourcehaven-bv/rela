@@ -3,6 +3,7 @@ package entitymanager_test
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -53,7 +54,10 @@ func facedWriteManager(t *testing.T, gate acl.ACL) (*entitymanager.Manager, *mem
 // was asked about, which is the whole point: a test that only checks the
 // verdict cannot tell an authorization of the right row from an
 // authorization of the wrong one that happened to agree.
-type conceptOnlyACL struct{ asked []entity.Face }
+type conceptOnlyACL struct {
+	asked    []entity.Face
+	askedIDs []string
+}
 
 func (a *conceptOnlyACL) AuthorizeWrite(_ context.Context, req acl.WriteRequest) acl.Decision {
 	es, ok := req.Subject.(acl.EntitySubject)
@@ -61,6 +65,7 @@ func (a *conceptOnlyACL) AuthorizeWrite(_ context.Context, req acl.WriteRequest)
 		return acl.Decision{Allow: true}
 	}
 	a.asked = append(a.asked, es.Face)
+	a.askedIDs = append(a.askedIDs, es.ID)
 	if es.Face == entity.Face("concept") {
 		return acl.Decision{Allow: true, RuleKind: "test", RuleID: "concept-grant"}
 	}
@@ -353,5 +358,67 @@ entities:
 		t.Fatalf("two distinct entities were minted the same id %q — the id is the "+
 			"ACL row-gate key, so one entity's grant would cover the other",
 			first.Entity.ID)
+	}
+}
+
+// TestPatch_AddressesTheFaceTheRefNames pins that PatchEntity resolves the
+// fused boundary form rather than always asking the zero coordinate.
+//
+// Store.GetEntity is GetEntityState(id, zero) in every backend, so before this
+// a patch of `POL-1@concept` reported "not found" for a row that plainly
+// exists — and on a faceless type it worked, which is what kept the gap hidden.
+//
+// NOTE ON REACH. This test runs against memstore, which keys entities on
+// FormatStateRef(id, face) — so GetEntity("POL-1@concept") builds the key
+// "POL-1@concept" with a zero face and hits the stored row BY COINCIDENCE.
+// fsstore keys the same way. The lookup fix is therefore NOT observable here:
+// reverting getEntityByRef to a bare GetEntity leaves this test green
+// (mutation-checked).
+//
+// pgstore is where it is real — it queries `id = $1 AND face = $2`, so the
+// fused id matches nothing (verified directly against a live database). What
+// this test genuinely pins is the ACL half: that the subject names the bare id
+// with the face in its own field. The lookup half is covered by the worlds
+// manual, which builds against postgres in CI and is what surfaced the bug.
+//
+// The ACL half matters as much as the lookup: the subject must name the BARE id
+// with the face in its own field, exactly as UpdateEntity does. Passing the
+// fused string as the subject ID would make the row-gate key disagree with
+// every other write path.
+func TestPatch_AddressesTheFaceTheRefNames(t *testing.T) {
+	ctx := context.Background()
+	gate := &conceptOnlyACL{}
+	mgr, st := facedWriteManager(t, gate)
+
+	seed := func(face, title string) {
+		t.Helper()
+		e := entity.New("POL-1", "beleid")
+		e.Face = entity.Face(face)
+		e.Properties = map[string]any{"title": title}
+		if err := st.CreateEntity(ctx, e); err != nil {
+			t.Fatalf("seed %s: %v", face, err)
+		}
+	}
+	seed("draft", "draft text")
+	seed("concept", "concept text")
+
+	if _, err := mgr.PatchEntity(ctx, "POL-1@concept",
+		entity.Patch{Properties: map[string]any{"title": "patched"}}); err != nil {
+		t.Fatalf("patching a faced address must resolve that row; got %v", err)
+	}
+
+	got, err := st.GetEntityState(ctx, "POL-1", entity.Face("concept"))
+	if err != nil || got.Properties["title"] != "patched" {
+		t.Errorf("concept face = %v (err %v), want the patched title", got.Properties, err)
+	}
+	sib, err := st.GetEntityState(ctx, "POL-1", entity.Face("draft"))
+	if err != nil || sib.Properties["title"] != "draft text" {
+		t.Errorf("draft face = %v (err %v), want it untouched", sib.Properties, err)
+	}
+	if !slices.Contains(gate.asked, entity.Face("concept")) {
+		t.Errorf("ACL was asked about %v, want the concept face", gate.asked)
+	}
+	if slices.Contains(gate.askedIDs, "POL-1@concept") {
+		t.Errorf("the ACL subject must name the BARE id; got %v", gate.askedIDs)
 	}
 }

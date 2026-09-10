@@ -753,6 +753,17 @@ A world reaches the following routes:
 | `/api/v1/_next_action` | Yes, as the display world for `visible_worlds` |
 | Documents, feeds, analysis, sync, attachments, export, relation sub-resources | No. An explicit `?world=` is refused with `422 world_unsupported` |
 
+A history response names the face it belongs to and how that face was chosen:
+`via` is `chain` (a face the world asked for, with `chain_position` giving
+which one), `fallback-default` (no face in the chain existed, so the default
+stood in), or `unscoped` (the world says nothing about this type). The rule
+matters more here than on a reading surface. A world with `otherwise: default`
+answers a missing face with a stand-in, which is the right answer for a reader
+and a misleading one for a timeline: without `via`, a history labeled only by
+face looks like the one you asked for. It is the same label the entity endpoint
+returns, computed the same way, so the two cannot disagree about one
+resolution.
+
 Analysis is deliberately unscoped. It reports on the health of the whole graph
 a caller may read, and a world that hides a broken draft would make the graph
 look clean precisely where it is not.

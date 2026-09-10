@@ -2,7 +2,9 @@ package dataentry
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
@@ -260,5 +262,93 @@ func TestHistoryFace_DefaultWorldNeverProbesTheStore(t *testing.T) {
 		t.Errorf("under the default world an absent LIVE row must still resolve "+
 			"the default face — a deleted entity's history is a supported read; "+
 			"got (%q,%v)", p, ok)
+	}
+}
+
+// TestHistoryTimeline_LabelsHowTheFaceWasChosen pins the provenance half of a
+// world-scoped timeline.
+//
+// A world may answer with a STAND-IN face: `otherwise: default` means a guide
+// with no Dutch face resolves to the English one. That is the right answer for
+// a READER — English beats a blank page for someone who asked for Dutch — and
+// a misleading one for a HISTORY, because a timeline labeled only by face
+// looks like the one the caller asked for. The reader has no way to tell "this
+// is the Dutch history" from "there is no Dutch history, here is English".
+//
+// So the response says which RULE produced the face, in the same vocabulary
+// and from the same mapping the entity GET uses ([worldProvenance]) — sharing
+// resolutionRuleAt rather than re-deriving it, so the two surfaces cannot
+// disagree about one resolution.
+func TestHistoryTimeline_LabelsHowTheFaceWasChosen(t *testing.T) {
+	scope := store.NewWorldScope(map[string]store.TypeResolution{
+		"policy": {
+			Chain:    []entityPkg.Face{entityPkg.Face("nl"), entityPkg.Face("en")},
+			Fallback: store.FallbackDefaultState,
+		},
+	})
+
+	tests := []struct {
+		name      string
+		face      entityPkg.Face
+		wantVia   string
+		wantPos   int
+		hasPos    bool
+		rationale string
+	}{
+		{
+			name: "first chain choice", face: entityPkg.Face("nl"),
+			wantVia: "chain", wantPos: 0, hasPos: true,
+			rationale: "the face the caller's world asked for first",
+		},
+		{
+			name: "stand-in later in the chain", face: entityPkg.Face("en"),
+			wantVia: "chain", wantPos: 1, hasPos: true,
+			rationale: "a real chain answer, but NOT the world's first choice — " +
+				"the position is the only thing that distinguishes the two",
+		},
+		{
+			name: "fallback stood in", face: entityPkg.Face("de"),
+			wantVia: "fallback-default", hasPos: false,
+			rationale: "no chain coordinate existed, so this history belongs to " +
+				"a face nobody asked for and must say so",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/_history/policy/POL-1", http.NoBody)
+			req = req.WithContext(withReadGate(worldCtx(scope), fakeGate{holdsPermission: true}))
+			rec := httptest.NewRecorder()
+
+			serveHistoryTimeline(rec, req, &stubHistory{}, "policy", "POL-1", tc.face)
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("timeline: got %d, want 200; body=%s", rec.Code, rec.Body)
+			}
+			var body struct {
+				Face          string `json:"face"`
+				Via           string `json:"via"`
+				ChainPosition *int   `json:"chain_position"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+				t.Fatalf("decode: %v; body=%s", err, rec.Body)
+			}
+			if body.Face != tc.face.String() {
+				t.Errorf("face: got %q, want %q", body.Face, tc.face)
+			}
+			if body.Via != tc.wantVia {
+				t.Errorf("via: got %q, want %q (%s)", body.Via, tc.wantVia, tc.rationale)
+			}
+			switch {
+			case tc.hasPos && body.ChainPosition == nil:
+				t.Errorf("chain_position missing: %s", tc.rationale)
+			case tc.hasPos && *body.ChainPosition != tc.wantPos:
+				t.Errorf("chain_position: got %d, want %d (%s)",
+					*body.ChainPosition, tc.wantPos, tc.rationale)
+			case !tc.hasPos && body.ChainPosition != nil:
+				t.Errorf("chain_position must be absent when no chain entry was "+
+					"used; got %d", *body.ChainPosition)
+			}
+		})
 	}
 }

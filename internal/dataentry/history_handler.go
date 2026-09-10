@@ -150,7 +150,7 @@ func handleV1History(a *App, w http.ResponseWriter, r *http.Request) {
 
 	// Authorize reads: live entity → same read gate as a GET; deleted entity →
 	// PermHistoryRead, else an indistinguishable 404.
-	if !authorizeHistoryRead(a, w, r, typeName, entityID) {
+	if !authorizeHistoryRead(a, w, r, typeName, ref) {
 		return
 	}
 
@@ -209,7 +209,7 @@ func handleV1History(a *App, w http.ResponseWriter, r *http.Request) {
 		serveHistoryVersion(a, w, r, scoped, typeName, entityID, parts[2])
 		return
 	}
-	serveHistoryTimeline(w, r, scoped, entityID, face)
+	serveHistoryTimeline(w, r, scoped, typeName, entityID, face)
 }
 
 // authorizeHistoryRead returns true if the caller may read this entity's
@@ -223,15 +223,16 @@ func handleV1History(a *App, w http.ResponseWriter, r *http.Request) {
 // typeName ⇒ 404); the version-read/restore paths additionally verify the
 // SNAPSHOT's type matches (see verifySnapshotType), so a deleted entity of a
 // mismatched type is a 404 too.
-func authorizeHistoryRead(a *App, w http.ResponseWriter, r *http.Request, typeName, entityID string) bool {
+func authorizeHistoryRead(a *App, w http.ResponseWriter, r *http.Request, typeName string, ref entityRef) bool {
 	ctx := r.Context()
 	gate := readGateFromContext(ctx)
+	entityID := ref.ID
 
 	// Live entity: gate exactly as a GET would (PermitsRead), so a hidden or
 	// nonexistent id is an indistinguishable 404. A type mismatch is ALSO a 404
 	// (indistinguishable), so the URL type can't be used to borrow another
 	// type's read verdict.
-	if live, found := a.reader.getEntity(ctx, entityID); found {
+	if live, found := a.liveHistorySubject(ctx, typeName, ref); found {
 		if live.Type != typeName {
 			writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 			return false
@@ -254,7 +255,7 @@ func authorizeHistoryRead(a *App, w http.ResponseWriter, r *http.Request, typeNa
 // serveHistoryTimeline writes the version metadata list (oldest first).
 func serveHistoryTimeline(
 	w http.ResponseWriter, r *http.Request, reader store.HistoryReader,
-	entityID string, face entityPkg.Face,
+	typeName, entityID string, face entityPkg.Face,
 ) {
 	metas, err := reader.ListVersions(r.Context(), entityID)
 	if err != nil {
@@ -289,13 +290,27 @@ func serveHistoryTimeline(
 		}
 		versions = append(versions, row)
 	}
-	// The response NAMES the face it belongs to. A record that does not name
-	// its subject invites the reader to assume the obvious one, which is
-	// precisely how the default face's history passed for a published page's.
-	// Empty means the default face, matching the face's own zero value.
-	writeV1JSON(w, http.StatusOK, map[string]any{
-		"id": entityID, "versions": versions, "face": face.String(),
-	})
+	// The response NAMES the face it belongs to, and HOW that face was
+	// chosen. A record that does not name its subject invites the reader to
+	// assume the obvious one, which is precisely how the default face's
+	// history passed for a published page's. Empty face means the default
+	// face, matching the face's own zero value.
+	//
+	// `via` matters more here than on a read surface. A world may answer with
+	// a STAND-IN face (`otherwise: default`, rule 3), which is a good answer
+	// for a reader — English beats a blank page for someone who asked for
+	// Dutch — and a misleading one for a timeline, because a history labeled
+	// only by face looks like the one the caller asked for. Labeling it the
+	// way the entity GET does (see worldProvenance) is what keeps the two
+	// surfaces from disagreeing about the same resolution.
+	rule, position := resolutionRuleAt(worldFromContext(ctx).scope, typeName, face)
+	body := map[string]any{
+		"id": entityID, "versions": versions, "face": face.String(), "via": rule,
+	}
+	if position != nil {
+		body["chain_position"] = *position
+	}
+	writeV1JSON(w, http.StatusOK, body)
 }
 
 // serveHistoryVersion writes one version's full snapshot, redacted through the
@@ -388,4 +403,46 @@ func serveHistoryVersion(a *App,
 		payload["origin"] = o
 	}
 	writeV1JSON(w, http.StatusOK, payload)
+}
+
+// liveHistorySubject finds the LIVE row whose read verdict gates this history
+// request, or reports that no live row answers the address.
+//
+// The {id} path segment is an ADDRESS, not a stored coordinate, and the two
+// spellings resolve differently:
+//
+//   - `ID@face` names one row, so it is read directly.
+//   - A bare `ID` names no row on a type that declares faces (BUG-HC6I2T
+//     removed the privileged face). The REQUEST'S WORLD resolves it, exactly
+//     as it resolves the same address on the entity GET.
+//
+// The bare arm delegates to [visibleReader.getWorldEntity] rather than
+// resolving anything here. That keeps one resolution site and one ordering
+// (ACL trims the candidate faces, then the world ranks what is left), so this
+// endpoint cannot answer with a face the entity view would not. Picking "some
+// live face" instead would be a second, weaker implementation of world
+// resolution — the implicit face choice this arc exists to remove.
+//
+// In the DEFAULT world getWorldEntity reads the zero coordinate, so a bare
+// address on a type that declares faces finds nothing and 404s. That is not a
+// gap: the entity GET answers the same address the same way (getVisibleRef
+// takes the identical bare-id branch), and the two surfaces must agree about
+// what an address names. A caller who wants a faced timeline in the default
+// world spells the face.
+//
+// found=false means no live row, which routes the caller to the deleted-entity
+// branch and its global acl.PermHistoryRead check. That is correct for a
+// genuinely deleted entity and for one the world excludes: in the latter case
+// the face gate below withholds the timeline anyway.
+//
+// Nil: never returned with found=true.
+func (a *App) liveHistorySubject(ctx context.Context, typeName string, ref entityRef) (*entityPkg.Entity, bool) {
+	if ref.Explicit {
+		return a.reader.getEntityRef(ctx, ref)
+	}
+	e, err := a.visibleReader.getWorldEntity(ctx, typeName, ref.ID)
+	if err != nil {
+		return nil, false
+	}
+	return e, true
 }

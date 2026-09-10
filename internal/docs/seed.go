@@ -287,11 +287,14 @@ func applyEdit(ctx context.Context, st seedEditStore, patcher SeedPatcher, op Se
 		patch.Content = &content
 	}
 	if patcher != nil {
-		_, err := patcher.PatchEntity(ctx, op.ID, patch)
+		// PatchEntity takes an ADDRESS, so a faced edit hands it `ID@face`.
+		// The bare form names the zero coordinate, where a type declaring
+		// faces stores nothing (BUG-HC6I2T).
+		_, err := patcher.PatchEntity(ctx, entity.FormatStateRef(op.ID, op.Face), patch)
 		return err
 	}
 
-	e, err := st.GetEntity(ctx, op.ID)
+	e, err := st.GetEntityState(ctx, op.ID, op.Face)
 	if err != nil {
 		return err
 	}
@@ -401,7 +404,10 @@ func (s *seedBindings) luaEdit(ls *lua.LState) int {
 	// Apply to the in-memory resolver store immediately, so a later entity{} /
 	// count{} island sees the edited value — the same one-recorder-both-stores
 	// property create() has (DR-S2).
-	op := SeedOp{Kind: "edit", Type: e.Type, ID: id, Properties: props, Content: content}
+	// Carry the RESOLVED coordinate, not the address as written: `id` may be
+	// `POL-4@draft`, and the replay path below patches by (id, face).
+	op := SeedOp{Kind: "edit", Type: e.Type, ID: e.ID, Face: e.Face,
+		Properties: props, Content: content}
 	if aerr := applyEdit(s.ctx, s.store, nil, op); aerr != nil {
 		return s.fail(ls, "edit(%q): %v", id, aerr)
 	}

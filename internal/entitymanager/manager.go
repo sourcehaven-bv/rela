@@ -994,7 +994,15 @@ func (m *Manager) PatchEntity(
 	// be dropped from the clone and erased on save. Consolidating this
 	// read here is the point of the primitive — consumers no longer hold
 	// a raw store handle of their own.
-	stored, getErr := m.deps.Store.GetEntity(ctx, id)
+	//
+	// The id may be the fused boundary form ("POL-1@published"), so it is
+	// PARSED rather than handed to GetEntity whole: GetEntity is
+	// GetEntityState(id, zero) in every backend, and a type declaring faces
+	// stores no row at the zero coordinate, so the faced form would resolve
+	// nothing (BUG-HC6I2T). The authorization below already reads the face
+	// off the stored row, so resolving it here is what makes that correct
+	// rather than accidentally right for unfaced types only.
+	stored, getErr := m.getEntityByRef(ctx, id)
 	if getErr != nil {
 		// Structural, not textual: consumers holding a narrow write
 		// interface (the Lua bindings) must be able to tell this apart
@@ -1017,8 +1025,13 @@ func (m *Manager) PatchEntity(
 	// authorizing without it would decide against the default face
 	// (BUG-Y0GNSB).
 	if err := m.authorizeAndAudit(ctx, acl.WriteRequest{
-		Op:      acl.OpUpdate,
-		Subject: acl.EntitySubject{Type: stored.Type, ID: id, Face: stored.Face},
+		Op: acl.OpUpdate,
+		// stored.ID, not `id`: the caller may have passed the fused form
+		// ("POL-4@draft"), and the subject names the id and the face in
+		// SEPARATE fields — passing the fused string as the ID would make the
+		// row-gate key disagree with every other write path, which names the
+		// bare id (see UpdateEntity above).
+		Subject: acl.EntitySubject{Type: stored.Type, ID: stored.ID, Face: stored.Face},
 	}); err != nil {
 		return nil, err
 	}

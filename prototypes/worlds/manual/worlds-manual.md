@@ -683,7 +683,7 @@ does not travel with the save:
 
 ```rela
 screenshot{
-  view = "form", type = "policy", entity = "POL-1", world = "editorial",
+  view = "form", type = "policy", entity = "POL-1@draft", world = "editorial",
   as = "editor", out = "edit-policy.png",
   alt = "The policy edit form",
 }
@@ -748,10 +748,10 @@ but a procedure also carries a readiness state, and that is what gives it a
 board:
 
 ```rela
-create("procedure", { id = "PRC-1", title = "Restore from backup", readiness = "drilled" })
+face("procedure", "PRC-1", "en", { title = "Restore from backup", readiness = "drilled" })
 face("procedure", "PRC-1", "nl", { title = "Herstellen vanaf back-up", readiness = "drilled" })
 
-create("procedure", { id = "PRC-2", title = "Revoke a leaver's access", readiness = "drilled" })
+face("procedure", "PRC-2", "en", { title = "Revoke a leaver's access", readiness = "drilled" })
 ```
 
 PRC-1 is localised; PRC-2 is not. Under `site-nl` the chain is `[nl, en]`, so
@@ -918,9 +918,9 @@ entitymanager — authorized, attributed, and captured as a version — rather t
 a fixture rewritten in place:
 
 ```rela
-create("policy", { id = "POL-4", title = "Device Encryption", owner = "IT", status = "to-do" })
-edit("POL-4", { status = "doing" })
-edit("POL-4", { title = "Device Encryption Standard", owner = "Security" })
+face("policy", "POL-4", "draft", { title = "Device Encryption", owner = "IT", status = "to-do" })
+edit("POL-4@draft", { status = "doing" })
+edit("POL-4@draft", { title = "Device Encryption Standard", owner = "Security" })
 ```
 
 A version is **not** one row per write. Capture is a debounced reconciliation
@@ -934,7 +934,7 @@ The timeline shows that settled state against the face the world resolved:
 
 ```rela
 screenshot{
-  view = "history", type = "policy", entity = "POL-4", world = "editorial",
+  view = "history", type = "policy", entity = "POL-4@draft", world = "editorial",
   as = "editor", out = "history-policy.png",
   -- Versions arrive from a background sweep, so the capture WAITS for the row
   -- this section claims rather than photographing an empty timeline.
