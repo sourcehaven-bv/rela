@@ -97,10 +97,14 @@ func TestCheckStates(t *testing.T) {
 	})
 }
 
-// TestCheckStates_ToleratedDiskShapes covers the two findings the write
-// path rejects but the fs load path tolerates (design doc §6): a
-// headless family and a type-mismatched state, seeded as hand-written
-// files.
+// TestCheckStates_ToleratedDiskShapes covers the shape the write path
+// rejects but the fs load path tolerates (design doc §6): a type-mismatched
+// state, seeded as a hand-written file.
+//
+// A family with no zero-coordinate row is NOT among them any more. That was
+// corrupt while one face was privileged by storage; it is the ordinary shape
+// of a faced entity now (BUG-HC6I2T), so PAGE-7 below is seeded to keep the
+// undeclared-face count honest rather than to report a family finding.
 func TestCheckStates_ToleratedDiskShapes(t *testing.T) {
 	fs := storage.NewMemFS()
 	write := func(path, content string) {
@@ -112,7 +116,8 @@ func TestCheckStates_ToleratedDiskShapes(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// Headless: a state with no default row.
+	// A row at a named face with no zero-coordinate sibling: legal now, and
+	// still an undeclared-face finding because `page` declares no faces.
 	write("/entities/pages/PAGE-7@draft.md", "---\nid: PAGE-7\ntype: page\n---\n")
 	// Type mismatch: default is page, state claims ticket. The state
 	// file lives in the pages dir (the dir maps the type at scan time),
@@ -167,8 +172,9 @@ func TestCheckStates_ToleratedDiskShapes(t *testing.T) {
 	if len(byCode["undeclared-face"]) != 2 {
 		t.Errorf("undeclared-face findings = %+v, want draft + review", byCode["undeclared-face"])
 	}
-	if hf := byCode["headless-family"]; len(hf) != 1 || hf[0].Subject != "PAGE-7" {
-		t.Errorf("headless-family findings = %+v, want PAGE-7", hf)
+	if hf := byCode["headless-family"]; len(hf) != 0 {
+		t.Errorf("headless-family is retired; a faced entity has no zero-coordinate "+
+			"row and that is not a finding: %+v", hf)
 	}
 	if tm := byCode["state-type-mismatch"]; len(tm) != 1 || tm[0].Subject != "PAGE-8" {
 		t.Errorf("state-type-mismatch findings = %+v, want PAGE-8", tm)
@@ -189,7 +195,6 @@ func TestCheckStates_SubtractsDeclaredFacesPerType(t *testing.T) {
 			"page": {
 				Label:      "Page",
 				IDPrefixes: []string{"PAGE-"},
-				BareFace:   "draft",
 				Faces: map[string]metamodel.FaceDef{
 					"draft":     {},
 					"published": {},
@@ -258,7 +263,6 @@ func TestCheckStates_SubtractionResolvesAliases(t *testing.T) {
 				Label:      "Page",
 				IDPrefixes: []string{"PAGE-"},
 				Aliases:    []string{"webpage"},
-				BareFace:   "draft",
 				Faces: map[string]metamodel.FaceDef{
 					"draft":     {},
 					"published": {},
@@ -301,7 +305,6 @@ func TestCheckStates_FullyDeclaredProjectIsSilent(t *testing.T) {
 			"page": {
 				Label:      "Page",
 				IDPrefixes: []string{"PAGE-"},
-				BareFace:   "draft",
 				Faces: map[string]metamodel.FaceDef{
 					"draft":     {},
 					"published": {},

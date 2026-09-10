@@ -1,6 +1,7 @@
 package datamigration
 
 import (
+	"bytes"
 	"fmt"
 	"slices"
 	"sort"
@@ -76,11 +77,23 @@ func Generate(current, live metamodel.ShapeProjection, existing []*File, descrip
 	// A draft must round-trip through the parser — a generator bug that
 	// emits an unparsable file should fail HERE, not when the operator runs
 	// `migrate data`.
-	if _, err := ParseFile(name, content); err != nil {
+	//
+	// The exception is a draft carrying a CHANGEME placeholder. Those are
+	// deliberately UNAPPLIABLE: a placeholder is not a valid face or value, so
+	// the step refuses it and the operator must make a real choice before
+	// anything runs. Failing generation over one would mean the generator could
+	// not draft the very changes that most need review, so the placeholder is
+	// checked for by name and the parse error is expected rather than fatal.
+	if _, err := ParseFile(name, content); err != nil && !bytes.Contains(content, []byte(placeholderValue)) {
 		return nil, fmt.Errorf("datamigration: generated draft does not parse (generator bug): %w", err)
 	}
 	return &Draft{FileName: name, Content: content, Report: report}, nil
 }
+
+// placeholderValue marks a spot the operator MUST fill in. It is deliberately
+// not a valid face or enum value, so a draft carrying one cannot be applied
+// unedited — see the round-trip exception in [Generate].
+const placeholderValue = "CHANGEME"
 
 // draftSteps renders the active steps and the commented optional cleanups.
 func draftSteps(
@@ -149,7 +162,7 @@ func draftActiveStep(
 			fmt.Fprintf(w, "  # TODO — no built-in coercion to %q: write migrations/%s-%s.lua\n", ps.Type, owner, prop)
 			fmt.Fprintf(w, "  # - lua: {entity: %s, script: migrations/%s-%s.lua}\n", owner, owner, prop)
 		}
-	case "bare_face_introduced", "bare_face_changed":
+	case "faces_introduced":
 		draftFaceStep(w, d, current, live)
 	case "computed_property_added", "property_computed_changed":
 		owner, prop, ok := splitPropertyKey(d.Subject)
@@ -170,68 +183,51 @@ func draftActiveStep(
 	}
 }
 
-// draftFaceStep emits the confirm_face step for a bare_face_introduced delta.
+// draftFaceStep emits the migrate_face step for a faces_introduced delta.
 //
-// The delta means every existing row sits at the zero coordinate and takes on
-// the newly declared bare face. Nothing moves — the store keeps every entity on
-// its bare coordinate — so the migration's job is to have the operator CONFIRM
-// that the relabel is the intended one, value by value.
+// The delta means every existing row sits at the zero coordinate, which names
+// no declared face. The migration has to move them, and only the operator knows
+// which face each one became — so the generator supplies the shape of the
+// answer (every value of a plausible keying enum, pre-listed) and leaves the
+// destinations as CHANGEME.
 //
-// Emitted LIVE, not commented, and that is forced rather than chosen:
-// validateDeltasResolved refuses a file spanning this delta with no
-// confirm_face step, so a commented skeleton would produce a draft that cannot
-// parse. The draft is therefore a real step pre-filled with the only answer
-// the store permits (every value becomes the declared bare face), under a TODO
-// telling the operator what to check before running it.
-//
-// That ordering matters for the defect this fixes. Applying an unreviewed draft
-// now confirms exactly what the schema already says; the operator's work is to
-// notice when that is WRONG — a value whose rows do not belong in the new bare
-// face — and change the schema. Previously there was nothing to notice.
+// Emitted LIVE, not commented: validateDeltasResolved refuses a file spanning
+// this delta with no migrate_face step, so a commented draft could not parse.
+// CHANGEME is not a declared face, so an unedited draft cannot parse either —
+// the operator must make a real choice before anything runs, which is the point.
 func draftFaceStep(w *strings.Builder, d metamodel.ShapeDelta, current, live metamodel.ShapeProjection) {
 	typeName := d.Subject
 	es, ok := live.Entities[typeName]
-	if !ok || len(es.Faces) == 0 || es.BareFace == "" {
+	if !ok || len(es.Faces) == 0 {
 		return
 	}
 
 	prop, values, byElimination := faceCandidateProperty(current, typeName)
 	if prop == "" {
-		// No enum to key on: emit the whole-type form. It still has to be a
-		// real step — validateDeltasResolved refuses a file spanning this
-		// delta without one — but there is no per-value question to pose.
-		fmt.Fprintf(w, "  # TODO — %q now has faces (%s) and every existing row becomes %q.\n",
-			typeName, strings.Join(es.Faces, ", "), es.BareFace)
-		fmt.Fprintf(w, "  #        No enum property was found to key a per-value check on, so confirm the\n")
-		fmt.Fprintf(w, "  #        whole type: satisfy yourself that %q is right for the rows you already\n", es.BareFace)
-		fmt.Fprintf(w, "  #        have. If it is not, change `bare_face:` rather than editing this step.\n")
-		fmt.Fprintf(w, "  - confirm_face: {entity: %s}\n", typeName)
+		fmt.Fprintf(w, "  # TODO — %q gained faces (%s). Every existing row is at the zero coordinate,\n",
+			typeName, strings.Join(es.Faces, ", "))
+		fmt.Fprintf(w, "  #        which names no face, and must be moved to the face it belongs to.\n")
+		fmt.Fprintf(w, "  #        No enum property was found to key the move on. Replace the property\n")
+		fmt.Fprintf(w, "  #        below with one whose values say which face each row became, and map\n")
+		fmt.Fprintf(w, "  #        each of its values to one of: %s\n", strings.Join(es.Faces, ", "))
+		fmt.Fprintf(w, "  - migrate_face:\n      entity: %s\n      property: %s\n      mapping:\n",
+			typeName, placeholderValue)
+		fmt.Fprintf(w, "        %s: %s\n", placeholderValue, placeholderValue)
 		return
 	}
 
-	fmt.Fprintf(w, "  # TODO — %q gained faces (%s). Every existing row stays on the bare coordinate and\n",
+	fmt.Fprintf(w, "  # TODO — %q gained faces (%s). Every existing row is at the zero coordinate,\n",
 		typeName, strings.Join(es.Faces, ", "))
+	fmt.Fprintf(w, "  #        which names no face. Give each %s value the face its rows move to;\n", prop)
+	fmt.Fprintf(w, "  #        replace every %s with one of: %s\n", placeholderValue, strings.Join(es.Faces, ", "))
 	if byElimination {
-		fmt.Fprintf(w, "  #        so becomes %q; rows cannot be moved off it.\n", es.BareFace)
 		fmt.Fprintf(w, "  #        NOTE: %q is the type's only enum, chosen by elimination — it may have\n", prop)
-		fmt.Fprintf(w, "  #        nothing to do with content state. Key this on a different property, or\n")
-		fmt.Fprintf(w, "  #        drop `property:`/`mapping:` to confirm the whole type at once.\n")
-		fmt.Fprintf(w, "  #        Otherwise check EACH value below really does belong in %q.\n", es.BareFace)
-		fmt.Fprintf(w, "  #        Keep this step BEFORE any drop_property of %s — it reads those values.\n", prop)
-		fmt.Fprintf(w, "  - confirm_face:\n      entity: %s\n      property: %s\n      mapping:\n", typeName, prop)
-		for _, v := range values {
-			fmt.Fprintf(w, "        %s: %s\n", quoteYAML(v), quoteYAML(es.BareFace))
-		}
-		return
+		fmt.Fprintf(w, "  #        nothing to do with content state. Key this on a different property if so.\n")
 	}
-	fmt.Fprintf(w, "  #        so becomes %q; rows cannot be moved off it. Check EACH %s value below\n", es.BareFace, prop)
-	fmt.Fprintf(w, "  #        really does belong in %q before running this.\n", es.BareFace)
-	fmt.Fprintf(w, "  #        If one of them does not, this schema is wrong for your data: change\n")
-	fmt.Fprintf(w, "  #        `bare_face:` rather than editing the mapping below.\n")
 	fmt.Fprintf(w, "  #        Keep this step BEFORE any drop_property of %s — it reads those values.\n", prop)
-	fmt.Fprintf(w, "  - confirm_face:\n      entity: %s\n      property: %s\n      mapping:\n", typeName, prop)
+	fmt.Fprintf(w, "  - migrate_face:\n      entity: %s\n      property: %s\n      mapping:\n", typeName, prop)
 	for _, v := range values {
-		fmt.Fprintf(w, "        %s: %s\n", quoteYAML(v), quoteYAML(es.BareFace))
+		fmt.Fprintf(w, "        %s: %s\n", quoteYAML(v), placeholderValue)
 	}
 }
 

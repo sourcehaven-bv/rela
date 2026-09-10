@@ -87,16 +87,55 @@ func RunStateTests(t *testing.T, f Factory) {
 		assert.Equal(t, "odd face", got.GetString("title"))
 	})
 
+	// HighestID must see an entity that exists ONLY at a named face. It used
+	// to scan `face = ''` to count each family once; a type declaring faces
+	// stores no row there (BUG-HC6I2T), so the generator saw nothing and
+	// minted one id for every entity of the type — two unrelated entities
+	// sharing the id the ACL row gate keys on.
+	t.Run("HighestIDSeesFacedEntities", func(t *testing.T) {
+		s := f(t)
+		mustCreate(t, s, newState(t, "PAGE-7", "page", "draft", "only at a face"))
+
+		n, err := s.HighestID(ctx(), "PAGE")
+		require.NoError(t, err)
+		assert.Equal(t, 7, n, "an entity stored only at a named face must still claim its number")
+	})
+
 	t.Run("WriteInvariants", func(t *testing.T) {
-		t.Run("HeadlessStateRejected", func(t *testing.T) {
+		t.Run("NamedFaceNeedsNoZeroCoordinateRow", func(t *testing.T) {
+			// A named face is a row in its own right (BUG-HC6I2T). The store
+			// used to demand a zero-coordinate row first, which made the bare
+			// coordinate a family's mandatory head and meant a type declaring
+			// faces could not store its first state without also storing a row
+			// belonging to no face.
 			s := f(t)
 			err := s.CreateEntity(ctx(), newState(t, "PAGE-3", "page", "draft", "no default"))
-			require.Error(t, err, "a non-default state must not exist without the default row")
+			require.NoError(t, err, "a named face is a row in its own right")
+
+			got, gerr := s.GetEntityState(ctx(), "PAGE-3", "draft")
+			require.NoError(t, gerr)
+			assert.Equal(t, "no default", got.GetString("title"))
+
+			_, gerr = s.GetEntity(ctx(), "PAGE-3")
+			assert.Error(t, gerr, "nothing was written at the zero coordinate")
+		})
+
+		// The ZERO coordinate is checked too. The probe used to be gated on
+		// `!e.Face.IsDefault()`, which was complete while every family had a
+		// zero-coordinate row to be checked against; with no face privileged
+		// (BUG-HC6I2T) a family can be created named-face-first, and then the
+		// zero-coordinate create ran no type check at all.
+		t.Run("TypeMismatchRejectedOnTheZeroCoordinate", func(t *testing.T) {
+			s := f(t)
+			mustCreate(t, s, newState(t, "PAGE-8", "page", "draft", "named first"))
+			err := s.CreateEntity(ctx(), newState(t, "PAGE-8", "ticket", "", "wrong type"))
+			require.Error(t, err, "states share their family's type, whichever face is written first")
 		})
 
 		t.Run("TypeMismatchRejected", func(t *testing.T) {
+			// Any sibling answers what type a family is — no face heads it.
 			s := f(t)
-			mustCreate(t, s, newState(t, "PAGE-4", "page", "", "default"))
+			mustCreate(t, s, newState(t, "PAGE-4", "page", "published", "sibling"))
 			err := s.CreateEntity(ctx(), newState(t, "PAGE-4", "ticket", "draft", "wrong type"))
 			require.Error(t, err, "states share their family's type")
 		})
@@ -347,21 +386,22 @@ func RunStateTests(t *testing.T, f Factory) {
 		assert.Len(t, inbound, 1, "heads are entity-level, so inbound edges survive")
 	})
 
-	t.Run("DeleteStateRefusesTheDefaultFaceWhileSiblingsRemain", func(t *testing.T) {
+	t.Run("DeleteStateOfTheZeroCoordinateLeavesSiblingsReachable", func(t *testing.T) {
 		s := f(t)
 		mustCreate(t, s, newState(t, "PAGE-22", "page", "", "default"))
 		mustCreate(t, s, newState(t, "PAGE-22", "page", "draft", "draft"))
 
-		// A family with no default row has no defined meaning, and world
-		// fallback resolves against it. Refusing is not a limitation to route
-		// around — deleting it would leave the remaining faces unreachable by
-		// every `otherwise: default` reader.
+		// The store used to refuse this to avoid "orphaning" the family, on
+		// the reasoning that world fallback resolved against the zero row.
+		// It resolved there only because `bare_face` pointed a declared face
+		// at it (BUG-HC6I2T); with no face privileged, the zero coordinate is
+		// one row among siblings and deleting it orphans nothing.
 		_, err := s.DeleteEntityState(ctx(), "PAGE-22", "")
-		require.Error(t, err)
-		assert.ErrorIs(t, err, store.ErrInvalidQuery)
+		require.NoError(t, err)
 
-		_, err = s.GetEntity(ctx(), "PAGE-22")
-		assert.NoError(t, err, "the refusal must not have deleted anything")
+		got, gerr := s.GetEntityState(ctx(), "PAGE-22", "draft")
+		require.NoError(t, gerr, "the sibling must survive and stay addressable")
+		assert.Equal(t, "draft", got.GetString("title"))
 	})
 
 	t.Run("DeleteStateOfTheLastFaceRemovesTheEntity", func(t *testing.T) {

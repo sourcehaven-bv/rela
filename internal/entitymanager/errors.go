@@ -86,6 +86,26 @@ var ErrTypeImmutable = errors.New("entity type is immutable on update; body type
 // writing another. Surfaced by the sync handler as HTTP 422, like its twin.
 var ErrFaceImmutable = errors.New("entity face is immutable on update; body face differs from the stored face")
 
+// ErrFaceRequired is returned when a create names no face for a type that
+// declares `faces:` (BUG-HC6I2T).
+//
+// A faced type stores no row at the zero coordinate, so there is no default
+// to fall back to. Choosing one silently is what the old create path did: it
+// wrote the zero coordinate whatever the caller asked for, which under
+// `bare_face` was a real face and made the ACL authorize one row while the
+// write landed on another.
+//
+// Refusing is the fail-closed direction. Surfaced as HTTP 422.
+var ErrFaceRequired = errors.New("this entity type declares content states; a create must name one")
+
+// ErrFaceNotDeclared is returned when a create names a face the type does not
+// declare, or names any face for a type declaring none.
+//
+// The second case is not pedantry: a type with no `faces:` has exactly one
+// state and no name for it, so a caller passing a face has confused this type
+// with another and would otherwise get a row nothing can address.
+var ErrFaceNotDeclared = errors.New("entity type does not declare this content state")
+
 // ErrRelationAlreadyExists is returned by [Manager.CreateRelation]
 // when the (from, type, to) tuple already exists.
 var ErrRelationAlreadyExists = errors.New("relation already exists")

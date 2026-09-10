@@ -88,7 +88,7 @@ recovery mechanism, so a step that finds nothing left to do does nothing.
 | `rename_entity_type: {from, to}` | rewrites `type:` on every entity of the old type (IDs are unchanged) |
 | `rename_relation_type: {from, to}` | recreates each relation under the new type, then deletes the old (relation history starts a new lifetime) |
 | `rename_face: {entity, from, to}` | moves every row stored at one content state to another (IDs are unchanged) |
-| `confirm_face: {entity, property?, mapping?}` | confirms which content state the already-existing rows become when a type gains `bare_face:`; writes nothing, and is **required** in any file spanning that change |
+| `migrate_face: {entity, property, mapping}` | moves existing rows onto the face they belong to when a type gains its first faces; **required** in any file spanning that change |
 | `map_values: {entity, property, mapping}` | remaps enum values (scalar and list properties); unmapped values are left and reported |
 | `set_default: {entity, property, value, only_missing}` | backfills a value (`only_missing` defaults to true) |
 | `recompute_computed: {entity}` | recomputes all materialized computed properties for an entity type in dependency order |
@@ -111,87 +111,100 @@ whole graph, so dependent computed properties cannot retain stale values.
 id — it is a separate field — so no id is rewritten and relations keep their
 endpoints, exactly as with `rename_entity_type`.
 
-Two things behave differently from an ordinary rename, both because the face
-named by `bare_face:` is stored as the *empty* coordinate rather than under its
-own name:
+A face's declared name is its stored coordinate, so a rename is always a
+named-to-named move and there are no special cases. A rename whose source and
+destination are the same name is a no-op and the step does nothing.
 
-- **Renaming the bare face** while it stays the bare face is a no-op in storage
-  terms: both spellings address the same coordinate, and the step does nothing.
-- **Renaming a named face onto the bare face is refused.** The store requires
-  that a face row cannot exist without its bare row, so the destination is
-  always occupied — which makes this a *merge*, not a rename. Decide which
-  content wins and express it as a drop plus a rename.
+A rename onto an occupied coordinate is refused: the entity has content at
+both, so this is a *merge* rather than a rename, and moving would destroy one
+side. Decide which content wins and express it as a drop plus a rename.
 
-A rename onto any other occupied coordinate is refused for the same reason: the
-entity has content at both, and moving would destroy one of them.
+### Adding or removing faces on a type that holds data
+
+Gaining or losing `faces:` needs a migration, and the classifier says so:
+`faces_introduced` and `faces_removed` are both needs-migration findings rather
+than drift.
+
+The reason is that a type declaring no faces keeps its single state at the
+**zero coordinate**, while a type declaring `faces:` keeps every state under a
+face name and nothing at the zero coordinate. Adding faces to a populated type
+therefore leaves every existing row at a coordinate that names no declared
+face. Nothing looks broken — no row moved and no value changed — which is
+exactly why the store will not adopt the shape on its own: only you can say
+which face the existing content became.
+
+`rename_face` cannot express this move. It requires a declared face name on
+both sides, and the zero coordinate is not one, so a project crossing this
+boundary with data in it needs the rows rewritten out of band before the new
+schema is adopted. Plan the change on an empty type where you can, and treat a
+populated one as a data-export-and-reimport rather than a step in a migration
+file.
+
+Removing faces is the mirror: rows sitting at named faces belong to no declared
+face afterwards, and the type's single state is a coordinate none of them
+occupies.
+
+Two consequences are worth checking at the same time, because neither produces
+a load error:
+
+- **Write grants in `acl.yaml` stop matching.** A bare `update: [policy]`
+  addresses the zero coordinate, so once `policy` declares faces the grant
+  reaches nothing. Rewrite it to name each face — `update: [policy@draft]` —
+  and run `rela acl audit`, which reports the bare form as
+  `B12-bare-grant-on-faced-type`.
+- **Creates must name a face.** A `POST` that omits one is refused with
+  `face_required` once the type is faced. See the
+  [Content States guide](content-states.md) for the request shape.
 
 ### Adopting content states on data you already have
 
-Giving a type its first `bare_face:` needs a migration, and the reason is that
-nothing visible happens. Every row you already have is stored at the empty
-coordinate, so all of them silently *become* whatever face `bare_face:` now
-names. No row moves, no value changes, and the result looks correct whether or
-not it is.
+Giving a type its first faces needs a migration, and the reason is that nothing
+visible happens. A type with no faces stores its single state at the zero
+coordinate, which names no face; declaring faces leaves every existing row
+sitting there. No row moves, no value changes, and the rows now belong to no
+declared face — which is why the store will not adopt the shape on its own.
 
-`confirm_face` is how you say it is:
+`migrate_face` moves them:
 
 ```yaml
-- confirm_face:
+- migrate_face:
     entity: article
     property: status
     mapping:
-      draft:     published
+      draft:     draft
       active:    published
       withdrawn: published
 ```
 
-The step **writes nothing** — the relabel is the schema change itself. What it
-does is force the question: every value of the property must appear, so a value
-whose rows do *not* belong in the new bare face is an error at parse time rather
-than a discovery months later. That is the whole point of listing them
-individually instead of writing a bare "yes, I confirm".
+Each value of the keying property names the face its rows move to. The move is
+real: the row is created at the new coordinate and the zero-coordinate row is
+removed.
 
-Two consequences worth stating plainly:
+**The mapping must cover every value of the property.** That is the safety
+property, not a formality — a value you leave out keeps its rows at the zero
+coordinate, where they name no face, and once the keying property is dropped
+(often in the same migration) nothing records what they were. Requiring every
+value to name a face turns "I did not think about `withdrawn`" into a parse
+error instead of a silent loss.
 
-- **Every value must map to the declared `bare_face:`.** Naming a different
-  face is refused, because rows cannot go there: a row can never leave the bare
-  coordinate (the store refuses to delete a family's default row while a
-  sibling exists, and refuses a named row with no default row under it). If a
-  value's rows belong somewhere else, this schema does not fit your data — make
-  that face the `bare_face:`. There is no step that moves a subset of rows;
-  `drop_entities` deletes an entire entity type and is not a way to separate
-  them.
+Two more rules:
+
 - **Put it before any `drop_property` of the property it reads.** The wrong
-  order is refused at parse time, since it would leave the step confirming
-  nothing.
+  order is refused at parse time, since the step would have no values to key on.
+- **Rows whose value is unset, or outside the declared set, stay where they
+  are** and are reported. They are not given a guessed face.
 
-When the type has no enum to key on, confirm the whole type at once:
+**A file that spans this schema change and does not migrate the rows is
+rejected.** That is the point of the step: before it existed, such a file
+parsed, applied, advanced the marker and reported the schema in sync while every
+row was left stranded. `rela migrate gen` therefore drafts a real `migrate_face`
+step with every value pre-listed against `CHANGEME`, and `CHANGEME` is not a
+face — so an unedited draft will not apply either. You have to say where the
+rows go.
 
-```yaml
-- confirm_face: {entity: article}
-```
-
-You get no per-value question, so this is the weaker form — use it when there
-genuinely is no property that encoded the old distinction, not to skip the
-check. `property:` and `mapping:` go together; giving one without the other is
-refused.
-
-**A file that spans this schema change and does not confirm it is rejected.**
-That is the point of the step: before it existed, such a file parsed, applied,
-advanced the marker and reported the schema in sync while every row silently
-changed state. `rela migrate gen` therefore drafts a real (uncommented)
-`confirm_face` step, pre-filled with the only answer the store permits. Your
-job when reviewing the draft is to notice when that answer is *wrong* and fix
-the schema.
-
-Assigning *different* rows to *different* faces is a separate operation: it
-needs a second row per entity rather than a move, so it is a copy, not a
-reassignment. That is not built yet.
-
-Repointing `bare_face:` between two faces that already exist
-(`bare_face_changed`) is not covered by this step either — the type already has
-named-face rows, so the newly-bare coordinate may already be occupied. Use
-`rename_face`, which detects that collision.
+Faced → flat (`faces_removed`) is the mirror case and is not covered: rows at
+named faces would have to move back, and deciding which one wins when several
+hold content is a merge rather than a move.
 
 ### The Lua escape hatch
 

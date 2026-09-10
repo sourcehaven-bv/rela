@@ -18,7 +18,7 @@ import (
 func facedPolicyMeta(rules ...metamodel.ValidationRule) *metamodel.Metamodel {
 	return &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{"policy": {
-			Label: "Policy", BareFace: "draft",
+			Label: "Policy",
 			Faces: map[string]metamodel.FaceDef{"draft": {}, "published": {}},
 			Properties: map[string]metamodel.PropertyDef{
 				"title": {Type: "string"},
@@ -30,7 +30,7 @@ func facedPolicyMeta(rules ...metamodel.ValidationRule) *metamodel.Metamodel {
 }
 
 // A rule scoped to `published` must actually reach the published face.
-func TestRunValidations_SeesNonBareFaces(t *testing.T) {
+func TestRunValidations_SeesEveryDeclaredFace(t *testing.T) {
 	rule := metamodel.ValidationRule{
 		Name: "published-needs-owner", EntityType: "policy",
 		Faces: []string{"published"}, Then: []string{"owner!="}, Severity: "error",
@@ -45,7 +45,7 @@ func TestRunValidations_SeesNonBareFaces(t *testing.T) {
 		ctx := context.Background()
 		// Draft is fine; the published face has no owner.
 		_ = st.CreateEntity(ctx, &entity.Entity{ID: "POL-1", Type: "policy",
-			Properties: map[string]any{"title": "P", "owner": "Security"}})
+			Face: entity.Face("draft"), Properties: map[string]any{"title": "P", "owner": "Security"}})
 		_ = st.CreateEntity(ctx, &entity.Entity{ID: "POL-1", Type: "policy",
 			Face: entity.Face("published"), Properties: map[string]any{"title": "P"}})
 	})
@@ -79,21 +79,40 @@ func TestCheckCardinality_CountsContentEdgesPerFace(t *testing.T) {
 	svc := newServiceWith(t, meta, func(st store.Store) {
 		ctx := context.Background()
 		_ = st.CreateEntity(ctx, &entity.Entity{ID: "POL-1", Type: "policy",
-			Properties: map[string]any{"title": "P"}})
+			Face: entity.Face("draft"), Properties: map[string]any{"title": "P"}})
 		_ = st.CreateEntity(ctx, &entity.Entity{ID: "POL-1", Type: "policy",
 			Face: entity.Face("published"), Properties: map[string]any{"title": "P"}})
 		_ = st.CreateEntity(ctx, &entity.Entity{ID: "CTL-1", Type: "control"})
-		// Edge tailed on the DRAFT (bare) face only.
-		_, _ = st.CreateRelation(ctx, "POL-1", "implements", "CTL-1", &store.RelationData{})
+		// Edge tailed on the DRAFT face, which must have its own entity row:
+		// the count runs per entity ROW, so an edge tailed on a face with no
+		// row is counted by nobody. FromFace is load-bearing — seeded at the
+		// zero coordinate the edge belongs to no face, both faces would lack
+		// one, and the test would pass whether or not counting is per-face
+		// (verified by mutation: deleting it left the old spelling green).
+		if _, rerr := st.CreateRelation(ctx, "POL-1", "implements", "CTL-1",
+			&store.RelationData{FromFace: entity.Face("draft")}); rerr != nil {
+			t.Fatalf("seed edge: %v", rerr)
+		}
 	})
 
 	res, err := svc.CheckCardinality(context.Background(), analysis.Options{})
 	if err != nil {
 		t.Fatalf("CheckCardinality: %v", err)
 	}
-	if len(res) == 0 {
-		t.Fatal("the published face has no `implements` edge and must be reported — " +
-			"a draft's edge does not satisfy a content-scoped bound on another face")
+	// EXACTLY one. The draft holds the edge and must be silent, so a
+	// per-entity count would report nothing and a face-blind one would
+	// report both — only a per-face count reports exactly the published
+	// face. Asserting merely "something was reported" cannot separate those.
+	//
+	// CardinalityViolation carries no Face field, so the count is what
+	// identifies which face was reported; if that field is ever added,
+	// assert it here directly.
+	if len(res) != 1 {
+		t.Fatalf("got %d violations, want exactly 1 — the published face only "+
+			"(0 = counted per entity, 2 = counted face-blind): %+v", len(res), res)
+	}
+	if res[0].EntityID != "POL-1" || res[0].RelationType != "implements" {
+		t.Errorf("violation = %+v, want POL-1/implements", res[0])
 	}
 }
 

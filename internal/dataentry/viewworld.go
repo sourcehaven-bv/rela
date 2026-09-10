@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sort"
 
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -340,23 +340,15 @@ func (h *viewsHandler) loadViewEntities(
 // rather than the rule-only [resolutionRule], for the same
 // one-implementation reason the paragraph above gives.
 //
-// # The face is DECLARED, not stored
-//
-// Same mapping the entity GET applies, and for the same reason — see
-// [worldProvenance]. A row resolved to the type's `bare_face:` is stored at
-// the zero coordinate, so reporting the raw coordinate emitted `face: ""`
-// with `via: "chain"` and every consumer printed the WORLD name instead
-// (TKT-PI17Z6). m may be nil, in which case the coordinate passes through.
-//
 // e must be non-nil; callers hold a resolved entity by construction.
-func (w viewWorld) provenanceFor(m *metamodel.Metamodel, e *entityPkg.Entity) *v1.EntityWorld {
+func (w viewWorld) provenanceFor(e *entityPkg.Entity) *v1.EntityWorld {
 	if w.isDefault() || e == nil {
 		return nil
 	}
 	rule, position := resolutionRuleAt(w.scope, e.Type, e.Face)
 	return &v1.EntityWorld{
 		Name:          w.name,
-		Face:          metamodel.DeclaredFace(m, e.Type, e.Face.String()),
+		Face:          e.Face.String(),
 		Via:           rule,
 		ChainPosition: position,
 	}
@@ -399,23 +391,26 @@ func (h *viewsHandler) writeWorldAbsentView(
 	w http.ResponseWriter, r *http.Request, entityType, entityID string,
 ) {
 	ctx := r.Context()
-	e, err := h.store.GetEntity(ctx, entityID)
-	// The face check rides the same condition as the miss, deliberately: this
-	// loads the DEFAULT face to describe an entity absent from the requested
-	// world, and a principal who may not read that face must not receive its
-	// edges or its `_faces` list — which would disclose exactly the content
-	// states the grant withholds (TKT-O7R2A1).
-	if err != nil || e == nil || e.Type != entityType ||
-		!faceReadable(ctx, e.Type, e.Face) {
-
+	// ANY face the reader may see, not the zero coordinate: a type declaring
+	// faces stores no row there (BUG-HC6I2T), so asking for it turned every
+	// world-absent page for a faced entity into a 422. The point of this page
+	// is to say "this entity exists, just not in the world you asked for",
+	// which needs a row the reader is allowed to be shown.
+	e, err := h.readableFaceOf(ctx, entityType, entityID)
+	// The face check rides the same condition as the miss, deliberately: a
+	// principal who may not read the face must not receive its edges or its
+	// `_faces` list — which would disclose exactly the content states the
+	// grant withholds (TKT-O7R2A1). readableFaceOf applies it while choosing,
+	// so an unreadable face is indistinguishable from an absent one here.
+	if err != nil || e == nil || e.Type != entityType {
 		writeV1Error(w, r, http.StatusUnprocessableEntity, "view_execution_failed",
 			"View execution failed", errViewEntryNotFound(entityID).Error())
 		return
 	}
 
-	// The default face's own edges, via the same face-scoped seam every other
-	// surface uses — never the bare-id reader, which returns the union of every
-	// face's edges (the face-merging bug fixed in 8b476cd1).
+	// That face's own edges, via the same face-scoped seam every other surface
+	// uses — never the bare-id reader, which returns the union of every face's
+	// edges (the face-merging bug fixed in 8b476cd1).
 	rels, ferr := h.faceEdges(ctx, e)
 	if ferr != nil {
 		writeGateError(w, r, ferr)
@@ -430,4 +425,47 @@ func (h *viewsHandler) writeWorldAbsentView(
 		WorldAbsent: true,
 	}
 	writeV1JSON(w, http.StatusOK, resp)
+}
+
+// readableFaceOf returns one stored row of an entity that this principal may
+// read, for the surfaces that need to describe an entity rather than a
+// particular content state.
+//
+// It exists because "the entity's default row" stopped being a thing a faced
+// type has (BUG-HC6I2T). The zero coordinate is now only where a type
+// declaring NO faces keeps its single state, so a caller wanting "some row of
+// this entity" must look for one.
+//
+// The read gate is applied while CHOOSING, not after: returning an unreadable
+// row for the caller to reject would make "you may not see this face" and
+// "this entity has no such face" distinguishable by timing and by which error
+// came back, which is the disclosure the face grant withholds (TKT-O7R2A1).
+//
+// Faces are scanned in a stable order so two requests describe the same row.
+//
+// Nil: returns (nil, store.ErrNotFound) when no row is readable.
+func (h *viewsHandler) readableFaceOf(
+	ctx context.Context, entityType, entityID string,
+) (*entityPkg.Entity, error) {
+	if e, err := h.store.GetEntity(ctx, entityID); err == nil &&
+		e.Type == entityType && faceReadable(ctx, e.Type, e.Face) {
+
+		return e, nil
+	}
+
+	var faces []string
+	for name := range h.schema().Meta.Entities[entityType].Faces {
+		faces = append(faces, name)
+	}
+	sort.Strings(faces)
+	for _, name := range faces {
+		e, err := h.store.GetEntityState(ctx, entityID, entityPkg.Face(name))
+		if err != nil || e == nil || e.Type != entityType {
+			continue
+		}
+		if faceReadable(ctx, e.Type, e.Face) {
+			return e, nil
+		}
+	}
+	return nil, store.ErrNotFound
 }

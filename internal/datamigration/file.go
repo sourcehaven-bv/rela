@@ -134,22 +134,14 @@ func ParseFile(name string, data []byte) (*File, error) {
 // cannot ship detection without either a resolving step or a deliberate,
 // visible exemption.
 var resolvingSteps = map[string][]string{
-	"bare_face_introduced": {"confirm_face"},
+	"faces_introduced": {"migrate_face"},
 
-	// Deliberately unresolved, both filed.
-	//
-	// bare_face_changed (TKT-L3P8I6): repointing between two EXISTING faces is
-	// a different problem from adopting the first one. The type already has
-	// named-face rows, so the newly-bare face may already be occupied — a
-	// collision `rename_face` detects and refuses, and that `confirm_face`
-	// does not look for. Enforcing confirm_face here would also break the
-	// legitimate rename_face-based migrations that handle it today.
-	//
-	// bare_face_removed (TKT-1YBNQJ): going faced → flat keeps every bare
-	// row's content; what is lost is the meaning attached to the coordinate,
-	// not the data.
-	"bare_face_changed": {},
-	"bare_face_removed": {},
+	// Deliberately unresolved (TKT-1YBNQJ). Faced → flat leaves rows at named
+	// faces that no longer exist while the type's single state is the zero
+	// coordinate none of them occupies. Resolving it means moving rows the
+	// other way and deciding which face wins when several hold content — a
+	// merge, not a move, with its own semantics.
+	"faces_removed": {},
 
 	// Property- and relation-level kinds, listed but NOT enforced. These are
 	// answered by a step the operator chooses between (map_values vs. a drop,
@@ -178,7 +170,7 @@ var resolvingSteps = map[string][]string{
 // at all discharged that demand by hashing correctly.
 //
 // It is also what makes the generator's drafts honest. Because an unconfirmed
-// file cannot parse, `rela migrate gen` must emit a real `confirm_face` step
+// file cannot parse, `rela migrate gen` must emit a real `migrate_face` step
 // rather than a commented suggestion, so the operator reviews a step that will
 // actually run instead of one they can ignore into the old behavior.
 //
@@ -188,7 +180,7 @@ var resolvingSteps = map[string][]string{
 func validateDeltasResolved(name string, f *File) error {
 	present := map[string]map[string]bool{}
 	for _, s := range f.Steps {
-		if cf, ok := s.(*confirmFaceStep); ok {
+		if cf, ok := s.(*migrateFaceStep); ok {
 			if present[s.Kind()] == nil {
 				present[s.Kind()] = map[string]bool{}
 			}
@@ -224,7 +216,7 @@ func validateDeltasResolved(name string, f *File) error {
 // narrow, and the narrowness is worth stating so nobody reads it as a general
 // guarantee.
 //
-// One rule: confirm_face reads a property's values to state which face the
+// One rule: migrate_face reads a property's values to state which face the
 // existing rows become, so a drop_property that erases that property must not
 // come first. Ordering is the operator's to choose, but this order is never
 // intentional — it leaves the step reporting on nothing, which turns an
@@ -235,7 +227,7 @@ func validateDeltasResolved(name string, f *File) error {
 // from-shape no longer declares the property), or a lua/map_values step that
 // changes the values out from under the confirmation. Catching those means
 // reading scripts and tracking value flow between steps — a value-provenance
-// feature, not an ordering check. The map_values case is why confirm_face's
+// feature, not an ordering check. The map_values case is why migrate_face's
 // uncovered-row note describes what it saw rather than asserting a cause.
 func validateStepOrder(name string, steps []Step) error {
 	type dropped struct {
@@ -247,12 +239,12 @@ func validateStepOrder(name string, steps []Step) error {
 		switch step := s.(type) {
 		case *dropPropertyStep:
 			drops = append(drops, dropped{entity: step.Entity, property: step.Property, at: i + 1})
-		case *confirmFaceStep:
+		case *migrateFaceStep:
 			for _, d := range drops {
 				if d.entity == step.Entity && d.property == step.Property {
 					return fmt.Errorf(
-						"datamigration: %s: step %d (confirm_face) reads %s.%s, but step %d (drop_property) "+
-							"already removed it — confirm_face must come first, or it would report on no "+
+						"datamigration: %s: step %d (migrate_face) reads %s.%s, but step %d (drop_property) "+
+							"already removed it — migrate_face must come first, or it would report on no "+
 							"values and confirm nothing",
 						name, i+1, step.Entity, step.Property, d.at)
 				}

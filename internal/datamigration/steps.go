@@ -67,8 +67,8 @@ func parseStep(node *yaml.Node) (Step, error) {
 		step = &renameRelationTypeStep{}
 	case "map_values":
 		step = &mapValuesStep{}
-	case "confirm_face":
-		step = &confirmFaceStep{}
+	case "migrate_face":
+		step = &migrateFaceStep{}
 	case "set_default":
 		step = &setDefaultStep{}
 	case "recompute_computed":
@@ -237,18 +237,11 @@ func (s *renameFaceStep) Validate(from, to metamodel.ShapeProjection) error {
 	if !faceInShape(to, s.Entity, s.To) {
 		return fmt.Errorf("entity %q declares no face %q in the to-schema", s.Entity, s.To)
 	}
-	s.fromStored = storedFaceIn(from, s.Entity, s.From)
-	s.toStored = storedFaceIn(to, s.Entity, s.To)
-	if s.fromStored == "" && s.toStored != "" {
-		// The bare face is a family's identity row: every store refuses to
-		// delete it while sibling faces remain, so "move the bare rows to a
-		// named coordinate" fails on the first entity with a sibling and
-		// leaves a duplicate behind. Renaming the bare face away is a change
-		// to `bare_face:` plus a family rewrite, not a row move.
-		return fmt.Errorf("entity %q: face %q is the bare face; it cannot be renamed to a "+
-			"named coordinate by moving rows — change `bare_face:` in the schema instead",
-			s.Entity, s.From)
-	}
+	// A face's declared name IS its stored coordinate (BUG-HC6I2T), so both
+	// sides are the names the schemas declare. There is no bare-face case to
+	// special-case: every face this step can name is a named row.
+	s.fromStored = s.From
+	s.toStored = s.To
 	return nil
 }
 
@@ -269,16 +262,8 @@ func (s *renameFaceStep) Validate(from, to metamodel.ShapeProjection) error {
 // counts as already moved, and only the source is deleted — which is the
 // idempotence the engine requires of every step.
 //
-// # The bare face is the asymmetric case
-//
-// The face named by `bare_face:` is stored as the ZERO coordinate, not under
-// its own name, so renaming to or from it moves rows between the zero
-// coordinate and a named one. Both sides are resolved through the schema that
-// declares them (from-side against the from-shape, to-side against the
-// to-shape) in Validate. When the two resolve to the SAME coordinate the rename
-// is a no-op in storage terms — a face that was already bare being renamed while
-// staying bare — and the step does nothing rather than deleting the row it just
-// re-created.
+// A rename to the same name is a no-op in storage terms, and the step does
+// nothing rather than deleting the row it just re-created.
 func (s *renameFaceStep) Run(ctx context.Context, x *Exec) (StepResult, error) {
 	res := StepResult{Kind: s.Kind(), Target: s.Target()}
 	if s.fromStored == s.toStored {
@@ -349,126 +334,72 @@ func faceInShape(p metamodel.ShapeProjection, typ, face string) bool {
 	return slices.Contains(es.Faces, face)
 }
 
-// storedFaceIn maps a DECLARED face name to the coordinate it is stored under,
-// per the given shape: the type's `bare_face` stores as the empty string, every
-// other face under its own name.
-//
-// The shape-projection twin of metamodel.StoredFace, which needs a whole
-// *Metamodel a migration step does not have. It is derivable here because
-// ShapeProjection carries BareFace precisely so this question is answerable
-// from a migration file alone.
-func storedFaceIn(p metamodel.ShapeProjection, typ, declared string) string {
-	if es, ok := p.Entities[typ]; ok && es.BareFace == declared {
-		return ""
-	}
-	return declared
-}
+// ---- migrate_face ----
 
-// ---- confirm_face ----
-
-// confirmFaceStep answers the question a bare_face delta asks: when a type
-// gains faces (or repoints `bare_face:`), which face do the rows that already
-// exist belong to? (BUG-TMGWIN)
+// migrateFaceStep moves existing rows onto the face they belong to when a type
+// gains its first faces (BUG-TMGWIN).
 //
-// # Why this is an affirmation and not a row move
+// # What the delta means
 //
-// It is tempting to want "put each row on the face its status says it should
-// have". The store does not permit that, and deliberately so. Two row-family
-// invariants (TKT-DOFYR1) hold in every backend: a family's default row cannot
-// be deleted while a sibling face remains, and a named-face row cannot exist
-// without a default row ("headless"). Together they mean an entity ALWAYS
-// occupies the bare coordinate — a row cannot move off it in either order.
-// That is the same wall rename_face reports when it refuses bare → named.
+// A type with no faces stores its single state at the zero coordinate, which
+// names no face. Declaring faces leaves every existing row sitting there:
+// nothing moved and no value changed, so nothing looks wrong, and the rows
+// belong to no declared face. That is why `faces_introduced` is
+// needs-migration rather than drift — the store must not adopt the shape on
+// its own, because only the operator knows which face the existing content
+// became.
 //
-// So repointing `bare_face:` does not move anything: it relabels every bare row
-// in place, which is exactly why CompareShapes calls it out. The migration's job
-// is not to perform a move, it is to CONFIRM the relabel is the intended one —
-// the store must not adopt that shape on its own, because nothing about it looks
-// wrong afterwards.
+// # Why the mapping is exhaustive
 //
-// # What the mapping is for
+// The step keys the move on an enum property's values, and Validate proves the
+// mapping total over that property's declared value set using the migration
+// file's own embedded projections (ShapeProjection carries every enum's values
+// alongside each type's Faces, so this needs no live metamodel).
 //
-// The confirmation could have been a bare `- confirm_face: {entity: task}`.
-// Requiring the operator to write out, value by value, which face each existing
-// row lands on is what makes the confirmation informed rather than ceremonial:
-// Validate proves the mapping total over the property's declared value set, so a
-// value with no sensible destination is an authoring error instead of a silent
-// default. That is the case that motivated this step — a value whose rows quietly
-// became something they are not.
-//
-// Every value must therefore map to the DECLARED BARE FACE, since that is where
-// those rows provably end up. A mapping naming a different face is refused with
-// the reason: rows cannot go there, and the schema must change instead. Getting
-// that error at parse time, against a value set written out in full, is the point
-// — it is the moment the operator discovers the schema does not fit the data.
-//
-// Assigning DIFFERENT rows to DIFFERENT faces needs a second row per entity
-// rather than a move, which is a copy operation with its own semantics
-// (FEAT-H2GSOJ phase two), not this step.
-type confirmFaceStep struct {
+// The failure this prevents is not picking the wrong face. It is a value with
+// no sensible destination in the new schema passing unnoticed, so its rows keep
+// sitting at a coordinate that names nothing — invisible, and unrecoverable
+// once the keying property is dropped in the same migration. Requiring every
+// value to name a face turns that into an authoring error.
+type migrateFaceStep struct {
 	Entity   string            `yaml:"entity"`
 	Property string            `yaml:"property"`
 	Mapping  map[string]string `yaml:"mapping"`
 }
 
-func (s *confirmFaceStep) Kind() string { return "confirm_face" }
-
-// Target avoids an arrow: the step's central claim is that nothing moves, and
-// an "x → y" label in the run table would say the opposite.
-func (s *confirmFaceStep) Target() string {
-	if s.Property == "" {
-		return s.Entity + " (confirm bare face)"
-	}
-	return s.Entity + "." + s.Property + " (confirm bare face)"
+func (s *migrateFaceStep) Kind() string { return "migrate_face" }
+func (s *migrateFaceStep) Target() string {
+	return s.Entity + "." + s.Property + " → face"
 }
 
-// Validate proves the mapping total over the property's value set, and that
-// every value lands on the face the rows will actually occupy.
+// Validate proves the mapping total over the property's value set.
 //
 // The property is read from the FROM-shape: it holds the values the rows carry
 // today, and the step is meant to run before that property is dropped. The
-// faces come from the TO-shape, which is the schema being confirmed.
-func (s *confirmFaceStep) Validate(from, to metamodel.ShapeProjection) error {
-	if s.Entity == "" {
-		return errors.New("entity is required")
-	}
-	if (s.Property == "") != (len(s.Mapping) == 0) {
-		return errors.New("property and mapping go together: give both to confirm value by value, " +
-			"or neither to confirm the whole type at once")
+// faces come from the TO-shape, since those are the coordinates rows move to.
+func (s *migrateFaceStep) Validate(from, to metamodel.ShapeProjection) error {
+	if s.Entity == "" || s.Property == "" || len(s.Mapping) == 0 {
+		return errors.New("entity, property and a non-empty mapping are required")
 	}
 	if !entityInShape(to, s.Entity) {
 		return fmt.Errorf("entity %q is not in the to-schema", s.Entity)
 	}
 	es := to.Entities[s.Entity]
 	if len(es.Faces) == 0 {
-		return fmt.Errorf("entity %q declares no faces in the to-schema — there is nothing to confirm", s.Entity)
+		return fmt.Errorf("entity %q declares no faces in the to-schema — there is nothing to migrate rows to",
+			s.Entity)
 	}
-	if es.BareFace == "" {
-		return fmt.Errorf("entity %q declares no `bare_face:` in the to-schema, so the rows at the zero "+
-			"coordinate belong to no declared face — there is nothing to confirm them as", s.Entity)
-	}
-	if s.Property == "" {
-		// Whole-type form: no property keys the confirmation, so there is
-		// nothing further to check. Used when the type has no enum to key on
-		// (the generator emits this shape) — the operator is still stating
-		// that the bare face is right for the rows they have, they just have
-		// no per-value question to answer.
-		return nil
-	}
-
 	if !entityPropInShape(from, s.Entity, s.Property) {
-		return fmt.Errorf("property %s.%s is not in the from-schema — confirm_face reads the values rows "+
+		return fmt.Errorf("property %s.%s is not in the from-schema — migrate_face reads the values rows "+
 			"carry TODAY, so the property must exist before the migration", s.Entity, s.Property)
 	}
 	if ps := from.Entities[s.Entity].Properties[s.Property]; ps.List {
-		// A row carrying several values at once has no single answer to "which
-		// face does this become", and Run reads the property as a string — so
-		// without this every row would land in the unaccounted bucket and be
-		// reported as invalid data. Refuse the question rather than answer it
+		// A row carrying several values at once has no single destination, and
+		// Run reads the property as a string — so without this every row would
+		// be reported as unmapped. Refuse the question rather than answer it
 		// wrongly.
 		return fmt.Errorf("property %s.%s is list-typed: a row holding several values has no single "+
-			"face, so it cannot key a confirmation. Confirm the whole type instead (omit `property:` "+
-			"and `mapping:`)", s.Entity, s.Property)
+			"face, so it cannot key a migration", s.Entity, s.Property)
 	}
 
 	values := enumValuesIn(from, s.Entity, s.Property)
@@ -482,21 +413,9 @@ func (s *confirmFaceStep) Validate(from, to metamodel.ShapeProjection) error {
 			return fmt.Errorf("mapping key %q is not a value of %s.%s (declared: %s)",
 				key, s.Entity, s.Property, strings.Join(values, ", "))
 		}
-		face := s.Mapping[key]
-		if !slices.Contains(es.Faces, face) {
+		if !slices.Contains(es.Faces, s.Mapping[key]) {
 			return fmt.Errorf("mapping value %q is not a face declared on %q in the to-schema (declared: %s)",
-				face, s.Entity, strings.Join(es.Faces, ", "))
-		}
-		if face != es.BareFace {
-			// The honest error. Every existing row is at the zero coordinate
-			// and the store will not let it leave, so promising some of them a
-			// different face cannot be kept.
-			return fmt.Errorf("%s = %q is mapped to face %q, but every existing row is stored at the zero "+
-				"coordinate and becomes %q (the declared `bare_face:`). A row cannot be moved off the bare "+
-				"coordinate — the store refuses to delete a family's default row. Make %q the `bare_face:` "+
-				"if that is where these rows belong; otherwise this schema does not fit the data and the "+
-				"rows need handling outside this migration",
-				s.Property, key, face, es.BareFace, face)
+				s.Mapping[key], s.Entity, strings.Join(es.Faces, ", "))
 		}
 	}
 
@@ -508,76 +427,97 @@ func (s *confirmFaceStep) Validate(from, to metamodel.ShapeProjection) error {
 	}
 	if len(missing) > 0 {
 		return fmt.Errorf("mapping is not exhaustive: %s.%s value(s) %s have no face. Every value must "+
-			"name the face its rows become, so a value with no sensible destination is caught here rather "+
-			"than silently becoming %q",
-			s.Entity, s.Property, strings.Join(missing, ", "), es.BareFace)
+			"name the face its rows move to — rows left behind stay at the zero coordinate, which names "+
+			"no face, and become unreachable once %s is dropped",
+			s.Entity, s.Property, strings.Join(missing, ", "), s.Property)
 	}
 	return nil
 }
 
-// Run writes nothing: the relabel is the schema change itself, already carried
-// by the file's `to` shape. What it does is REPORT — how many rows the
-// confirmation covers, and which of them carry a value the mapping could not
-// account for.
+// Run moves each row from the zero coordinate to the face its value maps to.
 //
-// Writing nothing makes it trivially idempotent, which the engine requires of
-// every step. It also makes x.Apply moot — this is the one step that behaves
-// identically in a dry run, deliberately, rather than by having missed the
-// flag.
-func (s *confirmFaceStep) Run(ctx context.Context, x *Exec) (StepResult, error) {
+// A face is a stored COORDINATE, and store.UpdateEntity addresses a row BY that
+// coordinate, so this cannot be an in-place field update the way
+// rename_entity_type is: handing UpdateEntity a changed Face looks up a row that
+// does not exist yet. It is a MOVE — create at the new coordinate, then delete
+// the old — exactly as renameFaceStep.Run does.
+//
+// Create-then-delete rather than the reverse, so a failure between the two
+// leaves the data duplicated rather than destroyed. Re-running then converges:
+// a destination row holding the source's content counts as already moved and
+// only the source is deleted, which is the idempotence the engine requires.
+func (s *migrateFaceStep) Run(ctx context.Context, x *Exec) (StepResult, error) {
 	res := StepResult{Kind: s.Kind(), Target: s.Target()}
 
-	confirmed := 0
-	unaccounted := map[string]int{}
+	type move struct {
+		e  *entity.Entity
+		to string
+	}
+	var moves []move
+	unmapped := map[string]int{}
 	q := store.EntityQuery{Type: s.Entity, AllStates: true}
 	for e, err := range x.Store.ListEntities(ctx, q) {
 		if err != nil {
 			return res, err
 		}
 		if !e.Face.IsDefault() {
-			continue // already on a named face; the confirmation is about bare rows
-		}
-		confirmed++
-		if s.Property == "" {
-			continue // whole-type form: no per-value question to answer
+			continue // already on a named face: a previous run, or hand-placed
 		}
 		v, ok := e.Properties[s.Property].(string)
 		if !ok {
-			unaccounted[""]++
+			unmapped[""]++
 			continue
 		}
-		if _, ok := s.Mapping[v]; !ok {
-			unaccounted[v]++
+		target, ok := s.Mapping[v]
+		if !ok {
+			// Validate proved the mapping total over the DECLARED value set, so
+			// reaching here means the stored value is outside it. Reported, not
+			// guessed at — note this describes what was seen, not why: an
+			// earlier map_values or lua step in the same file can produce it
+			// just as a stale stored value can.
+			unmapped[v]++
+			continue
 		}
+		moves = append(moves, move{e: e, to: target})
 	}
 
-	// Affected stays ZERO: the run report renders it as "changed N record(s)",
-	// and this step changes none — the relabel is the schema change itself.
-	// The count belongs in a note, where it reads as what it is.
-	if confirmed == 0 {
-		// Vacuous rather than successful, and the two must not look alike: a
-		// confirmation covering no rows tells the operator their data is not
-		// where they think it is.
-		res.Notes = append(res.Notes, "no rows at the bare coordinate — nothing to confirm")
-	} else {
-		res.Notes = append(res.Notes, fmt.Sprintf(
-			"confirmed %d row(s) become the bare face; no rows were written", confirmed))
-	}
-
-	for _, value := range slices.Sorted(maps.Keys(unaccounted)) {
+	for _, value := range slices.Sorted(maps.Keys(unmapped)) {
 		label := value
 		if label == "" {
 			label = "(unset or non-string)"
 		}
-		// Deliberately describes what was OBSERVED, not why. Validate proves
-		// the mapping total over the DECLARED value set, so the usual cause is
-		// stored data outside it — but an earlier step in the same file (a
-		// map_values, a lua transform) can also move rows out from under the
-		// mapping, and asserting "invalid data" would send the operator
-		// chasing the wrong thing.
 		res.Notes = append(res.Notes, fmt.Sprintf(
-			"%d row(s) with %s = %s are not covered by the mapping",
-			unaccounted[value], s.Property, label))
+			"%d row(s) with %s = %s are not covered by the mapping and stay at the zero coordinate",
+			unmapped[value], s.Property, label))
+	}
+
+	res.Affected = len(moves)
+	if !x.Apply {
+		return res, nil
+	}
+
+	for _, m := range moves {
+		// Same contract as rename_face: a destination row holding identical
+		// content is the previous run's copy and the move is finished; anything
+		// else is a genuine collision that would destroy one of two distinct
+		// rows, so it is refused with the id named.
+		existing, err := x.Store.GetEntityState(ctx, m.e.ID, entity.Face(m.to))
+		alreadyMoved := err == nil && existing != nil && sameContent(existing, m.e)
+		if err == nil && existing != nil && !alreadyMoved {
+			return res, fmt.Errorf(
+				"%s: cannot move to face %q — a row already exists there with different content; "+
+					"drop or merge it first, or this move would destroy one of the two", m.e.ID, m.to)
+		}
+		if !alreadyMoved {
+			moved := *m.e
+			moved.Face = entity.Face(m.to)
+			if err := x.Store.CreateEntity(ctx, &moved); err != nil {
+				return res, fmt.Errorf("%s: create at face %q: %w", m.e.ID, m.to, err)
+			}
+		}
+		if _, err := x.Store.DeleteEntityState(ctx, m.e.ID, m.e.Face); err != nil {
+			return res, fmt.Errorf("%s: remove the zero-coordinate row: %w", m.e.ID, err)
+		}
 	}
 	return res, nil
 }

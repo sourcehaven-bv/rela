@@ -32,7 +32,7 @@ export interface WorldInfo {
   // The operator's wording for what this world changes on a screen
   // (TKT-5SZG2L). Each entry is optional and an absent one renders NOTHING:
   // the app has no sentence of its own for any of them. Placeholders
-  // `{face}`, `{bare_face}`, `{world}`, `{title}` — see utils/worldText.
+  // `{face}`, `{world}`, `{title}` — see utils/worldText.
   messages?: WorldMessages
   // Behaviour for an entity with no face in this world: `redirect` names the
   // world the app navigates to instead of rendering the page.
@@ -72,9 +72,6 @@ export interface EntityType {
   // SCHEMA, not data: which faces the TYPE declares, never which faces a
   // given entity holds. `_faces` on an entity response answers that.
   faces?: Record<string, FaceInfo>
-  // Which declared face the bare id addresses, mirroring `bare_face:` in
-  // the schema. Empty when the type declares no faces, or names none.
-  bare_face?: string
   // Whether this type accepts comments (TKT-FIO205). Policy, not permission:
   // it decides whether to render a comment affordance at all, never whether
   // the current user may use it — the server re-authorizes every call, so a
@@ -85,9 +82,9 @@ export interface EntityType {
 
 // FaceInfo mirrors v1.FaceDef — one declared content state of a type.
 //
-// Which face the bare id addresses is NOT here: it is `bare_face` on the
-// entity type, because it is one fact about the type rather than a flag each
-// face could contradict.
+// No face is addressed by the bare id (BUG-HC6I2T): a face's declared name IS
+// its stored coordinate, so a type declaring faces has no unsuffixed row and
+// every address names a face.
 export interface FaceInfo {
   // The operator's display text for this face ("Nederlands" for `nl`).
   // Absent means fall back to the face name, which is itself

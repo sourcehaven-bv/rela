@@ -616,7 +616,7 @@ entities:
 | `description`    | Documentation for the property                                                        |
 | `list: true`     | Allow multiple values (multi-select for enum types)                                   |
 | `computed`       | Pure entity-local expression materialized on every write; the property is read-only   |
-| `unique: true`   | Natural key: no two entities of the type may share a non-empty value (write-time 422; find pre-existing dups with `rela analyze unique`). Only for string-valued properties (`string`, `date`, `datetime`, `enum`, custom types) — not `list`, and not `integer`/`boolean`/`file`. On the PostgreSQL backend this is additionally enforced by an automatically-maintained database index, so it holds even under concurrent writers ([details](postgres-backend.md#derived-schema-unique-constraints)). |
+| `unique: true`   | Natural key: no two entities of the type may share a non-empty value (write-time 422; find pre-existing dups with `rela analyze unique`). On a type declaring `faces:` the constraint holds **per face**: two entities may not share a value within one face, while two faces of the same entity never collide with each other. Only for string-valued properties (`string`, `date`, `datetime`, `enum`, custom types) — not `list`, and not `integer`/`boolean`/`file`. On the PostgreSQL backend this is additionally enforced by an automatically-maintained database index, so it holds even under concurrent writers ([details](postgres-backend.md#derived-schema-unique-constraints)). |
 | `max`            | For `file` properties: max attachments (default 1)                                    |
 | `accept`         | For `file` properties: narrow the MIME allowlist (e.g. `[application/pdf]`)           |
 | `scan_cmd`       | For `file` properties: the scan command (array args); configuring it enables scanning |
@@ -1023,8 +1023,7 @@ declare faces with types that do not.
 ```yaml
 entities:
   policy:
-    label: Policy
-    bare_face: draft           # POL-1 and POL-1@draft are one row
+    label: Policy              # every face is a named row: POL-1@draft, POL-1@published
     faces:
       draft:     { label: "Draft" }
       published: { label: "Published" }
@@ -1036,12 +1035,18 @@ entities:
 | --- | --- |
 | `faces` | A map from face name to face definition. A type without it has exactly one state, and that state appears in every world. |
 | `faces.<name>.label` | Display text for the web app. Falls back to the face name. It has no effect on resolution. |
-| `faces.<name>.messages.read_only` | The sentence the web app shows on a page or form that reached this face while the reader may not write it. Placeholders `{face}` (this face's label), `{bare_face}`, `{world}`, `{title}` (the entity's display title). Undeclared shows nothing. |
-| `bare_face` | The declared face that the bare entity id addresses. It must name a declared face. Omitting it leaves the entity's own row without a name and makes every declared face a separate suffixed row, which is legal but rarely intended. |
+| `faces.<name>.messages.read_only` | The sentence the web app shows on a page or form that reached this face while the reader may not write it. Placeholders `{face}` (this face's label), `{world}`, `{title}` (the entity's display title). Undeclared shows nothing. |
 
-`bare_face:` names a row that already exists: every entity has a row under its
-bare id whether or not the type declares faces, so adding `faces:` to a type
-migrates nothing.
+A face's declared name is also the coordinate its row is stored at, so the same
+spelling works in a URL, in an `acl.yaml` grant, and in a `copies:` address. A
+type declaring `faces:` stores nothing under the bare entity id: `POL-1` names
+no row, only `POL-1@draft` and `POL-1@published` do. A type declaring no faces
+is the opposite — it has one unnamed state stored under the bare id, and is
+unaffected by any of this.
+
+Adding `faces:` to a type that already holds data is therefore a migration, not
+a relabelling: the existing rows sit at a coordinate that names no declared
+face. See [Data Migration](data-migration.md).
 
 A face name is a run of lowercase letters and digits, with further runs joined
 by single hyphens: `draft`, `published`, `in-review`. Uppercase letters,
@@ -1071,9 +1076,9 @@ worlds:
 | --- | --- |
 | `select` | The face to show, or an ordered list. The first face the entity has wins. A single name and a one-element list mean the same thing. |
 | `overrides` | A map from entity type to a chain that replaces `select` for that type. It replaces the chain rather than extending it. |
-| `otherwise` | **Required.** What happens to an entity whose type declares faces but that has none the chain names: `exclude` leaves it out of the world, `default` shows its bare face. |
+| `otherwise` | **Required.** What happens to an entity whose type declares faces but that has none the chain names: `exclude` leaves it out of the world, `default` shows its unnamed state — which a faced type does not have, so `default` excludes it too. |
 | `banner` | Optional text the web app shows on every page in this world. Empty shows no announcement. |
-| `messages` | Optional. The web app's wording for what this world changes on a screen: `absent` (a detail page for an entity with no face here; placeholders `{face}`, `{bare_face}`, `{world}`, `{title}`), `projection` (a list or board note on a faced type; `{world}` only, since a list has no single entity), `stand_in` (the badge on a row served a stand-in; `{face}`, `{bare_face}`, `{world}`). A placeholder a surface cannot fill is left as written. The app has no default sentence; an undeclared entry shows nothing. |
+| `messages` | Optional. The web app's wording for what this world changes on a screen: `absent` (a detail page for an entity with no face here; placeholders `{face}`, `{world}`, `{title}`), `projection` (a list or board note on a faced type; `{world}` only, since a list has no single entity), `stand_in` (the badge on a row served a stand-in; `{face}`, `{world}`). A placeholder a surface cannot fill is left as written. The app has no default sentence; an undeclared entry shows nothing. |
 | `on_absent` | Optional. `redirect: <world>` sends a reader who opens an entity with no face in this world to that world (or `default`) instead of showing the page. |
 | `primary_for` | Optional. The faces this world is the canonical home of. Needed only when two worlds lead with the same face for a type. See below. |
 | `edits` | Accepted and validated as a declared face name. Not used yet. |
@@ -1089,10 +1094,10 @@ order:
 Rule 2 is why publishing works. If `POL-1` has no `published` face, it does not
 exist in the `published` world. Absence is the publication bit.
 
-A chain may name the face that `bare_face:` points at. That face is stored
-under the bare id rather than as a separate row, but naming it in a chain
-selects it by rule 2 like any other face, and the response reports the chain
-position it matched at.
+Rule 3's `default` substitutes an entity's single unnamed state. A type
+declaring `faces:` has no such state, so for those types `default` has nothing
+to substitute and behaves as `exclude`. Write chains that name a face every
+entity of the type can be expected to have.
 
 `otherwise:` has no default, and a world without it does not load. The two
 values are opposites and both are reasonable: a public world wants `exclude`,
@@ -1100,9 +1105,11 @@ an internal one usually wants `default`. Guessing wrong would mean a
 `published` world quietly serving a draft, so the schema has to say which one
 it means.
 
-Every project also has an implicit **default world**, in which every entity
-appears with its bare face. It needs no declaration, it always exists, and the
-name `default` is reserved so nothing can shadow it. Reading any other world
+Every project also has an implicit **default world**, which applies no
+resolution and serves each entity's unnamed state. A faced type has none, so
+its rows are reached there only by addressing a face as `ID@face`. It needs no
+declaration, it always exists, and the name `default` is reserved so nothing
+can shadow it. Reading any other world
 requires a `world:<name>` grant in `acl.yaml`; see the
 [ACL: Authorization Overview](acl-overview.md#scoping-a-grant-to-a-content-state).
 
@@ -1126,7 +1133,7 @@ a world:
 ### `primary_for:` — only when two worlds lead the same face
 
 A face switcher in the web app ("go to the Dutch version") has to name a
-**world**, because `?world=` is how a face is read and a bare face is not a
+**world**, because `?world=` is how a face is read and a face name is not a
 world. Which world serves a face is normally inferred: it is the world whose
 chain **leads** with that face. `site-nl` selecting `[nl, en]` is the world
 that serves `nl`. It is not the world that serves `en`, which it only falls
@@ -1175,8 +1182,9 @@ world on its own.
 
 ### Declaring copies
 
-Ordinary writes address the bare face. A non-bare face is written only through
-a **copy definition** that names it as a target and carries its own permission
+An ordinary write addresses one face by name and changes that face alone.
+Moving content BETWEEN faces is a different operation: it happens only through
+a **copy definition** that names the target face and carries its own permission
 guard, which is what makes publishing an authorized operation rather than a
 field edit.
 
@@ -1196,13 +1204,13 @@ copies:
 | Key | Meaning |
 | --- | --- |
 | `from` | The source face, as `type` or `type@face`. |
-| `to` | The target face. When it names a non-bare face, `guard:` is mandatory. |
+| `to` | The target face. When it names a face, `guard:` is mandatory. |
 | `label` | Display text for the action in the web app. Plain text, no interpolation. Falls back to the definition name. |
 | `on_success.message` | The confirmation the web app shows after the copy. Placeholders as for world messages; `{face}` is the face written. Falls back to the label. |
 | `on_success.landing` | Where the web app goes afterwards: `written` (the face written, the default), `stay` (reload in place), `{world: <name>}` or `{face: <name>}`. |
 | `fields` | `all` to copy every declared property, or a map from target property to source expression using the `{{...}}` interpolation grammar. A copy between different types requires an explicit map. |
 | `relations` | A map from relation type to `merge` (add the edges the target lacks) or `replace` (swap the target face's edges of that type). Only `scope: content` relation types can be listed. An omitted type is not copied. |
-| `guard.permission` | The ACL permission a caller must hold on the source entity. **Required** when `to` names a non-bare face. |
+| `guard.permission` | The ACL permission a caller must hold on the source entity. **Required** whenever `to` names a face. |
 
 A request invokes a definition by name and never supplies a mapping. See
 [Invoking a copy](data-entry.md#invoking-a-copy) for the HTTP surface.
@@ -1211,7 +1219,7 @@ A request invokes a definition by name and never supplies a mapping. See
 
 The loader refuses a copy definition that:
 
-- targets a non-bare face without a `guard.permission`, because an unguarded
+- targets a face without a `guard.permission`, because an unguarded
   definition would open the face to anyone who can name the copy;
 - names a face or type that the schema does not declare;
 - copies no fields, or declares both `fields: all` and a field map;
@@ -1590,8 +1598,7 @@ validations:
 ### `faces:` — scoping a rule to content states
 
 If a type declares `faces:`, each state is a separate row and **every one is
-validated**. A rule with no `faces:` key therefore applies to all of them,
-including the bare face.
+validated**. A rule with no `faces:` key therefore applies to all of them.
 
 That default is deliberate: a rule is a correctness claim, and the safe
 direction for a claim is to check more rather than less. A rule that silently
@@ -1611,8 +1618,7 @@ validations:
 Without the scope, that rule reports every unfinished draft as a violation, and
 a validator that cries wolf gets ignored.
 
-Name faces as you declared them — the bare face by its declared name, not as an
-empty value. A face no type declares is a **load error**: the rule would match
+Name faces as you declared them. A face no type declares is a **load error**: the rule would match
 nothing and pass forever while appearing to guard something.
 
 Violations report which state they are about, so an entity with a valid bare
@@ -2022,8 +2028,8 @@ automations:
         value: "{{today}}"
 ```
 
-Name faces as you declared them — the bare face by its declared name, not as an
-empty value. A face the triggering type does not declare is a **load error**:
+Name faces as you declared them. A face the triggering type does not declare
+is a **load error**:
 the trigger would never fire, silently disabling the automation it was meant to
 narrow.
 
