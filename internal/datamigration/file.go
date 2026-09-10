@@ -113,7 +113,43 @@ func ParseFile(name string, data []byte) (*File, error) {
 			return nil, fmt.Errorf("datamigration: %s: step %d (%s): %w", name, i+1, s.Kind(), err)
 		}
 	}
+	if err := validateStepOrder(name, f.Steps); err != nil {
+		return nil, err
+	}
 	return f, nil
+}
+
+// validateStepOrder checks the constraints no single step can see, because
+// they are about one step's position relative to another.
+//
+// Today that is one rule: confirm_face reads a property's values to state which
+// face the existing rows become, so a drop_property that erases that property
+// must not come first. Ordering is the operator's to choose, but this order is
+// never intentional — it leaves the step reporting on nothing, which turns an
+// informed confirmation back into the empty ceremony it exists to replace.
+func validateStepOrder(name string, steps []Step) error {
+	type dropped struct {
+		entity, property string
+		at               int
+	}
+	var drops []dropped
+	for i, s := range steps {
+		switch step := s.(type) {
+		case *dropPropertyStep:
+			drops = append(drops, dropped{entity: step.Entity, property: step.Property, at: i + 1})
+		case *confirmFaceStep:
+			for _, d := range drops {
+				if d.entity == step.Entity && d.property == step.Property {
+					return fmt.Errorf(
+						"datamigration: %s: step %d (confirm_face) reads %s.%s, but step %d (drop_property) "+
+							"already removed it — confirm_face must come first, or it would report on no "+
+							"values and confirm nothing",
+						name, i+1, step.Entity, step.Property, d.at)
+				}
+			}
+		}
+	}
+	return nil
 }
 
 // projectionFromYAML converts the YAML-decoded generic map back into a

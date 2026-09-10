@@ -67,6 +67,8 @@ func parseStep(node *yaml.Node) (Step, error) {
 		step = &renameRelationTypeStep{}
 	case "map_values":
 		step = &mapValuesStep{}
+	case "confirm_face":
+		step = &confirmFaceStep{}
 	case "set_default":
 		step = &setDefaultStep{}
 	case "recompute_computed":
@@ -360,6 +362,196 @@ func storedFaceIn(p metamodel.ShapeProjection, typ, declared string) string {
 		return ""
 	}
 	return declared
+}
+
+// ---- confirm_face ----
+
+// confirmFaceStep answers the question a bare_face delta asks: when a type
+// gains faces (or repoints `bare_face:`), which face do the rows that already
+// exist belong to? (BUG-TMGWIN)
+//
+// # Why this is an affirmation and not a row move
+//
+// It is tempting to want "put each row on the face its status says it should
+// have". The store does not permit that, and deliberately so. Two row-family
+// invariants (TKT-DOFYR1) hold in every backend: a family's default row cannot
+// be deleted while a sibling face remains, and a named-face row cannot exist
+// without a default row ("headless"). Together they mean an entity ALWAYS
+// occupies the bare coordinate — a row cannot move off it in either order.
+// That is the same wall rename_face reports when it refuses bare → named.
+//
+// So repointing `bare_face:` does not move anything: it relabels every bare row
+// in place, which is exactly why CompareShapes calls it out. The migration's job
+// is not to perform a move, it is to CONFIRM the relabel is the intended one —
+// the store must not adopt that shape on its own, because nothing about it looks
+// wrong afterwards.
+//
+// # What the mapping is for
+//
+// The confirmation could have been a bare `- confirm_face: {entity: task}`.
+// Requiring the operator to write out, value by value, which face each existing
+// row lands on is what makes the confirmation informed rather than ceremonial:
+// Validate proves the mapping total over the property's declared value set, so a
+// value with no sensible destination is an authoring error instead of a silent
+// default. That is the case that motivated this step — a value whose rows quietly
+// became something they are not.
+//
+// Every value must therefore map to the DECLARED BARE FACE, since that is where
+// those rows provably end up. A mapping naming a different face is refused with
+// the reason: rows cannot go there, and the schema must change instead. Getting
+// that error at parse time, against a value set written out in full, is the point
+// — it is the moment the operator discovers the schema does not fit the data.
+//
+// Assigning DIFFERENT rows to DIFFERENT faces needs a second row per entity
+// rather than a move, which is a copy operation with its own semantics
+// (FEAT-H2GSOJ phase two), not this step.
+type confirmFaceStep struct {
+	Entity   string            `yaml:"entity"`
+	Property string            `yaml:"property"`
+	Mapping  map[string]string `yaml:"mapping"`
+}
+
+func (s *confirmFaceStep) Kind() string   { return "confirm_face" }
+func (s *confirmFaceStep) Target() string { return s.Entity + "." + s.Property + " → face" }
+
+// Validate proves the mapping total over the property's value set, and that
+// every value lands on the face the rows will actually occupy.
+//
+// The property is read from the FROM-shape: it holds the values the rows carry
+// today, and the step is meant to run before that property is dropped. The
+// faces come from the TO-shape, which is the schema being confirmed.
+func (s *confirmFaceStep) Validate(from, to metamodel.ShapeProjection) error {
+	if s.Entity == "" || s.Property == "" || len(s.Mapping) == 0 {
+		return errors.New("entity, property and a non-empty mapping are required")
+	}
+	if !entityInShape(to, s.Entity) {
+		return fmt.Errorf("entity %q is not in the to-schema", s.Entity)
+	}
+	es := to.Entities[s.Entity]
+	if len(es.Faces) == 0 {
+		return fmt.Errorf("entity %q declares no faces in the to-schema — there is nothing to confirm", s.Entity)
+	}
+	if es.BareFace == "" {
+		return fmt.Errorf("entity %q declares no `bare_face:` in the to-schema, so the rows at the zero "+
+			"coordinate belong to no declared face — there is nothing to confirm them as", s.Entity)
+	}
+	if !entityPropInShape(from, s.Entity, s.Property) {
+		return fmt.Errorf("property %s.%s is not in the from-schema — confirm_face reads the values rows "+
+			"carry TODAY, so the property must exist before the migration", s.Entity, s.Property)
+	}
+
+	values := enumValuesIn(from, s.Entity, s.Property)
+	if len(values) == 0 {
+		return fmt.Errorf("property %s.%s is not an enum in the from-schema (no declared value set), "+
+			"so the mapping cannot be checked for completeness", s.Entity, s.Property)
+	}
+
+	for _, key := range slices.Sorted(maps.Keys(s.Mapping)) {
+		if !slices.Contains(values, key) {
+			return fmt.Errorf("mapping key %q is not a value of %s.%s (declared: %s)",
+				key, s.Entity, s.Property, strings.Join(values, ", "))
+		}
+		face := s.Mapping[key]
+		if !slices.Contains(es.Faces, face) {
+			return fmt.Errorf("mapping value %q is not a face declared on %q in the to-schema (declared: %s)",
+				face, s.Entity, strings.Join(es.Faces, ", "))
+		}
+		if face != es.BareFace {
+			// The honest error. Every existing row is at the zero coordinate
+			// and the store will not let it leave, so promising some of them a
+			// different face cannot be kept.
+			return fmt.Errorf("%s = %q is mapped to face %q, but every existing row is stored at the zero "+
+				"coordinate and becomes %q (the declared `bare_face:`). A row cannot be moved off the bare "+
+				"coordinate — the store refuses to delete a family's default row. Either make %q the "+
+				"`bare_face:` so these rows land there, or handle these rows separately (drop_entities, or "+
+				"a follow-up that adds a second row per entity)",
+				s.Property, key, face, es.BareFace, face)
+		}
+	}
+
+	var missing []string
+	for _, v := range values {
+		if _, ok := s.Mapping[v]; !ok {
+			missing = append(missing, v)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("mapping is not exhaustive: %s.%s value(s) %s have no face. Every value must "+
+			"name the face its rows become, so a value with no sensible destination is caught here rather "+
+			"than silently becoming %q",
+			s.Entity, s.Property, strings.Join(missing, ", "), es.BareFace)
+	}
+	return nil
+}
+
+// Run writes nothing: the relabel is the schema change itself, already carried
+// by the file's `to` shape. What it does is REPORT — how many rows the
+// confirmation covers, and which of them carry a value the mapping could not
+// account for.
+//
+// Writing nothing makes it trivially idempotent, which the engine requires of
+// every step.
+func (s *confirmFaceStep) Run(ctx context.Context, x *Exec) (StepResult, error) {
+	res := StepResult{Kind: s.Kind(), Target: s.Target()}
+
+	confirmed := 0
+	unaccounted := map[string]int{}
+	q := store.EntityQuery{Type: s.Entity, AllStates: true}
+	for e, err := range x.Store.ListEntities(ctx, q) {
+		if err != nil {
+			return res, err
+		}
+		if !e.Face.IsDefault() {
+			continue // already on a named face; the confirmation is about bare rows
+		}
+		confirmed++
+		v, ok := e.Properties[s.Property].(string)
+		if !ok {
+			unaccounted[""]++
+			continue
+		}
+		if _, ok := s.Mapping[v]; !ok {
+			// Validate proved the mapping total over the DECLARED value set,
+			// so this is a stored value outside it: pre-existing invalid data.
+			unaccounted[v]++
+		}
+	}
+
+	// Affected stays ZERO: the run report renders it as "changed N record(s)",
+	// and this step changes none — the relabel is the schema change itself.
+	// The count belongs in a note, where it reads as what it is.
+	res.Notes = append(res.Notes, fmt.Sprintf(
+		"confirmed %d row(s) become the bare face; no rows were written", confirmed))
+
+	for _, value := range slices.Sorted(maps.Keys(unaccounted)) {
+		label := value
+		if label == "" {
+			label = "(unset or non-string)"
+		}
+		res.Notes = append(res.Notes, fmt.Sprintf(
+			"%d row(s) with %s = %s are not covered by the mapping (value is outside the declared set)",
+			unaccounted[value], s.Property, label))
+	}
+	return res, nil
+}
+
+// enumValuesIn returns the declared value set of an entity property, whether it
+// is an inline `values:` list or a named custom type. Empty when the property
+// is not an enum — ShapeProjection carries both forms precisely so a migration
+// file can answer this without a live metamodel.
+func enumValuesIn(p metamodel.ShapeProjection, typ, prop string) []string {
+	es, ok := p.Entities[typ]
+	if !ok {
+		return nil
+	}
+	ps, ok := es.Properties[prop]
+	if !ok {
+		return nil
+	}
+	if len(ps.Values) > 0 {
+		return ps.Values
+	}
+	return p.Types[ps.Type]
 }
 
 // ---- rename_relation_type ----

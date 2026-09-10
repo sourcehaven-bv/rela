@@ -88,6 +88,7 @@ recovery mechanism, so a step that finds nothing left to do does nothing.
 | `rename_entity_type: {from, to}` | rewrites `type:` on every entity of the old type (IDs are unchanged) |
 | `rename_relation_type: {from, to}` | recreates each relation under the new type, then deletes the old (relation history starts a new lifetime) |
 | `rename_face: {entity, from, to}` | moves every row stored at one content state to another (IDs are unchanged) |
+| `confirm_face: {entity, property, mapping}` | confirms which content state the already-existing rows become when a type gains `bare_face:`; writes nothing |
 | `map_values: {entity, property, mapping}` | remaps enum values (scalar and list properties); unmapped values are left and reported |
 | `set_default: {entity, property, value, only_missing}` | backfills a value (`only_missing` defaults to true) |
 | `recompute_computed: {entity}` | recomputes all materialized computed properties for an entity type in dependency order |
@@ -123,6 +124,49 @@ own name:
 
 A rename onto any other occupied coordinate is refused for the same reason: the
 entity has content at both, and moving would destroy one of them.
+
+### Adopting content states on data you already have
+
+Giving a type its first `bare_face:` needs a migration, and the reason is that
+nothing visible happens. Every row you already have is stored at the empty
+coordinate, so all of them silently *become* whatever face `bare_face:` now
+names. No row moves, no value changes, and the result looks correct whether or
+not it is.
+
+`confirm_face` is how you say it is:
+
+```yaml
+- confirm_face:
+    entity: article
+    property: status
+    mapping:
+      draft:     published
+      active:    published
+      withdrawn: published
+```
+
+The step **writes nothing** — the relabel is the schema change itself. What it
+does is force the question: every value of the property must appear, so a value
+whose rows do *not* belong in the new bare face is an error at parse time rather
+than a discovery months later. That is the whole point of listing them
+individually instead of writing a bare "yes, I confirm".
+
+Two consequences worth stating plainly:
+
+- **Every value must map to the declared `bare_face:`.** Naming a different
+  face is refused, because rows cannot go there: a row can never leave the bare
+  coordinate (the store refuses to delete a family's default row while a
+  sibling exists, and refuses a named row with no default row under it). If a
+  value's rows belong somewhere else, this schema does not fit your data —
+  make that face the `bare_face:`, or separate those rows first with
+  `drop_entities`.
+- **Put it before any `drop_property` of the property it reads.** The wrong
+  order is refused at parse time, since it would leave the step confirming
+  nothing.
+
+Assigning *different* rows to *different* faces is a separate operation: it
+needs a second row per entity rather than a move, so it is a copy, not a
+reassignment. That is not built yet.
 
 ### The Lua escape hatch
 

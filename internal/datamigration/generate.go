@@ -2,6 +2,7 @@ package datamigration
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -49,7 +50,7 @@ func Generate(current, live metamodel.ShapeProjection, existing []*File, descrip
 	fmt.Fprintf(&b, "description: %s\n", quoteYAML(description))
 	b.WriteString("steps:\n")
 
-	steps, comments := draftSteps(report, live)
+	steps, comments := draftSteps(report, current, live)
 	if steps == "" && comments == "" {
 		b.WriteString("  []\n")
 	} else {
@@ -82,7 +83,9 @@ func Generate(current, live metamodel.ShapeProjection, existing []*File, descrip
 }
 
 // draftSteps renders the active steps and the commented optional cleanups.
-func draftSteps(report metamodel.ShapeReport, live metamodel.ShapeProjection) (active, commented string) {
+func draftSteps(
+	report metamodel.ShapeReport, current, live metamodel.ShapeProjection,
+) (active, commented string) {
 	// Subjects consumed by a rename guess must not ALSO get a drop comment.
 	renamed := map[string]bool{}
 	for _, d := range report.Deltas {
@@ -93,7 +96,7 @@ func draftSteps(report metamodel.ShapeReport, live metamodel.ShapeProjection) (a
 	var act, com strings.Builder
 	recomputed := map[string]bool{}
 	for _, d := range report.Deltas {
-		draftActiveStep(&act, d, live, recomputed)
+		draftActiveStep(&act, d, current, live, recomputed)
 		draftCleanupComment(&com, d, live, renamed)
 	}
 	return act.String(), com.String()
@@ -102,7 +105,8 @@ func draftSteps(report metamodel.ShapeReport, live metamodel.ShapeProjection) (a
 // draftActiveStep emits the uncommented (GUESS/TODO) step for one delta,
 // if its kind produces one.
 func draftActiveStep(
-	w *strings.Builder, d metamodel.ShapeDelta, live metamodel.ShapeProjection, recomputed map[string]bool,
+	w *strings.Builder, d metamodel.ShapeDelta, current, live metamodel.ShapeProjection,
+	recomputed map[string]bool,
 ) {
 	switch d.Kind {
 	case "possible_property_rename":
@@ -145,6 +149,8 @@ func draftActiveStep(
 			fmt.Fprintf(w, "  # TODO — no built-in coercion to %q: write migrations/%s-%s.lua\n", ps.Type, owner, prop)
 			fmt.Fprintf(w, "  # - lua: {entity: %s, script: migrations/%s-%s.lua}\n", owner, owner, prop)
 		}
+	case "bare_face_introduced", "bare_face_changed":
+		draftFaceStep(w, d, current, live)
 	case "computed_property_added", "property_computed_changed":
 		owner, prop, ok := splitPropertyKey(d.Subject)
 		if !ok || strings.HasPrefix(d.Subject, "rel:") || recomputed[owner] {
@@ -162,6 +168,83 @@ func draftActiveStep(
 	case "relation_endpoint_narrowed", "relation_cardinality_tightened", "relation_symmetry_changed":
 		fmt.Fprintf(w, "  # TODO — %s: no declarative step can fix this; write a lua step or adjust the data by hand\n", d.Detail)
 	}
+}
+
+// draftFaceStep emits the confirm_face skeleton for a bare_face delta.
+//
+// The delta means every existing row sits at the zero coordinate and takes on
+// the newly declared bare face. Nothing moves — the store keeps every entity on
+// its bare coordinate — so the migration's job is to have the operator CONFIRM
+// that the relabel is the intended one, value by value.
+//
+// Every value is pre-listed with the declared bare face already filled in,
+// because that is provably where those rows land. The point is not to make the
+// operator guess a destination: it is to make them look at each value and
+// decide whether "these rows are now <bare face>" is actually true. Where it is
+// not, the schema is wrong, and the comment says so.
+//
+// Emitted COMMENTED. An unedited draft must not silently confirm a state nobody
+// looked at, and Generate round-trips its own output through ParseFile, so a
+// live step here would also have to be valid on sight.
+func draftFaceStep(w *strings.Builder, d metamodel.ShapeDelta, current, live metamodel.ShapeProjection) {
+	typeName := d.Subject
+	es, ok := live.Entities[typeName]
+	if !ok || len(es.Faces) == 0 || es.BareFace == "" {
+		return
+	}
+
+	prop, values := faceCandidateProperty(current, typeName)
+	if prop == "" {
+		fmt.Fprintf(w, "  # TODO — %q now has faces (%s) and every existing row becomes %q.\n",
+			typeName, strings.Join(es.Faces, ", "), es.BareFace)
+		fmt.Fprintf(w, "  #        No enum property was found to key a confirmation on. Check by hand that\n")
+		fmt.Fprintf(w, "  #        %q is the right state for the rows you already have.\n", es.BareFace)
+		return
+	}
+
+	fmt.Fprintf(w, "  # TODO — %q gained faces (%s). Every existing row stays on the bare coordinate and\n",
+		typeName, strings.Join(es.Faces, ", "))
+	fmt.Fprintf(w, "  #        so becomes %q; rows cannot be moved off it. UNCOMMENT to confirm, after\n", es.BareFace)
+	fmt.Fprintf(w, "  #        checking EACH %s value below really does belong in %q.\n", prop, es.BareFace)
+	fmt.Fprintf(w, "  #        If one of them does not, this schema is wrong for your data: make that face\n")
+	fmt.Fprintf(w, "  #        the `bare_face:`, or separate those rows first.\n")
+	fmt.Fprintf(w, "  #        Keep this step BEFORE any drop_property of %s — it reads those values.\n", prop)
+	fmt.Fprintf(w, "  # - confirm_face:\n  #     entity: %s\n  #     property: %s\n  #     mapping:\n", typeName, prop)
+	for _, v := range values {
+		fmt.Fprintf(w, "  #       %s: %s\n", quoteYAML(v), quoteYAML(es.BareFace))
+	}
+}
+
+// faceCandidateProperty picks the enum property most likely to have encoded the
+// content state before faces existed, and returns it with its value set.
+//
+// A property literally named "status" or "state" wins; otherwise the single
+// enum property, when there is exactly one. With several unnamed candidates the
+// generator declines rather than guessing — a wrong guess here produces a
+// plausible-looking skeleton keyed on the wrong property, which is harder to
+// notice than no skeleton at all.
+func faceCandidateProperty(
+	current metamodel.ShapeProjection, typeName string,
+) (prop string, values []string) {
+	es, ok := current.Entities[typeName]
+	if !ok {
+		return "", nil
+	}
+	var candidates []string
+	for _, prop := range sortedPropKeys(es.Properties) {
+		if len(enumValuesIn(current, typeName, prop)) > 0 {
+			candidates = append(candidates, prop)
+		}
+	}
+	for _, name := range []string{"status", "state"} {
+		if slices.Contains(candidates, name) {
+			return name, enumValuesIn(current, typeName, name)
+		}
+	}
+	if len(candidates) == 1 {
+		return candidates[0], enumValuesIn(current, typeName, candidates[0])
+	}
+	return "", nil
 }
 
 // draftCleanupComment emits the commented-out optional cleanup for one
