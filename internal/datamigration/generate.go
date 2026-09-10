@@ -1,7 +1,9 @@
 package datamigration
 
 import (
+	"bytes"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -49,7 +51,7 @@ func Generate(current, live metamodel.ShapeProjection, existing []*File, descrip
 	fmt.Fprintf(&b, "description: %s\n", quoteYAML(description))
 	b.WriteString("steps:\n")
 
-	steps, comments := draftSteps(report, live)
+	steps, comments := draftSteps(report, current, live)
 	if steps == "" && comments == "" {
 		b.WriteString("  []\n")
 	} else {
@@ -75,14 +77,28 @@ func Generate(current, live metamodel.ShapeProjection, existing []*File, descrip
 	// A draft must round-trip through the parser — a generator bug that
 	// emits an unparsable file should fail HERE, not when the operator runs
 	// `migrate data`.
-	if _, err := ParseFile(name, content); err != nil {
+	//
+	// The exception is a draft carrying a CHANGEME placeholder. Those are
+	// deliberately UNAPPLIABLE: a placeholder is not a valid face or value, so
+	// the step refuses it and the operator must make a real choice before
+	// anything runs. Failing generation over one would mean the generator could
+	// not draft the very changes that most need review, so the placeholder is
+	// checked for by name and the parse error is expected rather than fatal.
+	if _, err := ParseFile(name, content); err != nil && !bytes.Contains(content, []byte(placeholderValue)) {
 		return nil, fmt.Errorf("datamigration: generated draft does not parse (generator bug): %w", err)
 	}
 	return &Draft{FileName: name, Content: content, Report: report}, nil
 }
 
+// placeholderValue marks a spot the operator MUST fill in. It is deliberately
+// not a valid face or enum value, so a draft carrying one cannot be applied
+// unedited — see the round-trip exception in [Generate].
+const placeholderValue = "CHANGEME"
+
 // draftSteps renders the active steps and the commented optional cleanups.
-func draftSteps(report metamodel.ShapeReport, live metamodel.ShapeProjection) (active, commented string) {
+func draftSteps(
+	report metamodel.ShapeReport, current, live metamodel.ShapeProjection,
+) (active, commented string) {
 	// Subjects consumed by a rename guess must not ALSO get a drop comment.
 	renamed := map[string]bool{}
 	for _, d := range report.Deltas {
@@ -93,7 +109,7 @@ func draftSteps(report metamodel.ShapeReport, live metamodel.ShapeProjection) (a
 	var act, com strings.Builder
 	recomputed := map[string]bool{}
 	for _, d := range report.Deltas {
-		draftActiveStep(&act, d, live, recomputed)
+		draftActiveStep(&act, d, current, live, recomputed)
 		draftCleanupComment(&com, d, live, renamed)
 	}
 	return act.String(), com.String()
@@ -102,7 +118,8 @@ func draftSteps(report metamodel.ShapeReport, live metamodel.ShapeProjection) (a
 // draftActiveStep emits the uncommented (GUESS/TODO) step for one delta,
 // if its kind produces one.
 func draftActiveStep(
-	w *strings.Builder, d metamodel.ShapeDelta, live metamodel.ShapeProjection, recomputed map[string]bool,
+	w *strings.Builder, d metamodel.ShapeDelta, current, live metamodel.ShapeProjection,
+	recomputed map[string]bool,
 ) {
 	switch d.Kind {
 	case "possible_property_rename":
@@ -145,6 +162,8 @@ func draftActiveStep(
 			fmt.Fprintf(w, "  # TODO — no built-in coercion to %q: write migrations/%s-%s.lua\n", ps.Type, owner, prop)
 			fmt.Fprintf(w, "  # - lua: {entity: %s, script: migrations/%s-%s.lua}\n", owner, owner, prop)
 		}
+	case "faces_introduced":
+		draftFaceStep(w, d, current, live)
 	case "computed_property_added", "property_computed_changed":
 		owner, prop, ok := splitPropertyKey(d.Subject)
 		if !ok || strings.HasPrefix(d.Subject, "rel:") || recomputed[owner] {
@@ -162,6 +181,94 @@ func draftActiveStep(
 	case "relation_endpoint_narrowed", "relation_cardinality_tightened", "relation_symmetry_changed":
 		fmt.Fprintf(w, "  # TODO — %s: no declarative step can fix this; write a lua step or adjust the data by hand\n", d.Detail)
 	}
+}
+
+// draftFaceStep emits the migrate_face step for a faces_introduced delta.
+//
+// The delta means every existing row sits at the zero coordinate, which names
+// no declared face. The migration has to move them, and only the operator knows
+// which face each one became — so the generator supplies the shape of the
+// answer (every value of a plausible keying enum, pre-listed) and leaves the
+// destinations as CHANGEME.
+//
+// Emitted LIVE, not commented: validateDeltasResolved refuses a file spanning
+// this delta with no migrate_face step, so a commented draft could not parse.
+// CHANGEME is not a declared face, so an unedited draft cannot parse either —
+// the operator must make a real choice before anything runs, which is the point.
+func draftFaceStep(w *strings.Builder, d metamodel.ShapeDelta, current, live metamodel.ShapeProjection) {
+	typeName := d.Subject
+	es, ok := live.Entities[typeName]
+	if !ok || len(es.Faces) == 0 {
+		return
+	}
+
+	prop, values, byElimination := faceCandidateProperty(current, typeName)
+	if prop == "" {
+		fmt.Fprintf(w, "  # TODO — %q gained faces (%s). Every existing row is at the zero coordinate,\n",
+			typeName, strings.Join(es.Faces, ", "))
+		fmt.Fprintf(w, "  #        which names no face, and must be moved to the face it belongs to.\n")
+		fmt.Fprintf(w, "  #        No enum property was found to key the move on. Replace the property\n")
+		fmt.Fprintf(w, "  #        below with one whose values say which face each row became, and map\n")
+		fmt.Fprintf(w, "  #        each of its values to one of: %s\n", strings.Join(es.Faces, ", "))
+		fmt.Fprintf(w, "  - migrate_face:\n      entity: %s\n      property: %s\n      mapping:\n",
+			typeName, placeholderValue)
+		fmt.Fprintf(w, "        %s: %s\n", placeholderValue, placeholderValue)
+		return
+	}
+
+	fmt.Fprintf(w, "  # TODO — %q gained faces (%s). Every existing row is at the zero coordinate,\n",
+		typeName, strings.Join(es.Faces, ", "))
+	fmt.Fprintf(w, "  #        which names no face. Give each %s value the face its rows move to;\n", prop)
+	fmt.Fprintf(w, "  #        replace every %s with one of: %s\n", placeholderValue, strings.Join(es.Faces, ", "))
+	if byElimination {
+		fmt.Fprintf(w, "  #        NOTE: %q is the type's only enum, chosen by elimination — it may have\n", prop)
+		fmt.Fprintf(w, "  #        nothing to do with content state. Key this on a different property if so.\n")
+	}
+	fmt.Fprintf(w, "  #        Keep this step BEFORE any drop_property of %s — it reads those values.\n", prop)
+	fmt.Fprintf(w, "  - migrate_face:\n      entity: %s\n      property: %s\n      mapping:\n", typeName, prop)
+	for _, v := range values {
+		fmt.Fprintf(w, "        %s: %s\n", quoteYAML(v), placeholderValue)
+	}
+}
+
+// faceCandidateProperty picks the enum property most likely to have encoded the
+// content state before faces existed, and returns it with its value set.
+//
+// A property literally named "status" or "state" is a confident match. A single
+// unnamed enum is a WEAK one — "the type has exactly one enum" is evidence of a
+// small schema, not of relevance, and the candidate may well be `priority` or
+// `language`. It is still offered, because a skeleton keyed on the wrong
+// property is easy to correct and a missing skeleton leaves the operator with
+// nothing, but byElimination reports which kind of guess it was so the draft
+// can say so rather than presenting both with equal confidence.
+//
+// With several unnamed candidates the generator declines: there is no basis to
+// choose, and picking one would be a coin flip dressed as a recommendation.
+func faceCandidateProperty(
+	current metamodel.ShapeProjection, typeName string,
+) (prop string, values []string, byElimination bool) {
+	es, ok := current.Entities[typeName]
+	if !ok {
+		return "", nil, false
+	}
+	var candidates []string
+	for _, p := range sortedPropKeys(es.Properties) {
+		if es.Properties[p].List {
+			continue // a multi-valued key cannot answer "which face"
+		}
+		if len(enumValuesIn(current, typeName, p)) > 0 {
+			candidates = append(candidates, p)
+		}
+	}
+	for _, name := range []string{"status", "state"} {
+		if slices.Contains(candidates, name) {
+			return name, enumValuesIn(current, typeName, name), false
+		}
+	}
+	if len(candidates) == 1 {
+		return candidates[0], enumValuesIn(current, typeName, candidates[0]), true
+	}
+	return "", nil, false
 }
 
 // draftCleanupComment emits the commented-out optional cleanup for one

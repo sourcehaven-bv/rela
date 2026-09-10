@@ -88,6 +88,7 @@ recovery mechanism, so a step that finds nothing left to do does nothing.
 | `rename_entity_type: {from, to}` | rewrites `type:` on every entity of the old type (IDs are unchanged) |
 | `rename_relation_type: {from, to}` | recreates each relation under the new type, then deletes the old (relation history starts a new lifetime) |
 | `rename_face: {entity, from, to}` | moves every row stored at one content state to another (IDs are unchanged) |
+| `migrate_face: {entity, property, mapping}` | moves existing rows onto the face they belong to when a type gains its first faces; **required** in any file spanning that change |
 | `map_values: {entity, property, mapping}` | remaps enum values (scalar and list properties); unmapped values are left and reported |
 | `set_default: {entity, property, value, only_missing}` | backfills a value (`only_missing` defaults to true) |
 | `recompute_computed: {entity}` | recomputes all materialized computed properties for an entity type in dependency order |
@@ -154,6 +155,56 @@ a load error:
 - **Creates must name a face.** A `POST` that omits one is refused with
   `face_required` once the type is faced. See the
   [Content States guide](content-states.md) for the request shape.
+
+### Adopting content states on data you already have
+
+Giving a type its first faces needs a migration, and the reason is that nothing
+visible happens. A type with no faces stores its single state at the zero
+coordinate, which names no face; declaring faces leaves every existing row
+sitting there. No row moves, no value changes, and the rows now belong to no
+declared face — which is why the store will not adopt the shape on its own.
+
+`migrate_face` moves them:
+
+```yaml
+- migrate_face:
+    entity: article
+    property: status
+    mapping:
+      draft:     draft
+      active:    published
+      withdrawn: published
+```
+
+Each value of the keying property names the face its rows move to. The move is
+real: the row is created at the new coordinate and the zero-coordinate row is
+removed.
+
+**The mapping must cover every value of the property.** That is the safety
+property, not a formality — a value you leave out keeps its rows at the zero
+coordinate, where they name no face, and once the keying property is dropped
+(often in the same migration) nothing records what they were. Requiring every
+value to name a face turns "I did not think about `withdrawn`" into a parse
+error instead of a silent loss.
+
+Two more rules:
+
+- **Put it before any `drop_property` of the property it reads.** The wrong
+  order is refused at parse time, since the step would have no values to key on.
+- **Rows whose value is unset, or outside the declared set, stay where they
+  are** and are reported. They are not given a guessed face.
+
+**A file that spans this schema change and does not migrate the rows is
+rejected.** That is the point of the step: before it existed, such a file
+parsed, applied, advanced the marker and reported the schema in sync while every
+row was left stranded. `rela migrate gen` therefore drafts a real `migrate_face`
+step with every value pre-listed against `CHANGEME`, and `CHANGEME` is not a
+face — so an unedited draft will not apply either. You have to say where the
+rows go.
+
+Faced → flat (`faces_removed`) is the mirror case and is not covered: rows at
+named faces would have to move back, and deciding which one wins when several
+hold content is a merge rather than a move.
 
 ### The Lua escape hatch
 

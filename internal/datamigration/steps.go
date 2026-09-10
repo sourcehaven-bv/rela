@@ -67,6 +67,8 @@ func parseStep(node *yaml.Node) (Step, error) {
 		step = &renameRelationTypeStep{}
 	case "map_values":
 		step = &mapValuesStep{}
+	case "migrate_face":
+		step = &migrateFaceStep{}
 	case "set_default":
 		step = &setDefaultStep{}
 	case "recompute_computed":
@@ -330,6 +332,216 @@ func faceInShape(p metamodel.ShapeProjection, typ, face string) bool {
 		return false
 	}
 	return slices.Contains(es.Faces, face)
+}
+
+// ---- migrate_face ----
+
+// migrateFaceStep moves existing rows onto the face they belong to when a type
+// gains its first faces (BUG-TMGWIN).
+//
+// # What the delta means
+//
+// A type with no faces stores its single state at the zero coordinate, which
+// names no face. Declaring faces leaves every existing row sitting there:
+// nothing moved and no value changed, so nothing looks wrong, and the rows
+// belong to no declared face. That is why `faces_introduced` is
+// needs-migration rather than drift — the store must not adopt the shape on
+// its own, because only the operator knows which face the existing content
+// became.
+//
+// # Why the mapping is exhaustive
+//
+// The step keys the move on an enum property's values, and Validate proves the
+// mapping total over that property's declared value set using the migration
+// file's own embedded projections (ShapeProjection carries every enum's values
+// alongside each type's Faces, so this needs no live metamodel).
+//
+// The failure this prevents is not picking the wrong face. It is a value with
+// no sensible destination in the new schema passing unnoticed, so its rows keep
+// sitting at a coordinate that names nothing — invisible, and unrecoverable
+// once the keying property is dropped in the same migration. Requiring every
+// value to name a face turns that into an authoring error.
+type migrateFaceStep struct {
+	Entity   string            `yaml:"entity"`
+	Property string            `yaml:"property"`
+	Mapping  map[string]string `yaml:"mapping"`
+}
+
+func (s *migrateFaceStep) Kind() string { return "migrate_face" }
+func (s *migrateFaceStep) Target() string {
+	return s.Entity + "." + s.Property + " → face"
+}
+
+// Validate proves the mapping total over the property's value set.
+//
+// The property is read from the FROM-shape: it holds the values the rows carry
+// today, and the step is meant to run before that property is dropped. The
+// faces come from the TO-shape, since those are the coordinates rows move to.
+func (s *migrateFaceStep) Validate(from, to metamodel.ShapeProjection) error {
+	if s.Entity == "" || s.Property == "" || len(s.Mapping) == 0 {
+		return errors.New("entity, property and a non-empty mapping are required")
+	}
+	if !entityInShape(to, s.Entity) {
+		return fmt.Errorf("entity %q is not in the to-schema", s.Entity)
+	}
+	es := to.Entities[s.Entity]
+	if len(es.Faces) == 0 {
+		return fmt.Errorf("entity %q declares no faces in the to-schema — there is nothing to migrate rows to",
+			s.Entity)
+	}
+	if !entityPropInShape(from, s.Entity, s.Property) {
+		return fmt.Errorf("property %s.%s is not in the from-schema — migrate_face reads the values rows "+
+			"carry TODAY, so the property must exist before the migration", s.Entity, s.Property)
+	}
+	if ps := from.Entities[s.Entity].Properties[s.Property]; ps.List {
+		// A row carrying several values at once has no single destination, and
+		// Run reads the property as a string — so without this every row would
+		// be reported as unmapped. Refuse the question rather than answer it
+		// wrongly.
+		return fmt.Errorf("property %s.%s is list-typed: a row holding several values has no single "+
+			"face, so it cannot key a migration", s.Entity, s.Property)
+	}
+
+	values := enumValuesIn(from, s.Entity, s.Property)
+	if len(values) == 0 {
+		return fmt.Errorf("property %s.%s is not an enum in the from-schema (no declared value set), "+
+			"so the mapping cannot be checked for completeness", s.Entity, s.Property)
+	}
+
+	for _, key := range slices.Sorted(maps.Keys(s.Mapping)) {
+		if !slices.Contains(values, key) {
+			return fmt.Errorf("mapping key %q is not a value of %s.%s (declared: %s)",
+				key, s.Entity, s.Property, strings.Join(values, ", "))
+		}
+		if !slices.Contains(es.Faces, s.Mapping[key]) {
+			return fmt.Errorf("mapping value %q is not a face declared on %q in the to-schema (declared: %s)",
+				s.Mapping[key], s.Entity, strings.Join(es.Faces, ", "))
+		}
+	}
+
+	var missing []string
+	for _, v := range values {
+		if _, ok := s.Mapping[v]; !ok {
+			missing = append(missing, v)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("mapping is not exhaustive: %s.%s value(s) %s have no face. Every value must "+
+			"name the face its rows move to — rows left behind stay at the zero coordinate, which names "+
+			"no face, and become unreachable once %s is dropped",
+			s.Entity, s.Property, strings.Join(missing, ", "), s.Property)
+	}
+	return nil
+}
+
+// Run moves each row from the zero coordinate to the face its value maps to.
+//
+// A face is a stored COORDINATE, and store.UpdateEntity addresses a row BY that
+// coordinate, so this cannot be an in-place field update the way
+// rename_entity_type is: handing UpdateEntity a changed Face looks up a row that
+// does not exist yet. It is a MOVE — create at the new coordinate, then delete
+// the old — exactly as renameFaceStep.Run does.
+//
+// Create-then-delete rather than the reverse, so a failure between the two
+// leaves the data duplicated rather than destroyed. Re-running then converges:
+// a destination row holding the source's content counts as already moved and
+// only the source is deleted, which is the idempotence the engine requires.
+func (s *migrateFaceStep) Run(ctx context.Context, x *Exec) (StepResult, error) {
+	res := StepResult{Kind: s.Kind(), Target: s.Target()}
+
+	type move struct {
+		e  *entity.Entity
+		to string
+	}
+	var moves []move
+	unmapped := map[string]int{}
+	q := store.EntityQuery{Type: s.Entity, AllStates: true}
+	for e, err := range x.Store.ListEntities(ctx, q) {
+		if err != nil {
+			return res, err
+		}
+		if !e.Face.IsDefault() {
+			continue // already on a named face: a previous run, or hand-placed
+		}
+		v, ok := e.Properties[s.Property].(string)
+		if !ok {
+			unmapped[""]++
+			continue
+		}
+		target, ok := s.Mapping[v]
+		if !ok {
+			// Validate proved the mapping total over the DECLARED value set, so
+			// reaching here means the stored value is outside it. Reported, not
+			// guessed at — note this describes what was seen, not why: an
+			// earlier map_values or lua step in the same file can produce it
+			// just as a stale stored value can.
+			unmapped[v]++
+			continue
+		}
+		moves = append(moves, move{e: e, to: target})
+	}
+
+	for _, value := range slices.Sorted(maps.Keys(unmapped)) {
+		label := value
+		if label == "" {
+			label = "(unset or non-string)"
+		}
+		res.Notes = append(res.Notes, fmt.Sprintf(
+			"%d row(s) with %s = %s are not covered by the mapping and stay at the zero coordinate",
+			unmapped[value], s.Property, label))
+	}
+
+	res.Affected = len(moves)
+	if !x.Apply {
+		return res, nil
+	}
+
+	for _, m := range moves {
+		// Same contract as rename_face: a destination row holding identical
+		// content is the previous run's copy and the move is finished; anything
+		// else is a genuine collision that would destroy one of two distinct
+		// rows, so it is refused with the id named.
+		existing, err := x.Store.GetEntityState(ctx, m.e.ID, entity.Face(m.to))
+		alreadyMoved := err == nil && existing != nil && sameContent(existing, m.e)
+		if err == nil && existing != nil && !alreadyMoved {
+			return res, fmt.Errorf(
+				"%s: cannot move to face %q — a row already exists there with different content; "+
+					"drop or merge it first, or this move would destroy one of the two", m.e.ID, m.to)
+		}
+		if !alreadyMoved {
+			moved := *m.e
+			moved.Face = entity.Face(m.to)
+			if err := x.Store.CreateEntity(ctx, &moved); err != nil {
+				return res, fmt.Errorf("%s: create at face %q: %w", m.e.ID, m.to, err)
+			}
+		}
+		if _, err := x.Store.DeleteEntityState(ctx, m.e.ID, m.e.Face); err != nil {
+			return res, fmt.Errorf("%s: remove the zero-coordinate row: %w", m.e.ID, err)
+		}
+	}
+	return res, nil
+}
+
+// enumValuesIn returns the declared value set of an entity property, whether it
+// is an inline `values:` list or a named custom type. Empty when the property
+// is not an enum — ShapeProjection carries both forms precisely so a migration
+// file can answer this without a live metamodel.
+func enumValuesIn(p metamodel.ShapeProjection, typ, prop string) []string {
+	es, ok := p.Entities[typ]
+	if !ok {
+		return nil
+	}
+	ps, ok := es.Properties[prop]
+	if !ok {
+		return nil
+	}
+	// Cloned: the projection is shared (one value is handed to every assembled
+	// Services), so handing a caller a live handle into it invites an aliasing
+	// bug for no gain at this call volume.
+	if len(ps.Values) > 0 {
+		return slices.Clone(ps.Values)
+	}
+	return slices.Clone(p.Types[ps.Type])
 }
 
 // ---- rename_relation_type ----
