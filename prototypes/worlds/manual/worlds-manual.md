@@ -297,14 +297,19 @@ reads{ who = "raj@example.com", type = "policy", id = "POL-1", face = "published
 And cannot reach the draft behind it, even by naming it directly:
 
 ```rela
-hidden{ who = "raj@example.com", type = "policy", id = "POL-1" }
+hidden{ who = "raj@example.com", type = "policy", id = "POL-1", face = "draft" }
 ```
 
-The editor, holding a bare `policy` grant, reaches the same draft:
+The editor, whose `read: ["*"]` covers every face, reaches the same draft:
 
 ```rela
-reads{ who = "edith@example.com", type = "policy", id = "POL-1" }
+reads{ who = "edith@example.com", type = "policy", id = "POL-1", face = "draft" }
 ```
+
+Both assertions name the face. Since BUG-HC6I2T no face is privileged by
+storage, so `POL-1` with no face names no row at all — the bare form would
+have tested absence rather than the read gate, and passed for the wrong
+reason.
 
 These three claims are what a bare `read: [policy]` would break — the reader
 would still be unable to write a draft, every `refuses{}` above would still
@@ -377,11 +382,16 @@ link("POL-1", "owned-by", "CTL-1")
 Nothing above was about approval. Swap the axis and the machinery is identical:
 
 ```rela
-create("guide", { id = "GUIDE-1", title = "Getting started" })
+face("guide", "GUIDE-1", "en", { title = "Getting started" })
 face("guide", "GUIDE-1", "nl", { title = "Aan de slag" })
 
-create("guide", { id = "GUIDE-2", title = "Incident response" })
+face("guide", "GUIDE-2", "en", { title = "Incident response" })
 ```
+
+Every face is named. A `guide` declares `en` and `nl`, and since BUG-HC6I2T a
+type that declares faces stores nothing at the unsuffixed coordinate — so
+there is no bare row for `en` to be implied by, and a create that named no
+face would be refused rather than silently landing somewhere.
 
 Both guides appear in the Dutch world. GUIDE-1 resolves to its Dutch face;
 GUIDE-2 has no translation, and because `site-nl` declares `otherwise:
