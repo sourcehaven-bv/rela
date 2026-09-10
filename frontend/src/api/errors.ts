@@ -87,6 +87,23 @@ function isAxiosCancellation(error: AxiosError): boolean {
  * Normalize an axios rejection into an ApiError. Pure — exported for
  * tests, which pin the boundary contract for all four failure shapes.
  */
+/**
+ * The user-facing sentence in a problem document.
+ *
+ * `title` is the message; `detail` is either a JSON pointer naming the
+ * offending field (rela's convention, see writeV1Error) or a longer
+ * explanation. A pointer is useless on its own in a toast, so it is dropped;
+ * anything else is appended to the title.
+ */
+function problemMessage(problem: ProblemDetail): string {
+  const title = problem.title?.trim() ?? ''
+  const detail = problem.detail?.trim() ?? ''
+  // A pointer is not a sentence. Fall back to the title, which carries the
+  // message in this case.
+  if (detail.startsWith('/')) return title || detail
+  return detail || title
+}
+
 export function normalizeApiError(error: AxiosError): ApiError {
   if (isAxiosCancellation(error)) {
     return new ApiError('Request cancelled', { kind: 'cancelled', original: error })
@@ -113,8 +130,13 @@ export function normalizeApiError(error: AxiosError): ApiError {
 
   if (data && typeof data === 'object' && 'type' in data && (data as ProblemDetail).type) {
     const problem = data as ProblemDetail & { correlation_id?: string }
+    // `detail` is the message when it is prose, per RFC 9457. But rela's
+    // writeV1Error also passes a JSON POINTER there (`/world`, `/face`) to say
+    // WHICH field a refusal is about, putting the sentence in `title`
+    // instead — and a toast reading just "/world" names the field while
+    // explaining nothing. problemMessage picks whichever field holds prose.
     return new ApiError(
-      problem.detail || problem.title || `Request failed (${response.status})`,
+      problemMessage(problem) || `Request failed (${response.status})`,
       {
         kind: 'http',
         status: problem.status ?? response.status,
