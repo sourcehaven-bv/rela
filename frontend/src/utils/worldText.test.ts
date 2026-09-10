@@ -9,13 +9,12 @@ describe('worldText', () => {
 
   it('substitutes the allowlisted placeholders', () => {
     expect(
-      worldText('Je kijkt naar {face} van {title}; bewerken doe je in {bare_face} ({world}).', {
+      worldText('Je kijkt naar {face} van {title} ({world}).', {
         face: 'Vastgesteld',
-        bare_face: 'Concept',
         world: 'actueel',
         title: 'Toegangsbeleid',
       }),
-    ).toBe('Je kijkt naar Vastgesteld van Toegangsbeleid; bewerken doe je in Concept (actueel).')
+    ).toBe('Je kijkt naar Vastgesteld van Toegangsbeleid (actueel).')
   })
 
   it('leaves an unknown placeholder as written', () => {

@@ -17,7 +17,6 @@ export interface WorldTextVars {
   /** The served face's label. */
   face?: string
   /** The type's bare face label. */
-  bare_face?: string
   /** The world's name. */
   world?: string
   /** The entity's display title. */
@@ -27,7 +26,7 @@ export interface WorldTextVars {
 // The allowlist. internal/metamodel.ChromePlaceholders is the same list on
 // the Go side, and TestChromePlaceholdersInSyncWithFrontend reads this line
 // to pin the two together.
-const KEYS: (keyof WorldTextVars)[] = ['face', 'bare_face', 'world', 'title']
+const KEYS: (keyof WorldTextVars)[] = ['face', 'world', 'title']
 
 const PLACEHOLDER = new RegExp(`\\{(${KEYS.join('|')})\\}`, 'g')
 

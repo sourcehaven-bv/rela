@@ -198,7 +198,7 @@ func (dr *docRuntime) luaEntity(ls *lua.LState) int {
 	if id == "" {
 		return dr.luaFail(ls, "entity: `id` is required")
 	}
-	e, err := dr.store.GetEntity(dr.ctx, id)
+	e, err := seedRowOf(dr.ctx, dr.store, id)
 	if err != nil {
 		return dr.luaFail(ls, "entity: %q not found in the seeded graph (did you create() it?)", id)
 	}
@@ -275,17 +275,13 @@ func (dr *docRuntime) luaFaces(ls *lua.LState) int {
 	}
 
 	var b strings.Builder
-	b.WriteString("| Face | Label | Bare id |\n|---|---|---|\n")
+	b.WriteString("| Face | Label |\n|---|---|\n")
 	for _, name := range sortedFaceNames(def) {
 		label := def.Faces[name].Label
 		if label == "" {
 			label = "—"
 		}
-		mark := ""
-		if name == def.BareFace {
-			mark = "✓"
-		}
-		fmt.Fprintf(&b, "| `%s` | %s | %s |\n", name, label, mark)
+		fmt.Fprintf(&b, "| `%s` | %s |\n", name, label)
 	}
 	dr.emit(b.String())
 	return 0

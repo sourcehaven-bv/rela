@@ -107,7 +107,7 @@ func handleV1History(a *App, w http.ResponseWriter, r *http.Request) {
 	// The id segment is an ADDRESS (`ID` or `ID@face`). An explicit face
 	// names the timeline directly; a bare id lets the request's world
 	// resolve it below. The row gate and the reader work on the bare id.
-	ref, ok := parseEntityRef(a.Meta(), typeName, parts[1])
+	ref, ok := parseEntityRef(parts[1])
 	if !ok {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 		return

@@ -20,8 +20,7 @@ func worldFixtureMeta(t *testing.T) *metamodel.Metamodel {
 	m := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"policy": {
-				Label:    "Policy",
-				BareFace: "draft",
+				Label: "Policy",
 				Faces: map[string]metamodel.FaceDef{
 					"draft":     {Label: "Draft"},
 					"published": {Label: "Published"},
@@ -136,17 +135,6 @@ face("policy", "POL-1", "approved", { title = "T" })`,
 			name:    "an unknown entity type is refused",
 			body:    `face("polciy", "POL-1", "published", {})`,
 			wantErr: "no such entity type",
-		},
-		{
-			// A `bare_face` face is STORED under the zero coordinate.
-			// Seeding it by name must land on the entity's own row, not mint a
-			// second one — otherwise the default world would show duplicates.
-			// Seeded ONLY through face(): the declared name maps to the zero
-			// coordinate, so the entity's own row comes into existence and
-			// the default world shows exactly one POL-1.
-			name: "seeding the default face by name lands on the entity's own row",
-			body: `face("policy", "POL-1", "draft", { title = "T" })
-shows{ type = "policy", exactly = { "POL-1" } }`,
 		},
 	}
 

@@ -169,6 +169,42 @@ func (h *writeHandler) enterWrite(r *http.Request) *http.Request {
 	return r
 }
 
+// parseCreateOpts validates a create body's ADDRESS fields — `id`, `prefix`
+// and `face` — into the options the manager writes at. It writes the 422
+// itself and reports ok=false when it has, so the handler branches once.
+//
+// entity.ParseFace is the ONLY constructor from external input (see the
+// entity.Face doc), so a body-supplied face goes through it rather than a
+// string conversion. Whether the type DECLARES this face is the manager's
+// question, not the codec's; this only rejects what is not a face at all.
+//
+// An empty (or all-whitespace) face is the zero coordinate, not an error: a
+// create that names no face is a different request from one that does, and the
+// manager decides whether the type allows it.
+func parseCreateOpts(
+	w http.ResponseWriter, r *http.Request, def *metamodel.EntityDef, id, prefix, rawFace string,
+) (entityPkg.CreateOptions, bool) {
+	opts := entityPkg.CreateOptions{
+		ID:     strings.TrimSpace(id),
+		Prefix: strings.TrimSpace(prefix),
+	}
+
+	if raw := strings.TrimSpace(rawFace); raw != "" {
+		parsed, err := entityPkg.ParseFace(raw)
+		if err != nil {
+			writeV1Error(w, r, http.StatusUnprocessableEntity, "validation_failed", err.Error(), "/face")
+			return entityPkg.CreateOptions{}, false
+		}
+		opts.Face = parsed
+	}
+
+	if msg := validateCreateIDOpts(def, opts.ID, opts.Prefix); msg != "" {
+		writeV1Error(w, r, http.StatusUnprocessableEntity, "validation_failed", msg, "")
+		return entityPkg.CreateOptions{}, false
+	}
+	return opts, true
+}
+
 func (h *writeHandler) handleV1CreateEntity(w http.ResponseWriter, r *http.Request, typeName, plural string) {
 	// Need write lock for creation
 	r = h.enterWrite(r)
@@ -177,12 +213,20 @@ func (h *writeHandler) handleV1CreateEntity(w http.ResponseWriter, r *http.Reque
 	var req struct {
 		ID         string            `json:"id,omitempty"`
 		Prefix     string            `json:"prefix,omitempty"`
+		Face       string            `json:"face,omitempty"`
 		Properties map[string]any    `json:"properties"`
 		Content    string            `json:"content,omitempty"`
 		Relations  v1.RelationsField `json:"relations"`
 	}
 
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	// Strict decode (BUG-HC6I2T): `face` used to be absent from this struct,
+	// and encoding/json drops an unknown key silently — so a client naming a
+	// face got 201 and a row at a face it never asked for. A misspelled key
+	// must fail loudly rather than be ignored, since the request that names a
+	// face and the one that names nothing now mean different things.
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
 		var werr *v1.WireError
 		if errors.As(err, &werr) {
 			writeV1Error(w, r, http.StatusBadRequest, werr.Code, werr.Detail, werr.Path)
@@ -198,10 +242,8 @@ func (h *writeHandler) handleV1CreateEntity(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	req.ID = strings.TrimSpace(req.ID)
-	req.Prefix = strings.TrimSpace(req.Prefix)
-	if msg := validateCreateIDOpts(&entityDef, req.ID, req.Prefix); msg != "" {
-		writeV1Error(w, r, http.StatusUnprocessableEntity, "validation_failed", msg, "")
+	createOpts, optsOK := parseCreateOpts(w, r, &entityDef, req.ID, req.Prefix, req.Face)
+	if !optsOK {
 		return
 	}
 
@@ -225,10 +267,22 @@ func (h *writeHandler) handleV1CreateEntity(w http.ResponseWriter, r *http.Reque
 			Properties: req.Properties,
 			Content:    req.Content,
 		},
-		entityPkg.CreateOptions{ID: req.ID, Prefix: req.Prefix},
+		// The face rides in CreateOptions, never on the carrier entity: the
+		// manager authorizes and writes the value it finds there, so the two
+		// cannot diverge (BUG-HC6I2T). It comes from the request body, never
+		// from `?world=` — a world resolves through a chain with a fallback,
+		// and a write must name the row it changes.
+		createOpts,
 	)
 	if err != nil {
 		if writeForbiddenIfACLDenied(w, err) {
+			return
+		}
+		// A face error is about the ADDRESS, not the payload, so it gets its
+		// own code: a client that omitted the face must add one, which is a
+		// different fix from a property that failed validation.
+		if errors.Is(err, entitymanager.ErrFaceRequired) || errors.Is(err, entitymanager.ErrFaceNotDeclared) {
+			writeV1Error(w, r, http.StatusUnprocessableEntity, "face_required", err.Error(), "/face")
 			return
 		}
 		writeV1Error(w, r, http.StatusUnprocessableEntity, "validation_failed", "Validation failed", err.Error())
@@ -311,6 +365,7 @@ func (h *writeHandler) handleV1DryRunCreate(w http.ResponseWriter, r *http.Reque
 	var req struct {
 		ID         string         `json:"id,omitempty"`
 		Prefix     string         `json:"prefix,omitempty"`
+		Face       string         `json:"face,omitempty"`
 		Properties map[string]any `json:"properties"`
 		Content    string         `json:"content,omitempty"`
 	}
@@ -328,6 +383,20 @@ func (h *writeHandler) handleV1DryRunCreate(w http.ResponseWriter, r *http.Reque
 	reqID := strings.TrimSpace(req.ID)
 	reqPrefix := strings.TrimSpace(req.Prefix)
 
+	// A face that is not a face at all is advisory here, like the ID warning
+	// below: the create form should say so while typing rather than only at
+	// submit. Whether the type declares it is ValidateCreate's question.
+	var dryFace entityPkg.Face
+	var faceWarning *Warning
+	if raw := strings.TrimSpace(req.Face); raw != "" {
+		parsed, perr := entityPkg.ParseFace(raw)
+		if perr != nil {
+			faceWarning = &Warning{Code: "face_invalid", Path: "/face", Detail: perr.Error()}
+		} else {
+			dryFace = parsed
+		}
+	}
+
 	// RR-9JOH: surface ID/prefix problems as a soft warning rather than
 	// 422 so the create form learns at typing time instead of at submit.
 	// The real commit's validateCreateIDOpts still hard-rejects — this
@@ -342,7 +411,7 @@ func (h *writeHandler) handleV1DryRunCreate(w http.ResponseWriter, r *http.Reque
 	// no audit, no automation. Hard structural errors surface as 422.
 	candidate, warnings, err := h.manager.ValidateCreate(r.Context(),
 		&entityPkg.Entity{Type: typeName, Properties: req.Properties, Content: req.Content},
-		entityPkg.CreateOptions{ID: reqID, Prefix: reqPrefix},
+		entityPkg.CreateOptions{ID: reqID, Prefix: reqPrefix, Face: dryFace},
 	)
 	if err != nil {
 		writeV1Error(w, r, http.StatusUnprocessableEntity, "validation_failed", "Validation failed", err.Error())
@@ -380,6 +449,9 @@ func (h *writeHandler) handleV1DryRunCreate(w http.ResponseWriter, r *http.Reque
 	if idWarning != nil {
 		result.Warnings = append(result.Warnings, *idWarning)
 	}
+	if faceWarning != nil {
+		result.Warnings = append(result.Warnings, *faceWarning)
+	}
 	if len(warnings) > 0 {
 		result.Warnings = append(result.Warnings, warnings...)
 	}
@@ -401,7 +473,7 @@ func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Reque
 	// The path segment is an ADDRESS — `ID` or `ID@face` (see entityRef). A
 	// write names the row it edits by address and never by world, which is
 	// why attachWorld refuses `?world=` on this method: the face rides here.
-	ref, ok := parseEntityRef(s.Meta, typeName, entityID)
+	ref, ok := parseEntityRef(entityID)
 	if !ok {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
 		return
@@ -607,7 +679,7 @@ func (h *writeHandler) handleV1DeleteEntity(w http.ResponseWriter, r *http.Reque
 	// The path segment is an ADDRESS (see entityRef). `ID` and `ID@<bare>`
 	// delete the whole entity; `ID@face` for a non-bare face deletes THAT
 	// face only — the "unpublish" the address grammar makes expressible.
-	ref, ok := parseEntityRef(h.schema().Meta, typeName, entityID)
+	ref, ok := parseEntityRef(entityID)
 	if !ok {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
 		return
@@ -902,13 +974,17 @@ func (h *writeHandler) handleV1CloneEntity(w http.ResponseWriter, r *http.Reques
 	props := make(map[string]any)
 	maps.Copy(props, entity.Properties)
 
+	// The clone lands on the SOURCE's face, not the bare coordinate
+	// (BUG-HC6I2T): a clone of a draft is a draft. The source face is read
+	// off the row that was actually loaded rather than re-derived, so the
+	// copy and its original cannot end up at different coordinates.
 	cloneResult, err := h.manager.CreateEntity(r.Context(),
 		&entityPkg.Entity{
 			Type:       typeName,
 			Properties: props,
 			Content:    entity.Content,
 		},
-		entityPkg.CreateOptions{},
+		entityPkg.CreateOptions{Face: entity.Face},
 	)
 	if err != nil {
 		if writeForbiddenIfACLDenied(w, err) {

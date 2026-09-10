@@ -39,14 +39,8 @@ func withStoreAttribution(ctx context.Context) context.Context {
 // the reader's own read verdict — an entity id is row-level secret and the ACL
 // probe is keyed by (type, id).
 //
-// sourceFace is the DECLARED face name, never the stored coordinate. The two
-// differ for exactly one face per type — the one named by `bare_face`, whose
-// stored coordinate is the empty string — and that is the whole of the bug
-// this signature guards against: a copy declared `from: policy@draft` on a
-// type with `bare_face: draft` would otherwise record an empty face and read
-// back as a bare `POL-4`, dropping the one fact the annotation carries. The
-// caller resolves it through metamodel.DeclaredFace; see store.Origin.
-// SourceFace for why provenance holds a name rather than a coordinate.
+// sourceFace is the source's face, empty only when the source type declares
+// none; see store.Origin.SourceFace.
 func withCopyOrigin(
 	ctx context.Context, definition, sourceID, sourceType, sourceFace string,
 ) context.Context {

@@ -26,10 +26,9 @@ type CopyTarget struct {
 // `new type`. Whitespace-trimmed; the caller validates that the parts name
 // declared things.
 //
-// The returned Face is the DECLARED NAME, which is not always the stored
-// coordinate — a face marked `bare_face` IS the zero face
-// (FaceDef.Default). Use [StoredFace] to resolve a declared
-// name to the coordinate the store addresses.
+// The returned Face is both the declared name and the coordinate the store
+// addresses: a face has one spelling (BUG-HC6I2T). Empty means the address
+// named no face, which is legal only for a type declaring none.
 func ParseCopyTarget(s string) (CopyTarget, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -154,8 +153,13 @@ func validateCopy(m *Metamodel, name string, def CopyDef) []string {
 	// write check can never pass there and an unguarded definition would be
 	// dead on arrival. Refusing at load says so, instead of leaving the
 	// operator a copy that always returns 403.
-	targetsGuardedFace := to.Face != "" && StoredFace(m, to.Type, to.Face) != ""
-	if targetsGuardedFace && def.Guard.Permission == "" {
+	//
+	// Every NAMED face is guarded. This used to exempt the face that
+	// `bare_face` mapped onto the zero coordinate, which is exactly the
+	// asymmetry BUG-HC6I2T removed: a copy into that face needed no guard
+	// while the identical copy into any sibling did, so which copies were
+	// guarded moved when the operator repointed `bare_face`.
+	if to.Face != "" && def.Guard.Permission == "" {
 		bad("targets the guarded face %q@%q but declares no `guard: {permission: ...}` — "+
 			"a guarded face is writable only through a definition that carries its "+
 			"own guard, so an unguarded one would open the face to anyone who can "+
@@ -310,85 +314,18 @@ func validateCopyRelations(m *Metamodel, name string, def CopyDef, to CopyTarget
 	return errs
 }
 
-// StoredFace resolves a DECLARED face name to the coordinate the store
-// addresses for that face.
-//
-// A package function rather than a *Metamodel method: that type sits at its
-// plimsoll exported-method cap, and the cap is a ratchet to narrow rather
-// than raise.
-//
-// The mapping is identity except for the type's default face, which is
-// stored under the ZERO coordinate: `bare_face` names which declared
-// coordinate the default state answers to, it does not create a second row
-// (design doc §2.1 — there are exactly N states and nothing else).
-//
-// Getting this wrong is not a cosmetic bug. A copy addressing `page@draft`
-// when draft is the default would read a face that does not exist, and a
-// copy WRITING it would mint a second row for a state the entity already
-// has — two rows claiming to be the same face.
-func StoredFace(m *Metamodel, entityType, declared string) string {
-	if m == nil {
-		return declared
-	}
-	if declared == "" {
-		return ""
-	}
-	def, ok := m.GetEntityDef(entityType)
-	if !ok {
-		return declared
-	}
-	if _, found := def.Faces[declared]; found && declared == def.BareFace {
-		return ""
-	}
-	return declared
-}
-
-// DeclaredFace is the inverse of [StoredFace]: it resolves a STORED
-// coordinate back to the face name the operator declared.
-//
-// Identity except for the zero coordinate, which is the type's
-// `bare_face` face when it declares one. A type with faces but no
-// default has no declared name for its default state, and a type with no
-// faces at all has no declared names whatsoever — both return "", which
-// is the honest answer rather than an invented one.
-//
-// Display paths need this direction because the wire and the store speak
-// stored coordinates while `faces:` (and therefore [FaceDef.Label]) is
-// keyed by declared name.
-func DeclaredFace(m *Metamodel, entityType, stored string) string {
-	if stored != "" {
-		return stored
-	}
-	if m == nil {
-		return ""
-	}
-	def, ok := m.GetEntityDef(entityType)
-	if !ok {
-		return ""
-	}
-	// A direct read now that the bare face is named on the type: this used
-	// to scan every face looking for the one flagged default, which also
-	// meant the answer depended on map order if two ever claimed it.
-	if _, ok := def.Faces[def.BareFace]; ok {
-		return def.BareFace
-	}
-	return ""
-}
-
 // FaceLabel is the display text for one face of an entity type: the
-// operator's [FaceDef.Label] when set, else the declared face name.
+// operator's [FaceDef.Label] when set, else the face name itself.
 //
-// Takes the STORED coordinate, because that is what every caller has in hand
-// — the wire carries stored coordinates and so does the store. It resolves
-// the declared name itself via [DeclaredFace].
+// A face's name IS its stored coordinate (BUG-HC6I2T), so the caller's
+// coordinate indexes `faces:` directly.
 //
-// Returns "" only when there is no declared name to fall back to (an
-// undeclared coordinate, or the default state of a type that declares no
-// default face). Callers render their own last-resort word for that case;
-// this function does not invent one, because "default" is a UI word and not
-// a fact about the metamodel.
+// Returns "" for the zero coordinate — the single state of a type that
+// declares no faces, which has no name. Callers render their own last-resort
+// word for that case; this function does not invent one, because "default"
+// is a UI word and not a fact about the metamodel.
 func FaceLabel(m *Metamodel, entityType, stored string) string {
-	declared := DeclaredFace(m, entityType, stored)
+	declared := stored
 	if declared == "" {
 		return ""
 	}

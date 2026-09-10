@@ -23,7 +23,16 @@ import (
 // positive control on the same fixture under an unrestricted principal, so an
 // absence is the gate's doing and not an empty fixture.
 
-// seedDraftAndPublishedTicket seeds TKT-1 with a draft (bare) face and a published face.
+// seedDraftAndPublishedTicket seeds TKT-1 with a zero-coordinate row and a
+// published face.
+//
+// Its callers run on `newTestAppV1`, whose `ticket` type declares NO faces —
+// so the zero coordinate is that type's single state, which is what makes the
+// unsuffixed row legitimate here. The `published` row beside it is an
+// UNDECLARED face, deliberately: the face gate keys on the coordinate the
+// store holds, never on the metamodel, and that is what these tests exercise.
+// A type that DOES declare faces stores nothing at the zero coordinate
+// (BUG-HC6I2T); see seedDeclaredFaceTicket for that shape.
 func seedDraftAndPublishedTicket(ctx context.Context, t *testing.T, app *App) {
 	t.Helper()
 	if err := app.store.CreateEntity(ctx, &entity.Entity{
@@ -36,6 +45,20 @@ func seedDraftAndPublishedTicket(ctx context.Context, t *testing.T, app *App) {
 		Properties: map[string]any{"title": "published face"},
 	}); err != nil {
 		t.Fatalf("seed published face: %v", err)
+	}
+}
+
+// seedDeclaredFaceTicket seeds TKT-1 on a metamodel that DECLARES draft+published:
+// both rows sit at their declared coordinates and none at the zero one.
+func seedDeclaredFaceTicket(ctx context.Context, t *testing.T, app *App) {
+	t.Helper()
+	for _, face := range []entity.Face{"draft", "published"} {
+		if err := app.store.CreateEntity(ctx, &entity.Entity{
+			ID: "TKT-1", Type: "ticket", Face: face,
+			Properties: map[string]any{"title": string(face) + " face"},
+		}); err != nil {
+			t.Fatalf("seed %s face: %v", face, err)
+		}
 	}
 }
 
@@ -140,7 +163,6 @@ entities:
   ticket:
     label: Ticket
     id_prefix: TKT
-    bare_face: draft
     faces:
       draft: {}
       published: {}
@@ -152,7 +174,7 @@ entities:
 	}
 	app := newAppFromParts(&Config{App: AppConfig{Name: "Faces", Description: "x"}}, meta, newFixture())
 	ctx := context.Background()
-	seedDraftAndPublishedTicket(ctx, t, app)
+	seedDeclaredFaceTicket(ctx, t, app)
 	viewer, admin := publishedOnly(t, app)
 
 	faces := func(ctx context.Context, d *acl.Declarative) ([]map[string]any, int) {

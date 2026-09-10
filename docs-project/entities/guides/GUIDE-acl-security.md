@@ -178,53 +178,66 @@ grant cannot be used to discover which faces an entity has.
 | `read: [policy]` | **every** face |
 | `read: [policy@published]` | that face only |
 | `read: ["*"]` | every type, every face |
-| `update: [policy]` | the **bare** face only |
+| `update: [policy]` | on a faced type, **nothing** — see below |
 | `update: [policy@published]` | that face only |
-| `update: ["*"]` | every type, bare face only |
+| `update: ["*"]` | every type, unnamed state only |
 
 A bare read grant covering every face is not laxness. A world never serves the
-bare face when its chain names another, so a bare read grant narrowed to the
-bare face would read **nothing** under any world. That is a total outage rather
-than a narrowing. Writes have no such interaction: they address a face by id
-and never pass through a world.
+unnamed state when its chain names a face, so a bare read grant narrowed to
+that state would read **nothing** under any world. That is a total outage
+rather than a narrowing. Writes have no such interaction: they address a face
+by id and never pass through a world.
 
 The practical consequence is that adding `faces:` to a live type does not
 silently tighten existing read grants. If you need a role kept away from
 drafts, name the face it may read.
 
-#### `bare_face` names the bare face — do not repeat it in a grant
+#### A write grant on a faced type must name the face
 
-A write grant matches the face **as stored**, and the face named by
-`bare_face:` is stored under the bare id rather than under `@<name>`. Given
-this type:
+A write grant matches the face **as stored**, and a type that declares `faces:`
+stores every row under a face name. Nothing is stored at the bare coordinate.
+Given this type:
 
 ```yaml
 policy:
-  bare_face: draft
   faces: {draft: {}, published: {}}
 ```
 
-the draft row lives at `POL-1`, and no row exists at the `draft` coordinate.
-The grants therefore behave as follows:
+`POL-1@draft` and `POL-1@published` are the only rows that exist. The grants
+therefore behave as follows:
 
 | Grant | Reaches the draft face? |
 | --- | --- |
-| `update: [policy]` | **yes**, this is the correct grant |
-| `update: [policy@draft]` | **no**, it matches nothing and denies everything |
+| `update: [policy]` | **no**, it matches nothing and denies everything |
+| `update: [policy@draft]` | **yes**, this is the correct grant |
 
-Write `update: [policy]` for the `bare_face` face, and `update: [policy@x]`
-only for the faces that are *not* the bare one. A grant naming the bare face is
-inert. It fails closed, denying rather than over-permitting, but it denies the
-very face it was written to allow, and `rela acl audit` does not currently flag
-it: the audit checks the *declared* name, while the grant matcher compares the
-*stored* coordinate.
+Name every face the role may write:
+
+```yaml
+editor:
+  update: [policy@draft]
+```
+
+The bare form is the dangerous spelling because it reads like a permission. It
+fails closed, denying rather than over-permitting, so the symptom is an editor
+who cannot save with no error naming a face. `rela acl audit` reports it as
+`B12-bare-grant-on-faced-type` at severity High, with the fix spelled out.
+
+Note that `*` is a wildcard over **types**, never over faces. `update: ["*"]`
+grants each type's unnamed state, so it reaches faceless types only. A role
+that must write a faced type needs that type's faces listed explicitly, even if
+it already holds the wildcard. This is deliberate: the alternative would mean
+every existing admin grant silently acquiring authority over `published` the
+moment a type declared its first face.
 
 #### World grants select a lens
 
 A `world:` grant does **not** keep a role away from a face. It scopes which
 worlds a caller may select with `?world=`, not which faces they may read. A
-caller who omits `?world=` reads the default world, where every entity shows
-its bare face, and only a face grant stands between that caller and a draft.
+caller who omits `?world=` reads the default world, which applies no
+resolution — but every face remains reachable there by addressing it directly
+as `POL-1@draft`, so only a face grant stands between that caller and a
+draft.
 
 A caller who omits `?world=` may still be in a world. `app.default_world` in
 `data-entry.yaml` sets the world a bare request lands in, and the server
@@ -625,8 +638,9 @@ configured. `rela acl audit` will not warn you, because `B10-undeclared-world`
 skips the default world and the entry produces no finding.
 
 The default world is not a special case here. It is the lens you get when you
-name none, and it resolves every entity to its bare face. Denying it would not
-mean "deny the data" but "refuse to serve a request that picked no lens", which
+name none, and it applies no resolution at all. Denying it would not mean "deny
+the data" but "refuse to serve a request that picked no lens", and it would not
+even hide a face, since a face is addressable as `ID@face` under any lens. That
 is why nothing relies on it, and why the answer is to gate the faces rather
 than the lens.
 

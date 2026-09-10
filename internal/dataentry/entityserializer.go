@@ -52,7 +52,7 @@ func (s entitySerializer) toV1(
 		Title:      meta.DisplayTitle(e.ID, e.Type, e.Properties),
 		Properties: make(map[string]any),
 		Content:    e.Content,
-		Self:       selfHref(plural, e, meta),
+		Self:       selfHref(plural, e),
 		Actions:    s.affordances.computeActions(ctx, e),
 	}
 
@@ -200,25 +200,17 @@ func (s entitySerializer) forWireRelated(
 // (422 world_read_only) exists to prevent, so handing it back in the response
 // body defeated the guard rather than complementing it.
 //
-// The bare face keeps the bare href: it IS the bare id, and appending its
-// declared name would break every existing client for no gain. A type with no
-// faces is unaffected. This is deliberately NOT unified with [v1.Face.Ref],
-// which spells the bare face as `ID@<bare_face>` so a face SWITCH can name it
-// literally under a world: a WRITE never takes a world, so a PATCH or DELETE
-// to the bare id always lands on the bare face — the row a page showing the
-// bare face describes — and the bare href is therefore a correct write
-// address everywhere. Only a READ of a bare id is world-resolved, and the
-// face switcher is the one place the SPA reads by address (RR-RN3YGR).
-func selfHref(plural string, e *entityPkg.Entity, meta *metamodel.Metamodel) string {
+// A type declaring faces has NO bare address (BUG-HC6I2T): every face is a
+// named row, so `_self` always carries its coordinate and a write to it always
+// names the face it edits. This used to spell the bare face as the bare id,
+// which was correct while `bare_face` made one face answer to the unsuffixed
+// id; with that gone an unsuffixed id names no row of a faced type.
+//
+// A type with NO faces is unaffected and keeps the bare href: it has exactly
+// one state, stored at the zero coordinate, and no name for it.
+func selfHref(plural string, e *entityPkg.Entity) string {
 	if e.Face.IsDefault() {
 		return fmt.Sprintf("/api/v1/%s/%s", plural, e.ID)
 	}
-	declared := metamodel.DeclaredFace(meta, e.Type, e.Face.String())
-	if declared == "" {
-		// An undeclared stored face: address it by its stored coordinate
-		// rather than dropping it, so the pointer still round-trips to the row
-		// the reader is looking at.
-		declared = e.Face.String()
-	}
-	return fmt.Sprintf("/api/v1/%s/%s@%s", plural, e.ID, declared)
+	return fmt.Sprintf("/api/v1/%s/%s@%s", plural, e.ID, e.Face.String())
 }

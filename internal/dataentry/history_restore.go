@@ -142,6 +142,13 @@ func restoreRecreate(a *App,
 		return
 	}
 
+	// No face: a version snapshot does not record which face it captured
+	// (store.VersionMeta has no Face), and this route addresses a bare id, so
+	// there is nothing to resurrect INTO for a faced type. The manager
+	// refuses with ErrFaceRequired, which is the fail-closed answer — the
+	// alternative is guessing a coordinate and resurrecting content into a
+	// state it never occupied. Capturing the face on a version snapshot, so a
+	// deleted face can be resurrected, is TKT-7R0ABK.
 	if _, err := a.entityManager.CreateEntity(ctx, target, entityPkg.CreateOptions{}); err != nil {
 		if writeForbiddenIfACLDenied(w, err) {
 			return

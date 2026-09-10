@@ -633,7 +633,7 @@ func (e *Engine) matchesFace(trigger Trigger, ent *entity.Entity) bool {
 	}
 	declared := ent.Face.String()
 	if e.meta != nil {
-		declared = metamodel.DeclaredFace(e.meta, ent.Type, ent.Face.String())
+		declared = ent.Face.String()
 	}
 	return slices.Contains(trigger.Faces, declared)
 }

@@ -85,7 +85,6 @@ entities:
     id_type: manual
     # Editorial axis: a bare id addresses the draft; publishing creates the
     # published face (see `copies:`).
-    bare_face: draft
     faces:
       draft:     { label: "Draft" }
       published: { label: "Published" }
@@ -100,7 +99,6 @@ entities:
     id_prefix: DOC
     id_type: manual
     # Language axis: English is what a bare id addresses; Dutch is a peer.
-    bare_face: en
     faces:
       en: { label: "English" }
       nl: { label: "Nederlands" }

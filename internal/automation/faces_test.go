@@ -18,7 +18,7 @@ func facedTicket(face string) *entity.Entity {
 
 func facedMeta() *metamodel.Metamodel {
 	return &metamodel.Metamodel{Entities: map[string]metamodel.EntityDef{
-		"ticket": {BareFace: "en", Faces: map[string]metamodel.FaceDef{"en": {}, "nl": {}}},
+		"ticket": {Faces: map[string]metamodel.FaceDef{"en": {}, "nl": {}}},
 	}}
 }
 
@@ -29,7 +29,7 @@ func TestEngine_UnscopedFiresOnEveryFace(t *testing.T) {
 	engine := NewEngine([]Automation{
 		newAutomation("flag").OnCreate("ticket").Set("flag", "yes").Build(),
 	})
-	for _, face := range []string{"", "nl"} {
+	for _, face := range []string{"en", "nl"} {
 		res := engine.Process(context.Background(), Event{
 			Type: EventEntityCreated, Entity: facedTicket(face),
 		})
@@ -39,8 +39,7 @@ func TestEngine_UnscopedFiresOnEveryFace(t *testing.T) {
 	}
 }
 
-// `faces:` narrows the trigger. The comparison is against the DECLARED name,
-// so scoping to the bare face uses its declared spelling rather than "".
+// `faces:` narrows the trigger: a row stored at another face must not fire.
 func TestEngine_ScopedToOneFace(t *testing.T) {
 	t.Parallel()
 	auto := newAutomation("nl-only").OnCreate("ticket").Set("flag", "yes").Build()
@@ -55,33 +54,10 @@ func TestEngine_ScopedToOneFace(t *testing.T) {
 	}
 
 	res = engine.Process(context.Background(), Event{
-		Type: EventEntityCreated, Entity: facedTicket(""),
+		Type: EventEntityCreated, Entity: facedTicket("en"),
 	})
 	if len(res.PropertiesSet) != 0 {
-		t.Errorf("bare face is out of scope and must NOT fire, got %v", res.PropertiesSet)
-	}
-}
-
-// Scoping to the bare face: the operator writes its declared name, and the row
-// is stored at the empty coordinate. The engine maps between the two.
-func TestEngine_ScopedToTheBareFace(t *testing.T) {
-	t.Parallel()
-	auto := newAutomation("en-only").OnCreate("ticket").Set("flag", "yes").Build()
-	auto.On.Faces = []string{"en"}
-	engine := NewEngineWithMeta(t, []Automation{auto})
-
-	res := engine.Process(context.Background(), Event{
-		Type: EventEntityCreated, Entity: facedTicket(""),
-	})
-	if res.PropertiesSet["flag"] != "yes" {
-		t.Errorf("the bare row IS the `en` face and must fire, got %v", res.PropertiesSet)
-	}
-
-	res = engine.Process(context.Background(), Event{
-		Type: EventEntityCreated, Entity: facedTicket("nl"),
-	})
-	if len(res.PropertiesSet) != 0 {
-		t.Errorf("nl is out of scope and must NOT fire, got %v", res.PropertiesSet)
+		t.Errorf("en is out of scope and must NOT fire, got %v", res.PropertiesSet)
 	}
 }
 
@@ -95,7 +71,6 @@ entities:
   ticket:
     label: Ticket
     id_prefix: TKT
-    bare_face: en
     faces: {en: {}, nl: {}}
     properties:
       title: {type: string}

@@ -14,16 +14,16 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
 
-// replaceTailMetaYAML stages a copy INTO a non-default face, which is the
-// only shape where the tail-dropping bug is visible: when the target is the
-// default face, dropping the tail happens to address the same edge.
+// replaceTailMetaYAML stages a copy between two named faces. The bug is
+// visible whenever the tail a delete addresses differs from the tail its
+// listing filtered by — the DEFAULT tail is what a dropped tail falls back
+// to, so a target face that is not it is what exposes the drop.
 const replaceTailMetaYAML = `
 version: "1"
 entities:
   page:
     label: Page
     id_prefix: PAGE
-    bare_face: live
     faces:
       live: {}
       review: {}
@@ -46,14 +46,14 @@ copies:
       permission: stage
 `
 
-// TestCopyReplace_DeletesTheTargetTailNotTheDefaultFacesEdge is named for the
-// corruption it prevents, and it reproduces a bug that was live in PR-C.
+// TestCopyReplace_DeletesTheTargetTail is named for the corruption it
+// prevents, and it reproduces a bug that was live in PR-C.
 //
 // THE BUG: applyCopyEdges listed the target face's edges filtered BY TAIL,
 // then called DeleteRelation with the tail DROPPED. Every backend's
 // DeleteRelation is default-tail-only (pgstore `AND from_face = ”`,
 // memstore defaultTailKey, fsstore's bare key), so the delete did not fail —
-// it removed the DEFAULT face's edge on the same triple and returned nil,
+// it removed the DEFAULT tail's edge on the same triple and returned nil,
 // while the edge being replaced survived.
 //
 // Verified against memstore before the fix:
@@ -62,15 +62,20 @@ copies:
 //	edges surviving the intended delete of the PUBLISHED-tail edge:
 //	  [PAGE-1@published--references--SPEC-1]
 //
-// So `relations: replace` into a non-default face corrupted a face the copy
-// had no business touching AND failed its own job, silently, in all three
-// backends. `promote-page` with `relations: replace` is the headline use case
-// in design doc §9.1.
+// So `relations: replace` into a non-default face failed its own job — and,
+// where a default-tail edge existed, destroyed a bystander too — silently, in
+// all three backends. `promote-page` with `relations: replace` is the headline
+// use case in design doc §9.1.
 //
 // Both assertions matter and neither is redundant: the target-side one
 // catches "the edge I meant to replace survived", the source-side one catches
-// "I destroyed a bystander". The bug produced BOTH at once.
-func TestCopyReplace_DeletesTheTargetTailNotTheDefaultFacesEdge(t *testing.T) {
+// "I destroyed a bystander". Note the bystander half is weaker than it was:
+// since BUG-HC6I2T a faced type stores no zero-coordinate row, so the tail a
+// dropped tail falls back to holds nothing here and only the target-side
+// assertion fires on the original bug. Mutation-checked: swapping
+// DeleteRelationState for DeleteRelation still fails the target-side
+// assertion.
+func TestCopyReplace_DeletesTheTargetTail(t *testing.T) {
 	var st store.Store = memstore.New()
 	meta, err := metamodel.Parse([]byte(replaceTailMetaYAML))
 	if err != nil {
@@ -101,17 +106,20 @@ func TestCopyReplace_DeletesTheTargetTailNotTheDefaultFacesEdge(t *testing.T) {
 			t.Fatalf("seed %s@%s: %v", id, p, cerr)
 		}
 	}
-	// A state row cannot exist headless, so the default face comes first.
-	seed("PAGE-1", "", "live")
+	// `page` declares faces, so every row names one (BUG-HC6I2T): there is
+	// no zero-coordinate row to head the family.
+	seed("PAGE-1", "live", "live")
 	seed("PAGE-1", "review", "staged")
-	seed("OLD-1", "", "old target")
-	seed("NEW-1", "", "new target")
+	seed("OLD-1", "live", "old target")
+	seed("NEW-1", "live", "new target")
 
+	liveTail := entity.Face("live")
 	reviewTail := entity.Face("review")
 	// Two edges differing ONLY by tail — these are two distinct relations.
-	// The SOURCE (default) face points at NEW-1; this is what gets copied.
-	if _, cerr := st.CreateRelation(ctx, "PAGE-1", "references", "NEW-1", nil); cerr != nil {
-		t.Fatalf("seed default-tail edge: %v", cerr)
+	// The SOURCE (live) face points at NEW-1; this is what gets copied.
+	if _, cerr := st.CreateRelation(ctx, "PAGE-1", "references", "NEW-1",
+		&store.RelationData{FromFace: liveTail}); cerr != nil {
+		t.Fatalf("seed live-tail edge: %v", cerr)
 	}
 	// The TARGET (review) face points at OLD-1; `replace` must remove this.
 	if _, cerr := st.CreateRelation(ctx, "PAGE-1", "references", "OLD-1",
@@ -125,7 +133,7 @@ func TestCopyReplace_DeletesTheTargetTailNotTheDefaultFacesEdge(t *testing.T) {
 		t.Fatalf("copy: %v", cerr)
 	}
 
-	targets := func(p *entity.Face) []string {
+	targets := func(p entity.Face) []string {
 		t.Helper()
 		q := store.RelationQuery{From: "PAGE-1", Type: "references"}
 		var out []string
@@ -133,10 +141,7 @@ func TestCopyReplace_DeletesTheTargetTailNotTheDefaultFacesEdge(t *testing.T) {
 			if lerr != nil {
 				t.Fatalf("list: %v", lerr)
 			}
-			switch {
-			case p == nil && r.FromFace.IsDefault():
-				out = append(out, r.To)
-			case p != nil && r.FromFace == *p:
+			if r.FromFace == p {
 				out = append(out, r.To)
 			}
 		}
@@ -145,15 +150,15 @@ func TestCopyReplace_DeletesTheTargetTailNotTheDefaultFacesEdge(t *testing.T) {
 
 	// The TARGET face must now hold NEW-1 only: its OLD-1 edge was replaced.
 	// Under the bug OLD-1 survived here, because the delete went elsewhere.
-	if got := targets(&reviewTail); len(got) != 1 || got[0] != "NEW-1" {
+	if got := targets(reviewTail); len(got) != 1 || got[0] != "NEW-1" {
 		t.Errorf("replace must swap the TARGET face's edges; got %v, want [NEW-1] "+
 			"— a surviving OLD-1 means the delete addressed the wrong tail", got)
 	}
 
-	// The SOURCE (default) face's edge must be untouched. Under the bug this
-	// is the edge that got deleted — a face the copy never addressed.
-	if got := targets(nil); len(got) != 1 || got[0] != "NEW-1" {
-		t.Errorf("the DEFAULT face's edge must survive a replace on another face; "+
+	// The SOURCE (live) face's edge must be untouched. Under the bug this is
+	// the edge that got deleted — a face the copy never addressed.
+	if got := targets(liveTail); len(got) != 1 || got[0] != "NEW-1" {
+		t.Errorf("the SOURCE face's edge must survive a replace on another face; "+
 			"got %v, want [NEW-1] — losing it means the copy corrupted a bystander",
 			got)
 	}

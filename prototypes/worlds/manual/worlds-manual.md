@@ -49,12 +49,11 @@ An entity has one or more **faces**. A face is one content version, addressed
 by a coordinate:
 
 ```text
-POL-1              the default face
+POL-1@draft        one face of an entity
 POL-1@published    another face of the same entity
 ```
 
-The type declares which faces exist. A policy declares two, and marks one as
-the default:
+The type declares which faces exist. A policy declares two:
 
 ```rela
 faces{ type = "policy" }
@@ -71,8 +70,8 @@ faces{ type = "guide" }
 exactly one state, the same in every view. Worlds are opt-in per type: adopting
 them for policies costs nothing for controls.
 
-(The ✓ column is `bare_face`, which the *Addressing* section below explains.
-It does not affect which face a world picks.)
+(No face is privileged. Each is a row of its own, named by the face name the
+type declared, and which one a reader gets is a world's decision.)
 
 ## Worlds
 
@@ -96,13 +95,15 @@ select: [draft, published]     # prefer the draft; if there is none, published
 
 **Rule two: `otherwise:`.** When the entity has *none* of the chain's faces,
 the projection has nothing to put in that slot — and there are only two honest
-answers. Leave the row out, or substitute the entity's bare-id state.
+answers. Leave the row out, or substitute the entity's unnamed state — which
+only a type declaring no faces has, so for a faced type the two answers
+coincide and the row is dropped either way.
 
 | World | Chain — first match wins | If none of those exist |
 | --- | --- | --- |
 | `published` | `published` | **row is dropped** |
-| `editorial` | `draft`, else `published` | bare-id state |
-| `site-nl` | `nl`, else `en` | bare-id state |
+| `editorial` | `draft`, else `published` | unnamed state |
+| `site-nl` | `nl`, else `en` | unnamed state |
 
 `otherwise:` is mandatory, and this table is why. For **publication** the
 answer must be *drop*: a policy with no published face is not merely unstyled
@@ -120,17 +121,18 @@ fallback, and it happens whether or not any face is the bare one.
 Two policies. One is published; one is still a draft.
 
 ```rela
-create("policy", { id = "POL-1", title = "Access Control", owner = "Security", status = "done" })
+face("policy", "POL-1", "draft", { title = "Access Control", owner = "Security", status = "done" })
 face("policy", "POL-1", "published", { title = "Access Control", owner = "Security", status = "done" })
 
-create("policy", { id = "POL-2", title = "Remote Working", owner = "People", status = "doing" })
+face("policy", "POL-2", "draft", { title = "Remote Working", owner = "People", status = "doing" })
 ```
 
-The default world holds every entity at its default face — the whole graph:
+Every policy row is a named face. The `editorial` world, whose chain leads with
+`draft`, therefore holds both:
 
 ```rela
-resolution{ type = "policy" }
-shows{ type = "policy", exactly = { "POL-1", "POL-2" } }
+resolution{ type = "policy", world = "editorial" }
+shows{ type = "policy", world = "editorial", exactly = { "POL-1", "POL-2" } }
 ```
 
 The reader's world holds only what has been published. POL-2 has no published
@@ -144,15 +146,15 @@ shows{ type = "policy", world = "published", exactly = { "POL-1" }, absent = { "
 That `absent` is the whole feature in one line. POL-2 exists, and a reader
 cannot see that it exists.
 
-The editorial world declares `otherwise: default`, so the same missing face
-resolves to a substitute rather than an absence:
+The editorial world leads with `draft`, and both policies have one, so the
+same entity a reader cannot see is present here at its draft:
 
 ```rela
 resolution{ type = "policy", world = "editorial" }
 shows{ type = "policy", world = "editorial", exactly = { "POL-1", "POL-2" } }
 ```
 
-Three diagrams, one set of entities. The difference between them is two lines
+Two diagrams, one set of entities. The difference between them is two lines
 of `worlds:` configuration.
 
 ### The projection, with the graph underneath
@@ -174,26 +176,27 @@ identity` — it belongs to the entity and comes along whichever face is chosen.
 The solid one is `implements`, `scope: content`: it belongs to a face, so the
 projection decides whether it appears at all.
 
-## Addressing: the bare id and the default world
+## Addressing: face names and the default world
 
 Two mechanisms have been referred to and not explained. Both are about
 ADDRESSING — how you name a face, and what you get when you name none.
 
-**`bare_face` names the row a bare id addresses.** Every entity has one row
-that `POL-1` resolves to; it exists whether or not you name it. `bare_face:
-draft` says the declared name `draft` refers to *that* row, so `POL-1` and
-`POL-1@draft` are one row rather than two. Omit it and `draft` becomes a
-separate suffixed row while the entity's own row has no name at all — legal,
-almost never intended. It sits on the type, so two faces cannot both claim it.
+**A face is named by the name its type declared.** `POL-1@draft` is the draft
+row and `POL-1@published` is the published one. There is one spelling per face:
+the name in `schema.yaml` is the name in a URL, in an `acl.yaml` grant, and in
+a `copies:` address. A type declaring faces stores nothing under the bare
+`POL-1`, so that address names no row of a policy at all.
 
 **The default world is what you get with no `?world=`.** It is not a declared
-world and applies no projection: every entity resolves to its bare-id row —
-the whole graph, one face each, exactly as a system without worlds behaves.
+world and applies no projection: it serves each entity's single unnamed state,
+which is what a type declaring no faces has. A control is fully visible there.
+A policy is not, because every policy row sits under a face name — reaching one
+in the default world means addressing it as `POL-1@draft`.
 `?world=default` is accepted as an explicit way to ask for the same thing.
 
-These two are why an unpublished policy is still reachable at all. It is absent
-from `world=published`, and present in the default world, because that world
-projects nothing.
+This is why an unpublished policy is still reachable at all. It is absent from
+`world=published`, and present in `world=editorial`, whose chain names the
+draft.
 
 ## Writing
 
@@ -203,9 +206,9 @@ That distinction matters. Writing is fully face-aware — every write names the
 face it lands on. What it does not accept is a *world*, which is a routing rule
 for reads, not a statement about what a write can reach.
 
-- **Ordinary CRUD** — create, update, delete — addresses the **bare-id row**.
-  That is why a new policy is a draft: `bare_face: draft`, so the row a create
-  writes is the draft.
+- **Ordinary CRUD** — create, update, delete — addresses **one named face**.
+  A create says which face it writes (`{"face": "draft", ...}`); an update or
+  delete addresses the row it changes, as `POL-1@draft`.
 - **A copy** addresses **any declared face**. Publishing is a copy from
   `policy@draft` to `policy@published` on the same entity.
 
@@ -219,16 +222,16 @@ api{
 }
 ```
 
-A refusal rather than a redirect, and the reason is the fallback rule. A world
-can answer a read with a substituted face: under `editorial`, reading POL-2
-returns its bare-id row because there is no published face to prefer. If a
-write could ride that same projection, a read-modify-write through it would
-load one face, edit it, and save it over whichever face the caller believed
-they were addressing. `DELETE ...?world=published` is worse — it would delete
-the entity outright while the caller believed they were unpublishing it.
+A refusal rather than a redirect, and the reason is the chain. A world can
+answer a read with a face further down it: under `site-nl`, reading a guide
+with no Dutch translation returns its English face. If a write could ride that
+same projection, a read-modify-write through it would load one face, edit it,
+and save it over whichever face the caller believed they were addressing.
+`DELETE ...?world=published` is worse — it would delete a face the caller never
+named while they believed they were unpublishing.
 
-So a write names its target directly: the bare id, or a copy that declares
-which face it writes. Never a projection that might have substituted something.
+So a write names its target directly: a face by name, or a copy that declares
+which face it writes. Never a projection that might have chosen something.
 
 ### Why publishing is an operation, not a field
 
@@ -429,10 +432,10 @@ The detail view badges that, so a reader can see when a link leads somewhere
 other than the face they are reading — there is a screenshot of it below, under
 The screens.
 
-This is why neighbours resolve through the world rather than being read at
-their bare id. An unlabelled link would silently hand a Dutch reader an English
-page; a link read at the bare id would ignore the translation even when one
-exists. Resolving the neighbour and naming its face is what makes the fallback
+This is why neighbours resolve through the world rather than being pinned to
+one face. An unlabelled link would silently hand a Dutch reader an English
+page; a link pinned to the English face would ignore the translation even when
+one exists. Resolving the neighbour and naming its face is what makes the fallback
 honest instead of invisible.
 
 ## What the operator configures
@@ -511,16 +514,14 @@ each row is showing — and the chain can substitute one silently, because a
 fallback row is byte-identical to a first-choice hit: same id, same title, same
 cells.
 
-Policies cannot show it. `draft` is their `bare_face`, so every policy has a
-draft row by construction — a face row cannot exist without the bare one it
-hangs off — and `editorial`'s chain `[draft, published]` therefore always
-matches at its first choice. The substitution is real but structurally
-unreachable on this axis. That is why the two policy tables above carry no
-badges at all: every row in them is the face its world asked for, and the badge
-only marks the rows that are not.
+The policies here cannot show it. Every one of them is drafted before it is
+published, so each has a `draft` row, and `editorial`'s chain `[draft,
+published]` always matches at its first choice. That is why the two policy
+tables above carry no badges at all: every row in them is the face its world
+asked for, and the badge only marks the rows that are not.
 
-Guides can. `site-nl` selects `[nl, en]` where `en` is the bare face, so a guide
-with no translation falls through to its English row: GUIDE-1 is Dutch, GUIDE-2
+Guides can. `site-nl` selects `[nl, en]`, so a guide with no Dutch translation
+falls through to its English row: GUIDE-1 is Dutch, GUIDE-2
 is a stand-in. Same list, one world, two different kinds of row:
 
 ```rela
@@ -571,13 +572,10 @@ page{
 }
 ```
 
-The "English" half is load-bearing beyond the badge. `en` is this type's
-`bare_face`, so it is stored at the *bare* row and comes back from the API as
-the empty coordinate; a `{face}` handed that empty string would print nothing.
-Reading "English" here asserts that the coordinate resolves back through the
-same `bare_face:` declaration the world chain was compiled with, to the label
-the operator gave that face — never the coordinate itself, which is storage
-vocabulary.
+The "English" half is load-bearing beyond the badge. Reading it here asserts
+that `{face}` resolves the served coordinate to the label the operator gave
+that face — never to the coordinate `en` itself, which is storage vocabulary a
+reader never chose.
 
 ### The detail view
 
@@ -611,11 +609,9 @@ difference is the whole point: "site-nl" says which world you asked for, which
 you already know; "English" says the link leads somewhere English, which you
 did not.
 
-Note that `en` is the guide type's `bare_face`, so it is stored at the bare row
-with no coordinate of its own. The badge still prints "English", because the
-API resolves the stored row back through the same `bare_face:` declaration the
-world chain was compiled with, and the label is the operator's own name for
-that face:
+The badge prints "English" rather than `en`, because the label is the
+operator's own name for that face and the coordinate is storage vocabulary a
+reader never chose:
 
 ```rela
 page{
@@ -728,9 +724,8 @@ page{
 
 Notice that no card on this board carries a badge. That is not the board
 skipping a label it owes you — it is the same rule the lists follow. `editorial`
-selects `[draft, published]`, `draft` is policy's `bare_face`, and a face row
-cannot exist without the bare one it hangs off, so every policy matches at the
-chain's first choice. There are no stand-ins on this board, so there is nothing
+selects `[draft, published]` and every policy here has a draft, so every policy
+matches at the chain's first choice. There are no stand-ins on this board, so there is nothing
 to mark, and a clean board is the honest rendering of that.
 
 #### A board that does have one
@@ -738,7 +733,7 @@ to mark, and a clean board is the honest rendering of that.
 To see the other case you need an axis where the world's first choice can
 actually be missing. A **procedure** is the handbook's operational runbook —
 written centrally in English, localised per site where the local team needs it
-in their own words. Same face layout as a guide (`bare_face: en`, plus `nl`),
+in their own words. Same face layout as a guide (`en` plus `nl`),
 but a procedure also carries a readiness state, and that is what gives it a
 board:
 

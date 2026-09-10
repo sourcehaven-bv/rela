@@ -11,9 +11,8 @@ entities:
     id_prefix: POL
     id_type: sequential
     # An editorial axis: the same policy exists as a draft and, once approved,
-    # as a published face. `bare_face:` names which face the bare id addresses:
-    # `POL-1` and `POL-1@draft` are the same row, so a new policy IS a draft.
-    bare_face: draft
+    # as a published face. Neither is addressed by the bare id — every face is
+    # a named row, so a create must say which one it writes.
     faces:
       draft:     { label: "Draft" }
       published: { label: "Published" }
@@ -27,8 +26,7 @@ entities:
     id_prefix: GUIDE
     id_type: sequential
     # A language axis. Nothing about it is "later" or "approved" — the faces
-    # are peers, and English is merely the one a bare id addresses.
-    bare_face: en
+    # are peers, and no face is privileged by where it is stored.
     faces:
       en: { label: "English" }
       nl: { label: "Nederlands" }
@@ -41,12 +39,10 @@ entities:
     id_type: sequential
     # The same language axis the guides use, on something operational. A
     # procedure is written centrally in English and localised per site where
-    # the local team needs it in their own words — so `en` is what a bare id
-    # addresses and `nl` is the translation, exactly as for a guide.
+    # the local team needs it in their own words, exactly as for a guide.
     #
     # Unlike a guide, a procedure also has an operational state of its own,
     # which is what gives it a board.
-    bare_face: en
     faces:
       en: { label: "English" }
       nl: { label: "Nederlands" }

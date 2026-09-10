@@ -23,6 +23,7 @@ func tierB(p *acl.Policy, m MetamodelReader) []Finding {
 	f = append(f, checkCeilingsAgainstMetamodel(p, m)...) // B8 / B9
 	f = append(f, checkUndeclaredWorlds(p, m)...)         // B10
 	f = append(f, checkUndeclaredFaces(p, m)...)          // B11
+	f = append(f, checkBareGrantOnFacedType(p, m)...)     // B12
 	return f
 }
 
@@ -103,6 +104,52 @@ func defaultWorldCaseVariant(role, world string) (Finding, bool) {
 	}, true
 }
 
+// B12 — a BARE write grant names a type that declares faces, so it
+// addresses the zero coordinate, where a faced type stores no row.
+//
+// Replaces the old B12, which caught the mirror image: a grant naming the
+// face that `bare_face` mapped onto the zero coordinate. BUG-HC6I2T removed
+// that mapping, so the surprise now runs the other way. `update: [beleid]`
+// on a type declaring `concept` and `vastgesteld` looks like "may update
+// beleid" and reaches neither face.
+//
+// Fail-closed at runtime, like B11: no row will ever match, so the symptom
+// is a denial with no visible cause.
+//
+// Skips a type the metamodel does not declare — B1 reports that, and two
+// findings for one mistake would give it two different fixes.
+func checkBareGrantOnFacedType(p *acl.Policy, m MetamodelReader) []Finding {
+	var f []Finding
+	for _, name := range sortedRoleNames(p) {
+		role := p.Roles[name]
+		seen := map[string]bool{}
+		for _, verb := range []string{"create", "update", "delete"} {
+			for _, entry := range verbLists(role)[verb] {
+				if _, _, isState := splitStateGrant(entry); isState || seen[entry] {
+					continue
+				}
+				// `*` ranges over TYPES and grants each one's zero
+				// coordinate. Reporting it here would fire on every policy
+				// holding the admin wildcard the moment any type gains a
+				// face, naming a grant whose other types it still serves.
+				if entry == "*" || !m.HasEntityType(entry) || !m.HasFaces(entry) {
+					continue
+				}
+				seen[entry] = true
+				f = append(f, Finding{
+					Rule: "B12-bare-grant-on-faced-type", Severity: High, Subject: name,
+					Detail: fmt.Sprintf("role %q grants %s on %q, but %q declares content states "+
+						"and stores no row at the bare coordinate — the grant matches nothing",
+						name, verb, entry, entry),
+					Fix: fmt.Sprintf("name the face: `%s: [%s@<face>]` for each state this role "+
+						"may write", verb, entry),
+				})
+			}
+		}
+	}
+	return f
+}
+
 // B11 — a `type@face` write grant names a content state the type does
 // not declare, so it grants write access to nothing.
 //
@@ -148,25 +195,6 @@ func checkUndeclaredFaces(p *acl.Policy, m MetamodelReader) []Finding {
 					continue
 				}
 				if !m.HasEntityType(typeName) {
-					continue
-				}
-				if bare := m.BareFace(typeName); bare != "" && face == bare {
-					// Declared, so B11 is silent — but a grant names a face AS
-					// STORED, and the bare face is stored under the bare id.
-					// `update: [policy@draft]` with `bare_face: draft` matches
-					// no row, ever; the grant that reaches that face is the
-					// bare `update: [policy]`. Fail-closed, and inexplicable
-					// without this finding.
-					seen[entry] = true
-					f = append(f, Finding{
-						Rule: "B12-bare-face-named", Severity: High, Subject: name,
-						Detail: fmt.Sprintf("role %q grants %s on %q, but %q is entity type %q's "+
-							"bare face, which is addressed by the bare id — the grant matches nothing",
-							name, verb, entry, face, typeName),
-						Fix: fmt.Sprintf("write `%s: [%s]`: the bare face is stored under the bare id, "+
-							"so the bare type grant is the one that reaches it",
-							verb, typeName),
-					})
 					continue
 				}
 				if m.HasFace(typeName, face) {

@@ -923,17 +923,14 @@ function faceLabelOf(declared: string): string {
   return faces[declared]?.label || declared
 }
 
-// A face's display label by STORED coordinate ('' is the bare face), for the
-// copy result, which reports what it wrote as stored.
+// A face's display label by its coordinate, for the copy result, which
+// reports what it wrote.
 function faceLabel(stored: string): string {
   return schemaStore.faceLabel(props.entityType, stored) || stored
 }
 
-const bareFaceLabel = computed<string>(() => schemaStore.faceLabel(props.entityType, ''))
-
 const textVars = computed<WorldTextVars>(() => ({
-  face: faceLabelOf(servedFace.value || (typeDef.value?.bare_face ?? '')),
-  bare_face: bareFaceLabel.value,
+  face: faceLabelOf(servedFace.value),
   world: world.value,
   title: entryTitle.value,
 }))

@@ -171,13 +171,13 @@ func (ce *copyEngine) copyState(ctx context.Context, req CopyRequest) (*CopyResu
 	// captures (migration 0013). It is not on the plan struct: the plan
 	// describes WHAT to write, and provenance is a property of the write
 	// context, carried the same boundary-populated way as attribution.
-	// The DECLARED face name, not plan.sourceTail: provenance is a label a
-	// reader reads, and the bare face is unnameable as a stored coordinate
-	// (it IS the empty string), so recording the coordinate would silently
-	// drop the `@draft` from a copy declared `from: policy@draft` — the very
-	// fact the annotation exists to carry. See withCopyOrigin.
+	// sourceTail is both the coordinate and the name a reader reads: a face
+	// has one spelling (BUG-HC6I2T). This used to resolve a separate declared
+	// name, because `bare_face` made one face's stored coordinate the empty
+	// string and recording it would have dropped the `@draft` from a copy
+	// declared `from: policy@draft`. See withCopyOrigin.
 	writeCtx := withCopyOrigin(
-		ctx, plan.name, plan.sourceID, plan.from.Type, plan.sourceDeclared)
+		ctx, plan.name, plan.sourceID, plan.from.Type, string(plan.sourceTail))
 
 	var result CopyResult
 	if err := tx.Tx(writeCtx, func(view store.Store) error {
@@ -207,25 +207,12 @@ type copyPlan struct {
 	sourceID string
 	targetID string
 
-	// sourceTail and targetTail are the STORED coordinates, resolved once
-	// through metamodel.StoredFace. Resolving them here rather than at
-	// each use is not tidiness: a declared face marked `bare_face` IS
-	// the zero coordinate, so a site that used the declared name would write
-	// a face at a tail no face lives at — silently, with no error.
+	// sourceTail and targetTail are the faces this copy reads and writes.
+	// A face's declared name IS its stored coordinate (BUG-HC6I2T removed
+	// the `bare_face` mapping), so these are the `copies:` spelling taken
+	// literally.
 	sourceTail entity.Face
 	targetTail entity.Face
-
-	// sourceDeclared is the source face's DECLARED name — the spelling the
-	// operator wrote in `copies:` — resolved through metamodel.DeclaredFace
-	// rather than read off from.Face, so `from: policy` and `from:
-	// policy@draft` agree when `draft` is the bare face (they address the
-	// same face, so they must label it the same).
-	//
-	// It exists BESIDE sourceTail rather than replacing it because the two
-	// answer different questions: sourceTail addresses a row and must stay
-	// the stored coordinate, while this one is provenance a human reads.
-	// Collapsing them is what produced the bare-face label bug.
-	sourceDeclared string
 
 	// existing is the target face as stored BEFORE the copy, nil when the
 	// copy creates it. Probed in planCopy before authorization, because the
@@ -277,11 +264,9 @@ func (ce *copyEngine) planCopy(
 	plan := &copyPlan{
 		name: req.Definition, def: def, from: from, to: to,
 		sourceID: req.SourceID, targetID: req.SourceID,
-		sourceTail: entity.Face(metamodel.StoredFace(ce.m.deps.Meta, from.Type, from.Face)),
-		targetTail: entity.Face(metamodel.StoredFace(ce.m.deps.Meta, to.Type, to.Face)),
+		sourceTail: entity.Face(from.Face),
+		targetTail: entity.Face(to.Face),
 	}
-	plan.sourceDeclared = metamodel.DeclaredFace(
-		ce.m.deps.Meta, from.Type, string(plan.sourceTail))
 	if def.IsSameEntity() {
 		if req.TargetID != "" {
 			return nil, fmt.Errorf("%w: %q", ErrCopyTargetNotAllowed, req.Definition)

@@ -393,8 +393,8 @@ type World struct {
 	// Messages is the operator's wording for what this world changes on a
 	// screen (TKT-5SZG2L). Each entry is optional and an absent one renders
 	// nothing: the web app has no sentence of its own for any of them.
-	// Placeholders `{face}`, `{bare_face}`, `{world}` and `{title}` are
-	// substituted by the client. Mirrors metamodel.WorldMessages.
+	// Placeholders `{face}`, `{world}` and `{title}` are substituted by the
+	// client. Mirrors metamodel.WorldMessages.
 	Messages *WorldMessages `json:"messages,omitempty"`
 	// OnAbsent is the behavior for an entity with no face in this world.
 	// Mirrors metamodel.WorldOnAbsent.
@@ -448,10 +448,7 @@ type EntityType struct {
 	// viewer may not read, which makes it a gated per-entity query rather
 	// than a field on the type's schema.
 	Faces map[string]FaceDef `json:"faces,omitempty"`
-	// BareFace names which declared face the bare id addresses, mirroring
-	// `bare_face:` in the schema. Empty when the type declares no faces, or
-	// when it declares faces but names none of them as the bare one.
-	BareFace string `json:"bare_face,omitempty"`
+
 	// Commentable reports that this type accepts comments (TKT-FIO205), so the
 	// SPA knows whether to offer a comment affordance at all. Policy, not
 	// permission: it says commenting is POSSIBLE here, never that the current
@@ -1101,10 +1098,10 @@ type Mention struct {
 // Face is one content state an entity has, other than the one being served.
 // See [Entity.Faces] for why it carries no readability flag.
 type Face struct {
-	// Face is the STORED coordinate — "" for the default face. It is what
-	// a client sends back as `?world=`-adjacent addressing, so it must be the
-	// stored form, not the declared name (a `bare_face` face's declared
-	// name maps to ""; see metamodel.StoredFace).
+	// Face is the face's name, which is also the coordinate its row is
+	// stored at (BUG-HC6I2T) — so what a client reads here is what it sends
+	// back when addressing the row. Empty only for a type declaring no
+	// faces, whose single state has no name.
 	Face string `json:"face"`
 	// Label is the display text for this face: the operator's
 	// `faces.<name>.label:` when declared, else the declared face name
@@ -1114,15 +1111,14 @@ type Face struct {
 	// Face and never by this string.
 	Label string `json:"label,omitempty"`
 	// Ref is the face's ADDRESS: the path segment that reads this row
-	// literally under any world — `POL-1@published`, and `POL-1@draft` for
-	// the bare face when the type declares a `bare_face` name.
+	// literally under any world — `POL-1@published`.
 	//
 	// It exists so a client can offer "view the published face" as a plain
 	// link, without deriving which declared world happens to lead with that
 	// face — a derivation that needs the chain, the per-type overrides and a
 	// tie-break rule, and that produced a dead control for any face no world
-	// headed. A bare face with no declared name has no explicit spelling and
-	// falls back to the bare id, which is literal only in the default world.
+	// headed. A type declaring no faces has one nameless state and falls back
+	// to the bare id, which is literal only in the default world.
 	Ref string `json:"ref,omitempty"`
 }
 

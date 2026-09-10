@@ -25,22 +25,21 @@ import (
 // configured `default_world` it 404'd everywhere. A client following the
 // server's own `_self` broke on the GET.
 //
-// # Declared names, stored coordinates
+// # One spelling per face
 //
-// The path carries the operator's DECLARED face name, the same vocabulary
-// `_world.face` and `_faces[].label` use. The type's `bare_face` is stored at
-// the zero coordinate (design doc §2.1), so `POL-1@draft` with `bare_face:
-// draft` addresses the same row as `POL-1` — Explicit is what records that
-// the caller spelled it out, which is what exempts it from world resolution.
-// A caller cannot tell the two apart by the response, only by what the world
-// would otherwise have done with a bare id.
+// The path carries the operator's declared face name, the same vocabulary
+// `_world.face` and `_faces[].label` use, and that name IS the coordinate the
+// row is stored at (BUG-HC6I2T) — so an address needs no translation and no
+// face answers to two spellings. An unsuffixed id names a row only for a type
+// declaring no faces; for a faced type it names no row at all, and the
+// request's world is what turns it into one.
 type entityRef struct {
 	// ID is the bare entity id. Every ACL row gate keys on this: the row
 	// gate is face-blind by design (guard rule 1) and a suffixed string
 	// handed to it matches nothing under a query-shaped policy.
 	ID string
-	// Face is the STORED coordinate the address names; zero for the bare
-	// face, whether the path spelled it (`ID@draft`) or not (`ID`).
+	// Face is the coordinate the address names; zero when the path named no
+	// face, which is a row only for a type declaring none.
 	Face entity.Face
 	// Explicit reports that the path named a face. An explicit address
 	// bypasses world resolution; a bare one is resolved by the request's
@@ -48,8 +47,7 @@ type entityRef struct {
 	Explicit bool
 }
 
-// parseEntityRef parses one path segment into an entityRef, mapping a
-// declared face name onto its stored coordinate through the metamodel.
+// parseEntityRef parses one path segment into an entityRef.
 //
 // Returns ok=false for anything the grammar rejects — an invalid id, two
 // separators, a face that fails [entity.ParseFace]. Callers render that as
@@ -57,14 +55,13 @@ type entityRef struct {
 // address cannot name a row, and a distinct 400 would only tell a caller
 // which strings are worth probing.
 //
-// An undeclared face name is NOT rejected here. It maps to itself as a stored
-// coordinate and the store answers whether such a row exists — the same
-// answer `selfHref` gives an undeclared stored face, so a row written under a
-// face the schema has since dropped stays addressable by the `_self` it hands
-// out.
-//
-// m may be nil (bare test fixtures); the name is then taken as stored.
-func parseEntityRef(m *metamodel.Metamodel, entityType, raw string) (entityRef, bool) {
+// An undeclared face name is NOT rejected here. It is taken as the coordinate
+// it spells and the store answers whether such a row exists — the same answer
+// `selfHref` gives an undeclared face, so a row written under a face the
+// schema has since dropped stays addressable by the `_self` it hands out.
+// That is why the metamodel is not consulted: a name needs no lookup to
+// become a coordinate.
+func parseEntityRef(raw string) (entityRef, bool) {
 	id, face, err := entity.ParseStateRef(raw)
 	if err != nil {
 		return entityRef{}, false
@@ -72,8 +69,7 @@ func parseEntityRef(m *metamodel.Metamodel, entityType, raw string) (entityRef, 
 	if face.IsDefault() {
 		return entityRef{ID: id}, true
 	}
-	stored := metamodel.StoredFace(m, entityType, face.String())
-	return entityRef{ID: id, Face: entity.Face(stored), Explicit: true}, true
+	return entityRef{ID: id, Face: face, Explicit: true}, true
 }
 
 // bareEntityID parses an address and returns its BARE id, for the surfaces
@@ -81,8 +77,8 @@ func parseEntityRef(m *metamodel.Metamodel, entityType, raw string) (entityRef, 
 // keyed by entity id in every store), documents, commands, scope navigation.
 // ok=false for an address the grammar rejects, rendered as the uniform
 // not-found by the caller.
-func bareEntityID(m *metamodel.Metamodel, entityType, raw string) (string, bool) {
-	ref, ok := parseEntityRef(m, entityType, raw)
+func bareEntityID(raw string) (string, bool) {
+	ref, ok := parseEntityRef(raw)
 	if !ok {
 		return "", false
 	}
@@ -97,9 +93,9 @@ func (ref entityRef) String() string {
 }
 
 // contentScopedRelationOn reports the first `scope: content` relation type a
-// PATCH body names when the write is addressed to a NON-BARE face — the one
+// PATCH body names when the write is addressed to a NAMED face — the one
 // combination the relation writers cannot honor, because they attach edges to
-// the entity's bare tail (entity.RelationOptions carries no face).
+// the entity's zero-coordinate tail (entity.RelationOptions carries no face).
 //
 // Keys resolve exactly as the writer resolves them ([resolveDirection]), so
 // the guard and the executor cannot disagree about which entity is the tail:
@@ -138,7 +134,7 @@ func contentScopedRelationOn(
 // The world NAME is still the request's: neighbors and included peers on
 // this response resolve through it, so naming it keeps the block truthful
 // about everything on the page that a world did touch.
-func addressedProvenance(ctx context.Context, m *metamodel.Metamodel, e *entity.Entity) *v1.EntityWorld {
+func addressedProvenance(ctx context.Context, e *entity.Entity) *v1.EntityWorld {
 	if e == nil {
 		return nil
 	}
@@ -148,7 +144,7 @@ func addressedProvenance(ctx context.Context, m *metamodel.Metamodel, e *entity.
 	}
 	return &v1.EntityWorld{
 		Name: name,
-		Face: metamodel.DeclaredFace(m, e.Type, e.Face.String()),
+		Face: e.Face.String(),
 		Via:  ruleUnscoped,
 	}
 }

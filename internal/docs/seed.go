@@ -3,6 +3,7 @@ package docs
 import (
 	"context"
 	"fmt"
+	"iter"
 	"sort"
 	"strings"
 
@@ -48,6 +49,13 @@ type seedWriter interface {
 	// face() to resolve the type of an id it is given, edit() to confirm the
 	// entity exists and to return the edited result.
 	GetEntity(ctx context.Context, id string) (*entity.Entity, error)
+	// GetEntityState reads ONE face. Needed because a type declaring faces
+	// stores no row at the zero coordinate (BUG-HC6I2T), so GetEntity alone
+	// cannot find a seeded faced entity at all.
+	GetEntityState(ctx context.Context, id string, p entity.Face) (*entity.Entity, error)
+	// ListEntities backs the family lookup the two above cannot do: find any
+	// row of an id without knowing which face it was seeded at.
+	ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error]
 
 	// UpdateEntity serves edit() against the IN-MEMORY resolver store only,
 	// where there is no entitymanager to patch through and only the resulting
@@ -68,9 +76,8 @@ type seedWriter interface {
 // this type exposes bindings but never installs them.
 type seedBindings struct {
 	store seedWriter
-	// meta validates that a face() coordinate is DECLARED for the type, and
-	// maps a declared name to its stored coordinate (the bare face stores as
-	// the zero value, so seeding it by name must land on the entity's own row).
+	// meta validates that a face() coordinate is DECLARED for the type, so a
+	// manual cannot seed a row no schema would produce.
 	meta *metamodel.Metamodel
 	// ctx is stored for the same reason docRuntime stores one: these are
 	// gopher-lua callbacks, which cannot take a context parameter.
@@ -143,7 +150,7 @@ func (s *seedBindings) luaLink(ls *lua.LState) int {
 			return s.fail(ls, "link(%q,%q,%q,%q): %q is not a declared face of %q",
 				from, relType, to, fromFace, fromFace, typ)
 		}
-		tail = entity.Face(metamodel.StoredFace(s.meta, typ, fromFace))
+		tail = entity.Face(fromFace)
 	}
 
 	if _, err := s.store.CreateRelation(s.ctx, from, relType, to,
@@ -258,6 +265,8 @@ func ApplySeedWith(ctx context.Context, st store.Store, patcher SeedPatcher, ops
 // full store.Store.
 type seedEditStore interface {
 	GetEntity(ctx context.Context, id string) (*entity.Entity, error)
+	GetEntityState(ctx context.Context, id string, p entity.Face) (*entity.Entity, error)
+	ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error]
 	UpdateEntity(ctx context.Context, e *entity.Entity) error
 }
 
@@ -333,10 +342,7 @@ func (s *seedBindings) luaFace(ls *lua.LState) int {
 	}
 	content := ls.OptString(faceContentArg, "")
 
-	// The STORED coordinate, not the declared name: a `bare_face` face is
-	// stored under the zero coordinate, so seeding it by name must land on the
-	// entity's own row rather than minting a second one.
-	stored := entity.Face(metamodel.StoredFace(s.meta, typ, coord))
+	stored := entity.Face(coord)
 	e := &entity.Entity{ID: id, Type: typ, Face: stored, Properties: props, Content: content}
 	if err := s.store.CreateEntity(s.ctx, e); err != nil {
 		return s.fail(ls, "face(%q, %q, %q): %v", typ, id, coord, err)
@@ -387,7 +393,7 @@ func (s *seedBindings) luaEdit(ls *lua.LState) int {
 			"the reader cannot see", id)
 	}
 
-	e, err := s.store.GetEntity(s.ctx, id)
+	e, err := seedRowOf(s.ctx, s.store, id)
 	if err != nil || e == nil {
 		return s.fail(ls, "edit(%q): no such seeded entity (create it first)", id)
 	}
@@ -401,7 +407,7 @@ func (s *seedBindings) luaEdit(ls *lua.LState) int {
 	}
 	s.ops = append(s.ops, op)
 
-	edited, gerr := s.store.GetEntity(s.ctx, id)
+	edited, gerr := seedRowOf(s.ctx, s.store, id)
 	if gerr != nil {
 		return s.fail(ls, "edit(%q): %v", id, gerr)
 	}
@@ -412,7 +418,7 @@ func (s *seedBindings) luaEdit(ls *lua.LState) int {
 // typeOf reports the seeded entity's type, for validating a face name against
 // the right declaration.
 func (s *seedBindings) typeOf(id string) string {
-	e, err := s.store.GetEntity(s.ctx, id)
+	e, err := seedRowOf(s.ctx, s.store, id)
 	if err != nil || e == nil {
 		return ""
 	}
@@ -427,4 +433,37 @@ func sortedFaceNames(def *metamodel.EntityDef) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// seedRowOf finds any stored row of a seeded id, whatever face it was seeded
+// at.
+//
+// A type declaring faces stores no row at the zero coordinate (BUG-HC6I2T), so
+// a plain GetEntity finds nothing for a faced entity — which is what made the
+// executable manual fail to resolve `POL-1` after its policies moved onto named
+// faces. The seed surfaces here (`link`, `edit`, `hidden`, the type lookup)
+// want the ENTITY, and the facts they read from it are the same at every face.
+//
+// Nil: returns (nil, store.ErrNotFound) when the id has no row at all.
+func seedRowOf(ctx context.Context, st seedEditStore, id string) (*entity.Entity, error) {
+	if e, err := st.GetEntity(ctx, id); err == nil {
+		return e, nil
+	}
+	base, face, perr := entity.ParseStateRef(id)
+	if perr == nil && !face.IsDefault() {
+		if e, err := st.GetEntityState(ctx, base, face); err == nil {
+			return e, nil
+		}
+	} else {
+		base = id
+	}
+	for e, err := range st.ListEntities(ctx, store.EntityQuery{IDs: []string{base}, AllStates: true}) {
+		if err != nil {
+			return nil, err
+		}
+		if e.ID == base {
+			return e, nil
+		}
+	}
+	return nil, store.ErrNotFound
 }

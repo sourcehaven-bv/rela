@@ -214,8 +214,12 @@ func buildEntityCountSQL(q store.EntityQuery) (sql string, args []any) {
 // Sscanf("%d") semantics identical across backends.
 func (s *Store) HighestID(ctx context.Context, prefix string) (int, error) {
 	pfx := prefix + "-"
-	// face = '': states share their family's number (TKT-DOFYR1).
-	const q = `SELECT id FROM entities WHERE id LIKE $1 AND face = ''`
+	// Every face, DISTINCT by id: states share their family's number
+	// (TKT-DOFYR1), so a family must be seen at least once and counting it
+	// twice is harmless. The old `face = ''` predicate saw a faced type not
+	// at all, so the generator minted one id for every entity of it
+	// (BUG-HC6I2T).
+	const q = `SELECT DISTINCT id FROM entities WHERE id LIKE $1`
 	rows, err := s.db.Query(ctx, q, pfx+"%")
 	if err != nil {
 		return 0, err
@@ -321,26 +325,53 @@ func (s *Store) CreateEntity(ctx context.Context, e *entity.Entity) error {
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // rollback after commit is a no-op
 
-	if !e.Face.IsDefault() {
-		// Row-family invariants (TKT-DOFYR1, design doc §6): a
-		// non-default state requires its default row (no headless
-		// states) and shares the family's type. FOR SHARE is the
-		// load-bearing part: under READ COMMITTED a plain probe leaves a
-		// check-then-act window in which a concurrent family delete
-		// commits between probe and insert, materializing a headless
-		// state. The share lock on the default row blocks that delete
-		// until this insert commits.
-		var defType string
+	// Serialize this write against a concurrent DeleteEntity of the same id
+	// (see lockFamily). Taken for EVERY create, not just a faced one: the
+	// racing delete sweeps the whole family, so a bare create must contend
+	// with it too.
+	if lockErr := lockFamily(ctx, tx, e.ID); lockErr != nil {
+		return lockErr
+	}
+
+	{
+		// Row-family invariant (TKT-DOFYR1, design doc §6): a state shares
+		// the family's type. ANY sibling answers — no face heads a family
+		// (BUG-HC6I2T), so the first state of a new family finds none and is
+		// legal; only a DIVERGENT type is refused.
+		//
+		// FOR SHARE still matters, for a narrower reason than before. It no
+		// longer prevents a headless state (there is no such thing now), but
+		// it pins the sibling this check read: without it, under READ
+		// COMMITTED, a concurrent delete of that row could commit between
+		// probe and insert and a second writer could then create the same
+		// family under a different type, leaving two types in one family —
+		// the invariant this probe exists to hold.
+		// No LIMIT: the lock must cover the WHOLE family, because
+		// DeleteEntity locks the whole family FOR UPDATE and the two only
+		// serialize when they contend on the same rows. Locking one
+		// arbitrary row would let a delete of a DIFFERENT row of the same
+		// family commit in the window, and the state inserted here would
+		// survive its family (verified by
+		// TestDeleteEntity_RacingStateCreateLeavesNoHeadlessFace).
+		//
+		// Every row of a family shares a type, so reading the first of them
+		// answers the type question regardless of how many are locked.
+		//
+		// Runs for EVERY face including the zero coordinate. Gating it on
+		// `!e.Face.IsDefault()` was complete only while every family
+		// necessarily had a zero-coordinate row; a family created
+		// named-face-first would then take a zero-coordinate write with no
+		// type check at all.
+		var famType string
 		probeErr := tx.QueryRow(ctx,
-			`SELECT type FROM entities WHERE id = $1 AND face = '' FOR SHARE`, e.ID).Scan(&defType)
-		if errors.Is(probeErr, pgx.ErrNoRows) {
-			return storeutil.HeadlessStateError(e.ID)
-		}
-		if probeErr != nil {
+			`SELECT type FROM entities WHERE id = $1 FOR SHARE`, e.ID).Scan(&famType)
+		switch {
+		case errors.Is(probeErr, pgx.ErrNoRows):
+			// First state of a new family: nothing to disagree with.
+		case probeErr != nil:
 			return probeErr
-		}
-		if defType != e.Type {
-			return storeutil.StateTypeMismatchError(e.ID, e.Face, e.Type, defType)
+		case famType != e.Type:
+			return storeutil.StateTypeMismatchError(e.ID, e.Face, e.Type, famType)
 		}
 	}
 
@@ -469,17 +500,18 @@ func (s *Store) DeleteEntity(ctx context.Context, id string, cascade bool) (*sto
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // rollback after commit is a no-op
 
-	// Lock the family's identity row before deciding what the family holds.
-	// CreateEntity takes the same row FOR SHARE before inserting a state, so
-	// this serializes the two: a state create either committed before the
-	// scan below (and is swept with the family) or waits for this delete to
-	// commit (and then finds no family — headless, refused). The scan alone
-	// ran on a READ COMMITTED snapshot that could miss a draft committed in
-	// that window, leaving PAGE-1@draft behind with no PAGE-1: a ghost that
-	// exists in some worlds and not others, and that a later create of the
-	// same id would adopt as its own face.
-	if _, lockErr := tx.Exec(ctx,
-		`SELECT 1 FROM entities WHERE id = $1 AND face = '' FOR UPDATE`, id); lockErr != nil {
+	// Lock the family id before deciding what it holds, so a concurrent
+	// CreateEntity of the same id cannot land a row between the scan below
+	// and the sweep. Without it the scan runs on a READ COMMITTED snapshot
+	// that misses a face committed in that window, and that face survives a
+	// delete which has already destroyed the entity's inbound relations and
+	// attachments — an intact-looking row whose graph was amputated.
+	//
+	// A ROW lock cannot do this job (it was `face = ''`, then `WHERE id`):
+	// the racing create is adding a face that does not exist yet, and once
+	// this delete commits there are no rows of the family left to contend on.
+	// The lock has to be on the id itself. See lockFamily.
+	if lockErr := lockFamily(ctx, tx, id); lockErr != nil {
 		return nil, lockErr
 	}
 	// Delete addresses the whole state FAMILY of the bare id
@@ -587,23 +619,6 @@ func (s *Store) DeleteEntityState(
 	}
 	if len(face) == 0 {
 		return nil, store.ErrNotFound
-	}
-
-	// Refuse to orphan the family: a family with no default row has no
-	// defined meaning and world fallback resolves against it. Deleting the
-	// LAST face is fine — nothing is left to orphan.
-	if p.IsDefault() {
-		var siblings int
-		if serr := tx.QueryRow(ctx,
-			`SELECT count(*) FROM entities WHERE id = $1 AND face <> ''`, id,
-		).Scan(&siblings); serr != nil {
-			return nil, serr
-		}
-		if siblings > 0 {
-			return nil, fmt.Errorf(
-				"%w: cannot delete the default face of %s while %d other state(s) remain",
-				store.ErrInvalidQuery, id, siblings)
-		}
 	}
 
 	// OUTGOING edges on this tail only. INCOMING edges are deliberately NOT
@@ -1242,4 +1257,43 @@ func entitySearchText(e *entity.Entity) string {
 	b.WriteByte('\n')
 	b.WriteString(strings.ToLower(e.Content))
 	return b.String()
+}
+
+// familyAdvisoryLockKey namespaces the per-entity family lock. Distinct from
+// migrateAdvisoryLockKey, reconcileAdvisoryLockKey and sweepAdvisoryLockKey —
+// the four must never alias. "RELF" (RELA Family).
+const familyAdvisoryLockKey int64 = 0x52_45_4c_46
+
+// lockFamily serializes CreateEntity and DeleteEntity on ONE entity id.
+//
+// # Why a row lock is not enough
+//
+// DeleteEntity locks the family FOR UPDATE, but a create adding a face that
+// does not exist yet has no row to contend on — and once the delete commits
+// there are no rows left at all. So the create proceeds and its face survives
+// a delete of the entity, with the inbound relations and attachments the
+// delete already swept (`WHERE from_id = $1 OR to_id = $1`) gone. The survivor
+// looks intact while its graph has been amputated, which is worse than either
+// a clean delete or a clean refusal.
+//
+// Before BUG-HC6I2T the headless-state rule made this unreachable: the create
+// found no zero-coordinate row and was refused. Removing that rule (no face is
+// privileged) removed the refusal, so the serialization has to be explicit.
+//
+// # Scope and contention
+//
+// Keyed on the ID, so writes to DIFFERENT entities never contend — the lock
+// costs nothing on the common path. Two ids whose hash collides serialize with
+// each other, which is a latency cost on a rare pair and never a correctness
+// one.
+//
+// The id is hashed TOGETHER WITH the schema because advisory locks are
+// database-global and both key slots are spent here (namespace + value), so a
+// bare hashtext(id) would make two tenants sharing a database serialize their
+// writes to same-named entities. Same reasoning as migrateAdvisoryLockKey.
+func lockFamily(ctx context.Context, tx DBTX, id string) error {
+	_, err := tx.Exec(ctx,
+		`SELECT pg_advisory_xact_lock($1::int, hashtext($2 || '\x1f' || current_schema()))`,
+		familyAdvisoryLockKey, id)
+	return err
 }

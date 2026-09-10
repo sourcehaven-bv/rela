@@ -57,7 +57,6 @@ func toV1EntityType(
 		IDType:      def.GetIDType(),
 		Properties:  make(map[string]v1.PropertyDef, len(def.Properties)),
 		Faces:       schemaFaceDefs(def),
-		BareFace:    def.BareFace,
 		// Whether this type accepts comments (TKT-FIO205). Policy, not
 		// permission: it tells the SPA whether to offer a comment affordance
 		// at all, never that the caller may use it.
@@ -243,7 +242,7 @@ func (a *App) handleV1DynamicRoutes(w http.ResponseWriter, r *http.Request) {
 		case "_attachments":
 			// Attachments are per ENTITY (the store keys them by bare id), so
 			// a faced address names the same files as the bare one.
-			id, ok := bareEntityID(a.Meta(), typeName, parts[1])
+			id, ok := bareEntityID(parts[1])
 			if !ok {
 				writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 				return
@@ -259,7 +258,7 @@ func (a *App) handleV1DynamicRoutes(w http.ResponseWriter, r *http.Request) {
 		case "relations":
 			a.handleV1RelationTarget(w, r, typeName, parts[1], parts[3], parts[4])
 		case "_attachments":
-			id, ok := bareEntityID(a.Meta(), typeName, parts[1])
+			id, ok := bareEntityID(parts[1])
 			if !ok {
 				writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 				return
@@ -772,7 +771,7 @@ func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeN
 		// Same choice loadViewEntities' provenanceFor makes, for the same
 		// reason (see [viewWorld.provenanceFor]).
 		if !worldScopeFrom(r.Context()).IsDefaultWorld() {
-			v1Entity.World = worldProvenance(r.Context(), a.Meta(), e)
+			v1Entity.World = worldProvenance(r.Context(), e)
 		}
 		data = append(data, v1Entity)
 
@@ -878,7 +877,7 @@ func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName
 	// The path segment is an ADDRESS — `ID` or `ID@face` — parsed here and
 	// nowhere downstream (TKT-SLFURL). An address the grammar rejects cannot
 	// name a row, so it gets the same not-found a missing row does.
-	ref, ok := parseEntityRef(a.Meta(), typeName, entityID)
+	ref, ok := parseEntityRef(entityID)
 	if !ok {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 		return
@@ -943,9 +942,9 @@ func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName
 	// labeled by [addressedProvenance] rather than by the chain position it
 	// happens to hold — see that function for why.
 	if ref.Explicit {
-		result.World = addressedProvenance(ctx, a.Meta(), entity)
+		result.World = addressedProvenance(ctx, entity)
 	} else {
-		result.World = worldProvenance(ctx, a.Meta(), entity)
+		result.World = worldProvenance(ctx, entity)
 	}
 
 	// Handle includes for related entities
@@ -1900,7 +1899,7 @@ func (a *App) resolveV1Includes(ctx context.Context, entity *entityPkg.Entity, i
 		//
 		// Same helper the entity root and list rows use, so the three surfaces
 		// cannot disagree about what a face resolution was.
-		wired.World = worldProvenance(ctx, a.Meta(), target)
+		wired.World = worldProvenance(ctx, target)
 		included[target.ID] = wired
 
 		if nested, ok := nestedFor[target.ID]; ok {

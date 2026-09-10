@@ -90,7 +90,14 @@ func (m *Manager) ApplyEntity(ctx context.Context, e *entity.Entity) (*entity.Up
 		return nil, fmt.Errorf("entitymanager: ApplyEntity: entity %s has inaccessible fields", e.ID)
 	}
 
-	stored, getErr := m.deps.Store.GetEntity(ctx, e.ID)
+	// The probe addresses the row the body NAMES, not the zero coordinate.
+	// GetEntity(id) is GetEntityState(id, zero), which a type declaring faces
+	// has no row at — so every faced apply resolved as a CREATE, the update
+	// branch below was unreachable, and the ErrFaceImmutable guard that
+	// branch carries never ran. A sync body could then be authorized against
+	// its own face while a sibling row of the same id already existed
+	// (BUG-HC6I2T).
+	stored, getErr := m.deps.Store.GetEntityState(ctx, e.ID, e.Face)
 	op, err := resolveUpsertOp(getErr, audit.OpCreateEntity, audit.OpUpdateEntity)
 	if err != nil {
 		return nil, fmt.Errorf("entitymanager: ApplyEntity: existence check for %s: %w", e.ID, err)
@@ -122,6 +129,22 @@ func (m *Manager) ApplyEntity(ctx context.Context, e *entity.Entity) (*entity.Up
 		subjectFace = stored.Face
 	}
 
+	// The same face rule the other three create paths enforce
+	// (Manager.CreateEntity, ValidateCreate, cascadeHost.CreateEntity). On
+	// UPDATE the face is the stored one and already exists, so there is
+	// nothing to check; on CREATE a sync body could otherwise land a row at
+	// an undeclared face, or at the zero coordinate of a faced type — a row
+	// belonging to no declared face, which nothing can address and no grant
+	// covers. Fourth path, same rule, so the four cannot drift.
+	//
+	// Only when the type is DECLARED: an unknown type is validation's to
+	// report, and preempting it here would swap a ValidationError for a bare
+	// "unknown entity type" that callers cannot classify.
+	if _, known := m.deps.Meta.GetEntityDef(e.Type); known && op.aclOp == acl.OpCreate {
+		if err := m.deps.requireCreateFaceFor(e.Type, e.Face); err != nil {
+			return nil, err
+		}
+	}
 	if err := m.authorizeAndAudit(ctx, acl.WriteRequest{
 		Op:      op.aclOp,
 		Subject: acl.EntitySubject{Type: subjectType, ID: e.ID, Face: subjectFace},

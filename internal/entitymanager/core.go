@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"sort"
+	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -22,6 +24,11 @@ type createCoreOpts struct {
 	TemplateVariant string         // Template variant name (empty = default)
 	Properties      map[string]any // Properties to set (overrides template defaults)
 	Content         string         // Body content (overrides template content when non-empty)
+	// Face is the content state to write. Carried here rather than read off
+	// the caller's entity so the face this authorizes and the face it writes
+	// are provably the same value (BUG-HC6I2T: they were populated from
+	// different places, and only one was ever set).
+	Face entity.Face
 	// SkipIDGeneration tells [buildCandidateEntity] to skip real ID
 	// allocation when ID is empty and the type uses auto-IDs.
 	// [Manager.ValidateCreate] sets this so a per-keystroke dry-run does
@@ -157,6 +164,7 @@ func buildCandidateEntity(
 	}
 
 	e := entity.New(entityID, entityType)
+	e.Face = opts.Face
 
 	tmpl, err := deps.Templater.EntityTemplate(ctx, entityType, opts.TemplateVariant)
 	if err != nil {
@@ -235,12 +243,23 @@ func generateID(ctx context.Context, deps Deps, entityType, prefix string) (stri
 // ErrEntityAlreadyExists (a create never overwrites), so a truncated
 // scan would surface as a spurious conflict rather than data loss — but
 // fail loudly here regardless, so the generator is never fed bad data.
+// AllStates, then deduped by bare id. Without it the scan sees only
+// zero-coordinate rows, which a type declaring faces has none of — so the
+// generator saw an EMPTY id set for such a type and minted the same id for
+// every entity of it (BUG-HC6I2T). Counting a family once is what the query
+// used to get from the zero coordinate; with no face privileged, dedup is
+// what provides it.
 func collectAllIDs(ctx context.Context, st store.Store) ([]string, error) {
+	seen := make(map[string]struct{})
 	ids := make([]string, 0)
-	for e, err := range st.ListEntities(ctx, store.EntityQuery{}) {
+	for e, err := range st.ListEntities(ctx, store.EntityQuery{AllStates: true}) {
 		if err != nil {
 			return nil, err
 		}
+		if _, dup := seen[e.ID]; dup {
+			continue
+		}
+		seen[e.ID] = struct{}{}
 		ids = append(ids, e.ID)
 	}
 	return ids, nil
@@ -298,4 +317,105 @@ func findExistingRelationTarget(
 		}
 	}
 	return nil
+}
+
+// requireCreateFaceFor enforces that a create names exactly the faces its type
+// declares: one of them for a faced type, none for a faceless one.
+//
+// The rule is symmetric on purpose. A faced type has no zero-coordinate row to
+// default to, and a faceless type has no name for the single state it does
+// store, so in both directions the only safe answer is to refuse rather than
+// pick. Reads still resolve a bare address through the world chain; a WRITE
+// never does, because a chain answers with a fallback and a write must name
+// the row it changes (BUG-HC6I2T).
+func (d Deps) requireCreateFaceFor(entityType string, face entity.Face) error {
+	def, ok := d.Meta.GetEntityDef(entityType)
+	if !ok {
+		return fmt.Errorf("unknown entity type: %s", entityType)
+	}
+	if len(def.Faces) == 0 {
+		if !face.IsDefault() {
+			return fmt.Errorf("%w: %s declares no faces, so %q names nothing",
+				ErrFaceNotDeclared, entityType, face)
+		}
+		return nil
+	}
+	if face.IsDefault() {
+		return fmt.Errorf("%w: %s declares %s", ErrFaceRequired,
+			entityType, strings.Join(sortedFaceNames(def), ", "))
+	}
+	if _, declared := def.Faces[face.String()]; !declared {
+		return fmt.Errorf("%w: %s declares %s, not %q", ErrFaceNotDeclared,
+			entityType, strings.Join(sortedFaceNames(def), ", "), face)
+	}
+	return nil
+}
+
+// sortedFaceNames lists a type's declared faces in a stable order, so an
+// error message names them the same way twice.
+func sortedFaceNames(def *metamodel.EntityDef) []string {
+	names := make([]string, 0, len(def.Faces))
+	for name := range def.Faces {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// anyFaceOf returns any stored row of an entity, for the checks that ask a
+// question every face of a family answers the same way — its TYPE.
+//
+// Relation endpoints are the motivating case. A relation attaches to the
+// ENTITY, not to one of its content states (`scope: identity`), so validating
+// `from`/`to` needs the family's type and nothing face-specific. Reading that
+// with Store.GetEntity asks the ZERO coordinate, where a type declaring faces
+// stores no row at all — so every relation touching a faced entity reported
+// the entity as missing (BUG-HC6I2T).
+//
+// Prefers the addressed row when `id` carries a face, so a caller who named
+// one is answered about it; otherwise takes the first row the family has.
+// Which row that is does not matter: the callers use only the type, and every
+// state of a family shares it (the store refuses a divergent one).
+//
+// FAILS CLOSED. Only a genuine [store.ErrNotFound] falls through to the next
+// lookup; any other error is returned as-is. Swallowing a transient backend
+// error here would report the entity as missing, and every caller's not-found
+// branch skips the ACL check by design (existence is itself a secret), so a
+// store hiccup would turn an ACL-gated operation into an ungated one — the
+// defect TestRename_FailsClosedOnNonNotFoundFetchError pins.
+//
+// Nil: never returned with a nil error.
+func anyFaceOf(ctx context.Context, st store.Store, id string) (*entity.Entity, error) {
+	e, err := st.GetEntity(ctx, id)
+	if err == nil {
+		return e, nil
+	}
+	if !errors.Is(err, store.ErrNotFound) {
+		return nil, err
+	}
+	base, face, perr := entity.ParseStateRef(id)
+	if perr == nil && !face.IsDefault() {
+		faced, serr := st.GetEntityState(ctx, base, face)
+		if serr == nil {
+			return faced, nil
+		}
+		if !errors.Is(serr, store.ErrNotFound) {
+			return nil, serr
+		}
+	} else {
+		base = id
+	}
+	// IDs-scoped, never a full scan: this runs on the relation write path,
+	// once per endpoint, and an unbounded scan there is the per-row lookup
+	// the collection-read rules exist to prevent.
+	q := store.EntityQuery{IDs: []string{base}, AllStates: true}
+	for e, err := range st.ListEntities(ctx, q) {
+		if err != nil {
+			return nil, err
+		}
+		if e.ID == base {
+			return e, nil
+		}
+	}
+	return nil, store.ErrNotFound
 }

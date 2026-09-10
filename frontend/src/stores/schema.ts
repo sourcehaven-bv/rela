@@ -176,25 +176,16 @@ export const useSchemaStore = defineStore('schema', () => {
   // this labels a face the client only knows from the TYPE — the return-to-
   // default button has to say "Go to English" before fetching anything.
   //
-  // The zero coordinate resolves through the `default: true` face, which is
-  // the case worth stating: a naive `faces['']` lookup finds nothing, so
-  // the default face would render unlabelled while every sibling is labelled.
-  //
-  // Returns '' when the type declares no name for that coordinate — a type
-  // with no `faces:` at all, or one that names no `bare_face`. The
-  // caller supplies its own last-resort wording; inventing "default" here
-  // would put a UI word in a schema lookup.
+  // Returns '' for the zero coordinate: a type declaring faces stores no row
+  // there (BUG-HC6I2T), and a type declaring none has no name for its single
+  // state. The caller supplies its own last-resort wording; inventing
+  // "default" here would put a UI word in a schema lookup.
   const faceLabel = computed(() => (entityType: string, face: string) => {
     const def = entityTypes.value.get(entityType)
     const faces = def?.faces
     if (!faces) return face
-    // The empty coordinate is the bare-id row, and the type says which
-    // declared name refers to it. This used to scan for a `default` flag on
-    // each face, which meant the answer depended on key order if two ever
-    // carried it; `bare_face` is a single field and cannot.
-    const declared = face || def?.bare_face || ''
-    if (!declared) return ''
-    return faces[declared]?.label || declared
+    if (!face) return ''
+    return faces[face]?.label || face
   })
   const getRelationType = computed(() => (name: string) => relationTypes.value.get(name))
   // Look up a relation type's inverse name (e.g., "blocks" → "blockedBy").

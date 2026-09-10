@@ -243,7 +243,6 @@ const notEditableNote = computed(() => {
   if (!face) return ''
   return worldText(faces?.[face]?.messages?.read_only, {
     face: faces?.[face]?.label || face,
-    bare_face: schemaStore.faceLabel(type, ''),
     world: worldParam.value ?? '',
     title: notEditableTitle.value,
   })

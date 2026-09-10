@@ -12,17 +12,27 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store/pgstore"
 )
 
-// TestDeleteEntity_RacingStateCreateLeavesNoHeadlessFace pins the family
-// delete's row lock. Before it, DeleteEntity scanned the family on a READ
-// COMMITTED snapshot while CreateEntity's FOR SHARE probe let a state create
-// commit in the window, so PAGE-k vanished and PAGE-k@draft survived headless.
+// TestDeleteEntity_RacingStateCreateLeavesNoHeadlessFace pinned the family
+// delete against a racing state create. Its assertion — that NO row of the id
+// survives — held because of the HEADLESS-STATE rule: a create landing after
+// the delete found no zero-coordinate row and was refused.
 //
-// With the bare row locked FOR UPDATE the two serialize: the create either
-// commits first and is swept with the family, or waits and then finds no
-// family (refused as headless). Either way NO row of the id remains. The
-// interleaving is driven by real concurrency rather than a scripted replay,
-// so the case is repeated; a single leaked row fails it.
+// BUG-HC6I2T removed that rule (no face is privileged by storage), so the
+// refusal is gone. The interleaving half is now covered by lockFamily's
+// advisory lock, which is what this test was really protecting: no row can
+// land between the delete's family scan and its sweep.
+//
+// What is left is a semantic question, not a locking one — whether a create
+// that wins the lock and finds the family absent is a NEW entity reusing a
+// freed id (the current answer) or should be refused. Skipped rather than
+// rewritten, because the assertion depends on that decision. BUG-22XSH3
+// carries it, along with the sharper half: the version-lineage fence is built
+// from `rename` rows only, so ANY id reuse after a delete inherits the deleted
+// entity's history.
 func TestDeleteEntity_RacingStateCreateLeavesNoHeadlessFace(t *testing.T) {
+	t.Skip("BUG-22XSH3: asserts the headless rule removed by BUG-HC6I2T; " +
+		"what should replace it is an open decision")
+
 	pool := newScopedPool(t)
 	s, err := pgstore.New(pool)
 	require.NoError(t, err)

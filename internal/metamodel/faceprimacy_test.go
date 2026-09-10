@@ -24,7 +24,6 @@ entities:
   guide:
     label: Guide
     id_prefix: GUIDE
-    bare_face: en
     faces:
       en: {}
       nl: {}
@@ -150,13 +149,11 @@ entities:
   guide:
     label: Guide
     id_prefix: GUIDE
-    bare_face: en
     faces: {en: {}, nl: {}}
     properties: {title: {type: string}}
   policy:
     label: Policy
     id_prefix: POL
-    bare_face: en
     faces: {en: {}, nl: {}}
     properties: {title: {type: string}}
 worlds:
@@ -188,13 +185,11 @@ entities:
   guide:
     label: Guide
     id_prefix: GUIDE
-    bare_face: en
     faces: {en: {}, nl: {}}
     properties: {title: {type: string}}
   policy:
     label: Policy
     id_prefix: POL
-    bare_face: en
     faces: {en: {}, nl: {}}
     properties: {title: {type: string}}
 worlds:

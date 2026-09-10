@@ -1327,7 +1327,7 @@ func (svc affordanceService) computeFaces(
 	}
 	current := e.Face.String()
 	for name := range def.Faces {
-		stored := metamodel.StoredFace(m, e.Type, name)
+		stored := name
 		if stored == current {
 			continue // the face being served is not somewhere else to go
 		}
@@ -1351,15 +1351,14 @@ func (svc affordanceService) computeFaces(
 		out = append(out, v1.Face{
 			Face:  stored,
 			Label: metamodel.FaceLabel(m, e.Type, stored),
-			Ref:   faceRef(m, e, stored),
+			Ref:   faceRef(e, stored),
 		})
 	}
 	// Sorted by the DECLARED name, not the label: the order must not shuffle
 	// when an operator edits display text, and a label is optional so sorting
 	// by it would interleave labeled and unlabeled faces arbitrarily.
 	sort.Slice(out, func(i, j int) bool {
-		return metamodel.DeclaredFace(m, e.Type, out[i].Face) <
-			metamodel.DeclaredFace(m, e.Type, out[j].Face)
+		return out[i].Face < out[j].Face
 	})
 	return out
 }
@@ -1374,8 +1373,8 @@ func bareSelfHref(self string) string {
 // faceRef spells the explicit address of e's face at the stored coordinate:
 // `ID@<declared name>`, or the bare id when the coordinate has no declared
 // name. See [v1.Face.Ref].
-func faceRef(m *metamodel.Metamodel, e *entityPkg.Entity, stored string) string {
-	declared := metamodel.DeclaredFace(m, e.Type, stored)
+func faceRef(e *entityPkg.Entity, stored string) string {
+	declared := stored
 	if declared == "" {
 		return e.ID
 	}

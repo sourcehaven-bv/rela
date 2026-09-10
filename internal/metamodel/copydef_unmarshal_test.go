@@ -42,7 +42,6 @@ entities:
   page:
     label: Page
     id_prefix: PAGE
-    bare_face: draft
     faces:
       draft: {}
       published: {}
@@ -174,7 +173,6 @@ entities:
   page:
     label: Page
     id_prefix: PAGE
-    bare_face: draft
     faces:
       draft: {}
       review: {}
@@ -263,7 +261,6 @@ entities:
   page:
     label: Page
     id_prefix: PAGE
-    bare_face: en
     faces:
       en: {label: English}
       nl: {label: Nederlands, messages: {read_only: "Alleen lezen"}}
@@ -281,12 +278,10 @@ entities:
 
 	// Labels are asserted on BOTH entries with different values, so a mix-up
 	// that copied one entry over the other shows up as a wrong label rather
-	// than passing. `bare_face` lives on the entity, not the face, so it is
-	// checked there.
+	// than passing.
 	checks := map[string]bool{
-		"EntityDef.BareFace": def.BareFace == "en",
-		"Label":              def.Faces["en"].Label == "English" && def.Faces["nl"].Label == "Nederlands",
-		"Messages":           def.Faces["nl"].Messages.ReadOnly == "Alleen lezen" && def.Faces["en"].Messages.ReadOnly == "",
+		"Label":    def.Faces["en"].Label == "English" && def.Faces["nl"].Label == "Nederlands",
+		"Messages": def.Faces["nl"].Messages.ReadOnly == "Alleen lezen" && def.Faces["en"].Messages.ReadOnly == "",
 	}
 	for name, ok := range checks {
 		if !ok {
@@ -301,11 +296,11 @@ entities:
 }
 
 // TestFaceLabel resolves display text for a face from the STORED coordinate,
-// which is what every caller has in hand.
+// which is what every caller has in hand. A face's declared name IS its
+// stored coordinate, so the lookup is direct.
 //
-// The default-face case is the one worth pinning: `en` is stored under the
-// ZERO coordinate, so a naive lookup of `Faces[""]` finds nothing and the
-// English face renders unlabeled while every other face is labeled.
+// The zero coordinate is the case worth pinning: it names no face at all, so
+// it has no label. Only a type declaring no faces stores a row there.
 func TestFaceLabel(t *testing.T) {
 	t.Parallel()
 
@@ -315,7 +310,6 @@ entities:
   page:
     label: Page
     id_prefix: PAGE
-    bare_face: en
     faces:
       en: {label: English}
       nl: {label: Nederlands}
@@ -339,10 +333,11 @@ entities:
 		stored     string
 		want       string
 	}{
-		{"default face resolves through the default-marked face", "page", "", "English"},
-		{"labeled non-default face", "page", "nl", "Nederlands"},
+		{"labeled face resolves to its label", "page", "en", "English"},
+		{"a second labeled face", "page", "nl", "Nederlands"},
 		{"unlabeled face falls back to the declared name", "page", "fr", "fr"},
-		{"type without faces has no name for its default state", "ticket", "", ""},
+		{"the zero coordinate names no face, so it has no label", "page", "", ""},
+		{"type without faces has no name for its single state", "ticket", "", ""},
 		{"unknown entity type", "nope", "nl", "nl"},
 		{"undeclared coordinate is still displayable", "page", "de", "de"},
 	}

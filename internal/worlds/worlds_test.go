@@ -27,7 +27,6 @@ entities:
     label: Page
     id_prefix: PAGE
     properties: {title: {type: string}}
-    bare_face: draft
     faces:
       draft: {}
       published: {}
@@ -35,7 +34,6 @@ entities:
     label: Policy
     id_prefix: POL
     properties: {title: {type: string}}
-    bare_face: draft
     faces:
       draft: {}
       review: {}
@@ -61,18 +59,6 @@ func ptr(t *testing.T, s string) entity.Face {
 	require.NoError(t, err)
 	return p
 }
-
-// defaultCoord is the coordinate a `bare_face` face compiles to: the
-// ZERO face, because a default-marked state is the one the bare id
-// addresses (design doc §2.1). Deliberately NOT expressible via ptr() —
-// entity.ParseFace rejects the empty string, which is why a test that
-// reached for ptr("draft") to describe a default coordinate was describing
-// something that cannot exist in storage (BUG-DFLTCHAIN).
-//
-// Spelled as a named constant rather than a bare "" at each site so the
-// assertion reads as a claim about DEFAULTNESS rather than as an empty value
-// someone might tidy away.
-const defaultCoord = entity.Face("")
 
 // TestCompile_FacelessProjectIsTheDefaultWorld pins AC1 and the whole
 // compatibility story: a metamodel with no worlds and no faces yields
@@ -138,17 +124,13 @@ func TestCompile_ChainsAndFallback(t *testing.T) {
 		// but the per-type override (`page: draft`) replaces that chain
 		// entirely.
 		//
-		// The override names `draft`, which page marks `bare_face`, so it
-		// compiles to the ZERO coordinate — not to the literal name. That is
-		// BUG-DFLTCHAIN: this assertion previously expected ptr("draft"), a
-		// coordinate no page row can ever carry, so the override selected
-		// nothing and every page fell through to `otherwise`. The world read
-		// as configured and resolved as if it were not.
+		// The override names `draft` and the chain carries `draft`: a face's
+		// declared name IS its stored coordinate, so the compiled chain is
+		// the name as written.
 		res, ok = scope.For("page")
 		require.True(t, ok)
-		assert.Equal(t, []entity.Face{defaultCoord}, res.Chain,
-			"the override replaces the global chain, it does not extend it — "+
-				"and `draft` is page's default, so it addresses the zero coordinate")
+		assert.Equal(t, []entity.Face{ptr(t, "draft")}, res.Chain,
+			"the override replaces the global chain, it does not extend it")
 	})
 
 	t.Run("rule 3: otherwise compiles to the fallback verdict", func(t *testing.T) {
@@ -178,7 +160,6 @@ entities:
     label: Memo
     id_prefix: MEMO
     properties: {title: {type: string}}
-    bare_face: draft
     faces:
       draft: {}
       archived: {}
@@ -186,7 +167,6 @@ entities:
     label: Note
     id_prefix: NOTE
     properties: {title: {type: string}}
-    bare_face: draft
     faces:
       draft: {}
       published: {}
@@ -237,18 +217,6 @@ worlds:
 // TestCompile_ChainDedup pins that a repeated coordinate collapses rather
 // than being ranked twice (design doc §4.5's dedup rule, which applies
 // even without templates).
-//
-// It ALSO pins the default-coordinate mapping, because `draft` here is
-// `bare_face`. This test previously expected the literal ptr("draft") and
-// so DEFENDED BUG-DFLTCHAIN: a chain entry no row could match, under
-// `otherwise: exclude`, silently removing every draft-only page from a world
-// that had explicitly selected drafts. A bug with a passing test guarding it
-// is worse than a bare bug — the test is what a future reader trusts — so the
-// old expectation is recorded here rather than quietly swapped.
-//
-// Dedup and the mapping interact: dedup runs AFTER mapping (see
-// resolveChain), so two names collapsing onto the same coordinate collapse
-// correctly. That is why this test can carry both properties at once.
 func TestCompile_ChainDedup(t *testing.T) {
 	c, err := worlds.Compile(parseSchema(t, `version: "1.0"
 namespace: https://example.org/test#
@@ -257,7 +225,6 @@ entities:
     label: Page
     id_prefix: PAGE
     properties: {title: {type: string}}
-    bare_face: draft
     faces:
       draft: {}
       published: {}
@@ -271,9 +238,8 @@ worlds:
 	require.True(t, ok)
 	res, ok := scope.For("page")
 	require.True(t, ok)
-	assert.Equal(t, []entity.Face{ptr(t, "published"), defaultCoord}, res.Chain,
-		"`published` is an ordinary coordinate; `draft` is this type's default "+
-			"and so addresses the zero coordinate")
+	assert.Equal(t, []entity.Face{ptr(t, "published"), ptr(t, "draft")}, res.Chain,
+		"the repeated `published` collapses to one entry and keeps its first position")
 }
 
 // TestCompile_RejectsBadFaceGrammar pins that the face grammar is
@@ -378,7 +344,6 @@ entities:
     label: Page
     id_prefix: PAGE
     properties: {title: {type: string}}
-    bare_face: Draft
     faces:
       Draft: {}
       published: {}

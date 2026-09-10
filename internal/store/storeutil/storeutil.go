@@ -287,16 +287,15 @@ func SortedRemove(s []string, key string) []string {
 	return slices.Delete(s, i, i+1)
 }
 
-// HeadlessStateError is the shared rejection for creating a non-default
-// state with no default row (TKT-DOFYR1, design doc §6). One string
-// across all backends so the contract cannot drift per backend.
-func HeadlessStateError(id string) error {
-	return fmt.Errorf("%w: entity %s has no default state; a state row cannot exist headless",
-		store.ErrNotFound, id)
-}
-
 // StateTypeMismatchError is the shared rejection for a state whose type
 // diverges from its family's (TKT-DOFYR1, design doc §6).
+//
+// The family invariant that survived BUG-HC6I2T. Its companion rule — "a
+// non-default state requires the DEFAULT row" — went with the bare face: it
+// made the zero coordinate a family's mandatory head, so a faced type could
+// not store its first state without first storing a row belonging to no
+// face. A family is now simply the rows sharing an id, and any one of them
+// answers what type they are.
 func StateTypeMismatchError(id string, p entity.Face, got, want string) error {
 	return fmt.Errorf("state %s@%s type %q does not match the entity's type %q", id, p, got, want)
 }

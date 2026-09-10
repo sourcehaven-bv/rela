@@ -121,11 +121,9 @@ func CopiesForSource(
 		if from.Type != entityType {
 			continue
 		}
-		// Compare STORED coordinates, not declared names: the `bare_face` IS
-		// the zero face, so `policy@draft` and `policy` address the same face
-		// when draft is bare. Comparing the declared strings would offer a
-		// promote button on the wrong face.
-		if metamodel.StoredFace(m.deps.Meta, from.Type, from.Face) != face {
+		// A face's declared name IS its stored coordinate (BUG-HC6I2T), so
+		// the `copies:` spelling compares directly against the row's face.
+		if from.Face != face {
 			continue
 		}
 		// Filtered before authorization, never probed — see the type doc.

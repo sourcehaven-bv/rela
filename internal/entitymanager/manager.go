@@ -731,9 +731,17 @@ func (m *Manager) CreateEntity(
 	if e == nil {
 		return nil, errors.New("entitymanager: CreateEntity: entity is nil")
 	}
+	// The face is taken from opts, NOT from e — the same value createCore
+	// writes below. Reading it off the caller's carrier entity is what made
+	// the authorized face and the written face two different things
+	// (BUG-HC6I2T); e.Face was structurally always zero, so the check
+	// answered about a row the write never touched.
+	if err := m.deps.requireCreateFaceFor(e.Type, opts.Face); err != nil {
+		return nil, err
+	}
 	if err := m.authorizeAndAudit(ctx, acl.WriteRequest{
 		Op:      acl.OpCreate,
-		Subject: acl.EntitySubject{Type: e.Type, ID: opts.ID, Face: e.Face},
+		Subject: acl.EntitySubject{Type: e.Type, ID: opts.ID, Face: opts.Face},
 	}); err != nil {
 		return nil, err
 	}
@@ -754,6 +762,7 @@ func (m *Manager) CreateEntity(
 		TemplateVariant: opts.Variant,
 		Properties:      e.Properties,
 		Content:         e.Content,
+		Face:            opts.Face,
 	})
 	if err != nil {
 		return nil, err
@@ -861,12 +870,19 @@ func (m *Manager) ValidateCreate(
 	if e == nil {
 		return nil, nil, errors.New("entitymanager: ValidateCreate: entity is nil")
 	}
+	// The face check runs here too, or the dry-run would report a create
+	// clean that the real one refuses — the drift this function exists to
+	// prevent (it shares buildCandidateEntity for exactly that reason).
+	if err := m.deps.requireCreateFaceFor(e.Type, opts.Face); err != nil {
+		return nil, nil, err
+	}
 	return buildCandidateEntity(ctx, m.deps, e.Type, createCoreOpts{
 		ID:              opts.ID,
 		IDPrefix:        opts.Prefix,
 		TemplateVariant: opts.Variant,
 		Properties:      e.Properties,
 		Content:         e.Content,
+		Face:            opts.Face,
 		// Skip the full-store scan generateID would do — dry-run runs
 		// per debounced keystroke and a real ID is not needed for
 		// validation. RR-8I07.
@@ -914,8 +930,19 @@ func (m *Manager) UpdateEntity(ctx context.Context, e *entity.Entity) (*entity.U
 		return nil, newValidationError(hard)
 	}
 
-	oldEntity, getErr := m.deps.Store.GetEntity(ctx, e.ID)
+	// The pre-image is read at the face this write AUTHORIZED against, not
+	// at the zero coordinate. GetEntity(id) is GetEntityState(id, zero), so
+	// the old spelling decided against e.Face and then read a different row
+	// — the same authorize-here/write-there split BUG-HC6I2T removed from
+	// the create path, and on a faced type it simply never found anything.
+	oldEntity, getErr := m.deps.Store.GetEntityState(ctx, e.ID, e.Face)
 	if getErr != nil {
+		// Fails closed: only a genuine miss is reported as missing, so a
+		// transient store error cannot reach the not-found branch that
+		// returns before authorizing.
+		if !errors.Is(getErr, store.ErrNotFound) {
+			return nil, getErr
+		}
 		return nil, fmt.Errorf("%w: %s", ErrEntityNotFound, e.ID)
 	}
 	if err := rejectComputedChanges(m.deps, oldEntity, e); err != nil {
@@ -1311,8 +1338,21 @@ func (m *Manager) deleteEntityInTx(
 // entity has any incident relations, returns [ErrHasRelations]
 // without deleting anything.
 func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*entity.DeleteResult, error) {
-	current, err := m.deps.Store.GetEntity(ctx, id)
+	// anyFaceOf, not GetEntity: a delete addresses the whole FAMILY, and
+	// GetEntity(id) is GetEntityState(id, zero) — a coordinate a type
+	// declaring faces has no row at, so every faced entity was undeletable
+	// (BUG-HC6I2T). Only the type and face are read from the result, and the
+	// type is the same at every face.
+	//
+	// Fails closed on a non-not-found error: collapsing every failure into
+	// ErrEntityNotFound would let a transient store error skip the ACL check
+	// below, since that branch returns before authorizing (existence is
+	// itself a secret). Only a genuine miss is reported as missing.
+	current, err := anyFaceOf(ctx, m.deps.Store, id)
 	if err != nil {
+		if !errors.Is(err, store.ErrNotFound) {
+			return nil, err
+		}
 		return nil, fmt.Errorf("%w: %s", ErrEntityNotFound, id)
 	}
 	// ACL check happens after the lookup so the request carries the
@@ -1511,6 +1551,10 @@ func (m *Manager) DeleteEntityFace(
 	}
 	current, err := m.deps.Store.GetEntityState(ctx, id, face)
 	if err != nil {
+		// Fails closed, as in DeleteEntity: the ACL check is below.
+		if !errors.Is(err, store.ErrNotFound) {
+			return nil, err
+		}
 		return nil, fmt.Errorf("%w: %s", ErrEntityNotFound, entity.FormatStateRef(id, face))
 	}
 	if aclErr := m.authorizeAndAudit(ctx, acl.WriteRequest{
@@ -1595,7 +1639,13 @@ func (m *Manager) RenameEntity(
 	//     Proceeding would run the rename with NO authorization at all —
 	//     a store read that flakes must not turn an ACL-gated operation
 	//     into an ungated one.
-	current, getErr := m.deps.Store.GetEntity(ctx, oldID)
+	// anyFaceOf, not GetEntity: a rename re-keys the whole family, and
+	// GetEntity asks the zero coordinate — which a faced type has no row at.
+	// That put every faced rename on the not-found branch below, and that
+	// branch SKIPS AUTHORIZATION by design, so the rename ran ungated
+	// (BUG-HC6I2T). The fail-closed reasoning below only holds if a present
+	// entity is actually found.
+	current, getErr := anyFaceOf(ctx, m.deps.Store, oldID)
 	switch {
 	case getErr == nil:
 		if aclErr := m.authorizeAndAudit(ctx, acl.WriteRequest{
@@ -1729,7 +1779,7 @@ func (m *Manager) CreateRelation(
 	// yet), mirroring UpdateRelation/DeleteRelation. Authorization must be
 	// decided from inputs that don't depend on peer existence.
 	var fromType string
-	if fromEntity, ferr := m.deps.Store.GetEntity(ctx, from); ferr == nil {
+	if fromEntity, ferr := anyFaceOf(ctx, m.deps.Store, from); ferr == nil {
 		fromType = fromEntity.Type
 	}
 	if aclErr := m.authorizeAndAudit(ctx, acl.WriteRequest{
@@ -1742,12 +1792,24 @@ func (m *Manager) CreateRelation(
 		return nil, aclErr
 	}
 
-	fromEntity, err := m.deps.Store.GetEntity(ctx, from)
+	// anyFaceOf, not GetEntity: an endpoint is an ENTITY and only its type is
+	// read here, so asking the zero coordinate would report every faced
+	// entity as missing (BUG-HC6I2T).
+	//
+	// Both fail closed: a transient store error must not be reported as a
+	// missing endpoint, which would read as an ordinary validation refusal.
+	fromEntity, err := anyFaceOf(ctx, m.deps.Store, from)
 	if err != nil {
+		if !errors.Is(err, store.ErrNotFound) {
+			return nil, err
+		}
 		return nil, fmt.Errorf("source %w: %s", ErrEntityNotFound, from)
 	}
-	toEntity, err := m.deps.Store.GetEntity(ctx, to)
+	toEntity, err := anyFaceOf(ctx, m.deps.Store, to)
 	if err != nil {
+		if !errors.Is(err, store.ErrNotFound) {
+			return nil, err
+		}
 		return nil, fmt.Errorf("target %w: %s", ErrEntityNotFound, to)
 	}
 	if vErr := m.deps.Meta.ValidateRelation(relType, fromEntity.Type, toEntity.Type); vErr != nil {
@@ -1813,7 +1875,7 @@ func (m *Manager) UpdateRelation(
 	// a soft not-found. The source type feeds the type-level grant check;
 	// it is best-effort (empty if the source doesn't exist).
 	var sourceType string
-	if fromEntity, ferr := m.deps.Store.GetEntity(ctx, from); ferr == nil {
+	if fromEntity, ferr := anyFaceOf(ctx, m.deps.Store, from); ferr == nil {
 		sourceType = fromEntity.Type
 	}
 	if aclErr := m.authorizeAndAudit(ctx, acl.WriteRequest{
@@ -1883,7 +1945,7 @@ func (m *Manager) DeleteRelation(ctx context.Context, from, relType, to string) 
 	// feeds the type-level grant check; it is best-effort (empty if the
 	// source doesn't exist).
 	var sourceType string
-	if fromEntity, ferr := m.deps.Store.GetEntity(ctx, from); ferr == nil {
+	if fromEntity, ferr := anyFaceOf(ctx, m.deps.Store, from); ferr == nil {
 		sourceType = fromEntity.Type
 	}
 	if aclErr := m.authorizeAndAudit(ctx, acl.WriteRequest{

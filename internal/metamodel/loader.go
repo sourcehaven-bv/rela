@@ -246,7 +246,6 @@ func validate(m *Metamodel) error {
 	validationErrors = append(validationErrors, validateRelationScope(m)...)
 	validationErrors = append(validationErrors, validateTransforms(m)...)
 	validationErrors = append(validationErrors, validateCopies(m)...)
-	validationErrors = append(validationErrors, validateFaces(m)...)
 	validationErrors = append(validationErrors, validateWorlds(m)...)
 	validationErrors = append(validationErrors, validateValidationFaces(m)...)
 	validationErrors = append(validationErrors, validateAutomationFaces(m)...)
@@ -682,44 +681,6 @@ func validateRelationScope(m *Metamodel) []string {
 			errs = append(errs, fmt.Sprintf(
 				"relation %q: invalid scope value %q (allowed: identity, content)",
 				name, string(rel.Scope)))
-		}
-	}
-	return errs
-}
-
-// validateFaces checks the per-type `faces:` declarations
-// (TKT-WAV8XP, design doc §4.1): at most one `bare_face` per type.
-//
-// The face NAME grammar is deliberately NOT checked here. It belongs
-// to [github.com/Sourcehaven-BV/rela/internal/entity].ParseFace, and
-// this package must not import entity (arch-lint keeps entity a leaf);
-// internal/worlds applies it when compiling. See that package's Compile.
-func validateFaces(m *Metamodel) []string {
-	var errs []string
-	for _, typeName := range sortedKeys(m.Entities) {
-		def := m.Entities[typeName]
-		// `bare_face` must name a face this type declares. A typo would
-		// otherwise leave the bare-id row unnamed while the face the operator
-		// meant became a separate suffixed row — two rows where they intended
-		// one, and no error to say so.
-		//
-		// The old spelling was `bare_face` on each face, which needed a
-		// second check that at most one claimed it. A single key on the type
-		// cannot be set twice, so that check is gone rather than moved.
-		if def.BareFace == "" {
-			continue
-		}
-		if len(def.Faces) == 0 {
-			errs = append(errs, fmt.Sprintf(
-				"entity %q: `bare_face: %s` but the type declares no `faces:` — "+
-					"a type without faces has exactly one state and needs no name for it",
-				typeName, def.BareFace))
-			continue
-		}
-		if _, ok := def.Faces[def.BareFace]; !ok {
-			errs = append(errs, fmt.Sprintf(
-				"entity %q: `bare_face: %s` names no declared face (declares: %s)",
-				typeName, def.BareFace, strings.Join(sortedKeys(def.Faces), ", ")))
 		}
 	}
 	return errs

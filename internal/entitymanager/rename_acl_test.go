@@ -87,3 +87,39 @@ func TestRename_NotFoundStillReturnsTypedError(t *testing.T) {
 		t.Fatalf("expected ErrEntityNotFound, got %v", err)
 	}
 }
+
+// TestDelete_FailsClosedOnNonNotFoundFetchError pins the same fail-closed
+// property for DeleteEntity that the rename test pins for RenameEntity.
+//
+// Both resolve the target through anyFaceOf, whose first lookup is a plain
+// GetEntity. If a non-not-found error there were swallowed, the entity would
+// look missing, and the not-found branch skips the ACL check by design — so a
+// transient store error would silently turn an ACL-gated delete into an
+// ungated one. Rename had this test; delete did not, which is how the same
+// defect reached both paths at once during BUG-HC6I2T.
+func TestDelete_FailsClosedOnNonNotFoundFetchError(t *testing.T) {
+	sentinel := errors.New("boom: transient backend error")
+	st := &flakyGetStore{Store: memstore.New(), err: sentinel}
+
+	deps := entitymanager.Deps{
+		Store:       st,
+		Meta:        parseMeta(t),
+		Templater:   nopTemplater{},
+		Audit:       audit.Nop{},
+		ACL:         acl.ReadOnlyACL{},
+		Transitions: statemachine.EmptySet(),
+		FieldGate:   entitymanager.AllowAllFieldGate{},
+	}
+	mgr, err := entitymanager.New(deps)
+	if err != nil {
+		t.Fatalf("entitymanager.New: %v", err)
+	}
+
+	_, err = mgr.DeleteEntity(context.Background(), "REQ-1", false)
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("expected the underlying fetch error to surface, got %v", err)
+	}
+	if got := st.deletes.Load(); got != 0 {
+		t.Errorf("delete mutated the store despite a failed pre-fetch: %d delete calls", got)
+	}
+}

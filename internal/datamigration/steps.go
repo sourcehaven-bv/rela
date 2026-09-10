@@ -235,18 +235,11 @@ func (s *renameFaceStep) Validate(from, to metamodel.ShapeProjection) error {
 	if !faceInShape(to, s.Entity, s.To) {
 		return fmt.Errorf("entity %q declares no face %q in the to-schema", s.Entity, s.To)
 	}
-	s.fromStored = storedFaceIn(from, s.Entity, s.From)
-	s.toStored = storedFaceIn(to, s.Entity, s.To)
-	if s.fromStored == "" && s.toStored != "" {
-		// The bare face is a family's identity row: every store refuses to
-		// delete it while sibling faces remain, so "move the bare rows to a
-		// named coordinate" fails on the first entity with a sibling and
-		// leaves a duplicate behind. Renaming the bare face away is a change
-		// to `bare_face:` plus a family rewrite, not a row move.
-		return fmt.Errorf("entity %q: face %q is the bare face; it cannot be renamed to a "+
-			"named coordinate by moving rows — change `bare_face:` in the schema instead",
-			s.Entity, s.From)
-	}
+	// A face's declared name IS its stored coordinate (BUG-HC6I2T), so both
+	// sides are the names the schemas declare. There is no bare-face case to
+	// special-case: every face this step can name is a named row.
+	s.fromStored = s.From
+	s.toStored = s.To
 	return nil
 }
 
@@ -267,16 +260,8 @@ func (s *renameFaceStep) Validate(from, to metamodel.ShapeProjection) error {
 // counts as already moved, and only the source is deleted — which is the
 // idempotence the engine requires of every step.
 //
-// # The bare face is the asymmetric case
-//
-// The face named by `bare_face:` is stored as the ZERO coordinate, not under
-// its own name, so renaming to or from it moves rows between the zero
-// coordinate and a named one. Both sides are resolved through the schema that
-// declares them (from-side against the from-shape, to-side against the
-// to-shape) in Validate. When the two resolve to the SAME coordinate the rename
-// is a no-op in storage terms — a face that was already bare being renamed while
-// staying bare — and the step does nothing rather than deleting the row it just
-// re-created.
+// A rename to the same name is a no-op in storage terms, and the step does
+// nothing rather than deleting the row it just re-created.
 func (s *renameFaceStep) Run(ctx context.Context, x *Exec) (StepResult, error) {
 	res := StepResult{Kind: s.Kind(), Target: s.Target()}
 	if s.fromStored == s.toStored {
@@ -345,21 +330,6 @@ func faceInShape(p metamodel.ShapeProjection, typ, face string) bool {
 		return false
 	}
 	return slices.Contains(es.Faces, face)
-}
-
-// storedFaceIn maps a DECLARED face name to the coordinate it is stored under,
-// per the given shape: the type's `bare_face` stores as the empty string, every
-// other face under its own name.
-//
-// The shape-projection twin of metamodel.StoredFace, which needs a whole
-// *Metamodel a migration step does not have. It is derivable here because
-// ShapeProjection carries BareFace precisely so this question is answerable
-// from a migration file alone.
-func storedFaceIn(p metamodel.ShapeProjection, typ, declared string) string {
-	if es, ok := p.Entities[typ]; ok && es.BareFace == declared {
-		return ""
-	}
-	return declared
 }
 
 // ---- rename_relation_type ----

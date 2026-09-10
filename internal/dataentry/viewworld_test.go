@@ -285,7 +285,7 @@ func TestViewWorld_ProvenanceOnCollectionEntities(t *testing.T) {
 		ID: "FEAT-PUB", Type: "feature", Face: entity.Face("published"),
 	}
 
-	got := pub.provenanceFor(nil, face)
+	got := pub.provenanceFor(face)
 	if got == nil {
 		t.Fatal("a non-default world must label its faces — this block is the " +
 			"whole reason item 4b exists (RULING 14)")
@@ -301,7 +301,7 @@ func TestViewWorld_ProvenanceOnCollectionEntities(t *testing.T) {
 			got.Via, ruleChain)
 	}
 
-	if defaultViewWorld().provenanceFor(nil, face) != nil {
+	if defaultViewWorld().provenanceFor(face) != nil {
 		t.Error("the DEFAULT world must not label: every entity is its default " +
 			"state there by definition, so a block on every row of every " +
 			"existing view is noise — and implies a world was applied")
@@ -328,10 +328,10 @@ func TestViewWorld_ProvenanceDistinguishesFallbackFromChain(t *testing.T) {
 			},
 		})}
 
-	dutch := w.provenanceFor(nil, &entity.Entity{
+	dutch := w.provenanceFor(&entity.Entity{
 		ID: "FEAT-NL", Type: "feature", Face: entity.Face("nl"),
 	})
-	fallback := w.provenanceFor(nil, &entity.Entity{
+	fallback := w.provenanceFor(&entity.Entity{
 		ID: "FEAT-EN", Type: "feature", Face: entity.Face(""),
 	})
 

@@ -16,23 +16,23 @@ import (
 )
 
 // copyAuthzMeta declares the shapes the write-authorization tests need: a
-// same-entity copy INTO the bare face with no guard (legal to declare — only a
-// non-bare target makes the guard mandatory), the GUARDED counterpart of that
-// same shape, a guarded cross-entity copy, a cross-entity copy whose target
-// the caller names, and a `unique:` natural key.
+// same-entity copy whose target names NO face — the only same-entity shape
+// that is still legal to declare without a guard, since every named face
+// requires one (BUG-HC6I2T) — the GUARDED counterpart of that same shape, a
+// guarded cross-entity copy, a cross-entity copy whose target the caller
+// names, and a `unique:` natural key.
 const copyAuthzMeta = `
 version: "1"
 entities:
   page:
     label: Page
     id_prefix: PAGE
-    bare_face: draft
     faces:
       draft: {}
       published: {}
     properties:
       title: {type: string}
-      slug: {type: string, unique: true}
+      slug: {type: string}
   ticket:
     label: Ticket
     id_prefix: TKT
@@ -40,16 +40,45 @@ entities:
       title: {type: string}
       points: {type: integer}
       tags: {type: string, list: true}
+      slug: {type: string, unique: true}
   note:
     label: Note
     id_type: manual
     properties:
       title: {type: string}
+  mirror:
+    label: Mirror
+    id_prefix: MIR
+    faces:
+      draft: {}
+      published: {}
+    properties:
+      title: {type: string}
 copies:
+  # Targets no face, so it needs no guard to declare — and therefore gets no
+  # exemption from the ordinary write check. See TestCopy_UnguardedCopyNeedsUpdate.
   revert:
+    from: page@published
+    to: page
+    fields: all
+  # The guarded sibling, for the shapes that need a real face target.
+  revert-draft:
     from: page@published
     to: page@draft
     fields: all
+    guard:
+      permission: revert-draft
+  # CROSS-ENTITY and face-targeting: a different TYPE, so it is not
+  # same-entity, but its target names a face and so carries a guard. This is
+  # the shape that isolates the IsSameEntity() clause of the write-check
+  # exemption. See TestCopy_GuardDoesNotOverruleACrossEntityWrite.
+  mirror-page:
+    from: page@published
+    to: mirror@published
+    fields:
+      title: "{{new.title}}"
+    guard:
+      permission: mirror-page
   # The atlas shape: the bare face is the ADOPTED text, and the only way to
   # change it is this guarded promote from the draft face.
   adopt:
@@ -87,9 +116,9 @@ copies:
       title: "{{new.title}}"
       points: "{{new.points}}"
       tags: "{{new.tags}}"
-  dup-page:
-    from: page
-    to: new page
+  dup-ticket:
+    from: ticket
+    to: new ticket
     fields:
       title: "{{new.title}}"
       slug: "{{new.slug}}"
@@ -148,23 +177,27 @@ func seedRaw(ctx context.Context, t *testing.T, st store.Store, e *entity.Entity
 	}
 }
 
-// TestCopy_IntoTheBareFaceNeedsUpdate is the hole an unguarded `revert`
-// definition opened: a same-entity copy INTO the bare face needs no guard to
-// declare, and the write check was skipped for every same-entity copy — so
-// under a read-only ACL, anyone who could read the published face could
-// overwrite the draft. Reverting the draft is editing the draft; it needs what
-// editing the draft needs.
-func TestCopy_IntoTheBareFaceNeedsUpdate(t *testing.T) {
+// TestCopy_UnguardedCopyNeedsUpdate is the hole an unguarded `revert`
+// definition opened: the write check was skipped for EVERY same-entity copy,
+// so under a read-only ACL anyone who could read the published face could
+// overwrite the target. A copy that carries no guard has nothing standing in
+// for the ordinary write grant, so it needs that grant.
+//
+// The exemption is keyed on the target naming a face, and since BUG-HC6I2T a
+// named face is unconditionally guarded at LOAD — so `revert`, which targets
+// no face, is exactly the shape that is declarable without a guard and must
+// therefore be authorized as an ordinary write.
+func TestCopy_UnguardedCopyNeedsUpdate(t *testing.T) {
 	ctx := context.Background()
 	mgr, st := newCopyAuthzManager(t, acl.ReadOnlyACL{})
-	seedRaw(ctx, t, st, &entity.Entity{ID: "PAGE-1", Type: "page", Properties: map[string]any{"title": "draft"}})
+	seedRaw(ctx, t, st, &entity.Entity{ID: "PAGE-1", Type: "page", Face: "draft",
+		Properties: map[string]any{"title": "draft"}})
 	seedRaw(ctx, t, st, &entity.Entity{ID: "PAGE-1", Type: "page", Face: "published",
 		Properties: map[string]any{"title": "PUBLISHED"}})
 
-	// Precondition: the ACL refuses a direct edit of the draft, so a
-	// successful revert below would be a write the principal could not make
-	// by hand.
-	if _, err := mgr.UpdateEntity(ctx, &entity.Entity{ID: "PAGE-1", Type: "page",
+	// Precondition: the ACL refuses a direct edit, so a successful revert
+	// below would be a write the principal could not make by hand.
+	if _, err := mgr.UpdateEntity(ctx, &entity.Entity{ID: "PAGE-1", Type: "page", Face: "draft",
 		Properties: map[string]any{"title": "x"}}); err == nil {
 		t.Fatal("precondition: ReadOnlyACL must refuse a direct update")
 	}
@@ -172,9 +205,9 @@ func TestCopy_IntoTheBareFaceNeedsUpdate(t *testing.T) {
 	_, err := mgr.CopyState(ctx, entitymanager.CopyRequest{Definition: "revert", SourceID: "PAGE-1"})
 	var forbidden *acl.ForbiddenError
 	if !errors.As(err, &forbidden) {
-		t.Fatalf("a copy into the bare face must be authorized as an UPDATE of it; got err=%v", err)
+		t.Fatalf("an UNGUARDED copy must be authorized as an ordinary write; got err=%v", err)
 	}
-	got, gerr := st.GetEntity(ctx, "PAGE-1")
+	got, gerr := st.GetEntityState(ctx, "PAGE-1", entity.Face("draft"))
 	if gerr != nil || got.Properties["title"] != "draft" {
 		t.Errorf("the draft must be untouched after a refused revert; got %v %v", got.Properties, gerr)
 	}
@@ -187,7 +220,8 @@ func TestCopy_IntoTheBareFaceNeedsUpdate(t *testing.T) {
 func TestCopy_GuardedFaceStaysExemptFromUpdate(t *testing.T) {
 	ctx := context.Background()
 	mgr, st := newCopyManager(t, nil, allowGuard{allow: true})
-	seedRaw(ctx, t, st, &entity.Entity{ID: "PAGE-1", Type: "page", Properties: map[string]any{"title": "draft"}})
+	seedRaw(ctx, t, st, &entity.Entity{ID: "PAGE-1", Type: "page", Face: "draft",
+		Properties: map[string]any{"title": "draft"}})
 	if _, err := mgr.CopyState(ctx, entitymanager.CopyRequest{Definition: "promote-page", SourceID: "PAGE-1"}); err != nil {
 		t.Fatalf("a guarded promote needs only its guard; got %v", err)
 	}
@@ -233,17 +267,24 @@ func TestCopy_TargetOfAnotherTypeIsRefused(t *testing.T) {
 	ctx := context.Background()
 	mgr, st := newCopyAuthzManager(t, acl.NopACL{})
 	seedRaw(ctx, t, st, &entity.Entity{ID: "TKT-1", Type: "ticket", Properties: map[string]any{"title": "src"}})
-	seedRaw(ctx, t, st, &entity.Entity{ID: "PAGE-9", Type: "page", Properties: map[string]any{"title": "a page"}})
+	// A FACELESS victim type: `spawn` targets `new ticket`, so its target
+	// tail is the zero coordinate and the probe reads the victim there. A
+	// faced type stores no row at that coordinate (BUG-HC6I2T), so the probe
+	// would read absent, take the create branch, and never reach the type
+	// check this test exists for. `note` takes manual ids, so the id below
+	// passes per-type validation on its own type.
+	seedRaw(ctx, t, st, &entity.Entity{ID: "NOTE-9", Type: "note",
+		Properties: map[string]any{"title": "a note"}})
 
 	_, err := mgr.CopyState(ctx, entitymanager.CopyRequest{
-		Definition: "spawn", SourceID: "TKT-1", TargetID: "PAGE-9",
+		Definition: "spawn", SourceID: "TKT-1", TargetID: "NOTE-9",
 	})
 	if !errors.Is(err, entitymanager.ErrCopyTargetTypeMismatch) {
 		t.Fatalf("want ErrCopyTargetTypeMismatch, got %v", err)
 	}
-	p, _ := st.GetEntity(ctx, "PAGE-9")
-	if p.Type != "page" {
-		t.Errorf("PAGE-9 must keep its type; got %q", p.Type)
+	p, _ := st.GetEntity(ctx, "NOTE-9")
+	if p.Type != "note" {
+		t.Errorf("NOTE-9 must keep its type; got %q", p.Type)
 	}
 }
 
@@ -254,7 +295,8 @@ func TestCopy_TargetIDShapeIsValidated(t *testing.T) {
 	ctx := context.Background()
 	mgr, st := newCopyAuthzManager(t, acl.NopACL{})
 	seedRaw(ctx, t, st, &entity.Entity{ID: "TKT-1", Type: "ticket", Properties: map[string]any{"title": "src"}})
-	seedRaw(ctx, t, st, &entity.Entity{ID: "PAGE-1", Type: "page", Properties: map[string]any{"title": "d"}})
+	seedRaw(ctx, t, st, &entity.Entity{ID: "PAGE-1", Type: "page", Face: "draft",
+		Properties: map[string]any{"title": "d"}})
 	seedRaw(ctx, t, st, &entity.Entity{ID: "PAGE-1", Type: "page", Face: "published",
 		Properties: map[string]any{"title": "p"}})
 
@@ -301,25 +343,35 @@ func TestCopy_SingleReferenceKeepsTheStoredValue(t *testing.T) {
 // view directly, so it was the one entry point that could persist a duplicate
 // natural key. It now runs the same structural checks a hand-written create
 // would.
+//
+// It uses the FACELESS `ticket` type deliberately. checkUniqueProperties scans
+// through store.ListEntities without EntityQuery.AllStates, which skips every
+// non-default row — so since BUG-HC6I2T removed the zero-coordinate row from
+// faced types, the scan sees nothing for `page` and the precondition below
+// would pass a create it should refuse. Written on `page` this test would be
+// VACUOUS: the copy would be refused for no reason, or not at all. The kernel
+// path under test is type-independent, so `ticket` pins it honestly; the
+// faced-type gap is a production defect, tracked separately.
 func TestCopy_TargetPassesUniqueAndValidation(t *testing.T) {
 	ctx := context.Background()
 	mgr, st := newCopyAuthzManager(t, acl.NopACL{})
-	seedRaw(ctx, t, st, &entity.Entity{ID: "PAGE-1", Type: "page",
+	seedRaw(ctx, t, st, &entity.Entity{ID: "TKT-1", Type: "ticket",
 		Properties: map[string]any{"title": "a", "slug": "same"}})
 
 	// Precondition: the ordinary create path refuses the duplicate.
-	if _, err := mgr.CreateEntity(ctx, &entity.Entity{ID: "PAGE-3", Type: "page",
-		Properties: map[string]any{"title": "b", "slug": "same"}}, entity.CreateOptions{}); err == nil {
+	if _, err := mgr.CreateEntity(ctx, &entity.Entity{ID: "TKT-3", Type: "ticket",
+		Properties: map[string]any{"title": "b", "slug": "same"}},
+		entity.CreateOptions{}); err == nil {
 		t.Fatal("precondition: CreateEntity must refuse a duplicate unique slug")
 	}
 
 	_, err := mgr.CopyState(ctx, entitymanager.CopyRequest{
-		Definition: "dup-page", SourceID: "PAGE-1", TargetID: "PAGE-2",
+		Definition: "dup-ticket", SourceID: "TKT-1", TargetID: "TKT-2",
 	})
 	if err == nil {
 		t.Fatal("a copy that would persist a duplicate unique slug must be refused")
 	}
-	if _, gerr := st.GetEntity(ctx, "PAGE-2"); !errors.Is(gerr, store.ErrNotFound) {
+	if _, gerr := st.GetEntity(ctx, "TKT-2"); !errors.Is(gerr, store.ErrNotFound) {
 		t.Errorf("no target may be written when validation refuses; got err=%v", gerr)
 	}
 }
@@ -498,5 +550,46 @@ func TestCopy_GuardDoesNotOverruleASameFaceCopy(t *testing.T) {
 	got, _ := st.GetEntity(ctx, "PAGE-1")
 	if got.Properties["title"] != "original" {
 		t.Errorf("the entity must be untouched; got %v", got.Properties)
+	}
+}
+
+// TestCopy_GuardDoesNotOverruleACrossEntityWrite isolates the IsSameEntity()
+// half of the write-check exemption.
+//
+// The exemption exists because nobody holds `update` on a guarded face by
+// design, so requiring it would make every promote impossible — and the
+// definition's guard stands in its place. That reasoning depends on identity
+// being PRESERVED: the guard is evaluated against the SOURCE id, so it only
+// speaks for the entity it was asked about.
+//
+// A cross-entity copy breaks that. Its target is a different entity with its
+// own audience, and a guard held on the source says nothing about the right
+// to write the target. Without the IsSameEntity() clause a guarded cross-type
+// copy would write an entity the principal cannot write by hand, authorized
+// by a permission on somebody else's row.
+//
+// Mutation-checked: deleting `plan.def.IsSameEntity() &&` from authorizeCopy
+// fails this test and nothing else in the package.
+func TestCopy_GuardDoesNotOverruleACrossEntityWrite(t *testing.T) {
+	ctx := context.Background()
+	// ReadOnly: the guard grants (newCopyAuthzManager wires an allow-all
+	// guard), so anything that succeeds did so WITHOUT a write grant.
+	mgr, st := newCopyAuthzManager(t, acl.ReadOnlyACL{})
+	seedRaw(ctx, t, st, &entity.Entity{ID: "PAGE-1", Type: "page", Face: "published",
+		Properties: map[string]any{"title": "source"}})
+	seedRaw(ctx, t, st, &entity.Entity{ID: "MIR-1", Type: "mirror", Face: "published",
+		Properties: map[string]any{"title": "victim"}})
+
+	_, err := mgr.CopyState(ctx, entitymanager.CopyRequest{
+		Definition: "mirror-page", SourceID: "PAGE-1", TargetID: "MIR-1",
+	})
+	var forbidden *acl.ForbiddenError
+	if !errors.As(err, &forbidden) {
+		t.Fatalf("a guard on the SOURCE must not authorize a write to a DIFFERENT "+
+			"entity — the target has its own audience; got err=%v", err)
+	}
+	got, gerr := st.GetEntityState(ctx, "MIR-1", entity.Face("published"))
+	if gerr != nil || got.Properties["title"] != "victim" {
+		t.Errorf("MIR-1 must be untouched; got %+v (err %v)", got, gerr)
 	}
 }
