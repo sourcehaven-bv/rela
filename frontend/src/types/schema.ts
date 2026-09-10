@@ -90,10 +90,16 @@ export interface FaceInfo {
   // Absent means fall back to the face name, which is itself
   // operator-authored config and so an honest, if terse, display string.
   label?: string
-  // The operator's chrome text about this face (TKT-5SZG2L). `read_only` is
-  // the note for a page or form showing this face while the reader may not
-  // write it; absent renders nothing.
-  messages?: { read_only?: string }
+  // The operator's chrome text about this face (TKT-5SZG2L). Absent renders
+  // nothing; the app has no sentence of its own.
+  //
+  // The two entries differ in WHO they are about. `read_only` is about the
+  // reader — the note for a page or form showing this face while they may
+  // not write it, so it appears only when they may not. `notice` is about
+  // the document — that a draft is not in force, which holds whoever is
+  // looking, including the editor who may rewrite it (TKT-NLWZLX). Both may
+  // be declared on one face; the detail page renders `notice` first.
+  messages?: { read_only?: string; notice?: string }
 }
 
 // WorldMessages mirrors v1.WorldMessages. See WorldInfo.messages.

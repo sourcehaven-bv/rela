@@ -948,6 +948,39 @@ const readOnlyNote = computed<string>(() => {
   return worldText(declared?.messages?.read_only, textVars.value)
 })
 
+// The note about the DOCUMENT on screen, in the operator's words for its
+// face (`faces.<name>.messages.notice`) — "this is a draft, not in force".
+//
+// Deliberately NOT gated on `mayUpdate`, which is the ONE thing separating it
+// from readOnlyNote above: a draft is not in force for the editor rewriting it
+// either, and a face writable by definition could never satisfy that guard.
+// That is the whole reason this is a second key rather than a relaxed first.
+//
+// `!servedFace` means the type declares no faces at all (BUG-HC6I2T removed
+// `bare_face`, so a faced type stores no bare row and always serves a named
+// face). No face on screen, nothing for a per-face note to be about.
+//
+// The `worldAbsent` term is BELT-AND-BRACES, not the mechanism: the banner's
+// own `v-if` already gates on `!worldAbsent`, so removing this term changes
+// nothing today. It is kept — as readOnlyNote keeps its copy — so a future
+// caller rendering this note outside that banner inherits the silence rather
+// than announcing a face the world never served.
+const noticeNote = computed<string>(() => {
+  if (worldAbsent.value || !servedFace.value) return ''
+  const declared = typeDef.value?.faces?.[servedFace.value]
+  return worldText(declared?.messages?.notice, textVars.value)
+})
+
+// The face notes the banner shows, in order, undeclared ones dropped.
+//
+// Ordered widest-scope-first: the DOCUMENT's own status, then the qualifier
+// on THIS reader's permission. Keeping that as one array literal is the point
+// — order is policy, and the template should not be where it is decided (nor
+// re-litigated when a third key arrives).
+const bannerNotes = computed<string[]>(() =>
+  [noticeNote.value, readOnlyNote.value].filter(Boolean)
+)
+
 // The note for an entity with no face in this world, in the world's words.
 const absentNote = computed<string>(() => {
   if (!worldAbsent.value) return ''
@@ -1477,17 +1510,22 @@ watch(
 
       <!--
         The ANNOUNCEMENT is operator config: `banner:` on the world in
-        schema.yaml. The NOTE is the operator's `faces.<name>.messages.read_only`
-        for a non-bare face on screen that this principal may not write (see
-        readOnlyNote). Neither declared: nothing renders — the world does not
-        make a page read-only, only a grant does, and a denial looks like any
-        other denial.
+        schema.yaml. The NOTES are the operator's `faces.<name>.messages.*`
+        for the face on screen: `notice` about the DOCUMENT (a draft is not in
+        force, whoever is reading), then `read_only` about the READER (a
+        non-bare face they may not write). Nothing declared: nothing renders —
+        the world does not make a page read-only, only a grant does, and a
+        denial looks like any other denial.
+
+        One span per note, not one interpolation: they are separate sentences
+        from separate keys and must not run together as one line. Which notes
+        and in what order is `bannerNotes`, not this template.
       -->
       <WorldBanner
-        v-if="!worldAbsent && ((isWorldBound && worldBanner) || readOnlyNote)"
+        v-if="!worldAbsent && ((isWorldBound && worldBanner) || bannerNotes.length)"
         :label="isWorldBound ? worldBanner : ''"
       >
-        {{ readOnlyNote }}
+        <span v-for="(note, i) in bannerNotes" :key="i" class="banner-note">{{ note }}</span>
       </WorldBanner>
 
       <header class="detail-header">
@@ -2224,6 +2262,28 @@ watch(
 }
 
 /* Uses global .loading-state, .error-state, .spinner from App.vue */
+
+/* The world banner's notes. Two may render at once (`notice` about the
+   document, `read_only` about the reader), and they are separate sentences
+   from separate config keys — so they stack rather than reflowing into one
+   line, whatever the operator's punctuation.
+
+   jsdom does no layout, so no unit test sees any of this: deleting this block
+   passes the whole suite. Verified by hand instead, measuring the rendered
+   geometry with both keys declared long enough to wrap, beside a world that
+   declares a `banner:` label. At full width the notes sit beside the label,
+   two 18px lines with the 4px gap. Below WorldBanner's `24rem` flex basis the
+   wrapper wraps under the label as that basis intends, each note takes two
+   lines, and the banner grows to contain them — no overlap, no clipping. */
+.banner-note {
+  /* The parent `.world-banner__note` is a `<span>`, but it is a flex ITEM and
+     therefore blockified, so these children lay out as blocks inside it. */
+  display: block;
+}
+
+.banner-note + .banner-note {
+  margin-top: var(--space-2xs);
+}
 
 /* Header */
 .detail-header {

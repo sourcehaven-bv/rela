@@ -358,6 +358,155 @@ describe('EntityDetail world binding', () => {
       expect(w.find('.world-banner').exists()).toBe(false)
     })
 
+    // `faces.<name>.messages.notice` (TKT-NLWZLX): text about the DOCUMENT
+    // rather than the reader, so it renders whatever `_actions` says. The
+    // page it exists for is the WRITABLE draft — which `read_only` can never
+    // reach, because a face writable by definition never satisfies its guard.
+    function seedFaceMessages(faces: Record<string, { label?: string; messages?: object }>) {
+      useSchemaStore().entityTypes.set(entityType, {
+        name: entityType,
+        label: 'Policy',
+        properties: { title: { type: 'string', values: null } },
+        faces,
+      } as never)
+    }
+
+    // The case the key exists for, and the one that isolates its single
+    // distinguishing guard: a face the reader MAY write. Reintroducing
+    // readOnlyNote's `mayUpdate` term would break this and nothing else.
+    it('shows a notice on a face the reader MAY write', async () => {
+      seedFaceMessages({
+        draft: { label: 'Concept', messages: { notice: 'Nog niet vastgesteld.' } },
+        published: { label: 'Vastgesteld' },
+      })
+      const w = await mountDetail(viewResponse(writableFace({ _self: '/api/v1/policys/POL-1@draft' })))
+      rendersProof(w)
+      expect(button(w, 'Edit')).toBeDefined()
+      expect(w.find('.world-banner').text()).toBe('Nog niet vastgesteld.')
+    })
+
+    // A second writable face, on the language axis rather than the editorial
+    // one — the faces are peers, and a notice is about whichever is served.
+    it('shows a notice on a translated face the reader may write', async () => {
+      seedFaceMessages({
+        draft: { label: 'Concept' },
+        nl: { label: 'Nederlands', messages: { notice: 'Vertaling in uitvoering.' } },
+      })
+      mockRoute.query = { world: 'site-nl' }
+      const w = await mountDetail(viewResponse(writableFace()))
+      rendersProof(w)
+      expect(button(w, 'Edit')).toBeDefined()
+      expect(w.find('.world-banner').text()).toBe('Vertaling in uitvoering.')
+    })
+
+    it('renders nothing when the face declares no notice', async () => {
+      seedFaceMessages({ draft: { label: 'Concept' }, published: { label: 'Vastgesteld' } })
+      const w = await mountDetail(viewResponse(writableFace({ _self: '/api/v1/policys/POL-1@draft' })))
+      rendersProof(w)
+      expect(w.find('.world-banner').exists()).toBe(false)
+    })
+
+    it('substitutes placeholders in a notice from the same vars as read_only', async () => {
+      seedFaceMessages({
+        draft: { label: 'Concept', messages: { notice: '{face} van {title}' } },
+        published: { label: 'Vastgesteld' },
+      })
+      const w = await mountDetail(viewResponse(writableFace({ _self: '/api/v1/policys/POL-1@draft' })))
+      rendersProof(w)
+      // The face LABEL and the display title, not the coordinate or the id.
+      expect(w.find('.world-banner').text()).toBe('Concept van Access Control Policy')
+    })
+
+    it('renders notice BEFORE read_only when a face declares both', async () => {
+      seedFaceMessages({
+        draft: { label: 'Concept' },
+        published: {
+          label: 'Vastgesteld',
+          messages: { notice: 'DOCUMENT-STATUS', read_only: 'READER-PERMISSION' },
+        },
+      })
+      mockRoute.query = { world: 'published' }
+      // A non-bare face this reader may NOT write: both notes apply at once.
+      const w = await mountDetail(viewResponse(standIn()))
+      rendersProof(w)
+      const text = w.find('.world-banner').text()
+      expect(text).toContain('DOCUMENT-STATUS')
+      expect(text).toContain('READER-PERMISSION')
+      // Order is defined, not incidental: the document's status first, the
+      // qualifier on the reader's permission second.
+      expect(text.indexOf('DOCUMENT-STATUS')).toBeLessThan(text.indexOf('READER-PERMISSION'))
+    })
+
+    it('keeps the notice when read_only is undeclared on the same face', async () => {
+      seedFaceMessages({
+        draft: { label: 'Concept' },
+        published: { label: 'Vastgesteld', messages: { notice: 'Alleen dit' } },
+      })
+      mockRoute.query = { world: 'published' }
+      const w = await mountDetail(viewResponse(standIn()))
+      rendersProof(w)
+      // The reader may not write, but only the document's sentence exists.
+      expect(button(w, 'Edit')).toBeUndefined()
+      expect(w.find('.world-banner').text()).toBe('Alleen dit')
+    })
+
+    // The only remaining way a detail page has no face on screen: a type that
+    // declares no `faces:` at all. BUG-HC6I2T removed `bare_face`, so a faced
+    // type stores no bare row and always serves a named face — `!servedFace`
+    // now means "faceless type", nothing else.
+    //
+    // Worth pinning rather than leaving to the falsy check: the tempting
+    // "fix" is to fall back to a first declared face, which is what
+    // `DeclaredFace` was removed for (it depended on map order). Here that
+    // would print one arbitrary face's legal status onto a page whose type
+    // has no faces to speak of.
+    it('says nothing on a type that declares no faces', async () => {
+      useSchemaStore().entityTypes.set(entityType, {
+        name: entityType,
+        label: 'Policy',
+        properties: { title: { type: 'string', values: null } },
+        // No `faces:` — one unnamed state, stored under the bare id.
+      } as never)
+      const w = await mountDetail(viewResponse())
+      rendersProof(w)
+      expect(w.find('.world-banner').exists()).toBe(false)
+
+      // Positive control: the same mount against a FACED type does render,
+      // so the absence above is about the type declaring no faces rather
+      // than a fixture that could never have produced a banner.
+      seedFaceMessages({
+        draft: { label: 'Concept', messages: { notice: 'RENDERS-HERE' } },
+        published: { label: 'Vastgesteld' },
+      })
+      const control = await mountDetail(
+        viewResponse(writableFace({ _self: '/api/v1/policys/POL-1@draft' })),
+      )
+      expect(control.find('.world-banner').text()).toBe('RENDERS-HERE')
+    })
+
+    it('says nothing about a face when the world served none', async () => {
+      // No face on screen to be about: the page fell back to the bare face
+      // and the ABSENT banner above already speaks in the world's words.
+      seedFaceMessages({
+        draft: { label: 'Concept', messages: { notice: 'SHOULD-NOT-RENDER' } },
+        published: { label: 'Vastgesteld' },
+      })
+      useSchemaStore().worlds.set('published', {
+        readable: true,
+        messages: { absent: 'Geen vastgestelde versie.' },
+      } as never)
+      mockRoute.query = { world: 'published' }
+      const w = await mountDetail({
+        ...viewResponse(writableFace({ _self: '/api/v1/policys/POL-1@draft' })),
+        _world_absent: true,
+      } as ViewResponse)
+      rendersProof(w)
+      expect(w.text()).not.toContain('SHOULD-NOT-RENDER')
+      // Positive control: the absent banner DID render, so the absence above
+      // is a statement about the notice rather than about a blank page.
+      expect(w.find('.world-banner--absent').text()).toContain('Geen vastgestelde versie.')
+    })
+
     it('opens the form on the served ADDRESS, face included', async () => {
       mockRoute.query = { world: 'site-nl' }
       const w = await mountDetail(viewResponse(writableFace()))

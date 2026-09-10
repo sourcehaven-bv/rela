@@ -373,6 +373,26 @@ type FaceMessages struct {
 	// page without an Edit button. Substitutes every placeholder: `{face}`
 	// is this face's label, `{title}` the entity's display title.
 	ReadOnly string `yaml:"read_only,omitempty"`
+
+	// Notice is shown on a detail page that reached this face, whatever the
+	// reader may do with it — "Let op: dit is een concept en nog niet
+	// vastgesteld." Empty shows nothing, like every entry here.
+	//
+	// The distinction from [FaceMessages.ReadOnly] is WHO the sentence is
+	// about, and it is why a second key exists rather than a relaxed guard
+	// on the first. ReadOnly is about the READER: you may not write this,
+	// so it renders only when they may not. Notice is about the DOCUMENT:
+	// this text is not in force, which is true of a draft whoever is
+	// looking — including the editor who may freely rewrite it. That page
+	// is the one carrying risk (a reader acting on an unadopted policy
+	// follows something nobody agreed) and it was the unmarked one, because
+	// a face writable by definition can never satisfy ReadOnly's guard.
+	//
+	// The two are independent and may both be declared on one face; the
+	// detail page renders Notice first, the document's status before the
+	// qualifier on the reader's permission. Substitutes every placeholder,
+	// as ReadOnly does — a detail page knows every fact.
+	Notice string `yaml:"notice,omitempty"`
 }
 
 // Otherwise is a world's policy for an entity whose type declares

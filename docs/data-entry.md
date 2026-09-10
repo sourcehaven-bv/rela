@@ -4960,7 +4960,11 @@ note below appears only when `schema.yaml` declares it.
   face reports `update: false` unless a grant names that face. A detail page or
   edit form showing a face the caller may not write shows that face's
   `messages.read_only` when declared, and otherwise looks like any other
-  permission denial.
+  permission denial. A detail page showing a face that declares
+  `messages.notice` carries that sentence regardless of `_actions` — it says
+  something about the document ("this is a draft, not yet in force") rather
+  than about the reader, so it also appears on a face the caller may freely
+  edit. A face declaring both shows `notice` first.
 - A **View Published** button, or a menu when the entity has several other
   faces, switches to another face by navigating to its address (`_faces[].ref`)
   in the same world. It appears on every screen that has faces, including the

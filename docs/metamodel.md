@@ -1036,6 +1036,26 @@ entities:
 | `faces` | A map from face name to face definition. A type without it has exactly one state, and that state appears in every world. |
 | `faces.<name>.label` | Display text for the web app. Falls back to the face name. It has no effect on resolution. |
 | `faces.<name>.messages.read_only` | The sentence the web app shows on a page or form that reached this face while the reader may not write it. Placeholders `{face}` (this face's label), `{world}`, `{title}` (the entity's display title). Undeclared shows nothing. |
+| `faces.<name>.messages.notice` | The sentence the web app shows on a detail page that reached this face, whatever the reader may do with it — "this is a draft and not yet in force". Same placeholders. Undeclared shows nothing. |
+
+The two message keys differ in who the sentence is about, and that decides
+which one you want. `read_only` is about the **reader**: it appears only when
+they may not write the face, so it explains a missing Edit button. `notice` is
+about the **document**: it appears whatever they may do, because a draft is not
+in force even for the editor rewriting it. A face that is writable by
+definition can never show a `read_only`, which is why marking a draft needs the
+second key. Both may be declared on one face; the page shows `notice` first.
+
+```yaml
+faces:
+  concept:
+    label: Concept
+    messages:
+      notice: 'Let op: dit is een concept en nog niet vastgesteld.'
+  vastgesteld:
+    label: Vastgesteld
+    # nothing declared: this face renders no note
+```
 
 A face's declared name is also the coordinate its row is stored at, so the same
 spelling works in a URL, in an `acl.yaml` grant, and in a `copies:` address. A
