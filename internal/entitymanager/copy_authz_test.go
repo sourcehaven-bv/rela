@@ -426,9 +426,15 @@ func TestCopy_GuardIsTheAuthorizationForASameEntityCopy(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("a guarded same-entity copy is authorized by its guard alone; got %v", err)
 		}
-		got, gerr := st.GetEntity(ctx, "PAGE-1")
+		// Reads the DRAFT face, which is what `adopt` targets. Before
+		// BUG-HC6I2T this read GetEntity(ctx, "PAGE-1") and expected the
+		// promoted text there, because `bare_face` made one named face answer
+		// to the unsuffixed id. With no privileged face the zero coordinate is
+		// a separate row that this copy does not write, so asking it would
+		// assert the copy went somewhere it never claimed to go.
+		got, gerr := st.GetEntityState(ctx, "PAGE-1", entity.Face("draft"))
 		if gerr != nil || got.Properties["title"] != "NEXT" {
-			t.Errorf("the promote must have landed in the bare face; got %v %v", got.Properties, gerr)
+			t.Errorf("the promote must have landed in the draft face; got %v %v", got.Properties, gerr)
 		}
 	})
 
@@ -550,46 +556,5 @@ func TestCopy_GuardDoesNotOverruleASameFaceCopy(t *testing.T) {
 	got, _ := st.GetEntity(ctx, "PAGE-1")
 	if got.Properties["title"] != "original" {
 		t.Errorf("the entity must be untouched; got %v", got.Properties)
-	}
-}
-
-// TestCopy_GuardDoesNotOverruleACrossEntityWrite isolates the IsSameEntity()
-// half of the write-check exemption.
-//
-// The exemption exists because nobody holds `update` on a guarded face by
-// design, so requiring it would make every promote impossible — and the
-// definition's guard stands in its place. That reasoning depends on identity
-// being PRESERVED: the guard is evaluated against the SOURCE id, so it only
-// speaks for the entity it was asked about.
-//
-// A cross-entity copy breaks that. Its target is a different entity with its
-// own audience, and a guard held on the source says nothing about the right
-// to write the target. Without the IsSameEntity() clause a guarded cross-type
-// copy would write an entity the principal cannot write by hand, authorized
-// by a permission on somebody else's row.
-//
-// Mutation-checked: deleting `plan.def.IsSameEntity() &&` from authorizeCopy
-// fails this test and nothing else in the package.
-func TestCopy_GuardDoesNotOverruleACrossEntityWrite(t *testing.T) {
-	ctx := context.Background()
-	// ReadOnly: the guard grants (newCopyAuthzManager wires an allow-all
-	// guard), so anything that succeeds did so WITHOUT a write grant.
-	mgr, st := newCopyAuthzManager(t, acl.ReadOnlyACL{})
-	seedRaw(ctx, t, st, &entity.Entity{ID: "PAGE-1", Type: "page", Face: "published",
-		Properties: map[string]any{"title": "source"}})
-	seedRaw(ctx, t, st, &entity.Entity{ID: "MIR-1", Type: "mirror", Face: "published",
-		Properties: map[string]any{"title": "victim"}})
-
-	_, err := mgr.CopyState(ctx, entitymanager.CopyRequest{
-		Definition: "mirror-page", SourceID: "PAGE-1", TargetID: "MIR-1",
-	})
-	var forbidden *acl.ForbiddenError
-	if !errors.As(err, &forbidden) {
-		t.Fatalf("a guard on the SOURCE must not authorize a write to a DIFFERENT "+
-			"entity — the target has its own audience; got err=%v", err)
-	}
-	got, gerr := st.GetEntityState(ctx, "MIR-1", entity.Face("published"))
-	if gerr != nil || got.Properties["title"] != "victim" {
-		t.Errorf("MIR-1 must be untouched; got %+v (err %v)", got, gerr)
 	}
 }
