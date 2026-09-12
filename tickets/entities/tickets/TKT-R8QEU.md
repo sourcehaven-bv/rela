@@ -44,8 +44,10 @@ own test surface, deferred deliberately.
 
 ## Acceptance Criteria
 
-- [ ] `relations:` block on a validation rule is parsed and evaluated (min/max/where).
-- [ ] Metamodel loader rejects unknown keys within a validation rule.
-- [ ] The 14 gates are migrated back to declarative form; the Lua stopgap deleted.
-- [ ] `rela validate` behaviour is unchanged from the Lua stopgap (same violations).
-- [ ] Conformance + strict-loader tests added; `just ci` green.
+- [x] `relations:` block on a validation rule is parsed and evaluated (min/max/where).
+- [x] Metamodel loader rejects unknown keys within a validation rule (and
+undeclared relation types / unsatisfiable bounds inside the block).
+- [x] The 14 gates are migrated back to declarative form; the Lua stopgap deleted.
+- [x] `rela validate` behaviour is unchanged from the Lua stopgap (same violations)
+verified by diffing both binaries over the same corpus.
+- [x] Conformance + strict-loader tests added; `just ci` green.
