@@ -188,3 +188,45 @@ func TestAppendToSection_PreservesOtherContent(t *testing.T) {
 		idx++
 	}
 }
+
+// TestAppendToSection_MultiLineBlock pins that a block spanning several lines
+// is inserted as SEPARATE lines, not as one element carrying embedded newlines.
+//
+// The rendered document is identical either way, so the assertion that matters
+// is the line count: insert and end are line indices, and a multi-line block
+// occupying a single index would put any later index arithmetic off by its
+// internal newline count. TestAppendToSection_PreservesOtherContent already
+// counts lines, so that drift would be a real bug and not a stylistic one.
+//
+// The webhook caller relies on this: it flattens each interpolated VALUE and
+// deliberately leaves the operator's own template shape intact, so the block
+// arriving here legitimately spans lines.
+func TestAppendToSection_MultiLineBlock(t *testing.T) {
+	content := "# T\n\n## A\n\naaa\n\n## B\n\nbbb"
+	block := "#### H\n\n- detail"
+	got := markdown.AppendToSection(content, "A", block)
+
+	want := "# T\n\n## A\n\naaa\n#### H\n\n- detail\n\n## B\n\nbbb"
+	if got != want {
+		t.Errorf("multi-line block\n got %q\nwant %q", got, want)
+	}
+	// Exactly the block's own lines were added — no more, no fewer.
+	added := len(strings.Split(got, "\n")) - len(strings.Split(content, "\n"))
+	if wantAdded := len(strings.Split(block, "\n")); added != wantAdded {
+		t.Errorf("added %d lines, want %d", added, wantAdded)
+	}
+}
+
+// TestAppendToSection_EmptyBlockAddsNothing pins that an empty block is a
+// no-op on a found section rather than a stray blank line.
+//
+// A template of "{{body.msg}}" whose field is absent interpolates to "", which
+// is deliberate — dropping the delivery would be worse. Inserting a blank line
+// per delivery would slowly pad the section of a document meant to be read by a
+// human during an incident.
+func TestAppendToSection_EmptyBlockAddsNothing(t *testing.T) {
+	content := "# T\n\n## A\n\naaa\n\n## B\n\nbbb"
+	if got := markdown.AppendToSection(content, "A", ""); got != content {
+		t.Errorf("empty block changed the document\n got %q\nwant %q", got, content)
+	}
+}

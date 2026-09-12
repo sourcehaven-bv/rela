@@ -8,8 +8,10 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
@@ -671,6 +673,69 @@ func TestWebhookRoutes_AppendSectionFlattensNewlines(t *testing.T) {
 	}
 }
 
+// TestWebhookRoutes_AppendSectionKeepsOperatorNewlines pins the other half of
+// the flattening rule: the OPERATOR's own template structure survives.
+//
+// The value a producer supplies is flattened (see the test above); the shape the
+// operator wrote is not. Without this an operator cannot express a structured
+// entry — a heading with detail beneath it — which is the natural form for an
+// incident timeline.
+func TestWebhookRoutes_AppendSectionKeepsOperatorNewlines(t *testing.T) {
+	app := newHookTestApp(t, map[string]dataentryconfig.Webhook{
+		"alert": {
+			Find: &dataentryconfig.WebhookFind{
+				Type:   "ticket",
+				Match:  []string{"title"},
+				Values: map[string]string{"title": "{{body.title}}"},
+			},
+			CreateIfMissing: &dataentryconfig.WebhookCreate{
+				Type:       "ticket",
+				Properties: map[string]string{"title": "{{body.title}}"},
+			},
+			Then: []dataentryconfig.WebhookStep{{
+				AppendSection: &dataentryconfig.WebhookAppendSection{
+					Section: "Notifications",
+					Content: "#### {{body.title}}\n\n- detail: {{body.msg}}",
+				},
+			}},
+		},
+	})
+
+	// The value carries a newline of its OWN, which must still be flattened.
+	body, err := json.Marshal(map[string]string{"title": "T", "msg": "one\ntwo"})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/hooks/alert", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Host = "127.0.0.1:8080"
+	rec := httptest.NewRecorder()
+	app.NewRouter().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	tickets := listTickets(t, app)
+	if len(tickets) != 1 {
+		t.Fatalf("got %d tickets, want 1", len(tickets))
+	}
+	content := tickets[0].Content
+
+	// The operator's two lines are two lines.
+	if !strings.Contains(content, "#### T\n") {
+		t.Errorf("operator heading did not survive as its own line:\n%s", content)
+	}
+	if !strings.Contains(content, "- detail: one two") {
+		t.Errorf("value newline was not flattened, or the detail line is missing:\n%s", content)
+	}
+	// And the producer's newline did not split the detail line in two.
+	for line := range strings.SplitSeq(content, "\n") {
+		if strings.TrimSpace(line) == "two" {
+			t.Errorf("producer newline survived into the document:\n%s", content)
+		}
+	}
+}
+
 // TestWebhookRoutes_ResponseIsNoStore pins the cache header: the body names an
 // entity id, and this route is outside /api/ where noCacheMiddleware runs.
 func TestWebhookRoutes_ResponseIsNoStore(t *testing.T) {
@@ -734,5 +799,82 @@ func TestWebhookRoutes_BusyIsRetryable(t *testing.T) {
 	}
 	if got := rec.Header().Get("Retry-After"); got == "" {
 		t.Error("Retry-After is unset; a producer cannot back off correctly")
+	}
+}
+
+// TestWebhookPayloadInterpolate_FlattensEveryValue tests the flattening SEAM
+// directly, rather than through a route.
+//
+// The whole guarantee rests on one flattenToLine call inside interpolate, and
+// every other test that covers it drives the full router under a name about
+// append_section. Deleting that call should fail a test that names the thing
+// that broke, so a later refactor cannot quietly remove it.
+//
+// It also pins the asymmetry across EVERY producer-controlled namespace, not
+// just body: each of these reaches properties and content through the same
+// seam, and all of them are attacker-controlled at the same level.
+func TestWebhookPayloadInterpolate_FlattensEveryValue(t *testing.T) {
+	payload := webhookPayload{
+		body: map[string]any{
+			"nl":     "one\ntwo",
+			"cr":     "one\rtwo",
+			"nul":    "one\x00two",
+			"nested": map[string]any{"k": "v\nw"},
+			"brace":  "{{body.nl}}",
+		},
+		query:   url.Values{"q": []string{"one\ntwo"}},
+		headers: map[string]string{"x-note": "one\ntwo"},
+		now:     time.Unix(0, 0).UTC(),
+	}
+
+	for _, tc := range []struct {
+		name, tmpl, want string
+	}{
+		{"body newline", "- {{body.nl}}", "- one two"},
+		{"body carriage return", "- {{body.cr}}", "- one two"},
+		{"body NUL", "- {{body.nul}}", "- onetwo"},
+		{"query newline", "- {{query.q}}", "- one two"},
+		{"header newline", "- {{header.x-note}}", "- one two"},
+		// The operator's own newline is untouched; only the value flattens.
+		{"operator newline kept", "#### h\n- {{body.nl}}", "#### h\n- one two"},
+		// A value is substituted, never re-scanned, so it cannot smuggle a
+		// second reference in.
+		{"no recursive interpolation", "- {{body.brace}}", "- {{body.nl}}"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := payload.interpolate(tc.tmpl); got != tc.want {
+				t.Errorf("interpolate(%q) = %q, want %q", tc.tmpl, got, tc.want)
+			}
+		})
+	}
+
+	// A composite value is JSON-encoded, so its newline is already escaped and
+	// no raw newline reaches the document.
+	if got := payload.interpolate("- {{body.nested}}"); strings.Contains(got, "\n") {
+		t.Errorf("composite value carried a raw newline: %q", got)
+	}
+}
+
+// TestWebhookPayloadInterpolate_ValueCannotForgeAHeading states the threat in
+// the terms the threat model uses, at the seam that prevents it.
+//
+// Only \n and \r can begin a new line in CommonMark, which is what goldmark
+// parses on the write path — so flattening exactly those two is sufficient here
+// rather than merely conventional.
+func TestWebhookPayloadInterpolate_ValueCannotForgeAHeading(t *testing.T) {
+	payload := webhookPayload{
+		body: map[string]any{"evil": "first\n\n## Injected\n\nbody"},
+		now:  time.Unix(0, 0).UTC(),
+	}
+
+	got := payload.interpolate("- {{body.evil}}")
+	for line := range strings.SplitSeq(got, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "#") {
+			t.Errorf("value forged a heading line: %q", got)
+		}
+	}
+	// Flattened, not dropped: losing an alert would be worse than one long line.
+	if !strings.Contains(got, "Injected") {
+		t.Errorf("value content was dropped rather than flattened: %q", got)
 	}
 }
