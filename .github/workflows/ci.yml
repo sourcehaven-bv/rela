@@ -112,6 +112,141 @@ jobs:
           name: reachability-report
           path: reachability.out
 
+  clamav:
+    name: ClamAV Integration
+    # 26.04 for the same reason as the Test job: the command sandbox needs
+    # unprivileged user namespaces, which 24.04 restricts via AppArmor.
+    runs-on: ubuntu-26.04
+    # Blocking, but only where it can regress. Every other scan test substitutes
+    # a stub `sh -c` command, so nothing in the suite observes that clamdscan
+    # needs its config bound into the sandbox — TKT-ZP1EE3 shipped a broken
+    # documented recipe with a fully green CI. Running this on every PR would
+    # charge each one a ~300 MB signature download for code it cannot touch, so
+    # it is path-filtered instead of scheduled: a PR that touches the sandbox,
+    # attachments or the guide cannot merge with this red, and one that doesn't
+    # pays nothing. (Scheduled would be cheaper still, but a non-blocking result
+    # nobody reads is not a guarantee.)
+    #
+    # The detection lives in a STEP rather than a job-level `if`, so the job
+    # always reports a status — a required check that never runs leaves a
+    # merge-queue entry queued forever.
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # 0, not a shallow depth: the detection below diffs against the PR
+          # base with `BASE_SHA...HEAD`, which needs the merge base in the
+          # local clone. A shallow clone usually lacks it, and `git diff` then
+          # fails INSIDE an `if` condition, where `set -e` does not fire — the
+          # step would quietly write changed=false and report a green skip on
+          # every PR forever. Same reason the ticket-hygiene job uses 0.
+          fetch-depth: 0
+
+      - name: Detect sandbox / attachment changes
+        id: detect
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "Non-PR event — running clamav integration."
+            exit 0
+          fi
+          # Compute the diff in its own statement so a git failure is fatal
+          # rather than being swallowed by the surrounding `if`.
+          CHANGED=$(git diff --name-only "$BASE_SHA"...HEAD -- \
+            internal/cmdexec internal/attachment \
+            docs-project/entities/guides/GUIDE-attachment-security.md \
+            docs/attachment-security.md \
+            scripts/clamav-vm-test.sh)
+          if [ -n "$CHANGED" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "Sandbox/attachment code changed — running clamav integration:"
+            echo "$CHANGED"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "No sandbox/attachment changes — skipping."
+          fi
+
+      - name: Set up Go
+        if: steps.detect.outputs.changed == 'true'
+        uses: actions/setup-go@v7
+        with:
+          go-version: '1.26.6'
+
+      - name: Install bubblewrap and ClamAV
+        if: steps.detect.outputs.changed == 'true'
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap clamav-daemon
+
+      - name: Verify the sandbox actually works on this runner
+        # Without a working sandbox the integration test would pass vacuously:
+        # --fdpass only fails BECAUSE of the namespace boundary.
+        if: steps.detect.outputs.changed == 'true'
+        run: bwrap --unshare-all --ro-bind / / /bin/true
+
+      - name: Cache ClamAV signature databases
+        if: steps.detect.outputs.changed == 'true'
+        uses: actions/cache@v4
+        with:
+          path: /var/lib/clamav
+          # The key is unique per run so the cache is always REFRESHED with
+          # whatever freshclam left behind, while restore-keys means a run
+          # starts from the most recent databases and usually skips the ~300 MB
+          # download. Staleness is fine here: the test asserts the EICAR
+          # verdict, which every database version has detected for decades.
+          key: clamav-db-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            clamav-db-${{ runner.os }}-
+
+      - name: Start clamd
+        if: steps.detect.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+
+          # freshclam runs on a timer AND as a daemon on Ubuntu; both hold a
+          # lock on /var/lib/clamav that makes a manual run fail. Stop both.
+          sudo systemctl stop clamav-freshclam.service clamav-freshclam.timer 2>/dev/null || true
+
+          # Ownership first: the cache restores /var/lib/clamav as the runner
+          # user, and freshclam drops privileges to `clamav`, so a restored
+          # cache is unwritable until this runs.
+          sudo mkdir -p /var/lib/clamav
+          sudo chown -R clamav:clamav /var/lib/clamav
+
+          # clamd refuses to start with no signature databases. NOT --quiet:
+          # when this fails it is the only evidence of why.
+          if ! ls /var/lib/clamav/daily.c[vl]d >/dev/null 2>&1; then
+            echo "No signature database present — downloading (~300 MB)."
+            sudo -u clamav freshclam --stdout
+          else
+            echo "Signature database restored from cache:"
+            ls -la /var/lib/clamav/
+          fi
+
+          sudo systemctl restart clamav-daemon
+
+          # clamd parses the whole database set before it binds the socket, so
+          # this legitimately takes tens of seconds on a cold start.
+          for _ in $(seq 1 90); do
+            if [ -S /var/run/clamav/clamd.ctl ]; then
+              echo "clamd socket is up."
+              exit 0
+            fi
+            sleep 2
+          done
+
+          echo "::error::clamd socket never appeared at /var/run/clamav/clamd.ctl"
+          sudo systemctl status clamav-daemon --no-pager --full || true
+          sudo journalctl -u clamav-daemon --no-pager -n 100 || true
+          exit 1
+
+      - name: Run clamd integration tests
+        if: steps.detect.outputs.changed == 'true'
+        env:
+          RELA_TEST_CLAMD: '1'
+        run: go test -race -run 'TestClamd' -v ./internal/attachment/...
+
   lint:
     name: Lint
     runs-on: ubuntu-latest

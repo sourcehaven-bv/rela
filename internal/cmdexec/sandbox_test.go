@@ -253,6 +253,58 @@ func TestWithExtraReadOnlySkipsNonAbsolute(t *testing.T) {
 	}
 }
 
+// TestSandboxErrNilOnOperatorOptOut pins that an explicit opt-out is not
+// reported as a sandbox failure. The composition root warns "a scan is
+// configured but cannot run" on a non-nil SandboxErr; an operator who ran with
+// RELA_UNCONFINED_COMMANDS=1 has accepted unconfined execution, and their
+// commands DO run, so surfacing that as a failure would be a false alarm. This
+// holds by construction — New takes the opt-out branch before consulting the
+// platform probe — and this test keeps it that way.
+func TestSandboxErrNilOnOperatorOptOut(t *testing.T) {
+	r, err := New(time.Second, 1<<20, WithSandboxDisabled())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := r.SandboxErr(); got != nil {
+		t.Errorf("SandboxErr = %v, want nil (opt-out is an accepted risk, not a failure)", got)
+	}
+}
+
+// TestDefaultScannerConfigsAreAbsoluteFiles guards the two properties that make
+// the default binds safe and effective: every entry must be absolute (a relative
+// path is silently dropped by WithExtraReadOnly, leaving an unreachable scanner
+// and no error), and none may be a bare directory — /etc/clamav holds the
+// signature databases and freshclam.conf, which can carry a DatabaseMirror proxy
+// credential, so only the single config file may be exposed to a sandboxed
+// third-party parser.
+func TestDefaultScannerConfigsAreAbsoluteFiles(t *testing.T) {
+	if len(DefaultScannerConfigs) == 0 {
+		t.Fatal("DefaultScannerConfigs is empty; the stock ClamAV install needs clamd.conf bound")
+	}
+	for _, p := range DefaultScannerConfigs {
+		if !filepath.IsAbs(p) {
+			t.Errorf("%q is not absolute; WithExtraReadOnly would drop it", p)
+		}
+		// Cheap smell test, host-independent: a bare directory usually has no
+		// extension. Not sufficient on its own — /etc/clamav/conf.d would pass —
+		// which is why the stat below is the real check wherever it can run.
+		if filepath.Ext(p) == "" {
+			t.Errorf("%q looks like a directory; bind the config FILE only", p)
+		}
+		// The honest check: on a host that actually has ClamAV, assert the path
+		// is a regular file. Skipped elsewhere rather than faked, so this test
+		// asserts the property its name claims wherever that is possible.
+		switch fi, err := os.Stat(p); {
+		case err != nil:
+			continue // not installed on this host; nothing to verify
+		case fi.IsDir():
+			t.Errorf("%q is a DIRECTORY; binding it would expose the signature "+
+				"databases and freshclam.conf (which can carry a DatabaseMirror "+
+				"credential) to every sandboxed command", p)
+		}
+	}
+}
+
 // TestSandboxWritableDirUnderTmp pins an argv-ordering dependency in the Linux
 // backend: --tmpfs /tmp must precede the --bind of the writable dir. The run's
 // temp dir usually lives under /tmp, and bwrap applies operations in order — a

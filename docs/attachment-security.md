@@ -53,7 +53,7 @@ overrides.
 # Global safety floor — applies to every `file` property unless overridden.
 attachments:
   allow: default-safe        # MIME allowlist preset, or an explicit list
-  scan_cmd: [clamdscan, --no-summary, --fdpass, "{in}"]   # configuring this enables scanning
+  scan_cmd: [clamdscan, --no-summary, --stream, "{in}"]   # configuring this enables scanning
 
 entities:
   report:
@@ -187,6 +187,106 @@ command, rela:
 - **probes every configured binary at startup** and warns if one is missing,
   so you find a typo or an uninstalled tool at boot, not on first upload.
 
+## Running under systemd
+
+rela confines external commands with **bubblewrap**, which has to *create*
+namespaces. A conventionally hardened unit forbids exactly that, and the failure
+is quiet: the service starts, serves HTTP, and logs the sandbox as unavailable —
+after which every upload to a scanned property is **rejected**, because scanning
+is fail-closed.
+
+Three directives break it. Each is sufficient on its own:
+
+| Directive | Symptom | What works |
+| --------- | ------- | ---------- |
+| `RestrictNamespaces=yes` | bwrap exits 1 | `RestrictNamespaces=user mnt pid net ipc uts cgroup` — an **allowlist**; `cgroup` is required |
+| `SystemCallFilter=@system-service` | bwrap killed by SIGSYS (exit 159) | add `mount umount2 pivot_root unshare setns clone clone3` |
+| `RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX` | bwrap exits 1 | add `AF_NETLINK` — bwrap configures loopback in its new netns |
+
+Everything else you would normally reach for is compatible: `NoNewPrivileges`,
+`ProtectSystem=strict`, `ProtectHome`, `PrivateDevices`, `ProtectProc=invisible`,
+an empty `CapabilityBoundingSet`, `MemoryDenyWriteExecute`, `LockPersonality`.
+
+A working unit — `systemd-analyze security` rates this **2.4 OK**:
+
+```ini
+[Unit]
+Description=rela server
+After=network.target clamav-daemon.service
+Wants=clamav-daemon.service
+
+[Service]
+Type=simple
+User=rela
+Group=rela
+# Only needed if clamd.conf sets LocalSocketMode 660. Debian ships 666.
+SupplementaryGroups=clamav
+ExecStart=/usr/local/bin/rela-server --project /var/lib/rela/project --bind 127.0.0.1 --port 8080
+Restart=on-failure
+RestartSec=2
+WorkingDirectory=/var/lib/rela
+
+# ---- filesystem ----
+ProtectSystem=strict
+ProtectHome=yes
+StateDirectory=rela
+ReadWritePaths=/var/lib/rela
+# Compatible with scanning ONLY because --stream sends contents over the socket.
+# A path-based scan would break here: clamd lives in the host's /tmp namespace
+# and cannot see this private one.
+PrivateTmp=yes
+
+# ---- privilege ----
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+RemoveIPC=yes
+UMask=0077
+
+# ---- required for the attachment sandbox (bubblewrap) ----
+RestrictNamespaces=user mnt pid net ipc uts cgroup
+SystemCallFilter=@system-service mount umount2 pivot_root unshare setns clone clone3
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Confirm it worked — this line is logged at startup:
+
+```text
+external command confinement  detail="sandbox bubblewrap (no network, temp-dir-only writes) + memory/PID/file-size/CPU limits"
+```
+
+If it instead says `sandbox unavailable (commands will refuse to run)` while a
+`scan_cmd` is configured, rela logs a **warning** saying every upload will be
+rejected. Under systemd, suspect the unit before the kernel: the sysctls named in
+that message (`kernel.unprivileged_userns_clone`,
+`kernel.apparmor_restrict_unprivileged_userns`) are usually already correct, and
+the three directives above are the actual cause.
+
+The syscalls are listed individually rather than via systemd's `@mount` set.
+`@mount` also carries `chroot`, `move_mount`, `open_tree`, `fsopen`, `fsconfig`
+and `fsmount`, which bubblewrap does not use — and because the set is
+systemd-maintained, its contents can *widen* on an upgrade without the unit
+changing. An explicit list can only ever be narrowed by a future systemd, which
+fails closed (commands refuse to run) rather than silently granting more.
+
+Tested against systemd 252 (Debian 12).
+
 ## Recipes
 
 These are starting points. Test them against your own deployment, pin versions,
@@ -194,54 +294,88 @@ and sandbox the tools.
 
 ### Virus scanning — ClamAV
 
-Run the ClamAV daemon (`clamd`) and scan over its stream interface:
+Run the ClamAV daemon (`clamd`) and scan over its unix socket:
 
 ```yaml
 attachments:
-  scan_cmd: [clamdscan, --no-summary, --fdpass, "{in}"]
+  scan_cmd: [clamdscan, --no-summary, --stream, "{in}"]
 ```
 
 Configuring the command enables scanning for every file property (those that
 don't opt out with `scan: off`). `clamdscan` exits non-zero when a signature
-matches, which rela maps to a rejected upload. `--fdpass` hands the file
-descriptor to the daemon (fast, no copy); use `--stream` instead if `clamd`
-runs on another host.
+matches, which rela maps to a rejected upload.
+
+Verified on Debian 12 (`clamav-daemon` + `bubblewrap`, stock `clamd.conf`): a
+clean upload stores normally, an EICAR test file is rejected with 422.
 
 On Windows, point `scan_cmd` at your AV's CLI scanner (e.g. a Microsoft
 Defender `MpCmdRun.exe -Scan -ScanType 3 -File {in}` invocation that exits
 non-zero on detection).
 
-#### Reaching `clamd` from inside the sandbox
+#### Use `--stream`, not `--fdpass`
 
-`clamdscan` talks to the daemon over a **unix socket**, but the sandbox gives
-each command its own mount namespace — the socket's path is not visible unless
-rela binds it in. rela already binds the well-known locations read-only:
+**`--fdpass` cannot work under the sandbox.** It hands the open file descriptor
+to `clamd` over the socket, and the daemon — in a different mount and user
+namespace — rejects what it receives:
 
 ```text
-/var/run/clamav/clamd.ctl
-/run/clamav/clamd.sock
-/var/run/clamav/clamd.sock
-/tmp/clamd.socket
+/tmp/rela-cmdexec-XXXX/in: Not a regular file ERROR
+```
+
+Path-based scanning (neither flag) fails too, for an unrelated reason: rela's
+temp directory is `0700` and owned by the server's user, while `clamd` runs as
+`clamav` and does the `open()` itself, so it gets `Permission denied`.
+
+`--stream` sends the file's **contents** over the socket. It needs neither
+shared filesystem visibility nor descriptor passing, which is why it is the only
+transport that works confined.
+
+#### Reaching `clamd` from inside the sandbox
+
+Reaching the daemon takes **two** things, and having only one looks like having
+neither.
+
+1. **The socket.** Each command gets its own mount namespace, so the socket path
+   is invisible unless rela binds it in.
+2. **The config file.** `clamdscan` parses `clamd.conf` at startup to learn where
+   `LocalSocket` is — *before* it connects. The sandbox's read allowlist excludes
+   `/etc` wholesale (it holds `passwd`, `shadow`, and rela's own config), so
+   without an explicit bind the scanner fails with
+   `ERROR: Can't parse clamd configuration file /etc/clamav/clamd.conf` and never
+   reaches the socket at all.
+
+rela binds the well-known locations of both, read-only:
+
+```text
+sockets   /var/run/clamav/clamd.ctl        configs  /etc/clamav/clamd.conf
+          /run/clamav/clamd.sock                    /usr/local/etc/clamav/clamd.conf
+          /var/run/clamav/clamd.sock
+          /tmp/clamd.socket
 ```
 
 so a stock ClamAV install (Debian/Ubuntu `clamav-daemon`, Homebrew `clamav`)
-works with no extra configuration. Binding the socket does **not** re-open
-network egress — a unix socket is a filesystem object, and the network namespace
-stays isolated, so `--fdpass`/`LocalSocket` scanning works while an outbound
-fetch still cannot.
+needs no extra configuration. Missing paths are skipped, so the list is harmless
+on hosts without ClamAV.
 
-If your `clamd.conf` uses a `LocalSocket` outside those paths, bind it explicitly:
+Binding a socket does **not** re-open network egress — a unix socket is a
+filesystem object, and the network namespace stays isolated. `--stream` over a
+`LocalSocket` therefore works with no egress at all; only a **TCP** `clamd` on
+another host needs it, and the sandbox has no per-command egress opt-in, so
+provide that at the deployment layer.
+
+If your `clamd.conf` lives elsewhere, or its `LocalSocket` points outside those
+paths, bind the extra paths explicitly:
 
 ```yaml
 attachments:
-  scan_cmd: [clamdscan, --no-summary, --fdpass, "{in}"]
-  scan_sockets: [/opt/clamav/run/clamd.sock]   # extra read-only binds
+  scan_cmd: [clamdscan, --no-summary, --stream, "{in}"]
+  scan_sockets: [/opt/clamav/run/clamd.sock, /opt/clamav/etc/clamd.conf]
 ```
 
-The **`--stream` / TCP** transport needs no socket bind, but it does need
-network egress, which the sandbox denies — prefer the local socket. Scan over
-TCP only when `clamd` runs on another host, and provide egress at the
-deployment layer (the sandbox has no per-command egress opt-in).
+Despite the name, `scan_sockets` binds any read-only path, which is what a
+non-default config file needs. Name the config **file**, never its directory:
+`/etc/clamav` also holds the signature databases and `freshclam.conf`, which can
+carry a `DatabaseMirror` proxy credential.
 
 ### Strip image metadata (EXIF/GPS) — exiftool
 

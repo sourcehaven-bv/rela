@@ -1,0 +1,9 @@
+---
+id: RR-Q4P93R
+type: review-response
+title: TestWarnIfScanCannotRun "runner healthy" case fails on hosts without a working sandbox
+finding: 'The "scan configured, runner healthy → silent" table case in TestWarnIfScanCannotRun constructs a real runner via attachment.NewCmdRunner and asserts no warning is emitted. On a host with no usable sandbox and no explicit opt-out — a Linux dev machine or CI container without bubblewrap installed — SandboxErr() is non-nil, the warning correctly fires, and the case FAILS. The sibling test TestWarnIfScanCannotRun_SilentWhenSandboxUsable has a t.Skip guard for exactly this condition; the table case does not. It passed locally only because macOS sandbox-exec is available. This matters beyond portability: a test that fails on developer laptops and in bwrap-less CI gets weakened or deleted rather than fixed, and BUG-2J30F3 / BUG-OJNWVK are prior instances of exactly this failure mode (release/CI jobs lacking bubblewrap). Fix: give the healthy case the same runner.SandboxErr() != nil skip guard, or restructure so the healthy path is exercised via an explicitly opted-out runner whose SandboxErr() is deterministically nil on every platform.'
+severity: significant
+status: addressed
+resolution: 'Fixed by the interface refactor in RR-JWVDEU rather than by adding a skip guard. warnIfScanCannotRun now takes a sandboxReporter interface, so the tests inject a stub with a fixed verdict instead of constructing a real CmdRunner whose SandboxErr() depends on whether the host has bubblewrap. No t.Skip remains in the file, and the healthy/unusable/nil branches all run deterministically on macOS, on Linux with bwrap, and on Linux without it. This matters because the previous shape would have failed on exactly the bwrap-less CI images that BUG-2J30F3 and BUG-OJNWVK were about.'
+---
