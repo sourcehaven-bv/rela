@@ -23,6 +23,8 @@ status: done
 | `just plimsoll` | clean |
 | `just coverage-check` | PASS, total 79.6% |
 | `go vet` | clean |
+| `just docs-check` | up to date |
+| `just ci` | exit 0 |
 
 ESLint reports 0 errors. The 4 warnings on `DynamicForm.vue` (file length, three
 non-null assertions) are pre-existing in a 1,591-line file this change adds two
@@ -40,7 +42,7 @@ added.
 
 **Review Responses:** RR-6OIIOE, RR-P3K8UG, RR-HDEVDK (critical); RR-R82OEB,
 RR-1KPRKU, RR-X4K509, RR-XN8DTF, RR-7NNHBN, RR-DC30OF, RR-JUDQ5Q, RR-N8CNLQ,
-RR-IS01DT (significant). All `addressed`.
+RR-IS01DT (significant); RR-1ND28L (minor). All `addressed`.
 
 Both a design review and a code review ran. Three criticals, all data-integrity
 defects that the passing test suite did not see:
@@ -95,11 +97,17 @@ bundle contains no `EasyMDE`.
 - [x] No TODOs or FIXMEs left unaddressed
 - [x] Ready for another developer to use
 
-One thing a reader should know rather than rediscover: **Milkdown's markdown
-listener is debounced by 200ms and does not fire at all under happy-dom.** That
-is why unit tests could not see the two save-path defects, and why any future
-change to the emit path needs either an e2e test or a test that drives the
-registered callback directly.
+Two things a reader should know rather than rediscover.
+
+**Milkdown's markdown listener is debounced by 200ms and does not fire at all
+under happy-dom.** That is why unit tests could not see the two save-path
+defects, and why any future change to the emit path needs either an e2e test or
+a test that drives the registered callback directly.
+
+**`docs/` is generated from `docs-project/`** (34 files carry a "Do not edit
+directly" header). Editing the generated copy survives review and is deleted by
+the next `just docs`. See RR-1ND28L, which also records that a backgrounded
+`just ci` reported exit 0 while `docs-check` failed inside it.
 
 ## Pull Request
 
