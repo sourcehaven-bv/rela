@@ -276,6 +276,7 @@ func validate(m *Metamodel) error {
 	validationErrors = append(validationErrors, validateCopies(m)...)
 	validationErrors = append(validationErrors, validateWorlds(m)...)
 	validationErrors = append(validationErrors, validateValidationFaces(m)...)
+	validationErrors = append(validationErrors, validateValidationRelations(m)...)
 	validationErrors = append(validationErrors, validateAutomationFaces(m)...)
 	validationErrors = append(validationErrors, validateComments(m)...)
 
@@ -1548,6 +1549,55 @@ relations:
 #       - "rationale!="
 #     severity: warning
 `
+}
+
+// validateValidationRelations checks every `relations:` constraint on a
+// validation rule: the relation type must be declared, and the bounds must
+// be satisfiable.
+//
+// Same rationale as validateValidationFaces, and the same failure mode this
+// ticket exists to eliminate. A misspelled relation type counts zero
+// relations forever. Under `min:` that is merely loud (the gate fires on
+// everything); under `max:` it is silent — the gate reports "satisfied"
+// precisely because it is looking at a relation type nothing uses. The
+// outer key allowlist catches `relationz:`; this catches the same typo one
+// level down, where the consequence is worse.
+func validateValidationRelations(m *Metamodel) []string {
+	var errs []string
+	for _, rule := range m.Validations {
+		for _, relType := range sortedKeys(rule.Relations) {
+			c := rule.Relations[relType]
+			if _, ok := m.GetRelationDef(relType); !ok {
+				errs = append(errs, fmt.Sprintf(
+					"validation %q: relations: relation type %q is not declared — "+
+						"the constraint would count nothing and pass forever",
+					rule.Name, relType))
+			}
+			if c.Min == nil && c.Max == nil {
+				errs = append(errs, fmt.Sprintf(
+					"validation %q: relations %q: needs `min:` or `max:` — "+
+						"a constraint with neither bound checks nothing",
+					rule.Name, relType))
+			}
+			if c.Min != nil && *c.Min < 0 {
+				errs = append(errs, fmt.Sprintf(
+					"validation %q: relations %q: `min: %d` is negative",
+					rule.Name, relType, *c.Min))
+			}
+			if c.Max != nil && *c.Max < 0 {
+				errs = append(errs, fmt.Sprintf(
+					"validation %q: relations %q: `max: %d` is negative",
+					rule.Name, relType, *c.Max))
+			}
+			if c.Min != nil && c.Max != nil && *c.Min > *c.Max {
+				errs = append(errs, fmt.Sprintf(
+					"validation %q: relations %q: `min: %d` exceeds `max: %d` — "+
+						"no entity can satisfy this constraint",
+					rule.Name, relType, *c.Min, *c.Max))
+			}
+		}
+	}
+	return errs
 }
 
 // validateValidationFaces checks that every face named in a rule's `faces:`

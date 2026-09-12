@@ -1018,6 +1018,16 @@ entities:
     properties:
       status:
         type: status
+  review-checklist:
+    label: Review checklist
+    id_prefix: "REV-"
+    properties:
+      status:
+        type: status
+relations:
+  has-review:
+    from: [ticket]
+    to: [review-checklist]
 validations:
   - name: done-needs-review
     entity_type: ticket
@@ -2616,5 +2626,77 @@ entities:
 	// A label-less inline enum has a nil Labels map (round-trip safety).
 	if props["priority"].Labels != nil {
 		t.Errorf("label-less enum should have nil Labels, got %v", props["priority"].Labels)
+	}
+}
+
+// TestParse_ValidationRelationsRejected covers the schema checks on a
+// `relations:` constraint. Each case is a rule that would otherwise load
+// clean and then check nothing — the silent-no-op failure mode the outer
+// key allowlist exists to prevent, one level further down.
+func TestParse_ValidationRelationsRejected(t *testing.T) {
+	const preamble = `version: "1.0"
+types:
+  status:
+    values: [open, done]
+entities:
+  ticket:
+    label: Ticket
+    id_prefix: "TKT-"
+    properties:
+      status:
+        type: status
+  review-checklist:
+    label: Review checklist
+    id_prefix: "REV-"
+    properties:
+      status:
+        type: status
+relations:
+  has-review:
+    from: [ticket]
+    to: [review-checklist]
+validations:
+  - name: gate
+    entity_type: ticket
+    when: ["status=done"]
+    severity: error
+    relations:
+`
+	tests := []struct {
+		name      string
+		block     string
+		wantInErr string
+	}{
+		{
+			name:      "undeclared relation type",
+			block:     "      has-reviewwww:\n        min: 1\n",
+			wantInErr: "is not declared",
+		},
+		{
+			name:      "no bounds",
+			block:     "      has-review: {}\n",
+			wantInErr: "needs `min:` or `max:`",
+		},
+		{
+			name:      "min exceeds max",
+			block:     "      has-review:\n        min: 5\n        max: 2\n",
+			wantInErr: "exceeds",
+		},
+		{
+			name:      "negative min",
+			block:     "      has-review:\n        min: -3\n",
+			wantInErr: "is negative",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Parse([]byte(preamble + tc.block))
+			if err == nil {
+				t.Fatal("expected a load error, got nil")
+			}
+			if !strings.Contains(err.Error(), tc.wantInErr) {
+				t.Errorf("error should mention %q; got: %v", tc.wantInErr, err)
+			}
+		})
 	}
 }
