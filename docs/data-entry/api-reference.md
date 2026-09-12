@@ -260,6 +260,13 @@ The handler honors `If-Match: <etag>` for optimistic concurrency control.
 The ETag is computed against the entity's current `properties + content`.
 Mismatch → 412 Precondition Failed.
 
+The precondition is re-checked by the store, atomically with the write
+(TKT-34XS2R). Previously the compare and the write were separate steps made
+safe only by a process-local write lock, so two `rela-server` processes against
+one PostgreSQL database could both pass the compare and the second could
+overwrite the first. A write that loses that race now returns 412 as well — the
+same status, and the same remedy for the client: re-read, re-apply, retry.
+
 ## MCP and Lua content semantics
 
 `entitymanager.RelationOptions.Content` is `*string` — pointer-vs-string

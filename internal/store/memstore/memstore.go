@@ -68,8 +68,14 @@ import (
 // method, on the store that already owns observer fan-out — not
 // accreted API.
 //
-//plimsoll:max-methods=50
-//plimsoll:max-exported-methods=32
+// +1 exported / +2 methods (TKT-34XS2R): UpdateEntityIf joined the mandated
+// store.Store interface, and the conditional core it shares with the
+// unconditional path is the second. Required-interface exception again — the
+// CAS precondition has to be evaluated atomically with the write, so it
+// cannot live anywhere but on the type that owns the write.
+//
+//plimsoll:max-methods=52
+//plimsoll:max-exported-methods=33
 type MemStore struct {
 	// txMu serializes an open Tx against ordinary writers: Tx holds it
 	// for the whole callback, every exported write method takes it
@@ -562,9 +568,21 @@ func (m *MemStore) createEntity(_ context.Context, e *entity.Entity) error {
 	return nil
 }
 
-func (m *MemStore) updateEntity(_ context.Context, e *entity.Entity) error {
+func (m *MemStore) updateEntity(ctx context.Context, e *entity.Entity) error {
+	_, err := m.updateEntityIf(ctx, e, store.UpdateCondition{})
+	return err
+}
+
+// updateEntityIf is the single update core: the compare and the write happen
+// under ONE acquisition of m.mu, which is what makes this a compare-and-swap
+// rather than the check-then-write it replaces. Splitting them — even into two
+// methods on the same mutex — would reintroduce the race, because the lock
+// would be released in between.
+func (m *MemStore) updateEntityIf(
+	_ context.Context, e *entity.Entity, cond store.UpdateCondition,
+) (store.EntityVersion, error) {
 	if err := storeutil.ValidateProperties(e.Properties); err != nil {
-		return err
+		return "", err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -572,12 +590,23 @@ func (m *MemStore) updateEntity(_ context.Context, e *entity.Entity) error {
 	key := entity.FormatStateRef(e.ID, e.Face)
 	existing, exists := m.entities[key]
 	if !exists {
-		return store.ErrNotFound
+		return "", store.ErrNotFound
+	}
+	if !cond.IsZero() {
+		// Versioned against the faced row (`existing`), not a bare-id lookup:
+		// since content-states (TKT-DOFYR1) an id names a FAMILY, and comparing
+		// against the default face would let a write to one face pass a
+		// condition computed from another.
+		if actual := store.VersionOf(existing); actual != cond.ExpectedVersion {
+			return "", &store.VersionConflictError{
+				ID: e.ID, Expected: cond.ExpectedVersion, Actual: actual,
+			}
+		}
 	}
 	// Row-family invariant: a non-default state cannot be re-typed away
 	// from its family (TKT-DOFYR1, design doc §6).
 	if !e.Face.IsDefault() && e.Type != existing.Type {
-		return storeutil.StateTypeMismatchError(e.ID, e.Face, e.Type, existing.Type)
+		return "", storeutil.StateTypeMismatchError(e.ID, e.Face, e.Type, existing.Type)
 	}
 
 	stored := e.Clone()
@@ -592,7 +621,9 @@ func (m *MemStore) updateEntity(_ context.Context, e *entity.Entity) error {
 		EntityID:   e.ID,
 		Face:       e.Face,
 	})
-	return nil
+	// Computed from `stored`, not from `e`: the stored copy is the one the
+	// next reader will see, and it has had Redacted cleared.
+	return store.VersionOf(stored), nil
 }
 
 func (m *MemStore) deleteEntity(_ context.Context, id string, cascade bool) (*store.DeleteResult, error) {

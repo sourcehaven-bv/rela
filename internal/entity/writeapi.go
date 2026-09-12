@@ -155,6 +155,24 @@ type Patch struct {
 	Properties map[string]any
 	MetaUnset  []string
 	Content    *string
+
+	// ExpectedVersion, when non-empty, makes the patch a COMPARE-AND-SWAP:
+	// it applies only if the stored entity still matches the token the caller
+	// last observed, and otherwise fails with a conflict the caller can
+	// distinguish and retry on (TKT-34XS2R).
+	//
+	// The token is produced by the store (`store.VersionOf`) and is opaque
+	// here. This field is deliberately a plain string rather than a
+	// `store.EntityVersion`: `entity` is the domain package and must not
+	// import `store`, which depends on it.
+	//
+	// Empty means "apply unconditionally", which is the historical behavior
+	// and remains the default. Note that a patch is already far safer than a
+	// read-modify-write even without this — properties it does not name are
+	// preserved, so a lost update can only affect properties two writers both
+	// named. ExpectedVersion closes the remaining case: two callers patching
+	// the SAME property, or a Content replacement computed from a base read.
+	ExpectedVersion string
 }
 
 // IsEmpty reports whether the patch would change nothing: no property
