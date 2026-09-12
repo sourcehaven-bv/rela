@@ -443,8 +443,8 @@ rela delete REQ-001 --cascade
 ### rela history
 
 Show an entity's version history, or print a past version's snapshot for piping
-to a diff tool. **PostgreSQL build only** — content versioning is a
-PostgreSQL-backend capability (filesystem projects use git for the same
+to a diff tool. **PostgreSQL and SQLite builds** — content versioning is a
+database-backend capability (filesystem projects use git for the same
 purpose); on other builds this reports that the backend does not support
 history.
 
@@ -508,8 +508,8 @@ rela restore TKT-42 3
 ### rela relation-history
 
 Show a relation's version history, or print a past version's snapshot for piping
-to a diff tool. A relation is addressed by its three-part key. **PostgreSQL build
-only** (filesystem projects use git). Relations carry their own properties and
+to a diff tool. A relation is addressed by its three-part key. **PostgreSQL and
+SQLite builds** (filesystem projects use git). Relations carry their own properties and
 markdown body, versioned with the same time-machine model as entities.
 
 ```bash
@@ -546,8 +546,8 @@ diff <(rela relation-history TKT-42 blocks TKT-99 --version 2) \
 
 ### rela relation-restore
 
-Restore a relation's content and properties to a past version. **PostgreSQL build
-only.** Applied as a normal write (authorized, validated, audited, re-versioned).
+Restore a relation's content and properties to a past version. **PostgreSQL and
+SQLite builds.** Applied as a normal write (authorized, validated, audited, re-versioned).
 If the relation was deleted it is re-created — which fails with a conflict if an
 endpoint entity no longer exists.
 
@@ -572,8 +572,8 @@ rela relation-restore TKT-42 blocks TKT-99 2
 
 Hard-delete an entity's version history for compliance (leaked secret, PII, GDPR
 erasure). The deliberate, audited, **irreversible** exception to append-only
-history. **PostgreSQL build only.** Operator-only: the trust boundary is shell +
-`RELA_DATABASE_URL` access (no ACL check), like `rela db migrate`.
+history. **PostgreSQL and SQLite builds.** Operator-only: the trust boundary is
+shell access to the database (no ACL check), like `rela db migrate`.
 
 ```bash
 rela history-purge <id> (--vseq N | --content-hash H | --all) --reason "..." [--commit] [--yes] [--force-live]
@@ -611,8 +611,8 @@ rela history-purge TKT-42 --content-hash abc123 --reason "erase SSN per DPO-42" 
 ### rela relation-history-purge
 
 The relation analog of `rela history-purge`, addressing a relation by its
-three-part key. Same flags, guardrails, and irreversibility. **PostgreSQL build
-only.**
+three-part key. Same flags, guardrails, and irreversibility. **PostgreSQL and
+SQLite builds.**
 
 ```bash
 rela relation-history-purge <from> <type> <to> (--vseq N | --content-hash H | --all) --reason "..." [--commit] [--yes] [--force-live]
