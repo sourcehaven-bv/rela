@@ -465,7 +465,7 @@ func (s *sweep) captureRelation(
 // for as long as nothing calls stop() on it, and stop() on a nil done channel
 // blocks its caller forever: a latent deadlock one refactor away, for the cost
 // of two lines here.
-func (s *Store) sweepNow(ctx context.Context, provider store.ProjectionProvider, cfg store.SweepConfig) error {
+func sweepNow(ctx context.Context, s *Store, provider store.ProjectionProvider, cfg store.SweepConfig) error {
 	done := make(chan struct{})
 	close(done)
 	sctx, cancel := context.WithCancel(ctx)

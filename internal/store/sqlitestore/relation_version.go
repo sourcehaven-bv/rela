@@ -602,18 +602,14 @@ func scanRelationVersionMeta(row scanner) (store.RelationVersionMeta, error) {
 // holding a live relation can attribute a synchronous capture to the right
 // lineage without first reading history that may not exist yet (a relation
 // deleted before the sweep ever ran has no version rows to resolve against).
-func (s *Store) RelationRecordID(ctx context.Context, from, relType, to string) (int64, error) {
-	const q = `SELECT rel_record_id FROM relations
-	           WHERE from_id = ? AND rel_type = ? AND to_id = ? AND from_face = ''`
-	var id int64
-	err := s.q().QueryRowContext(ctx, q, from, relType, to).Scan(&id)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, nil
-	}
-	if err != nil {
-		return 0, fmt.Errorf("sqlitestore: resolve relation record id: %w", err)
-	}
-	return id, nil
+//
+// On VersionStore rather than Store, matching pgstore: Store carries a pinned
+// plimsoll line whose doc says an added capability accessor should have to
+// argue for itself, and this one does not need to be there — lineage is this
+// type's concern. Keeping the two backends' accessor in the same place also
+// lets storetest discover them with one lookup.
+func (v *VersionStore) RelationRecordID(ctx context.Context, from, relType, to string) (int64, error) {
+	return v.liveRecordID(ctx, from, relType, to)
 }
 
 // bumpRelRecordSeq consumes the relation-lineage id the caller just used.

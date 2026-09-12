@@ -12,5 +12,5 @@ import (
 
 // SweepNow runs exactly one reconciliation tick synchronously.
 func (s *Store) SweepNow(ctx context.Context, p store.ProjectionProvider, cfg store.SweepConfig) error {
-	return s.sweepNow(ctx, p, cfg)
+	return sweepNow(ctx, s, p, cfg)
 }

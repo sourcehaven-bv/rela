@@ -91,6 +91,17 @@ const timeFmt = time.RFC3339Nano
 // Interface-driven again, so the numbers move with store.Store rather than
 // with this type.
 //
+// Content versioning (TKT-4NU9ZD) added exactly TWO exported methods, and the
+// arithmetic is the point of the line rather than an obstacle to it.
+// VersionStore() and StartVersionSweep() are the OPTIONAL capabilities
+// store.VersionServiceProvider and store.VersionSweeper declare, so the wiring
+// site can discover them by type assertion — they have to be on the store.
+// Everything else the feature needs hangs off *VersionStore instead: the seven
+// service methods, the lineage walks, the purge guardrails, and the
+// RelationRecordID accessor that pgstore also keeps off its Store for this
+// exact reason. The synchronous tick sweepNow is a free function taking the
+// store rather than a method, since nothing about it needs to be one.
+//
 //plimsoll:max-methods=51
 //plimsoll:max-exported-methods=33
 type Store struct {

@@ -68,10 +68,12 @@ func TestRelationsGetDistinctLineageIDs(t *testing.T) {
 	s := open(t)
 	seedRelationEndpoints(t, s, "FEAT-1", "FEAT-2", "FEAT-3")
 
-	recordIDer, ok := any(s).(interface {
+	// On the VERSION service, not the store — the same place pgstore puts it,
+	// which is what lets storetest find both with one lookup.
+	recordIDer, ok := s.VersionStore().(interface {
 		RelationRecordID(ctx context.Context, from, relType, to string) (int64, error)
 	})
-	require.True(t, ok, "sqlitestore must expose RelationRecordID")
+	require.True(t, ok, "sqlitestore's version service must expose RelationRecordID")
 
 	seen := map[int64]bool{}
 	for _, to := range []string{"FEAT-2", "FEAT-3"} {
