@@ -1455,7 +1455,23 @@ type ChecklistRule struct {
 //
 // Where reuses the same filter syntax as When/Then (e.g. "status=done"),
 // matched against the TARGET entity's properties. At least one of Min/Max
-// must be set for the constraint to have an effect.
+// must be set; the loader rejects a constraint with neither bound, an
+// undeclared relation type, or bounds that nothing can satisfy.
+//
+// # The count is what the acting identity can see
+//
+// Relations and their targets are read through the ACL-gated reader, so a
+// constraint counts VISIBLE relations, not all relations. A gate is
+// therefore not a global invariant: two principals validating the same
+// graph can legitimately reach different verdicts, because an edge is
+// dropped when either endpoint is invisible to the reader.
+//
+// This is deliberate — the alternative leaks hidden entities through
+// violation messages — and it is the same gating the Lua implementation
+// this replaced already had. It matters mainly for `Max`, where an
+// invisible target means a gate can pass for one principal and fail for
+// another. The CLI and CI paths wire an unrestricted reader, so the
+// authoritative verdict (the one enforcing the workflow) sees everything.
 type RelationConstraint struct {
 	// Where filters the target entities that count toward the constraint.
 	// All conditions are ANDed; empty means every target counts.

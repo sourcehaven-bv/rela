@@ -1866,7 +1866,26 @@ entities that match `when`.
 
 > Unknown keys inside a validation rule are rejected at load time, so a
 > misspelled or mis-nested block (e.g. `relationz:`) fails loudly rather than
-> being silently ignored.
+> being silently ignored. The same applies inside the block: an undeclared
+> relation type, a constraint with neither `min` nor `max`, and bounds nothing
+> can satisfy (`min: 5, max: 2`) are all load errors. A constraint that cannot
+> be evaluated at check time is reported too — it never counts as satisfied.
+
+`where` is matched against the **target** entity with the same type-aware
+semantics as `when`/`then`, which is worth knowing when porting hand-written
+comparisons:
+
+- `*` and `?` are wildcards, not literal characters.
+- On a list-valued property, `=` means "contains this element".
+- Values are coerced to the property's declared type, so `count=007` matches a
+  stored `7`, and a date matches its timestamp form.
+
+Relations and targets are read through the same visibility rules as everything
+else, so a constraint counts what the acting identity can **see**. A gate is
+not a global invariant: an edge is skipped when either endpoint is invisible,
+so two users can legitimately get different verdicts on the same graph. The CLI
+and CI read unrestricted, so the verdict that enforces the workflow sees the
+whole graph.
 
 ### Lua Validation
 
