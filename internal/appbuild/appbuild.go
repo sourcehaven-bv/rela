@@ -1694,9 +1694,11 @@ func assemble(
 		return nil, fmt.Errorf("compile computed properties: %w", err)
 	}
 
-	// Content versioning is a separate injected service (pgstore only; nil
-	// elsewhere), NOT a store capability the manager type-asserts. Derived once
-	// here and threaded into the recorders and the Services bundle.
+	// Content versioning is a separate injected service (pgstore and
+	// sqlitestore; nil on the fs/memory builds, which have no versioning
+	// store — fsstore uses git), NOT a store capability the manager
+	// type-asserts. Derived once here and threaded into the recorders and the
+	// Services bundle.
 	versions := versionServiceFor(st)
 
 	// A recipe-supplied state store wins over the per-backend one, which wins
@@ -1741,9 +1743,10 @@ func assemble(
 
 	val := validator.New(st, base.meta, readDeps)
 
-	// Start the pgstore version-reconciliation sweep (postgres build only; a
-	// no-op elsewhere). It captures create/update versions for settled entities;
-	// rename/delete are captured synchronously via the entitymanager hook above.
+	// Start the backend's version-reconciliation sweep (postgres and sqlite
+	// builds; a no-op elsewhere). It captures create/update versions for
+	// settled entities; rename/delete are captured synchronously via the
+	// entitymanager hook above.
 	startVersionSweepIfSupported(st, base.meta)
 
 	// Reconcile the derived schema (postgres build only; a no-op elsewhere):
@@ -1900,9 +1903,12 @@ func relationVersionRecorderFor(vs store.VersionService) entitymanager.RelationV
 }
 
 // (startVersionSweepIfSupported is defined per build tag in
-// versionsweep_postgres.go / versionsweep_nosweep.go — the postgres build starts
-// the pgstore reconciliation sweep, every other build no-ops — which keeps this
-// build-agnostic file free of any pgstore import. assemble calls it above.)
+// versionsweep_shared.go — compiled into the postgres and sqlite builds, where
+// it starts the backend's reconciliation sweep — and in
+// versionsweep_nosweep.go, where every other build no-ops. Discovery is by
+// type assertion on store.VersionSweeper, which keeps this build-agnostic file
+// and the shared resolver alike free of any backend import. assemble calls it
+// above.)
 
 // jobQueueShutdownTimeout bounds how long [Services.Close] waits for the job
 // queue to stop. A queue that will not drain must not wedge process shutdown.

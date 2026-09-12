@@ -31,7 +31,7 @@ type RestoreCmd struct {
 func (c *RestoreCmd) Run(ctx context.Context, svc *writeServices) error {
 	if svc.Versions == nil {
 		out.WriteMessage("The active storage backend does not support version history " +
-			"(restore is a PostgreSQL-build feature).")
+			"(restore needs the PostgreSQL or SQLite build).")
 		return nil
 	}
 	var reader store.HistoryReader = svc.Versions

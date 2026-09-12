@@ -740,6 +740,11 @@ jobs:
       # rest is byte-identical to what the Test job already ran, and paying for
       # a second full suite to re-verify it is not worth the minutes.
       #
+      # internal/sqlitedb is in the list even though it carries no build tag:
+      # it owns the database file and the migration ladder, so its tests are
+      # the ones that fail when a schema step is wrong. It is only reached by
+      # the sqlite build, which is what makes this the job that should run it.
+      #
       # No -race: the Test job races these same shared packages on the default
       # backend, and sqlitestore's own concurrency is covered by the
       # conformance suite. Add it if this job ever grows a genuinely
@@ -748,7 +753,9 @@ jobs:
         run: |
           go test -tags sqlite -shuffle=on \
             ./internal/store/... \
+            ./internal/sqlitedb/... \
             ./internal/appbuild/... \
+            ./internal/dataentry/... \
             ./internal/cli/...
 
   cross-compile:

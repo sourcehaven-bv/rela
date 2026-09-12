@@ -41,7 +41,7 @@ type HistoryPurgeCmd struct {
 func (c *HistoryPurgeCmd) Run(ctx context.Context, svc *writeServices) error {
 	if svc.Versions == nil {
 		out.WriteMessage("The active storage backend does not support version purge " +
-			"(a PostgreSQL-build compliance feature).")
+			"(history purge needs the PostgreSQL or SQLite build).")
 		return nil
 	}
 	var purger store.VersionPurger = svc.Versions
@@ -107,7 +107,7 @@ type RelationHistoryPurgeCmd struct {
 func (c *RelationHistoryPurgeCmd) Run(ctx context.Context, svc *writeServices) error {
 	if svc.Versions == nil {
 		out.WriteMessage("The active storage backend does not support relation version purge " +
-			"(a PostgreSQL-build compliance feature).")
+			"(history purge needs the PostgreSQL or SQLite build).")
 		return nil
 	}
 	var purger store.RelationVersionPurger = svc.Versions

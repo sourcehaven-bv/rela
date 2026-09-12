@@ -77,19 +77,25 @@ Compared with the **filesystem** build:
 
 - **No markdown files.** Entities live in the database, so you cannot `grep`
   them, hand-edit them, or review a change as a diff.
-- **No git history.** This is the sharpest trade. The filesystem build gets
-  version history for free because every entity is a file in your repository.
-  The PostgreSQL build replaces that with built-in content versioning — a time
-  machine you can list, diff and restore from. **The SQLite build has neither
-  yet**: content versioning is planned but not implemented, so today this
-  backend keeps no history of past edits. If an audit trail matters to you,
-  use one of the other two.
+- **No git history.** The filesystem build gets version history for free
+  because every entity is a file in your repository. The SQLite build replaces
+  that with built-in content versioning, the same way the PostgreSQL build
+  does — a time machine you can list, diff and restore from, stored in the
+  database rather than in your repository. What you give up is the *review*
+  workflow: history is queryable, but there is no pull request to read.
 
 Compared with the **PostgreSQL** build:
 
 - **One process.** No shared server, no multi-tenant deployment.
 - **No cross-process change feed**, because there is no second process.
-- **No content versioning, no version purge, no shared runtime state.**
+- **No shared runtime state.** Settings, the render cache and the operator's
+  logo live under `.rela/` rather than in the database. That is deliberate:
+  node-local state is only a problem when several processes serve one project,
+  and this backend is single-process by construction.
+
+Content versioning and version purge are NOT in that list any more — both
+backends implement the same contract, and one shared conformance suite holds
+them to it.
 
 ## What you get
 
