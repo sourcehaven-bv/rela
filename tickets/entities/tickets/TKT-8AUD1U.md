@@ -30,16 +30,44 @@ need a compatible collation, or the config needs to declare that ordering is
 byte/natural rather than locale-aware. Decide this explicitly rather than
 silently changing which rows appear.
 
-## Sequencing — check before starting
+## Sequencing — resolved
 
-Overlaps `rela-query-paging` (branch `tkt-ju3s5n-graphquery-paging`,
-TKT-JU3S5N): keyset paging for `GraphQueryer` via a separate `GraphPageQuery`.
-That commit's rationale explicitly notes paging lives off `GraphQuery` because
-`GraphCount` / `MatchingIDs` must answer for the whole matched set. It also
-references a follow-up TKT-YWDGZD for pushing the ACL predicate down.
+`store.GraphQuery.OrderBy` / `Limit` / `Offset` exist as of TKT-1U8XYN (#1526),
+pushed into SQL on pgstore and into `graphquerynaive.Order` / `Page` on the
+delegating backends, with paging conformance in `storetest/graphquery.go`. Build
+on those. `internal/dataentry/listpushdown.go` is the worked example of pushing
+a list shape down; a dashboard table card is the same problem with a smaller
+limit.
 
-Build on that rather than inventing a second bounding mechanism. Re-check
-whether it has merged before starting.
+This section previously pointed at TKT-JU3S5N (branch
+`tkt-ju3s5n-graphquery-paging`), which proposed keyset paging on a separate
+`GraphPageQuery`, and asked implementers to build on it rather than invent a
+second bounding mechanism. That re-check did not happen before TKT-1U8XYN
+shipped, so for a while two designs for one capability existed. TKT-JU3S5N is
+now closed `wont-fix` as superseded. Noted only so the history reads clearly.
+
+### Note on keyset vs offset, for whoever bounds these cards
+
+Offset paging is what exists and is the right default here: it supports
+arbitrary `OrderBy` and random access into the result set, which is what a list
+UI with sortable columns and jump-to-page needs, and a dashboard card's `limit:
+5` is the first page of an ordered set — offset's weakest case is not in play.
+
+Keyset (cursor) paging has two advantages at a different operating point. It is
+stable under concurrent writes: an offset page can drop or repeat a row when a
+row earlier in the ordering is inserted or deleted between requests, whereas a
+cursor resumes from a key and cannot. And it stays cheap at depth, since the
+engine seeks to the key rather than counting past `Offset` rows it then
+discards.
+
+Neither advantage is free. Keyset needs a total order with a unique tiebreak
+(id), and it cannot jump to an arbitrary page. So if a future consumer needs a
+deep or long-lived walk — exporting every matching row, or an ACL-filtered scan
+where a silently dropped row reads as a nonexistent entity — consider a cursor
+for that path specifically, rather than converting the list path. TKT-JU3S5N's
+review record (branch `tkt-ju3s5n-graphquery-paging`, commit `f83217ff`,
+unpushed) has the prior art, including a hostile-id conformance technique for
+catching ordering divergence that well-behaved test ids cannot detect.
 
 ## Acceptance
 
