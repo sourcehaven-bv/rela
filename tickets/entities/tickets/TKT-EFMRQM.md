@@ -7,7 +7,7 @@ priority: medium
 effort: m
 tags:
     - needs-design
-status: backlog
+status: done
 ---
 
 Sequenced AFTER [[TKT-1EM4KL]] (declarative webhook routes). That ticket covers
