@@ -5,7 +5,7 @@ title: Replace EasyMDE with Milkdown (ProseMirror) in data-entry forms
 kind: enhancement
 priority: medium
 effort: l
-status: planning
+status: done
 ---
 
 ## Description
