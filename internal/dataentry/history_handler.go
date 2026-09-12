@@ -115,8 +115,9 @@ func handleV1History(a *App, w http.ResponseWriter, r *http.Request) {
 	entityID := ref.ID
 
 	if a.versions == nil {
-		// Non-postgres backend: no version history capability. This is a
-		// capability gap, not an ACL decision, so it's safe to say so plainly.
+		// A backend with no version-history capability — fsstore (which gets
+		// history from git instead) or memstore. This is a capability gap,
+		// not an ACL decision, so it's safe to say so plainly.
 		writeV1Error(w, r, http.StatusNotImplemented, "history_unsupported",
 			"The active storage backend does not support version history", "")
 		return

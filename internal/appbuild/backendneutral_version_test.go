@@ -1,9 +1,8 @@
-//go:build postgres
+//go:build postgres || sqlite
 
 package appbuild
 
 import (
-	"context"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -47,15 +46,6 @@ func (n neutralVersionProvider) VersionStore() store.VersionService { return n.s
 // never called — the resolver's contract is which handle it returns.
 type neutralVersionService struct{ store.VersionService }
 
-// neutralStateStore satisfies the wiring's rawStateStore structurally, the way
-// a non-pgstore backend would: three methods, no state.KV import (a store may
-// not depend on that application package).
-type neutralStateStore struct{}
-
-func (neutralStateStore) Get(context.Context, string) ([]byte, error) { return nil, nil }
-func (neutralStateStore) Put(context.Context, string, []byte) error   { return nil }
-func (neutralStateStore) Delete(context.Context, string) error        { return nil }
-
 func neutralBase(t *testing.T) store.Store {
 	t.Helper()
 	m := memstore.New()
@@ -64,7 +54,13 @@ func neutralBase(t *testing.T) store.Store {
 }
 
 // TestCapabilitiesAreSatisfiableWithoutPgstore is AC-2: a backend outside
-// pgstore can satisfy every capability.
+// pgstore can satisfy every version capability.
+//
+// Compiled into the sqlite build too, since TKT-4NU9ZD made the resolvers it
+// exercises shared (versionsweep_shared.go). The claim is the same in both:
+// discovery is by store-package interface, so a second backend needs no wiring
+// of its own — which is precisely what sqlitestore then demonstrates for real
+// in versionwiring_sqlite_test.go.
 func TestCapabilitiesAreSatisfiableWithoutPgstore(t *testing.T) {
 	t.Run("version sweep", func(t *testing.T) {
 		s := &neutralSweeper{Store: neutralBase(t)}
@@ -121,15 +117,3 @@ func (typedNilProvider) VersionStore() store.VersionService {
 
 // neutralVersionServiceImpl exists only to be pointed at by a nil pointer.
 type neutralVersionServiceImpl struct{ store.VersionService }
-
-// TestRawStateStoreIsSatisfiableWithoutPgstore covers the state half, which the
-// ticket notes was left out of TKT-415WA7 entirely.
-func TestRawStateStoreIsSatisfiableWithoutPgstore(t *testing.T) {
-	var _ rawStateStore = neutralStateStore{}
-
-	// And a store with no state capability must fall through to the FSKV, not
-	// hand back a non-nil interface wrapping nothing.
-	if got := stateKVFor(neutralBase(t)); got != nil {
-		t.Errorf("stateKVFor = %#v, want untyped nil so the FSKV fallback engages", got)
-	}
-}

@@ -1,73 +1,50 @@
 //go:build postgres
 
-package appbuild_test
+package appbuild
 
 import (
 	"context"
-	"os"
-	"path/filepath"
 	"testing"
 
-	"github.com/Sourcehaven-BV/rela/internal/appbuild"
-	"github.com/Sourcehaven-BV/rela/internal/audit"
-	"github.com/Sourcehaven-BV/rela/internal/project"
-	"github.com/Sourcehaven-BV/rela/internal/script"
-	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
 
-// TestPostgresBuild_StateIsDatabaseBacked is the wiring assertion for
-// TKT-VC27L3: on the postgres build, Services.State() must be the database
-// store, NOT an FSKV under the project's .rela/.
+// The state-store half of TKT-L3FNEN AC-2, split out of
+// backendneutral_postgres_test.go when the VERSION half became shared with the
+// sqlite build (TKT-4NU9ZD).
 //
-// Asserting on the concrete type would be brittle and would not prove the data
-// actually lands in the database. Instead this writes through the KV and then
-// checks the project directory stayed clean — the observable difference an
-// operator cares about, and the one that breaks when a future refactor
-// accidentally reinstates the filesystem KV.
-func TestPostgresBuild_StateIsDatabaseBacked(t *testing.T) {
-	dsn := os.Getenv("RELA_TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("RELA_TEST_DATABASE_URL not set")
-	}
+// It stays postgres-only because rawStateStore is: the sqlite build keeps the
+// filesystem KV on purpose (TKT-L1A3PH), so there is no second implementation
+// for it to be neutral about.
+//
+// This file must NOT import internal/store/pgstore — same claim, same reason.
 
-	root := writeMinimalProject(t)
-	fs := storage.NewSafeFS(storage.NewOsFS())
-	paths, err := project.Discover(root, fs)
-	if err != nil {
-		t.Fatalf("Discover: %v", err)
-	}
+// pgNeutralBase is a store with no capabilities at all.
+func pgNeutralBase(t *testing.T) store.Store {
+	t.Helper()
+	m := memstore.New()
+	t.Cleanup(func() { _ = m.Close() })
+	return m
+}
 
-	svc, err := appbuild.New(appbuild.Config{
-		FS:           fs,
-		Paths:        paths,
-		ScriptEngine: script.NewEngine(),
-		Audit:        audit.Nop{},
-		DatabaseURL:  dsn,
-	})
-	if err != nil {
-		t.Fatalf("appbuild.New: %v", err)
-	}
-	t.Cleanup(func() { _ = svc.Close() })
+// neutralStateStore satisfies the wiring's rawStateStore structurally, the way
+// a non-pgstore backend would: three methods, no state.KV import (a store may
+// not depend on that application package).
+type neutralStateStore struct{}
 
-	ctx := context.Background()
-	const key = "documents/DOC-1-abc.html"
-	if err = svc.State().Put(ctx, key, []byte("<html>rendered</html>")); err != nil {
-		t.Fatalf("Put: %v", err)
-	}
+func (neutralStateStore) Get(context.Context, string) ([]byte, error) { return nil, nil }
+func (neutralStateStore) Put(context.Context, string, []byte) error   { return nil }
+func (neutralStateStore) Delete(context.Context, string) error        { return nil }
 
-	got, err := svc.State().Get(ctx, key)
-	if err != nil {
-		t.Fatalf("Get: %v", err)
-	}
-	if string(got) != "<html>rendered</html>" {
-		t.Fatalf("Get = %q", got)
-	}
+// TestRawStateStoreIsSatisfiableWithoutPgstore covers the state half, which the
+// ticket notes was left out of TKT-415WA7 entirely.
+func TestRawStateStoreIsSatisfiableWithoutPgstore(t *testing.T) {
+	var _ rawStateStore = neutralStateStore{}
 
-	// The write must not have landed on disk: an FSKV would have created
-	// .rela/documents/DOC-1-abc.html.
-	onDisk := filepath.Join(paths.CacheDir, "documents", "DOC-1-abc.html")
-	if _, statErr := os.Stat(onDisk); statErr == nil {
-		t.Fatalf("state was written to %s — the postgres build must keep state in "+
-			"the database, or it stays node-local across a load-balanced fleet", onDisk)
+	// And a store with no state capability must fall through to the FSKV, not
+	// hand back a non-nil interface wrapping nothing.
+	if got := stateKVFor(pgNeutralBase(t)); got != nil {
+		t.Errorf("stateKVFor = %#v, want untyped nil so the FSKV fallback engages", got)
 	}
 }

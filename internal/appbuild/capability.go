@@ -1,5 +1,3 @@
-//go:build postgres
-
 package appbuild
 
 import "reflect"
