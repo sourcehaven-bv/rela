@@ -58,7 +58,7 @@ func versionsOf(t *testing.T, s store.Store) store.VersionService {
 }
 
 // writeVersion captures one version synchronously, filling the fields every
-// backend needs so individual cases stay about the behaviour under test.
+// backend needs so individual cases stay about the behavior under test.
 func writeVersion(t *testing.T, v store.VersionService, in store.VersionInput) {
 	t.Helper()
 	if in.SchemaHash == "" {
@@ -286,7 +286,7 @@ func runRelationHistoryTests(t *testing.T, f Factory) {
 	t.Run("VersionsReadBackWithOrdinals", func(t *testing.T) {
 		s := f(t)
 		v := versionsOf(t, s)
-		rid := seedRelationLineage(t, s, v, "FEAT-1", "rel", "FEAT-2", "one", "two")
+		rid := seedRelationLineage(t, s, v, "one", "two")
 		require.NotZero(t, rid)
 
 		got, err := v.ListRelationVersions(ctx(), store.RelationHistoryQuery{
@@ -302,7 +302,7 @@ func runRelationHistoryTests(t *testing.T, f Factory) {
 	t.Run("SnapshotContentReadsBack", func(t *testing.T) {
 		s := f(t)
 		v := versionsOf(t, s)
-		seedRelationLineage(t, s, v, "FEAT-1", "rel", "FEAT-2", "recorded body")
+		seedRelationLineage(t, s, v, "recorded body")
 
 		snap, err := v.GetRelationVersion(ctx(), store.RelationHistoryQuery{
 			From: "FEAT-1", Type: "rel", To: "FEAT-2",
@@ -314,7 +314,7 @@ func runRelationHistoryTests(t *testing.T, f Factory) {
 	t.Run("UnknownLifetimeHandleIsNotFound", func(t *testing.T) {
 		s := f(t)
 		v := versionsOf(t, s)
-		seedRelationLineage(t, s, v, "FEAT-1", "rel", "FEAT-2", "body")
+		seedRelationLineage(t, s, v, "body")
 
 		// A RecordID that is not a lifetime of this key must not be readable:
 		// the composite key is the authorization boundary, so a caller cannot
@@ -328,7 +328,7 @@ func runRelationHistoryTests(t *testing.T, f Factory) {
 	t.Run("LifetimesEnumerateForALiveKey", func(t *testing.T) {
 		s := f(t)
 		v := versionsOf(t, s)
-		seedRelationLineage(t, s, v, "FEAT-1", "rel", "FEAT-2", "body")
+		seedRelationLineage(t, s, v, "body")
 
 		lts, err := v.ListRelationLifetimes(ctx(), "FEAT-1", "rel", "FEAT-2")
 		require.NoError(t, err)
@@ -351,18 +351,31 @@ func runRelationHistoryTests(t *testing.T, f Factory) {
 //
 // It reads the record id back through ListRelationLifetimes rather than
 // assuming how a backend allocates one — the surrogate is deliberately opaque.
+// seedRelationLineage creates FEAT-1 --rel--> FEAT-2 and captures bodies as
+// versions on it, returning the lineage id they landed on.
+//
+// The whole triple is fixed rather than parameterized. Every case uses the
+// same one, because what the cases vary is the HISTORY on a relation, not
+// which relation it is — and a parameter that only ever takes one value reads
+// like a dimension the suite varies when it does not.
+const (
+	seedFrom = "FEAT-1"
+	seedType = "rel"
+	seedTo   = "FEAT-2"
+)
+
 func seedRelationLineage(
-	t *testing.T, s store.Store, v store.VersionService, from, relType, to string, bodies ...string,
+	t *testing.T, s store.Store, v store.VersionService, bodies ...string,
 ) int64 {
 	t.Helper()
-	for _, id := range []string{from, to} {
+	for _, id := range []string{seedFrom, seedTo} {
 		if _, err := s.GetEntity(ctx(), id); err != nil {
 			e := entity.New(id, "feature")
 			e.SetString("title", id)
 			require.NoError(t, s.CreateEntity(ctx(), e))
 		}
 	}
-	_, err := s.CreateRelation(ctx(), from, relType, to, &store.RelationData{})
+	_, err := s.CreateRelation(ctx(), seedFrom, seedType, seedTo, &store.RelationData{})
 	require.NoError(t, err)
 
 	// Ask the LIVE ROW for its lineage, not history.
@@ -373,24 +386,24 @@ func seedRelationLineage(
 	// lifetime is the DEAD one. Seeding the new life's versions onto that id
 	// merges two histories that must stay apart — which is what made the
 	// multi-lifetime purge case unreachable on pgstore and skip silently.
-	rid := relationRecordID(t, s, v, from, relType, to)
+	rid := relationRecordID(t, s, v, seedFrom, seedType, seedTo)
 	if rid == 0 {
 		// The backend exposes no accessor. Fall back to capturing one version
 		// and resolving through history, which is correct for a first
 		// lifetime — the only case a backend without the accessor can reach.
 		require.NoError(t, v.WriteRelationVersion(ctx(), store.RelationVersionInput{
-			From: from, Type: relType, To: to, Op: store.VersionOpUpdate,
+			From: seedFrom, Type: seedType, To: seedTo, Op: store.VersionOpUpdate,
 			Content: bodies[0], SchemaHash: "schema-1", Projection: []byte(`{"v":1}`),
 		}))
 		bodies = bodies[1:]
-		lts, ltErr := v.ListRelationLifetimes(ctx(), from, relType, to)
+		lts, ltErr := v.ListRelationLifetimes(ctx(), seedFrom, seedType, seedTo)
 		require.NoError(t, ltErr)
 		require.NotEmpty(t, lts)
 		rid = lts[0].RecordID
 	}
 	for _, b := range bodies {
 		require.NoError(t, v.WriteRelationVersion(ctx(), store.RelationVersionInput{
-			RecordID: rid, From: from, Type: relType, To: to,
+			RecordID: rid, From: seedFrom, Type: seedType, To: seedTo,
 			Op: store.VersionOpUpdate, Content: b,
 			SchemaHash: "schema-1", Projection: []byte(`{"v":1}`),
 		}))
@@ -572,13 +585,13 @@ func runPurgeTests(t *testing.T, f Factory) {
 		v := versionsOf(t, s)
 
 		// Two lifetimes of the same triple: create, capture, delete, recreate.
-		rid1 := seedRelationLineage(t, s, v, "FEAT-1", "rel", "FEAT-2", "first life")
+		rid1 := seedRelationLineage(t, s, v, "first life")
 		require.NoError(t, v.WriteRelationVersion(ctx(), store.RelationVersionInput{
 			RecordID: rid1, From: "FEAT-1", Type: "rel", To: "FEAT-2",
 			Op: store.VersionOpDelete, SchemaHash: "schema-1", Projection: []byte(`{"v":1}`),
 		}))
 		require.NoError(t, s.DeleteRelation(ctx(), "FEAT-1", "rel", "FEAT-2"))
-		rid2 := seedRelationLineage(t, s, v, "FEAT-1", "rel", "FEAT-2", "second life")
+		rid2 := seedRelationLineage(t, s, v, "second life")
 
 		require.NotEqual(t, rid1, rid2,
 			"delete+recreate reused the lineage id; the new relation would inherit "+
@@ -602,7 +615,7 @@ func runPurgeTests(t *testing.T, f Factory) {
 	t.Run("RelationRecordIDAndAllLifetimesAreExclusive", func(t *testing.T) {
 		s := f(t)
 		v := versionsOf(t, s)
-		rid := seedRelationLineage(t, s, v, "FEAT-1", "rel", "FEAT-2", "body")
+		rid := seedRelationLineage(t, s, v, "body")
 
 		_, err := v.PurgeRelationVersions(ctx(), store.RelationVersionPurgeRequest{
 			From: "FEAT-1", Type: "rel", To: "FEAT-2",

@@ -123,8 +123,8 @@ func insertVersion(ctx context.Context, q querier, in store.VersionInput, conten
 	// time.Now() reads can straddle a second boundary and disagree about when
 	// it happened.
 	now := timestampNow()
-	if err := ensureSchemaVersion(ctx, q, in.SchemaHash, in.Projection, now); err != nil {
-		return err
+	if schemaErr := ensureSchemaVersion(ctx, q, in.SchemaHash, in.Projection, now); schemaErr != nil {
+		return schemaErr
 	}
 	// prev_id is meaningful only on a rename row; leaving it NULL elsewhere is
 	// what makes the partial index on it small and the lineage walk cheap.

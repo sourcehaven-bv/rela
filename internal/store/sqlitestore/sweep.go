@@ -99,7 +99,7 @@ func (s *Store) StartVersionSweep(provider store.ProjectionProvider, cfg store.S
 // Close can call it unconditionally.
 //
 // The wait is UNBOUNDED, and that is a deliberate trade on the shutdown path.
-// Cancelling the context stops the loop from starting another tick, but a
+// Canceling the context stops the loop from starting another tick, but a
 // statement already in flight runs to completion, so Close can block for as
 // long as one selectCandidates takes. Waiting is still the right choice:
 // returning early would let a tick issue its remaining inserts against a

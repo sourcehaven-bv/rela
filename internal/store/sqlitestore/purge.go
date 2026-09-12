@@ -72,7 +72,9 @@ func (v *VersionStore) PurgeVersions(
 		SELECT vseq, op, content_hash, created_at
 		FROM entity_versions
 		WHERE entity_id IN (` + idPH + `) AND face = ?`
-	baseArgs := append(idArgs, string(req.Face))
+	baseArgs := make([]any, 0, len(idArgs)+1)
+	baseArgs = append(baseArgs, idArgs...)
+	baseArgs = append(baseArgs, string(req.Face))
 
 	targets, err := selectPurgeTargets(ctx, v.db, baseQ, baseArgs, req.Selector)
 	if err != nil {
@@ -429,7 +431,7 @@ func selectPurgeTargets(
 			op      string
 			created string
 		)
-		if err := rows.Scan(&t.Vseq, &op, &t.ContentHash, &created); err != nil {
+		if scanErr := rows.Scan(&t.Vseq, &op, &t.ContentHash, &created); scanErr != nil {
 			return nil, err
 		}
 		t.Op = store.VersionOp(op)

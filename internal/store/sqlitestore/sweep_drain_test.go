@@ -15,7 +15,9 @@ import (
 // is never skipped for want of one.
 type fixedProjection struct{}
 
-func (fixedProjection) Projection() (string, []byte) { return "schema-1", []byte(`{"v":1}`) }
+func (fixedProjection) Projection() (hash string, projectionJSON []byte) {
+	return "schema-1", []byte(`{"v":1}`)
+}
 
 // immediateSweep captures anything at all, with no debounce, so a test does not
 // have to wait out a settle window.

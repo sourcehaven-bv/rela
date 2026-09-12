@@ -187,35 +187,35 @@ func tableShapes(t *testing.T, path string) map[string][]string {
 
 	out := map[string][]string{}
 
-	rows, err := db.Query(
+	collect(t, db, "table:",
 		`SELECT m.name, p.name || ' ' || p.type || ' notnull=' || p.[notnull] ||
 		        ' default=' || COALESCE(p.dflt_value, '<none>')
 		 FROM sqlite_master m
 		 JOIN pragma_table_info(m.name) p
 		 WHERE m.type = 'table' AND m.name NOT LIKE 'sqlite_%'
-		 ORDER BY m.name, p.name`)
-	require.NoError(t, err)
-	for rows.Next() {
-		var table, column string
-		require.NoError(t, rows.Scan(&table, &column))
-		out["table:"+table] = append(out["table:"+table], column)
-	}
-	require.NoError(t, rows.Err())
-	require.NoError(t, rows.Close())
+		 ORDER BY m.name, p.name`, out)
 
-	idx, err := db.Query(
+	collect(t, db, "index:",
 		`SELECT COALESCE(tbl_name, ''), name FROM sqlite_master
 		 WHERE type = 'index' AND name NOT LIKE 'sqlite_%'
-		 ORDER BY tbl_name, name`)
-	require.NoError(t, err)
-	for idx.Next() {
-		var table, name string
-		require.NoError(t, idx.Scan(&table, &name))
-		out["index:"+table] = append(out["index:"+table], name)
-	}
-	require.NoError(t, idx.Err())
-	require.NoError(t, idx.Close())
+		 ORDER BY tbl_name, name`, out)
 
 	require.NotEmpty(t, out)
 	return out
+}
+
+// collect runs a two-column (group, value) query into out under a key prefix.
+func collect(t *testing.T, db *sql.DB, prefix, query string, out map[string][]string) {
+	t.Helper()
+
+	rows, err := db.Query(query)
+	require.NoError(t, err)
+	defer func() { _ = rows.Close() }()
+
+	for rows.Next() {
+		var group, value string
+		require.NoError(t, rows.Scan(&group, &value))
+		out[prefix+group] = append(out[prefix+group], value)
+	}
+	require.NoError(t, rows.Err())
 }

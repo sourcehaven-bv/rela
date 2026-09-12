@@ -81,8 +81,8 @@ func insertRelationVersion(
 	// One timestamp for both inserts, as insertVersion does and for the same
 	// reason: the projection and the version describe one capture.
 	now := timestampNow()
-	if err := ensureSchemaVersion(ctx, q, in.SchemaHash, in.Projection, now); err != nil {
-		return err
+	if schemaErr := ensureSchemaVersion(ctx, q, in.SchemaHash, in.Projection, now); schemaErr != nil {
+		return schemaErr
 	}
 	// prev_from/prev_to are the rename stitch links; NULL on every other op.
 	var prevFrom, prevTo *string
@@ -123,11 +123,11 @@ func insertRelationVersion(
 // renders `IN ()` — a syntax error. Callers guard on len today, so this is a
 // guard rail rather than a live path: NULL matches nothing, which is the
 // correct reading of "none of these ids".
-func idPlaceholders[T any](ids []T) (string, []any) {
+func idPlaceholders[T any](ids []T) (placeholders string, args []any) {
 	if len(ids) == 0 {
 		return "NULL", nil
 	}
-	args := make([]any, len(ids))
+	args = make([]any, len(ids))
 	for i, id := range ids {
 		args[i] = id
 	}
@@ -179,26 +179,12 @@ func (v *VersionStore) relationLineageIDs(ctx context.Context, headID int64) ([]
 		id := frontier[0]
 		frontier = frontier[1:]
 
-		rows, err := v.db.QueryContext(ctx, q, id)
+		// NULLs are dropped: a rename with no resolvable predecessor (the
+		// stitch target was purged, or this is the head of the chain) simply
+		// contributes nothing to the frontier.
+		preds, err := scanNullableIDs(ctx, v.db, q, id)
 		if err != nil {
 			return nil, fmt.Errorf("sqlitestore: walk relation lineage: %w", err)
-		}
-		var preds []int64
-		for rows.Next() {
-			// NULL when a rename has no resolvable predecessor (the stitch
-			// target was purged, or this is the head of the chain).
-			var p *int64
-			if err := rows.Scan(&p); err != nil {
-				rows.Close()
-				return nil, err
-			}
-			if p != nil {
-				preds = append(preds, *p)
-			}
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
-			return nil, err
 		}
 		for _, p := range preds {
 			if _, dup := seen[p]; dup {
@@ -330,6 +316,11 @@ func (v *VersionStore) ListRelationVersions(
 	}
 
 	ph, args := idPlaceholders(ids)
+	// G202: the interpolated `ph` is idPlaceholders' output — a run of "?"
+	// separated by commas, or the literal NULL. It never carries a bind value,
+	// let alone caller input; the ids travel as args below. SQLite has no array
+	// parameter, so expanding an IN list this way is the only option.
+	//nolint:gosec // G202: placeholders only, ids are bound as arguments
 	sel := `
 		SELECT vseq, op, from_id, rel_type, to_id, prev_from, prev_to,
 		       content_hash, schema_hash, principal_user, principal_tool,
@@ -374,6 +365,7 @@ func (v *VersionStore) GetRelationVersion(
 	}
 
 	ph, args := idPlaceholders(ids)
+	//nolint:gosec // G202: placeholders only, ids are bound as arguments (see above)
 	sel := `
 		SELECT rv.op, rv.from_id, rv.rel_type, rv.to_id, rv.prev_from, rv.prev_to,
 		       rv.content_hash, rv.schema_hash, rv.principal_user, rv.principal_tool,
@@ -447,22 +439,9 @@ func (v *VersionStore) ListRelationLifetimes(
 		  ON latest.rel_record_id = rv.rel_record_id AND latest.vseq = rv.vseq
 		WHERE rv.from_id = ? AND rv.rel_type = ? AND rv.to_id = ?
 		ORDER BY latest.vseq DESC`
-	rows, err := v.db.QueryContext(ctx, headsQ, from, relType, to)
+	heads, err := scanIDs(ctx, v.db, headsQ, from, relType, to)
 	if err != nil {
 		return nil, fmt.Errorf("sqlitestore: list relation lifetimes: %w", err)
-	}
-	var heads []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		heads = append(heads, id)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return nil, err
 	}
 	if len(heads) == 0 {
 		return nil, nil
@@ -633,4 +612,50 @@ func bumpRelRecordSeq(ctx context.Context, q querier) error {
 		return fmt.Errorf("advance relation lineage counter: %w", err)
 	}
 	return nil
+}
+
+// scanIDs runs a single-column int64 query to completion.
+//
+// Extracted so the rows handle is closed by defer rather than by a Close call
+// on each exit path — the shape sqlclosecheck flags, and the one that leaks a
+// cursor the first time somebody adds a return.
+func scanIDs(ctx context.Context, q querier, sql string, args ...any) ([]int64, error) {
+	rows, err := q.QueryContext(ctx, sql, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []int64
+	for rows.Next() {
+		var id int64
+		if scanErr := rows.Scan(&id); scanErr != nil {
+			return nil, scanErr
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// scanNullableIDs is [scanIDs] for a column that may be NULL, dropping the
+// NULLs. The caller decides what an absent value means; here it is always
+// "no predecessor", which contributes nothing.
+func scanNullableIDs(ctx context.Context, q querier, sql string, args ...any) ([]int64, error) {
+	rows, err := q.QueryContext(ctx, sql, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []int64
+	for rows.Next() {
+		var id *int64
+		if scanErr := rows.Scan(&id); scanErr != nil {
+			return nil, scanErr
+		}
+		if id != nil {
+			out = append(out, *id)
+		}
+	}
+	return out, rows.Err()
 }

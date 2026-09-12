@@ -1,7 +1,7 @@
 package sqlitedb
 
 // versionSchemaSQL is the content-versioning half of the schema (TKT-4NU9ZD),
-// the SQLite analogue of pgstore migrations 0004 / 0005 / 0012 / 0013.
+// the SQLite analog of pgstore migrations 0004 / 0005 / 0012 / 0013.
 //
 // Shared between [schemaSQL] (fresh databases) and the v3→v4 migration
 // (existing ones), for the same reason projectFilesDDL and stateKVDDL are:

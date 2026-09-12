@@ -1,8 +1,15 @@
+//go:build postgres || sqlite
+
 package appbuild
 
 import "reflect"
 
 // Capability resolvers must never hand back a typed nil.
+//
+// Built only where a capability resolver exists (postgres, sqlite). The fs and
+// memory builds resolve every optional capability to a literal nil, so there
+// is nothing here for them to guard and an untagged file would read as dead
+// code on the default build.
 //
 // # Why interface `== nil` is not enough
 //
