@@ -464,6 +464,27 @@ func (v *VersionStore) ListRelationLifetimes(
 	return lifetimes, nil
 }
 
+// RelationRecordID returns the surrogate lineage id carried on the LIVE
+// relations row for this triple's default tail, or 0 when no such row exists.
+//
+// It is not part of any store interface — it is an accessor for the opaque
+// handle callers otherwise obtain from [store.RelationLifetime], and it exists
+// because that route does not always have an answer. A lifetime is summarized
+// from version ROWS, so a relation created (or re-created) since the last sweep
+// tick has none yet, and the newest lifetime on its key may belong to a
+// previous, deleted life. A caller holding a live relation needs the id of the
+// lineage it is actually in, which only the row knows.
+//
+// Lives on VersionStore rather than on Store deliberately: Store carries a
+// pinned plimsoll line whose doc warns that a further capability accessor must
+// not raise it, and lineage is this type's concern anyway.
+//
+// sqlitestore.Store exposes the same method under the same name; the two are
+// discovered together by internal/store/storetest.
+func (v *VersionStore) RelationRecordID(ctx context.Context, from, relType, to string) (int64, error) {
+	return v.liveRecordID(ctx, from, relType, to)
+}
+
 // liveRecordID returns the rel_record_id of the live relations row for this key,
 // or 0 if the relation is not currently live.
 func (v *VersionStore) liveRecordID(ctx context.Context, from, relType, to string) (int64, error) {

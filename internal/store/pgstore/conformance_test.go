@@ -27,9 +27,16 @@ func TestConformance(t *testing.T) {
 			return s
 		},
 		Attachments: true,
-		// pgstore is the one backend meeting the strong Tx contract: rollback
-		// on error, events withheld until commit (DEC-8UIL0).
+		// pgstore meets the strong Tx contract: rollback on error, events
+		// withheld until commit (DEC-8UIL0). sqlitestore does too; fsstore and
+		// memstore deliberately do not.
 		TxRollback: true,
+		// Versioning was pgstore's alone until sqlitestore implemented it
+		// (TKT-4NU9ZD), which is what moved the contract into storetest.
+		// Declaring it here is the point of that move: the suite now states
+		// what a caller may rely on, and BOTH backends answer to it rather
+		// than each describing whatever it happens to do.
+		Versioning: true,
 	})
 }
 
