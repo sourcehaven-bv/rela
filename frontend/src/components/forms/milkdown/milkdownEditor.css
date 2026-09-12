@@ -1,0 +1,293 @@
+/*
+ * Chrome for the Milkdown editor: toolbar, gutter handle, floating menus, and
+ * the editing-only parts of the writing surface.
+ *
+ * Split out of MilkdownEditor.vue's scoped block to keep that component under
+ * the project's file-length limit. Scoping is preserved by prefixing every
+ * selector with `.milkdown-editor-shell` rather than by Vue's scope hash, so
+ * these rules still cannot reach anything outside the editor. That prefix is
+ * also why they can style ProseMirror's own DOM, which Vue's scope hash cannot
+ * reach anyway (it needs `:deep()`, since the nodes are created by
+ * ProseMirror rather than compiled from the template).
+ *
+ * Typography is NOT here. The editing surface wears the `md-body` class and
+ * takes its headings, lists, tables, quotes and code styling from the shared
+ * styles/markdown-content.css, which is the documented single source of truth
+ * for rendered markdown. Only rules specific to EDITING belong in this file —
+ * a rendered view has no cursor, no drag handle, and no resizable columns.
+ */
+
+.milkdown-editor-shell {
+  /* Positioned so the mention menu and block handle, which Floating UI places
+     with absolute coordinates, anchor here rather than escaping to the next
+     positioned ancestor. */
+  position: relative;
+  width: 100%;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  background: var(--input-bg);
+  color: var(--text-color);
+  /* The shell owns the border and focus ring, rather than the editable area,
+     so the toolbar sits inside the same frame as the content instead of
+     reading as a separate bar stuck on top. */
+  transition:
+    border-color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.milkdown-editor-shell:focus-within {
+  border-color: var(--accent-color);
+  box-shadow:
+    0 0 0 2px var(--focus-ring-gap),
+    0 0 0 4px var(--focus-ring);
+}
+
+/* ── Toolbar ─────────────────────────────────────────────────────────────── */
+
+.milkdown-editor-shell .editor-toolbar {
+  /* Sticks to the top of the viewport while a long body scrolls under it, so
+     the formatting buttons stay reachable without scrolling back up.
+
+     `top: 0` works because nothing between here and the viewport establishes
+     a scroll container — the page itself scrolls. The one exception is the
+     mobile breakpoint, handled below.
+
+     The z-index sits above the drag handle (20) but well below the floating
+     menus (10000), so a mention menu opened near the top still covers it. */
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  display: flex;
+  /* Wraps rather than scrolls: a hidden formatting button is a button the user
+     will not find, and the editor is used at narrow widths in the form. */
+  flex-wrap: wrap;
+  gap: var(--space-2xs);
+  align-items: center;
+  padding: var(--space-xs) var(--space-sm);
+  border-bottom: 1px solid var(--border-color);
+  /* Matches the shell's radius, minus its 1px border, so the corners stay
+     flush while the bar is parked at the top of its frame. */
+  border-radius: calc(var(--radius-lg) - 1px) calc(var(--radius-lg) - 1px) 0 0;
+  background: var(--card-bg);
+}
+
+/* PageLayout pins its own topbar at this breakpoint (z-index 10), so the
+   toolbar has to clear it rather than slide underneath. The 64px slot is the
+   one that bar reserves; see PageLayout's `.page-layout__sticky`. */
+@media (max-width: 768px) {
+  .milkdown-editor-shell .editor-toolbar {
+    top: 64px;
+  }
+}
+
+.milkdown-editor-shell .toolbar-group {
+  display: flex;
+  gap: var(--space-3xs);
+  align-items: center;
+}
+
+.milkdown-editor-shell .toolbar-divider {
+  width: 1px;
+  height: 18px;
+  margin: 0 var(--space-2xs);
+  background: var(--border-color);
+}
+
+.milkdown-editor-shell .toolbar-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--muted-text);
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    color 120ms ease,
+    border-color 120ms ease;
+}
+
+.milkdown-editor-shell .toolbar-button:hover {
+  background: var(--hover-bg);
+  color: var(--text-color);
+}
+
+/* The command would do nothing here (heading inside a list item, say). Kept
+   focusable and in the tab order — see the `aria-disabled` note in
+   EditorToolbar.vue — so this only changes appearance and the pointer. */
+.milkdown-editor-shell .toolbar-button.is-unavailable {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* Hover must not suggest the button is live. */
+.milkdown-editor-shell .toolbar-button.is-unavailable:hover {
+  background: none;
+  color: var(--muted-text);
+}
+
+/* The cursor is inside this formatting, so pressing the button removes it.
+   Colouring the button makes that legible before the click. */
+.milkdown-editor-shell .toolbar-button.is-active {
+  border-color: color-mix(in srgb, var(--accent-color) 35%, transparent);
+  background: color-mix(in srgb, var(--accent-color) 12%, transparent);
+  color: var(--accent-color);
+}
+
+/* ── Editing surface ─────────────────────────────────────────────────────── */
+
+/* The gutter the drag handle occupies. Reserved as padding on the body rather
+   than a margin on the content, so the handle never overlaps the first
+   characters of a line at narrow widths. */
+.milkdown-editor-shell .milkdown-editor-body {
+  position: relative;
+  padding-left: var(--space-xl);
+}
+
+.milkdown-editor-shell .ProseMirror {
+  min-height: 220px;
+  padding: var(--space-lg) var(--space-lg) var(--space-lg) 0;
+  outline: none;
+}
+
+/* A trailing empty paragraph must keep its height, or the click target for
+   "start typing below the table" collapses to nothing. */
+.milkdown-editor-shell .ProseMirror p:empty::after {
+  content: '';
+  display: inline-block;
+}
+
+/* The shared sheet drops the top margin on its own first child; inside the
+   editor that has to apply to the ProseMirror root's first child instead. */
+.milkdown-editor-shell .ProseMirror > :first-child {
+  margin-top: 0;
+}
+
+.milkdown-editor-shell .ProseMirror > :last-child {
+  margin-bottom: 0;
+}
+
+/* Tables are interactive here: ProseMirror adds column resize handles and a
+   selected-cell overlay the read-only view never shows. */
+.milkdown-editor-shell .ProseMirror .selectedCell {
+  position: relative;
+}
+
+.milkdown-editor-shell .ProseMirror .selectedCell::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--accent-color) 18%, transparent);
+  pointer-events: none;
+}
+
+.milkdown-editor-shell .ProseMirror .column-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -2px;
+  bottom: 0;
+  width: 4px;
+  background: var(--accent-color);
+  pointer-events: none;
+}
+
+/* The gap cursor, shown when the caret sits between two block nodes. The
+   plugin ships a hardcoded black rule that is invisible in dark mode. */
+.milkdown-editor-shell .ProseMirror-gapcursor::after {
+  border-top-color: var(--text-color);
+}
+
+/* An entity reference reads as a link, matching how the rendered view shows
+   it. The dotted underline distinguishes "this is a graph reference" from an
+   ordinary markdown link without needing a second colour. */
+.milkdown-editor-shell a.entity-ref {
+  border-bottom: 1px dotted currentcolor;
+  color: var(--accent-color);
+  text-decoration: none;
+  cursor: default;
+}
+
+.milkdown-editor-shell a.entity-ref-inaccessible {
+  color: var(--muted-text);
+}
+
+/* Sits over the editor's first line. `pointer-events: none` so a click lands
+   on the editable surface underneath and starts editing rather than doing
+   nothing. Offsets match the ProseMirror padding above. */
+.milkdown-editor-shell .milkdown-placeholder {
+  position: absolute;
+  top: var(--space-lg);
+  left: 0;
+  color: var(--muted-text);
+  pointer-events: none;
+}
+
+/* ── Block drag handle ───────────────────────────────────────────────────── */
+
+/* Positioned by BlockProvider against the hovered block. Hidden until then, so
+   the gutter stays quiet while the user reads. */
+.milkdown-editor-shell .block-handle {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+}
+
+.milkdown-editor-shell .block-handle[data-show='false'] {
+  display: none;
+}
+
+.milkdown-editor-shell .block-handle-grip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 22px;
+  border-radius: var(--radius-sm);
+  color: var(--muted-text);
+  cursor: grab;
+  opacity: 0.55;
+  transition:
+    background 120ms ease,
+    opacity 120ms ease;
+}
+
+.milkdown-editor-shell .block-handle-grip:hover {
+  background: var(--hover-bg);
+  opacity: 1;
+}
+
+.milkdown-editor-shell .block-handle-grip:active {
+  cursor: grabbing;
+}
+
+/* ── Floating menus ──────────────────────────────────────────────────────── */
+
+/* The element SlashProvider positions. Floating UI writes `left`/`top` here,
+   so this is what must be absolutely positioned — styling the menu inside it
+   instead left the coordinates on a static wrapper, and the menu rendered in
+   normal flow at the bottom of the editor rather than at the cursor. */
+.milkdown-editor-shell .mention-menu-anchor {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 10000;
+}
+
+.milkdown-editor-shell .mention-menu-anchor[data-show='false'] {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .milkdown-editor-shell,
+  .milkdown-editor-shell .toolbar-button,
+  .milkdown-editor-shell .block-handle-grip {
+    transition: none;
+  }
+}

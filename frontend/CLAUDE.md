@@ -53,7 +53,8 @@ src/components/   → Reusable UI components
 | `src/stores/` | Pinia stores: `schema` (metamodel/config), `entities` (CRUD + cache), `ui` (toasts, sidebar), `git` (status) |
 | `src/views/` | Route-level components: Dashboard, List, Form, Entity, Kanban, Graph, Search, Settings |
 | `src/widgets/` | The property-widget library + `registry.ts` (the type→widget dispatch). One widget per property type, each rendering both `mode: 'display'` and `mode: 'edit'` |
-| `src/components/forms/` | Form scaffolding: DynamicForm, FieldRenderer (resolves via the widget registry), RelationPicker, MarkdownEditor, SidePanel |
+| `src/components/forms/` | Form scaffolding: DynamicForm, FieldRenderer (resolves via the widget registry), RelationPicker, SidePanel |
+| `src/components/forms/milkdown/` | The WYSIWYG markdown editor (Milkdown/ProseMirror) and everything it owns: entity-ref node, `@` completion, toolbar, write-back guard |
 | `src/components/lists/` | EntityList, FilterBar, Pagination |
 | `src/components/common/` | Sidebar, StatusBar, Badge, Toast, BackButton |
 | `src/composables/` | Vue composables: useKeyboardShortcuts, useEvents (SSE), useListKeyboard, useScopeNavigation, useBackTarget |
@@ -226,6 +227,63 @@ tracker with a counter fails `useNavigationPending.test.ts`.
 When asserting a computed style in e2e, remember the scoping rule above: a
 probe element built with `document.createElement` only picks up *unscoped*
 CSS, so it can verify `.spinner` but not any scoped class.
+
+## The markdown editor (Milkdown/ProseMirror)
+
+`src/components/forms/milkdown/` replaces the old EasyMDE editor in data-entry
+forms. It is WYSIWYG: it PARSES every body it opens and RE-SERIALIZES it on
+save. Four properties follow from that and must not be broken.
+
+**Opening an entity and saving it must emit nothing.** Serialization is pinned
+by `RELA_STRINGIFY_OPTIONS` (`serializerContract.ts`) and gated by a corpus
+test that runs every entity body in the repo through parse → serialize. The
+test distinguishes two failures that look identical in a diff:
+
+- *byte churn* — output differs, meaning identical (table padding, bullet
+  style). Expected; **suppressed** by `guardWriteBack`, which returns the
+  ORIGINAL bytes when the semantic projection is unchanged.
+- *semantic drift* — output means something else. **Zero tolerance**; the
+  guard refuses to write rather than guessing, and CI runs the full sweep via
+  `RELA_FULL_CORPUS=1`.
+
+Never bypass `guardedValue()` and save `modelValue` directly — that reintroduces
+the churn the guard exists to absorb.
+
+**Load-time normalization is not a user edit.** ProseMirror's table plugin
+rewrites column widths while a document loads, which is indistinguishable from
+typing unless guarded. The `armed` flag is set only once loading settles, and
+resolution transactions are tagged so an arriving title never counts as an
+edit. Getting this wrong writes a diff for an entity someone only opened.
+
+**Entity-reference titles are ACL output, never derived.** A `` `TKT-007` ``
+code span becomes an `entityRef` node whose `id` is serialized and whose
+`title`/`entityType`/`inaccessible` are view-only and never reach the markdown.
+Titles come SOLELY from the server's per-principal `mentions` map (BUG-R9EHKV,
+`collectMentions` → `visibility.Reader.Filter`). Do not look a title up from
+the graph, the entity store, or a cache: an entity the principal cannot read
+must produce no mention at all, and a redacted title must fall back to the ID.
+
+**The editing surface wears `.md-body`.** Typography comes from the shared
+`styles/markdown-content.css`, so the editor and the rendered entity view
+cannot drift apart. `milkdownEditor.css` holds only editing-specific chrome
+(toolbar, gutter handle, floating menus, resize handles) — do not restate
+heading or list rules there.
+
+Two things the toolbar does that are worth preserving. Command availability is
+a **dry run** (`commandAvailability.ts`): a ProseMirror command called without
+`dispatch` reports whether it would apply, so the disabled state cannot drift
+from what the command does. And an *active* command is probed by its INVERSE,
+because that is what pressing it runs — probing forward would disable the very
+button that removes the formatting.
+
+`tableCommands.ts` carries hand-written guards where the dry run is not
+trustworthy: the GFM schema is `table_header_row table_row+`, and the
+ProseMirror table commands do not know the header is mandatory. They report
+success and then corrupt the table. Those guards (`canAddRowBefore`,
+`isInHeaderRow`, `isOnlyBodyRow`) are the exception, not the pattern.
+
+The sandboxed app editor (`src/app-editor/`) deliberately stays on EasyMDE —
+see TKT-D2JML7 and the CSP note in `internal/dataentry/CLAUDE.md`.
 
 ## CSS Architecture
 

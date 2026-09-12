@@ -28,6 +28,7 @@ import {
   getCheckboxStats,
   type EntityRefResolver,
 } from '@/utils/markdown'
+import { makeRefResolver } from '@/utils/entityRefResolver'
 import BackButton from '@/components/common/BackButton.vue'
 import Badge from '@/components/common/Badge.vue'
 import InaccessibleField from '@/components/common/InaccessibleField.vue'
@@ -355,20 +356,11 @@ const checkboxStats = computed(() => {
 // renderer so bare-ID code spans become titled in-app links. Null when
 // the response carries no mentions; renderMarkdown then behaves exactly
 // as before (no resolver, no rewrite).
-const refResolver = computed<EntityRefResolver | undefined>(() => {
-  const mentions = viewData.value?.mentions
-  if (!mentions) return undefined
-  return (id) => {
-    const m = mentions[id]
-    if (!m) return null
-    return {
-      type: m.type,
-      title: m.title,
-      inaccessible: m.inaccessible,
-      inaccessibleReason: m.inaccessible_reason,
-    }
-  }
-})
+// Shared with the editor via makeRefResolver, so a reference shows the same
+// title whether it is being read or edited.
+const refResolver = computed<EntityRefResolver | undefined>(() =>
+  makeRefResolver(viewData.value?.mentions),
+)
 
 // Text-anchored comments as source ranges (TKT-FIO205 stage 2). Offsets are
 // resolved server-side per read; a detached anchor has none and is simply not

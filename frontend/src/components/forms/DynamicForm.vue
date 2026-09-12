@@ -30,6 +30,7 @@ import type {
   RelationAffordance,
   AttachmentInfo,
   TransitionOption,
+  Mention,
 } from '@/types'
 import { getTemplates, createRelation, dryRunCreateEntity, ApiError, getErrorMessage } from '@/api'
 import { uploadAttachment, attachmentErrorReason } from '@/api/attachments'
@@ -48,7 +49,8 @@ import { registerForm } from './dirtyFormRegistry'
 import { adoptLockedFieldValues } from './stagedEntity'
 import AutoSaveIndicator from './AutoSaveIndicator.vue'
 import FormFieldList from './FormFieldList.vue'
-import MarkdownEditor from './MarkdownEditor.vue'
+import MarkdownEditor from './milkdown/MilkdownEditor.vue'
+import { makeRefResolver } from '@/utils/entityRefResolver'
 import SidePanel from './SidePanel.vue'
 import HelpModal from '@/components/ui/HelpModal.vue'
 import PendingButton from '@/components/common/PendingButton.vue'
@@ -204,6 +206,11 @@ const userTouched = ref<Set<string>>(new Set())
 // via `to[0]` (which is wrong for polymorphic relations).
 const pickerTypes = ref<Record<string, Map<string, string>>>({})
 const content = ref('')
+// The server's per-principal mentions map for the loaded body, and the
+// resolver the editor renders references with. Shared with the read view via
+// makeRefResolver so a reference shows the same title on both surfaces.
+const mentions = ref<Record<string, Mention> | undefined>(undefined)
+const refResolver = computed(() => makeRefResolver(mentions.value))
 const loading = ref(true)
 // Opening an edit form against a local server resolves in tens of
 // milliseconds, so an ungated spinner appears and vanishes before it can be
@@ -499,7 +506,10 @@ async function loadEntity(force = false) {
     // Edit button was pressed on, and the form then refused the served face
     // "for permissions" (atlas worlds issue 7).
     const entity = await entitiesStore.fetchEntity(
-      formConfig.value.entity, props.entityId, force, DEFAULT_WORLD,
+      formConfig.value.entity,
+      props.entityId,
+      force,
+      DEFAULT_WORLD
     )
     // Route-guard: if the server says this row is not updatable, render an
     // inline "not editable" message instead of the form. The EntityDetail
@@ -533,6 +543,11 @@ async function loadEntity(force = false) {
     relationAffordances.value = entity._relations ?? {}
     attachments.value = entity._attachments ?? {}
     transitions.value = entity._transitions ?? {}
+    // Entity-ID code spans in the body, resolved per principal by the server.
+    // The editor renders references as titled links from this and nothing
+    // else; absent means every reference shows its bare ID, which is the
+    // correct degraded state rather than an error.
+    mentions.value = entity.mentions
     originalData.value = JSON.stringify({
       formData: formData.value,
       relations: relations.value,
@@ -716,9 +731,11 @@ async function loadTemplates() {
   try {
     templates.value = await getTemplates(formConfig.value.entity)
     if (templates.value.length > 0) {
-      // Select first template by default
+      // Select first template by default. This lands after the form is
+      // already interactive, so it must not overwrite what the user has
+      // begun writing.
       selectedTemplate.value = templates.value[0].name
-      applyTemplate(templates.value[0])
+      applyTemplate(templates.value[0], true)
     }
   } catch (err) {
     // Templates are optional, ignore errors
@@ -805,13 +822,25 @@ function scheduleStagedAffordances() {
   }, STAGED_DRYRUN_DEBOUNCE_MS)
 }
 
-function applyTemplate(template: Template) {
+/**
+ * Applies a template's properties, content and relations to the form.
+ *
+ * `preserveUserInput` is set on the automatic application that follows the
+ * async template fetch. Templates arrive after the form is interactive, so a
+ * user who started writing before the response landed had their body replaced
+ * by the template's — the entity-reference picker was the visible symptom,
+ * since inserting a reference and saving stored the template text instead.
+ *
+ * An explicit template choice from the dropdown passes false: replacing the
+ * content is the whole point of picking one.
+ */
+function applyTemplate(template: Template, preserveUserInput = false) {
   // Apply template properties
   for (const [key, value] of Object.entries(template.properties)) {
     formData.value[key] = value
   }
   // Apply template content
-  content.value = template.content
+  if (!preserveUserInput || !content.value) content.value = template.content
   // Apply template relations
   for (const rel of template.relations) {
     if (!relations.value[rel.relation]) {
@@ -1064,7 +1093,24 @@ function focusFirstError() {
   })
 }
 
+/**
+ * The body editor, so a save can flush its pending change.
+ *
+ * The editor's markdown listener is debounced; without the flush, a change
+ * made within that window is not in `content` yet and the save stores the
+ * previous body. Inserting an entity reference and immediately submitting is
+ * the case that exposed it.
+ */
+const markdownEditorRef = ref<{ flush?: () => void } | null>(null)
+
+/** Pushes any pending editor change into `content` before it is read. */
+function flushEditor() {
+  markdownEditorRef.value?.flush?.()
+}
+
 async function handleSubmit() {
+  flushEditor()
+  await nextTick()
   if (!formConfig.value) return
   // RR-HJLLUF: re-entrancy guard. PendingButton suppresses its own repeat
   // clicks, but handleKeydown calls handleSubmit() directly, so Cmd+Enter
@@ -1324,7 +1370,9 @@ function handleCancel() {
   }
   // Opened cold: fall back to the entity type's list, or the dashboard when
   // no list is configured for it.
-  const listId = formConfig.value ? schemaStore.findListIdForEntityType(formConfig.value.entity) : undefined
+  const listId = formConfig.value
+    ? schemaStore.findListIdForEntityType(formConfig.value.entity)
+    : undefined
   router.push(listId ? `/list/${listId}` : '/')
 }
 
@@ -1838,6 +1886,11 @@ if (!props.embedded) {
     // On clean commit we proceed silently; on error or timeout we
     // prompt the user to confirm.
     if (autoSave.value) {
+      // Same reason as on submit: a body change inside the editor's debounce
+      // window is not in `content` yet, so committing without flushing would
+      // leave it behind on navigation.
+      flushEditor()
+      await nextTick()
       const result = await autoSave.value.commitImmediately()
       if (result.settled && !result.error) {
         dirty.value = false
@@ -2028,7 +2081,9 @@ defineExpose({
         <div v-if="wizard.isLastStep.value" class="form-field content-field">
           <label for="content">Content</label>
           <MarkdownEditor
+            ref="markdownEditorRef"
             :model-value="content"
+            :ref-resolver="refResolver"
             placeholder="Markdown content..."
             @update:model-value="updateContent"
           />
@@ -2500,5 +2555,4 @@ defineExpose({
     gap: 6px;
   }
 }
-
 </style>

@@ -193,12 +193,12 @@ export class FormPage extends BasePage {
   }
 
   async fillMarkdown(value: string) {
-    // EasyMDE creates a CodeMirror instance
-    const codeMirror = this.page.locator(".CodeMirror");
-    if (await codeMirror.isVisible({ timeout: 1000 }).catch(() => false)) {
-      await codeMirror.click();
-      // Clear existing content
-      await this.page.keyboard.press("Meta+a");
+    // The markdown editor is a ProseMirror contenteditable, so it takes real
+    // keyboard input rather than needing an editor-instance handle.
+    const surface = this.proseMirror;
+    if (await surface.isVisible({ timeout: 1000 }).catch(() => false)) {
+      await surface.click();
+      await this.page.keyboard.press("ControlOrMeta+a");
       await this.page.keyboard.type(value);
     } else {
       // Fallback to textarea
@@ -459,16 +459,18 @@ export class FormPage extends BasePage {
     return this.page.locator(".content-field");
   }
 
+  /** The editor shell: toolbar plus editable surface. */
+  get markdownEditorShell(): Locator {
+    return this.page.locator(".milkdown-editor-shell");
+  }
+
   get markdownEditorRoot(): Locator {
-    return this.page.locator(".markdown-editor");
+    return this.page.locator(".milkdown-editor");
   }
 
-  get markdownToolbar(): Locator {
-    return this.page.locator(".editor-toolbar");
-  }
-
-  get codeMirror(): Locator {
-    return this.page.locator(".CodeMirror");
+  /** The editable surface ProseMirror renders into. */
+  get proseMirror(): Locator {
+    return this.markdownEditorRoot.locator(".ProseMirror");
   }
 
   async expectContentFieldVisible() {
@@ -479,14 +481,29 @@ export class FormPage extends BasePage {
     await expect(this.contentField.locator("label")).toHaveText(text);
   }
 
+  get markdownToolbar(): Locator {
+    return this.markdownEditorShell.locator(".editor-toolbar");
+  }
+
+  /**
+   * How many inline SVG icons the editor toolbar renders.
+   *
+   * The toolbar draws its glyphs as real `<svg>` elements rather than an icon
+   * font, which is what lets the editor ship no font at all. A count of zero
+   * means the icons regressed to something font-based.
+   */
+  async countToolbarSvgIcons(): Promise<number> {
+    return await this.markdownEditorShell.locator("button svg").count();
+  }
+
   async expectMarkdownEditorReady() {
     await expect(this.markdownEditorRoot).toBeVisible();
     await expect(this.markdownToolbar).toBeVisible();
-    await expect(this.codeMirror).toBeVisible();
+    await expect(this.proseMirror).toBeVisible();
   }
 
   async typeMarkdownBody(text: string) {
-    await this.codeMirror.click();
+    await this.proseMirror.click();
     await this.page.keyboard.type(text);
   }
 
@@ -548,90 +565,68 @@ export class FormPage extends BasePage {
     });
   }
 
-  /** Read the current CodeMirror buffer back as a single string. Used
-   *  to assert the picker inserted the expected `<id>` code span. */
+  /** The markdown the editor currently holds.
+   *
+   *  Read through the test hook the editor publishes rather than off an
+   *  editor-instance property: the markdown is a SERIALIZATION of the
+   *  ProseMirror document, not a buffer sitting on the DOM node, so there is
+   *  nothing equivalent to CodeMirror's `getValue` to reach for. The hook is
+   *  compiled out of production builds by `__E2E_TEST_HOOKS__`. */
   async getMarkdownBody(): Promise<string> {
-    return await this.codeMirror.evaluate((el) => {
-      // CodeMirror v5 exposes the instance on the .CodeMirror node via the
-      // global CodeMirror constructor. EasyMDE preserves the same shape;
-      // every line in the document is concatenated with '\n'.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const cm = (el as any).CodeMirror;
-      return typeof cm?.getValue === "function"
-        ? (cm.getValue() as string)
-        : "";
+    return await this.markdownEditorRoot.evaluate((el) => {
+      const hook = (el as HTMLElement & {
+        __relaGetMarkdown?: () => string;
+      }).__relaGetMarkdown;
+      return typeof hook === "function" ? hook() : "";
     });
   }
 
-  // --- Inline backtick autocomplete (TKT-2RCP) ---
+  // --- Inline `@` mention autocomplete ---
 
-  /** Inline popup the markdown editor pops when the user types a
-   *  backtick in prose context. Rendered next to the editor textarea
-   *  (NOT teleported), so we scope to the editor container. */
-  get backtickPopup(): Locator {
-    return this.markdownEditorRoot.locator(".backtick-popup");
+  /** The completion menu the editor opens on `@`.
+   *
+   *  Positioned by Milkdown's SlashProvider, which appends it to the editor's
+   *  parent and toggles `data-show` rather than unmounting it — so visibility,
+   *  not presence, is what the assertions key on. */
+  get mentionMenu(): Locator {
+    return this.markdownEditorShell.locator(".mention-menu");
   }
 
-  get backtickPopupOptions(): Locator {
-    return this.backtickPopup.locator(".backtick-popup-option");
+  get mentionMenuOptions(): Locator {
+    return this.mentionMenu.locator(".mention-menu-item");
   }
 
-  get backtickPopupHint(): Locator {
-    return this.backtickPopup.locator(".backtick-popup-hint");
+  get mentionMenuNote(): Locator {
+    return this.mentionMenu.locator(".mention-menu-note");
   }
 
-  /** Type a single character into the editor at the current cursor.
-   *  Uses execCommand insertText so EasyMDE's CodeMirror sees a real
-   *  user-input event (mirrors the inputRead flow). Focuses the
-   *  CodeMirror inputField explicitly because Playwright's click on
-   *  `.CodeMirror` lands on the gutter wrapper, not the hidden
-   *  textarea that captures input events. */
+  /** Entity references rendered as links inside the editor. */
+  get editorEntityRefs(): Locator {
+    return this.proseMirror.locator("a[data-entity-ref]");
+  }
+
+  /** Type into the editor at the current cursor.
+   *
+   *  Plain `keyboard.type` — a contenteditable receives real key events, so
+   *  none of the execCommand indirection the CodeMirror editor needed applies.
+   *  This also means the input rules and the mention trigger see exactly what
+   *  a user's typing produces. */
   async typeIntoEditor(text: string): Promise<void> {
-    await this.codeMirror.click();
-    await this.page.evaluate(() => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const cm = (document.querySelector(".CodeMirror") as any)?.CodeMirror;
-      cm?.focus();
-    });
-    for (const ch of text) {
-      await this.page.evaluate(
-        (c) => document.execCommand("insertText", false, c),
-        ch,
-      );
-    }
+    await this.proseMirror.click();
+    await this.page.keyboard.type(text);
   }
 
-  /** Shrink the inline-autocomplete open-delay to a small value for
-   *  e2e timing. Without this, the test depends on Playwright's
-   *  per-character `execCommand` latency to spread typing across the
-   *  default 600 ms grace window — fragile on fast runners. Call
-   *  before the editor mounts (i.e. before navigating to the form). */
-  async useFastAutocompleteDelay(delayMs = 30): Promise<void> {
-    await this.page.addInitScript((d) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (window as any).__BACKTICK_AUTOCOMPLETE_DELAY_MS__ = d;
-    }, delayMs);
-  }
-
-  /** Clear the editor's buffer entirely. Useful when a form preloads a
-   *  template body and the test wants a known starting state. */
+  /** Clear the editor entirely. Useful when a form preloads a template body
+   *  and the test wants a known starting state. */
   async clearEditorBuffer(): Promise<void> {
-    await this.codeMirror.click();
-    await this.page.evaluate(() => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const cm = (document.querySelector(".CodeMirror") as any)?.CodeMirror;
-      if (cm) {
-        cm.setValue("");
-        cm.focus();
-        cm.setCursor({ line: 0, ch: 0 });
-      }
-    });
+    await this.proseMirror.click();
+    await this.page.keyboard.press("ControlOrMeta+a");
+    await this.page.keyboard.press("Backspace");
   }
 
-  /** Wait for the inline autocomplete popup to appear. Default 1500 ms
-   *  (well above the 600 ms open delay). */
-  async waitForBacktickPopup(): Promise<void> {
-    await this.backtickPopup.waitFor({ state: "visible", timeout: 1_500 });
+  /** Wait for the `@` completion menu to appear. */
+  async waitForMentionMenu(): Promise<void> {
+    await this.mentionMenu.waitFor({ state: "visible", timeout: 3_000 });
   }
 
   // --- Template selector ---

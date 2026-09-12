@@ -86,6 +86,33 @@ export interface Entity {
   // Soft-validation findings on mutation responses (DEC-HWZHA).
   // Present on PATCH/POST results; absent on GETs.
   warnings?: Warning[]
+  // Entity-ID code spans in `content`, resolved to their titles so an EDIT
+  // surface can render them as links the way the read surface does. Same map
+  // and same semantics as `ViewResponse.mentions` — the server produces both
+  // from one call, so the two surfaces cannot disagree about a title.
+  //
+  // Present on the single-entity GET only; a list row has no content to scan.
+  // Per-principal: an entity the caller may not read has NO entry (the code
+  // span stays plain), and one whose title is redacted arrives with
+  // `inaccessible` set and its ID as the title. Never derive a title another
+  // way — that is what this map exists to prevent.
+  mentions?: Record<string, Mention>
+}
+
+// Mention resolves one entity-ID code span to its display title. Mirrors the
+// server-side `v1.Mention` (TKT-747O). `inaccessible` flags a target whose
+// display title is unreadable (e.g. git-crypt encrypted) so a renderer can
+// show a lock affordance instead of a name it does not have.
+//
+// `inaccessible_reason` carries the matching `entity.InaccessibleReason` value
+// as a bare string. Today only `"git-crypt"` is produced; clients treat an
+// unknown reason as opaque and fall back to a generic tooltip, so new reasons
+// server-side never break the client.
+export interface Mention {
+  type: string
+  title: string
+  inaccessible?: boolean
+  inaccessible_reason?: string
 }
 
 // FieldAffordance carries per-field write / option affordances on
