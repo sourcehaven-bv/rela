@@ -203,18 +203,43 @@ jobs:
         if: steps.detect.outputs.changed == 'true'
         run: |
           set -euo pipefail
-          sudo systemctl stop clamav-freshclam || true
-          # clamd refuses to start with no signature databases.
-          if [ ! -f /var/lib/clamav/daily.cvd ] && [ ! -f /var/lib/clamav/daily.cld ]; then
-            sudo freshclam --quiet
-          fi
+
+          # freshclam runs on a timer AND as a daemon on Ubuntu; both hold a
+          # lock on /var/lib/clamav that makes a manual run fail. Stop both.
+          sudo systemctl stop clamav-freshclam.service clamav-freshclam.timer 2>/dev/null || true
+
+          # Ownership first: the cache restores /var/lib/clamav as the runner
+          # user, and freshclam drops privileges to `clamav`, so a restored
+          # cache is unwritable until this runs.
+          sudo mkdir -p /var/lib/clamav
           sudo chown -R clamav:clamav /var/lib/clamav
+
+          # clamd refuses to start with no signature databases. NOT --quiet:
+          # when this fails it is the only evidence of why.
+          if ! ls /var/lib/clamav/daily.c[vl]d >/dev/null 2>&1; then
+            echo "No signature database present — downloading (~300 MB)."
+            sudo -u clamav freshclam --stdout
+          else
+            echo "Signature database restored from cache:"
+            ls -la /var/lib/clamav/
+          fi
+
           sudo systemctl restart clamav-daemon
-          for _ in $(seq 1 60); do
-            [ -S /var/run/clamav/clamd.ctl ] && break
+
+          # clamd parses the whole database set before it binds the socket, so
+          # this legitimately takes tens of seconds on a cold start.
+          for _ in $(seq 1 90); do
+            if [ -S /var/run/clamav/clamd.ctl ]; then
+              echo "clamd socket is up."
+              exit 0
+            fi
             sleep 2
           done
-          test -S /var/run/clamav/clamd.ctl
+
+          echo "::error::clamd socket never appeared at /var/run/clamav/clamd.ctl"
+          sudo systemctl status clamav-daemon --no-pager --full || true
+          sudo journalctl -u clamav-daemon --no-pager -n 100 || true
+          exit 1
 
       - name: Run clamd integration tests
         if: steps.detect.outputs.changed == 'true'
