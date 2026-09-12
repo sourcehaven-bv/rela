@@ -42,7 +42,7 @@ test.describe('Markdown Body Editor', () => {
     await form.expectMarkdownEditorReady();
 
     // Toolbar glyphs are real <svg> elements, not glyph-bearing pseudo-elements.
-    const svgCount = await form.markdownEditorShell.locator('button svg').count();
+    const svgCount = await form.countToolbarSvgIcons();
     expect(svgCount, 'toolbar should render inline SVG icons').toBeGreaterThan(0);
 
     // No stylesheet or preloaded font declares an icon font family.

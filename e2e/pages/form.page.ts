@@ -485,6 +485,17 @@ export class FormPage extends BasePage {
     return this.markdownEditorShell.locator(".editor-toolbar");
   }
 
+  /**
+   * How many inline SVG icons the editor toolbar renders.
+   *
+   * The toolbar draws its glyphs as real `<svg>` elements rather than an icon
+   * font, which is what lets the editor ship no font at all. A count of zero
+   * means the icons regressed to something font-based.
+   */
+  async countToolbarSvgIcons(): Promise<number> {
+    return await this.markdownEditorShell.locator("button svg").count();
+  }
+
   async expectMarkdownEditorReady() {
     await expect(this.markdownEditorRoot).toBeVisible();
     await expect(this.markdownToolbar).toBeVisible();
