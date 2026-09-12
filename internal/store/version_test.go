@@ -49,7 +49,7 @@ func TestVersionOf_DistinguishesValueTypes(t *testing.T) {
 
 // TestVersionOf_StableAcrossInsertionOrder pins the other half: the token must
 // NOT change for content that is genuinely equal. Go map iteration is
-// randomised, so an unsorted hash would produce spurious conflicts on an
+// randomized, so an unsorted hash would produce spurious conflicts on an
 // untouched entity.
 func TestVersionOf_StableAcrossInsertionOrder(t *testing.T) {
 	t.Parallel()

@@ -68,12 +68,12 @@ import (
 // method, on the store that already owns observer fan-out — not
 // accreted API.
 //
-//
 // +1 exported / +2 methods (TKT-34XS2R): UpdateEntityIf joined the mandated
 // store.Store interface, and the conditional core it shares with the
 // unconditional path is the second. Required-interface exception again — the
 // CAS precondition has to be evaluated atomically with the write, so it
 // cannot live anywhere but on the type that owns the write.
+//
 //plimsoll:max-methods=52
 //plimsoll:max-exported-methods=33
 type MemStore struct {
