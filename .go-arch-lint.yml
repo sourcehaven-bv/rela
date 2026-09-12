@@ -1242,15 +1242,23 @@ deps:
       - pgx
   sqlitestore:
     mayDependOn:
-      # Deliberately narrower than pgstore: no userstate, no sync, no canonical.
-      # This backend is the conformance-passing minimal store (DEC-LFSYNY stage
-      # 3); versioning, state and the sync manifest are later stages, and each
-      # should have to justify widening this list.
+      # Still narrower than pgstore: no userstate, no sync. This backend keeps
+      # the filesystem KV on purpose (TKT-L1A3PH) and has no sync manifest, and
+      # each further entry should have to justify widening this list.
       - entity
       - graphquerynaive
       - sqlitedb
       - store
       - storeutil
+      # Added by TKT-4NU9ZD (DEC-LFSYNY stage 4, content versioning) — the
+      # stage this list's previous note said would have to justify itself.
+      #
+      # canonical.HashEntity is the content-dedup hash a capture is keyed on,
+      # and it must be the SAME function pgstore uses: the hash decides whether
+      # an edit is a no-op the sweep can swallow, so two backends computing it
+      # differently would version the same edit differently. Re-deriving it
+      # here is exactly the drift the shared package exists to prevent.
+      - canonical
     canUse:
       # Only for *sqlite.Error, to tell a constraint violation from any other
       # failure. Opening the database — and registering the driver — is

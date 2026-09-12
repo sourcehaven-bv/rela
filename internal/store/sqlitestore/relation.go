@@ -191,14 +191,33 @@ func (s *Store) CreateRelation(
 	}
 	now := time.Now().UTC()
 
-	_, err = s.write(ctx, `INSERT INTO relations
-		(from_id, from_face, rel_type, to_id, properties, content, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		from, string(face), relType, to, props, content, now.Format(timeFmt))
-	if err != nil {
+	// Mint the surrogate lineage id at CREATE, once. It is what separates two
+	// relations' histories: a delete followed by a re-create of the same triple
+	// gets a FRESH id and therefore a fresh lineage, while a rename carries the
+	// existing id across in place. Reconstructing it later from the composite
+	// key would race the sweep and merge lineages that must stay apart.
+	//
+	// The id is READ INLINE in the INSERT, and the counter is bumped only
+	// afterwards, because the two orders differ on the failure path. Allocating
+	// first means a duplicate triple — an ordinary ErrConflict an automation
+	// retries on, not an exceptional case — permanently consumes an id: outside
+	// a Tx the UPDATE autocommits, so the INSERT's rollback cannot take it back.
+	// Reading the counter inside the INSERT makes allocation a consequence of a
+	// successful insert rather than a precondition for attempting one.
+	if _, err = s.write(ctx, `INSERT INTO relations
+		(from_id, from_face, rel_type, to_id, properties, content, updated_at, rel_record_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, (SELECT next FROM rel_record_seq WHERE id = 1))`,
+		from, string(face), relType, to, props, content, now.Format(timeFmt)); err != nil {
 		if isUniqueViolation(err) {
 			return nil, fmt.Errorf("sqlitestore: create relation: %w", store.ErrConflict)
 		}
+		return nil, fmt.Errorf("sqlitestore: create relation: %w", err)
+	}
+	// Consume the id this row just took. A second CreateRelation cannot
+	// interleave between the two statements: writes are serialized by writeMu
+	// inside a Tx and by the single-writer lock across the process, which is
+	// the same discipline every other multi-statement write here relies on.
+	if err = bumpRelRecordSeq(ctx, s.q()); err != nil {
 		return nil, fmt.Errorf("sqlitestore: create relation: %w", err)
 	}
 
