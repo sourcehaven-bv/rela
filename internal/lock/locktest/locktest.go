@@ -28,6 +28,12 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/lock"
 )
 
+// settleTimeout bounds how long a test waits for an acquire that MUST
+// eventually proceed. It is a failure deadline, not a tuning knob: generous
+// enough that a loaded CI box does not flake, short enough that a genuinely
+// wedged backend fails the run rather than hanging it.
+const settleTimeout = 5 * time.Second
+
 // Factory returns a fresh Locker for one subtest. Implementations that need
 // cleanup should register it on tb.
 //
@@ -54,9 +60,10 @@ func RunAll(t *testing.T, newLocker Factory) {
 }
 
 // testDistinctKeysDoNotContend is THE test for this seam. If it fails, the
-// backend has degraded to a global mutex and the burst behaviour the design
+// backend has degraded to a global mutex and the burst behavior the design
 // depends on is gone — while every other test here still passes.
 func testDistinctKeysDoNotContend(t *testing.T, newLocker Factory) {
+	t.Helper()
 	l := newLocker(t)
 	ctx := context.Background()
 
@@ -81,13 +88,14 @@ func testDistinctKeysDoNotContend(t *testing.T, newLocker Factory) {
 		if err != nil {
 			t.Fatalf("acquire beta while alpha held: %v", err)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(settleTimeout):
 		t.Fatal("acquiring a DIFFERENT key blocked while alpha was held: " +
 			"the backend is ignoring the key and serializing everything")
 	}
 }
 
 func testSameKeyExcludes(t *testing.T, newLocker Factory) {
+	t.Helper()
 	l := newLocker(t)
 	ctx := context.Background()
 
@@ -116,12 +124,13 @@ func testSameKeyExcludes(t *testing.T, newLocker Factory) {
 
 	select {
 	case <-blocked:
-	case <-time.After(5 * time.Second):
+	case <-time.After(settleTimeout):
 		t.Fatal("second acquire did not proceed after release")
 	}
 }
 
 func testReleaseIsIdempotent(t *testing.T, newLocker Factory) {
+	t.Helper()
 	l := newLocker(t)
 	ctx := context.Background()
 
@@ -142,6 +151,7 @@ func testReleaseIsIdempotent(t *testing.T, newLocker Factory) {
 }
 
 func testContextCancelWhileWaiting(t *testing.T, newLocker Factory) {
+	t.Helper()
 	l := newLocker(t)
 
 	rel, err := l.Acquire(context.Background(), "busy")
@@ -168,6 +178,7 @@ func testContextCancelWhileWaiting(t *testing.T, newLocker Factory) {
 }
 
 func testExpiredContextFails(t *testing.T, newLocker Factory) {
+	t.Helper()
 	l := newLocker(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -188,6 +199,7 @@ func testExpiredContextFails(t *testing.T, newLocker Factory) {
 // critical section panics — the caller's `defer rel()` must not leave the key
 // wedged for the process lifetime.
 func testReleaseAfterPanic(t *testing.T, newLocker Factory) {
+	t.Helper()
 	l := newLocker(t)
 	ctx := context.Background()
 
@@ -213,7 +225,7 @@ func testReleaseAfterPanic(t *testing.T, newLocker Factory) {
 
 	select {
 	case <-acquired:
-	case <-time.After(5 * time.Second):
+	case <-time.After(settleTimeout):
 		t.Fatal("key still held after a panicking critical section released it")
 	}
 }
@@ -223,6 +235,7 @@ func testReleaseAfterPanic(t *testing.T, newLocker Factory) {
 // lock to two callers at once fails here even if testSameKeyExcludes passes,
 // since that test only exercises one contending pair.
 func testSerializesConcurrent(t *testing.T, newLocker Factory) {
+	t.Helper()
 	l := newLocker(t)
 	ctx := context.Background()
 
@@ -238,9 +251,7 @@ func testSerializesConcurrent(t *testing.T, newLocker Factory) {
 	)
 
 	for range goroutines {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for range increments {
 				rel, err := l.Acquire(ctx, "counter")
 				if err != nil {
@@ -256,7 +267,7 @@ func testSerializesConcurrent(t *testing.T, newLocker Factory) {
 				inside.Add(-1)
 				rel()
 			}
-		}()
+		})
 	}
 	wg.Wait()
 
@@ -269,6 +280,7 @@ func testSerializesConcurrent(t *testing.T, newLocker Factory) {
 }
 
 func testRejectsInvalidKeys(t *testing.T, newLocker Factory) {
+	t.Helper()
 	l := newLocker(t)
 	ctx := context.Background()
 

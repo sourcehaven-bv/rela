@@ -18,6 +18,7 @@ import (
 func TestKeyedLock_Conformance(t *testing.T) {
 	_ = testDSN(t)
 	locktest.RunAll(t, func(tb testing.TB) lock.Locker {
+		tb.Helper()
 		// A fresh schema per subtest: advisory locks are database-global, so
 		// subtests sharing a schema would contend on the same keys.
 		pool := newScopedPool(tb.(*testing.T))
@@ -139,8 +140,8 @@ func TestKeyedLock_CancelledAcquireDoesNotWedgeOrLeak(t *testing.T) {
 
 	for range 10 {
 		wctx, cancel := context.WithTimeout(ctx, 60*time.Millisecond)
-		_, err := st.AcquireKeyedLock(wctx, "wedge/probe")
-		require.Error(t, err, "a waiter must not acquire a key another holder has")
+		_, waitErr := st.AcquireKeyedLock(wctx, "wedge/probe")
+		require.Error(t, waitErr, "a waiter must not acquire a key another holder has")
 		cancel()
 	}
 

@@ -12,7 +12,7 @@ import (
 // memory locker, so this exercises the ADAPTER's contract (validation,
 // ctx handling, release plumbing) without a database.
 //
-// The real cross-process behaviour is pgstore's and is covered by the
+// The real cross-process behavior is pgstore's and is covered by the
 // DB-gated suite there; what can go wrong here is the adapter dropping a
 // validation check or mishandling a cancelled ctx, which this catches.
 type fakeBackend struct{ inner lock.Locker }
@@ -23,6 +23,7 @@ func (f fakeBackend) AcquireKeyedLock(ctx context.Context, key string) (func(), 
 
 func TestBackendLocker_Conformance(t *testing.T) {
 	locktest.RunAll(t, func(tb testing.TB) lock.Locker {
+		tb.Helper()
 		l, err := lock.NewBackendLocker(fakeBackend{inner: lock.NewMemoryLocker()})
 		if err != nil {
 			tb.Fatalf("NewBackendLocker: %v", err)

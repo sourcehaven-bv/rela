@@ -88,9 +88,7 @@ func TestMemoryLocker_ConcurrentDistinctKeys(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for i := range 50 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for range 20 {
 				rel, err := l.Acquire(ctx, key(i))
 				if err != nil {
@@ -99,7 +97,7 @@ func TestMemoryLocker_ConcurrentDistinctKeys(t *testing.T) {
 				}
 				rel()
 			}
-		}()
+		})
 	}
 	wg.Wait()
 
