@@ -2,6 +2,7 @@ package validation
 
 import (
 	"context"
+	"strconv"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -186,8 +187,9 @@ func TestRelationConstraint_Max(t *testing.T) {
 	}
 }
 
-// TestRelationConstraint_NoReader verifies the check degrades to a no-op
-// (rather than panicking) when the service has no reader wired.
+// TestRelationConstraint_NoReader verifies that a missing reader is
+// REPORTED rather than silently satisfying the gate. A wiring error must
+// not read as "this entity passed its workflow gates".
 func TestRelationConstraint_NoReader(t *testing.T) {
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
@@ -205,7 +207,123 @@ func TestRelationConstraint_NoReader(t *testing.T) {
 	}
 	svc := New(meta, lua.ReadDeps{}) // no VisibleReader
 	res := svc.Check(context.Background(), []*entity.Entity{tkt("done")}, nil)
+	if len(res.LoadErrors) == 0 {
+		t.Fatal("a missing reader must be reported as a LoadError, not silently pass the gate")
+	}
 	if len(res.Violations) != 0 {
-		t.Fatalf("expected no violations without a reader, got %d", len(res.Violations))
+		t.Errorf("expected no violations (the check could not run), got %d", len(res.Violations))
+	}
+}
+
+// TestRelationConstraint_UnevaluableTargetFailsClosed pins the polarity of
+// the error path. A target that cannot be evaluated — here because the
+// `where` filter names a property the target type does not declare, which
+// filter.MatchAll reports as a hard error — must NOT be silently dropped
+// from the count when Max is set.
+//
+// Dropping it is how a `max: 0` gate ("a done ticket must have no open
+// critical review-responses") silently becomes "always satisfied": the
+// count stays at 0 precisely because the targets could not be checked.
+// A min gate is conservative when it undercounts, a max gate is not, so
+// an unevaluable target counts as matching whenever Max is set.
+func TestRelationConstraint_UnevaluableTargetFailsClosed(t *testing.T) {
+	rule := metamodel.ValidationRule{
+		Name:        "no-open-critical",
+		Description: "done ticket cannot have open critical review responses",
+		EntityType:  "ticket",
+		When:        []string{"status=done"},
+		Relations: map[string]metamodel.RelationConstraint{
+			// `nonexistent` is not declared on review-response, so
+			// filter.MatchAll returns an error for every target.
+			"has-review-response": {Where: []string{"nonexistent=open"}, Max: new(0)},
+		},
+		Severity: "error",
+	}
+	entities := []*entity.Entity{
+		tkt("done"),
+		{ID: "RR-1", Type: "review-response",
+			Properties: map[string]any{"status": "open", "severity": "critical"}},
+	}
+	deps := relationWorkspace(t, rule, entities, [][3]string{{"TKT-1", "has-review-response", "RR-1"}})
+	svc := New(deps.Meta, deps)
+	res := svc.Check(context.Background(), entities, nil)
+	if len(res.Violations) == 0 {
+		t.Fatal("max gate silently passed on an unevaluable target; it must fail closed")
+	}
+}
+
+// TestRelationConstraint_Boundaries pins the bounds as INCLUSIVE: a count
+// exactly equal to min (or to max) satisfies the constraint. Off-by-one
+// here would silently re-scope every migrated workflow gate.
+func TestRelationConstraint_Boundaries(t *testing.T) {
+	rev := func(id string) *entity.Entity {
+		return &entity.Entity{ID: id, Type: "review-checklist",
+			Properties: map[string]any{"status": "done"}}
+	}
+
+	tests := []struct {
+		name     string
+		c        metamodel.RelationConstraint
+		nRels    int
+		wantViol bool
+	}{
+		{name: "count equals min -> satisfied", c: metamodel.RelationConstraint{Min: new(2)}, nRels: 2},
+		{name: "count below min -> violation", c: metamodel.RelationConstraint{Min: new(2)}, nRels: 1, wantViol: true},
+		{name: "count above min -> satisfied", c: metamodel.RelationConstraint{Min: new(2)}, nRels: 3},
+		{name: "count equals max -> satisfied", c: metamodel.RelationConstraint{Max: new(2)}, nRels: 2},
+		{name: "count above max -> violation", c: metamodel.RelationConstraint{Max: new(2)}, nRels: 3, wantViol: true},
+		{name: "min and max both set, inside range", c: metamodel.RelationConstraint{Min: new(1), Max: new(2)}, nRels: 2},
+		{name: "min and max both set, below range",
+			c: metamodel.RelationConstraint{Min: new(1), Max: new(2)}, nRels: 0, wantViol: true},
+		{name: "min and max both set, above range",
+			c: metamodel.RelationConstraint{Min: new(1), Max: new(2)}, nRels: 3, wantViol: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rule := metamodel.ValidationRule{
+				Name:        "bounds",
+				Description: "bounds check",
+				EntityType:  "ticket",
+				When:        []string{"status=done"},
+				Relations:   map[string]metamodel.RelationConstraint{"has-review": tc.c},
+				Severity:    "error",
+			}
+			entities := []*entity.Entity{tkt("done")}
+			var rels [][3]string
+			for i := range tc.nRels {
+				id := "REV-" + strconv.Itoa(i)
+				entities = append(entities, rev(id))
+				rels = append(rels, [3]string{"TKT-1", "has-review", id})
+			}
+			deps := relationWorkspace(t, rule, entities, rels)
+			res := New(deps.Meta, deps).Check(context.Background(), entities, nil)
+			if gotViol := len(res.Violations) > 0; gotViol != tc.wantViol {
+				t.Fatalf("wantViol=%v got=%v (%d relations, %d violations)",
+					tc.wantViol, gotViol, tc.nRels, len(res.Violations))
+			}
+		})
+	}
+}
+
+// TestRelationConstraint_MalformedWhereReported is the regression guard for
+// the silent-skip class this ticket exists to eliminate: an unparseable
+// `where:` must be reported as a LoadError, not quietly counted as zero
+// (which would make a max gate pass forever).
+func TestRelationConstraint_MalformedWhereReported(t *testing.T) {
+	rule := metamodel.ValidationRule{
+		Name:        "bad-where",
+		Description: "malformed where",
+		EntityType:  "ticket",
+		When:        []string{"status=done"},
+		Relations: map[string]metamodel.RelationConstraint{
+			"has-review": {Where: []string{"not a filter at all"}, Max: new(0)},
+		},
+		Severity: "error",
+	}
+	entities := []*entity.Entity{tkt("done")}
+	deps := relationWorkspace(t, rule, entities, nil)
+	res := New(deps.Meta, deps).Check(context.Background(), entities, nil)
+	if len(res.LoadErrors) == 0 {
+		t.Fatal("a malformed where filter must be reported as a LoadError")
 	}
 }
