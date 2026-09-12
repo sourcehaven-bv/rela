@@ -34,12 +34,16 @@ func budgetMeta() *metamodel.Metamodel {
 			"feature": {Label: "Feature", Properties: str, PropertyOrder: []string{"title"}},
 			"person":  {Label: "Person", Properties: str, PropertyOrder: []string{"title"}},
 			"team":    {Label: "Team", Properties: str, PropertyOrder: []string{"title"}},
+			// epic exists solely to give the recursive-budget view its own
+			// entry type (see budgetConfig).
+			"epic": {Label: "Epic", Properties: str, PropertyOrder: []string{"title"}},
 		},
 		Relations: map[string]metamodel.RelationDef{
 			"implements":  {Label: "implements", From: []string{"ticket"}, To: []string{"feature"}},
 			"blocks":      {Label: "blocks", From: []string{"ticket"}, To: []string{"ticket"}},
 			"assigned-to": {Label: "assigned to", From: []string{"ticket"}, To: []string{"person"}},
 			"member-of":   {Label: "member of", From: []string{"person"}, To: []string{"team"}},
+			"tracked-by":  {Label: "tracked by", From: []string{"ticket"}, To: []string{"epic", "ticket"}},
 		},
 	}
 }
@@ -69,6 +73,26 @@ func budgetConfig() *Config {
 					}},
 				},
 			},
+			// A RECURSIVE traversal, which is what exercises the BFS frontier
+			// source gate (BUG-9Z20WH). The gate costs one header scan plus one
+			// probe per distinct type PER LEVEL, so its cost must scale with
+			// DEPTH, never with the number of rows at a level.
+			//
+			// Entry type is `epic`, NOT `ticket`: findViewByEntityType iterates
+			// the views MAP and returns the first entry matching the type, so a
+			// second ticket-entry view would make BOTH this test and the
+			// non-recursive one pick a random view per run. That is a
+			// nondeterminism `-shuffle=on` finds and a local run does not.
+			"recursive": {
+				Title: "Recursive",
+				Entry: dataentryconfig.ViewEntry{Type: "epic"},
+				Traverse: []dataentryconfig.ViewTraverse{
+					{From: "entry", FollowIncoming: "tracked-by", CollectAs: "chain", Recursive: true},
+				},
+				Sections: []dataentryconfig.ViewSection{
+					{Heading: "Chain", Source: "chain", Display: "list"},
+				},
+			},
 		},
 		Forms:      map[string]dataentryconfig.Form{},
 		Kanbans:    map[string]dataentryconfig.Kanban{},
@@ -96,6 +120,7 @@ func newBudgetApp(t *testing.T, n int) (*App, *storetest.Counting, *acl.Declarat
 		must(counting.CreateEntity(ctx, e))
 	}
 	mk("T1", "team", "Team one")
+	mk("E1", "epic", "Epic one")
 	for i := 1; i <= 3; i++ {
 		mk(fmt.Sprintf("P%d", i), "person", fmt.Sprintf("Person %d", i))
 		_, err := counting.CreateRelation(ctx, fmt.Sprintf("P%d", i), "member-of", "T1", nil)
@@ -118,6 +143,10 @@ func newBudgetApp(t *testing.T, n int) (*App, *storetest.Counting, *acl.Declarat
 			_, err = counting.CreateRelation(ctx, id, "blocks", "TKT-0001", nil)
 			must(err)
 		}
+		// Every ticket is tracked by E1, so the recursive view's first level
+		// holds n rows — the size the budget must be independent of.
+		_, err = counting.CreateRelation(ctx, id, "tracked-by", "E1", nil)
+		must(err)
 	}
 
 	app := newAppFromParts(budgetConfig(), budgetMeta(), newFixture(), appbuildtest.WithStore(counting))
@@ -202,6 +231,23 @@ func TestQueryBudget_SearchIsSizeIndependent(t *testing.T) {
 	assertBudget(t, "search", small, large, searchBudget, detail)
 }
 
+// A RECURSIVE view traversal, the shape that exercises the BFS frontier source
+// gate (BUG-9Z20WH). This is the budget the gate's own doc comment claims: one
+// header scan + one probe per distinct type per LEVEL, so the cost is a
+// function of depth, not of how many rows sit at a level. The fixture puts
+// n-1 blockers one level below TKT-0001, so if the gate were per-node this
+// count would grow from 10 to 50 rows.
+func TestQueryBudget_RecursiveViewTraversalIsSizeIndependent(t *testing.T) {
+	small, large, detail := readsFor(t, func(t *testing.T, app *App, d *acl.Declarative, ctx context.Context) {
+		t.Helper()
+		rec := viewsAs(ctx, t, app, d, "epic", "E1")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("view: %d %s", rec.Code, rec.Body)
+		}
+	})
+	assertBudget(t, "recursive view traversal", small, large, recursiveViewBudget, detail)
+}
+
 // Pinned budgets: the measured store-call count per request shape after
 // TKT-1U8XYN. Raise one only with a reason in the commit.
 const (
@@ -213,4 +259,10 @@ const (
 	viewSectionBudget = 11
 	// search: whole-type read, membership walk.
 	searchBudget = 3
+	// recursive view: entry, the fixpoint's relation queries, the collection
+	// load, and the BFS frontier source gate's ONE header scan per level
+	// walked (BUG-9Z20WH). Measured, not derived; the point of the pin is that
+	// it does not move with row count — the fixture puts every ticket one
+	// level below the epic, so a per-node gate would make this grow.
+	recursiveViewBudget = 12
 )

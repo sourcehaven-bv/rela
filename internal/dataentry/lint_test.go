@@ -182,3 +182,94 @@ func sortedKeys(m map[string]bool) []string {
 	sort.Strings(keys)
 	return keys
 }
+
+// TestViewTraversalIsSourceGated is the prevention measure for BUG-9Z20WH
+// (dataentry-readout-visibility-gate).
+//
+// The view traversal must drop an entity the principal cannot read at TWO
+// points, and the tripwire guards both because they close different halves of
+// the hole:
+//
+//  1. traverseViewBreadthFirst's FRONTIER (views.go). The recursive walk is
+//     id-only by design (TKT-1U8XYN) and never materializes an entity, so
+//     without a gate here a hidden node H is expanded on its id alone and its
+//     child V gets collected. V is readable in its own right, so NEITHER the
+//     load gate below NOR the out-gate (viewReader.Filter) drops it. This is
+//     the gate that actually closes the reachability leak — it is the only
+//     point at which H's unreadability can stop the walk.
+//
+//  2. loadViewEntities (viewworld.go). Stops a hidden node from entering a
+//     collection at all, including on the NON-recursive path that never
+//     touches the BFS.
+//
+// Behavioral coverage lives in acl_view_traversal_test.go; this is the cheap
+// structural tripwire that points a future refactorer back here rather than
+// letting the leak reopen silently.
+//
+// Note there is deliberately NO "the guard is moot" skip branch. The original
+// version of this test keyed a skip on views.go still containing GetEntity,
+// and the very next refactor (viewsHandler, TKT-1U8XYN) moved the entity load
+// into viewworld.go — which would have turned the guard into an unconditional
+// pass while the hole was reopened. A prevention measure that disarms itself on
+// refactor is worse than none, so this asserts unconditionally: if either site
+// moves again, this fails and someone has to re-point it on purpose.
+//
+// Scope note: this guards the TWO sites that leaked, not a package-wide "no raw
+// store reads" lint. A blanket ban would need a large, drift-prone allowlist
+// (analyze tools, sync, write-prep diffing that must stay raw per "never redact
+// a read that feeds a write") and would fight every change.
+func TestViewTraversalIsSourceGated(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		file    string
+		anchor  string
+		needles []string
+		why     string
+	}{
+		{
+			name:   "recursive frontier",
+			file:   "views.go",
+			anchor: "func (h *viewsHandler) traverseViewBreadthFirst(",
+			// Matched on the helper NAME, not a literal call expression: a
+			// needle like "h.readableViewIDs(ctx, next)" breaks when someone
+			// renames the local, and the cheapest path to green is then
+			// editing the needle rather than checking the gate.
+			needles: []string{"readableViewIDs(", "PermitsReadMany", "faceReadable("},
+			why: "the recursive walk expands its frontier without source-gating it, so a " +
+				"hidden intermediary can again act as a stepping-stone to a descendant " +
+				"reachable only through it. Filtering on the way out does NOT close this: " +
+				"the descendant is readable in its own right. Both halves of the verdict " +
+				"are required — PermitsReadMany is face-blind, so faceReadable is what " +
+				"stops a walk THROUGH a face-denied row (TKT-O7R2A1)",
+		},
+		{
+			name:    "collection load",
+			file:    "viewworld.go",
+			anchor:  "func (h *viewsHandler) loadViewEntities(",
+			needles: []string{"readGateFromContext(ctx)", "PermitsReadMany", "faceReadable("},
+			why: "traversal-collected entities are loaded off the raw store without a " +
+				"source gate, so a hidden entity can enter a collection (and reach the " +
+				"where: filter). The face half is required for the same reason as above",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body, err := os.ReadFile(tc.file)
+			if err != nil {
+				t.Fatalf("read %s: %v", tc.file, err)
+			}
+			src := string(body)
+
+			if !strings.Contains(src, tc.anchor) {
+				t.Fatalf("%s no longer defines %q — the view-traversal source-gate site "+
+					"has moved. Find its new home, confirm it still source-gates "+
+					"(BUG-9Z20WH), and re-point this guard at it.", tc.file, tc.anchor)
+			}
+			for _, needle := range tc.needles {
+				if !strings.Contains(src, needle) {
+					t.Errorf("%s no longer contains %q — %s (BUG-9Z20WH).",
+						tc.file, needle, tc.why)
+				}
+			}
+		})
+	}
+}
