@@ -11,17 +11,26 @@ status: done
 Swap the CodeQL workflow for a Semgrep job carrying local, hand-written
 DOM-XSS rules for the frontend.
 
-## Why replace rather than add
+## Why delete the workflow
 
-CodeQL's value here was the `javascript-typescript` analysis over `frontend/`.
-The Go half is already covered by gosec (see `.golangci.yml`, where the G702-G706
-taint checks are now enabled), so running both scanners meant paying for two
-SAST pipelines to cover one language.
+`codeql.yml` is redundant. CodeQL **default setup** is configured at the
+repository level (actions, go, javascript-typescript, python; enabled
+2026-09-04), so the workflow was a second, advanced-setup CodeQL run layered
+over it. TKT-QM2VQ added the file when default setup was `not-configured`;
+that is no longer the case.
 
-Semgrep is faster, its rules are readable YAML that lives in the repo, and a
-finding points at a rule the team wrote and can change. CodeQL's
-`security-and-quality` pack is a black box by comparison, and its results land
-in the Security tab rather than failing the job.
+Deleting the file does not remove CodeQL analysis — verified on the PR, where
+the `Analyze (go)` / `Analyze (javascript-typescript)` / `Analyze (actions)` /
+`Analyze (python)` checks all ran and passed on the commit that deletes it.
+
+## Why add Semgrep
+
+CodeQL's JS analysis was not catching browser DOM-XSS in this codebase, which
+is the risk that matters most in `frontend/` — it renders user-authored
+markdown to HTML. Semgrep rules are readable YAML in the repo, and they run
+with `--error` so a finding fails the build rather than landing in the
+Security tab. The Go side stays covered by gosec's G702-G706 taint checks,
+now enabled in `.golangci.yml`.
 
 ## Why the rules are hand-written
 
@@ -46,11 +55,11 @@ explicit sanitizer bypass is flagged.
 ## Branch protection
 
 `CodeQL` is not a required status check on `develop` (the ruleset requires Test,
-Lint, Fuzz, Docs, Rela Tickets, E2E, Architecture, God-object lint, Postgres
-Backend, Frontend, Build, Demos and the six Cross-Compile jobs), so deleting the
-workflow does not strand the merge queue. The new `Semgrep` job is likewise not
-required yet; adding it to the ruleset is a follow-up once it has run green on
-develop.
+Lint, Lint Markdown, Fuzz, Docs, Rela Tickets, E2E, Architecture, God-object
+lint, Postgres Backend, Frontend, Build, Demos and the six Cross-Compile jobs),
+so deleting the workflow does not strand the merge queue. The new `Semgrep` job
+is likewise not required yet; adding it to the ruleset is a follow-up once it
+has run green on develop.
 
 ## Changes
 

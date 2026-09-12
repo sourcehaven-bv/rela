@@ -30,23 +30,29 @@ which is the actual risk in this change)
 This is a replacement, so the honest question is what CodeQL caught that Semgrep
 will not.
 
-**Lost.** CodeQL ran two languages. The `go` matrix leg is the real reduction:
-it does interprocedural taint tracking that Semgrep's pattern rules do not
-attempt, and it produced genuine findings historically (RR-1TCU6X,
-`go/clear-text-logging`; TKT-R8QEV3's `go/path-injection` alerts). That loss is
-partly offset by gosec's taint checks, which are now ENABLED in `.golangci.yml`
-— G702 through G706, including path traversal, SSRF, XSS and log injection.
-When CodeQL was introduced those five were all excluded, so the Go-side gap is
-much smaller today than the raw "CodeQL is gone" framing suggests. It is not
-zero: gosec's analysis is shallower than CodeQL's.
+**Nothing, as it turns out.** CodeQL *default setup* is configured at the
+repository level (`gh api repos/sourcehaven-bv/rela/code-scanning/default-setup`
+reports `state: configured`, languages actions / go / javascript /
+javascript-typescript / python / typescript, enabled 2026-09-04). That is
+independent of `.github/workflows/codeql.yml`, so deleting the workflow does not
+remove CodeQL analysis. Confirmed empirically on PR #1569: the `Analyze (go)`,
+`Analyze (javascript-typescript)`, `Analyze (actions)` and `Analyze (python)`
+checks all ran and passed on a commit that deletes the workflow file.
 
-**Gained.** The `javascript-typescript` leg is replaced by rules that actually
-fail the build. CodeQL results land in the Security tab; these rules run with
-`--error`, so a new DOM-XSS sink blocks the PR. The rules are also readable and
-editable in-repo rather than being a black-box query pack.
+The workflow was therefore redundant with the repo-level configuration — it was
+a second, advanced-setup CodeQL run layered over default setup. TKT-QM2VQ
+originally added it precisely because default setup was `not-configured`; it has
+since been configured, which is what makes the file removable now.
 
-The user's decision is to ship the swap as-is. Recorded here so the Go-side
-tradeoff is visible to whoever revisits it, not as an objection.
+So the change is narrower than "replace CodeQL with Semgrep": CodeQL stays via
+default setup, the duplicate workflow goes, and Semgrep adds the browser DOM-XSS
+coverage that CodeQL's JS analysis was not providing here. The gosec taint
+checks (G702-G706, now enabled in `.golangci.yml`) remain the Go-side gate in
+lint.
+
+**Gained.** DOM-XSS rules that fail the build. CodeQL results land in the
+Security tab; these run with `--error`, so a new DOM-XSS sink blocks the PR. The
+rules are also readable and editable in-repo rather than a black-box query pack.
 
 ### Rule quality
 
