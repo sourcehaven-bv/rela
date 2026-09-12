@@ -15,9 +15,17 @@ status: done
 - [x] Edge cases from planning handled
 - [x] Error handling in place (errors surfaced, not swallowed)
 
-`scripts/check-tagged-tests-test.sh` covers the guard at unit level (14 cases
+`scripts/check-tagged-tests-test.sh` covers the guard at unit level (30 cases
 over throwaway modules). The integration-level check is the guard run against
 the real repo tree, both with and without the genuinely rotted `e2e_test.go`.
+
+Review caught the guard reproducing its own failure mode. The first draft
+parsed constraints with `sed`/`grep` and got three things wrong: a TAB after
+`//go:build` was not matched at all (so a rotted file gave "nothing to compile"
+and exit 0); the legacy `// +build` syntax was ignored though Go still honours
+it; and `!(a || b)` yielded both tags because stripping parens orphans the `!`
+from its group. Discovery moved to `scripts/tagged_build_tags.go`, which uses
+Go's own `go/build/constraint` parser and is correct by construction.
 
 The loop deliberately does not stop at the first failing tag: it records
 `fail=1` and continues, so one broken tag does not mask another.
@@ -46,11 +54,13 @@ assertion helpers, following `scripts/check-embedded-spa-test.sh`.
 
 ```
 $ ./scripts/check-tagged-tests.sh
-Build tags found on _test.go files: maildemo mailmanual postgres
+Build tags found on Go files: maildemo mailmanual memorybackend postgres sqlite
 ==> go vet -tags maildemo ./...
 ==> go vet -tags mailmanual ./...
+==> go vet -tags memorybackend ./...
 ==> go vet -tags postgres ./...
-OK: all build-tag-gated test files compile.   # exit 0
+==> go vet -tags sqlite ./...
+OK: all build-tag-gated files compile.   # exit 0
 ```
 
 2. Guard against the REAL regression. Restoring the rotted `e2e_test.go`
@@ -58,20 +68,20 @@ OK: all build-tag-gated test files compile.   # exit 0
    up the `e2e` tag on its own and fail with the original error:
 
 ```
-Build tags found on _test.go files: e2e maildemo mailmanual postgres
+Build tags found on Go files: e2e maildemo mailmanual memorybackend postgres sqlite
 ==> go vet -tags e2e ./...
 vet: internal/dataentry/e2e_test.go:62:2: not enough arguments in call to NewApp
-ERROR: tagged test files do not compile under -tags e2e.
-   # exit 1, and the remaining three tags are still vetted
+ERROR: tagged files do not compile under -tags e2e.
+   # exit 1, and the remaining tags are still vetted
 ```
 
-3. Guard test suite — 14/14, including the two cases that prove the guard is
+3. Guard test suite — 30/30, including the two cases that prove the guard is
    not redundant (on the same rotted tree, `go build ./...` and untagged
    `go vet ./...` both exit 0 while the guard exits 1):
 
 ```
 $ ./scripts/check-tagged-tests-test.sh
-passed: 14  failed: 0   # exit 0
+passed: 30  failed: 0   # exit 0
 ```
 
 4. Platform tags are correctly excluded rather than mis-vetted. `go vet -tags

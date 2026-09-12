@@ -1047,8 +1047,14 @@ jobs:
         with:
           go-version: '1.26.6'
 
-      - name: Install graphviz
-        run: sudo apt-get update && sudo apt-get install -y graphviz
+      # graphviz for the demo scripts. GTK4 + WebKitGTK because the tagged-build
+      # guard vets `./...`, which includes cmd/rela-desktop (Wails v3); without
+      # the headers those cgo packages fail pkg-config and the guard reports a
+      # compile failure that is really a missing dependency.
+      - name: Install graphviz and Wails Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y graphviz libgtk-4-dev libwebkitgtk-6.0-dev
 
       - name: Build rela
         run: go build -o bin/rela ./cmd/rela
@@ -1078,18 +1084,22 @@ jobs:
             "${e2e}"
           done
 
-      # Build-tag-gated test files are compiled by nothing else: `go build
-      # ./...` skips _test.go entirely, and `go test ./...` only builds files
-      # whose constraints the default tag set satisfies. So they rot silently —
-      # internal/dataentry/e2e_test.go did exactly that (TKT-1CH5AX). These
-      # tests need Postgres, a browser, or a human reading narrated output, so
-      # CI compiles them rather than runs them. The tag list is derived from
-      # the source, so a new tag is covered without editing this file.
-      - name: Compile build-tag-gated tests
-        run: ./scripts/check-tagged-tests.sh
-
-      - name: Test the tagged-test guard
+      # The guard's own test runs FIRST. It is what proves the guard can fail:
+      # a parser bug that made the guard pass everything would otherwise report
+      # green here and nobody would look further.
+      - name: Test the tagged-build guard
         run: ./scripts/check-tagged-tests-test.sh
+
+      # Build-tag-gated files are compiled by nothing else: `go build ./...`
+      # skips _test.go entirely, and neither it nor `go test ./...` builds
+      # files whose constraints the default tag set does not satisfy. So they
+      # rot silently — internal/dataentry/e2e_test.go did exactly that
+      # (TKT-1CH5AX). They need Postgres, a browser, or a human reading
+      # narrated output, so CI compiles them rather than runs them. The tag
+      # list is derived from the source, so a new tag is covered without
+      # editing this file.
+      - name: Compile build-tag-gated files
+        run: ./scripts/check-tagged-tests.sh
 
   docs:
     name: Docs
