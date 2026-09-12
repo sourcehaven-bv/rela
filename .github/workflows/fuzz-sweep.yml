@@ -4,9 +4,10 @@ name: Fuzz Sweep
 # in ci.yml runs only a 3-target smoke). Targets are discovered by
 # scripts/fuzz-all.sh, so new Fuzz* functions are swept automatically.
 #
-# On failure: the crashing inputs are uploaded as an artifact and a
-# GitHub issue is filed (or an existing open one gets a comment) so
-# findings don't silently rot in the Actions tab.
+# On failure: the crashing inputs are uploaded as an artifact and one
+# GitHub issue is filed per failing target, so findings don't silently
+# rot in the Actions tab. A target that fails again while its issue is
+# still open gets a comment there instead of a duplicate issue.
 #
 # Note: the pgstore fuzz targets self-skip without
 # RELA_TEST_DATABASE_URL; wiring a postgres service into this sweep is
@@ -48,7 +49,7 @@ jobs:
           retention-days: 30
           if-no-files-found: ignore
 
-      - name: File or update fuzz-failure issue
+      - name: File a fuzz-failure issue per failing target
         if: failure()
         env:
           GH_TOKEN: ${{ github.token }}
@@ -66,31 +67,76 @@ jobs:
             --description "Filed automatically by the weekly fuzz sweep" \
             --color D93F0B --force
 
-          {
-            echo "The weekly fuzz sweep failed."
-            echo ""
-            echo "Failed targets (package, target, kind — fuzz-crash means a"
-            echo "crashing input was found; error means the target failed for"
-            echo "an infrastructure reason, e.g. a seed-corpus regression):"
-            echo '```'
-            cat fuzz-failures.txt 2>/dev/null || echo "(summary missing — see run log)"
-            echo '```'
-            echo ""
-            echo "Run: ${RUN_URL}"
-            echo ""
-            echo "The crashing inputs are attached to the run as the **fuzz-failing-inputs** artifact."
-            echo "To reproduce locally: copy the artifact's \`testdata/fuzz/<Target>/\` files into the"
-            echo "package directory, then \`go test -run='^Fuzz<Target>\$' ./<pkg>\` — the failing input"
-            echo "now runs as a regular regression test. Once fixed, commit the input as a seed."
-          } > issue-body.md
+          # One issue per failing target, not one issue per sweep: a
+          # sweep that finds three unrelated crashes is three bugs, and
+          # each needs its own fix, assignee and close. Identity is the
+          # (package, target) pair, carried in the title and matched
+          # exactly on the next sweep — so a recurrence comments on its
+          # own issue and a newly broken target opens a fresh one.
+          file_failures=0
+          while read -r pkg target kind; do
+            [ -n "${target:-}" ] || continue
+            title="Fuzz failure: ${target} (${pkg#./})"
 
-          existing="$(gh issue list --label fuzz-failure --state open \
-            --json number --jq '.[0].number // empty')"
-          if [ -n "$existing" ]; then
-            gh issue comment "$existing" --body-file issue-body.md
-          else
-            gh issue create \
-              --title "Weekly fuzz sweep found failures" \
-              --label fuzz-failure \
-              --body-file issue-body.md
+            {
+              echo "The weekly fuzz sweep failed this target."
+              echo ""
+              echo "| | |"
+              echo "|---|---|"
+              echo "| Package | \`${pkg}\` |"
+              echo "| Target | \`${target}\` |"
+              echo "| Kind | \`${kind}\` |"
+              echo ""
+              case "$kind" in
+                *fuzz-crash*)
+                  echo "\`fuzz-crash\` means a crashing input was found."
+                  ;;
+                *)
+                  echo "\`error\` means the target failed for an infrastructure reason,"
+                  echo "e.g. a seed-corpus regression — not necessarily a new crashing input."
+                  ;;
+              esac
+              echo ""
+              echo "Run: ${RUN_URL}"
+              echo ""
+              echo "The crashing inputs are attached to the run as the **fuzz-failing-inputs** artifact."
+              echo "To reproduce locally: copy the artifact's \`testdata/fuzz/${target}/\` files into"
+              echo "\`${pkg}\`, then \`go test -run='^${target}\$' ${pkg}\` — the failing input now runs"
+              echo "as a regular regression test. Once fixed, commit the input as a seed."
+            } > issue-body.md
+
+            # Exact-title match among open fuzz-failure issues — a
+            # prefix/fuzzy match would alias two targets onto one issue.
+            # The title goes through the environment because gh's --jq
+            # takes no --arg, and interpolating it into the filter would
+            # let a target name break out of the quoting.
+            existing="$(TITLE="$title" gh issue list --label fuzz-failure \
+              --state open --limit 200 --json number,title \
+              --jq 'map(select(.title == env.TITLE)) | .[0].number // empty' || true)"
+
+            # One target's filing must not swallow the rest: a transient
+            # API error on the first of three crashes would otherwise
+            # lose the other two with the run already marked failed, and
+            # nothing re-runs it until next Monday.
+            if [ -n "$existing" ]; then
+              echo "Recurrence of ${title} — commenting on #${existing}"
+              gh issue comment "$existing" --body-file issue-body.md || {
+                echo "WARNING: failed to comment on #${existing} for ${title}"
+                file_failures=$((file_failures + 1))
+              }
+            else
+              echo "New failure ${title} — filing an issue"
+              gh issue create \
+                --title "$title" \
+                --label fuzz-failure \
+                --body-file issue-body.md || {
+                echo "WARNING: failed to file an issue for ${title}"
+                file_failures=$((file_failures + 1))
+              }
+            fi
+          done < <(sed -E 's/\[([^]]*)\]/\1/' fuzz-failures.txt)
+
+          if [ "$file_failures" -gt 0 ]; then
+            echo "ERROR: ${file_failures} target(s) could not be filed — see warnings above."
+            exit 1
           fi

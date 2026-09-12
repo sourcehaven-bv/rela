@@ -18,7 +18,7 @@ best bug-finding machinery in the repo gets no fuzz time.
 ## Approach (agreed with reviewer in session)
 
 1. `scripts/fuzz-all.sh`: discovers `Fuzz*` targets by scanning test files (new targets are swept automatically — no stale hand-list), runs each for `$FUZZTIME` (default 25s), collects failures into `fuzz-failures.txt`, exits non-zero if any failed. pgstore targets self-skip without `RELA_TEST_DATABASE_URL` (postgres-service wiring is a noted follow-up).
-2. `.github/workflows/fuzz-sweep.yml`: weekly cron (Mondays 06:00 UTC, before the security scan) + `workflow_dispatch`; on failure uploads the failing corpus inputs as an artifact and **auto-files a GitHub issue** (label `fuzz-failure`) with the failed targets, run link, and reproduction instructions — deduped by commenting on an existing open `fuzz-failure` issue instead of creating a new one each week.
+2. `.github/workflows/fuzz-sweep.yml`: weekly cron (Mondays 06:00 UTC, before the security scan) + `workflow_dispatch`; on failure uploads the failing corpus inputs as an artifact and **auto-files a GitHub issue** (label `fuzz-failure`) with the failed targets, run link, and reproduction instructions — deduped by commenting on an existing open `fuzz-failure` issue instead of creating a new one each week. **Superseded (issue #993):** one issue is now filed per failing `(package, target)` pair — a sweep finding three unrelated crashes is three bugs, each needing its own fix and close. Dedup is now per target, so a recurrence comments on that target's own issue.
 3. `just fuzz-all` recipe for local runs.
 4. The per-PR fuzz job stays as-is (fast smoke).
 
