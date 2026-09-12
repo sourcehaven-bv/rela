@@ -59,6 +59,32 @@ the entity: pgstore pins the identical behaviour in its own tests, so changing
 it here alone would break them and split the two backends under a conformance
 suite whose purpose is that they agree.
 
+**A background security review separately flagged a suspected "control
+regression" in `purge.go`. It is a FALSE POSITIVE**, and it is worth writing
+down so the next reviewer does not re-derive it. Reading two implementations
+side by side is a poor way to establish a negative, so each control property is
+now an executable claim in
+`internal/store/sqlitestore/purge_guardrails_test.go`, and each was confirmed
+to FAIL with its guard removed:
+
+| Property | Verified |
+|----------|----------|
+| DryRun never deletes, and still populates `RenameInTargets` / `LiveRowExists` / `Targets` so the caller can render the reason | `TestPurgeDryRunNeverDeletes` |
+| A rename row refuses even WITH `--force-live` | `TestPurgeRefusesARenameRowEvenWithForceLive` |
+| A live row refuses without `--force-live` | `TestPurgeRefusesALiveRowWithoutForceLive` |
+| `--force-live` on one face leaves a sibling face's history intact | `TestPurgeForceLiveIsScopedToOneFace` |
+| An empty selector ERRORS rather than defaulting to a scope | `TestPurgeRefusesAnEmptySelector` |
+| `--all` walks the fenced lineage, so an id reused after a rename keeps its own history | `TestPurgeAllUsesTheFencedLineage` |
+| A multi-lifetime relation key refuses without a selector, deleting nothing | `TestPurgeRelationMultiLifetimeRefusalDeletesNothing` |
+
+The guard ORDER also matches pgstore statement for statement: resolve targets,
+set the flags, `DryRun` return, rename refusal, live-without-force refusal, and
+only then the delete. The one genuine divergence is in the safe direction —
+sqlite wraps the delete and its tombstone in a transaction where pgstore leaves
+them as two autocommit statements (RR-EISIAL). The store performs no ACL check
+on either backend by design; authorization for `history-purge` is the operator
+shell, as it is for `db migrate`.
+
 **Unrelated changes in the diff, each deliberate:**
 
 - `internal/store/pgstore/relation_version.go` gains an exported
