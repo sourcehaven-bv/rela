@@ -128,8 +128,14 @@ type DBTX interface {
 // They have to live on this type to be discoverable that way; a second
 // type would not be found by the assertion.)
 //
-//plimsoll:max-exported-methods=44
-//plimsoll:max-methods=54
+// AcquireKeyedLock (TKT-1K47YD) is +1 for exactly the same reason: same pool,
+// same schema qualification, differing only in that the caller names the key
+// and the wait blocks. Consumers bind to the narrow lock.Locker seam rather
+// than to this type, so the public API this adds to is the store-capability
+// surface, not a new coupling point.
+//
+//plimsoll:max-exported-methods=45
+//plimsoll:max-methods=55
 type Store struct {
 	db        DBTX
 	observers []store.EntityObserver // notified synchronously after committed entity writes
