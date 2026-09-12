@@ -116,6 +116,51 @@ test.describe('Markdown editor entity-reference picker', () => {
     expect(after).toBe(before);
   });
 
+  test('opening and saving an untouched body does not rewrite it', async ({
+    appPage,
+    api,
+  }) => {
+    // The editor parses markdown into a document tree and writes it back on
+    // every save, so an unedited open must not churn the file. Markdown that
+    // exercises the constructs most likely to be reformatted: a table, a
+    // setext heading, mixed bullets, and an entity reference.
+    const body = [
+      'Setext Heading',
+      '==============',
+      '',
+      '* one',
+      '* two',
+      '',
+      '| a | b |',
+      '| - | - |',
+      '| 1 | 2 |',
+      '',
+      `A reference to \`${targetId}\` inline.`,
+      '',
+    ].join('\n');
+
+    const created = await api.createEntity('features', {
+      properties: {
+        title: 'Round Trip Feature',
+        description: 'Opened in the editor and saved untouched',
+        status: 'draft',
+        priority: 'low',
+      },
+      content: body,
+    });
+    originId = created.id;
+
+    const form = new FormPage(appPage);
+    await form.navigateToEditForm('feature', originId!);
+    await form.expectMarkdownEditorReady();
+    // Wait for the reference to resolve, so the editor has finished its
+    // load-time work before anything is saved.
+    await expect(form.editorEntityRefs.first()).toBeVisible();
+
+    const persisted = await api.getContent('features', originId!);
+    expect(persisted).toBe(body);
+  });
+
   test('typing the target title surfaces it as a top result (RR-Z9C1)', async ({ appPage }) => {
     // The picker should rank a clearly-matching title at the top of the
     // result list, so the user doesn't have to scroll past unrelated

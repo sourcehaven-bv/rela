@@ -263,7 +263,11 @@ jobs:
         run: npm run lint
 
       - name: Test
-        run: npm run test:run
+        # RELA_FULL_CORPUS sweeps every entity body through the markdown
+        # editor's parse/serialize pair instead of the 1-in-8 sample the local
+        # run uses. It is the gate on the WYSIWYG editor never rewriting what
+        # a user did not edit, and it takes about a minute.
+        run: RELA_FULL_CORPUS=1 npm run test:run
 
       - name: Build
         run: npm run build
