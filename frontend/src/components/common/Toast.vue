@@ -46,6 +46,13 @@ function getIcon(type: string): string {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  /* The container spans its column but is not itself a target: it sits at
+     bottom-right, directly over the form action buttons. That was harmless
+     while every create navigated away, but "Create & add another"
+     (TKT-7YHKD1) leaves the user on the form — and the toast reporting
+     record N then swallowed the click for record N+1 until it timed out.
+     Each toast re-enables pointer events for its own dismiss button. */
+  pointer-events: none;
 }
 
 .toast {
@@ -86,7 +93,13 @@ function getIcon(type: string): string {
   font-size: 14px;
 }
 
+/* Only the dismiss control takes pointer events back. Re-enabling them on
+   `.toast` itself was not enough of a scope: the toast's own icon and message
+   spans then inherit `auto` and keep swallowing clicks aimed at what sits
+   underneath — which, since "Create & add another" keeps the user on the form,
+   is the very button they need to press for the next record. */
 .toast-dismiss {
+  pointer-events: auto;
   background: none;
   border: none;
   color: inherit;
