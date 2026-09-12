@@ -63,9 +63,13 @@ jobs:
             echo "No target-failure summary — setup error, not filing an issue."
             exit 0
           fi
+          # A missing label is cosmetic; an unfiled crash is not. This is
+          # a no-op whenever the label already exists, so its only real
+          # effect under `set -e` would be to kill the step on a blip.
           gh label create fuzz-failure \
             --description "Filed automatically by the weekly fuzz sweep" \
-            --color D93F0B --force
+            --color D93F0B --force \
+            || echo "WARNING: could not create/update the fuzz-failure label, continuing"
 
           # One issue per failing target, not one issue per sweep: a
           # sweep that finds three unrelated crashes is three bugs, and
@@ -74,6 +78,7 @@ jobs:
           # exactly on the next sweep — so a recurrence comments on its
           # own issue and a newly broken target opens a fresh one.
           file_failures=0
+          ISSUE_PAGE_LIMIT=200
           while read -r pkg target kind; do
             [ -n "${target:-}" ] || continue
             title="Fuzz failure: ${target} (${pkg#./})"
@@ -87,32 +92,61 @@ jobs:
               echo "| Target | \`${target}\` |"
               echo "| Kind | \`${kind}\` |"
               echo ""
+              echo "Run: ${RUN_URL}"
+              echo ""
+              # Only a fuzz-crash writes a corpus file. Pointing an
+              # `error` at testdata/fuzz/<Target>/ sends the reader after
+              # files that do not exist (the artifact step is
+              # if-no-files-found: ignore, so it may hold only the summary).
               case "$kind" in
                 *fuzz-crash*)
                   echo "\`fuzz-crash\` means a crashing input was found."
+                  echo ""
+                  echo "The crashing inputs are attached to the run as the **fuzz-failing-inputs** artifact."
+                  echo "To reproduce locally: copy the artifact's \`testdata/fuzz/${target}/\` files into"
+                  echo "\`${pkg}\`, then \`go test -run='^${target}\$' ${pkg}\` — the failing input now runs"
+                  echo "as a regular regression test. Once fixed, commit the input as a seed."
                   ;;
                 *)
                   echo "\`error\` means the target failed for an infrastructure reason,"
-                  echo "e.g. a seed-corpus regression — not necessarily a new crashing input."
+                  echo "e.g. a seed-corpus regression or a build failure — NOT necessarily a"
+                  echo "new crashing input, so there may be no corpus file to reproduce from."
+                  echo "Start with the run log for this target."
                   ;;
               esac
-              echo ""
-              echo "Run: ${RUN_URL}"
-              echo ""
-              echo "The crashing inputs are attached to the run as the **fuzz-failing-inputs** artifact."
-              echo "To reproduce locally: copy the artifact's \`testdata/fuzz/${target}/\` files into"
-              echo "\`${pkg}\`, then \`go test -run='^${target}\$' ${pkg}\` — the failing input now runs"
-              echo "as a regular regression test. Once fixed, commit the input as a seed."
             } > issue-body.md
 
-            # Exact-title match among open fuzz-failure issues — a
-            # prefix/fuzzy match would alias two targets onto one issue.
-            # The title goes through the environment because gh's --jq
-            # takes no --arg, and interpolating it into the filter would
-            # let a target name break out of the quoting.
-            existing="$(TITLE="$title" gh issue list --label fuzz-failure \
-              --state open --limit 200 --json number,title \
-              --jq 'map(select(.title == env.TITLE)) | .[0].number // empty' || true)"
+            # Fetch the open fuzz-failure issues, then match the title
+            # EXACTLY below — a prefix or fuzzy match would alias two
+            # targets onto one issue.
+            #
+            # A FAILED query must never be read as "no match": both are
+            # the empty string, and guessing "no match" files a duplicate
+            # of an issue that already exists and is probably assigned.
+            # Fail closed — a skipped comment costs one week of signal on
+            # a bug already tracked; a duplicate costs manual triage every
+            # week thereafter.
+            if ! listing="$(gh issue list --label fuzz-failure \
+              --state open --limit "$ISSUE_PAGE_LIMIT" --json number,title 2>&1)"; then
+              echo "WARNING: could not query existing issues for ${title}: ${listing}"
+              file_failures=$((file_failures + 1))
+              continue
+            fi
+
+            # The match is client-side over a server-side page, so a full
+            # page could hide an existing issue and make us file a
+            # duplicate. Unreachable today (the sweep discovers ~52
+            # targets, so at most that many distinct titles exist), but
+            # asserted rather than assumed.
+            if [ "$(jq -r 'length' <<<"$listing")" -ge "$ISSUE_PAGE_LIMIT" ]; then
+              echo "WARNING: open fuzz-failure issues hit the ${ISSUE_PAGE_LIMIT} page limit —"
+              echo "         dedup may miss a match and file a duplicate. Triage the backlog."
+            fi
+
+            # The title reaches jq through the environment, not the
+            # filter string, so a target name cannot break the quoting.
+            existing="$(TITLE="$title" jq -r \
+              'map(select(.title == env.TITLE)) | .[0].number // empty' <<<"$listing")"
 
             # One target's filing must not swallow the rest: a transient
             # API error on the first of three crashes would otherwise
@@ -134,7 +168,12 @@ jobs:
                 file_failures=$((file_failures + 1))
               }
             fi
-          done < <(sed -E 's/\[([^]]*)\]/\1/' fuzz-failures.txt)
+          # `read` returns non-zero on a final line with no trailing
+          # newline and bash discards it, so a summary written with printf
+          # would silently lose its LAST row — always the same
+          # alphabetically-last target, at exit 0. The appended newline
+          # means we don't rely on the producer terminating the file.
+          done < <(sed -E 's/ \[([^]]*)\]$/ \1/' fuzz-failures.txt; printf '\n')
 
           if [ "$file_failures" -gt 0 ]; then
             echo "ERROR: ${file_failures} target(s) could not be filed — see warnings above."
