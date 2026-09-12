@@ -7,7 +7,7 @@
  *   - EntityDetail  `.content-body` / `.markdown-content` (client renderMarkdown)
  *   - DocumentView  `.document-body`  (server goldmark HTML)
  *   - DocumentsPanel `.document-body` (server goldmark HTML)
- *   - MarkdownEditor `.editor-preview` (EasyMDE live preview) — re-skinned to
+ *   - the sandboxed app editor's `.editor-preview` (EasyMDE live preview) — re-skinned to
  *     match; see the `.editor-preview` block at the bottom.
  *
  * Before this file these rules were copy-pasted into each component's scoped
@@ -262,7 +262,7 @@
 }
 
 /*
- * EasyMDE live-preview pane (MarkdownEditor.vue). EasyMDE renders the preview
+ * EasyMDE live-preview pane (src/app-editor/relaEditor.ts). EasyMDE renders the preview
  * into `.editor-preview`, which is created by the library and can't take the
  * `.md-body` class, so we alias it here to the same rules. This makes the
  * preview show what the entity view will actually render — EasyMDE otherwise

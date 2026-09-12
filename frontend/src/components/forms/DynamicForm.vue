@@ -30,6 +30,7 @@ import type {
   RelationAffordance,
   AttachmentInfo,
   TransitionOption,
+  Mention,
 } from '@/types'
 import { getTemplates, createRelation, dryRunCreateEntity, ApiError, getErrorMessage } from '@/api'
 import { uploadAttachment, attachmentErrorReason } from '@/api/attachments'
@@ -48,7 +49,8 @@ import { registerForm } from './dirtyFormRegistry'
 import { adoptLockedFieldValues } from './stagedEntity'
 import AutoSaveIndicator from './AutoSaveIndicator.vue'
 import FormFieldList from './FormFieldList.vue'
-import MarkdownEditor from './MarkdownEditor.vue'
+import MarkdownEditor from './milkdown/MilkdownEditor.vue'
+import { makeRefResolver } from '@/utils/entityRefResolver'
 import SidePanel from './SidePanel.vue'
 import HelpModal from '@/components/ui/HelpModal.vue'
 import PendingButton from '@/components/common/PendingButton.vue'
@@ -204,6 +206,11 @@ const userTouched = ref<Set<string>>(new Set())
 // via `to[0]` (which is wrong for polymorphic relations).
 const pickerTypes = ref<Record<string, Map<string, string>>>({})
 const content = ref('')
+// The server's per-principal mentions map for the loaded body, and the
+// resolver the editor renders references with. Shared with the read view via
+// makeRefResolver so a reference shows the same title on both surfaces.
+const mentions = ref<Record<string, Mention> | undefined>(undefined)
+const refResolver = computed(() => makeRefResolver(mentions.value))
 const loading = ref(true)
 // Opening an edit form against a local server resolves in tens of
 // milliseconds, so an ungated spinner appears and vanishes before it can be
@@ -534,6 +541,11 @@ async function loadEntity(force = false) {
     relationAffordances.value = entity._relations ?? {}
     attachments.value = entity._attachments ?? {}
     transitions.value = entity._transitions ?? {}
+    // Entity-ID code spans in the body, resolved per principal by the server.
+    // The editor renders references as titled links from this and nothing
+    // else; absent means every reference shows its bare ID, which is the
+    // correct degraded state rather than an error.
+    mentions.value = entity.mentions
     originalData.value = JSON.stringify({
       formData: formData.value,
       relations: relations.value,
@@ -2020,6 +2032,7 @@ defineExpose({
           <label for="content">Content</label>
           <MarkdownEditor
             :model-value="content"
+            :ref-resolver="refResolver"
             placeholder="Markdown content..."
             @update:model-value="updateContent"
           />

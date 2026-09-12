@@ -1,5 +1,5 @@
 import { api } from './client'
-import type { Entity, EntityWorld, FieldAffordance } from '@/types'
+import type { Entity, EntityWorld, FieldAffordance, Mention } from '@/types'
 
 // Field data for view sections
 export interface ViewSectionField {
@@ -132,22 +132,11 @@ export interface ViewSection {
 
 // Mention is the resolved target of an entity-ID code span found inside
 // any markdown body the response carries (entry content + section
-// content). Mirrors the server-side `Mention` Go struct (TKT-747O); the
-// SPA's `renderMarkdown` consumes this map to rewrite bare-ID code spans
-// into titled in-app links. `inaccessible` flags targets whose display
-// title is unreadable (e.g. git-crypt encrypted) so the renderer can
-// show a lock affordance.
-//
-// `inaccessible_reason` carries the matching `entity.InaccessibleReason`
-// value as a bare string. Today only `"git-crypt"` is produced; the SPA
-// treats unknown reasons as opaque and falls back to a generic tooltip,
-// so adding new reasons server-side never breaks the client.
-export interface Mention {
-  type: string
-  title: string
-  inaccessible?: boolean
-  inaccessible_reason?: string
-}
+// content). Re-exported from `@/types`, where it now lives beside `Entity`:
+// the single-entity GET carries the same map so an edit form can resolve the
+// refs in a body it is about to render. Kept exported here so the existing
+// `from '@/api/views'` imports keep working.
+export type { Mention } from '@/types'
 
 // Full view API response
 export interface ViewResponse {
