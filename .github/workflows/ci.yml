@@ -218,6 +218,33 @@ jobs:
             echo "::endgroup::"
           done
 
+  semgrep:
+    name: Semgrep
+    runs-on: ubuntu-latest
+    # Static security analysis for the frontend: gosec (see .golangci.yml)
+    # covers Go, this covers JS/TS. frontend/ renders user-authored markdown
+    # to HTML, so XSS is the risk that matters most here.
+    container:
+      image: semgrep/semgrep:1.140.0
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Scan frontend
+        # Rules are local (.semgrep/), not registry packs: the OSS packs
+        # (p/xss, p/javascript, p/typescript, p/owasp-top-ten) contain no
+        # browser DOM-XSS rules and find nothing here — see the header of the
+        # rule file. --error makes a finding fail the job; new findings should
+        # be fixed or given an inline `nosemgrep: <rule-id>` comment stating
+        # why, never silenced wholesale.
+        run: |
+          semgrep scan \
+            --config=.semgrep/frontend-xss.yml \
+            --error \
+            --metrics=off \
+            --exclude='*.test.ts' \
+            --exclude='*.spec.ts' \
+            frontend/src e2e
+
   lint-markdown:
     name: Lint Markdown
     runs-on: ubuntu-latest
