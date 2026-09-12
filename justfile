@@ -305,6 +305,16 @@ arch-lint:
     @echo "Checking architecture boundaries..."
     go-arch-lint check
 
+# Compile build-tag-gated Go files — the default build skips them, so they rot
+tagged-tests:
+    @echo "Compiling build-tag-gated files..."
+    scripts/check-tagged-tests.sh
+
+# Test the tagged-build guard itself (run this after changing its parser)
+tagged-tests-test:
+    @echo "Testing the tagged-build guard..."
+    scripts/check-tagged-tests-test.sh
+
 # Check type load lines (god-object linter). Existing offenders are
 # grandfathered with //plimsoll:max-* directives at the declaration site;
 # ratchet those down over time (TKT-N0IKN9). Keep plimsoll_version in sync

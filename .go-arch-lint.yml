@@ -18,6 +18,10 @@ exclude:
   - frontend
   - e2e
   - .claude
+  # Build tooling, not application code. scripts/tagged_build_tags.go is
+  # `//go:build ignore` and runs via `go run`, so it is outside the package
+  # graph and has no component to belong to.
+  - scripts
   # Gitignored local scratch (perf harnesses etc). CI never sees it, but the
   # linter scans the working tree, so a local run must not trip on it.
   - .ignored
