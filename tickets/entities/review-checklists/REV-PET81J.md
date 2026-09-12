@@ -101,4 +101,4 @@ it has reported green on develop a few times.
 - [x] All CI checks pass
 - [x] PR URL documented below
 
-**PR:** https://github.com/sourcehaven-bv/rela/pull/1563
+**PR:** https://github.com/sourcehaven-bv/rela/pull/1569
