@@ -44,12 +44,23 @@ unexplained suppression is a finding nobody can re-evaluate later.
 - [x] All significant review-responses addressed
 - [x] Self-reviewed the diff for unrelated changes
 
-**Review Responses:** RR-X0TGM4 (significant, addressed), RR-1GM1NB
-(significant, addressed), RR-VEACKR (nit, addressed — an audit result, no
-change required).
+**Review Responses:** RR-PGCAS1 (critical, addressed), RR-X0TGM4 (significant,
+addressed), RR-1GM1NB (significant, addressed), RR-VEACKR (nit, addressed — an
+audit result, no change required).
 
-No critical findings. Both significant findings are genuine defects that were
-fixed and pinned by failing-first tests:
+- **RR-PGCAS1** — found by CI on the opened PR, not by local checks.
+`UpdateEntityIf` had been written as its own transaction and UPDATE statement
+instead of reusing `UpdateEntity`'s, and develop's content-states work changed
+the shared shape underneath it while the branch sat unrebased. The CAS copy
+selected 5 columns into a 6-destination scan, addressed the bare id rather than
+`(id, face)`, and dropped the `origin_*` columns — so every conditional write
+against PostgreSQL failed, and because data-entry PATCH now routes through
+`ExpectedVersion`, every entity PATCH on a postgres deployment returned 422.
+Fixed by collapsing both paths onto ONE update core, which is what the other
+three backends already did and why only pgstore drifted.
+
+The two significant findings are genuine defects that were fixed and pinned by
+failing-first tests:
 
 - **RR-X0TGM4** — `VersionOf` hashed values with `%v`, so `int64(1)`,
 `float64(1)` and `"1"` produced the SAME token. A write that changed only a
@@ -96,12 +107,18 @@ type-sensitivity fix cannot have been traded for spurious conflicts.
 PASS. `TestFacedIDWrite_AuthorizesTheFaceItWrites` and
 `TestFacedIDWrite_ExplicitFaceGrantStillWorks`.
 
-**NOT verified here:** `internal/store/pgstore/cas_crossprocess_test.go` is
-gated on `RELA_TEST_DATABASE_URL` and no PostgreSQL instance was available in
-this environment, so the cross-PROCESS acceptance test did not run locally. It
-is the one case that cannot be demonstrated by the in-process suite. CI runs
-the postgres-tagged job, so it is covered before merge, but this checklist
-should not claim a local pass it did not get.
+- *Cross-process conflict instead of silent loss* — PASS, verified against a
+real PostgreSQL 17. `TestCrossProcess_ConditionalUpdateConflictsInsteadOfLosing`
+and `TestCrossProcess_ConcurrentAppendersAllLandAcrossHandles`, plus the full
+postgres-tagged pgstore suite (105s). This is the case the in-process suite
+cannot demonstrate, and it is what caught RR-PGCAS1.
+
+**Process note.** This section originally recorded the postgres suite as NOT
+verified, because the gated tests had not been run. That gap is exactly where
+RR-PGCAS1 was hiding: a critical defect that made every conditional write fail
+on the one backend the ticket most needed to work. The honest "not verified"
+note was correct, and acting on it rather than merging past it is what found
+the bug. The gated suite has since been run in full and passes.
 
 ## Documentation (enhancements only)
 
