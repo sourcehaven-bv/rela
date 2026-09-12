@@ -22,6 +22,15 @@ finds no unresolvable doc links.
 `just docs-check` FAILED on first run and is the one finding this checklist
 surfaced by itself — see Documentation below.
 
+The postgres-tagged suite was also run against a real PostgreSQL 17 rather than
+left to CI, because the sibling CAS branch had a critical defect hiding behind
+exactly that gate. `./internal/store/pgstore/...` and `./internal/jobs/...`
+pass. `./internal/dataentry/` shows one failure,
+`TestWebhookConflict_SchemaPinnedDSNIsIsolated`
+("relation \"public.entities\" does not exist"), which was REPRODUCED on clean
+`origin/develop` in a separate worktree against the same database — it is an
+artifact of the reused test instance, not of this branch.
+
 **Comment findings.** `just comment-report` lists the advisory rules
 (duplication, nil-contract, param-contract, restatement). They are not a merge
 gate, but a finding your diff *introduces* should be fixed or suppressed — don't
