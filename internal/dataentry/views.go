@@ -3,6 +3,7 @@ package dataentry
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
@@ -54,6 +55,24 @@ func (h *viewsHandler) executeViewRef(
 	}
 	if entry.Type != view.Entry.Type {
 		return nil, fmt.Errorf("entry entity %s is type %s, expected %s", entryRef, entry.Type, view.Entry.Type)
+	}
+	// Source-gate the entry (BUG-9Z20WH). Every production caller already
+	// row-gates the entry before invoking executeView (the `_views` route, the
+	// form side-panel, the command runner's `kind: view`), so this is normally
+	// a redundant same-principal probe returning the same verdict. It is kept
+	// as defense in depth: executeView is a SHARED ENGINE reachable via the
+	// synthetic ViewConfig in sections.go, and a future caller must not be able
+	// to feed it an entry the principal cannot read.
+	//
+	// This does NOT contradict viewEntry's "the entry is not row-gated here"
+	// note: that note is about not RE-gating an entry the handler just cleared,
+	// and this gate is world-INDEPENDENT (guard rule 1), so for every caller
+	// that did gate it returns the identical verdict and cannot 404 a cleared
+	// entry. A hidden entry is reported as the ordinary not-found so it stays
+	// indistinguishable from a missing one. Under NopACL the gate permits, so
+	// behavior is unchanged for a full-read principal.
+	if ok, gerr := readGateFromContext(ctx).PermitsRead(ctx, entry.Type, entry.ID); gerr != nil || !ok {
+		return nil, errViewEntryNotFound(entryRef.String())
 	}
 
 	result := &viewResult{
@@ -137,7 +156,7 @@ func (h *viewsHandler) applyViewTraverse(
 		if maxD <= 0 {
 			maxD = maxRecursionDepth
 		}
-		foundIDs = h.traverseViewBreadthFirst(ctx, sourceIDs, rule, maxD)
+		foundIDs = h.traverseViewBreadthFirst(ctx, sourceIDs, rule, maxD, w)
 	} else {
 		// One relation query for every source at once (TKT-1U8XYN), in the
 		// same order the per-source loop produced: sources in collection
@@ -236,7 +255,7 @@ func (h *viewsHandler) traverseViewMany(ctx context.Context, sourceIDs []string,
 // when it loads the collection, exactly as it did for the former depth-first
 // walk, and the recursive tests pin the SET of ids, not their order.
 func (h *viewsHandler) traverseViewBreadthFirst(
-	ctx context.Context, sourceIDs []string, rule ViewTraverse, maxDepth int,
+	ctx context.Context, sourceIDs []string, rule ViewTraverse, maxDepth int, w viewWorld,
 ) []string {
 	visited := make(map[string]bool, len(sourceIDs))
 	frontier := make([]string, 0, len(sourceIDs))
@@ -251,6 +270,24 @@ func (h *viewsHandler) traverseViewBreadthFirst(
 	for depth := 0; depth < maxDepth && len(frontier) > 0; depth++ {
 		found := h.traverseViewMany(ctx, frontier, rule)
 		all = append(all, found...)
+
+		// SOURCE-GATE the frontier (BUG-9Z20WH). An id the principal cannot
+		// read is not expanded, so it cannot act as a stepping-stone to a
+		// descendant reachable only through it.
+		//
+		// This gate has to be HERE, not only at the load. The walk is
+		// id-only by design (TKT-1U8XYN) — it never materializes an entity —
+		// so a hidden node H would otherwise be expanded on ids alone and its
+		// child V collected. V is readable in its own right, so neither the
+		// load-time gate nor the out-gate (viewReader.Filter) would drop it,
+		// and the leak would survive both. Gating the frontier is the only
+		// point at which H's UNREADABILITY can stop the walk.
+		//
+		// `all` deliberately keeps the ungated ids: they are the rule's raw
+		// result and every one of them is gated again at load time, so a
+		// hidden node still never reaches a collection. What this gate
+		// changes is REACHABILITY — which nodes get to be walked THROUGH —
+		// which is the bug.
 		next := make([]string, 0, len(found))
 		for _, id := range found {
 			if visited[id] {
@@ -259,9 +296,111 @@ func (h *viewsHandler) traverseViewBreadthFirst(
 			visited[id] = true
 			next = append(next, id)
 		}
-		frontier = next
+		frontier = h.readableViewIDs(ctx, next, w)
 	}
 	return all
+}
+
+// readableViewIDs filters ids down to those the request principal may read,
+// preserving order. It is the traversal's source gate (BUG-9Z20WH).
+//
+// # Why it resolves rows the same way the loader does
+//
+// The gate takes the world and queries with the SAME `World`/`FaceIn` shape as
+// [viewsHandler.loadViewEntities]. That is load-bearing, not tidiness: a type
+// declaring `faces:` stores NO row at the zero coordinate (BUG-HC6I2T), so a
+// default-world scan returns nothing for a faced entity. Gating on such a scan
+// would drop every faced entity from the frontier even under NopACL — a silent
+// functional regression dressed up as a denial, and a gate that decides about a
+// different graph than the one being walked.
+//
+// # Both halves of the verdict
+//
+// A row gate is face-BLIND, so it is paired with [faceReadable], exactly as
+// visibleHeaderIDs pairs them (TKT-O7R2A1). Without the face half a principal
+// granted only `policy@published` could walk THROUGH a draft-only entity to
+// reach its descendants — the same reachability leak this gate exists to close,
+// re-opened one coordinate down.
+//
+// Ids are resolved to their type and face with a content-free HEADER scan,
+// because the gate is keyed by (type, id) plus a face and the id-only walk has
+// neither. Headers keep the walk's "no entity loads during traversal" property.
+//
+// FAIL CLOSED throughout: a header scan that faults, an id whose header never
+// arrives (so its type is unknown), and a gate probe that errors all drop the
+// affected ids, each with a warning so an operator sees a cause rather than a
+// silently-truncated view. Under NopACL every probe permits and every face is
+// allowed, so the traversal is unchanged for a full-read principal.
+func (h *viewsHandler) readableViewIDs(ctx context.Context, ids []string, w viewWorld) []string {
+	if len(ids) == 0 {
+		return nil
+	}
+	if w.denied {
+		// The world itself is denied; nothing in it is expandable.
+		return nil
+	}
+
+	type idHeader struct {
+		typ  string
+		face entity.Face
+	}
+	hdrs := make(map[string]idHeader, len(ids))
+	q := store.EntityQuery{IDs: ids, World: w.scope}
+	for hdr, err := range store.ListEntityHeaders(ctx, h.store, q) {
+		if err != nil {
+			// A header-scan fault is not "everything is hidden", but it is
+			// also not a license to expand un-gated nodes. Drop the level.
+			slog.Warn("dataentry: view traversal: source-gate header scan failed; "+
+				"frontier dropped", "world", w.name, "ids", len(ids), "err", err)
+			return nil
+		}
+		hdrs[hdr.ID] = idHeader{typ: hdr.Type, face: hdr.Face}
+	}
+
+	byType := make(map[string][]string, 4)
+	ordered := make([]string, 0, len(ids))
+	for _, id := range ids {
+		h, ok := hdrs[id]
+		if !ok {
+			// No row for this id in this world: a dangling edge, or a face
+			// the world excludes. Either way it is not expandable here.
+			continue
+		}
+		byType[h.typ] = append(byType[h.typ], id)
+		ordered = append(ordered, id)
+	}
+
+	gate := readGateFromContext(ctx)
+	permitted := make(map[string]bool, len(ordered))
+	for typ, typeIDs := range byType {
+		verdicts, err := gate.PermitsReadMany(ctx, typ, typeIDs)
+		if err != nil {
+			// Fail closed: none of this type is expandable. Logged loud so
+			// operators see the cause rather than a silently-short chain.
+			slog.Warn("dataentry: view traversal: source-gate probe failed; "+
+				"dropping type from frontier", "type", typ, "ids", len(typeIDs), "err", err)
+			continue
+		}
+		for _, id := range typeIDs {
+			if verdicts[id] {
+				permitted[id] = true
+			}
+		}
+	}
+
+	out := make([]string, 0, len(ordered))
+	for _, id := range ordered {
+		if !permitted[id] {
+			continue
+		}
+		// The row gate cleared the ENTITY; it says nothing about which FACE
+		// this principal may read. Both halves or neither.
+		if !faceReadable(ctx, hdrs[id].typ, hdrs[id].face) {
+			continue
+		}
+		out = append(out, id)
+	}
+	return out
 }
 
 func countViewEntities(collections map[string][]*entity.Entity) int {
