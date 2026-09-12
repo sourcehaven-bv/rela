@@ -359,3 +359,53 @@ func sortedKeysOfStringMap(m map[string]string) []string {
 	sort.Strings(keys)
 	return keys
 }
+
+// --- request-scoped actions (TKT-EFMRQM) -----------------------------------
+
+// validateActionRequest checks an action's opt-in `request:` block.
+//
+// It shares the header floor and body ceiling with a declarative webhook
+// deliberately rather than growing a second set: both surfaces expose an
+// attacker-supplied request to operator-authored logic, so a header that is
+// always wrong to expose on one is always wrong on the other, and a second
+// list would drift the moment either gained a name. Every problem is a LOAD
+// ERROR, matching validateWebhooks: an action that silently does not see the
+// body it was written against loses a delivery a producer generally does not
+// resend.
+func validateActionRequest(id string, action Action, hasScript bool) []string {
+	req := action.Request
+	if req == nil {
+		return nil
+	}
+
+	var errs []string
+	if !hasScript {
+		// A declarative `set:` action has no code to receive a request. Silently
+		// ignoring the block would leave the operator believing a payload
+		// reached logic that does not exist.
+		errs = append(errs, fmt.Sprintf(
+			"actions: %q declares request: requires script (a set: action has no script to receive it)", id))
+	}
+
+	for _, h := range req.Headers {
+		if !webhookHeaderRegex.MatchString(h) {
+			errs = append(errs, fmt.Sprintf(
+				"actions: %q request header %q is not a valid HTTP header name", id, h))
+			continue
+		}
+		if isForbiddenWebhookHeader(h) {
+			errs = append(errs, fmt.Sprintf(
+				"actions: %q may not expose header %q (it carries credentials or a proxy-asserted identity)", id, h))
+		}
+	}
+
+	if req.MaxBodyBytes < 0 {
+		errs = append(errs, fmt.Sprintf("actions: %q request max_body_bytes must not be negative", id))
+	}
+	if req.MaxBodyBytes > maxWebhookBodyCap {
+		errs = append(errs, fmt.Sprintf(
+			"actions: %q request max_body_bytes %d exceeds the %d-byte ceiling",
+			id, req.MaxBodyBytes, maxWebhookBodyCap))
+	}
+	return errs
+}

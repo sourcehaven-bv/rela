@@ -6,8 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
+	"math"
+	"mime"
+	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -21,10 +26,41 @@ const actionsDir = "actions"
 
 // ActionResponse is the response returned from an action script.
 // All fields are optional. Empty response means "200 OK with no body".
+//
+// It carries TWO vocabularies, and a script picks exactly one:
+//
+//   - {redirect, message, message_type} — the SPA-toast shape, unchanged since
+//     before TKT-EFMRQM and still the default. Serialized as a rela JSON
+//     envelope by the handler.
+//   - {status, body, content_type} — the rich shape (TKT-EFMRQM), for a
+//     third-party consumer that needs a specific status and payload.
+//
+// Mixing them is a contract error rather than a precedence rule: the two are
+// answered to different consumers, so honoring one and dropping the other is a
+// silent half-delivery. [ActionResponse.IsRich] is the discriminator.
 type ActionResponse struct {
 	Redirect    string `json:"redirect,omitempty"`
 	Message     string `json:"message,omitempty"`
 	MessageType string `json:"message_type,omitempty"`
+
+	// Status is the HTTP status for the rich shape. Constrained to 2xx/4xx/5xx
+	// at parse time; zero when the script returned the SPA shape.
+	Status int `json:"-"`
+
+	// Body is the response payload verbatim. A string, never a table: encoding
+	// a table here would silently choose a serialization the script did not
+	// ask for, and its content_type would then be a guess.
+	Body string `json:"-"`
+
+	// ContentType is validated against a small allowlist at parse time and is
+	// never sniffed — see validActionContentTypes.
+	ContentType string `json:"-"`
+}
+
+// IsRich reports whether the script chose the {status, body, content_type}
+// vocabulary. Only a rich response bypasses the SPA envelope.
+func (r *ActionResponse) IsRich() bool {
+	return r != nil && (r.Status != 0 || r.Body != "")
 }
 
 // validMessageTypes is the allowed enum for ActionResponse.MessageType.
@@ -41,15 +77,9 @@ var validMessageTypes = map[string]bool{
 // project's actions/ directory using os.OpenRoot for traversal-resistant
 // access (rejects symlinks, ".." paths, absolute paths).
 //
-// The timeout applies to script execution. The caller is responsible for
-// holding any necessary workspace lock — actions may mutate the graph.
-//
-// triggerEntity is optional — nil when the action is invoked without entity
-// context. When non-nil it is exposed to the Lua script as the `entity` global.
-//
-// correlationID is stamped onto any *lua.ScriptError this returns so the
-// HTTP response and the slog log line stay matched up. Callers without
-// a correlation context (CLI, scheduler) may pass "".
+// The caller is responsible for holding any necessary workspace lock — actions
+// may mutate the graph. See [ActionInvocation] for what each argument means; it
+// is the positional form of that struct, kept for the callers that predate it.
 func (e *Engine) ExecuteAction(
 	ctx context.Context,
 	scriptPath string,
@@ -59,6 +89,53 @@ func (e *Engine) ExecuteAction(
 	timeout time.Duration,
 	correlationID string,
 ) (*ActionResponse, error) {
+	return e.ExecuteActionRequest(ctx, scriptPath, deps, ActionInvocation{
+		TriggerEntity: triggerEntity,
+		Params:        params,
+		Timeout:       timeout,
+		CorrelationID: correlationID,
+	})
+}
+
+// ActionInvocation carries the per-call inputs of one action execution.
+//
+// Grouped rather than added to [Engine.ExecuteAction]'s positional list, which
+// was already at seven arguments: the request-scoped inputs (TKT-EFMRQM) would
+// have made a call site an unreadable run of nils, and the compiler cannot tell
+// two adjacent same-typed arguments apart when one is swapped for the other.
+type ActionInvocation struct {
+	// TriggerEntity is optional — nil when the action is invoked without entity
+	// context. When non-nil it is exposed to the script as the `entity` global.
+	// It MUST already have passed the caller's read gate: this package does no
+	// ACL of its own.
+	TriggerEntity *entity.Entity
+
+	// Params are the action's static config params, as rela.params.
+	Params map[string]string
+
+	// Request is the inbound HTTP request, as rela.request (TKT-EFMRQM). Nil
+	// for a script that did not opt in, which leaves rela.request absent.
+	Request *lua.Request
+
+	// Timeout bounds script execution.
+	Timeout time.Duration
+
+	// CorrelationID is stamped onto any *lua.ScriptError so the HTTP response
+	// and the slog line stay matched up. Callers without a correlation context
+	// (CLI, scheduler) may leave it empty.
+	CorrelationID string
+}
+
+// ExecuteActionRequest is [Engine.ExecuteAction] taking its per-call inputs as
+// a struct, which is what a request-scoped invocation needs.
+func (e *Engine) ExecuteActionRequest(
+	ctx context.Context,
+	scriptPath string,
+	deps lua.WriteDeps,
+	inv ActionInvocation,
+) (*ActionResponse, error) {
+	triggerEntity, params, correlationID := inv.TriggerEntity, inv.Params, inv.CorrelationID
+
 	scriptCode, err := loadActionScript(deps.ProjectRoot, scriptPath)
 	if err != nil {
 		return nil, err
@@ -67,8 +144,9 @@ func (e *Engine) ExecuteAction(
 	var output bytes.Buffer
 	runtime, err := NewWriterRuntime(deps, scriptPath, &output,
 		lua.WithParams(params),
+		lua.WithRequest(inv.Request),
 		lua.WithActionMode(),
-		lua.WithTimeout(timeout),
+		lua.WithTimeout(inv.Timeout),
 		lua.WithCache(e.cache),
 		lua.WithContext(ctx),
 		lua.WithPrincipal(principal.From(ctx)),
@@ -278,7 +356,176 @@ func parseActionResponse(ret any) (*ActionResponse, error) {
 		resp.MessageType = s
 	}
 
+	if err := parseRichActionResponse(m, resp); err != nil {
+		return nil, err
+	}
+
 	return resp, nil
+}
+
+// validActionContentTypes is the allowlist a script may choose from for a rich
+// response body (TKT-EFMRQM). Compared as the lowercased media type, with any
+// parameters (`; charset=utf-8`) stripped first.
+//
+// An ALLOWLIST rather than an arbitrary string, for two reasons that survive
+// the response hardening the handler also applies (nosniff + a
+// `sandbox; default-src 'none'` CSP + no-store, the export/attachment recipe):
+//
+//   - This endpoint is same-origin with the SPA and reachable from a browser,
+//     so an active-content type (text/html, image/svg+xml,
+//     application/xhtml+xml) turns a script bug into a same-origin scripting
+//     sink. The CSP and nosniff are what make that survivable; the allowlist is
+//     what means a single header regression is not immediately exploitable.
+//     Defense in depth is the whole point — one of the two mechanisms failing
+//     should not be a vulnerability.
+//   - The set an actual consumer needs is small and machine-readable. A hook
+//     answering Icinga, a CI runner, or a payment provider needs JSON, plain
+//     text, XML or CSV. Nothing in the motivating use cases wants HTML, and a
+//     script that genuinely needs a novel type is an operator asking for one
+//     more entry here, which is a reviewable change.
+//
+// Deliberately NOT including text/html: an operator who wants a rendered page
+// has documents (`/_documents/...`), which already run Lua through the
+// machinery built for it.
+var validActionContentTypes = map[string]bool{
+	"application/json": true,
+	"text/plain":       true,
+	"text/csv":         true,
+	"application/xml":  true,
+	"text/xml":         true,
+}
+
+// defaultActionContentType is what a rich response with a body but no declared
+// content_type is served as. text/plain, never a sniffed type: an omitted
+// declaration is the case most likely to be an oversight, and the inert choice
+// is the right default for an oversight.
+const defaultActionContentType = "text/plain; charset=utf-8"
+
+// parseRichActionResponse reads the {status, body, content_type} vocabulary off
+// a script's return table onto resp, refusing a return that also used the SPA
+// vocabulary.
+func parseRichActionResponse(m map[string]any, resp *ActionResponse) error {
+	_, hasStatus := m["status"]
+	_, hasBody := m["body"]
+	_, hasContentType := m["content_type"]
+	if !hasStatus && !hasBody && !hasContentType {
+		return nil
+	}
+
+	if resp.Redirect != "" || resp.Message != "" || resp.MessageType != "" {
+		return errors.New(
+			"action response cannot combine {redirect, message, message_type} with {status, body, content_type}: " +
+				"return one shape or the other")
+	}
+
+	if hasStatus {
+		status, err := actionStatusFrom(m["status"])
+		if err != nil {
+			return err
+		}
+		resp.Status = status
+	}
+
+	if hasBody {
+		s, ok := m["body"].(string)
+		if !ok {
+			return fmt.Errorf(
+				"body must be a string, got %T (encode a table yourself, e.g. json.encode(t), "+
+					"so the content_type matches what you produced)", m["body"])
+		}
+		resp.Body = s
+	}
+
+	if hasContentType {
+		s, ok := m["content_type"].(string)
+		if !ok {
+			return fmt.Errorf("content_type must be a string, got %T", m["content_type"])
+		}
+		if err := validateActionContentType(s); err != nil {
+			return err
+		}
+		resp.ContentType = s
+	}
+
+	// A content_type on its own would otherwise leave IsRich false and be
+	// silently dropped by the SPA envelope.
+	if resp.Status == 0 {
+		resp.Status = http.StatusOK
+	}
+	if resp.ContentType == "" {
+		resp.ContentType = defaultActionContentType
+	}
+	return nil
+}
+
+// actionStatusFrom converts a Lua number to a status code a handler may send.
+//
+// BOTH int64 and float64 must be handled. Lua has one float64-backed number
+// type, but lua.luaValueToGo narrows an integral value to int64 on the way out
+// (so an id or a count round-trips as an integer), while a fractional one stays
+// float64 — so `status = 200` arrives as int64 and `status = 200.5` as float64.
+// Accepting only one of the two is a bug that unit tests over hand-built maps
+// cannot see, because the narrowing happens in the layer above them.
+//
+// A fractional value is REFUSED rather than truncated: truncating would let a
+// typo become a quietly different status.
+//
+// The accepted range is 2xx, 4xx and 5xx. 1xx and 3xx are refused because they
+// are protocol-level rather than application-level: a 1xx makes net/http's
+// state machine expect a continuation that never comes, and a 3xx needs a
+// Location header this shape has no field for — the SPA vocabulary's
+// `redirect:` is the supported way to redirect, and it is separately validated
+// against open-redirect.
+func actionStatusFrom(v any) (int, error) {
+	var status int
+	switch n := v.(type) {
+	case int64:
+		if n > math.MaxInt32 || n < math.MinInt32 {
+			return 0, fmt.Errorf("status %d is out of range", n)
+		}
+		status = int(n)
+	case float64:
+		status = int(n)
+		if float64(status) != n {
+			return 0, fmt.Errorf("status must be a whole number, got %v", n)
+		}
+	default:
+		return 0, fmt.Errorf("status must be a number, got %T", v)
+	}
+	switch {
+	case status >= 200 && status <= 299,
+		status >= 400 && status <= 599:
+		return status, nil
+	default:
+		return 0, fmt.Errorf(
+			"status %d is not allowed (use 2xx, 4xx or 5xx; a redirect uses the redirect field)", status)
+	}
+}
+
+// validateActionContentType checks a script-chosen content type against the
+// allowlist. Parameters are permitted (`; charset=utf-8`) but the media type
+// itself must be listed.
+func validateActionContentType(s string) error {
+	// mime.ParseMediaType rejects CR/LF and other header-injection shapes
+	// outright, so the split below never sees a smuggled header. Parsing rather
+	// than string-cutting is what makes that true.
+	mediaType, _, err := mime.ParseMediaType(s)
+	if err != nil {
+		return fmt.Errorf("content_type %q is not a valid media type: %w", s, err)
+	}
+	if !validActionContentTypes[strings.ToLower(mediaType)] {
+		return fmt.Errorf(
+			"content_type %q is not allowed (allowed: %s)", s, strings.Join(sortedContentTypes(), ", "))
+	}
+	return nil
+}
+
+// sortedContentTypes renders the allowlist for an error message, in a stable
+// order so the message does not shuffle between runs.
+func sortedContentTypes() []string {
+	out := slices.Collect(maps.Keys(validActionContentTypes))
+	slices.Sort(out)
+	return out
 }
 
 // validateRedirect ensures a redirect URL is a relative path starting with "/"
