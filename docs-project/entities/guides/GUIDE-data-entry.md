@@ -2901,6 +2901,8 @@ actions:
 | `script`      | string | Lua script path, relative to the `actions/` directory (mutually exclusive with `set`) |
 | `params`      | map    | Static key-value parameters from config, exposed as `rela.params` (values must be strings — quote them in YAML) |
 | `confirm`     | bool   | Show a confirmation dialog before executing (default: `false`)  |
+| `request`     | map    | Opt into request-scoped execution — see [Request-scoped actions](#request-scoped-actions). Requires `script` |
+| `capabilities`| map    | Ambient capability grant (`http`, `ai`, `write_file`, named `secrets`). Omitting it grants none |
 
 Each action must have either `set` or `script`, not both.
 
@@ -2981,6 +2983,116 @@ Scripts have a 5-second execution timeout (tighter than the default Lua
 timeout because the action handler holds a global write lock for the
 duration — concurrent mutations and other actions wait). Returning
 nothing (or `nil`) produces a silent success response.
+
+### Request-scoped actions
+
+By default an action script sees no part of the HTTP request that triggered it:
+the body carries `entity_id` and nothing else reaches the script, and the return
+value is projected onto the SPA's `{redirect, message, message_type}` toast
+vocabulary.
+
+A `request:` block opts one action into seeing the **whole request**, and lets it
+return an **arbitrary response**. This is the escape hatch for integrations the
+declarative [webhook routes](webhooks.md) cannot express — an odd payload
+shape, a response a third party needs in a specific form, logic that is not
+find/create/append.
+
+```yaml
+actions:
+  icinga-alert:
+    script: icinga-alert.lua
+    request:
+      body: true                    # rela.request.body / .raw
+      query: true                   # rela.request.query
+      headers: [X-Event-Type]       # allowlist; rela.request.headers
+      max_body_bytes: 262144        # optional; default 1 MiB, ceiling 8 MiB
+```
+
+Everything is **off by default**. An action with no `request:` block behaves
+exactly as it did before, including the SPA response shape.
+
+#### `rela.request`
+
+Present only for a request-scoped action, so `if rela.request then` is the
+script-side test. The table is read-only.
+
+| Field                    | Type   | Present when                                      |
+| ------------------------ | ------ | ------------------------------------------------- |
+| `rela.request.method`    | string | always                                            |
+| `rela.request.path`      | string | always                                            |
+| `rela.request.content_type` | string | always                                         |
+| `rela.request.raw`       | string | `body: true` — the body verbatim                  |
+| `rela.request.body`      | table  | `body: true` **and** the body parsed as JSON      |
+| `rela.request.query`     | table  | `query: true` — first value per key; `query._all[k]` is the full list |
+| `rela.request.headers`   | table  | always (empty without `headers:`), keyed lowercase |
+
+A body that does not parse as JSON leaves `rela.request.body` nil while
+`rela.request.raw` still holds the bytes — a script that expects a text or
+vendor payload reads `raw`. A body over the cap is refused with **413**; it is
+never truncated.
+
+**Headers are an allowlist, never pass-through.** Request headers carry session
+cookies, bearer tokens and proxy-injected identity assertions. `Authorization`,
+`Cookie`, `X-Forwarded-*`, `X-Auth-Request-*`, `X-Remote-*`, `X-Authentik-*`,
+`X-Pomerium-*` and the deployment's own `-principal-header` are refused at config
+load however you spell them — the same floor a declarative webhook gets.
+
+#### Returning a response
+
+A request-scoped script may return the rich shape instead of the SPA shape:
+
+```lua
+-- actions/icinga-alert.lua
+local alert = rela.request.body
+if alert == nil or alert.host == nil then
+    return { status = 422, body = "expected a JSON body with host", content_type = "text/plain" }
+end
+
+-- ... find or create the incident, append the notification ...
+
+return {
+    status = 202,
+    body = rela.json.encode({ status = "accepted", host = alert.host }),
+    content_type = "application/json",
+}
+```
+
+| Field          | Type   | Default                                                    |
+| -------------- | ------ | ---------------------------------------------------------- |
+| `status`       | number | `200` when a `body` is set. Must be 2xx, 4xx or 5xx        |
+| `body`         | string | empty. Must be a **string** — encode tables yourself       |
+| `content_type` | string | `text/plain; charset=utf-8`                                |
+
+`content_type` is an **allowlist**: `application/json`, `text/plain`,
+`text/csv`, `application/xml`, `text/xml`. `text/html` is deliberately not
+allowed — a rendered page belongs in a [document](#documents). The response is
+served with `X-Content-Type-Options: nosniff`, a `sandbox; default-src 'none'`
+CSP and `Cache-Control: no-store`, because a script-controlled body is
+attacker-influenceable output served same-origin with the SPA.
+
+A return **cannot mix** the two vocabularies. `{message = ..., status = ...}` is
+a contract error, not a precedence rule: the two are read by different consumers,
+so honoring one and dropping the other would be a silent half-delivery.
+
+**A script that fails always produces rela's error envelope**, whatever status
+it might have been going to return — a run that raised produced no return value,
+so it chose no status. A script that wants to answer 4xx or 5xx returns one
+deliberately, as above.
+
+#### What this does not change
+
+- `entity_id` in the body still resolves through the read-side ACL gate. An id
+  the caller may not read leaves the `entity` global nil and the action still
+  runs, exactly as before; a `request:` block is not a second route to an entity.
+- `capabilities:` is unaffected. A request-scoped action with no
+  `capabilities:` block still gets no `http`, no `ai`, no secrets and no
+  `write_file`.
+- Producer **authentication** is not rela's job. The proxy in front (oauth2-proxy,
+  Pratique) terminates it and hands rela an ACL-bounded request.
+- **Idempotency is the script's job.** rela offers no dedup key here. A producer
+  that retries will invoke the script twice, and the quiet failure mode is a
+  notification appended to an incident body twice — match on a stable field from
+  the payload before appending.
 
 ### Reserved Keyboard Shortcuts
 
