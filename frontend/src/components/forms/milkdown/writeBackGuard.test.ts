@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { guardWriteBack } from './writeBackGuard'
+import { guardWriteBack, decideEmit } from './writeBackGuard'
 
 describe('guardWriteBack', () => {
   it('reports unchanged when the bytes match', () => {
@@ -55,5 +55,48 @@ describe('guardWriteBack', () => {
   it('preserves an entity ref through a churn suppression', () => {
     const original = 'See `TKT-ABC` now.\n'
     expect(guardWriteBack(original, 'See `TKT-ABC` now.\n', false).value).toBe(original)
+  })
+})
+
+describe('decideEmit', () => {
+  // The bug this exists to prevent: `original` must be the bytes the parent
+  // handed over, NOT the editor's own settled serialization. Comparing the
+  // round-tripped form against itself always says "unchanged", so churn was
+  // reported clean and written back — a setext heading silently became ATX.
+  const SETEXT = 'Title\n=====\n\nbody\n'
+  const CHURNED = '# Title\n\nbody\n'
+
+  it('ignores the editor echoing back its own load', () => {
+    expect(decideEmit(CHURNED, SETEXT, CHURNED, false)).toEqual({ action: 'ignore' })
+  })
+
+  // Even if the echo check is bypassed (a later transaction re-emits the same
+  // churned text), the guard must still recognise it as churn against the
+  // ORIGINAL and refuse to propagate it.
+  it('ignores churn measured against the original, not the settled value', () => {
+    expect(decideEmit(CHURNED, SETEXT, 'something else', false)).toEqual({
+      action: 'ignore',
+    })
+  })
+
+  it('emits a real edit', () => {
+    const edited = '# Title\n\nbody EDITED\n'
+    expect(decideEmit(edited, SETEXT, CHURNED, true)).toEqual({
+      action: 'emit',
+      value: edited,
+    })
+  })
+
+  it('reports drift rather than emitting it', () => {
+    // Undirty content whose meaning differs from the original: the guard
+    // cannot tell a serializer bug from an edit it did not observe, so it
+    // refuses. Losing the edit silently would be worse than the churn.
+    expect(decideEmit('completely different\n', SETEXT, CHURNED, false)).toEqual({
+      action: 'report-drift',
+    })
+  })
+
+  it('ignores an unchanged document', () => {
+    expect(decideEmit(SETEXT, SETEXT, CHURNED, false)).toEqual({ action: 'ignore' })
   })
 })

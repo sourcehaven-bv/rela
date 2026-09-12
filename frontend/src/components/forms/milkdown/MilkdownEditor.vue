@@ -53,7 +53,7 @@ import {
   isResolutionTransaction,
   type ResolverHandle,
 } from './entityRefResolution'
-import { guardWriteBack } from './writeBackGuard'
+import { guardWriteBack, decideEmit } from './writeBackGuard'
 import { parseMentionQuery } from './mentionQuery'
 import { useMentionMenu } from './useMentionMenu'
 import { INLINE_COMMANDS, BLOCK_COMMANDS, type EditorCommand } from './editorCommands'
@@ -74,6 +74,7 @@ import EntityPickerModal from '../EntityPickerModal.vue'
 import type { EntityRefResolver } from '@/utils/markdown'
 import type { Entity } from '@/types'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
+import { useUIStore } from '@/stores/ui'
 
 const props = defineProps<{
   modelValue: string
@@ -141,14 +142,50 @@ const showTableGroup = ref(false)
 
 const ALL_COMMANDS = [...INLINE_COMMANDS, ...BLOCK_COMMANDS, ...TABLE_COMMANDS]
 
+const uiStore = useUIStore()
+
 /**
- * The markdown the editor was last loaded with.
+ * Tells the user their change was refused, once.
  *
- * `guardWriteBack` compares against this to tell a real edit from a
- * round-trip artifact, so it must track every value that comes in from the
- * parent as well as every value we emit.
+ * `drift-blocked` means re-serializing produced markdown that MEANS something
+ * different from what was loaded, so writing it back would corrupt the body.
+ * Refusing is right; refusing quietly is not — the form would look saved
+ * while the edit was dropped. Repeated once per editing session rather than
+ * per keystroke, because the condition persists until the document changes.
  */
-let loadedValue = props.modelValue
+let driftReported = false
+function reportDrift(): void {
+  if (driftReported) return
+  driftReported = true
+  uiStore.error(
+    'This content could not be saved safely: converting it back to markdown ' +
+      'would change its meaning. Your edit has not been applied. Please report this.'
+  )
+}
+
+/**
+ * The EXACT bytes the parent last handed us, never re-derived.
+ *
+ * This is the guard's reference point, and it must stay pristine. An earlier
+ * version re-baselined it to `serialize()` once loading settled, which looked
+ * reasonable and quietly destroyed the guard: comparing the round-tripped
+ * form against itself always says "unchanged", so churn was reported as clean
+ * and written back. A body whose first heading was setext came back as ATX
+ * with the guard insisting nothing had happened.
+ *
+ * Only the two places a new value arrives from outside may assign it: the
+ * initial prop, and the reload watcher.
+ */
+let originalValue = props.modelValue
+
+/**
+ * The markdown the editor holds once loading has settled.
+ *
+ * Distinct from `originalValue`: this one IS re-derived after load, and its
+ * only job is to suppress the listener's echo of our own serialization. It
+ * must never reach `guardWriteBack`.
+ */
+let settledValue = props.modelValue
 /**
  * Whether the user has changed the document since it was loaded.
  *
@@ -471,9 +508,20 @@ onMounted(async () => {
         ...RELA_STRINGIFY_OPTIONS,
       }))
 
+      // The guard sits ON the emit rather than beside it. Exposing it as an
+      // optional `guardedValue()` for the form to prefer meant the raw channel
+      // was the default and the guarded one a side door nobody walked through,
+      // so every round-trip artifact reached the save path. There is now no
+      // unguarded route out of this component.
       ctx.get(listenerCtx).markdownUpdated((_ctx, markdown) => {
-        if (markdown === loadedValue) return
-        emit('update:modelValue', markdown)
+        const decision = decideEmit(markdown, originalValue, settledValue, dirty)
+        if (decision.action === 'report-drift') {
+          // Refusing silently would lose the user's edit while the form still
+          // looked saved, which is worse than the churn this module prevents.
+          reportDrift()
+          return
+        }
+        if (decision.action === 'emit') emit('update:modelValue', decision.value)
       })
 
       ctx.set(slash.key, {
@@ -539,10 +587,10 @@ onMounted(async () => {
   // nothing active until the first edit — a document opened straight onto a
   // heading or a quote had the wrong buttons lit.
   if (mountedView) refreshDerivedState(mountedView.state)
-  // Loading is done; from here a document change is the user's doing. Take the
-  // settled markdown as the baseline, so the guard compares against what the
-  // editor actually holds rather than the bytes it was handed.
-  loadedValue = serialize()
+  // Loading is done; from here a document change is the user's doing.
+  // Only the echo-suppression value settles here. `originalValue` keeps the
+  // bytes the parent gave us, which is what the guard has to compare against.
+  settledValue = serialize()
   armed = true
 
   // E2E hook: expose the serialized markdown on the editor root.
@@ -586,8 +634,11 @@ watch(
     if (!view) return
     const currentMarkdown = serialize()
     if (currentMarkdown === next) return
-    loadedValue = next
+    // A genuinely new body from the parent: this is now the pristine baseline.
+    originalValue = next
+    settledValue = next
     dirty = false
+    driftReported = false
     armed = false
     e.action(replaceAll(next))
     applyResolver()
@@ -595,9 +646,8 @@ watch(
     // tracker having seen a transaction for the new content.
     const reloaded = currentView()
     if (reloaded) refreshDerivedState(reloaded.state)
-    // Same reasoning as at mount: re-baseline on the settled document and only
-    // then treat changes as edits.
-    loadedValue = serialize()
+    // Same reasoning as at mount: only the echo-suppression value settles.
+    settledValue = serialize()
     armed = true
   }
 )
@@ -610,11 +660,11 @@ watch(
  */
 function serialize(): string {
   const e = editor.value
-  if (!e) return loadedValue
+  if (!e) return originalValue
   try {
     return e.action(getMarkdown())
   } catch {
-    return loadedValue
+    return originalValue
   }
 }
 
@@ -622,10 +672,11 @@ defineExpose({
   /**
    * The markdown to save, with round-trip churn suppressed.
    *
-   * A caller that saves `modelValue` directly gets the churn; this is the
-   * guarded value. Exposed so the form can prefer it.
+   * The emit path already applies this, so the form does not need to call it.
+   * Kept exposed because it is the only way a test can read the verdict, and
+   * a verdict-level assertion is what pins the churn/drift distinction.
    */
-  guardedValue: () => guardWriteBack(loadedValue, serialize(), dirty),
+  guardedValue: () => guardWriteBack(originalValue, serialize(), dirty),
   /**
    * The live ProseMirror view, for tests only.
    *

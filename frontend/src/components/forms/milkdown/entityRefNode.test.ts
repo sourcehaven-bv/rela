@@ -37,7 +37,7 @@ async function roundTripThroughEditor(initial: string): Promise<string> {
 
 describe('isValidEntityRefId', () => {
   it('accepts the id shapes the store accepts', () => {
-    for (const id of ['TKT-U2R7GU', 'BUG-R9EHKV', 'iso-27001-a.5.1', 'x', '123abc']) {
+    for (const id of ['TKT-U2R7GU', 'BUG-R9EHKV', 'iso-27001-a-5-1', 'x', '123abc', 'a_b']) {
       expect(isValidEntityRefId(id)).toBe(true)
     }
   })
@@ -53,6 +53,17 @@ describe('isValidEntityRefId', () => {
       'a\nb',
       'a\tb',
       'x'.repeat(1025),
+      // The grammar is an allowlist, so anything outside [A-Za-z0-9_-] goes.
+      // A dot in particular: `iso-27001-a.5.1` looks like a plausible id and
+      // an earlier version of this test asserted the store accepted it. It
+      // does not — entity.ValidateID rejects it as invalid characters.
+      'a.b',
+      'iso-27001-a.5.1',
+      'a..b',
+      '-leading',
+      '_leading',
+      'unicode\u00e9',
+      'semi;colon',
     ]) {
       expect(isValidEntityRefId(id)).toBe(false)
     }

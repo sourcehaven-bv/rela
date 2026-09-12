@@ -93,21 +93,24 @@ const MEANINGFUL_KEYS: Record<string, readonly string[]> = {
 }
 
 /**
- * Leaf node types whose `value` is literal text the user typed.
+ * Leaf types whose whitespace does not carry meaning.
  *
- * Whitespace inside these is normalized before comparison: remark collapses a
- * newline inside an inline code span to a space, which changes the bytes but
- * not what the span denotes. Measured across the ticket corpus, this is the
- * only class of difference that survives a round-trip.
+ * Deliberately just these two. A round-trip may re-wrap a paragraph or fold a
+ * newline inside an inline code span, and neither changes what the text says.
+ *
+ * `code`, `html` and `yaml` are NOT here, even though they are also literal
+ * text. In a fenced block, indentation IS the content — a Python snippet, a
+ * YAML fragment, a Go fixture. Collapsing it would make two blocks that differ
+ * only in indentation compare as equal, so the guard would classify a
+ * reindented code block as suppressible churn and write the corruption back.
+ * The corpus measurement that justified normalizing at all only ever observed
+ * the inline-code case; applying it to fenced blocks was over-reach.
  */
-const TEXT_LEAVES = new Set(['text', 'inlineCode', 'code', 'html', 'yaml'])
+const WHITESPACE_INSENSITIVE_LEAVES = new Set(['text', 'inlineCode'])
 
 function normalizeLeafValue(type: string, value: unknown): unknown {
   if (typeof value !== 'string') return value
-  if (!TEXT_LEAVES.has(type)) return value
-  // Collapse every whitespace run to one space and trim. A round-trip may
-  // re-wrap a paragraph or fold a newline inside a code span; neither changes
-  // what the text says.
+  if (!WHITESPACE_INSENSITIVE_LEAVES.has(type)) return value
   return value.replace(/\s+/g, ' ').trim()
 }
 

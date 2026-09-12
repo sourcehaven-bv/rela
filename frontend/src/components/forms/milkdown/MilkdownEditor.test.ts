@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { TextSelection } from '@milkdown/kit/prose/state'
+import { listenerCtx } from '@milkdown/kit/plugin/listener'
 import type { EditorState } from '@milkdown/kit/prose/state'
 import MilkdownEditor from './MilkdownEditor.vue'
 import type { EntityRefResolver } from '@/utils/markdown'
@@ -638,6 +639,116 @@ describe('MilkdownEditor table controls', () => {
   it('keeps an empty cell empty on a plain round trip', async () => {
     const w = await mountEditor({ modelValue: '| a | b |\n| --- | --- |\n|  | d |\n' })
     expect(guarded(w)).not.toContain('<br')
+    w.unmount()
+  })
+})
+
+describe('MilkdownEditor write-back guard, through the component', () => {
+  beforeEach(() => {
+    searchEntities.mockReset()
+    searchEntities.mockResolvedValue({ data: [] })
+  })
+  afterEach(() => {
+    document.body.innerHTML = ''
+  })
+
+  // These mount the real component and assert on the CHANNEL THE FORM USES,
+  // rather than reaching past the wiring to call guardedValue(). An earlier
+  // version of this suite only did the latter, so it passed while the guard
+  // was not connected to the emit path at all and the baseline it compared
+  // against had been overwritten with the editor's own output.
+  it.each([
+    ['a setext heading', 'Title\n=====\n\nsome text\n'],
+    ['star bullets', '* one\n* two\n'],
+    ['a star thematic break', 'a\n\n***\n\nb\n'],
+    ['loose table padding', '| a | b |\n|---|---|\n| c | d |\n'],
+  ])('emits nothing and keeps the original bytes for %s', async (_name, src) => {
+    const w = await mountEditor({ modelValue: src })
+    expect(w.emitted('update:modelValue')).toBeUndefined()
+
+    // The guard must report the ORIGINAL bytes back, not the reformatted
+    // ones. `unchanged` would mean the baseline was the churned form.
+    const guarded = (
+      w.vm as unknown as { guardedValue: () => { value: string; verdict: string } }
+    ).guardedValue()
+    expect(guarded.value).toBe(src)
+    expect(guarded.verdict).toBe('churn-suppressed')
+    w.unmount()
+  })
+
+  it('keeps the original bytes for a body that needs no reformatting', async () => {
+    const src = '# Title\n\nsome text\n'
+    const w = await mountEditor({ modelValue: src })
+    const guarded = (
+      w.vm as unknown as { guardedValue: () => { value: string; verdict: string } }
+    ).guardedValue()
+    expect(guarded.value).toBe(src)
+    expect(guarded.verdict).toBe('unchanged')
+    w.unmount()
+  })
+
+  /**
+   * Invokes the component's own markdownUpdated callback.
+   *
+   * Milkdown's listener is debounced and does not fire for a programmatic
+   * dispatch under happy-dom, so every assertion about the emit channel could
+   * only ever be negative — and a negative assertion cannot tell "correctly
+   * suppressed" from "never ran". Calling the registered callback exercises
+   * the real path: guard included.
+   */
+  function fireMarkdownUpdated(w: ReturnType<typeof mount>, markdown: string) {
+    const editor = (
+      w.vm as unknown as { editorInstanceForTest: { ctx: { get: (k: unknown) => unknown } } }
+    ).editorInstanceForTest
+    const manager = editor.ctx.get(listenerCtx) as unknown as {
+      markdownUpdatedListeners: Array<(ctx: unknown, md: string, prev: string) => void>
+    }
+    expect(manager.markdownUpdatedListeners.length).toBeGreaterThan(0)
+    for (const fn of manager.markdownUpdatedListeners) fn(null, markdown, '')
+  }
+
+  // The guard must sit ON the emit, not beside it. It was previously exposed
+  // as an optional `guardedValue()` the form could choose to prefer, while
+  // `update:modelValue` carried the raw serialization — so the churn reached
+  // the save path and the guard was dead code.
+  it('does not emit the reformatted body when the listener reports churn', async () => {
+    const src = 'Title\n=====\n\nbody\n'
+    const w = await mountEditor({ modelValue: src })
+    fireMarkdownUpdated(w, '# Title\n\nbody\n')
+    await flushPromises()
+    expect(w.emitted('update:modelValue')).toBeUndefined()
+    w.unmount()
+  })
+
+  it('emits a genuine edit through the guard', async () => {
+    const src = 'Title\n=====\n\nbody\n'
+    const w = await mountEditor({ modelValue: src })
+    const view = (
+      w.vm as unknown as {
+        editorViewForTest: { state: EditorState; dispatch: (tr: unknown) => void }
+      }
+    ).editorViewForTest
+    // Mark the document dirty the way a real keystroke would.
+    view.dispatch(view.state.tr.insertText('X', 1))
+    await flushPromises()
+
+    fireMarkdownUpdated(w, '# XTitle\n\nbody\n')
+    await flushPromises()
+    expect(w.emitted('update:modelValue')).toEqual([['# XTitle\n\nbody\n']])
+    w.unmount()
+  })
+
+  // A reload must move the baseline, or the guard would keep measuring
+  // against a body the editor no longer holds.
+  it('rebaselines on a new value from the parent', async () => {
+    const w = await mountEditor({ modelValue: 'Title\n=====\n\nbody\n' })
+    await w.setProps({ modelValue: 'Other\n-----\n\nbody two\n' })
+    await flushPromises()
+    const guarded = (
+      w.vm as unknown as { guardedValue: () => { value: string; verdict: string } }
+    ).guardedValue()
+    expect(guarded.value).toBe('Other\n-----\n\nbody two\n')
+    expect(guarded.verdict).toBe('churn-suppressed')
     w.unmount()
   })
 })

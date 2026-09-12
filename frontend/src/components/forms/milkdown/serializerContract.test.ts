@@ -5,11 +5,7 @@ import { unified } from 'unified'
 import remarkParse from 'remark-parse'
 import remarkStringify from 'remark-stringify'
 import remarkGfm from 'remark-gfm'
-import {
-  RELA_STRINGIFY_OPTIONS,
-  isSemanticallyEqual,
-  semanticShape,
-} from './serializerContract'
+import { RELA_STRINGIFY_OPTIONS, isSemanticallyEqual, semanticShape } from './serializerContract'
 
 /**
  * The processor under test. This must stay the same stack Milkdown runs:
@@ -75,16 +71,12 @@ describe('serializer contract', () => {
     })
 
     it('preserves an entity ref code span verbatim', () => {
-      expect(roundTrip('See `TKT-U2R7GU` for detail.\n')).toBe(
-        'See `TKT-U2R7GU` for detail.\n'
-      )
+      expect(roundTrip('See `TKT-U2R7GU` for detail.\n')).toBe('See `TKT-U2R7GU` for detail.\n')
     })
 
     it('preserves GFM tables, task lists and strikethrough', () => {
       const table = '| a | b |\n| - | - |\n| 1 | 2 |\n'
-      expect(parse(roundTrip(table))).toEqual(
-        expect.objectContaining({ type: 'root' })
-      )
+      expect(parse(roundTrip(table))).toEqual(expect.objectContaining({ type: 'root' }))
       expect(isSemanticallyEqual(parse(table), parse(roundTrip(table)))).toBe(true)
       expect(roundTrip('- [ ] todo\n- [x] done\n')).toBe('- [ ] todo\n- [x] done\n')
       expect(roundTrip('~~gone~~\n')).toBe('~~gone~~\n')
@@ -111,9 +103,7 @@ describe('serializer contract', () => {
     })
 
     it('does not ignore a changed code language', () => {
-      expect(isSemanticallyEqual(parse('```go\nx\n```'), parse('```js\nx\n```'))).toBe(
-        false
-      )
+      expect(isSemanticallyEqual(parse('```go\nx\n```'), parse('```js\nx\n```'))).toBe(false)
     })
 
     it('excludes source positions from the shape', () => {
@@ -132,10 +122,7 @@ describe('serializer contract', () => {
     // fails loudly on the corpus-size assertion instead of silently scanning
     // an empty set.
     const repoRoot = resolve(process.cwd(), '..')
-    const roots = [
-      join(repoRoot, 'tickets/entities'),
-      join(repoRoot, 'docs-project'),
-    ]
+    const roots = [join(repoRoot, 'tickets/entities'), join(repoRoot, 'docs-project')]
     const all = roots.flatMap((r) => walk(r))
 
     /**
@@ -175,9 +162,56 @@ describe('serializer contract', () => {
         `corpus: ${files.length}/${all.length} files, ${byteChurn} with byte churn, ` +
           `${semanticDrift.length} semantic drift, ${notIdempotent.length} non-idempotent`
       )
+      // A sampled pass is not the gate. RELA_STRINGIFY_OPTIONS decides how
+      // 3,939 stored files get rewritten, so a green run over one eighth of
+      // them should not read as clearance to change it.
+      if (!FULL) {
+        console.warn(
+          `corpus: SAMPLED 1-in-${STRIDE}. This is NOT the full gate — run ` +
+            `RELA_FULL_CORPUS=1 npm run test:run before changing ` +
+            `RELA_STRINGIFY_OPTIONS or semanticShape. CI runs the full sweep.`
+        )
+      }
 
       expect(semanticDrift).toEqual([])
       expect(notIdempotent).toEqual([])
     }, 180_000)
+  })
+})
+
+describe('semantic comparison treats fenced code as significant', () => {
+  // Indentation inside a fenced block IS the content. Collapsing it would let
+  // the write-back guard classify a reindented Python snippet as suppressible
+  // churn and write the corruption back to the file.
+  it('reports a reindented code block as different', () => {
+    const a = parse('```python\nif x:\n    return 1\n```\n')
+    const b = parse('```python\nif x:\nreturn 1\n```\n')
+    expect(isSemanticallyEqual(a, b)).toBe(false)
+  })
+
+  it('reports a reindented yaml block as different', () => {
+    const a = parse('```yaml\nroot:\n  child: 1\n```\n')
+    const b = parse('```yaml\nroot:\nchild: 1\n```\n')
+    expect(isSemanticallyEqual(a, b)).toBe(false)
+  })
+
+  it('reports raw html with changed whitespace as different', () => {
+    const a = parse('<div>\n  <span>x</span>\n</div>\n')
+    const b = parse('<div>\n<span>x</span>\n</div>\n')
+    expect(isSemanticallyEqual(a, b)).toBe(false)
+  })
+
+  // The case the normalization exists for: remark folds a newline inside an
+  // inline code span to a space, which changes bytes but not meaning.
+  it('still ignores a folded newline inside an inline code span', () => {
+    const a = parse('a `one\ntwo` b\n')
+    const b = parse('a `one two` b\n')
+    expect(isSemanticallyEqual(a, b)).toBe(true)
+  })
+
+  it('still ignores paragraph re-wrapping', () => {
+    const a = parse('one two\nthree four\n')
+    const b = parse('one two three four\n')
+    expect(isSemanticallyEqual(a, b)).toBe(true)
   })
 })

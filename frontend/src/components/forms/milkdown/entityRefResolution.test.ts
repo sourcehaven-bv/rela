@@ -5,10 +5,7 @@ import { gfm } from '@milkdown/kit/preset/gfm'
 import { getMarkdown } from '@milkdown/kit/utils'
 import type { EditorState } from '@milkdown/kit/prose/state'
 import { entityRefNode } from './entityRefNode'
-import {
-  buildResolutionTransaction,
-  isResolutionTransaction,
-} from './entityRefResolution'
+import { buildResolutionTransaction, isResolutionTransaction } from './entityRefResolution'
 import type { EntityRefResolver } from '@/utils/markdown'
 
 async function makeEditor(initial: string) {
@@ -40,7 +37,13 @@ describe('entity ref resolution', () => {
     const { editor, state, root } = await makeEditor('See `TKT-ABC`.\n')
     expect(buildResolutionTransaction(state, undefined)).toBeNull()
     expect(refAttrs(state)).toEqual([
-      { id: 'TKT-ABC', title: null, entityType: null, inaccessible: false },
+      {
+        id: 'TKT-ABC',
+        title: null,
+        entityType: null,
+        inaccessible: false,
+        resolvedFromServer: false,
+      },
     ])
     await editor.destroy()
     root.remove()
@@ -59,6 +62,9 @@ describe('entity ref resolution', () => {
         title: 'Fix the thing',
         entityType: 'ticket',
         inaccessible: false,
+        // Recorded so a later map that omits this id clears the title rather
+        // than leaving a stale one on screen.
+        resolvedFromServer: true,
       },
     ])
     await editor.destroy()
@@ -169,6 +175,50 @@ describe('entity ref resolution', () => {
     const resolver: EntityRefResolver = (id) => ({ type: 'ticket', title: `T:${id}` })
     const next = state.apply(buildResolutionTransaction(state, resolver)!)
     expect(refAttrs(next).map((a) => a.title)).toEqual(['T:TKT-A', 'T:TKT-B'])
+    await editor.destroy()
+    root.remove()
+  })
+
+  // A title must not outlive the grant that produced it. The node keeps a
+  // picker-supplied title (the server has not weighed in on that id yet), but
+  // once the server HAS resolved it, a later map that omits it means access
+  // was withdrawn or the entity is gone — and the title has to go with it.
+  it('clears a server-resolved title when a later map omits the id', async () => {
+    const { editor, state, root } = await makeEditor('See `TKT-ABC`.\n')
+
+    const granted: EntityRefResolver = (id) =>
+      id === 'TKT-ABC' ? { type: 'ticket', title: 'Fix the thing' } : null
+    const resolved = state.apply(buildResolutionTransaction(state, granted)!)
+    expect(refAttrs(resolved)[0]).toMatchObject({
+      title: 'Fix the thing',
+      resolvedFromServer: true,
+    })
+
+    // Access revoked: the map is present but no longer carries this id.
+    const revoked: EntityRefResolver = () => null
+    const cleared = resolved.apply(buildResolutionTransaction(resolved, revoked)!)
+    expect(refAttrs(cleared)[0]).toMatchObject({
+      id: 'TKT-ABC',
+      title: null,
+      entityType: null,
+      resolvedFromServer: false,
+    })
+
+    await editor.destroy()
+    root.remove()
+  })
+
+  // The distinction that makes the above safe: no map at all is not the same
+  // as a map that declined the id. A response carrying no mention data must
+  // not blank titles the editor already has.
+  it('keeps a server-resolved title when there is no map at all', async () => {
+    const { editor, state, root } = await makeEditor('See `TKT-ABC`.\n')
+    const granted: EntityRefResolver = () => ({ type: 'ticket', title: 'Fix the thing' })
+    const resolved = state.apply(buildResolutionTransaction(state, granted)!)
+
+    expect(buildResolutionTransaction(resolved, undefined)).toBeNull()
+    expect(refAttrs(resolved)[0]).toMatchObject({ title: 'Fix the thing' })
+
     await editor.destroy()
     root.remove()
   })

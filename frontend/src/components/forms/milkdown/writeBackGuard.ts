@@ -59,11 +59,7 @@ export interface WriteBackResult {
  *
  * Nil: rejected — both arguments are required strings.
  */
-export function guardWriteBack(
-  original: string,
-  current: string,
-  dirty: boolean
-): WriteBackResult {
+export function guardWriteBack(original: string, current: string, dirty: boolean): WriteBackResult {
   if (current === original) return { value: original, verdict: 'unchanged' }
   if (dirty) return { value: current, verdict: 'edited' }
 
@@ -73,4 +69,34 @@ export function guardWriteBack(
     return { value: original, verdict: 'churn-suppressed' }
   }
   return { value: original, verdict: 'drift-blocked' }
+}
+
+/** What the editor should do with a freshly serialized document. */
+export type EmitDecision =
+  { action: 'ignore' } | { action: 'emit'; value: string } | { action: 'report-drift' }
+
+/**
+ * Decides what a serialization change means for the parent.
+ *
+ * Pulled out of the editor's markdown listener so it can be tested without
+ * mounting an editor. The listener is debounced and does not fire for a
+ * programmatic dispatch, which is exactly why the original inline version was
+ * never covered: the only assertions possible against it were negative ones.
+ *
+ * `settled` suppresses the editor echoing its own load back at the parent.
+ * `original` is the pristine input the guard compares against, and must NOT
+ * be the settled value — see the note on `originalValue` in MilkdownEditor.
+ */
+export function decideEmit(
+  markdown: string,
+  original: string,
+  settled: string,
+  dirty: boolean
+): EmitDecision {
+  if (markdown === settled) return { action: 'ignore' }
+
+  const guarded = guardWriteBack(original, markdown, dirty)
+  if (guarded.verdict === 'drift-blocked') return { action: 'report-drift' }
+  if (guarded.value === original) return { action: 'ignore' }
+  return { action: 'emit', value: guarded.value }
 }

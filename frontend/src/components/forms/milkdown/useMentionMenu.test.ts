@@ -104,9 +104,7 @@ describe('useMentionMenu', () => {
   it('ignores a slow response for a superseded query', async () => {
     const m = useMentionMenu()
     let releaseFirst: (v: unknown) => void = () => {}
-    searchEntities.mockImplementationOnce(
-      () => new Promise((res) => (releaseFirst = res))
-    )
+    searchEntities.mockImplementationOnce(() => new Promise((res) => (releaseFirst = res)))
     m.setQuery('old')
     await vi.advanceTimersByTimeAsync(200)
 

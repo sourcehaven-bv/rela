@@ -26,24 +26,24 @@ import { $node } from '@milkdown/kit/utils'
 /**
  * Reject IDs that would break the serialized code span.
  *
- * Mirrors `insertEntityRef.ts`, which mirrors the backend's
- * `internal/store/storeutil.ValidateID` denylist. Kept in step with that file:
- * an ID this accepts must be one `insertEntityRef` also accepts, or the two
- * insertion paths would disagree about what is representable.
+ * Mirrors the backend's one ID grammar, `internal/entity.ValidateID` (which
+ * `store/storeutil.ValidateID` now delegates to, TKT-IZGF7T). That is an
+ * ALLOWLIST — `^[A-Za-z0-9][A-Za-z0-9_-]*$` plus no `--` and no `..` — not the
+ * looser denylist an earlier version of this file carried. A denylist here
+ * would accept ids the backend refuses, so a code span like `foo.bar` would
+ * render as a link to an entity that cannot exist.
+ *
+ * `entityRefIdGrammar.test.ts` asserts this agrees with the Go rule over a
+ * shared fixture, so the two cannot drift silently.
  */
 const MAX_ID_BYTES = 1024
-const FORBIDDEN_RUN = '--'
+const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/
 
 export function isValidEntityRefId(id: unknown): id is string {
   if (typeof id !== 'string' || id === '' || id.length > MAX_ID_BYTES) return false
-  if (id.includes(FORBIDDEN_RUN)) return false
-  for (let i = 0; i < id.length; i++) {
-    const code = id.charCodeAt(i)
-    if (code < 0x20 || code === 0x7f) return false
-    if (code === 0x2f /* / */ || code === 0x5c /* \ */) return false
-    if (code === 0x60 /* ` */ || code === 0x20 /* space */) return false
-  }
-  return true
+  if (id.includes('--')) return false
+  if (id.includes('..')) return false
+  return ID_PATTERN.test(id)
 }
 
 /**
@@ -101,6 +101,17 @@ export const entityRefNode = $node('entityRef', () => ({
      * Mirrors the server's `Mention.inaccessible`.
      */
     inaccessible: { default: false },
+    /**
+     * Whether the title on this node came from a server mentions map.
+     *
+     * Distinguishes a title the server vouched for from one the picker
+     * supplied locally for a just-inserted reference. Only the former is
+     * cleared when a later map omits the ID, so a revoked grant drops the
+     * title instead of leaving it on screen indefinitely.
+     *
+     * View-only, like the rest: never serialized, never parsed from the DOM.
+     */
+    resolvedFromServer: { default: false },
   },
   parseDOM: [
     {
