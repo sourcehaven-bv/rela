@@ -158,3 +158,16 @@ date. They were run individually rather than as one `just ci` invocation
 because a concurrent session on this machine held the golangci-lint lock and
 triggered OOM kills; each step's result above is from a completed run on the
 final tree.
+
+Remote CI green, including Lint, Test, Architecture, God-object lint, Fuzz,
+Frontend, SQLite/Postgres backends, all six cross-compiles, E2E, Docs, Demos and
+Rela Tickets (the gate this PR's own feature enforces — remote confirmation of
+the local ticket-gate result).
+
+E2E failed once at the "Build the worlds manual" step with `manual:479: lua:
+context deadline exceeded` — a render timeout on a `screenshot{}` island that
+drives headless Chrome. Investigated rather than assumed flaky: the diff touches
+no file in the docs capture/render path, and the worlds prototype declares no
+`validations:` block at all, so nothing in this change participates in that
+code path. It passed on re-run with no code change, confirming the timeout was
+environmental.
