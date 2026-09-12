@@ -60,6 +60,25 @@ verified against the code before acting on them, and both fixed:
   draft-only node. Masked by VW1FAC until that was fixed, which is why they were
   fixed together.
 
+CI follow-up (PR #1573, first run): the `Test` job failed on the PRE-EXISTING
+`TestQueryBudget_ViewTableSectionIsSizeIndependent` with "store reads grow with
+page size: 12 at 10 rows, 11 at 50 rows". The reads DECREASED with size, which
+rules out an N+1 — that signature means two different code paths ran. Cause was
+my own fixture: the `recursive` view I added to the shared `budgetConfig` also
+used `Entry.Type: ticket`, and `findViewByEntityType` iterates a MAP, so
+`viewsAs(..., "ticket", ...)` picked a random one of the two views per run.
+`-shuffle=on` surfaced it; the local run got lucky. Fixed by giving the
+recursive view its own `epic` entry type. No budget test was relaxed or
+deleted, and the gate code is byte-identical to the reviewed commit.
+
+Read counts after the fix, measured at three sizes: table section 11/11/11 and
+recursive traversal 12/12/12 at 10/50/100 rows — genuinely flat. The gate was
+already batched (one header scan + one PermitsReadMany per type, per LEVEL),
+so no restructuring was needed; the extra read in the recursive case is one
+scan per BFS level, not per row. Leak evidence re-confirmed after the change:
+gate removed => the three leak tests fail with TKT-VISIBLE in the wire body;
+gate restored => all pass.
+
 Self-review note: the diff touches `querybudget_test.go` (a new budget test and
 a `recursive` view in the shared budget config) which is adjacent rather than
 unrelated — RR-VWBUDG required it, and the existing view budget test never
