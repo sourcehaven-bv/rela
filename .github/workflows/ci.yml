@@ -1078,6 +1078,20 @@ jobs:
             "${e2e}"
           done
 
+      # The `maildemo` tests are developer-facing: they print a narrated
+      # walkthrough of the mail pipeline and write payloads to /tmp for a human
+      # to read, so running them as a pass/fail gate buys nothing. They still
+      # reference internal APIs (appbuild.Services.mail, mail.NewHTTPSender,
+      # scheduler.NewWithQueue), which move. Compiling them keeps that reference
+      # honest without running them. `go build ./...` cannot do this: it skips
+      # _test.go files entirely, which is how internal/dataentry/e2e_test.go
+      # (tag `e2e`) silently stopped compiling.
+      - name: Compile build-tag-gated demo tests
+        run: |
+          set -euo pipefail
+          go vet -tags maildemo ./internal/mail/ ./internal/appbuild/
+          echo "OK: maildemo demo tests still compile."
+
   docs:
     name: Docs
     runs-on: ubuntu-latest
