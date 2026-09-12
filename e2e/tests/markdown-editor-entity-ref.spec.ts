@@ -89,16 +89,16 @@ test.describe('Markdown editor entity-reference picker', () => {
     const created = await form.submitAndExpectCreate('features');
     originId = created.id;
 
+    // Sanity FIRST: the persisted markdown must contain the backticked ID, so
+    // a rendering failure below is not misread as an insertion failure.
+    const persisted = await api.getContent('features', originId!);
+    expect(persisted).toContain(`\`${targetId}\``);
+
     const entity = new EntityPage(appPage);
     await entity.navigateToEntity('feature', originId!);
     const link = entity.contentEntityRefLink('feature', targetId!);
     await expect(link).toBeVisible();
     await expect(link).toHaveText(targetTitle);
-
-    // Sanity: the persisted markdown contains the backticked ID so we
-    // know the e2e isn't passing for an unrelated reason.
-    const persisted = await api.getContent('features', originId!);
-    expect(persisted).toContain(`\`${targetId}\``);
   });
 
   test('Escape closes the picker without inserting', async ({ appPage }) => {
@@ -124,6 +124,12 @@ test.describe('Markdown editor entity-reference picker', () => {
     // every save, so an unedited open must not churn the file. Markdown that
     // exercises the constructs most likely to be reformatted: a table, a
     // setext heading, mixed bullets, and an entity reference.
+    //
+    // The baseline is what the SERVER stored, not what was posted. rela's own
+    // markdown writer normalizes on write (setext headings become ATX — see
+    // internal/markdown/format_test.go), so comparing against the posted bytes
+    // would fail on server behaviour that has nothing to do with the editor.
+    // What this test pins is that OPENING the body changes nothing further.
     const body = [
       'Setext Heading',
       '==============',
@@ -150,6 +156,8 @@ test.describe('Markdown editor entity-reference picker', () => {
     });
     originId = created.id;
 
+    const asStored = await api.getContent('features', originId!);
+
     const form = new FormPage(appPage);
     await form.navigateToEditForm('feature', originId!);
     await form.expectMarkdownEditorReady();
@@ -158,7 +166,7 @@ test.describe('Markdown editor entity-reference picker', () => {
     await expect(form.editorEntityRefs.first()).toBeVisible();
 
     const persisted = await api.getContent('features', originId!);
-    expect(persisted).toBe(body);
+    expect(persisted).toBe(asStored);
   });
 
   test('typing the target title surfaces it as a top result (RR-Z9C1)', async ({ appPage }) => {

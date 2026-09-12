@@ -67,21 +67,21 @@ describe('decideEmit', () => {
   const CHURNED = '# Title\n\nbody\n'
 
   it('ignores the editor echoing back its own load', () => {
-    expect(decideEmit(CHURNED, SETEXT, CHURNED, false)).toEqual({ action: 'ignore' })
+    expect(decideEmit(CHURNED, SETEXT, CHURNED, false, null)).toEqual({ action: 'ignore' })
   })
 
   // Even if the echo check is bypassed (a later transaction re-emits the same
   // churned text), the guard must still recognise it as churn against the
   // ORIGINAL and refuse to propagate it.
   it('ignores churn measured against the original, not the settled value', () => {
-    expect(decideEmit(CHURNED, SETEXT, 'something else', false)).toEqual({
+    expect(decideEmit(CHURNED, SETEXT, 'something else', false, null)).toEqual({
       action: 'ignore',
     })
   })
 
   it('emits a real edit', () => {
     const edited = '# Title\n\nbody EDITED\n'
-    expect(decideEmit(edited, SETEXT, CHURNED, true)).toEqual({
+    expect(decideEmit(edited, SETEXT, CHURNED, true, null)).toEqual({
       action: 'emit',
       value: edited,
     })
@@ -91,12 +91,29 @@ describe('decideEmit', () => {
     // Undirty content whose meaning differs from the original: the guard
     // cannot tell a serializer bug from an edit it did not observe, so it
     // refuses. Losing the edit silently would be worse than the churn.
-    expect(decideEmit('completely different\n', SETEXT, CHURNED, false)).toEqual({
+    expect(decideEmit('completely different\n', SETEXT, CHURNED, false, null)).toEqual({
       action: 'report-drift',
     })
   })
 
   it('ignores an unchanged document', () => {
-    expect(decideEmit(SETEXT, SETEXT, CHURNED, false)).toEqual({ action: 'ignore' })
+    expect(decideEmit(SETEXT, SETEXT, CHURNED, false, null)).toEqual({ action: 'ignore' })
+  })
+
+  // A user who types and then deletes what they typed is back at the original
+  // text, but the parent still holds the intermediate value it was told about.
+  // Comparing only against `original` skipped the emit and the form saved the
+  // stale edit.
+  it('emits the revert when the parent holds an intermediate value', () => {
+    expect(decideEmit('hello\n', 'hello\n', 'hello\n', true, 'hello EDITED\n')).toEqual({
+      action: 'emit',
+      value: 'hello\n',
+    })
+  })
+
+  it('ignores a repeat of what the parent already holds', () => {
+    expect(decideEmit('a\n', 'orig\n', 'settled\n', true, 'a\n')).toEqual({
+      action: 'ignore',
+    })
   })
 })

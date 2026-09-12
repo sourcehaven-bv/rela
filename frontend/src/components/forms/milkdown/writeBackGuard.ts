@@ -91,12 +91,28 @@ export function decideEmit(
   markdown: string,
   original: string,
   settled: string,
-  dirty: boolean
+  dirty: boolean,
+  lastEmitted: string | null
 ): EmitDecision {
-  if (markdown === settled) return { action: 'ignore' }
+  // The editor echoing back exactly what it loaded, with the parent not yet
+  // told anything different. Once something HAS been emitted this is no longer
+  // sufficient: reverting an edit lands back on `settled`, and the parent still
+  // holds the intermediate value.
+  if (markdown === settled && lastEmitted === null) return { action: 'ignore' }
 
   const guarded = guardWriteBack(original, markdown, dirty)
   if (guarded.verdict === 'drift-blocked') return { action: 'report-drift' }
-  if (guarded.value === original) return { action: 'ignore' }
-  return { action: 'emit', value: guarded.value }
+
+  // What the parent should now hold. For churn this is the original bytes,
+  // which is the whole point of the guard.
+  const next = guarded.value
+
+  // Nothing to say only if the parent ALREADY holds this. Comparing against
+  // `original` alone was wrong: a user who types and then reverts ends up back
+  // at the original text, and the parent would keep the intermediate value it
+  // was told about and save that instead.
+  if (lastEmitted === null ? next === original : next === lastEmitted) {
+    return { action: 'ignore' }
+  }
+  return { action: 'emit', value: next }
 }

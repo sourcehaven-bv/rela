@@ -752,3 +752,62 @@ describe('MilkdownEditor write-back guard, through the component', () => {
     w.unmount()
   })
 })
+
+describe('MilkdownEditor flush', () => {
+  beforeEach(() => {
+    searchEntities.mockReset()
+    searchEntities.mockResolvedValue({ data: [] })
+  })
+  afterEach(() => {
+    document.body.innerHTML = ''
+  })
+
+  // Milkdown's markdown listener is debounced by 200ms. The toolbar picker
+  // inserts by dispatching straight on the view, so submitting immediately
+  // after saved a body WITHOUT the reference — the change had not reached the
+  // parent yet. Caught by e2e, not by any unit test, because the listener does
+  // not fire under happy-dom at all.
+  it('pushes a pending change to the parent immediately', async () => {
+    const w = await mountEditor({ modelValue: 'before\n' })
+    const view = (
+      w.vm as unknown as {
+        editorViewForTest: { state: EditorState; dispatch: (tr: unknown) => void }
+      }
+    ).editorViewForTest
+    view.dispatch(view.state.tr.insertText('X', 1))
+    await flushPromises()
+    expect(w.emitted('update:modelValue')).toBeUndefined()
+
+    ;(w.vm as unknown as { flush: () => void }).flush()
+    await flushPromises()
+    expect(w.emitted('update:modelValue')).toEqual([['Xbefore\n']])
+    w.unmount()
+  })
+
+  // The flush must not become a way around the guard.
+  it('emits nothing when the only difference is round-trip churn', async () => {
+    const w = await mountEditor({ modelValue: 'Title\n=====\n\nbody\n' })
+    ;(w.vm as unknown as { flush: () => void }).flush()
+    await flushPromises()
+    expect(w.emitted('update:modelValue')).toBeUndefined()
+    w.unmount()
+  })
+
+  it('is safe to call twice', async () => {
+    const w = await mountEditor({ modelValue: 'before\n' })
+    const view = (
+      w.vm as unknown as {
+        editorViewForTest: { state: EditorState; dispatch: (tr: unknown) => void }
+      }
+    ).editorViewForTest
+    view.dispatch(view.state.tr.insertText('X', 1))
+    await flushPromises()
+
+    const vm = w.vm as unknown as { flush: () => void }
+    vm.flush()
+    vm.flush()
+    await flushPromises()
+    expect(w.emitted('update:modelValue')).toEqual([['Xbefore\n']])
+    w.unmount()
+  })
+})

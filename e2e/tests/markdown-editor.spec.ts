@@ -24,34 +24,34 @@ test.describe('Markdown Body Editor', () => {
     await form.expectMarkdownEditorReady();
   });
 
-  test('markdown editor bundles Font Awesome (no CDN fetch)', async ({ appPage }) => {
-    // Regression guard for TKT-ZDRS. EasyMDE's default behavior is to inject
-    // <link href="https://maxcdn.bootstrapcdn.com/font-awesome/..."> into the
-    // page at runtime; we pass `autoDownloadFontAwesome: false` and ship FA
-    // 4.7 via npm so the binary stays self-contained.
+  test('the editor ships no icon font and fetches nothing off-origin', async ({
+    appPage,
+  }) => {
+    // Replaces a Font Awesome regression guard (TKT-ZDRS) that was specific to
+    // EasyMDE: it injected a maxcdn <link> at runtime unless told not to, so
+    // the old test asserted the BUNDLED font had applied to the toolbar.
     //
-    // The "no off-origin fetch" half of this invariant is now enforced for
-    // EVERY test by the appPage fixture in tests/fixtures.ts — if EasyMDE
-    // ever reintroduces a CDN <link>, every test that mounts a markdown
-    // editor will fail in afterEach with the offending URL. This test owns
-    // the complementary assertion: that the bundled FA stylesheet actually
-    // applied to the toolbar buttons. The two together form the regression
-    // guard.
+    // Milkdown's toolbar is inline SVG, so the stronger property now holds —
+    // there is no icon font to bundle or fetch. Asserting the absence directly
+    // keeps the invariant meaningful instead of deleting the coverage.
+    //
+    // The "nothing off-origin" half is enforced for EVERY test by the appPage
+    // fixture, which fails in afterEach on any off-origin request.
     const form = new FormPage(appPage);
     await form.navigateToCreateForm('feature');
     await form.expectMarkdownEditorReady();
 
-    // EasyMDE renders its toolbar glyphs via `fa fa-*` classes that resolve
-    // (only with FA loaded) to FontAwesome's icon font on the `::before`
-    // pseudo-element. If our bundled CSS failed to land, the computed family
-    // falls back to a generic and this assertion fails with the actual
-    // family in the error message.
-    const boldFontFamily = await form.getBoldToolbarIconFontFamily();
-    expect(boldFontFamily, 'bold toolbar button not in DOM').not.toBeNull();
-    expect(
-      boldFontFamily?.toLowerCase(),
-      `expected ::before font-family to include 'fontawesome', got ${boldFontFamily}`,
-    ).toContain('fontawesome');
+    // Toolbar glyphs are real <svg> elements, not glyph-bearing pseudo-elements.
+    const svgCount = await form.markdownEditorShell.locator('button svg').count();
+    expect(svgCount, 'toolbar should render inline SVG icons').toBeGreaterThan(0);
+
+    // No stylesheet or preloaded font declares an icon font family.
+    const iconFontRefs = await appPage.evaluate(() =>
+      [...document.querySelectorAll('link[rel="stylesheet"], link[rel="preload"]')]
+        .map((el) => el.getAttribute('href') ?? '')
+        .filter((href) => /font-?awesome|fontawesome/i.test(href)),
+    );
+    expect(iconFontRefs, 'no Font Awesome stylesheet should be loaded').toEqual([]);
   });
 
   test('can fill body content and submit form', async ({ appPage, api }) => {

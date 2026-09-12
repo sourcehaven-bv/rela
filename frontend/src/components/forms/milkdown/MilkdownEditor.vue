@@ -186,6 +186,16 @@ let originalValue = props.modelValue
  * must never reach `guardWriteBack`.
  */
 let settledValue = props.modelValue
+
+/**
+ * The last value emitted to the parent, or null if none.
+ *
+ * The parent holds this, not `originalValue`, once anything has been emitted.
+ * Without it, a user who edits and then reverts produces markdown equal to the
+ * original, the emit is skipped as "nothing to say", and the parent saves the
+ * intermediate value it was last told about.
+ */
+let lastEmitted: string | null = null
 /**
  * Whether the user has changed the document since it was loaded.
  *
@@ -238,6 +248,17 @@ let slashProvider: SlashProvider | null = null
 let blockProvider: BlockProvider | null = null
 /** Where the active `@` query starts, so insertion replaces trigger and query. */
 let activeMatchLength = 0
+
+/**
+ * The `@` query the user dismissed with Escape.
+ *
+ * SlashProvider decides visibility from `shouldShow` on every update, so
+ * closing the menu in the key handler did nothing: the query still parsed, the
+ * next update returned true, and the menu reappeared immediately. Remembering
+ * WHICH query was dismissed keeps it shut until the user types something else,
+ * rather than latching the trigger off entirely.
+ */
+let dismissedQuery: string | null = null
 
 /** True when the document holds nothing a user has written. */
 function isDocEmpty(state: EditorState): boolean {
@@ -304,6 +325,9 @@ function insertRef(item: Entity): void {
   const view = currentView()
   if (!view) return
   if (!isValidEntityRefId(item.id)) return
+  // No live query means no `@...` span to replace. Proceeding would delete
+  // whatever happened to sit before the cursor.
+  if (activeMatchLength <= 0) return
 
   const { state } = view
   const { $from } = state.selection
@@ -445,7 +469,10 @@ function onKeydownCapture(event: KeyboardEvent): void {
     }
     case 'Escape':
       event.preventDefault()
+      dismissedQuery = menu.state.query
       menu.close()
+      slashProvider?.hide()
+      activeMatchLength = 0
       break
     default:
       break
@@ -514,14 +541,17 @@ onMounted(async () => {
       // so every round-trip artifact reached the save path. There is now no
       // unguarded route out of this component.
       ctx.get(listenerCtx).markdownUpdated((_ctx, markdown) => {
-        const decision = decideEmit(markdown, originalValue, settledValue, dirty)
+        const decision = decideEmit(markdown, originalValue, settledValue, dirty, lastEmitted)
         if (decision.action === 'report-drift') {
           // Refusing silently would lose the user's edit while the form still
           // looked saved, which is worse than the churn this module prevents.
           reportDrift()
           return
         }
-        if (decision.action === 'emit') emit('update:modelValue', decision.value)
+        if (decision.action === 'emit') {
+          lastEmitted = decision.value
+          emit('update:modelValue', decision.value)
+        }
       })
 
       ctx.set(slash.key, {
@@ -537,8 +567,17 @@ onMounted(async () => {
               const match = parseMentionQuery(slashProvider?.getContent(view))
               if (!match) {
                 if (menu.state.open) menu.close()
+                dismissedQuery = null
+                // Cleared with the menu. It is the span `insertRef` deletes,
+                // so leaving a stale value behind lets a later insertion eat
+                // characters that are no longer part of a query.
+                activeMatchLength = 0
                 return false
               }
+              // Escape dismissed exactly this query. Editing it (typing or
+              // deleting) produces a different one and the menu returns.
+              if (dismissedQuery !== null && match.query === dismissedQuery) return false
+              dismissedQuery = null
               activeMatchLength = match.matchLength
               menu.setQuery(match.query)
               return true
@@ -637,6 +676,7 @@ watch(
     // A genuinely new body from the parent: this is now the pristine baseline.
     originalValue = next
     settledValue = next
+    lastEmitted = null
     dirty = false
     driftReported = false
     armed = false
@@ -669,6 +709,30 @@ function serialize(): string {
 }
 
 defineExpose({
+  /**
+   * Pushes any pending change to the parent immediately.
+   *
+   * Milkdown's markdown listener is debounced by 200ms, so a change made and
+   * saved within that window never reaches the parent: the entity-reference
+   * picker inserts on a direct view dispatch, and submitting straight after
+   * stored the body WITHOUT the reference. A form must call this before
+   * reading its content model.
+   *
+   * Runs the same decision as the listener, so a flush cannot bypass the
+   * write-back guard.
+   */
+  flush: () => {
+    const markdown = serialize()
+    const decision = decideEmit(markdown, originalValue, settledValue, dirty, lastEmitted)
+    if (decision.action === 'report-drift') {
+      reportDrift()
+      return
+    }
+    if (decision.action === 'emit') {
+      lastEmitted = decision.value
+      emit('update:modelValue', decision.value)
+    }
+  },
   /**
    * The markdown to save, with round-trip churn suppressed.
    *
