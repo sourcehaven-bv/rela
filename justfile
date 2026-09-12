@@ -305,6 +305,11 @@ arch-lint:
     @echo "Checking architecture boundaries..."
     go-arch-lint check
 
+# Compile build-tag-gated test files (postgres, maildemo, ...) — nothing else does
+tagged-tests:
+    @echo "Compiling build-tag-gated test files..."
+    scripts/check-tagged-tests.sh
+
 # Check type load lines (god-object linter). Existing offenders are
 # grandfathered with //plimsoll:max-* directives at the declaration site;
 # ratchet those down over time (TKT-N0IKN9). Keep plimsoll_version in sync

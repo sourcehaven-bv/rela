@@ -1078,6 +1078,19 @@ jobs:
             "${e2e}"
           done
 
+      # Build-tag-gated test files are compiled by nothing else: `go build
+      # ./...` skips _test.go entirely, and `go test ./...` only builds files
+      # whose constraints the default tag set satisfies. So they rot silently —
+      # internal/dataentry/e2e_test.go did exactly that (TKT-1CH5AX). These
+      # tests need Postgres, a browser, or a human reading narrated output, so
+      # CI compiles them rather than runs them. The tag list is derived from
+      # the source, so a new tag is covered without editing this file.
+      - name: Compile build-tag-gated tests
+        run: ./scripts/check-tagged-tests.sh
+
+      - name: Test the tagged-test guard
+        run: ./scripts/check-tagged-tests-test.sh
+
   docs:
     name: Docs
     runs-on: ubuntu-latest
