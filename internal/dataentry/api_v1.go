@@ -953,6 +953,23 @@ func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName
 		result.Included = a.resolveV1Includes(ctx, entity, includes)
 	}
 
+	// Resolve the entity-ID code spans in the body so an edit form can render
+	// them as titled links, the way the read surface already does
+	// (`rewriteEntityRefToken`). Same call the view handler makes, so the two
+	// surfaces cannot disagree about a title.
+	//
+	// It runs on the SERVED content, after the read gate and the redactor, so
+	// a reference inside a body the caller could not read never gets scanned.
+	// collectMentions then applies the gate a second time to each REFERENCED
+	// entity, which is what keeps a title the caller may not see out of the
+	// response (BUG-R9EHKV).
+	//
+	// Not folded into the ETag: mentions turn on OTHER entities' titles and on
+	// the caller's own grants, neither of which this validator ever covered.
+	// The response is `no-store` anyway, so a stale shared copy is not
+	// reachable.
+	result.Mentions = collectMentions(ctx, a.store, a.viewReader, a.Meta(), entity.Content)
+
 	// ETag for caching (visible-only path; deny-path above emits no ETag).
 	//
 	// The edges computed for the BODY above are reused rather than re-read.
