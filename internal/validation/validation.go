@@ -155,12 +155,12 @@ func (s *Service) compileRuleConditions(
 // one entity. Unlike matchFilters there is no legacy fallback: an
 // expression has only ever had one meaning, so a compile failure is a
 // real error rather than a dialect mismatch.
-func (s *Service) matchCondition(e *entity.Entity, source string) (bool, error) {
+func (s *Service) matchCondition(ctx context.Context, e *entity.Entity, source string) (bool, error) {
 	prog, err := s.evaluator().Compile(e.Type, source)
 	if err != nil {
 		return false, err
 	}
-	return s.evaluator().Matches(context.Background(), prog, e.Type, e.ID, e.Properties)
+	return s.evaluator().Matches(ctx, prog, e.Type, e.ID, e.Properties)
 }
 
 // matchFilters evaluates an ANDed set of filter clauses against an
@@ -171,7 +171,7 @@ func (s *Service) matchCondition(e *entity.Entity, source string) (bool, error) 
 // a silently-skipped rule (RR-FI4DYL). A genuine eval error is returned
 // so the caller treats it as "does not apply / does not satisfy",
 // matching the prior filter.MatchAll error contract.
-func (s *Service) matchFilters(e *entity.Entity, filters []*filter.Filter) (bool, error) {
+func (s *Service) matchFilters(ctx context.Context, e *entity.Entity, filters []*filter.Filter) (bool, error) {
 	prog, err := s.evaluator().CompileFilter(e.Type, filters)
 	if err != nil {
 		// Untranspilable — reproduce the legacy verdict exactly.
@@ -182,7 +182,7 @@ func (s *Service) matchFilters(e *entity.Entity, filters []*filter.Filter) (bool
 		rec := filter.Record{ID: e.ID, Type: e.Type, Properties: e.Properties}
 		return filter.MatchAll(rec, filters, entityDef, s.deps.Meta)
 	}
-	return s.evaluator().Matches(context.Background(), prog, e.Type, e.ID, e.Properties)
+	return s.evaluator().Matches(ctx, prog, e.Type, e.ID, e.Properties)
 }
 
 // New creates a validation service for the given metamodel.
@@ -408,7 +408,7 @@ func (s *Service) checkEntityAgainstRule(
 	// Evaluated through the predicate condition engine (TKT-J4IR1G): the
 	// filter clauses are transpiled + compiled once and cached.
 	if len(whenFilters) > 0 {
-		if matches, err := s.matchFilters(e, whenFilters); err != nil || !matches {
+		if matches, err := s.matchFilters(ctx, e, whenFilters); err != nil || !matches {
 			return entityResult{}
 		}
 	}
@@ -417,14 +417,14 @@ func (s *Service) checkEntityAgainstRule(
 	// routing it through filter.Parse would silently reinterpret it as a
 	// filter on a nonexistent property and select nothing.
 	if rule.WhenCondition != "" {
-		if matches, err := s.matchCondition(e, rule.WhenCondition); err != nil || !matches {
+		if matches, err := s.matchCondition(ctx, e, rule.WhenCondition); err != nil || !matches {
 			return entityResult{}
 		}
 	}
 
 	// Check 'then' conditions - if they don't satisfy, it's a violation.
 	if len(thenFilters) > 0 {
-		if satisfies, err := s.matchFilters(e, thenFilters); err != nil || !satisfies {
+		if satisfies, err := s.matchFilters(ctx, e, thenFilters); err != nil || !satisfies {
 			return entityResult{Violations: []Violation{s.newViolation(rule, e, rule.Description)}}
 		}
 	}
@@ -433,7 +433,7 @@ func (s *Service) checkEntityAgainstRule(
 		// so it is a violation — the same direction as a `then:` clause
 		// that fails to match. A malformed expression never reaches
 		// here: compileRuleConditions abandons the rule first.
-		if satisfies, err := s.matchCondition(e, rule.ThenCondition); err != nil || !satisfies {
+		if satisfies, err := s.matchCondition(ctx, e, rule.ThenCondition); err != nil || !satisfies {
 			return entityResult{Violations: []Violation{s.newViolation(rule, e, rule.Description)}}
 		}
 	}

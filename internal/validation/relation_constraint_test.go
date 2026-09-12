@@ -11,8 +11,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
 )
 
-func intPtr(n int) *int { return &n }
-
 // relationWorkspace builds a memstore with a ticket + review-checklist
 // schema (plus the given rule) and the supplied entities/relations,
 // returning read deps wired to it.
@@ -61,7 +59,7 @@ func TestRelationConstraint_Min(t *testing.T) {
 		EntityType:  "ticket",
 		When:        []string{"status=done"},
 		Relations: map[string]metamodel.RelationConstraint{
-			"has-review": {Where: []string{"status=done"}, Min: intPtr(1)},
+			"has-review": {Where: []string{"status=done"}, Min: new(1)},
 		},
 		Severity: "error",
 	}
@@ -126,7 +124,7 @@ func TestRelationConstraint_Max(t *testing.T) {
 		Relations: map[string]metamodel.RelationConstraint{
 			"has-review-response": {
 				Where: []string{"status=open", "severity=critical"},
-				Max:   intPtr(0),
+				Max:   new(0),
 			},
 		},
 		Severity: "error",
@@ -188,9 +186,9 @@ func TestRelationConstraint_Max(t *testing.T) {
 	}
 }
 
-// TestRelationConstraint_NoStore verifies the check degrades to a no-op
-// (rather than panicking) when the service has no store wired.
-func TestRelationConstraint_NoStore(t *testing.T) {
+// TestRelationConstraint_NoReader verifies the check degrades to a no-op
+// (rather than panicking) when the service has no reader wired.
+func TestRelationConstraint_NoReader(t *testing.T) {
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"ticket": {Properties: map[string]metamodel.PropertyDef{"status": {Type: "string"}}},
@@ -200,7 +198,7 @@ func TestRelationConstraint_NoStore(t *testing.T) {
 			EntityType: "ticket",
 			When:       []string{"status=done"},
 			Relations: map[string]metamodel.RelationConstraint{
-				"has-review": {Min: intPtr(1)},
+				"has-review": {Min: new(1)},
 			},
 			Severity: "error",
 		}},
