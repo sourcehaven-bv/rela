@@ -1,0 +1,9 @@
+---
+id: RR-XUB1HS
+type: review-response
+title: 'The sweep re-selects already-captured rows, so a backlog larger than one batch never drains'
+finding: 'internal/store/sqlitestore/sweep.go: selectCandidates and selectRelationCandidates ordered by updated_at ASC, and the content-hash dedup happens in Go (captureOne compares hashes and returns without writing). A settled, already-captured, unchanged row is therefore selected, examined and skipped, leaving nothing that the WHERE clause keys on any different — so the next tick returns the identical first Batch rows and everything behind them is never reached. Not eventually: never, for as long as those rows stay quiet. Measured: with 12 entities and Batch=3, 9 of 12 never received a version.'
+severity: critical
+resolution: 'Changed the ordering to `lv_created IS NOT NULL, lv_created ASC, updated_at ASC` on both candidate queries: never-captured rows first, then the longest-uncaptured. A tick that captures rows moves their lv_created to now so they sort to the back and the next tick necessarily advances. Deliberately an ORDER BY rather than a WHERE-clause dirty gate: a capture is written after the write it snapshots, so lv_created is normally NEWER than updated_at, and an `AND lv_created < updated_at` filter would permanently exclude an edit landing in the same clock tick as its predecessor''s capture (measured: updated_at ...28.741109Z vs lv_created ...28.741797Z for an edit that genuinely needed capturing). Pinned by TestSweepDrainsABacklogLargerThanOneBatch, TestSweepIsIdleWhenNothingChanged and TestSweepCapturesAnEditAfterCapture; the first was confirmed non-vacuous by restoring the old ORDER BY. pgstore has the same starvation and is NOT fixed here — recorded in the sweep.go comment as worth carrying back.'
+status: addressed
+---
