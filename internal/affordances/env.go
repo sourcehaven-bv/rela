@@ -38,9 +38,15 @@ func buildEnv(meta *metamodel.Metamodel, entityType string) (*predicate.Env, err
 	env := predicate.NewEnv()
 
 	if err := env.DeclareVar("entity", entityRecordType(meta, entityType)); err != nil {
+		// coverage-ignore: defensive: DeclareVar only errors on empty name / nil type / redeclare; "entity" is a non-
+		// empty constant,
+		// entityRecordType never returns nil, and this is the first declaration into a fresh env
 		return nil, err
 	}
 	if err := env.DeclareVar("current_user", userRecordType); err != nil {
+		// coverage-ignore: defensive: "current_user" is a non-empty constant with a non-nil userRecordType and no prior
+		// declaration, so
+		// DeclareVar cannot error here
 		return nil, err
 	}
 
@@ -62,6 +68,9 @@ func buildEnv(meta *metamodel.Metamodel, entityType string) (*predicate.Env, err
 	}
 	for _, f := range funcs {
 		if err := env.DeclareFunc(f.name, f.sig); err != nil {
+			// coverage-ignore: defensive: every func name is a distinct non-empty constant with a non-nil scalar Return
+			// and non-nil params, so
+			// DeclareFunc cannot error here
 			return nil, err
 		}
 	}
@@ -85,6 +94,9 @@ func entityRecordType(meta *metamodel.Metamodel, entityType string) predicate.Re
 		"type": predicate.StringType,
 	}
 	if meta == nil {
+		// coverage-ignore: defensive: buildEnv is the sole caller and always passes r.meta, which New rejects as nil;
+		// meta is never nil on
+		// this path
 		return rec
 	}
 	def, ok := meta.Entities[entityType]

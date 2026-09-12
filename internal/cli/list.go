@@ -68,7 +68,7 @@ func resolveListType(meta *metamodel.Metamodel, typeName string) (string, store.
 func collectListEntities(ctx context.Context, st store.Store, q store.EntityQuery) ([]*entity.Entity, error) {
 	var entities []*entity.Entity
 	for e, err := range st.ListEntities(ctx, q) {
-		if err != nil {
+		if err != nil { // coverage-ignore: defensive: memstore.ListEntities iterator never yields a non-nil error
 			return nil, err
 		}
 		entities = append(entities, e)

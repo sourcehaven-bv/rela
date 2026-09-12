@@ -83,9 +83,12 @@ func (g *Generator) GenerateJSON() ([]byte, error) {
 	// Generate spec and marshal to JSON
 	spec := g.Generate()
 	data, err := json.MarshalIndent(spec, "", "  ")
+	// coverage-ignore-start: defensive: OpenAPISpec is composed only of strings/maps/slices/structs —
+	// json.MarshalIndent cannot fail on it
 	if err != nil {
 		return nil, err
 	}
+	// coverage-ignore-end
 
 	g.mu.Lock()
 	g.cachedJSON = data

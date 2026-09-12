@@ -204,6 +204,9 @@ func (r *PolicyResolver) env(entityType string) (*predicate.Env, error) {
 	}
 	e, err := buildEnv(r.meta, entityType)
 	if err != nil {
+		// coverage-ignore: defensive: buildEnv only errors from DeclareVar/DeclareFunc on constant non-empty names into
+		// a fresh env, which
+		// cannot fail; no input reaches this branch
 		return nil, err
 	}
 	r.envs[entityType] = e
@@ -356,6 +359,8 @@ func (r *PolicyResolver) compile(roleName, entityType, block string, idx int, wh
 	}
 	env, err := r.env(entityType)
 	if err != nil {
+		// coverage-ignore: defensive: r.env only errors when buildEnv errors, which cannot happen (constant env
+		// declarations); unreachable
 		return nil, fmt.Errorf("roles.%s.%s.%s[%d]: %w", roleName, block, entityType, idx, err)
 	}
 	prog, err := predicate.Compile(env, when)
@@ -740,11 +745,15 @@ func (r *PolicyResolver) resolveViaDeclarative(
 ) (global map[string]bool, roles []string) {
 	global = map[string]bool{}
 	if r.policy == nil {
+		// coverage-ignore-start: defensive: both entry points (FieldVerdicts/RelationVerdicts) short-circuit on
+		// r.policy==nil before reaching
+		// bindingFor, so resolveViaDeclarative is never called with a nil policy today
 		// Defensive: FieldVerdicts / RelationVerdicts already short-circuit
 		// when policy is nil, but bindingFor is now the sole entry point
 		// and a future caller without that guard would otherwise panic on
 		// r.policy.Roles below.
 		return global, nil
+		// coverage-ignore-end
 	}
 	// RR-JJYW: reuse the per-request Request scope when one is attached
 	// to ctx (list handlers do this). Falls back to opening a fresh
@@ -826,9 +835,13 @@ func (r *PolicyResolver) passes(
 	}
 	b, err := bc.newBindings(r.meta)
 	if err != nil {
+		// coverage-ignore-start: defensive: newBindings only errors from SetVar/SetFunc on constant non-empty names
+		// with non-nil values, which
+		// cannot fail; binding build never errors here
 		slog.Warn("affordances: binding build failed; denying grant",
 			"role", role, "entity", bc.entity.ID, "error", err)
 		return false
+		// coverage-ignore-end
 	}
 	v, err := prog.Eval(ctx, b)
 	if err != nil {
@@ -838,9 +851,13 @@ func (r *PolicyResolver) passes(
 	}
 	boolV, ok := v.(predicate.Bool)
 	if !ok {
+		// coverage-ignore-start: defensive: predicate.Compile rejects any program whose top-level expression is not
+		// bool, so a compiled prog always
+		// evaluates to predicate.Bool; this non-bool guard is unreachable
 		slog.Warn("affordances: predicate did not return bool; denying grant",
 			"role", role, "entity", bc.entity.ID)
 		return false
+		// coverage-ignore-end
 	}
 	return boolV.Bool()
 }

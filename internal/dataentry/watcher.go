@@ -143,6 +143,9 @@ func (b *eventBroker) broadcastGitStatus() {
 //
 // coverage-ignore-func: requires real filesystem events via fsnotify
 func (a *App) StartWatching() error {
+	// coverage-ignore-start: os-fs-event: startup wiring for fsnotify-backed config subscription, store watcher, and
+	// store-event SSE bridge
+	// (project marks it coverage-ignore)
 	// (1) data-entry.yaml subscription.
 	if sub, ok := a.cfgLoader.(config.Subscriber); ok {
 		stop, err := sub.Subscribe(context.Background(), ConfigFile, func() {
@@ -179,6 +182,7 @@ func (a *App) StartWatching() error {
 	a.startStoreEventBridge()
 
 	return nil
+	// coverage-ignore-end
 }
 
 // storeEventBufSize is the buffer for the store-event subscription. The watcher
@@ -247,6 +251,8 @@ func (a *App) StartGitFetch() (stop func()) {
 		return func() {} // no-op if git not configured or fetch disabled
 	}
 
+	// coverage-ignore-start: os-fs-event: background goroutine driven by a real time.Ticker running git fetch (project
+	// marks it coverage-ignore)
 	interval := time.Duration(cfg.FetchInterval) * time.Second
 	ticker := time.NewTicker(interval)
 	done := make(chan struct{})
@@ -272,6 +278,7 @@ func (a *App) StartGitFetch() (stop func()) {
 	return func() {
 		close(done)
 	}
+	// coverage-ignore-end
 }
 
 // rebuildState re-reads changed inputs and publishes a fresh Schema snapshot

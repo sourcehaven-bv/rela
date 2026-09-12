@@ -28,9 +28,12 @@ func buildEnv(_ metamodel.CustomType) (*predicate.Env, error) {
 		"type":  predicate.StringType,
 		"value": predicate.StringType,
 	}
+	// coverage-ignore-start: defensive: DeclareVar on a fresh env with the fixed non-empty name "entity" and a non-nil
+	// RecordType never errors
 	if err := env.DeclareVar("entity", entityRec); err != nil {
 		return nil, err
 	}
+	// coverage-ignore-end
 
 	rec := predicate.RecordType{}
 	str := predicate.StringType
@@ -44,9 +47,13 @@ func buildEnv(_ metamodel.CustomType) (*predicate.Env, error) {
 		{"count_relations", predicate.FuncSig{Params: []predicate.Type{rec, str}, Return: num}},
 	}
 	for _, f := range funcs {
+		// coverage-ignore-start: defensive: DeclareFunc on a fresh env with fixed non-empty names, scalar return types,
+		// and non-nil params never
+		// errors
 		if err := env.DeclareFunc(f.name, f.sig); err != nil {
 			return nil, err
 		}
+		// coverage-ignore-end
 	}
 	return env, nil
 }
@@ -60,25 +67,36 @@ func evalWhen(
 	ctx context.Context, prog *predicate.Program, e *entity.Entity, prop string, lookup GraphLookup,
 ) (bool, error) {
 	b := predicate.NewBindings()
+	// coverage-ignore-start: defensive: SetVar with the fixed name "entity" and the always-non-nil record from
+	// entityRecord never errors
 	if err := b.SetVar("entity", entityRecord(e, prop)); err != nil {
 		return false, err
 	}
+	// coverage-ignore-end
 	gb := &graphBindings{entityID: e.ID, lookup: lookup}
+	// coverage-ignore-start: defensive: SetFunc with a fixed non-empty name and a non-nil FuncFunc never errors
 	if err := b.SetFunc("has_relation", predicate.FuncFunc(gb.hasRelation)); err != nil {
 		return false, err
 	}
+	// coverage-ignore-end
+	// coverage-ignore-start: defensive: SetFunc with a fixed non-empty name and a non-nil FuncFunc never errors
 	if err := b.SetFunc("count_relations", predicate.FuncFunc(gb.countRelations)); err != nil {
 		return false, err
 	}
+	// coverage-ignore-end
 
 	v, err := prog.Eval(ctx, b)
 	if err != nil {
 		return false, err
 	}
 	bv, ok := v.(predicate.Bool)
+	// coverage-ignore-start: defensive: predicate.Compile rejects a non-bool top-level expression, so a compiled
+	// program always evaluates to a
+	// Bool
 	if !ok {
 		return false, nil
 	}
+	// coverage-ignore-end
 	return bv.Bool(), nil
 }
 
@@ -125,12 +143,19 @@ func (g *graphBindings) countRelations(ctx context.Context, args []predicate.Val
 
 // stringArg reads the i-th arg as a string, "" if absent/wrong type.
 func stringArg(args []predicate.Value, i int) string {
+	// coverage-ignore-start: defensive: both callers pass i=1 and the FuncSig declares 2 params, so the compiler's
+	// arity check guarantees args
+	// has index 1
 	if i >= len(args) {
 		return ""
 	}
+	// coverage-ignore-end
 	if s, ok := args[i].(predicate.String); ok {
 		return s.String()
 	}
+	// coverage-ignore: defensive: arg 1 is declared StringType in the FuncSig, so the type checker guarantees it is a
+	// predicate.String at
+	// runtime
 	return ""
 }
 

@@ -71,9 +71,13 @@ func (o *OAuth) RequestDeviceCode(ctx context.Context) (*DeviceCodeResponse, err
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		"https://github.com/login/device/code",
 		strings.NewReader(data.Encode()))
+	// coverage-ignore-start: defensive: NewRequestWithContext cannot fail with a constant valid POST method, constant
+	// valid https URL, and non-
+	// nil body
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
+	// coverage-ignore-end
 
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
@@ -112,9 +116,13 @@ func (o *OAuth) PollForToken(ctx context.Context, deviceCode string) (*TokenResp
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		"https://github.com/login/oauth/access_token",
 		strings.NewReader(data.Encode()))
+	// coverage-ignore-start: defensive: NewRequestWithContext cannot fail with a constant valid POST method, constant
+	// valid https URL, and non-
+	// nil body
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
+	// coverage-ignore-end
 
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")

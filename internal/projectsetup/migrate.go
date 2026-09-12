@@ -50,8 +50,11 @@ type MigrateFileResult struct {
 // DetectMigrations checks for pending migrations in project files.
 // If startDir is empty, it uses the current working directory.
 func DetectMigrations(startDir string) ([]MigrateDetection, error) {
+	// coverage-ignore-start: main-or-wiring: constructs the real OS filesystem and delegates to DetectMigrationsWithFS,
+	// which is the tested seam
 	fs := storage.NewSafeFS(storage.NewOsFS())
 	return DetectMigrationsWithFS(startDir, fs)
+	// coverage-ignore-end
 }
 
 // CheckPending reports everything `rela migrate --check` needs: content
@@ -113,8 +116,11 @@ func detectMigrationsIn(ctx *project.Context, fs storage.FS) ([]MigrateDetection
 // Migrate applies pending migrations to project files.
 // If startDir is empty, it uses the current working directory.
 func Migrate(startDir string) (*MigrateResult, error) {
+	// coverage-ignore-start: main-or-wiring: constructs the real OS filesystem and delegates to MigrateWithFS, which is
+	// the tested seam
 	fs := storage.NewSafeFS(storage.NewOsFS())
 	return MigrateWithFS(startDir, fs)
+	// coverage-ignore-end
 }
 
 // MigrateWithFS applies migrations using the provided filesystem.

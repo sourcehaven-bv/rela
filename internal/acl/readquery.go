@@ -60,6 +60,9 @@ func (r *Request) readQuery(ctx context.Context, entityType string) ReadQueryRes
 	)
 	for _, a := range globals.Attributions {
 		role, ok := r.roleFor(a.Role)
+		// coverage-ignore: defensive: globals.Attributions only carries roles computeGlobals already confirmed defined
+		// in policy.Roles, so ok
+		// is always true here
 		if !ok {
 			continue
 		}

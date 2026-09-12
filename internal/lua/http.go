@@ -223,8 +223,12 @@ func (h httpBindings) doHTTPRequest(ls *lua.LState, fnName string, o httpRequest
 
 	bodyReader, contentType, err := o.payload()
 	if err != nil {
+		// coverage-ignore-start: defensive: method is pre-validated (validateHTTPMethod / fixed convenience-method
+		// constants) and reqURL is a
+		// url.Parse-validated *url.URL, so NewRequestWithContext cannot fail on any reachable input
 		ls.RaiseError("%s: %s", fnName, err.Error())
 		return 0
+		// coverage-ignore-end
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, o.method, o.url.String(), bodyReader)

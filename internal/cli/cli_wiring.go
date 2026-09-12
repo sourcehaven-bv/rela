@@ -135,7 +135,8 @@ func newCLIBundles(svc *appbuild.Services) (*cliBundles, error) {
 		// no external scan/transform until the cmd: harness is wired).
 		Processor: attachment.NewPolicyProcessor(svc.Meta(), nil),
 	})
-	if err != nil {
+	if err != nil { // coverage-ignore: defensive: attachment.New only fails on nil deps; newCLIBundles always passes a
+		// valid appbuild.Services
 		return nil, fmt.Errorf("attachment service: %w", err)
 	}
 	rt, err := renametype.New(renametype.Deps{
@@ -143,7 +144,8 @@ func newCLIBundles(svc *appbuild.Services) (*cliBundles, error) {
 		Meta:  svc.Meta(),
 		Paths: svc.Paths(),
 	})
-	if err != nil {
+	if err != nil { // coverage-ignore: defensive: renametype.New only fails on nil deps; newCLIBundles always passes a
+		// valid appbuild.Services
 		return nil, fmt.Errorf("renametype service: %w", err)
 	}
 	an, err := analysis.New(analysis.Deps{
@@ -155,7 +157,8 @@ func newCLIBundles(svc *appbuild.Services) (*cliBundles, error) {
 		FS:          svc.FS(),
 		Paths:       svc.Paths(),
 	})
-	if err != nil {
+	if err != nil { // coverage-ignore: defensive: analysis.New only fails on nil deps; newCLIBundles always passes a
+		// valid appbuild.Services
 		return nil, fmt.Errorf("analysis service: %w", err)
 	}
 	read := readServices{

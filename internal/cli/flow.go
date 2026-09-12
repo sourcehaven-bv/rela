@@ -29,6 +29,9 @@ type FlowCmd struct {
 
 // Run dispatches `rela flow <script.lua> [args...]`.
 func (c *FlowCmd) Run(ctx context.Context) error {
+	// coverage-ignore-start: os-fs-event: self-discovers a project from the script dir and drives an interactive huh
+	// TTY flow; no in-process test
+	// harness
 	scriptPath := c.Script
 	if !filepath.IsAbs(scriptPath) {
 		cwd, err := os.Getwd()
@@ -66,6 +69,7 @@ func (c *FlowCmd) Run(ctx context.Context) error {
 	flow := lua.NewFlowRuntime(runtime, transport)
 
 	return flow.RunFile(scriptPath, c.Args)
+	// coverage-ignore-end
 }
 
 // TerminalTransport implements lua.Transport using charmbracelet/huh.
@@ -85,6 +89,9 @@ type fieldValue struct {
 }
 
 func (t *TerminalTransport) presentForm(screen lua.Screen) (lua.Event, error) {
+	// coverage-ignore-start: os-fs-event: builds and runs an interactive huh form (form.Run() blocks on a TTY); not
+	// reachable without an
+	// interactive terminal
 	groups := make([]*huh.Group, 0, 1)
 	fieldValues := make(map[string]fieldValue)
 
@@ -141,6 +148,7 @@ func (t *TerminalTransport) presentForm(screen lua.Screen) (lua.Event, error) {
 		Action: selectedAction,
 		Data:   data,
 	}, nil
+	// coverage-ignore-end
 }
 
 func (t *TerminalTransport) buildField(f lua.Field) (huh.Field, any, error) {

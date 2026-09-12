@@ -120,7 +120,8 @@ func (c *ValidateCmd) Run(ctx context.Context) error {
 		FS:          checkSvc.FS(),
 		Paths:       checkSvc.Paths(),
 	})
-	if err != nil {
+	if err != nil { // coverage-ignore: defensive: analysis.New only fails on nil deps; appbuild.Discover on a valid
+		// project always supplies them
 		return fmt.Errorf("initialize analysis service: %w", err)
 	}
 

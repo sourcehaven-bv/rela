@@ -80,6 +80,9 @@ func (l *FSLoader) Subscribe(_ context.Context, onChange func()) (func(), error)
 		Extensions: []string{".yaml", ".yml"},
 		Debounce:   200 * time.Millisecond,
 		SkipHidden: true,
+		// coverage-ignore-start: os-fs-event: OnChange fires only on a real debounced fsnotify filesystem event, not
+		// reachable deterministically in
+		// a unit test
 		OnChange: func(_ []storage.ChangeEvent) {
 			onChange()
 			// Include set may have changed — add any new files we
@@ -90,8 +93,10 @@ func (l *FSLoader) Subscribe(_ context.Context, onChange func()) (func(), error)
 				_ = watcher.AddFile(f)
 			}
 		},
+		// coverage-ignore-end
 	})
-	if err != nil {
+	if err != nil { // coverage-ignore: defensive: storage.NewWatcher does not fail for a valid config over existing
+		// files; the failure path is not reachable in tests
 		return nil, err
 	}
 	watcher = w

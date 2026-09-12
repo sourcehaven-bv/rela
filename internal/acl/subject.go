@@ -51,7 +51,9 @@ type EntitySubject struct {
 	Face entity.Face
 }
 
-func (EntitySubject) isSubject() {}
+func (EntitySubject) isSubject() {} // coverage-ignore: sealing marker: never called at runtime; exists only so
+// EntitySubject satisfies the sealed Subject interface (compiler-checked), so no test can reach it without an
+// artificial no-op call
 
 // RelationSubject identifies a relation write. v1 evaluates relation
 // writes against `FromType` only (matching v0 semantics — see the
@@ -70,4 +72,6 @@ type RelationSubject struct {
 	FromID   string
 }
 
-func (RelationSubject) isSubject() {}
+func (RelationSubject) isSubject() {} // coverage-ignore: sealing marker: never called at runtime; exists only so
+// RelationSubject satisfies the sealed Subject interface (compiler-checked), so no test can reach it without an
+// artificial no-op call

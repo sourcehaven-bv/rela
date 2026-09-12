@@ -85,9 +85,13 @@ func Discover(startDir string, fs storage.FS) (*Context, error) {
 
 	// Convert to absolute path
 	startDir, err := filepath.Abs(startDir)
+	// coverage-ignore-start: os-fs: filepath.Abs fails only when the real os.Getwd fails (e.g. null-byte path on
+	// Linux); not reachable via the
+	// injected fs and platform-specific (test is Linux-only, skipped elsewhere)
 	if err != nil {
 		return nil, err
 	}
+	// coverage-ignore-end
 
 	// Walk up the directory tree looking for a schema file
 	dir := startDir

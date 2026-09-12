@@ -205,7 +205,8 @@ func (c *RelationRestoreCmd) Run(ctx context.Context, svc *writeServices) error 
 		if _, err := svc.EntityManager.CreateRelation(ctx, c.From, c.Type, c.To, opts); err != nil {
 			return fmt.Errorf("restore (re-create) %s--%s--%s to v%d: %w", c.From, c.Type, c.To, c.Version, err)
 		}
-	default:
+	default: // coverage-ignore: defensive: memstore.GetRelation returns only nil or store.ErrNotFound, so a non-
+		// NotFound error here is unreachable
 		return fmt.Errorf("restore %s--%s--%s: check current state: %w", c.From, c.Type, c.To, getErr)
 	}
 

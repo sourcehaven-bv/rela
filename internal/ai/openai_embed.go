@@ -62,9 +62,13 @@ func (p *openAICompatProvider) Embed(ctx context.Context, req EmbedRequest) (*Em
 		Input: req.Input,
 	}
 	httpReq, err := p.buildJSONRequest(ctx, "/embeddings", wire, apiKey)
+	// coverage-ignore-start: defensive: buildJSONRequest only fails via json.Marshal of an all-scalar wire struct or
+	// NewRequestWithContext on a
+	// Validate-passed BaseURL — neither is reachable here
 	if err != nil {
 		return nil, err
 	}
+	// coverage-ignore-end
 
 	p.logEmbedStart(p.cfg.BaseURL, model, len(req.Input))
 

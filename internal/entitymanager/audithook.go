@@ -19,7 +19,8 @@ import (
 // Property *names* may appear in the summary; property *values* never
 // do — defense against secrets accidentally stored in properties.
 func (m *Manager) recordEntityAudit(ctx context.Context, op string, e *entity.Entity, summary string) {
-	if e == nil {
+	if e == nil { // coverage-ignore: defensive: every in-package caller (Create/Update/Delete/Apply) passes a non-nil
+		// entity; unreachable via any write op
 		return
 	}
 	m.deps.Audit.Record(audit.Record{
@@ -39,7 +40,8 @@ func (m *Manager) recordEntityAudit(ctx context.Context, op string, e *entity.En
 // recordRelationAudit emits one audit record for a relation create /
 // update / delete success.
 func (m *Manager) recordRelationAudit(ctx context.Context, op string, rel *entity.Relation, summary string) {
-	if rel == nil {
+	if rel == nil { // coverage-ignore: defensive: every in-package caller passes a non-nil relation; unreachable via
+		// any write op
 		return
 	}
 	m.deps.Audit.Record(audit.Record{
@@ -67,7 +69,8 @@ func (m *Manager) recordRelationAudit(ctx context.Context, op string, rel *entit
 // after.ID + after.Type for After). Callers that lose the
 // post-rename fetch log via slog and skip the audit — never silently.
 func (m *Manager) recordRenameAudit(ctx context.Context, oldID string, after *entity.Entity) {
-	if after == nil {
+	if after == nil { // coverage-ignore: defensive: only caller is RenameEntity, which invokes this only after a non-
+		// nil post-rename fetch succeeds
 		return
 	}
 	m.deps.Audit.Record(audit.Record{
@@ -94,7 +97,8 @@ func (m *Manager) recordRenameAudit(ctx context.Context, oldID string, after *en
 // property names changed (content-only edit or no diff at all);
 // otherwise "updated: prop1,prop2,...".
 func updateEntitySummary(oldE, newE *entity.Entity) string {
-	if oldE == nil || newE == nil {
+	if oldE == nil || newE == nil { // coverage-ignore: defensive: only caller UpdateEntity passes the fetched oldEntity
+		// and the non-nil update target, both non-nil
 		return "updated"
 	}
 	names := changedPropertyNames(oldE.Properties, newE.Properties)

@@ -220,9 +220,12 @@ func generateEntityTemplate(
 	content := fmt.Sprintf("# Description\n\nDescribe your %s here.\n", strings.ToLower(label))
 
 	output, err := markdown.FormatDocument(frontmatter, content)
+	// coverage-ignore-start: defensive: frontmatter holds only scalar property defaults (string/bool/int), yaml.Marshal
+	// of these cannot fail
 	if err != nil {
 		return false, fmt.Errorf("failed to format template: %w", err)
 	}
+	// coverage-ignore-end
 
 	dir := filepath.Dir(templatePath)
 	if err := fs.MkdirAll(dir, 0755); err != nil {
@@ -261,9 +264,12 @@ func generateRelationTemplate(
 	content := fmt.Sprintf("# Rationale\n\nExplain why this %s relation exists.\n", strings.ToLower(label))
 
 	output, err := markdown.FormatDocument(map[string]any{}, content)
+	// coverage-ignore-start: defensive: FormatDocument gets an empty frontmatter map so it never marshals YAML and
+	// cannot return an error
 	if err != nil {
 		return false, fmt.Errorf("failed to format template: %w", err)
 	}
+	// coverage-ignore-end
 
 	dir := filepath.Dir(templatePath)
 	if err := fs.MkdirAll(dir, 0755); err != nil {

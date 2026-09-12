@@ -343,11 +343,16 @@ func (s *Service) CheckRule(
 			luaCtx.runtime.Close()
 			luaCtx = nil
 			rebuilt, loadErr := s.buildLuaRuleContext(ctx, rule)
+			// coverage-ignore-start: os-fs-event: rebuild LoadError only fires if the lua_file is deleted between the
+			// initial load and the mid-loop
+			// rebuild; inline rules never produce a LoadError and there is no test seam to remove the file between
+			// rebuild calls
 			if loadErr != nil {
 				// Script vanished mid-iteration — surface as LoadError
 				// and skip Lua for remaining entities.
 				result.LoadErrors = append(result.LoadErrors, *loadErr)
 			} else if rebuilt != nil {
+				// coverage-ignore-end
 				luaCtx = rebuilt
 			}
 		}

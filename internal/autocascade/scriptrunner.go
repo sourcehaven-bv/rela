@@ -112,6 +112,9 @@ var NopScriptRunner ScriptRunner = nopScriptRunner{}
 type nopScriptRunner struct{}
 
 func (nopScriptRunner) Run(_ context.Context, _ ScriptAction, _ Mutator) error {
+	// coverage-ignore: panic-invariant: NopScriptRunner exists to blow up when a test unexpectedly fires a scripted
+	// automation; calling it
+	// is the failure it guards against
 	panic("autocascade.NopScriptRunner: script execution not expected in this context")
 }
 

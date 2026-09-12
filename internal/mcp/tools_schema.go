@@ -39,7 +39,8 @@ func (h schemaResourceHandler) handleGetSchema(
 	}
 
 	text, err := marshalJSON(result)
-	if err != nil {
+	if err != nil { // coverage-ignore: defensive: result holds metamodel version/namespace/entities/relations (JSON-
+		// tagged types); json.Marshal cannot fail.
 		return errorResult(err.Error()), nil
 	}
 	return textResult(text), nil
@@ -80,7 +81,8 @@ func (h schemaResourceHandler) handleListEntityTypes(
 	}
 
 	text, err := marshalJSON(result)
-	if err != nil {
+	if err != nil { // coverage-ignore: defensive: result is []entityTypeInfo of strings/ints/metamodel PropertyDefs;
+		// json.Marshal cannot fail.
 		return errorResult(err.Error()), nil
 	}
 	return textResult(text), nil
@@ -126,7 +128,8 @@ func (h schemaResourceHandler) handleListRelationTypes(
 	}
 
 	text, err := marshalJSON(result)
-	if err != nil {
+	if err != nil { // coverage-ignore: defensive: result is []relationTypeInfo of strings/ints; json.Marshal cannot
+		// fail.
 		return errorResult(err.Error()), nil
 	}
 	return textResult(text), nil
