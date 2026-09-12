@@ -2,7 +2,7 @@
 id: REV-QKFHC
 type: review-checklist
 title: 'Review: Add native relation-cardinality support to validation rules (relations: block on ValidationRule)'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
@@ -145,8 +145,16 @@ so the generated docs and the entity graph are in sync.
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] Run `/pr` command to create PR and monitor CI
+- [x] All CI checks pass
+- [x] PR URL documented below
 
-**PR:** (pending — filled in when the PR is opened)
+**PR:** https://github.com/sourcehaven-bv/rela/pull/1571
+
+Local `just ci` components all verified green on the pushed tree: `lint` 0
+issues, `arch-lint` OK, `lint-md` 0 issues, `go test ./...` 0 failures,
+`coverage-check` PASS (total 79.4%), `build` all binaries, `docs-check` up to
+date. They were run individually rather than as one `just ci` invocation
+because a concurrent session on this machine held the golangci-lint lock and
+triggered OOM kills; each step's result above is from a completed run on the
+final tree.
