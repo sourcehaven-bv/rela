@@ -82,14 +82,14 @@ user's request.)
 
 Skip this section for bugs and internal refactors.
 
-- [x] ~~Docs-checklist created and linked via `has-docs`~~ (N/A: no user-facing
-surface. `internal/lock` is an internal seam with no consumer, no config key, no
-CLI flag and no API. User-facing docs land with the consumer, TKT-1EM4KL.)
-- [x] ~~User-facing documentation updated~~ (N/A: same reason. The contract is
-documented as godoc on the interface and the conformance suite.)
-- [x] ~~Docs-checklist marked as done~~ (N/A: none created.)
+- [x] Docs-checklist created and linked via `has-docs` (DOCS-7KLQ2M)
+- [x] ~~User-facing documentation updated~~ (N/A: no user-facing surface.
+`internal/lock` has no production consumer, no config key, no CLI flag and no
+API. The contract is documented as godoc on the interface and as the `locktest`
+conformance suite. User-facing docs land with the consumer, TKT-1EM4KL.)
+- [x] Docs-checklist marked as done
 
-**Docs Checklist:** <!-- e.g., DOCS-xxxx -->
+**Docs Checklist:** DOCS-7KLQ2M
 
 ## Final Checks
 
