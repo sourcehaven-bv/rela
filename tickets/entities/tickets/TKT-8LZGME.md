@@ -79,7 +79,14 @@ exact title, empty for a non-match.
 - actionlint clean (with shellcheck 0.11.0 present, so the `run:` block is
 genuinely inspected — confirmed by an injected-fault canary).
 
-Note: nothing in CI lints workflows. TKT-PCLGGL's verification notes claim
-actionlint runs via CodeQL's "Analyze (actions)" job, but `codeql.yml` analyzes
-only `go` and `javascript-typescript`. Adding an actionlint job is a follow-up,
-not in this ticket.
+Note on workflow linting: CI **does** analyze workflows, via CodeQL's
+`Analyze (actions)` job — but that job comes from GitHub's **default CodeQL
+setup** (configured languages: actions, go, javascript, javascript-typescript,
+python, typescript), not from the checked-in `codeql.yml`, whose matrix lists
+only `go` and `javascript-typescript`. Reading the repo's YAML alone suggests
+no workflow analysis exists; the job is real and passed on PR #1563.
+
+CodeQL's `actions` pack finds security issues (injection, unpinned actions,
+token misuse). It is not a shellcheck/actionlint substitute, so the
+shell-correctness class that produced this ticket's two critical findings
+(RR-LERUY1, RR-EAW6EL) is still ungated. actionlint was run manually here.

@@ -19,10 +19,14 @@ status: done
 
 `just ci` (check + coverage-check + build + docs-check) exited 0 on this branch.
 
-Additionally, since CI does **not** lint workflows (see below), actionlint was
-run manually: clean, with shellcheck 0.11.0 present so the `run:` block is
-genuinely inspected — verified by injecting an unquoted expansion into a copy
-and confirming SC2086 fires.
+Additionally, actionlint was run manually: clean, with shellcheck 0.11.0
+present so the `run:` block is genuinely inspected — verified by injecting an
+unquoted expansion into a copy and confirming SC2086 fires.
+
+CI does run CodeQL's `Analyze (actions)` job (via GitHub's default CodeQL
+setup, not the checked-in `codeql.yml`), and it passed. That pack covers
+workflow security, not shell correctness, so it would not have caught either
+critical finding — hence the manual actionlint run.
 
 ## Code Review
 
@@ -87,9 +91,9 @@ failing weekly sweep, so its first exercise against the real GitHub API is the
 next sweep that finds something. Everything above is verified against a stubbed
 `gh`.
 
-Follow-up work identified (not in this ticket): add an actionlint CI job — CI
-lints no workflows today, contrary to TKT-PCLGGL's notes — and commit the
-step-body test harness (RR-MUW7BA).
+Follow-up work identified (not in this ticket): add an actionlint CI job — the
+existing CodeQL `actions` analysis covers workflow security, not shell
+correctness — and commit the step-body test harness (RR-MUW7BA).
 
 ## Pull Request
 

@@ -10,11 +10,16 @@ status: deferred
 
 Found by cranky-code-reviewer on the TKT-8LZGME diff (finding 12).
 
-Related gap found while verifying this ticket: **nothing in CI lints workflows
-at all.** TKT-PCLGGL's verification notes claim actionlint runs via CodeQL's
-"Analyze (actions)" job, but `codeql.yml` analyzes only `go` and
-`javascript-typescript`. actionlint was run manually here (clean, with
-shellcheck 0.11.0 so the `run:` block is genuinely inspected).
+Related gap, stated precisely: CI **does** run CodeQL's `Analyze (actions)`
+job (from GitHub's default CodeQL setup, not from the checked-in `codeql.yml`
+— its matrix lists only `go` and `javascript-typescript`, which is why reading
+the repo's YAML suggests otherwise). It passed on PR #1563.
+
+But CodeQL's `actions` pack targets workflow *security* (injection, unpinned
+actions, token scope), not shell correctness. Neither of this ticket's two
+critical findings — a swallowed error read as "no match", a dropped final line
+— is in its remit, and both were silent-green. actionlint + shellcheck were run
+manually here and are what would catch that class.
 
 A follow-up ticket should do both: add an actionlint CI job, and commit the
 step-body test harness.

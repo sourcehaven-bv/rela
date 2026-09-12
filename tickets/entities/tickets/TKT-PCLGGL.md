@@ -28,4 +28,4 @@ combined task 4).
 ## Verification
 
 - Script run locally with a short FUZZTIME completes across all discovered targets and reports failures correctly (verified by injecting a deliberate failure).
-- Workflow lint-clean (actionlint via CI's Analyze (actions) job); CI green on PR.
+- Workflow lint-clean; CI green on PR. **Correction (TKT-8LZGME):** CI's `Analyze (actions)` job is CodeQL (from GitHub's default setup), not actionlint — it covers workflow security, not shell correctness. No CI job runs actionlint or shellcheck over a `run:` block.
