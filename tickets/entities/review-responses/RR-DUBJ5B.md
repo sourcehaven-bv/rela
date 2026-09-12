@@ -1,0 +1,9 @@
+---
+id: RR-DUBJ5B
+type: review-response
+title: Conformance seeds use only well-behaved ids, so the suite cannot catch cross-backend ordering divergence
+finding: internal/store/storetest/graphquery.go:497-499. Every paged assertion seeds TKT-1/2/3/4 or zero-padded TKT-%03d — ids where insertion order equals sort order and lexicographic equals numeric. Page_composes_with_InheritThrough is the only paged-vs-unpaged comparison and it uses the same tame ids. The drop-and-duplicate bug class from RR-R713PD is exactly what a cross-backend conformance suite should catch, and it currently cannot, because no seed data distinguishes the orderings. Needs hostile ids where insertion order != sort order and prefix relationships bite (TKT, TKT-2, TKT-10, TKT.9, tkt-3), seeded in reverse.
+severity: significant
+resolution: 'Added Page_hostile_ids_match_unpaged_order to the conformance suite with ids where insertion order, numeric order, and byte order all disagree and prefix relationships bite: tkt-3, TKT.9, TKT-10, TKT-2, TKT, TKT-Z, TKT-a — seeded in reverse, page size 2 over 7 items so boundaries land between the awkward neighbors. Critically it compares against the RAW GraphQuery iterator, not the runGraphQuery helper, because that helper sorts its output and would have masked exactly the misordering under test (a subtlety the original Page_composes_with_InheritThrough comparison had). Mutation-verified: making the keyset comparison case-insensitive (so it disagrees with byte order on tkt-3/TKT-Z/TKT-a) now fails the subtest on BOTH fsstore and memstore; previously the tame TKT-1..4 / TKT-%03d seeds could not detect it. Also confirmed PASS against live PostgreSQL, which incidentally proves COLLATE "C" genuinely agrees with Go byte comparison on these ids rather than just in theory.'
+status: addressed
+---
