@@ -420,16 +420,57 @@ func (s *Store) CreateEntity(ctx context.Context, e *entity.Entity) error {
 // UpdateEntity overwrites an existing entity. Returns store.ErrNotFound if the
 // entity does not exist.
 func (s *Store) UpdateEntity(ctx context.Context, e *entity.Entity) error {
+	_, err := s.updateEntityIf(ctx, e, store.UpdateCondition{})
+	return err
+}
+
+// updateEntityIf is the single update core. The unconditional path is this
+// same function with a zero condition, so there is ONE update statement rather
+// than two that could drift — which is exactly what happened while this branch
+// sat unrebased: develop added the `face` predicate and the origin columns to
+// its UpdateEntity, and a separate CAS statement silently kept the old shape.
+//
+// When cond is non-zero the row is read FOR UPDATE and compared in Go before
+// the write, inside the same transaction. See [Store.UpdateEntityIf] for why
+// the compare cannot be a SQL predicate.
+func (s *Store) updateEntityIf(
+	ctx context.Context, e *entity.Entity, cond store.UpdateCondition,
+) (store.EntityVersion, error) {
 	props, err := marshalProps(e.Properties)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // rollback after commit is a no-op
+
+	if !cond.IsZero() {
+		// FOR UPDATE: hold the row until commit so a concurrent writer on
+		// another connection (and another PROCESS) serializes behind us
+		// instead of racing. Addressed by (id, face), like every other read
+		// here: since content-states an id names a FAMILY, and comparing
+		// against the default face would let a write to one face pass a
+		// condition computed from another.
+		current, scanErr := scanEntity(tx.QueryRow(ctx,
+			`SELECT id, type, face, properties, content, updated_at
+			 FROM entities WHERE id = $1 AND face = $2 FOR UPDATE`, e.ID, e.Face))
+		if errors.Is(scanErr, pgx.ErrNoRows) {
+			return "", store.ErrNotFound
+		}
+		if scanErr != nil {
+			return "", scanErr
+		}
+		if actual := store.VersionOf(current); actual != cond.ExpectedVersion {
+			// Return before committing; the deferred rollback releases the
+			// lock and guarantees nothing was written.
+			return "", &store.VersionConflictError{
+				ID: e.ID, Expected: cond.ExpectedVersion, Actual: actual,
+			}
+		}
+	}
 
 	if !e.Face.IsDefault() {
 		// Row-family invariant: a non-default state cannot be re-typed
@@ -438,13 +479,13 @@ func (s *Store) UpdateEntity(ctx context.Context, e *entity.Entity) error {
 		probeErr := tx.QueryRow(ctx,
 			`SELECT type FROM entities WHERE id = $1 AND face = $2`, e.ID, e.Face).Scan(&curType)
 		if errors.Is(probeErr, pgx.ErrNoRows) {
-			return store.ErrNotFound
+			return "", store.ErrNotFound
 		}
 		if probeErr != nil {
-			return probeErr
+			return "", probeErr
 		}
 		if curType != e.Type {
-			return storeutil.StateTypeMismatchError(e.ID, e.Face, e.Type, curType)
+			return "", storeutil.StateTypeMismatchError(e.ID, e.Face, e.Type, curType)
 		}
 	}
 
@@ -467,27 +508,29 @@ func (s *Store) UpdateEntity(ctx context.Context, e *entity.Entity) error {
 		editorUser, editorTool,
 		o.kind, o.source, o.sourceFace, o.sourceType, o.definition).Scan(&updatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return store.ErrNotFound
+		return "", store.ErrNotFound
 	}
 	if err != nil {
 		// An update can violate a derived unique index too — e.g. an automation
 		// sets a unique property to a value another entity already holds
 		// (TKT-3Q0GP1). mapConflict names the property for a rela_derived_uniq__*
 		// clash and passes other errors through unchanged.
-		return s.mapConflict(err)
+		return "", s.mapConflict(err)
 	}
 
 	ev := store.Event{Op: store.EventEntityUpdated, EntityType: e.Type, EntityID: e.ID, Face: e.Face}
 	s.notify(ctx, tx, ev)
 	if err := tx.Commit(ctx); err != nil {
-		return err
+		return "", err
 	}
 
 	stored := e.Clone()
 	stored.UpdatedAt = updatedAt
 	s.notifyPut(stored)
 	s.emit(ev)
-	return nil
+	// Computed from `stored`, not from `e`: the stored copy is the one the
+	// next reader will see.
+	return store.VersionOf(stored), nil
 }
 
 // UpdateEntityIf implements the compare-and-swap write (TKT-34XS2R).
@@ -516,69 +559,7 @@ func (s *Store) UpdateEntity(ctx context.Context, e *entity.Entity) error {
 func (s *Store) UpdateEntityIf(
 	ctx context.Context, e *entity.Entity, cond store.UpdateCondition,
 ) (store.EntityVersion, error) {
-	if cond.IsZero() {
-		return store.VersionOf(e), s.UpdateEntity(ctx, e)
-	}
-
-	props, err := marshalProps(e.Properties)
-	if err != nil {
-		return "", err
-	}
-
-	tx, err := s.db.Begin(ctx)
-	if err != nil {
-		return "", err
-	}
-	defer tx.Rollback(ctx) //nolint:errcheck // rollback after commit is a no-op
-
-	// FOR UPDATE: hold the row until commit so a concurrent writer on another
-	// connection (and another PROCESS) serializes behind us instead of racing.
-	current, err := scanEntity(tx.QueryRow(ctx,
-		`SELECT id, type, properties, content, updated_at
-		 FROM entities WHERE id = $1 FOR UPDATE`, e.ID))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return "", store.ErrNotFound
-	}
-	if err != nil {
-		return "", err
-	}
-	if actual := store.VersionOf(current); actual != cond.ExpectedVersion {
-		// Return before committing; the deferred rollback releases the lock
-		// and guarantees nothing was written.
-		return "", &store.VersionConflictError{
-			ID: e.ID, Expected: cond.ExpectedVersion, Actual: actual,
-		}
-	}
-
-	editorUser, editorTool := attributionValues(ctx)
-	const q = `
-		UPDATE entities
-		SET type = $2, properties = $3, content = $4, search_text = $5,
-		    updated_at = now(), seq = nextval('rela_seq'),
-		    last_edited_by_user = $6, last_edited_by_tool = $7
-		WHERE id = $1
-		RETURNING updated_at`
-	var updatedAt time.Time
-	err = tx.QueryRow(ctx, q, e.ID, e.Type, props, e.Content, entitySearchText(e),
-		editorUser, editorTool).Scan(&updatedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return "", store.ErrNotFound
-	}
-	if err != nil {
-		return "", s.mapConflict(err)
-	}
-
-	ev := store.Event{Op: store.EventEntityUpdated, EntityType: e.Type, EntityID: e.ID}
-	s.notify(ctx, tx, ev)
-	if err := tx.Commit(ctx); err != nil {
-		return "", err
-	}
-
-	stored := e.Clone()
-	stored.UpdatedAt = updatedAt
-	s.notifyPut(stored)
-	s.emit(ev)
-	return store.VersionOf(stored), nil
+	return s.updateEntityIf(ctx, e, cond)
 }
 
 // DeleteEntity removes an entity. Without cascade, returns store.ErrHasRelations
