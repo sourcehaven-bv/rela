@@ -21,10 +21,15 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
-func seedV(t *testing.T, v store.VersionService, id string, face entity.Face, op store.VersionOp, content string) {
+// guardEntity is the single entity every case here purges. Fixed rather than
+// parameterized: what the cases vary is the GUARD under test, not which
+// entity trips it.
+const guardEntity = "FEAT-1"
+
+func seedV(t *testing.T, v store.VersionService, face entity.Face, op store.VersionOp, content string) {
 	t.Helper()
 	require.NoError(t, v.WriteVersion(t.Context(), store.VersionInput{
-		EntityID: id, Face: face, Op: op, Type: "feature", Content: content,
+		EntityID: guardEntity, Face: face, Op: op, Type: "feature", Content: content,
 		SchemaHash: "s1", Projection: []byte(`{"v":1}`),
 	}))
 }
@@ -36,8 +41,8 @@ func TestPurgeDryRunNeverDeletes(t *testing.T) {
 	e := entity.New("FEAT-1", "feature")
 	e.SetString("title", "live")
 	require.NoError(t, s.CreateEntity(t.Context(), e))
-	seedV(t, v, "FEAT-1", "", store.VersionOpUpdate, "v1")
-	seedV(t, v, "FEAT-1", "", store.VersionOpRename, "v2")
+	seedV(t, v, "", store.VersionOpUpdate, "v1")
+	seedV(t, v, "", store.VersionOpRename, "v2")
 
 	res, err := v.PurgeVersions(t.Context(), store.VersionPurgeRequest{
 		EntityID: "FEAT-1", Selector: store.PurgeSelector{All: true},
@@ -61,7 +66,7 @@ func TestPurgeRefusesARenameRowEvenWithForceLive(t *testing.T) {
 	v := s.VersionStore()
 	e := entity.New("FEAT-1", "feature")
 	require.NoError(t, s.CreateEntity(t.Context(), e))
-	seedV(t, v, "FEAT-1", "", store.VersionOpRename, "renamed")
+	seedV(t, v, "", store.VersionOpRename, "renamed")
 
 	res, err := v.PurgeVersions(t.Context(), store.VersionPurgeRequest{
 		EntityID: "FEAT-1", Selector: store.PurgeSelector{All: true},
@@ -81,7 +86,7 @@ func TestPurgeRefusesALiveRowWithoutForceLive(t *testing.T) {
 	v := s.VersionStore()
 	e := entity.New("FEAT-1", "feature")
 	require.NoError(t, s.CreateEntity(t.Context(), e))
-	seedV(t, v, "FEAT-1", "", store.VersionOpUpdate, "v1")
+	seedV(t, v, "", store.VersionOpUpdate, "v1")
 
 	res, err := v.PurgeVersions(t.Context(), store.VersionPurgeRequest{
 		EntityID: "FEAT-1", Selector: store.PurgeSelector{All: true}, Reason: "r",
@@ -97,8 +102,8 @@ func TestPurgeForceLiveIsScopedToOneFace(t *testing.T) {
 	v := s.VersionStore()
 	e := entity.New("FEAT-1", "feature")
 	require.NoError(t, s.CreateEntity(t.Context(), e))
-	seedV(t, v, "FEAT-1", "", store.VersionOpUpdate, "default")
-	seedV(t, v, "FEAT-1", "draft", store.VersionOpUpdate, "draft")
+	seedV(t, v, "", store.VersionOpUpdate, "default")
+	seedV(t, v, "draft", store.VersionOpUpdate, "draft")
 
 	_, err := v.PurgeVersions(t.Context(), store.VersionPurgeRequest{
 		EntityID: "FEAT-1", Face: "", Selector: store.PurgeSelector{All: true},
@@ -119,7 +124,7 @@ func TestPurgeForceLiveIsScopedToOneFace(t *testing.T) {
 func TestPurgeRefusesAnEmptySelector(t *testing.T) {
 	s := open(t)
 	v := s.VersionStore()
-	seedV(t, v, "FEAT-1", "", store.VersionOpUpdate, "v1")
+	seedV(t, v, "", store.VersionOpUpdate, "v1")
 
 	_, err := v.PurgeVersions(t.Context(), store.VersionPurgeRequest{
 		EntityID: "FEAT-1", Reason: "r",
@@ -142,14 +147,14 @@ func TestPurgeAllUsesTheFencedLineage(t *testing.T) {
 	v := s.VersionStore()
 
 	// Lifetime A: FEAT-1 renamed away to FEAT-2.
-	seedV(t, v, "FEAT-1", "", store.VersionOpUpdate, "old life")
+	seedV(t, v, "", store.VersionOpUpdate, "old life")
 	require.NoError(t, v.WriteVersion(t.Context(), store.VersionInput{
 		EntityID: "FEAT-2", Op: store.VersionOpRename, PrevID: "FEAT-1",
 		Type: "feature", Content: "renamed away",
 		SchemaHash: "s1", Projection: []byte(`{"v":1}`),
 	}))
 	// Lifetime B: a brand-new, unrelated FEAT-1.
-	seedV(t, v, "FEAT-1", "", store.VersionOpCreate, "new unrelated life")
+	seedV(t, v, "", store.VersionOpCreate, "new unrelated life")
 
 	before, err := v.ListVersions(t.Context(), "FEAT-1")
 	require.NoError(t, err)
