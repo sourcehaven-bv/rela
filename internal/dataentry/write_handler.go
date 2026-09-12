@@ -753,7 +753,12 @@ func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Reque
 			Content:         req.Content,
 			ExpectedVersion: string(store.VersionOf(entity)),
 		}
-		updateResult, err := h.manager.PatchEntity(r.Context(), entity.ID, patch)
+		// Fused ref, not the bare id: PatchEntity resolves the face from the
+		// STORED row it loads, and loading by bare id would land on the
+		// default face — so a write to POL-1@published would be authorized
+		// (and applied) against POL-1's default state instead.
+		ref := entityPkg.FormatStateRef(entity.ID, entity.Face)
+		updateResult, err := h.manager.PatchEntity(r.Context(), ref, patch)
 		if err != nil {
 			writePatchError(w, r, err)
 			return
