@@ -435,6 +435,39 @@ Each entry in `fields:` configures one property input:
 > column headers, relation field labels, view-section fields, and Lua flow
 > fields. `rela migrate` will never remove a `label:` you have written.
 
+### The Markdown Body Editor
+
+When a form sets `body: true`, the entity's markdown content is edited in a
+WYSIWYG editor: headings, lists, tables, quotes and code blocks render as they
+will appear on the entity page rather than as markdown source.
+
+**The file on disk stays markdown.** The editor parses the body when it opens
+and writes markdown back when you save. Opening an entity and saving it
+without changing anything writes nothing at all — the editor compares what it
+would produce against what it read, and keeps the original bytes when the
+meaning is unchanged. Your formatting is not rewritten just because you looked
+at a page.
+
+**Toolbar.** Bold, italic, strikethrough and inline code; headings 1-3;
+bullet, numbered and quote blocks; code block; table. A button is highlighted
+when the cursor is already inside that formatting, and pressing it again
+removes it. A button that cannot apply where the cursor is — a heading inside
+a list item, for instance — is greyed out rather than silently doing nothing.
+
+**Tables.** Put the cursor in a table and a second group of buttons appears:
+insert row above/below, insert column left/right, delete row, delete column,
+delete table. A GFM table must keep its header row and at least one body row,
+so the operations that would break that are disabled.
+
+**Linking to another entity.** Type `@` followed by part of a title or ID to
+open a completion menu, then Enter or click to insert. The toolbar's
+connected-nodes button opens a searchable picker for the same thing.
+
+A reference is stored as a plain code span — `` `TKT-007` `` — and displays as
+the entity's title, so the file stays readable outside rela and the title
+cannot go stale. Titles you see are the ones you are permitted to see: a
+reference to an entity your ACL role cannot read stays as the bare ID.
+
 ### File Properties on Forms
 
 A `file`-type property renders a file control: pick or drag a file, see its
