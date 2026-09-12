@@ -5,7 +5,7 @@ title: 'Add native relation-cardinality support to validation rules (relations: 
 kind: enhancement
 priority: medium
 effort: m
-status: backlog
+status: review
 ---
 
 ## Description
