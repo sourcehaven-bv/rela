@@ -378,6 +378,12 @@ const queryParams = computed((): ListParams => {
   const params: ListParams = {
     page: page.value,
     per_page: listConfig.value?.page_size || 25,
+    // Names the configured list so the server can apply its `condition:`.
+    // Sent unconditionally rather than only when a condition exists: the SPA
+    // would otherwise have to know which lists carry one, duplicating a
+    // server-side fact that changes on config reload. An id for a list with
+    // no condition simply resolves to no constraint.
+    list_id: props.listId,
   }
 
   // Add pre-configured filters from list config
