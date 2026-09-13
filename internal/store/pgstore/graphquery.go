@@ -326,11 +326,31 @@ func propCond(b *sqlBuilder, p store.PropPredicate) string {
 			return "TRUE"
 		}
 		return fmt.Sprintf("(%s OR NOT %s)", isEmpty, equalsCond(b, txt, jsn, p.Value))
+	case p.Op == store.PropGreaterEqual, p.Op == store.PropLessEqual:
+		return orderedCond(b, txt, jsn, p.Op, p.Value)
 	case p.Op == store.PropNotEqual:
 		return fmt.Sprintf("(NOT %s AND NOT %s)", isEmpty, equalsCond(b, txt, jsn, p.Value))
 	default:
 		return equalsCond(b, txt, jsn, p.Value)
 	}
+}
+
+// orderedCond renders [store.PropGreaterEqual] / [store.PropLessEqual] as
+// a byte-wise text comparison, matching graphquerynaive's matchesOrdered.
+//
+// The jsonb_typeof guard is load-bearing, not defensive. `->>` renders an
+// array as its JSON text (`["a", "b"]`) where Go's fmt.Sprint gives
+// `[a b]`, so without the guard a range predicate over a list property
+// would return different rows per backend. Excluding the shape is the one
+// answer both can give. A missing key yields SQL NULL, so the comparison
+// is already not-true for an absent property with no extra guard.
+func orderedCond(b *sqlBuilder, txt, jsn string, op store.PropOp, value string) string {
+	cmp := ">="
+	if op == store.PropLessEqual {
+		cmp = "<="
+	}
+	return fmt.Sprintf("(jsonb_typeof(%s) <> 'array' AND %s <> '' AND %s %s %s)",
+		jsn, txt, txt, cmp, b.arg(value))
 }
 
 // equalsCond renders value equality, matching [propmatch] semantics: a

@@ -170,6 +170,47 @@ func RunGraphQueryTests(t *testing.T, f Factory) {
 			"PropNotEqual keeps its filter-DSL meaning: empty is not in the population")
 	})
 
+	// Ordered comparison carries GraphQuery.OrderBy's contract — byte-wise
+	// on the string form — so a range predicate and a sort agree about what
+	// "larger" means. ISO-8601 dates are the motivating shape: their byte
+	// order IS their order.
+	//
+	// The list and empty cases are the parity-critical ones. Go renders a
+	// list as `[a b]` and postgres `->>` renders it as `["a", "b"]`, so any
+	// byte-wise answer over a list would be backend-dependent; both sides
+	// must refuse the shape rather than pick one rendering. Empty is
+	// excluded for the same reason PropNotEqual excludes it, and because
+	// SQL NULL comparison is not true either.
+	t.Run("Props_ordered_comparison", func(t *testing.T) {
+		s := f(t)
+		seedEntityWithProps(t, s, "task", "T-early", map[string]any{"due": "2026-09-01"})
+		seedEntityWithProps(t, s, "task", "T-bound", map[string]any{"due": "2026-09-11"})
+		seedEntityWithProps(t, s, "task", "T-late", map[string]any{"due": "2026-09-20"})
+		seedEntityWithProps(t, s, "task", "T-blank", map[string]any{"due": ""})
+		seedEntityWithProps(t, s, "task", "T-unset", nil)
+		seedEntityWithProps(t, s, "task", "T-list", map[string]any{"due": []string{"2026-09-20", "x"}})
+
+		for _, tc := range []struct {
+			name string
+			op   store.PropOp
+			want []string
+		}{
+			{"gte is inclusive at the bound", store.PropGreaterEqual, []string{"T-bound", "T-late"}},
+			{"lte is inclusive at the bound", store.PropLessEqual, []string{"T-bound", "T-early"}},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				got := runGraphQuery(t, s, store.GraphQuery{
+					EntityType: "task",
+					Props: []store.PropPredicate{
+						{Property: "due", Op: tc.op, Value: "2026-09-11"},
+					},
+				})
+				require.Equal(t, tc.want, got,
+					"empty, unset and list values are outside every ordered range")
+			})
+		}
+	})
+
 	// Value-shape parity. The naive backend compares Go values via
 	// propmatch; pgstore compares jsonb in SQL. Every shape a property
 	// can hold must land on the same answer in both, or a query means

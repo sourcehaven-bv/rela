@@ -370,6 +370,12 @@ func matchesProps(e *entity.Entity, props []store.PropPredicate) bool {
 			}
 			continue
 		}
+		if p.Op == store.PropGreaterEqual || p.Op == store.PropLessEqual {
+			if !matchesOrdered(raw, p.Op, p.Value) {
+				return false
+			}
+			continue
+		}
 		op := propmatch.OpEqual
 		if p.Op == store.PropNotEqual {
 			op = propmatch.OpNotEqual
@@ -379,6 +385,31 @@ func matchesProps(e *entity.Entity, props []store.PropPredicate) bool {
 		}
 	}
 	return true
+}
+
+// matchesOrdered decides [store.PropGreaterEqual] / [store.PropLessEqual]
+// by comparing string forms byte-wise, matching [Order]'s semantics so a
+// range predicate and a sort agree about what "larger" means.
+//
+// Empty and LIST values never match. Emptiness follows the PropNotEqual
+// reading (an unset value is in no ordered population) and SQL's NULL
+// comparison. Lists are refused because the two backends render them
+// differently — Go's fmt.Sprint gives `[a b]` where postgres `->>` gives
+// `["a", "b"]` — so any byte-wise answer would be backend-dependent. See
+// the [store.PropGreaterEqual] doc.
+func matchesOrdered(raw any, op store.PropOp, value string) bool {
+	if propmatch.IsEmpty(raw) {
+		return false
+	}
+	switch raw.(type) {
+	case []string, []any:
+		return false
+	}
+	s := fmt.Sprint(raw)
+	if op == store.PropGreaterEqual {
+		return s >= value
+	}
+	return s <= value
 }
 
 func matchesPredicate(

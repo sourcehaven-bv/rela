@@ -201,6 +201,38 @@ const (
 	// matches everything; callers lowering `p ~= ''` should emit nothing
 	// instead of relying on that.
 	PropNotEqualOrEmpty
+	// PropGreaterEqual and PropLessEqual compare the property's string form
+	// byte-wise against Value: `>=` and `<=` respectively.
+	//
+	// # Byte order, and why that is enough
+	//
+	// These carry the SAME contract [GraphQuery.OrderBy] already does —
+	// "sorts by the STRING form of each property, byte-wise" — and are
+	// sound for exactly the types that sorting is: those whose byte order
+	// IS their order. An ISO-8601 date is the motivating case: `2026-09-11`
+	// sorts and compares identically as text and as a date, which is why
+	// [internal/queryplan.StringShaped] already lists date and datetime.
+	//
+	// The store still does not consult the metamodel, so it cannot check
+	// this itself. **The CALLER must gate on the declared type** — that is
+	// where the metamodel is — and must not emit these for an `integer`
+	// property, where byte order is not numeric order ("10" < "9").
+	//
+	// # Empty and list values never match
+	//
+	// An empty property is outside any ordered range, matching the
+	// [PropNotEqual] reading (an unset value is not in the population) and
+	// SQL's NULL comparison, which is likewise not true.
+	//
+	// A LIST value never matches either, and that is load-bearing rather
+	// than incidental: Go renders []string{"a","b"} as `[a b]` while
+	// postgres `->>` renders it as `["a", "b"]`, so a byte-wise comparison
+	// against a list would give a DIFFERENT answer per backend. Refusing
+	// the shape outright is the only reading both can share. Equality does
+	// not have this problem because it branches on jsonb_typeof and treats
+	// an array as membership.
+	PropGreaterEqual
+	PropLessEqual
 )
 
 // PropPredicate restricts a GraphQuery to entities whose own property
