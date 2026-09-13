@@ -83,10 +83,12 @@ Minor findings from code review NOT acted on, with reasons:
 - *Duplicated parent double-counts* — unreachable: `applyViewTraverse` dedupes
   collections by id, so `parents` is unique. Left as-is rather than adding a
   guard for a state nothing can construct.
-- *Accessibility of the count badge and cells* — added an `aria-label` to the
-  count. The deeper point (a nested section with `columns:` has no header
-  semantics, unlike `display: table`'s real `<thead>`) is legitimate and
-  logged as a follow-up rather than redesigned here.
+- *Accessibility of the count badge and cells* — the count badge was
+  subsequently REMOVED entirely (it restated what the expanded rows already
+  show), so its `aria-label` is moot. The deeper point (a nested section with
+  per-type columns has no header semantics, unlike `display: table`'s real
+  `<thead>`) is legitimate and logged as a follow-up rather than redesigned
+  here.
 
 ## Acceptance Verification
 
