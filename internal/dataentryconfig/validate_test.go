@@ -3052,3 +3052,66 @@ func TestValidateLists_CreateWorld(t *testing.T) {
 		})
 	}
 }
+
+// A kanban `condition:` is refused until the board evaluates it server-side.
+// Accepting a key that validates and then does nothing is the silent no-op
+// BUG-F1LTV0 and BUG-MYN56J are both about. Delete this test — and the guard
+// in validateKanbans — when the board honours a condition.
+func TestValidateConfig_KanbanConditionRefusedForNow(t *testing.T) {
+	mm := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"taak": {Properties: map[string]metamodel.PropertyDef{
+				"status": {Type: metamodel.PropertyTypeString},
+				"titel":  {Type: metamodel.PropertyTypeString},
+			}},
+		},
+	}
+	src := []byte(`
+kanbans:
+  bord:
+    entity_type: taak
+    column_property: status
+    condition: "entity.status ~= 'gereed'"
+    card:
+      title: titel
+`)
+	var cfg Config
+	if err := yaml.Unmarshal(src, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	err := ValidateConfig(src, &cfg, mm)
+	if err == nil {
+		t.Fatal("expected a kanban condition to be refused")
+	}
+	if !strings.Contains(err.Error(), "condition is not supported on a kanban yet") {
+		t.Errorf("error should say why and point elsewhere, got: %v", err)
+	}
+}
+
+// The same config on a LIST is accepted — the guard is kanban-specific, not a
+// blanket refusal of the key.
+func TestValidateConfig_ListConditionAccepted(t *testing.T) {
+	mm := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"taak": {Properties: map[string]metamodel.PropertyDef{
+				"status": {Type: metamodel.PropertyTypeString},
+				"titel":  {Type: metamodel.PropertyTypeString},
+			}},
+		},
+	}
+	src := []byte(`
+lists:
+  open:
+    entity_type: taak
+    condition: "entity.status ~= 'gereed'"
+    columns:
+      - property: titel
+`)
+	var cfg Config
+	if err := yaml.Unmarshal(src, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateConfig(src, &cfg, mm); err != nil {
+		t.Fatalf("a list condition must be accepted: %v", err)
+	}
+}

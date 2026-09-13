@@ -793,12 +793,15 @@ type Kanban struct {
 	CreateForm       string           `yaml:"create_form,omitempty" json:"create_form,omitempty"`
 	Filters          []FilterConfig   `yaml:"filters,omitempty" json:"filters,omitempty"`
 	FilterControls   []FilterControl  `yaml:"filter_controls,omitempty" json:"filter_controls,omitempty"`
-	// Condition is a predicate expression ANDed with Filters. See
-	// [List.Condition] — same key, same semantics, same load-time compile.
+	// Condition mirrors [List.Condition], but is NOT YET SUPPORTED on a
+	// kanban and is refused at config load.
 	//
-	// It is the answer to the board rule Filters cannot state: "every open
-	// card, plus only recently-finished ones", which is a disjunction and
-	// therefore inexpressible as a flat ANDed filter list.
+	// The field exists so the shape is settled and the compiler already
+	// handles both surfaces; what is missing is the board's server-side read
+	// path (it still filters client-side). Accepting the key meanwhile would
+	// validate an expression and then ignore it — the silent no-op class of
+	// BUG-F1LTV0 and BUG-MYN56J. Drop the guard in validateKanbans when the
+	// board evaluates it.
 	Condition string `yaml:"condition,omitempty" json:"condition,omitempty"`
 }
 
