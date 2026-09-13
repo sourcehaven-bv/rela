@@ -254,6 +254,19 @@ type App struct {
 	// construction rather than silently matching everything.
 	nextActionMatchers NextActionMatcherFunc
 
+	// viewConditions resolves a list's or kanban's compiled `condition:`.
+	// Injected for the same reason nextActionMatchers is: the compiler lives
+	// above this package, and arch-lint forbids dataentry importing
+	// conditionlint or predicate.
+	//
+	// Nil when no deployment wired it, which means every view behaves as it
+	// did before conditions existed. That is the safe direction here — a
+	// condition only ever NARROWS a view, so an unwired lookup shows a
+	// superset of the configured view and never anything the ACL would
+	// withhold. It is not safe for the reverse, which is why a condition
+	// that fails to COMPILE is a startup error rather than a silent widening.
+	viewConditions ViewConditionLookup
+
 	// visibleReader is the ACL-bounded entity-read seam (TKT-N26KLB): the
 	// entity-read analog of visibleSearcher. Read handlers gate single-GET
 	// and include-filtering through it so the read gate is applied
