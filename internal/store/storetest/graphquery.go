@@ -130,6 +130,46 @@ func RunGraphQueryTests(t *testing.T, f Factory) {
 			"an entity with no status is not in the 'status != doing' population")
 	})
 
+	// PropNotEqualOrEmpty is the Lua `~=` reading and the deliberate
+	// counterpart to the case above: the SAME rows, plus the unset and
+	// blank ones. It exists because internal/predicate's documented
+	// equality table has `nil == anything -> false`, so `nil ~= 'doing'`
+	// is TRUE — while PropNotEqual (the filter-DSL reading) excludes it.
+	//
+	// The pairing is the point: lowering a predicate `~=` to PropNotEqual
+	// would drop rows the Go pass keeps, which is a pre-filter removing
+	// rows the authoritative pass would return. Pinned on every backend
+	// because pgstore renders it in SQL and the naive evaluator decides it
+	// in Go.
+	t.Run("Props_not_equal_or_empty_includes_unset", func(t *testing.T) {
+		s := f(t)
+		seedEntityWithProps(t, s, "task", "T-doing", map[string]any{"status": "doing"})
+		seedEntityWithProps(t, s, "task", "T-todo", map[string]any{"status": "todo"})
+		seedEntityWithProps(t, s, "task", "T-blank", map[string]any{"status": ""})
+		seedEntityWithProps(t, s, "task", "T-unset", nil)
+
+		got := runGraphQuery(t, s, store.GraphQuery{
+			EntityType: "task",
+			Props: []store.PropPredicate{
+				{Property: "status", Op: store.PropNotEqualOrEmpty, Value: "doing"},
+			},
+		})
+		require.Equal(t, []string{"T-blank", "T-todo", "T-unset"}, got,
+			"Lua `status ~= doing` is true for an unset or blank status")
+
+		// The two ops must differ ONLY on the empty rows. Asserting the
+		// difference directly keeps a future change to either one from
+		// quietly collapsing them into the same operator.
+		narrow := runGraphQuery(t, s, store.GraphQuery{
+			EntityType: "task",
+			Props: []store.PropPredicate{
+				{Property: "status", Op: store.PropNotEqual, Value: "doing"},
+			},
+		})
+		require.Equal(t, []string{"T-todo"}, narrow,
+			"PropNotEqual keeps its filter-DSL meaning: empty is not in the population")
+	})
+
 	// Value-shape parity. The naive backend compares Go values via
 	// propmatch; pgstore compares jsonb in SQL. Every shape a property
 	// can hold must land on the same answer in both, or a query means

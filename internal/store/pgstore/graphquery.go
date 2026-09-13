@@ -317,6 +317,15 @@ func propCond(b *sqlBuilder, p store.PropPredicate) string {
 		return isEmpty
 	case p.Value == "" && p.Op == store.PropNotEqual:
 		return "NOT " + isEmpty
+	case p.Op == store.PropNotEqualOrEmpty:
+		// The Lua `~=` reading: not this value, OR not set at all. An empty
+		// Value makes this degenerate (everything matches); rendering it as
+		// TRUE keeps the SQL honest rather than silently meaning something
+		// narrower.
+		if p.Value == "" {
+			return "TRUE"
+		}
+		return fmt.Sprintf("(%s OR NOT %s)", isEmpty, equalsCond(b, txt, jsn, p.Value))
 	case p.Op == store.PropNotEqual:
 		return fmt.Sprintf("(NOT %s AND NOT %s)", isEmpty, equalsCond(b, txt, jsn, p.Value))
 	default:

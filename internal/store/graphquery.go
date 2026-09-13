@@ -177,6 +177,30 @@ const (
 	// PropNotEqual is the negation. With an empty Value it means "is not
 	// empty".
 	PropNotEqual
+	// PropNotEqualOrEmpty is PropNotEqual WIDENED to also match an empty
+	// property: "not this value, or not set at all".
+	//
+	// It exists because [internal/predicate] and [internal/filter] answer
+	// `p ~= v` differently on an unset property, and both are right for
+	// their own contract:
+	//
+	//   - filter (and therefore PropNotEqual) names a POPULATION: an entity
+	//     with no status is not in the "status is something other than
+	//     doing" population. See the note on [PropPredicate].
+	//   - predicate is a Lua expression subset, and its documented equality
+	//     table has `nil == anything -> false`, so `nil ~= 'doing'` is
+	//     necessarily TRUE.
+	//
+	// Lowering a predicate `~=` to PropNotEqual would therefore DROP every
+	// row whose property is unset — rows the Go pass keeps — which is a
+	// pre-filter removing rows the authoritative pass would return, the one
+	// thing a pushdown may never do. This operator is the sound lowering
+	// target; PropNotEqual keeps its filter-DSL meaning untouched.
+	//
+	// With an EMPTY Value it is degenerate ("not empty, or empty") and
+	// matches everything; callers lowering `p ~= ''` should emit nothing
+	// instead of relying on that.
+	PropNotEqualOrEmpty
 )
 
 // PropPredicate restricts a GraphQuery to entities whose own property
@@ -191,11 +215,18 @@ const (
 //	{Property: "status", Op: PropEqual, Value: "doing"}  // status=doing
 //	{Property: "billing_email", Op: PropEqual}           // is empty
 //	{Property: "billing_email", Op: PropNotEqual}        // is not empty
+//	{Property: "status", Op: PropNotEqualOrEmpty, Value: "doing"} // status~=doing (Lua)
 //
 // Note that an EMPTY property does not satisfy a PropNotEqual against a
 // non-empty Value: an entity with no status is not in the "status is
 // something other than doing" population. Treating it as a match would
 // silently widen every exclusion filter to include unset rows.
+//
+// [PropNotEqualOrEmpty] is the deliberate opposite reading, for lowering a
+// [internal/predicate] `~=` whose Lua semantics DO match an unset property.
+// The two ops differ only on empty values; picking the wrong one is a
+// silent wrong answer in one direction or the other, so choose by which
+// dialect authored the comparison.
 type PropPredicate struct {
 	Property string
 	Op       PropOp

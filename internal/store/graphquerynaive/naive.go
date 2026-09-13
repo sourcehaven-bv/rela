@@ -355,11 +355,26 @@ func matchesProps(e *entity.Entity, props []store.PropPredicate) bool {
 			}
 			continue
 		}
+		raw := e.Properties[p.Property]
+		// PropNotEqualOrEmpty is PropNotEqual widened to accept an unset
+		// property — the Lua `~=` reading. propmatch deliberately answers
+		// the filter-DSL question instead (empty is not in the population),
+		// so the empty case is decided here rather than by adding a second
+		// meaning to propmatch.Decide, which internal/filter also depends on.
+		if p.Op == store.PropNotEqualOrEmpty {
+			if propmatch.IsEmpty(raw) {
+				continue
+			}
+			if propmatch.Decide(raw, propmatch.OpNotEqual, p.Value) != propmatch.Match {
+				return false
+			}
+			continue
+		}
 		op := propmatch.OpEqual
 		if p.Op == store.PropNotEqual {
 			op = propmatch.OpNotEqual
 		}
-		if propmatch.Decide(e.Properties[p.Property], op, p.Value) != propmatch.Match {
+		if propmatch.Decide(raw, op, p.Value) != propmatch.Match {
 			return false
 		}
 	}
