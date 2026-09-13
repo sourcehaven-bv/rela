@@ -170,6 +170,57 @@ func RunGraphQueryTests(t *testing.T, f Factory) {
 			"PropNotEqual keeps its filter-DSL meaning: empty is not in the population")
 	})
 
+	// Narrowing is the caller-supplied disjunction, and the assertion that
+	// matters is that it NARROWS: it is ANDed with everything else, never
+	// OR-ed into the authorization predicates. A caller branch that became
+	// an alternative route to authorization would be a privilege
+	// escalation, so the composition is pinned on every backend rather than
+	// left to each one's SQL.
+	t.Run("Narrowing_is_ANDed_not_ORed", func(t *testing.T) {
+		s := f(t)
+		seedEntityWithProps(t, s, "task", "T-open-mine",
+			map[string]any{"status": "open", "owner": "me"})
+		seedEntityWithProps(t, s, "task", "T-open-yours",
+			map[string]any{"status": "open", "owner": "you"})
+		seedEntityWithProps(t, s, "task", "T-done-mine",
+			map[string]any{"status": "done", "owner": "me"})
+
+		// Props is the ceiling stand-in (status=open); Narrowing is the
+		// caller's filter (owner=me OR owner=nobody). A row must satisfy
+		// BOTH, so T-done-mine is excluded even though it matches a
+		// narrowing branch — that exclusion is the escalation guard.
+		got := runGraphQuery(t, s, store.GraphQuery{
+			EntityType: "task",
+			Props: []store.PropPredicate{
+				{Property: "status", Op: store.PropEqual, Value: "open"},
+			},
+			Narrowing: []store.NarrowBranch{
+				{Props: []store.PropPredicate{{Property: "owner", Op: store.PropEqual, Value: "me"}}},
+				{Props: []store.PropPredicate{{Property: "owner", Op: store.PropEqual, Value: "nobody"}}},
+			},
+		})
+		require.Equal(t, []string{"T-open-mine"}, got,
+			"a narrowing branch must not admit a row the rest of the query excludes")
+
+		// Within a branch the props are ANDed; across branches they are ORed.
+		both := runGraphQuery(t, s, store.GraphQuery{
+			EntityType: "task",
+			Narrowing: []store.NarrowBranch{
+				{Props: []store.PropPredicate{
+					{Property: "status", Op: store.PropEqual, Value: "done"},
+					{Property: "owner", Op: store.PropEqual, Value: "me"},
+				}},
+				{Props: []store.PropPredicate{{Property: "owner", Op: store.PropEqual, Value: "you"}}},
+			},
+		})
+		require.Equal(t, []string{"T-done-mine", "T-open-yours"}, both,
+			"branches are ORed; props within a branch are ANDed")
+
+		// No branches is no constraint, not an empty result.
+		none := runGraphQuery(t, s, store.GraphQuery{EntityType: "task"})
+		require.Len(t, none, 3, "an absent Narrowing constrains nothing")
+	})
+
 	// Ordered comparison carries GraphQuery.OrderBy's contract — byte-wise
 	// on the string form — so a range predicate and a sort agree about what
 	// "larger" means. ISO-8601 dates are the motivating shape: their byte

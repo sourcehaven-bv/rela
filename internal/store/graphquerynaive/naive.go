@@ -302,6 +302,12 @@ func matches(ctx context.Context, r Reader, e *entity.Entity, q store.GraphQuery
 	if !matchesProps(e, q.Props) {
 		return false, nil
 	}
+	// Caller-supplied narrowing, ANDed with everything else including Any.
+	// Checked here with the other in-memory predicates, and BEFORE the Any
+	// check below, which returns rather than falling through.
+	if !matchesNarrowing(e, q.Narrowing) {
+		return false, nil
+	}
 	if q.HasInbound != nil {
 		ok, err := matchesPredicate(ctx, r, e, *q.HasInbound, store.DirectionIncoming)
 		if err != nil || !ok {
@@ -321,6 +327,24 @@ func matches(ctx context.Context, r Reader, e *entity.Entity, q store.GraphQuery
 		return matchesAny(ctx, r, e, q.Any)
 	}
 	return true, nil
+}
+
+// matchesNarrowing reports whether at least one caller-supplied branch holds
+// (a disjunction), each branch being a conjunction of property predicates.
+//
+// No branches means no constraint. An EMPTY branch holds, making the whole
+// disjunction vacuous — see [store.NarrowBranch]; a caller must drop the
+// Narrowing rather than emit one.
+func matchesNarrowing(e *entity.Entity, branches []store.NarrowBranch) bool {
+	if len(branches) == 0 {
+		return true
+	}
+	for _, br := range branches {
+		if matchesProps(e, br.Props) {
+			return true
+		}
+	}
+	return false
 }
 
 // matchesAny reports whether at least one branch holds for e's stored face.

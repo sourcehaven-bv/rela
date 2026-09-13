@@ -67,7 +67,40 @@ type GraphQuery struct {
 	// set is applied to the CANDIDATE rows before world ranking, so the
 	// answer is exact at the store and paging, counts and search stay honest
 	// with no post-filter.
+	// Any is AUTHORIZATION-derived and belongs to the ACL layer alone. It
+	// is a CEILING: it says which rows the principal may see at all. See
+	// [Narrowing] for the caller-supplied counterpart, and do not append a
+	// caller's branches here — the two are different types precisely so
+	// that mistake cannot compile.
 	Any []GraphBranch
+
+	// Narrowing is a disjunction supplied by a CALLER (a view's
+	// `condition:`, a report's filter) rather than by the ACL. It is ANDed
+	// with everything above, including [GraphQuery.Any].
+	//
+	// # Why this is a separate field and a separate type
+	//
+	// Both this and Any are "a list of OR-ed branches", so the obvious
+	// implementation is to reuse Any. That is a privilege-escalation bug.
+	// Any is OR-ed internally, so appending caller branches to it yields
+	//
+	//	acl_a OR acl_b OR caller_x
+	//
+	// when the required meaning is
+	//
+	//	(acl_a OR acl_b) AND caller_x
+	//
+	// In the first form a caller's branch is an ALTERNATIVE ROUTE TO
+	// AUTHORIZATION: a principal who matches no ACL branch is admitted by
+	// matching a display filter. Every test that only checks "the right
+	// rows are shown" still passes, because the escalation is visible only
+	// to a principal the test does not use.
+	//
+	// The ceiling may only ever NARROW — the same rule the ACL policy layer
+	// states for grants, so a bug fails toward less access. Keeping the two
+	// as distinct types ([GraphBranch] vs [NarrowBranch]) makes the wrong
+	// append a compile error rather than a review catch.
+	Narrowing []NarrowBranch
 
 	// OrderBy, Limit and Offset page a ROW query (GraphQuery,
 	// GraphQueryHeaders) inside the backend (TKT-1U8XYN), so a list page
@@ -156,6 +189,22 @@ func GraphQueryHeaders(ctx context.Context, gq GraphQueryer, q GraphQuery) iter.
 type GraphBranch struct {
 	HasInbound *RelationPredicate
 	FaceIn     []entity.Face
+}
+
+// NarrowBranch is one arm of [GraphQuery.Narrowing]: a conjunction of
+// property predicates, OR-ed with the other arms. An EMPTY branch holds for
+// every row, which makes the whole disjunction vacuous — a caller lowering
+// an unsatisfiable arm must drop the Narrowing entirely rather than emit an
+// empty branch.
+//
+// Deliberately NOT [GraphBranch], and deliberately carrying no relation or
+// face predicate. Faces and conferred roles are authorization concepts; a
+// caller narrowing a result set has no business expressing them, and the
+// type is what enforces that rather than a comment nobody reads. See
+// [GraphQuery.Narrowing] for why sharing one type would be a privilege
+// escalation.
+type NarrowBranch struct {
+	Props []PropPredicate
 }
 
 // PropOp is the comparison a [PropPredicate] applies. Deliberately only

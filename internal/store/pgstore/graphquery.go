@@ -231,7 +231,36 @@ func buildPredicateParts(b *sqlBuilder, q store.GraphQuery, typeArg string) (wit
 		with = append(with, w...)
 		conds = append(conds, cond)
 	}
+	if len(q.Narrowing) > 0 {
+		conds = append(conds, buildNarrowingSQL(b, q.Narrowing))
+	}
 	return with, conds
+}
+
+// buildNarrowingSQL renders [store.GraphQuery.Narrowing] as ONE conjunct: a
+// disjunction of per-branch property conjunctions.
+//
+// It is a SEPARATE conjunct from buildAnySQL's, which is the whole point of
+// the field being separate — folding caller branches into the Any disjunction
+// would make them an alternative route to authorization rather than a
+// restriction on top of it. See [store.GraphQuery.Narrowing].
+//
+// An empty branch renders TRUE (it constrains nothing), matching
+// graphquerynaive's matchesNarrowing.
+func buildNarrowingSQL(b *sqlBuilder, branches []store.NarrowBranch) string {
+	parts := make([]string, 0, len(branches))
+	for _, br := range branches {
+		if len(br.Props) == 0 {
+			parts = append(parts, "TRUE")
+			continue
+		}
+		conj := make([]string, 0, len(br.Props))
+		for _, p := range br.Props {
+			conj = append(conj, propCond(b, p))
+		}
+		parts = append(parts, "("+strings.Join(conj, " AND ")+")")
+	}
+	return "(" + strings.Join(parts, " OR ") + ")"
 }
 
 // buildAnySQL renders [store.GraphQuery.Any] as ONE conjunct: a disjunction
