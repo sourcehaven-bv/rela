@@ -2,8 +2,11 @@ package dataentry
 
 import (
 	"context"
+	"errors"
 
+	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
 // ViewConditionMatcher evaluates one view's compiled `condition:` against a
@@ -36,6 +39,21 @@ type ViewConditionMatcher interface {
 // matching conditionlint.ViewConditionKind — spelled as plain strings here so
 // the seam carries no import from the compiling package.
 type ViewConditionLookup func(kind, id string) (ViewConditionMatcher, bool)
+
+// ViewConditionFunc compiles every configured view `condition:` against the
+// current config and metamodel, returning the lookup plus one message per
+// problem.
+//
+// The consumer-side seam for the predicate compiler, mirroring
+// [NextActionMatcherFunc]: arch-lint keeps the condition engine above this
+// package, so the composition root supplies an implementation.
+//
+// Takes cfg + meta at call time rather than returning a prebuilt lookup
+// because both reload at runtime — a lookup captured at boot would keep
+// evaluating a condition the operator has since edited.
+type ViewConditionFunc func(
+	cfg *dataentryconfig.Config, meta *metamodel.Metamodel,
+) (ViewConditionLookup, []string)
 
 // View kinds and the request parameter that names a list.
 //
@@ -72,6 +90,87 @@ func viewConditionFor(lookup ViewConditionLookup, kind, id string) ViewCondition
 		return nil
 	}
 	return m
+}
+
+// AdaptViewConditions converts a compiler that returns a STRUCTURALLY
+// identical matcher under its own name into a [ViewConditionFunc].
+//
+// The composition root cannot name this package's types — dataentry's own
+// tests import appbuild, so doing so would close an import cycle — and while
+// Go assigns the two INTERFACES freely, it will not assign the function types
+// wrapping them. This adapter is that one conversion, kept here (where both
+// halves are already visible) rather than inlined at every wiring site.
+//
+// The type parameter is what makes the drift visible: a supplier whose
+// matcher stops satisfying [ViewConditionMatcher] fails to compile at the
+// call, not at some later evaluation.
+func AdaptViewConditions[M ViewConditionMatcher](
+	fn func(*dataentryconfig.Config, *metamodel.Metamodel) (func(kind, id string) (M, bool), []string),
+) ViewConditionFunc {
+	if fn == nil {
+		return nil
+	}
+	return func(cfg *dataentryconfig.Config, meta *metamodel.Metamodel) (ViewConditionLookup, []string) {
+		lookup, problems := fn(cfg, meta)
+		if lookup == nil {
+			return nil, problems
+		}
+		return func(kind, id string) (ViewConditionMatcher, bool) {
+			m, ok := lookup(kind, id)
+			if !ok {
+				// Do not return m: a nil M in a non-nil interface is the
+				// typed-nil trap, and callers test the result for nil.
+				return nil, false
+			}
+			return m, true
+		}, problems
+	}
+}
+
+// SetViewConditions injects the predicate compiler backing a list's or
+// kanban's `condition:`.
+//
+// Separate from NewApp for the same reason as [App.SetNextActionMatchers]:
+// the compiler lives above this package, so the composition root supplies it.
+// Rejects nil for the same reason too — a silently absent compiler would
+// leave every condition unevaluated, showing rows the operator's view
+// excludes.
+//
+// A deployment that never calls this keeps pre-condition behavior: views
+// show their ACL-scoped superset. That is the safe direction, because a
+// condition only ever NARROWS; it is not safe in reverse, which is why a
+// condition that fails to COMPILE is a startup error instead.
+func (a *App) SetViewConditions(fn ViewConditionFunc) error {
+	if fn == nil {
+		return errors.New("dataentry.SetViewConditions: func must be non-nil")
+	}
+	a.viewConditions = fn
+	return nil
+}
+
+// viewCondition resolves the matcher for one view against the CURRENT config
+// and metamodel.
+//
+// Compiles per call rather than caching: config and metamodel reload at
+// runtime, so a lookup captured at boot would evaluate an expression the
+// operator has since edited — the trap the nextActionMatchers field documents.
+// Compilation is a parse of one short expression and the Evaluator memoizes
+// programs, so this is cheap next to the store read it gates.
+//
+// Problems are dropped: validation refused a config whose conditions do not
+// compile, so a problem here can only arise in a deployment that skipped
+// validation, where the safe answer is the unconstrained (ACL-scoped) view
+// rather than a request that fails.
+func (a *App) viewCondition(kind, id string) ViewConditionMatcher {
+	if a.viewConditions == nil || id == "" {
+		return nil
+	}
+	s := a.State()
+	lookup, problems := a.viewConditions(s.Cfg, s.Meta)
+	if len(problems) > 0 {
+		return nil
+	}
+	return viewConditionFor(lookup, kind, id)
 }
 
 // applyViewCondition filters rows by a view's condition, preserving order.

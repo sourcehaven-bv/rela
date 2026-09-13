@@ -1,10 +1,12 @@
 package conditionlint
 
 import (
+	"context"
 	"fmt"
 	"sort"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
 	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
@@ -73,6 +75,76 @@ func CompileViewConditions(
 		programs = nil
 	}
 	return programs, problems
+}
+
+// ViewConditionMatcher evaluates one view's compiled condition against a row.
+//
+// The entity type is fixed at compile time (a view declares exactly one), so
+// unlike [NextActionMatcher] there is no per-type program map and no
+// unreachable-type case to refuse.
+type ViewConditionMatcher struct {
+	ev         *predicatefns.Evaluator
+	prog       *predicate.Program
+	entityType string
+}
+
+// Matches evaluates the condition against the identity on ctx.
+//
+// An evaluation error is SURFACED, not swallowed as a non-match. A missing
+// date property is an eval error, and treating it as "does not match" would
+// silently narrow the view with no diagnostic — the inverse of BUG-WHEREWIDE
+// and exactly the silent-wrong-answer class this feature exists to remove.
+func (m *ViewConditionMatcher) Matches(ctx context.Context, e *entity.Entity) (bool, error) {
+	if m == nil || e == nil {
+		return false, nil
+	}
+	ok, err := m.ev.MatchesAs(ctx, m.prog, m.entityType, e.ID, e.Properties)
+	if err != nil {
+		return false, fmt.Errorf("conditionlint: evaluating view condition for %s: %w", e.ID, err)
+	}
+	return ok, nil
+}
+
+// ViewConditionMatchers compiles every view condition and returns a lookup
+// keyed by (kind, id) — the pair the config uses, since a list and a kanban
+// may share an id.
+//
+// Returns nil when any condition fails to compile: the same config was
+// already refused by validation, so a partial set would only be reachable in
+// a deployment that skipped it, and evaluating SOME conditions while silently
+// ignoring others is worse than evaluating none.
+func ViewConditionMatchers(
+	cfg *dataentryconfig.Config, meta *metamodel.Metamodel,
+) (lookup func(kind, id string) (*ViewConditionMatcher, bool), problems []string) {
+	programs, problems := CompileViewConditions(cfg, meta)
+	if len(problems) > 0 {
+		return nil, problems
+	}
+	if len(programs) == 0 {
+		return nil, nil
+	}
+	ev := predicatefns.NewEvaluator(meta)
+	matchers := make(map[ViewConditionKey]*ViewConditionMatcher, len(programs))
+	for key, prog := range programs {
+		matchers[key] = &ViewConditionMatcher{ev: ev, prog: prog, entityType: entityTypeFor(cfg, key)}
+	}
+	return func(kind, id string) (*ViewConditionMatcher, bool) {
+		m, ok := matchers[ViewConditionKey{ViewConditionKind(kind), id}]
+		return m, ok
+	}, nil
+}
+
+// entityTypeFor reads back the entity type a key's view declares. Compilation
+// already proved it non-empty and known, so this cannot fail for a key that
+// reached the matcher map.
+func entityTypeFor(cfg *dataentryconfig.Config, key ViewConditionKey) string {
+	switch key.Kind {
+	case ViewConditionList:
+		return cfg.Lists[key.ID].EntityType
+	case ViewConditionKanban:
+		return cfg.Kanbans[key.ID].EntityType
+	}
+	return ""
 }
 
 // compileOne compiles a single surface's condition, appending a diagnostic

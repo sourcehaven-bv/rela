@@ -265,7 +265,7 @@ type App struct {
 	// superset of the configured view and never anything the ACL would
 	// withhold. It is not safe for the reverse, which is why a condition
 	// that fails to COMPILE is a startup error rather than a silent widening.
-	viewConditions ViewConditionLookup
+	viewConditions ViewConditionFunc
 
 	// visibleReader is the ACL-bounded entity-read seam (TKT-N26KLB): the
 	// entity-read analog of visibleSearcher. Read handlers gate single-GET

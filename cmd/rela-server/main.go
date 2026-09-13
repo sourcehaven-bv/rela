@@ -495,6 +495,14 @@ func main() {
 		os.Exit(1)
 	}
 
+	// The same bridge for a list's or kanban's `condition:`.
+	if err := app.SetViewConditions(
+		dataentry.AdaptViewConditions(appbuild.ViewConditions),
+	); err != nil {
+		slog.Error("failed to wire view conditions", "error", err)
+		os.Exit(1)
+	}
+
 	// Start file watcher for live-reload.
 	// The watcher goroutine is cleaned up on process exit.
 	if err := app.StartWatching(); err != nil {
