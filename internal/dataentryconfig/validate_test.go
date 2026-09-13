@@ -73,6 +73,13 @@ func testMetamodel() *metamodel.Metamodel {
 				From:  []string{"ticket"},
 				To:    []string{"category"},
 			},
+			// A heterogeneous relation, so tests can cover the case a
+			// third of rela's real relations are in: several `to:` types.
+			"relates-to": {
+				Label: "relates to",
+				From:  []string{"ticket"},
+				To:    []string{"ticket", "category"},
+			},
 			"blocks": {
 				Label: "blocks",
 				From:  []string{"ticket"},
@@ -3050,5 +3057,198 @@ func TestValidateLists_CreateWorld(t *testing.T) {
 					tt.createWorld, joined, tt.wantErr)
 			}
 		})
+	}
+}
+
+// TestValidateConfig_NestedSection sweeps the `display: nested` checks. Each
+// case builds a two-step traverse (entry → blocked → deeper) and varies only
+// the section, so a failure points at the rule under test rather than at the
+// fixture.
+func TestValidateConfig_NestedSection(t *testing.T) {
+	twoStep := []ViewTraverse{
+		{From: "entry", Follow: "blocks", CollectAs: "blocked"},
+		{From: "blocked", Follow: "blocks", CollectAs: "deeper"},
+	}
+
+	tests := []struct {
+		name     string
+		traverse []ViewTraverse
+		section  ViewSection
+		wantErr  string // substring; empty means the config must validate
+	}{
+		{
+			name:     "valid two-level nesting",
+			traverse: twoStep,
+			section:  ViewSection{Source: "blocked", Display: "nested", Children: "deeper"},
+		},
+		{
+			name:     "children omitted",
+			traverse: twoStep,
+			section:  ViewSection{Source: "blocked", Display: "nested"},
+			wantErr:  "no children",
+		},
+		{
+			name:     "children names an unknown collection",
+			traverse: twoStep,
+			section:  ViewSection{Source: "blocked", Display: "nested", Children: "nope"},
+			wantErr:  `unknown collection "nope" in children`,
+		},
+		{
+			name:     "children equals source",
+			traverse: twoStep,
+			section:  ViewSection{Source: "blocked", Display: "nested", Children: "blocked"},
+			wantErr:  "under itself",
+		},
+		{
+			// The child rule walks from `entry`, so its results are siblings of
+			// the section's rows, not their children. Renders an empty tree.
+			name: "children rule does not traverse from source",
+			traverse: []ViewTraverse{
+				{From: "entry", Follow: "blocks", CollectAs: "blocked"},
+				{From: "entry", Follow: "belongs-to", CollectAs: "cats"},
+			},
+			section: ViewSection{Source: "blocked", Display: "nested", Children: "cats"},
+			wantErr: "must start from the section's source",
+		},
+		{
+			// The recursive walk reports ids level by level without retaining
+			// which node each came from, so the tree would render flat.
+			name: "children collected recursively",
+			traverse: []ViewTraverse{
+				{From: "entry", Follow: "blocks", CollectAs: "blocked"},
+				{From: "blocked", Follow: "blocks", CollectAs: "deeper", Recursive: true},
+			},
+			section: ViewSection{Source: "blocked", Display: "nested", Children: "deeper"},
+			wantErr: "collected recursively",
+		},
+		{
+			name:     "children set on a non-nested display",
+			traverse: twoStep,
+			section:  ViewSection{Source: "blocked", Display: "list", Children: "deeper"},
+			wantErr:  "requires display: nested",
+		},
+		{
+			name:     "columns: refused on a nested section",
+			traverse: twoStep,
+			section: ViewSection{
+				Source: "blocked", Display: DisplayNested, Children: "deeper",
+				Columns: []ListColumn{{Property: "title"}},
+			},
+			wantErr: "takes parent_columns/child_columns",
+		},
+		{
+			// The point of splitting by level: `blocks` is ticket→ticket, so
+			// both levels are the SAME type, and only a per-level key can give
+			// them different columns.
+			name:     "same type at both levels takes different columns",
+			traverse: twoStep,
+			section: ViewSection{
+				Source: "blocked", Display: DisplayNested, Children: "deeper",
+				ParentColumns: map[string][]ListColumn{"ticket": {{Property: "status"}}},
+				ChildColumns:  map[string][]ListColumn{"ticket": {{Property: "title"}}},
+			},
+		},
+		{
+			name:     "child column property absent from its declared type",
+			traverse: twoStep,
+			section: ViewSection{
+				Source: "blocked", Display: DisplayNested, Children: "deeper",
+				ChildColumns: map[string][]ListColumn{"ticket": {{Property: "nonesuch"}}},
+			},
+			wantErr: `property "nonesuch" not in entity "ticket"`,
+		},
+		{
+			name:     "columns declared for a type the level never holds",
+			traverse: twoStep,
+			section: ViewSection{
+				Source: "blocked", Display: DisplayNested, Children: "deeper",
+				ChildColumns: map[string][]ListColumn{"category": {{Property: "name"}}},
+			},
+			wantErr: "which this level never holds",
+		},
+		{
+			// A heterogeneous relation: each reachable type names its own
+			// columns, including one the OTHER type does not have.
+			name: "heterogeneous children, per-type columns",
+			traverse: []ViewTraverse{
+				{From: "entry", Follow: "blocks", CollectAs: "blocked"},
+				{From: "blocked", Follow: "relates-to", CollectAs: "things"},
+			},
+			section: ViewSection{
+				Source: "blocked", Display: DisplayNested, Children: "things",
+				ChildColumns: map[string][]ListColumn{
+					"ticket":   {{Property: "status"}},
+					"category": {{Property: "name"}},
+				},
+			},
+		},
+		{
+			name:     "parent_columns on a non-nested display",
+			traverse: twoStep,
+			section: ViewSection{
+				Source: "blocked", Display: "list",
+				ParentColumns: map[string][]ListColumn{"ticket": {{Property: "status"}}},
+			},
+			wantErr: "sets parent_columns but display is",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &Config{Views: map[string]ViewConfig{
+				"test": {
+					Entry:    ViewEntry{Type: "ticket"},
+					Traverse: tc.traverse,
+					Sections: []ViewSection{tc.section},
+				},
+			}}
+
+			err := ValidateConfig([]byte(`version: "1.0"`), cfg, testMetamodel())
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("expected valid config, got: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("expected error containing %q, got nil", tc.wantErr)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("expected error containing %q, got: %v", tc.wantErr, err)
+			}
+		})
+	}
+}
+
+// TestValidateConfig_NestedSectionRefusedInSidePanel pins that `display: nested`
+// cannot be authored in a form's side panel.
+//
+// A side panel reuses ViewSection and renders through the same buildSections
+// path, so the tree would be BUILT — but v1.SidePanelSection has no field to
+// carry it, so it is dropped on the wire and the operator gets a heading with
+// nothing under it. Refusing at load is the honest answer (RR-MGMHAC).
+func TestValidateConfig_NestedSectionRefusedInSidePanel(t *testing.T) {
+	cfg := &Config{
+		Forms: map[string]Form{
+			"ticket_form": {
+				EntityType: "ticket",
+				Fields:     []FormField{{Property: "title"}},
+				SidePanel: &SidePanelConfig{
+					Sections: []ViewSection{
+						{Heading: "Children", Source: "entry", Display: DisplayNested, Children: "kids"},
+					},
+				},
+			},
+		},
+	}
+
+	err := ValidateConfig([]byte(`version: "1.0"`), cfg, testMetamodel())
+	if err == nil {
+		t.Fatal("expected display: nested in a side panel to be rejected")
+	}
+	if !strings.Contains(err.Error(), "side_panel") ||
+		!strings.Contains(err.Error(), "cannot render") {
+
+		t.Errorf("error should name the side panel and say it cannot render, got: %v", err)
 	}
 }

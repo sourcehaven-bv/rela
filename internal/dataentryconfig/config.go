@@ -1308,6 +1308,40 @@ type ViewSection struct {
 	GroupBy      string             `yaml:"group_by,omitempty" json:"group_by,omitempty"`
 	EmptyMessage string             `yaml:"empty_message,omitempty" json:"empty_message,omitempty"`
 	Link         string             `yaml:"link,omitempty" json:"link,omitempty"`
+
+	// Children names a SECOND collection to nest under each row of Source,
+	// making this section two levels deep. Required by `display: nested` and
+	// meaningless without it.
+	//
+	// The nesting comes from the traverse rules, not from this key: the rule
+	// that collected Children must have walked FROM the bucket named by
+	// Source, so `{from: epics, follow: has-task, collect_as: tasks}` is what
+	// puts a task under its epic. This key only says which of the collected
+	// buckets is the child level — which is why no separate `hierarchy:`
+	// declaration is needed here, unlike [Gantt].
+	Children string `yaml:"children,omitempty" json:"children,omitempty"`
+
+	// ParentColumns and ChildColumns are the columns a `display: nested`
+	// section renders, keyed by entity type WITHIN each level.
+	//
+	// Level first, then type, because both axes vary independently and only
+	// this order expresses both. A relation may reach several types, so each
+	// level needs a per-type map (`children:` reaching task AND bug is the
+	// common case — 15 of 47 relations in rela's own schema declare more than
+	// one `to:` type). And a self-referential containment puts ONE type at
+	// both levels, where a group row wants a summary and its children want
+	// detail — which a type-keyed map alone cannot say.
+	//
+	// A type absent from its level's map renders title and id only. That is
+	// the same "absent means default, not error" rule [Gantt.Sources] uses,
+	// so adding a type to a relation never breaks an existing view.
+	//
+	// Deliberately NOT [ViewSection.Columns]: that is a flat list shared with
+	// `display: table`, and a section cannot be both shapes at once. A
+	// `columns:` on a nested section is refused at load rather than silently
+	// ignored.
+	ParentColumns map[string][]ListColumn `yaml:"parent_columns,omitempty" json:"parent_columns,omitempty"`
+	ChildColumns  map[string][]ListColumn `yaml:"child_columns,omitempty" json:"child_columns,omitempty"`
 }
 
 // ViewSectionField defines a field within a view section.

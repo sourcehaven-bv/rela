@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Project overview — Epic cards</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
+    gap: 1rem;
+  }
+
+  .epic-card { display: flex; flex-direction: column; overflow: hidden; }
+  .epic-card:hover { box-shadow: var(--shadow-md); }
+
+  /* A 4px status stripe gives the grid a scannable colour signal. */
+  .epic-card .stripe { height: 4px; background: var(--badge-gray); }
+  .epic-card.st-doing .stripe { background: var(--accent-color); }
+  .epic-card.st-risk .stripe { background: var(--warning-color); }
+  .epic-card.st-done .stripe { background: var(--success-color); }
+  .epic-card.st-blocked .stripe { background: var(--error-color); }
+
+  .ec-head { padding: 0.9rem 1rem 0.7rem; }
+  .ec-head .top {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-bottom: 0.15rem;
+  }
+  .ec-head h2 { font-size: 0.98rem; font-weight: 600; line-height: 1.3; }
+  .ec-head .eid { display: block; margin-bottom: 0.7rem; }
+
+  .ring-row { display: flex; align-items: center; gap: 0.85rem; }
+
+  /* Donut via conic-gradient: done / in progress / blocked / remaining. */
+  .ring {
+    width: 52px;
+    height: 52px;
+    border-radius: 50%;
+    flex: none;
+    display: grid;
+    place-items: center;
+    position: relative;
+  }
+  .ring::after {
+    content: '';
+    position: absolute;
+    inset: 7px;
+    border-radius: 50%;
+    background: var(--card-bg);
+  }
+  .ring .n {
+    position: relative;
+    z-index: 1;
+    font-size: 0.8rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .legend { font-size: 0.78rem; color: var(--muted-text); line-height: 1.6; }
+  .legend b { color: var(--text-color); font-variant-numeric: tabular-nums; }
+  .legend .dot {
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    margin-right: 0.35rem;
+    vertical-align: baseline;
+  }
+  .dot.d { background: var(--success-color); }
+  .dot.p { background: var(--accent-color); }
+  .dot.b { background: var(--error-color); }
+  .dot.t { background: var(--border-color); }
+
+  .ec-tasks { border-top: 1px solid var(--border-color); padding: 0.5rem 0.35rem 0.5rem 0; }
+  .ec-tasks .label {
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--muted-text);
+    font-weight: 700;
+    padding: 0.2rem 1rem 0.35rem;
+  }
+  .trow {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.3rem 1rem;
+    font-size: 0.83rem;
+  }
+  .trow:hover { background: var(--hover-bg); }
+  .trow .t-title {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .trow .marker {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex: none;
+    border: 1.5px solid var(--border-color);
+  }
+  .marker.done { background: var(--success-color); border-color: var(--success-color); }
+  .marker.doing { background: var(--accent-color); border-color: var(--accent-color); }
+  .marker.blocked { background: var(--error-color); border-color: var(--error-color); }
+  .trow.is-done .t-title { color: var(--muted-text); text-decoration: line-through; }
+  .trow .when { font-size: 0.75rem; color: var(--muted-text); font-variant-numeric: tabular-nums; }
+  .trow .when.late { color: var(--error-color); font-weight: 600; }
+
+  .ec-foot {
+    margin-top: auto;
+    border-top: 1px solid var(--border-color);
+    padding: 0.55rem 1rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 0.78rem;
+  }
+  .ec-foot a { text-decoration: none; }
+  .ec-foot .who { display: flex; gap: 0.25rem; }
+</style>
+</head>
+<body>
+<main class="main">
+  <div class="crumbs"><a href="#">Projects</a> / Harbour Migration</div>
+  <div class="page-head">
+    <div>
+      <h1>Harbour Migration</h1>
+      <div class="subtitle">PRJ-4417 · epic health at a glance</div>
+    </div>
+    <div class="toolbar" style="margin:0">
+      <button class="btn">Sort: at risk first</button>
+      <button class="btn primary">New epic</button>
+    </div>
+  </div>
+
+  <div class="mockup-note">
+    <strong>Variant 4 — Epic cards.</strong> Each epic is a tile with a donut
+    rollup and its few most relevant tasks (late, blocked, in progress) rather
+    than all of them. Strongest for a weekly status read where the question is
+    "which epic needs me?". Not the view for working through a backlog.
+  </div>
+
+  <div class="grid">
+    <!-- At risk -->
+    <article class="card epic-card st-risk">
+      <div class="stripe"></div>
+      <div class="ec-head">
+        <div class="top">
+          <h2>Schema reconciliation</h2>
+          <span class="badge at-risk">At risk</span>
+        </div>
+        <span class="eid">EPIC-22</span>
+        <div class="ring-row">
+          <div class="ring" style="background:conic-gradient(var(--success-color) 0 20%, var(--accent-color) 20% 35%, var(--error-color) 35% 55%, var(--border-color) 55% 100%)">
+            <span class="n">20%</span>
+          </div>
+          <div class="legend">
+            <span class="dot d"></span><b>3</b> done ·
+            <span class="dot p"></span><b>2</b> doing<br>
+            <span class="dot b"></span><b>3</b> blocked ·
+            <span class="dot t"></span><b>6</b> to do
+          </div>
+        </div>
+      </div>
+      <div class="ec-tasks">
+        <div class="label">Needs attention</div>
+        <div class="trow">
+          <span class="marker blocked"></span>
+          <span class="t-title">Resolve column type conflicts</span>
+          <span class="when late">8 Sep</span>
+        </div>
+        <div class="trow">
+          <span class="marker doing"></span>
+          <span class="t-title">Diff live vs. target schema</span>
+          <span class="when late">2 Sep</span>
+        </div>
+        <div class="trow">
+          <span class="marker"></span>
+          <span class="t-title">Backfill null constraints</span>
+          <span class="when">24 Sep</span>
+        </div>
+      </div>
+      <div class="ec-foot">
+        <a href="#">All 14 tasks →</a>
+        <span class="who"><span class="owner">RA</span><span class="owner">MD</span></span>
+      </div>
+    </article>
+
+    <!-- In progress -->
+    <article class="card epic-card st-doing">
+      <div class="stripe"></div>
+      <div class="ec-head">
+        <div class="top">
+          <h2>Cutover tooling</h2>
+          <span class="badge doing">In progress</span>
+        </div>
+        <span class="eid">EPIC-21</span>
+        <div class="ring-row">
+          <div class="ring" style="background:conic-gradient(var(--success-color) 0 55%, var(--accent-color) 55% 73%, var(--error-color) 73% 82%, var(--border-color) 82% 100%)">
+            <span class="n">55%</span>
+          </div>
+          <div class="legend">
+            <span class="dot d"></span><b>6</b> done ·
+            <span class="dot p"></span><b>2</b> doing<br>
+            <span class="dot b"></span><b>1</b> blocked ·
+            <span class="dot t"></span><b>2</b> to do
+          </div>
+        </div>
+      </div>
+      <div class="ec-tasks">
+        <div class="label">Needs attention</div>
+        <div class="trow">
+          <span class="marker blocked"></span>
+          <span class="t-title">Rollback path for partial batches</span>
+          <span class="when late">5 Sep</span>
+        </div>
+        <div class="trow">
+          <span class="marker doing"></span>
+          <span class="t-title">Batch migrator CLI</span>
+          <span class="when">16 Sep</span>
+        </div>
+        <div class="trow">
+          <span class="marker"></span>
+          <span class="t-title">Operator runbook</span>
+          <span class="when">30 Sep</span>
+        </div>
+      </div>
+      <div class="ec-foot">
+        <a href="#">All 11 tasks →</a>
+        <span class="who"><span class="owner">MD</span><span class="owner">SK</span></span>
+      </div>
+    </article>
+
+    <!-- In progress, healthy -->
+    <article class="card epic-card st-doing">
+      <div class="stripe"></div>
+      <div class="ec-head">
+        <div class="top">
+          <h2>Access control review</h2>
+          <span class="badge doing">In progress</span>
+        </div>
+        <span class="eid">EPIC-23</span>
+        <div class="ring-row">
+          <div class="ring" style="background:conic-gradient(var(--success-color) 0 70%, var(--accent-color) 70% 80%, var(--border-color) 80% 100%)">
+            <span class="n">70%</span>
+          </div>
+          <div class="legend">
+            <span class="dot d"></span><b>7</b> done ·
+            <span class="dot p"></span><b>1</b> doing<br>
+            <span class="dot t"></span><b>2</b> to do
+          </div>
+        </div>
+      </div>
+      <div class="ec-tasks">
+        <div class="label">Needs attention</div>
+        <div class="trow">
+          <span class="marker doing"></span>
+          <span class="t-title">Review field redaction rules</span>
+          <span class="when">18 Sep</span>
+        </div>
+        <div class="trow">
+          <span class="marker"></span>
+          <span class="t-title">Penetration test scope</span>
+          <span class="when">7 Oct</span>
+        </div>
+      </div>
+      <div class="ec-foot">
+        <a href="#">All 10 tasks →</a>
+        <span class="who"><span class="owner">TP</span></span>
+      </div>
+    </article>
+
+    <!-- Not started -->
+    <article class="card epic-card">
+      <div class="stripe"></div>
+      <div class="ec-head">
+        <div class="top">
+          <h2>Decommission old stack</h2>
+          <span class="badge todo">Not started</span>
+        </div>
+        <span class="eid">EPIC-24</span>
+        <div class="ring-row">
+          <div class="ring" style="background:conic-gradient(var(--border-color) 0 100%)">
+            <span class="n">0%</span>
+          </div>
+          <div class="legend">
+            <span class="dot t"></span><b>6</b> to do<br>
+            Starts after EPIC-21
+          </div>
+        </div>
+      </div>
+      <div class="ec-tasks">
+        <div class="label">First up</div>
+        <div class="trow">
+          <span class="marker"></span>
+          <span class="t-title">Freeze writes to legacy DB</span>
+          <span class="when">10 Oct</span>
+        </div>
+        <div class="trow">
+          <span class="marker"></span>
+          <span class="t-title">Archive final snapshot</span>
+          <span class="when">17 Oct</span>
+        </div>
+      </div>
+      <div class="ec-foot">
+        <a href="#">All 6 tasks →</a>
+        <span class="who"><span class="owner">—</span></span>
+      </div>
+    </article>
+
+    <!-- Done -->
+    <article class="card epic-card st-done">
+      <div class="stripe"></div>
+      <div class="ec-head">
+        <div class="top">
+          <h2>Discovery &amp; sizing</h2>
+          <span class="badge done">Done</span>
+        </div>
+        <span class="eid">EPIC-19</span>
+        <div class="ring-row">
+          <div class="ring" style="background:conic-gradient(var(--success-color) 0 100%)">
+            <span class="n">100%</span>
+          </div>
+          <div class="legend">
+            <span class="dot d"></span><b>7</b> done<br>
+            Closed 21 Jul
+          </div>
+        </div>
+      </div>
+      <div class="ec-tasks">
+        <div class="label">Recently closed</div>
+        <div class="trow is-done">
+          <span class="marker done"></span>
+          <span class="t-title">Stakeholder interviews</span>
+          <span class="when">14 Jul</span>
+        </div>
+        <div class="trow is-done">
+          <span class="marker done"></span>
+          <span class="t-title">Effort estimate sign-off</span>
+          <span class="when">21 Jul</span>
+        </div>
+      </div>
+      <div class="ec-foot">
+        <a href="#">All 7 tasks →</a>
+        <span class="who"><span class="owner">SK</span></span>
+      </div>
+    </article>
+  </div>
+</main>
+<script src="shell.js"></script>
+</body>
+</html>
