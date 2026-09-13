@@ -5,7 +5,7 @@ title: Per-type columns and parent columns for the nested view section
 kind: enhancement
 priority: high
 effort: m
-status: review
+status: done
 ---
 
 ## Description
