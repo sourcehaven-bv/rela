@@ -280,6 +280,15 @@ const (
 	// the shape outright is the only reading both can share. Equality does
 	// not have this problem because it branches on jsonb_typeof and treats
 	// an array as membership.
+	//
+	// This runtime refusal does NOT make the caller's declared-type gate
+	// redundant; the two catch different things. A DECLARED list is caught
+	// at config load by the metamodel gate, which is where the useful
+	// error lives ("this property is a list" names the mistake). A list
+	// VALUE stored under a scalar DECLARATION — a legacy row, an import, a
+	// schema changed after the data was written — reaches the store
+	// anyway, and only the check here keeps the backends answering it the
+	// same way.
 	PropGreaterEqual
 	PropLessEqual
 )

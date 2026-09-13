@@ -70,6 +70,12 @@ func PushdownPrefilters(filters []*filter.Filter, meta *metamodel.Metamodel, typ
 // byte-wise and cannot consult the metamodel, so it cannot tell a date from
 // an integer; a caller that emits an ordered predicate without checking here
 // would push `"10" < "9"` and silently return the wrong rows.
+//
+// Checking here is what turns a bad ordered comparison into a CONFIG-LOAD
+// error naming the property, rather than a query that quietly matches
+// nothing. The store's own list/empty refusal is a parity guard for values
+// whose shape contradicts their declaration (legacy rows, imports), not a
+// substitute for this one.
 func stringComparableOnEveryType(meta *metamodel.Metamodel, types []string, prop string) bool {
 	return declaredOnEveryType(meta, types, prop, false)
 }
