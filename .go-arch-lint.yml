@@ -10,6 +10,7 @@ exclude:
   - internal/entitymanager/entitymanagertest
   - internal/visibility/visibilitytest
   - internal/state/statetest
+  - internal/lock/locktest
   - internal/jobs/jobstest
   - internal/mail/mailtest
   - internal/userstate/userstatetest
@@ -174,6 +175,7 @@ components:
   output:           { in: internal/output }
   project:          { in: internal/project }
   state:            { in: internal/state }
+  lock:             { in: internal/lock }
   storage:          { in: internal/storage }
 
   # Shared utilities
