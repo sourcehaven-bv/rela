@@ -487,21 +487,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	// The predicate compiler backing a source's `condition:`. Supplied here
-	// rather than imported by dataentry: the condition engine sits above the
-	// data-entry app, so the composition root bridges the two.
-	if err := app.SetNextActionMatchers(appbuild.NextActionMatchers); err != nil {
-		slog.Error("failed to wire next-action matchers", "error", err)
-		os.Exit(1)
-	}
-
-	// The same bridge for a list's or kanban's `condition:`.
-	if err := app.SetViewConditions(
-		dataentry.AdaptViewConditions(appbuild.ViewConditions),
-	); err != nil {
-		slog.Error("failed to wire view conditions", "error", err)
-		os.Exit(1)
-	}
+	wireConditionCompilers(app)
 
 	// Start file watcher for live-reload.
 	// The watcher goroutine is cleaned up on process exit.
@@ -741,4 +727,30 @@ func isLoopbackHost(host string) bool {
 		return ip.IsLoopback()
 	}
 	return false
+}
+
+// wireConditionCompilers supplies the predicate compilers backing a
+// next-action source's `condition:` and a list's or kanban's.
+//
+// Supplied here rather than imported by dataentry: the condition engine sits
+// above the data-entry app (arch-lint keeps it there), so the composition root
+// bridges the two. Both are exit-on-failure — a compiler that fails to wire
+// would leave every condition unevaluated, showing rows the operator's config
+// excludes.
+//
+// The view half needs AdaptViewConditions because appbuild cannot name
+// dataentry's types (dataentry's tests import appbuild, closing a cycle), so
+// it returns a structurally identical matcher under its own name. This call is
+// where the two meet: a drift between them fails to compile here.
+func wireConditionCompilers(app *dataentry.App) {
+	if err := app.SetNextActionMatchers(appbuild.NextActionMatchers); err != nil {
+		slog.Error("failed to wire next-action matchers", "error", err)
+		os.Exit(1)
+	}
+	if err := app.SetViewConditions(
+		dataentry.AdaptViewConditions(appbuild.ViewConditions),
+	); err != nil {
+		slog.Error("failed to wire view conditions", "error", err)
+		os.Exit(1)
+	}
 }

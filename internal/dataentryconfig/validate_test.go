@@ -3056,7 +3056,7 @@ func TestValidateLists_CreateWorld(t *testing.T) {
 // A kanban `condition:` is refused until the board evaluates it server-side.
 // Accepting a key that validates and then does nothing is the silent no-op
 // BUG-F1LTV0 and BUG-MYN56J are both about. Delete this test — and the guard
-// in validateKanbans — when the board honours a condition.
+// in validateKanbans — when the board honors a condition.
 func TestValidateConfig_KanbanConditionRefusedForNow(t *testing.T) {
 	mm := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
