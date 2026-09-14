@@ -347,6 +347,11 @@ func outputValidationViolations(
 	ruleViolations := make(map[string][]analysis.ValidationViolation)
 	ruleDescriptions := make(map[string]string)
 	ruleSeverities := make(map[string]string)
+	// Description is the rule's own text, identical across every violation
+	// of the rule, so taking it from the last one is well-defined. (It was
+	// not while Lua violations carried their per-entity message here — the
+	// heading then showed one arbitrary entity's message as if it were the
+	// rule.)
 	for _, v := range violations {
 		ruleViolations[v.RuleName] = append(ruleViolations[v.RuleName], v)
 		ruleDescriptions[v.RuleName] = v.Description
@@ -365,7 +370,7 @@ func outputValidationViolations(
 			checkOut.WriteWarning("%s (%d):", ruleDescriptions[ruleName], len(vs))
 		}
 		for _, v := range vs {
-			checkOut.WriteMessage("  %s: %s", v.EntityID, v.EntityTitle)
+			checkOut.WriteMessage("%s", formatValidationViolationLine(v))
 		}
 	}
 	if errorCount > 0 {

@@ -244,3 +244,42 @@ func TestAnalyzeCmds_CountErrorAborts(t *testing.T) {
 		}
 	})
 }
+
+// TestFormatValidationViolationLine covers the table row a violation
+// renders as. A Lua rule's per-entity message is what makes the finding
+// actionable, so it must appear; a violation without one must not gain a
+// trailing separator suggesting text that isn't there.
+func TestFormatValidationViolationLine(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		v    analysis.ValidationViolation
+		want string
+	}{
+		{
+			name: "lua message appended",
+			v: analysis.ValidationViolation{
+				EntityID:    "PROCEDURE-91XS",
+				EntityTitle: "Toegangsbeheer",
+				Message:     "geen terugkerende taak gekoppeld",
+			},
+			want: "  PROCEDURE-91XS: Toegangsbeheer — geen terugkerende taak gekoppeld",
+		},
+		{
+			name: "no message keeps the bare form",
+			v: analysis.ValidationViolation{
+				EntityID:    "PROCEDURE-MCBL",
+				EntityTitle: "Incidentbeheer",
+			},
+			want: "  PROCEDURE-MCBL: Incidentbeheer",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := formatValidationViolationLine(tc.v); got != tc.want {
+				t.Errorf("formatValidationViolationLine() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

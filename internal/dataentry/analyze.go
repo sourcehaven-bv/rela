@@ -76,6 +76,16 @@ type AnalysisIssue struct {
 	Message    string
 	Severity   string // "error" or "warning"
 
+	// RuleMessage is the per-entity explanation a Lua validation rule
+	// returned for THIS entity — which of the rule's several possible
+	// defects it has, and what to do about it. Message stays the rule's
+	// own description, identical across the rule's rows, so the two are
+	// shown together rather than one replacing the other.
+	//
+	// Empty for every issue that is not a Lua-rule violation, and for a
+	// Lua rule returning no message.
+	RuleMessage string
+
 	// Detail carries optional structured specifics about why the issue
 	// fired, beyond the flat Message. For content required-headers
 	// violations it holds the missing exact headers. Nil for issues
@@ -608,12 +618,13 @@ func (svc analyzeService) analyzeValidations(ctx context.Context, meta *metamode
 				continue
 			}
 			section.Issues = append(section.Issues, AnalysisIssue{
-				EntityID:   e.ID,
-				EntityType: e.Type,
-				Title:      safeDisplayTitle(meta, e),
-				Message:    rule.Description,
-				Severity:   severity,
-				Detail:     v.Detail,
+				EntityID:    e.ID,
+				EntityType:  e.Type,
+				Title:       safeDisplayTitle(meta, e),
+				Message:     rule.Description,
+				RuleMessage: v.Message,
+				Severity:    severity,
+				Detail:      v.Detail,
 			})
 		}
 		// Surface Lua failures and load failures so the UI shows

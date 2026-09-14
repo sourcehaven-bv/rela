@@ -1812,13 +1812,14 @@ func (a *App) handleV1Analyze(w http.ResponseWriter, r *http.Request) {
 	for _, vi := range visible {
 		issue, section := vi.issue, vi.section
 		api := APIIssue{
-			EntityID:   issue.EntityID,
-			EntityType: issue.EntityType,
-			Title:      issue.Title,
-			Message:    issue.Message,
-			Severity:   issue.Severity,
-			CheckType:  section,
-			Detail:     issue.Detail,
+			EntityID:    issue.EntityID,
+			EntityType:  issue.EntityType,
+			Title:       issue.Title,
+			Message:     issue.Message,
+			RuleMessage: issue.RuleMessage,
+			Severity:    issue.Severity,
+			CheckType:   section,
+			Detail:      issue.Detail,
 		}
 		if issue.ScriptError != nil {
 			env := buildScriptErrorEnvelope(issue.ScriptError, fullDetail, "")

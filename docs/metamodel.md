@@ -2017,6 +2017,49 @@ Each violation table has:
 | `message`  | string | Custom error message (required)                                  |
 | `severity` | string | `"error"` or `"warning"` (optional, defaults to rule's severity) |
 
+##### `message` is per-entity; `description:` is per-rule
+
+The two are reported side by side, never one instead of the other. The
+rule's `description:` names the rule and is the same for every entity
+that violates it; `message` says what is wrong with *this* entity and
+what to do about it. That is the point of writing a rule in Lua: when a
+defect has several shapes, the remedy differs per shape.
+
+```lua
+-- rule description: "Elke procedure moet een terugkerende taak hebben"
+local task = rela.trace_from(entity.id, 1)
+if #task == 0 then
+  return { message = "geen terugkerende taak gekoppeld" }
+end
+if all_exhausted(task) then
+  return { message = "alleen uitgeputte taken; plan een nieuwe" }
+end
+return nil
+```
+
+`rela analyze validations` groups violations under the rule description
+and appends each entity's message:
+
+```text
+⚠ Elke procedure moet een terugkerende taak hebben (2):
+  PROCEDURE-91XS: Toegangsbeheer — geen terugkerende taak gekoppeld
+  PROCEDURE-MCBL: Incidentbeheer — alleen uitgeputte taken; plan een nieuwe
+```
+
+In `-o json` the message is its own field alongside the description:
+
+```json
+{
+  "RuleName": "procedure-needs-task",
+  "Description": "Elke procedure moet een terugkerende taak hebben",
+  "Message": "geen terugkerende taak gekoppeld",
+  "EntityID": "PROCEDURE-91XS"
+}
+```
+
+A rule that returns no message (every non-Lua rule) reports the
+description alone.
+
 #### Security and Sandboxing
 
 Lua validation runs in a sandboxed environment:
