@@ -157,11 +157,28 @@ async function loadCandidates() {
   try {
     const allCandidates: Entity[] = []
     for (const targetType of targetTypes.value) {
-      const result = await entitiesStore.fetchList(targetType, {
-        per_page: 100,
+      // fetchAllList, not fetchList: `candidates` is not just what the dropdown
+      // offers, it is also the ONLY source for `buildOutgoingTypes`, which must
+      // name the type of every ALREADY-LINKED target — including ones the user
+      // will never scroll to. One page left anything past the first 100
+      // unresolvable, so `reshapeLegacyToModern` returned null and the form's
+      // entire relations autosave aborted with "unknown types" (BUG-HOB9BR).
+      const result = await entitiesStore.fetchAllList(targetType, {
         ...(worldParam.value ? { world: worldParam.value } : {}),
       })
       allCandidates.push(...result.data)
+      // has_more on a MERGED all-pages response means `listAllEntities` hit its
+      // 50-page cap, so the set is knowingly incomplete and BUG-HOB9BR is live
+      // again past that boundary. Worth a warning specifically because the
+      // user-facing message for that failure ("reload the form and try again")
+      // is advice that cannot work — a reload refetches the same 50 pages.
+      // Same reasoning as KanbanView's truncation banner.
+      if (result.meta.has_more) {
+        console.warn(
+          `RelationPicker: candidate list for "${targetType}" is truncated at the ` +
+            `page cap; relation saves may fail for targets beyond it (BUG-HOB9BR).`
+        )
+      }
     }
     candidates.value = allCandidates
   } catch (err) {
@@ -336,9 +353,12 @@ function closeCreateModal() {
 
 function handleEntityCreated(entity: Entity) {
   closeCreateModal()
-  // Push into candidates before selecting: `loadCandidates` fetches only the
-  // first 100 per type, so a freshly created entity is generally outside that
-  // window and would otherwise be unresolvable for display.
+  // Push into candidates before selecting. `loadCandidates` now fetches every
+  // page, but this entity did not EXIST when it ran, so it is in none of them.
+  // Without the push it is unresolvable for both display and — via
+  // `buildOutgoingTypes` — its type, which is the BUG-HOB9BR failure again.
+  // Do not drop this on the grounds that candidates are complete: they are
+  // complete as of the fetch, and this entity postdates it.
   candidates.value.push(entity)
   selectEntity(entity)
 }
