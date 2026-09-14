@@ -341,6 +341,21 @@ type FormField struct {
 	Hidden          bool                `yaml:"hidden" json:"hidden,omitempty"`
 	Transitions     map[string][]string `yaml:"transitions,omitempty" json:"transitions,omitempty"`
 
+	// KeepOnAddAnother carries this field's value across a "Create & add
+	// another" reset (TKT-7YHKD1) instead of clearing it. The reset is clean by
+	// default; a field opts OUT of being cleared, so forgetting the key loses
+	// one re-entry rather than silently writing a stale value into every
+	// subsequent record.
+	//
+	// Named for the button, not "sticky": it fires ONLY on that action, never
+	// on an ordinary page load, and a general-sounding name would invite the
+	// wrong expectation.
+	//
+	// Unlike FormRelation.Span this MUST serialize — the SPA is what performs
+	// the reset, so a `json:"-"` here would leave the key visible to the
+	// validator and invisible to the code that needs it.
+	KeepOnAddAnother bool `yaml:"keep_on_add_another,omitempty" json:"keep_on_add_another,omitempty"`
+
 	// Span places the field on the 12-column layout grid; 0 means full width.
 	// Same semantics as ViewSectionField.Span — forms and view sections are
 	// separate structs but share one layout model, so an author doesn't have
@@ -552,6 +567,12 @@ type FormRelation struct {
 	Properties   []RelationProperty `yaml:"properties" json:"properties,omitempty"`
 	Fields       []ViewSectionField `yaml:"fields" json:"fields,omitempty"`
 	EmptyMessage string             `yaml:"empty_message" json:"empty_message,omitempty"`
+
+	// KeepOnAddAnother carries this relation's selection across a
+	// "Create & add another" reset (TKT-7YHKD1). See the FormField field of the
+	// same name; relations are included because the batch context most worth
+	// keeping (a project, an assignee) is usually a relation, not a property.
+	KeepOnAddAnother bool `yaml:"keep_on_add_another,omitempty" json:"keep_on_add_another,omitempty"`
 
 	// Span is captured ONLY so it can be rejected. A relation renders via the
 	// card/picker widgets, which have a natural minimum width — a narrow grid

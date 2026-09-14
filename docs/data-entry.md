@@ -575,6 +575,52 @@ no extra form configuration is required.
   and include a non-empty suffix. The edit form shows the ID as a read-only
   display; renaming uses the dedicated rename flow.
 
+### Create & add another
+
+Create forms carry a secondary **Create & add another** action beside the
+primary **Create**. It creates the entity exactly as Create does, then — instead
+of navigating to the new entity — stays on the form and clears it for the next
+record. Use it when entering a batch: ten tasks, a stack of contacts, a set of
+notes.
+
+The created entity's ID is named in a confirmation toast, since you are not
+taken to it.
+
+The reset is **clean**: every field goes back to its metamodel default, its
+form-level `default`, and any `prop.*` / `rel.*` / `link_*` pre-fill in the URL
+(those survive because the action does not navigate, so the query string is
+unchanged). The body/content is always cleared.
+
+To carry a value across records, mark the field or relation with
+`keep_on_add_another`:
+
+```yaml
+forms:
+  new-task:
+    entity_type: task
+    fields:
+      - property: project
+        keep_on_add_another: true   # batch context — survives to the next record
+      - property: title             # cleared, like everything unmarked
+    relations:
+      - relation: assigned-to
+        keep_on_add_another: true
+```
+
+Notes:
+
+- The default is `false` — a clean reset. This is the safe direction: a field
+  you forgot to mark costs one re-entry, whereas a field wrongly carried over
+  writes a stale value into every subsequent record without saying so.
+- It applies to **relations** as well as properties. The batch context worth
+  keeping is often a relation (a project, an assignee), not a property.
+- It is rejected on a `hidden: true` field at config load — a hidden field has
+  no entered value to keep, so use `default` there instead.
+- It has no effect on edit forms, which autosave per field and have no
+  Create button.
+- The action is not offered on the inline-create modal reached from a relation
+  picker: that flow exists to create exactly one entity and link it.
+
 ### State Transitions
 
 For edit forms, you can restrict which enum values are selectable based on the current value:

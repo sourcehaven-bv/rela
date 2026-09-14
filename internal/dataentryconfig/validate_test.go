@@ -3052,3 +3052,89 @@ func TestValidateLists_CreateWorld(t *testing.T) {
 		})
 	}
 }
+
+// TKT-7YHKD1: keep_on_add_another carries a field's value across a
+// "Create & add another" reset. The key must survive the round trip on BOTH
+// FormField and FormRelation — a missing struct tag would make yaml.v3 drop it
+// in silence (the FormRelation.Span failure mode), leaving the validator happy
+// and the SPA blind.
+func TestValidateConfig_KeepOnAddAnotherRoundTrips(t *testing.T) {
+	src := []byte(`version: "1.0"
+forms:
+  new-ticket:
+    entity_type: ticket
+    fields:
+      - property: title
+      - property: assignee
+        keep_on_add_another: true
+    relations:
+      - relation: belongs-to
+        keep_on_add_another: true
+`)
+	var cfg Config
+	if err := yaml.Unmarshal(src, &cfg); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if err := ValidateConfig(src, &cfg, testMetamodel()); err != nil {
+		t.Fatalf("expected valid config, got: %v", err)
+	}
+
+	form := cfg.Forms["new-ticket"]
+	if form.Fields[0].KeepOnAddAnother {
+		t.Error("field without the key should be false")
+	}
+	// Asserting true (not merely "no error") is the point: an absent struct
+	// tag makes an absence-assertion pass vacuously.
+	if !form.Fields[1].KeepOnAddAnother {
+		t.Error("field keep_on_add_another should decode as true")
+	}
+	if !form.Relations[0].KeepOnAddAnother {
+		t.Error("relation keep_on_add_another should decode as true")
+	}
+}
+
+// A hidden field never renders and is excluded from the editable property set,
+// so it has no user-entered value for the reset to carry — the key is inert
+// there and that is worth telling the author about.
+func TestValidateConfig_KeepOnAddAnotherRejectedOnHiddenField(t *testing.T) {
+	cfg := &Config{
+		Forms: map[string]Form{
+			"test": {
+				EntityType: "ticket",
+				Fields: []FormField{{
+					Property:         "assignee",
+					Hidden:           true,
+					KeepOnAddAnother: true,
+				}},
+			},
+		},
+	}
+	err := ValidateConfig([]byte(`version: "1.0"`), cfg, testMetamodel())
+	if err == nil {
+		t.Fatal("expected error for keep_on_add_another on a hidden field")
+	}
+	if !strings.Contains(err.Error(), "keep_on_add_another on a hidden field") {
+		t.Errorf("expected inert-key error, got: %v", err)
+	}
+}
+
+// The mode:edit form is deliberately NOT rejected. Mode has no Go consumer and
+// getEditFormId falls back to any form for the type, so such a form is still
+// reachable as a create form — rejecting here would refuse a working config.
+func TestValidateConfig_KeepOnAddAnotherAllowedOnEditModeForm(t *testing.T) {
+	cfg := &Config{
+		Forms: map[string]Form{
+			"test": {
+				EntityType: "ticket",
+				Mode:       "edit",
+				Fields: []FormField{{
+					Property:         "assignee",
+					KeepOnAddAnother: true,
+				}},
+			},
+		},
+	}
+	if err := ValidateConfig([]byte(`version: "1.0"`), cfg, testMetamodel()); err != nil {
+		t.Errorf("keep_on_add_another on a mode:edit form should be allowed, got: %v", err)
+	}
+}

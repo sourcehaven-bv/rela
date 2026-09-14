@@ -623,6 +623,25 @@ func validateFormField(
 			"form %q: %sfield[%d] property %q sets clear_when_hidden but neither it nor its step has a visible_when (it would never apply)",
 			formID, ctx, i, f.Property))
 	}
+	// keep_on_add_another carries a value the USER entered across a
+	// "Create & add another" reset. A hidden field has no user-entered value —
+	// it never renders (FormFieldList.vue gates on `!field.hidden`) and is
+	// excluded from the editable property set — so the key can express nothing
+	// its `default` doesn't already say. Same class of inert-key mistake as
+	// clear_when_hidden with nothing that can hide it.
+	//
+	// This is the ONLY coherence check on the key. `mode: edit` looks like a
+	// second one and is not: Mode is unvalidated, has no Go consumer, and
+	// getEditFormId treats it as "prefer this form when editing" with a
+	// fallback to any form for the type — so a `mode: edit` form is still
+	// reachable as a create form, and rejecting the key there would refuse a
+	// working config. A wrong rejection breaks an operator; an inert key
+	// merely does nothing.
+	if f.KeepOnAddAnother && f.Hidden {
+		errs = append(errs, fmt.Sprintf(
+			"form %q: %sfield[%d] property %q sets keep_on_add_another on a hidden field (it has no entered value to keep; use default instead)",
+			formID, ctx, i, f.Property))
+	}
 	errs = append(errs, validateSpan(f.Span, fmt.Sprintf("form %q: %sfield[%d]", formID, ctx, i))...)
 	return errs
 }
