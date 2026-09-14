@@ -113,6 +113,22 @@ type Entity struct {
 	// transitions, nil on list rows and when no state machines are wired. It is a
 	// UI hint, never authorization — the write path re-enforces every transition.
 	Transitions *map[string][]Transition `json:"_transitions,omitempty"`
+	// Mentions resolves the entity-ID code spans in `Content` to their
+	// titles, so an EDIT surface can render them the way the read surface
+	// already does. Same map shape and same semantics as
+	// [ViewResponse.Mentions], produced by the same collectMentions call:
+	// the two must not diverge, because a title that appears in the editor
+	// and not in the rendered view (or the reverse) is a bug the user sees.
+	//
+	// It rides the single-entity GET only. A list row carries no content to
+	// scan, and a write response is not a surface that renders references.
+	//
+	// Per-principal, like every mention map: an entity the caller may not
+	// read has NO entry here (the code span stays plain), and one whose
+	// display title is redacted arrives with `inaccessible` set and its ID
+	// as the title. Deriving a title any other way would defeat the read
+	// gate — see BUG-R9EHKV.
+	Mentions map[string]Mention `json:"mentions,omitempty"`
 	// Copies lists the declared copy definitions available FROM this entity's
 	// current face — the promote / translate affordances (RULING 9). See
 	// [CopyOffer] for the per-entry contract (a UI hint, never a boundary).
