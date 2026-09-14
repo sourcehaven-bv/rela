@@ -86,14 +86,55 @@ implies one type but whose bytes sniff as an incompatible one (the classic
 `.jpg.php` / SVG-polyglot trick) is rejected.
 
 - `allow: default-safe` (the default when unset) permits common images
-  (`png`, `jpeg`, `gif`, `webp`), `pdf`, plain text, CSV, ZIP, and the generic
-  `application/octet-stream` (office documents sniff this way). It **blocks**
-  `image/svg+xml`, `text/html`, `xhtml`, JavaScript, and executable
+  (`png`, `jpeg`, `gif`, `webp`), `pdf`, plain text, CSV, `application/zip`
+  (which covers office and OpenDocument files — see below), and the generic
+  `application/octet-stream`. It **blocks** `image/svg+xml`, `text/html`,
+  `xhtml`, JavaScript, and executable
   extensions (`.exe`, `.dll`, `.sh`, `.ps1`, …) — the active/script-carrying
   types that drive stored-XSS and code execution.
 - `allow: [image/png, application/pdf]` — an explicit list narrows the global
   floor.
 - Per-property `accept: [application/pdf]` narrows a single field further.
+
+### ZIP-container documents
+
+A `.docx`, `.xlsx`, `.pptx`, `.odt`, `.ods`, `.odp`, `.odg` or `.epub` is a ZIP
+archive with XML inside, so it sniffs as `application/zip` — the sniffer stops
+at the ZIP header and never reads the member names that would tell a `.docx`
+from a bare `.zip`. Uploading one therefore needs `application/zip` in the
+allowlist; it is in `default-safe`, so these formats work out of the box.
+
+For these formats the extension is the only signal that names the format, so
+the sniff-vs-extension check tolerates the mismatch. That tolerance is an
+explicit list of container **extensions**, not a blanket rule for ZIP bytes: a
+ZIP claiming to be a `.pdf` is still rejected as a polyglot.
+
+Two groups of ZIP container are rejected outright by extension, because their
+bytes sniff as the same allowed `application/zip`:
+
+- **executables and installers** — `.jar`, `.war`, `.ear`, `.apk`, `.xpi`,
+  `.crx`, `.appx`, `.msix`, `.ipa`;
+- **macro-enabled office documents** — `.docm`, `.xlsm`, `.pptm`, `.dotm`,
+  `.xltm`, `.potm`, `.xlam`, `.ppam`, plus `.odb` and `.oxt`.
+
+Both lists are matched on the extension itself rather than on the MIME type the
+extension implies. `mime.TypeByExtension` reads the operating system's MIME
+database, and Go's built-in table covers only a handful of these, so a minimal
+container image (distroless, scratch, Alpine without `mailcap`) resolves most of
+them to nothing at all. Deciding in rela's own source keeps the answer the same
+on every host; deciding from the OS database would accept a `.jar` on the image
+you deploy and reject it on the laptop you tested on.
+
+Narrowing the allowlist to a specific document type does **not** work, because
+it is matched against the sniffed type:
+
+```yaml
+# Wrong — nothing sniffs as the OOXML type, so every upload is rejected.
+accept: [application/vnd.openxmlformats-officedocument.wordprocessingml.document]
+
+# Right — accept the container, and let the extension check do the narrowing.
+accept: [application/zip]
+```
 
 ## Scanning (`scan_cmd`, `scan: off`)
 

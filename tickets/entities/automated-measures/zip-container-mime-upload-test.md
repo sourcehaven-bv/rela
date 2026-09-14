@@ -1,0 +1,9 @@
+---
+id: zip-container-mime-upload-test
+type: automated-measure
+title: 'Test: ZIP-container uploads work, the tolerance stays narrow, and neither depends on the host MIME database'
+description: 'Guards against BUG-TDE1QO and the two review findings that followed it. TestMIME_ZipRejectionsNameTheirMechanism is the load-bearing one: two independent mechanisms reject ZIP bytes — deniedExtensions (before sniffing, decided in rela''s source) and the sniff-vs-claim mismatch (resolves a claim through the OS MIME database) — and asserting only ErrRejected could not tell them apart, so dropping .jar from the deny set still ''passed'' on a developer box while failing open on a minimal image. It asserts the error MESSAGE, so the host-independent check cannot be quietly replaced by the host-dependent one. TestMIME_AllowsZipContainerDocuments iterates zipContainerExtensions itself (a new entry cannot be added without being exercised) and builds a real ZIP with archive/zip, checking the rule against the sniffer''s observed output rather than an assumed one — assuming that output is what caused the bug. TestMIME_ExecutableZipContainersDeniedByExtension pins the structural half, TestMIME_ExtensionSetsAreDisjoint stops an extension being both tolerated and denied with the outcome decided by check ordering, and the dataentry tests cover the same ground end to end through the real HTTP upload handler. The suite is verified to produce identical verdicts on macOS (populated MIME database) and in golang:1.26-alpine (none at all).'
+kind: test
+location: internal/attachment/mimecheck_test.go:TestMIME_ZipRejectionsNameTheirMechanism, TestMIME_AllowsZipContainerDocuments, TestMIME_ExecutableZipContainersDeniedByExtension, TestMIME_ExtensionSetsAreDisjoint; internal/dataentry/handlers_attachment_write_test.go:TestAttachmentUpload_ZipContainerDocuments, TestAttachmentUpload_ZipExecutableContainersRejected
+status: active
+---

@@ -1,0 +1,9 @@
+---
+id: RR-1QO0BP
+type: review-response
+title: Adjacent ZIP-container formats split three ways by accident of the host MIME database
+finding: 'Probing the extension space: .vsdx, .ipa, .war, .ear, .crx, .whl, .nupkg, .appx, .msix, .pages, .key resolve to the empty string even on a fully-populated host, so they take the no-claim path and upload unchecked. Meanwhile .docm/.xlsm/.pptm (macro-enabled OOXML), .ott/.ots/.otp (ODF templates), .odb, .oxt and .kmz DO resolve to concrete types absent from zipContainerMIMETypes, so they are rejected as polyglots. To an operator this reads as an arbitrary distinction between .odt (works) and .ott (rejected). Rejecting .docm is defensible on macro grounds; rejecting .ott is probably unintended. The finding is that the tolerated/rejected/unchecked boundary is currently decided by whether an extension happens to be in the host MIME database, which is not a security policy.'
+severity: minor
+resolution: 'Each group decided deliberately in rela''s source instead of by the host database. ODF templates (.ott/.ots/.otp/.otg) join zipContainerExtensions — the reviewer read their rejection as unintended, which it was. Macro-enabled OOXML (.docm/.xlsm/.pptm/.dotm/.xltm/.potm/.xlam/.ppam) plus .odb and .oxt go into deniedExtensions on VBA grounds, alongside the executable containers. This turned out to be more than cosmetic: the alpine run showed .docm and .xlsm were ACCEPTED on a minimal image while rejected on macOS, precisely the accidental split the finding described. Formats left to the generic no-claim path (.vsdx, .whl, .nupkg, .pages, .key, .sketch) are now a knowing choice rather than an artifact — they are ordinary data files with no active-content story, and their bytes were already uploadable under a .zip name.'
+status: addressed
+---

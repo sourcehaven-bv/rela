@@ -216,8 +216,17 @@ jobs:
 
           # clamd refuses to start with no signature databases. NOT --quiet:
           # when this fails it is the only evidence of why.
-          if ! ls /var/lib/clamav/daily.c[vl]d >/dev/null 2>&1; then
-            echo "No signature database present — downloading (~300 MB)."
+          #
+          # BOTH main and daily must be present: clamav-daemon.service carries a
+          # ConditionPathExistsGlob for each, so a cache holding only one leaves
+          # systemd skipping the unit ("start condition unmet") and the socket
+          # never appears. Checking only daily made that state self-perpetuating
+          # — the incomplete cache satisfied the check, skipped the download, and
+          # was then saved forward under a fresh key for the next run to restore.
+          if ! ls /var/lib/clamav/main.c[vl]d >/dev/null 2>&1 \
+            || ! ls /var/lib/clamav/daily.c[vl]d >/dev/null 2>&1; then
+            echo "Signature database incomplete — downloading (~300 MB)."
+            ls -la /var/lib/clamav/ || true
             sudo -u clamav freshclam --stdout
           else
             echo "Signature database restored from cache:"
@@ -711,8 +720,14 @@ jobs:
           ! go list -deps -tags postgres ./cmd/rela-server | grep -q 'chromedp/chromedp'
           echo "both rela-docs builds link it: screenshot{} is supported on either backend,"
           echo "and history figures REQUIRE postgres (versioning is a pg-only capability)."
-          go list -deps ./cmd/rela-docs                    | grep -q 'chromedp/chromedp'
-          go list -deps -tags postgres ./cmd/rela-docs     | grep -q 'chromedp/chromedp'
+          # POSITIVE assertions use grep WITHOUT -q: `grep -q` exits on the first
+          # match, which SIGPIPEs a `go list` that is still writing, and pipefail
+          # turns that into exit 141. It only bites when `go list` is slow enough
+          # to still be producing output — i.e. when it is downloading modules —
+          # so the negated assertions above are unaffected (no match means grep
+          # reads to EOF) and this one fails only on a cold module cache.
+          go list -deps ./cmd/rela-docs                    | grep 'chromedp/chromedp' >/dev/null
+          go list -deps -tags postgres ./cmd/rela-docs     | grep 'chromedp/chromedp' >/dev/null
           echo "no build but the sqlite one links the sqlite driver:"
           ! go list -deps ./cmd/rela-server                | grep -q 'modernc.org/sqlite'
           ! go list -deps ./cmd/rela                       | grep -q 'modernc.org/sqlite'
@@ -722,11 +737,11 @@ jobs:
           ! go list -deps -tags sqlite ./cmd/rela-server | grep -q 'jackc/pgx'
           ! go list -deps -tags sqlite ./cmd/rela        | grep -q 'jackc/pgx'
           echo "the sqlite build DOES link bleve and the sqlite driver (it uses both):"
-          go list -deps -tags sqlite ./cmd/rela-server | grep -q 'blevesearch/bleve'
-          go list -deps -tags sqlite ./cmd/rela-server | grep -q 'modernc.org/sqlite'
+          go list -deps -tags sqlite ./cmd/rela-server | grep 'blevesearch/bleve' >/dev/null
+          go list -deps -tags sqlite ./cmd/rela-server | grep 'modernc.org/sqlite' >/dev/null
           echo "the sqlite rela-docs links it too: appbuild.At pins the temp project's"
           echo "root, so a seed can no longer escape into a real database (TKT-SK2QQW)."
-          go list -deps -tags sqlite ./cmd/rela-docs | grep -q 'chromedp/chromedp'
+          go list -deps -tags sqlite ./cmd/rela-docs | grep 'chromedp/chromedp' >/dev/null
           echo "rela-desktop links the default backend only:"
           ! go list -deps ./cmd/rela-desktop | grep -q 'jackc/pgx'
           ! go list -deps ./cmd/rela-desktop | grep -q 'modernc.org/sqlite'

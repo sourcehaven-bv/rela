@@ -1,6 +1,7 @@
 package dataentry
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"mime/multipart"
@@ -450,20 +451,17 @@ attachments:
   scan_cmd: ["sh", "-c", '! grep -q INFECTED "$1"', "sh", "{in}"]
 `
 
-// newGlobalAttachmentsApp builds an App whose metamodel is parsed from
-// globalAttachmentsMetamodelYAML through the real loader (metamodel.Parse) —
-// so these HTTP integration tests transitively depend on the BUG-5XIN07
-// whitelist fix: revert it and Parse rejects the `attachments:` key here,
-// failing this helper before any upload runs. A real command runner is wired
-// so the global scan command actually executes on the upload path.
-func newGlobalAttachmentsApp(t *testing.T) (*App, *acl.Declarative) {
+// newAttachmentApp builds an App whose metamodel is parsed from metaYAML through
+// the real loader (metamodel.Parse), with alice authorized to write to a seeded
+// TKT-001. Shared by the attachment HTTP integration tests so a change to the
+// wiring lands in one place.
+func newAttachmentApp(t *testing.T, metaYAML string) (*App, *acl.Declarative) {
 	t.Helper()
 
-	meta, err := metamodel.Parse([]byte(globalAttachmentsMetamodelYAML))
+	meta, err := metamodel.Parse([]byte(metaYAML))
 	if err != nil {
-		t.Fatalf("parse global-attachments metamodel: %v", err)
+		t.Fatalf("parse metamodel: %v", err)
 	}
-
 	cfg := &dataentryconfig.Config{
 		App:        dataentryconfig.AppConfig{Name: "Test App"},
 		Forms:      make(map[string]dataentryconfig.Form),
@@ -472,17 +470,27 @@ func newGlobalAttachmentsApp(t *testing.T) (*App, *acl.Declarative) {
 		Kanbans:    make(map[string]dataentryconfig.Kanban),
 		Navigation: []dataentryconfig.NavigationEntry{},
 	}
-
 	app := newAppFromParts(cfg, meta, newFixture())
+	d := writeACL(t, app)
+	app.acl = d
+	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "T1"}})
+	return app, d
+}
+
+// newGlobalAttachmentsApp builds an App on globalAttachmentsMetamodelYAML — so
+// these HTTP integration tests transitively depend on the BUG-5XIN07 whitelist
+// fix: revert it and Parse rejects the `attachments:` key here, failing this
+// helper before any upload runs. A real command runner is wired so the global
+// scan command actually executes on the upload path.
+func newGlobalAttachmentsApp(t *testing.T) (*App, *acl.Declarative) {
+	t.Helper()
+
+	app, d := newAttachmentApp(t, globalAttachmentsMetamodelYAML)
 	runner, err := attachment.NewCmdRunner(5*time.Second, store.MaxAttachmentBytes)
 	if err != nil {
 		t.Fatalf("NewCmdRunner: %v", err)
 	}
 	app.attachmentRunner = runner
-
-	d := writeACL(t, app)
-	app.acl = d
-	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "T1"}})
 	return app, d
 }
 
@@ -531,5 +539,93 @@ func TestAttachmentUpload_GlobalScanCmdRejects(t *testing.T) {
 	get := getAttachmentAs(aliceCtx(), t, app, d, "ticket", "tickets", "TKT-001", "report", "clean.txt")
 	if get.Code != http.StatusOK || get.Body.String() != "all good" {
 		t.Errorf("clean attachment must survive a rejected scan; GET got %d body=%q", get.Code, get.Body)
+	}
+}
+
+// defaultSafeMetamodelYAML is a real metamodel whose `report` file property
+// takes the `default-safe` allowlist — the out-of-box configuration an operator
+// gets by not setting `allow:` at all.
+const defaultSafeMetamodelYAML = `
+version: "1.0"
+types: {}
+relations: {}
+entities:
+  ticket:
+    label: Ticket
+    id_prefix: "TKT-"
+    id_type: sequential
+    properties:
+      title:
+        type: string
+        required: true
+      report:
+        type: file
+`
+
+// newDefaultSafeApp builds an App whose `report` file property takes the
+// `default-safe` allowlist — the out-of-box configuration an operator gets by
+// not setting `allow:` at all.
+func newDefaultSafeApp(t *testing.T) (*App, *acl.Declarative) {
+	t.Helper()
+	return newAttachmentApp(t, defaultSafeMetamodelYAML)
+}
+
+// zipBytes builds a real ZIP archive — the shape every ZIP-container document
+// (docx, odt, epub, …) has on the wire. The member name cannot affect any
+// verdict: http.DetectContentType stops at the PK\x03\x04 header.
+func zipBytes(t *testing.T) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	w, err := zw.Create("content.xml")
+	if err != nil {
+		t.Fatalf("zip create: %v", err)
+	}
+	if _, err := w.Write([]byte(`<?xml version="1.0"?><x/>`)); err != nil {
+		t.Fatalf("zip write: %v", err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("zip close: %v", err)
+	}
+	return buf.Bytes()
+}
+
+// TestAttachmentUpload_ZipContainerDocuments is the end-to-end guard for
+// BUG-TDE1QO: a docx/xlsx/odt/epub sniffs as application/zip while its
+// extension claims a concrete type, and the sniff-vs-extension check rejected
+// every one of them through the real upload handler under `default-safe`.
+func TestAttachmentUpload_ZipContainerDocuments(t *testing.T) {
+	app, d := newDefaultSafeApp(t)
+	data := zipBytes(t)
+
+	for _, name := range []string{"report.docx", "budget.xlsx", "notes.odt", "book.epub", "plain.zip"} {
+		t.Run(name, func(t *testing.T) {
+			rec := putAttachmentAs(aliceCtx(), t, app, d, "TKT-001", "report", name, data)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("upload: got %d, want 200; body=%s", rec.Code, rec.Body)
+			}
+			get := getAttachmentAs(aliceCtx(), t, app, d, "ticket", "tickets", "TKT-001", "report", name)
+			if get.Code != http.StatusOK || !bytes.Equal(get.Body.Bytes(), data) {
+				t.Errorf("GET: got %d, want 200 with the uploaded bytes", get.Code)
+			}
+		})
+	}
+}
+
+// TestAttachmentUpload_ZipExecutableContainersRejected pins that the fix stayed
+// narrow: ZIP is also the container for executable formats, so those keep
+// failing the mismatch check even though the bytes sniff as an allowed
+// application/zip.
+func TestAttachmentUpload_ZipExecutableContainersRejected(t *testing.T) {
+	app, d := newDefaultSafeApp(t)
+	data := zipBytes(t)
+
+	for _, name := range []string{"app.jar", "app.apk", "addon.xpi", "macro.docm", "fake.pdf"} {
+		t.Run(name, func(t *testing.T) {
+			rec := putAttachmentAs(aliceCtx(), t, app, d, "TKT-001", "report", name, data)
+			if rec.Code != http.StatusUnprocessableEntity {
+				t.Errorf("upload: got %d, want 422; body=%s", rec.Code, rec.Body)
+			}
+		})
 	}
 }
