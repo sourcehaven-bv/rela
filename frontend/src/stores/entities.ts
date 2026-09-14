@@ -2,15 +2,25 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import {
   listEntities,
+  listAllEntities,
   getEntity,
   createEntity,
   updateEntity,
   deleteEntity,
   type EntityPatch,
 } from '@/api/entities'
-import type { Entity, CreateEntity, ListParams, ListMeta } from '@/types'
+import type { Entity, CreateEntity, ListParams, ListMeta, ListResponse } from '@/types'
 import { getErrorMessage } from '@/api/errors'
 import { useGitStore } from './git'
+
+// The shape every list read returns, named once rather than restated inline on
+// each of `fetchList` / `fetchAllList` / `fetchListInternal`.
+type ListResult = {
+  data: Entity[]
+  meta: ListMeta
+  included?: Record<string, Entity>
+  _actions?: Record<string, boolean>
+}
 
 // No `etag` field here on purpose (TKT-DPBQ7S). One was declared for a long
 // time and written by NO path — `fetchEntity`, `create` and `update` all
@@ -74,8 +84,12 @@ export const useEntitiesStore = defineStore('entities', () => {
     return `${type}:${id}:${worldKey(world)}`
   }
 
-  function listCacheKey(type: string, params?: ListParams): string {
-    return `${type}:${JSON.stringify(params || {})}`
+  // The paging MODE is part of the key, not a prefix on it: `invalidateListCache`
+  // matches on the leading `<type>:`, so a mode prefix would hide paged entries
+  // from invalidation. Keeping the discriminator after the type means a new mode
+  // can never silently opt out of cache invalidation.
+  function listCacheKey(type: string, params: ListParams | undefined, mode: 'page' | 'all'): string {
+    return `${type}:${mode}:${JSON.stringify(params || {})}`
   }
 
   function isCacheValid(timestamp: number): boolean {
@@ -108,8 +122,47 @@ export const useEntitiesStore = defineStore('entities', () => {
   })
 
   // Actions
-  async function fetchList(type: string, params?: ListParams): Promise<{ data: Entity[]; meta: ListMeta; included?: Record<string, Entity>; _actions?: Record<string, boolean> }> {
-    const key = listCacheKey(type, params)
+  async function fetchList(type: string, params?: ListParams, signal?: AbortSignal): Promise<ListResult> {
+    return fetchListInternal(type, params, listEntities, 'page', signal)
+  }
+
+  /**
+   * fetchList for consumers that need the COMPLETE collection, not one page.
+   *
+   * A `listEntities` call returns a single page (server default 25, cap 100).
+   * A consumer that resolves IDs to entities client-side — mapping a selected
+   * ID to its type, title or row — is a complete-set consumer: anything past
+   * the page boundary is not merely unrendered, it is *unresolvable*, and the
+   * failure surfaces far from the fetch. BUG-HOB9BR is that failure: the
+   * relation picker could not name the type of an already-linked entity beyond
+   * page 1, so the form's entire relations autosave aborted.
+   *
+   * Caching is shared with `fetchList` but keyed separately, so a paged read
+   * and a single-page read of the same type never satisfy each other from
+   * cache — a single-page entry must never be served to a caller that asked
+   * for the whole set, which is the bug above in cache form.
+   *
+   * PASS A SIGNAL when the caller can be superseded. This runs a SEQUENTIAL
+   * loop of up to 50 requests, and every iteration writes into the shared
+   * entity cache — an unaborted loop from a unmounted consumer keeps
+   * populating it under its own `params.world` long after a new route has
+   * read those keys.
+   */
+  async function fetchAllList(type: string, params?: ListParams, signal?: AbortSignal): Promise<ListResult> {
+    return fetchListInternal(type, params, listAllEntities, 'all', signal)
+  }
+
+  // `mode` is REQUIRED on both this and `listCacheKey`, deliberately. A default
+  // would let a future mode land in another mode's cache slot silently, which
+  // is the same class of defect the key comment above is guarding against.
+  async function fetchListInternal(
+    type: string,
+    params: ListParams | undefined,
+    fetch: (type: string, params?: ListParams, signal?: AbortSignal) => Promise<ListResponse<Entity>>,
+    mode: 'page' | 'all',
+    signal?: AbortSignal
+  ): Promise<ListResult> {
+    const key = listCacheKey(type, params, mode)
     const cached = listCache.value.get(key)
 
     if (cached && isCacheValid(cached.timestamp)) {
@@ -118,7 +171,7 @@ export const useEntitiesStore = defineStore('entities', () => {
 
     loading.value.add(`list:${type}`)
     try {
-      const response = await listEntities(type, params)
+      const response = await fetch(type, params, signal)
 
       // Cache list result
       listCache.value.set(key, {
@@ -294,6 +347,7 @@ export const useEntitiesStore = defineStore('entities', () => {
 
     // Actions
     fetchList,
+    fetchAllList,
     fetchEntity,
     create,
     update,

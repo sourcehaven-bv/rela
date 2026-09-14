@@ -6,6 +6,7 @@ import type { Entity } from '@/types'
 
 vi.mock('@/api/entities', () => ({
   listEntities: vi.fn(),
+  listAllEntities: vi.fn(),
   getEntity: vi.fn(),
   createEntity: vi.fn(),
   updateEntity: vi.fn(),
@@ -132,7 +133,8 @@ describe('Entities Store', () => {
 
       const result = await store.fetchList('ticket')
 
-      expect(entitiesApi.listEntities).toHaveBeenCalledWith('ticket', undefined)
+      // First argument only — see the note in the fetchAllList block below.
+      expect(vi.mocked(entitiesApi.listEntities).mock.calls[0][0]).toBe('ticket')
       expect(result.data).toHaveLength(2)
       expect(result.meta.total).toBe(2)
 
@@ -157,6 +159,68 @@ describe('Entities Store', () => {
       await store.fetchList('ticket', { 'filter[status]': 'closed' })
 
       expect(entitiesApi.listEntities).toHaveBeenCalledTimes(2)
+    })
+  })
+
+  describe('fetchAllList (BUG-HOB9BR)', () => {
+    const mockResponse = {
+      data: [
+        { id: 'TKT-001', type: 'ticket', properties: { title: 'First' }, relations: {} },
+        { id: 'TKT-002', type: 'ticket', properties: { title: 'Second' }, relations: {} },
+      ],
+      meta: { total: 2, page: 1, per_page: 2, has_more: false },
+    }
+
+    it('pages the collection instead of fetching a single page', async () => {
+      vi.mocked(entitiesApi.listAllEntities).mockResolvedValue(mockResponse)
+
+      const result = await store.fetchAllList('ticket')
+
+      // First argument only: asserting the full arity couples this to the
+      // parameter list rather than the behaviour, and breaks on any new
+      // trailing optional for no defect.
+      expect(vi.mocked(entitiesApi.listAllEntities).mock.calls[0][0]).toBe('ticket')
+      expect(entitiesApi.listEntities).not.toHaveBeenCalled()
+      expect(result.data).toHaveLength(2)
+      // Rows are cached individually on this path too, same as fetchList.
+      expect(store.getCached('ticket', 'TKT-001')).toBeDefined()
+    })
+
+    it('does not serve a single-page cache entry to an all-pages caller', async () => {
+      // The bug in cache form: a `fetchList` result covers only page 1, so
+      // handing it to a caller that asked for the complete set would
+      // reintroduce the truncation the paged read exists to avoid.
+      //
+      // The two mocks return DISTINGUISHABLE payloads on purpose. Asserting
+      // only "listAllEntities was called" passes on a cold cache even with the
+      // mode removed from the key — the assertion has to be that the caller got
+      // the all-pages DATA, or the test cannot fail for its own reason.
+      const pageOnly = {
+        data: [{ id: 'TKT-001', type: 'ticket', properties: {}, relations: {} }],
+        meta: { total: 2, page: 1, per_page: 1, has_more: true },
+      }
+      vi.mocked(entitiesApi.listEntities).mockResolvedValue(pageOnly)
+      vi.mocked(entitiesApi.listAllEntities).mockResolvedValue(mockResponse)
+
+      await store.fetchList('ticket')
+      const all = await store.fetchAllList('ticket')
+
+      expect(all.data.map((e) => e.id)).toEqual(mockResponse.data.map((e) => e.id))
+      expect(all.meta.has_more).toBe(false)
+    })
+
+    it('invalidates paged list entries on write, like single-page ones', async () => {
+      // listCacheKey puts the mode AFTER the type so `invalidateListCache`'s
+      // `<type>:` prefix match still reaches paged entries. A mode prefix
+      // would leave them stale forever.
+      vi.mocked(entitiesApi.listAllEntities).mockResolvedValue(mockResponse)
+      vi.mocked(entitiesApi.updateEntity).mockResolvedValue(mockResponse.data[0] as Entity)
+
+      await store.fetchAllList('ticket')
+      await store.update('ticket', 'TKT-001', { properties: { title: 'Changed' } })
+      await store.fetchAllList('ticket')
+
+      expect(entitiesApi.listAllEntities).toHaveBeenCalledTimes(2)
     })
   })
 
