@@ -37,8 +37,9 @@ const docContent = ref<string>('')
 const loading = ref(false)
 
 // Cold-load only (the `!docContent` half): a re-render keeps the previous
-// document on screen rather than blanking it. The gate adds the other half
-// — a render quicker than the threshold shows nothing at all.
+// document on screen rather than blanking it — loadDocument only clears
+// docContent when `cold`. The gate adds the other half: a render quicker
+// than the threshold shows nothing at all.
 const showBlockLoader = useDelayedPending(() => loading.value && !docContent.value, {
   delay: PENDING_TIMINGS.navDelayMs,
   minDuration: PENDING_TIMINGS.navMinDurationMs,
@@ -111,17 +112,29 @@ watch(
   [selectedDoc, () => props.entityId],
   async () => {
     if (selectedDoc.value && props.entityId) {
-      await loadDocument()
+      await loadDocument(false, true)
     }
   },
   { immediate: true }
 )
 
-async function loadDocument(refresh = false) {
+// cold: blank the view before fetching. Reserved for a switch to a DIFFERENT
+// document (tab change or a new entity), where the old content is about to be
+// wrong — keeping it on screen would show one document under another's tab.
+//
+// A re-render of the SAME document must not blank: docContent going empty
+// drops the template past the delay-gated spinner into the empty-state branch
+// (see the v-if chain below), which unmounts the rendered body, collapses the
+// panel height and makes the browser clamp scroll to the top. That is the
+// BUG-DJZTRF flash, and since the SSE feed re-renders on any entity write of
+// any type, it fired constantly while nothing relevant had changed.
+async function loadDocument(refresh = false, cold = false) {
   if (!selectedDoc.value) return
 
   loading.value = true
-  docContent.value = ''
+  if (cold) {
+    docContent.value = ''
+  }
 
   try {
     // Documents panel is embedded on the entity page; pass that path as
@@ -136,7 +149,13 @@ async function loadDocument(refresh = false) {
       refresh,
       returnTo,
     })
-    docContent.value = result.html
+    // Assign only on a real change. v-html replaces the whole subtree on every
+    // assignment, even an identical one, which resets scroll and re-runs the
+    // mermaid/PlantUML watcher below. An SSE-driven re-render normally returns
+    // byte-identical HTML, so this guard is what makes the common case a no-op.
+    if (result.html !== docContent.value) {
+      docContent.value = result.html
+    }
     isCached.value = result.cached
   } catch (err: unknown) {
     const scriptErr = getScriptError(err)
@@ -145,7 +164,10 @@ async function loadDocument(refresh = false) {
     } else {
       uiStore.error(getErrorMessage(err, 'Failed to render document'))
     }
-    docContent.value = ''
+    // Keep whatever is already rendered. The error is surfaced via the toast
+    // or the script-error panel, so replacing a readable document with the
+    // empty state on a transient failure loses the user's place for nothing.
+    // A cold load has nothing to keep and correctly stays empty.
   } finally {
     loading.value = false
   }
