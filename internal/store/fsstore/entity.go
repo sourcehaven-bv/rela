@@ -342,9 +342,26 @@ func (s *FSStore) createEntity(_ context.Context, e *entity.Entity) error {
 	return nil
 }
 
-func (s *FSStore) updateEntity(_ context.Context, e *entity.Entity) error {
+func (s *FSStore) updateEntity(ctx context.Context, e *entity.Entity) error {
+	_, err := s.updateEntityIf(ctx, e, store.UpdateCondition{})
+	return err
+}
+
+// updateEntityIf is the single update core: the version compare and the file
+// write happen under ONE acquisition of s.mu, which is what makes this a
+// compare-and-swap rather than a check-then-write.
+//
+// The compare uses the entity freshly loaded from DISK (`old`, which this
+// method already needed for the prop-cache diff), not the in-memory index.
+// That is deliberate and is the reason fsstore can support CAS at all: a hand
+// edit or a `git pull` changes the file without any store write, and a token
+// derived from the actual bytes catches that where a per-write counter would
+// not.
+func (s *FSStore) updateEntityIf(
+	_ context.Context, e *entity.Entity, cond store.UpdateCondition,
+) (store.EntityVersion, error) {
 	if err := storeutil.ValidateProperties(e.Properties); err != nil {
-		return err
+		return "", err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -352,24 +369,33 @@ func (s *FSStore) updateEntity(_ context.Context, e *entity.Entity) error {
 	key := stateKey(e.ID, e.Face)
 	meta, exists := s.entities[key]
 	if !exists {
-		return store.ErrNotFound
+		return "", store.ErrNotFound
 	}
 	// Row-family invariant: a non-default state cannot be re-typed away
 	// from its family (TKT-DOFYR1, design doc §6).
 	if !e.Face.IsDefault() && e.Type != meta.Type {
-		return storeutil.StateTypeMismatchError(e.ID, e.Face, e.Type, meta.Type)
+		return "", storeutil.StateTypeMismatchError(e.ID, e.Face, e.Type, meta.Type)
 	}
 
-	// Load old entity for prop cache diff.
+	// Load old entity for prop cache diff — and, when conditional, for the
+	// CAS compare.
 	old, err := s.loadEntityMeta(meta)
 	if err != nil {
-		return err
+		return "", err
+	}
+
+	if !cond.IsZero() {
+		if actual := store.VersionOf(old); actual != cond.ExpectedVersion {
+			return "", &store.VersionConflictError{
+				ID: e.ID, Expected: cond.ExpectedVersion, Actual: actual,
+			}
+		}
 	}
 
 	stored := e.Clone()
 	stored.UpdatedAt = time.Now()
 	if err := s.writeEntity(stored); err != nil {
-		return err
+		return "", err
 	}
 
 	// The entity's type determines its file path, so a type change wrote the
@@ -379,7 +405,7 @@ func (s *FSStore) updateEntity(_ context.Context, e *entity.Entity) error {
 	if meta.Type != e.Type {
 		oldKey := s.layout.entityFileKey(meta.Type, e.ID)
 		if err := s.rooted.Remove(oldKey); err != nil && !os.IsNotExist(err) {
-			return err
+			return "", err
 		}
 		s.echoes.Forget(s.layout.absPath(oldKey))
 	}
@@ -398,7 +424,7 @@ func (s *FSStore) updateEntity(_ context.Context, e *entity.Entity) error {
 		EntityID:   e.ID,
 		Face:       e.Face,
 	})
-	return nil
+	return store.VersionOf(stored), nil
 }
 
 // forgetRelations drops index entries for relations whose files have been

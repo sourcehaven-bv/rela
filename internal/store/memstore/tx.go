@@ -48,6 +48,14 @@ func (m *MemStore) UpdateEntity(ctx context.Context, e *entity.Entity) error {
 	return m.updateEntity(ctx, e)
 }
 
+// UpdateEntityIf implements store.EntityWriter's compare-and-swap write.
+func (m *MemStore) UpdateEntityIf(
+	ctx context.Context, e *entity.Entity, cond store.UpdateCondition,
+) (store.EntityVersion, error) {
+	defer m.lockTx()()
+	return m.updateEntityIf(ctx, e, cond)
+}
+
 // DeleteEntity implements store.EntityWriter.
 // Returns store.ErrNotFound if the entity does not exist.
 func (m *MemStore) DeleteEntity(ctx context.Context, id string, cascade bool) (*store.DeleteResult, error) {
@@ -131,6 +139,12 @@ func (t txStore) CreateEntity(ctx context.Context, e *entity.Entity) error {
 
 func (t txStore) UpdateEntity(ctx context.Context, e *entity.Entity) error {
 	return t.updateEntity(ctx, e)
+}
+
+func (t txStore) UpdateEntityIf(
+	ctx context.Context, e *entity.Entity, cond store.UpdateCondition,
+) (store.EntityVersion, error) {
+	return t.updateEntityIf(ctx, e, cond)
 }
 
 func (t txStore) DeleteEntity(ctx context.Context, id string, cascade bool) (*store.DeleteResult, error) {

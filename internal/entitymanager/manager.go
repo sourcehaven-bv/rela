@@ -949,7 +949,10 @@ func (m *Manager) UpdateEntity(ctx context.Context, e *entity.Entity) (*entity.U
 		return nil, err
 	}
 
-	return m.updateCore(ctx, e, oldEntity)
+	// Unconditional: UpdateEntity is the whole-entity save, whose caller owns
+	// every field. A caller wanting compare-and-swap uses PatchEntity with
+	// entity.Patch.ExpectedVersion.
+	return m.updateCore(ctx, e, oldEntity, "")
 }
 
 // PatchEntity applies a TARGETED set of property changes to one entity:
@@ -981,6 +984,22 @@ func (m *Manager) UpdateEntity(ctx context.Context, e *entity.Entity) (*entity.U
 // silently drops some property writes is the confusing contract
 // lua.WriteDeps.ElevatedManager exists to avoid — and the bypass is still
 // recorded by authorizeAndAudit (RR-BA1NIV).
+//
+// # Compare-and-swap (TKT-34XS2R)
+//
+// Setting [entity.Patch.ExpectedVersion] makes the write conditional: it
+// applies only if the stored entity still matches that token, else it fails
+// with a [store.VersionConflictError] (recoverable via errors.As, and
+// errors.Is-able as [store.ErrConflict]). The precondition is evaluated by
+// the STORE, atomically with the write — this method's own read is write-prep
+// for the merge, not the check, so no TOCTOU window exists between them.
+//
+// A caller that wants a bounded retry loop re-reads, re-derives its patch,
+// and retries with the conflict's Actual version. Note that most callers do
+// NOT need this: a patch already preserves properties it does not name, so an
+// unconditional patch can only lose an update when two writers name the same
+// property. ExpectedVersion is for the cases where that is exactly what
+// happens — notably a Content replacement computed from a base read.
 func (m *Manager) PatchEntity(
 	ctx context.Context, id string, p entity.Patch,
 ) (*entity.UpdateResult, error) {
@@ -1050,7 +1069,7 @@ func (m *Manager) PatchEntity(
 	updated := stored.Clone()
 	p.Apply(updated)
 
-	return m.updateCore(ctx, updated, stored)
+	return m.updateCore(ctx, updated, stored, p.ExpectedVersion)
 }
 
 // updateCore is the shared post-authorization update pipeline: validate,
@@ -1071,8 +1090,10 @@ func (m *Manager) PatchEntity(
 // manager itself reads the row once per write. Callers may still read
 // separately for their own reasons — internal/mcp does, to validate
 // property names against the entity type before dispatching.
+// expectedVersion carries the caller's compare-and-swap precondition down to
+// the durable write. Empty means unconditional (the historical behavior).
 func (m *Manager) updateCore(
-	ctx context.Context, e, oldEntity *entity.Entity,
+	ctx context.Context, e, oldEntity *entity.Entity, expectedVersion string,
 ) (*entity.UpdateResult, error) {
 	// Type is immutable on update, on EVERY path and not only ApplyEntity's:
 	// the store checks a non-default face's type against its family but not
@@ -1138,7 +1159,12 @@ func (m *Manager) updateCore(
 	// UpdateEntity, not upsert: the GetEntity above already established
 	// the row exists (else we returned ErrEntityNotFound), so this is
 	// unambiguously an update (BUG-ZWTDH9).
-	if err := m.deps.Store.UpdateEntity(ctx, e); err != nil {
+	// The CAS precondition rides down to the store, which is the only layer
+	// that can compare-and-write atomically. Empty expectedVersion yields the
+	// zero condition, i.e. the unconditional write this path always did.
+	if _, err := m.deps.Store.UpdateEntityIf(ctx, e, store.UpdateCondition{
+		ExpectedVersion: store.EntityVersion(expectedVersion),
+	}); err != nil {
 		// A derived unique-property index can reject an update whose (possibly
 		// automation-set) value duplicates another entity's, even though the
 		// scan above passed under a concurrent writer. Surface it as the same
@@ -1146,6 +1172,11 @@ func (m *Manager) updateCore(
 		if ok, mapped := mapUniquePropertyConflict(err); ok {
 			return nil, mapped
 		}
+		// %w, and nothing more: a *store.VersionConflictError MUST stay
+		// recoverable by errors.As all the way up to whatever retry loop the
+		// caller wrote. RR-HI9QIU is the cautionary case — a translation that
+		// dropped the cause made a retry loop unreachable and turned 8 of 8
+		// concurrent losers into 500s, silently.
 		return nil, fmt.Errorf("write entity: %w", err)
 	}
 
