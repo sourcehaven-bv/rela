@@ -9,6 +9,7 @@ import { createDocumentClickHandler } from '@/composables/useDocumentClicks'
 import { renderMermaidDiagrams, renderPlantUMLDiagrams } from '@/utils/markdown'
 import type { DocumentConfig } from '@/types'
 import { getErrorMessage, getScriptError } from '@/api/errors'
+import PendingButton from '@/components/common/PendingButton.vue'
 import DOMPurify from 'dompurify'
 import { useDelayedPending } from '@/composables/useDelayedPending'
 import { PENDING_TIMINGS } from '@/composables/pendingTimings'
@@ -35,6 +36,15 @@ const handleContentClick = createDocumentClickHandler(router)
 const selectedDoc = ref<string | null>(null)
 const docContent = ref<string>('')
 const loading = ref(false)
+
+// Monotonic id of the most recently STARTED render. Renders are not serialized
+// — an SSE burst or a tab switch mid-flight leaves two in the air — and they
+// can complete out of order, so a response may only touch state if no newer
+// render has started since. Without the fence a slow re-render of one document
+// can land after a fast switch to another and paint it under the wrong tab;
+// SSE re-renders pass refresh=true, which bypasses the server's render cache,
+// so they are reliably the slow ones.
+let renderGeneration = 0
 
 // Cold-load only (the `!docContent` half): a re-render keeps the previous
 // document on screen rather than blanking it — loadDocument only clears
@@ -131,6 +141,7 @@ watch(
 async function loadDocument(refresh = false, cold = false) {
   if (!selectedDoc.value) return
 
+  const generation = ++renderGeneration
   loading.value = true
   if (cold) {
     docContent.value = ''
@@ -149,15 +160,27 @@ async function loadDocument(refresh = false, cold = false) {
       refresh,
       returnTo,
     })
-    // Assign only on a real change. v-html replaces the whole subtree on every
-    // assignment, even an identical one, which resets scroll and re-runs the
-    // mermaid/PlantUML watcher below. An SSE-driven re-render normally returns
-    // byte-identical HTML, so this guard is what makes the common case a no-op.
+    // A superseded render must not paint: its HTML belongs to the previously
+    // selected document or to an older state of this one.
+    if (generation !== renderGeneration) return
+
+    // Assign only on a real change. Vue's ref equality check already makes an
+    // identical assignment a no-op, so this guard is belt-and-braces rather
+    // than the thing that prevents the repaint — keep it as the explicit
+    // statement of intent (an SSE re-render normally returns byte-identical
+    // HTML and must not repaint), and so a future switch to a non-primitive
+    // content type cannot silently start re-patching the subtree.
     if (result.html !== docContent.value) {
       docContent.value = result.html
     }
+    // Inside the fence and beside the assignment: the badge describes the
+    // content on screen, so it must never outlive or precede it.
     isCached.value = result.cached
   } catch (err: unknown) {
+    // A superseded render's failure is not the user's problem — the render
+    // they are actually waiting on is still in flight.
+    if (generation !== renderGeneration) return
+
     const scriptErr = getScriptError(err)
     if (scriptErr) {
       scriptErrorStore.show(scriptErr)
@@ -169,7 +192,12 @@ async function loadDocument(refresh = false, cold = false) {
     // empty state on a transient failure loses the user's place for nothing.
     // A cold load has nothing to keep and correctly stays empty.
   } finally {
-    loading.value = false
+    // Only the newest render owns the flag; an older one clearing it would
+    // report "done" while the render the user is waiting on is still running,
+    // re-enabling Refresh mid-flight.
+    if (generation === renderGeneration) {
+      loading.value = false
+    }
   }
 }
 
@@ -208,15 +236,14 @@ function getDocTitle(name: string, config: DocumentConfig): string {
             {{ getDocTitle(doc.name, doc.config) }}
           </option>
         </select>
-        <button
+        <PendingButton
           class="btn btn-sm btn-secondary"
-          :disabled="loading"
+          :pending="loading"
+          label="Refresh"
+          pending-label="Refreshing…"
           title="Refresh document"
           @click="loadDocument(true)"
-        >
-          <span v-if="loading" class="spinner-sm" />
-          <span v-else>Refresh</span>
-        </button>
+        />
       </div>
     </header>
 
