@@ -161,12 +161,11 @@ func (a *App) SetViewConditions(fn ViewConditionFunc) error {
 // compile, so a problem here can only arise in a deployment that skipped
 // validation, where the safe answer is the unconstrained (ACL-scoped) view
 // rather than a request that fails.
-func (a *App) viewCondition(kind, id string) ViewConditionMatcher {
-	if a.viewConditions == nil || id == "" {
+func viewCondition(fn ViewConditionFunc, s *Schema, kind, id string) ViewConditionMatcher {
+	if fn == nil || id == "" || s == nil {
 		return nil
 	}
-	s := a.State()
-	lookup, problems := a.viewConditions(s.Cfg, s.Meta)
+	lookup, problems := fn(s.Cfg, s.Meta)
 	if len(problems) > 0 {
 		return nil
 	}

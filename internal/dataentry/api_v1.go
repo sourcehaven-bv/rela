@@ -357,7 +357,7 @@ func (a *App) listPage(
 	// BUG-F1LTP1's failure shape. Its own header states the rule: the pushed
 	// and the Go path must return the same rows, "and that is a matter of
 	// eligibility, not of translation cleverness".
-	cond := a.viewCondition(viewKindList, queryGet(query, listIDParam))
+	cond := viewCondition(a.viewConditions, a.State(), viewKindList, queryGet(query, listIDParam))
 	if cond == nil && !worldFromContext(ctx).blocksAllReads() {
 		rqr := readGateFromContext(ctx).ReadQuery(ctx, typeName)
 		isRelationKey := relationFilterClassifier(a.Meta(), a.Cfg(), typeName)

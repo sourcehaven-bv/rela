@@ -181,8 +181,21 @@ type appEntityWriter interface {
 // The routes themselves are on commentsHandler, so the public surface grew by
 // exactly the one setter. Ratchet target, as above.
 //
-//plimsoll:max-methods=88
-//plimsoll:max-exported-methods=21
+// 88 → 89 for SetViewConditions (TKT-LPLZ1V), and 21 → 22 exported, on the
+// same terms as SetComments above: it is a wiring setter in the established
+// shape, and the alternative — appbuild assigning the field directly — trades
+// a named seam for a hidden one.
+//
+// The subsystem cost App exactly that one method, and not by luck. The
+// condition lookup was written as an App method first and plimsoll failed the
+// build (90/22); it became a package function taking its seams explicitly
+// (`viewCondition`), which reads better for the reason TKT-WRLDAPI's note
+// gives — what a lookup depends on is named in the signature rather than
+// reached through this struct. Recorded because the load line interrupting
+// that habit is the whole point of it. Ratchet target, as above.
+//
+//plimsoll:max-methods=89
+//plimsoll:max-exported-methods=22
 type App struct {
 	// Primitives — immutable after NewApp.
 	fs    storage.FS
