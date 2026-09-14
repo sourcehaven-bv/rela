@@ -19,7 +19,6 @@ entities:
   page:
     label: Page
     id_prefix: PAGE
-    bare_face: draft
     faces:
       draft: {}
       published: {}
@@ -83,7 +82,8 @@ func TestCopyDepsAreWired(t *testing.T) {
 
 	ctx := context.Background()
 	if serr := st.CreateEntity(ctx, &entity.Entity{
-		ID: "PAGE-1", Type: "page", Properties: map[string]any{"title": "Draft"},
+		ID: "PAGE-1", Type: "page", Face: entity.Face("draft"),
+		Properties: map[string]any{"title": "Draft"},
 	}); serr != nil {
 		t.Fatalf("seed: %v", serr)
 	}
@@ -132,12 +132,13 @@ func TestCopyAffordancesAreWired(t *testing.T) {
 
 	ctx := context.Background()
 	if serr := st.CreateEntity(ctx, &entity.Entity{
-		ID: "PAGE-1", Type: "page", Properties: map[string]any{"title": "Draft"},
+		ID: "PAGE-1", Type: "page", Face: entity.Face("draft"),
+		Properties: map[string]any{"title": "Draft"},
 	}); serr != nil {
 		t.Fatalf("seed: %v", serr)
 	}
 
-	offers, err := entitymanager.CopiesForSource(ctx, mgr, "page", "", "PAGE-1")
+	offers, err := entitymanager.CopiesForSource(ctx, mgr, "page", "draft", "PAGE-1")
 	if err != nil {
 		t.Fatalf("CopiesForSource: %v", err)
 	}

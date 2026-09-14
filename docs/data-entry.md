@@ -608,6 +608,52 @@ no extra form configuration is required.
   and include a non-empty suffix. The edit form shows the ID as a read-only
   display; renaming uses the dedicated rename flow.
 
+### Create & add another
+
+Create forms carry a secondary **Create & add another** action beside the
+primary **Create**. It creates the entity exactly as Create does, then — instead
+of navigating to the new entity — stays on the form and clears it for the next
+record. Use it when entering a batch: ten tasks, a stack of contacts, a set of
+notes.
+
+The created entity's ID is named in a confirmation toast, since you are not
+taken to it.
+
+The reset is **clean**: every field goes back to its metamodel default, its
+form-level `default`, and any `prop.*` / `rel.*` / `link_*` pre-fill in the URL
+(those survive because the action does not navigate, so the query string is
+unchanged). The body/content is always cleared.
+
+To carry a value across records, mark the field or relation with
+`keep_on_add_another`:
+
+```yaml
+forms:
+  new-task:
+    entity_type: task
+    fields:
+      - property: project
+        keep_on_add_another: true   # batch context — survives to the next record
+      - property: title             # cleared, like everything unmarked
+    relations:
+      - relation: assigned-to
+        keep_on_add_another: true
+```
+
+Notes:
+
+- The default is `false` — a clean reset. This is the safe direction: a field
+  you forgot to mark costs one re-entry, whereas a field wrongly carried over
+  writes a stale value into every subsequent record without saying so.
+- It applies to **relations** as well as properties. The batch context worth
+  keeping is often a relation (a project, an assignee), not a property.
+- It is rejected on a `hidden: true` field at config load — a hidden field has
+  no entered value to keep, so use `default` there instead.
+- It has no effect on edit forms, which autosave per field and have no
+  Create button.
+- The action is not offered on the inline-create modal reached from a relation
+  picker: that flow exists to create exactly one entity and link it.
+
 ### State Transitions
 
 For edit forms, you can restrict which enum values are selectable based on the current value:
@@ -1396,7 +1442,7 @@ where: "priority != low"     # Exclude low priority
 #### `where:` under a world
 
 When a view is requested with `?world=<name>`, a `where:` clause is evaluated
-against the face that world resolved, not against the entity's bare face. Under
+against the face that world resolved, not against some other face. Under
 a world that selects `published`, `where: "status = active"` reads the
 published face's `status`. A page that rendered published content while
 filtering on draft values would contradict itself, so the filter follows the
@@ -2928,6 +2974,8 @@ actions:
 | `script`      | string | Lua script path, relative to the `actions/` directory (mutually exclusive with `set`) |
 | `params`      | map    | Static key-value parameters from config, exposed as `rela.params` (values must be strings — quote them in YAML) |
 | `confirm`     | bool   | Show a confirmation dialog before executing (default: `false`)  |
+| `request`     | map    | Opt into request-scoped execution — see [Request-scoped actions](#request-scoped-actions). Requires `script` |
+| `capabilities`| map    | Ambient capability grant (`http`, `ai`, `write_file`, named `secrets`). Omitting it grants none |
 
 Each action must have either `set` or `script`, not both.
 
@@ -3008,6 +3056,116 @@ Scripts have a 5-second execution timeout (tighter than the default Lua
 timeout because the action handler holds a global write lock for the
 duration — concurrent mutations and other actions wait). Returning
 nothing (or `nil`) produces a silent success response.
+
+### Request-scoped actions
+
+By default an action script sees no part of the HTTP request that triggered it:
+the body carries `entity_id` and nothing else reaches the script, and the return
+value is projected onto the SPA's `{redirect, message, message_type}` toast
+vocabulary.
+
+A `request:` block opts one action into seeing the **whole request**, and lets it
+return an **arbitrary response**. This is the escape hatch for integrations the
+declarative [webhook routes](webhooks.md) cannot express — an odd payload
+shape, a response a third party needs in a specific form, logic that is not
+find/create/append.
+
+```yaml
+actions:
+  icinga-alert:
+    script: icinga-alert.lua
+    request:
+      body: true                    # rela.request.body / .raw
+      query: true                   # rela.request.query
+      headers: [X-Event-Type]       # allowlist; rela.request.headers
+      max_body_bytes: 262144        # optional; default 1 MiB, ceiling 8 MiB
+```
+
+Everything is **off by default**. An action with no `request:` block behaves
+exactly as it did before, including the SPA response shape.
+
+#### `rela.request`
+
+Present only for a request-scoped action, so `if rela.request then` is the
+script-side test. The table is read-only.
+
+| Field                    | Type   | Present when                                      |
+| ------------------------ | ------ | ------------------------------------------------- |
+| `rela.request.method`    | string | always                                            |
+| `rela.request.path`      | string | always                                            |
+| `rela.request.content_type` | string | always                                         |
+| `rela.request.raw`       | string | `body: true` — the body verbatim                  |
+| `rela.request.body`      | table  | `body: true` **and** the body parsed as JSON      |
+| `rela.request.query`     | table  | `query: true` — first value per key; `query._all[k]` is the full list |
+| `rela.request.headers`   | table  | always (empty without `headers:`), keyed lowercase |
+
+A body that does not parse as JSON leaves `rela.request.body` nil while
+`rela.request.raw` still holds the bytes — a script that expects a text or
+vendor payload reads `raw`. A body over the cap is refused with **413**; it is
+never truncated.
+
+**Headers are an allowlist, never pass-through.** Request headers carry session
+cookies, bearer tokens and proxy-injected identity assertions. `Authorization`,
+`Cookie`, `X-Forwarded-*`, `X-Auth-Request-*`, `X-Remote-*`, `X-Authentik-*`,
+`X-Pomerium-*` and the deployment's own `-principal-header` are refused at config
+load however you spell them — the same floor a declarative webhook gets.
+
+#### Returning a response
+
+A request-scoped script may return the rich shape instead of the SPA shape:
+
+```lua
+-- actions/icinga-alert.lua
+local alert = rela.request.body
+if alert == nil or alert.host == nil then
+    return { status = 422, body = "expected a JSON body with host", content_type = "text/plain" }
+end
+
+-- ... find or create the incident, append the notification ...
+
+return {
+    status = 202,
+    body = rela.json.encode({ status = "accepted", host = alert.host }),
+    content_type = "application/json",
+}
+```
+
+| Field          | Type   | Default                                                    |
+| -------------- | ------ | ---------------------------------------------------------- |
+| `status`       | number | `200` when a `body` is set. Must be 2xx, 4xx or 5xx        |
+| `body`         | string | empty. Must be a **string** — encode tables yourself       |
+| `content_type` | string | `text/plain; charset=utf-8`                                |
+
+`content_type` is an **allowlist**: `application/json`, `text/plain`,
+`text/csv`, `application/xml`, `text/xml`. `text/html` is deliberately not
+allowed — a rendered page belongs in a [document](#documents). The response is
+served with `X-Content-Type-Options: nosniff`, a `sandbox; default-src 'none'`
+CSP and `Cache-Control: no-store`, because a script-controlled body is
+attacker-influenceable output served same-origin with the SPA.
+
+A return **cannot mix** the two vocabularies. `{message = ..., status = ...}` is
+a contract error, not a precedence rule: the two are read by different consumers,
+so honoring one and dropping the other would be a silent half-delivery.
+
+**A script that fails always produces rela's error envelope**, whatever status
+it might have been going to return — a run that raised produced no return value,
+so it chose no status. A script that wants to answer 4xx or 5xx returns one
+deliberately, as above.
+
+#### What this does not change
+
+- `entity_id` in the body still resolves through the read-side ACL gate. An id
+  the caller may not read leaves the `entity` global nil and the action still
+  runs, exactly as before; a `request:` block is not a second route to an entity.
+- `capabilities:` is unaffected. A request-scoped action with no
+  `capabilities:` block still gets no `http`, no `ai`, no secrets and no
+  `write_file`.
+- Producer **authentication** is not rela's job. The proxy in front (oauth2-proxy,
+  Pratique) terminates it and hands rela an ACL-bounded request.
+- **Idempotency is the script's job.** rela offers no dedup key here. A producer
+  that retries will invoke the script twice, and the quiet failure mode is a
+  notification appended to an incident body twice — match on a stable field from
+  the payload before appending.
 
 ### Reserved Keyboard Shortcuts
 
@@ -4933,9 +5091,10 @@ app:
   default_world: published
 ```
 
-Without it, browsing shows the bare faces. For a handbook whose bare face is the
-draft, that means readers land on drafts and need a URL parameter to reach the
-published text, so the example inverts it.
+Without it, browsing lands in the default world, which applies no resolution
+and so shows none of a faced type's rows at all. For a project using faces
+`default_world` is effectively required, and a handbook should land readers in
+the world holding the published text.
 
 `default_world` is presentation, not policy. It grants nothing: the world's
 read grant is re-checked on every request exactly as for an explicit `?world=`,
@@ -4943,15 +5102,15 @@ so pointing it at a world a role may not read yields that world's ordinary
 empty result. The server applies it to `curl` and to the browser alike, but
 only on read requests and only on the routes listed under
 [Routes that serve a world](#routes-that-serve-a-world). Passing
-`?world=default` explicitly still reaches the bare faces. Naming an undeclared
-world here is a startup error.
+`?world=default` explicitly still selects the unresolved default world. Naming
+an undeclared world here is a startup error.
 
 ### Creating into another world (`create_world`)
 
-A create always writes the bare face. When a list is shown in a world that does
-not select the bare face, a newly created entity has no face in the world on
-screen, and the author would be redirected to a page saying so. `create_world`
-on the list names the world the create button opens its form in:
+When a list is shown in a world that does not select the face a new entity is
+created in, the entity has no face in the world on screen and the author would
+be redirected to a page saying so. `create_world` on the list names the world
+the create button opens its form in:
 
 ```yaml
 lists:
@@ -4989,11 +5148,14 @@ note below appears only when `schema.yaml` declares it.
   patch it, drag-and-drop on a board or calendar writes it, and Delete removes
   it. Whether a write is offered is `_actions` on the response, which the
   server computes for the face it served: an entity served at its published
-  face reports `update: false` unless a grant names that face, and an entity
-  served at its bare face reports what the bare grant says. A detail page or
+  face reports `update: false` unless a grant names that face. A detail page or
   edit form showing a face the caller may not write shows that face's
   `messages.read_only` when declared, and otherwise looks like any other
-  permission denial.
+  permission denial. A detail page showing a face that declares
+  `messages.notice` carries that sentence regardless of `_actions` — it says
+  something about the document ("this is a draft, not yet in force") rather
+  than about the reader, so it also appears on a face the caller may freely
+  edit. A face declaring both shows `notice` first.
 - A **View Published** button, or a menu when the entity has several other
   faces, switches to another face by navigating to its address (`_faces[].ref`)
   in the same world. It appears on every screen that has faces, including the
@@ -5003,8 +5165,8 @@ note below appears only when `schema.yaml` declares it.
   carries a badge with the world's `messages.stand_in` when declared, typically
   `{face}`. A first-choice hit shows no badge. The badge appears on list rows,
   kanban cards, and each related entity on a detail page.
-- An entity that exists but has no face in the world renders its bare face,
-  with the world's `messages.absent` when declared. With
+- An entity that exists but has no face in the world renders one of the faces
+  the caller may read, with the world's `messages.absent` when declared. With
   `on_absent: {redirect: <world>}` the app navigates to that world instead.
 
 A detail page shows one button per copy definition whose source is the face on
@@ -5087,9 +5249,8 @@ Every declared world is listed for every caller, with its `banner`, `messages`
 and `on_absent` verbatim from the schema. `readable` says whether *this*
 caller may select it. A world you may not read is marked rather than hidden, and
 selecting it anyway returns an empty result rather than an error. The same
-response reports each type's declared faces under `entities.<type>.faces`
-together with its `bare_face`, plus the configured `default_world`. Like the
-world list, this is schema: it says `policy` declares `draft` and `published`,
+response reports each type's declared faces under `entities.<type>.faces`,
+plus the configured `default_world`. Like the world list, this is schema: it says `policy` declares `draft` and `published`,
 never which faces a particular policy has.
 
 ### Knowing which face you got (`_world`)
@@ -5104,7 +5265,7 @@ A single-entity read carries the provenance of the face it served:
 | --- | --- |
 | `name` | The world the response was resolved in. `default` for the implicit default world. |
 | `face` | The declared name of the face that was served. Empty when the served face has no declared name. |
-| `via` | The rule that chose the face: `unscoped` when no resolution was applied (a type without faces, the default world, or a face the request addressed as `ID@face`), `chain` when a face the world selects exists, `fallback-default` when `otherwise: default` substituted the bare face. |
+| `via` | The rule that chose the face: `unscoped` when no resolution was applied (a type without faces, the default world, or a face the request addressed as `ID@face`), `chain` when a face the world selects exists, `fallback-default` when `otherwise: default` substituted a faceless type's single state. |
 | `chain_position` | The zero-based index of the served face in the world's chain. Present only for `via: chain`. |
 
 Position `0` means the world got its first choice. Any later position is a
@@ -5131,10 +5292,9 @@ display label and address:
 ```
 
 `ref` is the path segment that reads that face literally under any world, so a
-client links to a face without working out which world leads with it. The bare
-face is spelled by its declared name (`POL-1@draft` with `bare_face: draft`);
-a bare face with no declared name has no explicit spelling and falls back to
-the bare id, which is literal only in the default world. `_faces` reports
+client links to a face without working out which world leads with it. Every
+face of a faced type is spelled `ID@face`, the same name the schema declares.
+`_faces` reports
 existence only: whether the caller may read a world is a role-level grant
 already answered by `_schema`. Which faces a given entity has is data, so
 `_faces` appears only on a response the caller was already cleared to read.
@@ -5202,22 +5362,24 @@ next section describes.
 ### Addressing a face directly (`ID@face`)
 
 Every response names the row it describes in `_self`, face included:
-`/api/v1/policys/POL-1` for the bare face, `/api/v1/policys/POL-1@published`
-for the published one. That address is accepted wherever the id is, on the
+`/api/v1/policys/POL-1@draft` for the draft, `/api/v1/policys/POL-1@published`
+for the published one. A type declaring `faces:` has no bare address, so
+`_self` always carries a face; a type with no faces keeps the unsuffixed
+`/api/v1/controls/CTL-1`. That address is accepted wherever the id is, on the
 entity route and on the entity view:
 
 | Request | Meaning |
 | --- | --- |
 | `GET /policys/POL-1@published` | The published face, under any world. An explicit address is served literally: the world made no choice, so `_world.via` is `unscoped`. |
-| `GET /policys/POL-1@draft` | The bare face by its declared name (`bare_face: draft`), even under a world that would resolve `POL-1` away from it. |
+| `GET /policys/POL-1@draft` | The draft, even under a world that would resolve a bare `POL-1` to a different face. |
 | `GET /_views/policy/POL-1@published` | The entity view of that face. |
-| `PATCH /policys/POL-1@published` | Edits the published face. Authorized against the face: a bare `update: [policy]` grant does not cover it, `update: [policy@published]` does. |
+| `PATCH /policys/POL-1@published` | Edits the published face. Authorized against the face: a bare `update: [policy]` grant covers no face at all, `update: [policy@published]` covers this one. |
 | `DELETE /policys/POL-1@published` | Removes the published face only, with the content-scoped edges tailed at it. Incoming edges point at the entity and survive. Authorized against the face. |
-| `DELETE /policys/POL-1@draft` | The bare face is the entity: deletes the whole entity, as `DELETE /policys/POL-1` does. |
+| `DELETE /policys/POL-1@draft` | Removes the draft only, unless it is the entity's last remaining face — deleting that leaves no entity behind. |
 
 A face the entity does not have, a face name the grammar rejects, or a face
 the caller may not read all produce the same `404` as a missing entity. A
-`PATCH` to a non-bare face may not carry `scope: content` relations; it is
+`PATCH` addressing a face may not carry `scope: content` relations; it is
 refused with `422 face_relations_unsupported`, because such an edge attaches
 to one face and the relation writers address the entity's bare tail. Move
 those edges with a copy definition instead. Identity-scoped relations are

@@ -300,6 +300,54 @@ func writeAttachmentWriteError(w http.ResponseWriter, r *http.Request, limit int
 // output size at the per-attachment limit.
 const attachmentCmdTimeout = 60 * time.Second
 
+// sandboxReporter is the one thing warnIfScanCannotRun needs from the command
+// runner. Declared here, at the call site, rather than widening
+// [attachment.CommandRunner] — which is deliberately narrow — and so that the
+// warning's branches can be exercised with a stub on every platform instead of
+// depending on whether the test host happens to have a working sandbox.
+type sandboxReporter interface {
+	// SandboxErr reports why commands cannot be confined, or nil when they can.
+	SandboxErr() error
+}
+
+// warnIfScanCannotRun warns when the metamodel configures a virus scan that this
+// host cannot actually run, because every upload to a scanned property will then
+// be REJECTED (scanning is fail-closed) rather than silently stored unscanned.
+//
+// The operator otherwise learns this from a 422 on someone's first upload, and
+// the confinement line alone does not connect the two facts: it reports the
+// sandbox posture without knowing a scan was configured.
+//
+// Nil: a nil runner means the constructor failed — one of the two states warned
+// about, so it is accepted rather than rejected, and buildErr carries the reason.
+// The two causes stay distinct in the message: a failed constructor is not a
+// sandbox problem, and blaming systemd for it would send the operator to the
+// wrong file.
+func warnIfScanCannotRun(meta *metamodel.Metamodel, runner sandboxReporter, buildErr error) {
+	if !metamodel.NewAttachmentPolicy(meta).HasConfiguredScan() {
+		return // nothing would be scanned; a broken sandbox rejects nothing
+	}
+	// Both messages are spelled out in full rather than composed from a shared
+	// prefix: TestSlogMessagesAreConstant requires a literal, since a computed
+	// message is the log-injection sink it guards against. The duplication is
+	// the price of that check, and it is the safer trade.
+	if runner == nil {
+		slog.Warn("attachments: a virus scan is configured but the command runner could not "+
+			"be built, so EVERY upload to a scanned property will be rejected",
+			"err", buildErr, "docs", attachmentSecurityDoc)
+		return
+	}
+	if err := runner.SandboxErr(); err != nil {
+		slog.Warn("attachments: a virus scan is configured but no working sandbox is "+
+			"available, so EVERY upload to a scanned property will be rejected",
+			"err", err, "docs", attachmentSecurityDoc)
+	}
+}
+
+// attachmentSecurityDoc is the generated guide path, which is what an operator
+// reading the log will look for on disk.
+const attachmentSecurityDoc = "docs/attachment-security.md"
+
 // probeAttachmentCommands checks, at startup, that every scan/transform binary
 // referenced by the metamodel's file properties is resolvable on PATH, warning
 // (never failing) for any that are missing — so an operator learns a typo or an

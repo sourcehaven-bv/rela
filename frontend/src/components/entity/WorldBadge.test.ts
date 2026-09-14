@@ -69,9 +69,9 @@ describe('WorldBadge', () => {
     })
 
     it('renders the declared text on the otherwise:default arm too', () => {
-      seed('{bare_face}')
-      const w = badge(world({ face: '', via: 'fallback-default' }))
-      expect(w.text()).toBe('Concept')
+      seed('Nog {face}')
+      const w = badge(world({ face: 'draft', via: 'fallback-default' }))
+      expect(w.text()).toBe('Nog Concept')
     })
   })
 

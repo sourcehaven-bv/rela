@@ -9,6 +9,10 @@ import (
 
 // forbiddenPatterns are Go/YAML internals that should never leak into user-facing errors.
 // If Parse() returns an error containing any of these, the error message is confusing.
+//
+// Scan with [assertNoInternalsLeak], never against the raw message: a good
+// error quotes the offending input back at the user, and that echo is not a
+// leak. See [stripQuotedEchoes].
 var forbiddenPatterns = []*regexp.Regexp{
 	// YAML tag internals
 	regexp.MustCompile(`!!\w+`), // !!str, !!seq, !!map, !!int, !!float, !!bool, !!null
@@ -19,6 +23,41 @@ var forbiddenPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`\[\]\w+\.\w+`),             // []metamodel.ValidationRule
 	regexp.MustCompile(`cannot unmarshal`),         // raw yaml.TypeError language
 	regexp.MustCompile(`\binto\b.*\b(map|struct)`), // "into map[string]..." or "into struct"
+}
+
+// quotedEcho matches a %q-quoted run in an error message — the form every
+// echo of user input takes, e.g. `unknown key "0!!0"`.
+var quotedEcho = regexp.MustCompile(`"(?:[^"\\]|\\.)*"`)
+
+// stripQuotedEchoes blanks out %q-quoted spans so [forbiddenPatterns] scans
+// only the prose the loader wrote itself.
+//
+// The distinction is the whole point of the check. `!!str` inside the prose is
+// a yaml tag the humanizer failed to translate; the same bytes inside quotes
+// are the user's own key handed back to them, which is what makes the error
+// actionable. Scanning the raw message conflates the two and fails on inputs
+// like "0!!0:" (BUG-993), where suppressing the "leak" would mean refusing to
+// name the key that is wrong.
+//
+// Replacement preserves length so any line/column offsets in the message stay
+// meaningful when a failure prints them.
+func stripQuotedEchoes(msg string) string {
+	return quotedEcho.ReplaceAllStringFunc(msg, func(m string) string {
+		return strings.Repeat(" ", len(m))
+	})
+}
+
+// assertNoInternalsLeak fails t if the loader's own prose leaks a Go/YAML
+// internal. context is appended to the failure to identify the input.
+func assertNoInternalsLeak(t *testing.T, errMsg, context string) {
+	t.Helper()
+
+	scanned := stripQuotedEchoes(errMsg)
+	for _, pattern := range forbiddenPatterns {
+		if pattern.MatchString(scanned) {
+			t.Errorf("error leaks Go/YAML internal %q:\n  %s%s", pattern.String(), errMsg, context)
+		}
+	}
 }
 
 // allowedErrorPrefixes are patterns that user-friendly errors should match.
@@ -395,11 +434,7 @@ entities:
 		errMsg := err.Error()
 
 		// Check for forbidden Go/YAML internals
-		for _, pattern := range forbiddenPatterns {
-			if pattern.MatchString(errMsg) {
-				t.Errorf("error contains Go/YAML internal %q:\n  %s", pattern.String(), errMsg)
-			}
-		}
+		assertNoInternalsLeak(t, errMsg, "")
 	})
 }
 
@@ -476,12 +511,7 @@ func FuzzParseErrorQuality(f *testing.F) {
 		errMsg := err.Error()
 
 		// PROPERTY 1: No Go/YAML internal leakage
-		for _, pattern := range forbiddenPatterns {
-			if pattern.MatchString(errMsg) {
-				t.Errorf("error leaks Go/YAML internal %q for input:\n%s\nerror: %s",
-					pattern.String(), input, errMsg)
-			}
-		}
+		assertNoInternalsLeak(t, errMsg, "\ninput:\n"+input)
 
 		// PROPERTY 2: Error is not empty
 		if errMsg == "" {
@@ -526,4 +556,64 @@ func matchesAnyFriendlyPattern(errMsg string) bool {
 		}
 	}
 	return false
+}
+
+// TestStripQuotedEchoes pins the oracle used by [assertNoInternalsLeak]: it
+// must keep catching a real leak in the loader's prose while ignoring the same
+// bytes echoed back inside quotes. Without this the BUG-993 fix could be
+// mistaken for blanket-silencing the check.
+func TestStripQuotedEchoes(t *testing.T) {
+	tests := []struct {
+		name    string
+		msg     string
+		flagged bool
+	}{
+		{
+			name: "user key that looks like a yaml tag",
+			msg:  `unknown key "0!!0" (valid keys: entities, version)`,
+		},
+		{
+			name:    "yaml internals in prose",
+			msg:     `line 3: cannot unmarshal !!str into map[string]int`,
+			flagged: true,
+		},
+		{
+			name:    "go type in prose",
+			msg:     `invalid value for metamodel.PropertyDef`,
+			flagged: true,
+		},
+		{
+			name:    "untranslated tag in prose",
+			msg:     `line 1: expected a mapping, got !!seq`,
+			flagged: true,
+		},
+		{
+			name: "yaml language quoted as a property name",
+			msg:  `property "cannot unmarshal" has unknown type "string"`,
+		},
+		{
+			name:    "leak beside a quoted echo",
+			msg:     `entity "task": cannot unmarshal`,
+			flagged: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			scanned := stripQuotedEchoes(tc.msg)
+			if len(scanned) != len(tc.msg) {
+				t.Fatalf("stripQuotedEchoes changed length: %d != %d", len(scanned), len(tc.msg))
+			}
+
+			var flagged bool
+			for _, pattern := range forbiddenPatterns {
+				if pattern.MatchString(scanned) {
+					flagged = true
+				}
+			}
+			if flagged != tc.flagged {
+				t.Errorf("flagged = %v, want %v (scanned %q)", flagged, tc.flagged, scanned)
+			}
+		})
+	}
 }

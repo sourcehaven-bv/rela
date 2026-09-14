@@ -42,7 +42,6 @@ entities:
   page:
     label: Page
     id_prefix: PAGE
-    bare_face: draft
     faces:
       draft: {}
       published: {}
@@ -174,7 +173,6 @@ entities:
   page:
     label: Page
     id_prefix: PAGE
-    bare_face: draft
     faces:
       draft: {}
       review: {}
@@ -188,6 +186,7 @@ worlds:
       page: [published]
     otherwise: default
     edits: draft
+    create: draft
     banner: "DRAFT — not in force"
     primary_for: published
     messages:
@@ -211,6 +210,7 @@ worlds:
 		"Overrides": len(def.Overrides["page"]) == 1 && def.Overrides["page"][0] == "published",
 		"Otherwise": string(def.Otherwise) == "default",
 		"Edits":     def.Edits == "draft",
+		"Create":    def.Create == "draft",
 		"Banner":    def.Banner == "DRAFT — not in force",
 		// Written as a bare scalar above, so this also pins the oneOrMany
 		// spelling: `primary_for: published` must decode to a one-element
@@ -263,10 +263,9 @@ entities:
   page:
     label: Page
     id_prefix: PAGE
-    bare_face: en
     faces:
-      en: {label: English}
-      nl: {label: Nederlands, messages: {read_only: "Alleen lezen"}}
+      en: {label: English, messages: {notice: "Nog niet vertaald"}}
+      nl: {label: Nederlands, messages: {read_only: "Alleen lezen", notice: "Concept"}}
     properties:
       title: {type: string}
 `
@@ -281,12 +280,16 @@ entities:
 
 	// Labels are asserted on BOTH entries with different values, so a mix-up
 	// that copied one entry over the other shows up as a wrong label rather
-	// than passing. `bare_face` lives on the entity, not the face, so it is
-	// checked there.
+	// than passing.
 	checks := map[string]bool{
-		"EntityDef.BareFace": def.BareFace == "en",
-		"Label":              def.Faces["en"].Label == "English" && def.Faces["nl"].Label == "Nederlands",
-		"Messages":           def.Faces["nl"].Messages.ReadOnly == "Alleen lezen" && def.Faces["en"].Messages.ReadOnly == "",
+		"Label":    def.Faces["en"].Label == "English" && def.Faces["nl"].Label == "Nederlands",
+		"Messages": def.Faces["nl"].Messages.ReadOnly == "Alleen lezen" && def.Faces["en"].Messages.ReadOnly == "",
+		// `notice` is asserted per entry, not ANDed, so a failure names which
+		// one dropped it. On `en` it is the ONLY message declared, which is
+		// the case that catches a shadow struct carrying `read_only` and
+		// forgetting `notice`.
+		"Messages.Notice[en]": def.Faces["en"].Messages.Notice == "Nog niet vertaald",
+		"Messages.Notice[nl]": def.Faces["nl"].Messages.Notice == "Concept",
 	}
 	for name, ok := range checks {
 		if !ok {
@@ -301,11 +304,11 @@ entities:
 }
 
 // TestFaceLabel resolves display text for a face from the STORED coordinate,
-// which is what every caller has in hand.
+// which is what every caller has in hand. A face's declared name IS its
+// stored coordinate, so the lookup is direct.
 //
-// The default-face case is the one worth pinning: `en` is stored under the
-// ZERO coordinate, so a naive lookup of `Faces[""]` finds nothing and the
-// English face renders unlabeled while every other face is labeled.
+// The zero coordinate is the case worth pinning: it names no face at all, so
+// it has no label. Only a type declaring no faces stores a row there.
 func TestFaceLabel(t *testing.T) {
 	t.Parallel()
 
@@ -315,7 +318,6 @@ entities:
   page:
     label: Page
     id_prefix: PAGE
-    bare_face: en
     faces:
       en: {label: English}
       nl: {label: Nederlands}
@@ -339,10 +341,11 @@ entities:
 		stored     string
 		want       string
 	}{
-		{"default face resolves through the default-marked face", "page", "", "English"},
-		{"labeled non-default face", "page", "nl", "Nederlands"},
+		{"labeled face resolves to its label", "page", "en", "English"},
+		{"a second labeled face", "page", "nl", "Nederlands"},
 		{"unlabeled face falls back to the declared name", "page", "fr", "fr"},
-		{"type without faces has no name for its default state", "ticket", "", ""},
+		{"the zero coordinate names no face, so it has no label", "page", "", ""},
+		{"type without faces has no name for its single state", "ticket", "", ""},
 		{"unknown entity type", "nope", "nl", "nl"},
 		{"undeclared coordinate is still displayable", "page", "de", "de"},
 	}

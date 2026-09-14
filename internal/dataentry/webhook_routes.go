@@ -551,8 +551,11 @@ func (h *webhookRouter) applySteps(
 	for i, step := range hook.Then {
 		switch {
 		case step.AppendSection != nil:
-			line := flattenToLine(payload.interpolate(step.AppendSection.Content))
-			content = markdown.AppendToSection(content, step.AppendSection.Section, line)
+			// interpolate() flattens each substituted value, so the only
+			// newlines reaching here are ones the OPERATOR wrote in the
+			// template — those are theirs to make, and to get wrong.
+			block := payload.interpolate(step.AppendSection.Content)
+			content = markdown.AppendToSection(content, step.AppendSection.Section, block)
 			contentChanged = true
 		case len(step.Set) > 0:
 			if patch.Properties == nil {
@@ -590,24 +593,38 @@ func webhookNeedsBody(hook dataentryconfig.Webhook) bool {
 	return false
 }
 
-// flattenToLine collapses newlines and NULs so an interpolated value stays on
-// the single markdown line the operator's template describes.
+// flattenToLine collapses newlines and NULs in ONE INTERPOLATED VALUE, so a
+// producer cannot emit its own markdown structure through a template
+// substitution.
 //
-// The template author writes a one-line step ("- {{body.msg}}") and the payload
-// decides what lands in it. Without this, a producer-supplied newline lets the
-// payload emit its own markdown structure: a `## Heading` in the value becomes a
-// SIBLING of the section being appended to, so every later delivery targeting
-// that section lands above it and the document silently reshapes itself.
+// The threat is the payload, not the template. A `## Heading` arriving inside
+// {{body.output}} would become a SIBLING of the section being appended to, so
+// every later delivery targeting that section lands above it and the document
+// silently reshapes itself.
 //
-// It is done HERE and not in [markdown.AppendToSection] because this is where
-// the destination context is known — "one line inside a named section". That
-// function is a general utility whose other callers may legitimately append
-// multi-line markdown. Same reasoning as internal/mail validating CR/LF in
-// caller-supplied header values rather than expecting the SMTP library to.
+// Applied per value in [webhookPayload.interpolate] rather than to the finished
+// string, because the two are different concerns and the finished string cannot
+// tell them apart. An operator writing a multi-line `content:` is describing the
+// shape they want — their document, their call — and flattening that was an
+// over-reach that also made a structured timeline entry impossible to express.
+// What no operator can do, deliberately, is hand that power to their producer.
 //
-// Nil: never returns an error — a value that cannot be represented on one line
-// is flattened, not rejected, because refusing would discard an alert whose
+// Never returns an error: a value that cannot be represented on one line is
+// flattened, not rejected, because refusing would discard an alert whose
 // producer will not resend it.
+//
+// # Only \n and \r, deliberately
+//
+// Those are the only characters that terminate a line in CommonMark, which is
+// what goldmark parses on the write path ([markdown.AppendToSection] splits on
+// \n) and what marked renders on the read path. \v, \f, U+0085, U+2028 and
+// U+2029 are left alone because they cannot forge a heading: appended after a
+// value they stay on the same line and no new heading is parsed.
+//
+// The safety therefore comes from the PARSER's definition of a line ending, not
+// from this function. A future path that splits on Unicode line boundaries —
+// notably anything using unicode.IsSpace, which does match \v, \f and U+0085 —
+// would put those survivors back in play and need more than this.
 func flattenToLine(s string) string {
 	return strings.Map(func(r rune) rune {
 		switch r {
@@ -772,13 +789,20 @@ func (p webhookPayload) interpolate(tmpl string) string {
 			b.WriteString(after)
 			break
 		}
-		b.WriteString(p.resolve(strings.TrimSpace(ref)))
+		// Flatten the VALUE, not the finished template: the newline that must
+		// not survive is a producer-supplied one. See [flattenToLine].
+		b.WriteString(flattenToLine(p.resolve(strings.TrimSpace(ref))))
 		rest = remainder
 	}
 	return b.String()
 }
 
 // resolve looks up one {{...}} reference, returning "" when absent.
+//
+// It returns the RAW producer-supplied value, which is not safe to write into a
+// document as-is. Use [webhookPayload.interpolate], which flattens each value
+// via [flattenToLine]; calling this directly bypasses the one guard that stops a
+// payload forging markdown structure.
 func (p webhookPayload) resolve(ref string) string {
 	switch ref {
 	case "now":

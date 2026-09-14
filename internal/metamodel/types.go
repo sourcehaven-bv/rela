@@ -153,6 +153,14 @@ type ValidationRule struct {
 	// Content specifies validation rules for markdown body content
 	Content *ContentRule `yaml:"content,omitempty"`
 
+	// Relations specifies relation-cardinality constraints, keyed by
+	// relation type. Each constraint asserts how many OUTGOING relations
+	// of that type the entity has to targets matching the constraint's
+	// `where` filters (min/max). Evaluated only for entities that match
+	// `when`. Used for workflow gates like "a done ticket must have at
+	// least one has-review relation to a done review-checklist".
+	Relations map[string]RelationConstraint `yaml:"relations,omitempty"`
+
 	// Severity is the severity level of violations: "error" or "warning"
 	// Defaults to "warning" if not specified
 	Severity string `yaml:"severity,omitempty"`
@@ -307,9 +315,14 @@ type EntityDef struct {
 	DisplayProperty string `yaml:"display_property,omitempty"`
 
 	// Faces declares this type's content states (TKT-WAV8XP, design
-	// doc §4.1). The map key is the face coordinate ("draft",
-	// "published"); exactly one entry may set `bare_face`, naming
-	// the state stored under the zero face.
+	// doc §4.1). The map key IS the face coordinate ("draft",
+	// "published") — declared name and stored coordinate are the same
+	// string, with no face privileged by where it is stored.
+	//
+	// No face is addressed by the bare id. A type declaring faces has
+	// no bare row to write, so every write to it names a face
+	// (BUG-HC6I2T); the zero coordinate survives only as the identity
+	// row a faceless type stores its single state in.
 	//
 	// ABSENT (the common case) means the type has no content states: it
 	// contributes its single default state to EVERY world, needing no
@@ -318,32 +331,6 @@ type EntityDef struct {
 	// needs no special handling — and why a project that never writes
 	// this key behaves byte-identically to the pre-worlds system.
 	Faces map[string]FaceDef `yaml:"faces,omitempty"`
-
-	// BareFace names which declared face the BARE ID addresses: with
-	// `bare_face: draft`, `POL-1` and `POL-1@draft` are the same row.
-	//
-	// # It names a row, it does not create one
-	//
-	// Every entity already has a row stored under the ZERO coordinate —
-	// that is what a bare id resolves to, and it exists whether or not
-	// this key is set (§2.1: there are exactly N states and nothing
-	// else). All this says is which declared NAME refers to it. Leave it
-	// unset and the declared faces are all suffixed rows, while the
-	// entity's own row has no name at all — legal, and almost never what
-	// an operator means.
-	//
-	// # Why it lives on the TYPE rather than on a face
-	//
-	// It was `bare_face` on each FaceDef, which needed a load-time
-	// check that at most one face claimed it, and read as a statement
-	// about precedence — "the default face" sounds like the important
-	// one, when in an ISMS it is the DRAFT while the published face is
-	// the one in force. On the type the constraint is structural (a
-	// single key cannot be set twice) and the name says what it does.
-	//
-	// Empty on a type declaring faces is legal but unusual; empty on a
-	// type declaring none is the ordinary case and means nothing.
-	BareFace string `yaml:"bare_face,omitempty"`
 }
 
 // FaceDef declares one content state of an entity type.
@@ -394,6 +381,26 @@ type FaceMessages struct {
 	// page without an Edit button. Substitutes every placeholder: `{face}`
 	// is this face's label, `{title}` the entity's display title.
 	ReadOnly string `yaml:"read_only,omitempty"`
+
+	// Notice is shown on a detail page that reached this face, whatever the
+	// reader may do with it — "Let op: dit is een concept en nog niet
+	// vastgesteld." Empty shows nothing, like every entry here.
+	//
+	// The distinction from [FaceMessages.ReadOnly] is WHO the sentence is
+	// about, and it is why a second key exists rather than a relaxed guard
+	// on the first. ReadOnly is about the READER: you may not write this,
+	// so it renders only when they may not. Notice is about the DOCUMENT:
+	// this text is not in force, which is true of a draft whoever is
+	// looking — including the editor who may freely rewrite it. That page
+	// is the one carrying risk (a reader acting on an unadopted policy
+	// follows something nobody agreed) and it was the unmarked one, because
+	// a face writable by definition can never satisfy ReadOnly's guard.
+	//
+	// The two are independent and may both be declared on one face; the
+	// detail page renders Notice first, the document's status before the
+	// qualifier on the reader's permission. Substitutes every placeholder,
+	// as ReadOnly does — a detail page knows every fact.
+	Notice string `yaml:"notice,omitempty"`
 }
 
 // Otherwise is a world's policy for an entity whose type declares
@@ -454,6 +461,26 @@ type WorldDef struct {
 	// declared face so a typo surfaces now rather than then.
 	Edits string `yaml:"edits,omitempty"`
 
+	// Create names the face a create issued from this world lands in.
+	//
+	// A create names no face of its own: the form is generic and the same
+	// form is reachable from several places, so which state a new entity
+	// starts in is a property of the workflow that opened it. A faced type
+	// has no default row to fall back to (BUG-HC6I2T), so without this key
+	// a create from a world-bound list has no target at all and the server
+	// refuses it with `face_required`.
+	//
+	// It is a SINGLE declared face, never a chain. `select:` may answer with
+	// a fallback, which is why a write never rides a world (see
+	// dataentry.attachWorld); this names one row directly, so that objection
+	// does not apply. Deriving the face from `select[0]` would be actively
+	// wrong: an ISMS world heading its ADOPTED face would then publish by
+	// the act of creating, which is the bug this key exists to avoid.
+	//
+	// Empty means a create from this world names no face, which a faced type
+	// refuses. Validated at load against the declared faces.
+	Create string `yaml:"create,omitempty"`
+
 	// PrimaryFor declares the faces this world is the canonical home of,
 	// breaking a tie when SEVERAL worlds head the same face for a type
 	// (TKT-MFVH03).
@@ -461,7 +488,7 @@ type WorldDef struct {
 	// # Why this is needed at all
 	//
 	// "Which world serves this face?" is the question a face-switcher asks:
-	// the read grammar is `?world=`, and a bare face is not a world, so an
+	// the read grammar is `?world=`, and a face is not a world, so an
 	// affordance offering "go to the Dutch version" must name a world. The
 	// answer is INFERRED from the compiled chains — the world whose chain
 	// HEADS that face — and for every schema written so far the inference is
@@ -521,8 +548,9 @@ type WorldDef struct {
 	Messages WorldMessages `yaml:"messages,omitempty"`
 
 	// OnAbsent decides what happens when a reader opens an entity that has
-	// no face in this world. Absent: the page shows the bare face, with
-	// [WorldMessages.Absent] if declared. See [WorldOnAbsent].
+	// no face in this world. Absent: the page shows whatever the world's
+	// `otherwise:` resolves to, with [WorldMessages.Absent] if declared.
+	// See [WorldOnAbsent].
 	OnAbsent WorldOnAbsent `yaml:"on_absent,omitempty"`
 }
 
@@ -530,8 +558,8 @@ type WorldDef struct {
 //
 // Each string is plain text with an allowlisted set of placeholders the web
 // app substitutes — [ChromePlaceholders]: `{face}` (the served face's
-// label), `{bare_face}` (the type's bare face label), `{world}` (this
-// world's name), `{title}` (the entity's display title). Anything else in
+// label), `{world}` (this world's name), `{title}` (the entity's display
+// title). Anything else in
 // braces is left as written. No markup, no conditionals — the text is the
 // operator's sentence, and rendering it is the whole feature.
 //
@@ -541,9 +569,8 @@ type WorldDef struct {
 // which it substitutes.
 type WorldMessages struct {
 	// Absent is shown on a detail page for an entity that has no face in
-	// this world (the page shows the bare face). Empty shows nothing.
-	// Substitutes `{face}` (the bare face, which is what is on screen),
-	// `{bare_face}`, `{world}` and `{title}`.
+	// this world. Empty shows nothing. Substitutes `{face}` (the face
+	// actually on screen), `{world}` and `{title}`.
 	Absent string `yaml:"absent,omitempty"`
 	// Projection is the note on a list or board of a type that declares
 	// faces — that entities with no face here are not listed. Empty shows
@@ -552,7 +579,7 @@ type WorldMessages struct {
 	// StandIn is the badge text on a row or card whose face is a stand-in
 	// for the world's first choice (a within-chain fallback or an
 	// `otherwise: default` substitution) — typically `{face}`. Empty renders
-	// no badge at all. Substitutes `{face}`, `{bare_face}` and `{world}`.
+	// no badge at all. Substitutes `{face}` and `{world}`.
 	StandIn string `yaml:"stand_in,omitempty"`
 }
 
@@ -562,7 +589,7 @@ type WorldMessages struct {
 // frontend/src/utils/worldText.ts; a test in internal/dataentry pins the two
 // to each other, because a name added on one side only renders literally on
 // screen with no failure anywhere.
-var ChromePlaceholders = []string{"face", "bare_face", "world", "title"}
+var ChromePlaceholders = []string{"face", "world", "title"}
 
 // WorldOnAbsent is the behavior for an entity with no face in a world.
 type WorldOnAbsent struct {
@@ -592,6 +619,7 @@ func (w *WorldDef) UnmarshalYAML(node *yaml.Node) error {
 		Overrides map[string]oneOrMany `yaml:"overrides,omitempty"`
 		Otherwise Otherwise            `yaml:"otherwise,omitempty"`
 		Edits     string               `yaml:"edits,omitempty"`
+		Create    string               `yaml:"create,omitempty"`
 		Banner    string               `yaml:"banner,omitempty"`
 		// oneOrMany like Select: the common case is a single face, and
 		// `primary_for: nl` should not have to be written as a list.
@@ -606,6 +634,7 @@ func (w *WorldDef) UnmarshalYAML(node *yaml.Node) error {
 	w.Select = raw.Select
 	w.Otherwise = raw.Otherwise
 	w.Edits = raw.Edits
+	w.Create = raw.Create
 	w.Banner = raw.Banner
 	w.PrimaryFor = raw.PrimaryFor
 	w.Messages = raw.Messages
@@ -1417,6 +1446,42 @@ type ChecklistRule struct {
 
 	// AllowSkipped treats strikethrough items as complete (e.g., "- [x] ~~task~~ (N/A: reason)")
 	AllowSkipped bool `yaml:"allow-skipped,omitempty"`
+}
+
+// RelationConstraint is a relation-cardinality assertion on a validation
+// rule, keyed in ValidationRule.Relations by relation type. It counts the
+// entity's OUTGOING relations of that type whose target entity matches all
+// of the Where filters, then requires the count to satisfy Min and/or Max.
+//
+// Where reuses the same filter syntax as When/Then (e.g. "status=done"),
+// matched against the TARGET entity's properties. At least one of Min/Max
+// must be set; the loader rejects a constraint with neither bound, an
+// undeclared relation type, or bounds that nothing can satisfy.
+//
+// # The count is what the acting identity can see
+//
+// Relations and their targets are read through the ACL-gated reader, so a
+// constraint counts VISIBLE relations, not all relations. A gate is
+// therefore not a global invariant: two principals validating the same
+// graph can legitimately reach different verdicts, because an edge is
+// dropped when either endpoint is invisible to the reader.
+//
+// This is deliberate — the alternative leaks hidden entities through
+// violation messages — and it is the same gating the Lua implementation
+// this replaced already had. It matters mainly for `Max`, where an
+// invisible target means a gate can pass for one principal and fail for
+// another. The CLI and CI paths wire an unrestricted reader, so the
+// authoritative verdict (the one enforcing the workflow) sees everything.
+type RelationConstraint struct {
+	// Where filters the target entities that count toward the constraint.
+	// All conditions are ANDed; empty means every target counts.
+	Where []string `yaml:"where,omitempty"`
+
+	// Min requires at least this many matching relations (nil = no lower bound).
+	Min *int `yaml:"min,omitempty"`
+
+	// Max requires at most this many matching relations (nil = no upper bound).
+	Max *int `yaml:"max,omitempty"`
 }
 
 // HeaderCheck specifies a header to check for in markdown content.

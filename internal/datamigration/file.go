@@ -113,7 +113,145 @@ func ParseFile(name string, data []byte) (*File, error) {
 			return nil, fmt.Errorf("datamigration: %s: step %d (%s): %w", name, i+1, s.Kind(), err)
 		}
 	}
+	if err := validateStepOrder(name, f.Steps); err != nil {
+		return nil, err
+	}
+	if err := validateDeltasResolved(name, f); err != nil {
+		return nil, err
+	}
 	return f, nil
+}
+
+// resolvingSteps maps each TierMigration delta kind to the step kinds that can
+// answer it. A kind mapped to an EMPTY list is a known, reviewed gap.
+//
+// This is the explicit mapping between what the classifier can DEMAND and what
+// the step vocabulary can DELIVER. Keeping it in one table is the point: the
+// defect that motivated it (BUG-TMGWIN) existed because detection and
+// remediation were maintained as separate lists, each looking complete on its
+// own. `TestResolvingSteps_CoversEveryMigrationDeltaKind` fails when
+// CompareShapes learns a kind that is not listed here, so a new delta kind
+// cannot ship detection without either a resolving step or a deliberate,
+// visible exemption.
+var resolvingSteps = map[string][]string{
+	"faces_introduced": {"migrate_face"},
+
+	// Deliberately unresolved (TKT-1YBNQJ). Faced → flat leaves rows at named
+	// faces that no longer exist while the type's single state is the zero
+	// coordinate none of them occupies. Resolving it means moving rows the
+	// other way and deciding which face wins when several hold content — a
+	// merge, not a move, with its own semantics.
+	"faces_removed": {},
+
+	// Property- and relation-level kinds, listed but NOT enforced. These are
+	// answered by a step the operator chooses between (map_values vs. a drop,
+	// convert vs. lua) or, for the relation kinds, by hand — the generator
+	// says as much when it drafts them. Requiring one specific step would be
+	// wrong, and requiring "any step at all" would be a check that a
+	// well-formed no-op passes.
+	//
+	// The face kinds differ because there is exactly one right answer and it
+	// is cheap to state, which is what makes enforcing it reasonable.
+	"enum_values_replaced":           {},
+	"property_type_changed":          {},
+	"property_format_changed":        {},
+	"property_list_changed":          {},
+	"relation_endpoint_narrowed":     {},
+	"relation_cardinality_tightened": {},
+	"relation_symmetry_changed":      {},
+}
+
+// validateDeltasResolved refuses a file whose own edge raises a needs-migration
+// delta that the file does not answer.
+//
+// Without this, a migration satisfies the gate by DECLARING the right `to` hash
+// while its steps do nothing — which is exactly how BUG-TMGWIN reached
+// production: the classifier demanded a confirmation, and a file with no steps
+// at all discharged that demand by hashing correctly.
+//
+// It is also what makes the generator's drafts honest. Because an unconfirmed
+// file cannot parse, `rela migrate gen` must emit a real `migrate_face` step
+// rather than a commented suggestion, so the operator reviews a step that will
+// actually run instead of one they can ignore into the old behavior.
+//
+// Only kinds with a non-empty entry in [resolvingSteps] are enforced. The
+// deltas are recomputed from the file's OWN embedded projections, so the check
+// needs no live schema and cannot drift from what the file claims to do.
+func validateDeltasResolved(name string, f *File) error {
+	present := map[string]map[string]bool{}
+	for _, s := range f.Steps {
+		if cf, ok := s.(*migrateFaceStep); ok {
+			if present[s.Kind()] == nil {
+				present[s.Kind()] = map[string]bool{}
+			}
+			present[s.Kind()][cf.Entity] = true
+		}
+	}
+
+	report := metamodel.CompareShapes(f.FromProjection, f.ToProjection)
+	for _, d := range report.ByTier(metamodel.TierMigration) {
+		wanted := resolvingSteps[d.Kind]
+		if len(wanted) == 0 {
+			continue
+		}
+		satisfied := false
+		for _, kind := range wanted {
+			if present[kind][d.Subject] {
+				satisfied = true
+				break
+			}
+		}
+		if !satisfied {
+			return fmt.Errorf(
+				"datamigration: %s: the schema change this file spans needs a %s step for %q, and the file "+
+					"has none — %s. Without it the migration would apply, report the schema in sync, and "+
+					"leave the change unconfirmed",
+				name, strings.Join(wanted, " or "), d.Subject, d.Detail)
+		}
+	}
+	return nil
+}
+
+// validateStepOrder checks step ordering WITHIN one file. It is deliberately
+// narrow, and the narrowness is worth stating so nobody reads it as a general
+// guarantee.
+//
+// One rule: migrate_face reads a property's values to state which face the
+// existing rows become, so a drop_property that erases that property must not
+// come first. Ordering is the operator's to choose, but this order is never
+// intentional — it leaves the step reporting on nothing, which turns an
+// informed confirmation back into the empty ceremony it exists to replace.
+//
+// What it does NOT catch: the same pair split across two files (each file is
+// parsed alone; that case is caught incidentally, because the second file's
+// from-shape no longer declares the property), or a lua/map_values step that
+// changes the values out from under the confirmation. Catching those means
+// reading scripts and tracking value flow between steps — a value-provenance
+// feature, not an ordering check. The map_values case is why migrate_face's
+// uncovered-row note describes what it saw rather than asserting a cause.
+func validateStepOrder(name string, steps []Step) error {
+	type dropped struct {
+		entity, property string
+		at               int
+	}
+	var drops []dropped
+	for i, s := range steps {
+		switch step := s.(type) {
+		case *dropPropertyStep:
+			drops = append(drops, dropped{entity: step.Entity, property: step.Property, at: i + 1})
+		case *migrateFaceStep:
+			for _, d := range drops {
+				if d.entity == step.Entity && d.property == step.Property {
+					return fmt.Errorf(
+						"datamigration: %s: step %d (migrate_face) reads %s.%s, but step %d (drop_property) "+
+							"already removed it — migrate_face must come first, or it would report on no "+
+							"values and confirm nothing",
+						name, i+1, step.Entity, step.Property, d.at)
+				}
+			}
+		}
+	}
+	return nil
 }
 
 // projectionFromYAML converts the YAML-decoded generic map back into a

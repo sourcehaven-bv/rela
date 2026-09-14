@@ -942,7 +942,6 @@ entities:
     properties:
       title:
         type: string
-    bare_face: draft
     faces:
       draft: {}
       published: {}
@@ -984,7 +983,6 @@ entities:
     properties:
       title:
         type: string
-    bare_face: draft
     faces:
       draft: {}
       published: {}

@@ -8,6 +8,7 @@ import {
 } from 'vue-router'
 import { isCancelledFetch } from '@/composables/usePageData'
 import { useNavigationPending } from '@/composables/useNavigationPending'
+import { relaBase } from '@/api/base'
 
 const routes: RouteRecordRaw[] = [
   {
@@ -119,7 +120,7 @@ const routes: RouteRecordRaw[] = [
 ]
 
 const router = createRouter({
-  history: createWebHistory(import.meta.env.BASE_URL),
+  history: createWebHistory(relaBase()),
   routes,
   scrollBehavior(to, _from, savedPosition) {
     // Browser back/forward: restore the previous scroll position.

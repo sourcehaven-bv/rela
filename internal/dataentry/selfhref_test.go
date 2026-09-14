@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
 // `_self` must address the ROW the response describes, face included.
@@ -14,34 +13,30 @@ import (
 // GET-`_self` / PATCH-`_self` loop then edited a different content state than
 // the one on screen, silently. That is the same wrong-face write the
 // `?world=` write refusal exists to prevent (TKT-4Y6CMV / QA F-5).
+//
+// Since BUG-HC6I2T a faced type has no bare address at all: `bare_face` is
+// gone, so every declared face is stored under its own name and every one of
+// them serializes with its coordinate. Only a type declaring NO faces keeps
+// the unsuffixed href, because its single state has no name to spell.
 func TestSelfHref(t *testing.T) {
-	meta := &metamodel.Metamodel{Entities: map[string]metamodel.EntityDef{
-		"guide": {
-			BareFace: "en",
-			Faces:    map[string]metamodel.FaceDef{"en": {}, "nl": {}},
-		},
-		"plain": {},
-	}}
-
 	for _, tc := range []struct {
 		name string
 		e    *entity.Entity
 		want string
 	}{
 		{
-			// The bare face IS the bare id; appending its declared name would
-			// break every existing client for no gain.
-			name: "bare face keeps the bare href",
-			e:    &entity.Entity{ID: "GUIDE-1", Type: "guide"},
-			want: "/api/v1/guides/GUIDE-1",
+			// No face is privileged: `en` addresses itself like any other.
+			name: "every declared face is addressed by its name",
+			e:    &entity.Entity{ID: "GUIDE-1", Type: "guide", Face: entity.Face("en")},
+			want: "/api/v1/guides/GUIDE-1@en",
 		},
 		{
-			name: "non-bare face is addressed by its declared name",
+			name: "a second face is addressed the same way",
 			e:    &entity.Entity{ID: "GUIDE-1", Type: "guide", Face: entity.Face("nl")},
 			want: "/api/v1/guides/GUIDE-1@nl",
 		},
 		{
-			name: "a type with no faces is unaffected",
+			name: "a type with no faces keeps the bare href",
 			e:    &entity.Entity{ID: "P-1", Type: "plain"},
 			want: "/api/v1/plains/P-1",
 		},
@@ -58,7 +53,7 @@ func TestSelfHref(t *testing.T) {
 			if tc.e.Type == "plain" {
 				plural = "plains"
 			}
-			if got := selfHref(plural, tc.e, meta); got != tc.want {
+			if got := selfHref(plural, tc.e); got != tc.want {
 				t.Errorf("selfHref = %q, want %q", got, tc.want)
 			}
 		})

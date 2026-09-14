@@ -1477,7 +1477,7 @@ func (b *SharedBase) Assemble(
 	st store.Store, searcher search.Searcher,
 	visible search.VisibleSearcher, searchCloser io.Closer,
 ) (*Services, error) {
-	return assemble(b, st, searcher, visible, searchCloser)
+	return assemble(b, st, searcher, visible, searchCloser, backendOverrides{})
 }
 
 // buildEntityManager assembles the write-path manager from the collaborators
@@ -1625,9 +1625,35 @@ func cascadeReadDeps(
 	}
 }
 
+// backendOverrides are the services a recipe supplies because they come from
+// something only that recipe holds — today, a database handle it opened.
+//
+// A struct rather than more parameters on [assemble]: every field is
+// optional, they arrive together from one recipe, and appending a third
+// positional nil to four call sites is how a signature becomes unreadable.
+// The zero value means "derive everything from the filesystem", which is what
+// the fs, memory and postgres recipes pass.
+type backendOverrides struct {
+	// projectConfig replaces the filesystem config loader. The sqlite recipe
+	// supplies one because its database may CARRY the project's config, which
+	// it layers behind the files.
+	projectConfig config.Loader
+
+	// stateKV replaces the filesystem state store. Supplied for the same
+	// reason and from the same handle: state written beside the database
+	// rather than inside it would be left behind when the file is shipped.
+	stateKV state.KV
+}
+
+// assemble builds the services bundle from an opened store.
+//
+// Overrides are passed in rather than derived here because they come from a
+// database handle that belongs to the recipe that opened it, and assemble is
+// deliberately build-agnostic.
 func assemble(
 	base *SharedBase, st store.Store, searcher search.Searcher,
 	visible search.VisibleSearcher, searchCloser io.Closer,
+	overrides backendOverrides,
 ) (svc *Services, retErr error) {
 	cfg := base.cfg
 
@@ -1649,7 +1675,10 @@ func assemble(
 
 	tr := tracer.New(st)
 	templater := templating.NewFSTemplater(cfg.FS, cfg.Paths)
-	cfgLoader := config.NewFSLoader(cfg.FS, cfg.Paths.Root)
+	cfgLoader := overrides.projectConfig
+	if cfgLoader == nil {
+		cfgLoader = config.NewFSLoader(cfg.FS, cfg.Paths.Root)
+	}
 
 	// Build the static lua read deps once — the ScriptRunner (automation
 	// cascades) is constructed with these.
@@ -1665,12 +1694,21 @@ func assemble(
 		return nil, fmt.Errorf("compile computed properties: %w", err)
 	}
 
-	// Content versioning is a separate injected service (pgstore only; nil
-	// elsewhere), NOT a store capability the manager type-asserts. Derived once
-	// here and threaded into the recorders and the Services bundle.
+	// Content versioning is a separate injected service (pgstore and
+	// sqlitestore; nil on the fs/memory builds, which have no versioning
+	// store — fsstore uses git), NOT a store capability the manager
+	// type-asserts. Derived once here and threaded into the recorders and the
+	// Services bundle.
 	versions := versionServiceFor(st)
 
-	stateKV, aliases, jobQueue, err := buildRuntimeServices(cfg.FS, cfg.Paths, base, stateKVFor(st))
+	// A recipe-supplied state store wins over the per-backend one, which wins
+	// over the filesystem. Same precedence as the config loader, and for the
+	// same reason.
+	backendKV := overrides.stateKV
+	if backendKV == nil {
+		backendKV = stateKVFor(st)
+	}
+	stateKV, aliases, jobQueue, err := buildRuntimeServices(cfg.FS, cfg.Paths, base, backendKV)
 	if err != nil {
 		return nil, err
 	}
@@ -1705,9 +1743,10 @@ func assemble(
 
 	val := validator.New(st, base.meta, readDeps)
 
-	// Start the pgstore version-reconciliation sweep (postgres build only; a
-	// no-op elsewhere). It captures create/update versions for settled entities;
-	// rename/delete are captured synchronously via the entitymanager hook above.
+	// Start the backend's version-reconciliation sweep (postgres and sqlite
+	// builds; a no-op elsewhere). It captures create/update versions for
+	// settled entities; rename/delete are captured synchronously via the
+	// entitymanager hook above.
 	startVersionSweepIfSupported(st, base.meta)
 
 	// Reconcile the derived schema (postgres build only; a no-op elsewhere):
@@ -1726,7 +1765,7 @@ func assemble(
 	// treats absent as delete). A `unique:` added without a restart stays
 	// enforced by the application scan; `rela db reconcile` applies it.
 	if !base.reassembly {
-		reconcileDerivedSchemaIfSupported(context.Background(), st, base)
+		reconcileDerivedSchemaIfSupported(context.Background(), st, base, cfgLoader)
 	}
 
 	// Evaluate the data-migration gate (adopt compatible schema-shape
@@ -1864,9 +1903,12 @@ func relationVersionRecorderFor(vs store.VersionService) entitymanager.RelationV
 }
 
 // (startVersionSweepIfSupported is defined per build tag in
-// versionsweep_postgres.go / versionsweep_nosweep.go — the postgres build starts
-// the pgstore reconciliation sweep, every other build no-ops — which keeps this
-// build-agnostic file free of any pgstore import. assemble calls it above.)
+// versionsweep_shared.go — compiled into the postgres and sqlite builds, where
+// it starts the backend's reconciliation sweep — and in
+// versionsweep_nosweep.go, where every other build no-ops. Discovery is by
+// type assertion on store.VersionSweeper, which keeps this build-agnostic file
+// and the shared resolver alike free of any backend import. assemble calls it
+// above.)
 
 // jobQueueShutdownTimeout bounds how long [Services.Close] waits for the job
 // queue to stop. A queue that will not drain must not wedge process shutdown.

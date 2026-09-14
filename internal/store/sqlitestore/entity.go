@@ -100,22 +100,25 @@ func (s *Store) CreateEntity(ctx context.Context, e *entity.Entity) error {
 }
 
 func (s *Store) createEntityLocked(ctx context.Context, e *entity.Entity) error {
-	if !e.Face.IsDefault() {
-		// Row-family invariants: a non-default state requires its default row
-		// and shares the family's type. One choke point for every direct
-		// writer, matching fs/mem/pg.
-		var defType string
-		err := s.q().QueryRowContext(ctx,
-			`SELECT type FROM entities WHERE id = ? AND face = ''`, e.ID).Scan(&defType)
-		if errors.Is(err, sql.ErrNoRows) {
-			return storeutil.HeadlessStateError(e.ID)
-		}
-		if err != nil {
-			return fmt.Errorf("sqlitestore: create %s: %w", e.ID, err)
-		}
-		if defType != e.Type {
-			return storeutil.StateTypeMismatchError(e.ID, e.Face, e.Type, defType)
-		}
+	// Row-family invariant: a state shares the family's type. One choke point
+	// for every direct writer, matching fs/mem/pg. ANY sibling answers — no
+	// face heads a family (BUG-HC6I2T), so a first state is legal with no
+	// siblings at all and only a DIVERGENT type is refused.
+	//
+	// Runs for EVERY face including the zero coordinate. Gating it on
+	// `!e.Face.IsDefault()` was complete only while every family necessarily
+	// had a zero-coordinate row: a family created named-face-first would then
+	// take a zero-coordinate write with no type check at all.
+	var famType string
+	err := s.q().QueryRowContext(ctx,
+		`SELECT type FROM entities WHERE id = ? LIMIT 1`, e.ID).Scan(&famType)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		// First state of a new family: nothing to disagree with.
+	case err != nil:
+		return fmt.Errorf("sqlitestore: create %s: %w", e.ID, err)
+	case famType != e.Type:
+		return storeutil.StateTypeMismatchError(e.ID, e.Face, e.Type, famType)
 	}
 
 	props, err := marshalProps(e.Properties)
@@ -340,22 +343,6 @@ func (s *Store) deleteEntityStateLocked(
 	target, err := s.GetEntityState(ctx, id, p)
 	if err != nil {
 		return nil, err
-	}
-
-	// Refuse to orphan the family: a family with no default row has no defined
-	// meaning, and world fallback (`otherwise: default`) resolves against it.
-	// Deleting the LAST face is fine — nothing is left to orphan.
-	if p.IsDefault() {
-		var others int
-		if cErr := s.q().QueryRowContext(ctx,
-			`SELECT count(*) FROM entities WHERE id = ? AND face <> ''`, id).Scan(&others); cErr != nil {
-			return nil, fmt.Errorf("sqlitestore: delete state %s: %w", id, cErr)
-		}
-		if others > 0 {
-			return nil, fmt.Errorf(
-				"%w: cannot delete the default face of %s while %d other state(s) remain",
-				store.ErrInvalidQuery, id, others)
-		}
 	}
 
 	owned, err := s.ownedRelations(ctx, id, p)

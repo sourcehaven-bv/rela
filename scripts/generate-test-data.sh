@@ -261,6 +261,7 @@ entities:
     label: Requirement
     aliases: [req]
     id_prefix: "REQ-"
+    id_type: short
     properties:
       title:
         type: string
@@ -277,6 +278,7 @@ entities:
     label: Decision
     aliases: [dec, adr]
     id_prefixes: ["DEC-", "ADR-"]
+    id_type: short
     properties:
       title:
         type: string
@@ -291,6 +293,7 @@ entities:
     label: Solution
     aliases: [sol]
     id_prefix: "SOL-"
+    id_type: short
     properties:
       title:
         type: string
@@ -304,6 +307,7 @@ entities:
     label: Component
     aliases: [comp]
     id_prefixes: ["COMP-", "AC-", "TC-"]
+    id_type: short
     properties:
       title:
         type: string

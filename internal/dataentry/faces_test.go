@@ -52,16 +52,16 @@ func TestComputeFaces(t *testing.T) {
 		// POL-1 has both; POL-2 is draft-only. Same type, same declared
 		// faces — so a result that merely echoed the metamodel would give
 		// both entities the same answer, and this pins that it does not.
-		seedFaceInStore(ctx, t, st, "POL-1", "policy", "")
+		seedFaceInStore(ctx, t, st, "POL-1", "policy", "draft")
 		seedFaceInStore(ctx, t, st, "POL-1", "policy", "published")
-		seedFaceInStore(ctx, t, st, "POL-2", "policy", "")
+		seedFaceInStore(ctx, t, st, "POL-2", "policy", "draft")
 
-		got := svc.computeFaces(ctx, &entityPkg.Entity{ID: "POL-1", Type: "policy"})
+		got := svc.computeFaces(ctx, &entityPkg.Entity{ID: "POL-1", Type: "policy", Face: "draft"})
 		if len(got) != 1 || got[0].Face != "published" {
 			t.Errorf("POL-1 has a published face; got %+v", got)
 		}
 
-		got = svc.computeFaces(ctx, &entityPkg.Entity{ID: "POL-2", Type: "policy"})
+		got = svc.computeFaces(ctx, &entityPkg.Entity{ID: "POL-2", Type: "policy", Face: "draft"})
 		if len(got) != 0 {
 			t.Errorf("POL-2 is draft-only, so it has no OTHER face; got %+v", got)
 		}
@@ -70,7 +70,7 @@ func TestComputeFaces(t *testing.T) {
 	t.Run("excludes the face being served", func(t *testing.T) {
 		t.Parallel()
 		svc, st := facesSvc(t)
-		seedFaceInStore(ctx, t, st, "POL-1", "policy", "")
+		seedFaceInStore(ctx, t, st, "POL-1", "policy", "draft")
 		seedFaceInStore(ctx, t, st, "POL-1", "policy", "published")
 
 		// Asked FROM the published face, the answer is the draft — not
@@ -79,19 +79,19 @@ func TestComputeFaces(t *testing.T) {
 		got := svc.computeFaces(ctx, &entityPkg.Entity{
 			ID: "POL-1", Type: "policy", Face: "published",
 		})
-		if len(got) != 1 || got[0].Face != "" {
-			t.Errorf("from published, the other face is the default one; got %+v", got)
+		if len(got) != 1 || got[0].Face != "draft" {
+			t.Errorf("from published, the other face is the draft; got %+v", got)
 		}
 	})
 
 	t.Run("lists every translation, sorted", func(t *testing.T) {
 		t.Parallel()
 		svc, st := facesSvc(t)
-		seedFaceInStore(ctx, t, st, "POST-1", "blog-post", "")
+		seedFaceInStore(ctx, t, st, "POST-1", "blog-post", "en")
 		seedFaceInStore(ctx, t, st, "POST-1", "blog-post", "nl")
 		seedFaceInStore(ctx, t, st, "POST-1", "blog-post", "fr")
 
-		got := svc.computeFaces(ctx, &entityPkg.Entity{ID: "POST-1", Type: "blog-post"})
+		got := svc.computeFaces(ctx, &entityPkg.Entity{ID: "POST-1", Type: "blog-post", Face: "en"})
 		if len(got) != 2 {
 			t.Fatalf("both translations are offered; got %+v", got)
 		}

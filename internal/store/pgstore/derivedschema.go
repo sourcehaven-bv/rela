@@ -72,10 +72,22 @@ const derivedListPrefix = "rela_derived_list__"
 // the (type, property) encoding unambiguous so ("ab","c") and ("a","bc") cannot
 // collide. The SHA-256 hex is truncated to keep the whole name within Postgres's
 // 63-byte identifier limit (prefix 19 + 32 hex = 51 bytes).
+//
+// uniqueIndexShape participates in the hash so that CHANGING the index
+// definition renames it. The DDL is `CREATE UNIQUE INDEX IF NOT EXISTS`, so a
+// deployment carrying the previous definition under the previous name would
+// silently keep it — and the previous one was scoped `WHERE face = ”`, which
+// enforces nothing on a faced type (BUG-HC6I2T). A new name means the
+// reconciler creates the correct index and drops the stale one, because a name
+// it no longer computes is by definition no longer desired.
 func uniqueIndexName(entityType, property string) string {
-	sum := sha256.Sum256([]byte(entityType + "\x00" + property))
+	sum := sha256.Sum256([]byte(entityType + "\x00" + property + "\x00" + uniqueIndexShape))
 	return derivedUniquePrefix + hex.EncodeToString(sum[:16])
 }
+
+// uniqueIndexShape versions the unique-index DEFINITION. Bump it whenever the
+// DDL below changes in a way that must take effect on an existing deployment.
+const uniqueIndexShape = "per-face-v2"
 
 // listIndexName hashes the whole list shape: filters, a separator that no
 // property name can contain, then the ordered sort keys — so the same keys
@@ -468,10 +480,17 @@ func createUniqueIndex(
 	// a dry-run's prediction drifts from what a create actually does. They can't
 	// share one string (this interpolates quoted literals; that binds $1/$2), so
 	// keep them identical by hand.
-	// face = '': FAMILY-SCOPED. `unique: true` is a natural-key rule
-	// over the DEFAULT world (TKT-DOFYR1) — a copied state sharing its
-	// family's value must not violate it. Migration 0011 dropped the
-	// face-unaware predecessors so this predicate always applies.
+	// PER-FACE. `face` is an index KEY column, not a predicate: two
+	// ENTITIES may not share the value within one face, and two faces of ONE
+	// entity never collide because a copied state legitimately carries its
+	// family's value. This must stay in lockstep with
+	// entitymanager.checkUniqueProperties, which implements the same rule in
+	// Go and is the only enforcement on the backends without this index.
+	//
+	// It was `WHERE face = ''` — family-scoped via the bare row — which
+	// enforced NOTHING once a type declaring faces stopped storing a row
+	// there (BUG-HC6I2T). Whether an operator can select the stronger
+	// per-entity reading is TKT-HXT2P9.
 	//
 	// TRAP (TKT-WAV8XP PR-C, RULING 4): this one STRUCTURALLY CANNOT be
 	// worlded, which is a stronger statement than "we chose not to".
@@ -484,8 +503,8 @@ func createUniqueIndex(
 	// Stated explicitly because it is the question a reader re-opens
 	// every time they sweep this file.
 	ddl := fmt.Sprintf(
-		`CREATE UNIQUE INDEX IF NOT EXISTS %s ON entities (type, (properties->>%s)) `+
-			`WHERE type = %s AND properties->>%s <> '' AND properties->>%s IS NOT NULL AND face = ''`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS %s ON entities (type, (properties->>%s), face) `+
+			`WHERE type = %s AND properties->>%s <> '' AND properties->>%s IS NOT NULL`,
 		quoteIdent(name),
 		quoteLiteral(spec.Property),
 		quoteLiteral(spec.Type),
@@ -545,8 +564,8 @@ func uniqueViolators(
 	const countQ = `
 		SELECT count(*) FROM (
 			SELECT 1 FROM entities
-			WHERE type = $1 AND properties->>$2 <> '' AND properties->>$2 IS NOT NULL AND face = ''
-			GROUP BY properties->>$2
+			WHERE type = $1 AND properties->>$2 <> '' AND properties->>$2 IS NOT NULL
+			GROUP BY properties->>$2, face
 			HAVING count(*) > 1
 		) g`
 	if cErr := conn.QueryRow(ctx, countQ, spec.Type, spec.Property).Scan(&count); cErr != nil {
@@ -561,8 +580,8 @@ func uniqueViolators(
 	const sampleQ = `
 		SELECT properties->>$2 AS val
 		FROM entities
-		WHERE type = $1 AND properties->>$2 <> '' AND properties->>$2 IS NOT NULL AND face = ''
-		GROUP BY properties->>$2
+		WHERE type = $1 AND properties->>$2 <> '' AND properties->>$2 IS NOT NULL
+		GROUP BY properties->>$2, face
 		HAVING count(*) > 1
 		ORDER BY count(*) DESC
 		LIMIT 5`

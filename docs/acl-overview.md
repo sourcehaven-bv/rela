@@ -181,18 +181,20 @@ different jobs. The world grant selects a lens and does not by itself keep a
 role away from content, because a caller who omits `?world=` is not asking for
 a world. The face grant is what gates the draft on every read path.
 
-**A grant names the face as stored.** If the type sets `bare_face: draft`, the
-draft row lives at the bare id, so the grant for it is the bare
-`update: [policy]`. Writing `update: [policy@draft]` matches nothing and denies
-the face it was meant to allow. The
+**A write grant on a faced type must name the face.** A type that declares
+`faces:` stores every row under a face name and nothing at the bare coordinate,
+so a bare `update: [policy]` matches no row and denies every face. Write
+`update: [policy@draft]` for each face the role may change. `rela acl audit`
+reports the bare form as `B12-bare-grant-on-faced-type`. The
 [ACL: Security Hardening guide](acl-security.md#scoping-a-grant-to-a-content-state)
 has the full table.
 
 **Reads and writes default differently, deliberately.** A bare `read: [policy]`
-covers *every* face. A bare `update: [policy]` covers only the bare face. A
-world never serves the bare face when its chain names another, so a read grant
-narrowed to the bare face would read nothing under any world. Writes address a
-face by id and never pass through a world, so they can safely stay narrow.
+covers *every* face. A bare `update: [policy]` covers only the unnamed state a
+faceless type has. A world never serves that state when its chain names a face,
+so a read grant narrowed to it would read nothing under any world. Writes
+address a face by id and never pass through a world, so they can safely stay
+narrow.
 
 The practical consequence is that adding `faces:` to a live type does **not**
 tighten existing read grants. If you need a role kept away from drafts, name the

@@ -204,16 +204,16 @@ func (r *metamodelReader) HasFace(t, face string) bool {
 	return declared
 }
 
-// BareFace returns the type's `bare_face:` declared name, or "".
-func (r *metamodelReader) BareFace(t string) string {
+// HasFaces reports whether entity type t declares any content states.
+func (r *metamodelReader) HasFaces(t string) bool {
 	if r.m == nil {
-		return ""
+		return false
 	}
 	def, ok := r.m.GetEntityDef(t)
 	if !ok {
-		return ""
+		return false
 	}
-	return def.BareFace
+	return len(def.Faces) > 0
 }
 
 func (r *metamodelReader) HasField(t, field string) bool {

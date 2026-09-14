@@ -123,6 +123,26 @@ describe('getErrorMessage', () => {
   })
 })
 
+  // rela's writeV1Error passes a JSON POINTER in `detail` to name the field a
+  // refusal is about, putting the sentence in `title`. Preferring `detail`
+  // unconditionally rendered a toast reading just "/world".
+  it('shows the title when detail is a JSON pointer, not the pointer', () => {
+    const err = normalizeApiError({
+      isAxiosError: true,
+      response: {
+        status: 422,
+        data: {
+          type: 'https://rela.dev/errors/validation_failed',
+          title: 'world "default" declares no `create:` face',
+          detail: '/world',
+          status: 422,
+        },
+      },
+    } as never)
+    expect(err.message).toBe('world "default" declares no `create:` face')
+    expect(err.message).not.toBe('/world')
+  })
+
 describe('getScriptError', () => {
   it('unwraps the envelope from a normalized ApiError', () => {
     const err = normalizeApiError(axiosErrorWith(scriptEnvelope))

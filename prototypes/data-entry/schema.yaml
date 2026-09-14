@@ -13,6 +13,7 @@ entities:
   ticket:
     label: Ticket
     id_prefix: "TKT-"
+    id_type: short
     properties:
       title:
         type: string

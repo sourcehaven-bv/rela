@@ -1,6 +1,7 @@
 package storetest
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -135,6 +136,30 @@ func RunValidationTests(t *testing.T, f Factory) {
 	// U+FFFD and reported success, and memstore kept the bytes. The rule is
 	// storeutil.ValidateProperties; these cases pin that each write path
 	// actually calls it, at the nesting the store fuzz target generates.
+	// A property NAME beginning with git's conflict marker must round-trip on
+	// every backend (BUG-TOXQAA / issue #993). fsstore wrote it as a YAML
+	// mapping key at column 0, so the file it had just written scanned as an
+	// unresolved merge and every later read refused it — the entity was
+	// unreadable and silently absent from the validator and the search index,
+	// while memstore and pgstore round-tripped it fine. The fix is in the
+	// markdown emitter (the key is quoted), not a new validity rule: the value
+	// is representable, so a serialization limit must not decide what an
+	// entity may contain. These cases pin that the backends agree.
+	t.Run("RoundTripsConflictMarkerPropertyName", func(t *testing.T) {
+		s := f(t)
+
+		for i, name := range []string{"<<<<<<<", "<<<<<<< HEAD", "x<<<<<<<"} {
+			id := fmt.Sprintf("E-cm%d", i)
+			e := entity.New(id, "t")
+			e.Properties[name] = "v"
+			require.NoErrorf(t, s.CreateEntity(ctx(), e), "create with property %q", name)
+
+			got, err := s.GetEntity(ctx(), id)
+			require.NoErrorf(t, err, "read back entity with property %q", name)
+			assert.Equalf(t, "v", got.Properties[name], "property %q lost its value", name)
+		}
+	})
+
 	t.Run("RejectsInvalidUTF8Properties", func(t *testing.T) {
 		const bad = "\n\xc80" // the fuzzer's original payload
 		s := f(t)

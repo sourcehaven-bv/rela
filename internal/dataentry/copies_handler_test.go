@@ -349,7 +349,6 @@ entities:
   page:
     label: Page
     id_prefix: PAGE
-    bare_face: draft
     faces:
       draft: {}
       published: {}
@@ -386,7 +385,11 @@ func TestCopyOffers_ReachTheWire(t *testing.T) {
 		t.Fatalf("metamodel.Parse: %v", err)
 	}
 	app := newAppFromParts(&Config{App: AppConfig{Name: "Copies", Description: "x"}}, meta, newFixture())
-	seedEntity(app, &entity.Entity{ID: "PAGE-1", Type: "page", Properties: map[string]any{"title": "Draft"}})
+	// `page` declares faces, so its draft is stored AT `draft` — there is no
+	// zero-coordinate row to seed (BUG-HC6I2T).
+	seedEntity(app, &entity.Entity{
+		ID: "PAGE-1", Type: "page", Face: "draft", Properties: map[string]any{"title": "Draft"},
+	})
 	seedEntity(app, &entity.Entity{ID: "TKT-1", Type: "ticket", Properties: map[string]any{"title": "t"}})
 
 	// rawCopies returns the `_copies` value as encoded, and whether the key
@@ -414,7 +417,8 @@ func TestCopyOffers_ReachTheWire(t *testing.T) {
 
 	t.Run("a face with a declared copy carries the offer and its verdict", func(t *testing.T) {
 		t.Parallel()
-		offers, present := rawCopies(t, "/api/v1/pages/PAGE-1")
+		// Addressed by face: a faced type has no unsuffixed row to GET.
+		offers, present := rawCopies(t, "/api/v1/pages/PAGE-1@draft")
 		if !present {
 			t.Fatal("`_copies` must be present on a per-entity response when the " +
 				"capability is wired — the test rebind uses production wiring")

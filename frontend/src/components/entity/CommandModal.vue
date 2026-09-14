@@ -4,6 +4,7 @@ import type { Command } from '@/types'
 import { useModalStack } from '@/composables/modalStack'
 import { getErrorMessage } from '@/api'
 import { useConfirm } from '@/composables/useConfirm'
+import { apiUrl } from '@/api/base'
 
 const props = defineProps<{
   entityId: string
@@ -42,7 +43,7 @@ async function runCommand(cmd: Command) {
   const params = new URLSearchParams()
   params.set('entity_id', props.entityId)
 
-  const url = `/api/command/${cmd.id}?${params.toString()}`
+  const url = apiUrl(`/api/command/${cmd.id}?${params.toString()}`)
 
   try {
     const response = await fetch(url, { method: 'POST' })
@@ -104,7 +105,9 @@ function processSSEEvent(eventType: string, rawData: string, cmd: Command) {
           label: data.label || data.path.split('/').pop() || 'File',
         })
         if (cmd.auto_open !== false && data.path) {
-          fetch(`/api/open-file?path=${encodeURIComponent(data.path)}&action=open`, { method: 'POST' })
+          fetch(apiUrl(`/api/open-file?path=${encodeURIComponent(data.path)}&action=open`), {
+            method: 'POST',
+          })
         }
         break
       case 'error':
@@ -123,11 +126,11 @@ function processSSEEvent(eventType: string, rawData: string, cmd: Command) {
 }
 
 function openFile(path: string) {
-  fetch(`/api/open-file?path=${encodeURIComponent(path)}&action=open`, { method: 'POST' })
+  fetch(apiUrl(`/api/open-file?path=${encodeURIComponent(path)}&action=open`), { method: 'POST' })
 }
 
 function revealFile(path: string) {
-  fetch(`/api/open-file?path=${encodeURIComponent(path)}&action=reveal`, { method: 'POST' })
+  fetch(apiUrl(`/api/open-file?path=${encodeURIComponent(path)}&action=reveal`), { method: 'POST' })
 }
 
 function close() {

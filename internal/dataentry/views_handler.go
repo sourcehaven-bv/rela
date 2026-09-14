@@ -94,9 +94,9 @@ func (h *viewsHandler) redactor() visibility.FieldRedactor {
 // (TKT-O7R2A1), with the same 404 so a denied face is indistinguishable from
 // an absent one.
 func (h *viewsHandler) sidePanelEntry(
-	w http.ResponseWriter, r *http.Request, s *Schema, entityType, entityID string,
+	w http.ResponseWriter, r *http.Request, entityType, entityID string,
 ) (*entityPkg.Entity, bool) {
-	ref, ok := parseEntityRef(s.Meta, entityType, entityID)
+	ref, ok := parseEntityRef(entityID)
 	if !ok {
 		writeV1Error(w, r, http.StatusNotFound, "entity_not_found", "Entity not found", "")
 		return nil, false
@@ -142,7 +142,7 @@ func (h *viewsHandler) handleV1SidePanel(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	entry, ok := h.sidePanelEntry(w, r, s, form.EntityType, entityID)
+	entry, ok := h.sidePanelEntry(w, r, form.EntityType, entityID)
 	if !ok {
 		return
 	}
@@ -487,7 +487,7 @@ func (h *viewsHandler) handleV1Views(w http.ResponseWriter, r *http.Request) {
 	// The id segment is an ADDRESS (`ID` or `ID@face`), parsed once here so
 	// the row gate below sees the BARE id (it is face-blind by design and
 	// matches nothing on a suffixed string) and the engine sees the face.
-	ref, ok := parseEntityRef(s.Meta, entityType, entityID)
+	ref, ok := parseEntityRef(entityID)
 	if !ok {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 		return

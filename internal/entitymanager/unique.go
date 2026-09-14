@@ -78,14 +78,28 @@ func checkUniqueProperties(
 		return nil
 	}
 
+	// AllStates, then filtered to THIS face. Without it the scan sees only
+	// zero-coordinate rows, which a type declaring faces has none of — so
+	// `unique:` silently enforced nothing on exactly the types most likely
+	// to want it (BUG-HC6I2T).
+	//
+	// PER-FACE is the rule: two ENTITIES may not share the value within one
+	// face, and two faces of ONE entity never collide, because they are the
+	// same entity. Excluding by bare id rather than by row is what makes the
+	// second half true. Whether an operator can ask for the stronger
+	// per-entity reading is TKT-HXT2P9.
 	var violations []*metamodel.ValidationError
-	for other, err := range deps.Store.ListEntities(ctx, store.EntityQuery{Type: e.Type}) {
+	q := store.EntityQuery{Type: e.Type, AllStates: true}
+	for other, err := range deps.Store.ListEntities(ctx, q) {
 		if err != nil {
 			// A partial scan cannot prove uniqueness — fail the write loud
 			// rather than admit a possible duplicate.
 			return fmt.Errorf("entitymanager: unique check for %s: %w", e.ID, err)
 		}
-		if other.ID == excludeSelfID {
+		if other.Face != e.Face {
+			continue
+		}
+		if other.ID == excludeSelfID || other.ID == e.ID {
 			continue
 		}
 		for _, up := range toCheck {

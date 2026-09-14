@@ -239,7 +239,6 @@ entities:
     id_type: sequential
     properties:
       title: {type: string}
-    bare_face: draft
     faces:
       draft: {}
       published: {}
@@ -263,7 +262,6 @@ worlds:
 		// `Draft` is not a legal face name (no uppercase). The loader's
 		// structural checks pass it; only the compiler catches it.
 		bad := strings.Replace(good, "draft: {}", "Draft: {}", 1)
-		bad = strings.Replace(bad, "bare_face: draft", "bare_face: Draft", 1)
 		_, err := newBaseOver(t, bad)
 		if err == nil {
 			t.Fatal("NewSharedBase must reject an invalid face name at startup")

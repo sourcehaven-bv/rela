@@ -140,9 +140,10 @@ type MetamodelReader interface {
 	// HasFace reports whether entity type t declares the content state
 	// named face.
 	HasFace(t, face string) bool
-	// BareFace returns the declared name of the face stored under the bare
-	// id (`bare_face:`), or "" when the type declares none.
-	BareFace(t string) string
+	// HasFaces reports whether entity type t declares any content states.
+	// A type that does stores no row at the zero coordinate, so a BARE
+	// type grant on it reaches nothing (see checkBareGrantOnFacedType).
+	HasFaces(t string) bool
 }
 
 // PermissionConsumer reports permissions referenced OUTSIDE acl.yaml. The

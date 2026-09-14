@@ -16,7 +16,6 @@ entities:
     id_prefix: PAGE
     properties:
       title: {type: string}
-    bare_face: draft
     faces:
       draft: {}
       published: {}
@@ -25,7 +24,6 @@ entities:
     id_prefix: POL
     properties:
       title: {type: string}
-    bare_face: draft
     faces:
       draft: {}
       review: {}
@@ -59,11 +57,6 @@ func TestWorlds_ParseAndDeclare(t *testing.T) {
 
 	if got := len(m.Entities["page"].Faces); got != 2 {
 		t.Errorf("page faces = %d, want 2", got)
-	}
-	// Which face the bare id addresses is ONE fact on the type, so there is a
-	// single value to assert rather than a flag per face that could disagree.
-	if got := m.Entities["page"].BareFace; got != "draft" {
-		t.Errorf("page bare_face = %q, want %q", got, "draft")
 	}
 	if got := len(m.Entities["ticket"].Faces); got != 0 {
 		t.Errorf("ticket declares no faces, got %d", got)
@@ -259,42 +252,6 @@ func TestWorlds_ValidationRejects(t *testing.T) {
     edits: staging
 `),
 			wantSubstr: []string{`world "editorial"`, "`edits:`", `"staging"`},
-		},
-		{
-			// Two faces can no longer BOTH claim the bare id — `bare_face` is
-			// one key on the type, so the old "at most one" check has no case
-			// left to catch. What can still go wrong is naming a face the type
-			// does not declare, which would leave the bare-id row unnamed while
-			// the intended face became a separate suffixed row.
-			name: "bare_face names an undeclared face",
-			schema: `version: "1.0"
-namespace: https://example.org/test#
-entities:
-  page:
-    label: Page
-    id_prefix: PAGE
-    properties:
-      title: {type: string}
-    bare_face: drfat
-    faces:
-      draft: {}
-      published: {}
-`,
-			wantSubstr: []string{`entity "page"`, "bare_face: drfat", "names no declared face", "draft, published"},
-		},
-		{
-			name: "bare_face on a type declaring no faces",
-			schema: `version: "1.0"
-namespace: https://example.org/test#
-entities:
-  page:
-    label: Page
-    id_prefix: PAGE
-    bare_face: draft
-    properties:
-      title: {type: string}
-`,
-			wantSubstr: []string{`entity "page"`, "declares no `faces:`"},
 		},
 	}
 

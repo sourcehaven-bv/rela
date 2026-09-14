@@ -25,7 +25,6 @@ entities:
   page:
     label: Page
     id_prefix: PAGE
-    bare_face: live
     faces:
       live: {}
       review: {}
@@ -39,8 +38,6 @@ entities:
   doc:
     label: Doc
     id_prefix: DOC
-    # No bare_face, so face "en" is NON-bare: its stored coordinate and its
-    # declared name are the same string. The control for the bare-face case.
     faces:
       en: {}
       nl: {}
@@ -61,16 +58,6 @@ copies:
   translate:
     from: doc@en
     to: doc@nl
-    fields:
-      title: "{{new.title}}"
-    guard:
-      permission: stage
-  # Declares the source WITHOUT a face suffix, so from.Face is "". It
-  # addresses the same face "page@live" does (live is the bare face), so it
-  # must label it the same way — the declared name, from the coordinate.
-  stage-review-bare:
-    from: page
-    to: page@review
     fields:
       title: "{{new.title}}"
     guard:
@@ -152,7 +139,7 @@ func TestCopyStampsOriginOnItsWrites(t *testing.T) {
 		wantLabel  string
 	}{
 		{
-			name:       "BARE face source records its DECLARED name",
+			name:       "same-entity copy records the SOURCE face",
 			definition: "stage-review",
 			sourceID:   "PAGE-1",
 			want: store.Origin{
@@ -161,10 +148,9 @@ func TestCopyStampsOriginOnItsWrites(t *testing.T) {
 				// pair is the source. Recording the id anyway keeps the
 				// reader from having to know that.
 				Source: "PAGE-1",
-				// `bare_face: live` makes `live` the ZERO stored coordinate,
-				// so recording the coordinate here would record "" and read
-				// back as a bare "PAGE-1" — dropping the one fact provenance
-				// carries. The boundary records the DECLARED name instead.
+				// A face's name IS its stored coordinate (BUG-HC6I2T), so
+				// the boundary records the coordinate and the label reads
+				// back the way the operator spelled it in `copies:`.
 				SourceFace: "live",
 				SourceType: "page",
 				Definition: "stage-review",
@@ -172,27 +158,9 @@ func TestCopyStampsOriginOnItsWrites(t *testing.T) {
 			wantLabel: "PAGE-1@live",
 		},
 		{
-			name: "source declared without @face still labels the face it addresses",
-			// `from: page` and `from: page@live` address the SAME face, so
-			// they must produce the same label; the name is resolved from the
-			// coordinate, not read off the definition text.
-			definition: "stage-review-bare",
-			sourceID:   "PAGE-1",
-			want: store.Origin{
-				Kind:       store.OriginCopy,
-				Source:     "PAGE-1",
-				SourceFace: "live",
-				SourceType: "page",
-				Definition: "stage-review-bare",
-			},
-			wantLabel: "PAGE-1@live",
-		},
-		{
-			name: "NON-bare face source is unchanged",
-			// The control: `en` is not doc's bare face, so its declared name
-			// and stored coordinate coincide and nothing about this case
-			// moves. If the fix had been "always spell something", this is
-			// where a wrong spelling would show up.
+			name: "a second faced type records its own face",
+			// The control against a hardcoded spelling: a different type,
+			// a different face name, same mechanism.
 			definition: "translate",
 			sourceID:   "DOC-1",
 			want: store.Origin{
@@ -263,7 +231,12 @@ func TestOrdinaryWriteCarriesNoOrigin(t *testing.T) {
 	ctx := principal.With(context.Background(),
 		principal.Principal{User: "edith@example.com", Tool: "data-entry"})
 
-	if _, err := mgr.PatchEntity(ctx, "PAGE-1", entity.Patch{
+	// The FACELESS `note` type, not PAGE-1: Manager.PatchEntity takes no face
+	// and reads through store.GetEntity, which resolves the zero coordinate —
+	// and since BUG-HC6I2T a faced type stores no row there, so a patch of
+	// PAGE-1 fails not-found before it can stamp anything. The origin marker
+	// under test is face-independent, so a faceless subject pins it honestly.
+	if _, err := mgr.PatchEntity(ctx, "NOTE-9", entity.Patch{
 		Properties: map[string]any{"title": "typed by hand"},
 	}); err != nil {
 		t.Fatalf("patch: %v", err)
@@ -304,20 +277,17 @@ func newOriginManager(t *testing.T) (*originRecordingStore, *entitymanager.Manag
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)
 	}
-	if cerr := rec.Store.CreateEntity(context.Background(), &entity.Entity{
-		ID: "PAGE-1", Type: "page", Properties: map[string]any{"title": "live"},
-	}); cerr != nil {
-		t.Fatalf("seed: %v", cerr)
-	}
-	// DOC-1@en: doc declares no bare_face, so "en" is a real, non-zero stored
-	// coordinate and the source must be seeded AT it. The default row comes
-	// first because a face row cannot exist headless.
+	// Both types declare faces, so every seeded row names one: since
+	// BUG-HC6I2T there is no zero-coordinate row to head a family.
 	for _, e := range []*entity.Entity{
-		{ID: "DOC-1", Type: "doc", Properties: map[string]any{"title": "doc"}},
+		{ID: "PAGE-1", Type: "page", Face: "live", Properties: map[string]any{"title": "live"}},
 		{ID: "DOC-1", Type: "doc", Face: "en", Properties: map[string]any{"title": "english"}},
+		// A faceless subject for the hand-edit half — see
+		// TestOrdinaryWriteCarriesNoOrigin.
+		{ID: "NOTE-9", Type: "note", Properties: map[string]any{"title": "note"}},
 	} {
 		if cerr := rec.Store.CreateEntity(context.Background(), e); cerr != nil {
-			t.Fatalf("seed doc %q: %v", e.Face, cerr)
+			t.Fatalf("seed %s@%s: %v", e.ID, e.Face, cerr)
 		}
 	}
 	return rec, mgr

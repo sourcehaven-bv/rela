@@ -93,7 +93,7 @@ func (dr *docRuntime) luaGraph(ls *lua.LState) int {
 		return 0
 	}
 	// Otherwise treat `from` as an instance id.
-	if _, err := dr.store.GetEntity(dr.ctx, from); err != nil {
+	if _, err := seedRowOf(dr.ctx, dr.store, from); err != nil {
 		return dr.luaFail(ls, "graph: %q is neither an entity type nor a seeded id", from)
 	}
 	dr.emit(dr.instanceGraph(from, depth, direction, filter))
@@ -378,7 +378,7 @@ func (dr *docRuntime) buildResolutionGraph(
 		}
 		sel, kept := selected[id]
 		for _, f := range faces {
-			name := metamodel.DeclaredFace(dr.meta, typ, f.String())
+			name := f.String()
 			if name == "" {
 				name = "(unnamed)"
 			}
@@ -452,7 +452,7 @@ func (dr *docRuntime) facesOf(typ, id string) ([]entity.Face, error) {
 		out = append(out, entity.Face(""))
 	}
 	for _, name := range sortedFaceNames(def) {
-		stored := entity.Face(metamodel.StoredFace(dr.meta, typ, name))
+		stored := entity.Face(name)
 		if stored.IsDefault() {
 			continue // already emitted as the bare-id row
 		}

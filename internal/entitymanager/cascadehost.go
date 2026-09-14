@@ -54,6 +54,15 @@ func (h *cascadeHost) CreateEntity(
 	// propagate per-step warnings; they'd be merged into the trigger's
 	// entity.CreateResult.Warnings if we extended Outcome, but that's a
 	// separate change.
+	// A cascade cannot name a face: autocascade.CreateEntityOptions carries
+	// none, and the automation DSL has no syntax for one. Refusing is the
+	// fail-closed answer for a faced type — writing the zero coordinate would
+	// mint a row belonging to NO declared face, which nothing can address and
+	// no grant covers (BUG-HC6I2T). requireCreateFace states the same rule the
+	// ordinary create path enforces, so the two cannot drift.
+	if err := h.deps.requireCreateFaceFor(entityType, ""); err != nil {
+		return nil, err
+	}
 	e, _, err := createCore(ctx, h.deps, entityType, createCoreOpts{
 		ID:              opts.ID,
 		IDPrefix:        opts.IDPrefix,
@@ -185,6 +194,13 @@ func (h *cascadeHost) ValidateRelation(relType, fromType, toType string) error {
 func (h *cascadeHost) DeleteEntity(ctx context.Context, _, id string, cascade bool) error {
 	current, err := h.deps.Store.GetEntity(ctx, id)
 	if err != nil {
+		// Not an ACL bypass (the triggering automation is already
+		// authorized), but reporting a transient store error as "missing"
+		// would make a cascade silently skip a replacement it should have
+		// performed. Surface the real cause.
+		if !errors.Is(err, store.ErrNotFound) {
+			return err
+		}
 		return fmt.Errorf("%w: %s", ErrEntityNotFound, id)
 	}
 
@@ -207,6 +223,19 @@ func (h *cascadeHost) DeleteEntity(ctx context.Context, _, id string, cascade bo
 	// behind a deleted entity (issue #888).
 	res, delErr := h.deps.Store.DeleteEntity(ctx, id, cascade)
 	if delErr != nil {
+		// Same partial-cascade rule as Manager.DeleteEntity (issue #929): a
+		// non-transactional backend reports the relations it already removed,
+		// and those removals stick, so they must reach the log. Relations
+		// only — the entity survived. Kept in step with the manager's path
+		// deliberately: an if_exists:replace delete and a direct delete must
+		// not log differently for the same failure.
+		if res != nil {
+			for _, rel := range res.DeletedRelations {
+				h.recordCascade(
+					audit.WithTriggeredBy(ctx, "cascade:delete-entity:"+id),
+					audit.OpDeleteRelation, relationSubject(rel), "deleted")
+			}
+		}
 		return fmt.Errorf("delete entity: %w", delErr)
 	}
 

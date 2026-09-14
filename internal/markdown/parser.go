@@ -110,14 +110,11 @@ func FormatDocumentOrdered(frontmatter map[string]any, content string, keyOrder 
 		sb.WriteString(frontmatterDelimiter)
 		sb.WriteString("\n")
 
-		var yamlBytes []byte
-		var err error
-
-		if len(keyOrder) > 0 {
-			yamlBytes, err = marshalOrdered(frontmatter, keyOrder)
-		} else {
-			yamlBytes, err = yaml.Marshal(frontmatter)
-		}
+		// Both branches go through marshalOrdered: with an empty keyOrder it
+		// emits every key alphabetically, which is what yaml.Marshal of a map
+		// already did, but through [KeyNode] and [ValueToNode] so the
+		// round-trip guards apply to a caller that supplies no order.
+		yamlBytes, err := marshalOrdered(frontmatter, keyOrder)
 		if err != nil {
 			return "", err
 		}
@@ -240,13 +237,30 @@ func ValueToNode(val any) (*yaml.Node, error) {
 // key. Keys that merely look like other scalars ("y", "on", "123") are left
 // plain — yaml.v3 still decodes them into a string key — so no file that
 // has one reflows.
+//
+// A key beginning with git's conflict marker is quoted for a different
+// reason, one level up from YAML (BUG-TOXQAA / issue #993): a mapping key is
+// emitted at column 0, so "<<<<<<< HEAD" written plain produces a line the
+// conflict scanner reads as an unresolved merge and the whole file is
+// refused — the entity is written successfully and then unreadable, and
+// silently drops out of the validator and the search index. Quoting moves
+// the marker off column 0. Values need no such guard: yaml.v3 always emits
+// them after "key: " or indented under a block scalar, never at column 0.
 func KeyNode(key string) *yaml.Node {
 	node := &yaml.Node{Kind: yaml.ScalarNode, Value: key}
-	if needsQuoting(key, false) || keyReadsAsNonString(key) {
+	if needsQuoting(key, false) || keyReadsAsNonString(key) || startsConflictMarker(key) {
 		node.Tag = "!!str"
 		node.Style = yaml.DoubleQuotedStyle
 	}
 	return node
+}
+
+// startsConflictMarker reports whether a plain scalar with this text, written
+// as a mapping key at column 0, would be indistinguishable from git's opening
+// conflict marker. Only the opening marker matters: it is the one
+// [HasConflictMarkers] scans for.
+func startsConflictMarker(key string) bool {
+	return strings.HasPrefix(key, string(conflictMarkerStart))
 }
 
 // keyReadsAsNonString reports whether a plain scalar with this text would be

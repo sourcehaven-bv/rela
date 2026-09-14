@@ -324,12 +324,11 @@ func TestWorldPrimes_MixedTypeFamilyIsOrderIndependent(t *testing.T) {
 }
 
 // TestWorldPrimes_ZeroInChainIsAChainHit pins that a chain containing the ZERO
-// coordinate resolves the default row at its CHAIN rank, not as a fallback.
+// coordinate resolves that row at its CHAIN rank, not as a fallback.
 //
-// A chain gets a zero coordinate whenever a world names the type's default
-// face (internal/worlds stores metamodel.StoredFace, which maps a
-// `bare_face` name to ""). Here the zero coordinate is ranked FIRST, so a
-// family holding both faces must prime to the default row — if the comparison
+// The zero coordinate is a coordinate like any other in the ranking: it is
+// where a type declaring no faces stores its single state. Here it is ranked
+// FIRST, so a family holding both rows must prime to it — if the comparison
 // skipped "" the published row would win and the world would serve the wrong
 // face.
 func TestWorldPrimes_ZeroInChainIsAChainHit(t *testing.T) {

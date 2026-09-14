@@ -171,13 +171,13 @@ func (ce *copyEngine) copyState(ctx context.Context, req CopyRequest) (*CopyResu
 	// captures (migration 0013). It is not on the plan struct: the plan
 	// describes WHAT to write, and provenance is a property of the write
 	// context, carried the same boundary-populated way as attribution.
-	// The DECLARED face name, not plan.sourceTail: provenance is a label a
-	// reader reads, and the bare face is unnameable as a stored coordinate
-	// (it IS the empty string), so recording the coordinate would silently
-	// drop the `@draft` from a copy declared `from: policy@draft` — the very
-	// fact the annotation exists to carry. See withCopyOrigin.
+	// sourceTail is both the coordinate and the name a reader reads: a face
+	// has one spelling (BUG-HC6I2T). This used to resolve a separate declared
+	// name, because `bare_face` made one face's stored coordinate the empty
+	// string and recording it would have dropped the `@draft` from a copy
+	// declared `from: policy@draft`. See withCopyOrigin.
 	writeCtx := withCopyOrigin(
-		ctx, plan.name, plan.sourceID, plan.from.Type, plan.sourceDeclared)
+		ctx, plan.name, plan.sourceID, plan.from.Type, string(plan.sourceTail))
 
 	var result CopyResult
 	if err := tx.Tx(writeCtx, func(view store.Store) error {
@@ -207,25 +207,12 @@ type copyPlan struct {
 	sourceID string
 	targetID string
 
-	// sourceTail and targetTail are the STORED coordinates, resolved once
-	// through metamodel.StoredFace. Resolving them here rather than at
-	// each use is not tidiness: a declared face marked `bare_face` IS
-	// the zero coordinate, so a site that used the declared name would write
-	// a face at a tail no face lives at — silently, with no error.
+	// sourceTail and targetTail are the faces this copy reads and writes.
+	// A face's declared name IS its stored coordinate (BUG-HC6I2T removed
+	// the `bare_face` mapping), so these are the `copies:` spelling taken
+	// literally.
 	sourceTail entity.Face
 	targetTail entity.Face
-
-	// sourceDeclared is the source face's DECLARED name — the spelling the
-	// operator wrote in `copies:` — resolved through metamodel.DeclaredFace
-	// rather than read off from.Face, so `from: policy` and `from:
-	// policy@draft` agree when `draft` is the bare face (they address the
-	// same face, so they must label it the same).
-	//
-	// It exists BESIDE sourceTail rather than replacing it because the two
-	// answer different questions: sourceTail addresses a row and must stay
-	// the stored coordinate, while this one is provenance a human reads.
-	// Collapsing them is what produced the bare-face label bug.
-	sourceDeclared string
 
 	// existing is the target face as stored BEFORE the copy, nil when the
 	// copy creates it. Probed in planCopy before authorization, because the
@@ -277,11 +264,9 @@ func (ce *copyEngine) planCopy(
 	plan := &copyPlan{
 		name: req.Definition, def: def, from: from, to: to,
 		sourceID: req.SourceID, targetID: req.SourceID,
-		sourceTail: entity.Face(metamodel.StoredFace(ce.m.deps.Meta, from.Type, from.Face)),
-		targetTail: entity.Face(metamodel.StoredFace(ce.m.deps.Meta, to.Type, to.Face)),
+		sourceTail: entity.Face(from.Face),
+		targetTail: entity.Face(to.Face),
 	}
-	plan.sourceDeclared = metamodel.DeclaredFace(
-		ce.m.deps.Meta, from.Type, string(plan.sourceTail))
 	if def.IsSameEntity() {
 		if req.TargetID != "" {
 			return nil, fmt.Errorf("%w: %q", ErrCopyTargetNotAllowed, req.Definition)
@@ -404,15 +389,51 @@ func (ce *copyEngine) readCopySource(
 //     could not write by hand — and "by hand" includes overwriting an
 //     existing one, which is why the probe precedes this function.
 //
-// A same-entity copy into a GUARDED (non-bare) face is exempt from (3): nobody
-// holds `update` on published by design, so requiring it would make every
-// promote impossible, and (2) — mandatory at load for exactly these
-// definitions — stands in its place. A same-entity copy into the BARE face is
-// NOT exempt: the bare face is the one ordinary writes address, no guard is
-// required to declare such a copy, and without (3) an unguarded `revert`
-// definition was a write anyone who could read the published face could
-// perform under a read-only ACL. Reverting the draft is editing the draft, so
-// it needs what editing the draft needs.
+// A GUARDED copy BETWEEN TWO FACES OF ONE ENTITY is exempt from (3): (2)
+// stands in its place. Three conditions, each load-bearing:
+//
+//   - `Guard.Permission != ""`, not "the target is a non-bare face". Those
+//     coincide in one direction only (a non-bare target makes a guard
+//     mandatory at LOAD), and keying on the face inverted the rule: a promote
+//     into the BARE face demanded `update` on the target type, which is the
+//     very grant that makes the face editable by hand — what the guard exists
+//     to prevent. Nobody holds `update` on a guarded face by design, so
+//     requiring (3) made the shape unexpressible in BOTH directions.
+//   - `IsSameEntity()`, so the caller chooses no target: planCopy pins
+//     targetID to the source and refuses a caller-supplied one.
+//   - `sourceTail != targetTail`, because the whole argument above is about
+//     MOVING content between two declared faces. `IsSameEntity()` compares
+//     types, not faces, so it also admits `from: t` / `to: t` — a definition
+//     whose endpoints coincide, on a type that may declare no faces at all.
+//     There is no guarded face there and no promote; the target is the
+//     ordinary row `update` governs, so exempting it would hand out
+//     "mutate this entity in place, authorized by a permission noun".
+//
+// Everything else keeps (3). An UNGUARDED same-entity copy is not exempt
+// whichever face it targets: an unguarded `revert` into the bare face is
+// declarable, and without (3) it was a write anyone who could read the
+// published face could perform under a read-only ACL. Reverting the draft is
+// editing the draft. A CROSS-entity copy is never exempt, guard or not —
+// there the caller picks the target, so a guard-overrules rule would let one
+// guard permission write entities the principal could not write by hand; it
+// keeps (3) plus the per-edge authorization below.
+//
+// ELEVATION is not a supported copy path, and the exemption assumes so. A
+// bypassACL Manager would neuter only (3) — (1) and (2) go through
+// CopyReadGate and CopyGuard, which never consult it — so an elevated copy
+// would be authorized in a way nobody designed. No elevated handle carries
+// CopyState today: Manager.Elevated returns an autocascade.Mutator, which is
+// six write methods without it. Before widening that, decide what elevation
+// MEANS for (1) and (2) — waiving (3) alone is not an answer.
+//
+// A guarded `fields: all` copy writes every property of the target, including
+// ones the caller cannot see, and (1) does NOT bound that: PermitsReadFace is
+// a row-and-face verdict, not a field one. Publishing the whole document IS
+// the operation, so this is intended — but note it is a full-record replace
+// (buildCopyTarget discards the existing properties under AllFields), so a
+// property living only on the target face does not survive. What (1) does
+// bound is coarser and still worth having: the guard says "you may perform
+// this promotion", never "you may read this document".
 func (ce *copyEngine) authorizeCopy(ctx context.Context, plan *copyPlan) error {
 	// (1) READ on the source, at the SOURCE FACE. Same-entity copies read RAW
 	// afterwards, which is about hidden FIELDS traveling with the entity — it
@@ -430,7 +451,12 @@ func (ce *copyEngine) authorizeCopy(ctx context.Context, plan *copyPlan) error {
 		}
 	}
 
-	if perm := plan.def.Guard.Permission; perm != "" {
+	// Computed ONCE and reused by the exemption below: the exemption is only
+	// safe because the guard above already ran, and two textually separated
+	// spellings of the same condition could drift apart under a later edit.
+	perm := plan.def.Guard.Permission
+	guarded := perm != ""
+	if guarded {
 		if ce.m.deps.CopyGuard == nil {
 			// A guarded copy with no guard implementation fails CLOSED,
 			// matching the statemachine's nil-guard rule: a guarded edge with
@@ -452,8 +478,9 @@ func (ce *copyEngine) authorizeCopy(ctx context.Context, plan *copyPlan) error {
 		}
 	}
 
-	if plan.def.IsSameEntity() && plan.targetTail != "" {
-		// (3) does not apply to a guarded face — see above.
+	if guarded && plan.def.IsSameEntity() && plan.sourceTail != plan.targetTail {
+		// (3) does not apply to a guarded face-to-face copy — see above. The
+		// guard checked just now IS the authorization for this write.
 		return nil
 	}
 	op := acl.OpUpdate

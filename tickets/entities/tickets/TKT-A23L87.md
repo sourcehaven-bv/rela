@@ -5,7 +5,7 @@ title: Audit already-deleted relations when a cascade delete fails partway
 kind: enhancement
 priority: low
 effort: s
-status: backlog
+status: done
 ---
 
 ## Description
@@ -25,3 +25,18 @@ partial deletion genuinely persists.
 
 GitHub issue #929. Severity: low. Basis: POLICY-015 §4 — audit records must
 reflect actual system state.
+
+## Third call site (IB-review, RR-YGYNO1)
+
+The first fix covered `Manager.DeleteEntity` and `cascadeHost.DeleteEntity`.
+It missed `dropEntitiesStep.Run` in `internal/datamigration/steps.go`, which
+calls `Store.DeleteEntity` directly, bypassing entitymanager, and returned on
+error without reading `del.DeletedRelations`.
+
+That path had the exact defect this ticket exists to fix. It is covered now,
+with both call sites sharing `captureCascaded`.
+
+The lesson is the search, not the fix: "every caller of DeleteEntity" is the
+question that finds all three, and grepping for the entitymanager methods finds
+only two. A store method reached directly by a non-obvious caller is the shape
+worth checking whenever an audit gap is closed at the manager layer.

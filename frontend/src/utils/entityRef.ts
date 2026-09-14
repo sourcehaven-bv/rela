@@ -14,7 +14,7 @@
  * PATCH and DELETE and on the `_views` route (TKT-SLFURL).
  *
  * The SPA never derives this itself. It does not know which face a world
- * resolved, whether the type has a `bare_face`, or how the server spells a
+ * resolved, or how the server spells a
  * coordinate; it reads the answer off the response. A response with no
  * `_self` (an older server, a synthetic entity) falls back to the id, which
  * is the pre-worlds behaviour and correct for every unfaced type.

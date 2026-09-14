@@ -243,7 +243,7 @@ func (h *viewsHandler) buildSectionEntityData(
 		EditFormID:    h.editFormForType(e.Type),
 		Props:         h.affordances.copyVisibleProperties(ctx, e),
 		FieldVerdicts: h.affordances.computeFieldAffordances(ctx, e),
-		World:         w.provenanceFor(s.Meta, e),
+		World:         w.provenanceFor(e),
 		Self:          rowSelfHref(s.Meta, e),
 	}
 	for _, f := range secFields {
@@ -260,7 +260,7 @@ func rowSelfHref(m *metamodel.Metamodel, e *entity.Entity) string {
 	if !ok {
 		return ""
 	}
-	return selfHref(def.GetPlural(e.Type), e, m)
+	return selfHref(def.GetPlural(e.Type), e)
 }
 
 // buildSections builds template-ready section data from view sections and a view result.

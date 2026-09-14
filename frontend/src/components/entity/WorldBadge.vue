@@ -58,7 +58,6 @@ const text = computed(() => {
   const face = w.face ? faces?.[w.face]?.label || w.face : ''
   return worldText(info?.messages?.stand_in, {
     face,
-    bare_face: schemaStore.faceLabel(props.entityType, ''),
     world: w.name,
   })
 })

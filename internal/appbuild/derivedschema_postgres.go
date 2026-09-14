@@ -7,8 +7,8 @@ import (
 	"errors"
 	"log/slog"
 	"os"
-	"path/filepath"
 
+	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/queryplan"
@@ -38,7 +38,9 @@ type derivedSchemaReconciler interface {
 // without the capability is skipped. Reconcile failures are logged and
 // swallowed: a derived-schema problem must never fail store-open. An operator
 // inspects or repairs drift via `rela db status` / `rela db reconcile`.
-func reconcileDerivedSchemaIfSupported(ctx context.Context, st store.Store, base *SharedBase) {
+func reconcileDerivedSchemaIfSupported(
+	ctx context.Context, st store.Store, base *SharedBase, cfg config.Loader,
+) {
 	s, ok := st.(derivedSchemaReconciler)
 	if !ok {
 		return
@@ -50,8 +52,11 @@ func reconcileDerivedSchemaIfSupported(ctx context.Context, st store.Store, base
 	// error must remain attributable to its property.
 	s.SetUniqueSpecProvider(uniqueSpecs)
 	specs := append([]store.DerivedObjectSpec(nil), uniqueSpecs...)
-	configPath := filepath.Join(base.cfg.Paths.Root, dataentryconfig.ConfigFile)
-	if data, err := base.cfg.FS.ReadFile(configPath); err == nil {
+	// Read through the config seam rather than the filesystem. A packaged
+	// project carries data-entry.yaml in its database, and reading the file
+	// directly would find nothing there — silently dropping every derived
+	// static-query index, with no error to explain the missing indexes.
+	if data, err := cfg.Load(ctx, dataentryconfig.ConfigFile); err == nil {
 		querySpecs, err := queryplan.LoadStaticIndexSpecs(data, base.meta)
 		if err != nil {
 			slog.Warn("appbuild: derived-schema reconcile skipped; invalid data-entry config", "error", err)

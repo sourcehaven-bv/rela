@@ -46,23 +46,13 @@ type Origin struct {
 	// the id is the same but the FACE differs, and the pair is the source).
 	Source string
 
-	// SourceFace is the DECLARED NAME of the source's content-state face —
-	// the spelling an operator wrote in the copy definition, e.g. "draft" —
-	// NOT the stored coordinate entity.Face carries.
+	// SourceFace is the source's content-state face — the spelling an
+	// operator wrote in the copy definition, e.g. "draft", which is also the
+	// coordinate that row is stored at (BUG-HC6I2T).
 	//
-	// The distinction is load-bearing and cost a bug to learn. A type may
-	// name one of its faces `bare_face`, and that face's STORED coordinate is
-	// the empty string: the bare id addresses it. So the bare face is
-	// UNNAMEABLE as a coordinate, and a copy declared `from: policy@draft` on
-	// a type with `bare_face: draft` recorded an empty SourceFace and read
-	// back as a bare "POL-4" — losing precisely the fact provenance exists to
-	// state. Provenance is a label a human reads, not an address anything
-	// dereferences, so it holds the name.
-	//
-	// Empty therefore means "no face name to report": the source type
-	// declares no faces at all, or declares faces but no bare_face and the
-	// write came from its unnamed default state. It does NOT mean "the
-	// default face" — that face has a name whenever the operator gave it one.
+	// Empty means "no face name to report", i.e. the source type declares no
+	// faces and its single state lives at the zero coordinate. Provenance is
+	// a label a human reads, not an address anything dereferences.
 	SourceFace string
 
 	// SourceType is the source entity's type. Stored ONLY so a read-out path
@@ -109,18 +99,12 @@ func OriginFrom(ctx context.Context) Origin {
 // names no source.
 //
 // It falls back to a bare "ID" only when [Origin.SourceFace] is empty, which
-// per that field means there is no declared name to print — NOT that the
-// source was "the default face". A named bare face still renders "POL-4@draft",
-// because the writer records the declared name rather than the stored
-// coordinate.
+// per that field means the source type declares no faces at all.
 //
 // This lives here rather than in each renderer so the CLI, the HTTP wire and
 // any future reader agree on ONE spelling — a reader who has learned to read
-// "POL-1@draft" in one place reads the same string in the others. That shared
-// spelling is also why the bare-face fix belongs at the WRITE boundary: a
-// read-side mapping would need a metamodel at every renderer, and this method
-// (which has none, and must not import one) would stop being the single
-// source of the spelling.
+// "POL-1@draft" in one place reads the same string in the others. It needs no
+// metamodel to do it, and must not import one.
 func (o Origin) SourceLabel() string {
 	if o.Source == "" {
 		return ""

@@ -225,6 +225,26 @@ If the gap is unacceptable for your operational model, consider:
 - Forwarding records to an external append-only sink in a future
   phase.
 
+### Partial cascade delete on a non-transactional backend
+
+The filesystem backend's transaction tier is a write mutex with no
+rollback, so a cascade delete that fails partway leaves the relation
+files it had already removed off disk. Those removals are real and
+they are audited: the store reports what it removed alongside the
+error, and the write path records one `delete-relation` row per
+relation, carrying the same `cascade:delete-entity:<id>` label a
+successful cascade uses. A partial and a complete cascade are
+therefore indistinguishable in the log except by how many rows they
+produced.
+
+No `delete-entity` row is written in that case — the entity survives a
+failed cascade (the store aborts before touching it), and recording
+its deletion would be the opposite error. Over-reporting is as broken
+as under-reporting, and harder to notice.
+
+The PostgreSQL and SQLite backends roll back, so a partial cascade
+cannot persist there and the question does not arise.
+
 ### Retention
 
 `rela` rotates to a new daily file but **never deletes audit logs** —

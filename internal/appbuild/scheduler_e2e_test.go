@@ -196,6 +196,15 @@ func TestSchedulerCmd_EndToEnd(t *testing.T) {
 	}, settleFor, 20*time.Millisecond,
 		"the scheduler command did not execute its task; check that it attaches the job queue")
 
+	// The note is what the task DOES; the state file is how the scheduler
+	// records that it is DONE, and recordSuccess writes it AFTER the note
+	// exists. Returning on the note alone lets that write race t.TempDir's
+	// RemoveAll, which then fails with ".rela: directory not empty"
+	// (BUG-PRFSTS). Wait for the run's last write, not its first visible one.
+	require.Eventually(t, func() bool { return schedulerSettled(svc) },
+		settleFor, 20*time.Millisecond,
+		"the scheduler did not persist its state; the run is not finished")
+
 	cancel()
 	select {
 	case <-done:
@@ -271,11 +280,17 @@ func runSchedulerTwice(t *testing.T, svc *appbuild.Services) {
 		"first run did not complete")
 
 	// Rewind so the task is due, then run the SAME scheduler again.
-	rewindLastRun(t, svc)
+	rewound := rewindLastRun(t, svc)
 
+	// Both conditions, for the reason given in TestSchedulerCmd_EndToEnd: the
+	// note proves the task ran, the state write proves the run is over. The
+	// plain schedulerSettled is useless here -- rewindLastRun leaves "tick"
+	// in the file, so it is already true before the second run starts. Wait
+	// for the stamp to move FORWARD off the rewound value instead
+	// (BUG-PRFSTS).
 	runUntil(t, s, func() bool {
 		notes := listNotes(t, svc)
-		return len(notes) > 0 && notes[0] == "2"
+		return len(notes) > 0 && notes[0] == "2" && lastRunAfter(svc, rewound)
 	}, "second run did not complete")
 }
 
@@ -286,14 +301,15 @@ const schedulerStateFile = "scheduler-state.json"
 
 // rewindLastRun pushes the task's last-run stamp far enough into the past that
 // the scheduler considers it due on its next evaluation.
-func rewindLastRun(t *testing.T, svc *appbuild.Services) {
+func rewindLastRun(t *testing.T, svc *appbuild.Services) time.Time {
 	t.Helper()
 
 	ctx := context.Background()
 	data, err := svc.State().Get(ctx, schedulerStateFile)
 	require.NoError(t, err)
 
-	old := time.Now().Add(-48 * time.Hour).Format(time.RFC3339Nano)
+	stamp := time.Now().Add(-48 * time.Hour)
+	old := stamp.Format(time.RFC3339Nano)
 	var st map[string]map[string]any
 	require.NoError(t, json.Unmarshal(data, &st))
 	require.Contains(t, st, "tasks")
@@ -302,6 +318,25 @@ func rewindLastRun(t *testing.T, svc *appbuild.Services) {
 	out, err := json.Marshal(st)
 	require.NoError(t, err)
 	require.NoError(t, svc.State().Put(ctx, schedulerStateFile, out))
+	return stamp
+}
+
+// lastRunAfter reports whether the persisted last-run stamp for "tick" has
+// moved strictly past want. Used to wait for a SPECIFIC run's state write
+// when an earlier one already left the task present in the file.
+func lastRunAfter(svc *appbuild.Services, want time.Time) bool {
+	data, err := svc.State().Get(context.Background(), schedulerStateFile)
+	if err != nil {
+		return false
+	}
+	var st struct {
+		Tasks map[string]time.Time `json:"tasks"`
+	}
+	if err := json.Unmarshal(data, &st); err != nil {
+		return false
+	}
+	got, ok := st.Tasks["tick"]
+	return ok && got.After(want)
 }
 
 // schedulerSettled reports whether the scheduler has written an outcome —

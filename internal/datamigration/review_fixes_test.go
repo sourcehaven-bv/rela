@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -246,5 +247,81 @@ func TestRenameProperty_ConflictLeavesBothValues(t *testing.T) {
 	}
 	if !noted {
 		t.Fatalf("conflict not surfaced in notes: %+v", res.Files[0].Steps[0].Notes)
+	}
+}
+
+// partialCascadeStore fails DeleteEntity while reporting the relations that
+// DID come off disk, which is the store contract a real backend follows: an
+// fsstore Tx is a write mutex with no rollback, so a cascade that aborts
+// partway leaves the earlier relation files genuinely deleted.
+type partialCascadeStore struct {
+	store.Store
+	removed []*entity.Relation
+}
+
+func (p *partialCascadeStore) DeleteEntity(
+	context.Context, string, bool,
+) (*store.DeleteResult, error) {
+	return &store.DeleteResult{DeletedRelations: p.removed},
+		errors.New("simulated I/O failure mid-cascade")
+}
+
+// recordingCapture records every relation version it is asked to write, so a
+// test can assert WHICH relations were captured rather than only that the
+// capture happened.
+type recordingCapture struct {
+	relations []string
+}
+
+func (r *recordingCapture) WriteVersion(context.Context, store.VersionInput) error {
+	return nil
+}
+
+func (r *recordingCapture) WriteRelationVersion(
+	_ context.Context, in store.RelationVersionInput,
+) error {
+	r.relations = append(r.relations, in.From+"--"+in.Type+"--"+in.To)
+	return nil
+}
+
+// TestDropEntities_PartialCascadeIsCaptured pins the IB-review finding on
+// rela#1488: dropEntitiesStep.Run returned on a DeleteEntity error without
+// reading del.DeletedRelations, so relations already removed from disk by a
+// partially-failed cascade left no audit trail.
+//
+// The other two DeleteEntity call sites in this ticket capture the partial
+// result; this one bypasses entitymanager and went to the store directly, so
+// the omission survived the first fix.
+func TestDropEntities_PartialCascadeIsCaptured(t *testing.T) {
+	base := seedStore(t)
+	st := &partialCascadeStore{
+		Store: base,
+		removed: []*entity.Relation{
+			{From: "TSK-1", Type: "assigned-to", To: "PER-1"},
+		},
+	}
+
+	from := metaV1()
+	to := metaV1()
+	delete(to.Entities, "person")
+	f := mustParse(t, "0001-drop.yaml", mustFileYAML(t, from, to, "  - drop_entities: {type: person}\n"))
+
+	rec := &recordingCapture{}
+	r := newTestRunner(t, Deps{Store: st, Meta: to, Versions: rec})
+
+	// The step must still fail — the cascade genuinely did.
+	if _, err := r.Run(t.Context(), []*File{f}, true); err == nil {
+		t.Fatal("Run succeeded, want the mid-cascade failure surfaced")
+	}
+
+	// ...but the relation that came off disk must be in the audit trail.
+	var found bool
+	for _, rel := range rec.relations {
+		if rel == "TSK-1--assigned-to--PER-1" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("partial cascade left no audit trail; captured relations = %v", rec.relations)
 	}
 }

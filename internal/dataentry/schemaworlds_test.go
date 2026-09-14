@@ -24,16 +24,14 @@ func worldsMeta() *metamodel.Metamodel {
 	return &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"policy": {
-				Label:    "Policy",
-				BareFace: "draft",
+				Label: "Policy",
 				Faces: map[string]metamodel.FaceDef{
 					"draft":     {},
 					"published": {},
 				},
 			},
 			"blog-post": {
-				Label:    "Blog post",
-				BareFace: "en",
+				Label: "Blog post",
 				Faces: map[string]metamodel.FaceDef{
 					"en": {},
 					"nl": {},
@@ -256,12 +254,6 @@ func TestSchemaFaces(t *testing.T) {
 	if len(policy) != 2 {
 		t.Fatalf("policy declares draft+published; got %v", policy)
 	}
-	// Which face the bare id addresses is on the TYPE, not on each face — so
-	// the wire mirrors the schema rather than re-deriving it per entry.
-	if got := meta.Entities["policy"].BareFace; got != "draft" {
-		t.Errorf("policy bare_face = %q, want draft (the state a bare id addresses)", got)
-	}
-
 	if got := schemaFaceDefs(meta.Entities["ticket"]); got != nil {
 		t.Errorf("a faceless type must emit no faces key, keeping a "+
 			"content-state-free project byte-identical on the wire; got %v", got)
@@ -285,7 +277,6 @@ func TestSchemaEndpoint_ServesWorldsAndFaces(t *testing.T) {
 	td.Faces = map[string]metamodel.FaceDef{
 		"draft": {}, "published": {},
 	}
-	td.BareFace = "draft"
 	meta.Entities["ticket"] = td
 
 	var schema v1.Schema
@@ -301,10 +292,6 @@ func TestSchemaEndpoint_ServesWorldsAndFaces(t *testing.T) {
 	if got := schema.Entities["ticket"].Faces; len(got) != 2 {
 		t.Errorf("ticket declares draft+published; the schema served %v", got)
 	}
-	if got := schema.Entities["ticket"].BareFace; got != "draft" {
-		t.Errorf("ticket bare_face = %q, want draft", got)
-	}
-
 	// The single-type route must agree, field for field.
 	var single v1.EntityType
 	getJSON(t, app, "/api/v1/_schema/types/ticket", &single)
@@ -436,7 +423,7 @@ func TestResolutionRule(t *testing.T) {
 func TestWorldProvenance_NamesTheWorld(t *testing.T) {
 	e := &entity.Entity{ID: "POST-1", Type: "blog-post", Face: "nl"}
 
-	if got := worldProvenance(context.Background(), nil, e); got.Name != defaultWorldName {
+	if got := worldProvenance(context.Background(), e); got.Name != defaultWorldName {
 		t.Errorf("an unstamped context is the default world; got name %q", got.Name)
 	}
 
@@ -444,7 +431,7 @@ func TestWorldProvenance_NamesTheWorld(t *testing.T) {
 		"blog-post": {Chain: []entity.Face{"nl", "en"}, Fallback: store.FallbackDefaultState},
 	})
 	ctx := withWorld(context.Background(), worldHandle{name: "site-nl", scope: scope})
-	got := worldProvenance(ctx, nil, e)
+	got := worldProvenance(ctx, e)
 	if got.Name != "site-nl" {
 		t.Errorf("name = %q, want site-nl — the world NAME lives only on the "+
 			"handle; a store.WorldScope carries none and it cannot be recovered "+
@@ -454,7 +441,7 @@ func TestWorldProvenance_NamesTheWorld(t *testing.T) {
 		t.Errorf("got %+v, want face=nl via=chain", got)
 	}
 
-	if worldProvenance(ctx, nil, nil) != nil {
+	if worldProvenance(ctx, nil) != nil {
 		t.Error("a nil entity yields nil, so a not-found result passes through " +
 			"without the caller branching")
 	}

@@ -169,7 +169,13 @@ type attachMeta struct {
 // installs the unexported recordSelfWrite on the FS directly, so no
 // external caller needs an entry point.)
 //
-//plimsoll:max-methods=92
+// (92 → 93, TKT-A23L87: unexported forgetStates added — the entity-side
+// counterpart to forgetRelations, so a partially-failed cascade delete can
+// drop the index entries for states already off disk. It mutates the index
+// (s.entities, s.entityOrder, s.propCache) under s.mu, so it belongs on the
+// receiver rather than beside it.)
+//
+//plimsoll:max-methods=93
 //plimsoll:max-exported-methods=35
 type FSStore struct {
 	// rooted is the validated-key I/O surface. Every read, write,

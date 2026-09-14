@@ -163,7 +163,7 @@ export async function createEntity(type: string, entity: CreateEntity): Promise<
 // verdict only.
 export async function dryRunCreateEntity(
   type: string,
-  candidate: Pick<CreateEntity, 'id' | 'prefix' | 'properties' | 'content'>,
+  candidate: Pick<CreateEntity, 'id' | 'prefix' | 'world' | 'properties' | 'content'>,
   signal?: AbortSignal
 ): Promise<Entity> {
   const path = `/${getPlural(type)}?dry_run=true`

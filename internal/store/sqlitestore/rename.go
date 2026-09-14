@@ -23,11 +23,13 @@ import (
 // indistinguishable from "FEAT-0".
 func (s *Store) HighestID(ctx context.Context, prefix string) (int, error) {
 	pfx := prefix + "-"
-	// face = '': states share their family's number (TKT-DOFYR1), so counting
-	// them would not change the answer but scanning them is wasted work — and
-	// a headless family tolerated from disk must not mint an id.
+	// Every face, DISTINCT by id: states share their family's number
+	// (TKT-DOFYR1), so a family must be seen at least once and counting it
+	// twice does not change the answer. Scoping to `face = ''` saw a type
+	// declaring faces not at all, so the generator minted one id for every
+	// entity of it (BUG-HC6I2T).
 	rows, err := s.q().QueryContext(ctx,
-		`SELECT id FROM entities WHERE id LIKE ? ESCAPE '\' AND face = ''`, likePrefix(pfx))
+		`SELECT DISTINCT id FROM entities WHERE id LIKE ? ESCAPE '\'`, likePrefix(pfx))
 	if err != nil {
 		return 0, fmt.Errorf("sqlitestore: highest id for %q: %w", prefix, err)
 	}

@@ -49,6 +49,37 @@ func TestSchemaFaces_CarriesOperatorMessages(t *testing.T) {
 	}
 }
 
+// TestSchemaFaces_CarriesNoticeIndependentOfReadOnly pins the second face
+// message key (TKT-NLWZLX). The two are independent: `notice` is about the
+// document and `read_only` about the reader, so a face may declare either
+// alone or both, and each must reach the wire without the other.
+func TestSchemaFaces_CarriesNoticeIndependentOfReadOnly(t *testing.T) {
+	meta := worldsMeta()
+	def := meta.Entities["policy"]
+	// The case the key exists for: a WRITABLE draft carrying a notice and no
+	// read_only. Before this key there was no config that put text here.
+	def.Faces["draft"] = metamodel.FaceDef{Messages: metamodel.FaceMessages{Notice: "Nog niet vastgesteld"}}
+	def.Faces["published"] = metamodel.FaceDef{Messages: metamodel.FaceMessages{
+		ReadOnly: "Alleen lezen",
+		Notice:   "Vastgesteld op {title}",
+	}}
+
+	got := schemaFaceDefs(def)
+
+	draft := got["draft"].Messages
+	if draft == nil || draft.Notice != "Nog niet vastgesteld" {
+		t.Errorf("draft face messages = %+v, want notice verbatim", draft)
+	}
+	if draft != nil && draft.ReadOnly != "" {
+		t.Errorf("notice alone must not synthesize a read_only; got %q", draft.ReadOnly)
+	}
+
+	pub := got["published"].Messages
+	if pub == nil || pub.ReadOnly != "Alleen lezen" || pub.Notice != "Vastgesteld op {title}" {
+		t.Errorf("published face messages = %+v, want both keys verbatim", pub)
+	}
+}
+
 func TestCopyOnSuccessWire(t *testing.T) {
 	t.Parallel()
 	if got := copyOnSuccessWire(metamodel.CopyOnSuccess{}); got != nil {

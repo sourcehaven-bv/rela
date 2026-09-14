@@ -44,7 +44,7 @@ func TestDeclaresFaces(t *testing.T) {
 			name: "one type declaring states silences the coarse probe",
 			meta: &metamodel.Metamodel{Entities: map[string]metamodel.EntityDef{
 				"ticket": {Label: "Ticket"},
-				"page": {Label: "Page", BareFace: "draft",
+				"page": {Label: "Page",
 					Faces: map[string]metamodel.FaceDef{
 						"draft": {},
 					}},

@@ -4,6 +4,7 @@ import axios from 'axios'
 import DOMPurify from 'dompurify'
 import { isCancelledFetch } from '@/composables/usePageData'
 import { renderMermaidDiagrams } from '@/utils/markdown'
+import { apiUrl } from '@/api/base'
 
 const props = defineProps<{
   open: boolean
@@ -34,7 +35,7 @@ async function loadHelp() {
   error.value = null
 
   try {
-    const response = await axios.get(`/api/help/${props.entityType}`)
+    const response = await axios.get(apiUrl(`/api/help/${props.entityType}`))
     if (myToken !== loadToken) return // superseded by a newer load
     // The server renders metamodel descriptions with goldmark in unsafe
     // mode (raw HTML passes through), so sanitize at the sink like every

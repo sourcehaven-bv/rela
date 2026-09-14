@@ -1,5 +1,6 @@
 import { api } from './client'
 import { getPlural } from './entities'
+import { apiUrl } from './base'
 
 /** A registered export format from the metamodel `transforms:` registry. */
 export interface TransformInfo {
@@ -32,7 +33,7 @@ export async function getTransforms(signal?: AbortSignal): Promise<TransformInfo
  */
 export function entityExportUrl(entityType: string, id: string, transform: string): string {
   const q = new URLSearchParams({ transform })
-  return `/api/v1/${getPlural(entityType)}/${encodeURIComponent(id)}/_export?${q.toString()}`
+  return apiUrl(`/api/v1/${getPlural(entityType)}/${encodeURIComponent(id)}/_export?${q.toString()}`)
 }
 
 /**
@@ -50,5 +51,5 @@ export function listExportUrl(
   const q = new URLSearchParams(extraParams)
   q.set('transform', transform)
   q.set('list', listId)
-  return `/api/v1/${getPlural(entityType)}/_export?${q.toString()}`
+  return apiUrl(`/api/v1/${getPlural(entityType)}/_export?${q.toString()}`)
 }
