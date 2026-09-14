@@ -370,60 +370,22 @@ func (a *App) scopedSortedEntities(
 	typeName string,
 	query map[string][]string,
 ) ([]*entityPkg.Entity, error) {
-	// A denied world yields nothing, via the SAME empty-result path a
-	// genuinely-empty world takes — so the two are identical on the wire.
-	if worldFromContext(ctx).blocksAllReads() {
-		return []*entityPkg.Entity{}, nil
-	}
+	// The verdict switch, the world scope and the face allowlist all live in
+	// scopedHeaders (scopedread.go) — see its doc for why they must not be
+	// re-implemented per handler.
 	rqr := readGateFromContext(ctx).ReadQuery(ctx, typeName)
-
-	// Content-free rows throughout (rowcontent.go): the pipeline below reads
-	// properties only, and the served page loads bodies afterwards if asked.
-	var entities []*entityPkg.Entity
-	switch {
-	case rqr.DenyAll:
+	entities, withheld, err := scopedEntities(ctx, a.Services(), rqr, scopeRequest{
+		Type:  typeName,
+		Faces: rqr.Faces,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if withheld {
+		// Return BEFORE the free-text search: a principal who may read
+		// nothing must not be able to probe the search backend's latency or
+		// induce load through ?q= (RR-X56H).
 		return []*entityPkg.Entity{}, nil
-	case rqr.AllowAll:
-		// Inline iteration rather than listFromStoreByTypes: that
-		// helper swallows iterator errors into a partial slice, and
-		// the list pipeline must fail loud on both verdict paths.
-		// World scope on BOTH verdict branches. Carrying it on only one is
-		// the RR-GQWRLD fail-open: AllowAll takes this EntityQuery branch
-		// and every ACL-gated principal takes the GraphQuery branch below,
-		// so a world stamped on one silently degrades to the default world
-		// for exactly one of the two populations.
-		// FaceIn rides on BOTH branches for exactly the reason World does
-		// (TKT-O7R2A1): a face allowlist carried on only the GraphQuery
-		// would leave the AllowAll population — the most privileged — with
-		// no face narrowing, and the two paths would disagree.
-		for h, err := range store.ListEntityHeaders(ctx, a.Services().Store, store.EntityQuery{
-			Type:   typeName,
-			World:  worldScopeFrom(ctx),
-			FaceIn: rqr.Faces,
-		}) {
-			if err != nil {
-				return nil, fmt.Errorf("%w: %w", errListLoad, err)
-			}
-			entities = append(entities, headerEntity(h))
-		}
-	case rqr.Query == nil:
-		// Defensive: a zero ReadQueryResult would otherwise alias
-		// AllowAll. Fail loud instead of silently widening the list.
-		return nil, fmt.Errorf("%w: zero ReadQueryResult for type %q", errACLListQuery, typeName)
-	default:
-		// COPY before stamping: the ACL layer may cache or reuse a
-		// ReadQueryResult per principal, so mutating *rqr.Query in place
-		// would leak one request's world into the next caller's — the same
-		// cross-request scope bleed visibility.listPushdown guards against.
-		wq := *rqr.Query
-		wq.World = worldScopeFrom(ctx)
-		wq.FaceIn = rqr.Faces
-		for h, err := range store.GraphQueryHeaders(ctx, a.Services().Store, wq) {
-			if err != nil {
-				return nil, fmt.Errorf("%w: %w", errACLListQuery, err)
-			}
-			entities = append(entities, headerEntity(h))
-		}
 	}
 
 	// Free-text search: intersect with hits from the searcher when ?q=... is
