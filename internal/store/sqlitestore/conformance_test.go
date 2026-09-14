@@ -74,6 +74,9 @@ func visibleSearchFactory(t *testing.T) (store.Store, search.Searcher, search.Vi
 // TestConformance runs the shared suite. TxRollback is declared because this
 // backend takes the STRONG Tx contract (DEC-8UIL0) — rollback on error and
 // post-commit-only event delivery — which the spike measured SQLite provides.
+// Versioning is declared because TKT-4NU9ZD made sqlitestore the second
+// backend to implement store.VersionService, which is what moved the version
+// contract out of pgstore's own tests and into storetest.
 func TestConformance(t *testing.T) {
 	storetest.RunAll(t, factory, searchFactory, visibleSearchFactory, storetest.Capabilities{
 		Observers: func(t *testing.T, obs ...store.EntityObserver) store.Store {
@@ -86,6 +89,7 @@ func TestConformance(t *testing.T) {
 		},
 		Attachments: true,
 		TxRollback:  true,
+		Versioning:  true,
 	})
 }
 
