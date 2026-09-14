@@ -216,8 +216,17 @@ jobs:
 
           # clamd refuses to start with no signature databases. NOT --quiet:
           # when this fails it is the only evidence of why.
-          if ! ls /var/lib/clamav/daily.c[vl]d >/dev/null 2>&1; then
-            echo "No signature database present — downloading (~300 MB)."
+          #
+          # BOTH main and daily must be present: clamav-daemon.service carries a
+          # ConditionPathExistsGlob for each, so a cache holding only one leaves
+          # systemd skipping the unit ("start condition unmet") and the socket
+          # never appears. Checking only daily made that state self-perpetuating
+          # — the incomplete cache satisfied the check, skipped the download, and
+          # was then saved forward under a fresh key for the next run to restore.
+          if ! ls /var/lib/clamav/main.c[vl]d >/dev/null 2>&1 \
+            || ! ls /var/lib/clamav/daily.c[vl]d >/dev/null 2>&1; then
+            echo "Signature database incomplete — downloading (~300 MB)."
+            ls -la /var/lib/clamav/ || true
             sudo -u clamav freshclam --stdout
           else
             echo "Signature database restored from cache:"
