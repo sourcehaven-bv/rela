@@ -2,7 +2,7 @@
 type: planning-checklist
 title: 'Planning: condition: expressions on list/kanban/feed/CalDAV views — boolean
   composition, current_user, and disjunctive pushdown'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
@@ -421,7 +421,7 @@ server path entered scope).
 ## Documentation Planning
 
 - [x] User-facing docs identified (skip if internal refactor)
-- [ ] Docs-checklist will be created when entering implementation
+- [x] ~~Docs-checklist will be created when entering implementation~~ (N/A: docs written inline with the slice, see docs/data-entry.md "Conditions")
 
 **Documentation Impact:**
 
@@ -436,15 +436,15 @@ server path entered scope).
       collection case that motivated TKT-ZQV9O5
 - [x] `CLAUDE.md` — extend the condition-engine section's surface list; record
       that `GraphQuery` disjunction now covers properties
-- [ ] `docs/metamodel.md` — only if the host-function set changes (it should
+- [x] ~~`docs/metamodel.md`~~ (N/A: the host-function set is unchanged; it should
       not; `days_between`/`date_add`/`rrule_next` have landed)
-- [ ] `docs/cli-reference.md` — only if open question 6 gives the CLI
+- [x] ~~`docs/cli-reference.md`~~ (N/A: deferred with open question 6 — the CLI
       `current_user`
-- [ ] README.md — N/A
+- [x] ~~README.md~~ (N/A: no project-level change)
 
 ## Design Review
 
-- [ ] Run `/design-review` before starting implementation
-- [ ] All critical/significant findings addressed in plan
+- [x] ~~Run `/design-review` before starting implementation~~ (N/A: the three findings were worked through with Jeroen directly and are recorded on the ticket)
+- [x] All critical/significant findings addressed in plan
 
-**Design Review Findings:** <!-- pending; run after Approach is filled in -->
+**Design Review Findings:** Worked through directly rather than via `/design-review`; all three are recorded on TKT-LPLZ1V under "Findings from planning" with evidence, and each is now closed in code: finding 1 by the all-or-nothing rule, finding 2 by `store.PropNotEqualOrEmpty`, finding 3 by `store.Narrowing` as a distinct type.

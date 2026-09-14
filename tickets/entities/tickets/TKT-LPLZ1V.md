@@ -5,7 +5,7 @@ title: 'condition: expressions on list/kanban/feed/CalDAV views — boolean comp
 kind: enhancement
 priority: medium
 effort: xl
-status: planning
+status: backlog
 ---
 
 ## Problem
@@ -128,17 +128,16 @@ kanbans:
 
 **This exact expression was verified against the live engine during planning**
 (compile + evaluate, pinned clock 2026-09-13). Three things about it are traps,
-all found by running it rather than reading it — see "Verified engine
-behaviour" below:
+all found by running it rather than reading it — see "Verified engine behaviour"
+below:
 
 - the inequality operator is **`~=`**, not `!=` (Lua syntax; `!=` is a parse
-  error) — while `filters:` uses `!=`, so the two keys spell it differently
+error) — while `filters:` uses `!=`, so the two keys spell it differently
 - `days_between(a, b)` is days **from b to a**, so an age is
-  `days_between(today(), prop)`; the intuitive-looking
-  `days_between(prop, today())` is NEGATIVE for a past date and silently
-  matches everything
+`days_between(today(), prop)`; the intuitive-looking `days_between(prop,
+today())` is NEGATIVE for a past date and silently matches everything
 - the `~= nil` guard is **required**: without it an entity whose date is unset
-  raises an eval error rather than evaluating false
+raises an eval error rather than evaluating false
 
 This is **not a new mechanism** — it is the established pattern applied to more
 surfaces:
@@ -197,42 +196,40 @@ entity.type == 'taak'   -> compile error: unknown attribute "type" on record
 entity.id == 'T-1'      -> compile error: unknown attribute "id" on record
 ```
 
-`internal/affordances` layers its own id/type pseudo-fields on top
-(`env.go` doc, RR-TBG91). This ticket must either add them to
-`EntityRecordType` or state plainly that a view condition cannot reference
-them. **Do not document them as available without fixing this first.**
+`internal/affordances` layers its own id/type pseudo-fields on top (`env.go`
+doc, RR-TBG91). This ticket must either add them to `EntityRecordType` or state
+plainly that a view condition cannot reference them. **Do not document them as
+available without fixing this first.**
 
-**2. The inequality operator is `~=`, not `!=`.** `!=` is a parse error
-(`syntax error near "!"`). `filters:` uses `!=`; `condition:` requires `~=`.
-That divergence is inherent to reusing Lua expression syntax and must be
-called out in the docs, because the two keys sit adjacent in the same YAML
-block.
+**2. The inequality operator is `~=`, not `!=`.** `!=` is a parse error (`syntax
+error near "!"`). `filters:` uses `!=`; `condition:` requires `~=`. That
+divergence is inherent to reusing Lua expression syntax and must be called out
+in the docs, because the two keys sit adjacent in the same YAML block.
 
-**3. `days_between(a, b)` is days from *b to a*** — positive while `a` is in
-the future (`internal/predicatefns/date.go:102-108`). So an AGE is
-`days_between(today(), prop)`. The intuitive-looking
-`days_between(prop, today())` is NEGATIVE for a past date, and
-`-10 <= 2` is true, so **it silently matches every old card** — the exact
-opposite of the intent, with no error. Confirmed: with that spelling a
-`gereed` card completed 10 days ago still matched.
+**3. `days_between(a, b)` is days from *b to a*** — positive while `a` is in the
+future (`internal/predicatefns/date.go:102-108`). So an AGE is
+`days_between(today(), prop)`. The intuitive-looking `days_between(prop,
+today())` is NEGATIVE for a past date, and `-10 <= 2` is true, so **it silently
+matches every old card** — the exact opposite of the intent, with no error.
+Confirmed: with that spelling a `gereed` card completed 10 days ago still
+matched.
 
-**4. An unset date is an eval ERROR, not false.**
-`days_between(today(), entity.afgerond_op)` on an entity with no
-`afgerond_op` raises `host function argument type mismatch`. An explicit
-`entity.afgerond_op ~= nil and …` guard short-circuits correctly; the
-truthiness shorthand (`entity.afgerond_op and …`) is refused at compile
-("'and' requires bool on left, got date").
+**4. An unset date is an eval ERROR, not false.** `days_between(today(),
+entity.afgerond_op)` on an entity with no `afgerond_op` raises `host function
+argument type mismatch`. An explicit `entity.afgerond_op ~= nil and …` guard
+short-circuits correctly; the truthiness shorthand (`entity.afgerond_op and …`)
+is refused at compile ("'and' requires bool on left, got date").
 
-Point 4 is a **design decision this ticket must take**, because the two
-existing consumers already disagree:
+Point 4 is a **design decision this ticket must take**, because the two existing
+consumers already disagree:
 
 - next actions RETURN the error — `internal/nextaction/nextaction.go:118`:
-  "An evaluation error is NOT treated as 'does not match': it is returned"
+"An evaluation error is NOT treated as 'does not match': it is returned"
 - automations treat an eval error as no-match plus a warning
-  (`internal/predicatefns/date.go:240-242`)
+(`internal/predicatefns/date.go:240-242`)
 
-On a view, propagating the error means **one dateless card fails the whole
-board request**. Treating it as no-match means a row silently vanishes — the
+On a view, propagating the error means **one dateless card fails the whole board
+request**. Treating it as no-match means a row silently vanishes — the
 `BUG-WHEREWIDE` failure direction, but narrowing rather than widening. Neither
 default is obviously right, which is why it is an open question below rather
 than an assumption.
@@ -293,15 +290,15 @@ and produces branches, keeping the existing soundness contract: pushed
 predicates may only remove rows the Go pass would also reject.
 4. Extend `storetest` so every backend is held to the new shape, per the
 `CLAUDE.md` conformance rule. Note `Any` has NO test in the plain GraphQuery
-suite today — it is pinned only under worlds
-(`storetest/worlds.go:576`, `AnyBranchesGrantFacesPerRelation`), and those
-cases are about faces. A disjunctive-Props block belongs in
-`storetest/graphquery.go` after `Props_combine_with_relation_predicate`.
+suite today — it is pinned only under worlds (`storetest/worlds.go:576`,
+`AnyBranchesGrantFacesPerRelation`), and those cases are about faces. A
+disjunctive-Props block belongs in `storetest/graphquery.go` after
+`Props_combine_with_relation_predicate`.
 
 ### Three findings from planning — read before designing
 
-Reviewed with Jeroen; the framing below reflects that discussion. In short:
-**1 is ordinary work**, **2 is a genuine defect in the lowering (not in
+Reviewed with Jeroen; the framing below reflects that discussion. In short: **1
+is ordinary work**, **2 is a genuine defect in the lowering (not in
 `propmatch`)**, and **3 is an authorization-ceiling invariant that should be
 made structural rather than documented.**
 
@@ -312,16 +309,15 @@ ticket's own worked example is affected**.
 ### The goal: no Go-side condition evaluation on postgres
 
 Jeroen's stated target, and it is stronger than "add OR support": on the
-postgres backend a `condition:` should be answered **entirely in SQL**, with
-the Go pass reduced to a correctness backstop rather than a routine filter.
-That is what makes paging, counts and `LIMIT` honest on a board of any size,
-and it is why the pushdown steps are IN this ticket rather than deferred.
+postgres backend a `condition:` should be answered **entirely in SQL**, with the
+Go pass reduced to a correctness backstop rather than a routine filter. That is
+what makes paging, counts and `LIMIT` honest on a board of any size, and it is
+why the pushdown steps are IN this ticket rather than deferred.
 
 `predicate.Program` already tracks `sqlPortable` and `Profile` already has
-`RequireSQLPortable` (`compile.go:26`, `:143`), and every host function
-carries an `SQLPortable` flag (`predicatefns/predicatefns.go:66-102`). The
-machinery for "can this whole program go to SQL?" exists; what is missing is
-the lowering.
+`RequireSQLPortable` (`compile.go:26`, `:143`), and every host function carries
+an `SQLPortable` flag (`predicatefns/predicatefns.go:66-102`). The machinery for
+"can this whole program go to SQL?" exists; what is missing is the lowering.
 
 **What blocks full pushdown today, and what each step does about it** — the
 three restrictions are enumerated in `predicate/prefilter.go:48-61`:
@@ -336,86 +332,81 @@ three restrictions are enumerated in `predicate/prefilter.go:48-61`:
 | `rrule_next()` unportable | step 8 (refuse in conditions; use `computed:`) |
 
 Steps 6–8 are the end-goal tail: each removes one exception, and each is
-independently shippable. They are listed after the feature because none of
-them blocks it.
+independently shippable. They are listed after the feature because none of them
+blocks it.
 
 **The three apparent exceptions, and what Jeroen decided about each.** None is
 accepted as permanent; each has a route, and the routes differ in kind:
 
 1. **`sha256()` — solvable, and the "non-portable" note is too pessimistic.**
-   Its purpose is a **content-hash key for collision/dedup, not a
-   cryptographic guarantee** — `sha256Hex`'s own doc ties it to Icinga DB's
-   content-hash key and to `unique:` stored values
-   (`predicatefns.go:220-234`). So: **rename to something generic**
-   (`content_hash` / `digest`) rather than a named algorithm, since the name
-   is what makes it look like a crypto primitive rather than a keying one.
-   Portability is an install requirement, not a barrier — **pgcrypto may be
-   required** (present on RDS and most hosted postgres), and sqlite is
-   extensible via `modernc.org/sqlite`'s `RegisterFunction`
-   (https://pkg.go.dev/modernc.org/sqlite#RegisterFunction).
-   *Caveat to carry:* the digest encoding is effectively permanent — it is a
-   STORED, INDEXED, often `unique:` value, so changing it later is a data
-   migration. A rename must therefore keep the same bytes, and the SQL
-   spelling must produce lowercase hex identical to the Go one, pinned by a
-   cross-implementation test.
+Its purpose is a **content-hash key for collision/dedup, not a cryptographic
+guarantee** — `sha256Hex`'s own doc ties it to Icinga DB's content-hash key and
+to `unique:` stored values (`predicatefns.go:220-234`). So: **rename to
+something generic** (`content_hash` / `digest`) rather than a named algorithm,
+since the name is what makes it look like a crypto primitive rather than a
+keying one. Portability is an install requirement, not a barrier — **pgcrypto
+may be required** (present on RDS and most hosted postgres), and sqlite is
+extensible via `modernc.org/sqlite`'s `RegisterFunction`
+(https://pkg.go.dev/modernc.org/sqlite#RegisterFunction). *Caveat to carry:* the
+digest encoding is effectively permanent — it is a STORED, INDEXED, often
+`unique:` value, so changing it later is a data migration. A rename must
+therefore keep the same bytes, and the SQL spelling must produce lowercase hex
+identical to the Go one, pinned by a cross-implementation test.
 
 2. **`rrule_next()` — blocked in conditions, moved to a computed property.**
-   The strongest of the three, because it reframes a pushdown problem as a
-   modelling one. Recurrence stepping is Go logic (`metamodel.NextRrule`), not
-   an expression, and no SQL spelling is sensible. But `computed:` ALREADY
-   exists and is exactly the right home: "a pure Lua-compatible scalar
-   expression evaluated from the entity's other properties on every write"
-   (`metamodel/types.go:713-717`), materialized and "stored and indexed
-   exactly like authored properties" (TKT-1EM4KL). A computed
-   `next_occurrence` is then **a plain stored column — pushable by
-   construction**, with no special casing, and it gets `unique:`/index support
-   free. Schema drift and `rela migrate gen` already handle recomputation.
-   So: **refuse `rrule_next` in a `condition:` at LOAD time**, with an error
-   naming the computed-property alternative. Note the consequence to design
-   around: computed values materialize on WRITE, so a date-relative
-   recurrence would go stale without a recompute trigger — verify before
-   promising this shape for time-varying expressions.
+The strongest of the three, because it reframes a pushdown problem as a
+modelling one. Recurrence stepping is Go logic (`metamodel.NextRrule`), not an
+expression, and no SQL spelling is sensible. But `computed:` ALREADY exists and
+is exactly the right home: "a pure Lua-compatible scalar expression evaluated
+from the entity's other properties on every write"
+(`metamodel/types.go:713-717`), materialized and "stored and indexed exactly
+like authored properties" (TKT-1EM4KL). A computed `next_occurrence` is then **a
+plain stored column — pushable by construction**, with no special casing, and it
+gets `unique:`/index support free. Schema drift and `rela migrate gen` already
+handle recomputation. So: **refuse `rrule_next` in a `condition:` at LOAD
+time**, with an error naming the computed-property alternative. Note the
+consequence to design around: computed values materialize on WRITE, so a
+date-relative recurrence would go stale without a recompute trigger — verify
+before promising this shape for time-varying expressions.
 
 3. **Field-to-field comparison (`entity.a == entity.b`) — a refactor to take
-   on.** Both sides are columns, so SQL can express it; what cannot is
-   `PropPredicate`, which pairs a property with a literal
-   `Value string`. `ConstEqualities` also needs a constant to bind by
-   construction. Accepted as real work rather than a boundary — it needs a
-   predicate shape carrying two property references, in both the SQL and naive
-   evaluators.
+on.** Both sides are columns, so SQL can express it; what cannot is
+`PropPredicate`, which pairs a property with a literal `Value string`.
+`ConstEqualities` also needs a constant to bind by construction. Accepted as
+real work rather than a boundary — it needs a predicate shape carrying two
+property references, in both the SQL and naive evaluators.
 
 `match()`/`regex()`/`fuzzy()`/`contains()`/`len()` are currently unflagged.
 `fuzzy()` is portable **on postgres specifically** — `similarity()` is already
 used by the search backend (`pgstore/search.go:202`) — so a single boolean
-`SQLPortable` is likely too coarse once pgcrypto and a sqlite extension
-function are in play. **A per-backend capability is the probable shape**; fix
-it in design review.
+`SQLPortable` is likely too coarse once pgcrypto and a sqlite extension function
+are in play. **A per-backend capability is the probable shape**; fix it in
+design review.
 
 **Acceptance for the goal:** on postgres, a `condition:` using only portable
-constructs is answered with **no Go-side row rejection** — asserted by
-comparing rows returned by the store against rows surviving the Go pass and
-requiring equality, which is stronger and more durable than matching an
-EXPLAIN string. Anything still not pushable becomes a **LOAD error on
-postgres** (via `RequireSQLPortable`) rather than a silent fallback to Go, so
-the exception set cannot grow invisibly.
+constructs is answered with **no Go-side row rejection** — asserted by comparing
+rows returned by the store against rows surviving the Go pass and requiring
+equality, which is stronger and more durable than matching an EXPLAIN string.
+Anything still not pushable becomes a **LOAD error on postgres** (via
+`RequireSQLPortable`) rather than a silent fallback to Go, so the exception set
+cannot grow invisibly.
 
 **Sequencing note (Jeroen):** this is the END GOAL, approached bit by bit.
-Intermediate PRs are fine — and wanted — whenever a slice is already useful
-and end-user noticeable, rather than holding everything for a big-bang
-landing.
+Intermediate PRs are fine — and wanted — whenever a slice is already useful and
+end-user noticeable, rather than holding everything for a big-bang landing.
 
 ### Findings from planning
 
-**Finding 1 (a constraint, not a blocker) — OR is all-or-nothing.** AND is
-safe to *sample*: pushing a subset of conjuncts only over-selects. OR is not:
-pushing one arm of `A or B` drops rows where B holds and A does not — and
-those rows never reach the Go pass to be rescued. So an `or` is pushable
-**only if EVERY arm is**.
+**Finding 1 (a constraint, not a blocker) — OR is all-or-nothing.** AND is safe
+to *sample*: pushing a subset of conjuncts only over-selects. OR is not: pushing
+one arm of `A or B` drops rows where B holds and A does not — and those rows
+never reach the Go pass to be rescued. So an `or` is pushable **only if EVERY
+arm is**.
 
-This is logic, not a codebase limitation, and it needs no design decision —
-only a test asserting that a disjunction with any unpushable arm pushes
-NOTHING. What IS a codebase choice is where the "pushable" line sits, and
-that is findings 2 and open question 4.
+This is logic, not a codebase limitation, and it needs no design decision — only
+a test asserting that a disjunction with any unpushable arm pushes NOTHING. What
+IS a codebase choice is where the "pushable" line sits, and that is findings 2
+and open question 4.
 
 For the atlas rule that currently means no pushdown, because the second arm is
 an ordered comparison and `PropOp` has only equality. **But that is a missing
@@ -424,25 +415,25 @@ added, the motivating rule becomes fully pushable.
 
 ### The ordered-comparison gap is smaller than the `PropOp` doc implies
 
-`PropOp`'s doc says ordered comparison "needs the property's declared type
-from the metamodel … and the store layer does not consult the metamodel."
-That is a statement about the STORE, and it is true. It is **not** a claim
-that the comparison cannot be pushed, because the layer that builds the query
-does have the metamodel and already uses it:
+`PropOp`'s doc says ordered comparison "needs the property's declared type from
+the metamodel … and the store layer does not consult the metamodel." That is a
+statement about the STORE, and it is true. It is **not** a claim that the
+comparison cannot be pushed, because the layer that builds the query does have
+the metamodel and already uses it:
 
 - `queryplan.StringShaped` (`queryplan.go:107-118`) is defined as exactly the
-  properties "whose byte order **IS** its order (string, enum, **date**,
-  **datetime**, custom type)" (`:103-106`), and `date`/`datetime` are in the
-  accepted set.
+properties "whose byte order **IS** its order (string, enum, **date**,
+**datetime**, custom type)" (`:103-106`), and `date`/`datetime` are in the
+accepted set.
 - `GraphQuery.OrderBy` **already sorts dates byte-wise in the store**
-  (`graphquery.go:78-85`), and `listpushdown.go:29-31` states ordering by such
-  a property "is byte-wise on both sides". So byte-ordering ISO-8601 dates in
-  SQL is shipping behaviour, not a new risk.
+(`graphquery.go:78-85`), and `listpushdown.go:29-31` states ordering by such a
+property "is byte-wise on both sides". So byte-ordering ISO-8601 dates in SQL is
+shipping behaviour, not a new risk.
 - `days_between(today(), prop) <= 2` is **not per-row computed** once `today()`
-  is fixed at request time: it is the constant bound `prop >= '2026-09-11'`.
-  Folding a request-constant to a literal before pushing is precisely what
-  `ConditionPrefilters` already does for `current_user.id`
-  (`queryplan.go:265-272`).
+is fixed at request time: it is the constant bound `prop >= '2026-09-11'`.
+Folding a request-constant to a literal before pushing is precisely what
+`ConditionPrefilters` already does for `current_user.id`
+(`queryplan.go:265-272`).
 
 So the real gap is that **`PropOp` has no `PropGreaterEqual` / `PropLessEqual`
 member** — one enum value plus one branch in `propCond` (pgstore) and
@@ -450,14 +441,14 @@ member** — one enum value plus one branch in `propCond` (pgstore) and
 needs alongside:
 
 1. a metamodel gate restricting ordered ops to `StringShaped` properties
-   (integers must stay out — byte order is not numeric order, as
-   `listpushdown.go:31` already notes), enforced caller-side where the
-   metamodel is available;
+(integers must stay out — byte order is not numeric order, as
+`listpushdown.go:31` already notes), enforced caller-side where the metamodel is
+available;
 2. an explicit decision on unset rows — the same class of question as blocker
-   2, and it must be answered the same way;
+2, and it must be answered the same way;
 3. constant-folding of `today()`-relative bounds at the queryplan layer, with
-   the folded literal computed ONCE per request so the pushed bound and the Go
-   pass cannot disagree across a midnight boundary;
+the folded literal computed ONCE per request so the pushed bound and the Go pass
+cannot disagree across a midnight boundary;
 4. `storetest` coverage, since the naive and SQL paths implement it separately.
 
 **This is step 2 of the implementation sequence.** It lands before the feature
@@ -481,37 +472,36 @@ unsound direction.** Verified by running both:
 
 **Predicate's answer is the correct one for its own contract, and is not
 negotiable.** `internal/predicate/doc.go` § "Equality semantics" commits to
-"Lua-flavored equality, not Go-flavored", with the table entry
-`nil == anything -> false`. `nil ~= 'gereed'` is therefore necessarily TRUE.
-A language that advertises itself as a Lua expression subset cannot answer
-this differently without breaking the promise that makes it predictable.
+"Lua-flavored equality, not Go-flavored", with the table entry `nil == anything
+-> false`. `nil ~= 'gereed'` is therefore necessarily TRUE. A language that
+advertises itself as a Lua expression subset cannot answer this differently
+without breaking the promise that makes it predictable.
 
-**`propmatch` is also not wrong — on its own terms.** It answers a
-FILTER-DSL question, and its doc calls the asymmetry "deliberate and
-long-standing": "a filter names the population it wants, and an entity with no
-status is not in the 'status is something other than doing' population."
-`internal/filter` delegates to the same rule (`filter/match.go:34-38`), so
-`filters:`, CalDAV, feeds and the CLI are all coherent with the store today.
+**`propmatch` is also not wrong — on its own terms.** It answers a FILTER-DSL
+question, and its doc calls the asymmetry "deliberate and long-standing": "a
+filter names the population it wants, and an entity with no status is not in the
+'status is something other than doing' population." `internal/filter` delegates
+to the same rule (`filter/match.go:34-38`), so `filters:`, CalDAV, feeds and the
+CLI are all coherent with the store today.
 
-So the split is **2-vs-1, and changing `propmatch` is the wrong fix** — it
-would silently alter every one of those surfaces to fix a problem none of them
-has.
+So the split is **2-vs-1, and changing `propmatch` is the wrong fix** — it would
+silently alter every one of those surfaces to fix a problem none of them has.
 
-**The actual defect: one storage predicate is being asked to mean two
-things.** `store.PropNotEqual` encodes "not equal AND present". That is right
-for the filter DSL and wrong as a lowering target for Lua `~=`. Framed
-correctly, `PropOp` simply **lacks an operator matching Lua `~=` semantics**.
+**The actual defect: one storage predicate is being asked to mean two things.**
+`store.PropNotEqual` encodes "not equal AND present". That is right for the
+filter DSL and wrong as a lowering target for Lua `~=`. Framed correctly,
+`PropOp` simply **lacks an operator matching Lua `~=` semantics**.
 
 Two consequences:
 
 1. *Lowering (mechanical).* `~=` must lower to
-   `(PropNotEqual v) OR (PropEqual "")`, never to `PropNotEqual` alone. The
-   branch structure this ticket adds already expresses it. Pinned by a test
-   with unset / empty-string / populated fixtures on every backend. Read
-   `storetest` `Props_exclusion_does_not_widen` first — it pins the CURRENT
-   meaning and must keep passing.
+`(PropNotEqual v) OR (PropEqual "")`, never to `PropNotEqual` alone. The branch
+structure this ticket adds already expresses it. Pinned by a test with unset /
+empty-string / populated fixtures on every backend. Read `storetest`
+`Props_exclusion_does_not_widen` first — it pins the CURRENT meaning and must
+keep passing.
 2. *Author-facing divergence (documentation).* This exists **whether or not
-   anything is pushed down**, because the two dialects genuinely disagree:
+anything is pushed down**, because the two dialects genuinely disagree:
 
    ```yaml
    filters:
@@ -521,19 +511,19 @@ Two consequences:
    condition: "entity.status ~= 'gereed'"   # a task with NO status is INCLUDED
    ```
 
-   Two adjacent keys, same apparent question, opposite answers on unset rows.
-   Must be documented prominently; consider a load-time lint note when a
-   `condition:` uses `~=` on an optional property.
+Two adjacent keys, same apparent question, opposite answers on unset rows. Must
+be documented prominently; consider a load-time lint note when a `condition:`
+uses `~=` on an optional property.
 
 This matters immediately: the atlas rule's first arm is a `~=`.
 
 **Finding 3 — the authorization part of a query is a CEILING; nothing a view
 supplies may raise it.** State it that way rather than as a fact about one
 field: it is the same shape as the ACL ceiling rule in root `CLAUDE.md`
-(`effective = user_grants ∩ (baseline ∪ scopes)` — a ceiling only ever
-NARROWS, "so a bug fails toward less access"). A view `condition:` is
-caller-supplied narrowing; the ACL query is the ceiling. The two compose by
-intersection, never by union.
+(`effective = user_grants ∩ (baseline ∪ scopes)` — a ceiling only ever NARROWS,
+"so a bug fails toward less access"). A view `condition:` is caller-supplied
+narrowing; the ACL query is the ceiling. The two compose by intersection, never
+by union.
 
 Today's shape makes violating that a one-line mistake. `GraphQuery.Any` is a
 flat `[]GraphBranch` OR'd together, and its sole production constructor is
@@ -541,60 +531,57 @@ flat `[]GraphBranch` OR'd together, and its sole production constructor is
 for the express purpose of stopping face-grant laundering between roles
 (`readquery.go:83-89`: "a principal who reaches an entity through ONE relation
 holds that relation's role and no other"). Appending condition branches to it
-yields `acl_a OR acl_b OR cond_x OR cond_y` where the meaning must be
-`(acl_a OR acl_b) AND (cond_x OR cond_y)`.
+yields `acl_a OR acl_b OR cond_x OR cond_y` where the meaning must be `(acl_a OR
+acl_b) AND (cond_x OR cond_y)`.
 
 **That is privilege escalation via `data-entry.yaml`, not a display bug:** a
 condition arm becomes an alternative route to authorization, so a principal
-denied by every ACL branch is admitted by matching a view's display filter —
-and every test that only checks "the board renders the right cards" still
-passes.
+denied by every ACL branch is admitted by matching a view's display filter — and
+every test that only checks "the board renders the right cards" still passes.
 
 **Preferred fix: make the invariant structural, not documented.** Options in
 increasing strength:
 
 1. Guard the condition pushdown to fire only when `q.Any` is empty. Safe, but
-   silently disables the optimisation for exactly the ACL-complex principals,
-   and leaves the hazard live for the next caller.
+silently disables the optimisation for exactly the ACL-complex principals, and
+leaves the hazard live for the next caller.
 2. A separate field so the store ANDs the two disjunctions — flattening them
-   is then not expressible.
+is then not expressible.
 3. Distinct TYPES for authorization-derived vs caller-supplied predicates, so
-   appending one to the other does not compile. Strongest; touches
-   `internal/acl`, `visibility/pushdown.go` and `listpushdown.go`.
+appending one to the other does not compile. Strongest; touches `internal/acl`,
+`visibility/pushdown.go` and `listpushdown.go`.
 
-**Naming matters here and `PropPredicate` is the wrong word to reuse**
-(Jeroen's point, and it is the better framing): a name describing the
-STRUCTURE invites appending to whichever slice is to hand, while a name
-describing WHOSE AUTHORITY the predicate carries makes the mistake read wrong
-at the call site. Prefer something like `Narrowing` / `CallerNarrowing` over
-another `*PropPredicate` field. Option 3 is this argument taken to its
-conclusion.
+**Naming matters here and `PropPredicate` is the wrong word to reuse** (Jeroen's
+point, and it is the better framing): a name describing the STRUCTURE invites
+appending to whichever slice is to hand, while a name describing WHOSE AUTHORITY
+the predicate carries makes the mistake read wrong at the call site. Prefer
+something like `Narrowing` / `CallerNarrowing` over another `*PropPredicate`
+field. Option 3 is this argument taken to its conclusion.
 
 Precedent for the care required: `listpushdown.go:120` already defensively
 re-slices before appending to `Props`
 (`append(append([]store.PropPredicate(nil), gq.Props...), props...)`) because
 the ACL result is reused per principal — without the copy, one principal's
-filters mutate another's cached query. Any new field needs the same
-treatment, and `visibility/pushdown.go:122`'s comment enumerating the
-read-only fields needs updating.
+filters mutate another's cached query. Any new field needs the same treatment,
+and `visibility/pushdown.go:122`'s comment enumerating the read-only fields
+needs updating.
 
 **Two further consequences to decide:**
 
 - **Index derivation breaks its own promise.** The derived index is a
-  composite btree over `(properties->>p1, …)` partial on
-  `type = X AND every listed property is a string`
-  (`pgstore/derivedschema.go:431-441`). It cannot serve `a = 'x' OR b = 'y'`,
-  and rows satisfying one arm need not have the other property at all, so they
-  fall outside the partial index entirely. Either derive one single-column
-  spec per arm and assert `BitmapOr` in a new EXPLAIN test, or declare
-  disjunctive pushdown explicitly **non-indexed** and relax
-  `ConditionIndexProperties`' doc consciously. The drift guard
-  (`queryplan.go:290-297`) survives cleanly only if the OR collector is a
-  SEPARATE function and `conditionEqualities` stays the AND-spine core.
+composite btree over `(properties->>p1, …)` partial on `type = X AND every
+listed property is a string` (`pgstore/derivedschema.go:431-441`). It cannot
+serve `a = 'x' OR b = 'y'`, and rows satisfying one arm need not have the other
+property at all, so they fall outside the partial index entirely. Either derive
+one single-column spec per arm and assert `BitmapOr` in a new EXPLAIN test, or
+declare disjunctive pushdown explicitly **non-indexed** and relax
+`ConditionIndexProperties`' doc consciously. The drift guard
+(`queryplan.go:290-297`) survives cleanly only if the OR collector is a SEPARATE
+function and `conditionEqualities` stays the AND-spine core.
 - **`visiblesearch` would inherit branch Props for free** (it shares
-  `buildAnySQL`, `pgstore/visiblesearch.go:336-340`) while top-level `Props`
-  is NOT rendered there today — an asymmetry to resolve deliberately rather
-  than discover.
+`buildAnySQL`, `pgstore/visiblesearch.go:336-340`) while top-level `Props` is
+NOT rendered there today — an asymmetry to resolve deliberately rather than
+discover.
 
 ### What is not pushable TODAY (and what of it is genuinely fixed)
 
@@ -609,20 +596,20 @@ Read precisely, that says the STORE cannot decide an ordered comparison on its
 own. It does not say the comparison cannot be pushed — the caller has the
 metamodel and already gates on it, dates are explicitly byte-orderable
 (`queryplan.go:103-106`), and the store already sorts by them. See "The
-ordered-comparison gap is smaller than the `PropOp` doc implies" above: this
-is an additive enum member plus a caller-side type gate, sized on its merits
-rather than ruled out.
+ordered-comparison gap is smaller than the `PropOp` doc implies" above: this is
+an additive enum member plus a caller-side type gate, sized on its merits rather
+than ruled out.
 
 **Genuinely not pushable, and not in scope to change:**
 
 - ordered comparison on an **integer** property — byte order is not numeric
-  order (`listpushdown.go:31`)
+order (`listpushdown.go:31`)
 - a comparison whose other side is **another entity field** — varies per row,
-  so there is no constant to bind (`predicate/prefilter.go:59-61`)
+so there is no constant to bind (`predicate/prefilter.go:59-61`)
 - anything under **`not`** — inverts the sense; De Morgan plus the unset-row
-  semantics of blocker 2 would have to be settled first
+semantics of blocker 2 would have to be settled first
 - a **free-text** query combined with a condition — `planListPushdown` already
-  declines outright when `q` is set (`listpushdown.go:57`)
+declines outright when `q` is set (`listpushdown.go:57`)
 
 Planning must therefore decide the **partial-pushdown** story: push the
 disjunctive skeleton whose leaves are pushable, leave the rest to the Go pass,
@@ -640,57 +627,56 @@ boring one. Steps 1–3 each ship alone and are useful without the feature.
 predicate's documented Lua semantics (finding 2). Do NOT change `propmatch`:
 `filters:`/CalDAV/feeds/CLI are coherent with today's `PropNotEqual` and must
 stay so. `storetest` gains unset / empty-string / populated fixtures on every
-backend; `Props_exclusion_does_not_widen` must keep passing unchanged.
-*Ships alone: fixes a latent mismatch that would bite any future lowering.*
+backend; `Props_exclusion_does_not_widen` must keep passing unchanged. *Ships
+alone: fixes a latent mismatch that would bite any future lowering.*
 
-**Step 2 — `PropOp` gains `>=` / `<=`.** With a caller-side `StringShaped`
-gate (dates and strings yes, integers no — byte order is not numeric order),
-and `today()`-relative constant folding computed ONCE per request so the
-pushed bound and the Go pass cannot straddle midnight. EXPLAIN test.
-*Ships alone: enables date-bound pushdown everywhere, not just here.*
+**Step 2 — `PropOp` gains `>=` / `<=`.** With a caller-side `StringShaped` gate
+(dates and strings yes, integers no — byte order is not numeric order), and
+`today()`-relative constant folding computed ONCE per request so the pushed
+bound and the Go pass cannot straddle midnight. EXPLAIN test. *Ships alone:
+enables date-bound pushdown everywhere, not just here.*
 
 **Step 3 — the authorization ceiling, as distinct types.** Authorization-derived
 and caller-supplied predicates become different types, so appending one to the
 other does not compile (finding 3). Hardens two call sites that ship TODAY
-(`helpers.go:573`, `listpushdown.go:120` — both correct now only because
-`Props` is ANDed). Name for authority, not structure.
-*Ships alone: a security hardening independent of this feature.*
+(`helpers.go:573`, `listpushdown.go:120` — both correct now only because `Props`
+is ANDed). Name for authority, not structure. *Ships alone: a security hardening
+independent of this feature.*
 
 **Step 4 — the feature.** `condition:` key on lists, kanbans, feeds and CalDAV
 collections; compiled at load; the kanban Go read path (`kanbanHandler`,
-modelled on `ganttHandler`); Go evaluation ANDed with `filters:`; docs.
-*Ships the atlas board.* By this point every hazard is already closed.
+modelled on `ganttHandler`); Go evaluation ANDed with `filters:`; docs. *Ships
+the atlas board.* By this point every hazard is already closed.
 
-**Step 5 — OR lowering.** Branch predicates + OR lowering, so a `condition:`
-of portable constructs is answered entirely in SQL with no Go-side row
-rejection. Steps 1 and 2 are what make the atlas rule reachable by it.
-Includes the index derivation decision (per-arm single-column specs +
-`BitmapOr`, or an explicit non-indexed declaration) and the
-`docs/data-entry.md:1920` correction.
+**Step 5 — OR lowering.** Branch predicates + OR lowering, so a `condition:` of
+portable constructs is answered entirely in SQL with no Go-side row rejection.
+Steps 1 and 2 are what make the atlas rule reachable by it. Includes the index
+derivation decision (per-arm single-column specs + `BitmapOr`, or an explicit
+non-indexed declaration) and the `docs/data-entry.md:1920` correction.
 
-**Step 6 — the hash function.** Rename away from an algorithm name (its job is
-a collision key, not a crypto guarantee), require pgcrypto on postgres,
-register the equivalent on sqlite via `modernc.org/sqlite`'s
-`RegisterFunction`. **The digest bytes must not change** — it is a stored,
-indexed, often `unique:` value, so a cross-implementation test pinning Go and
-SQL to identical lowercase hex is the load-bearing part.
+**Step 6 — the hash function.** Rename away from an algorithm name (its job is a
+collision key, not a crypto guarantee), require pgcrypto on postgres, register
+the equivalent on sqlite via `modernc.org/sqlite`'s `RegisterFunction`. **The
+digest bytes must not change** — it is a stored, indexed, often `unique:` value,
+so a cross-implementation test pinning Go and SQL to identical lowercase hex is
+the load-bearing part.
 
-**Step 7 — field-to-field comparison.** A predicate shape carrying two
-property references instead of a property and a literal, in both the SQL and
-naive evaluators, plus a lowering that no longer requires a constant RHS.
+**Step 7 — field-to-field comparison.** A predicate shape carrying two property
+references instead of a property and a literal, in both the SQL and naive
+evaluators, plus a lowering that no longer requires a constant RHS.
 
 **Step 8 — refuse `rrule_next` in conditions.** Load-time error naming the
-`computed:` alternative, and docs showing the computed `next_occurrence`
-shape. Verify the staleness question first: computed values materialize on
-write, so a time-relative recurrence needs a recompute story before this is
-presented as the recommended pattern.
+`computed:` alternative, and docs showing the computed `next_occurrence` shape.
+Verify the staleness question first: computed values materialize on write, so a
+time-relative recurrence needs a recompute story before this is presented as the
+recommended pattern.
 
 ### Intermediate PRs are wanted
 
 Jeroen's instruction: ship a PR whenever a slice is **already useful and
-end-user noticeable**, rather than holding the arc for one landing. Steps 1,
-2, 3, 6 and 7 are each independently useful; step 4 is the user-visible
-feature; steps 5 and 8 complete the goal. Do not bundle them for tidiness.
+end-user noticeable**, rather than holding the arc for one landing. Steps 1, 2,
+3, 6 and 7 are each independently useful; step 4 is the user-visible feature;
+steps 5 and 8 complete the goal. Do not bundle them for tidiness.
 
 ## Scope
 
@@ -722,9 +708,9 @@ two-key rule, the load-error behaviour, what pushes and what does not.
 states "Anything under `or`/`not` … stays Go-side". That is a published promise
 this ticket changes for `or`. It exists as a byte-identical copy in
 `docs-project/entities/guides/GUIDE-data-entry.md:1927`; both must move in
-lockstep. `not` remains Go-side.
-Also fix the stale cross-reference at `pgstore/graphquery.go:280-283`, which
-cites "the backend-parity rule in CLAUDE.md" — no such rule text exists there.
+lockstep. `not` remains Go-side. Also fix the stale cross-reference at
+`pgstore/graphquery.go:280-283`, which cites "the backend-parity rule in
+CLAUDE.md" — no such rule text exists there.
 
 **Out of scope**
 
@@ -740,10 +726,10 @@ an expression cannot round-trip the URL grammar anyway.
 - Extending `internal/filter` with boolean composition — the condition engine
 already has it; duplicating it would re-open `RES-6PK0S3`.
 - **Ordered comparison in `PropOp` (`>=`/`<=`) and `today()`-relative constant
-folding.** Deliberately deferred, NOT judged impossible — see the analysis
-above and open question 4. It is what would make the atlas rule fully
-pushable, so if design review wants that win in this ticket, move it in
-knowingly rather than discovering it later.
+folding.** Deliberately deferred, NOT judged impossible — see the analysis above
+and open question 4. It is what would make the atlas rule fully pushable, so if
+design review wants that win in this ticket, move it in knowingly rather than
+discovering it later.
 
 ## Related tickets
 
@@ -765,8 +751,8 @@ regression to not repeat when the board gains a server path.
 1. A list, kanban, feed and CalDAV collection each accept a `condition:` key; a
 disjunctive condition is evaluated correctly. Pinned by the six fixtures in
 "Verified engine behaviour" (open card with no date; `gereed` at 0, 1, 2, 3 and
-10 days), run end-to-end through the view read path rather than only against
-the evaluator.
+10 days), run end-to-end through the view read path rather than only against the
+evaluator.
 2. `condition:` and the surface's existing filter key are ANDed; neither weakens
 the other.
 3. A condition that does not compile against the surface's entity type is a
@@ -780,25 +766,24 @@ one CalDAV collection see different resources.
 6. A zero/unknown principal on a per-user surface fails closed, with a test.
 7. Any per-collection cache is keyed on the identity, with a test.
 8. **A top-level disjunction whose EVERY arm is pushable is pushed to the
-store**, not post-filtered — e.g. `entity.a == 'x' or entity.b == 'y'`.
-Verified on pgstore via EXPLAIN and held for every backend by `storetest`.
-A disjunction with any unpushable arm (a typed/computed comparison) pushes
-NOTHING and is correct Go-side — asserted explicitly, since pushing a subset
-of OR arms is the unsound case.
-8z. **On postgres, a `condition:` built from SQL-portable constructs is
-answered entirely in SQL** — no Go-side row rejection. Asserted by comparing
-rows returned by the store against rows surviving the Go pass and requiring
-equality (a stronger, more durable check than matching an EXPLAIN string).
-The known non-portable constructs (`sha256`, `rrule_next`, field-to-field
-comparison) are named in a test as the explicit exception list, so the set
-cannot grow silently.
-8a. **`~=` lowering does not drop unset rows.** `entity.p ~= 'v'` is true for
-an unset `p` in the predicate language but false under `store.PropNotEqual`.
-Whatever lowering is chosen, a row with `p` unset must survive. Pinned by a
-test with unset, empty-string and populated fixtures on every backend.
-8b. **A condition disjunction never widens an ACL `Any`.** A principal whose
-read query already carries `Any` branches gets the condition ANDed with them,
-never flattened into the same OR-list. Pinned by a test with both present.
+store**, not post-filtered — e.g. `entity.a == 'x' or entity.b == 'y'`. Verified
+on pgstore via EXPLAIN and held for every backend by `storetest`. A disjunction
+with any unpushable arm (a typed/computed comparison) pushes NOTHING and is
+correct Go-side — asserted explicitly, since pushing a subset of OR arms is the
+unsound case. 8z. **On postgres, a `condition:` built from SQL-portable
+constructs is answered entirely in SQL** — no Go-side row rejection. Asserted by
+comparing rows returned by the store against rows surviving the Go pass and
+requiring equality (a stronger, more durable check than matching an EXPLAIN
+string). The known non-portable constructs (`sha256`, `rrule_next`,
+field-to-field comparison) are named in a test as the explicit exception list,
+so the set cannot grow silently. 8a. **`~=` lowering does not drop unset rows.**
+`entity.p ~= 'v'` is true for an unset `p` in the predicate language but false
+under `store.PropNotEqual`. Whatever lowering is chosen, a row with `p` unset
+must survive. Pinned by a test with unset, empty-string and populated fixtures
+on every backend. 8b. **A condition disjunction never widens an ACL `Any`.** A
+principal whose read query already carries `Any` branches gets the condition
+ANDed with them, never flattened into the same OR-list. Pinned by a test with
+both present.
 9. Paging and counts are correct for a partly-pushed condition — no repeat of
 `BUG-5OAQUG`, and the scoped count comes from `store.CountMatched`, never
 `GraphCount`'s total. Pinned at more than one page of results.
@@ -806,9 +791,9 @@ never flattened into the same OR-list. Pinned by a test with both present.
 the query count is the same at 10 and 50 rows.
 11. No pushdown regression for the purely conjunctive case.
 12. Docs state the three author-facing traps verified in planning: `~=` vs
-`!=` between the two adjacent keys, `days_between` argument order (with a
-worked "age" example), and what an unset property does. Whichever way
-question 8 resolves, the docs say it explicitly.
+`!=` between the two adjacent keys, `days_between` argument order (with a worked
+"age" example), and what an unset property does. Whichever way question 8
+resolves, the docs say it explicitly.
 13. Docs updated as listed. `just test`, `just lint`, `just arch-lint`,
 `just coverage-check` pass.
 
@@ -829,8 +814,8 @@ endpoint that does — lists and kanbans both translate config to params in the
 SPA. Two of its properties are the ones this ticket needs, and both are
 deliberate: filters run **post-redaction** ("membership must not reflect a
 predicate over a value the principal cannot read", `gantt_handler.go:345-348`),
-and a match **error EXCLUDES the row and is logged** rather than being
-swallowed (`:376-384`) — which is a third data point for open question 8.
+and a match **error EXCLUDES the row and is logged** rather than being swallowed
+(`:376-384`) — which is a third data point for open question 8.
 
 `ganttHandler` is its own struct explicitly because "App is at its plimsoll
 method load line" (`gantt_handler.go:38-54`), and that is now literally true:
@@ -838,9 +823,9 @@ method load line" (`gantt_handler.go:38-54`), and that is now literally true:
 headroom. So a `kanbanHandler` struct in a new
 `internal/dataentry/kanban_handler.go`, constructed next to `app.gantt`
 (`app.go:1091-1096`) taking `scoped: app.scopedSortedEntities` + a redactor
-closure, costs App zero methods. It adds a FIELD, and `max-fields` is not
-pinned on App. Register at `api_v1.go:159` beside `_gantts`, and add the route
-probe `router_walk_test.go` requires (`api_v1.go:127-131`).
+closure, costs App zero methods. It adds a FIELD, and `max-fields` is not pinned
+on App. Register at `api_v1.go:159` beside `_gantts`, and add the route probe
+`router_walk_test.go` requires (`api_v1.go:127-131`).
 
 `scopedSortedEntities` (`api_v1.go:368-471`) returns the COMPLETE ordered
 ACL-scoped set pre-pagination — exactly what a board wants, and already used
@@ -852,15 +837,14 @@ Still to decide: whether the board endpoint also gains sort/paging/pushdown
 parity now, or only server-side condition evaluation. Note what changes either
 way — see question 9.
 4. **Ordered `PropOp` + constant-folded date bounds — in this ticket or its
-own?** `days_between(today(), prop) <= 2` folds to the constant bound
-`prop >= '<today-2>'`, which is pushable once `PropOp` gains `>=`/`<=`. The
-supporting facts are all in place (dates are `StringShaped` and byte-orderable;
-`OrderBy` already sorts them in SQL; `ConditionPrefilters` already folds
-request-constants for `current_user.id`). What it needs: the enum member, one
-branch each in `propCond` and `matchesProps`, a caller-side gate excluding
-integers, an unset-row decision consistent with blocker 2, a single
-per-request fold so the pushed bound and the Go pass cannot straddle midnight,
-and `storetest` coverage.
+own?** `days_between(today(), prop) <= 2` folds to the constant bound `prop >=
+'<today-2>'`, which is pushable once `PropOp` gains `>=`/`<=`. The supporting
+facts are all in place (dates are `StringShaped` and byte-orderable; `OrderBy`
+already sorts them in SQL; `ConditionPrefilters` already folds request-constants
+for `current_user.id`). What it needs: the enum member, one branch each in
+`propCond` and `matchesProps`, a caller-side gate excluding integers, an
+unset-row decision consistent with blocker 2, a single per-request fold so the
+pushed bound and the Go pass cannot straddle midnight, and `storetest` coverage.
 
 **This is the decision that determines whether the motivating case gets any
 pushdown at all.** Without it, the atlas rule is Go-side (correct, but a scan);
@@ -869,59 +853,57 @@ with it, the rule is fully pushable. Weigh against the ticket already being XL.
 running the engine (see "Verified engine behaviour"). Decide: add them to
 `EntityRecordType` (matching what `affordances` already does for itself), or
 document them as unavailable on a view condition. Adding them is the better
-answer if a board condition should ever filter by type, which a
-multi-type surface would need.
+answer if a board condition should ever filter by type, which a multi-type
+surface would need.
 
 8. **An unset property in a date function: error or no-match?** Verified as a
 hard eval error today. Next actions propagate it; automations downgrade it to
-no-match-plus-warning. For a view, propagating means one bad row fails the
-whole page; downgrading means rows vanish silently. Options: (a) require the
-author's `~= nil` guard and propagate — explicit, but a foot-gun that only
-shows up once real data has a gap; (b) downgrade to no-match + a logged
-warning, matching automations; (c) make the load-time lint reject a date
-function applied to an unguarded optional property, so the failure moves to
-startup where every other condition error already lives. (c) fits this
-codebase's fail-at-load principle best and is the recommendation to test in
-design review.
-6. **CLI `--filter`.** The CLI principal is `$USER`, not a graph identity. Either
+no-match-plus-warning. For a view, propagating means one bad row fails the whole
+page; downgrading means rows vanish silently. Options: (a) require the author's
+`~= nil` guard and propagate — explicit, but a foot-gun that only shows up once
+real data has a gap; (b) downgrade to no-match + a logged warning, matching
+automations; (c) make the load-time lint reject a date function applied to an
+unguarded optional property, so the failure moves to startup where every other
+condition error already lives. (c) fits this codebase's fail-at-load principle
+best and is the recommendation to test in design review.
+9. **CLI `--filter`.** The CLI principal is `$USER`, not a graph identity. Either
 resolve via the ACL policy's `principal_property`, or leave `current_user`
 undeclared on the CLI and say so.
-7. **Free-text queries.** Next actions refuse a `condition:` on a free-text query
+10. **Free-text queries.** Next actions refuse a `condition:` on a free-text query
 because the relevance cap runs before the condition. A view/feed `where:` is not
 capped the same way; confirm before allowing the combination. Note
 `planListPushdown` already declines outright when `q` is set
 (`listpushdown.go:57`), so the pushed path is not in question — only the Go one.
 
-9. **The board's optimistic drag-drop breaks under server-side membership.**
+11. **The board's optimistic drag-drop breaks under server-side membership.**
 Today `onDrop` (`KanbanView.vue:567-600`) writes via `moveCard`, and
 `beginOptimistic` (`:387-412`) rewrites the cached row; the client-side
 `filteredEntities` recompute then drops the card immediately, because the same
-predicate is re-evaluated over the same optimistic data. With the predicate
-on the server the client cannot re-evaluate, so a card dragged INTO a state
-the condition excludes stays visible until the settle refetch removes it —
+predicate is re-evaluated over the same optimistic data. With the predicate on
+the server the client cannot re-evaluate, so a card dragged INTO a state the
+condition excludes stays visible until the settle refetch removes it —
 flicker-then-vanish. Three sub-decisions:
-   - the optimistic cache write targets `entityKeys.list(type)` (`:399`) while
-     the query is keyed `entityKeys.listParams(type, boardParams)` (`:133`);
-     that works only because the latter shares the former's prefix. A
-     `_kanbans/{id}` key falls OUTSIDE it and the optimistic write would hit
-     nothing — and SSE invalidation of `['entities', <type>]` (`:113-116`,
-     `:631-633`) would silently stop refreshing the board.
-   - "your card left the board" has no UX today because it cannot happen; it
-     needs a deliberate answer (toast, or accept the refetch).
-   - evaluating the predicate on BOTH sides would fix the flicker but means a
-     JS twin of the matcher — the fifth evaluator this ticket exists to avoid.
-     Dropping the optimistic step in favour of a plain refetch is the
-     consistent choice; confirm the latency is acceptable.
+    - the optimistic cache write targets `entityKeys.list(type)` (`:399`) while
+the query is keyed `entityKeys.listParams(type, boardParams)` (`:133`); that
+works only because the latter shares the former's prefix. A `_kanbans/{id}` key
+falls OUTSIDE it and the optimistic write would hit nothing — and SSE
+invalidation of `['entities', <type>]` (`:113-116`, `:631-633`) would silently
+stop refreshing the board.
+    - "your card left the board" has no UX today because it cannot happen; it
+needs a deliberate answer (toast, or accept the refetch).
+    - evaluating the predicate on BOTH sides would fix the flicker but means a
+JS twin of the matcher — the fifth evaluator this ticket exists to avoid.
+Dropping the optimistic step in favour of a plain refetch is the consistent
+choice; confirm the latency is acceptable.
 
-10. **Pushdown eligibility must learn about conditions — a fail-open shape.**
-`planListPushdown` (`listpushdown.go:70-73`) `continue`s on any key not
-prefixed `filter[`, so it inspects only filter params. Its header states the
-governing invariant: "The pushed and the Go path must return the same rows in
-the same order, and that is a matter of **eligibility**, not of translation
-cleverness." A condition is categorically ineligible under today's rules (not
-an `eq`/`ne` on one string-shaped property), so a condition-bearing list MUST
-either make the planner decline or be pushed correctly. It must never ride
-through unexamined — that returns the unfiltered superset, which is exactly
-`BUG-F1LTP1`'s failure. A view `condition:` is config rather than a request
-param so it does not arrive in `query` today, but the wiring must make this
-explicit and a test must pin it.
+12. **Pushdown eligibility must learn about conditions — a fail-open shape.**
+`planListPushdown` (`listpushdown.go:70-73`) `continue`s on any key not prefixed
+`filter[`, so it inspects only filter params. Its header states the governing
+invariant: "The pushed and the Go path must return the same rows in the same
+order, and that is a matter of **eligibility**, not of translation cleverness."
+A condition is categorically ineligible under today's rules (not an `eq`/`ne` on
+one string-shaped property), so a condition-bearing list MUST either make the
+planner decline or be pushed correctly. It must never ride through unexamined —
+that returns the unfiltered superset, which is exactly `BUG-F1LTP1`'s failure. A
+view `condition:` is config rather than a request param so it does not arrive in
+`query` today, but the wiring must make this explicit and a test must pin it.
