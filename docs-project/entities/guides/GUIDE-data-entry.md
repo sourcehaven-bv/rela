@@ -1500,7 +1500,10 @@ sections:
 | `display`       | string | Display mode (see below)                                |
 | `render`        | string | `display` (default) or `input` — see Field Render Modes |
 | `fields`        | list   | Properties to show (`properties`, `content`, `cards`, `list` modes) |
-| `columns`       | list   | Column definitions (`table` mode)                       |
+| `columns`       | list   | Column definitions (`table` mode; `nested` uses the two keys below) |
+| `children`      | string | Collection to nest under each row (`nested` mode; required) |
+| `parent_columns`| map    | `nested` mode: columns for the source level, keyed by entity type |
+| `child_columns` | map    | `nested` mode: columns for the child level, keyed by entity type |
 | `group_by`      | string | Property to group entities by                           |
 | `empty_message` | string | Text shown when the collection is empty                 |
 | `link`          | bool   | Link entity titles to their detail pages                |
@@ -1609,10 +1612,82 @@ Rules worth knowing:
 | `table`      | Tabular layout with configurable columns (like a mini-list)     |
 | `cards`      | Card layout showing each entity with selected property badges   |
 | `list`       | Simple bulleted list of entity titles with optional fields      |
+| `nested`     | Two-level parent→child tree; each row expands to its children   |
 
 **`properties`** is best for the entry entity's metadata. **`content`** renders the markdown body.
 **`table`** works well for collections with many items. **`cards`** provides a visual layout for
 smaller collections. **`list`** is the most compact.
+
+#### `nested` — parent→child trees
+
+Renders one expandable row per entity in `source:`, with the entities from
+`children:` nested underneath. Use it for containment hierarchies —
+project → epic → task, or any `has-*` chain.
+
+```yaml
+views:
+  project:
+    entry:
+      type: project
+    traverse:
+      - {from: entry, follow: has-epic, collect_as: epics}
+      - {from: epics, follow: has-task, collect_as: work}
+    sections:
+      - heading: Epics
+        source: epics
+        display: nested
+        children: work
+        parent_columns:
+          epic:
+            - {property: status}
+            - {property: owner}
+        child_columns:
+          task:
+            - {property: status}
+            - {property: due}
+          bug:
+            - {property: status}
+            - {property: severity}
+```
+
+The nesting comes from the **traverse rules**, not from `children:` alone: the
+rule that collects the child bucket must walk `from:` the section's `source:`.
+That is what associates a task with its own epic, so config load rejects a
+`children:` whose rule starts anywhere else — it would render rows with no
+children rather than an error.
+
+##### Columns are per level, then per type
+
+`display: nested` does not take the flat `columns:` list the other modes use.
+It takes `parent_columns` and `child_columns`, each a map keyed by entity type.
+Both axes matter:
+
+- **Per level**, because a group row and a detail row want different things —
+  and with a self-referential containment (`project has-project`) the two levels
+  are the *same* type, which a type-keyed map alone could not distinguish.
+- **Per type**, because a relation may reach several types. `has-task: {to:
+  [task, bug]}` is ordinary rela, and a bug wants `severity` where a task wants
+  `due`.
+
+A type absent from its level's map renders its title and id only — adding a
+type to a relation never breaks an existing view. A column naming a property
+the type does not declare is a load error, as is declaring columns for a type
+the level can never hold.
+
+##### Other behaviours
+
+- Children render in traversal order. Section-level sorting is not supported yet.
+- `recursive: true` on the children's traverse rule is refused: this mode renders
+  exactly two levels, and the recursive walk does not record which parent each
+  node came from.
+- Rows are expanded by default, and large trees are capped. A row whose children
+  were withheld reports `hasMoreChildren` with the true `childCount`, and the
+  section sets `truncated` — so a capped row is never mistaken for a childless
+  one.
+- Values render through the same widgets every other surface uses, so an enum
+  arrives as a coloured badge and a date is formatted.
+- Rows carry no markdown body, like `table` and unlike `cards`.
+- Not available in a form's `side_panel:`, which has no wire field for a tree.
 
 ## Entity Views
 

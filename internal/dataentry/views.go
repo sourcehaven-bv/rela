@@ -23,6 +23,26 @@ type viewResult struct {
 	// them all — and because a builder that took a world parameter it did not
 	// otherwise need would invite someone to pass a different one.
 	World viewWorld
+
+	// Parents maps a collection name to that collection's parent→child edges:
+	// Parents["tasks"]["EPIC-1"] lists the task ids reached FROM EPIC-1 by the
+	// rule that collected "tasks". Collections alone cannot answer this — it is
+	// a flat bucket per name, so a two-step traverse loses which child came
+	// from which parent, which is exactly what `display: nested` needs.
+	//
+	// Holds IDS, not entities, and is NOT itself an authorization boundary: an
+	// id here may name an entity the caller cannot read, because the walk runs
+	// on raw store rows before the gate (see the Redact/Filter block in
+	// [viewsHandler.executeView]). A consumer MUST resolve ids against the
+	// gated Collections slice and drop the misses — that lookup IS the row
+	// gate. Nil when no rule recorded edges.
+	//
+	// Populated only by the flat walk. The recursive walk
+	// ([viewsHandler.traverseViewBreadthFirst]) reports ids level by level
+	// without retaining which node each came from, so a `recursive: true` rule
+	// records nothing; config validation refuses to pair one with a nested
+	// section rather than letting it render silently flat.
+	Parents map[string]map[string][]string
 }
 
 // executeView runs a view's traversal rules and returns the result.
@@ -151,6 +171,10 @@ func (h *viewsHandler) applyViewTraverse(
 		sourceIDs = append(sourceIDs, src.ID)
 	}
 	var foundIDs []string
+	// byParent is the parent→child edge map, retained only for the flat walk.
+	// See the Parents field doc on [viewResult] for why the recursive walk has
+	// none and what that costs.
+	var byParent map[string][]string
 	if rule.Recursive {
 		maxD := rule.MaxDepth
 		if maxD <= 0 {
@@ -161,7 +185,7 @@ func (h *viewsHandler) applyViewTraverse(
 		// One relation query for every source at once (TKT-1U8XYN), in the
 		// same order the per-source loop produced: sources in collection
 		// order, each source's edges in store order.
-		foundIDs = h.traverseViewMany(ctx, sourceIDs, rule)
+		foundIDs, byParent = h.traverseViewMany(ctx, sourceIDs, rule)
 	}
 
 	// ONE resolution for the whole rule application, not one per hop.
@@ -199,10 +223,51 @@ func (h *viewsHandler) applyViewTraverse(
 	for _, e := range result.Collections[rule.CollectAs] {
 		existing[e.ID] = true
 	}
+	kept := make(map[string]bool, len(found))
 	for _, e := range found {
+		kept[e.ID] = true
 		if !existing[e.ID] {
 			result.Collections[rule.CollectAs] = append(result.Collections[rule.CollectAs], e)
 			existing[e.ID] = true
+		}
+	}
+
+	// Merge the edge map, deduping exactly as the collection above does.
+	//
+	// Load-bearing: executeView runs every rule up to 10 times (the fixpoint
+	// loop), so appending unconditionally would list each child once per pass
+	// and render duplicate rows. Only edges whose child SURVIVED `where:`
+	// filtering are recorded, so a filtered-out child cannot reappear as a
+	// nested row.
+	if len(byParent) > 0 {
+		mergeViewParents(result, rule.CollectAs, byParent, kept)
+	}
+}
+
+// mergeViewParents records parent→child edges for one rule application,
+// keeping only children present in keep and skipping pairs already recorded.
+//
+// Idempotent by construction: re-running the same rule adds nothing, which is
+// what makes it safe under the fixpoint loop in [viewsHandler.executeView].
+func mergeViewParents(result *viewResult, collectAs string, byParent map[string][]string, keep map[string]bool) {
+	if result.Parents == nil {
+		result.Parents = map[string]map[string][]string{}
+	}
+	bucket := result.Parents[collectAs]
+	if bucket == nil {
+		bucket = map[string][]string{}
+		result.Parents[collectAs] = bucket
+	}
+	for parentID, childIDs := range byParent {
+		seen := make(map[string]bool, len(bucket[parentID]))
+		for _, id := range bucket[parentID] {
+			seen[id] = true
+		}
+		for _, childID := range childIDs {
+			if keep[childID] && !seen[childID] {
+				bucket[parentID] = append(bucket[parentID], childID)
+				seen[childID] = true
+			}
 		}
 	}
 }
@@ -211,9 +276,16 @@ func (h *viewsHandler) applyViewTraverse(
 // relation query. The result is ordered as the per-source calls would have
 // been concatenated: by source in the given order, then by the store's edge
 // order within a source. A source with no edges contributes nothing.
-func (h *viewsHandler) traverseViewMany(ctx context.Context, sourceIDs []string, rule ViewTraverse) []string {
+//
+// Also returns the source→neighbor map the walk builds anyway, so a caller
+// that needs parent attribution gets it without a second query. Keyed by
+// SOURCE id, holding ids only; see [viewResult.Parents] for why those ids are
+// not yet authorized.
+func (h *viewsHandler) traverseViewMany(
+	ctx context.Context, sourceIDs []string, rule ViewTraverse,
+) (found []string, byParent map[string][]string) {
 	if len(sourceIDs) == 0 {
-		return nil
+		return nil, nil
 	}
 	var relType string
 	var direction store.Direction
@@ -224,7 +296,7 @@ func (h *viewsHandler) traverseViewMany(ctx context.Context, sourceIDs []string,
 	case rule.FollowIncoming != "":
 		relType, direction, useTarget = rule.FollowIncoming, store.DirectionIncoming, false
 	default:
-		return nil
+		return nil, nil
 	}
 	bySource := make(map[string][]string, len(sourceIDs))
 	q := store.RelationQuery{EntityIDs: sourceIDs, Type: relType, Direction: direction}
@@ -244,7 +316,7 @@ func (h *viewsHandler) traverseViewMany(ctx context.Context, sourceIDs []string,
 	for _, id := range sourceIDs {
 		out = append(out, bySource[id]...)
 	}
-	return out
+	return out, bySource
 }
 
 // traverseViewBreadthFirst walks the relation graph from every source at
@@ -268,7 +340,10 @@ func (h *viewsHandler) traverseViewBreadthFirst(
 	}
 	all := make([]string, 0, len(frontier))
 	for depth := 0; depth < maxDepth && len(frontier) > 0; depth++ {
-		found := h.traverseViewMany(ctx, frontier, rule)
+		// Edge map discarded: this walk reports ids level by level and a node
+		// reached at two depths has no single parent here, so retaining it
+		// would be a partial answer worse than none. See [viewResult.Parents].
+		found, _ := h.traverseViewMany(ctx, frontier, rule)
 		all = append(all, found...)
 
 		// SOURCE-GATE the frontier (BUG-9Z20WH). An id the principal cannot

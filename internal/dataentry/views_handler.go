@@ -640,6 +640,12 @@ func (h *viewsHandler) handleV1Views(w http.ResponseWriter, r *http.Request) {
 			v1Sec.Groups = append(v1Sec.Groups, v1Grp)
 		}
 
+		// Convert the nested tree
+		v1Sec.Truncated = sec.Truncated
+		for _, node := range sec.Tree {
+			v1Sec.Tree = append(v1Sec.Tree, sectionTreeNodeToV1(node))
+		}
+
 		resp.Sections = append(resp.Sections, v1Sec)
 	}
 

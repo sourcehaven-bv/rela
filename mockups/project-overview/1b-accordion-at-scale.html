@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Project overview — Accordion at scale</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+  .summary-row {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 0.75rem;
+    margin-bottom: 1.25rem;
+  }
+  .stat { padding: 0.7rem 0.85rem; }
+  .stat .label {
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--muted-text);
+    margin-bottom: 0.25rem;
+  }
+  .stat .value { font-size: 1.35rem; font-weight: 700; line-height: 1.1; }
+  .stat .value small { font-size: 0.8rem; font-weight: 500; color: var(--muted-text); }
+
+  /* ---- Filter bar: the primary scale tool ---- */
+  .filters {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-bottom: 0.9rem;
+  }
+  .chip {
+    font-size: 0.78rem;
+    padding: 0.28rem 0.65rem;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-pill);
+    background: var(--card-bg);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .chip:hover { background: var(--hover-bg); }
+  .chip.on { background: var(--accent-color); border-color: var(--accent-color); color: #fff; font-weight: 600; }
+  .chip .n { opacity: 0.7; font-variant-numeric: tabular-nums; }
+  .search {
+    flex: 1;
+    min-width: 180px;
+    padding: 0.3rem 0.6rem;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: var(--input-bg);
+    color: var(--text-color);
+    font-size: 0.82rem;
+  }
+
+  .scope-note {
+    font-size: 0.78rem;
+    color: var(--muted-text);
+    margin-bottom: 0.9rem;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+
+  /* ---- Epic group headers ---- */
+  .group-head {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    margin: 1.4rem 0 0.5rem;
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    font-weight: 700;
+    color: var(--muted-text);
+  }
+  .group-head .n { font-weight: 500; letter-spacing: 0; text-transform: none; }
+  .group-head:first-of-type { margin-top: 0; }
+
+  .epic { margin-bottom: 0.45rem; overflow: hidden; }
+
+  .epic-head {
+    display: grid;
+    grid-template-columns: 18px 1fr 170px 160px 96px;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.65rem 1rem;
+    cursor: pointer;
+    user-select: none;
+  }
+  .epic-head:hover { background: var(--hover-bg); }
+  .twisty { color: var(--muted-text); transition: transform 0.15s; font-size: 0.7rem; }
+  .epic[open] .twisty { transform: rotate(90deg); }
+  .epic-title { font-weight: 600; }
+  .epic-title .eid { margin-left: 0.5rem; font-weight: 400; }
+
+  .epic-progress { display: flex; align-items: center; gap: 0.6rem; }
+  .epic-progress .bar { flex: 1; }
+  .epic-progress .pct {
+    font-variant-numeric: tabular-nums;
+    font-size: 0.78rem;
+    color: var(--muted-text);
+    width: 34px;
+    text-align: right;
+  }
+  .counts {
+    font-size: 0.78rem;
+    color: var(--muted-text);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .counts b { color: var(--error-color); }
+
+  /* ---- Task rows ---- */
+  .tasks { border-top: 1px solid var(--border-color); }
+  .task {
+    display: grid;
+    grid-template-columns: 1fr 96px 92px 34px;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.42rem 1rem 0.42rem 2.9rem;
+    border-bottom: 1px solid var(--border-color);
+    font-size: 0.86rem;
+  }
+  .task:last-of-type { border-bottom: 0; }
+  .task:hover { background: var(--hover-bg); }
+  .task .eid { margin-right: 0.5rem; }
+  .due { font-size: 0.78rem; color: var(--muted-text); font-variant-numeric: tabular-nums; }
+  .due.late { color: var(--error-color); font-weight: 600; }
+
+  /* The load-more footer inside an epic: the per-epic page boundary. */
+  .epic-foot {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.5rem 1rem 0.6rem 2.9rem;
+    border-top: 1px solid var(--border-color);
+    font-size: 0.8rem;
+    background: var(--bg-color);
+  }
+  .epic-foot .btn { padding: 0.22rem 0.6rem; font-size: 0.78rem; }
+  .epic-foot .note { color: var(--muted-text); }
+  .epic-foot a { text-decoration: none; margin-left: auto; }
+
+  .loading { padding: 0.6rem 1rem 0.7rem 2.9rem; font-size: 0.82rem; color: var(--muted-text); }
+  .skel {
+    height: 9px;
+    border-radius: 3px;
+    background: linear-gradient(90deg, var(--hover-bg) 25%, var(--border-color) 50%, var(--hover-bg) 75%);
+    background-size: 200% 100%;
+    animation: sh 1.2s infinite;
+    margin: 0.45rem 0;
+  }
+  @keyframes sh { from { background-position: 200% 0 } to { background-position: -200% 0 } }
+
+  /* ---- Project-level paging ---- */
+  .pager {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    margin-top: 1.25rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border-color);
+    font-size: 0.82rem;
+    color: var(--muted-text);
+  }
+  .pager .btn { padding: 0.28rem 0.65rem; }
+  .pager .pages { display: flex; gap: 0.25rem; margin-left: auto; }
+  .pager .pages .btn.on { background: var(--accent-color); border-color: var(--accent-color); color: #fff; font-weight: 600; }
+
+  .callout {
+    border: 1px solid var(--border-color);
+    border-left: 3px solid var(--warning-color);
+    background: var(--card-bg);
+    border-radius: 0 var(--radius-md) var(--radius-md) 0;
+    padding: 0.6rem 0.9rem;
+    font-size: 0.82rem;
+    color: var(--muted-text);
+    margin: 1.25rem 0;
+  }
+  .callout strong { color: var(--text-color); }
+
+  @media (max-width: 900px) {
+    .summary-row { grid-template-columns: repeat(2, 1fr); }
+    .epic-head { grid-template-columns: 18px 1fr 96px; }
+    .epic-head .epic-progress, .epic-head .counts, .task .due { display: none; }
+  }
+</style>
+</head>
+<body>
+<main class="main">
+  <div class="crumbs"><a href="#">Projects</a> / Atlas Platform</div>
+  <div class="page-head">
+    <div>
+      <h1>Atlas Platform</h1>
+      <div class="subtitle">PRJ-9002 · 84 epics · 1,412 tasks</div>
+    </div>
+    <div class="toolbar" style="margin:0">
+      <button class="btn">Saved views</button>
+      <button class="btn primary">New epic</button>
+    </div>
+  </div>
+
+  <div class="mockup-note">
+    <strong>Variant 1b — Accordion at scale.</strong> The same accordion against
+    84 epics and 1,412 tasks. Nothing about the row design changes; what changes
+    is that the view never tries to hold the whole graph.
+  </div>
+
+  <!-- Rollup counts are cheap: they come from an aggregate query, not from
+       counting loaded rows. -->
+  <div class="summary-row">
+    <div class="card stat">
+      <div class="label">Epics</div>
+      <div class="value">84 <small>/ 31 done</small></div>
+    </div>
+    <div class="card stat">
+      <div class="label">Tasks</div>
+      <div class="value">1,412 <small>/ 903 done</small></div>
+    </div>
+    <div class="card stat">
+      <div class="label">Blocked</div>
+      <div class="value" style="color:var(--error-color)">27</div>
+    </div>
+    <div class="card stat">
+      <div class="label">Overdue</div>
+      <div class="value" style="color:var(--error-color)">41</div>
+    </div>
+    <div class="card stat">
+      <div class="label">Due this week</div>
+      <div class="value">58</div>
+    </div>
+  </div>
+
+  <!-- ① Filter first -->
+  <div class="filters">
+    <span class="chip on">Active <span class="n">· 38</span></span>
+    <span class="chip">At risk <span class="n">· 9</span></span>
+    <span class="chip">Blocked <span class="n">· 6</span></span>
+    <span class="chip">Mine <span class="n">· 12</span></span>
+    <span class="chip">Done <span class="n">· 31</span></span>
+    <span class="chip">All <span class="n">· 84</span></span>
+    <input class="search" placeholder="Filter epics and tasks…">
+  </div>
+
+  <div class="scope-note">
+    Showing <strong>38 active epics</strong> of 84 · done and archived epics hidden by the default filter
+  </div>
+
+  <!-- ② Grouped, with only the first group auto-expanded -->
+  <div class="group-head"><span class="badge at-risk">At risk</span><span class="n">3 epics · auto-expanded</span></div>
+
+  <details class="card epic" open>
+    <summary class="epic-head">
+      <span class="twisty">▶</span>
+      <span class="epic-title">Schema reconciliation <span class="eid">EPIC-22</span></span>
+      <span class="epic-progress">
+        <span class="bar">
+          <span class="s-done" style="width:20%"></span>
+          <span class="s-doing" style="width:15%"></span>
+          <span class="s-blocked" style="width:20%"></span>
+        </span>
+        <span class="pct">20%</span>
+      </span>
+      <span class="counts">142 tasks · <b>8 blocked</b></span>
+      <span class="badge at-risk">At risk</span>
+    </summary>
+    <div class="tasks">
+      <!-- ③ Tasks are sorted by attention, not by id: blocked and overdue
+           first, so the first page is the useful page. -->
+      <div class="task">
+        <span><span class="eid">TSK-151</span>Resolve column type conflicts</span>
+        <span class="badge blocked">Blocked</span>
+        <span class="due late">8 Sep</span>
+        <span class="owner">RA</span>
+      </div>
+      <div class="task">
+        <span><span class="eid">TSK-150</span>Diff live vs. target schema</span>
+        <span class="badge doing">In progress</span>
+        <span class="due late">2 Sep</span>
+        <span class="owner">RA</span>
+      </div>
+      <div class="task">
+        <span><span class="eid">TSK-177</span>Vendor field mapping sign-off</span>
+        <span class="badge blocked">Blocked</span>
+        <span class="due late">9 Sep</span>
+        <span class="owner">MD</span>
+      </div>
+      <div class="task">
+        <span><span class="eid">TSK-152</span>Backfill null constraints</span>
+        <span class="badge todo">To do</span>
+        <span class="due">24 Sep</span>
+        <span class="owner">—</span>
+      </div>
+      <div class="task">
+        <span><span class="eid">TSK-181</span>Partition legacy audit rows</span>
+        <span class="badge todo">To do</span>
+        <span class="due">26 Sep</span>
+        <span class="owner">TP</span>
+      </div>
+    </div>
+    <!-- ④ Per-epic paging: 25 rows at a time, the API's default page -->
+    <div class="epic-foot">
+      <button class="btn">Load 25 more</button>
+      <span class="note">Showing 5 of 142 · preview; expanding pages 25 at a time</span>
+      <a href="#">Open epic →</a>
+    </div>
+  </details>
+
+  <details class="card epic">
+    <summary class="epic-head">
+      <span class="twisty">▶</span>
+      <span class="epic-title">Billing reconciliation <span class="eid">EPIC-40</span></span>
+      <span class="epic-progress">
+        <span class="bar">
+          <span class="s-done" style="width:34%"></span>
+          <span class="s-doing" style="width:12%"></span>
+          <span class="s-blocked" style="width:11%"></span>
+        </span>
+        <span class="pct">34%</span>
+      </span>
+      <span class="counts">96 tasks · <b>5 blocked</b></span>
+      <span class="badge at-risk">At risk</span>
+    </summary>
+    <!-- ⑤ Children are fetched on expand, never up front -->
+    <div class="loading">
+      Loading first 25 of 96 tasks…
+      <div class="skel" style="width:72%"></div>
+      <div class="skel" style="width:58%"></div>
+      <div class="skel" style="width:65%"></div>
+    </div>
+  </details>
+
+  <details class="card epic">
+    <summary class="epic-head">
+      <span class="twisty">▶</span>
+      <span class="epic-title">Tenant isolation audit <span class="eid">EPIC-57</span></span>
+      <span class="epic-progress">
+        <span class="bar">
+          <span class="s-done" style="width:12%"></span>
+          <span class="s-doing" style="width:8%"></span>
+          <span class="s-blocked" style="width:14%"></span>
+        </span>
+        <span class="pct">12%</span>
+      </span>
+      <span class="counts">61 tasks · <b>4 blocked</b></span>
+      <span class="badge at-risk">At risk</span>
+    </summary>
+    <div class="loading">Expand to load tasks.</div>
+  </details>
+
+  <div class="group-head"><span class="badge doing">In progress</span><span class="n">29 epics · collapsed</span></div>
+
+  <details class="card epic">
+    <summary class="epic-head">
+      <span class="twisty">▶</span>
+      <span class="epic-title">Cutover tooling <span class="eid">EPIC-21</span></span>
+      <span class="epic-progress">
+        <span class="bar">
+          <span class="s-done" style="width:55%"></span>
+          <span class="s-doing" style="width:18%"></span>
+          <span class="s-blocked" style="width:9%"></span>
+        </span>
+        <span class="pct">55%</span>
+      </span>
+      <span class="counts">118 tasks · <b>2 blocked</b></span>
+      <span class="badge doing">In progress</span>
+    </summary>
+    <div class="loading">Expand to load tasks.</div>
+  </details>
+
+  <details class="card epic">
+    <summary class="epic-head">
+      <span class="twisty">▶</span>
+      <span class="epic-title">Access control review <span class="eid">EPIC-23</span></span>
+      <span class="epic-progress">
+        <span class="bar">
+          <span class="s-done" style="width:70%"></span>
+          <span class="s-doing" style="width:10%"></span>
+        </span>
+        <span class="pct">70%</span>
+      </span>
+      <span class="counts">44 tasks</span>
+      <span class="badge doing">In progress</span>
+    </summary>
+    <div class="loading">Expand to load tasks.</div>
+  </details>
+
+  <details class="card epic">
+    <summary class="epic-head">
+      <span class="twisty">▶</span>
+      <span class="epic-title">Event bus migration <span class="eid">EPIC-31</span></span>
+      <span class="epic-progress">
+        <span class="bar">
+          <span class="s-done" style="width:48%"></span>
+          <span class="s-doing" style="width:20%"></span>
+        </span>
+        <span class="pct">48%</span>
+      </span>
+      <span class="counts">73 tasks</span>
+      <span class="badge doing">In progress</span>
+    </summary>
+    <div class="loading">Expand to load tasks.</div>
+  </details>
+
+  <details class="card epic">
+    <summary class="epic-head">
+      <span class="twisty">▶</span>
+      <span class="epic-title">Observability baseline <span class="eid">EPIC-33</span></span>
+      <span class="epic-progress">
+        <span class="bar">
+          <span class="s-done" style="width:62%"></span>
+          <span class="s-doing" style="width:9%"></span>
+        </span>
+        <span class="pct">62%</span>
+      </span>
+      <span class="counts">52 tasks</span>
+      <span class="badge doing">In progress</span>
+    </summary>
+    <div class="loading">Expand to load tasks.</div>
+  </details>
+
+  <!-- ④ Project-level paging over EPICS -->
+  <div class="pager">
+    <span>Epics 1–25 of 38 matching</span>
+    <span class="pages">
+      <button class="btn" disabled>‹</button>
+      <button class="btn on">1</button>
+      <button class="btn">2</button>
+      <button class="btn">›</button>
+    </span>
+  </div>
+
+  <div class="callout">
+    <strong>What this costs per page.</strong> The existing list page is pinned at
+    <strong>6 store reads regardless of page size</strong> (scoped count, one
+    bounded page read, page edges, neighbour headers, membership walk) by
+    <code>TestQueryBudget_ListPageIsSizeIndependent</code>. This view adds one
+    rollup-count query, plus one task-header query per <em>expanded</em> epic —
+    still constant in the number of epic rows, not one query per row. Task bodies
+    are never loaded: these rows need only id, title, status, due and owner, which
+    is exactly what <code>store.EntityHeader</code> carries.
+  </div>
+</main>
+<script src="shell.js"></script>
+</body>
+</html>

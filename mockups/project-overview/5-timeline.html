@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Project overview — Timeline</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+  .tl { overflow-x: auto; }
+  .tl-inner { min-width: 940px; position: relative; }
+
+  /* Two columns: a sticky label gutter, then the 16-week scale. */
+  .row {
+    display: grid;
+    grid-template-columns: 280px 1fr;
+    align-items: center;
+    border-bottom: 1px solid var(--border-color);
+  }
+  .row:last-child { border-bottom: 0; }
+
+  .head-row { border-bottom: 1px solid var(--border-color); }
+  .months {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--muted-text);
+    font-weight: 700;
+  }
+  .months div {
+    padding: 0.5rem 0.5rem 0.9rem;
+    border-left: 1px solid var(--border-color);
+  }
+
+  .gutter {
+    padding: 0.5rem 0.85rem;
+    position: sticky;
+    left: 0;
+    background: var(--card-bg);
+    z-index: 2;
+    border-right: 1px solid var(--border-color);
+  }
+
+  .track {
+    position: relative;
+    height: 100%;
+    min-height: 38px;
+    /* Faint month gridlines behind every bar. */
+    background-image: repeating-linear-gradient(
+      to right,
+      var(--border-color) 0 1px,
+      transparent 1px 25%
+    );
+  }
+
+  /* Today marker, at week 10 of 16. */
+  .today {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 62.5%;
+    width: 2px;
+    background: var(--error-color);
+    opacity: 0.55;
+    z-index: 3;
+  }
+  .today-flag {
+    position: absolute;
+    bottom: -1px;
+    left: 62.5%;
+    transform: translateX(-50%);
+    background: var(--error-color);
+    color: #fff;
+    font-size: 0.65rem;
+    font-weight: 700;
+    line-height: 1.4;
+    padding: 0 0.35rem;
+    border-radius: 3px 3px 0 0;
+    z-index: 4;
+  }
+
+  .bar-epic, .bar-task {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    border-radius: var(--radius-pill);
+    display: flex;
+    align-items: center;
+    padding: 0 0.5rem;
+    font-size: 0.72rem;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+  }
+
+  .bar-epic {
+    height: 20px;
+    background: var(--hover-bg);
+    border: 1px solid var(--border-color);
+    color: var(--muted-text);
+  }
+  /* Progress fill inside the epic bar shows the rollup in place. */
+  .bar-epic .fill {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    background: var(--accent-color);
+    opacity: 0.22;
+  }
+  .bar-epic.risk { border-color: var(--warning-color); }
+  .bar-epic.risk .fill { background: var(--warning-color); opacity: 0.3; }
+  .bar-epic.done .fill { background: var(--success-color); opacity: 0.28; }
+  .bar-epic span { position: relative; z-index: 1; }
+
+  .bar-task { height: 14px; background: var(--accent-color); color: #fff; font-weight: 500; }
+  .bar-task.done { background: var(--success-color); }
+  .bar-task.blocked { background: var(--error-color); }
+  .bar-task.todo {
+    background: transparent;
+    border: 1px dashed var(--border-color);
+    color: var(--muted-text);
+  }
+
+  .epic-label { font-weight: 600; font-size: 0.88rem; }
+  .epic-label .eid { margin-left: 0.4rem; font-weight: 400; }
+  .task-label { padding-left: 1.4rem; font-size: 0.82rem; color: var(--muted-text); }
+  .gutter .sub {
+    font-size: 0.72rem;
+    color: var(--muted-text);
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin-top: 0.15rem;
+  }
+  .gutter .sub .bar { width: 60px; }
+
+  .legend-row {
+    display: flex;
+    gap: 1.25rem;
+    flex-wrap: wrap;
+    font-size: 0.78rem;
+    color: var(--muted-text);
+    margin-top: 1rem;
+  }
+  .legend-row i {
+    display: inline-block;
+    width: 20px;
+    height: 8px;
+    border-radius: 999px;
+    margin-right: 0.35rem;
+    vertical-align: middle;
+  }
+</style>
+</head>
+<body>
+<main class="main">
+  <div class="crumbs"><a href="#">Projects</a> / Harbour Migration</div>
+  <div class="page-head">
+    <div>
+      <h1>Harbour Migration</h1>
+      <div class="subtitle">PRJ-4417 · Jul – Oct 2026</div>
+    </div>
+    <div class="toolbar" style="margin:0">
+      <button class="btn">Week</button>
+      <button class="btn primary">Month</button>
+      <button class="btn">Quarter</button>
+    </div>
+  </div>
+
+  <div class="mockup-note">
+    <strong>Variant 5 — Timeline.</strong> An epic-level gantt where a row
+    expands into its task bars. Answers "are we going to make the date?" instead
+    of "what is everyone doing" — it is the only variant that shows overlap and
+    sequencing. Requires start and due dates on every entity to be worth much.
+    Note rela already has a gantt view; this is the nested-rollup version of it.
+  </div>
+
+  <div class="card tl">
+    <div class="tl-inner">
+      <div class="row head-row">
+        <div class="gutter" style="font-size:0.7rem;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted-text);font-weight:700">Epic / task</div>
+        <div class="months" style="position:relative">
+          <div>July</div><div>August</div><div>September</div><div>October</div>
+          <span class="today-flag">Today</span>
+        </div>
+      </div>
+
+      <!-- EPIC-19 done -->
+      <div class="row">
+        <div class="gutter">
+          <div class="epic-label">Discovery &amp; sizing <span class="eid">EPIC-19</span></div>
+          <div class="sub">
+            <span class="bar"><span class="s-done" style="width:100%"></span></span>
+            <span class="badge done">Done</span>
+          </div>
+        </div>
+        <div class="track">
+          <div class="today"></div>
+          <div class="bar-epic done" style="left:1%;width:28%">
+            <span class="fill" style="width:100%"></span>
+            <span>Discovery &amp; sizing · 100%</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- EPIC-21 expanded -->
+      <div class="row">
+        <div class="gutter">
+          <div class="epic-label">Cutover tooling <span class="eid">EPIC-21</span></div>
+          <div class="sub">
+            <span class="bar">
+              <span class="s-done" style="width:55%"></span>
+              <span class="s-doing" style="width:18%"></span>
+              <span class="s-blocked" style="width:9%"></span>
+            </span>
+            <span class="badge doing">55%</span>
+          </div>
+        </div>
+        <div class="track">
+          <div class="today"></div>
+          <div class="bar-epic" style="left:22%;width:56%">
+            <span class="fill" style="width:55%"></span>
+            <span>Cutover tooling · 55%</span>
+          </div>
+        </div>
+      </div>
+      <div class="row">
+        <div class="gutter"><div class="task-label">TSK-118 Inventory legacy jobs</div></div>
+        <div class="track"><div class="today"></div><div class="bar-task done" style="left:23%;width:12%">Done</div></div>
+      </div>
+      <div class="row">
+        <div class="gutter"><div class="task-label">TSK-124 Batch migrator CLI</div></div>
+        <div class="track"><div class="today"></div><div class="bar-task" style="left:40%;width:22%">In progress</div></div>
+      </div>
+      <div class="row">
+        <div class="gutter"><div class="task-label">TSK-131 Rollback path</div></div>
+        <div class="track"><div class="today"></div><div class="bar-task blocked" style="left:46%;width:16%">Blocked</div></div>
+      </div>
+      <div class="row">
+        <div class="gutter"><div class="task-label">TSK-140 Operator runbook</div></div>
+        <div class="track"><div class="today"></div><div class="bar-task todo" style="left:64%;width:14%">To do</div></div>
+      </div>
+
+      <!-- EPIC-22 at risk -->
+      <div class="row">
+        <div class="gutter">
+          <div class="epic-label">Schema reconciliation <span class="eid">EPIC-22</span></div>
+          <div class="sub">
+            <span class="bar">
+              <span class="s-done" style="width:20%"></span>
+              <span class="s-doing" style="width:15%"></span>
+              <span class="s-blocked" style="width:20%"></span>
+            </span>
+            <span class="badge at-risk">At risk</span>
+          </div>
+        </div>
+        <div class="track">
+          <div class="today"></div>
+          <div class="bar-epic risk" style="left:34%;width:44%">
+            <span class="fill" style="width:20%"></span>
+            <span>Schema reconciliation · 20%</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- EPIC-23 -->
+      <div class="row">
+        <div class="gutter">
+          <div class="epic-label">Access control review <span class="eid">EPIC-23</span></div>
+          <div class="sub">
+            <span class="bar">
+              <span class="s-done" style="width:70%"></span>
+              <span class="s-doing" style="width:10%"></span>
+            </span>
+            <span class="badge doing">70%</span>
+          </div>
+        </div>
+        <div class="track">
+          <div class="today"></div>
+          <div class="bar-epic" style="left:44%;width:42%">
+            <span class="fill" style="width:70%"></span>
+            <span>Access control review · 70%</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- EPIC-24 not started -->
+      <div class="row">
+        <div class="gutter">
+          <div class="epic-label">Decommission old stack <span class="eid">EPIC-24</span></div>
+          <div class="sub">
+            <span class="bar"></span>
+            <span class="badge todo">Not started</span>
+          </div>
+        </div>
+        <div class="track">
+          <div class="today"></div>
+          <div class="bar-epic" style="left:74%;width:24%">
+            <span>Decommission old stack · 0%</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="legend-row">
+    <span><i style="background:var(--success-color)"></i>Done</span>
+    <span><i style="background:var(--accent-color)"></i>In progress</span>
+    <span><i style="background:var(--error-color)"></i>Blocked</span>
+    <span><i style="border:1px dashed var(--border-color);height:6px"></i>To do</span>
+    <span><i style="background:var(--error-color);width:2px;height:14px;border-radius:0"></i>Today</span>
+  </div>
+</main>
+<script src="shell.js"></script>
+</body>
+</html>

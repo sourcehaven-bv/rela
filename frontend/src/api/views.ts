@@ -113,11 +113,35 @@ export interface ViewGroup {
   entities?: ViewEntity[]
 }
 
+// One row of a `display: nested` section: an entity, its configured cells,
+// and the rows nested under it.
+//
+// Recursive so the shape survives a future multi-level section, but the server
+// emits exactly two levels today.
+export interface ViewTreeNode {
+  entity: ViewEntity
+  // Columns declared for this node's LEVEL and entity type
+  // (`parent_columns` / `child_columns`). Per node rather than per section: a
+  // nested section has no single column list, since the two levels differ and
+  // each may reach several entity types.
+  columns?: ViewColumn[]
+  // This node's values, positional over `columns`.
+  cells?: ViewCell[]
+  children?: ViewTreeNode[]
+  // How many children this node HAS. Exceeds children.length once the server's
+  // node budget truncates, and counts only children the caller may read.
+  childCount?: number
+  // True when children exist that this response does not carry. Needed because
+  // `children` is omitted when empty, so without it a truncated node looks
+  // identical to a childless one.
+  hasMoreChildren?: boolean
+}
+
 // View section with all display types
 export interface ViewSection {
   heading: string
   sectionId: string
-  display: 'properties' | 'content' | 'table' | 'cards' | 'list'
+  display: 'properties' | 'content' | 'table' | 'cards' | 'list' | 'nested'
   isEmpty: boolean
   emptyMessage?: string
   fields?: ViewSectionField[]
@@ -128,6 +152,10 @@ export interface ViewSection {
   isGrouped: boolean
   content?: string
   hasContent: boolean
+  // Parent rows of a `display: nested` section; absent for every other mode.
+  tree?: ViewTreeNode[]
+  // True when the node budget stopped a visible row from being emitted.
+  truncated?: boolean
 }
 
 // Mention is the resolved target of an entity-ID code span found inside

@@ -9,7 +9,13 @@ import { fetchView, getCommands, getErrorMessage } from '@/api'
 import { useWorld, worldQuery, DEFAULT_WORLD } from '@/composables/useWorld'
 import { entityRef, refBareId, refFace } from '@/utils/entityRef'
 import { worldText, type WorldTextVars } from '@/utils/worldText'
-import type { ViewEntity, ViewResponse, ViewSection, ViewSectionField } from '@/api'
+import type {
+  ViewEntity,
+  ViewResponse,
+  ViewSection,
+  ViewSectionField,
+  ViewTreeNode,
+} from '@/api'
 import type { Entity } from '@/types'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
 import { useAutoSave } from '@/composables/useAutoSave'
@@ -34,8 +40,9 @@ import Badge from '@/components/common/Badge.vue'
 import InaccessibleField from '@/components/common/InaccessibleField.vue'
 import PropertyDisplay from '@/components/common/PropertyDisplay.vue'
 import type { PropertyItem } from '@/components/common/PropertyDisplay.vue'
+import { ChevronRight } from 'lucide-vue-next'
 import { defaultRegistry } from '@/widgets/registry'
-import { viewFieldRoutingHint } from '@/widgets/viewRouting'
+import { isDenseEmpty, viewFieldRoutingHint } from '@/widgets/viewRouting'
 import type { WidgetRoutingHint } from '@/widgets/types'
 import type { PropertyDef } from '@/types'
 import type { Component } from 'vue'
@@ -1171,6 +1178,15 @@ interface FieldRow {
   hint: WidgetRoutingHint
 }
 
+// One resolved cell of a nested row: the widget to render plus the raw value
+// that widget wants. `property` is only a v-for key.
+interface NestedCell {
+  property: string
+  propertyName: string
+  widget: Component
+  value: unknown
+}
+
 // fieldRowsFor returns the precomputed FieldRow array for one entity's
 // fields. Cards/list templates iterate this instead of calling helper
 // functions inline per cell.
@@ -1307,6 +1323,54 @@ function rowDisplayValue(ent: ViewEntity, field: ViewSectionField): unknown {
     return ent._props[field.property]
   }
   return field.values ?? []
+}
+
+// nestedCellsFor resolves one nested row's configured `columns:` into widget
+// renders, so a nested section shows dates, enums and booleans the way every
+// other surface does instead of the raw stored string.
+//
+// Two deliberate choices:
+//
+// It reads the RAW value from `_props` rather than the cell's pre-stringified
+// `values`, because the widget is the thing that formats: handing DateWidget
+// `"2026-08-12 00:00:00 +0000 UTC"` would render that verbatim.
+//
+// It routes on the cell's server-resolved `widget` name, NOT through
+// viewFieldRoutingHint. That helper maps any truthy propType to 'enum-list' to
+// preserve the cards/list Badge behaviour, which would badge a date. The
+// server already resolved the right widget per property (`resolveWidget`), so
+// asking the registry for it by name keeps one type→widget decision instead of
+// a second heuristic that disagrees with it.
+//
+// Columns come from the NODE, not the section: a nested section has no single
+// column list, because `parent_columns` and `child_columns` are each keyed by
+// entity type, so a row's columns depend on its level and its type.
+//
+// Relation columns have no property and no relation widget, so they keep the
+// server's joined string via the text fallback — the same fall-through
+// EntityList documents.
+function nestedCellsFor(node: ViewTreeNode): NestedCell[] {
+  const out: NestedCell[] = []
+  for (const [idx, col] of (node.columns ?? []).entries()) {
+    const cell = node.cells?.[idx]
+    const values = cell?.values ?? []
+    const raw =
+      col.property && node.entity._props && col.property in node.entity._props
+        ? node.entity._props[col.property]
+        : values
+    // Empty renders nothing on a dense row — the same contract as a blank
+    // table cell, so a sparsely-set column does not become a row of dashes
+    // (see isDenseEmpty).
+    if (isDenseEmpty(raw)) continue
+
+    out.push({
+      property: col.property ?? col.relation ?? String(idx),
+      propertyName: col.property ?? '',
+      widget: defaultRegistry.resolve(cell?.widget, undefined),
+      value: raw,
+    })
+  }
+  return out
 }
 
 // Owner → (sectionIdx, rowIdx) index, rebuilt per viewData change so
@@ -2134,6 +2198,97 @@ watch(
               </tbody>
             </table>
           </div>
+
+          <!-- display: nested — a two-level parent→child tree.
+               Native <details> rather than a JS-managed expanded set: the
+               browser gives keyboard support, find-in-page expansion and the
+               correct ARIA for free, and the section has no cross-row state
+               that would need lifting. -->
+          <!-- The server cut rows at the node cap. Without saying so the list
+               reads as complete, which is the whole reason the flag exists. -->
+          <div v-else-if="section.display === 'nested'" class="nested-tree-wrap">
+            <p v-if="section.truncated" class="nested-truncated">
+              Some rows were not shown because this section hit its size limit.
+            </p>
+            <div class="nested-tree">
+              <!-- Open by default: a collapsed tree hides the thing the section
+                   exists to show, and the node budget already bounds how much
+                   arrives. Native <details> keeps keyboard support,
+                   find-in-page expansion and the right ARIA for free. -->
+              <details
+                v-for="node in section.tree"
+                :key="node.entity.id"
+                class="nested-node"
+                open
+              >
+                <summary class="nested-row">
+                  <ChevronRight class="nested-twisty" :size="18" aria-hidden="true" />
+                  <!-- .stop so following the link does not ALSO toggle the
+                       disclosure: Chrome routes <summary> activation through the
+                       bubbling click, so stopping it there suppresses the toggle
+                       while the twisty and the rest of the row still expand.
+                       The child link below needs no .stop — it is not inside a
+                       <summary>, so it has nothing to suppress. -->
+                  <component
+                    :is="entityTarget(node.entity) ? RouterLink : 'span'"
+                    class="nested-link"
+                    v-bind="entityTarget(node.entity) ? { to: entityTarget(node.entity) } : {}"
+                    @click.stop
+                  >
+                    <span class="entity-title">{{ node.entity.title }}</span>
+                    <span class="entity-id">{{ node.entity.id }}</span>
+                  </component>
+                  <WorldBadge :world="node.entity._world" :entity-type="node.entity.type" />
+                  <span class="nested-values">
+                    <component
+                      :is="cell.widget"
+                      v-for="cell in nestedCellsFor(node)"
+                      :key="cell.property"
+                      :model-value="cell.value"
+                      :mode="'display'"
+                      :property-name="cell.propertyName"
+                    />
+                  </span>
+                </summary>
+
+                <div v-if="node.children?.length" class="nested-children">
+                  <div
+                    v-for="child in node.children"
+                    :key="child.entity.id"
+                    :data-entity-id="child.entity.id"
+                    class="nested-child"
+                  >
+                    <component
+                      :is="entityTarget(child.entity) ? RouterLink : 'span'"
+                      class="nested-link"
+                      v-bind="entityTarget(child.entity) ? { to: entityTarget(child.entity) } : {}"
+                    >
+                      <span class="entity-title">{{ child.entity.title }}</span>
+                      <span class="entity-id">{{ child.entity.id }}</span>
+                    </component>
+                    <WorldBadge :world="child.entity._world" :entity-type="child.entity.type" />
+                    <span class="nested-values">
+                      <component
+                        :is="cell.widget"
+                        v-for="cell in nestedCellsFor(child)"
+                        :key="cell.property"
+                        :model-value="cell.value"
+                        :mode="'display'"
+                        :property-name="cell.propertyName"
+                      />
+                    </span>
+                  </div>
+                </div>
+                <div v-else class="nested-children nested-empty">No items</div>
+
+                <!-- The server withheld children; say so rather than letting the
+                     list read as complete. -->
+                <div v-if="node.hasMoreChildren" class="nested-children nested-more">
+                  Showing {{ node.children?.length ?? 0 }} of {{ node.childCount }}
+                </div>
+              </details>
+            </div>
+          </div>
         </section>
 
         <!-- External documents (renders only when configured for this type).
@@ -2682,6 +2837,115 @@ watch(
 /* Table */
 .table-wrapper {
   overflow-x: auto;
+}
+
+/* display: nested — parent rows that expand to their children. */
+.nested-truncated {
+  margin: 0 0 8px;
+  font-size: var(--font-size-sm);
+  color: var(--text-color);
+  background: var(--hover-bg);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+}
+
+.nested-tree {
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.nested-node:not(:last-child) {
+  border-bottom: 1px solid var(--border-color);
+}
+
+.nested-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  padding: 8px 12px;
+  background: var(--card-bg);
+  cursor: pointer;
+  /* The default triangle would sit beside our own twisty. */
+  list-style: none;
+}
+
+.nested-row::-webkit-details-marker {
+  display: none;
+}
+
+.nested-row:hover {
+  background: var(--hover-bg);
+}
+
+.nested-twisty {
+  flex: none;
+  color: var(--muted-text);
+  transition: transform 0.15s ease;
+}
+
+.nested-node[open] > .nested-row .nested-twisty {
+  transform: rotate(90deg);
+}
+
+.nested-link {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-sm);
+  min-width: 0;
+  text-decoration: none;
+  color: inherit;
+}
+
+.nested-link:hover .entity-title {
+  text-decoration: underline;
+}
+
+/* Column values sit right-aligned at the end of the row. Each is rendered by
+   its property's widget, so an enum arrives as a Badge and a date as a
+   formatted string — the same treatment every other surface gives it. */
+.nested-values {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  flex: none;
+  font-size: var(--font-size-sm);
+  color: var(--muted-text);
+  white-space: nowrap;
+}
+
+.nested-children {
+  border-top: 1px solid var(--border-color);
+  background: var(--bg-color);
+}
+
+.nested-child {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  padding: 6px 12px 6px 32px;
+  font-size: var(--font-size-dense);
+}
+
+.nested-child:not(:last-child) {
+  border-bottom: 1px solid var(--border-color);
+}
+
+.nested-child:hover {
+  background: var(--hover-bg);
+}
+
+.nested-empty,
+.nested-more {
+  padding: 6px 12px 6px 32px;
+  font-size: var(--font-size-sm);
+  color: var(--muted-text);
+}
+
+.nested-more {
+  border-top: 1px solid var(--border-color);
 }
 
 .table-group {

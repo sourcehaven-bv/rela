@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Project → epic → task overview — mockups</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+  .lede { max-width: 62ch; color: var(--muted-text); margin-bottom: 1.75rem; }
+
+  .options { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fill, minmax(400px, 1fr)); }
+
+  .opt { padding: 1.1rem 1.25rem; display: flex; flex-direction: column; }
+  .opt h2 { font-size: 1.05rem; margin-bottom: 0.15rem; }
+  .opt h2 a { text-decoration: none; }
+  .opt .tag {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--muted-text);
+    font-weight: 700;
+    margin-bottom: 0.6rem;
+  }
+  .opt p { font-size: 0.87rem; margin-bottom: 0.75rem; }
+
+  .pro-con { font-size: 0.83rem; display: grid; gap: 0.3rem; margin-bottom: 0.9rem; }
+  .pro-con div { display: flex; gap: 0.5rem; }
+  .pro-con .m { flex: none; font-weight: 700; width: 1rem; }
+  .pro-con .plus .m { color: var(--success-color); }
+  .pro-con .minus .m { color: var(--error-color); }
+
+  .opt .go { margin-top: auto; }
+
+  /* Tiny abstract preview of each layout. */
+  .thumb {
+    height: 74px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: var(--bg-color);
+    margin-bottom: 0.9rem;
+    padding: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    overflow: hidden;
+  }
+  .thumb i { display: block; background: var(--border-color); border-radius: 2px; height: 8px; }
+  .thumb i.a { background: var(--accent-color); opacity: 0.5; }
+  .thumb i.g { background: var(--success-color); opacity: 0.5; }
+  .thumb .ind { margin-left: 14px; height: 6px; }
+  .thumb .cols { display: flex; gap: 4px; flex: 1; }
+  .thumb .cols div { flex: 1; background: var(--hover-bg); border-radius: 3px; padding: 3px; display: flex; flex-direction: column; gap: 3px; }
+  .thumb .cols i { height: 7px; background: var(--card-bg); border: 1px solid var(--border-color); }
+  .thumb .tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; flex: 1; }
+  .thumb .tiles div { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 3px; }
+  .thumb .gantt { position: relative; flex: 1; }
+  .thumb .gantt i { position: absolute; height: 7px; border-radius: 999px; }
+
+  table.matrix { width: 100%; border-collapse: collapse; font-size: 0.84rem; margin-top: 2rem; }
+  table.matrix th, table.matrix td {
+    text-align: left;
+    padding: 0.5rem 0.7rem;
+    border-bottom: 1px solid var(--border-color);
+  }
+  table.matrix th {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--muted-text);
+  }
+  table.matrix td.y { color: var(--success-color); font-weight: 700; }
+  table.matrix td.n { color: var(--muted-text); }
+</style>
+</head>
+<body>
+<main class="main">
+  <h1>Project → epic → task overview</h1>
+  <p class="lede">
+    Five static mockups of a nested project overview: open a project, see every
+    epic with a done/ongoing rollup, and drill into the tasks underneath. Same
+    fake data throughout (PRJ-4417 "Harbour Migration", 6 epics, 48 tasks) so the
+    layouts are directly comparable. Colours are rela's real design tokens; the
+    button top-right toggles dark mode.
+  </p>
+
+  <div class="options">
+    <article class="card opt">
+      <div class="thumb">
+        <i class="a"></i><i class="ind"></i><i class="ind"></i><i></i><i></i>
+      </div>
+      <h2><a href="1-accordion.html">1 · Accordion</a></h2>
+      <div class="tag">Closest to today's list view</div>
+      <p>Collapsible epic rows, each with its own rollup bar; tasks indent underneath the open one.</p>
+      <div class="pro-con">
+        <div class="plus"><span class="m">+</span><span>Scales to many epics; collapsed by default</span></div>
+        <div class="plus"><span class="m">+</span><span>Degrades cleanly to a narrow screen</span></div>
+        <div class="minus"><span class="m">−</span><span>Can only compare epics you've opened</span></div>
+      </div>
+      <div class="go">
+        <a class="btn primary" href="1-accordion.html" style="text-decoration:none">Open mockup</a>
+        <a class="btn" href="1b-accordion-at-scale.html" style="text-decoration:none">See it at scale →</a>
+      </div>
+    </article>
+
+    <article class="card opt">
+      <div class="thumb">
+        <div class="cols">
+          <div><i></i><i></i></div><div><i></i></div><div><i></i><i></i></div>
+        </div>
+      </div>
+      <h2><a href="2-swimlanes.html">2 · Swimlanes</a></h2>
+      <div class="tag">Kanban, one lane per epic</div>
+      <p>Board with a lane per epic and a column per status, so progress reads left-to-right.</p>
+      <div class="pro-con">
+        <div class="plus"><span class="m">+</span><span>Natural drag-and-drop to change status</span></div>
+        <div class="plus"><span class="m">+</span><span>Bottlenecks are visible as a tall column</span></div>
+        <div class="minus"><span class="m">−</span><span>Hungry for horizontal space; long scroll</span></div>
+      </div>
+      <div class="go"><a class="btn primary" href="2-swimlanes.html" style="text-decoration:none">Open mockup</a></div>
+    </article>
+
+    <article class="card opt">
+      <div class="thumb">
+        <i></i><i class="ind"></i><i class="ind"></i><i></i><i class="ind"></i><i></i>
+      </div>
+      <h2><a href="3-tree-table.html">3 · Tree table</a></h2>
+      <div class="tag">Densest; report-shaped</div>
+      <p>One table, epics as parent rows carrying derived rollups, tasks as indented children.</p>
+      <div class="pro-con">
+        <div class="plus"><span class="m">+</span><span>Sortable, selectable columns, CSV export</span></div>
+        <div class="plus"><span class="m">+</span><span>Most information per screen</span></div>
+        <div class="minus"><span class="m">−</span><span>Reads as a spreadsheet, not a status view</span></div>
+      </div>
+      <div class="go"><a class="btn primary" href="3-tree-table.html" style="text-decoration:none">Open mockup</a></div>
+    </article>
+
+    <article class="card opt">
+      <div class="thumb">
+        <div class="tiles"><div></div><div></div><div></div><div></div></div>
+      </div>
+      <h2><a href="4-cards.html">4 · Epic cards</a></h2>
+      <div class="tag">Weekly status read</div>
+      <p>A tile per epic with a donut rollup and only the tasks that need attention — late, blocked, in flight.</p>
+      <div class="pro-con">
+        <div class="plus"><span class="m">+</span><span>Fastest answer to "which epic needs me?"</span></div>
+        <div class="plus"><span class="m">+</span><span>Reflows to any width for free</span></div>
+        <div class="minus"><span class="m">−</span><span>Never shows the full task list</span></div>
+      </div>
+      <div class="go"><a class="btn primary" href="4-cards.html" style="text-decoration:none">Open mockup</a></div>
+    </article>
+
+    <article class="card opt">
+      <div class="thumb">
+        <div class="gantt">
+          <i class="g" style="left:4%;width:30%;top:2px"></i>
+          <i class="a" style="left:26%;width:44%;top:14px"></i>
+          <i class="a" style="left:38%;width:20%;top:26px"></i>
+          <i style="left:60%;width:32%;top:38px"></i>
+        </div>
+      </div>
+      <h2><a href="5-timeline.html">5 · Timeline</a></h2>
+      <div class="tag">Schedule and sequencing</div>
+      <p>Epic-level gantt, each row expanding into its task bars, with a today marker.</p>
+      <div class="pro-con">
+        <div class="plus"><span class="m">+</span><span>Only variant showing overlap and slippage</span></div>
+        <div class="plus"><span class="m">+</span><span>Extends rela's existing gantt view</span></div>
+        <div class="minus"><span class="m">−</span><span>Needs start + due dates on everything</span></div>
+      </div>
+      <div class="go"><a class="btn primary" href="5-timeline.html" style="text-decoration:none">Open mockup</a></div>
+    </article>
+
+    <article class="card opt">
+      <div class="thumb">
+        <i style="width:35%"></i>
+        <i class="a"></i><i class="ind"></i><i class="ind"></i>
+        <i style="width:35%"></i>
+      </div>
+      <h2><a href="6-detail-widget.html">6 · Detail widget</a></h2>
+      <div class="tag">Integration, not a new layout</div>
+      <p>Variant 1 as one <code>ViewSection</code> on the ordinary entity detail page, between the properties and relation-card sections.</p>
+      <div class="pro-con">
+        <div class="plus"><span class="m">+</span><span>No router, sidebar, endpoint or ACL work</span></div>
+        <div class="plus"><span class="m">+</span><span>Upgrades a section a project page already has</span></div>
+        <div class="minus"><span class="m">−</span><span>Section wire format is flat; needs a nesting shape</span></div>
+      </div>
+      <div class="go"><a class="btn primary" href="6-detail-widget.html" style="text-decoration:none">Open mockup</a></div>
+    </article>
+  </div>
+
+  <h2 style="font-size:1.05rem;margin-top:2.5rem">At a glance</h2>
+  <table class="matrix">
+    <thead>
+      <tr>
+        <th>Question the view answers</th>
+        <th>Accordion</th>
+        <th>Swimlanes</th>
+        <th>Tree table</th>
+        <th>Cards</th>
+        <th>Timeline</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td>How far along is each epic?</td><td class="y">yes</td><td class="y">yes</td><td class="y">yes</td><td class="y">yes</td><td class="y">yes</td></tr>
+      <tr><td>What are all the tasks?</td><td class="y">yes</td><td class="y">yes</td><td class="y">yes</td><td class="n">partial</td><td class="y">yes</td></tr>
+      <tr><td>What is stuck right now?</td><td class="n">partial</td><td class="y">yes</td><td class="n">partial</td><td class="y">yes</td><td class="y">yes</td></tr>
+      <tr><td>Will we hit the date?</td><td class="n">no</td><td class="n">no</td><td class="n">partial</td><td class="n">no</td><td class="y">yes</td></tr>
+      <tr><td>Can I change status here?</td><td class="n">no</td><td class="y">yes</td><td class="n">no</td><td class="n">no</td><td class="n">no</td></tr>
+      <tr><td>Works on a phone?</td><td class="y">yes</td><td class="n">no</td><td class="n">partial</td><td class="y">yes</td><td class="n">no</td></tr>
+      <tr><td>Needs dates on entities?</td><td class="n">no</td><td class="n">no</td><td class="n">no</td><td class="n">no</td><td class="y">required</td></tr>
+    </tbody>
+  </table>
+</main>
+<script src="shell.js"></script>
+</body>
+</html>
