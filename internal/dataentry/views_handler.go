@@ -498,6 +498,13 @@ func (h *viewsHandler) handleV1Views(w http.ResponseWriter, r *http.Request) {
 	// executeView + serializeEntityForWire. Gate BEFORE executeView so a hidden
 	// id is indistinguishable from a missing one (404, no oracle) and the view
 	// pipeline never runs for a denied principal.
+	//
+	// This gates only the ENTRY. The view's TRAVERSAL is separately
+	// source-gated in loadViewEntities (BUG-9Z20WH), so a hidden intermediary
+	// can neither be collected nor serve as a stepping-stone to a descendant
+	// reachable only through it. Together the two gates make _views an
+	// entity-read chokepoint for the entry AND for every entity the traversal
+	// surfaces.
 	if !h.gateRead(w, r, entityType, ref.ID) {
 		return
 	}

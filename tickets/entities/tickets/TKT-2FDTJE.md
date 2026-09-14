@@ -49,6 +49,36 @@ user was on — `available_on` is display scoping only.
 Compare the read path, which *does* gate: `history_handler.go` uses
 `gateReadOrNotFound` / `PermitsRead`.
 
+## The seam to use (UPDATED 2026-07-25)
+
+When this ticket was filed, the fix looked like hand-rolling `PermitsRead` /
+`ReadQuery` calls at each payload builder. **Since then the read-side ACL has
+been decomposed into `internal/visibility` decorators (DEC-ZBI39P, landed via
+TKT-ZF2DTV / #1197), and `internal/dataentry` already exposes the exact seams
+this ticket needs** — do NOT hand-roll gating:
+
+- **entity context** → `a.visibleReader.getVisible(ctx, entityType, id)`
+(see `api_v1.go:745`, `feed_handler.go:158`). Returns `(entity, found, err)`; a
+hidden entity comes back `found=false`, i.e. an indistinguishable 404, which is
+exactly the semantic this ticket wants.
+- **list context** → `a.scopedSortedEntities(ctx, typeName, query)`
+(`api_v1.go:282`) — the shared list pipeline that already applies ACL read
+scope. The list handler at `api_v1.go:581` is the reference caller.
+- **relations** → `visibleRelationIDs` (the neighbor-visibility gate the
+transform/export path uses per CLAUDE.md) is the tool for filtering
+`relationsForEntity` so hidden neighbors don't leak.
+
+This **simplifies** the ticket: the payload builders in `commands.go` should
+route through the same seam the GET handlers use, rather than the raw
+`h.services().Store` / `listFromStoreByTypes`. It also means the fix is
+consistent-by-construction with how every other read is gated, instead of a
+parallel gating path that could drift.
+
+Per CLAUDE.md's new rule ("Never redact a read that feeds a write"): command
+payloads are read-**out** (the script consumes them), not write-prep, so the
+visibility-wrapped read is correct here — there is no read-modify-write to
+clobber.
+
 ## Why this wasn't fixed in TKT-MJ02AO
 
 Scoping the payload is a **behavior change to what existing commands receive**.
@@ -61,18 +91,18 @@ drive-by change inside a PR about authorization.
 
 **In scope:**
 
-- Scope `buildEntityInput` through `PermitsRead` — deny or 404 when the caller
-cannot read the requested entity
-- Scope `buildListInput` through `ReadQuery` so the script sees only readable
-rows
-- Decide and document the semantics: does a partially-readable list yield a
-filtered payload (quiet) or an error (loud)? Filtered matches how the rest of
-the read path behaves; loud is safer for scripts that assume completeness
-- Decide whether `relationsForEntity` should filter relations whose far endpoint
-is unreadable (it currently returns both directions unconditionally)
-- **Then reconsider TKT-MJ02AO's view deferral** — if the traversal can be
-read-gate scoped by the same mechanism, `context: view` may become grantable and
-`permission:` can be honored for it
+- Route `buildEntityInput` through `a.visibleReader.getVisible` — a hidden
+entity yields the same 404 as a nonexistent one
+- Route `buildListInput` through `a.scopedSortedEntities` so the script sees
+only readable rows
+- Filter `relationsForEntity` via `visibleRelationIDs` so hidden neighbors
+don't leak into the payload
+- Decide and document the semantics: a partially-readable list yields a
+filtered payload (quiet) — matches how the rest of the read path behaves and how
+`scopedSortedEntities` already works; a loud error would fight the seam
+- **Then reconsider TKT-MJ02AO's view deferral** — `executeView`'s traversal
+would need the same visibility wrapping; if that composes cleanly, `context:
+view` may become grantable and `permission:` honored for it
 - Update `docs/acl-security.md` (the table currently documents the *unscoped*
 behavior) and `docs/data-entry.md`
 - Migration note: scripts may receive fewer entities than before
@@ -80,16 +110,20 @@ behavior) and `docs/data-entry.md`
 **Out of scope:**
 
 - Changing who may *execute* a command (TKT-MJ02AO, done)
-- The launcher routes (separate ticket)
+- The launcher routes (TKT-JRY8V5)
+- Re-architecting the visibility seam — this ticket *consumes* it
 
 ## Acceptance criteria
 
 - An `entity`-context command invoked with an `entity_id` the principal cannot
-read does not receive that entity (404 or deny, per the recorded decision)
-- A `list`-context command receives only rows the principal may read
-- Under `NopACL` payloads are byte-identical to today (regression test)
-- The chosen partial-readability semantics are documented and pinned by a test
+read receives the same 404 as a nonexistent id (via `getVisible`)
+- A `list`-context command receives only rows the principal may read (via
+`scopedSortedEntities`)
+- Hidden neighbor relations do not appear in an entity command's payload
+- Under `NopACL` payloads are byte-identical to today (regression test — the
+visibility seam is a pass-through under NopACL)
+- The filtered-not-errored semantics are documented and pinned by a test
 - The view deferral is either lifted (with `permission:` honored) or
-re-justified in writing against the new scoping
+re-justified in writing against the visibility-wrapped traversal
 - `docs/acl-security.md`'s "What a command permission actually confers" table
 is updated to describe the scoped behavior
