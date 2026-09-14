@@ -8,6 +8,15 @@ Declared under `webhooks:`; **the hook id is the URL segment**, so
 `webhooks: { icinga-alert: ... }` serves `POST /hooks/icinga-alert`. There is no
 `path:` key.
 
+**When this vocabulary is not enough**, a
+[request-scoped action](data-entry.md#request-scoped-actions) is the escape
+hatch: an odd payload shape, a response a third party needs in a specific form,
+or logic that is not find/create/append. It is the same request in — a parsed
+body, the query string, an allowlisted set of headers, under the same size cap —
+but the mapping is Lua and the response is the script's to choose. Reach for it
+when a hook here would need a `condition:` or a second pass; the declarative
+route is the better answer whenever it fits.
+
 ## Producer authentication is NOT rela's job
 
 **rela does not authenticate the sender.** There is no HMAC verifier, no shared
@@ -259,9 +268,39 @@ then:
       content: "- {{now}} {{body.state}}"
 ```
 
-The line is appended after the last content line of the named section (before the
-next heading of the same or higher level). Heading matching is
+The content is appended after the last content line of the named section (before
+the next heading of the same or higher level). Heading matching is
 case-insensitive.
+
+### Multi-line content is yours; multi-line values are not
+
+`content:` may span several lines, so an entry can have structure:
+
+```yaml
+then:
+  - append_section:
+      section: Timeline
+      content: |-
+        #### {{now}} — {{body.host}}
+
+        - state: {{body.state}}
+        - output: `{{body.output}}`
+```
+
+Every **interpolated value** is flattened to one line first: `\n` and `\r` in
+`{{body.output}}` become spaces. That is the boundary that matters — a producer
+that could emit a newline could emit `## Heading`, which would become a SIBLING
+of the section it was appended to, so every later delivery would land above it
+and the document would silently reshape itself.
+
+The shape you write in `content:` is not touched. It is your document; a heading
+level that collides with the surrounding structure is yours to get wrong, the
+same as any other line you put in a template.
+
+Flattening happens during interpolation, so it applies to **every** `{{...}}` in
+a hook — `set:` values, `find:` match values and `create_if_missing:` properties
+as well as `content:`. A newline a producer sends never survives into a property
+value or a match key either.
 
 **A missing section is created**, as a new `## <section>` at the end of the body,
 rather than erroring. For an alert pipeline an error would discard a delivery the

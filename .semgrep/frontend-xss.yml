@@ -1,0 +1,84 @@
+# Frontend DOM-XSS rules.
+#
+# These are hand-written because Semgrep's OSS registry packs (p/xss,
+# p/javascript, p/typescript, p/owasp-top-ten) contain no browser DOM-XSS
+# rules — verified by canary: a literal `location.search -> innerHTML` flow
+# produces zero findings under all of them. The rules below are the minimum
+# needed for the CI job to be more than a green checkmark.
+#
+# frontend/ renders user-authored markdown to HTML, so unsanitized HTML sinks
+# are the risk that matters most in this codebase.
+rules:
+  - id: dom-innerhtml-assignment
+    patterns:
+      - pattern: $EL.innerHTML = $X
+      # String literals are author-controlled, not user input.
+      - pattern-not: $EL.innerHTML = "..."
+    message: >-
+      Assignment to innerHTML with a non-literal value can introduce DOM XSS.
+      Route the value through DOMPurify.sanitize(), or use textContent when
+      markup is not required. If the value is provably safe, add a
+      `nosemgrep: dom-innerhtml-assignment` comment stating why.
+    languages: [javascript, typescript]
+    severity: ERROR
+
+  - id: dom-outerhtml-assignment
+    patterns:
+      - pattern: $EL.outerHTML = $X
+      - pattern-not: $EL.outerHTML = "..."
+    message: >-
+      Assignment to outerHTML with a non-literal value can introduce DOM XSS.
+      Sanitize the value or use textContent.
+    languages: [javascript, typescript]
+    severity: ERROR
+
+  - id: dom-insert-adjacent-html
+    patterns:
+      - pattern: $EL.insertAdjacentHTML($POS, $X)
+      - pattern-not: $EL.insertAdjacentHTML($POS, "...")
+    message: >-
+      insertAdjacentHTML with a non-literal value can introduce DOM XSS.
+      Sanitize the value first.
+    languages: [javascript, typescript]
+    severity: ERROR
+
+  - id: dom-document-write
+    pattern-either:
+      - pattern: document.write($X)
+      - pattern: document.writeln($X)
+    message: >-
+      document.write() writes unparsed markup to the page and is a DOM XSS
+      sink. Build nodes with the DOM API instead.
+    languages: [javascript, typescript]
+    severity: ERROR
+
+  - id: js-eval-with-variable
+    patterns:
+      - pattern-either:
+          - pattern: eval($X)
+          - pattern: new Function($X)
+      - pattern-not: eval("...")
+      - pattern-not: new Function("...")
+    message: >-
+      eval()/new Function() on a non-literal executes arbitrary code if the
+      value is attacker-influenced. Use a parser (e.g. JSON.parse) instead.
+    languages: [javascript, typescript]
+    severity: ERROR
+
+  # Note: there is deliberately NO blanket v-html rule. v-html is used
+  # throughout the SPA to render markdown that has already been sanitized by
+  # renderMarkdown() (DOMPurify), so flagging every binding produces noise on
+  # correct code and trains reviewers to ignore the rule. The sanitizer itself
+  # is guarded by the innerHTML rule above plus the unit tests in
+  # frontend/src/utils/markdown.test.ts. Flag only the case where the
+  # sanitizer is explicitly bypassed.
+  - id: vue-v-html-raw-bypass
+    patterns:
+      - pattern-regex: 'v-html\s*=\s*"[^"]*\b(rawHtml|unsafe[A-Za-z]*|bypassSanitiz\w*)\b'
+    message: >-
+      v-html bound to an explicitly raw/unsanitized value. Route it through
+      renderMarkdown()/DOMPurify.sanitize() before binding.
+    languages: [generic]
+    paths:
+      include: ["*.vue"]
+    severity: ERROR

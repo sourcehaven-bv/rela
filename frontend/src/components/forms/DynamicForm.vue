@@ -252,6 +252,19 @@ const saving = ref(false)
 const dirty = ref(false)
 const errors = ref<Record<string, string>>({})
 const originalData = ref<string>('')
+// TKT-7YHKD1: polite live region for "Create & add another". Everything else
+// about that action is visual — the form blanks, a toast appears — and the
+// form's only other live region is the error summary, which is gated on there
+// being errors. Repeated keyboard entry is precisely the workflow an AT user
+// benefits from most, so silence here would be the wrong default.
+const statusAnnouncement = ref('')
+function announce(message: string) {
+  // Clear first so an identical consecutive message still re-announces.
+  statusAnnouncement.value = ''
+  nextTick(() => {
+    statusAnnouncement.value = message
+  })
+}
 const helpModalOpen = ref(false)
 const templates = ref<Template[]>([])
 const selectedTemplate = ref<string>('')
@@ -847,6 +860,155 @@ function getTemplateLabel(name: string): string {
   return name.charAt(0).toUpperCase() + name.slice(1)
 }
 
+// TKT-7YHKD1 "Create & add another": return the create-mode form to a blank
+// state IN PLACE, without navigating and without remounting the component.
+//
+// The reset is CLEAN. A field or relation carries its value into the next
+// record only if the operator marked it `keep_on_add_another` in
+// data-entry.yaml. That default is the safe direction: a wrongly-cleared field
+// costs one re-entry, while a wrongly-kept one silently writes a stale value
+// into every subsequent record.
+//
+// Create-mode state lives in more places than the three obvious refs, and
+// anything missed here leaks record N into record N+1 — see the enumeration
+// below. Callers: handleSubmit('again') only. `onMounted` deliberately does
+// NOT route through this (it has no prior state to clear and its own ordering
+// around loadTemplates is different).
+async function resetCreateForm() {
+  if (isEdit.value || !formConfig.value) return
+
+  // Capture the carry-over values BEFORE clearing. Read `allFields` rather
+  // than the affordance-filtered `fields`: the carry-over set must not depend
+  // on incidental affordance state (same reasoning as RR-00VT for defaults).
+  const keptProps: Record<string, unknown> = {}
+  const keptRels: Record<string, string[]> = {}
+  // The id -> type map for the kept relations travels WITH them. `pickerTypes`
+  // is cleared below, and `reshapeLegacyToModern` returns null if it cannot
+  // resolve a type for every picker target — which makes handleSubmit abort the
+  // whole save with "unknown types, reload the form", while the widget still
+  // shows the kept peer. That is a silent lost record, so the reset does not
+  // leave it to chance.
+  //
+  // Belt-and-braces in practice: `saveGeneration++` remounts the picker, and
+  // RelationPicker's onMounted re-emits `update:types` for any pre-existing
+  // outgoing selection precisely to cover this, so the map refills itself
+  // (verified — removing this block keeps the e2e green). Kept anyway: it makes
+  // the reset self-sufficient rather than dependent on a child's mount timing,
+  // and the failure mode if that dependency ever breaks is a lost record with a
+  // misleading "reload the form" message.
+  const keptPickerTypes: Record<string, Map<string, string>> = {}
+  for (const f of allFields.value) {
+    if (!f.keep_on_add_another) continue
+    if (f.property && formData.value[f.property] !== undefined) {
+      keptProps[f.property] = formData.value[f.property]
+    }
+    if (f.relation && relations.value[f.relation]) {
+      keptRels[f.relation] = [...relations.value[f.relation]]
+      const types = pickerTypes.value[f.relation]
+      if (types) keptPickerTypes[f.relation] = new Map(types)
+    }
+  }
+
+  // Values. Content is never kept: a body is per-record by nature and there is
+  // no field-level key to mark it.
+  formData.value = {}
+  relations.value = {}
+  content.value = ''
+  errors.value = {}
+  userTouched.value = new Set()
+  pickerTypes.value = {}
+  stagedFiles.value = {}
+  // An INCOMING RelationPicker's selection is latched here, not in `relations`
+  // (updateIncomingPicker writes it via `incoming-changed`), so clearing
+  // `relations` and remounting the widget does not reach it. Leaving it would
+  // write record N's incoming relation onto record N+1 with the user having
+  // touched nothing. RelationCards genuinely never render in create mode (they
+  // need an entityId), but the picker does — the two share this map.
+  pendingCardChanges.value.clear()
+
+  // Staged-affordance verdicts describe the PREVIOUS record. Leaving them
+  // would render record N+1 against record N's dry-run — and the dry-run fails
+  // OPEN, so on failure the stale verdicts would persist with no signal.
+  // Reset to the pre-dry-run state and re-derive below.
+  fieldAffordances.value = {}
+  relationAffordances.value = {}
+  stagedVisibleProps.value = new Set()
+  stagedAffordancesReady.value = false
+
+  // Retained hidden-branch values belong to the form state we are replacing —
+  // the same reason loadEntity calls this.
+  //
+  // Belt-and-braces TODAY: the retention map is only ever populated in EDIT
+  // mode (useChangePolicy is gated on `enabled: () => isEdit.value` and
+  // returns early at its entry point, because "create has no stored value to
+  // lose"), so in create mode there is nothing here to release and no test can
+  // observe its absence. Kept anyway because the cost is one call and the
+  // failure it would guard is silent: if retention ever becomes enabled for
+  // create, a value retained while hidden on record N would be restored over a
+  // cleared field on N+1. Delete this only together with that gate.
+  hiddenPolicy.releaseAll()
+
+  // A clear-confirm dialog opened against the previous record must not apply
+  // to this one. `formGeneration` is the existing staleness token for exactly
+  // this ("bumped whenever the form's underlying entity state is replaced
+  // wholesale").
+  formGeneration.value++
+
+  // Remount the relation widgets. This is REQUIRED, not cosmetic: an
+  // incoming-direction RelationPicker keeps its selection in its own
+  // `incomingValue` ref and ignores the `value` prop entirely, so clearing
+  // `relations` above does not reach it — its record-N peers would re-emit as
+  // additions and be written to record N+1 as duplicate links.
+  saveGeneration.value++
+
+  // Release the one-shot create latch only now that the form is blank again.
+  createdEntityId.value = null
+
+  idControls.reset()
+  initializeDefaults()
+
+  // Re-apply the template the user actually has selected, from the templates
+  // already loaded at mount. NOT loadTemplates(): that refetches over HTTP per
+  // record and force-selects templates[0], discarding the user's pill choice.
+  const chosen = templates.value.find((t) => t.name === selectedTemplate.value)
+  if (chosen) applyTemplate(chosen)
+
+  // Kept values are re-applied AFTER defaults and the template, both of which
+  // write formData — otherwise either would clobber the carried-over value.
+  for (const [prop, value] of Object.entries(keptProps)) {
+    formData.value[prop] = value
+    // A kept value is one the user entered, so it must stay "touched" for the
+    // commit filter (visibleWritablePropertiesForCommit) to include it.
+    userTouched.value.add(prop)
+  }
+  for (const [rel, targets] of Object.entries(keptRels)) {
+    relations.value[rel] = [...targets]
+  }
+  for (const [rel, types] of Object.entries(keptPickerTypes)) {
+    pickerTypes.value[rel] = types
+  }
+
+  // Back to step 1. Ordering matters: `dirty` is already false by this point
+  // (handleSubmit clears it before calling us), so the `router.replace` this
+  // performs cannot trip the unsaved-changes leave guard.
+  wizard.goTo(0)
+
+  await refreshStagedAffordances()
+  if (stagedUnmounted) return
+
+  // Re-baseline dirty tracking LAST. adoptLockedFieldValues (inside the
+  // dry-run above) mutates formData in place without touching originalData, so
+  // re-seeding any earlier would leave a form with an entry-locked field dirty
+  // the instant the dry-run resolves — a spurious "unsaved changes" prompt
+  // after every single record.
+  originalData.value = JSON.stringify({
+    formData: formData.value,
+    relations: relations.value,
+    content: content.value,
+  })
+  dirty.value = false
+}
+
 // Validate the form. `scopeFields` restricts validation to a subset (used for
 // per-step validation on wizard "Next"); when omitted, all shown fields are
 // validated (single-page submit, or wizard final submit over visible steps).
@@ -1064,7 +1226,22 @@ function focusFirstError() {
   })
 }
 
-async function handleSubmit() {
+// `mode` selects the terminal outcome of a successful create, and NOTHING
+// else: validation, payload assembly, the create call, the auto-link and the
+// staged-attachment upload are shared verbatim so the two buttons cannot build
+// different payloads.
+//
+//   'navigate' — the original behaviour: toast, then router.push to the new
+//                entity (or return_to).
+//   'again'    — TKT-7YHKD1: toast naming the id, then reset the form in place
+//                for the next record. No navigation.
+//
+// MUST stay defaulted: handleKeydown (Cmd+Enter) and defineExpose's `submit`
+// both call this bare, and the inline-create host depends on the 'navigate'
+// contract.
+type SubmitMode = 'navigate' | 'again'
+
+async function handleSubmit(mode: SubmitMode = 'navigate') {
   if (!formConfig.value) return
   // RR-HJLLUF: re-entrancy guard. PendingButton suppresses its own repeat
   // clicks, but handleKeydown calls handleSubmit() directly, so Cmd+Enter
@@ -1161,9 +1338,11 @@ async function handleSubmit() {
     }
 
     // Create only — the isEdit early return above means this is never an
-    // update. Cards never render in create mode (they require entityId), so
-    // pendingCardChanges is empty and relationsPayload is composed entirely
-    // from reshaped picker selections.
+    // update. RelationCards never render in create mode (they require an
+    // entityId), but an INCOMING RelationPicker does, and it routes through
+    // `pendingCardChanges` too (updateIncomingPicker) — so that map is NOT
+    // necessarily empty here, and relationsPayload is composed from both it
+    // and the reshaped outgoing picker selections.
     //
     // TKT-3I5U: send only visible + writable property keys; the server
     // fills hidden / read-only defaults after the affordance gate. For a
@@ -1198,6 +1377,13 @@ async function handleSubmit() {
         }
       } catch (linkErr) {
         console.warn('Auto-link failed:', linkErr)
+        // Staying on the form ('again') means the user never sees the entity,
+        // so a swallowed link failure would be invisible — and under repeated
+        // entry that is N silently-unlinked entities. The navigate path can
+        // stay quiet: the user lands on the entity and can see the gap.
+        if (mode === 'again') {
+          uiStore.error(`${entity.id} was created, but linking it failed. Link it manually.`)
+        }
         // Continue with navigation even if link fails
       }
     }
@@ -1236,6 +1422,13 @@ async function handleSubmit() {
       // it. A bare success toast followed by an error would describe one user
       // action twice, contradicting itself.
       uiStore.error(stagedFailureMessage(uploadFailures))
+    } else if (mode === 'again') {
+      // Name the id: the user is NOT taken to the entity, so this toast is the
+      // only evidence it exists. (Toast carries no link — the store's Toast
+      // type has no action field; making it clickable would change every toast
+      // in the app and is deliberately out of scope.)
+      uiStore.success(`Created ${entity.id}. Form cleared for the next one.`)
+      announce(`Created ${entity.id}. Form cleared for the next entry.`)
     } else {
       uiStore.success('Entity created successfully')
     }
@@ -1245,6 +1438,20 @@ async function handleSubmit() {
     // async path here already guards on this flag (RR-2PZB). A push on a torn-
     // down component is a no-op today; this keeps the discipline uniform.
     if (stagedUnmounted) return
+
+    // TKT-7YHKD1: stay put and blank the form for the next record.
+    //
+    // AWAITED, and inside the try, on purpose: the reset is async, and
+    // `saving` is only cleared by the finally below. Awaiting here keeps
+    // `saving` true across the whole reset, so the window in which
+    // `createdEntityId` has been released but the form is not yet blank is
+    // closed. That matters because handleKeydown calls handleSubmit()
+    // directly — Cmd+Enter bypasses PendingButton's repeat-click suppression
+    // entirely.
+    if (mode === 'again') {
+      await resetCreateForm()
+      return
+    }
 
     // Navigate to return_to or entity detail.
     //
@@ -1324,7 +1531,9 @@ function handleCancel() {
   }
   // Opened cold: fall back to the entity type's list, or the dashboard when
   // no list is configured for it.
-  const listId = formConfig.value ? schemaStore.findListIdForEntityType(formConfig.value.entity) : undefined
+  const listId = formConfig.value
+    ? schemaStore.findListIdForEntityType(formConfig.value.entity)
+    : undefined
   router.push(listId ? `/list/${listId}` : '/')
 }
 
@@ -1877,6 +2086,10 @@ if (!props.embedded) {
 defineExpose({
   /** True when the user has entered anything not yet persisted. */
   isDirty: () => dirty.value,
+  // Test seam (TKT-7YHKD1): the dirty BASELINE, so a test can assert the
+  // reset re-seeded it after the awaited dry-run rather than before. `dirty`
+  // itself only recomputes on the next edit, so it lags and cannot show this.
+  _originalData: () => originalData.value,
   /** True while a create request is in flight. */
   isSaving: () => saving.value,
   /** Submit the form, exactly as the Create button does. */
@@ -1943,7 +2156,9 @@ defineExpose({
         </router-link>
       </div>
 
-      <form v-else @submit.prevent="handleSubmit">
+      <!-- `handleSubmit('navigate')`, not a bare reference: the DOM passes the
+           SubmitEvent as the first argument, which would land in `mode`. -->
+      <form v-else @submit.prevent="handleSubmit('navigate')">
         <div v-if="showReadOnlyID" class="form-field id-field">
           <label>ID</label>
           <div class="id-display">{{ entityId }}</div>
@@ -2034,6 +2249,13 @@ defineExpose({
           />
         </div>
 
+        <!-- TKT-7YHKD1: polite status for "Create & add another", whose whole
+             effect (form blanks, toast appears) is otherwise visual only.
+             Always rendered so the region exists before it is populated —
+             a live region injected at the same moment as its text is not
+             reliably announced. -->
+        <p class="form-sr-only" role="status" aria-live="polite">{{ statusAnnouncement }}</p>
+
         <!-- Submit-time validation summary (create only — edit autosaves and has
              no submit gate). Announced via role=alert. -->
         <p v-if="!isEdit && errorCount > 0" class="wizard-error-summary" role="alert">
@@ -2094,6 +2316,25 @@ defineExpose({
           >
             <template #adornment><kbd>&#8984;&#8629;</kbd></template>
           </PendingButton>
+
+          <!--
+            TKT-7YHKD1: second terminal outcome for the create path — create,
+            then blank the form for the next record instead of navigating.
+
+            `type="button"`, not submit: two submit buttons in one form make
+            Enter ambiguous, and @submit.prevent must keep meaning the primary
+            Create. Hidden when embedded — an inline-create host is waiting for
+            exactly one entity to link, so "add another" has no meaning there.
+          -->
+          <PendingButton
+            v-if="!isEdit && !embedded && wizard.isLastStep.value"
+            type="button"
+            class="btn btn-secondary"
+            :pending="saving"
+            label="Create & add another"
+            pending-label="Saving…"
+            @click="handleSubmit('again')"
+          />
 
           <!-- Edit: ambient autosave status stands in for a Save button. -->
           <AutoSaveIndicator
@@ -2403,6 +2644,20 @@ defineExpose({
   margin-bottom: 24px;
 }
 
+/* Visually hidden but exposed to assistive tech (the standard sr-only clip,
+   matching AutoSaveIndicator's). Carries the TKT-7YHKD1 create+reset status. */
+.form-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .form-actions {
   display: flex;
   justify-content: flex-end;
@@ -2500,5 +2755,4 @@ defineExpose({
     gap: 6px;
   }
 }
-
 </style>

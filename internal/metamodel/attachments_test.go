@@ -117,6 +117,58 @@ func TestScanCommandFor(t *testing.T) {
 	}
 }
 
+func TestHasConfiguredScan(t *testing.T) {
+	cmd := []string{"clamdscan", "{in}"}
+	cases := []struct {
+		name        string
+		globalCmd   []string
+		propCmd     []string
+		propScan    ScanPolicy
+		hasFileProp bool
+		want        bool
+	}{
+		{"global command → scanned", cmd, nil, ScanDefault, true, true},
+		{"property command → scanned", nil, cmd, ScanDefault, true, true},
+		{"no command anywhere → not scanned", nil, nil, ScanDefault, true, false},
+		{"global command but scan off → not scanned", cmd, nil, ScanOff, true, false},
+		{"no file property → not scanned", cmd, nil, ScanDefault, false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := fileMetaCmd(tc.globalCmd, tc.propCmd, tc.propScan, tc.hasFileProp)
+			if got := NewAttachmentPolicy(m).HasConfiguredScan(); got != tc.want {
+				t.Errorf("HasConfiguredScan = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestHasConfiguredScan_NotInverseOfUnconfigured pins the distinction the two
+// methods exist for: they can BOTH be true, so neither can be derived from the
+// other. Here one property carries its own scan command while a second has none
+// and no global fallback — something is scanned, and something is unprotected.
+//
+// Deriving the startup check as !HasUnconfiguredScan() would conclude "nothing
+// is scanned" and silence the broken-sandbox warning in exactly this mixed
+// configuration, where uploads to the scanned property still get rejected.
+func TestHasConfiguredScan_NotInverseOfUnconfigured(t *testing.T) {
+	m := &Metamodel{
+		Entities: map[string]EntityDef{
+			"thing": {Properties: map[string]PropertyDef{
+				"scanned":   {Type: PropertyTypeFile, ScanCmd: []string{"clamdscan", "{in}"}},
+				"unscanned": {Type: PropertyTypeFile},
+			}},
+		},
+	}
+	p := NewAttachmentPolicy(m)
+	if !p.HasConfiguredScan() {
+		t.Error("HasConfiguredScan = false, want true (the `scanned` property is scanned)")
+	}
+	if !p.HasUnconfiguredScan() {
+		t.Error("HasUnconfiguredScan = false, want true (the `unscanned` property has no scanner)")
+	}
+}
+
 func TestHasUnconfiguredScan(t *testing.T) {
 	cmd := []string{"clamdscan", "{in}"}
 	cases := []struct {

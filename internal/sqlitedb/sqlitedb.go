@@ -137,6 +137,13 @@ func (c *DB) init(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// Also before schemaSQL, and for a reason specific to this one column:
+	// schemaSQL indexes relations(rel_record_id), which a pre-v4 database does
+	// not have, so it must be added first or schemaSQL fails before the ladder
+	// is ever reached. See ensureRelRecordIDColumn.
+	if err := c.ensureRelRecordIDColumn(ctx); err != nil {
+		return err
+	}
 	if _, err := c.db.ExecContext(ctx, schemaSQL); err != nil {
 		return fmt.Errorf("sqlitedb: create schema: %w", err)
 	}
@@ -302,6 +309,19 @@ CREATE TABLE IF NOT EXISTS relations (
 	properties TEXT NOT NULL DEFAULT '{}',
 	content    TEXT NOT NULL DEFAULT '',
 	updated_at TEXT NOT NULL,
+	-- rel_record_id is the stable surrogate that identifies a relation's
+	-- version LINEAGE (TKT-4NU9ZD). It lives on the row rather than being
+	-- reconstructed per sweep tick from the composite key, which is what
+	-- dissolves the sweep-vs-synchronous-capture allocation race and the
+	-- delete-recreate history-merge class of bugs: lineage is read straight
+	-- off the row.
+	--
+	-- 0 means "not yet assigned". It is the value an existing row takes when
+	-- the v3→v4 migration adds the column (SQLite requires a CONSTANT
+	-- default), and backfillRelRecordIDs replaces it. On a fresh database
+	-- nothing should ever keep it: CreateRelation mints an id from
+	-- rel_record_seq.
+	rel_record_id INTEGER NOT NULL DEFAULT 0,
 	PRIMARY KEY (from_id, from_face, rel_type, to_id)
 ) STRICT;
 CREATE INDEX IF NOT EXISTS relations_from_idx ON relations(from_id);
@@ -319,6 +339,7 @@ CREATE TABLE IF NOT EXISTS attachments (
 CREATE INDEX IF NOT EXISTS attachments_entity_idx ON attachments(entity_id);
 ` + projectFilesDDL + `
 ` + stateKVDDL + `
+` + versionSchemaSQL + `
 `
 
 // projectFilesDDL carries the operator-authored config — schema.yaml,
