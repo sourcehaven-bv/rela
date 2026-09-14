@@ -509,10 +509,11 @@ database file at `.rela/rela.db`, no server, and `Open` takes an exclusive
 sidecar lock so a second process is refused rather than admitted. That refusal
 is load-bearing — `unique:` is enforced by an untransacted scan in
 entitymanager, so two writers would have no backstop and the violation would be
-silent. It takes the strong `Tx` tier (rollback, post-commit-only events) but
-has no versioning yet, so it currently has neither git history nor version
-history. It also refuses to open on a filesystem where WAL cannot be enabled
-(iCloud/Dropbox/SMB), because SQLite is unsafe there.
+silent. It takes the strong `Tx` tier (rollback, post-commit-only events) and,
+since TKT-4NU9ZD, content versioning too — so history comes from the database
+rather than from git, which it cannot use because the markdown files are not
+the source of truth. It also refuses to open on a filesystem where WAL cannot
+be enabled (iCloud/Dropbox/SMB), because SQLite is unsafe there.
 
 Rules when touching this:
 
@@ -583,7 +584,10 @@ Rules when touching this:
   is the documented upgrade, not built. The data-entry SSE feed consumes this
   via `App.startStoreEventBridge` (entity events only). fsstore/memstore stay
   in-process single-writer by nature.
-- **Content versioning** (TKT-9INY0Y, postgres only). Two tables
+- **Content versioning** (TKT-9INY0Y; pgstore below, and sqlitestore since
+  TKT-4NU9ZD — the two are held to one contract by
+  `storetest.RunVersionTests`, declared via `Capabilities{Versioning}`).
+  Two tables
   (`entity_versions` = one full snapshot per version; `schema_versions` =
   content-addressed render-schema projection, deduped) plus a dedicated
   `version_seq` sequence. **Use `version_seq`, never `rela_seq`** — `rela_seq`
@@ -613,7 +617,7 @@ Rules when touching this:
   unbounded `entity_id = ANY(...)` read would merge two entities' histories — see
   the version.go doc). `HistoryReader`/`VersionWriter` are optional store
   capabilities (type-asserted like `store.Formatter`), NOT part of `store.Store`.
-- **Relation versioning** (TKT-92JL8P, postgres only) extends the above to
+- **Relation versioning** (TKT-92JL8P; both database backends) extends the above to
   relations, which carry their own props + body. A `relation_versions` table
   reuses `version_seq` + `schema_versions`; identity is a surrogate
   `rel_record_id` **column ON the `relations` row** (`DEFAULT nextval(...)`,
@@ -642,7 +646,7 @@ Rules when touching this:
   history exposes exactly what a live relation GET does. `RelationHistoryReader`/
   `RelationVersionWriter` are SEPARATE optional capabilities, type-asserted
   independently of the entity ones.
-- **Version purge** (TKT-BW6UUL, postgres only) is the audited, irreversible
+- **Version purge** (TKT-BW6UUL; both database backends) is the audited, irreversible
   exception to append-only history — hard-deletes version rows for compliance
   redaction. `VersionPurger`/`RelationVersionPurger` are SEPARATE optional
   capabilities (`purge.go`), one `PurgeVersions`/`PurgeRelationVersions` method

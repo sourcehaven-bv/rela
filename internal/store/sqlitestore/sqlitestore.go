@@ -91,6 +91,17 @@ const timeFmt = time.RFC3339Nano
 // Interface-driven again, so the numbers move with store.Store rather than
 // with this type.
 //
+// Content versioning (TKT-4NU9ZD) added exactly TWO exported methods, and the
+// arithmetic is the point of the line rather than an obstacle to it.
+// VersionStore() and StartVersionSweep() are the OPTIONAL capabilities
+// store.VersionServiceProvider and store.VersionSweeper declare, so the wiring
+// site can discover them by type assertion — they have to be on the store.
+// Everything else the feature needs hangs off *VersionStore instead: the seven
+// service methods, the lineage walks, the purge guardrails, and the
+// RelationRecordID accessor that pgstore also keeps off its Store for this
+// exact reason. The synchronous tick sweepNow is a free function taking the
+// store rather than a method, since nothing about it needs to be one.
+//
 //plimsoll:max-methods=51
 //plimsoll:max-exported-methods=33
 type Store struct {
@@ -104,6 +115,26 @@ type Store struct {
 	// mutex instead of burning its busy_timeout budget spinning on
 	// SQLITE_BUSY. Only the root store takes it; a view never does.
 	writeMu sync.Mutex
+
+	// versionMu makes a version purge mutually exclusive with a reconciliation
+	// sweep tick. It is the in-process stand-in for pgstore's
+	// pg_try_advisory_lock, and it is sufficient for the same reason the rest
+	// of this backend is single-writer: sqlitedb.Open holds an exclusive
+	// sidecar lock and refuses a second process, so the only writers that can
+	// race are goroutines here.
+	//
+	// Separate from writeMu deliberately. writeMu serializes Tx bodies, which
+	// a sweep tick does not take, and a sweep can run for a while — folding
+	// the two would make every ordinary write queue behind a tick for no
+	// correctness gain.
+	versionMu sync.Mutex
+
+	// sweepMu guards the sweep field only (swapping the goroutine handle), not
+	// the sweep's work — that is versionMu's job.
+	sweepMu sync.Mutex
+	// sweep is the running version-reconciliation goroutine, nil until
+	// StartVersionSweep is called. Stopped by Close.
+	sweep *sweep
 
 	subMu sync.Mutex
 	subs  map[int]chan store.Event
@@ -187,7 +218,7 @@ func (s *Store) write(ctx context.Context, q string, args ...any) (sql.Result, e
 
 // --- Lifecycle ------------------------------------------------------------
 
-// Close releases this store's subscribers.
+// Close releases this store's subscribers and stops its version sweep.
 //
 // It does NOT close the database: the store borrows a handle owned by
 // [sqlitedb.DB], and the wiring site that opened the file closes it. A
@@ -196,6 +227,16 @@ func (s *Store) Close() error {
 	if s.parent != nil {
 		return nil
 	}
+	// Stop the sweep BEFORE releasing anything else: a tick mid-flight would
+	// otherwise keep running against a handle the caller is about to close and
+	// log spurious failures on every shutdown. stop() waits for the goroutine
+	// to exit, so once it returns nothing else will touch the database.
+	s.sweepMu.Lock()
+	sw := s.sweep
+	s.sweep = nil
+	s.sweepMu.Unlock()
+	sw.stop()
+
 	s.subMu.Lock()
 	for id, ch := range s.subs {
 		delete(s.subs, id)

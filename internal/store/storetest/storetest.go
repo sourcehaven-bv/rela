@@ -51,6 +51,17 @@ type Capabilities struct {
 	// A backend that HAS rollback and forgets to say so gets no coverage of
 	// its most safety-critical behavior and no warning that it is missing.
 	TxRollback bool
+
+	// Versioning declares that the backend implements the content-versioning
+	// capability bundle ([store.VersionServiceProvider] yielding a
+	// [store.VersionService]). Setting it runs [RunVersionTests] as part of
+	// RunAll.
+	//
+	// Declared rather than sniffed, for the same reason as TxRollback: a type
+	// assertion would silently pass for a backend that implements the
+	// interface incorrectly or partially, and silently SKIP for one that meant
+	// to. The flag makes the claim explicit and the suite then holds it to it.
+	Versioning bool
 }
 
 func ctx() context.Context { return context.Background() }
@@ -203,5 +214,11 @@ func RunAll(t *testing.T, f Factory, sf SearchFactory, vsf VisibleSearchFactory,
 	// warning — indistinguishable from a backend that deliberately omits it.
 	if caps.TxRollback {
 		t.Run("TxRollback", func(t *testing.T) { RunTxRollbackTests(t, f) })
+	}
+	// Versioning is declared for the same reason, and the suite is stricter
+	// about it: it FAILS rather than skips when the capability is missing, so
+	// a backend cannot claim the tier and quietly not have it.
+	if caps.Versioning {
+		t.Run("Version", func(t *testing.T) { RunVersionTests(t, f) })
 	}
 }

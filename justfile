@@ -196,6 +196,33 @@ test-postgres:
     @echo "Running postgres-tagged tests (needs RELA_TEST_DATABASE_URL)..."
     go test -race -tags postgres ./internal/store/pgstore/... ./internal/jobs/...
 
+# Run the attachment scan tests against a REAL clamd (needs clamav-daemon
+# running locally). Every other scan test substitutes a stub `sh -c` command,
+# which exercises rela's plumbing but cannot see that clamdscan needs its config
+# file bound into the sandbox, or that --fdpass cannot cross the namespace
+# boundary — the bugs behind TKT-ZP1EE3, which shipped with a fully green suite.
+#
+# Opt-in via RELA_TEST_CLAMD (like RELA_TEST_DATABASE_URL) so it is a failure,
+# not a skip, when you asked for it. Covers the scan command through the real
+# sandbox; for the systemd layer use `just test-clamav-vm`.
+test-clamav:
+    @echo "Running clamd integration tests (needs a running clamav-daemon)..."
+    RELA_TEST_CLAMD=1 go test -race -run 'TestClamd' -v ./internal/attachment/...
+
+# Full end-to-end verification in a throwaway Debian VM: real clamd, real
+# bubblewrap, the systemd unit AS PUBLISHED in the guide, real HTTP uploads.
+#
+# This is the only thing that covers the systemd layer. A conventionally
+# hardened unit silently disables the sandbox, and because scanning is
+# fail-closed the symptom is "every upload rejected" — not a crash. The script
+# also breaks each of the three directives in turn and asserts that rela still
+# fails closed and still warns.
+#
+# Needs limactl (brew install lima). First run downloads a Debian image and the
+# ClamAV signature databases; the VM is reused afterwards.
+test-clamav-vm:
+    @./scripts/clamav-vm-test.sh
+
 # Verify the binaries compile under every backend build tag. Cheap guard
 # that no build-tag seam drifted; mirrors the CI compile matrix.
 build-check-tags:

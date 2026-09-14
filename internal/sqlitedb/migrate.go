@@ -12,7 +12,7 @@ import (
 // schemaVersion is the shape of the tables this binary expects. Bump it
 // whenever schemaSQL changes shape, and append the step that carries an
 // existing database forward to [migrations].
-const schemaVersion = 3
+const schemaVersion = 4
 
 // SchemaVersion reports the table shape this binary expects, so the CLI can
 // show a real number rather than prose.
@@ -74,6 +74,147 @@ var migrations = []migration{
 		to:    3,
 		apply: sqlSteps(stateKVDDL),
 	},
+	{
+		// v3 → v4: content versioning (TKT-4NU9ZD) — entity and relation
+		// history, the content-addressed schema projection store, and the
+		// surrogate relation-lineage id.
+		//
+		// Not sqlSteps: the lineage column needs a backfill, because SQLite's
+		// ALTER TABLE ADD COLUMN takes only a CONSTANT default, so every
+		// existing relation lands at the 0 sentinel and needs a DISTINCT id
+		// assigned. This is the "a backfill is the shape a future step is most
+		// likely to take" case the ladder was built for.
+		to:    4,
+		apply: migrateToVersion4,
+	},
+}
+
+// migrateToVersion4 installs the content-versioning schema on an existing
+// database.
+//
+// Only the column is added here; the tables and indexes came from schemaSQL,
+// which runs on every open before the ladder does. That ordering is why this
+// step cannot simply re-run versionSchemaSQL: it indexes
+// relations(rel_record_id), so schemaSQL would already have failed on a
+// pre-v4 database before the ladder got a turn — see [ensureRelRecordIDColumn],
+// which is called from the open path for exactly that reason.
+//
+// What is left for the step is the part schemaSQL genuinely cannot do: the
+// backfill. CREATE TABLE IF NOT EXISTS reaches an existing database happily,
+// but assigning a distinct lineage id to every relation already in it is data,
+// not shape.
+func migrateToVersion4(ctx context.Context, conn *sql.Conn) error {
+	return backfillRelRecordIDs(ctx, conn)
+}
+
+// ensureRelRecordIDColumn adds the relation-lineage column when it is missing.
+//
+// This runs from the OPEN path, before schemaSQL, rather than from the ladder
+// rung that conceptually owns it. The ordering forces it: schemaSQL runs on
+// every open and creates an index on relations(rel_record_id), so on a
+// pre-v4 database it would fail with "no such column" before the ladder could
+// add it.
+//
+// Guarded by a pragma probe rather than executed unconditionally, because
+// ALTER TABLE ADD COLUMN is the one statement in the versioning schema with no
+// IF NOT EXISTS form: running it twice fails with "duplicate column name",
+// which would make every second open of a migrated database an error.
+//
+// Checking the column rather than the schema version is deliberate. A v1
+// database has no relations table at all, so schemaSQL creates it complete
+// (rel_record_id included) and there is nothing to add — a version-gated ALTER
+// would then fail on exactly the databases furthest behind. The column's own
+// presence is the only question that has a correct answer on every path.
+func (c *DB) ensureRelRecordIDColumn(ctx context.Context) error {
+	// Two counts in one probe: how many columns the table has at all, and how
+	// many of them are rel_record_id. The first distinguishes "no relations
+	// table yet" — where schemaSQL is about to create it complete, and an
+	// ALTER would fail — from "a table that predates the column".
+	var columns, wanted int
+	if err := c.db.QueryRowContext(ctx,
+		`SELECT count(*), count(*) FILTER (WHERE name = 'rel_record_id')
+		 FROM pragma_table_info('relations')`,
+	).Scan(&columns, &wanted); err != nil {
+		return fmt.Errorf("sqlitedb: probe relations for rel_record_id: %w", err)
+	}
+	if columns == 0 || wanted > 0 {
+		return nil
+	}
+	// A relations table with no rel_record_id and no rows is still worth the
+	// ALTER: the column is part of the shape, and the backfill below is a
+	// no-op rather than a second condition to get right.
+	if _, err := c.db.ExecContext(ctx, relRecordIDColumnDDL); err != nil {
+		return fmt.Errorf("sqlitedb: add rel_record_id: %w", err)
+	}
+	return nil
+}
+
+// backfillRelRecordIDs assigns a distinct lineage id to every relation that
+// predates the column.
+//
+// Every relation needs its OWN id, because rel_record_id is what separates two
+// relations' histories. Leaving them all at the 0 sentinel would merge every
+// pre-existing relation into one lineage — the exact bug the surrogate exists
+// to prevent.
+//
+// Runs inside the migration's transaction, so either every relation gets an id
+// or none do. Re-running is safe: a second pass finds no rows at 0.
+func backfillRelRecordIDs(ctx context.Context, conn *sql.Conn) error {
+	// rowid is stable within this transaction and unique per row, so it orders
+	// the backfill deterministically without needing the composite key.
+	rowids, err := relationRowidsNeedingID(ctx, conn)
+	if err != nil {
+		return err
+	}
+	if len(rowids) == 0 {
+		return nil
+	}
+
+	// One reservation for the whole batch: the backfill stays two statements
+	// plus one UPDATE per row regardless of relation count, and allocation
+	// keeps the same shape as the single-id path so the two cannot drift.
+	var first int64
+	if err := conn.QueryRowContext(ctx,
+		`UPDATE rel_record_seq SET next = next + ? WHERE id = 1 RETURNING next - ?`,
+		len(rowids), len(rowids)).Scan(&first); err != nil {
+		return fmt.Errorf("reserve %d relation lineage ids: %w", len(rowids), err)
+	}
+	for i, rowid := range rowids {
+		if _, err := conn.ExecContext(ctx,
+			`UPDATE relations SET rel_record_id = ? WHERE rowid = ?`,
+			first+int64(i), rowid); err != nil {
+			return fmt.Errorf("assign lineage id to relation rowid %d: %w", rowid, err)
+		}
+	}
+	return nil
+}
+
+// relationRowidsNeedingID collects the rows still at the 0 sentinel.
+//
+// Read fully into memory before the UPDATEs rather than updated while the
+// cursor is open: mutating the table a live query is walking is undefined
+// under SQLite's ISOLATION rules, and the row count here is bounded by the
+// relations a single-process database holds.
+func relationRowidsNeedingID(ctx context.Context, conn *sql.Conn) ([]int64, error) {
+	rows, err := conn.QueryContext(ctx,
+		`SELECT rowid FROM relations WHERE rel_record_id = 0 ORDER BY rowid`)
+	if err != nil {
+		return nil, fmt.Errorf("scan relations for lineage backfill: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var rowids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan relation rowid: %w", err)
+		}
+		rowids = append(rowids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("scan relations for lineage backfill: %w", err)
+	}
+	return rowids, nil
 }
 
 // migrate stamps a fresh database, carries an older one forward, and refuses

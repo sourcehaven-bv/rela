@@ -25,7 +25,8 @@ type HistoryCmd struct {
 func (c *HistoryCmd) Run(ctx context.Context, svc *readServices) error {
 	if svc.Versions == nil {
 		out.WriteMessage("The active storage backend does not support version history " +
-			"(content versioning is a PostgreSQL-build feature; filesystem deployments use git).")
+			"(content versioning needs the PostgreSQL or SQLite build; filesystem " +
+			"deployments use git instead).")
 		return nil
 	}
 	var reader store.HistoryReader = svc.Versions
