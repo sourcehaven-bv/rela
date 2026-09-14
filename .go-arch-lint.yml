@@ -107,6 +107,7 @@ components:
   # values. The one place that knows both vocabularies, so that stores and
   # visibility (neither of which may import metamodel) can hold the result.
   worlds:           { in: internal/worlds }
+  queryscopes:      { in: internal/scopes }
   worldreader:      { in: internal/worldreader }
   migration:        { in: internal/migration }
   markdown:         { in: internal/markdown }
@@ -1026,6 +1027,18 @@ deps:
       - entity
       - metamodel
       - store
+
+  # GUARD: `acl` is deliberately absent. A query scope MAY read current_user,
+  # so unlike worlds it is not principal-independent — but the identity
+  # arrives as a value bound through predicatefns, never as an authorization
+  # decision. Scopes are UX; ACL decides what a principal may see, and the two
+  # must not merge. Adding `acl` here would let a scope start consulting
+  # grants, which is the merge.
+  queryscopes:
+    mayDependOn:
+      - metamodel
+      - predicate
+      - predicatefns
   # worldreader is the RUNTIME half of worlds: it holds a store and reads.
   #
   # It deliberately may NOT depend on acl, visibility, principal or
