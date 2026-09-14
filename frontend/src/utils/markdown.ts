@@ -299,6 +299,11 @@ function sanitizeMermaidSVG(svg: string): HTMLElement {
     slot.removeAttribute(LABEL_SLOT_ATTR)
     if (slot.nodeName.toLowerCase() !== 'foreignobject') continue
     if (!Number.isInteger(i) || i < 0 || i >= labels.length) continue
+    // The assigned value is the direct return of DOMPurify.sanitize() under
+    // the HTML profile; see this function's doc comment for why the label half
+    // is parsed separately from the SVG half. The sink is the sanitizer's
+    // output, not raw diagram text.
+    // nosemgrep: dom-innerhtml-assignment
     slot.innerHTML = DOMPurify.sanitize(labels[i], {
       USE_PROFILES: { html: true },
       FORBID_TAGS: LABEL_FORBID_TAGS,

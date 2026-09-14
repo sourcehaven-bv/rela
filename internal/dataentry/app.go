@@ -1151,6 +1151,18 @@ func NewApp(
 	} else {
 		slog.Warn("attachments: command runner unavailable; scan/transform disabled", "err", rerr)
 	}
+	// Deliberately outside the branch above: a failed constructor is one of the
+	// two states this warns about, so it must run on that path too.
+	//
+	// The nil is passed as an explicit untyped nil rather than the (*CmdRunner)
+	// value, because a typed nil in an interface is NOT == nil — handing over a
+	// failed runner directly would skip the constructor-failure branch and then
+	// call SandboxErr on a nil pointer.
+	var reporter sandboxReporter
+	if rerr == nil {
+		reporter = runner
+	}
+	warnIfScanCannotRun(meta, reporter, rerr)
 
 	// exportHandler owns the view-export routes (transform list, entity/list
 	// export). Extracted from App to keep App under its method cap. Probe the

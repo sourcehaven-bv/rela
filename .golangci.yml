@@ -125,7 +125,11 @@ linters:
         - G204
         - G304
         - G306
-        # Remaining taint-analysis checks (gosec v2) surface hardening work
+        # Remaining taint-analysis checks (gosec v2). These are the Go half of
+        # this project's static security analysis; Semgrep covers frontend/
+        # (see the `semgrep` job in ci.yml and .semgrep/frontend-xss.yml).
+        #
+        # The exclusions below surface hardening work
         # that belongs in FEAT-ESLP (data-entry server hardening). Deferring
         # these so the v2 migration doesn't block on threat-model decisions;
         # track the work under that feature instead.

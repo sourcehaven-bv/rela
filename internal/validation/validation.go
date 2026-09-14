@@ -5,8 +5,11 @@ package validation
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"maps"
 	"slices"
+	"strings"
 	"sync"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -109,6 +112,22 @@ func (s *Service) evaluator() *predicatefns.Evaluator {
 func (s *Service) compileRuleConditions(
 	rule metamodel.ValidationRule, candidates []*entity.Entity,
 ) []LoadError {
+	// A malformed `where:` on a relation constraint is the same class of
+	// operator mistake as a malformed condition, and needs the same
+	// treatment: parsed per-entity it would fail silently and the
+	// constraint would count nothing, so a `max:` gate would report
+	// "satisfied" forever. Checked once per rule, before any entity.
+	var errs []LoadError
+	for relType, c := range rule.Relations {
+		if _, err := filter.ParseAll(c.Where); err != nil {
+			errs = append(errs, LoadError{
+				RuleName: rule.Name,
+				Message: fmt.Sprintf("relations %q: invalid where filter: %v",
+					relType, err),
+			})
+		}
+	}
+
 	sources := make([]string, 0, 2)
 	if rule.WhenCondition != "" {
 		sources = append(sources, rule.WhenCondition)
@@ -117,7 +136,7 @@ func (s *Service) compileRuleConditions(
 		sources = append(sources, rule.ThenCondition)
 	}
 	if len(sources) == 0 {
-		return nil
+		return errs
 	}
 
 	// The env is per entity type, so compile against each type actually
@@ -130,7 +149,6 @@ func (s *Service) compileRuleConditions(
 	// the alternative is compiling against every declared type in the
 	// metamodel on every Check, which costs far more than it catches.
 	seen := make(map[string]bool, len(candidates))
-	var errs []LoadError
 	for _, e := range candidates {
 		if seen[e.Type] {
 			continue
@@ -153,12 +171,12 @@ func (s *Service) compileRuleConditions(
 // one entity. Unlike matchFilters there is no legacy fallback: an
 // expression has only ever had one meaning, so a compile failure is a
 // real error rather than a dialect mismatch.
-func (s *Service) matchCondition(e *entity.Entity, source string) (bool, error) {
+func (s *Service) matchCondition(ctx context.Context, e *entity.Entity, source string) (bool, error) {
 	prog, err := s.evaluator().Compile(e.Type, source)
 	if err != nil {
 		return false, err
 	}
-	return s.evaluator().Matches(context.Background(), prog, e.Type, e.ID, e.Properties)
+	return s.evaluator().Matches(ctx, prog, e.Type, e.ID, e.Properties)
 }
 
 // matchFilters evaluates an ANDed set of filter clauses against an
@@ -169,7 +187,7 @@ func (s *Service) matchCondition(e *entity.Entity, source string) (bool, error) 
 // a silently-skipped rule (RR-FI4DYL). A genuine eval error is returned
 // so the caller treats it as "does not apply / does not satisfy",
 // matching the prior filter.MatchAll error contract.
-func (s *Service) matchFilters(e *entity.Entity, filters []*filter.Filter) (bool, error) {
+func (s *Service) matchFilters(ctx context.Context, e *entity.Entity, filters []*filter.Filter) (bool, error) {
 	prog, err := s.evaluator().CompileFilter(e.Type, filters)
 	if err != nil {
 		// Untranspilable — reproduce the legacy verdict exactly.
@@ -180,7 +198,7 @@ func (s *Service) matchFilters(e *entity.Entity, filters []*filter.Filter) (bool
 		rec := filter.Record{ID: e.ID, Type: e.Type, Properties: e.Properties}
 		return filter.MatchAll(rec, filters, entityDef, s.deps.Meta)
 	}
-	return s.evaluator().Matches(context.Background(), prog, e.Type, e.ID, e.Properties)
+	return s.evaluator().Matches(ctx, prog, e.Type, e.ID, e.Properties)
 }
 
 // New creates a validation service for the given metamodel.
@@ -325,14 +343,10 @@ func (s *Service) CheckRule(
 	}()
 
 	for _, e := range candidates {
-		// The Lua path under checkEntityAgainstRule runs through luaCtx.runtime,
-		// which was built with lua.WithContext(ctx); applyTimeout derives the
-		// per-entity budget from that cached parent ctx. contextcheck can't
-		// follow that flow across the gopher-lua SetContext boundary.
-		//nolint:contextcheck // ctx threaded via WithContext on luaCtx.runtime
-		entityResult := s.checkEntityAgainstRule(e, rule, whenFilters, thenFilters, luaCtx)
+		entityResult := s.checkEntityAgainstRule(ctx, e, rule, whenFilters, thenFilters, luaCtx)
 		result.Violations = append(result.Violations, entityResult.Violations...)
 		result.ScriptErrors = append(result.ScriptErrors, entityResult.ScriptErrors...)
+		result.LoadErrors = append(result.LoadErrors, entityResult.LoadErrors...)
 
 		// If Lua errored on this entity, the runtime may be in an
 		// undefined state (partial coroutines, half-mutated globals).
@@ -381,6 +395,7 @@ func (s *Service) filterCandidates(
 type entityResult struct {
 	Violations   []Violation
 	ScriptErrors []*lua.ScriptError
+	LoadErrors   []LoadError
 }
 
 // checkEntityAgainstRule checks if an entity violates the given rule.
@@ -388,6 +403,7 @@ type entityResult struct {
 // for Lua execution; passing nil disables the Lua path even when the
 // rule defines lua/lua_file (used when the script failed to load).
 func (s *Service) checkEntityAgainstRule(
+	ctx context.Context,
 	e *entity.Entity,
 	rule metamodel.ValidationRule,
 	whenFilters, thenFilters []*filter.Filter,
@@ -410,7 +426,7 @@ func (s *Service) checkEntityAgainstRule(
 	// Evaluated through the predicate condition engine (TKT-J4IR1G): the
 	// filter clauses are transpiled + compiled once and cached.
 	if len(whenFilters) > 0 {
-		if matches, err := s.matchFilters(e, whenFilters); err != nil || !matches {
+		if matches, err := s.matchFilters(ctx, e, whenFilters); err != nil || !matches {
 			return entityResult{}
 		}
 	}
@@ -419,14 +435,14 @@ func (s *Service) checkEntityAgainstRule(
 	// routing it through filter.Parse would silently reinterpret it as a
 	// filter on a nonexistent property and select nothing.
 	if rule.WhenCondition != "" {
-		if matches, err := s.matchCondition(e, rule.WhenCondition); err != nil || !matches {
+		if matches, err := s.matchCondition(ctx, e, rule.WhenCondition); err != nil || !matches {
 			return entityResult{}
 		}
 	}
 
 	// Check 'then' conditions - if they don't satisfy, it's a violation.
 	if len(thenFilters) > 0 {
-		if satisfies, err := s.matchFilters(e, thenFilters); err != nil || !satisfies {
+		if satisfies, err := s.matchFilters(ctx, e, thenFilters); err != nil || !satisfies {
 			return entityResult{Violations: []Violation{s.newViolation(rule, e, rule.Description)}}
 		}
 	}
@@ -435,7 +451,7 @@ func (s *Service) checkEntityAgainstRule(
 		// so it is a violation — the same direction as a `then:` clause
 		// that fails to match. A malformed expression never reaches
 		// here: compileRuleConditions abandons the rule first.
-		if satisfies, err := s.matchCondition(e, rule.ThenCondition); err != nil || !satisfies {
+		if satisfies, err := s.matchCondition(ctx, e, rule.ThenCondition); err != nil || !satisfies {
 			return entityResult{Violations: []Violation{s.newViolation(rule, e, rule.Description)}}
 		}
 	}
@@ -448,6 +464,11 @@ func (s *Service) checkEntityAgainstRule(
 	// behavior where the rule reported once per entity.
 	var out entityResult
 	if luaCtx != nil {
+		// The Lua path runs through luaCtx.runtime, built with
+		// lua.WithContext(ctx); applyTimeout derives the per-entity budget
+		// from that cached parent ctx. contextcheck can't follow that flow
+		// across the gopher-lua SetContext boundary.
+		//nolint:contextcheck // ctx threaded via WithContext on luaCtx.runtime
 		luaViolations, scriptErr := s.runLuaForEntity(e, rule, luaCtx)
 		if scriptErr != nil {
 			out.ScriptErrors = append(out.ScriptErrors, scriptErr)
@@ -468,7 +489,136 @@ func (s *Service) checkEntityAgainstRule(
 		out.Violations = append(out.Violations, v)
 	}
 
+	// Check relation-cardinality constraints. Each keyed constraint counts
+	// the entity's outgoing relations of that type to targets matching the
+	// constraint's `where` filters, and flags a violation when the count
+	// falls outside [min, max]. Keys are sorted so violation order is
+	// stable across runs (Go map iteration is not).
+	for _, relType := range slices.Sorted(maps.Keys(rule.Relations)) {
+		detail, ok, err := s.checkRelationConstraint(ctx, e, relType, rule.Relations[relType])
+		switch {
+		case err != nil:
+			// The check could not run. Reported rather than swallowed:
+			// a gate that silently "passes" because it never ran is
+			// indistinguishable from a gate that verified something.
+			out.LoadErrors = append(out.LoadErrors, LoadError{
+				RuleName: rule.Name,
+				Message:  fmt.Sprintf("relations %q on %q: %v", relType, e.ID, err),
+			})
+		case !ok:
+			v := s.newViolation(rule, e, rule.Description)
+			v.Detail = []string{detail}
+			out.Violations = append(out.Violations, v)
+		}
+	}
+
 	return out
+}
+
+// checkRelationConstraint evaluates a single relation-cardinality
+// constraint against an entity. It counts outgoing relations of relType
+// whose target entity matches every `where` filter, then checks the count
+// against the constraint's Min/Max bounds. Returns (detail, false) with a
+// human-readable summary when the constraint is violated, ("", true) when
+// satisfied.
+//
+// A failure that prevents the count from being trusted — no reader wired,
+// or the relation read itself failing — is returned as an error rather
+// than reported as "satisfied". Silently satisfying the gate is the worst
+// available outcome: these constraints are the workflow gates standing
+// between a broken ticket and `status=done`, so a check that could not run
+// must say so rather than wave the entity through.
+func (s *Service) checkRelationConstraint(
+	ctx context.Context,
+	e *entity.Entity,
+	relType string,
+	c metamodel.RelationConstraint,
+) (detail string, satisfied bool, err error) {
+	if c.Min == nil && c.Max == nil {
+		return "", true, nil
+	}
+	// A missing reader is a wiring error, not a reason to pass. RR-X9NVHI
+	// makes a nil VisibleReader DENY reads; denying a read and satisfying
+	// a validation gate are opposite outcomes, so this reports instead.
+	if s.deps.VisibleReader == nil {
+		return "", false, errors.New("no entity reader wired")
+	}
+
+	// Parsed again here (compileRuleConditions already reported a bad
+	// filter as a LoadError and abandoned the rule) so this function is
+	// safe to call directly.
+	whereFilters, err := filter.ParseAll(c.Where)
+	if err != nil {
+		return "", false, fmt.Errorf("invalid where filter: %w", err)
+	}
+
+	rels, err := s.deps.OutgoingRelations(ctx, e.ID, relType)
+	if err != nil {
+		return "", false, fmt.Errorf("reading %q relations: %w", relType, err)
+	}
+
+	count := 0
+	for _, rel := range rels {
+		if len(whereFilters) == 0 {
+			count++
+			continue
+		}
+		// A target we cannot evaluate must not be silently dropped.
+		// Dropping it undercounts, which is conservative for Min (the
+		// gate still fires) but ANTI-conservative for Max: a `max: 0`
+		// gate would report "satisfied" precisely because the targets
+		// it was meant to catch could not be checked. So an unevaluable
+		// target counts as matching whenever Max is set, and is skipped
+		// otherwise — each bound fails closed.
+		failClosed := c.Max != nil
+
+		target, gErr := s.deps.VisibleReader.GetEntity(ctx, rel.To)
+		if gErr != nil {
+			if failClosed {
+				count++
+			}
+			continue
+		}
+		targetDef, ok := s.deps.Meta.GetEntityDef(target.Type)
+		if !ok {
+			if failClosed {
+				count++
+			}
+			continue
+		}
+		rec := filter.Record{ID: target.ID, Type: target.Type, Properties: target.Properties}
+		matches, mErr := filter.MatchAll(rec, whereFilters, targetDef, s.deps.Meta)
+		if mErr != nil {
+			if failClosed {
+				count++
+			}
+			continue
+		}
+		if matches {
+			count++
+		}
+	}
+
+	constraintDesc := describeRelationConstraint(relType, c.Where)
+	if c.Min != nil && count < *c.Min {
+		return fmt.Sprintf("requires at least %d %s relation(s), has %d",
+			*c.Min, constraintDesc, count), false, nil
+	}
+	if c.Max != nil && count > *c.Max {
+		return fmt.Sprintf("must have at most %d %s relation(s), has %d",
+			*c.Max, constraintDesc, count), false, nil
+	}
+	return "", true, nil
+}
+
+// describeRelationConstraint renders a relation type plus its target
+// filters into a compact human string, e.g. `has-review (status=done)`.
+func describeRelationConstraint(relType string, where []string) string {
+	desc := "'" + relType + "'"
+	if len(where) > 0 {
+		desc += " (" + strings.Join(where, ", ") + ")"
+	}
+	return desc
 }
 
 // newViolation constructs a Violation tagged with the rule's metadata.

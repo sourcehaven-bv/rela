@@ -76,9 +76,13 @@ func (l linuxSandbox) Available() error {
 	}
 	msg := strings.TrimSpace(string(out))
 	if usernsFailure.MatchString(msg) {
-		return fmt.Errorf("%w: bwrap cannot create a user namespace on this host "+
-			"(kernel.unprivileged_userns_clone=0, or Ubuntu 23.10+ "+
-			"kernel.apparmor_restrict_unprivileged_userns=1): %s", ErrSandboxUnavailable, msg)
+		return fmt.Errorf("%w: bwrap cannot create a user namespace on this host. "+
+			"Under systemd this is usually the UNIT, not the kernel — check "+
+			"RestrictNamespaces=, SystemCallFilter= and RestrictAddressFamilies= "+
+			"against the unit in docs/attachment-security.md (Running under "+
+			"systemd); otherwise kernel.unprivileged_userns_clone=0, or Ubuntu "+
+			"23.10+ kernel.apparmor_restrict_unprivileged_userns=1: %s",
+			ErrSandboxUnavailable, msg)
 	}
 	return fmt.Errorf("%w: bwrap probe failed: %w: %s", ErrSandboxUnavailable, err, msg)
 }

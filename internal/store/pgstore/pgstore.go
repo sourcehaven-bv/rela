@@ -134,7 +134,13 @@ type DBTX interface {
 // CAS precondition has to be evaluated atomically with the write, so it
 // cannot live anywhere but on the type that owns the write.
 //
-//plimsoll:max-exported-methods=45
+// AcquireKeyedLock (TKT-1K47YD) is +1 for exactly the same reason: same pool,
+// same schema qualification, differing only in that the caller names the key
+// and the wait blocks. Consumers bind to the narrow lock.Locker seam rather
+// than to this type, so the public API this adds to is the store-capability
+// surface, not a new coupling point.
+//
+//plimsoll:max-exported-methods=46
 //plimsoll:max-methods=56
 type Store struct {
 	db        DBTX
