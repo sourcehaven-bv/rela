@@ -5,7 +5,7 @@ title: Named query scopes declared per entity type in schema.yaml, referenced by
 kind: enhancement
 priority: high
 effort: l
-status: ready
+status: planning
 ---
 
 Add `query_scopes:` to an entity type in schema.yaml: named, reusable boolean
