@@ -44,11 +44,15 @@ func NewCmdRunner(timeout time.Duration, maxBytes int64, opts ...CmdRunnerOption
 	for _, o := range opts {
 		o(&cfg)
 	}
-	// A scan command talks to clamd over a unix socket that lives outside the
-	// sandbox's mount view; bind the well-known locations (+ any override) so the
-	// scanner is reachable without granting network access.
-	socketBinds := append(append([]string{}, cmdexec.DefaultScannerSockets...), cfg.extraReadOnly...)
-	r, err := cmdexec.New(timeout, maxBytes, cmdexec.WithExtraReadOnly(socketBinds...))
+	// A scan command needs two things from outside the sandbox's mount view: the
+	// daemon's unix socket, and the config file naming that socket (clamdscan
+	// parses clamd.conf before it connects, so the socket alone is not enough).
+	// Bind the well-known locations of both, plus any operator override, so a
+	// stock install works without configuration and without network access.
+	binds := append([]string{}, cmdexec.DefaultScannerSockets...)
+	binds = append(binds, cmdexec.DefaultScannerConfigs...)
+	binds = append(binds, cfg.extraReadOnly...)
+	r, err := cmdexec.New(timeout, maxBytes, cmdexec.WithExtraReadOnly(binds...))
 	if err != nil {
 		return nil, fmt.Errorf("attachment: %w", err)
 	}
@@ -64,6 +68,15 @@ func (c *CmdRunner) Probe(cmd []string) error { return c.exec.Probe(cmd) }
 // confined, for the startup log. Diagnostic only — never branch on this string;
 // callers just run the command and handle the error.
 func (c *CmdRunner) Describe() string { return c.exec.Describe() }
+
+// SandboxErr reports why commands run by this runner will FAIL, or nil when they
+// will run.
+//
+// Nil: does NOT mean "confined" — see [cmdexec.Runner.SandboxErr], which this
+// delegates to. The composition root uses it to warn at startup that configured
+// scans will all fail closed. Never skip a scan because it is non-nil: that
+// turns a fail-closed rejection into an unscanned upload.
+func (c *CmdRunner) SandboxErr() error { return c.exec.SandboxErr() }
 
 // Scan runs cmd over data as a virus/policy scan. A nil error means clean; a
 // non-zero exit is mapped to a rejection wrapping [ErrRejected]. The bytes are

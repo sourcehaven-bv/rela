@@ -139,6 +139,11 @@ export interface FormField {
   /** Fate of the stored value when `visible_when` turns false. Default `no`. */
   clear_when_hidden?: ClearWhenHidden
   /**
+   * Carry this field's value across a "Create & add another" reset
+   * (TKT-7YHKD1) instead of clearing it. The reset is clean by default.
+   */
+  keep_on_add_another?: boolean
+  /**
    * Width on the 12-column form grid (TKT-5V8704). Absent means full width —
    * one field per row, the default. Same semantics as a view section field's
    * span, so an author learns the model once.
@@ -162,6 +167,11 @@ export interface FormRelation {
   properties?: RelationProperty[]
   /** Condition expression; the relation widget is hidden when it evaluates false. */
   visible_when?: string
+  /**
+   * Carry this field's value across a "Create & add another" reset
+   * (TKT-7YHKD1) instead of clearing it. The reset is clean by default.
+   */
+  keep_on_add_another?: boolean
 }
 
 // Unified type for form fields that can be either property fields or relation fields
@@ -183,6 +193,13 @@ export interface FormFieldOrRelation {
   // Common props
   label?: string
   widget?: string
+  /**
+   * Carry this entry's value across a "Create & add another" reset
+   * (TKT-7YHKD1). Applies to BOTH halves of the union — the batch context an
+   * operator most wants to keep (a project, an assignee) is usually a
+   * relation. See FormField.
+   */
+  keep_on_add_another?: boolean
   /**
    * Width on the 12-column form grid; absent = full width. See FormField.
    *

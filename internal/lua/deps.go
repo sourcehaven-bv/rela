@@ -97,6 +97,34 @@ type ReadDeps struct {
 	Capabilities Capabilities
 }
 
+// OutgoingRelations returns the entity's outgoing relations of the given
+// type. It lives here (rather than in a consumer that would otherwise need
+// to import internal/store to name store.RelationQuery) so read-only
+// consumers of ReadDeps — e.g. the validation engine's relation-cardinality
+// check — can enumerate relations without taking a store dependency of
+// their own.
+//
+// Reads go through [ReadDeps.VisibleReader], so the relations counted are
+// exactly the ones the acting identity may see; a nil VisibleReader returns
+// nil rather than falling back to a raw handle (RR-X9NVHI).
+func (d ReadDeps) OutgoingRelations(ctx context.Context, fromID, relType string) ([]*entity.Relation, error) {
+	if d.VisibleReader == nil {
+		return nil, nil
+	}
+	var rels []*entity.Relation
+	for rel, err := range d.VisibleReader.ListRelations(ctx, store.RelationQuery{
+		From:      fromID,
+		Type:      relType,
+		Direction: store.DirectionOutgoing,
+	}) {
+		if err != nil {
+			return nil, err
+		}
+		rels = append(rels, rel)
+	}
+	return rels, nil
+}
+
 // Mutator is the consumer-side write surface Lua bindings call into
 // from rela.create_entity / rela.update_entity / rela.delete_entity /
 // rela.create_relation / rela.delete_relation. Defined here at the

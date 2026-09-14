@@ -94,6 +94,7 @@ exclude:
     - ^internal/store/storetest # shared conformance test kit (exercised via backends)
     - ^internal/visibility/visibilitytest # shared conformance test kit (exercised via visibility + future wirings)
     - ^internal/state/statetest # shared conformance test kit (exercised via FSKV + pgstore's StateKV)
+    - ^internal/lock/locktest # shared conformance test kit (exercised via MemoryLocker + pgstore's keyed lock)
     - ^internal/jobs/jobstest # shared conformance test kit (exercised via the memory + postgres queues)
     - ^internal/mail/mailtest # shared conformance test kit (exercised via the smtp + memory transports)
     - ^internal/schedulerstate/schedulerstatetest # shared conformance test kit (exercised via scheduler-state backends)

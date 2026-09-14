@@ -1813,6 +1813,80 @@ validations:
 3. Each required header is checked against the extracted headers
 4. If any required header is missing, the entity violates the rule
 
+### Relation Cardinality Validation
+
+The `relations` field asserts how many **outgoing** relations of a given type an
+entity has, optionally restricted to targets whose own properties match a filter.
+This expresses workflow gates like "a done ticket must have a completed review
+checklist" or "a done ticket must have no open critical review-responses" — a
+constraint that spans two entities, which property/content checks cannot.
+
+```yaml
+validations:
+  # A done ticket must link to at least one completed review checklist.
+  - name: done-ticket-needs-review
+    description: "Done tickets must have a completed review checklist"
+    entity_type: ticket
+    when:
+      - "status=done"
+    relations:
+      has-review: # keyed by relation type
+        where: # target must match ALL of these (same syntax as when/then)
+          - "status=done"
+        min: 1 # at least one matching relation
+    severity: error
+
+  # A done ticket must have no open critical review responses.
+  - name: done-ticket-no-open-critical
+    description: "Done tickets cannot have open critical review responses"
+    entity_type: ticket
+    when:
+      - "status=done"
+    relations:
+      has-review-response:
+        where:
+          - "status=open"
+          - "severity=critical"
+        max: 0 # no matching relation allowed
+    severity: error
+```
+
+Each entry under `relations` is keyed by a relation type and supports:
+
+| Field   | Meaning                                                              |
+| ------- | ------------------------------------------------------------------- |
+| `where` | Filters on the **target** entity's properties (ANDed). Omit to count every target of the type. Uses the same operators as `when`/`then`. |
+| `min`   | Require at least this many matching relations.                      |
+| `max`   | Require at most this many matching relations.                       |
+
+At least one of `min`/`max` must be set. The check counts outgoing relations of
+the keyed type whose target entity satisfies every `where` condition, then
+reports a violation when the count falls outside `[min, max]`. It runs only for
+entities that match `when`.
+
+> Unknown keys inside a validation rule are rejected at load time, so a
+> misspelled or mis-nested block (e.g. `relationz:`) fails loudly rather than
+> being silently ignored. The same applies inside the block: an undeclared
+> relation type, a constraint with neither `min` nor `max`, and bounds nothing
+> can satisfy (`min: 5, max: 2`) are all load errors. A constraint that cannot
+> be evaluated at check time is reported too — it never counts as satisfied.
+
+`where` is matched against the **target** entity with the same type-aware
+semantics as `when`/`then`, which is worth knowing when porting hand-written
+comparisons:
+
+- `*` and `?` are wildcards, not literal characters.
+- On a list-valued property, `=` means "contains this element".
+- Values are coerced to the property's declared type, so `count=007` matches a
+  stored `7`, and a date matches its timestamp form.
+
+Relations and targets are read through the same visibility rules as everything
+else, so a constraint counts what the acting identity can **see**. A gate is
+not a global invariant: an edge is skipped when either endpoint is invisible,
+so two users can legitimately get different verdicts on the same graph. The CLI
+and CI read unrestricted, so the verdict that enforces the workflow sees the
+whole graph.
+
 ### Lua Validation
 
 For complex validation logic that goes beyond property filters and content checks, you can use
