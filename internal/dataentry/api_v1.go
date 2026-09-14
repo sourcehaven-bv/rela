@@ -346,7 +346,19 @@ var errListLoad = errors.New("list load failed")
 func (a *App) listPage(
 	ctx context.Context, typeName string, query map[string][]string, page, perPage int,
 ) (rows []*entityPkg.Entity, total int, err error) {
-	if !worldFromContext(ctx).blocksAllReads() {
+	// A view `condition:` is evaluated in Go below, so the store cannot page
+	// this request: pushing LIMIT/OFFSET past a filter the store does not
+	// apply would return short pages and a count for the wrong population.
+	//
+	// Declining here is deliberate and must stay explicit. planListPushdown
+	// inspects only `filter[...]` params and `continue`s on everything else,
+	// so a condition it never sees would not make it decline — it would push
+	// a paged query and silently return the UNFILTERED superset, which is
+	// BUG-F1LTP1's failure shape. Its own header states the rule: the pushed
+	// and the Go path must return the same rows, "and that is a matter of
+	// eligibility, not of translation cleverness".
+	cond := viewCondition(a.viewConditions, a.State(), viewKindList, queryGet(query, listIDParam))
+	if cond == nil && !worldFromContext(ctx).blocksAllReads() {
 		rqr := readGateFromContext(ctx).ReadQuery(ctx, typeName)
 		isRelationKey := relationFilterClassifier(a.Meta(), a.Cfg(), typeName)
 		if plan, ok := planListPushdown(
@@ -357,6 +369,12 @@ func (a *App) listPage(
 	}
 	all, err := a.scopedSortedEntities(ctx, typeName, query)
 	if err != nil {
+		return nil, 0, err
+	}
+	// AFTER the ACL scope and every filter, BEFORE paging and the count: the
+	// condition narrows the population the page and total describe, so
+	// applying it later would page one set and count another.
+	if all, err = applyViewCondition(ctx, all, cond); err != nil {
 		return nil, 0, err
 	}
 	total = len(all)

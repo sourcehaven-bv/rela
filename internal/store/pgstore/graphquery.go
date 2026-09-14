@@ -231,7 +231,36 @@ func buildPredicateParts(b *sqlBuilder, q store.GraphQuery, typeArg string) (wit
 		with = append(with, w...)
 		conds = append(conds, cond)
 	}
+	if len(q.Narrowing) > 0 {
+		conds = append(conds, buildNarrowingSQL(b, q.Narrowing))
+	}
 	return with, conds
+}
+
+// buildNarrowingSQL renders [store.GraphQuery.Narrowing] as ONE conjunct: a
+// disjunction of per-branch property conjunctions.
+//
+// It is a SEPARATE conjunct from buildAnySQL's, which is the whole point of
+// the field being separate — folding caller branches into the Any disjunction
+// would make them an alternative route to authorization rather than a
+// restriction on top of it. See [store.GraphQuery.Narrowing].
+//
+// An empty branch renders TRUE (it constrains nothing), matching
+// graphquerynaive's matchesNarrowing.
+func buildNarrowingSQL(b *sqlBuilder, branches []store.NarrowBranch) string {
+	parts := make([]string, 0, len(branches))
+	for _, br := range branches {
+		if len(br.Props) == 0 {
+			parts = append(parts, "TRUE")
+			continue
+		}
+		conj := make([]string, 0, len(br.Props))
+		for _, p := range br.Props {
+			conj = append(conj, propCond(b, p))
+		}
+		parts = append(parts, "("+strings.Join(conj, " AND ")+")")
+	}
+	return "(" + strings.Join(parts, " OR ") + ")"
 }
 
 // buildAnySQL renders [store.GraphQuery.Any] as ONE conjunct: a disjunction
@@ -317,11 +346,40 @@ func propCond(b *sqlBuilder, p store.PropPredicate) string {
 		return isEmpty
 	case p.Value == "" && p.Op == store.PropNotEqual:
 		return "NOT " + isEmpty
+	case p.Op == store.PropNotEqualOrEmpty:
+		// The Lua `~=` reading: not this value, OR not set at all. An empty
+		// Value makes this degenerate (everything matches); rendering it as
+		// TRUE keeps the SQL honest rather than silently meaning something
+		// narrower.
+		if p.Value == "" {
+			return "TRUE"
+		}
+		return fmt.Sprintf("(%s OR NOT %s)", isEmpty, equalsCond(b, txt, jsn, p.Value))
+	case p.Op == store.PropGreaterEqual, p.Op == store.PropLessEqual:
+		return orderedCond(b, txt, jsn, p.Op, p.Value)
 	case p.Op == store.PropNotEqual:
 		return fmt.Sprintf("(NOT %s AND NOT %s)", isEmpty, equalsCond(b, txt, jsn, p.Value))
 	default:
 		return equalsCond(b, txt, jsn, p.Value)
 	}
+}
+
+// orderedCond renders [store.PropGreaterEqual] / [store.PropLessEqual] as
+// a byte-wise text comparison, matching graphquerynaive's matchesOrdered.
+//
+// The jsonb_typeof guard is load-bearing, not defensive. `->>` renders an
+// array as its JSON text (`["a", "b"]`) where Go's fmt.Sprint gives
+// `[a b]`, so without the guard a range predicate over a list property
+// would return different rows per backend. Excluding the shape is the one
+// answer both can give. A missing key yields SQL NULL, so the comparison
+// is already not-true for an absent property with no extra guard.
+func orderedCond(b *sqlBuilder, txt, jsn string, op store.PropOp, value string) string {
+	cmp := ">="
+	if op == store.PropLessEqual {
+		cmp = "<="
+	}
+	return fmt.Sprintf("(jsonb_typeof(%s) <> 'array' AND %s <> '' AND %s %s %s)",
+		jsn, txt, txt, cmp, b.arg(value))
 }
 
 // equalsCond renders value equality, matching [propmatch] semantics: a

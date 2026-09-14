@@ -649,7 +649,26 @@ type List struct {
 	Sort           []SortSpec      `yaml:"sort,omitempty" json:"default_sort,omitempty"`
 	Filters        []FilterConfig  `yaml:"filters" json:"filters,omitempty"`
 	FilterControls []FilterControl `yaml:"filter_controls" json:"filter_controls,omitempty"`
-	CreateForm     string          `yaml:"create_form" json:"create_form,omitempty"`
+	// Condition is a predicate expression ANDed with Filters, for a
+	// membership rule Filters cannot express: `or`, grouping, negation of a
+	// compound, and the date arithmetic host functions.
+	//
+	// A SEPARATE key from Filters rather than a richer operator, for the
+	// reason next actions and automations keep `query:`/`condition:` apart
+	// (docs/data-entry.md): the two syntaxes overlap without erroring, so
+	// filter.Parse reads `days_between(entity.due, today()) <= 7` as a
+	// filter on a property NAMED that, matches nothing, and goes quiet. The
+	// key is the declaration of intent; do not add dialect sniffing.
+	//
+	// Compiled at config load (conditionlint.CompileViewConditions) against
+	// EntityType, so a condition that does not compile is a startup error
+	// rather than a view that is silently empty forever.
+	//
+	// Note the dialect difference an author will hit: this is Lua
+	// expression syntax, so inequality is `~=` and an unset property is
+	// NOT equal to any value — where a Filters `!=` excludes unset rows.
+	Condition  string `yaml:"condition,omitempty" json:"condition,omitempty"`
+	CreateForm string `yaml:"create_form" json:"create_form,omitempty"`
 	// CreateWorld is the world the create button opens its form in, for when a
 	// new entity belongs in a DIFFERENT face than the one this list shows.
 	//
@@ -836,6 +855,16 @@ type Kanban struct {
 	CreateForm       string           `yaml:"create_form,omitempty" json:"create_form,omitempty"`
 	Filters          []FilterConfig   `yaml:"filters,omitempty" json:"filters,omitempty"`
 	FilterControls   []FilterControl  `yaml:"filter_controls,omitempty" json:"filter_controls,omitempty"`
+	// Condition mirrors [List.Condition], but is NOT YET SUPPORTED on a
+	// kanban and is refused at config load.
+	//
+	// The field exists so the shape is settled and the compiler already
+	// handles both surfaces; what is missing is the board's server-side read
+	// path (it still filters client-side). Accepting the key meanwhile would
+	// validate an expression and then ignore it — the silent no-op class of
+	// BUG-F1LTV0 and BUG-MYN56J. Drop the guard in validateKanbans when the
+	// board evaluates it.
+	Condition string `yaml:"condition,omitempty" json:"condition,omitempty"`
 }
 
 // KanbanColumn defines a column in the kanban board.

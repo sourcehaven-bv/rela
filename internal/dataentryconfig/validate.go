@@ -1748,6 +1748,18 @@ func validateKanbans(cfg *Config, meta *metamodel.Metamodel) []string {
 			}
 		}
 
+		// `condition:` is accepted on the struct (shared with lists) but the
+		// board does not evaluate it yet — it still filters client-side. A
+		// key that validates and then does nothing is precisely the silent
+		// no-op BUG-F1LTV0 and BUG-MYN56J are both about, so refuse it here
+		// until the kanban read path lands. Remove this when it does.
+		if kanban.Condition != "" {
+			errs = append(errs, fmt.Sprintf(
+				"kanban %q: condition is not supported on a kanban yet "+
+					"(the board filters client-side); use it on a list, or filters: here",
+				kanbanID))
+		}
+
 		// Validate filter properties
 		for i, f := range kanban.Filters {
 			if !validFilterOperators[f.Operator] {
