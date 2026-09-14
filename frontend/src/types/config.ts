@@ -647,6 +647,14 @@ export interface AnalyzeIssue {
   /** Optional headline shown when the row has no entity (e.g. validation rule name). */
   title?: string
   message: string
+  /**
+   * Per-entity explanation a Lua validation rule returned for THIS entity:
+   * which of the rule's several possible defects it has, and what to do
+   * about it. Shown alongside `message`, which stays the rule's own
+   * description and is identical across the rule's rows. Absent on every
+   * row that is not a Lua-rule violation.
+   */
+  ruleMessage?: string
   severity: 'error' | 'warning'
   checkType: string
   /**

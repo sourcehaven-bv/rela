@@ -120,7 +120,7 @@ func TestLuaValidation_RuntimeRebuiltAfterScriptError(t *testing.T) {
 		t.Fatalf("got %d violations, want 2", len(result.Violations))
 	}
 	for _, v := range result.Violations {
-		if v.Description == "leaked: from-1" {
+		if v.Message == "leaked: from-1" {
 			t.Errorf("entity %s saw leaked global from prior failed run; want clean state",
 				v.EntityID)
 		}
@@ -205,9 +205,9 @@ func TestLuaValidation_FreshRuntimePerCheckCall(t *testing.T) {
 		t.Fatalf("first run: got %d violations, want 1", len(first.Violations))
 	}
 	wantFirst := "counter=1"
-	if first.Violations[0].Description != wantFirst {
+	if first.Violations[0].Message != wantFirst {
 		t.Errorf("first run description = %q, want %q",
-			first.Violations[0].Description, wantFirst)
+			first.Violations[0].Message, wantFirst)
 	}
 
 	// Second run: must also start fresh, not see the leaked counter
@@ -217,8 +217,8 @@ func TestLuaValidation_FreshRuntimePerCheckCall(t *testing.T) {
 	if len(second.Violations) != 1 {
 		t.Fatalf("second run: got %d violations, want 1", len(second.Violations))
 	}
-	if second.Violations[0].Description != wantFirst {
+	if second.Violations[0].Message != wantFirst {
 		t.Errorf("second run description = %q, want %q (runtime must be fresh per CheckRule)",
-			second.Violations[0].Description, wantFirst)
+			second.Violations[0].Message, wantFirst)
 	}
 }

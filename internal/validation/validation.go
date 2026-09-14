@@ -24,6 +24,17 @@ type Violation struct {
 	EntityID    string
 	EntityTitle string
 
+	// Message is the per-entity explanation a Lua rule returned for THIS
+	// entity: which of the rule's several possible defects this one has,
+	// and what to do about it. Description stays the rule's own text, the
+	// same for every violation of the rule, so the two are not
+	// interchangeable and neither may overwrite the other.
+	//
+	// Empty for every non-Lua rule, and for a Lua rule that returns no
+	// message: the rule description alone is then the whole finding, and
+	// renderers must omit the message rather than print an empty line.
+	Message string
+
 	// Face names the content state this violation is about, as the
 	// operator DECLARED it — so the bare face reports its declared name
 	// rather than the empty string it is stored under.
@@ -35,7 +46,8 @@ type Violation struct {
 	Face string
 
 	// Detail carries optional structured specifics about *why* this
-	// violation fired, for surfacing beyond the flat Description. For
+	// violation fired, for surfacing beyond the flat Description and
+	// Message. For
 	// content required-headers rules it holds the missing exact
 	// headers (see MissingRequiredHeaders). Nil for violations with no
 	// structured detail (Lua, then-filter, property rules).
@@ -472,8 +484,8 @@ func (s *Service) checkEntityAgainstRule(
 }
 
 // newViolation constructs a Violation tagged with the rule's metadata.
-// description overrides rule.Description for Lua-sourced violations
-// (which carry their own custom messages).
+// description is the rule text to report under; Lua-sourced violations are
+// built directly in runLuaForEntity, which additionally sets Message.
 //
 // A method rather than a free function so it can resolve the entity's stored
 // face back to the name the operator declared — see declaredFaceOf.
@@ -504,10 +516,15 @@ func (s *Service) runLuaForEntity(
 	}
 	violations := make([]Violation, len(luaViolations))
 	for i, lv := range luaViolations {
+		// Description stays the rule's text and Message carries what the
+		// script said about THIS entity. Folding the script message into
+		// Description (as this once did) loses the rule text wherever a
+		// renderer groups violations under their rule.
 		violations[i] = Violation{
 			Face:        s.declaredFaceOf(e),
 			RuleName:    rule.Name,
-			Description: lv.Message,
+			Description: rule.Description,
+			Message:     lv.Message,
 			Severity:    lv.Severity,
 			EntityID:    e.ID,
 			EntityTitle: e.Title(),

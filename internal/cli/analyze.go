@@ -577,8 +577,25 @@ func writeRuleViolations(rule metamodel.ValidationRule, vs []analysis.Validation
 		out.WriteWarning("%s (%d):", rule.Description, len(vs))
 	}
 	for _, v := range vs {
-		out.WriteMessage("  %s: %s", v.EntityID, v.EntityTitle)
+		out.WriteMessage("%s", formatValidationViolationLine(v))
 	}
+}
+
+// formatValidationViolationLine renders one violation as the indented
+// line under its rule heading.
+//
+// A Lua rule's per-entity Message is what makes the finding actionable —
+// it says which of the rule's several possible defects this entity has —
+// so it is appended after the title. Rules that return no message (every
+// non-Lua rule) keep the bare "id: title" form: the rule description
+// above is then the whole finding and a trailing separator would suggest
+// text that isn't there.
+func formatValidationViolationLine(v analysis.ValidationViolation) string {
+	line := fmt.Sprintf("  %s: %s", v.EntityID, v.EntityTitle)
+	if v.Message != "" {
+		line += " — " + v.Message
+	}
+	return line
 }
 
 func writeValidationsSummary(ruleCount, errorCount, warningCount int, hasErrors bool) {

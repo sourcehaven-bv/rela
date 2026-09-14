@@ -907,3 +907,60 @@ func TestRunAnalysisSectionNames(t *testing.T) {
 			got, want)
 	}
 }
+
+// TestAnalyzeValidations_CarriesLuaRuleMessage pins that a Lua rule's
+// per-entity message reaches the browser surface as RuleMessage while
+// Message keeps the rule's own description. The two answer different
+// questions — "which rule fired" vs "what is wrong with THIS entity" —
+// and the view shows both, so neither may overwrite the other.
+func TestAnalyzeValidations_CarriesLuaRuleMessage(t *testing.T) {
+	g := newFixture()
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"procedure": {Properties: map[string]metamodel.PropertyDef{
+				"task": {Type: "string"},
+			}},
+		},
+		Validations: []metamodel.ValidationRule{
+			{
+				Name:        "procedure-needs-task",
+				Description: "Elke procedure moet een terugkerende taak hebben",
+				EntityType:  "procedure",
+				Severity:    "warning",
+				Lua: `
+				local task = entity.properties.task
+				if task == nil or task == "" then
+					return { message = "geen terugkerende taak gekoppeld" }
+				end
+				if task == "exhausted" then
+					return { message = "alleen uitgeputte taken; plan een nieuwe" }
+				end
+				return nil
+			`,
+			},
+		},
+	}
+
+	g.AddNode(&entity.Entity{ID: "PROCEDURE-91XS", Type: "procedure", Properties: map[string]any{}})
+	g.AddNode(&entity.Entity{ID: "PROCEDURE-MCBL", Type: "procedure", Properties: map[string]any{"task": "exhausted"}})
+	g.AddNode(&entity.Entity{ID: "PROCEDURE-OK", Type: "procedure", Properties: map[string]any{"task": "monthly"}})
+
+	svc := newAnalyzeService(t, g, meta)
+	section := svc.analyzeValidations(context.Background(), meta)
+
+	if len(section.Issues) != 2 {
+		t.Fatalf("expected 2 issues, got %d", len(section.Issues))
+	}
+	want := map[string]string{
+		"PROCEDURE-91XS": "geen terugkerende taak gekoppeld",
+		"PROCEDURE-MCBL": "alleen uitgeputte taken; plan een nieuwe",
+	}
+	for _, issue := range section.Issues {
+		if got := issue.RuleMessage; got != want[issue.EntityID] {
+			t.Errorf("%s RuleMessage = %q, want %q", issue.EntityID, got, want[issue.EntityID])
+		}
+		if issue.Message != "Elke procedure moet een terugkerende taak hebben" {
+			t.Errorf("%s Message = %q, want the rule description", issue.EntityID, issue.Message)
+		}
+	}
+}

@@ -293,26 +293,46 @@ func (s *Server) handleAnalyzeValidations(
 		return textResult("No custom validation rules defined in metamodel"), nil
 	}
 
+	// A violation is an object rather than a bare id so a Lua rule's
+	// per-entity message — which of the rule's several possible defects
+	// this entity has — reaches the caller. Rule carries the rule's own
+	// description, which is the same for every violation of it; the two
+	// are different levels and neither substitutes for the other.
+	type ruleViolation struct {
+		EntityID string `json:"entity_id"`
+		// Message is the per-entity explanation returned by a Lua rule.
+		// Omitted for non-Lua rules and for a Lua rule that returned no
+		// message: the rule description is then the whole finding.
+		Message string `json:"message,omitempty"`
+	}
 	type ruleResult struct {
-		Rule       string   `json:"rule"`
-		Severity   string   `json:"severity"`
-		Violations []string `json:"violations"`
+		Rule       string          `json:"rule"`
+		Severity   string          `json:"severity"`
+		Violations []ruleViolation `json:"violations"`
 	}
 
 	validator := s.deps().Validator
 	var results []ruleResult
 	for _, rule := range rules {
-		ids, err := validator.CheckRule(ctx, rule)
+		full, err := validator.CheckRuleFull(ctx, rule)
 		if err != nil {
 			continue
 		}
-		if len(ids) > 0 {
-			results = append(results, ruleResult{
-				Rule:       rule.Description,
-				Severity:   rule.GetSeverity(),
-				Violations: ids,
+		if len(full.Violations) == 0 {
+			continue
+		}
+		violations := make([]ruleViolation, 0, len(full.Violations))
+		for _, v := range full.Violations {
+			violations = append(violations, ruleViolation{
+				EntityID: v.EntityID,
+				Message:  v.Message,
 			})
 		}
+		results = append(results, ruleResult{
+			Rule:       rule.Description,
+			Severity:   rule.GetSeverity(),
+			Violations: violations,
+		})
 	}
 
 	if len(results) == 0 {
