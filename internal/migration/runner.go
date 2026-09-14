@@ -150,12 +150,19 @@ func ApplyWithMetamodel(path string, ft FileType, fs storage.FS, meta MetamodelP
 	encoder := yaml.NewEncoder(&buf)
 	encoder.SetIndent(2)
 	if err := encoder.Encode(&doc); err != nil {
+		// coverage-ignore-start: defensive: yaml.Encoder writing to a bytes.Buffer never errors (Buffer.Write always
+		// succeeds) and a valid parsed
+		// *yaml.Node always encodes
 		result.Error = fmt.Errorf("encoding YAML: %w", err)
 		return result, nil
+		// coverage-ignore-end
 	}
 	if err := encoder.Close(); err != nil {
+		// coverage-ignore-start: defensive: Close flushes into a bytes.Buffer which never errors after a successful
+		// Encode
 		result.Error = fmt.Errorf("closing encoder: %w", err)
 		return result, nil
+		// coverage-ignore-end
 	}
 
 	if err := fs.WriteFile(path, buf.Bytes(), 0o644); err != nil {

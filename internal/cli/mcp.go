@@ -18,6 +18,9 @@ type McpCmd struct{}
 
 // Run dispatches `rela mcp`.
 func (c *McpCmd) Run() error {
+	// coverage-ignore-start: external-tool: starts the MCP stdio server (blocking Serve loop over os.Stdin/os.Stdout);
+	// requires a real project +
+	// stdio transport
 	startDir := projectPath
 	if startDir == "" {
 		startDir = os.Getenv("RELA_PROJECT")
@@ -47,4 +50,5 @@ func (c *McpCmd) Run() error {
 	svc.watchSchema(srv)
 
 	return srv.Serve(context.Background())
+	// coverage-ignore-end
 }

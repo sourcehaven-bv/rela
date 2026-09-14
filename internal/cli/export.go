@@ -81,7 +81,7 @@ func (c *ExportCmd) exportEntities(ctx context.Context, svc *readServices, entit
 	st := svc.Store
 	entities := make([]*entity.Entity, 0)
 	for e, err := range st.ListEntities(ctx, store.EntityQuery{Type: entityType}) {
-		if err != nil {
+		if err != nil { // coverage-ignore: defensive: memstore.ListEntities iterator never yields a non-nil error
 			return err
 		}
 		entities = append(entities, e)
@@ -120,7 +120,7 @@ func (c *ExportCmd) exportAllData(ctx context.Context, svc *readServices) error 
 
 	allEntities := make([]*entity.Entity, 0)
 	for e, err := range st.ListEntities(ctx, store.EntityQuery{}) {
-		if err != nil {
+		if err != nil { // coverage-ignore: defensive: memstore.ListEntities iterator never yields a non-nil error
 			return err
 		}
 		allEntities = append(allEntities, e)
@@ -128,7 +128,7 @@ func (c *ExportCmd) exportAllData(ctx context.Context, svc *readServices) error 
 
 	allEdges := make([]*entity.Relation, 0)
 	for r, err := range st.ListRelations(ctx, store.RelationQuery{}) {
-		if err != nil {
+		if err != nil { // coverage-ignore: defensive: memstore.ListRelations iterator never yields a non-nil error
 			return err
 		}
 		allEdges = append(allEdges, r)
@@ -198,7 +198,7 @@ func getEntityRelations(ctx context.Context, svc *readServices, entityID string)
 	}
 	outQ := store.RelationQuery{EntityID: entityID, Direction: store.DirectionOutgoing}
 	for rel, err := range st.ListRelations(ctx, outQ) {
-		if err != nil {
+		if err != nil { // coverage-ignore: defensive: memstore.ListRelations iterator never yields a non-nil error
 			break
 		}
 		target := RelationTarget{ID: rel.To}
@@ -213,7 +213,7 @@ func getEntityRelations(ctx context.Context, svc *readServices, entityID string)
 	}
 	inQ := store.RelationQuery{EntityID: entityID, Direction: store.DirectionIncoming}
 	for rel, err := range st.ListRelations(ctx, inQ) {
-		if err != nil {
+		if err != nil { // coverage-ignore: defensive: memstore.ListRelations iterator never yields a non-nil error
 			break
 		}
 		source := RelationTarget{ID: rel.From}

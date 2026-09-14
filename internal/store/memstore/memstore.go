@@ -429,10 +429,14 @@ func entityIDSet(ids []string) map[string]bool {
 // exactly the drift storetest exists to catch. The nil guard stays
 // local — it is this backend's map-miss, not part of the rule.
 func matchEntityQuery(e *entity.Entity, q store.EntityQuery, idSet map[string]bool) bool {
+	// coverage-ignore-start: defensive invariant: both callers look e up by an id from m.entityOrder, which the write
+	// paths keep in lockstep with
+	// m.entities — a nil entity here is impossible without a broken index
 	if e == nil {
 		return false
 	}
 	return storeutil.MatchEntityQuery(e.Type, e.ID, e.Face, q, idSet)
+	// coverage-ignore-end
 }
 
 func (m *MemStore) CountEntities(_ context.Context, q store.EntityQuery) (int, error) {

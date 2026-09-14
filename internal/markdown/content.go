@@ -102,9 +102,12 @@ func ExtractChecklistItems(content string) []ChecklistItem {
 		if checkbox, ok := n.(*extast.TaskCheckBox); ok {
 			// Get the parent list item to extract text
 			listItem := findParentListItem(n)
+			// coverage-ignore-start: defensive: goldmark always nests a TaskCheckBox under a ListItem, so
+			// findParentListItem never returns nil here
 			if listItem == nil {
 				return ast.WalkContinue, nil
 			}
+			// coverage-ignore-end
 
 			// Extract text content and check for strikethrough
 			itemText, hasStrikethrough := extractListItemText(listItem, source)
@@ -128,7 +131,8 @@ func findParentListItem(n ast.Node) *ast.ListItem {
 			return li
 		}
 	}
-	return nil
+	return nil // coverage-ignore: defensive: only called on a TaskCheckBox, which goldmark always parents to a
+	// ListItem, so the loop always returns above
 }
 
 // extractListItemText extracts the text content of a list item and detects strikethrough.

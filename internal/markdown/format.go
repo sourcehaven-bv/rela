@@ -122,10 +122,14 @@ func formatOnce(content string, lineWidth int) (result string) {
 	md := goldmark.New(goldmark.WithRenderer(r))
 
 	var buf bytes.Buffer
+	// coverage-ignore-start: defensive: goldmark's markdown renderer panics (handled by the deferred recover above)
+	// rather than returning an
+	// error, and bytes.Buffer never fails a write, so Convert never returns a non-nil error here
 	if err := md.Convert([]byte(content), &buf); err != nil {
 		// If formatting fails, return original content.
 		return content
 	}
+	// coverage-ignore-end
 
 	wrapped := wrapParagraphs(buf.String(), lineWidth)
 
@@ -249,9 +253,12 @@ func isSpecialLine(line string) bool {
 	}
 
 	// Indented code (4+ spaces or tab)
+	// coverage-ignore-start: unreachable: isSpecialLine is only ever called with a TrimSpace'd line, which can never
+	// begin with 4 spaces or a tab
 	if strings.HasPrefix(line, "    ") || strings.HasPrefix(line, "\t") {
 		return true
 	}
+	// coverage-ignore-end
 
 	// HTML-style comments
 	if strings.HasPrefix(line, "<!--") {

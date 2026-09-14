@@ -151,9 +151,13 @@ func (p *openAICompatProvider) Chat(ctx context.Context, req ChatRequest) (*Chat
 	}
 
 	httpReq, err := p.buildChatHTTPRequest(ctx, model, req, apiKey)
+	// coverage-ignore-start: defensive: buildChatHTTPRequest only fails via json.Marshal of an all-scalar wire struct
+	// or NewRequestWithContext on
+	// a Validate-passed BaseURL — neither is reachable here
 	if err != nil {
 		return nil, err
 	}
+	// coverage-ignore-end
 
 	p.logRequestStart(p.cfg.BaseURL, model, len(req.Messages))
 
@@ -237,15 +241,23 @@ func (p *openAICompatProvider) buildJSONRequest(
 	ctx context.Context, path string, wireBody any, apiKey string,
 ) (*http.Request, error) {
 	body, err := json.Marshal(wireBody)
+	// coverage-ignore-start: defensive: wireBody is always a chat/embed wire struct of only
+	// strings/ints/bools/pointers-to-those; json.Marshal
+	// cannot fail on it
 	if err != nil {
 		return nil, &Error{Kind: ErrBadRequest, Message: "marshal request: " + redactKey(err.Error(), apiKey), cause: err}
 	}
+	// coverage-ignore-end
 
 	endpoint := strings.TrimRight(p.cfg.BaseURL, "/") + path
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	// coverage-ignore-start: defensive: BaseURL already passed url.Parse in cfg.Validate() and path is a constant ASCII
+	// literal, so
+	// NewRequestWithContext's own parse cannot fail
 	if err != nil {
 		return nil, &Error{Kind: ErrNetwork, Message: redactKey(err.Error(), apiKey), cause: err}
 	}
+	// coverage-ignore-end
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "application/json")
 	if apiKey != "" {

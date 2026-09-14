@@ -29,7 +29,7 @@ func (c *NormalizeCmd) Run(ctx context.Context, svc *readServices) error {
 
 	var entities []*entity.Entity
 	for e, err := range st.ListEntities(ctx, q) {
-		if err != nil {
+		if err != nil { // coverage-ignore: defensive: memstore.ListEntities iterator never yields a non-nil error
 			return err
 		}
 		entities = append(entities, e)

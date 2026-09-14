@@ -89,7 +89,7 @@ func buildRenumberPlan(
 ) []renumberEntry {
 	parents := map[string][]*entity.Relation{}
 	for r, err := range st.ListRelations(ctx, store.RelationQuery{Type: relType}) {
-		if err != nil {
+		if err != nil { // coverage-ignore: defensive: memstore.ListRelations iterator never yields a non-nil error
 			continue
 		}
 		var parent string

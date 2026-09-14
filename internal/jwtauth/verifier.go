@@ -118,6 +118,9 @@ func New(ctx context.Context, cfg Config) (*Verifier, error) {
 // line alone rather than paging on a transient blip. It fires at most once per
 // jwksRefreshInterval, so it needs no extra rate limiting.
 func refreshErrorHandler(u string) func(ctx context.Context, err error) {
+	// coverage-ignore-start: os-fs-event: invoked only by keyfunc's internal background refresh goroutine on a real
+	// fetch failure, which fires at
+	// most once per 10m refresh interval and needs live-network timing a unit test can't force
 	return func(ctx context.Context, err error) {
 		slog.ErrorContext(ctx, "jwtauth: JWKS background refresh failed; "+
 			"verification continues against the cached key set. This becomes an "+
@@ -125,6 +128,7 @@ func refreshErrorHandler(u string) func(ctx context.Context, err error) {
 			"reachable again.",
 			"jwks_url", u, "error", err)
 	}
+	// coverage-ignore-end
 }
 
 // VerifySubject verifies a request assertion and returns its subject (the stable

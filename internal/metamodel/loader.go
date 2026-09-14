@@ -74,7 +74,8 @@ func Load(path string, fs storage.FS) (*Metamodel, []string, error) {
 	}
 
 	absPath, err := filepath.Abs(path)
-	if err != nil {
+	if err != nil { // coverage-ignore: defensive: filepath.Abs only fails if os.Getwd fails; not reachable via the
+		// storage.FS abstraction in tests
 		return nil, nil, err
 	}
 
@@ -119,7 +120,8 @@ func LoadWithoutMigrationCheck(path string, fs storage.FS) (*Metamodel, []string
 	}
 
 	absPath, err := filepath.Abs(path)
-	if err != nil {
+	if err != nil { // coverage-ignore: defensive: filepath.Abs only fails if os.Getwd fails; not reachable via the
+		// storage.FS abstraction in tests
 		return nil, nil, err
 	}
 
@@ -182,7 +184,8 @@ func parseRaw(data []byte) (*Metamodel, error) {
 	}
 
 	// Extract property order from YAML (maps lose key order during unmarshaling)
-	if err := extractPropertyOrder(data, &m); err != nil {
+	if err := extractPropertyOrder(data, &m); err != nil { // coverage-ignore: defensive: extractPropertyOrder only
+		// errors on a yaml.Node re-parse of data that already unmarshaled cleanly above
 		return nil, err
 	}
 
@@ -194,7 +197,8 @@ func parseRaw(data []byte) (*Metamodel, error) {
 // same order as defined in the metamodel.
 func extractPropertyOrder(data []byte, m *Metamodel) error {
 	var root yaml.Node
-	if err := yaml.Unmarshal(data, &root); err != nil {
+	if err := yaml.Unmarshal(data, &root); err != nil { // coverage-ignore: defensive: same bytes already unmarshaled
+		// into the Metamodel struct; a yaml.Node parse is strictly more permissive and cannot fail here
 		return fmt.Errorf("parse yaml.Node for property order: %w", err)
 	}
 
@@ -1262,11 +1266,15 @@ func isKnownPropertyType(typeName string, m *Metamodel) bool {
 // This catches common typos like "entity" instead of "entities".
 func checkUnknownKeys(data []byte) error {
 	var raw map[string]any
+	// coverage-ignore-start: defensive: checkUnknownKeys runs only after data already unmarshaled into the Metamodel
+	// struct; a map[string]any
+	// parse of the same bytes cannot fail
 	if unmarshalErr := yaml.Unmarshal(data, &raw); unmarshalErr != nil {
 		// If we can't unmarshal as a map, the struct unmarshal already failed
 		// with a better error, so skip this check
 		return nil //nolint:nilerr // intentional: struct unmarshal error is better
 	}
+	// coverage-ignore-end
 
 	var unknownKeyErrors []string
 	for key := range raw {

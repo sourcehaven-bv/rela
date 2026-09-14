@@ -268,6 +268,9 @@ func (r *Request) grantingAttributions(
 			continue
 		}
 		role, ok := r.roleFor(a.Role)
+		// coverage-ignore: defensive: ForEntity attributions only carry roles the resolver already confirmed defined in
+		// policy.Roles, so ok is
+		// always true here
 		if !ok {
 			continue
 		}

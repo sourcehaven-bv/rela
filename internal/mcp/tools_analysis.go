@@ -53,7 +53,8 @@ func (s *Server) handleAnalyzeOrphans(
 	}
 
 	text, err := marshalJSON(orphans)
-	if err != nil {
+	if err != nil { // coverage-ignore: defensive: orphans is []orphanInfo of strings built from store entities;
+		// json.Marshal cannot fail.
 		return errorResult(err.Error()), nil
 	}
 	return textResult(
@@ -80,7 +81,8 @@ func (s *Server) handleAnalyzeCardinality(
 	}
 
 	text, err := marshalJSON(violations)
-	if err != nil {
+	if err != nil { // coverage-ignore: defensive: violations is []cardinalityViolation of strings; json.Marshal cannot
+		// fail.
 		return errorResult(err.Error()), nil
 	}
 	return textResult(
@@ -191,7 +193,7 @@ func (s *Server) handleAnalyzeUnique(
 		return textResult("No unique constraint violations found"), nil
 	}
 	text, err := marshalJSON(violations)
-	if err != nil {
+	if err != nil { // coverage-ignore: defensive: violations is []uniqueViolation of strings; json.Marshal cannot fail.
 		return errorResult(err.Error()), nil
 	}
 	return textResult(
@@ -276,7 +278,8 @@ func (s *Server) handleAnalyzeProperties(
 	}
 
 	text, err := marshalJSON(result)
-	if err != nil {
+	if err != nil { // coverage-ignore: defensive: result is a map of []entityErrors/[]relationErrors (strings);
+		// json.Marshal cannot fail.
 		return errorResult(err.Error()), nil
 	}
 
@@ -321,7 +324,7 @@ func (s *Server) handleAnalyzeValidations(
 	}
 
 	text, err := marshalJSON(results)
-	if err != nil {
+	if err != nil { // coverage-ignore: defensive: results is []ruleResult of strings; json.Marshal cannot fail.
 		return errorResult(err.Error()), nil
 	}
 	return textResult(
@@ -344,7 +347,8 @@ func (s *Server) handleAnalyzeSchema(
 	}
 
 	text, err := marshalJSON(analysis)
-	if err != nil {
+	if err != nil { // coverage-ignore: defensive: analysis is a schema.Analysis of strings/ints; json.Marshal cannot
+		// fail.
 		return errorResult(err.Error()), nil
 	}
 

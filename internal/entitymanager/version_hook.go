@@ -64,11 +64,13 @@ func (m *Manager) recordEntityVersion(ctx context.Context, op store.VersionOp, e
 	// the face travels on the record below.
 	proj := m.deps.Meta.RenderProjection()
 	projJSON, err := proj.JSON()
-	if err != nil {
-		// Never fail the write over versioning — log and skip this capture.
+	// Never fail the write over versioning — log and skip this capture.
+	if err != nil { // coverage-ignore-start: defensive: RenderProjection.JSON is json.Marshal
+		// over only strings/bools/slices/maps, which cannot error (see
+		// projection.go); no seam to inject a failing projection
 		slog.Error("version.projection_marshal_failed", "op", op, "id", e.ID, "error", err)
 		return
-	}
+	} // coverage-ignore-end
 	p := principal.From(ctx)
 	rec := VersionRecord{
 		EntityID:      e.ID,
@@ -152,11 +154,12 @@ func (m *Manager) recordRelationVersion(
 	}
 	proj := m.deps.Meta.RenderProjection()
 	projJSON, err := proj.JSON()
-	if err != nil {
+	if err != nil { // coverage-ignore-start: defensive: RenderProjection.JSON is json.Marshal over only
+		// strings/bools/slices/maps, which cannot error (see projection.go); no seam to inject a failing projection
 		slog.Error("relation_version.projection_marshal_failed",
 			"op", op, "from", r.From, "type", r.Type, "to", r.To, "error", err)
 		return
-	}
+	} // coverage-ignore-end
 	tb := audit.TriggeredByFrom(ctx)
 	if triggeredBy != "" {
 		tb = triggeredBy

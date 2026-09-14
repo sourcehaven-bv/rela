@@ -72,6 +72,9 @@ type serverFlags struct {
 }
 
 // coverage-ignore-func: flag wiring — exercised at startup, not in tests
+// coverage-ignore-start: main-or-wiring: flag/DI startup wiring using the global flag.CommandLine and process env,
+// exercised only at process
+// start
 func parseFlags() *serverFlags {
 	f := &serverFlags{}
 	flag.StringVar(&f.projectDir, "project", ".", "Path to the rela project directory")
@@ -144,6 +147,8 @@ func parseFlags() *serverFlags {
 	}
 	return f
 }
+
+// coverage-ignore-end
 
 // discoverOptions maps server flags to appbuild options. --read-only injects a
 // read-only ACL. The postgres DSN is not an option here — it is read from
@@ -271,6 +276,9 @@ func validateIdentityFlags(f *serverFlags, envUser string) (identityMode, error)
 // single exclusive source there is nothing to fall through to.
 //
 // coverage-ignore-func: startup wiring — the decision it acts on is validateIdentityFlags.
+// coverage-ignore-start: main-or-wiring: startup wiring that installs the identity source on the app and os.Exits on
+// SetJWTGate failure; the
+// pure decision it acts on (validateIdentityFlags) is tested separately
 func wirePrincipalResolvers(app *dataentry.App, f *serverFlags, idv *jwtauth.Verifier, mode identityMode) {
 	if mode == identityJWT {
 		if idv == nil {
@@ -305,6 +313,8 @@ func wirePrincipalResolvers(app *dataentry.App, f *serverFlags, idv *jwtauth.Ver
 	app.SetPrincipalHeader(f.principalHeader)
 }
 
+// coverage-ignore-end
+
 // buildIdentityVerifier builds the shared signed-JWT verifier from the flags, or
 // returns nil when JWT identity is disabled (any of issuer/audience/jwks unset). A
 // build failure — a bad config, a non-https JWKS URL, or an unreachable JWKS — is
@@ -313,6 +323,9 @@ func wirePrincipalResolvers(app *dataentry.App, f *serverFlags, idv *jwtauth.Ver
 // resolver and the webhook receiver, so the JWKS is fetched once.
 //
 // coverage-ignore-func: startup wiring — exercised via jwtauth's own tests.
+// coverage-ignore-start: main-or-wiring: startup wiring; jwtauth.New fetches a real JWKS over HTTPS at boot and this
+// os.Exits on failure —
+// verifier construction is covered by jwtauth's own tests
 func buildIdentityVerifier(ctx context.Context, f *serverFlags) *jwtauth.Verifier {
 	if f.jwtIssuer == "" || f.jwtAudience == "" || f.jwtJWKSURL == "" {
 		return nil
@@ -330,6 +343,8 @@ func buildIdentityVerifier(ctx context.Context, f *serverFlags) *jwtauth.Verifie
 	return v
 }
 
+// coverage-ignore-end
+
 // wireWebhookReceiver enables POST /webhooks/idp when -webhook-audience and
 // -webhook-action are both set. It requires JWT identity (the webhook reuses that
 // verifier's JWKS/issuer); a webhook audience without JWT identity, or a build
@@ -337,6 +352,9 @@ func buildIdentityVerifier(ctx context.Context, f *serverFlags) *jwtauth.Verifie
 // the endpoint off.
 //
 // coverage-ignore-func: startup wiring — exercised via the shim + verifier tests.
+// coverage-ignore-start: main-or-wiring: startup wiring; every guard branch terminates in os.Exit and the enable path
+// installs a real webhook
+// verifier on the app, reachable only at process start
 func wireWebhookReceiver(app *dataentry.App, f *serverFlags, idv *jwtauth.Verifier) {
 	if f.webhookAudience == "" && f.webhookAction == "" {
 		return // disabled
@@ -392,6 +410,8 @@ func (a assertionVerifierAdapter) VerifyAssertion(
 	}, nil
 }
 
+// coverage-ignore-end
+
 // webhookVerifierAdapter bridges the concrete jwtauth.WebhookVerifier to the
 // dataentry receiver's expected shape, translating jwtauth.WebhookClaims into
 // dataentry.WebhookClaims. This adapter lives in the wiring layer — the one place
@@ -408,6 +428,7 @@ func (a webhookVerifierAdapter) VerifyWebhook(ctx context.Context, raw string) (
 }
 
 // coverage-ignore-func: startup wiring — exercised at startup, not in tests
+//
 // wireWorlds gives the app request-level world selection and the link
 // resolution that must accompany it.
 //
@@ -428,6 +449,9 @@ func wireWorlds(app *dataentry.App, svc *appbuild.Services) {
 }
 
 // coverage-ignore-func: main function - entry point
+// coverage-ignore-start: main-or-wiring: process entry point — discovers services, builds the app, binds a listener,
+// and calls ListenAndServe;
+// every branch is startup wiring or os.Exit
 func main() {
 	f := parseFlags()
 
@@ -597,6 +621,8 @@ func serveUntilSignal(srv *http.Server) error {
 	}
 }
 
+// coverage-ignore-end
+
 // newHTTPServer serves the data-entry handler with cleartext HTTP/2
 // alongside HTTP/1.1. Go's http.Server only negotiates HTTP/2 automatically
 // when serving TLS, so for plaintext we opt in via Protocols.SetUnencryptedHTTP2.
@@ -634,6 +660,9 @@ func newHTTPServer(addr string, handler http.Handler) *http.Server {
 // buildFieldResolver constructs the data-entry affordance resolver
 // from the active services. A predicate compile error in acl.yaml is
 // fatal — surfaced loudly rather than silently disabling a gate.
+// coverage-ignore-start: main-or-wiring: startup wiring taking the concrete *appbuild.Services and os.Exiting on a
+// resolver-build failure;
+// reachable only from main()
 func buildFieldResolver(svc *appbuild.Services) dataentry.FieldVerdictResolver {
 	resolver, err := dataentry.ResolverFromServices(svc)
 	if err != nil {
@@ -642,6 +671,8 @@ func buildFieldResolver(svc *appbuild.Services) dataentry.FieldVerdictResolver {
 	}
 	return resolver
 }
+
+// coverage-ignore-end
 
 // shouldWarnNoACL reports whether the operator should be told they
 // are running with no access control on a non-loopback bind.
@@ -702,6 +733,9 @@ func startPprofIfRequested(addr string) error {
 	// Build our own mux with pprof handlers explicitly registered. The
 	// stdlib net/http/pprof package exposes the handler functions
 	// directly so we can wire them onto a private mux.
+	// coverage-ignore-start: os-fs-event: launches a real net/http/pprof listener in a goroutine (diagnostic-only, off
+	// by default); the pure
+	// validation branches above are reachable and left as gaps
 	mux := http.NewServeMux()
 	mux.HandleFunc("/debug/pprof/", pprof.Index)
 	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
@@ -721,6 +755,7 @@ func startPprofIfRequested(addr string) error {
 		}
 	}()
 	return nil
+	// coverage-ignore-end
 }
 
 // isLoopbackHost reports whether host is the loopback interface.

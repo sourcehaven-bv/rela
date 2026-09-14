@@ -656,6 +656,9 @@ func (h *commandHandler) handleOpenFile(w http.ResponseWriter, r *http.Request) 
 	// dispatch to the real handler (gedit, nautilus, etc. don't daemonize
 	// and die with their parent).
 	cmd := openFileCommand(runtime.GOOS, action, filePath)
+	// coverage-ignore-start: external-tool: launches the OS file opener (xdg-open/open); unsupported-platform is
+	// unreachable on the test GOOS and
+	// Start/Wait spawn a real process (project marks it coverage-ignore)
 	if cmd == nil {
 		http.Error(w, "Unsupported platform", http.StatusInternalServerError)
 		return
@@ -667,6 +670,7 @@ func (h *commandHandler) handleOpenFile(w http.ResponseWriter, r *http.Request) 
 	}
 	go func() { _ = cmd.Wait() }() // reap zombie
 	w.WriteHeader(http.StatusOK)
+	// coverage-ignore-end
 }
 
 // openFileCommand builds the OS-specific launcher for handleOpenFile.
@@ -734,6 +738,9 @@ func (h *commandHandler) handleOpenURL(w http.ResponseWriter, r *http.Request) {
 
 	// Fire-and-forget launcher: see handleOpenFile for why we can't bind to r.Context().
 	cmd := openURLCommand(runtime.GOOS, rawURL)
+	// coverage-ignore-start: external-tool: launches the OS URL opener (xdg-open/open); unsupported-platform is
+	// unreachable on the test GOOS and
+	// Start/Wait spawn a real process (project marks it coverage-ignore)
 	if cmd == nil {
 		http.Error(w, "Unsupported platform", http.StatusInternalServerError)
 		return
@@ -745,6 +752,7 @@ func (h *commandHandler) handleOpenURL(w http.ResponseWriter, r *http.Request) {
 	}
 	go func() { _ = cmd.Wait() }() // reap zombie
 	w.WriteHeader(http.StatusOK)
+	// coverage-ignore-end
 }
 
 // openURLCommand builds the OS-specific URL launcher. Returned command is

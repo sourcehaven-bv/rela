@@ -59,7 +59,7 @@ func (c *FmtCmd) formatEntities(
 ) (int, error) {
 	var entityIDs []string
 	for e, err := range st.ListEntities(ctx, q) {
-		if err != nil {
+		if err != nil { // coverage-ignore: defensive: memstore.ListEntities iterator never yields a non-nil error
 			return 0, err
 		}
 		entityIDs = append(entityIDs, e.ID)
@@ -89,7 +89,7 @@ func (c *FmtCmd) formatRelations(
 	type relKey struct{ from, typ, to string }
 	var relKeys []relKey
 	for r, err := range st.ListRelations(ctx, store.RelationQuery{}) {
-		if err != nil {
+		if err != nil { // coverage-ignore: defensive: memstore.ListRelations iterator never yields a non-nil error
 			return 0, err
 		}
 		relKeys = append(relKeys, relKey{r.From, r.Type, r.To})

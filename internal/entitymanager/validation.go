@@ -48,7 +48,8 @@ func warningCodeFor(t metamodel.ValidationErrorType) string {
 	case metamodel.ValidationErrorInvalidValue:
 		return "property_value_invalid"
 	}
-	return "validation_warning"
+	return "validation_warning" // coverage-ignore: unreachable-default: warningCodeFor is only called on soft errors,
+	// and the three soft types (Required/InvalidType/InvalidValue) all have explicit cases above
 }
 
 // propertyPointer constructs an RFC 6901 JSON Pointer for a property

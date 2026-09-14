@@ -61,10 +61,13 @@ func NewRootedFS(fs FS, root string) (*RootedFS, error) {
 		return nil, errors.New("storage: RootedFS root must not be empty")
 	}
 	abs, err := filepath.Abs(root)
+	// coverage-ignore-start: defensive: filepath.Abs only fails when os.Getwd fails for a relative path, not
+	// reproducible in a unit test
 	if err != nil {
 		return nil, fmt.Errorf("storage: resolve RootedFS root: %w", err)
 	}
 	return &RootedFS{vfs: validatedFS{fs: fs}, fs: fs, root: filepath.Clean(abs)}, nil
+	// coverage-ignore-end
 }
 
 // windowsReserved lists Windows reserved device names (case-insensitive,
@@ -354,9 +357,13 @@ func (r *RootedFS) WalkAll(fn fs.WalkDirFunc) error {
 func (r *RootedFS) relativize(fn fs.WalkDirFunc) fs.WalkDirFunc {
 	return func(path string, d fs.DirEntry, walkErr error) error {
 		rel, err := filepath.Rel(r.root, path)
+		// coverage-ignore-start: defensive: on POSIX filepath.Rel of two absolute paths always succeeds; the underlying
+		// Walk only yields absolute
+		// paths under root, so this fails only on Windows cross-volume symlinks
 		if err != nil {
 			return fmt.Errorf("rooted: callback path %q not under root %q: %w", path, r.root, err)
 		}
+		// coverage-ignore-end
 		return fn(filepath.ToSlash(rel), d, walkErr)
 	}
 }

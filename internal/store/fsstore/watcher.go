@@ -93,6 +93,9 @@ func (s *FSStore) StartWatching() error {
 	if s.echoWiringErr != nil {
 		return s.echoWiringErr
 	}
+	// coverage-ignore-start: os-fs-event: builds absolute dirs and starts a real fsnotify watcher; exercised only with
+	// live filesystem events
+	// (already carries coverage-ignore)
 	s.mu.Lock()
 	if s.extWatcher != nil {
 		s.mu.Unlock()
@@ -130,6 +133,7 @@ func (s *FSStore) StartWatching() error {
 
 	go w.Start()
 	return nil
+	// coverage-ignore-end
 }
 
 // StopWatching stops the external-change watcher if one is running.

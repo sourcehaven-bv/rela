@@ -113,6 +113,9 @@ func (f *Filesystem) Record(rec Record) {
 	}
 
 	line, err := json.Marshal(rec)
+	// coverage-ignore-start: defensive: json.Marshal on a Record (only string/pointer/primitive fields, no erroring
+	// MarshalJSON) cannot fail; no
+	// test can force this branch
 	if err != nil {
 		// Unreachable for well-formed Records (encoding/json on plain
 		// structs with primitive fields never errors), but logged for
@@ -120,6 +123,10 @@ func (f *Filesystem) Record(rec Record) {
 		slog.Error("audit.write_failed", "stage", "marshal", "error", err)
 		return
 	}
+	// coverage-ignore-end
+	// coverage-ignore-start: os-fs-event: mid-stream Write failure on an already-open fd needs OS-level fault injection
+	// (fill disk / detach fs);
+	// not reachable in a unit test
 	if _, err := f.file.Write(append(line, '\n')); err != nil {
 		// Mid-stream write failures (disk full after file was open,
 		// filesystem detach, etc.) — log and continue. Untested in
@@ -128,6 +135,7 @@ func (f *Filesystem) Record(rec Record) {
 		// rotate-error path covers the at-open failure mode.
 		slog.Error("audit.write_failed", "stage", "write", "error", err)
 	}
+	// coverage-ignore-end
 }
 
 // rotateLocked closes the current file (if any), creates the audit

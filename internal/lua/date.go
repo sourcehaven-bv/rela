@@ -157,14 +157,22 @@ func luaRruleNext(ls *lua.LState) int {
 	cleaned := strings.TrimPrefix(rruleStr, "RRULE:")
 	opt, err := rrule.StrToROption(cleaned)
 	if err != nil {
+		// coverage-ignore-start: defensive: ValidateRrule above already ran StrToROption on the same cleaned string; a
+		// re-parse of identical input
+		// cannot newly fail
 		ls.RaiseError("rrule_next: %s", err)
 		return 0
+		// coverage-ignore-end
 	}
 
 	rule, err := rrule.NewRRule(*opt)
 	if err != nil {
+		// coverage-ignore-start: defensive: opt came from a successful StrToROption on ValidateRrule-approved input;
+		// NewRRule cannot reject an
+		// option struct that parsed cleanly
 		ls.RaiseError("rrule_next: failed to create rule: %s", err)
 		return 0
+		// coverage-ignore-end
 	}
 
 	// Get the next occurrence strictly after the after date.

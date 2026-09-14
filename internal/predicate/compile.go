@@ -89,12 +89,17 @@ func compile(env *Env, source string, profile Profile, opts ...CompileOption) (p
 	// Either way, an unexpected panic surfaces as a typed ParseError
 	// instead of bringing down the host. Pinned by
 	// TestCompile_RecoversParserPanics (RR-S84L, RR-674Z).
+	// coverage-ignore-start: defensive: gopher-lua's parse.Parse converts its own yacc panics into typed errors, so no
+	// reachable input panics;
+	// this recover body is belt-and-suspenders (pinned by TestCompile_RecoversParserPanics which asserts no panic
+	// occurs)
 	defer func() {
 		if r := recover(); r != nil {
 			err = &ParseError{Msg: fmt.Sprintf("parser panic recovered: %v", r)}
 			prog = nil
 		}
 	}()
+	// coverage-ignore-end
 
 	wrapped := "return " + cleaned
 	chunk, parseErr := parse.Parse(strings.NewReader(wrapped), "<predicate>")
@@ -113,13 +118,20 @@ func compile(env *Env, source string, profile Profile, opts ...CompileOption) (p
 		return nil, translateParseError(parseErr)
 	}
 
+	// coverage-ignore-start: defensive: the wrapped source is "return "+cleaned, and a successful parse of a single
+	// leading `return` statement
+	// always yields exactly one chunk element
 	if len(chunk) != 1 {
 		return nil, &CompileError{Reason: "source must contain exactly one expression"}
 	}
+	// coverage-ignore-end
 	retStmt, ok := chunk[0].(*ast.ReturnStmt)
+	// coverage-ignore-start: defensive: chunk[0] parsed from a "return ..." wrapper is always an *ast.ReturnStmt when
+	// the wrapped parse succeeds
 	if !ok {
 		return nil, &CompileError{Reason: "source must be an expression"}
 	}
+	// coverage-ignore-end
 	if len(retStmt.Exprs) != 1 {
 		return nil, &CompileError{Reason: "multiple return values are not supported"}
 	}
@@ -332,6 +344,11 @@ func (w *walker) walkExpr(e ast.Expr) (node, error) {
 		// Default-reject: any AST node type not enumerated above is
 		// disallowed. New gopher-lua releases that introduce new node
 		// types break here visibly until we triage them.
+		// coverage-ignore: unreachable-default: every ast.Expr node type gopher-lua's current grammar can produce is
+		// enumerated in the cases
+		// above (accepted or explicitly rejected); this default only fires if a future gopher-lua release adds a new
+		// expr
+		// node kind
 		return nil, &CompileError{Line: e.Line(), Reason: "unsupported expression kind: " + astKindName(e)}
 	}
 }
@@ -372,6 +389,9 @@ func parseLuaNumber(s string) (float64, error) {
 			if errors.Is(err, strconv.ErrRange) {
 				return 0, fmt.Errorf("hex number literal %q exceeds 2^53 and cannot be represented exactly", s)
 			}
+			// coverage-ignore: defensive: gopher-lua's lexer validates hex syntax before a 0x literal reaches here, so
+			// ParseUint can only fail
+			// with ErrRange (handled above), never a syntax error
 			return 0, fmt.Errorf("invalid hex number literal %q", s)
 		}
 		return float64(u), nil

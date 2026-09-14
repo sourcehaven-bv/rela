@@ -217,6 +217,11 @@ func (w *writer) writeValue(v any) {
 			w.writeValue(val[k])
 		}
 	default:
+		// coverage-ignore: panic-invariant: writeValue only ever receives
+		// normalize() output, and normalize's default folds every unrecognized
+		// type to a string, so no value can reach this default via the public
+		// HashEntity/HashRelation path
+		//
 		// normalize is responsible for collapsing every type both backends can
 		// produce into the cases above. Reaching here means a new decoder type
 		// slipped through — fail loudly rather than hash a value whose
