@@ -68,6 +68,15 @@ type scopeRequest struct {
 // latency and induce load through `?q=` (RR-X56H, pinned by
 // TestACLList_DenyAllSearchShortCircuit).
 //
+// # The one sanctioned duplicate
+//
+// [planListPushdown] (listpushdown.go) builds the SAME narrowed query in the
+// paged shape the store can serve directly — ordering, limit, offset — so it
+// cannot route through here and return a slice. The two serve one endpoint by
+// different routes: a narrowing added to this function and not to that one
+// makes a list's pushed-down page disagree with its Go-filtered page, which
+// looks like a paging bug and is not one. Change both.
+//
 // Returns content-free headers (rowcontent.go); a caller that needs bodies
 // loads them for the served page only.
 func scopedHeaders(
@@ -103,8 +112,11 @@ func scopedHeaders(
 
 	case rqr.AllowAll:
 		// Extra conjuncts need a GraphQuery even though the ACL permits
-		// everything.
-		q := store.GraphQuery{EntityType: req.Type}
+		// everything — and they must be carried HERE as well as on the
+		// ACL-gated branch below. Props on only one branch is the same
+		// fail-open shape as RR-GQWRLD: the AllowAll population would get
+		// an unnarrowed read while everyone else got a narrowed one.
+		q := store.GraphQuery{EntityType: req.Type, Props: req.Props}
 		out, err := collectHeaders(ctx, svc, stampScope(ctx, q, req), errListLoad)
 		return out, false, err
 

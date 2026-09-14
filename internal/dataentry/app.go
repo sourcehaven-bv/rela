@@ -1088,12 +1088,7 @@ func NewApp(
 	// ganttHandler: the ACL-scoped lister and the field redactor are the two
 	// seams its security pipeline hangs on — both closures over App so test
 	// builders that rebind collaborators stay live.
-	app.gantt = &ganttHandler{
-		schema:   app.State,
-		store:    st,
-		scoped:   app.scopedSortedEntities,
-		redactor: func() visibility.FieldRedactor { return appRedactor(app) },
-	}
+	app.gantt = newGanttHandler(app, st)
 
 	// commandHandler owns the user-configured command surface. Its
 	// collaborators are narrow closures over App: the schema snapshot (command/
