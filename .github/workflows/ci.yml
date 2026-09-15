@@ -1235,8 +1235,14 @@ jobs:
         with:
           go-version: '1.26.6'
 
-      - name: Install graphviz
-        run: sudo apt-get update && sudo apt-get install -y graphviz
+      # graphviz for the demo scripts. GTK4 + WebKitGTK because the tagged-build
+      # guard vets `./...`, which includes cmd/rela-desktop (Wails v3); without
+      # the headers those cgo packages fail pkg-config and the guard reports a
+      # compile failure that is really a missing dependency.
+      - name: Install graphviz and Wails Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y graphviz libgtk-4-dev libwebkitgtk-6.0-dev
 
       - name: Build rela
         run: go build -o bin/rela ./cmd/rela
@@ -1266,19 +1272,22 @@ jobs:
             "${e2e}"
           done
 
-      # The `maildemo` tests are developer-facing: they print a narrated
-      # walkthrough of the mail pipeline and write payloads to /tmp for a human
-      # to read, so running them as a pass/fail gate buys nothing. They still
-      # reference internal APIs (appbuild.Services.mail, mail.NewHTTPSender,
-      # scheduler.NewWithQueue), which move. Compiling them keeps that reference
-      # honest without running them. `go build ./...` cannot do this: it skips
-      # _test.go files entirely, which is how internal/dataentry/e2e_test.go
-      # (tag `e2e`) silently stopped compiling.
-      - name: Compile build-tag-gated demo tests
-        run: |
-          set -euo pipefail
-          go vet -tags maildemo ./internal/mail/ ./internal/appbuild/
-          echo "OK: maildemo demo tests still compile."
+      # The guard's own test runs FIRST. It is what proves the guard can fail:
+      # a parser bug that made the guard pass everything would otherwise report
+      # green here and nobody would look further.
+      - name: Test the tagged-build guard
+        run: ./scripts/check-tagged-tests-test.sh
+
+      # Build-tag-gated files are compiled by nothing else: `go build ./...`
+      # skips _test.go entirely, and neither it nor `go test ./...` builds
+      # files whose constraints the default tag set does not satisfy. So they
+      # rot silently — internal/dataentry/e2e_test.go did exactly that
+      # (TKT-1CH5AX). They need Postgres, a browser, or a human reading
+      # narrated output, so CI compiles them rather than runs them. The tag
+      # list is derived from the source, so a new tag is covered without
+      # editing this file.
+      - name: Compile build-tag-gated files
+        run: ./scripts/check-tagged-tests.sh
 
   docs:
     name: Docs
