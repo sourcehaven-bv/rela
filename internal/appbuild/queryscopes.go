@@ -28,9 +28,13 @@ import (
 // named interface: internal/dataentry's tests import this package, so naming
 // its types here would close an import cycle (arch-lint forbids the edge).
 // The composition root adapts it — see dataentry.AdaptQueryScopes.
+// cfg is unused today and kept because the seam's shape is the contract: the
+// same signature serves NextActionMatchers, which does read the config, and a
+// resolver that later needs it (a per-view override, say) must not change
+// every wiring site to get it.
 func QueryScopes(
-	cfg *dataentryconfig.Config, meta *metamodel.Metamodel,
-) (*QueryScopeResolver, []string) {
+	_ *dataentryconfig.Config, meta *metamodel.Metamodel,
+) (resolver *QueryScopeResolver, problems []string) {
 	compiled, err := scopes.Compile(meta)
 	if err != nil {
 		return nil, []string{err.Error()}

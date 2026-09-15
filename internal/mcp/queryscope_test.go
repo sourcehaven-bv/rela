@@ -13,7 +13,7 @@ import (
 
 // scopedTaakMeta declares a type whose DEFAULT query scope hides archived
 // rows. `~=` deliberately does not lower to a store predicate, so a surface
-// that honoured the scope would have to filter in Go — there is no way for the
+// that honored the scope would have to filter in Go — there is no way for the
 // row to vanish by accident of the store query.
 func scopedTaakMeta() *metamodel.Metamodel {
 	return &metamodel.Metamodel{

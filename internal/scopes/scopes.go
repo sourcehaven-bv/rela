@@ -35,6 +35,7 @@ package scopes
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
@@ -230,11 +231,13 @@ func (e *CompileError) Error() string {
 	if len(e.Problems) == 1 {
 		return e.Problems[0]
 	}
-	out := fmt.Sprintf("%d query scopes failed to compile:", len(e.Problems))
+	var b strings.Builder
+	fmt.Fprintf(&b, "%d query scopes failed to compile:", len(e.Problems))
 	for _, p := range e.Problems {
-		out += "\n  - " + p
+		b.WriteString("\n  - ")
+		b.WriteString(p)
 	}
-	return out
+	return b.String()
 }
 
 func sortedEntityTypes(m *metamodel.Metamodel) []string {

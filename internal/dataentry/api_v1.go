@@ -372,7 +372,7 @@ func (a *App) listPage(
 			return plan.run(ctx, a.Services().Store)
 		}
 	}
-	all, err := scopedSortedEntitiesScoped(a, ctx, typeName, query, scope)
+	all, err := scopedSortedEntitiesScoped(ctx, a, typeName, query, scope)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -399,10 +399,10 @@ func (a *App) scopedSortedEntities(
 	if err != nil {
 		return nil, err
 	}
-	return scopedSortedEntitiesScoped(a, ctx, typeName, query, scope)
+	return scopedSortedEntitiesScoped(ctx, a, typeName, query, scope)
 }
 
-// scopedSortedEntitiesScoped is [App.scopedSortedEntities] with the query
+// scopedSortedEntitiesScoped is App.scopedSortedEntities with the query
 // scope already resolved, for callers that resolved it to decide something
 // else first (listPage uses it to gate the pushdown).
 //
@@ -410,8 +410,8 @@ func (a *App) scopedSortedEntities(
 // its plimsoll load line — the discipline the directive at [App] records:
 // a feature pays for its setter, not for its internals.
 func scopedSortedEntitiesScoped(
-	a *App,
 	ctx context.Context,
+	a *App,
 	typeName string,
 	query map[string][]string,
 	scope resolvedQueryScope,

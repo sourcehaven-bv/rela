@@ -54,7 +54,7 @@ func TestTraceFrom_IgnoresQueryScopes(t *testing.T) {
 // TestFindOrphans_IgnoresQueryScopes is AC6 for the orphan report.
 //
 // This is the ticket's named failure mode in miniature: an orphan report that
-// honoured a default scope would stop counting archived rows as orphans, so a
+// honored a default scope would stop counting archived rows as orphans, so a
 // genuinely unlinked entity would disappear from the report by being archived
 // — the analysis reports clean over data it was never shown.
 func TestFindOrphans_IgnoresQueryScopes(t *testing.T) {

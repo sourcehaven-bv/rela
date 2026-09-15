@@ -156,7 +156,7 @@ func scopedHeaders(
 			}
 			out = append(out, h)
 		}
-		out, err := applyScope(ctx, out, req)
+		out, err = applyScope(ctx, out, req)
 		return out, false, err
 
 	case rqr.AllowAll:

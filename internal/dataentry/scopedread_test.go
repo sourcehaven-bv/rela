@@ -72,8 +72,8 @@ func TestScopedHeaders_NarrowingsApplyToBothVerdictBranches(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
-			gotAllowAll := idsOf(t, ctx, app, allowAll, tc.req)
-			gotGated := idsOf(t, ctx, app, gated, tc.req)
+			gotAllowAll := idsOf(ctx, t, app, allowAll, tc.req)
+			gotGated := idsOf(ctx, t, app, gated, tc.req)
 
 			if strings.Join(gotAllowAll, ",") != strings.Join(gotGated, ",") {
 				t.Errorf("verdict branches disagree: AllowAll=%v, ACL-gated=%v — "+
@@ -88,7 +88,7 @@ func TestScopedHeaders_NarrowingsApplyToBothVerdictBranches(t *testing.T) {
 }
 
 func idsOf(
-	t *testing.T, ctx context.Context, app *App, rqr acl.ReadQueryResult, req scopeRequest,
+	ctx context.Context, t *testing.T, app *App, rqr acl.ReadQueryResult, req scopeRequest,
 ) []string {
 	t.Helper()
 	headers, _, err := scopedHeaders(ctx, app.Services(), rqr, req)
@@ -207,13 +207,13 @@ var verdictSwitchExempt = map[string]string{
 	"readgate.go": "verdict -> search.TypeScope adapter, not a read",
 
 	// Builds a paged store.GraphQuery for the pushdown fast path (ordering,
-	// limit, offset) rather than materialising a slice, so it cannot return
+	// limit, offset) rather than materializing a slice, so it cannot return
 	// the funnel's headers. It is the ONE duplicate that must stay, and it is
 	// the one place to check when adding a narrowing: planListPushdown and
 	// scopedHeaders serve the same endpoint by different routes, so a
 	// dimension added to one and not the other makes a list's first page
 	// disagree with its filtered page.
-	"listpushdown.go": "paged query PLAN, not a materialised read — see the note in scopedread.go",
+	"listpushdown.go": "paged query PLAN, not a materialized read — see the note in scopedread.go",
 
 	// ganttReadVerdict classifies the verdict to choose a REDACTION path
 	// (header-only fast path vs full entities), not to build a query. Both
@@ -275,8 +275,8 @@ func TestScopedHeaders_ScopeFiltersOnBothBranches(t *testing.T) {
 	gated := acl.ReadQueryResult{Query: &store.GraphQuery{EntityType: "ticket"}}
 	allowAll := acl.ReadQueryResult{AllowAll: true}
 
-	gotAllowAll := idsOf(t, context.Background(), app, allowAll, notDone)
-	gotGated := idsOf(t, context.Background(), app, gated, notDone)
+	gotAllowAll := idsOf(context.Background(), t, app, allowAll, notDone)
+	gotGated := idsOf(context.Background(), t, app, gated, notDone)
 
 	if strings.Join(gotAllowAll, ",") != strings.Join(gotGated, ",") {
 		t.Errorf("verdict branches disagree under a scope: AllowAll=%v, ACL-gated=%v",
@@ -351,14 +351,14 @@ func TestScopedHeaders_ScopePropsAreASuperset(t *testing.T) {
 			return props["status"] == "open" && props["prio"] == "high", nil
 		},
 	}
-	got := idsOf(t, context.Background(), app, acl.ReadQueryResult{AllowAll: true}, req)
+	got := idsOf(context.Background(), t, app, acl.ReadQueryResult{AllowAll: true}, req)
 	if strings.Join(got, ",") != "TKT-a" {
 		t.Errorf("ids = %v, want [TKT-a]", got)
 	}
 
 	// The SAME scope with no pushdown must give the same answer, slower.
 	req.ScopeProps = nil
-	if unpushed := idsOf(t, context.Background(), app, acl.ReadQueryResult{AllowAll: true}, req); strings.Join(unpushed, ",") != strings.Join(got, ",") {
+	if unpushed := idsOf(context.Background(), t, app, acl.ReadQueryResult{AllowAll: true}, req); strings.Join(unpushed, ",") != strings.Join(got, ",") {
 		t.Errorf("pushed=%v unpushed=%v — the prefilter changed the answer, so it is not a superset",
 			got, unpushed)
 	}

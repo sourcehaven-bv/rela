@@ -122,7 +122,7 @@ func TestQueryScopes_UnknownNameIsRefused(t *testing.T) {
 	}
 }
 
-// TestQueryScopes_RepeatedParamIsRefused pins the param-append defence.
+// TestQueryScopes_RepeatedParamIsRefused pins the param-append defense.
 // Get() takes the FIRST value, so `all` followed by `archief` would read
 // everything under a request that also asked for the archive.
 func TestQueryScopes_RepeatedParamIsRefused(t *testing.T) {

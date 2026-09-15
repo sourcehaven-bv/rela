@@ -10,7 +10,7 @@ import (
 )
 
 // scopedTaakMeta declares a type whose DEFAULT query scope hides archived
-// rows, so any analysis that honoured the default would stop seeing TAAK-2.
+// rows, so any analysis that honored the default would stop seeing TAAK-2.
 //
 // `implements` is required (min 1), which is what turns the scope into a
 // correctness question rather than a cosmetic one: an archived task missing

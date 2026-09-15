@@ -188,7 +188,7 @@ var errQueryScopeDuplicated = fmt.Errorf(
 // A REPEATED parameter is an error rather than first-wins: Get() would take
 // the first, so `?query_scope=all&query_scope=archief` would read everything
 // under a request that also asked for the archive — a client-side
-// param-append bug becoming a silently wider read. Same defence, same reason,
+// param-append bug becoming a silently wider read. Same defense, same reason,
 // as resolveWorld's errWorldDuplicated.
 func queryScopeParam(query map[string][]string) (string, error) {
 	values := query[QueryScopeParam]
