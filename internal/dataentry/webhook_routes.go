@@ -625,6 +625,10 @@ func webhookNeedsBody(hook dataentryconfig.Webhook) bool {
 // from this function. A future path that splits on Unicode line boundaries —
 // notably anything using unicode.IsSpace, which does match \v, \f and U+0085 —
 // would put those survivors back in play and need more than this.
+//
+// Both parsers are held to that definition by tests, because one of them
+// diverging is the only way the survivors become dangerous: goldmark by the
+// Go tests below, marked by frontend/src/utils/markdownLineEndings.test.ts.
 func flattenToLine(s string) string {
 	return strings.Map(func(r rune) rune {
 		switch r {
