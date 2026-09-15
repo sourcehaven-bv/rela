@@ -141,7 +141,12 @@ func StaticIndexSpecs(cfg *dataentryconfig.Config, meta *metamodel.Metamodel) []
 		byKey[spec.Type+"\x00"+strings.Join(props, "\x00")] = spec
 	}
 	for _, list := range cfg.Lists {
-		spec, ok := listIndexSpec(list, meta)
+		// The evaluator is shared with the next-action condition path above
+		// and built lazily, since most configs declare neither.
+		if ev == nil && listDeclaresQueryScope(list, meta) {
+			ev = predicatefns.NewEvaluator(meta)
+		}
+		spec, ok := listIndexSpec(list, meta, ev)
 		if !ok {
 			continue
 		}
@@ -335,13 +340,96 @@ func conditionEqualities(
 	return out
 }
 
+// listDeclaresQueryScope reports whether a list's page would carry scope
+// conjuncts, so the caller can avoid building an evaluator for the common
+// config that declares no scopes at all.
+//
+// Deliberately cheap and approximate in the SAFE direction: it may say yes
+// for a list whose scope contributes no columns (costing one unused
+// evaluator), never no for one that would.
+func listDeclaresQueryScope(list dataentryconfig.List, meta *metamodel.Metamodel) bool {
+	if list.QueryScope == metamodel.AllQueryScopeName {
+		return false
+	}
+	def, ok := meta.GetEntityDef(list.EntityType)
+	return ok && len(def.QueryScopes) > 0
+}
+
+// listScopeIndexProperties returns the index columns a list's query scope
+// contributes: the scalar equalities the runtime would push alongside the
+// list's own filters.
+//
+// Resolution mirrors the runtime's exactly, and the two must agree or the
+// derived index describes a query nobody issues:
+//
+//   - no `query_scope:` → the type's `default`, if it declares one
+//   - `query_scope: all` → no predicate (the implicit scope that withdraws
+//     the default), so no columns
+//   - any other name → that scope, or nothing if the type does not declare
+//     it (a config the loader already refuses; contributing nothing here
+//     keeps this non-destructive for a Config built in code)
+//
+// A scope that does not compile contributes nothing, on the same terms
+// [staticIndexProps] documents for a next-action condition.
+func listScopeIndexProperties(
+	list dataentryconfig.List, meta *metamodel.Metamodel, ev *predicatefns.Evaluator,
+) []string {
+	if ev == nil {
+		return nil
+	}
+	def, ok := meta.GetEntityDef(list.EntityType)
+	if !ok {
+		return nil
+	}
+	name := list.QueryScope
+	if name == metamodel.AllQueryScopeName {
+		return nil
+	}
+	if name == "" {
+		name = metamodel.DefaultQueryScopeName
+	}
+	source, ok := def.QueryScopes[name]
+	if !ok || source == "" {
+		return nil
+	}
+	prog, err := ev.CompileWithCurrentUser(list.EntityType, source)
+	if err != nil {
+		slog.Warn("queryplan: query scope skipped for index derivation",
+			"type", list.EntityType, "scope", name, "error", err)
+		return nil
+	}
+	return ConditionIndexProperties(prog, meta, []string{list.EntityType})
+}
+
 // listIndexSpec derives the index a list's default page uses: its static
-// equality filters (any order) then its sort keys (in order), all
-// string-shaped on the list's type. A list with no sort has no spec — the
-// id-ordered page is served by the fixed (type, id) index — and a list whose
-// filters or sort keys the store cannot evaluate byte-for-byte (see
-// StringShaped) has none either, because such a page never pushes down.
-func listIndexSpec(list dataentryconfig.List, meta *metamodel.Metamodel) (store.DerivedObjectSpec, bool) {
+// equality filters and its query scope's pushable equalities (any order),
+// then its sort keys (in order), all string-shaped on the list's type. A list
+// with no sort has no spec — the id-ordered page is served by the fixed
+// (type, id) index — and a list whose filters or sort keys the store cannot
+// evaluate byte-for-byte (see StringShaped) has none either, because such a
+// page never pushes down.
+//
+// # Why the scope participates (TKT-EVR2TU, AC11)
+//
+// A query scope contributes conjuncts to EVERY page of its type, exactly as a
+// static filter does — the default arrives without the list naming it. Leaving
+// it out of the derivation is the drift [ConditionIndexProperties] warns
+// about, in its costlier direction: the index is built for a narrower shape
+// than the query actually probes, so the page scans. Nothing fails and no test
+// goes red; the operator was simply promised an index that does not serve
+// their query.
+//
+// `mijn: "is_current_user(entity.toegewezen_aan)"` is the sharp case. It
+// lowers fully, so it derives a real column, and getting it wrong is a
+// sequential scan on the most-used list shape there is.
+//
+// Only the PUSHABLE part participates, via the same conditionEqualities core
+// the runtime pushdown uses — so a scope whose conjuncts are Go-side
+// post-filters (`~=`, ordered comparison, disjunction) contributes no columns,
+// which is correct: the store never sees them.
+func listIndexSpec(
+	list dataentryconfig.List, meta *metamodel.Metamodel, ev *predicatefns.Evaluator,
+) (store.DerivedObjectSpec, bool) {
 	if len(list.Sort) == 0 {
 		return store.DerivedObjectSpec{}, false
 	}
@@ -362,6 +450,16 @@ func listIndexSpec(list dataentryconfig.List, meta *metamodel.Metamodel) (store.
 			return store.DerivedObjectSpec{}, false
 		}
 		props = append(props, f.Property)
+	}
+	// A scope column that is not string-shaped is SKIPPED rather than
+	// disqualifying the whole spec, unlike an unshaped static filter above.
+	// The filter is part of the list's declared shape, so an unusable one
+	// means the page does not push down at all; the scope merely adds
+	// conjuncts, and the ones that do lower still deserve their columns.
+	for _, prop := range listScopeIndexProperties(list, meta, ev) {
+		if shaped(prop) {
+			props = append(props, prop)
+		}
 	}
 	slices.Sort(props)
 	props = slices.Compact(props)
