@@ -5,7 +5,7 @@ title: One scoped-read funnel for data-entry collection reads (the ACL verdict s
 kind: refactor
 priority: high
 effort: m
-status: in-progress
+status: done
 ---
 
 Extract the ACL read-verdict switch that `internal/dataentry` currently

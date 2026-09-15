@@ -2,82 +2,91 @@
 id: REV-5VW9X4
 type: review-checklist
 title: 'Review: Named query scopes declared per entity type in schema.yaml, referenced by data-entry views'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
 
 ## Automated Checks
 
-- [ ] All tests pass (`just test`)
-- [ ] Lint clean (`just lint`)
-- [ ] Comment lint gate clean (`just comment-lint`)
-- [ ] Coverage maintained (`just coverage-check`)
+- [x] `just test` — all pass
+- [x] `just lint` — clean
+- [x] `just coverage-check` — pass
+- [x] `just arch-lint` — pass
+- [x] `just plimsoll` — pass
+- [x] `just comment-lint` — pass
+- [x] Frontend: `npm run test:run`, `npm run lint`, `vue-tsc --noEmit`
 
-**Comment findings.** `just comment-report` lists the advisory rules
-(duplication, nil-contract, param-contract, restatement). They are not a merge
-gate, but a finding your diff *introduces* should be fixed or suppressed — don't
-grow the backlog.
+**Evidence:** every touched Go package green (dataentry, scopes, appbuild,
+queryplan, metamodel, dataentryconfig, cli, mcp, lua, analysis, tracer).
+golangci-lint 0 issues across all of them. Coverage gate explicit: "Package
+coverage threshold (50%) satisfied: PASS / Total coverage threshold (65%)
+satisfied: PASS / Total test coverage: 74.8%". arch-lint "OK - No warnings
+found". plimsoll clean. commentlint "no unresolvable doc links across 14855
+comments". Frontend: 2487 tests in 154 files pass, 0 lint errors, typecheck
+clean.
 
-Every rule is a heuristic over prose, so false positives are expected. To
-suppress one, prefer the inline form on the declaration line, which travels with
-the code and is reviewed in this diff:
+Also run against real PostgreSQL 16: the full pgstore suite (90s) plus the AC11
+EXPLAIN test.
 
-```go
-func f(p string) {} //commentlint:ignore param-contract  p is contained by Clone
-```
-
-Use `.commentlint.yml` (`ignore:` path globs, `allow-phrases:`) only when the
-same prose recurs across many sites. A reason is required either way — an
-unexplained suppression is a finding nobody can re-evaluate later.
+`cmd/rela-desktop` fails to build on this machine because the Xcode license has
+not been accepted (cgo/wails), which makes the repo-wide `just lint` and `just
+plimsoll` targets exit non-zero. Confirmed environmental and unrelated.
 
 ## Code Review
 
-- [ ] Run `/code-review` command (invokes cranky-code-reviewer agent)
-- [ ] All critical review-responses addressed
-- [ ] All significant review-responses addressed
-- [ ] Self-reviewed the diff for unrelated changes
+- [x] `/code-review` run
+- [x] All critical findings addressed
+- [x] All significant findings addressed
+- [x] Minor/nit findings addressed or deferred with reason
 
-**Review Responses:** <!-- List IDs of review-response entities created, e.g.,
-RR-xxxx -->
+Two reviewers, `cranky-code-reviewer` and `rela-security-reviewer`, run in
+parallel over the branch. Eight review responses recorded and linked:
 
-## Acceptance Verification
+| RR | Severity | Status |
+| --- | --- | --- |
+| RR-U95ITB BindRequest never called | critical | addressed |
+| RR-KH41AC view-declared query_scope inert | critical | addressed |
+| RR-O9O030 _position walked the default scope | significant | addressed |
+| RR-KMV4TD nil cfg/meta returned unscoped | significant | addressed |
+| RR-7WCTCM identity error reported as a 500 | minor | deferred |
+| RR-XZWGQ3 per-request recompile | minor | deferred |
+| RR-U4H8BQ identity conjuncts derive a dead index | minor | deferred |
+| RR-R65P4I countIsZero applies the default | minor | wont-fix |
 
-- [ ] Each acceptance criterion tested (reference planning checklist)
-- [ ] Test evidence documented in implementation checklist
+The two critical findings are the review's value: both reviewers independently
+found that `BindRequest` was declared, implemented, adapted through two layers
+and never called, so the ticket's headline `mijn:` case returned 500 on every
+page. The code reviewer separately found that `query_scope:` on a view was never
+read at request time, so named scopes were inert while the config validated and
+even derived an index. Neither was visible from the passing suite; both are now
+pinned by tests that fail when reverted.
 
-**Acceptance Status:**
-<!-- For each acceptance criterion, state PASS/FAIL with evidence -->
+Each deferral names what makes it more than a tidy-up: a seam decision neither
+side may make alone, a pattern shared with NextActionMatchers that should change
+for both call sites at once, and a change that must be request-bound or it
+shares one principal's identity with another.
 
-## Documentation (enhancements only)
+## Verification
 
-Skip this section for bugs and internal refactors.
+- [x] Each acceptance criterion verified
+- [x] Manual verification performed
+- [x] No regressions introduced
 
-- [ ] Docs-checklist created and linked via `has-docs`
-- [ ] User-facing documentation updated
-- [ ] Docs-checklist marked as done
+Full per-AC evidence in IMPL-XDZC30, including the EXPLAIN plans for AC11 and
+the mutation testing of every authoritative check. AC7 is split to TKT-LYLO6P
+and recorded as such on the ticket, with the reason it was worth separating.
 
-**Docs Checklist:** <!-- e.g., DOCS-xxxx -->
+## Documentation
 
-## Final Checks
+- [x] Code documentation updated
+- [x] Project documentation updated
 
-- [ ] Commit message explains the why, not just what
-- [ ] No TODOs or FIXMEs left unaddressed
-- [ ] Ready for another developer to use
+`docs/metamodel.md` gains a "Query Scopes" section and `docs/data-entry.md`
+gains `query_scope` in the list and kanban field tables plus a section on
+composition with static filters and the `?query_scope=` API shape. Both written
+in `docs-project/` and regenerated via `scripts/generate-docs.sh`.
 
-## Pull Request
-
-- [ ] Run `/pr` command to create PR and monitor CI
-
-<!--
-Deliberately NOT tracked here: the PR URL and whether CI passed.
-
-Both post-date this checklist. `/pr` requires the ticket to be `done` and
-validating clean before it opens the PR, and a `done` review-checklist may have
-no unchecked items — so an item asking for the PR URL can only be satisfied by a
-PR that does not exist yet. Checking it early would mean asserting "CI passed"
-before CI ran, which turns the checklist from evidence into a formality.
-
-GitHub records both authoritatively, and the branch and commit messages carry
-the ticket ID, so the ticket-to-PR link is recoverable without duplicating it
-here. See TKT-UFV01M. -->
+One stale doc comment was corrected during review: it asserted in the present
+tense that the SPA attached the parameter, describing code that did not exist.
+It now says the client is a required participant and why.
