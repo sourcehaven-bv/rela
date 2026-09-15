@@ -125,8 +125,11 @@ than rendering an empty page that reads as "you have nothing".
 
 **Test Scenarios:** AC1/AC2 → `metamodel/queryscope_test.go`; AC3 →
 `TestLookup_UnknownFailsClosed` + `TestQueryScopes_UnknownNameIsRefused` (HTTP)
-+ `validate_queryscope_test.go`; AC4/AC5 → `TestQueryScopes_EndToEnd`; AC8 →
-`TestScopedHeaders_ScopePropsAreASuperset`.
++ `validate_queryscope_test.go`; AC4/AC5 → `TestQueryScopes_EndToEnd`; AC6 →
+one test per surface in `internal/{mcp,lua,cli,analysis,tracer}`; AC8 →
+`TestScopedHeaders_ScopePropsAreASuperset`; AC9 →
+`appbuild/queryscopevisibility_test.go`; AC11 →
+`queryplan/queryscopeindex_test.go` plus the postgres EXPLAIN test.
 
 **Integration test:** `TestQueryScopes_EndToEnd` drives schema.yaml → real
 compiler → appbuild bridge → dataentry seam → HTTP list endpoint. The unit tests
@@ -137,9 +140,12 @@ space/slash/leading digit/doubled separator; scope declared on another type;
 scope on an unknown type (silent — validateLists already reports it); zero
 `Compiled`; nil metamodel; repeated `?query_scope=`.
 
-**Negative Tests:** every row of the "on invalid" column above, plus a mutation
-test confirming the Go-side filter is authoritative (reverting it leaks a row
-and the test names why).
+**Negative Tests:** every row of the "on invalid" column above, plus mutation
+tests confirming each authoritative check bites: the Go-side filter (reverting
+it leaks a row), the AC9 closed-world complement (a denylist reading finds
+nothing), the AC6 surface assertions (teaching `rela list` to honour the default
+fails its test), and the AC11 derivation (removing the scope contribution
+degrades the EXPLAIN plan to a Seq Scan).
 
 ## Risk Assessment
 
@@ -161,18 +167,37 @@ Effort: L (confirmed; the extraction was a separate M).
 
 - [x] `docs/metamodel.md` — the `query_scopes:` block
 - [x] `docs/data-entry.md` — `query_scope:` on lists/kanbans, `?query_scope=`
-- [ ] ~~`docs/cli-reference.md`~~ (N/A: no CLI surface)
-- [ ] ~~`README.md`~~ (N/A: not a project-level change)
+- [x] ~~`docs/cli-reference.md`~~ (N/A: no CLI surface — AC6 pins that the CLI
+deliberately does NOT apply scopes, so there is no flag or behaviour to
+document)
+- [x] ~~`README.md`~~ (N/A: not a project-level change)
 
 Both are generated from `docs-project/` — edit the source, run
 `scripts/generate-docs.sh`.
 
 ## Design Review
 
-- [ ] Run `/design-review` before starting implementation
-- [ ] All critical/significant findings addressed in plan
+- [x] ~~Run `/design-review` before starting implementation~~ (N/A: reviewed
+conversationally with the user instead — see below)
+- [x] All critical/significant findings addressed in plan
 
-**Design Review Findings:** Not run as a formal `/design-review`. The design was
-reviewed conversationally with the user across three decision points (naming
-collision, default-scope blast radius, read-path extraction), each resolved
-before implementation. Worth a `/code-review` before `done`.
+**Design Review Findings:** A formal `/design-review` was not run. The design
+was reviewed with the user across four decision points, each resolved before the
+code depending on it was written:
+
+1. **Naming collision.** "Scope" already meant three things in-tree. Resolved to
+`query_scopes:` / `query_scope:` so `scopedSortedEntities` stays readable.
+2. **Inline vs name-only.** Resolved to name-only, which makes type-level
+tooling (AC9, AC11) exhaustive by construction.
+3. **Default-scope blast radius.** I initially advised against a default; the
+user pushed back that configuring the rule on every view is the worse outcome,
+and `worlds:` sets the precedent for a safe default-on narrowing. Defaults are
+in, and AC6 is the compensating control.
+4. **Read-path extraction.** The survey found four independent reimplementations
+of the ACL verdict switch, with two past fail-open bugs (RR-GQWRLD, TKT-O7R2A1)
+caused by threading a narrowing through some and not others. The user chose to
+extract the funnel first as TKT-VAKI0Q, which immediately paid for itself — I
+reintroduced that exact bug class for `Props` while writing the function meant
+to prevent it, and the branch-parity test caught it.
+
+A `/code-review` is still to be run before `done`.

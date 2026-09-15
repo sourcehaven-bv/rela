@@ -5,7 +5,7 @@ title: Named query scopes declared per entity type in schema.yaml, referenced by
 kind: enhancement
 priority: high
 effort: l
-status: in-progress
+status: review
 ---
 
 Add `query_scopes:` to an entity type in schema.yaml: named, reusable boolean
@@ -200,7 +200,6 @@ scope declared for that `entity_type`.
 - `default` applied to SPA read surfaces (lists, kanbans, list search).
 - Pushdown of the store-safe part of a scope, with a mandatory Go-side re-check.
 - Derived-index inference extended to account for the scope (AC11).
-- Lua/MCP **opt-in** by naming a scope.
 
 ### Out of scope
 
@@ -209,6 +208,7 @@ then declared in one place, so type-level tooling (lint, index derivation, the
 AC9 overlap report) is exhaustive by construction.
 - `default` applying to Lua, MCP, `analyze_*`, `rela validate`, tracer, or
 export. These answer "what is true", not "what should a person see".
+- **Lua/MCP opt-IN.** Split to TKT-LYLO6P — see AC7.
 - Scopes on relation types.
 - Parameterised scopes (`recent(days)`). Revisit once a real second case exists.
 - Scope composition (`query_scope: [actief, mine]`). One name per view for now.
@@ -245,8 +245,13 @@ a required relation to an excluded entity silently stops being checked — the
 `rela validate`-reports-clean-over-unseen-data failure mode. One test per
 surface, not one test in aggregate.
 
-**AC7 — Lua/MCP opt in.** A script may name a scope explicitly and get the
-filtered set.
+**AC7 — Lua/MCP opt in.** SPLIT OUT to TKT-LYLO6P. Purely additive — nothing
+regresses without it, and AC6's "non-SPA surfaces see the unfiltered graph" is
+already proven independently. It was split because the cost is not in the
+filtering (that logic exists) but in two seams that each deserve their own
+review: a resolver threaded through `lua.ReadDeps` at 7 wiring sites, where nil
+must mean "no scoping" directly beside a field where nil means DENY (RR-X9NVHI);
+and a client-visible MCP tool argument with a golden update.
 
 **AC8 — pushdown is a superset, re-checked.** The store-safe conjuncts lower
 into `store.GraphQuery.Props` via `queryplan.ConditionPrefilters`; everything
