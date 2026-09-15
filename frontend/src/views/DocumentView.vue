@@ -11,6 +11,7 @@ import { renderMermaidDiagrams, renderPlantUMLDiagrams } from '@/utils/markdown'
 import { buildReturnTo } from '@/utils/returnPath'
 import { getErrorMessage, getScriptError } from '@/api/errors'
 import BackButton from '@/components/common/BackButton.vue'
+import PendingButton from '@/components/common/PendingButton.vue'
 import DOMPurify from 'dompurify'
 import { useDelayedPending } from '@/composables/useDelayedPending'
 import { PENDING_TIMINGS } from '@/composables/pendingTimings'
@@ -34,9 +35,19 @@ const { on, off } = useEvents()
 const docContent = ref<string>('')
 const loading = ref(true)
 
+// Monotonic id of the most recently STARTED render. Renders are not serialized
+// — an SSE burst or a document switch mid-flight leaves two in the air — and
+// they can complete out of order, so a response may only touch state if no
+// newer render has started since. Without the fence a slow re-render of
+// document A can land after a fast switch to B and paint A's body under B's
+// title; SSE re-renders pass refresh=true, which bypasses the server's render
+// cache, so they are reliably the slow ones.
+let renderGeneration = 0
+
 // Cold-load only (the `!docContent` half): a re-render keeps the previous
-// document on screen rather than blanking it. The gate adds the other half
-// — a render quicker than the threshold shows nothing at all.
+// document on screen rather than blanking it — loadDocument only clears
+// docContent when `cold`. The gate adds the other half: a render quicker
+// than the threshold shows nothing at all.
 const showBlockLoader = useDelayedPending(() => loading.value && !docContent.value, {
   delay: PENDING_TIMINGS.navDelayMs,
   minDuration: PENDING_TIMINGS.navMinDurationMs,
@@ -96,9 +107,22 @@ function editEntity() {
   })
 }
 
-async function loadDocument(refresh = false) {
+// cold: blank the view before fetching. Reserved for a switch to a DIFFERENT
+// document (name/entityId change), where the old content is about to be wrong
+// — keeping it on screen would show one document under another's title.
+//
+// A re-render of the SAME document must not blank: docContent going empty
+// drops the template past the delay-gated spinner into the empty-state branch
+// (see the v-if chain below), which unmounts the rendered body, collapses the
+// page height and makes the browser clamp scroll to the top. That is the
+// BUG-DJZTRF flash, and since the SSE feed re-renders on any entity write of
+// any type, it fired constantly while nothing relevant had changed.
+async function loadDocument(refresh = false, cold = false) {
+  const generation = ++renderGeneration
   loading.value = true
-  docContent.value = ''
+  if (cold) {
+    docContent.value = ''
+  }
 
   try {
     // Pass the current location as return_to so form links inside the
@@ -110,18 +134,44 @@ async function loadDocument(refresh = false) {
       refresh,
       returnTo,
     })
-    docContent.value = result.html
+    // A superseded render must not paint: its HTML belongs to the previous
+    // document or to an older state of this one.
+    if (generation !== renderGeneration) return
+
+    // Assign only on a real change. Vue's ref equality check already makes an
+    // identical assignment a no-op, so this guard is belt-and-braces rather
+    // than the thing that prevents the repaint — keep it as the explicit
+    // statement of intent (an SSE re-render normally returns byte-identical
+    // HTML and must not repaint), and so a future switch to a non-primitive
+    // content type cannot silently start re-patching the subtree.
+    if (result.html !== docContent.value) {
+      docContent.value = result.html
+    }
+    // Inside the fence and beside the assignment: the badge describes the
+    // content on screen, so it must never outlive or precede it.
     isCached.value = result.cached
   } catch (err: unknown) {
+    // A superseded render's failure is not the user's problem — the render
+    // they are actually waiting on is still in flight.
+    if (generation !== renderGeneration) return
+
     const scriptErr = getScriptError(err)
     if (scriptErr) {
       scriptErrorStore.show(scriptErr)
     } else {
       uiStore.error(getErrorMessage(err, 'Failed to render document'))
     }
-    docContent.value = ''
+    // Keep whatever is already rendered. The error is surfaced via the toast
+    // or the script-error panel, so replacing a readable document with the
+    // empty state on a transient failure loses the user's place for nothing.
+    // A cold load has nothing to keep and correctly stays empty.
   } finally {
-    loading.value = false
+    // Only the newest render owns the flag; an older one clearing it would
+    // report "done" while the render the user is waiting on is still running,
+    // re-enabling Refresh mid-flight.
+    if (generation === renderGeneration) {
+      loading.value = false
+    }
   }
 }
 
@@ -143,7 +193,7 @@ function handleEntityChange() {
 watch(
   [() => props.name, () => props.entityId],
   () => {
-    loadDocument()
+    loadDocument(false, true)
   },
   { immediate: true }
 )
@@ -170,10 +220,13 @@ onUnmounted(() => {
         <button v-if="editConfig" class="btn btn-secondary" @click="editEntity">
           {{ editConfig.label }}
         </button>
-        <button class="btn btn-secondary" :disabled="loading" @click="loadDocument(true)">
-          <span v-if="loading" class="spinner-sm" />
-          <span v-else>Refresh</span>
-        </button>
+        <PendingButton
+          class="btn btn-secondary"
+          :pending="loading"
+          label="Refresh"
+          pending-label="Refreshing…"
+          @click="loadDocument(true)"
+        />
       </div>
     </header>
 
