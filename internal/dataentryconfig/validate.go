@@ -2318,6 +2318,16 @@ func isLoopbackHost(host string) bool {
 	return strings.EqualFold(host, "localhost")
 }
 
+// ReservedExportSegment is the final path segment that turns a document URL
+// into an export request (/_documents/{document}/_export), and is therefore a
+// name no document may take.
+//
+// It is declared HERE rather than imported from dataentry because dataentry
+// imports this package, so the dependency cannot run the other way. dataentry's
+// exportSegment is an alias of this constant, so renaming one is a compile
+// error in the other; TestExportSegmentPremise asserts the two agree.
+const ReservedExportSegment = "_export"
+
 // Invariant: every document must have entity_type set, and exactly one of
 // {command, script} must be non-empty. entity_type is enforced at the HTTP
 // handler layer to reject cross-type render requests; the mutual exclusion
@@ -2338,6 +2348,25 @@ func validateDocuments(cfg *Config) []string {
 			errs = append(errs, fmt.Sprintf(
 				"document %q: edit is not supported without entity_type (a standalone document has no entity to edit)",
 				docID))
+		}
+
+		// "_export" is the reserved final segment of the document export routes
+		// (/_documents/{doc}/_export), so no document may take it as a name.
+		//
+		// Be precise about why, because the obvious reason is wrong: such a
+		// document is NOT unreachable today. The dispatch matches the reserved
+		// segment only in FINAL position, so all four shapes still resolve —
+		// /_documents/_export renders it, /_documents/_export/_export exports
+		// it, and the anchored pair works too. The reservation is
+		// forward-compatibility, not a repair: a name that is simultaneously a
+		// route keyword is one dispatch change away from being shadowed
+		// silently, and the failure would be a document that stops rendering
+		// with no error anywhere. Refusing at load costs an operator one
+		// rename and removes the whole class.
+		if docID == ReservedExportSegment {
+			errs = append(errs, fmt.Sprintf(
+				"document %q: %q is reserved for the export route (/_documents/{document}/%s); rename the document",
+				docID, ReservedExportSegment, ReservedExportSegment))
 		}
 
 		hasCmd := len(doc.Command) > 0

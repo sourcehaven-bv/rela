@@ -53,3 +53,23 @@ export function listExportUrl(
   q.set('list', listId)
   return apiUrl(`/api/v1/${getPlural(entityType)}/_export?${q.toString()}`)
 }
+
+/**
+ * Build the export URL for a rendered document + transform. Mirrors the two
+ * document render routes: `entityId` is omitted for a standalone document
+ * (declared without an `entity_type:`) and supplied for an entity-anchored one.
+ *
+ * The trailing `_export` segment is what distinguishes an export from a render;
+ * it can never collide with an entity id, which may not begin with `_`.
+ */
+export function documentExportUrl(
+  name: string,
+  entityId: string | undefined,
+  transform: string
+): string {
+  const q = new URLSearchParams({ transform })
+  const path = entityId
+    ? `/api/v1/_documents/${encodeURIComponent(name)}/${encodeURIComponent(entityId)}/_export`
+    : `/api/v1/_documents/${encodeURIComponent(name)}/_export`
+  return apiUrl(`${path}?${q.toString()}`)
+}

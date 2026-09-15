@@ -392,6 +392,44 @@ func (s *documentService) RenderListMarkdown(
 func (s *documentService) RenderStandalone(
 	ctx context.Context, cfg documentRenderConfig,
 ) (string, error) {
+	markdown, err := s.RenderStandaloneMarkdown(ctx, cfg)
+	if err != nil {
+		return "", err
+	}
+
+	htmlContent, err := markdownToHTML(markdown)
+	if err != nil {
+		return "", fmt.Errorf("markdown conversion: %w", err)
+	}
+	return htmlContent, nil
+}
+
+// RenderStandaloneMarkdown renders a standalone document to its raw markdown —
+// the pre-HTML step, and the whole of what view export needs. It relates to
+// [documentService.RenderStandalone] exactly as
+// [documentService.RenderMarkdown] relates to doRender, so the two callers
+// share one render path and cannot drift.
+//
+// Every guard RenderStandalone used to hold lives HERE, not in that wrapper:
+// this is the real entry point, and a guard that sits above one of two callers
+// is a guard the other caller does not have.
+//
+//   - The command: refusal is fail-closed. A `command:` renderer is handed the
+//     entry entity as {in}, and a standalone document has none; substituting an
+//     empty id is how a renderer silently produces a document about nothing.
+//   - The elevatedDeps(cfg) call carries BOTH the elevation grant and the
+//     document's declared capabilities (TKT-YH52OM). Dropping it would fail
+//     closed — an elevated report would quietly render as if unelevated — which
+//     is safe but very hard to diagnose.
+//
+// Like RenderStandalone it does NOT hash, cache, or singleflight; see that
+// method's doc for why none of those are oversights.
+//
+// Callers MUST apply the document's `permission:` and elevation gates before
+// invoking this — it makes no ACL decision of its own.
+func (s *documentService) RenderStandaloneMarkdown(
+	ctx context.Context, cfg documentRenderConfig,
+) (string, error) {
 	if len(cfg.Command) > 0 {
 		return "", errors.New("a document without an entity_type must use a script renderer, not a command")
 	}
@@ -411,12 +449,41 @@ func (s *documentService) RenderStandalone(
 		}
 		return "", fmt.Errorf("standalone script render: %w", err)
 	}
+	return buf.String(), nil
+}
 
-	htmlContent, err := markdownToHTML(buf.String())
-	if err != nil {
-		return "", fmt.Errorf("markdown conversion: %w", err)
+// RenderDocumentMarkdown renders EITHER document kind to markdown, dispatching
+// on whether an entry entity is present. It is the single entry point view
+// export uses, so the export handler never has to know which kind it holds.
+//
+// The dispatch is on entryID rather than a re-read of the config because the
+// two kinds need genuinely different engine calls: an anchored document goes to
+// ExecuteDocument with its entry id, a standalone one to
+// ExecuteStandaloneDocument. Routing a standalone render through the anchored
+// path with an empty id would NOT be equivalent — it would set
+// rela.document.entry_id to "" instead of nil, so a script branching on
+// `if rela.document.entry_id then` takes the wrong arm and renders a different
+// document than the operator reviewed.
+//
+// Callers MUST have run the document's gate chain first; this makes no ACL
+// decision of its own.
+func (s *documentService) RenderDocumentMarkdown(
+	ctx context.Context, entryID string, cfg documentRenderConfig,
+) (string, error) {
+	// Fail-closed backstop for the ANCHORED branch. RenderStandaloneMarkdown
+	// carries its own refusal, but RenderMarkdown deliberately does not — it
+	// also serves entity export, where a command: renderer is legitimate and
+	// has an entry entity to receive as {in}. Document export refuses commands
+	// on both kinds as a policy choice, so without this check the anchored
+	// branch would fall through to renderCommand the moment the handler's
+	// user-facing check was removed or bypassed by a new caller.
+	if len(cfg.Command) > 0 {
+		return "", errors.New("document export requires a script renderer, not a command")
 	}
-	return htmlContent, nil
+	if entryID == "" {
+		return s.RenderStandaloneMarkdown(ctx, cfg)
+	}
+	return s.RenderMarkdown(ctx, entryID, cfg)
 }
 
 // doRender performs the actual rendering work. Dispatches on Script vs.

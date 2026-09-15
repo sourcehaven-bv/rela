@@ -11,6 +11,8 @@ import { renderMermaidDiagrams, renderPlantUMLDiagrams } from '@/utils/markdown'
 import { buildReturnTo } from '@/utils/returnPath'
 import { getErrorMessage, getScriptError } from '@/api/errors'
 import BackButton from '@/components/common/BackButton.vue'
+import ExportMenu from '@/components/entity/ExportMenu.vue'
+import { documentExportUrl } from '@/api/transforms'
 import DOMPurify from 'dompurify'
 import { useDelayedPending } from '@/composables/useDelayedPending'
 import { PENDING_TIMINGS } from '@/composables/pendingTimings'
@@ -96,6 +98,14 @@ function editEntity() {
   })
 }
 
+// Builds the export URL for a chosen transform. Passed to ExportMenu, which
+// stays agnostic about what is being exported. The server applies the same gate
+// chain the render above already passed, so a document the user can read is a
+// document they can export, and nothing more.
+function exportUrlFor(transform: string): string {
+  return documentExportUrl(props.name, props.entityId, transform)
+}
+
 async function loadDocument(refresh = false) {
   loading.value = true
   docContent.value = ''
@@ -170,6 +180,10 @@ onUnmounted(() => {
         <button v-if="editConfig" class="btn btn-secondary" @click="editEntity">
           {{ editConfig.label }}
         </button>
+        <!-- Renders nothing when no transforms are registered; the menu hides
+             itself on an empty registry. Both document kinds are supported —
+             entityId is undefined for a standalone document. -->
+        <ExportMenu :url-for="exportUrlFor" />
         <button class="btn btn-secondary" :disabled="loading" @click="loadDocument(true)">
           <span v-if="loading" class="spinner-sm" />
           <span v-else>Refresh</span>

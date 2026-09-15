@@ -119,14 +119,22 @@ func TestNavFilterStaysPresentational(t *testing.T) {
 			// Unlike the two above, this needle guards a real boundary rather
 			// than a presentation filter. toDocumentRenderConfig is the ONLY
 			// producer of documentRenderConfig.Elevated == true, i.e. the single
-			// switch that turns on raw ACL bypass for a render. Both permitted
-			// callers check gateElevatedDocument first; a third caller that
-			// forgot would compile and silently elevate.
+			// switch that turns on raw ACL bypass for a render. A caller that
+			// forgot gateElevatedDocument would compile and silently elevate.
+			//
+			// TKT-K7J6FL NARROWED this list rather than widening it. The gate
+			// chains moved into resolveAnchoredDocument /
+			// resolveStandaloneDocument (export_document.go), which are now the
+			// only constructors of a render config and call gateElevatedDocument
+			// themselves, immediately above. The render handlers in api_v1.go
+			// and standalone_document_handler.go take the resolved config and no
+			// longer build one — so "every caller checked the gate" went from a
+			// convention this test polices to a property of there being exactly
+			// one place that can construct the config at all.
 			needle: "toDocumentRenderConfig(",
 			allowed: map[string]bool{
-				"standalone_document_handler.go": true,
-				"api_v1.go":                      true,
-				"handlers_document.go":           true, // the definition itself
+				"export_document.go":   true, // the two gate-chain resolvers
+				"handlers_document.go": true, // the definition itself
 			},
 			why: "it is the only switch that enables elevated (ACL-bypassing) reads, " +
 				"and every caller must pass gateElevatedDocument first",

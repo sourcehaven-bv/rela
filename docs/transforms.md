@@ -58,19 +58,69 @@ the metamodel, so it works without the data-entry server.
 
 ## Exporting from the data-entry app
 
-Entity and list views carry an **"Export ▾"** menu populated from the registered
-transforms. Choosing a format downloads the converted file.
+Entity views, list views and rendered documents carry an **"Export ▾"** menu
+populated from the registered transforms. Choosing a format downloads the
+converted file.
 
 - **Entity export:** `GET /api/v1/{plural}/{id}/_export?transform=<name>`
 - **List export:** `GET /api/v1/{plural}/_export?transform=<name>&list=<listId>` —
   exports the whole filtered set (not just the current page) as a table of the list
   view's columns, capped for very large lists (a visible "showing N of M
   (truncated)" line is appended when the cap is hit).
+- **Document export:** `GET /api/v1/_documents/{document}/_export?transform=<name>`
+  (standalone) or `GET /api/v1/_documents/{document}/{id}/_export?transform=<name>`
+  (entity-anchored) — see [Exporting a document](#exporting-a-document).
 
 Export is a property of an already-authorized view: it runs against the same
 ACL-scoped read the view itself uses, so an export can never reveal anything the
 view could not already show. Relation columns show only neighbor titles the viewer
 is permitted to see.
+
+### Exporting a document
+
+A Lua document is already a markdown producer — the on-screen view is that
+markdown converted to HTML — so exporting one converts the *same* markdown with
+a registered transform instead. Nothing extra is configured: a document gains
+every registered format automatically, exactly as an entity or list view does.
+
+```text
+GET /api/v1/_documents/sales_review/_export?transform=pdf
+GET /api/v1/_documents/release_notes/TKT-001/_export?transform=pdf
+```
+
+The two URL shapes mirror the two document kinds: a document declared without an
+`entity_type:` is standalone and takes no id, one declared with an `entity_type:`
+is rendered about a specific entity. Each shape rejects the other kind rather
+than rendering against a missing or guessed entity.
+
+**Export is gated exactly like the render it comes from.** The request passes the
+same checks in the same order — the entity read gate (for an anchored document),
+the document's `permission:`, and, for a document declaring
+`allow_acl_bypass: read`, the elevated-document gate. A document you may view is
+a document you may export; a document you may not view returns the same error it
+returns on the render route, and the script never runs. There is no separate
+"may export" permission and no per-document opt-out, because export reveals
+nothing the on-screen document does not.
+
+Two limits worth knowing:
+
+- **Script-only.** A document using a `command:` renderer cannot be exported
+  (you get a clear 400). `command:` renderers are handed the entry entity as a
+  temp file, which a standalone document does not have; supporting export on one
+  document kind but not the other would be a worse contract than supporting
+  neither.
+- **No caching.** Document renders are per-principal, so an export is produced
+  fresh for each request rather than served from the document cache.
+
+As on every other export surface, a request may only choose a registered
+transform **name** — never a command, flag, path, or renderer.
+
+> **Bodies are exported as they are rendered.** A document export carries entity
+> body content exactly as the on-screen document does. Field-level `visible:`
+> redaction applies to entity *properties*, and a document's Lua reads are
+> ACL-bound, but entity bodies are not currently redacted on any read-out path —
+> so an exported document exposes precisely what its rendered counterpart does,
+> no more and no less.
 
 ### Custom per-entity rendering
 
@@ -280,3 +330,5 @@ untrusted content through the Linux tier.
 - Asynchronous export for slow converters (LaTeX / LibreOffice) — exports run
   synchronously within the request.
 - A per-view configurable row cap for list export.
+- Exporting a document that uses a `command:` renderer (script-only for now —
+  see [Exporting a document](#exporting-a-document)).
