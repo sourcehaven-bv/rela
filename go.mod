@@ -6,7 +6,7 @@ toolchain go1.26.6
 
 require (
 	github.com/MicahParks/jwkset v0.11.3
-	github.com/MicahParks/keyfunc/v3 v3.8.1
+	github.com/MicahParks/keyfunc/v3 v3.8.2
 	github.com/acaloiaro/neoq v0.72.1
 	github.com/alecthomas/kong v1.16.1
 	github.com/aymerick/douceur v0.2.0
