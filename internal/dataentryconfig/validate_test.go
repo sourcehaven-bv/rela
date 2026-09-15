@@ -3138,3 +3138,44 @@ func TestValidateConfig_KeepOnAddAnotherAllowedOnEditModeForm(t *testing.T) {
 		t.Errorf("keep_on_add_another on a mode:edit form should be allowed, got: %v", err)
 	}
 }
+
+// TestValidateDocuments_ReservedExportNameRejected pins the config half of the
+// document-export routing premise. `/_documents/{doc}/_export` is the export
+// route, so a document literally named "_export" would be unreachable — every
+// request for it would route to the export handler instead. The other half (an
+// entity id can never be "_export") is guaranteed by entity.ValidateID; this
+// rule closes the side that config controls.
+func TestValidateDocuments_ReservedExportNameRejected(t *testing.T) {
+	meta := testMetamodel()
+	cfg := &Config{
+		Documents: map[string]DocumentConfig{
+			ReservedExportSegment: {EntityType: "ticket", Script: "docs/r.lua"},
+		},
+	}
+
+	err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
+	if err == nil {
+		t.Fatal("expected a document named \"_export\" to be rejected at load")
+	}
+	if !strings.Contains(err.Error(), ReservedExportSegment) {
+		t.Errorf("error should name the reserved segment, got: %s", err.Error())
+	}
+}
+
+// A document whose name merely CONTAINS the reserved segment is fine — only the
+// exact name collides with the route.
+func TestValidateDocuments_NameContainingExportAllowed(t *testing.T) {
+	meta := testMetamodel()
+	for _, name := range []string{"_exports", "export", "sales_export"} {
+		t.Run(name, func(t *testing.T) {
+			cfg := &Config{
+				Documents: map[string]DocumentConfig{
+					name: {EntityType: "ticket", Script: "docs/r.lua"},
+				},
+			}
+			if err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta); err != nil {
+				t.Errorf("document %q should be allowed, got: %v", name, err)
+			}
+		})
+	}
+}

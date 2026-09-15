@@ -150,50 +150,14 @@ func gateElevatedDocument(
 // plimsoll load line (see the directive on the type), and this is a leaf
 // handler with no reason to widen App's surface.
 func handleV1StandaloneDocument(a *App, w http.ResponseWriter, r *http.Request, docName string) {
-	if docName == "" {
-		writeV1Error(w, r, http.StatusBadRequest, "invalid_path",
-			"Path must be /_documents/{docName} or /_documents/{docName}/{entityId}", "")
-		return
-	}
-
-	// Validated even though a standalone render writes no cache file today:
-	// docName reaches the script engine as a config key, and the guard costs
-	// nothing. Keeping it means a future cache keyed on docName cannot
-	// reintroduce a traversal.
-	if !isSafePathSegment(docName) {
-		writeV1Error(w, r, http.StatusBadRequest, "invalid_path", "Path segment contains forbidden characters", "")
-		return
-	}
-
-	docCfg, ok := a.State().Cfg.Documents[docName]
+	resolved, ok := resolveStandaloneDocument(a, w, r, docName)
 	if !ok {
-		writeV1Error(w, r, http.StatusNotFound, "document_not_found", "Document config not found", "")
-		return
-	}
-
-	// The mirror of the standalone rejection in handleV1Documents: an
-	// entity-anchored document needs an entry id this shape cannot supply.
-	// Rejecting beats rendering it against a guessed or empty entity.
-	if !docCfg.IsStandalone() {
-		writeV1Error(w, r, http.StatusBadRequest, "document_kind_mismatch",
-			fmt.Sprintf("document %q is for entity_type %q; request it at /_documents/%s/{entityId}",
-				docName, docCfg.EntityType, docName), "")
-		return
-	}
-
-	// Gate BEFORE rendering — see gateDocumentPermission. Both gates apply:
-	// the permission check, and (for an elevated document) the closed switch
-	// on the ACL implementation that the read gate alone cannot provide.
-	if !gateDocumentPermission(w, r, docName, docCfg) {
-		return
-	}
-	if !gateElevatedDocument(w, r, a.acl, docName, docCfg) {
-		return
+		return // the resolver already wrote the response
 	}
 
 	returnPath := isSafeReturnPath(r.URL.Query().Get("return_to"))
 
-	html, err := a.documents.RenderStandalone(r.Context(), a.toDocumentRenderConfig(docName, &docCfg))
+	html, err := a.documents.RenderStandalone(r.Context(), resolved.cfg)
 	if err != nil {
 		var se *lua.ScriptError
 		if errors.As(err, &se) {

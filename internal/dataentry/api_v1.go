@@ -2534,100 +2534,68 @@ func (a *App) handleV1Documents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse path: /api/v1/_documents/{docName}[/{entityId}], then dispatch on
-	// the shape. The two branches live in separate functions so neither grows
-	// the other's guards by accident — they differ in their ACL story, not
-	// just in whether an id is present.
+	// Parse path: /api/v1/_documents/{docName}[/{entityId}][/_export], then
+	// dispatch on the shape. The branches live in separate functions so none
+	// grows another's guards by accident — they differ in their ACL story, not
+	// just in which segments are present.
+	//
+	// The trailing `_export` segment is matched EXACTLY and only in final
+	// position, so the four shapes are disjoint:
+	//
+	//	{doc}                     render, standalone
+	//	{doc}/_export             export, standalone
+	//	{doc}/{entityId}          render, anchored
+	//	{doc}/{entityId}/_export  export, anchored
+	//
+	// The two-segment forms cannot collide: an entity id can never be
+	// "_export" because entity.ValidateID rejects a leading underscore. The
+	// other side of that premise — a document literally named "_export" — is
+	// closed at config load by validateDocuments. See exportSegment.
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/_documents/")
-	parts := strings.SplitN(path, "/", 2)
-	if len(parts) == 1 || parts[1] == "" {
-		handleV1StandaloneDocument(a, w, r, parts[0])
-		return
+	parts := strings.Split(path, "/")
+
+	// Trailing empty segment from a trailing slash ("/_documents/foo/") is not
+	// a missing entity id; drop it so the shape matches the one-segment form.
+	if len(parts) > 1 && parts[len(parts)-1] == "" {
+		parts = parts[:len(parts)-1]
 	}
+
 	if parts[0] == "" {
 		writeV1Error(w, r, http.StatusBadRequest, "invalid_path", "Path must be /_documents/{docName}/{entityId}", "")
 		return
 	}
-	handleV1AnchoredDocument(a, w, r, parts[0], parts[1])
+
+	switch {
+	case len(parts) == 1:
+		handleV1StandaloneDocument(a, w, r, parts[0])
+	case len(parts) == 2 && parts[1] == exportSegment:
+		handleV1ExportDocument(a, w, r, parts[0], "")
+	case len(parts) == 2:
+		handleV1AnchoredDocument(a, w, r, parts[0], parts[1])
+	case len(parts) == 3 && parts[2] == exportSegment:
+		handleV1ExportDocument(a, w, r, parts[0], parts[1])
+	default:
+		writeV1Error(w, r, http.StatusNotFound, "not_found", "Resource not found", "")
+	}
 }
 
 // handleV1AnchoredDocument serves GET /api/v1/_documents/{docName}/{entityId}
 // — a document declared WITH an `entity_type:`, rendered about one entity.
 //
-// Gate ordering here is load-bearing; see the comments inline. A plain
-// function taking *App for the same reason handleV1StandaloneDocument is one:
-// App sits on its plimsoll load line.
+// The gate chain lives in resolveAnchoredDocument, shared with the export
+// route so the two cannot drift; its ordering is load-bearing and documented
+// there. What stays HERE is everything specific to producing HTML: the
+// return_to rewrite, the refresh flag, and the disk cache — see the note in
+// resolveAnchoredDocument about why the cache must not move into it.
+//
+// A plain function taking *App for the same reason handleV1StandaloneDocument
+// is one: App sits on its plimsoll load line.
 func handleV1AnchoredDocument(a *App, w http.ResponseWriter, r *http.Request, docName, entityID string) {
-	// Both segments flow into the on-disk document cache filename
-	// (workspace/document.go). Reject anything that could escape the cache
-	// directory before any filesystem work happens.
-	if !isSafePathSegment(docName) || !isSafePathSegment(entityID) {
-		writeV1Error(w, r, http.StatusBadRequest, "invalid_path", "Path segment contains forbidden characters", "")
-		return
-	}
-
-	// Get document config
-	docCfg, ok := a.State().Cfg.Documents[docName]
+	resolved, ok := resolveAnchoredDocument(a, w, r, docName, entityID)
 	if !ok {
-		writeV1Error(w, r, http.StatusNotFound, "document_not_found", "Document config not found", "")
-		return
+		return // the resolver already wrote the response
 	}
-
-	// A standalone document has no entry entity, so an entity-anchored
-	// request for one is a category error, not a document to render against
-	// the supplied id. Reject rather than silently ignoring the id.
-	if docCfg.IsStandalone() {
-		writeV1Error(w, r, http.StatusBadRequest, "document_kind_mismatch",
-			fmt.Sprintf("document %q has no entity_type; request it at /_documents/%s without an entity id",
-				docName, docName), "")
-		return
-	}
-
-	// Enforce the doc's entity_type before running the renderer: a
-	// release-notes script authored for releases must not run against a
-	// ticket. The frontend already filters the docs shown for an entity,
-	// but an HTTP caller can hit /_documents/<doc>/<wrong-type-id>
-	// directly; reject here.
-	ent, entErr := a.store.GetEntity(r.Context(), entityID)
-	if entErr != nil {
-		writeV1Error(w, r, http.StatusNotFound, "entity_not_found",
-			fmt.Sprintf("entity %q not found", entityID), "")
-		return
-	}
-
-	// ACL gate (TKT-C0R07J): document rendering serves entity-derived content
-	// (HTML + EntityIDs) and may run a Lua script that reads related entities.
-	// Gate on the document's declared entity_type BEFORE the type-mismatch
-	// branch (so a denied principal gets a uniform 404, not a 400 oracle) and
-	// BEFORE any rendering runs — a denied caller must never trigger the
-	// (possibly Lua) renderer.
-	if !a.gateReadOrNotFound(w, r, docCfg.EntityType, entityID) {
-		return
-	}
-
-	// A doc-level `permission:` applies IN ADDITION to the per-entity gate
-	// above — it narrows, never widens (a holder still needs to pass the
-	// entity read gate). Same uniform-404 treatment for the same reason.
-	if !gateDocumentPermission(w, r, docName, docCfg) {
-		return
-	}
-
-	// An entity-anchored document may also be elevated (TKT-Y3JVFK), in which
-	// case BOTH this and the per-entity gate above must pass. The entity gate
-	// governs the entry entity; elevation governs what the script may read
-	// BEYOND it, so neither subsumes the other.
-	if !gateElevatedDocument(w, r, a.acl, docName, docCfg) {
-		return
-	}
-
-	if ent.Type != docCfg.EntityType {
-		writeV1Error(w, r, http.StatusBadRequest, "entity_type_mismatch",
-			fmt.Sprintf("document %q is for entity_type %q, but %q is a %q",
-				docName, docCfg.EntityType, entityID, ent.Type), "")
-		return
-	}
-
-	renderCfg := a.toDocumentRenderConfig(docName, &docCfg)
+	renderCfg := resolved.cfg
 
 	// Check for refresh param - skip cache if present
 	forceRefresh := r.URL.Query().Get("refresh") == "true"
@@ -2644,7 +2612,12 @@ func handleV1AnchoredDocument(a *App, w http.ResponseWriter, r *http.Request, do
 	// is only populated for command: renders (see doRender); skip the
 	// read for script: docs so we don't serve a stale command:-era file
 	// after a doc is switched to a Lua script.
-	if !forceRefresh && docCfg.Script == "" {
+	//
+	// That condition is also what keeps GetCached safe: its key carries
+	// neither the ConfigID nor the principal, so it may only ever serve a
+	// principal-independent command: render. Never widen this to script:
+	// docs, and never call GetCached from a per-principal path (RR-2QSGLU).
+	if !forceRefresh && renderCfg.Script == "" {
 		result := a.documents.GetCached(r.Context(), entityID)
 		if result != nil {
 			html := RewriteDocumentLinks(result.HTML, returnPath, nil)

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { getTransforms, entityExportUrl, listExportUrl } from './transforms'
+import { getTransforms, entityExportUrl, listExportUrl, documentExportUrl } from './transforms'
 import { registerEntityPlurals } from './entities'
 import { api } from './client'
 
@@ -41,5 +41,23 @@ describe('transforms api', () => {
     expect(url).toContain('list=tickets')
     expect(url).toContain('filter%5Bstatus%5D=open')
     expect(url).toContain('q=foo')
+  })
+
+  it('documentExportUrl targets the anchored route when an entity id is given', () => {
+    const url = documentExportUrl('release_notes', 'TKT-001', 'pdf')
+    expect(url).toBe('/api/v1/_documents/release_notes/TKT-001/_export?transform=pdf')
+  })
+
+  it('documentExportUrl omits the entity segment for a standalone document', () => {
+    const url = documentExportUrl('sales_review', undefined, 'pdf')
+    expect(url).toBe('/api/v1/_documents/sales_review/_export?transform=pdf')
+  })
+
+  it('documentExportUrl encodes both segments', () => {
+    const url = documentExportUrl('a b&c', 'TKT 1&x', 'pdf')
+    expect(url).toContain('a%20b%26c')
+    expect(url).toContain('TKT%201%26x')
+    // The reserved segment stays literal — it is the route, not a value.
+    expect(url.endsWith('/_export?transform=pdf')).toBe(true)
   })
 })

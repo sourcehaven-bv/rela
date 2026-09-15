@@ -2101,6 +2101,17 @@ func isLoopbackHost(host string) bool {
 // {command, script} must be non-empty. entity_type is enforced at the HTTP
 // handler layer to reject cross-type render requests; the mutual exclusion
 // prevents ambiguous configs (which renderer runs when both are set?).
+// ReservedExportSegment is the final path segment that turns a document URL
+// into an export request (/_documents/{document}/_export), and is therefore a
+// name no document may take.
+//
+// It is declared HERE rather than imported from dataentry because dataentry
+// imports this package, so the dependency cannot run the other way. Exported so
+// the routing side can assert the two agree — TestExportSegmentMatchesConfig in
+// dataentry pins it, which is what keeps a rename of one from silently
+// un-reserving the other.
+const ReservedExportSegment = "_export"
+
 func validateDocuments(cfg *Config) []string {
 	var errs []string
 
@@ -2117,6 +2128,17 @@ func validateDocuments(cfg *Config) []string {
 			errs = append(errs, fmt.Sprintf(
 				"document %q: edit is not supported without entity_type (a standalone document has no entity to edit)",
 				docID))
+		}
+
+		// "_export" is the reserved final segment of the document export routes
+		// (/_documents/{doc}/_export). A document with that name would be
+		// unreachable — every request for it would route to the export handler
+		// for a document named "" instead. Refusing at load beats shipping a
+		// config whose document silently never renders.
+		if docID == ReservedExportSegment {
+			errs = append(errs, fmt.Sprintf(
+				"document %q: %q is reserved for the export route (/_documents/{document}/%s); rename the document",
+				docID, ReservedExportSegment, ReservedExportSegment))
 		}
 
 		hasCmd := len(doc.Command) > 0
