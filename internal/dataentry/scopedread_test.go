@@ -2,6 +2,7 @@ package dataentry
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -246,5 +247,119 @@ func TestScopedHeaders_IsTheOnlyVerdictSwitch(t *testing.T) {
 				"happens otherwise. If this genuinely is not a collection read, add it to "+
 				"verdictSwitchExempt with a reason.", name, line)
 		}
+	}
+}
+
+// TestScopedHeaders_ScopeFiltersOnBothBranches extends the branch-parity
+// invariant to the query-scope narrowing. Same reasoning as Props: a scope
+// applied on one verdict branch only would show an AllowAll principal the
+// rows everyone else's scope hides.
+func TestScopedHeaders_ScopeFiltersOnBothBranches(t *testing.T) {
+	app := newTestAppV1(t)
+	seedEntity(app, &entity.Entity{ID: "TKT-open", Type: "ticket",
+		Properties: map[string]any{"status": "open"}})
+	seedEntity(app, &entity.Entity{ID: "TKT-done", Type: "ticket",
+		Properties: map[string]any{"status": "done"}})
+
+	// A stand-in scope: "status is not done". The real one is a compiled
+	// predicate program, but the funnel only ever calls the evaluator, so a
+	// closure exercises the same path.
+	notDone := scopeRequest{
+		Type:  "ticket",
+		Scope: "not-done",
+		ScopeEval: func(_ context.Context, _ QueryScopeHandle, _, _ string, props map[string]any) (bool, error) {
+			return props["status"] != "done", nil
+		},
+	}
+
+	gated := acl.ReadQueryResult{Query: &store.GraphQuery{EntityType: "ticket"}}
+	allowAll := acl.ReadQueryResult{AllowAll: true}
+
+	gotAllowAll := idsOf(t, context.Background(), app, allowAll, notDone)
+	gotGated := idsOf(t, context.Background(), app, gated, notDone)
+
+	if strings.Join(gotAllowAll, ",") != strings.Join(gotGated, ",") {
+		t.Errorf("verdict branches disagree under a scope: AllowAll=%v, ACL-gated=%v",
+			gotAllowAll, gotGated)
+	}
+	if got := strings.Join(gotAllowAll, ","); got != "TKT-open" {
+		t.Errorf("scoped ids = %v, want [TKT-open]", gotAllowAll)
+	}
+}
+
+// TestScopedHeaders_ScopeWithoutEvaluatorIsRefused pins the fail-closed
+// direction. A nil evaluator beside a non-nil scope must error: silently
+// skipping the filter would serve the UNSCOPED set, which is exactly what a
+// scope exists to prevent, and nothing on screen would say so.
+func TestScopedHeaders_ScopeWithoutEvaluatorIsRefused(t *testing.T) {
+	app := newTestAppV1(t)
+	seedEntity(app, &entity.Entity{ID: "TKT-1", Type: "ticket"})
+
+	_, _, err := scopedHeaders(context.Background(), app.Services(),
+		acl.ReadQueryResult{AllowAll: true},
+		scopeRequest{Type: "ticket", Scope: "something", ScopeEval: nil})
+	if err == nil {
+		t.Fatal("a scope with no evaluator was accepted; it must refuse rather than serve unscoped rows")
+	}
+}
+
+// TestScopedHeaders_ScopeErrorPropagates pins that an evaluation failure
+// fails the request. Folding it into a non-match would render an empty page
+// for an identity scope with no principal — indistinguishable from "you have
+// no tasks", which is a wrong answer presented as a right one.
+func TestScopedHeaders_ScopeErrorPropagates(t *testing.T) {
+	app := newTestAppV1(t)
+	seedEntity(app, &entity.Entity{ID: "TKT-1", Type: "ticket"})
+
+	_, _, err := scopedHeaders(context.Background(), app.Services(),
+		acl.ReadQueryResult{AllowAll: true}, scopeRequest{
+			Type:  "ticket",
+			Scope: "identity",
+			ScopeEval: func(_ context.Context, _ QueryScopeHandle, _, _ string, _ map[string]any) (bool, error) {
+				return false, errNoIdentityForTest
+			},
+		})
+	if err == nil {
+		t.Fatal("a scope evaluation error was swallowed; it must fail the request")
+	}
+	if !errors.Is(err, errNoIdentityForTest) {
+		t.Errorf("error = %v, want it to wrap the evaluator's error", err)
+	}
+}
+
+var errNoIdentityForTest = errors.New("no current user")
+
+// TestScopedHeaders_ScopePropsAreASuperset pins the pushdown contract: the
+// pushed conjuncts narrow the READ, and the Go-side scope remains
+// authoritative. Passing props that are broader than the scope must not
+// change the result — only how many rows the store returned.
+func TestScopedHeaders_ScopePropsAreASuperset(t *testing.T) {
+	app := newTestAppV1(t)
+	seedEntity(app, &entity.Entity{ID: "TKT-a", Type: "ticket",
+		Properties: map[string]any{"status": "open", "prio": "high"}})
+	seedEntity(app, &entity.Entity{ID: "TKT-b", Type: "ticket",
+		Properties: map[string]any{"status": "open", "prio": "low"}})
+	seedEntity(app, &entity.Entity{ID: "TKT-c", Type: "ticket",
+		Properties: map[string]any{"status": "done", "prio": "high"}})
+
+	// The scope is "open AND high". Only the first conjunct is pushable.
+	req := scopeRequest{
+		Type:       "ticket",
+		ScopeProps: []store.PropPredicate{{Property: "status", Op: store.PropEqual, Value: "open", Scalar: true}},
+		Scope:      "open-and-high",
+		ScopeEval: func(_ context.Context, _ QueryScopeHandle, _, _ string, props map[string]any) (bool, error) {
+			return props["status"] == "open" && props["prio"] == "high", nil
+		},
+	}
+	got := idsOf(t, context.Background(), app, acl.ReadQueryResult{AllowAll: true}, req)
+	if strings.Join(got, ",") != "TKT-a" {
+		t.Errorf("ids = %v, want [TKT-a]", got)
+	}
+
+	// The SAME scope with no pushdown must give the same answer, slower.
+	req.ScopeProps = nil
+	if unpushed := idsOf(t, context.Background(), app, acl.ReadQueryResult{AllowAll: true}, req); strings.Join(unpushed, ",") != strings.Join(got, ",") {
+		t.Errorf("pushed=%v unpushed=%v — the prefilter changed the answer, so it is not a superset",
+			got, unpushed)
 	}
 }

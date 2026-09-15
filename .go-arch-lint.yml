@@ -613,6 +613,12 @@ deps:
       # type either.
       - conditionlint
       - predicatefns
+      # queryscopes + predicate: the query-scope bridge (queryscopes.go)
+      # compiles `query_scopes:` and hands dataentry an opaque handle plus an
+      # evaluator, so dataentry never names *predicate.Program — the same
+      # arrangement as the next-action matchers above.
+      - queryscopes
+      - predicate
       - principal
       - computed
       - dataentryconfig
