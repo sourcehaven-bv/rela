@@ -56,12 +56,17 @@ function dropPgSchema(schema: string): void {
 /** Build the server's RELA_DATABASE_URL from the admin DSN, pinned to `schema`
  *  via search_path (keeping public for the pg_trgm extension). The postgres
  *  server auto-migrates the schema on first open. NOTE: this OVERRIDES any
- *  pre-existing `options` param in the admin DSN — the e2e admin DSN is not
- *  expected to carry one. */
-function pgDsnForSchema(schema: string): string {
+ *  pre-existing `search_path` param in the admin DSN — the e2e admin DSN is
+ *  not expected to carry one. */
+export function pgDsnForSchema(schema: string): string {
   const u = new URL(PG_ADMIN_DSN);
-  // libpq options: -c search_path=<schema>,public. Encode the space + comma.
-  u.searchParams.set("options", `-c search_path=${schema},public`);
+  // Pin the schema with a plain `search_path` parameter rather than libpq's
+  // `options=-c search_path=...`. The latter has to survive URLSearchParams,
+  // which writes its space as "+" — and a URI query means a literal plus
+  // there, so the server read the parameter name as "+search_path" and
+  // refused every connection with SQLSTATE 42704. `search_path` as its own
+  // parameter has no space to get wrong.
+  u.searchParams.set("search_path", `${schema},public`);
   return u.toString();
 }
 // Resolve symlinks once — macOS $TMPDIR is typically /var/folders/... which
