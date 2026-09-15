@@ -4,6 +4,7 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -12,6 +13,8 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // newDocExportApp builds an app that can both render documents through a fake
@@ -555,5 +558,116 @@ func TestRenderDocumentMarkdown_RefusesCommandRenderer(t *testing.T) {
 				t.Errorf("renderer ran %d time(s) for a refused command: document", len(fake.calls))
 			}
 		})
+	}
+}
+
+// TestExportDocument_RouteShapes pins how every neighboring path shape
+// resolves, so a future change to the segment split cannot quietly move one of
+// them. The dispatch comment draws a four-shape table; this walks it, plus the
+// shapes just outside it.
+//
+// The empty-interior-segment cases are the ones that matter most. Without an
+// explicit rejection, "/{doc}//_export" splits to ["doc", "", "_export"],
+// matches the 3-segment export case, and reaches the export handler with an
+// empty entity id — which dispatches to the STANDALONE resolver and serves a
+// standalone document at the anchored URL shape. That is what this package's
+// CLAUDE.md forbids. net/http's ServeMux redirects the "//" spelling before a
+// handler sees it, but a percent-encoded %2F survives its cleaning and tests
+// call the router directly, so the guarantee has to live in the router.
+func TestExportDocument_RouteShapes(t *testing.T) {
+	requireCp(t)
+	docs := map[string]dataentryconfig.DocumentConfig{
+		"report": anchoredDoc(),
+		"sales":  standaloneDoc("docs/s.lua"),
+	}
+
+	tests := []struct {
+		name       string
+		path       string
+		want       int
+		wantRender bool
+	}{
+		{"bare prefix", "/api/v1/_documents/", http.StatusBadRequest, false},
+		{"standalone render", "/api/v1/_documents/sales", http.StatusOK, true},
+		{"standalone render, trailing slash", "/api/v1/_documents/sales/", http.StatusOK, true},
+		{"anchored render", "/api/v1/_documents/report/TKT-001", http.StatusOK, true},
+		{"anchored render, trailing slash", "/api/v1/_documents/report/TKT-001/", http.StatusOK, true},
+		{"standalone export, trailing slash", "/api/v1/_documents/sales/_export/", http.StatusOK, true},
+		{"anchored export, trailing slash", "/api/v1/_documents/report/TKT-001/_export/", http.StatusOK, true},
+
+		{"empty interior segment, standalone doc", "/api/v1/_documents/sales//_export", http.StatusBadRequest, false},
+		{"empty interior segment, anchored doc", "/api/v1/_documents/report//_export", http.StatusBadRequest, false},
+		{"encoded empty interior segment", "/api/v1/_documents/sales/%2F_export", http.StatusBadRequest, false},
+		{"empty document name", "/api/v1/_documents//_export", http.StatusBadRequest, false},
+		{"double empty segment", "/api/v1/_documents/sales//", http.StatusBadRequest, false},
+
+		{"suffix past the reserved segment", "/api/v1/_documents/sales/_export/extra", http.StatusNotFound, false},
+		{"anchored suffix past reserved", "/api/v1/_documents/report/TKT-001/_export/x", http.StatusNotFound, false},
+		// Exact match only: "_EXPORT" is an entity id, so a standalone document
+		// rejects it as a kind mismatch rather than treating it as an export.
+		{"reserved segment is case-sensitive", "/api/v1/_documents/sales/_EXPORT", http.StatusBadRequest, false},
+		{"reserved segment in entity position", "/api/v1/_documents/report/_export/TKT-001", http.StatusNotFound, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ticket := &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "t"}}
+			app, fake := newDocExportApp(t, docs, ticket)
+			seedEntity(app, ticket)
+
+			rec := docExportReq(t, app, tc.path+"?transform=copy")
+
+			if rec.Code != tc.want {
+				t.Errorf("status = %d, want %d (body %s)", rec.Code, tc.want, rec.Body.String())
+			}
+			if ran := len(fake.calls) > 0; ran != tc.wantRender {
+				t.Errorf("renderer ran = %v, want %v", ran, tc.wantRender)
+			}
+		})
+	}
+}
+
+// TestExportDocument_ElevationAndCapabilitiesReachTheRender is the POSITIVE
+// counterpart to TestExportDocument_ElevatedGateAppliesToExport, and it exists
+// because every other elevated assertion on this route is a denial.
+//
+// The failure it guards against is silent and fails CLOSED: if the export path
+// reached the script engine without going through elevatedDeps, an elevated
+// report would simply render as unelevated — no error, no denial, just a
+// smaller number in a PDF. A deny-only suite cannot see that. The same applies
+// to the document's declared `capabilities:` (TKT-YH52OM), which ride the same
+// call.
+func TestExportDocument_ElevationAndCapabilitiesReachTheRender(t *testing.T) {
+	st := memstore.New()
+	fake := &fakeScriptEngine{stdout: func(fakeScriptCall) string { return "# ok" }}
+	caps := lua.Capabilities{HTTP: true}
+
+	svc := newDocumentService(st, nil, "/p", fake,
+		func() lua.WriteDeps { return lua.WriteDeps{} },
+		func() documentElevation {
+			return documentElevation{Reader: visibility.Unrestricted(st)}
+		})
+
+	cfg := documentRenderConfig{
+		ConfigID:     "sales",
+		Script:       "docs/s.lua",
+		Elevated:     true,
+		Capabilities: caps,
+	}
+
+	if _, err := svc.RenderDocumentMarkdown(t.Context(), "", cfg); err != nil {
+		t.Fatalf("RenderDocumentMarkdown: %v", err)
+	}
+
+	if len(fake.calls) != 1 {
+		t.Fatalf("calls = %d, want 1", len(fake.calls))
+	}
+	got := fake.calls[0].deps
+	if got.ElevatedReader == nil {
+		t.Error("elevated standalone export reached the engine WITHOUT the bypass reader; " +
+			"the render would silently produce an unelevated report")
+	}
+	if !reflect.DeepEqual(got.Capabilities, caps) {
+		t.Errorf("Capabilities = %+v, want %+v — the document's declared grant was dropped",
+			got.Capabilities, caps)
 	}
 }

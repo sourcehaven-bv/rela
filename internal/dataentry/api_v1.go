@@ -2560,8 +2560,23 @@ func (a *App) handleV1Documents(w http.ResponseWriter, r *http.Request) {
 		parts = parts[:len(parts)-1]
 	}
 
-	if parts[0] == "" {
-		writeV1Error(w, r, http.StatusBadRequest, "invalid_path", "Path must be /_documents/{docName}/{entityId}", "")
+	// Any REMAINING empty segment is rejected outright. This is not defensive
+	// tidying — without it "/_documents/sales//_export" splits to
+	// ["sales", "", "_export"], matches the 3-segment export case, and calls
+	// the export handler with an empty entity id, which dispatches to the
+	// STANDALONE resolver. That serves a standalone document at the anchored
+	// URL shape, precisely what this package's CLAUDE.md forbids ("Never let
+	// one URL shape serve the other kind... do not fall back to rendering with
+	// an empty or guessed entry id").
+	//
+	// net/http's ServeMux happens to redirect "//" before a request reaches
+	// here, but that is a property of the mux, not of this function: tests and
+	// any future direct mount call it without that normalization, and a
+	// percent-encoded %2F survives ServeMux cleaning entirely. Reject here so
+	// the guarantee belongs to the router itself.
+	if slices.Contains(parts, "") {
+		writeV1Error(w, r, http.StatusBadRequest, "invalid_path",
+			"Path must be /_documents/{docName}/{entityId}", "")
 		return
 	}
 

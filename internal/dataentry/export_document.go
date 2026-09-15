@@ -2,6 +2,7 @@ package dataentry
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
@@ -266,25 +267,20 @@ func exportBaseName(docName, entityID string) string {
 // documentKindMismatchAnchored is the message for an entity-anchored document
 // requested at the standalone URL shape.
 func documentKindMismatchAnchored(docName string, docCfg dataentryconfig.DocumentConfig) string {
-	return "document " + quoteName(docName) + " is for entity_type " + quoteName(docCfg.EntityType) +
-		"; request it at /_documents/" + docName + "/{entityId}"
+	return fmt.Sprintf("document %q is for entity_type %q; request it at /_documents/%s/{entityId}",
+		docName, docCfg.EntityType, docName)
 }
 
 // documentKindMismatchStandalone is the message for a standalone document
 // requested at the entity-anchored URL shape.
 func documentKindMismatchStandalone(docName string) string {
-	return "document " + quoteName(docName) + " has no entity_type; request it at /_documents/" +
-		docName + " without an entity id"
+	return fmt.Sprintf("document %q has no entity_type; request it at /_documents/%s without an entity id",
+		docName, docName)
 }
 
 // documentTypeMismatch is the message for an entity whose type is not the one
 // the document declares.
 func documentTypeMismatch(docName, wantType, entityID, gotType string) string {
-	return "document " + quoteName(docName) + " is for entity_type " + quoteName(wantType) +
-		", but " + quoteName(entityID) + " is a " + quoteName(gotType)
+	return fmt.Sprintf("document %q is for entity_type %q, but %q is a %q",
+		docName, wantType, entityID, gotType)
 }
-
-// quoteName wraps a name in double quotes for an error message. A tiny helper
-// so the three message builders above read as sentences rather than as format
-// strings.
-func quoteName(s string) string { return `"` + s + `"` }

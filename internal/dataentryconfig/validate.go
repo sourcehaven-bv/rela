@@ -2097,21 +2097,20 @@ func isLoopbackHost(host string) bool {
 	return strings.EqualFold(host, "localhost")
 }
 
-// Invariant: every document must have entity_type set, and exactly one of
-// {command, script} must be non-empty. entity_type is enforced at the HTTP
-// handler layer to reject cross-type render requests; the mutual exclusion
-// prevents ambiguous configs (which renderer runs when both are set?).
 // ReservedExportSegment is the final path segment that turns a document URL
 // into an export request (/_documents/{document}/_export), and is therefore a
 // name no document may take.
 //
 // It is declared HERE rather than imported from dataentry because dataentry
-// imports this package, so the dependency cannot run the other way. Exported so
-// the routing side can assert the two agree — TestExportSegmentMatchesConfig in
-// dataentry pins it, which is what keeps a rename of one from silently
-// un-reserving the other.
+// imports this package, so the dependency cannot run the other way. dataentry's
+// exportSegment is an alias of this constant, so renaming one is a compile
+// error in the other; TestExportSegmentPremise asserts the two agree.
 const ReservedExportSegment = "_export"
 
+// Invariant: every document must have entity_type set, and exactly one of
+// {command, script} must be non-empty. entity_type is enforced at the HTTP
+// handler layer to reject cross-type render requests; the mutual exclusion
+// prevents ambiguous configs (which renderer runs when both are set?).
 func validateDocuments(cfg *Config) []string {
 	var errs []string
 
@@ -2131,10 +2130,18 @@ func validateDocuments(cfg *Config) []string {
 		}
 
 		// "_export" is the reserved final segment of the document export routes
-		// (/_documents/{doc}/_export). A document with that name would be
-		// unreachable — every request for it would route to the export handler
-		// for a document named "" instead. Refusing at load beats shipping a
-		// config whose document silently never renders.
+		// (/_documents/{doc}/_export), so no document may take it as a name.
+		//
+		// Be precise about why, because the obvious reason is wrong: such a
+		// document is NOT unreachable today. The dispatch matches the reserved
+		// segment only in FINAL position, so all four shapes still resolve —
+		// /_documents/_export renders it, /_documents/_export/_export exports
+		// it, and the anchored pair works too. The reservation is
+		// forward-compatibility, not a repair: a name that is simultaneously a
+		// route keyword is one dispatch change away from being shadowed
+		// silently, and the failure would be a document that stops rendering
+		// with no error anywhere. Refusing at load costs an operator one
+		// rename and removes the whole class.
 		if docID == ReservedExportSegment {
 			errs = append(errs, fmt.Sprintf(
 				"document %q: %q is reserved for the export route (/_documents/{document}/%s); rename the document",
