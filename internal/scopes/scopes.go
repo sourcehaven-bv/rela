@@ -114,6 +114,36 @@ func (c *Compiled) Names(entityType string) []string {
 	return out
 }
 
+// Each calls fn for every compiled scope, in a stable (type, name) order.
+//
+// Exists so a load-time report can inspect what every scope READS — the
+// `visible:` overlap warning needs the programs themselves, not just their
+// names. Ordered because its callers emit operator-facing diagnostics, and a
+// diagnostic whose line order changes per boot cannot be diffed.
+//
+// The program is handed out rather than copied because [predicate.Program] is
+// immutable once compiled; callers must treat it as read-only.
+//
+// Nil: a nil *Compiled calls fn zero times.
+func (c *Compiled) Each(fn func(key Key, prog *predicate.Program)) {
+	if c == nil {
+		return
+	}
+	keys := make([]Key, 0, len(c.byKey))
+	for key := range c.byKey {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].EntityType != keys[j].EntityType {
+			return keys[i].EntityType < keys[j].EntityType
+		}
+		return keys[i].Name < keys[j].Name
+	})
+	for _, key := range keys {
+		fn(key, c.byKey[key])
+	}
+}
+
 // RequiresIdentity reports the entity types whose DEFAULT scope reads
 // current_user, sorted.
 //

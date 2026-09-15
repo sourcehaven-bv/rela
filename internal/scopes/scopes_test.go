@@ -2,10 +2,12 @@ package scopes_test
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/predicate"
 	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
 	"github.com/Sourcehaven-BV/rela/internal/scopes"
 )
@@ -246,4 +248,61 @@ func TestCompile_NilAndEmpty(t *testing.T) {
 	if got := c.RequiresIdentity(); len(got) != 0 {
 		t.Errorf("RequiresIdentity() = %v, want empty", got)
 	}
+}
+
+// eachOrderSchema declares two types with several scopes, deliberately named
+// so that map iteration order and sorted order differ.
+const eachOrderSchema = `version: "1.0"
+entities:
+  taak:
+    label: Taak
+    plural: taken
+    id_prefix: "TAAK-"
+    id_type: sequential
+    properties:
+      status:
+        type: string
+    query_scopes:
+      zzz: "entity.status == 'a'"
+      default: "entity.status == 'b'"
+  aap:
+    label: Aap
+    plural: apen
+    id_prefix: "AAP-"
+    id_type: sequential
+    properties:
+      status:
+        type: string
+    query_scopes:
+      mid: "entity.status == 'c'"
+relations: {}
+`
+
+// TestEach_StableOrder pins that Each yields (type, name) sorted. Its callers
+// emit operator-facing diagnostics, and map iteration order would reshuffle a
+// boot log on every restart, making it undiffable.
+func TestEach_StableOrder(t *testing.T) {
+	compiled, err := scopes.Compile(parse(t, eachOrderSchema))
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	var got []string
+	compiled.Each(func(key scopes.Key, prog *predicate.Program) {
+		if prog == nil {
+			t.Errorf("Each must not yield a nil program for declared scope %v", key)
+		}
+		got = append(got, key.EntityType+"/"+key.Name)
+	})
+	want := []string{"aap/mid", "taak/default", "taak/zzz"}
+	if !slices.Equal(got, want) {
+		t.Errorf("Each order = %v, want %v", got, want)
+	}
+}
+
+// TestEach_NilReceiver pins the documented nil contract.
+func TestEach_NilReceiver(t *testing.T) {
+	var c *scopes.Compiled
+	c.Each(func(scopes.Key, *predicate.Program) {
+		t.Fatal("nil Compiled must not yield")
+	})
 }
