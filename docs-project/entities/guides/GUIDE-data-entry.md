@@ -4202,6 +4202,12 @@ paths (e.g. `/form/<form_id>/<entity_id>`, `/entity/ticket/TKT-001`) get a
 back on the document after submitting the form. See "Links in rendered
 documents" below.
 
+Both kinds carry an **"Export ▾"** menu when the metamodel registers any
+`transforms:`, converting the document's markdown to PDF/DOCX/etc. Export is
+gated exactly like the render — same checks, same order — so a document you may
+view is one you may export. Documents using a `command:` renderer are not
+exportable. See [View Export & Transforms](transforms.md#exporting-a-document).
+
 The frontend's `DocumentsPanel.vue` shows every entity-anchored document whose
 `entity_type` matches the current entity. SSE live-reload re-renders a document
 when any entity changes (see the "SSE live-reload" caveat below).
