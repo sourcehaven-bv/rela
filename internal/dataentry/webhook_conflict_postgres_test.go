@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -56,15 +55,10 @@ func conflictTestSchema(t *testing.T) (*pgxpool.Pool, string) {
 
 	schema := fmt.Sprintf("relahook_%d_%d", os.Getpid(), conflictSchemaCounter.Add(1))
 
-	u, err := url.Parse(base)
-	require.NoError(t, err)
-	q := u.Query()
 	// Pin every connection from this DSN to the test schema. Keeping `public`
 	// on the path is what pg_trgm needs; the schema itself comes first so every
 	// unqualified table resolves inside the test's own namespace.
-	q.Set("options", fmt.Sprintf("-c search_path=%s,public", schema))
-	u.RawQuery = q.Encode()
-	dsn := u.String()
+	dsn := dsnWithSchema(t, base, schema)
 
 	ctx := context.Background()
 	pool, err := pgxpool.New(ctx, dsn)

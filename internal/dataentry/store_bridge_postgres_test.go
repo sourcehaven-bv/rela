@@ -5,11 +5,12 @@ package dataentry
 import (
 	"context"
 	"fmt"
-	"net/url"
 	"os"
+	"strings"
 	"sync/atomic"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 
@@ -72,14 +73,37 @@ func TestStoreEventBridgeCrossProcessSSE(t *testing.T) {
 	require.Empty(t, ev.Data, "cross-process entity change must carry no id")
 }
 
+// dsnWithSchema returns base re-serialized as a key/value DSN with search_path
+// pinned to schema, mirroring the production helpers in `tenant`, `docscapture`
+// and `backendtest`.
+//
+// The URL form this used to build — `?options=-c search_path=...` through
+// url.Values.Encode — cannot survive the round trip. Encode writes a space as
+// "+", but a URI query means a literal plus there, so libpq (and pgx from
+// v5.11.0 on) reads the parameter name as "+search_path" and the server rejects
+// the connection. Percent-encoding the space instead breaks the "=" inside the
+// value. A key/value DSN has no such escaping to get wrong.
 func dsnWithSchema(t *testing.T, base, schema string) string {
 	t.Helper()
-	u, err := url.Parse(base)
+	cfg, err := pgx.ParseConfig(base)
+	// pgx redacts the password in parse errors, so this is safe to surface.
 	require.NoError(t, err)
-	q := u.Query()
-	q.Set("options", fmt.Sprintf("-c search_path=%s,public", schema))
-	u.RawQuery = q.Encode()
-	return u.String()
+	kv := []string{
+		"host=" + cfg.Host,
+		fmt.Sprintf("port=%d", cfg.Port),
+		"user=" + cfg.User,
+		"dbname=" + cfg.Database,
+		"search_path=" + schema + ",public",
+	}
+	if cfg.Password != "" {
+		kv = append(kv, "password="+cfg.Password)
+	}
+	// TLSConfig is nil exactly when the DSN disabled it; preserve that rather
+	// than defaulting to on, which a plaintext CI container would refuse.
+	if cfg.TLSConfig == nil {
+		kv = append(kv, "sslmode=disable")
+	}
+	return strings.Join(kv, " ")
 }
 
 func quoteIdent(s string) string { return `"` + s + `"` }

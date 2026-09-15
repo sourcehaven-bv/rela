@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/url"
 	"strconv"
+	"strings"
 
 	"github.com/acaloiaro/neoq"
 	"github.com/acaloiaro/neoq/backends/postgres"
@@ -82,6 +83,15 @@ const poolHeadroom = 4
 // An operator's explicit pool_max_conns is respected when it is already large
 // enough, and only raised when it would deadlock the workers.
 //
+// Only the pool_max_conns parameter is rewritten; every other parameter keeps
+// the operator's own bytes. Setting it through url.Values and re-encoding the
+// whole query would rewrite the others into Go's encoding, and Go encodes a
+// space as "+" where a URI query means a literal plus. libpq reads it that way,
+// and so does pgx from v5.11.0 on, so a DSN carrying
+// `options=-c%20search_path%3Dtenant` came back out as `-c+search_path=tenant`
+// and the server rejected the parameter name "+search_path" — a working DSN
+// turned into a connection failure by a helper that only meant to size a pool.
+//
 //nolint:unparam // floor is a parameter so the tests can vary it; the single production caller passing one value is the point, not an accident.
 func ensurePoolFloor(dsn string, floor int) string {
 	u, err := url.Parse(dsn)
@@ -95,14 +105,34 @@ func ensurePoolFloor(dsn string, floor int) string {
 		return dsn
 	}
 
-	q := u.Query()
-	if cur := q.Get("pool_max_conns"); cur != "" {
+	want := "pool_max_conns=" + strconv.Itoa(floor)
+	if cur := u.Query().Get("pool_max_conns"); cur != "" {
 		n, convErr := strconv.Atoi(cur)
 		if convErr == nil && n >= floor {
 			return dsn
 		}
+		// Too small, or unparseable — either way the workers need the floor.
+		u.RawQuery = replaceRawParam(u.RawQuery, "pool_max_conns", want)
+		return u.String()
 	}
-	q.Set("pool_max_conns", strconv.Itoa(floor))
-	u.RawQuery = q.Encode()
+
+	if u.RawQuery == "" {
+		u.RawQuery = want
+	} else {
+		u.RawQuery += "&" + want
+	}
 	return u.String()
+}
+
+// replaceRawParam substitutes the key=value pair for key in a raw query string,
+// leaving the surrounding pairs byte-for-byte as they were. See ensurePoolFloor
+// for why re-encoding the whole query is not an option.
+func replaceRawParam(raw, key, pair string) string {
+	parts := strings.Split(raw, "&")
+	for i, p := range parts {
+		if p == key || strings.HasPrefix(p, key+"=") {
+			parts[i] = pair
+		}
+	}
+	return strings.Join(parts, "&")
 }
