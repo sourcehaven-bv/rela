@@ -352,8 +352,7 @@ func (a *App) listPage(
 	if err != nil {
 		return nil, 0, err
 	}
-	scope, scopeProps, scopeEval, err := viewQueryScope(
-		a.queryScopes, a.Cfg(), a.Meta(), typeName, scopeName)
+	scope, err := viewQueryScope(a.queryScopes, a.Cfg(), a.Meta(), typeName, scopeName)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -364,7 +363,7 @@ func (a *App) listPage(
 	// remainder, and a store-side page computed without it would paginate
 	// over rows the scope excludes — wrong counts and wrong page boundaries,
 	// not merely extra rows. Declining is always correct, only slower.
-	if scope == nil && !worldFromContext(ctx).blocksAllReads() {
+	if scope.Scope == nil && !worldFromContext(ctx).blocksAllReads() {
 		rqr := readGateFromContext(ctx).ReadQuery(ctx, typeName)
 		isRelationKey := relationFilterClassifier(a.Meta(), a.Cfg(), typeName)
 		if plan, ok := planListPushdown(
@@ -373,7 +372,7 @@ func (a *App) listPage(
 			return plan.run(ctx, a.Services().Store)
 		}
 	}
-	all, err := scopedSortedEntitiesScoped(a, ctx, typeName, query, scope, scopeProps, scopeEval)
+	all, err := scopedSortedEntitiesScoped(a, ctx, typeName, query, scope)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -396,12 +395,11 @@ func (a *App) scopedSortedEntities(
 	if err != nil {
 		return nil, err
 	}
-	scope, scopeProps, scopeEval, err := viewQueryScope(
-		a.queryScopes, a.Cfg(), a.Meta(), typeName, scopeName)
+	scope, err := viewQueryScope(a.queryScopes, a.Cfg(), a.Meta(), typeName, scopeName)
 	if err != nil {
 		return nil, err
 	}
-	return scopedSortedEntitiesScoped(a, ctx, typeName, query, scope, scopeProps, scopeEval)
+	return scopedSortedEntitiesScoped(a, ctx, typeName, query, scope)
 }
 
 // scopedSortedEntitiesScoped is [App.scopedSortedEntities] with the query
@@ -416,10 +414,14 @@ func scopedSortedEntitiesScoped(
 	ctx context.Context,
 	typeName string,
 	query map[string][]string,
-	scope QueryScopeHandle,
-	scopeProps []store.PropPredicate,
-	scopeEval QueryScopeEvaluator,
+	scope resolvedQueryScope,
 ) ([]*entityPkg.Entity, error) {
+	// Stamp the scope's request-scoped state ONCE, before any row is
+	// evaluated — a scope reading current_user resolves it here, not per row.
+	ctx, err := scope.bind(ctx)
+	if err != nil {
+		return nil, err
+	}
 	// The verdict switch, the world scope, the face allowlist and the query
 	// scope all live in scopedHeaders (scopedread.go) — see its doc for why
 	// they must not be re-implemented per handler.
@@ -427,9 +429,9 @@ func scopedSortedEntitiesScoped(
 	entities, withheld, err := scopedEntities(ctx, a.Services(), rqr, scopeRequest{
 		Type:       typeName,
 		Faces:      rqr.Faces,
-		Scope:      scope,
-		ScopeProps: scopeProps,
-		ScopeEval:  scopeEval,
+		Scope:      scope.Scope,
+		ScopeProps: scope.Props,
+		ScopeEval:  scope.Eval,
 	})
 	if err != nil {
 		return nil, err

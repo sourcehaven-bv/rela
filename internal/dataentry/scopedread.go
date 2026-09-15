@@ -213,6 +213,10 @@ func allProps(req scopeRequest) []store.PropPredicate {
 // A nil evaluator alongside a non-nil scope is an ERROR, not a skip: skipping
 // serves the unscoped set, which is the failure direction a scope exists to
 // prevent.
+//
+// Filters IN PLACE and the caller must not retain headers. Safe at every
+// current call site because [scopedHeaders] builds the slice it passes and
+// hands it to nobody else, but the reuse is invisible from the signature.
 func applyScope(
 	ctx context.Context, headers []store.EntityHeader, req scopeRequest,
 ) ([]store.EntityHeader, error) {

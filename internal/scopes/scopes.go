@@ -118,8 +118,13 @@ func (c *Compiled) Names(entityType string) []string {
 //
 // Exists so a load-time report can inspect what every scope READS — the
 // `visible:` overlap warning needs the programs themselves, not just their
-// names. Ordered because its callers emit operator-facing diagnostics, and a
-// diagnostic whose line order changes per boot cannot be diffed.
+// names.
+//
+// Ordered so that a caller emitting one line per scope gets a stable order for
+// free. Today's only caller sorts its own output anyway (its lines interleave
+// several scopes' findings), so the ordering here is belt-and-braces rather
+// than load-bearing — but iterating a map is the kind of thing that produces a
+// boot log nobody can diff, and the cost is one sort of a handful of keys.
 //
 // The program is handed out rather than copied because [predicate.Program] is
 // immutable once compiled; callers must treat it as read-only.

@@ -72,35 +72,82 @@ func (a *App) SetQueryScopeResolver(fn QueryScopeResolverFunc) error {
 // Nil: a nil resolver func (no wiring) yields an unscoped read, which is
 // correct: a deployment whose composition root never supplied a resolver has
 // no compiled scopes, and config validation has already refused any view that
-// names one.
+// names one. A nil cfg or meta is an ERROR, which is a different case — see
+// below.
 func viewQueryScope(
 	fn QueryScopeResolverFunc, cfg *dataentryconfig.Config, meta *metamodel.Metamodel,
 	entityType, name string,
-) (scope QueryScopeHandle, props []store.PropPredicate, eval QueryScopeEvaluator, err error) {
-	if fn == nil || cfg == nil || meta == nil {
-		return nil, nil, nil, nil
+) (resolved resolvedQueryScope, err error) {
+	if fn == nil {
+		// No resolver was ever wired, so no scope can be declared: config
+		// validation refuses any view naming one, and a type's scopes cannot
+		// compile without a compiler. Unscoped is the truthful answer.
+		return resolvedQueryScope{}, nil
+	}
+	if cfg == nil || meta == nil {
+		// NOT the same case. A nil metamodel does not mean "no scopes are
+		// declared", it means "I cannot tell whether any are" — and the
+		// unscoped read this used to return is the one answer that is wrong
+		// either way. Refuse instead; every caller maps this to a 500, which
+		// is what a half-built App deserves.
+		return resolvedQueryScope{}, errors.New(
+			"dataentry: cannot resolve query scope without config and metamodel")
 	}
 	resolver, problems := fn(cfg, meta)
 	if resolver == nil {
 		if len(problems) > 0 {
 			// Compilation failed at startup and was reported there; refusing
 			// here too keeps a broken scope from degrading to unfiltered.
-			return nil, nil, nil, errors.New("dataentry: query scopes failed to compile")
+			return resolvedQueryScope{}, errors.New("dataentry: query scopes failed to compile")
 		}
-		return nil, nil, nil, nil
+		return resolvedQueryScope{}, nil
 	}
 	scope, props, ok := resolver.Resolve(entityType, name)
 	if !ok {
 		// Config validation refuses an undeclared name at load, so reaching
 		// here means the config and the compiled scopes disagree — a
 		// hot-reload race, say. Refuse rather than serve the unscoped set.
-		return nil, nil, nil, fmt.Errorf(
+		return resolvedQueryScope{}, fmt.Errorf(
 			"%w: %q is not declared on %q", errBadQueryScope, name, entityType)
 	}
 	if scope == nil {
-		return nil, nil, nil, nil
+		return resolvedQueryScope{}, nil
 	}
-	return scope, props, resolver.Evaluate, nil
+	return resolvedQueryScope{
+		Scope: scope, Props: props, Eval: resolver.Evaluate, Bind: resolver.BindRequest,
+	}, nil
+}
+
+// resolvedQueryScope is one view's scope, ready to apply.
+//
+// The four fields travel together because they are one contract: the program
+// was compiled by the resolver that supplied Eval, and Eval can only evaluate
+// it against an identity Bind stamped. Returning them separately invited
+// exactly the bug that motivated this struct — Bind was declared on the seam,
+// implemented at the composition root, adapted through two layers, and then
+// never called, so `is_current_user(...)` in a scope failed every page of its
+// type with ErrNoCurrentUser instead of scoping it.
+//
+// The zero value means "no scope", which every field check treats as unscoped.
+type resolvedQueryScope struct {
+	Scope QueryScopeHandle
+	Props []store.PropPredicate
+	Eval  QueryScopeEvaluator
+	Bind  func(context.Context) (context.Context, error)
+}
+
+// bind stamps the request-scoped evaluation state a scope needs, once, before
+// any row is evaluated.
+//
+// Called even when the scope does not reference the identity: the resolver
+// decides per program whether the binding is needed, and the cost of a
+// needless bind is one store lookup, while the cost of a missing one is a
+// failed page. Never call it per row — resolution reads the store.
+func (r resolvedQueryScope) bind(ctx context.Context) (context.Context, error) {
+	if r.Scope == nil || r.Bind == nil {
+		return ctx, nil
+	}
+	return r.Bind(ctx)
 }
 
 // QueryScopeParam is the query parameter that selects a query scope on the

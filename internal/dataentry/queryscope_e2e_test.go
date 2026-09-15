@@ -11,6 +11,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
 
 // scopeSchema declares the archived story end to end: a default that hides
@@ -27,9 +28,11 @@ entities:
     properties:
       title: {type: string, required: true}
       status: {type: string}
+      toegewezen_aan: {type: string}
     query_scopes:
       default: "entity.status ~= 'gearchiveerd'"
       archief: "entity.status == 'gearchiveerd'"
+      mijn: "is_current_user(entity.toegewezen_aan)"
 `
 
 // newScopeTestApp builds an app over scopeSchema with the REAL scope
@@ -52,9 +55,12 @@ func newScopeTestApp(t *testing.T) *App {
 		t.Fatalf("wire query scopes: %v", err)
 	}
 	for _, e := range []*entity.Entity{
-		{ID: "TAAK-1", Type: "taak", Properties: map[string]any{"title": "open werk", "status": "todo"}},
-		{ID: "TAAK-2", Type: "taak", Properties: map[string]any{"title": "afgerond", "status": "gereed"}},
-		{ID: "TAAK-3", Type: "taak", Properties: map[string]any{"title": "oud", "status": "gearchiveerd"}},
+		{ID: "TAAK-1", Type: "taak", Properties: map[string]any{
+			"title": "open werk", "status": "todo", "toegewezen_aan": "alice"}},
+		{ID: "TAAK-2", Type: "taak", Properties: map[string]any{
+			"title": "afgerond", "status": "gereed", "toegewezen_aan": "bob"}},
+		{ID: "TAAK-3", Type: "taak", Properties: map[string]any{
+			"title": "oud", "status": "gearchiveerd", "toegewezen_aan": "alice"}},
 	} {
 		seedEntity(app, e)
 	}
@@ -144,6 +150,11 @@ func scopeListIDs(t *testing.T, app *App, rawQuery string) []string {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("list: %d %s", rec.Code, rec.Body)
 	}
+	return idsFromListBody(t, rec)
+}
+
+func idsFromListBody(t *testing.T, rec *httptest.ResponseRecorder) []string {
+	t.Helper()
 	var resp struct {
 		Data []struct {
 			ID string `json:"id"`
@@ -157,4 +168,64 @@ func scopeListIDs(t *testing.T, app *App, rawQuery string) []string {
 		ids = append(ids, d.ID)
 	}
 	return ids
+}
+
+// TestQueryScopes_IdentityScope is the ticket's headline case: a scope reading
+// current_user, which is one of the commonest membership rules there is
+// ("assigned to me").
+//
+// It needs its own test because the identity arrives by a different route than
+// every other scope input. A plain scope reads properties off the row the
+// store just returned; an identity scope needs a principal RESOLVED and
+// stamped on ctx before any row is evaluated. Nothing about compiling or
+// applying the scope reveals whether that stamping happens, so without this
+// test the feature's most useful shape can be — and was — entirely unwired
+// while every other test passed.
+//
+// The failure mode if it regresses is an error on every page of the type, not
+// wrong rows. That is the correct direction (a personal list showing a
+// stranger's rows is the worst version of getting this wrong) but it is still
+// a broken feature, so this test asserts the rows rather than the error.
+func TestQueryScopes_IdentityScope(t *testing.T) {
+	app := newScopeTestApp(t)
+
+	rec := scopeListAs(app, "alice", "query_scope=mijn")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("an identity scope returned %d: %s\n"+
+			"A scope reading current_user needs the principal stamped on ctx before "+
+			"rows are evaluated; without it every page of this type errors.",
+			rec.Code, rec.Body)
+	}
+	got := idsFromListBody(t, rec)
+
+	// TAAK-3 is alice's too, but archived — this asserts the named scope
+	// REPLACES the default rather than composing with it.
+	want := []string{"TAAK-1", "TAAK-3"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("alice's rows = %v, want %v", got, want)
+	}
+
+	// The discriminating half: the same request as someone else must not
+	// return alice's rows.
+	rec = scopeListAs(app, "bob", "query_scope=mijn")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("identity scope for bob: %d %s", rec.Code, rec.Body)
+	}
+	if got := idsFromListBody(t, rec); strings.Join(got, ",") != "TAAK-2" {
+		t.Errorf("bob's rows = %v, want [TAAK-2] — an identity scope that ignores "+
+			"who is asking is worse than one that errors", got)
+	}
+}
+
+func scopeListAs(app *App, user, rawQuery string) *httptest.ResponseRecorder {
+	url := "/api/v1/taken"
+	if rawQuery != "" {
+		url += "?" + rawQuery
+	}
+	req := httptest.NewRequest(http.MethodGet, url, http.NoBody)
+	req = req.WithContext(principal.With(req.Context(),
+		principal.Principal{User: user, Tool: principal.ToolDataEntry}))
+	rec := httptest.NewRecorder()
+	app.handleV1ListEntities(rec, req, "taak", "taken")
+	return rec
 }
