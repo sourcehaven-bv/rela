@@ -313,13 +313,18 @@ shapes, that export inherits `permission:` and elevation, and the script-only
 limitation.
 - [x] `docs/data-entry.md` — note the Export menu on the document view (verify
 the documents section exists there first).
-- [ ] N/A — `docs/metamodel.md` (no metamodel change), `docs/cli-reference.md`
-(no CLI change), `CLAUDE.md` (no new pattern), `README.md`.
+- [x] ~~`docs/metamodel.md`, `docs/cli-reference.md`, `CLAUDE.md`, `README.md`~~
+(N/A: no metamodel change, no CLI change, no new pattern, no project-level change)
 
 ## Design Review
 
 - [x] Run `/design-review` before starting implementation
 - [x] All critical/significant findings addressed in plan
 
-**Design Review Findings:** Pending — `/design-review` runs next, before
-implementation begins. Findings will be recorded as RR-xxxx here.
+**Design Review Findings:** RR-XIYP3I (significant, fixed — a pre-existing
+entity-existence oracle in the chain this ticket extracts), RR-74LHU1
+(significant, fixed — the plan's script-error claim did not match the code),
+RR-LELF94, RR-T5POTJ, RR-MZE4IA (minor, all fixed). Two plan corrections came
+out of it: export keeps the flat 500 rather than routing script errors through
+`writeV1ScriptError`, and refusing `command:` renderers is a policy choice
+rather than a structural impossibility.

@@ -5,7 +5,7 @@ title: 'export: documents export via transforms, like entity and list views'
 kind: enhancement
 priority: medium
 effort: m
-status: review
+status: done
 ---
 
 ## Problem
