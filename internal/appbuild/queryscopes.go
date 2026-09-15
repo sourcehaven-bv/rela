@@ -78,6 +78,17 @@ func (r *QueryScopeResolver) Resolve(
 	// SUPERSET: whatever does not lower (negation, ordered comparison,
 	// disjunction) is left to the Go-side Evaluate, which stays
 	// authoritative.
+	//
+	// The empty identity is deliberate and load-bearing. It makes
+	// ConditionPrefilters skip every `current_user` conjunct, so an identity
+	// scope pushes NOTHING and applyScope decides it alone — the pushdown
+	// stays a strict superset. Passing a resolved identity here would be the
+	// natural way to earn the index listScopeIndexProperties derives for
+	// `mijn:`, and it is the one change to make carefully: this resolver is
+	// built per (cfg, meta), NOT per request, so an identity held on the
+	// struct would be one principal's identity reused in another principal's
+	// query. Thread it as an argument from a request-bound caller or not at
+	// all.
 	props := queryplan.ConditionPrefilters(prog, r.meta, []string{entityType}, "")
 	return prog, props, true
 }

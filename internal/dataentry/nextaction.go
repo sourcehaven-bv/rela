@@ -373,6 +373,15 @@ func (a *App) countIsZero(ctx context.Context, entityType string, ungated bool) 
 	// verdict FIRST and returns empty on DenyAll, which is exactly the
 	// answer we want — a principal denied the type sees "none", and the
 	// first-run hint fires for them.
+	//
+	// The nil query means no `?query_scope=`, so the entity type's DEFAULT
+	// query scope applies and this counts what a screen would show rather
+	// than what the store holds. Intended: the hint answers "is there
+	// anything here for you", a presentation question, so a user whose every
+	// task is archived is better served by the empty-state hint than by a
+	// blank list with no explanation. This is why the non-SPA surfaces
+	// (analyze_*, validate, the tracer) deliberately do NOT resolve scopes —
+	// they answer what is true, and each has a test pinning that.
 	entities, err := a.scopedSortedEntities(ctx, entityType, nil)
 	if err != nil {
 		return false, fmt.Errorf("next-action count for %q: %w", entityType, err)

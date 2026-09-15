@@ -4,7 +4,8 @@ type: review-response
 title: 'View-declared query_scope: is inert — nothing reads it at request time'
 finding: 'dataentryconfig.List.QueryScope and Kanban.QueryScope are declared, documented, validated and folded into index derivation, but never read on any read path. The server honours only ?query_scope=, and the SPA sends it from nowhere (zero references to query_scope in frontend/). So an operator writing `query_scope: archief` on a list gets a config that validates clean, derives an index, and renders completely unscoped. The type''s `default` still applies (it is keyed off entity type, not the view), so the observable behaviour is ''default works, named scopes are silently inert'' — the exact fail-open shape the feature exists to prevent, relocated from the resolver into the wiring.'
 severity: critical
-status: open
+resolution: Landed the client half. query_scope added to ListConfig/KanbanConfig/ListParams in TypeScript and attached in EntityList's queryParams and KanbanView's boardParams, each guarded so a view naming no scope sends no parameter rather than an empty one. Export (listExportUrlFor) and _position (ScopeDescriptor.QueryScope + buildListScope) carry it too, so both stay pinned to the view they were invoked from. Six frontend tests assert the built params, positive and negative, following the ?world= precedent and its anti-vacuity guard; verified by mutation (removing the attachment fails two of them). The Go doc comment that asserted the SPA already did this now states plainly that the client is a required participant.
+status: addressed
 ---
 
 ## Status
