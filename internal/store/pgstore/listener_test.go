@@ -3,11 +3,12 @@ package pgstore_test
 import (
 	"context"
 	"fmt"
-	"net/url"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
@@ -26,13 +27,43 @@ func dsnForSchema(t *testing.T, schema string) string {
 	if base == "" {
 		skipOrFailWithoutDSN(t)
 	}
-	u, err := url.Parse(base)
+	dsn, err := pinSearchPath(base, schema)
 	require.NoError(t, err)
-	q := u.Query()
-	// libpq options: set search_path for every connection from this DSN.
-	q.Set("options", fmt.Sprintf("-c search_path=%s,public", schema))
-	u.RawQuery = q.Encode()
-	return u.String()
+	return dsn
+}
+
+// pinSearchPath returns base re-serialized as a key/value DSN with search_path
+// set to schema, mirroring the production helpers in `tenant`, `docscapture`
+// and `backendtest`.
+//
+// The URL form this used to build — `?options=-c search_path=...` through
+// url.Values.Encode — cannot survive the round trip. Encode writes a space as
+// "+", but a URI query means a literal plus there, so libpq (and pgx from
+// v5.11.0 on) reads the parameter name as "+search_path" and the server rejects
+// the connection. Percent-encoding the space instead breaks the "=" inside the
+// value. A key/value DSN has no such escaping to get wrong.
+func pinSearchPath(base, schema string) (string, error) {
+	cfg, err := pgx.ParseConfig(base)
+	if err != nil {
+		// pgx redacts the password in parse errors, so this is safe to wrap.
+		return "", fmt.Errorf("parse %s: %w", testDBEnv, err)
+	}
+	kv := []string{
+		"host=" + cfg.Host,
+		fmt.Sprintf("port=%d", cfg.Port),
+		"user=" + cfg.User,
+		"dbname=" + cfg.Database,
+		"search_path=" + schema + ",public",
+	}
+	if cfg.Password != "" {
+		kv = append(kv, "password="+cfg.Password)
+	}
+	// TLSConfig is nil exactly when the DSN disabled it; preserve that rather
+	// than defaulting to on, which a plaintext CI container would refuse.
+	if cfg.TLSConfig == nil {
+		kv = append(kv, "sslmode=disable")
+	}
+	return strings.Join(kv, " "), nil
 }
 
 // openWriter opens a full pgstore (store + search + listener) against schema,

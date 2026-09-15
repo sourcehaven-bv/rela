@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 )
 
@@ -95,4 +97,48 @@ func TestEnsurePoolFloor_NonURLDSNUntouched(t *testing.T) {
 
 	const kv = "host=localhost dbname=rela sslmode=disable"
 	require.Equal(t, kv, ensurePoolFloor(kv, 14))
+}
+
+// TestEnsurePoolFloor_PreservesOptionsEncoding pins that sizing the pool does
+// not corrupt an operator's `options` parameter.
+//
+// The assertion goes through pgx rather than url.Query() on purpose: Query()
+// decodes "+" back to a space, so it agrees with itself no matter what was
+// written, and the whole defect is invisible to it. The server sees what pgx
+// parses.
+//
+// The bug this pins: setting pool_max_conns through url.Values and re-encoding
+// rewrote every other parameter into Go's encoding, where a space becomes "+".
+// A URI query means a literal plus there, so libpq — and pgx from v5.11.0 on —
+// read `-c+search_path=tenant` and the server rejected the parameter name
+// "+search_path" with SQLSTATE 42704. A correct operator DSN became an
+// unconnectable one, and only because a helper meant to size a pool.
+func TestEnsurePoolFloor_PreservesOptionsEncoding(t *testing.T) {
+	t.Parallel()
+
+	const dsn = "postgres://u:p@h:5432/db?options=-c%20search_path%3Dtenant_a,public&sslmode=disable"
+
+	before, err := pgconn.ParseConfig(dsn)
+	require.NoError(t, err)
+	require.Equal(t, "-c search_path=tenant_a,public", before.RuntimeParams["options"],
+		"precondition: the fixture is a DSN pgx already reads correctly")
+
+	after, err := pgconn.ParseConfig(ensurePoolFloor(dsn, 14))
+	require.NoError(t, err)
+	require.Equal(t, before.RuntimeParams["options"], after.RuntimeParams["options"],
+		"raising pool_max_conns must not re-encode the options parameter")
+}
+
+// TestEnsurePoolFloor_RaisesWithoutReEncoding pins the same invariant on the
+// branch that REPLACES an existing too-small value, not just the one that
+// appends a missing one.
+func TestEnsurePoolFloor_RaisesWithoutReEncoding(t *testing.T) {
+	t.Parallel()
+
+	const dsn = "postgres://u:p@h:5432/db?options=-c%20search_path%3Dtenant_a&pool_max_conns=2"
+
+	cfg, err := pgxpool.ParseConfig(ensurePoolFloor(dsn, 14))
+	require.NoError(t, err)
+	require.EqualValues(t, 14, cfg.MaxConns)
+	require.Equal(t, "-c search_path=tenant_a", cfg.ConnConfig.RuntimeParams["options"])
 }
