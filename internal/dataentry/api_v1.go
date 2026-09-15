@@ -1011,6 +1011,15 @@ func writeListPipelineError(w http.ResponseWriter, r *http.Request, err error) {
 		// filter key/operator, never store internals.
 		writeV1Error(w, r, http.StatusBadRequest, "invalid_filter",
 			"Invalid filter parameter", err.Error())
+	case errors.Is(err, errBadQueryScope):
+		// Client-caused, like errBadFilter above: the caller named a scope
+		// that does not resolve, or repeated the parameter. Echo the detail
+		// — it names only the caller's own scope name and the entity type,
+		// both of which are operator-authored config rather than secrets.
+		slog.Warn("dataentry: rejected invalid query_scope",
+			"err", err, "path", r.URL.Path, "method", r.Method)
+		writeV1Error(w, r, http.StatusBadRequest, "invalid_query_scope",
+			"Invalid query_scope parameter", err.Error())
 	case errors.Is(err, errACLListQuery):
 		writeGateError(w, r, err)
 	case errors.Is(err, errListLoad):

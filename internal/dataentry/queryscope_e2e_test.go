@@ -105,8 +105,14 @@ func TestQueryScopes_EndToEnd(t *testing.T) {
 func TestQueryScopes_UnknownNameIsRefused(t *testing.T) {
 	app := newScopeTestApp(t)
 	rec := scopeList(app, "query_scope=archieff")
-	if rec.Code == http.StatusOK {
-		t.Fatalf("an undeclared scope name returned 200 with body %s; it must refuse", rec.Body)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("an undeclared scope name returned %d with body %s; want 400 — a mistyped "+
+			"parameter is the caller's error, and the pipeline's catch-all 500 would blame "+
+			"free-text search, a subsystem the request never reached", rec.Code, rec.Body)
+	}
+	if !strings.Contains(rec.Body.String(), "archieff") {
+		t.Errorf("the 400 must name the scope the caller asked for, so the typo is "+
+			"visible without server logs; got %s", rec.Body)
 	}
 }
 
@@ -116,8 +122,8 @@ func TestQueryScopes_UnknownNameIsRefused(t *testing.T) {
 func TestQueryScopes_RepeatedParamIsRefused(t *testing.T) {
 	app := newScopeTestApp(t)
 	rec := scopeList(app, "query_scope=all&query_scope=archief")
-	if rec.Code == http.StatusOK {
-		t.Fatalf("a repeated query_scope returned 200; it must refuse rather than pick one")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("a repeated query_scope returned %d; want 400 rather than picking one", rec.Code)
 	}
 }
 

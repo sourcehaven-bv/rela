@@ -3,6 +3,7 @@ package dataentry
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -93,7 +94,8 @@ func viewQueryScope(
 		// Config validation refuses an undeclared name at load, so reaching
 		// here means the config and the compiled scopes disagree — a
 		// hot-reload race, say. Refuse rather than serve the unscoped set.
-		return nil, nil, nil, errors.New("dataentry: query scope " + name + " is not declared on " + entityType)
+		return nil, nil, nil, fmt.Errorf(
+			"%w: %q is not declared on %q", errBadQueryScope, name, entityType)
 	}
 	if scope == nil {
 		return nil, nil, nil, nil
@@ -113,9 +115,20 @@ func viewQueryScope(
 // sites that have one, never blanket-applied.
 const QueryScopeParam = "query_scope"
 
+// errBadQueryScope classifies every query-scope failure a REQUEST can cause,
+// so the list handler can answer 400 rather than letting it fall through to
+// the pipeline's catch-all 500.
+//
+// The distinction matters to whoever is debugging: a mistyped `?query_scope=`
+// is the caller's error and is fixed by changing the URL, whereas the
+// catch-all reports "Free-text search failed" — naming a subsystem the
+// request never reached. Scope names are operator-authored configuration, not
+// secrets (see the CLAUDE.md rule), so the detail may name the scope.
+var errBadQueryScope = errors.New("invalid query_scope")
+
 // errQueryScopeDuplicated reports a repeated `?query_scope=`.
-var errQueryScopeDuplicated = errors.New(
-	"query_scope may be given at most once")
+var errQueryScopeDuplicated = fmt.Errorf(
+	"%w: query_scope may be given at most once", errBadQueryScope)
 
 // queryScopeParam extracts the requested scope name from a request's query.
 //
