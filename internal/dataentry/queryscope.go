@@ -158,8 +158,14 @@ func (r resolvedQueryScope) bind(ctx context.Context) (context.Context, error) {
 //
 // Client-supplied like `?world=`, and for the same reason: the list endpoint
 // is keyed by entity TYPE, so the server cannot tell which configured list is
-// on screen. The SPA attaches it from the list's `query_scope:` at the call
-// sites that have one, never blanket-applied.
+// on screen. The SPA attaches it from the view's `query_scope:` — see the
+// queryParams computed in EntityList.vue and boardParams in KanbanView.vue,
+// each guarded so a view declaring no scope sends no parameter rather than an
+// empty one, since "" is a name that does not resolve.
+//
+// That the client is a required participant is worth stating plainly: a
+// `query_scope:` in data-entry.yaml validates, and derives an index, whether
+// or not anything sends it. It shipped inert once for exactly that reason.
 const QueryScopeParam = "query_scope"
 
 // errBadQueryScope classifies every query-scope failure a REQUEST can cause,

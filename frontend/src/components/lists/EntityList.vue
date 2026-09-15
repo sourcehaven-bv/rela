@@ -346,6 +346,11 @@ function listExportUrlFor(transform: string): string {
     if (!key.startsWith('filter[') && key !== 'q') continue
     if (typeof value === 'string') params.set(key, value)
   }
+  // Export is pinned to the view it was invoked from, so it carries the same
+  // scope the rows on screen were selected by. Without this an export of a
+  // scoped list silently widens to the type's default — a file that looks
+  // complete and is not.
+  if (cfg.query_scope) params.set('query_scope', cfg.query_scope)
   return listExportUrl(cfg.entity, props.listId, transform, params)
 }
 
@@ -449,6 +454,14 @@ const queryParams = computed((): ListParams => {
 
   if (worldParam.value) {
     params.world = worldParam.value
+  }
+
+  // The list's configured scope. Sent because the endpoint is keyed by entity
+  // TYPE, so the server cannot tell which list is on screen — without this the
+  // view falls back to the type's `default` and a list declaring
+  // `query_scope: archief` renders unscoped.
+  if (listConfig.value?.query_scope) {
+    params.query_scope = listConfig.value.query_scope
   }
 
   return params

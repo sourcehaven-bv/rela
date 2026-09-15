@@ -229,3 +229,40 @@ func scopeListAs(app *App, user, rawQuery string) *httptest.ResponseRecorder {
 	app.handleV1ListEntities(rec, req, "taak", "taken")
 	return rec
 }
+
+// TestQueryScopes_PositionMatchesTheScopedList pins that prev/next navigates
+// the set the list actually showed.
+//
+// ScopeDescriptor rebuilds the list's query from its own fields, so a field it
+// does not carry is a field the position silently drops. Before it carried the
+// scope, a reader on a `query_scope=archief` list got a position resolved
+// against the type's DEFAULT — which excludes archived rows, so the entity
+// they had open was absent from its own scope and the endpoint answered 404
+// not_in_scope on the row being looked at.
+func TestQueryScopes_PositionMatchesTheScopedList(t *testing.T) {
+	app := newScopeTestApp(t)
+
+	// TAAK-3 is the archived row: present in `archief`, absent from the
+	// default. Navigating it is only coherent under the scope that showed it.
+	scope := ScopeDescriptor{Source: "list", Type: "taak", QueryScope: "archief"}
+	rec, pos := getPosition(t, app, "TAAK-3", scope)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("position within the archief scope: %d %s\n"+
+			"The descriptor must carry query_scope, or the position resolves "+
+			"against the default scope and cannot find the row on screen.",
+			rec.Code, rec.Body)
+	}
+	if pos.Total != 1 || pos.Current != 1 {
+		t.Errorf("position = %d/%d, want 1/1 — the archief scope holds exactly "+
+			"one row, so anything else means a different set was walked",
+			pos.Current, pos.Total)
+	}
+
+	// The discriminating half: the SAME entity under the default scope is
+	// genuinely not in that set, and must still be refused.
+	rec, _ = getPosition(t, app, "TAAK-3", ScopeDescriptor{Source: "list", Type: "taak"})
+	if rec.Code == http.StatusOK {
+		t.Errorf("an archived row resolved a position in the default scope, which " +
+			"excludes it; the scope is not being applied to the position set")
+	}
+}
