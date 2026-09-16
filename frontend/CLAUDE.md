@@ -178,6 +178,19 @@ site.
   revalidation will flash the spinner on every background refresh.
   `DocumentView` / `DocumentsPanel` do the same by hand with
   `v-if="loading && !docContent"` — **preserve that guard.**
+- **Held content is read-side ACL's blind spot: drop it when the refetch is
+  refused.** "Keep previous content" is a rule about *loading*, and it silently
+  became a rule about *authorization* the moment a refetch could be denied. A
+  view holding a copy the server has just refused is showing content the
+  principal may no longer read, and every existing ACL test passes — the gate
+  did its job at the boundary, and nothing there can see what a client kept
+  (BUG-E8XE7I, issue #1603, CONTROL-8-03). Ask `shouldDropHeldContent(err)`
+  from `api/errors.ts` in the catch and clear on true; keep content on every
+  other failure, which is the transient case the rule above exists for.
+  **A test for one proves nothing about the other** — they reach the same
+  catch block and differ only in the error carried — so any surface holding
+  content across a refetch needs both, as `DocumentView.rerender.test.ts` and
+  `DocumentsPanel.denial.test.ts` pair them.
 - **One indicator per user act.** A save shows the button state, never the
   bar. Create-then-redirect is sequential: the button owns the save, the bar
   takes over at the route change.
