@@ -88,6 +88,15 @@ const props = defineProps<{ name: string }>()
       </text>
     </template>
 
+    <!-- Task list: rules preceded by a ticked box. -->
+    <template v-else-if="props.name === 'taskList'">
+      <path d="M10 6h10M10 12h10M10 18h10" />
+      <rect x="2" y="3.6" width="5" height="5" rx="1" />
+      <path d="M3 6.1l1.3 1.3L6.2 5" />
+      <rect x="2" y="9.6" width="5" height="5" rx="1" />
+      <rect x="2" y="15.6" width="5" height="5" rx="1" />
+    </template>
+
     <!-- Quote: a bar with indented rules. -->
     <template v-else-if="props.name === 'blockquote'">
       <path d="M5 5v14" stroke-width="2.5" />

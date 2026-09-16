@@ -455,10 +455,18 @@ meaning is unchanged. Your formatting is not rewritten just because you looked
 at a page.
 
 **Toolbar.** Bold, italic, strikethrough and inline code; headings 1-3;
-bullet, numbered and quote blocks; code block; table. A button is highlighted
-when the cursor is already inside that formatting, and pressing it again
-removes it. A button that cannot apply where the cursor is — a heading inside
-a list item, for instance — is greyed out rather than silently doing nothing.
+bullet, numbered, task and quote blocks; code block; table. A button is
+highlighted when the cursor is already inside that formatting, and pressing it
+again removes it. A button that cannot apply where the cursor is — a heading
+inside a list item, for instance — is greyed out rather than silently doing
+nothing.
+
+**Task lists.** The task-list button turns the current line into a checkbox
+item, and pressing it again turns it back into an ordinary one. You can also
+type `[ ]` followed by a space at the start of an existing list item. Click a
+checkbox to tick or untick it; the change is part of the document, so it saves
+with the rest of your edits and undoes with Ctrl-Z. In markdown these are the
+usual `- [ ] open` and `- [x] done` lines.
 
 **Tables.** Put the cursor in a table and a second group of buttons appears:
 insert row above/below, insert column left/right, delete row, delete column,

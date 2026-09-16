@@ -26,9 +26,21 @@
  * different lookups, so the descriptor names which one applies rather than
  * making the toolbar guess from the command.
  */
+import { TOGGLE_TASK_LIST_COMMAND } from './taskListItem'
+
 export type ActiveProbe =
   | { kind: 'mark'; mark: string }
   | { kind: 'node'; node: string; attrs?: Record<string, unknown> }
+  /**
+   * A node whose attributes need a test rather than an equality check.
+   *
+   * `attrs` compares for exact equality, which cannot express "this attribute
+   * is set to anything". A task item's `checked` is three-valued (`null` = not
+   * a task, `false` = open, `true` = done), so an `attrs: { checked: false }`
+   * probe reads a ticked item as inactive and the toolbar button pops out the
+   * moment the user ticks the box.
+   */
+  | { kind: 'nodeWhere'; node: string; match: (attrs: Record<string, unknown>) => boolean }
   | { kind: 'none' }
 
 export interface EditorCommand {
@@ -142,6 +154,17 @@ export const BLOCK_COMMANDS: EditorCommand[] = [
     probe: { kind: 'node', node: 'ordered_list' },
     toggleTo: 'LiftListItem',
     keywords: ['number', 'ordered', 'list', 'ol'],
+  },
+  {
+    id: 'taskList',
+    label: 'Task list',
+    // The GFM preset ships an input rule for `[ ] ` but no command, so this
+    // names one defined locally in `taskListItem.ts`.
+    command: TOGGLE_TASK_LIST_COMMAND,
+    probe: { kind: 'nodeWhere', node: 'list_item', match: (a) => a.checked != null },
+    // No `toggleTo`: the command inverts itself, because the three-state
+    // attribute makes the inverse depend on which state it is in.
+    keywords: ['task', 'todo', 'check', 'checkbox', 'checklist'],
   },
   {
     id: 'blockquote',

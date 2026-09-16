@@ -650,6 +650,76 @@ export class FormPage extends BasePage {
     return this.proseMirror.locator("a[data-entity-ref]");
   }
 
+  // --- GFM task lists (BUG-KHQXHH) ---
+
+  /** Task list items in the editor, as rendered by the task-list node view. */
+  get editorTaskItems(): Locator {
+    return this.proseMirror.locator("li[data-item-type='task']");
+  }
+
+  /** The checkboxes inside those items.
+   *
+   *  Deliberately `input[type=checkbox]` rather than the `data-checked`
+   *  attribute: that is the selector `styles/markdown-content.css` uses, so
+   *  asserting on it is what ties the editor's DOM to the rendered view. */
+  get editorTaskCheckboxes(): Locator {
+    return this.editorTaskItems.locator("input[type='checkbox']");
+  }
+
+  /** Checked state of every task item, in document order. */
+  async editorTaskCheckedStates(): Promise<boolean[]> {
+    return await this.editorTaskCheckboxes.evaluateAll((els) =>
+      els.map((el) => (el as HTMLInputElement).checked),
+    );
+  }
+
+  /** The computed `list-style-type` of the nth task item.
+   *
+   *  `none` proves the shared sheet's `:has(> input[type=checkbox])` rule
+   *  matched. jsdom cannot evaluate `:has()`, so this can only be checked in a
+   *  real browser. */
+  async editorTaskListStyle(index: number): Promise<string> {
+    return await this.editorTaskItems
+      .nth(index)
+      .evaluate((el) => getComputedStyle(el).listStyleType);
+  }
+
+  /** Bounding boxes of the nth task item's checkbox and its content wrapper,
+   *  for asserting the two share a visual row. */
+  async editorTaskRowBoxes(index: number) {
+    const item = this.editorTaskItems.nth(index);
+    return {
+      checkbox: await item.locator("input[type='checkbox']").boundingBox(),
+      content: await item.locator("div").first().boundingBox(),
+    };
+  }
+
+  /** Click the nth task checkbox, as a user would. */
+  async clickEditorTaskCheckbox(index: number): Promise<void> {
+    await this.editorTaskCheckboxes.nth(index).click();
+  }
+
+  /** Focus the nth task checkbox and activate it with the keyboard. */
+  async pressSpaceOnEditorTaskCheckbox(index: number): Promise<void> {
+    const box = this.editorTaskCheckboxes.nth(index);
+    await box.focus();
+    await box.press(" ");
+  }
+
+  /** Computed bottom margin of the paragraph inside the nth task item.
+   *
+   *  The shared sheet gives every `<p>` a 14px bottom margin, which inside a
+   *  task item's content wrapper becomes a blank line under each row. The
+   *  rendered view avoids it because marked puts the text directly in the
+   *  `<li>`; the editor needs one rule to match. */
+  async editorTaskParagraphMarginBottom(index: number): Promise<string> {
+    return await this.editorTaskItems
+      .nth(index)
+      .locator("div > p")
+      .first()
+      .evaluate((el) => getComputedStyle(el).marginBottom);
+  }
+
   /** Type into the editor at the current cursor.
    *
    *  Plain `keyboard.type` — a contenteditable receives real key events, so

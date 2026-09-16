@@ -47,6 +47,7 @@ import './milkdownEditor.css'
 
 import { RELA_STRINGIFY_OPTIONS } from './serializerContract'
 import { entityRefNode, isValidEntityRefId } from './entityRefNode'
+import { taskList } from './taskListItem'
 import {
   entityRefResolutionPlugin,
   buildResolutionTransaction,
@@ -595,6 +596,8 @@ onMounted(async () => {
     .use(history)
     .use(listener)
     .use(entityRefNode)
+    // After `gfm`: it contributes the `checked` attribute this renders.
+    .use(taskList)
     .use(entityRefResolutionPlugin(resolverHandle))
     .use(dirtyTracker)
     .use(slash)

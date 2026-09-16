@@ -37,13 +37,15 @@ function isMarkActive(state: EditorState, markName: string): boolean {
  * Whether the selection sits inside a node of the given type.
  *
  * Walks up from the selection head so a cursor inside a list item's paragraph
- * still reports the enclosing `bullet_list`. When `attrs` is given every named
- * attribute must match, which is how heading levels are told apart.
+ * still reports the enclosing `bullet_list`. When `match` is given the node's
+ * attributes must satisfy it, which is how heading levels are told apart (an
+ * equality test, built by the caller) and how a task item is recognised
+ * whatever its checked state (a predicate).
  */
 function isNodeActive(
   state: EditorState,
   nodeName: string,
-  attrs?: Record<string, unknown>
+  match?: (attrs: Record<string, unknown>) => boolean
 ): boolean {
   const type = state.schema.nodes[nodeName]
   if (!type) return false
@@ -52,8 +54,8 @@ function isNodeActive(
   for (let depth = $from.depth; depth >= 0; depth--) {
     const node = $from.node(depth)
     if (node.type !== type) continue
-    if (!attrs) return true
-    if (Object.entries(attrs).every(([k, v]) => node.attrs[k] === v)) return true
+    if (!match) return true
+    if (match(node.attrs)) return true
   }
   return false
 }
@@ -63,7 +65,13 @@ function probeMatches(state: EditorState, probe: ActiveProbe): boolean {
     case 'mark':
       return isMarkActive(state, probe.mark)
     case 'node':
-      return isNodeActive(state, probe.node, probe.attrs)
+      return isNodeActive(
+        state,
+        probe.node,
+        probe.attrs && ((attrs) => Object.entries(probe.attrs!).every(([k, v]) => attrs[k] === v))
+      )
+    case 'nodeWhere':
+      return isNodeActive(state, probe.node, probe.match)
     case 'none':
       return false
     default:
