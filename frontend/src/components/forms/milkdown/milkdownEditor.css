@@ -267,6 +267,47 @@
   cursor: grabbing;
 }
 
+/* ── Task lists ──────────────────────────────────────────────────────────── */
+
+/* Almost nothing belongs here, deliberately. The checkbox, the suppressed
+   bullet and the row pull-back all come from the shared
+   styles/markdown-content.css, which the editing surface inherits via
+   `md-body`, and that sheet stays the one place task lists are styled
+   (BUG-KHQXHH).
+
+   The node view matches the TIGHT shape that sheet looks for — an
+   `input[type=checkbox]` as the `<li>`'s first child — which is why those rules
+   apply here at all. It is not byte-identical to what marked emits: marked puts
+   the item's text straight in the `<li>`, while ProseMirror requires a single
+   `contentDOM` element to own it, so the editor has one extra wrapper. A
+   consequence worth knowing: the sheet's LOOSE-item rule (`li > p:first-child
+   :has(> input…)`) can never match the editor, because the input is outside
+   the `<p>`. That rule is dead on this surface, which is exactly why the
+   paragraph margin has to be reset below.
+
+   Those two wrapper rules are the whole editor-specific surface.
+   `e2e/tests/checkboxes.spec.ts` measures both in a real browser; jsdom has no
+   layout engine and cannot.
+
+   No `[data-checked='true']` styling either. The rendered view does not dim or
+   strike through a completed item, and making the editor do so would recreate
+   the editor/view divergence this handling exists to remove. If completed items
+   should read differently, that belongs in the shared sheet so both surfaces
+   change together. */
+.milkdown-editor-shell .ProseMirror li[data-item-type='task'] > div {
+  /* Without this the wrapper is a full-width block and the text lands UNDER
+     the checkbox, reading as an empty task above a stray paragraph. */
+  display: inline-block;
+  vertical-align: top;
+  /* Fill the rest of the row so a wrapped second line stays aligned with the
+     first rather than running back beneath the box. */
+  width: calc(100% - 22px);
+}
+
+.milkdown-editor-shell .ProseMirror li[data-item-type='task'] > div > p {
+  margin: 0;
+}
+
 /* ── Floating menus ──────────────────────────────────────────────────────── */
 
 /* The element SlashProvider positions. Floating UI writes `left`/`top` here,

@@ -107,7 +107,7 @@ describe('activeCommandIds', () => {
       if (cmd.probe.kind === 'mark') {
         expect(schema.marks[cmd.probe.mark], `mark ${cmd.probe.mark}`).toBeDefined()
       }
-      if (cmd.probe.kind === 'node') {
+      if (cmd.probe.kind === 'node' || cmd.probe.kind === 'nodeWhere') {
         expect(schema.nodes[cmd.probe.node], `node ${cmd.probe.node}`).toBeDefined()
       }
     }

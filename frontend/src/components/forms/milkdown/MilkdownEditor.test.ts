@@ -259,7 +259,7 @@ describe('MilkdownEditor toolbar', () => {
       if (cmd.probe.kind === 'mark') {
         expect(Object.keys(schema!.marks), `mark for ${cmd.id}`).toContain(cmd.probe.mark)
       }
-      if (cmd.probe.kind === 'node') {
+      if (cmd.probe.kind === 'node' || cmd.probe.kind === 'nodeWhere') {
         expect(Object.keys(schema!.nodes), `node for ${cmd.id}`).toContain(cmd.probe.node)
       }
     }
