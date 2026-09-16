@@ -3,6 +3,7 @@ package appbuild
 import (
 	"context"
 	"errors"
+	"reflect"
 
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 )
@@ -33,10 +34,17 @@ var _ entitymanager.AliasRewriter = (*aliasFanout)(nil)
 // AliasRewriter == nil` fast path still applies and an unused hook costs
 // nothing. Returns the single subscriber unwrapped when there is exactly one,
 // keeping the common case free of an indirection.
+//
+// A disabled subsystem reaches us as a TYPED nil — buildComments and
+// buildStateAndAliases both signal "feature off" by returning a nil
+// *comments.Service / *caldavalias.Service, and passing that concrete pointer
+// into this variadic boxes it into an interface with a non-nil type word. A
+// plain `s != nil` does not see through that box, so the dead subscriber was
+// kept and the first delete dereferenced it. Hence isNilSubscriber.
 func newAliasFanout(subs ...entitymanager.AliasRewriter) entitymanager.AliasRewriter {
 	live := make([]entitymanager.AliasRewriter, 0, len(subs))
 	for _, s := range subs {
-		if s != nil {
+		if !isNilSubscriber(s) {
 			live = append(live, s)
 		}
 	}
@@ -47,6 +55,28 @@ func newAliasFanout(subs ...entitymanager.AliasRewriter) entitymanager.AliasRewr
 		return live[0]
 	default:
 		return &aliasFanout{subscribers: live}
+	}
+}
+
+// isNilSubscriber reports whether s is nil, including a nil pointer boxed into
+// a non-nil interface.
+//
+// Reflection rather than a type switch over the known subscribers: the two
+// current typed-nil sources are not the point, the wiring pattern is. Any
+// later "disabled subsystem returns a nil *T" would reintroduce the same
+// crash, and a type switch would silently not cover it.
+//
+// Only the kinds that can carry a nil are consulted; a non-pointer subscriber
+// answers false at the Kind check without reflection reading its value.
+func isNilSubscriber(s entitymanager.AliasRewriter) bool {
+	if s == nil {
+		return true
+	}
+	switch v := reflect.ValueOf(s); v.Kind() {
+	case reflect.Ptr, reflect.Interface, reflect.Map, reflect.Slice, reflect.Func, reflect.Chan:
+		return v.IsNil()
+	default:
+		return false
 	}
 }
 
