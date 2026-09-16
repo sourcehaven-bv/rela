@@ -12,7 +12,7 @@ import (
 // schemaVersion is the shape of the tables this binary expects. Bump it
 // whenever schemaSQL changes shape, and append the step that carries an
 // existing database forward to [migrations].
-const schemaVersion = 4
+const schemaVersion = 5
 
 // SchemaVersion reports the table shape this binary expects, so the CLI can
 // show a real number rather than prose.
@@ -86,6 +86,18 @@ var migrations = []migration{
 		// likely to take" case the ladder was built for.
 		to:    4,
 		apply: migrateToVersion4,
+	},
+	{
+		// v4 → v5: entity commentary (TKT-OGTVJW). Pure DDL, and pure
+		// CREATE IF NOT EXISTS, so it is also a no-op on a database that
+		// already picked the table up from schemaSQL — which every database
+		// opened by this binary has, since schemaSQL runs before the ladder.
+		//
+		// The rung still earns its place: it is what moves the stamped version
+		// forward, and the version stamp is how a database opened by an OLDER
+		// binary is recognised as needing this shape at all.
+		to:    5,
+		apply: sqlSteps(commentsDDL),
 	},
 }
 
