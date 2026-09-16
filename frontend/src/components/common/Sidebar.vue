@@ -7,6 +7,7 @@ import { getSidebar, runAction } from '@/api'
 import { isCancelledFetch } from '@/composables/usePageData'
 import { ApiError, getErrorMessage, getScriptError } from '@/api/errors'
 import type { SidebarGroup, SidebarItem } from '@/types'
+import { isInputFocused } from '@/utils/dom'
 import {
   IconApps,
   IconMoon,
@@ -73,7 +74,7 @@ async function loadSidebar() {
 // behavior (push /search) still applies on routes without a search box.
 function handleKeydown(e: KeyboardEvent) {
   if (e.key !== '/') return
-  if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName)) return
+  if (isInputFocused()) return
   if (document.querySelector('.entity-list .search-box')) return
   e.preventDefault()
   router.push('/search')
