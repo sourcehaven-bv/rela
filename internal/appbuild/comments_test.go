@@ -107,7 +107,7 @@ func TestAliasFanout_NilWhenNothingSubscribes(t *testing.T) {
 }
 
 // TestAliasFanout_NilWhenOnlyTypedNilsSubscribe covers what the untyped-nil
-// case above cannot. The nils production passes are CONCRETE pointers from a
+// case above cannot. The nils production passes are concrete pointers from a
 // disabled subsystem, and boxing one into the variadic yields an interface
 // with a non-nil type word — so `s != nil` kept it and the first delete
 // dereferenced it. A literal `nil` in a test is converted by the compiler to a
@@ -145,20 +145,28 @@ func TestAliasFanout_SkipsTypedNilBesideLiveSubscriber(t *testing.T) {
 
 // TestAliasFanout_DisabledCommentsSurviveDelete wires the real buildComments
 // output into the fanout, which is the step the disabled-service test above
-// stops short of — and the step where the panic was born. Deleting an entity
-// with commenting off must be a no-op, not a crash.
+// stops short of — and the step where the panic was born. An unwired hook is
+// what keeps the delete a no-op: the Manager skips a nil AliasRewriter.
 func TestAliasFanout_DisabledCommentsSurviveDelete(t *testing.T) {
 	svc, err := buildComments(storage.NewOsFS(), paths(t), commentsMeta(t, false))
 	require.NoError(t, err)
 	require.Nil(t, svc)
 
-	rewriter := newAliasFanout(svc)
-	require.Nil(t, rewriter, "disabled comments must leave the hook unwired")
+	require.Nil(t, newAliasFanout(svc), "disabled comments must leave the hook unwired")
+}
 
-	// Mirrors entitymanager's guard: with no rewriter the hook is skipped.
-	if rewriter != nil {
-		require.NoError(t, rewriter.EntityDeleted(context.Background(), "TKT-1"))
-	}
+// TestAliasFanout_EnabledCommentsStillSubscribe is the other half of the
+// filter: dropping a disabled service is only correct if an enabled one still
+// gets through. Without this, an over-eager isNilSubscriber would silently stop
+// comment cleanup on delete — and a thread stranded at a reused id is the
+// hazard [comments.Service.EntityDeleted] exists to prevent, which is quieter
+// than the panic this fix removed.
+func TestAliasFanout_EnabledCommentsStillSubscribe(t *testing.T) {
+	svc, err := buildComments(storage.NewOsFS(), paths(t), commentsMeta(t, true))
+	require.NoError(t, err)
+	require.NotNil(t, svc)
+
+	require.Same(t, svc, newAliasFanout(svc), "an enabled service must stay wired")
 }
 
 func TestAliasFanout_NotifiesEverySubscriber(t *testing.T) {
