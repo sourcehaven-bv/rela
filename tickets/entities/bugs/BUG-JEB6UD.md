@@ -2,6 +2,7 @@
 id: BUG-JEB6UD
 type: bug
 title: 'TestMemoryLocker_AbandonedAcquireReleases is flaky: asserts map eviction that happens asynchronously'
+description: 'TestMemoryLocker_AbandonedAcquireReleases asserts map eviction that happens asynchronously: close(acquired) proves only that rel2() was CALLED, so the entry-count assertion reads the map mid-eviction. Fails 6 of 8 runs on unmodified develop at 5f04ec38. The lock itself is fine — the wedge guard above it passes every time; only the bookkeeping assertion is unstable.'
 priority: medium
 status: backlog
 ---
