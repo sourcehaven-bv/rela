@@ -411,7 +411,7 @@ func (a *App) listPage(
 	// AFTER the ACL scope and every filter, BEFORE paging and the count: the
 	// condition narrows the population the page and total describe, so
 	// applying it later would page one set and count another.
-	if all, err = applyViewCondition(ctx, all, cond); err != nil {
+	if all, err = applyViewCondition(ctx, all, cond, a.redactedForSuggestion); err != nil {
 		return nil, 0, err
 	}
 	total = len(all)

@@ -177,15 +177,42 @@ func viewCondition(fn ViewConditionFunc, s *Schema, kind, id string) ViewConditi
 // Returns rows unchanged when there is no matcher, so a view without a
 // condition costs nothing. An evaluation error aborts the page rather than
 // yielding a partial one — see [ViewConditionMatcher].
+//
+// The condition is evaluated against the REDACTED entity, never the raw
+// stored one. Field redaction otherwise happens at serialization, long after
+// this filter has already decided membership — and since a condition may name
+// is_current_user(entity.<field>), a condition over a field the reader cannot
+// see would decide whether the row appears. That leaks the hidden value one
+// bit at a time through row presence/absence, without it ever being
+// serialized (the IB-review finding on #1593).
+//
+// Evaluating post-redaction is sound in the direction that matters: redaction
+// REMOVES a hidden property, so it binds Nil, and every current-user form is
+// false on Nil. The result is strictly narrower than an unredacted pass for
+// those forms — the same asymmetry [ConditionPrefilterer] documents for next
+// actions, reached here by the same remedy.
+//
+// The KEPT rows are the originals, not the redacted copies: redaction for the
+// response happens at serialization, and substituting stripped entities here
+// would drop properties the reader may legitimately see.
+//
+// redact is the per-principal field filter. Nil means no redaction, which is
+// correct only for a caller that has already redacted or has no field policy;
+// a caller holding one must pass it.
 func applyViewCondition(
 	ctx context.Context, rows []*entityPkg.Entity, m ViewConditionMatcher,
+	redact func(context.Context, *entityPkg.Entity) *entityPkg.Entity,
 ) ([]*entityPkg.Entity, error) {
 	if m == nil || len(rows) == 0 {
 		return rows, nil
 	}
 	kept := make([]*entityPkg.Entity, 0, len(rows))
 	for _, e := range rows {
-		ok, err := m.Matches(ctx, e)
+		candidate := e
+		if redact != nil {
+			candidate = redact(ctx, e)
+		}
+		ok, err := m.Matches(ctx, candidate)
 		if err != nil {
 			return nil, err
 		}

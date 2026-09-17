@@ -50,6 +50,11 @@ type exportHandler struct {
 	// everything, which is the safe direction.
 	bindIdentity func(ctx context.Context, typeName string, query map[string][]string) (context.Context, error)
 
+	// redactForCondition strips the properties this principal may not see,
+	// so a `condition:` cannot decide row membership from a hidden value.
+	// Same seam and same reason as the list path — see applyViewCondition.
+	redactForCondition func(ctx context.Context, e *entityPkg.Entity) *entityPkg.Entity
+
 	// visReader is the row-gating + field-redacting read seam (DEC-ZBI39P):
 	// entity export reads through Get (which owns the stored-type check,
 	// RR-SRZK6X) and list-export rows through Filter, so a hidden field can
@@ -108,6 +113,7 @@ func newExportHandler(app *App) (*exportHandler, error) {
 			}
 			return bindQueryIdentity(ctx, scope)
 		},
+		redactForCondition: app.redactedForSuggestion,
 		findListForType: func(entityType string) string {
 			s := app.State()
 			return findListByEntityType(s, s.Cfg.Navigation, entityType)

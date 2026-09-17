@@ -43,13 +43,13 @@ func TestApplyViewCondition(t *testing.T) {
 
 	t.Run("nil matcher is a no-op, not an empty result", func(t *testing.T) {
 		in := rows("A", "B")
-		got, err := applyViewCondition(ctx, in, nil)
+		got, err := applyViewCondition(ctx, in, nil, nil)
 		require.NoError(t, err)
 		require.Equal(t, in, got)
 	})
 
 	t.Run("filters and preserves order", func(t *testing.T) {
-		got, err := applyViewCondition(ctx, rows("A", "B", "C"), stubMatcher{want: "open"})
+		got, err := applyViewCondition(ctx, rows("A", "B", "C"), stubMatcher{want: "open"}, nil)
 		require.NoError(t, err)
 		require.Len(t, got, 2)
 		require.Equal(t, "A", got[0].ID)
@@ -59,7 +59,7 @@ func TestApplyViewCondition(t *testing.T) {
 	// An unjudgeable row must not be silently dropped: that would narrow the
 	// view with no diagnostic, the inverse of BUG-WHEREWIDE.
 	t.Run("an evaluation error aborts rather than dropping the row", func(t *testing.T) {
-		_, err := applyViewCondition(ctx, rows("A", "B"), stubMatcher{want: "open", failOn: "A"})
+		_, err := applyViewCondition(ctx, rows("A", "B"), stubMatcher{want: "open", failOn: "A"}, nil)
 		require.Error(t, err)
 	})
 }
