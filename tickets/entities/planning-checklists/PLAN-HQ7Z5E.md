@@ -2,119 +2,173 @@
 id: PLAN-HQ7Z5E
 type: planning-checklist
 title: 'Planning: Add comments.Store.Get so a single-comment read stops pulling the whole thread'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
 
 ## Understanding
 
-- [ ] Problem/requirements clearly understood
-- [ ] Scope defined (what's in/out documented below)
-- [ ] Acceptance criteria documented with specific test scenarios
+- [x] Problem/requirements clearly understood
+- [x] Scope defined (what's in/out documented below)
+- [x] Acceptance criteria documented with specific test scenarios
 
 **Scope:**
-<!-- Document explicitly what IS and IS NOT in scope -->
+
+IN: a `Get` method on `comments.Store`; implementations in all four backends;
+`Service.Get` delegating to it; conformance coverage.
+
+OUT: `Service.Add`'s identical list-to-count amplification (filed separately);
+the `UpdatedAt` backend divergence this work uncovered (TKT-JZY2PM); any change
+to the `MaxPerTarget` advisory-cap reasoning.
 
 **Acceptance Criteria:**
-<!-- Each criterion must have a concrete test scenario -->
-1. ...
+
+1. `comments.Store` gains `Get`, all four backends implement it — compiler.
+2. Database backends serve a single-row read — EXPLAIN against seeded rows.
+3. `Service.Get` uses it — counting-store test asserting 1 get, 0 lists.
+4. Absent id returns `comments.ErrNotFound` — conformance.
+5. Face-scoped — conformance, both directions plus same-id-on-two-faces.
 
 ## Research
 
-- [ ] For larger features: run `/research` to create a structured research doc
-- [ ] Searched for existing libraries that solve this problem
-- [ ] Checked codebase for similar patterns or reusable code
-- [ ] Looked for reference implementations in other projects
-- [ ] Reviewed relevant rela concepts for prior art
+- [x] ~~run `/research`~~ (N/A: approach fixed by the ticket, one method)
+- [x] Searched for existing libraries that solve this problem
+- [x] Checked codebase for similar patterns or reusable code
+- [x] Looked for reference implementations in other projects
+- [x] Reviewed relevant rela concepts for prior art
 
-**Research Doc:** <!-- Link RES-xxxx if created, or N/A for small changes -->
+**Research Doc:** N/A — small, and the ticket's approach sketch was correct.
 
 **Existing Solutions:**
-<!-- Document what you found:
-- Libraries considered (with pros/cons, why chosen or rejected)
-- Similar patterns in codebase (file:line references)
-- Reference implementations that inspired the approach
-- Relevant concepts from rela-docs or rela-issues-and-design-tickets
--->
+
+No library question; this is an interface method over SQL the project owns.
+
+Prior art in-tree:
+- `storetest.Counting` budget tests — the pattern for pinning that a read path
+does not amplify, reused here as `countingStore` in `service_test.go`.
+- `commentstest.RunKeyFidelityTests` — the existing split for contracts only the
+database backends can honor, which is where the byte-exact `Get` case went.
+- `pgcomments.scanComment` already took `pgx.Row`, so `QueryRow` needed no new
+decoder; `sqlitecomments.scanComment` took `*sql.Rows` and was widened to a
+`rowScanner` interface so both read paths share one decoder.
 
 ## Approach
 
-- [ ] Technical approach chosen and documented
-- [ ] Approach builds on existing patterns (not reinventing)
-- [ ] Alternatives considered (document why rejected)
-- [ ] Dependencies identified (packages, APIs, types)
+- [x] Technical approach chosen and documented
+- [x] Approach builds on existing patterns (not reinventing)
+- [x] Alternatives considered (document why rejected)
+- [x] Dependencies identified (packages, APIs, types)
 
 **Technical Approach:**
-<!-- Document the approach with enough detail that implementation is mechanical -->
+
+`Get(ctx, target, id) (Comment, error)` on `comments.Store`, returning
+`ErrNotFound` when absent — the sentinel `Update` and `Delete` already use, so
+the handler's existing 404/500 branch needs no change.
+
+- pg/sqlite: `WHERE target_key = ? AND id = ?`, served by
+`PRIMARY KEY (target_key, id)`. No new index.
+- file/mem: read the thread and pick. Free there — a thread is one document.
+
+Alternative rejected: returning only the author. The one production caller
+(`gateCommentMutation`) also reads `existing.Body` and `existing.Resolved` for
+partial-update semantics, so a narrower read would force a second fetch. The
+ticket flagged this and the answer is "no".
 
 **Files to modify:**
-<!-- List specific files that will change -->
+
+`internal/comments/comments.go`, `service.go`, `service_test.go`,
+`commentstest/commentstest.go`, and `Get` in each of `filecomments/file.go`,
+`memcomments/mem.go`, `pgcomments/pg.go`, `sqlitecomments/sqlite.go`.
 
 ## Security Considerations
 
-- [ ] Input sources identified (user input, config, external APIs)
-- [ ] Input validation approach defined (allowlist preferred over blocklist)
-- [ ] Security-sensitive operations identified (file access, auth, crypto)
-- [ ] Error handling doesn't leak sensitive information
+- [x] Input sources identified (user input, config, external APIs)
+- [x] Input validation approach defined (allowlist preferred over blocklist)
+- [x] Security-sensitive operations identified (file access, auth, crypto)
+- [x] Error handling doesn't leak sensitive information
 
 **Input Sources & Validation:**
-<!-- For each input: source, validation approach, what happens on invalid input -->
+
+`target` and `id` arrive from the URL path, already resolved and read-gated by
+`gateCommentTarget` before `Get` is reached. Both are bound as SQL parameters,
+never interpolated. `filecomments` keeps its existing unsafe-id refusal.
 
 **Security-Sensitive Operations:**
-<!-- List operations and how they're protected -->
+
+`Get`'s result decides whether an `*-own` permission covers a mutation, so the
+method is on the authorization path. Two properties matter and both are pinned:
+
+- It must resolve within the named target only. A comment reachable across faces
+would let a request name one face and have its permission decided against a
+record from another, while the subsequent write used the named pair — check and
+write looking at different rows.
+- A missing row must be distinguishable from a failed query. Verified against
+both drivers that a deferred query error is not `ErrNoRows`, so an outage cannot
+be reported as a 404.
 
 ## Test Plan
 
-- [ ] Test scenarios documented for each acceptance criterion
-- [ ] Edge cases identified and documented
-- [ ] Negative test cases defined (invalid input, error conditions)
-- [ ] Integration test approach defined (not just unit tests)
+- [x] Test scenarios documented for each acceptance criterion
+- [x] Edge cases identified and documented
+- [x] Negative test cases defined (invalid input, error conditions)
+- [x] Integration test approach defined (not just unit tests)
 
 **Test Scenarios:**
-<!-- Map each acceptance criterion to how it will be tested -->
+
+`RunGetTests` in the shared conformance suite, so all four backends are held to
+one contract: full round-trip incl. UTC location, agreement with `List` across a
+thread, absent id, absent thread, scoping (5 cases), zero `UpdatedAt`, reflects
+an update, deleted comment gone. Byte-exact keys in `RunKeyFidelityTests`
+(database backends only). AC3 via `countingStore`. AC2 by EXPLAIN on both
+engines.
 
 **Edge Cases:**
-<!-- List specific edge cases and expected behavior. Consider:
-- Empty/null/missing values
-- Boundary values (0, -1, MAX_INT)
-- Special characters, unicode, null bytes
-- Concurrent access
-- Resource exhaustion
--->
+
+Absent thread vs absent comment; same id on two faces; same id on two targets;
+default-face-through-named and named-through-default (asymmetric under a prefix
+bug); case-differing ids; NULL `updated_at`.
 
 **Negative Tests:**
-<!-- What should fail? How should it fail? -->
+
+Every scoping case asserts `ErrNotFound` rather than a wrong row. Mutation
+testing confirmed each: breaking face scoping, swallowing the not-found error,
+ignoring `target_key`, and reverting `Service.Get` to list-and-scan each fail
+the tests that claim to catch them.
 
 ## Risk Assessment
 
-- [ ] Technical risks assessed with mitigations
-- [ ] Security risks assessed (see Security Considerations)
-- [ ] Effort estimated (xs/s/m/l/xl)
+- [x] Technical risks assessed with mitigations
+- [x] Security risks assessed (see Security Considerations)
+- [x] Effort estimated (xs/s/m/l/xl)
 
 **Risks:**
-<!-- List risks and how they will be mitigated -->
+
+- *A second read path diverging from `List`.* Mitigated by asserting the two
+agree, not merely that `Get` returns something plausible.
+- *An infrastructure error misreported as 404.* Mitigated by ordering the
+`ErrNoRows` check before the generic wrap; verified empirically per driver.
+- *`pgcomments` conformance not running in CI.* Already covered by the step
+added in TKT-OGTVJW, which fails on `--- SKIP`.
+
+Effort: s, as estimated.
 
 ## Documentation Planning
 
-For enhancements: identify what documentation needs updating.
-
-- [ ] User-facing docs identified (skip if internal refactor)
-- [ ] Docs-checklist will be created when entering implementation
+- [x] ~~User-facing docs identified~~ (N/A: internal interface, no API/CLI change)
+- [x] ~~Docs-checklist created~~ (N/A: `kind=enhancement` but no user-facing surface)
 
 **Documentation Impact:**
-<!-- Which docs need updating? Check all that apply:
-- [ ] docs/metamodel.md - New metamodel features
-- [ ] docs/cli-reference.md - New/changed commands
-- [ ] docs/data-entry.md - UI changes
-- [ ] CLAUDE.md - New patterns or conventions
-- [ ] README.md - Project-level changes
-- [ ] N/A - Internal change, no user-facing docs needed
--->
+
+N/A — internal change. The wire format, routes and CLI are untouched;
+`CLAUDE.md`'s comments rule ("any new one must pass `commentstest.RunAll`")
+still holds unchanged and gains coverage.
 
 ## Design Review
 
-- [ ] Run `/design-review` before starting implementation
-- [ ] All critical/significant findings addressed in plan
+- [x] ~~Run `/design-review` before starting implementation~~ (N/A: the ticket
+carried the design, settled when it was deferred from TKT-OGTVJW)
+- [x] All critical/significant findings addressed in plan
 
-**Design Review Findings:** <!-- List review-response IDs, e.g., RR-xxxx -->
+**Design Review Findings:** None at design time. A post-implementation
+`/code-review` raised four; see the review checklist.

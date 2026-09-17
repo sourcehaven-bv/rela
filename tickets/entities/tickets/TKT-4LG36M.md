@@ -5,7 +5,7 @@ title: Add comments.Store.Get so a single-comment read stops pulling the whole t
 kind: enhancement
 priority: low
 effort: s
-status: planning
+status: review
 ---
 
 ## Description
