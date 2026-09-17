@@ -3,6 +3,7 @@
 package appbuild
 
 import (
+	"github.com/Sourcehaven-BV/rela/internal/comments/sqlitecomments"
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/config/configsql"
 	"github.com/Sourcehaven-BV/rela/internal/sqlitedb"
@@ -11,9 +12,9 @@ import (
 )
 
 // backendServices builds the overrides that come from the opened database:
-// the project's config and its runtime state.
+// the project's config, its runtime state, and its comments.
 //
-// Both in one place because they share a handle and a rationale — each is
+// All in one place because they share a handle and a rationale — each is
 // something that would otherwise live in a file BESIDE the database, and so be
 // left behind when the single file is shipped.
 func backendServices(cfg Config, db *sqlitedb.DB) (backendOverrides, error) {
@@ -34,7 +35,21 @@ func backendServices(cfg Config, db *sqlitedb.DB) (backendOverrides, error) {
 		return backendOverrides{}, err
 	}
 
-	return backendOverrides{projectConfig: cfgLoader, stateKV: kv}, nil
+	// Comments go in the database rather than .rela/comments/ (TKT-OGTVJW), on
+	// the same handle. The reasoning is versioning's (TKT-4NU9ZD), not
+	// state.KV's: a comment is content ABOUT content, so it must travel with
+	// the rows it annotates — an operator shipping rela.db would otherwise hand
+	// over every entity and leave every remark behind.
+	commentStore, err := sqlitecomments.New(db.DB())
+	if err != nil {
+		return backendOverrides{}, err
+	}
+
+	return backendOverrides{
+		projectConfig: cfgLoader,
+		stateKV:       kv,
+		commentStore:  commentStore,
+	}, nil
 }
 
 // layerProjectConfig puts the project's FILES in front of the config baked

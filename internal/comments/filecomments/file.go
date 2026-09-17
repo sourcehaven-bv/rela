@@ -240,7 +240,7 @@ func (s *Store) Rename(_ context.Context, oldID, newID string) error {
 		if err != nil {
 			return err
 		}
-		if err := s.writeThread(dest, append(existing, moving...)); err != nil {
+		if err := s.writeThread(dest, comments.MergeThreads(existing, moving)); err != nil {
 			return err
 		}
 		if err := s.removeThread(key); err != nil {

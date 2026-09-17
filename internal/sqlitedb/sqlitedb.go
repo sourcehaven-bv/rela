@@ -339,6 +339,7 @@ CREATE TABLE IF NOT EXISTS attachments (
 CREATE INDEX IF NOT EXISTS attachments_entity_idx ON attachments(entity_id);
 ` + projectFilesDDL + `
 ` + stateKVDDL + `
+` + commentsDDL + `
 ` + versionSchemaSQL + `
 `
 
@@ -382,3 +383,57 @@ CREATE TABLE IF NOT EXISTS state_kv (
 	value      BLOB NOT NULL,
 	updated_at TEXT NOT NULL
 ) STRICT;`
+
+// commentsDDL carries entity commentary (TKT-OGTVJW), backing
+// internal/comments/sqlitecomments.
+//
+// In the database rather than in .rela/comments/*.yaml for the reason
+// versioning is (TKT-4NU9ZD) and state_kv is not (TKT-L1A3PH): a comment is
+// content ABOUT content, so it must travel with the rows it annotates. An
+// operator copying or shipping rela.db as "the project" would otherwise find
+// every entity present and every remark on them left behind.
+//
+// Deliberately NO foreign key to entities. A comment is a remark about an
+// entity, not a fact in the operator's domain model, and the feature lives
+// outside store.Store, entitymanager, the audit log and /_schema by design. An
+// FK would hand this table's lifecycle to the store's cascade machinery, when
+// the comment SERVICE owns it (Service.EntityDeleted, Store.Rename). The cost
+// is that a comment can outlive its entity — the same property the file
+// backend has, and survivable, since every read is by target key so an
+// unreachable row is invisible.
+//
+// target_key is entity.FormatStateRef(id, face): the bare id for the default
+// face, "id@face" otherwise — the same key filecomments uses for its filename,
+// so all four backends agree on what identifies a thread.
+//
+// Note SQLite's LIKE is ASCII case-INSENSITIVE by default while "=" is
+// byte-exact, so the two arms of `target_key = ? OR target_key LIKE ?` would
+// match different row sets. sqlitecomments handles that in its queries (a
+// byte-exact substr guard beside the LIKE) rather than here: COLLATE on the
+// column does NOT affect LIKE, and `PRAGMA case_sensitive_like` is global, so
+// setting it would silently change sqlitestore's queries — which rely on the
+// folding deliberately (see sqlitestore/rename.go).
+//
+// anchor is JSON text because comments.Anchor is a discriminated union whose
+// text kind carries a six-field descriptor set; columns would mean six mostly-
+// NULL ones plus a migration per new kind, and the type's doc requires that
+// adding a kind not migrate stored comments. Nothing queries inside it.
+//
+// Shared between schemaSQL (fresh databases) and the v4→v5 migration
+// (existing ones), for the same reason the two DDL blocks above are.
+const commentsDDL = `
+CREATE TABLE IF NOT EXISTS comments (
+	id          TEXT NOT NULL,
+	target_key  TEXT NOT NULL,
+	target_type TEXT NOT NULL,
+	author      TEXT NOT NULL,
+	created_at  TEXT NOT NULL,
+	updated_at  TEXT,
+	anchor      TEXT NOT NULL,
+	body        TEXT NOT NULL,
+	resolved    INTEGER NOT NULL DEFAULT 0,
+	PRIMARY KEY (target_key, id)
+) STRICT;
+-- Serves List: one target's thread in contract order (oldest first, id
+-- breaking ties), as an index range scan rather than a sort.
+CREATE INDEX IF NOT EXISTS comments_thread_idx ON comments(target_key, created_at, id);`

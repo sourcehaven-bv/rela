@@ -231,3 +231,41 @@ func SortComments(list []Comment) {
 		return list[i].ID < list[j].ID
 	})
 }
+
+// MergeThreads appends arriving to occupying, dropping any arrival whose ID the
+// destination already uses, and returns the result sorted.
+//
+// This is what a Rename into an OCCUPIED destination must do, and it is here
+// for the same reason [SortComments] is: every backend owes the same answer,
+// and two implementations agreeing independently is how that quietly stops
+// being true. The database backends get it from ON CONFLICT DO NOTHING; the
+// in-memory and file backends call this.
+//
+// The destination's own comment wins on a collision — it is the one a reader
+// may already have seen. Dropping the arrival rather than keeping both matters
+// because the service addresses a comment by (target, id): a thread holding one
+// ID twice makes the second copy unreachable, and an Update or Delete aimed at
+// it silently hits the first instead. Collisions need a restored backup or a
+// re-import to arise at all (IDs carry 80 bits of crypto/rand), but the damage
+// they do is lasting rather than transient.
+func MergeThreads(occupying, arriving []Comment) []Comment {
+	if len(occupying) == 0 {
+		SortComments(arriving)
+		return arriving
+	}
+	taken := make(map[string]struct{}, len(occupying))
+	for _, c := range occupying {
+		taken[c.ID] = struct{}{}
+	}
+	// Fresh array rather than appending in place: occupying may alias a slice
+	// the caller still holds (a map value, a read buffer).
+	merged := make([]Comment, 0, len(occupying)+len(arriving))
+	merged = append(merged, occupying...)
+	for _, c := range arriving {
+		if _, dup := taken[c.ID]; !dup {
+			merged = append(merged, c)
+		}
+	}
+	SortComments(merged)
+	return merged
+}

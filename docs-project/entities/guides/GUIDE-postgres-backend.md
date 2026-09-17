@@ -54,8 +54,8 @@ CA) so the connection is never silently unencrypted.
 ## Schema and migrations
 
 On first start the PostgreSQL build creates its schema automatically
-(`entities`, `relations`, `attachments`, `schema_version`, and the
-`entity_versions` / `schema_versions` history tables — see
+(`entities`, `relations`, `attachments`, `comments`, `schema_version`, and
+the `entity_versions` / `schema_versions` history tables — see
 [Version history](#version-history-time-machine) — plus the `pg_trgm`
 extension for substring/fuzzy search). Migrations are
 embedded in the binary and applied idempotently on every start — they run

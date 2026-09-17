@@ -42,8 +42,17 @@ a rela built before commenting existed.
 
 ### Where comments are stored
 
-On the default (filesystem) backend, one YAML file per target under
-`.rela/comments/`:
+Comments follow your storage backend, so they are always as portable and as
+shareable as the entities they annotate.
+
+| Backend | Comments live in |
+|---|---|
+| Filesystem (default) | one YAML file per target under `.rela/comments/` |
+| SQLite | the `comments` table in `.rela/rela.db` |
+| PostgreSQL | the `comments` table, in your tenant's schema |
+
+On the filesystem backend they are diffable and hand-editable like the entities
+beside them:
 
 ```text
 .rela/comments/
@@ -52,9 +61,24 @@ On the default (filesystem) backend, one YAML file per target under
   FEAT-002.yaml
 ```
 
-They are diffable and hand-editable like the entities they annotate. A target's
-whole thread lives in one file, so writes are atomic (temp file, fsync, rename)
-— a torn write would otherwise lose a whole conversation rather than one remark.
+A target's whole thread lives in one file, so writes are atomic (temp file,
+fsync, rename) — a torn write would otherwise lose a whole conversation rather
+than one remark.
+
+On the database backends each comment is a row. That is what makes commenting
+work when **several `rela-server` processes share one database**: a file-backed
+thread is written to whichever node served the request, so a comment posted
+through one node would be invisible to every other, with no error to explain
+it. Rows also mean two people commenting on the same entity at the same moment
+are independent inserts rather than a read-modify-write of one document.
+
+On SQLite the reason is portability rather than concurrency, since that tier is
+single-process by design: a comment is a remark *about* content, so it belongs
+in the file the content is in. Copy or ship `rela.db` and the commentary travels
+with it.
+
+Comments are never in your graph on any backend — no entity type, no audit log,
+no `/_schema` (see below).
 
 ## Permissions
 

@@ -44,8 +44,26 @@ import (
 
 var conflictSchemaCounter atomic.Int64
 
-// conflictTestSchema creates an isolated, migrated schema and returns a pool
-// pinned to it plus the schema-pinned DSN.
+// openPGStore opens a store over its own pool against dsn, closing both on
+// cleanup.
+//
+// pgstore.Open takes an injected handle (TKT-OGTVJW), so pool ownership is the
+// caller's — these tests each want an INDEPENDENT pool anyway, since they stand
+// in for separate rela-server processes. The schema is already migrated by the
+// helper that created it.
+func openPGStore(t *testing.T, ctx context.Context, dsn string) store.Store {
+	t.Helper()
+	pool, poolCloser, err := pgstore.NewPool(ctx, dsn)
+	require.NoError(t, err)
+	st, _, err := pgstore.Open(ctx, pool, dsn)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = st.Close()
+		_ = poolCloser.Close()
+	})
+	return st
+}
+
 func conflictTestSchema(t *testing.T) (*pgxpool.Pool, string) {
 	t.Helper()
 	base := os.Getenv("RELA_TEST_DATABASE_URL")
@@ -167,9 +185,7 @@ func TestWebhookConflict_ConcurrentCreateLosesOnUnique(t *testing.T) {
 	ctx := context.Background()
 	meta := alertMetamodel()
 
-	st, _, closer, err := pgstore.Open(ctx, dsn)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = st.Close(); _ = closer.Close() })
+	st := openPGStore(t, ctx, dsn)
 	reconcileUnique(t, st, meta)
 
 	const key = "b7a027ffdd51c19e22e7b7f00c894ef2f3d968896fb40e382df73339c8c645ac"
@@ -238,9 +254,7 @@ func TestWebhookConflict_LoserRefindsAndProceeds(t *testing.T) {
 	ctx := context.Background()
 	meta := alertMetamodel()
 
-	st, _, closer, err := pgstore.Open(ctx, dsn)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = st.Close(); _ = closer.Close() })
+	st := openPGStore(t, ctx, dsn)
 	reconcileUnique(t, st, meta)
 
 	hooks := map[string]dataentryconfig.Webhook{
@@ -339,9 +353,7 @@ func TestWebhookConflict_BlindUpdateLosesAppends(t *testing.T) {
 	_, dsn := conflictTestSchema(t)
 	ctx := context.Background()
 
-	st, _, closer, err := pgstore.Open(ctx, dsn)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = st.Close(); _ = closer.Close() })
+	st := openPGStore(t, ctx, dsn)
 
 	seed := entity.New("INC-APPEND", "incident")
 	seed.Properties = map[string]any{"title": "web01/http", "status": "open"}
@@ -399,9 +411,7 @@ func TestWebhookConflict_PipelineAppendsAllLand(t *testing.T) {
 	_, dsn := conflictTestSchema(t)
 	ctx := context.Background()
 
-	st, _, closer, err := pgstore.Open(ctx, dsn)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = st.Close(); _ = closer.Close() })
+	st := openPGStore(t, ctx, dsn)
 
 	app := newPostgresHookApp(t, st, map[string]dataentryconfig.Webhook{
 		"alert": {
@@ -484,12 +494,8 @@ func TestWebhookConflict_CrossProcessAppendsCanBeLost(t *testing.T) {
 	}
 
 	// Two independent stores over one schema == two processes.
-	stA, _, closerA, err := pgstore.Open(ctx, dsn)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = stA.Close(); _ = closerA.Close() })
-	stB, _, closerB, err := pgstore.Open(ctx, dsn)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = stB.Close(); _ = closerB.Close() })
+	stA := openPGStore(t, ctx, dsn)
+	stB := openPGStore(t, ctx, dsn)
 
 	seed := entity.New("INC-XPROC", "incident")
 	seed.Properties = map[string]any{"title": "web01/http", "status": "open"}
@@ -555,20 +561,15 @@ func TestWebhookConflict_SchemaPinnedDSNIsIsolated(t *testing.T) {
 	require.NotEqual(t, dsnA, dsnB, "each test schema must get its own DSN")
 
 	ctx := context.Background()
-	stA, _, closerA, err := pgstore.Open(ctx, dsnA)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = stA.Close(); _ = closerA.Close() })
-
-	stB, _, closerB, err := pgstore.Open(ctx, dsnB)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = stB.Close(); _ = closerB.Close() })
+	stA := openPGStore(t, ctx, dsnA)
+	stB := openPGStore(t, ctx, dsnB)
 
 	e := entity.New("INC-ISOLATED", "incident")
 	e.Properties = map[string]any{"title": "only in A"}
 	require.NoError(t, stA.CreateEntity(ctx, e))
 
 	// B must not see A's row.
-	_, err = stB.GetEntity(ctx, "INC-ISOLATED")
+	_, err := stB.GetEntity(ctx, "INC-ISOLATED")
 	require.Error(t, err, "schema B must not see schema A's entity — the DSN is not pinned")
 
 	// And the ROW must live in A's own schema, not in public. Asserting on the
