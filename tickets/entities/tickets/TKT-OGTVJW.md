@@ -5,7 +5,7 @@ title: 'Database-backed comment stores: pgcomments and sqlitecomments over an in
 kind: enhancement
 priority: medium
 effort: l
-status: planning
+status: review
 ---
 
 ## Description

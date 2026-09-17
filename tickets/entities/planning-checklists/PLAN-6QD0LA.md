@@ -2,7 +2,7 @@
 id: PLAN-6QD0LA
 type: planning-checklist
 title: 'Planning: Database-backed comment stores: pgcomments and sqlitecomments over an injected pool'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
@@ -222,10 +222,16 @@ closing the pool on every early return.
 `docs/comments.md` — "Where comments are stored" was actively WRONG for the
 postgres build after this change; now a per-backend table with the multi-process
 motivation.
-- [ ] `docs/postgres-backend.md` — mentions which tables the database holds.
-- [ ] `CLAUDE.md` — the storage-backend section and the `internal/comments`
-row in the package table.
-- [ ] `docs/sqlite-backend.md` (if it enumerates `rela.db`'s tables).
+- [x] `docs/postgres-backend.md` — `comments` added to the list of tables
+created on first start.
+- [x] `CLAUDE.md` — a comments rule added to the storage-backend section,
+beside the `state.KV` one it parallels, recording the backend-selection seam
+and the about-the-machine-or-about-the-content question that split the two
+database tiers. The package table was left alone: `internal/comments` was
+never in it, and the storage-backend section is where the decision belongs.
+- [x] `docs/sqlite-backend.md` — the "no shared runtime state" bullet said
+settings and caches stay under `.rela/`, which now reads as covering comments
+too. Corrected, with why comments went the other way.
 
 ## Design Review
 
