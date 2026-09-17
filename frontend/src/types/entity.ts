@@ -373,6 +373,15 @@ export interface ListParams {
   // `/_views/{type}/{id}` and `/_history/{type}/{id}` — see
   // internal/dataentry/world.go's worldCapablePath.
   world?: string
+  // list_id names which configured list this read is serving, so the server
+  // can apply that list's `condition:` — the predicate expression that states
+  // membership rules `filters:` cannot (`or`, grouping, date arithmetic).
+  //
+  // It carries an ID, never the expression: the condition is operator config
+  // the server already holds, so a caller can only select among lists it was
+  // already free to name. Omitting it is not an error — the server then
+  // applies no condition and returns the ACL-scoped superset.
+  list_id?: string
   /**
    * query_scope selects which rows are MEMBERS of the result, from the entity
    * type's declared `query_scopes:`. Orthogonal to `world`, which selects

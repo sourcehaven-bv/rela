@@ -346,7 +346,20 @@ var errListLoad = errors.New("list load failed")
 func (a *App) listPage(
 	ctx context.Context, typeName string, query map[string][]string, page, perPage int,
 ) (rows []*entityPkg.Entity, total int, err error) {
-	// Resolve the query scope FIRST: it decides membership, so it gates
+	// A view `condition:` is evaluated in Go below, so the store cannot page
+	// this request: pushing LIMIT/OFFSET past a filter the store does not
+	// apply would return short pages and a count for the wrong population.
+	//
+	// Declining here is deliberate and must stay explicit. planListPushdown
+	// inspects only `filter[...]` params and `continue`s on everything else,
+	// so a condition it never sees would not make it decline — it would push
+	// a paged query and silently return the UNFILTERED superset, which is
+	// BUG-F1LTP1's failure shape. Its own header states the rule: the pushed
+	// and the Go path must return the same rows, "and that is a matter of
+	// eligibility, not of translation cleverness".
+	cond := viewCondition(a.viewConditions, a.State(), viewKindList, queryGet(query, listIDParam))
+
+	// Resolve the query scope too: it decides membership, so it gates
 	// whether the pushdown fast path may serve this request at all.
 	scopeName, err := queryScopeParam(query)
 	if err != nil {
@@ -357,13 +370,32 @@ func (a *App) listPage(
 		return nil, 0, err
 	}
 
+	// Stamp the query identity HERE, not only inside the scope helper, because
+	// BOTH narrowings may name `current_user` and they are evaluated at
+	// different points. The scope binds before the store read; the condition
+	// runs in Go afterwards, against this ctx.
+	//
+	// The helper binds only when a scope actually resolved, and its new ctx
+	// never left it — so a `condition:` using is_current_user(...) raised
+	// ErrNoCurrentUser and answered 500 on every page, INCLUDING the shape the
+	// guide documents, where the list names a condition and no scope at all.
+	// Binding for the condition too is what makes that work.
+	//
+	// The bind is idempotent (an existing stamp is honored, a conflicting one
+	// refused), so the helper may still bind for its other callers.
+	if cond != nil || scope.Scope != nil {
+		if ctx, err = bindQueryIdentity(ctx, scope); err != nil {
+			return nil, 0, err
+		}
+	}
+
 	// The pushdown path serves a page straight from the store, so it can only
-	// run when the scope is FULLY expressible as store predicates. A scope
-	// using `~=`, an ordered comparison or a disjunction has a Go-side
-	// remainder, and a store-side page computed without it would paginate
-	// over rows the scope excludes — wrong counts and wrong page boundaries,
-	// not merely extra rows. Declining is always correct, only slower.
-	if scope.Scope == nil && !worldFromContext(ctx).blocksAllReads() {
+	// run when BOTH narrowings are absent. A scope using `~=`, an ordered
+	// comparison or a disjunction has a Go-side remainder, and a store-side
+	// page computed without it would paginate over rows the scope excludes —
+	// wrong counts and wrong page boundaries, not merely extra rows. The same
+	// holds for a condition. Declining is always correct, only slower.
+	if cond == nil && scope.Scope == nil && !worldFromContext(ctx).blocksAllReads() {
 		rqr := readGateFromContext(ctx).ReadQuery(ctx, typeName)
 		isRelationKey := relationFilterClassifier(a.Meta(), a.Cfg(), typeName)
 		if plan, ok := planListPushdown(
@@ -374,6 +406,12 @@ func (a *App) listPage(
 	}
 	all, err := scopedSortedEntitiesScoped(ctx, a, typeName, query, scope)
 	if err != nil {
+		return nil, 0, err
+	}
+	// AFTER the ACL scope and every filter, BEFORE paging and the count: the
+	// condition narrows the population the page and total describe, so
+	// applying it later would page one set and count another.
+	if all, err = applyViewCondition(ctx, all, cond, a.redactedForSuggestion); err != nil {
 		return nil, 0, err
 	}
 	total = len(all)

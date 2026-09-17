@@ -1059,6 +1059,7 @@ lists:
 | `columns`         | list   | Column definitions                                          |
 | `sort`            | object | Default sort order                                          |
 | `filters`         | list   | Static filters (always applied)                             |
+| `condition`       | string | Predicate expression ANDed with `filters` — for `or`, grouping and date arithmetic. See [Conditions](#conditions-condition) |
 | `filter_controls` | list   | Interactive filter controls shown to the user               |
 | `query_scope`     | string | Named query scope from the entity type's `query_scopes:`; `all` withdraws the type's `default` (see below) |
 | `create_form`     | string | Form name for the "New" button                              |
@@ -1190,6 +1191,126 @@ filters:
 
 To filter for a literal value that starts with `$`, you currently cannot
 escape it — choose property values that don't start with `$`.
+
+### Conditions (`condition:`)
+
+`filters:` entries are always ANDed, so they can only express a plain
+conjunction. When the membership rule needs **or**, grouping, negation of a
+compound, or date arithmetic, use `condition:` — a predicate expression
+evaluated per row and ANDed with `filters:`.
+
+```yaml
+lists:
+  actieve_taken:
+    entity_type: taak
+    condition: >-
+      entity.status ~= 'gereed'
+      or (entity.afgerond_op ~= nil
+          and days_between(today(), entity.afgerond_op) <= 2)
+```
+
+That rule — "every task that is not finished, plus ones finished in the last
+two days" — is a disjunction, and cannot be written as `filters:` at all. A
+filter on `afgerond_op` would also apply to the unfinished tasks and hide them.
+
+It is operator config: the expression is never accepted from a request, so a
+caller can only select among views you have declared.
+
+> **Lists only, for now.** A `condition:` on a `kanbans:` entry is **rejected
+> at startup** — the board still filters client-side, and a key that validated
+> and then did nothing would be exactly the silent no-op this feature exists to
+> remove. Use `filters:` on a board until this note goes away.
+
+**A condition that does not compile is a startup error**, naming the view and
+the offending attribute:
+
+```text
+view condition errors:
+  lists["actieve_taken"]: condition does not compile against entity type
+  "taak": predicate: compile error at line 1: unknown attribute "staus" on record
+```
+
+(One line in the real output; wrapped here to fit.)
+
+That is deliberate — a filter that silently matches nothing is far harder to
+notice than a server that refuses to start.
+
+#### It is a different language from `filters:`
+
+`condition:` is a Lua expression subset (the same language as automation
+`condition:` and next-action `condition:` — see
+[metamodel.md](metamodel.md)). `filters:` is the filter DSL. They sit next to
+each other in the same block and **three differences will bite you**:
+
+| | `filters:` | `condition:` |
+|---|---|---|
+| not-equal | `!=` | **`~=`** (`!=` is a parse error) |
+| unset property, not-equal | **excluded** | **included** |
+| value quoting | bare | `'single quotes'` |
+
+The first is caught at startup. The second is not, so read it carefully:
+
+```yaml
+filters:
+  - property: status
+    operator: "!="        # a task with NO status is HIDDEN
+    value: gereed
+condition: "entity.status ~= 'gereed'"   # a task with NO status is SHOWN
+```
+
+Both are correct for their own language. A filter names a population, and a
+task with no status is not in the "status is something other than gereed"
+population. The expression language follows Lua, where `nil` equals nothing,
+so `nil ~= 'gereed'` is true.
+
+#### `days_between` argument order
+
+`days_between(a, b)` counts days **from b to a**. So an *age* is:
+
+```lua
+days_between(today(), entity.afgerond_op)    -- 3 = finished three days ago
+```
+
+Writing the arguments the other way round is the trap, because it produces no
+error:
+
+```lua
+days_between(entity.afgerond_op, today()) <= 2   -- WRONG: matches everything
+```
+
+For a past date that yields a **negative** number, and `-10 <= 2` is true — so
+every old row matches and the filter appears to do nothing.
+
+#### An unset property is an error, not `false`
+
+A date function applied to a property that is not set raises an evaluation
+error, which fails the request rather than silently dropping the row. Guard it:
+
+```lua
+entity.afgerond_op ~= nil and days_between(today(), entity.afgerond_op) <= 2
+```
+
+The `and` short-circuits, so the guard is enough. Note the shorthand
+`entity.afgerond_op and …` does **not** compile — the language requires a
+boolean on the left of `and`.
+
+#### Available functions
+
+`today()`, `days_between()`, `date_add()`, `rrule_next()`, `match()`,
+`regex()`, `contains()`, `len()`. Signatures are in
+[metamodel.md](metamodel.md).
+
+A condition is evaluated for the signed-in principal, so it may also use
+`current_user.id`, `is_current_user(entity.owner)` and
+`has_current_user(entity.watchers)` — useful for "assigned to me or
+unassigned", which is likewise a disjunction:
+
+```yaml
+condition: "is_current_user(entity.assignee) or entity.assignee == nil"
+```
+
+A condition never widens a view: it is applied on top of the ACL, so it can
+only remove rows the principal could already see.
 
 ### Query Scopes
 

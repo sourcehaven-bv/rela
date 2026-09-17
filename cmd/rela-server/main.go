@@ -764,19 +764,31 @@ func isLoopbackHost(host string) bool {
 	return false
 }
 
-// wireConditionCompilers supplies the predicate compilers backing a source's
-// `condition:` and an entity type's `query_scopes:`.
+// wireConditionCompilers supplies the predicate compilers backing a
+// next-action source's `condition:`, a list's or kanban's `condition:`, and an
+// entity type's `query_scopes:`.
 //
-// Both live above internal/dataentry (arch-lint keeps the condition engine
-// there), so the composition root bridges them rather than dataentry
+// All three live above internal/dataentry (arch-lint keeps the condition
+// engine there), so the composition root bridges them rather than dataentry
 // importing one. Extracted from main() to keep it inside the funlen budget.
 //
-// Either failure is fatal: a silently absent compiler leaves conditions
+// Every failure is fatal: a silently absent compiler leaves conditions
 // unevaluated and scopes unapplied, which shows rows the operator explicitly
 // excluded — and nothing on screen would say so.
+//
+// The view halves need AdaptViewConditions / AdaptQueryScopes because appbuild
+// cannot name dataentry's types (dataentry's tests import appbuild, closing a
+// cycle), so each returns a structurally identical func under its own name.
+// This call is where the two meet: a drift between them fails to compile here.
 func wireConditionCompilers(app *dataentry.App) {
 	if err := app.SetNextActionMatchers(appbuild.NextActionMatchers); err != nil {
 		slog.Error("failed to wire next-action matchers", "error", err)
+		os.Exit(1)
+	}
+	if err := app.SetViewConditions(
+		dataentry.AdaptViewConditions(appbuild.ViewConditions),
+	); err != nil {
+		slog.Error("failed to wire view conditions", "error", err)
 		os.Exit(1)
 	}
 	if err := app.SetQueryScopeResolver(

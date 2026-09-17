@@ -189,8 +189,21 @@ type appEntityWriter interface {
 // and the compiling lives in internal/scopes with appbuild bridging. The
 // feature cost one method, not a subsystem. Ratchet target, as above.
 //
-//plimsoll:max-methods=89
-//plimsoll:max-exported-methods=22
+// 89 -> 90 for SetViewConditions (TKT-LPLZ1V), and 22 -> 23 exported, on the
+// same terms: it is a wiring setter in the established shape, and the
+// alternative — appbuild assigning the field directly — trades a named seam
+// for a hidden one.
+//
+// The subsystem cost App exactly that one method, and not by luck. The
+// condition lookup was written as an App method first and plimsoll failed the
+// build; it became a package function taking its seams explicitly
+// (`viewCondition`), which reads better for the reason TKT-WRLDAPI's note
+// gives — what a lookup depends on is named in the signature rather than
+// reached through this struct. Recorded because the load line interrupting
+// that habit is the whole point of it. Ratchet target, as above.
+//
+//plimsoll:max-methods=90
+//plimsoll:max-exported-methods=23
 type App struct {
 	// Primitives — immutable after NewApp.
 	fs    storage.FS
@@ -261,6 +274,19 @@ type App struct {
 	// deployment wired it — sources declaring a condition then fail engine
 	// construction rather than silently matching everything.
 	nextActionMatchers NextActionMatcherFunc
+
+	// viewConditions resolves a list's or kanban's compiled `condition:`.
+	// Injected for the same reason nextActionMatchers is: the compiler lives
+	// above this package, and arch-lint forbids dataentry importing
+	// conditionlint or predicate.
+	//
+	// Nil when no deployment wired it, which means every view behaves as it
+	// did before conditions existed. That is the safe direction here — a
+	// condition only ever NARROWS a view, so an unwired lookup shows a
+	// superset of the configured view and never anything the ACL would
+	// withhold. It is not safe for the reverse, which is why a condition
+	// that fails to COMPILE is a startup error rather than a silent widening.
+	viewConditions ViewConditionFunc
 
 	// queryScopes compiles `query_scopes:`; see SetQueryScopeResolver.
 	queryScopes QueryScopeResolverFunc

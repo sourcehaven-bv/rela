@@ -111,7 +111,13 @@ func viewQueryScope(
 			"%w: %q is not declared on %q", errBadQueryScope, name, entityType)
 	}
 	if scope == nil {
-		return resolvedQueryScope{}, nil
+		// No scope applies, but still carry the binder: the identity it
+		// stamps is request-scoped, not scope-scoped, and a view's
+		// `condition:` needs it whether or not a scope resolved. Dropping it
+		// here is what made `is_current_user(...)` in a condition fail with
+		// ErrNoCurrentUser on an unscoped list. Scope stays nil, so every
+		// "is there a scope" check still reads this as unscoped.
+		return resolvedQueryScope{Bind: resolver.BindRequest}, nil
 	}
 	return resolvedQueryScope{
 		Scope: scope, Props: props, Eval: resolver.Evaluate, Bind: resolver.BindRequest,
@@ -145,6 +151,24 @@ type resolvedQueryScope struct {
 // failed page. Never call it per row — resolution reads the store.
 func (r resolvedQueryScope) bind(ctx context.Context) (context.Context, error) {
 	if r.Scope == nil || r.Bind == nil {
+		return ctx, nil
+	}
+	return r.Bind(ctx)
+}
+
+// bindQueryIdentity stamps the request identity for ANY narrowing that may
+// name `current_user`, not only a resolved scope.
+//
+// Separate from [resolvedQueryScope.bind] because the two answer different
+// questions. bind asks "does this scope need binding", and correctly says no
+// when there is no scope. This asks "does this REQUEST need an identity", and
+// a list whose `condition:` names current_user needs one with no scope in
+// play — the case that returned 500 before.
+//
+// Binding twice is safe: the resolver honors an existing stamp and refuses
+// only a conflicting one, so a caller that already bound loses nothing.
+func bindQueryIdentity(ctx context.Context, r resolvedQueryScope) (context.Context, error) {
+	if r.Bind == nil {
 		return ctx, nil
 	}
 	return r.Bind(ctx)
