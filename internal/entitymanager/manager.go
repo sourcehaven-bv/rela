@@ -1296,11 +1296,12 @@ func (m *Manager) authorizeCascadeRelations(
 		// FromID is deliberately EMPTY. The decision is a pure function of
 		// (relation type, source type, source face, op) — FromID is never
 		// read by any branch of authorizeRelationWrite — so one check stands
-		// for every edge sharing that tuple. Stamping one arbitrary id into the audit
-		// row would make it look like a claim about that specific entity: a
-		// forensic query for another source in the same class would find
-		// nothing, though it was equally refused. An empty FromID says
-		// "this type-pair", which is what was actually decided.
+		// for every edge sharing that tuple. Stamping one arbitrary id into
+		// the audit row would make it look like a claim about that specific
+		// entity: a forensic query for another source in the same class
+		// would find nothing, though it was equally refused. An empty
+		// FromID says "this type-and-face class", which is what was
+		// actually decided.
 		return m.authorizeAndAudit(ctx, acl.WriteRequest{
 			Op: acl.OpDelete,
 			Subject: acl.RelationSubject{
