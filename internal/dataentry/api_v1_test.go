@@ -4011,12 +4011,22 @@ func assertViewSectionsLackKeys(t *testing.T, body []byte, keys ...string) {
 	}
 }
 
-// View responses must not carry add/link affordances. The view path is
-// strictly read-only; mutations live on the form/side-panel path. This guards
-// against re-introducing addInfo / linkInfo on v1.ViewSection across every
-// shape that historically emitted them: outgoing/incoming traversals,
-// cards/list/table displays, and the variant where the target type has no
-// create-form configured (which previously emitted only linkInfo).
+// View responses must not carry add/link affordances, nor a create affordance
+// on a section that did not ask for one. The view path is read-only BY DEFAULT
+// (TKT-651W); mutations live on the form/side-panel path.
+//
+// TKT-R4BMJM narrowed that invariant rather than reversing it: a section may now
+// opt into a create button with an explicit `create:` block. So this test still
+// asserts ABSENCE, on sections with no such block — which is every section here,
+// and every section in every config that predates the feature. `create` joins
+// the asserted-absent keys for exactly that reason: the opt-in must be the only
+// way to get one, and a change that made the affordance default-on would fail
+// here rather than quietly re-bleeding mutation onto a read surface.
+//
+// The shapes covered are the ones that historically emitted addInfo / linkInfo:
+// outgoing/incoming traversals, cards/list/table displays, and the variant where
+// the target type has no create-form configured (which previously emitted only
+// linkInfo).
 func TestV1Views_NoAddOrLinkInfoOnSections(t *testing.T) {
 	type variant struct {
 		name     string
@@ -4089,7 +4099,7 @@ func TestV1Views_NoAddOrLinkInfoOnSections(t *testing.T) {
 			if rec.Code != http.StatusOK {
 				t.Fatalf("status: want 200, got %d (body: %s)", rec.Code, rec.Body.String())
 			}
-			assertViewSectionsLackKeys(t, rec.Body.Bytes(), "addInfo", "linkInfo")
+			assertViewSectionsLackKeys(t, rec.Body.Bytes(), "addInfo", "linkInfo", "create")
 		})
 	}
 }

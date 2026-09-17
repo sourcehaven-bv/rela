@@ -175,22 +175,25 @@ type GroupData struct {
 	Entities  []SectionEntityData
 }
 
-// SectionAddTarget holds a possible entity type target for an "Add" button.
-type SectionAddTarget struct {
-	EntityType string
-	FormID     string
-	Label      string
-}
-
-// SectionAddInfo describes an "Add" button on a view section.
+// SectionAddInfo describes an "Add" button on a side-panel section.
+//
+// Targets are [SectionCreateTarget], shared with the entity-detail view's
+// create affordance so both surfaces derive their offer from one gated
+// function. The side panel ignores the Template field, which only the
+// detail-view path populates.
 type SectionAddInfo struct {
 	Relation string
 	LinkAs   string // "from" or "to" — role of the new entity in the relation
 	PeerID   string // entry entity ID
-	Targets  []SectionAddTarget
+	Targets  []SectionCreateTarget
 }
 
-// SectionLinkInfo describes a "Link existing" button on a view section.
+// SectionLinkInfo describes a "Link existing" button on a SIDE-PANEL section.
+//
+// Side-panel-only, and deliberately not extended to the entity-detail view by
+// TKT-R4BMJM: that ticket added a create affordance there, but link-existing was
+// explicitly out of its scope, and this struct is built with no form check and
+// no permission check (see resolveSectionButtonsWithTraverse).
 type SectionLinkInfo struct {
 	Relation    string   // relation type name
 	LinkAs      string   // "from" or "to" — role of the linked entity
@@ -216,6 +219,10 @@ type SectionData struct {
 	HasContent   bool
 	AddInfo      *SectionAddInfo
 	LinkInfo     *SectionLinkInfo
+	// CreateInfo is the entity-detail view's opt-in create affordance
+	// (TKT-R4BMJM). Nil unless the section's config carries a `create:` block,
+	// which is what keeps TKT-651W's read-only default intact.
+	CreateInfo *SectionCreateInfo
 
 	// Tree holds the parent rows of a `display: nested` section, each with its
 	// own children. Empty for every other display mode.
@@ -427,14 +434,21 @@ func (h *viewsHandler) executeSidePanel(
 }
 
 // resolveSectionButtonsWithTraverse populates AddInfo and LinkInfo on
-// side-panel sections. The side panel is the only mutation surface that
-// carries these affordances; the read-only entity-detail view path does
-// not call this. The `viewConfig` parameter is a synthetic ViewConfig
-// hand-built from a form's SidePanel config — it is not a generic view.
+// side-panel sections. The side panel is the only surface carrying a
+// LINK-EXISTING affordance; the entity-detail view path deliberately does not
+// call this (TKT-651W's read-only invariant), and reaches its own opt-in create
+// affordance through [viewsHandler.resolveSectionCreate] instead. The
+// `viewConfig` parameter is a synthetic ViewConfig hand-built from a form's
+// SidePanel config — it is not a generic view.
+//
+// The add targets are ACL-gated via [viewsHandler.creatableTargets] (TKT-R4BMJM).
+// Before that, this surface offered `+ Add <Type>` whenever a create form was
+// configured, with no principal involved — so a user who could not create the
+// type got a button leading to a form whose POST would be refused.
 //
 //nolint:gocognit // resolves section buttons across traverse targets; the branches are per-source button-resolution cases, not shared logic to extract.
 func (h *viewsHandler) resolveSectionButtonsWithTraverse(
-	viewConfig ViewConfig, sections []SectionData, entry *entity.Entity,
+	ctx context.Context, viewConfig ViewConfig, sections []SectionData, entry *entity.Entity,
 ) {
 	s := h.schema()
 	for i, sec := range viewConfig.Sections {
@@ -462,20 +476,7 @@ func (h *viewsHandler) resolveSectionButtonsWithTraverse(
 			} else {
 				candidateTypes = relDef.From
 			}
-			var targets []SectionAddTarget
-			for _, et := range candidateTypes {
-				formID := h.createFormForType(et)
-				if formID == "" {
-					continue
-				}
-				label := et
-				if ed, ok := s.Meta.GetEntityDef(et); ok && ed.Label != "" {
-					label = ed.Label
-				}
-				targets = append(targets, SectionAddTarget{
-					EntityType: et, FormID: formID, Label: label,
-				})
-			}
+			targets := h.creatableTargets(ctx, candidateTypes, nil)
 			if len(targets) > 0 {
 				sections[i].AddInfo = &SectionAddInfo{
 					Relation: relName,
