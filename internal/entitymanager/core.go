@@ -420,6 +420,42 @@ func anyFaceOf(ctx context.Context, st store.Store, id string) (*entity.Entity, 
 	return nil, store.ErrNotFound
 }
 
+// getRelationOnFace returns the edge of this triple whose TAIL is exactly
+// face, or [store.ErrNotFound].
+//
+// [store.RelationReader.GetRelation] cannot answer this: it addresses the
+// default-tail edge only, so on a faced source it reports "no such relation"
+// for an edge that exists, and hands back a DIFFERENT edge for one that does.
+// The tail is part of a relation's identity, so the query filters on it
+// rather than matching the triple approximately (BUG-64MU2Q).
+//
+// FAILS CLOSED: a query error is returned as-is, never flattened into
+// not-found. Callers branch on not-found to mean "absent", and on the create
+// path that branch decides whether a write proceeds.
+//
+// Nil: never returned with a nil error.
+func getRelationOnFace(
+	ctx context.Context, st store.Store, from string, face entity.Face, relType, to string,
+) (*entity.Relation, error) {
+	q := store.RelationQuery{
+		From:     from,
+		FromFace: &face,
+		Type:     relType,
+		To:       to,
+	}
+	for rel, err := range st.ListRelations(ctx, q) {
+		if err != nil {
+			return nil, err
+		}
+		// The query is the address; the comparison guards a backend that
+		// treats any of these fields as a hint rather than a filter.
+		if rel.From == from && rel.FromFace == face && rel.Type == relType && rel.To == to {
+			return rel, nil
+		}
+	}
+	return nil, store.ErrNotFound
+}
+
 // getEntityByRef resolves an entity ADDRESS — either a bare id or the fused
 // boundary form `ID@face` — to the row it names.
 //

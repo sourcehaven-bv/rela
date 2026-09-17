@@ -96,6 +96,14 @@ func (m *MemStore) UpdateRelation(
 	return m.updateRelation(ctx, from, relType, to, data)
 }
 
+// UpdateRelationState implements store.RelationWriter.
+func (m *MemStore) UpdateRelationState(
+	ctx context.Context, from string, p entity.Face, relType, to string, data store.RelationData,
+) (*entity.Relation, error) {
+	defer m.lockTx()()
+	return m.updateRelationState(ctx, from, p, relType, to, data)
+}
+
 // DeleteRelation implements store.RelationWriter.
 func (m *MemStore) DeleteRelation(ctx context.Context, from, relType, to string) error {
 	defer m.lockTx()()
@@ -171,6 +179,12 @@ func (t txStore) UpdateRelation(
 	ctx context.Context, from, relType, to string, data store.RelationData,
 ) (*entity.Relation, error) {
 	return t.updateRelation(ctx, from, relType, to, data)
+}
+
+func (t txStore) UpdateRelationState(
+	ctx context.Context, from string, p entity.Face, relType, to string, data store.RelationData,
+) (*entity.Relation, error) {
+	return t.updateRelationState(ctx, from, p, relType, to, data)
 }
 
 func (t txStore) DeleteRelation(ctx context.Context, from, relType, to string) error {

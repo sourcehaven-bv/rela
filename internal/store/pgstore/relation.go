@@ -176,8 +176,23 @@ func (s *Store) CreateRelation(
 
 // UpdateRelation overwrites a relation's data. Returns store.ErrNotFound if it
 // does not exist. Nil data.Properties clears the property set.
+// UpdateRelation updates the DEFAULT-tail edge of the triple.
+// UpdateRelationState is the general form.
 func (s *Store) UpdateRelation(
 	ctx context.Context, from, relType, to string, data store.RelationData,
+) (*entity.Relation, error) {
+	return s.UpdateRelationState(ctx, from, "", relType, to, data)
+}
+
+// UpdateRelationState updates the edge with EXACTLY this tail (BUG-64MU2Q).
+//
+// The tail is part of a relation's identity, so addressing the wrong one
+// writes the caller's properties onto a DIFFERENT edge rather than failing —
+// the same hazard DeleteRelationState exists to make unavailable.
+//
+// data.FromFace is ignored; p is the address.
+func (s *Store) UpdateRelationState(
+	ctx context.Context, from string, p entity.Face, relType, to string, data store.RelationData,
 ) (*entity.Relation, error) {
 	rawProps, err := marshalProps(data.Properties)
 	if err != nil {
@@ -191,16 +206,14 @@ func (s *Store) UpdateRelation(
 	defer tx.Rollback(ctx) //nolint:errcheck // rollback after commit is a no-op
 
 	editorUser, editorTool := attributionValues(ctx)
-	// Default-tail addressing in Step 1 (TKT-DOFYR1) — see
-	// store.RelationData.FromFace.
 	const q = `
 		UPDATE relations
 		SET properties = $4, content = $5, updated_at = now(), seq = nextval('rela_seq'),
 		    last_edited_by_user = $6, last_edited_by_tool = $7
-		WHERE from_id = $1 AND rel_type = $2 AND to_id = $3 AND from_face = ''
+		WHERE from_id = $1 AND rel_type = $2 AND to_id = $3 AND from_face = $8
 		RETURNING from_id, from_face, rel_type, to_id, properties, content, updated_at`
 	r, err := scanRelation(tx.QueryRow(ctx, q, from, relType, to, rawProps, data.Content,
-		editorUser, editorTool))
+		editorUser, editorTool, string(p)))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
@@ -208,7 +221,9 @@ func (s *Store) UpdateRelation(
 		return nil, err
 	}
 
-	ev := store.Event{Op: store.EventRelationUpdated, RelationType: relType, From: from, To: to}
+	ev := store.Event{
+		Op: store.EventRelationUpdated, RelationType: relType, From: from, To: to, Face: p,
+	}
 	s.notify(ctx, tx, ev)
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err

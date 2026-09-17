@@ -511,7 +511,30 @@ type RelationWriter interface {
 
 	// UpdateRelation updates an existing relation's data.
 	// Returns ErrNotFound if the relation does not exist.
+	//
+	// Addresses the DEFAULT-tail edge of the triple, like DeleteRelation —
+	// use UpdateRelationState for a state-tailed edge.
 	UpdateRelation(ctx context.Context, from, relType, to string, data RelationData) (*entity.Relation, error)
+
+	// UpdateRelationState updates the edge of this triple whose tail is p
+	// (BUG-64MU2Q). The zero face addresses the default-tail edge, making
+	// this the general form of UpdateRelation.
+	//
+	// Separate from UpdateRelation for the same reason DeleteRelationState
+	// is separate from DeleteRelation: the tail is part of a relation's
+	// IDENTITY, not a filter. A caller holding a state-tailed edge that
+	// drops the tail does not update "the edge, approximately" — it writes
+	// its properties onto a DIFFERENT edge, the default face's, and reports
+	// success.
+	//
+	// RelationData.FromFace is IGNORED here; p is the address. Carrying the
+	// tail in both would let them disagree, and a write whose address and
+	// payload disagree has no safe reading.
+	//
+	// Returns ErrNotFound if no edge with that exact tail exists.
+	UpdateRelationState(
+		ctx context.Context, from string, p entity.Face, relType, to string, data RelationData,
+	) (*entity.Relation, error)
 
 	// DeleteRelation removes a relation.
 	// Returns ErrNotFound if the relation does not exist.

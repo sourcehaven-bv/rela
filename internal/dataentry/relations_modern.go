@@ -261,8 +261,9 @@ func (h *writeHandler) collectEdgeWarnings(
 //
 //nolint:gocognit // diffs desired vs. existing relation sets and issues add/remove ops per peer; the branches are the set-reconciliation cases, not shared logic to extract.
 func (h *writeHandler) applyRelationsModern(
-	ctx context.Context, entityID string, desired map[string]v1.RelationsUpdate,
+	ctx context.Context, ref entityRef, desired map[string]v1.RelationsUpdate,
 ) ([]Warning, error) {
+	entityID := ref.ID
 	if len(desired) == 0 {
 		return nil, nil
 	}
@@ -283,6 +284,23 @@ func (h *writeHandler) applyRelationsModern(
 		relDef := meta.Relations[canonical]
 		direction := directionLabel(incoming)
 
+		// The TAIL face this edge is written to (BUG-64MU2Q). Non-zero only
+		// when the addressed entity is the tail AND the type is
+		// content-scoped:
+		//
+		//   - an INCOMING edge tails at the PEER, and the peer's face is not
+		//     this request's to choose;
+		//   - an identity-scoped edge belongs to the entity, so every face
+		//     shares it and the tail is the zero face by definition.
+		//
+		// Anything else would file the edge under a face that does not own
+		// it — the mis-addressing the store's *State methods exist to
+		// prevent.
+		tail := entity.Face("")
+		if !incoming && relDef.Scope.IsContent() {
+			tail = ref.Face
+		}
+
 		// Dedup by ID. Duplicate resource identifiers in the body
 		// collapse to a single edge — matches the legacy IDs-only
 		// reconciler's set semantics and is what callers expect when
@@ -296,7 +314,7 @@ func (h *writeHandler) applyRelationsModern(
 			desiredByID[ref.ID] = ref
 		}
 
-		current := h.currentEdgesByPeer(ctx, entityID, canonical, incoming)
+		current := h.currentEdgesByPeer(ctx, entityID, tail, canonical, incoming)
 
 		// Adds and upserts.
 		for _, id := range desiredOrder {
@@ -314,11 +332,12 @@ func (h *writeHandler) applyRelationsModern(
 				if isEdgeNoOp(existing, finalProps, finalContent, contentSet, ref) {
 					continue // value-based no-op suppression
 				}
-				if err := h.writeUpdateRelation(ctx, from, to, canonical, ref); err != nil {
+				if err := h.writeUpdateRelation(ctx, from, tail, to, canonical, ref); err != nil {
 					return warnings, err
 				}
 			} else {
-				if err := h.writeCreateRelation(ctx, from, to, canonical, ref, finalProps, finalContent); err != nil {
+				if err := h.writeCreateRelation(ctx, from, tail, to, canonical, ref,
+					finalProps, finalContent); err != nil {
 					return warnings, err
 				}
 			}
@@ -330,7 +349,7 @@ func (h *writeHandler) applyRelationsModern(
 				continue
 			}
 			from, to := edgeEndpoints(entityID, peerID, incoming)
-			if err := em.DeleteRelation(ctx, from, canonical, to); err != nil {
+			if err := em.DeleteRelationState(ctx, from, tail, canonical, to); err != nil {
 				return warnings, &relationError{
 					RelType: canonical, Target: peerID, Op: "delete",
 					Reason: "delete_failed", Err: err,
@@ -366,12 +385,13 @@ func (h *writeHandler) applyRelationsModern(
 // this function does not consult direction. `ref.ID` is the peer ID
 // (which is `to` for outgoing edges and `from` for incoming).
 func (h *writeHandler) writeCreateRelation(
-	ctx context.Context, from, to, relType string, ref v1.ResourceIdentifier,
+	ctx context.Context, from string, tail entity.Face, to, relType string, ref v1.ResourceIdentifier,
 	finalProps map[string]any, finalContent string,
 ) error {
 	opts := entity.RelationOptions{
 		Properties: finalProps,
 		Content:    ref.Content,
+		FromFace:   tail,
 	}
 	_, err := h.manager.CreateRelation(ctx, from, relType, to, opts)
 	if err == nil {
@@ -389,7 +409,7 @@ func (h *writeHandler) writeCreateRelation(
 	// Soft condition (type-allowlist mismatch): write directly through
 	// the store, skipping the workspace's pre-write validation. Safe
 	// because the EntityManager already ran the ACL above.
-	data := &store.RelationData{Properties: finalProps, Content: finalContent}
+	data := &store.RelationData{Properties: finalProps, Content: finalContent, FromFace: tail}
 	if _, sErr := h.store.CreateRelation(ctx, from, relType, to, data); sErr != nil {
 		return &relationError{
 			RelType: relType, Target: ref.ID, Op: "create",
@@ -405,12 +425,13 @@ func (h *writeHandler) writeCreateRelation(
 //
 // `from` and `to` are pre-resolved by the caller via edgeEndpoints.
 func (h *writeHandler) writeUpdateRelation(
-	ctx context.Context, from, to, relType string, ref v1.ResourceIdentifier,
+	ctx context.Context, from string, tail entity.Face, to, relType string, ref v1.ResourceIdentifier,
 ) error {
 	opts := entity.RelationOptions{
 		Properties: ref.Meta,
 		MetaUnset:  ref.MetaUnset,
 		Content:    ref.Content,
+		FromFace:   tail,
 	}
 	_, err := h.manager.UpdateRelation(ctx, from, relType, to, opts)
 	if err == nil {
@@ -428,13 +449,36 @@ func (h *writeHandler) writeUpdateRelation(
 		}
 	}
 	// Soft condition: rebuild the post-merge state and write directly.
-	current, _ := h.store.GetRelation(ctx, from, relType, to)
+	current := h.currentEdgeOnFace(ctx, from, tail, relType, to)
 	finalProps, finalContent, _ := mergeEdgeMeta(current, ref)
 	data := store.RelationData{Properties: finalProps, Content: finalContent}
-	if _, sErr := h.store.UpdateRelation(ctx, from, relType, to, data); sErr != nil {
+	if _, sErr := h.store.UpdateRelationState(ctx, from, tail, relType, to, data); sErr != nil {
 		return &relationError{
 			RelType: relType, Target: ref.ID, Op: "update",
 			Reason: "update_failed", Err: sErr,
+		}
+	}
+	return nil
+}
+
+// currentEdgeOnFace reads the edge of this triple whose TAIL is exactly
+// tail, for the soft-condition fallback's read-merge-write.
+//
+// `store.GetRelation` reads the default tail only, so on a faced source it
+// would merge the caller's changes into a DIFFERENT edge's properties and
+// write that result back (BUG-64MU2Q). Returns nil when absent, which
+// mergeEdgeMeta treats as "no prior state" — the same thing the previous
+// ignored-error read did.
+func (h *writeHandler) currentEdgeOnFace(
+	ctx context.Context, from string, tail entity.Face, relType, to string,
+) *entity.Relation {
+	q := store.RelationQuery{From: from, FromFace: &tail, Type: relType, To: to}
+	for rel, err := range h.store.ListRelations(ctx, q) {
+		if err != nil {
+			return nil
+		}
+		if rel.From == from && rel.FromFace == tail && rel.Type == relType && rel.To == to {
+			return rel
 		}
 	}
 	return nil

@@ -183,6 +183,25 @@ func pathEntityInBothSets(entityID string, keys []string, desired map[string]v1.
 func (a *App) currentEdgesByPeer(
 	ctx context.Context, entityID, canonical string, incoming bool,
 ) map[string]*entity.Relation {
+	return a.currentEdgesByPeerOnFace(ctx, entityID, "", canonical, incoming)
+}
+
+// currentEdgesByPeerOnFace is currentEdgesByPeer restricted to the
+// edges ONE face owns, for the write-side diff (BUG-64MU2Q).
+//
+// The readers query by BARE id, which matches every face's tail at once, so
+// a faced entity's diff would see the union of its faces' content-scoped
+// edges. The reconciler deletes whatever is current but not desired — so a
+// PATCH to the published face would delete the draft's links, the
+// cross-face write the address grammar exists to prevent.
+//
+// The filter applies to the TAIL only. An INCOMING edge tails at the peer,
+// whose face this request does not address, so those are left unfiltered.
+// An identity-scoped edge is stored on the zero face and so is matched by a
+// zero-face filter, which is what a faceless type and the default face use.
+func (a *App) currentEdgesByPeerOnFace(
+	ctx context.Context, entityID string, tail entity.Face, canonical string, incoming bool,
+) map[string]*entity.Relation {
 	current := map[string]*entity.Relation{}
 	var edges []*entity.Relation
 	if incoming {
@@ -192,6 +211,9 @@ func (a *App) currentEdgesByPeer(
 	}
 	for _, edge := range edges {
 		if edge.Type != canonical {
+			continue
+		}
+		if !incoming && edge.FromFace != tail {
 			continue
 		}
 		peerID := edge.To

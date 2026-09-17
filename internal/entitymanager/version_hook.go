@@ -149,6 +149,11 @@ func (m *Manager) recordRelationVersion(
 	// the store can address the right lineage. Until then the sync path —
 	// rename stitch and pre-delete capture — is default-tail only, and a
 	// state edge's delete is captured by the entity cascade instead.
+	//
+	// BUG-64MU2Q made this reachable from a client: a faced relation delete
+	// now takes the sync path, so it deletes correctly but records no final
+	// version. Closing that is TKT-JAROC3. The skip fails safe — no history
+	// rather than another lineage's history.
 	if !r.FromFace.IsDefault() {
 		return
 	}

@@ -66,6 +66,15 @@ type TemplateLoader interface {
 //   - UpdateRelation: fetch existing → merge properties → MetaUnset →
 //     content → write. No automation.
 //   - DeleteRelation: delete. No automation.
+//
+// +1 (BUG-64MU2Q): DeleteRelationState, the face-addressed form of
+// DeleteRelation. It cannot be an option on the existing method — the tail is
+// part of a relation's identity, so the two address different edges, which is
+// why the store draws the same line between DeleteRelation and
+// DeleteRelationState. Pinned here rather than split: the pair belongs on the
+// type that owns the write path.
+//
+//plimsoll:max-methods=41
 type Manager struct {
 	deps Deps
 
@@ -1831,6 +1840,7 @@ func (m *Manager) CreateRelation(
 		Subject: acl.RelationSubject{
 			Type:     relType,
 			FromType: fromType, FromID: from,
+			FromFace: opts.FromFace,
 		},
 	}); aclErr != nil {
 		return nil, aclErr
@@ -1859,11 +1869,17 @@ func (m *Manager) CreateRelation(
 	if vErr := m.deps.Meta.ValidateRelation(relType, fromEntity.Type, toEntity.Type); vErr != nil {
 		return nil, fmt.Errorf("invalid relation: %w", vErr)
 	}
-	if _, gErr := m.deps.Store.GetRelation(ctx, from, relType, to); gErr == nil {
-		return nil, fmt.Errorf("%w: %s --%s--> %s", ErrRelationAlreadyExists, from, relType, to)
+	// Keyed on the TAIL too: two edges on the same triple with different
+	// tails are two relations, so a faced create must not be rejected by
+	// the default face's edge (BUG-64MU2Q). Advisory either way — the
+	// store's atomic create below is the real guard.
+	if _, gErr := getRelationOnFace(ctx, m.deps.Store, from, opts.FromFace, relType, to); gErr == nil {
+		return nil, fmt.Errorf("%w: %s --%s--> %s", ErrRelationAlreadyExists,
+			entity.FormatStateRef(from, opts.FromFace), relType, to)
 	}
 
 	rel := entity.NewRelation(from, relType, to)
+	rel.FromFace = opts.FromFace
 
 	tmpl, err := m.deps.Templater.RelationTemplate(ctx, relType)
 	if err != nil {
@@ -1897,9 +1913,11 @@ func (m *Manager) CreateRelation(
 	if _, err := m.deps.Store.CreateRelation(ctx, from, relType, to, &store.RelationData{
 		Properties: rel.Properties,
 		Content:    rel.Content,
+		FromFace:   opts.FromFace,
 	}); err != nil {
 		if errors.Is(err, store.ErrConflict) {
-			return nil, fmt.Errorf("%w: %s --%s--> %s", ErrRelationAlreadyExists, from, relType, to)
+			return nil, fmt.Errorf("%w: %s --%s--> %s", ErrRelationAlreadyExists,
+				entity.FormatStateRef(from, opts.FromFace), relType, to)
 		}
 		return nil, err
 	}
@@ -1927,14 +1945,19 @@ func (m *Manager) UpdateRelation(
 		Subject: acl.RelationSubject{
 			Type:     relType,
 			FromType: sourceType, FromID: from,
+			FromFace: opts.FromFace,
 		},
 	}); aclErr != nil {
 		return nil, aclErr
 	}
 
-	rel, err := m.deps.Store.GetRelation(ctx, from, relType, to)
+	// Addressed by TAIL as well as triple (BUG-64MU2Q): GetRelation reads the
+	// default-tail edge, so on a faced source it would load a DIFFERENT edge
+	// and the merge below would write the caller's properties onto it.
+	rel, err := getRelationOnFace(ctx, m.deps.Store, from, opts.FromFace, relType, to)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s --%s--> %s", ErrRelationNotFound, from, relType, to)
+		return nil, fmt.Errorf("%w: %s --%s--> %s", ErrRelationNotFound,
+			entity.FormatStateRef(from, opts.FromFace), relType, to)
 	}
 
 	// Snapshot pre-update meta keys so the audit summary names exactly
@@ -1967,10 +1990,11 @@ func (m *Manager) UpdateRelation(
 	// UpdateRelation, not upsert: the GetRelation above established the
 	// triple exists (else we returned ErrRelationNotFound), so this is
 	// unambiguously an update (BUG-ZWTDH9).
-	if _, err := m.deps.Store.UpdateRelation(ctx, from, relType, to, store.RelationData{
-		Properties: rel.Properties,
-		Content:    rel.Content,
-	}); err != nil {
+	if _, err := m.deps.Store.UpdateRelationState(ctx, from, opts.FromFace, relType, to,
+		store.RelationData{
+			Properties: rel.Properties,
+			Content:    rel.Content,
+		}); err != nil {
 		return nil, err
 	}
 	m.recordRelationAudit(ctx, audit.OpUpdateRelation, rel, updateRelationSummary(oldProps, rel.Properties))
@@ -1983,8 +2007,24 @@ func (m *Manager) UpdateRelation(
 	return rel, nil
 }
 
-// DeleteRelation removes a relation. **No automation.**
+// DeleteRelation removes the DEFAULT-tail edge of the triple.
+// [Manager.DeleteRelationState] is the general form. **No automation.**
 func (m *Manager) DeleteRelation(ctx context.Context, from, relType, to string) error {
+	return m.DeleteRelationState(ctx, from, "", relType, to)
+}
+
+// DeleteRelationState removes the edge whose SOURCE face is exactly face
+// (BUG-64MU2Q). The zero face addresses the default-tail edge.
+//
+// Separate from [Manager.DeleteRelation] for the reason the store draws the
+// same line: the tail is part of a relation's identity, so a caller holding a
+// state-tailed edge that drops the face does not delete "roughly the right
+// edge" — it deletes the default face's, and reports success.
+//
+// **No automation.**
+func (m *Manager) DeleteRelationState(
+	ctx context.Context, from string, face entity.Face, relType, to string,
+) error {
 	// Authorize BEFORE touching the store (BUG-K6FEVB). The source type
 	// feeds the type-level grant check; it is best-effort (empty if the
 	// source doesn't exist).
@@ -1997,6 +2037,7 @@ func (m *Manager) DeleteRelation(ctx context.Context, from, relType, to string) 
 		Subject: acl.RelationSubject{
 			Type:     relType,
 			FromType: sourceType, FromID: from,
+			FromFace: face,
 		},
 	}); aclErr != nil {
 		return aclErr
@@ -2006,14 +2047,17 @@ func (m *Manager) DeleteRelation(ctx context.Context, from, relType, to string) 
 	// record and version snapshot carry the full Subject (relation type + from
 	// + to). The relation may not exist — then the store delete returns an
 	// error and we skip both the version capture and the audit.
-	rel, getErr := m.deps.Store.GetRelation(ctx, from, relType, to)
+	//
+	// Addressed by tail: reading the default edge here would version and audit
+	// a different relation than the one being deleted.
+	rel, getErr := getRelationOnFace(ctx, m.deps.Store, from, face, relType, to)
 	// Capture the final pre-delete version BEFORE the store delete, while the
 	// live row (and its rel_record_id) still exists — the same order-before
 	// rationale as entity delete. Skipped if the relation was already gone.
 	if getErr == nil {
 		m.recordRelationVersion(ctx, store.VersionOpDelete, rel, "", "", "")
 	}
-	if err := m.deps.Store.DeleteRelation(ctx, from, relType, to); err != nil {
+	if err := m.deps.Store.DeleteRelationState(ctx, from, face, relType, to); err != nil {
 		return fmt.Errorf("delete relation: %w", err)
 	}
 	if getErr == nil {
