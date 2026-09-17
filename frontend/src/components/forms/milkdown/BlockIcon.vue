@@ -115,6 +115,36 @@ const props = defineProps<{ name: string }>()
       <path d="M3 9h18M9 9v11M15 9v11" />
     </template>
 
+    <!-- Link: the two half-links of a chain, meeting at a bar. -->
+    <template v-else-if="props.name === 'link'">
+      <path d="M10 13a5 5 0 0 0 7 0l2-2a5 5 0 0 0-7-7l-1 1" />
+      <path d="M14 11a5 5 0 0 0-7 0l-2 2a5 5 0 0 0 7 7l1-1" />
+    </template>
+
+    <!-- Unlink: the same chain, broken, with the gap made explicit. -->
+    <template v-else-if="props.name === 'unlink'">
+      <path d="M16 13l1-1a5 5 0 0 0-7-7l-1 1" />
+      <path d="M8 11l-1 1a5 5 0 0 0 7 7l1-1" />
+      <path d="m4 4 16 16" />
+    </template>
+
+    <!-- Divider: a full-width rule, with the text it separates implied. -->
+    <template v-else-if="props.name === 'hr'">
+      <path d="M3 12h18" stroke-width="2.5" />
+      <path d="M6 6h12M6 18h12" opacity="0.45" />
+    </template>
+
+    <!-- Undo / redo: an arrow curving back onto the line it came from. -->
+    <template v-else-if="props.name === 'undo'">
+      <path d="M9 14 4 9l5-5" />
+      <path d="M4 9h10a6 6 0 0 1 0 12h-3" />
+    </template>
+
+    <template v-else-if="props.name === 'redo'">
+      <path d="m15 14 5-5-5-5" />
+      <path d="M20 9H10a6 6 0 0 0 0 12h3" />
+    </template>
+
     <!-- Table row/column operations. Each shows the grid with the affected
          band highlighted and a +/x marking what happens to it. -->
     <template v-else-if="props.name === 'addRowBefore'">

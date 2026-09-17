@@ -25,11 +25,23 @@ const props = defineProps<{
   tableCommands: readonly EditorCommand[]
   /** Whether the cursor is in a table, which is when the group appears. */
   showTableGroup: boolean
+  /** Undo and redo, in their own group at the end. */
+  historyCommands: readonly EditorCommand[]
+  /**
+   * Whether the cursor is in a link, which reveals the unlink button.
+   *
+   * Unlink needs a control of its own rather than living only in the hover
+   * tooltip: a pointer is not the only way people edit, and the tooltip is not
+   * in the tab order. With this button the whole feature — insert, retarget,
+   * remove — is reachable from the keyboard.
+   */
+  showUnlink: boolean
 }>()
 
 const emit = defineEmits<{
   run: [command: EditorCommand]
   openEntityPicker: []
+  unlink: []
 }>()
 
 /**
@@ -67,6 +79,21 @@ function onActivate(cmd: EditorCommand): void {
         @click="onActivate(cmd)"
       >
         <BlockIcon :name="cmd.id" />
+      </button>
+
+      <!-- Only while the cursor is in a link. Carrying a permanently-dead
+           unlink button on every paragraph would be noise, and unlike the
+           block commands it has no meaning outside one. -->
+      <button
+        v-if="props.showUnlink"
+        type="button"
+        class="toolbar-button"
+        title="Remove link"
+        aria-label="Remove link"
+        @mousedown.prevent
+        @click="emit('unlink')"
+      >
+        <BlockIcon name="unlink" />
       </button>
     </div>
 
@@ -133,6 +160,30 @@ function onActivate(cmd: EditorCommand): void {
         @click="emit('openEntityPicker')"
       >
         <BlockIcon name="entityRef" />
+      </button>
+    </div>
+
+    <span class="toolbar-divider" role="separator" />
+
+    <!-- History last: it acts on the document as a whole rather than on what
+         is under the cursor, so it does not belong among the formatting
+         groups. These are `aria-disabled` like every other button here, which
+         matters most for these two — their availability flips on every
+         transaction, so native `disabled` would drop focus mid-typing. -->
+    <div class="toolbar-group" aria-label="History">
+      <button
+        v-for="cmd in props.historyCommands"
+        :key="cmd.id"
+        type="button"
+        class="toolbar-button"
+        :class="{ 'is-unavailable': props.unavailableIds.has(cmd.id) }"
+        :title="props.unavailableIds.has(cmd.id) ? `${cmd.label} (not available here)` : cmd.label"
+        :aria-label="cmd.label"
+        :aria-disabled="props.unavailableIds.has(cmd.id)"
+        @mousedown.prevent
+        @click="onActivate(cmd)"
+      >
+        <BlockIcon :name="cmd.id" />
       </button>
     </div>
   </div>

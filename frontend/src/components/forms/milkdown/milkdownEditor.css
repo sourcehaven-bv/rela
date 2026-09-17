@@ -325,6 +325,21 @@
   display: none;
 }
 
+/* Same contract as the mention anchor: the provider writes `left`/`top` onto
+   THIS element, and `data-show` is how it hides. The hide rule has to exist
+   here — the tooltip plugin only toggles the attribute, it ships no CSS — and
+   without it the panel renders in normal flow under the editor. */
+.milkdown-editor-shell .link-panel-anchor {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 10000;
+}
+
+.milkdown-editor-shell .link-panel-anchor[data-show='false'] {
+  display: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .milkdown-editor-shell,
   .milkdown-editor-shell .toolbar-button,

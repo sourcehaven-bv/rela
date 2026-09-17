@@ -14,10 +14,10 @@
  * obvious reuse, and it is the wrong tool twice over:
  *
  *  1. It normalizes only to DECIDE the scheme and then returns the ORIGINAL
- *     string. `sanitizeLinkHref('https://ex.com/​path')` hands back the
- *     value with the zero-width character still in it, and a leading
- *     zero-width is not refused at all. Those bytes would serialize straight
- *     into the entity file — the exact thing this gate exists to stop.
+ *     string. Hand it a URL with a zero-width space in the path and it hands
+ *     that back unchanged, and a leading zero-width is not refused at all.
+ *     Those bytes would serialize straight into the entity file — the exact
+ *     thing this gate exists to stop.
  *  2. Its allowlist is wider than ours (it also permits `tel:` and `ftp:`) and
  *     it returns any scheme-less string unchanged, so relative paths pass.
  *
