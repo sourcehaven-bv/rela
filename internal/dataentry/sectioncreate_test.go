@@ -60,12 +60,13 @@ func seedCreateView(t *testing.T, opts createViewOptions) *App {
 }
 
 // fetchView serves the detail view and decodes the response.
-func fetchView(t *testing.T, app *App, ctx context.Context) v1ViewBody {
+//
+// ctx carries the principal when a test is exercising the ACL gate; a plain
+// Background context exercises the default (no ACL configured) path.
+func fetchView(ctx context.Context, t *testing.T, app *App) v1ViewBody {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_views/ticket/TKT-001", http.NoBody)
-	if ctx != nil {
-		req = req.WithContext(ctx)
-	}
+	req = req.WithContext(ctx)
 	rec := httptest.NewRecorder()
 	app.views.handleV1Views(rec, req)
 	if rec.Code != http.StatusOK {
@@ -107,7 +108,7 @@ type viewCreateBody struct {
 // It is the DEFAULT, and TKT-651W's invariant, so it is worth pinning twice.
 func TestSectionCreate_AbsentWithoutOptIn(t *testing.T) {
 	app := seedCreateView(t, createViewOptions{create: nil})
-	body := fetchView(t, app, nil)
+	body := fetchView(context.Background(), t, app)
 
 	if body.Sections[0].Create != nil {
 		t.Error("a section with no create: block must carry no create affordance")
@@ -121,7 +122,7 @@ func TestSectionCreate_AbsentWithoutOptIn(t *testing.T) {
 // the opt-in works, and the server resolves everything the client needs.
 func TestSectionCreate_OptInEmitsAffordance(t *testing.T) {
 	app := seedCreateView(t, createViewOptions{create: &dataentryconfig.SectionCreate{}})
-	body := fetchView(t, app, nil)
+	body := fetchView(context.Background(), t, app)
 
 	got := body.Sections[0].Create
 	if got == nil {
@@ -200,7 +201,7 @@ func TestSectionCreate_PerTypeTemplateIsResolvedServerSide(t *testing.T) {
 			"feature": {Template: "spike"},
 		},
 	}})
-	body := fetchView(t, app, nil)
+	body := fetchView(context.Background(), t, app)
 
 	targets := body.Sections[0].Create.Targets
 	if len(targets) != 1 {
@@ -244,7 +245,7 @@ func TestSectionCreate_HeaderMenuIsUnionOfOptedInSections(t *testing.T) {
 	}
 	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "t"}})
 
-	body := fetchView(t, app, nil)
+	body := fetchView(context.Background(), t, app)
 	if len(body.Create) != 1 {
 		t.Fatalf("header menu = %+v, want exactly one entry (deduped by relation)", body.Create)
 	}
@@ -263,7 +264,7 @@ func TestSectionCreate_NoAffordanceWithoutCreateForm(t *testing.T) {
 		create:          &dataentryconfig.SectionCreate{},
 		skipFeatureForm: true,
 	})
-	body := fetchView(t, app, nil)
+	body := fetchView(context.Background(), t, app)
 
 	if body.Sections[0].Create != nil {
 		t.Error("a type with no create form must not be offered")
@@ -278,7 +279,7 @@ func TestSectionCreate_AmbiguousSectionGetsNoAffordance(t *testing.T) {
 		create:   &dataentryconfig.SectionCreate{},
 		traverse: &ViewTraverse{From: "entry", Follow: "implements", CollectAs: "features", Recursive: true},
 	})
-	body := fetchView(t, app, nil)
+	body := fetchView(context.Background(), t, app)
 
 	if body.Sections[0].Create != nil {
 		t.Error("a recursive section has no single peer to link to; it must get no affordance")
@@ -320,7 +321,7 @@ func TestSectionCreate_GatedByCreatePermission(t *testing.T) {
 
 			ctx := principal.With(context.Background(),
 				principal.Principal{User: "bob", Tool: principal.ToolDataEntry})
-			body := fetchView(t, app, ctx)
+			body := fetchView(ctx, t, app)
 
 			got := body.Sections[0].Create != nil
 			if got != tc.wantOffer {

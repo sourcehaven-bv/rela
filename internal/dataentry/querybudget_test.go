@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -213,6 +214,43 @@ func TestQueryBudget_ViewTableSectionIsSizeIndependent(t *testing.T) {
 		}
 	})
 	assertBudget(t, "view table section", small, large, viewSectionBudget, detail)
+}
+
+// The same view with the section's opt-in create affordance enabled
+// (TKT-R4BMJM). Resolving it adds per-SECTION work — a relation lookup, a form
+// scan and an ACL create check per candidate type — and none of that may become
+// per-ROW.
+//
+// The budget is pinned to the same constant as the plain view deliberately: the
+// affordance consults the metamodel and the policy, never the store, so the
+// READ count must not move at all. A test that merely asserted "small == large"
+// would pass even if the affordance added a fixed per-request store read to
+// every view in the app.
+func TestQueryBudget_ViewSectionCreateAddsNoStoreReads(t *testing.T) {
+	small, large, detail := readsFor(t, func(t *testing.T, app *App, d *acl.Declarative, ctx context.Context) {
+		t.Helper()
+		// Opt the section in, which is the only way the affordance appears.
+		view := app.State().Cfg.Views["ticket"]
+		sections := append([]dataentryconfig.ViewSection(nil), view.Sections...)
+		sections[0].Create = &dataentryconfig.SectionCreate{}
+		view.Sections = sections
+		app.State().Cfg.Views["ticket"] = view
+		// A target type is offered only when a form resolves for it, so the
+		// affordance cannot appear without one.
+		app.State().Cfg.Forms["create_ticket"] = dataentryconfig.Form{EntityType: "ticket"}
+
+		rec := viewsAs(ctx, t, app, d, "ticket", "TKT-0001")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("view: %d %s", rec.Code, rec.Body)
+		}
+		// Guard against the test passing vacuously: the budget claim is only
+		// interesting if the affordance actually resolved. The fixture's role
+		// grants create on ticket, and `blocks` reaches ticket.
+		if !strings.Contains(rec.Body.String(), `"create"`) {
+			t.Fatalf("create affordance did not resolve, so this budget proves nothing: %s", rec.Body)
+		}
+	})
+	assertBudget(t, "view section create", small, large, viewSectionBudget, detail)
 }
 
 // A structured search (the dashboard card shape). Before batching: 2 +

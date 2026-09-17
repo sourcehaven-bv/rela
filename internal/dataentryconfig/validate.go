@@ -294,7 +294,7 @@ func validateSectionFieldWidget(
 // filesystem (ValidateConfig takes only config + metamodel), and plumbing a
 // templater through every caller to reach it would be a far wider change than
 // the check is worth. A stale variant name degrades to the form's default
-// template, which is the same behaviour a form-level template typo already has.
+// template, which is the same behavior a form-level template typo already has.
 func validateSectionCreate(
 	viewID string, i int, s ViewSection, view ViewConfig, cfg *Config, meta *metamodel.Metamodel,
 ) []string {

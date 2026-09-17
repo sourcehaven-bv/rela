@@ -123,7 +123,7 @@ func TestACLSidePanel_GatesUngrantedFace(t *testing.T) {
 	}
 }
 
-// TestACLSidePanel_AddButtonFollowsCreatePermission pins a DELIBERATE BEHAVIOUR
+// TestACLSidePanel_AddButtonFollowsCreatePermission pins a DELIBERATE BEHAVIOR
 // CHANGE from TKT-R4BMJM on a shipped surface.
 //
 // The side panel's `+ Add <Type>` button used to appear whenever a create form

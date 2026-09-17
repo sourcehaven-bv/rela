@@ -445,8 +445,6 @@ func (h *viewsHandler) executeSidePanel(
 // Before that, this surface offered `+ Add <Type>` whenever a create form was
 // configured, with no principal involved — so a user who could not create the
 // type got a button leading to a form whose POST would be refused.
-//
-//nolint:gocognit // resolves section buttons across traverse targets; the branches are per-source button-resolution cases, not shared logic to extract.
 func (h *viewsHandler) resolveSectionButtonsWithTraverse(
 	ctx context.Context, viewConfig ViewConfig, sections []SectionData, entry *entity.Entity,
 ) {
