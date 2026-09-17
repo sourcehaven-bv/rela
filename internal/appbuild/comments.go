@@ -20,21 +20,23 @@ import (
 // project that never enables commenting should see nothing at all.
 const commentsDirName = "comments"
 
-// buildComments constructs the commentary service, or nil when the metamodel
-// declares no enabled `comments:` block.
+// buildComments constructs the commentary service.
 //
-// Returning a genuinely nil *comments.Service (not a service over a no-op
-// store) is load-bearing in the same way versionServiceFor's nil is: the
-// data-entry app nil-checks it to decide whether to serve the comment routes
-// at all, so a disabled feature costs an operator no routes, no directory and
-// no storage — which is what AC1 asks for.
+// Nil: returned when the metamodel declares no enabled `comments:` block —
+// a genuinely nil *comments.Service, not a service over a no-op store. That is
+// load-bearing in the same way versionServiceFor's nil is: the data-entry app
+// nil-checks it to decide whether to serve the comment routes at all, so a
+// disabled feature costs an operator no routes, no directory and no storage —
+// which is what AC1 asks for. The backend argument is separately nil-accepting;
+// see below.
 //
 // The backend is chosen by the RECIPE, which passes one in when its database
 // should hold the comments (TKT-OGTVJW): postgres MUST, because filecomments is
 // node-local and that build serves several processes from one database; sqlite
-// does so commentary travels with rela.db, the same call versioning made. A nil
-// backend selects filecomments, which stays correct for the fs, memory and
-// desktop tiers.
+// does so commentary travels with rela.db, the same call versioning made.
+//
+// Nil backend: accepted, and selects filecomments — which stays correct for the
+// fs, memory and desktop tiers, so those recipes pass nothing.
 //
 // Passed in rather than selected by a build tag here, because the choice needs
 // the database HANDLE, which belongs to the recipe that opened it — the comment
