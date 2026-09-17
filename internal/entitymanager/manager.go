@@ -1259,7 +1259,15 @@ func (m *Manager) processUpdateAutomation(
 func (m *Manager) authorizeCascadeRelations(
 	ctx context.Context, tx store.Store, id string, incoming, outgoing []*entity.Relation,
 ) error {
-	type subject struct{ relType, fromType string }
+	// The FACE is part of the key, not just the pair (BUG-64MU2Q): a
+	// content-scoped edge is authorized against the state that owns it, so
+	// collapsing draft- and published-tailed edges into one check would let
+	// a `policy@published` grant stand for a draft-tailed edge. The
+	// cardinality stays bounded by (types × faces), which is small.
+	type subject struct {
+		relType, fromType string
+		fromFace          entity.Face
+	}
 	seen := make(map[subject]bool)
 
 	check := func(rel *entity.Relation) error {
@@ -1279,16 +1287,16 @@ func (m *Manager) authorizeCascadeRelations(
 		if from, err := tx.GetEntity(ctx, rel.From); err == nil {
 			fromType = from.Type
 		}
-		key := subject{relType: rel.Type, fromType: fromType}
+		key := subject{relType: rel.Type, fromType: fromType, fromFace: rel.FromFace}
 		if seen[key] {
 			return nil
 		}
 		seen[key] = true
 
 		// FromID is deliberately EMPTY. The decision is a pure function of
-		// (relation type, source type, op) — FromID is never read by any
-		// branch of authorizeRelationWrite — so one check stands for every
-		// edge sharing that pair. Stamping one arbitrary id into the audit
+		// (relation type, source type, source face, op) — FromID is never
+		// read by any branch of authorizeRelationWrite — so one check stands
+		// for every edge sharing that tuple. Stamping one arbitrary id into the audit
 		// row would make it look like a claim about that specific entity: a
 		// forensic query for another source in the same class would find
 		// nothing, though it was equally refused. An empty FromID says
@@ -1298,6 +1306,7 @@ func (m *Manager) authorizeCascadeRelations(
 			Subject: acl.RelationSubject{
 				Type:     rel.Type,
 				FromType: fromType,
+				FromFace: rel.FromFace,
 			},
 		})
 	}

@@ -261,9 +261,9 @@ func (h *writeHandler) collectEdgeWarnings(
 //
 //nolint:gocognit // diffs desired vs. existing relation sets and issues add/remove ops per peer; the branches are the set-reconciliation cases, not shared logic to extract.
 func (h *writeHandler) applyRelationsModern(
-	ctx context.Context, ref entityRef, desired map[string]v1.RelationsUpdate,
+	ctx context.Context, addr entityRef, desired map[string]v1.RelationsUpdate,
 ) ([]Warning, error) {
-	entityID := ref.ID
+	entityID := addr.ID
 	if len(desired) == 0 {
 		return nil, nil
 	}
@@ -284,21 +284,23 @@ func (h *writeHandler) applyRelationsModern(
 		relDef := meta.Relations[canonical]
 		direction := directionLabel(incoming)
 
-		// The TAIL face this edge is written to (BUG-64MU2Q). Non-zero only
-		// when the addressed entity is the tail AND the type is
-		// content-scoped:
+		// The tail a NEW edge of this type is created at (BUG-64MU2Q).
+		// Non-zero only when the addressed entity is the tail AND the type
+		// is content-scoped:
 		//
 		//   - an INCOMING edge tails at the PEER, and the peer's face is not
 		//     this request's to choose;
 		//   - an identity-scoped edge belongs to the entity, so every face
 		//     shares it and the tail is the zero face by definition.
 		//
-		// Anything else would file the edge under a face that does not own
-		// it — the mis-addressing the store's *State methods exist to
-		// prevent.
-		tail := entity.Face("")
+		// `addr`, not `ref`: the per-edge loops below bind `ref` to a
+		// v1.ResourceIdentifier, which has no face.
+		//
+		// This is the CREATE tail only. An existing edge carries its own —
+		// see tailOf below.
+		newTail := entity.Face("")
 		if !incoming && relDef.Scope.IsContent() {
-			tail = ref.Face
+			newTail = addr.Face
 		}
 
 		// Dedup by ID. Duplicate resource identifiers in the body
@@ -314,7 +316,20 @@ func (h *writeHandler) applyRelationsModern(
 			desiredByID[ref.ID] = ref
 		}
 
-		current := h.currentEdgesByPeer(ctx, entityID, tail, canonical, incoming)
+		current := h.currentEdgesByPeer(ctx, entityID, newTail, canonical, incoming)
+
+		// The tail an EXISTING edge is addressed by. Read off the edge
+		// itself, never recomputed from the request: the store's *State
+		// methods treat the tail as identity, so an address derived from
+		// the request modifies a different edge — or, on the incoming path
+		// where the tail belongs to the peer, none at all while reporting
+		// the write as attempted.
+		tailOf := func(e *entity.Relation) entity.Face {
+			if e == nil {
+				return newTail
+			}
+			return e.FromFace
+		}
 
 		// Adds and upserts.
 		for _, id := range desiredOrder {
@@ -332,11 +347,11 @@ func (h *writeHandler) applyRelationsModern(
 				if isEdgeNoOp(existing, finalProps, finalContent, contentSet, ref) {
 					continue // value-based no-op suppression
 				}
-				if err := h.writeUpdateRelation(ctx, from, tail, to, canonical, ref); err != nil {
+				if err := h.writeUpdateRelation(ctx, from, tailOf(existing), to, canonical, ref); err != nil {
 					return warnings, err
 				}
 			} else {
-				if err := h.writeCreateRelation(ctx, from, tail, to, canonical, ref,
+				if err := h.writeCreateRelation(ctx, from, newTail, to, canonical, ref,
 					finalProps, finalContent); err != nil {
 					return warnings, err
 				}
@@ -349,7 +364,7 @@ func (h *writeHandler) applyRelationsModern(
 				continue
 			}
 			from, to := edgeEndpoints(entityID, peerID, incoming)
-			if err := em.DeleteRelationState(ctx, from, tail, canonical, to); err != nil {
+			if err := em.DeleteRelationState(ctx, from, tailOf(current[peerID]), canonical, to); err != nil {
 				return warnings, &relationError{
 					RelType: canonical, Target: peerID, Op: "delete",
 					Reason: "delete_failed", Err: err,

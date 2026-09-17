@@ -195,9 +195,11 @@ func (a *App) currentEdgesByPeer(
 // PATCH to the published face would delete the draft's links, the
 // cross-face write the address grammar exists to prevent.
 //
-// The filter applies to the TAIL only. An INCOMING edge tails at the peer,
-// whose face this request does not address, so those are left unfiltered.
-// An identity-scoped edge is stored on the zero face and so is matched by a
+// The filter applies on the OUTGOING side only. An INCOMING edge tails at the
+// peer, whose face this request does not address, so the whole set is
+// returned — and the caller must then address each edge by the tail it
+// carries (`Relation.FromFace`), never by one derived from this request. An
+// identity-scoped edge is stored on the zero face and so is matched by a
 // zero-face filter, which is what a faceless type and the default face use.
 func (a *App) currentEdgesByPeerOnFace(
 	ctx context.Context, entityID string, tail entity.Face, canonical string, incoming bool,
