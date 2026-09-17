@@ -6,6 +6,7 @@ import {
   toApiError,
   getErrorMessage,
   getScriptError,
+  shouldDropHeldContent,
   type ProblemDetail,
 } from './errors'
 import type { ScriptError } from '@/types/scriptError'
@@ -157,5 +158,58 @@ describe('getScriptError', () => {
     expect(getScriptError(normalizeApiError(axiosErrorWith(problem)))).toBeNull()
     expect(getScriptError(new Error('x'))).toBeNull()
     expect(getScriptError(null)).toBeNull()
+  })
+})
+
+// Issue #1603 / CONTROL-8-03. A view that holds fetched content on screen
+// across a refetch needs to tell "the request failed" from "you may not read
+// this any more" — only the second obliges it to drop what is painted.
+describe('shouldDropHeldContent', () => {
+  // normalizeApiError prefers the ProblemDetail's own `status` over the HTTP
+  // one, so the body has to carry the status under test — a fixture pinned at
+  // 422 would make every case look like a validation failure.
+  function problemAt(status: number): AxiosError {
+    return axiosErrorWith({ ...problem, status }, status)
+  }
+
+  it.each([
+    ['401 expired session', 401],
+    ['403 refused capability', 403],
+    ['404 read gate (uniform not-found)', 404],
+  ])('is true for %s', (_name, status) => {
+    expect(shouldDropHeldContent(normalizeApiError(problemAt(status)))).toBe(true)
+  })
+
+  it.each([
+    ['400 bad request', 400],
+    ['422 validation', 422],
+    ['500 server error', 500],
+    ['503 unavailable', 503],
+  ])('is false for %s — the content is still the principal\'s to see', (_name, status) => {
+    expect(shouldDropHeldContent(normalizeApiError(problemAt(status)))).toBe(false)
+  })
+
+  it('is false for a network failure, which carries no status', () => {
+    expect(shouldDropHeldContent(normalizeApiError(axiosErrorWith(undefined)))).toBe(false)
+  })
+
+  it('is false for a cancellation', () => {
+    expect(shouldDropHeldContent(normalizeApiError(axiosErrorWith(undefined, 0, 'ERR_CANCELED')))).toBe(
+      false
+    )
+  })
+
+  it('is false for a non-ApiError rejection', () => {
+    expect(shouldDropHeldContent(new Error('boom'))).toBe(false)
+    expect(shouldDropHeldContent(null)).toBe(false)
+    expect(shouldDropHeldContent({ status: 403 })).toBe(false)
+  })
+
+  // Defensive, not observed: writeV1ScriptError hardcodes 422, so the server
+  // cannot currently emit a script envelope at 403. The case pins that the
+  // classifier reads `status` rather than `kind`, so a future path that does
+  // refuse mid-script is classified by the refusal, not the envelope.
+  it('is true for a script failure carrying a denial status', () => {
+    expect(shouldDropHeldContent(normalizeApiError(axiosErrorWith(scriptEnvelope, 403)))).toBe(true)
   })
 })
