@@ -149,6 +149,15 @@ export function wrapTablesForScroll(html: string): string {
   if (!html || !html.includes('<table')) return html
 
   const template = document.createElement('template')
+  // `html` is already DOMPurify output: every caller sanitizes before calling
+  // (renderMarkdown above; DocumentView and DocumentsPanel sanitize the
+  // server's goldmark HTML). This re-parses our own sanitized markup rather
+  // than introducing new input, and a `<template>` is inert — its content is
+  // parsed into a separate document fragment that never executes script, loads
+  // resources, or fires handlers. Sanitizing again would be a no-op, and
+  // sanitizing AFTER the wrap would strip the role/tabindex the wrapper exists
+  // to carry.
+  // nosemgrep: dom-innerhtml-assignment
   template.innerHTML = html
 
   const tables = template.content.querySelectorAll('table')
