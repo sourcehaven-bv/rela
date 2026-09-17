@@ -511,13 +511,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	// The predicate compiler backing a source's `condition:`. Supplied here
-	// rather than imported by dataentry: the condition engine sits above the
-	// data-entry app, so the composition root bridges the two.
-	if err := app.SetNextActionMatchers(appbuild.NextActionMatchers); err != nil {
-		slog.Error("failed to wire next-action matchers", "error", err)
-		os.Exit(1)
-	}
+	wireConditionCompilers(app)
 
 	// Start file watcher for live-reload.
 	// The watcher goroutine is cleaned up on process exit.
@@ -768,4 +762,27 @@ func isLoopbackHost(host string) bool {
 		return ip.IsLoopback()
 	}
 	return false
+}
+
+// wireConditionCompilers supplies the predicate compilers backing a source's
+// `condition:` and an entity type's `query_scopes:`.
+//
+// Both live above internal/dataentry (arch-lint keeps the condition engine
+// there), so the composition root bridges them rather than dataentry
+// importing one. Extracted from main() to keep it inside the funlen budget.
+//
+// Either failure is fatal: a silently absent compiler leaves conditions
+// unevaluated and scopes unapplied, which shows rows the operator explicitly
+// excluded — and nothing on screen would say so.
+func wireConditionCompilers(app *dataentry.App) {
+	if err := app.SetNextActionMatchers(appbuild.NextActionMatchers); err != nil {
+		slog.Error("failed to wire next-action matchers", "error", err)
+		os.Exit(1)
+	}
+	if err := app.SetQueryScopeResolver(
+		dataentry.AdaptQueryScopes(appbuild.QueryScopes),
+	); err != nil {
+		slog.Error("failed to wire query scopes", "error", err)
+		os.Exit(1)
+	}
 }

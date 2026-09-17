@@ -373,6 +373,17 @@ export interface ListParams {
   // `/_views/{type}/{id}` and `/_history/{type}/{id}` — see
   // internal/dataentry/world.go's worldCapablePath.
   world?: string
+  /**
+   * query_scope selects which rows are MEMBERS of the result, from the entity
+   * type's declared `query_scopes:`. Orthogonal to `world`, which selects
+   * which FACE of an already-included entity is served: a world never changes
+   * the row count, a scope is exactly a change to the row count.
+   *
+   * Omitted (not empty) when the view names no scope, so the entity type's
+   * `default` applies. An empty string would be a name that resolves to
+   * nothing, which the server answers with a 400.
+   */
+  query_scope?: string
   [key: `filter[${string}]`]: string | undefined
 }
 

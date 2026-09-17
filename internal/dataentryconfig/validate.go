@@ -357,6 +357,7 @@ func ValidateConfig(data []byte, cfg *Config, meta *metamodel.Metamodel) error {
 	errs = append(errs, validateCalDAV(cfg, meta)...)
 	errs = append(errs, validateStyles(cfg, meta)...)
 	errs = append(errs, validateNextActions(cfg, meta)...)
+	errs = append(errs, validateQueryScopes(cfg, meta)...)
 	errs = append(errs, validateCrossReferences(cfg)...)
 
 	if len(errs) > 0 {
@@ -2603,4 +2604,59 @@ func validateDocumentElevation(docID string, doc DocumentConfig, hasScript bool)
 	}
 
 	return errs
+}
+
+// validateQueryScopes checks that every `query_scope:` on a list or kanban
+// names a scope its entity type declares.
+//
+// An unknown name is a LOAD ERROR rather than a fallback to unfiltered. The
+// two failure directions are not symmetric: a refused config is fixed in
+// seconds, while a silent fallback shows every archived row on a board the
+// operator believed was scoped, and nothing on screen says so.
+//
+// The reserved `all` always resolves — it is implicit and means "no
+// predicate", so a view may withdraw its type's default even when the type
+// declares no scopes at all.
+func validateQueryScopes(cfg *Config, meta *metamodel.Metamodel) []string {
+	if cfg == nil || meta == nil {
+		return nil
+	}
+	var errs []string
+	for _, id := range sortedMapKeys(cfg.Lists) {
+		list := cfg.Lists[id]
+		errs = append(errs, checkQueryScopeRef(meta, "list", id, list.EntityType, list.QueryScope)...)
+	}
+	for _, id := range sortedMapKeys(cfg.Kanbans) {
+		kanban := cfg.Kanbans[id]
+		errs = append(errs, checkQueryScopeRef(meta, "kanban", id, kanban.EntityType, kanban.QueryScope)...)
+	}
+	return errs
+}
+
+// checkQueryScopeRef resolves one `query_scope:` reference.
+func checkQueryScopeRef(
+	meta *metamodel.Metamodel, kind, id, entityType, scope string,
+) []string {
+	if scope == "" || scope == metamodel.AllQueryScopeName {
+		return nil
+	}
+	def, ok := meta.GetEntityDef(entityType)
+	if !ok {
+		// The unknown entity type is already reported by validateLists /
+		// validateKanbans; adding a second error about a scope on a type that
+		// does not exist would be noise.
+		return nil
+	}
+	if _, ok := def.QueryScopes[scope]; ok {
+		return nil
+	}
+	declared := sortedMapKeys(def.QueryScopes)
+	if len(declared) == 0 {
+		return []string{fmt.Sprintf(
+			"%s %q: query_scope %q is not declared — entity type %q declares no query_scopes:",
+			kind, id, scope, entityType)}
+	}
+	return []string{fmt.Sprintf(
+		"%s %q: query_scope %q is not declared on entity type %q (declared: %s, plus the implicit %q)",
+		kind, id, scope, entityType, strings.Join(declared, ", "), metamodel.AllQueryScopeName)}
 }

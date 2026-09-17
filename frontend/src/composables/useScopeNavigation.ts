@@ -118,6 +118,10 @@ export function useScopeNavigation(entityId: () => string) {
     if (Object.keys(filters).length) scope.filters = filters
     if (sort) scope.sort = sort
     if (q) scope.q = q
+    // The list's configured scope, for the same reason the filters above are
+    // carried: the descriptor rebuilds the list's query server-side, so a
+    // field it omits is a field the position silently drops.
+    if (listConfig.query_scope) scope.query_scope = listConfig.query_scope
 
     return { scope, label: listConfig.title || listId }
   }

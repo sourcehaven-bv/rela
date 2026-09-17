@@ -1060,6 +1060,7 @@ lists:
 | `sort`            | object | Default sort order                                          |
 | `filters`         | list   | Static filters (always applied)                             |
 | `filter_controls` | list   | Interactive filter controls shown to the user               |
+| `query_scope`     | string | Named query scope from the entity type's `query_scopes:`; `all` withdraws the type's `default` (see below) |
 | `create_form`     | string | Form name for the "New" button                              |
 | `create_world`    | string | World the "New" button opens its form in, when a new entity belongs in another world than the list shows |
 | `edit_form`       | string | Form name for the row edit action                           |
@@ -1189,6 +1190,63 @@ filters:
 
 To filter for a literal value that starts with `$`, you currently cannot
 escape it — choose property values that don't start with `$`.
+
+### Query Scopes
+
+A static filter is a conjunction: every entry must match. When the membership
+rule needs an OR, a negation, or a comparison against today's date, declare a
+**query scope** on the entity type in `schema.yaml` and name it here:
+
+```yaml
+lists:
+  archief:
+    entity_type: taak
+    query_scope: archief
+  alles:
+    entity_type: taak
+    query_scope: all        # withdraw the type's default
+  open_werk:
+    entity_type: taak       # no query_scope: the type's `default` applies
+```
+
+The scopes themselves are declared per entity type — see
+[Query Scopes](metamodel.md#query-scopes) in the Metamodel Reference for the
+expression language, the implicit `all`, and the rules about identity. Three
+things matter from this side:
+
+- **A type's `default` scope applies to a view that names no scope.** This is
+  the point of declaring one: a rule like "hide archived tasks" is written
+  once and every list and board of that type inherits it.
+- **`query_scope: all` withdraws it**, and always resolves — even for a type
+  that declares no scopes at all.
+- **A name the type does not declare refuses at config load**, listing the
+  names it does declare. There is no fallback to unfiltered.
+
+Scopes and static filters compose: both narrow, and both apply. A scope is the
+right place for a rule that belongs to the domain ("a task is active until it
+is done"), a static filter for one that belongs to the screen ("this board is
+for the infra team").
+
+**A query scope is not access control.** It decides what a screen shows, not
+what a principal may read — anyone who can call the API can ask for
+`query_scope: all`. Use `scope_grants:` in `acl.yaml` to restrict what a role
+can see.
+
+#### Selecting a scope over the API
+
+The list API takes `?query_scope=<name>`, the same shape as `?world=`:
+
+```http
+GET /api/v1/taken?query_scope=archief
+GET /api/v1/taken?query_scope=all
+```
+
+Omitting the parameter applies the entity type's `default` scope, if it
+declares one. A name the type does not declare is a `400` naming the scope, for
+the same reason an undeclared world is: scope names are configuration in your
+repository, not secrets. Repeating the parameter
+(`?query_scope=all&query_scope=archief`) is also refused rather than silently
+taking the first, since the request asked two different things.
 
 ### Filter Controls
 
@@ -2317,6 +2375,7 @@ kanbans:
 | `create_form`      | string | Form name for the "New" button                             |
 | `filters`          | list   | Static filters (same as lists)                             |
 | `filter_controls`  | list   | Interactive filter controls (same as lists)                |
+| `query_scope`      | string | Named query scope (same as lists)                          |
 
 #### Column and swimlane icons
 

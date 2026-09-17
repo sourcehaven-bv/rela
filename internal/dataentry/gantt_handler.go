@@ -49,6 +49,12 @@ type ganttHandler struct {
 	// scoped is App.scopedSortedEntities: the ACL-scoped entity lister.
 	// Going through it (not the raw store) is what makes step 1 structural.
 	scoped func(ctx context.Context, typeName string, query map[string][]string) ([]*entity.Entity, error)
+
+	// scopedHeaders is the body-free read the AllowAll path uses: the gantt
+	// never reads markdown, and profiling showed body decode dominated the
+	// request. Injected rather than called directly so the handler keeps its
+	// narrow collaborator set.
+	scopedHeaders func(ctx context.Context, typeName string) ([]store.EntityHeader, bool, error)
 	// redactor is the field-redaction seam (appRedactor); a closure so test
 	// builders that rebind app.affordances keep it live.
 	redactor func() visibility.FieldRedactor
@@ -277,6 +283,25 @@ const (
 	ganttScoped
 )
 
+// newGanttHandler builds the gantt handler from an App.
+//
+// A constructor rather than a struct literal at each wiring site: the test
+// helper used to restate the literal, so a collaborator added in production
+// left tests constructing a handler with a nil field that segfaulted on the
+// first request instead of failing at construction.
+func newGanttHandler(app *App, st store.Store) *ganttHandler {
+	return &ganttHandler{
+		schema: app.State,
+		store:  st,
+		scoped: app.scopedSortedEntities,
+		scopedHeaders: func(ctx context.Context, typeName string) ([]store.EntityHeader, bool, error) {
+			rqr := readGateFromContext(ctx).ReadQuery(ctx, typeName)
+			return scopedHeaders(ctx, app.Services(), rqr, scopeRequest{Type: typeName, Faces: rqr.Faces})
+		},
+		redactor: func() visibility.FieldRedactor { return appRedactor(app) },
+	}
+}
+
 func ganttReadVerdict(ctx context.Context, typeName string) (ganttVerdict, *ganttError) {
 	rqr := readGateFromContext(ctx).ReadQuery(ctx, typeName)
 	switch {
@@ -319,12 +344,17 @@ func (h *ganttHandler) loadGanttType(
 	case ganttDeny:
 		return nil, nil
 	case ganttAllow:
-		var out []*entity.Entity
-		for hdr, err := range store.ListEntityHeaders(ctx, h.store, store.EntityQuery{Type: typeName}) {
-			if err != nil {
-				slog.Error("gantt: header list failed", "type", typeName, "error", err)
-				return nil, &ganttError{http.StatusInternalServerError, "internal", "Failed to list entities", ""}
-			}
+		// Headers via the shared funnel (scopedread.go) so every narrowing
+		// reaches this path too; redaction stays HERE because the funnel is
+		// deliberately ACL-narrowing only and must never return
+		// already-redacted rows (visibility.Redact is non-composable).
+		hdrs, _, err := h.scopedHeaders(ctx, typeName)
+		if err != nil {
+			slog.Error("gantt: header list failed", "type", typeName, "error", err)
+			return nil, &ganttError{http.StatusInternalServerError, "internal", "Failed to list entities", ""}
+		}
+		out := make([]*entity.Entity, 0, len(hdrs))
+		for _, hdr := range hdrs {
 			red := visibility.RedactHeader(ctx, h.redactor(), hdr)
 			out = append(out, &entity.Entity{ID: red.ID, Type: red.Type, Properties: red.Properties})
 		}

@@ -346,7 +346,24 @@ var errListLoad = errors.New("list load failed")
 func (a *App) listPage(
 	ctx context.Context, typeName string, query map[string][]string, page, perPage int,
 ) (rows []*entityPkg.Entity, total int, err error) {
-	if !worldFromContext(ctx).blocksAllReads() {
+	// Resolve the query scope FIRST: it decides membership, so it gates
+	// whether the pushdown fast path may serve this request at all.
+	scopeName, err := queryScopeParam(query)
+	if err != nil {
+		return nil, 0, err
+	}
+	scope, err := viewQueryScope(a.queryScopes, a.Cfg(), a.Meta(), typeName, scopeName)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	// The pushdown path serves a page straight from the store, so it can only
+	// run when the scope is FULLY expressible as store predicates. A scope
+	// using `~=`, an ordered comparison or a disjunction has a Go-side
+	// remainder, and a store-side page computed without it would paginate
+	// over rows the scope excludes — wrong counts and wrong page boundaries,
+	// not merely extra rows. Declining is always correct, only slower.
+	if scope.Scope == nil && !worldFromContext(ctx).blocksAllReads() {
 		rqr := readGateFromContext(ctx).ReadQuery(ctx, typeName)
 		isRelationKey := relationFilterClassifier(a.Meta(), a.Cfg(), typeName)
 		if plan, ok := planListPushdown(
@@ -355,7 +372,7 @@ func (a *App) listPage(
 			return plan.run(ctx, a.Services().Store)
 		}
 	}
-	all, err := a.scopedSortedEntities(ctx, typeName, query)
+	all, err := scopedSortedEntitiesScoped(ctx, a, typeName, query, scope)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -370,60 +387,60 @@ func (a *App) scopedSortedEntities(
 	typeName string,
 	query map[string][]string,
 ) ([]*entityPkg.Entity, error) {
-	// A denied world yields nothing, via the SAME empty-result path a
-	// genuinely-empty world takes — so the two are identical on the wire.
-	if worldFromContext(ctx).blocksAllReads() {
-		return []*entityPkg.Entity{}, nil
+	// Resolves the scope from the request's ?query_scope= (absent = the
+	// type's default), so every caller of this function is scoped too:
+	// export mirrors the list it names, and _position navigates the set the
+	// list actually showed.
+	scopeName, err := queryScopeParam(query)
+	if err != nil {
+		return nil, err
 	}
-	rqr := readGateFromContext(ctx).ReadQuery(ctx, typeName)
+	scope, err := viewQueryScope(a.queryScopes, a.Cfg(), a.Meta(), typeName, scopeName)
+	if err != nil {
+		return nil, err
+	}
+	return scopedSortedEntitiesScoped(ctx, a, typeName, query, scope)
+}
 
-	// Content-free rows throughout (rowcontent.go): the pipeline below reads
-	// properties only, and the served page loads bodies afterwards if asked.
-	var entities []*entityPkg.Entity
-	switch {
-	case rqr.DenyAll:
+// scopedSortedEntitiesScoped is App.scopedSortedEntities with the query
+// scope already resolved, for callers that resolved it to decide something
+// else first (listPage uses it to gate the pushdown).
+//
+// A package function taking the App rather than a method, to keep App under
+// its plimsoll load line — the discipline the directive at [App] records:
+// a feature pays for its setter, not for its internals.
+func scopedSortedEntitiesScoped(
+	ctx context.Context,
+	a *App,
+	typeName string,
+	query map[string][]string,
+	scope resolvedQueryScope,
+) ([]*entityPkg.Entity, error) {
+	// Stamp the scope's request-scoped state ONCE, before any row is
+	// evaluated — a scope reading current_user resolves it here, not per row.
+	ctx, err := scope.bind(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// The verdict switch, the world scope, the face allowlist and the query
+	// scope all live in scopedHeaders (scopedread.go) — see its doc for why
+	// they must not be re-implemented per handler.
+	rqr := readGateFromContext(ctx).ReadQuery(ctx, typeName)
+	entities, withheld, err := scopedEntities(ctx, a.Services(), rqr, scopeRequest{
+		Type:       typeName,
+		Faces:      rqr.Faces,
+		Scope:      scope.Scope,
+		ScopeProps: scope.Props,
+		ScopeEval:  scope.Eval,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if withheld {
+		// Return BEFORE the free-text search: a principal who may read
+		// nothing must not be able to probe the search backend's latency or
+		// induce load through ?q= (RR-X56H).
 		return []*entityPkg.Entity{}, nil
-	case rqr.AllowAll:
-		// Inline iteration rather than listFromStoreByTypes: that
-		// helper swallows iterator errors into a partial slice, and
-		// the list pipeline must fail loud on both verdict paths.
-		// World scope on BOTH verdict branches. Carrying it on only one is
-		// the RR-GQWRLD fail-open: AllowAll takes this EntityQuery branch
-		// and every ACL-gated principal takes the GraphQuery branch below,
-		// so a world stamped on one silently degrades to the default world
-		// for exactly one of the two populations.
-		// FaceIn rides on BOTH branches for exactly the reason World does
-		// (TKT-O7R2A1): a face allowlist carried on only the GraphQuery
-		// would leave the AllowAll population — the most privileged — with
-		// no face narrowing, and the two paths would disagree.
-		for h, err := range store.ListEntityHeaders(ctx, a.Services().Store, store.EntityQuery{
-			Type:   typeName,
-			World:  worldScopeFrom(ctx),
-			FaceIn: rqr.Faces,
-		}) {
-			if err != nil {
-				return nil, fmt.Errorf("%w: %w", errListLoad, err)
-			}
-			entities = append(entities, headerEntity(h))
-		}
-	case rqr.Query == nil:
-		// Defensive: a zero ReadQueryResult would otherwise alias
-		// AllowAll. Fail loud instead of silently widening the list.
-		return nil, fmt.Errorf("%w: zero ReadQueryResult for type %q", errACLListQuery, typeName)
-	default:
-		// COPY before stamping: the ACL layer may cache or reuse a
-		// ReadQueryResult per principal, so mutating *rqr.Query in place
-		// would leak one request's world into the next caller's — the same
-		// cross-request scope bleed visibility.listPushdown guards against.
-		wq := *rqr.Query
-		wq.World = worldScopeFrom(ctx)
-		wq.FaceIn = rqr.Faces
-		for h, err := range store.GraphQueryHeaders(ctx, a.Services().Store, wq) {
-			if err != nil {
-				return nil, fmt.Errorf("%w: %w", errACLListQuery, err)
-			}
-			entities = append(entities, headerEntity(h))
-		}
 	}
 
 	// Free-text search: intersect with hits from the searcher when ?q=... is
@@ -1013,6 +1030,15 @@ func writeListPipelineError(w http.ResponseWriter, r *http.Request, err error) {
 		// filter key/operator, never store internals.
 		writeV1Error(w, r, http.StatusBadRequest, "invalid_filter",
 			"Invalid filter parameter", err.Error())
+	case errors.Is(err, errBadQueryScope):
+		// Client-caused, like errBadFilter above: the caller named a scope
+		// that does not resolve, or repeated the parameter. Echo the detail
+		// — it names only the caller's own scope name and the entity type,
+		// both of which are operator-authored config rather than secrets.
+		slog.Warn("dataentry: rejected invalid query_scope",
+			"err", err, "path", r.URL.Path, "method", r.Method)
+		writeV1Error(w, r, http.StatusBadRequest, "invalid_query_scope",
+			"Invalid query_scope parameter", err.Error())
 	case errors.Is(err, errACLListQuery):
 		writeGateError(w, r, err)
 	case errors.Is(err, errListLoad):

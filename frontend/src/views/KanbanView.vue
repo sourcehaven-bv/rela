@@ -124,6 +124,9 @@ const boardParams = computed<ListParams | undefined>(() => {
   const params: ListParams = {}
   if (hasRelationFields.value) params.include = '*'
   if (worldParam.value) params.world = worldParam.value
+  // See the same attachment in EntityList: the board's configured scope has to
+  // travel on the request, since the endpoint is keyed by type.
+  if (kanbanConfig.value?.query_scope) params.query_scope = kanbanConfig.value.query_scope
   return Object.keys(params).length ? params : undefined
 })
 

@@ -181,8 +181,16 @@ type appEntityWriter interface {
 // The routes themselves are on commentsHandler, so the public surface grew by
 // exactly the one setter. Ratchet target, as above.
 //
-//plimsoll:max-methods=88
-//plimsoll:max-exported-methods=21
+// TKT-EVR2TU adds [App.SetQueryScopeResolver] on the same terms (21 -> 22):
+// the scope compiler backing `query_scopes:` lives above this package, so it
+// arrives through the same setter idiom. The rest stayed OFF App exactly as
+// the next-action feature did — `viewQueryScope`, `queryScopeParam` and
+// `scopedSortedEntitiesScoped` are package functions taking what they need,
+// and the compiling lives in internal/scopes with appbuild bridging. The
+// feature cost one method, not a subsystem. Ratchet target, as above.
+//
+//plimsoll:max-methods=89
+//plimsoll:max-exported-methods=22
 type App struct {
 	// Primitives — immutable after NewApp.
 	fs    storage.FS
@@ -253,6 +261,9 @@ type App struct {
 	// deployment wired it — sources declaring a condition then fail engine
 	// construction rather than silently matching everything.
 	nextActionMatchers NextActionMatcherFunc
+
+	// queryScopes compiles `query_scopes:`; see SetQueryScopeResolver.
+	queryScopes QueryScopeResolverFunc
 
 	// visibleReader is the ACL-bounded entity-read seam (TKT-N26KLB): the
 	// entity-read analog of visibleSearcher. Read handlers gate single-GET
@@ -1088,12 +1099,7 @@ func NewApp(
 	// ganttHandler: the ACL-scoped lister and the field redactor are the two
 	// seams its security pipeline hangs on — both closures over App so test
 	// builders that rebind collaborators stay live.
-	app.gantt = &ganttHandler{
-		schema:   app.State,
-		store:    st,
-		scoped:   app.scopedSortedEntities,
-		redactor: func() visibility.FieldRedactor { return appRedactor(app) },
-	}
+	app.gantt = newGanttHandler(app, st)
 
 	// commandHandler owns the user-configured command surface. Its
 	// collaborators are narrow closures over App: the schema snapshot (command/

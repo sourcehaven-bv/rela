@@ -649,7 +649,16 @@ type List struct {
 	Sort           []SortSpec      `yaml:"sort,omitempty" json:"default_sort,omitempty"`
 	Filters        []FilterConfig  `yaml:"filters" json:"filters,omitempty"`
 	FilterControls []FilterControl `yaml:"filter_controls" json:"filter_controls,omitempty"`
-	CreateForm     string          `yaml:"create_form" json:"create_form,omitempty"`
+	// QueryScope names a `query_scopes:` entry on this view's entity type,
+	// deciding which rows are members. Absent means the type's `default`
+	// scope applies (if it declares one); `all` withdraws that default.
+	//
+	// A name the type does not declare is a config error, never a silent
+	// fallback to unfiltered — that is the difference between a typo showing
+	// nothing and a typo showing archived records to everyone.
+	QueryScope string `yaml:"query_scope,omitempty" json:"query_scope,omitempty"`
+
+	CreateForm string `yaml:"create_form" json:"create_form,omitempty"`
 	// CreateWorld is the world the create button opens its form in, for when a
 	// new entity belongs in a DIFFERENT face than the one this list shows.
 	//
@@ -836,6 +845,14 @@ type Kanban struct {
 	CreateForm       string           `yaml:"create_form,omitempty" json:"create_form,omitempty"`
 	Filters          []FilterConfig   `yaml:"filters,omitempty" json:"filters,omitempty"`
 	FilterControls   []FilterControl  `yaml:"filter_controls,omitempty" json:"filter_controls,omitempty"`
+	// QueryScope names a `query_scopes:` entry on this view's entity type,
+	// deciding which rows are members. Absent means the type's `default`
+	// scope applies (if it declares one); `all` withdraws that default.
+	//
+	// A name the type does not declare is a config error, never a silent
+	// fallback to unfiltered — that is the difference between a typo showing
+	// nothing and a typo showing archived records to everyone.
+	QueryScope string `yaml:"query_scope,omitempty" json:"query_scope,omitempty"`
 }
 
 // KanbanColumn defines a column in the kanban board.
