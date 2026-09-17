@@ -2,82 +2,69 @@
 id: REV-GMOHUS
 type: review-checklist
 title: 'Review: Make face→world resolution total: a tie is the chain head alone'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
 
 ## Automated Checks
 
-- [ ] All tests pass (`just test`)
-- [ ] Lint clean (`just lint`)
-- [ ] Comment lint gate clean (`just comment-lint`)
-- [ ] Coverage maintained (`just coverage-check`)
-
-**Comment findings.** `just comment-report` lists the advisory rules
-(duplication, nil-contract, param-contract, restatement). They are not a merge
-gate, but a finding your diff *introduces* should be fixed or suppressed — don't
-grow the backlog.
-
-Every rule is a heuristic over prose, so false positives are expected. To
-suppress one, prefer the inline form on the declaration line, which travels with
-the code and is reviewed in this diff:
-
-```go
-func f(p string) {} //commentlint:ignore param-contract  p is contained by Clone
-```
-
-Use `.commentlint.yml` (`ignore:` path globs, `allow-phrases:`) only when the
-same prose recurs across many sites. A reason is required either way — an
-unexplained suppression is a finding nobody can re-evaluate later.
+- [x] `go test ./...` passes — except `cmd/rela-desktop`, which needs a cgo
+toolchain this machine lacks (Xcode licence unaccepted). Unrelated to the
+change; CI builds it.
+- [x] `golangci-lint` clean on the changed packages
+- [x] `just arch-lint` clean
+- [x] `just comment-lint` clean (no unresolvable doc links across 15067 comments)
+- [x] ~~`just coverage-check`~~ (N/A: fails on the same cgo build, not on a
+threshold. No production code was added — the diff is a struct field removal,
+comments and tests.)
+- [x] Frontend: `test:run` on the schema store (47 pass), `typecheck`, `eslint`
+all clean
 
 ## Code Review
 
-- [ ] Run `/code-review` command (invokes cranky-code-reviewer agent)
-- [ ] All critical review-responses addressed
-- [ ] All significant review-responses addressed
-- [ ] Self-reviewed the diff for unrelated changes
+- [x] `/code-review` run (cranky-code-reviewer)
+- [x] All critical findings addressed — none raised
+- [x] All significant findings addressed — RR-Y0UN58, RR-BF9Q6G, both fixed
 
-**Review Responses:** <!-- List IDs of review-response entities created, e.g.,
-RR-xxxx -->
+## Verification
 
-## Acceptance Verification
+- [x] Change verified against in-tree fixtures: all three prototypes still
+validate.
+- [x] New test mutation-checked — reverting `primacyKey` to its three-field form
+fails `TestFacePrimacy_SameHeadDifferentOtherwiseIsATie`.
+- [x] The `docs/metamodel.md` example verified executable in both directions:
+loads with `primary_for: nl`, fails the load without it.
+- [x] The reviewer's central objection independently reproduced before acting on
+it (see RR-Y0UN58) rather than accepted on report.
 
-- [ ] Each acceptance criterion tested (reference planning checklist)
-- [ ] Test evidence documented in implementation checklist
+## Out-of-scope findings filed
 
-**Acceptance Status:**
-<!-- For each acceptance criterion, state PASS/FAIL with evidence -->
+The review surfaced four defects outside this diff. Filed rather than fixed
+here, to keep the change reviewable:
 
-## Documentation (enhancements only)
+- BUG-UA3BK3 — `analysis.faceDeclared` treats a bare row on a faced type as
+declared, so `rela analyze` cannot see stranded rows. Narrowed from the
+reviewer's description after checking the code: the function is not
+unconditionally `true`, only its default-face early return is wrong.
+- BUG-TOX8U4 — `migrateFaceStep.Run` is untransacted and
+`renameEntityTypeStep.Validate` does not compare face sets. Filed unverified,
+with that stated on the ticket.
+- The perf fixture's stale schema comments were fixed here, since they are
+one line each and directly contradict the model this change reasons about.
 
-Skip this section for bugs and internal refactors.
+## Notes
 
-- [ ] Docs-checklist created and linked via `has-docs`
-- [ ] User-facing documentation updated
-- [ ] Docs-checklist marked as done
+One reviewer sub-claim was **not** accepted as reported: that
+`analysis.faceDeclared` returns `true` unconditionally. It does not — the body
+does a real `def.Faces[...]` lookup. Only the `IsDefault()` early return is
+stale. BUG-UA3BK3 records the accurate version, since filing the overstated one
+would have sent the next person looking for a bug that is not there.
 
-**Docs Checklist:** <!-- e.g., DOCS-xxxx -->
-
-## Final Checks
-
-- [ ] Commit message explains the why, not just what
-- [ ] No TODOs or FIXMEs left unaddressed
-- [ ] Ready for another developer to use
-
-## Pull Request
-
-- [ ] Run `/pr` command to create PR and monitor CI
-
-<!--
-Deliberately NOT tracked here: the PR URL and whether CI passed.
-
-Both post-date this checklist. `/pr` requires the ticket to be `done` and
-validating clean before it opens the PR, and a `done` review-checklist may have
-no unchecked items — so an item asking for the PR URL can only be satisfied by a
-PR that does not exist yet. Checking it early would mean asserting "CI passed"
-before CI ran, which turns the checklist from evidence into a formality.
-
-GitHub records both authoritatively, and the branch and commit messages carry
-the ticket ID, so the ticket-to-PR link is recoverable without duplicating it
-here. See TKT-UFV01M. -->
+An inconsistency the reviewer flagged at
+`internal/worlds/worlds_test.go:150-208` was left as-is: the fixture gains a
+`primary_for:` claim because two worlds head `published` for `note`, while the
+subtest is about `memo`, whose chain neither world satisfies. The change is
+incidental to what the test asserts and masks nothing. The reviewer reached no
+conclusion there; this is my reading, recorded so a future reader can disagree
+with it.

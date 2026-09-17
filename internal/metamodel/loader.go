@@ -912,14 +912,28 @@ type primacyKey struct{ entityType, face string }
 // This rule used to key the tie on `otherwise:` as well, exempting a pair that
 // led one face while resolving its ABSENCE differently — a `published` world
 // (otherwise: exclude, absence is the publication bit) beside a lenient sibling
-// (otherwise: default, substitute instead of vanishing). The exemption rested
-// on those two answering a different question, and for a faced type they no
-// longer do: [store.ResolveWorldPrimes] takes its FallbackDefaultState arm only
-// when a zero-coordinate row exists, and since BUG-HC6I2T a type declaring
-// `faces:` stores no row there. Both worlds therefore exclude, identically, and
-// keying on a value that changes nothing split one genuine ambiguity into two
-// halves that each looked unambiguous — so the client's face-to-world lookup
-// found two heads, no claimant, and gave up on a schema that had loaded clean.
+// (otherwise: default, substitute instead of vanishing).
+//
+// The exemption asked the wrong question of the right key. `otherwise:` decides
+// what a world does with an entity that has NONE of the faces it names, and the
+// loop below reaches this rule only for a face the type DECLARES and both
+// worlds LEAD. A reader switching to a face is asking about an entity that HAS
+// it, where the chain head decides and `otherwise:` is never consulted — so
+// both worlds hand back the same row, and the parameter the exemption turned on
+// cannot tell them apart on the one question the face-switch asks. Splitting
+// the key by it turned one genuine ambiguity into two halves that each looked
+// unambiguous, and the client's face-to-world lookup then found two heads, no
+// claimant, and gave up on a schema that had loaded clean.
+//
+// This argument is about which ROW a reader is served, and it does not rest on
+// how the two worlds treat entities lacking the face — those differ, observably
+// and by design, and nothing here narrows that. (BUG-HC6I2T removed the
+// requirement that a named face carry a zero-coordinate row, which makes the
+// two `otherwise:` values coincide for a type whose rows are ALL faced. That is
+// a corroborating aside, not the reason: a type may still hold bare rows —
+// written before `faces:` was declared, or by a raw-store path — and
+// `prototypes/perf/project` is an in-tree fixture where they do, so its
+// `editorial` world genuinely takes the fallback arm.)
 //
 // The consumer this serves is a TOTAL face-to-world function: every (type,
 // face) some world heads resolves to exactly one world, or the schema does not

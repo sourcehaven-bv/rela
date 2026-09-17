@@ -128,6 +128,12 @@ export const useSchemaStore = defineStore('schema', () => {
   // somehow arrives ambiguous, because the old behaviour (return whichever the
   // map yielded first) was the bug.
   //
+  // Against a current server this is TOTAL for any face some world heads:
+  // sharing a chain head is the tie whatever `otherwise:` says (TKT-Z4L0IU),
+  // so the ambiguous branch below is unreachable. It used to be reachable, and
+  // that gap was the defect — a pair differing only in `otherwise:` loaded
+  // clean and left this returning undefined.
+  //
   // Returns undefined when no declared world heads that face, or when a tie is
   // unresolved — the caller should then omit the affordance rather than invent
   // a parameter the server will reject with `unknown_world`.
@@ -145,21 +151,14 @@ export const useSchemaStore = defineStore('schema', () => {
     // Sorted so the answer cannot depend on map insertion order.
     heads.sort()
 
-    // Several worlds lead this face. Two shapes reach here, and both resolve
-    // the same way:
+    // Several worlds lead this face, so one of them claims it. The server
+    // refuses the load otherwise — sharing a chain head IS the tie, whatever
+    // the worlds' `otherwise:` says (TKT-Z4L0IU), so by the time this runs a
+    // claimant exists and this branch resolves.
     //
-    //   - INDISTINGUISHABLE worlds (same head, same `otherwise:`). The server
-    //     refuses these unless one claims the face, so a claimant normally
-    //     exists.
-    //   - DISTINGUISHABLE worlds (same head, different `otherwise:`) — a
-    //     `published` world where absence is the publication bit beside a
-    //     lenient sibling that substitutes instead. The server accepts that
-    //     pair without a declaration, because `otherwise:` already answers a
-    //     different question; but it does not say which one a face-SWITCH
-    //     means, and neither do the chains.
-    //
-    // So: one claimant wins, anything else omits the affordance. Returning a
-    // world here on a hunch is what this whole ticket removed.
+    // It still does not ASSUME that. A schema arriving ambiguous — an older
+    // server, a hand-built response — omits the affordance rather than
+    // returning a world on a hunch, which is what TKT-MFVH03 removed.
     const claimants = heads.filter((name) => worlds.value.get(name)?.primary_for?.includes(face))
     return claimants.length === 1 ? claimants[0] : undefined
   })

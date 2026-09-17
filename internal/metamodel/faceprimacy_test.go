@@ -113,10 +113,12 @@ func TestFacePrimacy_ClaimingAFaceTheWorldDoesNotHead(t *testing.T) {
 //
 // It does not answer that. `otherwise:` decides what happens to entities
 // LACKING the face, and a reader asking to be taken to `nl` is asking about one
-// that HAS it — both worlds serve them the same row. Worse, the exemption is
-// now vacuous for a faced type: ResolveWorldPrimes takes its FallbackDefaultState
-// arm only when a zero-coordinate row exists, and since BUG-HC6I2T a type
-// declaring `faces:` stores none, so both worlds exclude identically.
+// that HAS it — the chain head decides, `otherwise:` is never consulted, and
+// both worlds serve the same row. The exemption keyed the tie on a parameter
+// that cannot separate them on the question the face-switch asks.
+//
+// Note this says nothing about entities lacking the face: there the two worlds
+// DO differ, observably, and this rule leaves that alone.
 //
 // Pinned as a load ERROR because the exemption is what made the face-to-world
 // lookup partial: it saw two heads and no claimant on a schema the loader had

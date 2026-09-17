@@ -40,11 +40,6 @@ schema under test by design.)
 
 **Verification Evidence:**
 
-- Empirical probe against `store.ResolveWorldPrimes` confirming the exemption is
-vacuous for a faced type: faced-only entity under `otherwise: default`, chain
-`[published]` → `map[]` (excluded); the same world with a bare row present →
-`{Face:"", Via:2}` (`ResolutionFallbackDefault`). This is what justifies
-collapsing the key.
 - Mutation check: reverting `primacyKey` to the three-field form while keeping
 the new tests fails `TestFacePrimacy_SameHeadDifferentOtherwiseIsATie`, and
 passes with the change. The test has teeth.
@@ -54,6 +49,20 @@ passes with the change. The test has teeth.
 - The corrected `docs/metamodel.md` example was validated as a real schema in
 both directions: it loads with `primary_for: nl`, and fails the load with the
 claim removed. The doc's rule is executable, not just asserted.
+- Go: `go test ./...` (bar `cmd/rela-desktop`, which needs a cgo toolchain this
+machine lacks), `arch-lint`, `comment-lint`, `golangci-lint` clean. Frontend:
+`test:run` on the schema store (47 pass), `typecheck`, `eslint`.
+
+**Corrected evidence (RR-VACUOUS):** an earlier revision of this checklist
+recorded a probe showing a faced-only entity resolving to `map[]` under
+`otherwise: default`, and read it as proof the `FallbackDefaultState` arm is
+unreachable for any faced type. That probe was run against a constructed case
+with no bare row, and generalising from it was wrong. Against
+`prototypes/perf/project`'s shape — `perfseed` writes every policy at the bare
+coordinate, chain `[draft, published]` — the arm fires (`Via:2`) and the two
+`otherwise:` values differ observably (`exclude` → `map[]`). The justification
+has been rewritten to rest on the per-type/per-face argument, which needs no
+claim about stored rows.
 
 ## Quality
 
@@ -65,5 +74,5 @@ field rather than adding logic.
 ACL behaviour changes.
 - [x] No silent failures — an ambiguous schema fails the load rather than
 resolving by map order.
-- [x] No debug code left behind (the empirical probe was run from a temp file
-and removed; it is recorded above rather than committed).
+- [x] No debug code left behind (the probes were run from temp files and
+removed; their results are recorded above rather than committed).

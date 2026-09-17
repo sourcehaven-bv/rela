@@ -83,8 +83,16 @@ entities:
     label: Policy
     id_prefix: POL
     id_type: manual
-    # Editorial axis: a bare id addresses the draft; publishing creates the
-    # published face (see `copies:`).
+    # Editorial axis: publishing creates the published face (see `copies:`).
+    #
+    # NOTE this fixture is deliberately NOT in the state a faced type reaches
+    # through the write path. `perfseed` writes each policy at the BARE
+    # coordinate rather than at `draft`, so a policy holds a bare row plus an
+    # optional `published` one. Since BUG-HC6I2T a bare id addresses no
+    # declared face, so those rows are strictly stranded — which is why the
+    # `editorial` world below (otherwise: default) resolves them via its
+    # fallback rather than via its chain. Useful as a perf corpus; do not read
+    # it as a model of how faced data is meant to look (BUG-UA3BK3).
     faces:
       draft:     { label: "Draft" }
       published: { label: "Published" }
@@ -98,7 +106,9 @@ entities:
     label: Document
     id_prefix: DOC
     id_type: manual
-    # Language axis: English is what a bare id addresses; Dutch is a peer.
+    # Language axis: `en` and `nl` are peers, neither privileged. As for
+    # `policy` above, perfseed writes the English text at the BARE coordinate
+    # rather than at `en`, so these rows are stranded too.
     faces:
       en: { label: "English" }
       nl: { label: "Nederlands" }
