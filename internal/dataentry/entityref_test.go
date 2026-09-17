@@ -69,8 +69,8 @@ relations:
     to: [feature]
     scope: content
   # SYMMETRIC and content-scoped, with an inverse spelling: the inverse key
-  # still makes the addressed entity the TAIL, so the faced-PATCH guard must
-  # refuse it like the canonical name.
+  # still makes the addressed entity the TAIL, so a faced PATCH must resolve
+  # it to the addressed face like the canonical name (BUG-64MU2Q).
   relates-to:
     from: [policy]
     to: [policy]
@@ -374,6 +374,19 @@ func TestFacedAddress_PatchWritesTheNamedFace(t *testing.T) {
 	// invisible to the published face that asked for it.
 	assertNoEdgeTail(ctx, t, app, "POL-1", "", "cites", "FEAT-1")
 	assertNoEdgeTail(ctx, t, app, "POL-1", "draft", "cites", "FEAT-1")
+	// A SYMMETRIC content-scoped relation spelled by its INVERSE name still
+	// tails at this address — resolveDirection maps it back to outgoing — so
+	// the tail must be computed the way the writer resolves the key, not from
+	// the body key's spelling. The refusal this replaced got that right; the
+	// write has to as well.
+	rec = patchEntityAs(bob, t, app, d, "policy", "policys", "POL-1@published",
+		`{"relations":{"related-from":{"data":[{"type":"policy","id":"POL-1"}]}}}`, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("a symmetric content-scoped relation via its inverse key = %d %s, want 200",
+			rec.Code, rec.Body)
+	}
+	assertEdgeTail(ctx, t, app, "POL-1", "published", "relates-to", "POL-1")
+	assertNoEdgeTail(ctx, t, app, "POL-1", "", "relates-to", "POL-1")
 	// An identity-scoped edge is entity-level: the same edge from every face.
 	rec = patchEntityAs(bob, t, app, d, "policy", "policys", "POL-1@published",
 		`{"relations":{"implements":{"data":[{"type":"feature","id":"FEAT-1"}]}}}`, nil)
@@ -382,8 +395,14 @@ func TestFacedAddress_PatchWritesTheNamedFace(t *testing.T) {
 	}
 	// The response describes the row that was written: the published face's
 	// own edges, not the union of every tail's. The edge seeded below tails
-	// at another face, so it must not appear beside the published one.
-	if _, err := app.store.CreateRelation(ctx, "POL-1", "relates-to", "POL-1",
+	// at the DRAFT and points somewhere the published face does not, so it
+	// must not appear beside the published one.
+	if err := app.store.CreateEntity(ctx, &entity.Entity{
+		ID: "FEAT-2", Type: "feature", Properties: map[string]any{"title": "f2"},
+	}); err != nil {
+		t.Fatalf("seed draft-only target: %v", err)
+	}
+	if _, err := app.store.CreateRelation(ctx, "POL-1", "cites", "FEAT-2",
 		&store.RelationData{FromFace: "draft"}); err != nil {
 		t.Fatalf("seed draft-tailed edge: %v", err)
 	}
@@ -396,13 +415,13 @@ func TestFacedAddress_PatchWritesTheNamedFace(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &after); err != nil {
 		t.Fatal(err)
 	}
-	if _, leaked := after.Relations["relates-to"]; leaked {
+	if slices.Contains(after.Relations["cites"], "FEAT-2") {
 		t.Errorf("the PATCH response for the published face carried the DRAFT face's "+
 			"content-scoped edge: %v", after.Relations)
 	}
 	// The published face's own content-scoped edge is still there — the
 	// response is face-scoped, not edge-less.
-	if _, present := after.Relations["cites"]; !present {
+	if !slices.Contains(after.Relations["cites"], "FEAT-1") {
 		t.Errorf("the PATCH response dropped the published face's OWN content-scoped "+
 			"edge: %v", after.Relations)
 	}
