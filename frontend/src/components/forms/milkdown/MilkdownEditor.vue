@@ -666,6 +666,12 @@ onMounted(async () => {
       content: linkPanelRoot.value,
       debounce: 50,
       shouldShow: () => linkUI.panelOpen.value,
+      // Below the link, not above it. The provider's default is `top`, which
+      // for a link on the first line puts the panel on top of the toolbar —
+      // covering the very buttons it sits next to. `flip()` still lifts it
+      // above when there is no room below.
+      offset: 6,
+      floatingUIOptions: { placement: 'bottom-start' },
     })
   }
 
