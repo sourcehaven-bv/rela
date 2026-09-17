@@ -70,12 +70,17 @@ func pinSearchPath(base, schema string) (string, error) {
 // the way pgstore.Open does in production but pinned to an isolated test schema.
 func openWriter(t *testing.T, schema string) store.Store {
 	t.Helper()
+	ctx := context.Background()
 	dsn := dsnForSchema(t, schema)
-	st, _, closer, err := pgstore.Open(context.Background(), dsn)
+	// The caller owns the pool (TKT-OGTVJW), so the test builds one and closes
+	// it — the same shape the postgres recipe uses.
+	pool, poolCloser, err := pgstore.NewPool(ctx, dsn)
+	require.NoError(t, err)
+	st, _, err := pgstore.Open(ctx, pool, dsn)
 	require.NoError(t, err)
 	t.Cleanup(func() {
-		_ = st.Close()     // stops the listener
-		_ = closer.Close() // closes the pool
+		_ = st.Close() // stops the listener
+		_ = poolCloser.Close()
 	})
 	return st
 }
@@ -354,7 +359,9 @@ func TestListenerGoroutineExitsOnClose(t *testing.T) {
 	schema := freshFeedSchema(t)
 
 	dsn := dsnForSchema(t, schema)
-	st, _, closer, err := pgstore.Open(context.Background(), dsn)
+	pool, poolCloser, err := pgstore.NewPool(context.Background(), dsn)
+	require.NoError(t, err)
+	st, _, err := pgstore.Open(context.Background(), pool, dsn)
 	require.NoError(t, err)
 
 	// Subscribe + a write so the listener goroutine is fully active before we
@@ -364,8 +371,8 @@ func TestListenerGoroutineExitsOnClose(t *testing.T) {
 	waitForEntityEvent(t, ch, "TKT-1", 5*time.Second)
 	cancel()
 
-	require.NoError(t, st.Close())     // must stop + join the listener goroutine
-	require.NoError(t, closer.Close()) // close the pool
+	require.NoError(t, st.Close()) // must stop + join the listener goroutine
+	require.NoError(t, poolCloser.Close())
 
 	goleak.VerifyNone(t,
 		// pgx/pgxpool background goroutines unrelated to our listener.

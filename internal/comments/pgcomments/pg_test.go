@@ -45,6 +45,7 @@ var (
 // a new backend either satisfies them or does not.
 func TestConformance(t *testing.T) {
 	commentstest.RunAll(t, func(t *testing.T) comments.Store {
+		t.Helper()
 		store, err := pgcomments.New(newScopedPool(t))
 		require.NoError(t, err)
 		return store
@@ -165,7 +166,7 @@ func newScopedPool(t *testing.T) *pgxpool.Pool {
 
 // newScopedPoolWithDSN also returns a DSN pinned to the same schema, for tests
 // that need a second, independent pool against it.
-func newScopedPoolWithDSN(t *testing.T) (*pgxpool.Pool, string) {
+func newScopedPoolWithDSN(t *testing.T) (pool *pgxpool.Pool, scopedDSN string) {
 	t.Helper()
 	admin := adminConn(t)
 	ctx := context.Background()
@@ -185,7 +186,7 @@ func newScopedPoolWithDSN(t *testing.T) (*pgxpool.Pool, string) {
 	cfg.MaxConns = 2
 	cfg.MinConns = 0
 
-	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	pool, err = pgxpool.NewWithConfig(ctx, cfg)
 	require.NoError(t, err)
 	t.Cleanup(pool.Close)
 
@@ -193,7 +194,7 @@ func newScopedPoolWithDSN(t *testing.T) (*pgxpool.Pool, string) {
 	// creates it — the same call the production wiring makes at startup.
 	require.NoError(t, pgstore.Migrate(ctx, pool))
 
-	scopedDSN := cfg.ConnString()
+	scopedDSN = cfg.ConnString()
 	if !strings.Contains(scopedDSN, "search_path") {
 		scopedDSN = appendSearchPath(scopedDSN, schema)
 	}

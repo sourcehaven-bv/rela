@@ -95,7 +95,7 @@ var migrations = []migration{
 		//
 		// The rung still earns its place: it is what moves the stamped version
 		// forward, and the version stamp is how a database opened by an OLDER
-		// binary is recognised as needing this shape at all.
+		// binary is recognized as needing this shape at all.
 		to:    5,
 		apply: sqlSteps(commentsDDL),
 	},

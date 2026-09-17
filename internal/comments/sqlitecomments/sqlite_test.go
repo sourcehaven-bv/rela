@@ -18,6 +18,7 @@ import (
 // TestConformance runs the shared backend contract against SQLite.
 func TestConformance(t *testing.T) {
 	commentstest.RunAll(t, func(t *testing.T) comments.Store {
+		t.Helper()
 		return newStore(t, filepath.Join(t.TempDir(), "rela.db"))
 	})
 }

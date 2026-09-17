@@ -47,7 +47,7 @@ func paths(t *testing.T) *project.Context {
 // data-entry app decide not to serve the routes at all.
 func TestBuildComments_DisabledYieldsNilService(t *testing.T) {
 	p := paths(t)
-	svc, err := buildComments(storage.NewOsFS(), p, commentsMeta(t, false))
+	svc, err := buildComments(storage.NewOsFS(), p, commentsMeta(t, false), nil)
 	require.NoError(t, err)
 	require.Nil(t, svc, "a nil service IS the disabled signal")
 
@@ -56,7 +56,7 @@ func TestBuildComments_DisabledYieldsNilService(t *testing.T) {
 }
 
 func TestBuildComments_EnabledYieldsService(t *testing.T) {
-	svc, err := buildComments(storage.NewOsFS(), paths(t), commentsMeta(t, true))
+	svc, err := buildComments(storage.NewOsFS(), paths(t), commentsMeta(t, true), nil)
 	require.NoError(t, err)
 	require.NotNil(t, svc)
 }
@@ -67,12 +67,12 @@ func TestBuildComments_EnabledYieldsService(t *testing.T) {
 // missing.
 func TestBuildComments_EnabledWithoutPathsFails(t *testing.T) {
 	t.Run("nil paths", func(t *testing.T) {
-		_, err := buildComments(storage.NewOsFS(), nil, commentsMeta(t, true))
+		_, err := buildComments(storage.NewOsFS(), nil, commentsMeta(t, true), nil)
 		require.Error(t, err)
 	})
 
 	t.Run("nil filesystem", func(t *testing.T) {
-		_, err := buildComments(nil, paths(t), commentsMeta(t, true))
+		_, err := buildComments(nil, paths(t), commentsMeta(t, true), nil)
 		require.Error(t, err)
 	})
 }
@@ -148,7 +148,7 @@ func TestAliasFanout_SkipsTypedNilBesideLiveSubscriber(t *testing.T) {
 // stops short of — and the step where the panic was born. An unwired hook is
 // what keeps the delete a no-op: the Manager skips a nil AliasRewriter.
 func TestAliasFanout_DisabledCommentsSurviveDelete(t *testing.T) {
-	svc, err := buildComments(storage.NewOsFS(), paths(t), commentsMeta(t, false))
+	svc, err := buildComments(storage.NewOsFS(), paths(t), commentsMeta(t, false), nil)
 	require.NoError(t, err)
 	require.Nil(t, svc)
 
@@ -162,7 +162,7 @@ func TestAliasFanout_DisabledCommentsSurviveDelete(t *testing.T) {
 // hazard [comments.Service.EntityDeleted] exists to prevent, which is quieter
 // than the panic this fix removed.
 func TestAliasFanout_EnabledCommentsStillSubscribe(t *testing.T) {
-	svc, err := buildComments(storage.NewOsFS(), paths(t), commentsMeta(t, true))
+	svc, err := buildComments(storage.NewOsFS(), paths(t), commentsMeta(t, true), nil)
 	require.NoError(t, err)
 	require.NotNil(t, svc)
 

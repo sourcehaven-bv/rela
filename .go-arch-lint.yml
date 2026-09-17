@@ -127,6 +127,8 @@ components:
   comments:         { in: internal/comments }
   memcomments:      { in: internal/comments/memcomments }
   filecomments:     { in: internal/comments/filecomments }
+  pgcomments:       { in: internal/comments/pgcomments }
+  sqlitecomments:   { in: internal/comments/sqlitecomments }
   schedulerstate:   { in: internal/schedulerstate }
   kvschedstate:     { in: internal/schedulerstate/kvstate }
   pattern:          { in: internal/pattern }
@@ -604,9 +606,13 @@ deps:
       - kvuserstate
       # Likewise the commentary layer: the root picks the backend and hands the
       # service to the App, which nil-checks it to decide whether the feature
-      # exists at all.
+      # exists at all. The database backends are chosen by the recipe that owns
+      # the handle, so they are wired from here like the store itself
+      # (TKT-OGTVJW); each import sits in that recipe's tagged file.
       - comments
       - filecomments
+      - pgcomments
+      - sqlitecomments
       - datamigration
       # Bridges conditionlint's next-action condition compiler to the seam
       # dataentry declares, so the app never imports the predicate engine.
@@ -1097,6 +1103,27 @@ deps:
       - storage
     canUse:
       - yaml
+  # The database backends (TKT-OGTVJW). Both take an INJECTED handle from the
+  # composition root — the same pool the store and search backend run on — so
+  # neither depends on `store`: a comment is not graph content, and these
+  # packages have no reason to know a store exists. `entity` is for
+  # StateRefSeparator alone (the face half of a thread key).
+  #
+  # pgcomments is the one that fixes a real defect: filecomments is node-local,
+  # so under the multi-process postgres deployment a comment posted through one
+  # node is invisible to the others.
+  pgcomments:
+    mayDependOn:
+      - comments
+      - entity
+    canUse:
+      - pgx
+  # sqlitecomments needs no driver grant: it speaks database/sql only, and
+  # registering the driver stays sqlitedb's job.
+  sqlitecomments:
+    mayDependOn:
+      - comments
+      - entity
   # schedulerstate is the per-task scheduler bookkeeping seam (last successful
   # run, failure count, next retry). Deliberately NOT dependent on store: a
   # last-run stamp is a fact about a deployment's operation, not graph content,

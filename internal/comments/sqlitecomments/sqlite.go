@@ -247,11 +247,11 @@ func requireAffected(res sql.Result, notFound error) error {
 // scanComment reads one row in [columns] order.
 func scanComment(rows *sql.Rows) (comments.Comment, error) {
 	var (
-		c         comments.Comment
-		created   string
-		updated   *string
-		anchor    string
-		resolved  bool
+		c        comments.Comment
+		created  string
+		updated  *string
+		anchor   string
+		resolved bool
 	)
 	if err := rows.Scan(&c.ID, &c.Author, &created, &updated, &anchor, &c.Body, &resolved); err != nil {
 		return comments.Comment{}, err

@@ -29,26 +29,39 @@ const commentsDirName = "comments"
 // at all, so a disabled feature costs an operator no routes, no directory and
 // no storage — which is what AC1 asks for.
 //
-// Backend choice is deliberately NOT build-tagged today: the file backend is
-// correct for every current build (fs, memory, sqlite are all single-process,
-// and the postgres build's multi-process concern arrives with pgcomments in the
-// follow-up ticket). Making it a per-recipe choice before there is a second
-// backend would add four call sites that all pass the same thing.
-func buildComments(fs storage.FS, paths *project.Context, meta *metamodel.Metamodel) (*comments.Service, error) {
+// The backend is chosen by the RECIPE, which passes one in when its database
+// should hold the comments (TKT-OGTVJW): postgres MUST, because filecomments is
+// node-local and that build serves several processes from one database; sqlite
+// does so commentary travels with rela.db, the same call versioning made. A nil
+// backend selects filecomments, which stays correct for the fs, memory and
+// desktop tiers.
+//
+// Passed in rather than selected by a build tag here, because the choice needs
+// the database HANDLE, which belongs to the recipe that opened it — the comment
+// store shares that one pool rather than opening its own, exactly as the
+// in-database search backend does.
+func buildComments(
+	fs storage.FS, paths *project.Context, meta *metamodel.Metamodel, backend comments.Store,
+) (*comments.Service, error) {
 	if !metamodel.NewCommentPolicy(meta).Enabled() {
 		return nil, nil //nolint:nilnil // a nil service IS the "feature disabled" signal; see the doc above.
 	}
-	if fs == nil || paths == nil || paths.CacheDir == "" {
-		// Commenting is configured but there is nowhere to put the data. This
-		// is a wiring failure, not a degradation: silently disabling a feature
-		// the operator switched on would surface later as comments vanishing.
-		return nil, errors.New("comments: enabled in the metamodel but no project cache directory is available")
+
+	store := backend
+	if store == nil {
+		if fs == nil || paths == nil || paths.CacheDir == "" {
+			// Commenting is configured but there is nowhere to put the data. This
+			// is a wiring failure, not a degradation: silently disabling a feature
+			// the operator switched on would surface later as comments vanishing.
+			return nil, errors.New("comments: enabled in the metamodel but no project cache directory is available")
+		}
+		fileStore, err := filecomments.New(fs, filepath.Join(paths.CacheDir, commentsDirName))
+		if err != nil {
+			return nil, fmt.Errorf("comments: %w", err)
+		}
+		store = fileStore
 	}
 
-	store, err := filecomments.New(fs, filepath.Join(paths.CacheDir, commentsDirName))
-	if err != nil {
-		return nil, fmt.Errorf("comments: %w", err)
-	}
 	svc, err := comments.NewService(store, nil)
 	if err != nil {
 		return nil, fmt.Errorf("comments: %w", err)

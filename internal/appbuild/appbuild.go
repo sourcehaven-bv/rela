@@ -1659,6 +1659,18 @@ type backendOverrides struct {
 	// reason and from the same handle: state written beside the database
 	// rather than inside it would be left behind when the file is shipped.
 	stateKV state.KV
+
+	// commentStore replaces the filesystem comment store (TKT-OGTVJW).
+	//
+	// Supplied by the database recipes from the handle they already own, for
+	// two different reasons. Postgres NEEDS it: filecomments is node-local, so
+	// under the multi-process deployment docs/postgres-backend.md documents, a
+	// comment posted through one node is invisible to every other. SQLite wants
+	// it so commentary travels with rela.db, the same call versioning made.
+	//
+	// Nil leaves the filesystem backend in place, which is correct for the fs,
+	// memory and desktop tiers.
+	commentStore comments.Store
 }
 
 // assemble builds the services bundle from an opened store.
@@ -1752,7 +1764,7 @@ func assemble(
 	// store.EntityObserver for the reason that hook documents: stores fire the
 	// observer with the error discarded, which is fine for a rebuildable search
 	// index but not for records that exist ONLY in the comment store.
-	commentSvc, err := buildComments(cfg.FS, cfg.Paths, base.meta)
+	commentSvc, err := buildComments(cfg.FS, cfg.Paths, base.meta, overrides.commentStore)
 	if err != nil {
 		return nil, err
 	}
