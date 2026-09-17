@@ -53,12 +53,20 @@ useModalStack(computed(() => props.open))
 const title = computed(() => (props.editing ? 'Edit link' : 'Insert link'))
 const submitLabel = computed(() => (props.editing ? 'Save' : 'Insert'))
 
+// Watches the seed values ALONGSIDE `open`, not `open` alone.
+//
+// The obvious version — `watch(() => props.open, …)` reading `props.initialUrl`
+// in the body — silently opens the dialog empty. All four props change in one
+// update, and the watcher fires while that update is still in progress, so the
+// body reads the PREVIOUS `initialUrl`. Watching the tuple makes the
+// dependency real rather than incidental.
 watch(
-  () => props.open,
-  (isOpen, wasOpen) => {
+  () => [props.open, props.initialUrl, props.initialText] as const,
+  ([isOpen, url, text], prev) => {
+    const wasOpen = prev?.[0] ?? false
     if (isOpen && !wasOpen) {
-      urlInput.value = props.initialUrl ?? ''
-      textInput.value = props.initialText ?? ''
+      urlInput.value = url ?? ''
+      textInput.value = text ?? ''
       error.value = ''
       previouslyFocused.value = (document.activeElement as HTMLElement) ?? null
       // Focus the URL field even when the text field is present: the URL is
@@ -66,13 +74,13 @@ watch(
       // right.
       void nextTick(() => urlRef.value?.focus())
     } else if (!isOpen && wasOpen) {
-      const prev = previouslyFocused.value
+      const prev2 = previouslyFocused.value
       previouslyFocused.value = null
       // Focus goes back where it came from, which is the editor at the caret.
-      if (prev?.isConnected) prev.focus()
+      if (prev2?.isConnected) prev2.focus()
     }
   },
-  { immediate: true, flush: 'sync' }
+  { immediate: true }
 )
 
 onBeforeUnmount(() => {
