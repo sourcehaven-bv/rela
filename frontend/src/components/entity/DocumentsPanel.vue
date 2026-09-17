@@ -6,7 +6,11 @@ import { useScriptErrorStore } from '@/stores/scriptError'
 import { renderDocument } from '@/api/documents'
 import { useEvents } from '@/composables/useEvents'
 import { createDocumentClickHandler } from '@/composables/useDocumentClicks'
-import { renderMermaidDiagrams, renderPlantUMLDiagrams } from '@/utils/markdown'
+import {
+  renderMermaidDiagrams,
+  renderPlantUMLDiagrams,
+  wrapTablesForScroll,
+} from '@/utils/markdown'
 import type { DocumentConfig } from '@/types'
 import { getErrorMessage, getScriptError, shouldDropHeldContent } from '@/api/errors'
 import PendingButton from '@/components/common/PendingButton.vue'
@@ -59,7 +63,9 @@ const isCached = ref(false)
 const docBody = useTemplateRef<HTMLElement>('docBody')
 
 // Sanitized content for safe rendering
-const sanitizedContent = computed(() => DOMPurify.sanitize(docContent.value))
+const sanitizedContent = computed(() =>
+  wrapTablesForScroll(DOMPurify.sanitize(docContent.value))
+)
 
 // Re-run mermaid rendering whenever the doc content is (re-)painted. The
 // rela-server's document renderer emits <pre class="mermaid">…</pre>

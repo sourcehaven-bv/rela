@@ -29,6 +29,10 @@ vi.mock('vue-router', () => ({
 vi.mock('@/utils/markdown', () => ({
   renderMermaidDiagrams: vi.fn().mockResolvedValue(undefined),
   renderPlantUMLDiagrams: vi.fn(),
+  // Identity stand-in: these tests assert denial/hold behaviour by comparing
+  // the HTML that reaches the DOM, so the table-scroll wrapper would only add
+  // noise. Its own behaviour is covered in utils/markdown.test.ts.
+  wrapTablesForScroll: (html: string) => html,
 }))
 
 const renderDocumentMock = vi.fn<() => Promise<DocumentRenderResponse>>()

@@ -77,8 +77,21 @@ function scan() {
  */
 let observer: ResizeObserver | null = null
 
+/**
+ * Scroll containers between a block and the host, currently the per-table
+ * wrappers from `wrapTablesForScroll`. Tracked so their listeners can be
+ * removed again — `scan` is re-registered on every `observe()`.
+ */
+let scrollers: HTMLElement[] = []
+
+function unobserveScrollers() {
+  for (const s of scrollers) s.removeEventListener('scroll', scan)
+  scrollers = []
+}
+
 function observe() {
   observer?.disconnect()
+  unobserveScrollers()
   const host = props.container
   if (!host || typeof ResizeObserver === 'undefined') return
   observer = new ResizeObserver(() => scan())
@@ -86,6 +99,13 @@ function observe() {
   for (const img of host.querySelectorAll('img')) {
     if (!img.complete) img.addEventListener('load', scan, { once: true })
   }
+  // `scan` converts a viewport rect to a host-relative offset, which silently
+  // assumes nothing between the block and the host scrolls independently.
+  // `.md-table-scroll` breaks that assumption: an image in a table cell moves
+  // with the table while `hostRect` does not, so the affordance would drift off
+  // its block and stay there (a ResizeObserver does not fire on scroll).
+  scrollers = [...host.querySelectorAll<HTMLElement>('.md-table-scroll')]
+  for (const s of scrollers) s.addEventListener('scroll', scan, { passive: true })
 }
 
 watch(
@@ -98,7 +118,10 @@ watch(
   { immediate: true, deep: false }
 )
 
-onBeforeUnmount(() => observer?.disconnect())
+onBeforeUnmount(() => {
+  observer?.disconnect()
+  unobserveScrollers()
+})
 
 function startComposing(b: Placed) {
   composingFor.value = b.quote

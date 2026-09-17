@@ -113,9 +113,126 @@ export function renderMarkdown(
   // `mark` itself needs no ADD_TAGS: it is in DOMPurify's default allowlist.
   // The comment attributes carry a server-minted id and a boolean; neither is
   // a URL or a script sink.
-  return DOMPurify.sanitize(rawHtml, {
-    ADD_ATTR: ['data-cb-idx', 'data-comment-id', 'data-comment-uncertain', 'data-comment-chip'],
-  })
+  return wrapTablesForScroll(
+    DOMPurify.sanitize(rawHtml, {
+      ADD_ATTR: ['data-cb-idx', 'data-comment-id', 'data-comment-uncertain', 'data-comment-chip'],
+    })
+  )
+}
+
+/**
+ * Wrap every top-level `<table>` in a horizontally scrollable container.
+ *
+ * A wide markdown table has to scroll SOMETHING. Before TKT-8WH1KZ that was
+ * `.md-body` itself, which slid the surrounding headings and paragraphs
+ * sideways along with the table — the table is the thing that overflows, so
+ * the table is the thing that should scroll.
+ *
+ * Runs on ALREADY-SANITIZED html and builds the wrapper with DOM APIs, never
+ * by concatenating markup. That ordering is deliberate: re-parsing our own
+ * output through a second `DOMPurify.sanitize` would be wasted work, and
+ * string-splicing a wrapper around sanitized HTML is exactly how a sanitizer
+ * gets bypassed. `<template>` parses inertly — no network requests, no script
+ * execution — so untrusted content is never live in the document here.
+ *
+ * `role="region"` + `tabindex="0"` + a label are required, not decoration: a
+ * scrollable box that is not focusable and holds no focusable child cannot be
+ * reached with the keyboard at all, so its clipped content becomes
+ * unreachable (WCAG 2.1.1; axe `scrollable-region-focusable`). The wrapper is
+ * only added when a table is present, and the CSS only paints a scrollbar when
+ * the table actually overflows — but the tab stop is unconditional, which is
+ * the accepted trade for not measuring layout at render time.
+ *
+ * Nil/empty: returns the input unchanged.
+ */
+export function wrapTablesForScroll(html: string): string {
+  if (!html || !html.includes('<table')) return html
+
+  const template = document.createElement('template')
+  // `html` is already DOMPurify output: every caller sanitizes before calling
+  // (renderMarkdown above; DocumentView and DocumentsPanel sanitize the
+  // server's goldmark HTML). This re-parses our own sanitized markup rather
+  // than introducing new input, and a `<template>` is inert — its content is
+  // parsed into a separate document fragment that never executes script, loads
+  // resources, or fires handlers. Sanitizing again would be a no-op, and
+  // sanitizing AFTER the wrap would strip the role/tabindex the wrapper exists
+  // to carry.
+  // nosemgrep: dom-innerhtml-assignment
+  template.innerHTML = html
+
+  const tables = template.content.querySelectorAll('table')
+  // Reached when the `<table` above matched inside a code fence rather than
+  // real markup. Keep this: it is what stops a document that merely *mentions*
+  // `<table` from paying a full re-serialization.
+  if (tables.length === 0) return html
+
+  for (const table of tables) {
+    // Only the OUTERMOST table gets a wrapper. `querySelectorAll` is a
+    // descendant query, so a table nested in a `<td>` matches too — wrapping it
+    // would stack a second `role="region"` tab stop over the same pixels, which
+    // is worse than no region at all. Markdown cannot express a nested table,
+    // but this also runs on server-rendered document HTML, where an author's
+    // raw `<table>` survives DOMPurify.
+    if (table.parentElement?.closest('table')) continue
+
+    // A table already inside a scroller (a re-render) must not collect a
+    // second wrapper.
+    if (table.parentElement?.classList.contains('md-table-scroll')) continue
+
+    const scroller = document.createElement('div')
+    scroller.className = 'md-table-scroll'
+    scroller.setAttribute('role', 'region')
+    scroller.setAttribute('tabindex', '0')
+    scroller.setAttribute('aria-label', tableLabel(table))
+    table.replaceWith(scroller)
+    scroller.appendChild(table)
+  }
+
+  return template.innerHTML
+}
+
+/**
+ * Accessible name for a table's scroll region.
+ *
+ * An unnamed `role="region"` is announced as a bare "region", which tells a
+ * screen-reader user nothing about what they have just tabbed into. Prefer the
+ * table's own caption; fall back to its first column headers, which is what a
+ * sighted user reads to identify the table. Truncated because this becomes
+ * announced speech, not visible text.
+ */
+function tableLabel(table: HTMLTableElement): string {
+  // Every lookup here is scoped to THIS table's own children. A descendant
+  // query (`table.querySelectorAll('thead th')`) reaches into a nested table
+  // and names the outer region after the inner one's columns — a label that is
+  // worse than none, because it confidently describes the wrong table.
+  const children = [...table.children]
+
+  const caption = children.find((c) => c.tagName === 'CAPTION')
+  const captionText = squashWhitespace(caption?.textContent ?? '')
+  if (captionText) return `Table: ${captionText}`
+
+  const thead = children.find((c) => c.tagName === 'THEAD')
+  const headers = [...(thead?.querySelectorAll(':scope > tr > th') ?? [])]
+    .map((th) => squashWhitespace(th.textContent ?? ''))
+    .filter(Boolean)
+  if (headers.length > 0) {
+    const named = headers.slice(0, 3).join(', ')
+    return `Table: ${named}${headers.length > 3 ? ', …' : ''}`
+  }
+  return 'Table'
+}
+
+/**
+ * Collapse runs of whitespace to single spaces and trim.
+ *
+ * A header cell's `textContent` carries the source markup's newlines and
+ * indentation. Those are invisible in rendered text but land verbatim in an
+ * `aria-label`, so the label differs between equivalent documents. Screen
+ * readers collapse whitespace anyway; normalizing makes the attribute
+ * deterministic rather than depending on how the HTML happened to be formatted.
+ */
+function squashWhitespace(text: string): string {
+  return text.replace(/\s+/g, ' ').trim()
 }
 
 // rewriteEntityRefToken mutates a `codespan` token in place into a `link`
