@@ -10,8 +10,10 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sourcehaven-BV/rela/internal/comments"
+	"github.com/Sourcehaven-BV/rela/internal/comments/memcomments"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
@@ -75,6 +77,67 @@ func TestBuildComments_EnabledWithoutPathsFails(t *testing.T) {
 		_, err := buildComments(nil, paths(t), commentsMeta(t, true), nil)
 		require.Error(t, err)
 	})
+}
+
+// TestBuildComments_BackendOverrideIsUsed pins the database recipes' half of
+// TKT-OGTVJW: when a recipe supplies a backend, comments must go THERE and not
+// to the filesystem.
+//
+// Asserting on the empty `.rela/comments/` directory is the point. A wiring
+// regression that silently fell back to filecomments would still produce a
+// working service and pass every other test here, while a postgres deployment
+// quietly went back to node-local comments — the exact defect this ticket
+// exists to fix, and one with no error message to notice.
+func TestBuildComments_BackendOverrideIsUsed(t *testing.T) {
+	p := paths(t)
+	backend := memcomments.New()
+
+	svc, err := buildComments(storage.NewOsFS(), p, commentsMeta(t, true), backend)
+	require.NoError(t, err)
+	require.NotNil(t, svc)
+
+	ctx := commentsCtx()
+	target := comments.Target{Type: "ticket", ID: "TKT-1"}
+	_, err = svc.Add(ctx, target, comments.AddRequest{
+		Anchor: comments.Anchor{Kind: comments.AnchorProperty, Ref: "status"},
+		Body:   "in the injected backend",
+	})
+	require.NoError(t, err)
+
+	stored, err := backend.List(ctx, target)
+	require.NoError(t, err)
+	require.Len(t, stored, 1, "the comment must land in the supplied backend")
+
+	_, statErr := os.Stat(filepath.Join(p.CacheDir, commentsDirName))
+	require.ErrorIs(t, statErr, os.ErrNotExist,
+		"a supplied backend must leave no filesystem comment store behind")
+}
+
+// TestBuildComments_NilBackendUsesFilesystem is the other half: the fs, memory
+// and desktop tiers pass nothing and must keep the file backend they had.
+func TestBuildComments_NilBackendUsesFilesystem(t *testing.T) {
+	p := paths(t)
+	svc, err := buildComments(storage.NewOsFS(), p, commentsMeta(t, true), nil)
+	require.NoError(t, err)
+	require.NotNil(t, svc)
+
+	// The file backend creates its directory on the first write, not at
+	// construction, so the comment is what makes the storage observable.
+	_, err = svc.Add(commentsCtx(), comments.Target{Type: "ticket", ID: "TKT-1"},
+		comments.AddRequest{
+			Anchor: comments.Anchor{Kind: comments.AnchorProperty, Ref: "status"},
+			Body:   "on disk",
+		})
+	require.NoError(t, err)
+
+	_, statErr := os.Stat(filepath.Join(p.CacheDir, commentsDirName))
+	require.NoError(t, statErr, "the default tier still stores comments on disk")
+}
+
+// commentsCtx stamps an author, which the service requires before it will
+// accept a comment.
+func commentsCtx() context.Context {
+	return principal.With(context.Background(), principal.Principal{User: "alice", Tool: "test"})
 }
 
 // recordingRewriter captures the notifications it receives.
