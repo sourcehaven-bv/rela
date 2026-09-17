@@ -105,25 +105,56 @@ func TestFacePrimacy_ClaimingAFaceTheWorldDoesNotHead(t *testing.T) {
 	}
 }
 
-// Sharing a chain head is NOT a tie when the worlds resolve absence
-// differently. This pair is the prototype's own shape — a published world where
-// absence means "not published" and a lenient sibling that substitutes instead
-// — and rejecting it would fail a working schema for a question the operator
-// has already answered with `otherwise:`.
+// Sharing a chain head IS a tie even when the worlds resolve absence
+// differently. This pair — a published world where absence means "not
+// published" beside a lenient sibling that substitutes instead — used to be
+// exempt, on the argument that `otherwise:` already answered which world a
+// face-switch meant.
 //
-// This is the case that caught an over-broad first version of the rule
-// (internal/worlds TestCompile_ChainsAndFallback), so it is pinned here.
-func TestFacePrimacy_SameHeadDifferentOtherwiseIsNotATie(t *testing.T) {
-	if _, err := parseWorlds(t, primacyPrefix+`
+// It does not answer that. `otherwise:` decides what happens to entities
+// LACKING the face, and a reader asking to be taken to `nl` is asking about one
+// that HAS it — both worlds serve them the same row. Worse, the exemption is
+// now vacuous for a faced type: ResolveWorldPrimes takes its FallbackDefaultState
+// arm only when a zero-coordinate row exists, and since BUG-HC6I2T a type
+// declaring `faces:` stores none, so both worlds exclude identically.
+//
+// Pinned as a load ERROR because the exemption is what made the face-to-world
+// lookup partial: it saw two heads and no claimant on a schema the loader had
+// passed.
+func TestFacePrimacy_SameHeadDifferentOtherwiseIsATie(t *testing.T) {
+	_, err := parseWorlds(t, primacyPrefix+`
   published:
     select: [nl]
     otherwise: exclude
   lenient:
     select: [nl]
     otherwise: default
+`)
+	if err == nil {
+		t.Fatal("two worlds heading `nl` must declare `primary_for:` even when their " +
+			"`otherwise:` differs — a reader switching to a face they HAVE is served " +
+			"the same row by both, so the chains alone cannot say which world is meant")
+	}
+	for _, want := range []string{"guide", "published", "lenient", "nl", "primary_for"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error should name %q so the operator can act on it; got: %v", want, err)
+		}
+	}
+}
+
+// Declaring `primary_for:` resolves the differing-`otherwise:` tie the same way
+// it resolves an identical-`otherwise:` one — one rule, one remedy.
+func TestFacePrimacy_DeclaringOneResolvesTheOtherwiseTie(t *testing.T) {
+	if _, err := parseWorlds(t, primacyPrefix+`
+  published:
+    select: [nl]
+    otherwise: exclude
+    primary_for: nl
+  lenient:
+    select: [nl]
+    otherwise: default
 `); err != nil {
-		t.Fatalf("two worlds may lead the same face while answering different "+
-			"questions about entities lacking it: %v", err)
+		t.Fatalf("a declared claimant must resolve the tie: %v", err)
 	}
 }
 

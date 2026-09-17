@@ -880,23 +880,21 @@ func sortedPrimacyKeys[V any](m map[primacyKey]V) []primacyKey {
 		if out[i].entityType != out[j].entityType {
 			return out[i].entityType < out[j].entityType
 		}
-		if out[i].face != out[j].face {
-			return out[i].face < out[j].face
-		}
-		return out[i].otherwise < out[j].otherwise
+		return out[i].face < out[j].face
 	})
 	return out
 }
 
-// primacyKey identifies one (entity type, face, otherwise) triple — the
-// granularity at which headship is decided. Per type because `overrides:` makes
-// the answer per type; per `otherwise:` because two worlds leading the same
-// face but resolving its absence differently are distinguishable, and only
-// indistinguishable worlds are ambiguous.
-type primacyKey struct{ entityType, face, otherwise string }
+// primacyKey identifies one (entity type, face) pair — the granularity at which
+// headship is decided. Per type because `overrides:` makes the answer per type;
+// per face because a face is what a reader asks to be taken to.
+//
+// Deliberately NOT keyed by `otherwise:` as well. See [validateFacePrimacy] for
+// why that split made the rule miss the ties it exists to catch.
+type primacyKey struct{ entityType, face string }
 
-// validateFacePrimacy rejects an UNDECLARED tie between worlds that are
-// INDISTINGUISHABLE for a face (TKT-MFVH03).
+// validateFacePrimacy rejects an UNDECLARED tie between worlds that lead the
+// same face for a type (TKT-MFVH03).
 //
 // Without this the face-switcher answered "which world serves this face" by map
 // iteration order — insertion order, a property of how the config serialized
@@ -904,20 +902,29 @@ type primacyKey struct{ entityType, face, otherwise string }
 // unrelated world was added or renamed. That is the same silent key-order
 // failure `bare_face:` was introduced to remove on the face side.
 //
-// # What counts as a tie, and what deliberately does not
+// # What counts as a tie
 //
-// Sharing a chain HEAD is not enough. Two worlds routinely lead the same face
-// and differ in `otherwise:`, and that pair is meaningful rather than
-// ambiguous: the prototype's `published` (otherwise: exclude — absence is the
-// publication bit) and a lenient sibling (otherwise: default — substitute
-// instead of vanishing) select the same face and answer a DIFFERENT question
-// about the entities that lack it. Rejecting those would fail working schemas
-// for a question the operator has already answered.
+// Sharing a chain HEAD for a type IS the tie. Two worlds that lead the same
+// face serve a reader asking for that face the same row, so "which one does the
+// face-switch mean" has no answer in the chains and the operator has to say it
+// with `primary_for:`.
 //
-// A tie is therefore two worlds that lead the same face for a type AND resolve
-// it identically — same head, same `otherwise:`. Those two genuinely serve the
-// reader the same thing, so "which one does the face-switch mean" has no
-// answer in the chains, and the operator has to say.
+// This rule used to key the tie on `otherwise:` as well, exempting a pair that
+// led one face while resolving its ABSENCE differently — a `published` world
+// (otherwise: exclude, absence is the publication bit) beside a lenient sibling
+// (otherwise: default, substitute instead of vanishing). The exemption rested
+// on those two answering a different question, and for a faced type they no
+// longer do: [store.ResolveWorldPrimes] takes its FallbackDefaultState arm only
+// when a zero-coordinate row exists, and since BUG-HC6I2T a type declaring
+// `faces:` stores no row there. Both worlds therefore exclude, identically, and
+// keying on a value that changes nothing split one genuine ambiguity into two
+// halves that each looked unambiguous — so the client's face-to-world lookup
+// found two heads, no claimant, and gave up on a schema that had loaded clean.
+//
+// The consumer this serves is a TOTAL face-to-world function: every (type,
+// face) some world heads resolves to exactly one world, or the schema does not
+// load. A caller may then name the world serving a face without a fallback for
+// "the schema was ambiguous" — see `worldForFace` in the web app's schema store.
 //
 // Failing the LOAD rather than picking is deliberate and matches the rest of
 // this file: a schema whose resolution is ambiguous is a schema whose author
@@ -944,10 +951,9 @@ func validateFacePrimacy(m *Metamodel) []string {
 			if _, declared := def.Faces[chain[0]]; !declared {
 				continue
 			}
-			// Keyed by the RESOLUTION, not just the head: two worlds leading
-			// the same face with different `otherwise:` answer different
-			// questions and are not interchangeable.
-			k := primacyKey{typeName, chain[0], string(world.Otherwise)}
+			// Keyed by the HEAD alone. `otherwise:` deliberately does not
+			// participate — see the doc above.
+			k := primacyKey{typeName, chain[0]}
 			heads[k] = append(heads[k], worldName)
 			for _, claim := range world.PrimaryFor {
 				if claim == chain[0] {
