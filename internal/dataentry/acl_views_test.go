@@ -16,10 +16,9 @@ import (
 // getEntityAs (the GET-entity equivalent). The middleware is bypassed in
 // unit tests, so gateCtxFor attaches the readGate the handler reads.
 //
-// entityType is kept explicit (mirroring getEntityAs and the route shape) so a
-// future non-ticket case needs no signature churn.
-//
-//nolint:unparam // see above: entityType is intentionally parameterized.
+// entityType is explicit (mirroring getEntityAs and the route shape). The
+// `unparam` suppression this used to carry is gone: the recursive query-budget
+// test drives an `epic`-entry view, so the parameter now genuinely varies.
 func viewsAs(ctx context.Context, t *testing.T, app *App, d *acl.Declarative,
 	entityType, entityID string,
 ) *httptest.ResponseRecorder {

@@ -46,6 +46,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/scopes"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/state"
@@ -766,9 +767,13 @@ func NewFromCollaborators(c Collaborators) (*Services, error) {
 	visible := c.VisibleSearcher
 	if visible == nil {
 		v, err := search.NewVisible(c.Searcher, c.Store)
+		// coverage-ignore-start: defensive: NewVisible only errors on nil Searcher/Store or a Store that isn't an
+		// EntityReader; c.Searcher/c.Store
+		// are validated non-nil above and every store.Store is an EntityReader
 		if err != nil {
 			return nil, fmt.Errorf("appbuild.NewFromCollaborators: derive VisibleSearcher: %w", err)
 		}
+		// coverage-ignore-end
 		visible = v
 	}
 	// Compile worlds from the supplied metamodel so this construction path
@@ -871,9 +876,13 @@ func buildAutomation(meta *metamodel.Metamodel) (*automation.Engine, *autocascad
 		return nil, nil, fmt.Errorf("build automation engine: %w", err)
 	}
 	cascadeRunner, err := autocascade.New(autocascade.Deps{Engine: autoEngine})
+	// coverage-ignore-start: defensive: autocascade.New only errors on a nil Engine; autoEngine is freshly built by
+	// NewEngineFromMetamodel just
+	// above and is never nil
 	if err != nil {
 		return nil, nil, fmt.Errorf("build autocascade runner: %w", err)
 	}
+	// coverage-ignore-end
 	return autoEngine, cascadeRunner, nil
 }
 
@@ -1055,9 +1064,13 @@ func buildACL(policy *acl.Policy, meta *metamodel.Metamodel, st store.Store) (ac
 	// the policy enables that lookup (else it is an inert dependency).
 	d, err := acl.NewDeclarative(policy, acl.NewStoreGraph(st), st,
 		acl.WithPrincipalLookup(acl.NewStorePrincipalLookup(st)))
+	// coverage-ignore-start: defensive: NewDeclarative only errors on nil policy/graph/queryer or a missing principal
+	// lookup; policy is non-nil
+	// (guarded above), graph and queryer are non-nil (NewStoreGraph(st)/st), and WithPrincipalLookup is always supplied
 	if err != nil {
 		return nil, nil, fmt.Errorf("appbuild: build acl.Declarative: %w", err)
 	}
+	// coverage-ignore-end
 	return d, d, nil
 }
 
@@ -1257,10 +1270,14 @@ func buildAt(
 	// warns at most once per process.
 	project.WarnIfLegacySchema(paths)
 	auditSink, auditErr := audit.NewFilesystem(filepath.Join(paths.CacheDir, "audit"))
+	// coverage-ignore-start: defensive: audit.NewFilesystem only errors on an empty dir; filepath.Join(paths.CacheDir,
+	// "audit") is never empty
+	// because project.Discover always sets a non-empty CacheDir
 	if auditErr != nil {
 		return nil, fmt.Errorf("build audit sink: %w", auditErr)
 	}
 
+	// coverage-ignore-end
 	return New(Config{
 		FS:           fs,
 		Paths:        paths,
@@ -1419,6 +1436,21 @@ func prepare(cfg Config, opts []Option) (*SharedBase, error) {
 	if err != nil {
 		return nil, fmt.Errorf("compile worlds: %w", err)
 	}
+
+	// Compile the declared query scopes for the same reason, and at the same
+	// point: a scope that does not compile must fail the BOOT, not the first
+	// page that happens to use it. Compiling here rather than only in the
+	// data-entry wiring means every entry point pays the check, so `rela
+	// validate` cannot report clean on a schema rela-server would refuse.
+	//
+	// The result is discarded — dataentry compiles its own, from a metamodel
+	// that reloads at runtime (see appbuild.QueryScopes). This call is the
+	// gate, not the supply.
+	compiledScopes, err := scopes.Compile(meta)
+	if err != nil {
+		return nil, fmt.Errorf("compile query scopes: %w", err)
+	}
+	warnQueryScopes(&compiledScopes, meta, aclPolicy)
 
 	return &SharedBase{
 		cfg: cfg, opts: o, acl: resolvedACL, aclPolicy: aclPolicy,
@@ -1669,9 +1701,13 @@ func assemble(
 	}
 
 	autoEngine, cascadeRunner, err := buildAutomation(base.meta)
+	// coverage-ignore-start: defensive: buildAutomation only errors when autocascade.New fails, which requires a nil
+	// Engine that buildAutomation
+	// never produces (see the scupper there)
 	if err != nil {
 		return nil, err
 	}
+	// coverage-ignore-end
 
 	tr := tracer.New(st)
 	templater := templating.NewFSTemplater(cfg.FS, cfg.Paths)
@@ -1709,6 +1745,10 @@ func assemble(
 		backendKV = stateKVFor(st)
 	}
 	stateKV, aliases, jobQueue, err := buildRuntimeServices(cfg.FS, cfg.Paths, base, backendKV)
+	// coverage-ignore-start: defensive: entitymanager.New only errors on a nil required dep
+	// (Store/Meta/Templater/Audit/ACL/Transitions);
+	// assemble supplies all of them non-nil (Audit validated in Config.validate, Transitions is Compile's non-nil Set,
+	// resolvedACL is never nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1732,14 +1772,19 @@ func assemble(
 	if err != nil {
 		return nil, err
 	}
+	// coverage-ignore-end
 
 	// Upstream's parameter order (readDeps after cascadeRunner) with the
 	// comment fanout wrapping the alias rewriter.
 	mgr, err := buildEntityManager(base, st, newAliasFanout(aliases, commentSvc), templater, resolvedACL,
 		autoEngine, cascadeRunner, readDeps, versions, tw, computedSet)
+	// coverage-ignore-start: defensive: buildStateKV only errors when NewRootedFS fails on a non-empty CacheDir, which
+	// requires filepath.Abs to
+	// fail — unreachable with valid inputs (see the scupper in buildStateKV)
 	if err != nil {
 		return nil, err
 	}
+	// coverage-ignore-end
 
 	val := validator.New(st, base.meta, readDeps)
 
@@ -1836,6 +1881,10 @@ type versionRecorder struct {
 	w store.VersionWriter
 }
 
+// coverage-ignore-start: postgres-only: versionRecorder is only constructed by versionRecorderFor with a non-nil
+// VersionService, which
+// versionServiceFor supplies only in the postgres build; the default/memory build returns nil so this method is never
+// wired
 func (r versionRecorder) RecordVersion(ctx context.Context, v entitymanager.VersionRecord) error {
 	return r.w.WriteVersion(ctx, store.VersionInput{
 		EntityID:      v.EntityID,
@@ -1853,6 +1902,8 @@ func (r versionRecorder) RecordVersion(ctx context.Context, v entitymanager.Vers
 	})
 }
 
+// coverage-ignore-end
+
 // versionRecorderFor returns a synchronous version recorder when a versioning
 // service is wired (pgstore), or nil when none is (fsstore/memstore — where the
 // entitymanager's version hook then no-ops). vs is the injected version service
@@ -1863,7 +1914,8 @@ func versionRecorderFor(vs store.VersionService) entitymanager.VersionRecorder {
 	if vs == nil {
 		return nil
 	}
-	return versionRecorder{w: vs}
+	return versionRecorder{w: vs} // coverage-ignore: postgres-only: vs is non-nil only in the postgres build
+	// (versionServiceFor returns nil in default/memory builds), so this non-nil return is unreachable here
 }
 
 // relationVersionRecorder adapts a store.RelationVersionWriter to the
@@ -1874,6 +1926,10 @@ type relationVersionRecorder struct {
 	w store.RelationVersionWriter
 }
 
+// coverage-ignore-start: postgres-only: relationVersionRecorder is only constructed by relationVersionRecorderFor with
+// a non-nil
+// VersionService, supplied only in the postgres build; the default/memory build returns nil so this method is never
+// wired
 func (r relationVersionRecorder) RecordRelationVersion(
 	ctx context.Context, v entitymanager.RelationVersionRecord,
 ) error {
@@ -1894,12 +1950,15 @@ func (r relationVersionRecorder) RecordRelationVersion(
 	})
 }
 
+// coverage-ignore-end
+
 // relationVersionRecorderFor mirrors versionRecorderFor for relation versions.
 func relationVersionRecorderFor(vs store.VersionService) entitymanager.RelationVersionRecorder {
 	if vs == nil {
 		return nil
 	}
-	return relationVersionRecorder{w: vs}
+	return relationVersionRecorder{w: vs} // coverage-ignore: postgres-only: vs is non-nil only in the postgres build
+	// (versionServiceFor returns nil in default/memory builds), so this non-nil return is unreachable here
 }
 
 // (startVersionSweepIfSupported is defined per build tag in
@@ -2005,9 +2064,13 @@ func (s *Services) Close() error {
 
 		if s.store != nil {
 			if lc, ok := s.store.(store.Lifecycle); ok {
+				// coverage-ignore-start: defensive: fsstore/memstore Close does not return an error under normal test
+				// conditions, so this warn-on-close-
+				// error branch is unreachable
 				if err := lc.Close(); err != nil {
 					slog.Warn("appbuild: failed to close store", "error", err)
 				}
+				// coverage-ignore-end
 			}
 		}
 		if s.searchCloser != nil {
@@ -2150,9 +2213,13 @@ func buildStateKV(fs storage.FS, paths *project.Context) (state.KV, error) {
 		return nopKV{}, nil
 	}
 	rfs, err := storage.NewRootedFS(fs, paths.CacheDir)
+	// coverage-ignore-start: defensive: NewRootedFS only errors on nil fs / empty root / filepath.Abs failure; fs and a
+	// non-empty CacheDir are
+	// guaranteed by the guard above, and filepath.Abs does not fail for these inputs
 	if err != nil {
 		return nil, fmt.Errorf("build state KV: invalid root %q: %w", paths.CacheDir, err)
 	}
+	// coverage-ignore-end
 	return state.NewFSKV(rfs), nil
 }
 

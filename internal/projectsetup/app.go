@@ -27,8 +27,11 @@ type ScaffoldAppResult struct {
 // <style> or <script> in a scaffolded app would be silently dead on arrival
 // (see dataentry.appCSP). Separate files are what actually runs.
 func ScaffoldApp(startDir, id string) (*ScaffoldAppResult, error) {
+	// coverage-ignore-start: main-or-wiring: constructs the real OS filesystem and delegates to ScaffoldAppWithFS,
+	// which is the tested seam
 	fs := storage.NewSafeFS(storage.NewOsFS())
 	return ScaffoldAppWithFS(startDir, id, fs)
+	// coverage-ignore-end
 }
 
 // ScaffoldAppWithFS is ScaffoldApp with an injectable filesystem (for tests).

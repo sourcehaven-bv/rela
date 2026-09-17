@@ -186,9 +186,13 @@ func (r *Runner) runCreatedEntityAutomation(
 	created *entity.Entity,
 	outcome *Outcome,
 ) *queueItem {
+	// coverage-ignore-start: defensive: New rejects a nil Engine and the field is unexported, so r.engine is never nil
+	// for a Runner obtained via
+	// the public constructor
 	if r.engine == nil {
 		return nil
 	}
+	// coverage-ignore-end
 
 	newAutoResult := r.engine.Process(ctx, automation.Event{
 		Type:   automation.EventEntityCreated,

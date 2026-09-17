@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
+	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
@@ -215,6 +216,37 @@ type SectionData struct {
 	HasContent   bool
 	AddInfo      *SectionAddInfo
 	LinkInfo     *SectionLinkInfo
+
+	// Tree holds the parent rows of a `display: nested` section, each with its
+	// own children. Empty for every other display mode.
+	Tree []SectionTreeNode
+	// Truncated reports that the node budget stopped a VISIBLE row from being
+	// emitted somewhere in Tree. See [viewsHandler.buildNestedTree] for why it
+	// is not merely "the budget ran out".
+	Truncated bool
+}
+
+// SectionTreeNode is one row of a `display: nested` section: an entity plus
+// the children nested under it.
+type SectionTreeNode struct {
+	SectionEntityData
+	// Columns are the columns declared for THIS node's level and entity type,
+	// so a consumer can label the cells without a section-wide header list.
+	// Empty when the node's type declares none — it renders title and id only.
+	Columns []ListColumn
+	// Row carries this node's cells, positional over Columns above.
+	Row SectionRowData
+	// Children are the nodes nested under this one. Always one level deep —
+	// `display: nested` renders exactly parent → child.
+	Children []SectionTreeNode
+	// ChildCount is how many children this node HAS, which is not
+	// len(Children) once the budget truncates. Counts only children the caller
+	// may read, so it is safe to render.
+	ChildCount int
+	// HasMoreChildren reports that children exist beyond those in Children.
+	// Without it a budget-capped node is indistinguishable from a childless
+	// one, since Children is omitted when empty.
+	HasMoreChildren bool
 }
 
 // buildSectionEntityData composes the per-row data for a cards/list
@@ -265,7 +297,7 @@ func rowSelfHref(m *metamodel.Metamodel, e *entity.Entity) string {
 
 // buildSections builds template-ready section data from view sections and a view result.
 //
-//nolint:gocognit,funlen // builds each section by its declared source and display mode; the branches are the distinct section kinds, not shared logic to extract.
+//nolint:gocognit // builds each section by its declared source and display mode; the branches are the distinct section kinds, not shared logic to extract.
 func (h *viewsHandler) buildSections(ctx context.Context, sections []ViewSection, result *viewResult) []SectionData {
 	s := h.schema()
 	out := make([]SectionData, 0, len(sections))
@@ -314,35 +346,7 @@ func (h *viewsHandler) buildSections(ctx context.Context, sections []ViewSection
 				// entity load per row per column (TKT-1U8XYN).
 				relValues := h.resolveRelationColumns(ctx, s, sec.Columns, entities)
 				buildRow := func(e *entity.Entity) SectionRowData {
-					eDef, _ := s.Meta.GetEntityDef(e.Type)
-					row := SectionRowData{
-						EntityID: e.ID, EntityType: e.Type, EditFormID: h.editFormForType(e.Type),
-						Self: rowSelfHref(s.Meta, e),
-					}
-					for ci, col := range sec.Columns {
-						cell := SectionColumnData{
-							Link: resolveLinkTarget(col.Link, e.Type, e.ID), EntityID: e.ID, EntityType: e.Type,
-						}
-						if col.Relation != "" {
-							cell.Values = relValues[e.ID][ci]
-						} else {
-							var pd metamodel.PropertyDef
-							if eDef != nil {
-								if propDef, ok := eDef.Properties[col.Property]; ok {
-									pd = propDef
-									cell.PropType = pd.Type
-								}
-							}
-							cell.Widget = resolveWidget(pd, s.Meta)
-							if vs := e.GetAttributeStrings(col.Property); vs != nil {
-								cell.Values = vs
-							} else if val := e.GetAttributeString(col.Property); val != "" {
-								cell.Values = []string{val}
-							}
-						}
-						row.Cells = append(row.Cells, cell)
-					}
-					return row
+					return h.buildSectionRow(s, sec.Columns, e, relValues)
 				}
 				if sec.GroupBy != "" {
 					sd.IsGrouped = true
@@ -381,6 +385,9 @@ func (h *viewsHandler) buildSections(ctx context.Context, sections []ViewSection
 					sed.HasContent = e.Content != ""
 					sd.Entities = append(sd.Entities, sed)
 				}
+			case dataentryconfig.DisplayNested:
+				sd.Columns = sec.Columns
+				sd.Tree, sd.Truncated = h.buildNestedTree(ctx, sec, entities, result)
 			}
 		}
 

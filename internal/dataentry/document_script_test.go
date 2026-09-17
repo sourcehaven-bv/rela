@@ -48,6 +48,12 @@ type fakeScriptCall struct {
 	entryID    string
 	timeout    time.Duration
 
+	// deps is what the render path actually handed the engine. Recorded so a
+	// test can assert the elevation grant and declared capabilities survived
+	// the call chain — both failures are silent-and-closed (an elevated report
+	// simply renders as unelevated), so nothing else would catch them.
+	deps lua.WriteDeps
+
 	// List-render fields, populated only by ExecuteListDocument.
 	listID  string
 	query   lua.ListQuery
@@ -55,9 +61,9 @@ type fakeScriptCall struct {
 	rowIDs2 []string // drained a SECOND time, to pin the walk-twice contract
 }
 
-func (f *fakeScriptEngine) ExecuteDocument(_ context.Context, path string, _ lua.WriteDeps, stdout io.Writer,
+func (f *fakeScriptEngine) ExecuteDocument(_ context.Context, path string, deps lua.WriteDeps, stdout io.Writer,
 	documentID, entryID string, timeout time.Duration) error {
-	call := fakeScriptCall{path: path, documentID: documentID, entryID: entryID, timeout: timeout}
+	call := fakeScriptCall{path: path, documentID: documentID, entryID: entryID, timeout: timeout, deps: deps}
 	f.mu.Lock()
 	f.calls = append(f.calls, call)
 	f.mu.Unlock()
@@ -77,9 +83,9 @@ func (f *fakeScriptEngine) ExecuteDocument(_ context.Context, path string, _ lua
 // ExecuteStandaloneDocument records a standalone render (TKT-M1AX6P). entryID
 // stays zero on the recorded call — that absence is the contract under test:
 // a document with no entity_type has no entry entity.
-func (f *fakeScriptEngine) ExecuteStandaloneDocument(_ context.Context, path string, _ lua.WriteDeps,
+func (f *fakeScriptEngine) ExecuteStandaloneDocument(_ context.Context, path string, deps lua.WriteDeps,
 	stdout io.Writer, documentID string, timeout time.Duration) error {
-	call := fakeScriptCall{path: path, documentID: documentID, timeout: timeout}
+	call := fakeScriptCall{path: path, documentID: documentID, timeout: timeout, deps: deps}
 	f.mu.Lock()
 	f.calls = append(f.calls, call)
 	f.mu.Unlock()

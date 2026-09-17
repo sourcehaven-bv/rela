@@ -83,6 +83,17 @@ func (s *originRecordingStore) UpdateEntity(ctx context.Context, e *entity.Entit
 	return s.Store.UpdateEntity(ctx, e)
 }
 
+// UpdateEntityIf must be recorded too: PatchEntity routes through the
+// conditional write (TKT-34XS2R), so a recorder that only overrode
+// UpdateEntity would see a patch as NO write at all and silently stop
+// asserting anything about the patch path.
+func (s *originRecordingStore) UpdateEntityIf(
+	ctx context.Context, e *entity.Entity, cond store.UpdateCondition,
+) (store.EntityVersion, error) {
+	s.updated = append(s.updated, store.OriginFrom(ctx))
+	return s.Store.UpdateEntityIf(ctx, e, cond)
+}
+
 // Tx must be re-implemented, not inherited, and the view it hands the callback
 // must record into THIS recorder.
 //
@@ -116,6 +127,13 @@ func (s *txRecordingStore) CreateEntity(ctx context.Context, e *entity.Entity) e
 func (s *txRecordingStore) UpdateEntity(ctx context.Context, e *entity.Entity) error {
 	s.rec.updated = append(s.rec.updated, store.OriginFrom(ctx))
 	return s.Store.UpdateEntity(ctx, e)
+}
+
+func (s *txRecordingStore) UpdateEntityIf(
+	ctx context.Context, e *entity.Entity, cond store.UpdateCondition,
+) (store.EntityVersion, error) {
+	s.rec.updated = append(s.rec.updated, store.OriginFrom(ctx))
+	return s.Store.UpdateEntityIf(ctx, e, cond)
 }
 
 func newOriginRecorder(inner store.Store) *originRecordingStore {

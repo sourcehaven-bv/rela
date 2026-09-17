@@ -250,9 +250,11 @@ func appEntryContentType(entry string) string {
 func parseAppMeta(htmlBytes []byte) appInfo {
 	var info appInfo
 	doc, err := nethtml.Parse(bytes.NewReader(htmlBytes))
+	// coverage-ignore-start: defensive: nethtml.Parse only errors when the reader errors, and bytes.Reader never does
 	if err != nil {
 		return info
 	}
+	// coverage-ignore-end
 	head := findFirstElementByAtom(doc, atom.Head)
 	if head == nil {
 		return info

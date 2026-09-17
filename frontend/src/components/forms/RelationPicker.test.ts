@@ -25,7 +25,9 @@ function seedSchema(targetType = 'ticket') {
 
 function seedCandidates(entities: Entity[]) {
   const entitiesStore = useEntitiesStore()
-  entitiesStore.fetchList = vi.fn().mockResolvedValue({
+  // fetchAllList, not fetchList: the picker needs the COMPLETE candidate set to
+  // resolve the type of every already-linked target, not just page 1 (BUG-HOB9BR).
+  entitiesStore.fetchAllList = vi.fn().mockResolvedValue({
     data: entities,
     meta: { total: entities.length, page: 1, per_page: 100, has_more: false },
     included: {},
@@ -520,7 +522,7 @@ describe('RelationPicker — face badge (BUG-3)', () => {
       attachTo: document.body,
     })
     await flushPromises()
-    expect(entitiesStore.fetchList).toHaveBeenCalledWith(
+    expect(entitiesStore.fetchAllList).toHaveBeenCalledWith(
       'ticket',
       expect.objectContaining({ world: 'published' })
     )

@@ -44,6 +44,12 @@ type APIIssue struct {
 	Severity   string `json:"severity"` // "error" or "warning"
 	CheckType  string `json:"checkType"`
 
+	// RuleMessage is the per-entity explanation a Lua validation rule
+	// returned for this entity, shown alongside (never instead of)
+	// Message, which stays the rule's own description. Absent
+	// (omitempty) on every row that is not a Lua-rule violation.
+	RuleMessage string `json:"ruleMessage,omitempty"`
+
 	// Detail carries optional structured specifics about why the issue
 	// fired, beyond the flat Message. For content required-headers
 	// violations it holds the missing exact headers. Absent (omitempty)

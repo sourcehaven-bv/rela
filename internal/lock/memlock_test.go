@@ -75,9 +75,21 @@ func TestMemoryLocker_AbandonedAcquireReleases(t *testing.T) {
 		t.Fatal("key wedged: the abandoned waiter never released the lock it was handed")
 	}
 
-	if n := lock.MemoryLockerEntries(l); n != 0 {
-		t.Errorf("%d map entries remain after an abandoned acquire (want 0)", n)
+	// Poll rather than read once. The abandoned waiter's cleanup unlocks the
+	// mutex BEFORE it drops its refcount, so the acquire above can succeed
+	// while that goroutine has not yet reached the map. Reading immediately
+	// makes this test fail on roughly 2 runs in 5 for a locker that is
+	// behaving correctly. Polling still fails a locker that never drops the
+	// entry, which is the property being pinned.
+	deadline := time.Now().Add(5 * time.Second)
+	var n int
+	for time.Now().Before(deadline) {
+		if n = lock.MemoryLockerEntries(l); n == 0 {
+			return
+		}
+		time.Sleep(time.Millisecond)
 	}
+	t.Errorf("%d map entries remain after an abandoned acquire (want 0)", n)
 }
 
 // TestMemoryLocker_ConcurrentDistinctKeys exercises the map bookkeeping under

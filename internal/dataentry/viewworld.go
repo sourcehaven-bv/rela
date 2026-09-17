@@ -288,6 +288,9 @@ func (h *viewsHandler) loadViewEntities(
 		byID[e.ID] = e
 	}
 
+	// SOURCE-GATE the traversal (BUG-9Z20WH). See [viewsHandler.gateLoadedEntities].
+	h.gateLoadedEntities(ctx, ids, byID)
+
 	out := make([]*entityPkg.Entity, 0, len(byID))
 	emitted := make(map[string]struct{}, len(byID))
 	for _, id := range ids {
@@ -302,6 +305,70 @@ func (h *viewsHandler) loadViewEntities(
 		out = append(out, e)
 	}
 	return out
+}
+
+// gateLoadedEntities is the collection-load half of the traversal source gate
+// (BUG-9Z20WH). It deletes from byID every entity the principal may not read.
+//
+// # Not the load-bearing gate
+//
+// The one that closes the reachability hole is the frontier gate,
+// [viewsHandler.readableViewIDs]: the recursive walk is id-only, so only a gate
+// on the frontier can stop a hidden node from acting as a stepping-stone to a
+// descendant reachable only through it. This gate cannot do that — the
+// descendant is readable in its own right and would pass it.
+//
+// What this adds is the NON-RECURSIVE path, which never enters the BFS and so
+// never meets the frontier gate: it keeps a hidden entity out of a collection,
+// and out of applyViewTraverse's where: filter, so a predicate cannot infer a
+// hidden entity's property values.
+//
+// # Both halves of the verdict
+//
+// The row gate is face-BLIND, so it is paired with [faceReadable] — these
+// entities carry their resolved Face, and a principal granted only
+// `policy@published` must not be handed a draft row (TKT-O7R2A1). Same pairing
+// visibleHeaderIDs uses.
+//
+// Grouping walks `ids` rather than ranging the map, so the per-type id slices
+// are deterministic across requests.
+//
+// FAIL CLOSED: on a probe error the whole type is dropped, logged so an
+// operator sees a cause rather than a silently-short collection. Under NopACL
+// every probe permits, so this is byte-identical to the ungated load.
+func (h *viewsHandler) gateLoadedEntities(
+	ctx context.Context, ids []string, byID map[string]*entityPkg.Entity,
+) {
+	if len(byID) == 0 {
+		return
+	}
+	idsByType := make(map[string][]string, 4)
+	for _, id := range ids {
+		if e, ok := byID[id]; ok {
+			idsByType[e.Type] = append(idsByType[e.Type], e.ID)
+		}
+	}
+	gate := readGateFromContext(ctx)
+	for typ, typeIDs := range idsByType {
+		verdicts, err := gate.PermitsReadMany(ctx, typ, typeIDs)
+		if err != nil {
+			slog.Warn("dataentry: view traversal: collection read gate failed; "+
+				"dropping type", "type", typ, "ids", len(typeIDs), "err", err)
+			for _, id := range typeIDs {
+				delete(byID, id)
+			}
+			continue
+		}
+		for _, id := range typeIDs {
+			e, ok := byID[id]
+			if !ok {
+				continue
+			}
+			if !verdicts[id] || !faceReadable(ctx, e.Type, e.Face) {
+				delete(byID, id)
+			}
+		}
+	}
 }
 
 // provenanceFor labels how this world resolved e's face, or nil under the

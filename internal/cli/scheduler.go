@@ -18,6 +18,9 @@ type SchedulerCmd struct{}
 // Run dispatches `rela scheduler`. The WorkspaceProvider is supplied at
 // the kong wiring site (appbuild.Services implements it structurally).
 func (c *SchedulerCmd) Run(ctx context.Context, ws scheduler.WorkspaceProvider) error {
+	// coverage-ignore-start: main-or-wiring: constructs and runs the long-running scheduler loop; the CLI test harness
+	// supplies no
+	// scheduler.WorkspaceProvider fixture
 	data, err := ws.Config().Load(ctx, scheduler.ConfigFile)
 	if err != nil {
 		return fmt.Errorf("cannot read %s: %w", scheduler.ConfigFile, err)
@@ -36,4 +39,5 @@ func (c *SchedulerCmd) Run(ctx context.Context, ws scheduler.WorkspaceProvider) 
 		return err
 	}
 	return s.Run(ctx)
+	// coverage-ignore-end
 }

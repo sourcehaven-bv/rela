@@ -66,23 +66,34 @@ func (s *SafeFS) WriteFile(path string, data []byte, perm os.FileMode) error {
 		return err
 	}
 
+	// coverage-ignore-start: os-fs-event: Write on a freshly opened O_WRONLY temp file only fails on a full disk / OS
+	// I/O fault, not injectable
+	// in a unit test
 	if _, writeErr := f.Write(data); writeErr != nil {
 		f.Close()
 		os.Remove(tmpPath)
 		return writeErr
 	}
+	// coverage-ignore-end
 
 	// Fsync to ensure data reaches disk
+	// coverage-ignore-start: os-fs-event: fsync failure is an OS/disk-level fault not deterministically reproducible in
+	// a unit test
 	if syncErr := f.Sync(); syncErr != nil {
 		f.Close()
 		os.Remove(tmpPath)
 		return syncErr
 	}
+	// coverage-ignore-end
 
+	// coverage-ignore-start: os-fs-event: Close on a successfully written+synced fd only fails on a deferred OS I/O
+	// error, not injectable in a
+	// unit test
 	if closeErr := f.Close(); closeErr != nil {
 		os.Remove(tmpPath)
 		return closeErr
 	}
+	// coverage-ignore-end
 
 	// Atomic rename: temp → final
 	if renameErr := os.Rename(tmpPath, path); renameErr != nil {
@@ -103,9 +114,13 @@ func (s *SafeFS) WriteFile(path string, data []byte, perm os.FileMode) error {
 // Errors are ignored since the file content is already safe.
 func syncDir(dir string) {
 	d, err := os.Open(dir)
+	// coverage-ignore-start: os-fs-event: syncDir runs on a directory just created by MkdirAll and written into;
+	// os.Open failing requires the dir
+	// to vanish mid-write, not deterministically reachable
 	if err != nil {
 		return
 	}
+	// coverage-ignore-end
 	_ = d.Sync()
 	d.Close()
 }

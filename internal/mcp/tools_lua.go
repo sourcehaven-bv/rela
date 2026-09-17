@@ -237,7 +237,8 @@ func luaScriptErrorResult(surface lua.Surface, envelopePath, projectRoot string,
 	}
 	se := lua.BuildScriptError(in)
 	body, err := json.Marshal(se)
-	if err != nil {
+	if err != nil { // coverage-ignore: defensive: ScriptError holds only strings/ints/string-slices built from this
+		// function's frame/err inputs (Args is unset here), so json.Marshal cannot fail.
 		return errorResult(fmt.Sprintf("Lua error: %v (also failed to marshal envelope: %v)", se.Error(), err))
 	}
 	return errorResult(string(body))

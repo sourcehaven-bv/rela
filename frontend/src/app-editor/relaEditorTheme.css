@@ -1,15 +1,17 @@
 /* Re-skin EasyMDE's hardcoded light chrome with rela theme tokens so the
  * <rela-editor> follows the host theme (light/dark) instead of EasyMDE's
- * built-in white. Ported from the SPA's MarkdownEditor.vue token overrides,
- * de-scoped (the element renders in light DOM, so these target EasyMDE's
- * generated classes directly). The tokens themselves come from _rela.css,
- * which the app links; this only maps them onto EasyMDE's elements.
+ * built-in white. De-scoped plain CSS, because the element renders in light
+ * DOM and these target EasyMDE's generated classes directly. The tokens come
+ * from _rela.css, which the app links; this only maps them onto EasyMDE's
+ * elements.
  *
  * Injected AFTER easymde.min.css so these win the cascade.
  *
- * DRIFT: this is a hand-ported copy of MarkdownEditor.vue's scoped EasyMDE
- * overrides (de-scoped + plain CSS). Keep them in sync; the eventual shared
- * core is tracked in TKT-D2JML7. */
+ * These used to be a hand-ported copy of the SPA editor's scoped overrides,
+ * kept in sync by hand. The SPA now runs Milkdown and has no EasyMDE styling
+ * left, so there is nothing to drift against: this is the only copy. Moving
+ * the sandboxed app editor onto Milkdown too is the remaining half of
+ * TKT-D2JML7. */
 
 .EasyMDEContainer {
   width: 100%;

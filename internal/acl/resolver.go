@@ -278,6 +278,9 @@ func (r *Request) grantsPermission(attrs []RoleAttribution, perm string) bool {
 	}
 	for _, a := range attrs {
 		role, ok := r.roleFor(a.Role)
+		// coverage-ignore: defensive: attrs come from Globals/computeForEntity which already skip roles not defined in
+		// policy.Roles, so ok is
+		// always true here
 		if !ok {
 			continue
 		}

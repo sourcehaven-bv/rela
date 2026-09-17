@@ -176,12 +176,12 @@ class RelaEditorElement extends HTMLElement {
         // Suppress EasyMDE's runtime <link> to the FA CDN — the glyphs are
         // bundled (and the font is served same-origin under the app base).
         autoDownloadFontAwesome: false,
-        // NOTE: this toolbar/options config is intentionally kept close to the
-        // SPA editor's (frontend/src/components/forms/MarkdownEditor.vue) so the
-        // two editors feel the same. They are NOT yet shared (this is a plain
-        // IIFE with no Vue). If you change one, change the other — or do the
-        // extraction tracked in TKT-D2JML7 (shared core). The app editor omits
-        // the SPA's entity-ref toolbar button (it needs the schema store).
+        // The SPA editor is now Milkdown (a ProseMirror WYSIWYG), so there is
+        // no longer a parallel EasyMDE config to keep this in step with. The
+        // two editors do differ in kind until the sandboxed app editor moves
+        // across as well — the remaining half of TKT-D2JML7. That move is
+        // gated on the CSP here allowing no inline styles, which ProseMirror
+        // needs a stylesheet for rather than a `<style>` injection.
         toolbar: [
           'bold',
           'italic',

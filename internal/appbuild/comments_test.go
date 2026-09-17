@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/Sourcehaven-BV/rela/internal/comments"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
@@ -105,12 +106,67 @@ func TestAliasFanout_NilWhenNothingSubscribes(t *testing.T) {
 	require.Nil(t, newAliasFanout(nil, nil))
 }
 
+// TestAliasFanout_NilWhenOnlyTypedNilsSubscribe covers what the untyped-nil
+// case above cannot. The nils production passes are concrete pointers from a
+// disabled subsystem, and boxing one into the variadic yields an interface
+// with a non-nil type word — so `s != nil` kept it and the first delete
+// dereferenced it. A literal `nil` in a test is converted by the compiler to a
+// true nil interface and never reproduced that.
+func TestAliasFanout_NilWhenOnlyTypedNilsSubscribe(t *testing.T) {
+	var disabled *comments.Service // exactly what buildComments returns when off
+	require.Nil(t, newAliasFanout(disabled))
+	require.Nil(t, newAliasFanout(disabled, nil))
+}
+
 // TestAliasFanout_UnwrapsSingleSubscriber keeps the common case free of an
 // indirection: with one subscriber there is nothing to fan out to.
 func TestAliasFanout_UnwrapsSingleSubscriber(t *testing.T) {
 	only := &recordingRewriter{}
 	got := newAliasFanout(nil, only)
 	require.Same(t, only, got)
+}
+
+// TestAliasFanout_SkipsTypedNilBesideLiveSubscriber is the production shape:
+// comments off, CalDAV aliases on. The dead subscriber must be dropped rather
+// than fanned out to, and the live one must still be notified.
+func TestAliasFanout_SkipsTypedNilBesideLiveSubscriber(t *testing.T) {
+	var disabled *comments.Service
+	live := &recordingRewriter{}
+
+	got := newAliasFanout(disabled, live)
+	require.Same(t, live, got, "a dead subscriber must not force a fanout")
+
+	ctx := context.Background()
+	require.NoError(t, got.EntityDeleted(ctx, "TKT-1"))
+	require.NoError(t, got.EntityRenamed(ctx, "TKT-old", "TKT-new"))
+	require.Equal(t, []string{"TKT-1"}, live.deleted)
+	require.Equal(t, []string{"TKT-old->TKT-new"}, live.renamed)
+}
+
+// TestAliasFanout_DisabledCommentsSurviveDelete wires the real buildComments
+// output into the fanout, which is the step the disabled-service test above
+// stops short of — and the step where the panic was born. An unwired hook is
+// what keeps the delete a no-op: the Manager skips a nil AliasRewriter.
+func TestAliasFanout_DisabledCommentsSurviveDelete(t *testing.T) {
+	svc, err := buildComments(storage.NewOsFS(), paths(t), commentsMeta(t, false))
+	require.NoError(t, err)
+	require.Nil(t, svc)
+
+	require.Nil(t, newAliasFanout(svc), "disabled comments must leave the hook unwired")
+}
+
+// TestAliasFanout_EnabledCommentsStillSubscribe is the other half of the
+// filter: dropping a disabled service is only correct if an enabled one still
+// gets through. Without this, an over-eager isNilSubscriber would silently stop
+// comment cleanup on delete — and a thread stranded at a reused id is the
+// hazard [comments.Service.EntityDeleted] exists to prevent, which is quieter
+// than the panic this fix removed.
+func TestAliasFanout_EnabledCommentsStillSubscribe(t *testing.T) {
+	svc, err := buildComments(storage.NewOsFS(), paths(t), commentsMeta(t, true))
+	require.NoError(t, err)
+	require.NotNil(t, svc)
+
+	require.Same(t, svc, newAliasFanout(svc), "an enabled service must stay wired")
 }
 
 func TestAliasFanout_NotifiesEverySubscriber(t *testing.T) {

@@ -138,6 +138,13 @@ function onMessageClick(key: string, issue: AnalyzeIssue, ev: Event) {
                 {{ row.issue.message }}
               </span>
               <span v-else>{{ row.issue.message }}</span>
+              <!-- A Lua rule's per-entity message says what is wrong with
+                   THIS entity, which the rule description above cannot.
+                   Rendered as its own line, outside the reveal toggle, so
+                   it is readable without a click. -->
+              <span v-if="row.issue.ruleMessage" class="rule-message">{{
+                row.issue.ruleMessage
+              }}</span>
             </td>
             <td>
               <span class="severity-badge" :class="row.issue.severity">
@@ -208,6 +215,9 @@ function onMessageClick(key: string, issue: AnalyzeIssue, ev: Event) {
             {{ row.issue.message }}
           </span>
           <span v-else>{{ row.issue.message }}</span>
+          <span v-if="row.issue.ruleMessage" class="rule-message">{{
+            row.issue.ruleMessage
+          }}</span>
         </div>
         <div v-if="row.issue.detail?.length && isExpanded(row.key)" class="issue-card-detail">
           <div class="detail-label">Missing required headers:</div>
@@ -355,6 +365,16 @@ function onMessageClick(key: string, issue: AnalyzeIssue, ev: Event) {
   color: var(--text-color);
   overflow-wrap: anywhere;
   word-break: break-word;
+}
+
+/* The per-entity Lua message sits under the rule description on its own
+   line, de-emphasised so the rule stays the row's heading. */
+.rule-message {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--muted-text);
+  line-height: 1.4;
 }
 
 .severity-badge {

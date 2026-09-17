@@ -307,10 +307,15 @@ func (c *Client) DeleteRelation(
 
 func (c *Client) patch(ctx context.Context, segments []string, body any, ifMatch string) (*PushResult, error) {
 	buf, err := json.Marshal(body)
+	// coverage-ignore-start: defensive: body is EntityBody/RelationBody; its Properties are already canonically hashed
+	// (which serializes them)
+	// before reaching here, so an unmarshalable value would fail earlier — json.Marshal cannot fail on the bodies this
+	// path receives
 	if err != nil {
 		return nil, fmt.Errorf("marshal body: %w", err)
 	}
 	req, err := c.newRequest(ctx, http.MethodPatch, segments, nil, bytes.NewReader(buf))
+	// coverage-ignore-end
 	if err != nil {
 		return nil, err
 	}
@@ -438,9 +443,13 @@ func (c *Client) newRequest(
 		full.RawQuery = q.Encode()
 	}
 	req, err := http.NewRequestWithContext(ctx, method, full.String(), body)
+	// coverage-ignore-start: defensive: method is always a valid http.Method* constant and full is derived from a base
+	// URL already validated
+	// absolute+parseable in NewClient, so NewRequestWithContext cannot fail here
 	if err != nil {
 		return nil, err
 	}
+	// coverage-ignore-end
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
 	}

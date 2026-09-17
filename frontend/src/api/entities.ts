@@ -234,6 +234,11 @@ export interface ScopeDescriptor {
   sort?: string
   // Required for a search scope; optional free-text filter within a list scope.
   q?: string
+  // The originating list's `query_scope:`, so prev/next walks the set the list
+  // actually showed. Omitting it resolves the position against the entity
+  // type's DEFAULT scope instead: on a list showing `archief`, the open entity
+  // is then absent from its own scope and the endpoint answers 404.
+  query_scope?: string
 }
 
 /** A neighbouring entity in a scope. `type` is needed to build the target's

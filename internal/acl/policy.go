@@ -501,6 +501,9 @@ func grantsVerb(role RoleDef, op Op, target string) bool {
 		list = role.Update
 	case OpDelete:
 		list = role.Delete
+	// coverage-ignore: unreachable-default: Op is a closed set (create/update/delete/rename) all handled above; no
+	// valid Op reaches this
+	// default
 	default:
 		return false
 	}

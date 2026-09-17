@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Project overview — Accordion</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+  .summary-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+  }
+  .stat { padding: 0.85rem 1rem; }
+  .stat .label {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--muted-text);
+    margin-bottom: 0.3rem;
+  }
+  .stat .value { font-size: 1.6rem; font-weight: 700; line-height: 1.1; }
+  .stat .value small { font-size: 0.85rem; font-weight: 500; color: var(--muted-text); }
+
+  .epic { margin-bottom: 0.6rem; overflow: hidden; }
+
+  .epic-head {
+    display: grid;
+    grid-template-columns: 18px 1fr 190px 90px 96px;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.8rem 1rem;
+    cursor: pointer;
+    user-select: none;
+  }
+  .epic-head:hover { background: var(--hover-bg); }
+
+  .twisty { color: var(--muted-text); transition: transform 0.15s; font-size: 0.7rem; }
+  .epic[open] .twisty { transform: rotate(90deg); }
+
+  .epic-title { font-weight: 600; }
+  .epic-title .eid { margin-left: 0.5rem; font-weight: 400; }
+
+  .epic-progress { display: flex; align-items: center; gap: 0.6rem; }
+  .epic-progress .bar { flex: 1; }
+  .epic-progress .pct {
+    font-variant-numeric: tabular-nums;
+    font-size: 0.78rem;
+    color: var(--muted-text);
+    width: 34px;
+    text-align: right;
+  }
+  .counts { font-size: 0.78rem; color: var(--muted-text); font-variant-numeric: tabular-nums; }
+
+  .tasks { border-top: 1px solid var(--border-color); }
+  .task {
+    display: grid;
+    grid-template-columns: 1fr 96px 92px 34px;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.5rem 1rem 0.5rem 2.9rem;
+    border-bottom: 1px solid var(--border-color);
+    font-size: 0.88rem;
+  }
+  .task:last-child { border-bottom: 0; }
+  .task:hover { background: var(--hover-bg); }
+  .task .eid { margin-right: 0.5rem; }
+  .task.is-done .title { color: var(--muted-text); text-decoration: line-through; }
+  .due { font-size: 0.78rem; color: var(--muted-text); font-variant-numeric: tabular-nums; }
+  .due.late { color: var(--error-color); font-weight: 600; }
+
+  .epic-foot {
+    padding: 0.5rem 1rem 0.7rem 2.9rem;
+    font-size: 0.8rem;
+  }
+  .epic-foot a { text-decoration: none; }
+
+  @media (max-width: 900px) {
+    .summary-row { grid-template-columns: repeat(2, 1fr); }
+    .epic-head { grid-template-columns: 18px 1fr 90px; }
+    .epic-head .epic-progress, .task .due { display: none; }
+  }
+</style>
+</head>
+<body>
+<main class="main">
+  <div class="crumbs"><a href="#">Projects</a> / Harbour Migration</div>
+  <div class="page-head">
+    <div>
+      <h1>Harbour Migration</h1>
+      <div class="subtitle">PRJ-4417 · Q3 delivery · owner Sasha K.</div>
+    </div>
+    <div class="toolbar" style="margin:0">
+      <button class="btn">Expand all</button>
+      <button class="btn primary">New epic</button>
+    </div>
+  </div>
+
+  <div class="mockup-note">
+    <strong>Variant 1 — Accordion.</strong> The default, closest to the existing
+    list view. Each epic is a collapsible row carrying its own rollup; tasks
+    appear indented underneath. Scales to many epics because everything is
+    collapsed until asked for, and it degrades to a plain list on narrow screens.
+  </div>
+
+  <div class="summary-row">
+    <div class="card stat">
+      <div class="label">Epics</div>
+      <div class="value">6 <small>/ 2 done</small></div>
+    </div>
+    <div class="card stat">
+      <div class="label">Tasks</div>
+      <div class="value">48 <small>/ 29 done</small></div>
+    </div>
+    <div class="card stat">
+      <div class="label">Blocked</div>
+      <div class="value" style="color:var(--error-color)">3</div>
+    </div>
+    <div class="card stat">
+      <div class="label">Due this week</div>
+      <div class="value">7</div>
+    </div>
+  </div>
+
+  <!-- Epic 1: in progress, expanded -->
+  <details class="card epic" open>
+    <summary class="epic-head">
+      <span class="twisty">▶</span>
+      <span class="epic-title">Cutover tooling <span class="eid">EPIC-21</span></span>
+      <span class="epic-progress">
+        <span class="bar">
+          <span class="s-done" style="width:55%"></span>
+          <span class="s-doing" style="width:18%"></span>
+          <span class="s-blocked" style="width:9%"></span>
+        </span>
+        <span class="pct">55%</span>
+      </span>
+      <span class="counts">11 tasks</span>
+      <span class="badge doing">In progress</span>
+    </summary>
+    <div class="tasks">
+      <div class="task is-done">
+        <span><span class="eid">TSK-118</span><span class="title">Inventory legacy jobs</span></span>
+        <span class="badge done">Done</span>
+        <span class="due">12 Aug</span>
+        <span class="owner">SK</span>
+      </div>
+      <div class="task is-done">
+        <span><span class="eid">TSK-119</span><span class="title">Write dry-run harness</span></span>
+        <span class="badge done">Done</span>
+        <span class="due">19 Aug</span>
+        <span class="owner">MD</span>
+      </div>
+      <div class="task">
+        <span><span class="eid">TSK-124</span><span class="title">Batch migrator CLI</span></span>
+        <span class="badge doing">In progress</span>
+        <span class="due">16 Sep</span>
+        <span class="owner">MD</span>
+      </div>
+      <div class="task">
+        <span><span class="eid">TSK-131</span><span class="title">Rollback path for partial batches</span></span>
+        <span class="badge blocked">Blocked</span>
+        <span class="due late">5 Sep</span>
+        <span class="owner">RA</span>
+      </div>
+      <div class="task">
+        <span><span class="eid">TSK-140</span><span class="title">Operator runbook</span></span>
+        <span class="badge todo">To do</span>
+        <span class="due">30 Sep</span>
+        <span class="owner">—</span>
+      </div>
+    </div>
+    <div class="epic-foot"><a href="#">Show all 11 tasks →</a></div>
+  </details>
+
+  <!-- Epic 2: at risk -->
+  <details class="card epic">
+    <summary class="epic-head">
+      <span class="twisty">▶</span>
+      <span class="epic-title">Schema reconciliation <span class="eid">EPIC-22</span></span>
+      <span class="epic-progress">
+        <span class="bar">
+          <span class="s-done" style="width:20%"></span>
+          <span class="s-doing" style="width:15%"></span>
+          <span class="s-blocked" style="width:20%"></span>
+        </span>
+        <span class="pct">20%</span>
+      </span>
+      <span class="counts">14 tasks</span>
+      <span class="badge at-risk">At risk</span>
+    </summary>
+    <div class="tasks">
+      <div class="task">
+        <span><span class="eid">TSK-150</span><span class="title">Diff live vs. target schema</span></span>
+        <span class="badge doing">In progress</span>
+        <span class="due late">2 Sep</span>
+        <span class="owner">RA</span>
+      </div>
+      <div class="task">
+        <span><span class="eid">TSK-151</span><span class="title">Resolve column type conflicts</span></span>
+        <span class="badge blocked">Blocked</span>
+        <span class="due late">8 Sep</span>
+        <span class="owner">RA</span>
+      </div>
+      <div class="task">
+        <span><span class="eid">TSK-152</span><span class="title">Backfill null constraints</span></span>
+        <span class="badge todo">To do</span>
+        <span class="due">24 Sep</span>
+        <span class="owner">—</span>
+      </div>
+    </div>
+    <div class="epic-foot"><a href="#">Show all 14 tasks →</a></div>
+  </details>
+
+  <!-- Epic 3 -->
+  <details class="card epic">
+    <summary class="epic-head">
+      <span class="twisty">▶</span>
+      <span class="epic-title">Access control review <span class="eid">EPIC-23</span></span>
+      <span class="epic-progress">
+        <span class="bar">
+          <span class="s-done" style="width:70%"></span>
+          <span class="s-doing" style="width:10%"></span>
+        </span>
+        <span class="pct">70%</span>
+      </span>
+      <span class="counts">10 tasks</span>
+      <span class="badge doing">In progress</span>
+    </summary>
+    <div class="tasks">
+      <div class="task is-done">
+        <span><span class="eid">TSK-160</span><span class="title">Map roles to new grants</span></span>
+        <span class="badge done">Done</span>
+        <span class="due">28 Aug</span>
+        <span class="owner">TP</span>
+      </div>
+      <div class="task">
+        <span><span class="eid">TSK-166</span><span class="title">Review field redaction rules</span></span>
+        <span class="badge review">In review</span>
+        <span class="due">18 Sep</span>
+        <span class="owner">TP</span>
+      </div>
+    </div>
+    <div class="epic-foot"><a href="#">Show all 10 tasks →</a></div>
+  </details>
+
+  <!-- Epic 4: done -->
+  <details class="card epic">
+    <summary class="epic-head">
+      <span class="twisty">▶</span>
+      <span class="epic-title">Discovery &amp; sizing <span class="eid">EPIC-19</span></span>
+      <span class="epic-progress">
+        <span class="bar"><span class="s-done" style="width:100%"></span></span>
+        <span class="pct">100%</span>
+      </span>
+      <span class="counts">7 tasks</span>
+      <span class="badge done">Done</span>
+    </summary>
+    <div class="tasks">
+      <div class="task is-done">
+        <span><span class="eid">TSK-101</span><span class="title">Stakeholder interviews</span></span>
+        <span class="badge done">Done</span>
+        <span class="due">14 Jul</span>
+        <span class="owner">SK</span>
+      </div>
+    </div>
+    <div class="epic-foot"><a href="#">Show all 7 tasks →</a></div>
+  </details>
+
+  <!-- Epic 5: not started -->
+  <details class="card epic">
+    <summary class="epic-head">
+      <span class="twisty">▶</span>
+      <span class="epic-title">Decommission old stack <span class="eid">EPIC-24</span></span>
+      <span class="epic-progress">
+        <span class="bar"></span>
+        <span class="pct">0%</span>
+      </span>
+      <span class="counts">6 tasks</span>
+      <span class="badge todo">Not started</span>
+    </summary>
+    <div class="tasks">
+      <div class="task">
+        <span><span class="eid">TSK-180</span><span class="title">Freeze writes to legacy DB</span></span>
+        <span class="badge todo">To do</span>
+        <span class="due">10 Oct</span>
+        <span class="owner">—</span>
+      </div>
+    </div>
+    <div class="epic-foot"><a href="#">Show all 6 tasks →</a></div>
+  </details>
+</main>
+<script src="shell.js"></script>
+</body>
+</html>

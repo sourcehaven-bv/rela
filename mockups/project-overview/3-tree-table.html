@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Project overview — Tree table</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+  table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+
+  thead th {
+    text-align: left;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--muted-text);
+    font-weight: 700;
+    padding: 0.55rem 0.75rem;
+    border-bottom: 1px solid var(--border-color);
+    background: var(--card-bg);
+    position: sticky;
+    top: 0;
+    white-space: nowrap;
+  }
+  thead th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  thead th.sorted::after { content: ' ▾'; color: var(--accent-color); }
+
+  tbody td {
+    padding: 0.45rem 0.75rem;
+    border-bottom: 1px solid var(--border-color);
+    vertical-align: middle;
+  }
+  tbody tr:hover td { background: var(--hover-bg); }
+
+  tr.epic-row { background: var(--card-bg); }
+  tr.epic-row td { font-weight: 600; border-bottom: 1px solid var(--border-color); }
+  tr.epic-row .twisty {
+    display: inline-block;
+    width: 1rem;
+    color: var(--muted-text);
+    font-size: 0.65rem;
+    cursor: pointer;
+  }
+
+  tr.task-row td:first-child { padding-left: 2.6rem; font-weight: 400; }
+  tr.task-row td { color: var(--text-color); }
+  tr.task-row.is-done td:first-child .title { color: var(--muted-text); }
+
+  /* Rollup values are computed from children, so mark them as derived. */
+  .rollup { color: var(--muted-text); font-weight: 500; }
+
+  .cell-progress { display: flex; align-items: center; gap: 0.5rem; min-width: 120px; }
+  .cell-progress .bar { flex: 1; }
+  .cell-progress .pct { font-size: 0.78rem; width: 32px; text-align: right; font-variant-numeric: tabular-nums; }
+
+  .title { margin-left: 0.4rem; }
+  td .eid { margin-right: 0.1rem; }
+  .late { color: var(--error-color); font-weight: 600; }
+  .wrap { overflow-x: auto; }
+  table { min-width: 860px; }
+</style>
+</head>
+<body>
+<main class="main">
+  <div class="crumbs"><a href="#">Projects</a> / Harbour Migration</div>
+  <div class="page-head">
+    <div>
+      <h1>Harbour Migration</h1>
+      <div class="subtitle">PRJ-4417 · 6 epics · 48 tasks</div>
+    </div>
+    <div class="toolbar" style="margin:0">
+      <button class="btn">Columns</button>
+      <button class="btn">Export CSV</button>
+    </div>
+  </div>
+
+  <div class="mockup-note">
+    <strong>Variant 3 — Tree table.</strong> One table, epics as parent rows with
+    derived rollups, tasks as indented children. Densest option and the only one
+    that supports sorting and column choice across both levels. Reads as a
+    report rather than a board, which suits a status review or an export.
+  </div>
+
+  <div class="card wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Epic / task</th>
+          <th>Status</th>
+          <th>Progress</th>
+          <th class="num">Tasks</th>
+          <th class="num">Open</th>
+          <th class="sorted">Due</th>
+          <th>Owner</th>
+        </tr>
+      </thead>
+      <tbody>
+        <!-- EPIC-22 -->
+        <tr class="epic-row">
+          <td><span class="twisty">▾</span><span class="eid">EPIC-22</span><span class="title">Schema reconciliation</span></td>
+          <td><span class="badge at-risk">At risk</span></td>
+          <td>
+            <span class="cell-progress">
+              <span class="bar">
+                <span class="s-done" style="width:20%"></span>
+                <span class="s-doing" style="width:15%"></span>
+                <span class="s-blocked" style="width:20%"></span>
+              </span>
+              <span class="pct rollup">20%</span>
+            </span>
+          </td>
+          <td class="num rollup">14</td>
+          <td class="num rollup">11</td>
+          <td class="late">8 Sep</td>
+          <td><span class="owner">RA</span></td>
+        </tr>
+        <tr class="task-row">
+          <td><span class="eid">TSK-150</span><span class="title">Diff live vs. target schema</span></td>
+          <td><span class="badge doing">In progress</span></td>
+          <td></td>
+          <td class="num">—</td>
+          <td class="num">—</td>
+          <td class="late">2 Sep</td>
+          <td><span class="owner">RA</span></td>
+        </tr>
+        <tr class="task-row">
+          <td><span class="eid">TSK-151</span><span class="title">Resolve column type conflicts</span></td>
+          <td><span class="badge blocked">Blocked</span></td>
+          <td></td>
+          <td class="num">—</td>
+          <td class="num">—</td>
+          <td class="late">8 Sep</td>
+          <td><span class="owner">RA</span></td>
+        </tr>
+        <tr class="task-row">
+          <td><span class="eid">TSK-152</span><span class="title">Backfill null constraints</span></td>
+          <td><span class="badge todo">To do</span></td>
+          <td></td>
+          <td class="num">—</td>
+          <td class="num">—</td>
+          <td>24 Sep</td>
+          <td><span class="owner">—</span></td>
+        </tr>
+
+        <!-- EPIC-21 -->
+        <tr class="epic-row">
+          <td><span class="twisty">▾</span><span class="eid">EPIC-21</span><span class="title">Cutover tooling</span></td>
+          <td><span class="badge doing">In progress</span></td>
+          <td>
+            <span class="cell-progress">
+              <span class="bar">
+                <span class="s-done" style="width:55%"></span>
+                <span class="s-doing" style="width:18%"></span>
+                <span class="s-blocked" style="width:9%"></span>
+              </span>
+              <span class="pct rollup">55%</span>
+            </span>
+          </td>
+          <td class="num rollup">11</td>
+          <td class="num rollup">5</td>
+          <td>30 Sep</td>
+          <td><span class="owner">MD</span></td>
+        </tr>
+        <tr class="task-row">
+          <td><span class="eid">TSK-124</span><span class="title">Batch migrator CLI</span></td>
+          <td><span class="badge doing">In progress</span></td>
+          <td></td>
+          <td class="num">—</td>
+          <td class="num">—</td>
+          <td>16 Sep</td>
+          <td><span class="owner">MD</span></td>
+        </tr>
+        <tr class="task-row">
+          <td><span class="eid">TSK-131</span><span class="title">Rollback path for partial batches</span></td>
+          <td><span class="badge blocked">Blocked</span></td>
+          <td></td>
+          <td class="num">—</td>
+          <td class="num">—</td>
+          <td class="late">5 Sep</td>
+          <td><span class="owner">RA</span></td>
+        </tr>
+        <tr class="task-row is-done">
+          <td><span class="eid">TSK-118</span><span class="title">Inventory legacy jobs</span></td>
+          <td><span class="badge done">Done</span></td>
+          <td></td>
+          <td class="num">—</td>
+          <td class="num">—</td>
+          <td>12 Aug</td>
+          <td><span class="owner">SK</span></td>
+        </tr>
+
+        <!-- EPIC-23 collapsed -->
+        <tr class="epic-row">
+          <td><span class="twisty">▸</span><span class="eid">EPIC-23</span><span class="title">Access control review</span></td>
+          <td><span class="badge doing">In progress</span></td>
+          <td>
+            <span class="cell-progress">
+              <span class="bar">
+                <span class="s-done" style="width:70%"></span>
+                <span class="s-doing" style="width:10%"></span>
+              </span>
+              <span class="pct rollup">70%</span>
+            </span>
+          </td>
+          <td class="num rollup">10</td>
+          <td class="num rollup">3</td>
+          <td>7 Oct</td>
+          <td><span class="owner">TP</span></td>
+        </tr>
+
+        <!-- EPIC-24 collapsed -->
+        <tr class="epic-row">
+          <td><span class="twisty">▸</span><span class="eid">EPIC-24</span><span class="title">Decommission old stack</span></td>
+          <td><span class="badge todo">Not started</span></td>
+          <td>
+            <span class="cell-progress">
+              <span class="bar"></span>
+              <span class="pct rollup">0%</span>
+            </span>
+          </td>
+          <td class="num rollup">6</td>
+          <td class="num rollup">6</td>
+          <td>24 Oct</td>
+          <td><span class="owner">—</span></td>
+        </tr>
+
+        <!-- EPIC-19 collapsed, done -->
+        <tr class="epic-row">
+          <td><span class="twisty">▸</span><span class="eid">EPIC-19</span><span class="title">Discovery &amp; sizing</span></td>
+          <td><span class="badge done">Done</span></td>
+          <td>
+            <span class="cell-progress">
+              <span class="bar"><span class="s-done" style="width:100%"></span></span>
+              <span class="pct rollup">100%</span>
+            </span>
+          </td>
+          <td class="num rollup">7</td>
+          <td class="num rollup">0</td>
+          <td>21 Jul</td>
+          <td><span class="owner">SK</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</main>
+<script src="shell.js"></script>
+</body>
+</html>

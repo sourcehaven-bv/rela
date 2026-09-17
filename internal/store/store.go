@@ -339,9 +339,46 @@ type EntityWriter interface {
 	// Returns ErrConflict if an entity with the same ID already exists.
 	CreateEntity(ctx context.Context, e *entity.Entity) error
 
-	// UpdateEntity persists changes to an existing entity.
+	// UpdateEntity persists changes to an existing entity, unconditionally:
+	// it is last-write-wins and will overwrite a concurrent writer's changes.
 	// Returns ErrNotFound if the entity does not exist.
+	//
+	// Callers doing read-modify-write want [EntityWriter.UpdateEntityIf].
 	UpdateEntity(ctx context.Context, e *entity.Entity) error
+
+	// UpdateEntityIf is UpdateEntity with a compare-and-swap precondition:
+	// the write applies only if the stored record still matches
+	// cond.ExpectedVersion (see [VersionOf]). It returns the version the
+	// entity has AFTER a successful write, so a caller looping over several
+	// conditional writes never needs to re-read to get its next token.
+	//
+	// This is the primitive for read-modify-write. It replaces the
+	// check-then-write shape, which is safe only under a process-local
+	// mutex and therefore not safe at all in a deployment running several
+	// processes against one database (docs/postgres-backend.md).
+	//
+	// Errors:
+	//   - ErrNotFound if the entity does not exist. A caller that expected a
+	//     specific version and finds the row deleted gets this, NOT a
+	//     conflict — the distinction matters because retrying cannot help.
+	//   - *VersionConflictError if the row exists but has moved on. NOTHING
+	//     was written. The error carries the current version, so the caller
+	//     can re-read, recompute, and retry with a bounded loop.
+	//
+	// A zero cond makes this identical to UpdateEntity. That is a deliberate
+	// convenience for generic code, not an invitation — a caller that means
+	// to be unconditional should say so by calling UpdateEntity.
+	//
+	// **Relationship to [Transactor.Tx]** (DEC-8UIL0): the precondition is
+	// evaluated identically inside and outside a Tx. Inside a pgstore
+	// transaction it is largely redundant, since the transaction and its
+	// advisory lock already serialize writers — but not entirely: it still
+	// catches an expectation formed BEFORE the Tx opened. Keeping the check
+	// unconditional means one documented contract, and no caller has to
+	// reason about whether it happens to be inside a transaction.
+	UpdateEntityIf(
+		ctx context.Context, e *entity.Entity, cond UpdateCondition,
+	) (EntityVersion, error)
 
 	// DeleteEntity removes an entity and optionally its relations.
 	// Returns ErrNotFound if the entity does not exist.

@@ -331,6 +331,36 @@ type EntityDef struct {
 	// needs no special handling — and why a project that never writes
 	// this key behaves byte-identically to the pre-worlds system.
 	Faces map[string]FaceDef `yaml:"faces,omitempty"`
+
+	// QueryScopes declares named, reusable membership predicates over this
+	// type — the rule deciding whether a row belongs in a collection at all.
+	// Values are [internal/predicate] expressions over `entity` (and
+	// optionally `current_user`); a data-entry list or kanban references one
+	// by name with `query_scope:`.
+	//
+	// The names `default` and `all` are special. `default` applies to a
+	// presentation surface that names no scope; `all` is implicit, always
+	// resolves to "no predicate", and is how a view withdraws the default.
+	// Declaring `all` is a load error — it could only shadow the withdrawal.
+	//
+	// # Why this is not `worlds:`
+	//
+	// A world RANKS the faces of one entity and picks at most one, so it
+	// never changes the row count. A query scope INCLUDES or EXCLUDES the
+	// entity, so it does. "Archived" is the second kind: an archived task is
+	// not a variant of a live task you would rank against it, which is why
+	// it cannot be spelled as a face.
+	//
+	// # Why the expressions are not compiled here
+	//
+	// Only the raw source is held. Compiling needs [internal/predicatefns],
+	// which already imports this package, and arch-lint keeps metamodel a
+	// near-leaf regardless. So `internal/scopes` compiles them at assembly —
+	// the same split, for the same reason, as `worlds:` and internal/worlds.
+	//
+	// ABSENT (the common case) means no scoping: every surface sees every
+	// row, exactly as before this key existed.
+	QueryScopes map[string]string `yaml:"query_scopes,omitempty"`
 }
 
 // FaceDef declares one content state of an entity type.
@@ -604,6 +634,19 @@ type WorldOnAbsent struct {
 // DefaultWorldName is reserved: the default world is implicit and total,
 // so a declaration under this name could only shadow or contradict it.
 const DefaultWorldName = "default"
+
+// DefaultQueryScopeName is the query scope a presentation surface uses when
+// it names none. Unlike [DefaultWorldName] this is DECLARED, not implicit:
+// the whole point of the key is to let an operator say "and by default,
+// hide the archived ones".
+const DefaultQueryScopeName = "default"
+
+// AllQueryScopeName is reserved and implicit: it always resolves to "no
+// predicate", and is how a view withdraws [DefaultQueryScopeName]. Reserved
+// rather than merely conventional because a declaration under this name
+// could only shadow the withdrawal — leaving an operator no way to ask for
+// the unfiltered set.
+const AllQueryScopeName = "all"
 
 // UnmarshalYAML accepts `select: published` as well as
 // `select: [review, published]`.

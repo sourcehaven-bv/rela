@@ -27,6 +27,10 @@ type Violation struct {
 	EntityID    string
 	EntityType  string
 	EntityTitle string
+	// Message is the per-entity explanation a Lua rule returned, alongside
+	// (never instead of) Description. Empty for non-Lua rules. See
+	// validation.Violation.Message.
+	Message string
 	// Face names the content state that violated, as declared. Empty for a
 	// type with no faces. See validation.Violation.Face.
 	Face string
@@ -38,6 +42,11 @@ type Violation struct {
 // specifics (Lua, then-filter, property rules).
 type RuleViolation struct {
 	EntityID string
+	// Message is the per-entity explanation a Lua rule returned for this
+	// entity. Empty for non-Lua rules and for a Lua rule that returned no
+	// message; renderers fall back to the rule description alone. See
+	// validation.Violation.Message.
+	Message string
 	// Face names the content state that violated, as declared. Empty for a
 	// type with no faces. See validation.Violation.Face.
 	Face   string
@@ -149,6 +158,7 @@ func (v *GenericValidator) CheckRuleFull(
 	for _, vi := range result.Violations {
 		out.Violations = append(out.Violations, RuleViolation{
 			EntityID: vi.EntityID,
+			Message:  vi.Message,
 			Face:     vi.Face,
 			Detail:   vi.Detail,
 		})
@@ -175,6 +185,7 @@ func (v *GenericValidator) CheckAll(ctx context.Context) ([]Violation, error) {
 		out = append(out, Violation{
 			RuleName:    r.RuleName,
 			Description: r.Description,
+			Message:     r.Message,
 			Severity:    r.Severity,
 			EntityID:    r.EntityID,
 			Face:        r.Face,

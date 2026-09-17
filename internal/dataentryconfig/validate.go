@@ -83,14 +83,22 @@ var validSortDirections = map[string]bool{
 	"desc": true,
 }
 
+// DisplayNested is the section display mode that renders a two-level
+// parent→child tree.
+//
+// Exported because internal/dataentry matches on it when building the section,
+// and one wire value should not be spelled twice across a package boundary.
+const DisplayNested = "nested"
+
 // Valid display modes for view sections
 var validSectionDisplayModes = map[string]bool{
-	"properties": true,
-	"content":    true,
-	"table":      true,
-	"list":       true,
-	"cards":      true,
-	"breakdown":  true,
+	"properties":  true,
+	"content":     true,
+	"table":       true,
+	"list":        true,
+	"cards":       true,
+	"breakdown":   true,
+	DisplayNested: true,
 }
 
 // Valid render modes for a view section and its fields (TKT-HOIX1). Empty is
@@ -349,6 +357,7 @@ func ValidateConfig(data []byte, cfg *Config, meta *metamodel.Metamodel) error {
 	errs = append(errs, validateCalDAV(cfg, meta)...)
 	errs = append(errs, validateStyles(cfg, meta)...)
 	errs = append(errs, validateNextActions(cfg, meta)...)
+	errs = append(errs, validateQueryScopes(cfg, meta)...)
 	errs = append(errs, validateCrossReferences(cfg)...)
 
 	if len(errs) > 0 {
@@ -516,6 +525,17 @@ func validateSidePanelSpans(formID string, panel *SidePanelConfig) []string {
 	}
 	var errs []string
 	for i, sec := range panel.Sections {
+		// A side panel has no wire field for a nested tree
+		// (v1.SidePanelSection carries Fields and Entities only), so
+		// `display: nested` there would build a tree that is dropped on the
+		// way out — a section with a heading and nothing in it, no error.
+		// Refuse it instead. Plumbing Tree through the side panel is the
+		// alternative, but nothing has asked for a tree in a 300px panel.
+		if sec.Display == DisplayNested {
+			errs = append(errs, fmt.Sprintf(
+				"form %q: side_panel section[%d] uses display: %s, which a side panel cannot render",
+				formID, i, DisplayNested))
+		}
 		for j, f := range sec.Fields {
 			errs = append(errs, validateSpan(f.Span,
 				fmt.Sprintf("form %q: side_panel section[%d] field[%d]", formID, i, j))...)
@@ -1492,6 +1512,8 @@ func validateViews(cfg *Config, meta *metamodel.Metamodel) []string {
 					viewID, i, s.Display, joinMapKeys(validSectionDisplayModes)))
 			}
 
+			errs = append(errs, validateNestedSection(viewID, i, s, view, collections, meta)...)
+
 			// Spans are checked unconditionally — deliberately NOT inside the
 			// `sourceType != ""` guard below, which only runs when the source
 			// collection resolves. A bad span is wrong regardless of whether
@@ -1534,7 +1556,9 @@ func validateViews(cfg *Config, meta *metamodel.Metamodel) []string {
 						}
 					}
 
-					// Validate columns
+					// Validate columns. A nested section uses
+					// parent_columns/child_columns instead; see
+					// validateNestedSection.
 					for j, c := range s.Columns {
 						if c.Property != "" && c.Property != "title" && c.Property != "id" {
 							if _, ok := sourceDef.Properties[c.Property]; !ok {
@@ -1576,6 +1600,204 @@ func validateViews(cfg *Config, meta *metamodel.Metamodel) []string {
 		}
 	}
 
+	return errs
+}
+
+// collectionTypes returns every entity type a collection may hold.
+//
+// [determineTargetType] answers with ONE type and yields "" for a relation
+// declaring several `to:` types — correct for its callers, which need a single
+// type or nothing. A nested section needs the whole set instead: a relation
+// reaching both `task` and `bug` is ordinary (15 of the 47 relations in rela's
+// own schema declare more than one `to:` type), and each type may declare its
+// own columns.
+//
+// Returns nil for the implicit `entry` collection, whose type comes from the
+// view rather than a rule, and for a name no rule collects.
+func collectionTypes(view ViewConfig, name string, meta *metamodel.Metamodel) []string {
+	if name == "entry" {
+		if view.Entry.Type != "" {
+			return []string{view.Entry.Type}
+		}
+		return nil
+	}
+	// Later rules win, matching the executor: a second rule with the same
+	// collect_as merges into the same bucket.
+	var rule *ViewTraverse
+	for i := range view.Traverse {
+		if view.Traverse[i].CollectAs == name {
+			rule = &view.Traverse[i]
+		}
+	}
+	if rule == nil {
+		return nil
+	}
+	relType := rule.Follow
+	if relType == "" {
+		relType = rule.FollowIncoming
+	}
+	relDef, ok := meta.GetRelationDef(relType)
+	if !ok {
+		return nil
+	}
+	if rule.Follow != "" {
+		return relDef.To
+	}
+	return relDef.From
+}
+
+// validateLevelColumns checks one level's per-type column map for a nested
+// section: every key must be a type the level can actually hold, and every
+// column must name a property of the type it is declared for.
+//
+// A type the level CAN hold but that the map omits is not an error — it
+// renders title and id only, the same "absent means default" rule
+// [Gantt.Sources] uses, so adding a type to a relation never breaks a view.
+func validateLevelColumns(
+	viewID string, i int, level string, byType map[string][]ListColumn,
+	allowed []string, meta *metamodel.Metamodel,
+) []string {
+	var errs []string
+	allowedSet := make(map[string]bool, len(allowed))
+	for _, t := range allowed {
+		allowedSet[t] = true
+	}
+	for _, entityType := range sortedMapKeys(byType) {
+		if len(allowed) > 0 && !allowedSet[entityType] {
+			errs = append(errs, fmt.Sprintf(
+				"view %q: section[%d] %s declares columns for %q, which this level never holds (valid: %s)",
+				viewID, i, level, entityType, strings.Join(allowed, ", ")))
+			continue
+		}
+		entDef, ok := meta.GetEntityDef(entityType)
+		if !ok {
+			errs = append(errs, fmt.Sprintf(
+				"view %q: section[%d] %s references unknown entity type %q",
+				viewID, i, level, entityType))
+			continue
+		}
+		for j, c := range byType[entityType] {
+			if c.Property != "" && c.Property != "title" && c.Property != "id" {
+				if _, ok := entDef.Properties[c.Property]; !ok {
+					errs = append(errs, fmt.Sprintf(
+						"view %q: section[%d] %s[%q] column[%d] property %q not in entity %q",
+						viewID, i, level, entityType, j, c.Property, entityType))
+				}
+			}
+			if c.Relation != "" {
+				if _, ok := meta.GetRelationDef(c.Relation); !ok {
+					errs = append(errs, fmt.Sprintf(
+						"view %q: section[%d] %s[%q] column[%d] references unknown relation %q",
+						viewID, i, level, entityType, j, c.Relation))
+				}
+			}
+		}
+	}
+	return errs
+}
+
+// nestedOnlyKeyErr reports a nested-only key authored on another display mode.
+func nestedOnlyKeyErr(viewID string, i int, key, display string) string {
+	return fmt.Sprintf(
+		"view %q: section[%d] sets %s but display is %q (it requires display: %s)",
+		viewID, i, key, display, DisplayNested)
+}
+
+// validateNestedSection checks the `children:` key that `display: nested`
+// requires, and refuses the two shapes that would render a silently wrong
+// section rather than failing.
+//
+// collections is the accumulated collection→entity-type map the surrounding
+// loop already built for `source:`, so a `children:` typo is reported against
+// the same vocabulary and cannot drift from it.
+//
+// The two refusals, both of which would otherwise produce a section that looks
+// fine and is not:
+//
+//   - `children:` naming a bucket NOT collected by a rule that walked FROM
+//     `source:`. Nesting comes from the traverse shape, so an unrelated bucket
+//     yields rows with no children at all — an empty tree, not an error.
+//   - `recursive: true` on the rule that collected the children. The recursive
+//     walk reports ids level by level without retaining which node each came
+//     from (see viewResult.Parents in internal/dataentry), so the section would
+//     render flat with every child under no parent.
+func validateNestedSection(
+	viewID string, i int, s ViewSection, view ViewConfig, collections map[string]string,
+	meta *metamodel.Metamodel,
+) []string {
+	if s.Display != DisplayNested {
+		var errs []string
+		if s.Children != "" {
+			errs = append(errs, fmt.Sprintf(
+				"view %q: section[%d] sets children %q but display is %q (children requires display: %s)",
+				viewID, i, s.Children, s.Display, DisplayNested))
+		}
+		if s.ParentColumns != nil {
+			errs = append(errs, nestedOnlyKeyErr(viewID, i, "parent_columns", s.Display))
+		}
+		if s.ChildColumns != nil {
+			errs = append(errs, nestedOnlyKeyErr(viewID, i, "child_columns", s.Display))
+		}
+		return errs
+	}
+
+	// A nested section is per-level and per-type, so the flat list `table`
+	// uses cannot apply to it — refuse rather than silently ignore.
+	if len(s.Columns) > 0 {
+		return []string{fmt.Sprintf(
+			"view %q: section[%d] has display: %s, which takes parent_columns/child_columns "+
+				"(keyed by entity type) instead of columns",
+			viewID, i, DisplayNested)}
+	}
+
+	if s.Children == "" {
+		return []string{fmt.Sprintf(
+			"view %q: section[%d] has display: %s but no children (name the collection to nest under each row)",
+			viewID, i, DisplayNested)}
+	}
+	if s.Children == s.Source {
+		return []string{fmt.Sprintf(
+			"view %q: section[%d] nests collection %q under itself (children must differ from source)",
+			viewID, i, s.Children)}
+	}
+	if _, ok := collections[s.Children]; !ok {
+		return []string{fmt.Sprintf(
+			"view %q: section[%d] references unknown collection %q in children (valid: %s)",
+			viewID, i, s.Children, strings.Join(sortedMapKeys(collections), ", "))}
+	}
+
+	// Find the rule that collected the children and check it nests under the
+	// section's own source. Later rules win, matching the executor, where a
+	// second rule with the same collect_as merges into the same bucket.
+	var child *ViewTraverse
+	for j := range view.Traverse {
+		if view.Traverse[j].CollectAs == s.Children {
+			child = &view.Traverse[j]
+		}
+	}
+	if child == nil {
+		// Reachable only for `entry`, which every view seeds without a rule.
+		return []string{fmt.Sprintf(
+			"view %q: section[%d] cannot nest collection %q (no traverse rule collects it)",
+			viewID, i, s.Children)}
+	}
+	var errs []string
+	if child.From != s.Source {
+		errs = append(errs, fmt.Sprintf(
+			"view %q: section[%d] nests %q under %q, but the rule collecting %q traverses from %q "+
+				"(the children rule must start from the section's source)",
+			viewID, i, s.Children, s.Source, s.Children, child.From))
+	}
+	if child.Recursive {
+		errs = append(errs, fmt.Sprintf(
+			"view %q: section[%d] nests %q, which is collected recursively; "+
+				"display: %s renders exactly two levels and cannot attribute a recursive walk",
+			viewID, i, s.Children, DisplayNested))
+	}
+	errs = append(errs, validateLevelColumns(viewID, i, "parent_columns", s.ParentColumns,
+		collectionTypes(view, s.Source, meta), meta)...)
+	errs = append(errs, validateLevelColumns(viewID, i, "child_columns", s.ChildColumns,
+		collectionTypes(view, s.Children, meta), meta)...)
 	return errs
 }
 
@@ -2109,6 +2331,16 @@ func isLoopbackHost(host string) bool {
 	return strings.EqualFold(host, "localhost")
 }
 
+// ReservedExportSegment is the final path segment that turns a document URL
+// into an export request (/_documents/{document}/_export), and is therefore a
+// name no document may take.
+//
+// It is declared HERE rather than imported from dataentry because dataentry
+// imports this package, so the dependency cannot run the other way. dataentry's
+// exportSegment is an alias of this constant, so renaming one is a compile
+// error in the other; TestExportSegmentPremise asserts the two agree.
+const ReservedExportSegment = "_export"
+
 // Invariant: every document must have entity_type set, and exactly one of
 // {command, script} must be non-empty. entity_type is enforced at the HTTP
 // handler layer to reject cross-type render requests; the mutual exclusion
@@ -2129,6 +2361,25 @@ func validateDocuments(cfg *Config) []string {
 			errs = append(errs, fmt.Sprintf(
 				"document %q: edit is not supported without entity_type (a standalone document has no entity to edit)",
 				docID))
+		}
+
+		// "_export" is the reserved final segment of the document export routes
+		// (/_documents/{doc}/_export), so no document may take it as a name.
+		//
+		// Be precise about why, because the obvious reason is wrong: such a
+		// document is NOT unreachable today. The dispatch matches the reserved
+		// segment only in FINAL position, so all four shapes still resolve —
+		// /_documents/_export renders it, /_documents/_export/_export exports
+		// it, and the anchored pair works too. The reservation is
+		// forward-compatibility, not a repair: a name that is simultaneously a
+		// route keyword is one dispatch change away from being shadowed
+		// silently, and the failure would be a document that stops rendering
+		// with no error anywhere. Refusing at load costs an operator one
+		// rename and removes the whole class.
+		if docID == ReservedExportSegment {
+			errs = append(errs, fmt.Sprintf(
+				"document %q: %q is reserved for the export route (/_documents/{document}/%s); rename the document",
+				docID, ReservedExportSegment, ReservedExportSegment))
 		}
 
 		hasCmd := len(doc.Command) > 0
@@ -2365,4 +2616,59 @@ func validateDocumentElevation(docID string, doc DocumentConfig, hasScript bool)
 	}
 
 	return errs
+}
+
+// validateQueryScopes checks that every `query_scope:` on a list or kanban
+// names a scope its entity type declares.
+//
+// An unknown name is a LOAD ERROR rather than a fallback to unfiltered. The
+// two failure directions are not symmetric: a refused config is fixed in
+// seconds, while a silent fallback shows every archived row on a board the
+// operator believed was scoped, and nothing on screen says so.
+//
+// The reserved `all` always resolves — it is implicit and means "no
+// predicate", so a view may withdraw its type's default even when the type
+// declares no scopes at all.
+func validateQueryScopes(cfg *Config, meta *metamodel.Metamodel) []string {
+	if cfg == nil || meta == nil {
+		return nil
+	}
+	var errs []string
+	for _, id := range sortedMapKeys(cfg.Lists) {
+		list := cfg.Lists[id]
+		errs = append(errs, checkQueryScopeRef(meta, "list", id, list.EntityType, list.QueryScope)...)
+	}
+	for _, id := range sortedMapKeys(cfg.Kanbans) {
+		kanban := cfg.Kanbans[id]
+		errs = append(errs, checkQueryScopeRef(meta, "kanban", id, kanban.EntityType, kanban.QueryScope)...)
+	}
+	return errs
+}
+
+// checkQueryScopeRef resolves one `query_scope:` reference.
+func checkQueryScopeRef(
+	meta *metamodel.Metamodel, kind, id, entityType, scope string,
+) []string {
+	if scope == "" || scope == metamodel.AllQueryScopeName {
+		return nil
+	}
+	def, ok := meta.GetEntityDef(entityType)
+	if !ok {
+		// The unknown entity type is already reported by validateLists /
+		// validateKanbans; adding a second error about a scope on a type that
+		// does not exist would be noise.
+		return nil
+	}
+	if _, ok := def.QueryScopes[scope]; ok {
+		return nil
+	}
+	declared := sortedMapKeys(def.QueryScopes)
+	if len(declared) == 0 {
+		return []string{fmt.Sprintf(
+			"%s %q: query_scope %q is not declared — entity type %q declares no query_scopes:",
+			kind, id, scope, entityType)}
+	}
+	return []string{fmt.Sprintf(
+		"%s %q: query_scope %q is not declared on entity type %q (declared: %s, plus the implicit %q)",
+		kind, id, scope, entityType, strings.Join(declared, ", "), metamodel.AllQueryScopeName)}
 }

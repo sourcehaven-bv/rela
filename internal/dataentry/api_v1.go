@@ -358,7 +358,25 @@ func (a *App) listPage(
 	// and the Go path must return the same rows, "and that is a matter of
 	// eligibility, not of translation cleverness".
 	cond := viewCondition(a.viewConditions, a.State(), viewKindList, queryGet(query, listIDParam))
-	if cond == nil && !worldFromContext(ctx).blocksAllReads() {
+
+	// Resolve the query scope too: it decides membership, so it gates
+	// whether the pushdown fast path may serve this request at all.
+	scopeName, err := queryScopeParam(query)
+	if err != nil {
+		return nil, 0, err
+	}
+	scope, err := viewQueryScope(a.queryScopes, a.Cfg(), a.Meta(), typeName, scopeName)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	// The pushdown path serves a page straight from the store, so it can only
+	// run when BOTH narrowings are absent. A scope using `~=`, an ordered
+	// comparison or a disjunction has a Go-side remainder, and a store-side
+	// page computed without it would paginate over rows the scope excludes —
+	// wrong counts and wrong page boundaries, not merely extra rows. The same
+	// holds for a condition. Declining is always correct, only slower.
+	if cond == nil && scope.Scope == nil && !worldFromContext(ctx).blocksAllReads() {
 		rqr := readGateFromContext(ctx).ReadQuery(ctx, typeName)
 		isRelationKey := relationFilterClassifier(a.Meta(), a.Cfg(), typeName)
 		if plan, ok := planListPushdown(
@@ -367,7 +385,7 @@ func (a *App) listPage(
 			return plan.run(ctx, a.Services().Store)
 		}
 	}
-	all, err := a.scopedSortedEntities(ctx, typeName, query)
+	all, err := scopedSortedEntitiesScoped(ctx, a, typeName, query, scope)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -388,60 +406,60 @@ func (a *App) scopedSortedEntities(
 	typeName string,
 	query map[string][]string,
 ) ([]*entityPkg.Entity, error) {
-	// A denied world yields nothing, via the SAME empty-result path a
-	// genuinely-empty world takes — so the two are identical on the wire.
-	if worldFromContext(ctx).blocksAllReads() {
-		return []*entityPkg.Entity{}, nil
+	// Resolves the scope from the request's ?query_scope= (absent = the
+	// type's default), so every caller of this function is scoped too:
+	// export mirrors the list it names, and _position navigates the set the
+	// list actually showed.
+	scopeName, err := queryScopeParam(query)
+	if err != nil {
+		return nil, err
 	}
-	rqr := readGateFromContext(ctx).ReadQuery(ctx, typeName)
+	scope, err := viewQueryScope(a.queryScopes, a.Cfg(), a.Meta(), typeName, scopeName)
+	if err != nil {
+		return nil, err
+	}
+	return scopedSortedEntitiesScoped(ctx, a, typeName, query, scope)
+}
 
-	// Content-free rows throughout (rowcontent.go): the pipeline below reads
-	// properties only, and the served page loads bodies afterwards if asked.
-	var entities []*entityPkg.Entity
-	switch {
-	case rqr.DenyAll:
+// scopedSortedEntitiesScoped is App.scopedSortedEntities with the query
+// scope already resolved, for callers that resolved it to decide something
+// else first (listPage uses it to gate the pushdown).
+//
+// A package function taking the App rather than a method, to keep App under
+// its plimsoll load line — the discipline the directive at [App] records:
+// a feature pays for its setter, not for its internals.
+func scopedSortedEntitiesScoped(
+	ctx context.Context,
+	a *App,
+	typeName string,
+	query map[string][]string,
+	scope resolvedQueryScope,
+) ([]*entityPkg.Entity, error) {
+	// Stamp the scope's request-scoped state ONCE, before any row is
+	// evaluated — a scope reading current_user resolves it here, not per row.
+	ctx, err := scope.bind(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// The verdict switch, the world scope, the face allowlist and the query
+	// scope all live in scopedHeaders (scopedread.go) — see its doc for why
+	// they must not be re-implemented per handler.
+	rqr := readGateFromContext(ctx).ReadQuery(ctx, typeName)
+	entities, withheld, err := scopedEntities(ctx, a.Services(), rqr, scopeRequest{
+		Type:       typeName,
+		Faces:      rqr.Faces,
+		Scope:      scope.Scope,
+		ScopeProps: scope.Props,
+		ScopeEval:  scope.Eval,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if withheld {
+		// Return BEFORE the free-text search: a principal who may read
+		// nothing must not be able to probe the search backend's latency or
+		// induce load through ?q= (RR-X56H).
 		return []*entityPkg.Entity{}, nil
-	case rqr.AllowAll:
-		// Inline iteration rather than listFromStoreByTypes: that
-		// helper swallows iterator errors into a partial slice, and
-		// the list pipeline must fail loud on both verdict paths.
-		// World scope on BOTH verdict branches. Carrying it on only one is
-		// the RR-GQWRLD fail-open: AllowAll takes this EntityQuery branch
-		// and every ACL-gated principal takes the GraphQuery branch below,
-		// so a world stamped on one silently degrades to the default world
-		// for exactly one of the two populations.
-		// FaceIn rides on BOTH branches for exactly the reason World does
-		// (TKT-O7R2A1): a face allowlist carried on only the GraphQuery
-		// would leave the AllowAll population — the most privileged — with
-		// no face narrowing, and the two paths would disagree.
-		for h, err := range store.ListEntityHeaders(ctx, a.Services().Store, store.EntityQuery{
-			Type:   typeName,
-			World:  worldScopeFrom(ctx),
-			FaceIn: rqr.Faces,
-		}) {
-			if err != nil {
-				return nil, fmt.Errorf("%w: %w", errListLoad, err)
-			}
-			entities = append(entities, headerEntity(h))
-		}
-	case rqr.Query == nil:
-		// Defensive: a zero ReadQueryResult would otherwise alias
-		// AllowAll. Fail loud instead of silently widening the list.
-		return nil, fmt.Errorf("%w: zero ReadQueryResult for type %q", errACLListQuery, typeName)
-	default:
-		// COPY before stamping: the ACL layer may cache or reuse a
-		// ReadQueryResult per principal, so mutating *rqr.Query in place
-		// would leak one request's world into the next caller's — the same
-		// cross-request scope bleed visibility.listPushdown guards against.
-		wq := *rqr.Query
-		wq.World = worldScopeFrom(ctx)
-		wq.FaceIn = rqr.Faces
-		for h, err := range store.GraphQueryHeaders(ctx, a.Services().Store, wq) {
-			if err != nil {
-				return nil, fmt.Errorf("%w: %w", errACLListQuery, err)
-			}
-			entities = append(entities, headerEntity(h))
-		}
 	}
 
 	// Free-text search: intersect with hits from the searcher when ?q=... is
@@ -970,6 +988,23 @@ func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName
 		result.Included = a.resolveV1Includes(ctx, entity, includes)
 	}
 
+	// Resolve the entity-ID code spans in the body so an edit form can render
+	// them as titled links, the way the read surface already does
+	// (`rewriteEntityRefToken`). Same call the view handler makes, so the two
+	// surfaces cannot disagree about a title.
+	//
+	// It runs on the SERVED content, after the read gate and the redactor, so
+	// a reference inside a body the caller could not read never gets scanned.
+	// collectMentions then applies the gate a second time to each REFERENCED
+	// entity, which is what keeps a title the caller may not see out of the
+	// response (BUG-R9EHKV).
+	//
+	// Not folded into the ETag: mentions turn on OTHER entities' titles and on
+	// the caller's own grants, neither of which this validator ever covered.
+	// The response is `no-store` anyway, so a stale shared copy is not
+	// reachable.
+	result.Mentions = collectMentions(ctx, a.store, a.viewReader, a.Meta(), entity.Content)
+
 	// ETag for caching (visible-only path; deny-path above emits no ETag).
 	//
 	// The edges computed for the BODY above are reused rather than re-read.
@@ -1014,6 +1049,15 @@ func writeListPipelineError(w http.ResponseWriter, r *http.Request, err error) {
 		// filter key/operator, never store internals.
 		writeV1Error(w, r, http.StatusBadRequest, "invalid_filter",
 			"Invalid filter parameter", err.Error())
+	case errors.Is(err, errBadQueryScope):
+		// Client-caused, like errBadFilter above: the caller named a scope
+		// that does not resolve, or repeated the parameter. Echo the detail
+		// — it names only the caller's own scope name and the entity type,
+		// both of which are operator-authored config rather than secrets.
+		slog.Warn("dataentry: rejected invalid query_scope",
+			"err", err, "path", r.URL.Path, "method", r.Method)
+		writeV1Error(w, r, http.StatusBadRequest, "invalid_query_scope",
+			"Invalid query_scope parameter", err.Error())
 	case errors.Is(err, errACLListQuery):
 		writeGateError(w, r, err)
 	case errors.Is(err, errListLoad):
@@ -1813,13 +1857,14 @@ func (a *App) handleV1Analyze(w http.ResponseWriter, r *http.Request) {
 	for _, vi := range visible {
 		issue, section := vi.issue, vi.section
 		api := APIIssue{
-			EntityID:   issue.EntityID,
-			EntityType: issue.EntityType,
-			Title:      issue.Title,
-			Message:    issue.Message,
-			Severity:   issue.Severity,
-			CheckType:  section,
-			Detail:     issue.Detail,
+			EntityID:    issue.EntityID,
+			EntityType:  issue.EntityType,
+			Title:       issue.Title,
+			Message:     issue.Message,
+			RuleMessage: issue.RuleMessage,
+			Severity:    issue.Severity,
+			CheckType:   section,
+			Detail:      issue.Detail,
 		}
 		if issue.ScriptError != nil {
 			env := buildScriptErrorEnvelope(issue.ScriptError, fullDetail, "")
@@ -2534,100 +2579,83 @@ func (a *App) handleV1Documents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse path: /api/v1/_documents/{docName}[/{entityId}], then dispatch on
-	// the shape. The two branches live in separate functions so neither grows
-	// the other's guards by accident — they differ in their ACL story, not
-	// just in whether an id is present.
+	// Parse path: /api/v1/_documents/{docName}[/{entityId}][/_export], then
+	// dispatch on the shape. The branches live in separate functions so none
+	// grows another's guards by accident — they differ in their ACL story, not
+	// just in which segments are present.
+	//
+	// The trailing `_export` segment is matched EXACTLY and only in final
+	// position, so the four shapes are disjoint:
+	//
+	//	{doc}                     render, standalone
+	//	{doc}/_export             export, standalone
+	//	{doc}/{entityId}          render, anchored
+	//	{doc}/{entityId}/_export  export, anchored
+	//
+	// The two-segment forms cannot collide: an entity id can never be
+	// "_export" because entity.ValidateID rejects a leading underscore. The
+	// other side of that premise — a document literally named "_export" — is
+	// closed at config load by validateDocuments. See exportSegment.
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/_documents/")
-	parts := strings.SplitN(path, "/", 2)
-	if len(parts) == 1 || parts[1] == "" {
+	parts := strings.Split(path, "/")
+
+	// Trailing empty segment from a trailing slash ("/_documents/foo/") is not
+	// a missing entity id; drop it so the shape matches the one-segment form.
+	if len(parts) > 1 && parts[len(parts)-1] == "" {
+		parts = parts[:len(parts)-1]
+	}
+
+	// Any REMAINING empty segment is rejected outright. This is not defensive
+	// tidying — without it "/_documents/sales//_export" splits to
+	// ["sales", "", "_export"], matches the 3-segment export case, and calls
+	// the export handler with an empty entity id, which dispatches to the
+	// STANDALONE resolver. That serves a standalone document at the anchored
+	// URL shape, precisely what this package's CLAUDE.md forbids ("Never let
+	// one URL shape serve the other kind... do not fall back to rendering with
+	// an empty or guessed entry id").
+	//
+	// net/http's ServeMux happens to redirect "//" before a request reaches
+	// here, but that is a property of the mux, not of this function: tests and
+	// any future direct mount call it without that normalization, and a
+	// percent-encoded %2F survives ServeMux cleaning entirely. Reject here so
+	// the guarantee belongs to the router itself.
+	if slices.Contains(parts, "") {
+		writeV1Error(w, r, http.StatusBadRequest, "invalid_path",
+			"Path must be /_documents/{docName}/{entityId}", "")
+		return
+	}
+
+	switch {
+	case len(parts) == 1:
 		handleV1StandaloneDocument(a, w, r, parts[0])
-		return
+	case len(parts) == 2 && parts[1] == exportSegment:
+		handleV1ExportDocument(a, w, r, parts[0], "")
+	case len(parts) == 2:
+		handleV1AnchoredDocument(a, w, r, parts[0], parts[1])
+	case len(parts) == 3 && parts[2] == exportSegment:
+		handleV1ExportDocument(a, w, r, parts[0], parts[1])
+	default:
+		writeV1Error(w, r, http.StatusNotFound, "not_found", "Resource not found", "")
 	}
-	if parts[0] == "" {
-		writeV1Error(w, r, http.StatusBadRequest, "invalid_path", "Path must be /_documents/{docName}/{entityId}", "")
-		return
-	}
-	handleV1AnchoredDocument(a, w, r, parts[0], parts[1])
 }
 
 // handleV1AnchoredDocument serves GET /api/v1/_documents/{docName}/{entityId}
 // — a document declared WITH an `entity_type:`, rendered about one entity.
 //
-// Gate ordering here is load-bearing; see the comments inline. A plain
-// function taking *App for the same reason handleV1StandaloneDocument is one:
-// App sits on its plimsoll load line.
+// The gate chain lives in resolveAnchoredDocument, shared with the export
+// route so the two cannot drift; its ordering is load-bearing and documented
+// there. What stays HERE is everything specific to producing HTML: the
+// return_to rewrite, the refresh flag, and the disk cache — see the note in
+// resolveAnchoredDocument about why the cache must not move into it.
+//
+// A plain function taking *App for the same reason handleV1StandaloneDocument
+// is one: App sits on its plimsoll load line.
 func handleV1AnchoredDocument(a *App, w http.ResponseWriter, r *http.Request, docName, entityID string) {
-	// Both segments flow into the on-disk document cache filename
-	// (workspace/document.go). Reject anything that could escape the cache
-	// directory before any filesystem work happens.
-	if !isSafePathSegment(docName) || !isSafePathSegment(entityID) {
-		writeV1Error(w, r, http.StatusBadRequest, "invalid_path", "Path segment contains forbidden characters", "")
-		return
-	}
-
-	// Get document config
-	docCfg, ok := a.State().Cfg.Documents[docName]
+	resolved, ok := resolveAnchoredDocument(a, w, r, docName, entityID)
 	if !ok {
-		writeV1Error(w, r, http.StatusNotFound, "document_not_found", "Document config not found", "")
-		return
+		return // the resolver already wrote the response
 	}
-
-	// A standalone document has no entry entity, so an entity-anchored
-	// request for one is a category error, not a document to render against
-	// the supplied id. Reject rather than silently ignoring the id.
-	if docCfg.IsStandalone() {
-		writeV1Error(w, r, http.StatusBadRequest, "document_kind_mismatch",
-			fmt.Sprintf("document %q has no entity_type; request it at /_documents/%s without an entity id",
-				docName, docName), "")
-		return
-	}
-
-	// Enforce the doc's entity_type before running the renderer: a
-	// release-notes script authored for releases must not run against a
-	// ticket. The frontend already filters the docs shown for an entity,
-	// but an HTTP caller can hit /_documents/<doc>/<wrong-type-id>
-	// directly; reject here.
-	ent, entErr := a.store.GetEntity(r.Context(), entityID)
-	if entErr != nil {
-		writeV1Error(w, r, http.StatusNotFound, "entity_not_found",
-			fmt.Sprintf("entity %q not found", entityID), "")
-		return
-	}
-
-	// ACL gate (TKT-C0R07J): document rendering serves entity-derived content
-	// (HTML + EntityIDs) and may run a Lua script that reads related entities.
-	// Gate on the document's declared entity_type BEFORE the type-mismatch
-	// branch (so a denied principal gets a uniform 404, not a 400 oracle) and
-	// BEFORE any rendering runs — a denied caller must never trigger the
-	// (possibly Lua) renderer.
-	if !a.gateReadOrNotFound(w, r, docCfg.EntityType, entityID) {
-		return
-	}
-
-	// A doc-level `permission:` applies IN ADDITION to the per-entity gate
-	// above — it narrows, never widens (a holder still needs to pass the
-	// entity read gate). Same uniform-404 treatment for the same reason.
-	if !gateDocumentPermission(w, r, docName, docCfg) {
-		return
-	}
-
-	// An entity-anchored document may also be elevated (TKT-Y3JVFK), in which
-	// case BOTH this and the per-entity gate above must pass. The entity gate
-	// governs the entry entity; elevation governs what the script may read
-	// BEYOND it, so neither subsumes the other.
-	if !gateElevatedDocument(w, r, a.acl, docName, docCfg) {
-		return
-	}
-
-	if ent.Type != docCfg.EntityType {
-		writeV1Error(w, r, http.StatusBadRequest, "entity_type_mismatch",
-			fmt.Sprintf("document %q is for entity_type %q, but %q is a %q",
-				docName, docCfg.EntityType, entityID, ent.Type), "")
-		return
-	}
-
-	renderCfg := a.toDocumentRenderConfig(docName, &docCfg)
+	renderCfg := resolved.cfg
 
 	// Check for refresh param - skip cache if present
 	forceRefresh := r.URL.Query().Get("refresh") == "true"
@@ -2644,7 +2672,12 @@ func handleV1AnchoredDocument(a *App, w http.ResponseWriter, r *http.Request, do
 	// is only populated for command: renders (see doRender); skip the
 	// read for script: docs so we don't serve a stale command:-era file
 	// after a doc is switched to a Lua script.
-	if !forceRefresh && docCfg.Script == "" {
+	//
+	// That condition is also what keeps GetCached safe: its key carries
+	// neither the ConfigID nor the principal, so it may only ever serve a
+	// principal-independent command: render. Never widen this to script:
+	// docs, and never call GetCached from a per-principal path (RR-2QSGLU).
+	if !forceRefresh && renderCfg.Script == "" {
 		result := a.documents.GetCached(r.Context(), entityID)
 		if result != nil {
 			html := RewriteDocumentLinks(result.HTML, returnPath, nil)

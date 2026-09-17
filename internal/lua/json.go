@@ -117,9 +117,14 @@ func goJSONToLuaSafe(ls *lua.LState, val any, depth int) lua.LValue {
 		}
 		return tbl
 	default:
+		// coverage-ignore-start: unreachable-default: json.Unmarshal only produces
+		// nil/bool/float64/string/[]any/map[string]any, so no other dynamic
+		// type can reach here
+		//
 		// json.Unmarshal only produces the cases above, so this branch
 		// should be unreachable. Treat as a programming error.
 		ls.RaiseError("json.decode: unexpected value type %T from json.Unmarshal", v)
 		return lua.LNil
+		// coverage-ignore-end
 	}
 }

@@ -113,6 +113,22 @@ type Entity struct {
 	// transitions, nil on list rows and when no state machines are wired. It is a
 	// UI hint, never authorization — the write path re-enforces every transition.
 	Transitions *map[string][]Transition `json:"_transitions,omitempty"`
+	// Mentions resolves the entity-ID code spans in `Content` to their
+	// titles, so an EDIT surface can render them the way the read surface
+	// already does. Same map shape and same semantics as
+	// [ViewResponse.Mentions], produced by the same collectMentions call:
+	// the two must not diverge, because a title that appears in the editor
+	// and not in the rendered view (or the reverse) is a bug the user sees.
+	//
+	// It rides the single-entity GET only. A list row carries no content to
+	// scan, and a write response is not a surface that renders references.
+	//
+	// Per-principal, like every mention map: an entity the caller may not
+	// read has NO entry here (the code span stays plain), and one whose
+	// display title is redacted arrives with `inaccessible` set and its ID
+	// as the title. Deriving a title any other way would defeat the read
+	// gate — see BUG-R9EHKV.
+	Mentions map[string]Mention `json:"mentions,omitempty"`
 	// Copies lists the declared copy definitions available FROM this entity's
 	// current face — the promote / translate affordances (RULING 9). See
 	// [CopyOffer] for the per-entry contract (a UI hint, never a boundary).
@@ -926,6 +942,20 @@ type ViewSection struct {
 	IsGrouped    bool           `json:"isGrouped"`
 	Content      string         `json:"content,omitempty"`
 	HasContent   bool           `json:"hasContent"`
+
+	// Tree carries the parent rows of a `display: nested` section. Omitted for
+	// every other display mode, so a response that has no nested section is
+	// byte-identical to one produced before this field existed.
+	Tree []ViewTreeNode `json:"tree,omitempty"`
+	// Truncated reports that some VISIBLE row in Tree was not emitted — a
+	// parent the node budget could not afford, or children past a parent's
+	// preview cap. Never set merely because the budget ran out, so it cannot be
+	// used to probe how much is being withheld.
+	//
+	// Coarser than a node's HasMoreChildren and implied by it: a parent over
+	// the preview cap sets both. This flag exists for what HasMoreChildren
+	// cannot express — a parent dropped entirely has no row to signal on.
+	Truncated bool `json:"truncated,omitempty"`
 }
 
 // ViewEntity represents an entity in a view section.
@@ -1004,6 +1034,38 @@ type ViewRow struct {
 	// Self addresses the ROW this entry describes, face included — the same
 	// contract as [Entity.Self]. See [ViewEntity.Self].
 	Self string `json:"_self,omitempty"`
+}
+
+// ViewTreeNode is one row of a `display: nested` section: an entity, its
+// configured cells, and the rows nested under it.
+//
+// Always exactly two levels deep in practice — a nested section renders
+// parent → child — but the type is recursive so the wire shape does not have
+// to change if a later ticket lifts that.
+type ViewTreeNode struct {
+	Entity ViewEntity `json:"entity"`
+	// Columns are the columns declared for this node's LEVEL and entity type
+	// (`parent_columns` / `child_columns`, both keyed by type).
+	//
+	// Per node rather than per section because a nested section has no single
+	// column list: the two levels differ, and each may reach several entity
+	// types. Absent when the node's type declares none.
+	Columns []ViewColumn `json:"columns,omitempty"`
+	// Cells are this node's values, positional over Columns above.
+	Cells []ViewCell `json:"cells,omitempty"`
+	// Children are the nodes nested under this one, omitted when there are
+	// none — which is why HasMoreChildren below has to exist.
+	Children []ViewTreeNode `json:"children,omitempty"`
+	// ChildCount is how many children this node HAS, which exceeds
+	// len(Children) once the node budget truncates. Counts only children the
+	// caller may read.
+	ChildCount int `json:"childCount,omitempty"`
+	// HasMoreChildren reports children this response does not carry. Without
+	// it a truncated node is byte-identical to a childless one, since Children
+	// is omitempty — so a consumer could not tell a complete subtree from a
+	// withheld one. Computed on the gated tree: it never reflects entities the
+	// caller cannot read.
+	HasMoreChildren bool `json:"hasMoreChildren,omitempty"`
 }
 
 // ViewCell represents a table cell.

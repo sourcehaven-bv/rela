@@ -48,7 +48,8 @@ func loadWithIncludes(root *Metamodel, rootPath, rootDir string, fs storage.FS) 
 	}
 
 	absRoot, err := filepath.Abs(rootPath)
-	if err != nil {
+	if err != nil { // coverage-ignore: defensive: filepath.Abs only fails if os.Getwd fails; not reachable via the
+		// storage.FS abstraction in tests
 		return nil, err
 	}
 
@@ -94,7 +95,8 @@ func resolveIncludes(
 	fullPath := filepath.Join(rootDir, includePath)
 
 	absPath, err := filepath.Abs(fullPath)
-	if err != nil {
+	if err != nil { // coverage-ignore: defensive: filepath.Abs only fails if os.Getwd fails; not reachable via the
+		// storage.FS abstraction in tests
 		return nil, err
 	}
 
@@ -119,7 +121,8 @@ func resolveIncludes(
 				IncludedFrom: includedFrom,
 			}
 		}
-		return nil, err
+		return nil, err // coverage-ignore: defensive: reachable only on a non-NotExist read error (e.g. permission
+		// denied); the storage.FS used in tests returns NotExist for missing include files
 	}
 
 	// Parse the partial metamodel

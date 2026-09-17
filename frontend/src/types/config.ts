@@ -243,6 +243,17 @@ export interface ListConfig {
    * principal being able to read THIS world, not the ambient one.
    */
   create_world?: string
+  /**
+   * Named query scope from the entity type's `query_scopes:`, deciding which
+   * rows are members. Absent means the type's `default` scope applies; `all`
+   * withdraws it.
+   *
+   * Sent as `?query_scope=` because the list endpoint is keyed by entity TYPE
+   * — the server cannot tell which configured list is on screen, so the client
+   * has to say. Never send an empty string: a name that does not resolve is a
+   * 400, and "" resolves to nothing.
+   */
+  query_scope?: string
   edit_form?: string
   page_size?: number
   actions?: string[]
@@ -359,6 +370,8 @@ export interface KanbanConfig {
   create_form?: string
   filters?: Array<{ property: string; operator: string; value: string }>
   filter_controls?: FilterControl[]
+  /** Named query scope; see the field of the same name on ListConfig. */
+  query_scope?: string
 }
 
 export interface KanbanColumn {
@@ -664,6 +677,14 @@ export interface AnalyzeIssue {
   /** Optional headline shown when the row has no entity (e.g. validation rule name). */
   title?: string
   message: string
+  /**
+   * Per-entity explanation a Lua validation rule returned for THIS entity:
+   * which of the rule's several possible defects it has, and what to do
+   * about it. Shown alongside `message`, which stays the rule's own
+   * description and is identical across the rule's rows. Absent on every
+   * row that is not a Lua-rule violation.
+   */
+  ruleMessage?: string
   severity: 'error' | 'warning'
   checkType: string
   /**

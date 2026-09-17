@@ -498,6 +498,13 @@ func (h *viewsHandler) handleV1Views(w http.ResponseWriter, r *http.Request) {
 	// executeView + serializeEntityForWire. Gate BEFORE executeView so a hidden
 	// id is indistinguishable from a missing one (404, no oracle) and the view
 	// pipeline never runs for a denied principal.
+	//
+	// This gates only the ENTRY. The view's TRAVERSAL is separately
+	// source-gated in loadViewEntities (BUG-9Z20WH), so a hidden intermediary
+	// can neither be collected nor serve as a stepping-stone to a descendant
+	// reachable only through it. Together the two gates make _views an
+	// entity-read chokepoint for the entry AND for every entity the traversal
+	// surfaces.
 	if !h.gateRead(w, r, entityType, ref.ID) {
 		return
 	}
@@ -631,6 +638,12 @@ func (h *viewsHandler) handleV1Views(w http.ResponseWriter, r *http.Request) {
 				v1Grp.Entities = append(v1Grp.Entities, sectionEntityToV1(e))
 			}
 			v1Sec.Groups = append(v1Sec.Groups, v1Grp)
+		}
+
+		// Convert the nested tree
+		v1Sec.Truncated = sec.Truncated
+		for _, node := range sec.Tree {
+			v1Sec.Tree = append(v1Sec.Tree, sectionTreeNodeToV1(node))
 		}
 
 		resp.Sections = append(resp.Sections, v1Sec)

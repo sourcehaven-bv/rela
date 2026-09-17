@@ -86,10 +86,17 @@ func TestPostgresQueue_SchemaPinnedDSN(t *testing.T) {
 			fmt.Sprintf(`DROP SCHEMA IF EXISTS %s CASCADE`, pgx.Identifier{schema}.Sanitize()))
 	})
 
+	// Pin the schema with a plain `search_path` runtime parameter rather than
+	// libpq's `options=-c search_path=...`. The latter has to survive
+	// url.Values.Encode, which writes its space as "+" — and a URI query means
+	// a literal plus there, so libpq (and pgx from v5.11.0 on) reads the
+	// parameter name as "+search_path" and the server refuses the connection.
+	// `search_path` as its own parameter has no space to get wrong, and keeps
+	// the DSN a URL so ensurePoolFloor still sizes the pool.
 	u, err := url.Parse(admin)
 	require.NoError(t, err)
 	q := u.Query()
-	q.Set("options", "-c search_path="+schema+",public")
+	q.Set("search_path", schema+",public")
 	u.RawQuery = q.Encode()
 
 	queue, err := jobs.NewPostgresQueue(ctx, discardLogger(), u.String())

@@ -1008,6 +1008,124 @@ relations:
     symmetric: true
 ```
 
+## Query Scopes
+
+An entity type can declare **query scopes**: named boolean expressions that
+decide which rows a screen shows. A list or kanban selects one by name, and a
+scope called `default` applies to every screen of that type unless the view
+names another. The expression language is the same one
+[`condition:`](#expression-conditions-condition) uses.
+
+```yaml
+entities:
+  taak:
+    label: Task
+    properties:
+      status: { type: status_enum }
+      toegewezen_aan: { type: string }
+    query_scopes:
+      default: "entity.status ~= 'gearchiveerd'"   # hide archived everywhere
+      actief:  "entity.status ~= 'gereed'"
+      mijn:    "is_current_user(entity.toegewezen_aan)"
+      archief: "entity.status == 'gearchiveerd'"
+```
+
+Declaring the rule on the type rather than on each screen means the project has
+a vocabulary: "active tasks" is a thing an operator can refer to, and the rule
+behind it is written once. It also means rela needs no built-in idea of what
+"archived" means — the operator declares an ordinary property and two scopes,
+and a concept rela would otherwise have to carry through the store, the API,
+the search index and every export path stays out of the product entirely.
+
+| Name | Meaning |
+| --- | --- |
+| `default` | Applies to every list and kanban of this type that names no scope. Optional; without it, screens are unfiltered. |
+| `all` | **Implicit and always available.** Resolves to no predicate, so `query_scope: all` withdraws the `default`. Reserved — a type cannot declare a scope by this name. |
+| anything else | Applies only where a view names it. |
+
+Scope names must start with a letter and may contain letters, digits, and
+single `-` or `_` separators between them.
+
+### Query scopes are presentation, not access control
+
+**A query scope never decides what a principal is allowed to see.** The ACL
+read gate in `acl.yaml` runs first and independently; a scope narrows what is
+already permitted, for presentation reasons. This matters because the two read
+alike in YAML: a scope written as `mijn: "is_current_user(entity.owner)"` looks
+like "only my rows are visible", but it is a display filter, and anyone who
+can reach the API can ask for `query_scope: all`. To restrict what a role may
+read, use `scope_grants:` — see
+[ACL: Authorization Overview](acl-overview.md).
+
+One consequence worth knowing about: a scope that reads a property some role
+hides with `visible:` earns a startup warning naming the scope, the property
+and the roles. It is a warning rather than a refusal precisely because the row
+was already gated on its own terms — but the two declarations disagree about
+the same property, and whichever you meant, you probably did not mean both.
+
+### Query scopes and worlds are different operations
+
+They look adjacent and neither replaces the other:
+
+| | `worlds:` | `query_scopes:` |
+| --- | --- | --- |
+| operates on | faces (content states of one entity) | property values |
+| semantics | rank the faces and pick one per entity | include or exclude the entity |
+| row count | never changes it | reduces it |
+| the question | which version of X do I show | is X here at all |
+
+So "archived" cannot be a face: an archived task is not a variant of a live
+task that you would rank against it, it is a task that should not appear. The
+two compose — a world picks the face, a scope decides whether the row is in the
+list at all.
+
+### Identity in a scope
+
+A scope may read `current_user`, which is what makes `mijn:` above work. Two
+consequences follow:
+
+- A scope that never mentions the identity is evaluated exactly as an ordinary
+  expression, and works on a deployment with no authentication.
+- A scope that **does** mention it requires a resolved principal. On an
+  anonymous deployment such a screen fails with an error rather than rendering
+  an empty page, because the honest answers are the right rows or a failure,
+  never somebody else's rows. Putting one in `default` therefore makes every
+  screen of that type identity-dependent, and earns a startup warning saying
+  so.
+
+### Which surfaces apply scopes
+
+Scopes shape **screens**. They are deliberately absent everywhere that answers
+"what is actually in the graph":
+
+| Applies | Does not apply |
+| --- | --- |
+| Lists, kanbans, and list search in the web app | `rela list`, `rela export`, `rela validate` |
+| The list API, where `?query_scope=` selects one | `analyze_*` (cardinality, orphans, properties, validations) |
+| | MCP `list_entities`, Lua `rela.list_entities` |
+| | Trace and orphan reports |
+
+The split is not an oversight. If `analyze_cardinality` honoured a `default`
+scope that hides archived rows, archiving an entity with a missing required
+relation would silence the violation — and `rela validate` would report clean
+over data it was never shown.
+
+#### Load-time checks on query scopes
+
+The loader refuses the whole schema, and reports every problem it finds, when a
+query scope:
+
+- has a name outside the grammar above, or is called `all` in any
+  capitalization;
+- has an empty expression;
+- fails to compile, or reads a property the entity type does not declare — the
+  error names the type, the scope and the expression.
+
+A `query_scope:` in `data-entry.yaml` naming a scope the type does not declare
+is refused when that config loads, listing the names the type does declare. It
+never falls back to unfiltered: the difference between a typo that shows
+nothing and a typo that shows archived records to everyone is the whole point.
+
 ## Content States and Worlds
 
 An entity type can declare **faces**: several content states of one entity,
@@ -2022,6 +2140,49 @@ Each violation table has:
 | ---------- | ------ | ---------------------------------------------------------------- |
 | `message`  | string | Custom error message (required)                                  |
 | `severity` | string | `"error"` or `"warning"` (optional, defaults to rule's severity) |
+
+##### `message` is per-entity; `description:` is per-rule
+
+The two are reported side by side, never one instead of the other. The
+rule's `description:` names the rule and is the same for every entity
+that violates it; `message` says what is wrong with *this* entity and
+what to do about it. That is the point of writing a rule in Lua: when a
+defect has several shapes, the remedy differs per shape.
+
+```lua
+-- rule description: "Elke procedure moet een terugkerende taak hebben"
+local task = rela.trace_from(entity.id, 1)
+if #task == 0 then
+  return { message = "geen terugkerende taak gekoppeld" }
+end
+if all_exhausted(task) then
+  return { message = "alleen uitgeputte taken; plan een nieuwe" }
+end
+return nil
+```
+
+`rela analyze validations` groups violations under the rule description
+and appends each entity's message:
+
+```text
+⚠ Elke procedure moet een terugkerende taak hebben (2):
+  PROCEDURE-91XS: Toegangsbeheer — geen terugkerende taak gekoppeld
+  PROCEDURE-MCBL: Incidentbeheer — alleen uitgeputte taken; plan een nieuwe
+```
+
+In `-o json` the message is its own field alongside the description:
+
+```json
+{
+  "RuleName": "procedure-needs-task",
+  "Description": "Elke procedure moet een terugkerende taak hebben",
+  "Message": "geen terugkerende taak gekoppeld",
+  "EntityID": "PROCEDURE-91XS"
+}
+```
+
+A rule that returns no message (every non-Lua rule) reports the
+description alone.
 
 #### Security and Sandboxing
 

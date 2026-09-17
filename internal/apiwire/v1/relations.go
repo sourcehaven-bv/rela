@@ -97,6 +97,8 @@ func (f *RelationsField) UnmarshalJSON(b []byte) error {
 
 	for relType, val := range raw {
 		trimmed := bytes.TrimLeftFunc(val, unicode.IsSpace)
+		// coverage-ignore-start: unreachable: a json.RawMessage value from a decoded object is always a complete, non-
+		// empty JSON token
 		if len(trimmed) == 0 {
 			return &WireError{
 				Code:   "relation_value_invalid",
@@ -104,6 +106,7 @@ func (f *RelationsField) UnmarshalJSON(b []byte) error {
 				Detail: "relation type value is empty",
 			}
 		}
+		// coverage-ignore-end
 		switch trimmed[0] {
 		case '[':
 			return &WireError{
@@ -126,11 +129,15 @@ func (f *RelationsField) UnmarshalJSON(b []byte) error {
 					Detail: "relation type value cannot be null; use \"data\": [] to clear all edges",
 				}
 			}
+			// coverage-ignore-start: unreachable: `null` is the only valid JSON literal beginning with 'n', so the
+			// string=="null" check above always
+			// holds when trimmed[0]=='n'
 			return &WireError{
 				Code:   "relation_value_invalid",
 				Path:   "/relations/" + JSONPointerEscape(relType),
 				Detail: "relation type value must be the JSON:API §9 wrapper `{\"data\": [...]}`",
 			}
+			// coverage-ignore-end
 		default:
 			return &WireError{
 				Code:   "relation_value_invalid",
@@ -150,6 +157,9 @@ func (f *RelationsField) UnmarshalJSON(b []byte) error {
 // Returns a WireError on any malformed input.
 func decodeRelationsUpdate(relType string, raw json.RawMessage) (RelationsUpdate, error) {
 	var fields map[string]json.RawMessage
+	// coverage-ignore-start: defensive: raw was verified to start with '{' and is well-formed JSON, so unmarshal into
+	// map[string]json.RawMessage
+	// cannot fail
 	if err := json.Unmarshal(raw, &fields); err != nil {
 		return RelationsUpdate{}, &WireError{
 			Code:   "wrapper_invalid",
@@ -157,6 +167,7 @@ func decodeRelationsUpdate(relType string, raw json.RawMessage) (RelationsUpdate
 			Detail: "wrapper must be a JSON object with a `data` array",
 		}
 	}
+	// coverage-ignore-end
 
 	for k := range fields {
 		if k != "data" {
@@ -174,6 +185,8 @@ func decodeRelationsUpdate(relType string, raw json.RawMessage) (RelationsUpdate
 	}
 
 	trimmed := bytes.TrimLeftFunc(dataRaw, unicode.IsSpace)
+	// coverage-ignore-start: unreachable: dataRaw is a json.RawMessage from a decoded object field, always a complete
+	// non-empty JSON token
 	if len(trimmed) == 0 {
 		return RelationsUpdate{}, &WireError{
 			Code:   "data_required",
@@ -181,6 +194,7 @@ func decodeRelationsUpdate(relType string, raw json.RawMessage) (RelationsUpdate
 			Detail: "`data` must be an array",
 		}
 	}
+	// coverage-ignore-end
 	if string(trimmed) == "null" {
 		// Treated identically to the data-absent case (per RR-UZ8LX).
 		return RelationsUpdate{}, &WireError{
@@ -239,12 +253,16 @@ func decodeRelationsUpdate(relType string, raw json.RawMessage) (RelationsUpdate
 // to fail loudly on that case.
 func validateMetaUnsetElements(relType string, dataRaw json.RawMessage) error {
 	var rawRefs []json.RawMessage
+	// coverage-ignore-start: defensive: caller only invokes this after verifying dataRaw starts with '[' and is well-
+	// formed JSON, so unmarshal
+	// into []json.RawMessage cannot fail
 	if err := json.Unmarshal(dataRaw, &rawRefs); err != nil {
 		// Not an array — the main decoder will surface the right error
 		// in a WireError shape; we deliberately swallow this one to
 		// avoid double-reporting.
 		return nil //nolint:nilerr // see comment
 	}
+	// coverage-ignore-end
 	for i, rawRef := range rawRefs {
 		var fields map[string]json.RawMessage
 		if err := json.Unmarshal(rawRef, &fields); err != nil {
@@ -266,6 +284,9 @@ func validateMetaUnsetElements(relType string, dataRaw json.RawMessage) error {
 			}
 		}
 		var elems []json.RawMessage
+		// coverage-ignore-start: defensive: muRaw was verified to start with '[' and is well-formed JSON, so unmarshal
+		// into []json.RawMessage cannot
+		// fail
 		if err := json.Unmarshal(muRaw, &elems); err != nil {
 			return &WireError{
 				Code:   "meta_unset_invalid",
@@ -273,6 +294,7 @@ func validateMetaUnsetElements(relType string, dataRaw json.RawMessage) error {
 				Detail: err.Error(),
 			}
 		}
+		// coverage-ignore-end
 		for j, e := range elems {
 			t := bytes.TrimLeftFunc(e, unicode.IsSpace)
 			if len(t) == 0 || t[0] != '"' {
@@ -306,6 +328,9 @@ func translateRefDecodeError(relType string, dataRaw json.RawMessage, err error)
 	// Best-effort: catch the meta_unset non-string element case, which
 	// json reports as "cannot unmarshal X into Go struct field
 	// ResourceIdentifier.meta_unset of type string".
+	// coverage-ignore-start: unreachable: validateMetaUnsetElements runs before this decode and rejects every non-
+	// string meta_unset element, so
+	// json never reports a ".meta_unset of type string" error here
 	if strings.Contains(msg, ".meta_unset of type string") {
 		return &WireError{
 			Code:   "meta_unset_invalid",
@@ -313,6 +338,7 @@ func translateRefDecodeError(relType string, dataRaw json.RawMessage, err error)
 			Detail: "`meta_unset` must contain only strings",
 		}
 	}
+	// coverage-ignore-end
 	// Fallback: generic body-invalid.
 	_ = dataRaw // reserved for future richer parsing
 	var jsonErr *json.UnmarshalTypeError
@@ -323,11 +349,15 @@ func translateRefDecodeError(relType string, dataRaw json.RawMessage, err error)
 			Detail: msg,
 		}
 	}
+	// coverage-ignore-start: defensive fallback: dataRaw is pre-parsed well-formed JSON, so a decode failure here is
+	// always an
+	// *json.UnmarshalTypeError caught above; no other error type reaches this generic branch
 	return &WireError{
 		Code:   "data_invalid",
 		Path:   "/relations/" + JSONPointerEscape(relType) + "/data",
 		Detail: msg,
 	}
+	// coverage-ignore-end
 }
 
 // JSONPointerEscape applies RFC 6901 JSON Pointer escaping to a single

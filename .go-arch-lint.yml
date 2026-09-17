@@ -19,6 +19,10 @@ exclude:
   - frontend
   - e2e
   - .claude
+  # Build tooling, not application code. scripts/tagged_build_tags.go is
+  # `//go:build ignore` and runs via `go run`, so it is outside the package
+  # graph and has no component to belong to.
+  - scripts
   # Gitignored local scratch (perf harnesses etc). CI never sees it, but the
   # linter scans the working tree, so a local run must not trip on it.
   - .ignored
@@ -107,6 +111,7 @@ components:
   # values. The one place that knows both vocabularies, so that stores and
   # visibility (neither of which may import metamodel) can hold the result.
   worlds:           { in: internal/worlds }
+  queryscopes:      { in: internal/scopes }
   worldreader:      { in: internal/worldreader }
   migration:        { in: internal/migration }
   markdown:         { in: internal/markdown }
@@ -612,6 +617,12 @@ deps:
       # type either.
       - conditionlint
       - predicatefns
+      # queryscopes + predicate: the query-scope bridge (queryscopes.go)
+      # compiles `query_scopes:` and hands dataentry an opaque handle plus an
+      # evaluator, so dataentry never names *predicate.Program — the same
+      # arrangement as the next-action matchers above.
+      - queryscopes
+      - predicate
       - principal
       - computed
       - dataentryconfig
@@ -1026,6 +1037,18 @@ deps:
       - entity
       - metamodel
       - store
+
+  # GUARD: `acl` is deliberately absent. A query scope MAY read current_user,
+  # so unlike worlds it is not principal-independent — but the identity
+  # arrives as a value bound through predicatefns, never as an authorization
+  # decision. Scopes are UX; ACL decides what a principal may see, and the two
+  # must not merge. Adding `acl` here would let a scope start consulting
+  # grants, which is the merge.
+  queryscopes:
+    mayDependOn:
+      - metamodel
+      - predicate
+      - predicatefns
   # worldreader is the RUNTIME half of worlds: it holds a store and reads.
   #
   # It deliberately may NOT depend on acl, visibility, principal or

@@ -441,6 +441,47 @@ Each entry in `fields:` configures one property input:
 > column headers, relation field labels, view-section fields, and Lua flow
 > fields. `rela migrate` will never remove a `label:` you have written.
 
+### The Markdown Body Editor
+
+When a form sets `body: true`, the entity's markdown content is edited in a
+WYSIWYG editor: headings, lists, tables, quotes and code blocks render as they
+will appear on the entity page rather than as markdown source.
+
+**The file on disk stays markdown.** The editor parses the body when it opens
+and writes markdown back when you save. Opening an entity and saving it
+without changing anything writes nothing at all — the editor compares what it
+would produce against what it read, and keeps the original bytes when the
+meaning is unchanged. Your formatting is not rewritten just because you looked
+at a page.
+
+**Toolbar.** Bold, italic, strikethrough and inline code; headings 1-3;
+bullet, numbered, task and quote blocks; code block; table. A button is
+highlighted when the cursor is already inside that formatting, and pressing it
+again removes it. A button that cannot apply where the cursor is — a heading
+inside a list item, for instance — is greyed out rather than silently doing
+nothing.
+
+**Task lists.** The task-list button turns the current line into a checkbox
+item, and pressing it again turns it back into an ordinary one. You can also
+type `[ ]` followed by a space at the start of an existing list item. Click a
+checkbox to tick or untick it; the change is part of the document, so it saves
+with the rest of your edits and undoes with Ctrl-Z. In markdown these are the
+usual `- [ ] open` and `- [x] done` lines.
+
+**Tables.** Put the cursor in a table and a second group of buttons appears:
+insert row above/below, insert column left/right, delete row, delete column,
+delete table. A GFM table must keep its header row and at least one body row,
+so the operations that would break that are disabled.
+
+**Linking to another entity.** Type `@` followed by part of a title or ID to
+open a completion menu, then Enter or click to insert. The toolbar's
+connected-nodes button opens a searchable picker for the same thing.
+
+A reference is stored as a plain code span — `` `TKT-007` `` — and displays as
+the entity's title, so the file stays readable outside rela and the title
+cannot go stale. Titles you see are the ones you are permitted to see: a
+reference to an entity your ACL role cannot read stays as the bare ID.
+
 ### File Properties on Forms
 
 A `file`-type property renders a file control: pick or drag a file, see its
@@ -1026,6 +1067,7 @@ lists:
 | `filters`         | list   | Static filters (always applied)                             |
 | `condition`       | string | Predicate expression ANDed with `filters` — for `or`, grouping and date arithmetic. See [Conditions](#conditions-condition) |
 | `filter_controls` | list   | Interactive filter controls shown to the user               |
+| `query_scope`     | string | Named query scope from the entity type's `query_scopes:`; `all` withdraws the type's `default` (see below) |
 | `create_form`     | string | Form name for the "New" button                              |
 | `create_world`    | string | World the "New" button opens its form in, when a new entity belongs in another world than the list shows |
 | `edit_form`       | string | Form name for the row edit action                           |
@@ -1275,6 +1317,63 @@ condition: "is_current_user(entity.assignee) or entity.assignee == nil"
 
 A condition never widens a view: it is applied on top of the ACL, so it can
 only remove rows the principal could already see.
+
+### Query Scopes
+
+A static filter is a conjunction: every entry must match. When the membership
+rule needs an OR, a negation, or a comparison against today's date, declare a
+**query scope** on the entity type in `schema.yaml` and name it here:
+
+```yaml
+lists:
+  archief:
+    entity_type: taak
+    query_scope: archief
+  alles:
+    entity_type: taak
+    query_scope: all        # withdraw the type's default
+  open_werk:
+    entity_type: taak       # no query_scope: the type's `default` applies
+```
+
+The scopes themselves are declared per entity type — see
+[Query Scopes](metamodel.md#query-scopes) in the Metamodel Reference for the
+expression language, the implicit `all`, and the rules about identity. Three
+things matter from this side:
+
+- **A type's `default` scope applies to a view that names no scope.** This is
+  the point of declaring one: a rule like "hide archived tasks" is written
+  once and every list and board of that type inherits it.
+- **`query_scope: all` withdraws it**, and always resolves — even for a type
+  that declares no scopes at all.
+- **A name the type does not declare refuses at config load**, listing the
+  names it does declare. There is no fallback to unfiltered.
+
+Scopes and static filters compose: both narrow, and both apply. A scope is the
+right place for a rule that belongs to the domain ("a task is active until it
+is done"), a static filter for one that belongs to the screen ("this board is
+for the infra team").
+
+**A query scope is not access control.** It decides what a screen shows, not
+what a principal may read — anyone who can call the API can ask for
+`query_scope: all`. Use `scope_grants:` in `acl.yaml` to restrict what a role
+can see.
+
+#### Selecting a scope over the API
+
+The list API takes `?query_scope=<name>`, the same shape as `?world=`:
+
+```http
+GET /api/v1/taken?query_scope=archief
+GET /api/v1/taken?query_scope=all
+```
+
+Omitting the parameter applies the entity type's `default` scope, if it
+declares one. A name the type does not declare is a `400` naming the scope, for
+the same reason an undeclared world is: scope names are configuration in your
+repository, not secrets. Repeating the parameter
+(`?query_scope=all&query_scope=archief`) is also refused rather than silently
+taking the first, since the request asked two different things.
 
 ### Filter Controls
 
@@ -1588,7 +1687,10 @@ sections:
 | `display`       | string | Display mode (see below)                                |
 | `render`        | string | `display` (default) or `input` — see Field Render Modes |
 | `fields`        | list   | Properties to show (`properties`, `content`, `cards`, `list` modes) |
-| `columns`       | list   | Column definitions (`table` mode)                       |
+| `columns`       | list   | Column definitions (`table` mode; `nested` uses the two keys below) |
+| `children`      | string | Collection to nest under each row (`nested` mode; required) |
+| `parent_columns`| map    | `nested` mode: columns for the source level, keyed by entity type |
+| `child_columns` | map    | `nested` mode: columns for the child level, keyed by entity type |
 | `group_by`      | string | Property to group entities by                           |
 | `empty_message` | string | Text shown when the collection is empty                 |
 | `link`          | bool   | Link entity titles to their detail pages                |
@@ -1697,10 +1799,82 @@ Rules worth knowing:
 | `table`      | Tabular layout with configurable columns (like a mini-list)     |
 | `cards`      | Card layout showing each entity with selected property badges   |
 | `list`       | Simple bulleted list of entity titles with optional fields      |
+| `nested`     | Two-level parent→child tree; each row expands to its children   |
 
 **`properties`** is best for the entry entity's metadata. **`content`** renders the markdown body.
 **`table`** works well for collections with many items. **`cards`** provides a visual layout for
 smaller collections. **`list`** is the most compact.
+
+#### `nested` — parent→child trees
+
+Renders one expandable row per entity in `source:`, with the entities from
+`children:` nested underneath. Use it for containment hierarchies —
+project → epic → task, or any `has-*` chain.
+
+```yaml
+views:
+  project:
+    entry:
+      type: project
+    traverse:
+      - {from: entry, follow: has-epic, collect_as: epics}
+      - {from: epics, follow: has-task, collect_as: work}
+    sections:
+      - heading: Epics
+        source: epics
+        display: nested
+        children: work
+        parent_columns:
+          epic:
+            - {property: status}
+            - {property: owner}
+        child_columns:
+          task:
+            - {property: status}
+            - {property: due}
+          bug:
+            - {property: status}
+            - {property: severity}
+```
+
+The nesting comes from the **traverse rules**, not from `children:` alone: the
+rule that collects the child bucket must walk `from:` the section's `source:`.
+That is what associates a task with its own epic, so config load rejects a
+`children:` whose rule starts anywhere else — it would render rows with no
+children rather than an error.
+
+##### Columns are per level, then per type
+
+`display: nested` does not take the flat `columns:` list the other modes use.
+It takes `parent_columns` and `child_columns`, each a map keyed by entity type.
+Both axes matter:
+
+- **Per level**, because a group row and a detail row want different things —
+  and with a self-referential containment (`project has-project`) the two levels
+  are the *same* type, which a type-keyed map alone could not distinguish.
+- **Per type**, because a relation may reach several types. `has-task: {to:
+  [task, bug]}` is ordinary rela, and a bug wants `severity` where a task wants
+  `due`.
+
+A type absent from its level's map renders its title and id only — adding a
+type to a relation never breaks an existing view. A column naming a property
+the type does not declare is a load error, as is declaring columns for a type
+the level can never hold.
+
+##### Other behaviours
+
+- Children render in traversal order. Section-level sorting is not supported yet.
+- `recursive: true` on the children's traverse rule is refused: this mode renders
+  exactly two levels, and the recursive walk does not record which parent each
+  node came from.
+- Rows are expanded by default, and large trees are capped. A row whose children
+  were withheld reports `hasMoreChildren` with the true `childCount`, and the
+  section sets `truncated` — so a capped row is never mistaken for a childless
+  one.
+- Values render through the same widgets every other surface uses, so an enum
+  arrives as a coloured badge and a date is formatted.
+- Rows carry no markdown body, like `table` and unlike `cards`.
+- Not available in a form's `side_panel:`, which has no wire field for a tree.
 
 ## Entity Views
 
@@ -2328,6 +2502,7 @@ kanbans:
 | `create_form`      | string | Form name for the "New" button                             |
 | `filters`          | list   | Static filters (same as lists)                             |
 | `filter_controls`  | list   | Interactive filter controls (same as lists)                |
+| `query_scope`      | string | Named query scope (same as lists)                          |
 
 #### Column and swimlane icons
 
@@ -4289,6 +4464,12 @@ paths (e.g. `/form/<form_id>/<entity_id>`, `/entity/ticket/TKT-001`) get a
 `return_to` query param appended automatically on form links so the user lands
 back on the document after submitting the form. See "Links in rendered
 documents" below.
+
+Both kinds carry an **"Export ▾"** menu when the metamodel registers any
+`transforms:`, converting the document's markdown to PDF/DOCX/etc. Export is
+gated exactly like the render — same checks, same order — so a document you may
+view is one you may export. Documents using a `command:` renderer are not
+exportable. See [View Export & Transforms](transforms.md#exporting-a-document).
 
 The frontend's `DocumentsPanel.vue` shows every entity-anchored document whose
 `entity_type` matches the current entity. SSE live-reload re-renders a document

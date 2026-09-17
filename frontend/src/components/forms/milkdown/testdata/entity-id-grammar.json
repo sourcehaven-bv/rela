@@ -1,0 +1,33 @@
+{
+  "_comment": "Shared fixture pinning the entity-ID grammar across languages. Read by entityRefIdGrammar.test.ts (isValidEntityRefId) and internal/entity/id_grammar_fixture_test.go (entity.ValidateID). Both must agree on every case, so a change to one grammar without the other fails a test rather than silently letting the editor render references the store would refuse.",
+  "valid": [
+    "TKT-U2R7GU",
+    "BUG-R9EHKV",
+    "x",
+    "123abc",
+    "a_b",
+    "a-b",
+    "iso-27001-a-5-1",
+    "UPPER",
+    "MiXeD-42_x"
+  ],
+  "invalid": [
+    "",
+    "has space",
+    "has`backtick",
+    "a--b",
+    "a/b",
+    "a\\b",
+    "a\nb",
+    "a\tb",
+    "a.b",
+    "iso-27001-a.5.1",
+    "a..b",
+    "-leading",
+    "_leading",
+    "unicodeé",
+    "semi;colon",
+    "star*",
+    "dollar$"
+  ]
+}

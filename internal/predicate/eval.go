@@ -62,6 +62,9 @@ func (s *evalState) eval(ctx context.Context, n node) (Value, error) {
 	case *tableArgNode:
 		// Table-arg nodes are handled inside evalCall via the
 		// per-call dispatch; reaching here is a bug.
+		// coverage-ignore: invariant: tableArgNode is only ever produced as a callNode arg and consumed inside
+		// evalCall; it never reaches the
+		// top-level eval switch
 		return nil, &EvalError{Reason: "internal: tableArgNode outside call context"}
 	case *relationalNode:
 		return s.evalRelational(ctx, x)
@@ -76,6 +79,9 @@ func (s *evalState) eval(ctx context.Context, n node) (Value, error) {
 	case *concatNode:
 		return s.evalConcat(ctx, x)
 	default:
+		// coverage-ignore: invariant: the node interface is sealed and all 8 concrete node types are enumerated above,
+		// so no other node kind
+		// can reach this default
 		return nil, &EvalError{Reason: fmt.Sprintf("internal: unknown IR node %T", n)}
 	}
 }
@@ -333,6 +339,9 @@ func valuesEqual(a, b Value) bool {
 	}
 	// Records / lists are forbidden at compile time, so reaching this
 	// branch is an internal invariant violation.
+	// coverage-ignore: invariant: == / ~= only compile for scalar or nil operands (Record/List rejected by
+	// checkRelational), so every value
+	// reaching valuesEqual matches one of the scalar cases above
 	return false
 }
 
@@ -344,27 +353,43 @@ func evalOrdered(op string, a, b Value) (Value, error) {
 	switch av := a.(type) {
 	case Number:
 		bv, ok := b.(Number)
+		// coverage-ignore-start: defensive: compile-time checkRelational guarantees same-type operands; a Number lhs
+		// always has a Number rhs, so
+		// this drift guard is unreachable
 		if !ok {
 			return nil, &EvalError{Reason: fmt.Sprintf("internal: ordered cmp %q: rhs type %s mismatches lhs Number", op, b.Type().typeName())}
 		}
+		// coverage-ignore-end
 		return NewBool(cmpNumber(op, av.v, bv.v)), nil
 	case Int:
 		bv, ok := b.(Int)
+		// coverage-ignore-start: defensive: compile-time checkRelational guarantees same-type operands; an Int lhs
+		// always has an Int rhs, so this
+		// drift guard is unreachable
 		if !ok {
 			return nil, &EvalError{Reason: fmt.Sprintf("internal: ordered cmp %q: rhs type %s mismatches lhs Int", op, b.Type().typeName())}
 		}
+		// coverage-ignore-end
 		return NewBool(cmpInt(op, av.v, bv.v)), nil
 	case Date:
 		bv, ok := b.(Date)
+		// coverage-ignore-start: defensive: compile-time checkRelational guarantees same-type operands; a Date lhs
+		// always has a Date rhs, so this
+		// drift guard is unreachable
 		if !ok {
 			return nil, &EvalError{Reason: fmt.Sprintf("internal: ordered cmp %q: rhs type %s mismatches lhs Date", op, b.Type().typeName())}
 		}
+		// coverage-ignore-end
 		return NewBool(cmpDate(op, av.v, bv.v)), nil
 	case String:
 		bv, ok := b.(String)
+		// coverage-ignore-start: defensive: compile-time checkRelational guarantees same-type operands; a String lhs
+		// always has a String rhs, so
+		// this drift guard is unreachable
 		if !ok {
 			return nil, &EvalError{Reason: fmt.Sprintf("internal: ordered cmp %q: rhs type %s mismatches lhs String", op, b.Type().typeName())}
 		}
+		// coverage-ignore-end
 		return NewBool(cmpString(op, av.v, bv.v)), nil
 	}
 	return nil, &EvalError{Reason: fmt.Sprintf("ordered comparison %q on unsupported type %s", op, a.Type().typeName())}

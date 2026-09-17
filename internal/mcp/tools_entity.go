@@ -68,7 +68,8 @@ func (s *Server) handleListEntities(
 		summaries[i] = convertStoreEntitySummary(e)
 	}
 	text, err := marshalJSON(summaries)
-	if err != nil {
+	if err != nil { // coverage-ignore: defensive: summaries is []map[string]any of entity id/type/title/status strings;
+		// json.Marshal cannot fail.
 		return errorResult(err.Error()), nil
 	}
 	return textResult(text), nil
@@ -133,7 +134,8 @@ func (s *Server) handleSearchEntities(
 	}
 
 	text, err := marshalJSON(summaries)
-	if err != nil {
+	if err != nil { // coverage-ignore: defensive: summaries is []map[string]any of search-hit id/type/title/status
+		// strings; json.Marshal cannot fail.
 		return errorResult(err.Error()), nil
 	}
 	return textResult(text), nil

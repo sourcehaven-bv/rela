@@ -569,3 +569,72 @@ describe('AnalyzeView truncation', () => {
     expect(notices).toHaveLength(1)
   })
 })
+
+// A Lua validation rule returns a per-entity message saying which of the
+// rule's several possible defects this entity has. It is a different
+// level from the rule description (which is identical across the rule's
+// rows), so the row shows both: the description as the message cell's
+// heading, the per-entity text beneath it.
+describe('AnalyzeView Lua rule message', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    routerPush.mockReset()
+    analyzeMock.mockReset()
+    const schema = useSchemaStore()
+    schema.entityTypes.set('procedure', { label: 'Procedure' } as never)
+  })
+
+  async function mountWith(issues: AnalyzeIssue[]) {
+    analyzeMock.mockResolvedValue(makeResult(issues))
+    const wrapper = mount(AnalyzeView, { attachTo: document.body })
+    await flushPromises()
+    return wrapper
+  }
+
+  const ruleDescription = 'Elke procedure moet een terugkerende taak hebben'
+
+  function luaIssue(entityId: string, ruleMessage: string) {
+    return makeIssue({
+      entityId,
+      entityType: 'procedure',
+      title: entityId,
+      message: ruleDescription,
+      ruleMessage,
+      severity: 'warning',
+      checkType: 'Validations',
+    })
+  }
+
+  it('shows each row its own rule message alongside the shared rule description', async () => {
+    const wrapper = await mountWith([
+      luaIssue('PROCEDURE-91XS', 'geen terugkerende taak gekoppeld'),
+      luaIssue('PROCEDURE-MCBL', 'alleen uitgeputte taken; plan een nieuwe'),
+    ])
+
+    const messages = wrapper.findAll('.issues-table .rule-message').map((el) => el.text())
+    expect(messages).toEqual([
+      'geen terugkerende taak gekoppeld',
+      'alleen uitgeputte taken; plan een nieuwe',
+    ])
+
+    // The rule description is still the cell's heading — the per-entity
+    // message adds to it rather than replacing it.
+    const cells = wrapper.findAll('.issues-table .message-cell').map((el) => el.text())
+    expect(cells[0]).toContain(ruleDescription)
+    expect(cells[1]).toContain(ruleDescription)
+  })
+
+  it('renders no rule-message line for a violation that carries none', async () => {
+    const wrapper = await mountWith([
+      makeIssue({
+        entityId: 'PROCEDURE-OK',
+        entityType: 'procedure',
+        message: ruleDescription,
+        severity: 'warning',
+        checkType: 'Validations',
+      }),
+    ])
+
+    expect(wrapper.find('.rule-message').exists()).toBe(false)
+  })
+})

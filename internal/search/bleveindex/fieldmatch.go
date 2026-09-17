@@ -49,7 +49,11 @@ func (idx *Index) MatchedFields(e *entity.Entity, text string) map[string]struct
 
 	analyzer := idx.textAnalyzer()
 	if analyzer == nil {
+		// coverage-ignore-start: defensive: textAnalyzer only returns nil if the bleve registry lacks the standard
+		// analyzer, which never happens
+		// with bleve linked (and OnceValue memoizes so it cannot be forced per-test)
 		return normalizeEmpty(out) // analyzer unavailable: substring floor only
+		// coverage-ignore-end
 	}
 
 	queryTokens := analyzeTerms(analyzer, text)
@@ -86,7 +90,8 @@ func (idx *Index) MatchedFields(e *entity.Entity, text string) map[string]struct
 var cachedStandardAnalyzer = sync.OnceValue(func() analysis.Analyzer {
 	a, err := registry.NewCache().AnalyzerNamed(standard.Name)
 	if err != nil {
-		return nil
+		return nil // coverage-ignore: defensive: the standard analyzer is always registered when bleve is linked, so
+		// AnalyzerNamed(standard.Name) never errors
 	}
 	return a
 })

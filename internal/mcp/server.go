@@ -455,6 +455,9 @@ func (s *Server) HTTPHandler() http.Handler {
 // Serve starts the MCP server on stdio and blocks until the peer
 // disconnects or ctx is cancelled.
 func (s *Server) Serve(ctx context.Context) error {
+	// coverage-ignore-start: main-or-wiring: Serve() is the process-level stdio entry point — it arms the real
+	// filesystem watcher and blocks in
+	// server.ServeStdio reading os.Stdin/writing os.Stdout, unreachable by a unit test.
 	s.logger.Info("starting rela MCP server on stdio")
 
 	// Start the file watcher; MCP only cares "something changed."
@@ -485,4 +488,5 @@ func (s *Server) Serve(ctx context.Context) error {
 	defer s.deps().Watcher.Stop()
 
 	return s.mcp.Run(ctx, &mcpgo.StdioTransport{})
+	// coverage-ignore-end
 }

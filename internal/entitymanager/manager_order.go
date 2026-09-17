@@ -26,14 +26,15 @@ import (
 // declares the side orderable, regardless of write entry point.
 func (m *Manager) assignManagedOrder(ctx context.Context, rel *entity.Relation, relType string) error {
 	relDef, ok := m.deps.Meta.Relations[relType]
-	if !ok {
-		// Caller already validated the relation type via
-		// Meta.ValidateRelation. This branch is only reachable
-		// through a metamodel reload race; failing loudly surfaces
-		// the race rather than silently writing a relation with no
-		// managed order.
+	// Caller already validated the relation type via Meta.ValidateRelation. This
+	// branch is only reachable through a metamodel reload race; failing loudly
+	// surfaces the race rather than silently writing a relation with no managed
+	// order.
+	if !ok { // coverage-ignore-start: defensive: CreateRelation calls ValidateRelation(relType)
+		// before assignManagedOrder, so an absent relType is only reachable via a
+		// metamodel reload race between the two calls
 		return fmt.Errorf("assignManagedOrder: relation type %q not found in metamodel", relType)
-	}
+	} // coverage-ignore-end
 	assignSide := func(prop string, query store.RelationQuery) error {
 		if prop == "" {
 			return nil

@@ -221,9 +221,13 @@ func Compile(pat string) (*regexp.Regexp, bool, error) {
 	// Convert to regex and compile
 	regexPattern := GlobToAnchoredRegex(pat)
 	re, err := regexp.Compile(regexPattern)
+	// coverage-ignore-start: defensive: globToRegexCore only emits QuoteMeta output, ".*", "." and escaped backslash,
+	// so the produced anchored
+	// regex is always valid and regexp.Compile cannot fail here
 	if err != nil {
 		return nil, true, fmt.Errorf("failed to compile glob pattern %q: %w", pat, err)
 	}
+	// coverage-ignore-end
 
 	return re, true, nil
 }
@@ -248,9 +252,13 @@ func CompileSubstring(pat string) (*regexp.Regexp, error) {
 	// Convert to unanchored regex and compile (case-insensitive)
 	regexPattern := "(?i)" + GlobToSubstringRegex(pat)
 	re, err := regexp.Compile(regexPattern)
+	// coverage-ignore-start: defensive: "(?i)" + globToRegexCore output is always a valid regex (QuoteMeta escapes all
+	// literals), so
+	// regexp.Compile cannot fail here
 	if err != nil {
 		return nil, fmt.Errorf("failed to compile pattern %q: %w", pat, err)
 	}
+	// coverage-ignore-end
 
 	return re, nil
 }

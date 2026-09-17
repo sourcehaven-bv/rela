@@ -88,7 +88,9 @@ func isValidIDPrefix(p string) bool {
 			return true
 		}
 	}
-	return true
+	return true // coverage-ignore: unreachable: every loop iteration either returns (empty letter-run, end-of-string,
+	// or non-dash) or consumes a dash and returns when i==len(p); the loop never re-enters with i>=len(p), so this
+	// final return is a defensive fallthrough
 }
 
 func isASCIILetter(b byte) bool {
@@ -325,12 +327,16 @@ func calculateIDLength(entityCount int) int {
 // The caps parameter controls suffix capitalization: "upper" (default) or "lower".
 func generateRandomBase36(prefix string, length int, caps string) string {
 	b := make([]byte, length)
+	// coverage-ignore-start: defensive: crypto/rand.Read reads from the OS CSPRNG and does not return an error on
+	// supported platforms; there is
+	// no injection seam (package-level crypto/rand), so this fallback is unreachable in tests
 	if _, err := rand.Read(b); err != nil {
 		// Fallback to less random but functional approach
 		for i := range b {
 			b[i] = byte(i * 7 % base36Size)
 		}
 	}
+	// coverage-ignore-end
 
 	for i := range b {
 		b[i] = base36Chars[b[i]%base36Size]

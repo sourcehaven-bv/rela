@@ -175,8 +175,14 @@ type attachMeta struct {
 // (s.entities, s.entityOrder, s.propCache) under s.mu, so it belongs on the
 // receiver rather than beside it.)
 //
-//plimsoll:max-methods=93
-//plimsoll:max-exported-methods=35
+// +1 exported / +2 methods (TKT-34XS2R): UpdateEntityIf joined the mandated
+// store.Store interface, and the conditional core it shares with the
+// unconditional path is the second. Required-interface exception again — the
+// CAS precondition has to be evaluated atomically with the write, so it
+// cannot live anywhere but on the type that owns the write.
+//
+//plimsoll:max-methods=95
+//plimsoll:max-exported-methods=36
 type FSStore struct {
 	// rooted is the validated-key I/O surface. Every read, write,
 	// directory op, and remove that operates on files under the
@@ -405,9 +411,13 @@ func (s *FSStore) loadPropertyAttachments(entityID, prop string) {
 			continue
 		}
 		info, err := fileEntry.Info()
+		// coverage-ignore-start: defensive: DirEntry.Info() never fails for an entry just returned by ReadDir on
+		// MemFS/OsFS; not injectable via
+		// ErrorFS (Info is on the DirEntry, not the FS)
 		if err != nil {
 			continue
 		}
+		// coverage-ignore-end
 		s.attachments[attachmentKey(entityID, prop, name)] = attachMeta{
 			entityID: entityID,
 			property: prop,
@@ -492,9 +502,12 @@ func (s *FSStore) notifyRenamed(oldID string, renamed *entity.Entity) {
 // process shutdown.
 func (s *FSStore) cleanupTempFiles() {
 	for _, dirKey := range []string{s.layout.entitiesKey, s.layout.relationsKey} {
+		// coverage-ignore-start: unreachable: cleanupTempFiles runs only from New, which rejects empty
+		// EntitiesKey/RelationsKey before this loop
 		if dirKey == "" {
 			continue
 		}
+		// coverage-ignore-end
 		var toRemove []string
 		if err := s.rooted.Walk(dirKey, func(p string, d os.DirEntry, err error) error {
 			if err != nil || d.IsDir() {

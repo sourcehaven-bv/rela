@@ -74,7 +74,8 @@ func Load(path string, fs storage.FS) (*Metamodel, []string, error) {
 	}
 
 	absPath, err := filepath.Abs(path)
-	if err != nil {
+	if err != nil { // coverage-ignore: defensive: filepath.Abs only fails if os.Getwd fails; not reachable via the
+		// storage.FS abstraction in tests
 		return nil, nil, err
 	}
 
@@ -119,7 +120,8 @@ func LoadWithoutMigrationCheck(path string, fs storage.FS) (*Metamodel, []string
 	}
 
 	absPath, err := filepath.Abs(path)
-	if err != nil {
+	if err != nil { // coverage-ignore: defensive: filepath.Abs only fails if os.Getwd fails; not reachable via the
+		// storage.FS abstraction in tests
 		return nil, nil, err
 	}
 
@@ -182,7 +184,8 @@ func parseRaw(data []byte) (*Metamodel, error) {
 	}
 
 	// Extract property order from YAML (maps lose key order during unmarshaling)
-	if err := extractPropertyOrder(data, &m); err != nil {
+	if err := extractPropertyOrder(data, &m); err != nil { // coverage-ignore: defensive: extractPropertyOrder only
+		// errors on a yaml.Node re-parse of data that already unmarshaled cleanly above
 		return nil, err
 	}
 
@@ -194,7 +197,8 @@ func parseRaw(data []byte) (*Metamodel, error) {
 // same order as defined in the metamodel.
 func extractPropertyOrder(data []byte, m *Metamodel) error {
 	var root yaml.Node
-	if err := yaml.Unmarshal(data, &root); err != nil {
+	if err := yaml.Unmarshal(data, &root); err != nil { // coverage-ignore: defensive: same bytes already unmarshaled
+		// into the Metamodel struct; a yaml.Node parse is strictly more permissive and cannot fail here
 		return fmt.Errorf("parse yaml.Node for property order: %w", err)
 	}
 
@@ -275,6 +279,7 @@ func validate(m *Metamodel) error {
 	validationErrors = append(validationErrors, validateTransforms(m)...)
 	validationErrors = append(validationErrors, validateCopies(m)...)
 	validationErrors = append(validationErrors, validateWorlds(m)...)
+	validationErrors = append(validationErrors, validateQueryScopes(m)...)
 	validationErrors = append(validationErrors, validateValidationFaces(m)...)
 	validationErrors = append(validationErrors, validateValidationRelations(m)...)
 	validationErrors = append(validationErrors, validateAutomationFaces(m)...)
@@ -1262,11 +1267,15 @@ func isKnownPropertyType(typeName string, m *Metamodel) bool {
 // This catches common typos like "entity" instead of "entities".
 func checkUnknownKeys(data []byte) error {
 	var raw map[string]any
+	// coverage-ignore-start: defensive: checkUnknownKeys runs only after data already unmarshaled into the Metamodel
+	// struct; a map[string]any
+	// parse of the same bytes cannot fail
 	if unmarshalErr := yaml.Unmarshal(data, &raw); unmarshalErr != nil {
 		// If we can't unmarshal as a map, the struct unmarshal already failed
 		// with a better error, so skip this check
 		return nil //nolint:nilerr // intentional: struct unmarshal error is better
 	}
+	// coverage-ignore-end
 
 	var unknownKeyErrors []string
 	for key := range raw {
@@ -1725,4 +1734,67 @@ func anyNamedTypeHasFaces(m *Metamodel, types []string) bool {
 		}
 	}
 	return false
+}
+
+// queryScopeName is the grammar for a `query_scopes:` key: an ASCII
+// identifier, optionally dash- or underscore-separated.
+//
+// An ALLOWLIST here, where [ValidateSchemaName] is a blocklist, and the
+// difference is deliberate. That function must stay lenient because shipped
+// metamodels already use dashes and internal spaces in entity and property
+// names, so an allowlist would reject valid existing schemas. `query_scopes:`
+// is new, so no config can break — and the name is a REFERENCE token: it
+// appears as `query_scope:` in data-entry.yaml and is the obvious candidate
+// for a `?query_scope=` parameter when the SPA grows a scope switcher.
+//
+// RR-3JRSFV deferred exactly this tightening for world names, on the grounds
+// that "the correct charset is a function of the surface that will carry it,
+// which is not yet designed". For scopes that surface is designed and lands
+// with this feature, so the tightening is free now and breaking later.
+var queryScopeName = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9]*([_-][A-Za-z0-9]+)*$`)
+
+// validateQueryScopes checks the `query_scopes:` declarations on every entity
+// type. Like [validateWorlds] these are LOAD-TIME refusals: a scope decides
+// whether a row is in a collection, so one that silently failed to load would
+// show rows an operator believed were hidden.
+//
+// Only the NAME and the shape are checked here. Whether the expression
+// compiles is internal/scopes' job, for the reason its package doc gives:
+// compiling needs internal/predicatefns, which imports this package.
+func validateQueryScopes(m *Metamodel) []string {
+	var errs []string
+	for _, typeName := range sortedKeys(m.Entities) {
+		def := m.Entities[typeName]
+		for _, scopeName := range sortedKeys(def.QueryScopes) {
+			errs = append(errs, validateQueryScopeName(typeName, scopeName)...)
+			if strings.TrimSpace(def.QueryScopes[scopeName]) == "" {
+				errs = append(errs, fmt.Sprintf(
+					"entity %q: query scope %q has an empty expression — "+
+						"a scope that selects nothing is a typo, not a filter",
+					typeName, scopeName))
+			}
+		}
+	}
+	return errs
+}
+
+// validateQueryScopeName rejects a reserved or malformed scope name.
+func validateQueryScopeName(typeName, scopeName string) []string {
+	if strings.EqualFold(scopeName, AllQueryScopeName) {
+		// Case-folded for the reason validateWorlds gives: YAML keys are
+		// case-sensitive but humans are not, and an `All:` scope that
+		// shadowed the implicit withdrawal would leave no way to ask for
+		// the unfiltered set.
+		return []string{fmt.Sprintf(
+			"entity %q: query scope %q is reserved — %q is implicit and always means "+
+				"\"no predicate\", so a view can use it to withdraw the default scope",
+			typeName, scopeName, AllQueryScopeName)}
+	}
+	if !queryScopeName.MatchString(scopeName) {
+		return []string{fmt.Sprintf(
+			"entity %q: query scope %q is not a valid name — use letters and digits, "+
+				"separated by single dashes or underscores (e.g. %q or %q)",
+			typeName, scopeName, "actief", "recent_done")}
+	}
+	return nil
 }

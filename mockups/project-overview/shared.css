@@ -1,0 +1,245 @@
+/* Shared chrome for the project → epic → task overview mockups.
+ *
+ * Colors are copied verbatim from frontend/src/styles/tokens.css so these
+ * mockups read like the real SPA. Layout and components are mockup-only. */
+
+:root {
+  --sidebar-bg: #164155;
+  --sidebar-text: #f3f2ef;
+  --accent-color: #4772fb;
+  --bg-color: #f3f2ef;
+  --text-color: #191919;
+  --border-color: #e0ddd5;
+  --success-color: #06ce90;
+  --error-color: #e5484d;
+  --warning-color: #f4aa83;
+  --info-color: #4772fb;
+  --card-bg: #ffffff;
+  --input-bg: #ffffff;
+  --hover-bg: #ebe9e4;
+  --muted-text: #6b7280;
+  --badge-blue: #4772fb;
+  --badge-purple: #8b5cf6;
+  --badge-green: #06ce90;
+  --badge-gray: #6b7280;
+  --badge-red: #e5484d;
+  --badge-orange: #f4aa83;
+  --badge-yellow: #f9d975;
+}
+
+.dark {
+  --sidebar-bg: #091821;
+  --sidebar-text: #ece9e0;
+  --accent-color: #6f93ff;
+  --bg-color: #0f1f28;
+  --text-color: #ece9e0;
+  --border-color: #264454;
+  --success-color: #34d39c;
+  --error-color: #f87171;
+  --warning-color: #f9d975;
+  --info-color: #6f93ff;
+  --card-bg: #162a35;
+  --input-bg: #1b3140;
+  --hover-bg: #1f3848;
+  --muted-text: #8fa4b0;
+  --badge-blue: #6f93ff;
+  --badge-purple: #c4b5fd;
+  --badge-green: #34d39c;
+  --badge-gray: #8fa4b0;
+  --badge-red: #f87171;
+  --badge-orange: #f4aa83;
+  --badge-yellow: #f9d975;
+
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-pill: 999px;
+  --shadow-sm: 0 1px 3px rgb(0 0 0 / 10%);
+  --shadow-md: 0 2px 8px rgb(0 0 0 / 12%);
+}
+
+.dark {
+  --shadow-sm: 0 1px 3px rgb(0 0 0 / 30%);
+  --shadow-md: 0 2px 8px rgb(0 0 0 / 40%);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: 'Open Sans', -apple-system, BlinkMacSystemFont, "Segoe UI",
+    Roboto, "Helvetica Neue", Arial, sans-serif;
+  background: var(--bg-color);
+  color: var(--text-color);
+  line-height: 1.5;
+  font-size: 14px;
+}
+
+a { color: var(--accent-color); }
+
+/* ---- App shell ---------------------------------------------------- */
+
+.shell { display: flex; min-height: 100vh; }
+
+.sidebar {
+  width: 200px;
+  flex: 0 0 200px;
+  background: var(--sidebar-bg);
+  color: var(--sidebar-text);
+  padding: 1rem 0.75rem;
+}
+
+.sidebar .brand {
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  padding: 0 0.5rem 1rem;
+  font-size: 1rem;
+}
+
+.sidebar .nav-group {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  opacity: 0.55;
+  padding: 1rem 0.5rem 0.35rem;
+}
+
+.sidebar a {
+  display: block;
+  padding: 0.35rem 0.5rem;
+  border-radius: 5px;
+  color: var(--sidebar-text);
+  text-decoration: none;
+  opacity: 0.85;
+}
+
+.sidebar a:hover { background: rgba(255, 255, 255, 0.08); opacity: 1; }
+.sidebar a.active { background: rgba(255, 255, 255, 0.14); opacity: 1; font-weight: 600; }
+
+.main { flex: 1; min-width: 0; padding: 1.5rem 2rem 4rem; }
+
+/* ---- Page header -------------------------------------------------- */
+
+.crumbs { font-size: 0.8rem; color: var(--muted-text); margin-bottom: 0.4rem; }
+.crumbs a { text-decoration: none; }
+
+.page-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.35rem;
+}
+
+h1 { font-size: 1.5rem; letter-spacing: -0.01em; }
+.subtitle { color: var(--muted-text); margin-bottom: 1.25rem; }
+
+.mockup-note {
+  border-left: 3px solid var(--accent-color);
+  background: var(--card-bg);
+  border-radius: 0 6px 6px 0;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1.5rem;
+  font-size: 0.85rem;
+  color: var(--muted-text);
+}
+.mockup-note strong { color: var(--text-color); }
+
+/* ---- Generic bits -------------------------------------------------- */
+
+.card {
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+}
+
+.badge {
+  display: inline-block;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  white-space: nowrap;
+  color: #fff;
+}
+
+.badge.todo { background: var(--badge-gray); }
+.badge.doing { background: var(--badge-blue); }
+.badge.blocked { background: var(--badge-red); }
+.badge.review { background: var(--badge-purple); }
+.badge.done { background: var(--badge-green); }
+.badge.at-risk { background: var(--badge-orange); color: #191919; }
+
+.badge.soft {
+  background: transparent;
+  border: 1px solid var(--border-color);
+  color: var(--muted-text);
+  font-weight: 500;
+}
+
+.eid {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.75rem;
+  color: var(--muted-text);
+}
+
+.owner {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--hover-bg);
+  color: var(--muted-text);
+  font-size: 0.65rem;
+  font-weight: 700;
+  flex: none;
+}
+
+/* Progress bar, segmented by status. */
+.bar {
+  display: flex;
+  height: 6px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--hover-bg);
+}
+.bar span { display: block; height: 100%; }
+.bar .s-done { background: var(--success-color); }
+.bar .s-doing { background: var(--accent-color); }
+.bar .s-blocked { background: var(--error-color); }
+.bar .s-todo { background: transparent; }
+
+.btn {
+  padding: 0.35rem 0.7rem;
+  border: 1px solid var(--border-color);
+  background: var(--card-bg);
+  color: var(--text-color);
+  border-radius: 6px;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+.btn:hover { background: var(--hover-bg); }
+.btn.primary { background: var(--accent-color); border-color: var(--accent-color); color: #fff; }
+
+.toolbar { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; margin-bottom: 1rem; }
+.spacer { flex: 1; }
+
+/* Mockup switcher shown at the top of every variant. */
+.variants {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  margin-bottom: 1.25rem;
+  padding-bottom: 1.25rem;
+  border-bottom: 1px dashed var(--border-color);
+}
+.variants a {
+  font-size: 0.78rem;
+  padding: 0.3rem 0.6rem;
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  text-decoration: none;
+  color: var(--muted-text);
+  background: var(--card-bg);
+}
+.variants a.active { background: var(--accent-color); border-color: var(--accent-color); color: #fff; font-weight: 600; }

@@ -9,7 +9,6 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/calfeed"
 	entitypkg "github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // feedPathPrefix is the route prefix for calendar feeds.
@@ -144,34 +143,22 @@ type feedEntitySource struct {
 	app *App
 }
 
-// listType lists all entities of a type the principal may read, applying the
-// ACL read-query verdict (the same DenyAll/AllowAll/Query switch the list
-// endpoint uses). Fail-closed: an unresolvable verdict withholds.
+// listType lists all entities of a type the principal may read.
+//
+// Routes through scopedHeaders (scopedread.go), which owns the verdict switch
+// and every narrowing — this used to restate the switch by hand, which is how
+// a world or face narrowing could reach the list endpoint and not the feed.
+// Fail-closed: an unresolvable verdict withholds.
 func (s feedEntitySource) listType(ctx context.Context, entityType string) ([]*entitypkg.Entity, error) {
 	rqr := readGateFromContext(ctx).ReadQuery(ctx, entityType)
-	var out []*entitypkg.Entity
-	switch {
-	case rqr.DenyAll:
-		return nil, nil
-	case rqr.AllowAll:
-		for e, err := range s.app.Services().Store.ListEntities(ctx, store.EntityQuery{Type: entityType}) {
-			if err != nil {
-				return nil, fmt.Errorf("feed: list %q: %w", entityType, err)
-			}
-			out = append(out, e)
-		}
-	case rqr.Query == nil:
-		// Zero verdict: withhold rather than silently widening.
-		return nil, nil
-	default:
-		for e, err := range s.app.Services().Store.GraphQuery(ctx, *rqr.Query) {
-			if err != nil {
-				return nil, fmt.Errorf("feed: acl-scoped list %q: %w", entityType, err)
-			}
-			out = append(out, e)
-		}
+	entities, _, err := scopedEntities(ctx, s.app.Services(), rqr, scopeRequest{
+		Type:  entityType,
+		Faces: rqr.Faces,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("feed: list %q: %w", entityType, err)
 	}
-	return out, nil
+	return entities, nil
 }
 
 // getEntity fetches one entity if the principal may read it (per-entity gate).

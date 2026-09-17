@@ -138,8 +138,14 @@ func TestLuaValidation_SingleViolation(t *testing.T) {
 	if violations[0].EntityID != "TKT-002" {
 		t.Errorf("violation entity = %s, want TKT-002", violations[0].EntityID)
 	}
-	if violations[0].Description != "Status is required" {
-		t.Errorf("violation description = %q, want %q", violations[0].Description, "Status is required")
+	if violations[0].Message != "Status is required" {
+		t.Errorf("violation message = %q, want %q", violations[0].Message, "Status is required")
+	}
+	// The rule's own description stays on Description; the script's text
+	// goes to Message. Folding one into the other loses the rule wherever
+	// a renderer groups violations by it.
+	if violations[0].Description != "Status must not be empty" {
+		t.Errorf("violation description = %q, want the rule description", violations[0].Description)
 	}
 }
 
@@ -186,10 +192,13 @@ func TestLuaValidation_MultipleViolations(t *testing.T) {
 	// Check we got both violations with correct severities
 	foundStatus, foundOwner := false, false
 	for _, v := range violations {
-		if v.Description == "Status is required" && v.Severity == "error" {
+		if v.Description != "Required fields check" {
+			t.Errorf("violation description = %q, want the rule description", v.Description)
+		}
+		if v.Message == "Status is required" && v.Severity == "error" {
 			foundStatus = true
 		}
-		if v.Description == "Owner is required" && v.Severity == "warning" {
+		if v.Message == "Owner is required" && v.Severity == "warning" {
 			foundOwner = true
 		}
 	}
@@ -583,8 +592,8 @@ func TestLuaValidation_ScriptFile(t *testing.T) {
 	if violations[0].EntityID != "TKT-002" {
 		t.Errorf("violation entity = %s, want TKT-002", violations[0].EntityID)
 	}
-	if violations[0].Description != "Status must be 'valid'" {
-		t.Errorf("violation description = %q, want %q", violations[0].Description, "Status must be 'valid'")
+	if violations[0].Message != "Status must be 'valid'" {
+		t.Errorf("violation message = %q, want %q", violations[0].Message, "Status must be 'valid'")
 	}
 }
 
@@ -765,5 +774,95 @@ func TestLuaValidation_PathTraversal(t *testing.T) {
 				t.Errorf("got %d violations, want 0", len(violations))
 			}
 		})
+	}
+}
+
+// TestLuaValidation_MessageAndDescriptionAreSeparate pins the two
+// levels apart. A Lua rule's returned message is per-ENTITY ("which of
+// this rule's several defects does this one have"); the rule's
+// description is per-RULE and identical across its violations. They
+// were once the same field, so the table output (which groups by the
+// description) showed one arbitrary entity's message as the rule
+// heading, and no surface could show both.
+func TestLuaValidation_MessageAndDescriptionAreSeparate(t *testing.T) {
+	t.Parallel()
+	ws := newMockWorkspace()
+	meta := ticketMeta([]metamodel.ValidationRule{
+		{
+			Name:        "status-shape",
+			Description: "Every ticket must have a usable status",
+			EntityType:  "ticket",
+			Lua: `
+			local status = entity.properties.status
+			if status == nil or status == "" then
+				return { message = "no status at all; set one" }
+			end
+			if status == "expired" then
+				return { message = "status is expired; pick a live one" }
+			end
+			return nil
+		`,
+			Severity: "warning",
+		},
+	}, "status")
+
+	entities := []*entity.Entity{
+		{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"status": ""}},
+		{ID: "TKT-002", Type: "ticket", Properties: map[string]any{"status": "expired"}},
+		{ID: "TKT-003", Type: "ticket", Properties: map[string]any{"status": "ready"}},
+	}
+
+	svc := New(meta, ws.services(t.TempDir()))
+	violations := svc.Check(context.Background(), entities, nil).Violations
+
+	if len(violations) != 2 {
+		t.Fatalf("got %d violations, want 2", len(violations))
+	}
+	want := map[string]string{
+		"TKT-001": "no status at all; set one",
+		"TKT-002": "status is expired; pick a live one",
+	}
+	for _, v := range violations {
+		if got := v.Message; got != want[v.EntityID] {
+			t.Errorf("%s message = %q, want %q", v.EntityID, got, want[v.EntityID])
+		}
+		if v.Description != "Every ticket must have a usable status" {
+			t.Errorf("%s description = %q, want the rule description", v.EntityID, v.Description)
+		}
+	}
+}
+
+// TestNonLuaViolation_HasNoMessage pins the empty case: a rule with no
+// Lua returns nothing per-entity, so Message stays empty and renderers
+// print the rule description alone rather than a dangling separator.
+func TestNonLuaViolation_HasNoMessage(t *testing.T) {
+	t.Parallel()
+	ws := newMockWorkspace()
+	meta := ticketMeta([]metamodel.ValidationRule{
+		{
+			Name:        "ready-needs-owner",
+			Description: "Ready tickets must have an owner",
+			EntityType:  "ticket",
+			When:        []string{"status=ready"},
+			Then:        []string{"owner!="},
+			Severity:    "error",
+		},
+	}, "status", "owner")
+
+	entities := []*entity.Entity{
+		{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"status": "ready"}},
+	}
+
+	svc := New(meta, ws.services(t.TempDir()))
+	violations := svc.Check(context.Background(), entities, nil).Violations
+
+	if len(violations) != 1 {
+		t.Fatalf("got %d violations, want 1", len(violations))
+	}
+	if violations[0].Message != "" {
+		t.Errorf("Message = %q, want empty for a non-Lua rule", violations[0].Message)
+	}
+	if violations[0].Description != "Ready tickets must have an owner" {
+		t.Errorf("Description = %q, want the rule description", violations[0].Description)
 	}
 }
