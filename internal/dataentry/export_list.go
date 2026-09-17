@@ -50,10 +50,35 @@ func (h *exportHandler) handleV1ExportList(w http.ResponseWriter, r *http.Reques
 
 	// The WHOLE ACL-scoped, filtered, sorted set — pre-pagination. Reuses the
 	// exact read path the list view uses, so export can't widen past the view.
+	// That covers the ACL, the filters, the sort and the query scope; the
+	// list's `condition:` is applied separately just below, because it lives a
+	// layer above this shared path.
 	entities, err := h.scopedEntities(ctx, typeName, query)
 	if err != nil {
 		writeListPipelineError(w, r, err)
 		return
+	}
+	// The list's `condition:` is applied in listPage, ABOVE the shared read
+	// path above, so it has to be applied here too — otherwise the export
+	// renders rows the list on screen excludes, and "export mirrors the list"
+	// is false for exactly the views that needed a condition to express their
+	// membership rule.
+	//
+	// Before the cap and the total, so both describe the conditioned set: the
+	// truncation notice must count the rows this export would have rendered.
+	if cond := h.listCondition(effListID); cond != nil {
+		// A condition may name `current_user`, and this path resolves no scope
+		// of its own, so nothing has stamped the identity the evaluator needs.
+		// Without this the export 500s on exactly the per-user views the
+		// condition syntax exists to express.
+		if ctx, err = h.bindConditionIdentity(ctx, typeName, query); err != nil {
+			writeListPipelineError(w, r, err)
+			return
+		}
+		if entities, err = applyViewCondition(ctx, entities, cond); err != nil {
+			writeListPipelineError(w, r, err)
+			return
+		}
 	}
 	// Field-redact every row through the visibility seam before any cell is
 	// rendered (the #1188 IB-review finding): a hidden property renders as
@@ -482,4 +507,32 @@ func columnLabel(c dataentryconfig.ListColumn) string {
 		return c.Relation
 	}
 	return c.Property
+}
+
+// listCondition resolves the effective list's compiled `condition:`, or nil
+// when the seam is unwired or the list declares none.
+//
+// Nil-safe on the seam because a deployment that never wired the compiler
+// keeps pre-condition behavior: the ACL-scoped superset of the view, never
+// more.
+func (h *exportHandler) listCondition(listID string) ViewConditionMatcher {
+	if h.viewCondition == nil {
+		return nil
+	}
+	return h.viewCondition(listID)
+}
+
+// bindConditionIdentity stamps the query identity a `current_user` condition
+// evaluates against, once for the whole export.
+//
+// Nil seam is not an error: only a condition naming current_user needs the
+// stamp, and such a condition then fails loudly rather than matching
+// everything — the safe direction for a narrowing.
+func (h *exportHandler) bindConditionIdentity(
+	ctx context.Context, typeName string, query map[string][]string,
+) (context.Context, error) {
+	if h.bindIdentity == nil {
+		return ctx, nil
+	}
+	return h.bindIdentity(ctx, typeName, query)
 }

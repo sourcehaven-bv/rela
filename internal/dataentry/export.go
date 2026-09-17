@@ -28,6 +28,28 @@ type exportHandler struct {
 	scopedEntities  func(ctx context.Context, typeName string, query map[string][]string) ([]*entityPkg.Entity, error)
 	findListForType func(entityType string) string
 
+	// viewCondition resolves a list's compiled `condition:`, so an export
+	// renders the rows that list SHOWS.
+	//
+	// Injected rather than reached through App for the same reason
+	// scopedEntities is. It is a SEPARATE step from scopedEntities because the
+	// condition is applied above it (in listPage), so an export that only
+	// called the shared read path emitted rows the list excludes.
+	//
+	// Nil means no condition is ever applied, which is the pre-condition
+	// behavior: the ACL-scoped superset of the view, never more.
+	viewCondition func(listID string) ViewConditionMatcher
+
+	// bindIdentity stamps the query identity a `current_user` condition
+	// needs. Separate from viewCondition because the two seams answer
+	// different questions (which expression, and who is asking), and the
+	// identity is request-scoped rather than list-scoped.
+	//
+	// Nil skips the binding, which only matters for a condition that names
+	// current_user — such a condition then errors rather than matching
+	// everything, which is the safe direction.
+	bindIdentity func(ctx context.Context, typeName string, query map[string][]string) (context.Context, error)
+
 	// visReader is the row-gating + field-redacting read seam (DEC-ZBI39P):
 	// entity export reads through Get (which owns the stored-type check,
 	// RR-SRZK6X) and list-export rows through Filter, so a hidden field can
@@ -68,6 +90,24 @@ func newExportHandler(app *App) (*exportHandler, error) {
 		redactor:       redactor,
 		documents:      app.documents,
 		scopedEntities: app.scopedSortedEntities,
+		viewCondition: func(listID string) ViewConditionMatcher {
+			return viewCondition(app.viewConditions, app.State(), viewKindList, listID)
+		},
+		bindIdentity: func(
+			ctx context.Context, typeName string, query map[string][]string,
+		) (context.Context, error) {
+			// Resolving the scope is how this path reaches the binder; the
+			// resolved scope itself is applied by scopedEntities already.
+			name, err := queryScopeParam(query)
+			if err != nil {
+				return ctx, err
+			}
+			scope, err := viewQueryScope(app.queryScopes, app.Cfg(), app.Meta(), typeName, name)
+			if err != nil {
+				return ctx, err
+			}
+			return bindQueryIdentity(ctx, scope)
+		},
 		findListForType: func(entityType string) string {
 			s := app.State()
 			return findListByEntityType(s, s.Cfg.Navigation, entityType)
