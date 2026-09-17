@@ -406,6 +406,14 @@ CREATE TABLE IF NOT EXISTS state_kv (
 // face, "id@face" otherwise — the same key filecomments uses for its filename,
 // so all four backends agree on what identifies a thread.
 //
+// Note SQLite's LIKE is ASCII case-INSENSITIVE by default while "=" is
+// byte-exact, so the two arms of `target_key = ? OR target_key LIKE ?` would
+// match different row sets. sqlitecomments handles that in its queries (a
+// byte-exact substr guard beside the LIKE) rather than here: COLLATE on the
+// column does NOT affect LIKE, and `PRAGMA case_sensitive_like` is global, so
+// setting it would silently change sqlitestore's queries — which rely on the
+// folding deliberately (see sqlitestore/rename.go).
+//
 // anchor is JSON text because comments.Anchor is a discriminated union whose
 // text kind carries a six-field descriptor set; columns would mean six mostly-
 // NULL ones plus a migration per new kind, and the type's doc requires that

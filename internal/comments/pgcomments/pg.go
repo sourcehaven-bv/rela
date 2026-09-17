@@ -38,14 +38,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/Sourcehaven-BV/rela/internal/comments"
-	"github.com/Sourcehaven-BV/rela/internal/entity"
 )
 
 // DBTX is the database handle this store runs on: a *pgxpool.Pool in
@@ -195,7 +193,7 @@ func (s *Store) DeleteAllFaces(ctx context.Context, entityID string) error {
 	if _, err := s.db.Exec(ctx, `
 		DELETE FROM comments
 		WHERE target_key = $1 OR target_key LIKE $2 ESCAPE '\'`,
-		entityID, facePrefixPattern(entityID)); err != nil {
+		entityID, comments.FacePrefixPattern(entityID)); err != nil {
 		return fmt.Errorf("pgcomments: delete all faces of %q: %w", entityID, err)
 	}
 	return nil
@@ -212,47 +210,72 @@ func (s *Store) DeleteAllFaces(ctx context.Context, entityID string) error {
 //
 // It MERGES into an occupied destination rather than replacing. rela permits id
 // reuse, so the destination is not guaranteed empty, and discarding the
-// occupant's comments would destroy data nobody asked to remove. A plain UPDATE
-// of the key does exactly this: the rows join one thread and List's ORDER BY
-// interleaves them by timestamp.
+// occupant's comments would destroy data nobody asked to remove. The rows join
+// one thread and List's ORDER BY interleaves them by timestamp.
+//
+// # Why this is a copy-then-delete rather than an UPDATE of the key
+//
+// A plain `UPDATE ... SET target_key` merges correctly right up until the
+// destination already holds a comment with the same id, where it violates
+// PRIMARY KEY (target_key, id) and aborts — moving NOTHING while the entity
+// rename that triggered it has already committed. The comment id is minted
+// from 80 bits of crypto/rand, so this needs a restored backup, a re-import or
+// a filecomments migration to happen at all; it is rare, not impossible, and
+// the consequence is bad out of proportion to its odds. entitymanager LOGS a
+// failure from EntityRenamed rather than returning it, so the thread would be
+// stranded under a key nothing resolves to, with no error reaching the user
+// and no route left to reach the rows.
+//
+// INSERT ... ON CONFLICT DO NOTHING makes the collision a no-op instead: the
+// destination's existing comment wins (the conservative choice — it is the one
+// a reader may already have seen), and the rest of the thread still moves.
 func (s *Store) Rename(ctx context.Context, oldID, newID string) error {
 	if oldID == newID {
 		return nil
 	}
+	// Two statements, so they need a transaction: a failure between them would
+	// duplicate the whole thread across both keys.
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("pgcomments: rename %q to %q: %w", oldID, newID, err)
+	}
+	// Rolls back unless Commit already succeeded, in which case it is a no-op.
+	defer func() { _ = tx.Rollback(ctx) }()
+
 	// The key is "id" or "id@face", so the new key is the new id plus whatever
 	// followed the old one. Computed in SQL rather than by reading the rows
 	// back into Go: this runs on the entity write path, and a read-then-write
 	// would race a concurrent add to the same thread.
 	//
-	// A PK collision is impossible despite the merge — the destination key
-	// differs only by id, and (target_key, id) stays unique because a comment
-	// id is minted per comment, never reused across targets.
-	// $3 is cast explicitly: pgx infers an untyped parameter's OID from its use,
-	// and substring(text FROM int) leaves it ambiguous enough that the driver
-	// tries to encode the Go int as text and fails outright.
-	if _, err := s.db.Exec(ctx, `
-		UPDATE comments
-		SET target_key = $2 || substring(target_key from $3::int)
-		WHERE target_key = $1 OR target_key LIKE $4 ESCAPE '\'`,
-		oldID, newID, len(oldID)+1, facePrefixPattern(oldID)); err != nil {
+	// char_length($1) rather than a Go-side len(oldID): substring() counts
+	// CHARACTERS and Go's len() counts BYTES, so a multi-byte id would slice at
+	// the wrong offset and re-key every comment to a corrupt target — losing
+	// them outright, with a nil error. Today entity.ValidateID admits only
+	// ASCII, so the two agree by luck; computing both sides in SQL means they
+	// agree by construction, which is the same standard facePrefixPattern holds
+	// itself to just below.
+	// $1 is the old id, $2 the face pattern; the INSERT adds the new id as $3.
+	const selection = `target_key = $1 OR target_key LIKE $2 ESCAPE '\'`
+	pattern := comments.FacePrefixPattern(oldID)
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO comments
+			(id, target_key, target_type, author, created_at, updated_at, anchor, body, resolved)
+		SELECT id, $3 || substring(target_key from char_length($1::text) + 1),
+			target_type, author, created_at, updated_at, anchor, body, resolved
+		FROM comments
+		WHERE `+selection+`
+		ON CONFLICT (target_key, id) DO NOTHING`,
+		oldID, pattern, newID); err != nil {
+		return fmt.Errorf("pgcomments: rename %q to %q: %w", oldID, newID, err)
+	}
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM comments WHERE `+selection, oldID, pattern); err != nil {
+		return fmt.Errorf("pgcomments: rename %q to %q: %w", oldID, newID, err)
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("pgcomments: rename %q to %q: %w", oldID, newID, err)
 	}
 	return nil
-}
-
-// facePrefixPattern builds the LIKE pattern matching every FACED thread of id
-// ("id@draft", never the bare "id").
-//
-// The id is escaped because an entity id may legally contain an underscore
-// (entity.ValidateID admits [A-Za-z0-9_-]), and an unescaped "_" is LIKE's
-// single-character wildcard — so renaming "TKT_1" would also re-key "TKT-1",
-// silently merging two unrelated threads. Backslash is escaped first so it
-// cannot double-escape what follows; "%" cannot appear in a valid id but is
-// escaped anyway, since this function's correctness should not depend on a
-// grammar declared in another package.
-func facePrefixPattern(id string) string {
-	r := strings.NewReplacer(`\`, `\\`, `_`, `\_`, `%`, `\%`)
-	return r.Replace(id) + entity.StateRefSeparator + "%"
 }
 
 // zeroTimeToNil maps Go's zero time to SQL NULL.
@@ -277,8 +300,15 @@ func scanComment(row pgx.Row) (comments.Comment, error) {
 	if err := row.Scan(&c.ID, &c.Author, &c.CreatedAt, &updatedAt, &anchor, &c.Body, &c.Resolved); err != nil {
 		return comments.Comment{}, err
 	}
+	// Normalized to UTC because pgx returns a TIMESTAMPTZ in time.Local, and
+	// Comment marshals to JSON with whatever offset it carries. Left alone, one
+	// comment would serialize as "+01:00" from this node and "Z" from a sqlite
+	// one, and the offset would shift under the server's DST — a difference
+	// clients see even though both describe the same instant. sqlitecomments
+	// already returns UTC, so this is what makes the two agree.
+	c.CreatedAt = c.CreatedAt.UTC()
 	if updatedAt != nil {
-		c.UpdatedAt = *updatedAt
+		c.UpdatedAt = updatedAt.UTC()
 	}
 	if err := json.Unmarshal(anchor, &c.Anchor); err != nil {
 		return comments.Comment{}, fmt.Errorf("decode anchor of %q: %w", c.ID, err)

@@ -47,8 +47,16 @@
 -- (created_at, id) is the contract's sort order, pinned by
 -- commentstest.RunOrderingTests: oldest first, the server-minted id breaking
 -- ties so a coarse clock stamping two comments in one tick cannot make a
--- thread reorder between reads. The index carries both columns so List is an
--- index range scan per target rather than a sort.
+-- thread reorder between reads. The index carries both columns so it CAN serve
+-- List pre-ordered.
+--
+-- It usually will not, and that is fine. Measured on 200k rows, the planner
+-- prefers the narrower comments_target_prefix_idx and sorts, because a thread
+-- is capped at MaxPerTarget and sorting a few hundred rows costs less than the
+-- wider index's I/O. It does choose this index, with no Sort node, once a
+-- single thread grows large. Treat it as insurance for the threads that would
+-- hurt, not as the plan every List takes — and re-measure before concluding a
+-- sort in the plan is a regression.
 --
 -- # Why the anchor is jsonb
 --
@@ -65,9 +73,15 @@ CREATE TABLE comments (
     -- caller-chosen id would let one principal overwrite another's comment).
     id          TEXT        COLLATE "C" NOT NULL,
     target_key  TEXT        COLLATE "C" NOT NULL,
-    -- The entity type the thread hangs off. Carried because the HTTP surface
-    -- is addressed by (type, id) and the read gate needs the type to resolve a
-    -- verdict; NOT part of the key, since entity ids are unique across types.
+    -- The entity type the thread hangs off. NOT part of the key and NOT read
+    -- back by this backend: entity ids are unique across types, so target_key
+    -- alone identifies a thread and every query keys on it.
+    --
+    -- Stored anyway because a comment row is otherwise unintelligible to
+    -- anyone reading the table directly — an operator answering "what is
+    -- commented on" from SQL, or triaging a support question, would otherwise
+    -- have to join back through the entity store to learn what a key refers
+    -- to. It costs one column on a table that will never be large.
     target_type TEXT        NOT NULL,
     -- Written from the request principal, never from the request body. This is
     -- what makes authorship unforgeable, and it is why the column is NOT NULL

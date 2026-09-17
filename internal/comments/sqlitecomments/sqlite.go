@@ -29,7 +29,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/comments"
@@ -61,6 +60,10 @@ type DBTX interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+	// BeginTx is needed by Rename alone, which is two statements that must not
+	// be observable apart. pgcomments.DBTX carries the same capability, so the
+	// two backends ask for the same thing.
+	BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
 }
 
 // Store is the SQLite comment backend.
@@ -173,10 +176,9 @@ func (s *Store) DeleteTarget(ctx context.Context, target comments.Target) error 
 // DeleteAllFaces removes every thread belonging to an entity id — the bare id
 // and every "id@face" — so an entity delete strands nothing.
 func (s *Store) DeleteAllFaces(ctx context.Context, entityID string) error {
-	if _, err := s.db.ExecContext(ctx, `
-		DELETE FROM comments
-		WHERE target_key = ? OR target_key LIKE ? ESCAPE '\'`,
-		entityID, facePrefixPattern(entityID)); err != nil {
+	args := faceArgs(entityID)
+	if _, err := s.db.ExecContext(ctx,
+		`DELETE FROM comments WHERE `+selectFaces, args...); err != nil {
 		return fmt.Errorf("sqlitecomments: delete all faces of %q: %w", entityID, err)
 	}
 	return nil
@@ -188,34 +190,71 @@ func (s *Store) DeleteAllFaces(ctx context.Context, entityID string) error {
 // an id that no longer exists) and MERGES into an occupied destination, since
 // rela permits id reuse and discarding the occupant's comments would destroy
 // data nobody asked to remove. Both pinned by commentstest.RunRenameTests.
+// A copy-then-delete rather than an UPDATE of the key, and a character-counted
+// offset rather than a Go-side byte count. See the pgcomments.Store.Rename doc
+// for both reasons in full — the hazards are identical and the two backends are
+// held to one answer by commentstest.RunRenameTests.
 func (s *Store) Rename(ctx context.Context, oldID, newID string) error {
 	if oldID == newID {
 		return nil
 	}
-	// substr() is 1-based, so len+1 is the first byte after the old id — the
-	// "@face" suffix, or nothing for a bare-id thread. Computed in SQL rather
-	// than read back into Go: this runs on the entity write path, and a
-	// read-then-write would race a concurrent add to the same thread.
-	if _, err := s.db.ExecContext(ctx, `
-		UPDATE comments
-		SET target_key = ? || substr(target_key, ?)
-		WHERE target_key = ? OR target_key LIKE ? ESCAPE '\'`,
-		newID, len(oldID)+1, oldID, facePrefixPattern(oldID)); err != nil {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("sqlitecomments: rename %q to %q: %w", oldID, newID, err)
+	}
+	// Rolls back unless Commit already succeeded, in which case it is a no-op.
+	defer func() { _ = tx.Rollback() }()
+
+	// length() counts CHARACTERS, matching substr(); Go's len() counts bytes,
+	// so computing the offset here keeps the two units agreeing by
+	// construction rather than by the id grammar happening to be ASCII.
+	args := faceArgs(oldID)
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO comments
+			(id, target_key, target_type, author, created_at, updated_at, anchor, body, resolved)
+		SELECT id, ? || substr(target_key, length(?) + 1),
+			target_type, author, created_at, updated_at, anchor, body, resolved
+		FROM comments
+		WHERE `+selectFaces+`
+		ON CONFLICT (target_key, id) DO NOTHING`,
+		append([]any{newID, oldID}, args...)...); err != nil {
+		return fmt.Errorf("sqlitecomments: rename %q to %q: %w", oldID, newID, err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM comments WHERE `+selectFaces, args...); err != nil {
+		return fmt.Errorf("sqlitecomments: rename %q to %q: %w", oldID, newID, err)
+	}
+	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("sqlitecomments: rename %q to %q: %w", oldID, newID, err)
 	}
 	return nil
 }
 
-// facePrefixPattern builds the LIKE pattern matching every FACED thread of id
-// ("id@draft", never the bare "id").
+// selectFaces builds the WHERE clause matching every thread of an entity id —
+// the bare id and every "id@face" — with its bound arguments.
 //
-// The id is escaped because an entity id may legally contain an underscore
-// (entity.ValidateID admits [A-Za-z0-9_-]) and "_" is LIKE's single-character
-// wildcard — so renaming "TKT_1" would also re-key "TKT-1", silently merging
-// two unrelated threads.
-func facePrefixPattern(id string) string {
-	r := strings.NewReplacer(`\`, `\\`, `_`, `\_`, `%`, `\%`)
-	return r.Replace(id) + entity.StateRefSeparator + "%"
+// The substr() guard beside the LIKE is what makes the match case-EXACT, and
+// it is load-bearing rather than belt-and-braces. SQLite's LIKE is ASCII
+// case-insensitive by default while "=" is byte-exact, so without it the two
+// arms of this clause would match different row sets: renaming "tkt-1" would
+// also re-key "TKT-1", merging two entities' threads, and DeleteAllFaces would
+// delete an entity the caller never named. PostgreSQL does not do this (its
+// column is COLLATE "C"), so the guard is also what keeps the two backends
+// answering alike — pinned by commentstest.RunRenameTests.
+//
+// Fixed here rather than with COLLATE or a PRAGMA: collation does not affect
+// LIKE, and `PRAGMA case_sensitive_like` is global, so it would silently change
+// sqlitestore's queries, which rely on the folding deliberately.
+//
+// The LIKE stays because it is what the index serves; substr() only filters the
+// handful of rows LIKE already narrowed to.
+const selectFaces = `(target_key = ? OR ` +
+	`(target_key LIKE ? ESCAPE '\' AND substr(target_key, 1, ?) = ?))`
+
+// faceArgs binds [selectFaces] for one entity id.
+func faceArgs(id string) []any {
+	prefix := id + entity.StateRefSeparator
+	return []any{id, comments.FacePrefixPattern(id), len([]rune(prefix)), prefix}
 }
 
 // formatOptionalTime maps Go's zero time to SQL NULL, so "never edited" needs

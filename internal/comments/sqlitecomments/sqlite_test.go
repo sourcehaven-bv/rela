@@ -23,6 +23,17 @@ func TestConformance(t *testing.T) {
 	})
 }
 
+// TestKeyFidelity holds this backend to byte-exact target keys, which RunAll
+// deliberately leaves out: filecomments cannot promise case-sensitivity on a
+// case-insensitive filesystem and refuses non-ASCII ids outright, both
+// reasonably. A database backend has neither excuse.
+func TestKeyFidelity(t *testing.T) {
+	commentstest.RunKeyFidelityTests(t, func(t *testing.T) comments.Store {
+		t.Helper()
+		return newStore(t, filepath.Join(t.TempDir(), "rela.db"))
+	})
+}
+
 // TestNewRejectsNilHandle pins the constructor's nil contract: a wiring mistake
 // must fail at construction, not at the first comment someone posts.
 func TestNewRejectsNilHandle(t *testing.T) {
