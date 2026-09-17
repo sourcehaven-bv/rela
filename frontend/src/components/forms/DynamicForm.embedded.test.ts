@@ -89,7 +89,14 @@ afterEach(() => {
   })
 })
 
-async function mountCreate(props: { embedded?: boolean } = {}) {
+async function mountCreate(
+  props: {
+    embedded?: boolean
+    embeddedLink?: { relation: string; peer: string; linkAs: 'from' | 'to' }
+    embeddedTemplate?: string
+    embeddedWorld?: string
+  } = {}
+) {
   const schema = useSchemaStore()
   schema.forms.set(FORM.id, FORM as never)
   schema.entityTypes.set('ticket', ENTITY_TYPE as never)
@@ -224,5 +231,84 @@ describe('DynamicForm — embedded mode', () => {
     const { wrapper } = await mountCreate()
 
     expect(wrapper.find('.form-header').exists()).toBe(true)
+  })
+})
+
+// The prop channel for pre-link / template / world (TKT-R4BMJM).
+//
+// An embedded form reads an EMPTY query — the mocked route above carries
+// `prop.title=from-host-url`, which belongs to the page behind the modal and
+// would silently pre-fill the nested entity. A host that genuinely holds this
+// context therefore has to pass it explicitly.
+//
+// The risk these pin is that the props reopen the hole the empty-query rule
+// closed: they must supply context the HOST chose, never resurrect the host
+// page's own URL params.
+describe('DynamicForm — embedded pre-link props', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+  })
+
+  it('links via the prop, and still ignores the host page URL', async () => {
+    // The peer's type is resolved from its id prefix, so the schema has to know
+    // the prefix — as it does in the real app. Without it the relation carries
+    // an untypeable id and reshapeLegacyToModern aborts the whole create.
+    const schema = useSchemaStore()
+    schema.entityTypes.set('feature', {
+      name: 'feature',
+      label: 'Feature',
+      id_prefix: 'FEAT',
+      properties: {},
+    } as never)
+
+    const { wrapper, create } = await mountCreate({
+      embedded: true,
+      embeddedLink: { relation: 'implements', peer: 'FEAT-1', linkAs: 'to' },
+    })
+
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(create.mock.calls.length, 'create should have been called').toBe(1)
+    const payload = create.mock.calls[0][1] as {
+      relations?: Record<string, { data: { type: string; id: string }[] }>
+      properties?: Record<string, unknown>
+    }
+    // The edge rides the create payload for linkAs: 'to', in the modern
+    // JSON:API resource-identifier shape. The TYPE matters as much as the id:
+    // an untypeable peer makes reshapeLegacyToModern return null, which aborts
+    // the entire create — so a pre-linked relation with no picker field on the
+    // form could not save at all until the prefill registered its type.
+    expect(payload.relations?.implements).toEqual({
+      data: [{ type: 'feature', id: 'FEAT-1' }],
+    })
+    // And the host page's `prop.title` is still ignored — the prop channel
+    // supplies context, it does not re-enable the URL overlay.
+    expect(payload.properties?.title).not.toBe('from-host-url')
+  })
+
+  it('creates in the world the host passed', async () => {
+    // A faced type has no default row to fall back to, so a dropped world is a
+    // refusal at the server (BUG-HC6I2T) — the failure is a 4xx, not a silent
+    // wrong face, but the user sees a create that inexplicably failed.
+    const { wrapper, create } = await mountCreate({
+      embedded: true,
+      embeddedWorld: 'published',
+    })
+
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect((create.mock.calls[0][1] as { world?: string }).world).toBe('published')
+  })
+
+  it('carries no world when the host had none', async () => {
+    const { wrapper, create } = await mountCreate({ embedded: true })
+
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect((create.mock.calls[0][1] as { world?: string }).world).toBeUndefined()
   })
 })

@@ -76,6 +76,24 @@ const props = defineProps<{
    * time and never reactive afterwards.
    */
   embedded?: boolean
+  /**
+   * Pre-link and template context for an EMBEDDED form (TKT-R4BMJM).
+   *
+   * These exist because `embedded` deliberately reads an empty query (see
+   * initializeDefaults): the form mounts over the host's page, so honouring
+   * `route.query` would pre-fill the new entity from whatever that page was
+   * showing and auto-link it to the host's peer. A host that genuinely has this
+   * context passes it EXPLICITLY instead.
+   *
+   * They feed the same code paths the URL params feed, so pre-link and template
+   * selection have one implementation with two entry points rather than two
+   * implementations that can drift.
+   *
+   * Read at setup time and never reactive afterwards, matching `embedded`.
+   */
+  embeddedLink?: { relation: string; peer: string; linkAs: 'from' | 'to' }
+  embeddedTemplate?: string
+  embeddedWorld?: string
 }>()
 
 /**
@@ -679,6 +697,19 @@ function initializeDefaults() {
     }
   }
 
+  // The embedded host's pre-link, feeding the SAME linkParams the URL feeds.
+  // An embedded form read an empty query above, so this is the only way the
+  // context reaches it — and routing it here means the downstream handling
+  // (the `to` edge in the payload, the `from` edge after create) has one
+  // implementation rather than an embedded copy.
+  if (props.embedded && props.embeddedLink) {
+    linkParams.value = {
+      relation: props.embeddedLink.relation,
+      peer: props.embeddedLink.peer,
+      as: props.embeddedLink.linkAs,
+    }
+  }
+
   // Apply metamodel defaults
   for (const [propName, propDef] of Object.entries(entityType.value.properties)) {
     if (propDef.default !== undefined) {
@@ -724,11 +755,29 @@ function initializeDefaults() {
   // Pre-fill relation from link params (but this is usually auto-created, not shown)
   if (linkParams.value) {
     const rel = linkParams.value.relation
+    const peer = linkParams.value.peer
     if (!relations.value[rel]) {
       relations.value[rel] = []
     }
-    if (!relations.value[rel].includes(linkParams.value.peer)) {
-      relations.value[rel].push(linkParams.value.peer)
+    if (!relations.value[rel].includes(peer)) {
+      relations.value[rel].push(peer)
+    }
+    // Register the peer's TYPE as well as its id (BUG found in TKT-R4BMJM).
+    //
+    // `pickerTypes` is otherwise populated only by RelationPicker, via
+    // updateRelationTypes. A pre-linked relation that has no picker field on
+    // this form therefore had no type entry — and reshapeLegacyToModern returns
+    // null for an id it cannot type, which aborts the WHOLE create with
+    // "Some related entities have unknown types".
+    //
+    // So a create button for a relation the form does not also render as a
+    // field could not save at all. The id prefix is the same source the
+    // post-create reverse link already uses.
+    const peerType = getTypeFromId(peer)
+    if (peerType) {
+      const types = pickerTypes.value[rel] ?? new Map<string, string>()
+      types.set(peer, peerType)
+      pickerTypes.value[rel] = types
     }
   }
 
@@ -739,16 +788,40 @@ function initializeDefaults() {
   })
 }
 
+/**
+ * The template variant this form was asked to open with, if any.
+ *
+ * Two channels for one meaning: a prop when embedded (an embedded form reads no
+ * query), a `?template=` param on the page flow. Neither is authoritative over
+ * the other because a form is only ever one of the two.
+ */
+function requestedTemplate(): string | undefined {
+  if (props.embedded) return props.embeddedTemplate
+  const q = route.query.template
+  return typeof q === 'string' && q !== '' ? q : undefined
+}
+
 async function loadTemplates() {
   if (!formConfig.value) return
   try {
     templates.value = await getTemplates(formConfig.value.entity)
     if (templates.value.length > 0) {
+      // An operator-preselected variant wins over templates[0] (TKT-R4BMJM).
+      // It arrives as a prop when embedded and as `?template=` on the page
+      // flow, so both create surfaces resolve through this one selection.
+      //
+      // A name that matches nothing falls back to the default rather than
+      // erroring: the variant may have been deleted from disk since config
+      // load, and refusing to open the form would be a worse answer than
+      // opening it with the ordinary default.
+      const requested = requestedTemplate()
+      const chosen =
+        (requested && templates.value.find((t) => t.name === requested)) || templates.value[0]
       // Select first template by default. This lands after the form is
       // already interactive, so it must not overwrite what the user has
       // begun writing.
-      selectedTemplate.value = templates.value[0].name
-      applyTemplate(templates.value[0], true)
+      selectedTemplate.value = chosen.name
+      applyTemplate(chosen, true)
     }
   } catch (err) {
     // Templates are optional, ignore errors
@@ -1401,7 +1474,15 @@ async function handleSubmit(mode: SubmitMode = 'navigate') {
     // new entity starts in — the server maps it through `worlds.<name>.create`.
     // A faced type has no default row to fall back to, so omitting this is a
     // refusal rather than a silent default (BUG-HC6I2T).
-    if (worldParam.value) payload.world = worldParam.value
+    //
+    // An embedded form takes the world from its HOST, explicitly. `useWorld`
+    // reads the route, and an embedded form's route is the host page's — so
+    // this happens to be the same value. Taking it as a prop makes that a
+    // stated contract rather than a coincidence that a later refactor of
+    // `embedded` could silently break, the way the empty-query rule would
+    // otherwise suggest the world is dropped too.
+    const createWorld = props.embedded ? props.embeddedWorld : worldParam.value
+    if (createWorld) payload.world = createWorld
     Object.assign(payload, idControls.buildPayloadFields())
     const entity = await entitiesStore.create(formConfig.value.entity, payload)
     createdEntityId.value = entity.id
@@ -1418,19 +1499,28 @@ async function handleSubmit(mode: SubmitMode = 'navigate') {
         const { relation, peer } = linkParams.value
         // Look up peer type from ID prefix
         const peerType = getTypeFromId(peer)
-        if (peerType) {
-          await createRelation(peerType, peer, relation, entity.id)
+        if (!peerType) {
+          // An id whose prefix matches no type in the schema. This used to be
+          // an `if (peerType)` with no else, so the link was SKIPPED silently
+          // and the user got a created-but-unlinked entity with no indication
+          // anything went wrong (RR-8SP2UG). Throwing routes it into the same
+          // surfaced failure as a rejected request: the whole point of these
+          // buttons is that the user does not have to link by hand, so a
+          // link that did not happen has to say so.
+          throw new Error(`no entity type matches the id prefix of "${peer}"`)
         }
+        await createRelation(peerType, peer, relation, entity.id)
       } catch (linkErr) {
         console.warn('Auto-link failed:', linkErr)
-        // Staying on the form ('again') means the user never sees the entity,
-        // so a swallowed link failure would be invisible — and under repeated
-        // entry that is N silently-unlinked entities. The navigate path can
-        // stay quiet: the user lands on the entity and can see the gap.
-        if (mode === 'again') {
-          uiStore.error(`${entity.id} was created, but linking it failed. Link it manually.`)
-        }
-        // Continue with navigation even if link fails
+        // Surfaced on EVERY path, not just 'again'. The older reasoning — that
+        // the navigate path can stay quiet because the user lands on the entity
+        // and can see the gap — does not hold here: `return_to` sends them back
+        // to the ORIGINATING entity, where a missing link looks exactly like a
+        // section that has not refreshed yet.
+        uiStore.error(`${entity.id} was created, but linking it failed. Link it manually.`)
+        // Continue with navigation even if link fails: the entity exists, and
+        // stranding the user on a form that would re-create it on resubmit is
+        // worse than landing them somewhere they can fix the link.
       }
     }
 
