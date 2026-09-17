@@ -36,6 +36,17 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version: '1.26.6'
+          cache: false
+
+      - name: Cache Go build + module cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-test-${{ runner.os }}-${{ runner.arch }}-1.26.6-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            go-test-${{ runner.os }}-${{ runner.arch }}-1.26.6-
 
       - name: Download dependencies
         run: go mod download
@@ -91,6 +102,17 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version: '1.26'
+          cache: false
+
+      - name: Cache Go build + module cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-reachability-${{ runner.os }}-${{ runner.arch }}-1.26-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            go-reachability-${{ runner.os }}-${{ runner.arch }}-1.26-
 
       - name: Download dependencies
         run: go mod download
@@ -174,6 +196,17 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version: '1.26.6'
+          cache: false
+
+      - name: Cache Go build + module cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-clamav-${{ runner.os }}-${{ runner.arch }}-1.26.6-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            go-clamav-${{ runner.os }}-${{ runner.arch }}-1.26.6-
 
       - name: Install bubblewrap and ClamAV
         if: steps.detect.outputs.changed == 'true'
@@ -266,11 +299,30 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version: '1.26.6'
+          cache: false
+
+      - name: Cache Go build + module cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-lint-${{ runner.os }}-${{ runner.arch }}-1.26.6-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            go-lint-${{ runner.os }}-${{ runner.arch }}-1.26.6-
+
+      - name: Cache golangci-lint
+        id: cache-golangci-lint
+        uses: actions/cache@v4
+        with:
+          path: ~/go/bin/golangci-lint
+          key: tool-golangci-lint-v2.11.4-${{ runner.os }}-${{ runner.arch }}-go1.26.6
 
       - name: Install golangci-lint
         # Build from source against the active Go toolchain so the linter can
         # analyse our code regardless of the go.mod toolchain directive.
         run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4
+        if: steps.cache-golangci-lint.outputs.cache-hit != 'true'
 
       # rela-desktop links Wails v3, whose Linux build needs GTK4 + WebKitGTK
       # headers. Without them the cgo packages fail to build.
@@ -292,10 +344,29 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version: '1.26.6'
+          cache: false
+
+      - name: Cache Go build + module cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-arch-lint-${{ runner.os }}-${{ runner.arch }}-1.26.6-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            go-arch-lint-${{ runner.os }}-${{ runner.arch }}-1.26.6-
+
+      - name: Cache go-arch-lint
+        id: cache-go-arch-lint
+        uses: actions/cache@v4
+        with:
+          path: ~/go/bin/go-arch-lint
+          key: tool-go-arch-lint-v1.15.0-${{ runner.os }}-${{ runner.arch }}-go1.26.6
 
       - name: Install go-arch-lint
         # Keep in sync with go_arch_lint_version in the justfile.
         run: go install github.com/fe3dback/go-arch-lint@v1.15.0
+        if: steps.cache-go-arch-lint.outputs.cache-hit != 'true'
 
       - name: Check architecture
         run: go-arch-lint check
@@ -310,6 +381,17 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version: '1.26.6'
+          cache: false
+
+      - name: Cache Go build + module cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-plimsoll-${{ runner.os }}-${{ runner.arch }}-1.26.6-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            go-plimsoll-${{ runner.os }}-${{ runner.arch }}-1.26.6-
 
       # rela-desktop links Wails v3, whose Linux build needs GTK4 + WebKitGTK
       # headers to type-check. Without them the cgo packages fail to load and
@@ -319,9 +401,17 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev
 
+      - name: Cache plimsoll
+        id: cache-plimsoll
+        uses: actions/cache@v4
+        with:
+          path: ~/go/bin/plimsoll
+          key: tool-plimsoll-v0.2.0-${{ runner.os }}-${{ runner.arch }}-go1.26.6
+
       - name: Install plimsoll
         # Keep in sync with plimsoll_version in the justfile.
         run: go install github.com/sourcehaven-bv/plimsoll/cmd/plimsoll@v0.2.0
+        if: steps.cache-plimsoll.outputs.cache-hit != 'true'
 
       - name: Check type load lines
         run: plimsoll ./...
@@ -336,10 +426,29 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version: '1.26.6'
+          cache: false
+
+      - name: Cache Go build + module cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-comment-lint-${{ runner.os }}-${{ runner.arch }}-1.26.6-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            go-comment-lint-${{ runner.os }}-${{ runner.arch }}-1.26.6-
+
+      - name: Cache commentlint
+        id: cache-commentlint
+        uses: actions/cache@v4
+        with:
+          path: ~/go/bin/commentlint
+          key: tool-commentlint-v0.3.1-${{ runner.os }}-${{ runner.arch }}-go1.26.6
 
       - name: Install commentlint
         # Keep in sync with commentlint_version in the justfile.
         run: go install github.com/sourcehaven-bv/commentlint@v0.3.1
+        if: steps.cache-commentlint.outputs.cache-hit != 'true'
 
       # Gate: clean today, so a regression fails the build. Rules are promoted
       # here from the advisory step once their backlog reaches zero.
@@ -489,6 +598,17 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version: '1.26.6'
+          cache: false
+
+      - name: Cache Go build + module cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-e2e-${{ runner.os }}-${{ runner.arch }}-1.26.6-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            go-e2e-${{ runner.os }}-${{ runner.arch }}-1.26.6-
 
       - name: Set up Node.js
         uses: actions/setup-node@v7
@@ -598,6 +718,17 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version: '1.26.6'
+          cache: false
+
+      - name: Cache Go build + module cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-fuzz-${{ runner.os }}-${{ runner.arch }}-1.26.6-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            go-fuzz-${{ runner.os }}-${{ runner.arch }}-1.26.6-
 
       - name: Run fuzz tests
         run: |
@@ -693,6 +824,17 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version: '1.26.6'
+          cache: false
+
+      - name: Cache Go build + module cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-postgres-${{ runner.os }}-${{ runner.arch }}-1.26.6-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            go-postgres-${{ runner.os }}-${{ runner.arch }}-1.26.6-
 
       # Trust auth: no password in the DSN. The DB is ephemeral and
       # runner-local, so there is no credential to keep out of the log.
@@ -914,6 +1056,17 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version: '1.26.6'
+          cache: false
+
+      - name: Cache Go build + module cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-sqlite-${{ runner.os }}-${{ runner.arch }}-1.26.6-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            go-sqlite-${{ runner.os }}-${{ runner.arch }}-1.26.6-
 
       # internal/cli is in scope and its render/export tests shell out through
       # internal/cmdexec, which FAILS CLOSED when no sandbox is available — so
@@ -971,6 +1124,17 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version: '1.26.6'
+          cache: false
+
+      - name: Cache Go build + module cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-cross-compile-${{ matrix.goos }}-${{ matrix.tags || 'default' }}-${{ runner.os }}-${{ runner.arch }}-1.26.6-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            go-cross-compile-${{ matrix.goos }}-${{ matrix.tags || 'default' }}-${{ runner.os }}-${{ runner.arch }}-1.26.6-
 
       # CGO off matches the GoReleaser builds for rela / rela-server; this is a
       # pure cross-compile, so no per-OS C toolchain is needed.
@@ -987,24 +1151,14 @@ jobs:
           echo "Building GOOS=$GOOS ${flags:-(default)}"
           go build $flags ./cmd/rela ./cmd/rela-server ./cmd/rela-docs
 
-  build:
-    name: Build
-    runs-on: ubuntu-latest
-    needs: [test, lint, arch-lint, plimsoll, lint-markdown, fuzz, postgres, cross-compile, frontend, e2e]
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Set up Go
-        uses: actions/setup-go@v7
-        with:
-          go-version: '1.26.6'
-
-      # Compile-only gate. Release binaries come from GoReleaser in
-      # release.yml, so there is no artifact to upload here — a per-run copy
-      # was retained for 90 days and never downloaded.
-      - name: Build
-        run: go build -o bin/rela ./cmd/rela
-
+  # There is deliberately no `build` job. It ran `go build ./cmd/rela` — a
+  # strict subset of what Cross-Compile (linux/default) already builds
+  # (rela + rela-server + rela-docs, same GOOS) — but gated `demos` and `docs`
+  # behind `needs: [build]`, which in turn waited on all ten other jobs. That
+  # made a redundant 60s compile the hinge of a three-stage serial tail: the
+  # slowest job, then build, then demos. `demos` and `docs` now start at t=0
+  # with everything else. If you reintroduce a compile-only gate here, do not
+  # put anything in its `needs:`.
   rela-tickets:
     name: Rela Tickets
     runs-on: ubuntu-latest
@@ -1067,6 +1221,17 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version: '1.26.6'
+          cache: false
+
+      - name: Cache Go build + module cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-rela-tickets-${{ runner.os }}-${{ runner.arch }}-1.26.6-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            go-rela-tickets-${{ runner.os }}-${{ runner.arch }}-1.26.6-
 
       - name: Build rela
         if: steps.gate.outputs.applies == 'true'
@@ -1243,7 +1408,6 @@ jobs:
   demos:
     name: Demos
     runs-on: ubuntu-latest
-    needs: [build]
     steps:
       - uses: actions/checkout@v7
 
@@ -1251,6 +1415,17 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version: '1.26.6'
+          cache: false
+
+      - name: Cache Go build + module cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-demos-${{ runner.os }}-${{ runner.arch }}-1.26.6-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            go-demos-${{ runner.os }}-${{ runner.arch }}-1.26.6-
 
       # graphviz for the demo scripts. GTK4 + WebKitGTK because the tagged-build
       # guard vets `./...`, which includes cmd/rela-desktop (Wails v3); without
@@ -1309,7 +1484,6 @@ jobs:
   docs:
     name: Docs
     runs-on: ubuntu-latest
-    needs: [build]
     steps:
       - uses: actions/checkout@v7
 
@@ -1317,6 +1491,17 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version: '1.26.6'
+          cache: false
+
+      - name: Cache Go build + module cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-docs-${{ runner.os }}-${{ runner.arch }}-1.26.6-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            go-docs-${{ runner.os }}-${{ runner.arch }}-1.26.6-
 
       - name: Build rela
         run: go build -o bin/rela ./cmd/rela

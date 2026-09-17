@@ -7,7 +7,12 @@ export default defineConfig({
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
-  workers: process.env.CI ? 2 : undefined,
+  // The GitHub runner has 4 cores; 2 workers left half of them idle. Raising
+  // this is safe because every shared resource is already per-worker: the
+  // fixture spawns rela-server on a free ephemeral port, mkdtemps its project
+  // dir, and names each postgres schema `relae2e_<pid>_<n>` — which is unique
+  // precisely because Playwright runs each worker as a separate OS process.
+  workers: process.env.CI ? 4 : undefined,
   reporter: process.env.CI
     ? [['line'], ['html', { open: 'never' }]]
     : [['list'], ['html', { open: 'never' }]],
