@@ -370,6 +370,25 @@ func (a *App) listPage(
 		return nil, 0, err
 	}
 
+	// Stamp the query identity HERE, not only inside the scope helper, because
+	// BOTH narrowings may name `current_user` and they are evaluated at
+	// different points. The scope binds before the store read; the condition
+	// runs in Go afterwards, against this ctx.
+	//
+	// The helper binds only when a scope actually resolved, and its new ctx
+	// never left it — so a `condition:` using is_current_user(...) raised
+	// ErrNoCurrentUser and answered 500 on every page, INCLUDING the shape the
+	// guide documents, where the list names a condition and no scope at all.
+	// Binding for the condition too is what makes that work.
+	//
+	// The bind is idempotent (an existing stamp is honored, a conflicting one
+	// refused), so the helper may still bind for its other callers.
+	if cond != nil || scope.Scope != nil {
+		if ctx, err = bindQueryIdentity(ctx, scope); err != nil {
+			return nil, 0, err
+		}
+	}
+
 	// The pushdown path serves a page straight from the store, so it can only
 	// run when BOTH narrowings are absent. A scope using `~=`, an ordered
 	// comparison or a disjunction has a Go-side remainder, and a store-side
