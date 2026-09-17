@@ -174,10 +174,9 @@ func (s *Store) CreateRelation(
 	return r, nil
 }
 
-// UpdateRelation overwrites a relation's data. Returns store.ErrNotFound if it
-// does not exist. Nil data.Properties clears the property set.
-// UpdateRelation updates the DEFAULT-tail edge of the triple.
-// UpdateRelationState is the general form.
+// UpdateRelation overwrites the DEFAULT-tail edge's data. Returns
+// store.ErrNotFound if it does not exist. Nil data.Properties clears the
+// property set. UpdateRelationState is the general form.
 func (s *Store) UpdateRelation(
 	ctx context.Context, from, relType, to string, data store.RelationData,
 ) (*entity.Relation, error) {

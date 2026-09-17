@@ -464,7 +464,18 @@ func (h *writeHandler) writeUpdateRelation(
 		}
 	}
 	// Soft condition: rebuild the post-merge state and write directly.
-	current := h.currentEdgeOnFace(ctx, from, tail, relType, to)
+	//
+	// FAILS CLOSED. mergeEdgeMeta reads a nil `current` as "no prior state",
+	// so swallowing a store error here would ERASE the edge's existing
+	// properties instead of merging into them — a silent partial write on a
+	// transient fault.
+	current, readErr := h.currentEdgeOnFace(ctx, from, tail, relType, to)
+	if readErr != nil && !errors.Is(readErr, store.ErrNotFound) {
+		return &relationError{
+			RelType: relType, Target: ref.ID, Op: "update",
+			Reason: "update_failed", Err: readErr,
+		}
+	}
 	finalProps, finalContent, _ := mergeEdgeMeta(current, ref)
 	data := store.RelationData{Properties: finalProps, Content: finalContent}
 	if _, sErr := h.store.UpdateRelationState(ctx, from, tail, relType, to, data); sErr != nil {
@@ -481,22 +492,25 @@ func (h *writeHandler) writeUpdateRelation(
 //
 // `store.GetRelation` reads the default tail only, so on a faced source it
 // would merge the caller's changes into a DIFFERENT edge's properties and
-// write that result back (BUG-64MU2Q). Returns nil when absent, which
-// mergeEdgeMeta treats as "no prior state" — the same thing the previous
-// ignored-error read did.
+// write that result back (BUG-64MU2Q).
+//
+// An absent edge is [store.ErrNotFound], NOT a nil relation with a nil
+// error: the caller merges against the returned value, and "no prior state"
+// has to be distinguishable from "the read failed" — conflating them is how
+// a transient fault becomes a silent property erasure.
 func (h *writeHandler) currentEdgeOnFace(
 	ctx context.Context, from string, tail entity.Face, relType, to string,
-) *entity.Relation {
+) (*entity.Relation, error) {
 	q := store.RelationQuery{From: from, FromFace: &tail, Type: relType, To: to}
 	for rel, err := range h.store.ListRelations(ctx, q) {
 		if err != nil {
-			return nil
+			return nil, err
 		}
 		if rel.From == from && rel.FromFace == tail && rel.Type == relType && rel.To == to {
-			return rel
+			return rel, nil
 		}
 	}
-	return nil
+	return nil, store.ErrNotFound
 }
 
 // isMissingPeerCondition reports whether the EntityManager error is a

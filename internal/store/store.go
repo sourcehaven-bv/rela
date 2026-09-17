@@ -565,14 +565,15 @@ type RelationData struct {
 	Properties map[string]any
 	Content    string
 
-	// FromFace sets the state-specific TAIL of the created edge
-	// (TKT-DOFYR1; zero = default state / identity edge). Consumed by
-	// CreateRelation only. UpdateRelation and DeleteRelation address the
-	// DEFAULT-tail edge of their triple in Step 1 — individual update/
-	// delete of a state-tailed edge has no consumer before the Step-3
-	// copy kernel and is added then, mirroring the no-per-state-entity-
-	// delete decision; state-tailed edges are removed today via the
-	// entity delete/rename cascades.
+	// FromFace sets the state-specific TAIL of the CREATED edge
+	// (TKT-DOFYR1; zero = default state / identity edge).
+	//
+	// Consumed by CreateRelation only, and deliberately still so: on the
+	// update path the tail is the ADDRESS, carried as UpdateRelationState's
+	// own parameter rather than in the payload. Carrying it in both would
+	// let them disagree, and a write whose address and payload disagree has
+	// no safe reading — so UpdateRelationState ignores this field
+	// (BUG-64MU2Q). Delete has no payload at all; see DeleteRelationState.
 	FromFace entity.Face
 }
 
