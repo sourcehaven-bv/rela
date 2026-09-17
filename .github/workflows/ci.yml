@@ -812,6 +812,23 @@ jobs:
           fi
           echo "OK: job-queue suite ran against PostgreSQL with no skips."
 
+      # The comment-backend conformance suite is DB-gated on the same terms.
+      # Note it needs NO build tag: pgcomments takes an injected handle and is
+      # an ordinary package, so `go test` compiles it in every build. Only the
+      # DSN decides whether it runs, which is exactly why it needs this step —
+      # the untagged CI job compiles it and skips every meaningful test.
+      - name: Run comment-backend conformance (race) against PostgreSQL
+        run: |
+          set -euo pipefail
+          go test -race -v ./internal/comments/... 2>&1 | tee comments-test.log
+          if grep -q -- '--- SKIP' comments-test.log; then
+            echo "::error::comment-backend tests SKIPPED in the Postgres Backend job."
+            echo "This suite is the file-vs-database parity gate; a skip is not a pass."
+            grep -- '--- SKIP' comments-test.log
+            exit 1
+          fi
+          echo "OK: comment backends ran against PostgreSQL with no skips."
+
       # The step above covers the STORE under -tags postgres. Nothing covered
       # the WIRING: `internal/appbuild` and `internal/cli` were compiled with
       # the tag but never run with it, so every build-agnostic composition-root
