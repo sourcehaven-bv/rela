@@ -9,6 +9,12 @@ import InlineCreateFormModal from './InlineCreateFormModal.vue'
 import { useInlineCreate } from '@/composables/useInlineCreate'
 import WorldBadge from '@/components/entity/WorldBadge.vue'
 import { useWorld } from '@/composables/useWorld'
+import {
+  missingIds,
+  mergeResolvedLinks,
+  indexKnownEntities,
+  resolveSelected,
+} from './outOfPageLinks'
 
 // Per-edge state emitted on the incoming-changed channel after
 // TKT-GFQK unified the save path. DynamicForm wraps this into a
@@ -93,6 +99,18 @@ const incomingOriginal = ref<string[]>([])
 const incomingLoadedEntries = ref<RelationEntry[]>([])
 const incomingLoaded = ref(false)
 
+// Entities that are linked but absent from `candidates` (BUG-LSCDJK).
+//
+// `candidates` is a CHOICE list — the first `per_page: 100` per target type —
+// so it answers "what could I pick", not "what did I pick". Past 100 entities
+// an existing link falls outside it and has no resolvable type, which makes
+// reshapeLegacyToModern return null and drops the whole relations payload.
+//
+// The edges carry the type (`RelationEntry.type`) — why the `cards` widget was
+// never affected. Resolving from that source feeds both the emitted type map
+// and `selectedEntities`.
+const resolvedLinks = ref<Entity[]>([])
+
 // Computed
 const relationType = computed(() => {
   if (!props.field.relation) return undefined
@@ -135,10 +153,14 @@ const isMulti = computed(() => {
 
 const effectiveValue = computed(() => (isIncoming.value ? incomingValue.value : props.value))
 
-const selectedEntities = computed(() => {
-  return candidates.value.filter((c) => effectiveValue.value.includes(c.id))
-})
+const knownById = computed(() => indexKnownEntities(resolvedLinks.value, candidates.value))
 
+const selectedEntities = computed(() => resolveSelected(effectiveValue.value, knownById.value))
+
+// Note the asymmetry this leaves (pre-existing, widened by BUG-LSCDJK): the
+// dropdown offers `candidates` only, so an out-of-page link the user can now
+// SEE and remove cannot be re-added from here. Making search hit the search
+// endpoint instead of the cached page is the real fix, and is its own change.
 const filteredCandidates = computed(() => {
   if (!searchQuery.value) {
     return candidates.value.filter((c) => !effectiveValue.value.includes(c.id))
@@ -173,6 +195,55 @@ async function loadCandidates() {
     loading.value = false
   }
 }
+
+// Resolve the type of every linked entity the candidate page omits
+// (BUG-LSCDJK); see `outOfPageLinks.ts` for why the candidate page cannot
+// answer this and the edges can.
+//
+// Best-effort by design: on failure we keep whatever the candidate page
+// resolved. Turning a transient lookup error into a blocked save would
+// reproduce the very symptom this fixes, and there is no wipe risk — an
+// unresolved id yields no type, so reshapeLegacyToModern refuses to emit a
+// malformed identifier rather than writing a wrong one.
+//
+// The failure is logged, not surfaced: the user sees a missing chip, then a
+// reload-toast at save time, with nothing connecting the two. A deliberate
+// deferral — a toast per transient lookup error is its own noise problem, and
+// the refusal path keeps the data correct meanwhile.
+async function resolveOutOfPageLinks() {
+  if (isIncoming.value || !props.field.relation || !props.entityId) return
+  // `effectiveValue`, not `props.value`: identical for an outgoing picker, but
+  // reading what `selectedEntities` renders keeps the two from drifting if the
+  // incoming guard above is ever relaxed.
+  const missing = missingIds(effectiveValue.value, knownById.value)
+  if (missing.length === 0) return
+  try {
+    const edges = await getEntityRelations(props.entityType, props.entityId, props.field.relation)
+    resolvedLinks.value = mergeResolvedLinks(resolvedLinks.value, edges, new Set(missing))
+  } catch (err) {
+    if (isCancelledFetch(err)) return
+    console.error('Failed to resolve linked entities outside the candidate page:', err)
+  }
+}
+
+// Re-resolve when the linked set changes after mount. The picker is keyed on
+// DynamicForm's `saveGeneration`, never incremented, so a post-mount reload (a
+// committed transition, an attachment change) reassigns `relations.value`
+// WITHOUT remounting this component — resolving only at mount would leave such
+// an id typeless. Free when nothing is missing: the resolve returns before any
+// request once every id is known.
+watch(
+  () => effectiveValue.value.join('\u0000'),
+  async () => {
+    await resolveOutOfPageLinks()
+    // Re-emit: the parent's map was built from what was known at the last
+    // emit, so a type resolved just now would otherwise never reach it,
+    // leaving the save to abort on an id this component has already resolved.
+    if (!isIncoming.value && props.value.length > 0) {
+      emit('update:types', buildOutgoingTypes(props.value))
+    }
+  }
+)
 
 async function loadIncomingValue() {
   if (!isIncoming.value || !props.field.relation) return
@@ -255,9 +326,11 @@ function emitIncomingDiff() {
 // PATCH builder can populate `type` per resource identifier without
 // guessing via `to[0]` or `id_prefix`.
 function buildOutgoingTypes(ids: string[]): Map<string, string> {
+  const known = knownById.value
   const out = new Map<string, string>()
-  for (const c of candidates.value) {
-    if (ids.includes(c.id)) out.set(c.id, c.type)
+  for (const id of ids) {
+    const entity = known.get(id)
+    if (entity) out.set(id, entity.type)
   }
   return out
 }
@@ -346,7 +419,11 @@ function handleEntityCreated(entity: Entity) {
 // Lifecycle
 onMounted(async () => {
   await loadCandidates()
-  await loadIncomingValue()
+  // Fill in the links the candidate page missed before emitting, so the first
+  // emit is already complete (BUG-LSCDJK). It needs only `loadCandidates` (to
+  // know what is missing), so it runs alongside the incoming load rather than
+  // adding a third serial hop to a form that may mount several pickers.
+  await Promise.all([loadIncomingValue(), resolveOutOfPageLinks()])
   // Surface types for any pre-existing outgoing selection so the
   // submit-time PATCH builder knows the type even when the user
   // didn't touch this widget.

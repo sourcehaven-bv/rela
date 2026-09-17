@@ -8,6 +8,24 @@ import { useEntitiesStore } from '@/stores/entities'
 import type { Entity } from '@/types'
 import type { FormFieldOrRelation } from '@/types/config'
 
+// BUG-LSCDJK: resolving a pre-existing link's type needs the relations
+// endpoint, which carries `type` per edge. Mocked so the picker can be
+// driven without the network stack.
+vi.mock('@/api', async () => {
+  const actual = await vi.importActual<Record<string, unknown>>('@/api')
+  return { ...actual, getEntityRelations: vi.fn() }
+})
+
+import { getEntityRelations } from '@/api'
+
+// Default for every describe in this file: the pre-existing blocks mount
+// pickers that must not call this, but a future `entityId` on one of them
+// would otherwise hit an undefined return and crash in `.filter`.
+beforeEach(() => {
+  vi.mocked(getEntityRelations).mockReset()
+  vi.mocked(getEntityRelations).mockResolvedValue([])
+})
+
 function seedSchema(targetType = 'ticket') {
   const schemaStore = useSchemaStore()
   schemaStore.entityTypes.set(targetType, {
@@ -539,5 +557,183 @@ describe('RelationPicker — face badge (BUG-3)', () => {
     expect(typeIdx).toBeGreaterThanOrEqual(0)
     expect(badgeIdx).toBeGreaterThan(labelIdx)
     expect(labelIdx).toBeGreaterThan(typeIdx)
+  })
+})
+
+// BUG-LSCDJK — the picker resolved a linked entity's TYPE only from
+// `candidates`, which is the first 100 entities per target type. A
+// pre-existing link to an entity outside that window therefore had no type,
+// `reshapeLegacyToModern` returned null, and DynamicForm discarded the whole
+// relations payload with "Some related entities have unknown types".
+//
+// The type is available: the relations endpoint carries `type` per edge —
+// that is exactly why the `cards` widget is immune. The picker must use it
+// for ids it cannot find in the candidate page, and must render those links
+// so the user can see and remove them.
+describe('RelationPicker — pre-existing value outside the candidate page (BUG-LSCDJK)', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.mocked(getEntityRelations).mockReset()
+    vi.mocked(getEntityRelations).mockResolvedValue([])
+  })
+
+  const IN_PAGE = entity('TKT-001', 'In the first page')
+  const OUT_OF_PAGE = entity('TKT-999', 'Beyond the first 100')
+
+  // The candidate page is capped at 100, so the picker's list read returns
+  // only `page`. The relations endpoint knows every actual edge, with types.
+  // `maxOutgoing > 1` makes the picker multi-select, so adding a peer keeps
+  // the existing selection instead of replacing it.
+  async function mountWithPaging(
+    value: string[],
+    page: Entity[],
+    edges: Entity[],
+    maxOutgoing = 1
+  ) {
+    // seedSchema registers `affects` with max_outgoing: 1; re-register it
+    // here so a caller can ask for the multi-select form of the same relation.
+    seedSchema()
+    useSchemaStore().relationTypes.set('affects', {
+      name: 'affects',
+      from: ['ticket'],
+      to: ['ticket'],
+      max_outgoing: maxOutgoing,
+    } as never)
+    seedCandidates(page)
+    vi.mocked(getEntityRelations).mockResolvedValue(
+      edges.map((e) => ({ id: e.id, type: e.type, direction: 'outgoing' as const }))
+    )
+    const field: FormFieldOrRelation = { relation: 'affects', label: 'Affects' }
+    const wrapper = mount(RelationPicker, {
+      props: { field, entityType: 'ticket', entityId: 'TKT-SELF', value },
+      attachTo: document.body,
+    })
+    await flushPromises()
+    return wrapper
+  }
+
+  it('emits a type for a pre-existing id that is not in the candidate page', async () => {
+    const wrapper = await mountWithPaging([OUT_OF_PAGE.id], [IN_PAGE], [OUT_OF_PAGE])
+
+    const events = wrapper.emitted('update:types')
+    expect(events).toBeTruthy()
+    const types = events![events!.length - 1][0] as Map<string, string>
+    // Without a type here, reshapeLegacyToModern returns null and the
+    // relation write is silently discarded.
+    expect(types.get('TKT-999')).toBe('ticket')
+    wrapper.unmount()
+  })
+
+  it('renders a pre-existing out-of-page link as a selected chip', async () => {
+    // Secondary symptom: `selectedEntities` filters `candidates`, so an
+    // out-of-page link was invisible — the user could not see or remove it.
+    //
+    // The chip shows the bare id: the relations endpoint carries `id` and
+    // `type` per edge but no title, and resolving one would cost a fetch per
+    // link. An id the user can see and remove beats a link they cannot.
+    const wrapper = await mountWithPaging([OUT_OF_PAGE.id], [IN_PAGE], [OUT_OF_PAGE])
+
+    const chips = wrapper.findAll('.selected-entity')
+    expect(chips.length).toBe(1)
+    expect(chips[0].text()).toContain('TKT-999')
+    wrapper.unmount()
+  })
+
+  it('renders one chip per link when stored data repeats an id', async () => {
+    // The old `candidates.filter(...)` could not repeat an entity; mapping
+    // over the value list can. Two chips for one edge would give the user two
+    // x buttons that remove the same link.
+    const wrapper = await mountWithPaging(
+      [OUT_OF_PAGE.id, OUT_OF_PAGE.id],
+      [IN_PAGE],
+      [OUT_OF_PAGE],
+      10
+    )
+
+    const chips = wrapper.findAll('.selected-entity')
+    expect(chips.length).toBe(1)
+    // Not just "one chip" — the surviving one must be the link itself, which
+    // a dedupe that dropped both would also satisfy.
+    expect(chips[0].text()).toContain('TKT-999')
+    wrapper.unmount()
+  })
+
+  it('keeps the out-of-page type after the user adds another peer', async () => {
+    // The emit on selection rebuilds the whole map. Rebuilding from
+    // `candidates` alone drops the out-of-page id's type again, so the very
+    // act of editing the relation breaks the save. Multi-select, so the
+    // out-of-page link is still selected after the addition.
+    const wrapper = await mountWithPaging([OUT_OF_PAGE.id], [IN_PAGE], [OUT_OF_PAGE], 10)
+
+    const search = wrapper.find('input[role="combobox"]')
+    await search.trigger('focus')
+    await flushPromises()
+    await wrapper.find('.dropdown-item').trigger('click')
+    await flushPromises()
+
+    const events = wrapper.emitted('update:types')!
+    const types = events[events.length - 1][0] as Map<string, string>
+    expect(types.get('TKT-001')).toBe('ticket')
+    expect(types.get('TKT-999')).toBe('ticket')
+    wrapper.unmount()
+  })
+
+  it('resolves an out-of-page id that arrives after mount', async () => {
+    // The picker is keyed on `saveGeneration`, which DynamicForm never
+    // increments, so a post-mount reload (a committed state-machine
+    // transition, an attachment change) reassigns `relations.value` WITHOUT
+    // remounting the picker. Resolving once in onMounted is therefore not
+    // enough: an id that arrives later would have no type, reproducing the
+    // save-abort this fix removes.
+    const LATE = entity('TKT-998', 'Also beyond the first 100')
+    const wrapper = await mountWithPaging([OUT_OF_PAGE.id], [IN_PAGE], [OUT_OF_PAGE, LATE], 10)
+
+    await wrapper.setProps({ value: [OUT_OF_PAGE.id, LATE.id] })
+    await flushPromises()
+
+    const events = wrapper.emitted('update:types')!
+    const types = events[events.length - 1][0] as Map<string, string>
+    expect(types.get('TKT-998')).toBe('ticket')
+    expect(types.get('TKT-999')).toBe('ticket')
+    wrapper.unmount()
+  })
+
+  it('keeps the remaining types when a resolved link is removed', async () => {
+    // removeEntity rebuilds the map through the same path as selectEntity.
+    const wrapper = await mountWithPaging(
+      [OUT_OF_PAGE.id, IN_PAGE.id],
+      [IN_PAGE],
+      [OUT_OF_PAGE],
+      10
+    )
+
+    // Remove the first chip (the out-of-page link).
+    await wrapper.findAll('.remove-btn')[0].trigger('click')
+    await flushPromises()
+
+    const events = wrapper.emitted('update:types')!
+    const types = events[events.length - 1][0] as Map<string, string>
+    expect(types.get('TKT-001')).toBe('ticket')
+    wrapper.unmount()
+  })
+
+  it('still emits types for in-page ids when the relations lookup fails', async () => {
+    // Resolution is best-effort: a failed lookup must not regress the ids
+    // the candidate page already resolved, or a transient error would turn
+    // into the very save-abort this fix removes.
+    seedSchema()
+    seedCandidates([IN_PAGE])
+    vi.mocked(getEntityRelations).mockRejectedValue(new Error('boom'))
+    const field: FormFieldOrRelation = { relation: 'affects', label: 'Affects' }
+    const wrapper = mount(RelationPicker, {
+      props: { field, entityType: 'ticket', entityId: 'TKT-SELF', value: [IN_PAGE.id] },
+      attachTo: document.body,
+    })
+    await flushPromises()
+
+    const events = wrapper.emitted('update:types')!
+    const types = events[events.length - 1][0] as Map<string, string>
+    expect(types.get('TKT-001')).toBe('ticket')
+    wrapper.unmount()
   })
 })
