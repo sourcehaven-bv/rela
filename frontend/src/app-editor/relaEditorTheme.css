@@ -209,11 +209,21 @@
   border-collapse: collapse;
   margin: 0 0 14px;
 }
+/* Same cell bounds as `.md-body` in styles/markdown-content.css, and for the
+   same reason: the preview also sets `overflow-wrap: anywhere`, which would
+   otherwise collapse every column's min-content width to one character. The
+   preview gets no `.md-table-scroll` wrapper (EasyMDE renders through its own
+   marked instance, which never sees rela's renderer), so a very wide table
+   still wraps here rather than scrolling — the squeezing is fixed, the scroll
+   affordance is not. */
 .EasyMDEContainer .editor-preview th,
 .EasyMDEContainer .editor-preview td {
   padding: 8px 12px;
   text-align: left;
   border: 1px solid var(--border-color);
+  min-width: 12ch;
+  max-width: 40ch;
+  overflow-wrap: break-word;
 }
 .EasyMDEContainer .editor-preview th {
   background: var(--hover-bg);

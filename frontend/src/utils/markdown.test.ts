@@ -13,6 +13,7 @@ import {
   renderMermaidDiagrams,
   renderPlantUMLDiagrams,
   encodePlantUMLHex,
+  wrapTablesForScroll,
 } from './markdown'
 
 describe('markdown', () => {
@@ -818,4 +819,130 @@ describe('markdown', () => {
       expect(container.querySelector('pre.mermaid')).toBeTruthy()
     })
   })
+
+  // TKT-8WH1KZ. jsdom has no layout engine, so these pin the STRUCTURE and the
+  // accessibility contract only; the actual column widths and scroll behaviour
+  // are verified in a real browser (see the ticket's verification notes).
+  describe('wrapTablesForScroll', () => {
+    const parse = (html: string): HTMLElement => {
+      const el = document.createElement('div')
+      el.innerHTML = html
+      return el
+    }
+
+    // Assert on the parsed DOM, not the serialized string: this file's header
+    // documents that HTML serialization differs between DOM implementations
+    // (BUG-SQSV6V), so substring checks would pin formatting rather than
+    // structure.
+    it('wraps a table in a focusable, labelled scroll region', () => {
+      const el = parse(
+        wrapTablesForScroll('<table><thead><tr><th>Kans</th><th>Niveau</th></tr></thead></table>')
+      )
+      const scroller = el.querySelector('.md-table-scroll')
+      expect(scroller).not.toBeNull()
+      expect(scroller?.querySelector(':scope > table')).not.toBeNull()
+      // Without tabindex the region is unreachable by keyboard, so its clipped
+      // content cannot be scrolled to at all (WCAG 2.1.1).
+      expect(scroller?.getAttribute('tabindex')).toBe('0')
+      expect(scroller?.getAttribute('role')).toBe('region')
+      expect(scroller?.getAttribute('aria-label')).toBe('Table: Kans, Niveau')
+    })
+
+    it('keeps the table element itself intact inside the wrapper', () => {
+      const el = document.createElement('div')
+      el.innerHTML = wrapTablesForScroll('<table><tbody><tr><td>x</td></tr></tbody></table>')
+      const table = el.querySelector('.md-table-scroll > table')
+      expect(table).not.toBeNull()
+      expect(table?.querySelector('td')?.textContent).toBe('x')
+    })
+
+    it('wraps every table, not just the first', () => {
+      const el = document.createElement('div')
+      el.innerHTML = wrapTablesForScroll('<table><tbody></tbody></table><p>x</p><table><tbody></tbody></table>')
+      expect(el.querySelectorAll('.md-table-scroll').length).toBe(2)
+    })
+
+    it('does not double-wrap an already-wrapped table', () => {
+      const once = wrapTablesForScroll('<table><tbody></tbody></table>')
+      const el = document.createElement('div')
+      el.innerHTML = wrapTablesForScroll(once)
+      expect(el.querySelectorAll('.md-table-scroll').length).toBe(1)
+    })
+
+    it('prefers a caption for the accessible name', () => {
+      const html = wrapTablesForScroll(
+        '<table><caption>Risk matrix</caption><thead><tr><th>A</th></tr></thead></table>'
+      )
+      expect(html).toContain('aria-label="Table: Risk matrix"')
+    })
+
+    it('truncates the label after three headers', () => {
+      const html = wrapTablesForScroll(
+        '<table><thead><tr><th>a</th><th>b</th><th>c</th><th>d</th></tr></thead></table>'
+      )
+      expect(html).toContain('aria-label="Table: a, b, c, \u2026"')
+    })
+
+    it('falls back to a generic label when there are no headers', () => {
+      const html = wrapTablesForScroll('<table><tbody><tr><td>x</td></tr></tbody></table>')
+      expect(html).toContain('aria-label="Table"')
+    })
+
+    it('leaves content without tables untouched', () => {
+      const html = '<p>no tables here</p>'
+      expect(wrapTablesForScroll(html)).toBe(html)
+      expect(wrapTablesForScroll('')).toBe('')
+    })
+
+    // The cheap `includes('<table')` guard short-circuits the common case, so a
+    // test using content with no `<table` substring at all would pass even if
+    // the transform were `return html`. This input DOES reach the parse, so it
+    // pins that a table-free document survives the round-trip unwrapped.
+    it('reaches the parser but adds no wrapper when the match is only text', () => {
+      const el = parse(wrapTablesForScroll('<p>write &lt;table&gt; to start one</p>'))
+      expect(el.querySelectorAll('.md-table-scroll').length).toBe(0)
+      expect(el.querySelector('p')?.textContent).toBe('write <table> to start one')
+    })
+
+    // Regression: `querySelectorAll('table')` is a descendant query, so a table
+    // inside a `<td>` matched too. That stacked a second role="region" tab stop
+    // over the same pixels, and the OUTER label was built from the INNER
+    // table's headers — a confident, wrong announcement.
+    it('wraps only the outermost table when tables are nested', () => {
+      const el = parse(
+        wrapTablesForScroll(
+          '<table><thead><tr><th>OUTER</th></tr></thead><tbody><tr><td>' +
+            '<table><thead><tr><th>INNER</th></tr></thead></table>' +
+            '</td></tr></tbody></table>'
+        )
+      )
+      expect(el.querySelectorAll('.md-table-scroll').length).toBe(1)
+      expect(el.querySelector('.md-table-scroll')?.getAttribute('aria-label')).toBe('Table: OUTER')
+      // The nested table is left intact, just unwrapped.
+      expect(el.querySelector('td > table')).not.toBeNull()
+    })
+
+    it('wraps a table inside a blockquote or list item', () => {
+      const bq = parse(
+        wrapTablesForScroll('<blockquote><table><tbody><tr><td>q</td></tr></tbody></table></blockquote>')
+      )
+      expect(bq.querySelectorAll('blockquote > .md-table-scroll > table').length).toBe(1)
+
+      const li = parse(
+        wrapTablesForScroll('<ul><li><table><tbody><tr><td>l</td></tr></tbody></table></li></ul>')
+      )
+      expect(li.querySelectorAll('li > .md-table-scroll > table').length).toBe(1)
+    })
+
+    it('collapses whitespace in the accessible name', () => {
+      const el = parse(wrapTablesForScroll('<table><thead><tr><th>a\n   b</th></tr></thead></table>'))
+      expect(el.querySelector('.md-table-scroll')?.getAttribute('aria-label')).toBe('Table: a b')
+    })
+
+    it('is applied by renderMarkdown, so rendered tables arrive wrapped', () => {
+      const result = renderMarkdown('| Kans |\n| --- |\n| 1 |')
+      expect(result).toContain('md-table-scroll')
+    })
+  })
+
 })
