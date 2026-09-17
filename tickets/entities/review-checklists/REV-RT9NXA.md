@@ -188,4 +188,7 @@ to fail, then restored. A test that cannot fail is not evidence.
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
+- [x] ~~Run `/pr` command to create PR and monitor CI~~ (N/A here: `/pr`
+gates on the ticket already being `done` and validating clean, so this item
+can only be satisfied by a PR that does not exist yet — see TKT-UFV01M and
+the note below. The PR follows immediately after this checklist closes.)
