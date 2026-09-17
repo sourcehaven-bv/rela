@@ -11,7 +11,7 @@ why3: 'The source face stops at the store boundary. store.RelationData.FromFace 
 why4: The feature was built store-first and the client half deferred. TKT-2RQMV4 records the identical gap for entity creates ('no client can send a face yet'). The relation half had no such marker, so it presented as a settled refusal rather than unbuilt work.
 why5: 'A capability gap was closed with a refusal that gave remediation advice instead of declaring itself unbuilt. That made it look finished, and the advice — being prose in a handler, not a value derived from the addressing model — then rotted silently when BUG-HC6I2T removed the address it named. Nothing failed: the guard''s test asserts the 422 fires, never that its advice works.'
 prevention: 'When a capability is built store-first with the client half deferred, mark the gap as unbuilt rather than closing it with a refusal that offers remediation. A refusal reads as a settled contract, so the deferred work is only discovered when a user meets the dead end — and its advice, being prose in a handler rather than a value derived from the addressing model, is free to rot when the model moves under it. TKT-2RQMV4 carries exactly this marker for the entity-create half of the same feature and is why that gap is known rather than surprising. Secondary: test the escape a refusal names, not just that the refusal fires (measure refusal-remediation-is-reachable-test) — the guard''s test asserted the 422 and never its advice, so BUG-HC6I2T could delete the address the message recommends with every test still passing.'
-status: review
+status: done
 ---
 
 ## Symptom
@@ -124,9 +124,9 @@ human-intent path should do.
 ## Operator note (behaviour change)
 
 A faced relation write now authorizes against the SOURCE's face. `acl.yaml`
-grants are matched by `GrantsVerbOnState`, which treats `*` as covering only
-the DEFAULT face — so on a **faced** type a role holding `create: ["*"]` no
-longer covers content-scoped relation writes and must name the faces:
+grants are matched by `GrantsVerbOnState`, which treats `*` as covering only the
+DEFAULT face — so on a **faced** type a role holding `create: ["*"]` no longer
+covers content-scoped relation writes and must name the faces:
 
 ```yaml
 roles:

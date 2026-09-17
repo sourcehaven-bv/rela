@@ -2,7 +2,7 @@
 id: REV-5XAV1O
 type: review-checklist
 title: 'Review: Relation writes cannot name the source face'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
@@ -15,7 +15,8 @@ packages; pgstore conformance run against a local database since
 - [x] Lint clean (`golangci-lint` on every touched package, `just arch-lint`,
 `just plimsoll`)
 - [x] Comment lint gate clean (`just comment-lint`)
-- [ ] Coverage maintained (`just coverage-check`) — running
+- [x] Coverage maintained (`just coverage-check`): package floor and total
+thresholds both PASS, total 79.6%
 
 **Comment findings.** Two introduced by this diff, both fixed rather than
 suppressed: a duplicated `UpdateRelation` doc paragraph in pgstore, and the
@@ -114,4 +115,7 @@ type that is a behaviour change, not a no-op.
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
+- [x] ~~Run `/pr` command to create PR and monitor CI~~ (N/A here: `/pr` gates
+on this ticket already being `done` and validating clean, so the PR
+necessarily post-dates this checklist — see the note below and TKT-UFV01M.
+The branch is `fix/BUG-64MU2Q-faced-relation-writes`.)
