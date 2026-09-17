@@ -121,6 +121,23 @@ together.
 (`internal/entitymanager/copy_apply.go:64`) and is the reference for what the
 human-intent path should do.
 
+## Operator note (behaviour change)
+
+A faced relation write now authorizes against the SOURCE's face. `acl.yaml`
+grants are matched by `GrantsVerbOnState`, which treats `*` as covering only
+the DEFAULT face — so on a **faced** type a role holding `create: ["*"]` no
+longer covers content-scoped relation writes and must name the faces:
+
+```yaml
+roles:
+  editor:
+    create: ["*", "policy@draft", "policy@published"]
+```
+
+This is a tightening, and deliberate: without it a principal granted
+`policy@draft` could write the published face's edges. Faceless types are
+unaffected — they always pass the zero face, which `*` covers.
+
 ## Regression test
 
 Measure `refusal-remediation-is-reachable-test`: the existing test asserts only
