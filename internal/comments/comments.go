@@ -57,7 +57,7 @@ import (
 // layer turns [ErrNotFound] into a 404 and the validation errors into 400s.
 var (
 	// ErrNotFound reports that no comment with the given ID exists on the
-	// target. Returned by Update and Delete.
+	// target. Returned by Get, Update and Delete.
 	ErrNotFound = errors.New("comments: not found")
 
 	// ErrEmptyBody reports a comment whose body is empty or whitespace-only.
@@ -279,11 +279,27 @@ func (t Target) Key() string {
 // server-minted ID, and that concurrent Adds to one target both survive.
 //
 // Nil: no method returns a nil error with a nil result; List returns an empty
-// slice rather than nil when a target has no comments.
+// slice rather than nil when a target has no comments, and Get reports a
+// missing comment as [ErrNotFound] rather than a zero Comment.
 type Store interface {
 	// List returns the target's comments, oldest first, ties broken by ID.
 	// A target with no comments yields an empty slice, not an error.
 	List(ctx context.Context, target Target) ([]Comment, error)
+
+	// Get returns one comment, or [ErrNotFound] if the target holds no
+	// comment with that ID.
+	//
+	// Scoped to the target, so an ID is only ever resolved within one face:
+	// a comment stored under `TKT-1@draft` must not be reachable through
+	// `TKT-1`. That is the same scoping List and Delete use, and it is what
+	// stops an authorization check reading a record from a face the request
+	// never named.
+	//
+	// Separate from List because the database backends serve this from
+	// `PRIMARY KEY (target_key, id)` as a single-row read. Authorizing an
+	// edit needs one comment's author; going through List would fetch up to
+	// [MaxPerTarget] rows with their bodies to find it.
+	Get(ctx context.Context, target Target, id string) (Comment, error)
 
 	// Add appends c to the target's thread. The caller has already set ID,
 	// Author and CreatedAt; implementations persist them as given rather

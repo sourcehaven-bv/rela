@@ -117,6 +117,28 @@ func (s *Store) List(ctx context.Context, target comments.Target) ([]comments.Co
 	return out, nil
 }
 
+// Get returns one comment as a single-row read.
+//
+// Served by the `PRIMARY KEY (target_key, id)` index, so this is an index
+// lookup rather than the thread scan List performs — which is the whole point
+// of the method: authorizing an edit needs one author, not every body in the
+// thread.
+func (s *Store) Get(ctx context.Context, target comments.Target, id string) (comments.Comment, error) {
+	row := s.db.QueryRow(ctx, `
+		SELECT `+columns+`
+		FROM comments
+		WHERE target_key = $1 AND id = $2`, target.Key(), id)
+
+	c, err := scanComment(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return comments.Comment{}, comments.ErrNotFound
+	}
+	if err != nil {
+		return comments.Comment{}, fmt.Errorf("pgcomments: get %q from %q: %w", id, target.Key(), err)
+	}
+	return c, nil
+}
+
 // Add inserts one comment.
 //
 // ID, Author and CreatedAt arrive already set by the service and are persisted
