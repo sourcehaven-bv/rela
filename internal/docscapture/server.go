@@ -11,6 +11,7 @@ package docscapture
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -415,7 +416,10 @@ func resolveRole(byRole map[string]string, defaultUser, role string) (principal.
 	return principal.Principal{User: user, Tool: principal.ToolDataEntry}, known
 }
 
-// knownRoles lists the roles that have an assigned user, for a failure message.
+// errUnknownRole marks an `as=` that names no role in acl.yaml. It is a
+// property of the document, so a capture must not retry it.
+var errUnknownRole = errors.New("unknown role")
+
 // requireKnownRole refuses an `as=` naming a role no principal in acl.yaml
 // holds. The assignee resolves an unknown role to a privileged default user,
 // so a typo'd role would run the island as the editor and its assertion would
@@ -430,11 +434,12 @@ func (p *project) requireKnownRole(as string) error {
 		return nil
 	}
 	return fmt.Errorf(
-		"as=%q: no principal is assigned that role in acl.yaml, and an unknown role "+
+		"%w: as=%q: no principal is assigned that role in acl.yaml, and an unknown role "+
 			"falls back to a privileged default — so this request would run as someone "+
-			"else. Known roles: %s", as, strings.Join(knownRoles(p.byRole), ", "))
+			"else. Known roles: %s", errUnknownRole, as, strings.Join(knownRoles(p.byRole), ", "))
 }
 
+// knownRoles lists the roles that have an assigned user, for a failure message.
 func knownRoles(byRole map[string]string) []string {
 	out := make([]string, 0, len(byRole))
 	for r := range byRole {
