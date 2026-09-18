@@ -1,0 +1,8 @@
+---
+id: RR-Z7V8PI
+type: review-response
+title: AC1/AC3/AC4 pass with the defect live
+finding: 'Design review C4. Three acceptance criteria are untrippable as written, the same failure mode TKT-M0WMEE hit. AC3 asserts declared order via /api/v1/entities?sort=status but never pins WHICH path serves it; if step 1 (Go delegation) lands and step 2 (SQL CASE) silently declines, the test runs the Go path on memstore, sees declared order and passes while every Postgres deployment still serves alphabetical. AC3 must assert on both paths explicitly, as AC2 does. AC1 ("the two sorters agree") compares the v1 list path against the search/dashboard path, but after delegation BOTH are filter.SortMulti - it asserts a function equals itself. Its stated mutation still fails so it is not worthless, but it tests the delegation edit, not the ordering contract, and is blind to C1/C2/C3 because both sides share the defect. AC4''s mutation is also insufficient: listIndexName takes a store.DerivedObjectSpec whose OrderBy is []string of property names, so hand-constructing two specs with different enum values and asserting different names passes WITHOUT the queryplan half being wired. The test must start from two metamodels through the real derivation. Related: StaticIndexSpecs'' dedup key (queryplan.go:165-166) is built from Kind+Type+Properties+OrderBy; if enum values are not added to it, two lists sorting the same property under different value orders collide in byKey and one spec is silently DROPPED - a distinct hazard from the documented stale-index one, and worse because it is silent from birth rather than triggered by a schema edit.'
+severity: critical
+status: open
+---

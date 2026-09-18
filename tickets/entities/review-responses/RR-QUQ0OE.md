@@ -1,0 +1,8 @@
+---
+id: RR-QUQ0OE
+type: review-response
+title: List-valued and undeclared properties silently stop sorting
+finding: 'Design review S7. (1) List-valued properties: applyV1Sorting does fmt.Sprintf("%v", v) so []any{"b"} becomes "[b]" and sorts. filter.compareStrings type-asserts valI.(string), fails, and returns false for EVERY pair (sort.go:122-128) - meaning no row is less than any other, so the sort silently does nothing. StringShaped declines lists so pushdown is not involved, but the behaviour changes from sorted-by-bracket-string to not-sorted-at-all with no error and no log. listpushdown.go''s own precedent (and the BUG-AMK38R note in applyV1Filters) is to warn rather than answer wrong silently. (2) Undeclared properties: probed - SortMulti still sorts them via the default branch of comparePropValues -> compareStrings -> natsort, giving [B(apple) A(Zebra) C()]. So the plan''s negative test "sort= naming an unknown property: pushdown declines, Go path leaves order untouched. Current behaviour; must not change" is wrong on both halves: today applyV1Sorting DOES sort unknown properties byte-wise (it reads Properties[...] directly, ignoring the metamodel), and after delegation it sorts them via natsort. A test written to that AC will fail and the implementer will not know which side is wrong. (3) A non-string scalar (integer 42) in a string-typed or undeclared column: compareStrings returns false so it neither sorts nor errors, landing wherever the stable sort leaves it, where applyV1Sorting would have formatted it "42" and sorted it among the strings.'
+severity: significant
+status: open
+---
