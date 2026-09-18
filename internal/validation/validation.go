@@ -587,14 +587,31 @@ func (s *Service) checkRelationConstraint(
 		return "", false, fmt.Errorf("invalid where filter: %w", err)
 	}
 
-	related, err := s.graph.RelatedEntities(ctx, e.ID, relType, DirectionOutgoing)
+	dir := DirectionOutgoing
+	if c.IsIncoming() {
+		dir = DirectionIncoming
+	}
+	related, err := s.graph.RelatedEntities(ctx, e.ID, relType, dir)
 	if err != nil {
 		return "", false, fmt.Errorf("reading %q relations: %w", relType, err)
 	}
 
 	count := 0
 	for _, rel := range related {
-		if len(whereFilters) == 0 {
+		// A type filter is answered from the edge's own far type, so it is
+		// applied before anything reads properties. An UNRESOLVED edge has
+		// no type to compare: it cannot be shown to be excluded, so it
+		// falls through to the fail-closed decision below rather than being
+		// dropped here — dropping it would be the undercount that a `max:`
+		// bound silently reads as success.
+		if c.TargetType != "" && rel.Resolved && !s.sameEntityType(rel.Type, c.TargetType) {
+			continue
+		}
+		// With no property filters there is nothing further to evaluate —
+		// unless the edge is unresolved AND a type filter was asked for, in
+		// which case whether it belongs in the count is genuinely unknown
+		// and the bound decides (below).
+		if len(whereFilters) == 0 && (rel.Resolved || c.TargetType == "") {
 			count++
 			continue
 		}
@@ -640,7 +657,7 @@ func (s *Service) checkRelationConstraint(
 		}
 	}
 
-	constraintDesc := describeRelationConstraint(relType, c.Where)
+	constraintDesc := describeRelationConstraint(relType, c)
 	if c.Min != nil && count < *c.Min {
 		return fmt.Sprintf("requires at least %d %s relation(s), has %d",
 			*c.Min, constraintDesc, count), false, nil
@@ -652,12 +669,36 @@ func (s *Service) checkRelationConstraint(
 	return "", true, nil
 }
 
+// sameEntityType reports whether two type names denote the same declared
+// type, resolving aliases on both sides.
+//
+// A `target_type` may legitimately be written as an alias, and the stored
+// entity carries whichever spelling it was created with. Comparing the raw
+// strings would make an aliased constraint match nothing — and a constraint
+// that matches nothing passes forever.
+func (s *Service) sameEntityType(got, want string) bool {
+	if got == want {
+		return true
+	}
+	return s.deps.Meta.ResolveAlias(got) == s.deps.Meta.ResolveAlias(want)
+}
+
 // describeRelationConstraint renders a relation type plus its target
 // filters into a compact human string, e.g. `has-review (status=done)`.
-func describeRelationConstraint(relType string, where []string) string {
+func describeRelationConstraint(relType string, c metamodel.RelationConstraint) string {
 	desc := "'" + relType + "'"
-	if len(where) > 0 {
-		desc += " (" + strings.Join(where, ", ") + ")"
+	// Direction is named only when it is not the default, so the message for
+	// every rule written before this key existed is unchanged.
+	if c.IsIncoming() {
+		desc += " incoming"
+	}
+	var parts []string
+	if c.TargetType != "" {
+		parts = append(parts, "type="+c.TargetType)
+	}
+	parts = append(parts, c.Where...)
+	if len(parts) > 0 {
+		desc += " (" + strings.Join(parts, ", ") + ")"
 	}
 	return desc
 }

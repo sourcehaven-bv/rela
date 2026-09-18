@@ -1981,16 +1981,76 @@ validations:
 
 Each entry under `relations` is keyed by a relation type and supports:
 
-| Field   | Meaning                                                              |
-| ------- | ------------------------------------------------------------------- |
-| `where` | Filters on the **target** entity's properties (ANDed). Omit to count every target of the type. Uses the same operators as `when`/`then`. |
-| `min`   | Require at least this many matching relations.                      |
-| `max`   | Require at most this many matching relations.                       |
+| Field         | Meaning                                                              |
+| ------------- | -------------------------------------------------------------------- |
+| `where`       | Filters on the **far** entity's properties (ANDed). Omit to count every one. Uses the same operators as `when`/`then`. |
+| `direction`   | `outgoing` (default) counts edges the entity is the SOURCE of; `incoming` counts edges it is the TARGET of. |
+| `target_type` | Restricts the count to far entities of this type. Omit to count every type the relation reaches. |
+| `min`         | Require at least this many matching relations.                      |
+| `max`         | Require at most this many matching relations.                       |
 
-At least one of `min`/`max` must be set. The check counts outgoing relations of
-the keyed type whose target entity satisfies every `where` condition, then
-reports a violation when the count falls outside `[min, max]`. It runs only for
-entities that match `when`.
+At least one of `min`/`max` must be set. The check counts relations of the keyed
+type whose far entity satisfies every `where` condition, then reports a
+violation when the count falls outside `[min, max]`. It runs only for entities
+that match `when`.
+
+Counting is per **edge**, not per distinct far entity: two edges to the same
+entity count two.
+
+### Direction and target type
+
+A constraint counts outgoing edges unless you say otherwise, so every rule
+written before these keys existed keeps its meaning.
+
+`direction: incoming` is for a claim about edges that point AT the entity. If
+tasks link to the procedure they cover, then from the procedure there is
+nothing outgoing to count:
+
+```yaml
+- name: procedure-heeft-open-taak
+  description: "An adopted procedure needs an open task"
+  entity_type: procedure
+  faces: [vastgesteld]
+  relations:
+    gaat_over:
+      direction: incoming
+      target_type: taak
+      where:
+        - "status!=gereed"
+      min: 1
+  severity: error
+```
+
+`target_type` matters when a relation reaches more than one type. Here
+`gaat_over` accepts both a `taak` and a `terugkerend` (a recurring schedule),
+so the count alone cannot say WHICH was found — "has a task" and "has a
+schedule" are different claims over one relation. A `where` clause cannot
+express it either: those filter an entity's *properties*, and a type is not a
+property.
+
+Setting `target_type` also lets rela check `where` against that type when the
+schema loads, rather than leaving a mistyped property to misbehave at check
+time.
+
+Both keys are validated at load. These are all load errors, because each one
+would otherwise produce a rule that counts nothing and therefore passes
+forever:
+
+- a `direction` that is not `outgoing` or `incoming`
+- `direction` on a `symmetric: true` relation — a symmetric edge is stored
+  once with no preferred direction, so honouring direction would give the two
+  endpoints different counts for the same relationship
+- a `target_type` that is not a declared entity type
+- a `target_type` the relation cannot reach on the side `direction` selects
+- a `where` property that **none** of the reachable far types declares (a
+  property only some of them declare is fine — that is the normal case for a
+  relation spanning several types)
+
+> **Incoming counts are entity-level.** An edge records the face of its tail
+> but has no head face, so an incoming edge cannot be attributed to one face of
+> the entity it arrives at. Since each face is validated as its own row, an
+> incoming constraint on a faced type reports one violation per face for a
+> single underlying defect. Narrow the rule with `faces:` to avoid the noise.
 
 > Unknown keys inside a validation rule are rejected at load time, so a
 > misspelled or mis-nested block (e.g. `relationz:`) fails loudly rather than
