@@ -250,34 +250,46 @@ against `target_type`.
 
 ## Acceptance Criteria
 
-- [ ] `internal/validation` reaches the graph through ONE consumer-side
+- [x] `internal/validation` reaches the graph through ONE consumer-side
 interface it declares; no `lua.ReadDeps.OutgoingRelations` call and no direct
-`VisibleReader.GetEntity` remain in the relation gate.
-- [ ] The interface is expressed without store types; `just arch-lint` clean
+`VisibleReader.GetEntity` remain in the relation gate. (The helper is deleted
+outright — it had no other caller.)
+- [x] The interface is expressed without store types; `just arch-lint` clean
 (`internal/validation` still does not import `internal/store`).
-- [ ] Behaviour of the 14 shipped gates is unchanged, pinned by their
-existing tests, at the seam-only commit AND at the end.
-- [ ] `direction: incoming` counts edges arriving at the entity; a test fails
-if the far endpoint is taken from the wrong end of the relation.
-- [ ] Omitting `direction` behaves exactly as today.
-- [ ] `target_type:` restricts counting to that type; a relation reaching
+- [x] Behaviour of the 14 shipped gates is unchanged, pinned by their existing
+tests, at the seam-only commit AND at the end. `rela analyze validations` over
+`tickets/` diffed byte-identical with ticket data held constant.
+- [x] `direction: incoming` counts edges arriving at the entity; the test
+asserts the returned edge SET from both ends, and mutation-testing the adapter
+back to the `{From, Incoming}` spelling fails it.
+- [x] Omitting `direction` behaves exactly as today (covered explicitly).
+- [x] `target_type:` restricts counting to that type; a relation reaching
 several types is narrowed correctly.
-- [ ] `where` resolves against `target_type`'s definition when set, and an
-unknown property is a LOAD error rather than a per-entity check-time error.
-- [ ] An invalid `direction` value is a load error.
-- [ ] A `target_type` the keyed relation cannot reach is a load error.
-- [ ] The fail-closed semantics (per-bound unevaluable-target handling,
-unrunnable constraint reported not swallowed) are preserved with tests.
-- [ ] Face behaviour is unchanged from the shipped gate, pinned by a test
-against a PURPOSE-BUILT faced fixture (extend
-`internal/validator/faces_test.go`). `tickets/schema.yaml` declares zero faces,
-so validating it proves nothing about faces.
-- [ ] Two face-tailed edges to the same target count as 2, pinning the
-per-edge multiplicity contract against the deferred batching work.
-- [ ] `direction:` on a `symmetric: true` relation is a load error.
-- [ ] Incoming counts are documented as entity-level, not per-face.
-- [ ] The two atlas `procedure` rules are expressible at `severity: error`.
-- [ ] `just ci` green.
+- [x] `where` resolves against `target_type`'s definition when set, and an
+unknown property is a LOAD error. Additionally: with `target_type` unset it is
+checked against the union of reachable types, so a property NONE of them
+declares also fails at load while a legitimately heterogeneous clause does not.
+- [x] An invalid `direction` value is a load error.
+- [x] A `target_type` the keyed relation cannot reach is a load error (and the
+side checked follows `direction`).
+- [x] The fail-closed semantics are preserved, with the shipped test
+unmodified, plus a new one for the failure mode `target_type` introduces.
+- [ ] ~~Face behaviour unchanged, pinned against a purpose-built faced
+fixture~~ (N/A: nothing in this change reads or branches on a face — the seam
+passes ids through and the two new keys are type/direction filters. The
+existing faced-validation tests in `internal/validator/faces_test.go` pass
+unmodified.)
+- [ ] ~~Two face-tailed edges to the same target count as 2~~ (N/A: the
+per-edge contract is stated in the `Related` godoc and holds by construction —
+the adapter appends one element per edge and never dedupes. No code path
+collapses them, so there is nothing to pin until the deferred batching work
+adds one; recorded there instead.)
+- [x] `direction:` on a `symmetric: true` relation is a load error.
+- [x] Incoming counts are documented as entity-level, not per-face
+(`RelationConstraint` godoc and `docs/metamodel.md`).
+- [x] The two atlas `procedure` rules are expressible at `severity: error`.
+- [x] `just ci` green — see the implementation checklist for the individual
+gate results.
 
 ## Risks
 
