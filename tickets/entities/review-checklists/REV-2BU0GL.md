@@ -41,6 +41,22 @@ That bug is the reason `TestCapture_RetriesAgainstRealBrowser` exists. The
 mocked-seam tests passed against the broken version, because a mock never
 exercises the relaunch — only a real browser does.
 
+The first version of this fix passed every local test and still failed CI with
+the identical error. The retry was unreachable: `internal/docs` wired the Lua
+runtime with a hardcoded 30s `buildTimeout` as the per-island cap, so gopher-lua
+aborted a screenshot island at 30s regardless of the 5-minute
+`screenshotBuildTimeout` the same function had chosen three lines earlier. The
+island died before `Capture` could return an error worth retrying.
+
+That is the deeper defect, and the capture-layer retry does nothing without it.
+`rlua.WithTimeout` now takes the build's tier deadline. The build-wide context
+still caps the total, so this does not let N islands escape the ceiling
+(`TestScreenshotIslands_TotalStillBounded`).
+
+Reverting that one argument reproduces the exact CI failure,
+`lua: <string>:2: context deadline exceeded`, so the regression test pins the
+real bug rather than a proxy for it.
+
 The retry classifier is a DENY list, not an allow list. Transient failures are
 open-ended (a dial timeout, a deadline mid-navigation, a tab killed under
 memory pressure, a dropped websocket), so enumerating them would leave the next
@@ -67,6 +83,8 @@ all, which is a launch failure rather than a slow page.
 | 4 | a broken figure still fails fast | PASS | `TestCapture_UnrenderableEntity_FailsLoud` passes in 2.33s, well inside its `perCaptureTimeout - 1s` budget |
 | 5 | the real pipeline still works | PASS | built `worlds-manual.md` against postgres: 16/16 screenshots, all executable assertions pass |
 | 6 | a cancelled build stops promptly | PASS | `TestCapture_CancelledContextStopsRetrying` |
+| 7 | a screenshot island gets the screenshot ceiling | PASS | `TestScreenshotIsland_GetsTheScreenshotCeiling`; reverting the argument reproduces the CI error |
+| 8 | the ceiling still bounds the total | PASS | `TestScreenshotIslands_TotalStillBounded` stops at 2s, not 15s |
 
 ## Documentation (enhancements only)
 
@@ -88,5 +106,12 @@ trap, since the wrong version looks more correct than the right one.
 Worth recording: this flake hit unrelated PRs and dequeued one from the merge
 queue, so it read as "CI is flaky" rather than as a defect anyone owned. Both
 observed failures landed on the FIRST of sixteen screenshots, which is what
-identified cold start as the cause rather than any particular figure. Counting
-which screenshot failed cost one grep and was the whole diagnosis.
+identified cold start as the trigger.
+
+The more useful lesson is the second one. I shipped a capture-layer retry that
+was correct in itself, verified it against the real manual locally, and it still
+failed CI identically — because the binding constraint was one layer up, in a
+package I had not read. The local build passed only because it never needed the
+retry. What found it was the CI timing: the job failed 34 seconds in, and three
+30-second attempts cannot fit in 34 seconds, so the retry provably never ran.
+Reading the elapsed time before re-reading the code was the whole diagnosis.
