@@ -48,6 +48,7 @@ Nine findings, no critical. All addressed.
 | RR-P4FYPI | minor | CSP-violation e2e test filtered by a hardcoded seed entity ID |
 | RR-E0JRND | nit | e2e files reformatted wholesale by a stray Prettier run |
 | RR-FHJZC3 | nit | Stale reference to a deleted module in a comment |
+| RR-FWNEJ2 | minor | Rebase onto develop validated the extraction by accident |
 
 All three significant findings were in the same thirty lines —
 `_promptForRef`/`_withdrawPromptedRef`, which existed only to fix a nit
@@ -57,6 +58,14 @@ it was written quickly against a nit rather than designed.
 
 RR-LF36QW's resolution was rewritten to say it is superseded, since it recorded
 as "addressed" a fix that reintroduced the same defect by another route.
+
+RR-FWNEJ2 came from the rebase rather than from a reviewer, and is the best
+evidence the ticket has. While this was in flight, someone added a task-list
+command to the shared catalogue on `develop`. It appeared in the sandboxed app
+editor with no code change at all — the toolbar builds from the catalogue, the
+glyph test demands one per command, and the availability probe already covered
+the new probe kind. Under the fork this replaces, the app editor would simply
+have lacked the button and nothing would have reported it.
 
 One disputed claim was resolved by measurement rather than argument. The review
 disproved a comment of mine with a probe showing the document fully reverts
