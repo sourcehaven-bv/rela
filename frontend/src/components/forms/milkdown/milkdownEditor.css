@@ -325,12 +325,14 @@
   display: none;
 }
 
-/* Same contract as the mention anchor: the provider writes `left`/`top` onto
-   THIS element, and `data-show` is how it hides. The hide rule has to exist
-   here — the tooltip plugin only toggles the attribute, it ships no CSS — and
-   without it the panel renders in normal flow under the editor. */
+/* `fixed`, unlike the mention anchor above, and deliberately so.
+   `linkPanelPosition.ts` anchors this to the LINK's rect, which
+   `posToDOMRect` gives in viewport coordinates. The shell is
+   `position: relative`, so an absolute panel would resolve those against the
+   shell's box and sit further down the page the further the form is scrolled.
+   `fixed` puts the written coordinates in the space they were computed in. */
 .milkdown-editor-shell .link-panel-anchor {
-  position: absolute;
+  position: fixed;
   top: 0;
   left: 0;
   z-index: 10000;

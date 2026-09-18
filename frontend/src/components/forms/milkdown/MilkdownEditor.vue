@@ -34,7 +34,7 @@ import { cursor } from '@milkdown/kit/plugin/cursor'
 import { trailing } from '@milkdown/kit/plugin/trailing'
 import { listener, listenerCtx } from '@milkdown/kit/plugin/listener'
 import { SlashProvider, slashFactory } from '@milkdown/kit/plugin/slash'
-import { TooltipProvider } from '@milkdown/kit/plugin/tooltip'
+import { positionLinkPanel } from './linkPanelPosition'
 import { replaceAll, getMarkdown, callCommand, $prose } from '@milkdown/kit/utils'
 import { editorViewCtx } from '@milkdown/kit/core'
 import type { EditorView } from '@milkdown/kit/prose/view'
@@ -269,7 +269,8 @@ const COMMONMARK_WITHOUT_EMPTY_LINE_PLUGIN = commonmark.filter(
 const dirtyTrackerKey = new PluginKey('rela-dirty-tracker')
 
 let slashProvider: SlashProvider | null = null
-let linkTooltipProvider: TooltipProvider | null = null
+/** Tears down the link panel's floating-ui autoUpdate subscription. */
+let cleanupLinkPanel: (() => void) | null = null
 let blockProvider: BlockProvider | null = null
 
 /**
@@ -340,10 +341,26 @@ function refreshDerivedState(state: EditorState): void {
   // document dirty on a mere cursor move and put a diff in git for an entity
   // somebody only opened.
   linkUI.refresh(state)
-  // Reposition after the refresh, so `shouldShow` sees the link this state
-  // implies rather than the previous one.
+  repositionLinkPanel()
+}
+
+/**
+ * Re-anchors the link panel to the link it is describing.
+ *
+ * Runs after `linkUI.refresh`, so it positions against the link THIS state
+ * implies rather than the previous one — the lag that made the panel appear
+ * at the last place the cursor was.
+ */
+function repositionLinkPanel(): void {
+  cleanupLinkPanel?.()
+  cleanupLinkPanel = null
+
   const view = currentView()
-  if (view) linkTooltipProvider?.update(view)
+  const panel = linkPanelRoot.value
+  if (!view || !panel) return
+
+  const link = linkUI.panelLink.value
+  cleanupLinkPanel = positionLinkPanel(view, panel, link ? { from: link.from, to: link.to } : null)
 }
 
 function currentView(): EditorView | null {
@@ -661,19 +678,11 @@ onMounted(async () => {
   // from state — whether the caret is in a link, minus any Escape dismissal.
   // It never dispatches, so moving the cursor into a link cannot mark the
   // document dirty.
-  if (linkPanelRoot.value) {
-    linkTooltipProvider = new TooltipProvider({
-      content: linkPanelRoot.value,
-      debounce: 50,
-      shouldShow: () => linkUI.panelOpen.value,
-      // Below the link, not above it. The provider's default is `top`, which
-      // for a link on the first line puts the panel on top of the toolbar —
-      // covering the very buttons it sits next to. `flip()` still lifts it
-      // above when there is no room below.
-      offset: 6,
-      floatingUIOptions: { placement: 'bottom-start' },
-    })
-  }
+  // The link panel is positioned directly rather than through
+  // `TooltipProvider`; see `linkPanelPosition.ts` for why (it anchors to the
+  // selection, and throttles, so the panel lagged and landed at the caret
+  // instead of at the link). It stays where the template put it — inside the
+  // shell but outside the editable div.
 
   applyResolver()
   const mountedView = currentView()
@@ -825,8 +834,8 @@ onBeforeUnmount(() => {
   menu.dispose()
   slashProvider?.destroy()
   slashProvider = null
-  linkTooltipProvider?.destroy()
-  linkTooltipProvider = null
+  cleanupLinkPanel?.()
+  cleanupLinkPanel = null
   blockProvider?.destroy()
   blockProvider = null
   void editor.value?.destroy()
