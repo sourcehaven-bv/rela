@@ -180,6 +180,35 @@ Fix both inside `filter`, since the search path benefits from a defined order
 too. Guard with direct unit tests before touching `applyV1Sorting`, so the
 change is proven in isolation.
 
+**A third defect, found while planning: non-ISO date formats are wrongly
+pushdown-eligible.**
+
+`queryplan.StringShaped` (`queryplan.go:119`) admits date and datetime
+properties because "byte order IS its order" — true for ISO 8601, false for any
+other layout. `metamodel.PropertyDef.Format` (`types.go:762`) lets an operator
+declare a Go layout such as `02/01/2006`, and `filter.SortMulti` honours it via
+`compareDates` while SQL compares the raw text. Measured:
+
+```
+non-ISO format  agree=false
+  go       = [31/12/2025  05/01/2026  10/02/2026]   ← chronological
+  bytewise = [05/01/2026  10/02/2026  31/12/2025]   ← wrong
+```
+
+This is a **pre-existing** bug, not one this ticket introduces: today both paths
+are byte-wise on the API list path, so they agree with each other while both
+being chronologically wrong. Step 1 makes the Go path correct, which converts a
+silent wrongness into a visible divergence between the pushed and Go paths —
+exactly the defect `listpushdown.go:15-40` says eligibility must prevent.
+
+So `StringShaped` must decline a date/datetime whose `Format` is not the ISO
+default (`metamodel.DefaultDateFormat` / `DefaultDatetimeFormat`). Declining is
+the fail-safe direction: it costs pushdown on an unusual config and keeps the
+two paths in agreement. Cover it in AC2 with a non-ISO fixture.
+
+ISO dates and mixed date/datetime columns were probed and DO agree, so the
+narrowing is limited to explicitly non-default formats.
+
 **Alternatives considered:**
 
 - *Teach `applyV1Sorting` about enums.* Rejected: keeps two comparison rules
@@ -198,7 +227,7 @@ change is proven in isolation.
 | `internal/filter/sort.go` | Direction-aware null placement; byte-order id tiebreak |
 | `internal/dataentry/api_v1.go` | `applyV1Sorting` delegates to `filter.SortMulti` |
 | `internal/store/graphquery.go` | Optional rank list on `OrderSpec`; document the contract |
-| `internal/queryplan/queryplan.go` | Emit enum rank in the order spec / index spec |
+| `internal/queryplan/queryplan.go` | Emit enum rank in the order spec / index spec; `StringShaped` declines non-ISO date formats |
 | `internal/store/pgstore/graphquery.go` | `CASE` rank in `ORDER BY` |
 | `internal/store/pgstore/derivedschema.go` | `CASE` in index DDL; hash values in `listIndexName` |
 | `internal/store/graphquerynaive/naive.go` | Rank-aware ordering to keep backends in step |
@@ -274,6 +303,7 @@ No error message gains config or data content.
   order fallback).
 - A value containing a single quote, reaching both `ORDER BY` and index DDL.
 - Multi-key sort mixing an enum and a date.
+- A date property declaring a non-ISO `format:` (must decline pushdown).
 - Sort property declared on one entity type but not another in a mixed result set
   (`comparePropValues` has a `typeRank` path for this).
 - Equal sort keys spanning a page boundary — the paging-corruption case.
@@ -307,6 +337,7 @@ without it, like the rest of the pgstore suite.
 | Paging corruption from the missing tiebreak | **High** | AC6, fixed in `filter` first and unit-tested before delegation |
 | Descending-sort divergence from null placement | **High** | AC6; same fix, both directions asserted |
 | Stale index after a schema edit (measured 650× slowdown) | **High** | AC4; hash values into the index name, reusing the `uniqueIndexShape` pattern |
+| Non-ISO date formats diverge once the Go path is correct | **High** | `StringShaped` declines them; non-ISO fixture in AC2 |
 | Enum values reaching DDL unescaped | Medium | Reuse `quoteLiteral`; edge case with an embedded quote |
 | Behaviour change visible on upgrade | Medium | Intended. Release note; see the ticket's open question |
 | Backends drifting out of step | Medium | `graphquerynaive` updated with pgstore; differential test covers both |
