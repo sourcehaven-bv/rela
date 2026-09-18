@@ -1754,15 +1754,32 @@ func validateConstraintWhere(
 	return errs
 }
 
+// whereOperators are the filter operators [wherePropertyName] splits on,
+// longest-first so "!=" and ">=" are not misread as their single-character
+// prefixes.
+//
+// This duplicates the operator set in internal/filter because metamodel may
+// not import it (arch-lint). Drift is guarded from the other side: a test in
+// internal/filter fails if that package's operators and this list diverge.
+var whereOperators = []string{"<=", ">=", "!=", "=~", "~", "<", ">", "="}
+
+// WhereOperators returns the operator set [wherePropertyName] recognises.
+// Exported for the drift guard in internal/filter; not part of the metamodel
+// API surface.
+func WhereOperators() []string { return slices.Clone(whereOperators) }
+
 // wherePropertyName extracts the property a filter clause names, or "" if the
 // clause has no recognisable operator.
 //
 // Deliberately a local scan rather than a call into internal/filter: metamodel
 // may not depend on that package, and this needs only the name to the left of
-// the operator. Operators are tried longest-first so "!=" and ">=" are not
-// misread as the single-character forms.
+// the operator.
+//
+// An unrecognised clause yields "", which SKIPS the check rather than
+// reporting an error — so a parser that falls behind internal/filter loses a
+// load-time diagnostic but never rejects a schema that is actually valid.
 func wherePropertyName(clause string) string {
-	for _, op := range []string{"!=", ">=", "<=", "=~", "~", "=", ">", "<"} {
+	for _, op := range whereOperators {
 		if i := strings.Index(clause, op); i > 0 {
 			return strings.TrimSpace(clause[:i])
 		}

@@ -11,6 +11,7 @@ package validator
 import (
 	"context"
 	"iter"
+	"log/slog"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
@@ -127,10 +128,17 @@ func New(r EntityLister, meta *metamodel.Metamodel, deps lua.ReadDeps) *GenericV
 	// Mirrors analysis.newValidationService: both entry points into a
 	// Service must wire this the same way, or a `relations:` gate would
 	// mean something different depending on which one ran it.
-	if gr := deps.VisibleReader; gr != nil {
-		if g, err := validationgraph.New(gr); err == nil {
-			svc = svc.WithGraph(g)
-		}
+	//
+	// A failure to build it is logged rather than returned, because a
+	// graph-less Service is already fail-LOUD: every relation constraint
+	// reports as unevaluable instead of passing. The log is what turns
+	// "every gate on this deployment errors" into something an operator can
+	// diagnose without reading the evaluator.
+	if g, err := validationgraph.New(deps.VisibleReader); err != nil {
+		slog.Warn("validator: relation-cardinality gates unavailable; they will report as unevaluable",
+			"error", err)
+	} else {
+		svc = svc.WithGraph(g)
 	}
 	return &GenericValidator{
 		r:    r,

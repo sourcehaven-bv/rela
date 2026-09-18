@@ -5,7 +5,7 @@ title: 'Validation relation gates: a consumer-side graph seam, with direction an
 kind: enhancement
 priority: medium
 effort: l
-status: in-progress
+status: review
 ---
 
 ## Description
@@ -276,14 +276,13 @@ side checked follows `direction`).
 unmodified, plus a new one for the failure mode `target_type` introduces.
 - [ ] ~~Face behaviour unchanged, pinned against a purpose-built faced
 fixture~~ (N/A: nothing in this change reads or branches on a face — the seam
-passes ids through and the two new keys are type/direction filters. The
-existing faced-validation tests in `internal/validator/faces_test.go` pass
-unmodified.)
+passes ids through and the two new keys are type/direction filters. The existing
+faced-validation tests in `internal/validator/faces_test.go` pass unmodified.)
 - [ ] ~~Two face-tailed edges to the same target count as 2~~ (N/A: the
 per-edge contract is stated in the `Related` godoc and holds by construction —
 the adapter appends one element per edge and never dedupes. No code path
-collapses them, so there is nothing to pin until the deferred batching work
-adds one; recorded there instead.)
+collapses them, so there is nothing to pin until the deferred batching work adds
+one; recorded there instead.)
 - [x] `direction:` on a `symmetric: true` relation is a load error.
 - [x] Incoming counts are documented as entity-level, not per-face
 (`RelationConstraint` godoc and `docs/metamodel.md`).

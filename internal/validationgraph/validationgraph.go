@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 	"iter"
+	"reflect"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -50,11 +51,28 @@ var _ validation.Graph = (*Graph)(nil)
 //
 // Nil r is rejected: a gate that counts nothing because nothing was wired
 // would report `min:` violations everywhere and satisfy every `max:`.
+//
+// A TYPED nil — a nil pointer inside a non-nil interface — is rejected too.
+// It survives a plain `!= nil` check at the wiring site and then panics on
+// first use, which surfaces as a crash in whichever request happened to
+// evaluate a gate rather than as the wiring mistake it is.
 func New(r Reader) (*Graph, error) {
-	if r == nil {
+	if r == nil || isTypedNil(r) {
 		return nil, fmt.Errorf("validationgraph: nil reader")
 	}
 	return &Graph{r: r}, nil
+}
+
+// isTypedNil reports whether v holds a nil pointer, map, slice, func or
+// channel inside a non-nil interface.
+func isTypedNil(v any) bool {
+	rv := reflect.ValueOf(v)
+	switch rv.Kind() {
+	case reflect.Ptr, reflect.Map, reflect.Slice, reflect.Func, reflect.Chan, reflect.UnsafePointer:
+		return rv.IsNil()
+	default:
+		return false
+	}
 }
 
 // RelatedEntities implements [validation.Graph].

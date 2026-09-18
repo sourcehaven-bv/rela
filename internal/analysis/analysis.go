@@ -531,10 +531,11 @@ func (s *Service) newValidationService() *validation.Service {
 	// see. internal/validator wires the identical thing; the two entry
 	// points into a Service must not differ here, or a gate would mean
 	// something different depending on which one ran it.
-	if r := s.deps.LuaReadDeps.VisibleReader; r != nil {
-		if g, err := validationgraph.New(r); err == nil {
-			svc = svc.WithGraph(g)
-		}
+	if g, err := validationgraph.New(s.deps.LuaReadDeps.VisibleReader); err != nil {
+		slog.Warn("analysis: relation-cardinality gates unavailable; they will report as unevaluable",
+			"error", err)
+	} else {
+		svc = svc.WithGraph(g)
 	}
 	if s.deps.LuaCache != nil {
 		return svc.WithCache(s.deps.LuaCache)

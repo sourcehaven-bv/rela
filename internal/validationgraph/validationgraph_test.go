@@ -142,3 +142,14 @@ func TestNew_RejectsNilReader(t *testing.T) {
 		t.Fatal("New(nil) must fail: a graph that counts nothing satisfies every max gate")
 	}
 }
+
+// A typed nil survives a plain `!= nil` check at the wiring site, so the
+// constructor has to catch it here. Otherwise it panics on first use — a
+// crash in whichever request happened to evaluate a gate, rather than the
+// wiring error it actually is.
+func TestNew_RejectsTypedNilReader(t *testing.T) {
+	var nilStore *memstore.MemStore
+	if _, err := validationgraph.New(nilStore); err == nil {
+		t.Fatal("New must reject a typed-nil reader")
+	}
+}
