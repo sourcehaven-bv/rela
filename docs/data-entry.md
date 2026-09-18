@@ -471,6 +471,23 @@ so the operations that would break that are disabled.
 open a completion menu, then Enter or click to insert. The toolbar's
 connected-nodes button opens a searchable picker for the same thing.
 
+Matching is fuzzy and spans the title and the ID together, so you do not have to
+remember which one a word came from: `@fancy-rank` finds "FancyReport ranking
+fix", and a partial ID still puts an exact or prefix match at the top.
+
+**Narrowing by type.** A bare `@` lists the entity types, and while the query is
+still short the three closest types stay on offer above the results. Pressing
+Enter on a type (or clicking it) does not insert anything — it scopes the search
+to that type and shows it as a chip, so the next thing you type only matches
+entities of that type. This is the way to reach an entity when you remember its
+type and only a fragment of its title. Once the query is longer than about six
+characters the types drop away, since by then you are plainly naming an entity
+rather than browsing.
+
+To drop the scope, press Backspace until the query is empty and then once more;
+the chip clears and the search widens again. A space still closes the menu
+entirely, so an `@` in ordinary prose leaves nothing hanging open.
+
 A reference is stored as a plain code span — `` `TKT-007` `` — and displays as
 the entity's title, so the file stays readable outside rela and the title
 cannot go stale. Titles you see are the ones you are permitted to see: a
