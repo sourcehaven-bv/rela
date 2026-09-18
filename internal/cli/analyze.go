@@ -261,14 +261,8 @@ func (c *AnalyzeStatesCmd) Run(ctx context.Context, analyzer *analysis.Service) 
 		if len(f.Examples) < f.Count {
 			examples += ", …"
 		}
-		// A bare-row finding's subject IS the zero face, which has no name, so
-		// the label is the code alone rather than a dangling `[code] :`.
-		subject := f.Subject + ": "
-		if f.Subject == "" {
-			subject = ""
-		}
-		out.WriteWarning("[%s] %s%d row(s) — %s (e.g. %s)",
-			f.Code, subject, f.Count, f.Detail, examples)
+		out.WriteWarning("[%s] %s: %d row(s) — %s (e.g. %s)",
+			f.Code, f.Subject, f.Count, f.Detail, examples)
 	}
 	if len(findings) == 0 {
 		out.WriteSuccess("%s", statesMsg)

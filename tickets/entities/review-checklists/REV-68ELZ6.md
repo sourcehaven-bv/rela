@@ -2,82 +2,54 @@
 id: REV-68ELZ6
 type: review-checklist
 title: 'Review: analysis.faceDeclared treats a bare row as always-declared on a faced type'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
 
 ## Automated Checks
 
-- [ ] All tests pass (`just test`)
-- [ ] Lint clean (`just lint`)
-- [ ] Comment lint gate clean (`just comment-lint`)
-- [ ] Coverage maintained (`just coverage-check`)
-
-**Comment findings.** `just comment-report` lists the advisory rules
-(duplication, nil-contract, param-contract, restatement). They are not a merge
-gate, but a finding your diff *introduces* should be fixed or suppressed — don't
-grow the backlog.
-
-Every rule is a heuristic over prose, so false positives are expected. To
-suppress one, prefer the inline form on the declaration line, which travels with
-the code and is reviewed in this diff:
-
-```go
-func f(p string) {} //commentlint:ignore param-contract  p is contained by Clone
-```
-
-Use `.commentlint.yml` (`ignore:` path globs, `allow-phrases:`) only when the
-same prose recurs across many sites. A reason is required either way — an
-unexplained suppression is a finding nobody can re-evaluate later.
+- [x] `go test ./...` passes — no failures
+- [x] `golangci-lint` clean on the changed packages (a `gocognit` 31/30 on
+`CheckStates` was fixed by extracting `coordinateFinding`, not by raising the
+threshold)
+- [x] `just arch-lint` clean
+- [x] `just comment-lint` clean
+- [x] `just docs-check` clean — both guides regenerated from their sources
+- [x] `just coverage-check` — analysis at 81.8%, both thresholds satisfied
 
 ## Code Review
 
-- [ ] Run `/code-review` command (invokes cranky-code-reviewer agent)
-- [ ] All critical review-responses addressed
-- [ ] All significant review-responses addressed
-- [ ] Self-reviewed the diff for unrelated changes
+- [x] `/code-review` run (cranky-code-reviewer)
+- [x] All critical findings addressed — RR-X7PFKQ, RR-GWPN58, both fixed
+- [x] All significant findings addressed — RR-BCUHUU (doc rhetoric, a
+falsifiable claim, a third stale copy)
 
-**Review Responses:** <!-- List IDs of review-response entities created, e.g.,
-RR-xxxx -->
+## Verification
 
-## Acceptance Verification
+- [x] Both critical findings **reproduced before being acted on**, not accepted
+on report. A `phantomtype` row did report under `bare-row-on-faced-type`; a
+three-type project did collapse into one finding with an empty subject.
+- [x] Both fixes mutation-verified. Collapsing `faceUnknownType` into
+`faceBareOnFaced` fails the test; re-keying the aggregation on the face fails it
+with the exact shipped shape (merged finding, empty subject, `type ""`).
+- [x] End-to-end on the real corpus. `prototypes/perf/project` seeded with
+`rela dev seed --scale 0.01` now reports two findings — `document: 20 row(s)`
+and `policy: 15 row(s)` — where the first draft reported one merged finding
+whose five examples were all `DOC-*`, leaving `policy` invisible.
+- [x] No in-tree project newly fails: `analyze states` is clean against the
+tickets project, docs-project and the worlds prototype.
 
-- [ ] Each acceptance criterion tested (reference planning checklist)
-- [ ] Test evidence documented in implementation checklist
+## Notes
 
-**Acceptance Status:**
-<!-- For each acceptance criterion, state PASS/FAIL with evidence -->
+The dangling-colon render fix I committed separately was **reverted**. With a
+non-empty Subject on every finding the CLI formatter needs no branch, so the
+right fix made the workaround unnecessary. Keeping both would have left dead
+code guarding a case that can no longer arise.
 
-## Documentation (enhancements only)
-
-Skip this section for bugs and internal refactors.
-
-- [ ] Docs-checklist created and linked via `has-docs`
-- [ ] User-facing documentation updated
-- [ ] Docs-checklist marked as done
-
-**Docs Checklist:** <!-- e.g., DOCS-xxxx -->
-
-## Final Checks
-
-- [ ] Commit message explains the why, not just what
-- [ ] No TODOs or FIXMEs left unaddressed
-- [ ] Ready for another developer to use
-
-## Pull Request
-
-- [ ] Run `/pr` command to create PR and monitor CI
-
-<!--
-Deliberately NOT tracked here: the PR URL and whether CI passed.
-
-Both post-date this checklist. `/pr` requires the ticket to be `done` and
-validating clean before it opens the PR, and a `done` review-checklist may have
-no unchecked items — so an item asking for the PR URL can only be satisfied by a
-PR that does not exist yet. Checking it early would mean asserting "CI passed"
-before CI ran, which turns the checklist from evidence into a formality.
-
-GitHub records both authoritatively, and the branch and commit messages carry
-the ticket ID, so the ticket-to-PR link is recoverable without duplicating it
-here. See TKT-UFV01M. -->
+One item in RR-BCUHUU was self-inflicted and caught while checking the
+reviewer's version of it: my new `unknown-entity-type` sentence claimed no world
+could reach a row of an undefined type. Probing `ResolveWorldPrimes` showed it
+returns `Via:0` (unscoped, rule 1) — the row **is** served. Same class of error
+as RR-Y0UN58 on the previous PR: an absolute claim about world behaviour written
+from reasoning rather than from a probe.

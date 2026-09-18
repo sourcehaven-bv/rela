@@ -836,9 +836,11 @@ rela analyze states
 ```
 
 This reports rows stored under a face no type declares, for example after a
-face was renamed or removed from `faces:`, and rows stranded at the bare id on
-a type that declares `faces:` — the shape left behind when a type gains faces
-while its existing rows stay at the coordinate that now names no declared face.
+face was renamed or removed from `faces:`; rows stranded at the bare id on a
+type that declares `faces:` — the shape left behind when a type gains faces
+while its existing rows stay at the coordinate that now names no declared face;
+and rows whose entity type the schema does not define at all.
+
 A faced row whose bare sibling is missing is **not** reported: that is the
 ordinary shape of a faced entity, not a fault.
 

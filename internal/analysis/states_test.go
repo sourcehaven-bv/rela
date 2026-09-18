@@ -354,6 +354,17 @@ func TestCheckStates_BareRowOnFacedType(t *testing.T) {
 				IDPrefixes: []string{"PAGE-"},
 				Faces:      map[string]metamodel.FaceDef{"draft": {}, "published": {}},
 			},
+			// A SECOND faced type. One finding per type is the contract: the
+			// remedy is a `migrate_face` step naming `entity: <type>`, so a
+			// finding spanning two types would describe two different steps.
+			// Keyed on the face instead, every faced type in the project
+			// merged into one finding whose example cap could hide a type
+			// outright.
+			"doc": {
+				Label:      "Doc",
+				IDPrefixes: []string{"DOC-"},
+				Faces:      map[string]metamodel.FaceDef{"en": {}, "nl": {}},
+			},
 			// control declares NO faces: its single state lives at the bare
 			// coordinate and is exactly where it belongs.
 			"control": {Label: "Control", IDPrefixes: []string{"CTL-"}},
@@ -371,6 +382,16 @@ func TestCheckStates_BareRowOnFacedType(t *testing.T) {
 		if err := s.CreateEntity(context.Background(), pageDraft); err != nil {
 			t.Fatalf("seed PAGE-1@draft: %v", err)
 		}
+		// A second faced type with bare rows, to prove the two do not merge.
+		addEntity(s, "DOC-1", "doc", map[string]any{"title": "also stranded"})
+		// A row whose TYPE the metamodel does not define. It reports under its
+		// own code: `migrate_face` resolves its mapping against the type's
+		// declared properties, so pointing this row at that step hands the
+		// operator a migration that cannot parse.
+		ghost := entity.New("GHO-1", "phantomtype")
+		if err := s.CreateEntity(context.Background(), ghost); err != nil {
+			t.Fatalf("seed GHO-1: %v", err)
+		}
 		// A faceless type carrying a bare row — the ordinary shape.
 		addEntity(s, "CTL-1", "control", map[string]any{"title": "fine"})
 	})
@@ -387,23 +408,63 @@ func TestCheckStates_BareRowOnFacedType(t *testing.T) {
 		}
 	}
 
-	if len(bare) != 1 {
-		t.Fatalf("want exactly one bare-row finding, got %d: %+v", len(bare), bare)
+	// ONE finding PER TYPE, each naming its type. Not one merged finding:
+	// the remedy is per-type, and an empty subject names nothing to act on.
+	if len(bare) != 2 {
+		t.Fatalf("want one bare-row finding per faced type (page, doc), got %d: %+v",
+			len(bare), bare)
 	}
-	if bare[0].Count != 1 {
-		t.Errorf("only PAGE-1's bare row is stranded; CTL-1 is a faceless type "+
-			"whose single state belongs at the bare id: count = %d, want 1", bare[0].Count)
+	bySubject := map[string]analysis.StateFinding{}
+	for _, f := range bare {
+		if f.Subject == "" {
+			t.Error("a bare-row finding must name the type an operator acts on, not an empty subject")
+		}
+		bySubject[f.Subject] = f
 	}
-	// The example names the row an operator has to go and fix. A bare ref
-	// serializes as the plain id, with no `@face` suffix to chase.
-	if len(bare[0].Examples) != 1 || bare[0].Examples[0] != "PAGE-1" {
-		t.Errorf("examples should name the stranded row: got %v, want [PAGE-1]", bare[0].Examples)
+	for _, want := range []struct {
+		typ, example string
+	}{{"page", "PAGE-1"}, {"doc", "DOC-1"}} {
+		f, ok := bySubject[want.typ]
+		if !ok {
+			t.Errorf("no bare-row finding for type %q; got subjects %v", want.typ, bySubject)
+			continue
+		}
+		if f.Count != 1 {
+			t.Errorf("%s: only its own bare row is stranded, and CTL-1 (faceless) is not: "+
+				"count = %d, want 1", want.typ, f.Count)
+		}
+		// The example names the row an operator has to go and fix. A bare ref
+		// serializes as the plain id, with no `@face` suffix to chase.
+		if len(f.Examples) != 1 || f.Examples[0] != want.example {
+			t.Errorf("%s: examples should name the stranded row: got %v, want [%s]",
+				want.typ, f.Examples, want.example)
+		}
 	}
-	// Reported under its own code, not folded into undeclared-face, whose
-	// Subject would be the empty string and whose remedy is different.
+
+	// The undefined type reports SEPARATELY. Folding it in would tell the
+	// operator it sat on a type declaring `faces:` and hand them a
+	// `migrate_face` remedy that cannot resolve a type the schema never had.
+	var ghosts []analysis.StateFinding
 	for _, f := range findings {
-		if f.Code == "undeclared-face" && f.Subject == "" {
-			t.Error("a bare row must not report as `undeclared-face` with an empty subject")
+		if f.Code == "unknown-entity-type" {
+			ghosts = append(ghosts, f)
+		}
+	}
+	if len(ghosts) != 1 || ghosts[0].Subject != "phantomtype" {
+		t.Fatalf("an undefined type must report under its own code naming the type: %+v", ghosts)
+	}
+	if _, merged := bySubject["phantomtype"]; merged {
+		t.Error("a row of an undefined type must not report as `bare-row-on-faced-type` — " +
+			"the type declares nothing, so `migrate_face` cannot apply")
+	}
+
+	// The DECLARED face seeded beside PAGE-1's bare row is not a fault, so
+	// nothing reports it. This is the over-report half of the guard.
+	for _, f := range findings {
+		for _, ex := range f.Examples {
+			if ex == "PAGE-1@draft" {
+				t.Errorf("`draft` is declared for page and must not report: %+v", f)
+			}
 		}
 	}
 }

@@ -10,7 +10,7 @@ why3: 'That early return was correct when written: before BUG-HC6I2T a named fac
 why4: BUG-HC6I2T removed the headless-state invariant and deleted the headless-family finding, but did not revisit the mirror case — the predicate that assumed a bare row is always legitimate.
 why5: A change that inverts a data-model invariant has no mechanism to find the predicates that encoded the old one. The removed finding and this one are the same fact read in opposite directions, and only one was updated.
 prevention: 'AM-analyze-reports-bare-row-on-faced-type pins both directions of the predicate (stranded on a faced type, ordinary on a faceless one), mutation-verified so neither half can be dropped. More generally: when an invariant is removed, grep for predicates that return a constant for the case it governed — faceDeclared''s `return true` was a documented assumption, not a hidden one, and its doc comment still cited the removed invariant by name.'
-status: in-progress
+status: done
 ---
 
 ## Description
