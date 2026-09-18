@@ -47,20 +47,26 @@ func TestStoreEventBridgeCrossProcessSSE(t *testing.T) {
 		pool.Close()
 	})
 
-	// Writer A: a standalone pgstore on the schema.
-	a, _, aCloser, err := pgstore.Open(ctx, dsn)
+	// Writer A: a standalone pgstore on the schema. Each side gets its OWN pool
+	// (pgstore.Open takes an injected handle, TKT-OGTVJW), which is what makes
+	// these two stand in for two rela-server processes.
+	aPool, aPoolCloser, err := pgstore.NewPool(ctx, dsn)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = a.Close(); _ = aCloser.Close() })
+	a, _, err := pgstore.Open(ctx, aPool, dsn)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = a.Close(); _ = aPoolCloser.Close() })
 
 	// The "server B" side: a second pgstore wired into a dataentry App's bridge.
-	bStore, _, bCloser, err := pgstore.Open(ctx, dsn)
+	bPool, bPoolCloser, err := pgstore.NewPool(ctx, dsn)
+	require.NoError(t, err)
+	bStore, _, err := pgstore.Open(ctx, bPool, dsn)
 	require.NoError(t, err)
 	app := &App{store: bStore, broker: newEventBroker()}
 	app.startStoreEventBridge()
 	t.Cleanup(func() {
 		app.StopWatching()
 		_ = bStore.Close()
-		_ = bCloser.Close()
+		_ = bPoolCloser.Close()
 	})
 
 	sse := app.broker.subscribe()

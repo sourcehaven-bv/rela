@@ -836,10 +836,17 @@ rela analyze states
 ```
 
 This reports rows stored under a face no type declares, for example after a
-face was renamed or removed from `faces:`, along with face rows whose bare row
-is missing and faces stored under a type that does not declare them. It
-detects only. To move rows between faces, use the `rename_face` step of the
-[data migration system](data-migration.md#renaming-a-content-state).
+face was renamed or removed from `faces:`; rows stranded at the bare id on a
+type that declares `faces:` — the shape left behind when a type gains faces
+while its existing rows stay at the coordinate that now names no declared face;
+and rows whose entity type the schema does not define at all.
+
+A faced row whose bare sibling is missing is **not** reported: that is the
+ordinary shape of a faced entity, not a fault.
+
+It detects only. To move rows between faces, use the `rename_face` step of the
+[data migration system](data-migration.md#renaming-a-content-state); to adopt
+bare rows into a face, use `migrate_face`.
 
 If your project uses the PostgreSQL backend, each face keeps its own version
 history. Editing the draft versions `POL-1@draft`, and invoking `publish`

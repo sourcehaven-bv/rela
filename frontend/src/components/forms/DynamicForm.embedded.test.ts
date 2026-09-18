@@ -14,7 +14,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
-import { useSchemaStore, useEntitiesStore } from '@/stores'
+import { useSchemaStore, useEntitiesStore, useUIStore } from '@/stores'
 import DynamicForm from './DynamicForm.vue'
 import type { Entity } from '@/types'
 
@@ -89,7 +89,14 @@ afterEach(() => {
   })
 })
 
-async function mountCreate(props: { embedded?: boolean } = {}) {
+async function mountCreate(
+  props: {
+    embedded?: boolean
+    embeddedLink?: { relation: string; peer: string; linkAs: 'from' | 'to' }
+    embeddedTemplate?: string
+    embeddedWorld?: string
+  } = {}
+) {
   const schema = useSchemaStore()
   schema.forms.set(FORM.id, FORM as never)
   schema.entityTypes.set('ticket', ENTITY_TYPE as never)
@@ -224,5 +231,213 @@ describe('DynamicForm — embedded mode', () => {
     const { wrapper } = await mountCreate()
 
     expect(wrapper.find('.form-header').exists()).toBe(true)
+  })
+})
+
+// The prop channel for pre-link / template / world (TKT-R4BMJM).
+//
+// An embedded form reads an EMPTY query — the mocked route above carries
+// `prop.title=from-host-url`, which belongs to the page behind the modal and
+// would silently pre-fill the nested entity. A host that genuinely holds this
+// context therefore has to pass it explicitly.
+//
+// The risk these pin is that the props reopen the hole the empty-query rule
+// closed: they must supply context the HOST chose, never resurrect the host
+// page's own URL params.
+describe('DynamicForm — embedded pre-link props', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+  })
+
+  it('links via the prop, and still ignores the host page URL', async () => {
+    // The peer's type is resolved from its id prefix, so the schema has to know
+    // the prefix — as it does in the real app. Without it the relation carries
+    // an untypeable id and reshapeLegacyToModern aborts the whole create.
+    const schema = useSchemaStore()
+    schema.entityTypes.set('feature', {
+      name: 'feature',
+      label: 'Feature',
+      id_prefix: 'FEAT',
+      properties: {},
+    } as never)
+
+    const { wrapper, create } = await mountCreate({
+      embedded: true,
+      embeddedLink: { relation: 'implements', peer: 'FEAT-1', linkAs: 'to' },
+    })
+
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(create.mock.calls.length, 'create should have been called').toBe(1)
+    const payload = create.mock.calls[0][1] as {
+      relations?: Record<string, { data: { type: string; id: string }[] }>
+      properties?: Record<string, unknown>
+    }
+    // The edge rides the create payload for linkAs: 'to', in the modern
+    // JSON:API resource-identifier shape. The TYPE matters as much as the id:
+    // an untypeable peer makes reshapeLegacyToModern return null, which aborts
+    // the entire create — so a pre-linked relation with no picker field on the
+    // form could not save at all until the prefill registered its type.
+    expect(payload.relations?.implements).toEqual({
+      data: [{ type: 'feature', id: 'FEAT-1' }],
+    })
+    // And the host page's `prop.title` is still ignored — the prop channel
+    // supplies context, it does not re-enable the URL overlay.
+    expect(payload.properties?.title).not.toBe('from-host-url')
+  })
+
+  it('link_as=from creates the edge FROM the new entity, not from the peer', async () => {
+    // The direction that had no coverage, and was therefore inverted.
+    //
+    // `link_as` names the NEW entity's role (the server's definition, in
+    // internal/dataentry/sections.go). So `from` means new --relation--> peer,
+    // and the edge must be addressed from the new entity: the endpoint is
+    // /{plural}/{from}/relations/{rel} with the TO in the body.
+    //
+    // Two bugs hid here. The payload prefill ALSO added the peer, so an
+    // incoming section wrote a backwards edge in addition to the correct one.
+    // And the call was addressed from the peer, needing the peer's type from its
+    // id prefix — which fails for a legitimately prefix-less id, so linking to
+    // one was impossible.
+    const api = await import('@/api')
+    const createRelationMock = vi.mocked(api.createRelation)
+
+    const { wrapper, create } = await mountCreate({
+      embedded: true,
+      embeddedLink: { relation: 'implements', peer: 'no-prefix-id', linkAs: 'from' },
+    })
+
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    // The payload must NOT carry the edge: it can only express
+    // new --relation--> peer as `relations`, which is the `to` direction.
+    const payload = create.mock.calls[0][1] as { relations?: Record<string, unknown> }
+    expect(payload.relations?.implements).toBeUndefined()
+
+    // (type, entityId, relation, targetId) => entityId --relation--> targetId.
+    expect(createRelationMock).toHaveBeenCalledWith('ticket', CREATED.id, 'implements', 'no-prefix-id')
+  })
+
+  it('surfaces a link failure instead of silently creating an unlinked entity', async () => {
+    // RR-8SP2UG: the old code skipped the link when it could not resolve a peer
+    // type and said nothing, so the user got an orphan and no indication.
+    const api = await import('@/api')
+    vi.mocked(api.createRelation).mockRejectedValueOnce(new Error('nope'))
+
+    const { wrapper } = await mountCreate({
+      embedded: true,
+      embeddedLink: { relation: 'implements', peer: 'FEAT-1', linkAs: 'from' },
+    })
+
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    // The entity is still reported created — it exists — but the failed link
+    // must be visible rather than swallowed.
+    const ui = useUIStore()
+    expect(ui.toasts.some((t) => /linking it failed/i.test(t.message))).toBe(true)
+  })
+
+  it('creates in the world the host passed', async () => {
+    // A faced type has no default row to fall back to, so a dropped world is a
+    // refusal at the server (BUG-HC6I2T) — the failure is a 4xx, not a silent
+    // wrong face, but the user sees a create that inexplicably failed.
+    const { wrapper, create } = await mountCreate({
+      embedded: true,
+      embeddedWorld: 'published',
+    })
+
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect((create.mock.calls[0][1] as { world?: string }).world).toBe('published')
+  })
+
+  it('carries no world when the host had none', async () => {
+    const { wrapper, create } = await mountCreate({ embedded: true })
+
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect((create.mock.calls[0][1] as { world?: string }).world).toBeUndefined()
+  })
+})
+
+// The two silent-drop paths between `relations.value` and the create payload
+// (found in code review). `relations.value` is not the payload: a wizard prune
+// and a cards-widget exclusion sit in between, and either one eats a prefilled
+// edge — producing a create that succeeds with no relation and no error.
+describe('DynamicForm — pre-link cannot be silently dropped', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+  })
+
+  it('refuses the create when a cards widget would swallow the pre-linked edge', async () => {
+    // A cards-managed relation is excluded from the IDs-only payload because
+    // card edits are supposed to arrive via pendingCardChanges — which the
+    // prefill does not write. Before the post-condition check the entity was
+    // created unlinked, silently.
+    const schema = useSchemaStore()
+    schema.forms.set('cards-form', {
+      id: 'cards-form',
+      entity: 'ticket',
+      fields: [{ property: 'title', label: 'Title' }],
+      relations: [{ relation: 'implements', widget: 'cards' }],
+    } as never)
+    schema.entityTypes.set('ticket', ENTITY_TYPE as never)
+    schema.entityTypes.set('feature', {
+      name: 'feature', label: 'Feature', id_prefix: 'FEAT', properties: {},
+    } as never)
+    schema.loaded = true
+
+    const entities = useEntitiesStore()
+    const create = vi.spyOn(entities, 'create').mockResolvedValue(CREATED)
+
+    const wrapper = mount(DynamicForm, {
+      props: {
+        formId: 'cards-form',
+        embedded: true,
+        embeddedLink: { relation: 'implements', peer: 'FEAT-1', linkAs: 'to' as const },
+      },
+      global: {
+        stubs: {
+          RouterLink: true, MarkdownEditor: true, RelationPicker: true,
+          RelationCards: true, AutoSaveIndicator: true, HelpModal: true,
+        },
+      },
+    })
+    mounted.push(wrapper)
+    await flushPromises()
+
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    // Nothing created: an unlinked entity is worse than a refused one, because
+    // the user cannot tell it happened.
+    expect(create).not.toHaveBeenCalled()
+    const ui = useUIStore()
+    expect(ui.toasts.some((t) => /cannot pre-link/i.test(t.message))).toBe(true)
+  })
+
+  it('still creates normally when the form can carry the edge', async () => {
+    // The paired positive: the check must not refuse the ordinary case.
+    const schema = useSchemaStore()
+    schema.entityTypes.set('feature', {
+      name: 'feature', label: 'Feature', id_prefix: 'FEAT', properties: {},
+    } as never)
+
+    const { wrapper, create } = await mountCreate({
+      embedded: true,
+      embeddedLink: { relation: 'implements', peer: 'FEAT-1', linkAs: 'to' },
+    })
+
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(create).toHaveBeenCalledTimes(1)
   })
 })

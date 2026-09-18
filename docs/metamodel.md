@@ -1288,23 +1288,28 @@ worlds:
     primary_for: nl        # the canonical home of the Dutch face
   editorial-nl:
     select: [nl]
-    otherwise: exclude
+    otherwise: default
 ```
 
 Two rules are enforced at load:
 
-- **An undeclared tie is an error.** If several worlds lead a face *and resolve
-  it identically*, and none claims it, the schema does not load. Picking one
-  would depend on the order the configuration happened to serialize in.
+- **An undeclared tie is an error.** If several worlds lead a face for a type
+  and none claims it, the schema does not load. Picking one would depend on the
+  order the configuration happened to serialize in.
 - **A claim may only confirm, never contradict.** Naming a face this world does
   not lead is an error, because the resulting control would navigate to a world
   where the face is not primary.
 
-Sharing a chain head is **not** by itself a tie. Two worlds may lead the same
-face and differ in `otherwise:`, such as a published world where absence means
-"not published" beside a lenient sibling that substitutes instead. That pair
-loads without a declaration, and the face switcher omits the face unless one
-world claims it.
+Sharing a chain head **is** the tie, whatever the worlds' `otherwise:` says. A
+published world where absence means "not published", beside a lenient sibling
+that substitutes instead, still needs one of them to claim the face: a reader
+asking to be taken to a face they **have** is served the same row by both, so
+`otherwise:` — which decides what happens to entities *lacking* the face —
+cannot say which world the switch means.
+
+The result is that every (type, face) some world leads resolves to exactly one
+world, or the schema does not load. Anything naming the world that serves a
+face can rely on getting an answer.
 
 The key sits on the **world**, not on the face, because `overrides:` makes the
 answer per type and face: one world can lead `en` for `guide` while another
@@ -1379,12 +1384,23 @@ can leave a partially written target face.
 
 ### Checking stored states
 
-`rela analyze states` reports state rows the schema does not account for, for
-example rows left behind after a `faces:` entry was renamed or removed. A face
-is checked against **its own entity type**: a `draft` row on a type that
-declares no faces is reported even if another type declares `draft`. This is
-detection only. To move rows between faces, use the `rename_face` step of the
-[data migration system](data-migration.md#renaming-a-content-state).
+`rela analyze states` reports state rows the schema does not account for. Three
+kinds, each with its own remedy:
+
+| Finding | Meaning |
+| --- | --- |
+| `undeclared-face` | A row under a face name no type declares, for example after a `faces:` entry was renamed or removed. |
+| `bare-row-on-faced-type` | A row at the bare id on a type that declares `faces:`. No world's chain names the bare id, so nothing reaches the row. |
+| `unknown-entity-type` | A row whose entity type the schema does not define at all. |
+
+A face is checked against **its own entity type**: a `draft` row on a type that
+declares no faces is reported even if another type declares `draft`. Each
+finding names the thing you act on — the face for the first, the entity type for
+the other two — because the remedy is per-type for those.
+
+This is detection only. To move rows between faces, use the `rename_face` step
+of the [data migration system](data-migration.md#renaming-a-content-state); to
+adopt bare rows into a face, use `migrate_face`.
 
 ## Default Metamodel
 

@@ -12,20 +12,27 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
-// Open is the one-call backend constructor used by the wiring layer (appbuild
-// and the MCP wiring, behind //go:build postgres). It builds a pgx pool from
-// the DSN, applies migrations, and wires a Store together with its in-database
-// search Backend over that single shared pool.
+// NewPool builds a pgx pool from a DSN, configured the way every rela process
+// expects, and returns it as a [DBTX] with a closer for its lifetime.
 //
-// The returned io.Closer closes the pool — pgstore owns the pool it created
-// here, so callers close it via this value (Store.Close only tears down the
-// watcher). Keeping pool construction in one place means each composition root
-// calls Open once instead of duplicating build-pool/migrate/wire/close logic.
-func Open(ctx context.Context, dsn string) (store.Store, search.Searcher, io.Closer, error) {
+// Pool OWNERSHIP belongs to the composition root, not to this package: the
+// store, the in-database search backend and the comment backend are three equal
+// consumers of ONE pool, and only the caller knows when the last of them is
+// done. So this closes nothing itself — the returned io.Closer is how the
+// caller ends the pool's life.
+//
+// The pool's CONFIGURATION is pgstore's business even so: the query tracer is
+// what produces the per-statement timing `rela-server -verbose` reports, and a
+// composition root that built a bare pgxpool would silently lose it.
+//
+// Returning DBTX rather than *pgxpool.Pool keeps pgx out of the composition
+// root — arch-lint grants that vendor to the store layer, not to appbuild, and
+// widening it for one type would be the wrong trade.
+func NewPool(ctx context.Context, dsn string) (DBTX, io.Closer, error) {
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		// ParseConfig parses (not connects); pgx redacts the password in errors.
-		return nil, nil, nil, fmt.Errorf("parse database DSN: %w", err)
+		return nil, nil, fmt.Errorf("parse database DSN: %w", err)
 	}
 	// The tracer is always attached; it decides per statement whether to
 	// account (stats on the context) or log (Debug enabled) and otherwise
@@ -33,18 +40,42 @@ func Open(ctx context.Context, dsn string) (store.Store, search.Searcher, io.Clo
 	cfg.ConnConfig.Tracer = queryTracer{}
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("connect to database: %w", err)
+		return nil, nil, fmt.Errorf("connect to database: %w", err)
 	}
-	if err = Migrate(ctx, pool); err != nil {
-		pool.Close()
-		return nil, nil, nil, fmt.Errorf("migrate database: %w", err)
-	}
+	return pool, &poolCloser{pool}, nil
+}
 
-	backend := NewSearchBackend(pool)
-	st, err := New(pool, WithObserver(backend))
+// poolCloser ends the life of a pool built by [NewPool]. Store.Close only tears
+// down the watcher, so without this the pool would outlive every consumer.
+type poolCloser struct{ pool *pgxpool.Pool }
+
+func (c *poolCloser) Close() error {
+	c.pool.Close()
+	return nil
+}
+
+// Open wires a Store and its in-database search Backend over an ALREADY-BUILT
+// pool, and starts the cross-process change-feed listener.
+//
+// It takes a handle rather than a DSN (TKT-OGTVJW) because the pool is shared
+// with consumers this package does not own. It used to build the pool itself
+// and return only the store, the searcher and a closer — which made it a
+// composition root living inside the store package, and left the real
+// composition root with no handle to give anything else. `pgcomments` is the
+// third consumer that made that concrete; `NewSearchBackend(pool)` below was
+// always the second.
+//
+// The caller owns db: Open closes nothing, and Store.Close only tears down the
+// watcher. Migrations are the caller's too — run [Migrate] before this.
+//
+// dsn is still required, and is NOT a second route to the database: the change
+// feed's listener holds its own dedicated connection, deliberately outside the
+// pool so a slow LISTEN cannot starve query traffic. It is used for that alone.
+func Open(ctx context.Context, db DBTX, dsn string) (store.Store, search.Searcher, error) {
+	backend := NewSearchBackend(db)
+	st, err := New(db, WithObserver(backend))
 	if err != nil {
-		pool.Close()
-		return nil, nil, nil, fmt.Errorf("open store: %w", err)
+		return nil, nil, fmt.Errorf("open store: %w", err)
 	}
 
 	// Start the cross-process change-feed listener (TKT-WZYWM9). It holds its
@@ -60,16 +91,7 @@ func Open(ctx context.Context, dsn string) (store.Store, search.Searcher, io.Clo
 		st.listener = l
 	}
 
-	return st, search.New(st, backend), &poolCloser{pool}, nil
-}
-
-// poolCloser closes the pgx pool the wiring layer received from Open. The
-// store's own Close only tears down the watcher, so the pool is closed here.
-type poolCloser struct{ pool *pgxpool.Pool }
-
-func (c *poolCloser) Close() error {
-	c.pool.Close()
-	return nil
+	return st, search.New(st, backend), nil
 }
 
 // MigrateDSN opens a short-lived pool for the given DSN, applies pending

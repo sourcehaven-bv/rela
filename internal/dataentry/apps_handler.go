@@ -149,7 +149,7 @@ func (a *App) handleV1App(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if entry == appEditorEntry {
-		// ETag + revalidate so the 372KB bundle isn't re-transferred on every
+		// ETag + revalidate so the bundle isn't re-transferred on every
 		// iframe (re)load. appContentTypes[".js"] is the single source for the
 		// content-type so it can't drift.
 		serveCachedAsset(w, r, appContentTypes[".js"], appEditorJSETag(), appEditorSource())
@@ -159,17 +159,6 @@ func (a *App) handleV1App(w http.ResponseWriter, r *http.Request) {
 		serveCachedAsset(w, r, appContentTypes[".css"], appEditorCSSETag(), appEditorCSSSource())
 		return
 	}
-	if entry == appEditorFontEntry {
-		// The app runs in a sandboxed iframe with an OPAQUE (null) origin, so an
-		// @font-face request for this font is cross-origin and the browser
-		// blocks it without CORS. Allow it: this is a static glyph webfont with
-		// no sensitive data (fonts are the canonical CORS-allowed cross-origin
-		// resource). Without this the editor toolbar renders as tofu boxes.
-		h.Set("Access-Control-Allow-Origin", "*")
-		serveCachedAsset(w, r, appContentTypes[".woff2"], appEditorFontETag(), appEditorFontSource())
-		return
-	}
-
 	if entry == "" {
 		entry = appIndexFile
 	}

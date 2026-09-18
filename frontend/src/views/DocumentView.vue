@@ -7,7 +7,11 @@ import { renderDocument } from '@/api/documents'
 import { useEvents } from '@/composables/useEvents'
 import { createDocumentClickHandler } from '@/composables/useDocumentClicks'
 import { useBackTarget } from '@/composables/useBackTarget'
-import { renderMermaidDiagrams, renderPlantUMLDiagrams } from '@/utils/markdown'
+import {
+  renderMermaidDiagrams,
+  renderPlantUMLDiagrams,
+  wrapTablesForScroll,
+} from '@/utils/markdown'
 import { buildReturnTo } from '@/utils/returnPath'
 import { getErrorMessage, getScriptError, shouldDropHeldContent } from '@/api/errors'
 import BackButton from '@/components/common/BackButton.vue'
@@ -58,7 +62,9 @@ const showBlockLoader = useDelayedPending(() => loading.value && !docContent.val
 const isCached = ref(false)
 
 // Sanitized content for safe rendering
-const sanitizedContent = computed(() => DOMPurify.sanitize(docContent.value))
+const sanitizedContent = computed(() =>
+  wrapTablesForScroll(DOMPurify.sanitize(docContent.value))
+)
 
 // Template ref to the rendered body element so we can run mermaid on it.
 const docBody = useTemplateRef<HTMLElement>('docBody')

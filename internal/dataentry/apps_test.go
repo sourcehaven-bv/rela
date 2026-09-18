@@ -560,29 +560,19 @@ func TestHandleV1App(t *testing.T) {
 		}
 	})
 
-	t.Run("serves the reserved _rela-editor.woff2 font", func(t *testing.T) {
+	// The editor ships no webfont: its toolbar glyphs are inline SVG (TKT-D2JML7).
+	// The EasyMDE build it replaced served a Font Awesome woff2 here, with a
+	// CORS header because the sandboxed iframe is null-origin. Pinned as a 404
+	// so the asset, the reserved path and the CORS exception cannot creep back
+	// in together unnoticed.
+	t.Run("no longer serves a webfont at the old reserved path", func(t *testing.T) {
 		withTestEditorAssets(t)
 		w := doRequest(t, app, http.MethodGet, "/api/v1/_apps/demo/_rela-editor.woff2")
-		if w.Code != http.StatusOK {
-			t.Fatalf("status = %d, want 200", w.Code)
+		if w.Code != http.StatusNotFound {
+			t.Errorf("status = %d, want 404 (the editor ships no font)", w.Code)
 		}
-		if w.Body.Len() == 0 {
-			t.Error("editor font is empty")
-		}
-		if ct := w.Header().Get("Content-Type"); ct != "font/woff2" {
-			t.Errorf("font Content-Type = %q, want font/woff2", ct)
-		}
-		// The app iframe is sandboxed (opaque/null origin), so the @font-face
-		// request is cross-origin and the browser blocks it without CORS. The
-		// font MUST send Access-Control-Allow-Origin or the toolbar renders as
-		// tofu boxes (verified in-browser, TKT-5F9V56).
-		if acao := w.Header().Get("Access-Control-Allow-Origin"); acao != "*" {
-			t.Errorf("font Access-Control-Allow-Origin = %q, want * (sandboxed iframe is null-origin)", acao)
-		}
-		// font-src <base> already permits the same-path font (no CSP widening).
-		csp := w.Header().Get("Content-Security-Policy")
-		if !strings.Contains(csp, "font-src ") || !strings.Contains(csp, "/api/v1/_apps/demo/") {
-			t.Errorf("font-src must path-scope the app (covers _rela-editor.woff2): %q", csp)
+		if acao := w.Header().Get("Access-Control-Allow-Origin"); acao != "" {
+			t.Errorf("no route here should send CORS, got %q", acao)
 		}
 	})
 
@@ -616,7 +606,7 @@ func TestHandleV1App(t *testing.T) {
 
 	t.Run("editor assets carry an ETag and 304 on If-None-Match", func(t *testing.T) {
 		withTestEditorAssets(t)
-		for _, entry := range []string{"_rela-editor.js", "_rela-editor.css", "_rela-editor.woff2"} {
+		for _, entry := range []string{"_rela-editor.js", "_rela-editor.css"} {
 			w := doRequest(t, app, http.MethodGet, "/api/v1/_apps/demo/"+entry)
 			etag := w.Header().Get("ETag")
 			if etag == "" {
@@ -640,20 +630,20 @@ func TestHandleV1App(t *testing.T) {
 		}
 	})
 
-	t.Run("an app cannot shadow _rela-editor.js / .woff2 with its own files", func(t *testing.T) {
+	t.Run("an app cannot shadow _rela-editor.js / .css with its own files", func(t *testing.T) {
 		withTestEditorAssets(t)
 		writeApp(t, root, "shadowed", map[string]string{
-			"index.html":         "<html></html>",
-			"_rela-editor.js":    "EVIL",
-			"_rela-editor.woff2": "EVIL",
+			"index.html":       "<html></html>",
+			"_rela-editor.js":  "EVIL",
+			"_rela-editor.css": "EVIL",
 		})
 		js := doRequest(t, app, http.MethodGet, "/api/v1/_apps/shadowed/_rela-editor.js")
 		if js.Code != http.StatusOK || strings.Contains(js.Body.String(), "EVIL") {
 			t.Errorf("reserved _rela-editor.js must serve the real bundle: %.40s", js.Body.String())
 		}
-		font := doRequest(t, app, http.MethodGet, "/api/v1/_apps/shadowed/_rela-editor.woff2")
-		if font.Code != http.StatusOK || font.Body.String() == "EVIL" {
-			t.Errorf("reserved _rela-editor.woff2 must serve the real font, not the app file")
+		css := doRequest(t, app, http.MethodGet, "/api/v1/_apps/shadowed/_rela-editor.css")
+		if css.Code != http.StatusOK || strings.Contains(css.Body.String(), "EVIL") {
+			t.Errorf("reserved _rela-editor.css must serve the real stylesheet, not the app file")
 		}
 	})
 
@@ -727,26 +717,24 @@ func TestHandleV1App(t *testing.T) {
 // production/release build always runs the frontend build first.
 func editorBundleBuilt() bool { return len(appEditorSource()) > 0 }
 
-// withTestEditorAssets swaps the editor bundle/font source vars with fixed test
-// bytes for the duration of a test, restoring them after. This lets the serving
-// path (content-type, CORS, caching, shadowing) be exercised in CI even when the
-// frontend build hasn't run (the `go test ./...` job doesn't build it) — closing
-// the coverage hole where the new reserved-entry branches would otherwise only
-// run on a developer's machine. The fake JS deliberately contains the
-// "rela-editor" marker and the reserved font path so the same assertions hold.
+// withTestEditorAssets swaps the editor bundle/stylesheet source vars with fixed
+// test bytes for the duration of a test, restoring them after. This lets the
+// serving path (content-type, caching, shadowing) be exercised in CI even when
+// the frontend build hasn't run (the `go test ./...` job doesn't build it) —
+// closing the coverage hole where the reserved-entry branches would otherwise
+// only run on a developer's machine. The fake JS deliberately contains the
+// "rela-editor" marker and the reserved stylesheet path so the same assertions
+// hold.
 func withTestEditorAssets(t *testing.T) {
 	t.Helper()
 	const fakeJS = `(function(){customElements.define('rela-editor',class extends HTMLElement{});` +
 		`var h='` + appEditorCSSEntry + `';})();`
-	const fakeCSS = `.CodeMirror{font-family:monospace}` +
-		`@font-face{font-family:FontAwesome;src:url(` + appEditorFontEntry + `)}`
-	fakeFont := []byte("wOF2-test-font-bytes")
-	origJS, origFont, origCSS := appEditorSource, appEditorFontSource, appEditorCSSSource
+	const fakeCSS = `.rela-editor-shell{position:relative}`
+	origJS, origCSS := appEditorSource, appEditorCSSSource
 	appEditorSource = func() []byte { return []byte(fakeJS) }
-	appEditorFontSource = func() []byte { return fakeFont }
 	appEditorCSSSource = func() []byte { return []byte(fakeCSS) }
 	t.Cleanup(func() {
-		appEditorSource, appEditorFontSource, appEditorCSSSource = origJS, origFont, origCSS
+		appEditorSource, appEditorCSSSource = origJS, origCSS
 	})
 }
 
@@ -772,12 +760,10 @@ func TestAppEditorBundleEmbedded(t *testing.T) {
 	if len(css) == 0 {
 		t.Fatal("editor stylesheet not embedded")
 	}
-	// The @font-face moved into the stylesheet along with the rest of the CSS.
-	if !strings.Contains(string(css), appEditorFontEntry) {
-		t.Errorf("editor stylesheet must reference the reserved font path %q (its @font-face)", appEditorFontEntry)
-	}
-	if len(appEditorFontSource()) == 0 {
-		t.Fatal("editor woff2 font not embedded")
+	// The editor ships no webfont, so nothing may reintroduce an @font-face
+	// pointing at an asset that is no longer built or served.
+	if strings.Contains(string(css), "@font-face") {
+		t.Error("editor stylesheet must not declare an @font-face: the toolbar glyphs are inline SVG")
 	}
 }
 

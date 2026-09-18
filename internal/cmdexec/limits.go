@@ -7,19 +7,21 @@ import (
 
 // Limits bound what a single command may CONSUME, complementing [Sandbox],
 // which bounds what it may REACH. Both are needed: namespaces isolate access,
-// not resource usage — a sandboxed converter can still allocate gigabytes, fork
-// a thousand processes, or fill the disk, any of which takes down the server.
+// not resource usage — a sandboxed converter can still allocate gigabytes or
+// fill the disk, either of which takes down the server.
 //
 // Every field is a hard ceiling applied to the child before exec. Zero means
 // "unset" for that dimension.
+//
+// There is deliberately no process-count field. RLIMIT_NPROC, the obvious
+// candidate, is scoped to the real UID rather than to a process tree — see
+// [applyRlimits] for why that made it unusable here, and what bounds a fork
+// bomb instead.
 type Limits struct {
 	// MaxAddressSpace caps the child's virtual memory (RLIMIT_AS), in bytes.
 	// Bounds the "allocate until the host OOMs" case; the converter dies with an
 	// allocation failure instead.
 	MaxAddressSpace uint64
-	// MaxProcesses caps processes/threads for the child's uid (RLIMIT_NPROC).
-	// Bounds fork bombs.
-	MaxProcesses uint64
 	// MaxFileSize caps any single file the child writes (RLIMIT_FSIZE), in
 	// bytes. This is a PREVENTIVE disk bound: the write fails at the limit,
 	// unlike the output cap, which only rejects an oversize result after it has
@@ -38,7 +40,6 @@ type Limits struct {
 func DefaultLimits() Limits {
 	return Limits{
 		MaxAddressSpace: 2 << 30, // 2 GiB
-		MaxProcesses:    256,
 		MaxFileSize:     1 << 30, // 1 GiB
 		MaxCPUSeconds:   120,
 	}

@@ -925,6 +925,15 @@ type ViewResponse struct {
 	// Omitted when false, so an ordinary view response is byte-identical to
 	// what it was before this field existed.
 	WorldAbsent bool `json:"_world_absent,omitempty"`
+
+	// Create is the page-header create menu: the sections that opted into
+	// `create.in: [header]`, deduped by relation and in section order
+	// (TKT-R4BMJM).
+	//
+	// Assembled server-side so the SPA renders what it is given rather than
+	// re-deriving which section maps to which relation. Omitted when no section
+	// opted in — which is every view that predates this field.
+	Create []ViewSectionCreate `json:"create,omitempty"`
 }
 
 // ViewSection represents a section with resolved data.
@@ -956,6 +965,55 @@ type ViewSection struct {
 	// the preview cap sets both. This flag exists for what HasMoreChildren
 	// cannot express — a parent dropped entirely has no row to signal on.
 	Truncated bool `json:"truncated,omitempty"`
+
+	// Create is this section's opt-in create affordance (TKT-R4BMJM).
+	//
+	// Omitted unless the section's config carries a `create:` block AND the
+	// principal may create at least one type the relation reaches, so a view that
+	// did not opt in is byte-identical to what it was before this field existed.
+	// That is what keeps TKT-651W's read-only default intact and lets
+	// TestV1Views_NoAddOrLinkInfoOnSections keep asserting absence.
+	Create *ViewSectionCreate `json:"create,omitempty"`
+}
+
+// ViewSectionCreate describes a section's create-related affordance.
+//
+// Deliberately NOT [ViewAddInfo], whose doc comment forbids reuse from a view
+// response. The two also differ in substance: this one carries the flow and a
+// per-target template, and its targets are ACL-gated.
+//
+// Relation, LinkAs and PeerID are computed server-side but travel to the client
+// and back — in the page flow they land in an editable URL. They are a
+// CONVENIENCE, not a trust anchor: the write path re-authorizes the create and
+// the edge independently, and cannot verify that a section ever offered this
+// particular triple.
+type ViewSectionCreate struct {
+	Relation string `json:"relation"`
+	// LinkAs is the role of the NEW entity: "to" when the section was collected
+	// by following outgoing edges from the entry, "from" for incoming.
+	LinkAs string `json:"linkAs"`
+	// PeerID is the entry entity the new entity gets linked to.
+	PeerID string `json:"peerId"`
+	// Flow is "modal" or "page".
+	Flow string `json:"flow"`
+	// Heading labels this entry in the page-header menu. Carried only on
+	// ViewResponse.Create, where the section it came from is not otherwise named.
+	Heading string                    `json:"heading,omitempty"`
+	Targets []ViewSectionCreateTarget `json:"targets"`
+}
+
+// ViewSectionCreateTarget is one offerable entity type.
+//
+// Presence in the list IS the affordance: the server includes a type only when
+// a form resolves for it AND the principal may create it, so the client does no
+// permission arithmetic (the rule TKT-OMUD56 settled).
+type ViewSectionCreateTarget struct {
+	EntityType string `json:"entityType"`
+	FormID     string `json:"formId"`
+	Label      string `json:"label"`
+	// Template preselects an entity template variant, or "" for the form's own
+	// default.
+	Template string `json:"template,omitempty"`
 }
 
 // ViewEntity represents an entity in a view section.
@@ -1090,6 +1148,14 @@ type ViewGroup struct {
 // the rename to V1SidePanelAddInfo. Do not reach for this type from a new
 // view-related response: the read-only-view invariant established by
 // TKT-651W means no view section should carry add affordances.
+//
+// That invariant was narrowed, not lifted, by TKT-R4BMJM: a view section may
+// carry a create affordance when its config explicitly opts in, and that rides
+// [ViewSectionCreate] — a separate type. This one stays side-panel-only. The
+// distinction is not pedantry: this type's targets are not ACL-gated in the
+// same way, it carries a link-existing sibling the view path must not have, and
+// RR-R8X6 predicted that the misleading "View" prefix would tempt exactly the
+// reuse this sentence forbids.
 type ViewAddInfo struct {
 	Relation string          `json:"relation"`
 	LinkAs   string          `json:"linkAs"`

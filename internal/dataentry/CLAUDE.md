@@ -65,6 +65,32 @@ Rules for new write affordances in the Vue SPA (`frontend/`):
   plus a `perItemVerbs`/`perCollectionVerbs` update, and (b) the inline
   `v-if` on the component. No ESLint enforcement; code review catches drift.
 
+## The entity-detail view is read-only BY DEFAULT, not absolutely
+
+TKT-651W stripped `+ Add` / `Link Existing` from entity-detail view sections
+because "editing the graph from inside a read view blurs the line between viewing
+and editing". TKT-R4BMJM **narrowed** that to "read-only unless a section opts
+in", and did not reverse it. Rules for new code:
+
+- **Absence is the read-only default, and it is load-bearing.** A section with no
+  `create:` block emits nothing on the wire.
+  `TestV1Views_NoAddOrLinkInfoOnSections` asserts the absence of `addInfo`,
+  `linkInfo` **and** `create` across every section shape; it narrowed rather than
+  inverted, so all five of its original cases still assert absence. A change that
+  made the affordance default-on fails there.
+- **`v1.ViewAddInfo` is still side-panel-only.** Its doc comment forbids reuse
+  from a view response, and RR-R8X6 predicted that the misleading `View` prefix
+  would tempt exactly that — which is what happened during TKT-R4BMJM's planning.
+  The view path uses `v1.ViewSectionCreate`, a separate type.
+- **Link-existing did NOT come along.** `resolveSectionButtonsWithTraverse` builds
+  `LinkInfo` unconditionally, with no form check and no permission check, which is
+  why the view path has its own `resolveSectionCreate` rather than reusing it.
+  Don't "simplify" the two back into one without gating LinkInfo first.
+- **Both add affordances are ACL-gated through `creatableTargets`.** A type is
+  offered only when a form resolves for it AND `computeCollectionActions` says the
+  principal may create it. Before TKT-R4BMJM the side panel offered a button
+  whenever a form existed, with no principal involved.
+
 ## Documents (`documents:` + `/_documents/...`)
 
 Two kinds, discriminated by `DocumentConfig.IsStandalone()` (empty
@@ -218,23 +244,39 @@ User-authored apps served in a sandboxed iframe. An app is a **folder**
   `whenReady`/`isReady` to `appSDKMethods` — they're local SDK helpers, not host
   calls.
 - **Optional markdown editor: `<rela-editor>` from the reserved
-  `/_apps/<id>/_rela-editor.js`** (`appEditorSource()`), with its glyph webfont
-  at `/_apps/<id>/_rela-editor.woff2` (`appEditorFontSource()`, served with
-  `Access-Control-Allow-Origin: *` because the sandboxed iframe is null-origin so
-  the `@font-face` fetch is cross-origin). Both are embedded from
-  `app_editor_dist/` — a **build artifact** produced by `frontend/vite.editor.config.ts`
-  (`npm run build` runs it), gitignored like `static/v2`, with a committed
-  `.gitkeep` so the glob embed compiles on a clean checkout;
-  `TestAppEditorBundleEmbedded` skips when unbuilt and asserts the contract when
-  built. Separate from `_rela.js` so only apps that opt in pay the ~370KB bundle.
+  `/_apps/<id>/_rela-editor.js`** (`appEditorSource()`), with its stylesheet at
+  `/_apps/<id>/_rela-editor.css` (`appEditorCSSSource()`). A FILE, not an inline
+  `<style>`: the app CSP has no `'unsafe-inline'`, so an injected style element
+  is blocked outright and the editor renders completely unstyled. Both are
+  embedded from `app_editor_dist/` — a **build artifact** produced by
+  `frontend/vite.editor.config.ts` (`npm run build` runs it), gitignored like
+  `static/v2`, with a committed `.gitkeep` so the glob embed compiles on a clean
+  checkout; `TestAppEditorBundleEmbedded` skips when unbuilt and asserts the
+  contract when built. Separate from `_rela.js` so only apps that opt in pay the
+  bundle.
+
   **The element's public contract is the swap seam — keep it minimal**: property
   `value` (whitespace-exact), attributes `placeholder`/`readonly`, native
-  `input`/`change` events, `focus()`. Everything else (that it's EasyMDE/
-  CodeMirror, the toolbar, the generated DOM) is unsupported, so the editor can
-  be swapped later without breaking apps. Light DOM, not shadow DOM (CM5 misbehaves
-  in a shadow root); upgrades to enforced shadow encapsulation if the SPA moves
-  to CM6, without changing the contract. Programmatic `.value` sets are silent
-  (no `input`), matching a native `<textarea>`.
+  `input`/`change` events, `focus()`. Everything else (the editor underneath,
+  the toolbar, the generated DOM) is unsupported. That is not theoretical: the
+  editor was swapped from EasyMDE to Milkdown (TKT-D2JML7) with the contract
+  unchanged. Light DOM, not shadow DOM — ProseMirror works in a shadow root, but
+  the app's own `_rela.css` tokens would not reach it and the editor is meant to
+  look like the app it sits in. Programmatic `.value` sets are silent (no
+  `input`), matching a native `<textarea>`.
+
+  **There are only TWO editor assets.** The EasyMDE build served a third, a Font
+  Awesome woff2 at `_rela-editor.woff2`, with an `Access-Control-Allow-Origin: *`
+  exception because the sandboxed iframe is null-origin. Milkdown draws its
+  toolbar with inline SVG, so the asset, the reserved path and that CORS
+  exception are all gone; a test pins the path as a 404 so they cannot creep
+  back in together.
+
+  **The CSP's `style-src` does NOT block ProseMirror.** It governs stylesheets
+  and the `style` ATTRIBUTE; ProseMirror positions its chrome by writing DOM
+  style PROPERTIES (`el.style.left`), which is the CSSOM and is permitted. This
+  was verified against a server replicating `appCSP` exactly before the port —
+  an earlier note here recorded the opposite and was wrong.
 - **Optional styling is served at the reserved `/_apps/<id>/_rela.css`**
   (`appCSSSource()` = theme tokens + the atomic `.btn`/`.input`/`.card`). The
   tokens are embedded from `apps_tokens.css`, a **byte-identical copy** of

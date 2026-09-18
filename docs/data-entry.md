@@ -1688,6 +1688,7 @@ sections:
 | `group_by`      | string | Property to group entities by                           |
 | `empty_message` | string | Text shown when the collection is empty                 |
 | `link`          | bool   | Link entity titles to their detail pages                |
+| `create`        | map    | Offer a "create related entity" button (see below)      |
 
 Each entry under `fields:` takes:
 
@@ -1698,6 +1699,85 @@ Each entry under `fields:` takes:
 | `span`     | int    | Width on the 12-column grid (1-12; omit for full width)      |
 | `render`   | string | `display` or `input`; overrides the section's `render`        |
 | `widget`   | string | Which widget renders this property (see Widget Overrides)    |
+
+### Creating related entities from a section
+
+By default the entity detail page is **read-only**: it shows an entity and its
+neighbours, and every change happens through a form. A section can opt out of
+that and offer a button that creates a new related entity, already linked to the
+entity you are looking at.
+
+```yaml
+views:
+  epic:
+    entry:
+      type: epic
+    traverse:
+      - from: entry
+        follow: has-task
+        collect_as: tasks
+    sections:
+      - heading: Tasks
+        source: tasks
+        display: table
+        create:
+          in: [section, header]   # default: [section]
+          flow: modal             # default: modal
+          types:
+            task: { template: bugfix }
+            bug: { template: regression }
+```
+
+| Field   | Type | Description                                                        |
+| ------- | ---- | ------------------------------------------------------------------ |
+| `in`    | list | Where the button appears: `section`, `header`, or both. Default `[section]` |
+| `flow`  | str  | `modal` (default) keeps you on the page; `page` opens the full form |
+| `types` | map  | Per-entity-type options, keyed by type (see below)                  |
+
+Omit `create:` entirely to keep a section read-only. There is no `create: false`
+— absence already means that, and a second spelling of one meaning is refused at
+load.
+
+**Which types are offered is derived, not configured.** A type appears only when
+all three hold: the section's relation can reach it, a form exists that can
+create it, and the user has permission to create it. So there is no list of
+types to keep in step with your ACL — removing someone's `create` grant removes
+their button. One reachable type renders a direct button (`+ Task`); several
+render a short menu.
+
+The button follows the grant, but it is **not** what enforces it. The server
+re-authorizes the entity and the relation when the form is submitted, so a user
+who edits the request by hand gets whatever their own permissions allow. That is
+the same answer the create form would give them. Treat the button as a
+convenience, not as the access-control boundary.
+
+**`flow` is per section, not per type.** Which flow feels right depends on the
+form, not on the entity type, and one type opening a modal while its sibling
+navigates reads as a bug rather than as configuration.
+
+- `modal` opens the create form in a dialog and refreshes the page when it
+  succeeds. Good for short forms.
+- `page` navigates to the full create form and returns you to the originating
+  entity on submit. Good for long or multi-step forms.
+
+**`types` is keyed by entity type** because a template variant only exists per
+type — a relation reaching both `task` and `bug` has no single meaningful
+template. A type you do not list still gets a button; it just opens with the
+form's own default template.
+
+| Field      | Type | Description                                            |
+| ---------- | ---- | ------------------------------------------------------ |
+| `template` | str  | Template variant to preselect (`templates/entities/<type>--<variant>.md`) |
+
+When `in:` includes `header`, the section also contributes an entry to a menu at
+the top of the page. That menu is the union of the sections that opted in. It is
+deduped by relation, so two sections over one relation produce a single entry.
+
+A section can only offer this if exactly one relation filled it. A section built
+from a `recursive:` traverse rule, or from a rule that starts at another
+collection rather than `entry`, has no single entity to link the new one to;
+declaring `create:` on one is refused at config load rather than silently
+producing no button.
 
 ### Field Render Modes
 
@@ -5253,6 +5333,82 @@ entry theme, rela toggles the same `dark` class on your app's `<html>` element
 tokens flip. No work needed beyond linking `_rela.css` and using `var(--…)` for your
 own colors. Opting in is entirely optional; an app that wants full control of
 its look simply doesn't link it.
+
+### Editing markdown (optional `<rela-editor>`)
+
+Apps that edit entity body content can embed rela's own markdown editor rather
+than building one. Opt in with a script tag, then use the element:
+
+```html
+<head>
+  <script src="_rela.js"></script>
+  <script src="_rela-editor.js"></script>
+</head>
+<body>
+  <rela-editor id="body" placeholder="Write markdown"></rela-editor>
+</body>
+```
+
+It is the same WYSIWYG editor the data-entry forms use: a formatting toolbar,
+table controls, and `@` completion for entity references. It renders into the
+page normally, so your own CSS lays it out like any other block element.
+
+Kept separate from `_rela.js` so only apps that want an editor pay for it.
+
+**The element's API is deliberately small**, because it is what lets rela change
+the editor underneath without breaking your app:
+
+| | |
+|---|---|
+| `value` | property — get/set the markdown text, exactly as written |
+| `placeholder` | attribute — plain text shown while empty (read once, at mount) |
+| `readonly` | attribute — present to make the editor read-only |
+| `input` | event — fired on every change |
+| `change` | event — fired on blur, only if the content actually changed |
+| `focus()` | method — put the cursor in the editor |
+
+Everything else is an implementation detail and may change: which editor is
+underneath, what the toolbar looks like, what DOM it generates. Read and write
+`value`, listen for `input` and `change`, and your app keeps working. (The
+editor has already been replaced once, and apps written against this API needed
+no edit.)
+
+```js
+var editor = document.getElementById('body');
+
+rela.whenReady(async function () {
+  var res = await rela.get({ type: 'ticket', id: 'TKT-001' });
+  editor.value = res.data.content;
+
+  // `change` fires on blur after a real edit — a click-away with nothing
+  // changed does not fire it, so this will not save on every focus loss.
+  editor.addEventListener('change', async function () {
+    await rela.update({
+      type: 'ticket', id: 'TKT-001', patch: { content: editor.value },
+    });
+  });
+});
+```
+
+Three behaviours are worth knowing:
+
+- **Setting `value` from code is silent.** It fires no `input` event, matching a
+  native `<textarea>`. Loading content into the editor therefore cannot trigger
+  an autosave loop.
+- **An unedited body comes back untouched.** A WYSIWYG editor re-writes the
+  markdown it parses, so opening a body and saving it could otherwise rewrite
+  tables, headings and list markers for no reason. As long as the user has not
+  edited anything, `value` returns the original bytes exactly.
+- **Once the user edits, the whole body is rewritten to normal form.** Tables
+  are repadded to their column widths, `Setext`-underlined headings become `##`,
+  list markers are normalised — including in parts of the document the user
+  never touched. The meaning never changes, only the formatting. This is what
+  editing a parsed document means, and it is worth knowing if you diff what you
+  store.
+- **Entity references show as plain IDs.** In the data-entry form a `` `TKT-001` ``
+  reference renders as the entity's title; here it stays the ID. Titles are
+  per-user information that only the server can decide you may see, and the app
+  bridge has no call that returns them, so showing one would mean guessing.
 
 ### The `rela` bridge
 

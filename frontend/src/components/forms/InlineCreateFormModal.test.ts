@@ -172,3 +172,53 @@ describe('InlineCreateFormModal', () => {
   })
 
 })
+
+// The create-from-detail-page host passes pre-link, template and world as PROPS
+// (TKT-R4BMJM). They cannot ride the URL: an embedded form reads an empty query
+// by design, because it mounts over the host's page and honouring that page's
+// params would pre-fill the new entity from whatever the host was showing.
+//
+// This asserts the modal forwards them rather than swallowing them. It is worth
+// its own test because the failure is silent — a dropped prop yields a form that
+// opens fine, creates fine, and is simply not linked.
+describe('pre-link context forwarding', () => {
+  it('forwards link, template and world to the embedded form', () => {
+    const schema = useSchemaStore()
+    schema.entityTypes.set('task', { name: 'task', label: 'Task' } as never)
+
+    // A stub that RECORDS what it received. Deliberately declares the props it
+    // is asserting on: a stub with a narrow prop list would drop the new ones
+    // into attrs and the assertion would pass against a broken forward.
+    let seen: Record<string, unknown> = {}
+    const recorder = {
+      name: 'DynamicForm',
+      props: ['formId', 'embedded', 'embeddedLink', 'embeddedTemplate', 'embeddedWorld'],
+      emits: ['inline-created', 'inline-cancelled'],
+      setup(props: Record<string, unknown>, { expose }: { expose: (o: object) => void }) {
+        seen = props
+        expose({ isDirty: () => false, isSaving: () => false, submit: vi.fn() })
+        return () => null
+      },
+    }
+
+    const link = { relation: 'has-task', peer: 'EPIC-1', linkAs: 'to' as const }
+    mount(InlineCreateFormModal, {
+      props: {
+        show: true,
+        formId: 'create_task',
+        entityType: 'task',
+        template: 'bugfix',
+        link,
+        world: 'published',
+      },
+      global: { stubs: { DynamicForm: recorder } },
+      attachTo: document.body,
+    })
+
+    expect(seen.embeddedLink).toEqual(link)
+    expect(seen.embeddedTemplate).toBe('bugfix')
+    // The world decides which face the new entity lands in; a faced type has no
+    // default row to fall back to, so dropping it is a refusal at the server.
+    expect(seen.embeddedWorld).toBe('published')
+  })
+})
