@@ -44,18 +44,22 @@ the remaining six were fixed in 549471d6.
 
 **Acceptance Status:**
 
-- Reduce CI wall clock — **PASS**. 875s and 841s on two baseline runs → 530s.
-39%, measured cold.
+- Reduce CI wall clock — **PASS**. Run 35337622282, 23/23 jobs green, 683s;
+best green run 530s. Develop the same week: 865s, 934s, 976s (mean 925s). So
+26-43% faster like for like. Warm caches show clearly per job: Lint 258->142s,
+Demos 256->121s, SQLite 219->101s, Frontend 208->140s.
 - No coverage or check loss — **PASS**. 18 required checks still report; only
 `Build` was removed, and it compiled a strict subset of Cross-Compile
 (linux/default). The reviewer independently verified no job depended on it: all
 four `bin/rela` consumers build it themselves.
 - Merge queue not broken — **PASS**. The `Build` required check was removed
-from the develop ruleset in the same change, 19 → 18.
+from the develop ruleset in the same change, 19 -> 18. `Rela Tickets` also
+passes now that this ticket exists.
 
-Not yet observable: the warm-cache steady state, which needs a second run on an
-unchanged `go.sum`. The 530s figure is therefore the floor, not the expected
-steady state.
+An E2E failure during this work was misattributed twice before being traced to
+the branch being 7 commits behind develop; a rebase resolved it. Recorded
+because the wrong cause (Playwright worker count) had a plausible mechanism and
+a three-run correlation behind it, and was still wrong.
 
 ## Documentation (enhancements only)
 

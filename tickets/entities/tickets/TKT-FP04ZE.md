@@ -56,19 +56,39 @@ no visible symptom. See RR-AUWXN2.
 
 - Cached the four version-pinned lint tools; the golangci-lint `go install`
 alone was 61s per run.
-- Raised E2E Playwright workers 2 → 4 on a 4-core runner (E2E 409s → 361s).
-Per-test state is isolated: ephemeral port, `mkdtemp` project dir, and a
-`relae2e_<pid>_<n>` postgres schema. The postgres container and the CPU are
-*not* isolated, and `retries: 2` would mask load flake as a slow green — the
-config comment says so rather than claiming blanket safety (RR-M292PZ).
+- E2E Playwright workers were raised 2 -> 4 and then REVERTED. The revert is
+  not because 4 is known bad: the E2E failure first blamed on it was a stale
+  branch (7 commits behind develop), and a rebase went green. It is because 4
+  was never independently justified, and because `internal/dataentry` builds
+  its cmdexec runner per request with no `WithMaxConcurrent` (TKT-LP4EE8) —
+  unlike `internal/transform`, which bounds conversions at 4. Bound that
+  first. See RR-M292PZ.
 - Dropped the `Build` required status check from the develop ruleset in the
 same change. A required check that never reports leaves a merge-queue entry
 queued forever (the failure mode of BUG-P3SXOL).
 
 ## Result
 
-875s → 530s (39%), measured on a cold cache, so that is the floor rather than
-the steady state.
+Verified on run 35337622282 (fully green, 23 jobs), compared like for like
+against develop runs from the same week:
+
+| | wall clock |
+|---|---|
+| develop (35326416365, 35327661277, 35332682574) | 865s, 934s, 976s (mean 925s) |
+| this branch, green runs | 530s, 683s |
+
+**26-43% faster.** The spread on both sides is dominated by `Postgres Backend`,
+the noisiest job (499-682s across all six runs, unaffected by these changes).
+
+Warm-cache effect per job, against the 875s baseline:
+
+| Job | before | after |
+|---|---|---|
+| Lint | 258s | 142s |
+| Demos | 256s | 121s |
+| SQLite Backend | 219s | 101s |
+| Frontend | 208s | 140s |
+| Docs | 56s, after ~8.5 min of waiting | ran at t=0 |
 
 ## Deliberately not done
 
