@@ -444,8 +444,9 @@ Each entry in `fields:` configures one property input:
 ### The Markdown Body Editor
 
 When a form sets `body: true`, the entity's markdown content is edited in a
-WYSIWYG editor: headings, lists, tables, quotes and code blocks render as they
-will appear on the entity page rather than as markdown source.
+WYSIWYG editor: headings, lists, tables, quotes, links, dividers and code
+blocks render as they will appear on the entity page rather than as markdown
+source.
 
 **The file on disk stays markdown.** The editor parses the body when it opens
 and writes markdown back when you save. Opening an entity and saving it
@@ -454,8 +455,9 @@ would produce against what it read, and keeps the original bytes when the
 meaning is unchanged. Your formatting is not rewritten just because you looked
 at a page.
 
-**Toolbar.** Bold, italic, strikethrough and inline code; headings 1-3;
-bullet, numbered, task and quote blocks; code block; table. A button is
+**Toolbar.** Bold, italic, strikethrough, inline code and link; headings 1-3;
+bullet, numbered, task and quote blocks; code block; table; divider; undo and
+redo. A button is
 highlighted when the cursor is already inside that formatting, and pressing it
 again removes it. A button that cannot apply where the cursor is — a heading
 inside a list item, for instance — is greyed out rather than silently doing
@@ -472,6 +474,27 @@ usual `- [ ] open` and `- [x] done` lines.
 insert row above/below, insert column left/right, delete row, delete column,
 delete table. A GFM table must keep its header row and at least one body row,
 so the operations that would break that are disabled.
+
+**Links to the web.** Select some text and press the link button to give it a
+target; with no selection, the dialog asks for the text as well. Put the cursor
+in an existing link and a small panel appears below it showing the address,
+with Edit and Remove. The toolbar covers the same ground without a pointer:
+with the cursor in a link, the link button reopens the dialog to change the
+address, and a remove-link button appears beside it. Pasting a web address over
+selected text turns that text into a link rather than replacing it.
+
+Only `http`, `https` and `mailto` addresses are accepted, and anything else is
+refused with a message rather than saved. A bare host is completed for you —
+`example.com` becomes `https://example.com` — but a relative path like
+`/other/page` is refused, because an entity body is read on several surfaces
+that do not share a base URL, so a relative target has no stable meaning.
+A `mailto:` address keeps the address and drops any `?subject=` or `?bcc=`
+parameters.
+
+This applies to links you *create*. A link already in a file is left exactly as
+written, even if its address uses a scheme the editor would not accept — your
+stored content is never rewritten behind your back. Such a link is not
+clickable anywhere in rela.
 
 **Linking to another entity.** Type `@` followed by part of a title or ID to
 open a completion menu, then Enter or click to insert. The toolbar's
