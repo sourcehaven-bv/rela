@@ -338,8 +338,15 @@ func (v *VersionStore) liveRelationHash(
 	if gErr != nil {
 		return "", false, gErr
 	}
+	// FromFace is carried from the row rather than left zero, mirroring
+	// sqlitestore. The query pins from_face = '' so the zero value would be
+	// right today — which is exactly the problem: it would be right by
+	// coincidence, and contentHashOfRelation folds the tail into the hash, so
+	// relaxing that predicate later would silently produce a hash that
+	// suppresses a DIFFERENT lineage's sweep capture.
 	return contentHashOfRelation(store.RelationVersionInput{
-		From: r.From, Type: r.Type, To: r.To, Content: r.Content, Properties: r.Properties,
+		From: r.From, FromFace: r.FromFace, Type: r.Type, To: r.To,
+		Content: r.Content, Properties: r.Properties,
 	}), true, nil
 }
 

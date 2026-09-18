@@ -42,7 +42,24 @@ import (
 // an explicit DeleteRelation and an entity CASCADE delete — the store bulk-
 // deletes relations below the entitymanager, so cascade edges would otherwise
 // lose their history entirely.
+//
+// RecordID is the surrogate lineage id. When it is 0 the store resolves it from
+// the composite key — including FromFace, so a state-tailed capture lands on its
+// OWN lineage rather than the default tail's (TKT-JAROC3). That resolution is
+// correct for a SYNCHRONOUS capture taken BEFORE a delete (the live row still
+// carries the id) or during a rename (resolved from the pre-rename key). Callers
+// that capture after the row is gone must supply a non-zero RecordID read
+// earlier.
 func (v *VersionStore) WriteRelationVersion(ctx context.Context, in store.RelationVersionInput) error {
+	if in.RecordID == 0 {
+		// Resolve from the (still-live, pre-delete) row or the most-recent lineage.
+		id, err := v.recordIDForKey(ctx, in.From, in.FromFace, in.Type, in.To)
+		if err != nil {
+			return fmt.Errorf("sqlitestore: resolve rel_record_id for %s--%s--%s: %w",
+				entity.FormatStateRef(in.From, in.FromFace), in.Type, in.To, err)
+		}
+		in.RecordID = id
+	}
 	tx, err := v.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("sqlitestore: begin relation version write: %w", err)
@@ -201,20 +218,21 @@ func (v *VersionStore) relationLineageIDs(ctx context.Context, headID int64) ([]
 // recordIDForKey resolves a composite key to the rel_record_id of its current
 // (or most recent) lineage.
 //
-// Live rows are matched on the DEFAULT TAIL only, and that is deliberate: this
-// resolves a (from, type, to) KEY, which is what a caller who did not name a
-// face is asking about. A state-tailed sibling of the same triple is a DIFFERENT
-// edge with its own lineage; answering with it would silently redirect a
-// default-tail question to another face. A face-aware caller resolves its own
-// record id and passes it directly.
+// The key includes the TAIL (fromFace): a state-tailed edge and its default-tail
+// sibling share a (from, type, to) triple but are different edges with their own
+// lineages, so the face has to select between them (TKT-JAROC3). Passing the zero
+// face asks about the default tail, which is what a caller that never names a
+// face means.
 //
 // Nil: returns (0, store.ErrNotFound) when the key has neither a live row nor
 // any history.
-func (v *VersionStore) recordIDForKey(ctx context.Context, from, relType, to string) (int64, error) {
+func (v *VersionStore) recordIDForKey(
+	ctx context.Context, from string, fromFace entity.Face, relType, to string,
+) (int64, error) {
 	const live = `SELECT rel_record_id FROM relations
-	              WHERE from_id = ? AND rel_type = ? AND to_id = ? AND from_face = ''`
+	              WHERE from_id = ? AND rel_type = ? AND to_id = ? AND from_face = ?`
 	var id int64
-	err := v.db.QueryRowContext(ctx, live, from, relType, to).Scan(&id)
+	err := v.db.QueryRowContext(ctx, live, from, relType, to, string(fromFace)).Scan(&id)
 	if err == nil {
 		return id, nil
 	}
@@ -231,10 +249,10 @@ func (v *VersionStore) recordIDForKey(ctx context.Context, from, relType, to str
 		JOIN (SELECT rel_record_id, max(vseq) AS vseq
 		      FROM relation_versions GROUP BY rel_record_id) latest
 		  ON latest.rel_record_id = rv.rel_record_id AND latest.vseq = rv.vseq
-		WHERE rv.from_id = ? AND rv.rel_type = ? AND rv.to_id = ? AND rv.from_face = ''
+		WHERE rv.from_id = ? AND rv.rel_type = ? AND rv.to_id = ? AND rv.from_face = ?
 		ORDER BY rv.vseq DESC
 		LIMIT 1`
-	err = v.db.QueryRowContext(ctx, dead, from, relType, to).Scan(&id)
+	err = v.db.QueryRowContext(ctx, dead, from, relType, to, string(fromFace)).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, store.ErrNotFound
 	}
@@ -256,7 +274,10 @@ func (v *VersionStore) resolveLineageIDs(
 ) ([]int64, error) {
 	head := q.RecordID
 	if head == 0 {
-		id, err := v.recordIDForKey(ctx, q.From, q.Type, q.To)
+		// The read query names no face, so it asks about the default tail.
+		// A caller after a state-tailed edge's history passes its RecordID
+		// (reading history BY face is TKT-JAROC3's read-side half).
+		id, err := v.recordIDForKey(ctx, q.From, entity.Face(""), q.Type, q.To)
 		if err != nil {
 			return nil, err // ErrNotFound propagates
 		}
