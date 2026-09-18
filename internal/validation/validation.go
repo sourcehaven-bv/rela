@@ -97,6 +97,10 @@ type Service struct {
 	deps  lua.ReadDeps
 	cache *lua.Cache
 
+	// graph serves relation-cardinality constraints. Nil until WithGraph
+	// supplies one; see that method for why nil denies rather than passes.
+	graph Graph
+
 	// ev is the predicate condition engine for `When:`/`Then:` rules
 	// (TKT-J4IR1G): filter clauses are transpiled + compiled once (cached
 	// in the Evaluator) and evaluated per entity. Built lazily against
@@ -229,6 +233,17 @@ func New(meta *metamodel.Metamodel, deps lua.ReadDeps) *Service {
 // per-rule. Zero-or-nil cache leaves validation runtimes un-cached.
 func (s *Service) WithCache(c *lua.Cache) *Service {
 	s.cache = c
+	return s
+}
+
+// WithGraph wires the graph-read surface relation-cardinality constraints
+// (`relations:`) evaluate against. A Service without one reports every such
+// constraint as unevaluable rather than satisfied, so a forgotten wiring is
+// loud instead of turning a gate into a no-op.
+//
+// Rules that use no `relations:` block need no graph.
+func (s *Service) WithGraph(g Graph) *Service {
+	s.graph = g
 	return s
 }
 
@@ -539,12 +554,15 @@ func (s *Service) checkEntityAgainstRule(
 // human-readable summary when the constraint is violated, ("", true) when
 // satisfied.
 //
-// A failure that prevents the count from being trusted — no reader wired,
+// A failure that prevents the count from being trusted — no graph wired,
 // or the relation read itself failing — is returned as an error rather
 // than reported as "satisfied". Silently satisfying the gate is the worst
 // available outcome: these constraints are the workflow gates standing
 // between a broken ticket and `status=done`, so a check that could not run
 // must say so rather than wave the entity through.
+//
+// Counting is per EDGE, not per distinct target: a subject holding two
+// face-tailed edges to one entity counts two. See [Related].
 func (s *Service) checkRelationConstraint(
 	ctx context.Context,
 	e *entity.Entity,
@@ -554,11 +572,11 @@ func (s *Service) checkRelationConstraint(
 	if c.Min == nil && c.Max == nil {
 		return "", true, nil
 	}
-	// A missing reader is a wiring error, not a reason to pass. RR-X9NVHI
-	// makes a nil VisibleReader DENY reads; denying a read and satisfying
-	// a validation gate are opposite outcomes, so this reports instead.
-	if s.deps.VisibleReader == nil {
-		return "", false, errors.New("no entity reader wired")
+	// A missing graph is a wiring error, not a reason to pass. Denying a
+	// read and satisfying a validation gate are opposite outcomes, so this
+	// reports instead (same reasoning as RR-X9NVHI's nil-reader denial).
+	if s.graph == nil {
+		return "", false, errors.New("no graph wired")
 	}
 
 	// Parsed again here (compileRuleConditions already reported a bad
@@ -569,13 +587,13 @@ func (s *Service) checkRelationConstraint(
 		return "", false, fmt.Errorf("invalid where filter: %w", err)
 	}
 
-	rels, err := s.deps.OutgoingRelations(ctx, e.ID, relType)
+	related, err := s.graph.RelatedEntities(ctx, e.ID, relType, DirectionOutgoing)
 	if err != nil {
 		return "", false, fmt.Errorf("reading %q relations: %w", relType, err)
 	}
 
 	count := 0
-	for _, rel := range rels {
+	for _, rel := range related {
 		if len(whereFilters) == 0 {
 			count++
 			continue
@@ -587,23 +605,29 @@ func (s *Service) checkRelationConstraint(
 		// it was meant to catch could not be checked. So an unevaluable
 		// target counts as matching whenever Max is set, and is skipped
 		// otherwise — each bound fails closed.
+		//
+		// This covers the targets that REACH here: dangling references
+		// and `where` clauses the target type cannot answer. Edges whose
+		// endpoints the acting identity may not see are already gone —
+		// the gated reader drops them upstream — which is deliberate and
+		// documented on [metamodel.RelationConstraint]: a gate speaks
+		// about the visible graph, not the whole one.
 		failClosed := c.Max != nil
 
-		target, gErr := s.deps.VisibleReader.GetEntity(ctx, rel.To)
-		if gErr != nil {
+		if !rel.Resolved {
 			if failClosed {
 				count++
 			}
 			continue
 		}
-		targetDef, ok := s.deps.Meta.GetEntityDef(target.Type)
+		targetDef, ok := s.deps.Meta.GetEntityDef(rel.Type)
 		if !ok {
 			if failClosed {
 				count++
 			}
 			continue
 		}
-		rec := filter.Record{ID: target.ID, Type: target.Type, Properties: target.Properties}
+		rec := filter.Record{ID: rel.ID, Type: rel.Type, Properties: rel.Properties}
 		matches, mErr := filter.MatchAll(rec, whereFilters, targetDef, s.deps.Meta)
 		if mErr != nil {
 			if failClosed {

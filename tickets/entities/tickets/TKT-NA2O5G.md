@@ -5,7 +5,7 @@ title: 'Validation relation gates: a consumer-side graph seam, with direction an
 kind: enhancement
 priority: medium
 effort: l
-status: planning
+status: in-progress
 ---
 
 ## Description
@@ -158,9 +158,9 @@ a regression in step one is visible before any new feature is layered on.
 Arch-lint: `validation.mayDependOn` has no `store`, so the interface must be
 expressed in validation-local terms (ids, type names, property maps), not store
 types — exactly as `acl.Graph` returns `[]string` rather than
-`[]*entity.Relation`. The adapter lives where a store handle exists;
-the adapter lives in a NEW LEAF PACKAGE (working name
-`internal/validationgraph`) that both entry points can import.
+`[]*entity.Relation`. The adapter lives where a store handle exists; the adapter
+lives in a NEW LEAF PACKAGE (working name `internal/validationgraph`) that both
+entry points can import.
 
 `internal/validator` is NOT a viable home: `analysis.mayDependOn` does not list
 `validator`, and `analysis.newValidationService` is the second entry point into
@@ -186,40 +186,40 @@ Putting the far-endpoint choice INSIDE the adapter helps, but it guards only
 HALF the mistake. `store.RelationQuery.Direction` gates only
 `EntityID`/`EntityIDs`; `From` and `To` are matched unconditionally
 (`internal/store/storeutil/storeutil.go:327-348`), and there is no
-`ValidateRelationQuery`. Verified empirically: `{From:"A",
-Direction:Incoming}` still matches A→B, an OUTGOING edge, while
-`{From:"B", Direction:Incoming}` matches nothing.
+`ValidateRelationQuery`. Verified empirically: `{From:"A", Direction:Incoming}`
+still matches A→B, an OUTGOING edge, while `{From:"B", Direction:Incoming}`
+matches nothing.
 
 CONSTRAINT: incoming must be spelled `{EntityID: id, Direction:
 DirectionIncoming}` (or `{To: id}`), never `{From: id, Direction: ...}`. The
 direction test must assert the returned edge SET, not merely which endpoint was
 read from it.
 
-The interface must also return ONE ELEMENT PER EDGE with a resolution
-tri-state, not a flat list of targets: relation identity is
-`(From, FromFace, Type, To)` (`internal/entity/entity.go:302-308`), so one
-subject can have N edges to the same target and today's loop counts all N;
-and an edge whose target cannot be read must stay distinguishable from an
-absent edge, or the `Max` fail-closed branch is lost.
+The interface must also return ONE ELEMENT PER EDGE with a resolution tri-state,
+not a flat list of targets: relation identity is `(From, FromFace, Type, To)`
+(`internal/entity/entity.go:302-308`), so one subject can have N edges to the
+same target and today's loop counts all N; and an edge whose target cannot be
+read must stay distinguishable from an absent edge, or the `Max` fail-closed
+branch is lost.
 
 ### Preserve the fail-closed reasoning that actually exists
 
 The shipped code is careful within its scope: an unevaluable target counts as
-matching when `Max` is set and is skipped otherwise
-(`validation.go:583-590`), and a constraint that cannot run is reported as a
-`LoadError` rather than silently passing (`validation.go:517-524`). Carry both
-across unchanged, with their tests.
+matching when `Max` is set and is skipped otherwise (`validation.go:583-590`),
+and a constraint that cannot run is reported as a `LoadError` rather than
+silently passing (`validation.go:517-524`). Carry both across unchanged, with
+their tests.
 
 One clarification the move must not blur: ACL-hidden targets never reach that
 branch at all. `visibility.PolicyReader.FilterRelations`
 (`internal/visibility/policyreader.go:161`) drops an edge when either endpoint
 is invisible, BEFORE the evaluator runs. That is the intended semantics —
 validation runs over an ACL-pruned graph, so a gate is a statement about the
-visible graph, not a global invariant, and the CLI/CI paths wire an
-unrestricted reader for the authoritative verdict.
-`RelationConstraint`'s godoc (`types.go:1504-1517`) and `docs/metamodel.md`
-both already say this correctly. The `failClosed` branch genuinely covers
-dangling edges and `MatchAll` errors, and stays.
+visible graph, not a global invariant, and the CLI/CI paths wire an unrestricted
+reader for the authoritative verdict. `RelationConstraint`'s godoc
+(`types.go:1504-1517`) and `docs/metamodel.md` both already say this correctly.
+The `failClosed` branch genuinely covers dangling edges and `MatchAll` errors,
+and stays.
 
 Small in-scope fix: the comment at `validation.go:583-590` reads as a general
 guarantee without noting the upstream pruning. Add one cross-referencing

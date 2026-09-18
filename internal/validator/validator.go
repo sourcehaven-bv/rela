@@ -17,6 +17,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/validation"
+	"github.com/Sourcehaven-BV/rela/internal/validationgraph"
 )
 
 // Violation represents a custom validation rule violation.
@@ -115,11 +116,26 @@ var _ Validator = (*GenericValidator)(nil)
 // New creates a Validator backed by an EntityLister and a metamodel.
 // deps provides read-only Lua access for validation rules that use Lua scripts.
 // deps.ProjectRoot is used to resolve lua_file paths from validations/.
+//
+// Relation-cardinality gates (`relations:`) read through deps.VisibleReader,
+// so they count what that reader can see — the same reader, and therefore the
+// same visibility, the rest of the rule evaluation uses. A nil VisibleReader
+// leaves the graph unwired, and the engine then reports those constraints as
+// unevaluable rather than satisfied.
 func New(r EntityLister, meta *metamodel.Metamodel, deps lua.ReadDeps) *GenericValidator {
+	svc := validation.New(meta, deps)
+	// Mirrors analysis.newValidationService: both entry points into a
+	// Service must wire this the same way, or a `relations:` gate would
+	// mean something different depending on which one ran it.
+	if gr := deps.VisibleReader; gr != nil {
+		if g, err := validationgraph.New(gr); err == nil {
+			svc = svc.WithGraph(g)
+		}
+	}
 	return &GenericValidator{
 		r:    r,
 		meta: meta,
-		svc:  validation.New(meta, deps),
+		svc:  svc,
 	}
 }
 

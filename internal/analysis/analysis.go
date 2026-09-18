@@ -23,6 +23,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
 	"github.com/Sourcehaven-BV/rela/internal/validation"
+	"github.com/Sourcehaven-BV/rela/internal/validationgraph"
 )
 
 // ValidationFilter specifies which validation rules to run. Multiple
@@ -525,6 +526,16 @@ func (s *Service) countRelationsFor(
 // aliasing if a future caller passes a different LuaCache.
 func (s *Service) newValidationService() *validation.Service {
 	svc := validation.New(s.deps.Meta, s.deps.LuaReadDeps)
+	// Relation gates read through the SAME reader the rest of the rule
+	// evaluation uses, so a constraint counts exactly what this caller can
+	// see. internal/validator wires the identical thing; the two entry
+	// points into a Service must not differ here, or a gate would mean
+	// something different depending on which one ran it.
+	if r := s.deps.LuaReadDeps.VisibleReader; r != nil {
+		if g, err := validationgraph.New(r); err == nil {
+			svc = svc.WithGraph(g)
+		}
+	}
 	if s.deps.LuaCache != nil {
 		return svc.WithCache(s.deps.LuaCache)
 	}
