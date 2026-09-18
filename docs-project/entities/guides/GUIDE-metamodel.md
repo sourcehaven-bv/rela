@@ -2058,6 +2058,8 @@ forever:
 > incoming constraint on a faced type reports one violation per face for a
 > single underlying defect. Narrow the rule with `faces:` to avoid the noise.
 
+### Load-time validation of a `relations:` block
+
 > Unknown keys inside a validation rule are rejected at load time, so a
 > misspelled or mis-nested block (e.g. `relationz:`) fails loudly rather than
 > being silently ignored. The same applies inside the block: an undeclared
