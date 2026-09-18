@@ -209,6 +209,34 @@ two paths in agreement. Cover it in AC2 with a non-ISO fixture.
 ISO dates and mixed date/datetime columns were probed and DO agree, so the
 narrowing is limited to explicitly non-default formats.
 
+**A fourth defect: `sort=id` would switch to natural order.**
+
+`filter.SortMulti` treats `id` and `modified` as VIRTUAL properties
+(`sort.go:180-212`) and routes `id` to `SortByID`, which uses `natsort.Less`.
+`applyV1Sorting` has no virtual-property concept: it looks up
+`Properties["id"]`, finds nothing, and falls through to its plain byte-order id
+tiebreak. Measured:
+
+```
+sort=id  natsort (Go)   = [TKT-2  TKT-9  TKT-10  TKT-100]
+sort=id  bytewise (SQL) = [TKT-10 TKT-100 TKT-2  TKT-9]
+```
+
+Natural order is nicer for humans and is what the CLI already gives. It is also
+unrepresentable in the pushed query, and `id` is the universal final tiebreak on
+BOTH paths, so adopting natsort silently would break page boundaries on every
+list, not only those sorted by id.
+
+Decision for implementation: keep **byte order** for `id` on the API list path.
+Concretely, the delegation must either pass `id`/`modified` through a
+byte-order-preserving route or decline pushdown whenever `sort=id` is requested.
+Preserving byte order is preferred — it is the status quo, and `_position`
+navigation (`api_v1.go:423`) depends on list order matching.
+
+`modified` needs the same treatment: `filter.SortMulti` sorts by `ModifiedAt`,
+which is not a stored property at all and cannot be pushed. Confirm whether
+`sort=modified` is reachable on this path; if it is, it must decline pushdown.
+
 **Alternatives considered:**
 
 - *Teach `applyV1Sorting` about enums.* Rejected: keeps two comparison rules
@@ -304,6 +332,7 @@ No error message gains config or data content.
 - A value containing a single quote, reaching both `ORDER BY` and index DDL.
 - Multi-key sort mixing an enum and a date.
 - A date property declaring a non-ISO `format:` (must decline pushdown).
+- `sort=id` and `sort=modified` (virtual properties; must not change order).
 - Sort property declared on one entity type but not another in a mixed result set
   (`comparePropValues` has a `typeRank` path for this).
 - Equal sort keys spanning a page boundary — the paging-corruption case.
@@ -338,6 +367,7 @@ without it, like the rest of the pgstore suite.
 | Descending-sort divergence from null placement | **High** | AC6; same fix, both directions asserted |
 | Stale index after a schema edit (measured 650× slowdown) | **High** | AC4; hash values into the index name, reusing the `uniqueIndexShape` pattern |
 | Non-ISO date formats diverge once the Go path is correct | **High** | `StringShaped` declines them; non-ISO fixture in AC2 |
+| `sort=id` silently switching to natural order breaks every page boundary | **High** | Keep byte order for `id`; asserted in AC6 |
 | Enum values reaching DDL unescaped | Medium | Reuse `quoteLiteral`; edge case with an embedded quote |
 | Behaviour change visible on upgrade | Medium | Intended. Release note; see the ticket's open question |
 | Backends drifting out of step | Medium | `graphquerynaive` updated with pgstore; differential test covers both |
