@@ -73,6 +73,24 @@ noted as the reference for whoever does the world ticket.
 
 **Technical Approach:**
 
+*Open question resolved: `where` validation when `target_type` is NOT set.*
+The plan validates `where` properties at load only when `target_type` fixes a
+single target type. Left there, the unset case is inconsistent — same rule
+shape, different error timing. It is not an oversight but it must be stated:
+when a relation reaches several types, a `where` property valid for one and
+invalid for another has no single load-time answer, and rejecting it would
+break the existing ability to write one gate across heterogeneous targets.
+
+DECISION: when `target_type` is unset, validate the `where` properties
+against the UNION of the relation's reachable types on the relevant side and
+fail at load only if the property exists on NONE of them. That catches the
+real typo (a property no possible target has) without rejecting the legitimate
+heterogeneous case, and it makes the unset path strictly better than today
+rather than merely unchanged. A property present on some types and absent on
+others keeps today's per-entity check-time behaviour, which is correct: the
+fail-closed logic already handles it per target.
+
+
 Two commits, deliberately ordered.
 
 *Commit 1 — the seam, no behaviour change.* Declare in `internal/validation` a
@@ -219,8 +237,20 @@ validate` over `tickets/` must report identically before and after.
 **Edge Cases:**
 
 - Self-referencing relation (from-type == to-type): direction still
-distinguishes the two ends; both must be counted correctly.
-- Symmetric relation: confirm direction semantics are coherent, or reject.
+distinguishes the two ends; both must be counted correctly. Precedent:
+`internal/dataentry/default_view.go:96-101` treats a self-referential
+relation as genuinely two-directional ("the edges visible to the inverse are
+different from the outgoing"), so both directions are meaningful and neither
+is a duplicate.
+- Symmetric relation (`symmetric: true`): follow the established convention
+rather than inventing one. `internal/dataentry/relations_direction.go:49-55`
+treats a symmetric relation as OUTGOING by convention ("the metamodel's
+`symmetric: true` flag tells the reconciler the edge has no preferred
+direction") and `default_view.go:92-95` skips the incoming pass because it
+"would duplicate the same edges". So for a symmetric relation the two
+directions are the same set. DECISION: accept `direction:` on a symmetric
+relation and treat both values as equivalent, matching that convention —
+do NOT reject it, and do NOT double-count. Pinned by a test.
 - `target_type` set with an empty `where` — type filter alone must work.
 - Zero edges, with `min: 0` and with `max: 0`.
 - Target invisible to the acting identity — must keep today's per-bound
