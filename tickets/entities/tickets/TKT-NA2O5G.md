@@ -5,7 +5,7 @@ title: 'Validation relation gates: a consumer-side graph seam, with direction an
 kind: enhancement
 priority: medium
 effort: l
-status: review
+status: done
 ---
 
 ## Description

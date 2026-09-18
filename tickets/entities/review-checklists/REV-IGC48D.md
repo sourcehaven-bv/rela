@@ -17,9 +17,9 @@ status: done
 `go test ./internal/...` — no failures. `just lint` exit 0; `golangci-lint`
 scoped to the six changed packages reports **0 issues** (it reported 32 before
 the review fixes, which would have failed CI). `just comment-lint` gate clean:
-no unresolvable doc links across 15178 comments. `just coverage-check` exit 0;
-the changed packages measure validationgraph 90.9%, validation 88.8%, metamodel
-87.5%, validator 80.5% — all well above the 50% default floor. `just arch-lint`
+no unresolvable doc links across 15178 comments. `just coverage-check` exit 0: package
+threshold (50%) PASS, total threshold (65%) PASS, total 79.6%. The changed
+packages measure validation 89.0% and validationgraph 82.9%. `just arch-lint`
 clean, and `just plimsoll` clean.
 
 **Comment findings.** `just comment-report` surfaces no advisory findings in any
@@ -122,7 +122,7 @@ entities with reasons, not as comments in the code.
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
+- [x] Run `/pr` command to create PR and monitor CI
 
 <!--
 Deliberately NOT tracked here: the PR URL and whether CI passed.
