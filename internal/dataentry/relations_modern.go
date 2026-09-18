@@ -501,8 +501,25 @@ func (h *writeHandler) writeUpdateRelation(
 func (h *writeHandler) currentEdgeOnFace(
 	ctx context.Context, from string, tail entity.Face, relType, to string,
 ) (*entity.Relation, error) {
+	return edgeOnFace(ctx, h.store, from, tail, relType, to)
+}
+
+// edgeOnFace reads the edge of this triple whose TAIL is exactly tail.
+//
+// Package-level rather than a method because two unrelated surfaces need it —
+// the relation write path's read-merge-write and relation-history restore —
+// and the store has no face-aware relation get (`store.GetRelation` is the
+// default tail by contract). A second copy of this query is how one of them
+// ends up addressing the wrong edge.
+//
+// Nil: returns (nil, store.ErrNotFound) when no edge carries this tail; never
+// (nil, nil). The callers act on the returned value, so "no such edge" must be
+// distinguishable from "the read failed".
+func edgeOnFace(
+	ctx context.Context, st store.Store, from string, tail entity.Face, relType, to string,
+) (*entity.Relation, error) {
 	q := store.RelationQuery{From: from, FromFace: &tail, Type: relType, To: to}
-	for rel, err := range h.store.ListRelations(ctx, q) {
+	for rel, err := range st.ListRelations(ctx, q) {
 		if err != nil {
 			return nil, err
 		}

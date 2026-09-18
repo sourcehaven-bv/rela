@@ -241,10 +241,10 @@ func (v *VersionStore) resolveLineageIDs(
 ) ([]int64, error) {
 	head := q.RecordID
 	if head == 0 {
-		// The read query names no face, so it asks about the default tail.
-		// A caller after a state-tailed edge's history passes its RecordID
-		// (reading history BY face is TKT-JAROC3's read-side half).
-		id, err := v.recordIDForKey(ctx, q.From, entity.Face(""), q.Type, q.To)
+		// The query's face selects the tail; zero means the default tail, so
+		// a caller that names no face reads the default tail specifically
+		// rather than whichever tail happens to sort first (TKT-JAROC3).
+		id, err := v.recordIDForKey(ctx, q.From, q.FromFace, q.Type, q.To)
 		if err != nil {
 			return nil, err // ErrNotFound propagates
 		}
@@ -402,8 +402,13 @@ func (v *VersionStore) GetRelationVersion(
 // head). A lifetime is bounded by its id-set's count/min/max(created_at), NOT by
 // the presence of a create row — create/update rows come only from the async
 // sweep, so a short-lived relation's lineage may hold only a delete.
+//
+// The enumeration is scoped to ONE tail (fromFace; zero = the default tail,
+// TKT-JAROC3). Tails are separate relations, and the response carries no face,
+// so listing them together would hand a caller asking about one edge an opaque
+// RecordID belonging to another.
 func (v *VersionStore) ListRelationLifetimes(
-	ctx context.Context, from, relType, to string,
+	ctx context.Context, from string, fromFace entity.Face, relType, to string,
 ) ([]store.RelationLifetime, error) {
 	// Heads: every rel_record_id whose FINAL row carries this key, newest-first.
 	// This is recordIDForKey's dead-query without LIMIT 1.
@@ -415,8 +420,9 @@ func (v *VersionStore) ListRelationLifetimes(
 		    FROM relation_versions GROUP BY rel_record_id
 		) latest ON latest.rel_record_id = rv.rel_record_id AND latest.vseq = rv.vseq
 		WHERE rv.from_id = $1 AND rv.rel_type = $2 AND rv.to_id = $3
+		  AND rv.from_face = $4
 		ORDER BY latest.vseq DESC`
-	rows, err := v.db.Query(ctx, headsQ, from, relType, to)
+	rows, err := v.db.Query(ctx, headsQ, from, relType, to, string(fromFace))
 	if err != nil {
 		return nil, err
 	}
@@ -438,7 +444,9 @@ func (v *VersionStore) ListRelationLifetimes(
 	}
 
 	// The live relations-row id for this key (if any), to flag the live lifetime.
-	liveID, err := v.liveRecordID(ctx, from, relType, to)
+	// Same tail as the heads above: the live edge on ANOTHER tail is a different
+	// relation and must not mark this tail's lifetime live.
+	liveID, err := v.liveRecordID(ctx, from, fromFace, relType, to)
 	if err != nil {
 		return nil, err
 	}
@@ -488,16 +496,19 @@ func (v *VersionStore) ListRelationLifetimes(
 // sqlitestore.Store exposes the same method under the same name; the two are
 // discovered together by internal/store/storetest.
 func (v *VersionStore) RelationRecordID(ctx context.Context, from, relType, to string) (int64, error) {
-	return v.liveRecordID(ctx, from, relType, to)
+	return v.liveRecordID(ctx, from, entity.Face(""), relType, to)
 }
 
 // liveRecordID returns the rel_record_id of the live relations row for this key,
-// or 0 if the relation is not currently live.
-func (v *VersionStore) liveRecordID(ctx context.Context, from, relType, to string) (int64, error) {
+// or 0 if the relation is not currently live. fromFace selects the tail; the
+// zero face is the default tail (TKT-JAROC3).
+func (v *VersionStore) liveRecordID(
+	ctx context.Context, from string, fromFace entity.Face, relType, to string,
+) (int64, error) {
 	const q = `SELECT rel_record_id FROM relations
-	           WHERE from_id = $1 AND rel_type = $2 AND to_id = $3 AND from_face = ''`
+	           WHERE from_id = $1 AND rel_type = $2 AND to_id = $3 AND from_face = $4`
 	var id int64
-	err := v.db.QueryRow(ctx, q, from, relType, to).Scan(&id)
+	err := v.db.QueryRow(ctx, q, from, relType, to, string(fromFace)).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, nil
 	}

@@ -331,7 +331,7 @@ func runRelationHistoryTests(t *testing.T, f Factory) {
 		v := versionsOf(t, s)
 		seedRelationLineage(t, s, v, "body")
 
-		lts, err := v.ListRelationLifetimes(ctx(), "FEAT-1", "rel", "FEAT-2")
+		lts, err := v.ListRelationLifetimes(ctx(), "FEAT-1", entity.Face(""), "rel", "FEAT-2")
 		require.NoError(t, err)
 		require.Len(t, lts, 1)
 		require.Equal(t, 1, lts[0].Lifetime)
@@ -341,7 +341,7 @@ func runRelationHistoryTests(t *testing.T, f Factory) {
 
 	t.Run("UnknownKeyHasNoLifetimes", func(t *testing.T) {
 		v := versionsOf(t, f(t))
-		lts, err := v.ListRelationLifetimes(ctx(), "NOPE-1", "rel", "NOPE-2")
+		lts, err := v.ListRelationLifetimes(ctx(), "NOPE-1", entity.Face(""), "rel", "NOPE-2")
 		require.NoError(t, err)
 		require.Empty(t, lts)
 	})
@@ -389,20 +389,40 @@ func runRelationTailTests(t *testing.T, f Factory) {
 			SchemaHash: "schema-1", Projection: []byte(`{"v":1}`),
 		}))
 
-		lts, err := v.ListRelationLifetimes(ctx(), seedFrom, seedType, seedTo)
+		// Each tail enumerates ONE lifetime — its own. Listing by triple alone
+		// would report the other tail's lineage here too, and the response
+		// carries no face to tell them apart.
+		defLts, err := v.ListRelationLifetimes(ctx(), seedFrom, entity.Face(""), seedType, seedTo)
 		require.NoError(t, err)
-		require.Len(t, lts, 2, "each tail is its own lineage, so the triple has two")
-		require.NotEqual(t, lts[0].RecordID, lts[1].RecordID)
+		require.Len(t, defLts, 1, "the draft tail must not appear in the default tail's lifetimes")
+		draftLts, err := v.ListRelationLifetimes(ctx(), seedFrom, entity.Face("draft"), seedType, seedTo)
+		require.NoError(t, err)
+		require.Len(t, draftLts, 1)
+		require.NotEqual(t, defLts[0].RecordID, draftLts[0].RecordID,
+			"each tail is its own lineage")
 
-		// Read each lineage back and check the bodies did not interleave. A
-		// lineage holding both bodies is the bug: one edge's history swallowed
-		// the other's.
-		for _, lt := range lts {
+		// Read each tail's history BY FACE and check the bodies did not
+		// interleave. A timeline holding both bodies is the bug: one edge's
+		// history swallowed the other's.
+		for _, tc := range []struct {
+			face entity.Face
+			want string
+		}{
+			{"", "default tail body"},
+			{"draft", "draft tail body"},
+		} {
 			got, err := v.ListRelationVersions(ctx(), store.RelationHistoryQuery{
-				From: seedFrom, Type: seedType, To: seedTo, RecordID: lt.RecordID,
+				From: seedFrom, FromFace: tc.face, Type: seedType, To: seedTo,
 			})
 			require.NoError(t, err)
-			require.Len(t, got, 1, "a tail's lineage must hold only its own capture")
+			require.Len(t, got, 1, "a tail's timeline must hold only its own capture")
+
+			snap, err := v.GetRelationVersion(ctx(), store.RelationHistoryQuery{
+				From: seedFrom, FromFace: tc.face, Type: seedType, To: seedTo,
+			}, 1)
+			require.NoError(t, err)
+			require.Equal(t, tc.want, snap.Content,
+				"reading by face must return THAT tail's snapshot")
 		}
 	})
 
@@ -425,14 +445,10 @@ func runRelationTailTests(t *testing.T, f Factory) {
 			SchemaHash: "schema-1", Projection: []byte(`{"v":1}`),
 		}))
 
-		lts, err := v.ListRelationLifetimes(ctx(), seedFrom, seedType, seedTo)
-		require.NoError(t, err)
-		require.Len(t, lts, 2)
-
 		hashes := make([]string, 0, 2)
-		for _, lt := range lts {
+		for _, face := range []entity.Face{"", "draft"} {
 			got, err := v.ListRelationVersions(ctx(), store.RelationHistoryQuery{
-				From: seedFrom, Type: seedType, To: seedTo, RecordID: lt.RecordID,
+				From: seedFrom, FromFace: face, Type: seedType, To: seedTo,
 			})
 			require.NoError(t, err)
 			require.Len(t, got, 1)
@@ -510,7 +526,7 @@ func seedRelationLineage(
 			Content: bodies[0], SchemaHash: "schema-1", Projection: []byte(`{"v":1}`),
 		}))
 		bodies = bodies[1:]
-		lts, ltErr := v.ListRelationLifetimes(ctx(), seedFrom, seedType, seedTo)
+		lts, ltErr := v.ListRelationLifetimes(ctx(), seedFrom, entity.Face(""), seedType, seedTo)
 		require.NoError(t, ltErr)
 		require.NotEmpty(t, lts)
 		rid = lts[0].RecordID
@@ -711,7 +727,7 @@ func runPurgeTests(t *testing.T, f Factory) {
 			"delete+recreate reused the lineage id; the new relation would inherit "+
 				"the deleted one's history")
 
-		lts, err := v.ListRelationLifetimes(ctx(), "FEAT-1", "rel", "FEAT-2")
+		lts, err := v.ListRelationLifetimes(ctx(), "FEAT-1", entity.Face(""), "rel", "FEAT-2")
 		require.NoError(t, err)
 		require.Len(t, lts, 2, "delete+recreate must mint a fresh lifetime, not resurrect the old one")
 

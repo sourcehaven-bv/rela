@@ -174,7 +174,10 @@ func (v *VersionStore) PurgeRelationVersions(
 	// the live row belongs to, and reading that after the delete has already
 	// committed would be answering a question about a world the delete has
 	// changed — as well as leaving the erasure un-tombstoned if the read fails.
-	liveID, err := v.liveRecordID(ctx, req.From, req.Type, req.To)
+	// Default tail: RelationVersionPurgeRequest names no face, so purge
+	// addresses the default-tail edge (TKT-JAROC3 leaves purging a
+	// state-tailed edge to the operator's explicit RecordID).
+	liveID, err := v.liveRecordID(ctx, req.From, entity.Face(""), req.Type, req.To)
 	if err != nil {
 		return nil, err
 	}
@@ -241,7 +244,8 @@ func (v *VersionStore) resolvePurgeLineage(
 	if req.AllLifetimes && req.RecordID != 0 {
 		return nil, nil, errors.New("sqlitestore: RecordID and AllLifetimes are mutually exclusive")
 	}
-	lifetimes, err := v.ListRelationLifetimes(ctx, req.From, req.Type, req.To)
+	// Default tail, as above: the purge request names no face.
+	lifetimes, err := v.ListRelationLifetimes(ctx, req.From, entity.Face(""), req.Type, req.To)
 	if err != nil {
 		return nil, nil, err
 	}

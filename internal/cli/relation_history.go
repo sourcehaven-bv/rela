@@ -15,7 +15,7 @@ import (
 // addressed by its three-part key. Relation content versioning is a pgstore-only
 // capability (filesystem deployments use git for the same purpose).
 type RelationHistoryCmd struct {
-	From          string `arg:"" help:"Source entity ID (the relation's 'from')."`
+	From          string `arg:"" help:"Source entity ID, optionally faced as ID@face (the relation's 'from')."`
 	Type          string `arg:"" help:"Relation type (e.g. addresses)."`
 	To            string `arg:"" help:"Target entity ID (the relation's 'to')."`
 	Version       int    `help:"Print the full snapshot for this 1-based version ordinal (for piping to a diff tool) instead of the timeline." default:"0"`
@@ -32,18 +32,39 @@ func (c *RelationHistoryCmd) Run(ctx context.Context, svc *writeServices) error 
 		return nil
 	}
 	var reader store.RelationHistoryReader = svc.Versions
-	if c.ListLifetimes {
-		return c.printLifetimes(ctx, reader)
-	}
-	recordID, err := resolveLifetimeRecordID(ctx, reader, c.From, c.Type, c.To, c.Lifetime)
+	from, fromFace, err := parseRelationFrom(c.From)
 	if err != nil {
 		return err
 	}
-	q := store.RelationHistoryQuery{From: c.From, Type: c.Type, To: c.To, RecordID: recordID}
+	if c.ListLifetimes {
+		return c.printLifetimes(ctx, reader, from, fromFace)
+	}
+	recordID, err := resolveLifetimeRecordID(ctx, reader, from, fromFace, c.Type, c.To, c.Lifetime)
+	if err != nil {
+		return err
+	}
+	q := store.RelationHistoryQuery{
+		From: from, FromFace: fromFace, Type: c.Type, To: c.To, RecordID: recordID,
+	}
 	if c.Version > 0 {
 		return c.printSnapshot(ctx, reader, q)
 	}
 	return c.printTimeline(ctx, reader, q)
+}
+
+// parseRelationFrom splits the `from` argument into its bare id and its TAIL.
+//
+// A relation's source may carry a face, and the tail is part of the edge's
+// identity: `POL-1@draft--cites--FEAT-1` and `POL-1--cites--FEAT-1` are two
+// relations with separate histories (TKT-JAROC3). Accepting the `ID@face`
+// spelling here is what lets an operator name the one they mean; an unsuffixed
+// id means the default tail.
+func parseRelationFrom(raw string) (id string, face entity.Face, err error) {
+	id, face, err = entity.ParseStateRef(raw)
+	if err != nil {
+		return "", "", fmt.Errorf("invalid source address %q: %w", raw, err)
+	}
+	return id, face, nil
 }
 
 // resolveLifetimeRecordID maps a 1-based lifetime ordinal to its durable
@@ -51,12 +72,13 @@ func (c *RelationHistoryCmd) Run(ctx context.Context, svc *writeServices) error 
 // Returns 0 (newest lifetime) when lifetime <= 0. Shared by the relation-history,
 // relation-restore, and relation-history-purge commands.
 func resolveLifetimeRecordID(
-	ctx context.Context, reader store.RelationHistoryReader, from, relType, to string, lifetime int,
+	ctx context.Context, reader store.RelationHistoryReader,
+	from string, fromFace entity.Face, relType, to string, lifetime int,
 ) (int64, error) {
 	if lifetime <= 0 {
 		return 0, nil
 	}
-	lifetimes, err := reader.ListRelationLifetimes(ctx, from, relType, to)
+	lifetimes, err := reader.ListRelationLifetimes(ctx, from, fromFace, relType, to)
 	if err != nil {
 		return 0, fmt.Errorf("list lifetimes for %s--%s--%s: %w", from, relType, to, err)
 	}
@@ -66,8 +88,10 @@ func resolveLifetimeRecordID(
 	return lifetimes[lifetime-1].RecordID, nil
 }
 
-func (c *RelationHistoryCmd) printLifetimes(ctx context.Context, reader store.RelationHistoryReader) error {
-	lifetimes, err := reader.ListRelationLifetimes(ctx, c.From, c.Type, c.To)
+func (c *RelationHistoryCmd) printLifetimes(
+	ctx context.Context, reader store.RelationHistoryReader, from string, fromFace entity.Face,
+) error {
+	lifetimes, err := reader.ListRelationLifetimes(ctx, from, fromFace, c.Type, c.To)
 	if err != nil {
 		return fmt.Errorf("list lifetimes for %s--%s--%s: %w", c.From, c.Type, c.To, err)
 	}
@@ -119,7 +143,8 @@ func (c *RelationHistoryCmd) printTimeline(
 	}
 	// Footer: signal that older deleted lifetimes exist (only for the newest view).
 	if q.RecordID == 0 {
-		if lifetimes, err := reader.ListRelationLifetimes(ctx, c.From, c.Type, c.To); err == nil && len(lifetimes) > 1 {
+		if lifetimes, err := reader.ListRelationLifetimes(
+			ctx, q.From, q.FromFace, c.Type, c.To); err == nil && len(lifetimes) > 1 {
 			out.WriteMessage("note: %d earlier deleted lifetime(s) of this key exist — "+
 				"use --list-lifetimes, or --lifetime K to view one.", len(lifetimes)-1)
 		}
@@ -164,7 +189,7 @@ func (c *RelationHistoryCmd) printSnapshot(
 // new lifetime 1 appears afterward; it does NOT revive the old lineage in place.
 // That is the only sensible semantics (restore = an authorized re-create).
 type RelationRestoreCmd struct {
-	From     string `arg:"" help:"Source entity ID (the relation's 'from')."`
+	From     string `arg:"" help:"Source entity ID, optionally faced as ID@face (the relation's 'from')."`
 	Type     string `arg:"" help:"Relation type."`
 	To       string `arg:"" help:"Target entity ID (the relation's 'to')."`
 	Version  int    `arg:"" help:"The 1-based version ordinal to restore to (see 'rela relation-history')."`
@@ -180,11 +205,17 @@ func (c *RelationRestoreCmd) Run(ctx context.Context, svc *writeServices) error 
 	}
 	var reader store.RelationHistoryReader = svc.Versions
 
-	recordID, err := resolveLifetimeRecordID(ctx, reader, c.From, c.Type, c.To, c.Lifetime)
+	from, fromFace, err := parseRelationFrom(c.From)
 	if err != nil {
 		return err
 	}
-	q := store.RelationHistoryQuery{From: c.From, Type: c.Type, To: c.To, RecordID: recordID}
+	recordID, err := resolveLifetimeRecordID(ctx, reader, from, fromFace, c.Type, c.To, c.Lifetime)
+	if err != nil {
+		return err
+	}
+	q := store.RelationHistoryQuery{
+		From: from, FromFace: fromFace, Type: c.Type, To: c.To, RecordID: recordID,
+	}
 	snap, err := reader.GetRelationVersion(ctx, q, c.Version)
 	if errors.Is(err, store.ErrNotFound) {
 		return fmt.Errorf("no version %d for %s--%s--%s", c.Version, c.From, c.Type, c.To)

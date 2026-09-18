@@ -1027,7 +1027,23 @@ type RelationLifetime struct {
 // otherwise, so the composite key remains the authorization boundary and RecordID
 // only disambiguates within it.
 type RelationHistoryQuery struct {
-	From     string
+	From string
+
+	// FromFace is the state-specific TAIL whose history is being read; zero
+	// reads the DEFAULT tail (TKT-JAROC3).
+	//
+	// The tail is part of the key, not a filter over it: a triple can hold
+	// one edge per tail and those are different relations with their own
+	// lineages. So a query that names no face does not read "the edge,
+	// approximately" — it reads the default tail's history specifically,
+	// which is what a caller that never names a face means.
+	//
+	// Ignored when RecordID is non-zero: an explicit lineage handle already
+	// identifies one edge, and the store validates that handle against the
+	// key. Supplying both a face and a mismatched RecordID is not an error,
+	// because the RecordID is the narrower address.
+	FromFace entity.Face
+
 	Type     string
 	To       string
 	RecordID int64 // 0 = newest lifetime
@@ -1035,10 +1051,11 @@ type RelationHistoryQuery struct {
 
 // RelationVersionInput is one relation version to persist via
 // [RelationVersionWriter]. RecordID is the surrogate lineage id read off the
-// live relations row (0 is invalid — the caller must supply the row's
-// rel_record_id). PrevFrom/PrevTo are set only for VersionOpRename. Attribution
-// arrives here, populated from ctx at the boundary — the store learns the
-// Principal by no other route.
+// live relations row; 0 asks the store to resolve it from the composite key
+// (including FromFace), which is correct for a synchronous capture taken while
+// the row still exists. PrevFrom/PrevTo are set only for VersionOpRename.
+// Attribution arrives here, populated from ctx at the boundary — the store
+// learns the Principal by no other route.
 type RelationVersionInput struct {
 	RecordID int64
 
@@ -1100,7 +1117,15 @@ type RelationHistoryReader interface {
 	// key was deleted-and-recreated: this is how a caller discovers that older
 	// deleted lifetimes exist and obtains the RecordID handle to read one. Returns
 	// an empty slice for an unknown key.
-	ListRelationLifetimes(ctx context.Context, from, relType, to string) ([]RelationLifetime, error)
+	//
+	// fromFace scopes the enumeration to ONE tail; zero is the default tail
+	// (TKT-JAROC3). Tails are separate relations with separate lineages, so
+	// listing them together would offer a caller asking about the draft edge
+	// a handle to the published edge's history — and the two are indis-
+	// tinguishable in the response, which carries no face.
+	ListRelationLifetimes(
+		ctx context.Context, from string, fromFace entity.Face, relType, to string,
+	) ([]RelationLifetime, error)
 }
 
 // --- Version purge (TKT-BW6UUL) ---

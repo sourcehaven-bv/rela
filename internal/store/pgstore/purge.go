@@ -172,7 +172,10 @@ func (v *VersionStore) PurgeRelationVersions(
 	if liveExists && req.ForceLive {
 		// The live row's lineage is the newest lifetime; tombstone it so the sweep
 		// doesn't re-capture the purged content. (AllLifetimes includes it.)
-		liveID, lerr := v.liveRecordID(ctx, req.From, req.Type, req.To)
+		// Default tail: RelationVersionPurgeRequest names no face, so purge
+		// addresses the default-tail edge (TKT-JAROC3 leaves purging a
+		// state-tailed edge to the operator's explicit RecordID).
+		liveID, lerr := v.liveRecordID(ctx, req.From, entity.Face(""), req.Type, req.To)
 		if lerr != nil {
 			return nil, lerr
 		}
@@ -201,7 +204,8 @@ func (v *VersionStore) resolvePurgeLineage(
 	if req.AllLifetimes && req.RecordID != 0 {
 		return nil, nil, errors.New("pgstore: RecordID and AllLifetimes are mutually exclusive")
 	}
-	lifetimes, err := v.ListRelationLifetimes(ctx, req.From, req.Type, req.To)
+	// Default tail, as above: the purge request names no face.
+	lifetimes, err := v.ListRelationLifetimes(ctx, req.From, entity.Face(""), req.Type, req.To)
 	if err != nil {
 		return nil, nil, err
 	}
