@@ -34,6 +34,7 @@ jobs:
 
       - name: Set up Go
         uses: actions/setup-go@v7
+        id: setup-go
         with:
           go-version: '1.26.6'
           # The two Go caches are split deliberately, because they have
@@ -57,12 +58,12 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/go-build
-          key: go-test-${{ runner.os }}-${{ runner.arch }}-1.26.6-${{ hashFiles('**/go.sum') }}
+          key: go-test-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-${{ steps.setup-go.outputs.go-version }}-${{ hashFiles('go.sum') }}
           # A go.sum bump falls back to the previous build cache rather than
           # going cold. Safe: Go's cache is content-addressed, so stale entries
           # are never served for changed inputs, only ignored.
           restore-keys: |
-            go-test-${{ runner.os }}-${{ runner.arch }}-1.26.6-
+            go-test-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-${{ steps.setup-go.outputs.go-version }}-
 
       - name: Download dependencies
         run: go mod download
@@ -116,6 +117,7 @@ jobs:
 
       - name: Set up Go
         uses: actions/setup-go@v7
+        id: setup-go
         with:
           go-version: '1.26'
           cache: true
@@ -124,9 +126,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/go-build
-          key: go-reachability-${{ runner.os }}-${{ runner.arch }}-1.26-${{ hashFiles('**/go.sum') }}
+          key: go-reachability-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-${{ steps.setup-go.outputs.go-version }}-${{ hashFiles('go.sum') }}
           restore-keys: |
-            go-reachability-${{ runner.os }}-${{ runner.arch }}-1.26-
+            go-reachability-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-${{ steps.setup-go.outputs.go-version }}-
 
       - name: Download dependencies
         run: go mod download
@@ -208,6 +210,7 @@ jobs:
       - name: Set up Go
         if: steps.detect.outputs.changed == 'true'
         uses: actions/setup-go@v7
+        id: setup-go
         with:
           go-version: '1.26.6'
           cache: true
@@ -216,9 +219,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/go-build
-          key: go-clamav-${{ runner.os }}-${{ runner.arch }}-1.26.6-${{ hashFiles('**/go.sum') }}
+          key: go-clamav-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-${{ steps.setup-go.outputs.go-version }}-${{ hashFiles('go.sum') }}
           restore-keys: |
-            go-clamav-${{ runner.os }}-${{ runner.arch }}-1.26.6-
+            go-clamav-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-${{ steps.setup-go.outputs.go-version }}-
 
       - name: Install bubblewrap and ClamAV
         if: steps.detect.outputs.changed == 'true'
@@ -304,11 +307,14 @@ jobs:
   lint:
     name: Lint
     runs-on: ubuntu-latest
+    env:
+      GOLANGCI_LINT_VERSION: "v2.11.4"
     steps:
       - uses: actions/checkout@v7
 
       - name: Set up Go
         uses: actions/setup-go@v7
+        id: setup-go
         with:
           go-version: '1.26.6'
           cache: true
@@ -317,22 +323,22 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/go-build
-          key: go-lint-${{ runner.os }}-${{ runner.arch }}-1.26.6-${{ hashFiles('**/go.sum') }}
+          key: go-lint-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-${{ steps.setup-go.outputs.go-version }}-${{ hashFiles('go.sum') }}
           restore-keys: |
-            go-lint-${{ runner.os }}-${{ runner.arch }}-1.26.6-
+            go-lint-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-${{ steps.setup-go.outputs.go-version }}-
 
       - name: Cache golangci-lint
         id: cache-golangci-lint
         uses: actions/cache@v4
         with:
           path: ~/go/bin/golangci-lint
-          key: tool-golangci-lint-v2.11.4-${{ runner.os }}-${{ runner.arch }}-go1.26.6
+          key: tool-golangci-lint-${{ env.GOLANGCI_LINT_VERSION }}-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-${{ steps.setup-go.outputs.go-version }}
 
       - name: Install golangci-lint
+        if: steps.cache-golangci-lint.outputs.cache-hit != 'true'
         # Build from source against the active Go toolchain so the linter can
         # analyse our code regardless of the go.mod toolchain directive.
-        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4
-        if: steps.cache-golangci-lint.outputs.cache-hit != 'true'
+        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${{ env.GOLANGCI_LINT_VERSION }}
 
       # rela-desktop links Wails v3, whose Linux build needs GTK4 + WebKitGTK
       # headers. Without them the cgo packages fail to build.
@@ -347,11 +353,14 @@ jobs:
   arch-lint:
     name: Architecture
     runs-on: ubuntu-latest
+    env:
+      GO_ARCH_LINT_VERSION: "v1.15.0"
     steps:
       - uses: actions/checkout@v7
 
       - name: Set up Go
         uses: actions/setup-go@v7
+        id: setup-go
         with:
           go-version: '1.26.6'
           cache: true
@@ -360,21 +369,21 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/go-build
-          key: go-arch-lint-${{ runner.os }}-${{ runner.arch }}-1.26.6-${{ hashFiles('**/go.sum') }}
+          key: go-arch-lint-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-${{ steps.setup-go.outputs.go-version }}-${{ hashFiles('go.sum') }}
           restore-keys: |
-            go-arch-lint-${{ runner.os }}-${{ runner.arch }}-1.26.6-
+            go-arch-lint-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-${{ steps.setup-go.outputs.go-version }}-
 
       - name: Cache go-arch-lint
         id: cache-go-arch-lint
         uses: actions/cache@v4
         with:
           path: ~/go/bin/go-arch-lint
-          key: tool-go-arch-lint-v1.15.0-${{ runner.os }}-${{ runner.arch }}-go1.26.6
+          key: tool-go-arch-lint-${{ env.GO_ARCH_LINT_VERSION }}-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-${{ steps.setup-go.outputs.go-version }}
 
       - name: Install go-arch-lint
-        # Keep in sync with go_arch_lint_version in the justfile.
-        run: go install github.com/fe3dback/go-arch-lint@v1.15.0
         if: steps.cache-go-arch-lint.outputs.cache-hit != 'true'
+        # Keep in sync with go_arch_lint_version in the justfile.
+        run: go install github.com/fe3dback/go-arch-lint@${{ env.GO_ARCH_LINT_VERSION }}
 
       - name: Check architecture
         run: go-arch-lint check
@@ -382,11 +391,14 @@ jobs:
   plimsoll:
     name: God-object lint
     runs-on: ubuntu-latest
+    env:
+      PLIMSOLL_VERSION: "v0.2.0"
     steps:
       - uses: actions/checkout@v7
 
       - name: Set up Go
         uses: actions/setup-go@v7
+        id: setup-go
         with:
           go-version: '1.26.6'
           cache: true
@@ -395,9 +407,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/go-build
-          key: go-plimsoll-${{ runner.os }}-${{ runner.arch }}-1.26.6-${{ hashFiles('**/go.sum') }}
+          key: go-plimsoll-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-${{ steps.setup-go.outputs.go-version }}-${{ hashFiles('go.sum') }}
           restore-keys: |
-            go-plimsoll-${{ runner.os }}-${{ runner.arch }}-1.26.6-
+            go-plimsoll-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-${{ steps.setup-go.outputs.go-version }}-
 
       # rela-desktop links Wails v3, whose Linux build needs GTK4 + WebKitGTK
       # headers to type-check. Without them the cgo packages fail to load and
@@ -412,12 +424,12 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/go/bin/plimsoll
-          key: tool-plimsoll-v0.2.0-${{ runner.os }}-${{ runner.arch }}-go1.26.6
+          key: tool-plimsoll-${{ env.PLIMSOLL_VERSION }}-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-${{ steps.setup-go.outputs.go-version }}
 
       - name: Install plimsoll
-        # Keep in sync with plimsoll_version in the justfile.
-        run: go install github.com/sourcehaven-bv/plimsoll/cmd/plimsoll@v0.2.0
         if: steps.cache-plimsoll.outputs.cache-hit != 'true'
+        # Keep in sync with plimsoll_version in the justfile.
+        run: go install github.com/sourcehaven-bv/plimsoll/cmd/plimsoll@${{ env.PLIMSOLL_VERSION }}
 
       - name: Check type load lines
         run: plimsoll ./...
@@ -425,11 +437,14 @@ jobs:
   comment-lint:
     name: Comment lint
     runs-on: ubuntu-latest
+    env:
+      COMMENTLINT_VERSION: "v0.3.1"
     steps:
       - uses: actions/checkout@v7
 
       - name: Set up Go
         uses: actions/setup-go@v7
+        id: setup-go
         with:
           go-version: '1.26.6'
           cache: true
@@ -438,21 +453,21 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/go-build
-          key: go-comment-lint-${{ runner.os }}-${{ runner.arch }}-1.26.6-${{ hashFiles('**/go.sum') }}
+          key: go-comment-lint-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-${{ steps.setup-go.outputs.go-version }}-${{ hashFiles('go.sum') }}
           restore-keys: |
-            go-comment-lint-${{ runner.os }}-${{ runner.arch }}-1.26.6-
+            go-comment-lint-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-${{ steps.setup-go.outputs.go-version }}-
 
       - name: Cache commentlint
         id: cache-commentlint
         uses: actions/cache@v4
         with:
           path: ~/go/bin/commentlint
-          key: tool-commentlint-v0.3.1-${{ runner.os }}-${{ runner.arch }}-go1.26.6
+          key: tool-commentlint-${{ env.COMMENTLINT_VERSION }}-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-${{ steps.setup-go.outputs.go-version }}
 
       - name: Install commentlint
-        # Keep in sync with commentlint_version in the justfile.
-        run: go install github.com/sourcehaven-bv/commentlint@v0.3.1
         if: steps.cache-commentlint.outputs.cache-hit != 'true'
+        # Keep in sync with commentlint_version in the justfile.
+        run: go install github.com/sourcehaven-bv/commentlint@${{ env.COMMENTLINT_VERSION }}
 
       # Gate: clean today, so a regression fails the build. Rules are promoted
       # here from the advisory step once their backlog reaches zero.
@@ -600,6 +615,7 @@ jobs:
 
       - name: Set up Go
         uses: actions/setup-go@v7
+        id: setup-go
         with:
           go-version: '1.26.6'
           cache: true
@@ -608,9 +624,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/go-build
-          key: go-e2e-${{ runner.os }}-${{ runner.arch }}-1.26.6-${{ hashFiles('**/go.sum') }}
+          key: go-e2e-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-${{ steps.setup-go.outputs.go-version }}-${{ hashFiles('go.sum') }}
           restore-keys: |
-            go-e2e-${{ runner.os }}-${{ runner.arch }}-1.26.6-
+            go-e2e-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-${{ steps.setup-go.outputs.go-version }}-
 
       - name: Set up Node.js
         uses: actions/setup-node@v7
@@ -718,6 +734,7 @@ jobs:
 
       - name: Set up Go
         uses: actions/setup-go@v7
+        id: setup-go
         with:
           go-version: '1.26.6'
           cache: true
@@ -726,9 +743,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/go-build
-          key: go-fuzz-${{ runner.os }}-${{ runner.arch }}-1.26.6-${{ hashFiles('**/go.sum') }}
+          key: go-fuzz-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-${{ steps.setup-go.outputs.go-version }}-${{ hashFiles('go.sum') }}
           restore-keys: |
-            go-fuzz-${{ runner.os }}-${{ runner.arch }}-1.26.6-
+            go-fuzz-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-${{ steps.setup-go.outputs.go-version }}-
 
       - name: Run fuzz tests
         run: |
@@ -822,6 +839,7 @@ jobs:
 
       - name: Set up Go
         uses: actions/setup-go@v7
+        id: setup-go
         with:
           go-version: '1.26.6'
           cache: true
@@ -830,9 +848,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/go-build
-          key: go-postgres-${{ runner.os }}-${{ runner.arch }}-1.26.6-${{ hashFiles('**/go.sum') }}
+          key: go-postgres-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-${{ steps.setup-go.outputs.go-version }}-${{ hashFiles('go.sum') }}
           restore-keys: |
-            go-postgres-${{ runner.os }}-${{ runner.arch }}-1.26.6-
+            go-postgres-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-${{ steps.setup-go.outputs.go-version }}-
 
       # Trust auth: no password in the DSN. The DB is ephemeral and
       # runner-local, so there is no credential to keep out of the log.
@@ -1052,6 +1070,7 @@ jobs:
 
       - name: Set up Go
         uses: actions/setup-go@v7
+        id: setup-go
         with:
           go-version: '1.26.6'
           cache: true
@@ -1060,9 +1079,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/go-build
-          key: go-sqlite-${{ runner.os }}-${{ runner.arch }}-1.26.6-${{ hashFiles('**/go.sum') }}
+          key: go-sqlite-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-${{ steps.setup-go.outputs.go-version }}-${{ hashFiles('go.sum') }}
           restore-keys: |
-            go-sqlite-${{ runner.os }}-${{ runner.arch }}-1.26.6-
+            go-sqlite-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-${{ steps.setup-go.outputs.go-version }}-
 
       # internal/cli is in scope and its render/export tests shell out through
       # internal/cmdexec, which FAILS CLOSED when no sandbox is available — so
@@ -1118,6 +1137,7 @@ jobs:
 
       - name: Set up Go
         uses: actions/setup-go@v7
+        id: setup-go
         with:
           go-version: '1.26.6'
           cache: true
@@ -1126,9 +1146,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/go-build
-          key: go-cross-compile-${{ matrix.goos }}-${{ matrix.tags || 'default' }}-${{ runner.os }}-${{ runner.arch }}-1.26.6-${{ hashFiles('**/go.sum') }}
+          key: go-cross-compile-${{ matrix.goos }}-${{ matrix.tags || 'default' }}-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-${{ steps.setup-go.outputs.go-version }}-${{ hashFiles('go.sum') }}
           restore-keys: |
-            go-cross-compile-${{ matrix.goos }}-${{ matrix.tags || 'default' }}-${{ runner.os }}-${{ runner.arch }}-1.26.6-
+            go-cross-compile-${{ matrix.goos }}-${{ matrix.tags || 'default' }}-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-${{ steps.setup-go.outputs.go-version }}-
 
       # CGO off matches the GoReleaser builds for rela / rela-server; this is a
       # pure cross-compile, so no per-OS C toolchain is needed.
@@ -1145,14 +1165,10 @@ jobs:
           echo "Building GOOS=$GOOS ${flags:-(default)}"
           go build $flags ./cmd/rela ./cmd/rela-server ./cmd/rela-docs
 
-  # There is deliberately no `build` job. It ran `go build ./cmd/rela` — a
-  # strict subset of what Cross-Compile (linux/default) already builds
-  # (rela + rela-server + rela-docs, same GOOS) — but gated `demos` and `docs`
-  # behind `needs: [build]`, which in turn waited on all ten other jobs. That
-  # made a redundant 60s compile the hinge of a three-stage serial tail: the
-  # slowest job, then build, then demos. `demos` and `docs` now start at t=0
-  # with everything else. If you reintroduce a compile-only gate here, do not
-  # put anything in its `needs:`.
+  # There is deliberately no `build` job: it compiled a strict subset of
+  # Cross-Compile (linux/default), but `needs: [build]` on demos/docs made that
+  # redundant compile the hinge of a three-stage serial tail. If you
+  # reintroduce a compile-only gate here, do not put anything in its `needs:`.
   rela-tickets:
     name: Rela Tickets
     runs-on: ubuntu-latest
@@ -1213,17 +1229,24 @@ jobs:
       - name: Set up Go
         if: steps.gate.outputs.applies == 'true'
         uses: actions/setup-go@v7
+        id: setup-go
         with:
           go-version: '1.26.6'
           cache: true
 
       - name: Cache Go build cache
+        # Gated like the checkout above. Without it, an ungated run has no
+        # workspace, so hashFiles() returns "" rather than failing, and the key
+        # collapses to exactly the restore-keys prefix — saving a cache built
+        # from an empty checkout under the very key every later run falls back
+        # to.
+        if: steps.gate.outputs.applies == 'true'
         uses: actions/cache@v4
         with:
           path: ~/.cache/go-build
-          key: go-rela-tickets-${{ runner.os }}-${{ runner.arch }}-1.26.6-${{ hashFiles('**/go.sum') }}
+          key: go-rela-tickets-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-${{ steps.setup-go.outputs.go-version }}-${{ hashFiles('go.sum') }}
           restore-keys: |
-            go-rela-tickets-${{ runner.os }}-${{ runner.arch }}-1.26.6-
+            go-rela-tickets-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-${{ steps.setup-go.outputs.go-version }}-
 
       - name: Build rela
         if: steps.gate.outputs.applies == 'true'
@@ -1405,6 +1428,7 @@ jobs:
 
       - name: Set up Go
         uses: actions/setup-go@v7
+        id: setup-go
         with:
           go-version: '1.26.6'
           cache: true
@@ -1413,9 +1437,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/go-build
-          key: go-demos-${{ runner.os }}-${{ runner.arch }}-1.26.6-${{ hashFiles('**/go.sum') }}
+          key: go-demos-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-${{ steps.setup-go.outputs.go-version }}-${{ hashFiles('go.sum') }}
           restore-keys: |
-            go-demos-${{ runner.os }}-${{ runner.arch }}-1.26.6-
+            go-demos-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-${{ steps.setup-go.outputs.go-version }}-
 
       # graphviz for the demo scripts. GTK4 + WebKitGTK because the tagged-build
       # guard vets `./...`, which includes cmd/rela-desktop (Wails v3); without
@@ -1479,6 +1503,7 @@ jobs:
 
       - name: Set up Go
         uses: actions/setup-go@v7
+        id: setup-go
         with:
           go-version: '1.26.6'
           cache: true
@@ -1487,9 +1512,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/go-build
-          key: go-docs-${{ runner.os }}-${{ runner.arch }}-1.26.6-${{ hashFiles('**/go.sum') }}
+          key: go-docs-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-${{ steps.setup-go.outputs.go-version }}-${{ hashFiles('go.sum') }}
           restore-keys: |
-            go-docs-${{ runner.os }}-${{ runner.arch }}-1.26.6-
+            go-docs-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-${{ steps.setup-go.outputs.go-version }}-
 
       - name: Build rela
         run: go build -o bin/rela ./cmd/rela
