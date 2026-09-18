@@ -1624,6 +1624,12 @@ types to keep in step with your ACL — removing someone's `create` grant remove
 their button. One reachable type renders a direct button (`+ Task`); several
 render a short menu.
 
+The button follows the grant, but it is **not** what enforces it. The server
+re-authorizes the entity and the relation independently when the form is
+submitted, so a user who edits the request by hand gets whatever their own
+permissions allow — the same answer they would get from the create form directly.
+Treat the button as a convenience, not as the access-control boundary.
+
 **`flow` is per section, not per type.** Which flow feels right depends on the
 form, not on the entity type, and one type opening a modal while its sibling
 navigates reads as a bug rather than as configuration.

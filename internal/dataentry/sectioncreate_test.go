@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -86,6 +87,10 @@ type v1ViewBody struct {
 	Sections []struct {
 		Heading string          `json:"heading"`
 		Create  *viewCreateBody `json:"create"`
+		// Entities is read only to prove a row-filtering test is not vacuous.
+		Entities []struct {
+			ID string `json:"id"`
+		} `json:"entities"`
 	} `json:"sections"`
 }
 
@@ -330,4 +335,212 @@ func TestSectionCreate_GatedByCreatePermission(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestSectionCreate_ACLImplementationArms pins what the affordance does under
+// the two non-declarative ACL implementations.
+//
+// This is the RR-CWWJGW shape, checked rather than assumed. The repo documents a
+// fail-open hazard for predicates written against the READ gate: it returns
+// nopReadGate under BOTH ReadOnlyACL and NopACL, and its HoldsPermission returns
+// true, so such a predicate grants under `--read-only`. A UI gate that failed
+// open there would render a create button on a server that refuses every write.
+//
+// This affordance derives from AuthorizeWrite, not the read gate, so it gets the
+// right answer for the right reason — and both arms are load-bearing in opposite
+// directions, which is why both are asserted:
+//
+//   - ReadOnlyACL denies every write, so the button must be ABSENT. Rendering it
+//     would promise a verb the surface rejects.
+//   - NopACL permits every write (no policy configured), so the button must be
+//     PRESENT. Hiding it would make the feature dead for every deployment
+//     without an acl.yaml — which is most of them.
+func TestSectionCreate_ACLImplementationArms(t *testing.T) {
+	tests := []struct {
+		name      string
+		impl      acl.ACL
+		wantOffer bool
+		why       string
+	}{
+		{
+			name:      "ReadOnlyACL refuses every write",
+			impl:      acl.ReadOnlyACL{},
+			wantOffer: false,
+			why:       "a create button on a read-only server promises a verb every write rejects",
+		},
+		{
+			name:      "NopACL permits every write",
+			impl:      acl.NopACL{},
+			wantOffer: true,
+			why:       "hiding it would make the feature dead wherever no acl.yaml is configured",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			app := seedCreateView(t, createViewOptions{create: &dataentryconfig.SectionCreate{}})
+			app.acl = tc.impl
+
+			body := fetchView(context.Background(), t, app)
+
+			got := body.Sections[0].Create != nil
+			if got != tc.wantOffer {
+				t.Errorf("affordance present = %v, want %v — %s", got, tc.wantOffer, tc.why)
+			}
+		})
+	}
+}
+
+// TestSectionCreate_CarriesNoBitAboutHiddenRows pins the confidentiality
+// property of the affordance itself.
+//
+// The affordance appears on sections whose ROWS may be ACL-filtered, so the
+// question is whether its presence says anything about what was filtered. It
+// must not: it derives from the metamodel (which types the relation reaches),
+// the form registry, and create permission — never from row data. A section
+// that is empty because everything in it is hidden must look identical to one
+// that is genuinely empty.
+//
+// That the affordance is unchanged while the ROWS differ is the whole assertion.
+// Per CLAUDE.md the relation and type names are not secret (the metamodel is
+// served over the API); what would be a real disclosure is the one-bit channel
+// "something is hidden here", and this is what forecloses it.
+func TestSectionCreate_CarriesNoBitAboutHiddenRows(t *testing.T) {
+	// Two principals with the SAME create grant but different read grants, so
+	// the rows differ and nothing else does.
+	policy := func(read []string) *acl.Policy {
+		return &acl.Policy{
+			Roles: map[string]acl.RoleDef{"r": {
+				Read:   read,
+				Create: []string{"feature"},
+			}},
+			Assignments: map[string]string{"bob": "r"},
+		}
+	}
+
+	var affordances []string
+	var rowCounts []int
+	for _, read := range [][]string{
+		{"ticket", "feature"}, // sees the neighbor
+		{"ticket"},            // neighbor is hidden — section renders empty
+	} {
+		app := seedCreateView(t, createViewOptions{create: &dataentryconfig.SectionCreate{}})
+		d := mustNewACL(t, policy(read), app.store)
+		app.acl = d
+		// gateCtxFor, not a bare principal ctx: the ROW gate is what filters
+		// neighbors, and a handler test bypasses the middleware that attaches
+		// it. Without this the rows are unfiltered and the invariance below
+		// compares two identical situations — which the anti-vacuity check at
+		// the end catches, and did.
+		ctx := gateCtxFor(principal.With(context.Background(),
+			principal.Principal{User: "bob", Tool: principal.ToolDataEntry}), t, d)
+
+		body := fetchView(ctx, t, app)
+		sec := body.Sections[0]
+		if sec.Create == nil {
+			t.Fatalf("read=%v: the affordance must not depend on the read grant", read)
+		}
+		serialized, err := json.Marshal(sec.Create)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		affordances = append(affordances, string(serialized))
+		rowCounts = append(rowCounts, len(sec.Entities))
+	}
+
+	// Anti-vacuity: the two principals really did see different rows, or this
+	// test compares two identical situations and proves nothing.
+	if rowCounts[0] == rowCounts[1] {
+		t.Fatalf("both principals saw %d rows; the fixture is not exercising row "+
+			"filtering, so the invariance below is meaningless", rowCounts[0])
+	}
+	if affordances[0] != affordances[1] {
+		t.Errorf("the affordance differs with the row set:\n visible: %s\n hidden:  %s\n"+
+			"that is a one-bit channel for whether rows were filtered", affordances[0], affordances[1])
+	}
+}
+
+// TestSectionCreate_EdgeRefusedOnBothLinkDirections is AC10's relation half.
+//
+// The two `link_as` values take DIFFERENT server paths, which is the whole
+// reason this is a table rather than one assertion:
+//
+//	from  a separate POST /{plural}/{id}/relations/{rel} → validateRelationOp
+//	to    the edge rides the create body's `relations:`  → validateRelationsModernAffordances
+//
+// Only the first was gated. The second wrote an edge that `POST /relations/`
+// refuses, and the create response reported `_relations: {"implements":
+// {"creatable": false}}` for the edge it had just written. TKT-R4BMJM made that
+// path reachable from a button — an outgoing section resolves to `link_as: to`.
+//
+// The verdict is DECLARED here on purpose. `validateRelationOp` is
+// default-permissive for a relation type with no verdict entry
+// (affordances.go), so the same test against a verdict-free schema would pass
+// while exercising nothing — the trap the plan called out before either gate
+// existed.
+func TestSectionCreate_EdgeRefusedOnBothLinkDirections(t *testing.T) {
+	const wantRule = `"rule_id":"relation-affordance:not-creatable:implements"`
+
+	notCreatable := func(t *testing.T) *App {
+		t.Helper()
+		return seedTicketWithRelationVerdicts(t, RelationVerdicts{
+			Types: map[string]RelationVerdict{"implements": {Creatable: false}},
+		})
+	}
+
+	t.Run("link_as=from: separate POST to the relations endpoint", func(t *testing.T) {
+		app := notCreatable(t)
+		req := httptest.NewRequest(http.MethodPost,
+			"/api/v1/tickets/TKT-001/relations/implements",
+			strings.NewReader(`{"id":"FEAT-001"}`))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		app.write.handleV1CreateRelation(rec, req, "ticket", "TKT-001", "implements")
+
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want 403; body=%s", rec.Code, rec.Body)
+		}
+		if !strings.Contains(rec.Body.String(), wantRule) {
+			t.Errorf("body must name the not-creatable rule: %s", rec.Body)
+		}
+	})
+
+	t.Run("link_as=to: edge rides the create payload", func(t *testing.T) {
+		app := notCreatable(t)
+		body := `{"properties":{"title":"new"},` +
+			`"relations":{"implements":{"data":[{"type":"feature","id":"FEAT-001"}]}}}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/tickets", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		app.write.handleV1CreateEntity(rec, req, "ticket", "tickets")
+
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want 403 — an edge refused on the relations endpoint "+
+				"must not be writable by riding a create; body=%s", rec.Code, rec.Body)
+		}
+		if !strings.Contains(rec.Body.String(), wantRule) {
+			t.Errorf("body must name the not-creatable rule: %s", rec.Body)
+		}
+		// Refused BEFORE the entity exists: denying after CreateEntity would
+		// turn an authorization refusal into an orphaned entity.
+		if strings.Contains(rec.Body.String(), `"id":"TKT-`) {
+			t.Errorf("the refusal must not have created an entity: %s", rec.Body)
+		}
+	})
+
+	t.Run("a creatable verdict still permits both", func(t *testing.T) {
+		// The paired positive: the gate must not refuse the ordinary case.
+		app := seedTicketWithRelationVerdicts(t, RelationVerdicts{
+			Types: map[string]RelationVerdict{"implements": {Creatable: true, Removable: true}},
+		})
+		body := `{"properties":{"title":"new"},` +
+			`"relations":{"implements":{"data":[{"type":"feature","id":"FEAT-001"}]}}}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/tickets", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		app.write.handleV1CreateEntity(rec, req, "ticket", "tickets")
+
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("status = %d, want 201; body=%s", rec.Code, rec.Body)
+		}
+	})
 }

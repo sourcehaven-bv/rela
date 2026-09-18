@@ -3998,6 +3998,13 @@ func assertViewSectionsLackKeys(t *testing.T, body []byte, keys ...string) {
 	t.Helper()
 	var raw struct {
 		Sections []map[string]json.RawMessage `json:"sections"`
+		// The header create menu is a TOP-LEVEL field, not a section one, so a
+		// per-section scan cannot see it. Without this, a regression that
+		// defaulted the header placement to on — or populated the menu without
+		// a `create:` block — would leave this guard green while re-bleeding
+		// mutation onto the read surface, which is the one thing it exists to
+		// prevent.
+		Create json.RawMessage `json:"create"`
 	}
 	if err := json.Unmarshal(body, &raw); err != nil {
 		t.Fatalf("decode: %v", err)
@@ -4008,6 +4015,10 @@ func assertViewSectionsLackKeys(t *testing.T, body []byte, keys ...string) {
 				t.Errorf("section[%d]: %q must not be present in view responses", i, k)
 			}
 		}
+	}
+	if raw.Create != nil {
+		t.Errorf("top-level %q must not be present in a view response whose sections did "+
+			"not opt in; got %s", "create", raw.Create)
 	}
 }
 

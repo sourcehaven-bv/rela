@@ -320,7 +320,7 @@ func validateSectionCreate(
 	// no single originating relation cannot offer the affordance at all.
 	// Refused here rather than dropped at render time, because the operator
 	// explicitly asked for a button they would otherwise never see.
-	relation, _, ok := SectionOriginRelation(view, s)
+	relation, linkAs, ok := SectionOriginRelation(view, s)
 	if !ok {
 		errs = append(errs, fmt.Sprintf(
 			"view %q: section[%d] declares create but no single relation fills it — "+
@@ -336,7 +336,7 @@ func validateSectionCreate(
 		return errs
 	}
 	reachable := relDef.To
-	if _, linkAs, _ := SectionOriginRelation(view, s); linkAs == "from" {
+	if linkAs == "from" {
 		reachable = relDef.From
 	}
 	for typeName := range s.Create.Types {
@@ -369,12 +369,16 @@ func validateSectionCreate(
 	return errs
 }
 
-// hasCreateForm reports whether any form can create the given entity type.
+// hasCreateForm reports whether any form exists for the given entity type.
 //
-// Mirrors the runtime resolver's rule (viewsHandler.createFormForType): a form
-// whose mode is not "edit" creates directly, and an edit-mode form creates when
-// no entity id is supplied. The two must agree, or config load accepts a
-// section the resolver then renders empty.
+// Deliberately LOOSER than the runtime resolver, and only in the safe
+// direction. `viewsHandler.createFormForType` prefers a non-edit form and falls
+// back to an edit-mode one — which works for creation when no entity id is
+// supplied (RR-KGCF61 settled that on TKT-OMUD56) — so "a form exists for this
+// type" and "a form resolves for this type" agree on every input. If the
+// resolver ever narrowed, this would accept a section the resolver renders
+// empty; the runtime derivation is authoritative and drops the type, so the
+// failure would be a missing button rather than a broken one.
 func hasCreateForm(cfg *Config, entityType string) bool {
 	for _, f := range cfg.Forms {
 		if f.EntityType == entityType {

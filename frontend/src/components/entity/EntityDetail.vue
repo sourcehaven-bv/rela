@@ -1567,12 +1567,27 @@ async function onCreated(created: Entity) {
   // a type they cannot read back, in which case the refetch legitimately does
   // not show the new row. Naming the id is the honest answer — silence would
   // look like the create failed, and an error would claim something false.
-  const stillMissing = !viewData.value?.sections.some((sec) =>
-    sec.entities?.some((e) => e.id === created.id)
-  )
-  if (stillMissing) {
+  //
+  // A section's rows live in one of THREE places depending on its display mode
+  // — `entities` (cards/list), `rows` (table), `tree` (nested) — so scanning
+  // only `entities` reported "missing" for every table and nested section and
+  // fired the toast even when the row was plainly on screen.
+  if (!viewData.value?.sections.some((sec) => sectionContainsEntity(sec, created.id))) {
     uiStore.success(`Created ${created.id}.`)
   }
+}
+
+/** Does a rendered section carry this entity, in whichever shape it uses? */
+function sectionContainsEntity(sec: ViewSection, id: string): boolean {
+  if (sec.entities?.some((e) => e.id === id)) return true
+  if (sec.rows?.some((r) => r.entityId === id)) return true
+  return treeContainsEntity(sec.tree, id)
+}
+
+function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): boolean {
+  return (nodes ?? []).some(
+    (n) => n.entity?.id === id || treeContainsEntity(n.children, id)
+  )
 }
 </script>
 

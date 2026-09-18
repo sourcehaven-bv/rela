@@ -1578,6 +1578,27 @@ func (c *SectionCreate) TemplateFor(entityType string) string {
 	return c.Types[entityType].Template
 }
 
+// yamlKindName names a node kind for an operator-facing error.
+//
+// yaml.Kind is a bitmask constant with no String method, so the alternative is
+// a bare number in the message.
+func yamlKindName(k yaml.Kind) string {
+	switch k {
+	case yaml.DocumentNode:
+		return "a document"
+	case yaml.SequenceNode:
+		return "a list"
+	case yaml.MappingNode:
+		return "a mapping"
+	case yaml.ScalarNode:
+		return "a scalar value"
+	case yaml.AliasNode:
+		return "an alias"
+	default:
+		return "an unknown node"
+	}
+}
+
 // UnmarshalYAML rejects every scalar spelling of `create:`.
 //
 // Absence already means "read-only", so `create: false` would be a second
@@ -1588,9 +1609,13 @@ func (c *SectionCreate) TemplateFor(entityType string) string {
 // would be the exact opposite of what the operator wrote.
 func (c *SectionCreate) UnmarshalYAML(value *yaml.Node) error {
 	if value.Kind != yaml.MappingNode {
+		// Report the KIND and the line, not value.Value: that is empty for a
+		// sequence, so `create: [a, b]` otherwise produced `invalid create ""`
+		// — an empty quoted string and nothing to locate.
 		return fmt.Errorf(
-			"invalid create %q: must be a mapping (omit the key entirely to keep the section read-only)",
-			value.Value)
+			"invalid create at line %d: got %s, must be a mapping "+
+				"(omit the key entirely to keep the section read-only)",
+			value.Line, yamlKindName(value.Kind))
 	}
 	// Alias to avoid recursing into this method.
 	type rawSectionCreate SectionCreate

@@ -40,12 +40,15 @@ type SectionCreateInfo struct {
 // the write path would refuse. It is a UI hint either way: the write
 // re-authorizes independently.
 //
-// templates may be nil; when non-nil it supplies the per-type preselected
-// template variant.
+// create may be nil; when non-nil it supplies the per-type preselected template
+// variant.
 //
-// The `seen` memo matters: a view section is resolved per section, and a type
-// reachable by several relations would otherwise be re-authorized once per
-// section per relation.
+// NOT memoized, deliberately. A type reachable by several opted-in sections is
+// authorized once per section, and `createFormForType` re-sorts the form list
+// each call. Both are metamodel/config/policy work — no store reads, which
+// `TestQueryBudget_ViewSectionCreateAddsNoStoreReads` pins — and the affordance
+// is opt-in, so the section count is small by construction. A memo would be
+// real work to keep correct across principals for a cost nothing has measured.
 func (h *viewsHandler) creatableTargets(
 	ctx context.Context, candidateTypes []string, create *dataentryconfig.SectionCreate,
 ) []SectionCreateTarget {

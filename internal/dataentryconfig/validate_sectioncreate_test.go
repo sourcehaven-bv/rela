@@ -1,6 +1,7 @@
 package dataentryconfig
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -307,4 +308,63 @@ func TestSectionCreate_HeterogeneousRelationAcceptsPerTypeTemplates(t *testing.T
 	if got := create.TemplateFor("unlisted"); got != "" {
 		t.Errorf("TemplateFor(unlisted) = %q, want empty", got)
 	}
+}
+
+// TestSectionCreate_SurvivesRoundTrips answers the question RR-19AU91 raised:
+// DarkMode implements four methods (UnmarshalYAML, MarshalYAML, MarshalJSON,
+// UnmarshalJSON), so does SectionCreate need the other three?
+//
+// It does not, and this test is why rather than an assertion of faith. The
+// custom unmarshal only intercepts YAML DECODING to refuse a scalar; the struct
+// tags already describe both encodings, so marshaling and JSON decoding need no
+// help. ViewSection is json-tagged and ViewConfig is served over the wire, so a
+// silent loss here would strip an operator's `create:` block from anything that
+// re-serializes a view — hence a test rather than a code comment.
+func TestSectionCreate_SurvivesRoundTrips(t *testing.T) {
+	var sec ViewSection
+	if err := yaml.Unmarshal(
+		[]byte("source: tasks\ndisplay: cards\ncreate: {flow: page, in: [header]}"), &sec,
+	); err != nil {
+		t.Fatalf("yaml decode: %v", err)
+	}
+	if sec.Create == nil || sec.Create.Flow != SectionCreateFlowPage {
+		t.Fatalf("yaml decode produced %+v", sec.Create)
+	}
+
+	t.Run("json", func(t *testing.T) {
+		b, err := json.Marshal(sec)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		var back ViewSection
+		if err := json.Unmarshal(b, &back); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if back.Create == nil {
+			t.Fatal("the create block did not survive a JSON round-trip")
+		}
+		if back.Create.EffectiveFlow() != SectionCreateFlowPage {
+			t.Errorf("flow = %q, want %q", back.Create.EffectiveFlow(), SectionCreateFlowPage)
+		}
+		if !back.Create.PlacedIn(SectionCreateInHeader) {
+			t.Error("placement did not survive a JSON round-trip")
+		}
+	})
+
+	t.Run("yaml", func(t *testing.T) {
+		b, err := yaml.Marshal(sec)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		var back ViewSection
+		if err := yaml.Unmarshal(b, &back); err != nil {
+			t.Fatalf("re-decode: %v", err)
+		}
+		if back.Create == nil {
+			t.Fatal("the create block did not survive a YAML round-trip")
+		}
+		if back.Create.EffectiveFlow() != SectionCreateFlowPage {
+			t.Errorf("flow = %q, want %q", back.Create.EffectiveFlow(), SectionCreateFlowPage)
+		}
+	})
 }

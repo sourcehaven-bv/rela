@@ -5,7 +5,7 @@ title: Create related entities from the entity detail page (section + header but
 kind: enhancement
 priority: medium
 effort: l
-status: in-progress
+status: review
 ---
 
 ## Description

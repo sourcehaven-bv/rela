@@ -1450,6 +1450,38 @@ async function handleSubmit(mode: SubmitMode = 'navigate') {
     }
     const relationsPayload: ModernRelationsField = { ...reshapedPickers, ...modernRelations }
 
+    // POST-CONDITION: a `link_as: to` pre-link must actually be in the payload.
+    //
+    // `relations.value` is NOT the payload. Two filters sit between them —
+    // `pruneWizardHiddenRelations` (drops a relation on an inactive wizard step)
+    // and the `cardRelations` exclusion (card-managed edges are supposed to
+    // arrive via `pendingCardChanges`, which the prefill does not write) — and
+    // either one silently eats a prefilled edge. The create then succeeds with
+    // no relation and no error: the user returns to the originating entity and
+    // the section is still empty, which looks exactly like a stale page.
+    //
+    // Checked rather than prevented because the right answer depends on the
+    // form: routing the prefill into `pendingCardChanges` would duplicate the
+    // card widget's own bookkeeping, and forcing a wizard step active would
+    // override an author's `visible_when`. Failing loudly puts the problem in
+    // front of the operator who configured it, which is the only person who can
+    // fix it.
+    if (linkParams.value?.as === 'to') {
+      const rel = linkParams.value.relation
+      const carried = (relationsPayload[rel]?.data ?? []).some(
+        (r) => r.id === linkParams.value!.peer
+      )
+      if (!carried) {
+        uiStore.error(
+          `Cannot pre-link this ${formConfig.value.entity} to ${linkParams.value.peer}: ` +
+            `the form's "${rel}" field cannot carry it. Ask your operator to check the ` +
+            `create button's section config against this form.`
+        )
+        saving.value = false
+        return
+      }
+    }
+
     const payload: {
       id?: string
       prefix?: string

@@ -279,6 +279,77 @@ func parseCreateOpts(
 	return opts, true
 }
 
+// gateCreateRelationAffordances applies the relation affordance gate to the
+// edges riding a create body. Reports whether the request may proceed; writes
+// the denial itself when not.
+//
+// The PATCH path has gated this since the affordance layer landed; the create
+// path did not, so an edge a `RelationVerdict{Creatable: false}` refuses on
+// `POST /{plural}/{id}/relations/{rel}` was written anyway by riding the create
+// body's `relations:` field. The create response even reported
+// `_relations: {"<rel>": {"creatable": false}}` for the edge it had just
+// written — the affordance map contradicting itself in the payload that
+// produced it. Found reviewing TKT-R4BMJM, which made the path reachable from a
+// button: a section create on an OUTGOING relation resolves to `link_as: to`,
+// and that is exactly the direction that rides the create body.
+//
+// Called BEFORE CreateEntity, not beside the Phase A relation validation, which
+// runs after: refusing there would leave the new entity written and unlinked,
+// turning an authorization denial into an orphan. No id is needed — verdicts
+// resolve against the entity's TYPE and properties, which the candidate carries.
+func (h *writeHandler) gateCreateRelationAffordances(
+	w http.ResponseWriter, r *http.Request,
+	candidate *entityPkg.Entity, desired map[string]v1.RelationsUpdate,
+) bool {
+	if desired == nil {
+		return true
+	}
+	if denial := h.affordances.validateRelationsModernAffordances(
+		r.Context(), "", candidate, desired,
+	); denial != nil {
+		h.denyAfford(r.Context(), w, candidate, *denial)
+		return false
+	}
+	return true
+}
+
+// writeCreateRelations runs the two relation phases for a create: validate, then
+// apply. Returns the accumulated soft warnings and whether the request may
+// continue; writes the error response itself when not.
+//
+// Extracted from [writeHandler.handleV1CreateEntity] to keep it under the
+// statement limit, and because the two phases are one unit: Phase A must run
+// before any write so a structural relation error does not leave the entity
+// half-linked (DEC-HWZHA atomicity).
+//
+// Note these run AFTER the entity exists, which is why the AFFORDANCE gate
+// cannot live here — see [writeHandler.gateCreateRelationAffordances].
+func (h *writeHandler) writeCreateRelations(
+	w http.ResponseWriter, r *http.Request,
+	created *entityPkg.Entity, desired map[string]v1.RelationsUpdate,
+) (warnings []Warning, ok bool) {
+	if desired == nil {
+		return nil, true
+	}
+	// Phase A: validation only. Soft conditions surface as warnings; hard
+	// wire/structural failures return immediately without applying.
+	ws, err := h.validateRelationsModern(r.Context(), created.ID, created.Type, desired)
+	if err != nil {
+		h.writeRelationsValidationError(w, r, err)
+		return nil, false
+	}
+	warnings = ws
+
+	// Phase B: the writes.
+	ws, err = h.applyRelationsModern(r.Context(), created.ID, desired)
+	warnings = append(warnings, ws...)
+	if err != nil {
+		h.writeRelationsApplyError(w, r, err)
+		return nil, false
+	}
+	return warnings, true
+}
+
 func (h *writeHandler) handleV1CreateEntity(w http.ResponseWriter, r *http.Request, typeName, plural string) {
 	// Need write lock for creation
 	r = h.enterWrite(r)
@@ -341,6 +412,10 @@ func (h *writeHandler) handleV1CreateEntity(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	if !h.gateCreateRelationAffordances(w, r, candidate, req.Relations.Modern) {
+		return
+	}
+
 	createResult, err := h.manager.CreateEntity(r.Context(),
 		&entityPkg.Entity{
 			Type:       typeName,
@@ -370,27 +445,9 @@ func (h *writeHandler) handleV1CreateEntity(w http.ResponseWriter, r *http.Reque
 	}
 	created := createResult.Entity
 
-	// Phase A: relation validation (mirrors the PATCH path). Soft
-	// conditions surface as warnings; hard wire/structural failures
-	// return immediately without applying.
-	var relWarnings []Warning
-	if req.Relations.Modern != nil {
-		ws, err := h.validateRelationsModern(r.Context(), created.ID, created.Type, req.Relations.Modern)
-		if err != nil {
-			h.writeRelationsValidationError(w, r, err)
-			return
-		}
-		relWarnings = ws
-	}
-
-	// Phase B: relation writes.
-	if req.Relations.Modern != nil {
-		ws, err := h.applyRelationsModern(r.Context(), created.ID, req.Relations.Modern)
-		relWarnings = append(relWarnings, ws...)
-		if err != nil {
-			h.writeRelationsApplyError(w, r, err)
-			return
-		}
+	relWarnings, ok := h.writeCreateRelations(w, r, created, req.Relations.Modern)
+	if !ok {
+		return
 	}
 
 	rels := h.reader.outgoingRelations(r.Context(), created.ID)
@@ -935,6 +992,35 @@ func (h *writeHandler) handleV1CreateRelation(
 
 	if req.ID == "" {
 		writeV1Error(w, r, http.StatusBadRequest, "missing_id", "Target ID is required", "")
+		return
+	}
+
+	// Read-gate the BODY target as well as the path entity.
+	//
+	// The path gate above is not sufficient, and on this route it can be
+	// vacuous: a client that just created the path entity is guaranteed to pass
+	// it. Without this, naming an unreadable entity as the target returned 201
+	// while a nonexistent one returned 422 "target entity not found" — an
+	// existence oracle for any id the caller cannot read, and a link to a row
+	// they were never shown.
+	//
+	// Pre-existing (the body target was never gated), but TKT-R4BMJM put weight
+	// on it: the `link_as: from` create is now addressed FROM the new entity
+	// with the peer in the body, precisely so a prefix-less peer id can be
+	// linked. That moved the peer out from under the path gate.
+	//
+	// The target's type comes from the STORE, not from its id prefix: a
+	// prefix-derived type is exactly the fragile lookup that made a
+	// legitimately prefix-less id unlinkable. A target that does not exist and
+	// one the caller may not read collapse to the same 404 carrying the shared
+	// entityNotFoundTitle, so the two stay indistinguishable — whether an
+	// entity exists is a genuine secret (docs/acl-security.md).
+	target, targetFound := h.reader.getEntity(r.Context(), req.ID)
+	if !targetFound {
+		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
+		return
+	}
+	if !h.gateRead(w, r, target.Type, target.ID) {
 		return
 	}
 

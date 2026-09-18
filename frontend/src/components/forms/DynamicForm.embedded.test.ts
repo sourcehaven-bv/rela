@@ -365,3 +365,79 @@ describe('DynamicForm — embedded pre-link props', () => {
     expect((create.mock.calls[0][1] as { world?: string }).world).toBeUndefined()
   })
 })
+
+// The two silent-drop paths between `relations.value` and the create payload
+// (found in code review). `relations.value` is not the payload: a wizard prune
+// and a cards-widget exclusion sit in between, and either one eats a prefilled
+// edge — producing a create that succeeds with no relation and no error.
+describe('DynamicForm — pre-link cannot be silently dropped', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+  })
+
+  it('refuses the create when a cards widget would swallow the pre-linked edge', async () => {
+    // A cards-managed relation is excluded from the IDs-only payload because
+    // card edits are supposed to arrive via pendingCardChanges — which the
+    // prefill does not write. Before the post-condition check the entity was
+    // created unlinked, silently.
+    const schema = useSchemaStore()
+    schema.forms.set('cards-form', {
+      id: 'cards-form',
+      entity: 'ticket',
+      fields: [{ property: 'title', label: 'Title' }],
+      relations: [{ relation: 'implements', widget: 'cards' }],
+    } as never)
+    schema.entityTypes.set('ticket', ENTITY_TYPE as never)
+    schema.entityTypes.set('feature', {
+      name: 'feature', label: 'Feature', id_prefix: 'FEAT', properties: {},
+    } as never)
+    schema.loaded = true
+
+    const entities = useEntitiesStore()
+    const create = vi.spyOn(entities, 'create').mockResolvedValue(CREATED)
+
+    const wrapper = mount(DynamicForm, {
+      props: {
+        formId: 'cards-form',
+        embedded: true,
+        embeddedLink: { relation: 'implements', peer: 'FEAT-1', linkAs: 'to' as const },
+      },
+      global: {
+        stubs: {
+          RouterLink: true, MarkdownEditor: true, RelationPicker: true,
+          RelationCards: true, AutoSaveIndicator: true, HelpModal: true,
+        },
+      },
+    })
+    mounted.push(wrapper)
+    await flushPromises()
+
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    // Nothing created: an unlinked entity is worse than a refused one, because
+    // the user cannot tell it happened.
+    expect(create).not.toHaveBeenCalled()
+    const ui = useUIStore()
+    expect(ui.toasts.some((t) => /cannot pre-link/i.test(t.message))).toBe(true)
+  })
+
+  it('still creates normally when the form can carry the edge', async () => {
+    // The paired positive: the check must not refuse the ordinary case.
+    const schema = useSchemaStore()
+    schema.entityTypes.set('feature', {
+      name: 'feature', label: 'Feature', id_prefix: 'FEAT', properties: {},
+    } as never)
+
+    const { wrapper, create } = await mountCreate({
+      embedded: true,
+      embeddedLink: { relation: 'implements', peer: 'FEAT-1', linkAs: 'to' },
+    })
+
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(create).toHaveBeenCalledTimes(1)
+  })
+})
