@@ -7,6 +7,7 @@ package dataentryconfig
 import (
 	"fmt"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 
@@ -1452,6 +1453,209 @@ type ViewSection struct {
 	// ignored.
 	ParentColumns map[string][]ListColumn `yaml:"parent_columns,omitempty" json:"parent_columns,omitempty"`
 	ChildColumns  map[string][]ListColumn `yaml:"child_columns,omitempty" json:"child_columns,omitempty"`
+
+	// Create opts this section into offering a "create related entity" button
+	// (TKT-R4BMJM). Nil — the default, and what every auto-generated view emits
+	// — means the section is read-only, which is TKT-651W's invariant.
+	//
+	// Opt-IN is the whole point. TKT-651W deliberately stripped add affordances
+	// from the entity-detail view because "editing the graph from inside a read
+	// view blurs the line between viewing and editing", and this key narrows
+	// that rule to "read-only unless an operator explicitly asks otherwise"
+	// rather than reversing it. A section that says nothing keeps saying
+	// nothing, so no existing deployment grows a button on upgrade.
+	Create *SectionCreate `yaml:"create,omitempty" json:"create,omitempty"`
+}
+
+// SectionCreate declares HOW a section's create-related affordance behaves.
+//
+// It never declares WHICH types are offered. That stays derived — a type is
+// offered when the section's relation reaches it, a create form resolves for
+// it, and the principal may create it (TKT-OMUD56's settled rule: the offer is
+// computed, not declared, so it cannot drift from ACL or from the registered
+// forms). Consequently this struct has no allowlist field, and adding one would
+// reintroduce exactly the drift that rule exists to prevent.
+//
+// Nil: accepted — a nil *SectionCreate means the section is read-only.
+type SectionCreate struct {
+	// In places the button: "section" (a button on the section header),
+	// "header" (an entry in the page-header menu), or both. Empty means
+	// [SectionCreateInSection].
+	//
+	// The header menu is assembled as the union of sections that opted in,
+	// because a section learns its relation only from the `traverse:` rule that
+	// filled it — so sections are the only place that mapping exists.
+	In []string `yaml:"in,omitempty" json:"in,omitempty"`
+
+	// Flow selects the create experience: [SectionCreateFlowModal] (default)
+	// keeps the user on the detail page; [SectionCreateFlowPage] navigates to
+	// the full create form and returns to the originating entity on submit.
+	//
+	// Deliberately relation-wide rather than per-type: a flow is a UI choice
+	// and is type-independent, so one type opening a modal while its sibling
+	// navigates would read as a bug rather than as configuration.
+	Flow string `yaml:"flow,omitempty" json:"flow,omitempty"`
+
+	// Types carries per-target-type overrides, keyed by entity type.
+	//
+	// Keyed by type because a template variant only exists per type: a
+	// heterogeneous relation (`to: [task, bug]`) has no single meaningful
+	// template. A type absent from the map still gets a button, just with no
+	// preset template — the same "absent means default, not error" rule
+	// [ViewSection.ParentColumns] uses.
+	Types map[string]SectionCreateTarget `yaml:"types,omitempty" json:"types,omitempty"`
+}
+
+// SectionOriginRelation resolves the relation that filled a section, plus the
+// role a NEWLY created entity would take in it ("to" when the section was
+// collected by following outgoing edges from the entry, "from" for incoming).
+//
+// ok is false when no single relation can be attributed to the section, which
+// is the case for `source: entry`, a `recursive:` rule, and any rule whose
+// `from:` is another collected bucket rather than the entry. Those sections must
+// get no create affordance: guessing a relation would link the new entity to the
+// wrong peer, which is worse than offering nothing.
+//
+// Shared by load-time validation and the runtime resolver so the two cannot
+// disagree about which sections are eligible.
+func SectionOriginRelation(view ViewConfig, section ViewSection) (relation, linkAs string, ok bool) {
+	if section.Source == "" || section.Source == "entry" {
+		return "", "", false
+	}
+	for _, rule := range view.Traverse {
+		if rule.CollectAs != section.Source || rule.From != "entry" {
+			continue
+		}
+		if rule.Recursive {
+			// A recursive rule collects entities at arbitrary depth, so the
+			// entry is not the peer of every row and there is no one edge to
+			// pre-set.
+			return "", "", false
+		}
+		if rule.FollowIncoming != "" {
+			return rule.FollowIncoming, "from", true
+		}
+		if rule.Follow != "" {
+			return rule.Follow, "to", true
+		}
+		return "", "", false
+	}
+	return "", "", false
+}
+
+// SectionCreateTarget carries the per-entity-type overrides of a [SectionCreate].
+type SectionCreateTarget struct {
+	// Template names an entity template variant to preselect in the opened
+	// form (`templates/entities/<type>--<variant>.md`). Empty means the form's
+	// own default.
+	Template string `yaml:"template,omitempty" json:"template,omitempty"`
+}
+
+// Placement values for [SectionCreate.In].
+const (
+	SectionCreateInSection = "section"
+	SectionCreateInHeader  = "header"
+)
+
+// Flow values for [SectionCreate.Flow].
+const (
+	SectionCreateFlowModal = "modal"
+	SectionCreateFlowPage  = "page"
+)
+
+// Placements returns the effective placements, applying the default.
+//
+// Nil receiver: accepted, returns nil — so a caller can ask an absent
+// [ViewSection.Create] without a nil check.
+func (c *SectionCreate) Placements() []string {
+	if c == nil {
+		return nil
+	}
+	if len(c.In) == 0 {
+		return []string{SectionCreateInSection}
+	}
+	return c.In
+}
+
+// EffectiveFlow returns the flow, applying the [SectionCreateFlowModal] default.
+//
+// Nil receiver: accepted, returns "".
+func (c *SectionCreate) EffectiveFlow() string {
+	if c == nil {
+		return ""
+	}
+	if c.Flow == "" {
+		return SectionCreateFlowModal
+	}
+	return c.Flow
+}
+
+// PlacedIn reports whether the affordance appears at the given placement.
+//
+// Nil receiver: accepted, returns false — an absent create block is placed
+// nowhere.
+func (c *SectionCreate) PlacedIn(placement string) bool {
+	return slices.Contains(c.Placements(), placement)
+}
+
+// TemplateFor returns the preselected template variant for an entity type, or
+// "" when the type has no override.
+//
+// Nil receiver: accepted, returns "".
+func (c *SectionCreate) TemplateFor(entityType string) string {
+	if c == nil {
+		return ""
+	}
+	return c.Types[entityType].Template
+}
+
+// yamlKindName names a node kind for an operator-facing error.
+//
+// yaml.Kind is a bitmask constant with no String method, so the alternative is
+// a bare number in the message.
+func yamlKindName(k yaml.Kind) string {
+	switch k {
+	case yaml.DocumentNode:
+		return "a document"
+	case yaml.SequenceNode:
+		return "a list"
+	case yaml.MappingNode:
+		return "a mapping"
+	case yaml.ScalarNode:
+		return "a scalar value"
+	case yaml.AliasNode:
+		return "an alias"
+	default:
+		return "an unknown node"
+	}
+}
+
+// UnmarshalYAML rejects every scalar spelling of `create:`.
+//
+// Absence already means "read-only", so `create: false` would be a second
+// spelling of the same thing and `create: true` a second spelling of
+// `create: {}`. One spelling per meaning — the same call [DarkMode.UnmarshalYAML]
+// makes when it refuses `dark: true`. Without this, a scalar decodes into a
+// zero-valued struct and silently enables the affordance, which for `false`
+// would be the exact opposite of what the operator wrote.
+func (c *SectionCreate) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind != yaml.MappingNode {
+		// Report the KIND and the line, not value.Value: that is empty for a
+		// sequence, so `create: [a, b]` otherwise produced `invalid create ""`
+		// — an empty quoted string and nothing to locate.
+		return fmt.Errorf(
+			"invalid create at line %d: got %s, must be a mapping "+
+				"(omit the key entirely to keep the section read-only)",
+			value.Line, yamlKindName(value.Kind))
+	}
+	// Alias to avoid recursing into this method.
+	type rawSectionCreate SectionCreate
+	var raw rawSectionCreate
+	if err := value.Decode(&raw); err != nil {
+		return fmt.Errorf("invalid create: %w", err)
+	}
+	*c = SectionCreate(raw)
+	return nil
 }
 
 // ViewSectionField defines a field within a view section.

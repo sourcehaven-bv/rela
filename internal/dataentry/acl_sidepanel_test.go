@@ -122,3 +122,66 @@ func TestACLSidePanel_GatesUngrantedFace(t *testing.T) {
 		t.Errorf("the granted face must still render: got %d; body=%s", rec.Code, rec.Body)
 	}
 }
+
+// TestACLSidePanel_AddButtonFollowsCreatePermission pins a DELIBERATE BEHAVIOR
+// CHANGE from TKT-R4BMJM on a shipped surface.
+//
+// The side panel's `+ Add <Type>` button used to appear whenever a create form
+// was configured for the target type — resolveSectionButtonsWithTraverse
+// consulted `createFormForType` and nothing else, so no principal was involved.
+// A user without create permission got a button leading to a form whose POST
+// the write path then refused.
+//
+// Now the targets are ACL-gated, so the button disappears for that user. This
+// is a fix, not a regression, but it changes what an existing deployment renders
+// and therefore gets its own test rather than riding on the view-path ones.
+func TestACLSidePanel_AddButtonFollowsCreatePermission(t *testing.T) {
+	tests := []struct {
+		name      string
+		creatable []string
+		wantAdd   bool
+	}{
+		{name: "may create the target type", creatable: []string{"feature"}, wantAdd: true},
+		{name: "may not create the target type", creatable: nil, wantAdd: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			app := newTestAppV1(t)
+			seedEntity(app, &entity.Entity{
+				ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "t"},
+			})
+			app.Cfg().Forms["create_feature"] = dataentryconfig.Form{EntityType: "feature"}
+			app.Cfg().Forms[sidePanelFormID] = dataentryconfig.Form{
+				EntityType: "ticket",
+				SidePanel: &dataentryconfig.SidePanelConfig{
+					Traverse: []dataentryconfig.ViewTraverse{
+						{From: "entry", Follow: "implements", CollectAs: "features"},
+					},
+					Sections: []dataentryconfig.ViewSection{
+						{Heading: "Features", Source: "features", Display: "cards"},
+					},
+				},
+			}
+
+			d := mustNewACL(t, &acl.Policy{
+				Roles: map[string]acl.RoleDef{"r": {
+					Read:   []string{"ticket", "feature"},
+					Create: tc.creatable,
+				}},
+				Assignments: map[string]string{"alice": "r"},
+			}, app.store)
+			app.acl = d
+
+			rec := sidePanelAs(aliceCtx(), t, app, d, "TKT-001")
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body)
+			}
+			gotAdd := strings.Contains(rec.Body.String(), `"addInfo"`)
+			if gotAdd != tc.wantAdd {
+				t.Errorf("addInfo present = %v, want %v — the Add button must follow create "+
+					"permission, not merely the existence of a form; body=%s",
+					gotAdd, tc.wantAdd, rec.Body)
+			}
+		})
+	}
+}

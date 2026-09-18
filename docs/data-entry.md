@@ -1688,6 +1688,7 @@ sections:
 | `group_by`      | string | Property to group entities by                           |
 | `empty_message` | string | Text shown when the collection is empty                 |
 | `link`          | bool   | Link entity titles to their detail pages                |
+| `create`        | map    | Offer a "create related entity" button (see below)      |
 
 Each entry under `fields:` takes:
 
@@ -1698,6 +1699,85 @@ Each entry under `fields:` takes:
 | `span`     | int    | Width on the 12-column grid (1-12; omit for full width)      |
 | `render`   | string | `display` or `input`; overrides the section's `render`        |
 | `widget`   | string | Which widget renders this property (see Widget Overrides)    |
+
+### Creating related entities from a section
+
+By default the entity detail page is **read-only**: it shows an entity and its
+neighbours, and every change happens through a form. A section can opt out of
+that and offer a button that creates a new related entity, already linked to the
+entity you are looking at.
+
+```yaml
+views:
+  epic:
+    entry:
+      type: epic
+    traverse:
+      - from: entry
+        follow: has-task
+        collect_as: tasks
+    sections:
+      - heading: Tasks
+        source: tasks
+        display: table
+        create:
+          in: [section, header]   # default: [section]
+          flow: modal             # default: modal
+          types:
+            task: { template: bugfix }
+            bug: { template: regression }
+```
+
+| Field   | Type | Description                                                        |
+| ------- | ---- | ------------------------------------------------------------------ |
+| `in`    | list | Where the button appears: `section`, `header`, or both. Default `[section]` |
+| `flow`  | str  | `modal` (default) keeps you on the page; `page` opens the full form |
+| `types` | map  | Per-entity-type options, keyed by type (see below)                  |
+
+Omit `create:` entirely to keep a section read-only. There is no `create: false`
+— absence already means that, and a second spelling of one meaning is refused at
+load.
+
+**Which types are offered is derived, not configured.** A type appears only when
+all three hold: the section's relation can reach it, a form exists that can
+create it, and the user has permission to create it. So there is no list of
+types to keep in step with your ACL — removing someone's `create` grant removes
+their button. One reachable type renders a direct button (`+ Task`); several
+render a short menu.
+
+The button follows the grant, but it is **not** what enforces it. The server
+re-authorizes the entity and the relation when the form is submitted, so a user
+who edits the request by hand gets whatever their own permissions allow. That is
+the same answer the create form would give them. Treat the button as a
+convenience, not as the access-control boundary.
+
+**`flow` is per section, not per type.** Which flow feels right depends on the
+form, not on the entity type, and one type opening a modal while its sibling
+navigates reads as a bug rather than as configuration.
+
+- `modal` opens the create form in a dialog and refreshes the page when it
+  succeeds. Good for short forms.
+- `page` navigates to the full create form and returns you to the originating
+  entity on submit. Good for long or multi-step forms.
+
+**`types` is keyed by entity type** because a template variant only exists per
+type — a relation reaching both `task` and `bug` has no single meaningful
+template. A type you do not list still gets a button; it just opens with the
+form's own default template.
+
+| Field      | Type | Description                                            |
+| ---------- | ---- | ------------------------------------------------------ |
+| `template` | str  | Template variant to preselect (`templates/entities/<type>--<variant>.md`) |
+
+When `in:` includes `header`, the section also contributes an entry to a menu at
+the top of the page. That menu is the union of the sections that opted in. It is
+deduped by relation, so two sections over one relation produce a single entry.
+
+A section can only offer this if exactly one relation filled it. A section built
+from a `recursive:` traverse rule, or from a rule that starts at another
+collection rather than `entry`, has no single entity to link the new one to;
+declaring `create:` on one is refused at config load rather than silently
+producing no button.
 
 ### Field Render Modes
 

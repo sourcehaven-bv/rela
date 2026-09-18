@@ -65,6 +65,32 @@ Rules for new write affordances in the Vue SPA (`frontend/`):
   plus a `perItemVerbs`/`perCollectionVerbs` update, and (b) the inline
   `v-if` on the component. No ESLint enforcement; code review catches drift.
 
+## The entity-detail view is read-only BY DEFAULT, not absolutely
+
+TKT-651W stripped `+ Add` / `Link Existing` from entity-detail view sections
+because "editing the graph from inside a read view blurs the line between viewing
+and editing". TKT-R4BMJM **narrowed** that to "read-only unless a section opts
+in", and did not reverse it. Rules for new code:
+
+- **Absence is the read-only default, and it is load-bearing.** A section with no
+  `create:` block emits nothing on the wire.
+  `TestV1Views_NoAddOrLinkInfoOnSections` asserts the absence of `addInfo`,
+  `linkInfo` **and** `create` across every section shape; it narrowed rather than
+  inverted, so all five of its original cases still assert absence. A change that
+  made the affordance default-on fails there.
+- **`v1.ViewAddInfo` is still side-panel-only.** Its doc comment forbids reuse
+  from a view response, and RR-R8X6 predicted that the misleading `View` prefix
+  would tempt exactly that — which is what happened during TKT-R4BMJM's planning.
+  The view path uses `v1.ViewSectionCreate`, a separate type.
+- **Link-existing did NOT come along.** `resolveSectionButtonsWithTraverse` builds
+  `LinkInfo` unconditionally, with no form check and no permission check, which is
+  why the view path has its own `resolveSectionCreate` rather than reusing it.
+  Don't "simplify" the two back into one without gating LinkInfo first.
+- **Both add affordances are ACL-gated through `creatableTargets`.** A type is
+  offered only when a form resolves for it AND `computeCollectionActions` says the
+  principal may create it. Before TKT-R4BMJM the side panel offered a button
+  whenever a form existed, with no principal involved.
+
 ## Documents (`documents:` + `/_documents/...`)
 
 Two kinds, discriminated by `DocumentConfig.IsStandalone()` (empty

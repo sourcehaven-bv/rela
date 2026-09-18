@@ -145,3 +145,80 @@ func deleteEntityAs(ctx context.Context, t *testing.T, app *App, d *acl.Declarat
 	app.write.handleV1DeleteEntity(rec, req, typeName, plural, entityID)
 	return rec
 }
+
+// TestACLWrite_RelationTargetIsReadGated closes an existence oracle on the
+// relation-create endpoint.
+//
+// `handleV1CreateRelation` read-gated only the PATH entity. The body target
+// (`{"id": ...}`) was never gated, so naming an entity the caller cannot read
+// returned 201 — the edge was written to a row they were never shown — while
+// naming a nonexistent one returned 422 "target entity not found". The two
+// responses differed, which is an existence oracle for any id.
+//
+// Pre-existing, but TKT-R4BMJM put weight on it: the `link_as: from` create is
+// now addressed FROM the newly created entity with the peer in the BODY (so a
+// prefix-less peer id can be linked at all), which moved the peer out from
+// under the path gate. On that route the path gate is close to vacuous — the
+// caller just created the entity it names.
+//
+// Both arms are asserted because only the PAIR is the property: a 404 on the
+// hidden target alone would be satisfied by an implementation that 404s
+// everything, and the nonexistent arm is what proves the two are
+// indistinguishable.
+func TestACLWrite_RelationTargetIsReadGated(t *testing.T) {
+	// bob may read and write tickets, and may CREATE features, but may not
+	// READ features — the create-implies-no-read case (internal/acl/policy.go).
+	newApp := func(t *testing.T) (*App, context.Context) {
+		t.Helper()
+		app := newTestAppV1(t)
+		app.broker = newEventBroker()
+		bindRepo(app, t.TempDir())
+		seedEntity(app, &entity.Entity{
+			ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "mine"},
+		})
+		seedEntity(app, &entity.Entity{
+			ID: "FEAT-001", Type: "feature", Properties: map[string]any{"title": "secret"},
+		})
+		d := mustNewACL(t, &acl.Policy{
+			Roles: map[string]acl.RoleDef{"r": {
+				Read:   []string{"ticket"},
+				Create: []string{"ticket", "feature"},
+				Update: []string{"ticket"},
+			}},
+			Assignments: map[string]string{"bob": "r"},
+		}, app.store)
+		app.acl = d
+		ctx := gateCtxFor(principal.With(context.Background(),
+			principal.Principal{User: "bob", Tool: principal.ToolDataEntry}), t, d)
+		return app, ctx
+	}
+
+	link := func(t *testing.T, app *App, ctx context.Context, target string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost,
+			"/api/v1/tickets/TKT-001/relations/implements",
+			strings.NewReader(`{"id":"`+target+`"}`))
+		req = req.WithContext(ctx)
+		rec := httptest.NewRecorder()
+		app.write.handleV1CreateRelation(rec, req, "ticket", "TKT-001", "implements")
+		return rec
+	}
+
+	appHidden, ctxHidden := newApp(t)
+	hidden := link(t, appHidden, ctxHidden, "FEAT-001")
+
+	appAbsent, ctxAbsent := newApp(t)
+	absent := link(t, appAbsent, ctxAbsent, "FEAT-999")
+
+	if hidden.Code != http.StatusNotFound {
+		t.Errorf("hidden target: got %d, want 404 — linking to an unreadable row must be "+
+			"refused, not written; body=%s", hidden.Code, hidden.Body)
+	}
+	if absent.Code != hidden.Code || absent.Body.String() != hidden.Body.String() {
+		t.Errorf("hidden and nonexistent targets must be indistinguishable:\n hidden: %d %s\n absent: %d %s",
+			hidden.Code, hidden.Body, absent.Code, absent.Body)
+	}
+	if strings.Contains(hidden.Body.String(), "secret") {
+		t.Errorf("LEAK: the refusal echoed the hidden entity's content: %s", hidden.Body)
+	}
+}

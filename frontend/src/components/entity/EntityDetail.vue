@@ -57,6 +57,10 @@ import { shouldFlipPopover } from '@/utils/popoverFlip'
 import { applyHighlights, type HighlightRange } from '@/utils/commentHighlight'
 import CommandModal from '@/components/entity/CommandModal.vue'
 import ExportMenu from '@/components/entity/ExportMenu.vue'
+import SectionCreateButton from '@/components/entity/SectionCreateButton.vue'
+import InlineCreateFormModal from '@/components/forms/InlineCreateFormModal.vue'
+import { buildCreateLinkQuery } from '@/utils/createLink'
+import type { ViewSectionCreate, ViewSectionCreateTarget } from '@/api/views'
 import { entityExportUrl } from '@/api/transforms'
 import CopyMenu from '@/components/entity/CopyMenu.vue'
 import FaceMenu from '@/components/entity/FaceMenu.vue'
@@ -1487,6 +1491,104 @@ watch(
     loadView()
   }
 )
+// ---------------------------------------------------------------------------
+// Create related entity (TKT-R4BMJM)
+// ---------------------------------------------------------------------------
+
+/** The affordance + target a create modal is currently open for. */
+const activeCreate = ref<{
+  create: ViewSectionCreate
+  target: ViewSectionCreateTarget
+} | null>(null)
+
+/**
+ * Opens the create flow for one target.
+ *
+ * `flow` decides where it happens, and the two paths differ in how the pre-link
+ * reaches the form — deliberately, not incidentally:
+ *
+ *   - PAGE navigates with query params. `DynamicForm` already parses them.
+ *   - MODAL passes props. An embedded form reads an EMPTY query on purpose
+ *     (DynamicForm.vue), because it mounts over whatever page the host is on and
+ *     honouring that page's query would pre-fill the new entity from the host's
+ *     params. Reusing the URL channel here would reintroduce exactly that bug.
+ *
+ * The world is carried on BOTH paths. It decides which face the new entity
+ * lands in (`worlds.<name>.create`), and a faced type has no default row to fall
+ * back to, so dropping it is a refusal rather than a silent default.
+ */
+function startCreate(create: ViewSectionCreate, target: ViewSectionCreateTarget) {
+  if (create.flow === 'page') {
+    router.push({
+      path: `/form/${target.formId}`,
+      query: buildCreateLinkQuery({
+        relation: create.relation,
+        peer: create.peerId,
+        linkAs: create.linkAs,
+        // Back to the entity the user started from, so the new item is visible
+        // in the section that offered the button.
+        returnTo: route.fullPath,
+        template: target.template,
+        world: worldParam.value || undefined,
+      }),
+    })
+    return
+  }
+  activeCreate.value = { create, target }
+}
+
+function closeCreate() {
+  activeCreate.value = null
+}
+
+/**
+ * After a modal create: refresh the page.
+ *
+ * It does NOT link. The pre-link travels to the embedded form as a prop, and
+ * that form owns BOTH directions — `linkAs: 'to'` rides its create payload,
+ * `linkAs: 'from'` is its own post-create call. Linking here as well created the
+ * same edge twice: the second attempt failed with "relation already exists" and
+ * reported a link failure for an edge that was already correct.
+ *
+ * One implementation, two entry points, is the whole reason the pre-link is a
+ * prop rather than a second code path — so the host must not re-implement half
+ * of it.
+ */
+async function onCreated(created: Entity) {
+  const active = activeCreate.value
+  activeCreate.value = null
+  if (!active) return
+
+  // A whole-view refetch: there is no per-section fetch, so "in place" means
+  // "no navigation", not a partial update.
+  await loadView()
+
+  // `create` implies no `read` (internal/acl/policy.go): a principal may create
+  // a type they cannot read back, in which case the refetch legitimately does
+  // not show the new row. Naming the id is the honest answer — silence would
+  // look like the create failed, and an error would claim something false.
+  //
+  // A section's rows live in one of THREE places depending on its display mode
+  // — `entities` (cards/list), `rows` (table), `tree` (nested) — so scanning
+  // only `entities` reported "missing" for every table and nested section and
+  // fired the toast even when the row was plainly on screen.
+  if (!viewData.value?.sections.some((sec) => sectionContainsEntity(sec, created.id))) {
+    uiStore.success(`Created ${created.id}.`)
+  }
+}
+
+/** Does a rendered section carry this entity, in whichever shape it uses? */
+function sectionContainsEntity(sec: ViewSection, id: string): boolean {
+  if (sec.entities?.some((e) => e.id === id)) return true
+  if (sec.rows?.some((r) => r.entityId === id)) return true
+  return treeContainsEntity(sec.tree, id)
+}
+
+function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): boolean {
+  return (nodes ?? []).some(
+    (n) => n.entity?.id === id || treeContainsEntity(n.children, id)
+  )
+}
 </script>
 
 <template>
@@ -1606,6 +1708,19 @@ watch(
             a world, where copyOffers is empty; see its comment for why.
           -->
           <CopyMenu :offers="copyOffers" :busy="copyBusy" @invoke="runCopy" />
+          <!--
+            The page-header create menu: sections that opted into
+            `create.in: [header]`. The server assembles and dedupes it, so this
+            renders what it is given. Absent entirely when no section opted in,
+            which is every view that predates TKT-R4BMJM.
+          -->
+          <SectionCreateButton
+            v-for="hc in viewData?.create ?? []"
+            :key="hc.relation"
+            :create="hc"
+            :menu-label="hc.heading || 'New'"
+            @select="startCreate"
+          />
           <RouterLink v-if="editTarget" class="btn btn-secondary" :to="editTarget">
             Edit <kbd>E</kbd>
           </RouterLink>
@@ -1762,16 +1877,37 @@ watch(
             sectionRendersGenericHeading(section) ? undefined : section.heading || undefined
           "
         >
-          <h2
-            v-if="sectionRendersGenericHeading(section)"
-            :id="`${section.sectionId}-heading`"
-            class="section-heading"
+          <!--
+            The heading row carries the section's opt-in create affordance
+            (TKT-R4BMJM). It sits HERE, above the six display branches, rather
+            than inside each of them: the button is one affordance, and copying
+            it into cards/list/table/nested/content/properties would be six
+            places to keep in step — and six to unpick when FEAT-KQ45P unifies
+            the branch structure.
+
+            The row renders when there is a heading OR an affordance, so a
+            section that opted in still gets its button when it has no heading.
+          -->
+          <div
+            v-if="sectionRendersGenericHeading(section) || section.create"
+            class="section-heading-row"
           >
-            {{ section.heading }}
-            <span v-if="section === entryContentSection && checkboxStats" class="cb-stats"
-              >({{ checkboxStats.checked }}/{{ checkboxStats.total }})</span
+            <h2
+              v-if="sectionRendersGenericHeading(section)"
+              :id="`${section.sectionId}-heading`"
+              class="section-heading"
             >
-          </h2>
+              {{ section.heading }}
+              <span v-if="section === entryContentSection && checkboxStats" class="cb-stats"
+                >({{ checkboxStats.checked }}/{{ checkboxStats.total }})</span
+              >
+            </h2>
+            <SectionCreateButton
+              :create="section.create"
+              :menu-label="'New'"
+              @select="startCreate"
+            />
+          </div>
 
           <div v-if="section.isEmpty" class="section-empty">
             {{ section.emptyMessage || 'No items' }}
@@ -2310,6 +2446,32 @@ watch(
       </div>
 
       <CommandModal ref="commandModalRef" :entity-id="bareEntityId" />
+
+      <!--
+        The modal create host. Reused verbatim from the inline-create flow
+        (TKT-OMUD56) rather than reimplemented: it already owns the dirty-discard
+        confirm, the focus restore, the modal stack and the nesting cap, and it
+        depends on none of the form context it was first written inside.
+
+        `v-if` rather than `v-show` — unmounting is what aborts the embedded
+        form's in-flight dry run; a hidden-but-alive form keeps POSTing behind a
+        closed dialog.
+      -->
+      <InlineCreateFormModal
+        v-if="activeCreate"
+        :show="true"
+        :form-id="activeCreate.target.formId"
+        :entity-type="activeCreate.target.entityType"
+        :template="activeCreate.target.template"
+        :link="{
+          relation: activeCreate.create.relation,
+          peer: activeCreate.create.peerId,
+          linkAs: activeCreate.create.linkAs,
+        }"
+        :world="worldParam || undefined"
+        @close="closeCreate"
+        @created="onCreated"
+      />
     </template>
 
     <div v-else class="error-state">
@@ -2610,6 +2772,19 @@ watch(
 /* KEEP IN SYNC with SectionEditForm.vue `.section-edit-form-header
    .section-heading` (RR-ZE29PY): the properties inline-edit section renders
    its heading inside that component, which can't reach these scoped styles. */
+.section-heading-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-md);
+}
+
+/* The row owns the heading's spacing when both are present; the h2 keeps its
+   own margins so a section with no create affordance is unchanged. */
+.section-heading-row > .section-heading {
+  flex: 1 1 auto;
+}
+
 .section-heading {
   font-size: var(--font-size-lg);
   font-weight: 600;
