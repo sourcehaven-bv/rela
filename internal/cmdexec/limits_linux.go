@@ -22,6 +22,36 @@ func platformApplyLimits(cmd *exec.Cmd, _ Limits) { setPgid(cmd) }
 // the alternative (a re-exec trampoline that sets its own rlimits pre-exec) buys
 // no practical safety for materially more machinery. Errors are returned so the
 // caller can fail closed rather than run an unbounded process.
+//
+// RLIMIT_NPROC is deliberately NOT set, despite "bound a fork bomb" being a
+// real goal (BUG-EA0E8M). It is the wrong mechanism for that goal at any value:
+// the kernel checks it in fork(2) against a count of every process and thread
+// owned by the real UID, not against this command's descendants. Setting it to
+// 256 therefore did not grant the child 256 forks — it made the child's forks
+// fail whenever the UID was already above 256, for reasons having nothing to do
+// with the child. Worse, the ceiling applies to the shared counter while the
+// child holds it, so rela was setting policy on a resource belonging to every
+// other process running as the same user.
+//
+// That is not hypothetical: it took down every `command:` document render in a
+// CI job, with `bwrap: Creating new namespace failed: Resource temporarily
+// unavailable` (EAGAIN from fork), because a Playwright suite on the same UID
+// held a few hundred browser threads. A server sharing its UID with anything
+// busy hits the same wall.
+//
+// What bounds a runaway command instead, all of it correctly scoped:
+//
+//   - --unshare-pid (Sandbox.Wrap) puts each command in its own PID namespace,
+//     so a fork bomb cannot outlive or escape that namespace;
+//   - killProcessGroup reaps the whole tree when the timeout fires;
+//   - RLIMIT_AS and RLIMIT_CPU below are genuinely per-process;
+//   - Runner.WithMaxConcurrent bounds how many commands run at once, which is
+//     the aggregate bound RLIMIT_NPROC was reached for.
+//
+// Operators wanting a hard per-service process ceiling should set it where it
+// is cgroup-scoped rather than UID-scoped — `TasksMax=` in the rela-server
+// systemd unit (see docs/attachment-security.md). That bounds the service and its
+// children only, which is what this code wanted and could not express.
 func applyRlimits(pid int, l Limits) error {
 	set := func(resource int, v uint64) error {
 		if v == 0 {
@@ -31,9 +61,6 @@ func applyRlimits(pid int, l Limits) error {
 		return unix.Prlimit(pid, resource, &rl, nil)
 	}
 	if err := set(unix.RLIMIT_AS, l.MaxAddressSpace); err != nil {
-		return err
-	}
-	if err := set(unix.RLIMIT_NPROC, l.MaxProcesses); err != nil {
 		return err
 	}
 	if err := set(unix.RLIMIT_FSIZE, l.MaxFileSize); err != nil {
