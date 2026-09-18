@@ -1,7 +1,7 @@
 ---
 id: TKT-JAROC3
 type: ticket
-title: Faced relation restore forks the lineage instead of replacing the face's links
+title: Entity restore should replace the face's content-scoped links
 kind: enhancement
 priority: high
 effort: s
@@ -10,32 +10,11 @@ status: ready
 
 ## Problem
 
-Restoring a faced (`scope: content`) relation creates a second edge instead of
-restoring the one the user asked for.
-
-`internal/dataentry/relation_history_handler.go:365`:
-
-```go
-_, liveErr := a.store.GetRelation(ctx, from, relType, to)
-if liveErr == nil {
-    _, writeErr = a.entityManager.UpdateRelation(ctx, from, relType, to, opts)
-} else {
-    _, writeErr = a.entityManager.CreateRelation(ctx, from, relType, to, opts)
-}
-```
-
-`GetRelation` reads the DEFAULT tail, so for a faced edge it misses and the
-handler takes the **create** branch. `opts` carries no face, so the restore
-mints a *second, default-tailed* edge beside the faced one. Same shape in
-`internal/cli/relation_history.go:199`.
-
-The result is two edges where the user expected one, and the faced edge they
-meant to restore is untouched.
+Restoring a faced (`scope: content`) relation replaces only that one edge. A
+user does not restore one relation; they restore an entity, and its links should
+come along.
 
 ## Restore is an ENTITY operation
-
-A user does not restore one relation. They restore an entity, and its links come
-along — the same way its body does. So the semantics are:
 
 **Entity restore replaces the face's links.** Restoring a face brings back the
 content-scoped edges that face had at that version, and clears whatever
@@ -47,35 +26,28 @@ into the new one, it replaces it. A link set that merged instead would leave the
 face holding edges from two different points in time, which is not a state the
 entity was ever in.
 
-## Why it matters now
-
-Before BUG-64MU2Q no client could write a state-tailed edge, so a faced edge
-could not reach restore at all. That fix added `Manager.DeleteRelationState` and
-made the reconciler face-aware, so it can now.
-
 ## Fix
 
-Thread the face through the liveness probe and into `RelationOptions.FromFace` —
-`entity.RelationOptions` gained that field in BUG-64MU2Q, so the write side is
-ready and only the handler needs wiring.
-
-Then make entity restore drive the link set: for the face being restored, delete
-its current content-scoped edges and write back the ones the version carried.
+Make entity restore drive the link set: for the face being restored, delete its
+current content-scoped edges and write back the ones the version carried.
 `Manager.DeleteRelationState` is the per-edge primitive that exists for this.
 
-## Done: per-tail version capture
+The per-relation restore route is already face-correct (see below); what is
+missing is the entity-level operation that drives it.
 
-The capture half of this ticket is fixed (commit `bddf9e62`). It was smaller
-than originally written: the synchronous hook already HAD the face on
-`entity.Relation.FromFace`, so there was no design question about exposing
-`rel_record_id` on a domain type. The fix was to stop dropping it.
+## Done: per-tail capture and per-tail history reads
+
+Both halves of the original ticket are fixed (commits `bddf9e62`, `5a0800cf`).
+The work was smaller than first written: the face was already in hand at every
+boundary, so the fix was to stop dropping it.
+
+### Capture (`bddf9e62`)
 
 - `entitymanager/version_hook.go` — removed the `if !r.FromFace.IsDefault()`
 skip; `RelationVersionRecord` carries `FromFace`, exactly as an entity's
 `VersionRecord` carries `Face`.
 - `pgstore` / `sqlitestore` `recordIDForKey` — the key now includes the tail,
-so a state-tailed capture resolves its OWN lineage. Passing the zero face asks
-about the default tail, which is what a caller that never names a face means.
+so a state-tailed capture resolves its OWN lineage.
 - `sqlitestore.WriteRelationVersion` — gained the key-resolution step pgstore
 already had. Without it a synchronous capture inserted `rel_record_id = 0`,
 filing every sync capture on one shared lineage. Pre-existing, found while
@@ -83,14 +55,39 @@ fixing the above.
 - `pgstore.contentHashOfRelation` — now folds in `FromFace`, matching
 sqlitestore and `canonical.HashRelation`. Without it two tails holding identical
 bytes hash the same, and a content-keyed dedup drops one tail's capture.
-- `storetest` `RelationTails` — three conformance cases holding both backends
-to this: independent lineages, distinct hashes on identical bytes, and
-`ErrNotFound` for a tail with neither a live edge nor history.
 
-Reading history BY face is the remaining read-side gap:
-`store.RelationHistoryQuery` has no face field, so a caller after a state-tailed
-edge's history must pass its `RecordID`. Both read call sites pass the zero face
-with a comment naming this.
+### Reads (`5a0800cf`)
+
+- `store.RelationHistoryQuery` gained `FromFace`, and
+`RelationHistoryReader.ListRelationLifetimes` gained a `fromFace` parameter.
+Enumerating lifetimes across all tails would hand a caller asking about the
+draft edge an opaque `RecordID` belonging to the published edge, and the
+response carries no face to tell them apart.
+- **`internal/dataentry/relation_history_handler.go` never parsed the
+`{from}` segment.** On a faced type `selfHref` hands out `ID@face` and the SPA
+passes it verbatim, so two things failed silently: the ACL row gate got a
+suffixed string that matches no row (a 404 for an ordinary reader on pgstore),
+and the store read the default tail's history. It now parses with
+`parseEntityRef`, like every other faced route.
+- The per-relation restore route writes back to the tail it read from
+(`RelationOptions.FromFace`) and probes liveness on that tail via a new shared
+`edgeOnFace`. Previously a faced restore took the create branch and minted a
+second, default-tailed edge beside the one the caller addressed.
+- `internal/cli/relation_history.go` accepts `ID@face` on the `from`
+positional for both `relation-history` and `relation-restore`.
+- Version purge stays default-tail: `RelationVersionPurgeRequest` names no
+face, and each call site says so.
+
+### Tests
+
+- `storetest` `RelationTails` holds both database backends to one contract:
+independent lineages per tail, reads scoped by face returning that tail's
+snapshot, distinct content hashes on identical bytes, and `ErrNotFound` for a
+tail with neither a live edge nor history.
+- `internal/dataentry` pins both directions of the address parse — a faced
+address reads its own tail, a bare one reads the default tail. The test fake
+keys on the tail exactly as the real store does, so a handler that drops the
+face fails it.
 
 ## Related
 
