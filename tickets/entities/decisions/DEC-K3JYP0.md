@@ -3,7 +3,7 @@ id: DEC-K3JYP0
 type: decision
 title: Remove `otherwise:`; exclusion is the only rule-3 behaviour
 context: 'otherwise: default was designed against the pre-BUG-HC6I2T data model where a faced entity always had a bare row. Measured against ResolveWorldPrimes, the two otherwise: values are now indistinguishable for correctly faced data; they diverge only for stranded bare rows.'
-consequences: 'otherwise: is rejected at load with a rela migrate step to remove it. stand_in: and on_absent.redirect survive. ResolutionAt''s terminal branch gains a new name (outside-world) because a directly-addressed face is not a resolution outcome. Sequenced after BUG-UA3BK3 so operators can see stranded rows before removal hides them.'
+consequences: 'otherwise: is rejected at load with a rela migrate step to remove it. stand_in: and on_absent.redirect survive. ResolutionAt''s terminal branch gains a new value, ResolutionOutsideWorld (wire: outside-world), because a face the world''s chain does not contain was selected by no resolution rule. Sequenced after BUG-UA3BK3 so operators can see stranded rows before removal hides them.'
 date: "2026-09-18"
 status: proposed
 ---
@@ -63,10 +63,10 @@ behaviour. Delete `metamodel.Otherwise`, `store.Fallback` /
 ## Consequences
 
 **Kept.** `stand_in:` survives — it covers a within-chain fallback *and* an
-`otherwise: default` substitution, and the first is still live (`chain_position
-> 0`). `WorldBadge`loses one arm of a two-arm check.`on_absent.redirect`is a
-> separate SPA-level key, unaffected, and is arguably the better answer to "no
-> face here" than`otherwise: default` ever was.
+`otherwise: default` substitution, and the first is still live (a positive
+`chain_position`). `WorldBadge` loses one arm of a two-arm check.
+`on_absent.redirect` is a separate SPA-level key, unaffected, and is arguably
+the better answer to "no face here" than `otherwise: default` ever was.
 
 **Lost.** An operator can no longer ask a world to serve a bare row as a
 stand-in. That is intentional: after BUG-HC6I2T such a row is stranded, and the
@@ -105,8 +105,24 @@ directly-addressed face was selected by none of them.
 
 Neither existing value fits. `ResolutionExcluded` is false — the entity is on
 screen, not absent. `ResolutionUnscoped` is false — the world does scope this
-type. So the branch gets a **new** name (`outside-world` / `addressed`): a wire
-vocabulary addition, meaning "you named this face; the world did not choose it".
+type. So the branch gets a **new** value, `ResolutionOutsideWorld`, spelled
+`outside-world` on the wire: this face is not in the world's chain, so no rule
+selected it.
+
+The name describes the FACE'S RELATION TO THE WORLD, not how the request
+arrived, and that is deliberate. The other three values are all facts about the
+world's decision — `unscoped` made none, `chain` chose this one, `excluded`
+rejected the entity — so `outside-world` ("not in its vocabulary at all") sits
+in the same register.
+
+`addressed` and `addressed-explicitly` were considered and rejected. Every face
+in rela is addressed: `POL-1@draft` and `POL-1@published` are both addresses,
+and a declared face name IS its storage coordinate. Worse, a directly-addressed
+IN-CHAIN face (`POL-1@published` under `?world=published`) is equally explicit
+and correctly reports `chain` — so "explicitly" is not the discriminator, and
+naming it that way relocates the ambiguity rather than removing it. `off-chain`
+is precise but leaks `select:`'s implementation vocabulary into an
+operator-facing wire value and badge.
 
 This is also **wrong today, independent of this decision**: a reader who opens
 `POL-1@draft` under `?world=published` is told `via: "fallback-default"`, which
@@ -114,8 +130,17 @@ claims the `otherwise:` arm fired even in a deployment that declares `otherwise:
 exclude`. Worth fixing as its own bug rather than folding in here.
 
 The badge improves rather than degrades: `WorldBadge.isSubstitute` fires on the
-new value, meaning "you are looking at a face the world would not have served" —
-more accurate for the face-switcher than "a substitution happened".
+new value, reading as "outside the published world" — more accurate for the
+face-switcher than "a substitution happened".
+
+The resulting vocabulary:
+
+```text
+via: "unscoped"       // world says nothing about this type
+via: "chain"          // world chose this face (+ chain_position)
+via: "excluded"       // world rejected this entity
+via: "outside-world"  // face is not in this world's chain
+```
 
 ## Alternatives rejected
 
