@@ -36,8 +36,11 @@ isolation entirely to you. Each command gets:
   the server fetch internal services or cloud metadata;
 - a **read-only view of the system**, with only the command's own temp directory
   writable;
-- **resource ceilings** on memory, processes, file size, and CPU (Linux), so a
-  malicious file cannot exhaust the host;
+- **resource ceilings** on memory, file size, and CPU (Linux), so a malicious
+  file cannot exhaust the host;
+- its **own PID namespace** (when sandboxed), so a fork bomb stays contained and
+  is reaped with the command rather than leaking processes — note this bounds
+  *lifetime*, not *count*; see "Bounding process count" for a numeric ceiling;
 - **process-group cleanup**, so a helper spawned by the tool cannot outlive the
   timeout;
 - a **bounded pool**, so concurrent uploads cannot multiply resource use.
@@ -308,14 +311,71 @@ RestrictNamespaces=user mnt pid net ipc uts cgroup
 SystemCallFilter=@system-service mount umount2 pivot_root unshare setns clone clone3
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 
+# ---- process ceiling (see "Bounding process count" below) ----
+TasksMax=512
+
 [Install]
 WantedBy=multi-user.target
 ```
 
+### Bounding process count
+
+rela bounds each command's **memory, file size and CPU** with rlimits, but
+deliberately sets no process-count limit. `RLIMIT_NPROC`, the obvious candidate,
+is scoped to the **real UID** rather than to a process tree: the kernel checks it
+in `fork(2)` against every process and thread owned by that user. A limit of 256
+therefore does not grant a command 256 forks — it makes that command's forks fail
+whenever the user is already above 256, for reasons having nothing to do with the
+command. rela used to set it, and a host whose `rela` user was busy turned every
+`command:`-backed render into `bwrap: Creating new namespace failed: Resource
+temporarily unavailable`.
+
+A runaway command is still contained, by mechanisms scoped to the command
+itself: its own PID namespace (`--unshare-pid`), a process-group kill when the
+timeout fires, per-process `RLIMIT_AS` and `RLIMIT_CPU`, and rela's bounded pool
+limiting how many commands run at once.
+
+Containment is not a count, though. A PID namespace stops a fork bomb escaping
+or outliving its command, but imposes no ceiling on how many processes it may
+create while it runs — verified: 300 processes fork without complaint inside
+`bwrap --unshare-all`. Host PIDs are a global resource, so if you want a number,
+set one below.
+
+The PID namespace is the sandbox's, so a host that has opted out of confinement
+(`RELA_UNCONFINED_COMMANDS`) does not get it — there, the timeout kill and the
+concurrency cap are what remain. `RLIMIT_NPROC` never filled that gap either: it
+permitted 256 forks on a quiet host and refused the first one on a busy host, so
+it bounded nothing predictably. If you run unconfined, `TasksMax=` below is the
+bound worth setting.
+
+If you want a hard ceiling on top of that, set it where it is **cgroup-scoped**:
+
+```ini
+TasksMax=512
+```
+
+That bounds this service and its children only — which is what a process limit
+should mean — and leaves every other process owned by the `rela` user alone. Size
+it above your peak concurrent conversions; `systemctl show rela-server -p
+TasksCurrent` reports live usage, and `systemctl show rela-server -p
+EffectiveTasksMax` the ceiling actually in force.
+
+The default is `DefaultTasksMax`: 15% of the *minimum* of `kernel.threads-max`,
+`kernel.pid_max - 1`, and the root cgroup's `pids.max`. In practice
+`threads-max` is the binding term, and it is derived from RAM, so the default
+varies per host — a 4 GiB VM with `threads-max = 30767` yields 4615. Do not
+compute it from `pid_max` alone: systemd has shipped `pid_max = 4194304` on
+64-bit systems since v243, which would put the figure three orders of magnitude
+too high. Read the real value rather than predicting it.
+
+Note that cgroup accounting is orthogonal to PID namespaces: tasks inside
+bubblewrap still charge the unit's `pids.max`, so `TasksMax=` does bound the
+sandboxed converters.
+
 Confirm it worked — this line is logged at startup:
 
 ```text
-external command confinement  detail="sandbox bubblewrap (no network, temp-dir-only writes) + memory/PID/file-size/CPU limits"
+external command confinement  detail="sandbox bubblewrap (no network, temp-dir-only writes) + memory/file-size/CPU limits"
 ```
 
 If it instead says `sandbox unavailable (commands will refuse to run)` while a

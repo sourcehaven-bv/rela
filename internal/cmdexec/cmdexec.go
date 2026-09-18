@@ -64,9 +64,10 @@ type Runner struct {
 	// host cannot do it".
 	sandboxOptOut bool
 
-	// limits bound what the command may CONSUME (memory, processes, file size,
-	// CPU). The sandbox bounds what it may REACH; without limits a confined
-	// converter can still exhaust the host.
+	// limits bound what the command may CONSUME (memory, file size, CPU). The
+	// sandbox bounds what it may REACH; without limits a confined converter can
+	// still exhaust the host. Process COUNT is deliberately not among them — see
+	// applyRlimits (limits_linux.go) for why RLIMIT_NPROC cannot express it.
 	limits Limits
 
 	// slots bounds how many commands may run CONCURRENTLY. Per-command limits
