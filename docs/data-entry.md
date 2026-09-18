@@ -1625,10 +1625,10 @@ their button. One reachable type renders a direct button (`+ Task`); several
 render a short menu.
 
 The button follows the grant, but it is **not** what enforces it. The server
-re-authorizes the entity and the relation independently when the form is
-submitted, so a user who edits the request by hand gets whatever their own
-permissions allow — the same answer they would get from the create form directly.
-Treat the button as a convenience, not as the access-control boundary.
+re-authorizes the entity and the relation when the form is submitted, so a user
+who edits the request by hand gets whatever their own permissions allow. That is
+the same answer the create form would give them. Treat the button as a
+convenience, not as the access-control boundary.
 
 **`flow` is per section, not per type.** Which flow feels right depends on the
 form, not on the entity type, and one type opening a modal while its sibling
@@ -1649,8 +1649,8 @@ form's own default template.
 | `template` | str  | Template variant to preselect (`templates/entities/<type>--<variant>.md`) |
 
 When `in:` includes `header`, the section also contributes an entry to a menu at
-the top of the page. The menu is the union of the sections that opted in, deduped
-by relation, so two sections over the same relation produce one entry.
+the top of the page. That menu is the union of the sections that opted in. It is
+deduped by relation, so two sections over one relation produce a single entry.
 
 A section can only offer this if exactly one relation filled it. A section built
 from a `recursive:` traverse rule, or from a rule that starts at another
