@@ -199,8 +199,13 @@ function onOverlayClick(event: MouseEvent): void {
           </label>
 
           <!-- Always present so a screen reader announces the message when it
-               arrives, rather than the region appearing along with it. -->
-          <p id="link-dialog-error" class="link-dialog-error" role="alert" aria-live="polite">
+               arrives, rather than the region appearing along with it.
+
+               `role="alert"` only: it already implies `aria-live="assertive"`,
+               and declaring `polite` alongside it is a conflict whose winner
+               is reader-dependent. Assertive is right here — the message is a
+               direct response to the user pressing the confirm button. -->
+          <p id="link-dialog-error" class="link-dialog-error" role="alert">
             {{ error }}
           </p>
 

@@ -7,7 +7,7 @@
  *  1. It anchors to `posToDOMRect(view, from, to)` — the SELECTION. For this
  *     panel the selection is usually a collapsed caret, so the anchor is a
  *     zero-width rect wherever the cursor happens to sit, which is not where
- *     the link is. On a hover it is not even related to the link.
+ *     the link is.
  *  2. Its updater is `throttle`d. A throttled position is a position computed
  *     from an earlier view, so the panel visibly lags a click and appears at
  *     the previous anchor — reported as "it tracks the previous mouse

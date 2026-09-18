@@ -471,10 +471,11 @@ so the operations that would break that are disabled.
 
 **Links to the web.** Select some text and press the link button to give it a
 target; with no selection, the dialog asks for the text as well. Put the cursor
-in an existing link and a small panel appears above it showing the address,
-with Edit and Remove; the toolbar also grows a remove-link button, so the whole
-feature works without a mouse. Pasting a web address over selected text turns
-that text into a link rather than replacing it.
+in an existing link and a small panel appears below it showing the address,
+with Edit and Remove. The toolbar covers the same ground without a pointer:
+with the cursor in a link, the link button reopens the dialog to change the
+address, and a remove-link button appears beside it. Pasting a web address over
+selected text turns that text into a link rather than replacing it.
 
 Only `http`, `https` and `mailto` addresses are accepted, and anything else is
 refused with a message rather than saved. A bare host is completed for you —

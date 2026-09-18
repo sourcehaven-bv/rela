@@ -175,12 +175,17 @@ export function useLinkUI(): UseLinkUI {
     const { from, to, empty } = state.selection
     if (empty) {
       // Nothing to wrap: insert the text the dialog collected, carrying the
-      // mark, then put the caret after it so typing continues outside the
-      // link rather than extending it.
+      // mark, then put the caret after it.
       const text = payload.text || payload.url
       const tr = state.tr.insertText(text, from, to)
       tr.addMark(from, from + text.length, mark)
       tr.setSelection(TextSelection.create(tr.doc, from + text.length))
+      // Clearing the stored marks is what actually stops the next keystroke
+      // joining the link. Moving the caret is not enough: a position on a
+      // mark's trailing boundary inherits the marks of the node BEFORE it, so
+      // the caret sits outside the text but inside the link as far as typing
+      // is concerned, and the user's next words silently become link text.
+      tr.setStoredMarks([])
       view.dispatch(tr)
     } else {
       view.dispatch(state.tr.addMark(from, to, mark))

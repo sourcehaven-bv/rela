@@ -674,15 +674,10 @@ onMounted(async () => {
     })
   }
 
-  // The link panel. `shouldShow` is asked on every update and answers purely
-  // from state — whether the caret is in a link, minus any Escape dismissal.
-  // It never dispatches, so moving the cursor into a link cannot mark the
-  // document dirty.
-  // The link panel is positioned directly rather than through
-  // `TooltipProvider`; see `linkPanelPosition.ts` for why (it anchors to the
-  // selection, and throttles, so the panel lagged and landed at the caret
-  // instead of at the link). It stays where the template put it — inside the
-  // shell but outside the editable div.
+  // The link panel needs no setup here: `repositionLinkPanel` anchors it from
+  // `refreshDerivedState`, and it stays where the template put it — inside the
+  // shell, outside the editable div. See `linkPanelPosition.ts` for why it is
+  // positioned directly rather than through `TooltipProvider`.
 
   applyResolver()
   const mountedView = currentView()

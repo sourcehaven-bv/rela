@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * The panel shown on the link under the caret or the pointer.
+ * The panel shown on the link the caret is in.
  *
  * Presentational, like `MentionMenu` and the toolbar: it renders a target and
  * two actions and emits. Where it appears, and whether it appears at all, is

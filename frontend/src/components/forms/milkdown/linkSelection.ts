@@ -78,8 +78,16 @@ export function findLinkAt(state: EditorState): LinkAtSelection | null {
 /**
  * Expands a position carrying `mark` to the whole run of that same mark.
  *
- * "Same" means the identical mark instance (`Mark.eq`), so two adjacent links
- * with different targets stay separate rather than merging into one range.
+ * "Same" is `Mark.eq` — VALUE equality, not instance identity. Two adjacent
+ * links with different targets therefore stay separate, which is the case that
+ * matters.
+ *
+ * Two adjacent links with the SAME target are treated as one range, and that
+ * is not a choice made here: ProseMirror merges them into a single text node
+ * when the document is parsed, so by the time this runs there is only one link
+ * to find. `[one](u)[two](u)` arrives as one `"onetwo"` node carrying one
+ * mark. Nothing downstream can un-merge it, and the stored markdown is
+ * unaffected unless the user retargets.
  */
 function extentOf(state: EditorState, pos: number, mark: Mark): LinkAtSelection | null {
   const $pos = state.doc.resolve(pos)
@@ -134,11 +142,34 @@ export function canApplyLink(state: EditorState): boolean {
   const { $from, $to, empty } = state.selection
   if (empty) return $from.parent.type.allowsMarkType(linkType)
 
-  let allowed = false
+  // EVERY text node in range must accept the mark, not merely one of them.
+  //
+  // An "any" test reads as the permissive-sounding choice and is the dangerous
+  // one: a selection reaching from a paragraph into a code block would pass it,
+  // and the caller would then apply a mark the code block cannot hold. The
+  // paste path turns that into swallowed input — it reports the paste handled
+  // and inserts nothing.
+  let sawText = false
+  let allAllowed = true
   state.doc.nodesBetween($from.pos, $to.pos, (node, _pos, parent) => {
-    if (allowed) return false
-    if (node.isText && parent?.type.allowsMarkType(linkType)) allowed = true
+    if (!allAllowed) return false
+    if (!node.isText) return true
+    sawText = true
+    if (!parent?.type.allowsMarkType(linkType)) allAllowed = false
     return true
   })
-  return allowed
+  return sawText && allAllowed
+}
+
+/**
+ * Whether the selection stays within a single text block.
+ *
+ * A mark applied across a block boundary becomes one mark per block, so a
+ * single pasted URL would silently produce several links in several
+ * paragraphs. Nobody means that, so the callers that would create it refuse
+ * instead.
+ */
+export function isWithinOneBlock(state: EditorState): boolean {
+  const { $from, $to } = state.selection
+  return $from.sameParent($to)
 }

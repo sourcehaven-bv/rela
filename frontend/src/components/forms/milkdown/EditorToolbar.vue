@@ -30,10 +30,12 @@ const props = defineProps<{
   /**
    * Whether the cursor is in a link, which reveals the unlink button.
    *
-   * Unlink needs a control of its own rather than living only in the hover
-   * tooltip: a pointer is not the only way people edit, and the tooltip is not
-   * in the tab order. With this button the whole feature — insert, retarget,
-   * remove — is reachable from the keyboard.
+   * The floating panel is not a keyboard route: it sits outside the editable
+   * div, so reaching its buttons means tabbing out of the editor entirely, and
+   * it vanishes as soon as the caret moves. The toolbar carries the whole
+   * feature instead — with the caret in a link, the Link button opens the
+   * dialog prefilled (retarget) and this one removes it, so insert, retarget
+   * and remove are all reachable without a pointer.
    */
   showUnlink: boolean
 }>()

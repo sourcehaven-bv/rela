@@ -127,6 +127,20 @@ describe('normalizeLinkUrl', () => {
       expect(r).toMatchObject({ ok: true, url: 'mailto:a@b.com', strippedParams: true })
     })
 
+    it('drops parameters hidden behind a fragment', () => {
+      // `new URL()` fills `search` only when `?` precedes `#`, so this form
+      // parks the parameters in `hash` and slipped past a query-only check.
+      const r = normalizeLinkUrl('mailto:a@b.com#frag?bcc=evil@x.com&body=hi')
+      expect(r).toMatchObject({ ok: true, url: 'mailto:a@b.com', strippedParams: true })
+    })
+
+    it('drops a bare trailing question mark', () => {
+      expect(normalizeLinkUrl('mailto:a@b.com?')).toMatchObject({
+        ok: true,
+        url: 'mailto:a@b.com',
+      })
+    })
+
     it('leaves a plain mailto alone and does not claim to have stripped', () => {
       const r = normalizeLinkUrl('mailto:a@b.com')
       expect(r).toMatchObject({ ok: true, url: 'mailto:a@b.com' })

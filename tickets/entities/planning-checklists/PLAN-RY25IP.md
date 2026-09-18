@@ -369,8 +369,8 @@ validation — see Security.
 - `frontend/src/components/forms/milkdown/EditorToolbar.vue` (undo/redo group)
 - `frontend/src/components/forms/milkdown/MilkdownEditor.vue` (wiring — see
 the size constraint below)
-- `frontend/src/components/forms/milkdown/useLinkUI.ts` (new composable: dialog
-+ tooltip open/close state and the commit/unlink calls)
+- `frontend/src/components/forms/milkdown/useLinkUI.ts` (new composable holding
+the dialog and tooltip open/close state and the commit/unlink calls)
 - `frontend/src/components/forms/milkdown/milkdownEditor.css` (tooltip chrome)
 - `e2e/tests/markdown-editor-links.spec.ts` (new) and `e2e/pages/form.page.ts`
 (locators)

@@ -13,8 +13,7 @@ import MilkdownEditor from './MilkdownEditor.vue'
  *
  * Layout is not asserted anywhere here: happy-dom has no layout engine, so
  * `getBoundingClientRect` is all zeros and floating-ui cannot place anything.
- * These check structure and document content; position and real hover are the
- * e2e suite's job.
+ * These check structure and document content; position is the e2e suite's job.
  */
 
 const searchEntities = vi.fn()
@@ -43,6 +42,20 @@ function markdownOf(w: VueWrapper): string {
 
 function button(w: VueWrapper, label: string) {
   return w.findAll('.toolbar-button').find((b) => b.attributes('aria-label') === label)
+}
+
+/** The live ProseMirror view, via the accessor the sibling editor tests use. */
+function editorViewOf(w: VueWrapper) {
+  const view = (
+    w.vm as unknown as {
+      editorViewForTest?: {
+        state: EditorState
+        dispatch: (tr: unknown) => void
+      }
+    }
+  ).editorViewForTest
+  if (!view) throw new Error('editor view not available')
+  return view
 }
 
 /**
@@ -175,6 +188,30 @@ describe('link insertion', () => {
     await fillDialog('https://example.com', 'the docs')
 
     expect(markdownOf(w)).toContain('[the docs](https://example.com/)')
+    w.unmount()
+  })
+
+  it('leaves the caret outside the link, so typing does not extend it', async () => {
+    // Moving the caret past the text is not enough on its own: a position on a
+    // mark's trailing boundary inherits the marks of the node before it, so
+    // the next keystroke joins the link unless the stored marks are cleared.
+    const w = await mountEditor({ modelValue: 'ab\n' })
+    await selectRange(w, 2, 2)
+
+    await button(w, 'Link')!.trigger('click')
+    await flushPromises()
+    await fillDialog('https://example.com', 'LINK')
+
+    const view = editorViewOf(w)
+    expect(view.state.storedMarks ?? []).toHaveLength(0)
+
+    // Typing at the caret must land outside the link.
+    view.dispatch(view.state.tr.insertText('TAIL', view.state.selection.from))
+    await flushPromises()
+
+    const md = markdownOf(w)
+    expect(md).toContain('[LINK](https://example.com/)')
+    expect(md).not.toContain('[LINKTAIL]')
     w.unmount()
   })
 })
@@ -356,6 +393,59 @@ describe('pasting a URL', () => {
     const md = markdownOf(w)
     expect(md).not.toContain('](')
     expect(md).toContain('replacement text')
+    w.unmount()
+  })
+
+  // The three cases below were all silent data loss: `handlePaste` returned
+  // true on conditions it had not actually verified, so ProseMirror's own
+  // handling never ran and the clipboard went nowhere.
+
+  it('falls through for a selection spanning two blocks', async () => {
+    // Applying one mark across a block boundary yields one link PER BLOCK, so
+    // a single pasted URL used to become two links in two paragraphs.
+    const w = await mountEditor({ modelValue: 'alpha\n\nbeta\n' })
+    await selectRange(w, 2, 10)
+
+    await paste(w, 'https://new.test/')
+
+    const md = markdownOf(w)
+    expect(md).not.toContain('](https://new.test/)')
+    w.unmount()
+  })
+
+  it('pastes as plain text inside a code block', async () => {
+    // `code_block` declares `marks: ''`, so no link is possible here. The
+    // property that matters is that the paste still HAPPENS: swallowing it
+    // (returning true, then applying a mark the block cannot hold) would drop
+    // the user's clipboard entirely.
+    const w = await mountEditor({ modelValue: '```\nconst x = 1\n```\n' })
+    await selectRange(w, 2, 6)
+
+    await paste(w, 'https://new.test/')
+
+    const md = markdownOf(w)
+    expect(md).toContain('https://new.test/')
+    expect(md).not.toContain('](https://new.test/)')
+    w.unmount()
+  })
+
+  it('refuses a paste that would partly overwrite an existing link', async () => {
+    // Refusing in `linkPasteHref` is not enough: falling through hands the
+    // selection to ProseMirror's default paste, which replaces it — shredding
+    // the link. Before this was guarded the body became
+    // `shttps\://new\.test/[s](https://old.test/) here`: the word "docs" gone,
+    // the link reduced to one character, and the URL left as escaped text.
+    const src = 'see [docs](https://old.test/) here\n'
+    const w = await mountEditor({ modelValue: src })
+    await selectRange(w, 2, 8)
+
+    await paste(w, 'https://new.test/')
+
+    const md = markdownOf(w)
+    // The existing link survives intact, target and text both.
+    expect(md).toContain('[docs](https://old.test/)')
+    // And the pasted URL did not land as escaped literal text.
+    expect(md).not.toContain('\\:')
     w.unmount()
   })
 

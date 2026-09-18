@@ -5,7 +5,7 @@ title: Insert and edit external links in the Milkdown editor (plus horizontal ru
 kind: enhancement
 priority: medium
 effort: m
-status: in-progress
+status: review
 ---
 
 The WYSIWYG editor has no way to create, retarget or remove a hyperlink. Add a
@@ -99,25 +99,25 @@ not be probed for active state.
 ## Acceptance criteria
 
 1. With text selected, the link button inserts a link; the body serializes to
-   `[text](https://example.com)`.
+`[text](https://example.com)`.
 2. With the cursor inside a link, a tooltip appears showing the URL, with edit
-   and unlink actions.
+and unlink actions.
 3. Unlink removes the mark and keeps the text.
 4. `javascript:alert(1)` and `data:text/html,x` are refused with a visible
-   message; no link is created AND nothing is written to the mark.
+message; no link is created AND nothing is written to the mark.
 5. `example.com` is stored as `https://example.com`.
 6. Pasting `https://example.com` over a selection wraps it rather than replacing
-   it.
+it.
 7. The horizontal-rule command inserts a break serializing to `---`.
 8. Undo and redo buttons work and are `aria-disabled` (never natively
-   `disabled`) at the ends of the history stack.
+`disabled`) at the ends of the history stack.
 9. Opening an entity that contains a link and saving it without edits emits
-   nothing (the write-back guard still holds).
+nothing (the write-back guard still holds).
 10. A link can be inserted, retargeted AND unlinked without a mouse.
 11. Selecting across an existing link and pressing the link button retargets it
-    — it never destroys the link or discards the entered URL.
+— it never destroys the link or discards the entered URL.
 12. A pre-existing `javascript:` link round-trips unchanged when an unrelated
-    part of that body is edited.
+part of that body is edited.
 13. `mailto:a@b.com?bcc=x@y.com` is stored as `mailto:a@b.com`.
 14. `example.com:8080/path` is stored as `https://example.com:8080/path`.
 

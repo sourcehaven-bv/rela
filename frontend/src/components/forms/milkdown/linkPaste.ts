@@ -15,7 +15,7 @@ import { $prose } from '@milkdown/kit/utils'
 import { Plugin, PluginKey } from '@milkdown/kit/prose/state'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import { normalizeLinkUrl } from './linkUrl'
-import { canApplyLink, findLinkAt } from './linkSelection'
+import { canApplyLink, findLinkAt, isWithinOneBlock } from './linkSelection'
 
 export const linkPasteKey = new PluginKey('rela-link-paste')
 
@@ -30,29 +30,63 @@ export function linkPasteHref(view: EditorView, text: string): string | null {
   const { state } = view
   const { empty } = state.selection
 
+  // Whitespace in the RAW clipboard means prose that happens to contain a URL,
+  // not a URL. Checked first, against the untrimmed text: `normalizeLinkUrl`
+  // strips the characters a browser ignores while resolving a scheme, so by
+  // the time it has run, internal whitespace is gone and this can no longer
+  // tell the two apart.
+  if (/\s/.test(text.trim())) return null
+
   // Nothing selected means there is no text to wrap. Pasting a URL at a caret
   // should insert the URL as text, which is what ProseMirror already does.
   if (empty) return null
 
-  // The mark has to be legal here. A code block declares `marks: ''`, so
-  // checking this BEFORE returning true is what stops a paste into one being
-  // swallowed and dropped.
+  // One block only. A mark spanning a block boundary becomes one mark per
+  // block, so a single pasted URL would turn into a link in each paragraph it
+  // touched.
+  if (!isWithinOneBlock(state)) return null
+
+  // The mark has to be legal across the WHOLE selection — `canApplyLink` is an
+  // all-nodes test for exactly this reason. A code block declares `marks: ''`,
+  // and swallowing a paste we cannot then apply loses the user's clipboard.
   if (!canApplyLink(state)) return null
 
-  // Already a link: that is a retarget, and it belongs to the dialog where the
-  // user can see what they are changing. Falling through also means pasting
-  // over a link still replaces its text, which is what a paste normally does.
+  // Any existing link in range is the dialog's business, not this plugin's.
+  // A selection wholly inside one is an ordinary label edit; a partial overlap
+  // is refused here and then BLOCKED outright — see `pasteWouldDamageLink`.
   if (findLinkAt(state)) return null
 
   const result = normalizeLinkUrl(text)
   if (!result.ok) return null
 
-  // A multi-line clipboard is prose that happens to start with a URL, not a
-  // URL. `normalizeLinkUrl` would already refuse most of these; this keeps the
-  // intent explicit.
-  if (/\s/.test(text.trim())) return null
-
   return result.url
+}
+
+/**
+ * Whether the selection overlaps a link that a plain paste would damage.
+ *
+ * Refusing to LINKIFY is not enough on its own. Falling through hands the
+ * selection to ProseMirror's default paste, which replaces it — and a
+ * selection running from plain prose into a link takes the link apart:
+ * `see [docs](url) here` came back as
+ * `shttps\://new\.test/[s](url) here`, with the word gone, the link reduced to
+ * one character, and the URL left as escaped literal text.
+ *
+ * So the plugin has to CLAIM this paste and do nothing, rather than decline it.
+ * Retargeting a link is the dialog's job, where the user can see what is
+ * changing.
+ */
+export function pasteWouldDamageLink(view: EditorView): boolean {
+  const { state } = view
+  if (state.selection.empty) return false
+  const link = findLinkAt(state)
+  if (!link) return false
+
+  // Wholly inside the link is an ordinary text replacement — the link keeps
+  // its target and the user is editing its label, which is what a paste over
+  // selected text normally means. Only a PARTIAL overlap is destructive.
+  const { from, to } = state.selection
+  return from < link.from || to > link.to
 }
 
 /**
@@ -64,9 +98,10 @@ export function linkPasteHref(view: EditorView, text: string): string | null {
  * here — but naming the operation that cannot misfire keeps the guarantee
  * local instead of resting on a check three functions away.
  *
- * Applying one mark across a multi-block selection yields one link per block
- * on save. That is inherent to inline marks spanning a block boundary, not
- * something to paper over.
+ * By the time this runs the selection is known to sit inside one block, to
+ * accept the mark throughout, and to carry no link already. Returning `true`
+ * without those being true is how a paste gets swallowed and the clipboard
+ * lost, so they are conditions rather than assumptions.
  */
 export const linkPaste = $prose(
   () =>
@@ -78,7 +113,12 @@ export const linkPaste = $prose(
           if (!text) return false
 
           const href = linkPasteHref(view, text)
-          if (!href) return false
+          if (!href) {
+            // Claim the paste and do nothing, rather than declining it: the
+            // default handler would replace a selection that straddles a link
+            // boundary and destroy the link in the process.
+            return pasteWouldDamageLink(view)
+          }
 
           const { state, dispatch } = view
           const { from, to } = state.selection

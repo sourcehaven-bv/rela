@@ -171,9 +171,19 @@ export function normalizeLinkUrl(input: string): LinkUrlResult {
   // in an entity body, and this repo already treats mail header injection as a
   // real threat (internal/mail rejects CR/LF in caller-supplied headers).
   // Dropped rather than refused, because the address itself is fine.
-  if (parsed.protocol === 'mailto:' && parsed.search) {
+  // The FRAGMENT is stripped too, not just the query. `new URL()` only
+  // populates `search` when `?` precedes `#`, so `mailto:a@b.com#x?bcc=evil`
+  // parks the whole parameter string in `hash` and sails past a query-only
+  // check. `mailto:` has no meaningful fragment, so dropping both closes that
+  // and costs nothing.
+  if (parsed.protocol === 'mailto:') {
+    const hadParams = Boolean(parsed.search || parsed.hash)
     parsed.search = ''
-    return { ok: true, url: parsed.href, strippedParams: true }
+    parsed.hash = ''
+    // Assigning '' does not remove a trailing bare `?`/`#` from `href`, so the
+    // delimiters are trimmed rather than trusted.
+    const url = parsed.href.replace(/[?#]+$/, '')
+    return hadParams ? { ok: true, url, strippedParams: true } : { ok: true, url }
   }
 
   // `parsed.href`, never `candidate`: this is the normalized form, and it is
