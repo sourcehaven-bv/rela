@@ -1384,12 +1384,23 @@ can leave a partially written target face.
 
 ### Checking stored states
 
-`rela analyze states` reports state rows the schema does not account for, for
-example rows left behind after a `faces:` entry was renamed or removed. A face
-is checked against **its own entity type**: a `draft` row on a type that
-declares no faces is reported even if another type declares `draft`. This is
-detection only. To move rows between faces, use the `rename_face` step of the
-[data migration system](data-migration.md#renaming-a-content-state).
+`rela analyze states` reports state rows the schema does not account for. Three
+kinds, each with its own remedy:
+
+| Finding | Meaning |
+| --- | --- |
+| `undeclared-face` | A row under a face name no type declares, for example after a `faces:` entry was renamed or removed. |
+| `bare-row-on-faced-type` | A row at the bare id on a type that declares `faces:`. No world's chain names the bare id, so nothing reaches the row. |
+| `unknown-entity-type` | A row whose entity type the schema does not define at all. |
+
+A face is checked against **its own entity type**: a `draft` row on a type that
+declares no faces is reported even if another type declares `draft`. Each
+finding names the thing you act on — the face for the first, the entity type for
+the other two — because the remedy is per-type for those.
+
+This is detection only. To move rows between faces, use the `rename_face` step
+of the [data migration system](data-migration.md#renaming-a-content-state); to
+adopt bare rows into a face, use `migrate_face`.
 
 ## Default Metamodel
 
