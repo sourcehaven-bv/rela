@@ -14,6 +14,9 @@ status: in-progress
 - [x] Comment lint gate clean (`just comment-lint`)
 - [x] Coverage maintained (`just coverage-check`)
 
+Full `just ci` passes, exit 0 — that is the authoritative run and includes the
+docs gate the cheaper targets skip.
+
 Go: all packages pass. Frontend: 2801 tests across 179 files.
 `just lint` 0 issues; `just arch-lint` OK; `just plimsoll` clean;
 `just comment-lint` clean across 15,064 comments; `just lint-md` 0 issues.
@@ -36,7 +39,7 @@ length-driven splits. No new suppression was added anywhere in this ticket.
 Two independent reviewers (general code quality + rela's security invariants),
 each verifying claims against the code rather than the plan.
 
-**Review Responses:** 17 total — 5 critical, 7 significant, 5 minor. All
+**Review Responses:** 18 total — 6 critical, 8 significant, 4 minor. All
 critical and significant are `addressed`; one minor is `deferred` with a reason.
 
 | ID | Sev | Finding |
@@ -58,6 +61,7 @@ critical and significant are `addressed`; one minor is `deferred` with a reason.
 | RR-19AU91 | minor | Bool-or-mapping YAML precedent missed (`DarkMode`) |
 | RR-OIE28X | minor | Six cleanups: guard-test gap, stale memo comment, duplicate call, YAML error, nested rows |
 | RR-RDPC48 | minor | **Deferred**: zero-face affordance over-offers under a non-default world |
+| RR-WGNYNY | significant | `docs/data-entry.md` is generated; my hand-edit was discarded and failed the docs-check gate |
 
 The deferral is argued, not convenience: it is a pre-existing shortcut in a
 shared affordance helper, it fails toward less access (button shows, write 403s),
@@ -68,6 +72,12 @@ picked up as its own ticket.
 Three of the criticals were found by *me* rather than by a reviewer — two during
 manual verification, one while writing the AC10 test the plan had promised.
 That is the argument for doing both.
+
+RR-WGNYNY came from the full `just ci` run, after `lint`, `test`, `arch-lint`,
+`plimsoll`, `comment-lint`, `lint-md` and `coverage-check` had all passed: the
+docs I wrote were in a GENERATED file and would have been deleted by the next
+`just docs`. Worth stating because it is the one gate the cheaper targets do not
+reach.
 
 **Unrelated changes:** none. The diff touches only the files in the plan's file
 list plus `write_handler.go` and `acl_write_test.go`, both added deliberately to
