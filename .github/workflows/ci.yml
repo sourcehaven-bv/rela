@@ -36,15 +36,31 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version: '1.26.6'
-          cache: false
+          # The two Go caches are split deliberately, because they have
+          # different sharing properties.
+          #
+          # MODULE cache (~/go/pkg/mod): byte-identical in every job, since it
+          # is a function of go.sum alone. setup-go keys on exactly that, so
+          # one shared entry is correct and 15 copies would be waste. Jobs do
+          # race to save it and losers log "Unable to reserve cache" — harmless
+          # here, because whichever job wins stored the same bytes.
+          #
+          # BUILD cache (~/.cache/go-build): differs per job, because each
+          # compiles a different package set under different build tags. That
+          # one gets a per-job key below. Sharing it was the original defect:
+          # every job derived the same go.sum key, raced, and the winner stored
+          # only its own partial build graph — entries under one key ranged
+          # 10MB to 791MB, so a job could restore a cache near-useless to it.
+          cache: true
 
-      - name: Cache Go build + module cache
+      - name: Cache Go build cache
         uses: actions/cache@v4
         with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
+          path: ~/.cache/go-build
           key: go-test-${{ runner.os }}-${{ runner.arch }}-1.26.6-${{ hashFiles('**/go.sum') }}
+          # A go.sum bump falls back to the previous build cache rather than
+          # going cold. Safe: Go's cache is content-addressed, so stale entries
+          # are never served for changed inputs, only ignored.
           restore-keys: |
             go-test-${{ runner.os }}-${{ runner.arch }}-1.26.6-
 
@@ -102,14 +118,12 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version: '1.26'
-          cache: false
+          cache: true
 
-      - name: Cache Go build + module cache
+      - name: Cache Go build cache
         uses: actions/cache@v4
         with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
+          path: ~/.cache/go-build
           key: go-reachability-${{ runner.os }}-${{ runner.arch }}-1.26-${{ hashFiles('**/go.sum') }}
           restore-keys: |
             go-reachability-${{ runner.os }}-${{ runner.arch }}-1.26-
@@ -196,14 +210,12 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version: '1.26.6'
-          cache: false
+          cache: true
 
-      - name: Cache Go build + module cache
+      - name: Cache Go build cache
         uses: actions/cache@v4
         with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
+          path: ~/.cache/go-build
           key: go-clamav-${{ runner.os }}-${{ runner.arch }}-1.26.6-${{ hashFiles('**/go.sum') }}
           restore-keys: |
             go-clamav-${{ runner.os }}-${{ runner.arch }}-1.26.6-
@@ -299,14 +311,12 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version: '1.26.6'
-          cache: false
+          cache: true
 
-      - name: Cache Go build + module cache
+      - name: Cache Go build cache
         uses: actions/cache@v4
         with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
+          path: ~/.cache/go-build
           key: go-lint-${{ runner.os }}-${{ runner.arch }}-1.26.6-${{ hashFiles('**/go.sum') }}
           restore-keys: |
             go-lint-${{ runner.os }}-${{ runner.arch }}-1.26.6-
@@ -344,14 +354,12 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version: '1.26.6'
-          cache: false
+          cache: true
 
-      - name: Cache Go build + module cache
+      - name: Cache Go build cache
         uses: actions/cache@v4
         with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
+          path: ~/.cache/go-build
           key: go-arch-lint-${{ runner.os }}-${{ runner.arch }}-1.26.6-${{ hashFiles('**/go.sum') }}
           restore-keys: |
             go-arch-lint-${{ runner.os }}-${{ runner.arch }}-1.26.6-
@@ -381,14 +389,12 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version: '1.26.6'
-          cache: false
+          cache: true
 
-      - name: Cache Go build + module cache
+      - name: Cache Go build cache
         uses: actions/cache@v4
         with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
+          path: ~/.cache/go-build
           key: go-plimsoll-${{ runner.os }}-${{ runner.arch }}-1.26.6-${{ hashFiles('**/go.sum') }}
           restore-keys: |
             go-plimsoll-${{ runner.os }}-${{ runner.arch }}-1.26.6-
@@ -426,14 +432,12 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version: '1.26.6'
-          cache: false
+          cache: true
 
-      - name: Cache Go build + module cache
+      - name: Cache Go build cache
         uses: actions/cache@v4
         with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
+          path: ~/.cache/go-build
           key: go-comment-lint-${{ runner.os }}-${{ runner.arch }}-1.26.6-${{ hashFiles('**/go.sum') }}
           restore-keys: |
             go-comment-lint-${{ runner.os }}-${{ runner.arch }}-1.26.6-
@@ -598,14 +602,12 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version: '1.26.6'
-          cache: false
+          cache: true
 
-      - name: Cache Go build + module cache
+      - name: Cache Go build cache
         uses: actions/cache@v4
         with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
+          path: ~/.cache/go-build
           key: go-e2e-${{ runner.os }}-${{ runner.arch }}-1.26.6-${{ hashFiles('**/go.sum') }}
           restore-keys: |
             go-e2e-${{ runner.os }}-${{ runner.arch }}-1.26.6-
@@ -718,14 +720,12 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version: '1.26.6'
-          cache: false
+          cache: true
 
-      - name: Cache Go build + module cache
+      - name: Cache Go build cache
         uses: actions/cache@v4
         with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
+          path: ~/.cache/go-build
           key: go-fuzz-${{ runner.os }}-${{ runner.arch }}-1.26.6-${{ hashFiles('**/go.sum') }}
           restore-keys: |
             go-fuzz-${{ runner.os }}-${{ runner.arch }}-1.26.6-
@@ -824,14 +824,12 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version: '1.26.6'
-          cache: false
+          cache: true
 
-      - name: Cache Go build + module cache
+      - name: Cache Go build cache
         uses: actions/cache@v4
         with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
+          path: ~/.cache/go-build
           key: go-postgres-${{ runner.os }}-${{ runner.arch }}-1.26.6-${{ hashFiles('**/go.sum') }}
           restore-keys: |
             go-postgres-${{ runner.os }}-${{ runner.arch }}-1.26.6-
@@ -1056,14 +1054,12 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version: '1.26.6'
-          cache: false
+          cache: true
 
-      - name: Cache Go build + module cache
+      - name: Cache Go build cache
         uses: actions/cache@v4
         with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
+          path: ~/.cache/go-build
           key: go-sqlite-${{ runner.os }}-${{ runner.arch }}-1.26.6-${{ hashFiles('**/go.sum') }}
           restore-keys: |
             go-sqlite-${{ runner.os }}-${{ runner.arch }}-1.26.6-
@@ -1124,14 +1120,12 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version: '1.26.6'
-          cache: false
+          cache: true
 
-      - name: Cache Go build + module cache
+      - name: Cache Go build cache
         uses: actions/cache@v4
         with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
+          path: ~/.cache/go-build
           key: go-cross-compile-${{ matrix.goos }}-${{ matrix.tags || 'default' }}-${{ runner.os }}-${{ runner.arch }}-1.26.6-${{ hashFiles('**/go.sum') }}
           restore-keys: |
             go-cross-compile-${{ matrix.goos }}-${{ matrix.tags || 'default' }}-${{ runner.os }}-${{ runner.arch }}-1.26.6-
@@ -1221,14 +1215,12 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version: '1.26.6'
-          cache: false
+          cache: true
 
-      - name: Cache Go build + module cache
+      - name: Cache Go build cache
         uses: actions/cache@v4
         with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
+          path: ~/.cache/go-build
           key: go-rela-tickets-${{ runner.os }}-${{ runner.arch }}-1.26.6-${{ hashFiles('**/go.sum') }}
           restore-keys: |
             go-rela-tickets-${{ runner.os }}-${{ runner.arch }}-1.26.6-
@@ -1415,14 +1407,12 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version: '1.26.6'
-          cache: false
+          cache: true
 
-      - name: Cache Go build + module cache
+      - name: Cache Go build cache
         uses: actions/cache@v4
         with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
+          path: ~/.cache/go-build
           key: go-demos-${{ runner.os }}-${{ runner.arch }}-1.26.6-${{ hashFiles('**/go.sum') }}
           restore-keys: |
             go-demos-${{ runner.os }}-${{ runner.arch }}-1.26.6-
@@ -1491,14 +1481,12 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version: '1.26.6'
-          cache: false
+          cache: true
 
-      - name: Cache Go build + module cache
+      - name: Cache Go build cache
         uses: actions/cache@v4
         with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
+          path: ~/.cache/go-build
           key: go-docs-${{ runner.os }}-${{ runner.arch }}-1.26.6-${{ hashFiles('**/go.sum') }}
           restore-keys: |
             go-docs-${{ runner.os }}-${{ runner.arch }}-1.26.6-
