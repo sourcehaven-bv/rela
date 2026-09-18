@@ -5,6 +5,7 @@ import { searchEntities } from '@/api'
 import { useSchemaStore } from '@/stores'
 import { parseFilterQueryParams } from '@/utils/filters'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
+import { isInputFocused } from '@/utils/dom'
 import { useBackTarget } from '@/composables/useBackTarget'
 import BackButton from '@/components/common/BackButton.vue'
 import AdHocFilterMenu from '@/components/lists/AdHocFilterMenu.vue'
@@ -177,8 +178,7 @@ function getEntityTypeLabel(type: string): string {
 
 // Keyboard navigation
 function handleKeydown(e: KeyboardEvent) {
-  const target = e.target as HTMLElement
-  const isInInput = target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA'
+  const isInInput = isInputFocused()
 
   // F key to open filter menu (when not in an input). The menu owns its own
   // keydown handling once open, so we don't need to early-return here.

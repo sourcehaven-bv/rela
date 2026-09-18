@@ -130,6 +130,138 @@ func RunGraphQueryTests(t *testing.T, f Factory) {
 			"an entity with no status is not in the 'status != doing' population")
 	})
 
+	// PropNotEqualOrEmpty is the Lua `~=` reading and the deliberate
+	// counterpart to the case above: the SAME rows, plus the unset and
+	// blank ones. It exists because internal/predicate's documented
+	// equality table has `nil == anything -> false`, so `nil ~= 'doing'`
+	// is TRUE — while PropNotEqual (the filter-DSL reading) excludes it.
+	//
+	// The pairing is the point: lowering a predicate `~=` to PropNotEqual
+	// would drop rows the Go pass keeps, which is a pre-filter removing
+	// rows the authoritative pass would return. Pinned on every backend
+	// because pgstore renders it in SQL and the naive evaluator decides it
+	// in Go.
+	t.Run("Props_not_equal_or_empty_includes_unset", func(t *testing.T) {
+		s := f(t)
+		seedEntityWithProps(t, s, "task", "T-doing", map[string]any{"status": "doing"})
+		seedEntityWithProps(t, s, "task", "T-todo", map[string]any{"status": "todo"})
+		seedEntityWithProps(t, s, "task", "T-blank", map[string]any{"status": ""})
+		seedEntityWithProps(t, s, "task", "T-unset", nil)
+
+		got := runGraphQuery(t, s, store.GraphQuery{
+			EntityType: "task",
+			Props: []store.PropPredicate{
+				{Property: "status", Op: store.PropNotEqualOrEmpty, Value: "doing"},
+			},
+		})
+		require.Equal(t, []string{"T-blank", "T-todo", "T-unset"}, got,
+			"Lua `status ~= doing` is true for an unset or blank status")
+
+		// The two ops must differ ONLY on the empty rows. Asserting the
+		// difference directly keeps a future change to either one from
+		// quietly collapsing them into the same operator.
+		narrow := runGraphQuery(t, s, store.GraphQuery{
+			EntityType: "task",
+			Props: []store.PropPredicate{
+				{Property: "status", Op: store.PropNotEqual, Value: "doing"},
+			},
+		})
+		require.Equal(t, []string{"T-todo"}, narrow,
+			"PropNotEqual keeps its filter-DSL meaning: empty is not in the population")
+	})
+
+	// Narrowing is the caller-supplied disjunction, and the assertion that
+	// matters is that it NARROWS: it is ANDed with everything else, never
+	// OR-ed into the authorization predicates. A caller branch that became
+	// an alternative route to authorization would be a privilege
+	// escalation, so the composition is pinned on every backend rather than
+	// left to each one's SQL.
+	t.Run("Narrowing_is_ANDed_not_ORed", func(t *testing.T) {
+		s := f(t)
+		seedEntityWithProps(t, s, "task", "T-open-mine",
+			map[string]any{"status": "open", "owner": "me"})
+		seedEntityWithProps(t, s, "task", "T-open-yours",
+			map[string]any{"status": "open", "owner": "you"})
+		seedEntityWithProps(t, s, "task", "T-done-mine",
+			map[string]any{"status": "done", "owner": "me"})
+
+		// Props is the ceiling stand-in (status=open); Narrowing is the
+		// caller's filter (owner=me OR owner=nobody). A row must satisfy
+		// BOTH, so T-done-mine is excluded even though it matches a
+		// narrowing branch — that exclusion is the escalation guard.
+		got := runGraphQuery(t, s, store.GraphQuery{
+			EntityType: "task",
+			Props: []store.PropPredicate{
+				{Property: "status", Op: store.PropEqual, Value: "open"},
+			},
+			Narrowing: []store.NarrowBranch{
+				{Props: []store.PropPredicate{{Property: "owner", Op: store.PropEqual, Value: "me"}}},
+				{Props: []store.PropPredicate{{Property: "owner", Op: store.PropEqual, Value: "nobody"}}},
+			},
+		})
+		require.Equal(t, []string{"T-open-mine"}, got,
+			"a narrowing branch must not admit a row the rest of the query excludes")
+
+		// Within a branch the props are ANDed; across branches they are ORed.
+		both := runGraphQuery(t, s, store.GraphQuery{
+			EntityType: "task",
+			Narrowing: []store.NarrowBranch{
+				{Props: []store.PropPredicate{
+					{Property: "status", Op: store.PropEqual, Value: "done"},
+					{Property: "owner", Op: store.PropEqual, Value: "me"},
+				}},
+				{Props: []store.PropPredicate{{Property: "owner", Op: store.PropEqual, Value: "you"}}},
+			},
+		})
+		require.Equal(t, []string{"T-done-mine", "T-open-yours"}, both,
+			"branches are ORed; props within a branch are ANDed")
+
+		// No branches is no constraint, not an empty result.
+		none := runGraphQuery(t, s, store.GraphQuery{EntityType: "task"})
+		require.Len(t, none, 3, "an absent Narrowing constrains nothing")
+	})
+
+	// Ordered comparison carries GraphQuery.OrderBy's contract — byte-wise
+	// on the string form — so a range predicate and a sort agree about what
+	// "larger" means. ISO-8601 dates are the motivating shape: their byte
+	// order IS their order.
+	//
+	// The list and empty cases are the parity-critical ones. Go renders a
+	// list as `[a b]` and postgres `->>` renders it as `["a", "b"]`, so any
+	// byte-wise answer over a list would be backend-dependent; both sides
+	// must refuse the shape rather than pick one rendering. Empty is
+	// excluded for the same reason PropNotEqual excludes it, and because
+	// SQL NULL comparison is not true either.
+	t.Run("Props_ordered_comparison", func(t *testing.T) {
+		s := f(t)
+		seedEntityWithProps(t, s, "task", "T-early", map[string]any{"due": "2026-09-01"})
+		seedEntityWithProps(t, s, "task", "T-bound", map[string]any{"due": "2026-09-11"})
+		seedEntityWithProps(t, s, "task", "T-late", map[string]any{"due": "2026-09-20"})
+		seedEntityWithProps(t, s, "task", "T-blank", map[string]any{"due": ""})
+		seedEntityWithProps(t, s, "task", "T-unset", nil)
+		seedEntityWithProps(t, s, "task", "T-list", map[string]any{"due": []string{"2026-09-20", "x"}})
+
+		for _, tc := range []struct {
+			name string
+			op   store.PropOp
+			want []string
+		}{
+			{"gte is inclusive at the bound", store.PropGreaterEqual, []string{"T-bound", "T-late"}},
+			{"lte is inclusive at the bound", store.PropLessEqual, []string{"T-bound", "T-early"}},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				got := runGraphQuery(t, s, store.GraphQuery{
+					EntityType: "task",
+					Props: []store.PropPredicate{
+						{Property: "due", Op: tc.op, Value: "2026-09-11"},
+					},
+				})
+				require.Equal(t, tc.want, got,
+					"empty, unset and list values are outside every ordered range")
+			})
+		}
+	})
+
 	// Value-shape parity. The naive backend compares Go values via
 	// propmatch; pgstore compares jsonb in SQL. Every shape a property
 	// can hold must land on the same answer in both, or a query means

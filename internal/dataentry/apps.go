@@ -56,12 +56,6 @@ const appEditorEntry = "_rela-editor.js"
 // editor would render unstyled.
 const appEditorCSSEntry = "_rela-editor.css"
 
-// appEditorFontEntry is the reserved per-app path that serves the Font Awesome
-// glyph webfont the editor's toolbar uses. The bundle's @font-face points here
-// (a same-base URL), so the app CSP's `font-src <base>` permits it without
-// widening. Reserved (underscore-prefixed).
-const appEditorFontEntry = "_rela-editor.woff2"
-
 // maxAppFileBytes caps the size of any single served app file. Generous for a
 // single-page app's assets while bounding memory pressure from a pathological
 // file.

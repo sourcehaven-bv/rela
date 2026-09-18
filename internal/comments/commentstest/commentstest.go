@@ -389,6 +389,133 @@ func RunRenameTests(t *testing.T, f Factory) {
 		require.NoError(t, s.Rename(ctx, "TKT-none", "TKT-new"))
 	})
 
+	t.Run("collides on a shared comment id without stranding the thread",
+		func(t *testing.T) {
+			// A destination holding a comment with the SAME id as one arriving.
+			// Vanishingly unlikely (ids carry 80 bits of crypto/rand) but
+			// reachable through a restored backup, a re-import, or a
+			// filecomments migration — and the consequence is out of all
+			// proportion to the odds, because entitymanager LOGS a failure from
+			// EntityRenamed rather than returning it. A backend that aborts here
+			// leaves the whole thread under a key nothing resolves to, with no
+			// error reaching the user and no route left to the rows.
+			//
+			// The contract is: the destination's existing comment wins (a
+			// reader may already have seen it), everything else still moves,
+			// and nothing is stranded at the old key.
+			s := f(t)
+			require.NoError(t, s.Add(ctx, target("TKT-old"), comment("dup", 0, "alice", "from old")))
+			require.NoError(t, s.Add(ctx, target("TKT-old"), comment("c1", time.Hour, "alice", "also from old")))
+			require.NoError(t, s.Add(ctx, target("TKT-new"), comment("dup", 2*time.Hour, "bob", "already here")))
+
+			require.NoError(t, s.Rename(ctx, "TKT-old", "TKT-new"))
+
+			old, err := s.List(ctx, target("TKT-old"))
+			require.NoError(t, err)
+			require.Empty(t, old, "nothing may be left stranded at the old key")
+
+			// Ordered by created_at, so the moved c1 (+1h) precedes the
+			// surviving occupant (+2h).
+			got, err := s.List(ctx, target("TKT-new"))
+			require.NoError(t, err)
+			require.Equal(t, []string{"c1", "dup"}, ids(got))
+			require.Equal(t, "already here", got[1].Body,
+				"the destination's comment wins on a collision")
+		})
+}
+
+// RunKeyFidelityTests pins that a backend treats an entity id as EXACT BYTES:
+// case is significant, and a multi-byte id re-keys correctly.
+//
+// Separate from [RunAll] because neither is a contract every backend can
+// honor. filecomments keys on a filename, so on a case-insensitive filesystem
+// (macOS, Windows) "TKT-1@draft.yaml" and "tkt-1@draft.yaml" ARE one file, and
+// it refuses a non-ASCII id outright rather than build an unsafe path. Those
+// are sound decisions for a file backend, not defects — but they mean the
+// guarantee below can only be asked of the database backends.
+//
+// For those two it is a real hazard rather than a hypothetical. SQLite's LIKE
+// is ASCII case-INSENSITIVE by default while "=" is byte-exact, so the two arms
+// of one query silently match different row sets — and a different set again
+// from PostgreSQL's COLLATE "C". Separately, both compute the moved key with
+// SQL's substring()/substr(), which count CHARACTERS where Go's len() counts
+// BYTES; slicing at the wrong offset re-keys a thread to a corrupt target and
+// returns nil.
+//
+// Whether two ids differing only by case can coexist at all, and whether an id
+// may hold a multi-byte rune, are questions for the store and for
+// entity.ValidateID — answered elsewhere, by invariants these packages
+// deliberately do not import. This fixes the answer the BACKENDS give, so it
+// holds however those questions are later answered.
+func RunKeyFidelityTests(t *testing.T, f Factory) {
+	t.Helper()
+	ctx := context.Background()
+
+	upper := comments.Target{Type: "ticket", ID: "TKT-1", Face: "draft"}
+	lower := comments.Target{Type: "ticket", ID: "tkt-1", Face: "draft"}
+	seed := func(t *testing.T) comments.Store {
+		t.Helper()
+		s := f(t)
+		require.NoError(t, s.Add(ctx, upper, comment("upper", 0, "alice", "on TKT-1")))
+		require.NoError(t, s.Add(ctx, lower, comment("lower", time.Hour, "bob", "on tkt-1")))
+		return s
+	}
+
+	t.Run("rename does not re-key a target differing only by case", func(t *testing.T) {
+		s := seed(t)
+
+		require.NoError(t, s.Rename(ctx, "tkt-1", "OTHER-9"))
+
+		kept, err := s.List(ctx, upper)
+		require.NoError(t, err)
+		require.Equal(t, []string{"upper"}, ids(kept),
+			"renaming tkt-1 must leave TKT-1's thread where it was")
+
+		moved, err := s.List(ctx, comments.Target{Type: "ticket", ID: "OTHER-9", Face: "draft"})
+		require.NoError(t, err)
+		require.Equal(t, []string{"lower"}, ids(moved))
+	})
+
+	t.Run("moves a faced thread whose id is multi-byte", func(t *testing.T) {
+		// The database backends compute the new key as "newID + everything
+		// after the old id", and SQL's substring()/substr() count CHARACTERS
+		// while Go's len() counts BYTES. Slicing at a byte offset would drop
+		// the "@" and re-key the thread to a corrupt target — losing it
+		// outright, and returning nil.
+		//
+		// entity.ValidateID admits only ASCII today, so the two units agree by
+		// luck rather than construction. This test is what keeps them agreeing
+		// if that ever changes: a backend must not be correct only by the grace
+		// of a grammar declared in a package it does not import.
+		s := f(t)
+		faced := comments.Target{Type: "ticket", ID: "TKT-é", Face: "draft"}
+		require.NoError(t, s.Add(ctx, faced, comment("c1", 0, "alice", "one")))
+
+		require.NoError(t, s.Rename(ctx, "TKT-é", "TKT-9"))
+
+		moved, err := s.List(ctx, comments.Target{Type: "ticket", ID: "TKT-9", Face: "draft"})
+		require.NoError(t, err)
+		require.Equal(t, []string{"c1"}, ids(moved),
+			"a multi-byte id must re-key to id@face, not to a corrupt key")
+	})
+
+	t.Run("DeleteAllFaces does not reach a target differing only by case", func(t *testing.T) {
+		// Same OR-of-two-matching-rules shape as Rename, so it needs the same
+		// guarantee: a delete must not reach an entity the caller did not name.
+		s := seed(t)
+
+		require.NoError(t, s.DeleteAllFaces(ctx, "tkt-1"))
+
+		kept, err := s.List(ctx, upper)
+		require.NoError(t, err)
+		require.Equal(t, []string{"upper"}, ids(kept),
+			"deleting tkt-1's faces must not touch TKT-1")
+
+		gone, err := s.List(ctx, lower)
+		require.NoError(t, err)
+		require.Empty(t, gone)
+	})
+
 	t.Run("merges into an occupied destination", func(t *testing.T) {
 		// rela permits ID reuse, so the destination is not guaranteed empty.
 		// Merging is the conservative choice: discarding the occupant's
@@ -483,6 +610,13 @@ func RunRoundTripTests(t *testing.T, f Factory) {
 		require.Equal(t, want.ID, got[0].ID)
 		require.Equal(t, want.Author, got[0].Author)
 		require.True(t, want.CreatedAt.Equal(got[0].CreatedAt), "CreatedAt must round-trip")
+		// Equal compares INSTANTS and ignores location, so it would pass while
+		// two backends returned the same moment in different zones. Comment
+		// marshals to JSON with whatever offset it carries, so that difference
+		// reaches clients: "Z" from one backend, "+01:00" from another, shifting
+		// under the server's DST. UTC is the one answer all backends give.
+		require.Equal(t, time.UTC, got[0].CreatedAt.Location(),
+			"CreatedAt must come back in UTC, not the server's local zone")
 		require.Equal(t, want.Anchor, got[0].Anchor)
 		require.Equal(t, want.Body, got[0].Body)
 		require.Equal(t, want.Resolved, got[0].Resolved)

@@ -156,6 +156,41 @@ export interface ViewSection {
   tree?: ViewTreeNode[]
   // True when the node budget stopped a visible row from being emitted.
   truncated?: boolean
+  // The section's opt-in create affordance. Absent unless the section's config
+  // carries a `create:` block AND the principal may create something the
+  // relation reaches — the detail page is read-only by default (TKT-651W).
+  create?: ViewSectionCreate
+}
+
+/**
+ * A "create related entity" affordance on a view section (TKT-R4BMJM).
+ *
+ * `targets` IS the permission answer: the server lists a type only when a form
+ * resolves for it and the principal may create it, so the client does no
+ * permission arithmetic. An empty or absent affordance means "offer nothing".
+ *
+ * `relation`, `linkAs` and `peerId` are a convenience, not a capability. In the
+ * page flow they land in an editable URL, and the server re-authorizes both the
+ * create and the edge independently.
+ */
+export interface ViewSectionCreate {
+  relation: string
+  /** Role of the NEW entity: 'to' for an outgoing section, 'from' for incoming. */
+  linkAs: 'from' | 'to'
+  /** The entry entity the new one gets linked to. */
+  peerId: string
+  flow: 'modal' | 'page'
+  /** Section heading; carried only on the page-header menu entries. */
+  heading?: string
+  targets: ViewSectionCreateTarget[]
+}
+
+export interface ViewSectionCreateTarget {
+  entityType: string
+  formId: string
+  label: string
+  /** Operator-preselected template variant, or absent for the form's default. */
+  template?: string
 }
 
 // Mention is the resolved target of an entity-ID code span found inside
@@ -171,6 +206,13 @@ export interface ViewResponse {
   entry: Entity
   sections: ViewSection[]
   mentions?: Record<string, Mention>
+  /**
+   * The page-header create menu: the sections that opted into
+   * `create.in: [header]`, deduped by relation and in section order.
+   * Assembled server-side so the SPA does not re-derive which section maps to
+   * which relation. Absent when no section opted in.
+   */
+  create?: ViewSectionCreate[]
   /**
    * The entity EXISTS but has no face in the requested world — the ordinary
    * state of an unpublished draft under a filtering world, not an error.

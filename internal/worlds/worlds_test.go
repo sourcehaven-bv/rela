@@ -174,6 +174,7 @@ worlds:
   published:
     select: published
     otherwise: exclude
+    primary_for: published
   lenient:
     select: published
     otherwise: default
@@ -181,6 +182,11 @@ worlds:
 		// `note` declares `published` so the world is declarable, while
 		// `memo` declares only draft/archived — so memo's chain is EMPTY
 		// and `otherwise:` is the only thing that can resolve it.
+		//
+		// Both worlds head `published` for `note`, which is a tie regardless
+		// of their differing `otherwise:` (see validateFacePrimacy), so one
+		// claims it. Incidental to what this subtest asserts — it is about
+		// `memo`, whose chain neither world can satisfy.
 		compiled, err := worlds.Compile(m)
 		require.NoError(t, err)
 

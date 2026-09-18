@@ -181,8 +181,29 @@ type appEntityWriter interface {
 // The routes themselves are on commentsHandler, so the public surface grew by
 // exactly the one setter. Ratchet target, as above.
 //
-//plimsoll:max-methods=88
-//plimsoll:max-exported-methods=21
+// TKT-EVR2TU adds [App.SetQueryScopeResolver] on the same terms (21 -> 22):
+// the scope compiler backing `query_scopes:` lives above this package, so it
+// arrives through the same setter idiom. The rest stayed OFF App exactly as
+// the next-action feature did — `viewQueryScope`, `queryScopeParam` and
+// `scopedSortedEntitiesScoped` are package functions taking what they need,
+// and the compiling lives in internal/scopes with appbuild bridging. The
+// feature cost one method, not a subsystem. Ratchet target, as above.
+//
+// 89 -> 90 for SetViewConditions (TKT-LPLZ1V), and 22 -> 23 exported, on the
+// same terms: it is a wiring setter in the established shape, and the
+// alternative — appbuild assigning the field directly — trades a named seam
+// for a hidden one.
+//
+// The subsystem cost App exactly that one method, and not by luck. The
+// condition lookup was written as an App method first and plimsoll failed the
+// build; it became a package function taking its seams explicitly
+// (`viewCondition`), which reads better for the reason TKT-WRLDAPI's note
+// gives — what a lookup depends on is named in the signature rather than
+// reached through this struct. Recorded because the load line interrupting
+// that habit is the whole point of it. Ratchet target, as above.
+//
+//plimsoll:max-methods=90
+//plimsoll:max-exported-methods=23
 type App struct {
 	// Primitives — immutable after NewApp.
 	fs    storage.FS
@@ -253,6 +274,22 @@ type App struct {
 	// deployment wired it — sources declaring a condition then fail engine
 	// construction rather than silently matching everything.
 	nextActionMatchers NextActionMatcherFunc
+
+	// viewConditions resolves a list's or kanban's compiled `condition:`.
+	// Injected for the same reason nextActionMatchers is: the compiler lives
+	// above this package, and arch-lint forbids dataentry importing
+	// conditionlint or predicate.
+	//
+	// Nil when no deployment wired it, which means every view behaves as it
+	// did before conditions existed. That is the safe direction here — a
+	// condition only ever NARROWS a view, so an unwired lookup shows a
+	// superset of the configured view and never anything the ACL would
+	// withhold. It is not safe for the reverse, which is why a condition
+	// that fails to COMPILE is a startup error rather than a silent widening.
+	viewConditions ViewConditionFunc
+
+	// queryScopes compiles `query_scopes:`; see SetQueryScopeResolver.
+	queryScopes QueryScopeResolverFunc
 
 	// visibleReader is the ACL-bounded entity-read seam (TKT-N26KLB): the
 	// entity-read analog of visibleSearcher. Read handlers gate single-GET
@@ -1088,12 +1125,7 @@ func NewApp(
 	// ganttHandler: the ACL-scoped lister and the field redactor are the two
 	// seams its security pipeline hangs on — both closures over App so test
 	// builders that rebind collaborators stay live.
-	app.gantt = &ganttHandler{
-		schema:   app.State,
-		store:    st,
-		scoped:   app.scopedSortedEntities,
-		redactor: func() visibility.FieldRedactor { return appRedactor(app) },
-	}
+	app.gantt = newGanttHandler(app, st)
 
 	// commandHandler owns the user-configured command surface. Its
 	// collaborators are narrow closures over App: the schema snapshot (command/

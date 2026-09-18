@@ -93,9 +93,15 @@ Compared with the **PostgreSQL** build:
   node-local state is only a problem when several processes serve one project,
   and this backend is single-process by construction.
 
-Content versioning and version purge are NOT in that list any more — both
-backends implement the same contract, and one shared conformance suite holds
-them to it.
+Content versioning, version purge and comments are NOT in that list any more —
+both backends implement the same contract, and one shared conformance suite
+holds them to it.
+
+Comments are the one thing that went into the database *despite* the
+single-process argument above, and the difference is worth naming. Settings and
+a render cache are about the machine; a comment is about the content. An
+operator who copies `rela.db` expecting "the project" would otherwise find every
+entity present and every remark on them left behind.
 
 ## What you get
 

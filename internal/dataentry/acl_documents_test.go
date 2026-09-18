@@ -30,6 +30,12 @@ func documentsAs(ctx context.Context, t *testing.T, app *App, d *acl.Declarative
 // it must respect the per-entity read gate. A denied principal gets a 404 BEFORE
 // the renderer runs — never the rendered document, and not even a type-mismatch
 // 400 oracle.
+//
+// The SPA depends on this STATUS, not just on the refusal (BUG-E8XE7I): a
+// document already on screen is cleared when a re-render is refused, and
+// `shouldDropHeldContent` in frontend/src/api/errors.ts decides that from
+// 401/403/404. Changing this deny to some other status would leave a revoked
+// principal reading stale content in the browser, with nothing failing here.
 func TestACLDocuments_GatesHiddenEntity(t *testing.T) {
 	app := newTestAppV1(t)
 	seedEntity(app, &entity.Entity{

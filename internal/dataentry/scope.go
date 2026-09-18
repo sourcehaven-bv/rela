@@ -30,6 +30,17 @@ type ScopeDescriptor struct {
 	Filters map[string]string `json:"filters,omitempty"` // filter[...] bracket keys → value
 	Sort    string            `json:"sort,omitempty"`    // "-created,title" form
 	Q       string            `json:"q,omitempty"`       // free-text query
+
+	// QueryScope is the originating view's `query_scope:`, carried so
+	// prev/next walks the set the list actually showed.
+	//
+	// Without it the position resolves against the entity type's DEFAULT
+	// scope regardless of what was on screen: a list showing `archief`
+	// would navigate the non-archived set, so the very entity the reader
+	// has open is absent from its own scope and the endpoint answers 404
+	// not_in_scope. Empty means the default, which is correct for a list
+	// that named no scope.
+	QueryScope string `json:"query_scope,omitempty"`
 }
 
 // knownScopeSources gates Source. Extending scope to a new origin is a
@@ -146,6 +157,9 @@ func (d ScopeDescriptor) toQuery() url.Values {
 	}
 	if d.Q != "" {
 		q.Set("q", d.Q)
+	}
+	if d.QueryScope != "" {
+		q.Set(QueryScopeParam, d.QueryScope)
 	}
 	return q
 }

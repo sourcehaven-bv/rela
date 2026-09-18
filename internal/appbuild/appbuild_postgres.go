@@ -5,8 +5,11 @@ package appbuild
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 
+	"github.com/Sourcehaven-BV/rela/internal/comments"
+	"github.com/Sourcehaven-BV/rela/internal/comments/pgcomments"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/pgstore"
@@ -26,7 +29,7 @@ func New(cfg Config, opts ...Option) (*Services, error) {
 	if err != nil {
 		return nil, err
 	}
-	st, searcher, closer, err := openBackend(context.Background(), base)
+	st, searcher, commentStore, closer, err := openBackend(context.Background(), base)
 	if err != nil {
 		return nil, err
 	}
@@ -38,20 +41,51 @@ func New(cfg Config, opts ...Option) (*Services, error) {
 	if !ok {
 		return nil, errors.New("appbuild: postgres store does not implement search.VisibleSearcher")
 	}
-	return assemble(base, st, searcher, visible, closer, backendOverrides{})
+	return assemble(base, st, searcher, visible, closer, backendOverrides{
+		commentStore: commentStore,
+	})
 }
 
-// openBackend delegates pool construction, migration, and store+search wiring
-// to pgstore.Open — the single owner of that logic (shared with the MCP
-// wiring's postgres recipe).
-func openBackend(ctx context.Context, base *SharedBase) (store.Store, search.Searcher, io.Closer, error) {
-	if base.cfg.DatabaseURL == "" {
-		return nil, nil, nil, errors.New(
+// openBackend builds the pool this build's services share, then wires each
+// consumer over it.
+//
+// The POOL is owned here, not by pgstore (TKT-OGTVJW). Three things read this
+// database — the store, its in-database search backend, and the comment store —
+// and only the composition root knows when the last of them is done, which is
+// why the returned closer closes the pool. pgstore.Open used to build the pool
+// itself and hand back only the store and searcher, which made it a composition
+// root inside the store package and left nothing for a third consumer to share.
+//
+// Migration runs here for the same reason: it is a property of the database
+// this process is about to use, not of any one consumer of it.
+func openBackend(
+	ctx context.Context, base *SharedBase,
+) (store.Store, search.Searcher, comments.Store, io.Closer, error) {
+	dsn := base.cfg.DatabaseURL
+	if dsn == "" {
+		return nil, nil, nil, nil, errors.New(
 			"appbuild: postgres build requires a database URL (set RELA_DATABASE_URL)")
 	}
-	st, searcher, closer, err := pgstore.Open(ctx, base.cfg.DatabaseURL)
+	pool, poolCloser, err := pgstore.NewPool(ctx, dsn)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
-	return st, searcher, closer, nil
+	// Every failure below must close the pool: nothing else holds it yet, so
+	// returning early without this leaks the connections.
+	if err := pgstore.Migrate(ctx, pool); err != nil {
+		_ = poolCloser.Close()
+		return nil, nil, nil, nil, fmt.Errorf("migrate database: %w", err)
+	}
+
+	st, searcher, err := pgstore.Open(ctx, pool, dsn)
+	if err != nil {
+		_ = poolCloser.Close()
+		return nil, nil, nil, nil, err
+	}
+	commentStore, err := pgcomments.New(pool)
+	if err != nil {
+		_ = poolCloser.Close()
+		return nil, nil, nil, nil, err
+	}
+	return st, searcher, commentStore, poolCloser, nil
 }

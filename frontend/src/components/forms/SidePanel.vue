@@ -4,6 +4,7 @@ import { RouterLink, useRouter, type RouteLocationRaw } from 'vue-router'
 import { api } from '@/api/client'
 import { isCancelledFetch } from '@/composables/usePageData'
 import type { SidePanelSection, SidePanelEntity, SidePanelAddTarget } from '@/types'
+import { buildCreateLinkQuery } from '@/utils/createLink'
 import Badge from '@/components/common/Badge.vue'
 
 const props = defineProps<{
@@ -70,12 +71,15 @@ function entityTarget(entity: SidePanelEntity): RouteLocationRaw {
 
 function createNewForSection(section: SidePanelSection, target: SidePanelAddTarget) {
   if (!section.addInfo) return
-  // Navigate to create form with relation context
-  const query: Record<string, string> = {
-    _relation: section.addInfo.relation,
-    _linkAs: section.addInfo.linkAs,
-    _peerId: section.addInfo.peerId,
-  }
+  // Built by the shared helper, not by hand. This used to push `_relation` /
+  // `_linkAs` / `_peerId`, which DynamicForm does not read — so the form opened
+  // with no relation context and the user had to link manually anyway
+  // (TKT-R4BMJM).
+  const query = buildCreateLinkQuery({
+    relation: section.addInfo.relation,
+    peer: section.addInfo.peerId,
+    linkAs: section.addInfo.linkAs,
+  })
   router.push({ path: `/form/${target.formId}`, query })
 }
 

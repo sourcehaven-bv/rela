@@ -46,6 +46,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/scopes"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/state"
@@ -1436,6 +1437,21 @@ func prepare(cfg Config, opts []Option) (*SharedBase, error) {
 		return nil, fmt.Errorf("compile worlds: %w", err)
 	}
 
+	// Compile the declared query scopes for the same reason, and at the same
+	// point: a scope that does not compile must fail the BOOT, not the first
+	// page that happens to use it. Compiling here rather than only in the
+	// data-entry wiring means every entry point pays the check, so `rela
+	// validate` cannot report clean on a schema rela-server would refuse.
+	//
+	// The result is discarded — dataentry compiles its own, from a metamodel
+	// that reloads at runtime (see appbuild.QueryScopes). This call is the
+	// gate, not the supply.
+	compiledScopes, err := scopes.Compile(meta)
+	if err != nil {
+		return nil, fmt.Errorf("compile query scopes: %w", err)
+	}
+	warnQueryScopes(&compiledScopes, meta, aclPolicy)
+
 	return &SharedBase{
 		cfg: cfg, opts: o, acl: resolvedACL, aclPolicy: aclPolicy,
 		meta: meta, worlds: compiledWorlds,
@@ -1659,6 +1675,18 @@ type backendOverrides struct {
 	// reason and from the same handle: state written beside the database
 	// rather than inside it would be left behind when the file is shipped.
 	stateKV state.KV
+
+	// commentStore replaces the filesystem comment store (TKT-OGTVJW).
+	//
+	// Supplied by the database recipes from the handle they already own, for
+	// two different reasons. Postgres NEEDS it: filecomments is node-local, so
+	// under the multi-process deployment docs/postgres-backend.md documents, a
+	// comment posted through one node is invisible to every other. SQLite wants
+	// it so commentary travels with rela.db, the same call versioning made.
+	//
+	// Nil leaves the filesystem backend in place, which is correct for the fs,
+	// memory and desktop tiers.
+	commentStore comments.Store
 }
 
 // assemble builds the services bundle from an opened store.
@@ -1752,7 +1780,7 @@ func assemble(
 	// store.EntityObserver for the reason that hook documents: stores fire the
 	// observer with the error discarded, which is fine for a rebuildable search
 	// index but not for records that exist ONLY in the comment store.
-	commentSvc, err := buildComments(cfg.FS, cfg.Paths, base.meta)
+	commentSvc, err := buildComments(cfg.FS, cfg.Paths, base.meta, overrides.commentStore)
 	if err != nil {
 		return nil, err
 	}

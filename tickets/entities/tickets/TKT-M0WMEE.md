@@ -5,7 +5,7 @@ title: Query-budget test for the nested view section
 kind: test
 priority: medium
 effort: s
-status: backlog
+status: done
 ---
 
 ## Description

@@ -183,3 +183,44 @@ export function getScriptError(err: unknown): ScriptError | null {
   if (isScriptError(err)) return err
   return null
 }
+
+/**
+ * True when a view holding already-fetched content must drop it, because the
+ * server has just answered that the content is no longer the principal's to
+ * see — as opposed to the request merely failing to complete.
+ *
+ * The distinction matters wherever a view keeps already-fetched content on
+ * screen across a refetch (DocumentView, DocumentsPanel). Holding content
+ * through a timeout or a 500 is right — the user keeps their place and the
+ * toast explains the hiccup. Holding it through a withdrawn permission is
+ * not: the server has just said this principal may not read it, so the copy
+ * still painted is content they are no longer entitled to (CONTROL-8-03).
+ *
+ * 404 is in the list because rela's read gate answers a denied entity with a
+ * uniform not-found — whether an entity exists is itself a secret, so an
+ * access-revoked render is deliberately indistinguishable from a deleted one
+ * (see resolveAnchoredDocument in internal/dataentry/export_document.go, whose
+ * comment mandates exactly this). 401/403 cover an expired session and a
+ * refused config-declared capability.
+ *
+ * That 404 therefore sweeps in two non-denials, knowingly: an entity someone
+ * genuinely deleted, and a document key dropped from data-entry.yaml (which
+ * carries a distinct `document_not_found` code and is NOT confidential by
+ * rela's config-is-not-a-secret rule). Both are content that no longer exists,
+ * so clearing the view is the right answer for them anyway — the cost of the
+ * ambiguity is an empty state instead of stale content, not a wrong decision.
+ * What is NOT free is the 401 case: the SPA has no global re-authentication
+ * handler, so an expired session yields a blank view and a toast with no route
+ * back. Confidentiality still wins that trade, but see the bug entity for the
+ * follow-up.
+ *
+ * Do NOT use this to drive a login redirect. It answers "should a view drop
+ * content it is holding", not "was the user denied" — a deleted entity is a
+ * true result here and must not send anyone to a login screen.
+ *
+ * Nil: accepted — a non-ApiError rejection is not a denial.
+ */
+export function shouldDropHeldContent(err: unknown): boolean {
+  if (!(err instanceof ApiError)) return false
+  return err.status === 401 || err.status === 403 || err.status === 404
+}

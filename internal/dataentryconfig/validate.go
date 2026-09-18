@@ -283,6 +283,111 @@ func validateSectionFieldWidget(
 	return errs
 }
 
+// validateSectionCreate checks a section's opt-in `create:` block (TKT-R4BMJM).
+//
+// Everything here is an allowlist: a value not named is refused rather than
+// tolerated. An operator who opts a section in has asserted something, so a
+// block that cannot work is a load error rather than a silently missing button —
+// a missing button gives them nothing to debug.
+//
+// Template EXISTENCE is deliberately not checked. This package has no
+// filesystem (ValidateConfig takes only config + metamodel), and plumbing a
+// templater through every caller to reach it would be a far wider change than
+// the check is worth. A stale variant name degrades to the form's default
+// template, which is the same behavior a form-level template typo already has.
+func validateSectionCreate(
+	viewID string, i int, s ViewSection, view ViewConfig, cfg *Config, meta *metamodel.Metamodel,
+) []string {
+	if s.Create == nil {
+		return nil
+	}
+	var errs []string
+
+	if f := s.Create.Flow; f != "" && f != SectionCreateFlowModal && f != SectionCreateFlowPage {
+		errs = append(errs, fmt.Sprintf(
+			"view %q: section[%d] create.flow %q is invalid (valid: %s, %s)",
+			viewID, i, f, SectionCreateFlowModal, SectionCreateFlowPage))
+	}
+	for _, p := range s.Create.In {
+		if p != SectionCreateInSection && p != SectionCreateInHeader {
+			errs = append(errs, fmt.Sprintf(
+				"view %q: section[%d] create.in contains %q (valid: %s, %s)",
+				viewID, i, p, SectionCreateInSection, SectionCreateInHeader))
+		}
+	}
+
+	// The relation is what a created entity gets linked by, so a section with
+	// no single originating relation cannot offer the affordance at all.
+	// Refused here rather than dropped at render time, because the operator
+	// explicitly asked for a button they would otherwise never see.
+	relation, linkAs, ok := SectionOriginRelation(view, s)
+	if !ok {
+		errs = append(errs, fmt.Sprintf(
+			"view %q: section[%d] declares create but no single relation fills it — "+
+				"create needs a section collected by one non-recursive traverse rule from entry",
+			viewID, i))
+		return errs
+	}
+
+	relDef, found := meta.GetRelationDef(relation)
+	if !found {
+		// The traverse validator already reported the unknown relation; adding
+		// a second error for the same root cause would just be noise.
+		return errs
+	}
+	reachable := relDef.To
+	if linkAs == "from" {
+		reachable = relDef.From
+	}
+	for typeName := range s.Create.Types {
+		if !slices.Contains(reachable, typeName) {
+			sort.Strings(reachable)
+			errs = append(errs, fmt.Sprintf(
+				"view %q: section[%d] create.types names %q, which relation %q cannot reach (valid: %s)",
+				viewID, i, typeName, relation, strings.Join(reachable, ", ")))
+			continue
+		}
+		// A type with no create form is dropped by the runtime derivation, so
+		// an override naming one would load cleanly and then produce nothing.
+		if !hasCreateForm(cfg, typeName) {
+			errs = append(errs, fmt.Sprintf(
+				"view %q: section[%d] create.types names %q, which has no form to create it",
+				viewID, i, typeName))
+		}
+	}
+
+	// A section whose relation reaches nothing creatable can never render a
+	// button, so the whole block is inert — worth saying once, at the block
+	// level, rather than leaving the operator to infer it.
+	if !slices.ContainsFunc(reachable, func(t string) bool { return hasCreateForm(cfg, t) }) {
+		sort.Strings(reachable)
+		errs = append(errs, fmt.Sprintf(
+			"view %q: section[%d] declares create but no type reachable by relation %q has a form to create it (reachable: %s)",
+			viewID, i, relation, strings.Join(reachable, ", ")))
+	}
+
+	return errs
+}
+
+// hasCreateForm reports whether any form exists for the given entity type.
+//
+// Deliberately LOOSER than the runtime resolver, and only in the safe
+// direction. `viewsHandler.createFormForType` prefers a non-edit form and falls
+// back to an edit-mode one — which works for creation when no entity id is
+// supplied (RR-KGCF61 settled that on TKT-OMUD56) — so "a form exists for this
+// type" and "a form resolves for this type" agree on every input. If the
+// resolver ever narrowed, this would accept a section the resolver renders
+// empty; the runtime derivation is authoritative and drops the type, so the
+// failure would be a missing button rather than a broken one.
+func hasCreateForm(cfg *Config, entityType string) bool {
+	for _, f := range cfg.Forms {
+		if f.EntityType == entityType {
+			return true
+		}
+	}
+	return false
+}
+
 // validateSectionRender checks the section-level `render:` and each field's,
 // independently of whether the section's source resolves (RR-4ICH8M).
 func validateSectionRender(viewID string, i int, s ViewSection) []string {
@@ -357,6 +462,7 @@ func ValidateConfig(data []byte, cfg *Config, meta *metamodel.Metamodel) error {
 	errs = append(errs, validateCalDAV(cfg, meta)...)
 	errs = append(errs, validateStyles(cfg, meta)...)
 	errs = append(errs, validateNextActions(cfg, meta)...)
+	errs = append(errs, validateQueryScopes(cfg, meta)...)
 	errs = append(errs, validateCrossReferences(cfg)...)
 
 	if len(errs) > 0 {
@@ -1513,6 +1619,11 @@ func validateViews(cfg *Config, meta *metamodel.Metamodel) []string {
 
 			errs = append(errs, validateNestedSection(viewID, i, s, view, collections, meta)...)
 
+			// Outside the source-resolution guard below for the same reason
+			// render/widget are: an opted-in section with a bad `create:` is
+			// wrong regardless of whether its source collection resolves.
+			errs = append(errs, validateSectionCreate(viewID, i, s, view, cfg, meta)...)
+
 			// Spans are checked unconditionally — deliberately NOT inside the
 			// `sourceType != ""` guard below, which only runs when the source
 			// collection resolves. A bad span is wrong regardless of whether
@@ -1967,6 +2078,18 @@ func validateKanbans(cfg *Config, meta *metamodel.Metamodel) []string {
 						kanbanID, i, f.Property, kanban.EntityType))
 				}
 			}
+		}
+
+		// `condition:` is accepted on the struct (shared with lists) but the
+		// board does not evaluate it yet — it still filters client-side. A
+		// key that validates and then does nothing is precisely the silent
+		// no-op BUG-F1LTV0 and BUG-MYN56J are both about, so refuse it here
+		// until the kanban read path lands. Remove this when it does.
+		if kanban.Condition != "" {
+			errs = append(errs, fmt.Sprintf(
+				"kanban %q: condition is not supported on a kanban yet "+
+					"(the board filters client-side); use it on a list, or filters: here",
+				kanbanID))
 		}
 
 		// Validate filter properties
@@ -2603,4 +2726,59 @@ func validateDocumentElevation(docID string, doc DocumentConfig, hasScript bool)
 	}
 
 	return errs
+}
+
+// validateQueryScopes checks that every `query_scope:` on a list or kanban
+// names a scope its entity type declares.
+//
+// An unknown name is a LOAD ERROR rather than a fallback to unfiltered. The
+// two failure directions are not symmetric: a refused config is fixed in
+// seconds, while a silent fallback shows every archived row on a board the
+// operator believed was scoped, and nothing on screen says so.
+//
+// The reserved `all` always resolves — it is implicit and means "no
+// predicate", so a view may withdraw its type's default even when the type
+// declares no scopes at all.
+func validateQueryScopes(cfg *Config, meta *metamodel.Metamodel) []string {
+	if cfg == nil || meta == nil {
+		return nil
+	}
+	var errs []string
+	for _, id := range sortedMapKeys(cfg.Lists) {
+		list := cfg.Lists[id]
+		errs = append(errs, checkQueryScopeRef(meta, "list", id, list.EntityType, list.QueryScope)...)
+	}
+	for _, id := range sortedMapKeys(cfg.Kanbans) {
+		kanban := cfg.Kanbans[id]
+		errs = append(errs, checkQueryScopeRef(meta, "kanban", id, kanban.EntityType, kanban.QueryScope)...)
+	}
+	return errs
+}
+
+// checkQueryScopeRef resolves one `query_scope:` reference.
+func checkQueryScopeRef(
+	meta *metamodel.Metamodel, kind, id, entityType, scope string,
+) []string {
+	if scope == "" || scope == metamodel.AllQueryScopeName {
+		return nil
+	}
+	def, ok := meta.GetEntityDef(entityType)
+	if !ok {
+		// The unknown entity type is already reported by validateLists /
+		// validateKanbans; adding a second error about a scope on a type that
+		// does not exist would be noise.
+		return nil
+	}
+	if _, ok := def.QueryScopes[scope]; ok {
+		return nil
+	}
+	declared := sortedMapKeys(def.QueryScopes)
+	if len(declared) == 0 {
+		return []string{fmt.Sprintf(
+			"%s %q: query_scope %q is not declared — entity type %q declares no query_scopes:",
+			kind, id, scope, entityType)}
+	}
+	return []string{fmt.Sprintf(
+		"%s %q: query_scope %q is not declared on entity type %q (declared: %s, plus the implicit %q)",
+		kind, id, scope, entityType, strings.Join(declared, ", "), metamodel.AllQueryScopeName)}
 }

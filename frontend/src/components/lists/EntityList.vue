@@ -346,6 +346,11 @@ function listExportUrlFor(transform: string): string {
     if (!key.startsWith('filter[') && key !== 'q') continue
     if (typeof value === 'string') params.set(key, value)
   }
+  // Export is pinned to the view it was invoked from, so it carries the same
+  // scope the rows on screen were selected by. Without this an export of a
+  // scoped list silently widens to the type's default — a file that looks
+  // complete and is not.
+  if (cfg.query_scope) params.set('query_scope', cfg.query_scope)
   return listExportUrl(cfg.entity, props.listId, transform, params)
 }
 
@@ -378,6 +383,12 @@ const queryParams = computed((): ListParams => {
   const params: ListParams = {
     page: page.value,
     per_page: listConfig.value?.page_size || 25,
+    // Names the configured list so the server can apply its `condition:`.
+    // Sent unconditionally rather than only when a condition exists: the SPA
+    // would otherwise have to know which lists carry one, duplicating a
+    // server-side fact that changes on config reload. An id for a list with
+    // no condition simply resolves to no constraint.
+    list_id: props.listId,
   }
 
   // Add pre-configured filters from list config
@@ -449,6 +460,14 @@ const queryParams = computed((): ListParams => {
 
   if (worldParam.value) {
     params.world = worldParam.value
+  }
+
+  // The list's configured scope. Sent because the endpoint is keyed by entity
+  // TYPE, so the server cannot tell which list is on screen — without this the
+  // view falls back to the type's `default` and a list declaring
+  // `query_scope: archief` renders unscoped.
+  if (listConfig.value?.query_scope) {
+    params.query_scope = listConfig.value.query_scope
   }
 
   return params

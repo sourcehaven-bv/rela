@@ -6,9 +6,13 @@ import { useScriptErrorStore } from '@/stores/scriptError'
 import { renderDocument } from '@/api/documents'
 import { useEvents } from '@/composables/useEvents'
 import { createDocumentClickHandler } from '@/composables/useDocumentClicks'
-import { renderMermaidDiagrams, renderPlantUMLDiagrams } from '@/utils/markdown'
+import {
+  renderMermaidDiagrams,
+  renderPlantUMLDiagrams,
+  wrapTablesForScroll,
+} from '@/utils/markdown'
 import type { DocumentConfig } from '@/types'
-import { getErrorMessage, getScriptError } from '@/api/errors'
+import { getErrorMessage, getScriptError, shouldDropHeldContent } from '@/api/errors'
 import PendingButton from '@/components/common/PendingButton.vue'
 import DOMPurify from 'dompurify'
 import { useDelayedPending } from '@/composables/useDelayedPending'
@@ -59,7 +63,9 @@ const isCached = ref(false)
 const docBody = useTemplateRef<HTMLElement>('docBody')
 
 // Sanitized content for safe rendering
-const sanitizedContent = computed(() => DOMPurify.sanitize(docContent.value))
+const sanitizedContent = computed(() =>
+  wrapTablesForScroll(DOMPurify.sanitize(docContent.value))
+)
 
 // Re-run mermaid rendering whenever the doc content is (re-)painted. The
 // rela-server's document renderer emits <pre class="mermaid">…</pre>
@@ -191,6 +197,18 @@ async function loadDocument(refresh = false, cold = false) {
     // or the script-error panel, so replacing a readable document with the
     // empty state on a transient failure loses the user's place for nothing.
     // A cold load has nothing to keep and correctly stays empty.
+    //
+    // A denial is the exception: content the principal may no longer read
+    // must not stay painted (#1603, CONTROL-8-03). See shouldDropHeldContent's
+    // godoc for which statuses count and why 404 is among them.
+    //
+    // isCached is deliberately NOT cleared alongside. The badge renders
+    // inside the `v-else-if="docContent"` branch that this blanking already
+    // unmounts, and every successful render reassigns it — so a stale `true`
+    // has no path to the screen, and a test for one cannot fail.
+    if (shouldDropHeldContent(err)) {
+      docContent.value = ''
+    }
   } finally {
     // Only the newest render owns the flag; an older one clearing it would
     // report "done" while the render the user is waiting on is still running,
@@ -262,6 +280,13 @@ function getDocTitle(name: string, config: DocumentConfig): string {
       />
     </div>
 
+    <!-- Unlike DocumentView's, this empty state is not terminal: the tab
+         selector and Refresh above stay rendered, because they come from
+         config rather than content. After a denial (#1603) that leaves the
+         user able to retry into another refusal. Deliberate — the panel is
+         one section of an entity page, so hiding its chrome would misreport
+         the document as unconfigured, and config names are not secret
+         (docs/acl-security.md). -->
     <div v-else class="empty-state">
       <p>No document content available</p>
     </div>

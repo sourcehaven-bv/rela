@@ -302,6 +302,12 @@ func matches(ctx context.Context, r Reader, e *entity.Entity, q store.GraphQuery
 	if !matchesProps(e, q.Props) {
 		return false, nil
 	}
+	// Caller-supplied narrowing, ANDed with everything else including Any.
+	// Checked here with the other in-memory predicates, and BEFORE the Any
+	// check below, which returns rather than falling through.
+	if !matchesNarrowing(e, q.Narrowing) {
+		return false, nil
+	}
 	if q.HasInbound != nil {
 		ok, err := matchesPredicate(ctx, r, e, *q.HasInbound, store.DirectionIncoming)
 		if err != nil || !ok {
@@ -321,6 +327,24 @@ func matches(ctx context.Context, r Reader, e *entity.Entity, q store.GraphQuery
 		return matchesAny(ctx, r, e, q.Any)
 	}
 	return true, nil
+}
+
+// matchesNarrowing reports whether at least one caller-supplied branch holds
+// (a disjunction), each branch being a conjunction of property predicates.
+//
+// No branches means no constraint. An EMPTY branch holds, making the whole
+// disjunction vacuous — see [store.NarrowBranch]; a caller must drop the
+// Narrowing rather than emit one.
+func matchesNarrowing(e *entity.Entity, branches []store.NarrowBranch) bool {
+	if len(branches) == 0 {
+		return true
+	}
+	for _, br := range branches {
+		if matchesProps(e, br.Props) {
+			return true
+		}
+	}
+	return false
 }
 
 // matchesAny reports whether at least one branch holds for e's stored face.
@@ -355,15 +379,61 @@ func matchesProps(e *entity.Entity, props []store.PropPredicate) bool {
 			}
 			continue
 		}
+		raw := e.Properties[p.Property]
+		// PropNotEqualOrEmpty is PropNotEqual widened to accept an unset
+		// property — the Lua `~=` reading. propmatch deliberately answers
+		// the filter-DSL question instead (empty is not in the population),
+		// so the empty case is decided here rather than by adding a second
+		// meaning to propmatch.Decide, which internal/filter also depends on.
+		if p.Op == store.PropNotEqualOrEmpty {
+			if propmatch.IsEmpty(raw) {
+				continue
+			}
+			if propmatch.Decide(raw, propmatch.OpNotEqual, p.Value) != propmatch.Match {
+				return false
+			}
+			continue
+		}
+		if p.Op == store.PropGreaterEqual || p.Op == store.PropLessEqual {
+			if !matchesOrdered(raw, p.Op, p.Value) {
+				return false
+			}
+			continue
+		}
 		op := propmatch.OpEqual
 		if p.Op == store.PropNotEqual {
 			op = propmatch.OpNotEqual
 		}
-		if propmatch.Decide(e.Properties[p.Property], op, p.Value) != propmatch.Match {
+		if propmatch.Decide(raw, op, p.Value) != propmatch.Match {
 			return false
 		}
 	}
 	return true
+}
+
+// matchesOrdered decides [store.PropGreaterEqual] / [store.PropLessEqual]
+// by comparing string forms byte-wise, matching [Order]'s semantics so a
+// range predicate and a sort agree about what "larger" means.
+//
+// Empty and LIST values never match. Emptiness follows the PropNotEqual
+// reading (an unset value is in no ordered population) and SQL's NULL
+// comparison. Lists are refused because the two backends render them
+// differently — Go's fmt.Sprint gives `[a b]` where postgres `->>` gives
+// `["a", "b"]` — so any byte-wise answer would be backend-dependent. See
+// the [store.PropGreaterEqual] doc.
+func matchesOrdered(raw any, op store.PropOp, value string) bool {
+	if propmatch.IsEmpty(raw) {
+		return false
+	}
+	switch raw.(type) {
+	case []string, []any:
+		return false
+	}
+	s := fmt.Sprint(raw)
+	if op == store.PropGreaterEqual {
+		return s >= value
+	}
+	return s <= value
 }
 
 func matchesPredicate(

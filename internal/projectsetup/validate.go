@@ -197,6 +197,14 @@ func validateDataEntry(path string, mm *metamodel.Metamodel, fs storage.FS) erro
 	if _, issues := conditionlint.CompileNextActions(&cfg, mm); len(issues) > 0 {
 		return fmt.Errorf("next-action condition errors:\n  %s", strings.Join(issues, "\n  "))
 	}
+
+	// List and kanban `condition:` expressions, for the same reason and with
+	// the same authority: they are evaluated on the read path by this Env, so
+	// a condition that does not compile would leave the view silently wrong
+	// rather than merely unfiltered.
+	if _, issues := conditionlint.CompileViewConditions(&cfg, mm); len(issues) > 0 {
+		return fmt.Errorf("view condition errors:\n  %s", strings.Join(issues, "\n  "))
+	}
 	return nil
 }
 

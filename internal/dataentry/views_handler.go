@@ -160,7 +160,7 @@ func (h *viewsHandler) handleV1SidePanel(w http.ResponseWriter, r *http.Request)
 		Traverse: form.SidePanel.Traverse,
 		Sections: form.SidePanel.Sections,
 	}
-	h.resolveSectionButtonsWithTraverse(viewConfig, sections, entry)
+	h.resolveSectionButtonsWithTraverse(r.Context(), viewConfig, sections, entry)
 
 	// Convert to API response format
 	result := make([]v1.SidePanelSection, 0, len(sections))
@@ -202,7 +202,14 @@ func (h *viewsHandler) handleV1SidePanel(w http.ResponseWriter, r *http.Request)
 				PeerID:   sec.AddInfo.PeerID,
 			}
 			for _, t := range sec.AddInfo.Targets {
-				apiSec.AddInfo.Targets = append(apiSec.AddInfo.Targets, v1.ViewAddTarget(t))
+				// Field-by-field, not a struct conversion: the shared
+				// SectionCreateTarget carries a Template the side panel has no
+				// use for, and the wire type deliberately does not gain one.
+				apiSec.AddInfo.Targets = append(apiSec.AddInfo.Targets, v1.ViewAddTarget{
+					EntityType: t.EntityType,
+					FormID:     t.FormID,
+					Label:      t.Label,
+				})
 			}
 		}
 		if sec.LinkInfo != nil {
@@ -542,6 +549,13 @@ func (h *viewsHandler) handleV1Views(w http.ResponseWriter, r *http.Request) {
 	// Build sections
 	sections := h.buildSections(r.Context(), viewCfg.Sections, result)
 
+	// The opt-in create affordance (TKT-R4BMJM). Runs on every section, but
+	// only ever populates one whose config carries an explicit `create:` block,
+	// so a view that did not opt in stays exactly as read-only as TKT-651W made
+	// it. Note this is NOT resolveSectionButtonsWithTraverse, which also builds
+	// an ungated link-existing affordance the view path must not carry.
+	h.resolveSectionCreate(r.Context(), viewCfg, sections, result.Entry)
+
 	// Build response
 	entityDef := s.Meta.Entities[result.Entry.Type]
 	plural := entityDef.GetPlural(result.Entry.Type)
@@ -568,6 +582,7 @@ func (h *viewsHandler) handleV1Views(w http.ResponseWriter, r *http.Request) {
 	resp := v1.ViewResponse{
 		Entry:    h.serializer.forWire(r.Context(), result.Entry, entryRels, h.schema().Meta, plural),
 		Sections: make([]v1.ViewSection, 0, len(sections)),
+		Create:   sectionCreateMenuToV1(headerCreateMenu(sections)),
 	}
 
 	for _, sec := range sections {
@@ -581,6 +596,10 @@ func (h *viewsHandler) handleV1Views(w http.ResponseWriter, r *http.Request) {
 			Content:      sec.Content,
 			HasContent:   sec.HasContent,
 		}
+
+		// The opt-in create affordance. Nil for every section that did not
+		// declare `create:`, which keeps the response byte-identical there.
+		v1Sec.Create = sectionCreateToV1(sec.CreateInfo)
 
 		// Convert fields
 		for _, f := range sec.Fields {

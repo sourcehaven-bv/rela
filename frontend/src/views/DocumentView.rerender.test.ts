@@ -3,6 +3,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 
 import DocumentView from './DocumentView.vue'
+import { ApiError } from '@/api/errors'
 import { useSchemaStore } from '@/stores/schema'
 import { renderMermaidDiagrams } from '@/utils/markdown'
 import type { DocumentRenderResponse } from '@/types'
@@ -30,6 +31,10 @@ vi.mock('vue-router', () => ({
 vi.mock('@/utils/markdown', () => ({
   renderMermaidDiagrams: vi.fn().mockResolvedValue(undefined),
   renderPlantUMLDiagrams: vi.fn(),
+  // Identity stand-in: these tests assert re-render/mount behaviour by
+  // comparing the HTML that reaches the DOM, so the table-scroll wrapper would
+  // only add noise. Its own behaviour is covered in utils/markdown.test.ts.
+  wrapTablesForScroll: (html: string) => html,
 }))
 
 const renderDocumentMock = vi.fn<() => Promise<DocumentRenderResponse>>()
@@ -54,6 +59,15 @@ const EMPTY_STATE = 'No document content available'
 
 function response(html: string): DocumentRenderResponse {
   return { html, cached: false, entity_ids: [] }
+}
+
+/** A server refusal as the axios interceptor delivers it to a catch site. */
+function denial(status: number): ApiError {
+  return new ApiError(`Request failed (${status})`, {
+    kind: 'http',
+    status,
+    original: new Error('denied'),
+  })
 }
 
 /** A promise plus the trigger that settles it, so a test can hold a render open. */
@@ -170,6 +184,49 @@ describe('DocumentView re-render (BUG-DJZTRF)', () => {
     // would lose the user's place and show the empty state instead.
     expect(wrapper.html()).toContain('original')
     expect(wrapper.text()).not.toContain(EMPTY_STATE)
+  })
+
+  // Issue #1603 / CONTROL-8-03. The clause above keeps content across a failed
+  // re-render, which is right for a transient one and wrong for a denial: an
+  // access revocation mid-view left the previous render on screen until the
+  // user navigated away by hand. These assert the narrow carve-out — the
+  // preceding test pins that the general case is unchanged.
+  it.each([
+    ['401 expired session', 401],
+    ['403 refused capability', 403],
+    ['404 read gate (uniform not-found)', 404],
+  ])('blanks the document when a re-render is denied (%s)', async (_name, status) => {
+    const wrapper = await mountView('<p>original</p>')
+
+    renderDocumentMock.mockRejectedValue(denial(status))
+    entityChangedHandler?.()
+    await flushPromises()
+
+    expect(wrapper.html()).not.toContain('original')
+    expect(wrapper.find(BODY).exists()).toBe(false)
+    expect(wrapper.text()).toContain(EMPTY_STATE)
+  })
+
+  it('does not blank on a denial from a superseded render', async () => {
+    const wrapper = await mountView('<p>original</p>')
+
+    const stale = deferred<DocumentRenderResponse>()
+    renderDocumentMock.mockReturnValue(stale.promise)
+    entityChangedHandler?.()
+    await flushPromises()
+
+    const fresh = deferred<DocumentRenderResponse>()
+    renderDocumentMock.mockReturnValue(fresh.promise)
+    await switchDocument(wrapper, 'other')
+    fresh.resolve(response('<p>other doc</p>'))
+    await flushPromises()
+
+    // The abandoned render's denial is about a document no longer displayed.
+    // Blanking here would erase a body the newest render was allowed to paint.
+    stale.reject(denial(404))
+    await flushPromises()
+
+    expect(wrapper.html()).toContain('other doc')
   })
 
   it('ignores a superseded render that resolves after a document switch', async () => {

@@ -67,7 +67,40 @@ type GraphQuery struct {
 	// set is applied to the CANDIDATE rows before world ranking, so the
 	// answer is exact at the store and paging, counts and search stay honest
 	// with no post-filter.
+	// Any is AUTHORIZATION-derived and belongs to the ACL layer alone. It
+	// is a CEILING: it says which rows the principal may see at all. See
+	// [Narrowing] for the caller-supplied counterpart, and do not append a
+	// caller's branches here — the two are different types precisely so
+	// that mistake cannot compile.
 	Any []GraphBranch
+
+	// Narrowing is a disjunction supplied by a CALLER (a view's
+	// `condition:`, a report's filter) rather than by the ACL. It is ANDed
+	// with everything above, including [GraphQuery.Any].
+	//
+	// # Why this is a separate field and a separate type
+	//
+	// Both this and Any are "a list of OR-ed branches", so the obvious
+	// implementation is to reuse Any. That is a privilege-escalation bug.
+	// Any is OR-ed internally, so appending caller branches to it yields
+	//
+	//	acl_a OR acl_b OR caller_x
+	//
+	// when the required meaning is
+	//
+	//	(acl_a OR acl_b) AND caller_x
+	//
+	// In the first form a caller's branch is an ALTERNATIVE ROUTE TO
+	// AUTHORIZATION: a principal who matches no ACL branch is admitted by
+	// matching a display filter. Every test that only checks "the right
+	// rows are shown" still passes, because the escalation is visible only
+	// to a principal the test does not use.
+	//
+	// The ceiling may only ever NARROW — the same rule the ACL policy layer
+	// states for grants, so a bug fails toward less access. Keeping the two
+	// as distinct types ([GraphBranch] vs [NarrowBranch]) makes the wrong
+	// append a compile error rather than a review catch.
+	Narrowing []NarrowBranch
 
 	// OrderBy, Limit and Offset page a ROW query (GraphQuery,
 	// GraphQueryHeaders) inside the backend (TKT-1U8XYN), so a list page
@@ -158,6 +191,22 @@ type GraphBranch struct {
 	FaceIn     []entity.Face
 }
 
+// NarrowBranch is one arm of [GraphQuery.Narrowing]: a conjunction of
+// property predicates, OR-ed with the other arms. An EMPTY branch holds for
+// every row, which makes the whole disjunction vacuous — a caller lowering
+// an unsatisfiable arm must drop the Narrowing entirely rather than emit an
+// empty branch.
+//
+// Deliberately NOT [GraphBranch], and deliberately carrying no relation or
+// face predicate. Faces and conferred roles are authorization concepts; a
+// caller narrowing a result set has no business expressing them, and the
+// type is what enforces that rather than a comment nobody reads. See
+// [GraphQuery.Narrowing] for why sharing one type would be a privilege
+// escalation.
+type NarrowBranch struct {
+	Props []PropPredicate
+}
+
 // PropOp is the comparison a [PropPredicate] applies. Deliberately only
 // equality and its negation: ordered comparison (`due < 2026-01-01`)
 // needs the property's declared type from the metamodel to avoid
@@ -177,6 +226,71 @@ const (
 	// PropNotEqual is the negation. With an empty Value it means "is not
 	// empty".
 	PropNotEqual
+	// PropNotEqualOrEmpty is PropNotEqual WIDENED to also match an empty
+	// property: "not this value, or not set at all".
+	//
+	// It exists because [internal/predicate] and [internal/filter] answer
+	// `p ~= v` differently on an unset property, and both are right for
+	// their own contract:
+	//
+	//   - filter (and therefore PropNotEqual) names a POPULATION: an entity
+	//     with no status is not in the "status is something other than
+	//     doing" population. See the note on [PropPredicate].
+	//   - predicate is a Lua expression subset, and its documented equality
+	//     table has `nil == anything -> false`, so `nil ~= 'doing'` is
+	//     necessarily TRUE.
+	//
+	// Lowering a predicate `~=` to PropNotEqual would therefore DROP every
+	// row whose property is unset — rows the Go pass keeps — which is a
+	// pre-filter removing rows the authoritative pass would return, the one
+	// thing a pushdown may never do. This operator is the sound lowering
+	// target; PropNotEqual keeps its filter-DSL meaning untouched.
+	//
+	// With an EMPTY Value it is degenerate ("not empty, or empty") and
+	// matches everything; callers lowering `p ~= ''` should emit nothing
+	// instead of relying on that.
+	PropNotEqualOrEmpty
+	// PropGreaterEqual and PropLessEqual compare the property's string form
+	// byte-wise against Value: `>=` and `<=` respectively.
+	//
+	// # Byte order, and why that is enough
+	//
+	// These carry the SAME contract [GraphQuery.OrderBy] already does —
+	// "sorts by the STRING form of each property, byte-wise" — and are
+	// sound for exactly the types that sorting is: those whose byte order
+	// IS their order. An ISO-8601 date is the motivating case: `2026-09-11`
+	// sorts and compares identically as text and as a date, which is why
+	// [internal/queryplan.StringShaped] already lists date and datetime.
+	//
+	// The store still does not consult the metamodel, so it cannot check
+	// this itself. **The CALLER must gate on the declared type** — that is
+	// where the metamodel is — and must not emit these for an `integer`
+	// property, where byte order is not numeric order ("10" < "9").
+	//
+	// # Empty and list values never match
+	//
+	// An empty property is outside any ordered range, matching the
+	// [PropNotEqual] reading (an unset value is not in the population) and
+	// SQL's NULL comparison, which is likewise not true.
+	//
+	// A LIST value never matches either, and that is load-bearing rather
+	// than incidental: Go renders []string{"a","b"} as `[a b]` while
+	// postgres `->>` renders it as `["a", "b"]`, so a byte-wise comparison
+	// against a list would give a DIFFERENT answer per backend. Refusing
+	// the shape outright is the only reading both can share. Equality does
+	// not have this problem because it branches on jsonb_typeof and treats
+	// an array as membership.
+	//
+	// This runtime refusal does NOT make the caller's declared-type gate
+	// redundant; the two catch different things. A DECLARED list is caught
+	// at config load by the metamodel gate, which is where the useful
+	// error lives ("this property is a list" names the mistake). A list
+	// VALUE stored under a scalar DECLARATION — a legacy row, an import, a
+	// schema changed after the data was written — reaches the store
+	// anyway, and only the check here keeps the backends answering it the
+	// same way.
+	PropGreaterEqual
+	PropLessEqual
 )
 
 // PropPredicate restricts a GraphQuery to entities whose own property
@@ -191,11 +305,18 @@ const (
 //	{Property: "status", Op: PropEqual, Value: "doing"}  // status=doing
 //	{Property: "billing_email", Op: PropEqual}           // is empty
 //	{Property: "billing_email", Op: PropNotEqual}        // is not empty
+//	{Property: "status", Op: PropNotEqualOrEmpty, Value: "doing"} // status~=doing (Lua)
 //
 // Note that an EMPTY property does not satisfy a PropNotEqual against a
 // non-empty Value: an entity with no status is not in the "status is
 // something other than doing" population. Treating it as a match would
 // silently widen every exclusion filter to include unset rows.
+//
+// [PropNotEqualOrEmpty] is the deliberate opposite reading, for lowering a
+// [internal/predicate] `~=` whose Lua semantics DO match an unset property.
+// The two ops differ only on empty values; picking the wrong one is a
+// silent wrong answer in one direction or the other, so choose by which
+// dialect authored the comparison.
 type PropPredicate struct {
 	Property string
 	Op       PropOp

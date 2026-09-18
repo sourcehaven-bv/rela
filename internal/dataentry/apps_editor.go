@@ -8,11 +8,16 @@ import (
 	"net/http"
 )
 
-// The <rela-editor> Custom Element bundle and its glyph webfont, built by the
+// The <rela-editor> Custom Element bundle and its stylesheet, built by the
 // standalone editor build (frontend/vite.editor.config.ts) into
 // frontend → ../internal/dataentry/app_editor_dist and embedded here. Served at
-// the reserved per-app paths _rela-editor.js / _rela-editor.css /
-// _rela-editor.woff2 (see apps.go and apps_handler.go). TKT-5F9V56.
+// the reserved per-app paths _rela-editor.js / _rela-editor.css (see apps.go
+// and apps_handler.go). TKT-5F9V56.
+//
+// There is no third asset: the editor (Milkdown, TKT-D2JML7) draws its toolbar
+// with inline SVG and ships no webfont. The EasyMDE build it replaced served a
+// Font Awesome woff2 at _rela-editor.woff2, which needed a CORS header because
+// a sandboxed iframe has an opaque origin. That path is gone.
 //
 // Like the SPA bundle (static/v2), these are BUILD ARTIFACTS — gitignored and
 // produced by `npm run build` (frontend/package.json runs the editor build too).
@@ -38,7 +43,7 @@ func appEditorAsset(name string) []byte {
 	return b
 }
 
-// appEditorSource / appEditorFontSource are package-level VARS (not funcs) so
+// appEditorSource / appEditorCSSSource are package-level VARS (not funcs) so
 // tests can inject a fake bundle and exercise the serving path even when the
 // frontend build hasn't run (the CI `go test ./...` job doesn't build the
 // frontend — see withTestEditorAssets in apps_test.go). Production code never
@@ -47,9 +52,6 @@ var (
 	// appEditorSource returns the <rela-editor> IIFE bundle served at
 	// /api/v1/_apps/<id>/_rela-editor.js.
 	appEditorSource = func() []byte { return appEditorAsset("rela-editor.js") }
-	// appEditorFontSource returns the toolbar glyph webfont served at
-	// /api/v1/_apps/<id>/_rela-editor.woff2.
-	appEditorFontSource = func() []byte { return appEditorAsset("rela-editor.woff2") }
 	// appEditorCSSSource returns the editor stylesheet served at
 	// /api/v1/_apps/<id>/_rela-editor.css. Served as a FILE rather than inlined
 	// into the bundle: the app CSP has no 'unsafe-inline', so a <style> element
@@ -63,9 +65,8 @@ var (
 // hash is a stable strong validator: a new build → new bytes → new ETag, which
 // can't serve a stale asset across deploys (unlike `immutable` max-age on an
 // unversioned URL). Empty when the asset isn't built.
-func appEditorJSETag() string   { return weakETagFor(appEditorSource()) }
-func appEditorFontETag() string { return weakETagFor(appEditorFontSource()) }
-func appEditorCSSETag() string  { return weakETagFor(appEditorCSSSource()) }
+func appEditorJSETag() string  { return weakETagFor(appEditorSource()) }
+func appEditorCSSETag() string { return weakETagFor(appEditorCSSSource()) }
 
 func weakETagFor(b []byte) string {
 	if len(b) == 0 {

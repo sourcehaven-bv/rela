@@ -34,6 +34,29 @@ const props = defineProps<{
   formId: string
   /** Entity type being created; used for the dialog title. */
   entityType: string
+  /**
+   * Entity template variant to preselect, from the section's
+   * `create.types.<type>.template` (TKT-R4BMJM). Undefined leaves the form's
+   * own default selection alone.
+   */
+  template?: string
+  /**
+   * Pre-link context, when this modal was opened from a section's create
+   * affordance. Passed as a PROP rather than through the URL because an
+   * embedded form deliberately reads an empty query — it mounts over the host's
+   * page, and honouring that page's params would pre-fill the new entity from
+   * whatever the host happened to be showing.
+   *
+   * Only `linkAs: 'to'` is applied here (the form carries the edge in its create
+   * payload). The reverse direction is the host's job, after the id exists.
+   */
+  link?: { relation: string; peer: string; linkAs: 'from' | 'to' }
+  /**
+   * World the create is issued in. Decides which face the new entity lands in
+   * (`worlds.<name>.create`); a faced type has no default row to fall back to,
+   * so omitting it is a refusal rather than a silent default.
+   */
+  world?: string
 }>()
 
 const emit = defineEmits<{
@@ -148,6 +171,9 @@ function handleKeydown(e: KeyboardEvent) {
             ref="formRef"
             :form-id="formId"
             embedded
+            :embedded-template="template"
+            :embedded-link="link"
+            :embedded-world="world"
             @inline-created="handleCreated"
             @inline-cancelled="requestClose"
           />

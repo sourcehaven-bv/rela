@@ -95,6 +95,19 @@ const (
 	MaxBodyBytes = 16 * 1024
 
 	// MaxPerTarget caps how many comments one entity may carry.
+	//
+	// ADVISORY on the database backends, not a hard limit. Service.Add checks
+	// it by listing then counting, which is a check-then-act: with several
+	// rela-server processes on one database (the topology pgcomments exists to
+	// serve), N concurrent posts to a thread at the limit all read the same
+	// count and all insert. The file and memory tiers are single-writer, so
+	// there the check holds exactly.
+	//
+	// Left as-is deliberately. The cap exists to bound the FILE backend's
+	// whole-thread document reads, so overshooting it by a handful of rows on a
+	// backend that pages costs nothing; making it exact would mean a
+	// conditional insert and a new method on comments.Store, which is a
+	// contract change for an invariant that does not need to be exact.
 	MaxPerTarget = 500
 
 	// MinQuoteRunes is the shortest text selection that may be anchored.
@@ -329,4 +342,28 @@ func ValidateBody(body string) error {
 		}
 	}
 	return nil
+}
+
+// FacePrefixPattern builds the SQL LIKE pattern matching every FACED thread of
+// an entity id ("id@draft", never the bare "id"), escaped for `ESCAPE '\'`.
+//
+// Shared by the database backends for the reason [SortComments] and
+// [MergeThreads] are: the escaping below is subtle, and two copies of subtle
+// code are two chances to fix a bug in one of them. It lives here rather than
+// in either backend because neither may import the other.
+//
+// The id is escaped because an entity id may legally contain an underscore
+// (entity.ValidateID admits [A-Za-z0-9_-]), and an unescaped "_" is LIKE's
+// single-character wildcard — so renaming "TKT_1" would also re-key "TKT-1",
+// silently merging two unrelated threads. Backslash is escaped first so it
+// cannot double-escape what follows; "%" cannot appear in a valid id but is
+// escaped anyway, since this function's correctness should not depend on a
+// grammar declared in another package.
+//
+// Note this handles WILDCARDS only. SQLite's LIKE is also ASCII
+// case-insensitive, which no pattern can express; sqlitecomments pairs this
+// with a byte-exact guard for that.
+func FacePrefixPattern(id string) string {
+	r := strings.NewReplacer(`\`, `\\`, `_`, `\_`, `%`, `\%`)
+	return r.Replace(id) + entity.StateRefSeparator + "%"
 }

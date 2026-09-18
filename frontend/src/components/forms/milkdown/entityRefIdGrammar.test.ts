@@ -1,7 +1,7 @@
 /// <reference types="node" />
 // Runs in Node (vitest) and needs node:fs / node:url. The project tsconfig
 // scopes `types` to vitest/globals, so pull in node types file-locally rather
-// than widening them project-wide (same pattern as markdownContentMirror).
+// than widening them project-wide (the same trick serializerContract.test.ts uses).
 //
 // Guards the entity-ID grammar across the language boundary.
 //

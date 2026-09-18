@@ -128,8 +128,7 @@ func (s *Store) Rename(_ context.Context, oldID, newID string) error {
 		stored := s.byward[key]
 		delete(s.byward, key)
 		dest := reKey(key, oldID, newID)
-		s.byward[dest] = append(s.byward[dest], stored...)
-		comments.SortComments(s.byward[dest])
+		s.byward[dest] = comments.MergeThreads(s.byward[dest], stored)
 	}
 	return nil
 }

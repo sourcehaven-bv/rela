@@ -18,6 +18,7 @@ import (
 	"github.com/yuin/goldmark/parser"
 	"github.com/yuin/goldmark/renderer/html"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
@@ -548,47 +549,14 @@ func visibleEntitiesOfType(
 	ctx context.Context, svc Services, typ string,
 	ts search.TypeScope, props []store.PropPredicate,
 ) ([]*entity.Entity, error) {
-	if ts.AllowAll && len(props) == 0 {
-		var out []*entity.Entity
-		// Content-free rows (rowcontent.go): search results render titles
-		// and properties, and a body is loaded only on request.
-		for h, err := range store.ListEntityHeaders(ctx, svc.Store, store.EntityQuery{
-			Type:  typ,
-			World: worldScopeFrom(ctx),
-		}) {
-			if err != nil {
-				return nil, fmt.Errorf("%w: %w", errListLoad, err)
-			}
-			out = append(out, headerEntity(h))
-		}
-		return out, nil
-	}
-
-	q := store.GraphQuery{EntityType: typ, Props: props}
-	errClass := errListLoad
-	if !ts.AllowAll {
-		// Copy by value: TypeScope.Query is shared across calls and must not
-		// be mutated (store.GraphQueryer documents the same rule).
-		q = *ts.Query
-		q.Props = append(append([]store.PropPredicate(nil), q.Props...), props...)
-		errClass = errACLListQuery
-	}
-	// World scope on BOTH verdict branches, for the RR-GQWRLD reason
-	// scopedSortedEntities spells out: AllowAll takes the EntityQuery branch
-	// above and every ACL-gated principal takes this one, so a world stamped
-	// on only one silently degrades to the default world for exactly one of
-	// the two populations.
-	q.World = worldScopeFrom(ctx)
-
-	var out []*entity.Entity
-	for h, err := range store.GraphQueryHeaders(ctx, svc.Store, q) {
-		if err != nil {
-			return nil, fmt.Errorf("%w: %w", errClass, err)
-		}
-		e := headerEntity(h)
-		out = append(out, e)
-	}
-	return out, nil
+	// A search TypeScope is an ACL read verdict in a different shape: same
+	// AllowAll/Query pair, minus DenyAll (ResolveTypeScope has already
+	// denied by omission) and minus Faces. Restating it lets this path share
+	// the one verdict switch (scopedread.go) rather than reimplementing it —
+	// which is how the RR-GQWRLD world bug reached two sites.
+	rqr := acl.ReadQueryResult{AllowAll: ts.AllowAll, Query: ts.Query}
+	entities, _, err := scopedEntities(ctx, svc, rqr, scopeRequest{Type: typ, Props: props})
+	return entities, err
 }
 
 // freeTextIDsForTypeResult is what freeTextIDsForType returns: the set of

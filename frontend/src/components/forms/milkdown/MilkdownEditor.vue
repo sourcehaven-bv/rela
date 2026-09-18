@@ -19,14 +19,7 @@
  *    from the graph itself.
  */
 import { ref, onMounted, onBeforeUnmount, watch, shallowRef, computed, nextTick } from 'vue'
-import {
-  Editor,
-  rootCtx,
-  defaultValueCtx,
-  remarkStringifyOptionsCtx,
-  editorViewOptionsCtx,
-} from '@milkdown/kit/core'
-import { commonmark, remarkPreserveEmptyLinePlugin } from '@milkdown/kit/preset/commonmark'
+import { Editor, rootCtx, defaultValueCtx, editorViewOptionsCtx } from '@milkdown/kit/core'
 import { gfm } from '@milkdown/kit/preset/gfm'
 import { history } from '@milkdown/kit/plugin/history'
 import { block, BlockProvider } from '@milkdown/kit/plugin/block'
@@ -46,7 +39,7 @@ import '@milkdown/kit/prose/tables/style/tables.css'
 import '@milkdown/kit/prose/gapcursor/style/gapcursor.css'
 import './milkdownEditor.css'
 
-import { RELA_STRINGIFY_OPTIONS } from './serializerContract'
+import { RELA_COMMONMARK, configureRelaSerializer } from './editorPreset'
 import { entityRefNode } from './entityRefNode'
 import { insertEntityRefAtCursor, replaceMentionQueryWithRef } from './insertEntityRef'
 import { taskList } from './taskListItem'
@@ -247,24 +240,6 @@ let armed = false
 // Held in a mutable box so the ProseMirror plugin, created once at mount,
 // always reads the current resolver rather than the one captured at build.
 const resolverHandle: ResolverHandle = { resolver: props.refResolver }
-
-/**
- * The commonmark preset with `remarkPreserveEmptyLinePlugin` taken out.
- *
- * That plugin keeps blank lines between paragraphs, but it does so by
- * serializing EVERY empty paragraph as a literal `<br />` — including the
- * empty cells of a table, so adding a row or column wrote raw HTML into the
- * stored markdown.
- *
- * Removing it is a straight improvement rather than a trade: blank runs are
- * preserved exactly as written instead of being normalized, and no `<br />`
- * appears. Filtered here rather than through `Editor.remove`, which returns a
- * promise and would break the builder chain.
- */
-const EMPTY_LINE_PLUGIN_PARTS = new Set<unknown>(remarkPreserveEmptyLinePlugin)
-const COMMONMARK_WITHOUT_EMPTY_LINE_PLUGIN = commonmark.filter(
-  (plugin) => !EMPTY_LINE_PLUGIN_PARTS.has(plugin)
-)
 
 const dirtyTrackerKey = new PluginKey('rela-dirty-tracker')
 
@@ -597,13 +572,9 @@ onMounted(async () => {
         ...prev,
         attributes: { ...(prev.attributes ?? {}), class: 'milkdown-prose md-body' },
       }))
-      // Merge rather than replace: the defaults carry Milkdown's own remark
-      // handlers, and dropping them would break serialization of every node
-      // type the presets contribute.
-      ctx.update(remarkStringifyOptionsCtx, (prev) => ({
-        ...prev,
-        ...RELA_STRINGIFY_OPTIONS,
-      }))
+      // Shared with the sandboxed app editor, so the two cannot serialize a
+      // body differently.
+      configureRelaSerializer(ctx)
 
       // The guard sits ON the emit rather than beside it. Exposing it as an
       // optional `guardedValue()` for the form to prefer meant the raw channel
@@ -639,7 +610,7 @@ onMounted(async () => {
         },
       })
     })
-    .use(COMMONMARK_WITHOUT_EMPTY_LINE_PLUGIN)
+    .use(RELA_COMMONMARK)
     .use(gfm)
     .use(history)
     .use(listener)

@@ -31,7 +31,7 @@ type AnalyzeCmd struct {
 	RelationFiles AnalyzeRelationFilesCmd `cmd:"" name:"relation-files" help:"Find relation files whose filename disagrees with their content."`
 	Properties    AnalyzePropertiesCmd    `cmd:"" help:"Validate entity property values against metamodel."`
 	Validations   AnalyzeValidationsCmd   `cmd:"" help:"Run custom validation rules from metamodel."`
-	States        AnalyzeStatesCmd        `cmd:"" help:"Find content-state integrity issues (undeclared faces, headless families)."`
+	States        AnalyzeStatesCmd        `cmd:"" help:"Find content-state integrity issues (undeclared faces, rows stranded at the bare id)."`
 	All           AnalyzeAllCmd           `cmd:"" help:"Run all analyses."`
 	Schema        AnalyzeSchemaCmd        `cmd:"" help:"Analyze metamodel schema usage."`
 }
@@ -232,11 +232,14 @@ func (c *AnalyzeCardinalityCmd) Run(ctx context.Context, analyzer *analysis.Serv
 }
 
 // AnalyzeStatesCmd reports content-state integrity findings
-// (TKT-DOFYR1): rows stored under faces no metamodel declaration
-// accounts for (in Step 1 that is every state row — declarations arrive
-// with worlds), headless families, and type-mismatched states. The
-// remedy is the future data-migration system; this surface detects
-// only.
+// (TKT-DOFYR1): rows stored under faces no metamodel declaration accounts
+// for, rows stranded at the bare id on a type that declares `faces:`
+// (BUG-UA3BK3), and type-mismatched states. The remedy is a data
+// migration; this surface detects only.
+//
+// It no longer reports headless families. A family with no zero-coordinate
+// row was corrupt while one face was privileged by storage, and is the
+// ordinary shape of a faced entity now (BUG-HC6I2T).
 type AnalyzeStatesCmd struct{}
 
 // Run dispatches `rela analyze states`.

@@ -162,7 +162,7 @@ func (r *Runner) Describe() string {
 	default:
 		limits := "no resource limits (non-Linux)"
 		if rlimitsSupported() {
-			limits = "memory/PID/file-size/CPU limits"
+			limits = "memory/file-size/CPU limits"
 		}
 		return "sandbox " + r.sandbox.Name() + " (no network, temp-dir-only writes) + " + limits
 	}

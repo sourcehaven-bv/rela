@@ -1082,7 +1082,9 @@ lists:
 | `columns`         | list   | Column definitions                                          |
 | `sort`            | object | Default sort order                                          |
 | `filters`         | list   | Static filters (always applied)                             |
+| `condition`       | string | Predicate expression ANDed with `filters` — for `or`, grouping and date arithmetic. See [Conditions](#conditions-condition) |
 | `filter_controls` | list   | Interactive filter controls shown to the user               |
+| `query_scope`     | string | Named query scope from the entity type's `query_scopes:`; `all` withdraws the type's `default` (see below) |
 | `create_form`     | string | Form name for the "New" button                              |
 | `create_world`    | string | World the "New" button opens its form in, when a new entity belongs in another world than the list shows |
 | `edit_form`       | string | Form name for the row edit action                           |
@@ -1212,6 +1214,183 @@ filters:
 
 To filter for a literal value that starts with `$`, you currently cannot
 escape it — choose property values that don't start with `$`.
+
+### Conditions (`condition:`)
+
+`filters:` entries are always ANDed, so they can only express a plain
+conjunction. When the membership rule needs **or**, grouping, negation of a
+compound, or date arithmetic, use `condition:` — a predicate expression
+evaluated per row and ANDed with `filters:`.
+
+```yaml
+lists:
+  actieve_taken:
+    entity_type: taak
+    condition: >-
+      entity.status ~= 'gereed'
+      or (entity.afgerond_op ~= nil
+          and days_between(today(), entity.afgerond_op) <= 2)
+```
+
+That rule — "every task that is not finished, plus ones finished in the last
+two days" — is a disjunction, and cannot be written as `filters:` at all. A
+filter on `afgerond_op` would also apply to the unfinished tasks and hide them.
+
+It is operator config: the expression is never accepted from a request, so a
+caller can only select among views you have declared.
+
+> **Lists only, for now.** A `condition:` on a `kanbans:` entry is **rejected
+> at startup** — the board still filters client-side, and a key that validated
+> and then did nothing would be exactly the silent no-op this feature exists to
+> remove. Use `filters:` on a board until this note goes away.
+
+**A condition that does not compile is a startup error**, naming the view and
+the offending attribute:
+
+```text
+view condition errors:
+  lists["actieve_taken"]: condition does not compile against entity type
+  "taak": predicate: compile error at line 1: unknown attribute "staus" on record
+```
+
+(One line in the real output; wrapped here to fit.)
+
+That is deliberate — a filter that silently matches nothing is far harder to
+notice than a server that refuses to start.
+
+#### It is a different language from `filters:`
+
+`condition:` is a Lua expression subset (the same language as automation
+`condition:` and next-action `condition:` — see
+[metamodel.md](metamodel.md)). `filters:` is the filter DSL. They sit next to
+each other in the same block and **three differences will bite you**:
+
+| | `filters:` | `condition:` |
+|---|---|---|
+| not-equal | `!=` | **`~=`** (`!=` is a parse error) |
+| unset property, not-equal | **excluded** | **included** |
+| value quoting | bare | `'single quotes'` |
+
+The first is caught at startup. The second is not, so read it carefully:
+
+```yaml
+filters:
+  - property: status
+    operator: "!="        # a task with NO status is HIDDEN
+    value: gereed
+condition: "entity.status ~= 'gereed'"   # a task with NO status is SHOWN
+```
+
+Both are correct for their own language. A filter names a population, and a
+task with no status is not in the "status is something other than gereed"
+population. The expression language follows Lua, where `nil` equals nothing,
+so `nil ~= 'gereed'` is true.
+
+#### `days_between` argument order
+
+`days_between(a, b)` counts days **from b to a**. So an *age* is:
+
+```lua
+days_between(today(), entity.afgerond_op)    -- 3 = finished three days ago
+```
+
+Writing the arguments the other way round is the trap, because it produces no
+error:
+
+```lua
+days_between(entity.afgerond_op, today()) <= 2   -- WRONG: matches everything
+```
+
+For a past date that yields a **negative** number, and `-10 <= 2` is true — so
+every old row matches and the filter appears to do nothing.
+
+#### An unset property is an error, not `false`
+
+A date function applied to a property that is not set raises an evaluation
+error, which fails the request rather than silently dropping the row. Guard it:
+
+```lua
+entity.afgerond_op ~= nil and days_between(today(), entity.afgerond_op) <= 2
+```
+
+The `and` short-circuits, so the guard is enough. Note the shorthand
+`entity.afgerond_op and …` does **not** compile — the language requires a
+boolean on the left of `and`.
+
+#### Available functions
+
+`today()`, `days_between()`, `date_add()`, `rrule_next()`, `match()`,
+`regex()`, `contains()`, `len()`. Signatures are in
+[metamodel.md](metamodel.md).
+
+A condition is evaluated for the signed-in principal, so it may also use
+`current_user.id`, `is_current_user(entity.owner)` and
+`has_current_user(entity.watchers)` — useful for "assigned to me or
+unassigned", which is likewise a disjunction:
+
+```yaml
+condition: "is_current_user(entity.assignee) or entity.assignee == nil"
+```
+
+A condition never widens a view: it is applied on top of the ACL, so it can
+only remove rows the principal could already see.
+
+### Query Scopes
+
+A static filter is a conjunction: every entry must match. When the membership
+rule needs an OR, a negation, or a comparison against today's date, declare a
+**query scope** on the entity type in `schema.yaml` and name it here:
+
+```yaml
+lists:
+  archief:
+    entity_type: taak
+    query_scope: archief
+  alles:
+    entity_type: taak
+    query_scope: all        # withdraw the type's default
+  open_werk:
+    entity_type: taak       # no query_scope: the type's `default` applies
+```
+
+The scopes themselves are declared per entity type — see
+[Query Scopes](metamodel.md#query-scopes) in the Metamodel Reference for the
+expression language, the implicit `all`, and the rules about identity. Three
+things matter from this side:
+
+- **A type's `default` scope applies to a view that names no scope.** This is
+  the point of declaring one: a rule like "hide archived tasks" is written
+  once and every list and board of that type inherits it.
+- **`query_scope: all` withdraws it**, and always resolves — even for a type
+  that declares no scopes at all.
+- **A name the type does not declare refuses at config load**, listing the
+  names it does declare. There is no fallback to unfiltered.
+
+Scopes and static filters compose: both narrow, and both apply. A scope is the
+right place for a rule that belongs to the domain ("a task is active until it
+is done"), a static filter for one that belongs to the screen ("this board is
+for the infra team").
+
+**A query scope is not access control.** It decides what a screen shows, not
+what a principal may read — anyone who can call the API can ask for
+`query_scope: all`. Use `scope_grants:` in `acl.yaml` to restrict what a role
+can see.
+
+#### Selecting a scope over the API
+
+The list API takes `?query_scope=<name>`, the same shape as `?world=`:
+
+```http
+GET /api/v1/taken?query_scope=archief
+GET /api/v1/taken?query_scope=all
+```
+
+Omitting the parameter applies the entity type's `default` scope, if it
+declares one. A name the type does not declare is a `400` naming the scope, for
+the same reason an undeclared world is: scope names are configuration in your
+repository, not secrets. Repeating the parameter
+(`?query_scope=all&query_scope=archief`) is also refused rather than silently
+taking the first, since the request asked two different things.
 
 ### Filter Controls
 
@@ -1532,6 +1711,7 @@ sections:
 | `group_by`      | string | Property to group entities by                           |
 | `empty_message` | string | Text shown when the collection is empty                 |
 | `link`          | bool   | Link entity titles to their detail pages                |
+| `create`        | map    | Offer a "create related entity" button (see below)      |
 
 Each entry under `fields:` takes:
 
@@ -1542,6 +1722,85 @@ Each entry under `fields:` takes:
 | `span`     | int    | Width on the 12-column grid (1-12; omit for full width)      |
 | `render`   | string | `display` or `input`; overrides the section's `render`        |
 | `widget`   | string | Which widget renders this property (see Widget Overrides)    |
+
+### Creating related entities from a section
+
+By default the entity detail page is **read-only**: it shows an entity and its
+neighbours, and every change happens through a form. A section can opt out of
+that and offer a button that creates a new related entity, already linked to the
+entity you are looking at.
+
+```yaml
+views:
+  epic:
+    entry:
+      type: epic
+    traverse:
+      - from: entry
+        follow: has-task
+        collect_as: tasks
+    sections:
+      - heading: Tasks
+        source: tasks
+        display: table
+        create:
+          in: [section, header]   # default: [section]
+          flow: modal             # default: modal
+          types:
+            task: { template: bugfix }
+            bug: { template: regression }
+```
+
+| Field   | Type | Description                                                        |
+| ------- | ---- | ------------------------------------------------------------------ |
+| `in`    | list | Where the button appears: `section`, `header`, or both. Default `[section]` |
+| `flow`  | str  | `modal` (default) keeps you on the page; `page` opens the full form |
+| `types` | map  | Per-entity-type options, keyed by type (see below)                  |
+
+Omit `create:` entirely to keep a section read-only. There is no `create: false`
+— absence already means that, and a second spelling of one meaning is refused at
+load.
+
+**Which types are offered is derived, not configured.** A type appears only when
+all three hold: the section's relation can reach it, a form exists that can
+create it, and the user has permission to create it. So there is no list of
+types to keep in step with your ACL — removing someone's `create` grant removes
+their button. One reachable type renders a direct button (`+ Task`); several
+render a short menu.
+
+The button follows the grant, but it is **not** what enforces it. The server
+re-authorizes the entity and the relation when the form is submitted, so a user
+who edits the request by hand gets whatever their own permissions allow. That is
+the same answer the create form would give them. Treat the button as a
+convenience, not as the access-control boundary.
+
+**`flow` is per section, not per type.** Which flow feels right depends on the
+form, not on the entity type, and one type opening a modal while its sibling
+navigates reads as a bug rather than as configuration.
+
+- `modal` opens the create form in a dialog and refreshes the page when it
+  succeeds. Good for short forms.
+- `page` navigates to the full create form and returns you to the originating
+  entity on submit. Good for long or multi-step forms.
+
+**`types` is keyed by entity type** because a template variant only exists per
+type — a relation reaching both `task` and `bug` has no single meaningful
+template. A type you do not list still gets a button; it just opens with the
+form's own default template.
+
+| Field      | Type | Description                                            |
+| ---------- | ---- | ------------------------------------------------------ |
+| `template` | str  | Template variant to preselect (`templates/entities/<type>--<variant>.md`) |
+
+When `in:` includes `header`, the section also contributes an entry to a menu at
+the top of the page. That menu is the union of the sections that opted in. It is
+deduped by relation, so two sections over one relation produce a single entry.
+
+A section can only offer this if exactly one relation filled it. A section built
+from a `recursive:` traverse rule, or from a rule that starts at another
+collection rather than `entry`, has no single entity to link the new one to;
+declaring `create:` on one is refused at config load rather than silently
+producing no button.
 
 ### Field Render Modes
 
@@ -2340,6 +2599,7 @@ kanbans:
 | `create_form`      | string | Form name for the "New" button                             |
 | `filters`          | list   | Static filters (same as lists)                             |
 | `filter_controls`  | list   | Interactive filter controls (same as lists)                |
+| `query_scope`      | string | Named query scope (same as lists)                          |
 
 #### Column and swimlane icons
 
@@ -5096,6 +5356,82 @@ entry theme, rela toggles the same `dark` class on your app's `<html>` element
 tokens flip. No work needed beyond linking `_rela.css` and using `var(--…)` for your
 own colors. Opting in is entirely optional; an app that wants full control of
 its look simply doesn't link it.
+
+### Editing markdown (optional `<rela-editor>`)
+
+Apps that edit entity body content can embed rela's own markdown editor rather
+than building one. Opt in with a script tag, then use the element:
+
+```html
+<head>
+  <script src="_rela.js"></script>
+  <script src="_rela-editor.js"></script>
+</head>
+<body>
+  <rela-editor id="body" placeholder="Write markdown"></rela-editor>
+</body>
+```
+
+It is the same WYSIWYG editor the data-entry forms use: a formatting toolbar,
+table controls, and `@` completion for entity references. It renders into the
+page normally, so your own CSS lays it out like any other block element.
+
+Kept separate from `_rela.js` so only apps that want an editor pay for it.
+
+**The element's API is deliberately small**, because it is what lets rela change
+the editor underneath without breaking your app:
+
+| | |
+|---|---|
+| `value` | property — get/set the markdown text, exactly as written |
+| `placeholder` | attribute — plain text shown while empty (read once, at mount) |
+| `readonly` | attribute — present to make the editor read-only |
+| `input` | event — fired on every change |
+| `change` | event — fired on blur, only if the content actually changed |
+| `focus()` | method — put the cursor in the editor |
+
+Everything else is an implementation detail and may change: which editor is
+underneath, what the toolbar looks like, what DOM it generates. Read and write
+`value`, listen for `input` and `change`, and your app keeps working. (The
+editor has already been replaced once, and apps written against this API needed
+no edit.)
+
+```js
+var editor = document.getElementById('body');
+
+rela.whenReady(async function () {
+  var res = await rela.get({ type: 'ticket', id: 'TKT-001' });
+  editor.value = res.data.content;
+
+  // `change` fires on blur after a real edit — a click-away with nothing
+  // changed does not fire it, so this will not save on every focus loss.
+  editor.addEventListener('change', async function () {
+    await rela.update({
+      type: 'ticket', id: 'TKT-001', patch: { content: editor.value },
+    });
+  });
+});
+```
+
+Three behaviours are worth knowing:
+
+- **Setting `value` from code is silent.** It fires no `input` event, matching a
+  native `<textarea>`. Loading content into the editor therefore cannot trigger
+  an autosave loop.
+- **An unedited body comes back untouched.** A WYSIWYG editor re-writes the
+  markdown it parses, so opening a body and saving it could otherwise rewrite
+  tables, headings and list markers for no reason. As long as the user has not
+  edited anything, `value` returns the original bytes exactly.
+- **Once the user edits, the whole body is rewritten to normal form.** Tables
+  are repadded to their column widths, `Setext`-underlined headings become `##`,
+  list markers are normalised — including in parts of the document the user
+  never touched. The meaning never changes, only the formatting. This is what
+  editing a parsed document means, and it is worth knowing if you diff what you
+  store.
+- **Entity references show as plain IDs.** In the data-entry form a `` `TKT-001` ``
+  reference renders as the entity's title; here it stays the ID. Titles are
+  per-user information that only the server can decide you may see, and the app
+  bridge has no call that returns them, so showing one would mean guessing.
 
 ### The `rela` bridge
 

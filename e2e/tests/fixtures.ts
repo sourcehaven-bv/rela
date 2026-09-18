@@ -1526,7 +1526,13 @@ const E2E_DEMO_APP_HTML = `<!doctype html>
     <meta name="rela-app:bridge-version" content="1">
     <meta name="rela-app:label" content="E2E Demo">
     <meta name="rela-app:description" content="Drives the rela bridge from a sandboxed iframe for e2e tests">
-    <script src="_rela.js"></script></head>
+    <script src="_rela.js"></script>
+    <!-- The optional markdown editor. A real <script src>, so the bundle runs
+         under the same path-scoped CSP an app gets in production — which is the
+         only place the editor's styling and ProseMirror's own DOM writes can
+         actually be verified (TKT-D2JML7). -->
+    <script src="_rela-editor.js"></script>
+    <link rel="stylesheet" href="_rela.css" /></head>
   <body>
     <div data-testid="status">starting</div>
     <div data-testid="feature-count"></div>
@@ -1536,6 +1542,9 @@ const E2E_DEMO_APP_HTML = `<!doctype html>
          the path-scoped CSP (connect-src 'none' + scoped img-src) must block it.
          Result lands in [data-testid=csp-probe]: 'blocked' if the boundary holds. -->
     <div data-testid="csp-probe">pending</div>
+    <rela-editor data-testid="editor" placeholder="Write markdown"></rela-editor>
+    <div data-testid="editor-value"></div>
+    <div data-testid="editor-events"></div>
     <script src="app.js"></script>
   </body>
 </html>`;
@@ -1578,6 +1587,25 @@ ready(async function () {
   } catch (e) {
     statusEl.textContent = 'error: ' + (e && e.message ? e.message : e);
   }
+});
+
+// The <rela-editor> element's contract, mirrored into the DOM so the spec can
+// read it: .value on one node, the input/change counts on another.
+var editorEl = document.querySelector('[data-testid=editor]');
+var editorValueEl = document.querySelector('[data-testid=editor-value]');
+var editorEventsEl = document.querySelector('[data-testid=editor-events]');
+var editorInputs = 0, editorChanges = 0;
+function renderEditorState() {
+  editorValueEl.textContent = JSON.stringify(editorEl.value);
+  editorEventsEl.textContent = 'input=' + editorInputs + ' change=' + editorChanges;
+}
+editorEl.addEventListener('input', function () { editorInputs++; renderEditorState(); });
+editorEl.addEventListener('change', function () { editorChanges++; renderEditorState(); });
+ready(function () {
+  // A body carrying the things a WYSIWYG round-trip is most likely to reformat:
+  // a table, a list, and an entity reference.
+  editorEl.value = '# Title\\n\\n- one\\n- two\\n\\nSee \`FEAT-001\` for detail.\\n\\n| a | b |\\n| - | - |\\n| 1 | 2 |\\n';
+  renderEditorState();
 });
 
 document.querySelector('[data-testid=link-btn]').addEventListener('click', async function () {

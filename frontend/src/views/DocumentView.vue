@@ -7,9 +7,13 @@ import { renderDocument } from '@/api/documents'
 import { useEvents } from '@/composables/useEvents'
 import { createDocumentClickHandler } from '@/composables/useDocumentClicks'
 import { useBackTarget } from '@/composables/useBackTarget'
-import { renderMermaidDiagrams, renderPlantUMLDiagrams } from '@/utils/markdown'
+import {
+  renderMermaidDiagrams,
+  renderPlantUMLDiagrams,
+  wrapTablesForScroll,
+} from '@/utils/markdown'
 import { buildReturnTo } from '@/utils/returnPath'
-import { getErrorMessage, getScriptError } from '@/api/errors'
+import { getErrorMessage, getScriptError, shouldDropHeldContent } from '@/api/errors'
 import BackButton from '@/components/common/BackButton.vue'
 import ExportMenu from '@/components/entity/ExportMenu.vue'
 import { documentExportUrl } from '@/api/transforms'
@@ -58,7 +62,9 @@ const showBlockLoader = useDelayedPending(() => loading.value && !docContent.val
 const isCached = ref(false)
 
 // Sanitized content for safe rendering
-const sanitizedContent = computed(() => DOMPurify.sanitize(docContent.value))
+const sanitizedContent = computed(() =>
+  wrapTablesForScroll(DOMPurify.sanitize(docContent.value))
+)
 
 // Template ref to the rendered body element so we can run mermaid on it.
 const docBody = useTemplateRef<HTMLElement>('docBody')
@@ -175,6 +181,18 @@ async function loadDocument(refresh = false, cold = false) {
     // or the script-error panel, so replacing a readable document with the
     // empty state on a transient failure loses the user's place for nothing.
     // A cold load has nothing to keep and correctly stays empty.
+    //
+    // A denial is the exception: content the principal may no longer read
+    // must not stay painted (#1603, CONTROL-8-03). See shouldDropHeldContent's
+    // godoc for which statuses count and why 404 is among them.
+    //
+    // isCached is deliberately NOT cleared alongside. The badge renders
+    // inside the `v-else-if="docContent"` branch that this blanking already
+    // unmounts, and every successful render reassigns it — so a stale `true`
+    // has no path to the screen, and a test for one cannot fail.
+    if (shouldDropHeldContent(err)) {
+      docContent.value = ''
+    }
   } finally {
     // Only the newest render owns the flag; an older one clearing it would
     // report "done" while the render the user is waiting on is still running,
