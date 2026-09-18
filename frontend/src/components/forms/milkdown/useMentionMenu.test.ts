@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { useMentionMenu, rankByIdMatch } from './useMentionMenu'
+import { useMentionMenu } from './useMentionMenu'
+import { rankByIdMatch } from './rankMentions'
 import type { Entity } from '@/types'
 
 const searchEntities = vi.fn()
