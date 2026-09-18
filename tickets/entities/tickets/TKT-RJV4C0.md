@@ -5,7 +5,7 @@ title: Docs and analyze remedy still say faces cannot be adopted on populated ty
 kind: docs
 priority: medium
 effort: s
-status: backlog
+status: done
 ---
 
 ## Description

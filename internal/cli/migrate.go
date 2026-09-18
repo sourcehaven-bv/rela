@@ -11,15 +11,18 @@ import (
 // MigrateCmd groups the migration commands. The default subcommand (bare
 // `rela migrate`) migrates project CONFIG files and deliberately runs
 // without project services — it must work on a project too broken to boot.
-// The data subcommands (status/gen/data/gc) migrate stored CONTENT after a
-// schema shape change (TKT-0C57FS) and need the full service bundle; see
-// requiresProject in kong.go, which distinguishes them by full command path.
+// The data subcommands (status/gen/data/gc/adopt-face) migrate stored CONTENT
+// and need the full service bundle; see requiresProject in kong.go, which
+// distinguishes them by full command path. All but adopt-face follow a schema
+// shape change (TKT-0C57FS); adopt-face repairs rows stranded without one
+// (TKT-FTOENU).
 type MigrateCmd struct {
-	Config MigrateConfigCmd `cmd:"" default:"withargs" help:"Migrate project config files to current syntax (default)."`
-	Status MigrateStatusCmd `cmd:"" help:"Show the data-schema migration status."`
-	Gen    MigrateGenCmd    `cmd:"" help:"Draft a data migration from the schema shape diff."`
-	Data   MigrateDataCmd   `cmd:"" help:"Run pending data migrations (dry-run by default)."`
-	Gc     MigrateGCCmd     `cmd:"" name:"gc" help:"Garbage-collect schema-orphaned data (dry-run by default)."`
+	Config    MigrateConfigCmd    `cmd:"" default:"withargs" help:"Migrate project config files to current syntax (default)."`
+	Status    MigrateStatusCmd    `cmd:"" help:"Show the data-schema migration status."`
+	Gen       MigrateGenCmd       `cmd:"" help:"Draft a data migration from the schema shape diff."`
+	Data      MigrateDataCmd      `cmd:"" help:"Run pending data migrations (dry-run by default)."`
+	Gc        MigrateGCCmd        `cmd:"" name:"gc" help:"Garbage-collect schema-orphaned data (dry-run by default)."`
+	AdoptFace MigrateAdoptFaceCmd `cmd:"" name:"adopt-face" help:"Adopt stranded bare rows onto a face (dry-run by default)."`
 }
 
 // MigrateConfigCmd migrates project files (schema.yaml, etc.) to current

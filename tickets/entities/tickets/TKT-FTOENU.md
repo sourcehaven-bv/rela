@@ -5,7 +5,7 @@ title: Adopt stranded bare rows into a face on a type that already has faces
 kind: enhancement
 priority: medium
 effort: m
-status: backlog
+status: done
 ---
 
 ## Description

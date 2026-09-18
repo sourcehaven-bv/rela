@@ -24,12 +24,12 @@ type StateFinding struct {
 	//     only.
 	//   - "bare-row-on-faced-type": rows stored at the bare id on a type
 	//     that declares `faces:`. No world's chain names the bare id
-	//     (BUG-HC6I2T), so the rows are unreachable. Remedy is a
-	//     `migrate_face` step for that type — detection only.
+	//     (BUG-HC6I2T), so the rows are unreachable. Remedy is
+	//     `rela migrate adopt-face` for that type — detection only.
 	//   - "unknown-entity-type": rows whose entity type the metamodel does
 	//     not define, so no coordinate on them is declared. Reported apart
 	//     from the two above because the fault is the TYPE, and neither of
-	//     their remedies can apply: `migrate_face` resolves its mapping
+	//     their remedies can apply: adopt-face resolves its mapping
 	//     against the type's declared properties, which do not exist.
 	//   - "state-type-mismatch": rows of one entity disagree about its
 	//     type. The write path refuses this at every face, so it can
@@ -120,7 +120,7 @@ func (s *Service) collectStateFamilies(
 // bool cannot carry this: three of the four answers are faults with
 // DIFFERENT remedies, and a caller holding only "not declared" has to guess
 // which sentence to print. Guessing is how a row of an undefined type came
-// to be told it lived on a type declaring `faces:` and to try `migrate_face`,
+// to be told it lived on a type declaring `faces:` and to try adopt-face,
 // which cannot resolve a type the schema never defined.
 type faceStatus int
 
@@ -143,9 +143,9 @@ const (
 // The subject is not the same field for every status, because the remedies are
 // not the same shape. `undeclared-face` is remedied per FACE (rename it, or
 // drop the rows), while `bare-row-on-faced-type` and `unknown-entity-type` are
-// remedied per TYPE — `migrate_face` takes `entity: <type>` and a mapping over
+// remedied per TYPE — adopt-face takes `--entity <type>` and a mapping over
 // that type's own property, so one finding spanning two types would describe
-// two different migration steps.
+// two different repairs.
 //
 // Keying everything by face merged every faced type in a project into a single
 // finding with an empty subject, whose [maxStateExamples] cap could then hide a
@@ -282,9 +282,9 @@ func (s *Service) CheckStates(ctx context.Context, opts Options) ([]StateFinding
 //
 // Each status gets its own code, subject and remedy. They were one code keyed
 // on the face until a review found a row of an UNDEFINED type being told it sat
-// on a type declaring `faces:` and to fix it with `migrate_face` — a step that
-// resolves its mapping against the type's declared properties, so the
-// operator's migration could not have parsed.
+// on a type declaring `faces:` and to fix it with adopt-face — which resolves
+// its mapping against the type's declared properties, so the operator's
+// command could not have run.
 //
 // Split out of [Service.CheckStates] to keep that function under the cognitive
 // complexity limit; it is a pure switch over the key and holds no state.
@@ -299,8 +299,8 @@ func coordinateFinding(k faultKey, count int, examples []string) StateFinding {
 	case faceBareOnFaced:
 		f.Code = "bare-row-on-faced-type"
 		f.Detail = fmt.Sprintf("stored at the bare id on type %q, which declares `faces:`, so no "+
-			"world's chain names it; adopt the rows into a face with a `migrate_face` "+
-			"migration step for that type (detection only)", k.subject)
+			"world's chain names it; adopt the rows into a face with "+
+			"`rela migrate adopt-face --entity %s` (detection only)", k.subject, k.subject)
 	case faceUndeclared:
 		f.Code = "undeclared-face"
 		f.Detail = fmt.Sprintf("stored under face %q, which no metamodel declaration accounts for; "+

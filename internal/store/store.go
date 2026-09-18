@@ -415,10 +415,13 @@ type EntityWriter interface {
 	//     deleting them would let removing a draft silently cut links that
 	//     unrelated entities hold on the published face.
 	//
-	// Refuses (ErrInvalidQuery) to delete the DEFAULT face while non-default
-	// faces remain: a family with no default row has no defined meaning, and
-	// world fallback (`otherwise: default`) resolves against it. Delete the
-	// whole entity, or discard the non-default faces first.
+	// Deleting the DEFAULT face while non-default faces remain is ALLOWED.
+	// It was once refused (a family was required to keep a default row), but
+	// BUG-HC6I2T removed that invariant: a type declaring `faces:` stores
+	// nothing at the zero coordinate, so the refusal would have made the
+	// flat→faced migration impossible. It is what migrate_face and
+	// `rela migrate adopt-face` do on every row they move, and
+	// TestFaces_RowCanLeaveTheZeroCoordinate pins it.
 	//
 	// Returns ErrNotFound if that face does not exist. Deleting the only
 	// remaining face is allowed and leaves no entity behind — it is
