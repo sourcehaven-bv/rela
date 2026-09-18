@@ -1544,7 +1544,7 @@ type RelationConstraint struct {
 	//
 	// Refused on a `symmetric: true` relation: symmetry is a presentation
 	// convention over ONE stored row, not a reciprocal pair, so a query from
-	// the other endpoint finds nothing. Honouring direction there would give
+	// the other endpoint finds nothing. Honoring direction there would give
 	// the two ends different counts for the same relationship, decided by
 	// which way round the edge happened to be written.
 	Direction string `yaml:"direction,omitempty"`

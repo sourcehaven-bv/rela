@@ -591,68 +591,18 @@ func (s *Service) checkRelationConstraint(
 	if c.IsIncoming() {
 		dir = DirectionIncoming
 	}
-	related, err := s.graph.RelatedEntities(ctx, e.ID, relType, dir)
+	// Only read far entities when something will actually look at one. A
+	// bare `min:`/`max:` with no filters counts edges, and resolving each
+	// far end anyway would be a per-row lookup on a whole-graph scan.
+	resolveFar := len(whereFilters) > 0 || c.TargetType != ""
+	related, err := s.graph.RelatedEntities(ctx, e.ID, relType, dir, resolveFar)
 	if err != nil {
 		return "", false, fmt.Errorf("reading %q relations: %w", relType, err)
 	}
 
 	count := 0
 	for _, rel := range related {
-		// A type filter is answered from the edge's own far type, so it is
-		// applied before anything reads properties. An UNRESOLVED edge has
-		// no type to compare: it cannot be shown to be excluded, so it
-		// falls through to the fail-closed decision below rather than being
-		// dropped here — dropping it would be the undercount that a `max:`
-		// bound silently reads as success.
-		if c.TargetType != "" && rel.Resolved && !s.sameEntityType(rel.Type, c.TargetType) {
-			continue
-		}
-		// With no property filters there is nothing further to evaluate —
-		// unless the edge is unresolved AND a type filter was asked for, in
-		// which case whether it belongs in the count is genuinely unknown
-		// and the bound decides (below).
-		if len(whereFilters) == 0 && (rel.Resolved || c.TargetType == "") {
-			count++
-			continue
-		}
-		// A target we cannot evaluate must not be silently dropped.
-		// Dropping it undercounts, which is conservative for Min (the
-		// gate still fires) but ANTI-conservative for Max: a `max: 0`
-		// gate would report "satisfied" precisely because the targets
-		// it was meant to catch could not be checked. So an unevaluable
-		// target counts as matching whenever Max is set, and is skipped
-		// otherwise — each bound fails closed.
-		//
-		// This covers the targets that REACH here: dangling references
-		// and `where` clauses the target type cannot answer. Edges whose
-		// endpoints the acting identity may not see are already gone —
-		// the gated reader drops them upstream — which is deliberate and
-		// documented on [metamodel.RelationConstraint]: a gate speaks
-		// about the visible graph, not the whole one.
-		failClosed := c.Max != nil
-
-		if !rel.Resolved {
-			if failClosed {
-				count++
-			}
-			continue
-		}
-		targetDef, ok := s.deps.Meta.GetEntityDef(rel.Type)
-		if !ok {
-			if failClosed {
-				count++
-			}
-			continue
-		}
-		rec := filter.Record{ID: rel.ID, Type: rel.Type, Properties: rel.Properties}
-		matches, mErr := filter.MatchAll(rec, whereFilters, targetDef, s.deps.Meta)
-		if mErr != nil {
-			if failClosed {
-				count++
-			}
-			continue
-		}
-		if matches {
+		if s.countsToward(rel, c, whereFilters, resolveFar) {
 			count++
 		}
 	}
@@ -667,6 +617,62 @@ func (s *Service) checkRelationConstraint(
 			*c.Max, constraintDesc, count), false, nil
 	}
 	return "", true, nil
+}
+
+// countsToward reports whether one edge counts toward a constraint's bound.
+//
+// The per-edge decision, extracted so the three concerns it balances stay
+// legible: the type filter, the property filters, and what to do about an
+// edge whose far entity could not be read.
+//
+// # Each bound fails closed
+//
+// An edge we cannot evaluate must not be silently dropped. Dropping it
+// undercounts, which is conservative for Min (the gate still fires) but
+// ANTI-conservative for Max: a `max: 0` gate would report "satisfied"
+// precisely because the edges it was meant to catch could not be checked. So
+// an unevaluable edge counts whenever Max is set, and is skipped otherwise.
+//
+// That covers the edges that REACH here: dangling references and `where`
+// clauses the far type cannot answer. Edges whose endpoints the acting
+// identity may not see are already gone — the gated reader drops them
+// upstream — which is deliberate and documented on
+// [metamodel.RelationConstraint]: a gate speaks about the visible graph, not
+// the whole one.
+func (s *Service) countsToward(
+	rel Related, c metamodel.RelationConstraint, whereFilters []*filter.Filter, resolveFar bool,
+) bool {
+	// Nothing was read, so there is nothing to filter on: every edge counts,
+	// exactly as before this seam existed.
+	if !resolveFar {
+		return true
+	}
+	failClosed := c.Max != nil
+
+	// A type filter is answered from the edge's own far type. An UNRESOLVED
+	// edge has none, so it cannot be shown to be excluded and falls through
+	// to the fail-closed decision rather than being dropped here — dropping
+	// it would be the undercount a `max:` bound reads as success.
+	if !rel.Resolved {
+		return failClosed
+	}
+	if c.TargetType != "" && !s.sameEntityType(rel.Type, c.TargetType) {
+		return false
+	}
+	if len(whereFilters) == 0 {
+		return true
+	}
+
+	targetDef, ok := s.deps.Meta.GetEntityDef(rel.Type)
+	if !ok {
+		return failClosed
+	}
+	rec := filter.Record{ID: rel.ID, Type: rel.Type, Properties: rel.Properties}
+	matches, err := filter.MatchAll(rec, whereFilters, targetDef, s.deps.Meta)
+	if err != nil {
+		return failClosed
+	}
+	return matches
 }
 
 // sameEntityType reports whether two type names denote the same declared

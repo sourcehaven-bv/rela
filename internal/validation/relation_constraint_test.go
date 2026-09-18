@@ -52,7 +52,7 @@ func relationWorkspace(
 
 // newWithGraph builds a Service wired exactly as production does: the same
 // reader backs both rule evaluation and the relation gate. Tests that assert
-// counting behaviour must go through this, not bare New — a Service with no
+// counting behavior must go through this, not bare New — a Service with no
 // graph reports every `relations:` constraint as unevaluable, which is a
 // different (and separately tested) code path.
 func newWithGraph(t *testing.T, deps lua.ReadDeps, rels [][3]string) *Service {
@@ -72,7 +72,7 @@ type testGraph struct {
 }
 
 func (g testGraph) RelatedEntities(
-	ctx context.Context, subjectID, relType string, dir Direction,
+	ctx context.Context, subjectID, relType string, dir Direction, resolveFar bool,
 ) ([]Related, error) {
 	if dir != DirectionOutgoing {
 		return nil, errors.New("testGraph: only outgoing is wired")
@@ -80,6 +80,10 @@ func (g testGraph) RelatedEntities(
 	var out []Related
 	for _, rel := range g.rels {
 		if rel[0] != subjectID || rel[1] != relType {
+			continue
+		}
+		if !resolveFar {
+			out = append(out, Related{ID: rel[2]})
 			continue
 		}
 		e, gErr := g.deps.VisibleReader.GetEntity(ctx, rel[2])

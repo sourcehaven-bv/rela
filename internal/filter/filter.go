@@ -68,7 +68,7 @@ type Filter struct {
 //   - property>=value (greater than or equal)
 //   - property=~pattern (regex match)
 //
-// operators are the recognised comparison operators, in order of specificity
+// operators are the recognized comparison operators, in order of specificity
 // (longest first) so "!=" is not read as "!" followed by "=".
 var operators = []struct {
 	str string
@@ -84,7 +84,7 @@ var operators = []struct {
 	{"=", OpEqual},
 }
 
-// Operators returns the operator strings [Parse] recognises.
+// Operators returns the operator strings [Parse] recognizes.
 //
 // Exported for the drift guard against internal/metamodel, which keeps its own
 // copy because arch-lint forbids it importing this package.

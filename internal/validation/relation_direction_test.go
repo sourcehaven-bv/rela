@@ -86,7 +86,7 @@ func TestRelationConstraint_IncomingWithTargetType(t *testing.T) {
 				Direction:  metamodel.RelationDirectionIncoming,
 				TargetType: "taak",
 				Where:      []string{"status!=gereed"},
-				Min:        ptr(1),
+				Min:        new(1),
 			},
 		},
 		Severity: "error",
@@ -181,7 +181,7 @@ func TestRelationConstraint_DirectionSelectsDifferentEdges(t *testing.T) {
 				Description: "procedure needs a gaat_over edge",
 				EntityType:  "procedure",
 				Relations: map[string]metamodel.RelationConstraint{
-					"gaat_over": {Direction: tc.dir, Min: ptr(1)},
+					"gaat_over": {Direction: tc.dir, Min: new(1)},
 				},
 				Severity: "error",
 			}
@@ -211,7 +211,7 @@ func TestRelationConstraint_UnresolvedEdgeCountsUnderMaxWithTargetType(t *testin
 			"gaat_over": {
 				Direction:  metamodel.RelationDirectionIncoming,
 				TargetType: "taak",
-				Max:        ptr(0),
+				Max:        new(0),
 			},
 		},
 		Severity: "error",
@@ -225,6 +225,3 @@ func TestRelationConstraint_UnresolvedEdgeCountsUnderMaxWithTargetType(t *testin
 		t.Fatal("max gate passed on an unreadable edge; it must fail closed")
 	}
 }
-
-// ptr returns a pointer to n, for the *int bounds.
-func ptr(n int) *int { return &n }

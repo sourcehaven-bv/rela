@@ -1,9 +1,12 @@
 package validationgraph_test
 
 import (
+	"context"
+	"iter"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/validation"
 	"github.com/Sourcehaven-BV/rela/internal/validationgraph"
@@ -36,7 +39,7 @@ func fixture(t *testing.T) *validationgraph.Graph {
 // an already-chosen set.
 //
 // This is the regression that motivated the package. store.RelationQuery
-// honours Direction for EntityID/EntityIDs only — From and To are matched
+// honors Direction for EntityID/EntityIDs only — From and To are matched
 // unconditionally — so the natural-looking `{From: id, Direction: Incoming}`
 // silently returns the entity's OUTGOING edges. A test that only checked
 // "which end did we read" would pass against that bug, because the endpoint
@@ -61,7 +64,7 @@ func TestRelatedEntities_DirectionSelectsTheEdgeSet(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := g.RelatedEntities(ctx, tc.subject, "has-review", tc.dir)
+			got, err := g.RelatedEntities(ctx, tc.subject, "has-review", tc.dir, true)
 			if err != nil {
 				t.Fatalf("RelatedEntities: %v", err)
 			}
@@ -83,7 +86,7 @@ func TestRelatedEntities_DirectionSelectsTheEdgeSet(t *testing.T) {
 // The far entity's properties must reach the caller, since `where` matches
 // against them.
 func TestRelatedEntities_CarriesTargetProperties(t *testing.T) {
-	got, err := fixture(t).RelatedEntities(t.Context(), "A", "has-review", validation.DirectionOutgoing)
+	got, err := fixture(t).RelatedEntities(t.Context(), "A", "has-review", validation.DirectionOutgoing, true)
 	if err != nil {
 		t.Fatalf("RelatedEntities: %v", err)
 	}
@@ -120,7 +123,7 @@ func TestRelatedEntities_UnreadableTargetSurvivesAsUnresolved(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	got, err := g.RelatedEntities(ctx, "A", "has-review", validation.DirectionOutgoing)
+	got, err := g.RelatedEntities(ctx, "A", "has-review", validation.DirectionOutgoing, true)
 	if err != nil {
 		t.Fatalf("RelatedEntities: %v", err)
 	}
@@ -151,5 +154,73 @@ func TestNew_RejectsTypedNilReader(t *testing.T) {
 	var nilStore *memstore.MemStore
 	if _, err := validationgraph.New(nilStore); err == nil {
 		t.Fatal("New must reject a typed-nil reader")
+	}
+}
+
+// countingReader counts entity reads so a budget test can assert that a
+// constraint needing no far-entity data performs none.
+type countingReader struct {
+	inner validationgraph.Reader
+	gets  int
+}
+
+func (c *countingReader) GetEntity(ctx context.Context, id string) (*entity.Entity, error) {
+	c.gets++
+	return c.inner.GetEntity(ctx, id)
+}
+
+func (c *countingReader) ListRelations(
+	ctx context.Context, q store.RelationQuery,
+) iter.Seq2[*entity.Relation, error] {
+	return c.inner.ListRelations(ctx, q)
+}
+
+// A constraint that inspects nothing about the far end must read nothing.
+//
+// Before resolveFar existed, the adapter resolved every edge eagerly, so a
+// bare `min: 1` gate did one lookup per edge where the pre-seam code did
+// none — a per-row read on what is a whole-graph scan, and invisible to every
+// behavioral test because the count was still correct.
+func TestRelatedEntities_NoFarReadsWhenNotRequested(t *testing.T) {
+	ctx := t.Context()
+	st := memstore.New()
+	for _, e := range []*entity.Entity{
+		{ID: "A", Type: "ticket"},
+		{ID: "B", Type: "review-checklist"},
+		{ID: "C", Type: "review-checklist"},
+	} {
+		if err := st.CreateEntity(ctx, e); err != nil {
+			t.Fatalf("create %s: %v", e.ID, err)
+		}
+	}
+	for _, to := range []string{"B", "C"} {
+		if _, err := st.CreateRelation(ctx, "A", "has-review", to, nil); err != nil {
+			t.Fatalf("create relation to %s: %v", to, err)
+		}
+	}
+	cr := &countingReader{inner: st}
+	g, err := validationgraph.New(cr)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	got, err := g.RelatedEntities(ctx, "A", "has-review", validation.DirectionOutgoing, false)
+	if err != nil {
+		t.Fatalf("RelatedEntities: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d edges, want 2 — the edges must still be counted", len(got))
+	}
+	if cr.gets != 0 {
+		t.Errorf("performed %d entity reads with resolveFar=false; want 0", cr.gets)
+	}
+
+	// And it still reads when asked.
+	cr.gets = 0
+	if _, err := g.RelatedEntities(ctx, "A", "has-review", validation.DirectionOutgoing, true); err != nil {
+		t.Fatalf("RelatedEntities(resolveFar): %v", err)
+	}
+	if cr.gets != 2 {
+		t.Errorf("performed %d entity reads with resolveFar=true; want 2", cr.gets)
 	}
 }

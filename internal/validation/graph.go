@@ -87,11 +87,25 @@ type Graph interface {
 	// RelatedEntities returns one [Related] per edge of relType incident to
 	// subjectID on the side dir selects, in graph order.
 	//
+	// resolveFar asks for the far entities to be READ. Pass false when the
+	// caller will only count edges: a constraint with no `where` and no
+	// `target_type` inspects nothing about the far end, and reading it anyway
+	// costs one lookup per edge per entity — a per-row read on what is a
+	// collection scan. Elements then come back with Resolved=false and ID set,
+	// which is all such a caller needs.
+	//
 	// An error means the edge lookup itself failed; the caller reports the
 	// constraint as unevaluable rather than counting zero. A far entity that
 	// could not be read is NOT an error — it comes back with Resolved=false
 	// so the caller keeps its per-bound fail-closed choice.
-	RelatedEntities(ctx context.Context, subjectID, relType string, dir Direction) ([]Related, error)
+	//
+	// Note the two sources of Resolved=false are deliberately the same value:
+	// "not read because nobody asked" and "asked, could not read". A caller
+	// passing false has said it will not inspect the far end, so it must not
+	// then branch on Resolved.
+	RelatedEntities(
+		ctx context.Context, subjectID, relType string, dir Direction, resolveFar bool,
+	) ([]Related, error)
 }
 
 // NullGraph is a [Graph] with no edges, for tests that build a Service but
@@ -100,6 +114,8 @@ type Graph interface {
 type NullGraph struct{}
 
 // RelatedEntities always returns no edges.
-func (NullGraph) RelatedEntities(context.Context, string, string, Direction) ([]Related, error) {
+func (NullGraph) RelatedEntities(
+	context.Context, string, string, Direction, bool,
+) ([]Related, error) {
 	return nil, nil
 }

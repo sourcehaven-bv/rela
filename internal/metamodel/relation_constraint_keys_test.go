@@ -45,18 +45,18 @@ func TestValidateValidationRelations_NewKeys(t *testing.T) {
 			relType: "gaat_over",
 			c: RelationConstraint{
 				Direction: RelationDirectionIncoming, TargetType: "taak",
-				Where: []string{"status!=gereed"}, Min: intp(1),
+				Where: []string{"status!=gereed"}, Min: new(1),
 			},
 		},
 		{
 			name:    "outgoing default with no new keys is fine",
 			relType: "gaat_over",
-			c:       RelationConstraint{Min: intp(1)},
+			c:       RelationConstraint{Min: new(1)},
 		},
 		{
-			name:     "an unrecognised direction is refused",
+			name:     "an unrecognized direction is refused",
 			relType:  "gaat_over",
-			c:        RelationConstraint{Direction: "sideways", Min: intp(1)},
+			c:        RelationConstraint{Direction: "sideways", Min: new(1)},
 			wantErr:  true,
 			contains: "is not valid",
 		},
@@ -65,14 +65,14 @@ func TestValidateValidationRelations_NewKeys(t *testing.T) {
 			// counts depending on which way round the edge was written.
 			name:     "direction on a symmetric relation is refused",
 			relType:  "hangt_samen_met",
-			c:        RelationConstraint{Direction: RelationDirectionIncoming, Min: intp(1)},
+			c:        RelationConstraint{Direction: RelationDirectionIncoming, Min: new(1)},
 			wantErr:  true,
 			contains: "symmetric",
 		},
 		{
 			name:     "an undeclared target_type is refused",
 			relType:  "gaat_over",
-			c:        RelationConstraint{TargetType: "nonexistent", Min: intp(1)},
+			c:        RelationConstraint{TargetType: "nonexistent", Min: new(1)},
 			wantErr:  true,
 			contains: "not a declared entity type",
 		},
@@ -82,7 +82,7 @@ func TestValidateValidationRelations_NewKeys(t *testing.T) {
 			name:    "a target_type the relation cannot reach is refused",
 			relType: "gaat_over",
 			c: RelationConstraint{
-				Direction: RelationDirectionIncoming, TargetType: "procedure", Min: intp(1),
+				Direction: RelationDirectionIncoming, TargetType: "procedure", Min: new(1),
 			},
 			wantErr:  true,
 			contains: "not reachable",
@@ -92,7 +92,7 @@ func TestValidateValidationRelations_NewKeys(t *testing.T) {
 			// procedure IS reachable outgoing, so the same value is fine here.
 			name:     "the same target_type is fine on the other side",
 			relType:  "gaat_over",
-			c:        RelationConstraint{TargetType: "procedure", Min: intp(1)},
+			c:        RelationConstraint{TargetType: "procedure", Min: new(1)},
 			wantErr:  false,
 			contains: "",
 		},
@@ -101,7 +101,7 @@ func TestValidateValidationRelations_NewKeys(t *testing.T) {
 			relType: "gaat_over",
 			c: RelationConstraint{
 				Direction: RelationDirectionIncoming, TargetType: "taak",
-				Where: []string{"actief=ja"}, Min: intp(1),
+				Where: []string{"actief=ja"}, Min: new(1),
 			},
 			wantErr:  true,
 			contains: "which none of",
@@ -114,7 +114,7 @@ func TestValidateValidationRelations_NewKeys(t *testing.T) {
 			relType: "gaat_over",
 			c: RelationConstraint{
 				Direction: RelationDirectionIncoming,
-				Where:     []string{"actief=ja"}, Min: intp(1),
+				Where:     []string{"actief=ja"}, Min: new(1),
 			},
 		},
 		{
@@ -122,7 +122,7 @@ func TestValidateValidationRelations_NewKeys(t *testing.T) {
 			relType: "gaat_over",
 			c: RelationConstraint{
 				Direction: RelationDirectionIncoming,
-				Where:     []string{"nonsense=1"}, Min: intp(1),
+				Where:     []string{"nonsense=1"}, Min: new(1),
 			},
 			wantErr:  true,
 			contains: "which none of",
@@ -152,7 +152,7 @@ func TestValidateValidationRelations_NewKeys(t *testing.T) {
 // time would count nothing.
 func TestValidateValidationRelations_TargetTypeAlias(t *testing.T) {
 	m := keysMeta(RelationConstraint{
-		Direction: RelationDirectionIncoming, TargetType: "task", Min: intp(1),
+		Direction: RelationDirectionIncoming, TargetType: "task", Min: new(1),
 	}, "gaat_over")
 	def := m.Entities["taak"]
 	def.Aliases = []string{"task"}
@@ -165,4 +165,26 @@ func TestValidateValidationRelations_TargetTypeAlias(t *testing.T) {
 	}
 }
 
-func intp(n int) *int { return &n }
+// An aliased `from:`/`to:` must not make target_type unwritable.
+//
+// Comparing a resolved target_type against a raw From/To list rejects EVERY
+// spelling — including the alias the schema itself used — with a message that
+// names the alias it just refused. Both sides are canonicalized so load and
+// check agree by construction.
+func TestValidateValidationRelations_AliasedReachableType(t *testing.T) {
+	m := keysMeta(RelationConstraint{
+		Direction: RelationDirectionIncoming, TargetType: "taak", Min: new(1),
+	}, "gaat_over")
+	def := m.Entities["taak"]
+	def.Aliases = []string{"task"}
+	m.Entities["taak"] = def
+	// The relation reaches the type by its ALIAS.
+	rel := m.Relations["gaat_over"]
+	rel.From = []string{"task", "terugkerend"}
+	m.Relations["gaat_over"] = rel
+	m.InitAliases()
+
+	if errs := validateValidationRelations(m); len(errs) > 0 {
+		t.Errorf("an aliased from: must still make target_type reachable; got: %v", errs)
+	}
+}

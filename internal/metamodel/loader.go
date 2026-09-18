@@ -1604,7 +1604,7 @@ func validateValidationRelations(m *Metamodel) []string {
 						"the constraint would count nothing and pass forever",
 					rule.Name, relType))
 			}
-			errs = append(errs, validateConstraintDirection(m, rule.Name, relType, c, relDef, relOK)...)
+			errs = append(errs, validateConstraintDirection(rule.Name, relType, c, relDef, relOK)...)
 			errs = append(errs, validateConstraintTargetType(m, rule.Name, relType, c, relDef, relOK)...)
 			if c.Min == nil && c.Max == nil {
 				errs = append(errs, fmt.Sprintf(
@@ -1635,7 +1635,7 @@ func validateValidationRelations(m *Metamodel) []string {
 
 // validateConstraintDirection checks a constraint's `direction:`.
 //
-// Two ways it can be wrong, both silent at runtime. An unrecognised word
+// Two ways it can be wrong, both silent at runtime. An unrecognized word
 // would fall back to outgoing, so a rule meaning "incoming" would quietly
 // count the opposite edges. And `direction:` on a symmetric relation is
 // incoherent: symmetry is a presentation convention over ONE stored row, so
@@ -1643,7 +1643,7 @@ func validateValidationRelations(m *Metamodel) []string {
 // relationship get different counts depending on which way round the edge was
 // written.
 func validateConstraintDirection(
-	_ *Metamodel, ruleName, relType string, c RelationConstraint, relDef *RelationDef, relOK bool,
+	ruleName, relType string, c RelationConstraint, relDef *RelationDef, relOK bool,
 ) []string {
 	if c.Direction == "" {
 		return nil
@@ -1704,7 +1704,16 @@ func validateConstraintTargetType(
 				ruleName, relType, c.TargetType))
 			return errs
 		}
-		if !slices.Contains(reachable, canonical) {
+		// Both sides canonicalized: `to:`/`from:` may name an alias, and
+		// comparing a resolved name against a raw list would reject EVERY
+		// spelling of a legitimate target_type. The runtime resolves both
+		// sides too (sameEntityType), so this keeps load and check agreeing
+		// by construction rather than by the happy accident that
+		// validateRelationReferences currently rejects an aliased `to:`.
+		reaches := slices.ContainsFunc(reachable, func(t string) bool {
+			return m.ResolveAlias(t) == canonical
+		})
+		if !reaches {
 			errs = append(errs, fmt.Sprintf(
 				"validation %q: relations %q: `target_type: %s` is not reachable — "+
 					"%s %q connects to %v; the constraint would count nothing and pass forever",
@@ -1763,19 +1772,19 @@ func validateConstraintWhere(
 // internal/filter fails if that package's operators and this list diverge.
 var whereOperators = []string{"<=", ">=", "!=", "=~", "~", "<", ">", "="}
 
-// WhereOperators returns the operator set [wherePropertyName] recognises.
+// WhereOperators returns the operator set [wherePropertyName] recognizes.
 // Exported for the drift guard in internal/filter; not part of the metamodel
 // API surface.
 func WhereOperators() []string { return slices.Clone(whereOperators) }
 
 // wherePropertyName extracts the property a filter clause names, or "" if the
-// clause has no recognisable operator.
+// clause has no recognizable operator.
 //
 // Deliberately a local scan rather than a call into internal/filter: metamodel
 // may not depend on that package, and this needs only the name to the left of
 // the operator.
 //
-// An unrecognised clause yields "", which SKIPS the check rather than
+// An unrecognized clause yields "", which SKIPS the check rather than
 // reporting an error — so a parser that falls behind internal/filter loses a
 // load-time diagnostic but never rejects a schema that is actually valid.
 func wherePropertyName(clause string) string {
