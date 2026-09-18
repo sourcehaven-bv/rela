@@ -5,7 +5,7 @@ import { useSchemaStore, useUIStore } from '@/stores'
 import { useScopeNavigation } from '@/composables'
 import { useBackTarget } from '@/composables/useBackTarget'
 import { isCancelledFetch } from '@/composables/usePageData'
-import { fetchView, getCommands, getErrorMessage, createRelation } from '@/api'
+import { fetchView, getCommands, getErrorMessage } from '@/api'
 import { useWorld, worldQuery, DEFAULT_WORLD } from '@/composables/useWorld'
 import { entityRef, refBareId, refFace } from '@/utils/entityRef'
 import { worldText, type WorldTextVars } from '@/utils/worldText'
@@ -1542,31 +1542,22 @@ function closeCreate() {
 }
 
 /**
- * After a modal create: link if the section needs the reverse edge, then reload.
+ * After a modal create: refresh the page.
  *
- * `linkAs: 'to'` is already handled — the embedded form carries the relation in
- * its payload, so the edge exists by the time this runs. `linkAs: 'from'` needs
- * the opposite edge, which only the peer's endpoint can create.
+ * It does NOT link. The pre-link travels to the embedded form as a prop, and
+ * that form owns BOTH directions — `linkAs: 'to'` rides its create payload,
+ * `linkAs: 'from'` is its own post-create call. Linking here as well created the
+ * same edge twice: the second attempt failed with "relation already exists" and
+ * reported a link failure for an edge that was already correct.
  *
- * A link failure is SURFACED, never swallowed. These buttons exist so the user
- * does not link by hand; an entity created without its link, reported as
- * success, is worse than no button at all.
+ * One implementation, two entry points, is the whole reason the pre-link is a
+ * prop rather than a second code path — so the host must not re-implement half
+ * of it.
  */
 async function onCreated(created: Entity) {
   const active = activeCreate.value
   activeCreate.value = null
   if (!active) return
-
-  if (active.create.linkAs === 'from') {
-    try {
-      await createRelation(created.type, created.id, active.create.relation, active.create.peerId)
-    } catch (err) {
-      uiStore.error(
-        `${created.id} was created, but linking it failed. Link it manually. ` +
-          getErrorMessage(err)
-      )
-    }
-  }
 
   // A whole-view refetch: there is no per-section fetch, so "in place" means
   // "no navigation", not a partial update.

@@ -752,8 +752,15 @@ function initializeDefaults() {
     }
   }
 
-  // Pre-fill relation from link params (but this is usually auto-created, not shown)
-  if (linkParams.value) {
+  // Pre-fill the relation from link params.
+  //
+  // ONLY for `link_as=to`, where the new entity is the relation's TO: the
+  // create payload expresses `new --relation--> peer`, which is exactly that
+  // edge. For `link_as=from` the edge runs the other way and the payload cannot
+  // say so, so it is created by the second call after submit — putting the peer
+  // in the payload there would write a BACKWARDS edge in addition to the
+  // correct one.
+  if (linkParams.value && linkParams.value.as === 'to') {
     const rel = linkParams.value.relation
     const peer = linkParams.value.peer
     if (!relations.value[rel]) {
@@ -771,8 +778,13 @@ function initializeDefaults() {
     // "Some related entities have unknown types".
     //
     // So a create button for a relation the form does not also render as a
-    // field could not save at all. The id prefix is the same source the
-    // post-create reverse link already uses.
+    // field could not save at all.
+    //
+    // A prefix-less peer id (the demo project's categories are `backend`,
+    // `devops`) yields no type here. That is survivable on THIS path and only
+    // here: a form that renders the relation as a picker has already registered
+    // the type, and one that does not will fail loudly at submit rather than
+    // write a mistyped edge.
     const peerType = getTypeFromId(peer)
     if (peerType) {
       const types = pickerTypes.value[rel] ?? new Map<string, string>()
@@ -1491,25 +1503,38 @@ async function handleSubmit(mode: SubmitMode = 'navigate') {
     // response handling — this is the create channel.)
     surfaceWarnings(entity.warnings)
 
-    // Handle auto-linking from link_* params (e.g., from custom view "Add" buttons)
-    // For link_as=to, the relation is already included in relations.value (pre-filled)
-    // For link_as=from, we need to create the reverse relation: peer --relation--> new_entity
+    // Auto-linking from link_* params (a section or side-panel create button).
+    //
+    // `link_as` names the role of the NEW entity, which is the server's
+    // definition (internal/dataentry/sections.go) and the only one that lets a
+    // caller express both directions:
+    //
+    //   link_as=to    new entity is the relation's TO. The create payload
+    //                 already carries `relation: [peer]`, which the server
+    //                 writes as new --relation--> peer. Nothing to do here.
+    //   link_as=from  new entity is the relation's FROM, so the edge runs
+    //                 new --relation--> peer in the OTHER direction from what
+    //                 the payload can express. Needs a second call.
+    //
+    // This comment previously read the flag the opposite way ("for link_as=from
+    // we need peer --relation--> new_entity"), which was untestable while the
+    // side panel emitted param names the form never read (TKT-R4BMJM). Once the
+    // names were fixed, an incoming section produced a REDUNDANT reverse call
+    // whose peer-type lookup then failed on a prefix-less id like `backend` —
+    // reporting a link failure for an edge the payload had already written.
     if (linkParams.value && linkParams.value.as === 'from') {
       try {
         const { relation, peer } = linkParams.value
-        // Look up peer type from ID prefix
-        const peerType = getTypeFromId(peer)
-        if (!peerType) {
-          // An id whose prefix matches no type in the schema. This used to be
-          // an `if (peerType)` with no else, so the link was SKIPPED silently
-          // and the user got a created-but-unlinked entity with no indication
-          // anything went wrong (RR-8SP2UG). Throwing routes it into the same
-          // surfaced failure as a rejected request: the whole point of these
-          // buttons is that the user does not have to link by hand, so a
-          // link that did not happen has to say so.
-          throw new Error(`no entity type matches the id prefix of "${peer}"`)
-        }
-        await createRelation(peerType, peer, relation, entity.id)
+        // new --relation--> peer, addressed from the NEW entity.
+        //
+        // The endpoint is `/{plural}/{from}/relations/{rel}` with the TO in the
+        // body, so the source entity is the one in the path. Addressing it from
+        // the peer instead would write the edge backwards — and would also need
+        // the peer's TYPE, which is only derivable from its id prefix. That
+        // lookup fails for a legitimately prefix-less id (the demo project's
+        // category ids are `backend`, `devops`), so the old form of this call
+        // could not link to one at all. The new entity's type is known outright.
+        await createRelation(entity.type, entity.id, relation, peer)
       } catch (linkErr) {
         console.warn('Auto-link failed:', linkErr)
         // Surfaced on EVERY path, not just 'again'. The older reasoning — that

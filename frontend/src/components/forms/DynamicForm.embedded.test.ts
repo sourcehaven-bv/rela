@@ -14,7 +14,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
-import { useSchemaStore, useEntitiesStore } from '@/stores'
+import { useSchemaStore, useEntitiesStore, useUIStore } from '@/stores'
 import DynamicForm from './DynamicForm.vue'
 import type { Entity } from '@/types'
 
@@ -286,6 +286,59 @@ describe('DynamicForm — embedded pre-link props', () => {
     // And the host page's `prop.title` is still ignored — the prop channel
     // supplies context, it does not re-enable the URL overlay.
     expect(payload.properties?.title).not.toBe('from-host-url')
+  })
+
+  it('link_as=from creates the edge FROM the new entity, not from the peer', async () => {
+    // The direction that had no coverage, and was therefore inverted.
+    //
+    // `link_as` names the NEW entity's role (the server's definition, in
+    // internal/dataentry/sections.go). So `from` means new --relation--> peer,
+    // and the edge must be addressed from the new entity: the endpoint is
+    // /{plural}/{from}/relations/{rel} with the TO in the body.
+    //
+    // Two bugs hid here. The payload prefill ALSO added the peer, so an
+    // incoming section wrote a backwards edge in addition to the correct one.
+    // And the call was addressed from the peer, needing the peer's type from its
+    // id prefix — which fails for a legitimately prefix-less id, so linking to
+    // one was impossible.
+    const api = await import('@/api')
+    const createRelationMock = vi.mocked(api.createRelation)
+
+    const { wrapper, create } = await mountCreate({
+      embedded: true,
+      embeddedLink: { relation: 'implements', peer: 'no-prefix-id', linkAs: 'from' },
+    })
+
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    // The payload must NOT carry the edge: it can only express
+    // new --relation--> peer as `relations`, which is the `to` direction.
+    const payload = create.mock.calls[0][1] as { relations?: Record<string, unknown> }
+    expect(payload.relations?.implements).toBeUndefined()
+
+    // (type, entityId, relation, targetId) => entityId --relation--> targetId.
+    expect(createRelationMock).toHaveBeenCalledWith('ticket', CREATED.id, 'implements', 'no-prefix-id')
+  })
+
+  it('surfaces a link failure instead of silently creating an unlinked entity', async () => {
+    // RR-8SP2UG: the old code skipped the link when it could not resolve a peer
+    // type and said nothing, so the user got an orphan and no indication.
+    const api = await import('@/api')
+    vi.mocked(api.createRelation).mockRejectedValueOnce(new Error('nope'))
+
+    const { wrapper } = await mountCreate({
+      embedded: true,
+      embeddedLink: { relation: 'implements', peer: 'FEAT-1', linkAs: 'from' },
+    })
+
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    // The entity is still reported created — it exists — but the failed link
+    // must be visible rather than swallowed.
+    const ui = useUIStore()
+    expect(ui.toasts.some((t) => /linking it failed/i.test(t.message))).toBe(true)
   })
 
   it('creates in the world the host passed', async () => {
