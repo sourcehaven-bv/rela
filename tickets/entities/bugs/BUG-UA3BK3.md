@@ -4,7 +4,13 @@ type: bug
 title: analysis.faceDeclared treats a bare row as always-declared on a faced type
 description: analysis.faceDeclared returns true unconditionally for the zero face, justified by the pre-BUG-HC6I2T model where a bare id always addressed a real row. A faced type now stores no bare row, so a bare row on such a type is stranded data that rela analyze reports as healthy. Reproducible in-tree against prototypes/perf/project.
 priority: medium
-status: backlog
+why1: rela analyze reported no finding for a row stored at the bare id on a type declaring faces:, so stranded rows were invisible.
+why2: analysis.faceDeclared returned true unconditionally for the zero face, so the bare row was treated as declared for every type.
+why3: 'That early return was correct when written: before BUG-HC6I2T a named face required a zero-coordinate sibling, so every entity genuinely had a declared bare state.'
+why4: BUG-HC6I2T removed the headless-state invariant and deleted the headless-family finding, but did not revisit the mirror case — the predicate that assumed a bare row is always legitimate.
+why5: A change that inverts a data-model invariant has no mechanism to find the predicates that encoded the old one. The removed finding and this one are the same fact read in opposite directions, and only one was updated.
+prevention: 'AM-analyze-reports-bare-row-on-faced-type pins both directions of the predicate (stranded on a faced type, ordinary on a faceless one), mutation-verified so neither half can be dropped. More generally: when an invariant is removed, grep for predicates that return a constant for the case it governed — faceDeclared''s `return true` was a documented assumption, not a hidden one, and its doc comment still cited the removed invariant by name.'
+status: review
 ---
 
 ## Description

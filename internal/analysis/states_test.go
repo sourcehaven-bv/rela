@@ -334,3 +334,76 @@ func TestCheckStates_FullyDeclaredProjectIsSilent(t *testing.T) {
 		}
 	}
 }
+
+// TestCheckStates_BareRowOnFacedType pins BUG-UA3BK3: a row stored at the
+// bare id is stranded on a type that declares `faces:`, and ordinary on a
+// type that declares none.
+//
+// Both halves are load-bearing and the second is the reason this is a table
+// rather than one case. `faceDeclared` used to return true for the zero face
+// UNCONDITIONALLY, on the pre-BUG-HC6I2T reasoning that "the bare id addresses
+// it" — true then, because a named face required a zero-coordinate sibling.
+// Removing that early return outright would swing the error the other way and
+// report every entity of every faceless type in the project, which is most of
+// them. The predicate has to ASK the type.
+func TestCheckStates_BareRowOnFacedType(t *testing.T) {
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"page": {
+				Label:      "Page",
+				IDPrefixes: []string{"PAGE-"},
+				Faces:      map[string]metamodel.FaceDef{"draft": {}, "published": {}},
+			},
+			// control declares NO faces: its single state lives at the bare
+			// coordinate and is exactly where it belongs.
+			"control": {Label: "Control", IDPrefixes: []string{"CTL-"}},
+		},
+	}
+
+	svc := newServiceWith(t, meta, func(s store.Store) {
+		// A faced type carrying a bare row — the stranded shape. Seeded
+		// alongside a declared face so the family is not merely a lone
+		// orphan: the bare row is unreachable even though `PAGE-1@draft`
+		// resolves fine.
+		addEntity(s, "PAGE-1", "page", map[string]any{"title": "stranded"})
+		pageDraft := entity.New("PAGE-1", "page")
+		pageDraft.Face = mustFace(t, "draft")
+		if err := s.CreateEntity(context.Background(), pageDraft); err != nil {
+			t.Fatalf("seed PAGE-1@draft: %v", err)
+		}
+		// A faceless type carrying a bare row — the ordinary shape.
+		addEntity(s, "CTL-1", "control", map[string]any{"title": "fine"})
+	})
+
+	findings, err := svc.CheckStates(context.Background(), analysis.Options{})
+	if err != nil {
+		t.Fatalf("CheckStates: %v", err)
+	}
+
+	var bare []analysis.StateFinding
+	for _, f := range findings {
+		if f.Code == "bare-row-on-faced-type" {
+			bare = append(bare, f)
+		}
+	}
+
+	if len(bare) != 1 {
+		t.Fatalf("want exactly one bare-row finding, got %d: %+v", len(bare), bare)
+	}
+	if bare[0].Count != 1 {
+		t.Errorf("only PAGE-1's bare row is stranded; CTL-1 is a faceless type "+
+			"whose single state belongs at the bare id: count = %d, want 1", bare[0].Count)
+	}
+	// The example names the row an operator has to go and fix. A bare ref
+	// serializes as the plain id, with no `@face` suffix to chase.
+	if len(bare[0].Examples) != 1 || bare[0].Examples[0] != "PAGE-1" {
+		t.Errorf("examples should name the stranded row: got %v, want [PAGE-1]", bare[0].Examples)
+	}
+	// Reported under its own code, not folded into undeclared-face, whose
+	// Subject would be the empty string and whose remedy is different.
+	for _, f := range findings {
+		if f.Code == "undeclared-face" && f.Subject == "" {
+			t.Error("a bare row must not report as `undeclared-face` with an empty subject")
+		}
+	}
+}

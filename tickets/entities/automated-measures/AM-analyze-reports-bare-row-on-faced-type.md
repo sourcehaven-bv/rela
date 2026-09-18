@@ -4,8 +4,8 @@ type: automated-measure
 title: analyze reports a bare row on a faced type as stranded
 description: Asserts CheckStates reports a stranded-data finding for a bare row on a type declaring faces, and reports none for a bare row on a faceless type. The second half guards against a fix that drops faceDeclared's IsDefault early return outright.
 kind: test
-location: internal/analysis/states_test.go
-status: proposed
+location: internal/analysis/states_test.go:TestCheckStates_BareRowOnFacedType
+status: active
 ---
 
 ## Measure

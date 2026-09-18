@@ -21,6 +21,10 @@ type StateFinding struct {
 	//     when some OTHER type declares `draft`. Remedy is the future
 	//     data migration system (FEAT-T3EF5A, DEC-0VGTF3) — detection
 	//     only.
+	//   - "bare-row-on-faced-type": rows stored at the bare id on a type
+	//     that declares `faces:`. The bare id names no declared face
+	//     (BUG-HC6I2T), so no world can reach the row. Remedy is a
+	//     `migrate_face` step adopting it into a face — detection only.
 	//   - "state-type-mismatch": rows of one entity disagree about its
 	//     type. The write path refuses this at every face, so it can
 	//     only come from disk edits, which the load path tolerates.
@@ -28,10 +32,14 @@ type StateFinding struct {
 	// There is no "headless-family" finding. It reported a family with no
 	// zero-coordinate row, which was corrupt while one face was privileged
 	// by storage and is the ORDINARY shape of a faced entity now
-	// (BUG-HC6I2T) — the write path mandates it.
+	// (BUG-HC6I2T) — the write path mandates it. "bare-row-on-faced-type" is
+	// its MIRROR, not its return: the removed check wanted a bare row and
+	// this one reports the presence of the same thing the same change made
+	// meaningless.
 	Code string `json:"code"`
-	// Subject is the face value (undeclared-face) or the bare
-	// entity id (family findings).
+	// Subject is the face value (undeclared-face), the bare
+	// entity id (family findings), or empty (bare-row-on-faced-type,
+	// whose subject IS the zero face and has no name).
 	Subject string `json:"subject"`
 	// Count is the number of affected rows.
 	Count int `json:"count"`
@@ -106,14 +114,14 @@ func (s *Service) collectStateFamilies(
 // coupling it to world compilation would make the stranded-data report
 // disappear exactly when the schema is broken.
 //
-// The default state is never "undeclared": every entity has one by
-// construction (the bare id addresses it), so a zero face is declared
-// for every type. Only non-default states reach this in practice, but the
-// guard keeps the predicate total.
+// The zero face is declared only by a type that declares NO faces, whose
+// single state lives there and has no name. On a type declaring `faces:` a
+// bare row is stranded: since BUG-HC6I2T removed the headless-state
+// invariant, a declared face no longer requires a zero-coordinate sibling
+// and the bare id names no declared face, so no world can reach the row.
+// This used to return true unconditionally, on the pre-BUG-HC6I2T reasoning
+// that "every entity has one by construction (the bare id addresses it)".
 func (s *Service) faceDeclared(entityType string, p entity.Face) bool {
-	if p.IsDefault() {
-		return true
-	}
 	// GetEntityDef, not a raw map index: the write path does not
 	// canonicalize e.Type, so a stored row legitimately carries an alias.
 	// Indexing Entities directly would report every state of an
@@ -123,6 +131,9 @@ func (s *Service) faceDeclared(entityType string, p entity.Face) bool {
 		// A state of a type the metamodel does not define declares
 		// nothing. Reporting it is right: the row is unreachable.
 		return false
+	}
+	if p.IsDefault() {
+		return len(def.Faces) == 0
 	}
 	_, declared := def.Faces[p.String()]
 	return declared
@@ -195,6 +206,21 @@ func (s *Service) CheckStates(ctx context.Context, opts Options) ([]StateFinding
 	undeclared := make([]StateFinding, 0, len(faces))
 	for _, p := range faces {
 		agg := byFace[p]
+		// The zero face gets its own code and its own sentence. Reporting it
+		// as `undeclared-face` with an empty Subject would print `face ""`,
+		// which names nothing an operator can search for, and the remedy
+		// differs: a named undeclared face needs a rename or a delete, a bare
+		// row on a faced type needs adopting INTO a face (`migrate_face`).
+		if p.IsDefault() {
+			undeclared = append(undeclared, StateFinding{
+				Code: "bare-row-on-faced-type", Subject: "", Count: agg.count,
+				Examples: agg.examples,
+				Detail: "stored at the bare id on a type that declares `faces:`, so it names " +
+					"no declared face and no world can reach it; adopt it into a face with a " +
+					"`migrate_face` migration step (detection only)",
+			})
+			continue
+		}
 		undeclared = append(undeclared, StateFinding{
 			Code: "undeclared-face", Subject: string(p), Count: agg.count,
 			Examples: agg.examples,
