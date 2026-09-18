@@ -55,6 +55,7 @@ src/components/   → Reusable UI components
 | `src/widgets/` | The property-widget library + `registry.ts` (the type→widget dispatch). One widget per property type, each rendering both `mode: 'display'` and `mode: 'edit'` |
 | `src/components/forms/` | Form scaffolding: DynamicForm, FieldRenderer (resolves via the widget registry), RelationPicker, SidePanel |
 | `src/components/forms/milkdown/` | The WYSIWYG markdown editor (Milkdown/ProseMirror) and everything it owns: entity-ref node, `@` completion, toolbar, write-back guard |
+| `src/app-editor/` | `<rela-editor>`, the Custom Element custom apps embed. Built as a standalone IIFE (`vite.editor.config.ts`), not part of the SPA bundle. Imports the editor's shared modules; holds only the plain-DOM toolbar and `@` menu that replace the SPA's Vue ones |
 | `src/components/lists/` | EntityList, FilterBar, Pagination |
 | `src/components/common/` | Sidebar, StatusBar, Badge, Toast, BackButton |
 | `src/composables/` | Vue composables: useKeyboardShortcuts, useEvents (SSE), useListKeyboard, useScopeNavigation, useBackTarget |
@@ -243,9 +244,13 @@ CSS, so it can verify `.spinner` but not any scoped class.
 
 ## The markdown editor (Milkdown/ProseMirror)
 
-`src/components/forms/milkdown/` replaces the old EasyMDE editor in data-entry
-forms. It is WYSIWYG: it PARSES every body it opens and RE-SERIALIZES it on
-save. Four properties follow from that and must not be broken.
+`src/components/forms/milkdown/` replaces the old EasyMDE editor. It is
+WYSIWYG: it PARSES every body it opens and RE-SERIALIZES it on save. Four
+properties follow from that and must not be broken.
+
+There are TWO editors on it, and they share their load-bearing parts rather
+than mirroring them: the data-entry form (`MilkdownEditor.vue`) and the
+sandboxed custom-app element (`src/app-editor/`, see below).
 
 **Opening an entity and saving it must emit nothing.** Serialization is pinned
 by `RELA_STRINGIFY_OPTIONS` (`serializerContract.ts`) and gated by a corpus
@@ -295,8 +300,43 @@ ProseMirror table commands do not know the header is mandatory. They report
 success and then corrupt the table. Those guards (`canAddRowBefore`,
 `isInHeaderRow`, `isOnlyBodyRow`) are the exception, not the pattern.
 
-The sandboxed app editor (`src/app-editor/`) deliberately stays on EasyMDE —
-see TKT-D2JML7 and the CSP note in `internal/dataentry/CLAUDE.md`.
+### The sandboxed app editor (`src/app-editor/`)
+
+`<rela-editor>`, the Custom Element custom apps embed (TKT-D2JML7). It runs the
+same Milkdown editor behind a six-item public contract — `value`, `placeholder`,
+`readonly`, `input`, `change`, `focus()` — which is the swap seam and survived
+the EasyMDE → Milkdown move unchanged. See `internal/dataentry/CLAUDE.md` for
+the serving side.
+
+**Share the editor's modules; do not mirror them.** The command catalogue, the
+active and availability probes, the `entityRef` node, the serializer contract,
+the write-back guard and the toolbar icon geometry are all imported from
+`components/forms/milkdown/`. A second copy of any of them means the two editors
+can serialize the same body differently, which is precisely the drift the
+EasyMDE build carried (it hand-mirrored a slice of `markdown-content.css` and
+needed `markdownContentMirror.test.ts` to catch the copies diverging; both are
+gone).
+
+**What IS local is only what needs a framework in the SPA.** The bundle is a
+plain IIFE with no Vue, so the toolbar (`relaToolbar.ts`) and the `@` menu
+(`relaMentionMenu.ts`) are built through the DOM API. Anything reaching for Vue
+or the axios API layer cannot be imported into it — that is why `rankByIdMatch`
+lives in its own `rankMentions.ts` rather than in `useMentionMenu.ts`.
+
+**References render as BARE IDS here.** The SPA resolves titles from the
+server's per-principal `mentions` map; the app bridge has no such endpoint, and
+deriving a title any other way would route around the read gate (BUG-R9EHKV).
+
+**`input` comes off the ProseMirror view hook, not the markdown listener.** The
+listener is debounced 200ms, so a change made and read inside that window would
+never reach the app — exactly what an app saving on submit does. It must also
+not fire from `appendTransaction`, which runs while the new state is still being
+assembled: an earlier version did, and every listener read the document as it
+was BEFORE the edit.
+
+**`.value` reads through `guardWriteBack`.** The getter is the app's save path,
+so the churn suppression has to sit on it; returning the raw serialization would
+hand an app a reformatted body it never edited.
 
 ## CSS Architecture
 
@@ -311,7 +351,7 @@ Global styles in `App.vue` use CSS custom properties for theming:
 | File | Holds | Contract |
 |------|-------|----------|
 | `src/styles/tokens.css` | **Colour only** | Copied byte-identically into the Go binary (`internal/dataentry/apps_tokens.css`) and served to custom apps as `_rela.css`. `TestAppTokensCSSInSyncWithFrontend` fails on drift. |
-| `src/styles/scales.css` | Spacing, radius, typography, elevation | SPA-only, except the four `--font-size-*` steps noted below. |
+| `src/styles/scales.css` | Spacing, radius, typography, elevation | Not in `_rela.css`, so an app author cannot rely on these — except the four `--font-size-*` steps noted below, which ARE a frozen contract. The `<rela-editor>` bundle concatenates this file for its own chrome, which is why the editor may use `--space-*` and `--radius-*` while an app's own markup may not. |
 
 Both are imported from `main.ts`. Keep them separate: `tokens.css` documents
 itself as theme-tokens-only, so dimension scales do **not** belong there.

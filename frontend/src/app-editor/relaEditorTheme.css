@@ -1,304 +1,312 @@
-/* Re-skin EasyMDE's hardcoded light chrome with rela theme tokens so the
- * <rela-editor> follows the host theme (light/dark) instead of EasyMDE's
- * built-in white. De-scoped plain CSS, because the element renders in light
- * DOM and these target EasyMDE's generated classes directly. The tokens come
- * from _rela.css, which the app links; this only maps them onto EasyMDE's
- * elements.
+/* Chrome for the <rela-editor> Custom Element: toolbar, writing surface,
+ * placeholder and the `@` completion menu.
  *
- * Injected AFTER easymde.min.css so these win the cascade.
+ * De-scoped plain CSS, because the element renders in LIGHT DOM and these
+ * target the DOM the element builds directly. Every selector is nonetheless
+ * prefixed with `.rela-editor-shell`, so the rules cannot reach anything in the
+ * host app outside the editor.
  *
- * These used to be a hand-ported copy of the SPA editor's scoped overrides,
- * kept in sync by hand. The SPA now runs Milkdown and has no EasyMDE styling
- * left, so there is nothing to drift against: this is the only copy. Moving
- * the sandboxed app editor onto Milkdown too is the remaining half of
- * TKT-D2JML7. */
+ * Tokens come from _rela.css, which the app links. This file only maps them
+ * onto the editor's elements — it defines no colours of its own, so an app
+ * under a custom palette gets an editor that matches it.
+ *
+ * TYPOGRAPHY IS NOT HERE. The writing surface wears `md-body`, and the bundle
+ * concatenates the SPA's styles/markdown-content.css (see emitEditorCSS in
+ * vite.editor.config.ts) — the same single source of truth the entity view
+ * uses. That is what makes WYSIWYG true by construction: what the user types
+ * here is styled by the very rules that will render it later. It also replaces
+ * the hand-mirrored copy the EasyMDE build carried, which had its own test to
+ * catch the drift it invited.
+ *
+ * Concatenated LAST, so these win over the ProseMirror and markdown sheets. */
 
-.EasyMDEContainer {
+.rela-editor-shell {
+  /* Positioned so the mention menu, which Floating UI places with absolute
+     coordinates, anchors here rather than escaping to the next positioned
+     ancestor in the host app. */
+  position: relative;
+  display: block;
   width: 100%;
-}
-
-.EasyMDEContainer .CodeMirror {
   border: 1px solid var(--border-color);
-  border-radius: 0 0 6px 6px;
-  font-family: monospace;
-  font-size: 14px;
+  border-radius: var(--radius-lg);
   background: var(--input-bg);
   color: var(--text-color);
+  /* The shell owns the border and focus ring, rather than the editable area,
+     so the toolbar sits inside the same frame as the content instead of
+     reading as a separate bar stuck on top. */
+  transition:
+    border-color 120ms ease,
+    box-shadow 120ms ease;
 }
 
-.EasyMDEContainer .CodeMirror-cursor {
-  border-left-color: var(--text-color);
-}
-
-.EasyMDEContainer .CodeMirror-selected {
-  background: var(--accent-color) !important;
-  opacity: 0.3;
-}
-
-.EasyMDEContainer .CodeMirror-focused {
+.rela-editor-shell:focus-within {
   border-color: var(--accent-color);
+  box-shadow:
+    0 0 0 2px var(--focus-ring-gap),
+    0 0 0 4px var(--focus-ring);
 }
 
-.editor-toolbar {
-  border: 1px solid var(--border-color);
-  border-bottom: none;
-  border-radius: 6px 6px 0 0;
+/* ── Toolbar ─────────────────────────────────────────────────────────────── */
+
+.rela-editor-shell .rela-toolbar {
+  /* Sticks to the top while a long body scrolls under it, so the formatting
+     buttons stay reachable without scrolling back up. `top: 0` is relative to
+     whatever scroll container the APP puts the editor in, which is the right
+     answer for a host layout this bundle cannot see. */
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  display: flex;
+  /* Wraps rather than scrolls: a hidden formatting button is a button the user
+     will not find, and an app may place the editor in a narrow column. */
+  flex-wrap: wrap;
+  gap: var(--space-2xs);
+  align-items: center;
+  padding: var(--space-xs) var(--space-sm);
+  border-bottom: 1px solid var(--border-color);
+  /* Matches the shell's radius, minus its 1px border, so the corners stay
+     flush while the bar is parked at the top of its frame. */
+  border-radius: calc(var(--radius-lg) - 1px) calc(var(--radius-lg) - 1px) 0 0;
   background: var(--card-bg);
 }
 
-.editor-toolbar button {
-  color: var(--muted-text) !important;
+.rela-editor-shell .rela-toolbar-group {
+  display: flex;
+  gap: var(--space-3xs);
+  align-items: center;
 }
 
-.editor-toolbar button:hover {
-  background: var(--hover-bg);
+.rela-editor-shell .rela-toolbar-group[hidden],
+.rela-editor-shell .rela-toolbar-divider[hidden] {
+  display: none;
 }
 
-.editor-toolbar button.active {
+.rela-editor-shell .rela-toolbar-divider {
+  width: 1px;
+  height: 18px;
+  margin: 0 var(--space-2xs);
   background: var(--border-color);
 }
 
-.editor-toolbar i.separator {
-  border-left-color: var(--border-color);
-  border-right-color: var(--border-color);
+.rela-editor-shell .rela-toolbar-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--muted-text);
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    color 120ms ease,
+    border-color 120ms ease;
 }
 
-.editor-preview,
-.editor-preview-side {
-  padding: 16px;
-  background: var(--card-bg);
+.rela-editor-shell .rela-toolbar-button:hover {
+  background: var(--hover-bg);
   color: var(--text-color);
 }
 
-.editor-preview-side {
-  border: 1px solid var(--border-color);
-  border-left: none;
+/* The command would do nothing here (heading inside a list item, say). Kept
+   focusable and in the tab order — a native `disabled` control cannot be
+   focused, so disabling the button the user is tabbed to would drop focus to
+   <body> mid-interaction — so this only changes appearance and the pointer. */
+.rela-editor-shell .rela-toolbar-button.is-unavailable {
+  opacity: 0.35;
+  cursor: not-allowed;
 }
 
-/* Live-preview markdown element styling. This sandboxed app-editor bundle
-   inlines its own CSS and does NOT load the SPA's styles/markdown-content.css,
-   so the `.editor-preview` rules there are mirrored here. Keep the two in
-   sync (same values, both re-skin EasyMDE's hardcoded light-theme defaults to
-   theme tokens). Tracked with the other editor DRIFT in TKT-D2JML7. */
-.EasyMDEContainer .editor-preview h1,
-.EasyMDEContainer .editor-preview h2,
-.EasyMDEContainer .editor-preview h3,
-.EasyMDEContainer .editor-preview h4,
-.EasyMDEContainer .editor-preview h5,
-.EasyMDEContainer .editor-preview h6 {
-  margin: 24px 0 12px;
-  color: var(--text-color);
-  line-height: 1.3;
-  font-weight: 600;
+/* Hover must not suggest the button is live. */
+.rela-editor-shell .rela-toolbar-button.is-unavailable:hover {
+  background: none;
+  color: var(--muted-text);
 }
-.EasyMDEContainer .editor-preview > :first-child {
+
+/* The cursor is inside this formatting, so pressing the button removes it.
+   Colouring the button makes that legible before the click. */
+.rela-editor-shell .rela-toolbar-button.is-active {
+  border-color: color-mix(in srgb, var(--accent-color) 35%, transparent);
+  background: color-mix(in srgb, var(--accent-color) 12%, transparent);
+  color: var(--accent-color);
+}
+
+/* A read-only editor keeps its toolbar visible (the document still reads as an
+   editor) but nothing on it can act, so it is greyed as a whole rather than
+   button by button. */
+.rela-editor-shell.is-readonly .rela-toolbar {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+/* ── Writing surface ─────────────────────────────────────────────────────── */
+
+.rela-editor-shell .rela-editor-body {
+  position: relative;
+}
+
+.rela-editor-shell .rela-editor-surface {
+  position: relative;
+}
+
+.rela-editor-shell .ProseMirror {
+  min-height: 200px;
+  padding: var(--space-lg);
+  outline: none;
+}
+
+/* A trailing empty paragraph must keep its height, or the click target for
+   "start typing below the table" collapses to nothing. */
+.rela-editor-shell .ProseMirror p:empty::after {
+  content: '';
+  display: inline-block;
+}
+
+/* The shared sheet drops the top margin on its own first child; inside the
+   editor that has to apply to the ProseMirror root's first child instead. */
+.rela-editor-shell .ProseMirror > :first-child {
   margin-top: 0;
 }
-.EasyMDEContainer .editor-preview h1 {
-  font-size: 26px;
-}
-.EasyMDEContainer .editor-preview h2 {
-  font-size: 21px;
-}
-.EasyMDEContainer .editor-preview h3 {
-  font-size: 17px;
-}
-.EasyMDEContainer .editor-preview h4 {
-  font-size: 15px;
-}
-.EasyMDEContainer .editor-preview h5,
-.EasyMDEContainer .editor-preview h6 {
-  font-size: 14px;
-  color: var(--muted-text);
-}
-.EasyMDEContainer .editor-preview {
-  /* Mirrors --md-list-pad from markdown-content.css: couples list indent to
-     the task-list checkbox pull-back below. */
-  --md-list-pad: 26px;
-  overflow-wrap: anywhere;
-}
-.EasyMDEContainer .editor-preview p {
-  margin: 0 0 14px;
-}
-.EasyMDEContainer .editor-preview ul,
-.EasyMDEContainer .editor-preview ol {
-  margin: 0 0 14px;
-  padding-left: var(--md-list-pad);
-}
-.EasyMDEContainer .editor-preview ul {
-  list-style: disc outside;
-}
-.EasyMDEContainer .editor-preview ol {
-  list-style: decimal outside;
-}
-.EasyMDEContainer .editor-preview ul ul {
-  list-style-type: circle;
-}
-.EasyMDEContainer .editor-preview ul ul ul {
-  list-style-type: square;
-}
-.EasyMDEContainer .editor-preview li {
-  margin-bottom: 4px;
-  line-height: 1.6;
-}
-.EasyMDEContainer .editor-preview li > ul,
-.EasyMDEContainer .editor-preview li > ol {
-  margin: 4px 0 0;
-}
-.EasyMDEContainer .editor-preview li::marker {
-  color: var(--muted-text);
-}
-.EasyMDEContainer .editor-preview li:has(> input[type='checkbox']:first-child),
-.EasyMDEContainer .editor-preview li:has(> p:first-child > input[type='checkbox']:first-child) {
-  list-style: none;
-  margin-left: calc(-1 * var(--md-list-pad) + 4px);
-}
-.EasyMDEContainer .editor-preview li > p:first-child:has(> input[type='checkbox']:first-child) {
-  margin-bottom: 0;
-  display: inline;
-}
-.EasyMDEContainer .editor-preview code {
-  background: var(--hover-bg);
-  color: var(--text-color);
-  padding: 2px 6px;
-  border-radius: 4px;
-  font-size: 13px;
-}
-.EasyMDEContainer .editor-preview pre {
-  background: var(--hover-bg);
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
-  padding: 14px 16px;
-  overflow-x: auto;
-  font-size: 13px;
-  margin: 0 0 14px;
-}
-.EasyMDEContainer .editor-preview pre code {
-  background: none;
-  padding: 0;
-  border-radius: 0;
-  font-size: inherit;
-}
-.EasyMDEContainer .editor-preview blockquote {
-  margin: 0 0 14px;
-  padding: 8px 16px;
-  background: var(--hover-bg);
-  border-left: 4px solid var(--accent-color);
-  color: var(--muted-text);
-  border-radius: 0 4px 4px 0;
-}
-.EasyMDEContainer .editor-preview blockquote > :last-child {
+
+.rela-editor-shell .ProseMirror > :last-child {
   margin-bottom: 0;
 }
-.EasyMDEContainer .editor-preview hr {
-  border: none;
-  border-top: 1px solid var(--border-color);
-  margin: 28px 0;
+
+/* Tables are interactive here: ProseMirror adds column resize handles and a
+   selected-cell overlay the read-only view never shows. */
+.rela-editor-shell .ProseMirror .selectedCell {
+  position: relative;
 }
-.EasyMDEContainer .editor-preview img {
-  max-width: 100%;
-  height: auto;
+
+.rela-editor-shell .ProseMirror .selectedCell::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--accent-color) 18%, transparent);
+  pointer-events: none;
 }
-.EasyMDEContainer .editor-preview a {
+
+.rela-editor-shell .ProseMirror .column-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -2px;
+  bottom: 0;
+  width: 4px;
+  background: var(--accent-color);
+  pointer-events: none;
+}
+
+/* The gap cursor, shown when the caret sits between two block nodes. The
+   plugin ships a hardcoded black rule that is invisible in dark mode. */
+.rela-editor-shell .ProseMirror-gapcursor::after {
+  border-top-color: var(--text-color);
+}
+
+/* An entity reference reads as a link, matching how the rendered view shows
+   it. The dotted underline distinguishes "this is a graph reference" from an
+   ordinary markdown link without needing a second colour.
+   No href is set here: this editor renders references as bare IDs with no
+   title, because the app bridge has no per-principal mentions endpoint. */
+.rela-editor-shell a.entity-ref {
+  border-bottom: 1px dotted currentcolor;
   color: var(--accent-color);
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-.EasyMDEContainer .editor-preview table {
-  width: 100%;
-  border-collapse: collapse;
-  margin: 0 0 14px;
-}
-/* Same cell bounds as `.md-body` in styles/markdown-content.css, and for the
-   same reason: the preview also sets `overflow-wrap: anywhere`, which would
-   otherwise collapse every column's min-content width to one character. The
-   preview gets no `.md-table-scroll` wrapper (EasyMDE renders through its own
-   marked instance, which never sees rela's renderer), so a very wide table
-   still wraps here rather than scrolling — the squeezing is fixed, the scroll
-   affordance is not. */
-.EasyMDEContainer .editor-preview th,
-.EasyMDEContainer .editor-preview td {
-  padding: 8px 12px;
-  text-align: left;
-  border: 1px solid var(--border-color);
-  min-width: 12ch;
-  max-width: 40ch;
-  overflow-wrap: break-word;
-}
-.EasyMDEContainer .editor-preview th {
-  background: var(--hover-bg);
-  font-weight: 600;
+  text-decoration: none;
+  cursor: default;
 }
 
-.CodeMirror-gutters {
-  background: var(--hover-bg);
-  border-right-color: var(--border-color);
-}
-
-.CodeMirror-linenumber {
+/* Sits over the editor's first line. `pointer-events: none` so a click lands
+   on the editable surface underneath and starts editing rather than doing
+   nothing. Offsets match the ProseMirror padding above. */
+.rela-editor-shell .rela-editor-placeholder {
+  position: absolute;
+  top: var(--space-lg);
+  left: var(--space-lg);
   color: var(--muted-text);
+  pointer-events: none;
 }
 
-.EasyMDEContainer.fullscreen {
-  z-index: 9999 !important;
+.rela-editor-shell .rela-editor-placeholder[hidden] {
+  display: none;
 }
 
-/* Fullscreen mode: EasyMDE hardcodes #fff on the fixed-position toolbar and
-   editor (and #fff fade gradients at the toolbar edges, #ddd on the side
-   preview border). Re-skin them with tokens so fullscreen matches the host
-   theme like the inline editor does. */
-.editor-toolbar.fullscreen {
-  background: var(--card-bg);
-}
-.editor-toolbar.fullscreen::before {
-  background: linear-gradient(to right, var(--card-bg) 0, transparent 100%);
-}
-.editor-toolbar.fullscreen::after {
-  background: linear-gradient(to left, var(--card-bg) 0, transparent 100%);
-}
-.CodeMirror-fullscreen {
+/* ── Degraded fallback ───────────────────────────────────────────────────── */
+
+/* Shown only when the editor failed to construct, so the app has a working
+   plain editor rather than a dead element. */
+.rela-editor-shell .rela-editor-fallback {
+  display: block;
+  width: 100%;
+  min-height: 200px;
+  box-sizing: border-box;
+  padding: var(--space-lg);
+  border: none;
+  border-radius: var(--radius-lg);
   background: var(--input-bg);
-}
-.editor-preview-side {
-  border-color: var(--border-color);
+  color: var(--text-color);
+  font-family: monospace;
+  font-size: var(--font-size-base);
+  resize: vertical;
+  outline: none;
 }
 
-/* Backtick entity-reference autocomplete popup (relaBacktick.ts). Anchored at
-   the trigger backtick; rendered in light DOM at document.body, so styled with
-   the same rela tokens. z-index above EasyMDE's fullscreen layer (9999). */
-.rela-bt-popup {
-  position: fixed;
+/* ── Mention menu ────────────────────────────────────────────────────────── */
+
+/* The element SlashProvider positions. Floating UI writes `left`/`top` here,
+   so this is what must be absolutely positioned — styling the menu inside it
+   instead leaves the coordinates on a static wrapper, and the menu renders in
+   normal flow at the bottom of the editor rather than at the cursor.
+   Those writes are DOM style PROPERTIES, which the app CSP permits; it is the
+   `style` ATTRIBUTE and injected stylesheets that `style-src` governs. */
+.rela-editor-shell .rela-mention-anchor {
+  position: absolute;
+  top: 0;
+  left: 0;
   z-index: 10000;
+}
+
+.rela-editor-shell .rela-mention-anchor[data-show='false'] {
+  display: none;
+}
+
+.rela-editor-shell .rela-mention-menu {
   min-width: 220px;
   max-width: 420px;
   max-height: 240px;
   overflow-y: auto;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
   background: var(--card-bg);
   color: var(--text-color);
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
-  font-size: 0.9rem;
+  box-shadow: var(--shadow-lg);
+  font-size: var(--font-size-base);
 }
-.rela-bt-option {
-  display: flex;
-  align-items: baseline;
-  gap: 0.6rem;
-  padding: 0.4rem 0.7rem;
-  cursor: pointer;
-}
-.rela-bt-option.active {
-  background: var(--hover-bg);
-}
-.rela-bt-title {
-  flex: 1 1 auto;
-  min-width: 0;
+
+.rela-editor-shell .rela-mention-option {
+  padding: var(--space-xs) var(--space-sm);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  /* The bare entity ID, so a monospace face is the honest presentation. */
+  font-family: monospace;
+  cursor: pointer;
 }
-.rela-bt-sub {
-  flex: 0 0 auto;
+
+.rela-editor-shell .rela-mention-option.is-active {
+  background: var(--hover-bg);
+}
+
+.rela-editor-shell .rela-mention-note {
+  padding: var(--space-xs) var(--space-sm);
   color: var(--muted-text);
-  font-size: 0.8rem;
+  font-size: var(--font-size-sm);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rela-editor-shell,
+  .rela-editor-shell .rela-toolbar-button {
+    transition: none;
+  }
 }
