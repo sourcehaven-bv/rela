@@ -116,14 +116,19 @@ tokenizer guard, uFuzzy defaults, and the identity-based highlight).
 
 ## Final Checks
 
-- [ ] Commit message explains the why, not just what
+- [x] Commit message explains the why, not just what — names the two defects the
+change fixes, why type inference was abandoned (with the measured ambiguity), and
+the three load-bearing invariants a future change could undo.
 - [x] No TODOs or FIXMEs left unaddressed — grepped the new and modified sources;
 no TODO/FIXME/XXX/`console.log`/`debugger`.
 - [x] Ready for another developer to use
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
+- [x] ~~Run `/pr` command to create PR and monitor CI~~ (deferred to the operator:
+`/pr` is a user-invoked command, and by the note below the PR URL and CI status
+are deliberately not recorded here. Branch `tkt-6mz42j-mention-type-picker`,
+commit 3ee794eb.)
 
 <!--
 Deliberately NOT tracked here: the PR URL and whether CI passed.
