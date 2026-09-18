@@ -2,7 +2,7 @@
 id: REV-MYO03R
 type: review-checklist
 title: 'Review: Insert and edit external links in the Milkdown editor (plus horizontal rule and undo/redo)'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
@@ -141,7 +141,10 @@ accessibility requirement depends on.
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
+- [x] ~~Run `/pr` command to create PR and monitor CI~~ (N/A: the PR post-dates
+this checklist — `/pr` gates on the ticket already being `done` and validating
+clean, so this item could only be satisfied by a PR that does not exist yet.
+See the note below and TKT-UFV01M.)
 
 <!--
 Deliberately NOT tracked here: the PR URL and whether CI passed.

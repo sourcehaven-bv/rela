@@ -5,7 +5,7 @@ title: Insert and edit external links in the Milkdown editor (plus horizontal ru
 kind: enhancement
 priority: medium
 effort: m
-status: review
+status: done
 ---
 
 The WYSIWYG editor has no way to create, retarget or remove a hyperlink. Add a
