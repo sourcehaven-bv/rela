@@ -4,7 +4,7 @@ type: ticket
 title: 'Validation relation gates: a consumer-side graph seam, with direction and target-type filters'
 kind: enhancement
 priority: medium
-effort: m
+effort: l
 status: planning
 ---
 
@@ -68,10 +68,16 @@ task or a schedule — which is precisely the distinction the rule is about.
 vocabularies, so `where: ["status!=gereed"]` silently means different things
 depending on which type happens to be at the far end.
 
-The failure mode today is a per-entity `LoadError`
-(`internal/validation/validation.go:521`), not a load-time error, so a rule with
-an unusable `where` reports once per candidate entity at check time. The gate
-correctly refuses to pass, but the diagnosis arrives late and repeated.
+The failure mode today is worse than a noisy error: it is SILENCE. A `where`
+that fails to PARSE is already caught once per rule before any entity
+(`internal/validation/validation.go:127-140`). But `type=taak` parses fine — it
+is a syntactically valid clause naming a property that does not exist. It fails
+inside `filter.MatchAll` (`internal/filter/match.go:140-143`, "unknown
+property"), and that error is swallowed by the fail-closed branch at
+`validation.go:606-610`. Under `min:` the gate then fires on everything; under
+`max:` each unevaluable target COUNTS AS MATCHING, so the gate fires too. Either
+way the operator gets violations with no diagnostic explaining that the filter
+itself is broken.
 
 ## Scope
 
@@ -153,11 +159,20 @@ Arch-lint: `validation.mayDependOn` has no `store`, so the interface must be
 expressed in validation-local terms (ids, type names, property maps), not store
 types — exactly as `acl.Graph` returns `[]string` rather than
 `[]*entity.Relation`. The adapter lives where a store handle exists;
-`internal/validator` may depend on `store` and is the natural home, with
-`appbuild` and `analysis` wiring it.
+the adapter lives in a NEW LEAF PACKAGE (working name
+`internal/validationgraph`) that both entry points can import.
 
-Note both current entry points into `validation.Service` — `validator.New` and
-`analysis.newValidationService` — will need to supply the adapter.
+`internal/validator` is NOT a viable home: `analysis.mayDependOn` does not list
+`validator`, and `analysis.newValidationService` is the second entry point into
+`validation.Service`. `lua` being the only package both can currently reach is
+exactly why `OutgoingRelations` ended up on `ReadDeps`. Arch-lint: declare the
+new component with `mayDependOn: [entity, metamodel, store]` and add it to
+`validator` and `analysis`. `validation` does not depend on it — it declares the
+interface and receives an implementation.
+
+Note `validator.New` has FOUR production call sites: `appbuild.go:574`,
+`appbuild.go:1801`, `appbuildtest/fixture.go:250`, and `dataentry/app.go:1057`
+(the last uses a per-request `lateGatedReader`).
 
 ### Direction on the far end
 
@@ -167,18 +182,49 @@ Getting this wrong counts real edges against the wrong entities and still
 reports plausible-looking numbers, so it needs a test that distinguishes the two
 ends rather than one that merely counts.
 
-Putting the far-endpoint choice INSIDE the adapter (the interface returns "the
-entities at the other end", direction already applied) is preferable to
-returning edges and having the evaluator pick an end — it makes the mistake
-unavailable rather than merely tested for.
+Putting the far-endpoint choice INSIDE the adapter helps, but it guards only
+HALF the mistake. `store.RelationQuery.Direction` gates only
+`EntityID`/`EntityIDs`; `From` and `To` are matched unconditionally
+(`internal/store/storeutil/storeutil.go:327-348`), and there is no
+`ValidateRelationQuery`. Verified empirically: `{From:"A",
+Direction:Incoming}` still matches A→B, an OUTGOING edge, while
+`{From:"B", Direction:Incoming}` matches nothing.
 
-### Preserve the fail-closed reasoning
+CONSTRAINT: incoming must be spelled `{EntityID: id, Direction:
+DirectionIncoming}` (or `{To: id}`), never `{From: id, Direction: ...}`. The
+direction test must assert the returned edge SET, not merely which endpoint was
+read from it.
 
-The shipped code is careful: an unevaluable target counts as matching when `Max`
-is set and is skipped otherwise, so each bound fails closed
+The interface must also return ONE ELEMENT PER EDGE with a resolution
+tri-state, not a flat list of targets: relation identity is
+`(From, FromFace, Type, To)` (`internal/entity/entity.go:302-308`), so one
+subject can have N edges to the same target and today's loop counts all N;
+and an edge whose target cannot be read must stay distinguishable from an
+absent edge, or the `Max` fail-closed branch is lost.
+
+### Preserve the fail-closed reasoning that actually exists
+
+The shipped code is careful within its scope: an unevaluable target counts as
+matching when `Max` is set and is skipped otherwise
 (`validation.go:583-590`), and a constraint that cannot run is reported as a
-`LoadError` rather than silently passing (`validation.go:517-524`). Carry this
-across unchanged and keep its tests.
+`LoadError` rather than silently passing (`validation.go:517-524`). Carry both
+across unchanged, with their tests.
+
+One clarification the move must not blur: ACL-hidden targets never reach that
+branch at all. `visibility.PolicyReader.FilterRelations`
+(`internal/visibility/policyreader.go:161`) drops an edge when either endpoint
+is invisible, BEFORE the evaluator runs. That is the intended semantics —
+validation runs over an ACL-pruned graph, so a gate is a statement about the
+visible graph, not a global invariant, and the CLI/CI paths wire an
+unrestricted reader for the authoritative verdict.
+`RelationConstraint`'s godoc (`types.go:1504-1517`) and `docs/metamodel.md`
+both already say this correctly. The `failClosed` branch genuinely covers
+dangling edges and `MatchAll` errors, and stays.
+
+Small in-scope fix: the comment at `validation.go:583-590` reads as a general
+guarantee without noting the upstream pruning. Add one cross-referencing
+sentence so the next reader does not infer a stronger property than the read
+path delivers.
 
 ### Cost
 
@@ -222,7 +268,14 @@ unknown property is a LOAD error rather than a per-entity check-time error.
 - [ ] A `target_type` the keyed relation cannot reach is a load error.
 - [ ] The fail-closed semantics (per-bound unevaluable-target handling,
 unrunnable constraint reported not swallowed) are preserved with tests.
-- [ ] Face behaviour is unchanged from the shipped gate, pinned by a test.
+- [ ] Face behaviour is unchanged from the shipped gate, pinned by a test
+against a PURPOSE-BUILT faced fixture (extend
+`internal/validator/faces_test.go`). `tickets/schema.yaml` declares zero faces,
+so validating it proves nothing about faces.
+- [ ] Two face-tailed edges to the same target count as 2, pinning the
+per-edge multiplicity contract against the deferred batching work.
+- [ ] `direction:` on a `symmetric: true` relation is a load error.
+- [ ] Incoming counts are documented as entity-level, not per-face.
 - [ ] The two atlas `procedure` rules are expressible at `severity: error`.
 - [ ] `just ci` green.
 

@@ -82,8 +82,19 @@ invalid for another has no single load-time answer, and rejecting it would
 break the existing ability to write one gate across heterogeneous targets.
 
 DECISION: when `target_type` is unset, validate the `where` properties
-against the UNION of the relation's reachable types on the relevant side and
-fail at load only if the property exists on NONE of them. That catches the
+against the UNION of the relation's reachable types on the relevant side
+(`RelationDef.From`/`To`, guaranteed non-empty by `loader.go:562-569`) and fail
+at load only if the property exists on NONE of them.
+
+Design-review S2 sharpens WHY this matters, with a case the ticket's own
+motivating example walks up to: a relation reaching `taak` and `terugkerend`
+where only one declares `status`, filtered by `where: ["status!=gereed"]`.
+`MatchAll` errors for every `terugkerend` target, and under `max:` an
+unevaluable target COUNTS AS MATCHING — so a `max: 0` gate fires on entities
+that have only schedules. Partial-presence is therefore not merely untidy; it
+silently inverts a gate. Emit a load-time WARNING when a `where` property is
+missing from SOME but not all reachable types, naming them, so the operator is
+told to set `target_type`. That catches the
 real typo (a property no possible target has) without rejecting the legitimate
 heterogeneous case, and it makes the unset path strictly better than today
 rather than merely unchanged. A property present on some types and absent on
@@ -120,6 +131,19 @@ list of targets. Sketch:
     }
     RelatedEntities(ctx, subjectID, relType string, dir Direction) ([]Related, error)
 
+*Multiplicity is part of the contract (design-review C1).* Relation identity is
+`(From, FromFace, Type, To)`, not the triple — `entity.Relation.Key`
+(`internal/entity/entity.go:302-308`): "two edges on the same triple with
+different tails are two relations". A `RelationQuery` with `FromFace == nil`
+leaves the tail unfiltered, so one subject CAN have N edges to the same target.
+Today's loop counts EDGES (`validation.go:577-582`), so N face-tailed edges to
+one target count N.
+
+The per-edge shape above preserves this by construction, but the invariant must
+be stated in the interface godoc — "ONE ELEMENT PER EDGE; ids may repeat" —
+because the deferred batching work is exactly what would silently collapse it
+to a set. Pinned by a test: two face-tailed edges to one target must count 2.
+
 `Err` on the element is what carries "edge exists, target unreadable" so the
 evaluator keeps its per-bound fail-closed choice. The outer error stays for
 "the relation query itself failed", which is today's `LoadError` path.
@@ -141,6 +165,86 @@ it at `validator.New` and `analysis.newValidationService`.
 `checkRelationConstraint` then calls the interface instead of
 `deps.OutgoingRelations` + `VisibleReader.GetEntity`. The 14 shipped gates must
 behave identically; their existing tests are the gate.
+
+*The incoming query MUST use EntityID, never From (design-review C4).*
+`store.RelationQuery.Direction` gates ONLY `EntityID`/`EntityIDs`. `From` and
+`To` are matched unconditionally and independently
+(`internal/store/storeutil/storeutil.go:327-348`; `endpointMatches` at `:354`).
+There is no `ValidateRelationQuery`, so a contradictory query is not rejected.
+
+Verified empirically against `storeutil.NewRelationMatcher` with one edge A→B:
+`{From:"B", Direction:Incoming}` matches NOTHING (B's incoming edge invisible);
+`{From:"A", Direction:Incoming}` still matches A→B, an OUTGOING edge;
+`{EntityID:"B", Direction:Incoming}` matches A→B, correct.
+
+Today's query (`internal/lua/deps.go:113-117`) passes `From: fromID` AND
+`Direction: DirectionOutgoing`, where the Direction is REDUNDANT — `From` alone
+does the work. So the minimal-looking edit (keep `From`, flip `Direction`)
+silently returns outgoing edges: it compiles, runs, and yields plausible
+numbers.
+
+CONSTRAINT: the adapter spells incoming as `{EntityID: id, Direction:
+DirectionIncoming}` (or `{To: id}`), never `{From: id, Direction: ...}`.
+
+This also corrects the "far end" mitigation above: picking `rel.From` vs
+`rel.To` correctly is worthless if the QUERY returned the wrong edge set. The
+direction test must assert the returned edge SET, not merely which endpoint was
+read from it — a test that only swaps endpoint-picking would still pass against
+the wrong query.
+
+*Incoming counts are entity-level, and that must be stated (design-review S3).*
+`entity.Relation` has `FromFace` and deliberately NO `ToFace`
+(`internal/entity/entity.go:263-265`), so an incoming edge cannot be attributed
+to a face of the entity it arrives at. `internal/analysis/analysis.go:504-517`
+already establishes the asymmetry as precedent: the tail filter applies only on
+the OUTGOING direction, "an incoming bound counts edges arriving at the entity
+regardless of which state they left".
+
+Because `loadCandidates` validates every face as its own row
+(`validator.go`, `AllStates: true`), an `incoming` constraint on a 3-face entity
+evaluates identically three times and emits THREE violations for one logical
+defect. The plan's "face behaviour unchanged" criterion is inapplicable here —
+`incoming` does not exist today, so there is no behaviour to preserve.
+
+DECISION: allow it, and document that incoming counts are entity-level, not
+per-face. Do NOT make it a load error: the atlas motivating case is exactly an
+incoming constraint on a faced type (`procedure` with `concept`/`vastgesteld`),
+so rejecting it would block the use case the ticket exists for. Accept the
+duplicate reporting for now; deduplicating per-entity is the world ticket's
+business, not this one's. Pinned by a test asserting the count is
+face-independent, and named in the godoc + `docs/metamodel.md`.
+
+*Symmetric relations: reject, do not accept (design-review S4, corrected).*
+A symmetric relation is ONE stored row; no reciprocal edge is ever written
+(`Symmetric` appears nowhere in `internal/store/**` or
+`internal/entitymanager/**`; `Manager.CreateRelation` makes exactly one store
+call). Symmetry is a read-time presentation convention only
+(`internal/dataentry/default_view.go:92-95` skips the incoming pass precisely
+to avoid double-counting the same edges). So for symmetric type T with a stored
+edge A→T→B, a query from B finds nothing: A and B would get DIFFERENT counts
+for the same relationship, decided by write order. This supersedes my earlier
+"treat both directions as equivalent" note: make `direction:` on a
+`symmetric: true` relation a LOAD ERROR.
+
+*Adapter home: a new leaf package (design-review S1, DECIDED).*
+The plan originally put the store-backed adapter in `internal/validator`. That
+is unbuildable: `.go-arch-lint.yml` `analysis.mayDependOn` lists
+`frontmatter, lua, metamodel, project, schema, storage, store, tracer,
+validation` — no `validator` — and `analysis.newValidationService` is the second
+entry point into `validation.Service`. `lua` being the only package BOTH can
+reach is precisely why `OutgoingRelations` ended up on `ReadDeps`.
+
+DECISION: a new leaf package (working name `internal/validationgraph`) holding
+the interface's store-backed implementation. Arch-lint changes: declare the
+component, give it `mayDependOn: [entity, metamodel, store]`, and add it to
+`validator` and `analysis`. `validation` itself does NOT depend on it — it
+declares the interface and receives an implementation, so the criterion
+"`internal/validation` must not import `internal/store`" still holds.
+
+Rejected: adding `validator` to `analysis.mayDependOn` (a new dependency edge
+between two peers, when a shared leaf is the pattern the repo already uses);
+widening `ReadDeps` in place (keeps the non-seam shape this ticket exists to
+correct).
 
 *Commit 2 — the keys.* `Direction` and `TargetType` on `RelationConstraint`,
 passed through to the interface (direction) and applied as a pre-`where` skip
@@ -192,18 +296,47 @@ entity types and property names are appropriate and useful.
 
 **Security-Sensitive Operations:**
 
-Read gating. The gate counts what the acting identity can SEE — the shipped docs
-say so explicitly, and a gate is documented as not being a global invariant. The
-adapter must therefore keep reading through `VisibleReader` rather than taking a
-raw store handle; swapping to a raw handle would silently turn a
-visibility-scoped gate into a global one and leak the existence of hidden
-entities through violation counts. Criterion: visibility behaviour unchanged.
+Read gating. The gate counts what the acting identity can SEE. This is settled
+and CORRECT, not a defect: validation runs over an ACL-pruned graph, so a
+principal may legitimately not see issues a fuller view would show. A gate is a
+statement about the visible graph, never a global invariant. The CLI and CI
+paths wire an unrestricted reader, so the verdict that enforces the workflow
+sees everything. `RelationConstraint`'s godoc
+(`internal/metamodel/types.go:1504-1517`) and `docs/metamodel.md` both already
+say this accurately.
 
-Fail-closed semantics must survive the move: an unevaluable target counts as
-matching when `Max` is set and is skipped otherwise (each bound fails closed),
-and a constraint that cannot run is reported as a `LoadError` rather than
-silently passing. Losing either during the refactor converts a gate into a
-no-op, which is the failure class this whole line of work exists to prevent.
+The adapter must therefore keep reading through `VisibleReader`. Taking a raw
+store handle would silently turn a visibility-scoped gate into a global one and
+leak hidden entities through violation counts.
+
+*Design-review C3, resolved.* The review claimed the `failClosed` branch is
+"substantially dead" because `visibility.PolicyReader.FilterRelations`
+(`internal/visibility/policyreader.go:161`) drops an edge when either endpoint
+is hidden, BEFORE the evaluator runs — so an ACL-hidden target never reaches
+the `GetEntity` failure path. The mechanism is real and verified. The
+conclusion that it is a soundness hole is NOT accepted: pruning is the intended
+semantics per the paragraph above.
+
+Two corrections to the review: `types.go:1504-1517` is already accurate (it
+states the drop and that it matters mainly for Max), and the comment at
+`validation.go:583-590` is accurate for its own scope — it describes edges that
+REACH the loop. Neither is a lie.
+
+What IS worth fixing, and is now in scope: `validation.go:583-590` reads as a
+general guarantee without noting that ACL pruning already happened upstream. Add
+one cross-referencing sentence so the next reader does not infer a stronger
+property than the read path delivers. The `failClosed` branch still genuinely
+covers dangling edges and `MatchAll` errors, so it stays.
+
+Consequently the plan does NOT claim to "preserve fail-closed on invisible
+targets" — that was never true. It claims: behaviour unchanged, including the
+pruning, pinned by tests.
+
+Fail-closed semantics that DO exist must survive the move: an unevaluable
+target (dangling edge, or a `MatchAll` error) counts as matching when `Max` is
+set and is skipped otherwise, and a constraint that cannot run is reported as a
+`LoadError` rather than silently passing. Losing either converts a gate into a
+no-op.
 
 ## Test Plan
 
@@ -231,8 +364,21 @@ no-op, which is the failure class this whole line of work exists to prevent.
 | face behaviour unchanged | Faced fixture; count matches pre-change behaviour exactly. |
 | atlas rules expressible | Fixture mirroring `procedure`/`taak`/`terugkerend` over an incoming multi-target-type relation. |
 
-Integration: the tickets project's own 14 gates ARE the integration test — `rela
+Integration: the tickets project's own 14 gates are a regression check — `rela
 validate` over `tickets/` must report identically before and after.
+
+*But it is NOT sufficient (design-review C2).* `tickets/schema.yaml` declares
+ZERO faces (`grep -c "faces:" tickets/schema.yaml` → 0) and no `scope: content`
+relations, so it exercises only the faceless, one-edge-per-triple case — the one
+case where C1 cannot bite and where a "face behaviour unchanged" criterion
+passes vacuously. A criterion satisfied by construction rather than
+verification is the "clean run over data it never looked at" failure this
+codebase repeatedly warns about (`metamodel/types.go:96-112`,
+`loader.go:validateValidationFaces`).
+
+So the face and multiplicity criteria need a purpose-built fixture with a faced
+type and a face-tailed relation. `internal/validator/faces_test.go` already
+exists and is the place to extend.
 
 **Edge Cases:**
 
@@ -284,7 +430,30 @@ the existing tests.
 - *Scope creep into worlds/faces/batching* — each is out of scope with a
 criterion pinning "unchanged" rather than "improved".
 
-**Effort:** m
+*Design-review minors, accepted (M1-M4).*
+
+- **M1** — the ticket's stated symptom was wrong and is corrected: a `where`
+  that fails to PARSE is already caught once per rule
+  (`validation.go:127-140`). `type=taak` PARSES and fails inside `MatchAll`,
+  swallowed by the fail-closed branch — so the real symptom is SILENCE (no
+  diagnostic), not repeated errors. Strengthens the motivation.
+- **M2** — `GetEntityDef` resolves aliases (`metamodel.go:39-50`) but
+  `validateRelationReferences` checks `m.Entities` directly
+  (`loader.go:571,577`). An aliased `target_type` would pass at check time and
+  fail the new load-time check. Normalize through `ResolveAlias` on both sides;
+  negative test for an aliased `target_type`.
+- **M3** — "OUTGOING" is hardcoded in prose in TWO godocs
+  (`types.go:1495-1497` and `types.go:157-161`). `commentlint`'s `duplication`
+  rule targets exactly this. Both must be updated; the ticket's file list
+  omitted `types.go:157`.
+- **M4** — `validator.New` has FOUR production call sites, not three:
+  `appbuild.go:574`, `appbuild.go:1801`, `appbuildtest/fixture.go:250`,
+  `dataentry/app.go:1057`. The last uses a per-request `lateGatedReader`
+  (`app.go:1048`) — the only site where the ACL story is non-trivial, and the
+  one the plan omitted.
+
+**Effort:** l (re-estimated from m after design review; the original estimate
+predated C1-C4 and S1-S5)
 
 ## Documentation Planning
 
@@ -298,12 +467,39 @@ Validation" section with `direction:` and `target_type:`, including the note
 that `where` is validated at load when `target_type` is set.
 - [x] `docs-project/entities/guides/GUIDE-metamodel.md` — the mirrored copy
 updated in the same commit (TKT-R8QEU updated both).
-- [ ] N/A — CLAUDE.md: no new cross-cutting convention; the seam follows the
-existing consumer-side-interface rule already documented there.
+- [x] ~~CLAUDE.md~~ (N/A: no new cross-cutting convention; the seam follows the
+existing consumer-side-interface rule already documented there)
 
 ## Design Review
 
-- [ ] Run `/design-review` before starting implementation
-- [ ] All critical/significant findings addressed in plan
+- [x] Run `/design-review` before starting implementation
+- [x] All critical/significant findings addressed in plan
 
-**Design Review Findings:** pending — see note below.
+**Design Review Findings:** 4 critical, 5 significant, 5 minor. All critical and
+significant findings are addressed in this plan and the ticket; each has a
+review-response entity linked to TKT-NA2O5G.
+
+- RR-CE7JVU (critical) — flat `[]Target` loses edge multiplicity → per-edge
+  return with a stated "ids may repeat" invariant + pinning test.
+- RR-WXZ00T (critical) — `Direction` gates only `EntityID`, so `{From, Incoming}`
+  silently returns OUTGOING edges → hard constraint on the query spelling,
+  verified empirically; test must assert the edge SET.
+- RR-YTRVNW (critical) — plan claimed a `Max` fail-closed guarantee that does
+  not hold for ACL-hidden targets → mechanism accepted, "soundness hole"
+  conclusion REJECTED (pruning is intended); claim corrected to
+  "behaviour unchanged", plus one clarifying comment in scope.
+- RR-MSLJHN (critical) — `tickets/` has zero faces so the named integration test
+  passed vacuously → purpose-built faced fixture required.
+- RR-CNM4HB (significant) — `analysis` cannot import `validator`, so the
+  proposed adapter home was unbuildable → new leaf package.
+- RR-M2XRW2 (significant) — partial-presence `where` on a multi-type relation
+  silently inverts a `max` gate → validate against the reachable-type union,
+  warn on partial presence.
+- RR-WCH0E6 (significant) — `direction:` on a symmetric relation gives the two
+  endpoints different counts → load error.
+- RR-LS7AG1 (significant) — incoming on a faced type reports once per face →
+  allowed and documented as entity-level; not a load error, since the atlas case
+  needs it.
+
+Minors M1-M4 accepted and folded in (see Risk Assessment). Effort re-estimated
+m → l.
