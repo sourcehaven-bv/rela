@@ -2,7 +2,7 @@
 id: REV-AP1PDB
 type: review-checklist
 title: 'Review: Create related entities from the entity detail page (section + header buttons, modal or page flow)'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
@@ -17,10 +17,10 @@ status: in-progress
 Full `just ci` passes, exit 0 — that is the authoritative run and includes the
 docs gate the cheaper targets skip.
 
-Go: all packages pass. Frontend: 2801 tests across 179 files.
-`just lint` 0 issues; `just arch-lint` OK; `just plimsoll` clean;
-`just comment-lint` clean across 15,064 comments; `just lint-md` 0 issues.
-Coverage 79.9%, both thresholds PASS.
+Go: all packages pass. Frontend: 2801 tests across 179 files. `just lint` 0
+issues; `just arch-lint` OK; `just plimsoll` clean; `just comment-lint` clean
+across 15,064 comments; `just lint-md` 0 issues. Coverage 79.9%, both thresholds
+PASS.
 
 Lint found four things in my own diff, all fixed rather than suppressed: three
 British spellings, and `handleV1CreateEntity` crossing the 60-statement `funlen`
@@ -64,14 +64,14 @@ critical and significant are `addressed`; one minor is `deferred` with a reason.
 | RR-WGNYNY | significant | `docs/data-entry.md` is generated; my hand-edit was discarded and failed the docs-check gate |
 
 The deferral is argued, not convenience: it is a pre-existing shortcut in a
-shared affordance helper, it fails toward less access (button shows, write 403s),
-and fixing it properly means making the collection-verb translation face-aware
-across every create surface. Recorded with the BUG-Y0GNSB precedent so it can be
-picked up as its own ticket.
+shared affordance helper, it fails toward less access (button shows, write
+403s), and fixing it properly means making the collection-verb translation
+face-aware across every create surface. Recorded with the BUG-Y0GNSB precedent
+so it can be picked up as its own ticket.
 
 Three of the criticals were found by *me* rather than by a reviewer — two during
-manual verification, one while writing the AC10 test the plan had promised.
-That is the argument for doing both.
+manual verification, one while writing the AC10 test the plan had promised. That
+is the argument for doing both.
 
 RR-WGNYNY came from the full `just ci` run, after `lint`, `test`, `arch-lint`,
 `plimsoll`, `comment-lint`, `lint-md` and `coverage-check` had all passed: the
@@ -126,14 +126,14 @@ wrong write. Called out rather than rounded up.
 - [x] Ready for another developer to use
 
 Five commits, each scoped to one concern, each stating the reasoning rather than
-the mechanism — in particular why this narrows TKT-651W rather than reversing it,
-and why two bugs that masked each other had to be fixed together.
+the mechanism — in particular why this narrows TKT-651W rather than reversing
+it, and why two bugs that masked each other had to be fixed together.
 
-No TODO or FIXME added. Every probe file written during investigation was removed
-(`protoverify`, `roundtrip_probe`, `roacl_probe`, `ac10_probe`, `peer_probe`);
-the three worth keeping were promoted into real tests with explanations of what
-they guard.
+No TODO or FIXME added. Every probe file written during investigation was
+removed (`protoverify`, `roundtrip_probe`, `roacl_probe`, `ac10_probe`,
+`peer_probe`); the three worth keeping were promoted into real tests with
+explanations of what they guard.
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
+- [x] ~~Run `/pr` command to create PR and monitor CI~~ (N/A here: `/pr` gates on the ticket already being `done` and validating clean, so this item cannot be satisfied before the transition it precedes — see the note below and TKT-UFV01M)
