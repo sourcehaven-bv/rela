@@ -4,7 +4,13 @@ type: bug
 title: Face migration is not atomic and rename does not validate face sets
 description: Two related gaps found while reviewing TKT-Z4L0IU. migrateFaceStep.Run moves rows in an untransacted loop, so a crash mid-run leaves a family split across the bare coordinate and named faces. renameEntityTypeStep.Validate does not compare the two types' face sets, so a rename into a type declaring different faces can strand rows. Both produce the mixed state that other checks then fail to report.
 priority: medium
-status: backlog
+why1: migrateFaceStep.Run applied each move as a create-then-delete straight to the outer store, so a failure between the two left the row duplicated across the bare coordinate and a face.
+why2: The apply loop was written as a plain range over moves; the engine's own batched store.Tx helper (forEachEntity) was not reused because that helper wraps UpdateEntity and a face move is a create plus a delete.
+why3: A create+delete pair is a two-write operation that only looks like one, so the need for atomicity is not visible at the call site the way a multi-row update is.
+why4: 'renameEntityTypeStep.Validate has the mirror gap: ShapeProjection carries Faces and both shapes are in hand, but it compares only that the two types exist, so a rename into a type declaring different faces strands every row on an undeclared coordinate.'
+why5: 'Both are the same omission: a step that changes where a row LIVES was reasoned about as a change to what a row CONTAINS. Content changes are single writes and need no cross-type check; coordinate changes are neither.'
+prevention: 'AM-face-migration-is-atomic pins both: every move is written through a transaction view (mutation-verified against the pre-fix loop), and a rename into a divergent face set is refused at Validate naming the orphaned faces. The general rule for the next step of this kind: if a step moves a row between coordinates rather than editing it in place, it needs a transaction and a destination-shape check, because neither is implied by the step''s own YAML.'
+status: done
 ---
 
 ## Description

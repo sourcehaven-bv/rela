@@ -149,6 +149,26 @@ func draftActiveStep(
 		fmt.Fprintf(w, "  # GUESS — confirm this is a rename, not an unrelated remove+add\n")
 		fmt.Fprintf(w, "  - rename_property: {entity: %s, from: %s, to: %s}\n", owner, oldProp, newProp)
 	case "possible_entity_type_rename":
+		// A rename keeps each row's FACE, so a destination declaring a
+		// different face set would strand every row on one the new type does
+		// not name — which renameEntityTypeStep.Validate refuses. The rename
+		// guess comes from propertyShapesSimilar, which compares PROPERTIES
+		// only, so it happily pairs two types whose faces diverge.
+		//
+		// Emitted COMMENTED with the remedy named, rather than live. A live
+		// step here cannot parse, and Generate's round-trip self-check turns
+		// that into "generated draft does not parse (generator bug)" with no
+		// file at all — the tool blaming itself for a schema change the
+		// operator is entitled to make. The comment keeps the draft useful and
+		// says what has to happen first.
+		if orphaned := facesNotIn(current, d.Counterpart, live, d.Subject); len(orphaned) > 0 {
+			fmt.Fprintf(w, "  # TODO — %s declares face(s) %s that %s does not.\n",
+				d.Counterpart, strings.Join(orphaned, ", "), d.Subject)
+			fmt.Fprintf(w, "  #        Move those rows first (rename_face / migrate_face),\n")
+			fmt.Fprintf(w, "  #        then uncomment this step.\n")
+			fmt.Fprintf(w, "  # - rename_entity_type: {from: %s, to: %s}\n", d.Counterpart, d.Subject)
+			return
+		}
 		fmt.Fprintf(w, "  # GUESS — confirm this is a rename, not an unrelated remove+add\n")
 		fmt.Fprintf(w, "  - rename_entity_type: {from: %s, to: %s}\n", d.Counterpart, d.Subject)
 	case "enum_values_replaced":

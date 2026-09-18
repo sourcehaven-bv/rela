@@ -191,7 +191,42 @@ func (s *renameEntityTypeStep) Validate(from, to metamodel.ShapeProjection) erro
 	if !entityInShape(to, s.To) {
 		return fmt.Errorf("entity type %q is not in the to-schema", s.To)
 	}
+	// A rename keeps every row's FACE as well as its id — it is an in-place
+	// type change, not a move between coordinates. So a destination declaring
+	// a different face set strands every row whose face it does not declare:
+	// the row keeps a coordinate the new type names nothing at, which is
+	// exactly the shape `rela analyze states` reports as stranded data
+	// (BUG-UA3BK3). Refusing here is cheap; both shapes carry Faces, and the
+	// alternative is discovering it from an analysis run afterwards.
+	if orphaned := facesNotIn(from, s.From, to, s.To); len(orphaned) > 0 {
+		return fmt.Errorf(
+			"entity type %q declares face(s) %s that %q does not, so renaming would leave "+
+				"every row on one of them at a coordinate the new type names nothing at; "+
+				"rename or migrate those faces first (`rename_face`, `migrate_face`)",
+			s.From, strings.Join(orphaned, ", "), s.To)
+	}
 	return nil
+}
+
+// facesNotIn returns the faces fromType declares that toType does not, sorted.
+//
+// Empty for the ordinary rename, where both sides declare the same set — and
+// also where NEITHER declares any, which is the common flat-type rename.
+func facesNotIn(from metamodel.ShapeProjection, fromType string,
+	to metamodel.ShapeProjection, toType string,
+) []string {
+	dst := make(map[string]struct{}, len(to.Entities[toType].Faces))
+	for _, f := range to.Entities[toType].Faces {
+		dst[f] = struct{}{}
+	}
+	var orphaned []string
+	for _, f := range from.Entities[fromType].Faces {
+		if _, ok := dst[f]; !ok {
+			orphaned = append(orphaned, f)
+		}
+	}
+	slices.Sort(orphaned)
+	return orphaned
 }
 
 func (s *renameEntityTypeStep) Run(ctx context.Context, x *Exec) (StepResult, error) {
@@ -285,44 +320,23 @@ func (s *renameFaceStep) Run(ctx context.Context, x *Exec) (StepResult, error) {
 		return res, nil
 	}
 
+	moves := make([]faceMove, 0, len(moving))
 	for _, e := range moving {
-		// A row already at the destination is EITHER the previous run's own
-		// copy (a crash between create and delete leaves both rows — the
-		// re-run must converge, which is the idempotence the engine requires)
-		// OR a genuine COLLISION: the entity has DIFFERENT content at both
-		// coordinates and the rename would silently destroy one of them.
-		// Identical content is the former; anything else is refused with the
-		// ids named, so the operator resolves it deliberately.
-		//
-		// A collision is most often a rename ONTO the bare face while the bare
-		// row still holds the type's original content — the flat/faced
-		// boundary, which is exactly where this arc's other defects clustered.
-		existing, err := x.Store.GetEntityState(ctx, e.ID, entity.Face(s.toStored))
-		alreadyMoved := err == nil && existing != nil && sameContent(existing, e)
-		if err == nil && existing != nil && !alreadyMoved {
-			return res, fmt.Errorf(
-				"%s: cannot rename face %q to %q — a row already exists at the destination; "+
-					"drop or merge it first, or this rename would destroy one of the two",
-				e.ID, s.From, s.To)
-		}
-		if !alreadyMoved {
-			moved := *e
-			moved.Face = entity.Face(s.toStored)
-			if err := x.Store.CreateEntity(ctx, &moved); err != nil {
-				return res, fmt.Errorf("%s: create at %q: %w", e.ID, s.toStored, err)
-			}
-		}
-		if _, err := x.Store.DeleteEntityState(ctx, e.ID, entity.Face(s.fromStored)); err != nil {
-			return res, fmt.Errorf("%s: remove old face %q: %w", e.ID, s.fromStored, err)
-		}
+		moves = append(moves, faceMove{e: e, to: s.toStored})
 	}
-	return res, nil
+	return res, applyMoves(ctx, x, moves)
 }
 
-// sameContent reports whether two rows carry the same properties and body —
-// the test for "this destination row is the previous run's copy".
+// sameContent reports whether two rows carry the same type, properties and
+// body — the test for "this destination row is the previous run's copy".
+//
+// Type is compared even though a family's rows share one by invariant. This
+// answer decides whether [applyFaceMove] SKIPS the create and deletes the
+// source anyway, so a false positive destroys a row without having copied it;
+// the cost of the extra comparison is nothing against that.
 func sameContent(a, b *entity.Entity) bool {
-	return a.Content == b.Content && reflect.DeepEqual(a.Properties, b.Properties)
+	return a.Type == b.Type && a.Content == b.Content &&
+		reflect.DeepEqual(a.Properties, b.Properties)
 }
 
 // faceInShape reports whether a projection declares the named face for a type.
@@ -449,11 +463,7 @@ func (s *migrateFaceStep) Validate(from, to metamodel.ShapeProjection) error {
 func (s *migrateFaceStep) Run(ctx context.Context, x *Exec) (StepResult, error) {
 	res := StepResult{Kind: s.Kind(), Target: s.Target()}
 
-	type move struct {
-		e  *entity.Entity
-		to string
-	}
-	var moves []move
+	var moves []faceMove
 	unmapped := map[string]int{}
 	q := store.EntityQuery{Type: s.Entity, AllStates: true}
 	for e, err := range x.Store.ListEntities(ctx, q) {
@@ -478,7 +488,7 @@ func (s *migrateFaceStep) Run(ctx context.Context, x *Exec) (StepResult, error) 
 			unmapped[v]++
 			continue
 		}
-		moves = append(moves, move{e: e, to: target})
+		moves = append(moves, faceMove{e: e, to: target})
 	}
 
 	for _, value := range slices.Sorted(maps.Keys(unmapped)) {
@@ -496,30 +506,118 @@ func (s *migrateFaceStep) Run(ctx context.Context, x *Exec) (StepResult, error) 
 		return res, nil
 	}
 
-	for _, m := range moves {
-		// Same contract as rename_face: a destination row holding identical
-		// content is the previous run's copy and the move is finished; anything
-		// else is a genuine collision that would destroy one of two distinct
-		// rows, so it is refused with the id named.
-		existing, err := x.Store.GetEntityState(ctx, m.e.ID, entity.Face(m.to))
-		alreadyMoved := err == nil && existing != nil && sameContent(existing, m.e)
-		if err == nil && existing != nil && !alreadyMoved {
-			return res, fmt.Errorf(
-				"%s: cannot move to face %q — a row already exists there with different content; "+
-					"drop or merge it first, or this move would destroy one of the two", m.e.ID, m.to)
-		}
-		if !alreadyMoved {
-			moved := *m.e
-			moved.Face = entity.Face(m.to)
-			if err := x.Store.CreateEntity(ctx, &moved); err != nil {
-				return res, fmt.Errorf("%s: create at face %q: %w", m.e.ID, m.to, err)
+	return res, applyMoves(ctx, x, moves)
+}
+
+// faceMove is one row and the face it is headed for. Shared by the two steps
+// that relocate rows between coordinates — `migrate_face` (off the bare id) and
+// `rename_face` (between named faces).
+type faceMove struct {
+	e  *entity.Entity
+	to string
+}
+
+// applyMoves relocates every row in moves, batched through store.Tx.
+//
+// Each move is a CREATE at the target face followed by a DELETE of the source
+// row, so a failure between the two leaves the family holding BOTH — the row
+// duplicated rather than moved. A transaction makes the pair atomic where the
+// backend can promise it (pg, sqlite: rollback) and serializes it against other
+// writers everywhere.
+//
+// On fs/mem there is no rollback, so a mid-batch failure leaves earlier moves
+// applied AND the failing move half-applied (created at the target, not yet
+// deleted at the source). The step is idempotent precisely so a re-run
+// converges from there — [applyFaceMove]'s `alreadyMoved` path is what makes
+// that the documented recovery rather than a repair job.
+//
+// Batched rather than one transaction over every move for the reason
+// [updateBatchSize] gives: on pg a single graph-wide transaction stalls every
+// other writer for its whole duration.
+//
+// Shared by both relocating steps rather than copied into each: they differ in
+// which coordinate a row moves FROM, never in what a half-applied move leaves
+// behind, so a second copy of this loop would be a second place to forget the
+// transaction.
+func applyMoves(ctx context.Context, x *Exec, moves []faceMove) error {
+	for start := 0; start < len(moves); start += updateBatchSize {
+		batch := moves[start:min(start+updateBatchSize, len(moves))]
+		err := x.Store.Tx(ctx, func(s store.Store) error {
+			for _, m := range batch {
+				if err := applyFaceMove(ctx, s, m.e, m.to); err != nil {
+					return err
+				}
 			}
-		}
-		if _, err := x.Store.DeleteEntityState(ctx, m.e.ID, m.e.Face); err != nil {
-			return res, fmt.Errorf("%s: remove the zero-coordinate row: %w", m.e.ID, err)
+			return nil
+		})
+		if err != nil {
+			return err
 		}
 	}
-	return res, nil
+	return nil
+}
+
+// applyFaceMove relocates one row from its current face to `to`.
+//
+// Idempotent, and that is load-bearing: fs/mem give no rollback, so a batch
+// that fails part-way leaves earlier moves applied and a re-run has to skip
+// them rather than collide. A destination row holding identical content is the
+// previous run's copy and the move is finished; anything else is a genuine
+// collision that would destroy one of two distinct rows, so it is refused with
+// the id named — same contract as rename_face.
+//
+// `s` is the transaction view, never the outer store: writing through the
+// outer store from inside Tx deadlocks on fs/mem and bypasses the transaction
+// on pg.
+func applyFaceMove(ctx context.Context, s store.Store, e *entity.Entity, to string) error {
+	var alreadyMoved bool
+	if existing, err := s.GetEntityState(ctx, e.ID, entity.Face(to)); err == nil && existing != nil {
+		alreadyMoved = sameContent(existing, e)
+		if !alreadyMoved {
+			return fmt.Errorf(
+				"%s: cannot move face %q to %q — a row already exists at the destination with "+
+					"different content; drop or merge it first, or this move would destroy one "+
+					"of the two", e.ID, e.Face, to)
+		}
+	}
+	if !alreadyMoved {
+		moved := *e
+		moved.Face = entity.Face(to)
+		if err := s.CreateEntity(ctx, &moved); err != nil {
+			return fmt.Errorf("%s: create at face %q: %w", e.ID, to, err)
+		}
+	}
+	// Deleting a face takes its OUTGOING edges with it — they were written
+	// against that face and nothing else can own them (see the
+	// store.DeleteEntityState contract). The CreateEntity above copies the
+	// row's content, not its edges, so without re-creating them a move
+	// silently destroys every relation the row owned. Incoming edges are
+	// entity-level and survive the delete untouched.
+	//
+	// DeleteResult names exactly what went, which is why the result is read
+	// rather than discarded: the store reports what it destroyed and this is
+	// the code that has to listen.
+	del, err := s.DeleteEntityState(ctx, e.ID, e.Face)
+	if err != nil {
+		return fmt.Errorf("%s: remove the source row at face %q: %w", e.ID, e.Face, err)
+	}
+	for _, rel := range del.DeletedRelations {
+		if rel.From != e.ID || rel.FromFace != e.Face {
+			// An incoming edge, or one tailed on another face: not ours to
+			// move. Nothing observed produces these, but re-creating one on
+			// the wrong tail would invent an edge rather than preserve it.
+			continue
+		}
+		if _, err := s.CreateRelation(ctx, e.ID, rel.Type, rel.To, &store.RelationData{
+			Properties: rel.Properties,
+			Content:    rel.Content,
+			FromFace:   entity.Face(to),
+		}); err != nil {
+			return fmt.Errorf("%s: carry relation %q to %q across to face %q: %w",
+				e.ID, rel.Type, rel.To, to, err)
+		}
+	}
+	return nil
 }
 
 // enumValuesIn returns the declared value set of an entity property, whether it
