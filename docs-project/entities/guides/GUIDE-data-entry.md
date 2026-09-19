@@ -4110,12 +4110,30 @@ Context-specific variables:
 
 | Variable            | Available In         | Description              |
 | ------------------- | -------------------- | ------------------------ |
-| `RELA_ENTITY_ID`    | entity, view         | Current entity ID        |
+| `RELA_ENTITY_ID`    | entity, view         | Current entity ID, always bare |
 | `RELA_ENTITY_TYPE`  | entity, view         | Current entity type      |
+| `RELA_ENTITY_FACE`  | entity, view         | Face on screen, empty for a faceless type |
+| `RELA_ENTITY_REF`   | entity, view         | Address: `ID@face`, or the bare ID when there is no face |
 | `RELA_LIST_ID`      | list                 | Current list ID          |
 | `RELA_VIEW_ID`      | view                 | Current view ID          |
 
 Custom variables from `env:` are added to the process environment.
+
+On an entity type that declares [faces](content-states.md), a command runs
+against the face the reader has on screen. `RELA_ENTITY_ID` stays bare, so a
+script that predates faces keeps working unchanged; `RELA_ENTITY_REF` is the
+address `rela update` and the HTTP API accept, so a face-aware script writes
+back to the face it read:
+
+```bash
+rela update "$RELA_ENTITY_REF" --set reviewed_at="$(date -I)"
+```
+
+The payload an entity-context command receives is scoped to the invoking
+principal: a row they may not read refuses with the ordinary not-found, a face
+they may not read does the same, and a property hidden by `visible:` is absent
+rather than raw. A command script therefore sees what its caller sees, never
+more.
 
 ### The `::rela::` Line Protocol
 
