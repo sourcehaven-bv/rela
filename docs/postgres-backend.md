@@ -467,7 +467,7 @@ operator's separate responsibility.
 ## Data migration (schema shape changes)
 
 Each schema (tenant) tracks the shape of the metamodel its DATA conforms to
-in its own `state_kv` rows, so tenants at different points migrate
+in its own `migration_state` row, so tenants at different points migrate
 independently: `rela migrate data` resolves each store's own chain (see the
 [data-migration guide](data-migration.md)). Postgres-specific behavior:
 

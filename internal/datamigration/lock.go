@@ -22,7 +22,7 @@ import (
 // waiting for the lock.
 var ErrLockHeld = errors.New("datamigration: another migration or GC run is active")
 
-// MigrationLock serializes the writers of the migration marker/ledger and
+// MigrationLock serializes the writers of the migration record/ledger and
 // the destructive GC path across processes sharing one store (TKT-CPCBR7).
 // It is an operational mutual-exclusion primitive like the pgstore sweep's
 // advisory lock — NOT a transaction seam (that stays store.Store.Tx,
@@ -49,11 +49,15 @@ type storeLocker interface {
 // cross-process lock when the backend has one (pgstore's schema-scoped
 // advisory lock), else a lock file under cacheDir, else a process-local
 // lock (tests, cacheDir-less contexts). The cacheDir branch applies to the
-// memory backend too, ON PURPOSE: what the lock guards is the marker/ledger
-// in state.KV, and for every non-postgres backend that state lives under
-// `.rela/` (FSKV) — shared across processes — so the lock must be a file
-// beside it. Mirrors how the state.KV backend itself is chosen: backend
-// capability wins, filesystem fallback.
+// memory backend too, ON PURPOSE: the lock guards the drift ledger in state.KV
+// and the migration record beside it, and for every non-postgres backend both
+// live in the project tree — shared across processes — so the lock must be a
+// file there as well. Mirrors how the state.KV backend itself is chosen:
+// backend capability wins, filesystem fallback.
+//
+// Note the lock's home stayed `.rela/` when the migration record moved into
+// the project directory (TKT-XCJ0Y2). That is deliberate: a lock is machine
+// state, not content, so it must NOT be committed.
 func LockFor(st store.Store, cacheDir string) MigrationLock {
 	if sl, ok := st.(storeLocker); ok {
 		return &storeLock{sl: sl}

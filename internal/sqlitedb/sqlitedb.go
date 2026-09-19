@@ -340,6 +340,7 @@ CREATE INDEX IF NOT EXISTS attachments_entity_idx ON attachments(entity_id);
 ` + projectFilesDDL + `
 ` + stateKVDDL + `
 ` + commentsDDL + `
+` + migrationStateDDL + `
 ` + versionSchemaSQL + `
 `
 
@@ -421,6 +422,23 @@ CREATE TABLE IF NOT EXISTS state_kv (
 //
 // Shared between schemaSQL (fresh databases) and the v4→v5 migration
 // (existing ones), for the same reason the two DDL blocks above are.
+// migrationStateDDL carries the data-migration record (TKT-XCJ0Y2): which
+// migrations have run against this database and the schema shape its content
+// conforms to.
+//
+// In the database rather than in a file beside it, for versioning's reason
+// (TKT-4NU9ZD) rather than state_kv's: this describes the CONTENT, so shipping
+// rela.db without it would hand over every entity alongside a record claiming
+// no migration had ever run — and the next run would replay all of them.
+//
+// A single row, pinned by the id CHECK. There is exactly one store per
+// database file, so a key would be a column with one possible value.
+const migrationStateDDL = `
+CREATE TABLE IF NOT EXISTS migration_state (
+	id    INTEGER PRIMARY KEY CHECK (id = 1),
+	state TEXT NOT NULL
+) STRICT;`
+
 const commentsDDL = `
 CREATE TABLE IF NOT EXISTS comments (
 	id          TEXT NOT NULL,
