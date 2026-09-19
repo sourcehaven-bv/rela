@@ -49,6 +49,7 @@ import type { EditorView } from '@milkdown/kit/prose/view'
 import { lift } from '@milkdown/kit/prose/commands'
 
 import { RELA_COMMONMARK, configureRelaSerializer } from '@/components/forms/milkdown/editorPreset'
+import { relaCommentNode, relaCommentRemarkPlugin } from '@/components/forms/milkdown/commentNode'
 import { entityRefNode, isValidEntityRefId } from '@/components/forms/milkdown/entityRefNode'
 import { guardWriteBack } from '@/components/forms/milkdown/writeBackGuard'
 import { parseMentionQuery } from '@/components/forms/milkdown/mentionQuery'
@@ -560,6 +561,10 @@ class RelaEditorElement extends HTMLElement {
         .use(gfm)
         .use(history)
         .use(entityRefNode)
+        // The remark half must load with the node: it retypes comment-only `html`
+        // mdast nodes so the schema claims them instead of the preset's.
+        .use(relaCommentRemarkPlugin)
+        .use(relaCommentNode)
         .use(dirtyTracker)
         .use(slash)
         // `cursor` gives the gap cursor and `trailing` a way to click below a

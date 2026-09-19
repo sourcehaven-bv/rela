@@ -40,6 +40,7 @@ import './milkdownEditor.css'
 
 import { RELA_COMMONMARK, configureRelaSerializer } from './editorPreset'
 import { entityRefNode, isValidEntityRefId } from './entityRefNode'
+import { relaCommentNode, relaCommentRemarkPlugin } from './commentNode'
 import { taskList } from './taskListItem'
 import {
   entityRefResolutionPlugin,
@@ -567,6 +568,10 @@ onMounted(async () => {
     .use(history)
     .use(listener)
     .use(entityRefNode)
+    // The remark half must load with the node: it retypes comment-only `html`
+    // mdast nodes so the schema below claims them instead of the preset's.
+    .use(relaCommentRemarkPlugin)
+    .use(relaCommentNode)
     // After `gfm`: it contributes the `checked` attribute this renders.
     .use(taskList)
     .use(entityRefResolutionPlugin(resolverHandle))
