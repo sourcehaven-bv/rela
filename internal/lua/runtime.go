@@ -35,8 +35,14 @@ import (
 const (
 	defaultSearchLimit = 20
 	// argPosCreateEntityID is the position of the optional ID parameter in create_entity
-	// (type=1, properties=2, content=3, id=4).
+	// (type=1, properties=2, content=3, id=4, opts=5).
 	argPosCreateEntityID = 4
+	// argPosCreateEntityOpts is the position of the optional options table in
+	// create_entity, carrying the content state to write.
+	argPosCreateEntityOpts = 5
+	// argPosCreateRelationOpts is the position of the optional options table in
+	// create_relation (from=1, type=2, to=3, opts=4).
+	argPosCreateRelationOpts = 4
 )
 
 // stripShebang removes a shebang line from the beginning of Lua code.
@@ -1331,6 +1337,18 @@ func EntityToTable(ls *lua.LState, e *entity.Entity) *lua.LTable {
 	t.RawSetString("type", lua.LString(e.Type))
 	t.RawSetString("content", lua.LString(e.Content))
 
+	// The content state this row was read at, empty on the default face.
+	// ALWAYS present, like mod_time and redacted below, so a script never
+	// needs `e.face or "..."` — the shape of the table does not depend on
+	// the data in it.
+	//
+	// Not redacted, deliberately: Face is not a property, so visibility.Redact
+	// does not cover it. The row-level gate already decided whether this
+	// script may see the row at all; given that it may, the coordinate the row
+	// was fetched at discloses nothing the successful read did not. Same
+	// standing as `type` above.
+	t.RawSetString("face", lua.LString(e.Face.String()))
+
 	// Add modification time as ISO 8601 string (empty if zero)
 	if !e.UpdatedAt.IsZero() {
 		t.RawSetString("mod_time", lua.LString(e.UpdatedAt.Format(time.RFC3339)))
@@ -1454,6 +1472,14 @@ func relationToTable(ls *lua.LState, rel *entity.Relation) *lua.LTable {
 	t.RawSetString("from", lua.LString(rel.From))
 	t.RawSetString("type", lua.LString(rel.Type))
 	t.RawSetString("to", lua.LString(rel.To))
+	// The SOURCE's content state; empty on the default face and on every
+	// identity-scoped edge. Always present, for the reason EntityToTable's
+	// `face` is. There is no to_face: targets are faceless by construction.
+	t.RawSetString("from_face", lua.LString(rel.FromFace.String()))
+	// The relation body. Always present so `content` is not write-only: the
+	// create binding accepts it in the options table, and a key a script can
+	// set but never read back is a trap.
+	t.RawSetString("content", lua.LString(rel.Content))
 
 	if len(rel.Properties) > 0 {
 		props := ls.NewTable()
@@ -1697,7 +1723,14 @@ func (r *Runtime) luaSearch(ls *lua.LState) int {
 	return 1
 }
 
-// luaCreateEntity implements rela.create_entity(type, properties, content?, id?) -> (entity, warnings).
+// luaCreateEntity implements
+// rela.create_entity(type, properties, content?, id?, opts?) -> (entity, warnings).
+//
+// opts is an optional table; `{face = "draft"}` names the content state to
+// create on a type declaring `faces:`, which such a type REQUIRES because it
+// stores no row at the zero coordinate (BUG-HC6I2T). A faceless type must not
+// name one. Both rules are the manager's (requireCreateFaceFor); this binding
+// only makes the value expressible.
 //
 // Multi-return contract follows string.gsub semantics (NOT io.open):
 // both return values can be non-nil simultaneously. The first value
@@ -1720,6 +1753,15 @@ func (r *Runtime) luaCreateEntity(ls *lua.LState) int {
 	content := ls.OptString(3, "")
 	customID := ls.OptString(argPosCreateEntityID, "")
 
+	opts, optErr := parseWriteOpts(ls, argPosCreateEntityOpts, createEntityOptKeys, createEntityOptSet)
+	if optErr != nil {
+		ls.RaiseError("create entity error: %s", optErr.Error())
+		return 0
+	}
+
+	// The face rides CreateOptions only. createCore assigns e.Face = opts.Face,
+	// and reading it off the caller's carrier entity instead is what BUG-HC6I2T
+	// was.
 	newE := &entity.Entity{
 		ID:         customID,
 		Type:       entityType,
@@ -1727,7 +1769,7 @@ func (r *Runtime) luaCreateEntity(ls *lua.LState) int {
 		Content:    content,
 	}
 	result, err := r.deps.EntityManager.CreateEntity(
-		r.callerCtx(), newE, entity.CreateOptions{ID: customID})
+		r.callerCtx(), newE, entity.CreateOptions{ID: customID, Face: opts.Face})
 	if err != nil {
 		ls.RaiseError("create entity error: %s", err.Error())
 		return 0
@@ -1879,7 +1921,17 @@ func (r *Runtime) luaDeleteEntity(ls *lua.LState) int {
 	return 1
 }
 
-// luaCreateRelation implements rela.create_relation(from, type, to, content?) -> table
+// luaCreateRelation implements rela.create_relation(from, type, to, opts?) -> table
+//
+// opts is an optional table taking `face` (the SOURCE's content state, for a
+// `scope: content` relation type — targets are faceless by construction) and
+// `content` (the relation body).
+//
+// Position 4 previously accepted and silently IGNORED a content string: the
+// old doc comment advertised it and the body never read it. It now carries
+// the options table, so a 4th argument must be a table. That is a deliberate
+// break, and a safe one — the argument was never in the documented signature,
+// so no script could have relied on it doing anything.
 func (r *Runtime) luaCreateRelation(ls *lua.LState) int {
 	from := ls.CheckString(1)
 	relType := ls.CheckString(2)
@@ -1890,8 +1942,15 @@ func (r *Runtime) luaCreateRelation(ls *lua.LState) int {
 		return 0
 	}
 
+	opts, optErr := parseWriteOpts(ls, argPosCreateRelationOpts, createRelationOptKeys, createRelationOptSet)
+	if optErr != nil {
+		ls.RaiseError("create relation error: %s", optErr.Error())
+		return 0
+	}
+
 	rel, err := r.deps.EntityManager.CreateRelation(
-		r.callerCtx(), from, relType, to, entity.RelationOptions{})
+		r.callerCtx(), from, relType, to,
+		entity.RelationOptions{FromFace: opts.Face, Content: opts.Content})
 	if err != nil {
 		ls.RaiseError("create relation error: %s", err.Error())
 		return 0

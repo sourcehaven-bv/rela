@@ -441,6 +441,19 @@ The body is decoded strictly, so a misspelled key such as `"faces"` is a `400`
 rather than a silently ignored field. A request that means to name a face and
 fails to spell it must not look like a request that named none.
 
+A Lua script names the face the same way, in a trailing options table:
+
+```lua
+rela.create_entity("policy", {title = "Access Control"}, "", nil,
+                   { face = "draft" })
+```
+
+The script names the face **directly** rather than naming a world. A world
+resolves through a chain and may answer with a fallback, but a write has to
+name the row it changes — so the two are deliberately different vocabularies.
+See the [Lua scripting guide](lua-scripting.md) for the full options table and
+for how the other write bindings address a face.
+
 Add a `copies:` block to `schema.yaml`:
 
 ```yaml
