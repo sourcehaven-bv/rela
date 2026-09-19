@@ -65,6 +65,8 @@ func parseStep(node *yaml.Node) (Step, error) {
 		step = &renameFaceStep{}
 	case "rename_relation_type":
 		step = &renameRelationTypeStep{}
+	case "reverse_relation":
+		step = &reverseRelationStep{}
 	case "map_values":
 		step = &mapValuesStep{}
 	case "migrate_face":
@@ -368,6 +370,10 @@ type migrateFaceStep struct {
 }
 
 func (s *migrateFaceStep) Kind() string { return "migrate_face" }
+
+// resolvedSubject implements resolvingStep: faces_introduced's subject is the
+// bare entity type name.
+func (s *migrateFaceStep) resolvedSubject() string { return s.Entity }
 func (s *migrateFaceStep) Target() string {
 	return s.Entity + "." + s.Property + " → face"
 }
