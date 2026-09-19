@@ -177,3 +177,74 @@ func TestGraphQueryExplainPagedListUsesDerivedListIndex(t *testing.T) {
 		t.Fatalf("page still sorts instead of walking the index:\n%s", plan)
 	}
 }
+
+// TestEndpointMatchExplainUsesDerivedIndex pins the finding that made the
+// propCond alias refactor mandatory (TKT-RELTRV).
+//
+// A derived query index is PARTIAL:
+//
+//	CREATE INDEX ... ON entities ((properties->>'status'))
+//	  WHERE type = 'concept' AND jsonb_typeof(properties->'status') = 'string';
+//
+// PostgreSQL matches a partial index only when the query IMPLIES its
+// predicate. An endpoint filter spelled as a bare `->>` comparison is correct
+// and silently unindexed: measured at 5k concepts it bitmap-scanned every row
+// of the type to find 10. Emitting the same jsonb_typeof guard the scalar
+// spelling carries makes the index a candidate and the scan disappears.
+//
+// This asserts the SHAPE (the index is used), not a timing, so it is stable in
+// CI. It fails if a future change hand-rolls the endpoint comparison instead of
+// routing it through propCondOn.
+func TestEndpointMatchExplainUsesDerivedIndex(t *testing.T) {
+	const tickets = 5000
+	pool := newScopedPool(t)
+	s, err := pgstore.New(pool)
+	require.NoError(t, err)
+	ctx := context.Background()
+
+	// The index must exist on the TRAVERSED-TO type, not the queried type —
+	// a traversal condition has to contribute its own derived spec.
+	_, err = s.Reconcile(ctx, []store.DerivedObjectSpec{{
+		Kind: store.DerivedQueryIndex, Type: "concept", Properties: []string{"status"},
+	}}, store.ReconcileOptions{})
+	require.NoError(t, err)
+
+	// 500 concepts, exactly one of them 'rare'; every ticket points at one.
+	const concepts = 500
+	for i := range concepts {
+		status := "active"
+		if i == concepts-1 {
+			status = "rare"
+		}
+		e := entity.New(fmt.Sprintf("CON-%06d", i), "concept")
+		e.Properties["status"] = status
+		require.NoError(t, s.CreateEntity(ctx, e))
+	}
+	for i := range tickets {
+		id := fmt.Sprintf("TKT-%06d", i)
+		require.NoError(t, s.CreateEntity(ctx, entity.New(id, "ticket")))
+		_, err = s.CreateRelation(ctx, id, "caused-by", fmt.Sprintf("CON-%06d", i%concepts), nil)
+		require.NoError(t, err)
+	}
+	_, err = pool.Exec(ctx, "ANALYZE entities; ANALYZE relations")
+	require.NoError(t, err)
+
+	plan := explainGraphQuery(t, pool, store.GraphQuery{
+		EntityType: "ticket",
+		HasOutbound: &store.RelationPredicate{
+			OfTypes: []string{"caused-by"},
+			EndpointMatch: &store.EndpointPredicate{
+				EntityType: "concept",
+				Props: []store.PropPredicate{{
+					Property: "status", Op: store.PropEqual, Value: "rare", Scalar: true,
+				}},
+			},
+		},
+	})
+	t.Logf("plan:\n%s", plan)
+	if !strings.Contains(plan, "rela_derived_query__") {
+		t.Fatalf("endpoint-match filter does not reach the derived index on the "+
+			"traversed-to type; the join degrades to a scan of every row of that "+
+			"type:\n%s", plan)
+	}
+}
