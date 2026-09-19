@@ -464,7 +464,7 @@ func matchesPredicate(
 	// needs. With endpoints named, only those count.
 	anyEndpoint := len(p.Endpoints) == 0
 
-	found, err := hasMatchingRelation(ctx, r, candidates, dir, typeSet, endpointSet, anyEndpoint)
+	found, err := hasMatchingRelation(ctx, r, candidates, dir, typeSet, endpointSet, anyEndpoint, p.EndpointMatch)
 	if err != nil {
 		return false, err
 	}
@@ -476,9 +476,13 @@ func matchesPredicate(
 
 // hasMatchingRelation reports whether any candidate has an edge in dir
 // satisfying the type and endpoint constraints.
+//
+// match, when non-nil, additionally requires the entity on the far side of the
+// edge to satisfy it. It is checked LAST, after the cheap type and id tests,
+// because it is the only one that loads another entity.
 func hasMatchingRelation(
 	ctx context.Context, r Reader, candidates []string, dir store.Direction,
-	typeSet, endpointSet map[string]bool, anyEndpoint bool,
+	typeSet, endpointSet map[string]bool, anyEndpoint bool, match *store.EndpointPredicate,
 ) (bool, error) {
 	for _, c := range candidates {
 		for rel, err := range r.ListRelations(ctx, store.RelationQuery{
@@ -491,19 +495,65 @@ func hasMatchingRelation(
 			if len(typeSet) > 0 && !typeSet[rel.Type] {
 				continue
 			}
-			if anyEndpoint {
-				return true, nil
-			}
 			other := rel.To
 			if dir == store.DirectionIncoming {
 				other = rel.From
 			}
-			if endpointSet[other] {
+			if !anyEndpoint && !endpointSet[other] {
+				continue
+			}
+			if match == nil {
+				return true, nil
+			}
+			ok, err := matchesEndpoint(ctx, r, other, match)
+			if err != nil {
+				return false, err
+			}
+			if ok {
 				return true, nil
 			}
 		}
 	}
 	return false, nil
+}
+
+// matchesEndpoint reports whether the entity identified by id satisfies p:
+// its type, its own properties, and any chained relation predicates.
+//
+// A missing endpoint entity is NOT a match. A dangling edge names a row that
+// does not exist, and an absent row satisfies no property constraint — the
+// same reading [matchesOrdered] gives an unset value, and the one the SQL
+// backends give via an inner JOIN.
+func matchesEndpoint(
+	ctx context.Context, r Reader, id string, p *store.EndpointPredicate,
+) (bool, error) {
+	var found *entity.Entity
+	for e, err := range r.ListEntities(ctx, store.EntityQuery{Type: p.EntityType, IDs: []string{id}}) {
+		if err != nil {
+			return false, err
+		}
+		found = e
+		break
+	}
+	if found == nil {
+		return false, nil
+	}
+	if !matchesProps(found, p.Props) {
+		return false, nil
+	}
+	if p.HasInbound != nil {
+		ok, err := matchesPredicate(ctx, r, found, *p.HasInbound, store.DirectionIncoming)
+		if err != nil || !ok {
+			return false, err
+		}
+	}
+	if p.HasOutbound != nil {
+		ok, err := matchesPredicate(ctx, r, found, *p.HasOutbound, store.DirectionOutgoing)
+		if err != nil || !ok {
+			return false, err
+		}
+	}
+	return true, nil
 }
 
 // expandSet returns seeds plus everything reachable via the given
