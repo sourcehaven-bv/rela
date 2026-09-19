@@ -389,9 +389,15 @@ type RelationPredicate struct {
 	//
 	// Nested one level per hop, so a chain A -x-> B -y-> C is an
 	// EndpointMatch on B carrying its own relation predicate for the y hop.
-	// Depth is bounded by the caller at compile time; the naive backend
-	// additionally bounds its own recursion (see graphquerynaive.DepthCap),
-	// so a hand-built query cannot recurse without limit either.
+	// Nesting is bounded by EVERY backend at graphquerynaive.DepthCap, which
+	// is a REFUSAL rather than a truncation: a too-deep chain errors. It must
+	// not degrade to an unsatisfiable arm instead, because under a Negate that
+	// inverts to "match every row" — a guard becoming a row-gate bypass.
+	//
+	// A nested hop may NOT carry InheritThrough / EntityInheritThrough. The
+	// SQL backends cannot emit them there, and a backend that silently ignored
+	// an ACL-folded expansion would gate the same principal differently from
+	// one that honored it; both refuse instead.
 	//
 	// SECURITY: this predicate reads properties of entities the query does
 	// not RETURN, so a caller-supplied EndpointMatch is an inference channel

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -78,11 +79,27 @@ func (r *Request) GateTraversal(
 		return nil, errors.New("acl: traversal hop: entity type is required")
 	}
 
+	// TWO field checks, and both are needed.
+	//
+	// The policy-wide one is load-time and principal-independent (see
+	// ConditionallyVisible). The ceiling one is necessarily per-principal: a
+	// client attenuated by `client_baselines` / `scope_grants` may be denied a
+	// field its USER holds unconditionally, and the policy-wide question
+	// cannot see that. Without it a traversal filter would reach further than
+	// a plain read for the same principal, which is precisely what the
+	// ceiling exists to prevent — and it only ever narrows, so refusing more
+	// for an attenuated client is the correct direction.
+	ceiling := r.FieldCeilingFor(hop.EntityType)
 	for _, p := range hop.Props {
 		if meta != nil && meta.ConditionallyVisible(hop.EntityType, p.Property) {
 			return nil, fmt.Errorf(
-				"acl: traversal hop: property %q on %q has a conditional visibility grant "+
+				"acl: traversal hop: property %q on %q is not unconditionally visible "+
 					"and cannot be filtered on", p.Property, hop.EntityType)
+		}
+		if ceilingHidesField(ceiling, p.Property) {
+			return nil, fmt.Errorf(
+				"acl: traversal hop: property %q on %q is hidden by the client ceiling %q "+
+					"and cannot be filtered on", p.Property, hop.EntityType, ceiling.Baseline)
 		}
 	}
 
@@ -101,14 +118,28 @@ func (r *Request) GateTraversal(
 		return nil, ErrTraversalDenied
 	}
 
-	match := &store.EndpointPredicate{
-		EntityType: hop.EntityType,
-		Props:      hop.Props,
+	// A disjunctive authorization ceiling cannot be expressed inside a single
+	// endpoint predicate without flattening it into an OR that
+	// EndpointPredicate has no field for. Refusing is the fail-closed reading;
+	// widening to "no constraint" would be the escalation. Checked BEFORE
+	// anything is composed so the refusal cannot be reached with a
+	// half-built predicate.
+	if !rq.AllowAll && rq.Query != nil && len(rq.Query.Any) > 0 {
+		return nil, ErrTraversalDenied
 	}
 
-	// The read query for the type is a GraphQuery; fold the parts that
-	// constrain WHICH ROWS are readable into this hop. AllowAll contributes
-	// nothing, which is correct rather than an omission.
+	// COPY the caller's props rather than aliasing them. `append` onto the
+	// caller's slice may write into its spare capacity, so a TraversalHop
+	// reused across two gate calls would have one call's ACL predicates
+	// silently overwritten by the next — and the surviving predicate would
+	// be the WRONG principal's.
+	props := make([]store.PropPredicate, len(hop.Props), len(hop.Props)+len(readQueryProps(rq)))
+	copy(props, hop.Props)
+	match := &store.EndpointPredicate{EntityType: hop.EntityType, Props: props}
+
+	// Fold the parts of the read query that constrain WHICH ROWS are
+	// readable. AllowAll contributes nothing, which is correct rather than an
+	// omission.
 	if !rq.AllowAll && rq.Query != nil {
 		match.Props = append(match.Props, rq.Query.Props...)
 		if rq.Query.HasInbound != nil {
@@ -117,16 +148,19 @@ func (r *Request) GateTraversal(
 			// the ACL's, not the caller's, so its expansions are correct here.
 			match.HasInbound = rq.Query.HasInbound
 		}
-		if len(rq.Query.Any) > 0 {
-			// A disjunctive authorization ceiling cannot be expressed inside a
-			// single endpoint predicate without flattening it into an OR that
-			// EndpointPredicate has no field for. Refusing is the fail-closed
-			// reading; widening to "no constraint" would be the escalation.
-			return nil, ErrTraversalDenied
-		}
 	}
 
 	if hop.Next != nil {
+		// A CHAINED hop's gate travels through the nested SQL emitter, which
+		// cannot express the two inheritance expansions — and the Go backend
+		// CAN, so emitting them here would gate the same principal differently
+		// per backend. Refuse rather than diverge. A single-hop traversal is
+		// unaffected: its predicate rides the top-level emitter, which does
+		// expand them.
+		inb := match.HasInbound
+		if inb != nil && (len(inb.InheritThrough) > 0 || len(inb.EntityInheritThrough) > 0) {
+			return nil, ErrTraversalDenied
+		}
 		nested, err := r.GateTraversal(ctx, meta, *hop.Next)
 		if err != nil {
 			return nil, err
@@ -151,8 +185,23 @@ type FieldVisibility interface {
 	ConditionallyVisible(entityType, property string) bool
 }
 
-// ConditionallyVisible implements [FieldVisibility]: it reports whether ANY
-// role's `visible:` grant for this type/property carries a `when:` clause.
+// ConditionallyVisible implements [FieldVisibility]: it reports whether a
+// property's read visibility is anything less than unconditional for EVERY
+// role, in which case it must not be filterable.
+//
+// Two ways a field can be non-public, and BOTH have to be caught:
+//
+//  1. A `visible:` grant carrying a `when:` — visibility depends on the row.
+//  2. A role declaring a `visible:` block for the type that does NOT list the
+//     property. `visible:` is a CLOSED WORLD per role (see
+//     applyFieldGrants in internal/affordances/resolver.go, which opts the
+//     whole dimension in as soon as a role declaresVisible): everything the
+//     role does not name is hidden, with no `when:` string anywhere to find.
+//
+// Case 2 is the likelier spelling — an operator writes `visible: [name,
+// title]` intending `salary` to be hidden — and it is the one a
+// `when:`-only check silently misses, returning "filterable" for exactly the
+// fields that are most thoroughly hidden.
 //
 // The question is deliberately POLICY-WIDE and principal-independent. A
 // per-principal answer would make the set of filterable properties vary by
@@ -160,17 +209,53 @@ type FieldVisibility interface {
 // condition — and the one who could filter would be an oracle for the one who
 // could not. Asking of the policy instead means the refusal is a property of
 // the SCHEMA, reported identically to everyone, which is also what lets it be
-// a load-time error rather than a request-time one.
+// a load-time error rather than a request-time one. It is NOT a substitute
+// for the per-principal ceiling check; see [Request.GateTraversal].
 func (p *Policy) ConditionallyVisible(entityType, property string) bool {
 	if p == nil {
 		return false
 	}
 	for _, role := range p.Roles {
-		for _, grant := range role.Visible[entityType] {
-			if grant.When != "" && grant.Field == property {
-				return true
+		grants, declared := role.Visible[entityType]
+		if !declared {
+			// This role gates no fields on the type, so it hides nothing.
+			continue
+		}
+		granted := false
+		for _, g := range grants {
+			if g.Field != property {
+				continue
 			}
+			if g.When != "" {
+				return true // case 1: conditional
+			}
+			granted = true
+		}
+		if !granted {
+			return true // case 2: closed world, not listed
 		}
 	}
 	return false
+}
+
+// ceilingHidesField reports whether a compiled field ceiling withholds
+// property. Visible is a CLOSED WORLD when non-nil (anything unlisted is
+// hidden); Redact is a denial list.
+func ceilingHidesField(c FieldCeiling, property string) bool {
+	if !c.Constrains() {
+		return false
+	}
+	if slices.Contains(c.Redact, property) {
+		return true
+	}
+	return c.Visible != nil && !slices.Contains(c.Visible, property)
+}
+
+// readQueryProps returns the read query's own property predicates, or nil.
+// Used only to size the copy in GateTraversal.
+func readQueryProps(rq ReadQueryResult) []store.PropPredicate {
+	if rq.AllowAll || rq.Query == nil {
+		return nil
+	}
+	return rq.Query.Props
 }

@@ -196,17 +196,121 @@ func TestConditionallyVisible(t *testing.T) {
 	if nilPolicy.ConditionallyVisible("concept", "salary") {
 		t.Fatal("nil policy must report false")
 	}
+
+	// `visible:` is a CLOSED WORLD per role: a role declaring it hides every
+	// field it does not list, with no `when:` anywhere to find. Both that and
+	// the conditional case must refuse filtering.
 	p := &Policy{Roles: map[string]RoleDef{
-		"a": {Visible: map[string][]FieldGrant{"concept": {{Field: "plain"}}}},
-		"b": {Visible: map[string][]FieldGrant{"concept": {{Field: "secret", When: "x == 1"}}}},
+		"staff": {Visible: map[string][]FieldGrant{
+			"person": {{Field: "name"}, {Field: "secret", When: "x == 1"}},
+		}},
+		// Declares nothing for person, so it hides nothing there.
+		"other": {Visible: map[string][]FieldGrant{"concept": {{Field: "title"}}}},
 	}}
-	if p.ConditionallyVisible("concept", "plain") {
-		t.Error("an unconditional grant must not be reported as conditional")
+
+	for _, tc := range []struct {
+		name, entityType, property string
+		want                       bool
+	}{
+		{"unconditional grant stays filterable", "person", "name", false},
+		{"conditional grant is refused", "person", "secret", true},
+		{"closed world: unlisted field is refused", "person", "salary", true},
+		{"type nobody gates is filterable", "widget", "anything", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := p.ConditionallyVisible(tc.entityType, tc.property); got != tc.want {
+				t.Fatalf("ConditionallyVisible(%q, %q) = %v, want %v",
+					tc.entityType, tc.property, got, tc.want)
+			}
+		})
 	}
-	if !p.ConditionallyVisible("concept", "secret") {
-		t.Error("a conditional grant in ANY role must be reported")
+}
+
+// The gate must not write into the caller's Props backing array.
+//
+// Today readQuery never populates Query.Props (it constrains rows through
+// HasInbound), so the fold appends nothing and the alias is harmless. That is
+// exactly why this is pinned: the day a read query grows a property
+// constraint, an aliasing append would write the ACL's predicate into the
+// caller's spare capacity, and a TraversalHop reused across two gate calls
+// would keep the WRONG principal's predicate — a cross-request authorization
+// bleed that no existing test would catch.
+//
+// Asserted structurally (the gate returns a distinct backing array) rather
+// than by observing a mutation, so it holds before the latent bug is
+// reachable rather than after.
+func TestGateTraversal_DoesNotAliasCallerProps(t *testing.T) {
+	d, ctx := gateFixture(t, &Policy{
+		Roles:       map[string]RoleDef{"reader": {Read: []string{"ticket", "concept"}}},
+		Assignments: map[string]string{"alice": "reader"},
+	})
+
+	props := make([]store.PropPredicate, 0, 8) // spare capacity: what makes append write in place
+	props = append(props, store.PropPredicate{
+		Property: "status", Op: store.PropEqual, Value: "open", Scalar: true,
+	})
+	hop := TraversalHop{RelationTypes: []string{"caused-by"}, EntityType: "concept", Props: props}
+
+	got, err := requestFor(t, d, "alice").GateTraversal(ctx, nil, hop)
+	if err != nil {
+		t.Fatalf("gate: %v", err)
 	}
-	if p.ConditionallyVisible("other", "secret") {
-		t.Error("the answer must be scoped to the entity type")
+	if len(got.EndpointMatch.Props) == 0 {
+		t.Fatal("expected the author's filter to survive")
+	}
+	if &got.EndpointMatch.Props[0] == &hop.Props[0] {
+		t.Fatal("gate aliased the caller's Props slice; a later fold would write into its spare capacity")
+	}
+	if len(hop.Props) != 1 || hop.Props[0].Value != "open" {
+		t.Fatalf("gate mutated the caller's hop: %+v", hop.Props)
+	}
+}
+
+// A client attenuated by `client_baselines` must not filter on a field the
+// ceiling hides, even when the USER it acts as holds that field
+// unconditionally. Without this the traversal reaches further than a plain
+// read for the same principal — the ceiling only ever narrows, so refusing
+// more for an attenuated client is the correct direction.
+func TestGateTraversal_RefusesFieldHiddenByTheClientCeiling(t *testing.T) {
+	p := &Policy{
+		Roles: map[string]RoleDef{
+			// Alice's own grant is UNCONDITIONAL, so the policy-wide field
+			// check says "filterable". Only the ceiling knows better.
+			"reader": {Read: []string{"ticket", "concept"}},
+		},
+		Assignments: map[string]string{"alice": "reader"},
+		ClientBaselines: map[string]ClientBaseline{
+			"app": {
+				AppliesTo:   []string{"app"},
+				Restriction: Restriction{Redact: map[string][]string{"concept": {"salary"}}},
+			},
+		},
+	}
+	if err := p.Validate(); err != nil {
+		t.Fatalf("policy must load: %v", err)
+	}
+	d, ctx := gateFixture(t, p)
+
+	attenuated, err := d.ForPrincipal(principal.VerifiedFrom("alice", principal.ToolDataEntry,
+		principal.Claims{PrincipalType: "app"}))
+	if err != nil {
+		t.Fatalf("ForPrincipal: %v", err)
+	}
+
+	hop := TraversalHop{
+		RelationTypes: []string{"caused-by"},
+		EntityType:    "concept",
+		Props: []store.PropPredicate{
+			{Property: "salary", Op: store.PropEqual, Value: "250000", Scalar: true},
+		},
+	}
+	if _, err := attenuated.GateTraversal(ctx, p, hop); err == nil {
+		t.Fatal("an attenuated client must not filter on a ceiling-redacted field")
+	}
+
+	// The same hop through the UNATTENUATED user is allowed: the ceiling is
+	// what refuses, not the property itself.
+	if _, err := requestFor(t, d, "alice").GateTraversal(ctx, p, hop); err != nil {
+		t.Fatalf("the unattenuated user must still filter on it: %v", err)
 	}
 }

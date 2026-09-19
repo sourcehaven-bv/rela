@@ -1,6 +1,7 @@
 package storetest
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -157,6 +158,83 @@ func RunEndpointMatchTests(t *testing.T, f Factory) {
 		require.Equal(t, []string{"TKT-1"}, got)
 	})
 
+	// The ACL folds its read query into an endpoint match, and that query
+	// carries InheritThrough / EntityInheritThrough whenever the policy
+	// declares role inheritance. pgstore's nested emitter cannot express them,
+	// so BOTH backends must refuse rather than one silently ignoring them —
+	// an authorization predicate that evaporates on one backend is the defect
+	// this case exists to catch.
+	t.Run("nested_inheritance_expansion_is_refused_by_every_backend", func(t *testing.T) {
+		s := f(t)
+		seed(t, s)
+		err := graphQueryErr(t, s, store.GraphQuery{
+			EntityType: "ticket",
+			HasOutbound: &store.RelationPredicate{
+				OfTypes: []string{"caused-by"},
+				EndpointMatch: &store.EndpointPredicate{
+					EntityType: "concept",
+					HasInbound: &store.RelationPredicate{
+						Endpoints:      []string{"alice"},
+						OfTypes:        []string{"owns"},
+						InheritThrough: []string{"member-of"},
+						Depth:          3,
+					},
+				},
+			},
+		})
+		require.Error(t, err, "a nested inheritance expansion must be refused, not silently ignored")
+	})
+
+	// A NEGATED predicate inverts everything beneath it, so any guard that
+	// renders an arm unsatisfiable instead of refusing would turn "has no
+	// path to X" into "match everything". Pinned because a depth bound was
+	// briefly implemented that way.
+	t.Run("negated_chained_hop", func(t *testing.T) {
+		s := f(t)
+		// TKT-1 -> CON-open -owned-by-> alice ; TKT-2 -> CON-done (no owner)
+		seed(t, s)
+		mustRel(t, s, "CON-open", "owned-by", "alice")
+
+		got := runGraphQuery(t, s, store.GraphQuery{
+			EntityType: "ticket",
+			HasOutbound: &store.RelationPredicate{
+				OfTypes: []string{"caused-by"},
+				Negate:  true,
+				EndpointMatch: &store.EndpointPredicate{
+					EntityType: "concept",
+					HasOutbound: &store.RelationPredicate{
+						OfTypes: []string{"owned-by"}, Endpoints: []string{"alice"},
+					},
+				},
+			},
+		})
+		// Only TKT-1 reaches an alice-owned concept, so the negation keeps the
+		// other two. Critically it must NOT be all three.
+		require.Equal(t, []string{"TKT-2", "TKT-3"}, got)
+	})
+
+	// The nesting bound must REFUSE, not render the too-deep arm
+	// unsatisfiable: under an outer Negate an unsatisfiable arm inverts to
+	// "match everything", turning a DoS guard into a row-gate bypass.
+	t.Run("excessive_nesting_is_refused", func(t *testing.T) {
+		s := f(t)
+		seed(t, s)
+		inner := &store.EndpointPredicate{EntityType: "concept"}
+		for range 12 {
+			inner = &store.EndpointPredicate{
+				EntityType:  "concept",
+				HasOutbound: &store.RelationPredicate{OfTypes: []string{"caused-by"}, EndpointMatch: inner},
+			}
+		}
+		err := graphQueryErr(t, s, store.GraphQuery{
+			EntityType: "ticket",
+			HasOutbound: &store.RelationPredicate{
+				OfTypes: []string{"caused-by"}, EndpointMatch: inner,
+			},
+		})
+		require.Error(t, err, "nesting past the cap must be refused")
+	})
+
 	t.Run("nil_EndpointMatch_is_unconstrained", func(t *testing.T) {
 		s := f(t)
 		seed(t, s)
@@ -168,4 +246,17 @@ func RunEndpointMatchTests(t *testing.T, f Factory) {
 		})
 		require.Equal(t, []string{"TKT-1", "TKT-2", "TKT-3"}, got)
 	})
+}
+
+// graphQueryErr drains a GraphQuery and returns the first error, or nil.
+// Unlike runGraphQuery it does not fail the test — callers asserting a
+// REFUSAL need the error rather than a fatal.
+func graphQueryErr(t *testing.T, s store.Store, q store.GraphQuery) error {
+	t.Helper()
+	for _, err := range s.GraphQuery(context.Background(), q) {
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }

@@ -19,11 +19,18 @@ import (
 // SELECT by type; when only one of HasInbound / HasOutbound is set,
 // only that EXISTS clause is emitted. Both nil → degenerate
 // "everything of this type" answer (covered by the conformance suite).
-// checkGraphQueryScope is retained as the single place a future graph
-// query restriction would live. World scoping is implemented in SQL as of
-// PR-C, so it currently accepts everything.
-func checkGraphQueryScope(_ store.GraphQuery) error {
-	return nil
+// checkGraphQueryScope is the single place a graph-query restriction lives.
+// World scoping is implemented in SQL as of PR-C; what remains here is the
+// EndpointMatch nesting bound.
+//
+// The bound is enforced by REFUSING the whole query, not by rendering the
+// too-deep arm unsatisfiable. An unsatisfiable arm is sound only under a
+// positive EXISTS: nested inside a NEGATED predicate it inverts to
+// `NOT EXISTS(... AND FALSE)`, which is TRUE for every row of the type — so
+// the guard against a pathological query would itself become a row-gate
+// bypass. Refusing matches graphquerynaive, which errors on the same input.
+func checkGraphQueryScope(q store.GraphQuery) error {
+	return graphquerynaive.CheckEndpointShape(q)
 }
 
 func (s *Store) GraphQuery(ctx context.Context, q store.GraphQuery) iter.Seq2[*entity.Entity, error] {
@@ -701,8 +708,13 @@ func buildPredicateSQL(
 // support the two inheritance expansions. Those are ACL constructs anchored on
 // the query's own entity type (see the identity-anchor note in
 // buildPredicateSQL), and silently re-anchoring them on an endpoint would
-// change who inherits from whom. A caller must not set them here; they are
-// ignored rather than mis-applied.
+// change who inherits from whom.
+//
+// Both the nesting bound and the refusal of those fields are enforced UP
+// FRONT by checkGraphQueryScope, so by the time this runs the predicate is
+// known to be emittable. Ignoring them here — the original behavior — made
+// this backend DIVERGE from graphquerynaive, which routes the same predicate
+// back through matchesPredicate and DOES expand both closures.
 func nestedPredicateSQL(
 	b *sqlBuilder, prefix string, p store.RelationPredicate, candidateAlias string, dir store.Direction,
 ) (with []string, exists string) {
