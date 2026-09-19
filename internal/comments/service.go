@@ -119,21 +119,14 @@ func (s *Service) List(ctx context.Context, target Target) ([]Comment, error) {
 	return s.store.List(ctx, target)
 }
 
-// Get returns one comment by ID.
+// Get returns one comment by ID, or [ErrNotFound].
 //
 // It exists chiefly so a handler can resolve a comment's author *before*
 // deciding whether an *-own permission covers the requested mutation.
+//
+// The ACL gate is the caller's job, as with List.
 func (s *Service) Get(ctx context.Context, target Target, id string) (Comment, error) {
-	list, err := s.store.List(ctx, target)
-	if err != nil {
-		return Comment{}, err
-	}
-	for _, c := range list {
-		if c.ID == id {
-			return c, nil
-		}
-	}
-	return Comment{}, ErrNotFound
+	return s.store.Get(ctx, target, id)
 }
 
 // Update replaces a comment's body and resolved flag.
