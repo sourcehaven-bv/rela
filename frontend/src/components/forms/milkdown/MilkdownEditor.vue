@@ -38,9 +38,8 @@ import '@milkdown/kit/prose/tables/style/tables.css'
 import '@milkdown/kit/prose/gapcursor/style/gapcursor.css'
 import './milkdownEditor.css'
 
-import { RELA_COMMONMARK, configureRelaSerializer } from './editorPreset'
+import { RELA_COMMONMARK, RELA_OUTPUT_NODES, configureRelaSerializer } from './editorPreset'
 import { entityRefNode, isValidEntityRefId } from './entityRefNode'
-import { relaCommentNode, relaCommentRemarkPlugin } from './commentNode'
 import { taskList } from './taskListItem'
 import {
   entityRefResolutionPlugin,
@@ -568,10 +567,7 @@ onMounted(async () => {
     .use(history)
     .use(listener)
     .use(entityRefNode)
-    // The remark half must load with the node: it retypes comment-only `html`
-    // mdast nodes so the schema below claims them instead of the preset's.
-    .use(relaCommentRemarkPlugin)
-    .use(relaCommentNode)
+    .use(RELA_OUTPUT_NODES)
     // After `gfm`: it contributes the `checked` attribute this renders.
     .use(taskList)
     .use(entityRefResolutionPlugin(resolverHandle))

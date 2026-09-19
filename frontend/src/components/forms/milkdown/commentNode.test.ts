@@ -27,7 +27,16 @@ async function mountEditor(modelValue: string) {
   return wrapper
 }
 
-/** Reads the editor's write-back value without emitting, as the guard does. */
+/**
+ * Reads the editor's write-back decision without emitting.
+ *
+ * `verdict` is the load-bearing half, not `value`. On an unedited editor
+ * `guardWriteBack` returns the ORIGINAL bytes for `unchanged`,
+ * `churn-suppressed` AND `drift-blocked` alike, so asserting `value` compares
+ * the input string to itself and cannot fail — a serializer that corrupts the
+ * document passes. Only `verdict` distinguishes a correct round-trip from a
+ * suppressed corruption.
+ */
 function guarded(w: ReturnType<typeof mount>) {
   return (
     w.vm as unknown as { guardedValue: () => { value: string; verdict: string } }
@@ -57,6 +66,24 @@ describe('commentBody', () => {
 
   it('accepts an empty comment', () => {
     expect(commentBody('<!---->')).toBe('')
+  })
+
+  // Finding #7: `''` is a FALSY success. A caller testing truthiness rather
+  // than `=== null` would misread an empty comment as "not a comment".
+  it('distinguishes an empty comment from a non-comment', () => {
+    expect(commentBody('<!---->')).not.toBeNull()
+    expect(commentBody('<div>')).toBeNull()
+  })
+
+  // Finding #10: the `(?!-->)` guard is subtle enough that someone will
+  // "simplify" it to a lazy `.*?`, which silently reunites two comments into
+  // one (anchored backtracking). Any interior terminator must be rejected.
+  it.each([
+    '<!-- a --> b <!-- c -->',
+    '<!-- x --><!-- y -->',
+    '<!-- outer <!-- inner --> tail -->',
+  ])('rejects any string with an interior terminator: %s', (src) => {
+    expect(commentBody(src)).toBeNull()
   })
 
   it('returns null for a non-string value', () => {
@@ -115,6 +142,29 @@ describe('MilkdownEditor comment chips', () => {
 
     expect(chip.exists()).toBe(true)
     expect(chip.classes()).toContain('rela-comment-block')
+    w.unmount()
+  })
+
+  // Finding #3: the block test must read the UNTRIMMED body. `<!--\nfoo\n-->`
+  // is the most common template shape — a comment opened on its own line — and
+  // trimming first removes exactly the newlines that identify it, so it
+  // rendered as a cramped inline chip and lost `pre-wrap`.
+  it('marks a comment with only edge newlines as block', async () => {
+    const w = await mountEditor('<!--\nDocument what IS and IS NOT in scope\n-->\n')
+    const chip = w.find('.ProseMirror').find('.rela-comment')
+
+    expect(chip.exists()).toBe(true)
+    expect(chip.classes()).toContain('rela-comment-block')
+    w.unmount()
+  })
+
+  // A genuinely single-line comment must NOT get the block treatment, or the
+  // fix above would simply classify everything as block.
+  it('keeps a single-line comment inline', async () => {
+    const w = await mountEditor('<!-- short note -->\n')
+    const chip = w.find('.ProseMirror').find('.rela-comment')
+
+    expect(chip.classes()).not.toContain('rela-comment-block')
     w.unmount()
   })
 
@@ -199,7 +249,9 @@ describe('MilkdownEditor comment round-trip', () => {
 `
     const w = await mountEditor(src)
 
-    expect(guarded(w).value).toContain('<!-- For each option:\n### Option N: Name')
+    const g = guarded(w)
+    expect(g.verdict).toBe('unchanged')
+    expect(g.value).toContain('<!-- For each option:\n### Option N: Name')
     expect(w.emitted('update:modelValue')).toBeUndefined()
     w.unmount()
   })
@@ -208,7 +260,9 @@ describe('MilkdownEditor comment round-trip', () => {
     const src = '**Research Doc:** <!-- Link RES-xxxx, or N/A -->\n'
     const w = await mountEditor(src)
 
-    expect(guarded(w).value).toContain('**Research Doc:** <!-- Link RES-xxxx, or N/A -->')
+    const g = guarded(w)
+    expect(g.verdict).toBe('unchanged')
+    expect(g.value).toContain('**Research Doc:** <!-- Link RES-xxxx, or N/A -->')
     expect(w.emitted('update:modelValue')).toBeUndefined()
     w.unmount()
   })
@@ -219,8 +273,22 @@ describe('MilkdownEditor comment round-trip', () => {
     const src = 'Raw: <!-- a --> text <!-- b -->.\n'
     const w = await mountEditor(src)
 
-    expect(guarded(w).value).toContain('<!-- a --> text <!-- b -->')
+    const g = guarded(w)
+    expect(g.verdict).toBe('unchanged')
+    expect(g.value).toContain('<!-- a --> text <!-- b -->')
     expect(w.emitted('update:modelValue')).toBeUndefined()
+    w.unmount()
+  })
+
+  // The leading-newline shape must round-trip too: the block fix changed how
+  // it RENDERS, and this proves it did not change what is STORED.
+  it('round-trips a comment with edge newlines', async () => {
+    const src = '<!--\nDocument what IS and IS NOT in scope\n-->\n'
+    const w = await mountEditor(src)
+
+    const g = guarded(w)
+    expect(g.verdict).toBe('unchanged')
+    expect(g.value).toContain('<!--\nDocument what IS and IS NOT in scope\n-->')
     w.unmount()
   })
 
@@ -230,7 +298,9 @@ describe('MilkdownEditor comment round-trip', () => {
     const src = '<!--   padded   -->\n'
     const w = await mountEditor(src)
 
-    expect(guarded(w).value).toContain('<!--   padded   -->')
+    const g = guarded(w)
+    expect(g.verdict).toBe('unchanged')
+    expect(g.value).toContain('<!--   padded   -->')
     w.unmount()
   })
 })

@@ -180,8 +180,9 @@ Effort: s (confirmed).
 owns; the comment node belongs in that list.
 - [x] N/A for docs/metamodel.md, docs/cli-reference.md, README.md — no
 metamodel, CLI or project-level change.
-- [ ] docs/data-entry.md — assessed during implementation; this is editor
-chrome rather than a data-entry feature, so likely N/A.
+- [x] ~~docs/data-entry.md~~ (N/A: assessed during implementation — that file
+documents data-entry features, and this is editor rendering of content that
+already existed; nothing an operator configures or a user invokes changed).
 
 ## Design Review
 

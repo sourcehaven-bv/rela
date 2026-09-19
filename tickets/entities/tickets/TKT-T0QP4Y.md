@@ -5,7 +5,7 @@ title: Style HTML comments as muted chips in the Milkdown editor
 kind: enhancement
 priority: medium
 effort: s
-status: review
+status: done
 ---
 
 ## Description

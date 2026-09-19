@@ -55,6 +55,14 @@ import { $node, $remark } from '@milkdown/kit/utils'
 const COMMENT_PATTERN = /^<!--((?:(?!-->)[\s\S])*)-->$/
 
 /**
+ * Label length beyond which a `title` tooltip is worth setting.
+ *
+ * Below it the chip shows the whole comment, so a tooltip would merely repeat
+ * text already on screen.
+ */
+const TITLE_THRESHOLD = 60
+
+/**
  * Extracts the text inside an HTML comment, or null when the value is not
  * exactly one comment.
  *
@@ -65,7 +73,10 @@ export function commentBody(value: unknown): string | null {
   if (typeof value !== 'string') return null
   const match = COMMENT_PATTERN.exec(value)
   if (!match) return null
-  return match[1] ?? null
+  // A matched group is always a string, so `<!---->` yields '' — a FALSY
+  // success. Callers must test `=== null`, never truthiness, or an empty
+  // comment is misread as "not a comment".
+  return match[1]
 }
 
 /**
@@ -86,11 +97,17 @@ export function isCommentNode(node: { type?: string; value?: unknown }): boolean
  *
  * The original bytes are carried on `value` untouched, which is what
  * `toMarkdown` writes back.
+ *
+ * Two things a reader will reasonably worry about, both checked:
+ *
+ *  - *Does it reach comments nested in tables, blockquotes and list items?*
+ *    Yes — remark emits a flat `html` node for each, and the walk recurses
+ *    `children`, so they are claimed like any other.
+ *  - *Is mutating the tree in place safe?* Yes. `$remark` plugins are attached
+ *    to the shared inbound processor, but `SerializerState.toString` calls
+ *    `remark.stringify()` directly and never runs transformers, so the
+ *    outbound path cannot re-enter this plugin and re-type its own output.
  */
-export const relaCommentRemarkPlugin = $remark('relaComment', () => () => (tree: unknown) => {
-  retypeComments(tree as MdastNode)
-})
-
 /** The shape this plugin walks. Declared locally rather than pulled from an
  * mdast types package, since only two fields are touched. */
 interface MdastNode {
@@ -98,6 +115,10 @@ interface MdastNode {
   value?: unknown
   children?: MdastNode[]
 }
+
+export const relaCommentRemarkPlugin = $remark('relaComment', () => () => (tree: unknown) => {
+  retypeComments(tree as MdastNode)
+})
 
 /**
  * Walks the tree depth-first, retyping every comment-only `html` node.
@@ -156,11 +177,19 @@ export const relaCommentNode = $node('relaComment', () => ({
     // A multi-line comment is block-level guidance (the `Options` scaffold in
     // research.md); a single-line one may be either. The distinction drives
     // layout only, so it is computed here rather than stored.
+    //
+    // Tested against `body`, NOT `label`: trimming removes the edge newlines
+    // first, so a comment opened on its own line (`<!--\nfoo\n-->` — the most
+    // common template shape) would be misread as inline and lose both the
+    // block layout and the `pre-wrap` that preserves its newlines.
+    const isBlock = body.includes('\n')
     const attrs: Record<string, string> = {
       'data-type': 'rela-comment',
       'data-value': value,
-      class: label.includes('\n') ? 'rela-comment rela-comment-block' : 'rela-comment',
-      title: label,
+      class: isBlock ? 'rela-comment rela-comment-block' : 'rela-comment',
+      // Only when the chip may actually clip: a `title` duplicating fully
+      // visible text produces a redundant hover tooltip.
+      ...(isBlock || label.length > TITLE_THRESHOLD ? { title: label } : {}),
     }
     // The third element is a CHILD, so ProseMirror builds it with
     // `createTextNode` rather than assigning innerHTML. A comment body is
