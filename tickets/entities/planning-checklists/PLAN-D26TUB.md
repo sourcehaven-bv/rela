@@ -110,12 +110,62 @@ implement and conformance-test.
 2. `Validate(from, to)`: the type must exist in both projections; refuse when
    `Symmetric` is true in either; refuse when the endpoints are NOT actually
    swapped (a guard against a hand-written step that would silently corrupt).
-3. `Run`: `collectRelations(ctx, x.Store, s.Type)`, then per edge — but ONLY
+3. `Run`: `collectRelations(ctx, x.Store, s.Type)`, then a PRE-FLIGHT pass over
+   the whole collected set (see "Pre-flight" below), then per edge — but ONLY
    for edges that still point the OLD way. See "Idempotence" below; this is the
    part that is not like `rename_relation_type`. For each such edge:
    `CreateRelation(ctx, r.To, s.Type, r.From, &store.RelationData{...})`,
    `x.captureRelationDelete`, `DeleteRelation`. Tolerate `ErrConflict` on
    create exactly as `rename_relation_type` does.
+
+**Pre-flight: collisions and unreversible tails must be detected BEFORE any
+write, and must be visible in dry-run.** Three cases make the naive
+create-then-delete loop destructive. All three were verified empirically against
+a memstore, not reasoned about:
+
+- **A self-edge** (`A --t--> A`) reverses to a byte-identical triple, so the
+  create returns `ErrConflict` against the very edge the delete then removes.
+  Probe result: **0 survivors — the edge is destroyed.**
+- **Both directions present** (`A --t--> B` and `B --t--> A`) makes
+  `ErrConflict` ambiguous between "a prior crashed run already created this" and
+  "a legitimate distinct edge exists here". Probe result: **2 edges became 1,
+  and the survivor `A→B` carried the OTHER edge's properties (`w=BA`)** — silent
+  corruption, not merely loss. On fs/memory there is no version capture at all
+  (`newCapturer` returns nil when `Versions` is nil, `run.go:307`), so the
+  original is unrecoverable.
+- **A state-tailed edge** (`FromFace != ""`) has no reversed representation at
+  all, because heads have no face slot.
+
+So `rename_relation_type`'s `ErrConflict` tolerance (`steps.go:542`) must NOT be
+copied. It is sound there only because the destination triple uses a type name
+nothing else writes; here source and destination share one namespace.
+
+`Run` therefore does, before any write and regardless of `x.Apply`:
+
+1. Refuse if any collected edge has `r.FromFace != ""`, naming the edge. This is
+   the load-bearing guard for content-scoped data — a DATA-level check, not the
+   schema-level `scope:` check first planned, because `scope:` can be stale
+   relative to what is stored (it may have been flipped to `identity` while
+   state-tailed rows remain) and the migration subsystem exists precisely
+   because the schema is not a reliable description of the store.
+2. Skip self-edges (`r.From == r.To`) outright: reversal is identity. They do
+   not count toward `Affected`.
+3. Build the set of existing relation keys, compute every reversed key, and
+   refuse if a reversed key collides with an edge that is not itself in the
+   reversal set — naming both edges.
+
+Because all three run before the `x.Apply` branch, a dry-run reports the refusal
+rather than a clean count for a run that would destroy data. That fidelity is
+what makes "the review is the safety mechanism" a real mitigation rather than an
+assumed one.
+
+Additionally, the per-edge write must carry the tail explicitly
+(`store.RelationData{..., FromFace: r.FromFace}`) and delete via
+`DeleteRelationState(ctx, r.From, r.FromFace, s.Type, r.To)` rather than
+`DeleteRelation`. Guard 1 makes both moot today by refusing every non-zero tail,
+but writing them the narrow way means a future relaxation cannot silently
+reintroduce the defect `DeleteRelationState` was added to prevent
+(`store.go:519-537`).
 
 **Idempotence needs a directional test, and the naive design does not have
 one.** Every other step has a trigger that fires only on untransformed data —
