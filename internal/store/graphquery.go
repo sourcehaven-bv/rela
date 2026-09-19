@@ -378,7 +378,7 @@ type RelationPredicate struct {
 	// EndpointMatch further restricts which entities on the far side of the
 	// relation count as a match, by their TYPE and their own PROPERTIES —
 	// "has a caused-by edge to a ticket whose status is done". Nil means no
-	// endpoint-entity constraint, which is the pre-existing behaviour.
+	// endpoint-entity constraint, which is the pre-existing behavior.
 	//
 	// It composes with [RelationPredicate.Endpoints] as a conjunction: an
 	// endpoint must be in the (expanded) id set AND satisfy this match. The
@@ -395,8 +395,8 @@ type RelationPredicate struct {
 	//
 	// SECURITY: this predicate reads properties of entities the query does
 	// not RETURN, so a caller-supplied EndpointMatch is an inference channel
-	// — which rows come back reveals the neighbour's property values, and its
-	// existence, without any row of the neighbour ever being serialized (so
+	// — which rows come back reveals the neighbor's property values, and its
+	// existence, without any row of the neighbor ever being serialized (so
 	// response redaction never fires). A caller composing this from untrusted
 	// input MUST gate the traversed type with its own read query and MUST
 	// refuse properties whose visibility is conditional. See TKT-RELTRV.
