@@ -67,7 +67,15 @@ a local instance), including `TestTenantIsolation` and
 documents and the reason the record is backend-selected rather than always a
 file.
 
-One correction worth recording: an initial attempt to verify AC-4
+Two corrections worth recording.
+
+Code review caught that my claim "migrateface_test.go needed zero edits" was
+wrong: it changed by 15 filename swaps (`"0001-faces.yaml"` →
+`testName("faces")`). No assertion logic changed — which is the substance, and
+the BUG-TMGWIN guard genuinely survives untouched in `file.go` — but the claim
+as stated was inaccurate.
+
+And: an initial attempt to verify AC-4
 (server-read-only) by running `rela-server` reported a pass, but the server
 exits before wiring in this checkout because the SPA is not built — so that run
 proved nothing. The behaviour is genuinely covered by
