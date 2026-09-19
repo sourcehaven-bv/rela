@@ -108,16 +108,16 @@ type FileResult struct {
 }
 
 // Run executes the plan (from [Resolve]) in order. Dry-run (apply=false)
-// counts affected records per step without writing. On apply, the marker
-// advances after EACH file completes — a crash between files resumes at the
-// right position — and one audit record is emitted per applied file.
+// counts affected records per step without writing. On apply, the migration
+// record advances after EACH file completes — a crash between files resumes at
+// the right position — and one audit record is emitted per applied file.
 //
 // The whole run executes under a system-attributed context: audit and
 // version rows attribute to the invoking operator with the data-migration
 // tool, never to a guessed identity.
 func (r *Runner) Run(ctx context.Context, plan []*File, apply bool) (*RunResult, error) {
 	if apply {
-		// The whole apply run holds the migration lock: marker advances and
+		// The whole apply run holds the migration lock: record advances and
 		// bulk rewrites must not interleave with another runner, a GC apply,
 		// or a gate adoption. Dry-runs are read-only and stay lock-free.
 		release, err := r.deps.Lock.TryAcquire(ctx)
@@ -163,7 +163,7 @@ func (r *Runner) Run(ctx context.Context, plan []*File, apply bool) (*RunResult,
 	return res, nil
 }
 
-// advanceMarker moves the marker to the file's to-shape and appends the file
+// advanceMarker moves the record to the file's to-shape and appends the file
 // to the applied list. Written only after every step of the file succeeded —
 // the record must never claim conformance the data doesn't have.
 func (r *Runner) advanceMarker(ctx context.Context, f *File) error {

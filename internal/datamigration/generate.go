@@ -34,8 +34,8 @@ type Draft struct {
 	Report metamodel.ShapeReport
 }
 
-// Generate drafts a migration from the store's current shape (the marker's
-// projection) to the live schema's shape. Needs-migration deltas and safe,
+// Generate drafts a migration from the store's recorded shape to the live
+// schema's shape. Needs-migration deltas and safe,
 // deterministic computed-property drift produce active steps; other drift
 // deltas produce commented-out optional cleanups (drops, backfills) the operator may enable. Returns nil when the
 // shapes are identical or the change is purely additive with no drift — in

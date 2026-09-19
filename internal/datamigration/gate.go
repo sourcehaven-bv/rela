@@ -16,13 +16,14 @@ import (
 type GateStatus string
 
 const (
-	// StatusInSync: marker hash equals the live shape hash; nothing to do.
+	// StatusInSync: the recorded shape equals the live shape; nothing to do.
 	StatusInSync GateStatus = "in-sync"
-	// StatusBootstrapped: no marker existed; the live shape was adopted as
-	// the baseline (existing projects join the system without ceremony).
+	// StatusBootstrapped: nothing was recorded and the project has no
+	// migrations, so the live shape is a safe baseline (an existing project
+	// joins the system without ceremony).
 	StatusBootstrapped GateStatus = "bootstrapped"
-	// StatusAdopted: the shape changed compatibly (additive and/or drift)
-	// and the marker was moved to the live shape.
+	// StatusAdopted: the shape changed compatibly (additive and/or drift), so
+	// the record moves to the live shape when persisted.
 	StatusAdopted GateStatus = "adopted"
 	// StatusNeedsMigration: the shape changed incompatibly; the recorded
 	// state was NOT moved. The operator must run `rela migrate gen` /
