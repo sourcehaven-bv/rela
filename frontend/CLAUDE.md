@@ -294,6 +294,33 @@ from what the command does. And an *active* command is probed by its INVERSE,
 because that is what pressing it runs — probing forward would disable the very
 button that removes the formatting.
 
+**Link URLs are validated on the way IN, and never on load.** `linkUrl.ts`
+gates the two places a user supplies a target (the dialog and the paste
+handler) against an allowlist of `http`/`https`/`mailto`. Two things about it
+are load-bearing:
+
+- **Do not delegate to the preset's `sanitizeLinkHref`.** It normalizes only to
+  DECIDE the scheme and then returns the ORIGINAL string, so a smuggled
+  zero-width character survives into the stored markdown, and a leading one is
+  not refused at all. It is also absent from the package's public `.d.ts`.
+  `normalizeLinkUrl` strips those characters itself and normalizes through
+  `new URL()`, storing `url.href`. The preset's sanitizer stays where it
+  belongs, on the render side.
+- **The gate must never run at parse time.** A body that already contains a
+  `javascript:` link keeps it byte-for-byte; it is defanged at every render
+  sink instead. Sanitizing on load would rewrite an author's stored content —
+  `rawHtmlPassthrough.test.ts` calls that "a data-integrity bug wearing a
+  security fix's clothes" and pins it.
+
+**The link button never dispatches `ToggleLink` directly.** That command is
+`toggleMark`, whose `removeWhenPresent` tests `.some()`, so over a selection
+that merely TOUCHES an existing link it removes that link and discards the URL
+the user just typed. `linkSelection.findLinkAt` is what routes an overlap to a
+retarget instead. Note also that `@milkdown/components/link-tooltip` registers
+a second, different `$command('ToggleLink')`; string lookup resolves to
+whichever registered first, and `commandNamesExistInEditor` cannot catch it
+because the NAME is still there. That package is deliberately not installed.
+
 `tableCommands.ts` carries hand-written guards where the dry run is not
 trustworthy: the GFM schema is `table_header_row table_row+`, and the
 ProseMirror table commands do not know the header is mandatory. They report

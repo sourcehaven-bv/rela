@@ -552,6 +552,128 @@ export class FormPage extends BasePage {
     await this.page.keyboard.type(text);
   }
 
+  // ── Links in the markdown body ──────────────────────────────────────────
+
+  /** A toolbar button by its accessible name. */
+  markdownToolbarButton(name: string): Locator {
+    return this.markdownToolbar.getByRole("button", { name, exact: true });
+  }
+
+  /** The modal that collects a link's address (and text, from a bare caret). */
+  get linkDialog(): Locator {
+    return this.page.locator(".link-dialog");
+  }
+
+  /** The validation message under the address field. */
+  get linkDialogError(): Locator {
+    return this.linkDialog.locator("#link-dialog-error");
+  }
+
+  /** The floating panel shown on the link under the caret or pointer. */
+  get linkPanel(): Locator {
+    return this.page.locator(".link-tooltip");
+  }
+
+  /** Anchors inside the editing surface. */
+  get editorLinks(): Locator {
+    return this.proseMirror.locator("a");
+  }
+
+  /** Horizontal rules inside the editing surface. */
+  get editorDividers(): Locator {
+    return this.proseMirror.locator("hr");
+  }
+
+  /**
+   * Selects a word in the editing surface, as a drag over it would.
+   *
+   * Playwright has no "select this text" primitive for contenteditable, so
+   * this walks the text nodes and sets a DOM range. Throws rather than
+   * silently selecting nothing, which would make a later assertion fail
+   * somewhere unrelated.
+   */
+  async selectWordInMarkdownBody(word: string) {
+    await this.proseMirror.evaluate((surface, needle) => {
+      const walker = document.createTreeWalker(surface, NodeFilter.SHOW_TEXT);
+      while (walker.nextNode()) {
+        const node = walker.currentNode as Text;
+        const index = node.textContent?.indexOf(needle) ?? -1;
+        if (index < 0) continue;
+        const range = document.createRange();
+        range.setStart(node, index);
+        range.setEnd(node, index + needle.length);
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+        (surface as HTMLElement).focus();
+        return;
+      }
+      throw new Error(`text not found in editor: ${needle}`);
+    }, word);
+  }
+
+  /**
+   * Puts a collapsed caret inside a word, without selecting it.
+   *
+   * Distinct from `selectWordInMarkdownBody`: surfaces driven by caret position
+   * behave differently from ones driven by a selection, and the link panel is
+   * the former.
+   */
+  async placeCaretInMarkdownWord(word: string) {
+    await this.proseMirror.evaluate((surface, needle) => {
+      const walker = document.createTreeWalker(surface, NodeFilter.SHOW_TEXT);
+      while (walker.nextNode()) {
+        const node = walker.currentNode as Text;
+        const index = node.textContent?.indexOf(needle) ?? -1;
+        if (index < 0) continue;
+        const at = index + Math.floor(needle.length / 2);
+        const range = document.createRange();
+        range.setStart(node, at);
+        range.collapse(true);
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+        (surface as HTMLElement).focus();
+        return;
+      }
+      throw new Error(`text not found in editor: ${needle}`);
+    }, word);
+  }
+
+  /** Opens the link dialog from the toolbar. */
+  async openLinkDialog() {
+    await this.markdownToolbarButton("Link").click();
+  }
+
+  /** Fills the address and confirms. The confirm label differs when editing. */
+  async submitLinkDialog(url: string) {
+    await expect(this.linkDialog).toBeVisible();
+    await this.linkDialog.locator("input").last().fill(url);
+    await this.linkDialog
+      .getByRole("button", { name: /insert|save/i })
+      .click();
+  }
+
+  /**
+   * Bounding boxes of the first editor link and the floating panel.
+   *
+   * Exposed as geometry because that is the whole point of the test that uses
+   * it: the panel used to anchor to the selection rather than the link, which
+   * no unit test can see (happy-dom has no layout engine and returns all-zero
+   * rects).
+   */
+  async linkAndPanelBoxes(): Promise<{
+    link: { x: number; y: number; height: number };
+    panel: { x: number; y: number };
+  }> {
+    const link = await this.editorLinks.first().boundingBox();
+    const panel = await this.linkPanel.boundingBox();
+    if (!link || !panel) {
+      throw new Error("expected both the link and the panel to have a box");
+    }
+    return { link, panel };
+  }
+
   /** Computed `font-family` of the bold toolbar button's `::before` pseudo
    *  element. Used by markdown-editor.spec.ts to assert that the bundled
    *  Font Awesome stylesheet actually applied (TKT-ZDRS) — EasyMDE renders

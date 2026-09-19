@@ -27,10 +27,11 @@ import { cursor } from '@milkdown/kit/plugin/cursor'
 import { trailing } from '@milkdown/kit/plugin/trailing'
 import { listener, listenerCtx } from '@milkdown/kit/plugin/listener'
 import { SlashProvider, slashFactory } from '@milkdown/kit/plugin/slash'
+import { positionLinkPanel } from './linkPanelPosition'
 import { replaceAll, getMarkdown, callCommand, $prose } from '@milkdown/kit/utils'
 import { editorViewCtx } from '@milkdown/kit/core'
 import type { EditorView } from '@milkdown/kit/prose/view'
-import { TextSelection, Plugin, PluginKey } from '@milkdown/kit/prose/state'
+import { Plugin, PluginKey } from '@milkdown/kit/prose/state'
 import type { EditorState } from '@milkdown/kit/prose/state'
 import { lift } from '@milkdown/kit/prose/commands'
 import '@milkdown/kit/prose/view/style/prosemirror.css'
@@ -39,7 +40,8 @@ import '@milkdown/kit/prose/gapcursor/style/gapcursor.css'
 import './milkdownEditor.css'
 
 import { RELA_COMMONMARK, configureRelaSerializer } from './editorPreset'
-import { entityRefNode, isValidEntityRefId } from './entityRefNode'
+import { entityRefNode } from './entityRefNode'
+import { insertEntityRefAtCursor, replaceMentionQueryWithRef } from './insertEntityRef'
 import { taskList } from './taskListItem'
 import {
   entityRefResolutionPlugin,
@@ -48,9 +50,19 @@ import {
   type ResolverHandle,
 } from './entityRefResolution'
 import { guardWriteBack, decideEmit } from './writeBackGuard'
-import { parseMentionQuery } from './mentionQuery'
+import { createMentionTrigger } from './mentionTrigger'
 import { useMentionMenu } from './useMentionMenu'
-import { INLINE_COMMANDS, BLOCK_COMMANDS, type EditorCommand } from './editorCommands'
+import {
+  INLINE_COMMANDS,
+  BLOCK_COMMANDS,
+  HISTORY_COMMANDS,
+  type EditorCommand,
+} from './editorCommands'
+import { undoDepth, redoDepth } from '@milkdown/kit/prose/history'
+import { linkPaste } from './linkPaste'
+import { useLinkUI } from './useLinkUI'
+import LinkDialog from './LinkDialog.vue'
+import LinkTooltip from './LinkTooltip.vue'
 import { activeCommandIds } from './activeFormats'
 import { unavailableCommandIds } from './commandAvailability'
 import {
@@ -122,9 +134,10 @@ const unavailableIds = ref<Set<string>>(new Set())
 const inlineCommands = INLINE_COMMANDS
 /** The toolbar's block buttons. The `/` menu offers the same set, filtered. */
 const toolbarBlockCommands = BLOCK_COMMANDS
-/** Every command the toolbar can light up, probed together on each change. */
 /** The table group, shown only while the cursor is inside a table. */
 const tableCommands = TABLE_COMMANDS
+/** Undo and redo, in their own group at the end of the toolbar. */
+const historyCommands = HISTORY_COMMANDS
 /**
  * Whether to show the table group at all.
  *
@@ -134,7 +147,17 @@ const tableCommands = TABLE_COMMANDS
  */
 const showTableGroup = ref(false)
 
-const ALL_COMMANDS = [...INLINE_COMMANDS, ...BLOCK_COMMANDS, ...TABLE_COMMANDS]
+const ALL_COMMANDS = [
+  ...INLINE_COMMANDS,
+  ...BLOCK_COMMANDS,
+  ...TABLE_COMMANDS,
+  ...HISTORY_COMMANDS,
+]
+
+const linkUI = useLinkUI()
+
+/** The element the link panel's floating provider positions. */
+const linkPanelRoot = ref<HTMLElement | null>(null)
 
 const uiStore = useUIStore()
 
@@ -221,20 +244,22 @@ const resolverHandle: ResolverHandle = { resolver: props.refResolver }
 const dirtyTrackerKey = new PluginKey('rela-dirty-tracker')
 
 let slashProvider: SlashProvider | null = null
+/** Tears down the link panel's floating-ui autoUpdate subscription. */
+let cleanupLinkPanel: (() => void) | null = null
 let blockProvider: BlockProvider | null = null
-/** Where the active `@` query starts, so insertion replaces trigger and query. */
-let activeMatchLength = 0
 
 /**
- * The `@` query the user dismissed with Escape.
+ * Whether the `@` menu should be showing, and how wide its query is.
  *
- * SlashProvider decides visibility from `shouldShow` on every update, so
- * closing the menu in the key handler did nothing: the query still parsed, the
- * next update returned true, and the menu reappeared immediately. Remembering
- * WHICH query was dismissed keeps it shut until the user types something else,
- * rather than latching the trigger off entirely.
+ * Holds the Escape dismissal too: SlashProvider re-decides visibility on every
+ * update, so closing the menu in the key handler alone did nothing — the query
+ * still parsed and the menu came straight back.
  */
-let dismissedQuery: string | null = null
+const mentionTrigger = createMentionTrigger({
+  isOpen: () => menu.state.open,
+  close: () => menu.close(),
+  setQuery: (query) => menu.setQuery(query),
+})
 
 /** True when the document holds nothing a user has written. */
 function isDocEmpty(state: EditorState): boolean {
@@ -277,7 +302,40 @@ function refreshDerivedState(state: EditorState): void {
   // AddRowBefore IS a slice, and it claims to apply in the header row before
   // corrupting the table. Its own guard overrides the dry run.
   if (!canAddRowBefore(state)) unavailable.add('addRowBefore')
+
+  // Undo and redo report themselves applicable whether or not there is
+  // anything on the stack, so the depth is the only honest answer. Same
+  // shape of override as the table guards above.
+  if (undoDepth(state) === 0) unavailable.add('undo')
+  if (redoDepth(state) === 0) unavailable.add('redo')
+
   unavailableIds.value = unavailable
+
+  // Which link the caret is in, for the toolbar's unlink button and the
+  // floating panel. A read, never a dispatch: writing here would mark the
+  // document dirty on a mere cursor move and put a diff in git for an entity
+  // somebody only opened.
+  linkUI.refresh(state)
+  repositionLinkPanel()
+}
+
+/**
+ * Re-anchors the link panel to the link it is describing.
+ *
+ * Runs after `linkUI.refresh`, so it positions against the link THIS state
+ * implies rather than the previous one — the lag that made the panel appear
+ * at the last place the cursor was.
+ */
+function repositionLinkPanel(): void {
+  cleanupLinkPanel?.()
+  cleanupLinkPanel = null
+
+  const view = currentView()
+  const panel = linkPanelRoot.value
+  if (!view || !panel) return
+
+  const link = linkUI.panelLink.value
+  cleanupLinkPanel = positionLinkPanel(view, panel, link ? { from: link.from, to: link.to } : null)
 }
 
 function currentView(): EditorView | null {
@@ -300,30 +358,16 @@ function currentView(): EditorView | null {
 function insertRef(item: Entity): void {
   const view = currentView()
   if (!view) return
-  if (!isValidEntityRefId(item.id)) return
-  // No live query means no `@...` span to replace. Proceeding would delete
-  // whatever happened to sit before the cursor.
-  if (activeMatchLength <= 0) return
-
-  const { state } = view
-  const { $from } = state.selection
-  const to = $from.pos
-  // Replaces the trigger and the query together, so the `@abc` the user typed
-  // does not survive alongside the node it produced.
-  const from = Math.max($from.start(), to - activeMatchLength)
-
-  const node = state.schema.nodes.entityRef.create({
-    id: item.id,
-    title: entityDisplayTitle(item) || null,
-    entityType: item.type ?? null,
-    inaccessible: false,
-  })
-  const tr = state.tr.replaceWith(from, to, node)
-  // A space after the reference so the user can keep typing prose without the
-  // next character being absorbed into the node.
-  tr.insertText(' ', from + 1)
-  tr.setSelection(TextSelection.create(tr.doc, from + 2))
-  view.dispatch(tr)
+  const inserted = replaceMentionQueryWithRef(
+    view,
+    {
+      id: item.id,
+      title: entityDisplayTitle(item) || '',
+      entityType: item.type ?? null,
+    },
+    mentionTrigger.matchLength()
+  )
+  if (!inserted) return
   menu.close()
   view.focus()
 }
@@ -333,36 +377,41 @@ function insertRef(item: Entity): void {
 // has not learned the trigger still needs a way in.
 const pickerOpen = ref(false)
 
-/** Inserts a reference at the cursor, replacing any selection. */
-function insertRefAtCursor(id: string, title: string, entityType: string | null): void {
+function onPickerSelect(id: string): void {
   const view = currentView()
   if (!view) return
-  if (!isValidEntityRefId(id)) return
-  const { state } = view
-  const node = state.schema.nodes.entityRef.create({
-    id,
-    title: title || null,
-    entityType,
-    inaccessible: false,
-  })
-  const { from, to } = state.selection
-  const tr = state.tr.replaceWith(from, to, node)
-  tr.insertText(' ', from + 1)
-  tr.setSelection(TextSelection.create(tr.doc, from + 2))
-  view.dispatch(tr)
-}
-
-function onPickerSelect(id: string): void {
   // The picker emits an ID only, so the title resolves through the mentions
   // map on the next pass, or falls back to the ID. It cannot be looked up
   // locally without routing around the read gate.
   const hit = resolverHandle.resolver?.(id) ?? null
-  insertRefAtCursor(id, hit?.title ?? '', hit?.type ?? null)
+  insertEntityRefAtCursor(view, {
+    id,
+    title: hit?.title ?? '',
+    entityType: hit?.type ?? null,
+  })
 }
 
 function onPickerClose(): void {
   pickerOpen.value = false
   void nextTick(() => currentView()?.focus())
+}
+
+function onLinkSubmit(payload: { url: string; text: string; strippedParams: boolean }): void {
+  const view = currentView()
+  if (!view) return
+  linkUI.closeDialog()
+  linkUI.submit(view, payload)
+  // Silently changing what someone typed is worse than refusing it, so say so
+  // when a mailto's parameters were dropped.
+  if (payload.strippedParams) {
+    uiStore.showToast('info', 'Email parameters were removed from the link.')
+  }
+}
+
+function onLinkUnlink(): void {
+  const view = currentView()
+  if (!view) return
+  linkUI.unlink(view)
 }
 
 /**
@@ -376,6 +425,17 @@ function runCommand(cmd: EditorCommand): void {
   const e = editor.value
   if (!e) return
   if (unavailableIds.value.has(cmd.id)) return
+
+  // A link needs a target before anything can be applied, so the button opens
+  // the dialog instead of dispatching. It must NOT fall through to
+  // `ToggleLink`: that is `toggleMark`, which over a selection merely touching
+  // an existing link removes it. `openForSelection` routes that case to a
+  // retarget.
+  if (cmd.id === 'link') {
+    const view = currentView()
+    if (view) linkUI.openForSelection(view)
+    return
+  }
 
   // Row/column deletes bypass the command manager; see `tableCommands`.
   if (DIRECT_TABLE_COMMANDS.has(cmd.id)) {
@@ -413,19 +473,29 @@ function onMenuHover(index: number): void {
 }
 
 /**
- * Keyboard handling for whichever menu is open.
+ * Keyboard handling for whichever floating surface is open.
  *
  * Bound on the wrapper in the capture phase so it runs before ProseMirror's
  * own keymap: without that, Enter inserts a paragraph break and the arrow keys
  * move the cursor instead of the highlight.
  *
- * The two menus cannot both be open: `@` needs a boundary character before it
- * and `/` only fires at the start of a block, so the triggers are mutually
- * exclusive by construction. The mention menu is still checked first, so a
- * stray overlap would resolve one way rather than acting on both.
+ * Two surfaces can want a key. The mention menu is checked first because it is
+ * the more transient of the two and claims several keys; the link panel claims
+ * only Escape. Resolving a stray overlap one way is better than acting on
+ * both.
  */
 function onKeydownCapture(event: KeyboardEvent): void {
-  if (!menu.state.open) return
+  if (!menu.state.open) {
+    if (event.key === 'Escape' && linkUI.panelOpen.value) {
+      event.preventDefault()
+      // Remembering the dismissal is what makes this work at all. Simply
+      // hiding the panel would achieve nothing: its visibility is derived
+      // from the selection, and the caret is still in the link, so the next
+      // state change would show it again and Escape would look broken.
+      linkUI.dismiss()
+    }
+    return
+  }
   switch (event.key) {
     case 'ArrowDown':
       event.preventDefault()
@@ -445,10 +515,9 @@ function onKeydownCapture(event: KeyboardEvent): void {
     }
     case 'Escape':
       event.preventDefault()
-      dismissedQuery = menu.state.query
+      mentionTrigger.dismiss(menu.state.query)
       menu.close()
       slashProvider?.hide()
-      activeMatchLength = 0
       break
     default:
       break
@@ -532,28 +601,7 @@ onMounted(async () => {
             content: menuRoot.value as HTMLElement,
             trigger: '@',
             debounce: 0,
-            // The default shouldShow only fires while `@` is the last
-            // character typed, so it cannot follow a query. This reads the
-            // text before the cursor on every update instead.
-            shouldShow: (view) => {
-              const match = parseMentionQuery(slashProvider?.getContent(view))
-              if (!match) {
-                if (menu.state.open) menu.close()
-                dismissedQuery = null
-                // Cleared with the menu. It is the span `insertRef` deletes,
-                // so leaving a stale value behind lets a later insertion eat
-                // characters that are no longer part of a query.
-                activeMatchLength = 0
-                return false
-              }
-              // Escape dismissed exactly this query. Editing it (typing or
-              // deleting) produces a different one and the menu returns.
-              if (dismissedQuery !== null && match.query === dismissedQuery) return false
-              dismissedQuery = null
-              activeMatchLength = match.matchLength
-              menu.setQuery(match.query)
-              return true
-            },
+            shouldShow: (view) => mentionTrigger.shouldShow(slashProvider?.getContent(view)),
           })
           return {
             update: (view, prevState) => slashProvider?.update(view, prevState),
@@ -570,6 +618,10 @@ onMounted(async () => {
     // After `gfm`: it contributes the `checked` attribute this renders.
     .use(taskList)
     .use(entityRefResolutionPlugin(resolverHandle))
+    // After the presets, so its `handlePaste` is offered the event before
+    // theirs. It declines everything that is not a bare URL over a selection,
+    // so ordinary pasting is untouched.
+    .use(linkPaste)
     .use(dirtyTracker)
     .use(slash)
     // Drag/insert handle in the gutter, plus the drop cursor and gap cursor it
@@ -592,6 +644,11 @@ onMounted(async () => {
       getPlacement: () => 'left-start',
     })
   }
+
+  // The link panel needs no setup here: `repositionLinkPanel` anchors it from
+  // `refreshDerivedState`, and it stays where the template put it — inside the
+  // shell, outside the editable div. See `linkPanelPosition.ts` for why it is
+  // positioned directly rather than through `TooltipProvider`.
 
   applyResolver()
   const mountedView = currentView()
@@ -743,6 +800,8 @@ onBeforeUnmount(() => {
   menu.dispose()
   slashProvider?.destroy()
   slashProvider = null
+  cleanupLinkPanel?.()
+  cleanupLinkPanel = null
   blockProvider?.destroy()
   blockProvider = null
   void editor.value?.destroy()
@@ -759,8 +818,11 @@ onBeforeUnmount(() => {
       :unavailable-ids="unavailableIds"
       :table-commands="tableCommands"
       :show-table-group="showTableGroup"
+      :history-commands="historyCommands"
+      :show-unlink="linkUI.inLink.value"
       @run="runCommand"
       @open-entity-picker="pickerOpen = true"
+      @unlink="onLinkUnlink"
     />
 
     <div class="milkdown-editor-body">
@@ -809,6 +871,28 @@ onBeforeUnmount(() => {
       />
     </div>
 
+    <!-- Outside the editable div for the same reason as the mention menu: the
+         provider positions this element, and inside the contenteditable it
+         would become part of the document being edited. -->
+    <div ref="linkPanelRoot" class="link-panel-anchor" data-show="false">
+      <LinkTooltip
+        v-if="linkUI.panelLink.value"
+        :href="linkUI.panelLink.value.href"
+        @edit="linkUI.openForPanel()"
+        @unlink="onLinkUnlink"
+      />
+    </div>
+
     <EntityPickerModal :open="pickerOpen" @select="onPickerSelect" @close="onPickerClose" />
+
+    <LinkDialog
+      :open="linkUI.dialog.value.open"
+      :initial-url="linkUI.dialog.value.initialUrl"
+      :initial-text="linkUI.dialog.value.initialText"
+      :needs-text="linkUI.dialog.value.needsText"
+      :editing="linkUI.dialog.value.editing"
+      @submit="onLinkSubmit"
+      @close="linkUI.closeDialog()"
+    />
   </div>
 </template>
