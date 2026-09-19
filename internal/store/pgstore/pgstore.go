@@ -140,8 +140,16 @@ type DBTX interface {
 // than to this type, so the public API this adds to is the store-capability
 // surface, not a new coupling point.
 //
-//plimsoll:max-exported-methods=46
-//plimsoll:max-methods=56
+// +1 exported / +1 method (TKT-HH7PKJ): SwapRelationEndpoints is an OPTIONAL
+// store capability (store.BulkMigrator) on the same terms as HeaderReader and
+// the TKT-1U8XYN pair above — consumers reach it by type-asserting the store
+// handle, so it has to live on this type or the assertion would not find it.
+// The whole point of the capability is that the rewrite happens where the rows
+// are: endpoints are a relation's identity, so a loop above the store must be
+// create-then-delete, which forks version lineage and destroys a self-edge.
+//
+//plimsoll:max-exported-methods=47
+//plimsoll:max-methods=57
 type Store struct {
 	db        DBTX
 	observers []store.EntityObserver // notified synchronously after committed entity writes
