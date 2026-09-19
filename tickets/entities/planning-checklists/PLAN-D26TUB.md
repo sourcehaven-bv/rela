@@ -58,11 +58,29 @@ OUT:
 6. `migrate gen` drafts a live `reverse_relation` step for that delta.
    Test: generate and assert the step is present and uncommented.
 7. A file spanning the delta with no step is refused. Test: `ParseFile`.
-8. Cardinality bounds that were NOT swapped alongside the endpoints are
-   reported. Test: swap endpoints only, assert the draft carries the warning.
-9. An edge whose endpoints do not typecheck after reversal is reported and
-   left. Test: an edge whose `to` entity is not of a type the new `from`
-   accepts.
+8. When the endpoints are swapped, the four cardinality comparisons do NOT also
+   fire as separate deltas — the swap is one finding, not five. Test:
+   `CompareShapes` over a metamodel pair that swaps endpoints AND their bounds
+   together yields exactly one delta. A pair that swaps the endpoints but LEAVES
+   the bounds produces the swap delta plus a warning naming the bounds that no
+   longer correspond, where "no longer correspond" is defined as
+   `effectiveBound(from.MinOutgoing) != effectiveBound(to.MinIncoming)` (and the
+   three mirrors), using the same nil-normalization `effectiveBound` applies
+   (`shapecompare.go:320-330`) so an unset bound and an explicit 0 do not read
+   as a difference.
+9. If ANY edge would not typecheck after reversal, the step refuses the whole
+   run, naming the first such edge. All-or-nothing, not report-and-continue:
+   a partial reversal leaves a mix of reversed and unreversed edges that the
+   directional test in Idempotence cannot classify on a later run, so
+   "report and leave" would reintroduce the oscillation this design exists to
+   prevent. Test: an edge whose `to` entity is not of a type the new `from:`
+   accepts causes the run to fail and write nothing.
+
+   The endpoint types are already resolved for the directional test, so this
+   costs nothing extra. Both are served by ONE batched header read
+   (`ListEntityHeaders` over the collected endpoint ids, the TKT-1U8XYN path),
+   never a `GetEntity` per edge — a per-row lookup is the defect class
+   CLAUDE.md's collection-reads rule forbids.
 
 ## Research
 
@@ -229,33 +247,48 @@ FROM-shape's `to:` list. Consequences to accept and test:
 6. `draftActiveStep`: emit a live `reverse_relation` step, plus a comment when
    the cardinality bounds were not swapped with the endpoints.
 
-**The scope: content refusal cannot be validated from the projections.**
-`ShapeProjection.RelationShape` (`shapeprojection.go:82-92`) carries `From`,
-`To`, `Symmetric`, the four bounds, `Content` and `Properties` — NOT `Scope` or
-`Orderable`. So `Validate(from, to)` cannot see whether the type is
-content-scoped. Two options:
+**No metamodel reaches `Exec`; the guard is a data check.** The first draft of
+this plan proposed adding a `Meta` field to `Exec` so the step could read
+`scope:` from the live metamodel, because `ShapeProjection.RelationShape`
+(`shapeprojection.go:82-92`) deliberately carries `From`, `To`, `Symmetric`, the
+four bounds, `Content` and `Properties` — but NOT `Scope` or `Orderable`, since
+neither affects whether a stored edge conforms.
 
-  (a) Add `Scope` to `ShapeProjection`. Rejected: it changes the shape hash for
-      every existing project, forcing a re-baseline, and `scope:` does not
-      affect whether a STORED edge conforms — which is the projection's stated
-      membership rule.
-  (b) Check at RUN time against the live metamodel, which `Exec` does not carry
-      today. `Runner` has `deps.Meta`, so `Exec` gains a `Meta` field and the
-      step refuses in `Run` rather than `Validate`.
+That is the wrong seam, and it is unnecessary:
 
-      `Exec` has two construction sites: `run.go:131` (the runner, which has
-      `deps.Meta` directly) and `gc.go:189` (the GC, which holds
-      `Meta func() *metamodel.Metamodel` — hot-reload aware, `gc.go:39`). The
-      GC only ever runs drop steps, so it may leave the new field nil; the
-      reverse step must then fail loudly rather than skip its check, since a
-      silently-skipped scope check is the lossy path this guards.
+- `Exec`'s existing fields (`run.go:196-202`) are each the target of writes or a
+  capability needed to perform them. Handing all thirteen step kinds the live
+  metamodel lets a future step depend on the CURRENT schema rather than the two
+  projections the file embeds, and the file's self-containment is the property
+  that makes a migration a reproducible description of its own transformation
+  (`file.go:22-28`).
+- It answers the question indirectly. What the code needs to know is whether any
+  collected edge carries a tail, and that is readable straight off the data as
+  `r.FromFace != ""` — no metamodel, no new field, and immune to a `scope:` that
+  has been flipped to `identity` while state-tailed rows remain stored. The
+  schema is not a reliable description of the store; that premise is why this
+  subsystem exists.
 
-Taking (b). The cost is that the refusal is a run-time rather than parse-time
-error, so it surfaces on `migrate data` (dry-run included) rather than on
-`ParseFile`. That is acceptable because dry-run is the default and reports it
-before any write. Note the same limitation applies to `_order_out`/`_order_in`:
-`Orderable` is not in the projection either, so the order-property swap is also
-a run-time concern.
+So guard 1 in the pre-flight is the whole mechanism, `Exec` is unchanged, and
+adding `Scope` to `ShapeProjection` (which would re-baseline every project's
+shape hash for a field that does not affect conformance) stays rejected.
+
+**Version capture: state which half is synchronous, and do not inherit the
+missing tail.** The delete half is captured synchronously via
+`x.captureRelationDelete`, the same path `rename_relation_type` and the cascade
+use. The CREATE half is not: new edges are picked up by the debounced
+reconciliation sweep, so on a fast-exiting CLI run their initial versions may
+land after the process ends. Attribution is still correct (`Runner.Run` sets
+`store.WithAttribution`, `run.go:119-120`). Say this in the step's doc rather
+than leaving the next reader to derive it.
+
+Separately, `capturer.relationDelete` builds `RelationVersionInput` without
+setting `FromFace` (`run.go:354-358`) although the struct carries one
+(`store.go:1024-1028`), so a state-tailed edge's delete would be recorded
+against the wrong relation. Pre-existing and out of scope to fix here — the
+pre-flight tail refusal means this step never captures a state-tailed delete —
+but worth a comment at the guard saying that is WHY the refusal cannot be
+relaxed without fixing the capture first.
 
 **Files to modify:**
 - `internal/datamigration/steps.go` — the step, registration
@@ -345,35 +378,53 @@ file applies and the marker advances, not just the step in isolation.
 
 **Risks:**
 
-1. **Content-scoped edges are unrepresentable reversed, and silently lossy if
-   missed.** `entity.Relation` has `FromFace` and deliberately no `ToFace`
-   (`entity.go:260-266`): heads are entity-level by construction, which is what
-   makes cross-world dangling references inexpressible. Reversing
-   `(A@draft) --t--> B` has nowhere to put `draft`. Worse, the tail face is part
-   of the key (`entity.go:302-308`), so two edges differing only in tail face
-   are two relations that a reversal collapses onto one key — a silent merge.
-   *Mitigation:* refuse the whole relation type at run time, before any write.
-   Effort `l` rather than `m` largely because `Exec` must learn the metamodel
-   to do this.
+1. **Four independent routes to silent edge loss, all in the write loop.**
+   Self-edges (probe: 0 survivors), both-directions-present (probe: 2 edges → 1,
+   survivor carrying the wrong properties), state-tailed edges collapsing onto
+   one key, and `DeleteRelation`'s default-tail addressing. These are the
+   dominant risk in the ticket and every one of them was reachable from the
+   first draft of this plan.
+   *Mitigation:* the pre-flight pass, which runs before the `x.Apply` branch so
+   a dry-run reports the refusal instead of a clean count. Each of the four has
+   its own acceptance criterion and a test asserting the data survives.
 
-2. **Version lineage breaks per edge.** Endpoints are the address
-   (`UpdateRelation` mutates only `data`), so this is delete+create and each
-   edge starts a fresh lineage on the database backends.
-   *Mitigation:* none available; it is inherent, identical to
-   `rename_relation_type`, and must be stated in the step's doc and the guide
-   rather than discovered.
+2. **The step could oscillate rather than converge**, un-migrating the graph on
+   the re-run that is supposed to be the crash-recovery mechanism.
+   *Mitigation:* the endpoint-type directional test, plus a refusal for types
+   whose from/to lists overlap and so cannot be decided. AC-2 asserts direction,
+   not merely a zero count.
 
-3. **A partial swap is ambiguous.** Endpoint lists that overlap rather than
-   exchange cleanly (`from: [a,b] → [b,a]`) are not a reversal.
-   *Mitigation:* the delta fires only on an exact exchange of non-empty,
-   non-equal lists; anything else stays two narrowings, which is the current
-   behaviour and is safe.
+3. **The enforcement wiring could silently do nothing**, or refuse every file
+   including correct ones, because `validateDeltasResolved` is hard-coded to
+   `*migrateFaceStep` and to unprefixed subjects.
+   *Mitigation:* generalize the population loop first; AC-7 asserts the refusal
+   fires for the relation delta AND that a correct file parses.
 
-4. **The generator could draft a step the operator did not intend**, since a
-   deliberate double-narrowing that happens to look like a swap is
-   indistinguishable from one. *Mitigation:* accepted. The draft is reviewed
-   before it applies — "the review is the safety mechanism" — and the step is a
-   whole-type rewrite that a reader will not miss.
+4. **An already-committed migration file that spans a swap stops parsing.**
+   Such a file currently sees two `relation_endpoint_narrowed` deltas with an
+   empty `resolvingSteps` entry; after this change it sees one
+   `relation_endpoints_swapped` with a NON-empty entry, so
+   `validateDeltasResolved` demands a step the file cannot have had, and
+   `LoadDir` fails the whole chain (`file.go:322-325`).
+   *Answered, not assumed:* there are **zero** committed data-migration files
+   in the tree. `find` for `migrations/*.yaml` outside `pgstore/` returns
+   nothing, and the only files carrying `from_projection` are the generator,
+   the parser and the test fixtures. So no existing file can break, and the
+   risk is real only for projects outside this repo. The guide section must
+   still warn operators with committed migrations that span a swap, and the
+   step's introduction should be treated as a breaking change for them.
+
+5. **Version lineage breaks per edge.** Endpoints are the address, so this is
+   delete+create and each edge starts a fresh lineage on the database backends.
+   *Mitigation:* none available; inherent and identical to
+   `rename_relation_type`. Must be stated in the step doc and the guide.
+
+6. **A deliberate double-narrowing that happens to look like a swap gets a
+   drafted step.** *Mitigation:* accepted, but only because the dry-run is now
+   faithful (risk 1). The earlier version of this plan accepted it on the
+   strength of "the review is the safety mechanism" while the dry-run would
+   have reported a clean count for a destructive run — which made the review a
+   mitigation in name only.
 
 **Effort:** l
 
@@ -392,7 +443,22 @@ file applies and the marker advances, not just the step in isolation.
 
 ## Design Review
 
-- [ ] Run `/design-review` before starting implementation
-- [ ] All critical/significant findings addressed in plan
+- [x] Run `/design-review` before starting implementation
+- [x] All critical/significant findings addressed in plan
 
-**Design Review Findings:**
+**Design Review Findings:** RR-6U41C3, RR-2IKYBT, RR-EHKYDB, RR-RN0QB8,
+RR-838OB8 (critical); RR-0MQ4ZF, RR-2L6XJB, RR-ASNIG5, RR-A7DK8Q (significant).
+All nine addressed in the Approach, Acceptance Criteria and Risks sections
+above. Three minor findings were folded in without their own entities: the
+delta-kind guard is a source regex so the new `r.add` must be a literal call
+(noted in Approach §4), the existing-files question is answered in Risk 4, and
+the risk register was rewritten because it had omitted its own top three risks.
+
+The review recommended not proceeding, and it was right about the plan as it
+then stood. Four of the five critical findings were routes to silent edge loss;
+two of those I had already found and fixed independently before the review
+returned, and three I had not. The two probe results quoted in the Pre-flight
+section (self-edge → 0 survivors; both-directions → 2 edges become 1 carrying
+the wrong properties) were produced by running the proposed sequence against a
+memstore, not by reading the code — both were worse than the review described,
+since the bidirectional case corrupts rather than merely loses.
