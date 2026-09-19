@@ -133,7 +133,12 @@ describe('buildDuplicatePrefill', () => {
     // AC6: selected types carry every visible peer.
     it('carries peers of selected keys', () => {
       const p = buildDuplicatePrefill(entity(), ticketType, rels, ['blocks'], undefined)
-      expect(p.relations).toEqual({ blocks: ['TKT-2', 'TKT-3'] })
+      expect(p.relations).toEqual({
+        blocks: [
+          { id: 'TKT-2', type: 'ticket' },
+          { id: 'TKT-3', type: 'ticket' },
+        ],
+      })
     })
 
     // AC7: unchecking a type means none of its edges exist on the copy.
@@ -147,7 +152,7 @@ describe('buildDuplicatePrefill', () => {
     // resolves them server-side, so translating here would double-invert.
     it('passes an incoming inverse key through untranslated', () => {
       const p = buildDuplicatePrefill(entity(), ticketType, rels, ['blocked_by'], undefined)
-      expect(p.relations).toEqual({ blocked_by: ['TKT-9'] })
+      expect(p.relations).toEqual({ blocked_by: [{ id: 'TKT-9', type: 'ticket' }] })
     })
 
     it('selects nothing when no keys are chosen', () => {

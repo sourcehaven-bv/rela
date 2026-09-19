@@ -19,7 +19,7 @@ export interface DuplicatePrefill {
    * incoming ones. The create body resolves both, so these are passed through
    * untranslated.
    */
-  relations: Record<string, string[]>
+  relations: Record<string, DuplicatePeer[]>
   /**
    * Properties the source withheld or that cannot be carried, for disclosure
    * to the user. A duplicate that quietly drops fields is the one unacceptable
@@ -27,6 +27,12 @@ export interface DuplicatePrefill {
    * in silence.
    */
   omitted: OmittedProperty[]
+}
+
+/** A peer to pre-link. `type` is required to emit a JSON:API resource id. */
+export interface DuplicatePeer {
+  id: string
+  type: string
 }
 
 export interface OmittedProperty {
@@ -88,10 +94,12 @@ export function buildDuplicatePrefill(
   }
 
   const selected = new Set(selectedRelationKeys)
-  const outRelations: Record<string, string[]> = {}
+  const outRelations: Record<string, DuplicatePeer[]> = {}
   for (const [key, edges] of Object.entries(relations)) {
     if (!selected.has(key)) continue
-    const peers = edges.map((e) => e.id)
+    // `type` is carried because the create body needs a resource identifier,
+    // and a card-delivered edge is refused outright without one.
+    const peers = edges.filter((e) => !!e.type).map((e) => ({ id: e.id, type: e.type }))
     if (peers.length > 0) outRelations[key] = peers
   }
 

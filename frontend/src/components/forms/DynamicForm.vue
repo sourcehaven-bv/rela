@@ -115,7 +115,7 @@ const props = defineProps<{
   embeddedPrefill?: {
     properties: Record<string, unknown>
     content: string
-    relations: Record<string, string[]>
+    relations: Record<string, { id: string; type: string }[]>
   }
 }>()
 
@@ -999,14 +999,81 @@ function applyEmbeddedPrefill() {
       name: '',
       properties: prefill.properties,
       content: prefill.content,
-      relations: Object.entries(prefill.relations).flatMap(([relation, targets]) =>
-        targets.map((target) => ({ relation, target }))
+      relations: Object.entries(prefill.relations).flatMap(([relation, peers]) =>
+        peers.map((peer) => ({ relation, target: peer.id }))
       ),
     },
     false
   )
   for (const prop of Object.keys(prefill.properties)) {
     userTouched.value.add(prop)
+  }
+  routePrefilledCardRelations(prefill.relations)
+}
+
+/**
+ * Re-routes prefilled edges whose form field is card-managed.
+ *
+ * `relations.value` is NOT the payload for a `widget: cards` relation: the
+ * submit path excludes those keys and takes them from `pendingCardChanges`
+ * instead. A prefill that only wrote `relations.value` therefore lost every
+ * card-managed edge silently — the entity was created, the edge was not, and
+ * nothing errored. That is RR-7Z3SFC's failure mode, which was fixed for a
+ * single pre-linked peer and reappears here at N peers across N relations.
+ *
+ * An INCOMING edge arrives under the relation's inverse name (that is how the
+ * read endpoint keys it), so it is mapped back to the canonical relation and
+ * given the incoming suffix — `buildRelationsPatch` re-derives the inverse body
+ * key from that pair.
+ */
+function routePrefilledCardRelations(
+  prefilled: Record<string, { id: string; type: string }[]>
+) {
+  // allFields, not fields: the visible set is filtered by affordances that
+  // arrive with the dry-run, which has not run when the prefill lands. Whether
+  // an edge is card-DELIVERED is a property of the form config, not of what is
+  // currently on screen.
+  const cardRelations = new Set(
+    allFields.value.filter((f) => f.relation && f.widget === 'cards').map((f) => f.relation!)
+  )
+  if (cardRelations.size === 0) return
+
+  const canonicalByInverse = new Map<string, string>()
+  for (const f of allFields.value) {
+    if (!f.relation) continue
+    const inverse = schemaStore.getInverseName(f.relation)
+    if (inverse) canonicalByInverse.set(inverse, f.relation)
+  }
+
+  for (const [key, peers] of Object.entries(prefilled)) {
+    const canonical = canonicalByInverse.get(key)
+    const relation = canonical ?? key
+    if (!cardRelations.has(relation)) continue
+
+    const suffix = canonical ? INCOMING_SUFFIX : OUTGOING_SUFFIX
+    const mapKey = `${relation}${suffix}`
+    const state = pendingCardChanges.value.get(mapKey) ?? {
+      entries: [],
+      added: [],
+      removed: [],
+      updated: [],
+    }
+    for (const peer of peers) {
+      // `entries` is what buildRelationsPatch actually emits; `added` only
+      // decides whether the key is emitted at all. Populating one without the
+      // other sends an EMPTY edge list, which reads as "unlink everything"
+      // rather than as the copy's edges.
+      if (!state.entries.some((e) => e.id === peer.id)) {
+        state.entries.push({ id: peer.id, type: peer.type })
+      }
+      if (!state.added.some((a) => a.targetId === peer.id)) {
+        state.added.push({ targetId: peer.id })
+      }
+    }
+    pendingCardChanges.value.set(mapKey, state)
+    // Drop the copy the card path now owns, so one edge cannot be emitted
+    // twice under two different body keys.
+    delete relations.value[key]
   }
 }
 
