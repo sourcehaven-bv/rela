@@ -310,6 +310,37 @@ caller-supplied traversal must lower into `GraphQuery.Narrowing`, never `Any`.
 Those are deliberately different types so the mistake cannot compile
 (`internal/store/graphquery.go:77`).
 
+
+### Implementation findings (store + ACL layers landed)
+
+Three constraints surfaced while building the gate that the design above did
+not anticipate. All three are fail-CLOSED refusals rather than silent
+degradations, because each is a case where the predicate cannot express what
+the policy means:
+
+1. **A face-restricted read cannot be gated.** `store.EndpointPredicate` has no
+   face field, so when `ReadQueryResult.Faces` is non-empty the gate refuses.
+   Emitting the predicate anyway would traverse through content states the
+   principal may not read.
+2. **A disjunctive (`Any`) authorization ceiling cannot be gated.** The
+   conferred-role path produces `GraphQuery.Any` branches; an EndpointPredicate
+   has no OR field, so flattening would either widen (escalation) or misstate
+   the ceiling. Refused.
+3. **The field gate is POLICY-WIDE, not per-principal.** `ConditionallyVisible`
+   asks whether ANY role's `visible:` grant for the type/property carries a
+   `when:`. A per-principal answer would make the set of filterable properties
+   vary by role, so the privileged caller becomes an oracle for the
+   unprivileged one — and it is what lets the refusal be a load-time error
+   rather than a request-time one.
+
+Also settled: a **dangling edge is not a match**. This falls out of the INNER
+JOIN in SQL, and the Go path was made to agree explicitly rather than by
+accident; it is pinned by a conformance test.
+
+The security tests were verified to FAIL when the row gate is removed, and the
+EXPLAIN test to fail when the endpoint comparison is hand-rolled without the
+scalar guard. A security test that cannot fail is worth nothing.
+
 ## Recommendation
 
 Ship `related(entity, path, {constraints})` — table form (S4), required type
