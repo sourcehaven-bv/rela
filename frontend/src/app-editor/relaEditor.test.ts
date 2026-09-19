@@ -574,3 +574,52 @@ describe('<rela-editor> contract', () => {
     expect(document.head.querySelector('style')).toBeNull()
   })
 })
+
+// Comment chips in the sandboxed element (TKT-T0QP4Y).
+//
+// The node and its remark plugin now load from `RELA_OUTPUT_NODES` in the
+// shared preset, so both editors get them from one place. That is the fix for a
+// review finding, and it needs a test on THIS side: the whole risk the shared
+// preset exists to remove is the two editors writing different bytes, and a
+// test that only ever runs the SPA cannot see that happen.
+describe('rela-editor comment chips', () => {
+  it('renders an HTML comment as a chip, not as raw text', async () => {
+    const ed = makeEditor()
+    ed.value = '<!-- Document what IS and IS NOT in scope -->\n'
+    document.body.appendChild(ed)
+    await settle()
+
+    const surface = prose(ed)
+    const chip = surface?.querySelector('.rela-comment')
+    expect(chip).not.toBeNull()
+    expect(chip?.textContent).toBe('Document what IS and IS NOT in scope')
+    expect(surface?.textContent).not.toContain('<!--')
+  })
+
+  // The property the shared preset exists to guarantee. `.value` reads through
+  // `guardWriteBack`, which is the app's save path.
+  it('round-trips a comment unchanged through the value getter', async () => {
+    const src = '## Options\n\n<!-- For each option:\n- **Pros**: good\n-->\n'
+    const ed = makeEditor()
+    ed.value = src
+    document.body.appendChild(ed)
+    await settle()
+
+    expect(ed.value).toContain('<!-- For each option:\n- **Pros**: good\n-->')
+  })
+
+  // Raw markup must stay visible here too: the app editor renders untrusted
+  // content in a page an app controls, so a chip hiding live markup would be
+  // worse here than in the SPA, not better.
+  it('leaves non-comment raw HTML visible as text', async () => {
+    const ed = makeEditor()
+    ed.value = 'Body <img src=x onerror="alert(1)"> tail\n'
+    document.body.appendChild(ed)
+    await settle()
+
+    const surface = prose(ed)
+    expect(surface?.querySelector('.rela-comment')).toBeNull()
+    expect(surface?.querySelector('img')).toBeNull()
+    expect(surface?.textContent).toContain('onerror')
+  })
+})

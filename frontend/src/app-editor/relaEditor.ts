@@ -48,7 +48,11 @@ import type { EditorState } from '@milkdown/kit/prose/state'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import { lift } from '@milkdown/kit/prose/commands'
 
-import { RELA_COMMONMARK, configureRelaSerializer } from '@/components/forms/milkdown/editorPreset'
+import {
+  RELA_COMMONMARK,
+  RELA_OUTPUT_NODES,
+  configureRelaSerializer,
+} from '@/components/forms/milkdown/editorPreset'
 import { entityRefNode, isValidEntityRefId } from '@/components/forms/milkdown/entityRefNode'
 import { guardWriteBack } from '@/components/forms/milkdown/writeBackGuard'
 import { parseMentionQuery } from '@/components/forms/milkdown/mentionQuery'
@@ -560,6 +564,7 @@ class RelaEditorElement extends HTMLElement {
         .use(gfm)
         .use(history)
         .use(entityRefNode)
+        .use(RELA_OUTPUT_NODES)
         .use(dirtyTracker)
         .use(slash)
         // `cursor` gives the gap cursor and `trailing` a way to click below a
