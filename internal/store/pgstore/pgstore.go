@@ -140,8 +140,8 @@ type DBTX interface {
 // than to this type, so the public API this adds to is the store-capability
 // surface, not a new coupling point.
 //
-//plimsoll:max-exported-methods=46
-//plimsoll:max-methods=56
+//plimsoll:max-exported-methods=47
+//plimsoll:max-methods=57
 type Store struct {
 	db        DBTX
 	observers []store.EntityObserver // notified synchronously after committed entity writes

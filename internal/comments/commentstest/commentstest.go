@@ -48,6 +48,7 @@ func RunAll(t *testing.T, f Factory) {
 	t.Helper()
 	t.Run("Empty", func(t *testing.T) { RunEmptyTests(t, f) })
 	t.Run("Ordering", func(t *testing.T) { RunOrderingTests(t, f) })
+	t.Run("Get", func(t *testing.T) { RunGetTests(t, f) })
 	t.Run("Update", func(t *testing.T) { RunUpdateTests(t, f) })
 	t.Run("Delete", func(t *testing.T) { RunDeleteTests(t, f) })
 	t.Run("Isolation", func(t *testing.T) { RunIsolationTests(t, f) })
@@ -55,6 +56,244 @@ func RunAll(t *testing.T, f Factory) {
 	t.Run("Concurrency", func(t *testing.T) { RunConcurrencyTests(t, f) })
 	t.Run("RoundTrip", func(t *testing.T) { RunRoundTripTests(t, f) })
 	t.Run("Faces", func(t *testing.T) { RunFaceTests(t, f) })
+}
+
+// RunGetTests pins the single-comment read (TKT-4LG36M).
+//
+// Get exists so the database backends can serve an authorization check from
+// their primary key instead of reading a whole thread. That makes it a SECOND
+// read path onto the same rows, and a second path is exactly where backends
+// drift: the risk is not that Get fails outright but that it disagrees with
+// List in some corner — a different zone on a timestamp, a face it resolves
+// through that List would not.
+func RunGetTests(t *testing.T, f Factory) {
+	t.Helper()
+	ctx := context.Background()
+
+	t.Run("Fidelity", func(t *testing.T) { runGetFidelityTests(t, f) })
+
+	t.Run("absent id is ErrNotFound", func(t *testing.T) {
+		s := f(t)
+		tgt := target("TKT-1")
+		require.NoError(t, s.Add(ctx, tgt, comment("c1", 0, "alice", "present")))
+
+		_, err := s.Get(ctx, tgt, "nope")
+		require.ErrorIs(t, err, comments.ErrNotFound)
+	})
+
+	t.Run("a target with no thread at all is ErrNotFound", func(t *testing.T) {
+		s := f(t)
+		_, err := s.Get(ctx, target("TKT-never-commented"), "c1")
+		require.ErrorIs(t, err, comments.ErrNotFound,
+			"an absent thread must report a missing comment, not an infrastructure error")
+	})
+
+	t.Run("Scoping", func(t *testing.T) { runGetScopingTests(t, f) })
+
+	t.Run("a deleted comment is gone", func(t *testing.T) {
+		s := f(t)
+		tgt := target("TKT-1")
+		require.NoError(t, s.Add(ctx, tgt, comment("c1", 0, "alice", "doomed")))
+		require.NoError(t, s.Delete(ctx, tgt, "c1"))
+
+		_, err := s.Get(ctx, tgt, "c1")
+		require.ErrorIs(t, err, comments.ErrNotFound)
+	})
+}
+
+// runGetFidelityTests pins that Get decodes a comment exactly as List does.
+//
+// Get is a second decoder over the same columns, so the failure to guard against
+// is not that it errors but that it quietly disagrees — a timestamp in the
+// server's local zone rather than UTC, or an optional column read differently
+// through its NULL path. Either ships two shapes of one comment to the same
+// client depending on which route the request took.
+func runGetFidelityTests(t *testing.T, f Factory) {
+	t.Helper()
+	ctx := context.Background()
+
+	t.Run("returns the stored comment", func(t *testing.T) {
+		s := f(t)
+		tgt := target("TKT-1")
+		want := comments.Comment{
+			ID:        "c1",
+			Author:    "alice@example.com",
+			CreatedAt: base,
+			Anchor:    comments.Anchor{Kind: comments.AnchorSection, Ref: "acceptance-criteria"},
+			Body:      "A body with **markdown**, a newline\nand a tab\there.",
+			Resolved:  true,
+		}
+		require.NoError(t, s.Add(ctx, tgt, want))
+
+		got, err := s.Get(ctx, tgt, "c1")
+		require.NoError(t, err)
+		require.Equal(t, want.ID, got.ID)
+		require.Equal(t, want.Author, got.Author)
+		require.True(t, want.CreatedAt.Equal(got.CreatedAt), "CreatedAt must round-trip")
+		// Same reasoning as RunRoundTripTests: Equal compares instants and
+		// ignores location, so without this a backend could return the right
+		// moment in the server's local zone and serialize a different offset to
+		// clients than List does for the very same comment.
+		require.Equal(t, time.UTC, got.CreatedAt.Location(),
+			"Get must return UTC, exactly as List does")
+		require.Equal(t, want.Anchor, got.Anchor)
+		require.Equal(t, want.Body, got.Body)
+		require.Equal(t, want.Resolved, got.Resolved)
+	})
+
+	t.Run("agrees with List on every comment in a thread", func(t *testing.T) {
+		s := f(t)
+		tgt := target("TKT-1")
+		require.NoError(t, s.Add(ctx, tgt, comment("c1", time.Hour, "alice", "first")))
+		require.NoError(t, s.Add(ctx, tgt, comment("c2", 2*time.Hour, "bob", "second")))
+
+		listed, err := s.List(ctx, tgt)
+		require.NoError(t, err)
+		require.Len(t, listed, 2)
+
+		for _, want := range listed {
+			got, err := s.Get(ctx, tgt, want.ID)
+			require.NoError(t, err, "Get must find every comment List returns")
+			require.Equal(t, want, got, "Get and List must agree on %q", want.ID)
+		}
+	})
+
+	// UpdatedAt is the column most likely to diverge and the least likely to be
+	// noticed: it is optional, so it travels a NULL path the others do not, and
+	// each backend decodes it separately (a *time.Time on postgres, a *string
+	// parsed from text on sqlite). Its absence is also meaningful — `omitzero`
+	// makes a zero value mean "never edited" to every API client.
+	t.Run("an unedited comment has a zero UpdatedAt", func(t *testing.T) {
+		s := f(t)
+		tgt := target("TKT-1")
+		require.NoError(t, s.Add(ctx, tgt, comment("c1", 0, "alice", "never edited")))
+
+		got, err := s.Get(ctx, tgt, "c1")
+		require.NoError(t, err)
+		require.True(t, got.UpdatedAt.IsZero(),
+			"a comment nobody edited must report no edit time, not the zero date or the epoch")
+	})
+
+	t.Run("reflects an update", func(t *testing.T) {
+		s := f(t)
+		tgt := target("TKT-1")
+		require.NoError(t, s.Add(ctx, tgt, comment("c1", 0, "alice", "before")))
+		require.NoError(t, s.Update(ctx, tgt, "c1", "after", true))
+
+		got, err := s.Get(ctx, tgt, "c1")
+		require.NoError(t, err)
+		require.Equal(t, "after", got.Body)
+		require.True(t, got.Resolved)
+
+		// Whether an edit STAMPS UpdatedAt is not asserted here: the database
+		// backends set it and the file/memory ones do not (TKT-JZY2PM). What
+		// this suite does pin is that however a backend answers that question,
+		// its two read paths answer it identically — which is the risk a second
+		// decoder introduces, and the only part of it that Get owns.
+		listed, err := s.List(ctx, tgt)
+		require.NoError(t, err)
+		require.Len(t, listed, 1)
+		require.Equal(t, listed[0], got, "Get and List must agree after an update")
+		if !got.UpdatedAt.IsZero() {
+			require.Equal(t, time.UTC, got.UpdatedAt.Location(),
+				"a stamped UpdatedAt must come back in UTC, exactly as CreatedAt does")
+		}
+	})
+}
+
+// runGetScopingTests pins that Get resolves an ID only within the target it was
+// asked about.
+//
+// Split out because these cases carry the security weight of the method.
+// Get's result decides whether an *-own permission covers a mutation, so an ID
+// that resolved outside the named target would have a request's permission
+// decided against a record it never asked for — and, because the caller then
+// mutates by the same (target, id) pair, the check and the write would be
+// looking at different rows.
+func runGetScopingTests(t *testing.T, f Factory) {
+	t.Helper()
+	ctx := context.Background()
+
+	t.Run("does not resolve across targets", func(t *testing.T) {
+		s := f(t)
+		require.NoError(t, s.Add(ctx, target("TKT-1"), comment("c1", 0, "alice", "on one")))
+
+		_, err := s.Get(ctx, target("TKT-2"), "c1")
+		require.ErrorIs(t, err, comments.ErrNotFound,
+			"a comment id must not be reachable from another entity's target")
+	})
+
+	t.Run("does not resolve across faces", func(t *testing.T) {
+		s := f(t)
+		def := comments.Target{Type: "ticket", ID: "TKT-1"}
+		draft := comments.Target{Type: "ticket", ID: "TKT-1", Face: "draft"}
+		require.NoError(t, s.Add(ctx, draft, comment("c1", 0, "alice", "on the draft")))
+
+		_, err := s.Get(ctx, def, "c1")
+		require.ErrorIs(t, err, comments.ErrNotFound,
+			"a comment on the draft face must not be reachable through the default face")
+
+		got, err := s.Get(ctx, draft, "c1")
+		require.NoError(t, err)
+		require.Equal(t, "on the draft", got.Body)
+	})
+
+	// The reverse of the case above, and NOT redundant with it. Target.Key() is
+	// entity.FormatStateRef, so the default face serializes to the bare id and a
+	// named face to "id@face" — meaning "TKT-1" is a PREFIX of "TKT-1@draft" but
+	// not the other way round. A backend matching by prefix rather than equality
+	// fails in one direction only, so testing one direction tests half the bug.
+	t.Run("the default face is not reachable through a named one", func(t *testing.T) {
+		s := f(t)
+		def := comments.Target{Type: "ticket", ID: "TKT-1"}
+		draft := comments.Target{Type: "ticket", ID: "TKT-1", Face: "draft"}
+		require.NoError(t, s.Add(ctx, def, comment("c1", 0, "alice", "on the default")))
+
+		_, err := s.Get(ctx, draft, "c1")
+		require.ErrorIs(t, err, comments.ErrNotFound,
+			"a comment on the default face must not be reachable through the draft face")
+	})
+
+	// This is the case with the real security weight. Get's result decides
+	// whether an *-own permission covers a mutation, so it is not enough that a
+	// lookup finds A row — it must find THE row. With one comment per store the
+	// assertions above are satisfied by any backend that merely scopes SOMEHOW;
+	// two comments sharing an id across two faces is what distinguishes
+	// "returns the right record" from "returns a plausible one".
+	t.Run("one id on two faces returns each face's own comment", func(t *testing.T) {
+		s := f(t)
+		def := comments.Target{Type: "ticket", ID: "TKT-1"}
+		draft := comments.Target{Type: "ticket", ID: "TKT-1", Face: "draft"}
+		require.NoError(t, s.Add(ctx, def, comment("c1", 0, "alice", "on the default")))
+		require.NoError(t, s.Add(ctx, draft, comment("c1", 0, "bob", "on the draft")))
+
+		got, err := s.Get(ctx, def, "c1")
+		require.NoError(t, err)
+		require.Equal(t, "on the default", got.Body, "the default face must return its own comment")
+		require.Equal(t, "alice", got.Author, "the author decides an *-own permission; it must be this face's")
+
+		got, err = s.Get(ctx, draft, "c1")
+		require.NoError(t, err)
+		require.Equal(t, "on the draft", got.Body, "the draft face must return its own comment")
+		require.Equal(t, "bob", got.Author)
+	})
+
+	// The same property across two entities rather than two faces.
+	t.Run("one id on two targets returns each target's own comment", func(t *testing.T) {
+		s := f(t)
+		require.NoError(t, s.Add(ctx, target("TKT-1"), comment("c1", 0, "alice", "on one")))
+		require.NoError(t, s.Add(ctx, target("TKT-2"), comment("c1", 0, "bob", "on two")))
+
+		got, err := s.Get(ctx, target("TKT-1"), "c1")
+		require.NoError(t, err)
+		require.Equal(t, "on one", got.Body)
+		require.Equal(t, "alice", got.Author)
+
+		got, err = s.Get(ctx, target("TKT-2"), "c1")
+		require.NoError(t, err)
+		require.Equal(t, "on two", got.Body)
+		require.Equal(t, "bob", got.Author)
+	})
 }
 
 // RunFaceTests pins the per-face contract (FEAT-9CD2MX).
@@ -460,6 +699,26 @@ func RunKeyFidelityTests(t *testing.T, f Factory) {
 		require.NoError(t, s.Add(ctx, lower, comment("lower", time.Hour, "bob", "on tkt-1")))
 		return s
 	}
+
+	t.Run("Get does not resolve a target differing only by case", func(t *testing.T) {
+		// Get matches both key halves with "=", which is byte-exact in SQLite
+		// where LIKE is not. That is a property of the SQL each backend wrote,
+		// so it is asserted rather than reasoned about — the same reason the
+		// rename and delete cases below exist.
+		s := seed(t)
+
+		got, err := s.Get(ctx, upper, "upper")
+		require.NoError(t, err)
+		require.Equal(t, "on TKT-1", got.Body)
+
+		_, err = s.Get(ctx, lower, "upper")
+		require.ErrorIs(t, err, comments.ErrNotFound,
+			"tkt-1 must not resolve a comment stored on TKT-1")
+
+		_, err = s.Get(ctx, upper, "lower")
+		require.ErrorIs(t, err, comments.ErrNotFound,
+			"TKT-1 must not resolve a comment stored on tkt-1")
+	})
 
 	t.Run("rename does not re-key a target differing only by case", func(t *testing.T) {
 		s := seed(t)

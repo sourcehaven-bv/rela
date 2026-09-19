@@ -94,6 +94,7 @@ components:
   statemachine:     { in: internal/statemachine }
   tracer:           { in: internal/tracer }
   validation:       { in: internal/validation }
+  validationgraph:  { in: internal/validationgraph }
   validator:        { in: internal/validator }
 
   # Core domain
@@ -757,6 +758,7 @@ deps:
       - store
       - tracer
       - validation
+      - validationgraph
   cmdexec:
     canUse:
       - xsys
@@ -1024,12 +1026,18 @@ deps:
       - predicatefns
     canUse:
       - gopherlua
+  validationgraph:
+    mayDependOn:
+      - entity
+      - store
+      - validation
   validator:
     mayDependOn:
       - lua
       - metamodel
       - store
       - validation
+      - validationgraph
 
   # Core domain
   metamodel:

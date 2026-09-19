@@ -182,7 +182,17 @@ func (s *FSStore) createRelation(
 }
 
 func (s *FSStore) updateRelation(
-	_ context.Context, from, relType, to string, data store.RelationData,
+	ctx context.Context, from, relType, to string, data store.RelationData,
+) (*entity.Relation, error) {
+	return s.updateRelationState(ctx, from, "", relType, to, data)
+}
+
+// updateRelationState writes the edge with EXACTLY this tail. The tail is
+// part of a relation's identity, so addressing the wrong one updates a
+// different edge rather than failing (BUG-64MU2Q) — the same reasoning
+// deleteRelationState is built on.
+func (s *FSStore) updateRelationState(
+	_ context.Context, from string, p entity.Face, relType, to string, data store.RelationData,
 ) (*entity.Relation, error) {
 	if err := storeutil.ValidateProperties(data.Properties); err != nil {
 		return nil, err
@@ -190,13 +200,14 @@ func (s *FSStore) updateRelation(
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	key := defaultTailKey(from, relType, to)
-	if _, ok := s.relations[key]; !ok {
+	rm, ok := s.relations[relKey(from, p, relType, to)]
+	if !ok {
 		return nil, store.ErrNotFound
 	}
 
-	// Load existing, then apply update.
-	r, err := s.loadRelation(from, relType, to)
+	// Load existing, then apply update. Via the index meta, so the loaded
+	// edge carries the tail it is stored under rather than the default.
+	r, err := s.loadRelationMeta(rm)
 	if err != nil {
 		return nil, err
 	}
@@ -222,6 +233,7 @@ func (s *FSStore) updateRelation(
 		RelationType: relType,
 		From:         from,
 		To:           to,
+		Face:         p,
 	})
 	return r.Clone(), nil
 }

@@ -19,6 +19,23 @@ import (
 const (
 	// perCaptureTimeout bounds one navigate+render+capture.
 	perCaptureTimeout = 30 * time.Second
+	// captureAttempts is how many times one screenshot{} island will run its
+	// navigate+render+capture before failing the build.
+	//
+	// This exists for COLD START, not for a slow page. The docs build runs on
+	// the same CI runner as the Playwright suite and immediately after it, so
+	// the first capture stands up a temp project, starts a server, launches
+	// Chrome and loads the SPA on a machine that is still under load. Both
+	// observed CI failures landed on the FIRST screenshot{} of the manual and
+	// none on the other fifteen, which is the signature of a cold-start cost
+	// rather than of a figure that cannot be taken.
+	//
+	// Three attempts, not "retry until it works": a genuinely broken figure
+	// must still fail the build, and fail before CI's job timeout. Only
+	// transient failures are retried (see retryableCapture) — a page that
+	// stamped form-state-error, or a region over the height cap, fails on the
+	// first attempt exactly as before.
+	captureAttempts = 3
 	// maxFullHeight caps a full-page capture; a taller page is a build error, not
 	// a silent truncation (DR-M2).
 	maxFullHeight = 4000
@@ -54,6 +71,10 @@ type Capturer struct {
 	// owns — the Capturer must never close it.
 	proj    *project
 	browser *browser
+	// attempt overrides one capture attempt. Nil in production (captureOnce is
+	// used); set by tests so the RETRY POLICY can be exercised without a
+	// browser, a server or a 30-second timeout to wait out.
+	attempt func(context.Context, docs.CaptureSpec) (string, error)
 }
 
 // New returns a Capturer. It does NOT launch a browser yet (that happens on the
@@ -72,7 +93,45 @@ func New(shared *SharedProject) (*Capturer, error) {
 }
 
 // Capture renders one screenshot and writes the PNG, returning its path.
+//
+// A transient failure is retried up to captureAttempts times; a deterministic
+// one (the page stamped form-state-error, the region exceeds the height cap)
+// fails immediately. See captureAttempts for why.
 func (c *Capturer) Capture(ctx context.Context, spec docs.CaptureSpec) (string, error) {
+	var err error
+	for attempt := 1; attempt <= captureAttempts; attempt++ {
+		var path string
+		path, err = c.attemptOnce(ctx, spec)
+		if err == nil {
+			return path, nil
+		}
+		if !retryableCapture(err) || attempt == captureAttempts {
+			return "", err
+		}
+		// Drop the browser so the next attempt relaunches it. A capture that
+		// timed out can leave the tab mid-navigation, and reusing it would
+		// carry that state into the retry — the same SPA-state bleed the
+		// about:blank navigation in captureOnce exists to prevent.
+		c.resetBrowser()
+		select {
+		case <-ctx.Done():
+			return "", err
+		case <-time.After(captureRetryPause):
+		}
+	}
+	return "", err
+}
+
+// attemptOnce runs one attempt through the test seam when set.
+func (c *Capturer) attemptOnce(ctx context.Context, spec docs.CaptureSpec) (string, error) {
+	if c.attempt != nil {
+		return c.attempt(ctx, spec)
+	}
+	return c.captureOnce(ctx, spec)
+}
+
+// captureOnce is one navigate+render+capture attempt.
+func (c *Capturer) captureOnce(ctx context.Context, spec docs.CaptureSpec) (string, error) {
 	if err := c.ensure(ctx, spec); err != nil {
 		return "", err
 	}
@@ -158,6 +217,52 @@ func (c *Capturer) Capture(ctx context.Context, spec docs.CaptureSpec) (string, 
 	return spec.OutPath, nil
 }
 
+// captureRetryPause lets a loaded runner breathe between attempts. An
+// immediate retry would re-run into the same contention that lost the race.
+// A variable, not a const, so the retry-policy tests do not sleep.
+var captureRetryPause = 2 * time.Second
+
+// Deterministic capture failures. These are properties of the figure or the
+// document, so a retry would fail identically while delaying the build and
+// obscuring the real message.
+var (
+	// errPageLoadFailed is the renderability gate's verdict: the form reached a
+	// terminal ERROR state. The entity id, field set or role is wrong.
+	errPageLoadFailed = errors.New("the page failed to load")
+	// errRegionTooTall is the maxFullHeight cap. The manual must choose a
+	// tighter clip.
+	errRegionTooTall = errors.New("capture region is too tall")
+)
+
+// retryableCapture reports whether err is worth another attempt.
+//
+// The policy is a DENY list over an allow list on purpose. The transient
+// failures are open-ended — a dial timeout, a deadline during navigation, a
+// tab that died with the runner under load, a websocket that dropped — and
+// enumerating them would leave new ones fatally unretried. The deterministic
+// failures are few and known, so naming those and retrying the rest fails in
+// the safe direction: at worst a genuinely broken figure costs two extra
+// attempts before it fails with the same message it has today.
+func retryableCapture(err error) bool {
+	switch {
+	case err == nil:
+		return false
+	case errors.Is(err, errPageLoadFailed), errors.Is(err, errRegionTooTall):
+		return false
+	case errors.Is(err, errUnknownRole):
+		return false
+	}
+	return true
+}
+
+// resetBrowser tears down the browser so the next attempt launches a fresh one.
+func (c *Capturer) resetBrowser() {
+	if c.browser != nil {
+		c.browser.close()
+		c.browser = nil
+	}
+}
+
 // ensure acquires the document's shared temp project (standing it up on first
 // use, and applying any seed ops added since the last island) and launches the
 // browser once.
@@ -219,7 +324,7 @@ func captureAction(spec docs.CaptureSpec, out *[]byte) chromedp.Action {
 			clip = padAndClamp(region, float64(spec.Pad), page0)
 		}
 		if clip.H > maxFullHeight {
-			return fmt.Errorf("capture region is %.0fpx tall (> %dpx cap); use a tighter clip= selector or clip=\"focus\"", clip.H, maxFullHeight)
+			return fmt.Errorf("%w: %.0fpx (> %dpx cap); use a tighter clip= selector or clip=\"focus\"", errRegionTooTall, clip.H, maxFullHeight)
 		}
 		buf, err := page.CaptureScreenshot().
 			WithFormat(page.CaptureScreenshotFormatPng).
@@ -261,7 +366,7 @@ func renderabilityGate() chromedp.Action {
 			return fmt.Errorf("waiting for the page to load: %w", err)
 		}
 		if state == "error" {
-			return errors.New("the page failed to load — check the entity id, the form's field set, and the `as` role's read access")
+			return fmt.Errorf("%w: check the entity id, the form's field set, and the `as` role's read access", errPageLoadFailed)
 		}
 		return nil
 	})

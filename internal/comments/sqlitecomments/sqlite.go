@@ -118,6 +118,28 @@ func (s *Store) List(ctx context.Context, target comments.Target) ([]comments.Co
 	return out, nil
 }
 
+// Get returns one comment as a single-row read.
+//
+// Served by the `PRIMARY KEY (target_key, id)` index, so this is a lookup
+// rather than the thread scan List performs. Both halves of the key are matched
+// with `=`, which is byte-exact in SQLite — unlike LIKE, whose ASCII
+// case-folding the face-prefix queries in this file have to defend against.
+func (s *Store) Get(ctx context.Context, target comments.Target, id string) (comments.Comment, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT `+columns+`
+		FROM comments
+		WHERE target_key = ? AND id = ?`, target.Key(), id)
+
+	c, err := scanComment(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return comments.Comment{}, comments.ErrNotFound
+	}
+	if err != nil {
+		return comments.Comment{}, fmt.Errorf("sqlitecomments: get %q from %q: %w", id, target.Key(), err)
+	}
+	return c, nil
+}
+
 // Add inserts one comment, persisting the service-supplied ID, Author and
 // CreatedAt as given.
 func (s *Store) Add(ctx context.Context, target comments.Target, c comments.Comment) error {
@@ -283,8 +305,20 @@ func requireAffected(res sql.Result, notFound error) error {
 	return nil
 }
 
+// rowScanner is the one method scanComment needs, satisfied by both *sql.Rows
+// and *sql.Row — so the thread read and the single-row read share one decoder
+// rather than keeping two copies of the timestamp parsing and anchor decoding
+// in step.
+//
+// Named rowScanner, not scanner, because [sql.Scanner] is a different interface
+// entirely (`Scan(src any) error`, implemented by destination types) and this
+// file imports database/sql.
+type rowScanner interface {
+	Scan(dest ...any) error
+}
+
 // scanComment reads one row in [columns] order.
-func scanComment(rows *sql.Rows) (comments.Comment, error) {
+func scanComment(row rowScanner) (comments.Comment, error) {
 	var (
 		c        comments.Comment
 		created  string
@@ -292,7 +326,7 @@ func scanComment(rows *sql.Rows) (comments.Comment, error) {
 		anchor   string
 		resolved bool
 	)
-	if err := rows.Scan(&c.ID, &c.Author, &created, &updated, &anchor, &c.Body, &resolved); err != nil {
+	if err := row.Scan(&c.ID, &c.Author, &created, &updated, &anchor, &c.Body, &resolved); err != nil {
 		return comments.Comment{}, err
 	}
 	c.Resolved = resolved

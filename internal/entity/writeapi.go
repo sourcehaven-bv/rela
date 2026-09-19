@@ -123,6 +123,23 @@ type RelationOptions struct {
 	Properties map[string]any
 	MetaUnset  []string
 	Content    *string
+
+	// FromFace names the SOURCE's content state for a `scope: content`
+	// relation type, whose edges belong to one face rather than to the
+	// entity as such (TKT-DOFYR1, BUG-64MU2Q). The zero value addresses
+	// the default state, which is what an identity-scoped edge and a
+	// faceless type always use.
+	//
+	// The tail is part of a relation's IDENTITY, not a filter: two edges
+	// on the same triple with different tails are two relations. Dropping
+	// this field on an update therefore does not address "roughly the
+	// right edge" — it addresses the default face's, which is a different
+	// one. `store.RelationWriter.DeleteRelationState` documents the same
+	// reasoning on the delete path.
+	//
+	// There is no ToFace: targets are faceless by construction, which is
+	// what makes cross-world dangling references inexpressible.
+	FromFace Face
 }
 
 // Patch describes a TARGETED entity write: apply exactly these

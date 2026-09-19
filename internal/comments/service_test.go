@@ -2,6 +2,7 @@ package comments_test
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -198,6 +199,91 @@ func TestGet_ReportsNotFound(t *testing.T) {
 	svc, _ := newService(t)
 	_, err := svc.Get(aliceCtx(), comments.Target{Type: "ticket", ID: "TKT-1"}, "nope")
 	require.ErrorIs(t, err, comments.ErrNotFound)
+}
+
+// countingStore records which read each call takes.
+//
+// The delegate is a named field rather than an embedded interface: embedding
+// would make this satisfy comments.Store however the interface grows, turning a
+// forgotten method into a nil-dereference at call time instead of a build
+// failure here.
+type countingStore struct {
+	inner comments.Store
+	lists int
+	gets  int
+}
+
+var _ comments.Store = (*countingStore)(nil)
+
+func (s *countingStore) List(ctx context.Context, target comments.Target) ([]comments.Comment, error) {
+	s.lists++
+	return s.inner.List(ctx, target)
+}
+
+func (s *countingStore) Get(ctx context.Context, target comments.Target, id string) (comments.Comment, error) {
+	s.gets++
+	return s.inner.Get(ctx, target, id)
+}
+
+func (s *countingStore) Add(ctx context.Context, target comments.Target, c comments.Comment) error {
+	return s.inner.Add(ctx, target, c)
+}
+
+func (s *countingStore) Update(
+	ctx context.Context, target comments.Target, id, body string, resolved bool,
+) error {
+	return s.inner.Update(ctx, target, id, body, resolved)
+}
+
+func (s *countingStore) Delete(ctx context.Context, target comments.Target, id string) error {
+	return s.inner.Delete(ctx, target, id)
+}
+
+func (s *countingStore) DeleteTarget(ctx context.Context, target comments.Target) error {
+	return s.inner.DeleteTarget(ctx, target)
+}
+
+func (s *countingStore) DeleteAllFaces(ctx context.Context, entityID string) error {
+	return s.inner.DeleteAllFaces(ctx, entityID)
+}
+
+func (s *countingStore) Rename(ctx context.Context, oldID, newID string) error {
+	return s.inner.Rename(ctx, oldID, newID)
+}
+
+// TestGet_DoesNotReadTheWholeThread is the point of TKT-4LG36M, and it needs a
+// test because the regression is invisible: a Get reimplemented as a
+// list-and-scan returns exactly the right comment, so every other test here
+// still passes while each authorization check drags up to MaxPerTarget bodies
+// out of the database to read one author field.
+//
+// Counting the calls is the only way to observe the difference from outside,
+// which is the same reason the store's read paths are pinned with
+// storetest.Counting budgets.
+func TestGet_DoesNotReadTheWholeThread(t *testing.T) {
+	st := &countingStore{inner: memcomments.New()}
+	svc, err := comments.NewService(st, func() time.Time { return testBase })
+	require.NoError(t, err)
+
+	ctx := aliceCtx()
+	tgt := comments.Target{Type: "ticket", ID: "TKT-1"}
+	var id string
+	for i := range 5 {
+		c, addErr := svc.Add(ctx, tgt, comments.AddRequest{
+			Anchor: propAnchor(),
+			Body:   "comment " + strconv.Itoa(i),
+		})
+		require.NoError(t, addErr)
+		id = c.ID
+	}
+
+	st.lists, st.gets = 0, 0
+	got, err := svc.Get(ctx, tgt, id)
+	require.NoError(t, err)
+	require.Equal(t, id, got.ID)
+
+	require.Equal(t, 1, st.gets, "one comment must cost one single-row read")
+	require.Zero(t, st.lists, "reading one comment must not list the thread")
 }
 
 // TestEntityRenamed_ReKeysComments pins the critical design-review finding

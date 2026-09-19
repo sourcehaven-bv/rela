@@ -215,6 +215,39 @@
   color: var(--muted-text);
 }
 
+/* An HTML comment is authoring guidance, not content: templates use it to tell
+   the author what belongs in a section, and the rendered view drops it. The
+   chip says "scaffolding" without a second colour — muted text plus a dashed
+   border, which is the conventional "this is a placeholder" idiom.
+
+   The delimiters are not shown, because reading `<!--` adds nothing once the
+   border makes the status obvious. The border is what carries that meaning, so
+   it has to stay visible enough to read at a glance; `title` holds the full
+   text for a comment the chip has to clip. */
+.milkdown-editor-shell .rela-comment {
+  border: 1px dashed var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-xs);
+  color: var(--muted-text);
+  font-size: 0.9em;
+  /* Body font rather than the monospace the raw text inherited: the comment is
+     prose the author reads, not markup they edit. */
+  font-style: italic;
+  cursor: default;
+}
+
+/* A multi-line comment is block-level guidance (the `Options` scaffold in
+   research.md). `inline-block` keeps the node inline in the schema — which is
+   what stops a trailing comment from splitting its paragraph — while letting
+   it lay out as a block, and `pre-wrap` preserves the interior newlines the
+   author wrote. */
+.milkdown-editor-shell .rela-comment-block {
+  display: inline-block;
+  width: 100%;
+  padding: var(--space-xs) var(--space-sm);
+  white-space: pre-wrap;
+}
+
 /* Sits over the editor's first line. `pointer-events: none` so a click lands
    on the editable surface underneath and starts editing rather than doing
    nothing. Offsets match the ProseMirror padding above. */

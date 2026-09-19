@@ -19,6 +19,7 @@ import type { Ctx } from '@milkdown/kit/ctx'
 import { remarkStringifyOptionsCtx } from '@milkdown/kit/core'
 import { commonmark, remarkPreserveEmptyLinePlugin } from '@milkdown/kit/preset/commonmark'
 import { RELA_STRINGIFY_OPTIONS } from './serializerContract'
+import { relaCommentNode, relaCommentRemarkPlugin } from './commentNode'
 
 /**
  * The commonmark preset with `remarkPreserveEmptyLinePlugin` taken out.
@@ -35,6 +36,27 @@ import { RELA_STRINGIFY_OPTIONS } from './serializerContract'
  */
 const EMPTY_LINE_PLUGIN_PARTS = new Set<unknown>(remarkPreserveEmptyLinePlugin)
 export const RELA_COMMONMARK = commonmark.filter((plugin) => !EMPTY_LINE_PLUGIN_PARTS.has(plugin))
+
+/**
+ * Nodes that change what bytes an editor writes, in the order they load.
+ *
+ * `relaComment` belongs here rather than in each editor's own `.use()` chain
+ * because it decides whether an HTML comment serializes through the preset's
+ * `html` node or through the chip — a difference in OUTPUT, which is exactly
+ * what this file exists to keep identical between the two editors. Registering
+ * it per-editor would recreate the drift shape TKT-D2JML7 removed: two chains
+ * that must match, with only a comment in each saying so.
+ *
+ * The remark plugin must load with the node. It retypes comment-only `html`
+ * mdast nodes to `relaComment`, which is what wins the match against the
+ * preset (see `commentNode.ts`); the node alone would silently lose.
+ *
+ * `entityRefNode` is deliberately NOT moved here in this change. It has the
+ * same claim to belong, but the two editors resolve its titles differently
+ * (the SPA from a per-principal mentions map, the app editor not at all), so
+ * relocating it is its own piece of work rather than a drive-by.
+ */
+export const RELA_OUTPUT_NODES = [relaCommentRemarkPlugin, relaCommentNode].flat()
 
 /**
  * Applies rela's serializer options to an editor's ctx.

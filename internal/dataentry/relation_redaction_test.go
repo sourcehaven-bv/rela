@@ -214,7 +214,7 @@ func seedLiveRelHistoryApp(t *testing.T, aclYAML string) *App {
 	}
 	app.versions = relHistoryStore{
 		versions: map[string][]store.RelationVersionSnapshot{
-			relKey("alice", "depends_on", "acme"): {{
+			bareRelKey("alice", "depends_on", "acme"): {{
 				RelationVersionMeta: store.RelationVersionMeta{
 					Version: 1, Op: store.VersionOpCreate, From: "alice", Type: "depends_on", To: "acme",
 				},
@@ -299,7 +299,7 @@ assignments:
 	// No live depends_on edge — only history (the relation was deleted). alice lives.
 	app.versions = relHistoryStore{
 		versions: map[string][]store.RelationVersionSnapshot{
-			relKey("alice", "depends_on", "acme"): {{
+			bareRelKey("alice", "depends_on", "acme"): {{
 				RelationVersionMeta: store.RelationVersionMeta{
 					Version: 1, Op: store.VersionOpDelete, From: "alice", Type: "depends_on", To: "acme",
 				},
@@ -340,7 +340,7 @@ assignments:
 	app := buildPolicyApp(t, ownGrantACL, nil)
 	app.versions = relHistoryStore{
 		versions: map[string][]store.RelationVersionSnapshot{
-			relKey("GONE-A", "depends_on", "GONE-B"): {{
+			bareRelKey("GONE-A", "depends_on", "GONE-B"): {{
 				RelationVersionMeta: store.RelationVersionMeta{
 					Version: 1, Op: store.VersionOpDelete, From: "GONE-A", Type: "depends_on", To: "GONE-B",
 				},

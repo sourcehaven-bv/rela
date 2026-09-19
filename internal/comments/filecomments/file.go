@@ -88,6 +88,27 @@ func (s *Store) List(_ context.Context, target comments.Target) ([]comments.Comm
 	return s.readThread(target.Key())
 }
 
+// Get returns one comment from the target's thread.
+//
+// Reads the whole thread and picks, which costs nothing here: a thread is a
+// single YAML document, so reading one comment and reading all of them are the
+// same file read. The database backends are the ones this distinction is for.
+func (s *Store) Get(_ context.Context, target comments.Target, id string) (comments.Comment, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	list, err := s.readThread(target.Key())
+	if err != nil {
+		return comments.Comment{}, err
+	}
+	for _, c := range list {
+		if c.ID == id {
+			return c, nil
+		}
+	}
+	return comments.Comment{}, comments.ErrNotFound
+}
+
 // Add appends a comment to the target's thread.
 func (s *Store) Add(_ context.Context, target comments.Target, c comments.Comment) error {
 	s.mu.Lock()

@@ -246,18 +246,31 @@ func (s *Store) getRelationState(
 	return r, err
 }
 
+// UpdateRelation updates the DEFAULT-tail edge of the triple.
+// UpdateRelationState is the general form.
 func (s *Store) UpdateRelation(
 	ctx context.Context, from, relType, to string, data store.RelationData,
+) (*entity.Relation, error) {
+	return s.UpdateRelationState(ctx, from, "", relType, to, data)
+}
+
+// UpdateRelationState updates the edge with EXACTLY this tail (BUG-64MU2Q).
+//
+// The tail is part of a relation's identity, so addressing the wrong one
+// writes the caller's properties onto a DIFFERENT edge rather than failing —
+// the same hazard DeleteRelationState exists to make unavailable.
+//
+// data.FromFace is ignored; p is the address.
+func (s *Store) UpdateRelationState(
+	ctx context.Context, from string, p entity.Face, relType, to string, data store.RelationData,
 ) (*entity.Relation, error) {
 	props, err := marshalProps(data.Properties)
 	if err != nil {
 		return nil, err
 	}
-	// Addresses the DEFAULT-tail edge, matching GetRelation and the
-	// store.RelationWriter contract (TKT-DOFYR1).
 	res, err := s.write(ctx, `UPDATE relations SET properties = ?, content = ?, updated_at = ?
-		WHERE from_id = ? AND rel_type = ? AND to_id = ? AND from_face = ''`,
-		props, data.Content, time.Now().UTC().Format(timeFmt), from, relType, to)
+		WHERE from_id = ? AND rel_type = ? AND to_id = ? AND from_face = ?`,
+		props, data.Content, time.Now().UTC().Format(timeFmt), from, relType, to, string(p))
 	if err != nil {
 		return nil, fmt.Errorf("sqlitestore: update relation: %w", err)
 	}
@@ -269,8 +282,12 @@ func (s *Store) UpdateRelation(
 		return nil, fmt.Errorf("sqlitestore: update relation: %w", store.ErrNotFound)
 	}
 
-	s.emit(store.Event{Op: store.EventRelationUpdated, RelationType: relType, From: from, To: to})
-	return s.GetRelation(ctx, from, relType, to)
+	s.emit(store.Event{
+		Op: store.EventRelationUpdated, RelationType: relType, From: from, To: to, Face: p,
+	})
+	// getRelationState, not GetRelation: the latter reads the default tail,
+	// so a faced update would echo back a different edge than it wrote.
+	return s.getRelationState(ctx, from, p, relType, to)
 }
 
 // DeleteRelation removes the DEFAULT-tail edge of the triple.

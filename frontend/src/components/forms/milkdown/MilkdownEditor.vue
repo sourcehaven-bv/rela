@@ -39,7 +39,7 @@ import '@milkdown/kit/prose/tables/style/tables.css'
 import '@milkdown/kit/prose/gapcursor/style/gapcursor.css'
 import './milkdownEditor.css'
 
-import { RELA_COMMONMARK, configureRelaSerializer } from './editorPreset'
+import { RELA_COMMONMARK, RELA_OUTPUT_NODES, configureRelaSerializer } from './editorPreset'
 import { entityRefNode } from './entityRefNode'
 import { insertEntityRefAtCursor, replaceMentionQueryWithRef } from './insertEntityRef'
 import { taskList } from './taskListItem'
@@ -615,6 +615,7 @@ onMounted(async () => {
     .use(history)
     .use(listener)
     .use(entityRefNode)
+    .use(RELA_OUTPUT_NODES)
     // After `gfm`: it contributes the `checked` attribute this renders.
     .use(taskList)
     .use(entityRefResolutionPlugin(resolverHandle))

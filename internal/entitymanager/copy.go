@@ -596,6 +596,12 @@ func (ce *copyEngine) planCopyEdges(ctx context.Context, plan *copyPlan) ([]copy
 				Op: acl.OpCreate,
 				Subject: acl.RelationSubject{
 					Type: rel.Type, FromType: plan.to.Type, FromID: plan.targetID,
+					// The face applyCopyEdges actually writes these edges to
+					// (BUG-64MU2Q). Omitting it asked about the default face
+					// while the write landed on targetTail — the check-here/
+					// write-there split the entity-level gate above already
+					// avoids by carrying EntitySubject.Face.
+					FromFace: plan.targetTail,
 				},
 			}); aerr != nil {
 				return nil, aerr

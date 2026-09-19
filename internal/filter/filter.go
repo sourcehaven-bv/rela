@@ -67,25 +67,39 @@ type Filter struct {
 //   - property>value (greater than)
 //   - property>=value (greater than or equal)
 //   - property=~pattern (regex match)
+//
+// operators are the recognized comparison operators, in order of specificity
+// (longest first) so "!=" is not read as "!" followed by "=".
+var operators = []struct {
+	str string
+	op  Operator
+}{
+	{"<=", OpLessEqual},
+	{">=", OpGreaterEqual},
+	{"!=", OpNotEqual},
+	{"=~", OpRegex},
+	{"~", OpFuzzy},
+	{"<", OpLess},
+	{">", OpGreater},
+	{"=", OpEqual},
+}
+
+// Operators returns the operator strings [Parse] recognizes.
+//
+// Exported for the drift guard against internal/metamodel, which keeps its own
+// copy because arch-lint forbids it importing this package.
+func Operators() []string {
+	out := make([]string, 0, len(operators))
+	for _, o := range operators {
+		out = append(out, o.str)
+	}
+	return out
+}
+
 func Parse(s string) (*Filter, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return nil, errors.New("empty filter expression")
-	}
-
-	// Try operators in order of specificity (longest first)
-	operators := []struct {
-		str string
-		op  Operator
-	}{
-		{"<=", OpLessEqual},
-		{">=", OpGreaterEqual},
-		{"!=", OpNotEqual},
-		{"=~", OpRegex},
-		{"~", OpFuzzy},
-		{"<", OpLess},
-		{">", OpGreater},
-		{"=", OpEqual},
 	}
 
 	for _, op := range operators {

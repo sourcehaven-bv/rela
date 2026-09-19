@@ -217,6 +217,26 @@
   cursor: default;
 }
 
+/* An HTML comment is authoring guidance, not content. Mirrors the SPA rule in
+   milkdownEditor.css — duplicated per shell prefix, the same way entity-ref
+   above is, because the two editors scope their rules differently. */
+.rela-editor-shell .rela-comment {
+  border: 1px dashed var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-xs);
+  color: var(--muted-text);
+  font-size: 0.9em;
+  font-style: italic;
+  cursor: default;
+}
+
+.rela-editor-shell .rela-comment-block {
+  display: inline-block;
+  width: 100%;
+  padding: var(--space-xs) var(--space-sm);
+  white-space: pre-wrap;
+}
+
 /* Sits over the editor's first line. `pointer-events: none` so a click lands
    on the editable surface underneath and starts editing rather than doing
    nothing. Offsets match the ProseMirror padding above. */

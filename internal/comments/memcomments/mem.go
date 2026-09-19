@@ -45,6 +45,24 @@ func (s *Store) List(_ context.Context, target comments.Target) ([]comments.Comm
 	return out, nil
 }
 
+// Get returns one comment from the target's thread.
+//
+// A scan, because this backend holds a thread as a slice and a map keyed by
+// comment ID would have to be maintained alongside it for no gain at the scale
+// this backend serves. [comments.Comment] is all value types, so the returned
+// copy shares nothing with stored state.
+func (s *Store) Get(_ context.Context, target comments.Target, id string) (comments.Comment, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for _, c := range s.byward[target.Key()] {
+		if c.ID == id {
+			return c, nil
+		}
+	}
+	return comments.Comment{}, comments.ErrNotFound
+}
+
 // Add appends a comment to the target's thread.
 func (s *Store) Add(_ context.Context, target comments.Target, c comments.Comment) error {
 	s.mu.Lock()

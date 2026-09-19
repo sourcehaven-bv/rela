@@ -522,6 +522,91 @@ func RunStateTests(t *testing.T, f Factory) {
 			"the miss must not have deleted the default-tail edge")
 	})
 
+	// --- Per-tail relation update (BUG-64MU2Q) ---------------------------
+
+	t.Run("UpdateRelationStateAddressesTheTailNotTheTriple", func(t *testing.T) {
+		s := f(t)
+		mustCreate(t, s, newState(t, "PAGE-28", "page", "", "default"))
+		mustCreate(t, s, newState(t, "PAGE-28", "page", "published", "published"))
+		mustCreate(t, s, newState(t, "SPEC-9", "page", "", "target"))
+
+		pub := ptr(t, "published")
+		_, err := s.CreateRelation(ctx(), "PAGE-28", "references", "SPEC-9",
+			&store.RelationData{Content: "default edge"})
+		require.NoError(t, err)
+		_, err = s.CreateRelation(ctx(), "PAGE-28", "references", "SPEC-9",
+			&store.RelationData{FromFace: pub, Content: "published edge"})
+		require.NoError(t, err)
+
+		// Update the PUBLISHED-tail edge. The regression this guards mirrors
+		// the delete one above: UpdateRelation is default-tail-only, so a
+		// caller dropping the tail wrote its properties onto the DEFAULT
+		// edge and reported success — the wrong edge, silently.
+		updated, err := s.UpdateRelationState(ctx(), "PAGE-28", pub, "references", "SPEC-9",
+			store.RelationData{Content: "published edge v2"})
+		require.NoError(t, err)
+		assert.Equal(t, pub, updated.FromFace,
+			"the echoed edge must be the one that was addressed")
+		assert.Equal(t, "published edge v2", updated.Content)
+
+		edges := collectRelations(t, s, store.RelationQuery{From: "PAGE-28"})
+		require.Len(t, edges, 2)
+		byFace := map[entity.Face]string{}
+		for _, e := range edges {
+			byFace[e.FromFace] = e.Content
+		}
+		assert.Equal(t, "published edge v2", byFace[pub])
+		assert.Equal(t, "default edge", byFace[""],
+			"the default-tail edge must be untouched by a write to its published-tail sibling")
+	})
+
+	t.Run("UpdateRelationStateZeroFaceMatchesUpdateRelation", func(t *testing.T) {
+		s := f(t)
+		mustCreate(t, s, newState(t, "PAGE-29", "page", "", "default"))
+		mustCreate(t, s, newState(t, "PAGE-29", "page", "draft", "draft"))
+		mustCreate(t, s, newState(t, "SPEC-10", "page", "", "target"))
+
+		draft := ptr(t, "draft")
+		_, err := s.CreateRelation(ctx(), "PAGE-29", "references", "SPEC-10",
+			&store.RelationData{Content: "default edge"})
+		require.NoError(t, err)
+		_, err = s.CreateRelation(ctx(), "PAGE-29", "references", "SPEC-10",
+			&store.RelationData{FromFace: draft, Content: "draft edge"})
+		require.NoError(t, err)
+
+		// The zero face is the general form's default-tail address, so it
+		// must behave exactly as UpdateRelation does — same edge, same result.
+		updated, err := s.UpdateRelationState(ctx(), "PAGE-29", "", "references", "SPEC-10",
+			store.RelationData{Content: "default edge v2"})
+		require.NoError(t, err)
+		assert.True(t, updated.FromFace.IsDefault())
+
+		edges := collectRelations(t, s, store.RelationQuery{From: "PAGE-29", FromFace: &draft})
+		require.Len(t, edges, 1)
+		assert.Equal(t, "draft edge", edges[0].Content,
+			"the draft-tail edge must be untouched by a default-tail write")
+	})
+
+	t.Run("UpdateRelationStateNotFound", func(t *testing.T) {
+		s := f(t)
+		mustCreate(t, s, newState(t, "PAGE-30", "page", "", "default"))
+		mustCreate(t, s, newState(t, "SPEC-11", "page", "", "target"))
+		_, err := s.CreateRelation(ctx(), "PAGE-30", "references", "SPEC-11",
+			&store.RelationData{Content: "default edge"})
+		require.NoError(t, err)
+
+		// A tail with no edge is absent, NOT "close enough" to the default
+		// edge that does exist.
+		_, err = s.UpdateRelationState(ctx(), "PAGE-30", ptr(t, "draft"), "references", "SPEC-11",
+			store.RelationData{Content: "clobbered"})
+		assert.ErrorIs(t, err, store.ErrNotFound)
+
+		edges := collectRelations(t, s, store.RelationQuery{From: "PAGE-30"})
+		require.Len(t, edges, 1)
+		assert.Equal(t, "default edge", edges[0].Content,
+			"the miss must not have written to the default-tail edge")
+	})
+
 	t.Run("RenameCascadesTheFamily", func(t *testing.T) {
 		s := f(t)
 		mustCreate(t, s, newState(t, "PAGE-12", "page", "", "default"))
