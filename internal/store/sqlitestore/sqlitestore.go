@@ -108,8 +108,8 @@ const timeFmt = time.RFC3339Nano
 // CAS precondition has to be evaluated atomically with the write, so it
 // cannot live anywhere but on the type that owns the write.
 //
-//plimsoll:max-methods=52
-//plimsoll:max-exported-methods=34
+//plimsoll:max-methods=53
+//plimsoll:max-exported-methods=35
 type Store struct {
 	db *sql.DB
 

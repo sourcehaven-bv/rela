@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/audit"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -120,7 +121,10 @@ func (c *RelationHistoryPurgeCmd) Run(ctx context.Context, svc *writeServices) e
 	p := principal.From(ctx)
 	key := fmt.Sprintf("%s--%s--%s", c.From, c.Type, c.To)
 
-	recordID, err := resolveLifetimeRecordID(ctx, svc.Versions, c.From, c.Type, c.To, c.Lifetime)
+	// Default tail: RelationVersionPurgeRequest names no face, so purge
+	// addresses the default-tail edge (TKT-JAROC3).
+	recordID, err := resolveLifetimeRecordID(
+		ctx, svc.Versions, c.From, entity.Face(""), c.Type, c.To, c.Lifetime)
 	if err != nil {
 		return err
 	}

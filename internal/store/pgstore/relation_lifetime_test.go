@@ -7,6 +7,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/pgstore"
 )
@@ -51,7 +52,7 @@ func TestListRelationLifetimes_ReusedKeyEnumeratesAll(t *testing.T) {
 	require.NoError(t, s.DeleteRelation(ctx, "A", "blocks", "X"))
 
 	// Enumerate: two lifetimes, newest-first, distinct record ids, neither live.
-	lifetimes, err := vs.ListRelationLifetimes(ctx, "A", "blocks", "X")
+	lifetimes, err := vs.ListRelationLifetimes(ctx, "A", entity.Face(""), "blocks", "X")
 	require.NoError(t, err)
 	require.Len(t, lifetimes, 2, "both lifetimes of the reused key are enumerated")
 	require.Equal(t, 1, lifetimes[0].Lifetime)
@@ -99,7 +100,7 @@ func TestListRelationLifetimes_LiveKeyOneLifetime(t *testing.T) {
 	c.Op = store.VersionOpCreate
 	require.NoError(t, vs.WriteRelationVersion(ctx, c))
 
-	lifetimes, err := vs.ListRelationLifetimes(ctx, "L", "links", "M")
+	lifetimes, err := vs.ListRelationLifetimes(ctx, "L", entity.Face(""), "links", "M")
 	require.NoError(t, err)
 	require.Len(t, lifetimes, 1)
 	require.True(t, lifetimes[0].Live, "the single lifetime is the live relation")
@@ -115,7 +116,7 @@ func TestListRelationLifetimes_UnknownKeyEmpty(t *testing.T) {
 	t.Cleanup(func() { _ = s.Close() })
 	ctx := context.Background()
 
-	lifetimes, err := s.VersionStore().ListRelationLifetimes(ctx, "NO", "such", "KEY")
+	lifetimes, err := s.VersionStore().ListRelationLifetimes(ctx, "NO", entity.Face(""), "such", "KEY")
 	require.NoError(t, err)
 	require.Empty(t, lifetimes)
 }
@@ -181,7 +182,7 @@ func TestListRelationLifetimes_DeleteOnlyLineage(t *testing.T) {
 	require.NoError(t, vs.WriteRelationVersion(ctx, d))
 	require.NoError(t, s.DeleteRelation(ctx, "SL-A", "links", "SL-B"))
 
-	lifetimes, err := vs.ListRelationLifetimes(ctx, "SL-A", "links", "SL-B")
+	lifetimes, err := vs.ListRelationLifetimes(ctx, "SL-A", entity.Face(""), "links", "SL-B")
 	require.NoError(t, err)
 	require.Len(t, lifetimes, 1, "a delete-only lineage is still a lifetime")
 	require.Equal(t, 1, lifetimes[0].VersionCount)
@@ -236,7 +237,7 @@ func TestPurgeRelationVersions_MultiLifetimeRefusedWithoutSelector(t *testing.T)
 	require.Zero(t, res.Purged, "nothing erased on refusal")
 
 	// Both lifetimes intact.
-	lifetimes, err := vs.ListRelationLifetimes(ctx, "P-A", "blocks", "P-B")
+	lifetimes, err := vs.ListRelationLifetimes(ctx, "P-A", entity.Face(""), "blocks", "P-B")
 	require.NoError(t, err)
 	require.Len(t, lifetimes, 2)
 }
@@ -265,7 +266,7 @@ func TestPurgeRelationVersions_LifetimePurgesOnlyThatLineage(t *testing.T) {
 	require.Positive(t, res.Purged, "the selected lifetime's rows are purged")
 
 	// The newer lifetime (rid2) survives; only one lifetime remains.
-	lifetimes, err := vs.ListRelationLifetimes(ctx, "Q-A", "blocks", "Q-B")
+	lifetimes, err := vs.ListRelationLifetimes(ctx, "Q-A", entity.Face(""), "blocks", "Q-B")
 	require.NoError(t, err)
 	require.Len(t, lifetimes, 1)
 	require.Equal(t, rid2, lifetimes[0].RecordID, "the un-purged (newer) lifetime remains")
@@ -293,7 +294,7 @@ func TestPurgeRelationVersions_AllLifetimesErasesEverything(t *testing.T) {
 	require.False(t, res.MultiLifetimeRefused)
 	require.Equal(t, 4, res.Purged, "both lifetimes' create+delete rows (2×2) erased")
 
-	lifetimes, err := vs.ListRelationLifetimes(ctx, "R-A", "blocks", "R-B")
+	lifetimes, err := vs.ListRelationLifetimes(ctx, "R-A", entity.Face(""), "blocks", "R-B")
 	require.NoError(t, err)
 	require.Empty(t, lifetimes, "no lifetimes remain after --all-lifetimes")
 }
@@ -360,12 +361,12 @@ func TestListRelationLifetimes_RenamedAwayNotListedUnderOldKey(t *testing.T) {
 	require.NoError(t, vs.WriteRelationVersion(ctx, ren))
 
 	// The OLD key has NO lifetime (the lineage was renamed away from it)...
-	oldLifetimes, err := vs.ListRelationLifetimes(ctx, "RA", "links", "RX")
+	oldLifetimes, err := vs.ListRelationLifetimes(ctx, "RA", entity.Face(""), "links", "RX")
 	require.NoError(t, err)
 	require.Empty(t, oldLifetimes, "renamed-away lineage is not a lifetime of the old key")
 
 	// ...and the NEW key has exactly one (live) lifetime carrying the whole history.
-	newLifetimes, err := vs.ListRelationLifetimes(ctx, "RA2", "links", "RX")
+	newLifetimes, err := vs.ListRelationLifetimes(ctx, "RA2", entity.Face(""), "links", "RX")
 	require.NoError(t, err)
 	require.Len(t, newLifetimes, 1)
 	require.True(t, newLifetimes[0].Live)
@@ -411,7 +412,7 @@ func TestListRelationLifetimes_ForkedRenameStitchesToOneLifetime(t *testing.T) {
 
 	// The new key reports ONE lifetime — the two rel_record_ids are stitched, not
 	// double-listed (the claimed-set fold firing).
-	lifetimes, err := vs.ListRelationLifetimes(ctx, "FA2", "links", "FX")
+	lifetimes, err := vs.ListRelationLifetimes(ctx, "FA2", entity.Face(""), "links", "FX")
 	require.NoError(t, err)
 	require.Len(t, lifetimes, 1, "forked rename stitches to a single lifetime")
 	require.Equal(t, newRID, lifetimes[0].RecordID)

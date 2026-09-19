@@ -172,7 +172,10 @@ func (v *VersionStore) PurgeRelationVersions(
 	if liveExists && req.ForceLive {
 		// The live row's lineage is the newest lifetime; tombstone it so the sweep
 		// doesn't re-capture the purged content. (AllLifetimes includes it.)
-		liveID, lerr := v.liveRecordID(ctx, req.From, req.Type, req.To)
+		// Default tail: RelationVersionPurgeRequest names no face, so purge
+		// addresses the default-tail edge (TKT-JAROC3 leaves purging a
+		// state-tailed edge to the operator's explicit RecordID).
+		liveID, lerr := v.liveRecordID(ctx, req.From, entity.Face(""), req.Type, req.To)
 		if lerr != nil {
 			return nil, lerr
 		}
@@ -201,7 +204,8 @@ func (v *VersionStore) resolvePurgeLineage(
 	if req.AllLifetimes && req.RecordID != 0 {
 		return nil, nil, errors.New("pgstore: RecordID and AllLifetimes are mutually exclusive")
 	}
-	lifetimes, err := v.ListRelationLifetimes(ctx, req.From, req.Type, req.To)
+	// Default tail, as above: the purge request names no face.
+	lifetimes, err := v.ListRelationLifetimes(ctx, req.From, entity.Face(""), req.Type, req.To)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -338,8 +342,15 @@ func (v *VersionStore) liveRelationHash(
 	if gErr != nil {
 		return "", false, gErr
 	}
+	// FromFace is carried from the row rather than left zero, mirroring
+	// sqlitestore. The query pins from_face = '' so the zero value would be
+	// right today — which is exactly the problem: it would be right by
+	// coincidence, and contentHashOfRelation folds the tail into the hash, so
+	// relaxing that predicate later would silently produce a hash that
+	// suppresses a DIFFERENT lineage's sweep capture.
 	return contentHashOfRelation(store.RelationVersionInput{
-		From: r.From, Type: r.Type, To: r.To, Content: r.Content, Properties: r.Properties,
+		From: r.From, FromFace: r.FromFace, Type: r.Type, To: r.To,
+		Content: r.Content, Properties: r.Properties,
 	}), true, nil
 }
 

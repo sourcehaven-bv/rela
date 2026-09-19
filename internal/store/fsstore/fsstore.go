@@ -181,8 +181,8 @@ type attachMeta struct {
 // CAS precondition has to be evaluated atomically with the write, so it
 // cannot live anywhere but on the type that owns the write.
 //
-//plimsoll:max-methods=95
-//plimsoll:max-exported-methods=36
+//plimsoll:max-methods=97
+//plimsoll:max-exported-methods=37
 type FSStore struct {
 	// rooted is the validated-key I/O surface. Every read, write,
 	// directory op, and remove that operates on files under the

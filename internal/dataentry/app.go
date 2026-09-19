@@ -202,7 +202,7 @@ type appEntityWriter interface {
 // reached through this struct. Recorded because the load line interrupting
 // that habit is the whole point of it. Ratchet target, as above.
 //
-//plimsoll:max-methods=90
+//plimsoll:max-methods=91
 //plimsoll:max-exported-methods=23
 type App struct {
 	// Primitives — immutable after NewApp.
@@ -1258,7 +1258,7 @@ func NewApp(
 		faceEdges: func(ctx context.Context, e *entity.Entity) ([]*entity.Relation, map[string]bool, error) {
 			return servedFaceEdges(ctx, app.reader, app.worldNeighbors, app.visibleReader, e)
 		},
-		currentEdgesByPeer: app.currentEdgesByPeer,
+		currentEdgesByPeer: app.currentEdgesByPeerOnFace,
 		engine:             func() *script.Engine { return app.scriptEngine },
 		luaDeps:            app.luaWriteDeps,
 		fullScriptDetail:   app.allowFullScriptDetail,

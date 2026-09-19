@@ -229,7 +229,7 @@ func TestPurgeRelationMultiLifetimeRefusalDeletesNothing(t *testing.T) {
 		"a multi-lifetime key purged without naming a lifetime: a false erasure guarantee")
 	require.Zero(t, res.Purged, "the refusal still deleted rows")
 
-	lts, err := v.ListRelationLifetimes(ctx, "FEAT-1", "rel", "FEAT-2")
+	lts, err := v.ListRelationLifetimes(ctx, "FEAT-1", entity.Face(""), "rel", "FEAT-2")
 	require.NoError(t, err)
 	require.Len(t, lts, 2, "the refused purge removed a lifetime")
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -67,9 +68,13 @@ relations:
     from: [policy]
     to: [feature]
     scope: content
+    # An explicit inverse so a test can reconcile this edge from the TARGET
+    # side, where the tail belongs to the source's face rather than to the
+    # addressed entity.
+    inverse: { id: cited-by }
   # SYMMETRIC and content-scoped, with an inverse spelling: the inverse key
-  # still makes the addressed entity the TAIL, so the faced-PATCH guard must
-  # refuse it like the canonical name.
+  # still makes the addressed entity the TAIL, so a faced PATCH must resolve
+  # it to the addressed face like the canonical name (BUG-64MU2Q).
   relates-to:
     from: [policy]
     to: [policy]
@@ -313,7 +318,12 @@ func TestFacedAddress_PatchWritesTheNamedFace(t *testing.T) {
 			Roles: map[string]acl.RoleDef{"editor": {
 				// Both faces by NAME: a bare `policy` grant covers only the
 				// zero coordinate, which a faced type stores no row at.
-				Read: []string{"*"}, Create: []string{"*"},
+				//
+				// Create carries the faces too, because a content-scoped
+				// relation write authorizes against the SOURCE's face
+				// (BUG-64MU2Q) and `*` grants only the default one.
+				Read:   []string{"*"},
+				Create: []string{"*", "policy@draft", "policy@published"},
 				Update: []string{"policy@draft", "policy@published"},
 			}},
 			Assignments: map[string]string{"bob": "editor"},
@@ -353,23 +363,34 @@ func TestFacedAddress_PatchWritesTheNamedFace(t *testing.T) {
 		t.Errorf("POL-1@draft must write the draft row; got %v", draft.Properties["title"])
 	}
 
-	// A content-scoped edge attaches to a face's tail, and the relation
-	// writers address the bare tail: refused, not silently misfiled.
+	// A content-scoped edge attaches to the ADDRESSED face's tail and is
+	// written there (BUG-64MU2Q). This used to be refused with a 422 whose
+	// advice — "edit it on the bare face" — named an address a faced type
+	// does not have, so the edge was unwritable from any client.
 	rec = patchEntityAs(bob, t, app, d, "policy", "policys", "POL-1@published",
 		`{"relations":{"cites":{"data":[{"type":"feature","id":"FEAT-1"}]}}}`, nil)
-	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "face_relations_unsupported") {
-		t.Errorf("a content-scoped relation through a face address = %d %s, want 422 face_relations_unsupported",
+	if rec.Code != http.StatusOK {
+		t.Fatalf("a content-scoped relation through a face address = %d %s, want 200", rec.Code, rec.Body)
+	}
+	assertEdgeTail(ctx, t, app, "POL-1", "published", "cites", "FEAT-1")
+	// ...and nowhere else. An edge on the zero coordinate would be the
+	// wrong-face write the address grammar exists to prevent, and would be
+	// invisible to the published face that asked for it.
+	assertNoEdgeTail(ctx, t, app, "POL-1", "", "cites", "FEAT-1")
+	assertNoEdgeTail(ctx, t, app, "POL-1", "draft", "cites", "FEAT-1")
+	// A SYMMETRIC content-scoped relation spelled by its INVERSE name still
+	// tails at this address — resolveDirection maps it back to outgoing — so
+	// the tail must be computed the way the writer resolves the key, not from
+	// the body key's spelling. The refusal this replaced got that right; the
+	// write has to as well.
+	rec = patchEntityAs(bob, t, app, d, "policy", "policys", "POL-1@published",
+		`{"relations":{"related-from":{"data":[{"type":"policy","id":"POL-1"}]}}}`, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("a symmetric content-scoped relation via its inverse key = %d %s, want 200",
 			rec.Code, rec.Body)
 	}
-	// A SYMMETRIC content-scoped relation spelled by its inverse name still
-	// tails at this address (resolveDirection maps it back to outgoing), so
-	// the guard must resolve keys the way the writer does.
-	rec = patchEntityAs(bob, t, app, d, "policy", "policys", "POL-1@published",
-		`{"relations":{"related-from":{"data":[{"type":"policy","id":"POL-2"}]}}}`, nil)
-	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "face_relations_unsupported") {
-		t.Errorf("a symmetric content-scoped relation via its inverse key = %d %s, want 422 "+
-			"face_relations_unsupported — it would attach to the BARE tail", rec.Code, rec.Body)
-	}
+	assertEdgeTail(ctx, t, app, "POL-1", "published", "relates-to", "POL-1")
+	assertNoEdgeTail(ctx, t, app, "POL-1", "", "relates-to", "POL-1")
 	// An identity-scoped edge is entity-level: the same edge from every face.
 	rec = patchEntityAs(bob, t, app, d, "policy", "policys", "POL-1@published",
 		`{"relations":{"implements":{"data":[{"type":"feature","id":"FEAT-1"}]}}}`, nil)
@@ -377,12 +398,17 @@ func TestFacedAddress_PatchWritesTheNamedFace(t *testing.T) {
 		t.Errorf("an identity-scoped relation through a face address = %d %s, want 200", rec.Code, rec.Body)
 	}
 	// The response describes the row that was written: the published face's
-	// own edges, not the union of every tail's. store.CreateRelation takes no
-	// face, so the edge seeded below tails at the ZERO coordinate — a tail no
-	// face of this type occupies, which is exactly what makes it a clean
-	// negative: it must not appear beside the published face.
-	if _, err := app.store.CreateRelation(ctx, "POL-1", "cites", "FEAT-1", nil); err != nil {
-		t.Fatalf("seed zero-coordinate-tail edge: %v", err)
+	// own edges, not the union of every tail's. The edge seeded below tails
+	// at the DRAFT and points somewhere the published face does not, so it
+	// must not appear beside the published one.
+	if err := app.store.CreateEntity(ctx, &entity.Entity{
+		ID: "FEAT-2", Type: "feature", Properties: map[string]any{"title": "f2"},
+	}); err != nil {
+		t.Fatalf("seed draft-only target: %v", err)
+	}
+	if _, err := app.store.CreateRelation(ctx, "POL-1", "cites", "FEAT-2",
+		&store.RelationData{FromFace: "draft"}); err != nil {
+		t.Fatalf("seed draft-tailed edge: %v", err)
 	}
 	rec = patchEntityAs(bob, t, app, d, "policy", "policys", "POL-1@published",
 		`{"properties":{"title":"PUBLISHED v3"}}`, nil)
@@ -393,9 +419,15 @@ func TestFacedAddress_PatchWritesTheNamedFace(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &after); err != nil {
 		t.Fatal(err)
 	}
-	if _, leaked := after.Relations["cites"]; leaked {
+	if slices.Contains(after.Relations["cites"], "FEAT-2") {
 		t.Errorf("the PATCH response for the published face carried the DRAFT face's "+
 			"content-scoped edge: %v", after.Relations)
+	}
+	// The published face's own content-scoped edge is still there — the
+	// response is face-scoped, not edge-less.
+	if !slices.Contains(after.Relations["cites"], "FEAT-1") {
+		t.Errorf("the PATCH response dropped the published face's OWN content-scoped "+
+			"edge: %v", after.Relations)
 	}
 }
 
@@ -583,4 +615,91 @@ func TestFacedAddress_FaceGateStillHolds(t *testing.T) {
 		t.Errorf("the draft is withheld from a policy@published reader however it is "+
 			"spelled; got %d %s", rec.Code, rec.Body)
 	}
+}
+
+// edgeTails returns the tail faces of every stored edge on this triple.
+// Queried by BARE id — deliberately unfiltered — so an assertion sees where
+// an edge actually landed rather than only where it was expected.
+func edgeTails(
+	ctx context.Context, t *testing.T, app *App, from, relType, to string,
+) []entity.Face {
+	t.Helper()
+	var tails []entity.Face
+	for rel, err := range app.store.ListRelations(ctx, store.RelationQuery{
+		From: from, Type: relType, To: to,
+	}) {
+		if err != nil {
+			t.Fatalf("list %s--%s->%s: %v", from, relType, to, err)
+		}
+		tails = append(tails, rel.FromFace)
+	}
+	return tails
+}
+
+// assertEdgeTail fails unless the triple has an edge tailed at face.
+func assertEdgeTail(
+	ctx context.Context, t *testing.T, app *App, from string, face entity.Face, relType, to string,
+) {
+	t.Helper()
+	tails := edgeTails(ctx, t, app, from, relType, to)
+	if slices.Contains(tails, face) {
+		return
+	}
+	t.Errorf("%s--%s->%s: no edge tailed at %q; stored tails are %q",
+		from, relType, to, face, tails)
+}
+
+// assertNoEdgeTail fails if the triple has an edge tailed at face. The
+// negative matters as much as the positive: a faced write that also lands on
+// the zero coordinate is misfiled, not merely redundant.
+// read together at every call site, and narrowing one of them would make the
+// positive and negative assertions look like different operations.
+//
+//nolint:unparam // signature deliberately mirrors assertEdgeTail: the pair is
+func assertNoEdgeTail(
+	ctx context.Context, t *testing.T, app *App, from string, face entity.Face, relType, to string,
+) {
+	t.Helper()
+	tails := edgeTails(ctx, t, app, from, relType, to)
+	if slices.Contains(tails, face) {
+		t.Errorf("%s--%s->%s: an edge is tailed at %q, which does not own it; stored tails are %q",
+			from, relType, to, face, tails)
+	}
+}
+
+// TestFacedAddress_IncomingEdgeAddressedByItsOwnTail: an edge reconciled from
+// the PEER's side tails at the source's face, which the peer's request does
+// not name. Addressing it by a tail derived from the request instead of from
+// the edge deletes a different edge — or, as here, none at all, failing a
+// legitimate request with a 500 while the link survives (BUG-64MU2Q review).
+func TestFacedAddress_IncomingEdgeAddressedByItsOwnTail(t *testing.T) {
+	app, d := facedApp(t, func(st store.Store) *acl.Declarative {
+		return mustNewACL(t, &acl.Policy{
+			Roles: map[string]acl.RoleDef{"editor": {
+				Read:   []string{"*"},
+				Create: []string{"*", "policy@draft", "policy@published"},
+				Update: []string{"*", "policy@draft", "policy@published"},
+				Delete: []string{"*", "policy@draft", "policy@published"},
+			}},
+			Assignments: map[string]string{"bob": "editor"},
+		}, st)
+	})
+	ctx := context.Background()
+	bob := principal.With(ctx, principal.Principal{User: "bob", Tool: principal.ToolDataEntry})
+
+	// A content-scoped edge tailed at the DRAFT face.
+	if _, err := app.store.CreateRelation(ctx, "POL-1", "cites", "FEAT-1",
+		&store.RelationData{FromFace: "draft"}); err != nil {
+		t.Fatalf("seed draft-tailed edge: %v", err)
+	}
+
+	// Clear it from the TARGET's side. FEAT-1 is faceless and names no face,
+	// but the edge it is clearing tails at POL-1@draft.
+	rec := patchEntityAs(bob, t, app, d, "feature", "features", "FEAT-1",
+		`{"relations":{"cited-by":{"data":[]}}}`, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("clearing a faced edge from the target side = %d %s, want 200",
+			rec.Code, rec.Body)
+	}
+	assertNoEdgeTail(ctx, t, app, "POL-1", "draft", "cites", "FEAT-1")
 }

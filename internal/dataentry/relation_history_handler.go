@@ -49,7 +49,20 @@ func handleV1RelationHistory(a *App, w http.ResponseWriter, r *http.Request) {
 	// parts[0] is the {fromType} URL segment. It is COSMETIC only — never an ACL
 	// trust input (the gate + redaction resolve the real type from the globally-
 	// unique id; see authorizeRelationHistoryRead / serveRelationHistoryVersion).
-	from, relType, to := parts[1], parts[2], parts[3]
+	//
+	// parts[1] is an ADDRESS, not a bare id: on a faced type `selfHref` hands out
+	// `ID@face` and the SPA passes it here verbatim, so it must be parsed rather
+	// than handed to the store (TKT-JAROC3). The face selects which TAIL's history
+	// this is; the bare id is what every ACL row gate keys on.
+	fromRef, refOK := parseEntityRef(parts[1])
+	if !refOK {
+		// An address the grammar rejects names no row. Same not-found a missing
+		// relation gives — a distinct 400 would only say which strings are worth
+		// probing.
+		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
+		return
+	}
+	from, relType, to := fromRef.ID, parts[2], parts[3]
 
 	if a.versions == nil {
 		writeV1Error(w, r, http.StatusNotImplemented, "history_unsupported",
@@ -69,7 +82,7 @@ func handleV1RelationHistory(a *App, w http.ResponseWriter, r *http.Request) {
 			writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
 			return
 		}
-		restoreRelationHistoryVersion(a, w, r, reader, from, relType, to, parts[4])
+		restoreRelationHistoryVersion(a, w, r, reader, fromRef, relType, to, parts[4])
 		return
 	}
 
@@ -93,7 +106,7 @@ func handleV1RelationHistory(a *App, w http.ResponseWriter, r *http.Request) {
 	// reveal that older deleted lifetimes exist, which is the feature's whole point
 	// and is what the gate authorizes.
 	if len(parts) >= 5 && parts[4] == "_lifetimes" {
-		serveRelationLifetimes(w, r, reader, from, relType, to)
+		serveRelationLifetimes(w, r, reader, fromRef, relType, to)
 		return
 	}
 
@@ -108,7 +121,9 @@ func handleV1RelationHistory(a *App, w http.ResponseWriter, r *http.Request) {
 			"record_id must be a positive integer", "")
 		return
 	}
-	q := store.RelationHistoryQuery{From: from, Type: relType, To: to, RecordID: recordID}
+	q := store.RelationHistoryQuery{
+		From: from, FromFace: fromRef.Face, Type: relType, To: to, RecordID: recordID,
+	}
 
 	if len(parts) >= 5 && parts[4] != "" {
 		serveRelationHistoryVersion(a, w, r, reader, q, parts[4])
@@ -183,9 +198,9 @@ func authorizeRelationHistoryRead(a *App, w http.ResponseWriter, r *http.Request
 // so a UI can offer a lifetime picker for a deleted-and-recreated relation.
 func serveRelationLifetimes(
 	w http.ResponseWriter, r *http.Request, reader store.RelationHistoryReader,
-	from, relType, to string,
+	fromRef entityRef, relType, to string,
 ) {
-	lifetimes, err := reader.ListRelationLifetimes(r.Context(), from, relType, to)
+	lifetimes, err := reader.ListRelationLifetimes(r.Context(), fromRef.ID, fromRef.Face, relType, to)
 	if err != nil {
 		writeGateError(w, r, err)
 		return
@@ -203,7 +218,7 @@ func serveRelationLifetimes(
 		})
 	}
 	writeV1JSON(w, http.StatusOK, map[string]any{
-		"from": from, "type": relType, "to": to, "lifetimes": rows,
+		"from": fromRef.String(), "type": relType, "to": to, "lifetimes": rows,
 	})
 }
 
@@ -325,8 +340,9 @@ func serveRelationHistoryVersion(
 // exists, the create maps ErrEntityNotFound → 409 dangling-edge (not 500).
 func restoreRelationHistoryVersion(a *App,
 	w http.ResponseWriter, r *http.Request, reader store.RelationHistoryReader,
-	from, relType, to, versionStr string,
+	fromRef entityRef, relType, to, versionStr string,
 ) {
+	from := fromRef.ID
 	// Restore is a write; gate reads first so a caller who can't even read the
 	// history can't probe it via restore.
 	if !authorizeRelationHistoryRead(a, w, r, from, to) {
@@ -342,7 +358,7 @@ func restoreRelationHistoryVersion(a *App,
 	ctx := r.Context()
 	// Restore reads from the newest lifetime (RecordID 0); the HTTP restore route
 	// does not expose an older-lifetime selector (the CLI does via --lifetime).
-	q := store.RelationHistoryQuery{From: from, Type: relType, To: to}
+	q := store.RelationHistoryQuery{From: from, FromFace: fromRef.Face, Type: relType, To: to}
 	snap, err := reader.GetRelationVersion(ctx, q, version)
 	if errors.Is(err, store.ErrNotFound) {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
@@ -357,12 +373,21 @@ func restoreRelationHistoryVersion(a *App,
 	opts := entityPkg.RelationOptions{
 		Properties: cloneProps(snap.Properties),
 		Content:    &content,
+		// The restore writes back to the TAIL it read from. Without this a
+		// faced edge's history would restore onto the DEFAULT tail — a
+		// different relation — leaving the edge the caller addressed
+		// untouched and minting a second one beside it (TKT-JAROC3).
+		FromFace: fromRef.Face,
 	}
 
 	// If the relation currently exists, update it; else re-create. Both go
 	// through the entitymanager, which authorizes, validates endpoints, and
 	// audits. A missing endpoint surfaces as ErrEntityNotFound → 409.
-	_, liveErr := a.store.GetRelation(ctx, from, relType, to)
+	//
+	// Liveness is probed on the addressed tail for the same reason:
+	// store.GetRelation reads the default tail, so a live faced edge would
+	// look absent and take the create branch.
+	_, liveErr := edgeOnFace(ctx, a.store, from, fromRef.Face, relType, to)
 	var writeErr error
 	if liveErr == nil {
 		_, writeErr = a.entityManager.UpdateRelation(ctx, from, relType, to, opts)
@@ -385,6 +410,6 @@ func restoreRelationHistoryVersion(a *App,
 
 	writeV1JSON(w, http.StatusOK, map[string]any{
 		"restored_from_version": snap.Version,
-		"relation":              map[string]any{"from": from, "type": relType, "to": to},
+		"relation":              map[string]any{"from": fromRef.String(), "type": relType, "to": to},
 	})
 }

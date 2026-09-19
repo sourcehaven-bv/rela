@@ -74,8 +74,8 @@ import (
 // CAS precondition has to be evaluated atomically with the write, so it
 // cannot live anywhere but on the type that owns the write.
 //
-//plimsoll:max-methods=52
-//plimsoll:max-exported-methods=33
+//plimsoll:max-methods=54
+//plimsoll:max-exported-methods=34
 type MemStore struct {
 	// txMu serializes an open Tx against ordinary writers: Tx holds it
 	// for the whole callback, every exported write method takes it
@@ -1062,7 +1062,16 @@ func (m *MemStore) createRelation(
 }
 
 func (m *MemStore) updateRelation(
-	_ context.Context, from, relType, to string, data store.RelationData,
+	ctx context.Context, from, relType, to string, data store.RelationData,
+) (*entity.Relation, error) {
+	return m.updateRelationState(ctx, from, "", relType, to, data)
+}
+
+// updateRelationState writes the edge with EXACTLY this tail. The tail is
+// part of a relation's identity, so addressing the wrong one updates a
+// different edge rather than failing (BUG-64MU2Q).
+func (m *MemStore) updateRelationState(
+	_ context.Context, from string, p entity.Face, relType, to string, data store.RelationData,
 ) (*entity.Relation, error) {
 	if err := storeutil.ValidateProperties(data.Properties); err != nil {
 		return nil, err
@@ -1070,7 +1079,7 @@ func (m *MemStore) updateRelation(
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	key := defaultTailKey(from, relType, to)
+	key := tailKey(from, p, relType, to)
 	r, ok := m.relations[key]
 	if !ok {
 		return nil, store.ErrNotFound
@@ -1094,6 +1103,7 @@ func (m *MemStore) updateRelation(
 		RelationType: relType,
 		From:         from,
 		To:           to,
+		Face:         p,
 	})
 	return updated.Clone(), nil
 }
