@@ -94,6 +94,29 @@ const props = defineProps<{
   embeddedLink?: { relation: string; peer: string; linkAs: 'from' | 'to' }
   embeddedTemplate?: string
   embeddedWorld?: string
+  /**
+   * Values copied from a source entity for a Duplicate (TKT-Z8K2FS).
+   *
+   * Shaped like a template because that is what it is — a template computed
+   * from an entity rather than read from `templates/` — so it flows through
+   * `applyTemplate` and inherits its typed-value assignment and `originalData`
+   * re-baseline instead of becoming a second apply path.
+   *
+   * Its keys are registered as user-touched. The commit filter keeps an
+   * untouched key only while the dry-run reports it visible and writable, so a
+   * prefilled value on a field the user never opens would otherwise be dropped
+   * from the payload silently — the user would watch it sit in the form and
+   * then find it missing from the copy. Marking them touched moves that
+   * failure to the server's affordance gate, which refuses loudly with a
+   * rule_id (RR-2U2D reasoning, RR-DDY9LG).
+   *
+   * Read at setup time and never reactive afterwards, matching `embedded`.
+   */
+  embeddedPrefill?: {
+    properties: Record<string, unknown>
+    content: string
+    relations: Record<string, string[]>
+  }
 }>()
 
 /**
@@ -953,6 +976,38 @@ function applyTemplate(template: Template, preserveUserInput = false) {
     relations: relations.value,
     content: content.value,
   })
+}
+
+/**
+ * Applies a Duplicate's copied values (TKT-Z8K2FS).
+ *
+ * Runs through `applyTemplate` so typed values, content and relations take the
+ * one existing apply path, then marks every copied property user-touched — see
+ * the `embeddedPrefill` prop doc for why that is load-bearing rather than
+ * incidental.
+ *
+ * `preserveUserInput: false` because a duplicate is an explicit request for
+ * this entity's values: a template default that landed first must lose. Nothing
+ * the user typed can be at risk yet, since this runs before the form is
+ * interactive.
+ */
+function applyEmbeddedPrefill() {
+  const prefill = props.embeddedPrefill
+  if (!prefill) return
+  applyTemplate(
+    {
+      name: '',
+      properties: prefill.properties,
+      content: prefill.content,
+      relations: Object.entries(prefill.relations).flatMap(([relation, targets]) =>
+        targets.map((target) => ({ relation, target }))
+      ),
+    },
+    false
+  )
+  for (const prop of Object.keys(prefill.properties)) {
+    userTouched.value.add(prop)
+  }
 }
 
 function selectTemplate(name: string) {
@@ -2098,6 +2153,9 @@ onMounted(async () => {
   } else {
     initializeDefaults()
     await loadTemplates()
+    // After templates, so a duplicate's copied values win over the template's
+    // defaults: the user asked for a copy of THIS entity, not for a fresh one.
+    applyEmbeddedPrefill()
     loadState.value = 'loaded' // create mode: no entity to fetch
   }
   loading.value = false

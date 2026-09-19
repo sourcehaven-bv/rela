@@ -64,6 +64,7 @@ import type { ViewSectionCreate, ViewSectionCreateTarget } from '@/api/views'
 import { entityExportUrl } from '@/api/transforms'
 import CopyMenu from '@/components/entity/CopyMenu.vue'
 import FaceMenu from '@/components/entity/FaceMenu.vue'
+import DuplicateModal from '@/components/entity/DuplicateModal.vue'
 import WorldBadge from '@/components/entity/WorldBadge.vue'
 import WorldBanner from '@/components/common/WorldBanner.vue'
 import { invokeCopy } from '@/api/copies'
@@ -270,6 +271,28 @@ const mayDelete = computeActionAllowed(entry, 'delete')
 // Edit shows. There is nothing left for the page to AND in.
 const canUpdate = computed(() => mayUpdate.value)
 const canDelete = computed(() => mayDelete.value)
+
+// Duplicate is offered off `inline_create`, NOT `_actions` (TKT-Z8K2FS).
+// `create` is a COLLECTION-scope verb, so an entity response carries only
+// update/delete/rename and has no `create` key to read. The sidebar map is
+// populated only when the principal may create the type AND a create form
+// resolves for it — both conditions a duplicate needs — and it carries the
+// resolved form id, so presence IS the affordance. A UI hint, never
+// authorization: the create re-authorizes.
+//
+// Withheld on an inaccessible entity: its properties are ciphertext, so a
+// "copy" of them would be a copy of nothing.
+const duplicateFormId = computed(() =>
+  isInaccessible.value ? undefined : schemaStore.inlineCreateFormFor(props.entityType)
+)
+const canDuplicate = computed(() => !!duplicateFormId.value && !!entry.value)
+const showDuplicateModal = ref(false)
+
+function handleDuplicated(created: { id: string; type: string }) {
+  showDuplicateModal.value = false
+  uiStore.showToast('success', `Created ${created.id}`)
+  void router.push(`/entity/${created.type}/${created.id}`)
+}
 
 // Nil: undefined when editing is unavailable (no configured form, an
 // inaccessible/git-crypt entity, or no update permission on the face on
@@ -1050,6 +1073,7 @@ const hasOverflow = computed(
     commands.value.length > 0 ||
     overflowFaces.value.length > 0 ||
     overflowCopies.value.length > 0 ||
+    canDuplicate.value ||
     showHistory.value
 )
 
@@ -1736,6 +1760,14 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
             >History</RouterLink
           >
           <ExportMenu :url-for="(t: string) => entityExportUrl(entityType, entityId, t)" />
+          <!--
+            Duplicate. Gated on `inline_create` rather than `_actions` (there is
+            no `create` key on an entity response); the mobile block below gates
+            on the SAME computed via hasOverflow.
+          -->
+          <button v-if="canDuplicate" class="btn btn-secondary" @click="showDuplicateModal = true">
+            Duplicate
+          </button>
           <button v-if="canDelete" class="btn btn-danger" @click="requestDelete">
             Delete <kbd>Del</kbd>
           </button>
@@ -1822,6 +1854,13 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
               >
                 {{ o.label || o.name }}
               </button>
+              <button
+                v-if="canDuplicate"
+                class="overflow-menu-item"
+                @click="showDuplicateModal = true"
+              >
+                Duplicate
+              </button>
               <RouterLink v-if="showHistory" class="overflow-menu-item" :to="historyTarget">
                 History
               </RouterLink>
@@ -1829,6 +1868,24 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
           </div>
         </div>
       </header>
+
+      <!--
+        Duplicate dialog. Mounted under v-if so the embedded create form inside
+        it unmounts on close, aborting any in-flight dry-run rather than leaving
+        it POSTing behind a closed dialog.
+
+        `world` is threaded explicitly: it decides which face the copy lands in,
+        and an embedded form reads props rather than the route.
+      -->
+      <DuplicateModal
+        v-if="showDuplicateModal && entry && duplicateFormId"
+        :show="showDuplicateModal"
+        :source="entry"
+        :form-id="duplicateFormId"
+        :world="worldParam || undefined"
+        @close="showDuplicateModal = false"
+        @created="handleDuplicated"
+      />
 
       <!-- Inaccessible (git-crypt encrypted) banner. Sits above the
            sections so it dominates the visual hierarchy when the entity
