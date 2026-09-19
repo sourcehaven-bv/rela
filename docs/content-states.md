@@ -862,10 +862,15 @@ visible change rather than a forgotten call site.
   world. Restoring a version onto a face that still exists works; restoring a
   face that was **deleted** is refused for a faced type, because a version
   snapshot does not yet report which face it captured.
-- Only the HTTP API can create into a face. The web app's create forms, `rela
-  create`, the MCP `create_entity` tool and the Lua `create` binding all name
-  no face, so they reach faceless types only; against a faced type they are
-  refused with `face_required`.
+- Only the HTTP API can **create** into a face. The web app's create forms,
+  `rela create`, the MCP `create_entity` tool and the Lua `create` binding all
+  name no face, so they reach faceless types only; against a faced type they
+  are refused with `face_required`.
+- **Updates are not restricted this way.** Every write path that takes an id
+  takes an address, because the entity manager parses it — so
+  `rela update POL-1@draft`, `rela.update_entity("POL-1@draft", …)` and a
+  `PATCH` of `POL-1@draft` all reach the named face. The asymmetry is create
+  versus update, not API versus client.
 - `guard.when` on a copy and `edits:` on a world are parsed but not
   implemented. The first is refused at load, the second is accepted and
   ignored.

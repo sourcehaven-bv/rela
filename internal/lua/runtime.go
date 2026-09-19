@@ -1330,6 +1330,14 @@ func EntityToTable(ls *lua.LState, e *entity.Entity) *lua.LTable {
 	t.RawSetString("id", lua.LString(e.ID))
 	t.RawSetString("type", lua.LString(e.Type))
 	t.RawSetString("content", lua.LString(e.Content))
+	// The content state this record is, '' for a faceless type (BUG-G2BASF).
+	// Always present, so a script tests the value rather than its existence.
+	//
+	// `id` stays BARE. A script that concatenates them gets the address the
+	// write path accepts (`rela.update_entity("POL-1@concept", ...)` — see
+	// entitymanager.PatchEntity); one that ignores the face reads and writes
+	// exactly as it did before faces existed.
+	t.RawSetString("face", lua.LString(string(e.Face)))
 
 	// Add modification time as ISO 8601 string (empty if zero)
 	if !e.UpdatedAt.IsZero() {

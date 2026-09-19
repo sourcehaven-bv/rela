@@ -3115,3 +3115,44 @@ func TestUpdateEntity_NotFoundStillReported(t *testing.T) {
 		t.Errorf("missing-entity message changed; got: %v", err)
 	}
 }
+
+// A script can tell which face it is looking at (BUG-G2BASF). Without this a
+// face-triggered action or automation could not address the row that invoked
+// it: `id` is bare, so the face is the only way back to the fused address the
+// write path accepts.
+func TestEntityToTable_CarriesFace(t *testing.T) {
+	tests := []struct {
+		name string
+		face entity.Face
+		want string
+	}{
+		{name: "faceless type reports the empty face", face: "", want: ""},
+		{name: "faced row reports its face", face: "concept", want: "concept"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ls := glua.NewState()
+			defer ls.Close()
+
+			tbl := EntityToTable(ls, &entity.Entity{ID: "POL-1", Type: "policy", Face: tc.face})
+
+			if got := tbl.RawGetString("face"); got.String() != tc.want {
+				t.Errorf("face = %q, want %q", got.String(), tc.want)
+			}
+			// Always an LString, never nil: a script tests the VALUE, so
+			// `entity.face == ""` is the faceless check and nil-vs-empty
+			// never becomes a dialect. RawGetString returns LNil for an
+			// unset key, so the type assertion is the real check here.
+			if _, ok := tbl.RawGetString("face").(glua.LString); !ok {
+				t.Errorf("face must be an LString even for a faceless type, got %T",
+					tbl.RawGetString("face"))
+			}
+			// The id stays BARE: concatenating the two is what yields the
+			// address, and a fused id would break every existing script.
+			if got := tbl.RawGetString("id").String(); got != "POL-1" {
+				t.Errorf("id = %q, want the bare id", got)
+			}
+		})
+	}
+}
