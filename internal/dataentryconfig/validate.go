@@ -932,6 +932,42 @@ func GetValidEnumValues(propDef metamodel.PropertyDef, meta *metamodel.Metamodel
 	return nil
 }
 
+// validateEntityDuplicate validates one entity type's `duplicate:` block.
+//
+// Every named property must exist on the type, and an explicitly empty list is
+// refused: absence is how a type opts out of narrowing, so an empty list would
+// be a second spelling of the default — or, read the other way, a request to
+// carry nothing, which the Duplicate affordance has no use for.
+//
+// Nil block: accepted, returns nil — absence means "carry everything visible".
+func validateEntityDuplicate(
+	meta *metamodel.Metamodel, entityType string, dup *DuplicateConfig,
+) []string {
+	if dup == nil {
+		return nil
+	}
+	entDef, ok := meta.GetEntityDef(entityType)
+	if !ok {
+		// The unknown-type error is already reported by the caller; adding a
+		// second error for the same cause would just be noise.
+		return nil
+	}
+	if dup.Properties != nil && len(dup.Properties) == 0 {
+		return []string{fmt.Sprintf(
+			"entity_views[%q]: duplicate.properties is empty "+
+				"(omit the duplicate block to carry every property)", entityType)}
+	}
+	var errs []string
+	for _, prop := range dup.Properties {
+		if _, ok := entDef.Properties[prop]; !ok {
+			errs = append(errs, fmt.Sprintf(
+				"entity_views[%q]: duplicate.properties names unknown property %q "+
+					"for entity type %q", entityType, prop, entityType))
+		}
+	}
+	return errs
+}
+
 // validateEntityViews validates entity_views entries: each key must be a known
 // entity type, and each detail_view must reference an existing view.
 func validateEntityViews(cfg *Config, meta *metamodel.Metamodel) []string {
@@ -941,9 +977,17 @@ func validateEntityViews(cfg *Config, meta *metamodel.Metamodel) []string {
 			errs = append(errs, fmt.Sprintf(
 				"entity_views: unknown entity type %q", entityType))
 		}
+		errs = append(errs, validateEntityDuplicate(meta, entityType, ev.Duplicate)...)
+
+		// An entry carrying only `duplicate:` is legitimate (TKT-Z8K2FS), so
+		// the empty-detail_view refusal applies only when nothing else is
+		// declared — otherwise the error's own advice ("omit the entry") would
+		// tell an operator to delete config that is doing something.
 		if ev.DetailView == "" {
-			errs = append(errs, fmt.Sprintf(
-				"entity_views[%q]: detail_view is empty (omit the entry instead)", entityType))
+			if ev.Duplicate == nil {
+				errs = append(errs, fmt.Sprintf(
+					"entity_views[%q]: entry declares nothing (omit the entry instead)", entityType))
+			}
 			continue
 		}
 		if _, ok := cfg.Views[ev.DetailView]; ok {
