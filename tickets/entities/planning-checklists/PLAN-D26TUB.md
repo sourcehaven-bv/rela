@@ -39,6 +39,11 @@ OUT:
 
 **Acceptance Criteria:**
 
+0. **Every criterion below holds on BOTH paths** — the native `BulkMigrator`
+   implementation and the generic fallback. They are pinned by one shared
+   conformance suite in `storetest`, run against every backend, so a backend
+   that gains the capability later cannot quietly change behaviour. Where a
+   criterion differs by path it says so explicitly (only #10 does).
 1. Reversing a relation type rewrites every stored edge, preserving properties
    and body content. Test: seed 3 edges with properties and content, apply,
    assert each exists reversed with both carried across and the original gone.
@@ -68,6 +73,12 @@ OUT:
    three mirrors), using the same nil-normalization `effectiveBound` applies
    (`shapecompare.go:320-330`) so an unset bound and an explicit 0 do not read
    as a difference.
+10. On a versioning backend, a reversed edge KEEPS its version lineage: the
+   in-place re-key preserves `rel_record_id`, so history before and after the
+   reversal is one continuous lifetime. Test: capture a version, reverse, assert
+   the history walk still returns the pre-reversal version. (Native path only —
+   the fallback is delete+create and forks the lineage, which is why the native
+   path is implemented for exactly the backends that have history.)
 9. If ANY edge would not typecheck after reversal, the step refuses the whole
    run, naming the first such edge. All-or-nothing, not report-and-continue:
    a partial reversal leaves a mix of reversed and unreversed edges that the
@@ -124,17 +135,112 @@ implement and conformance-test.
 
 **Technical Approach:**
 
-1. `reverseRelationStep{Type string}` in `steps.go`, registered in `parseStep`.
-2. `Validate(from, to)`: the type must exist in both projections; refuse when
-   `Symmetric` is true in either; refuse when the endpoints are NOT actually
-   swapped (a guard against a hand-written step that would silently corrupt).
-3. `Run`: `collectRelations(ctx, x.Store, s.Type)`, then a PRE-FLIGHT pass over
-   the whole collected set (see "Pre-flight" below), then per edge — but ONLY
-   for edges that still point the OLD way. See "Idempotence" below; this is the
-   part that is not like `rename_relation_type`. For each such edge:
-   `CreateRelation(ctx, r.To, s.Type, r.From, &store.RelationData{...})`,
-   `x.captureRelationDelete`, `DeleteRelation`. Tolerate `ErrConflict` on
-   create exactly as `rename_relation_type` does.
+The rewrite is pushed DOWN into the store as an optional capability, so a
+backend that can do it in one statement does, and the in-process loop becomes
+the fallback rather than the only path.
+
+**1. The seam.** A new optional capability in `internal/store`, type-asserted at
+the call site exactly like `HeaderReader`, `Formatter`, `HistoryReader` and
+`VersionWriter` — deliberately NOT part of `store.Store`, because a mandatory
+method would oblige every backend plus the `storetest` conformance suite:
+
+```go
+// BulkMigrator performs whole-table migration rewrites natively.
+type BulkMigrator interface {
+    SwapRelationEndpoints(ctx context.Context, relType string) (int, error)
+}
+```
+
+The interface is NAMED for the general job (bulk migration rewrites) and shaped
+to grow — `RenameRelationType`, `RenameProperty`, `MapValues` are the obvious
+next members — but only `SwapRelationEndpoints` is implemented now. The others
+are deferred to follow-up work, with their sketches recorded under "Deferred
+members" below so the seam is designed against them rather than fitted to one
+method and widened awkwardly later.
+
+Its vocabulary is store-level (`relType string`, a count back). It must never
+take a `*metamodel.Metamodel` or any application type: arch-lint forbids a store
+depending on an application package, and the `scope:`/`Orderable` decisions stay
+in `datamigration` ABOVE the seam.
+
+**2. The dispatcher.** A package-level function in `store`, mirroring
+`ListEntityHeaders` (`store.go:659-685`), so callers never assert themselves and
+the fallback stays a detail of the package:
+
+```go
+func SwapRelationEndpoints(ctx context.Context, s Store, relType string) (int, error)
+```
+
+Native when the backend implements `BulkMigrator`; otherwise the
+collect-then-rewrite loop, which is where the pre-flight guards below live.
+
+**3. Native implementations.** pgstore and sqlitestore do it in one statement
+per table, the same shape `RenameEntity` already uses for its bulk re-key
+(`pgstore/entity.go:875`):
+
+```sql
+UPDATE relations SET from_id = to_id, to_id = from_id,
+       seq = nextval('rela_seq')
+ WHERE rel_type = $1
+```
+
+fsstore and memstore do NOT implement it: fsstore encodes the endpoints in the
+FILENAME (`FROM--type--TO.md`, `fsstore/layout.go:51`), so there is no set-based
+rewrite to be had, and memstore is keyed the same way in a map. They take the
+fallback, which is correct rather than a compromise — those are single-process
+backends whose graphs fit in memory.
+
+**4. The step** (`reverseRelationStep{Type}`) validates against the projections
+as before, performs the `scope:`/overlap refusals it owns, and then calls
+`store.SwapRelationEndpoints`. It no longer contains a write loop at all.
+
+**Why this is better than the loop, beyond speed.** Three of the five critical
+design-review findings are properties of create-then-delete, and an in-place
+UPDATE does not have them:
+
+- **Self-edges.** `A --t--> A` updates to itself. There is no create to hit
+  `ErrConflict` and no delete to destroy the row. The probe result that made
+  RR-RN0QB8 critical (0 survivors) cannot arise.
+- **Both directions present.** `A→B` and `B→A` swapping onto each other is a
+  PRIMARY KEY violation (`relations` is keyed `(from_id, rel_type, to_id)`,
+  `0001_init.sql:63`) inside a transaction — a clean refusal with rollback,
+  instead of the half-applied loop that left one edge carrying the other's
+  properties.
+- **Version lineage.** This is the significant win. `rel_record_id` is a COLUMN
+  ON the row (TKT-92JL8P), so an in-place re-key keeps it — which is exactly why
+  #1127 made rename atomic. Reversal inherits that property: history stays
+  continuous instead of every edge starting a fresh lineage. Risk 5 below is
+  downgraded from "inherent cost" to "fallback-only cost".
+
+The pre-flight guards are NOT dropped. They still gate the fallback path, and
+the tail refusal (guard 1) applies on every path — a state-tailed edge has no
+reversed representation regardless of how the bytes get written.
+
+**Deferred members** (sketched so the seam is designed against them, not
+implemented here):
+
+- `RenameRelationType` — a plain column update (`SET rel_type = $2 WHERE
+  rel_type = $1`), the cheapest of the three and the natural next one.
+- `RenameProperty` / `MapValues` — these touch `properties JSONB`, and pgstore
+  today has no in-place jsonb surgery anywhere (properties are always written as
+  a whole document). They need a jsonb key-rename / value-CASE expression per
+  backend plus their own EXPLAIN-style verification, so they are genuinely
+  follow-up work rather than a quick addition.
+
+**Files to modify (revised):**
+- `internal/store/store.go` — `BulkMigrator` + the `SwapRelationEndpoints`
+  dispatcher and its fallback
+- `internal/store/pgstore/relation.go`, `internal/store/sqlitestore/` — native
+  implementations
+- `internal/store/storetest/` — a capability-aware conformance test, so the
+  native and fallback paths are held to ONE contract (the `Capabilities`
+  pattern the versioning tests already use)
+- `internal/datamigration/steps.go` — the step, registration
+- `internal/datamigration/file.go` — `resolvingSteps` + the generalized
+  `validateDeltasResolved`
+- `internal/datamigration/generate.go` — drafting
+- `internal/metamodel/shapecompare.go` — the delta kind + `migrationDeltaKinds`
+- `docs-project/entities/guides/GUIDE-data-migration.md`
 
 **Pre-flight: collisions and unreversible tails must be detected BEFORE any
 write, and must be visible in dry-run.** Three cases make the naive
@@ -414,10 +520,20 @@ file applies and the marker advances, not just the step in isolation.
    still warn operators with committed migrations that span a swap, and the
    step's introduction should be treated as a breaking change for them.
 
-5. **Version lineage breaks per edge.** Endpoints are the address, so this is
-   delete+create and each edge starts a fresh lineage on the database backends.
-   *Mitigation:* none available; inherent and identical to
-   `rename_relation_type`. Must be stated in the step doc and the guide.
+5. **Version lineage breaks per edge — on the FALLBACK path only.** Where the
+   rewrite is delete+create, each edge starts a fresh lineage. The native path
+   does not have this: `rel_record_id` is a column on the row, so an in-place
+   re-key keeps it (the property #1127 established for rename).
+   *Mitigation:* implement the native path for the backends that have version
+   history at all (pg, sqlite). fs/memory take the fallback and have no
+   versioning to break. State the difference in the step doc and the guide.
+
+7. **Two code paths can drift.** A native single-statement rewrite and a
+   Go loop are easy to let diverge — the defect class BUG-TMGWIN came from
+   detection and remediation being maintained as separate lists.
+   *Mitigation:* one conformance contract in `storetest`, run against every
+   backend, asserting identical observable outcomes (including the refusals).
+   A backend without the capability must pass the same suite via the fallback.
 
 6. **A deliberate double-narrowing that happens to look like a swap gets a
    drafted step.** *Mitigation:* accepted, but only because the dry-run is now
