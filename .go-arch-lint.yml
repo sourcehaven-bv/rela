@@ -84,6 +84,8 @@ components:
   datamigration:    { in: internal/datamigration }
   filemigstate:     { in: internal/datamigration/filemigstate }
   memmigstate:      { in: internal/datamigration/memmigstate }
+  pgmigstate:       { in: internal/datamigration/pgmigstate }
+  sqlitemigstate:   { in: internal/datamigration/sqlitemigstate }
   migstatetest:     { in: internal/datamigration/migstatetest }
   entitymanager:    { in: internal/entitymanager }
   imgproc:          { in: internal/imgproc }
@@ -623,6 +625,8 @@ deps:
       # file backend is the filesystem tier's default (TKT-XCJ0Y2).
       - filemigstate
       - memmigstate
+      - pgmigstate
+      - sqlitemigstate
       # Bridges conditionlint's next-action condition compiler to the seam
       # dataentry declares, so the app never imports the predicate engine.
       # predicatefns + principal: the same bridge derives the query identity
@@ -982,6 +986,19 @@ deps:
       - datamigration
       - storage
   memmigstate:
+    mayDependOn:
+      - datamigration
+  # The database backends take an INJECTED handle from the composition root —
+  # the same pool the store, search backend and comments run on — so neither
+  # depends on `store`: a migration record is not graph content.
+  pgmigstate:
+    mayDependOn:
+      - datamigration
+    canUse:
+      - pgx
+  # sqlitemigstate needs no driver grant: it speaks database/sql only, and
+  # registering the driver stays sqlitedb's job.
+  sqlitemigstate:
     mayDependOn:
       - datamigration
   # The conformance harness every backend must pass, so it necessarily builds

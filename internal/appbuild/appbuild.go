@@ -1782,7 +1782,7 @@ func assemble(
 	if backendKV == nil {
 		backendKV = stateKVFor(st)
 	}
-	migState, err := buildMigState(cfg.FS, cfg.Paths, overrides.migState)
+	migState, err := buildMigState(cfg.FS, cfg.Paths, overrides.migState, backendKV)
 	if err != nil {
 		return nil, err
 	}

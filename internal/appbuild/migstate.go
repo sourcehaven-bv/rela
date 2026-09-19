@@ -10,6 +10,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/datamigration/filemigstate"
 	"github.com/Sourcehaven-BV/rela/internal/datamigration/memmigstate"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/state"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
@@ -26,6 +27,20 @@ import (
 // self-consistent, and a tier with no project directory has no migrations to
 // run anyway.
 func buildMigState(
+	fsys storage.FS, paths *project.Context, override datamigration.StateStore, kv state.KV,
+) (datamigration.StateStore, error) {
+	next, err := selectMigState(fsys, paths, override)
+	if err != nil {
+		return nil, err
+	}
+	// Wrapped so an upgrade adopts the pre-TKT-XCJ0Y2 state.KV marker instead
+	// of re-baselining over it, and so a rollback finds a current one. The
+	// wrapper is transitional; drop it once no supported version reads the
+	// legacy key.
+	return datamigration.NewLegacyBridge(next, kv)
+}
+
+func selectMigState(
 	fsys storage.FS, paths *project.Context, override datamigration.StateStore,
 ) (datamigration.StateStore, error) {
 	if override != nil {
