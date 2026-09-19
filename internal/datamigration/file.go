@@ -300,9 +300,17 @@ func LoadDir(fsys fs.FS) ([]*File, error) {
 		if e.IsDir() {
 			continue
 		}
+		// Only YAML is a candidate: migrations/ also holds the committed
+		// applied-list (applied.json), and a future sibling would be skipped
+		// here too rather than parsed as a migration.
 		if ext := path.Ext(e.Name()); ext != ".yaml" && ext != ".yml" {
 			continue
 		}
+		// A YAML file whose NAME is not a migration name is an ERROR, not
+		// something to skip quietly. Skipping would mean a migration the
+		// operator wrote never runs and nothing says so — the failure mode
+		// this system exists to prevent. ParseFile rejects it by name, which
+		// is where the message is; listing it here is what gets it there.
 		names = append(names, e.Name())
 	}
 	sort.Strings(names)
