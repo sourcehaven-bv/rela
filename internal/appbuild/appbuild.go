@@ -113,7 +113,14 @@ import (
 // bundle rather than new getters onto its contents, so they belong here and
 // not on a narrower type.
 //
-//plimsoll:max-exported-methods=33
+// 33 → 34 (TKT-XCJ0Y2): [Services.MigState], the per-store migration record.
+// It is a genuine sibling of [Services.State] rather than a getter onto it —
+// state.KV is node-local cache, this describes what the CONTENT conforms to,
+// and the two have different backends for that reason. The CLI needs it to
+// build the `rela migrate` commands, and this bundle is the only boundary it
+// can cross. Still a ratchet target under TKT-N0IKN9.
+//
+//plimsoll:max-exported-methods=34
 type Services struct {
 	fs    storage.FS
 	paths *project.Context
