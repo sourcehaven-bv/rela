@@ -138,6 +138,28 @@ func TestNewMigrationFileName(t *testing.T) {
 	}
 }
 
+// Whatever a description contains, the generated name must be one the loader
+// accepts — the generator must never write a file ParseFile would refuse.
+func FuzzNewMigrationFileName(f *testing.F) {
+	f.Add("backfill owner")
+	f.Add("")
+	f.Add("../../escape")
+	f.Add("Ünïcödé")
+	f.Add("a\x00b")
+	for _, s := range []string{"!!!", "----", "TAB\there"} {
+		f.Add(s)
+	}
+	f.Fuzz(func(t *testing.T, desc string) {
+		got, err := NewMigrationFileName("20260919143022", desc)
+		if err != nil {
+			t.Fatalf("NewMigrationFileName(%q) errored: %v", desc, err)
+		}
+		if !IsMigrationFileName(got.String()) {
+			t.Fatalf("NewMigrationFileName(%q) = %q, which the loader rejects", desc, got.String())
+		}
+	})
+}
+
 // Whatever a description contains, the generated name must validate — the
 // generator must never write a file the loader will then refuse.
 func TestNewMigrationFileName_AlwaysProducesAValidName(t *testing.T) {
