@@ -280,6 +280,32 @@ func projectionToYAML(p metamodel.ShapeProjection) (map[string]any, error) {
 	return m, nil
 }
 
+// HasMigrations reports whether the directory holds any migration files.
+//
+// Deliberately a NAME check, not a parse: it feeds the gate's un-baselined
+// decision, and that decision must not depend on whether some unrelated file
+// happens to be well-formed. A full parse would let one malformed migration
+// answer "I cannot tell" to the question "does this project have migrations at
+// all", turning a recoverable file error into a refusal to classify.
+//
+// Both wiring sites (the CLI and appbuild) call THIS, so the two cannot drift
+// — the un-baselined decision is safety-critical and deserves one definition.
+func HasMigrations(fsys fs.FS) (bool, error) {
+	entries, err := fs.ReadDir(fsys, MigrationsDir)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return false, nil
+		}
+		return false, fmt.Errorf("datamigration: read %s/: %w", MigrationsDir, err)
+	}
+	for _, e := range entries {
+		if !e.IsDir() && IsMigrationFileName(e.Name()) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // LoadDir parses every *.yaml/*.yml file in the project's migrations/
 // directory, sorted by name (the chain order). A missing directory is an
 // empty chain, not an error.

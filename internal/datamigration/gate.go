@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync/atomic"
 	"time"
 
@@ -192,7 +193,12 @@ func classifyAgainst(v *Verdict, st *State, live metamodel.ShapeProjection) erro
 	}
 
 	v.Report = metamodel.CompareShapes(stored, live)
-	v.pendingApplied = st.Applied
+	// Cloned, not aliased: a published Verdict is shared across goroutines and
+	// documented as immutable, and this slice header points into a *State the
+	// gate neither owns nor controls the lifetime of. The backends happen to
+	// hand out copies today, but nothing in the StateStore contract requires
+	// it, so relying on that would be an aliasing bug waiting on a new backend.
+	v.pendingApplied = slices.Clone(st.Applied)
 	if !v.Report.Compatible() {
 		v.Status = StatusNeedsMigration
 		for _, d := range v.Report.ByTier(metamodel.TierMigration) {
@@ -245,6 +251,15 @@ func (g *Gate) Persist(ctx context.Context, v *Verdict) error {
 	if v == nil {
 		return nil
 	}
+	// Evaluate read outside the lock, so the record may have moved since — a
+	// concurrent `migrate data --apply` recording a file is the realistic case.
+	// Writing v's captured applied list over it would UN-record that migration,
+	// and on the bootstrapped path would replace a populated list with an empty
+	// one. Re-read and bail if anything changed; the next evaluation sees the
+	// newer state and classifies against it.
+	if changed, err := g.recordMoved(ctx, v); err != nil || changed {
+		return err
+	}
 	switch v.Status {
 	case StatusBootstrapped:
 		return g.adopt(ctx, v.pendingShape, nil, v.EvaluatedAt)
@@ -254,6 +269,32 @@ func (g *Gate) Persist(ctx context.Context, v *Verdict) error {
 		return nil
 	}
 	return nil
+}
+
+// recordMoved reports whether the stored record differs from what [Gate.Evaluate]
+// saw, which makes v's captured adoption stale and unsafe to write.
+//
+// A read error is NOT treated as "unchanged": failing to confirm the record is
+// where we left it is exactly when a blind overwrite is most dangerous.
+func (g *Gate) recordMoved(ctx context.Context, v *Verdict) (bool, error) {
+	st, err := g.migState.Load(ctx)
+	if err != nil {
+		return false, err
+	}
+	var nowHash string
+	if st != nil {
+		proj, perr := st.ShapeProjection()
+		if perr != nil {
+			return false, fmt.Errorf("datamigration: recorded migration state is unreadable: %w", perr)
+		}
+		nowHash = proj.Hash()
+	}
+	if nowHash == v.StoreHash {
+		return false, nil
+	}
+	slog.Info("datamigration: adoption skipped — the migration record moved since it was evaluated",
+		"evaluated_at_shape", short(v.StoreHash), "current_shape", short(nowHash))
+	return true, nil
 }
 
 // EvaluateAndPersist is Evaluate followed by Persist — the operator-driven
@@ -353,8 +394,13 @@ func (v *Verdict) Describe() string {
 		return fmt.Sprintf("schema changed incompatibly %s → %s (%d deltas need migration) — run `rela migrate gen`",
 			short(v.StoreHash), short(v.LiveHash), len(v.Report.ByTier(metamodel.TierMigration)))
 	case StatusUnbaselined:
-		return "no recorded migration state, but this project has migrations — " +
-			"run `rela migrate data` to apply them, or `rela migrate baseline` to record them as already applied"
+		// Reports the live shape like every other branch: this is the case
+		// where an operator most needs it, to compare against a migration
+		// file's to_projection by hand before deciding how to resolve.
+		return fmt.Sprintf(
+			"no recorded migration state, but this project has migrations (live shape %s) — "+
+				"run `rela migrate data` to apply them, or `rela migrate baseline` to record them "+
+				"as already applied", short(v.LiveHash))
 	}
 	return string(v.Status)
 }

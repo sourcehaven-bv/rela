@@ -31,6 +31,50 @@ func RunAll(t *testing.T, f Factory) {
 	t.Run("Replace", func(t *testing.T) { RunReplaceTests(t, f) })
 	t.Run("AppliedOrder", func(t *testing.T) { RunAppliedOrderTests(t, f) })
 	t.Run("Isolation", func(t *testing.T) { RunIsolationTests(t, f) })
+	t.Run("NoAliasing", func(t *testing.T) { RunNoAliasingTests(t, f) })
+}
+
+// RunNoAliasingTests pins that Load hands out a value the caller may keep and
+// mutate without reaching back into the store.
+//
+// The gate publishes a Verdict carrying a slice derived from a loaded State,
+// and that Verdict is explicitly documented as immutable and shared across
+// goroutines. A backend that returned its own internal slice would make that
+// promise false from a distance — the kind of bug that appears only when a new
+// backend is added, which is exactly what this harness is for.
+func RunNoAliasingTests(t *testing.T, f Factory) {
+	t.Helper()
+	st := f(t)
+	ctx := context.Background()
+	now := time.Date(2026, 9, 19, 14, 30, 22, 0, time.UTC)
+
+	seed, err := datamigration.NewState(fixtureProjection(), []datamigration.AppliedEntry{
+		{Name: "20260901120000-first.yaml", AppliedAt: now},
+	}, now)
+	if err != nil {
+		t.Fatalf("NewState: %v", err)
+	}
+	if saveErr := st.Save(ctx, seed); saveErr != nil {
+		t.Fatalf("Save: %v", saveErr)
+	}
+
+	first, err := st.Load(ctx)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	// Mutate what we were handed, as a caller legitimately may.
+	first.Applied[0].Name = "20261231235959-mutated.yaml"
+	first.Applied = append(first.Applied, datamigration.AppliedEntry{
+		Name: "20261231235959-appended.yaml", AppliedAt: now,
+	})
+
+	second, err := st.Load(ctx)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if names := second.AppliedNames(); len(names) != 1 || names[0] != "20260901120000-first.yaml" {
+		t.Errorf("mutating a loaded State changed the store: second Load = %v", names)
+	}
 }
 
 // RunAbsentTests pins the un-bootstrapped case: a store nothing has written to

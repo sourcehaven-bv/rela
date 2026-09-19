@@ -106,24 +106,53 @@ func (b *LegacyBridge) loadLegacy(ctx context.Context) (*State, error) {
 	for _, name := range m.Applied {
 		if _, err := ParseMigrationName(name); err != nil {
 			// A legacy name predates the timestamp scheme (0001-foo.yaml), so
-			// it cannot be carried across as-is. Dropping it would replay the
-			// migration; the operator is told to baseline instead.
+			// it cannot be carried across as-is.
+			//
+			// Returning the SURVIVING entries would be silent data corruption,
+			// not a partial success: under the old scheme EVERY name is
+			// %04d-shaped, so every one fails here and the adopted state would
+			// carry an empty applied list beside a valid projection. Resolve
+			// reads that as "nothing has run" and replans the entire chain
+			// against already-migrated content.
+			//
+			// So refuse the whole marker. The caller treats that as absent,
+			// which — with migrations present — is StatusUnbaselined: the gate
+			// refuses to guess and the operator resolves it explicitly. That is
+			// the same answer this bridge would give for any unreadable marker,
+			// and the only safe one.
 			slog.Warn("datamigration.legacy_name_unconvertible",
 				"name", name,
-				"hint", "this migration predates the timestamp naming scheme — rename the file and run "+
-					"`rela migrate baseline` to record the applied set explicitly")
-			continue
+				"hint", "this migration predates the timestamp naming scheme — rename the files in "+
+					"migrations/ to <timestamp>-<slug>.yaml, then run `rela migrate baseline` to record "+
+					"the applied set explicitly")
+			//nolint:nilnil,nilerr // deliberate: an unconvertible legacy marker is reported as ABSENT so
+			// the caller reaches the un-baselined refusal. Returning the parse error instead would fail
+			// every command on a store that merely predates the naming scheme.
+			return nil, nil
 		}
 		entries = append(entries, AppliedEntry{Name: name, AppliedAt: m.UpdatedAt})
 	}
 
-	slog.Info("datamigration.legacy_marker_adopted", "applied", len(entries))
-	return &State{
+	adopted := &State{
 		FormatVersion: StateFormatVersion,
 		Applied:       entries,
 		Projection:    m.Projection,
 		UpdatedAt:     m.UpdatedAt,
-	}, nil
+	}
+	// Validate on the way out, like every other StateStore.Load does. Each
+	// check above happens to cover a field already, so this is belt-and-braces
+	// today — but [ValidateState] is documented as THE on-the-way-in-from-
+	// storage gate, and a Load path that skips it is one refactor away from
+	// mattering. A failure joins the deliberate legacy fail-open rather than
+	// becoming a second one: bootstrap is where an unreadable legacy marker
+	// already lands.
+	if err := ValidateState(adopted); err != nil {
+		slog.Warn("datamigration.legacy_marker_invalid", "error", err)
+		return nil, nil //nolint:nilnil // an unusable legacy marker falls back to bootstrap, as above
+	}
+
+	slog.Info("datamigration.legacy_marker_adopted", "applied", len(entries))
+	return adopted, nil
 }
 
 // Save writes the new record, then mirrors it to the legacy marker.

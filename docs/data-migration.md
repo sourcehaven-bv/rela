@@ -75,17 +75,31 @@ it.
 
 **A store with no record.** With no migrations in the project, the live shape
 is adopted as the baseline silently — an existing project joins the system
-without ceremony. With migrations present, the gate **refuses to guess**: those
-files may be exactly the ones this store still needs, and baselining would mark
-them applied forever. Resolve it explicitly:
+without ceremony.
+
+With migrations present, **every command refuses to guess**, including
+`rela migrate data` itself. Those files may be exactly the ones this store still
+needs — or exactly the ones it has already run, with its record lost. Nothing
+distinguishes the two from the outside, and both wrong answers lose data:
+baselining marks pending migrations applied forever, while running them replays
+transforms over already-migrated content.
+
+Resolve it explicitly:
 
 ```bash
-rela migrate data        # run them
-rela migrate baseline    # or record them as already applied, without running
+rela migrate baseline --apply   # the content already matches: record them as applied
 ```
 
 A fresh clone of a project whose `schema.yaml` moved ahead of its committed
-entities is the everyday way to reach this.
+entities is the everyday way to reach this — as is an `applied.json` that was
+gitignored by accident.
+
+**Upgrading from the pre-`applied.json` scheme** lands here too. The old record
+named migrations `0001-…`, which is not a valid name under the timestamp scheme,
+so it cannot be carried across: rename the files in `migrations/`, then
+`rela migrate baseline --apply` to record the set. The upgrade refuses rather
+than adopting a partial list, because a partially-converted record reads as
+"nothing has run" and would replay the whole chain.
 
 While a needs-migration change is pending, writes keep today's behavior
 (soft validation warnings); nothing blocks. Run `rela migrate status` to see

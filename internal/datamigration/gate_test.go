@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
@@ -195,3 +196,47 @@ func TestGate_ReEvaluateOnReloadUpdatesVerdict(t *testing.T) {
 		t.Fatalf("verdict after revert = %s, want in-sync", got)
 	}
 }
+
+// Evaluate reads outside the lock, so the record can move before Persist runs.
+// Persist must then decline rather than blind-overwrite: writing the verdict's
+// captured applied list would UN-record whatever landed in between, and that
+// migration would silently re-run.
+func TestGate_PersistDeclinesWhenTheRecordMoved(t *testing.T) {
+	kv := newFakeKV()
+	g, ms := newTestGate(t, kv)
+	evalPersist(t, g, metaV1())
+
+	// Classify an additive change, but do not persist it yet.
+	m2 := metaV1()
+	m2.Entities["task"].Properties["estimate"] = metamodel.PropertyDef{Type: "integer"}
+	v, err := g.Evaluate(t.Context(), m2)
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if v.Status != StatusAdopted {
+		t.Fatalf("status = %s, want adopted", v.Status)
+	}
+
+	// A concurrent runner records a migration and moves the shape.
+	concurrent, err := (&State{}).WithApplied("20260919143022-concurrent.yaml", metaV2().ShapeProjection(), now())
+	if err != nil {
+		t.Fatalf("WithApplied: %v", err)
+	}
+	if saveErr := ms.Save(t.Context(), concurrent); saveErr != nil {
+		t.Fatalf("Save: %v", saveErr)
+	}
+
+	// Persisting the stale verdict must not clobber it.
+	if persistErr := g.Persist(t.Context(), v); persistErr != nil {
+		t.Fatalf("Persist: %v", persistErr)
+	}
+	got, err := ms.Load(t.Context())
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if names := got.AppliedNames(); len(names) != 1 || names[0] != "20260919143022-concurrent.yaml" {
+		t.Fatalf("a stale Persist un-recorded the concurrent migration: applied = %v", names)
+	}
+}
+
+func now() time.Time { return time.Date(2026, 9, 19, 14, 30, 22, 0, time.UTC) }

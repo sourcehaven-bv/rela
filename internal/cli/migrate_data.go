@@ -63,9 +63,16 @@ func newGate(svc *writeServices, lock datamigration.MigrationLock) (*datamigrati
 		MigState: svc.MigState,
 		State:    svc.State,
 		Lock:     lock,
+		// The shared name-only probe, so the CLI and appbuild cannot answer
+		// the un-baselined question differently. A full parse here would let
+		// one malformed file turn "does this project have migrations?" into an
+		// error, which the gate would surface as a refusal to classify.
 		HasMigrations: func(ctx context.Context) (bool, error) {
-			files, err := loadDataMigrations(ctx, svc)
-			return len(files) > 0, err
+			fsys, err := newConfigFS(ctx, svc)
+			if err != nil {
+				return false, err
+			}
+			return datamigration.HasMigrations(fsys)
 		},
 	})
 }
@@ -245,10 +252,28 @@ func (c *MigrateDataCmd) Run(ctx context.Context, svc *writeServices) error {
 			fmt.Println("no recorded data shape yet — baseline adopted; nothing to migrate")
 			return nil
 		}
-		if len(files) > 0 {
-			fmt.Printf("no recorded migration state; treating all %d migration(s) as pending\n", len(files))
-		}
-		stored = files[0].FromProjection
+		// Migrations exist and nothing is recorded, so what shape this store's
+		// content conforms to is genuinely unknown. REFUSE rather than guess.
+		//
+		// The obvious guess — adopt files[0].FromProjection and replan the
+		// whole chain — is what this command must not do. A store already at
+		// the chain's end (its record lost, or gitignored by accident) would
+		// have every migration re-run against migrated content, and the
+		// residual compatibility check cannot catch it: with every file
+		// planned, the walk ends at the last file's to-shape, which equals
+		// live by construction. The one diagnostic that would notice is
+		// structurally blind on exactly this path.
+		//
+		// This is the case StatusUnbaselined exists for, so defer to it. The
+		// operator resolves it explicitly with `rela migrate baseline` (the
+		// content already matches) or by re-running from a known state.
+		fmt.Printf("%d migration file(s) in %s/, but this store has no recorded migration state.\n",
+			len(files), datamigration.MigrationsDir)
+		fmt.Println("Refusing to guess which have already run — running them all could re-apply " +
+			"migrations against already-migrated content.")
+		fmt.Println("If the content already matches the current schema, record it with " +
+			"`rela migrate baseline --apply`.")
+		return relaerrors.NewExitError(1)
 	}
 	live := svc.Meta.ShapeProjection()
 	plan, err := datamigration.Resolve(stored, applied, live, files)
@@ -429,6 +454,24 @@ func (c *MigrateBaselineCmd) Run(ctx context.Context, svc *writeServices) error 
 	if err != nil {
 		return err
 	}
+
+	// The load-decide-save below must be serialized against every other writer
+	// of this record, exactly as the runner and the gate are (TKT-CPCBR7).
+	// Without it, a `migrate data --apply` that starts first and records its
+	// first file is clobbered by a baseline whose `existing == nil` check ran
+	// before that write landed — and the migrations baseline then claims are
+	// applied never run, which is the failure `StatusUnbaselined` exists to
+	// prevent.
+	//
+	// Unlike the gate, contention FAILS rather than skipping: a baseline is an
+	// explicit operator claim, and silently doing nothing would leave the
+	// operator believing a claim that was never recorded.
+	release, err := migrationLock(svc).TryAcquire(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+
 	existing, err := svc.MigState.Load(ctx)
 	if err != nil {
 		return err

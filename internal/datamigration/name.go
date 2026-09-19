@@ -83,6 +83,9 @@ func IsMigrationFileName(s string) bool {
 // NewMigrationFileName builds a migration filename from a timestamp and a
 // free-text description, slugifying the description so the result validates.
 //
+// stamp must be formatted with [stampLayout]; anything else is rejected by
+// [ParseMigrationName] rather than silently producing an unloadable name.
+//
 // Nil: never returns an empty name — a description that slugifies to nothing
 // falls back to "migration", because a file still needs a name.
 func NewMigrationFileName(stamp, description string) (MigrationName, error) {
@@ -110,9 +113,12 @@ func slugify(s string) string {
 		}
 	}
 	out := strings.Trim(b.String(), "-")
+	// Derived from stampLayout rather than a literal sample stamp, so changing
+	// the layout cannot silently make this budget wrong.
+	budget := maxNameLen - len(stampLayout) - len("-") - len(".yaml")
 	// Truncating can strip back to a trailing hyphen, so trim again after.
-	if len(out) > maxNameLen-len("20260919143022-.yaml") {
-		out = strings.Trim(out[:maxNameLen-len("20260919143022-.yaml")], "-")
+	if len(out) > budget {
+		out = strings.Trim(out[:budget], "-")
 	}
 	if out == "" {
 		return "migration"

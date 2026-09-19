@@ -61,6 +61,16 @@ func writeMigration(t *testing.T, root, name string, meta *metamodel.Metamodel, 
 	}
 }
 
+// baselineEmpty records the store's shape while migrations/ is still empty, so
+// later tests start from a store that has joined the migration system rather
+// than from the un-baselined state (which `migrate data` now refuses).
+func baselineEmpty(t *testing.T, svc *writeServices) {
+	t.Helper()
+	if err := (&MigrateDataCmd{}).Run(t.Context(), svc); err != nil {
+		t.Fatalf("baseline an empty project: %v", err)
+	}
+}
+
 func readApplied(t *testing.T, svc *writeServices) *datamigration.State {
 	t.Helper()
 	st, err := svc.MigState.Load(t.Context())
@@ -75,6 +85,8 @@ func readApplied(t *testing.T, svc *writeServices) *datamigration.State {
 func TestMigrateData_DataOnlyMigrationRunsAndIsRecorded(t *testing.T) {
 	meta := migrateTestMeta()
 	svc, root := migrateTestServices(t, meta)
+	baselineEmpty(t, svc)
+
 	const name = "20260919143022-backfill-owner.yaml"
 	writeMigration(t, root, name, meta,
 		"  - set_default: {entity: task, property: owner, value: unassigned}\n")
@@ -106,14 +118,39 @@ func TestMigrateData_DataOnlyMigrationRunsAndIsRecorded(t *testing.T) {
 func TestMigrateData_DryRunRecordsNothing(t *testing.T) {
 	meta := migrateTestMeta()
 	svc, root := migrateTestServices(t, meta)
+	baselineEmpty(t, svc)
+	before := readApplied(t, svc).AppliedNames()
+
 	writeMigration(t, root, "20260919143022-backfill-owner.yaml", meta,
 		"  - set_default: {entity: task, property: owner, value: unassigned}\n")
 
 	if err := (&MigrateDataCmd{}).Run(t.Context(), svc); err != nil {
 		t.Fatalf("migrate data: %v", err)
 	}
-	if st := readApplied(t, svc); st != nil && len(st.Applied) != 0 {
-		t.Fatalf("a dry-run recorded %v", st.AppliedNames())
+	if after := readApplied(t, svc).AppliedNames(); len(after) != len(before) {
+		t.Fatalf("a dry-run recorded %v", after)
+	}
+}
+
+// `migrate data` must REFUSE when migrations exist and nothing is recorded,
+// rather than guessing the store's shape and replanning the whole chain.
+//
+// The guess is unsafe in a way the residual compatibility check cannot catch:
+// with every file planned, the walk ends at the last file's to-shape, which
+// equals live by construction. A store already at the chain's end — its record
+// lost or gitignored — would have every migration re-applied to migrated data.
+func TestMigrateData_RefusesToGuessWhenUnbaselined(t *testing.T) {
+	meta := migrateTestMeta()
+	svc, root := migrateTestServices(t, meta)
+	writeMigration(t, root, "20260919143022-backfill-owner.yaml", meta,
+		"  - set_default: {entity: task, property: owner, value: unassigned}\n")
+
+	err := (&MigrateDataCmd{Apply: true}).Run(t.Context(), svc)
+	if err == nil {
+		t.Fatal("migrate data must refuse to guess the shape of an un-baselined store")
+	}
+	if st := readApplied(t, svc); st != nil {
+		t.Errorf("the refusal must record nothing, got %v", st.AppliedNames())
 	}
 }
 
@@ -265,5 +302,35 @@ func TestMigrateData_RejectsBadlyNamedMigration(t *testing.T) {
 	}
 	if st := readApplied(t, svc); st != nil && len(st.Applied) != 0 {
 		t.Errorf("nothing should be recorded when the load fails: %v", st.AppliedNames())
+	}
+}
+
+// baseline must be serialized against every other writer of the migration
+// record, like the runner and the gate are.
+//
+// Without the lock, a `migrate data --apply` that has already recorded its
+// first file is clobbered by a baseline whose "is anything recorded?" check ran
+// before that write landed — and every migration the baseline then claims is
+// applied silently never runs. That is precisely the failure StatusUnbaselined
+// exists to prevent, reintroduced by the command meant to resolve it.
+func TestMigrateBaseline_RefusesWhileTheMigrationLockIsHeld(t *testing.T) {
+	meta := migrateTestMeta()
+	svc, root := migrateTestServices(t, meta)
+	writeMigration(t, root, "20260919143022-backfill-owner.yaml", meta,
+		"  - set_default: {entity: task, property: owner, value: unassigned}\n")
+
+	// Stand in for a concurrent `migrate data --apply` holding the lock.
+	release, err := migrationLock(svc).TryAcquire(t.Context())
+	if err != nil {
+		t.Fatalf("acquire lock: %v", err)
+	}
+	defer release()
+
+	err = (&MigrateBaselineCmd{Apply: true}).Run(t.Context(), svc)
+	if err == nil {
+		t.Fatal("baseline must refuse while another migration writer holds the lock")
+	}
+	if st := readApplied(t, svc); st != nil {
+		t.Errorf("a contended baseline must record nothing, got %v", st.AppliedNames())
 	}
 }

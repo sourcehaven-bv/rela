@@ -128,24 +128,49 @@ func TestLegacyBridge_MirrorsWritesForRollback(t *testing.T) {
 	}
 }
 
-// A legacy name that predates the timestamp scheme cannot be carried across
-// without inventing a name. Dropping it silently would replay the migration,
-// so it is reported and the operator is pointed at `migrate baseline`.
-func TestLegacyBridge_SkipsUnconvertibleLegacyNames(t *testing.T) {
-	kv := newFakeKV()
-	writeLegacy(t, kv, legacyFixture(t, "0001-old-style.yaml", "20260901120000-new-style.yaml"))
+// A legacy name that predates the timestamp scheme cannot be carried across,
+// and the WHOLE marker must then be refused rather than partially adopted.
+//
+// Returning the surviving entries would be silent data corruption: under the
+// old scheme every name is %04d-shaped, so every one fails and the adopted
+// state would carry an empty applied list beside a valid projection. Resolve
+// reads that as "nothing has run" and replans the entire chain against
+// already-migrated content.
+func TestLegacyBridge_RefusesUnconvertibleLegacyNames(t *testing.T) {
+	t.Run("all names legacy", func(t *testing.T) {
+		kv := newFakeKV()
+		writeLegacy(t, kv, legacyFixture(t, "0001-rename.yaml", "0002-backfill.yaml"))
 
-	b, err := NewLegacyBridge(newMigState(), kv)
-	if err != nil {
-		t.Fatalf("NewLegacyBridge: %v", err)
-	}
-	got, err := b.Load(t.Context())
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if names := got.AppliedNames(); len(names) != 1 || names[0] != "20260901120000-new-style.yaml" {
-		t.Errorf("applied = %v, want only the convertible name", names)
-	}
+		b, err := NewLegacyBridge(newMigState(), kv)
+		if err != nil {
+			t.Fatalf("NewLegacyBridge: %v", err)
+		}
+		got, err := b.Load(t.Context())
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if got != nil {
+			t.Fatalf("an unconvertible legacy marker must be refused entirely, got applied=%v", got.AppliedNames())
+		}
+	})
+
+	// The mixed case is the dangerous one: a partial adoption looks plausible.
+	t.Run("mixed names", func(t *testing.T) {
+		kv := newFakeKV()
+		writeLegacy(t, kv, legacyFixture(t, "0001-old-style.yaml", "20260901120000-new-style.yaml"))
+
+		b, err := NewLegacyBridge(newMigState(), kv)
+		if err != nil {
+			t.Fatalf("NewLegacyBridge: %v", err)
+		}
+		got, err := b.Load(t.Context())
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if got != nil {
+			t.Fatalf("a partially-convertible marker must be refused, not partially adopted: %v", got.AppliedNames())
+		}
+	})
 }
 
 // A corrupt legacy marker falls back to bootstrap rather than failing: this

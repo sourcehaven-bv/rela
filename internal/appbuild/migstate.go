@@ -3,7 +3,6 @@ package appbuild
 import (
 	"context"
 	"fmt"
-	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/datamigration"
@@ -68,10 +67,14 @@ func hasMigrationsVia(loader config.Loader) func(context.Context) (bool, error) 
 		return nil
 	}
 	return func(ctx context.Context) (bool, error) {
-		names, err := loader.List(ctx, datamigration.MigrationsDir)
+		fsys, err := config.NewFSView(loader)
 		if err != nil {
 			return false, err
 		}
-		return slices.ContainsFunc(names, datamigration.IsMigrationFileName), nil
+		bound, err := fsys.WithContext(ctx)
+		if err != nil {
+			return false, err
+		}
+		return datamigration.HasMigrations(bound)
 	}
 }

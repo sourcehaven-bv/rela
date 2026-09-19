@@ -2,7 +2,7 @@
 id: IMPL-J5RMKW
 type: implementation-checklist
 title: 'Implementation: Replace the shape-hash migration chain with a committed applied-list; enable data-only migrations'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->

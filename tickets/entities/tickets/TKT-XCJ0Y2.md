@@ -5,7 +5,7 @@ title: Replace the shape-hash migration chain with a committed applied-list; ena
 kind: enhancement
 priority: high
 effort: l
-status: in-progress
+status: review
 ---
 
 ## Problem
