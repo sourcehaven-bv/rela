@@ -139,12 +139,11 @@ face. Nothing looks broken — no row moved and no value changed — which is
 exactly why the store will not adopt the shape on its own: only you can say
 which face the existing content became.
 
-`rename_face` cannot express this move. It requires a declared face name on
-both sides, and the zero coordinate is not one, so a project crossing this
-boundary with data in it needs the rows rewritten out of band before the new
-schema is adopted. Plan the change on an empty type where you can, and treat a
-populated one as a data-export-and-reimport rather than a step in a migration
-file.
+`rename_face` cannot express this move: it requires a declared face name on
+both sides, and the zero coordinate is not one. `migrate_face` is the step that
+can, and the next section covers it — a file spanning this change without one
+is refused, so a populated type is migrated in the ordinary way rather than
+exported and reimported.
 
 Removing faces is the mirror: rows sitting at named faces belong to no declared
 face afterwards, and the type's single state is a coordinate none of them
@@ -211,6 +210,36 @@ rows go.
 Faced → flat (`faces_removed`) is the mirror case and is not covered: rows at
 named faces would have to move back, and deciding which one wins when several
 hold content is a merge rather than a move.
+
+### Repairing rows that are already stranded
+
+`migrate_face` runs across the moment a type gains faces. Rows can also be
+found at the zero coordinate on a type that has declared faces for a while —
+data written before the faces existed, a hand-edited file, an import, a seed.
+`rela analyze states` reports them as `bare-row-on-faced-type`.
+
+There is no schema change to hang a migration on here: the schema is already
+correct and the data is behind it. `rela migrate adopt-face` moves them,
+keyed the same way and dry-run by default:
+
+```bash
+rela migrate adopt-face --entity article --property status \
+    --map draft=draft --map active=published --map withdrawn=published
+rela migrate adopt-face --entity article --property status \
+    --map draft=draft --map active=published --apply
+```
+
+The mapping does **not** have to be exhaustive, and that is the one deliberate
+difference from `migrate_face`. That step runs in the same file as the
+`drop_property` that erases the values it keys on, so a value left out becomes
+unrecoverable. Nothing is dropped here: a value you leave out keeps its rows
+where they are, still reported by `analyze`, still fixable by re-running with a
+wider mapping. Rows whose value is unset or outside the mapping are reported
+rather than given a guessed face.
+
+A destination that already holds different content is refused, naming the id —
+the entity has two distinct states, so this is a merge to decide rather than a
+move to perform.
 
 ### The Lua escape hatch
 

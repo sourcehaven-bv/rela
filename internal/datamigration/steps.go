@@ -449,77 +449,27 @@ func (s *migrateFaceStep) Validate(from, to metamodel.ShapeProjection) error {
 func (s *migrateFaceStep) Run(ctx context.Context, x *Exec) (StepResult, error) {
 	res := StepResult{Kind: s.Kind(), Target: s.Target()}
 
-	type move struct {
-		e  *entity.Entity
-		to string
+	// The row move is shared with `rela migrate adopt-face` (TKT-FTOENU),
+	// which repairs the same stranded rows outside a schema change. Only the
+	// authorization differs — this path proved its mapping total against the
+	// file's embedded projections in Validate — so which rows qualify, what an
+	// occupied destination means and what makes a re-run converge are written
+	// once, in adoptface.go.
+	a := faceAdoption{entityType: s.Entity, property: s.Property, mapping: s.Mapping}
+	plan, err := a.plan(ctx, x.Store)
+	if err != nil {
+		return res, err
 	}
-	var moves []move
-	unmapped := map[string]int{}
-	q := store.EntityQuery{Type: s.Entity, AllStates: true}
-	for e, err := range x.Store.ListEntities(ctx, q) {
-		if err != nil {
-			return res, err
-		}
-		if !e.Face.IsDefault() {
-			continue // already on a named face: a previous run, or hand-placed
-		}
-		v, ok := e.Properties[s.Property].(string)
-		if !ok {
-			unmapped[""]++
-			continue
-		}
-		target, ok := s.Mapping[v]
-		if !ok {
-			// Validate proved the mapping total over the DECLARED value set, so
-			// reaching here means the stored value is outside it. Reported, not
-			// guessed at — note this describes what was seen, not why: an
-			// earlier map_values or lua step in the same file can produce it
-			// just as a stale stored value can.
-			unmapped[v]++
-			continue
-		}
-		moves = append(moves, move{e: e, to: target})
-	}
-
-	for _, value := range slices.Sorted(maps.Keys(unmapped)) {
-		label := value
-		if label == "" {
-			label = "(unset or non-string)"
-		}
-		res.Notes = append(res.Notes, fmt.Sprintf(
-			"%d row(s) with %s = %s are not covered by the mapping and stay at the zero coordinate",
-			unmapped[value], s.Property, label))
-	}
-
-	res.Affected = len(moves)
+	// Validate proved the mapping total over the DECLARED value set, so a row
+	// reported here carries a value outside it. The note describes what was
+	// seen, not why: an earlier map_values or lua step in the same file can
+	// produce it just as a stale stored value can.
+	res.Notes = plan.notes(s.Property)
+	res.Affected = len(plan.moves)
 	if !x.Apply {
 		return res, nil
 	}
-
-	for _, m := range moves {
-		// Same contract as rename_face: a destination row holding identical
-		// content is the previous run's copy and the move is finished; anything
-		// else is a genuine collision that would destroy one of two distinct
-		// rows, so it is refused with the id named.
-		existing, err := x.Store.GetEntityState(ctx, m.e.ID, entity.Face(m.to))
-		alreadyMoved := err == nil && existing != nil && sameContent(existing, m.e)
-		if err == nil && existing != nil && !alreadyMoved {
-			return res, fmt.Errorf(
-				"%s: cannot move to face %q — a row already exists there with different content; "+
-					"drop or merge it first, or this move would destroy one of the two", m.e.ID, m.to)
-		}
-		if !alreadyMoved {
-			moved := *m.e
-			moved.Face = entity.Face(m.to)
-			if err := x.Store.CreateEntity(ctx, &moved); err != nil {
-				return res, fmt.Errorf("%s: create at face %q: %w", m.e.ID, m.to, err)
-			}
-		}
-		if _, err := x.Store.DeleteEntityState(ctx, m.e.ID, m.e.Face); err != nil {
-			return res, fmt.Errorf("%s: remove the zero-coordinate row: %w", m.e.ID, err)
-		}
-	}
-	return res, nil
+	return res, plan.apply(ctx, x.Store)
 }
 
 // enumValuesIn returns the declared value set of an entity property, whether it

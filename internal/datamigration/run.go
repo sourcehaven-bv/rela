@@ -308,22 +308,33 @@ type capturer struct {
 }
 
 func (r *Runner) newCapturer(fileName string) *capturer {
-	if r.deps.Versions == nil {
+	return newCapturer(r.deps.Versions, r.deps.Meta, migrationTool, fileName)
+}
+
+// newCapturer builds the synchronous version-capture sink, or nil when the
+// backend has none (fs/memory, where git is the recovery path).
+//
+// Free function rather than a Runner method because the adopt-face command
+// deletes zero-coordinate rows outside any migration file and needs the same
+// pre-delete capture. tool and triggeredBy are parameters so an audit reader
+// can tell a file-driven migration from a stranded-row repair.
+func newCapturer(v VersionCapture, meta *metamodel.Metamodel, tool, triggeredBy string) *capturer {
+	if v == nil {
 		return nil
 	}
-	proj := r.deps.Meta.RenderProjection()
+	proj := meta.RenderProjection()
 	projJSON, err := proj.JSON()
 	if err != nil {
 		slog.Error("datamigration.capture_projection_marshal_failed", "error", err)
 		return nil
 	}
 	return &capturer{
-		w:           r.deps.Versions,
+		w:           v,
 		schemaHash:  proj.Hash(),
 		projection:  projJSON,
 		user:        principal.SystemUser(),
-		tool:        migrationTool,
-		triggeredBy: fileName,
+		tool:        tool,
+		triggeredBy: triggeredBy,
 	}
 }
 
