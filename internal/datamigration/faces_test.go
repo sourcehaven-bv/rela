@@ -44,7 +44,7 @@ func TestRunner_MigratesEveryContentState(t *testing.T) {
 	}
 
 	r := newTestRunner(t, Deps{Store: st, State: newFakeKV(), Audit: audit.NewMemory()})
-	f := mustParse(t, "0001-test.yaml", mustFileYAML(t, metaV1(), metaV2(), v1ToV2Steps))
+	f := mustParse(t, testName("test"), mustFileYAML(t, metaV1(), metaV2(), v1ToV2Steps))
 	if _, err := r.Run(ctx, []*File{f}, true); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -94,7 +94,7 @@ func TestRenameFace_MovesRowsToTheNewCoordinate(t *testing.T) {
 	}
 
 	r := newTestRunner(t, Deps{Store: st, State: newFakeKV(), Audit: audit.NewMemory()})
-	f := mustParse(t, "0001-face.yaml", mustFileYAML(t,
+	f := mustParse(t, testName("face"), mustFileYAML(t,
 		facedMeta("en", "nl"),
 		facedMeta("en", "nl-BE"),
 		"  - rename_face: {entity: task, from: nl, to: nl-BE}\n"))
@@ -135,7 +135,7 @@ func TestRenameFace_OntoAnOccupiedCoordinateIsRefused(t *testing.T) {
 	}
 
 	r := newTestRunner(t, Deps{Store: st, State: newFakeKV(), Audit: audit.NewMemory()})
-	f := mustParse(t, "0001-face.yaml", mustFileYAML(t,
+	f := mustParse(t, testName("face"), mustFileYAML(t,
 		facedMeta("en", "nl", "nl-BE"),
 		facedMeta("en", "nl-BE"),
 		"  - rename_face: {entity: task, from: nl, to: nl-BE}\n"))
@@ -177,7 +177,7 @@ func TestRenameFace_ReRunConvergesAfterACrash(t *testing.T) {
 	}
 
 	r := newTestRunner(t, Deps{Store: st, State: newFakeKV(), Audit: audit.NewMemory()})
-	f := mustParse(t, "0001-face.yaml", mustFileYAML(t,
+	f := mustParse(t, testName("face"), mustFileYAML(t,
 		facedMeta("en", "nl"),
 		facedMeta("en", "nl-BE"),
 		"  - rename_face: {entity: task, from: nl, to: nl-BE}\n"))

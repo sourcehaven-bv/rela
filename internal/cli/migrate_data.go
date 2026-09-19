@@ -8,10 +8,12 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/datamigration"
 	relaerrors "github.com/Sourcehaven-BV/rela/internal/errors"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
 
 // The `rela migrate status|gen|data|gc` subcommands operate the
@@ -55,12 +57,24 @@ func migrationLock(svc *writeServices) datamigration.MigrationLock {
 	return datamigration.LockFor(svc.Store, svc.Paths.CacheDir)
 }
 
-// currentShape loads the marker (bootstrapping it via the gate when absent)
-// and returns the shape the data conforms to plus the gate for reuse.
+// newGate builds the gate over this store's migration record and drift ledger.
+func newGate(svc *writeServices, lock datamigration.MigrationLock) (*datamigration.Gate, error) {
+	return datamigration.NewGate(datamigration.GateDeps{
+		MigState: svc.MigState,
+		State:    svc.State,
+		Lock:     lock,
+		HasMigrations: func(ctx context.Context) (bool, error) {
+			files, err := loadDataMigrations(ctx, svc)
+			return len(files) > 0, err
+		},
+	})
+}
+
+// evaluateGate classifies without writing, for read-only commands.
 func evaluateGate(
 	ctx context.Context, svc *writeServices, lock datamigration.MigrationLock,
 ) (*datamigration.Gate, *datamigration.Verdict, error) {
-	gate, err := datamigration.NewGate(svc.State, lock)
+	gate, err := newGate(svc, lock)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -69,6 +83,37 @@ func evaluateGate(
 		return nil, nil, err
 	}
 	return gate, v, nil
+}
+
+// evaluateAndPersistGate classifies AND records a compatible adoption.
+//
+// This is the write half of the split on [datamigration.Gate]: the CLI is the
+// only caller that persists, because on the filesystem tier the record is a
+// git-tracked file and a server must not write one at boot.
+func evaluateAndPersistGate(
+	ctx context.Context, svc *writeServices, lock datamigration.MigrationLock,
+) (*datamigration.Verdict, error) {
+	gate, err := newGate(svc, lock)
+	if err != nil {
+		return nil, err
+	}
+	return gate.EvaluateAndPersist(ctx, svc.Meta)
+}
+
+// storedShape returns the shape the store's content conforms to, or false when
+// nothing is recorded yet.
+func storedShape(
+	ctx context.Context, svc *writeServices,
+) (proj metamodel.ShapeProjection, applied []string, recorded bool, err error) {
+	st, loadErr := svc.MigState.Load(ctx)
+	if loadErr != nil || st == nil {
+		return metamodel.ShapeProjection{}, nil, false, loadErr
+	}
+	proj, projErr := st.ShapeProjection()
+	if projErr != nil {
+		return metamodel.ShapeProjection{}, nil, false, projErr
+	}
+	return proj, st.AppliedNames(), true, nil
 }
 
 // MigrateStatusCmd shows where the store's data stands relative to the live
@@ -95,19 +140,20 @@ func (c *MigrateStatusCmd) Run(ctx context.Context, svc *writeServices) error {
 		fmt.Printf("%d migration file(s) in %s/\n", len(files), datamigration.MigrationsDir)
 	}
 	if v.Status == datamigration.StatusNeedsMigration {
-		marker, mErr := datamigration.LoadMarker(ctx, svc.State)
-		if mErr != nil {
-			return mErr
+		stored, applied, ok, sErr := storedShape(ctx, svc)
+		if sErr != nil {
+			return sErr
 		}
-		stored, pErr := marker.ShapeProjection()
-		if pErr != nil {
-			return pErr
+		if ok {
+			if _, rErr := datamigration.Resolve(stored, applied, svc.Meta.ShapeProjection(), files); rErr != nil {
+				fmt.Println("the pending migrations do not cover this change — run `rela migrate gen`")
+			} else {
+				fmt.Println("pending migrations cover it — run `rela migrate data` to preview them")
+			}
 		}
-		if _, rErr := datamigration.Resolve(stored, marker.Applied, svc.Meta.ShapeProjection(), files); rErr != nil {
-			fmt.Println("no resolvable migration path yet — run `rela migrate gen`")
-		} else {
-			fmt.Println("a migration path exists — run `rela migrate data` to preview it")
-		}
+		return relaerrors.NewExitError(1)
+	}
+	if v.Status == datamigration.StatusUnbaselined {
 		return relaerrors.NewExitError(1)
 	}
 	return nil
@@ -122,33 +168,31 @@ type MigrateGenCmd struct {
 
 // Run executes `rela migrate gen`.
 func (c *MigrateGenCmd) Run(ctx context.Context, svc *writeServices) error {
-	marker, err := datamigration.LoadMarker(ctx, svc.State)
+	stored, _, ok, err := storedShape(ctx, svc)
 	if err != nil {
 		return err
 	}
-	if marker == nil {
-		// No marker: nothing recorded to diff against. Evaluate the gate
-		// (bootstraps the baseline) and tell the operator why gen is a no-op.
-		if _, _, gErr := evaluateGate(ctx, svc, migrationLock(svc)); gErr != nil {
+	if !ok {
+		// Nothing recorded to diff against. Evaluate and persist (which
+		// baselines a project with no migrations) and say why gen is a no-op.
+		v, gErr := evaluateAndPersistGate(ctx, svc, migrationLock(svc))
+		if gErr != nil {
 			return gErr
+		}
+		if v.Status == datamigration.StatusUnbaselined {
+			fmt.Println(v.Describe())
+			return relaerrors.NewExitError(1)
 		}
 		fmt.Println("no recorded data shape yet — baseline adopted; edit schema.yaml first, then re-run `rela migrate gen`")
 		return nil
 	}
-	stored, err := marker.ShapeProjection()
-	if err != nil {
-		return err
-	}
-	existing, err := loadDataMigrations(ctx, svc)
-	if err != nil {
-		return err
-	}
-	draft, err := datamigration.Generate(stored, svc.Meta.ShapeProjection(), existing, c.Description)
+	draft, err := datamigration.Generate(stored, svc.Meta.ShapeProjection(), c.Description, time.Now())
 	if err != nil {
 		return err
 	}
 	if draft == nil {
-		fmt.Println("no shape change needing a migration — nothing generated")
+		fmt.Println("no schema change needing a migration — nothing generated " +
+			"(a data-only migration is hand-written: create migrations/<timestamp>-<name>.yaml)")
 		return nil
 	}
 	if c.Stdout {
@@ -180,27 +224,34 @@ type MigrateDataCmd struct {
 // Run executes `rela migrate data [--apply]`.
 func (c *MigrateDataCmd) Run(ctx context.Context, svc *writeServices) error {
 	lock := migrationLock(svc)
-	marker, err := datamigration.LoadMarker(ctx, svc.State)
-	if err != nil {
-		return err
-	}
-	if marker == nil {
-		if _, _, gErr := evaluateGate(ctx, svc, lock); gErr != nil {
-			return gErr
-		}
-		fmt.Println("no recorded data shape yet — baseline adopted; nothing to migrate")
-		return nil
-	}
-	stored, err := marker.ShapeProjection()
-	if err != nil {
-		return err
-	}
 	files, err := loadDataMigrations(ctx, svc)
 	if err != nil {
 		return err
 	}
+	stored, applied, ok, err := storedShape(ctx, svc)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		// No record yet. With no migrations on disk this is a new store and
+		// the gate baselines it. With migrations present it is the
+		// un-baselined case, and `migrate data` is exactly where the operator
+		// resolves it: run every file from the beginning, because nothing says
+		// any of them has run.
+		if len(files) == 0 {
+			if _, gErr := evaluateAndPersistGate(ctx, svc, lock); gErr != nil {
+				return gErr
+			}
+			fmt.Println("no recorded data shape yet — baseline adopted; nothing to migrate")
+			return nil
+		}
+		if len(files) > 0 {
+			fmt.Printf("no recorded migration state; treating all %d migration(s) as pending\n", len(files))
+		}
+		stored = files[0].FromProjection
+	}
 	live := svc.Meta.ShapeProjection()
-	plan, err := datamigration.Resolve(stored, marker.Applied, live, files)
+	plan, err := datamigration.Resolve(stored, applied, live, files)
 	if err != nil {
 		return err
 	}
@@ -231,6 +282,7 @@ func (c *MigrateDataCmd) Run(ctx context.Context, svc *writeServices) error {
 		Store:    svc.Store,
 		Meta:     svc.Meta,
 		State:    svc.State,
+		MigState: svc.MigState,
 		Audit:    svc.Audit,
 		ScriptFS: scriptFS,
 		Versions: versionCaptureFor(svc),
@@ -264,7 +316,7 @@ func printRunResult(res *datamigration.RunResult, applied bool) {
 		verb = "changed"
 	}
 	for _, f := range res.Files {
-		fmt.Printf("%s (%.12s → %.12s):\n", f.Name, f.From, f.To)
+		fmt.Printf("%s:\n", f.Name)
 		for _, s := range f.Steps {
 			fmt.Printf("  %-22s %-40s %s %d record(s)\n", s.Kind, s.Target, verb, s.Affected)
 			for _, n := range s.Notes {
@@ -354,4 +406,69 @@ func versionCaptureFor(svc *writeServices) datamigration.VersionCapture {
 		return nil
 	}
 	return svc.Versions
+}
+
+// MigrateBaselineCmd records the project's migrations as already applied
+// without running them, and adopts the live schema shape as the baseline.
+//
+// It is the escape hatch for the un-baselined case: a store with content that
+// already matches the current schema, but no recorded migration state — an
+// existing project adopting the migration system, or one whose state file was
+// lost. Flyway's `baselineOnMigrate` fills the same role.
+//
+// It is deliberately a separate, explicit command rather than something the
+// gate infers. Marking migrations applied when they are NOT is how data
+// silently fails to be transformed, so the claim has to be the operator's.
+type MigrateBaselineCmd struct {
+	Apply bool `help:"Record the baseline (default is a dry-run preview)."`
+}
+
+// Run executes `rela migrate baseline [--apply]`.
+func (c *MigrateBaselineCmd) Run(ctx context.Context, svc *writeServices) error {
+	files, err := loadDataMigrations(ctx, svc)
+	if err != nil {
+		return err
+	}
+	existing, err := svc.MigState.Load(ctx)
+	if err != nil {
+		return err
+	}
+	if existing != nil {
+		fmt.Println("migration state is already recorded — nothing to baseline")
+		fmt.Println("(to re-run a migration, remove its entry from the applied list)")
+		return nil
+	}
+
+	live := svc.Meta.ShapeProjection()
+	entries := make([]datamigration.AppliedEntry, 0, len(files))
+	now := time.Now().UTC()
+	for _, f := range files {
+		entries = append(entries, datamigration.AppliedEntry{Name: f.Name, AppliedAt: now})
+	}
+
+	if !c.Apply {
+		fmt.Printf("would record %d migration(s) as already applied:\n", len(entries))
+		for _, e := range entries {
+			fmt.Printf("  %s\n", e.Name)
+		}
+		fmt.Println("dry-run only — re-run with --apply to record")
+		return nil
+	}
+
+	st, err := datamigration.NewState(live, entries, now)
+	if err != nil {
+		return err
+	}
+	if err := svc.MigState.Save(ctx, st); err != nil {
+		return err
+	}
+	svc.Audit.Record(audit.Record{
+		Time:      now,
+		Op:        audit.OpDataMigration,
+		Principal: principal.From(ctx),
+		Summary: fmt.Sprintf("migration baseline recorded: %d migration(s) marked applied without running",
+			len(entries)),
+	})
+	fmt.Printf("recorded %d migration(s) as already applied\n", len(entries))
+	return nil
 }

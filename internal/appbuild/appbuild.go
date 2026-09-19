@@ -40,6 +40,8 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/comments"
 	"github.com/Sourcehaven-BV/rela/internal/computed"
 	"github.com/Sourcehaven-BV/rela/internal/config"
+	"github.com/Sourcehaven-BV/rela/internal/datamigration"
+	"github.com/Sourcehaven-BV/rela/internal/datamigration/memmigstate"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/jobs"
@@ -139,6 +141,7 @@ type Services struct {
 	templater       templating.Templater
 	cfgLoader       config.Loader
 	stateKV         state.KV
+	migState        datamigration.StateStore
 	// jobQueue is the background-job seam (TKT-YOED3R). Its backend is a
 	// per-tier choice made by the recipe: ephemeral in-process on fs/mem,
 	// durable PostgreSQL on the postgres build. Torn down in Close.
@@ -333,6 +336,17 @@ func (s *Services) Config() config.Loader { return s.cfgLoader }
 // State returns the .rela cache-directory KV (or a sentinel error-KV
 // when no cache dir is available).
 func (s *Services) State() state.KV { return s.stateKV }
+
+// MigState returns the per-store migration record: which migrations have run
+// and the shape the content conforms to.
+//
+// Distinct from [Services.State] on purpose (TKT-XCJ0Y2). state.KV is
+// node-local cache — the render cache, scheduler run stamps, user settings —
+// and is gitignored on the filesystem tier. The migration record describes the
+// CONTENT, so it has to travel with the content: a committed file in the
+// project on fs, a row in the tenant's schema on postgres, a row in rela.db on
+// sqlite.
+func (s *Services) MigState() datamigration.StateStore { return s.migState }
 
 // Jobs returns the background-job queue, already started.
 //
@@ -803,13 +817,17 @@ func NewFromCollaborators(c Collaborators) (*Services, error) {
 		templater:       c.Templater,
 		cfgLoader:       c.CfgLoader,
 		stateKV:         c.StateKV,
-		scriptEngine:    c.ScriptEngine,
-		searchCloser:    c.SearchCloser,
-		acl:             c.ACL,
-		aclDeclarative:  c.Declarative,
-		aclPolicy:       aclPolicy,
-		audit:           c.Audit,
-		fieldRedactor:   fieldRedactor,
+		// This construction path has no project directory to commit a file
+		// into, so the migration record is in-memory. Callers that need a
+		// durable one build Services through New/Discover.
+		migState:       memmigstate.New(),
+		scriptEngine:   c.ScriptEngine,
+		searchCloser:   c.SearchCloser,
+		acl:            c.ACL,
+		aclDeclarative: c.Declarative,
+		aclPolicy:      aclPolicy,
+		audit:          c.Audit,
+		fieldRedactor:  fieldRedactor,
 	}, nil
 }
 
@@ -1592,11 +1610,15 @@ type backgroundServices struct {
 // Neither may fail boot. Each returns a stop function that is always safe to
 // call, so Close needs no nil checks beyond the ones it already has.
 func startBackgroundServices(
-	base *SharedBase, st store.Store, stateKV state.KV, versions store.VersionService,
+	base *SharedBase, st store.Store, stateKV state.KV, migState datamigration.StateStore,
+	cfgLoader config.Loader, versions store.VersionService,
 ) backgroundServices {
 	cfg := base.cfg
 
-	gcStop := startDataMigration(stateKV, base.meta, st, cfg.Audit, versions, cfg.Paths.CacheDir)
+	gcStop := startDataMigration(
+		stateKV, migState, base.meta, st, cfg.Audit, versions, cfg.Paths.CacheDir,
+		hasMigrationsVia(cfgLoader),
+	)
 
 	// Mail is optional and never fails boot. The outbox itself is discarded
 	// here: nothing can enqueue until the declarative layer (TKT-U2R7GU)
@@ -1671,6 +1693,10 @@ type backendOverrides struct {
 	// it layers behind the files.
 	projectConfig config.Loader
 
+	// migState replaces the file-backed migration record (TKT-XCJ0Y2).
+	// Supplied by the database recipes so a tenant's position lives with its
+	// data; nil selects the committed-file backend.
+	migState datamigration.StateStore
 	// stateKV replaces the filesystem state store. Supplied for the same
 	// reason and from the same handle: state written beside the database
 	// rather than inside it would be left behind when the file is shipped.
@@ -1756,6 +1782,11 @@ func assemble(
 	if backendKV == nil {
 		backendKV = stateKVFor(st)
 	}
+	migState, err := buildMigState(cfg.FS, cfg.Paths, overrides.migState)
+	if err != nil {
+		return nil, err
+	}
+
 	stateKV, aliases, jobQueue, err := buildRuntimeServices(cfg.FS, cfg.Paths, base, backendKV)
 	// coverage-ignore-start: defensive: entitymanager.New only errors on a nil required dep
 	// (Store/Meta/Templater/Audit/ACL/Transitions);
@@ -1829,11 +1860,11 @@ func assemble(
 	// changes, warn on incompatible ones) and start the drift GC sweep
 	// (TKT-0C57FS). Never fails boot; the stop func is torn down in Close —
 	// per-assembled, like the search closer.
-	background := startBackgroundServices(base, st, stateKV, versions)
+	background := startBackgroundServices(base, st, stateKV, migState, cfgLoader, versions)
 
 	return newServices(
 		base, st, background, searcher, visible, searchCloser, mgr, tr, val,
-		templater, cfgLoader, stateKV, jobQueue, aliases, commentSvc, versions,
+		templater, cfgLoader, stateKV, migState, jobQueue, aliases, commentSvc, versions,
 		resolvedACL, aclDeclarative, fieldRedactor,
 	), nil
 }
@@ -1847,7 +1878,7 @@ func newServices(
 	searcher search.Searcher, visible search.VisibleSearcher, searchCloser io.Closer,
 	mgr *entitymanager.Manager, tr tracer.Tracer, val validator.Validator,
 	templater templating.Templater, cfgLoader config.Loader, stateKV state.KV,
-	jobQueue jobs.Queue, aliases *caldavalias.Service, commentSvc *comments.Service,
+	migState datamigration.StateStore, jobQueue jobs.Queue, aliases *caldavalias.Service, commentSvc *comments.Service,
 	versions store.VersionService, resolvedACL acl.ACL, aclDeclarative *acl.Declarative,
 	fieldRedactor visibility.FieldRedactor,
 ) *Services {
@@ -1872,6 +1903,7 @@ func newServices(
 		templater:       templater,
 		cfgLoader:       cfgLoader,
 		stateKV:         stateKV,
+		migState:        migState,
 		jobQueue:        jobQueue,
 		caldavAliases:   aliases,
 		comments:        commentSvc,

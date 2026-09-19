@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io/fs"
 	"path"
-	"regexp"
 	"sort"
 	"strings"
 
@@ -19,22 +18,38 @@ import (
 // committed alongside schema.yaml (a migration is operator-authored config).
 const MigrationsDir = "migrations"
 
-// File is one parsed data-migration file: an edge from one shape hash to
-// another, with the transforming steps. Both projections are EMBEDDED
-// (amendment A2) so the file is self-contained: the chain resolver compares
-// the store's current projection against FromProjection without any
-// historical-schema source, and plan-time step validation has real shapes to
-// check targets against. Each hash is integrity-checked against its embedded
-// projection at parse time, so a hand-edited projection cannot silently
-// diverge from the hash the chain keys on.
+// File is one parsed data-migration file: a named, ordered list of steps that
+// transform stored content, with the before and after schema shapes embedded.
+//
+// # Why there is no from/to hash
+//
+// A migration used to declare `from:`/`to:` shape hashes and be treated as an
+// EDGE in a hash graph, which meant a file had to correspond to a schema shape
+// change: a data-only migration (a backfill, a de-duplication, a correction of
+// values an old bug wrote) has the same shape on both sides and was refused at
+// parse time. Whether a migration has run is now recorded by NAME in the
+// store's [State], the way every comparable tool does it, so a file with no
+// shape change is an ordinary migration (TKT-XCJ0Y2).
+//
+// # Why both projections are still embedded
+//
+// They are what makes a file self-validating, and neither can be reconstructed
+// later. Step targets are checked against the shapes the file itself spans
+// (see [Step.Validate]) — `rename_property{from: status, to: state}` is
+// well-formed only where `status` exists in the from-shape, and by the time a
+// later migration has run, the live schema no longer contains it. And
+// [validateDeltasResolved] recomputes the file's OWN edge to refuse a file
+// that spans a needs-migration change its steps do not answer; computed
+// against the live schema instead, that check would see one aggregate delta
+// for the whole chain and could no longer tell which file was meant to resolve
+// it — which is precisely how BUG-TMGWIN shipped.
 type File struct {
-	// Name is the file's base name (e.g. "0001-rename-status.yaml").
-	// Files run in lexicographic Name order; the marker's applied list
-	// records Names.
+	// Name is the file's base name (e.g. "20260919143022-rename-status.yaml"),
+	// validated by [ParseMigrationName]. Files run in lexicographic Name
+	// order, which for timestamp-prefixed names is chronological order; the
+	// [State] applied list records Names.
 	Name string
 
-	From           string
-	To             string
 	FromProjection metamodel.ShapeProjection
 	ToProjection   metamodel.ShapeProjection
 	Description    string
@@ -46,34 +61,29 @@ type File struct {
 // re-marshaled through JSON on load, so the YAML layer never needs yaml tags
 // on metamodel types.
 type fileYAML struct {
-	From           string         `yaml:"from"`
-	To             string         `yaml:"to"`
 	FromProjection map[string]any `yaml:"from_projection"`
 	ToProjection   map[string]any `yaml:"to_projection"`
 	Description    string         `yaml:"description,omitempty"`
 	Steps          []yaml.Node    `yaml:"steps"`
 }
 
-var hashRe = regexp.MustCompile(`^[0-9a-f]{64}$`)
-
 // ParseFile parses and validates one migration file. Every error names the
 // file; step errors name the step index and kind too.
+//
+// The name is validated against the [MigrationName] allowlist: a file whose
+// name reaches here from a directory listing has already been filtered by
+// [IsMigrationFileName], but ParseFile is also reached directly, and a name
+// becomes an applied-list entry that is later compared against directory
+// entries.
 func ParseFile(name string, data []byte) (*File, error) {
+	if _, err := ParseMigrationName(name); err != nil {
+		return nil, err
+	}
 	var raw fileYAML
 	dec := yaml.NewDecoder(strings.NewReader(string(data)))
 	dec.KnownFields(true)
 	if err := dec.Decode(&raw); err != nil {
 		return nil, fmt.Errorf("datamigration: %s: %w", name, err)
-	}
-
-	if !hashRe.MatchString(raw.From) {
-		return nil, fmt.Errorf("datamigration: %s: `from` is not a shape hash (64 hex chars)", name)
-	}
-	if !hashRe.MatchString(raw.To) {
-		return nil, fmt.Errorf("datamigration: %s: `to` is not a shape hash (64 hex chars)", name)
-	}
-	if raw.From == raw.To {
-		return nil, fmt.Errorf("datamigration: %s: `from` and `to` are the same shape hash", name)
 	}
 
 	fromProj, err := projectionFromYAML(raw.FromProjection)
@@ -84,19 +94,8 @@ func ParseFile(name string, data []byte) (*File, error) {
 	if err != nil {
 		return nil, fmt.Errorf("datamigration: %s: to_projection: %w", name, err)
 	}
-	// Integrity: the hash keys the chain; the projection feeds validation
-	// and free-edge comparison. They MUST agree or the file is corrupt.
-	if h := fromProj.Hash(); h != raw.From {
-		return nil, fmt.Errorf("datamigration: %s: from_projection hashes to %s, not the declared `from` %s", name, h, raw.From)
-	}
-	if h := toProj.Hash(); h != raw.To {
-		return nil, fmt.Errorf("datamigration: %s: to_projection hashes to %s, not the declared `to` %s", name, h, raw.To)
-	}
-
 	f := &File{
 		Name:           name,
-		From:           raw.From,
-		To:             raw.To,
 		FromProjection: fromProj,
 		ToProjection:   toProj,
 		Description:    raw.Description,

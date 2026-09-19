@@ -618,6 +618,11 @@ deps:
       - pgcomments
       - sqlitecomments
       - datamigration
+      # The migration-state backends, selected here for the same reason as the
+      # comment backends: the recipe owns the handle each one needs, and the
+      # file backend is the filesystem tier's default (TKT-XCJ0Y2).
+      - filemigstate
+      - memmigstate
       # Bridges conditionlint's next-action condition compiler to the seam
       # dataentry declares, so the app never imports the predicate engine.
       # predicatefns + principal: the same bridge derives the query identity
