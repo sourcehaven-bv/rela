@@ -2,7 +2,7 @@
 id: PLAN-D26TUB
 type: planning-checklist
 title: 'Planning: reverse_relation migration step: rewrite stored edges when a relation type''s direction is swapped'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->

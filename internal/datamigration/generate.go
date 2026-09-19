@@ -178,9 +178,56 @@ func draftActiveStep(
 		recomputed[owner] = true
 		fmt.Fprintf(w, "  # recompute the entity's computed-property graph in dependency order\n")
 		fmt.Fprintf(w, "  - recompute_computed: {entity: %s}\n", owner)
+	case "relation_endpoints_swapped":
+		relType := strings.TrimPrefix(d.Subject, "rel:")
+		fmt.Fprintf(w, "  # reverse every stored edge of %s to match the swapped endpoints\n", relType)
+		fmt.Fprintf(w, "  - reverse_relation: {type: %s}\n", relType)
+		if warn := cardinalityNotSwapped(relType, current, live); warn != "" {
+			fmt.Fprintf(w, "  # WARNING — %s\n", warn)
+		}
 	case "relation_endpoint_narrowed", "relation_cardinality_tightened", "relation_symmetry_changed":
 		fmt.Fprintf(w, "  # TODO — %s: no declarative step can fix this; write a lua step or adjust the data by hand\n", d.Detail)
 	}
+}
+
+// cardinalityNotSwapped reports bounds the operator left behind when swapping
+// the endpoints, or "" when they were swapped too.
+//
+// Swapping `from:`/`to:` without exchanging the outgoing/incoming bounds leaves
+// the reversed data violating the schema it was migrated to satisfy — the edges
+// move and the constraints do not follow. Compared through effectiveBound's
+// normalization (absent min = 0, absent max = unbounded), so an unset bound and
+// an explicit zero do not read as a difference.
+func cardinalityNotSwapped(relType string, current, live metamodel.ShapeProjection) string {
+	from, ok := current.Relations[relType]
+	if !ok {
+		return ""
+	}
+	to, ok := live.Relations[relType]
+	if !ok {
+		return ""
+	}
+	var stale []string
+	for _, c := range []struct {
+		name     string
+		old, new *int
+		isMax    bool
+	}{
+		{"min_outgoing/min_incoming", from.MinOutgoing, to.MinIncoming, false},
+		{"max_outgoing/max_incoming", from.MaxOutgoing, to.MaxIncoming, true},
+		{"min_incoming/min_outgoing", from.MinIncoming, to.MinOutgoing, false},
+		{"max_incoming/max_outgoing", from.MaxIncoming, to.MaxOutgoing, true},
+	} {
+		if metamodel.EffectiveBound(c.old, c.isMax) != metamodel.EffectiveBound(c.new, c.isMax) {
+			stale = append(stale, c.name)
+		}
+	}
+	if len(stale) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("the endpoints were swapped but these bounds were not: %s. "+
+		"Exchange them in schema.yaml, or the reversed edges violate the cardinality "+
+		"they were migrated to satisfy", strings.Join(stale, ", "))
 }
 
 // draftFaceStep emits the migrate_face step for a faces_introduced delta.

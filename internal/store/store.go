@@ -684,6 +684,135 @@ func ListEntityHeaders(
 	}
 }
 
+// BulkMigrator performs whole-table migration rewrites natively (TKT-HH7PKJ).
+//
+// OPTIONAL capability, type-asserted at the call site like [HeaderReader] and
+// [Formatter] — not part of [Store]. A backend that can express a rewrite as a
+// set operation implements it; the rest are served by the generic fallback
+// beside each dispatcher, which reads, rewrites and writes row by row.
+//
+// Callers should use the package-level dispatcher ([SwapRelationEndpoints])
+// rather than asserting themselves, so the fallback stays a detail of this
+// package.
+//
+// # Why this is a store concern
+//
+// The alternative is a loop above the store, and for an endpoint swap that loop
+// must be create-then-delete, because a relation's endpoints are its ADDRESS
+// (see [RelationWriter.UpdateRelation], which mutates only data). That shape
+// carries hazards the set operation does not have: a self-edge whose reversed
+// triple collides with itself, a both-directions pair that collides with its
+// partner, and — on the versioning backends — a fresh version lineage per edge,
+// since delete+create mints a new rel_record_id. An in-place re-key keeps the
+// row, so it keeps its identity and its history; this is the same property that
+// made [EntityWriter.RenameEntity] atomic.
+//
+// # Vocabulary
+//
+// Members take store-level arguments only (a relation type name, a property
+// key) and never an application type: a store must not depend on the metamodel
+// (arch-lint enforces it), so every schema-shaped decision — whether a relation
+// type is content-scoped, whether its endpoints overlap — stays ABOVE this
+// seam, in the caller. A member is a mechanical rewrite of rows the caller has
+// already decided are safe to rewrite.
+//
+// Today it has one member. RenameRelationType (a rel_type column update),
+// RenameProperty and MapValues (both jsonb surgery, which no backend does
+// in-place yet) are the intended next ones; the interface is named for the job
+// rather than the method so they can join it without a rename.
+type BulkMigrator interface {
+	// SwapRelationEndpoints exchanges from and to on every relation of
+	// relType, returning the number of rows rewritten.
+	//
+	// The caller guarantees the rewrite is safe for this type: no edge carries
+	// a tail face (a head has no face slot, so a reversed state-tailed edge is
+	// unrepresentable), and the type's endpoint lists do not overlap. An
+	// implementation performs the rewrite and does not re-derive those.
+	//
+	// A collision — two edges that would swap onto the same triple, or a
+	// self-edge in a backend that cannot rewrite a row onto itself — must
+	// fail with an error and leave the data unchanged, never half-rewritten.
+	SwapRelationEndpoints(ctx context.Context, relType string) (int, error)
+}
+
+// SwapRelationEndpoints exchanges from and to on every relation of relType.
+//
+// Uses the store's native [BulkMigrator] when it has one — pgstore and
+// sqlitestore rewrite the table in one statement — and otherwise falls back to
+// a read-rewrite-write loop through the public writer API.
+//
+// The two paths are held to ONE contract by storetest: same counts, same
+// refusals, same surviving data. The fallback differs in exactly one
+// observable way, and only on a backend with version history: it is
+// delete-then-create, so each edge starts a new lineage. The backends that
+// have history (pg, sqlite) are precisely the ones implementing the native
+// path, so in practice no deployment pays that cost.
+//
+// Nil: s is required.
+func SwapRelationEndpoints(ctx context.Context, s Store, relType string) (int, error) {
+	if bm, ok := s.(BulkMigrator); ok {
+		return bm.SwapRelationEndpoints(ctx, relType)
+	}
+	return swapRelationEndpointsFallback(ctx, s, relType)
+}
+
+// swapRelationEndpointsFallback rewrites the edges one at a time.
+//
+// Collision detection is a PRE-FLIGHT pass over the whole set, not a per-edge
+// check: the native path gets it from a unique constraint evaluated against the
+// final state, and a loop that discovered a collision halfway would already
+// have destroyed the edges it rewrote. Refusing before the first write is what
+// makes the two paths agree, and what makes a dry-run above this layer honest.
+func swapRelationEndpointsFallback(ctx context.Context, s Store, relType string) (int, error) {
+	var rels []*entity.Relation
+	for r, err := range s.ListRelations(ctx, RelationQuery{Type: relType}) {
+		if err != nil {
+			return 0, err
+		}
+		rels = append(rels, r)
+	}
+
+	existing := make(map[string]bool, len(rels))
+	for _, r := range rels {
+		existing[r.Key()] = true
+	}
+	for _, r := range rels {
+		// A self-edge reverses onto itself. The native path rewrites the row
+		// in place (a no-op); create-then-delete would create nothing and then
+		// delete the only copy, so it is skipped rather than "handled".
+		if r.From == r.To {
+			continue
+		}
+		swapped := &entity.Relation{From: r.To, Type: r.Type, To: r.From}
+		if existing[swapped.Key()] {
+			return 0, fmt.Errorf(
+				"%w: %s--%s--%s would swap onto %s--%s--%s, which already exists — "+
+					"reversing this type would merge two distinct edges",
+				ErrConflict, r.From, r.Type, r.To, swapped.From, swapped.Type, swapped.To)
+		}
+	}
+
+	n := 0
+	for _, r := range rels {
+		if r.From == r.To {
+			continue
+		}
+		data := &RelationData{Properties: r.Properties, Content: r.Content, FromFace: r.FromFace}
+		if _, err := s.CreateRelation(ctx, r.To, r.Type, r.From, data); err != nil {
+			return n, fmt.Errorf("swap %s--%s--%s: %w", r.From, r.Type, r.To, err)
+		}
+		// DeleteRelationState, not DeleteRelation: the tail is part of a
+		// relation's identity, so dropping it would delete a DIFFERENT edge and
+		// report success. The caller has refused tailed edges already; using
+		// the narrow call means a future relaxation cannot reintroduce that.
+		if err := s.DeleteRelationState(ctx, r.From, r.FromFace, r.Type, r.To); err != nil {
+			return n, fmt.Errorf("swap %s--%s--%s: remove the original: %w", r.From, r.Type, r.To, err)
+		}
+		n++
+	}
+	return n, nil
+}
+
 // Formatter checks whether an entity/relation's persisted representation
 // is up to date with its canonical format. Optionally applies the format.
 //

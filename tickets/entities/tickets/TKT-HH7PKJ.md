@@ -5,7 +5,7 @@ title: 'reverse_relation migration step: rewrite stored edges when a relation ty
 kind: enhancement
 priority: medium
 effort: l
-status: planning
+status: review
 ---
 
 ## Description
@@ -53,9 +53,9 @@ the row, so the re-key PRESERVES version lineage instead of forking it. That is
 exactly why #1127 made rename atomic.
 
 The interface is named and shaped for the general job so `RenameRelationType`,
-`RenameProperty` and `MapValues` can join it later; only the swap is
-implemented now. Its vocabulary stays store-level — arch-lint forbids a store
-depending on an application package, so the `scope:`/overlap decisions stay in
+`RenameProperty` and `MapValues` can join it later; only the swap is implemented
+now. Its vocabulary stays store-level — arch-lint forbids a store depending on
+an application package, so the `scope:`/overlap decisions stay in
 `datamigration` above the seam.
 
 ## Original proposal (superseded: in-process loop)
