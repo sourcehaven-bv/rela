@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/Sourcehaven-BV/rela/internal/entity"
-
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -96,86 +94,22 @@ func (s *reverseRelationStep) Validate(from, to metamodel.ShapeProjection) error
 func (s *reverseRelationStep) Run(ctx context.Context, x *Exec) (StepResult, error) {
 	res := StepResult{Kind: s.Kind(), Target: s.Target()}
 
-	if err := s.refuseContentScoped(ctx, x); err != nil {
-		return res, err
+	// The store owns the preconditions it can see from the data — a state-tailed
+	// edge, a pair that would swap onto each other — and answers them
+	// identically on every backend, before any write. A dry-run therefore
+	// reports the same refusal an apply would, which is what makes reviewing
+	// the plan meaningful.
+	n, err := store.CheckSwapRelationEndpoints(ctx, x.Store, s.Type)
+	if err != nil {
+		return res, fmt.Errorf("relation type %q cannot be reversed: %w", s.Type, err)
 	}
+	res.Affected = n
 	if !x.Apply {
-		// A dry-run must reach the same refusals an apply would, or the
-		// operator reviews a clean count for a migration that cannot run. The
-		// native backends get collision detection from a unique constraint that
-		// only a real write evaluates, so the check is made explicitly here and
-		// costs one pass over the type.
-		n, err := s.previewReversible(ctx, x)
-		res.Affected = n
-		return res, err
+		return res, nil
 	}
-	n, err := store.SwapRelationEndpoints(ctx, x.Store, s.Type)
+	n, err = store.SwapRelationEndpoints(ctx, x.Store, s.Type)
 	res.Affected = n
 	return res, err
-}
-
-// refuseContentScoped rejects a type whose stored edges carry tail faces.
-//
-// Checked against the DATA, not the schema: `scope:` may have been changed to
-// identity while state-tailed rows remain, and the whole premise of this
-// subsystem is that the schema is not a reliable description of the store.
-func (s *reverseRelationStep) refuseContentScoped(ctx context.Context, x *Exec) error {
-	for r, err := range x.Store.ListRelations(ctx, store.RelationQuery{Type: s.Type}) {
-		if err != nil {
-			return err
-		}
-		if !r.FromFace.IsDefault() {
-			return fmt.Errorf("relation %s--%s--%s is tailed at face %q: a relation's head is "+
-				"entity-level by construction (there is no ToFace), so a reversed state-tailed "+
-				"edge cannot be represented — reversing this type would silently drop the tail "+
-				"and merge every edge that differs only by it",
-				r.From, s.Type, r.To, r.FromFace)
-		}
-	}
-	return nil
-}
-
-// previewReversible counts the edges an apply would rewrite, and refuses the
-// same collisions an apply would.
-//
-// Self-edges are excluded from the count: reversing one is a no-op, and the
-// store does not count them either, so including them here would make the
-// preview disagree with the result.
-//
-// The collision check is duplicated from the fallback rather than shared,
-// because the two answer different questions: this one must hold for EVERY
-// backend on a read-only pass, while the fallback's guards the writes it is
-// about to perform. A native backend has no read-only path to its own unique
-// constraint, so without this a pg/sqlite dry-run would report a clean count
-// for a migration that fails on apply.
-func (s *reverseRelationStep) previewReversible(ctx context.Context, x *Exec) (int, error) {
-	var rels []*entity.Relation
-	for r, err := range x.Store.ListRelations(ctx, store.RelationQuery{Type: s.Type}) {
-		if err != nil {
-			return 0, err
-		}
-		rels = append(rels, r)
-	}
-
-	existing := make(map[string]bool, len(rels))
-	for _, r := range rels {
-		existing[r.Key()] = true
-	}
-	n := 0
-	for _, r := range rels {
-		if r.From == r.To {
-			continue
-		}
-		mirror := &entity.Relation{From: r.To, Type: r.Type, To: r.From}
-		if existing[mirror.Key()] {
-			return 0, fmt.Errorf(
-				"%w: %s--%s--%s would swap onto %s--%s--%s, which already exists — "+
-					"reversing this type would merge two distinct edges",
-				store.ErrConflict, r.From, r.Type, r.To, mirror.From, mirror.Type, mirror.To)
-		}
-		n++
-	}
-	return n, nil
 }
 
 // overlappingEndpoints reports whether any entity type appears on both sides.

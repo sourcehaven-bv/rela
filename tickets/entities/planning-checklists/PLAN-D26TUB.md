@@ -553,9 +553,10 @@ file applies and the marker advances, not just the step in isolation.
 - [x] `docs-project/entities/guides/GUIDE-data-migration.md` — the step table
       gains a row; a new section covers the reversal, the lineage cost, and the
       content-scope refusal. `docs/data-migration.md` regenerates from it.
-- [ ] docs/metamodel.md — no metamodel feature is added; `from:`/`to:` already
-      exist and the operator edits them by hand.
-- [ ] CLAUDE.md — no new pattern.
+- [x] ~~docs/metamodel.md~~ (N/A: no metamodel feature is added; `from:`/`to:`
+      already exist and the operator edits them by hand)
+- [x] ~~CLAUDE.md~~ (N/A: the store capability follows the existing
+      HeaderReader/Formatter pattern rather than introducing a new one)
 
 ## Design Review
 

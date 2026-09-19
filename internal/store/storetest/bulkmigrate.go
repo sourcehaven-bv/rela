@@ -2,6 +2,7 @@ package storetest
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -113,6 +114,75 @@ func RunBulkMigrateTests(t *testing.T, f Factory) {
 		}
 	})
 
+	// The suite exists because a native fast path and a hand-written loop
+	// drift, and EVENTS are where they drift invisibly: final row state can
+	// agree while the change feed tells three different stories. A reversal
+	// removes the old triple and adds its mirror, so that is what every
+	// backend must say — an "updated" on the new triple alone would leave an
+	// id-keyed consumer holding a ghost edge in the old direction.
+	t.Run("SwapEmitsDeleteThenCreatePerEdge", func(t *testing.T) {
+		s := f(t)
+		seedSwapEntities(t, s, "A", "B")
+		mustRelation(t, s, "A", "blocks", "B", nil)
+
+		events, cancel := s.Subscribe(16)
+		defer cancel()
+
+		_, err := store.SwapRelationEndpoints(ctx(), s, "blocks")
+		require.NoError(t, err)
+
+		// Asserted as a SET, not a sequence. The fallback creates before it
+		// deletes so a crash between the two duplicates rather than destroys;
+		// the native path has no such window and reports the removal first.
+		// Both orderings are honest, and pinning one would force a backend to
+		// take a worse write order to satisfy a test.
+		got := drainRelationEvents(t, events, 2)
+		require.Len(t, got, 2, "want one delete and one create")
+		var deleted, created *store.Event
+		for i := range got {
+			switch got[i].Op {
+			case store.EventRelationDeleted:
+				deleted = &got[i]
+			case store.EventRelationCreated:
+				created = &got[i]
+			case store.EventRelationUpdated:
+				t.Errorf("a reversal must not report an update: the old triple ceased to "+
+					"exist and the new one did not exist before (%v)", got[i])
+			case store.EventEntityCreated, store.EventEntityUpdated, store.EventEntityDeleted:
+				// Filtered out by drainRelationEvents; unreachable here.
+			}
+		}
+		require.NotNil(t, deleted, "no delete event for the old direction: %v", got)
+		require.NotNil(t, created, "no create event for the new direction: %v", got)
+		assert.Equal(t, "A", deleted.From)
+		assert.Equal(t, "B", deleted.To)
+		assert.Equal(t, "B", created.From)
+		assert.Equal(t, "A", created.To)
+	})
+
+	// A rewritten row must not still look settled. Staleness heuristics read
+	// UpdatedAt — on the database backends the version sweep selects its
+	// candidates by it, and a reversal is captured by no synchronous hook, so a
+	// row whose timestamp never moved could have its new triple recorded
+	// nowhere (the TKT-9TQ6I trap, whose "a miss costs only the marker"
+	// reasoning does not apply here).
+	t.Run("SwapMovesUpdatedAt", func(t *testing.T) {
+		s := f(t)
+		seedSwapEntities(t, s, "A", "B")
+		mustRelation(t, s, "A", "blocks", "B", nil)
+		before, err := s.GetRelation(ctx(), "A", "blocks", "B")
+		require.NoError(t, err)
+
+		time.Sleep(10 * time.Millisecond) // clocks with coarse resolution
+		_, err = store.SwapRelationEndpoints(ctx(), s, "blocks")
+		require.NoError(t, err)
+
+		after, err := s.GetRelation(ctx(), "B", "blocks", "A")
+		require.NoError(t, err)
+		assert.True(t, after.UpdatedAt.After(before.UpdatedAt),
+			"UpdatedAt did not move: before=%s after=%s", before.UpdatedAt, after.UpdatedAt)
+	})
+
 	t.Run("EmptyTypeIsANoOp", func(t *testing.T) {
 		s := f(t)
 		n, err := store.SwapRelationEndpoints(ctx(), s, "blocks")
@@ -140,6 +210,29 @@ func RunBulkMigrateTests(t *testing.T, f Factory) {
 		_, err = s.GetRelation(ctx(), "A", "blocks", "B")
 		assert.NoError(t, err, "two swaps return the edge to its original direction")
 	})
+}
+
+// drainRelationEvents collects up to n relation events, or fails on timeout.
+//
+// Filters to relation ops: a backend may also emit entity events for the same
+// write, and the contract under test is about the relation feed.
+func drainRelationEvents(t *testing.T, events <-chan store.Event, n int) []store.Event {
+	t.Helper()
+	var out []store.Event
+	deadline := time.After(5 * time.Second)
+	for len(out) < n {
+		select {
+		case ev := <-events:
+			switch ev.Op {
+			case store.EventRelationCreated, store.EventRelationUpdated, store.EventRelationDeleted:
+				out = append(out, ev)
+			default:
+			}
+		case <-deadline:
+			t.Fatalf("timed out waiting for %d relation event(s), got %d: %v", n, len(out), out)
+		}
+	}
+	return out
 }
 
 // seedSwapEntities creates the entities the relation tests point at.

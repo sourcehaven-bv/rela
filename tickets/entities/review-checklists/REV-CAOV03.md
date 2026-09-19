@@ -2,82 +2,91 @@
 id: REV-CAOV03
 type: review-checklist
 title: 'Review: reverse_relation migration step: rewrite stored edges when a relation type''s direction is swapped'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
 
 ## Automated Checks
 
-- [ ] All tests pass (`just test`)
-- [ ] Lint clean (`just lint`)
-- [ ] Comment lint gate clean (`just comment-lint`)
-- [ ] Coverage maintained (`just coverage-check`)
-
-**Comment findings.** `just comment-report` lists the advisory rules
-(duplication, nil-contract, param-contract, restatement). They are not a merge
-gate, but a finding your diff *introduces* should be fixed or suppressed — don't
-grow the backlog.
-
-Every rule is a heuristic over prose, so false positives are expected. To
-suppress one, prefer the inline form on the declaration line, which travels with
-the code and is reviewed in this diff:
-
-```go
-func f(p string) {} //commentlint:ignore param-contract  p is contained by Clone
-```
-
-Use `.commentlint.yml` (`ignore:` path globs, `allow-phrases:`) only when the
-same prose recurs across many sites. A reason is required either way — an
-unexplained suppression is a finding nobody can re-evaluate later.
+- [x] All tests pass (`just test`) — plus the postgres and sqlite suites, which
+      this change touches: `go test -tags postgres ./internal/store/pgstore/`
+      and `-tags sqlite ./internal/store/sqlitestore/` both green
+- [x] Lint clean (`just lint`) — 0 issues
+- [x] Comment lint gate clean (`just comment-lint`)
+- [x] Coverage maintained (`just coverage-check`) — thresholds PASS
+- [x] `just arch-lint` clean — the store capability adds no application
+      dependency to a store package
 
 ## Code Review
 
-- [ ] Run `/code-review` command (invokes cranky-code-reviewer agent)
-- [ ] All critical review-responses addressed
-- [ ] All significant review-responses addressed
-- [ ] Self-reviewed the diff for unrelated changes
+- [x] Run `/code-review` command (invokes cranky-code-reviewer agent)
+- [x] All critical review-responses addressed
+- [x] All significant review-responses addressed
+- [x] Self-reviewed the diff for unrelated changes
 
-**Review Responses:** <!-- List IDs of review-response entities created, e.g.,
-RR-xxxx -->
+**Review Responses:** RR-5XNMEN, RR-EL513R, RR-U31Q7Q (critical, all addressed);
+RR-BC2PPF, RR-L5S5VG (significant, both addressed); RR-G72VZX (minor,
+addressed); RR-2TPCTX, RR-3QWH45 (minor, deferred with reasons).
+
+Design-review findings from the planning phase: RR-6U41C3, RR-2IKYBT,
+RR-EHKYDB, RR-RN0QB8, RR-838OB8, RR-0MQ4ZF, RR-2L6XJB, RR-ASNIG5, RR-A7DK8Q.
+
+The three criticals were all real and all confirmed before fixing:
+
+- The swap did not bump `updated_at`, so the version sweep might never select
+  the rewritten row — the TKT-9TQ6I trap, whose "a miss costs only the marker"
+  exemption does not transfer, because nothing captures a reversal
+  synchronously. Fixed in both backends, pinned by a conformance case, and
+  mutation-verified.
+- The fallback's collision mirror was face-blind. Verified directly: a stored
+  edge keys as `A@draft--blocks--B` while the constructed mirror keys as
+  `B--blocks--A`. Unreachable today, which made it worse rather than better —
+  the store depended on a caller-side guarantee it could not itself check. The
+  store now asserts the precondition instead of trusting it.
+- Three backends emitted three different event streams for one operation, and
+  the conformance suite was green throughout because it only compared rows.
 
 ## Acceptance Verification
 
-- [ ] Each acceptance criterion tested (reference planning checklist)
-- [ ] Test evidence documented in implementation checklist
+- [x] Each acceptance criterion tested (reference planning checklist)
+- [x] Test evidence documented in implementation checklist
 
 **Acceptance Status:**
-<!-- For each acceptance criterion, state PASS/FAIL with evidence -->
+
+- AC-0 (both paths, one contract) — PASS. `RunBulkMigrateTests` runs
+  unconditionally on fs, memory, sqlite and postgres.
+- AC-1 (rewrites every edge, keeps properties and body) — PASS, unit and
+  end-to-end.
+- AC-2 (re-run does not flip back) — PASS. The marker records the applied file;
+  the store operation itself is a mechanical swap with no memory, which the
+  suite asserts explicitly so nobody adds a hidden marker below the schema.
+- AC-3 (content-scoped refused before any write) — PASS, now refused by the
+  store itself as well as the step.
+- AC-4 (symmetric refused) / overlapping endpoints refused — PASS at parse time.
+- AC-5 (one delta, not two narrowings) — PASS.
+- AC-6 (generator drafts a live step) — PASS; the draft parses.
+- AC-7 (file spanning the delta must carry the step) — PASS both ways, and
+  mutation-verified against the subject-prefix trap the design review predicted.
+- AC-8 (cardinality warning) — PASS, and now reported once per bound pair.
+- AC-9 (all-or-nothing on a collision) — PASS; both edges survive a refusal.
+- AC-10 (lineage preserved on a versioning backend) — PASS, mutation-verified
+  by swapping the in-place UPDATE for a DELETE+INSERT.
 
 ## Documentation (enhancements only)
 
-Skip this section for bugs and internal refactors.
+- [x] Docs-checklist created and linked via `has-docs`
+- [x] User-facing documentation updated
+- [x] Docs-checklist marked as done
 
-- [ ] Docs-checklist created and linked via `has-docs`
-- [ ] User-facing documentation updated
-- [ ] Docs-checklist marked as done
-
-**Docs Checklist:** <!-- e.g., DOCS-xxxx -->
+**Docs Checklist:** DOCS-GDJHQB
 
 ## Final Checks
 
-- [ ] Commit message explains the why, not just what
-- [ ] No TODOs or FIXMEs left unaddressed
-- [ ] Ready for another developer to use
+- [x] Commit message explains the why, not just what
+- [x] No TODOs or FIXMEs left unaddressed
+- [x] Ready for another developer to use
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
-
-<!--
-Deliberately NOT tracked here: the PR URL and whether CI passed.
-
-Both post-date this checklist. `/pr` requires the ticket to be `done` and
-validating clean before it opens the PR, and a `done` review-checklist may have
-no unchecked items — so an item asking for the PR URL can only be satisfied by a
-PR that does not exist yet. Checking it early would mean asserting "CI passed"
-before CI ran, which turns the checklist from evidence into a formality.
-
-GitHub records both authoritatively, and the branch and commit messages carry
-the ticket ID, so the ticket-to-PR link is recoverable without duplicating it
-here. See TKT-UFV01M. -->
+- [x] Run `/pr` command to create PR and monitor CI

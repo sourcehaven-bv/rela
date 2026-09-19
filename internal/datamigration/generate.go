@@ -207,18 +207,25 @@ func cardinalityNotSwapped(relType string, current, live metamodel.ShapeProjecti
 	if !ok {
 		return ""
 	}
+	// One entry per BOUND PAIR, not per direction. A min that was not carried
+	// across fails both `old.MinOutgoing == new.MinIncoming` and
+	// `old.MinIncoming == new.MinOutgoing`, so checking all four directions
+	// would name a single mistake twice and read as two problems.
 	var stale []string
 	for _, c := range []struct {
-		name     string
-		old, new *int
-		isMax    bool
+		name   string
+		oldOut *int
+		newIn  *int
+		oldIn  *int
+		newOut *int
+		isMax  bool
 	}{
-		{"min_outgoing/min_incoming", from.MinOutgoing, to.MinIncoming, false},
-		{"max_outgoing/max_incoming", from.MaxOutgoing, to.MaxIncoming, true},
-		{"min_incoming/min_outgoing", from.MinIncoming, to.MinOutgoing, false},
-		{"max_incoming/max_outgoing", from.MaxIncoming, to.MaxOutgoing, true},
+		{"min_outgoing/min_incoming", from.MinOutgoing, to.MinIncoming, from.MinIncoming, to.MinOutgoing, false},
+		{"max_outgoing/max_incoming", from.MaxOutgoing, to.MaxIncoming, from.MaxIncoming, to.MaxOutgoing, true},
 	} {
-		if metamodel.EffectiveBound(c.old, c.isMax) != metamodel.EffectiveBound(c.new, c.isMax) {
+		outMoved := metamodel.EffectiveBound(c.oldOut, c.isMax) == metamodel.EffectiveBound(c.newIn, c.isMax)
+		inMoved := metamodel.EffectiveBound(c.oldIn, c.isMax) == metamodel.EffectiveBound(c.newOut, c.isMax)
+		if !outMoved || !inMoved {
 			stale = append(stale, c.name)
 		}
 	}

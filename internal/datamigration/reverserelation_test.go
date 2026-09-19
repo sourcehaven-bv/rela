@@ -356,8 +356,15 @@ func TestReverseRelation_WarnsWhenCardinalityWasNotSwapped(t *testing.T) {
 	if out == nil {
 		t.Fatal("no file drafted")
 	}
-	if !strings.Contains(string(out.Content), "bounds were not") {
-		t.Errorf("no cardinality warning in the draft:\n%s", out.Content)
+	body := string(out.Content)
+	if !strings.Contains(body, "bounds were not") {
+		t.Errorf("no cardinality warning in the draft:\n%s", body)
+	}
+	// One unswapped pair is ONE problem. Checking all four directions names it
+	// twice ("max_outgoing/max_incoming, max_incoming/max_outgoing"), which
+	// reads as two mistakes and sends the operator looking for a second one.
+	if strings.Contains(body, "max_incoming/max_outgoing") {
+		t.Errorf("a single unswapped bound pair is reported twice:\n%s", body)
 	}
 }
 

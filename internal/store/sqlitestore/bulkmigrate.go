@@ -3,6 +3,7 @@ package sqlitestore
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -31,9 +32,14 @@ func (s *Store) SwapRelationEndpoints(ctx context.Context, relType string) (int,
 		return 0, nil
 	}
 
+	// updated_at moves with the rewrite, for the reason pgstore's copy of this
+	// statement spells out: the version sweep selects candidates by it, and a
+	// reversal is captured by no synchronous hook, so a row that still looks
+	// settled could have its new triple never recorded.
 	res, err := s.write(ctx,
-		`UPDATE relations SET from_id = to_id, to_id = from_id
-		  WHERE rel_type = ? AND from_id <> to_id`, relType)
+		`UPDATE relations SET from_id = to_id, to_id = from_id, updated_at = ?
+		  WHERE rel_type = ? AND from_id <> to_id`,
+		time.Now().UTC().Format(timeFmt), relType)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return 0, fmt.Errorf(
@@ -48,9 +54,15 @@ func (s *Store) SwapRelationEndpoints(ctx context.Context, relType string) (int,
 		return 0, fmt.Errorf("sqlitestore: swap relation endpoints: %w", err)
 	}
 
+	// Deleted-then-created, matching pgstore and the generic fallback: the old
+	// triple ceased to exist and the new one did not exist before, so a single
+	// "updated" would leave an id-keyed consumer holding a ghost edge.
 	for _, r := range swapped {
 		s.emit(store.Event{
-			Op: store.EventRelationUpdated, RelationType: r.Type, From: r.To, To: r.From,
+			Op: store.EventRelationDeleted, RelationType: r.Type, From: r.From, To: r.To,
+		})
+		s.emit(store.Event{
+			Op: store.EventRelationCreated, RelationType: r.Type, From: r.To, To: r.From,
 		})
 	}
 	return int(n), nil

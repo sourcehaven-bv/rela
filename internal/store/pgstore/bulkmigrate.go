@@ -49,9 +49,18 @@ func (s *Store) SwapRelationEndpoints(ctx context.Context, relType string) (int,
 		return 0, nil
 	}
 
+	// updated_at MUST move with the rewrite. The version sweep selects
+	// candidates by it (sweep.go), and HashRelation folds the triple into the
+	// content hash — so a swapped row has a genuinely new hash and SHOULD be
+	// captured, but a row whose updated_at still reads "settled long ago" may
+	// never be selected to notice. TKT-9TQ6I left the atomic RENAME without
+	// this on the grounds that a miss costs only the rename marker; that
+	// reasoning does not transfer, because nothing captures a reversal
+	// synchronously, so a miss would cost the version itself.
 	tag, err := tx.Exec(ctx,
 		`UPDATE relations
-		    SET from_id = to_id, to_id = from_id, seq = nextval('rela_seq')
+		    SET from_id = to_id, to_id = from_id,
+		        updated_at = now(), seq = nextval('rela_seq')
 		  WHERE rel_type = $1 AND from_id <> to_id`, relType)
 	if err != nil {
 		var pgErr *pgconn.PgError
@@ -70,11 +79,21 @@ func (s *Store) SwapRelationEndpoints(ctx context.Context, relType string) (int,
 		}
 	}
 
-	evs := make([]store.Event, 0, len(oldTriples))
+	// Deleted-then-created, not updated. The edge at the NEW triple did not
+	// exist before, and the one at the old triple no longer does, so an
+	// id-keyed consumer that heard only "updated" would keep a ghost edge in
+	// the old direction forever. This also makes the three backends agree: the
+	// generic fallback goes through CreateRelation/DeleteRelationState and so
+	// emits exactly this pair, and it matches the tombstones written above.
+	evs := make([]store.Event, 0, 2*len(oldTriples))
 	for _, r := range oldTriples {
-		evs = append(evs, store.Event{
-			Op: store.EventRelationUpdated, RelationType: r.Type, From: r.To, To: r.From,
-		})
+		evs = append(evs,
+			store.Event{
+				Op: store.EventRelationDeleted, RelationType: r.Type, From: r.From, To: r.To,
+			},
+			store.Event{
+				Op: store.EventRelationCreated, RelationType: r.Type, From: r.To, To: r.From,
+			})
 	}
 	for _, ev := range evs {
 		s.notify(ctx, tx, ev)

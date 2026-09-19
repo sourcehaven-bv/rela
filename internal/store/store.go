@@ -750,10 +750,95 @@ type BulkMigrator interface {
 //
 // Nil: s is required.
 func SwapRelationEndpoints(ctx context.Context, s Store, relType string) (int, error) {
+	// Checked on BOTH paths, not just the fallback: a native backend discovers
+	// a collision only by attempting the write, so without this a pg/sqlite
+	// caller gets a different error (and a different moment of failure) than an
+	// fs caller for the same data. The native statement's unique constraint
+	// remains the backstop.
+	if _, err := CheckSwapRelationEndpoints(ctx, s, relType); err != nil {
+		return 0, err
+	}
 	if bm, ok := s.(BulkMigrator); ok {
 		return bm.SwapRelationEndpoints(ctx, relType)
 	}
 	return swapRelationEndpointsFallback(ctx, s, relType)
+}
+
+// CheckSwapRelationEndpoints reports whether every edge of relType can be
+// reversed, without writing anything.
+//
+// Exported because a dry-run needs the same answer an apply gives, and the
+// NATIVE backends have no read-only path to their own unique constraint — they
+// learn about a collision only by attempting the write. A caller that previews
+// a reversal calls this; [SwapRelationEndpoints] calls it too, so the two can
+// never disagree about what is legal.
+//
+// Returns the number of edges a reversal would rewrite (self-edges excluded:
+// reversing one is a no-op).
+func CheckSwapRelationEndpoints(ctx context.Context, s Store, relType string) (int, error) {
+	var rels []*entity.Relation
+	for r, err := range s.ListRelations(ctx, RelationQuery{Type: relType}) {
+		if err != nil {
+			return 0, err
+		}
+		rels = append(rels, r)
+	}
+	if err := checkSwappable(rels, relType); err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, r := range rels {
+		if r.From != r.To {
+			n++
+		}
+	}
+	return n, nil
+}
+
+// checkSwappable refuses a set of edges that cannot be reversed as a whole.
+//
+// Two refusals, both computed before any write so they hold identically on the
+// native and fallback paths:
+//
+//   - A state-tailed edge. The tail is part of a relation's IDENTITY
+//     ([entity.Relation.Key] serializes it into the FROM slot) and a head has
+//     no face slot at all, so a reversed state-tailed edge cannot be
+//     represented and two edges differing only by their tail would merge. The
+//     BulkMigrator contract says the caller guarantees this; the guarantee is
+//     ASSERTED here rather than assumed, because a store that depends on a
+//     precondition for correctness should not be the only thing that cannot
+//     see it violated.
+//   - A pair that would swap onto each other's triple. The mirror key carries
+//     the tail face, so it compares like with like — a face-blind mirror would
+//     both miss real collisions and invent false ones the moment tailed edges
+//     were admitted.
+func checkSwappable(rels []*entity.Relation, relType string) error {
+	existing := make(map[string]bool, len(rels))
+	for _, r := range rels {
+		if !r.FromFace.IsDefault() {
+			return fmt.Errorf(
+				"%w: %s is tailed at face %q — a reversed state-tailed edge has nowhere to put "+
+					"the face, since a head is entity-level by construction",
+				ErrInvalidQuery, r.Key(), r.FromFace)
+		}
+		existing[r.Key()] = true
+	}
+	for _, r := range rels {
+		// A self-edge reverses onto itself. The native path rewrites the row
+		// in place (a no-op); create-then-delete would create nothing and then
+		// delete the only copy, so it is skipped rather than "handled".
+		if r.From == r.To {
+			continue
+		}
+		mirror := &entity.Relation{From: r.To, FromFace: r.FromFace, Type: r.Type, To: r.From}
+		if existing[mirror.Key()] {
+			return fmt.Errorf(
+				"%w: %s--%s--%s would swap onto %s--%s--%s, which already exists — "+
+					"reversing this type would merge two distinct edges",
+				ErrConflict, r.From, relType, r.To, mirror.From, relType, mirror.To)
+		}
+	}
+	return nil
 }
 
 // swapRelationEndpointsFallback rewrites the edges one at a time.
@@ -772,24 +857,8 @@ func swapRelationEndpointsFallback(ctx context.Context, s Store, relType string)
 		rels = append(rels, r)
 	}
 
-	existing := make(map[string]bool, len(rels))
-	for _, r := range rels {
-		existing[r.Key()] = true
-	}
-	for _, r := range rels {
-		// A self-edge reverses onto itself. The native path rewrites the row
-		// in place (a no-op); create-then-delete would create nothing and then
-		// delete the only copy, so it is skipped rather than "handled".
-		if r.From == r.To {
-			continue
-		}
-		swapped := &entity.Relation{From: r.To, Type: r.Type, To: r.From}
-		if existing[swapped.Key()] {
-			return 0, fmt.Errorf(
-				"%w: %s--%s--%s would swap onto %s--%s--%s, which already exists — "+
-					"reversing this type would merge two distinct edges",
-				ErrConflict, r.From, r.Type, r.To, swapped.From, swapped.Type, swapped.To)
-		}
+	if err := checkSwappable(rels, relType); err != nil {
+		return 0, err
 	}
 
 	n := 0

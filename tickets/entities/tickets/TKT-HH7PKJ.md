@@ -5,7 +5,7 @@ title: 'reverse_relation migration step: rewrite stored edges when a relation ty
 kind: enhancement
 priority: medium
 effort: l
-status: review
+status: done
 ---
 
 ## Description
