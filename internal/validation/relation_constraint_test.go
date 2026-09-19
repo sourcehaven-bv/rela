@@ -2,6 +2,7 @@ package validation
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"testing"
 
@@ -47,6 +48,52 @@ func relationWorkspace(
 		}
 	}
 	return lua.ReadDeps{VisibleReader: st, Tracer: tracer.New(st), Meta: meta}
+}
+
+// newWithGraph builds a Service wired exactly as production does: the same
+// reader backs both rule evaluation and the relation gate. Tests that assert
+// counting behavior must go through this, not bare New — a Service with no
+// graph reports every `relations:` constraint as unevaluable, which is a
+// different (and separately tested) code path.
+func newWithGraph(t *testing.T, deps lua.ReadDeps, rels [][3]string) *Service {
+	t.Helper()
+	return New(deps.Meta, deps).WithGraph(testGraph{deps: deps, rels: rels})
+}
+
+// testGraph is a minimal [Graph] over the test's reader. It deliberately does
+// NOT reuse internal/validationgraph: that package imports this one, so the
+// production adapter is unreachable from an internal test here. Keeping the
+// two independent also means a bug in the adapter cannot mask itself by
+// being both the code under test and the test's own fixture — the adapter has
+// its own tests in its own package.
+type testGraph struct {
+	deps lua.ReadDeps
+	rels [][3]string
+}
+
+func (g testGraph) RelatedEntities(
+	ctx context.Context, subjectID, relType string, dir Direction, resolveFar bool,
+) ([]Related, error) {
+	if dir != DirectionOutgoing {
+		return nil, errors.New("testGraph: only outgoing is wired")
+	}
+	var out []Related
+	for _, rel := range g.rels {
+		if rel[0] != subjectID || rel[1] != relType {
+			continue
+		}
+		if !resolveFar {
+			out = append(out, Related{ID: rel[2]})
+			continue
+		}
+		e, gErr := g.deps.VisibleReader.GetEntity(ctx, rel[2])
+		if gErr != nil || e == nil {
+			out = append(out, Related{ID: rel[2]})
+			continue
+		}
+		out = append(out, Related{ID: e.ID, Type: e.Type, Properties: e.Properties, Resolved: true})
+	}
+	return out, nil
 }
 
 func tkt(status string) *entity.Entity {
@@ -103,7 +150,7 @@ func TestRelationConstraint_Min(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			deps := relationWorkspace(t, rule, tc.entities, tc.rels)
-			svc := New(deps.Meta, deps)
+			svc := newWithGraph(t, deps, tc.rels)
 			res := svc.Check(context.Background(), tc.entities, nil)
 			gotViol := len(res.Violations) > 0
 			if gotViol != tc.wantViol {
@@ -177,7 +224,7 @@ func TestRelationConstraint_Max(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			deps := relationWorkspace(t, rule, tc.entities, tc.rels)
-			svc := New(deps.Meta, deps)
+			svc := newWithGraph(t, deps, tc.rels)
 			res := svc.Check(context.Background(), tc.entities, nil)
 			gotViol := len(res.Violations) > 0
 			if gotViol != tc.wantViol {
@@ -244,8 +291,9 @@ func TestRelationConstraint_UnevaluableTargetFailsClosed(t *testing.T) {
 		{ID: "RR-1", Type: "review-response",
 			Properties: map[string]any{"status": "open", "severity": "critical"}},
 	}
-	deps := relationWorkspace(t, rule, entities, [][3]string{{"TKT-1", "has-review-response", "RR-1"}})
-	svc := New(deps.Meta, deps)
+	edges := [][3]string{{"TKT-1", "has-review-response", "RR-1"}}
+	deps := relationWorkspace(t, rule, entities, edges)
+	svc := newWithGraph(t, deps, edges)
 	res := svc.Check(context.Background(), entities, nil)
 	if len(res.Violations) == 0 {
 		t.Fatal("max gate silently passed on an unevaluable target; it must fail closed")
@@ -296,7 +344,7 @@ func TestRelationConstraint_Boundaries(t *testing.T) {
 				rels = append(rels, [3]string{"TKT-1", "has-review", id})
 			}
 			deps := relationWorkspace(t, rule, entities, rels)
-			res := New(deps.Meta, deps).Check(context.Background(), entities, nil)
+			res := newWithGraph(t, deps, rels).Check(context.Background(), entities, nil)
 			if gotViol := len(res.Violations) > 0; gotViol != tc.wantViol {
 				t.Fatalf("wantViol=%v got=%v (%d relations, %d violations)",
 					tc.wantViol, gotViol, tc.nRels, len(res.Violations))
@@ -322,7 +370,7 @@ func TestRelationConstraint_MalformedWhereReported(t *testing.T) {
 	}
 	entities := []*entity.Entity{tkt("done")}
 	deps := relationWorkspace(t, rule, entities, nil)
-	res := New(deps.Meta, deps).Check(context.Background(), entities, nil)
+	res := newWithGraph(t, deps, nil).Check(context.Background(), entities, nil)
 	if len(res.LoadErrors) == 0 {
 		t.Fatal("a malformed where filter must be reported as a LoadError")
 	}
