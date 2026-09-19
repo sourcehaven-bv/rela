@@ -145,6 +145,13 @@ func StaticIndexSpecs(cfg *dataentryconfig.Config, meta *metamodel.Metamodel) []
 		if q.condition != "" && ev == nil {
 			ev = predicatefns.NewEvaluator(meta)
 		}
+		// A traversal indexes the type at the FAR END of the relation, which
+		// store.DerivedObjectSpec cannot express on the query's own spec (it
+		// carries one Type, and the index is partial on it). So a condition
+		// with a traversal contributes a SECOND spec — see TraversalIndexSpecs.
+		for _, ts := range staticTraversalSpecs(sq, q.condition, meta, ev) {
+			byKey[ts.Type+"\x00"+strings.Join(ts.Properties, "\x00")] = ts
+		}
 		props := staticIndexProps(sq, q.condition, meta, ev)
 		if len(props) == 0 {
 			continue

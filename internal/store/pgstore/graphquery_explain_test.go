@@ -12,6 +12,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/predicate"
+	"github.com/Sourcehaven-BV/rela/internal/queryplan"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/pgstore"
 )
@@ -202,11 +205,16 @@ func TestEndpointMatchExplainUsesDerivedIndex(t *testing.T) {
 	require.NoError(t, err)
 	ctx := context.Background()
 
-	// The index must exist on the TRAVERSED-TO type, not the queried type —
-	// a traversal condition has to contribute its own derived spec.
-	_, err = s.Reconcile(ctx, []store.DerivedObjectSpec{{
-		Kind: store.DerivedQueryIndex, Type: "concept", Properties: []string{"status"},
-	}}, store.ReconcileOptions{})
+	// The index must exist on the TRAVERSED-TO type, not the queried type.
+	// Reconcile the spec queryplan DERIVES for this traversal rather than a
+	// hand-written one, so the test proves the derivation and the lowering
+	// agree — a derivation that produced the wrong type or property would
+	// still create an index, and a hand-written spec would hide that.
+	specs := queryplan.TraversalIndexSpecs(
+		traversalExplainProgram(t), traversalExplainMeta(), "ticket")
+	require.Len(t, specs, 1, "queryplan must derive exactly one traversal index spec")
+	require.Equal(t, "concept", specs[0].Type)
+	_, err = s.Reconcile(ctx, specs, store.ReconcileOptions{})
 	require.NoError(t, err)
 
 	// 500 concepts, exactly one of them 'rare'; every ticket points at one.
@@ -247,4 +255,31 @@ func TestEndpointMatchExplainUsesDerivedIndex(t *testing.T) {
 			"traversed-to type; the join degrades to a scan of every row of that "+
 			"type:\n%s", plan)
 	}
+}
+
+// traversalExplainMeta / traversalExplainProgram describe the same traversal
+// the EXPLAIN below runs, so the derived spec and the executed query cannot
+// drift apart.
+func traversalExplainMeta() *metamodel.Metamodel {
+	return &metamodel.Metamodel{
+		Types: map[string]metamodel.CustomType{
+			"concept_status": {Values: []string{"active", "rare"}},
+		},
+		Entities: map[string]metamodel.EntityDef{
+			"ticket":  {Properties: map[string]metamodel.PropertyDef{}},
+			"concept": {Properties: map[string]metamodel.PropertyDef{"status": {Type: "concept_status"}}},
+		},
+		Relations: map[string]metamodel.RelationDef{
+			"caused-by": {From: []string{"ticket"}, To: []string{"concept"}},
+		},
+	}
+}
+
+func traversalExplainProgram(t *testing.T) *predicate.Program {
+	t.Helper()
+	env := predicate.NewEnv()
+	require.NoError(t, env.DeclareVar("entity", predicate.RecordType{}))
+	prog, err := predicate.Compile(env, `related(entity, 'caused-by', { status = 'rare' })`)
+	require.NoError(t, err)
+	return prog
 }
