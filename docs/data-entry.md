@@ -475,8 +475,9 @@ Matching is fuzzy and spans the title and the ID together, so you do not have to
 remember which one a word came from: `@fancy-rank` finds "FancyReport ranking
 fix", and a partial ID still puts an exact or prefix match at the top.
 
-**Narrowing by type.** A bare `@` lists the entity types, and while the query is
-still short the three closest types stay on offer above the results. Pressing
+**Narrowing by type.** A bare `@` lists the entity types, and they start
+narrowing from the very first letter you type: `@t` offers the types beginning
+with "t", and the three closest stay on offer above the results. Pressing
 Enter on a type (or clicking it) does not insert anything — it scopes the search
 to that type and shows it as a chip, so the next thing you type only matches
 entities of that type. This is the way to reach an entity when you remember its

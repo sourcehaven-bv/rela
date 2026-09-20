@@ -157,6 +157,35 @@ reintroducing the stale-index read initially did NOT fail the test written for
 it, which is why that test was strengthened to highlight the last entity rather
 than the first.
 
+## Post-demo fix: types narrow from the first letter
+
+Found by the operator running the local demo against the real `tickets/` project
+(24 types): the type list did not filter until the second character.
+
+Cause: `refreshTypeItems` gated the type list on `MIN_SEARCH_LEN = 2`. That
+constant exists to stop a one-character ENTITY search reaching the server, which
+is a different concern — filtering 24 type names is local and free. The two never
+needed to share a threshold. Fix: only a bare `@` (length 0) lists everything;
+from the first letter the names are ranked and capped as before.
+
+Measured against the real 24 types: `t` → test-case/test-suite/ticket, `d` →
+decision/doc-task/docs-checklist, `q` → qa-report alone, `z` → no matches. Prefix
+matches rank first. The entity search still waits for the second character, so no
+extra request is made.
+
+Two unit tests had pinned the old behaviour and now assert the new intent, plus
+one new test for the bare-`@` case and an e2e test for single-letter narrowing.
+
+**The first version of that e2e test failed against working code**, because it
+read `count()` once immediately after the keystroke and got the pre-render list.
+It now asserts on row CONTENT via `expect`, which auto-retries, and uses a type
+that cannot match the letter as the witness that narrowing happened.
+
+**Pre-existing e2e flakiness noted, not introduced.** Under `--repeat-each=3` the
+editor specs fail 1-2 of ~70 with a *different* test each run. Verified against
+the stashed baseline: 2 of 69 failed there too. Not caused by this change; worth
+its own ticket.
+
 ## Quality
 
 - [x] Code follows project patterns (check similar code)

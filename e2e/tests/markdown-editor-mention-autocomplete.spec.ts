@@ -55,6 +55,34 @@ test.describe('Markdown editor @ mention autocomplete', () => {
     await expect(form.mentionMenuEntityOptions).toHaveCount(0);
   });
 
+  test('one letter already narrows the type list', async ({ appPage }) => {
+    const form = new FormPage(appPage);
+    await form.navigateToCreateForm('feature');
+    await form.expectMarkdownEditorReady();
+    await form.clearEditorBuffer();
+
+    // A bare `@` offers every type — that is the discovery path. `bug` is one of
+    // them and does not match `f`, so it is the witness that narrowing happened.
+    await form.typeIntoEditor('see @');
+    await form.waitForMentionMenu();
+    await expect(form.mentionMenuTypeOptions.filter({ hasText: 'bug' })).toHaveCount(1);
+
+    // One letter narrows. Deliberately NOT gated on MIN_SEARCH_LEN: filtering
+    // type names is local, so it reacts from the first keystroke while the
+    // entity search still waits for the second character.
+    //
+    // Assert on CONTENT, not on a row count read once: the count is captured
+    // before Vue re-renders and reads the pre-keystroke list, which is exactly
+    // how the first version of this test failed against working code. `expect`
+    // auto-retries, a bare `count()` does not.
+    await form.typeIntoEditor('f');
+    await form.expectEditorText('see @f');
+    await expect(form.mentionMenuTypeOptions.filter({ hasText: 'feature' })).toHaveCount(1);
+    await expect(form.mentionMenuTypeOptions.filter({ hasText: 'bug' })).toHaveCount(0);
+    // Still capped at MAX_TYPE_SUGGESTIONS, and never empty for a real prefix.
+    await expect(form.mentionMenuTypeOptions).not.toHaveCount(0);
+  });
+
   test('the arrow keys move the highlight, one row at a time', async ({ appPage }) => {
     const form = new FormPage(appPage);
     await form.navigateToCreateForm('feature');
