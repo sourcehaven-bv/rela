@@ -5,7 +5,7 @@ title: 'Duplicate an entity from the detail page: relation-picker modal, then a 
 kind: enhancement
 priority: medium
 effort: l
-status: review
+status: done
 ---
 
 ## Description
