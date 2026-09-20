@@ -181,8 +181,8 @@ func relationPath(e ast.Expr, line int) ([]string, error) {
 	}
 }
 
-// Traversals returns every traversal the program compiles, in the order
-// [Program.inspect] visits them. A lowering uses this to build store
+// Traversals returns every traversal the program compiles, in the order the
+// program inspection walk visits them. A lowering uses this to build store
 // predicates; an empty result means the program needs no graph access beyond
 // its bindings.
 //

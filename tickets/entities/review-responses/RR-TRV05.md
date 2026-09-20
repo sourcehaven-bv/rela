@@ -1,7 +1,7 @@
 ---
 id: RR-TRV05
 type: review-response
-title: 'GateTraversal aliased the caller's Props slice'
+title: "GateTraversal aliased the caller's Props slice"
 severity: minor
 status: addressed
 finding: |-
