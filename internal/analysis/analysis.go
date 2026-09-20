@@ -64,14 +64,9 @@ type GapResult struct {
 	Missing []string
 }
 
-// CardinalityViolation represents a cardinality constraint violation.
-type CardinalityViolation struct {
-	EntityID     string
-	RelationType string
-	Constraint   string // "min_outgoing", "max_outgoing", "min_incoming", "max_incoming"
-	Required     int
-	Actual       int
-}
+// CardinalityViolation re-exports schema.CardinalityViolation so CLI
+// consumers don't need to import internal/schema directly.
+type CardinalityViolation = schema.CardinalityViolation
 
 // ValidationViolation re-exports validation.Violation so CLI
 // consumers don't need to import internal/validation directly.
@@ -341,29 +336,16 @@ func (s *Service) FindGaps(ctx context.Context, opts Options) []GapResult {
 
 // --- Cardinality analysis ---
 
-// cardinalitySpec is one direction of a relation's cardinality
-// constraints: the subject population (which entity types are checked),
-// the count direction, the min/max bounds with their constraint labels,
-// and the relation label reported on violations (the inverse id for the
-// incoming side, when declared).
-//
-// This is the single seam world-awareness (TKT-9KZGJO) will thread
-// through: subject population, counting scope, and violation identity
-// each have exactly one home — the spec, Service.countRelations, and
-// the two emit passes in Service.checkCardinality (TKT-RNBLAC).
-type cardinalitySpec struct {
-	relName       string // metamodel relation name — the count query key
-	direction     store.Direction
-	subjectTypes  []string // relDef.From (outgoing) / relDef.To (incoming)
-	minBound      *int     // nil or 0 disables the min check
-	maxBound      *int     // nil disables the max check; 0 forbids any edge
-	minConstraint string
-	maxConstraint string
-	relationLabel string // violation display label; inverse id on the incoming side
-}
-
 // CheckCardinality checks all cardinality constraints, filtered by
 // scope.
+//
+// The check itself lives in [schema.CheckCardinality]: `internal/mcp`
+// serves the same analysis over a gated reader and may not import this
+// package, so the one implementation sits in a package both consumers
+// already depend on (TKT-CICJSN). This method stays the CLI's entry
+// point — `rela analyze cardinality`, `rela validate --check
+// cardinality` and `analyze all` all reach it — and re-exports the
+// result type, so those surfaces need no schema import.
 //
 // A store error fails the run loudly: the first failing count aborts
 // with a wrapped error and NO violations. Reporting around a failed
@@ -373,149 +355,7 @@ type cardinalitySpec struct {
 // of the other analyses (see [Service.FindOrphansWithScope]): those can
 // only miss findings, a failed count invents them.
 func (s *Service) CheckCardinality(ctx context.Context, opts Options) ([]CardinalityViolation, error) {
-	// Non-nil even when empty: JSON callers serialize Details as [], not null.
-	violations := make([]CardinalityViolation, 0)
-
-	for relName, relDef := range s.deps.Meta.Relations {
-		incomingLabel := relName
-		if relDef.Inverse != nil && relDef.Inverse.GetID() != "" {
-			incomingLabel = relDef.Inverse.GetID()
-		}
-		specs := [2]cardinalitySpec{
-			{
-				relName: relName, direction: store.DirectionOutgoing, subjectTypes: relDef.From,
-				minBound: relDef.MinOutgoing, maxBound: relDef.MaxOutgoing,
-				minConstraint: "min_outgoing", maxConstraint: "max_outgoing",
-				relationLabel: relName,
-			},
-			{
-				relName: relName, direction: store.DirectionIncoming, subjectTypes: relDef.To,
-				minBound: relDef.MinIncoming, maxBound: relDef.MaxIncoming,
-				minConstraint: "min_incoming", maxConstraint: "max_incoming",
-				relationLabel: incomingLabel,
-			},
-		}
-		for _, spec := range specs {
-			v, err := s.checkCardinality(ctx, spec, opts.Scope)
-			if err != nil {
-				return nil, err
-			}
-			violations = append(violations, v...)
-		}
-	}
-	return violations, nil
-}
-
-// checkCardinality evaluates one direction of one relation. Each
-// subject is scanned and counted once; min violations are then emitted
-// before max violations (two passes over the cached counts) so the
-// output order matches the historical per-constraint grouping.
-func (s *Service) checkCardinality(
-	ctx context.Context, spec cardinalitySpec, scope map[string]bool,
-) ([]CardinalityViolation, error) {
-	minActive := spec.minBound != nil && *spec.minBound > 0
-	maxActive := spec.maxBound != nil
-	if !minActive && !maxActive {
-		return nil, nil
-	}
-	dirWord := "outgoing"
-	if spec.direction == store.DirectionIncoming {
-		dirWord = "incoming"
-	}
-
-	// Buffering every (subject, count) before emitting is deliberate: the
-	// two emit passes below reproduce the historical min-then-max grouped
-	// ordering. Collapsing this into a single count-and-emit pass would
-	// interleave min and max violations and reorder the output the
-	// pinning tests guard.
-	type subject struct {
-		id    string
-		face  entity.Face
-		count int
-	}
-	var subjects []subject
-	for _, subjectType := range spec.subjectTypes {
-		entities := collectEntities(ctx, s.deps.Store, store.EntityQuery{Type: subjectType, AllStates: true})
-		for _, e := range filterByScope(entities, scope) {
-			count, err := s.countRelationsFor(ctx, e, spec)
-			if err != nil {
-				return nil, fmt.Errorf("analysis: count %s %q relations of %s: %w", dirWord, spec.relName, e.ID, err)
-			}
-			subjects = append(subjects, subject{id: e.ID, face: e.Face, count: count})
-		}
-	}
-
-	var violations []CardinalityViolation
-	if minActive {
-		for _, sub := range subjects {
-			if sub.count < *spec.minBound {
-				violations = append(violations, CardinalityViolation{
-					EntityID:     sub.id,
-					RelationType: spec.relationLabel,
-					Constraint:   spec.minConstraint,
-					Required:     *spec.minBound,
-					Actual:       sub.count,
-				})
-			}
-		}
-	}
-	if maxActive {
-		for _, sub := range subjects {
-			if sub.count > *spec.maxBound {
-				violations = append(violations, CardinalityViolation{
-					EntityID:     sub.id,
-					RelationType: spec.relationLabel,
-					Constraint:   spec.maxConstraint,
-					Required:     *spec.maxBound,
-					Actual:       sub.count,
-				})
-			}
-		}
-	}
-	return violations, nil
-}
-
-// countRelations counts an entity's relations of one type in one
-// direction. Errors propagate — see the [Service.CheckCardinality]
-// error policy.
-func (s *Service) countRelations(
-	ctx context.Context, entityID, relName string, direction store.Direction,
-) (int, error) {
-	return s.deps.Store.CountRelations(ctx, store.RelationQuery{
-		EntityID:  entityID,
-		Direction: direction,
-		Type:      relName,
-	})
-}
-
-// countRelationsFor counts a subject's edges at the granularity the relation's
-// SCOPE implies (TKT-4Y6CMV).
-//
-// A content-scoped edge belongs to one state on its tail side — a draft may
-// implement a different control set than the published face — so its bound is
-// a claim about that state and must be counted per face. Counting by bare id
-// gives every state of an entity the same total, which lets one face's edge
-// satisfy another face's `min_outgoing` and reports a clean graph while the
-// published face genuinely has none.
-//
-// An identity-scoped edge belongs to the whole entity, so it is counted once
-// per entity exactly as before. The tail filter is applied only on the OUTGOING
-// direction, because that is the side a content scope pins; an incoming bound
-// counts edges arriving at the entity regardless of which state they left.
-func (s *Service) countRelationsFor(
-	ctx context.Context, e *entity.Entity, spec cardinalitySpec,
-) (int, error) {
-	def, ok := s.deps.Meta.Relations[spec.relName]
-	if !ok || !def.Scope.IsContent() || spec.direction != store.DirectionOutgoing {
-		return s.countRelations(ctx, e.ID, spec.relName, spec.direction)
-	}
-	face := e.Face
-	return s.deps.Store.CountRelations(ctx, store.RelationQuery{
-		EntityID:  e.ID,
-		Direction: spec.direction,
-		Type:      spec.relName,
-		FromFace:  &face,
-	})
+	return schema.CheckCardinality(ctx, s.deps.Store, s.deps.Meta, opts.Scope)
 }
 
 // --- Custom validations ---

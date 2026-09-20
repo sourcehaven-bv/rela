@@ -5,7 +5,7 @@ title: 'MCP analyze_cardinality: delete the fifth copy, call the consolidated an
 kind: refactor
 priority: high
 effort: s
-status: backlog
+status: in-progress
 ---
 
 Follow-up from TKT-RNBLAC's code review. TKT-RNBLAC consolidated the four
