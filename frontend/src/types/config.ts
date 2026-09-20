@@ -522,7 +522,7 @@ export interface GanttConfig {
   /** Relation types traversed parent-to-child, as one set. */
   hierarchy: string[]
   multi_parent: 'first' | 'error'
-  on_cycle: 'error' | 'prune'
+  on_cycle: 'error' | 'prune' | 'mark'
   /** Levels expanded on first load; deeper levels reachable by drill-down. */
   default_depth: number
   max_depth: number
