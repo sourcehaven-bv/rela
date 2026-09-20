@@ -11,7 +11,7 @@ why3: recordSuccess deliberately stamps the run's START time, so a long run cann
 why4: Nothing downstream could catch it. The clock-jump guard in runDueTasks clamps only retries too far in the FUTURE; a retry in the past is exactly the case it does not cover. The backoff ladder would normally escalate to ERROR at four consecutive failures, but every retry took the skip path in doExecuteTask, which records neither success nor failure, so failures stayed at 1 forever and the escalation was unreachable.
 why5: 'The skip path is right for the case it was written for and wrong for one it cannot distinguish. A run already pending means either a healthy task running long or a wedged task whose previous run never cleared; the scheduler sees the same sentinel for both. Choosing "record nothing" made the healthy case correct and the wedged case permanently silent — and because the wedge blocks the shared queue fingerprint, one stuck task takes every other task with it.'
 prevention: 'Three regression tests pin the corrected behaviour, two of which fail against the old code with the exact production symptom: a retry stamped before the failure that produced it, and a failure count that never advances. The existing test asserted retryAt == start+delay and so pinned the defect; it passed only because its injected clock made the run instantaneous, which hid the start-vs-now distinction entirely. More generally: a test that fixes elapsed time at ~0 cannot tell those two clocks apart, so any duration-derived value needs a case where elapsed is larger than the value being derived.'
-status: ready
+status: backlog
 ---
 
 ## Description
