@@ -74,7 +74,7 @@ func TestFindOrphansWithScope(t *testing.T) {
 	})
 
 	t.Run("no scope", func(t *testing.T) {
-		orphans := svc.FindOrphansWithScope(context.Background(), analysis.Options{})
+		orphans, _ := svc.FindOrphansWithScope(context.Background(), analysis.Options{})
 		if len(orphans) != 1 {
 			t.Errorf("got %d orphans, want 1", len(orphans))
 		}
@@ -84,7 +84,7 @@ func TestFindOrphansWithScope(t *testing.T) {
 	})
 
 	t.Run("with scope including orphan", func(t *testing.T) {
-		orphans := svc.FindOrphansWithScope(context.Background(), analysis.Options{
+		orphans, _ := svc.FindOrphansWithScope(context.Background(), analysis.Options{
 			Scope: map[string]bool{"DOC-003": true},
 		})
 		if len(orphans) != 1 {
@@ -93,7 +93,7 @@ func TestFindOrphansWithScope(t *testing.T) {
 	})
 
 	t.Run("with scope excluding orphan", func(t *testing.T) {
-		orphans := svc.FindOrphansWithScope(context.Background(), analysis.Options{
+		orphans, _ := svc.FindOrphansWithScope(context.Background(), analysis.Options{
 			Scope: map[string]bool{"DOC-001": true, "DOC-002": true},
 		})
 		if len(orphans) != 0 {
@@ -116,7 +116,7 @@ func TestFindDuplicates(t *testing.T) {
 	})
 
 	t.Run("finds duplicates", func(t *testing.T) {
-		dups := svc.FindDuplicates(context.Background(), analysis.Options{})
+		dups, _ := svc.FindDuplicates(context.Background(), analysis.Options{})
 		if len(dups) != 1 {
 			t.Errorf("got %d duplicate groups, want 1", len(dups))
 		}
@@ -126,7 +126,7 @@ func TestFindDuplicates(t *testing.T) {
 	})
 
 	t.Run("scope filters duplicates", func(t *testing.T) {
-		dups := svc.FindDuplicates(context.Background(), analysis.Options{
+		dups, _ := svc.FindDuplicates(context.Background(), analysis.Options{
 			Scope: map[string]bool{"DOC-001": true},
 		})
 		if len(dups) != 0 {
@@ -160,7 +160,7 @@ func TestFindUniqueViolations(t *testing.T) {
 	})
 
 	t.Run("finds the email collision, not nickname or cross-type", func(t *testing.T) {
-		v := svc.FindUniqueViolations(context.Background(), analysis.Options{})
+		v, _ := svc.FindUniqueViolations(context.Background(), analysis.Options{})
 		if len(v) != 1 {
 			t.Fatalf("got %d violations, want 1: %+v", len(v), v)
 		}
@@ -174,7 +174,7 @@ func TestFindUniqueViolations(t *testing.T) {
 	})
 
 	t.Run("scope filters violations", func(t *testing.T) {
-		v := svc.FindUniqueViolations(context.Background(), analysis.Options{
+		v, _ := svc.FindUniqueViolations(context.Background(), analysis.Options{
 			Scope: map[string]bool{"PERS-JV": true}, // only one of the pair in scope
 		})
 		if len(v) != 0 {
@@ -190,7 +190,7 @@ func TestFindUniqueViolations(t *testing.T) {
 			addEntity(s, "DOC-1", "doc", map[string]any{"title": "same"})
 			addEntity(s, "DOC-2", "doc", map[string]any{"title": "same"})
 		})
-		if v := s2.FindUniqueViolations(context.Background(), analysis.Options{}); len(v) != 0 {
+		if v, _ := s2.FindUniqueViolations(context.Background(), analysis.Options{}); len(v) != 0 {
 			t.Errorf("got %d violations, want 0 (no unique props declared)", len(v))
 		}
 	})
@@ -583,7 +583,8 @@ func TestRunValidations(t *testing.T) {
 		addEntity(s, "TKT-001", "ticket", map[string]any{"status": "in-progress"})
 	})
 
-	violations := svc.RunValidations(context.Background(), analysis.Options{}).Violations
+	result, _ := svc.RunValidations(context.Background(), analysis.Options{})
+	violations := result.Violations
 	if len(violations) != 1 {
 		t.Fatalf("got %d violations, want 1", len(violations))
 	}
@@ -631,18 +632,20 @@ func TestRunValidationsFiltered(t *testing.T) {
 	})
 
 	t.Run("filter by rule name", func(t *testing.T) {
-		violations := svc.RunValidationsFiltered(
+		res, _ := svc.RunValidationsFiltered(
 			context.Background(), analysis.Options{}, []analysis.ValidationFilter{{RuleName: "ticket-rule"}},
-		).Violations
+		)
+		violations := res.Violations
 		if len(violations) != 1 || violations[0].RuleName != "ticket-rule" {
 			t.Errorf("got %#v, want one ticket-rule violation", violations)
 		}
 	})
 
 	t.Run("filter by entity type", func(t *testing.T) {
-		violations := svc.RunValidationsFiltered(
+		res, _ := svc.RunValidationsFiltered(
 			context.Background(), analysis.Options{}, []analysis.ValidationFilter{{EntityType: "bug"}},
-		).Violations
+		)
+		violations := res.Violations
 		if len(violations) != 1 || violations[0].RuleName != "bug-rule" {
 			t.Errorf("got %#v, want one bug-rule violation", violations)
 		}
