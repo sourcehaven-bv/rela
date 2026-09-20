@@ -16,7 +16,7 @@ func TestRankingTitleProperty(t *testing.T) {
 		"arbitrary required string":  {EntityDef{Properties: map[string]PropertyDef{"code": str}}, ""},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if got := tc.def.RankingTitleProperty(); got != tc.want {
+			if got := RankingTitleProperty(&tc.def); got != tc.want {
 				t.Errorf("got %q, want %q", got, tc.want)
 			}
 		})

@@ -99,7 +99,7 @@ func searchTitles(meta *metamodel.Metamodel) pgstore.SearchTitles {
 	titles := pgstore.SearchTitles{}
 	for name := range meta.Entities {
 		def := meta.Entities[name]
-		if prop := def.RankingTitleProperty(); prop != "" {
+		if prop := metamodel.RankingTitleProperty(&def); prop != "" {
 			titles[name] = prop
 		}
 	}

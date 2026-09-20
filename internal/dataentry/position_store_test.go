@@ -43,7 +43,7 @@ func TestPosition_StoreMatchesGoPath(t *testing.T) {
 				inScope[id] = true
 				req := httptest.NewRequest(http.MethodGet, positionURL(t, id, scope), http.NoBody).WithContext(ctx)
 				rec := httptest.NewRecorder()
-				pos, handled := app.storePosition(rec, req, scope, id)
+				pos, handled := storePosition(app, rec, req, scope, id)
 				if !handled || pos == nil {
 					t.Fatalf("%s: store path declined or failed: %d %s", id, rec.Code, rec.Body)
 				}
@@ -78,7 +78,7 @@ func TestPosition_StoreMatchesGoPath(t *testing.T) {
 				}
 				req := httptest.NewRequest(http.MethodGet, positionURL(t, id, scope), http.NoBody).WithContext(ctx)
 				rec := httptest.NewRecorder()
-				pos, handled := app.storePosition(rec, req, scope, id)
+				pos, handled := storePosition(app, rec, req, scope, id)
 				if !handled || pos != nil || rec.Code != http.StatusNotFound {
 					t.Errorf("%s: want a written 404, got handled=%v pos=%v code=%d", id, handled, pos, rec.Code)
 				}
@@ -99,7 +99,7 @@ func TestPosition_StoreDeclines(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "/api/v1/_position", http.NoBody).WithContext(ctx)
 			rec := httptest.NewRecorder()
-			if pos, handled := app.storePosition(rec, req, scope, "TKT-001"); handled || pos != nil {
+			if pos, handled := storePosition(app, rec, req, scope, "TKT-001"); handled || pos != nil {
 				t.Errorf("store path took a scope it must decline")
 			}
 		})

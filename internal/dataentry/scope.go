@@ -195,7 +195,7 @@ func (a *App) handleV1EntityPosition(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if pos, handled := a.storePosition(w, r, scope, id); handled {
+	if pos, handled := storePosition(a, w, r, scope, id); handled {
 		if pos != nil {
 			writeV1JSON(w, http.StatusOK, *pos)
 		}
@@ -241,8 +241,10 @@ func (a *App) handleV1EntityPosition(w http.ResponseWriter, r *http.Request) {
 // The ACL is honored exactly as on the list page: the plan's query IS the
 // principal's compiled read query, so Total, Prev and Next describe visible
 // rows only, and an id outside them is the same not_in_scope 404.
-func (a *App) storePosition(
-	w http.ResponseWriter, r *http.Request, scope ScopeDescriptor, id string,
+//
+// A function, not a method: App is at its method load line.
+func storePosition(
+	a *App, w http.ResponseWriter, r *http.Request, scope ScopeDescriptor, id string,
 ) (*v1.Position, bool) {
 	if scope.Source == "search" {
 		return nil, false

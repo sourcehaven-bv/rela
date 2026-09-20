@@ -134,7 +134,7 @@ func (s *Store) SearchVisibleFields(
 		}
 		defer rows.Close()
 
-		s.emitFieldVisibleRows(ctx, rows, q, hidden, yield)
+		emitFieldVisibleRows(ctx, s.db, rows, q, hidden, yield)
 	}
 }
 
@@ -143,8 +143,8 @@ func (s *Store) SearchVisibleFields(
 // survivors up to q.Limit. Any scan/row/hidden-func error is yielded and stops
 // iteration. Extracted from SearchVisibleFields to keep that closure's
 // branching within the complexity budget.
-func (s *Store) emitFieldVisibleRows(
-	ctx context.Context, rows pgx.Rows, q search.Query, hidden search.HiddenFieldsFunc,
+func emitFieldVisibleRows(
+	ctx context.Context, db DBTX, rows pgx.Rows, q search.Query, hidden search.HiddenFieldsFunc,
 	yield func(search.Hit, error) bool,
 ) {
 	// Pass 1 decides every row it can from id and properties alone, and
@@ -189,7 +189,7 @@ func (s *Store) emitFieldVisibleRows(
 	}
 	rows.Close()
 
-	bodies, err := s.searchBodies(ctx, bodyless)
+	bodies, err := searchBodies(ctx, db, bodyless)
 	if err != nil {
 		yield(search.Hit{}, fmt.Errorf("%w: pgstore visible search bodies: %w", search.ErrScope, err))
 		return
@@ -222,11 +222,11 @@ type stateKey struct {
 // searchBodies loads the bodies of the given ids, every state, keyed by
 // state. The caller picks the state it resolved; loading all of an id's
 // states keeps this one statement regardless of world.
-func (s *Store) searchBodies(ctx context.Context, ids []string) (map[stateKey]string, error) {
+func searchBodies(ctx context.Context, db DBTX, ids []string) (map[stateKey]string, error) {
 	if len(ids) == 0 {
-		return nil, nil
+		return map[stateKey]string{}, nil
 	}
-	rows, err := s.db.Query(ctx, "SELECT id, face, content FROM entities WHERE id = ANY($1::text[])", ids)
+	rows, err := db.Query(ctx, "SELECT id, face, content FROM entities WHERE id = ANY($1::text[])", ids)
 	if err != nil {
 		return nil, err
 	}

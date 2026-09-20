@@ -127,7 +127,7 @@ func planListPushdown(
 // listNarrowing is what decides a list request's MEMBERSHIP beyond its
 // filter[...] params: the view's `condition:` and its query scope. It is
 // resolved once and shared by the two consumers that must agree on it — the
-// page ([App.listPage]) and the position inside that page
+// page (App.listPage) and the position inside that page
 // (handleV1EntityPosition) — because both narrowings are invisible to
 // planListPushdown. A caller that planned a pushdown without consulting them
 // would answer for the UNFILTERED superset (BUG-F1LTP1's failure shape), which

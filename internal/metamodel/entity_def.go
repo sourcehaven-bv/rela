@@ -137,13 +137,14 @@ func (e *EntityDef) GetDefaultStatus(m *Metamodel) string {
 	return "draft"
 }
 
-// RankingTitleProperty names the property search ranking may treat as this
-// type's title: a declared, non-template display_property, else a conventional
-// required `title`/`name`/`label`. It is deliberately narrower than
+// RankingTitleProperty names the property search ranking may treat as e's
+// title: a declared, non-template display_property, else a conventional
+// required `title`/`name`/`label`. A function rather than a method because
+// EntityDef is at its exported-method load line. It is deliberately narrower than
 // [EntityDef.GetPrimaryProperty], which also falls back to ANY required string
 // property — a fine last resort for a label, but not a reason to rank a type
 // by an arbitrary field. Empty means "rank by id".
-func (e *EntityDef) RankingTitleProperty() string {
+func RankingTitleProperty(e *EntityDef) string {
 	if e.DisplayProperty != "" {
 		if isDisplayTemplate(e.DisplayProperty) {
 			return ""
