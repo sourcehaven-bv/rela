@@ -105,8 +105,9 @@ header path must be opt-in per caller rather than a blanket swap.
 
 ## Acceptance criteria
 
-1. Heap for one list request is flat in the type's entity count, not linear:
-5,000 x 20KB renders within a few MB, not ~100 MB.
+1. One list request reads no body it will not render: body reads are bounded by
+page size, not by the type's entity count. Asserted by COUNTING bodies served
+(`storetest.BodyWatch`), not by measuring heap — see the test plan for why.
 2. `total`, sort order, filtering, and free-text results are byte-identical to
 today for every existing test.
 3. ACL row-gating and field redaction are unchanged — asserted as equivalence
@@ -117,11 +118,19 @@ pattern).
 
 ## Test plan
 
-- **Retention test against a real backend** (pgstore, DB-gated like the existing
-suite): assert heap growth for one list request is bounded well below the
-dataset's body size. Must fail on current develop.
-- **Explicitly not memstore** for that assertion — it shares body strings and
-reports ~1 MB either way, which is what let this ship.
+- **Body-count assertion via `storetest.BodyWatch`**, running under the default
+`go test ./...` on every backend. Counting is the same property as retention
+asked in a form every backend can answer: exact, thresholdless, no GC or
+allocator noise.
+- **Why counting and not heap.** The original plan was a DB-gated pgstore heap
+test, explicitly not on memstore, because memstore shares body strings and
+reports ~1 MB whether or not the defect is present. That reasoning about
+memstore is correct, but the conclusion drawn from it was wrong: a pgstore-only
+assertion does not run in the default test path, so the defect could return
+anywhere the one DB-gated job was not watching. Counting fails on memstore too,
+and catches a 5-body regression that no heap threshold could separate from
+noise. Mutation-verified: reverting the AllowAll branch to `ListEntities` fails
+with "list of 50 rows read 50 bodies, want 0" — on memstore.
 - Equivalence tests: same ids, same order, same `total` before/after, across
 AllowAll / scoped / DenyAll verdicts.
 - ACL equivalence asserted against `ListEntities` output, mutation-verified by

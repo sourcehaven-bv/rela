@@ -49,14 +49,15 @@ export defect exactly — `row 0 content = "", want "the body of TKT-1"`.
 packages. `just lint`, `just arch-lint`, `just comment-lint`, `just
 plimsoll` green. dataentry coverage 82.8% against a 55% floor.
 
-## Deviation from the written acceptance criteria
+## Note on the instrument
 
-Acceptance criterion 1 and the test plan both specify a DB-gated **heap**
-assertion, explicitly not on memstore. That instrument was replaced with body
-**counting** (`storetest.BodyWatch`), for the reason the ticket itself
-supplies: memstore is blind to body retention, so a heap probe there cannot
-fail, and a pgstore-only test does not run in the default `go test ./...`.
+Acceptance criterion 1 originally specified a DB-gated **heap** assertion,
+explicitly not on memstore. It was raised as a deliberate deviation, reviewed,
+and the criterion itself was changed to body **counting**
+(`storetest.BodyWatch`) — so the ticket now states what shipped rather than
+carrying a criterion nobody intends to meet.
 
-This is a deliberate deviation from a written criterion and is flagged for
-review rather than absorbed silently. See the Resolution section of BUG-SDMD6O
-and [[AM-list-endpoint-bounded-retention]] for the full argument.
+The reasoning is on BUG-SDMD6O's test plan and in
+[[AM-list-endpoint-bounded-retention]]: counting fails on memstore where a heap
+probe cannot, catches a 5-body regression no threshold separates from noise,
+and runs under the default `go test ./...` instead of one DB-gated job.
