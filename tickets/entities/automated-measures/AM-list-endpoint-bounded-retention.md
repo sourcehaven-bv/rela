@@ -4,7 +4,7 @@ type: automated-measure
 title: "One list request reads no body it will not render, whatever the type size"
 kind: test
 location: internal/dataentry/listbodies_test.go + internal/store/storetest/bodywatch.go
-status: implemented
+status: active
 description: "A list request over a type with N large-bodied entities must not read N bodies to render one page. Pins BUG-SDMD6O. Asserted by COUNTING bodies (storetest.BodyWatch), not by measuring heap — counting is backend-independent, so it fails on memstore too, which a heap probe cannot."
 ---
 
@@ -52,9 +52,11 @@ original plan correctly identified as blind to the heap probe.
    expectations — the pattern TKT-1ESTYJ used, and mutation-verified by removing
    the gate and confirming failure.
 4. Callers that genuinely need bodies still receive them. `include_content=true`
-   pays for the PAGE (asserted at exactly per_page, not 0 and not N), and a list
-   export with an `export_render:` Lua script receives row bodies — that one had
-   silently regressed to empty strings when collection reads became content-free.
+   pays for the PAGE (asserted at exactly per_page, not 0 and not N). The other
+   such caller, a list export with an `export_render:` Lua script, is pinned by
+   [[AM-export-render-receives-row-bodies]] instead — it had silently regressed
+   to empty strings (BUG-RGVKRV), and its two assertions constrain this one:
+   bodies reach the consumer that renders them, and no one else.
 
 ## Note
 

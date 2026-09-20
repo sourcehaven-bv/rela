@@ -11,7 +11,7 @@ prevention: "storetest.BodyWatch counts bodies served to a read path, so 'this p
 title: GET /api/v1/<type> retains every entity of the type (bodies included) to render one page
 priority: high
 effort: m
-status: review
+status: backlog
 ---
 
 ## Symptom
@@ -157,21 +157,22 @@ Mutation-verified against the exact defect. Reverting the AllowAll branch to
 `ListEntities` fails with *"list of 50 rows read 50 bodies, want 0"* — on
 **memstore**, the backend a heap probe reports ~1 MB on either way.
 
-### The regression the pin found
+### The regression the pin found — filed as [[BUG-RGVKRV]]
 
 Requirement 4 asked whether any list row legitimately needs a body. One does,
 and it had silently broken: a list export with an `export_render:` Lua script
-reaches `row.content`, and since collection reads became content-free it was
-receiving the **empty string for every row**. The export still returned 200 and
-still emitted a document; only the bodies were gone. Confirmed by checking out
-`bb8d3a144~1`, where the same test passes.
+was receiving the **empty string for every row**.
 
-Fixed with a `loadBodies` seam called on the override path only, after the ACL
-scope, the field-redaction pass and the cap — so it loads at most
-`listExportCap` bodies, for rows that already survived every gate. The
-built-in column table renders columns and stays content-free, pinned in both
-directions.
+That is a distinct defect from this one, with its own cause and its own
+preventive measure, so it is filed separately as **BUG-RGVKRV** rather than
+recorded here — a data-loss-shaped regression should not live as a note on an
+already-fixed unrelated bug. Its fix and both directions of its pin
+(`AM-export-render-receives-row-bodies`) ship in this same change, because the
+pin for THIS bug is what surfaced it and the two assertions constrain each
+other: bodies are loaded for the consumer that renders them, and for no one
+else.
 
-The existing override tests could not have caught this: the shared
-`fakeScriptEngine` records row IDs only, so the rows arrived in the right order
-with the right ids and every body empty.
+Requirement 4 is therefore met, though not in the way the ticket expected. It
+anticipated that export would need the whole-entity path retained. What it
+actually needs is a narrow, gated refill on one path — see BUG-RGVKRV for why
+that placement matters.
