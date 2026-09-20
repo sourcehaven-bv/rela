@@ -39,7 +39,7 @@ func createWorld(t *testing.T) *world {
 
 // TestCreate_MatchesRuntime is the create-verb conformance guard. The
 // production create path authorizes with the new entity's concrete ID
-// (entitymanager.ApplyEntity: EntitySubject{ID: e.ID}), so the runtime
+// (entitymanager.ApplyEntity: acl.NewEntitySubject(type, e.ID, face)), so the runtime
 // FOLDS local-role-via-edge routes into a create decision — create is NOT
 // globals-only in production. The report must therefore credit an
 // edge-conferred create exactly as the runtime does: reporting create as
