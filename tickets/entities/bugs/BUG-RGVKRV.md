@@ -12,7 +12,7 @@ why3: The content-free change was made for the list-rendering path, where no sur
 why4: The two paths were not distinguished because they differ only in what the CONSUMER does with a row, not in how the row is fetched — a built-in table renders columns, a Lua script may reach any field. The fetch is shared; the requirement is not.
 why5: 'Systemic: a performance narrowing was applied at a shared fetch seam by reasoning about the callers known at the time. Removing data from a shared read is a silent, type-safe change for any caller that merely stops seeing it — an empty string is a valid string. Nothing forced the change to enumerate its consumers, and the one consumer with a different requirement degraded quietly instead of failing.'
 prevention: 'P1 (implemented): a `loadBodies` seam on the export handler refills bodies on the override path only, after the ACL scope, field redaction and the cap — so at most listExportCap bodies, all already through every gate. P2 (implemented): AM-export-render-receives-row-bodies pins both directions — the override path receives real bodies, the built-in table still reads none — so a future narrowing cannot re-empty one without failing the other. P3 (not done, follow-up): the shared fakeScriptEngine records row ids only, so any assertion about what a script RECEIVES is invisible to it; widening it would retire a whole class of blind spot beyond this bug.'
-status: ready
+status: backlog
 ---
 
 ## Symptom
