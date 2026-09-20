@@ -58,8 +58,8 @@
     "source-map": "^0.8.0",
     "tsx": "^4.23.13",
     "typescript": "~6.0.3",
-    "typescript-eslint": "^8.69.0",
-    "vite": "^8.2.2",
+    "typescript-eslint": "^8.70.0",
+    "vite": "^8.3.0",
     "vitest": "^4.1.11",
     "vue-eslint-parser": "^10.4.1",
     "vue-tsc": "^3.3.11"
