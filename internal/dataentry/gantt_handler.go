@@ -327,9 +327,8 @@ func ganttReadVerdict(ctx context.Context, typeName string) (ganttVerdict, *gant
 //     ID/Type/Properties WITHOUT markdown bodies (which the gantt never
 //     reads; profiling showed body decode dominated the request), redacted
 //     via visibility.RedactHeader.
-//   - scoped Query verdict: the ACL pushdown has no header variant, so this
-//     falls back to the full-entity scoped lister — correct, slower. Falling
-//     back rather than approximating keeps the failure direction closed.
+//   - scoped Query verdict: the scoped lister, which reads content-free
+//     rows through the ACL pushdown (rowcontent.go).
 //
 // Redaction happens HERE, exactly once per entity on either path
 // (visibility.Redact/RedactHeader must never see already-redacted input).
@@ -578,17 +577,20 @@ func (h *ganttHandler) collectGanttRound(
 				Depth:          ganttClosureRoundDepth,
 			},
 		}
+		// Headers: the gantt reads ids, types and properties, never a body
+		// (TKT-U9DYW4). Redaction happens here, exactly once per entity.
 		var fresh []*entity.Entity
-		for e, qerr := range h.store.GraphQuery(ctx, q) {
+		for hdr, qerr := range store.GraphQueryHeaders(ctx, h.store, q) {
 			if qerr != nil {
 				slog.Error("gantt: subtree query failed", "type", typeName, "error", qerr)
 				return nil, &ganttError{http.StatusInternalServerError, "internal", "Failed to query subtree", ""}
 			}
-			if _, seen := nodes[e.ID]; seen {
+			if _, seen := nodes[hdr.ID]; seen {
 				continue
 			}
-			fresh = append(fresh, visibility.Redact(ctx, h.redactor(), e))
-			next = append(next, e.ID)
+			red := visibility.RedactHeader(ctx, h.redactor(), hdr)
+			fresh = append(fresh, &entity.Entity{ID: red.ID, Type: red.Type, Properties: red.Properties})
+			next = append(next, hdr.ID)
 		}
 		if gerr := h.addGanttNodes(s, g, typeName, fresh, nodes); gerr != nil {
 			return nil, gerr
@@ -674,7 +676,20 @@ func (b *ganttBudget) take() bool {
 func (h *ganttHandler) ganttEdgesForType(
 	ctx context.Context, relType string, nodes map[string]*ganttNode, subtreeRoot string,
 ) (edges [][2]string, external bool, gerr *ganttError) {
-	for rel, err := range h.store.ListRelations(ctx, store.RelationQuery{Type: relType}) {
+	q := store.RelationQuery{Type: relType}
+	if subtreeRoot != "" {
+		// A drilled request needs only the edges touching its node set: the
+		// in-set ones build the tree, and an edge from OUTSIDE onto an in-set
+		// node is the `external` signal below. Both have an endpoint in the
+		// set, so bounding the read by it loses nothing, where the unbounded
+		// read shipped every edge of the relation type (TKT-U9DYW4).
+		q.EntityIDs = make([]string, 0, len(nodes))
+		for id := range nodes {
+			q.EntityIDs = append(q.EntityIDs, id)
+		}
+		sort.Strings(q.EntityIDs)
+	}
+	for rel, err := range h.store.ListRelations(ctx, q) {
 		if err != nil {
 			slog.Error("gantt: relation list failed", "relation", relType, "error", err)
 			return nil, false, &ganttError{http.StatusInternalServerError, "internal", "Failed to list relations", ""}

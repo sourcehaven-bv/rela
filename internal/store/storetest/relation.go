@@ -1,6 +1,7 @@
 package storetest
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -273,6 +274,30 @@ func RunRelationTests(t *testing.T, f Factory) {
 		}
 		// Duplicated and unknown ids are harmless.
 		require.Len(t, keys(store.RelationQuery{EntityIDs: []string{"A", "A", "nope"}, Direction: store.DirectionOutgoing}), 1)
+	})
+
+	// A batch far larger than any backend's bind-parameter budget must still
+	// be ONE correct answer: a gantt subtree or a wide page can hand a store
+	// tens of thousands of ids (TKT-U9DYW4).
+	t.Run("ListEntityIDsLargeBatch", func(t *testing.T) {
+		s := f(t)
+		for _, id := range []string{"A", "B"} {
+			require.NoError(t, s.CreateEntity(ctx(), entity.New(id, "node")))
+		}
+		_, err := s.CreateRelation(ctx(), "A", "links", "B", nil)
+		require.NoError(t, err)
+		ids := make([]string, 0, 40001)
+		for i := range 40000 {
+			ids = append(ids, fmt.Sprintf("MISSING-%d", i))
+		}
+		ids = append(ids, "B")
+		n := 0
+		for r, err := range s.ListRelations(ctx(), store.RelationQuery{EntityIDs: ids}) {
+			require.NoError(t, err)
+			require.Equal(t, "A", r.From)
+			n++
+		}
+		require.Equal(t, 1, n, "an edge with one endpoint in the batch is returned exactly once")
 	})
 
 	t.Run("ListEntityIDsNilIsUnfilteredEmptyIsNothing", func(t *testing.T) {
