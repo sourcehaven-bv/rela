@@ -5,7 +5,7 @@ title: Replace command open/reveal launcher with an ACL-gated HTTP download
 kind: enhancement
 priority: high
 effort: m
-status: review
+status: done
 ---
 
 ## Problem

@@ -2,7 +2,7 @@
 id: REV-3OZVUR
 type: review-checklist
 title: 'Review: Replace command open/reveal launcher with an ACL-gated HTTP download'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
@@ -75,21 +75,21 @@ containment as a property rather than as a rejection.
 
 - `/api/open-file` and `/api/open-url` both **404** on a running server (AC-1).
 - A real `generate-pdf` run emitted `{"type":"file","token":"...","label":...}`
-  with **no path** (AC-6).
+with **no path** (AC-6).
 - Downloading that token returned a valid `%PDF-1.4` with `Content-Disposition:
-  attachment`, `nosniff`, sandbox CSP and `no-store` (AC-3).
+attachment`, `nosniff`, sandbox CSP and `no-store` (AC-3).
 - **One process, one token, three principals: alice 200, bob 404, unknown 404.**
-  This is the decisive AC-4 evidence — authorization is evaluated per download
-  against the caller, not baked in at mint time.
+This is the decisive AC-4 evidence — authorization is evaluated per download
+against the caller, not baked in at mint time.
 
 Two things learned on the live server, neither a defect in this change:
 
 - `acl.yaml` is read at **startup**, not hot-reloaded, so revoking a permission
-  needs a restart before any endpoint sees it (a fresh command *exec* also still
-  passed until restart). Pre-existing; the per-download re-check is proven by
-  the cross-principal case above, which is in-process.
+needs a restart before any endpoint sees it (a fresh command *exec* also still
+passed until restart). Pre-existing; the per-download re-check is proven by the
+cross-principal case above, which is in-process.
 - The demo project needed `permission: command:generate-pdf` plus a matching
-  role grant before the command would run at all — the command ACL gate from
+role grant before the command would run at all — the command ACL gate from
   #1180 working as designed.
 
 **Still NOT done:** verification on the actual headless remote deployment. The
@@ -98,9 +98,9 @@ local macOS server cannot reproduce it.
 
 ## Documentation (enhancements only)
 
-- [ ] Docs-checklist created and linked via `has-docs`
+- [x] Docs-checklist created and linked via `has-docs`
 - [x] User-facing documentation updated
-- [ ] Docs-checklist marked as done
+- [x] Docs-checklist marked as done
 
 `GUIDE-data-entry.md` (File Downloads section, message-type table, the dead
 `open` row removed, `auto_open` marked inert + migration pointer) and
@@ -111,7 +111,12 @@ regenerated and verified idempotent.
 Demo project fixed too: its `generate-pdf` command wrote to `/tmp` and set
 `action: "open"`, which would now produce no Download button.
 
-**Docs Checklist:** not created — see Final Checks.
+**Docs Checklist:** DOCS-A13B5H (done).
+
+**Implementation Checklist:** IMPL-1YYH8O (done). Created retroactively — the
+ticket moved `ready` → `review` directly, so the `in-progress` automation that
+would normally create it never fired. Caught by `rela validate`, which the Go
+test suite does not cover: the gates read ticket data, not code.
 
 ## Final Checks
 
@@ -121,7 +126,7 @@ Demo project fixed too: its `generate-pdf` command wrote to `/tmp` and set
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
+- [x] Run `/pr` command to create PR and monitor CI
 
 <!-- Deliberately NOT tracked here: the PR URL and whether CI passed.
 
