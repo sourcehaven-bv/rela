@@ -71,9 +71,30 @@ re-check fails both subtests.
 `TestCommandExecEmitsTokenNotPath`; `_OutsideBytesAreUnreachable` asserts
 containment as a property rather than as a rejection.
 
-**Manual verification is NOT done.** The ticket's test plan calls for confirming
-on the real headless deployment, since the original symptom (silent no-op) is
-only observable there. That is the one item outstanding.
+**Live server verification (rela-server + the demo project, port 8799):**
+
+- `/api/open-file` and `/api/open-url` both **404** on a running server (AC-1).
+- A real `generate-pdf` run emitted `{"type":"file","token":"...","label":...}`
+  with **no path** (AC-6).
+- Downloading that token returned a valid `%PDF-1.4` with `Content-Disposition:
+  attachment`, `nosniff`, sandbox CSP and `no-store` (AC-3).
+- **One process, one token, three principals: alice 200, bob 404, unknown 404.**
+  This is the decisive AC-4 evidence — authorization is evaluated per download
+  against the caller, not baked in at mint time.
+
+Two things learned on the live server, neither a defect in this change:
+
+- `acl.yaml` is read at **startup**, not hot-reloaded, so revoking a permission
+  needs a restart before any endpoint sees it (a fresh command *exec* also still
+  passed until restart). Pre-existing; the per-download re-check is proven by
+  the cross-principal case above, which is in-process.
+- The demo project needed `permission: command:generate-pdf` plus a matching
+  role grant before the command would run at all — the command ACL gate from
+  #1180 working as designed.
+
+**Still NOT done:** verification on the actual headless remote deployment. The
+original symptom (`xdg-open` silently no-opping) is only observable there, and a
+local macOS server cannot reproduce it.
 
 ## Documentation (enhancements only)
 
