@@ -225,6 +225,7 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 		// Late-bound like production: ACL-gating tests reassign app.acl after
 		// this rebind.
 		aclImpl: func() acl.ACL { return app.acl },
+		files:   newCommandFileStore(),
 	}
 	// attachmentHandler mirrors production wiring: closures for the swappable
 	// acl/audit/field-resolver fields (attachment ACL tests reassign app.acl

@@ -1713,7 +1713,16 @@ type CommandConfig struct {
 	AvailableOn *CommandScope     `yaml:"available_on,omitempty"`
 	Confirm     string            `yaml:"confirm,omitempty"`
 	Env         map[string]string `yaml:"env,omitempty"`
-	AutoOpen    *bool             `yaml:"auto_open,omitempty"`
+
+	// AutoOpen is INERT since TKT-93FUCV removed the server-side file
+	// launcher. It used to make the SPA auto-POST /api/open-file when a
+	// command emitted a `file` message; files are now downloaded by explicit
+	// click, so nothing reads it.
+	//
+	// The key is still parsed so existing project configs keep loading rather
+	// than erroring on an unknown field. Removing it is a breaking config
+	// change and is deliberately not bundled with the launcher removal.
+	AutoOpen *bool `yaml:"auto_open,omitempty"`
 
 	// Permission names the global ACL permission a principal must hold to
 	// execute this command (e.g. "command:nightly-export"), granted via a

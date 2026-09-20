@@ -3971,7 +3971,7 @@ commands:
 | `available_on` | object | Restrict where the button appears (optional)           |
 | `confirm`      | string | Confirmation prompt before execution (optional)        |
 | `env`          | map    | Custom environment variables (optional)                |
-| `auto_open`    | bool   | Auto-open output files on completion (optional)        |
+| `auto_open`    | bool   | No longer used; accepted for backwards compatibility   |
 | `permission`   | string | ACL permission required to run this command (optional) |
 
 ### Authorization
@@ -4122,9 +4122,8 @@ JSON. Lines without the prefix are treated as log output.
 | ---------- | -------------------------------- | ------------------------------------- |
 | `message`  | Toast notification               | `text`, `level` (info/warning/error)  |
 | `error`    | Error toast                      | `text`                                |
-| `file`     | Open or reveal a file            | `path`, `label`, `action` (open/reveal) |
+| `file`     | Offer a file for download        | `path`, `label`                       |
 | `entity`   | Entity update notification       | `id`, `entity_type`, `action` (created/updated/deleted) |
-| `open`     | Open URL in browser              | `url`                                 |
 | `group`    | Start a collapsible group        | `label`                               |
 | `endgroup` | End the current group            | —                                     |
 
@@ -4132,33 +4131,37 @@ JSON. Lines without the prefix are treated as log output.
 
 ```bash
 echo '::rela::{"type":"group","label":"Generated Files"}'
-echo '::rela::{"type":"file","path":"/tmp/report.pdf","label":"PDF Report","action":"open"}'
-echo '::rela::{"type":"file","path":"/tmp/data.csv","label":"CSV Data","action":"reveal"}'
+echo '::rela::{"type":"file","path":"out/report.pdf","label":"PDF Report"}'
+echo '::rela::{"type":"file","path":"out/data.csv","label":"CSV Data"}'
 echo '::rela::{"type":"endgroup"}'
 echo '::rela::{"type":"message","text":"Done!","level":"info"}'
 ```
 
-### Auto-Open
+### File Downloads
 
-When `auto_open: true` is set on a command, all output files with `action: "open"` are
-automatically opened when the command completes successfully, and the toast is dismissed.
-This is useful for commands that produce a single output file where the extra click to
-open it would be redundant:
+A `file` message renders a **Download** button. Clicking it downloads the file
+through the server to the browser that ran the command.
 
-```yaml
-commands:
-  generate-pdf:
-    label: "Generate PDF"
-    script: |
-      PDF="/tmp/report-${RELA_ENTITY_ID}.pdf"
-      # ... generate PDF ...
-      echo "::rela::{\"type\":\"file\",\"path\":\"$PDF\",\"label\":\"Report\",\"action\":\"open\"}"
-    context: entity
-    auto_open: true
-```
+**The file must live inside the project root.** A relative `path` is resolved
+against it; an absolute path outside it is refused. A refused file is still
+listed, but without a download button — so write output somewhere under the
+project directory (`out/` above), not to `/tmp`.
 
-If the command fails or no files have `action: "open"`, the toast stays visible with
-the normal interactive buttons.
+`label` is what the user sees and the name the file is saved as. It defaults to
+the basename of `path`.
+
+The server never sends the file's path to the browser. It sends an opaque
+one-time token, and the download endpoint re-checks the command's
+`permission:` against the current policy on every request. A token therefore
+stops working when the permission is revoked or the server is restarted with
+`--read-only`, and it expires 30 minutes after its command finishes.
+
+> **Changed:** earlier versions ran an OS "open"/"reveal" launcher on the
+> machine hosting the server, and `auto_open: true` fired it automatically.
+> That only ever made sense for a desktop install — on a server it silently did
+> nothing, and had it worked it would have opened the file on the server rather
+> than for the user. Downloads replace both. The `auto_open` key is still
+> accepted so existing configs keep loading, but it has no effect.
 
 ### Streaming and Cancellation
 
@@ -4452,11 +4455,10 @@ commands:
   generate-pdf:
     label: "Generate PDF"
     script: |
-      PDF="/tmp/ticket-${RELA_ENTITY_ID}.pdf"
+      PDF="out/ticket-${RELA_ENTITY_ID}.pdf"
       # ... generate PDF ...
-      echo "::rela::{\"type\":\"file\",\"path\":\"$PDF\",\"label\":\"Ticket PDF\",\"action\":\"open\"}"
+      echo "::rela::{\"type\":\"file\",\"path\":\"$PDF\",\"label\":\"Ticket PDF\"}"
     context: entity
-    auto_open: true
     available_on:
       entity_types: [ticket]
 

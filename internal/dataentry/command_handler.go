@@ -8,10 +8,10 @@ import (
 )
 
 // commandHandler serves the user-configured command surface: the SSE-streaming
-// shell-exec endpoints (/api/command/, /api/command-cancel/), the file/URL
-// launchers (/api/open-file, /api/open-url), and the command-resolution query
-// behind /api/v1/_commands. Extracted from App (TKT-R68TV8) to shrink the god
-// object.
+// shell-exec endpoints (/api/command/, /api/command-cancel/), the download
+// route for files a run produced (/api/command-file/), and the
+// command-resolution query behind /api/v1/_commands. Extracted from App
+// (TKT-R68TV8) to shrink the god object.
 //
 // Its collaborators are supplied as narrow closures over App (consumer-side
 // interfaces per CLAUDE.md) rather than a handle to App itself:
@@ -43,6 +43,13 @@ type commandHandler struct {
 	// app.acl AFTER construction, so a captured value would go stale and the
 	// handler would authorize against the wrong policy.
 	aclImpl func() acl.ACL
+
+	// files maps the opaque download tokens minted for files a run emitted to
+	// their on-disk paths (TKT-93FUCV). Owned by the handler rather than being
+	// package-level like runningCommands: it holds resolved filesystem paths,
+	// so one table per App keeps two servers in one process from resolving
+	// each other's tokens.
+	files *commandFileStore
 }
 
 // currentACL resolves the active ACL, or nil when the handler was constructed
@@ -56,13 +63,11 @@ func (h *commandHandler) currentACL() acl.ACL {
 	return h.aclImpl()
 }
 
-// registerCommandRoutes mounts the command-exec and launcher endpoints. The
-// command-resolution query is mounted separately under /api/v1/ by the v1
-// router (handleV1Commands delegates to h.resolve). handleOpenURL is a method
-// on the handler (exercised by tests) but, matching the pre-extraction router,
-// is not mounted here.
+// registerCommandRoutes mounts the command-exec and command-file endpoints.
+// The command-resolution query is mounted separately under /api/v1/ by the v1
+// router (handleV1Commands delegates to h.resolve).
 func (h *commandHandler) registerCommandRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/command/", h.handleCommandExec)
 	mux.HandleFunc("/api/command-cancel/", h.handleCommandCancel)
-	mux.HandleFunc("/api/open-file", h.handleOpenFile)
+	mux.HandleFunc("/api/command-file/", h.handleCommandFile)
 }
