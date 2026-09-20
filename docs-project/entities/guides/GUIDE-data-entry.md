@@ -3977,7 +3977,7 @@ commands:
 | `available_on` | object | Restrict where the button appears (optional)           |
 | `confirm`      | string | Confirmation prompt before execution (optional)        |
 | `env`          | map    | Custom environment variables (optional)                |
-| `auto_open`    | bool   | No longer used; accepted for backwards compatibility   |
+| `auto_open`    | bool   | Inert; removed by `rela migrate` (see File Downloads)  |
 | `permission`   | string | ACL permission required to run this command (optional) |
 
 ### Authorization
@@ -4167,7 +4167,9 @@ stops working when the permission is revoked or the server is restarted with
 > That only ever made sense for a desktop install — on a server it silently did
 > nothing, and had it worked it would have opened the file on the server rather
 > than for the user. Downloads replace both. The `auto_open` key is still
-> accepted so existing configs keep loading, but it has no effect.
+> accepted so existing configs keep loading, but it has no effect and is no
+> longer sent to the browser. Run `rela migrate` to remove it from your
+> `data-entry.yaml`.
 
 ### Streaming and Cancellation
 

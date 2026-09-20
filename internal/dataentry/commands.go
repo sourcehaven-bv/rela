@@ -35,12 +35,14 @@ const commandOutputPrefix = "::rela::"
 const cancelGrace = 3 * time.Second
 
 // ResolvedCommand is a command that has been matched to a specific page context.
+//
+// Field-for-field convertible to [v1.Command] (handleV1Commands does exactly
+// that conversion), so the two must be changed together.
 type ResolvedCommand struct {
-	ID       string
-	Label    string
-	Confirm  string
-	Context  string
-	AutoOpen *bool
+	ID      string
+	Label   string
+	Confirm string
+	Context string
 }
 
 // commandDenyReason explains why a command may not run. It is deliberately
@@ -152,11 +154,10 @@ func (h *commandHandler) resolveCommands(
 		}
 		if authorizeCommand(ctx, aclImpl, cmd) {
 			result = append(result, ResolvedCommand{
-				ID:       id,
-				Label:    cmd.Label,
-				Confirm:  cmd.Confirm,
-				Context:  cmd.Context,
-				AutoOpen: cmd.AutoOpen,
+				ID:      id,
+				Label:   cmd.Label,
+				Confirm: cmd.Confirm,
+				Context: cmd.Context,
 			})
 		}
 	}
@@ -430,6 +431,15 @@ func (h *commandHandler) handleCommandExec(w http.ResponseWriter, r *http.Reques
 		execID = fmt.Sprintf("cmd-%d", time.Now().UnixNano())
 	}
 
+	// A SECOND, server-minted key for this run, used only to group its download
+	// tokens. Deliberately not execID: that one is client-supplied (it has to
+	// be, so the client can address /api/command-cancel/), and a caller who
+	// reuses another run's id would otherwise reach into that run's token group
+	// and start its expiry clock early. This is the same hazard runningCommands
+	// records an `owner` for (RR-YZV7SY); here there is nothing to authorize
+	// against, so the key is simply not the client's to name.
+	runKey := newRunKey()
+
 	// Build stdin JSON based on context.
 	var input *commandInput
 	switch cmd.Context {
@@ -552,7 +562,7 @@ func (h *commandHandler) handleCommandExec(w http.ResponseWriter, r *http.Reques
 	defer runningCommands.Delete(execID)
 	// Start the download tokens' expiry clock when the run ends. Not a delete:
 	// the user clicks Download after the file is reported (TKT-93FUCV).
-	defer h.files.release(execID)
+	defer h.files.release(runKey)
 
 	// Capture stderr in background.
 	var stderrBuf strings.Builder
@@ -572,7 +582,7 @@ func (h *commandHandler) handleCommandExec(w http.ResponseWriter, r *http.Reques
 		line := scanner.Text()
 		msg := parseCommandOutput(line)
 		if msg.Type == "file" {
-			msg = h.mintFileToken(execID, cmd, msg)
+			msg = h.mintFileToken(runKey, commandID, cmd, msg)
 		}
 		data, _ := json.Marshal(msg)
 		writeSSEEvent(w, flusher, msg.Type, string(data))
@@ -661,22 +671,41 @@ func (h *commandHandler) handleCommandCancel(w http.ResponseWriter, r *http.Requ
 //
 // The server path is dropped either way. It is meaningless to a remote user and
 // naming it in the payload is how the old launcher grew its arbitrary-path hole.
-func (h *commandHandler) mintFileToken(execID string, cmd CommandConfig, msg CommandMessage) CommandMessage {
+func (h *commandHandler) mintFileToken(
+	runKey, commandID string, cmd CommandConfig, msg CommandMessage,
+) CommandMessage {
 	label := msg.Label
 	if label == "" {
 		label = filepath.Base(msg.Path)
 	}
 
-	resolved, err := containedProjectPath(h.projectRoot(), msg.Path)
+	resolved, err := containProjectPath(h.projectRoot(), msg.Path)
 	if err != nil {
 		slog.Warn("dataentry: command file not downloadable",
-			"err", err, "command", cmd.Label, "exec_id", execID)
+			"err", err, "command", commandID, "run", runKey)
 		return CommandMessage{Type: msg.Type, Label: label}
 	}
 
-	token, err := h.files.mint(execID, resolved, label, cmd)
+	// Regular files only. Containment proves WHERE the path is, not WHAT it is,
+	// and a directory opens successfully — so without this a directory would
+	// mint a token, commit the download headers, and then fail the copy, giving
+	// the user a 200 and an empty file. Checked here rather than at download so
+	// the operator gets the same warning as any other unusable path, and the
+	// download path stays a straight read.
+	info, err := os.Stat(resolved.abs)
+	if err != nil || !info.Mode().IsRegular() {
+		slog.Warn("dataentry: command file is not a regular file",
+			"err", err, "command", commandID, "run", runKey)
+		return CommandMessage{Type: msg.Type, Label: label}
+	}
+
+	token, err := h.files.mint(runKey, resolved, label, cmd)
 	if err != nil {
-		slog.Warn("dataentry: minting command file token failed", "err", err, "exec_id", execID)
+		// Only reachable if crypto/rand fails, which means the process is in
+		// serious trouble — Error, not Warn. The cases above are operator
+		// misconfiguration; this one is not.
+		slog.Error("dataentry: minting command file token failed",
+			"err", err, "command", commandID, "run", runKey)
 		return CommandMessage{Type: msg.Type, Label: label}
 	}
 	return CommandMessage{Type: msg.Type, Label: label, Token: token}
@@ -722,7 +751,7 @@ func (h *commandHandler) handleCommandFile(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	f, err := os.Open(entry.path)
+	f, err := os.Open(entry.path.abs)
 	if err != nil {
 		// The script may have cleaned up after itself, or written to a temp
 		// location that has since gone. Don't echo the path or the OS error.
@@ -733,6 +762,10 @@ func (h *commandHandler) handleCommandFile(w http.ResponseWriter, r *http.Reques
 	defer f.Close()
 
 	setHardenedDownloadHeaders(w.Header(), contentTypeForFilename(entry.label), entry.label)
+	// no-store is set here rather than in the shared helper because the three
+	// download endpoints genuinely differ: attachments are stable stored
+	// content and set no Cache-Control at all, while these bytes and an
+	// export's are produced per request. Same line, same reason, as export.go.
 	w.Header().Set("Cache-Control", "no-store")
 
 	if _, err := io.Copy(w, f); err != nil {

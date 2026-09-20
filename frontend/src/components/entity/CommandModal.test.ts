@@ -154,9 +154,10 @@ describe('CommandModal confirm integration', () => {
 describe('CommandModal file downloads', () => {
   let originalFetch: typeof fetch
 
-  // Drives runCommand with a canned SSE body and returns the mounted wrapper
-  // once the stream has been consumed.
+  // Stubs fetch with a canned SSE body, drives runCommand, and returns the
+  // mounted wrapper once the stream has been consumed.
   async function runWithSSE(body: string) {
+    stubSSE(body)
     const wrapper = mount(CommandModal, {
       props: { entityId: 'TKT-X' },
       attachTo: document.body,
@@ -190,11 +191,10 @@ describe('CommandModal file downloads', () => {
   })
 
   it('renders a single Download link for a file message', async () => {
-    stubSSE(
+    const wrapper = await runWithSSE(
       'event: file\ndata: {"type":"file","token":"tok-123","label":"report.pdf"}\n\n' +
         'event: done\ndata: {"success":true}\n\n'
     )
-    const wrapper = await runWithSSE('')
 
     const links = document.querySelectorAll<HTMLAnchorElement>('.output-file a')
     expect(links).toHaveLength(1)
@@ -208,11 +208,10 @@ describe('CommandModal file downloads', () => {
   })
 
   it('does not auto-download on completion', async () => {
-    stubSSE(
+    const wrapper = await runWithSSE(
       'event: file\ndata: {"type":"file","token":"tok-123","label":"report.pdf"}\n\n' +
         'event: done\ndata: {"success":true}\n\n'
     )
-    const wrapper = await runWithSSE('')
 
     // Exactly one fetch: the command exec itself. A second would mean the
     // component tried to fetch the file on its own, which browsers block when
@@ -223,11 +222,10 @@ describe('CommandModal file downloads', () => {
 
   it('lists a file with no token but offers no download link', async () => {
     // The server declined to serve this one (outside the project root).
-    stubSSE(
+    const wrapper = await runWithSSE(
       'event: file\ndata: {"type":"file","label":"outside.pdf"}\n\n' +
         'event: done\ndata: {"success":true}\n\n'
     )
-    const wrapper = await runWithSSE('')
 
     expect(document.body.textContent).toContain('outside.pdf')
     expect(document.querySelectorAll('.output-file a')).toHaveLength(0)

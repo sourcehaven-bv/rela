@@ -1719,9 +1719,10 @@ type CommandConfig struct {
 	// command emitted a `file` message; files are now downloaded by explicit
 	// click, so nothing reads it.
 	//
-	// The key is still parsed so existing project configs keep loading rather
-	// than erroring on an unknown field. Removing it is a breaking config
-	// change and is deliberately not bundled with the launcher removal.
+	// Parsed, but no longer served: it was dropped from the API response
+	// (v1.Command) so the wire stops advertising a capability the server does
+	// not have. Kept here only so an unmigrated project still loads; the
+	// `command-auto-open` migration strips it.
 	AutoOpen *bool `yaml:"auto_open,omitempty"`
 
 	// Permission names the global ACL permission a principal must hold to

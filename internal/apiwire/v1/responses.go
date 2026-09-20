@@ -870,12 +870,16 @@ type DocumentResponse struct {
 }
 
 // Command is the JSON representation of an available command.
+//
+// There is deliberately no auto_open here. TKT-93FUCV removed the server-side
+// launcher it selected, so the key would have advertised a capability the
+// server no longer has. The YAML key is still parsed (and stripped by the
+// `command-auto-open` migration) so existing projects keep loading.
 type Command struct {
-	ID       string `json:"id"`
-	Label    string `json:"label"`
-	Confirm  string `json:"confirm,omitempty"`
-	Context  string `json:"context"`
-	AutoOpen *bool  `json:"auto_open,omitempty"`
+	ID      string `json:"id"`
+	Label   string `json:"label"`
+	Confirm string `json:"confirm,omitempty"`
+	Context string `json:"context"`
 }
 
 // Template represents a template for API responses.

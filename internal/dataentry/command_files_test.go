@@ -14,13 +14,24 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 )
 
+// mustContain resolves path through the real containment check, so handler
+// tests mint the same way production does.
+func mustContain(t *testing.T, root, path string) containedPath {
+	t.Helper()
+	cp, err := containProjectPath(root, path)
+	if err != nil {
+		t.Fatalf("containProjectPath(%q): %v", path, err)
+	}
+	return cp
+}
+
 // --- Token table (TKT-93FUCV) ---
 
 func TestCommandFileStore_MintLookup(t *testing.T) {
 	s := newCommandFileStore()
 	cmd := CommandConfig{Label: "Export", Context: "entity", Permission: "command:allowed"}
 
-	token, err := s.mint("run-1", "/tmp/report.pdf", "report.pdf", cmd)
+	token, err := s.mint("run-1", containedPath{abs: "/tmp/report.pdf"}, "report.pdf", cmd)
 	if err != nil {
 		t.Fatalf("mint: %v", err)
 	}
@@ -32,8 +43,8 @@ func TestCommandFileStore_MintLookup(t *testing.T) {
 	if !ok {
 		t.Fatal("lookup failed for a freshly minted token")
 	}
-	if entry.path != "/tmp/report.pdf" {
-		t.Errorf("path = %q, want /tmp/report.pdf", entry.path)
+	if entry.path.abs != "/tmp/report.pdf" {
+		t.Errorf("path = %q, want /tmp/report.pdf", entry.path.abs)
 	}
 	if entry.label != "report.pdf" {
 		t.Errorf("label = %q, want report.pdf", entry.label)
@@ -59,7 +70,7 @@ func TestCommandFileStore_TokensAreUnguessable(t *testing.T) {
 	s := newCommandFileStore()
 	seen := make(map[string]bool)
 	for range 100 {
-		token, err := s.mint("run-1", "/tmp/x", "x", CommandConfig{})
+		token, err := s.mint("run-1", containedPath{abs: "/tmp/x"}, "x", CommandConfig{})
 		if err != nil {
 			t.Fatalf("mint: %v", err)
 		}
@@ -73,23 +84,74 @@ func TestCommandFileStore_TokensAreUnguessable(t *testing.T) {
 	}
 }
 
-// TestCommandFileStore_LiveRunDoesNotExpire pins that expiry starts at run
-// completion, not at mint. A long-running script that emits a file early must
-// keep it downloadable for the whole run.
-func TestCommandFileStore_LiveRunDoesNotExpire(t *testing.T) {
+// TestCommandFileStore_LiveRunOutlivesTheShortTTL pins that the post-run TTL
+// does not start at mint. A long-running script that emits a file early must
+// keep it downloadable for the whole run, not for 30 minutes of it.
+func TestCommandFileStore_LiveRunOutlivesTheShortTTL(t *testing.T) {
 	s := newCommandFileStore()
 	base := time.Now()
 	s.now = func() time.Time { return base }
 
-	token, err := s.mint("run-1", "/tmp/x", "x", CommandConfig{})
+	token, err := s.mint("run-1", containedPath{abs: "/tmp/x"}, "x", CommandConfig{})
 	if err != nil {
 		t.Fatalf("mint: %v", err)
 	}
 
-	// Far past the TTL, but the run never completed.
-	s.now = func() time.Time { return base.Add(100 * commandFileTTL) }
+	// Many multiples of the post-run TTL later (but inside the mint-time
+	// ceiling), with the run still going.
+	s.now = func() time.Time { return base.Add(10 * commandFileTTL) }
 	if _, ok := s.lookup(token); !ok {
-		t.Error("token expired while its run was still in flight")
+		t.Error("token hit the post-run TTL while its run was still in flight")
+	}
+}
+
+// TestCommandFileStore_UnreleasedTokensStillExpire pins the backstop: an entry
+// whose release never lands is still reclaimable, so a missed release cannot
+// leak entries forever.
+func TestCommandFileStore_UnreleasedTokensStillExpire(t *testing.T) {
+	s := newCommandFileStore()
+	base := time.Now()
+	s.now = func() time.Time { return base }
+
+	token, err := s.mint("orphan", containedPath{abs: "/tmp/x"}, "x", CommandConfig{})
+	if err != nil {
+		t.Fatalf("mint: %v", err)
+	}
+
+	s.now = func() time.Time { return base.Add(commandFileMaxLifetime + time.Second) }
+	if _, ok := s.lookup(token); ok {
+		t.Error("an unreleased token outlived the absolute ceiling")
+	}
+
+	// And the sweep actually reclaims it rather than leaving it resident.
+	if _, err := s.mint("later", containedPath{abs: "/tmp/y"}, "y", CommandConfig{}); err != nil {
+		t.Fatalf("mint: %v", err)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.byToken) != 1 {
+		t.Errorf("byToken holds %d entries, want 1 — the orphan was not swept", len(s.byToken))
+	}
+}
+
+// TestCommandFileStore_ReleaseOnlyShortens pins that finishing a run cannot
+// extend a token's life past the ceiling it was minted with.
+func TestCommandFileStore_ReleaseOnlyShortens(t *testing.T) {
+	s := newCommandFileStore()
+	base := time.Now()
+	s.now = func() time.Time { return base }
+
+	token, err := s.mint("run-1", containedPath{abs: "/tmp/x"}, "x", CommandConfig{})
+	if err != nil {
+		t.Fatalf("mint: %v", err)
+	}
+
+	// A run that somehow outlives the ceiling, then completes.
+	s.now = func() time.Time { return base.Add(commandFileMaxLifetime + time.Second) }
+	s.release("run-1")
+
+	if _, ok := s.lookup(token); ok {
+		t.Error("release granted a fresh window to an already-expired token")
 	}
 }
 
@@ -100,7 +162,7 @@ func TestCommandFileStore_ExpiresAfterRelease(t *testing.T) {
 	base := time.Now()
 	s.now = func() time.Time { return base }
 
-	token, err := s.mint("run-1", "/tmp/x", "x", CommandConfig{})
+	token, err := s.mint("run-1", containedPath{abs: "/tmp/x"}, "x", CommandConfig{})
 	if err != nil {
 		t.Fatalf("mint: %v", err)
 	}
@@ -122,7 +184,7 @@ func TestCommandFileStore_ExpiresAfterRelease(t *testing.T) {
 // deadline instead of deleting: the user clicks Download AFTER the run ends.
 func TestCommandFileStore_ReleaseKeepsTokensUsable(t *testing.T) {
 	s := newCommandFileStore()
-	token, err := s.mint("run-1", "/tmp/x", "x", CommandConfig{})
+	token, err := s.mint("run-1", containedPath{abs: "/tmp/x"}, "x", CommandConfig{})
 	if err != nil {
 		t.Fatalf("mint: %v", err)
 	}
@@ -140,14 +202,14 @@ func TestCommandFileStore_SweepDrainsExpired(t *testing.T) {
 	s.now = func() time.Time { return base }
 
 	for range 10 {
-		if _, err := s.mint("old-run", "/tmp/x", "x", CommandConfig{}); err != nil {
+		if _, err := s.mint("old-run", containedPath{abs: "/tmp/x"}, "x", CommandConfig{}); err != nil {
 			t.Fatalf("mint: %v", err)
 		}
 	}
 	s.release("old-run")
 
 	s.now = func() time.Time { return base.Add(commandFileTTL + time.Second) }
-	if _, err := s.mint("new-run", "/tmp/y", "y", CommandConfig{}); err != nil {
+	if _, err := s.mint("new-run", containedPath{abs: "/tmp/y"}, "y", CommandConfig{}); err != nil {
 		t.Fatalf("mint: %v", err)
 	}
 
@@ -175,7 +237,7 @@ func TestMintFileToken_StripsPath(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out := app.commands.mintFileToken("run-1",
+	out := app.commands.mintFileToken("run-1", "export",
 		CommandConfig{Label: "Export"},
 		CommandMessage{Type: "file", Path: target, Label: "report.pdf"})
 
@@ -203,7 +265,7 @@ func TestMintFileToken_LabelFallsBackToBasename(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out := app.commands.mintFileToken("run-1", CommandConfig{},
+	out := app.commands.mintFileToken("run-1", "gen", CommandConfig{},
 		CommandMessage{Type: "file", Path: target})
 	if out.Label != "report.pdf" {
 		t.Errorf("label = %q, want the basename report.pdf", out.Label)
@@ -231,7 +293,7 @@ func TestMintFileToken_RejectsOutsideProject(t *testing.T) {
 		{"nonexistent inside root", "no-such-file.pdf"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			out := app.commands.mintFileToken("run-1", CommandConfig{},
+			out := app.commands.mintFileToken("run-1", "gen", CommandConfig{},
 				CommandMessage{Type: "file", Path: tc.path, Label: "x"})
 			if out.Token != "" {
 				t.Errorf("minted a token for %q", tc.path)
@@ -244,6 +306,70 @@ func TestMintFileToken_RejectsOutsideProject(t *testing.T) {
 				t.Errorf("type = %q, want file", out.Type)
 			}
 		})
+	}
+}
+
+// TestMintFileToken_OutsideBytesAreUnreachable is the containment assertion
+// that matters. TestMintFileToken_RejectsOutsideProject is rejection-shaped
+// ("no token was minted"), and dataentry/CLAUDE.md warns that such a test can
+// pass against a leaky implementation. This one asserts the property directly:
+// the bytes of a file outside the project root are never served, whatever the
+// mint path decided.
+func TestMintFileToken_OutsideBytesAreUnreachable(t *testing.T) {
+	app := newHandlerTestApp(t)
+	app.paths.Root = t.TempDir()
+
+	const secret = "SECRET-OUTSIDE-THE-PROJECT"
+	outside := filepath.Join(t.TempDir(), "secret.txt")
+	if err := os.WriteFile(outside, []byte(secret), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	out := app.commands.mintFileToken("run-1", "gen", CommandConfig{},
+		CommandMessage{Type: "file", Path: outside, Label: "secret.txt"})
+
+	// Whatever the SSE payload says, the secret must not be in it...
+	payload, err := json.Marshal(out)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(payload), secret) || strings.Contains(string(payload), outside) {
+		t.Errorf("file message leaked the outside path or its contents: %s", payload)
+	}
+
+	// ...and if a token WAS somehow minted, downloading it must not serve it.
+	if out.Token != "" {
+		r := httptest.NewRequest(http.MethodGet, "/api/command-file/"+out.Token, http.NoBody)
+		w := httptest.NewRecorder()
+		app.commands.handleCommandFile(w, r)
+		if strings.Contains(w.Body.String(), secret) {
+			t.Errorf("a file outside the project root was served: %d %s", w.Code, w.Body.String())
+		}
+	}
+}
+
+// TestMintFileToken_RejectsDirectory pins that containment is not the only
+// check. A directory is inside the project root and opens successfully, so
+// without a regular-file check it would mint a token, commit the download
+// headers, and then fail the copy — handing the user a 200 and a zero-byte
+// file.
+func TestMintFileToken_RejectsDirectory(t *testing.T) {
+	app := newHandlerTestApp(t)
+	root := t.TempDir()
+	app.paths.Root = root
+
+	dir := filepath.Join(root, "reports")
+	if err := os.Mkdir(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+
+	out := app.commands.mintFileToken("run-1", "gen", CommandConfig{},
+		CommandMessage{Type: "file", Path: dir, Label: "reports"})
+	if out.Token != "" {
+		t.Error("minted a download token for a directory")
+	}
+	if out.Type != "file" {
+		t.Errorf("type = %q, want file — the item should still be listed", out.Type)
 	}
 }
 
@@ -296,7 +422,7 @@ func TestHandleCommandFile_ServesHardenedDownload(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	token, err := app.commands.files.mint("run-1", target, "report.txt", CommandConfig{})
+	token, err := app.commands.files.mint("run-1", mustContain(t, root, target), "report.txt", CommandConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -332,7 +458,7 @@ func TestHandleCommandFile_MissingFileIs404(t *testing.T) {
 	root := t.TempDir()
 	app.paths.Root = root
 
-	token, err := app.commands.files.mint("run-1", filepath.Join(root, "gone.txt"), "gone.txt", CommandConfig{})
+	token, err := app.commands.files.mint("run-1", containedPath{abs: filepath.Join(root, "gone.txt")}, "gone.txt", CommandConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -365,7 +491,7 @@ func TestHandleCommandFile_ReauthorizesPerDownload(t *testing.T) {
 		d := commandPolicyACL(t, app)
 		app.acl = d
 		cmd := CommandConfig{Label: "Export", Context: "entity", Permission: "command:allowed"}
-		token, err := app.commands.files.mint("run-1", target, "report.txt", cmd)
+		token, err := app.commands.files.mint("run-1", mustContain(t, root, target), "report.txt", cmd)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -15,6 +15,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
@@ -118,7 +119,10 @@ func TestResolveCommands(t *testing.T) {
 		}
 	})
 
-	t.Run("auto_open propagated to resolved command", func(t *testing.T) {
+	// auto_open is parsed but no longer served (TKT-93FUCV): the launcher it
+	// selected is gone, so the wire must not advertise it. A command that sets
+	// it still resolves normally — the key is inert, not rejected.
+	t.Run("auto_open is not served", func(t *testing.T) {
 		app2, _ := testAppInstance()
 		trueVal := true
 		app2.Cfg().Commands = map[string]CommandConfig{
@@ -128,24 +132,20 @@ func TestResolveCommands(t *testing.T) {
 				Context:  "entity",
 				AutoOpen: &trueVal,
 			},
-			"normal-cmd": {
-				Label:   "Normal",
-				Script:  "echo hi",
-				Context: "entity",
-			},
 		}
 		cmds := app2.commands.resolveCommands(context.Background(), "entity", "", "ticket")
-		for _, c := range cmds {
-			if c.ID == "auto-cmd" {
-				if c.AutoOpen == nil || !*c.AutoOpen {
-					t.Error("expected auto-cmd to have AutoOpen=true")
-				}
-			}
-			if c.ID == "normal-cmd" {
-				if c.AutoOpen != nil {
-					t.Error("expected normal-cmd to have AutoOpen=nil")
-				}
-			}
+		if len(cmds) != 1 || cmds[0].ID != "auto-cmd" {
+			t.Fatalf("a command setting auto_open must still resolve, got %v", cmds)
+		}
+
+		// The resolved command is converted field-for-field into v1.Command,
+		// so serializing it is what the client actually sees.
+		payload, err := json.Marshal(v1.Command(cmds[0]))
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		if strings.Contains(string(payload), "auto_open") {
+			t.Errorf("auto_open reached the wire: %s", payload)
 		}
 	})
 
