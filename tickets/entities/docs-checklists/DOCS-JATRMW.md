@@ -1,0 +1,68 @@
+---
+id: DOCS-JATRMW
+type: docs-checklist
+title: 'Docs: Section sort plus one declared order per enum'
+status: done
+---
+
+## Code Documentation
+
+- [x] Exported symbols documented — `filter.QuerySort`, `NewQuerySort`,
+`QuerySortApply`, `store.OrderSpec.Values`,
+`store.DerivedObjectSpec.OrderValues`, `queryplan.DeclaredValues`, and the three
+new `ViewSection` fields all carry doc comments.
+- [x] Non-obvious decisions explained where a reader will look for them:
+  - Why the comparator is byte-wise rather than type-aware, on `QuerySort`.
+  - Why the `ORDER BY` `CASE` interpolates literals instead of binding
+parameters, on `orderKeySQL` — with the measured numbers, because the
+"safer-looking" change silently costs the index.
+  - Why the index expression must stay character-identical to the query's,
+on `orderRankSQL`.
+  - Why a duplicated enum value ranks at its first position, on
+`buildEnumIndex` — it is SQL's `CASE` semantics, not an arbitrary pick.
+  - Why `parent_sort`/`child_sort` are separate keys, on `ViewSection`.
+- [x] `just comment-lint` gate clean; no advisory findings introduced
+(`comment-report`'s findings in `graphquery.go` are at :31/:49, pre-existing —
+this change starts at :125).
+
+## Project Documentation
+
+- [x] `docs/data-entry.md` — rewritten "Sort Configuration" (declared enum
+order, byte-wise text, ties by id, non-ISO dates); three new section keys in the
+key table; a "Sorting is per level too" section with a worked example and the
+sort-before-caps rule.
+- [x] `docs/metamodel.md` — "The ORDER of `values:` is load-bearing, not just
+the set", with the two consequences an operator needs before editing a list:
+reordering reorders every list sorted on it, and a removed value still sorts
+(after the declared ones).
+- [x] `docs/postgres-backend.md` — enum sort keys are indexed by declared
+position; editing `values:` renames the index so the next reconcile rebuilds it.
+Also corrected a claim this change falsified: "Equivalent queries share an index
+even when their literal values differ" is no longer true for sort keys.
+- [x] ~~`CLAUDE.md`~~ (N/A: the root file's existing rule — that new read paths
+pin their cost with a budget test — is unchanged and still accurate.)
+
+**Edited at source, not in `docs/`.** All three files are generated from
+`docs-project/entities/guides/` by `scripts/generate-docs.sh`. My first pass
+edited `docs/` directly and the script silently reverted one of the three files;
+the edits were redone against the guide entities and regenerated. Verified
+idempotent.
+
+## External Documentation
+
+- [x] ~~README~~ (N/A: no change to project-level setup or capabilities.)
+- [x] Release note required — **three user-visible ordering changes**, which is
+the reason this checklist exists rather than being skipped:
+  1. Enum-sorted lists move from alphabetical to declared order. This is the
+feature; it is also a visible change to existing screens.
+  2. String sorts become byte order: case-sensitive (`Zebra` before
+`apple`) and non-numeric (`item10` before `item9`). Measured on this repo's own
+4,308 ticket titles, **99% of positions move.**
+  3. `sort=id` on the API becomes byte order. `rela list --sort` keeps
+natural order, so the CLI and the web list now differ — a deliberate scope line
+(the CLI does not page and has no SQL path to agree with), but one an upgrading
+operator should know about.
+
+Not a behaviour change but worth a line: a section's `sort:` applies before the
+row caps, so a capped nested section now shows its top-sorted rows rather than a
+traversal prefix.

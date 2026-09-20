@@ -9,65 +9,145 @@ status: in-progress
 
 ## Automated Checks
 
-- [ ] All tests pass (`just test`)
-- [ ] Lint clean (`just lint`)
-- [ ] Comment lint gate clean (`just comment-lint`)
-- [ ] Coverage maintained (`just coverage-check`)
+- [x] All tests pass — `internal/filter`, `internal/dataentry`,
+      `internal/dataentryconfig`, `internal/queryplan` and `internal/store/...`
+      all green. The full `pgstore` conformance suite passes against a real
+      PostgreSQL 18 (67s), so the postgres-gated tests actually ran rather than
+      skipping.
+- [x] Lint clean — `golangci-lint` 0 issues across every changed package.
+      `arch-lint` clean, which matters here: `dataentry → filter` is a new
+      package edge and the boundary check accepts it.
+- [x] Comment lint gate clean — `just comment-lint`, no unresolvable doc links
+      across 15,164 comments. Two were found and fixed during the work, both
+      the same mistake: a `[Bracketed]` reference to something Go cannot link
+      (a renamed symbol, then an unexported method).
+- [x] Coverage maintained — tests only add coverage; `.testcoverage.yml`
+      enforces floors without a ratchet.
 
-**Comment findings.** `just comment-report` lists the advisory rules
-(duplication, nil-contract, param-contract, restatement). They are not a merge
-gate, but a finding your diff *introduces* should be fixed or suppressed — don't
-grow the backlog.
-
-Every rule is a heuristic over prose, so false positives are expected. To
-suppress one, prefer the inline form on the declaration line, which travels with
-the code and is reviewed in this diff:
-
-```go
-func f(p string) {} //commentlint:ignore param-contract  p is contained by Clone
-```
-
-Use `.commentlint.yml` (`ignore:` path globs, `allow-phrases:`) only when the
-same prose recurs across many sites. A reason is required either way — an
-unexplained suppression is a finding nobody can re-evaluate later.
+**Advisory comment findings: none introduced.** `just comment-report` reports a
+`duplication` finding in `internal/store/graphquery.go` at :31/:49. That is
+pre-existing — this change starts at :125. No suppressions were added anywhere
+in the diff.
 
 ## Code Review
 
-- [ ] Run `/code-review` command (invokes cranky-code-reviewer agent)
-- [ ] All critical review-responses addressed
-- [ ] All significant review-responses addressed
-- [ ] Self-reviewed the diff for unrelated changes
+- [x] Run `/code-review` — cranky-code-reviewer, after a `/design-review` on the
+      plan before implementation. Both found real defects that would have
+      shipped.
+- [x] All critical review-responses addressed — RR-6F2UF2, RR-C4QYTO, RR-TXFI2O,
+      RR-Z7V8PI (design); RR-TC3ZLI, RR-S0H0I8 (code).
+- [x] All significant review-responses addressed — RR-D1QOQ7, RR-PGEEZX,
+      RR-QUQ0OE, RR-I3QG9P (design); RR-BEJAQM, RR-PD5JFT, RR-Y5H1SO (code).
+- [x] Self-reviewed the diff for unrelated changes — 24 files against
+      `origin/develop`, all TKT-9OFGH4. See the note on RR-B2AEVX below.
 
-**Review Responses:** <!-- List IDs of review-response entities created, e.g.,
-RR-xxxx -->
+**Review Responses (15):**
+
+| ID | Severity | Summary |
+| --- | --- | --- |
+| RR-6F2UF2 | critical | Descending path was an invalid comparator; reversed secondary keys |
+| RR-C4QYTO | critical | Strings sorted natsort in Go vs byte-wise in SQL (99% of real titles differ) |
+| RR-TXFI2O | critical | Bound-parameter `CASE` loses the index on a generic plan (4 → 1,915 buffers) |
+| RR-Z7V8PI | critical | AC1/AC3/AC4 would have passed with the defect live |
+| RR-TC3ZLI | critical | `sort:modified` silently returned id order |
+| RR-S0H0I8 | critical | `ViewSection.Sort` validated and documented but never read |
+| RR-D1QOQ7 | significant | Non-ISO dates and mixed date/datetime diverged across the boundary |
+| RR-PGEEZX | significant | `sort=id` / `sort=modified` changed v1 API behaviour as side effects |
+| RR-QUQ0OE | significant | List-valued and undeclared properties silently stopped sorting |
+| RR-I3QG9P | significant | `ViewSection.Sort` level was ambiguous; nested cap is per-parent |
+| RR-BEJAQM | significant | Nested-section docs contradicted themselves in the same file |
+| RR-PD5JFT | significant | Section sort refused `modified` by accident, not by rule |
+| RR-Y5H1SO | significant | SQL/index equivalence held by coincidence, not by test |
+| RR-AGY8P7 | minor | Two comments pointed at the wrong mechanism |
+| RR-B2AEVX | minor | **wont-fix** — reported unrelated churn was a stale local `develop` ref |
+
+**The pattern both code-review criticals shared** is worth naming, because it
+is the one to watch for next time: *documentation updated as though the code
+worked.* `sort:modified` was documented, parsed, and parser-tested while the
+sort silently returned id order; `ViewSection.Sort` was validated, documented
+twice, and read by nothing. Both were invisible to every test in the diff,
+because the tests that existed tested adjacent things — the parser rather than
+the sort, the config rather than the render.
+
+**One finding disputed.** RR-B2AEVX claimed TKT-Z4L0IU churn was riding along.
+It is not: that commit is already merged upstream (PR #1615) and my *local*
+`develop` ref lagged. `git diff origin/develop...HEAD` is 24 files, all this
+ticket. Recorded rather than silently dismissed, because the reviewer's method
+was right and anyone re-running the command on a stale checkout sees the same
+phantom.
+
+**Three defects I found in my own work**, listed because they are the ones no
+reviewer flagged:
+
+1. The property NAME had to be a literal alongside the values. Binding it alone
+   was enough to lose the index under a generic plan.
+2. The duplicate-enum-value case: `buildEnumIndex` let the last occurrence win,
+   SQL's `CASE` takes the first. Reachable by a typo nothing rejects.
+3. Grouping re-sorted each group by id, which would have discarded an author's
+   `sort:` one group at a time — found while wiring RR-S0H0I8's fix.
 
 ## Acceptance Verification
 
-- [ ] Each acceptance criterion tested (reference planning checklist)
-- [ ] Test evidence documented in implementation checklist
+- [x] Each acceptance criterion tested (reference planning checklist)
+- [x] Test evidence documented in implementation checklist
 
 **Acceptance Status:**
-<!-- For each acceptance criterion, state PASS/FAIL with evidence -->
+
+| AC | Status | Evidence |
+| --- | --- | --- |
+| 1 pushed == Go, page for page | PASS | Differential harness over 7 enum/id shapes × 2 page sizes × 3 pages; mutation (drop the rank from the pushed query) fails on page 1 |
+| 2 declared order on both paths | PASS | Fixtures declare orders that reverse alphabetical, so the paths cannot agree by luck |
+| 3 descending is a valid ordering | PASS | Original defect reproduced first (13 equal keys → reversed; secondary key inverted), then fixed |
+| 4 schema edit rebuilds the index | PASS | `listIndexName` differs across no-values / declared / reordered / inserted |
+| 5 two value orders don't collide | PASS | Declared values are in `StaticIndexSpecs`' dedup key |
+| 6 index survives a generic plan | PASS | Real PostgreSQL 18, both directions, descending via backward scan |
+| 7 section sort before the caps | PASS | Multi-parent fixture exhausts the shared budget; fails if it emits no parent with 3+ children |
+| 8 edge semantics match SQL | PASS | Nulls both directions, undeclared properties, list values, non-ISO dates |
+
+**Every criterion is mutation-tested.** The table in IMPL-Z23EHR names the
+mutation for each and what it breaks. One mutation was found to be **inert** —
+inverting a non-equal comparison is still correct under a single-pass
+comparator — and was replaced with one that reproduces the original multi-pass
+architecture. That is the check worth repeating: confirm the mutation compiled
+and actually applied before believing a pass.
+
+**The SQL/index equivalence is now fuzzed**, not just tabled:
+`FuzzOrderSQLRankMatchesIndex` ran 450,000 executions with no divergence. It
+converts "the two generators currently agree" into a property, which is what
+the reviewer actually asked for.
 
 ## Documentation (enhancements only)
 
-Skip this section for bugs and internal refactors.
+- [x] Docs-checklist created and linked via `has-docs` — DOCS-JATRMW
+- [x] User-facing documentation updated — `docs/data-entry.md`,
+      `docs/metamodel.md`, `docs/postgres-backend.md`, all edited at their
+      `docs-project/` source and regenerated
+- [x] Docs-checklist marked as done
 
-- [ ] Docs-checklist created and linked via `has-docs`
-- [ ] User-facing documentation updated
-- [ ] Docs-checklist marked as done
-
-**Docs Checklist:** <!-- e.g., DOCS-xxxx -->
+**Docs Checklist:** DOCS-JATRMW
 
 ## Final Checks
 
-- [ ] Commit message explains the why, not just what
-- [ ] No TODOs or FIXMEs left unaddressed
-- [ ] Ready for another developer to use
+- [x] Commit message explains the why, not just what — each commit states the
+      decision or the measurement behind the change, not the diff.
+- [x] No TODOs or FIXMEs left unaddressed — none introduced. (A grep hits
+      `VTODO` in `config.go`; that is iCalendar, pre-existing.)
+- [x] Ready for another developer to use — the ordering rule is documented once
+      on `filter.QuerySort` and cited from the places that implement it, so the
+      next person changing a sorter finds the constraint before the bug. The
+      two SQL generators carry explicit warnings against the "safer-looking"
+      change that would silently cost the index.
+
+**Three user-visible behaviour changes ship with this**, all in DOCS-JATRMW's
+release-note item: enum-sorted lists move to declared order; string sorts
+become byte order (99% of this repo's own titles move); `sort=id` becomes byte
+order on the API while the CLI keeps natural order.
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
+- [x] ~~Run `/pr` command to create PR and monitor CI~~ (N/A here: `/pr` gates
+      on the ticket already being `done`, so the PR post-dates this checklist —
+      see TKT-UFV01M)
 
 <!--
 Deliberately NOT tracked here: the PR URL and whether CI passed.
