@@ -67,9 +67,22 @@ Five sort implementations exist in total: `filter.SortMulti`, `applyV1Sorting`,
 
 ## Approach
 
-1. **`applyV1Sorting` delegates to `filter.SortMulti`.** Deletes the second
-comparison rule rather than teaching it about enums. This is the fix for the
-divergence and needs no new comparison code.
+1. **One query-sort comparator, defined by what SQL can express.** Both
+`applyV1Sorting` and `filter.SortMulti` use it: byte order on the stored string
+form, enum rank where declared values exist, nulls last ascending / first
+descending, id ascending as the tiebreak in both directions.
+
+   Scope decision (user, 2026-09-20): **sorting stays in SQL**, because
+otherwise paging does not work properly and loading a whole type is too much
+overhead. Sort semantics become whatever sqlite/postgres can support, and the Go
+comparator conforms to SQL rather than the reverse.
+
+   This replaces an earlier plan to simply delegate to `filter.SortMulti`.
+Design review showed the two sorters differ on strings, dates, ids, lists,
+undeclared properties and the meaning of descending, so delegating would have
+swapped one divergence for several. Accepted consequence: string sorts and
+`sort=id` become byte order, which moves 99% of positions across this repo's own
+4,308 ticket titles. Release note required.
 2. **`queryplan` emits a `CASE` rank** for an enum sort key, so the pushed query
 orders by declared position.
 3. **The enum's declared values participate in `listIndexName`'s hash** — see
@@ -86,6 +99,10 @@ existing type so the YAML shape matches `List.Sort` (`:649`) and
 `metamodel.SortSpec` needs **no change** — no new field, no metamodel access.
 `filter.SortMulti` already takes `*metamodel.Metamodel` as a parameter. That
 closes the third open question below.
+
+Note `store.OrderSpec` DOES change: it grows an optional ordered-value list so
+the enum rank reaches both pgstore's `CASE` and `graphquerynaive`. Those values
+must also enter `listIndexName`'s hash and `StaticIndexSpecs`' dedup key.
 
 ## Measurements (Postgres 18, 200k rows, rela's real index shape)
 
@@ -185,8 +202,10 @@ my enum wrongly", and it would keep two sorters alive, which is the defect.
 path sorts, so collection order is whatever traversal and the store produced.
 This ticket adds:
 
-- `Sort []SortSpec` on `ViewSection`, matching the `List` and `DashboardCard`
-shape.
+- `parent_sort:` and `child_sort:` on a nested `ViewSection`, plain `sort:` on a
+flat one. NOT one ambiguous `sort:`: a nested section holds two collections at
+two levels, and the existing `ParentColumns`/`ChildColumns` pair already solved
+that problem the same way.
 - A sort step for section collections, applied **before any cap**, so the
 surviving rows are the top-sorted ones rather than an arbitrary prefix.
 - Sort properties validated against the source type the way `columns:` already
