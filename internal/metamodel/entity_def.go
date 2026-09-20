@@ -137,6 +137,27 @@ func (e *EntityDef) GetDefaultStatus(m *Metamodel) string {
 	return "draft"
 }
 
+// RankingTitleProperty names the property search ranking may treat as this
+// type's title: a declared, non-template display_property, else a conventional
+// required `title`/`name`/`label`. It is deliberately narrower than
+// [EntityDef.GetPrimaryProperty], which also falls back to ANY required string
+// property — a fine last resort for a label, but not a reason to rank a type
+// by an arbitrary field. Empty means "rank by id".
+func (e *EntityDef) RankingTitleProperty() string {
+	if e.DisplayProperty != "" {
+		if isDisplayTemplate(e.DisplayProperty) {
+			return ""
+		}
+		return e.DisplayProperty
+	}
+	for _, name := range []string{"title", "name", "label"} {
+		if prop, ok := e.Properties[name]; ok && prop.Required && (prop.Type == PropertyTypeString || prop.Type == "") {
+			return name
+		}
+	}
+	return ""
+}
+
 // GetPrimaryProperty returns the name of the primary property used as
 // the entity's display name.
 //

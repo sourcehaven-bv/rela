@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/pgstore"
 )
@@ -83,6 +84,48 @@ func TestSearch_RanksTitleMatchAboveBodyMention(t *testing.T) {
 		ids = append(ids, f.ID)
 	}
 	require.Equal(t, []string{"N-2", "N-1"}, ids)
+}
+
+// With a title map, ranking reads the title property alone: case must not
+// matter (the needle is lowercased, a raw property is not), a type without an
+// entry ranks by id, and the gated search orders exactly as the ungated one.
+func TestSearch_RanksByConfiguredTitle(t *testing.T) {
+	pool := newScopedPool(t)
+	titles := pgstore.SearchTitles{"note": "title", "person": "name"}
+	backend := pgstore.NewSearchBackend(pool).RankByTitles(titles)
+	st, err := pgstore.New(pool, pgstore.WithObserver(backend), pgstore.WithSearchTitles(titles))
+	require.NoError(t, err)
+	ctx := context.Background()
+
+	mk := func(id, typ, prop, value, content string) {
+		e := entity.New(id, typ)
+		if prop != "" {
+			e.SetString(prop, value)
+		}
+		e.Content = content
+		require.NoError(t, st.CreateEntity(ctx, e))
+	}
+	mk("N-1", "note", "title", "Quarterly review", "telemetry is mentioned in the body only")
+	mk("N-2", "note", "title", "TELEMETRY", "")
+	mk("N-3", "note", "title", "Telemetry rollout plan for the platform", "")
+	mk("P-1", "person", "name", "Telemetry Tom", "")
+	mk("X-1", "misc", "label", "telemetry", "") // type absent from the map: ranks by id
+
+	faces, err := backend.Search("Telemetry", 10, store.DefaultWorld())
+	require.NoError(t, err)
+	ids := make([]string, 0, len(faces))
+	for _, f := range faces {
+		ids = append(ids, f.ID)
+	}
+	require.Equal(t, []string{"N-2", "P-1", "N-3", "N-1", "X-1"}, ids)
+
+	var gated []string
+	scope := map[string]search.TypeScope{search.WildcardType: {AllowAll: true}}
+	for hit, err := range st.SearchVisible(ctx, search.Query{Text: "Telemetry", Limit: 10}, scope) {
+		require.NoError(t, err)
+		gated = append(gated, hit.ID)
+	}
+	require.Equal(t, ids, gated, "gated and ungated searches must rank identically")
 }
 
 // Migration 0014 rebuilds search_text in SQL for rows written before the

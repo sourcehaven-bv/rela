@@ -2,6 +2,7 @@ package pgstore
 
 import (
 	"context"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -25,7 +26,8 @@ import (
 // The Service layer (search.New) applies type/property filters and the result
 // limit on top; this backend only maps text to candidate IDs.
 type SearchBackend struct {
-	db DBTX
+	db     DBTX
+	titles SearchTitles
 }
 
 // compile-time interface check.
@@ -34,6 +36,14 @@ var _ search.Backend = (*SearchBackend)(nil)
 // NewSearchBackend builds a search backend over the same handle as the store.
 func NewSearchBackend(db DBTX) *SearchBackend {
 	return &SearchBackend{db: db}
+}
+
+// RankByTitles makes the backend rank by display title; see [SearchTitles].
+// It must carry the same map as the store it is paired with ([Open] does
+// this), or the gated and ungated searches would order differently.
+func (b *SearchBackend) RankByTitles(t SearchTitles) *SearchBackend {
+	b.titles = t
+	return b
 }
 
 // EntityPut is a no-op: the store already persists search_text on write.
@@ -56,7 +66,7 @@ func (b *SearchBackend) EntityRenamed(string, *entity.Entity) error { return nil
 // consistent with substring semantics ("" is a substring of everything).
 func (b *SearchBackend) Search(text string, limit int, w store.WorldScope) ([]search.Face, error) {
 	needle := strings.ToLower(text)
-	sql, args := buildSearchSQL(needle, limit, w)
+	sql, args := buildSearchSQL(needle, limit, w, b.titles)
 
 	// context.Background(): the search.Backend.Search interface carries no
 	// context (see internal/search/types.go), so a search query can't inherit a
@@ -152,7 +162,7 @@ func faceFor(id, entityType string, p entity.Face, rank int, w store.WorldScope)
 // visiblesearch.go's buildVisibleSearchSQL holds the gated and ungated
 // streams to an ordered-subsequence contract, so the ORDER BY here and there
 // must agree.
-func buildSearchSQL(needle string, limit int, w store.WorldScope) (sqlText string, args []any) {
+func buildSearchSQL(needle string, limit int, w store.WorldScope, titles SearchTitles) (sqlText string, args []any) {
 	// search_text is already lowercased by the store, so a plain LIKE with
 	// the lowercased needle is case-insensitive without per-row lower()
 	// calls. '%' and '_' in the needle are escaped so they match literally.
@@ -166,7 +176,7 @@ func buildSearchSQL(needle string, limit int, w store.WorldScope) (sqlText strin
 			textPred("search_text") + ` AND face = ''`
 	} else {
 		rank, candidate := worldSQL(w, "", &args)
-		inner := `SELECT DISTINCT ON (id) id, face, type, search_text, (` + rank + `) AS wrank` +
+		inner := `SELECT DISTINCT ON (id) id, face, type, search_text, properties, (` + rank + `) AS wrank` +
 			` FROM entities WHERE ` + candidate +
 			` ORDER BY id ASC, (` + rank + `) ASC, face ASC`
 		sqlText = `SELECT id, face, type, wrank FROM (` + inner + `) p WHERE ` + textPred("p.search_text")
@@ -176,8 +186,11 @@ func buildSearchSQL(needle string, limit int, w store.WorldScope) (sqlText strin
 		// Avoid similarity() on an empty string; just order by id.
 		sqlText += ` ORDER BY id ASC`
 	} else {
-		args = append(args, needle)
-		sqlText += ` ORDER BY ` + rankExpr("search_text", len(args)) + ` DESC, id ASC`
+		bind := func(v any) string {
+			args = append(args, v)
+			return "$" + strconv.Itoa(len(args))
+		}
+		sqlText += ` ORDER BY ` + titles.rankSQL("", bind, needle) + ` DESC, id ASC`
 	}
 	if limit > 0 {
 		args = append(args, limit)
@@ -196,10 +209,56 @@ func buildSearchSQL(needle string, limit int, w store.WorldScope) (sqlText strin
 // is the LIKE over the whole column, ranking is this prefix.
 const searchRankPrefix = 1024
 
-// rankExpr is the ranking expression both search builders order by; they
-// must agree (see buildVisibleSearchSQL's ordered-subsequence contract).
-func rankExpr(col string, needleArg int) string {
-	return `similarity(left(` + col + `, ` + strconv.Itoa(searchRankPrefix) + `), $` + strconv.Itoa(needleArg) + `)`
+// SearchTitles maps an entity type to the property holding its display
+// title. It is plain configuration handed in by the composition root, which
+// derives it from the metamodel — this package must not import that. Types
+// and property names reach SQL as bound parameters, never interpolated.
+//
+// With a map, free-text ranking is the trigram similarity between the needle
+// and the row's TITLE (TKT-U9DYW4). Matching is unchanged — the LIKE over all
+// of search_text — so every row that mentions the term is still found; what
+// changes is that ranking no longer computes trigrams over a kilobyte of
+// every matched row, which was 1.1 s of a 1.3 s search for a term most rows
+// contain. A row whose type has no entry, or whose title is unset, ranks by
+// its id. Nil keeps the prefix ranking, for callers with no metamodel.
+type SearchTitles map[string]string
+
+// rankSQL is the ranking expression BOTH search builders order by; they must
+// agree (see buildVisibleSearchSQL's ordered-subsequence contract), which is
+// why there is exactly one place that writes it. alias qualifies the columns
+// ("e" for the gated builder, empty for the ungated one); bind appends a
+// parameter and returns its placeholder.
+//
+// The title is lowercased here because the needle already is: search_text is
+// lowercased at write time, a raw property is not, and similarity() is case
+// sensitive.
+func (t SearchTitles) rankSQL(alias string, bind func(any) string, needle string) string {
+	col := func(name string) string {
+		if alias == "" {
+			return name
+		}
+		return alias + "." + name
+	}
+	if len(t) == 0 {
+		return `similarity(left(` + col("search_text") + `, ` + strconv.Itoa(searchRankPrefix) + `), ` + bind(needle) + `)`
+	}
+	byProp := map[string][]string{}
+	for typ, prop := range t {
+		byProp[prop] = append(byProp[prop], typ)
+	}
+	props := make([]string, 0, len(byProp))
+	for prop := range byProp {
+		props = append(props, prop)
+	}
+	sort.Strings(props) // deterministic SQL keeps the plan cache warm
+	var arms strings.Builder
+	for _, prop := range props {
+		types := byProp[prop]
+		sort.Strings(types)
+		arms.WriteString(` WHEN ` + col("type") + ` = ANY(` + bind(types) + `::text[]) THEN ` +
+			col("properties") + ` ->> ` + bind(prop))
+	}
+	return `similarity(lower(coalesce(CASE` + arms.String() + ` END, ` + col("id") + `)), ` + bind(needle) + `)`
 }
 
 // Close releases backend resources. The handle is owned by the wiring layer,

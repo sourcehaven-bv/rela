@@ -18,7 +18,7 @@ func TestBuildVisibleSearchSQL_LimitPlacement(t *testing.T) {
 	scope := map[string]search.TypeScope{"ticket": {AllowAll: true}}
 
 	t.Run("no filters: LIMIT pushed into SQL", func(t *testing.T) {
-		sqlText, args, ok := buildVisibleSearchSQL(search.Query{Text: "alpha", Limit: 7}, scope)
+		sqlText, args, ok := buildVisibleSearchSQL(search.Query{Text: "alpha", Limit: 7}, scope, nil)
 		if !ok {
 			t.Fatal("expected a query")
 		}
@@ -36,7 +36,7 @@ func TestBuildVisibleSearchSQL_LimitPlacement(t *testing.T) {
 			Limit:   7,
 			Filters: []search.PropertyFilter{{Property: "status", Value: "open", Op: search.FilterEq}},
 		}
-		sqlText, _, ok := buildVisibleSearchSQL(q, scope)
+		sqlText, _, ok := buildVisibleSearchSQL(q, scope, nil)
 		if !ok {
 			t.Fatal("expected a query")
 		}
@@ -63,18 +63,18 @@ func TestBuildVisibleSearchSQL_Shape(t *testing.T) {
 	}
 
 	t.Run("empty scope: no query", func(t *testing.T) {
-		if _, _, ok := buildVisibleSearchSQL(search.Query{Text: "x"}, nil); ok {
+		if _, _, ok := buildVisibleSearchSQL(search.Query{Text: "x"}, nil, nil); ok {
 			t.Error("nil scope must not produce a query")
 		}
 		deny := map[string]search.TypeScope{"ticket": {}}
-		if _, _, ok := buildVisibleSearchSQL(search.Query{Text: "x"}, deny); ok {
+		if _, _, ok := buildVisibleSearchSQL(search.Query{Text: "x"}, deny, nil); ok {
 			t.Error("zero-value-only scope must not produce a query")
 		}
 	})
 
 	t.Run("wildcard allow: no visibility clause", func(t *testing.T) {
 		scope := map[string]search.TypeScope{search.WildcardType: {AllowAll: true}}
-		sqlText, _, ok := buildVisibleSearchSQL(search.Query{Text: "x"}, scope)
+		sqlText, _, ok := buildVisibleSearchSQL(search.Query{Text: "x"}, scope, nil)
 		if !ok {
 			t.Fatal("expected a query")
 		}
@@ -90,7 +90,7 @@ func TestBuildVisibleSearchSQL_Shape(t *testing.T) {
 			"doc":    {Query: docPred},
 			"ticket": {Query: pred()},
 		}
-		sqlText, _, ok := buildVisibleSearchSQL(search.Query{Text: "x"}, scope)
+		sqlText, _, ok := buildVisibleSearchSQL(search.Query{Text: "x"}, scope, nil)
 		if !ok {
 			t.Fatal("expected a query")
 		}
