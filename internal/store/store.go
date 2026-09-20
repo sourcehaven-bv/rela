@@ -480,6 +480,11 @@ type RelationQuery struct {
 	// does. Nil means unfiltered; an empty, non-nil slice matches nothing —
 	// a caller that computed "no ids" must get no edges, not all of them.
 	// When both EntityID and EntityIDs are set an edge must satisfy both.
+	//
+	// A backend must accept a batch of ANY size in one call: callers hand
+	// it a whole page or a whole subtree and do not chunk. A backend with a
+	// bind-parameter budget has to pack the batch itself (sqlitestore sends
+	// one JSON array). Pinned by storetest's ListEntityIDsLargeBatch.
 	EntityIDs []string
 	Cursor    string // pagination cursor from a previous page (empty = start); ignored by ListRelations
 	Limit     int    // max relations per page (0 = no limit); ignored by ListRelations

@@ -31,7 +31,7 @@ func TestSimpleGraphSQL_Gate(t *testing.T) {
 		"narrowing":          {store.GraphQuery{EntityType: "t", Narrowing: []store.NarrowBranch{{}}}, false},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, _, ok := simpleGraphSQL(tc.q, entityColumns, false); ok != tc.want {
+			if _, _, _, ok := simpleGraphSQL(tc.q, entityColumns, false); ok != tc.want {
 				t.Errorf("pushed = %v, want %v", ok, tc.want)
 			}
 		})

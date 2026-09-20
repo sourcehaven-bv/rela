@@ -102,13 +102,21 @@ var _ search.FieldVisibleSearcher = (*Store)(nil)
 // principal may not see (per hidden) is dropped, so a search cannot confirm a
 // redacted property's value by returning its entity.
 //
-// The per-field match is computed in Go over the already-scanned entity with
-// [search.MatchTextFields] — the same ground-truth matcher the generic backend
-// uses — so pgstore and the simple backends agree. This does NOT push the
-// field projection into SQL; the entity is already in hand from the visibility
-// scan, so the filter is a cheap in-memory pass over the candidate rows. A SQL
-// pushdown (matching per-column server-side) is a tracked performance
-// follow-up, not a correctness gap.
+// The per-field match is computed in Go with [search.MatchTextFields] — the
+// same ground-truth matcher the generic backend uses — so pgstore and the
+// simple backends agree. It runs in TWO passes (TKT-U9DYW4), because the
+// candidate rows no longer carry bodies:
+//
+//  1. Every row is judged from its id and properties. A row with no hidden
+//     fields, or whose match a VISIBLE property or the id already explains,
+//     is kept here.
+//  2. The rows left over are those only a body can decide. Their bodies are
+//     fetched in one statement, for exactly the (id, face) pairs the gated
+//     query resolved, and the verdict is recomputed with the body in place.
+//
+// Pass 1 can only over-approximate "needs a body": a blank Content can remove
+// the content field from the matched set, never add a field to it. So no row
+// is kept in pass 1 that the single-pass code would have dropped.
 func (s *Store) SearchVisibleFields(
 	ctx context.Context, q search.Query, scope map[string]search.TypeScope, hidden search.HiddenFieldsFunc,
 ) iter.Seq2[search.Hit, error] {
@@ -149,15 +157,10 @@ func emitFieldVisibleRows(
 ) {
 	// Pass 1 decides every row it can from id and properties alone, and
 	// remembers the rows whose verdict depends on the body.
-	type candidate struct {
-		hit      search.Hit
-		e        *entity.Entity
-		hidden   map[string]struct{}
-		needBody bool
-	}
 	var (
-		cands    []candidate
-		bodyless []string
+		cands    []searchCandidate
+		bodyless []stateKey
+		decided  int
 	)
 	for rows.Next() {
 		e, scanErr := scanEntity(rows)
@@ -168,20 +171,26 @@ func emitFieldVisibleRows(
 		if !search.MatchFilters(e, q.Filters) {
 			continue
 		}
-		c := candidate{hit: search.Hit{ID: e.ID, Type: e.Type, Title: e.Title()}, e: e}
-		if hidden != nil && q.Text != "" {
-			hf, err := hidden(ctx, c.hit, e)
-			if err != nil {
-				yield(search.Hit{}, fmt.Errorf("%w: hidden-fields for %q: %w", search.ErrScope, c.hit.ID, err))
-				return
-			}
-			if len(hf) > 0 && !search.MatchHasVisibleField(search.MatchTextFields(e, q.Text), hf) {
-				// No visible property explains the match; only the body can.
-				c.hidden, c.needBody = hf, true
-				bodyless = append(bodyless, e.ID)
-			}
+		c, err := judgeWithoutBody(ctx, q, e, hidden)
+		if err != nil {
+			yield(search.Hit{}, err)
+			return
+		}
+		if c.needBody {
+			bodyless = append(bodyless, stateKey{id: e.ID, face: e.Face})
 		}
 		cands = append(cands, c)
+		if !c.needBody {
+			decided++
+		}
+		// Rows are emitted in order, up to q.Limit. Once that many rows are
+		// already KEPT, nothing further can be emitted — the undecided rows
+		// ahead of them can only add to the kept set — so stop buffering.
+		// This is what bounds memory when Go-side filters moved the LIMIT
+		// out of the SQL.
+		if q.Limit > 0 && decided >= q.Limit {
+			break
+		}
 	}
 	if err := rows.Err(); err != nil {
 		yield(search.Hit{}, fmt.Errorf("%w: pgstore visible search: %w", search.ErrScope, err))
@@ -213,25 +222,61 @@ func emitFieldVisibleRows(
 	}
 }
 
+// searchCandidate is one gated search row between the two passes.
+type searchCandidate struct {
+	hit      search.Hit
+	e        *entity.Entity
+	hidden   map[string]struct{}
+	needBody bool
+}
+
+// judgeWithoutBody is pass 1 for one row: needBody is set only when the row
+// has hidden fields and neither its id nor a visible property explains the
+// match, so only its body can.
+func judgeWithoutBody(
+	ctx context.Context, q search.Query, e *entity.Entity, hidden search.HiddenFieldsFunc,
+) (searchCandidate, error) {
+	c := searchCandidate{hit: search.Hit{ID: e.ID, Type: e.Type, Title: e.Title()}, e: e}
+	if hidden == nil || q.Text == "" {
+		return c, nil
+	}
+	hf, err := hidden(ctx, c.hit, e)
+	if err != nil {
+		return c, fmt.Errorf("%w: hidden-fields for %q: %w", search.ErrScope, c.hit.ID, err)
+	}
+	if len(hf) > 0 && !search.MatchHasVisibleField(search.MatchTextFields(e, q.Text), hf) {
+		c.hidden, c.needBody = hf, true
+	}
+	return c, nil
+}
+
 // stateKey addresses one stored state of an entity.
 type stateKey struct {
 	id   string
 	face entity.Face
 }
 
-// searchBodies loads the bodies of the given ids, every state, keyed by
-// state. The caller picks the state it resolved; loading all of an id's
-// states keeps this one statement regardless of world.
-func searchBodies(ctx context.Context, db DBTX, ids []string) (map[stateKey]string, error) {
-	if len(ids) == 0 {
+// searchBodies loads the bodies of exactly the given states. The keys are the
+// (id, face) pairs the GATED query resolved, so this statement reads no row
+// the gate did not already admit — it must never widen to "every state of
+// these ids", which would pull a face the world or the ACL withheld.
+func searchBodies(ctx context.Context, db DBTX, keys []stateKey) (map[stateKey]string, error) {
+	if len(keys) == 0 {
 		return map[stateKey]string{}, nil
 	}
-	rows, err := db.Query(ctx, "SELECT id, face, content FROM entities WHERE id = ANY($1::text[])", ids)
+	ids, faces := make([]string, len(keys)), make([]string, len(keys))
+	for i, k := range keys {
+		ids[i], faces[i] = k.id, string(k.face)
+	}
+	rows, err := db.Query(ctx,
+		"SELECT e.id, e.face, e.content FROM entities e"+
+			" JOIN unnest($1::text[], $2::text[]) AS k(id, face) ON e.id = k.id AND e.face = k.face",
+		ids, faces)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := make(map[stateKey]string, len(ids))
+	out := make(map[stateKey]string, len(keys))
 	for rows.Next() {
 		var id, face, content string
 		if err := rows.Scan(&id, &face, &content); err != nil {

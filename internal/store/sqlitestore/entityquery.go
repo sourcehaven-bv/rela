@@ -194,7 +194,10 @@ func limitClause(n int) string {
 func jsonIDs(ids []string) string {
 	b, err := json.Marshal(ids)
 	if err != nil {
-		return "[]" // unreachable: a []string always marshals
+		// A []string always marshals. Should that ever stop being true, "[]"
+		// would read as "match nothing" and turn a bug into an empty result,
+		// so fail loudly instead.
+		panic("sqlitestore: marshal id batch: " + err.Error())
 	}
 	return string(b)
 }

@@ -3,6 +3,7 @@ package sqlitestore
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"iter"
 	"reflect"
@@ -53,7 +54,7 @@ func (s *Store) ListEntityHeaders(ctx context.Context, q store.EntityQuery) iter
 
 // GraphQueryHeaders implements store.GraphHeaderQueryer.
 func (s *Store) GraphQueryHeaders(ctx context.Context, q store.GraphQuery) iter.Seq2[store.EntityHeader, error] {
-	sqlText, args, ok := simpleGraphSQL(q, headerColumns, false)
+	sqlText, args, ok := simpleGraph(ctx, s, q, headerColumns, false)
 	if !ok {
 		return func(yield func(store.EntityHeader, error) bool) {
 			for e, err := range s.GraphQuery(ctx, q) {
@@ -72,7 +73,7 @@ func (s *Store) GraphQueryHeaders(ctx context.Context, q store.GraphQuery) iter.
 
 // CountMatched implements store.MatchedCounter.
 func (s *Store) CountMatched(ctx context.Context, q store.GraphQuery) (int, error) {
-	sqlText, args, ok := simpleGraphSQL(q, headerColumns, true)
+	sqlText, args, ok := simpleGraph(ctx, s, q, headerColumns, true)
 	if !ok {
 		matched, _, err := s.GraphCount(ctx, q)
 		return matched, err
@@ -87,7 +88,7 @@ func (s *Store) CountMatched(ctx context.Context, q store.GraphQuery) (int, erro
 // simpleGraphRows runs the SQL path for GraphQuery; ok=false means the shape
 // is not simple and the caller must use graphquerynaive.
 func (s *Store) simpleGraphRows(ctx context.Context, q store.GraphQuery) (iter.Seq2[*entity.Entity, error], bool) {
-	sqlText, args, ok := simpleGraphSQL(q, entityColumns, false)
+	sqlText, args, ok := simpleGraph(ctx, s, q, entityColumns, false)
 	if !ok {
 		return nil, false
 	}
@@ -135,6 +136,31 @@ func (s *Store) headerRows(ctx context.Context, what, sqlText string, args []any
 	}
 }
 
+// sqlGuard is a probe that must find NOTHING for the pushed statement to be
+// exact; a hit sends the query to graphquerynaive.
+type sqlGuard struct {
+	sqlText string
+	args    []any
+}
+
+// simpleGraph is simpleGraphSQL plus its guard: ok only when the shape is
+// simple AND the data lets SQL order it exactly as Go would.
+func simpleGraph(
+	ctx context.Context, s *Store, q store.GraphQuery, columns string, count bool,
+) (sqlText string, args []any, ok bool) {
+	sqlText, args, guard, ok := simpleGraphSQL(q, columns, count)
+	if !ok || guard == nil {
+		return sqlText, args, ok
+	}
+	var hit int
+	switch err := s.q().QueryRowContext(ctx, guard.sqlText, guard.args...).Scan(&hit); {
+	case errors.Is(err, sql.ErrNoRows):
+		return sqlText, args, true
+	default:
+		return "", nil, false // a hit, or a probe failure: the Go path answers
+	}
+}
+
 // pushablePropertyName bounds the names that reach a JSON path. The path is
 // text inside the statement (SQLite cannot bind one), so the name is held to
 // a charset that needs no escaping inside the quoted-label form `$."name"`.
@@ -146,7 +172,9 @@ func jsonPath(property string) string { return `'$."` + property + `"'` }
 // simpleGraphSQL builds the statement for a simple-shaped q, or reports
 // ok=false. count selects count(*) and ignores ordering and paging, as
 // GraphCount does.
-func simpleGraphSQL(q store.GraphQuery, columns string, count bool) (sqlText string, args []any, ok bool) {
+func simpleGraphSQL(
+	q store.GraphQuery, columns string, count bool,
+) (sqlText string, args []any, guard *sqlGuard, ok bool) {
 	// The gate is an allowlist over the ZERO VALUE: clear the fields this
 	// function translates, and whatever is left must be empty. A field added
 	// to GraphQuery later therefore declines here until someone teaches this
@@ -156,11 +184,11 @@ func simpleGraphSQL(q store.GraphQuery, columns string, count bool) (sqlText str
 	rest.EntityType, rest.Props, rest.World, rest.FaceIn = "", nil, store.WorldScope{}, nil
 	rest.OrderBy, rest.Limit, rest.Offset = nil, 0, 0
 	if !reflect.DeepEqual(rest, store.GraphQuery{}) || q.EntityType == "" {
-		return "", nil, false
+		return "", nil, nil, false
 	}
 	eq := store.EntityQuery{Type: q.EntityType, World: q.World, FaceIn: q.FaceIn}
 	if storeutil.ValidateEntityQuery(eq) != nil {
-		return "", nil, false // let the naive path report the error its way
+		return "", nil, nil, false // let the naive path report the error its way
 	}
 
 	var conds []string
@@ -171,7 +199,7 @@ func simpleGraphSQL(q store.GraphQuery, columns string, count bool) (sqlText str
 		// negation, list membership and ordered comparison all go through
 		// propmatch's rules for non-string values, which stay in Go.
 		if !p.Scalar || p.Op != store.PropEqual || p.Value == "" || !pushablePropertyName.MatchString(p.Property) {
-			return "", nil, false
+			return "", nil, nil, false
 		}
 		path := jsonPath(p.Property)
 		conds = append(conds, "json_type(properties, "+path+") = 'text' AND json_extract(properties, "+path+") = ?")
@@ -189,19 +217,21 @@ func simpleGraphSQL(q store.GraphQuery, columns string, count bool) (sqlText str
 		args = append(args, condArgs...)
 	}
 	if count {
-		return "SELECT count(*) FROM (" + inner + ")" + where, args, true
+		return "SELECT count(*) FROM (" + inner + ")" + where, args, nil, true
 	}
 
 	var order strings.Builder
+	var inexact []string
 	for _, spec := range q.OrderBy {
 		if !pushablePropertyName.MatchString(spec.Property) {
-			return "", nil, false
+			return "", nil, nil, false
 		}
 		// The sort key is the value's TEXT form, compared byte-wise, with a
 		// missing or JSON-null value as the largest — GraphQuery.OrderBy's
 		// contract. SQLite's own NULL placement is the opposite of that, so
 		// the null test leads each key explicitly.
 		path := jsonPath(spec.Property)
+		inexact = append(inexact, "json_type(properties, "+path+") IN ('real', 'array', 'object')")
 		key := "(CASE json_type(properties, " + path + ")" +
 			" WHEN 'true' THEN 'true' WHEN 'false' THEN 'false' WHEN 'null' THEN NULL" +
 			" ELSE CAST(json_extract(properties, " + path + ") AS TEXT) END)"
@@ -212,6 +242,18 @@ func simpleGraphSQL(q store.GraphQuery, columns string, count bool) (sqlText str
 		}
 	}
 	order.WriteString("id ASC, face ASC")
+	if len(inexact) > 0 {
+		// The text form SQL gives a float, a list or an object is not the one
+		// Go's fmt gives it ("1.0e+21" vs "1e+21", `["a"]` vs "[a]"), so
+		// ordering such values here would disagree with graphquerynaive —
+		// and the same list would reorder depending on which path served it.
+		// Sort keys are scalar strings by contract; a type that breaks the
+		// contract is answered by the Go path, found by one cheap probe.
+		guard = &sqlGuard{
+			sqlText: "SELECT 1 FROM (" + inner + ") WHERE " + strings.Join(inexact, " OR ") + " LIMIT 1",
+			args:    append([]any(nil), args[:len(args)-len(condArgs)]...),
+		}
+	}
 
 	sqlText = "SELECT " + columns + " FROM (" + inner + ")" + where + " ORDER BY " + order.String()
 	if q.Limit > 0 || q.Offset > 0 {
@@ -222,5 +264,5 @@ func simpleGraphSQL(q store.GraphQuery, columns string, count bool) (sqlText str
 		sqlText += " LIMIT ? OFFSET ?"
 		args = append(args, limit, max(q.Offset, 0))
 	}
-	return sqlText, args, true
+	return sqlText, args, guard, true
 }

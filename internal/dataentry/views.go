@@ -105,6 +105,9 @@ func allViewBodies() viewBodies { return viewBodies{all: true} }
 // contentFreeDisplays are the section display modes KNOWN never to read a
 // collected entity's body. It is an allowlist on purpose: a display mode
 // added later, or one this list forgot, loads bodies — slower, never wrong.
+// It is coupled to buildSections' display switch (sections.go): these modes
+// build their rows from properties alone, while `content` and `cards` copy
+// the entity's body. Change one, check the other.
 var contentFreeDisplays = map[string]bool{"table": true, "properties": true, "list": true, "nested": true}
 
 // viewBodyCollections derives the body-carrying collections from the

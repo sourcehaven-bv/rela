@@ -252,7 +252,12 @@ func storePosition(
 	query := scope.toQuery()
 	ctx, n, err := resolveListNarrowing(r.Context(), a, scope.Type, query)
 	if err != nil {
-		return nil, false // the Go path reports the same error in its own shape
+		// LOAD-BEARING: declining here is safe only because the Go path
+		// (resolveScope → scopedSortedEntities) resolves the same narrowing
+		// again and refuses with the same error. A scope that fails to
+		// resolve must never degrade into an unscoped read; if the Go path
+		// ever stops re-resolving, this must return the error instead.
+		return nil, false
 	}
 	plan, ok := n.pushdownPlan(ctx, a, scope.Type, query, 1, 1)
 	if !ok {

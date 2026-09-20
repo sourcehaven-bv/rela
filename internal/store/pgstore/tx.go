@@ -76,11 +76,14 @@ func (s *Store) Tx(ctx context.Context, fn func(store.Store) error) error {
 
 	pending := &txPending{}
 	view := &Store{
-		db:          tx,
-		originID:    s.originID,
-		schema:      s.schema,
-		subscribers: make(map[int]chan store.Event),
-		txPending:   pending,
+		db:       tx,
+		originID: s.originID,
+		schema:   s.schema,
+		// Carried: a search inside a transaction must rank as one outside it.
+		// (observers are deliberately NOT carried — see txPending.)
+		searchTitles: s.searchTitles,
+		subscribers:  make(map[int]chan store.Event),
+		txPending:    pending,
 	}
 	if err := fn(view); err != nil {
 		return err

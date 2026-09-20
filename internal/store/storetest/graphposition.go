@@ -101,6 +101,15 @@ func RunGraphPositionTests(t *testing.T, f Factory) {
 		})
 	}
 
+	t.Run("empty result", func(t *testing.T) {
+		s := f(t)
+		seed(t, s)
+		q := store.GraphQuery{EntityType: "ticket", Props: []store.PropPredicate{{Property: "status", Value: "no-such-status"}}}
+		_, found, err := store.GraphPosition(ctx(), s, q, "T-0")
+		require.NoError(t, err)
+		require.False(t, found)
+	})
+
 	t.Run("unmatched id of the type is not found", func(t *testing.T) {
 		s := f(t)
 		seed(t, s)

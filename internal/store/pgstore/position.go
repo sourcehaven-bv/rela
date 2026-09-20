@@ -67,6 +67,9 @@ func buildGraphPositionSQL(q store.GraphQuery, id string) (sqlText string, args 
 		}
 		window.WriteString("(s.properties ->> $" + strconv.Itoa(len(args)) + `) COLLATE "C"` + dir + ", ")
 	}
+	// Byte-wise, like every id ordering here: the id column is declared
+	// COLLATE "C" (guarded by TestListOrderIsByteWise), which the window
+	// inherits exactly as the list's own ORDER BY does.
 	window.WriteString("s.id ASC")
 
 	args = append(args, id)
