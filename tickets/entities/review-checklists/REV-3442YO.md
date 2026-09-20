@@ -24,6 +24,15 @@ status: in-progress
 - [x] Coverage maintained — tests only add coverage; `.testcoverage.yml`
       enforces floors without a ratchet.
 
+**A coverage run failed and it was my fault, not the code's.** The first
+attempt died on `parsing profile file: line "291.4 1 2" doesn't match expected
+format`. That is a TRUNCATED line in `coverage.out`, not a threshold failure:
+I had two `coverage-check` invocations running at once, both writing the same
+profile. Diagnosed by finding the malformed line (42028, a fragment of a
+`write_handler.go` block), confirming two writers, then stopping every test
+process and re-running once. Worth recording because the error text points at
+the profile parser and reads like a toolchain bug.
+
 **Advisory comment findings: none introduced.** `just comment-report` reports a
 `duplication` finding in `internal/store/graphquery.go` at :31/:49. That is
 pre-existing — this change starts at :125. No suppressions were added anywhere
@@ -85,6 +94,11 @@ reviewer flagged:
    SQL's `CASE` takes the first. Reachable by a typo nothing rejects.
 3. Grouping re-sorted each group by id, which would have discarded an author's
    `sort:` one group at a time — found while wiring RR-S0H0I8's fix.
+4. `internal/store/graphquerynaive` had **no test file at all**, despite being
+   the ordering used by sqlite, fsstore and memstore — three of the four
+   backends. Its ranking was verified only indirectly, through the dataentry
+   differential test. Now pinned directly (`order_test.go`), including the
+   duplicate-value case, and mutation-tested.
 
 ## Acceptance Verification
 
