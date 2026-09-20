@@ -5,7 +5,7 @@ title: 'Duplicate an entity from the detail page: relation-picker modal, then a 
 kind: enhancement
 priority: medium
 effort: l
-status: in-progress
+status: review
 ---
 
 ## Description
@@ -420,9 +420,9 @@ removal.
 ## Risks
 
 - **Affordance/write divergence.** A Duplicate button offered for something the write
-path refuses. Mitigated by deriving from `inline_create`, which the server computes from the
-same create verdict the write path enforces, never from "the detail page
-rendered".
+path refuses. Mitigated by deriving from `inline_create`, which the server
+computes from the same create verdict the write path enforces, never from "the
+detail page rendered".
 - **Self-loop inverse conflict.** `detectSelfLoopShapeConflict`
 (`relations_direction.go:89`) rejects a body naming both a relation and its
 inverse for the same self-loop, reachable when duplicating a self-referencing
