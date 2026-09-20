@@ -34,7 +34,9 @@ OUT of scope:
   conformance suite. The store keeps knowing nothing about enums.
 - `filter.Sort` (the CLI single-key path) and `graphquerynaive.Order`. Neither
   serves the list API. Named here so a reviewer knows they were considered.
-- Natural-number sort on strings.
+- Natural-number sort on strings as a NEW feature. Note this is not the same
+  as D1 below: natsort is PRESENT behaviour in `filter.SortMulti` today, and
+  what to do about it is a decision this ticket cannot avoid.
 
 **Acceptance Criteria:**
 
@@ -97,7 +99,14 @@ declared position, reading `propDef.Values` for an inline enum or
 index. `compareByPropDef` (`:333`) also routes date, integer and boolean to
 type-aware comparisons. Verified by probe, not by reading.
 
-So this ticket writes **no new comparison code**. It deletes a duplicate.
+~~So this ticket writes **no new comparison code**. It deletes a duplicate.~~
+
+**This claim was wrong and design review disproved it (RR-6F2UF2).** The two
+sorters do not implement one rule with two deltas; they differ on strings,
+dates, ids, timestamps, lists, undeclared properties and the meaning of
+descending. Six comparator functions need restructuring to three-way `int`
+returns before delegation is safe. The enum comparison itself is reusable; the
+surrounding machinery is not.
 
 *The delegation pattern is already written.* `queryservice.sortEntitiesMulti`
 (`queryservice.go:306`) builds the `map[string]*metamodel.EntityDef` that
@@ -148,7 +157,7 @@ fall back to the Go path, exactly as they do for integers today.
 sorts each collection through `filter.SortMulti` before applying any cap;
 validation mirrors `columns:`.
 
-**Two defects in `filter.SortMulti` that must be fixed first**
+**Defects in `filter.SortMulti` that must be fixed first** (two found by probe during planning, two more by design review)
 
 Both found by probe during planning, and both silently corrupt paging if the
 delegation lands as-is. Neither is visible on the search path that uses it today,
@@ -400,9 +409,78 @@ For enhancements: identify what documentation needs updating.
       shapes; check during implementation.
 - [x] Release note — enum-sorted list views change order on upgrade.
 
+## Decisions required before implementation
+
+Design review found four critical defects (RR-6F2UF2, RR-C4QYTO, RR-TXFI2O,
+RR-Z7V8PI) and four significant ones. Two need a product call; the rest have a
+recommended answer recorded on the review-response.
+
+**D1. String sorts (RR-C4QYTO) — needs the user's decision.**
+
+`filter.compareStrings` uses natsort (case-insensitive, numeric-aware); SQL uses
+`COLLATE "C"`. Measured on this repo's own 4,308 ticket titles: the two orders
+differ at **4,301 of 4,308 positions (99%)**, from position 0. `title` is the
+second most-sorted property in rela's own config (11 uses, behind `status` at
+13), so this is not an edge case.
+
+| Option | Cost |
+| --- | --- |
+| (a) Make Go byte-wise | Reorders ~every title-sorted list; loses case-insensitive ordering everywhere |
+| **(b) Decline string-sort pushdown** | Go path scans the type: measured 2,061 buffers / 18.7ms at 200k rows, vs 5 buffers pushed |
+| (c) Natural order in SQL | Not indexable; rules itself out |
+
+Recommendation: **(b)**. It keeps the nicer ordering, keeps both paths in
+agreement, and confines the cost to string-sorted lists. String *equality*
+filters stay pushdown-eligible either way, since equality is byte-identical on
+both sides. Note (b) means large deployments lose paging pushdown on `title` —
+that is the tradeoff to accept or reject.
+
+**D2. `sort=id` (RR-PGEEZX) — needs the user's decision.**
+
+Recommendation: keep **byte order** on the v1 path (status quo there, matches
+SQL, and `_position` navigation depends on list order matching). Do not change
+`SortByID`, which is CLI and search behaviour and out of scope. `sort=modified`
+should be declined on v1 rather than silently activated.
+
+**Already decided from measurement, no input needed:**
+
+- **RR-TXFI2O**: the `ORDER BY` `CASE` must use **literals**, not bound
+  parameters. Measured: bound parameters keep the index on a custom plan
+  (4 buffers) but fall to a Parallel Seq Scan once pgx switches to a generic
+  plan after five executions (1,915 buffers, 32.2ms). Literal arms hold the
+  index under a forced generic plan (4 buffers, 0.043ms). This reverses the
+  security rule stated above: `quoteLiteral` becomes load-bearing on the query
+  path, not only in DDL. The EXPLAIN test must force a generic plan or execute
+  at least six times, or it proves nothing about production.
+- **RR-6F2UF2**: three-way (`int`) comparators throughout `filter/sort.go`,
+  inverting only the key comparison, with the id tiebreak applied outside the
+  inversion and always ascending.
+- **RR-Z7V8PI**: AC1, AC3 and AC4 rewritten to assert per-path and to derive
+  index specs from real metamodels; enum values added to `StaticIndexSpecs`'
+  dedup key.
+- **RR-I3QG9P**: `ViewSection` sort binds to a named level. Follow the existing
+  `ParentColumns`/`ChildColumns` precedent with `parent_sort`/`child_sort`
+  rather than one ambiguous `sort:`.
+
+**Effort is no longer `m`.** The claim that step 1 writes no new comparison code
+was wrong: six comparator functions need restructuring before delegation is safe,
+and two pushdown-eligibility narrowings (strings, non-ISO dates) are prerequisites
+rather than follow-ups. Re-estimate once D1 and D2 are settled.
+
 ## Design Review
 
-- [ ] Run `/design-review` before starting implementation
-- [ ] All critical/significant findings addressed in plan
+- [x] Run `/design-review` before starting implementation
+- [ ] All critical/significant findings addressed in plan — blocked on D1 and D2 above
 
-**Design Review Findings:** <!-- List review-response IDs, e.g., RR-xxxx -->
+**Design Review Findings:**
+
+| ID | Severity | Summary |
+| --- | --- | --- |
+| RR-6F2UF2 | critical | Descending path is an invalid comparator; reverses secondary keys |
+| RR-C4QYTO | critical | Strings sort natsort in Go vs byte-wise in SQL (99% of real titles differ) |
+| RR-TXFI2O | critical | Bound-parameter CASE loses the index on a generic plan (4 -> 1,915 buffers) |
+| RR-Z7V8PI | critical | AC1/AC3/AC4 pass with the defect live |
+| RR-D1QOQ7 | significant | Non-ISO date formats and mixed date/datetime diverge |
+| RR-PGEEZX | significant | sort=id and sort=modified change v1 API behaviour |
+| RR-QUQ0OE | significant | List-valued and undeclared properties silently stop sorting |
+| RR-I3QG9P | significant | ViewSection.Sort level is ambiguous; nested cap is per-parent |
