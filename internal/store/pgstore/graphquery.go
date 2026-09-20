@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"iter"
+	"strconv"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -530,11 +531,7 @@ func buildGraphQuerySQLSelect(q store.GraphQuery, sel graphSelect) (sqlText stri
 	page.WriteString(inner)
 	page.WriteString(" ORDER BY ")
 	for _, spec := range q.OrderBy {
-		dir := " ASC"
-		if spec.Descending {
-			dir = " DESC"
-		}
-		page.WriteString("(e.properties ->> " + b.arg(spec.Property) + `) COLLATE "C"` + dir + ", ")
+		page.WriteString(orderKeySQL(b, spec) + ", ")
 	}
 	page.WriteString("e.id ASC")
 	if q.Limit > 0 {
@@ -544,6 +541,58 @@ func buildGraphQuerySQLSelect(q store.GraphQuery, sel graphSelect) (sqlText stri
 		page.WriteString(" OFFSET " + b.arg(q.Offset))
 	}
 	return page.String(), b.args
+}
+
+// orderKeySQL renders one sort key: a byte-wise text comparison, or a rank
+// over the declared value order when the spec carries one.
+//
+// # Why the values are literals and not bind parameters
+//
+// The rank has to match the expression index the reconciler derives
+// (createListIndexDDL), and PostgreSQL matches an expression index by
+// expression EQUIVALENCE. A `CASE` whose arms are `$2, $3, …` is not the same
+// expression as one whose arms are literals, so the index stops being used —
+// not immediately, which is what makes it dangerous, but once the plan cache
+// switches from a custom to a generic plan after five executions of a prepared
+// statement. Measured on 200k rows: 4 buffers with literals, 1,915 with bind
+// parameters, both from the same statement (TKT-9OFGH4).
+//
+// The values come from operator-authored schema.yaml, the same trust level the
+// derived-index DDL already interpolates, and they go through quoteLiteral so
+// an embedded quote cannot break the statement. Do NOT "fix" this back to
+// b.arg: it reads safer and silently costs the index.
+func orderKeySQL(b *sqlBuilder, spec store.OrderSpec) string {
+	dir := " ASC"
+	if spec.Descending {
+		dir = " DESC"
+	}
+	if len(spec.Values) == 0 {
+		// No rank, so no expression index to match: the property name stays a
+		// bind parameter, as it has always been.
+		return "(e.properties ->> " + b.arg(spec.Property) + `) COLLATE "C"` + dir
+	}
+	// Ranked keys interpolate the PROPERTY NAME as well as the values.
+	// Measured: with the name bound as $n and everything else identical, a
+	// generic plan seq-scans (1,915 buffers) because `properties ->> $n` is
+	// not the same expression as `properties->>'status'`; with it literal the
+	// same query is an Index Scan at 4 buffers. Property names come from the
+	// metamodel, and quoteLiteral escapes them regardless.
+	name := quoteLiteral(spec.Property)
+	text := "((properties->>" + name + `) COLLATE "C")` + dir
+	var sb strings.Builder
+	sb.WriteString("(CASE (properties->>" + name + ")")
+	for i, v := range spec.Values {
+		sb.WriteString(" WHEN " + quoteLiteral(v) + " THEN " + strconv.Itoa(i))
+	}
+	// Every undeclared value shares one rank past the end, so they sort after
+	// the declared ones; the text key then orders them among themselves,
+	// matching compareOrderValues on the Go path.
+	//
+	// The direction applies to BOTH keys. Ranking ascending while the tiebreak
+	// descends would order the enum forwards and its unranked values
+	// backwards, which no caller asked for.
+	sb.WriteString(" ELSE " + strconv.Itoa(len(spec.Values)) + " END)" + dir)
+	return sb.String() + ", " + text
 }
 
 // buildPredicateSQL emits (CTE definitions, EXISTS clause) for one

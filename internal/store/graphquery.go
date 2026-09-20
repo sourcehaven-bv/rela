@@ -125,6 +125,29 @@ type GraphQuery struct {
 type OrderSpec struct {
 	Property   string
 	Descending bool
+
+	// Values is the declared order of an enum-shaped property, most
+	// significant first. Empty — the usual case — means compare the text
+	// form byte-wise, which is [GraphQuery.OrderBy]'s default contract.
+	//
+	// When set, a backend ranks each value by its POSITION in this slice,
+	// and any value not listed sorts after every listed one, byte-wise
+	// among its peers. That is what lets a workflow enum read in workflow
+	// order (`backlog, ready, done`) instead of alphabetically (`backlog,
+	// done, ready`) without loading the type into memory to sort it.
+	//
+	// A backend that ranks in SQL must emit the values as LITERALS, not
+	// bind parameters: an expression index is matched by expression
+	// equivalence, and a parameterised rank stops matching a
+	// literal-valued index as soon as the plan cache goes generic —
+	// measured at 4 versus 1,915 buffers on 200k rows (TKT-9OFGH4). The
+	// values come from operator-authored schema.yaml, the same trust
+	// level the derived-index DDL already interpolates, and must still be
+	// escaped.
+	//
+	// Callers must treat a non-nil Values as read-only; backends may
+	// retain it for the life of the query.
+	Values []string
 }
 
 // GraphHeaderQueryer is the content-free projection of [GraphQueryer]:

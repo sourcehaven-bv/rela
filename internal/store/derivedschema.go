@@ -55,6 +55,22 @@ type DerivedObjectSpec struct {
 	// list's `sort:` properties, each string-shaped. Properties then holds
 	// the list's static equality filters. Unused by the other kinds.
 	OrderBy []string
+
+	// OrderValues gives the declared value order of each OrderBy key, by the
+	// same index: OrderValues[i] belongs to OrderBy[i]. An empty entry — the
+	// usual case — means that key is compared byte-wise. Non-empty means the
+	// index must rank by position, matching the [OrderSpec.Values] the query
+	// carries, or the query and its index describe different expressions and
+	// the index goes unused.
+	//
+	// It is nil or exactly len(OrderBy) long; a backend may index it directly.
+	//
+	// This participates in the index NAME. Two lists sorting one property
+	// under two declared orders need two indexes, and reordering `values:` in
+	// schema.yaml must rebuild rather than silently keep an index that now
+	// ranks by the old positions — the same reason uniqueIndexShape is hashed
+	// (BUG-HC6I2T).
+	OrderValues [][]string
 }
 
 // DerivedObjectState is the outcome of reconciling one spec (or one discovered

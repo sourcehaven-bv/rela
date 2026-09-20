@@ -12,6 +12,7 @@
 package graphquerynaive
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"iter"
@@ -113,16 +114,49 @@ func Order(rows []*entity.Entity, specs []store.OrderSpec) {
 				continue
 			}
 			si, sj := fmt.Sprint(vi), fmt.Sprint(vj)
-			if si == sj {
+			c := compareOrderValues(si, sj, spec.Values)
+			if c == 0 {
 				continue
 			}
 			if spec.Descending {
-				return si > sj
+				return c > 0
 			}
-			return si < sj
+			return c < 0
 		}
 		return rows[i].ID < rows[j].ID
 	})
+}
+
+// compareOrderValues ranks two values by their position in the declared order
+// when one is given, and byte-wise otherwise.
+//
+// A value the schema does not declare sorts after every declared one, matching
+// the `ELSE` arm a SQL backend emits for the same spec — so a row holding a
+// value that was removed from the enum lands in the same place on every
+// backend rather than wherever its text happens to fall.
+func compareOrderValues(a, b string, values []string) int {
+	if len(values) == 0 {
+		return strings.Compare(a, b)
+	}
+	ia, ib := -1, -1
+	for i, v := range values {
+		if v == a && ia < 0 {
+			ia = i
+		}
+		if v == b && ib < 0 {
+			ib = i
+		}
+	}
+	switch {
+	case ia >= 0 && ib >= 0:
+		return cmp.Compare(ia, ib)
+	case ia >= 0:
+		return -1
+	case ib >= 0:
+		return 1
+	default:
+		return strings.Compare(a, b)
+	}
 }
 
 // sortValue reads a sort key the way SQL's `->>` does: a key that is
