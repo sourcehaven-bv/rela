@@ -5,7 +5,7 @@ title: Replace command open/reveal launcher with an ACL-gated HTTP download
 kind: enhancement
 priority: high
 effort: m
-status: ready
+status: review
 ---
 
 ## Problem
@@ -73,9 +73,9 @@ fix. An explicit button always works.
 a **capability**. Re-running `authorizeCommand` at download time is the whole
 point: it re-evaluates the live ACL, so a leaked token stops working after a
 `--read-only` restart or a policy change that revokes the command's permission —
-exactly the bimodal policy the gate enforces (DEC-EIHQSU: no `acl.yaml` ⇒ runs as
-before; policy present ⇒ `permission` must be set and held; `--read-only` denies
-all). Mint-time-only validation would let a token outlive the grant that
+exactly the bimodal policy the gate enforces (DEC-EIHQSU: no `acl.yaml` ⇒ runs
+as before; policy present ⇒ `permission` must be set and held; `--read-only`
+denies all). Mint-time-only validation would let a token outlive the grant that
 produced it. Run-scoped TTL on top bounds the window further.
 
 **Why token-scoped rather than path-addressed.** A route that accepts a
@@ -93,8 +93,8 @@ missing store key.
 The command ACL gate landed on develop in **#1180** (`feat(dataentry):
 per-command ACL guard for command execution`, TKT-MJ02AO). `authorizeCommand`
 (`commands.go:84`) is the single decision point, re-consulted at exec time. The
-download re-check calls the **same function** with the stored `CommandConfig`, so
-it cannot drift from the exec boundary. No longer blocked.
+download re-check calls the **same function** with the stored `CommandConfig`,
+so it cannot drift from the exec boundary. No longer blocked.
 
 ## Acceptance criteria
 
