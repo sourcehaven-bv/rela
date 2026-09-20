@@ -5,7 +5,7 @@ title: 'Section sort: plus one declared order per enum, on every sort path'
 kind: enhancement
 priority: medium
 effort: m
-status: planning
+status: ready
 ---
 
 ## Description

@@ -2,7 +2,7 @@
 id: PLAN-P5RMKX
 type: planning-checklist
 title: 'Planning: Section sort: plus one declared order per enum, on every sort path'
-status: in-progress
+status: pending
 ---
 
 <!-- @managed: claude-workflow v1 -->
