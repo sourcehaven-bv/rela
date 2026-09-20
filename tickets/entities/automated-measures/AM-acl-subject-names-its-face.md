@@ -12,7 +12,7 @@ description: |-
 
     This test guards the residual discretionary choice the compiler cannot
     make: which of the two constructors a caller picks. NewFacelessEntitySubject
-    is a one-word way back to the old behaviour, so the test repo-scans every
+    is a one-word way back to the old behavior, so the test repo-scans every
     non-test source and fails on any call from a file not in its
     `facelessAllowed` allowlist, each entry carrying a written reason. It is an
     ALLOWLIST rather than an exemption list, so a new faceless call site fails
@@ -30,7 +30,7 @@ description: |-
     so it could only ever pass.
 
     Paired with TestFacedIDWrite_* in internal/dataentry, which pins the
-    end-to-end behaviour no scan can see (a call that passes the WRONG face
+    end-to-end behavior no scan can see (a call that passes the WRONG face
     expression). See also BUG-HC6I2T: the old scan was satisfied by a literal
     that set Face to a value the write did not use.
 kind: test

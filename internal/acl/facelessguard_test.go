@@ -45,7 +45,7 @@ var facelessCall = regexp.MustCompile(`\bNewFacelessEntitySubject\(`)
 // What the type CANNOT enforce is the remaining discretionary choice. A caller
 // must pick between [acl.NewEntitySubject] and [acl.NewFacelessEntitySubject],
 // and picking the faceless one is a one-word way back to the original
-// behaviour — authorize against the default face — with no compile error. The
+// behavior — authorize against the default face — with no compile error. The
 // compiler guarantees the choice is MADE; only review can judge whether it is
 // RIGHT. This test turns that judgement into a merge-blocking artifact.
 //
