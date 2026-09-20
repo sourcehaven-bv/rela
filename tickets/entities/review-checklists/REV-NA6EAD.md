@@ -125,10 +125,10 @@ no TODO/FIXME/XXX/`console.log`/`debugger`.
 
 ## Pull Request
 
-- [x] ~~Run `/pr` command to create PR and monitor CI~~ (deferred to the operator:
-`/pr` is a user-invoked command, and by the note below the PR URL and CI status
-are deliberately not recorded here. Branch `tkt-6mz42j-mention-type-picker`,
-commit 3ee794eb.)
+- [x] Run `/pr` command to create PR and monitor CI — done. GitHub CI is green
+(29 pass, 2 skipping, 0 failures), including CodeQL after the `useId()` fix, and
+auto-merge is armed pending review. Per the note below the URL and CI status are
+not recorded as checklist evidence; they post-date this checklist.
 
 <!--
 Deliberately NOT tracked here: the PR URL and whether CI passed.
