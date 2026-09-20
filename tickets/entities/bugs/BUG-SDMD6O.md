@@ -6,11 +6,12 @@ why1: One list request holds ~100 MB of entity bodies to render a 50-row page.
 why2: scopedSortedEntities returns []*entity.Entity for the whole type; pagination slices only after the pipeline returns.
 why3: Sort, filter and free-text intersection genuinely need the full SET, so the full LOAD was assumed necessary along with it — but a list row renders properties, never the body.
 why4: When EntityHeader landed (TKT-1ESTYJ) it was applied to the analyze path that motivated it; the list path has the same shape and was not revisited.
-why5: "The default test backend (memstore) shares body strings rather than materialising them, so body-retention costs ~1 MB there and ~101 MB on a real backend. The regression is structurally invisible to the fast test path, so no unit test could have caught it."
+why5: "The default test backend (memstore) shares body strings rather than materialising them, so body-retention costs ~1 MB there and ~101 MB on a real backend. The regression is invisible to a HEAP probe on the fast test path — but not to a body COUNT, which is backend-independent and is what now pins it."
+prevention: "storetest.BodyWatch counts bodies served to a read path, so 'this pipeline read markdown it will not render' is an exact, backend-independent assertion rather than a heap measurement only a DB-gated job can make. It is the third sibling of Counting (round-trips) and Breadth (batch width); a new collection read path pins its body cost the same way CLAUDE.md already requires a Counting budget test."
 title: GET /api/v1/<type> retains every entity of the type (bodies included) to render one page
 priority: high
 effort: m
-status: backlog
+status: review
 ---
 
 ## Symptom
@@ -125,3 +126,52 @@ reports ~1 MB either way, which is what let this ship.
 AllowAll / scoped / DenyAll verdicts.
 - ACL equivalence asserted against `ListEntities` output, mutation-verified by
 removing the gate and confirming failure.
+
+
+## Resolution
+
+The retention defect itself was already fixed by **TKT-1U8XYN**, which landed
+after this bug was written. `scopedHeaders` reads `store.EntityHeader` rows on
+every verdict branch, `listpushdown.go` serves a page straight from the store,
+and pgstore projects the content column away in SQL. Verified by measurement,
+not by reading: a list over a 50-row type reads **0 bodies**.
+
+What this change adds is the part that was genuinely missing — **the pin**, and
+one real regression the pin found.
+
+### The pin (`storetest.BodyWatch`)
+
+The ticket's test plan called for a DB-gated heap assertion, explicitly not on
+memstore. That instrument was reconsidered and replaced, for the reason the
+ticket itself supplies: memstore is blind to body retention, so a heap test
+there cannot fail — and a pgstore-only test does not run in the default
+`go test ./...`. The defect would simply have been reintroduced somewhere the
+assertion was not watching.
+
+`BodyWatch` counts bodies SERVED instead of weighing them. That is the same
+property, asked in a form every backend can answer: exact, thresholdless, and
+it runs everywhere. It is the third sibling of `Counting` (round-trips) and
+`Breadth` (batch width) — each measures a cost the other two cannot see.
+
+Mutation-verified against the exact defect. Reverting the AllowAll branch to
+`ListEntities` fails with *"list of 50 rows read 50 bodies, want 0"* — on
+**memstore**, the backend a heap probe reports ~1 MB on either way.
+
+### The regression the pin found
+
+Requirement 4 asked whether any list row legitimately needs a body. One does,
+and it had silently broken: a list export with an `export_render:` Lua script
+reaches `row.content`, and since collection reads became content-free it was
+receiving the **empty string for every row**. The export still returned 200 and
+still emitted a document; only the bodies were gone. Confirmed by checking out
+`bb8d3a144~1`, where the same test passes.
+
+Fixed with a `loadBodies` seam called on the override path only, after the ACL
+scope, the field-redaction pass and the cap — so it loads at most
+`listExportCap` bodies, for rows that already survived every gate. The
+built-in column table renders columns and stays content-free, pinned in both
+directions.
+
+The existing override tests could not have caught this: the shared
+`fakeScriptEngine` records row IDs only, so the rows arrived in the right order
+with the right ids and every body empty.

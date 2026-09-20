@@ -2,11 +2,13 @@ package dataentry
 
 import (
 	"context"
+	"io"
 	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
@@ -431,5 +433,103 @@ func TestExport_List_RenderOverride_ConfigIDNamespaced(t *testing.T) {
 	}
 	if got, want := fake.calls[0].path, "docs/fancy_list.lua"; got != want {
 		t.Errorf("script path = %q, want %q", got, want)
+	}
+}
+
+// bodyCapturingEngine records the CONTENT of every row handed to a list
+// render script — which is exactly what lua.EntityToTable exposes to the
+// script as `row.content`.
+//
+// The shared fakeScriptEngine records only row IDs, which is why it could not
+// catch the regression below: the rows arrived, in the right order, with the
+// right ids, and with every body silently empty.
+type bodyCapturingEngine struct {
+	fakeScriptEngine
+	contents []string
+}
+
+func (b *bodyCapturingEngine) ExecuteListDocument(_ context.Context, _ string, _ lua.WriteDeps,
+	stdout io.Writer, _ string, lrc lua.ListRenderContext, _ time.Duration) error {
+	for i := range lrc.Rows.Len() {
+		if e := lrc.Rows.At(i); e != nil {
+			b.contents = append(b.contents, e.Content)
+		}
+	}
+	_, _ = io.WriteString(stdout, "# out\n")
+	return nil
+}
+
+// A list export with an `export_render:` script must hand that script the row
+// BODIES (BUG-SDMD6O).
+//
+// The built-in column table renders properties, so the content-free rows the
+// shared list read path yields are right for it. A script is the one list
+// consumer that can reach `row.content`, and when collection reads became
+// content-free (TKT-1U8XYN) it started receiving the empty string for every
+// body — a silent failure, because the export still succeeded and still
+// emitted a document. Only the bodies were gone.
+//
+// Asserting on the rows the script RECEIVES rather than on rendered output is
+// deliberate: the rendered output is produced by the script, so a fake that
+// ignores content would let this pass while the real Lua binding renders
+// nothing.
+func TestExport_List_RenderOverrideReceivesRowBodies(t *testing.T) {
+	requireCp(t)
+	app := newExportApp(t)
+	seedEntity(app, &entity.Entity{ID: "TKT-1", Type: "ticket",
+		Properties: map[string]any{"title": "Title TKT-1", "status": "open"},
+		Content:    "the body of TKT-1"})
+	seedEntity(app, &entity.Entity{ID: "TKT-2", Type: "ticket",
+		Properties: map[string]any{"title": "Title TKT-2", "status": "open"},
+		Content:    "the body of TKT-2"})
+	// Configures the override and republishes the schema; the engine is then
+	// swapped for one that records bodies.
+	withListRenderOverride(t, app, func(fakeScriptCall) string { return "# out\n" })
+	engine := &bodyCapturingEngine{}
+	app.documents = newDocumentService(app.store, app.kv, "/", engine,
+		func() lua.WriteDeps { return lua.WriteDeps{} }, nil)
+	var err error
+	if app.export, err = newExportHandler(app); err != nil {
+		t.Fatalf("newExportHandler: %v", err)
+	}
+
+	rec := exportListURL(adminListCtx(t, app), app, "transform=copy&list=tickets")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body)
+	}
+	want := []string{"the body of TKT-1", "the body of TKT-2"}
+	if len(engine.contents) != len(want) {
+		t.Fatalf("script saw %d rows, want %d: %q", len(engine.contents), len(want), engine.contents)
+	}
+	for i, w := range want {
+		if engine.contents[i] != w {
+			t.Errorf("row %d content = %q, want %q", i, engine.contents[i], w)
+		}
+	}
+}
+
+// The other half: a list WITHOUT a render override must stay content-free.
+// Loading bodies for the built-in column table would undo the retention fix
+// for every list export, which is the over-correction this pins against.
+func TestExport_List_BuiltinTableReadsNoBodies(t *testing.T) {
+	requireCp(t)
+	app := newExportApp(t)
+	seedEntity(app, &entity.Entity{ID: "TKT-1", Type: "ticket",
+		Properties: map[string]any{"title": "Title TKT-1", "status": "open"},
+		Content:    "the body of TKT-1"})
+
+	var loaded int
+	orig := app.export.loadBodies
+	app.export.loadBodies = func(ctx context.Context, rows []*entity.Entity) error {
+		loaded += len(rows)
+		return orig(ctx, rows)
+	}
+
+	rec := exportListURL(adminListCtx(t, app), app, "transform=copy&list=tickets")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body)
+	}
+	if loaded != 0 {
+		t.Errorf("built-in table export loaded %d bodies, want 0 — it renders columns", loaded)
 	}
 }
