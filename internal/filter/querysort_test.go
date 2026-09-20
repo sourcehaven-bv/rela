@@ -234,3 +234,28 @@ func TestQuerySort_CustomTypeValuesRank(t *testing.T) {
 		t.Errorf("custom type rank = %s, want %s", got, want)
 	}
 }
+
+// A value listed twice is a schema typo nothing rejects, so the three
+// rankings — this comparator, graphquerynaive, and SQL's CASE — have to agree
+// on which position wins. SQL takes the FIRST matching arm (verified:
+// `CASE 'a' WHEN 'a' THEN 0 WHEN 'b' THEN 1 WHEN 'a' THEN 2 END` = 0), so a
+// last-wins index would sort a duplicated value differently in Go than in the
+// database.
+func TestQuerySort_DuplicateDeclaredValueRanksAtItsFirstPosition(t *testing.T) {
+	defs := qsDefs(map[string]metamodel.PropertyDef{
+		"status": {Type: metamodel.PropertyTypeEnum, Values: []string{"open", "wip", "open", "done"}},
+	})
+	specs := []SortSpec{{Property: "status"}}
+	if got := NewQuerySort(specs, defs, &metamodel.Metamodel{}).Ranks("status")["open"]; got != 0 {
+		t.Errorf("duplicated value ranked at %d, want 0 (its first position, as SQL's CASE does)", got)
+	}
+
+	rows := []qsRow{
+		{id: "A", props: map[string]any{"status": "done"}},
+		{id: "B", props: map[string]any{"status": "open"}},
+		{id: "C", props: map[string]any{"status": "wip"}},
+	}
+	if got, want := qsSort(t, rows, specs, defs), "B,C,A"; got != want {
+		t.Errorf("order = %s, want %s", got, want)
+	}
+}

@@ -2,7 +2,7 @@
 id: IMPL-Z23EHR
 type: implementation-checklist
 title: 'Implementation: Section sort: plus one declared order per enum, on every sort path'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
@@ -156,8 +156,18 @@ Mutation: restore the `.(string)` type assertion → list test fails.
 `dataentry → filter` edge is allowed); `golangci-lint` 0 issues; `gofmt` clean;
 the full `pgstore` conformance suite passes against real PostgreSQL (67s).
 
-**Behaviour changes shipped**, all three in the release note and docs:
+**Behaviour changes shipped**, all in the release note and docs:
 enum-sorted lists move to declared order; string sorts become byte order
-(case-sensitive, non-numeric); `sort=id` becomes byte order in search and CLI.
-`sort=modified` stops being honored on the query path — it has no stored
-column, so no backend can order by it.
+(case-sensitive, non-numeric); `sort=id` becomes byte order. `sort=modified`
+stops being honored on the query path — it has no stored column, so no backend
+can order by it.
+
+**Correction to an earlier note in this checklist:** the `sort=id` change does
+NOT reach the CLI. `rela list --sort` calls `filter.Sort`/`filter.SortByID`
+directly (`internal/cli/list.go:192-210`), which keep natsort and the
+per-type comparators. Verified by grep: after this change no production code
+calls `filter.SortMulti`, and the CLI is the only remaining consumer of the old
+comparators. That is the intended scope line — the CLI does not page and has no
+SQL path to agree with — but it does mean `rela list --sort id` and
+`/api/v1/entities?sort=id` now order differently. Worth a reviewer's attention;
+unifying them would be its own ticket.
