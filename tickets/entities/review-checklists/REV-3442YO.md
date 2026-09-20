@@ -2,7 +2,7 @@
 id: REV-3442YO
 type: review-checklist
 title: 'Review: Section sort: plus one declared order per enum, on every sort path'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
@@ -21,8 +21,11 @@ status: in-progress
       across 15,164 comments. Two were found and fixed during the work, both
       the same mistake: a `[Bracketed]` reference to something Go cannot link
       (a renamed symbol, then an unexported method).
-- [x] Coverage maintained — tests only add coverage; `.testcoverage.yml`
-      enforces floors without a ratchet.
+- [x] Coverage maintained — `just coverage-check` PASS on both thresholds
+      (package 50%, total 65%); total 79.9% (41807/52311). Changed packages:
+      `dataentry` 83.0%, `dataentryconfig` 91.2%, `filter` 90.1%, `queryplan`
+      88.4%, `store` 76.8%. Note the desktop cgo build failure that blocked
+      this gate on TKT-M0WMEE did not recur.
 
 **A coverage run failed and it was my fault, not the code's.** The first
 attempt died on `parsing profile file: line "291.4 1 2" doesn't match expected
@@ -98,7 +101,11 @@ reviewer flagged:
    the ordering used by sqlite, fsstore and memstore — three of the four
    backends. Its ranking was verified only indirectly, through the dataentry
    differential test. Now pinned directly (`order_test.go`), including the
-   duplicate-value case, and mutation-tested.
+   duplicate-value case, and mutation-tested. The package is deliberately excluded
+   from the coverage floor (`.testcoverage.yml:107` — it is exercised through
+   every backend's tests and cross-package coverage is not attributed without
+   `-coverpkg`), so the gap was invisible to the gate by design; the exclusion
+   is about attribution, not about the package not needing tests.
 
 ## Acceptance Verification
 
