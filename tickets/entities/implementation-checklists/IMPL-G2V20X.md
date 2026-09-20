@@ -186,6 +186,75 @@ editor specs fail 1-2 of ~70 with a *different* test each run. Verified against
 the stashed baseline: 2 of 69 failed there too. Not caused by this change; worth
 its own ticket.
 
+## Re-port onto the shared editor modules
+
+While this sat in review, develop moved 32 commits ahead and **PR #1622**
+(TKT-D2JML7, porting the sandboxed app editor from EasyMDE to Milkdown)
+refactored exactly what this ticket rewrote:
+
+- the menu's search/staleness machine moved to `mentionMenuState.ts`, so the app
+editor can drive the same menu without Vue, leaving `useMentionMenu.ts` a thin
+reactive wrapper;
+- `rankByIdMatch` moved to `rankMentions.ts`, generic over `{id?}`, shared by the
+SPA and `src/app-editor/relaMentionMenu.ts`.
+
+That made the conflict a re-port rather than a merge, and it raised a scope
+question. **Operator decision: SPA-only.** The fuzzy scorer moves into the shared
+`rankMentions.ts`, so BOTH editors get the better ranking; the type picker stays
+in the Vue wrapper, because a sandboxed app runs under `connect-src 'none'` and
+has no route to the schema's type list. Building that channel is explicitly out
+of scope.
+
+What the re-port changed:
+
+- `mentionRanking.ts` is **deleted**; `rankEntities` became `rankMentions` in
+`rankMentions.ts`, replacing `rankByIdMatch`. Both measured guards moved with it:
+uFuzzy on its defaults (the `intraIns: 1` cost) and the tokenizer-coverage check.
+The cost assertion moved too — a correctness fixture passes either way, so it
+would be worthless as the regression guard for the thing that actually hurt.
+`mentionRanking.test.ts` → `rankMentions.test.ts`.
+- `MentionMenuState` now **extends** `MentionMenuSnapshot<Entity>`, adding only
+`typeItems`, `selectedType` and `highlight`. The type-picker fields deliberately
+do NOT widen the shared snapshot: the app editor's menu has no picker, and every
+plain-DOM renderer would otherwise carry fields it can never populate.
+- The `type` scope is applied inside the machine's `search` closure, which reads
+`state.selectedType` at call time. That is the whole integration: the machine
+needs no knowledge of scoping.
+
+**Two behaviour changes this surfaced in existing tests, both correct.** The old
+`rankByIdMatch` only re-tiered and never dropped a row, while the fuzzy scorer
+filters. So `TKT` no longer keeps `FEAT-TKX` at the bottom of the list, in
+`mentionMenuState.test.ts` and in the app editor's `relaMentionMenu.test.ts`.
+Both tests now assert the new contract explicitly, with a companion case proving
+a TITLE match still survives when the id does not — so the filtering is not
+collateral damage of the ID tier.
+
+**One ordering bug the re-port introduced, caught by the existing tests.**
+`applyScopeChange` cleared `state.items` *before* calling `machine.setQuery`, but
+that call syncs the machine's snapshot back over ours, so the clear was silently
+undone and the old scope's rows stayed under the new chip — the very defect
+RR-XWOQZH exists to prevent. Fixed by clearing after the call, with a comment
+naming the ordering.
+
+Verified after the re-port: **3019** frontend unit tests in 187 files (up from
+2841, since develop's own suite came along), **24** editor e2e tests, and a probe
+confirming uFuzzy is genuinely bundled into `rela-editor.js` (the `interSplit` /
+`intraIns` internals are present) and behaves identically when imported from the
+app-editor side.
+
+## CodeQL
+
+`js/insecure-randomness` (high) fired on the `Math.random()` suffix used to make
+the ARIA option-id prefix unique. **Not a false positive to suppress**: the id
+authenticates nothing, but `Math.random()` was the wrong tool. Replaced with
+Vue 3.5's `useId()`, which is unique by construction per app instance and stable
+across SSR hydration, where a random value would differ between server and
+client. Verified in jsdom that two mounted menus get distinct prefixes, every id
+is a valid HTML identifier, and every `aria-activedescendant` resolves.
+
+My first reading of this check was wrong: I reported it as "configuration not
+found", a config error, from an incomplete run. It was a real finding.
+
 ## Quality
 
 - [x] Code follows project patterns (check similar code)

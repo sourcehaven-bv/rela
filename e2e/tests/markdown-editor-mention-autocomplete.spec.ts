@@ -128,7 +128,11 @@ test.describe('Markdown editor @ mention autocomplete', () => {
       appPage.evaluate(() => {
         const box = document.querySelector('.mention-menu[role="listbox"]');
         const id = box?.getAttribute('aria-activedescendant') ?? null;
-        const target = id ? document.getElementById(id) : null;
+        // Resolve WITHIN this listbox, not via document.getElementById. useId()
+        // ids are document-scoped, so a page holding two editors would let the
+        // wrong instance's row satisfy the lookup and the assertion would pass
+        // for the wrong reason.
+        const target = id ? box?.querySelector(`#${CSS.escape(id)}`) : null;
         return {
           // One listbox for one selection: the highlight is a single sequence
           // across both sections, so nested listboxes would misreport it.
