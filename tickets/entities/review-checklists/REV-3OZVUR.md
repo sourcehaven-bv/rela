@@ -9,68 +9,100 @@ status: in-progress
 
 ## Automated Checks
 
-- [ ] All tests pass (`just test`)
-- [ ] Lint clean (`just lint`)
-- [ ] Comment lint gate clean (`just comment-lint`)
-- [ ] Coverage maintained (`just coverage-check`)
+- [x] All tests pass (`just test`)
+- [x] Lint clean (`just lint`)
+- [x] Comment lint gate clean (`just comment-lint`)
+- [x] Coverage maintained (`just coverage-check`)
 
-**Comment findings.** `just comment-report` lists the advisory rules
-(duplication, nil-contract, param-contract, restatement). They are not a merge
-gate, but a finding your diff *introduces* should be fixed or suppressed — don't
-grow the backlog.
+Evidence: full Go suite green; `-race` clean on `internal/dataentry` (466s) and
+`internal/migration`; `golangci-lint ./...` 0 issues; `just arch-lint`, `just
+plimsoll`, `just comment-lint` all clean. Coverage 79.7%, both thresholds PASS.
+Frontend: typecheck clean, lint 0 errors, 2933 tests pass.
 
-Every rule is a heuristic over prose, so false positives are expected. To
-suppress one, prefer the inline form on the declaration line, which travels with
-the code and is reviewed in this diff:
-
-```go
-func f(p string) {} //commentlint:ignore param-contract  p is contained by Clone
-```
-
-Use `.commentlint.yml` (`ignore:` path globs, `allow-phrases:`) only when the
-same prose recurs across many sites. A reason is required either way — an
-unexplained suppression is a finding nobody can re-evaluate later.
+One `comment-report` advisory finding was raised **and fixed** rather than
+suppressed: `mint` asserted a containment precondition its signature did not
+enforce. Fixed with the `containedPath` witness type (RR-0L9DUD), so an
+unchecked path now fails to compile.
 
 ## Code Review
 
-- [ ] Run `/code-review` command (invokes cranky-code-reviewer agent)
-- [ ] All critical review-responses addressed
-- [ ] All significant review-responses addressed
-- [ ] Self-reviewed the diff for unrelated changes
+- [x] Run `/code-review` command (invokes cranky-code-reviewer agent)
+- [x] All critical review-responses addressed
+- [x] All significant review-responses addressed
+- [x] Self-reviewed the diff for unrelated changes
 
-**Review Responses:** <!-- List IDs of review-response entities created, e.g.,
-RR-xxxx -->
+Two reviewers ran in parallel: `cranky-code-reviewer` for quality and
+`rela-security-reviewer` for security. Both independently found the `exec_id`
+defect, which is the one that mattered.
+
+Every finding was verified against the code before acting — the directory-200
+and immortal-token claims were each reproduced with a throwaway probe first.
+
+**Review Responses:** RR-AG4SG8 (significant, addressed), RR-GX7PIJ
+(significant, addressed), RR-I5KBFX, RR-0L9DUD, RR-UXH1KY, RR-385HBF, RR-Z8WFJ2
+(minor, addressed), RR-A98CSH (nit, addressed), RR-U463I9, RR-T7Z6UW (minor,
+deferred with follow-up tickets TKT-3MDPTH / TKT-58ID95).
+
+No critical findings. Neither deferred item is a regression: both describe
+pre-existing exposure that this ticket does not widen, and each has a ticket so
+it is not lost.
 
 ## Acceptance Verification
 
-- [ ] Each acceptance criterion tested (reference planning checklist)
-- [ ] Test evidence documented in implementation checklist
+- [x] Each acceptance criterion tested (reference planning checklist)
+- [x] Test evidence documented in implementation checklist
 
 **Acceptance Status:**
-<!-- For each acceptance criterion, state PASS/FAIL with evidence -->
+
+1. **PASS** — `/api/open-file` is not mounted on any build; the route walk test
+covers `/api/command-file/` instead.
+2. **PASS (in substance)** — no *code* matches; two explanatory comments
+mention the old route by name, which the literal grep in the AC did not
+anticipate.
+3. **PASS** — one Download link per file item, `Content-Disposition:
+attachment` asserted in `TestHandleCommandFile_ServesHardenedDownload`; frontend
+pinned by `CommandModal.test.ts`.
+4. **PASS** — `TestHandleCommandFile_ReauthorizesPerDownload` covers both the
+revoked-permission and `--read-only` cases. Mutation-tested: removing the
+re-check fails both subtests.
+5. **PASS** — `TestCommandFileStore_ExpiresAfterRelease`, plus
+`_UnreleasedTokensStillExpire` for the backstop added during review.
+6. **PASS** — `TestMintFileToken_StripsPath` and
+`TestCommandExecEmitsTokenNotPath`; `_OutsideBytesAreUnreachable` asserts
+containment as a property rather than as a rejection.
+
+**Manual verification is NOT done.** The ticket's test plan calls for confirming
+on the real headless deployment, since the original symptom (silent no-op) is
+only observable there. That is the one item outstanding.
 
 ## Documentation (enhancements only)
 
-Skip this section for bugs and internal refactors.
-
 - [ ] Docs-checklist created and linked via `has-docs`
-- [ ] User-facing documentation updated
+- [x] User-facing documentation updated
 - [ ] Docs-checklist marked as done
 
-**Docs Checklist:** <!-- e.g., DOCS-xxxx -->
+`GUIDE-data-entry.md` (File Downloads section, message-type table, the dead
+`open` row removed, `auto_open` marked inert + migration pointer) and
+`GUIDE-server-security.md` (section 5 rewritten, section 6 removed and the rest
+renumbered, TOCTOU section rewritten to admit the window widened). `docs/`
+regenerated and verified idempotent.
+
+Demo project fixed too: its `generate-pdf` command wrote to `/tmp` and set
+`action: "open"`, which would now produce no Download button.
+
+**Docs Checklist:** not created — see Final Checks.
 
 ## Final Checks
 
-- [ ] Commit message explains the why, not just what
-- [ ] No TODOs or FIXMEs left unaddressed
-- [ ] Ready for another developer to use
+- [x] Commit message explains the why, not just what
+- [x] No TODOs or FIXMEs left unaddressed
+- [x] Ready for another developer to use
 
 ## Pull Request
 
 - [ ] Run `/pr` command to create PR and monitor CI
 
-<!--
-Deliberately NOT tracked here: the PR URL and whether CI passed.
+<!-- Deliberately NOT tracked here: the PR URL and whether CI passed.
 
 Both post-date this checklist. `/pr` requires the ticket to be `done` and
 validating clean before it opens the PR, and a `done` review-checklist may have
