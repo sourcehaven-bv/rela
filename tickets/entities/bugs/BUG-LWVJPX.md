@@ -5,7 +5,7 @@ title: migrate_face reports only entity counts, so a caller cannot tell whether 
 description: A migrate_face step reports "changed N record(s)" counting ENTITIES only. The same run rewrites every outgoing edge of those entities and says nothing about them. Before BUG-TOX8U4 that identical output accompanied 245 SILENTLY DESTROYED relations on a real dataset — the operator had to count rows in SQL to discover it. PR 1627 fixes the destruction but not the reporting, so the output still cannot distinguish "edges carried" from "edges lost".
 priority: medium
 effort: s
-status: ready
+status: backlog
 ---
 
 ## Problem
