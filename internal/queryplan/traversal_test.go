@@ -5,6 +5,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
+	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -124,5 +125,35 @@ func TestTraversalIndexSpecs_NilInputs(t *testing.T) {
 	}
 	if got := TraversalIndexSpecs(progFor(t, `related(entity, 'derives', {status='x'})`), nil, "ticket"); got != nil {
 		t.Errorf("nil metamodel must derive nothing, got %+v", got)
+	}
+}
+
+// Index derivation and validation must resolve a chain by the SAME rules.
+// Before they shared ResolveTraversalTarget they did not: derivation ignored
+// the `from:` side and treated a zero-target relation as merely unresolvable.
+// The drift direction is the dangerous one — a condition that loads fine whose
+// index is silently never derived, so the query scans every row of the target
+// type. These are the cases where the two used to disagree.
+func TestTraversalIndexSpecs_AgreesWithValidation(t *testing.T) {
+	meta := traversalIndexMeta()
+	// `about` starts from concept, not ticket: validation refuses it, so
+	// derivation must not resolve it either.
+	meta.Relations["about"] = metamodel.RelationDef{From: []string{"concept"}, To: []string{"person"}}
+	// A relation declaring no target at all.
+	meta.Relations["dangling"] = metamodel.RelationDef{From: []string{"ticket"}}
+
+	for _, tc := range []struct{ name, src string }{
+		{"wrong from-side", `related(entity, 'about', { name = 'alice' })`},
+		{"no declared target", `related(entity, 'dangling', { status = 'open' })`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prog := progFor(t, tc.src)
+			if err := predicatefns.ValidateTraversals(meta, "ticket", prog); err == nil {
+				t.Fatal("validation should refuse this shape")
+			}
+			if got := TraversalIndexSpecs(prog, meta, "ticket"); len(got) != 0 {
+				t.Fatalf("derivation must agree with validation and derive nothing, got %+v", got)
+			}
+		})
 	}
 }

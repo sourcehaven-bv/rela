@@ -68,32 +68,21 @@ func TraversalIndexSpecs(
 // traversalIndexTarget resolves the final hop's entity type and returns the
 // constrained properties that are pushdown-eligible on it.
 //
-// It returns ("", nil) for anything it cannot resolve — an unknown relation,
-// an unresolved union, a property that is not string-shaped. That is the same
-// answer as "derives no index", which is the safe direction: a missing index
-// costs a scan, whereas an index derived for the wrong shape would be
-// reconciled and never used.
+// Resolution is delegated to [predicatefns.ResolveTraversalTarget] — the same
+// walk validation uses — rather than reimplemented. A second copy would drift,
+// and the drift shows up as: the condition loads fine, the index is silently
+// never derived, and the query scans every row of the target type.
+//
+// It returns ("", nil) for anything unresolvable, or a property that is not
+// string-shaped. That is the same answer as "derives no index", which is the
+// safe direction: a missing index costs a scan, whereas an index derived for
+// the wrong shape would be reconciled and never used.
 func traversalIndexTarget(
 	meta *metamodel.Metamodel, fromType string, spec predicate.TraversalSpec,
 ) (targetType string, props []string) {
-	current := fromType
-	for i, relType := range spec.Path {
-		def, ok := meta.GetRelationDef(relType)
-		if !ok {
-			return "", nil
-		}
-		last := i == len(spec.Path)-1
-		switch {
-		case len(def.To) == 1:
-			current = def.To[0]
-		case last && spec.EntityType != "" && slices.Contains(def.To, spec.EntityType):
-			current = spec.EntityType
-		default:
-			// A union we cannot resolve. ValidateTraversals refuses these at
-			// load, so reaching here means the caller skipped validation;
-			// deriving nothing is still the safe answer.
-			return "", nil
-		}
+	current, err := predicatefns.ResolveTraversalTarget(meta, fromType, spec)
+	if err != nil || current == "" {
+		return "", nil
 	}
 
 	for _, name := range spec.PropNames() {

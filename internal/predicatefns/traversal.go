@@ -1,6 +1,7 @@
 package predicatefns
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -43,17 +44,41 @@ func ValidateTraversals(meta *metamodel.Metamodel, fromType string, prog *predic
 }
 
 func validateTraversal(meta *metamodel.Metamodel, fromType string, spec predicate.TraversalSpec) error {
+	target, err := ResolveTraversalTarget(meta, fromType, spec)
+	if err != nil {
+		return err
+	}
+	return validateTraversalProps(meta, target, spec)
+}
+
+// ResolveTraversalTarget walks a traversal's hops and returns the entity type
+// the FINAL hop lands on, or an error naming why it cannot be resolved.
+//
+// This is the ONE definition of how a chain resolves, shared by validation
+// (which surfaces the error at config load) and by index derivation in
+// internal/queryplan (which treats any error as "derive no index"). They must
+// agree: if validation accepts a chain that derivation cannot resolve, the
+// condition loads fine and its index is silently never created — the query
+// then scans every row of the target type, which is the regression the
+// derived index exists to prevent. Two copies of this walk WILL drift, and
+// that is the direction they drift in.
+func ResolveTraversalTarget(
+	meta *metamodel.Metamodel, fromType string, spec predicate.TraversalSpec,
+) (string, error) {
+	if meta == nil {
+		return "", errors.New("related: no metamodel")
+	}
 	current := fromType
 	for i, relType := range spec.Path {
 		def, ok := meta.GetRelationDef(relType)
 		if !ok {
-			return fmt.Errorf("related: unknown relation type %q", relType)
+			return "", fmt.Errorf("related: unknown relation type %q", relType)
 		}
 		// The FROM side must admit the type we are standing on. Checking it
 		// turns a traversal that could never match into a load error naming
 		// the relation, rather than a silently empty result.
 		if current != "" && len(def.From) > 0 && !slices.Contains(def.From, current) {
-			return fmt.Errorf("related: relation %q does not start from %q (declared from: %s)",
+			return "", fmt.Errorf("related: relation %q does not start from %q (declared from: %s)",
 				relType, current, strings.Join(def.From, ", "))
 		}
 
@@ -61,11 +86,11 @@ func validateTraversal(meta *metamodel.Metamodel, fromType string, spec predicat
 		last := i == len(spec.Path)-1
 		switch {
 		case len(targets) == 0:
-			return fmt.Errorf("related: relation %q declares no target type", relType)
+			return "", fmt.Errorf("related: relation %q declares no target type", relType)
 		case len(targets) == 1:
 			current = targets[0]
 			if last && spec.EntityType != "" && spec.EntityType != current {
-				return fmt.Errorf("related: type %q does not match the target of %q (%s)",
+				return "", fmt.Errorf("related: type %q does not match the target of %q (%s)",
 					spec.EntityType, relType, current)
 			}
 		default:
@@ -73,25 +98,24 @@ func validateTraversal(meta *metamodel.Metamodel, fromType string, spec predicat
 			// intermediate union is unresolvable and must be refused rather
 			// than guessed.
 			if !last {
-				return fmt.Errorf(
+				return "", fmt.Errorf(
 					"related: intermediate relation %q has %d target types (%s) and cannot be "+
 						"resolved; a chained hop must traverse single-target relations",
 					relType, len(targets), strings.Join(targets, ", "))
 			}
 			if spec.EntityType == "" {
-				return fmt.Errorf(
+				return "", fmt.Errorf(
 					"related: relation %q has %d target types (%s); add type='<one of them>' to "+
 						"say which one is meant", relType, len(targets), strings.Join(targets, ", "))
 			}
 			if !slices.Contains(targets, spec.EntityType) {
-				return fmt.Errorf("related: type %q is not a target of %q (declared to: %s)",
+				return "", fmt.Errorf("related: type %q is not a target of %q (declared to: %s)",
 					spec.EntityType, relType, strings.Join(targets, ", "))
 			}
 			current = spec.EntityType
 		}
 	}
-
-	return validateTraversalProps(meta, current, spec)
+	return current, nil
 }
 
 // validateTraversalProps checks each constrained property is declared on the
