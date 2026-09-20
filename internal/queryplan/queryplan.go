@@ -530,9 +530,11 @@ func listIndexSpec(
 		ranked = ranked || len(declared) > 0
 	}
 	if !ranked {
-		// Leave OrderValues nil when no key is ranked, so a spec that ranks
-		// nothing is byte-identical to one built before ranking existed — the
-		// index name, and therefore the existing index, does not move.
+		// Belt and braces: a backend's index name must already ignore empty
+		// value lists, and pgstore's does, so an unranked spec hashes the same
+		// with nil or with per-key empties. Nilling it keeps the spec itself
+		// comparable to one built before ranking existed, which is what the
+		// dedup key and any equality assertion see.
 		values = nil
 	}
 	return store.DerivedObjectSpec{

@@ -3303,6 +3303,12 @@ func TestValidateConfig_NestedSection(t *testing.T) {
 			section:  ViewSection{Source: "blocked", Display: "list", Sort: []SortSpec{{Property: "id"}}},
 		},
 		{
+			name:     "sort on modified is refused",
+			traverse: twoStep,
+			section:  ViewSection{Source: "blocked", Display: "list", Sort: []SortSpec{{Property: "modified"}}},
+			wantErr:  "which a section cannot order by",
+		},
+		{
 			name:     "sort with an invalid direction",
 			traverse: twoStep,
 			section: ViewSection{

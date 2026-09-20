@@ -1778,9 +1778,14 @@ func collectionTypes(view ViewConfig, name string, meta *metamodel.Metamodel) []
 // known, skip where it is not, rather than guessing.
 //
 // "id" is always valid: every entity has one, and it is the universal sort
-// tiebreak. "modified" is deliberately NOT accepted — it has no stored column,
-// so no backend can order by it, and a section sorted on it would order
-// differently depending on which path served it.
+// tiebreak.
+//
+// "modified" is refused EXPLICITLY. A section renders from a traversal result,
+// where modification time is not carried, so a section sorted on it would
+// silently not sort. It would also be refused as a side effect of the
+// declared-by check below — no entity type declares a property with that name
+// — but only until someone declares one, and a guard that holds by accident
+// is not a guard.
 func validateSectionSort(
 	viewID string, i int, key string, specs []SortSpec,
 	allowed []string, meta *metamodel.Metamodel,
@@ -1796,6 +1801,13 @@ func validateSectionSort(
 			errs = append(errs, fmt.Sprintf(
 				"view %q: section[%d] %s[%d] has invalid direction %q (use \"asc\" or \"desc\")",
 				viewID, i, key, n, spec.Direction))
+		}
+		if spec.Property == "modified" {
+			errs = append(errs, fmt.Sprintf(
+				"view %q: section[%d] %s[%d] sorts on %q, which a section cannot order by "+
+					"(a traversal result carries no modification time)",
+				viewID, i, key, n, spec.Property))
+			continue
 		}
 		if spec.Property == "id" || len(allowed) == 0 {
 			continue

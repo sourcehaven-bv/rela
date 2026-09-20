@@ -18,16 +18,62 @@ import (
 // proves the planner agrees; these prove the two generators agree, which is the
 // part a refactor breaks.
 func TestOrderSQL_IndexRankAppearsVerbatimInQuery(t *testing.T) {
-	values := []string{"todo", "doing", "blocked", "done"}
-	query := orderKeySQL(&sqlBuilder{}, store.OrderSpec{Property: "status", Values: values})
-	index := orderRankSQL("status", values)
+	// Every shape an operator could put in schema.yaml, because the property
+	// holds today by two generators happening to agree rather than by
+	// construction. One hard-coded input would not notice a quoting or
+	// separator change that only bites on an unusual value.
+	for _, tc := range []struct {
+		name     string
+		property string
+		values   []string
+	}{
+		{"ordinary", "status", []string{"todo", "doing", "blocked", "done"}},
+		{"single value", "status", []string{"only"}},
+		{"embedded quote", "status", []string{"it's", "plain"}},
+		{"empty string declared", "status", []string{"", "set"}},
+		{"unicode", "status", []string{"naïve", "日本", "emoji-🙂"}},
+		{"spaces and punctuation", "status", []string{"in progress", "won't fix", "a,b"}},
+		{"sql-looking", "status", []string{"'; DROP TABLE entities; --", "ok"}},
+		{"duplicate value", "status", []string{"a", "b", "a"}},
+		{"property name with a quote", "it's", []string{"a", "b"}},
+		{"descending", "status", []string{"a", "b"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			spec := store.OrderSpec{
+				Property:   tc.property,
+				Values:     tc.values,
+				Descending: tc.name == "descending",
+			}
+			query := orderKeySQL(&sqlBuilder{}, spec)
+			index := orderRankSQL(tc.property, tc.values)
 
-	if index == "" {
-		t.Fatal("declared values produced no index rank expression")
+			if index == "" {
+				t.Fatal("declared values produced no index rank expression")
+			}
+			if !strings.Contains(query, index) {
+				t.Errorf("index rank is not a substring of the query rank\n  query: %s\n  index: %s",
+					query, index)
+			}
+		})
 	}
-	if !strings.Contains(query, index) {
-		t.Errorf("index rank is not a substring of the query rank\n  query: %s\n  index: %s", query, index)
-	}
+}
+
+// FuzzOrderSQLRankMatchesIndex is the same invariant over arbitrary input:
+// whatever the generators do, the index expression must appear verbatim in the
+// query, or PostgreSQL builds an index it can never use.
+func FuzzOrderSQLRankMatchesIndex(f *testing.F) {
+	f.Add("status", "todo\ndoing\ndone")
+	f.Add("it's", "a'b\n")
+	f.Add("x", "")
+	f.Fuzz(func(t *testing.T, property, joined string) {
+		values := strings.Split(joined, "\n")
+		query := orderKeySQL(&sqlBuilder{}, store.OrderSpec{Property: property, Values: values})
+		index := orderRankSQL(property, values)
+		if index != "" && !strings.Contains(query, index) {
+			t.Errorf("rank expressions diverge for property=%q values=%q\n  query: %s\n  index: %s",
+				property, values, query, index)
+		}
+	})
 }
 
 // The property name is interpolated, not bound, for a ranked key. Measured on

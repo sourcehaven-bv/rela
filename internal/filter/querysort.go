@@ -149,8 +149,29 @@ func (q *QuerySort) compareSpec(a, b Record, spec SortSpec) int {
 }
 
 func (q *QuerySort) compareKey(a, b Record, property string) int {
-	if property == "id" {
+	switch property {
+	case "id":
 		return strings.Compare(a.ID, b.ID)
+	case "modified":
+		// Honored here even though no backend can ORDER BY it, because the
+		// paths that reach a "modified" key — search and the CLI — hold a
+		// materialized result set and are never pushed down. The pushdown
+		// planner rejects it independently (stringShaped fails: no entity
+		// type declares a property called "modified"), so supporting it
+		// cannot put the two paths out of step.
+		//
+		// A zero time sorts as absent, so a row with no recorded
+		// modification lands with the rows missing an ordinary property:
+		// last ascending, first descending.
+		switch za, zb := a.ModifiedAt.IsZero(), b.ModifiedAt.IsZero(); {
+		case za && zb:
+			return 0
+		case za:
+			return 1
+		case zb:
+			return -1
+		}
+		return a.ModifiedAt.Compare(b.ModifiedAt)
 	}
 	sa, oka := sortValue(a, property)
 	sb, okb := sortValue(b, property)
@@ -215,10 +236,14 @@ func sortValue(r Record, property string) (string, bool) {
 }
 
 // isVirtualSortProperty reports whether name addresses something other than a
-// stored property. Only "id" is honored on the query path — it is a real
-// column on every backend. "modified" is NOT: it has no stored column, so no
-// backend can order by it, and accepting it here would produce an ordering the
-// pushed path could never reproduce.
+// stored property, so [NewQuerySort] skips resolving a declared value order
+// for it: neither an entity id nor a modification time can be enum-shaped.
+//
+// Both ARE honored by the comparator below. That is a different question
+// from whether a backend can ORDER BY them, which the pushdown planner decides
+// for itself — "id" it can, "modified" it cannot, and a request sorting on
+// "modified" therefore stays on the Go path rather than being pushed and
+// reproduced differently.
 func isVirtualSortProperty(name string) bool {
 	return name == "id" || name == "modified"
 }

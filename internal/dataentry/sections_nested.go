@@ -367,6 +367,12 @@ func fillPropertyCell(
 // caller's slice: the collections it runs over are shared by every section of
 // the view, so sorting in place would let one section's `sort:` silently
 // reorder another's rows.
+//
+// The copy is load-bearing for the parent level and for a flat section, which
+// sort a caller-owned collection. A per-parent child bucket is freshly built
+// and could be sorted in place, but the sorter stays uniform rather than
+// growing a "may I mutate this?" parameter — the cost is one bounded slice per
+// parent.
 type entitySorter func(rows []*entity.Entity) []*entity.Entity
 
 // newEntitySorter builds the sorter for one level, resolving declared enum

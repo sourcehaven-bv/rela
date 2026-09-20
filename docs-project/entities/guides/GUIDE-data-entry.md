@@ -1999,7 +1999,8 @@ adding these keys changes nothing until you use them.
 
 ##### Other behaviours
 
-- Children render in traversal order. Section-level sorting is not supported yet.
+- Children render in traversal order unless the section declares `child_sort:`
+  (see above); parents likewise honour `parent_sort:`.
 - `recursive: true` on the children's traverse rule is refused: this mode renders
   exactly two levels, and the recursive walk does not record which parent each
   node came from.

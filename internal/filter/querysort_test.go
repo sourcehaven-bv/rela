@@ -3,6 +3,7 @@ package filter
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
@@ -257,5 +258,47 @@ func TestQuerySort_DuplicateDeclaredValueRanksAtItsFirstPosition(t *testing.T) {
 	}
 	if got, want := qsSort(t, rows, specs, defs), "B,C,A"; got != want {
 		t.Errorf("order = %s, want %s", got, want)
+	}
+}
+
+// `sort:modified` is honored on the Go path. The search bar documents it and
+// searchparser parses it, and search results are already materialized, so
+// there is no pushed query for this to disagree with — the pushdown planner
+// rejects the key independently because no entity type declares a property
+// called "modified".
+//
+// Regression: the first version of this comparator only special-cased "id",
+// so "modified" fell through to the property lookup, every row compared
+// absent, and the whole result tied through to the id tiebreak.
+func TestQuerySort_ModifiedOrdersByModificationTime(t *testing.T) {
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	type row struct {
+		id string
+		at time.Time
+	}
+	acc := func(r row) Record {
+		return Record{ID: r.id, Type: "ticket", Properties: map[string]any{}, ModifiedAt: r.at}
+	}
+	run := func(dir string) string {
+		rows := []row{
+			{"A", base},
+			{"B", base.Add(48 * time.Hour)},
+			{"C", base.Add(24 * time.Hour)},
+			{"D", time.Time{}}, // never recorded: sorts as absent
+		}
+		specs := []SortSpec{{Property: "modified", Direction: dir}}
+		QuerySortApply(NewQuerySort(specs, statusDefs(), &metamodel.Metamodel{}), rows, acc, specs)
+		out := make([]string, 0, len(rows))
+		for _, r := range rows {
+			out = append(out, r.id)
+		}
+		return strings.Join(out, ",")
+	}
+
+	if got, want := run("asc"), "A,C,B,D"; got != want {
+		t.Errorf("sort:modified asc = %s, want %s", got, want)
+	}
+	if got, want := run("desc"), "D,B,C,A"; got != want {
+		t.Errorf("sort:modified desc = %s, want %s", got, want)
 	}
 }

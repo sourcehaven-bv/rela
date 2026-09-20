@@ -599,3 +599,116 @@ func TestNestedSection_SortDoesNotMutateSharedCollections(t *testing.T) {
 		t.Errorf("shared collection was reordered: %v -> %v", before, after)
 	}
 }
+
+// flatSection builds a flat section over the `parents` collection.
+func flatSection(display string, specs ...SortSpec) ViewSection {
+	return ViewSection{
+		Heading: "Rows", Source: "parents", Display: display,
+		Columns: []ListColumn{{Property: "status"}, {Property: "title"}},
+		Fields:  []ViewSectionField{{Property: "title"}},
+		Sort:    specs,
+	}
+}
+
+func flatFixture(props map[string]map[string]any) *viewResult {
+	ids := make([]string, 0, len(props))
+	for id := range props {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	rows := make([]*entity.Entity, 0, len(ids))
+	for _, id := range ids {
+		rows = append(rows, &entity.Entity{ID: id, Type: "ticket", Properties: props[id]})
+	}
+	return &viewResult{Collections: map[string][]*entity.Entity{"parents": rows}}
+}
+
+func buildFlatFor(t *testing.T, app *App, sec ViewSection, result *viewResult) SectionData {
+	t.Helper()
+	out := app.views.buildSections(context.Background(), []ViewSection{sec}, result)
+	if len(out) != 1 {
+		t.Fatalf("buildSections: got %d sections, want 1", len(out))
+	}
+	return out[0]
+}
+
+// A flat section's `sort:` must actually order its rows. Validating the key
+// and then ignoring it is worse than not offering it, because the config
+// loads clean and every signal says it worked.
+func TestFlatSection_SortOrdersRows(t *testing.T) {
+	props := map[string]map[string]any{
+		"TKT-1": {"title": "a", "status": "closed"},
+		"TKT-2": {"title": "b", "status": "open"},
+		"TKT-3": {"title": "c", "status": "closed"},
+	}
+	// `status_type` declares open before closed — the reverse of alphabetical.
+	want := []string{"TKT-2", "TKT-1", "TKT-3"}
+
+	for _, display := range []string{"table", "list", "cards", "content"} {
+		t.Run(display, func(t *testing.T) {
+			sd := buildFlatFor(t, testViewApp(), flatSection(display, SortSpec{Property: "status"}), flatFixture(props))
+
+			var got []string
+			switch display {
+			case "table":
+				for _, r := range sd.Rows {
+					got = append(got, r.EntityID)
+				}
+			default:
+				for _, e := range sd.Entities {
+					got = append(got, e.ID)
+				}
+			}
+			if !slices.Equal(got, want) {
+				t.Errorf("%s order = %v, want %v (declared enum order)", display, got, want)
+			}
+		})
+	}
+}
+
+// Grouping must not discard the section's order: the grouped table path
+// re-sorted each group by id, which would silently override `sort:`.
+func TestFlatSection_SortSurvivesGrouping(t *testing.T) {
+	sec := flatSection("table", SortSpec{Property: "title", Direction: "desc"})
+	sec.GroupBy = "status"
+
+	sd := buildFlatFor(t, testViewApp(), sec, flatFixture(map[string]map[string]any{
+		"TKT-1": {"title": "a", "status": "open"},
+		"TKT-2": {"title": "c", "status": "open"},
+		"TKT-3": {"title": "b", "status": "open"},
+	}))
+
+	if len(sd.Groups) != 1 {
+		t.Fatalf("got %d groups, want 1", len(sd.Groups))
+	}
+	var got []string
+	for _, r := range sd.Groups[0].Rows {
+		got = append(got, r.EntityID)
+	}
+	if want := []string{"TKT-2", "TKT-3", "TKT-1"}; !slices.Equal(got, want) {
+		t.Errorf("grouped order = %v, want %v (title desc, not id)", got, want)
+	}
+}
+
+// With no `sort:`, grouping keeps its id ordering — the pre-existing
+// behaviour, which the fix above must not disturb.
+func TestFlatSection_GroupingWithoutSortStillOrdersByID(t *testing.T) {
+	sec := flatSection("table")
+	sec.GroupBy = "status"
+
+	sd := buildFlatFor(t, testViewApp(), sec, flatFixture(map[string]map[string]any{
+		"TKT-10": {"title": "a", "status": "open"},
+		"TKT-2":  {"title": "b", "status": "open"},
+	}))
+
+	if len(sd.Groups) != 1 {
+		t.Fatalf("got %d groups, want 1", len(sd.Groups))
+	}
+	var got []string
+	for _, r := range sd.Groups[0].Rows {
+		got = append(got, r.EntityID)
+	}
+	if want := []string{"TKT-2", "TKT-10"}; !slices.Equal(got, want) {
+		t.Errorf("ungrouped-sort order = %v, want %v (natsort by id, unchanged)", got, want)
+	}
+}
