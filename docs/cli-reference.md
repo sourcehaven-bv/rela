@@ -1908,6 +1908,12 @@ Checks `schema.yaml` and `data-entry.yaml` for:
 - View traversal correctness
 - Dashboard and command configuration
 
+**Examples:**
+
+```bash
+rela validate
+```
+
 Pass `--check` to also validate the entity graph:
 
 ```bash
@@ -1926,7 +1932,7 @@ Exit `2` takes precedence over exit `1`. A run that could not read all of
 its input cannot support a claim about the rules, including the claim that
 the violations it reported are all of them. The usual cause is an entity
 whose YAML frontmatter does not parse, most often an unquoted scalar
-containing `: ` — quote it:
+containing a colon followed by a space — quote it:
 
 ```yaml
 title: "Something: with a colon"
@@ -1938,12 +1944,6 @@ when the run actually read everything.
 Note that `--check cardinality` on its own only scans the entity types that
 declare a cardinality bound, so it reports an unreadable file only for those
 types. `--check properties` and `--check validations` scan all types.
-
-**Examples:**
-
-```bash
-rela validate
-```
 
 ---
 
