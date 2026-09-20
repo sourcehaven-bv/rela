@@ -11,7 +11,7 @@
  * a row does not pull focus out of ProseMirror, which would close the menu
  * before the click resolves.
  */
-import { computed, type DeepReadonly } from 'vue'
+import { computed, useId, type DeepReadonly } from 'vue'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
 import type { Entity } from '@/types'
 import type { MentionMenuState } from './useMentionMenu'
@@ -55,8 +55,15 @@ function entityIndex(idx: number): number {
 /**
  * A per-instance id prefix, so two editors on one page cannot mint the same
  * option ids (`aria-activedescendant` resolves against the whole document).
+ *
+ * `useId()` rather than a random suffix: it is unique by construction per app
+ * instance and stable across SSR hydration, where a random value would differ
+ * between server and client. It also keeps `Math.random()` out of an id that
+ * CodeQL reads as security-relevant (js/insecure-randomness) — the id is only
+ * an ARIA pointer and authenticates nothing, but the deterministic API is the
+ * better tool regardless, so there is nothing here worth suppressing.
  */
-const uid = `mention-menu-${Math.random().toString(36).slice(2, 8)}`
+const uid = useId()
 
 /** The DOM id of the row at `index` in the combined list. */
 function optionId(index: number): string {
