@@ -2,6 +2,7 @@ package dataentry
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -25,12 +26,24 @@ type relHistoryStore struct {
 	lifetimes map[string][]store.RelationLifetime
 }
 
-func relKey(from, relType, to string) string { return from + "|" + relType + "|" + to }
+// relKey folds the TAIL into the fake's key, exactly as the real store's
+// lineage resolution does: two tails of one triple are different relations, so
+// a fake keyed on the triple alone could not tell a faced read from a bare one
+// and would pass a handler that dropped the face (TKT-JAROC3).
+func relKey(from string, fromFace entity.Face, relType, to string) string {
+	return entity.FormatStateRef(from, fromFace) + "|" + relType + "|" + to
+}
+
+// bareRelKey is relKey for the DEFAULT tail — the shape almost every case
+// wants, since only the faced cases care about the tail.
+func bareRelKey(from, relType, to string) string {
+	return relKey(from, entity.Face(""), relType, to)
+}
 
 func (h relHistoryStore) ListRelationVersions(
 	_ context.Context, q store.RelationHistoryQuery,
 ) ([]store.RelationVersionMeta, error) {
-	snaps := h.versions[relKey(q.From, q.Type, q.To)]
+	snaps := h.versions[relKey(q.From, q.FromFace, q.Type, q.To)]
 	metas := make([]store.RelationVersionMeta, 0, len(snaps))
 	for _, s := range snaps {
 		metas = append(metas, s.RelationVersionMeta)
@@ -41,7 +54,7 @@ func (h relHistoryStore) ListRelationVersions(
 func (h relHistoryStore) GetRelationVersion(
 	_ context.Context, q store.RelationHistoryQuery, version int,
 ) (*store.RelationVersionSnapshot, error) {
-	snaps := h.versions[relKey(q.From, q.Type, q.To)]
+	snaps := h.versions[relKey(q.From, q.FromFace, q.Type, q.To)]
 	if version < 1 || version > len(snaps) {
 		return nil, store.ErrNotFound
 	}
@@ -53,12 +66,12 @@ func (h relHistoryStore) GetRelationVersion(
 // versions — enough for the handler tests (which exercise the timeline/version
 // paths, not multi-lifetime enumeration; that is covered by the pgstore DB tests).
 func (h relHistoryStore) ListRelationLifetimes(
-	_ context.Context, from, relType, to string,
+	_ context.Context, from string, fromFace entity.Face, relType, to string,
 ) ([]store.RelationLifetime, error) {
-	if lts, ok := h.lifetimes[relKey(from, relType, to)]; ok {
+	if lts, ok := h.lifetimes[relKey(from, fromFace, relType, to)]; ok {
 		return lts, nil
 	}
-	snaps := h.versions[relKey(from, relType, to)]
+	snaps := h.versions[relKey(from, fromFace, relType, to)]
 	if len(snaps) == 0 {
 		return nil, nil
 	}
@@ -110,7 +123,7 @@ func newRelHistoryApp(t *testing.T) *App {
 	base := newAppFromParts(nil, testMeta(), f)
 	rel := relHistoryStore{
 		versions: map[string][]store.RelationVersionSnapshot{
-			relKey("DEC-1", "addresses", "REQ-1"): {{
+			bareRelKey("DEC-1", "addresses", "REQ-1"): {{
 				RelationVersionMeta: store.RelationVersionMeta{
 					Version: 1, Op: store.VersionOpCreate, From: "DEC-1", Type: "addresses", To: "REQ-1",
 				},
@@ -175,7 +188,7 @@ func TestRelationHistory_LifetimesRoutePermitted(t *testing.T) {
 	// Give the key two canned lifetimes.
 	rel := app.versions.(relHistoryStore)
 	rel.lifetimes = map[string][]store.RelationLifetime{
-		relKey("DEC-1", "addresses", "REQ-1"): {
+		bareRelKey("DEC-1", "addresses", "REQ-1"): {
 			{Lifetime: 1, RecordID: 22, VersionCount: 2, Live: true, FinalOp: store.VersionOpUpdate},
 			{Lifetime: 2, RecordID: 11, VersionCount: 3, FinalOp: store.VersionOpDelete},
 		},
@@ -238,7 +251,7 @@ func TestRelationHistory_DeletedRelationRequiresPermission(t *testing.T) {
 	base := newAppFromParts(nil, testMeta(), &fixture{})
 	rel := relHistoryStore{
 		versions: map[string][]store.RelationVersionSnapshot{
-			relKey("GONE-A", "links", "GONE-B"): {{
+			bareRelKey("GONE-A", "links", "GONE-B"): {{
 				RelationVersionMeta: store.RelationVersionMeta{
 					Version: 1, Op: store.VersionOpDelete, From: "GONE-A", Type: "links", To: "GONE-B",
 				},
@@ -265,5 +278,121 @@ func TestRelationHistory_DeletedRelationRequiresPermission(t *testing.T) {
 	handleV1RelationHistory(base, rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("deleted relation, holder: got %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestRelationHistory_FacedAddressReadsItsOwnTail is the TKT-JAROC3 read-side
+// regression.
+//
+// On a faced type `selfHref` hands out `ID@face` and the SPA passes that
+// straight into the `{from}` path segment, so the handler must PARSE it. Two
+// things go wrong when it does not, and both are silent:
+//
+//   - the bare id is never recovered, so the ACL row gate is handed a suffixed
+//     string that matches no row, and an ordinary reader gets a 404;
+//   - the face is never recovered, so the store reads the DEFAULT tail's
+//     history — a different relation — and serves it as if it were this one.
+//
+// The fake keys on the tail exactly as the real store's lineage resolution
+// does, so a handler that drops the face reads the wrong bucket here too.
+func TestRelationHistory_FacedAddressReadsItsOwnTail(t *testing.T) {
+	f := &fixture{}
+	f.AddNode(entity.New("DEC-1", "decision"))
+	f.AddNode(entity.New("REQ-1", "requirement"))
+
+	app := newAppFromParts(nil, testMeta(), f)
+	app.versions = relHistoryStore{
+		versions: map[string][]store.RelationVersionSnapshot{
+			bareRelKey("DEC-1", "addresses", "REQ-1"): {{
+				RelationVersionMeta: store.RelationVersionMeta{
+					Version: 1, Op: store.VersionOpCreate,
+					From: "DEC-1", Type: "addresses", To: "REQ-1",
+				},
+				Content: "default tail body",
+			}},
+			relKey("DEC-1", entity.Face("published"), "addresses", "REQ-1"): {{
+				RelationVersionMeta: store.RelationVersionMeta{
+					Version: 1, Op: store.VersionOpCreate,
+					From: "DEC-1", Type: "addresses", To: "REQ-1",
+				},
+				Content: "published tail body",
+			}},
+		},
+	}
+
+	gate := perEndpointGate{allow: map[string]bool{"DEC-1": true, "REQ-1": true}}
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/_relation_history/decision/DEC-1@published/addresses/REQ-1/1", http.NoBody)
+	req = req.WithContext(withReadGate(context.Background(), gate))
+	rec := httptest.NewRecorder()
+	handleV1RelationHistory(app, rec, req)
+
+	// A 404 here means the gate got the suffixed id; the wrong body means the
+	// store got the wrong tail.
+	if rec.Code != http.StatusOK {
+		t.Fatalf("faced address must resolve: got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var got struct {
+		Relation struct {
+			Content string `json:"content"`
+		} `json:"relation"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode response: %v; body=%s", err, rec.Body.String())
+	}
+	if got.Relation.Content != "published tail body" {
+		t.Fatalf("read the wrong tail's history: got %q, want %q",
+			got.Relation.Content, "published tail body")
+	}
+}
+
+// TestRelationHistory_BareAddressReadsTheDefaultTail is the other half: an
+// unsuffixed id must keep reading the default tail. Without it the case above
+// would also pass a handler that read whichever tail sorted first.
+func TestRelationHistory_BareAddressReadsTheDefaultTail(t *testing.T) {
+	f := &fixture{}
+	f.AddNode(entity.New("DEC-1", "decision"))
+	f.AddNode(entity.New("REQ-1", "requirement"))
+
+	app := newAppFromParts(nil, testMeta(), f)
+	app.versions = relHistoryStore{
+		versions: map[string][]store.RelationVersionSnapshot{
+			bareRelKey("DEC-1", "addresses", "REQ-1"): {{
+				RelationVersionMeta: store.RelationVersionMeta{
+					Version: 1, Op: store.VersionOpCreate,
+					From: "DEC-1", Type: "addresses", To: "REQ-1",
+				},
+				Content: "default tail body",
+			}},
+			relKey("DEC-1", entity.Face("published"), "addresses", "REQ-1"): {{
+				RelationVersionMeta: store.RelationVersionMeta{
+					Version: 1, Op: store.VersionOpCreate,
+					From: "DEC-1", Type: "addresses", To: "REQ-1",
+				},
+				Content: "published tail body",
+			}},
+		},
+	}
+
+	gate := perEndpointGate{allow: map[string]bool{"DEC-1": true, "REQ-1": true}}
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/_relation_history/decision/DEC-1/addresses/REQ-1/1", http.NoBody)
+	req = req.WithContext(withReadGate(context.Background(), gate))
+	rec := httptest.NewRecorder()
+	handleV1RelationHistory(app, rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("bare address must resolve: got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var got struct {
+		Relation struct {
+			Content string `json:"content"`
+		} `json:"relation"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode response: %v; body=%s", err, rec.Body.String())
+	}
+	if got.Relation.Content != "default tail body" {
+		t.Fatalf("a bare address must read the default tail: got %q", got.Relation.Content)
 	}
 }

@@ -108,7 +108,15 @@ type RelationVersionRecorder interface {
 // the op, the pre-rename endpoints (rename only), attribution, and the
 // render-schema projection the snapshot was taken under.
 type RelationVersionRecord struct {
-	From          string
+	From string
+
+	// FromFace is the SOURCE face the captured edge is tailed at (zero =
+	// the default tail). It is what lets the store resolve the right
+	// lineage: a triple with no face names the default tail, so without it
+	// a state-tailed capture would be filed under a different edge's
+	// history (TKT-JAROC3).
+	FromFace entity.Face
+
 	Type          string
 	To            string
 	Op            store.VersionOp
@@ -134,24 +142,12 @@ func (m *Manager) recordRelationVersion(
 	if m.deps.RelationVersionRecorder == nil {
 		return
 	}
-	// STILL SKIPPED, and now for a narrower reason (TKT-C1XUA8).
-	//
-	// TKT-C1XUA8 gave state-tailed edges their own history — the SWEEP
-	// captures them, because it reads rel_record_id straight off the row.
-	// This SYNCHRONOUS path cannot: the record it builds carries the
-	// (from, type, to) TRIPLE, and the store resolves that to a lineage via
-	// recordIDForKey, which answers with the DEFAULT tail by design (a key
-	// with no face names the default face). Capturing a state-tailed edge
-	// here would therefore file it under the default tail's lineage — the
-	// interleaving the whole per-state design exists to prevent.
-	//
-	// Lifting this needs the record to carry a rel_record_id (or a tail) so
-	// the store can address the right lineage. Until then the sync path —
-	// rename stitch and pre-delete capture — is default-tail only, and a
-	// state edge's delete is captured by the entity cascade instead.
-	if !r.FromFace.IsDefault() {
-		return
-	}
+	// PER-TAIL (TKT-JAROC3): the skip is gone. The tail travels on the record
+	// below, exactly as the face travels on an entity's VersionRecord, so the
+	// store resolves the state-tailed edge's OWN lineage rather than the
+	// default tail's. Before this, a faced capture had to be dropped — a
+	// triple with no face names the default tail, so filing it would have
+	// interleaved two edges' histories.
 	proj := m.deps.Meta.RenderProjection()
 	projJSON, err := proj.JSON()
 	if err != nil { // coverage-ignore-start: defensive: RenderProjection.JSON is json.Marshal over only
@@ -167,6 +163,7 @@ func (m *Manager) recordRelationVersion(
 	p := principal.From(ctx)
 	rec := RelationVersionRecord{
 		From:          r.From,
+		FromFace:      r.FromFace,
 		Type:          r.Type,
 		To:            r.To,
 		Op:            op,

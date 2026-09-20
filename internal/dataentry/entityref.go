@@ -5,7 +5,6 @@ import (
 
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
 // entityRef is an entity ADDRESS as it arrives in a URL path segment,
@@ -92,33 +91,12 @@ func (ref entityRef) String() string {
 	return entity.FormatStateRef(ref.ID, ref.Face)
 }
 
-// contentScopedRelationOn reports the first `scope: content` relation type a
-// PATCH body names when the write is addressed to a NAMED face — the one
-// combination the relation writers cannot honor, because they attach edges to
-// the entity's zero-coordinate tail (entity.RelationOptions carries no face).
-//
-// Keys resolve exactly as the writer resolves them ([resolveDirection]), so
-// the guard and the executor cannot disagree about which entity is the tail:
-// an INCOMING edge's tail is the peer and passes through, but a SYMMETRIC
-// relation's inverse spelling still makes this address the tail and is
-// refused like the canonical name. An unknown key passes through to the
-// ordinary relation validation, which rejects it.
-func contentScopedRelationOn(
-	m *metamodel.Metamodel, ref entityRef, desired map[string]v1.RelationsUpdate,
-) (relType string, refused bool) {
-	if ref.Face.IsDefault() || m == nil {
-		return "", false
-	}
-	for key := range desired {
-		canonical, incoming, ok := resolveDirection(m, key)
-		if !ok || incoming {
-			continue
-		}
-		if def, found := m.Relations[canonical]; found && def.Scope.IsContent() {
-			return canonical, true
-		}
-	}
-	return "", false
+// refOf is the address of a row already in hand — the inverse of parsing one
+// out of a path. A create has no request address to carry (the id is minted
+// during the write), so the row it produced is what names the face its
+// content-scoped edges belong to.
+func refOf(e *entity.Entity) entityRef {
+	return entityRef{ID: e.ID, Face: e.Face, Explicit: !e.Face.IsDefault()}
 }
 
 // addressedProvenance labels a face served because the CALLER NAMED IT, as

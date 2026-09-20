@@ -281,6 +281,32 @@ Titles come SOLELY from the server's per-principal `mentions` map (BUG-R9EHKV,
 the graph, the entity store, or a cache: an entity the principal cannot read
 must produce no mention at all, and a redacted title must fall back to the ID.
 
+**An HTML comment is a chip, and only an exact comment is.** A comment-only
+`html` mdast node is retyped to `relaComment` by a remark plugin
+(`commentNode.ts`) and rendered as a muted chip showing the inner text without
+delimiters — templates carry authoring guidance this way, and the rendered view
+drops it, so the editor was the one place it looked like prose. Three things
+hold it together:
+
+- The **retype is what wins the match**, not `parseMarkdown`. Milkdown resolves
+  against `{...schema.nodes, ...schema.marks}` taking the first match, and the
+  preset is registered first, so a competing matcher on `type === 'html'` would
+  lose. Retyping makes the two disjoint.
+- The matcher is an **anchored allowlist**, and must stay one. Anything that is
+  not exactly one comment — `<!-- note --><div>`, an unterminated comment,
+  `<img>` — falls through to the preset's `html` node and stays VISIBLE as
+  text. Chipping live markup would hide it behind a label reading "this is only
+  a note". (`<!-- a --> text <!-- b -->` is not a counter-example: remark splits
+  it into two well-formed comment nodes, so both chip correctly.)
+- `toMarkdown` writes the **original bytes**, never the trimmed label.
+  `serializerContract.ts` excludes `html` from the whitespace-insensitive
+  leaves, so any whitespace change inside a comment is semantic drift and the
+  write is refused.
+
+The label is a ProseMirror text child (`createTextNode`), never `innerHTML` —
+same property `rawHtmlPassthrough.test.ts` pins for raw markup, and for the same
+reason: Milkdown has shipped that vulnerability class twice in adjacent nodes.
+
 **The editing surface wears `.md-body`.** Typography comes from the shared
 `styles/markdown-content.css`, so the editor and the rendered entity view
 cannot drift apart. `milkdownEditor.css` holds only editing-specific chrome

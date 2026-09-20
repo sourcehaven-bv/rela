@@ -53,7 +53,7 @@ func (stubVersionService) GetRelationVersion(
 }
 
 func (stubVersionService) ListRelationLifetimes(
-	context.Context, string, string, string,
+	context.Context, string, entity.Face, string, string,
 ) ([]store.RelationLifetime, error) {
 	panic("stubVersionService.ListRelationLifetimes not implemented")
 }

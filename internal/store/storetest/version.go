@@ -40,6 +40,7 @@ func RunVersionTests(t *testing.T, f Factory) {
 	t.Run("Faces", func(t *testing.T) { runFaceHistoryTests(t, f) })
 	t.Run("Lineage", func(t *testing.T) { runLineageTests(t, f) })
 	t.Run("RelationHistory", func(t *testing.T) { runRelationHistoryTests(t, f) })
+	t.Run("RelationTails", func(t *testing.T) { runRelationTailTests(t, f) })
 	t.Run("Purge", func(t *testing.T) { runPurgeTests(t, f) })
 }
 
@@ -380,7 +381,7 @@ func runRelationHistoryTests(t *testing.T, f Factory) {
 		v := versionsOf(t, s)
 		seedRelationLineage(t, s, v, "body")
 
-		lts, err := v.ListRelationLifetimes(ctx(), "FEAT-1", "rel", "FEAT-2")
+		lts, err := v.ListRelationLifetimes(ctx(), "FEAT-1", entity.Face(""), "rel", "FEAT-2")
 		require.NoError(t, err)
 		require.Len(t, lts, 1)
 		require.Equal(t, 1, lts[0].Lifetime)
@@ -390,9 +391,138 @@ func runRelationHistoryTests(t *testing.T, f Factory) {
 
 	t.Run("UnknownKeyHasNoLifetimes", func(t *testing.T) {
 		v := versionsOf(t, f(t))
-		lts, err := v.ListRelationLifetimes(ctx(), "NOPE-1", "rel", "NOPE-2")
+		lts, err := v.ListRelationLifetimes(ctx(), "NOPE-1", entity.Face(""), "rel", "NOPE-2")
 		require.NoError(t, err)
 		require.Empty(t, lts)
+	})
+}
+
+// runRelationTailTests covers relations that carry a SOURCE FACE (TKT-JAROC3).
+//
+// A triple can hold one edge per state tail, and those edges are different
+// relations, not one relation seen through a filter. So each has to get its own
+// history. The failure these guard against is a silent one: a faced capture
+// filed under the default tail's lineage interleaves two edges' histories, and
+// nothing errors — the versions simply belong to the wrong edge.
+func runRelationTailTests(t *testing.T, f Factory) {
+	// seedTails creates the two endpoint entities plus both tails of the seed
+	// triple: the default-tail edge and one tailed at `draft`.
+	seedTails := func(t *testing.T, s store.Store) {
+		t.Helper()
+		for _, id := range []string{seedFrom, seedTo} {
+			e := entity.New(id, "feature")
+			e.SetString("title", id)
+			require.NoError(t, s.CreateEntity(ctx(), e))
+		}
+		_, err := s.CreateRelation(ctx(), seedFrom, seedType, seedTo, &store.RelationData{})
+		require.NoError(t, err)
+		_, err = s.CreateRelation(ctx(), seedFrom, seedType, seedTo,
+			&store.RelationData{FromFace: "draft"})
+		require.NoError(t, err)
+	}
+
+	t.Run("TailsHaveIndependentLineages", func(t *testing.T) {
+		s := f(t)
+		v := versionsOf(t, s)
+		seedTails(t, s)
+
+		// Both captures leave RecordID zero, which is what the synchronous
+		// hook does: the store resolves the lineage from the composite key.
+		// The key includes the tail, so these must resolve differently.
+		require.NoError(t, v.WriteRelationVersion(ctx(), store.RelationVersionInput{
+			From: seedFrom, Type: seedType, To: seedTo, Op: store.VersionOpDelete,
+			Content: "default tail body", SchemaHash: "schema-1", Projection: []byte(`{"v":1}`),
+		}))
+		require.NoError(t, v.WriteRelationVersion(ctx(), store.RelationVersionInput{
+			From: seedFrom, FromFace: "draft", Type: seedType, To: seedTo,
+			Op: store.VersionOpDelete, Content: "draft tail body",
+			SchemaHash: "schema-1", Projection: []byte(`{"v":1}`),
+		}))
+
+		// Each tail enumerates ONE lifetime — its own. Listing by triple alone
+		// would report the other tail's lineage here too, and the response
+		// carries no face to tell them apart.
+		defLts, err := v.ListRelationLifetimes(ctx(), seedFrom, entity.Face(""), seedType, seedTo)
+		require.NoError(t, err)
+		require.Len(t, defLts, 1, "the draft tail must not appear in the default tail's lifetimes")
+		draftLts, err := v.ListRelationLifetimes(ctx(), seedFrom, entity.Face("draft"), seedType, seedTo)
+		require.NoError(t, err)
+		require.Len(t, draftLts, 1)
+		require.NotEqual(t, defLts[0].RecordID, draftLts[0].RecordID,
+			"each tail is its own lineage")
+
+		// Read each tail's history BY FACE and check the bodies did not
+		// interleave. A timeline holding both bodies is the bug: one edge's
+		// history swallowed the other's.
+		for _, tc := range []struct {
+			face entity.Face
+			want string
+		}{
+			{"", "default tail body"},
+			{"draft", "draft tail body"},
+		} {
+			got, err := v.ListRelationVersions(ctx(), store.RelationHistoryQuery{
+				From: seedFrom, FromFace: tc.face, Type: seedType, To: seedTo,
+			})
+			require.NoError(t, err)
+			require.Len(t, got, 1, "a tail's timeline must hold only its own capture")
+
+			snap, err := v.GetRelationVersion(ctx(), store.RelationHistoryQuery{
+				From: seedFrom, FromFace: tc.face, Type: seedType, To: seedTo,
+			}, 1)
+			require.NoError(t, err)
+			require.Equal(t, tc.want, snap.Content,
+				"reading by face must return THAT tail's snapshot")
+		}
+	})
+
+	t.Run("IdenticalContentAcrossTailsStaysDistinct", func(t *testing.T) {
+		s := f(t)
+		v := versionsOf(t, s)
+		seedTails(t, s)
+
+		// The content hash must fold in the tail. If it did not, a dedup keyed
+		// on content would drop one tail's capture — a MISSING version rather
+		// than a duplicate, which is the harder bug to notice.
+		const same = "byte identical"
+		require.NoError(t, v.WriteRelationVersion(ctx(), store.RelationVersionInput{
+			From: seedFrom, Type: seedType, To: seedTo, Op: store.VersionOpDelete,
+			Content: same, SchemaHash: "schema-1", Projection: []byte(`{"v":1}`),
+		}))
+		require.NoError(t, v.WriteRelationVersion(ctx(), store.RelationVersionInput{
+			From: seedFrom, FromFace: "draft", Type: seedType, To: seedTo,
+			Op: store.VersionOpDelete, Content: same,
+			SchemaHash: "schema-1", Projection: []byte(`{"v":1}`),
+		}))
+
+		hashes := make([]string, 0, 2)
+		for _, face := range []entity.Face{"", "draft"} {
+			got, err := v.ListRelationVersions(ctx(), store.RelationHistoryQuery{
+				From: seedFrom, FromFace: face, Type: seedType, To: seedTo,
+			})
+			require.NoError(t, err)
+			require.Len(t, got, 1)
+			hashes = append(hashes, got[0].ContentHash)
+		}
+		require.NotEqual(t, hashes[0], hashes[1],
+			"two tails holding identical bytes must hash differently")
+	})
+
+	t.Run("UnknownTailIsNotFound", func(t *testing.T) {
+		s := f(t)
+		v := versionsOf(t, s)
+		seedTails(t, s)
+
+		// A tail with neither a live edge nor any history has no lineage to
+		// resolve. Filing the capture under the default tail's lineage would
+		// be the silent corruption; refusing is the whole point of keying the
+		// resolution on the tail.
+		err := v.WriteRelationVersion(ctx(), store.RelationVersionInput{
+			From: seedFrom, FromFace: "no-such-face", Type: seedType, To: seedTo,
+			Op: store.VersionOpDelete, Content: "orphan",
+			SchemaHash: "schema-1", Projection: []byte(`{"v":1}`),
+		})
+		require.ErrorIs(t, err, store.ErrNotFound)
 	})
 }
 
@@ -457,7 +587,7 @@ func seedRelationLineage(
 			Content: bodies[0], SchemaHash: "schema-1", Projection: []byte(`{"v":1}`),
 		}))
 		bodies = bodies[1:]
-		lts, ltErr := v.ListRelationLifetimes(ctx(), seedFrom, seedType, seedTo)
+		lts, ltErr := v.ListRelationLifetimes(ctx(), seedFrom, entity.Face(""), seedType, seedTo)
 		require.NoError(t, ltErr)
 		require.NotEmpty(t, lts)
 		rid = lts[0].RecordID
@@ -658,7 +788,7 @@ func runPurgeTests(t *testing.T, f Factory) {
 			"delete+recreate reused the lineage id; the new relation would inherit "+
 				"the deleted one's history")
 
-		lts, err := v.ListRelationLifetimes(ctx(), "FEAT-1", "rel", "FEAT-2")
+		lts, err := v.ListRelationLifetimes(ctx(), "FEAT-1", entity.Face(""), "rel", "FEAT-2")
 		require.NoError(t, err)
 		require.Len(t, lts, 2, "delete+recreate must mint a fresh lifetime, not resurrect the old one")
 

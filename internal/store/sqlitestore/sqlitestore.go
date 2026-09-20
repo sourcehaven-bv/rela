@@ -114,8 +114,8 @@ const timeFmt = time.RFC3339Nano
 // second method is its private pre-read helper, which exists because the
 // events name triples that no longer exist once the UPDATE has run.
 //
-//plimsoll:max-methods=54
-//plimsoll:max-exported-methods=35
+//plimsoll:max-methods=55
+//plimsoll:max-exported-methods=36
 type Store struct {
 	db *sql.DB
 

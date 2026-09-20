@@ -514,7 +514,30 @@ type RelationWriter interface {
 
 	// UpdateRelation updates an existing relation's data.
 	// Returns ErrNotFound if the relation does not exist.
+	//
+	// Addresses the DEFAULT-tail edge of the triple, like DeleteRelation —
+	// use UpdateRelationState for a state-tailed edge.
 	UpdateRelation(ctx context.Context, from, relType, to string, data RelationData) (*entity.Relation, error)
+
+	// UpdateRelationState updates the edge of this triple whose tail is p
+	// (BUG-64MU2Q). The zero face addresses the default-tail edge, making
+	// this the general form of UpdateRelation.
+	//
+	// Separate from UpdateRelation for the same reason DeleteRelationState
+	// is separate from DeleteRelation: the tail is part of a relation's
+	// IDENTITY, not a filter. A caller holding a state-tailed edge that
+	// drops the tail does not update "the edge, approximately" — it writes
+	// its properties onto a DIFFERENT edge, the default face's, and reports
+	// success.
+	//
+	// RelationData.FromFace is IGNORED here; p is the address. Carrying the
+	// tail in both would let them disagree, and a write whose address and
+	// payload disagree has no safe reading.
+	//
+	// Returns ErrNotFound if no edge with that exact tail exists.
+	UpdateRelationState(
+		ctx context.Context, from string, p entity.Face, relType, to string, data RelationData,
+	) (*entity.Relation, error)
 
 	// DeleteRelation removes a relation.
 	// Returns ErrNotFound if the relation does not exist.
@@ -545,14 +568,15 @@ type RelationData struct {
 	Properties map[string]any
 	Content    string
 
-	// FromFace sets the state-specific TAIL of the created edge
-	// (TKT-DOFYR1; zero = default state / identity edge). Consumed by
-	// CreateRelation only. UpdateRelation and DeleteRelation address the
-	// DEFAULT-tail edge of their triple in Step 1 — individual update/
-	// delete of a state-tailed edge has no consumer before the Step-3
-	// copy kernel and is added then, mirroring the no-per-state-entity-
-	// delete decision; state-tailed edges are removed today via the
-	// entity delete/rename cascades.
+	// FromFace sets the state-specific TAIL of the CREATED edge
+	// (TKT-DOFYR1; zero = default state / identity edge).
+	//
+	// Consumed by CreateRelation only, and deliberately still so: on the
+	// update path the tail is the ADDRESS, carried as UpdateRelationState's
+	// own parameter rather than in the payload. Carrying it in both would
+	// let them disagree, and a write whose address and payload disagree has
+	// no safe reading — so UpdateRelationState ignores this field
+	// (BUG-64MU2Q). Delete has no payload at all; see DeleteRelationState.
 	FromFace entity.Face
 }
 
@@ -1204,7 +1228,23 @@ type RelationLifetime struct {
 // otherwise, so the composite key remains the authorization boundary and RecordID
 // only disambiguates within it.
 type RelationHistoryQuery struct {
-	From     string
+	From string
+
+	// FromFace is the state-specific TAIL whose history is being read; zero
+	// reads the DEFAULT tail (TKT-JAROC3).
+	//
+	// The tail is part of the key, not a filter over it: a triple can hold
+	// one edge per tail and those are different relations with their own
+	// lineages. So a query that names no face does not read "the edge,
+	// approximately" — it reads the default tail's history specifically,
+	// which is what a caller that never names a face means.
+	//
+	// Ignored when RecordID is non-zero: an explicit lineage handle already
+	// identifies one edge, and the store validates that handle against the
+	// key. Supplying both a face and a mismatched RecordID is not an error,
+	// because the RecordID is the narrower address.
+	FromFace entity.Face
+
 	Type     string
 	To       string
 	RecordID int64 // 0 = newest lifetime
@@ -1212,10 +1252,11 @@ type RelationHistoryQuery struct {
 
 // RelationVersionInput is one relation version to persist via
 // [RelationVersionWriter]. RecordID is the surrogate lineage id read off the
-// live relations row (0 is invalid — the caller must supply the row's
-// rel_record_id). PrevFrom/PrevTo are set only for VersionOpRename. Attribution
-// arrives here, populated from ctx at the boundary — the store learns the
-// Principal by no other route.
+// live relations row; 0 asks the store to resolve it from the composite key
+// (including FromFace), which is correct for a synchronous capture taken while
+// the row still exists. PrevFrom/PrevTo are set only for VersionOpRename.
+// Attribution arrives here, populated from ctx at the boundary — the store
+// learns the Principal by no other route.
 type RelationVersionInput struct {
 	RecordID int64
 
@@ -1277,7 +1318,15 @@ type RelationHistoryReader interface {
 	// key was deleted-and-recreated: this is how a caller discovers that older
 	// deleted lifetimes exist and obtains the RecordID handle to read one. Returns
 	// an empty slice for an unknown key.
-	ListRelationLifetimes(ctx context.Context, from, relType, to string) ([]RelationLifetime, error)
+	//
+	// fromFace scopes the enumeration to ONE tail; zero is the default tail
+	// (TKT-JAROC3). Tails are separate relations with separate lineages, so
+	// listing them together would offer a caller asking about the draft edge
+	// a handle to the published edge's history — and the two are indis-
+	// tinguishable in the response, which carries no face.
+	ListRelationLifetimes(
+		ctx context.Context, from string, fromFace entity.Face, relType, to string,
+	) ([]RelationLifetime, error)
 }
 
 // --- Version purge (TKT-BW6UUL) ---

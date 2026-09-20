@@ -70,6 +70,20 @@ type RelationSubject struct {
 	Type     string // relation type (e.g. "editor-of")
 	FromType string
 	FromID   string
+
+	// FromFace names the SOURCE's content state, for a `scope: content`
+	// relation type whose edges belong to one face rather than to the
+	// entity as such (TKT-DOFYR1). The zero value is the default state.
+	//
+	// Only the source carries a face: [entity.Relation] has no ToFace, so
+	// there is nothing on the target side to authorize (BUG-64MU2Q).
+	//
+	// The zero value keeps every existing grant's meaning, for the same
+	// reason [EntitySubject.Face] does: a write that names no face
+	// addresses the default one, and a bare-type grant covers exactly
+	// that. An identity-scoped edge is entity-level and always leaves
+	// this zero.
+	FromFace entity.Face
 }
 
 func (RelationSubject) isSubject() {} // coverage-ignore: sealing marker: never called at runtime; exists only so

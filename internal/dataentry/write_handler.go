@@ -59,6 +59,14 @@ type entityMutator interface {
 		ctx context.Context, from, relType, to string, opts entityPkg.RelationOptions,
 	) (*entityPkg.Relation, error)
 	DeleteRelation(ctx context.Context, from, relType, to string) error
+	// DeleteRelationState removes the edge whose SOURCE face is exactly
+	// face — what a relation removal addressed to `ID@face` means for a
+	// `scope: content` type. The zero face is the default-tail edge, so
+	// this also covers every identity-scoped and faceless removal.
+	// See entitymanager.Manager.DeleteRelationState.
+	DeleteRelationState(
+		ctx context.Context, from string, face entityPkg.Face, relType, to string,
+	) error
 
 	// PatchEntity is how the webhook pipeline writes: it names only the
 	// properties a hook actually sets, so a property the hook does not mention
@@ -123,9 +131,13 @@ type writeHandler struct {
 	// outgoing edges of the face an entity IS, with the neighbor ids the
 	// caller may see. The write path answers with the row it wrote, so it
 	// owes the row's own edges, not the bare id's union of every face's.
-	faceEdges          func(ctx context.Context, e *entityPkg.Entity) ([]*entityPkg.Relation, map[string]bool, error)
+	faceEdges func(ctx context.Context, e *entityPkg.Entity) ([]*entityPkg.Relation, map[string]bool, error)
+	// currentEdgesByPeer is face-scoped: the reconciler diffs against the
+	// edges ONE face owns, because it DELETES whatever is current but not
+	// desired. Handed the bare-id union of every face's edges, a PATCH to
+	// one face would delete another face's links (BUG-64MU2Q).
 	currentEdgesByPeer func(
-		ctx context.Context, entityID, canonical string, incoming bool,
+		ctx context.Context, entityID string, tail entityPkg.Face, canonical string, incoming bool,
 	) map[string]*entityPkg.Relation
 
 	// paths contains caller-supplied conflict-file paths to the project
@@ -340,8 +352,11 @@ func (h *writeHandler) writeCreateRelations(
 	}
 	warnings = ws
 
-	// Phase B: the writes.
-	ws, err = h.applyRelationsModern(r.Context(), created.ID, desired)
+	// Phase B: the writes, addressed to the face just created — it owns its
+	// content-scoped edges (BUG-64MU2Q). The address comes from the row the
+	// manager returned, not from the request: a create mints its id during
+	// the write, so the row it produced is what names the face.
+	ws, err = h.applyRelationsModern(r.Context(), refOf(created), desired)
 	warnings = append(warnings, ws...)
 	if err != nil {
 		h.writeRelationsApplyError(w, r, err)
@@ -726,20 +741,13 @@ func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if req.Relations.Modern != nil {
-		// A content-scoped relation type attaches to ONE face on its tail
-		// side, and the relation writers below address the entity's bare
-		// tail (entity.RelationOptions carries no face). Writing such an
-		// edge from a non-bare face would therefore silently attach it to
-		// the bare face — the wrong-face write this whole address grammar
-		// exists to prevent. Identity-scoped edges are entity-level and
-		// write the same edge from every face, so they pass through.
-		if relType, refused := contentScopedRelationOn(s.Meta, ref, req.Relations.Modern); refused {
-			writeV1Error(w, r, http.StatusUnprocessableEntity, "face_relations_unsupported",
-				"Content-scoped relations cannot be written through a face address",
-				fmt.Sprintf("relation %q is `scope: content`; edit it on the bare face, "+
-					"or move it with a copy definition", relType))
-			return
-		}
+		// A content-scoped edge is written to the face the request
+		// addresses; applyRelationsModern carries `ref` for exactly that
+		// (BUG-64MU2Q). This used to refuse the write outright, because
+		// entity.RelationOptions could not name a tail face and the edge
+		// would have silently landed on the default one — and it advised
+		// "edit it on the bare face", an address a faced type does not
+		// have, so the refusal was a dead end from any client.
 		if denial := h.affordances.validateRelationsModernAffordances(
 			r.Context(), ref.ID, entity, req.Relations.Modern,
 		); denial != nil {
@@ -837,7 +845,7 @@ func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Reque
 	// Phase C: relation writes. Produces warnings on soft conditions
 	// and structured errors on hard failures.
 	if req.Relations.Modern != nil {
-		ws, err := h.applyRelationsModern(r.Context(), ref.ID, req.Relations.Modern)
+		ws, err := h.applyRelationsModern(r.Context(), ref, req.Relations.Modern)
 		warnings = append(warnings, ws...)
 		if err != nil {
 			h.writeRelationsApplyError(w, r, err)

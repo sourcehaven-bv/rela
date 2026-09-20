@@ -101,12 +101,15 @@ func (r *Request) authorizeRelationWrite(ctx context.Context, op Op, s RelationS
 		}
 	}
 
-	// Relation writes address the DEFAULT tail today: RelationSubject carries
-	// no face, and store.RelationData.FromFace is consumed by
-	// CreateRelation only. State-tailed relation writes arrive with the copy
-	// kernel; until then the zero face here is the accurate statement, not
-	// a placeholder.
-	d := r.decideFromAttrs(attrs, op, s.FromType, entity.Face(""),
+	// The SOURCE's face, so a `scope: content` edge is authorized against the
+	// state it actually belongs to (BUG-64MU2Q): a principal granted
+	// `policy@draft` must not write the published face's edges. The zero face
+	// is the default state, which is what every identity-scoped edge and every
+	// faceless type addresses — so existing grants keep their meaning.
+	//
+	// Only the source has a face; entity.Relation has no ToFace, so there is
+	// no target-side state to authorize.
+	d := r.decideFromAttrs(attrs, op, s.FromType, s.FromFace,
 		"no role grants %s on relations from type %q")
 	if !d.Allow {
 		d.Reason = r.explainRelationDenial(d.Reason, s, op)

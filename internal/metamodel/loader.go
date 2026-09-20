@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -1596,12 +1597,15 @@ func validateValidationRelations(m *Metamodel) []string {
 	for _, rule := range m.Validations {
 		for _, relType := range sortedKeys(rule.Relations) {
 			c := rule.Relations[relType]
-			if _, ok := m.GetRelationDef(relType); !ok {
+			relDef, relOK := m.GetRelationDef(relType)
+			if !relOK {
 				errs = append(errs, fmt.Sprintf(
 					"validation %q: relations: relation type %q is not declared — "+
 						"the constraint would count nothing and pass forever",
 					rule.Name, relType))
 			}
+			errs = append(errs, validateConstraintDirection(rule.Name, relType, c, relDef, relOK)...)
+			errs = append(errs, validateConstraintTargetType(m, rule.Name, relType, c, relDef, relOK)...)
 			if c.Min == nil && c.Max == nil {
 				errs = append(errs, fmt.Sprintf(
 					"validation %q: relations %q: needs `min:` or `max:` — "+
@@ -1627,6 +1631,178 @@ func validateValidationRelations(m *Metamodel) []string {
 		}
 	}
 	return errs
+}
+
+// validateConstraintDirection checks a constraint's `direction:`.
+//
+// Two ways it can be wrong, both silent at runtime. An unrecognized word
+// would fall back to outgoing, so a rule meaning "incoming" would quietly
+// count the opposite edges. And `direction:` on a symmetric relation is
+// incoherent: symmetry is a presentation convention over ONE stored row, so
+// a query from the other endpoint finds nothing and the two ends of the same
+// relationship get different counts depending on which way round the edge was
+// written.
+func validateConstraintDirection(
+	ruleName, relType string, c RelationConstraint, relDef *RelationDef, relOK bool,
+) []string {
+	if c.Direction == "" {
+		return nil
+	}
+	var errs []string
+	if c.Direction != RelationDirectionOutgoing && c.Direction != RelationDirectionIncoming {
+		errs = append(errs, fmt.Sprintf(
+			"validation %q: relations %q: `direction: %s` is not valid — use %q or %q",
+			ruleName, relType, c.Direction, RelationDirectionOutgoing, RelationDirectionIncoming))
+		return errs
+	}
+	if relOK && relDef.Symmetric {
+		errs = append(errs, fmt.Sprintf(
+			"validation %q: relations %q: `direction:` is not valid on a symmetric relation — "+
+				"a symmetric edge is stored once with no preferred direction, so the two "+
+				"endpoints would get different counts for the same relationship; omit the key",
+			ruleName, relType))
+	}
+	return errs
+}
+
+// validateConstraintTargetType checks `target_type:` and, through it, the
+// `where:` clauses.
+//
+// A `target_type` the relation cannot reach matches nothing, so the
+// constraint passes forever while appearing to guard something — the same
+// failure `faces:` and the relation-type check above already refuse.
+//
+// `where` is checked against whichever far types are possible. With
+// `target_type` set that is exactly one, so an unknown property is
+// unambiguous. Without it the relation may reach several types, and a
+// property some of them declare is legitimate — so only a property NONE of
+// them declares is an error. That case is worth catching loudly: at runtime
+// an unevaluable target counts as matching whenever `max:` is set, so a
+// mistyped property turns a `max: 0` gate into one that fires on everything,
+// with no diagnostic saying why.
+func validateConstraintTargetType(
+	m *Metamodel, ruleName, relType string, c RelationConstraint, relDef *RelationDef, relOK bool,
+) []string {
+	if !relOK {
+		return nil // the relation-type error already reported; nothing to resolve against.
+	}
+	var errs []string
+
+	// The far end is the head for an outgoing constraint, the tail for an
+	// incoming one.
+	reachable := relDef.To
+	if c.IsIncoming() {
+		reachable = relDef.From
+	}
+
+	farTypes := reachable
+	if c.TargetType != "" {
+		canonical := m.ResolveAlias(c.TargetType)
+		if _, ok := m.GetEntityDef(canonical); !ok {
+			errs = append(errs, fmt.Sprintf(
+				"validation %q: relations %q: `target_type: %s` is not a declared entity type",
+				ruleName, relType, c.TargetType))
+			return errs
+		}
+		// Both sides canonicalized: `to:`/`from:` may name an alias, and
+		// comparing a resolved name against a raw list would reject EVERY
+		// spelling of a legitimate target_type. The runtime resolves both
+		// sides too (sameEntityType), so this keeps load and check agreeing
+		// by construction rather than by the happy accident that
+		// validateRelationReferences currently rejects an aliased `to:`.
+		reaches := slices.ContainsFunc(reachable, func(t string) bool {
+			return m.ResolveAlias(t) == canonical
+		})
+		if !reaches {
+			errs = append(errs, fmt.Sprintf(
+				"validation %q: relations %q: `target_type: %s` is not reachable — "+
+					"%s %q connects to %v; the constraint would count nothing and pass forever",
+				ruleName, relType, c.TargetType, farEndWord(c), relType, reachable))
+			return errs
+		}
+		farTypes = []string{canonical}
+	}
+
+	errs = append(errs, validateConstraintWhere(m, ruleName, relType, c, farTypes)...)
+	return errs
+}
+
+// validateConstraintWhere reports `where` properties that NO possible far type
+// declares. See validateConstraintTargetType for why only the none-of-them
+// case is an error.
+func validateConstraintWhere(
+	m *Metamodel, ruleName, relType string, c RelationConstraint, farTypes []string,
+) []string {
+	if len(c.Where) == 0 || len(farTypes) == 0 {
+		return nil
+	}
+	var errs []string
+	for _, clause := range c.Where {
+		prop := wherePropertyName(clause)
+		if prop == "" {
+			continue // malformed; the engine's own parse reports it.
+		}
+		anyDeclares := false
+		for _, typeName := range farTypes {
+			def, ok := m.GetEntityDef(typeName)
+			if !ok {
+				continue
+			}
+			if _, has := def.Properties[prop]; has {
+				anyDeclares = true
+				break
+			}
+		}
+		if !anyDeclares {
+			errs = append(errs, fmt.Sprintf(
+				"validation %q: relations %q: `where: %s` names property %q, which none of "+
+					"%v declares — the filter can never be evaluated",
+				ruleName, relType, clause, prop, farTypes))
+		}
+	}
+	return errs
+}
+
+// whereOperators are the filter operators [wherePropertyName] splits on,
+// longest-first so "!=" and ">=" are not misread as their single-character
+// prefixes.
+//
+// This duplicates the operator set in internal/filter because metamodel may
+// not import it (arch-lint). Drift is guarded from the other side: a test in
+// internal/filter fails if that package's operators and this list diverge.
+var whereOperators = []string{"<=", ">=", "!=", "=~", "~", "<", ">", "="}
+
+// WhereOperators returns the operator set [wherePropertyName] recognizes.
+// Exported for the drift guard in internal/filter; not part of the metamodel
+// API surface.
+func WhereOperators() []string { return slices.Clone(whereOperators) }
+
+// wherePropertyName extracts the property a filter clause names, or "" if the
+// clause has no recognizable operator.
+//
+// Deliberately a local scan rather than a call into internal/filter: metamodel
+// may not depend on that package, and this needs only the name to the left of
+// the operator.
+//
+// An unrecognized clause yields "", which SKIPS the check rather than
+// reporting an error — so a parser that falls behind internal/filter loses a
+// load-time diagnostic but never rejects a schema that is actually valid.
+func wherePropertyName(clause string) string {
+	for _, op := range whereOperators {
+		if i := strings.Index(clause, op); i > 0 {
+			return strings.TrimSpace(clause[:i])
+		}
+	}
+	return ""
+}
+
+// farEndWord names the side of the relation a constraint looks at, for error
+// messages.
+func farEndWord(c RelationConstraint) string {
+	if c.IsIncoming() {
+		return "incoming side of"
+	}
+	return "outgoing side of"
 }
 
 // validateValidationFaces checks that every face named in a rule's `faces:`

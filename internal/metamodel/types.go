@@ -154,11 +154,11 @@ type ValidationRule struct {
 	Content *ContentRule `yaml:"content,omitempty"`
 
 	// Relations specifies relation-cardinality constraints, keyed by
-	// relation type. Each constraint asserts how many OUTGOING relations
-	// of that type the entity has to targets matching the constraint's
-	// `where` filters (min/max). Evaluated only for entities that match
-	// `when`. Used for workflow gates like "a done ticket must have at
-	// least one has-review relation to a done review-checklist".
+	// relation type. Evaluated only for entities that match `when`. Used
+	// for workflow gates like "a done ticket must have at least one
+	// has-review relation to a done review-checklist".
+	//
+	// See [RelationConstraint] for what each one asserts.
 	Relations map[string]RelationConstraint `yaml:"relations,omitempty"`
 
 	// Severity is the severity level of violations: "error" or "warning"
@@ -1493,11 +1493,16 @@ type ChecklistRule struct {
 
 // RelationConstraint is a relation-cardinality assertion on a validation
 // rule, keyed in ValidationRule.Relations by relation type. It counts the
-// entity's OUTGOING relations of that type whose target entity matches all
-// of the Where filters, then requires the count to satisfy Min and/or Max.
+// entity's relations of that type — outgoing unless Direction says
+// otherwise — whose far entity matches all of the Where filters and, when
+// TargetType is set, is of that type. The count then has to satisfy Min
+// and/or Max.
+//
+// Counting is per EDGE, not per distinct far entity: two edges to the same
+// entity count two.
 //
 // Where reuses the same filter syntax as When/Then (e.g. "status=done"),
-// matched against the TARGET entity's properties. At least one of Min/Max
+// matched against the FAR entity's properties. At least one of Min/Max
 // must be set; the loader rejects a constraint with neither bound, an
 // undeclared relation type, or bounds that nothing can satisfy.
 //
@@ -1516,15 +1521,65 @@ type ChecklistRule struct {
 // another. The CLI and CI paths wire an unrestricted reader, so the
 // authoritative verdict (the one enforcing the workflow) sees everything.
 type RelationConstraint struct {
-	// Where filters the target entities that count toward the constraint.
-	// All conditions are ANDed; empty means every target counts.
+	// Where filters the entities at the far end of the edge. All conditions
+	// are ANDed; empty means every one counts.
 	Where []string `yaml:"where,omitempty"`
+
+	// Direction selects which end of the edge the entity being validated
+	// sits on: "outgoing" (the default) counts edges it is the SOURCE of,
+	// "incoming" counts edges it is the TARGET of.
+	//
+	// Empty means outgoing, so every rule written before this key existed
+	// keeps its meaning.
+	//
+	// # Incoming counts are entity-level
+	//
+	// An edge records the face of its tail but has no head face — heads are
+	// entity-level by construction — so an incoming edge cannot be
+	// attributed to one face of the entity it arrives at. Each face of a
+	// faced entity is validated as its own row, so an incoming constraint
+	// evaluates identically for every face and reports one violation per
+	// face for a single underlying defect. That is noisy rather than wrong,
+	// and narrowing the rule with `faces:` avoids it.
+	//
+	// Refused on a `symmetric: true` relation: symmetry is a presentation
+	// convention over ONE stored row, not a reciprocal pair, so a query from
+	// the other endpoint finds nothing. Honoring direction there would give
+	// the two ends different counts for the same relationship, decided by
+	// which way round the edge happened to be written.
+	Direction string `yaml:"direction,omitempty"`
+
+	// TargetType restricts the count to far entities of this type. Empty
+	// counts every type the relation reaches.
+	//
+	// It exists because a relation may reach several types, and then a count
+	// alone cannot say WHAT was found — "has a task" and "has a recurring
+	// schedule" are different claims over one relation. `Where` cannot
+	// express it: those clauses filter an entity's PROPERTIES, and a type is
+	// not a property.
+	//
+	// Setting it also makes the far type known before any data is read, so
+	// the loader can check `Where` against it rather than leaving a
+	// mistyped property to fail per-entity at check time.
+	TargetType string `yaml:"target_type,omitempty"`
 
 	// Min requires at least this many matching relations (nil = no lower bound).
 	Min *int `yaml:"min,omitempty"`
 
 	// Max requires at most this many matching relations (nil = no upper bound).
 	Max *int `yaml:"max,omitempty"`
+}
+
+// RelationConstraintDirection values, as spelled in schema.yaml.
+const (
+	RelationDirectionOutgoing = "outgoing"
+	RelationDirectionIncoming = "incoming"
+)
+
+// IsIncoming reports whether the constraint counts edges arriving at the
+// entity. Empty (the default) is outgoing.
+func (c RelationConstraint) IsIncoming() bool {
+	return c.Direction == RelationDirectionIncoming
 }
 
 // HeaderCheck specifies a header to check for in markdown content.

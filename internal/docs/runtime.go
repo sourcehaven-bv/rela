@@ -241,7 +241,16 @@ func Build(ctx context.Context, src string, opts Options) (string, error) {
 		Tracer:        dr.tracer,
 		Meta:          opts.Meta,
 	}
-	rt := rlua.NewReader(readDeps, dr.out, rlua.WithContext(ctx), rlua.WithTimeout(buildTimeout),
+	// Use the BUILD's tier deadline, not the bare Tier-A buildTimeout, as the
+	// per-island cap. gopher-lua's SetContext aborts an island on its own
+	// deadline, so a hardcoded 30s here silently overrode the wider ceiling a
+	// screenshot build had just chosen: one screenshot{} got 30s no matter what
+	// screenshotBuildTimeout said, and a capture that needed longer failed as
+	// `lua: context deadline exceeded` — attributed to the manual rather than to
+	// this ceiling, and unfixable from the capture layer because the island was
+	// already dead. The build-wide ctx above still caps the TOTAL, so this
+	// bounds one island without letting N islands escape.
+	rt := rlua.NewReader(readDeps, dr.out, rlua.WithContext(ctx), rlua.WithTimeout(deadline),
 		// The docs build runs from the operator shell / CI over in-repo
 		// scripts, the same trust boundary as `rela script` (TKT-YH52OM).
 		rlua.WithCapabilities(rlua.TrustedCapabilities()))

@@ -97,6 +97,10 @@ type Service struct {
 	deps  lua.ReadDeps
 	cache *lua.Cache
 
+	// graph serves relation-cardinality constraints. Nil until WithGraph
+	// supplies one; see that method for why nil denies rather than passes.
+	graph Graph
+
 	// ev is the predicate condition engine for `When:`/`Then:` rules
 	// (TKT-J4IR1G): filter clauses are transpiled + compiled once (cached
 	// in the Evaluator) and evaluated per entity. Built lazily against
@@ -229,6 +233,17 @@ func New(meta *metamodel.Metamodel, deps lua.ReadDeps) *Service {
 // per-rule. Zero-or-nil cache leaves validation runtimes un-cached.
 func (s *Service) WithCache(c *lua.Cache) *Service {
 	s.cache = c
+	return s
+}
+
+// WithGraph wires the graph-read surface relation-cardinality constraints
+// (`relations:`) evaluate against. A Service without one reports every such
+// constraint as unevaluable rather than satisfied, so a forgotten wiring is
+// loud instead of turning a gate into a no-op.
+//
+// Rules that use no `relations:` block need no graph.
+func (s *Service) WithGraph(g Graph) *Service {
+	s.graph = g
 	return s
 }
 
@@ -539,12 +554,15 @@ func (s *Service) checkEntityAgainstRule(
 // human-readable summary when the constraint is violated, ("", true) when
 // satisfied.
 //
-// A failure that prevents the count from being trusted — no reader wired,
+// A failure that prevents the count from being trusted — no graph wired,
 // or the relation read itself failing — is returned as an error rather
 // than reported as "satisfied". Silently satisfying the gate is the worst
 // available outcome: these constraints are the workflow gates standing
 // between a broken ticket and `status=done`, so a check that could not run
 // must say so rather than wave the entity through.
+//
+// Counting is per EDGE, not per distinct target: a subject holding two
+// face-tailed edges to one entity counts two. See [Related].
 func (s *Service) checkRelationConstraint(
 	ctx context.Context,
 	e *entity.Entity,
@@ -554,11 +572,11 @@ func (s *Service) checkRelationConstraint(
 	if c.Min == nil && c.Max == nil {
 		return "", true, nil
 	}
-	// A missing reader is a wiring error, not a reason to pass. RR-X9NVHI
-	// makes a nil VisibleReader DENY reads; denying a read and satisfying
-	// a validation gate are opposite outcomes, so this reports instead.
-	if s.deps.VisibleReader == nil {
-		return "", false, errors.New("no entity reader wired")
+	// A missing graph is a wiring error, not a reason to pass. Denying a
+	// read and satisfying a validation gate are opposite outcomes, so this
+	// reports instead (same reasoning as RR-X9NVHI's nil-reader denial).
+	if s.graph == nil {
+		return "", false, errors.New("no graph wired")
 	}
 
 	// Parsed again here (compileRuleConditions already reported a bad
@@ -569,54 +587,27 @@ func (s *Service) checkRelationConstraint(
 		return "", false, fmt.Errorf("invalid where filter: %w", err)
 	}
 
-	rels, err := s.deps.OutgoingRelations(ctx, e.ID, relType)
+	dir := DirectionOutgoing
+	if c.IsIncoming() {
+		dir = DirectionIncoming
+	}
+	// Only read far entities when something will actually look at one. A
+	// bare `min:`/`max:` with no filters counts edges, and resolving each
+	// far end anyway would be a per-row lookup on a whole-graph scan.
+	resolveFar := len(whereFilters) > 0 || c.TargetType != ""
+	related, err := s.graph.RelatedEntities(ctx, e.ID, relType, dir, resolveFar)
 	if err != nil {
 		return "", false, fmt.Errorf("reading %q relations: %w", relType, err)
 	}
 
 	count := 0
-	for _, rel := range rels {
-		if len(whereFilters) == 0 {
-			count++
-			continue
-		}
-		// A target we cannot evaluate must not be silently dropped.
-		// Dropping it undercounts, which is conservative for Min (the
-		// gate still fires) but ANTI-conservative for Max: a `max: 0`
-		// gate would report "satisfied" precisely because the targets
-		// it was meant to catch could not be checked. So an unevaluable
-		// target counts as matching whenever Max is set, and is skipped
-		// otherwise — each bound fails closed.
-		failClosed := c.Max != nil
-
-		target, gErr := s.deps.VisibleReader.GetEntity(ctx, rel.To)
-		if gErr != nil {
-			if failClosed {
-				count++
-			}
-			continue
-		}
-		targetDef, ok := s.deps.Meta.GetEntityDef(target.Type)
-		if !ok {
-			if failClosed {
-				count++
-			}
-			continue
-		}
-		rec := filter.Record{ID: target.ID, Type: target.Type, Properties: target.Properties}
-		matches, mErr := filter.MatchAll(rec, whereFilters, targetDef, s.deps.Meta)
-		if mErr != nil {
-			if failClosed {
-				count++
-			}
-			continue
-		}
-		if matches {
+	for _, rel := range related {
+		if s.countsToward(rel, c, whereFilters, resolveFar) {
 			count++
 		}
 	}
 
-	constraintDesc := describeRelationConstraint(relType, c.Where)
+	constraintDesc := describeRelationConstraint(relType, c)
 	if c.Min != nil && count < *c.Min {
 		return fmt.Sprintf("requires at least %d %s relation(s), has %d",
 			*c.Min, constraintDesc, count), false, nil
@@ -628,12 +619,92 @@ func (s *Service) checkRelationConstraint(
 	return "", true, nil
 }
 
+// countsToward reports whether one edge counts toward a constraint's bound.
+//
+// The per-edge decision, extracted so the three concerns it balances stay
+// legible: the type filter, the property filters, and what to do about an
+// edge whose far entity could not be read.
+//
+// # Each bound fails closed
+//
+// An edge we cannot evaluate must not be silently dropped. Dropping it
+// undercounts, which is conservative for Min (the gate still fires) but
+// ANTI-conservative for Max: a `max: 0` gate would report "satisfied"
+// precisely because the edges it was meant to catch could not be checked. So
+// an unevaluable edge counts whenever Max is set, and is skipped otherwise.
+//
+// That covers the edges that REACH here: dangling references and `where`
+// clauses the far type cannot answer. Edges whose endpoints the acting
+// identity may not see are already gone — the gated reader drops them
+// upstream — which is deliberate and documented on
+// [metamodel.RelationConstraint]: a gate speaks about the visible graph, not
+// the whole one.
+func (s *Service) countsToward(
+	rel Related, c metamodel.RelationConstraint, whereFilters []*filter.Filter, resolveFar bool,
+) bool {
+	// Nothing was read, so there is nothing to filter on: every edge counts,
+	// exactly as before this seam existed.
+	if !resolveFar {
+		return true
+	}
+	failClosed := c.Max != nil
+
+	// A type filter is answered from the edge's own far type. An UNRESOLVED
+	// edge has none, so it cannot be shown to be excluded and falls through
+	// to the fail-closed decision rather than being dropped here — dropping
+	// it would be the undercount a `max:` bound reads as success.
+	if !rel.Resolved {
+		return failClosed
+	}
+	if c.TargetType != "" && !s.sameEntityType(rel.Type, c.TargetType) {
+		return false
+	}
+	if len(whereFilters) == 0 {
+		return true
+	}
+
+	targetDef, ok := s.deps.Meta.GetEntityDef(rel.Type)
+	if !ok {
+		return failClosed
+	}
+	rec := filter.Record{ID: rel.ID, Type: rel.Type, Properties: rel.Properties}
+	matches, err := filter.MatchAll(rec, whereFilters, targetDef, s.deps.Meta)
+	if err != nil {
+		return failClosed
+	}
+	return matches
+}
+
+// sameEntityType reports whether two type names denote the same declared
+// type, resolving aliases on both sides.
+//
+// A `target_type` may legitimately be written as an alias, and the stored
+// entity carries whichever spelling it was created with. Comparing the raw
+// strings would make an aliased constraint match nothing — and a constraint
+// that matches nothing passes forever.
+func (s *Service) sameEntityType(got, want string) bool {
+	if got == want {
+		return true
+	}
+	return s.deps.Meta.ResolveAlias(got) == s.deps.Meta.ResolveAlias(want)
+}
+
 // describeRelationConstraint renders a relation type plus its target
 // filters into a compact human string, e.g. `has-review (status=done)`.
-func describeRelationConstraint(relType string, where []string) string {
+func describeRelationConstraint(relType string, c metamodel.RelationConstraint) string {
 	desc := "'" + relType + "'"
-	if len(where) > 0 {
-		desc += " (" + strings.Join(where, ", ") + ")"
+	// Direction is named only when it is not the default, so the message for
+	// every rule written before this key existed is unchanged.
+	if c.IsIncoming() {
+		desc += " incoming"
+	}
+	var parts []string
+	if c.TargetType != "" {
+		parts = append(parts, "type="+c.TargetType)
+	}
+	parts = append(parts, c.Where...)
+	if len(parts) > 0 {
+		desc += " (" + strings.Join(parts, ", ") + ")"
 	}
 	return desc
 }

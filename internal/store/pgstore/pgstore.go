@@ -148,8 +148,8 @@ type DBTX interface {
 // are: endpoints are a relation's identity, so a loop above the store must be
 // create-then-delete, which forks version lineage and destroys a self-edge.
 //
-//plimsoll:max-exported-methods=47
-//plimsoll:max-methods=57
+//plimsoll:max-exported-methods=48
+//plimsoll:max-methods=58
 type Store struct {
 	db        DBTX
 	observers []store.EntityObserver // notified synchronously after committed entity writes
