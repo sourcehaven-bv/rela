@@ -13,70 +13,116 @@ status: pending
 - [x] Scope defined (what's in/out documented below)
 - [x] Acceptance criteria documented with specific test scenarios
 
+**The decision this plan is built on** (user, 2026-09-20): **sorting happens in
+SQL**, because otherwise paging does not work properly and the overhead of
+loading a whole type is unacceptable. Sort semantics change to whatever the
+sqlite and postgres backends can support, and the Go comparator conforms to SQL
+rather than the reverse.
+
+That single principle resolved every open design-review question, including four
+the reviewer raised that this plan had not anticipated. It also inverts the
+plan's earlier shape: the job is no longer "make the Go path type-aware", it is
+"make one SQL-expressible ordering and hold every path to it".
+
 **Scope:**
 
 IN scope:
 
-1. `applyV1Sorting` stops comparing byte-wise and delegates to the existing
-   type-aware comparison, so the REST list path agrees with search and
-   dashboards on enum, integer, date and boolean properties.
-2. The pushed-down SQL path orders enums by declared position, so a paged list
-   reads the same whether or not the request was pushdown-eligible.
-3. The enum's declared values participate in the derived index name, so editing
-   `values:` in `schema.yaml` rebuilds the index instead of silently
-   de-optimising the query.
-4. `Sort []SortSpec` on `ViewSection`, applied before any row cap.
+1. One ordering rule for the query-sort path, defined as what SQL can express:
+   byte order on the stored string form, enum rank where declared values exist,
+   nulls last ascending / first descending, id ascending as the final tiebreak
+   in both directions.
+2. `applyV1Sorting` and `filter.SortMulti` both implement that rule, so the REST
+   list path, search and dashboards agree.
+3. The enum `CASE` rank pushed into SQL, with declared values in the derived
+   index name and in `StaticIndexSpecs`' dedup key.
+4. `parent_sort:` / `child_sort:` on `ViewSection`, applied per level before any
+   cap.
 
 OUT of scope:
 
 - Per-use-site `values:` ordering. Rejected on measurement; see the ticket.
-- Changing `store.GraphQuery.OrderBy`'s byte-wise contract or the `storetest`
-  conformance suite. The store keeps knowing nothing about enums.
-- `filter.Sort` (the CLI single-key path) and `graphquerynaive.Order`. Neither
-  serves the list API. Named here so a reviewer knows they were considered.
-- Natural-number sort on strings as a NEW feature. Note this is not the same
-  as D1 below: natsort is PRESENT behaviour in `filter.SortMulti` today, and
-  what to do about it is a decision this ticket cannot avoid.
+- Changing `store.GraphQuery.OrderBy`'s byte-wise contract. It already says what
+  this plan now implements everywhere, so it needs no change — it was right and
+  the Go comparator was the outlier.
+- `filter`'s type-aware comparators (`compareDates`, `compareIntegers`,
+  `compareBooleans`) for NON-query callers. They keep their current behaviour;
+  only the query-sort path stops routing through them.
+- The ~28 display-only `natsort` call sites (analyze output, MCP tools, schema
+  and template listings, export). They sort their own slices and never reach
+  `SortMulti`.
+
+**Accepted behaviour changes** (all release-note material):
+
+| Change | Before | After |
+| --- | --- | --- |
+| String sorts | natsort: case-insensitive, numeric-aware | byte order: `Zebra` before `apple`, `item10` before `item9` |
+| `sort=id` | natsort in search/CLI, byte on v1 | byte order everywhere |
+| Enum sorts on the v1 list path | alphabetical | declared order |
+
+The first two are regressions in readability, accepted deliberately to keep
+paging correct. Measured on this repo's own 4,308 ticket titles: **99% of
+positions move**.
 
 **Acceptance Criteria:**
 
-1. **The two sorters agree.** A list of entities with an enum property, sorted
-   via `/api/v1/entities?sort=<enum>`, returns the same order as the same
-   entities sorted through the search/dashboard path.
-   *Test*: seed one fixture, sort it both ways, assert identical id sequences.
-   *Mutation*: revert `applyV1Sorting` to byte-wise; the test must fail.
+The old AC1 ("the two sorters agree") is deleted, not repaired — after
+unification both sides it compared are the same function, so it asserted a
+tautology (RR-Z7V8PI). Every criterion below names a mutation that must make it
+fail.
 
-2. **Pushed and Go paths agree, page for page.** Extend
-   `TestListPushdown_MatchesGoPathPageForPage` with an enum sort key, asc and
-   desc, across page boundaries.
-   *Test*: the existing differential harness, with an enum property added to the
-   fixture metamodel.
-   *Mutation*: emit the byte-wise `ORDER BY` while the Go path ranks; the test
-   must fail on page 1.
+1. **Pushed and Go paths agree, page for page.** Extend
+   `TestListPushdown_MatchesGoPathPageForPage` with an enum sort key (asc and
+   desc), a mixed-case string key, a key with embedded numbers, and a sparse
+   property, across page boundaries.
+   *Mutation*: emit byte-wise `ORDER BY` while the Go path ranks — must fail on
+   page 1.
+   *Note*: the current fixture's titles are same-case and digit-free, where byte
+   and natural order coincide. That is why it passes today over a live
+   divergence, so widening the fixture is part of the criterion.
 
-3. **Declared order, not alphabetical.** An enum declared `todo, doing,
-   blocked, done` sorts in that order, not `blocked, doing, done, todo`.
-   *Test*: explicit sequence assertion on a fixture whose declared order differs
-   from its alphabetical order.
+2. **Declared enum order, asserted on BOTH paths.** An enum declared
+   `todo, doing, blocked, done` sorts in that order, not alphabetically, both
+   when pushdown is eligible and when the request is forced onto the Go path.
+   *Mutation*: let the SQL side silently decline — must fail on the pushed
+   assertion rather than passing on memstore.
 
-4. **A schema edit does not silently de-optimise.** Reordering or inserting a
-   value in `values:` changes the derived index name, so the reconciler drops
-   the stale index and creates the correct one.
-   *Test*: `listIndexName` returns different names for two metamodels differing
-   only in enum value order. Plus an EXPLAIN test proving the generated index is
-   used (required by root `CLAUDE.md` for any newly supported SQL shape).
-   *Mutation*: omit values from the hash; the name-difference test must fail.
+3. **Descending is a valid ordering.** Equal keys keep input order under a
+   descending sort; a secondary ascending key stays ascending under a
+   descending primary; ties break by id ascending in both directions.
+   *Mutation*: restore `return !less` — must fail. (Currently 13 equal keys
+   return reversed, and a secondary key inverts entirely.)
 
-5. **Section `sort:` orders rows before the cap.** A `display: nested` section
-   with `sort:` emits the top-sorted rows, not an arbitrary prefix.
-   *Test*: a fixture with more children than `nestedChildPreview`, asserting the
-   surviving rows are the sorted-first ones.
-   *Mutation*: apply the sort after the cap; the test must fail.
+4. **A schema edit rebuilds the index.** Two metamodels differing only in enum
+   value order, run through the REAL derivation
+   (`queryplan.StaticIndexSpecs` → `listIndexName`), produce different index
+   names.
+   *Mutation*: omit values from the hash — must fail.
+   *Why through the derivation*: hand-built `DerivedObjectSpec`s would pass with
+   the `queryplan` half unwired (RR-Z7V8PI).
 
-6. **Null placement and tiebreak are preserved.** See the two defects below —
-   this is the criterion that keeps AC2 honest.
-   *Test*: rows with a missing property, asc and desc, plus rows with equal sort
-   keys and out-of-order ids.
+5. **Two value orders do not collide in the dedup map.** Two lists sorting the
+   same property under different declared orders both survive
+   `StaticIndexSpecs`.
+   *Mutation*: leave values out of the `byKey` key — one spec is silently
+   dropped and the test must catch it.
+
+6. **The index survives a generic plan.** The EXPLAIN test forces
+   `plan_cache_mode = force_generic_plan` (or executes ≥6 times) and asserts an
+   Index Scan.
+   *Mutation*: use bound parameters in the `CASE` — must fail with a Seq Scan.
+   Measured: 4 → 1,915 buffers.
+
+7. **Section sort orders rows before the per-parent cap.** Seed MULTIPLE parents
+   whose combined children exceed `nestedNodeBudget`, so the shared budget is
+   exercised, not just one parent's preview cap.
+   *Mutation*: sort after the cap — must fail on a late parent.
+
+8. **Edge semantics match SQL.** Nulls last ascending and first descending;
+   unknown properties sort byte-wise; list-valued properties sort by their
+   string form; non-ISO date formats sort lexically.
+   *Mutation*: restore the `.(string)` type assertion — list and non-string
+   values stop sorting and the test must fail.
 
 ## Research
 
@@ -86,50 +132,49 @@ OUT of scope:
 - [x] Looked for reference implementations in other projects
 - [x] Reviewed relevant rela concepts for prior art
 
-**Research Doc:** N/A — the research is recorded in the ticket body (Postgres
-measurements, rejected alternatives) rather than a separate RES entity, because
-it is a decision record for this one design rather than a survey.
+**Research Doc:** N/A — recorded in the ticket body (Postgres measurements,
+rejected alternatives) as a decision record for this design rather than a survey.
 
 **Existing Solutions:**
 
-*In the codebase (the decisive finding).* `internal/filter/sort.go` already
-implements declared-order enum sorting: `buildEnumIndex` (`:65`) maps value →
-declared position, reading `propDef.Values` for an inline enum or
-`meta.Types[...].Values` for a custom type; `compareEnums` (`:88`) compares by
-index. `compareByPropDef` (`:333`) also routes date, integer and boolean to
-type-aware comparisons. Verified by probe, not by reading.
+*The enum rank already exists and is reusable.* `buildEnumIndex`
+(`filter/sort.go:65`) maps value → declared position, reading `propDef.Values`
+for an inline enum or `meta.Types[...].Values` for a custom type; `compareEnums`
+(`:88`) compares by that index and puts unknown values last. Verified by probe.
+That logic carries over unchanged — it is the one semantic that IS
+SQL-expressible, via a `CASE` rank.
 
-~~So this ticket writes **no new comparison code**. It deletes a duplicate.~~
+*What does NOT carry over*, and this corrects the earlier claim that this ticket
+writes no new comparison code: the surrounding type dispatch. Under the SQL-wins
+decision the query-sort path needs ONE comparator (format to string, compare
+bytes, apply the enum rank when declared values are present), not six type-aware
+ones.
 
-**This claim was wrong and design review disproved it (RR-6F2UF2).** The two
-sorters do not implement one rule with two deltas; they differ on strings,
-dates, ids, timestamps, lists, undeclared properties and the meaning of
-descending. Six comparator functions need restructuring to three-way `int`
-returns before delegation is safe. The enum comparison itself is reusable; the
-surrounding machinery is not.
+*`graphquerynaive` is the reference implementation.* `sqlitestore/graphquery.go:12-20`
+states it outright: delegating rather than writing SQL pushdown is "a deliberate
+first step… the naive implementation is the behavioral reference every backend
+is verified against". sqlite, fsstore and memstore all route `GraphQuery`
+through it, so only pgstore emits real SQL. Making SQL-expressible semantics the
+authority matches how the codebase already reasons about backend agreement, and
+`graphquerynaive.Order` (`naive.go:95-126`) already implements exactly the target
+rule — byte-wise, nulls-as-largest, id tiebreak.
 
-*The delegation pattern is already written.* `queryservice.sortEntitiesMulti`
-(`queryservice.go:306`) builds the `map[string]*metamodel.EntityDef` that
-`filter.SortMulti` needs and calls it. `applyV1Sorting`'s call site
-(`api_v1.go:518`) has `a.Meta()` in scope, so the same shape works there.
+*The stale-index pattern already exists.* `uniqueIndexShape`
+(`derivedschema.go:90`) versions an index definition so a change renames it and
+the reconciler drops what it no longer computes (BUG-HC6I2T). AC4 applies that
+idea to enum values.
 
-*The stale-index pattern is already written.* `uniqueIndexShape`
-(`derivedschema.go:90`) versions the unique-index definition so that changing
-the DDL renames the index; the reconciler then drops what it no longer computes.
-Added for BUG-HC6I2T. AC4 applies that existing idea to enum values.
+*The differential harness already exists.*
+`TestListPushdown_MatchesGoPathPageForPage` (`listpushdown_test.go:64`) runs
+every request shape at two page sizes across three pages against both paths.
+AC1 widens its fixture rather than building a harness.
 
-*The differential harness is already written.*
-`TestListPushdown_MatchesGoPathPageForPage` (`listpushdown_test.go:64`) already
-runs every request shape at two page sizes across three pages against both
-paths. AC2 adds rows to its table rather than building a harness.
-
-*External research.* Four Postgres idioms were measured on a 200k-row replica of
-rela's real index shape; results and sources are in the ticket. Summary:
-`array_position` and a rank lookup table both force a sequential scan and are
-the two most-recommended answers on the web. Native pg enums are fastest but
-cannot be reordered without recreating the type, which operator-edited
-`schema.yaml` rules out. An indexed `CASE` rank matches byte-wise performance
-and serves both directions from one index via a backward scan.
+*External research.* Four Postgres idioms measured on a 200k-row replica of
+rela's index shape; results and sources in the ticket. `array_position` and a
+rank lookup table both force a sequential scan and are the two most-recommended
+answers online. Native pg enums are fastest but cannot be reordered without
+recreating the type. An indexed `CASE` rank matches byte-wise performance and
+serves both directions from one index via a backward scan.
 
 ## Approach
 
@@ -140,137 +185,65 @@ and serves both directions from one index via a backward scan.
 
 **Technical Approach:**
 
-Four steps, in dependency order. Steps 1 and 2 are the bugfix; 3 is the feature.
+*Step 1 — define the rule once.* Write the query-sort comparator in `filter`:
+three-way `int` return, format the value to its string form, compare bytes,
+apply an enum rank when declared values are present. Invert ONLY the key
+comparison for descending; apply the id tiebreak outside the inversion, always
+ascending. This is `graphquerynaive.Order`'s rule, which is `GraphQuery.OrderBy`'s
+documented contract, which is what pgstore emits — so one rule, already written
+down in three places, finally implemented in all of them.
 
-*Step 1 — unify the Go sorters.* Replace `applyV1Sorting`'s comparison body with
-a `filter.SortMulti` call, building `entityDefs` the way `sortEntitiesMulti`
-does. Two behaviour differences must be reconciled first, because
-`filter.SortMulti` as written would break paging (see the two defects below).
+The existing `compareDates` / `compareIntegers` / `compareBooleans` /
+`comparePropValues` stay for non-query callers and are simply not on this path.
 
-*Step 2 — push the same order into SQL.* `queryplan` gains an enum-aware order
-spec carrying the declared values; `store.OrderSpec` grows an optional rank list;
-pgstore emits a `CASE` over it in both `ORDER BY` and `createListIndexDDL`, and
-`listIndexName` hashes the values. Backends that cannot rank decline the sort and
-fall back to the Go path, exactly as they do for integers today.
+*Step 2 — both Go entry points use it.* `applyV1Sorting` and
+`filter.SortMulti`'s query-sort route both call the new comparator.
+`SortByID` drops `natsort.Less` for byte order, which collapses the explicit
+`sort=id` key and the implicit tiebreak into the same rule.
 
-*Step 3 — section sort.* `Sort []SortSpec` on `ViewSection`; the section builder
-sorts each collection through `filter.SortMulti` before applying any cap;
-validation mirrors `columns:`.
+*Step 3 — push the enum rank into SQL.* `store.OrderSpec` grows an optional
+ordered value list; `queryplan` populates it and adds it to both the index spec
+and the `byKey` dedup key; pgstore emits a `CASE` with **literal** arms (via
+`quoteLiteral`) in `ORDER BY` and in `createListIndexDDL`, and `listIndexName`
+hashes the values. `graphquerynaive.Order` applies the same rank in Go so
+sqlite/fs/mem agree.
 
-**Defects in `filter.SortMulti` that must be fixed first** (two found by probe during planning, two more by design review)
+*Step 4 — section sort.* `parent_sort:` / `child_sort:` on `ViewSection`
+(nested) and `sort:` (flat), each sorting its level's collection before the cap.
 
-Both found by probe during planning, and both silently corrupt paging if the
-delegation lands as-is. Neither is visible on the search path that uses it today,
-which is why they have survived.
-
-1. **Null placement differs by direction.** `filter.SortMulti` puts rows missing
-   the property LAST in both directions. `applyV1Sorting`, `graphquerynaive` and
-   SQL all put them last ascending and FIRST descending (SQL's default). Measured:
-
-   ```
-   filter.SortMulti asc : C(todo) E(doing) A(done) B(nil) D(nil)
-   filter.SortMulti desc: A(done) E(doing) C(todo) B(nil) D(nil)   ← nils still last
-   ```
-
-   Delegating without fixing this makes the Go path disagree with the pushed path
-   on every descending sort over a sparse property, which is AC2's failure mode.
-
-2. **No id tiebreak.** Equal sort keys keep input order — measured
-   `TKT-10, TKT-2, TKT-1`. `applyV1Sorting` and SQL both break ties by id
-   ascending. Without a tiebreak, two rows with the same status have no defined
-   order, so a row can appear on both page 1 and page 2, or on neither. This is
-   the defect that makes AC6 non-optional.
-
-   Note `filter.SortByID` uses `natsort.Less` (natural order), while
-   `applyV1Sorting` and SQL use plain byte order. The tiebreak must be **byte
-   order**, not natsort, to match SQL. Do not reuse `SortByID` for it.
-
-Fix both inside `filter`, since the search path benefits from a defined order
-too. Guard with direct unit tests before touching `applyV1Sorting`, so the
-change is proven in isolation.
-
-**A third defect, found while planning: non-ISO date formats are wrongly
-pushdown-eligible.**
-
-`queryplan.StringShaped` (`queryplan.go:119`) admits date and datetime
-properties because "byte order IS its order" — true for ISO 8601, false for any
-other layout. `metamodel.PropertyDef.Format` (`types.go:762`) lets an operator
-declare a Go layout such as `02/01/2006`, and `filter.SortMulti` honours it via
-`compareDates` while SQL compares the raw text. Measured:
-
-```
-non-ISO format  agree=false
-  go       = [31/12/2025  05/01/2026  10/02/2026]   ← chronological
-  bytewise = [05/01/2026  10/02/2026  31/12/2025]   ← wrong
-```
-
-This is a **pre-existing** bug, not one this ticket introduces: today both paths
-are byte-wise on the API list path, so they agree with each other while both
-being chronologically wrong. Step 1 makes the Go path correct, which converts a
-silent wrongness into a visible divergence between the pushed and Go paths —
-exactly the defect `listpushdown.go:15-40` says eligibility must prevent.
-
-So `StringShaped` must decline a date/datetime whose `Format` is not the ISO
-default (`metamodel.DefaultDateFormat` / `DefaultDatetimeFormat`). Declining is
-the fail-safe direction: it costs pushdown on an unusual config and keeps the
-two paths in agreement. Cover it in AC2 with a non-ISO fixture.
-
-ISO dates and mixed date/datetime columns were probed and DO agree, so the
-narrowing is limited to explicitly non-default formats.
-
-**A fourth defect: `sort=id` would switch to natural order.**
-
-`filter.SortMulti` treats `id` and `modified` as VIRTUAL properties
-(`sort.go:180-212`) and routes `id` to `SortByID`, which uses `natsort.Less`.
-`applyV1Sorting` has no virtual-property concept: it looks up
-`Properties["id"]`, finds nothing, and falls through to its plain byte-order id
-tiebreak. Measured:
-
-```
-sort=id  natsort (Go)   = [TKT-2  TKT-9  TKT-10  TKT-100]
-sort=id  bytewise (SQL) = [TKT-10 TKT-100 TKT-2  TKT-9]
-```
-
-Natural order is nicer for humans and is what the CLI already gives. It is also
-unrepresentable in the pushed query, and `id` is the universal final tiebreak on
-BOTH paths, so adopting natsort silently would break page boundaries on every
-list, not only those sorted by id.
-
-Decision for implementation: keep **byte order** for `id` on the API list path.
-Concretely, the delegation must either pass `id`/`modified` through a
-byte-order-preserving route or decline pushdown whenever `sort=id` is requested.
-Preserving byte order is preferred — it is the status quo, and `_position`
-navigation (`api_v1.go:423`) depends on list order matching.
-
-`modified` needs the same treatment: `filter.SortMulti` sorts by `ModifiedAt`,
-which is not a stored property at all and cannot be pushed. Confirm whether
-`sort=modified` is reachable on this path; if it is, it must decline pushdown.
+**Why literals, not bound parameters, in `ORDER BY`** (RR-TXFI2O): a
+bound-parameter `CASE` keeps the index under a custom plan but falls to a
+Parallel Seq Scan once the plan cache goes generic after five executions —
+measured 4 → 1,915 buffers, 32.2ms. Literal arms hold the index under a forced
+generic plan. The values are operator-authored config, the same trust level the
+existing derived-index DDL already interpolates. **Say this in the code comment**,
+or a later reader will "fix" it back to parameters and reintroduce a silent 480×
+regression.
 
 **Alternatives considered:**
 
-- *Teach `applyV1Sorting` about enums.* Rejected: keeps two comparison rules
-  alive, which is the defect this ticket exists to remove.
-- *Decline pushdown for enum sorts* (the integer precedent). Rejected: a `CASE`
-  rank is indexable at the same cost as byte-wise (measured), so declining would
-  give up paging pushdown for no gain. Kept as the fallback if step 2 proves
-  harder than expected — it degrades performance, never correctness.
-- *Per-site `values:`.* Rejected on measurement; recorded in the ticket.
-- *Native pg enum columns.* Rejected; recorded in the ticket.
+- *Narrow `StringShaped` to decline string-sort pushdown* (keeping natsort in
+  Go). Rejected by the user: it loses paging pushdown on `title`, the
+  second-most-sorted property, costing a whole-type scan — measured 2,061
+  buffers / 18.7ms at 200k rows versus 5 buffers pushed.
+- *Teach SQL natural ordering.* Not indexable; rules itself out.
+- *Per-site `values:`* and *native pg enums*. Rejected on measurement; recorded
+  in the ticket.
 
 **Files to modify:**
 
 | File | Change |
 | --- | --- |
-| `internal/filter/sort.go` | Direction-aware null placement; byte-order id tiebreak |
-| `internal/dataentry/api_v1.go` | `applyV1Sorting` delegates to `filter.SortMulti` |
-| `internal/store/graphquery.go` | Optional rank list on `OrderSpec`; document the contract |
-| `internal/queryplan/queryplan.go` | Emit enum rank in the order spec / index spec; `StringShaped` declines non-ISO date formats |
-| `internal/store/pgstore/graphquery.go` | `CASE` rank in `ORDER BY` |
+| `internal/filter/sort.go` | New three-way query-sort comparator; `SortByID` to byte order; direction-aware null placement; id tiebreak |
+| `internal/dataentry/api_v1.go` | `applyV1Sorting` uses the shared comparator |
+| `internal/store/graphquery.go` | Optional ordered-values list on `OrderSpec` |
+| `internal/store/graphquerynaive/naive.go` | Apply the enum rank (keeps sqlite/fs/mem in step) |
+| `internal/queryplan/queryplan.go` | Populate values in the order/index spec; add them to the `byKey` dedup key |
+| `internal/store/pgstore/graphquery.go` | `CASE` rank with literal arms in `ORDER BY` |
 | `internal/store/pgstore/derivedschema.go` | `CASE` in index DDL; hash values in `listIndexName` |
-| `internal/store/graphquerynaive/naive.go` | Rank-aware ordering to keep backends in step |
-| `internal/dataentryconfig/config.go` | `Sort []SortSpec` on `ViewSection` |
-| `internal/dataentryconfig/validate.go` | Validate section sort properties |
-| `internal/dataentry/sections.go` | Sort collections before the cap |
+| `internal/dataentryconfig/config.go` | `parent_sort:` / `child_sort:` / `sort:` on `ViewSection` |
+| `internal/dataentryconfig/validate.go` | Validate sort properties; refuse the wrong key for the display |
+| `internal/dataentry/sections_nested.go` | Sort each level before the cap |
 
 ## Security Considerations
 
@@ -293,12 +266,16 @@ which is not a stored property at all and cannot be pushed. Confirm whether
 arms are built from `values:`, which is operator-authored config, not end-user
 input. Two different rules apply depending on where it lands:
 
-- In `ORDER BY`, values MUST be bound parameters via the existing `b.arg(...)`
-  builder, never string-concatenated. This is mechanical and non-negotiable.
 - In the derived index DDL, parameters are not available — DDL cannot be
-  parameterised. The existing code faces the same problem and solves it with
-  `quoteLiteral` / `quoteIdent` / `safeDDLName` (`derivedschema.go:285-290`).
-  Reuse those; do not invent new escaping.
+  parameterised. The existing code solves this with `quoteLiteral` /
+  `quoteIdent` / `safeDDLName` (`derivedschema.go:285-290`). Reuse those; do not
+  invent new escaping.
+- **In `ORDER BY`, values must ALSO be literals via `quoteLiteral`** — not bound
+  parameters. This reverses what this plan originally said, on measurement
+  (RR-TXFI2O): a bound-parameter `CASE` stops matching the literal-valued
+  expression index once Postgres switches to a generic plan, costing 4 → 1,915
+  buffers. So `quoteLiteral` is load-bearing on the query path too, and the code
+  comment must say why, or the next reader will revert it.
 
 Threat model note: an attacker who can edit `schema.yaml` already has the
 operator's shell and does not need a SQL injection. So this is defence in depth
@@ -372,18 +349,21 @@ without it, like the rest of the pgstore suite.
 
 | Risk | Severity | Mitigation |
 | --- | --- | --- |
-| Paging corruption from the missing tiebreak | **High** | AC6, fixed in `filter` first and unit-tested before delegation |
-| Descending-sort divergence from null placement | **High** | AC6; same fix, both directions asserted |
-| Stale index after a schema edit (measured 650× slowdown) | **High** | AC4; hash values into the index name, reusing the `uniqueIndexShape` pattern |
-| Non-ISO date formats diverge once the Go path is correct | **High** | `StringShaped` declines them; non-ISO fixture in AC2 |
-| `sort=id` silently switching to natural order breaks every page boundary | **High** | Keep byte order for `id`; asserted in AC6 |
-| Enum values reaching DDL unescaped | Medium | Reuse `quoteLiteral`; edge case with an embedded quote |
-| Behaviour change visible on upgrade | Medium | Intended. Release note; see the ticket's open question |
-| Backends drifting out of step | Medium | `graphquerynaive` updated with pgstore; differential test covers both |
+| Descending comparator corrupts secondary keys (reproduced) | **High** | AC3; three-way comparator, both directions asserted |
+| Bound-parameter `CASE` silently loses the index in production | **High** | AC6 forces a generic plan; literal arms, with the reason in the code comment |
+| Stale index after a schema edit (measured 650× slowdown) | **High** | AC4; hash values into the index name, reusing `uniqueIndexShape` |
+| Two value orders colliding in the dedup map (silent from birth) | **High** | AC5; values in `byKey` |
+| Paging corruption from the missing id tiebreak | **High** | AC3; tiebreak outside the inversion, always ascending |
+| **String and `sort=id` ordering changes for every user** | **High** | Accepted by decision. Release note is mandatory, not optional — 99% of real titles move |
+| Backends drifting out of step | Medium | `graphquerynaive` carries the same rank; AC1 covers both paths |
+| Enum values reaching SQL or DDL unescaped | Medium | `quoteLiteral` on both; embedded-quote edge case tested |
+| Section sort missing the per-parent budget interaction | Medium | AC7 seeds multiple parents past `nestedNodeBudget` |
 | Scope creep into a per-site override | Low | Explicitly out of scope, with measurements recorded |
 
-**Effort:** m. Step 1 is small and the comparison logic already exists; step 2 is
-the bulk (three packages plus an EXPLAIN test); step 3 is mechanical.
+**Effort:** m. Step 1 is one comparator replacing a type dispatch, so it deletes
+more than it adds; step 2 is the bulk (three packages plus an EXPLAIN test);
+step 3 is mechanical. The interim estimate above `m` assumed type-aware
+comparison on both sides, which the SQL-wins decision removed.
 
 One risk worth naming plainly: the EXPLAIN test and the postgres half of AC4
 cannot be verified on this machine without a database. Postgres.app is available
@@ -407,65 +387,42 @@ For enhancements: identify what documentation needs updating.
       an operator: reordering `values:` reorders every list sorted on it.
 - [ ] `docs/postgres-backend.md` — only if the derived-index section names index
       shapes; check during implementation.
-- [x] Release note — enum-sorted list views change order on upgrade.
+- [x] Release note — **three** ordering changes on upgrade: enum-sorted list
+      views move to declared order; string sorts become byte order
+      (case-sensitive, non-numeric); `sort=id` becomes byte order in search and
+      CLI. The last two affect every list, not only enum-sorted ones.
 
-## Decisions required before implementation
+## Decisions taken
 
-Design review found four critical defects (RR-6F2UF2, RR-C4QYTO, RR-TXFI2O,
-RR-Z7V8PI) and four significant ones. Two need a product call; the rest have a
-recommended answer recorded on the review-response.
+Design review found four critical and four significant defects. All eight are
+now `addressed`; the two that needed a product call were answered by the user on
+2026-09-20 with one principle: **sorting stays in SQL, and sort semantics become
+whatever sqlite/postgres can support.**
 
-**D1. String sorts (RR-C4QYTO) — needs the user's decision.**
+| ID | Severity | Resolution |
+| --- | --- | --- |
+| RR-C4QYTO | critical | Strings compare byte-wise; natsort leaves the query-sort path. Pushdown on `title` is kept. |
+| RR-6F2UF2 | critical | Three-way comparator; id tiebreak outside the inversion. Scope shrinks to ONE comparator, not six. |
+| RR-TXFI2O | critical | `ORDER BY` `CASE` uses literal arms; EXPLAIN test forces a generic plan. |
+| RR-Z7V8PI | critical | AC1 deleted as a tautology; AC2/AC4 assert per-path and derive from real metamodels. |
+| RR-D1QOQ7 | significant | Dates compare byte-wise. No behaviour change; the divergence never opens. `StringShaped` needs no narrowing. |
+| RR-PGEEZX | significant | `sort=id` byte order everywhere; `sort=modified` stays declined (not SQL-expressible). |
+| RR-QUQ0OE | significant | Lists and undeclared properties sort by string form, matching `->>`. |
+| RR-I3QG9P | significant | `parent_sort:` / `child_sort:`, mirroring `ParentColumns`/`ChildColumns`. |
 
-`filter.compareStrings` uses natsort (case-insensitive, numeric-aware); SQL uses
-`COLLATE "C"`. Measured on this repo's own 4,308 ticket titles: the two orders
-differ at **4,301 of 4,308 positions (99%)**, from position 0. `title` is the
-second most-sorted property in rela's own config (11 uses, behind `status` at
-13), so this is not an edge case.
+**What the decision changed about this plan.** Three prerequisites the review
+added were removed again, because the principle dissolves rather than solves
+them:
 
-| Option | Cost |
-| --- | --- |
-| (a) Make Go byte-wise | Reorders ~every title-sorted list; loses case-insensitive ordering everywhere |
-| **(b) Decline string-sort pushdown** | Go path scans the type: measured 2,061 buffers / 18.7ms at 200k rows, vs 5 buffers pushed |
-| (c) Natural order in SQL | Not indexable; rules itself out |
+- No `StringShaped` narrowing for strings or non-ISO dates. Both stay
+  pushdown-eligible, since the Go path now matches what SQL does.
+- No six-comparator restructuring. The query-sort path needs one comparator.
+- No decision about mixed date/datetime instants — that branch simply is not on
+  this path.
 
-Recommendation: **(b)**. It keeps the nicer ordering, keeps both paths in
-agreement, and confines the cost to string-sorted lists. String *equality*
-filters stay pushdown-eligible either way, since equality is byte-identical on
-both sides. Note (b) means large deployments lose paging pushdown on `title` —
-that is the tradeoff to accept or reject.
-
-**D2. `sort=id` (RR-PGEEZX) — needs the user's decision.**
-
-Recommendation: keep **byte order** on the v1 path (status quo there, matches
-SQL, and `_position` navigation depends on list order matching). Do not change
-`SortByID`, which is CLI and search behaviour and out of scope. `sort=modified`
-should be declined on v1 rather than silently activated.
-
-**Already decided from measurement, no input needed:**
-
-- **RR-TXFI2O**: the `ORDER BY` `CASE` must use **literals**, not bound
-  parameters. Measured: bound parameters keep the index on a custom plan
-  (4 buffers) but fall to a Parallel Seq Scan once pgx switches to a generic
-  plan after five executions (1,915 buffers, 32.2ms). Literal arms hold the
-  index under a forced generic plan (4 buffers, 0.043ms). This reverses the
-  security rule stated above: `quoteLiteral` becomes load-bearing on the query
-  path, not only in DDL. The EXPLAIN test must force a generic plan or execute
-  at least six times, or it proves nothing about production.
-- **RR-6F2UF2**: three-way (`int`) comparators throughout `filter/sort.go`,
-  inverting only the key comparison, with the id tiebreak applied outside the
-  inversion and always ascending.
-- **RR-Z7V8PI**: AC1, AC3 and AC4 rewritten to assert per-path and to derive
-  index specs from real metamodels; enum values added to `StaticIndexSpecs`'
-  dedup key.
-- **RR-I3QG9P**: `ViewSection` sort binds to a named level. Follow the existing
-  `ParentColumns`/`ChildColumns` precedent with `parent_sort`/`child_sort`
-  rather than one ambiguous `sort:`.
-
-**Effort is no longer `m`.** The claim that step 1 writes no new comparison code
-was wrong: six comparator functions need restructuring before delegation is safe,
-and two pushdown-eligibility narrowings (strings, non-ISO dates) are prerequisites
-rather than follow-ups. Re-estimate once D1 and D2 are settled.
+**Effort: `m` stands.** The earlier re-estimate upward assumed type-aware
+comparison on both sides. Conforming to SQL is less code than that, and deletes
+more than it adds.
 
 ## Design Review
 
