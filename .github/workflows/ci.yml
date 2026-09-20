@@ -55,7 +55,7 @@ jobs:
           cache: true
 
       - name: Cache Go build cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/go-build
           key: go-test-${{ runner.arch }}-ubuntu-26.04-${{ steps.setup-go.outputs.go-version }}-${{ hashFiles('go.sum') }}
@@ -123,7 +123,7 @@ jobs:
           cache: true
 
       - name: Cache Go build cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/go-build
           key: go-reachability-${{ runner.arch }}-ubuntu-26.04-${{ steps.setup-go.outputs.go-version }}-${{ hashFiles('go.sum') }}
@@ -216,7 +216,7 @@ jobs:
           cache: true
 
       - name: Cache Go build cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/go-build
           key: go-clamav-${{ runner.arch }}-ubuntu-26.04-${{ steps.setup-go.outputs.go-version }}-${{ hashFiles('go.sum') }}
@@ -235,7 +235,7 @@ jobs:
 
       - name: Cache ClamAV signature databases
         if: steps.detect.outputs.changed == 'true'
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: /var/lib/clamav
           # The key is unique per run so the cache is always REFRESHED with
@@ -320,7 +320,7 @@ jobs:
           cache: true
 
       - name: Cache Go build cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/go-build
           key: go-lint-${{ runner.arch }}-ubuntu-latest-${{ steps.setup-go.outputs.go-version }}-${{ hashFiles('go.sum') }}
@@ -329,7 +329,7 @@ jobs:
 
       - name: Cache golangci-lint
         id: cache-golangci-lint
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/go/bin/golangci-lint
           key: tool-golangci-lint-${{ env.GOLANGCI_LINT_VERSION }}-${{ runner.arch }}-ubuntu-latest-${{ steps.setup-go.outputs.go-version }}
@@ -366,7 +366,7 @@ jobs:
           cache: true
 
       - name: Cache Go build cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/go-build
           key: go-arch-lint-${{ runner.arch }}-ubuntu-latest-${{ steps.setup-go.outputs.go-version }}-${{ hashFiles('go.sum') }}
@@ -375,7 +375,7 @@ jobs:
 
       - name: Cache go-arch-lint
         id: cache-go-arch-lint
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/go/bin/go-arch-lint
           key: tool-go-arch-lint-${{ env.GO_ARCH_LINT_VERSION }}-${{ runner.arch }}-ubuntu-latest-${{ steps.setup-go.outputs.go-version }}
@@ -404,7 +404,7 @@ jobs:
           cache: true
 
       - name: Cache Go build cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/go-build
           key: go-plimsoll-${{ runner.arch }}-ubuntu-latest-${{ steps.setup-go.outputs.go-version }}-${{ hashFiles('go.sum') }}
@@ -421,7 +421,7 @@ jobs:
 
       - name: Cache plimsoll
         id: cache-plimsoll
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/go/bin/plimsoll
           key: tool-plimsoll-${{ env.PLIMSOLL_VERSION }}-${{ runner.arch }}-ubuntu-latest-${{ steps.setup-go.outputs.go-version }}
@@ -450,7 +450,7 @@ jobs:
           cache: true
 
       - name: Cache Go build cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/go-build
           key: go-comment-lint-${{ runner.arch }}-ubuntu-latest-${{ steps.setup-go.outputs.go-version }}-${{ hashFiles('go.sum') }}
@@ -459,7 +459,7 @@ jobs:
 
       - name: Cache commentlint
         id: cache-commentlint
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/go/bin/commentlint
           key: tool-commentlint-${{ env.COMMENTLINT_VERSION }}-${{ runner.arch }}-ubuntu-latest-${{ steps.setup-go.outputs.go-version }}
@@ -621,7 +621,7 @@ jobs:
           cache: true
 
       - name: Cache Go build cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/go-build
           key: go-e2e-${{ runner.arch }}-ubuntu-26.04-${{ steps.setup-go.outputs.go-version }}-${{ hashFiles('go.sum') }}
@@ -740,7 +740,7 @@ jobs:
           cache: true
 
       - name: Cache Go build cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/go-build
           key: go-fuzz-${{ runner.arch }}-ubuntu-latest-${{ steps.setup-go.outputs.go-version }}-${{ hashFiles('go.sum') }}
@@ -845,7 +845,7 @@ jobs:
           cache: true
 
       - name: Cache Go build cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/go-build
           key: go-postgres-${{ runner.arch }}-ubuntu-latest-${{ steps.setup-go.outputs.go-version }}-${{ hashFiles('go.sum') }}
@@ -1076,7 +1076,7 @@ jobs:
           cache: true
 
       - name: Cache Go build cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/go-build
           key: go-sqlite-${{ runner.arch }}-ubuntu-26.04-${{ steps.setup-go.outputs.go-version }}-${{ hashFiles('go.sum') }}
@@ -1143,7 +1143,7 @@ jobs:
           cache: true
 
       - name: Cache Go build cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/go-build
           key: go-cross-compile-${{ matrix.goos }}-${{ matrix.tags || 'default' }}-${{ runner.arch }}-ubuntu-latest-${{ steps.setup-go.outputs.go-version }}-${{ hashFiles('go.sum') }}
@@ -1241,7 +1241,7 @@ jobs:
         # from an empty checkout under the very key every later run falls back
         # to.
         if: steps.gate.outputs.applies == 'true'
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/go-build
           key: go-rela-tickets-${{ runner.arch }}-ubuntu-latest-${{ steps.setup-go.outputs.go-version }}-${{ hashFiles('go.sum') }}
@@ -1434,7 +1434,7 @@ jobs:
           cache: true
 
       - name: Cache Go build cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/go-build
           key: go-demos-${{ runner.arch }}-ubuntu-latest-${{ steps.setup-go.outputs.go-version }}-${{ hashFiles('go.sum') }}
@@ -1509,7 +1509,7 @@ jobs:
           cache: true
 
       - name: Cache Go build cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/go-build
           key: go-docs-${{ runner.arch }}-ubuntu-latest-${{ steps.setup-go.outputs.go-version }}-${{ hashFiles('go.sum') }}
