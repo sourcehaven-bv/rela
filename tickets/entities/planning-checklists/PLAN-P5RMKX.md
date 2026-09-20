@@ -2,7 +2,7 @@
 id: PLAN-P5RMKX
 type: planning-checklist
 title: 'Planning: Section sort: plus one declared order per enum, on every sort path'
-status: pending
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
@@ -385,8 +385,14 @@ For enhancements: identify what documentation needs updating.
 - [x] `docs/metamodel.md` — note that the ORDER of `values:` is now
       load-bearing, not just the set. This is the change most likely to surprise
       an operator: reordering `values:` reorders every list sorted on it.
-- [ ] `docs/postgres-backend.md` — only if the derived-index section names index
-      shapes; check during implementation.
+- [x] `docs/postgres-backend.md` — **required**, checked during planning rather
+      than deferred. The "Derived schema" section (`:109-126`) states
+      "Equivalent queries share an index even when their literal values or
+      filter order differ", which becomes FALSE for enum sort keys once declared
+      values enter the index name: two lists sorting the same enum under
+      different declared orders must get different indexes (AC4/AC5). The same
+      passage lists what gets no index and will need the enum `CASE` shape
+      described alongside it.
 - [x] Release note — **three** ordering changes on upgrade: enum-sorted list
       views move to declared order; string sorts become byte order
       (case-sensitive, non-numeric); `sort=id` becomes byte order in search and
@@ -427,7 +433,7 @@ more than it adds.
 ## Design Review
 
 - [x] Run `/design-review` before starting implementation
-- [ ] All critical/significant findings addressed in plan — blocked on D1 and D2 above
+- [x] All critical/significant findings addressed in plan — all 8 `addressed`
 
 **Design Review Findings:**
 
