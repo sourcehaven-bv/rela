@@ -1138,7 +1138,7 @@ func NewApp(
 		// Inline rather than an App method: its only consumer is this
 		// closure, and App is at its plimsoll method load line.
 		schemaFile:  func() string { return filepath.Base(app.paths.SchemaPath) },
-		executeView: app.views.executeView,
+		executeView: app.views.executeViewWhole,
 		// Late-bound: tests reassign app.acl after construction.
 		aclImpl: func() acl.ACL { return app.acl },
 	}

@@ -66,8 +66,67 @@ func (h *viewsHandler) executeView(
 
 // executeViewRef is [viewsHandler.executeView] for an already-parsed entry
 // address.
+// executeViewWhole is [viewsHandler.executeView] with every collection
+// carrying its bodies, whatever the sections say. The command runner uses it:
+// its consumer is an operator script reading the collections as JSON, not the
+// section builders, so the sections say nothing about what it reads.
+func (h *viewsHandler) executeViewWhole(
+	ctx context.Context, view ViewConfig, entryID string, w viewWorld,
+) (*viewResult, error) {
+	ref, ok := parseEntityRef(entryID)
+	if !ok {
+		return nil, errViewEntryNotFound(entryID)
+	}
+	return h.executeViewBodies(ctx, view, ref, w, allViewBodies())
+}
+
 func (h *viewsHandler) executeViewRef(
 	ctx context.Context, view ViewConfig, entryRef entityRef, w viewWorld,
+) (*viewResult, error) {
+	return h.executeViewBodies(ctx, view, entryRef, w, viewBodyCollections(view.Sections))
+}
+
+// viewBodies says which collections of a view result must carry markdown
+// bodies. Traversal itself reads content-free headers (TKT-U9DYW4): it walks
+// edges by id and filters on properties, and most collected entities end up
+// in a table, so loading every body was transfer the response never used.
+type viewBodies struct {
+	all   bool
+	names map[string]bool
+}
+
+func (b viewBodies) wants(collection string) bool { return b.all || b.names[collection] }
+
+// allViewBodies is for a consumer that hands the collections to something
+// other than the section builders — the command runner pipes them to an
+// operator script, which has always received whole entities.
+func allViewBodies() viewBodies { return viewBodies{all: true} }
+
+// contentFreeDisplays are the section display modes KNOWN never to read a
+// collected entity's body. It is an allowlist on purpose: a display mode
+// added later, or one this list forgot, loads bodies — slower, never wrong.
+var contentFreeDisplays = map[string]bool{"table": true, "properties": true, "list": true, "nested": true}
+
+// viewBodyCollections derives the body-carrying collections from the
+// sections that will render the result.
+func viewBodyCollections(sections []ViewSection) viewBodies {
+	b := viewBodies{names: map[string]bool{}}
+	for _, sec := range sections {
+		if contentFreeDisplays[sec.Display] {
+			continue
+		}
+		b.names[sec.Source] = true
+		if sec.Children != "" {
+			b.names[sec.Children] = true
+		}
+	}
+	return b
+}
+
+// executeViewBodies is the view engine. bodies decides which collections are
+// completed with their markdown after traversal, gating and redaction.
+func (h *viewsHandler) executeViewBodies(
+	ctx context.Context, view ViewConfig, entryRef entityRef, w viewWorld, bodies viewBodies,
 ) (*viewResult, error) {
 	entry, err := h.viewEntry(ctx, entryRef, w)
 	if err != nil {
@@ -136,8 +195,56 @@ func (h *viewsHandler) executeViewRef(
 	for name, entities := range result.Collections {
 		result.Collections[name] = h.viewReader.Filter(ctx, entities)
 	}
+	h.loadViewBodies(ctx, result, w, bodies)
 
 	return result, nil
+}
+
+// loadViewBodies completes the body-carrying collections in ONE batched read,
+// after the gate: only entities the principal may see, and only those a
+// section will render with a body. The decision is per COLLECTION and the
+// load is per ID, so an entity sitting in both a table and a cards collection
+// gets its body in the latter regardless of which traverse rule found it
+// first. Redaction is property-only, so completing the body afterwards
+// leaves the redacted properties exactly as gated.
+func (h *viewsHandler) loadViewBodies(ctx context.Context, result *viewResult, w viewWorld, bodies viewBodies) {
+	var ids []string
+	seen := map[string]bool{}
+	for name, entities := range result.Collections {
+		if !bodies.wants(name) {
+			continue
+		}
+		for _, e := range entities {
+			if !seen[e.ID] {
+				seen[e.ID] = true
+				ids = append(ids, e.ID)
+			}
+		}
+	}
+	if len(ids) == 0 {
+		return
+	}
+	content := make(map[string]string, len(ids))
+	for e, err := range h.store.ListEntities(ctx, store.EntityQuery{IDs: ids, World: w.scope}) {
+		if err != nil {
+			slog.Warn("dataentry: view: loading collection bodies failed; bodies omitted",
+				"world", w.name, "ids", len(ids), "err", err)
+			return
+		}
+		content[e.ID] = e.Content
+	}
+	for name, entities := range result.Collections {
+		if !bodies.wants(name) {
+			continue
+		}
+		for i, e := range entities {
+			if body, ok := content[e.ID]; ok && body != e.Content {
+				completed := *e // never write through a pointer another collection shares
+				completed.Content = body
+				entities[i] = &completed
+			}
+		}
+	}
 }
 
 func (h *viewsHandler) applyViewTraverse(
