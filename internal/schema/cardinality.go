@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"iter"
 	"log/slog"
+	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -18,6 +19,33 @@ type CardinalityViolation struct {
 	Constraint   string // "min_outgoing", "max_outgoing", "min_incoming", "max_incoming"
 	Required     int
 	Actual       int
+}
+
+// IsMin reports whether the violated bound was a minimum. Constraint is a
+// closed set of four values, so this is the whole discrimination every
+// renderer needs.
+func (v CardinalityViolation) IsMin() bool {
+	return strings.HasPrefix(v.Constraint, "min_")
+}
+
+// Message renders the violation as a sentence, WITHOUT the entity id.
+//
+// The id is omitted because its placement differs per surface: the CLI
+// prefixes it ("REQ-002 must have at least ..."), while the MCP payload
+// carries it in its own JSON field beside this text. Callers that want the
+// CLI form print the id and this, in that order.
+//
+// It lives on the type so the three surfaces that render cardinality —
+// `rela analyze cardinality`, `rela validate --check cardinality`, and the
+// MCP analyze_cardinality tool — cannot drift apart in wording the way the
+// checks themselves had (TKT-CICJSN).
+func (v CardinalityViolation) Message() string {
+	if v.IsMin() {
+		return fmt.Sprintf("must have at least %d '%s' relation(s), has %d",
+			v.Required, v.RelationType, v.Actual)
+	}
+	return fmt.Sprintf("has more than %d '%s' relation(s): %d",
+		v.Required, v.RelationType, v.Actual)
 }
 
 // CardinalityReader is the read capability [CheckCardinality] requires — the
@@ -34,6 +62,15 @@ type CardinalityViolation struct {
 // GraphReader that is not a `store.Store` — so a single implementation had
 // to land somewhere both sides already depend on. `analysis.CheckCardinality`
 // is a thin wrapper over this (TKT-CICJSN).
+//
+// What the reader yields defines the subject population, including how much
+// of the AllStates request it honors. A raw `store.Store` returns every face;
+// an ACL-gated reader that composes a `store.GraphQuery` does not, because
+// that type has no AllStates field — such a reader collapses each id to one
+// world prime, so the check sees fewer subjects and reports fewer violations.
+// That is the safe direction (missed, never invented), but it means per-face
+// coverage is a property of the READER, not a guarantee of this function
+// (RR-16R183).
 type CardinalityReader interface {
 	ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error]
 	CountRelations(ctx context.Context, q store.RelationQuery) (int, error)

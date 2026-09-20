@@ -1,7 +1,6 @@
 package mcp
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -19,9 +18,21 @@ import (
 
 // failingCountReader wraps the server's GraphReader and fails every
 // CountRelations call, simulating a backend outage during the scan.
+//
+// GraphReader must be non-nil — every method this does not override
+// delegates to it, so a zero value panics at the first such call rather
+// than at construction. Build one with newFailingCountReader.
 type failingCountReader struct {
 	GraphReader
 	err error
+}
+
+func newFailingCountReader(t *testing.T, base GraphReader, err error) failingCountReader {
+	t.Helper()
+	if base == nil {
+		t.Fatal("failingCountReader needs a non-nil base reader")
+	}
+	return failingCountReader{GraphReader: base, err: err}
 }
 
 func (f failingCountReader) CountRelations(context.Context, store.RelationQuery) (int, error) {
@@ -48,7 +59,7 @@ func TestHandleAnalyzeCardinality_CountErrorFailsTheToolCall(t *testing.T) {
 
 	deps := newTestDeps(t, meta, st)
 	countErr := errors.New("backend down")
-	deps.Store = failingCountReader{GraphReader: deps.Store, err: countErr}
+	deps.Store = newFailingCountReader(t, deps.Store, countErr)
 
 	srv := &Server{logger: slog.New(slog.DiscardHandler)}
 	setDeps(srv, deps)
@@ -69,18 +80,20 @@ func TestHandleAnalyzeCardinality_CountErrorFailsTheToolCall(t *testing.T) {
 	}
 }
 
-// TestHandleAnalyzeCardinality_TruncatedScanIsLogged covers the second
+// TestHandleAnalyzeCardinality_TruncatedScanStillAnswers covers the second
 // defect TKT-CICJSN names: the deleted copy did `if err != nil { break }` on
-// the ListEntities iterator, so a truncated scan was presented as a complete
-// one with nothing anywhere recording that rows were missed.
+// the ListEntities iterator.
 //
-// The RESULT is deliberately the same either way — an under-count can only
+// The RESULT is deliberately unchanged by the fix — an under-count can only
 // miss findings, never invent them, so the tool still answers rather than
-// failing (unlike a failed count, which does invent them). What changed is
-// that the shared checker leaves a trace, which is the whole difference
-// between a quiet wrong answer and a diagnosable one. The assertion is on
-// the log for exactly that reason.
-func TestHandleAnalyzeCardinality_TruncatedScanIsLogged(t *testing.T) {
+// failing (unlike a failed count, which does invent them, and which the test
+// above pins). What the fix added is a log record, and that is asserted in
+// TestCheckCardinality_TruncatedScanIsLogged over in internal/schema, where
+// no test runs in parallel and swapping the default logger is safe. This test
+// stays parallel and covers the MCP-level contract: answer, don't fabricate.
+func TestHandleAnalyzeCardinality_TruncatedScanStillAnswers(t *testing.T) {
+	t.Parallel()
+
 	meta, st := makeTestFixture(t)
 	one := 1
 	meta.Relations["addresses"] = metamodel.RelationDef{
@@ -89,15 +102,7 @@ func TestHandleAnalyzeCardinality_TruncatedScanIsLogged(t *testing.T) {
 	}
 
 	deps := newTestDeps(t, meta, st)
-	scanErr := errors.New("scan interrupted")
-	deps.Store = failingListReader{GraphReader: deps.Store, err: scanErr}
-
-	// collectCardinalitySubjects warns on the package logger, so capture the
-	// default for the duration of the call. Hence no t.Parallel() here.
-	var logged bytes.Buffer
-	restore := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&logged, nil)))
-	t.Cleanup(func() { slog.SetDefault(restore) })
+	deps.Store = newFailingListReader(t, deps.Store, errors.New("scan interrupted"))
 
 	srv := &Server{logger: slog.New(slog.DiscardHandler)}
 	setDeps(srv, deps)
@@ -112,16 +117,24 @@ func TestHandleAnalyzeCardinality_TruncatedScanIsLogged(t *testing.T) {
 	if text := getResultText(t, result); strings.Contains(text, "violation") {
 		t.Errorf("invented violations for rows never scanned: %s", text)
 	}
-	if !strings.Contains(logged.String(), scanErr.Error()) {
-		t.Errorf("truncated scan left no trace in the log; got: %s", logged.String())
-	}
 }
 
 // failingListReader yields the iterator error on the first row, so nothing
 // is ever scanned.
+//
+// GraphReader must be non-nil, for the same reason as failingCountReader.
+// Build one with newFailingListReader.
 type failingListReader struct {
 	GraphReader
 	err error
+}
+
+func newFailingListReader(t *testing.T, base GraphReader, err error) failingListReader {
+	t.Helper()
+	if base == nil {
+		t.Fatal("failingListReader needs a non-nil base reader")
+	}
+	return failingListReader{GraphReader: base, err: err}
 }
 
 func (f failingListReader) ListEntities(
@@ -136,7 +149,9 @@ func (f failingListReader) ListEntities(
 // MCP surface adopted from the shared checker: an incoming bound is reported
 // against the relation's INVERSE id, which is the name the subject entity's
 // own operator would use, rather than the forward name with an "incoming "
-// prefix. Same string `rela analyze cardinality` prints.
+// prefix. Both surfaces render through CardinalityViolation.Message(), so the
+// sentence is the same one `rela analyze cardinality` prints; the CLI puts the
+// entity id in front of it, while MCP carries the id in its own JSON field.
 func TestHandleAnalyzeCardinality_IncomingUsesInverseLabel(t *testing.T) {
 	t.Parallel()
 
