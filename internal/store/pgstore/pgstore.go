@@ -140,8 +140,12 @@ type DBTX interface {
 // than to this type, so the public API this adds to is the store-capability
 // surface, not a new coupling point.
 //
-//plimsoll:max-exported-methods=47
-//plimsoll:max-methods=57
+// GraphPosition (TKT-U9DYW4) is +1 as well: an optional store capability
+// (store.PositionQueryer) that must live on the type holding the graph SQL
+// builder, consumed through that one-method interface.
+//
+//plimsoll:max-exported-methods=48
+//plimsoll:max-methods=58
 type Store struct {
 	db        DBTX
 	observers []store.EntityObserver // notified synchronously after committed entity writes
