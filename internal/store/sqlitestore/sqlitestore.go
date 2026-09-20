@@ -108,8 +108,14 @@ const timeFmt = time.RFC3339Nano
 // CAS precondition has to be evaluated atomically with the write, so it
 // cannot live anywhere but on the type that owns the write.
 //
-//plimsoll:max-methods=53
-//plimsoll:max-exported-methods=35
+// +3 exported / +5 methods (TKT-U9DYW4): ListEntityHeaders, GraphQueryHeaders
+// and CountMatched are optional store capabilities (store.HeaderReader,
+// GraphHeaderQueryer, MatchedCounter), each consumed through its one-method
+// interface; they sit here because they share the type's SQL builders and
+// transaction-aware handle. The other two are their shared row helpers.
+//
+//plimsoll:max-methods=58
+//plimsoll:max-exported-methods=38
 type Store struct {
 	db *sql.DB
 
