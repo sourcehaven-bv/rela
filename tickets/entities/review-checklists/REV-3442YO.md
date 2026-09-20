@@ -164,6 +164,33 @@ release-note item: enum-sorted lists move to declared order; string sorts
 become byte order (99% of this repo's own titles move); `sort=id` becomes byte
 order on the API while the CLI keeps natural order.
 
+## Post-PR: rebase onto a moved develop
+
+The PR opened with `mergeable=CONFLICTING` — 24 commits landed on develop while
+this work was in review, several touching the same files. **GitHub does not run
+`pull_request` workflows on a conflicting PR**, so only CodeQL reported and the
+main CI slate never appeared. That is worth knowing because the PR page showed
+green CodeQL checks and no failures, which reads identically to "CI passed"; an
+empty commit to re-trigger did nothing, because the cause was the conflict, not
+a missed event.
+
+Resolved by rebasing onto `origin/develop`. One conflict, in
+`dataentryconfig/config.go`: develop added `ViewSection.Create` (TKT-R4BMJM's
+opt-in create affordance) where this branch added the three sort keys. Both are
+purely additive to the same struct, so both were kept.
+
+Re-verified on the new base: all packages green, docs regenerate identically,
+and the three new doc sections survived.
+
+**One test failure during that check was a stale local build artifact, not a
+regression.** `TestAppEditorBundleEmbedded` failed on
+`editor stylesheet must not declare an @font-face`. `internal/dataentry/app_editor_dist/`
+is gitignored and held a Sept 13 EasyMDE build, from before the Milkdown swap
+(TKT-D2JML7) removed the Font Awesome webfont. Confirmed by running the same
+test in a clean worktree of `origin/develop`, where it passes by skipping — the
+artifact is absent there. Deleting the stale files fixed it; CI builds the
+bundle fresh and was never affected.
+
 ## Pull Request
 
 - [x] ~~Run `/pr` command to create PR and monitor CI~~ (N/A here: `/pr` gates
