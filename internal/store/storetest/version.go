@@ -274,6 +274,56 @@ func runLineageTests(t *testing.T, f Factory) {
 }
 
 func runRelationHistoryTests(t *testing.T, f Factory) {
+	// The reason the endpoint swap is a STORE capability rather than a loop
+	// above it (TKT-HH7PKJ). An in-place re-key keeps the row, so it keeps its
+	// rel_record_id and its history reads as ONE continuous lifetime. A
+	// create-then-delete loop would mint a fresh lineage per edge and orphan
+	// everything captured before the reversal — the same property that made
+	// RenameEntity atomic in #1127.
+	t.Run("SwapRelationEndpointsKeepsTheLineage", func(t *testing.T) {
+		s := f(t)
+		v := versionsOf(t, s)
+		rid := seedRelationLineage(t, s, v, "before the swap")
+		require.NotZero(t, rid)
+
+		n, err := store.SwapRelationEndpoints(ctx(), s, seedType)
+		require.NoError(t, err)
+		require.Equal(t, 1, n)
+
+		// The reversed edge resolves to the SAME lineage id, so its pre-swap
+		// history reads back through the new direction. The key resolves via
+		// the LIVE ROW (recordIDForKey), which is exactly what an in-place
+		// re-key preserves and what a delete+create would have replaced.
+		got, err := v.ListRelationVersions(ctx(), store.RelationHistoryQuery{
+			From: seedTo, Type: seedType, To: seedFrom,
+		})
+		require.NoError(t, err)
+		require.NotEmpty(t, got, "the pre-swap history must still be reachable")
+		require.Equal(t, "before the swap", contentOfRelationVersion(t, v,
+			store.RelationHistoryQuery{From: seedTo, Type: seedType, To: seedFrom}, 1),
+			"the surviving version must be the one captured before the reversal")
+
+		// The pre-swap direction ALSO still reads, and that is not a leak: the
+		// captured version rows keep the endpoints they were written with, so
+		// the old key remains the "last known" address of the same lineage. Both
+		// keys therefore resolve to one history rather than to two.
+		stale, err := v.ListRelationVersions(ctx(), store.RelationHistoryQuery{
+			From: seedFrom, Type: seedType, To: seedTo,
+		})
+		require.NoError(t, err)
+		require.Equal(t, len(got), len(stale),
+			"both directions must address the SAME lineage, not two forks")
+
+		// What is NOT asserted, deliberately: that ListRelationLifetimes reports
+		// the reversed key, or that the rid handle addresses it through that key.
+		// Both resolve through the stored VERSION rows, which describe the
+		// direction the edge pointed when each was captured — documented
+		// behavior of a lifetime handle (see RelationHistoryReader), unchanged
+		// by this rewrite. The continuity claimed here is the LIVE row's
+		// rel_record_id, which recordIDForKey resolves first and which only an
+		// in-place re-key can preserve.
+	})
+
 	t.Run("EmptyHistoryIsNotAnError", func(t *testing.T) {
 		v := versionsOf(t, f(t))
 		got, err := v.ListRelationVersions(ctx(), store.RelationHistoryQuery{
@@ -363,6 +413,17 @@ const (
 	seedType = "rel"
 	seedTo   = "FEAT-2"
 )
+
+// contentOfRelationVersion reads one version's body, for tests that assert WHICH
+// version survived rather than merely how many.
+func contentOfRelationVersion(
+	t *testing.T, v store.VersionService, q store.RelationHistoryQuery, ordinal int,
+) string {
+	t.Helper()
+	snap, err := v.GetRelationVersion(ctx(), q, ordinal)
+	require.NoError(t, err)
+	return snap.Content
+}
 
 func seedRelationLineage(
 	t *testing.T, s store.Store, v store.VersionService, bodies ...string,

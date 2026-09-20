@@ -5,7 +5,7 @@ title: 'reverse_relation migration step: rewrite stored edges when a relation ty
 kind: enhancement
 priority: medium
 effort: l
-status: backlog
+status: done
 ---
 
 ## Description
@@ -34,7 +34,31 @@ which edges are now backwards either: `countRelationsFor`
 a side effect of every edge being counted on the wrong side, naming a
 cardinality fault rather than a direction one.
 
-## Proposed solution
+## Proposed solution: push the rewrite into the store
+
+The rewrite is an optional STORE capability (`BulkMigrator`), type-asserted at
+the call site like `HeaderReader`/`Formatter`/`HistoryReader`, with a generic
+in-process fallback. pgstore and sqlitestore do it in one statement per table —
+the same bulk in-place shape `RenameEntity` already uses
+(`pgstore/entity.go:875`); fsstore and memstore take the fallback, because
+fsstore encodes the endpoints in the FILENAME and there is no set-based rewrite
+to be had.
+
+This is not only faster. Three of the hazards below are properties of
+create-then-delete and simply do not arise from an in-place `UPDATE`: a
+self-edge updates to itself, a both-directions collision becomes a PRIMARY KEY
+violation inside a transaction (clean refusal + rollback rather than a
+half-applied loop), and — the significant one — `rel_record_id` is a column ON
+the row, so the re-key PRESERVES version lineage instead of forking it. That is
+exactly why #1127 made rename atomic.
+
+The interface is named and shaped for the general job so `RenameRelationType`,
+`RenameProperty` and `MapValues` can join it later; only the swap is implemented
+now. Its vocabulary stays store-level — arch-lint forbids a store depending on
+an application package, so the `scope:`/overlap decisions stay in
+`datamigration` above the seam.
+
+## Original proposal (superseded: in-process loop)
 
 A `reverse_relation` step that rewrites stored edges of one relation type:
 
