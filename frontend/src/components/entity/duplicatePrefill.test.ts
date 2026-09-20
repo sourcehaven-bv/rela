@@ -199,3 +199,57 @@ describe('defaultSelection', () => {
     expect(defaultSelection(choices)).toEqual(['blocks'])
   })
 })
+
+describe('self-loops and untyped peers', () => {
+  // A self-loop arrives TWICE — once per direction — because it matches the
+  // filter at both endpoints. Emitting either key links the copy to the
+  // SOURCE rather than to itself; emitting both makes them point at each
+  // other. Reproducing it needs the copy's id, which does not exist yet.
+  it('drops a self-loop and reports it once, though it arrives under two keys', () => {
+    const p = buildDuplicatePrefill(
+      entity(),
+      ticketType,
+      {
+        blocks: [{ id: 'TKT-001', type: 'ticket', direction: 'outgoing' }],
+        blocked_by: [{ id: 'TKT-001', type: 'ticket', direction: 'incoming' }],
+      },
+      ['blocks', 'blocked_by'],
+      undefined
+    )
+
+    expect(p.relations).toEqual({})
+    expect(p.omitted.filter((o) => o.reason === 'self-loop')).toHaveLength(1)
+  })
+
+  it('keeps other peers of a relation that also self-loops', () => {
+    const p = buildDuplicatePrefill(
+      entity(),
+      ticketType,
+      {
+        blocks: [
+          { id: 'TKT-001', type: 'ticket', direction: 'outgoing' },
+          { id: 'TKT-2', type: 'ticket', direction: 'outgoing' },
+        ],
+      },
+      ['blocks'],
+      undefined
+    )
+
+    expect(p.relations).toEqual({ blocks: [{ id: 'TKT-2', type: 'ticket' }] })
+  })
+
+  // An edge is more consequential than a property, so dropping one silently is
+  // worse than the thing this module exists to prevent.
+  it('reports a peer whose type the server could not resolve', () => {
+    const p = buildDuplicatePrefill(
+      entity(),
+      ticketType,
+      { blocks: [{ id: 'TKT-2', type: '', direction: 'outgoing' }] },
+      ['blocks'],
+      undefined
+    )
+
+    expect(p.relations).toEqual({})
+    expect(p.omitted).toContainEqual({ property: 'blocks → TKT-2', reason: 'untyped-peer' })
+  })
+})

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, shallowRef, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter, useRoute, onBeforeRouteLeave } from 'vue-router'
+import { planPrefillRouting } from './prefillRouting'
 import { useSchemaStore, useEntitiesStore, useUIStore } from '@/stores'
 import { isCancelledFetch } from '@/composables/usePageData'
 import { readReturnTo } from '@/utils/returnPath'
@@ -1008,27 +1009,45 @@ function applyEmbeddedPrefill() {
   for (const prop of Object.keys(prefill.properties)) {
     userTouched.value.add(prop)
   }
+
+  // Register each peer's TYPE, the same obligation a pre-link carries
+  // (see the `link_as: to` path above). `pickerTypes` is otherwise populated
+  // only by RelationPicker, so a relation the form does not render as a field
+  // would have no type entry — and reshapeLegacyToModern returns null for an id
+  // it cannot type, aborting the WHOLE create with "Some related entities have
+  // unknown types" and advice ("reload the form") that cannot help.
+  //
+  // A duplicate is MORE exposed than a pre-link: it carries whatever the source
+  // had, including relation types this create form never renders. The type is
+  // carried on the peer rather than guessed from an id prefix, so unlike that
+  // path this cannot miss.
+  for (const [key, peers] of Object.entries(prefill.relations)) {
+    const types = pickerTypes.value[key] ?? new Map<string, string>()
+    for (const peer of peers) types.set(peer.id, peer.type)
+    pickerTypes.value[key] = types
+  }
+
   routePrefilledCardRelations(prefill.relations)
+
+  // Re-baseline AFTER every mutation. applyTemplate baselines mid-way, and
+  // routePrefilledCardRelations then deletes the keys it took ownership of —
+  // so without this the form reads dirty the moment it opens and the discard
+  // guard stops distinguishing anything.
+  originalData.value = JSON.stringify({
+    formData: formData.value,
+    relations: relations.value,
+    content: content.value,
+  })
 }
 
 /**
- * Re-routes prefilled edges whose form field is card-managed.
+ * Applies the card-delivery routing decided by [planPrefillRouting].
  *
- * `relations.value` is NOT the payload for a `widget: cards` relation: the
- * submit path excludes those keys and takes them from `pendingCardChanges`
- * instead. A prefill that only wrote `relations.value` therefore lost every
- * card-managed edge silently — the entity was created, the edge was not, and
- * nothing errored. That is RR-7Z3SFC's failure mode, which was fixed for a
- * single pre-linked peer and reappears here at N peers across N relations.
- *
- * An INCOMING edge arrives under the relation's inverse name (that is how the
- * read endpoint keys it), so it is mapped back to the canonical relation and
- * given the incoming suffix — `buildRelationsPatch` re-derives the inverse body
- * key from that pair.
+ * The decision itself is a pure function in `prefillRouting.ts` — inverse keys
+ * and symmetric self-inverse relations are where the subtlety is, and keeping
+ * them out of this component is what makes them testable without a form mount.
  */
-function routePrefilledCardRelations(
-  prefilled: Record<string, { id: string; type: string }[]>
-) {
+function routePrefilledCardRelations(prefilled: Record<string, { id: string; type: string }[]>) {
   // allFields, not fields: the visible set is filtered by affordances that
   // arrive with the dry-run, which has not run when the prefill lands. Whether
   // an edge is card-DELIVERED is a property of the form config, not of what is
@@ -1038,27 +1057,22 @@ function routePrefilledCardRelations(
   )
   if (cardRelations.size === 0) return
 
-  const canonicalByInverse = new Map<string, string>()
+  const inverseByRelation = new Map<string, string>()
   for (const f of allFields.value) {
     if (!f.relation) continue
     const inverse = schemaStore.getInverseName(f.relation)
-    if (inverse) canonicalByInverse.set(inverse, f.relation)
+    if (inverse) inverseByRelation.set(f.relation, inverse)
   }
 
-  for (const [key, peers] of Object.entries(prefilled)) {
-    const canonical = canonicalByInverse.get(key)
-    const relation = canonical ?? key
-    if (!cardRelations.has(relation)) continue
-
-    const suffix = canonical ? INCOMING_SUFFIX : OUTGOING_SUFFIX
-    const mapKey = `${relation}${suffix}`
-    const state = pendingCardChanges.value.get(mapKey) ?? {
+  const { cardRoutes } = planPrefillRouting(prefilled, cardRelations, inverseByRelation)
+  for (const route of cardRoutes) {
+    const state = pendingCardChanges.value.get(route.mapKey) ?? {
       entries: [],
       added: [],
       removed: [],
       updated: [],
     }
-    for (const peer of peers) {
+    for (const peer of route.peers) {
       // `entries` is what buildRelationsPatch actually emits; `added` only
       // decides whether the key is emitted at all. Populating one without the
       // other sends an EMPTY edge list, which reads as "unlink everything"
@@ -1070,10 +1084,10 @@ function routePrefilledCardRelations(
         state.added.push({ targetId: peer.id })
       }
     }
-    pendingCardChanges.value.set(mapKey, state)
+    pendingCardChanges.value.set(route.mapKey, state)
     // Drop the copy the card path now owns, so one edge cannot be emitted
     // twice under two different body keys.
-    delete relations.value[key]
+    delete relations.value[route.sourceKey]
   }
 }
 

@@ -37,7 +37,7 @@ export interface DuplicatePeer {
 
 export interface OmittedProperty {
   property: string
-  reason: 'redacted' | 'file' | 'state-machine' | 'not-configured'
+  reason: 'redacted' | 'file' | 'state-machine' | 'not-configured' | 'untyped-peer' | 'self-loop'
 }
 
 /**
@@ -95,11 +95,42 @@ export function buildDuplicatePrefill(
 
   const selected = new Set(selectedRelationKeys)
   const outRelations: Record<string, DuplicatePeer[]> = {}
+  // A SELF-LOOP cannot be carried, and is reported rather than guessed at.
+  //
+  // The read endpoint returns it TWICE — once under the canonical key and once
+  // under the inverse — because it matches the direction filter at both
+  // endpoints. Emitting both would not reproduce the self-loop: it would write
+  // two opposite edges between the copy and the SOURCE, so duplicating a
+  // self-blocking ticket would leave the copy and the original blocking each
+  // other. Emitting one would link the copy to the source, which is also not
+  // what the source expressed.
+  //
+  // Reproducing it faithfully needs the copy's own id, which does not exist
+  // until the create returns. That is a real feature (re-point self-edges after
+  // create), not something to approximate here, so the edge is dropped and the
+  // user is told.
+  const selfLoopReported = new Set<string>()
   for (const [key, edges] of Object.entries(relations)) {
     if (!selected.has(key)) continue
-    // `type` is carried because the create body needs a resource identifier,
-    // and a card-delivered edge is refused outright without one.
-    const peers = edges.filter((e) => !!e.type).map((e) => ({ id: e.id, type: e.type }))
+    const peers: DuplicatePeer[] = []
+    for (const e of edges) {
+      if (!e.type) {
+        // `type` is required to emit a resource identifier, and a
+        // card-delivered edge is refused outright without one. Report rather
+        // than drop silently — an edge is more consequential than a property.
+        omitted.push({ property: `${key} → ${e.id}`, reason: 'untyped-peer' })
+        continue
+      }
+      if (e.id === source.id) {
+        // Reported once, though the edge arrives under two keys.
+        if (!selfLoopReported.has(e.id)) {
+          selfLoopReported.add(e.id)
+          omitted.push({ property: `${key} → itself`, reason: 'self-loop' })
+        }
+        continue
+      }
+      peers.push({ id: e.id, type: e.type })
+    }
     if (peers.length > 0) outRelations[key] = peers
   }
 
@@ -111,9 +142,16 @@ export function buildDuplicatePrefill(
   }
 }
 
-/** Mirrors DuplicateConfig.CarriesProperty on the Go side. */
+/**
+ * Mirrors DuplicateConfig.CarriesProperty on the Go side.
+ *
+ * An absent `properties` carries everything. An EMPTY one is refused at config
+ * load, so it should never arrive — but the wire is not the validator, so a
+ * hand-crafted response is handled the same way Go handles it (carry nothing)
+ * rather than being silently promoted back to the default.
+ */
 function carriesProperty(config: DuplicateConfig, name: string): boolean {
-  if (!config.properties || config.properties.length === 0) return true
+  if (!config.properties) return true
   return config.properties.includes(name)
 }
 

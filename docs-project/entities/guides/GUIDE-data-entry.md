@@ -2006,6 +2006,11 @@ the metamodel or the template. Omit the `duplicate:` block to carry everything;
 an empty `properties:` list is refused at load, because omitting the block is
 already how a type opts out of narrowing.
 
+The list narrows **properties only** — the markdown body always carries. There
+is no way to exclude it, so a type whose body you would not want copied should
+not be narrowed but reconsidered: the user can clear the body in the create form
+before submitting.
+
 Three kinds of property never carry, whatever you configure, because copying
 them produces a broken record rather than a narrower one:
 

@@ -22,7 +22,7 @@
  * 3. `DynamicForm` mounts under `v-if`, never `v-show` — unmounting aborts its
  *    in-flight dry-run rather than leaving it POSTing behind a closed dialog.
  */
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import DynamicForm from '../forms/DynamicForm.vue'
 import { useModalStack } from '@/composables/modalStack'
 import { provideInlineCreateDepth } from '@/composables/useInlineCreate'
@@ -39,8 +39,14 @@ import {
 import type { Entity, RelationEntry } from '@/types'
 
 const props = defineProps<{
-  show: boolean
-  /** The entity being duplicated, as the detail page already loaded it. */
+  /**
+   * The entity being duplicated, as the detail page already loaded it.
+   *
+   * There is deliberately no `show` prop: the host mounts this under `v-if`,
+   * so the component's lifetime IS the dialog's. Carrying both a `v-if` and a
+   * `show` gate made the close transition unobservable — the unmount beat the
+   * watcher, so focus was never returned to the trigger.
+   */
   source: Entity
   /** Create form id, from the sidebar `inline_create` map. */
   formId: string
@@ -60,7 +66,9 @@ const emit = defineEmits<{
 const schemaStore = useSchemaStore()
 const { confirm } = useConfirm()
 
-useModalStack(computed(() => props.show))
+// Registered for the component's whole lifetime, which is exactly how long
+// the dialog is on screen.
+useModalStack(computed(() => true))
 provideInlineCreateDepth()
 
 type Phase = 'choosing' | 'loading' | 'failed' | 'form'
@@ -105,6 +113,10 @@ function omittedReasonLabel(reason: string): string {
       return 'attached file'
     case 'state-machine':
       return 'starts at its initial value'
+    case 'self-loop':
+      return 'points at the original; re-link on the copy'
+    case 'untyped-peer':
+      return 'peer type unavailable'
     default:
       return reason
   }
@@ -133,7 +145,7 @@ async function loadRelations() {
   phase.value = 'loading'
   loadError.value = ''
   try {
-    const data = await getAllEntityRelations(props.source.type, props.source.id)
+    const data = await getAllEntityRelations(props.source.type, props.source.id, props.world)
     relations.value = data ?? {}
     choices.value = relationChoices(relations.value)
     selected.value = defaultSelection(choices.value)
@@ -166,22 +178,26 @@ function confirmChoices() {
   phase.value = 'form'
 }
 
-watch(
-  () => props.show,
-  async (isOpen, wasOpen) => {
-    if (isOpen && !wasOpen) {
-      previouslyFocused.value = document.activeElement as HTMLElement | null
-      prefill.value = null
-      await loadRelations()
-      await nextTick()
-      dialogRef.value?.focus()
-    } else if (!isOpen && wasOpen) {
-      previouslyFocused.value?.focus?.()
-      previouslyFocused.value = null
-    }
-  },
-  { immediate: true }
-)
+// The host mounts this under `v-if`, so the component exists only while the
+// dialog is open: mount IS open and unmount IS close. A `watch` on `show` was
+// the wrong seam — the v-if tears the component down before the watcher can
+// observe the transition, so the close branch never ran and focus was never
+// returned to the triggering control.
+onMounted(async () => {
+  previouslyFocused.value = document.activeElement as HTMLElement | null
+  // Focus BEFORE the fetch, not after. Escape is bound to the dialog element
+  // (deliberately, so it cannot reach past this dialog), which means it only
+  // works once focus is inside — and the loading phase is exactly when a user
+  // wants out of a slow or hung read.
+  await nextTick()
+  dialogRef.value?.focus()
+  await loadRelations()
+})
+
+onBeforeUnmount(() => {
+  previouslyFocused.value?.focus?.()
+  previouslyFocused.value = null
+})
 
 async function requestClose() {
   if (formRef.value?.isSaving()) return
@@ -219,7 +235,7 @@ function handleKeydown(e: KeyboardEvent) {
 
 <template>
   <Teleport to="body">
-    <div v-if="show" class="modal-overlay" @click.self="requestClose">
+    <div class="modal-overlay" @click.self="requestClose">
       <div
         ref="dialogRef"
         class="modal duplicate-modal"
@@ -237,12 +253,20 @@ function handleKeydown(e: KeyboardEvent) {
         </header>
 
         <div class="duplicate-body">
-          <p v-if="phase === 'loading'" class="duplicate-status">Loading relations…</p>
+          <template v-if="phase === 'loading'">
+            <p class="duplicate-status">Loading relations…</p>
+            <div class="duplicate-actions">
+              <button type="button" class="btn" @click="requestClose">Cancel</button>
+            </div>
+          </template>
 
           <div v-else-if="phase === 'failed'" class="duplicate-status duplicate-error">
             <p>Could not load this entity's relations, so a copy would be missing them.</p>
             <p class="duplicate-error-detail">{{ loadError }}</p>
-            <button type="button" class="btn" @click="loadRelations">Try again</button>
+            <div class="duplicate-actions">
+              <button type="button" class="btn" @click="requestClose">Cancel</button>
+              <button type="button" class="btn btn-primary" @click="loadRelations">Try again</button>
+            </div>
           </div>
 
           <template v-else-if="phase === 'choosing'">

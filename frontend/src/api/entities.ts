@@ -312,10 +312,15 @@ export async function createRelation(
  */
 export async function getAllEntityRelations(
   type: string,
-  entityId: string
+  entityId: string,
+  world?: string
 ): Promise<Record<string, RelationEntry[]>> {
+  // The world is carried because a content-scoped relation belongs to ONE
+  // face: reading unscoped while the page shows a non-default world would
+  // enumerate a different face's edges than the one on screen.
   return api.get<Record<string, RelationEntry[]>>(
-    `/${getPlural(type)}/${entityId}/relations`
+    `/${getPlural(type)}/${entityId}/relations`,
+    world ? { world } : undefined
   )
 }
 

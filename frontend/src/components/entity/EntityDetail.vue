@@ -1879,7 +1879,6 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
       -->
       <DuplicateModal
         v-if="showDuplicateModal && entry && duplicateFormId"
-        :show="showDuplicateModal"
         :source="entry"
         :form-id="duplicateFormId"
         :world="worldParam || undefined"

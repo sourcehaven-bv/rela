@@ -110,6 +110,11 @@ func TestDuplicateConfig_CarriesProperty(t *testing.T) {
 		want bool
 	}{
 		{"nil block carries everything", nil, "title", true},
+		// The validator refuses an empty list at load, so this state is
+		// unreachable through config. Pinned anyway because the method is
+		// exported and a caller could construct one: an empty allowlist
+		// carries nothing, rather than silently meaning "carry everything".
+		{"empty allowlist carries nothing", &DuplicateConfig{Properties: []string{}}, "title", false},
 		{"named property carries", &DuplicateConfig{Properties: []string{"title"}}, "title", true},
 		{"unnamed property does not", &DuplicateConfig{Properties: []string{"title"}}, "status", false},
 	}

@@ -56,7 +56,7 @@ const source = {
 
 function mountModal() {
   return mount(DuplicateModal, {
-    props: { show: true, source, formId: 'create_ticket' },
+    props: { source, formId: 'create_ticket' },
     global: { stubs: { DynamicForm: true, Teleport: true } },
   })
 }
@@ -80,6 +80,22 @@ describe('DuplicateModal', () => {
     await flushPromises()
 
     expect(provideInlineCreateDepth).toHaveBeenCalled()
+  })
+
+  // The dialog's lifetime IS the dialog: the host mounts it under v-if, so
+  // focus must return to the trigger on UNMOUNT. A `show`-prop watch could
+  // never observe that transition, because the unmount beats it.
+  it('returns focus to the element that opened it', async () => {
+    const trigger = document.createElement('button')
+    document.body.appendChild(trigger)
+    trigger.focus()
+
+    const w = mountModal()
+    await flushPromises()
+    w.unmount()
+
+    expect(document.activeElement).toBe(trigger)
+    trigger.remove()
   })
 
   // AC20. The detail page binds Del/Backspace to delete; an unregistered modal
