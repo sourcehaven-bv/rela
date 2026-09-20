@@ -5,7 +5,7 @@ title: 'Section sort: plus one declared order per enum, on every sort path'
 kind: enhancement
 priority: medium
 effort: m
-status: ready
+status: in-progress
 ---
 
 ## Description
@@ -72,17 +72,17 @@ Five sort implementations exist in total: `filter.SortMulti`, `applyV1Sorting`,
 form, enum rank where declared values exist, nulls last ascending / first
 descending, id ascending as the tiebreak in both directions.
 
-   Scope decision (user, 2026-09-20): **sorting stays in SQL**, because
-otherwise paging does not work properly and loading a whole type is too much
-overhead. Sort semantics become whatever sqlite/postgres can support, and the Go
+Scope decision (user, 2026-09-20): **sorting stays in SQL**, because otherwise
+paging does not work properly and loading a whole type is too much overhead.
+Sort semantics become whatever sqlite/postgres can support, and the Go
 comparator conforms to SQL rather than the reverse.
 
-   This replaces an earlier plan to simply delegate to `filter.SortMulti`.
-Design review showed the two sorters differ on strings, dates, ids, lists,
-undeclared properties and the meaning of descending, so delegating would have
-swapped one divergence for several. Accepted consequence: string sorts and
-`sort=id` become byte order, which moves 99% of positions across this repo's own
-4,308 ticket titles. Release note required.
+This replaces an earlier plan to simply delegate to `filter.SortMulti`. Design
+review showed the two sorters differ on strings, dates, ids, lists, undeclared
+properties and the meaning of descending, so delegating would have swapped one
+divergence for several. Accepted consequence: string sorts and `sort=id` become
+byte order, which moves 99% of positions across this repo's own 4,308 ticket
+titles. Release note required.
 2. **`queryplan` emits a `CASE` rank** for an enum sort key, so the pushed query
 orders by declared position.
 3. **The enum's declared values participate in `listIndexName`'s hash** — see

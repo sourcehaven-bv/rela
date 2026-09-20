@@ -133,7 +133,7 @@ func QuerySortApply[T any](q *QuerySort, items []T, access Accessor[T], specs []
 
 // compareSpec returns -1, 0 or +1 for one sort key, with direction applied.
 //
-// Direction inverts the KEY comparison only. The id tiebreak in [QuerySort.Sort]
+// Direction inverts the KEY comparison only. The id tiebreak in [QuerySortApply]
 // stays ascending in both directions, matching `ORDER BY <key> DESC, id ASC`,
 // which every backend emits. Inverting the whole comparison instead — the
 // `return !less` shape this replaces — is not a valid ordering at all: for two
