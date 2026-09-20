@@ -1473,13 +1473,32 @@ sort:
     direction: asc   # "asc" (default) or "desc"
 ```
 
-You can also sort by the virtual properties `id` (entity ID) and `modified` (file modification time).
+You can also sort a list by the virtual property `id` (entity ID).
 
-Values compare as text, byte by byte. An entity that lacks the sort property
-sorts as if it held the largest value: after every entity that has one when
-ascending, before them when descending. On the PostgreSQL backend a sorted list
-page is served straight from an index when the sort keys are string-shaped
-properties (see the PostgreSQL guide on derived list indexes).
+**Enum properties sort in their declared order.** A `status` whose schema lists
+`values: [backlog, ready, in-progress, done]` sorts in that order rather than
+alphabetically, so writing the enum in workflow order gives the right sort for
+free. A value the schema no longer declares sorts after every declared one.
+This applies to any property whose type declares `values:`, including a custom
+type shared by several properties.
+
+Everything else compares as text, byte by byte — so sorting is case-sensitive
+(`Zebra` before `apple`) and not numeric (`item10` before `item9`). A date
+declaring a non-default `format:` therefore sorts lexically, not
+chronologically; store dates in the default ISO form if you need chronological
+order.
+
+That rule is what every storage backend can express, which is why it is the
+rule: a sort the database cannot perform would force the whole entity type to
+be loaded and sorted in memory for every page.
+
+An entity that lacks the sort property sorts as if it held the largest value:
+after every entity that has one when ascending, before them when descending.
+Ties break by entity ID ascending, in both directions, so paging is stable.
+
+On the PostgreSQL backend a sorted list page is served straight from an index
+when the sort keys are string-shaped properties, including enum keys (see the
+PostgreSQL guide on derived list indexes).
 
 If no sort is configured, the list falls back to the entity type's `default_sort` from the metamodel,
 or sorts by ID ascending.
@@ -1691,6 +1710,9 @@ sections:
 | `children`      | string | Collection to nest under each row (`nested` mode; required) |
 | `parent_columns`| map    | `nested` mode: columns for the source level, keyed by entity type |
 | `child_columns` | map    | `nested` mode: columns for the child level, keyed by entity type |
+| `sort`          | list   | Sort keys for a flat section (`list`, `table`, `cards`) |
+| `parent_sort`   | list   | `nested` mode: sort keys for the source level            |
+| `child_sort`    | list   | `nested` mode: sort keys for the child level             |
 | `group_by`      | string | Property to group entities by                           |
 | `empty_message` | string | Text shown when the collection is empty                 |
 | `link`          | bool   | Link entity titles to their detail pages                |
@@ -1940,6 +1962,40 @@ A type absent from its level's map renders its title and id only — adding a
 type to a relation never breaks an existing view. A column naming a property
 the type does not declare is a load error, as is declaring columns for a type
 the level can never hold.
+
+##### Sorting is per level too
+
+For the same reason, a nested section takes `parent_sort:` and `child_sort:`
+rather than one `sort:` — with two collections at two levels, a single key
+could only pick a level by convention. Flat sections (`list`, `table`, `cards`)
+take a plain `sort:`. Using the wrong key for the display is a load error, not
+a silent no-op.
+
+```yaml
+sections:
+  - heading: Epics
+    source: epics
+    display: nested
+    children: tasks
+    parent_sort:
+      - property: status          # declared enum order, e.g. planned before done
+    child_sort:
+      - property: status
+      - property: due
+        direction: asc
+```
+
+Both take the same shape as a list's `sort:`, and follow the same rules —
+declared order for enums, byte-wise text otherwise (see
+[Sort Configuration](#sort-configuration)).
+
+**Sorting happens before the row caps.** A nested section emits at most 2000
+rows in total and at most 25 children per parent, so without a sort the rows
+that survive are whichever the traversal reached first. With one, they are the
+top-sorted rows — which is usually the point of asking for a sort at all.
+
+A section that declares no sort keeps the order the traversal produced, so
+adding these keys changes nothing until you use them.
 
 ##### Other behaviours
 

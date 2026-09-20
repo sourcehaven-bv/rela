@@ -113,13 +113,22 @@ filters are non-empty equality checks on declared, scalar string-shaped
 properties (`string`, `enum`, `date`, `datetime`, or a custom type). rela
 creates one composite `rela_derived_query__…` index for the complete set of
 properties in each query shape. Equivalent queries share an index even when
-their literal values or filter order differ.
+their literal values or filter order differ. (A list's *sort* keys are the one
+exception: an enum's declared value order is part of the index definition, not
+a literal — see below.)
 
 Lists get the same treatment. A list with a `sort:` whose keys (and whose
 static `=` filters, if any) are string-shaped properties gets one
 `rela_derived_list__…` index over its type, its filters, its sort keys and the
 id — the exact scan a list page performs when the server pushes paging into the
-database. With it, page 40 of an 11,000-row list is an index range scan; without
+database.
+
+A sort key on an **enum** property (or any property whose type declares
+`values:`) is indexed by its declared position rather than its text, so a
+workflow enum pages in workflow order. The declared values are part of the
+index definition, which has one consequence for operators: editing a `values:`
+list in `schema.yaml` changes the index's name, so the next reconcile builds
+the new index and drops the old one. With it, page 40 of an 11,000-row list is an index range scan; without
 it the database sorts the whole type for every page. A list sorted on an
 integer, a list-valued property, or with a `!=` or range filter gets no index,
 because such a page is not pushed down (see "Observing query cost").

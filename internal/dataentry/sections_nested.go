@@ -6,6 +6,7 @@ import (
 
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
@@ -78,7 +79,9 @@ func (h *viewsHandler) buildNestedTree(
 	// do that work for rows the budget is about to discard. On a 1,400-epic
 	// project with 200 tasks each that is ~280k ids to render at most
 	// nestedNodeBudget rows.
-	plan, truncated := planNestedRows(parents, edges, childByID)
+	plan, truncated := planNestedRows(parents, edges, childByID,
+		newEntitySorter(sec.ParentSort, parents, s.Meta),
+		newEntitySorter(sec.ChildSort, result.Collections[sec.Children], s.Meta))
 
 	rowEntities := make([]*entity.Entity, 0, len(plan)+nestedNodeBudget)
 	for _, row := range plan {
@@ -226,9 +229,13 @@ type nestedRow struct {
 // the gantt's budget.
 func planNestedRows(
 	parents []*entity.Entity, edges map[string][]string, childByID map[string]*entity.Entity,
+	sortParents, sortChildren entitySorter,
 ) (rows []nestedRow, truncated bool) {
 	budget := nestedNodeBudget
 	rows = make([]nestedRow, 0, len(parents))
+	// Ordering the parents decides which of them the node budget can afford,
+	// so it has to happen before the loop rather than on the emitted rows.
+	parents = sortParents(parents)
 	for _, p := range parents {
 		if budget <= 0 {
 			// A visible parent we cannot emit: that IS the truncation signal.
@@ -244,6 +251,12 @@ func planNestedRows(
 				kids = append(kids, child)
 			}
 		}
+
+		// BEFORE the cap: `kids[:limit]` keeps a prefix, so an unsorted slice
+		// would show whichever children the traversal happened to reach
+		// first, and a `child_sort:` would only reorder that arbitrary
+		// subset. The preview is meant to be the TOP rows.
+		kids = sortChildren(kids)
 
 		limit := min(len(kids), nestedChildPreview, budget)
 		budget -= limit
@@ -347,5 +360,51 @@ func fillPropertyCell(
 		cell.Values = vs
 	} else if val := e.GetAttributeString(property); val != "" {
 		cell.Values = []string{val}
+	}
+}
+
+// entitySorter returns a possibly-reordered view of rows. It never mutates the
+// caller's slice: the collections it runs over are shared by every section of
+// the view, so sorting in place would let one section's `sort:` silently
+// reorder another's rows.
+type entitySorter func(rows []*entity.Entity) []*entity.Entity
+
+// newEntitySorter builds the sorter for one level, resolving declared enum
+// orders once from the types actually present rather than per comparison.
+//
+// Returns an identity function when nothing is declared, which is the common
+// case and keeps the no-sort path allocation-free.
+//
+// scope names the entities whose types can appear at this level. It is the
+// whole collection rather than the rows being sorted, so a child level resolves
+// its enum ranks from every type the collection holds — the per-parent buckets
+// are subsets of it, and resolving per bucket would repeat the work for each
+// parent and could rank one parent's children differently from another's.
+func newEntitySorter(
+	specs []SortSpec, scope []*entity.Entity, meta *metamodel.Metamodel,
+) entitySorter {
+	if len(specs) == 0 {
+		return func(rows []*entity.Entity) []*entity.Entity { return rows }
+	}
+	defs := make(map[string]*metamodel.EntityDef)
+	if meta != nil {
+		for _, e := range scope {
+			if _, seen := defs[e.Type]; seen {
+				continue
+			}
+			if def, ok := meta.GetEntityDef(e.Type); ok {
+				defs[e.Type] = def
+			}
+		}
+	}
+	qs := filter.NewQuerySort(specs, defs, meta)
+	return func(rows []*entity.Entity) []*entity.Entity {
+		if len(rows) < 2 {
+			return rows
+		}
+		out := make([]*entity.Entity, len(rows))
+		copy(out, rows)
+		filter.QuerySortApply(qs, out, entityRecord, specs)
+		return out
 	}
 }

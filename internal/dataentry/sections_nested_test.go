@@ -3,6 +3,7 @@ package dataentry
 import (
 	"context"
 	"fmt"
+	"slices"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
@@ -401,5 +402,200 @@ func TestNestedSection_SectionBudgetDropsParentsAndFlags(t *testing.T) {
 	}
 	if !sd.Truncated {
 		t.Error("dropping whole parents must set Truncated: no row survives to carry hasMoreChildren")
+	}
+}
+
+// nestedFixtureWithProps is nestedFixture with per-entity properties, so a
+// sort test can control the keys rather than inheriting the id-shaped ones.
+func nestedFixtureWithProps(
+	edges map[string][]string, props map[string]map[string]any,
+) *viewResult {
+	var parents, children []*entity.Entity
+	seenParent := map[string]bool{}
+	at := func(id string) map[string]any {
+		if p, ok := props[id]; ok {
+			return p
+		}
+		return map[string]any{"title": id}
+	}
+	parentOrder := make([]string, 0, len(edges))
+	for id := range edges {
+		parentOrder = append(parentOrder, id)
+	}
+	slices.Sort(parentOrder) // deterministic seeding; the sort under test reorders it
+	for _, parentID := range parentOrder {
+		if !seenParent[parentID] {
+			parents = append(parents, &entity.Entity{ID: parentID, Type: "ticket", Properties: at(parentID)})
+			seenParent[parentID] = true
+		}
+		for _, childID := range edges[parentID] {
+			children = append(children, &entity.Entity{ID: childID, Type: "ticket", Properties: at(childID)})
+		}
+	}
+	return &viewResult{
+		Collections: map[string][]*entity.Entity{"parents": parents, "children": children},
+		Parents:     map[string]map[string][]string{"children": edges},
+	}
+}
+
+func parentIDs(sd SectionData) []string {
+	out := make([]string, 0, len(sd.Tree))
+	for _, n := range sd.Tree {
+		out = append(out, n.ID)
+	}
+	return out
+}
+
+// `status_type` declares open before closed, which is the REVERSE of
+// alphabetical — so a path that ranks by declared position and one that
+// compares text cannot agree by accident.
+func TestNestedSection_ChildSortUsesDeclaredEnumOrder(t *testing.T) {
+	app := testViewApp()
+	sec := nestedSection()
+	sec.ChildSort = []SortSpec{{Property: "status"}}
+
+	edges := map[string][]string{"TKT-P1": {"TKT-C1", "TKT-C2", "TKT-C3"}}
+	props := map[string]map[string]any{
+		"TKT-C1": {"title": "c1", "status": "closed"},
+		"TKT-C2": {"title": "c2", "status": "open"},
+		"TKT-C3": {"title": "c3", "status": "closed"},
+	}
+	sd := buildNestedFor(t, app, sec, nestedFixtureWithProps(edges, props))
+
+	got := treeIDs(sd)["TKT-P1"]
+	want := []string{"TKT-C2", "TKT-C1", "TKT-C3"} // open first, then closed by id
+	if !slices.Equal(got, want) {
+		t.Errorf("child order = %v, want %v (declared order, not alphabetical)", got, want)
+	}
+}
+
+func TestNestedSection_ParentSortOrdersTheParentLevel(t *testing.T) {
+	app := testViewApp()
+	sec := nestedSection()
+	sec.ParentSort = []SortSpec{{Property: "status"}}
+
+	edges := map[string][]string{"TKT-P1": {"TKT-C1"}, "TKT-P2": {"TKT-C2"}, "TKT-P3": {"TKT-C3"}}
+	props := map[string]map[string]any{
+		"TKT-P1": {"title": "p1", "status": "closed"},
+		"TKT-P2": {"title": "p2", "status": "open"},
+		"TKT-P3": {"title": "p3", "status": "closed"},
+	}
+	sd := buildNestedFor(t, app, sec, nestedFixtureWithProps(edges, props))
+
+	got := parentIDs(sd)
+	want := []string{"TKT-P2", "TKT-P1", "TKT-P3"}
+	if !slices.Equal(got, want) {
+		t.Errorf("parent order = %v, want %v", got, want)
+	}
+}
+
+// AC7. The cap is per-parent AND the node budget is shared across parents, so
+// a single-parent fixture would prove nothing about the case that actually
+// loses rows: a late parent, whose remaining budget is smaller than the
+// preview cap, must still keep its TOP children rather than an arbitrary
+// prefix.
+func TestNestedSection_ChildSortAppliesBeforeThePerParentCap(t *testing.T) {
+	app := testViewApp()
+	sec := nestedSection()
+	sec.ChildSort = []SortSpec{{Property: "status"}}
+
+	// Enough parents to exhaust nestedNodeBudget partway through, so the last
+	// emitted parent is capped by the shared budget rather than the preview.
+	perParent := nestedChildPreview + 5
+	parentCount := (nestedNodeBudget / (nestedChildPreview + 1)) + 5
+
+	edges := map[string][]string{}
+	props := map[string]map[string]any{}
+	for p := range parentCount {
+		pid := fmt.Sprintf("TKT-P%04d", p)
+		props[pid] = map[string]any{"title": pid, "status": "open"}
+		for c := range perParent {
+			cid := fmt.Sprintf("TKT-C%04d-%04d", p, c)
+			// Only the LAST few children of each parent are `open`, so an
+			// unsorted prefix would contain none of them.
+			status := "closed"
+			if c >= perParent-3 {
+				status = "open"
+			}
+			edges[pid] = append(edges[pid], cid)
+			props[cid] = map[string]any{"title": cid, "status": status}
+		}
+	}
+
+	sd := buildNestedFor(t, app, sec, nestedFixtureWithProps(edges, props))
+	byParent := treeIDs(sd)
+	if len(byParent) == 0 {
+		t.Fatal("no parents emitted")
+	}
+
+	// Every emitted parent that kept at least 3 children must lead with its
+	// three `open` ones, whether it was cut by the preview cap or by the
+	// shared budget.
+	checked := 0
+	for _, node := range sd.Tree {
+		kids := node.Children
+		if len(kids) < 3 {
+			continue
+		}
+		for i := range 3 {
+			if got := kids[i].Props["status"]; got != "open" {
+				t.Fatalf("parent %s child[%d] = %v, want open; "+
+					"the cap kept a traversal prefix instead of the top-sorted rows",
+					node.ID, i, got)
+			}
+		}
+		checked++
+	}
+	if checked == 0 {
+		t.Fatal("fixture emitted no parent with 3+ children; it cannot detect the defect")
+	}
+}
+
+// A section that declares no sort keeps the order the traversal produced, so
+// adding the feature does not silently reorder existing views.
+func TestNestedSection_NoSortPreservesTraversalOrder(t *testing.T) {
+	app := testViewApp()
+	edges := map[string][]string{"TKT-P1": {"TKT-C3", "TKT-C1", "TKT-C2"}}
+	props := map[string]map[string]any{
+		"TKT-C3": {"title": "c3", "status": "open"},
+		"TKT-C1": {"title": "c1", "status": "closed"},
+		"TKT-C2": {"title": "c2", "status": "open"},
+	}
+	sd := buildNestedFor(t, app, nestedSection(), nestedFixtureWithProps(edges, props))
+
+	got := treeIDs(sd)["TKT-P1"]
+	want := []string{"TKT-C3", "TKT-C1", "TKT-C2"}
+	if !slices.Equal(got, want) {
+		t.Errorf("unsorted section order = %v, want %v (traversal order)", got, want)
+	}
+}
+
+// The sorter must not reorder the shared collection: sections run over the
+// same slices, so sorting in place would let one section's sort reorder
+// another's rows.
+func TestNestedSection_SortDoesNotMutateSharedCollections(t *testing.T) {
+	app := testViewApp()
+	sec := nestedSection()
+	sec.ChildSort = []SortSpec{{Property: "status"}}
+
+	edges := map[string][]string{"TKT-P1": {"TKT-C1", "TKT-C2"}}
+	props := map[string]map[string]any{
+		"TKT-C1": {"title": "c1", "status": "closed"},
+		"TKT-C2": {"title": "c2", "status": "open"},
+	}
+	result := nestedFixtureWithProps(edges, props)
+	before := make([]string, 0, len(result.Collections["children"]))
+	for _, e := range result.Collections["children"] {
+		before = append(before, e.ID)
+	}
+
+	buildNestedFor(t, app, sec, result)
+
+	after := make([]string, 0, len(result.Collections["children"]))
+	for _, e := range result.Collections["children"] {
+		after = append(after, e.ID)
+	}
+	if !slices.Equal(before, after) {
+		t.Errorf("shared collection was reordered: %v -> %v", before, after)
 	}
 }

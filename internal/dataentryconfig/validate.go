@@ -1763,6 +1763,60 @@ func collectionTypes(view ViewConfig, name string, meta *metamodel.Metamodel) []
 // A type the level CAN hold but that the map omits is not an error — it
 // renders title and id only, the same "absent means default" rule
 // [Gantt.Sources] uses, so adding a type to a relation never breaks a view.
+// validateSectionSort checks a section's sort keys against the entity types
+// the level can hold.
+//
+// A property is accepted when SOME allowed type declares it, not every one: a
+// level reached through a multi-target relation legitimately mixes types, and
+// a row whose type lacks the property simply sorts as absent (last ascending),
+// which is the same answer the store gives. Requiring every type to declare it
+// would refuse a reasonable config.
+//
+// When allowed is empty the type is not statically known — determineTargetType
+// returns "" for a multi-`to:` relation — so only the shape is checked. That
+// matches how `columns:` handles the same case: validate where the type is
+// known, skip where it is not, rather than guessing.
+//
+// "id" is always valid: every entity has one, and it is the universal sort
+// tiebreak. "modified" is deliberately NOT accepted — it has no stored column,
+// so no backend can order by it, and a section sorted on it would order
+// differently depending on which path served it.
+func validateSectionSort(
+	viewID string, i int, key string, specs []SortSpec,
+	allowed []string, meta *metamodel.Metamodel,
+) []string {
+	var errs []string
+	for n, spec := range specs {
+		switch {
+		case spec.Property == "":
+			errs = append(errs, fmt.Sprintf(
+				"view %q: section[%d] %s[%d] has no property", viewID, i, key, n))
+			continue
+		case spec.Direction != "" && spec.Direction != "asc" && spec.Direction != "desc":
+			errs = append(errs, fmt.Sprintf(
+				"view %q: section[%d] %s[%d] has invalid direction %q (use \"asc\" or \"desc\")",
+				viewID, i, key, n, spec.Direction))
+		}
+		if spec.Property == "id" || len(allowed) == 0 {
+			continue
+		}
+		declaredBy := make([]string, 0, len(allowed))
+		for _, entityType := range allowed {
+			if def, ok := meta.GetEntityDef(entityType); ok {
+				if _, has := def.Properties[spec.Property]; has {
+					declaredBy = append(declaredBy, entityType)
+				}
+			}
+		}
+		if len(declaredBy) == 0 {
+			errs = append(errs, fmt.Sprintf(
+				"view %q: section[%d] %s[%d] sorts on %q, which no type at this level declares (types: %s)",
+				viewID, i, key, n, spec.Property, strings.Join(allowed, ", ")))
+		}
+	}
+	return errs
+}
+
 func validateLevelColumns(
 	viewID string, i int, level string, byType map[string][]ListColumn,
 	allowed []string, meta *metamodel.Metamodel,
@@ -1848,6 +1902,14 @@ func validateNestedSection(
 		if s.ChildColumns != nil {
 			errs = append(errs, nestedOnlyKeyErr(viewID, i, "child_columns", s.Display))
 		}
+		if s.ParentSort != nil {
+			errs = append(errs, nestedOnlyKeyErr(viewID, i, "parent_sort", s.Display))
+		}
+		if s.ChildSort != nil {
+			errs = append(errs, nestedOnlyKeyErr(viewID, i, "child_sort", s.Display))
+		}
+		errs = append(errs, validateSectionSort(viewID, i, "sort", s.Sort,
+			collectionTypes(view, s.Source, meta), meta)...)
 		return errs
 	}
 
@@ -1904,9 +1966,19 @@ func validateNestedSection(
 				"display: %s renders exactly two levels and cannot attribute a recursive walk",
 			viewID, i, s.Children, DisplayNested))
 	}
+	if len(s.Sort) > 0 {
+		errs = append(errs, fmt.Sprintf(
+			"view %q: section[%d] has display: %s, which takes parent_sort/child_sort "+
+				"(one per level) instead of sort",
+			viewID, i, DisplayNested))
+	}
 	errs = append(errs, validateLevelColumns(viewID, i, "parent_columns", s.ParentColumns,
 		collectionTypes(view, s.Source, meta), meta)...)
 	errs = append(errs, validateLevelColumns(viewID, i, "child_columns", s.ChildColumns,
+		collectionTypes(view, s.Children, meta), meta)...)
+	errs = append(errs, validateSectionSort(viewID, i, "parent_sort", s.ParentSort,
+		collectionTypes(view, s.Source, meta), meta)...)
+	errs = append(errs, validateSectionSort(viewID, i, "child_sort", s.ChildSort,
 		collectionTypes(view, s.Children, meta), meta)...)
 	return errs
 }
