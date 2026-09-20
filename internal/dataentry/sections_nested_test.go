@@ -691,7 +691,7 @@ func TestFlatSection_SortSurvivesGrouping(t *testing.T) {
 }
 
 // With no `sort:`, grouping keeps its id ordering — the pre-existing
-// behaviour, which the fix above must not disturb.
+// behavior, which the fix above must not disturb.
 func TestFlatSection_GroupingWithoutSortStillOrdersByID(t *testing.T) {
 	sec := flatSection("table")
 	sec.GroupBy = "status"
