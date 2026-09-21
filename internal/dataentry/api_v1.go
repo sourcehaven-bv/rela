@@ -515,7 +515,7 @@ func scopedSortedEntitiesScoped(
 	if err != nil {
 		return nil, err
 	}
-	entities = applyV1Sorting(entities, query)
+	entities = applyV1Sorting(entities, query, a.Meta())
 	return entities, nil
 }
 
@@ -2251,7 +2251,19 @@ func parseSortParam(query map[string][]string) []filter.SortSpec {
 
 // applyV1Sorting applies `sort=` query params to the entity slice. Pure data
 // transform — a free function, not App behavior (TKT-N26KLB M5.5).
-func applyV1Sorting(entities []*entityPkg.Entity, query map[string][]string) []*entityPkg.Entity {
+//
+// The ordering rule lives in [filter.QuerySort] so this path, the search and
+// dashboard path, and every store backend share one definition
+// (TKT-9OFGH4). It is store.GraphQuery.OrderBy's contract: byte-wise on the
+// text form, enum values by declared position, absent rows as the largest
+// value, id ascending as the final tiebreak — so a request reads the same
+// whether or not it was pushed into the database.
+//
+// meta may be nil; that yields byte-wise comparison for every property, which
+// is the right answer when no schema is available.
+func applyV1Sorting(
+	entities []*entityPkg.Entity, query map[string][]string, meta *metamodel.Metamodel,
+) []*entityPkg.Entity {
 	sortSpecs := parseSortParam(query)
 	if len(sortSpecs) == 0 {
 		return entities
@@ -2259,40 +2271,29 @@ func applyV1Sorting(entities []*entityPkg.Entity, query map[string][]string) []*
 
 	sorted := make([]*entityPkg.Entity, len(entities))
 	copy(sorted, entities)
-
-	// Byte-wise on the string form, a row WITHOUT the property sorting as
-	// the largest value (last ascending, first descending), id as the final
-	// tiebreak — the same order a store pages by (store.GraphQuery.OrderBy),
-	// so a request served either way reads the same. That replaced the
-	// accident of comparing "<nil>" as text, which put missing values
-	// between digits and letters.
-	sort.SliceStable(sorted, func(i, j int) bool {
-		for _, spec := range sortSpecs {
-			// A JSON null is "no value" here as it is in SQL (`->>` yields
-			// NULL), so both paths place it with the absent rows.
-			vi, oki := sorted[i].Properties[spec.Property]
-			vj, okj := sorted[j].Properties[spec.Property]
-			oki, okj = oki && vi != nil, okj && vj != nil
-			if oki != okj {
-				return oki != spec.IsDescending()
-			}
-			if !oki {
-				continue
-			}
-			si := fmt.Sprintf("%v", vi)
-			sj := fmt.Sprintf("%v", vj)
-			if si == sj {
-				continue
-			}
-			if spec.IsDescending() {
-				return si > sj
-			}
-			return si < sj
-		}
-		return sorted[i].ID < sorted[j].ID
-	})
-
+	filter.QuerySortApply(newEntityQuerySort(sortSpecs, sorted, meta), sorted, entityRecord, sortSpecs)
 	return sorted
+}
+
+// newEntityQuerySort resolves declared value orders for the types actually
+// present in rows, so a mixed-type result set ranks each property against
+// every definition that declares it.
+func newEntityQuerySort(
+	specs []filter.SortSpec, rows []*entityPkg.Entity, meta *metamodel.Metamodel,
+) *filter.QuerySort {
+	if meta == nil {
+		return filter.NewQuerySort(specs, nil, nil)
+	}
+	defs := make(map[string]*metamodel.EntityDef)
+	for _, e := range rows {
+		if _, seen := defs[e.Type]; seen {
+			continue
+		}
+		if def, ok := meta.GetEntityDef(e.Type); ok {
+			defs[e.Type] = def
+		}
+	}
+	return filter.NewQuerySort(specs, defs, meta)
 }
 
 func parseV1Pagination(query map[string][]string) (page, perPage int) {

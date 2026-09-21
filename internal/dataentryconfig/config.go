@@ -1514,6 +1514,28 @@ type ViewSection struct {
 	// rather than reversing it. A section that says nothing keeps saying
 	// nothing, so no existing deployment grows a button on upgrade.
 	Create *SectionCreate `yaml:"create,omitempty" json:"create,omitempty"`
+
+	// Sort orders a FLAT section's rows (`list`, `table`, `cards`).
+	// ParentSort and ChildSort order each level of a `display: nested`
+	// section. The keys are mutually exclusive by display, and using the
+	// wrong one is refused at load rather than ignored (TKT-9OFGH4).
+	//
+	// Three keys rather than one, for the reason [ViewSection.ParentColumns]
+	// gives: a nested section holds two collections at two levels, with
+	// independent types, so a single `sort:` could only pick a level by
+	// convention. `columns:` faced the same choice and split; this follows it,
+	// and an author who already knows parent_columns/child_columns knows these.
+	//
+	// Enum properties order by their DECLARED value order, so
+	// `sort: [{property: status}]` on a workflow enum reads in workflow order
+	// rather than alphabetically. Everything else compares byte-wise on the
+	// stored text — see [filter.QuerySort] for why that is the rule.
+	//
+	// Sorting happens BEFORE the row caps, so the rows that survive are the
+	// top-sorted ones rather than whichever the traversal reached first.
+	Sort       []SortSpec `yaml:"sort,omitempty" json:"sort,omitempty"`
+	ParentSort []SortSpec `yaml:"parent_sort,omitempty" json:"parent_sort,omitempty"`
+	ChildSort  []SortSpec `yaml:"child_sort,omitempty" json:"child_sort,omitempty"`
 }
 
 // SectionCreate declares HOW a section's create-related affordance behaves.

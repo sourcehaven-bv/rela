@@ -129,6 +129,43 @@ func StringShaped(meta *metamodel.Metamodel, pd metamodel.PropertyDef) bool {
 	return custom
 }
 
+// DeclaredValues returns the declared order of property's values when it is
+// enum-shaped, or nil when it compares byte-wise.
+//
+// An inline `values:` list wins over a custom type's, matching buildEnumIndex
+// on the Go sort path — the two must agree or a ranked query and the Go
+// comparator order the same rows differently.
+func DeclaredValues(meta *metamodel.Metamodel, def *metamodel.EntityDef, property string) []string {
+	if meta == nil || def == nil {
+		return nil
+	}
+	pd, ok := def.Properties[property]
+	if !ok || pd.List {
+		return nil
+	}
+	if len(pd.Values) > 0 {
+		return slices.Clone(pd.Values)
+	}
+	if ct, ok := meta.Types[pd.Type]; ok && len(ct.Values) > 0 {
+		return slices.Clone(ct.Values)
+	}
+	return nil
+}
+
+// orderValuesKey renders per-key declared orders into a dedup-map key. The
+// separators cannot occur in a schema value, so two different orders cannot
+// encode to the same string.
+func orderValuesKey(values [][]string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(values))
+	for _, v := range values {
+		parts = append(parts, strings.Join(v, "\x00"))
+	}
+	return strings.Join(parts, "\x01")
+}
+
 // StaticIndexSpecs derives one composite index per canonical static query
 // shape. Query literal values are deliberately absent from the spec.
 func StaticIndexSpecs(cfg *dataentryconfig.Config, meta *metamodel.Metamodel) []store.DerivedObjectSpec {
@@ -169,8 +206,13 @@ func StaticIndexSpecs(cfg *dataentryconfig.Config, meta *metamodel.Metamodel) []
 		if !ok {
 			continue
 		}
+		// The declared value order is part of the key, not just the sort
+		// property: two lists ordering one enum differently need two
+		// indexes, and without this they collide here and one is silently
+		// discarded — leaving the other list to seq-scan forever.
 		byKey[string(spec.Kind)+"\x00"+spec.Type+"\x00"+strings.Join(spec.Properties, "\x00")+
-			"\x01"+strings.Join(spec.OrderBy, "\x00")] = spec
+			"\x01"+strings.Join(spec.OrderBy, "\x00")+
+			"\x02"+orderValuesKey(spec.OrderValues)] = spec
 	}
 	keys := make([]string, 0, len(byKey))
 	for key := range byKey {
@@ -483,13 +525,27 @@ func listIndexSpec(
 	slices.Sort(props)
 	props = slices.Compact(props)
 	order := make([]string, 0, len(list.Sort))
+	values := make([][]string, 0, len(list.Sort))
+	ranked := false
 	for _, s := range list.Sort {
 		if !shaped(s.Property) {
 			return store.DerivedObjectSpec{}, false
 		}
 		order = append(order, s.Property)
+		declared := DeclaredValues(meta, def, s.Property)
+		values = append(values, declared)
+		ranked = ranked || len(declared) > 0
+	}
+	if !ranked {
+		// Belt and braces: a backend's index name must already ignore empty
+		// value lists, and pgstore's does, so an unranked spec hashes the same
+		// with nil or with per-key empties. Nilling it keeps the spec itself
+		// comparable to one built before ranking existed, which is what the
+		// dedup key and any equality assertion see.
+		values = nil
 	}
 	return store.DerivedObjectSpec{
-		Kind: store.DerivedListIndex, Type: list.EntityType, Properties: props, OrderBy: order,
+		Kind: store.DerivedListIndex, Type: list.EntityType,
+		Properties: props, OrderBy: order, OrderValues: values,
 	}, true
 }

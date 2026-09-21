@@ -3262,6 +3262,69 @@ func TestValidateConfig_NestedSection(t *testing.T) {
 			},
 			wantErr: "sets parent_columns but display is",
 		},
+		// Sort keys are per level, so using the wrong key for the display is
+		// refused rather than silently ignored (TKT-9OFGH4).
+		{
+			name:     "parent_sort and child_sort on a nested display",
+			traverse: twoStep,
+			section: ViewSection{
+				Source: "blocked", Display: DisplayNested, Children: "deeper",
+				ParentSort: []SortSpec{{Property: "status"}},
+				ChildSort:  []SortSpec{{Property: "status", Direction: "desc"}},
+			},
+		},
+		{
+			name:     "sort on a flat display",
+			traverse: twoStep,
+			section:  ViewSection{Source: "blocked", Display: "table", Sort: []SortSpec{{Property: "status"}}},
+		},
+		{
+			name:     "sort on a nested display",
+			traverse: twoStep,
+			section: ViewSection{
+				Source: "blocked", Display: DisplayNested, Children: "deeper",
+				Sort: []SortSpec{{Property: "status"}},
+			},
+			wantErr: "takes parent_sort/child_sort",
+		},
+		{
+			name:     "child_sort on a flat display",
+			traverse: twoStep,
+			section: ViewSection{
+				Source: "blocked", Display: "list",
+				ChildSort: []SortSpec{{Property: "status"}},
+			},
+			wantErr: "sets child_sort but display is",
+		},
+		{
+			name:     "sort on an undeclared property",
+			traverse: twoStep,
+			section: ViewSection{
+				Source: "blocked", Display: "list",
+				Sort: []SortSpec{{Property: "nope"}},
+			},
+			wantErr: "which no type at this level declares",
+		},
+		{
+			name:     "sort on id is always valid",
+			traverse: twoStep,
+			section:  ViewSection{Source: "blocked", Display: "list", Sort: []SortSpec{{Property: "id"}}},
+		},
+		{
+			name:     "sort on modified is refused",
+			traverse: twoStep,
+			section:  ViewSection{Source: "blocked", Display: "list", Sort: []SortSpec{{Property: "modified"}}},
+			wantErr:  "which a section cannot order by",
+		},
+		{
+			name:     "sort with an invalid direction",
+			traverse: twoStep,
+			section: ViewSection{
+				Source: "blocked", Display: "list",
+				Sort: []SortSpec{{Property: "status", Direction: "sideways"}},
+			},
+			wantErr: "invalid direction",
+		},
 	}
 
 	for _, tc := range tests {

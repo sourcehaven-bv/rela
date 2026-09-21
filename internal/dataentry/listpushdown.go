@@ -101,7 +101,14 @@ func planListPushdown(
 		if !stringShaped(spec.Property) {
 			return listPlan{}, false
 		}
-		order = append(order, store.OrderSpec{Property: spec.Property, Descending: spec.IsDescending()})
+		// Values carries the enum's declared order so the store ranks by
+		// position rather than alphabetically, matching filter.QuerySort on
+		// the Go path. Empty for a plain string, which stays byte-wise.
+		order = append(order, store.OrderSpec{
+			Property:   spec.Property,
+			Descending: spec.IsDescending(),
+			Values:     queryplan.DeclaredValues(meta, def, spec.Property),
+		})
 	}
 
 	var gq store.GraphQuery
