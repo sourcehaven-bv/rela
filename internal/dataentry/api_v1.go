@@ -1120,17 +1120,26 @@ func writeGateError(w http.ResponseWriter, r *http.Request, err error) {
 // --- Relation Handlers ---
 
 func (a *App) handleV1EntityRelations(w http.ResponseWriter, r *http.Request, typeName, entityID string) {
+	// The path segment is an ADDRESS — `ID` or `ID@face` (BUG-VFHUWO). The
+	// bare id feeds the ACL row gate, which is face-blind by design; the face
+	// selects which tail's edges are served.
+	ref, refOK := parseEntityRef(entityID)
+	if !refOK {
+		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
+		return
+	}
+
 	// ACL gate (TKT-VQGN CRIT-2): /relations on a hidden entity 404s
 	// indistinguishably. Without the gate the endpoint confirms
 	// existence (200 vs 404) AND leaks the full neighbor-id set —
 	// closing one channel via /include filter while leaving this open
 	// would defeat the per-entity-response invariant.
-	if !a.gateReadOrNotFound(w, r, typeName, entityID) {
+	if !a.gateReadOrNotFound(w, r, typeName, ref.ID) {
 		return
 	}
 
 	s := a.State()
-	entity, found := a.reader.getEntity(r.Context(), entityID)
+	entity, found := a.reader.getEntityRef(r.Context(), ref)
 	// The gate above authorized by (type, id), which a `type@face` grant is
 	// invisible to, and this reader is the raw store — so the face half is owed
 	// here (TKT-O7R2A1). It matters even though the response carries no body:
@@ -1143,8 +1152,13 @@ func (a *App) handleV1EntityRelations(w http.ResponseWriter, r *http.Request, ty
 		return
 	}
 
-	outgoing := a.reader.outgoingRelations(r.Context(), entityID)
-	incoming := a.reader.incomingRelations(r.Context(), entityID)
+	// Outgoing edges at the ADDRESSED TAIL: a content-scoped edge belongs to
+	// one face of its source, so an unfiltered read returns the union of every
+	// face's edges and presents another face's links as this one's. Incoming
+	// edges stay entity-level — heads are faceless, so an inbound edge points
+	// at the entity and is shared by its faces.
+	outgoing := a.reader.outgoingRelationsOnFace(r.Context(), ref)
+	incoming := a.reader.incomingRelations(r.Context(), ref.ID)
 
 	// Gate hidden neighbors (BUG-ABXMAV / RR-HJV8CP). Without this, a hidden
 	// peer's `type` (via the ungated entityType read) and edge `meta` leak past
@@ -1322,7 +1336,12 @@ func (a *App) handleV1EntityRelationType(w http.ResponseWriter, r *http.Request,
 	case http.MethodGet:
 		a.handleV1GetRelationType(w, r, typeName, entityID, relType)
 	case http.MethodPost:
-		a.write.handleV1CreateRelation(w, r, typeName, entityID, relType)
+		ref, refOK := parseEntityRef(entityID)
+		if !refOK {
+			writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
+			return
+		}
+		a.write.handleV1CreateRelation(w, r, typeName, ref, relType)
 	default:
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
 	}
@@ -1338,12 +1357,19 @@ func resolveRelationEndpoints(entityID, peerID, direction string) (from, to stri
 }
 
 func (a *App) handleV1GetRelationType(w http.ResponseWriter, r *http.Request, typeName, entityID, relType string) {
-	// ACL gate (TKT-VQGN CRIT-2): see handleV1EntityRelations.
-	if !a.gateReadOrNotFound(w, r, typeName, entityID) {
+	// An ADDRESS, as in handleV1EntityRelations (BUG-VFHUWO).
+	ref, refOK := parseEntityRef(entityID)
+	if !refOK {
+		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 		return
 	}
 
-	entity, found := a.reader.getEntity(r.Context(), entityID)
+	// ACL gate (TKT-VQGN CRIT-2): see handleV1EntityRelations. BARE id.
+	if !a.gateReadOrNotFound(w, r, typeName, ref.ID) {
+		return
+	}
+
+	entity, found := a.reader.getEntityRef(r.Context(), ref)
 	// Face half of the grant, as in handleV1EntityRelations.
 	if !found || entity.Type != typeName ||
 		!faceReadable(r.Context(), entity.Type, entity.Face) {
@@ -1354,11 +1380,13 @@ func (a *App) handleV1GetRelationType(w http.ResponseWriter, r *http.Request, ty
 
 	incoming := r.URL.Query().Get("direction") == string(DirectionIncoming)
 
+	// Outgoing at the addressed tail, incoming at the entity: see
+	// handleV1EntityRelations.
 	var edges []*entityPkg.Relation
 	if incoming {
-		edges = a.reader.incomingRelations(r.Context(), entityID)
+		edges = a.reader.incomingRelations(r.Context(), ref.ID)
 	} else {
-		edges = a.reader.outgoingRelations(r.Context(), entityID)
+		edges = a.reader.outgoingRelationsOnFace(r.Context(), ref)
 	}
 
 	// Gate hidden neighbors (BUG-ABXMAV / RR-HJV8CP): same rationale as
@@ -1405,15 +1433,22 @@ func (a *App) handleV1GetRelationType(w http.ResponseWriter, r *http.Request, ty
 func (a *App) handleV1RelationTarget(
 	w http.ResponseWriter, r *http.Request, typeName, entityID, relType, targetID string,
 ) {
+	// The path segment is an ADDRESS (BUG-VFHUWO); every arm below consumes
+	// the parsed form.
+	ref, refOK := parseEntityRef(entityID)
+	if !refOK {
+		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
+		return
+	}
 	switch r.Method {
 	case http.MethodGet:
 		// Single-relation body read for sync (RR-SYNCR1): meta + content +
 		// _redacted + a relation-level ETag, dual-endpoint gated.
-		handleV1GetRelationTarget(a, w, r, typeName, entityID, relType, targetID)
+		handleV1GetRelationTarget(a, w, r, typeName, ref, relType, targetID)
 	case http.MethodPatch:
-		a.write.handleV1UpdateRelation(w, r, typeName, entityID, relType, targetID)
+		a.write.handleV1UpdateRelation(w, r, typeName, ref, relType, targetID)
 	case http.MethodDelete:
-		a.write.handleV1DeleteRelation(w, r, typeName, entityID, relType, targetID)
+		a.write.handleV1DeleteRelation(w, r, typeName, ref, relType, targetID)
 	default:
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
 	}
@@ -1429,7 +1464,12 @@ func (a *App) handleV1EntityAction(w http.ResponseWriter, r *http.Request, typeN
 
 	switch action {
 	case "clone":
-		a.write.handleV1CloneEntity(w, r, typeName, entityID)
+		ref, refOK := parseEntityRef(entityID)
+		if !refOK {
+			writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
+			return
+		}
+		a.write.handleV1CloneEntity(w, r, typeName, ref)
 	default:
 		writeV1Error(w, r, http.StatusNotFound, "unknown_action", "Unknown action", "")
 	}
