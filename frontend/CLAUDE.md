@@ -373,8 +373,11 @@ gone).
 **What IS local is only what needs a framework in the SPA.** The bundle is a
 plain IIFE with no Vue, so the toolbar (`relaToolbar.ts`) and the `@` menu
 (`relaMentionMenu.ts`) are built through the DOM API. Anything reaching for Vue
-or the axios API layer cannot be imported into it — that is why `rankByIdMatch`
-lives in its own `rankMentions.ts` rather than in `useMentionMenu.ts`.
+or the axios API layer cannot be imported into it — that is why the ranking
+lives in its own `rankMentions.ts` rather than in `useMentionMenu.ts`. Both
+editors therefore share the fuzzy scorer; the SPA's **type picker** does not
+travel with it, because a sandboxed app runs under `connect-src 'none'` and has
+no route to the schema's type list.
 
 **References render as BARE IDS here.** The SPA resolves titles from the
 server's per-principal `mentions` map; the app bridge has no such endpoint, and
@@ -390,6 +393,84 @@ was BEFORE the edit.
 **`.value` reads through `guardWriteBack`.** The getter is the app's save path,
 so the churn suppression has to sit on it; returning the raw serialization would
 hand an app a reformatted body it never edited.
+
+**The `@` mention query goes to `/_search` exactly as typed.** `rankMentions.ts`
+re-ranks the response client-side; it must never rewrite the request. Splitting a
+hyphenated query into words was measured to destroy ID ranking on the bleve
+backend (the regression BUG-O09QUC exists to prevent) and to match nothing at all
+on the linear and postgres backends, which match the query as one substring.
+Keeping it a single token is also what makes `@status:open` inert rather than
+filter syntax. Cross-field reach comes from the **type picker**, which scopes via
+the `type` parameter `searchEntities` already takes — the type is a filter, never
+part of the scored haystack, and a picked name is always one the schema supplied
+(so `?type=` stays an allowlist).
+
+Four things in that file are load-bearing and each was a real defect first:
+
+- **Rank, do not filter.** Only uFuzzy's own `filter` may drop a row. A "match
+  quality floor" (`info.terms >= needed`) rejects every *prefix* — uFuzzy counts
+  `fancy-` as zero complete terms — so the menu blanked on each keystroke until a
+  word was finished. Complete-word fixtures pass happily while the feature is
+  unusable, which is why `rankMentions.test.ts` asserts over **every prefix** of
+  a target query. Any floor added later must pass that matrix.
+- **Guard the query uFuzzy only PARTLY understands, not just the fully
+  untokenizable one.** `uf.filter()` returns **`null`** (not `[]`), and
+  `uf.split()` silently keeps only what its Latin-oriented splitter matches:
+  `日本語-jp` → `["jp"]`, and `café` → `["caf"]`, so this hits ordinary accented
+  European titles too, not only CJK and Cyrillic. Ranking on the surviving
+  fragment drops rows the server matched on the discarded part — the same "No
+  matches over a good response" failure, reached through a different door.
+  `tokenizerSawWholeNeedle` requires the terms to cover the query's
+  letter/number characters and passes the server's order through otherwise. It
+  needs its explicit `terms.length === 0` branch: an all-separator query like
+  `---` has zero meaningful characters, so a bare coverage comparison reads as
+  "fully covered" and falls through to a filter that matches nothing.
+- **Never widen the response.** Recall is the server's job and it is ACL-gated, so
+  a row the ranker invented would be ungated. The haystack uses the `_title` the
+  server already redacted — never `properties.title`, and never a locally derived
+  title (see the ACL rule above).
+- **Leave uFuzzy on its defaults; `intraIns: 1` is a tab-freeze.** It buys one
+  typo (`rankng` → `ranking`) and costs exponential backtracking whenever a
+  repeated-character run in the needle meets one in the haystack: measured 27 s
+  at a 24-character needle and 55 s at 64, against 0 ms on the defaults. The work
+  is synchronous on the main thread and the 150 ms debounce bounds how *often*
+  matching starts, not how long one run takes, so a long repeated-run title (a
+  plain long title no validator rejects) plus a long query stalls the editor while
+  the user holds unsaved work. A length bound does not help — the blowup starts
+  around 16 characters. The motivating `fancyreport` → `FancyReport` case does not
+  need the option. Pinned by a **cost** assertion, because every correctness
+  fixture passes either way; if that test hangs rather than fails, that is the
+  regression.
+
+**The highlight is an identity, never an index.** `MentionMenuState.highlight`
+holds `{kind:'type',name}` / `{kind:'entity',id}` / `null` and
+`highlightedIndex()` resolves it against the live rows on each read. The rows
+change asynchronously underneath it — type suggestions re-rank per keystroke and
+vanish past `TYPE_SECTION_MAX_QUERY`, entities arrive a debounce later — and a
+stored index was wrong four ways: it could point past the end (so `current()`
+returned null, the keymap fell through without `preventDefault`, and Enter put a
+paragraph break in the document), or slide onto an unrelated row when the list
+above it shrank (so Enter inserted an entity the user never highlighted). A
+changed scope also clears `items` and the highlight, so the chip cannot sit above
+rows from the previous scope. **Assert these before the debounce resolves**:
+`runSearch` resets the highlight on arrival, so any test that settles first
+cannot see this class of bug at all — which is exactly how it shipped past the
+first round of tests.
+
+**The menu's `query` mirror is one tick behind the document.** It is written by
+the slash provider's `shouldShow`, which runs on ProseMirror's update cycle —
+*after* the capture-phase key handler. A Backspace handler that reads
+`menu.state.query` therefore sees the pre-keystroke value and acts one character
+early; that let the `@` trigger itself be deleted while the menu closed and reset
+the scope, which looked exactly like the chip clearing correctly. Re-read the live
+document with `parseMentionQuery(slashProvider.getContent(view))` instead. This is
+only reproducible with back-to-back keystrokes in a real browser (any pause lets
+the mirror catch up, and jsdom has no update cycle), so the guard is the e2e test
+`Backspace at the start of the query clears the type scope` — don't demote it to a
+unit test.
+
+The sandboxed app editor (`src/app-editor/`) deliberately stays on EasyMDE —
+see TKT-D2JML7 and the CSP note in `internal/dataentry/CLAUDE.md`.
 
 ## CSS Architecture
 

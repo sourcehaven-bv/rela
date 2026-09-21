@@ -38,7 +38,7 @@ func TestTranslateVerb_Roundtrip(t *testing.T) {
 			if !ok {
 				t.Errorf("Subject = %T, want acl.EntitySubject", req.Subject)
 			}
-			if s.Type != "ticket" || s.ID != "TKT-001" {
+			if s.Type() != "ticket" || s.ID() != "TKT-001" {
 				t.Errorf("Subject = %+v, want {Type:ticket, ID:TKT-001}", s)
 			}
 		})

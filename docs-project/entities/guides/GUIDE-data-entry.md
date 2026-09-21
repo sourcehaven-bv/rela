@@ -500,6 +500,24 @@ clickable anywhere in rela.
 open a completion menu, then Enter or click to insert. The toolbar's
 connected-nodes button opens a searchable picker for the same thing.
 
+Matching is fuzzy and spans the title and the ID together, so you do not have to
+remember which one a word came from: `@fancy-rank` finds "FancyReport ranking
+fix", and a partial ID still puts an exact or prefix match at the top.
+
+**Narrowing by type.** A bare `@` lists the entity types, and they start
+narrowing from the very first letter you type: `@t` offers the types beginning
+with "t", and the three closest stay on offer above the results. Pressing
+Enter on a type (or clicking it) does not insert anything — it scopes the search
+to that type and shows it as a chip, so the next thing you type only matches
+entities of that type. This is the way to reach an entity when you remember its
+type and only a fragment of its title. Once the query is longer than about six
+characters the types drop away, since by then you are plainly naming an entity
+rather than browsing.
+
+To drop the scope, press Backspace until the query is empty and then once more;
+the chip clears and the search widens again. A space still closes the menu
+entirely, so an `@` in ordinary prose leaves nothing hanging open.
+
 A reference is stored as a plain code span — `` `TKT-007` `` — and displays as
 the entity's title, so the file stays readable outside rela and the title
 cannot go stale. Titles you see are the ones you are permitted to see: a
@@ -1496,13 +1514,32 @@ sort:
     direction: asc   # "asc" (default) or "desc"
 ```
 
-You can also sort by the virtual properties `id` (entity ID) and `modified` (file modification time).
+You can also sort a list by the virtual property `id` (entity ID).
 
-Values compare as text, byte by byte. An entity that lacks the sort property
-sorts as if it held the largest value: after every entity that has one when
-ascending, before them when descending. On the PostgreSQL backend a sorted list
-page is served straight from an index when the sort keys are string-shaped
-properties (see the PostgreSQL guide on derived list indexes).
+**Enum properties sort in their declared order.** A `status` whose schema lists
+`values: [backlog, ready, in-progress, done]` sorts in that order rather than
+alphabetically, so writing the enum in workflow order gives the right sort for
+free. A value the schema no longer declares sorts after every declared one.
+This applies to any property whose type declares `values:`, including a custom
+type shared by several properties.
+
+Everything else compares as text, byte by byte — so sorting is case-sensitive
+(`Zebra` before `apple`) and not numeric (`item10` before `item9`). A date
+declaring a non-default `format:` therefore sorts lexically, not
+chronologically; store dates in the default ISO form if you need chronological
+order.
+
+That rule is what every storage backend can express, which is why it is the
+rule: a sort the database cannot perform would force the whole entity type to
+be loaded and sorted in memory for every page.
+
+An entity that lacks the sort property sorts as if it held the largest value:
+after every entity that has one when ascending, before them when descending.
+Ties break by entity ID ascending, in both directions, so paging is stable.
+
+On the PostgreSQL backend a sorted list page is served straight from an index
+when the sort keys are string-shaped properties, including enum keys (see the
+PostgreSQL guide on derived list indexes).
 
 If no sort is configured, the list falls back to the entity type's `default_sort` from the metamodel,
 or sorts by ID ascending.
@@ -1714,6 +1751,9 @@ sections:
 | `children`      | string | Collection to nest under each row (`nested` mode; required) |
 | `parent_columns`| map    | `nested` mode: columns for the source level, keyed by entity type |
 | `child_columns` | map    | `nested` mode: columns for the child level, keyed by entity type |
+| `sort`          | list   | Sort keys for a flat section (`list`, `table`, `cards`) |
+| `parent_sort`   | list   | `nested` mode: sort keys for the source level            |
+| `child_sort`    | list   | `nested` mode: sort keys for the child level             |
 | `group_by`      | string | Property to group entities by                           |
 | `empty_message` | string | Text shown when the collection is empty                 |
 | `link`          | bool   | Link entity titles to their detail pages                |
@@ -1964,9 +2004,44 @@ type to a relation never breaks an existing view. A column naming a property
 the type does not declare is a load error, as is declaring columns for a type
 the level can never hold.
 
+##### Sorting is per level too
+
+For the same reason, a nested section takes `parent_sort:` and `child_sort:`
+rather than one `sort:` — with two collections at two levels, a single key
+could only pick a level by convention. Flat sections (`list`, `table`, `cards`)
+take a plain `sort:`. Using the wrong key for the display is a load error, not
+a silent no-op.
+
+```yaml
+sections:
+  - heading: Epics
+    source: epics
+    display: nested
+    children: tasks
+    parent_sort:
+      - property: status          # declared enum order, e.g. planned before done
+    child_sort:
+      - property: status
+      - property: due
+        direction: asc
+```
+
+Both take the same shape as a list's `sort:`, and follow the same rules —
+declared order for enums, byte-wise text otherwise (see
+[Sort Configuration](#sort-configuration)).
+
+**Sorting happens before the row caps.** A nested section emits at most 2000
+rows in total and at most 25 children per parent, so without a sort the rows
+that survive are whichever the traversal reached first. With one, they are the
+top-sorted rows — which is usually the point of asking for a sort at all.
+
+A section that declares no sort keeps the order the traversal produced, so
+adding these keys changes nothing until you use them.
+
 ##### Other behaviours
 
-- Children render in traversal order. Section-level sorting is not supported yet.
+- Children render in traversal order unless the section declares `child_sort:`
+  (see above); parents likewise honour `parent_sort:`.
 - `recursive: true` on the children's traverse rule is refused: this mode renders
   exactly two levels, and the recursive walk does not record which parent each
   node came from.
@@ -1997,9 +2072,61 @@ entity_views:
 
 ### Fields
 
-| Field         | Type   | Description                                                       |
-| ------------- | ------ | ----------------------------------------------------------------- |
-| `detail_view` | string | View name (must reference a key under `views:`) used for entities of this type |
+| Field         | Type    | Description                                                       |
+| ------------- | ------- | ----------------------------------------------------------------- |
+| `detail_view` | string  | View name (must reference a key under `views:`) used for entities of this type |
+| `duplicate`   | mapping | Narrows what a duplicate of this type copies — see below |
+
+An entry may carry either field or both. An entry that declares neither is a
+load error, since it configures nothing.
+
+### Duplicating an entity
+
+The entity detail page offers a **Duplicate** action for every type you may
+create. It opens a dialog listing the entity's relation types in both
+directions with a checkbox each, then a create form prefilled from the source.
+Nothing is written until you submit, so you can edit the copy — in particular a
+`unique:` title that would otherwise collide — before it exists.
+
+By default the copy carries every property you can see, plus the markdown body.
+To narrow that, name the properties to carry:
+
+```yaml
+entity_views:
+  invoice:
+    detail_view: invoice_detail
+    duplicate:
+      properties: [customer, currency, line_items]
+```
+
+A property outside the list is not blanked; it takes its normal default from
+the metamodel or the template. Omit the `duplicate:` block to carry everything;
+an empty `properties:` list is refused at load, because omitting the block is
+already how a type opts out of narrowing.
+
+The list narrows **properties only** — the markdown body always carries. There
+is no way to exclude it, so a type whose body you would not want copied should
+not be narrowed but reconsidered: the user can clear the body in the create form
+before submitting.
+
+Three kinds of property never carry, whatever you configure, because copying
+them produces a broken record rather than a narrower one:
+
+- **Attachments** (`file` properties). The bytes are stored under the source
+  entity's id, so the copy would point at a file that is not its own.
+- **State-machine properties.** Creating an entity is an *entry*, not a
+  transition, so the copy starts at the state machine's initial value rather
+  than wherever the source had reached.
+- **Properties hidden from you** by field-level `visible:` rules. You never
+  received the value, so the copy cannot carry it.
+
+The dialog names anything it could not copy, so an incomplete duplicate is
+always visible as one.
+
+Relations follow the checkboxes: outgoing types are selected by default, and
+incoming ones ("something else points at me") are offered but not preselected.
+Only relations whose other end you may read are listed, so the counts shown are
+per-viewer and may be lower than the raw graph.
 
 ### How navigation resolves
 
@@ -3903,7 +4030,7 @@ colour-blindness and greyscale where amber-versus-red alone would not.
 | `header` / `footer` | string | Markdown rendered above / below the chart |
 | `hierarchy` | list | Relation types traversed parent-to-child; at least one required |
 | `multi_parent` | string | `first` (default) or `error` — see below |
-| `on_cycle` | string | `error` (default) or `prune` — see below |
+| `on_cycle` | string | `error` (default), `prune` or `mark` — see below |
 | `default_depth` | int | Levels expanded on first load (default 2) |
 | `max_depth` | int | Levels per **response**, measured from the response's root (default 10). Drilling re-roots the walk, so deeper levels stay reachable; beyond-cap levels still fold into their ancestor's rolled span |
 | `max_nodes` | int | Nodes per response (default 2000); exceeding it flags the response as truncated |
@@ -3934,9 +4061,22 @@ rather than a silent default:
   honest. `error` refuses the request instead, for projects that intend a
   strict tree. There is deliberately no `duplicate`: rendering one entity
   under two ancestors double-counts every roll-up above it.
-- `on_cycle: error` refuses the request when containment loops (A contains B
-  contains A); `prune` drops the loop and renders the rest. A cycle is always
-  a data bug — the choice is only between a hard stop and a degraded render.
+- `on_cycle` says what happens when containment loops (A contains B contains
+  A). `error` (the default) refuses the request; `prune` drops the looping
+  component and renders the rest; `mark` renders it in place and flags it.
+
+  Under `mark` the loop is broken at exactly one edge: the entity the loop
+  closes back onto keeps its ordinary position under its first parent, and the
+  single edge that returned to it is not drawn. That node carries `in_cycle`
+  on the wire and a `↻` marker in the SPA, and the entity holding the cut edge
+  reports `has_more_children` — so a withheld edge never reads as a leaf. No
+  entity is drawn twice, and no roll-up counts one twice.
+
+  Which policy is right depends on the schema. A loop is a data error in a
+  project plan that intends a strict tree, so `error` fails loudly; it may be
+  a legitimate mutual containment elsewhere, which is what `mark` is for. The
+  marker is therefore worded neutrally: it reports that an edge is not shown,
+  not that something is broken.
 
 Both `error` policies evaluate against the **requesting principal's visible
 subgraph** (hidden entities must not be reportable), so under ACL the same
@@ -4133,12 +4273,30 @@ Context-specific variables:
 
 | Variable            | Available In         | Description              |
 | ------------------- | -------------------- | ------------------------ |
-| `RELA_ENTITY_ID`    | entity, view         | Current entity ID        |
+| `RELA_ENTITY_ID`    | entity, view         | Current entity ID, always bare |
 | `RELA_ENTITY_TYPE`  | entity, view         | Current entity type      |
+| `RELA_ENTITY_FACE`  | entity, view         | Face on screen, empty for a faceless type |
+| `RELA_ENTITY_REF`   | entity, view         | Address: `ID@face`, or the bare ID when there is no face |
 | `RELA_LIST_ID`      | list                 | Current list ID          |
 | `RELA_VIEW_ID`      | view                 | Current view ID          |
 
 Custom variables from `env:` are added to the process environment.
+
+On an entity type that declares [faces](content-states.md), a command runs
+against the face the reader has on screen. `RELA_ENTITY_ID` stays bare, so a
+script that predates faces keeps working unchanged; `RELA_ENTITY_REF` is the
+address `rela update` and the HTTP API accept, so a face-aware script writes
+back to the face it read:
+
+```bash
+rela update "$RELA_ENTITY_REF" --set reviewed_at="$(date -I)"
+```
+
+The payload an entity-context command receives is scoped to the invoking
+principal: a row they may not read refuses with the ordinary not-found, a face
+they may not read does the same, and a property hidden by `visible:` is absent
+rather than raw. A command script therefore sees what its caller sees, never
+more.
 
 ### The `::rela::` Line Protocol
 

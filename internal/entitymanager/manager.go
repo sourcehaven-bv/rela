@@ -649,7 +649,7 @@ func (m *Manager) recordACLBypass(ctx context.Context, req acl.WriteRequest) {
 	case acl.RelationSubject:
 		subject = &audit.Subject{Kind: "relation", RelationType: s.Type, FromID: s.FromID}
 	case acl.EntitySubject:
-		subject = &audit.Subject{Kind: "entity", Type: s.Type, ID: s.ID}
+		subject = &audit.Subject{Kind: "entity", Type: s.Type(), ID: s.ID()}
 	}
 	m.deps.Audit.Record(audit.Record{
 		Time:        time.Now().UTC(),
@@ -682,8 +682,8 @@ func (m *Manager) recordDeniedWrite(ctx context.Context, d acl.Decision, req acl
 	case acl.EntitySubject:
 		subject = &audit.Subject{
 			Kind: "entity",
-			Type: s.Type,
-			ID:   s.ID,
+			Type: s.Type(),
+			ID:   s.ID(),
 		}
 	}
 	m.deps.Audit.Record(audit.Record{
@@ -750,7 +750,7 @@ func (m *Manager) CreateEntity(
 	}
 	if err := m.authorizeAndAudit(ctx, acl.WriteRequest{
 		Op:      acl.OpCreate,
-		Subject: acl.EntitySubject{Type: e.Type, ID: opts.ID, Face: opts.Face},
+		Subject: acl.NewEntitySubject(e.Type, opts.ID, opts.Face),
 	}); err != nil {
 		return nil, err
 	}
@@ -924,7 +924,7 @@ func (m *Manager) UpdateEntity(ctx context.Context, e *entity.Entity) (*entity.U
 	// GrantsVerbOnState exists to hold (BUG-Y0GNSB).
 	if err := m.authorizeAndAudit(ctx, acl.WriteRequest{
 		Op:      acl.OpUpdate,
-		Subject: acl.EntitySubject{Type: e.Type, ID: e.ID, Face: e.Face},
+		Subject: acl.NewEntitySubject(e.Type, e.ID, e.Face),
 	}); err != nil {
 		return nil, err
 	}
@@ -1059,7 +1059,7 @@ func (m *Manager) PatchEntity(
 		// SEPARATE fields — passing the fused string as the ID would make the
 		// row-gate key disagree with every other write path, which names the
 		// bare id (see UpdateEntity above).
-		Subject: acl.EntitySubject{Type: stored.Type, ID: stored.ID, Face: stored.Face},
+		Subject: acl.NewEntitySubject(stored.Type, stored.ID, stored.Face),
 	}); err != nil {
 		return nil, err
 	}
@@ -1155,7 +1155,7 @@ func (m *Manager) updateCore(
 	if err := m.deps.Transitions.EnforceUpdate(
 		ctx, oldEntity, e, m.deps.TransitionGuard, m.deps.TransitionGraph,
 	); err != nil {
-		return nil, m.mapTransitionError(ctx, acl.EntitySubject{Type: e.Type, ID: e.ID, Face: e.Face}, err)
+		return nil, m.mapTransitionError(ctx, acl.NewEntitySubject(e.Type, e.ID, e.Face), err)
 	}
 
 	// Enforce `unique: true` natural-key constraints against the final
@@ -1423,7 +1423,7 @@ func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*e
 	// confusing than the ErrEntityNotFound returned above.
 	if aclErr := m.authorizeAndAudit(ctx, acl.WriteRequest{
 		Op:      acl.OpDelete,
-		Subject: acl.EntitySubject{Type: current.Type, ID: id, Face: current.Face},
+		Subject: acl.NewEntitySubject(current.Type, id, current.Face),
 	}); aclErr != nil {
 		return nil, aclErr
 	}
@@ -1622,7 +1622,7 @@ func (m *Manager) DeleteEntityFace(
 	}
 	if aclErr := m.authorizeAndAudit(ctx, acl.WriteRequest{
 		Op:      acl.OpDelete,
-		Subject: acl.EntitySubject{Type: current.Type, ID: id, Face: current.Face},
+		Subject: acl.NewEntitySubject(current.Type, id, current.Face),
 	}); aclErr != nil {
 		return nil, aclErr
 	}
@@ -1713,13 +1713,14 @@ func (m *Manager) RenameEntity(
 	case getErr == nil:
 		if aclErr := m.authorizeAndAudit(ctx, acl.WriteRequest{
 			Op: acl.OpRename,
-			// facesubject:no-face — a rename re-keys the WHOLE entity family
+			// Faceless on purpose: a rename re-keys the WHOLE entity family
 			// (fsstore.renameEntity walks stateFamily(oldID), and
 			// store.RenameEntity takes no Face), so there is no single face to
-			// name here. Setting one would assert a narrower scope than the
+			// name here. Naming one would assert a narrower scope than the
 			// operation has: authorizing the rename of one face while renaming
-			// all of them.
-			Subject: acl.EntitySubject{Type: current.Type, ID: oldID},
+			// all of them. The faceless constructor is the loud, greppable way
+			// to say that; it authorizes against the default face.
+			Subject: acl.NewFacelessEntitySubject(current.Type, oldID),
 		}); aclErr != nil {
 			return nil, aclErr
 		}
@@ -1845,6 +1846,13 @@ func (m *Manager) CreateRelation(
 	if fromEntity, ferr := anyFaceOf(ctx, m.deps.Store, from); ferr == nil {
 		fromType = fromEntity.Type
 	}
+	// BEFORE the ACL, so an unvalidated coordinate never becomes an
+	// authorization coordinate — and so the check still runs on the
+	// bypassACL path, where authorizeAndAudit returns without consulting
+	// any grant.
+	if fErr := m.deps.requireRelationFaceFor(relType, fromType, opts.FromFace); fErr != nil {
+		return nil, fErr
+	}
 	if aclErr := m.authorizeAndAudit(ctx, acl.WriteRequest{
 		Op: acl.OpCreate,
 		Subject: acl.RelationSubject{
@@ -1949,6 +1957,10 @@ func (m *Manager) UpdateRelation(
 	var sourceType string
 	if fromEntity, ferr := anyFaceOf(ctx, m.deps.Store, from); ferr == nil {
 		sourceType = fromEntity.Type
+	}
+	// BEFORE the ACL, for the reason given in [Manager.CreateRelation].
+	if fErr := m.deps.requireRelationFaceFor(relType, sourceType, opts.FromFace); fErr != nil {
+		return nil, fErr
 	}
 	if aclErr := m.authorizeAndAudit(ctx, acl.WriteRequest{
 		Op: acl.OpUpdate,

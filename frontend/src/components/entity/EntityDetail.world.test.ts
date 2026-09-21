@@ -3,6 +3,7 @@ import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { PiniaColada } from '@pinia/colada'
 import EntityDetail from './EntityDetail.vue'
+import CommandModal from './CommandModal.vue'
 import { useSchemaStore } from '@/stores/schema'
 import { useUIStore } from '@/stores/ui'
 import type { Entity, CopyOffer, EntityWorld } from '@/types'
@@ -625,20 +626,42 @@ describe('EntityDetail world binding', () => {
       expect(fetchViewMock).toHaveBeenCalledWith(entityType, entityId, undefined)
     })
 
-    it('hides operator COMMANDS while a NON-bare face is on screen (S1)', async () => {
-      // A command pipes a rendered view to a shell script's stdin, and the
-      // server passes defaultViewWorld() explicitly there — so with the
-      // published face on screen the script gets the BARE face's content.
+    // REACHABILITY, not suppression (BUG-G2BASF, measure
+    // faced-type-affordance-parity-test). This used to assert the buttons were
+    // HIDDEN at a non-bare face. On a faced type that is total — such a type
+    // has no bare face to fall back to — so the affordance was gone from the
+    // product at every address, and an assertion shaped that way could not
+    // tell the difference.
+    it('renders operator COMMANDS at a NON-bare face, addressed BY that face (S1)', async () => {
+      // The type DECLARES faces, which is where the old gate was total rather
+      // than partial: such a type has no bare face to fall back to
+      // (BUG-HC6I2T), so `servedFace ? [] : loaded` had no reachable else
+      // branch at any address.
+      useSchemaStore().entityTypes.set(entityType, {
+        name: entityType,
+        label: 'Policy',
+        properties: { title: { type: 'string', values: null } },
+        faces: { draft: { label: 'Concept' }, published: { label: 'Vastgesteld' } },
+      } as never)
       getCommandsMock.mockResolvedValue([{ id: 'publish', label: 'Run publish script' }])
       mockRoute.query = { world: 'published' }
       const w = await mountDetail(viewResponse(standIn()))
       rendersProof(w)
-      expect(w.text()).not.toContain('Run publish script')
+      expect(w.text()).toContain('Run publish script')
 
-      // The bare face under the SAME world is what the script gets, so the
-      // button renders — the world is not what gates it.
-      const bare = await mountDetail(viewResponse())
-      expect(bare.text()).toContain('Run publish script')
+      // The address is what makes rendering it honest: the server resolves
+      // `ID@face` literally for both command contexts, so the script receives
+      // the row on screen. Sending the bare id is what USED to make the
+      // button a lie — and was then used to justify hiding it.
+      expect(w.findComponent(CommandModal).props('entityId')).toBe('POL-1@published')
+    })
+
+    it('addresses a command by the BARE id when no face is served', async () => {
+      getCommandsMock.mockResolvedValue([{ id: 'publish', label: 'Run publish script' }])
+      const w = await mountDetail(viewResponse())
+      rendersProof(w)
+      expect(w.text()).toContain('Run publish script')
+      expect(w.findComponent(CommandModal).props('entityId')).toBe('POL-1')
     })
 
     it('deletes by the served ADDRESS and names the face', async () => {

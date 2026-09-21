@@ -256,3 +256,41 @@ describe('reshapeLegacyToModern', () => {
     ])
   })
 })
+
+// A card state whose `added` is populated but whose `entries` is empty emits an
+// EMPTY edge list, not the added edge — `added`/`removed`/`updated` only decide
+// whether the key is emitted at all, while `entries` is the desired end state
+// that becomes `data`.
+//
+// This is not a hypothetical. The duplicate prefill (TKT-Z8K2FS) first
+// populated only `added`, and the result was a create whose relations body said
+// "this relation should have no edges". Every unit test passed; the copy simply
+// arrived without its relations and nothing errored. Pinned here because the
+// asymmetry is invisible at the call site.
+describe('buildRelationsPatch entries/added asymmetry', () => {
+  it('emits an empty edge list when added is set but entries is not', () => {
+    const pending = new Map<string, RelationCardState>([
+      [`blocks${OUTGOING_SUFFIX}`, card({ added: [{ targetId: 'FEAT-2' }] })],
+    ])
+
+    const out = buildRelationsPatchRaw(pending, new Map())
+
+    expect(out.blocks).toEqual({ data: [] })
+  })
+
+  it('emits the edge when entries carries it', () => {
+    const pending = new Map<string, RelationCardState>([
+      [
+        `blocks${OUTGOING_SUFFIX}`,
+        card({
+          entries: [{ id: 'FEAT-2', type: 'feature' }],
+          added: [{ targetId: 'FEAT-2' }],
+        }),
+      ],
+    ])
+
+    const out = buildRelationsPatchRaw(pending, new Map())
+
+    expect(out.blocks).toEqual({ data: [{ type: 'feature', id: 'FEAT-2' }] })
+  })
+})

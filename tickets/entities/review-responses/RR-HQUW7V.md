@@ -1,0 +1,9 @@
+---
+id: RR-HQUW7V
+type: review-response
+title: requireRelationFaceFor REQUIRED a face, breaking every caller that cannot supply one
+finding: 'The first implementation of requireRelationFaceFor (internal/entitymanager/core.go) returned ErrFaceRequired when a content-scoped relation from a FACED source named no face. Every in-tree caller except the data-entry outgoing path passes entity.RelationOptions{} with a zero FromFace, so all of them broke: internal/cli/link.go:18 (`rela link`, no face flag exists), internal/mcp/tools_relation.go:81 (the tool schema has no face parameter at all), internal/dataentry/caldav_write.go:243, internal/cli/renumber.go:68, and internal/dataentry/relations_modern.go:354 — the INCOMING-edge path, whose zero tail is a documented deliberate decision (relations_direction.go:301-304: ''the peer''s face is not this request''s to choose''). Reproduced empirically: a `rela link`-shaped call against the faced fixture returned ''this entity type declares content states; a create must name one''. The full test suite stayed green because nothing else exercises a content-scoped relation from a faced source.'
+severity: critical
+resolution: 'Took the reviewer''s option 1: dropped the ErrFaceRequired branch, keeping only the two REJECTION rules (identity scope refuses a named face; faceless source refuses a named face). RR-9LM7T7 asked for rejection of an invalid face, never for mandating one — requiring it was scope I added without checking the callers. The asymmetry with requireCreateFaceFor is now documented at the declaration: an entity create with no face has no row to write and must refuse, whereas a relation create with a zero tail writes a real, addressable, readable edge at the identity coordinate. Guarded by TestCreateRelation_ZeroTailStillWorksForFacelessCallers, which reproduces the exact option structs cli/link.go and mcp/tools_relation.go pass; verified it fails against the old behaviour.'
+status: addressed
+---

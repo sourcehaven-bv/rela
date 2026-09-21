@@ -26,13 +26,13 @@ require (
 	github.com/mattn/go-runewidth v0.0.30
 	github.com/microcosm-cc/bluemonday v1.0.27
 	github.com/mitchellh/go-wordwrap v1.0.1
-	github.com/modelcontextprotocol/go-sdk v1.7.0
-	github.com/olekukonko/tablewriter v1.1.4
+	github.com/modelcontextprotocol/go-sdk v1.8.0
+	github.com/olekukonko/tablewriter v1.1.5
 	github.com/stretchr/testify v1.12.1
 	github.com/teambition/rrule-go v1.8.2
 	github.com/teekennedy/goldmark-markdown v0.5.1
 	github.com/vloothuis/textanchor v0.2.0
-	github.com/wailsapp/wails/v3 v3.0.0-beta.19
+	github.com/wailsapp/wails/v3 v3.0.0-beta.23
 	github.com/wneessen/go-mail v0.8.1
 	github.com/yuin/goldmark v1.8.6
 	github.com/yuin/gopher-lua v1.1.2
@@ -42,7 +42,7 @@ require (
 	golang.org/x/sync v0.23.0
 	golang.org/x/sys v0.48.0
 	gopkg.in/yaml.v3 v3.0.1
-	modernc.org/sqlite v1.58.0
+	modernc.org/sqlite v1.59.0
 )
 
 require (
@@ -119,7 +119,6 @@ require (
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/jbenet/go-context v0.0.0-20150711004518-d14ea06fba99 // indirect
-	github.com/jchv/go-winloader v0.0.0-20250406163304-c1995be93bd1 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/jsuar/go-cron-descriptor v0.1.0 // indirect
 	github.com/kevinburke/ssh_config v1.4.0 // indirect
@@ -164,7 +163,7 @@ require (
 	golang.org/x/time v0.15.0 // indirect
 	google.golang.org/protobuf v1.36.6 // indirect
 	gopkg.in/warnings.v0 v0.1.2 // indirect
-	modernc.org/libc v1.75.6 // indirect
+	modernc.org/libc v1.75.7 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
 )

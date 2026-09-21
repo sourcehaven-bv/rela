@@ -703,3 +703,148 @@ func TestFacedAddress_IncomingEdgeAddressedByItsOwnTail(t *testing.T) {
 	}
 	assertNoEdgeTail(ctx, t, app, "POL-1", "draft", "cites", "FEAT-1")
 }
+
+// TestFacedAddress_RelationsSubTreeReachesItsOwnTail is the BUG-VFHUWO
+// acceptance test: the `/{plural}/{id}/relations` sub-tree must resolve a
+// faced address and serve THAT face's edges.
+//
+// Before the fix these handlers passed the raw path segment to
+// `store.GetEntity`, which is the bare id by contract. On pgstore a faced
+// address matched no row, so the whole sub-tree 404'd for a type that
+// declares faces — and the bare id 404s too, because such a type stores
+// nothing at the zero coordinate. There was no address that worked.
+//
+// This asserts on WHICH EDGES come back, not merely on a 200. memstore keys
+// its index on FormatStateRef, so a suffixed id resolves there by accident
+// and a status-code assertion passes against the broken code — the property
+// that hid this defect through three separate bugs.
+func TestFacedAddress_RelationsSubTreeReachesItsOwnTail(t *testing.T) {
+	app, d := facedApp(t, func(st store.Store) *acl.Declarative {
+		return mustNewACL(t, &acl.Policy{
+			Roles: map[string]acl.RoleDef{"editor": {
+				Read:   []string{"*"},
+				Create: []string{"*", "policy@draft", "policy@published"},
+				Update: []string{"*", "policy@draft", "policy@published"},
+				Delete: []string{"*", "policy@draft", "policy@published"},
+			}},
+			Assignments: map[string]string{"bob": "editor"},
+		}, st)
+	})
+	ctx := context.Background()
+	bob := principal.With(ctx, principal.Principal{User: "bob", Tool: principal.ToolDataEntry})
+
+	// One target per face, so "which edges came back" distinguishes the tails.
+	for _, id := range []string{"FEAT-DRAFT", "FEAT-PUB"} {
+		if err := app.store.CreateEntity(ctx, &entity.Entity{
+			ID: id, Type: "feature", Properties: map[string]any{"title": id},
+		}); err != nil {
+			t.Fatalf("seed %s: %v", id, err)
+		}
+	}
+	if _, err := app.store.CreateRelation(ctx, "POL-1", "cites", "FEAT-DRAFT",
+		&store.RelationData{FromFace: "draft"}); err != nil {
+		t.Fatalf("seed draft-tailed edge: %v", err)
+	}
+	if _, err := app.store.CreateRelation(ctx, "POL-1", "cites", "FEAT-PUB",
+		&store.RelationData{FromFace: "published"}); err != nil {
+		t.Fatalf("seed published-tailed edge: %v", err)
+	}
+
+	targetsFor := func(addr string) []string {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/policys/"+addr+"/relations", http.NoBody)
+		req = req.WithContext(gateCtxFor(bob, t, d))
+		rec := httptest.NewRecorder()
+		app.handleV1DynamicRoutes(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET %s/relations = %d, want 200; body=%s", addr, rec.Code, rec.Body)
+		}
+		var body map[string][]struct {
+			ID string `json:"id"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("decode: %v; body=%s", err, rec.Body)
+		}
+		var ids []string
+		for _, e := range body["cites"] {
+			ids = append(ids, e.ID)
+		}
+		slices.Sort(ids)
+		return ids
+	}
+
+	if got, want := targetsFor("POL-1@draft"), []string{"FEAT-DRAFT"}; !slices.Equal(got, want) {
+		t.Errorf("draft face serves %q, want %q — a faced address must serve its OWN tail", got, want)
+	}
+	if got, want := targetsFor("POL-1@published"), []string{"FEAT-PUB"}; !slices.Equal(got, want) {
+		t.Errorf("published face serves %q, want %q", got, want)
+	}
+}
+
+// TestFacedAddress_SingleRelationPatchHitsItsOwnTail pins rule 1 of
+// tailOfExistingEdge: when a triple carries an edge at TWO tails, a PATCH
+// addressed to one face must modify THAT face's edge.
+//
+// Discovering the tail from the triple instead returns whichever edge the
+// store yields first, so `POL-1@draft` could write the published edge's meta
+// — the confusion an `@face` address exists to resolve, reintroduced by the
+// fix for the bug next to it.
+func TestFacedAddress_SingleRelationPatchHitsItsOwnTail(t *testing.T) {
+	app, d := facedApp(t, func(st store.Store) *acl.Declarative {
+		return mustNewACL(t, &acl.Policy{
+			Roles: map[string]acl.RoleDef{"editor": {
+				Read:   []string{"*"},
+				Create: []string{"*", "policy@draft", "policy@published"},
+				Update: []string{"*", "policy@draft", "policy@published"},
+				Delete: []string{"*", "policy@draft", "policy@published"},
+			}},
+			Assignments: map[string]string{"bob": "editor"},
+		}, st)
+	})
+	ctx := context.Background()
+	bob := principal.With(ctx, principal.Principal{User: "bob", Tool: principal.ToolDataEntry})
+
+	// ONE triple, TWO tails — the case a tail discovered from the triple
+	// cannot distinguish.
+	for _, face := range []entity.Face{"published", "draft"} {
+		if _, err := app.store.CreateRelation(ctx, "POL-1", "cites", "FEAT-1",
+			&store.RelationData{
+				FromFace:   face,
+				Properties: map[string]any{"note": string(face) + " original"},
+			}); err != nil {
+			t.Fatalf("seed %s-tailed edge: %v", face, err)
+		}
+	}
+
+	// PUBLISHED is addressed deliberately. The store yields a triple's tails
+	// in sorted order, so a tail DISCOVERED from the triple is "draft" —
+	// addressing the other one is what makes this assertion sensitive to the
+	// address being honored rather than to store ordering. (Addressing draft
+	// passes either way, which is exactly the accidental-agreement trap that
+	// hid BUG-VFHUWO itself.)
+	req := httptest.NewRequest(http.MethodPatch,
+		"/api/v1/policys/POL-1@published/relations/cites/FEAT-1",
+		strings.NewReader(`{"meta":{"note":"published EDITED"}}`))
+	req = req.WithContext(gateCtxFor(bob, t, d))
+	rec := httptest.NewRecorder()
+	app.handleV1DynamicRoutes(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PATCH = %d, want 200; body=%s", rec.Code, rec.Body)
+	}
+
+	noteAt := func(face entity.Face) string {
+		t.Helper()
+		rel, err := edgeOnFace(ctx, app.store, "POL-1", face, "cites", "FEAT-1")
+		if err != nil {
+			t.Fatalf("read %s-tailed edge: %v", face, err)
+		}
+		s, _ := rel.Properties["note"].(string)
+		return s
+	}
+	if got, want := noteAt("published"), "published EDITED"; got != want {
+		t.Errorf("published edge note = %q, want %q — the addressed tail was not written", got, want)
+	}
+	if got, want := noteAt("draft"), "draft original"; got != want {
+		t.Errorf("draft edge note = %q, want %q — a PATCH to the PUBLISHED face modified it", got, want)
+	}
+}

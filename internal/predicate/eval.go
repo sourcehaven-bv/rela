@@ -59,6 +59,8 @@ func (s *evalState) eval(ctx context.Context, n node) (Value, error) {
 		return s.evalAttr(ctx, x)
 	case *callNode:
 		return s.evalCall(ctx, x)
+	case *traversalNode:
+		return s.evalTraversal(ctx, x)
 	case *tableArgNode:
 		// Table-arg nodes are handled inside evalCall via the
 		// per-call dispatch; reaching here is a bug.

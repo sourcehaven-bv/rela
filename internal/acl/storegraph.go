@@ -41,7 +41,18 @@ func (g *StoreGraph) HasEdge(ctx context.Context, from, relType, to string) bool
 		return true
 	}
 	if !errors.Is(err, store.ErrNotFound) {
-		slog.Warn("acl: StoreGraph.HasEdge: backend error treated as no-edge",
+		// A cancelled request context is routine: the caller hung up and
+		// nobody is waiting for the answer. It is not a backend fault, and
+		// at this call's fan-out (see the O(...) note above) a single
+		// disconnect emits a burst of these — enough to bury the genuine
+		// backend errors this log exists to surface. Demote those to Debug
+		// and keep Warn for real failures. DeadlineExceeded stays at Warn
+		// on purpose: a timeout IS a signal about backend latency.
+		level := slog.LevelWarn
+		if errors.Is(err, context.Canceled) {
+			level = slog.LevelDebug
+		}
+		slog.Log(ctx, level, "acl: StoreGraph.HasEdge: backend error treated as no-edge",
 			"from", from, "rel_type", relType, "to", to, "error", err)
 	}
 	return false

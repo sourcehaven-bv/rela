@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"net/http"
 	"net/url"
@@ -25,6 +26,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // Protocol prefix for structured command output messages.
@@ -237,6 +239,55 @@ type commandProjectInfo struct {
 	Metamodel string `json:"metamodel"`
 }
 
+// entityReadable reports whether this principal may read the given row: the
+// world block, the face-blind row gate, then the FACE gate — the same three
+// checks [visibleReader.getVisibleRef] applies, in the same order.
+//
+// Not delegated to getVisibleRef because that resolves an address to a row and
+// this caller already holds one: a command request carries no entity type, so
+// the type has to come off the stored entity. Re-reading through getVisibleRef
+// would mean a second store round-trip to reach the identical verdict on the
+// identical row.
+//
+// A gate ERROR is a denial, not a pass. The caller renders every false as the
+// uniform not-found, so a denied face stays indistinguishable from an absent
+// one (the row-level rule).
+func (h *commandHandler) entityReadable(ctx context.Context, e *entity.Entity) bool {
+	if worldFromContext(ctx).blocksAllReads() {
+		return false
+	}
+	ok, err := readGateFromContext(ctx).PermitsRead(ctx, e.Type, e.ID)
+	if err != nil || !ok {
+		return false
+	}
+	return faceReadable(ctx, e.Type, e.Face)
+}
+
+// redactEntity applies field-level `visible:` redaction to an entity bound for
+// a command's stdin.
+//
+// An unwired redactor FAILS CLOSED: the payload leaves the process, so a
+// missing collaborator must withhold values rather than ship them raw. Both
+// construction sites supply one (app.go and the test helper), so reaching the
+// nil arm is a wiring bug, reported rather than silently tolerated.
+//
+// Nil: e nil returns nil.
+func (h *commandHandler) redactEntity(ctx context.Context, e *entity.Entity) *entity.Entity {
+	if e == nil {
+		return nil
+	}
+	if h.redactor == nil {
+		slog.Error("dataentry: command handler has no field redactor; "+
+			"withholding every property from the command payload",
+			"type", e.Type, "id", e.ID)
+		out := *e
+		out.Properties = nil
+		out.Content = ""
+		return &out
+	}
+	return visibility.Redact(ctx, h.redactor, e)
+}
+
 func (h *commandHandler) buildEntityInput(ctx context.Context, e *entity.Entity) *commandInput {
 	return &commandInput{
 		Context:   "entity",
@@ -439,7 +490,25 @@ func (h *commandHandler) handleCommandExec(w http.ResponseWriter, r *http.Reques
 			http.Error(w, "Entity not found: "+entityID, http.StatusNotFound)
 			return
 		}
-		input = h.buildEntityInput(r.Context(), entityDomain)
+		// READ-GATE the row, then its FACE, then redact — the chain this
+		// branch owed and did not have (BUG-G2BASF review). The view branch
+		// gets all three from executeView; this one reads the raw store, so
+		// it applies them itself.
+		//
+		// Ordered read-then-gate rather than gate-then-read because the row
+		// gate needs the entity TYPE and a command request carries only an
+		// address. That is the same order executeViewRef uses, and it
+		// discloses nothing: every failure below is the one not-found a
+		// missing entity produces, and nothing derived from the row is
+		// written before the gates clear.
+		//
+		// `authorizeCommand` does NOT cover this: it decides whether this
+		// COMMAND may run, not which rows it may see.
+		if !h.entityReadable(r.Context(), entityDomain) {
+			http.Error(w, "Entity not found: "+entityID, http.StatusNotFound)
+			return
+		}
+		input = h.buildEntityInput(r.Context(), h.redactEntity(r.Context(), entityDomain))
 	case "list":
 		listID := r.URL.Query().Get("list_id")
 		listCfg, found := s.Cfg.Lists[listID]
@@ -876,9 +945,22 @@ func (h *commandHandler) buildCommandEnv(cmd CommandConfig, input *commandInput)
 		"RELA_CONTEXT="+cmd.Context,
 	)
 	if input.Entity != nil {
+		// The face is a SEPARATE variable, and RELA_ENTITY_ID stays bare
+		// (BUG-G2BASF). A script that does not know about faces keeps
+		// working unchanged, and one that does can address the row it was
+		// actually invoked on without parsing an address out of the id.
+		//
+		// RELA_ENTITY_REF is what `rela update` and the HTTP API accept, so
+		// a face-aware script writes back to the face it read. Built with
+		// [entity.FormatStateRef], the inverse of the ParseStateRef the
+		// handler above uses, so the two spellings of an address cannot
+		// drift apart here. Both are always SET — an unset variable and an
+		// empty one are different things to a shell.
 		env = append(env,
 			"RELA_ENTITY_ID="+input.Entity.ID,
 			"RELA_ENTITY_TYPE="+input.Entity.Type,
+			"RELA_ENTITY_FACE="+string(input.Entity.Face),
+			"RELA_ENTITY_REF="+entity.FormatStateRef(input.Entity.ID, input.Entity.Face),
 		)
 	}
 	if input.ListID != "" {

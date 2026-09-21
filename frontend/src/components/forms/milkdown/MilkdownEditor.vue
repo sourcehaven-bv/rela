@@ -51,7 +51,8 @@ import {
 } from './entityRefResolution'
 import { guardWriteBack, decideEmit } from './writeBackGuard'
 import { createMentionTrigger } from './mentionTrigger'
-import { useMentionMenu } from './useMentionMenu'
+import { useSchemaMentionMenu, type MentionChoice } from './useMentionMenu'
+import { createMentionKeydownHandler } from './mentionKeymap'
 import {
   INLINE_COMMANDS,
   BLOCK_COMMANDS,
@@ -107,10 +108,8 @@ const editor = shallowRef<Editor | null>(null)
 /** True while the document is empty, so the placeholder shows. */
 const isEmpty = ref(true)
 
-const menu = useMentionMenu()
-const menuState = computed(
-  () => menu.state as unknown as import('./useMentionMenu').MentionMenuState
-)
+// Binds the type picker to the live schema; see `useSchemaMentionMenu`.
+const menu = useSchemaMentionMenu()
 
 const showPlaceholder = computed(() => isEmpty.value)
 
@@ -147,6 +146,7 @@ const historyCommands = HISTORY_COMMANDS
  */
 const showTableGroup = ref(false)
 
+/** Every command the toolbar can light up, probed together on each change. */
 const ALL_COMMANDS = [
   ...INLINE_COMMANDS,
   ...BLOCK_COMMANDS,
@@ -462,10 +462,26 @@ function runCommand(cmd: EditorCommand): void {
   currentView()?.focus()
 }
 
+/**
+ * Acts on a menu row: a type row scopes the search, an entity row inserts.
+ *
+ * Shared by click and by Enter/Tab so the two paths cannot diverge on what a
+ * row means. Picking a type keeps the menu open — it narrows the search, it is
+ * not the insertion, and the user still has to choose an entity.
+ */
+function commitChoice(choice: MentionChoice): void {
+  if (choice.kind === 'entity') {
+    insertRef(choice.entity)
+    return
+  }
+  menu.selectType(choice.name)
+  currentView()?.focus()
+}
+
 function onMenuPick(index: number): void {
   menu.setHighlight(index)
-  const item = menu.current()
-  if (item) insertRef(item as Entity)
+  const choice = menu.current()
+  if (choice) commitChoice(choice)
 }
 
 function onMenuHover(index: number): void {
@@ -475,15 +491,23 @@ function onMenuHover(index: number): void {
 /**
  * Keyboard handling for whichever floating surface is open.
  *
- * Bound on the wrapper in the capture phase so it runs before ProseMirror's
- * own keymap: without that, Enter inserts a paragraph break and the arrow keys
- * move the cursor instead of the highlight.
- *
- * Two surfaces can want a key. The mention menu is checked first because it is
- * the more transient of the two and claims several keys; the link panel claims
- * only Escape. Resolving a stray overlap one way is better than acting on
- * both.
+ * Mention semantics live in `mentionKeymap.ts`; this supplies the three things
+ * that need the editor itself, and handles the link panel's own Escape.
+ * Bound in the capture phase on the wrapper.
  */
+const onMentionKeydown = createMentionKeydownHandler(menu, {
+  queryText: () => {
+    const view = currentView()
+    return view ? slashProvider?.getContent(view) : undefined
+  },
+  commit: commitChoice,
+  dismiss: (query) => {
+    mentionTrigger.dismiss(query)
+    menu.close()
+    slashProvider?.hide()
+  },
+})
+
 function onKeydownCapture(event: KeyboardEvent): void {
   if (!menu.state.open) {
     if (event.key === 'Escape' && linkUI.panelOpen.value) {
@@ -496,32 +520,7 @@ function onKeydownCapture(event: KeyboardEvent): void {
     }
     return
   }
-  switch (event.key) {
-    case 'ArrowDown':
-      event.preventDefault()
-      menu.moveHighlight(1)
-      break
-    case 'ArrowUp':
-      event.preventDefault()
-      menu.moveHighlight(-1)
-      break
-    case 'Enter':
-    case 'Tab': {
-      const item = menu.current()
-      if (!item) return
-      event.preventDefault()
-      insertRef(item as Entity)
-      break
-    }
-    case 'Escape':
-      event.preventDefault()
-      mentionTrigger.dismiss(menu.state.query)
-      menu.close()
-      slashProvider?.hide()
-      break
-    default:
-      break
-  }
+  onMentionKeydown(event)
 }
 
 onMounted(async () => {
@@ -865,8 +864,9 @@ onBeforeUnmount(() => {
          menu part of the document the user is editing. -->
     <div ref="menuRoot" class="mention-menu-anchor" data-show="false">
       <MentionMenu
-        :state="menuState"
+        :state="menu.state"
         :min-query-length="menu.minQueryLength"
+        :highlighted-index="menu.highlightedIndex()"
         @pick="onMenuPick"
         @hover="onMenuHover"
       />

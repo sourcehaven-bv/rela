@@ -39,7 +39,7 @@ func TestValidateEntityProperties(t *testing.T) {
 		}
 	}
 
-	errs := schema.ValidateEntityProperties(ctx, st, meta)
+	errs, _ := schema.ValidateEntityProperties(ctx, st, meta)
 	if len(errs) != 1 {
 		t.Fatalf("got %d entities with errors, want 1", len(errs))
 	}
@@ -91,7 +91,7 @@ func TestValidateRelationProperties(t *testing.T) {
 }
 
 func TestValidateProperties_NilInputs(t *testing.T) {
-	if errs := schema.ValidateEntityProperties(context.Background(), nil, nil); errs != nil {
+	if errs, _ := schema.ValidateEntityProperties(context.Background(), nil, nil); errs != nil {
 		t.Errorf("ValidateEntityProperties(nil,nil) = %v, want nil", errs)
 	}
 	if errs := schema.ValidateRelationProperties(context.Background(), nil, nil); errs != nil {

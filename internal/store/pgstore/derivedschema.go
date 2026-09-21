@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -100,9 +101,19 @@ func listIndexName(spec store.DerivedObjectSpec) string {
 		_, _ = h.Write([]byte(property))
 	}
 	_, _ = h.Write([]byte{'\x01'})
-	for _, property := range spec.OrderBy {
+	for i, property := range spec.OrderBy {
 		_, _ = h.Write([]byte{'\x00'})
 		_, _ = h.Write([]byte(property))
+		// The DECLARED ORDER is part of the index definition, not just the
+		// key name: the DDL below ranks by position, so two lists sorting
+		// one property under two value orders need two indexes, and
+		// reordering `values:` must rebuild rather than keep an index that
+		// ranks by the old positions. A name the reconciler no longer
+		// computes is dropped, which is what makes that automatic.
+		for _, v := range orderValuesAt(spec, i) {
+			_, _ = h.Write([]byte{'\x02'})
+			_, _ = h.Write([]byte(v))
+		}
 	}
 	return derivedListPrefix + hex.EncodeToString(h.Sum(nil)[:16])
 }
@@ -118,12 +129,46 @@ func createListIndexDDL(name string, spec store.DerivedObjectSpec) string {
 	for _, property := range spec.Properties {
 		columns = append(columns, "(properties->>"+quoteLiteral(property)+")")
 	}
-	for _, property := range spec.OrderBy {
+	for i, property := range spec.OrderBy {
+		if rank := orderRankSQL(property, orderValuesAt(spec, i)); rank != "" {
+			columns = append(columns, rank)
+		}
 		columns = append(columns, "((properties->>"+quoteLiteral(property)+`) COLLATE "C")`)
 	}
 	columns = append(columns, "id")
 	return "CREATE INDEX IF NOT EXISTS " + quoteIdent(name) + " ON entities (" +
 		strings.Join(columns, ", ") + ") WHERE face = ''"
+}
+
+// orderValuesAt returns the declared value order of the i-th sort key, or nil
+// when that key compares byte-wise. Tolerates a short or absent OrderValues so
+// a caller that only fills OrderBy stays valid.
+func orderValuesAt(spec store.DerivedObjectSpec, i int) []string {
+	if i >= len(spec.OrderValues) {
+		return nil
+	}
+	return spec.OrderValues[i]
+}
+
+// orderRankSQL renders the declared-order rank expression for one key, or ""
+// when the key has no declared order.
+//
+// It must stay CHARACTER-IDENTICAL to the expression orderKeySQL emits in the
+// query's ORDER BY, because PostgreSQL matches an expression index by
+// expression equivalence. Changing one without the other leaves an index that
+// is built, maintained on every write, and never used. Pinned by the EXPLAIN
+// test, which runs under a forced generic plan for the same reason.
+func orderRankSQL(property string, values []string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("(CASE (properties->>" + quoteLiteral(property) + ")")
+	for i, v := range values {
+		sb.WriteString(" WHEN " + quoteLiteral(v) + " THEN " + strconv.Itoa(i))
+	}
+	sb.WriteString(" ELSE " + strconv.Itoa(len(values)) + " END)")
+	return sb.String()
 }
 
 func queryIndexName(entityType string, properties []string) string {

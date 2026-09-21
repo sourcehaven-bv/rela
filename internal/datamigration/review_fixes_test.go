@@ -20,14 +20,14 @@ import (
 func TestGC_EnumValueDriftNeverWedgesTheSweep(t *testing.T) {
 	st := seedStore(t)
 	kv := newFakeKV()
-	gate := newTestGate(t, kv)
-	if _, err := gate.Evaluate(t.Context(), metaV1()); err != nil {
+	gate, _ := newTestGate(t, kv)
+	if _, err := gate.EvaluateAndPersist(t.Context(), metaV1()); err != nil {
 		t.Fatal(err)
 	}
 	// Remove an enum value: drift-adopts.
 	m2 := metaV1()
 	m2.Types["status"] = metamodel.CustomType{Values: []string{"open", "done"}}
-	v, err := gate.Evaluate(t.Context(), m2)
+	v, err := gate.EvaluateAndPersist(t.Context(), m2)
 	if err != nil || v.Status != StatusAdopted {
 		t.Fatalf("status = %v err = %v, want adopted", v.Status, err)
 	}
@@ -46,7 +46,7 @@ func TestGC_EnumValueDriftNeverWedgesTheSweep(t *testing.T) {
 	m3 := metaV1()
 	m3.Types["status"] = metamodel.CustomType{Values: []string{"open", "done"}}
 	delete(m3.Entities["task"].Properties, "tags")
-	if _, evalErr := gate.Evaluate(t.Context(), m3); evalErr != nil {
+	if _, evalErr := gate.EvaluateAndPersist(t.Context(), m3); evalErr != nil {
 		t.Fatal(evalErr)
 	}
 	g := newTestGC(t, GCDeps{
@@ -155,7 +155,7 @@ func TestGC_ScanSkipsManagedProperties(t *testing.T) {
 		t.Fatal(err)
 	}
 	kv := newFakeKV()
-	gate := newTestGate(t, kv)
+	gate, _ := newTestGate(t, kv)
 	if _, err := gate.Evaluate(ctx, metaV1()); err != nil {
 		t.Fatal(err)
 	}
@@ -201,7 +201,7 @@ func TestDropEntities_AbortsWhenCaptureFails(t *testing.T) {
 	from := metaV1()
 	to := metaV1()
 	delete(to.Entities, "person")
-	f := mustParse(t, "0001-drop.yaml", mustFileYAML(t, from, to, "  - drop_entities: {type: person}\n"))
+	f := mustParse(t, testName("drop"), mustFileYAML(t, from, to, "  - drop_entities: {type: person}\n"))
 
 	r := newTestRunner(t, Deps{Store: st, Meta: to, Versions: failingCapture{}})
 
@@ -228,7 +228,7 @@ func TestRenameProperty_ConflictLeavesBothValues(t *testing.T) {
 	if err := st.UpdateEntity(ctx, e); err != nil {
 		t.Fatal(err)
 	}
-	f := mustParse(t, "0001-r.yaml",
+	f := mustParse(t, testName("r"),
 		mustFileYAML(t, metaV1(), metaV2(), "  - rename_property: {entity: task, from: status, to: state}\n"))
 	r := newTestRunner(t, Deps{Store: st})
 	res, err := r.Run(ctx, []*File{f}, true)
@@ -304,7 +304,7 @@ func TestDropEntities_PartialCascadeIsCaptured(t *testing.T) {
 	from := metaV1()
 	to := metaV1()
 	delete(to.Entities, "person")
-	f := mustParse(t, "0001-drop.yaml", mustFileYAML(t, from, to, "  - drop_entities: {type: person}\n"))
+	f := mustParse(t, testName("drop"), mustFileYAML(t, from, to, "  - drop_entities: {type: person}\n"))
 
 	rec := &recordingCapture{}
 	r := newTestRunner(t, Deps{Store: st, Meta: to, Versions: rec})

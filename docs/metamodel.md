@@ -176,6 +176,23 @@ types:
     values: [critical, high, medium, low]
 ```
 
+**The ORDER of `values:` is load-bearing, not just the set.** Lists, views and
+sections sort an enum property by each value's position in this list, so
+writing the values in workflow order — `todo` before `done`, `critical` before
+`low` — gives the right sort for free, instead of the alphabetical order a
+plain text comparison would produce.
+
+Two consequences worth knowing before you edit a `values:` list:
+
+- Reordering the values **reorders every list sorted on that property.** That
+  is usually what you want, but it is a visible change to existing screens.
+- A value that no longer appears in `values:` still sorts — after every
+  declared value, and alphabetically among other undeclared ones — so removing
+  a value does not hide rows that still hold it.
+
+On the PostgreSQL backend the declared order is compiled into a database index,
+which is rebuilt automatically when you change it.
+
 #### Display Labels
 
 Enum values are stored as-is (typically snake_case identifiers). For a

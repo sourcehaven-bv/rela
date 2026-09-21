@@ -64,6 +64,7 @@ import type { ViewSectionCreate, ViewSectionCreateTarget } from '@/api/views'
 import { entityExportUrl } from '@/api/transforms'
 import CopyMenu from '@/components/entity/CopyMenu.vue'
 import FaceMenu from '@/components/entity/FaceMenu.vue'
+import DuplicateModal from '@/components/entity/DuplicateModal.vue'
 import WorldBadge from '@/components/entity/WorldBadge.vue'
 import WorldBanner from '@/components/common/WorldBanner.vue'
 import { invokeCopy } from '@/api/copies'
@@ -152,7 +153,8 @@ const servedRef = computed(() => (entry.value ? entityRef(entry.value) : props.e
 // never derived from the world.
 const servedFace = computed(() => refFace(servedRef.value))
 // The bare id, for surfaces addressed per ENTITY rather than per row:
-// documents, commands, history, scope navigation.
+// documents, history, scope navigation. NOT commands — a command acts on the
+// face on screen and takes servedRef (BUG-G2BASF).
 const bareEntityId = computed(() => refBareId(props.entityId))
 
 // Scope navigation (prev/next within a list) and back affordance
@@ -179,24 +181,22 @@ const pageState = computed<'pending' | 'loaded' | 'error'>(() => {
 const viewData = ref<ViewResponse | null>(null)
 const loadedCommands = ref<Command[]>([])
 
-// Commands are SUPPRESSED while a NON-BARE face is on screen, and this is a
-// stop-gap with a known expiry rather than a design.
+// Commands run against the ADDRESS on screen, face included (BUG-G2BASF).
 //
-// A command pipes a rendered view to an operator shell script's stdin. The
-// server passes `defaultViewWorld()` explicitly at that call site
-// (internal/dataentry/commands.go), so while the reader looks at the published
-// face the script receives the BARE face's content — and it receives it "past
-// any layer that could observe it", as that comment says.
+// This used to suppress every command whenever a non-bare face was served, on
+// the reasoning that the script would receive the bare face's content while
+// the reader looked at another face. That reasoning described a discarded
+// address, not a server limitation: both command contexts resolve an explicit
+// `ID@face` literally — `entity` parses it (commands.go, ParseStateRef) and
+// `view` short-circuits on `entry.Explicit` even under `defaultViewWorld()`
+// (viewworld.go, viewEntry), where the face is additionally ACL-checked by
+// faceReadable. The mismatch existed only because this component sent the bare
+// id and then hid the button it had just made inaccurate.
 //
-// What a face-bound command should MEAN is deliberately another ticket. But
-// until it has one, rendering the buttons is the affordance-that-lies shape:
-// the page would be promising an action whose input is not what is on screen.
-// A page showing the bare face — under any world — is exactly what the script
-// gets, so the buttons render there.
-//
-// Gated HERE rather than on the two button sites (desktop header + mobile
-// overflow) so a third render site cannot be added without inheriting it.
-const commands = computed<Command[]>(() => (servedFace.value ? [] : loadedCommands.value))
+// On a FACED type the suppression was total rather than partial — such a type
+// has no bare face to fall back to (BUG-HC6I2T), so no address rendered the
+// buttons at all.
+const commands = computed<Command[]>(() => loadedCommands.value)
 
 // Prev/next within a list re-fetches this component in place. Blanking the
 // page to a centred spinner on every step was the worst layout shift in
@@ -270,6 +270,28 @@ const mayDelete = computeActionAllowed(entry, 'delete')
 // Edit shows. There is nothing left for the page to AND in.
 const canUpdate = computed(() => mayUpdate.value)
 const canDelete = computed(() => mayDelete.value)
+
+// Duplicate is offered off `inline_create`, NOT `_actions` (TKT-Z8K2FS).
+// `create` is a COLLECTION-scope verb, so an entity response carries only
+// update/delete/rename and has no `create` key to read. The sidebar map is
+// populated only when the principal may create the type AND a create form
+// resolves for it — both conditions a duplicate needs — and it carries the
+// resolved form id, so presence IS the affordance. A UI hint, never
+// authorization: the create re-authorizes.
+//
+// Withheld on an inaccessible entity: its properties are ciphertext, so a
+// "copy" of them would be a copy of nothing.
+const duplicateFormId = computed(() =>
+  isInaccessible.value ? undefined : schemaStore.inlineCreateFormFor(props.entityType)
+)
+const canDuplicate = computed(() => !!duplicateFormId.value && !!entry.value)
+const showDuplicateModal = ref(false)
+
+function handleDuplicated(created: { id: string; type: string }) {
+  showDuplicateModal.value = false
+  uiStore.showToast('success', `Created ${created.id}`)
+  void router.push(`/entity/${created.type}/${created.id}`)
+}
 
 // Nil: undefined when editing is unavailable (no configured form, an
 // inaccessible/git-crypt entity, or no update permission on the face on
@@ -1050,6 +1072,7 @@ const hasOverflow = computed(
     commands.value.length > 0 ||
     overflowFaces.value.length > 0 ||
     overflowCopies.value.length > 0 ||
+    canDuplicate.value ||
     showHistory.value
 )
 
@@ -1736,6 +1759,14 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
             >History</RouterLink
           >
           <ExportMenu :url-for="(t: string) => entityExportUrl(entityType, entityId, t)" />
+          <!--
+            Duplicate. Gated on `inline_create` rather than `_actions` (there is
+            no `create` key on an entity response); the mobile block below gates
+            on the SAME computed via hasOverflow.
+          -->
+          <button v-if="canDuplicate" class="btn btn-secondary" @click="showDuplicateModal = true">
+            Duplicate
+          </button>
           <button v-if="canDelete" class="btn btn-danger" @click="requestDelete">
             Delete <kbd>Del</kbd>
           </button>
@@ -1822,6 +1853,13 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
               >
                 {{ o.label || o.name }}
               </button>
+              <button
+                v-if="canDuplicate"
+                class="overflow-menu-item"
+                @click="showDuplicateModal = true"
+              >
+                Duplicate
+              </button>
               <RouterLink v-if="showHistory" class="overflow-menu-item" :to="historyTarget">
                 History
               </RouterLink>
@@ -1829,6 +1867,23 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
           </div>
         </div>
       </header>
+
+      <!--
+        Duplicate dialog. Mounted under v-if so the embedded create form inside
+        it unmounts on close, aborting any in-flight dry-run rather than leaving
+        it POSTing behind a closed dialog.
+
+        `world` is threaded explicitly: it decides which face the copy lands in,
+        and an embedded form reads props rather than the route.
+      -->
+      <DuplicateModal
+        v-if="showDuplicateModal && entry && duplicateFormId"
+        :source="entry"
+        :form-id="duplicateFormId"
+        :world="worldParam || undefined"
+        @close="showDuplicateModal = false"
+        @created="handleDuplicated"
+      />
 
       <!-- Inaccessible (git-crypt encrypted) banner. Sits above the
            sections so it dominates the visual hierarchy when the entity
@@ -2445,7 +2500,8 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
         />
       </div>
 
-      <CommandModal ref="commandModalRef" :entity-id="bareEntityId" />
+      <!-- The ADDRESS, not the bare id: a command acts on the face on screen. -->
+      <CommandModal ref="commandModalRef" :entity-id="servedRef" />
 
       <!--
         The modal create host. Reused verbatim from the inline-create flow

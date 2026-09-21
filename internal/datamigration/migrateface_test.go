@@ -39,7 +39,7 @@ func TestMigrateFace_MovesRowsByPropertyValue(t *testing.T) {
 	ctx := t.Context()
 
 	r := newTestRunner(t, Deps{Store: st, State: newFakeKV(), Audit: audit.NewMemory()})
-	f := mustParse(t, "0001-faces.yaml", mustFileYAML(t, metaV1(), facedV1(), migrateTaskFaces))
+	f := mustParse(t, testName("faces"), mustFileYAML(t, metaV1(), facedV1(), migrateTaskFaces))
 	res, err := r.Run(ctx, []*File{f}, true)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -78,10 +78,10 @@ func TestMigrateFace_IsIdempotent(t *testing.T) {
 	body := mustFileYAML(t, metaV1(), facedV1(), migrateTaskFaces)
 	r := newTestRunner(t, Deps{Store: st, State: newFakeKV(), Audit: audit.NewMemory()})
 
-	if _, err := r.Run(ctx, []*File{mustParse(t, "0001-faces.yaml", body)}, true); err != nil {
+	if _, err := r.Run(ctx, []*File{mustParse(t, testName("faces"), body)}, true); err != nil {
 		t.Fatalf("first Run: %v", err)
 	}
-	res, err := r.Run(ctx, []*File{mustParse(t, "0001-faces.yaml", body)}, true)
+	res, err := r.Run(ctx, []*File{mustParse(t, testName("faces"), body)}, true)
 	if err != nil {
 		t.Fatalf("second Run: %v", err)
 	}
@@ -104,7 +104,7 @@ func TestMigrateFace_RefusesNonExhaustiveMapping(t *testing.T) {
         open: draft
         wip: draft
 `
-	_, err := ParseFile("0001-faces.yaml", mustFileYAML(t, metaV1(), facedV1(), steps))
+	_, err := ParseFile(testName("faces"), mustFileYAML(t, metaV1(), facedV1(), steps))
 	if err == nil {
 		t.Fatal("expected a parse error: `done` has no face")
 	}
@@ -167,7 +167,7 @@ func TestMigrateFace_RejectsBadMappingEntries(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := ParseFile("0001-faces.yaml", mustFileYAML(t, metaV1(), facedV1(), tc.steps))
+			_, err := ParseFile(testName("faces"), mustFileYAML(t, metaV1(), facedV1(), tc.steps))
 			if err == nil {
 				t.Fatalf("expected a parse error containing %q", tc.want)
 			}
@@ -191,7 +191,7 @@ func TestMigrateFace_RefusesListTypedKey(t *testing.T) {
 		m.Entities["task"] = def
 		return m
 	}
-	_, err := ParseFile("0001-faces.yaml",
+	_, err := ParseFile(testName("faces"),
 		mustFileYAML(t, withListStatus(metaV1()), withListStatus(facedV1()), migrateTaskFaces))
 	if err == nil {
 		t.Fatal("expected a parse error: a list-typed property cannot key the move")
@@ -214,7 +214,7 @@ func TestMigrateFace_RefusesDropPropertyBeforeIt(t *testing.T) {
 
 	drop := "  - drop_property: {entity: task, property: status}\n"
 
-	_, err := ParseFile("0001-faces.yaml", mustFileYAML(t, metaV1(), to, drop+migrateTaskFaces))
+	_, err := ParseFile(testName("faces"), mustFileYAML(t, metaV1(), to, drop+migrateTaskFaces))
 	if err == nil {
 		t.Fatal("expected a parse error: drop_property precedes the migrate_face that reads it")
 	}
@@ -223,7 +223,7 @@ func TestMigrateFace_RefusesDropPropertyBeforeIt(t *testing.T) {
 	}
 
 	// The correct order parses.
-	if _, err := ParseFile("0001-faces.yaml", mustFileYAML(t, metaV1(), to, migrateTaskFaces+drop)); err != nil {
+	if _, err := ParseFile(testName("faces"), mustFileYAML(t, metaV1(), to, migrateTaskFaces+drop)); err != nil {
 		t.Errorf("migrate_face before drop_property should parse, got: %v", err)
 	}
 }
@@ -241,7 +241,7 @@ func TestMigrateFace_ReportsRowsOutsideTheDeclaredValueSet(t *testing.T) {
 	}
 
 	r := newTestRunner(t, Deps{Store: st, State: newFakeKV(), Audit: audit.NewMemory()})
-	f := mustParse(t, "0001-faces.yaml", mustFileYAML(t, metaV1(), facedV1(), migrateTaskFaces))
+	f := mustParse(t, testName("faces"), mustFileYAML(t, metaV1(), facedV1(), migrateTaskFaces))
 	res, err := r.Run(ctx, []*File{f}, true)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -261,7 +261,7 @@ func TestMigrateFace_DryRunMovesNothing(t *testing.T) {
 	st := seedStore(t)
 	ctx := t.Context()
 	r := newTestRunner(t, Deps{Store: st, State: newFakeKV(), Audit: audit.NewMemory()})
-	f := mustParse(t, "0001-faces.yaml", mustFileYAML(t, metaV1(), facedV1(), migrateTaskFaces))
+	f := mustParse(t, testName("faces"), mustFileYAML(t, metaV1(), facedV1(), migrateTaskFaces))
 	res, err := r.Run(ctx, []*File{f}, false)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -278,7 +278,7 @@ func TestMigrateFace_DryRunMovesNothing(t *testing.T) {
 // with no migrate_face step is the do-nothing migration that caused the bug: it
 // parsed, applied, advanced the marker and reported the schema in sync.
 func TestParseFile_RefusesUnmigratedFaceAdoption(t *testing.T) {
-	_, err := ParseFile("0001-faces.yaml", mustFileYAML(t, metaV1(), facedV1(), "  []\n"))
+	_, err := ParseFile(testName("faces"), mustFileYAML(t, metaV1(), facedV1(), "  []\n"))
 	if err == nil {
 		t.Fatal("expected a parse error: the file spans a faces_introduced edge and migrates nothing")
 	}
@@ -291,7 +291,7 @@ func TestParseFile_RefusesUnmigratedFaceAdoption(t *testing.T) {
 	pdef := toMeta.Entities["person"]
 	pdef.Faces = map[string]metamodel.FaceDef{"draft": {}, "published": {}}
 	toMeta.Entities["person"] = pdef
-	_, err = ParseFile("0002-faces.yaml", mustFileYAML(t, metaV1(), toMeta, migrateTaskFaces))
+	_, err = ParseFile(testName("faces"), mustFileYAML(t, metaV1(), toMeta, migrateTaskFaces))
 	if err == nil {
 		t.Fatal("expected a parse error: person's adoption is unmigrated")
 	}
@@ -317,7 +317,7 @@ func TestResolvingSteps_CoversEveryMigrationDeltaKind(t *testing.T) {
 // The generator must draft a migrate_face step for a faces_introduced delta
 // rather than the do-nothing file that caused BUG-TMGWIN.
 func TestGenerate_DraftsMigrateFaceForFacesIntroduced(t *testing.T) {
-	draft, err := Generate(metaV1().ShapeProjection(), facedV1().ShapeProjection(), nil, "adopt faces")
+	draft, err := Generate(metaV1().ShapeProjection(), facedV1().ShapeProjection(), "adopt faces", testNow())
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -347,7 +347,7 @@ func TestGenerate_DraftsMigrateFaceForFacesIntroduced(t *testing.T) {
 // operator has to make a real choice before anything runs. This is the
 // generator's half of the BUG-TMGWIN fix.
 func TestGenerate_FaceDraftDoesNotApplyUnedited(t *testing.T) {
-	draft, err := Generate(metaV1().ShapeProjection(), facedV1().ShapeProjection(), nil, "adopt faces")
+	draft, err := Generate(metaV1().ShapeProjection(), facedV1().ShapeProjection(), "adopt faces", testNow())
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -368,7 +368,7 @@ func TestGenerate_FaceDraftWithoutEnumExplainsItself(t *testing.T) {
 	pdef.Faces = map[string]metamodel.FaceDef{"draft": {}, "published": {}}
 	toMeta.Entities["person"] = pdef
 
-	draft, err := Generate(metaV1().ShapeProjection(), toMeta.ShapeProjection(), nil, "adopt faces")
+	draft, err := Generate(metaV1().ShapeProjection(), toMeta.ShapeProjection(), "adopt faces", testNow())
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
