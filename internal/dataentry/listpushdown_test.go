@@ -20,12 +20,22 @@ import (
 // pushdownApp seeds tickets whose sort keys collide, are missing, or are
 // out of insertion order, so an ordering difference between the two paths
 // cannot hide.
+//
+// Titles deliberately MIX CASE and embed unpadded numbers. With uniform-case,
+// digit-free titles a byte-wise and a natural ordering agree, so this fixture
+// used to pass over a live divergence between the two paths (TKT-9OFGH4).
 func pushdownApp(t *testing.T) (*App, *acl.Declarative) {
 	t.Helper()
 	app := newTestAppV1(t)
 	dues := []string{"2026-03-01", "", "2026-01-15", "2026-03-01", "null", "2025-12-31", "2026-02-02", "", "2026-01-15", "2026-12-31", "2026-05-05", "null"}
+	// Case and digit width vary so byte order and natural order disagree:
+	// byte-wise "Ticket 2" < "Ticket 10" < "ticket 3".
+	titles := []string{
+		"Ticket 2", "ticket 3", "Ticket 10", "TICKET 1", "ticket 20", "Ticket 2",
+		"zebra", "Apple", "ticket 100", "Ticket 9", "apple", "Zebra",
+	}
 	for i, due := range dues {
-		props := map[string]any{"title": fmt.Sprintf("Ticket %02d", 11-i), "status": []string{"open", "done", "open"}[i%3]}
+		props := map[string]any{"title": titles[i], "status": []string{"open", "done", "open"}[i%3]}
 		switch due {
 		case "":
 		case "null":
@@ -63,17 +73,27 @@ func goPath(
 
 func TestListPushdown_MatchesGoPathPageForPage(t *testing.T) {
 	// The test metamodel declares no `due`, so declare a string-shaped one
-	// for the sort key; status is a plain string already.
+	// for the sort key. `status` is redeclared as an ENUM whose declared order
+	// is the REVERSE of its alphabetical order, so a path that ranks and a
+	// path that compares text cannot agree by luck.
 	app, d := pushdownApp(t)
 	meta := app.Meta()
 	tk := meta.Entities["ticket"]
 	tk.Properties["due"] = metamodelProp("date")
+	tk.Properties["status"] = metamodel.PropertyDef{
+		Type:   metamodel.PropertyTypeEnum,
+		Values: []string{"open", "done"}, // alphabetically done < open
+	}
 	meta.Entities["ticket"] = tk
 
 	for _, rq := range []string{
 		"sort=due", "sort=-due", "sort=due,title", "sort=-title",
 		"filter%5Bstatus%5D=open&sort=due", "filter%5Bstatus%5D%5Bne%5D=open&sort=-due",
 		"filter%5Bstatus%5D=open", "",
+		// Enum keys: ranked by declared position on both paths, including as
+		// a secondary key and under a descending primary.
+		"sort=status", "sort=-status", "sort=status,title", "sort=-status,due",
+		"sort=title,status", "sort=id", "sort=-id",
 	} {
 		for _, perPage := range []int{3, 5} {
 			for page := 1; page <= 3; page++ {

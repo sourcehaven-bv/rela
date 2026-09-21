@@ -168,6 +168,14 @@ const todayDay = computed(() => {
   )
 })
 
+/** cycleLabel describes the containment loop a node sits on. Worded
+ * neutrally: whether a loop is a data error or a legitimate mutual
+ * containment depends on the operator's schema, so the UI reports the shape
+ * and the consequence without calling it a mistake. */
+function cycleLabel(node: GanttNode): string {
+  return `${node.title || node.id} is part of a containment loop — one repeating edge is not shown`
+}
+
 /** openEntity navigates to the node's entity page — the tree-column name's
  * click, and the fallback for chart clicks that cannot drill. */
 function openEntity(node: GanttNode) {
@@ -451,6 +459,14 @@ const footerHtml = computed(() =>
               {{ row.node.title || row.node.id }}
             </button>
             <span class="kind">{{ row.node.type }}</span>
+            <span
+              v-if="row.node.in_cycle"
+              class="cycle-flag"
+              role="img"
+              :aria-label="cycleLabel(row.node)"
+              :title="cycleLabel(row.node)"
+              >&#8635;</span
+            >
           </div>
 
           <div class="cell-bars" :style="gridStyle">
@@ -615,6 +631,16 @@ const footerHtml = computed(() =>
   color: var(--muted-text);
   font-size: 0.9rem;
 }
+/* The loop marker sits with the type label, not on the bar itself: the bar
+   is positioned by date and a node in a loop may have no dates at all. */
+.cycle-flag {
+  margin-left: 4px;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--text-muted, #888);
+  cursor: help;
+}
+
 .gantt-error {
   color: var(--error-color);
   padding: 1rem;

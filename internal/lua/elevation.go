@@ -210,12 +210,27 @@ func registerElevatedWrites(
 	ls *lua.LState, t *lua.LTable, em Mutator, guard func(string) bool,
 	ctxFn func() context.Context,
 ) {
+	// create_relation takes the same trailing options table as the gated
+	// rela.create_relation, so a script can author a `scope: content` edge on
+	// the face that owns it.
+	//
+	// Safe only because the scope/declaration check lives in entitymanager
+	// (requireRelationFaceFor) rather than in the ACL: authorizeAndAudit
+	// returns early under bypassACL, so nothing here validates the face. The
+	// ACL bypass is about the VERB; the face is a COORDINATE, and an elevated
+	// caller must not be able to address one the metamodel does not declare.
 	ls.SetField(t, "create_relation", ls.NewFunction(func(s *lua.LState) int {
 		if !guard("create_relation") {
 			return 0
 		}
 		from, relType, to := s.CheckString(1), s.CheckString(2), s.CheckString(3)
-		if _, err := em.CreateRelation(ctxFn(), from, relType, to, entity.RelationOptions{}); err != nil {
+		opts, optErr := parseWriteOpts(s, argPosCreateRelationOpts, createRelationOptKeys, createRelationOptSet)
+		if optErr != nil {
+			s.RaiseError("bypass_acl create_relation error: %s", optErr.Error())
+			return 0
+		}
+		if _, err := em.CreateRelation(ctxFn(), from, relType, to,
+			entity.RelationOptions{FromFace: opts.Face, Content: opts.Content}); err != nil {
 			s.RaiseError("bypass_acl create_relation error: %s", err.Error())
 			return 0
 		}

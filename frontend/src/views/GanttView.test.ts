@@ -180,3 +180,52 @@ describe('GanttView fetch policy', () => {
     w.unmount()
   })
 })
+
+describe('GanttView containment-loop marker', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    const store = useSchemaStore()
+    store.gantts.set('plan', {
+      title: 'Plan',
+      hierarchy: ['contains'],
+      multi_parent: 'first',
+      on_cycle: 'mark',
+      default_depth: 2,
+      max_depth: 10,
+      max_nodes: 2000,
+      sources: { project: { start: 'planned_start', end: 'planned_end' } },
+    })
+    routeQuery.value = {}
+    getGanttMock.mockReset()
+    routerPush.mockClear()
+  })
+
+  it('flags only the node the loop closes onto, and renders the rest', async () => {
+    const looped = node('B', [node('C')])
+    looped.in_cycle = true
+    getGanttMock.mockResolvedValue({ roots: [node('A', [looped])] })
+
+    const w = mountGantt()
+    await flushPromises()
+
+    const flags = w.findAll('.cycle-flag')
+    expect(flags).toHaveLength(1)
+    expect(flags[0].attributes('aria-label')).toContain('containment loop')
+    expect(flags[0].attributes('aria-label')).toContain('Node B')
+    // The loop does not cost the view its other rows — the whole point of
+    // mark over error. (Node C sits past default_depth, so it is collapsed
+    // rather than absent; A and B are what this asserts.)
+    expect(w.text()).toContain('Node A')
+    expect(w.text()).toContain('Node B')
+    w.unmount()
+  })
+
+  it('renders no marker when nothing is flagged', async () => {
+    getGanttMock.mockResolvedValue(forest())
+    const w = mountGantt()
+    await flushPromises()
+
+    expect(w.findAll('.cycle-flag')).toHaveLength(0)
+    w.unmount()
+  })
+})

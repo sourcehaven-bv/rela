@@ -37,12 +37,12 @@ func (r *Request) authorizeEntityWrite(ctx context.Context, op Op, s EntitySubje
 	// With an ID, fold in local-role probes; without, globals-only
 	// (Op=Create has no ID yet at authz time).
 	var attrs []RoleAttribution
-	if s.ID != "" {
-		attrs = r.computeForEntity(ctx, s.ID)
+	if s.id != "" {
+		attrs = r.computeForEntity(ctx, s.id)
 	} else {
 		attrs = r.Globals(ctx).Attributions
 	}
-	return r.decideFromAttrs(attrs, op, s.Type, s.Face, "no role grants %s on type %q")
+	return r.decideFromAttrs(attrs, op, s.typ, s.face, "no role grants %s on type %q")
 }
 
 func (r *Request) authorizeRelationWrite(ctx context.Context, op Op, s RelationSubject) Decision {

@@ -504,6 +504,49 @@ func (h *writeHandler) currentEdgeOnFace(
 	return edgeOnFace(ctx, h.store, from, tail, relType, to)
 }
 
+// tailOfExistingEdge reports the TAIL the single-relation PATCH and DELETE
+// routes should address on this triple.
+//
+// Two rules, in order, and the order is the point:
+//
+//  1. If the CALLER NAMED A FACE and the edge tails at the source they
+//     addressed, that face IS the address. A triple can carry one edge per
+//     tail, so discovering a tail instead would let `POL-1@draft` modify the
+//     published edge — the very confusion an `@face` address exists to
+//     resolve.
+//  2. Otherwise the tail is read OFF THE EXISTING EDGE. A bare address names
+//     no face, and on the INCOMING path the tail belongs to the peer and is
+//     not this request's to choose; recomputing it from the request would
+//     address a DIFFERENT edge and report success (RR-5MLZCR).
+//
+// Returns the zero face when neither rule finds one, which leaves the caller
+// addressing the default tail and lets the manager's own not-found answer
+// stand rather than inventing a distinct error here.
+//
+// addressed is the face the request named (zero when it named none); owned
+// reports whether the addressed entity is this edge's SOURCE — false on the
+// incoming path, where rule 1 must not apply.
+func tailOfExistingEdge(
+	ctx context.Context, st store.Store,
+	from, relType, to string, addressed entity.Face, owned bool,
+) entity.Face {
+	if owned && !addressed.IsDefault() {
+		return addressed
+	}
+	for rel, err := range st.ListRelations(ctx, store.RelationQuery{From: from, Type: relType, To: to}) {
+		if err != nil {
+			// A read fault is not evidence of a default-tail edge. The zero
+			// face is the safe answer: the write then addresses the default
+			// edge and fails not-found rather than hitting another face's.
+			return entity.Face("")
+		}
+		if rel.From == from && rel.Type == relType && rel.To == to {
+			return rel.FromFace
+		}
+	}
+	return entity.Face("")
+}
+
 // edgeOnFace reads the edge of this triple whose TAIL is exactly tail.
 //
 // Package-level rather than a method because two unrelated surfaces need it —

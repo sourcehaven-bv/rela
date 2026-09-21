@@ -12,6 +12,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/predicate"
+	"github.com/Sourcehaven-BV/rela/internal/queryplan"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/pgstore"
 )
@@ -176,4 +179,107 @@ func TestGraphQueryExplainPagedListUsesDerivedListIndex(t *testing.T) {
 	if strings.Contains(plan, "Sort") {
 		t.Fatalf("page still sorts instead of walking the index:\n%s", plan)
 	}
+}
+
+// TestEndpointMatchExplainUsesDerivedIndex pins the finding that made the
+// propCond alias refactor mandatory (TKT-RELTRV).
+//
+// A derived query index is PARTIAL:
+//
+//	CREATE INDEX ... ON entities ((properties->>'status'))
+//	  WHERE type = 'concept' AND jsonb_typeof(properties->'status') = 'string';
+//
+// PostgreSQL matches a partial index only when the query IMPLIES its
+// predicate. An endpoint filter spelled as a bare `->>` comparison is correct
+// and silently unindexed: measured at 5k concepts it bitmap-scanned every row
+// of the type to find 10. Emitting the same jsonb_typeof guard the scalar
+// spelling carries makes the index a candidate and the scan disappears.
+//
+// This asserts the SHAPE (the index is used), not a timing, so it is stable in
+// CI. It fails if a future change hand-rolls the endpoint comparison instead of
+// routing it through propCondOn.
+func TestEndpointMatchExplainUsesDerivedIndex(t *testing.T) {
+	const tickets = 5000
+	pool := newScopedPool(t)
+	s, err := pgstore.New(pool)
+	require.NoError(t, err)
+	ctx := context.Background()
+
+	// The index must exist on the TRAVERSED-TO type, not the queried type.
+	// Reconcile the spec queryplan DERIVES for this traversal rather than a
+	// hand-written one, so the test proves the derivation and the lowering
+	// agree — a derivation that produced the wrong type or property would
+	// still create an index, and a hand-written spec would hide that.
+	specs := queryplan.TraversalIndexSpecs(
+		traversalExplainProgram(t), traversalExplainMeta(), "ticket")
+	require.Len(t, specs, 1, "queryplan must derive exactly one traversal index spec")
+	require.Equal(t, "concept", specs[0].Type)
+	_, err = s.Reconcile(ctx, specs, store.ReconcileOptions{})
+	require.NoError(t, err)
+
+	// 500 concepts, exactly one of them 'rare'; every ticket points at one.
+	const concepts = 500
+	for i := range concepts {
+		status := "active"
+		if i == concepts-1 {
+			status = "rare"
+		}
+		e := entity.New(fmt.Sprintf("CON-%06d", i), "concept")
+		e.Properties["status"] = status
+		require.NoError(t, s.CreateEntity(ctx, e))
+	}
+	for i := range tickets {
+		id := fmt.Sprintf("TKT-%06d", i)
+		require.NoError(t, s.CreateEntity(ctx, entity.New(id, "ticket")))
+		_, err = s.CreateRelation(ctx, id, "caused-by", fmt.Sprintf("CON-%06d", i%concepts), nil)
+		require.NoError(t, err)
+	}
+	_, err = pool.Exec(ctx, "ANALYZE entities; ANALYZE relations")
+	require.NoError(t, err)
+
+	plan := explainGraphQuery(t, pool, store.GraphQuery{
+		EntityType: "ticket",
+		HasOutbound: &store.RelationPredicate{
+			OfTypes: []string{"caused-by"},
+			EndpointMatch: &store.EndpointPredicate{
+				EntityType: "concept",
+				Props: []store.PropPredicate{{
+					Property: "status", Op: store.PropEqual, Value: "rare", Scalar: true,
+				}},
+			},
+		},
+	})
+	t.Logf("plan:\n%s", plan)
+	if !strings.Contains(plan, "rela_derived_query__") {
+		t.Fatalf("endpoint-match filter does not reach the derived index on the "+
+			"traversed-to type; the join degrades to a scan of every row of that "+
+			"type:\n%s", plan)
+	}
+}
+
+// traversalExplainMeta / traversalExplainProgram describe the same traversal
+// the EXPLAIN below runs, so the derived spec and the executed query cannot
+// drift apart.
+func traversalExplainMeta() *metamodel.Metamodel {
+	return &metamodel.Metamodel{
+		Types: map[string]metamodel.CustomType{
+			"concept_status": {Values: []string{"active", "rare"}},
+		},
+		Entities: map[string]metamodel.EntityDef{
+			"ticket":  {Properties: map[string]metamodel.PropertyDef{}},
+			"concept": {Properties: map[string]metamodel.PropertyDef{"status": {Type: "concept_status"}}},
+		},
+		Relations: map[string]metamodel.RelationDef{
+			"caused-by": {From: []string{"ticket"}, To: []string{"concept"}},
+		},
+	}
+}
+
+func traversalExplainProgram(t *testing.T) *predicate.Program {
+	t.Helper()
+	env := predicate.NewEnv()
+	require.NoError(t, env.DeclareVar("entity", predicate.RecordType{}))
+	prog, err := predicate.Compile(env, `related(entity, 'caused-by', { status = 'rare' })`)
+	require.NoError(t, err)
+	return prog
 }

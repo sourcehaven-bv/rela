@@ -32,7 +32,24 @@ describe('createMentionMenuMachine', () => {
     const { m } = machineWith(async () => [{ id: 'FEAT-TKX' }, { id: 'TKT-ABC' }])
     m.setQuery('TKT')
     await settle()
-    expect(m.state.items.map((i) => i.id)).toEqual(['TKT-ABC', 'FEAT-TKX'])
+    // `TKT-ABC` is promoted by the ID tier, and `FEAT-TKX` is DROPPED: the
+    // ranking now filters as well as orders. The tier sort it replaced kept
+    // every row and only re-ordered them, so a non-matching row survived at the
+    // bottom. `FEAT-TKX` has no title here, so its haystack is the bare id and
+    // `TKT` does not match it.
+    expect(m.state.items.map((i) => i.id)).toEqual(['TKT-ABC'])
+  })
+
+  it('keeps a row whose TITLE matches even when its id does not', async () => {
+    // The counterpart to the case above: filtering is on the title AND id
+    // together, so a title match is not collateral damage of the id tier.
+    const { m } = machineWith(async () => [
+      { id: 'FEAT-TKX', _title: 'unrelated' },
+      { id: 'ZZ-1', _title: 'TKT planning notes' },
+    ])
+    m.setQuery('TKT')
+    await settle()
+    expect(m.state.items.map((i) => i.id)).toEqual(['ZZ-1'])
   })
 
   it('clears stale results when the query is backspaced below the minimum', async () => {

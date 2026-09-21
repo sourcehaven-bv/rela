@@ -26,6 +26,11 @@ export interface GanttNode {
   rolled?: GanttSpan
   committed?: string
   breach?: GanttBreach
+  /** True when a containment loop closes back onto this node, under
+   * `on_cycle: mark`. The node still renders under its first parent; the
+   * edge that looped back to it is cut, and `has_more_children` reports
+   * that withholding. Never set under the other policies. */
+  in_cycle?: boolean
   children?: GanttNode[]
   /** True when children exist that this response does not carry (depth cap
    * or node budget) — the drill signal for a node that looks like a leaf. */
