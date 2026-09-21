@@ -137,7 +137,7 @@ func TestAssertedRoles_GrantsWriteAccess(t *testing.T) {
 
 	got := req.AuthorizeWrite(context.Background(), acl.WriteRequest{
 		Op:      acl.OpCreate,
-		Subject: acl.EntitySubject{Type: "ticket", ID: "TKT-1"},
+		Subject: acl.NewFacelessEntitySubject("ticket", "TKT-1"),
 	})
 	if !got.Allow {
 		t.Errorf("asserted editor denied create on ticket: %+v", got)

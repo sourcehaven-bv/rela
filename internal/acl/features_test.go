@@ -36,7 +36,7 @@ assignments:
 		Relation("alice", "member-of", "engineering").
 		Build(t)
 
-	w.AssertAllow("alice", acl.OpUpdate, acl.EntitySubject{Type: "ticket", ID: "TKT-001"})
+	w.AssertAllow("alice", acl.OpUpdate, acl.NewFacelessEntitySubject("ticket", "TKT-001"))
 	w.AssertPrimarySource("alice", "TKT-001", "editor",
 		acl.Source{Kind: acl.SourceGroup, Group: "engineering"})
 }
@@ -128,11 +128,11 @@ role_relations:
 
 	w.AssertVisible("alice", "document", "D-overview", "D-roadmap", "D-secret")
 
-	w.AssertAllow("alice", acl.OpUpdate, acl.EntitySubject{Type: "document", ID: "D-secret"})
+	w.AssertAllow("alice", acl.OpUpdate, acl.NewFacelessEntitySubject("document", "D-secret"))
 	w.AssertPrimarySource("alice", "D-secret", "editor",
 		acl.Source{Kind: acl.SourceLocalViaAncestor, Ancestor: "F-eng", Relation: "editor-of"})
 
-	w.AssertDeny("alice", acl.OpUpdate, acl.EntitySubject{Type: "document", ID: "D-readme"})
+	w.AssertDeny("alice", acl.OpUpdate, acl.NewFacelessEntitySubject("document", "D-readme"))
 }
 
 // TestFeature_UC4_MultiParentUnion pins the union semantics for
@@ -171,7 +171,7 @@ role_relations:
 
 	w.AssertContains("alice", "document", "D-roadmap")
 	w.AssertHidden("alice", "document", "D-readme")
-	w.AssertAllow("alice", acl.OpUpdate, acl.EntitySubject{Type: "document", ID: "D-roadmap"})
+	w.AssertAllow("alice", acl.OpUpdate, acl.NewFacelessEntitySubject("document", "D-roadmap"))
 }
 
 // TestFeature_UC5_MultiSourceAttribution pins the multi-source case:
@@ -282,11 +282,11 @@ role_relations:
 		Relation("alice", "assigned-to", "TKT-042").
 		Build(t)
 
-	w.AssertAllow("alice", acl.OpUpdate, acl.EntitySubject{Type: "ticket", ID: "TKT-042"})
+	w.AssertAllow("alice", acl.OpUpdate, acl.NewFacelessEntitySubject("ticket", "TKT-042"))
 	w.AssertPrimarySource("alice", "TKT-042", "editor",
 		acl.Source{Kind: acl.SourceLocal, Relation: "assigned-to"})
 
-	w.AssertDeny("alice", acl.OpUpdate, acl.EntitySubject{Type: "ticket", ID: "TKT-099"})
+	w.AssertDeny("alice", acl.OpUpdate, acl.NewFacelessEntitySubject("ticket", "TKT-099"))
 }
 
 // TestFeature_UC8_ClosedWorldDeny pins the closed-world read shape:

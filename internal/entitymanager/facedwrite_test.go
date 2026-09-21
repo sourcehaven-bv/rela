@@ -64,9 +64,9 @@ func (a *conceptOnlyACL) AuthorizeWrite(_ context.Context, req acl.WriteRequest)
 	if !ok {
 		return acl.Decision{Allow: true}
 	}
-	a.asked = append(a.asked, es.Face)
-	a.askedIDs = append(a.askedIDs, es.ID)
-	if es.Face == entity.Face("concept") {
+	a.asked = append(a.asked, es.Face())
+	a.askedIDs = append(a.askedIDs, es.ID())
+	if es.Face() == entity.Face("concept") {
 		return acl.Decision{Allow: true, RuleKind: "test", RuleID: "concept-grant"}
 	}
 	return acl.Decision{
