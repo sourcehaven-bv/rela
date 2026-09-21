@@ -1927,6 +1927,37 @@ Checks `schema.yaml` and `data-entry.yaml` for:
 rela validate
 ```
 
+Pass `--check` to also validate the entity graph:
+
+```bash
+rela validate --check cardinality --check properties --check validations
+```
+
+**Exit codes:**
+
+| Code | Meaning |
+| ---- | ------- |
+| `0`  | Every rule was evaluated over the whole project, and all passed. |
+| `1`  | Every rule was evaluated, and at least one violation was found. |
+| `2`  | Some input could not be read, so the run is **incomplete**. The offending files are named in the output. |
+
+Exit `2` takes precedence over exit `1`. A run that could not read all of
+its input cannot support a claim about the rules, including the claim that
+the violations it reported are all of them. The usual cause is an entity
+whose YAML frontmatter does not parse, most often an unquoted scalar
+containing a colon followed by a space — quote it:
+
+```yaml
+title: "Something: with a colon"
+```
+
+Treat exit `2` as a failure in CI. "All validations passed." is printed only
+when the run actually read everything.
+
+Note that `--check cardinality` on its own only scans the entity types that
+declare a cardinality bound, so it reports an unreadable file only for those
+types. `--check properties` and `--check validations` scan all types.
+
 ---
 
 ### rela version

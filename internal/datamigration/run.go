@@ -130,7 +130,15 @@ func (r *Runner) Run(ctx context.Context, plan []*File, apply bool) (*RunResult,
 	ctx = store.WithAttribution(ctx, store.Attribution{User: p.User, Tool: migrationTool})
 
 	res := &RunResult{Applied: apply}
-	res.ValidationBefore = len(schema.ValidateEntityProperties(ctx, r.deps.Store, r.deps.Meta))
+	// A read failure here would skew the before/after delta silently: the
+	// count is a comparison, and an entity missing from only one side
+	// moves the number for a reason that has nothing to do with the
+	// migration. Fail rather than report a misleading delta (BUG-4KPN2M).
+	before, beforeErr := schema.ValidateEntityProperties(ctx, r.deps.Store, r.deps.Meta)
+	if beforeErr != nil {
+		return nil, fmt.Errorf("datamigration: count property errors before migration: %w", beforeErr)
+	}
+	res.ValidationBefore = len(before)
 
 	for _, f := range plan {
 		x := &Exec{
@@ -159,7 +167,11 @@ func (r *Runner) Run(ctx context.Context, plan []*File, apply bool) (*RunResult,
 		}
 	}
 
-	res.ValidationAfter = len(schema.ValidateEntityProperties(ctx, r.deps.Store, r.deps.Meta))
+	after, afterErr := schema.ValidateEntityProperties(ctx, r.deps.Store, r.deps.Meta)
+	if afterErr != nil {
+		return res, fmt.Errorf("datamigration: count property errors after migration: %w", afterErr)
+	}
+	res.ValidationAfter = len(after)
 	return res, nil
 }
 

@@ -145,12 +145,15 @@ func TestRunValidationChecks_JSONOutput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("analysis.New: %v", err)
 	}
-	hasErrors, err := runValidationChecks(context.Background(), svc, an, out, meta, []string{"cardinality"})
+	outcome, err := runValidationChecks(context.Background(), svc, an, out, meta, []string{"cardinality"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !hasErrors {
+	if !outcome.hasErrors {
 		t.Error("expected hasErrors=true")
+	}
+	if outcome.incomplete() {
+		t.Errorf("unexpected incomplete scan: %v", outcome.scanErr)
 	}
 
 	var result output.AnalysisResult

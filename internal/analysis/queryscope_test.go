@@ -83,7 +83,7 @@ func TestAnalysis_IgnoresQueryScopes(t *testing.T) {
 
 	t.Run("orphans see archived rows", func(t *testing.T) {
 		svc := newServiceWith(t, meta, seed)
-		orphans := svc.FindOrphansWithScope(context.Background(), analysis.Options{})
+		orphans, _ := svc.FindOrphansWithScope(context.Background(), analysis.Options{})
 		found := map[string]bool{}
 		for _, o := range orphans {
 			found[o.ID] = true

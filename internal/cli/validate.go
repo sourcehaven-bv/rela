@@ -34,6 +34,26 @@ const (
 	checkAll         = "all"
 )
 
+// Exit codes for `rela validate`. The three outcomes are distinct
+// because they call for different actions, and conflating the last two
+// is what BUG-NEQRY2 / BUG-4KPN2M were about: a run that could not read
+// its input used to be indistinguishable from a clean one.
+//
+//	0 — every rule was evaluated over the whole project, and all passed.
+//	1 — every rule was evaluated, and at least one violation was found.
+//	2 — some input could not be read, so the run is INCOMPLETE. Whether
+//	    the entities that were read are clean is not the question: rules
+//	    that never saw the unreadable entities cannot have passed on
+//	    them. Fix the named files and re-run.
+//
+// Exit 2 takes precedence over exit 1: an incomplete run cannot report a
+// trustworthy violation count, so the incompleteness is the finding to
+// act on first.
+const (
+	exitValidationFailed  = 1
+	exitValidationPartial = 2
+)
+
 // ValidateCmd validates project configuration files.
 type ValidateCmd struct {
 	Check []string `help:"Run validation checks: cardinality, properties, validations, all, or validations:filter."`
@@ -125,23 +145,87 @@ func (c *ValidateCmd) Run(ctx context.Context) error {
 		return fmt.Errorf("initialize analysis service: %w", err)
 	}
 
-	checkErrors, err := runValidationChecks(ctx, checkSvc, checkAnalysis, out, result.Metamodel, c.Check)
+	outcome, err := runValidationChecks(ctx, checkSvc, checkAnalysis, out, result.Metamodel, c.Check)
 	if err != nil {
 		return err
 	}
-	hasErrors = hasErrors || checkErrors
+	return finishValidate(outcome, hasErrors || outcome.hasErrors)
+}
 
+// finishValidate maps the run's outcome onto the documented exit codes
+// and prints the matching verdict.
+//
+// Incompleteness outranks violations: a run that could not read all its
+// input cannot support any claim about the rules, including the claim
+// that the violations it found are all of them.
+func finishValidate(outcome checkOutcome, hasErrors bool) error {
+	if outcome.incomplete() {
+		reportIncompleteScan(outcome.scanErr, hasErrors)
+		return errors.NewExitError(exitValidationPartial)
+	}
 	if hasErrors {
 		if !quiet {
 			fmt.Println("\nValidation failed.")
 		}
-		return errors.NewExitError(1)
+		return errors.NewExitError(exitValidationFailed)
 	}
 	if !quiet {
 		fmt.Println("\nAll validations passed.")
 	}
 	return nil
 }
+
+// reportIncompleteScan explains why the run is not a pass and names the
+// files that could not be read, so the operator can fix them rather
+// than re-run hoping for a different answer.
+//
+// This prints on stdout unconditionally — not gated on !quiet — because
+// it is the reason for a non-zero exit, and a silent non-zero exit is
+// the failure mode this pair of bugs is about in the other direction.
+func reportIncompleteScan(scanErr error, hasErrors bool) {
+	fmt.Println("\nValidation INCOMPLETE: some entities could not be read.")
+	files := analysis.IncompleteScanFiles(scanErr)
+	if len(files) > 0 {
+		fmt.Println("\nFiles that could not be read:")
+		for _, f := range files {
+			fmt.Printf("  ✗ %s\n", f)
+		}
+	}
+	// The full error text follows the file list: a backend that does not
+	// name a path leaves the message as the only detail, and the yaml
+	// error names the line even when the path was recovered.
+	for line := range strings.SplitSeq(scanErr.Error(), "\n") {
+		if line != "" {
+			fmt.Printf("  %s\n", line)
+		}
+	}
+	if hasErrors {
+		fmt.Println("\nViolations were also found in the entities that could be read;" +
+			" the list above is not necessarily complete.")
+	}
+	remedy := "Fix the errors above and re-run."
+	if len(files) > 0 {
+		remedy = "Fix the files above and re-run."
+	}
+	fmt.Println("\nRules were not evaluated over the whole project, so this run is not a pass. " + remedy)
+}
+
+// checkOutcome is what a set of entity checks concluded. The two fields
+// are independent: a run can find violations, fail to read its input, or
+// both, and the caller must be able to tell which.
+type checkOutcome struct {
+	// hasErrors reports that a check found a violation in the input it
+	// managed to read.
+	hasErrors bool
+	// scanErr is non-nil when some input could not be read. Every check
+	// contributes, so the operator sees all unreadable files at once
+	// rather than one per re-run.
+	scanErr error
+}
+
+// incomplete reports whether any check ran over input it could not
+// fully read.
+func (o checkOutcome) incomplete() bool { return o.scanErr != nil }
 
 func runValidationChecks(
 	ctx context.Context,
@@ -150,33 +234,40 @@ func runValidationChecks(
 	checkOut *output.Writer,
 	meta metamodelAccessor,
 	validateChecks []string,
-) (bool, error) {
+) (checkOutcome, error) {
 	checks, err := parseChecks(validateChecks, meta)
 	if err != nil {
-		return false, err
+		return checkOutcome{}, err
 	}
 	opts := analysis.Options{}
-	hasErrors := false
+	outcome := checkOutcome{}
+	var scanErrs []error
 	if checks.cardinality {
-		found, err := runCardinalityCheck(ctx, checkAnalysis, checkOut, opts)
+		found, scanErr, err := runCardinalityCheck(ctx, checkAnalysis, checkOut, opts)
 		if err != nil {
-			return false, err
+			return checkOutcome{}, err
 		}
+		scanErrs = append(scanErrs, scanErr)
 		if found {
-			hasErrors = true
+			outcome.hasErrors = true
 		}
 	}
 	if checks.properties {
-		if runPropertiesCheck(ctx, checkSvc, checkOut, opts) {
-			hasErrors = true
+		found, scanErr := runPropertiesCheck(ctx, checkSvc, checkOut, opts)
+		scanErrs = append(scanErrs, scanErr)
+		if found {
+			outcome.hasErrors = true
 		}
 	}
 	if checks.validations {
-		if runValidationsCheck(ctx, checkAnalysis, checkOut, opts, checks.validationFilters) {
-			hasErrors = true
+		found, scanErr := runValidationsCheck(ctx, checkAnalysis, checkOut, opts, checks.validationFilters)
+		scanErrs = append(scanErrs, scanErr)
+		if found {
+			outcome.hasErrors = true
 		}
 	}
-	return hasErrors, nil
+	outcome.scanErr = stderrors.Join(scanErrs...)
+	return outcome, nil
 }
 
 // runCardinalityCheck runs cardinality validation. Returns true if
@@ -187,19 +278,28 @@ func runValidationChecks(
 // check prints on !quiet, including in JSON mode.
 func runCardinalityCheck(
 	ctx context.Context, checkAnalysis *analysis.Service, checkOut *output.Writer, opts analysis.Options,
-) (bool, error) {
+) (found bool, scanErr, err error) {
 	if !quiet {
 		fmt.Println("\nChecking cardinality constraints...")
 	}
 	violations, err := checkAnalysis.CheckCardinality(ctx, opts)
 	if err != nil {
-		return false, err
+		// An incomplete scan is reported to the caller, not returned as a
+		// hard error: other checks still run, and the operator gets every
+		// unreadable file in one pass.
+		if analysis.IsIncompleteScan(err) {
+			if !quiet && checkOut.Format != output.FormatJSON {
+				checkOut.WriteError("Cardinality NOT checked: could not read all entities")
+			}
+			return false, err, nil
+		}
+		return false, nil, err
 	}
 	if len(violations) == 0 {
 		if !quiet && checkOut.Format != output.FormatJSON {
 			checkOut.WriteSuccess("All cardinality constraints satisfied")
 		}
-		return false, nil
+		return false, nil, nil
 	}
 	if checkOut.Format == output.FormatJSON {
 		_ = checkOut.WriteAnalysisResult(output.AnalysisResult{
@@ -218,17 +318,26 @@ func runCardinalityCheck(
 			}
 		}
 	}
-	return true, nil
+	return true, nil, nil
 }
 
-// runPropertiesCheck runs property validation. Returns true if errors found.
+// runPropertiesCheck runs property validation. Returns whether errors
+// were found, plus a non-nil scanErr when some entity could not be read
+// — in which case "all properties are valid" is not a claim this check
+// can make, whatever the entities it did read looked like.
 func runPropertiesCheck(
 	ctx context.Context, checkSvc *appbuild.Services, checkOut *output.Writer, opts analysis.Options,
-) bool {
+) (bool, error) {
 	if !quiet {
 		fmt.Println("\nValidating entity properties...")
 	}
-	propErrors := schema.ValidateEntityProperties(ctx, checkSvc.Store(), checkSvc.Meta())
+	propErrors, scanErr := schema.ValidateEntityProperties(ctx, checkSvc.Store(), checkSvc.Meta())
+	if scanErr != nil {
+		scanErr = &analysis.IncompleteScanError{Op: "validate entity properties", Err: scanErr}
+		if !quiet && checkOut.Format != output.FormatJSON {
+			checkOut.WriteError("Entity properties NOT fully checked: could not read all entities")
+		}
+	}
 	if opts.Scope != nil {
 		filtered := propErrors[:0]
 		for _, pe := range propErrors {
@@ -243,10 +352,10 @@ func runPropertiesCheck(
 		errorCount += len(pe.Errors)
 	}
 	if errorCount == 0 {
-		if !quiet && checkOut.Format != output.FormatJSON {
+		if !quiet && checkOut.Format != output.FormatJSON && scanErr == nil {
 			checkOut.WriteSuccess("All entity properties are valid")
 		}
-		return false
+		return false, scanErr
 	}
 	if checkOut.Format == output.FormatJSON {
 		var results []output.PropertyValidationResult
@@ -274,32 +383,42 @@ func runPropertiesCheck(
 			}
 		}
 	}
-	return true
+	return true, scanErr
 }
 
+// runValidationsCheck runs the custom Lua validation rules. Returns
+// whether errors were found, plus a non-nil scanErr when the rules ran
+// over an entity set the scan could not fully read — the exact case
+// BUG-4KPN2M describes, where a rule reports a pass on an entity it
+// never saw.
 func runValidationsCheck(
 	ctx context.Context,
 	checkAnalysis *analysis.Service,
 	checkOut *output.Writer,
 	opts analysis.Options,
 	filters []analysis.ValidationFilter,
-) bool {
+) (bool, error) {
 	if !quiet {
 		fmt.Println("\nRunning custom validations...")
 	}
 	var result analysis.ValidationResult
+	var scanErr error
 	if len(filters) > 0 {
-		result = checkAnalysis.RunValidationsFiltered(ctx, opts, filters)
+		result, scanErr = checkAnalysis.RunValidationsFiltered(ctx, opts, filters)
 	} else {
-		result = checkAnalysis.RunValidations(ctx, opts)
+		result, scanErr = checkAnalysis.RunValidations(ctx, opts)
+	}
+	if scanErr != nil && !quiet && checkOut.Format != output.FormatJSON {
+		checkOut.WriteError("Validation rules NOT evaluated over all entities: could not read all input")
 	}
 	violations := result.Violations
 	errorCount, warningCount := analysis.CountValidationsBySeverity(violations)
 	if len(violations) == 0 && !result.HasErrors() {
-		if !quiet && checkOut.Format != output.FormatJSON {
+		// Only claim a pass when the rules actually saw everything.
+		if !quiet && checkOut.Format != output.FormatJSON && scanErr == nil {
 			checkOut.WriteSuccess("All validation rules passed")
 		}
-		return false
+		return false, scanErr
 	}
 	if checkOut.Format == output.FormatJSON {
 		status := "warning"
@@ -317,7 +436,7 @@ func runValidationsCheck(
 		}
 		renderValidationErrorsTo(checkOut, result.ScriptErrors, result.LoadErrors)
 	}
-	return errorCount > 0 || result.HasErrors()
+	return errorCount > 0 || result.HasErrors(), scanErr
 }
 
 func renderValidationErrorsTo(
