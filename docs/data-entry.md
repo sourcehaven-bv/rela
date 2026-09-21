@@ -1986,9 +1986,61 @@ entity_views:
 
 ### Fields
 
-| Field         | Type   | Description                                                       |
-| ------------- | ------ | ----------------------------------------------------------------- |
-| `detail_view` | string | View name (must reference a key under `views:`) used for entities of this type |
+| Field         | Type    | Description                                                       |
+| ------------- | ------- | ----------------------------------------------------------------- |
+| `detail_view` | string  | View name (must reference a key under `views:`) used for entities of this type |
+| `duplicate`   | mapping | Narrows what a duplicate of this type copies — see below |
+
+An entry may carry either field or both. An entry that declares neither is a
+load error, since it configures nothing.
+
+### Duplicating an entity
+
+The entity detail page offers a **Duplicate** action for every type you may
+create. It opens a dialog listing the entity's relation types in both
+directions with a checkbox each, then a create form prefilled from the source.
+Nothing is written until you submit, so you can edit the copy — in particular a
+`unique:` title that would otherwise collide — before it exists.
+
+By default the copy carries every property you can see, plus the markdown body.
+To narrow that, name the properties to carry:
+
+```yaml
+entity_views:
+  invoice:
+    detail_view: invoice_detail
+    duplicate:
+      properties: [customer, currency, line_items]
+```
+
+A property outside the list is not blanked; it takes its normal default from
+the metamodel or the template. Omit the `duplicate:` block to carry everything;
+an empty `properties:` list is refused at load, because omitting the block is
+already how a type opts out of narrowing.
+
+The list narrows **properties only** — the markdown body always carries. There
+is no way to exclude it, so a type whose body you would not want copied should
+not be narrowed but reconsidered: the user can clear the body in the create form
+before submitting.
+
+Three kinds of property never carry, whatever you configure, because copying
+them produces a broken record rather than a narrower one:
+
+- **Attachments** (`file` properties). The bytes are stored under the source
+  entity's id, so the copy would point at a file that is not its own.
+- **State-machine properties.** Creating an entity is an *entry*, not a
+  transition, so the copy starts at the state machine's initial value rather
+  than wherever the source had reached.
+- **Properties hidden from you** by field-level `visible:` rules. You never
+  received the value, so the copy cannot carry it.
+
+The dialog names anything it could not copy, so an incomplete duplicate is
+always visible as one.
+
+Relations follow the checkboxes: outgoing types are selected by default, and
+incoming ones ("something else points at me") are offered but not preselected.
+Only relations whose other end you may read are listed, so the counts shown are
+per-viewer and may be lower than the raw graph.
 
 ### How navigation resolves
 

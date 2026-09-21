@@ -188,6 +188,11 @@ export interface ApiHelpers {
     },
   ): Promise<EntityResponse>;
   getEntity(plural: string, id: string): Promise<EntityResponse>;
+  /** Both directions, grouped by wire key (inverse names for incoming). */
+  getAllRelations(
+    plural: string,
+    id: string,
+  ): Promise<Record<string, Array<{ id: string; type: string; direction?: string }>>>;
   updateEntity(
     plural: string,
     id: string,
@@ -682,6 +687,11 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
       },
       async getEntity(plural, id) {
         return (await call("GET", `${plural}/${id}`)).json();
+      },
+      async getAllRelations(plural, id) {
+        // Both directions, grouped by wire key. A per-entity GET carries
+        // OUTGOING edges only, so an incoming edge can only be verified here.
+        return (await call("GET", `${plural}/${id}/relations`)).json();
       },
       async updateEntity(plural, id, properties) {
         return (await call("PATCH", `${plural}/${id}`, { properties })).json();

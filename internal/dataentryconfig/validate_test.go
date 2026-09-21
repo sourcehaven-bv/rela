@@ -2348,7 +2348,15 @@ func TestValidateEntityViews_UnknownEntityType(t *testing.T) {
 	}
 }
 
-func TestValidateEntityViews_EmptyDetailViewIsError(t *testing.T) {
+// An entry that declares nothing at all is refused, so an operator does not
+// leave a stanza behind that silently does something.
+//
+// The message widened from "detail_view is empty" when `duplicate:` became a
+// second thing an entry may declare (TKT-Z8K2FS): an entry carrying only a
+// duplicate block is legitimate, so the refusal is now about the entry being
+// entirely empty rather than about detail_view specifically. See
+// TestValidateEntityViews_Duplicate for the duplicate-only case.
+func TestValidateEntityViews_EmptyEntryIsError(t *testing.T) {
 	meta := testMetamodel()
 	cfg := &Config{
 		EntityViews: map[string]EntityViewConfig{
@@ -2356,8 +2364,8 @@ func TestValidateEntityViews_EmptyDetailViewIsError(t *testing.T) {
 		},
 	}
 	err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
-	if err == nil || !strings.Contains(err.Error(), "detail_view is empty") {
-		t.Errorf("expected empty detail_view error, got: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "declares nothing") {
+		t.Errorf("expected empty-entry error, got: %v", err)
 	}
 }
 

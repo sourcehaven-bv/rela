@@ -130,6 +130,55 @@ type Config struct {
 // /entity/:type/:id.
 type EntityViewConfig struct {
 	DetailView string `yaml:"detail_view,omitempty" json:"detail_view,omitempty"`
+
+	// Duplicate narrows what a duplicate of this type carries over
+	// (TKT-Z8K2FS). Nil means every property the caller can see carries.
+	Duplicate *DuplicateConfig `yaml:"duplicate,omitempty" json:"duplicate,omitempty"`
+}
+
+// DuplicateConfig narrows what the Duplicate affordance copies from a source
+// entity into the prefilled create form.
+//
+// It declares only WHICH properties carry. It is not an opt-in switch: the
+// Duplicate button is offered wherever the principal may create the type and a
+// create form resolves, so a type with no block still duplicates — it just
+// carries everything visible.
+//
+// Two categories are excluded regardless of this config, because carrying them
+// produces a broken copy rather than a narrower one: `file` properties (their
+// bytes live under the SOURCE's id, so the value would be a dangling path) and
+// state-machine properties (a create is an entry, not a transition — see
+// applyCreateLock in internal/dataentry).
+//
+// Nil: accepted — a nil *DuplicateConfig means "carry every visible property".
+type DuplicateConfig struct {
+	// Properties is the allowlist of property names to carry. Absent means
+	// all visible properties; an EMPTY list is refused at load rather than
+	// treated as "none", so there is only one spelling of "carry nothing"
+	// (there isn't one — omit the type from the duplicate flow instead).
+	//
+	// It narrows PROPERTIES only. The markdown body always carries, and no
+	// setting excludes it — the user clears it in the create form if they do
+	// not want it. Worth stating because an operator writing an allowlist can
+	// reasonably read it as covering the whole record.
+	Properties []string `yaml:"properties,omitempty" json:"properties,omitempty"`
+}
+
+// CarriesProperty reports whether a property carries onto a duplicate.
+//
+// Only the NIL receiver means "carry everything". A present block always has a
+// non-empty allowlist, because [validateEntityDuplicate] refuses an empty
+// `properties:` at load — absence of the block is the single spelling of the
+// default, and treating an empty list as a second spelling here would quietly
+// re-admit the state that validation exists to make unreachable.
+//
+// Nil receiver: accepted, returns true — so a caller can ask without a nil
+// check.
+func (d *DuplicateConfig) CarriesProperty(name string) bool {
+	if d == nil {
+		return true
+	}
+	return slices.Contains(d.Properties, name)
 }
 
 // Action defines an operation that can be triggered from the UI.
