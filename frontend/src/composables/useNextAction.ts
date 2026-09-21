@@ -16,6 +16,16 @@ import type { NextActionSuggestion, NextActionProminence, NextActionFeedbackKind
 
 const suggestion = ref<NextActionSuggestion | null>(null)
 const busy = ref(false)
+/**
+ * Whether an `action:` offer is running (BUG-G2BASF).
+ *
+ * Module-level for the same reason as `busy`: the two surfaces render the SAME
+ * singleton suggestion, so a per-component ref would let the banner and the
+ * status-bar popover run the same mutation concurrently, with no undo.
+ * Separate FROM `busy`, which tracks feedback (snooze/dismiss/mute) — the two
+ * disable different controls and must not mask each other.
+ */
+const acting = ref(false)
 /** Whether the status-bar popover is expanded. */
 const expanded = ref(false)
 /** The suggestion whose impression has already been reported, if any. */
@@ -56,6 +66,7 @@ function suggestionKey(s: NextActionSuggestion): string {
 export function __resetNextActionForTest() {
   suggestion.value = null
   busy.value = false
+  acting.value = false
   expanded.value = false
   shownKey.value = null
   loadedWorld = null
@@ -197,6 +208,7 @@ export function useNextAction() {
   return {
     suggestion,
     busy,
+    acting,
     expanded,
     bandLabel,
     prominence,
@@ -206,5 +218,14 @@ export function useNextAction() {
     markShown,
     respond,
     acknowledge,
+    // Re-resolve the slot for a caller that has just INVALIDATED the current
+    // answer by acting on it — an `action:` offer that ran (BUG-G2BASF).
+    //
+    // Unconditional where loadOnce is latched: the world has not changed,
+    // which is exactly why loadOnce would decline, but the graph underneath it
+    // has. It re-latches loadedWorld to the current world as a side effect of
+    // load(), so a later world switch still resolves. No impression is
+    // reported; see load().
+    reload: () => load(),
   }
 }

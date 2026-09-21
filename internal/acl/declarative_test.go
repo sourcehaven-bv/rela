@@ -74,7 +74,7 @@ func ctxAs(user string) context.Context {
 // of the given type. Subject is required; tests for the type-level
 // grant check fold the create case so the entity ID is empty.
 func entityCreate(etype string) acl.WriteRequest {
-	return acl.WriteRequest{Op: acl.OpCreate, Subject: acl.EntitySubject{Type: etype}}
+	return acl.WriteRequest{Op: acl.OpCreate, Subject: acl.NewFacelessEntitySubject(etype, "")}
 }
 
 // relCreate builds the canonical WriteRequest for a relation create

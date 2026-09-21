@@ -141,32 +141,37 @@ func New(d Deps) (*Service, error) {
 // FindOrphansWithScope returns entities with no relations, filtered
 // by scope.
 //
-// Errors from the tracer or per-entity store reads are logged via
-// slog.Warn and the impacted entries are skipped — the caller sees
-// an under-count rather than a hard failure. This matches the
-// existing CLI summary behavior (AnalyzeAll reports `len(orphans)`
-// without an error channel). A returning-errors variant is a
-// candidate follow-up; not in scope for the package lift.
-func (s *Service) FindOrphansWithScope(ctx context.Context, opts Options) []*entity.Entity {
+// A non-nil error is an [IncompleteScanError]: either the tracer could
+// not enumerate orphans, or one of the orphans it named could not be
+// read. The entities that WERE read are still returned, so a caller
+// rendering a summary can show them, but a caller making a pass/fail
+// claim must not treat the result as complete.
+//
+// The warn-and-skip this replaces was documented as a known follow-up
+// (BUG-4KPN2M why4); a skipped orphan silently lowered the count.
+func (s *Service) FindOrphansWithScope(ctx context.Context, opts Options) ([]*entity.Entity, error) {
 	ids, err := s.deps.Tracer.FindOrphans(ctx)
 	if err != nil {
-		slog.Warn("analysis: tracer.FindOrphans failed; returning no orphans (results may under-count)", "error", err)
-		return nil
+		return nil, &IncompleteScanError{Op: "find orphans", Err: err}
 	}
 	st := s.deps.Store
 	out := make([]*entity.Entity, 0, len(ids))
+	var scanErrs []error
 	for _, id := range ids {
 		if !inScope(id, opts.Scope) {
 			continue
 		}
 		e, err := st.GetEntity(ctx, id)
 		if err != nil {
-			slog.Warn("analysis: store.GetEntity failed; orphan skipped (results may under-count)", "id", id, "error", err)
+			scanErrs = append(scanErrs, &IncompleteScanError{
+				Op:  "read orphan " + id,
+				Err: err,
+			})
 			continue
 		}
 		out = append(out, e)
 	}
-	return out
+	return out, errors.Join(scanErrs...)
 }
 
 // --- Duplicate analysis ---
@@ -177,8 +182,9 @@ func (s *Service) FindOrphansWithScope(ctx context.Context, opts Options) []*ent
 // whether two ENTITIES are the same thing, and an entity's translations are not
 // duplicates of each other. Widening would report every faced entity as a
 // duplicate of itself.
-func (s *Service) FindDuplicates(ctx context.Context, opts Options) []DuplicateGroup {
-	entities := filterByScope(collectEntities(ctx, s.deps.Store, store.EntityQuery{}), opts.Scope)
+func (s *Service) FindDuplicates(ctx context.Context, opts Options) ([]DuplicateGroup, error) {
+	collected, scanErr := collectEntities(ctx, s.deps.Store, store.EntityQuery{})
+	entities := filterByScope(collected, opts.Scope)
 
 	titleGroups := make(map[string][]*entity.Entity)
 	for _, e := range entities {
@@ -197,7 +203,7 @@ func (s *Service) FindDuplicates(ctx context.Context, opts Options) []DuplicateG
 			})
 		}
 	}
-	return duplicates
+	return duplicates, scanErr
 }
 
 // FindUniqueViolations returns groups of same-type entities that share a
@@ -216,7 +222,7 @@ func (s *Service) FindDuplicates(ctx context.Context, opts Options) []DuplicateG
 // identifies an ENTITY, and its states share that identity by construction —
 // they are the same entity. Widening would make every faced entity collide with
 // itself.
-func (s *Service) FindUniqueViolations(ctx context.Context, opts Options) []UniqueViolation {
+func (s *Service) FindUniqueViolations(ctx context.Context, opts Options) ([]UniqueViolation, error) {
 	// (type, property) pairs the metamodel declares unique + non-list.
 	type uniqueProp struct{ entityType, property string }
 	var uniqueProps []uniqueProp
@@ -228,10 +234,11 @@ func (s *Service) FindUniqueViolations(ctx context.Context, opts Options) []Uniq
 		}
 	}
 	if len(uniqueProps) == 0 {
-		return nil
+		return nil, nil
 	}
 
-	entities := filterByScope(collectEntities(ctx, s.deps.Store, store.EntityQuery{}), opts.Scope)
+	collected, scanErr := collectEntities(ctx, s.deps.Store, store.EntityQuery{})
+	entities := filterByScope(collected, opts.Scope)
 
 	// Group by (type, property, value); a group with >1 entity is a
 	// violation. valueGroups keyed on the uniqueProp then the value.
@@ -276,7 +283,7 @@ func (s *Service) FindUniqueViolations(ctx context.Context, opts Options) []Uniq
 		}
 		return violations[i].Value < violations[j].Value
 	})
-	return violations
+	return violations, scanErr
 }
 
 // --- Gap analysis ---
@@ -286,7 +293,7 @@ func (s *Service) FindUniqueViolations(ctx context.Context, opts Options) []Uniq
 // Deliberately the default query, not allStatesQuery: a gap is "this entity is
 // missing an expected link", asked once per entity. Reporting the same gap once
 // per state would be noise, not coverage.
-func (s *Service) FindGaps(ctx context.Context, opts Options) []GapResult {
+func (s *Service) FindGaps(ctx context.Context, opts Options) ([]GapResult, error) {
 	meta := s.deps.Meta
 	stringIDPrefixes := make(map[string]bool)
 	for _, entityDef := range meta.Entities {
@@ -298,8 +305,9 @@ func (s *Service) FindGaps(ctx context.Context, opts Options) []GapResult {
 		}
 	}
 
+	collected, scanErr := collectEntities(ctx, s.deps.Store, store.EntityQuery{})
 	prefixGroups := make(map[string][]int)
-	for _, e := range collectEntities(ctx, s.deps.Store, store.EntityQuery{}) {
+	for _, e := range collected {
 		if !inScope(e.ID, opts.Scope) {
 			continue
 		}
@@ -336,7 +344,7 @@ func (s *Service) FindGaps(ctx context.Context, opts Options) []GapResult {
 			})
 		}
 	}
-	return allGaps
+	return allGaps, scanErr
 }
 
 // --- Cardinality analysis ---
@@ -372,6 +380,19 @@ type cardinalitySpec struct {
 // (TKT-RNBLAC). This deliberately diverges from the under-count logging
 // of the other analyses (see [Service.FindOrphansWithScope]): those can
 // only miss findings, a failed count invents them.
+//
+// # Scope of its incomplete-scan reporting
+//
+// This check scans only the entity TYPES that declare a bound, so it
+// detects an unreadable file only for those types. An unreadable file
+// of a type with no cardinality constraints is invisible here, and
+// correctly so: every constraint this check has WAS evaluated over
+// every subject it governs.
+//
+// That means `--check cardinality` alone is not a whole-corpus
+// readability gate. `--check properties` and `--check validations` both
+// scan all types and do report such a file, which is why the CI
+// invocation runs all three.
 func (s *Service) CheckCardinality(ctx context.Context, opts Options) ([]CardinalityViolation, error) {
 	// Non-nil even when empty: JSON callers serialize Details as [], not null.
 	violations := make([]CardinalityViolation, 0)
@@ -435,7 +456,14 @@ func (s *Service) checkCardinality(
 	}
 	var subjects []subject
 	for _, subjectType := range spec.subjectTypes {
-		entities := collectEntities(ctx, s.deps.Store, store.EntityQuery{Type: subjectType, AllStates: true})
+		entities, scanErr := collectEntities(ctx, s.deps.Store, store.EntityQuery{Type: subjectType, AllStates: true})
+		if scanErr != nil {
+			// Same reasoning as a failed count (see the CheckCardinality
+			// error policy): a subject the scan could not read is not a
+			// subject with zero relations. Reporting around it would
+			// under-count min violations while claiming a complete check.
+			return nil, scanErr
+		}
 		for _, e := range filterByScope(entities, scope) {
 			count, err := s.countRelationsFor(ctx, e, spec)
 			if err != nil {
@@ -545,18 +573,25 @@ func (s *Service) newValidationService() *validation.Service {
 
 // RunValidations executes all custom validation rules from the
 // metamodel, filtered by scope.
-func (s *Service) RunValidations(ctx context.Context, opts Options) ValidationResult {
-	return s.newValidationService().Check(ctx, collectEntities(ctx, s.deps.Store, allStatesQuery()), opts.Scope)
+//
+// A non-nil error is an [IncompleteScanError]: the rules ran over the
+// entities that could be read, so the result is usable but does not
+// cover the whole project. A rule cannot have passed on an entity it
+// never saw (BUG-4KPN2M).
+func (s *Service) RunValidations(ctx context.Context, opts Options) (ValidationResult, error) {
+	entities, scanErr := collectEntities(ctx, s.deps.Store, allStatesQuery())
+	return s.newValidationService().Check(ctx, entities, opts.Scope), scanErr
 }
 
 // RunValidationsFiltered executes custom validation rules matching
 // the given filters. Multiple filters union (OR). An empty
 // ValidationFilter matches all rules.
+// A non-nil error is an [IncompleteScanError] — see [Service.RunValidations].
 func (s *Service) RunValidationsFiltered(
 	ctx context.Context,
 	opts Options,
 	filters []ValidationFilter,
-) ValidationResult {
+) (ValidationResult, error) {
 	svc := s.newValidationService()
 
 	ruleNames := make(map[string]bool)
@@ -568,7 +603,8 @@ func (s *Service) RunValidationsFiltered(
 		}
 	}
 
-	return svc.CheckRules(ctx, collectEntities(ctx, s.deps.Store, allStatesQuery()), opts.Scope, ruleNames)
+	entities, scanErr := collectEntities(ctx, s.deps.Store, allStatesQuery())
+	return svc.CheckRules(ctx, entities, opts.Scope, ruleNames), scanErr
 }
 
 // matchesFilter returns true if the rule matches the filter criteria.
@@ -593,6 +629,10 @@ func CountValidationsBySeverity(violations []ValidationViolation) (errors, warni
 // AnalyzeAll runs all analyses and returns a summary of counts. A
 // cardinality store error fails the whole run — see the
 // [Service.CheckCardinality] error policy.
+//
+// When the returned error satisfies [IsIncompleteScan] the summary is
+// non-nil and usable, but its counts are lower bounds: some input could
+// not be read. Any other error means no summary at all.
 func (s *Service) AnalyzeAll(ctx context.Context, opts Options) (*Summary, error) {
 	cardinality, err := s.CheckCardinality(ctx, opts)
 	if err != nil {
@@ -602,28 +642,47 @@ func (s *Service) AnalyzeAll(ctx context.Context, opts Options) (*Summary, error
 	if err != nil {
 		return nil, err
 	}
+
+	// Each analysis rescans, so each can independently report an
+	// incomplete read; join them so the caller learns about every file it
+	// could not read rather than only the first.
+	var scanErrs []error
+	orphans, err := s.FindOrphansWithScope(ctx, opts)
+	scanErrs = append(scanErrs, err)
+	duplicates, err := s.FindDuplicates(ctx, opts)
+	scanErrs = append(scanErrs, err)
+	uniqueViolations, err := s.FindUniqueViolations(ctx, opts)
+	scanErrs = append(scanErrs, err)
+	gaps, err := s.FindGaps(ctx, opts)
+	scanErrs = append(scanErrs, err)
+
 	summary := &Summary{
-		Orphans:          len(s.FindOrphansWithScope(ctx, opts)),
-		Duplicates:       len(s.FindDuplicates(ctx, opts)),
-		UniqueViolations: len(s.FindUniqueViolations(ctx, opts)),
-		Gaps:             len(s.FindGaps(ctx, opts)),
+		Orphans:          len(orphans),
+		Duplicates:       len(duplicates),
+		UniqueViolations: len(uniqueViolations),
+		Gaps:             len(gaps),
 		Cardinality:      len(cardinality),
 		States:           len(states),
 	}
 
-	for _, pe := range schema.ValidateEntityProperties(ctx, s.deps.Store, s.deps.Meta) {
+	propErrors, err := schema.ValidateEntityProperties(ctx, s.deps.Store, s.deps.Meta)
+	if err != nil {
+		scanErrs = append(scanErrs, &IncompleteScanError{Op: "validate entity properties", Err: err})
+	}
+	for _, pe := range propErrors {
 		if !inScope(pe.EntityID, opts.Scope) {
 			continue
 		}
 		summary.PropertyErrors += len(pe.Errors)
 	}
 
-	result := s.RunValidations(ctx, opts)
+	result, err := s.RunValidations(ctx, opts)
+	scanErrs = append(scanErrs, err)
 	summary.ValidationErrors, summary.ValidationWarnings = validation.CountBySeverity(result.Violations)
 	summary.ValidationScriptErrors = len(result.ScriptErrors)
 	summary.ValidationLoadErrors = len(result.LoadErrors)
 
-	return summary, nil
+	return summary, errors.Join(scanErrs...)
 }
 
 // --- Orphan temp files ---
@@ -680,19 +739,24 @@ func findTempFilesInDir(fs storage.FS, dir string) []string {
 // --- helpers ---
 
 // collectEntities iterates the store yielding entities. On iteration
-// error, logs and returns the partial slice (callers cannot signal
-// errors today — see [Service.FindOrphansWithScope] for the rationale).
-func collectEntities(ctx context.Context, s store.Store, q store.EntityQuery) []*entity.Entity {
+// error it returns the entities read so far AND an
+// [IncompleteScanError], so a caller can both render what it has and
+// report that the scan was partial.
+//
+// Returning the partial slice alongside the error is deliberate:
+// `rela analyze` still wants to show its summary, while `rela validate`
+// must refuse to call the run a pass. Before BUG-4KPN2M this function
+// logged a warning and returned only the slice, which made an
+// under-count indistinguishable from a clean read.
+func collectEntities(ctx context.Context, s store.Store, q store.EntityQuery) ([]*entity.Entity, error) {
 	out := make([]*entity.Entity, 0)
 	for e, err := range s.ListEntities(ctx, q) {
 		if err != nil {
-			slog.Warn("analysis: store.ListEntities iterator error; results may under-count",
-				"type", q.Type, "error", err)
-			return out
+			return out, &IncompleteScanError{Op: "list entities", EntityType: q.Type, Err: err}
 		}
 		out = append(out, e)
 	}
-	return out
+	return out, nil
 }
 
 // filterByScope returns only entities present in scope. nil scope is

@@ -968,7 +968,7 @@ func (h *writeHandler) writeRelationsApplyError(w http.ResponseWriter, r *http.R
 }
 
 func (h *writeHandler) handleV1CreateRelation(
-	w http.ResponseWriter, r *http.Request, typeName, entityID, relType string,
+	w http.ResponseWriter, r *http.Request, typeName string, ref entityRef, relType string,
 ) {
 	// Need write lock
 	r = h.enterWrite(r)
@@ -976,12 +976,13 @@ func (h *writeHandler) handleV1CreateRelation(
 
 	// ACL gate (TKT-VQGN CRIT-2): runs BEFORE body parse (RR-FGUZ
 	// applied to relation writes) and BEFORE the affordance check —
-	// otherwise a 400/403 confirms the entity exists.
-	if !h.gateRead(w, r, typeName, entityID) {
+	// otherwise a 400/403 confirms the entity exists. The BARE id: the row
+	// gate is face-blind.
+	if !h.gateRead(w, r, typeName, ref.ID) {
 		return
 	}
 
-	entity, found := h.reader.getEntity(r.Context(), entityID)
+	entity, found := h.reader.getEntityRef(r.Context(), ref)
 	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
 		return
@@ -1049,8 +1050,21 @@ func (h *writeHandler) handleV1CreateRelation(
 
 	from, to := resolveRelationEndpoints(entity.ID, req.ID, req.Direction)
 
+	// The new edge's TAIL, by the same rule applyRelationsModern uses
+	// (BUG-64MU2Q): a content-scoped OUTGOING edge tails at the addressed
+	// face; an incoming edge tails at the PEER, whose face is not this
+	// request's to choose; an identity-scoped edge belongs to the entity, so
+	// its tail is the zero face by definition.
+	newTail := entityPkg.Face("")
+	if req.Direction != string(DirectionIncoming) {
+		if relDef, ok := h.schema().Meta.Relations[relType]; ok && relDef.Scope.IsContent() {
+			newTail = ref.Face
+		}
+	}
+
 	_, err := h.manager.CreateRelation(
-		r.Context(), from, relType, to, entityPkg.RelationOptions{Properties: req.Meta},
+		r.Context(), from, relType, to,
+		entityPkg.RelationOptions{Properties: req.Meta, FromFace: newTail},
 	)
 	if err != nil {
 		if writeForbiddenIfACLDenied(w, err) {
@@ -1064,18 +1078,18 @@ func (h *writeHandler) handleV1CreateRelation(
 }
 
 func (h *writeHandler) handleV1UpdateRelation(
-	w http.ResponseWriter, r *http.Request, typeName, entityID, relType, targetID string,
+	w http.ResponseWriter, r *http.Request, typeName string, ref entityRef, relType, targetID string,
 ) {
 	// Need write lock
 	r = h.enterWrite(r)
 	defer h.writeMu.Unlock()
 
-	// ACL gate (TKT-VQGN CRIT-2): see handleV1CreateRelation.
-	if !h.gateRead(w, r, typeName, entityID) {
+	// ACL gate (TKT-VQGN CRIT-2): see handleV1CreateRelation. BARE id.
+	if !h.gateRead(w, r, typeName, ref.ID) {
 		return
 	}
 
-	entity, found := h.reader.getEntity(r.Context(), entityID)
+	entity, found := h.reader.getEntityRef(r.Context(), ref)
 	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
 		return
@@ -1123,8 +1137,15 @@ func (h *writeHandler) handleV1UpdateRelation(
 
 	from, to := resolveRelationEndpoints(entity.ID, targetID, req.Direction)
 
+	// The addressed tail when the caller named one on the edge's SOURCE,
+	// else the existing edge's own — see tailOfExistingEdge. `from == ref.ID`
+	// is the ownership test: on the incoming path the source is the peer, so
+	// the addressed face is not this edge's to take.
+	tail := tailOfExistingEdge(r.Context(), h.store, from, relType, to, ref.Face, from == ref.ID)
+
 	rel, err := h.manager.UpdateRelation(r.Context(), from, relType, to, entityPkg.RelationOptions{
 		Properties: req.Meta,
+		FromFace:   tail,
 	})
 	if err != nil {
 		if writeForbiddenIfACLDenied(w, err) {
@@ -1147,18 +1168,18 @@ func (h *writeHandler) handleV1UpdateRelation(
 }
 
 func (h *writeHandler) handleV1DeleteRelation(
-	w http.ResponseWriter, r *http.Request, typeName, entityID, relType, targetID string,
+	w http.ResponseWriter, r *http.Request, typeName string, ref entityRef, relType, targetID string,
 ) {
 	// Need write lock
 	r = h.enterWrite(r)
 	defer h.writeMu.Unlock()
 
-	// ACL gate (TKT-VQGN CRIT-2): see handleV1CreateRelation.
-	if !h.gateRead(w, r, typeName, entityID) {
+	// ACL gate (TKT-VQGN CRIT-2): see handleV1CreateRelation. BARE id.
+	if !h.gateRead(w, r, typeName, ref.ID) {
 		return
 	}
 
-	entity, found := h.reader.getEntity(r.Context(), entityID)
+	entity, found := h.reader.getEntityRef(r.Context(), ref)
 	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
 		return
@@ -1177,7 +1198,13 @@ func (h *writeHandler) handleV1DeleteRelation(
 
 	from, to := resolveRelationEndpoints(entity.ID, targetID, direction)
 
-	if err := h.manager.DeleteRelation(r.Context(), from, relType, to); err != nil {
+	// Addressed by its OWN tail — see tailOfExistingEdge. Dropping the tail
+	// deletes a DIFFERENT edge (the default face's) and reports success.
+	// DeleteRelationState with the zero face IS DeleteRelation, so the
+	// faceless and identity-scoped cases are unchanged.
+	tail := tailOfExistingEdge(r.Context(), h.store, from, relType, to, ref.Face, from == ref.ID)
+
+	if err := h.manager.DeleteRelationState(r.Context(), from, tail, relType, to); err != nil {
 		if writeForbiddenIfACLDenied(w, err) {
 			return
 		}
@@ -1188,7 +1215,9 @@ func (h *writeHandler) handleV1DeleteRelation(
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (h *writeHandler) handleV1CloneEntity(w http.ResponseWriter, r *http.Request, typeName, entityID string) {
+func (h *writeHandler) handleV1CloneEntity(
+	w http.ResponseWriter, r *http.Request, typeName string, ref entityRef,
+) {
 	// Need write lock
 	r = h.enterWrite(r)
 	defer h.writeMu.Unlock()
@@ -1197,12 +1226,12 @@ func (h *writeHandler) handleV1CloneEntity(w http.ResponseWriter, r *http.Reques
 
 	// ACL gate (TKT-VQGN): runs BEFORE getEntity (RR-NGMI timing) so
 	// a clone from a hidden source 404s with the same shape and
-	// timing as a clone from a nonexistent source.
-	if !h.gateRead(w, r, typeName, entityID) {
+	// timing as a clone from a nonexistent source. BARE id.
+	if !h.gateRead(w, r, typeName, ref.ID) {
 		return
 	}
 
-	entity, found := h.reader.getEntity(r.Context(), entityID)
+	entity, found := h.reader.getEntityRef(r.Context(), ref)
 	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
 		return

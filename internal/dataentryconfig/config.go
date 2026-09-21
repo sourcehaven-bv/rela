@@ -130,6 +130,55 @@ type Config struct {
 // /entity/:type/:id.
 type EntityViewConfig struct {
 	DetailView string `yaml:"detail_view,omitempty" json:"detail_view,omitempty"`
+
+	// Duplicate narrows what a duplicate of this type carries over
+	// (TKT-Z8K2FS). Nil means every property the caller can see carries.
+	Duplicate *DuplicateConfig `yaml:"duplicate,omitempty" json:"duplicate,omitempty"`
+}
+
+// DuplicateConfig narrows what the Duplicate affordance copies from a source
+// entity into the prefilled create form.
+//
+// It declares only WHICH properties carry. It is not an opt-in switch: the
+// Duplicate button is offered wherever the principal may create the type and a
+// create form resolves, so a type with no block still duplicates — it just
+// carries everything visible.
+//
+// Two categories are excluded regardless of this config, because carrying them
+// produces a broken copy rather than a narrower one: `file` properties (their
+// bytes live under the SOURCE's id, so the value would be a dangling path) and
+// state-machine properties (a create is an entry, not a transition — see
+// applyCreateLock in internal/dataentry).
+//
+// Nil: accepted — a nil *DuplicateConfig means "carry every visible property".
+type DuplicateConfig struct {
+	// Properties is the allowlist of property names to carry. Absent means
+	// all visible properties; an EMPTY list is refused at load rather than
+	// treated as "none", so there is only one spelling of "carry nothing"
+	// (there isn't one — omit the type from the duplicate flow instead).
+	//
+	// It narrows PROPERTIES only. The markdown body always carries, and no
+	// setting excludes it — the user clears it in the create form if they do
+	// not want it. Worth stating because an operator writing an allowlist can
+	// reasonably read it as covering the whole record.
+	Properties []string `yaml:"properties,omitempty" json:"properties,omitempty"`
+}
+
+// CarriesProperty reports whether a property carries onto a duplicate.
+//
+// Only the NIL receiver means "carry everything". A present block always has a
+// non-empty allowlist, because [validateEntityDuplicate] refuses an empty
+// `properties:` at load — absence of the block is the single spelling of the
+// default, and treating an empty list as a second spelling here would quietly
+// re-admit the state that validation exists to make unreachable.
+//
+// Nil receiver: accepted, returns true — so a caller can ask without a nil
+// check.
+func (d *DuplicateConfig) CarriesProperty(name string) bool {
+	if d == nil {
+		return true
+	}
+	return slices.Contains(d.Properties, name)
 }
 
 // Action defines an operation that can be triggered from the UI.
@@ -1073,9 +1122,16 @@ type Gantt struct {
 	// prototype showed the repeated bar reads as two pieces of work.
 	MultiParent string `yaml:"multi_parent,omitempty" json:"multi_parent"`
 	// OnCycle says what to do when the containment graph loops: "error"
-	// (default) refuses the request; "prune" stops the walk at the repeated
-	// node and renders the rest. A cycle is always a data bug — the choice is
-	// only whether the operator prefers a hard stop or a degraded render.
+	// (default) refuses the request; "prune" drops the looping component and
+	// renders the rest; "mark" renders the component in place and flags it.
+	//
+	// Three policies rather than two because a loop is not necessarily a data
+	// bug — whether "A contains B contains A" is nonsense or a legitimate
+	// mutual dependency is a property of the operator's schema, not something
+	// this package can know. "error" suits a project that intends a strict
+	// tree; "mark" suits one where a loop is expected and should still be
+	// legible. Neither is more correct in general, which is why the choice is
+	// declared rather than inferred.
 	OnCycle string `yaml:"on_cycle,omitempty" json:"on_cycle"`
 	// DefaultDepth is how many levels the SPA expands on first load
 	// (default 2). Deeper levels stay reachable by drill-down; this only
@@ -1465,6 +1521,28 @@ type ViewSection struct {
 	// rather than reversing it. A section that says nothing keeps saying
 	// nothing, so no existing deployment grows a button on upgrade.
 	Create *SectionCreate `yaml:"create,omitempty" json:"create,omitempty"`
+
+	// Sort orders a FLAT section's rows (`list`, `table`, `cards`).
+	// ParentSort and ChildSort order each level of a `display: nested`
+	// section. The keys are mutually exclusive by display, and using the
+	// wrong one is refused at load rather than ignored (TKT-9OFGH4).
+	//
+	// Three keys rather than one, for the reason [ViewSection.ParentColumns]
+	// gives: a nested section holds two collections at two levels, with
+	// independent types, so a single `sort:` could only pick a level by
+	// convention. `columns:` faced the same choice and split; this follows it,
+	// and an author who already knows parent_columns/child_columns knows these.
+	//
+	// Enum properties order by their DECLARED value order, so
+	// `sort: [{property: status}]` on a workflow enum reads in workflow order
+	// rather than alphabetically. Everything else compares byte-wise on the
+	// stored text — see [filter.QuerySort] for why that is the rule.
+	//
+	// Sorting happens BEFORE the row caps, so the rows that survive are the
+	// top-sorted ones rather than whichever the traversal reached first.
+	Sort       []SortSpec `yaml:"sort,omitempty" json:"sort,omitempty"`
+	ParentSort []SortSpec `yaml:"parent_sort,omitempty" json:"parent_sort,omitempty"`
+	ChildSort  []SortSpec `yaml:"child_sort,omitempty" json:"child_sort,omitempty"`
 }
 
 // SectionCreate declares HOW a section's create-related affordance behaves.

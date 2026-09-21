@@ -1140,8 +1140,9 @@ func NewApp(
 		schemaFile:  func() string { return filepath.Base(app.paths.SchemaPath) },
 		executeView: app.views.executeView,
 		// Late-bound: tests reassign app.acl after construction.
-		aclImpl: func() acl.ACL { return app.acl },
-		files:   newCommandFileStore(),
+		aclImpl:  func() acl.ACL { return app.acl },
+		files:    newCommandFileStore(),
+		redactor: appRedactor(app),
 	}
 
 	// Build and publish the initial Schema snapshot. All reloadable

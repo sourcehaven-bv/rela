@@ -13,6 +13,17 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
+// ledgerKey holds the drift ledger: schema names whose data is orphaned, with
+// first-seen timestamps, awaiting GC.
+//
+// This stays in state.KV, unlike the migration record that moved out of it
+// (TKT-XCJ0Y2). The ledger is a GC clock — node-local bookkeeping about when
+// this deployment first noticed some orphaned data — and it is rebuildable
+// from the store at any time with `rela migrate gc --scan`. The migration
+// record is not: it says what the CONTENT conforms to, so it has to travel
+// with the content.
+const ledgerKey = "migration/drift.json"
+
 // Ledger is the drift ledger: schema names whose stored data was orphaned by
 // an adopted schema change, each with the time it was first seen. The GC
 // engine deletes an entry's data only once the entry is older than the grace

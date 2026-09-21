@@ -79,7 +79,15 @@ func buildEnumIndex(propDef *metamodel.PropertyDef, meta *metamodel.Metamodel) m
 
 	index := make(map[string]int, len(values))
 	for i, v := range values {
-		index[v] = i
+		// FIRST occurrence wins, so a value listed twice by mistake ranks
+		// where it first appears. That matches SQL's `CASE x WHEN 'a' THEN 0
+		// … WHEN 'a' THEN 2 END`, which also takes the first matching arm —
+		// and the same rule in graphquerynaive. Letting the last win here
+		// would make a duplicated value sort differently in Go than in the
+		// database, for a schema nothing rejects (TKT-9OFGH4).
+		if _, seen := index[v]; !seen {
+			index[v] = i
+		}
 	}
 	return index
 }

@@ -68,6 +68,20 @@ type exportHandler struct {
 	// (visibleRelationIDs) shared with the serializer paths.
 	visibleReader visibleReader
 
+	// loadBodies fills the bodies of already-gated rows, in place. The list
+	// read path is content-free (rowcontent.go), which is right for the
+	// built-in column table — it renders properties — but WRONG for an
+	// `export_render:` script, which reaches `row.content` and would
+	// otherwise render every body as the empty string. That failure is
+	// silent: the export succeeds and the bodies are simply absent.
+	//
+	// A seam rather than a store handle so the export handler keeps taking
+	// only what it needs, and so the call site is one named thing a test can
+	// assert on. Called on the OVERRIDE path only, and only after the ACL
+	// scope, the field-redaction pass and the cap — so it loads at most
+	// listExportCap bodies, for rows that already survived every gate.
+	loadBodies func(ctx context.Context, rows []*entityPkg.Entity) error
+
 	// engine is the SHARED transform engine. Sharing is load-bearing, not an
 	// optimisation: the engine owns the bounded worker pool that caps concurrent
 	// converter processes, so a per-request engine would give every request its
@@ -87,10 +101,13 @@ func newExportHandler(app *App) (*exportHandler, error) {
 		return nil, fmt.Errorf("dataentry: newExportHandler: %w", err)
 	}
 	return &exportHandler{
-		meta:           app.Meta,
-		cfg:            func() *Config { return app.State().Cfg },
-		reader:         app.reader,
-		visibleReader:  app.visibleReader,
+		meta:          app.Meta,
+		cfg:           func() *Config { return app.State().Cfg },
+		reader:        app.reader,
+		visibleReader: app.visibleReader,
+		loadBodies: func(ctx context.Context, rows []*entityPkg.Entity) error {
+			return loadRowContent(ctx, app.Services().Store, rows)
+		},
 		visReader:      visReader,
 		redactor:       redactor,
 		documents:      app.documents,

@@ -46,7 +46,11 @@ func (s *FSStore) loadEntityMeta(m entityMeta) (*entity.Entity, error) {
 	key := s.layout.entityFileKey(m.Type, stateKey(m.ID, m.Face))
 	e, err := s.codec.readEntityFile(key, m.ID, m.Type)
 	if err != nil {
-		return nil, err
+		// Name the file. A bare "failed to parse frontmatter" reaches the
+		// caller through an iterator with no other identifying detail, so
+		// whoever reports the failure cannot say which file to fix
+		// (BUG-NEQRY2 acceptance criterion 1).
+		return nil, fmt.Errorf("%s: %w", key, err)
 	}
 	e.Face = m.Face
 	return e, nil

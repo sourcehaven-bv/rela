@@ -342,7 +342,7 @@ role_relations:
 	// edge confers editor on TKT-001.
 	writeDecision := declarative.AuthorizeWrite(aliceCtx, acl.WriteRequest{
 		Op:      acl.OpUpdate,
-		Subject: acl.EntitySubject{Type: "ticket", ID: "TKT-001"},
+		Subject: acl.NewFacelessEntitySubject("ticket", "TKT-001"),
 	})
 	if !writeDecision.Allow {
 		t.Fatalf("write path: expected allow (editor-of edge should confer editor); got %+v", writeDecision)

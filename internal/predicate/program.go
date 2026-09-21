@@ -18,6 +18,7 @@ type Program struct {
 	attributes  map[string]map[string]struct{}
 	vars        map[string]struct{}
 	funcs       map[string]struct{}
+	traversals  []TraversalSpec
 	sqlPortable bool
 }
 
@@ -69,6 +70,7 @@ func (p *Program) inspect() {
 	p.attributes = map[string]map[string]struct{}{}
 	p.vars = map[string]struct{}{}
 	p.funcs = map[string]struct{}{}
+	p.traversals = nil
 	p.sqlPortable = true
 	var visit func(node)
 	visit = func(n node) {
@@ -92,6 +94,13 @@ func (p *Program) inspect() {
 			for _, a := range x.args {
 				visit(a)
 			}
+		case *traversalNode:
+			// A traversal stays SQL-portable: it exists to be lowered into a
+			// store predicate, so marking it non-portable would defeat the
+			// one reason the form is compiled statically rather than being a
+			// host function.
+			p.traversals = append(p.traversals, x.spec)
+			visit(x.subject)
 		case *tableArgNode:
 			p.sqlPortable = false
 		case *relationalNode:

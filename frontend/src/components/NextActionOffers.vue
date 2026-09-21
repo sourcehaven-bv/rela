@@ -12,7 +12,14 @@
  * sibling buttons cannot express.
  */
 import { computed, onMounted, onUnmounted, ref, useTemplateRef } from 'vue'
+import { useRouter } from 'vue-router'
 import { useNextAction } from '@/composables/useNextAction'
+import { runAction } from '@/api/actions'
+import { getScriptError } from '@/api/errors'
+import { ApiError, getErrorMessage } from '@/api'
+import { useConfirm } from '@/composables/useConfirm'
+import { useUIStore } from '@/stores'
+import { useScriptErrorStore } from '@/stores/scriptError'
 import type { NextActionOffer, NextActionPickOption } from '@/types'
 
 const props = defineProps<{
@@ -25,11 +32,20 @@ const props = defineProps<{
  * Offers that ACT, paired with their index so a pick_one can find its live
  * options. The index is the key the server used, so filtering must not lose
  * it — hence the map-then-filter rather than a plain filter.
+ *
+ * `action` renders here too (BUG-G2BASF). It was previously filtered out, so
+ * an offer the config layer validates — Kind() ranks it first in the union,
+ * and validation rejects an unknown action id — rendered nothing at all.
+ *
+ * `set` is still absent, and deliberately: unlike `action` it has no endpoint
+ * behind it, so a button would have nothing to call. Left to the ticket that
+ * gives it one rather than faked client-side out of a PATCH, which would put
+ * the interpolation rules in the wrong layer.
  */
 const actEntries = computed(() =>
   props.offers
     .map((offer, index) => ({ offer, index }))
-    .filter(({ offer }) => offer.navigate || offer.acknowledge || offer.pick_one)
+    .filter(({ offer }) => offer.navigate || offer.acknowledge || offer.pick_one || offer.action)
 )
 
 /** The resolved options for one offer, or [] when the server sent none. */
@@ -37,7 +53,84 @@ function optionsFor(index: number): NextActionPickOption[] {
   return props.pickOptions?.[String(index)] ?? []
 }
 
-const { busy, respond, acknowledge } = useNextAction()
+const { busy, acting, respond, acknowledge, reload } = useNextAction()
+const router = useRouter()
+const { confirm } = useConfirm()
+const uiStore = useUIStore()
+const scriptErrorStore = useScriptErrorStore()
+
+// Whether this instance is still mounted. A redirect must not fire from a
+// component the user has already navigated away from: `runAction` and
+// `reload` are both awaited, and a slow script easily outlives the page.
+let alive = true
+onUnmounted(() => {
+  alive = false
+})
+
+/**
+ * Run an `action:` offer against the suggested entity.
+ *
+ * `confirm: true` is HONOURED rather than advisory — validation already
+ * refuses it on anything but an action or set, so an operator who set it is
+ * owed the prompt. An offer mutates the graph in one click with no undo.
+ */
+async function act(offer: NextActionOffer, triggerEl: HTMLElement | null) {
+  // entityId is optional on the wire (a count-based source suggests without
+  // one), and runAction omits the body entirely when it is absent — so the
+  // action would run against NO entity, server-side and silently. Refuse
+  // instead; the button is not rendered in that case either.
+  if (!offer.action || !props.entityId || acting.value) return
+
+  // Latched BEFORE the confirm await, not after it. The button's :disabled
+  // only updates on re-render, so a double-click lands both handlers in the
+  // same tick; latching after the dialog would open two of them and run the
+  // mutation twice on two OKs.
+  acting.value = true
+  const label = offerLabel(offer, 'Do it')
+  try {
+    if (offer.confirm) {
+      const ok = await confirm({
+        title: `${label}?`,
+        message: 'This runs immediately and cannot be undone.',
+        confirmLabel: label,
+      })
+      if (!ok) return
+    }
+    // No entity type: the server reads it off the stored row and deliberately
+    // ignores a caller-supplied one (actions_request.go, BUG-ZWTDH9).
+    const res = await runAction(offer.action, props.entityId)
+    if (res?.message) {
+      // The enum is validated server-side against exactly these four names
+      // (script/action.go), which are the store's methods.
+      const kind = res.message_type ?? 'success'
+      uiStore[kind](res.message)
+    } else if (!res?.redirect) {
+      // Only when the script said nothing at all: a redirect IS the feedback,
+      // and a toast that outlives the page it described is noise.
+      uiStore.success(`${label}: done`)
+    }
+    // The suggestion was resolved BY acting, so re-ask rather than leave a
+    // banner recommending work that is now done.
+    await reload()
+    // Last, so the slot is already re-resolved when the destination renders,
+    // and only if this instance still exists — see `alive`.
+    if (res?.redirect && alive) router.push(res.redirect)
+  } catch (err) {
+    // Same precedence as the sidebar's action: a script error opens the
+    // dialog with file:line and correlation id; anything else is a toast
+    // CARRYING the correlation id, which is the only handle on the server log.
+    const scriptErr = getScriptError(err)
+    if (scriptErr) {
+      scriptErrorStore.show(scriptErr, triggerEl)
+    } else {
+      const corrID = err instanceof ApiError ? err.correlationId : undefined
+      const msg = `${label}: ${getErrorMessage(err, 'Action failed')}`
+      uiStore.error(corrID ? `${msg} (ref: ${corrID})` : msg)
+    }
+  } finally {
+    acting.value = false
+  }
+}
 
 const deferOpen = ref(false)
 const deferRef = useTemplateRef<HTMLElement>('deferRef')
@@ -83,6 +176,17 @@ onUnmounted(() => document.removeEventListener('click', handleClickOutside))
         @click="acknowledge()"
       >
         {{ offerLabel(offer, 'Nice') }}
+      </button>
+
+      <!-- action: run a configured Lua action against the suggested entity.
+           Primary, like navigate — it is the thing being recommended. -->
+      <button
+        v-if="offer.action && entityId"
+        class="btn btn-sm btn-primary"
+        :disabled="busy || acting"
+        @click="act(offer, $event.currentTarget as HTMLElement)"
+      >
+        {{ offerLabel(offer, 'Do it') }}
       </button>
 
       <!-- pick_one: one button per live option. Rendered only when the server

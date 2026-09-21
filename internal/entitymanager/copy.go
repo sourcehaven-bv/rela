@@ -488,12 +488,8 @@ func (ce *copyEngine) authorizeCopy(ctx context.Context, plan *copyPlan) error {
 		op = acl.OpCreate
 	}
 	return ce.m.authorizeAndAudit(ctx, acl.WriteRequest{
-		Op: op,
-		Subject: acl.EntitySubject{
-			Type: plan.to.Type,
-			ID:   plan.targetID,
-			Face: plan.targetTail,
-		},
+		Op:      op,
+		Subject: acl.NewEntitySubject(plan.to.Type, plan.targetID, plan.targetTail),
 	})
 }
 

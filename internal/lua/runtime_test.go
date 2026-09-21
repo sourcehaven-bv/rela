@@ -157,6 +157,18 @@ func testWorkspace(t *testing.T) *mockWorkspace {
 // underlying memstore. Five methods — the lua write-binding surface.
 type mockManager struct {
 	ws *mockWorkspace
+	// Faces last seen at the manager boundary. Asserting on these is what
+	// distinguishes "the binding threaded the face" from "the call happened
+	// to succeed" — a binding that parses a face and drops it satisfies every
+	// error-free assertion.
+	lastCreateFace   entity.Face
+	lastRelationFace entity.Face
+	// Call counts, because the face fields cannot distinguish "never called"
+	// from "called with the zero face" — and the zero face is exactly what a
+	// binding that parsed the options and dropped them would pass. A negative
+	// test asserting only on the face would pass against that bug.
+	createCalls   int
+	relationCalls int
 }
 
 var _ Mutator = (*mockManager)(nil)
@@ -171,12 +183,19 @@ func (m *mockManager) CreateEntity(
 	if id == "" {
 		id = fmt.Sprintf("%s-%03d", strings.ToUpper(e.Type[:3]), m.ws.entityCount(ctx)+1)
 	}
+	// Face comes from opts, exactly as the real createCore does
+	// (e.Face = opts.Face). A double that dropped it would let a binding
+	// parse the face and discard it with every test still green — which is
+	// the defect these tests exist to catch.
 	newE := &entity.Entity{
 		ID:         id,
 		Type:       e.Type,
+		Face:       opts.Face,
 		Properties: e.Properties,
 		Content:    e.Content,
 	}
+	m.lastCreateFace = opts.Face
+	m.createCalls++
 	if err := m.ws.store.CreateEntity(ctx, newE); err != nil {
 		return nil, err
 	}
@@ -243,9 +262,15 @@ func (m *mockManager) CreateRelation(
 		content = *opts.Content
 	}
 	var data *store.RelationData
-	if len(opts.Properties) > 0 || content != "" {
-		data = &store.RelationData{Properties: opts.Properties, Content: content}
+	if len(opts.Properties) > 0 || content != "" || !opts.FromFace.IsDefault() {
+		data = &store.RelationData{
+			Properties: opts.Properties,
+			Content:    content,
+			FromFace:   opts.FromFace,
+		}
 	}
+	m.lastRelationFace = opts.FromFace
+	m.relationCalls++
 	return m.ws.store.CreateRelation(ctx, from, relType, to, data)
 }
 
@@ -3113,5 +3138,46 @@ func TestUpdateEntity_NotFoundStillReported(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "entity not found: NOPE-999") {
 		t.Errorf("missing-entity message changed; got: %v", err)
+	}
+}
+
+// A script can tell which face it is looking at (BUG-G2BASF). Without this a
+// face-triggered action or automation could not address the row that invoked
+// it: `id` is bare, so the face is the only way back to the fused address the
+// write path accepts.
+func TestEntityToTable_CarriesFace(t *testing.T) {
+	tests := []struct {
+		name string
+		face entity.Face
+		want string
+	}{
+		{name: "faceless type reports the empty face", face: "", want: ""},
+		{name: "faced row reports its face", face: "concept", want: "concept"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ls := glua.NewState()
+			defer ls.Close()
+
+			tbl := EntityToTable(ls, &entity.Entity{ID: "POL-1", Type: "policy", Face: tc.face})
+
+			if got := tbl.RawGetString("face"); got.String() != tc.want {
+				t.Errorf("face = %q, want %q", got.String(), tc.want)
+			}
+			// Always an LString, never nil: a script tests the VALUE, so
+			// `entity.face == ""` is the faceless check and nil-vs-empty
+			// never becomes a dialect. RawGetString returns LNil for an
+			// unset key, so the type assertion is the real check here.
+			if _, ok := tbl.RawGetString("face").(glua.LString); !ok {
+				t.Errorf("face must be an LString even for a faceless type, got %T",
+					tbl.RawGetString("face"))
+			}
+			// The id stays BARE: concatenating the two is what yields the
+			// address, and a fused id would break every existing script.
+			if got := tbl.RawGetString("id").String(); got != "POL-1" {
+				t.Errorf("id = %q, want the bare id", got)
+			}
+		})
 	}
 }

@@ -50,7 +50,7 @@ import (
 // Pass the face off the entity being described; the zero value is
 // correct only for a genuinely unfaced entity or a per-collection verb.
 func translateVerb(verb, entityType, entityID string, face entityPkg.Face) acl.WriteRequest {
-	subject := acl.EntitySubject{Type: entityType, ID: entityID, Face: face}
+	subject := acl.NewEntitySubject(entityType, entityID, face)
 	switch verb {
 	case "create":
 		return acl.WriteRequest{Op: acl.OpCreate, Subject: subject}
