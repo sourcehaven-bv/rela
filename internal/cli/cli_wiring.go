@@ -10,6 +10,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	syncclient "github.com/Sourcehaven-BV/rela/internal/cli/sync"
 	"github.com/Sourcehaven-BV/rela/internal/config"
+	"github.com/Sourcehaven-BV/rela/internal/datamigration"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -79,6 +80,9 @@ type writeServices struct {
 	LuaCache     *lua.Cache
 	LuaWriteDeps lua.WriteDeps
 	State        state.KV
+	// MigState is the per-store migration record. Distinct from State: that
+	// is node-local cache, this describes what the CONTENT conforms to.
+	MigState datamigration.StateStore
 }
 
 // entityWriter is the write surface the CLI's mutating subcommands call. See
@@ -181,6 +185,7 @@ func newCLIBundles(svc *appbuild.Services) (*cliBundles, error) {
 		LuaCache:      svc.ScriptEngine().LuaCache(),
 		LuaWriteDeps:  svc.LuaWriteDeps(),
 		State:         svc.State(),
+		MigState:      svc.MigState(),
 	}
 	return &cliBundles{
 		read:       &read,

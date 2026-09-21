@@ -389,6 +389,80 @@ func TestBuildCommandEnv(t *testing.T) {
 	}
 }
 
+// A faced entity reaches the script as a face and a fused address, while
+// RELA_ENTITY_ID stays bare (BUG-G2BASF). Both are always present, so a
+// script tests the value rather than the variable's existence.
+func TestBuildCommandEnvFace(t *testing.T) {
+	tests := []struct {
+		name     string
+		face     entity.Face
+		wantFace string
+		wantRef  string
+	}{
+		{
+			name:     "faceless type is unchanged",
+			face:     "",
+			wantFace: "",
+			wantRef:  "TKT-1",
+		},
+		{
+			name:     "faced row carries the face and the address",
+			face:     "concept",
+			wantFace: "concept",
+			wantRef:  "TKT-1@concept",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			app, entities := testAppInstance()
+			bindRepo(app, "/test/project")
+
+			e := *entities.ticket1
+			e.ID = "TKT-1"
+			e.Face = tc.face
+
+			// Both CONTEXTS that carry an entity, since the docs table
+			// promises the variables in each and they are set in one shared
+			// `input.Entity != nil` block.
+			for _, ctxName := range []string{"entity", "view"} {
+				input := app.commands.buildEntityInput(context.Background(), &e)
+				input.Context = ctxName
+				ctxEnv := app.commands.buildCommandEnv(
+					CommandConfig{Script: "echo hi", Context: ctxName}, input)
+				if envToMap(ctxEnv)["RELA_ENTITY_REF"] == "" {
+					t.Errorf("%s context: RELA_ENTITY_REF unset", ctxName)
+				}
+			}
+
+			cmd := CommandConfig{Script: "echo hi", Context: "entity"}
+			env := app.commands.buildCommandEnv(cmd, app.commands.buildEntityInput(context.Background(), &e))
+
+			envMap := envToMap(env)
+			if envMap["RELA_ENTITY_FACE"] != tc.wantFace {
+				t.Errorf("RELA_ENTITY_FACE = %q, want %q", envMap["RELA_ENTITY_FACE"], tc.wantFace)
+			}
+			if envMap["RELA_ENTITY_REF"] != tc.wantRef {
+				t.Errorf("RELA_ENTITY_REF = %q, want %q", envMap["RELA_ENTITY_REF"], tc.wantRef)
+			}
+			// The bare id is what a face-unaware script already reads.
+			if envMap["RELA_ENTITY_ID"] != "TKT-1" {
+				t.Errorf("RELA_ENTITY_ID = %q, want the BARE id", envMap["RELA_ENTITY_ID"])
+			}
+			// ROUND-TRIP: the address handed to a script must parse back to
+			// the pair it was built from, or the command it writes back with
+			// addresses a different row than the one it read.
+			gotID, gotFace, perr := entity.ParseStateRef(envMap["RELA_ENTITY_REF"])
+			if perr != nil {
+				t.Fatalf("RELA_ENTITY_REF %q does not parse: %v", envMap["RELA_ENTITY_REF"], perr)
+			}
+			if gotID != e.ID || gotFace != tc.face {
+				t.Errorf("round-trip = (%q, %q), want (%q, %q)", gotID, gotFace, e.ID, tc.face)
+			}
+		})
+	}
+}
+
 func TestBuildCommandEnvListContext(t *testing.T) {
 	app, _ := testAppInstance()
 	bindRepo(app, "/test/project")

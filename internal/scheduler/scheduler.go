@@ -402,6 +402,15 @@ func (s *Scheduler) doExecuteTask(ctx context.Context, task TaskConfig) {
 	if errors.Is(err, errTaskInFlight) || errors.Is(err, errTaskPending) {
 		s.logger.Warn("skipping task, a run is already pending",
 			"name", task.Name, "duration", elapsed)
+		// ...unless the ladder is already armed. Then the previous attempt
+		// did NOT merely run long: it failed, and the run it left behind
+		// never cleared. Leaving state untouched there pins Failures at 1
+		// and NextRetry at a fixed stamp, so the backoff can never climb
+		// and persistentFailureThreshold can never escalate to ERROR — the
+		// task stays wedged, silently, at one skip per tick.
+		if _, retrying := s.state.NextRetry[task.Name]; retrying {
+			s.recordFailure(ctx, task, start, elapsed, err)
+		}
 		return
 	}
 
@@ -477,7 +486,16 @@ func (s *Scheduler) recordFailure(
 ) {
 	failures := s.state.Failures[task.Name] + 1
 	delay := retryDelay(failures)
-	retryAt := start.Add(delay)
+	// The ladder is measured from when the failure was OBSERVED, not from
+	// when the run began. recordSuccess deliberately stamps the START time
+	// so a long run doesn't drift the schedule; that reasoning does NOT
+	// carry over here. A run that fails after `delay` has already elapsed —
+	// the 20m taskResultTimeout against a 5m first rung always does — would
+	// otherwise get a retry stamped in the PAST, be due on the very next
+	// tick, and spin once per tick forever. The clock-jump
+	// guard in runDueTasks only clamps retries too far in the future, so
+	// nothing downstream catches it.
+	retryAt := start.Add(elapsed).Add(delay)
 
 	s.state.Failures[task.Name] = failures
 	s.state.NextRetry[task.Name] = retryAt

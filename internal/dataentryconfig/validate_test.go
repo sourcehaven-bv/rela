@@ -2348,7 +2348,15 @@ func TestValidateEntityViews_UnknownEntityType(t *testing.T) {
 	}
 }
 
-func TestValidateEntityViews_EmptyDetailViewIsError(t *testing.T) {
+// An entry that declares nothing at all is refused, so an operator does not
+// leave a stanza behind that silently does something.
+//
+// The message widened from "detail_view is empty" when `duplicate:` became a
+// second thing an entry may declare (TKT-Z8K2FS): an entry carrying only a
+// duplicate block is legitimate, so the refusal is now about the entry being
+// entirely empty rather than about detail_view specifically. See
+// TestValidateEntityViews_Duplicate for the duplicate-only case.
+func TestValidateEntityViews_EmptyEntryIsError(t *testing.T) {
 	meta := testMetamodel()
 	cfg := &Config{
 		EntityViews: map[string]EntityViewConfig{
@@ -2356,8 +2364,8 @@ func TestValidateEntityViews_EmptyDetailViewIsError(t *testing.T) {
 		},
 	}
 	err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
-	if err == nil || !strings.Contains(err.Error(), "detail_view is empty") {
-		t.Errorf("expected empty detail_view error, got: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "declares nothing") {
+		t.Errorf("expected empty-entry error, got: %v", err)
 	}
 }
 
@@ -3253,6 +3261,69 @@ func TestValidateConfig_NestedSection(t *testing.T) {
 				ParentColumns: map[string][]ListColumn{"ticket": {{Property: "status"}}},
 			},
 			wantErr: "sets parent_columns but display is",
+		},
+		// Sort keys are per level, so using the wrong key for the display is
+		// refused rather than silently ignored (TKT-9OFGH4).
+		{
+			name:     "parent_sort and child_sort on a nested display",
+			traverse: twoStep,
+			section: ViewSection{
+				Source: "blocked", Display: DisplayNested, Children: "deeper",
+				ParentSort: []SortSpec{{Property: "status"}},
+				ChildSort:  []SortSpec{{Property: "status", Direction: "desc"}},
+			},
+		},
+		{
+			name:     "sort on a flat display",
+			traverse: twoStep,
+			section:  ViewSection{Source: "blocked", Display: "table", Sort: []SortSpec{{Property: "status"}}},
+		},
+		{
+			name:     "sort on a nested display",
+			traverse: twoStep,
+			section: ViewSection{
+				Source: "blocked", Display: DisplayNested, Children: "deeper",
+				Sort: []SortSpec{{Property: "status"}},
+			},
+			wantErr: "takes parent_sort/child_sort",
+		},
+		{
+			name:     "child_sort on a flat display",
+			traverse: twoStep,
+			section: ViewSection{
+				Source: "blocked", Display: "list",
+				ChildSort: []SortSpec{{Property: "status"}},
+			},
+			wantErr: "sets child_sort but display is",
+		},
+		{
+			name:     "sort on an undeclared property",
+			traverse: twoStep,
+			section: ViewSection{
+				Source: "blocked", Display: "list",
+				Sort: []SortSpec{{Property: "nope"}},
+			},
+			wantErr: "which no type at this level declares",
+		},
+		{
+			name:     "sort on id is always valid",
+			traverse: twoStep,
+			section:  ViewSection{Source: "blocked", Display: "list", Sort: []SortSpec{{Property: "id"}}},
+		},
+		{
+			name:     "sort on modified is refused",
+			traverse: twoStep,
+			section:  ViewSection{Source: "blocked", Display: "list", Sort: []SortSpec{{Property: "modified"}}},
+			wantErr:  "which a section cannot order by",
+		},
+		{
+			name:     "sort with an invalid direction",
+			traverse: twoStep,
+			section: ViewSection{
+				Source: "blocked", Display: "list",
+				Sort: []SortSpec{{Property: "status", Direction: "sideways"}},
+			},
+			wantErr: "invalid direction",
 		},
 	}
 

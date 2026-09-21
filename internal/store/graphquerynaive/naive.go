@@ -12,7 +12,9 @@
 package graphquerynaive
 
 import (
+	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"iter"
 	"slices"
@@ -30,6 +32,48 @@ import (
 type Reader interface {
 	ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error]
 	ListRelations(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error]
+}
+
+// CheckEndpointShape validates a query's EndpointMatch chains: nesting must
+// not exceed [DepthCap], and a NESTED hop must not carry an inheritance
+// expansion. Exported so every backend enforces the identical bound — see the
+// contract note on [store.RelationPredicate.EndpointMatch].
+func CheckEndpointShape(q store.GraphQuery) error {
+	for _, p := range []*store.RelationPredicate{q.HasInbound, q.HasOutbound} {
+		if err := checkEndpointShape(p, 0); err != nil {
+			return err
+		}
+	}
+	for _, br := range q.Any {
+		if err := checkEndpointShape(br.HasInbound, 0); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func checkEndpointShape(p *store.RelationPredicate, nesting int) error {
+	if p == nil || p.EndpointMatch == nil {
+		return nil
+	}
+	if nesting >= depthCap {
+		return fmt.Errorf("graphquerynaive: endpoint match nested deeper than %d hops", depthCap)
+	}
+	for _, next := range []*store.RelationPredicate{
+		p.EndpointMatch.HasInbound, p.EndpointMatch.HasOutbound,
+	} {
+		if next == nil {
+			continue
+		}
+		if len(next.InheritThrough) > 0 || len(next.EntityInheritThrough) > 0 {
+			return errors.New(
+				"graphquerynaive: inheritance expansion is not supported on a nested endpoint match")
+		}
+		if err := checkEndpointShape(next, nesting+1); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // DepthCap bounds every transitive walk performed by the naive
@@ -51,6 +95,14 @@ const depthCap = DepthCap
 // Run executes q against r and yields matching entities. Errors abort
 // the iterator.
 func Run(ctx context.Context, r Reader, q store.GraphQuery) iter.Seq2[*entity.Entity, error] {
+	// Validate the query SHAPE before touching the store, so a refusal does not
+	// depend on whether any candidate happens to reach the offending depth.
+	// pgstore refuses the same shapes up front in checkGraphQueryScope;
+	// validating lazily would make a query error on one backend and succeed on
+	// the other purely by data.
+	if err := CheckEndpointShape(q); err != nil {
+		return func(yield func(*entity.Entity, error) bool) { yield(nil, err) }
+	}
 	return func(yield func(*entity.Entity, error) bool) {
 		candidates, err := collectByType(ctx, r, q)
 		if err != nil {
@@ -113,16 +165,49 @@ func Order(rows []*entity.Entity, specs []store.OrderSpec) {
 				continue
 			}
 			si, sj := fmt.Sprint(vi), fmt.Sprint(vj)
-			if si == sj {
+			c := compareOrderValues(si, sj, spec.Values)
+			if c == 0 {
 				continue
 			}
 			if spec.Descending {
-				return si > sj
+				return c > 0
 			}
-			return si < sj
+			return c < 0
 		}
 		return rows[i].ID < rows[j].ID
 	})
+}
+
+// compareOrderValues ranks two values by their position in the declared order
+// when one is given, and byte-wise otherwise.
+//
+// A value the schema does not declare sorts after every declared one, matching
+// the `ELSE` arm a SQL backend emits for the same spec — so a row holding a
+// value that was removed from the enum lands in the same place on every
+// backend rather than wherever its text happens to fall.
+func compareOrderValues(a, b string, values []string) int {
+	if len(values) == 0 {
+		return strings.Compare(a, b)
+	}
+	ia, ib := -1, -1
+	for i, v := range values {
+		if v == a && ia < 0 {
+			ia = i
+		}
+		if v == b && ib < 0 {
+			ib = i
+		}
+	}
+	switch {
+	case ia >= 0 && ib >= 0:
+		return cmp.Compare(ia, ib)
+	case ia >= 0:
+		return -1
+	case ib >= 0:
+		return 1
+	default:
+		return strings.Compare(a, b)
+	}
 }
 
 // sortValue reads a sort key the way SQL's `->>` does: a key that is
@@ -155,6 +240,9 @@ func Page[T any](rows []T, offset, limit int) []T {
 
 // Count returns (matched, total) for q against r.
 func Count(ctx context.Context, r Reader, q store.GraphQuery) (matched, total int, err error) {
+	if shapeErr := CheckEndpointShape(q); shapeErr != nil {
+		return 0, 0, shapeErr
+	}
 	candidates, err := collectByType(ctx, r, q)
 	if err != nil {
 		return 0, 0, err
@@ -177,6 +265,9 @@ func Count(ctx context.Context, r Reader, q store.GraphQuery) (matched, total in
 // store, or in the store but of the wrong type, map to false. The
 // returned map always has len(ids) keys (after dedup).
 func MatchingIDs(ctx context.Context, r Reader, q store.GraphQuery, ids []string) (map[string]bool, error) {
+	if err := CheckEndpointShape(q); err != nil {
+		return nil, err
+	}
 	out := make(map[string]bool, len(ids))
 	for _, id := range ids {
 		out[id] = false
@@ -440,6 +531,17 @@ func matchesPredicate(
 	ctx context.Context, r Reader, e *entity.Entity,
 	p store.RelationPredicate, dir store.Direction,
 ) (bool, error) {
+	return matchesPredicateAt(ctx, r, e, p, dir, 0)
+}
+
+// matchesPredicateAt is [matchesPredicate] carrying the current
+// EndpointMatch NESTING level, which is distinct from the transitive-walk
+// Depth the two InheritThrough expansions use: nesting counts hops the CALLER
+// wrote literally, depth counts steps the store takes through one hop.
+func matchesPredicateAt(
+	ctx context.Context, r Reader, e *entity.Entity,
+	p store.RelationPredicate, dir store.Direction, nesting int,
+) (bool, error) {
 	endpoints, err := expandSet(ctx, r, p.Endpoints, p.InheritThrough, p.Depth)
 	if err != nil {
 		return false, err
@@ -464,7 +566,8 @@ func matchesPredicate(
 	// needs. With endpoints named, only those count.
 	anyEndpoint := len(p.Endpoints) == 0
 
-	found, err := hasMatchingRelation(ctx, r, candidates, dir, typeSet, endpointSet, anyEndpoint)
+	found, err := hasMatchingRelation(
+		ctx, r, candidates, dir, typeSet, endpointSet, anyEndpoint, p.EndpointMatch, nesting)
 	if err != nil {
 		return false, err
 	}
@@ -476,9 +579,14 @@ func matchesPredicate(
 
 // hasMatchingRelation reports whether any candidate has an edge in dir
 // satisfying the type and endpoint constraints.
+//
+// match, when non-nil, additionally requires the entity on the far side of the
+// edge to satisfy it. It is checked LAST, after the cheap type and id tests,
+// because it is the only one that loads another entity.
 func hasMatchingRelation(
 	ctx context.Context, r Reader, candidates []string, dir store.Direction,
-	typeSet, endpointSet map[string]bool, anyEndpoint bool,
+	typeSet, endpointSet map[string]bool, anyEndpoint bool, match *store.EndpointPredicate,
+	nesting int,
 ) (bool, error) {
 	for _, c := range candidates {
 		for rel, err := range r.ListRelations(ctx, store.RelationQuery{
@@ -491,19 +599,90 @@ func hasMatchingRelation(
 			if len(typeSet) > 0 && !typeSet[rel.Type] {
 				continue
 			}
-			if anyEndpoint {
-				return true, nil
-			}
 			other := rel.To
 			if dir == store.DirectionIncoming {
 				other = rel.From
 			}
-			if endpointSet[other] {
+			if !anyEndpoint && !endpointSet[other] {
+				continue
+			}
+			if match == nil {
+				return true, nil
+			}
+			ok, err := matchesEndpoint(ctx, r, other, match, nesting)
+			if err != nil {
+				return false, err
+			}
+			if ok {
 				return true, nil
 			}
 		}
 	}
 	return false, nil
+}
+
+// matchesEndpoint reports whether the entity identified by id satisfies p:
+// its type, its own properties, and any chained relation predicates.
+//
+// A missing endpoint entity is NOT a match. A dangling edge names a row that
+// does not exist, and an absent row satisfies no property constraint — the
+// same reading [matchesOrdered] gives an unset value, and the one the SQL
+// backends give via an inner JOIN.
+func matchesEndpoint(
+	ctx context.Context, r Reader, id string, p *store.EndpointPredicate, nesting int,
+) (bool, error) {
+	// Bound the chain the CALLER wrote. Without this a hand-built query nests
+	// without limit: each level costs a lookup here and, on the SQL backends, a
+	// further JOIN whose alias grows one segment longer — so the emitted
+	// statement grows QUADRATICALLY (measured: depth 1000 produced 6 MB of
+	// SQL). The condition compiler caps authored chains, but store.GraphQuery
+	// is a public type that any caller can build, so the floor belongs here
+	// where every backend inherits it.
+	if nesting >= depthCap {
+		return false, fmt.Errorf(
+			"graphquerynaive: endpoint match nested deeper than %d hops", depthCap)
+	}
+	// The SQL backends cannot emit an inheritance expansion on a NESTED hop
+	// (see pgstore.checkEndpointNesting). This backend could — expandSet is
+	// right there — but doing so would make the same policy and principal gate
+	// differently per backend, which for an ACL-folded predicate is worse than
+	// refusing. Refuse in both, so the store contract has one answer.
+	for _, next := range []*store.RelationPredicate{p.HasInbound, p.HasOutbound} {
+		if next == nil {
+			continue
+		}
+		if len(next.InheritThrough) > 0 || len(next.EntityInheritThrough) > 0 {
+			return false, errors.New(
+				"graphquerynaive: inheritance expansion is not supported on a nested endpoint match")
+		}
+	}
+	var found *entity.Entity
+	for e, err := range r.ListEntities(ctx, store.EntityQuery{Type: p.EntityType, IDs: []string{id}}) {
+		if err != nil {
+			return false, err
+		}
+		found = e
+		break
+	}
+	if found == nil {
+		return false, nil
+	}
+	if !matchesProps(found, p.Props) {
+		return false, nil
+	}
+	if p.HasInbound != nil {
+		ok, err := matchesPredicateAt(ctx, r, found, *p.HasInbound, store.DirectionIncoming, nesting+1)
+		if err != nil || !ok {
+			return false, err
+		}
+	}
+	if p.HasOutbound != nil {
+		ok, err := matchesPredicateAt(ctx, r, found, *p.HasOutbound, store.DirectionOutgoing, nesting+1)
+		if err != nil || !ok {
+			return false, err
+		}
+	}
+	return true, nil
 }
 
 // expandSet returns seeds plus everything reachable via the given

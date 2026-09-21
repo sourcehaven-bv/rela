@@ -3,6 +3,8 @@ package dataentry
 import (
 	"context"
 	"net/http"
+
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // commandHandler serves the user-configured command surface: the SSE-streaming
@@ -45,6 +47,16 @@ type commandHandler struct {
 	// than reassigning app.acl (RR-CWBZVT). A nil authz is treated as deny by
 	// the accessor, so a wiring omission fails closed.
 	authz commandAuthorizer
+
+	// redactor applies field-level `visible:` redaction to an ENTITY-context
+	// payload (BUG-G2BASF). The view context gets this for free — its
+	// viewResult arrives already row-gated and redacted from executeView
+	// (see buildViewInput) — but the entity context reads the store
+	// directly, so it owes the entity the same treatment.
+	//
+	// A closure over App for the same reason as the other fields: tests
+	// rebind the affordance service after construction.
+	redactor visibility.FieldRedactor
 }
 
 // authorizer returns the wired command authorizer, or a denyAuthorizer when the

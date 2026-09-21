@@ -1,0 +1,9 @@
+---
+id: RR-S0H0I8
+type: review-response
+title: ViewSection.Sort was validated and documented but never read
+finding: 'Code review C2. ViewSection.Sort was added with a 20-line doc comment, validated for flat sections by validateSectionSort, documented in the section-key table and in prose - and read by nothing. buildSections dispatched "table", "content", "cards", "list" and DisplayNested; only the nested arm consulted a sort field (ParentSort/ChildSort). The flat arms iterated entities in traversal order. Failure scenario: an operator reads the new docs, writes `display: table` with `sort: [{property: status}]`, the config LOADS CLEAN because validateSectionSort confirms the property is declared and the mutual-exclusion check passes, and the page renders in traversal order. Every signal says it worked. No test caught it: the five new section tests all set ParentSort or ChildSort, and the two validation cases only assert the config parses - true of a field that does nothing. That is the vacuous-test shape TKT-M0WMEE was burned by.'
+severity: critical
+resolution: 'Fixed by sorting the collection once in buildSections, before the display switch, so every flat mode honors it rather than each arm remembering to. Found and fixed a second defect while wiring it: the grouped `table` path called sortStoreEntitiesByID unconditionally, which would have discarded an author''s sort one group at a time; it now only re-sorts by id when no sort is declared, preserving the pre-existing behaviour for ungrouped configs. Three tests added: TestFlatSection_SortOrdersRows (table/list/cards/content as subtests), TestFlatSection_SortSurvivesGrouping, TestFlatSection_GroupingWithoutSortStillOrdersByID. Mutation-verified both ways: removing the sort call fails all four display subtests; making grouping re-sort unconditionally fails the grouping test.'
+status: addressed
+---

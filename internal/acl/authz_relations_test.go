@@ -73,7 +73,7 @@ func TestRelationGrant_AllowsEdgeWithoutEntityCreate(t *testing.T) {
 			got.RuleKind, got.RuleID)
 	}
 
-	if got := r.authorizeEntityWrite(ctx, OpCreate, EntitySubject{Type: "terugkerend"}); got.Allow {
+	if got := r.authorizeEntityWrite(ctx, OpCreate, NewFacelessEntitySubject("terugkerend", "")); got.Allow {
 		t.Error("granting the edge also granted entity-create on the source type; " +
 			"that is the over-broad authority this feature exists to avoid")
 	}

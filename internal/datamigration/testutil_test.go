@@ -92,8 +92,11 @@ func metaV2() *metamodel.Metamodel {
 	return m
 }
 
-// mustFileYAML renders a well-formed migration file from two metamodels and
-// a steps block, with real hashes and embedded projections.
+// mustFileYAML renders a well-formed migration file from two metamodels and a
+// steps block, with embedded projections.
+//
+// No from/to hashes: a migration is identified by NAME now, and the
+// projections are what step validation and validateDeltasResolved run on.
 func mustFileYAML(t *testing.T, from, to *metamodel.Metamodel, stepsYAML string) []byte {
 	t.Helper()
 	fp := from.ShapeProjection()
@@ -107,10 +110,49 @@ func mustFileYAML(t *testing.T, from, to *metamodel.Metamodel, stepsYAML string)
 		t.Fatalf("marshal to projection: %v", err)
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "from: %s\nto: %s\ndescription: test\nsteps:\n%s%s%s",
-		fp.Hash(), tp.Hash(), stepsYAML, fromYAML, toYAML)
+	fmt.Fprintf(&b, "description: test\nsteps:\n%s%s%s", stepsYAML, fromYAML, toYAML)
 	return []byte(b.String())
 }
+
+// testName builds a valid migration filename for a test.
+//
+// Every name must satisfy the MigrationName allowlist now, so tests cannot
+// use ad-hoc strings like "0001-x.yaml".
+func testName(slug string) string {
+	return "20260919143022-" + slug + ".yaml"
+}
+
+// fakeMigState is an in-memory StateStore for tests.
+//
+// Hand-rolled rather than reusing memmigstate: that package imports
+// datamigration, and these tests are IN package datamigration, so importing it
+// would be an import cycle. memmigstate is held to the same contract by
+// migstatetest.
+type fakeMigState struct {
+	mu    sync.Mutex
+	state *State
+}
+
+func (f *fakeMigState) Load(context.Context) (*State, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.state == nil {
+		return nil, nil //nolint:nilnil // (nil, nil) = un-bootstrapped, the StateStore contract
+	}
+	out := *f.state
+	return &out, nil
+}
+
+func (f *fakeMigState) Save(_ context.Context, s *State) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := *s
+	f.state = &out
+	return nil
+}
+
+// newMigState returns an empty in-memory migration-state store.
+func newMigState() *fakeMigState { return &fakeMigState{} }
 
 func mustParse(t *testing.T, name string, data []byte) *File {
 	t.Helper()

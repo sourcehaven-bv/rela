@@ -50,7 +50,7 @@ func TestRunValidations_SeesEveryDeclaredFace(t *testing.T) {
 			Face: entity.Face("published"), Properties: map[string]any{"title": "P"}})
 	})
 
-	res := svc.RunValidations(context.Background(), analysis.Options{})
+	res, _ := svc.RunValidations(context.Background(), analysis.Options{})
 	if len(res.Violations) != 2 {
 		t.Fatalf("got %d violations, want 2 (the scoped rule AND the unscoped one "+
 			"must both catch the published face): %+v", len(res.Violations), res.Violations)
@@ -137,7 +137,7 @@ func TestRunValidations_MissingFaceIsNotAViolation(t *testing.T) {
 			Properties: map[string]any{"title": "Draft only"}})
 	})
 
-	res := svc.RunValidations(context.Background(), analysis.Options{})
+	res, _ := svc.RunValidations(context.Background(), analysis.Options{})
 	if len(res.Violations) != 0 {
 		t.Fatalf("an entity with no published face must not violate a "+
 			"published-scoped rule, got %+v", res.Violations)

@@ -121,9 +121,26 @@ func resolveAnchoredDocument(
 	a *App, w http.ResponseWriter, r *http.Request, docName, entityID string,
 ) (resolvedDocument, bool) {
 	// Both segments flow into the on-disk document cache filename
-	// (workspace/document.go). Reject anything that could escape the cache
-	// directory before any filesystem work happens.
-	if !isSafePathSegment(docName) || !isSafePathSegment(entityID) {
+	// (document.go GetCached/doRender). Reject anything that could escape the
+	// cache directory before any filesystem work happens.
+	//
+	// The entity segment is an ADDRESS — `ID` or `ID@face` — so it is
+	// validated as a state ref rather than a plain segment (BUG-VFHUWO).
+	// isSafeStateRefSegment applies isSafePathSegment to the bare id and
+	// entity.ParseFace to the suffix, so neither half can carry a separator;
+	// `@` itself is inert in a filename, and the faced address keys a cache
+	// entry distinct from the bare one, which is correct — they render
+	// different content.
+	//
+	// A malformed address is a 400 here rather than the uniform 404 the entity
+	// routes give one, and that difference is deliberate: this segment also
+	// names a CACHE FILE, so "this path is unusable" is the honest answer and
+	// the caller learns nothing about which entities exist — the id never
+	// reaches the store. It is also what keeps a reserved segment in the entity
+	// position (`/_documents/sales/_EXPORT`) a 400: `parseEntityRef` rejects a
+	// leading underscore, which is exactly the case this route must not serve.
+	ref, refOK := parseEntityRef(entityID)
+	if !isSafePathSegment(docName) || !isSafeStateRefSegment(entityID) || !refOK {
 		writeV1Error(w, r, http.StatusBadRequest, "invalid_path", "Path segment contains forbidden characters", "")
 		return resolvedDocument{}, false
 	}
@@ -147,7 +164,8 @@ func resolveAnchoredDocument(
 	// Document rendering serves entity-derived content and may run a Lua script
 	// that reads related entities, so a denied caller must never reach the
 	// renderer, and must not learn whether the id exists.
-	if !a.gateReadOrNotFound(w, r, docCfg.EntityType, entityID) {
+	// The BARE id: the row gate is face-blind by design.
+	if !a.gateReadOrNotFound(w, r, docCfg.EntityType, ref.ID) {
 		return resolvedDocument{}, false
 	}
 
@@ -175,7 +193,7 @@ func resolveAnchoredDocument(
 	// principal for this id; a miss gets the SAME uniform 404 a denial gets,
 	// so the two remain indistinguishable (entityNotFoundTitle's godoc
 	// requires exactly this).
-	ent, entErr := a.store.GetEntity(r.Context(), entityID)
+	ent, entErr := a.store.GetEntityState(r.Context(), ref.ID, ref.Face)
 	if entErr != nil {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 		return resolvedDocument{}, false

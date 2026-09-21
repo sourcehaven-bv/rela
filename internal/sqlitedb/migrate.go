@@ -12,7 +12,7 @@ import (
 // schemaVersion is the shape of the tables this binary expects. Bump it
 // whenever schemaSQL changes shape, and append the step that carries an
 // existing database forward to [migrations].
-const schemaVersion = 5
+const schemaVersion = 6
 
 // SchemaVersion reports the table shape this binary expects, so the CLI can
 // show a real number rather than prose.
@@ -98,6 +98,16 @@ var migrations = []migration{
 		// binary is recognized as needing this shape at all.
 		to:    5,
 		apply: sqlSteps(commentsDDL),
+	},
+	{
+		// v5 → v6: the data-migration record (TKT-XCJ0Y2), moved out of
+		// state.KV because it describes the CONTENT rather than the machine.
+		// Pure CREATE IF NOT EXISTS, so it is a no-op on a database that
+		// already took the table from schemaSQL; the rung exists to move the
+		// stamped version, which is how an older binary's database is
+		// recognized as needing the shape.
+		to:    6,
+		apply: sqlSteps(migrationStateDDL),
 	},
 }
 

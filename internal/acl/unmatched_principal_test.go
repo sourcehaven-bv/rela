@@ -101,7 +101,7 @@ func rejectWorld(t *testing.T, mode string) *acl.Declarative {
 func writeReq() acl.WriteRequest {
 	return acl.WriteRequest{
 		Op:      acl.OpUpdate,
-		Subject: acl.EntitySubject{Type: "ticket", ID: "TKT-1"},
+		Subject: acl.NewFacelessEntitySubject("ticket", "TKT-1"),
 	}
 }
 

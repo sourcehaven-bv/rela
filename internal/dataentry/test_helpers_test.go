@@ -226,7 +226,8 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 		// assign app.commands.authz directly to the impl under test rather than
 		// reassigning app.acl — the wiring seam, not the ctx read gate, is what
 		// distinguishes NopACL/ReadOnly/Declarative (RR-CWBZVT / RR-QWVG8Y).
-		authz: ungatedAuthorizer{},
+		authz:    ungatedAuthorizer{},
+		redactor: appRedactor(app),
 	}
 	// attachmentHandler mirrors production wiring: closures for the swappable
 	// acl/audit/field-resolver fields (attachment ACL tests reassign app.acl

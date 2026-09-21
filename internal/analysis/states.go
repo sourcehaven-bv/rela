@@ -96,7 +96,10 @@ func (s *Service) collectStateFamilies(
 	families = make(map[string]*stateFamily)
 	for h, iterErr := range store.ListEntityHeaders(ctx, s.deps.Store, store.EntityQuery{AllStates: true}) {
 		if iterErr != nil {
-			return nil, nil, fmt.Errorf("analysis: list entity states: %w", iterErr)
+			// Classified as an incomplete scan so every caller treats an
+			// unreadable file the same way, whichever analysis hit it
+			// first (BUG-4KPN2M).
+			return nil, nil, &IncompleteScanError{Op: "list entity states", Err: iterErr}
 		}
 		if !inScope(h.ID, opts.Scope) {
 			continue

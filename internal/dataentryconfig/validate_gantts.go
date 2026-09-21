@@ -14,7 +14,7 @@ import (
 var validGanttMultiParent = map[string]bool{"first": true, "error": true}
 
 // validGanttOnCycle are the accepted cycle policies.
-var validGanttOnCycle = map[string]bool{"error": true, "prune": true}
+var validGanttOnCycle = map[string]bool{"error": true, "prune": true, "mark": true}
 
 // Defaults applied at load so the wire value is never empty and the SPA does
 // not have to re-implement them. MaxDepth matches the view-traversal cap

@@ -70,3 +70,29 @@ correctly — that analysis is only cheap while flakes are rare.
 
 Found while landing FEAT-9CD2MX. Neither test is touched by that work: the
 branch modifies no file under `internal/storage`, and no `analyze*` file.
+
+## Another sighting (2026-09-20, TKT-Z8K2FS)
+
+`just ci` on a loaded dev machine, on a branch touching **no file** in
+`internal/dataentry`:
+
+```
+panic: test timed out after 10m0s
+	running tests:
+		TestAnalyzeProperties_StopsScanningAtCap (7m3s)
+FAIL	github.com/Sourcehaven-BV/rela/internal/dataentry	604.201s
+```
+
+The same package alone passes in **66s**, and the test alone in ~67s. So the
+7m3s is contention against a shared package budget, not a hang — which is this
+bug's thesis, observed again.
+
+Two costs worth recording, since they argue for the fix rather than for raising
+the timeout:
+
+- The failure surfaces as a package-level panic over a goroutine dump of bleve
+  internals, so it reads as a deadlock in search. Establishing that it was
+  unrelated to the branch under test took longer than the fix would.
+- It blocks the whole package, so one slow test's budget overrun is reported as
+  `FAIL internal/dataentry` with no named culprit in the summary line.
+

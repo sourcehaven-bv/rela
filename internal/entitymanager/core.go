@@ -351,6 +351,96 @@ func (d Deps) requireCreateFaceFor(entityType string, face entity.Face) error {
 	return nil
 }
 
+// requireRelationFaceFor rejects a source face that the relation type or the
+// source entity type cannot carry. It is the relation-side counterpart of
+// requireCreateFaceFor, but deliberately one-sided: it refuses a WRONG face
+// and never demands one (see below).
+//
+// It guards the manager write path only. The cascade host writes relations
+// straight to the store (cascadehost.go WriteRelation), so it does not pass
+// through here — safe today because it supplies no face at all and therefore
+// only ever writes the zero tail, which is legal. A future cascade that wants
+// to choose a face must route through the manager or repeat this check.
+//
+//   - `scope: identity` edges attach to the entity as such, so they have no
+//     per-face existence and the only valid tail is the zero face. Accepting
+//     a named one would store a coordinate the readers never query — the edge
+//     exists and nothing returns it (reads filter on the tail), so a caller's
+//     "does this link exist" check answers false and re-creates it forever.
+//   - `scope: content` edges belong to one face of the source, so a named tail
+//     must be one the source type declares, and a faceless source must not
+//     name one at all.
+//
+// **Rejects a wrong face; does NOT require one.** This is deliberately weaker
+// than its entity-side twin, and the asymmetry is the point. An entity create
+// with no face has no row to write — a faced type stores nothing at the zero
+// coordinate, so refusing is the only option. A relation create with a zero
+// tail writes a real, addressable, readable edge; it is simply attached at the
+// identity coordinate. That is a far weaker failure, and demanding a face here
+// would break every caller that cannot yet supply one — `rela link`
+// (internal/cli/link.go), the MCP create_relation tool (whose schema has no
+// face parameter), CalDAV membership writes, and the data-entry INCOMING-edge
+// path, which passes a zero tail as a considered decision because the peer's
+// face is not the request's to choose. Those surfaces gain a face with
+// TKT-2RQMV4; until then they must keep working.
+//
+// Lives HERE rather than in each binding because the ACL is not a backstop
+// for it: Manager.authorizeAndAudit returns early under `bypassACL`, so an
+// elevated caller reaches the store with no grant check at all. A check below
+// that short-circuit covers the elevated path, and every future client (MCP,
+// CLI, caldav — see TKT-2RQMV4) inherits it the way entity creates already
+// inherit requireCreateFaceFor.
+//
+// fromType is best-effort at the call sites (empty when the source does not
+// exist yet, mirroring the authorization subject), so an unresolvable source
+// is validated on the relation scope alone rather than refused here — the
+// peer-existence checks that follow are what report a missing endpoint.
+//
+// Nil: never returns an error for a zero face on an identity-scoped type,
+// which is the overwhelmingly common case.
+func (d Deps) requireRelationFaceFor(relType, fromType string, face entity.Face) error {
+	relDef, ok := d.Meta.GetRelationDef(relType)
+	if !ok {
+		// Unknown relation type: ValidateRelation reports it with a better
+		// message than a face complaint would.
+		return nil
+	}
+	// Branch through IsIdentity/IsContent, never by comparing to a constant:
+	// identity scope has two spellings ("" and "identity").
+	if relDef.Scope.IsIdentity() {
+		if !face.IsDefault() {
+			return fmt.Errorf("%w: relation %s is scope: identity, so it attaches to the "+
+				"entity rather than to %q", ErrFaceNotDeclared, relType, face)
+		}
+		return nil
+	}
+	if fromType == "" {
+		return nil
+	}
+	def, defOK := d.Meta.GetEntityDef(fromType)
+	if !defOK {
+		return nil
+	}
+	if len(def.Faces) == 0 {
+		if !face.IsDefault() {
+			return fmt.Errorf("%w: source type %s declares no faces, so %q names nothing",
+				ErrFaceNotDeclared, fromType, face)
+		}
+		return nil
+	}
+	// A zero tail is ACCEPTED on a faced source — see the doc block. It means
+	// the identity coordinate, which is a real and readable edge, not a
+	// missing row.
+	if face.IsDefault() {
+		return nil
+	}
+	if _, declared := def.Faces[face.String()]; !declared {
+		return fmt.Errorf("%w: source type %s declares %s, not %q", ErrFaceNotDeclared,
+			fromType, strings.Join(sortedFaceNames(def), ", "), face)
+	}
+	return nil
+}
+
 // sortedFaceNames lists a type's declared faces in a stable order, so an
 // error message names them the same way twice.
 func sortedFaceNames(def *metamodel.EntityDef) []string {

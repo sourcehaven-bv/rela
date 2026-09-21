@@ -14,7 +14,7 @@
  * say so. That is the same defect (RR-9PTXV0) that TKT-D2JML7 was written to
  * remove, so shipping a smaller instance of it was not an option.
  */
-import { rankByIdMatch } from './rankMentions'
+import { rankMentions } from './rankMentions'
 
 /**
  * Below this length the menu prompts rather than searching.
@@ -130,7 +130,10 @@ export function createMentionMenuMachine<T extends { id?: string }>(
     try {
       const items = await options.search(query, signal)
       if (disposed || gen !== generation) return
-      state.items = rankByIdMatch(items, query).slice(0, MAX_RESULTS)
+      // Rank THEN slice, in that order. `rankMentions` promotes an exact or
+      // prefix ID match ahead of the fuzzy order, so slicing first would drop a
+      // target sitting past the cut before the promotion could reach it.
+      state.items = rankMentions(items, query).slice(0, MAX_RESULTS)
       state.errorMsg = ''
       state.highlightedIndex = 0
     } catch (err: unknown) {

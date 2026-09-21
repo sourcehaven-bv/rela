@@ -103,6 +103,17 @@ func (h *exportHandler) handleV1ExportList(w http.ResponseWriter, r *http.Reques
 	// List when it finds none, and a zero List has no ExportRender.
 	renderer := h.listTableRenderer(entities, columns, total, truncated)
 	if effList.ExportRender != "" {
+		// The built-in table renders COLUMNS, so the content-free rows the
+		// shared read path yields are exactly right for it. A script is the
+		// one list consumer that can reach `row.content`, so it — and only
+		// it — pays for the bodies. After the cap, so this loads at most
+		// listExportCap of them and never a body that was paged or gated
+		// away. See the loadBodies field for why the failure it fixes is
+		// silent rather than loud.
+		if err := h.loadBodies(ctx, entities); err != nil {
+			writeListPipelineError(w, r, fmt.Errorf("%w: %w", errListLoad, err))
+			return
+		}
 		renderer = h.listOverrideRenderer(listOverride{
 			listID: effListID, script: effList.ExportRender, typeName: typeName,
 			rows: entities, total: total, query: query,

@@ -1623,7 +1623,7 @@ Add to your CI pipeline to ensure project files are up-to-date:
 
 This will exit with code 1 if migrations are needed.
 
-### rela migrate status / gen / data / gc
+### rela migrate status / gen / data / gc / baseline
 
 Operate the **data-migration** system: when `schema.yaml` changes shape
 (property renamed, type changed, enum values remapped), these commands
@@ -1632,9 +1632,11 @@ detect it, draft a migration, and transform the stored content. See the
 
 ```bash
 rela migrate status              # where does the data stand vs the live schema?
-rela migrate gen                 # draft migrations/000N-schema-change.yaml from the diff
-rela migrate data                # dry-run the pending migration chain
-rela migrate data --apply        # execute it
+rela migrate gen                 # draft migrations/<timestamp>-<slug>.yaml from the diff
+rela migrate data                # dry-run the pending migrations
+rela migrate data --apply        # execute them
+rela migrate baseline            # dry-run recording migrations as already applied
+rela migrate baseline --apply    # record them, without running them
 rela migrate gc                  # dry-run the orphaned-data garbage collector
 rela migrate gc --scan --apply   # full-scan for orphans, then delete expired ones
 ```
@@ -1646,6 +1648,7 @@ rela migrate gc --scan --apply   # full-scan for orphans, then delete expired on
 | `gen`   | `--description` | One-line description embedded in the migration file |
 | `gen`   | `--stdout` | Print the draft instead of writing `migrations/<name>` |
 | `data`  | `--apply` | Execute (default is a dry-run preview with per-step counts) |
+| `baseline` | `--apply` | Record the baseline (default is a dry-run preview) |
 | `gc`    | `--apply` | Delete expired orphaned data (default is a dry-run preview) |
 | `gc`    | `--scan`  | Full-scan the store for orphans not yet in the drift ledger |
 | `gc`    | `--grace` | Override the grace period orphaned data must age before deletion (default 720h) |
@@ -1653,8 +1656,18 @@ rela migrate gc --scan --apply   # full-scan for orphans, then delete expired on
 Unlike bare `rela migrate` (config files, service-free), these subcommands
 need the project services and a store. Compatible schema changes (new types,
 new optional properties, new enum values) never need any of this — they are
-adopted automatically at startup. `status` exits 1 while an incompatible
-change is unmigrated, so it doubles as a CI check.
+adopted automatically. `status` exits 1 while an incompatible change is
+unmigrated, so it doubles as a CI check.
+
+**Which migrations have run** is tracked by NAME, so a migration need not
+change the schema at all: a backfill or a data correction is an ordinary
+migration file you write by hand (`gen` drafts only from a schema diff).
+
+**`baseline`** is for a store whose content already matches the current schema
+but that has no record of the migrations in the project — an existing project
+adopting the system, or one whose record was lost. It marks them applied
+without running them, so use it only when that claim is true; `migrate data`
+is the right command when they genuinely still need to run.
 
 ---
 
@@ -1913,6 +1926,37 @@ Checks `schema.yaml` and `data-entry.yaml` for:
 ```bash
 rela validate
 ```
+
+Pass `--check` to also validate the entity graph:
+
+```bash
+rela validate --check cardinality --check properties --check validations
+```
+
+**Exit codes:**
+
+| Code | Meaning |
+| ---- | ------- |
+| `0`  | Every rule was evaluated over the whole project, and all passed. |
+| `1`  | Every rule was evaluated, and at least one violation was found. |
+| `2`  | Some input could not be read, so the run is **incomplete**. The offending files are named in the output. |
+
+Exit `2` takes precedence over exit `1`. A run that could not read all of
+its input cannot support a claim about the rules, including the claim that
+the violations it reported are all of them. The usual cause is an entity
+whose YAML frontmatter does not parse, most often an unquoted scalar
+containing a colon followed by a space — quote it:
+
+```yaml
+title: "Something: with a colon"
+```
+
+Treat exit `2` as a failure in CI. "All validations passed." is printed only
+when the run actually read everything.
+
+Note that `--check cardinality` on its own only scans the entity types that
+declare a cardinality bound, so it reports an unreadable file only for those
+types. `--check properties` and `--check validations` scan all types.
 
 ---
 

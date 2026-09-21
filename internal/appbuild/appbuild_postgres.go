@@ -10,6 +10,8 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/comments"
 	"github.com/Sourcehaven-BV/rela/internal/comments/pgcomments"
+	"github.com/Sourcehaven-BV/rela/internal/datamigration"
+	"github.com/Sourcehaven-BV/rela/internal/datamigration/pgmigstate"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/pgstore"
@@ -29,7 +31,7 @@ func New(cfg Config, opts ...Option) (*Services, error) {
 	if err != nil {
 		return nil, err
 	}
-	st, searcher, commentStore, closer, err := openBackend(context.Background(), base)
+	st, searcher, commentStore, migState, closer, err := openBackend(context.Background(), base)
 	if err != nil {
 		return nil, err
 	}
@@ -43,6 +45,7 @@ func New(cfg Config, opts ...Option) (*Services, error) {
 	}
 	return assemble(base, st, searcher, visible, closer, backendOverrides{
 		commentStore: commentStore,
+		migState:     migState,
 	})
 }
 
@@ -58,34 +61,44 @@ func New(cfg Config, opts ...Option) (*Services, error) {
 //
 // Migration runs here for the same reason: it is a property of the database
 // this process is about to use, not of any one consumer of it.
+//
+// The migration RECORD is a fourth consumer (TKT-XCJ0Y2): it lives in the
+// tenant's schema so tenants at different points migrate independently, which
+// one committed file shared by every tenant could not express.
 func openBackend(
 	ctx context.Context, base *SharedBase,
-) (store.Store, search.Searcher, comments.Store, io.Closer, error) {
+) (store.Store, search.Searcher, comments.Store, datamigration.StateStore, io.Closer, error) {
 	dsn := base.cfg.DatabaseURL
 	if dsn == "" {
-		return nil, nil, nil, nil, errors.New(
+		return nil, nil, nil, nil, nil, errors.New(
 			"appbuild: postgres build requires a database URL (set RELA_DATABASE_URL)")
 	}
 	pool, poolCloser, err := pgstore.NewPool(ctx, dsn)
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, err
 	}
 	// Every failure below must close the pool: nothing else holds it yet, so
 	// returning early without this leaks the connections.
 	if err := pgstore.Migrate(ctx, pool); err != nil {
 		_ = poolCloser.Close()
-		return nil, nil, nil, nil, fmt.Errorf("migrate database: %w", err)
+		return nil, nil, nil, nil, nil, fmt.Errorf("migrate database: %w", err)
 	}
 
 	st, searcher, err := pgstore.Open(ctx, pool, dsn)
 	if err != nil {
 		_ = poolCloser.Close()
-		return nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, err
 	}
+	migState, err := pgmigstate.New(pool)
+	if err != nil {
+		_ = poolCloser.Close()
+		return nil, nil, nil, nil, nil, err
+	}
+
 	commentStore, err := pgcomments.New(pool)
 	if err != nil {
 		_ = poolCloser.Close()
-		return nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, err
 	}
-	return st, searcher, commentStore, poolCloser, nil
+	return st, searcher, commentStore, migState, poolCloser, nil
 }
