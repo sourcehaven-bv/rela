@@ -65,3 +65,31 @@ export function parseMentionQuery(textBefore: string | undefined): MentionQuery 
 
   return { query, matchLength: query.length + 1 }
 }
+
+/**
+ * Whether Backspace should clear the mention menu's type scope instead of
+ * deleting a character.
+ *
+ * True only when a scope is set AND the query is already empty. With characters
+ * left to delete it must be false, or the user could never backspace through
+ * their own query.
+ *
+ * `textBefore` must be read from the LIVE document at the moment the key is
+ * handled, not from the menu's `query` state. That state is written by the slash
+ * provider's `shouldShow`, which runs on ProseMirror's update cycle — i.e. after
+ * the capture-phase key handler — so on the keystroke that empties the query it
+ * is one character stale. Trusting it let the `@` trigger itself be deleted: the
+ * menu then closed, and closing resets the scope, which looked exactly like the
+ * chip clearing correctly while the trigger was actually lost.
+ *
+ * Nil: accepts undefined for `textBefore` (see [parseMentionQuery]) and reports
+ * false, since no active query means no scope to clear.
+ */
+export function shouldClearScopeOnBackspace(
+  textBefore: string | undefined,
+  hasScope: boolean
+): boolean {
+  if (!hasScope) return false
+  const live = parseMentionQuery(textBefore)
+  return live !== null && live.query.length === 0
+}

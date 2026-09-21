@@ -51,7 +51,7 @@ func runReverse(t *testing.T, st store.Store, apply bool) (*RunResult, error) {
 	t.Helper()
 	data := mustFileYAML(t, metaV1(), reversedMeta(),
 		"  - reverse_relation: {type: assigned-to}\n")
-	f, err := ParseFile("0001-reverse.yaml", data)
+	f, err := ParseFile("20260919143022-reverse.yaml", data)
 	if err != nil {
 		t.Fatalf("ParseFile: %v", err)
 	}
@@ -295,7 +295,7 @@ func TestReverseRelation_ValidateRefusals(t *testing.T) {
 func TestReverseRelation_FileMustCarryTheStep(t *testing.T) {
 	t.Run("missing step is refused", func(t *testing.T) {
 		data := mustFileYAML(t, metaV1(), reversedMeta(), "  []\n")
-		_, err := ParseFile("0001-reverse.yaml", data)
+		_, err := ParseFile("20260919143022-reverse.yaml", data)
 		if err == nil {
 			t.Fatal("a file spanning the swap with no step must be refused")
 		}
@@ -307,7 +307,7 @@ func TestReverseRelation_FileMustCarryTheStep(t *testing.T) {
 	t.Run("correct file parses", func(t *testing.T) {
 		data := mustFileYAML(t, metaV1(), reversedMeta(),
 			"  - reverse_relation: {type: assigned-to}\n")
-		if _, err := ParseFile("0001-reverse.yaml", data); err != nil {
+		if _, err := ParseFile("20260919143022-reverse.yaml", data); err != nil {
 			t.Fatalf("a file carrying the step must parse: %v", err)
 		}
 	})
@@ -316,7 +316,7 @@ func TestReverseRelation_FileMustCarryTheStep(t *testing.T) {
 // The generator must draft the step live, not the old "no declarative step can
 // fix this" comment.
 func TestReverseRelation_GeneratorDraftsTheStep(t *testing.T) {
-	out, err := Generate(metaV1().ShapeProjection(), reversedMeta().ShapeProjection(), nil, "reverse")
+	out, err := Generate(metaV1().ShapeProjection(), reversedMeta().ShapeProjection(), "reverse", testNow())
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -349,7 +349,7 @@ func TestReverseRelation_WarnsWhenCardinalityWasNotSwapped(t *testing.T) {
 	r2.MaxOutgoing = &one // left behind: should have become MaxIncoming
 	to.Relations["assigned-to"] = r2
 
-	out, err := Generate(from.ShapeProjection(), to.ShapeProjection(), nil, "reverse")
+	out, err := Generate(from.ShapeProjection(), to.ShapeProjection(), "reverse", testNow())
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}

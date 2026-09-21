@@ -297,6 +297,33 @@ export async function createRelation(
   return api.post(`/${getPlural(type)}/${entityId}/relations/${relationName}`, body)
 }
 
+/**
+ * Every visible relation of an entity, both directions, grouped by wire key.
+ *
+ * Incoming edges are keyed by the relation's INVERSE name, not its canonical
+ * one, and each entry carries its own `direction`. The create body accepts
+ * those same inverse keys (`resolveDirection` server-side), so a caller
+ * building a create payload passes keys through unchanged rather than mapping
+ * them back.
+ *
+ * Every edge whose peer the caller may not read is already dropped server-side,
+ * so a derived count is a total over VISIBLE peers — per-principal by
+ * construction, and deliberately not the raw graph total.
+ */
+export async function getAllEntityRelations(
+  type: string,
+  entityId: string,
+  world?: string
+): Promise<Record<string, RelationEntry[]>> {
+  // The world is carried because a content-scoped relation belongs to ONE
+  // face: reading unscoped while the page shows a non-default world would
+  // enumerate a different face's edges than the one on screen.
+  return api.get<Record<string, RelationEntry[]>>(
+    `/${getPlural(type)}/${entityId}/relations`,
+    world ? { world } : undefined
+  )
+}
+
 export async function getEntityRelations(
   type: string,
   entityId: string,

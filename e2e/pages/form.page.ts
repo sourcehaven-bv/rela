@@ -637,8 +637,39 @@ export class FormPage extends BasePage {
     return this.markdownEditorShell.locator(".mention-menu");
   }
 
+  /** Every row, across both sections. Prefer a section-scoped locator below
+   *  when a test cares which kind of row it is acting on. */
   get mentionMenuOptions(): Locator {
     return this.mentionMenu.locator(".mention-menu-item");
+  }
+
+  // The two sections are `role="group"` inside ONE listbox (the highlight is a
+  // single sequence across both). Addressed by `data-section` rather than by
+  // their ARIA label, which varies: the Entities heading only renders when type
+  // rows sit above it, so the group falls back to an aria-label without one.
+
+  /** The type-picker rows, which scope the search rather than inserting. */
+  get mentionMenuTypeOptions(): Locator {
+    return this.mentionMenu.locator(
+      "ul[data-section='types'] .mention-menu-item",
+    );
+  }
+
+  /** The entity rows, which insert a reference. */
+  get mentionMenuEntityOptions(): Locator {
+    return this.mentionMenu.locator(
+      "ul[data-section='entities'] .mention-menu-item",
+    );
+  }
+
+  /** The row currently highlighted, across both sections. */
+  get mentionMenuHighlighted(): Locator {
+    return this.mentionMenu.locator(".mention-menu-item.is-highlighted");
+  }
+
+  /** The chip showing the type the search is scoped to. */
+  get mentionMenuScopeChip(): Locator {
+    return this.mentionMenu.locator(".mention-menu-chip");
   }
 
   get mentionMenuNote(): Locator {
@@ -742,6 +773,17 @@ export class FormPage extends BasePage {
   /** Wait for the `@` completion menu to appear. */
   async waitForMentionMenu(): Promise<void> {
     await this.mentionMenu.waitFor({ state: "visible", timeout: 3_000 });
+  }
+
+  /** Wait until the editor's text contains `text`.
+   *
+   *  `typeIntoEditor` clicks and types without waiting for focus to settle, so
+   *  under parallel load a keystroke can land before ProseMirror is listening
+   *  and the tail of the string is dropped. A test that asserts on menu state
+   *  right after typing then fails on a half-typed query. Gate on the text
+   *  being present rather than assuming the type succeeded. */
+  async expectEditorText(text: string): Promise<void> {
+    await expect(this.proseMirror).toContainText(text, { timeout: 5_000 });
   }
 
   // --- Template selector ---

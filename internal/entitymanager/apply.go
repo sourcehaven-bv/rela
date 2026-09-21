@@ -147,7 +147,7 @@ func (m *Manager) ApplyEntity(ctx context.Context, e *entity.Entity) (*entity.Up
 	}
 	if err := m.authorizeAndAudit(ctx, acl.WriteRequest{
 		Op:      op.aclOp,
-		Subject: acl.EntitySubject{Type: subjectType, ID: e.ID, Face: subjectFace},
+		Subject: acl.NewEntitySubject(subjectType, e.ID, subjectFace),
 	}); err != nil {
 		return nil, err
 	}
@@ -183,7 +183,7 @@ func (m *Manager) ApplyEntity(ctx context.Context, e *entity.Entity) (*entity.Up
 			ctx, stored, e, m.deps.TransitionGuard, m.deps.TransitionGraph,
 		); err != nil {
 			return nil, m.mapTransitionError(
-				ctx, acl.EntitySubject{Type: subjectType, ID: e.ID, Face: subjectFace}, err)
+				ctx, acl.NewEntitySubject(subjectType, e.ID, subjectFace), err)
 		}
 	} else if err := m.deps.Transitions.EnforceCreate(ctx, e); err != nil {
 		return nil, err

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
-	"slices"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/audit"
@@ -39,9 +38,15 @@ type VersionCapture interface {
 // Deps are the runner's collaborators. Store, Meta, State, Audit, ScriptFS
 // and Lock are required; Versions is optional (pg only).
 type Deps struct {
-	Store    store.Store
-	Meta     *metamodel.Metamodel
-	State    state.KV
+	Store store.Store
+	Meta  *metamodel.Metamodel
+	// State is the drift ledger's home. It is NOT where migration state
+	// lives — see MigState.
+	State state.KV
+	// MigState records which migrations have run and the shape the content
+	// conforms to. Backend-selected (file, postgres, sqlite, memory) because
+	// that record has to travel with the data it describes.
+	MigState StateStore
 	Audit    audit.Audit
 	ScriptFS fs.FS // project root, for `lua:` step scripts
 	Versions VersionCapture
@@ -68,6 +73,8 @@ func NewRunner(deps Deps) (*Runner, error) {
 		return nil, errors.New("datamigration: NewRunner: Meta is required")
 	case deps.State == nil:
 		return nil, errors.New("datamigration: NewRunner: State is required")
+	case deps.MigState == nil:
+		return nil, errors.New("datamigration: NewRunner: MigState is required")
 	case deps.Audit == nil:
 		return nil, errors.New("datamigration: NewRunner: Audit is required")
 	case deps.ScriptFS == nil:
@@ -97,22 +104,20 @@ type RunResult struct {
 // FileResult reports one migration file's execution.
 type FileResult struct {
 	Name  string
-	From  string
-	To    string
 	Steps []StepResult
 }
 
 // Run executes the plan (from [Resolve]) in order. Dry-run (apply=false)
-// counts affected records per step without writing. On apply, the marker
-// advances after EACH file completes — a crash between files resumes at the
-// right position — and one audit record is emitted per applied file.
+// counts affected records per step without writing. On apply, the migration
+// record advances after EACH file completes — a crash between files resumes at
+// the right position — and one audit record is emitted per applied file.
 //
 // The whole run executes under a system-attributed context: audit and
 // version rows attribute to the invoking operator with the data-migration
 // tool, never to a guessed identity.
 func (r *Runner) Run(ctx context.Context, plan []*File, apply bool) (*RunResult, error) {
 	if apply {
-		// The whole apply run holds the migration lock: marker advances and
+		// The whole apply run holds the migration lock: record advances and
 		// bulk rewrites must not interleave with another runner, a GC apply,
 		// or a gate adoption. Dry-runs are read-only and stay lock-free.
 		release, err := r.deps.Lock.TryAcquire(ctx)
@@ -125,7 +130,15 @@ func (r *Runner) Run(ctx context.Context, plan []*File, apply bool) (*RunResult,
 	ctx = store.WithAttribution(ctx, store.Attribution{User: p.User, Tool: migrationTool})
 
 	res := &RunResult{Applied: apply}
-	res.ValidationBefore = len(schema.ValidateEntityProperties(ctx, r.deps.Store, r.deps.Meta))
+	// A read failure here would skew the before/after delta silently: the
+	// count is a comparison, and an entity missing from only one side
+	// moves the number for a reason that has nothing to do with the
+	// migration. Fail rather than report a misleading delta (BUG-4KPN2M).
+	before, beforeErr := schema.ValidateEntityProperties(ctx, r.deps.Store, r.deps.Meta)
+	if beforeErr != nil {
+		return nil, fmt.Errorf("datamigration: count property errors before migration: %w", beforeErr)
+	}
+	res.ValidationBefore = len(before)
 
 	for _, f := range plan {
 		x := &Exec{
@@ -135,7 +148,7 @@ func (r *Runner) Run(ctx context.Context, plan []*File, apply bool) (*RunResult,
 			Computed: r.computed,
 			capture:  r.newCapturer(f.Name),
 		}
-		fr := FileResult{Name: f.Name, From: f.From, To: f.To}
+		fr := FileResult{Name: f.Name}
 		for _, step := range f.Steps {
 			sr, err := step.Run(ctx, x)
 			fr.Steps = append(fr.Steps, sr)
@@ -154,28 +167,27 @@ func (r *Runner) Run(ctx context.Context, plan []*File, apply bool) (*RunResult,
 		}
 	}
 
-	res.ValidationAfter = len(schema.ValidateEntityProperties(ctx, r.deps.Store, r.deps.Meta))
+	after, afterErr := schema.ValidateEntityProperties(ctx, r.deps.Store, r.deps.Meta)
+	if afterErr != nil {
+		return res, fmt.Errorf("datamigration: count property errors after migration: %w", afterErr)
+	}
+	res.ValidationAfter = len(after)
 	return res, nil
 }
 
-// advanceMarker moves the marker to the file's to-shape and appends the file
+// advanceMarker moves the record to the file's to-shape and appends the file
 // to the applied list. Written only after every step of the file succeeded —
-// the marker must never claim conformance the data doesn't have.
+// the record must never claim conformance the data doesn't have.
 func (r *Runner) advanceMarker(ctx context.Context, f *File) error {
-	marker, err := LoadMarker(ctx, r.deps.State)
+	cur, err := r.deps.MigState.Load(ctx)
 	if err != nil {
 		return err
 	}
-	var applied []string
-	if marker != nil {
-		applied = marker.Applied
-	}
-	applied = appendUnique(applied, f.Name)
-	m, err := NewMarker(f.ToProjection, applied, r.now().UTC())
+	next, err := cur.WithApplied(f.Name, f.ToProjection, r.now().UTC())
 	if err != nil {
 		return err
 	}
-	return SaveMarker(ctx, r.deps.State, m)
+	return r.deps.MigState.Save(ctx, next)
 }
 
 // auditFile emits the per-file audit record: names, hashes and counts —
@@ -189,16 +201,9 @@ func (r *Runner) auditFile(p principal.Principal, f *File, fr FileResult) {
 		Time:      r.now().UTC(),
 		Op:        audit.OpDataMigration,
 		Principal: p,
-		Summary: fmt.Sprintf("data migration %s applied (%s → %s): %d steps, %d records changed",
-			f.Name, short(f.From), short(f.To), len(fr.Steps), total),
+		Summary: fmt.Sprintf("data migration %s applied: %d steps, %d records changed",
+			f.Name, len(fr.Steps), total),
 	})
-}
-
-func appendUnique(list []string, v string) []string {
-	if slices.Contains(list, v) {
-		return list
-	}
-	return append(list, v)
 }
 
 // ---- execution context shared by steps ----

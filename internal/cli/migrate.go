@@ -23,6 +23,7 @@ type MigrateCmd struct {
 	Data      MigrateDataCmd      `cmd:"" help:"Run pending data migrations (dry-run by default)."`
 	Gc        MigrateGCCmd        `cmd:"" name:"gc" help:"Garbage-collect schema-orphaned data (dry-run by default)."`
 	AdoptFace MigrateAdoptFaceCmd `cmd:"" name:"adopt-face" help:"Adopt stranded bare rows onto a face (dry-run by default)."`
+	Baseline  MigrateBaselineCmd  `cmd:"" help:"Record the project's migrations as already applied, without running them."`
 }
 
 // MigrateConfigCmd migrates project files (schema.yaml, etc.) to current

@@ -12,9 +12,21 @@ This is distinct from `rela migrate` (which upgrades the *syntax* of config
 files like `schema.yaml` itself) and from `rela db migrate` (PostgreSQL DDL).
 Both of those run before anything described here.
 
-## The shape hash
+## The shape projection
 
-The unit of identity is the **shape hash**: a content hash of the
+Two separate questions run this system, and it helps to keep them apart:
+
+- **Which migrations have run?** Answered by NAME, from a list the store
+  keeps. That is what decides which files execute.
+- **What shape does the stored data conform to?** Answered by the **shape
+  projection**, a description of the data-relevant slice of the schema. That
+  is what the compatibility gate classifies against and what `rela migrate
+  gen` diffs to draft a migration.
+
+The projection has a content hash, used as a cheap "did anything change?"
+check. It is not an identity a migration is addressed by.
+
+The projection covers a content hash of the
 data-shape-relevant slice of the metamodel — entity properties (type,
 required, list, format, values, default, computed expression), named enum value lists, and
 relation types (endpoints, cardinality, symmetry, content flag, relation
@@ -22,16 +34,28 @@ properties). Everything else — labels, descriptions, colors, views, forms,
 automations, validations, id prefixes — is excluded, so cosmetic edits never
 demand a migration.
 
-Each store records the shape its data conforms to in a **marker**
-(`migration/state.json` in the store's state KV: under `.rela/` on the
-filesystem backend, in the `state_kv` table on PostgreSQL — so with
-schema-per-tenant every tenant has its own marker and migrates
-independently).
+Each store records both answers — the applied migration names and the
+projection its content conforms to — in a **migration record**. Where that
+record lives is chosen per backend, because it describes the DATA and so has to
+travel with it:
+
+| Backend | Location | Why |
+|---|---|---|
+| filesystem | `migrations/applied.json`, **committed** | The entities and `migrations/` are tracked by git; a record under the gitignored `.rela/` would be missing from a fresh clone |
+| PostgreSQL | `migration_state` in the tenant's schema | Each tenant tracks its own shape, so tenants at different points migrate independently |
+| SQLite | `migration_state` in `rela.db` | A shipped single file must carry it, or the receiving copy replays every migration |
+
+`migrations/applied.json` being committed is deliberate, and it is what Rails
+does with `db/schema.rb` and EF Core with its model snapshot. It costs a
+generated file in git that conflicts when two branches each add a migration —
+and that conflict is the point. Git surfaces the collision so a human decides
+the order, rather than both branches merging cleanly into an undefined one.
 
 ## The compatibility gate
 
 At every process start (server and project CLI commands alike), the gate
-compares the marker against the live schema and classifies each difference:
+compares the recorded projection against the live schema and classifies each
+difference:
 
 | Tier | Examples | What happens |
 |---|---|---|
@@ -39,8 +63,43 @@ compares the marker against the live schema and classifies each difference:
 | **drift** | deleted property, deleted entity/relation type, deleted enum value, new *required* or computed property, changed computed expression | adopted, with a logged notice per delta |
 | **needs-migration** | property type/format change, `list` flip, enum value replacement, endpoint/cardinality narrowing, symmetry flip | **not** adopted — the gate warns and points at `rela migrate gen` |
 
-A store with no marker adopts the current shape as its baseline silently —
-existing projects join the system without ceremony.
+**Who writes.** The gate always *classifies*; only the `rela migrate`
+commands *record* what it classified. A running server never writes the
+migration record — on the filesystem backend that record is a git-tracked
+file, and a server dirtying an operator's working tree at boot (or needing a
+writable project directory on a deploy box) would be wrong. It also means
+several server processes starting at once have nothing to race over. The cost
+is that a server can serve with an unrecorded *additive* change, which by
+definition cannot invalidate stored content; the next `rela migrate` records
+it.
+
+**A store with no record.** With no migrations in the project, the live shape
+is adopted as the baseline silently — an existing project joins the system
+without ceremony.
+
+With migrations present, **every command refuses to guess**, including
+`rela migrate data` itself. Those files may be exactly the ones this store still
+needs — or exactly the ones it has already run, with its record lost. Nothing
+distinguishes the two from the outside, and both wrong answers lose data:
+baselining marks pending migrations applied forever, while running them replays
+transforms over already-migrated content.
+
+Resolve it explicitly:
+
+```bash
+rela migrate baseline --apply   # the content already matches: record them as applied
+```
+
+A fresh clone of a project whose `schema.yaml` moved ahead of its committed
+entities is the everyday way to reach this — as is an `applied.json` that was
+gitignored by accident.
+
+**Upgrading from the pre-`applied.json` scheme** lands here too. The old record
+named migrations `0001-…`, which is not a valid name under the timestamp scheme,
+so it cannot be carried across: rename the files in `migrations/`, then
+`rela migrate baseline --apply` to record the set. The upgrade refuses rather
+than adopting a partial list, because a partially-converted record reads as
+"nothing has run" and would replay the whole chain.
 
 While a needs-migration change is pending, writes keep today's behavior
 (soft validation warnings); nothing blocks. Run `rela migrate status` to see
@@ -57,14 +116,19 @@ immediate loss.
 
 ## Migration files
 
-Migrations are YAML files you commit under `migrations/`, named with an
-ordering prefix (`0001-rename-status.yaml`). Each is an edge from one shape
-hash to another, with both projections embedded so the file is fully
-self-contained:
+Migrations are YAML files you commit under `migrations/`, named with a
+**timestamp prefix** (`20260919143022-rename-status.yaml`). Names sort
+lexicographically, which for a timestamp is chronologically, so the file order
+is the run order.
+
+A timestamp rather than a sequence number because sequence numbers collide
+silently across concurrent branches: two pull requests cut from the same commit
+both pick the same next index, and since nothing else about the filenames
+differs, git merges both cleanly into an undefined order.
+
+Each file embeds the schema shape before and after it, so it is self-contained:
 
 ```yaml
-from: <shape hash the data currently conforms to>
-to: <shape hash after this migration>
 description: status rework
 steps:
   - rename_property: {entity: task, from: status, to: state}
@@ -73,9 +137,33 @@ steps:
       property: state
       mapping: {open: todo, wip: doing}
   - convert: {entity: task, property: due, to_type: date, from_format: "01/02/2006"}
-from_projection: { ... }   # embedded, integrity-checked against `from`
+from_projection: { ... }   # the shape before this migration
+to_projection: { ... }     # the shape after it
+```
+
+The projections are not decoration. Step targets are validated against the
+shapes **this file** spans — `rename_property{from: status, to: state}` is
+well-formed only where `status` exists in the from-shape — and by the time a
+later migration has run, the live schema no longer contains it. They are also
+what lets a file be refused when it spans a change its steps do not answer (see
+`migrate_face` below).
+
+### Data-only migrations
+
+A migration does not have to change the schema. A backfill, a de-duplication,
+or a correction of values an old bug wrote is an ordinary migration file whose
+two projections are the same:
+
+```yaml
+description: backfill owner on tasks that have none
+steps:
+  - set_default: {entity: task, property: owner, value: unassigned}
+from_projection: { ... }   # identical to to_projection
 to_projection: { ... }
 ```
+
+It runs because its name is not in the applied list. `rela migrate gen` will
+not draft one — there is no schema diff to draft from — so write it by hand.
 
 ### Steps
 
@@ -100,6 +188,10 @@ recovery mechanism, so a step that finds nothing left to do does nothing.
 
 Step targets are validated against the embedded projections when the file is
 parsed: a typo'd entity type or property is an error, never a silent no-op.
+Migration names are validated too — a name must be
+`<14-digit timestamp>-<lowercase-slug>.yaml` — because the applied list records
+names and compares them against directory entries, and a case-folding
+filesystem would otherwise make one file look like two entries.
 Deletes are first-class steps — putting one in a reviewed migration file *is*
 the operator consent — but the generator only ever emits them commented out.
 Adding or changing a computed property emits one active
@@ -315,15 +407,18 @@ Scripts must be idempotent, like every other step.
 ## Workflow
 
 ```text
-edit schema.yaml            # the incompatible change
-rela migrate gen            # drafts migrations/000N-schema-change.yaml
-$EDITOR migrations/000N-*   # review: confirm GUESSes, fill TODOs
-rela migrate data           # dry-run: per-step counts + validation delta
-rela migrate data --apply   # execute
+edit schema.yaml              # the incompatible change
+rela migrate gen              # drafts migrations/<timestamp>-<slug>.yaml
+$EDITOR migrations/2026*      # review: confirm GUESSes, fill TODOs
+rela migrate data             # dry-run: per-step counts + validation delta
+rela migrate data --apply     # execute
 git add schema.yaml migrations/ && git commit
 ```
 
-`gen` diffs the marker's stored projection against the live schema and emits
+Commit `migrations/applied.json` along with the migration: on the filesystem
+backend it is how a clone knows what has already run.
+
+`gen` diffs the recorded projection against the live schema and emits
 best guesses: same-shaped remove+add pairs become `rename_property` /
 `rename_entity_type` steps marked `# GUESS`, enum replacements become
 `map_values` stubs marked `# TODO`, type changes become `convert` steps, and
@@ -347,17 +442,23 @@ process, the lock stays honored — the remedy is simply removing
 `.rela/migration.lock` by hand once you have confirmed no migration is
 running.
 
-`data` resolves the chain from the store's current hash to the live schema.
-Migrations run in file-name order; compatible gaps between them (additive
-changes that were adopted without a migration) are bridged automatically, so
-a tenant that is several versions behind catches up in one run. Already
-applied files (recorded in the marker) are skipped. The marker advances
-after each file completes — a crash mid-run is recovered by re-running.
+`data` runs every migration whose name is not in the applied list, in file-name
+order. A store that is several versions behind catches up in one run, and a
+tenant with its own applied list catches up independently of its siblings. The
+record advances after each file completes — a crash mid-run is recovered by
+re-running.
+
+**The applied list is the only thing preventing a double-apply**, which makes
+step idempotency load-bearing rather than merely advisable. Every step must be
+safe to re-run: re-running after a crash is the documented recovery path, and a
+record restored from a backup will replay whatever it has forgotten. The
+declarative steps are idempotent by construction; a `lua:` step is idempotent
+only if you wrote it that way.
 
 Execution writes raw batches to the store (bypassing per-entity validation,
 automations, and ACL — the trust boundary is your shell, exactly like
-`rela db migrate`). Each applied file emits one audit record with names,
-hashes and counts, never content. On PostgreSQL, migrated content appears in
+`rela db migrate`). Each applied file emits one audit record with names and
+counts, never content. On PostgreSQL, migrated content appears in
 the version history attributed to the operator with the `data-migration`
 tool, and destructive steps capture pre-delete snapshots synchronously.
 

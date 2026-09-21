@@ -25,7 +25,7 @@ func membershipGraph() *fakeGraph {
 }
 
 func writeTicket(op Op) WriteRequest {
-	return WriteRequest{Op: op, Subject: EntitySubject{Type: "ticket", ID: "T-1"}}
+	return WriteRequest{Op: op, Subject: NewFacelessEntitySubject("ticket", "T-1")}
 }
 
 // A ctx that carries the operation's Request must not pay the membership

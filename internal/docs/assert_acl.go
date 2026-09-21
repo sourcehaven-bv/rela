@@ -111,8 +111,14 @@ func (a *aclBindings) luaAuthz(ls *lua.LState, wantAllow bool) int {
 
 	ctx := principal.With(a.ctx, principal.Principal{User: who, Tool: principal.ToolCLI})
 	dec := d.AuthorizeWrite(ctx, acl.WriteRequest{
-		Op:      acl.Op(op),
-		Subject: acl.EntitySubject{Type: typ, ID: id},
+		Op: acl.Op(op),
+		// Faceless: the allows{}/refuses{} Lua surface takes who/op/type/id
+		// and has no `face` field, so a doc claim has no face to name and is
+		// asserted against the default one. Adding `face=` to the surface
+		// would make faced claims expressible; until then the faceless
+		// constructor says out loud that this claim covers the default face
+		// only, rather than implying a face it never asked for.
+		Subject: acl.NewFacelessEntitySubject(typ, id),
 	})
 
 	if msg := checkAuthz(verb, who, op, typ, wantAllow, because, dec); msg != "" {

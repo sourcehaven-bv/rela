@@ -35,14 +35,14 @@ func driftSetup(t *testing.T) (store.Store, *fakeKV, *Gate, *metamodel.Metamodel
 	t.Helper()
 	st := seedStore(t)
 	kv := newFakeKV()
-	gate := newTestGate(t, kv)
-	if _, err := gate.Evaluate(t.Context(), metaV1()); err != nil {
+	gate, _ := newTestGate(t, kv)
+	if _, err := gate.EvaluateAndPersist(t.Context(), metaV1()); err != nil {
 		t.Fatal(err)
 	}
 	m2 := metaV1()
 	delete(m2.Entities["task"].Properties, "tags")
 	delete(m2.Entities, "person")
-	if _, err := gate.Evaluate(t.Context(), m2); err != nil {
+	if _, err := gate.EvaluateAndPersist(t.Context(), m2); err != nil {
 		t.Fatal(err)
 	}
 	// Give the tasks tag values so the property GC has something to remove.
@@ -173,7 +173,7 @@ func TestGC_ScanFindsLegacyOrphans(t *testing.T) {
 		t.Fatal(err)
 	}
 	kv := newFakeKV()
-	gate := newTestGate(t, kv)
+	gate, _ := newTestGate(t, kv)
 	if _, err := gate.Evaluate(ctx, metaV1()); err != nil {
 		t.Fatal(err)
 	}

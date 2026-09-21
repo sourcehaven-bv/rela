@@ -28,23 +28,28 @@ import (
 // App's god-object method count — the pattern App's own doc records for
 // receiver-free handler helpers (plimsoll, TKT-N0IKN9).
 func handleV1GetRelationTarget(
-	a *App, w http.ResponseWriter, r *http.Request, typeName, entityID, relType, targetID string,
+	a *App, w http.ResponseWriter, r *http.Request, typeName string, ref entityRef, relType, targetID string,
 ) {
 	ctx := r.Context()
+	entityID := ref.ID
 
 	// The path entity must exist and match the route type, or it is an
-	// indistinguishable 404 (same as a get on the wrong-typed id).
-	if src, ok := a.reader.getEntity(ctx, entityID); !ok || src.Type != typeName {
+	// indistinguishable 404 (same as a get on the wrong-typed id). Addressed
+	// by REF: on a faced type the bare id names no row at all (BUG-VFHUWO).
+	if src, ok := a.reader.getEntityRef(ctx, ref); !ok || src.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 		return
 	}
 
-	// Dual-endpoint gate: from = entityID (the path entity), to = targetID.
+	// Dual-endpoint gate on the BARE ids: the row gate is face-blind.
 	if !authorizeRelationEndpointsReadable(a, w, r, entityID, targetID) {
 		return
 	}
 
-	rel, err := a.reader.store.GetRelation(ctx, entityID, relType, targetID)
+	// The edge at the ADDRESSED TAIL. store.GetRelation reads the default
+	// tail only, so on a faced source it would miss the edge entirely, or
+	// return a different face's (BUG-VFHUWO).
+	rel, err := edgeOnFace(ctx, a.reader.store, entityID, ref.Face, relType, targetID)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			writeV1Error(w, r, http.StatusNotFound, "not_found", "Relation not found", "")
@@ -64,7 +69,7 @@ func handleV1GetRelationTarget(
 
 	// Redact meta, fail-closed: resolve the live SOURCE entity; if it is gone,
 	// emit no meta rather than raw meta (mirrors the relation-history handler).
-	source, live := a.reader.getEntity(ctx, entityID)
+	source, live := a.reader.getEntityRef(ctx, ref)
 	var meta map[string]any
 	if live {
 		meta = a.affordances.visibleRelationMeta(ctx, source, relType, rel.Properties)

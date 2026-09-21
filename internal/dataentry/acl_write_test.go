@@ -200,7 +200,7 @@ func TestACLWrite_RelationTargetIsReadGated(t *testing.T) {
 			strings.NewReader(`{"id":"`+target+`"}`))
 		req = req.WithContext(ctx)
 		rec := httptest.NewRecorder()
-		app.write.handleV1CreateRelation(rec, req, "ticket", "TKT-001", "implements")
+		app.write.handleV1CreateRelation(rec, req, "ticket", entityRef{ID: "TKT-001"}, "implements")
 		return rec
 	}
 

@@ -130,6 +130,13 @@ func newSandboxedState() *lua.LState {
 // (A local, dependency-free mirror of lua.EntityToTable — importing the full
 // runtime package for one conversion would drag the whole binding surface
 // into this package.)
+//
+// Deliberately NARROWER than its counterpart: a migration step is a pure
+// property transform (patch in, patch out), so it gets no `face`, `mod_time`
+// or `redacted`. `face` in particular would be inert here — a step cannot
+// choose which row it rewrites, the engine applies the returned patch to the
+// row it was handed. Adding it would suggest an influence the step does not
+// have.
 func entityToTable(ls *lua.LState, e *entity.Entity) *lua.LTable {
 	t := ls.NewTable()
 	t.RawSetString("id", lua.LString(e.ID))

@@ -5,13 +5,24 @@ import (
 	"fmt"
 	"slices"
 	"sort"
-	"strconv"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
+
+// stampLayout is the filename timestamp: YYYYMMDDHHMMSS, which sorts
+// lexicographically in chronological order, so [LoadDir]'s plain name sort is
+// also the run order.
+//
+// Timestamps replaced the old %04d sequence because that numbering collides
+// silently across concurrent branches: two PRs cut from the same commit both
+// pick the same next index, and since the filenames differ in no other way
+// git merges both cleanly into an undefined order. rela hit exactly this in
+// its own postgres DDL ladder (BUG-TY2XQC).
+const stampLayout = "20060102150405"
 
 // Draft is a generated migration file, ready to be written to
 // migrations/<FileName> and REVIEWED by the operator. The guesses are the
@@ -23,13 +34,15 @@ type Draft struct {
 	Report metamodel.ShapeReport
 }
 
-// Generate drafts a migration from the store's current shape (the marker's
-// projection) to the live schema's shape. Needs-migration deltas and safe,
+// Generate drafts a migration from the store's recorded shape to the live
+// schema's shape. Needs-migration deltas and safe,
 // deterministic computed-property drift produce active steps; other drift
 // deltas produce commented-out optional cleanups (drops, backfills) the operator may enable. Returns nil when the
 // shapes are identical or the change is purely additive with no drift — in
 // both cases there is nothing worth a file.
-func Generate(current, live metamodel.ShapeProjection, existing []*File, description string) (*Draft, error) {
+func Generate(
+	current, live metamodel.ShapeProjection, description string, now time.Time,
+) (*Draft, error) {
 	report := metamodel.CompareShapes(current, live)
 	if len(report.Deltas) == 0 {
 		return nil, nil //nolint:nilnil // nil draft = shapes identical, nothing to generate (documented)
@@ -43,8 +56,6 @@ func Generate(current, live metamodel.ShapeProjection, existing []*File, descrip
 	fmt.Fprintf(&b, "# Steps marked GUESS were inferred from the schema diff and may be wrong;\n")
 	fmt.Fprintf(&b, "# steps marked TODO need values filled in; commented steps are optional\n")
 	fmt.Fprintf(&b, "# cleanups that DELETE data when uncommented.\n")
-	fmt.Fprintf(&b, "from: %s\n", current.Hash())
-	fmt.Fprintf(&b, "to: %s\n", live.Hash())
 	if description == "" {
 		description = "schema change"
 	}
@@ -59,8 +70,11 @@ func Generate(current, live metamodel.ShapeProjection, existing []*File, descrip
 		b.WriteString(comments)
 	}
 
-	// The embedded projections make the file self-contained (amendment A2):
-	// integrity-checked against the hashes above at parse time.
+	// The embedded projections make the file self-contained: step targets are
+	// validated against the shapes THIS file spans, and validateDeltasResolved
+	// recomputes the file's own edge. Neither can be reconstructed later —
+	// once a further migration has run, the live schema no longer contains the
+	// property a rename step names. See the [File] doc.
 	fromYAML, err := marshalProjectionYAML("from_projection", current)
 	if err != nil {
 		return nil, err
@@ -72,7 +86,11 @@ func Generate(current, live metamodel.ShapeProjection, existing []*File, descrip
 	b.WriteString(fromYAML)
 	b.WriteString(toYAML)
 
-	name := fmt.Sprintf("%04d-schema-change.yaml", nextIndex(existing))
+	migName, err := NewMigrationFileName(now.UTC().Format(stampLayout), description)
+	if err != nil {
+		return nil, err
+	}
+	name := migName.String()
 	content := []byte(b.String())
 	// A draft must round-trip through the parser — a generator bug that
 	// emits an unparsable file should fail HERE, not when the operator runs
@@ -430,26 +448,6 @@ func quoteYAML(s string) string {
 		return fmt.Sprintf("%q", s)
 	}
 	return strings.TrimRight(string(out), "\n")
-}
-
-// nextIndex picks the next chain index: one past the highest numeric prefix
-// among the existing files (count-based numbering would collide after a file
-// is deleted from the middle of the chain).
-func nextIndex(existing []*File) int {
-	highest := 0
-	for _, f := range existing {
-		digits := 0
-		for digits < len(f.Name) && f.Name[digits] >= '0' && f.Name[digits] <= '9' {
-			digits++
-		}
-		if digits == 0 {
-			continue
-		}
-		if n, err := strconv.Atoi(f.Name[:digits]); err == nil && n > highest {
-			highest = n
-		}
-	}
-	return highest + 1
 }
 
 // sortedShapeKeys/sortedPropKeys keep draft output deterministic.

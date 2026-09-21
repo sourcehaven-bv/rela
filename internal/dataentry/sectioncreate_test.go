@@ -494,7 +494,7 @@ func TestSectionCreate_EdgeRefusedOnBothLinkDirections(t *testing.T) {
 			strings.NewReader(`{"id":"FEAT-001"}`))
 		req.Header.Set("Content-Type", "application/json")
 		rec := httptest.NewRecorder()
-		app.write.handleV1CreateRelation(rec, req, "ticket", "TKT-001", "implements")
+		app.write.handleV1CreateRelation(rec, req, "ticket", entityRef{ID: "TKT-001"}, "implements")
 
 		if rec.Code != http.StatusForbidden {
 			t.Fatalf("status = %d, want 403; body=%s", rec.Code, rec.Body)

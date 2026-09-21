@@ -6,7 +6,8 @@ why1: One list request holds ~100 MB of entity bodies to render a 50-row page.
 why2: scopedSortedEntities returns []*entity.Entity for the whole type; pagination slices only after the pipeline returns.
 why3: Sort, filter and free-text intersection genuinely need the full SET, so the full LOAD was assumed necessary along with it — but a list row renders properties, never the body.
 why4: When EntityHeader landed (TKT-1ESTYJ) it was applied to the analyze path that motivated it; the list path has the same shape and was not revisited.
-why5: "The default test backend (memstore) shares body strings rather than materialising them, so body-retention costs ~1 MB there and ~101 MB on a real backend. The regression is structurally invisible to the fast test path, so no unit test could have caught it."
+why5: "The default test backend (memstore) shares body strings rather than materialising them, so body-retention costs ~1 MB there and ~101 MB on a real backend. The regression is invisible to a HEAP probe on the fast test path — but not to a body COUNT, which is backend-independent and is what now pins it."
+prevention: "storetest.BodyWatch counts bodies served to a read path, so 'this pipeline read markdown it will not render' is an exact, backend-independent assertion rather than a heap measurement only a DB-gated job can make. It is the third sibling of Counting (round-trips) and Breadth (batch width); a new collection read path pins its body cost the same way CLAUDE.md already requires a Counting budget test."
 title: GET /api/v1/<type> retains every entity of the type (bodies included) to render one page
 priority: high
 effort: m
@@ -104,8 +105,9 @@ header path must be opt-in per caller rather than a blanket swap.
 
 ## Acceptance criteria
 
-1. Heap for one list request is flat in the type's entity count, not linear:
-5,000 x 20KB renders within a few MB, not ~100 MB.
+1. One list request reads no body it will not render: body reads are bounded by
+page size, not by the type's entity count. Asserted by COUNTING bodies served
+(`storetest.BodyWatch`), not by measuring heap — see the test plan for why.
 2. `total`, sort order, filtering, and free-text results are byte-identical to
 today for every existing test.
 3. ACL row-gating and field redaction are unchanged — asserted as equivalence
@@ -116,12 +118,70 @@ pattern).
 
 ## Test plan
 
-- **Retention test against a real backend** (pgstore, DB-gated like the existing
-suite): assert heap growth for one list request is bounded well below the
-dataset's body size. Must fail on current develop.
-- **Explicitly not memstore** for that assertion — it shares body strings and
-reports ~1 MB either way, which is what let this ship.
+- **Body-count assertion via `storetest.BodyWatch`**, running under the default
+`go test ./...` on every backend. Counting is the same property as retention
+asked in a form every backend can answer: exact, thresholdless, no GC or
+allocator noise.
+- **Why counting and not heap.** The original plan was a DB-gated pgstore heap
+test, explicitly not on memstore, because memstore shares body strings and
+reports ~1 MB whether or not the defect is present. That reasoning about
+memstore is correct, but the conclusion drawn from it was wrong: a pgstore-only
+assertion does not run in the default test path, so the defect could return
+anywhere the one DB-gated job was not watching. Counting fails on memstore too,
+and catches a 5-body regression that no heap threshold could separate from
+noise. Mutation-verified: reverting the AllowAll branch to `ListEntities` fails
+with "list of 50 rows read 50 bodies, want 0" — on memstore.
 - Equivalence tests: same ids, same order, same `total` before/after, across
 AllowAll / scoped / DenyAll verdicts.
 - ACL equivalence asserted against `ListEntities` output, mutation-verified by
 removing the gate and confirming failure.
+
+
+## Resolution
+
+The retention defect itself was already fixed by **TKT-1U8XYN**, which landed
+after this bug was written. `scopedHeaders` reads `store.EntityHeader` rows on
+every verdict branch, `listpushdown.go` serves a page straight from the store,
+and pgstore projects the content column away in SQL. Verified by measurement,
+not by reading: a list over a 50-row type reads **0 bodies**.
+
+What this change adds is the part that was genuinely missing — **the pin**, and
+one real regression the pin found.
+
+### The pin (`storetest.BodyWatch`)
+
+The ticket's test plan called for a DB-gated heap assertion, explicitly not on
+memstore. That instrument was reconsidered and replaced, for the reason the
+ticket itself supplies: memstore is blind to body retention, so a heap test
+there cannot fail — and a pgstore-only test does not run in the default
+`go test ./...`. The defect would simply have been reintroduced somewhere the
+assertion was not watching.
+
+`BodyWatch` counts bodies SERVED instead of weighing them. That is the same
+property, asked in a form every backend can answer: exact, thresholdless, and
+it runs everywhere. It is the third sibling of `Counting` (round-trips) and
+`Breadth` (batch width) — each measures a cost the other two cannot see.
+
+Mutation-verified against the exact defect. Reverting the AllowAll branch to
+`ListEntities` fails with *"list of 50 rows read 50 bodies, want 0"* — on
+**memstore**, the backend a heap probe reports ~1 MB on either way.
+
+### The regression the pin found — filed as [[BUG-RGVKRV]]
+
+Requirement 4 asked whether any list row legitimately needs a body. One does,
+and it had silently broken: a list export with an `export_render:` Lua script
+was receiving the **empty string for every row**.
+
+That is a distinct defect from this one, with its own cause and its own
+preventive measure, so it is filed separately as **BUG-RGVKRV** rather than
+recorded here — a data-loss-shaped regression should not live as a note on an
+already-fixed unrelated bug. Its fix and both directions of its pin
+(`AM-export-render-receives-row-bodies`) ship in this same change, because the
+pin for THIS bug is what surfaced it and the two assertions constrain each
+other: bodies are loaded for the consumer that renders them, and for no one
+else.
+
+Requirement 4 is therefore met, though not in the way the ticket expected. It
+anticipated that export would need the whole-entity path retained. What it
+actually needs is a narrow, gated refill on one path — see BUG-RGVKRV for why
+that placement matters.

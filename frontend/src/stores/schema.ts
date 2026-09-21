@@ -13,6 +13,7 @@ import type {
   FormConfig,
   ListConfig,
   ViewConfig,
+  EntityViewConfig,
   CalendarConfig,
   GanttConfig,
   KanbanConfig,
@@ -46,6 +47,8 @@ export const useSchemaStore = defineStore('schema', () => {
   const forms = ref<Map<string, FormConfig>>(new Map())
   const lists = ref<Map<string, ListConfig>>(new Map())
   const views = ref<Map<string, ViewConfig>>(new Map())
+  // Keyed by entity TYPE, unlike `views` which is keyed by view id.
+  const entityViews = ref<Map<string, EntityViewConfig>>(new Map())
   const kanbans = ref<Map<string, KanbanConfig>>(new Map())
   const calendars = ref<Map<string, CalendarConfig>>(new Map())
   const gantts = ref<Map<string, GanttConfig>>(new Map())
@@ -420,6 +423,7 @@ export const useSchemaStore = defineStore('schema', () => {
       forms.value = new Map(Object.entries(configData.forms || {}))
       lists.value = new Map(Object.entries(configData.lists || {}))
       views.value = new Map(Object.entries(configData.views || {}))
+      entityViews.value = new Map(Object.entries(configData.entity_views || {}))
       kanbans.value = new Map(Object.entries(configData.kanbans || {}))
       calendars.value = new Map(Object.entries(configData.calendars || {}))
       gantts.value = new Map(Object.entries(configData.gantts || {}))
@@ -472,6 +476,13 @@ export const useSchemaStore = defineStore('schema', () => {
     () => (entityType: string) => inlineCreate.value[entityType]
   )
 
+  // The `duplicate:` block for an entity type, or undefined when the operator
+  // declared none. Undefined means "carry every visible property" — absence is
+  // the default, not an opt-out (TKT-Z8K2FS).
+  const duplicateConfigFor = computed(
+    () => (entityType: string) => entityViews.value.get(entityType)?.duplicate
+  )
+
   return {
     // State
     entityTypes,
@@ -481,6 +492,7 @@ export const useSchemaStore = defineStore('schema', () => {
     forms,
     lists,
     views,
+    entityViews,
     kanbans,
     calendars,
     gantts,
@@ -526,6 +538,7 @@ export const useSchemaStore = defineStore('schema', () => {
     entityTypeList,
     relationTypeList,
     inlineCreateFormFor,
+    duplicateConfigFor,
 
     // Actions
     load,

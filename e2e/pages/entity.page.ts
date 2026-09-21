@@ -459,4 +459,50 @@ export class EntityPage extends BasePage {
     await target.click({ modifiers: [modifier] });
     return popupPromise;
   }
+
+  // ── Duplicate (TKT-Z8K2FS) ────────────────────────────────────────────────
+
+  /** The Duplicate button in the desktop header action row. */
+  get duplicateButton(): Locator {
+    return this.page.locator('.desktop-actions button:has-text("Duplicate")');
+  }
+
+  get duplicateModal(): Locator {
+    return this.page.locator('.duplicate-modal');
+  }
+
+  /** One relation-type row in the picker, addressed by its visible label. */
+  duplicateChoice(label: string): Locator {
+    return this.duplicateModal
+      .locator('.duplicate-choice')
+      .filter({ has: this.page.locator(`.duplicate-choice-label:text-is("${label}")`) });
+  }
+
+  /** The checkbox for a relation-type row. */
+  duplicateChoiceCheckbox(label: string): Locator {
+    return this.duplicateChoice(label).locator('input[type="checkbox"]');
+  }
+
+  /** Edge count shown beside a relation-type row. */
+  duplicateChoiceCount(label: string): Locator {
+    return this.duplicateChoice(label).locator('.duplicate-count');
+  }
+
+  async openDuplicate() {
+    await this.duplicateButton.click();
+    await expect(this.duplicateModal).toBeVisible();
+  }
+
+  async continueDuplicate() {
+    await this.duplicateModal.locator('button:has-text("Continue")').click();
+  }
+
+  /** The create form hosted inside the duplicate dialog. */
+  duplicateField(property: string): Locator {
+    return this.duplicateModal.locator(`#field-${property}`);
+  }
+
+  async submitDuplicateForm() {
+    await this.duplicateModal.locator('button[type="submit"]').first().click();
+  }
 }

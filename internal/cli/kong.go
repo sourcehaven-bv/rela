@@ -279,7 +279,7 @@ func requiresProject(cmd string) bool {
 		// data-migration subcommands need the store, so they are matched on
 		// the full command path.
 		switch firstTwoKongTokens(cmd) {
-		case "migrate status", "migrate gen", "migrate data", "migrate gc", "migrate adopt-face":
+		case "migrate status", "migrate gen", "migrate data", "migrate gc", "migrate adopt-face", "migrate baseline":
 			return true
 		}
 		return false

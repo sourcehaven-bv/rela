@@ -16,6 +16,12 @@ export interface Config {
   forms: Record<string, FormConfig>
   lists: Record<string, ListConfig>
   views: Record<string, ViewConfig>
+  /**
+   * Per-entity-TYPE UX bindings, keyed by entity type — unlike `views`, which
+   * is keyed by view id. Optional: the Go side omits the key when no entry is
+   * configured.
+   */
+  entity_views?: Record<string, EntityViewConfig>
   kanbans: Record<string, KanbanConfig>
   /** Optional: the Go side omits the key entirely when no calendar is configured. */
   calendars?: Record<string, CalendarConfig>
@@ -337,6 +343,26 @@ export interface ListFilter {
 
 // SortSpec is imported from schema.ts
 
+/**
+ * Narrows what a Duplicate carries from the source entity (TKT-Z8K2FS).
+ *
+ * Absent means "carry every visible property" — it is not an opt-in switch, so
+ * a type with no block still duplicates. `file` and state-machine properties
+ * are excluded regardless, because carrying them yields a broken copy rather
+ * than a narrower one.
+ */
+export interface DuplicateConfig {
+  /** Allowlist of property names. Absent means all visible properties. */
+  properties?: string[]
+}
+
+/** UX bindings for one metamodel entity type. */
+export interface EntityViewConfig {
+  /** View used to render an entity of this type; falls back to /entity/:type/:id. */
+  detail_view?: string
+  duplicate?: DuplicateConfig
+}
+
 export interface ViewConfig {
   entity: string
   title?: string
@@ -522,7 +548,7 @@ export interface GanttConfig {
   /** Relation types traversed parent-to-child, as one set. */
   hierarchy: string[]
   multi_parent: 'first' | 'error'
-  on_cycle: 'error' | 'prune'
+  on_cycle: 'error' | 'prune' | 'mark'
   /** Levels expanded on first load; deeper levels reachable by drill-down. */
   default_depth: number
   max_depth: number
