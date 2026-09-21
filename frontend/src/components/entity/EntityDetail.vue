@@ -152,7 +152,8 @@ const servedRef = computed(() => (entry.value ? entityRef(entry.value) : props.e
 // never derived from the world.
 const servedFace = computed(() => refFace(servedRef.value))
 // The bare id, for surfaces addressed per ENTITY rather than per row:
-// documents, commands, history, scope navigation.
+// documents, history, scope navigation. NOT commands — a command acts on the
+// face on screen and takes servedRef (BUG-G2BASF).
 const bareEntityId = computed(() => refBareId(props.entityId))
 
 // Scope navigation (prev/next within a list) and back affordance
@@ -179,24 +180,22 @@ const pageState = computed<'pending' | 'loaded' | 'error'>(() => {
 const viewData = ref<ViewResponse | null>(null)
 const loadedCommands = ref<Command[]>([])
 
-// Commands are SUPPRESSED while a NON-BARE face is on screen, and this is a
-// stop-gap with a known expiry rather than a design.
+// Commands run against the ADDRESS on screen, face included (BUG-G2BASF).
 //
-// A command pipes a rendered view to an operator shell script's stdin. The
-// server passes `defaultViewWorld()` explicitly at that call site
-// (internal/dataentry/commands.go), so while the reader looks at the published
-// face the script receives the BARE face's content — and it receives it "past
-// any layer that could observe it", as that comment says.
+// This used to suppress every command whenever a non-bare face was served, on
+// the reasoning that the script would receive the bare face's content while
+// the reader looked at another face. That reasoning described a discarded
+// address, not a server limitation: both command contexts resolve an explicit
+// `ID@face` literally — `entity` parses it (commands.go, ParseStateRef) and
+// `view` short-circuits on `entry.Explicit` even under `defaultViewWorld()`
+// (viewworld.go, viewEntry), where the face is additionally ACL-checked by
+// faceReadable. The mismatch existed only because this component sent the bare
+// id and then hid the button it had just made inaccurate.
 //
-// What a face-bound command should MEAN is deliberately another ticket. But
-// until it has one, rendering the buttons is the affordance-that-lies shape:
-// the page would be promising an action whose input is not what is on screen.
-// A page showing the bare face — under any world — is exactly what the script
-// gets, so the buttons render there.
-//
-// Gated HERE rather than on the two button sites (desktop header + mobile
-// overflow) so a third render site cannot be added without inheriting it.
-const commands = computed<Command[]>(() => (servedFace.value ? [] : loadedCommands.value))
+// On a FACED type the suppression was total rather than partial — such a type
+// has no bare face to fall back to (BUG-HC6I2T), so no address rendered the
+// buttons at all.
+const commands = computed<Command[]>(() => loadedCommands.value)
 
 // Prev/next within a list re-fetches this component in place. Blanking the
 // page to a centred spinner on every step was the worst layout shift in
@@ -2445,7 +2444,8 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
         />
       </div>
 
-      <CommandModal ref="commandModalRef" :entity-id="bareEntityId" />
+      <!-- The ADDRESS, not the bare id: a command acts on the face on screen. -->
+      <CommandModal ref="commandModalRef" :entity-id="servedRef" />
 
       <!--
         The modal create host. Reused verbatim from the inline-create flow

@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import NextActionOffers from './NextActionOffers.vue'
 import { __resetNextActionForTest, useNextAction } from '@/composables/useNextAction'
 import { getNextAction, sendNextActionFeedback } from '@/api'
+import { runAction } from '@/api/actions'
 import type { NextActionOffer } from '@/types'
 
 vi.mock('@/api', async () => {
@@ -14,9 +15,27 @@ vi.mock('@/api', async () => {
     sendNextActionFeedback: vi.fn(),
   }
 })
+vi.mock('@/api/actions', () => ({ runAction: vi.fn() }))
+// PARTIAL: useWorld() reads useRoute(), so replacing the whole module leaves
+// the composable without a route and every test fails on import.
+const routerPush = vi.fn()
+vi.mock('vue-router', async (orig) => ({
+  ...(await orig<typeof import('vue-router')>()),
+  useRouter: () => ({ push: routerPush }),
+}))
+// The confirm dialog is a host-bound singleton (App.vue). Here it records what
+// it was asked and answers YES by default, so an action test asserts the
+// WORDING without a real dialog; the refusal case overrides it.
+type ConfirmOpts = { title: string; message: string; confirmLabel?: string }
+const confirmMock = vi.fn<(o: ConfirmOpts) => Promise<boolean>>(async () => true)
+vi.mock('@/composables/useConfirm', () => ({
+  useConfirm: () => ({ confirm: (o: ConfirmOpts) => confirmMock(o) }),
+  withConfirmError: (fn: unknown) => fn,
+}))
 
 const mockGet = vi.mocked(getNextAction)
 const mockFeedback = vi.mocked(sendNextActionFeedback)
+const mockRunAction = vi.mocked(runAction)
 
 const stubs = { RouterLink: { template: '<a :to="to"><slot/></a>', props: ['to'] } }
 
@@ -54,6 +73,9 @@ describe('NextActionOffers', () => {
     __resetNextActionForTest()
     mockFeedback.mockResolvedValue(undefined)
     mockGet.mockResolvedValue({ suggestion: null })
+    mockRunAction.mockReset().mockResolvedValue(null)
+    confirmMock.mockReset().mockResolvedValue(true)
+    routerPush.mockClear()
   })
 
   describe('acting affordances', () => {
@@ -74,6 +96,156 @@ describe('NextActionOffers', () => {
       const w = mountOffers([{ acknowledge: true, label: 'Nice' }])
 
       expect(w.text()).toContain('Nice')
+    })
+  })
+
+  // BUG-G2BASF: `action` was filtered out of the render entirely, so an offer
+  // the config layer validates (Kind() ranks it first in the union, and an
+  // unknown action id is a load error) produced no button at all.
+  describe('action', () => {
+    const actOffer: NextActionOffer = { action: 'regenerate', label: 'Regenerate' }
+
+    it('renders an action as a primary affordance', () => {
+      const w = mountOffers([actOffer])
+
+      expect(w.text()).toContain('Regenerate')
+      expect(w.find('.btn-primary').exists()).toBe(true)
+    })
+
+    it('runs the configured action against the suggested entity', async () => {
+      const w = mountOffers([actOffer])
+      await w.find('.btn-primary').trigger('click')
+      await flushPromises()
+
+      // No entity TYPE: the server reads it off the stored row and ignores a
+      // caller-supplied one (BUG-ZWTDH9).
+      expect(mockRunAction).toHaveBeenCalledWith('regenerate', 'TASK-1')
+    })
+
+    // An offer mutates the graph in one click with no undo, and validation
+    // already refuses `confirm` on anything but an action or set — so an
+    // operator who set it is owed the prompt.
+    it('prompts before running when confirm is set', async () => {
+      const w = mountOffers([{ ...actOffer, confirm: true }])
+      await w.find('.btn-primary').trigger('click')
+      await flushPromises()
+
+      expect(confirmMock).toHaveBeenCalled()
+      expect(confirmMock.mock.calls[0][0].confirmLabel).toBe('Regenerate')
+      expect(mockRunAction).toHaveBeenCalled()
+    })
+
+    it('runs nothing when the confirmation is declined', async () => {
+      confirmMock.mockResolvedValue(false)
+      const w = mountOffers([{ ...actOffer, confirm: true }])
+      await w.find('.btn-primary').trigger('click')
+      await flushPromises()
+
+      expect(mockRunAction).not.toHaveBeenCalled()
+    })
+
+    it('does not prompt when confirm is absent', async () => {
+      const w = mountOffers([actOffer])
+      await w.find('.btn-primary').trigger('click')
+      await flushPromises()
+
+      expect(confirmMock).not.toHaveBeenCalled()
+    })
+
+    // The suggestion was resolved BY acting, so the slot is re-asked rather
+    // than left recommending work that is now done.
+    it('re-resolves the suggestion after a successful run', async () => {
+      const w = mountOffers([actOffer])
+      mockGet.mockClear()
+      await w.find('.btn-primary').trigger('click')
+      await flushPromises()
+
+      expect(mockGet).toHaveBeenCalled()
+    })
+
+    // The button's :disabled only updates on re-render, so two clicks in one
+    // tick both reach the handler. With `confirm` the latch has to be taken
+    // BEFORE the dialog await, or two dialogs open and two OKs mutate twice.
+    it('runs once for a double-click, even with confirm', async () => {
+      let resolveConfirm: (ok: boolean) => void = () => {}
+      confirmMock.mockImplementation(() => new Promise<boolean>((r) => { resolveConfirm = r }))
+
+      const w = mountOffers([{ ...actOffer, confirm: true }])
+      const btn = w.find('.btn-primary')
+      await btn.trigger('click')
+      await btn.trigger('click')
+      resolveConfirm(true)
+      await flushPromises()
+
+      expect(confirmMock).toHaveBeenCalledTimes(1)
+      expect(mockRunAction).toHaveBeenCalledTimes(1)
+    })
+
+    it('runs once for a double-click without confirm', async () => {
+      const w = mountOffers([actOffer])
+      const btn = w.find('.btn-primary')
+      await btn.trigger('click')
+      await btn.trigger('click')
+      await flushPromises()
+
+      expect(mockRunAction).toHaveBeenCalledTimes(1)
+    })
+
+    // The latch must not strand the button after a refusal.
+    it('can be retried after the confirmation is declined', async () => {
+      confirmMock.mockResolvedValue(false)
+      const w = mountOffers([{ ...actOffer, confirm: true }])
+      await w.find('.btn-primary').trigger('click')
+      await flushPromises()
+
+      confirmMock.mockResolvedValue(true)
+      await w.find('.btn-primary').trigger('click')
+      await flushPromises()
+
+      expect(mockRunAction).toHaveBeenCalledTimes(1)
+    })
+
+    // A script may answer with a destination instead of a message; dropping
+    // it would strand the user on a suggestion that has already been acted on.
+    it('follows a redirect the script returned', async () => {
+      mockRunAction.mockResolvedValue({ redirect: '/entity/task/TASK-2' })
+      const w = mountOffers([actOffer])
+      await w.find('.btn-primary').trigger('click')
+      await flushPromises()
+
+      expect(routerPush).toHaveBeenCalledWith('/entity/task/TASK-2')
+    })
+
+    // An advisory surface must not break the page it sits on.
+    it('survives a failing action', async () => {
+      mockRunAction.mockRejectedValue(new Error('boom'))
+      const w = mountOffers([actOffer])
+      await w.find('.btn-primary').trigger('click')
+      await flushPromises()
+
+      expect(w.text()).toContain('Regenerate')
+    })
+
+    // `set` has no endpoint behind it, so a button would have nothing to
+    // call. Rendering one would be the affordance-that-lies shape.
+    it('renders no button at all for a set-only offer', () => {
+      const w = mountOffers([{ set: { status: 'done' } }])
+
+      // Not just "no primary button" — a secondary one would be the same
+      // defect wearing a different class.
+      expect(w.findAll('button').filter((b) => !b.classes('na-defer__trigger'))).toHaveLength(0)
+      expect(w.findAll('a')).toHaveLength(0)
+    })
+
+    // entityId is optional on the wire. Without one runAction sends no body
+    // and the action would run against nothing, server-side and silently.
+    it('renders no action button without an entity id', () => {
+      const w = mount(NextActionOffers, {
+        props: { offers: [actOffer] },
+        global: { stubs },
+      })
+
+      expect(w.find('.btn-primary').exists()).toBe(false)
     })
   })
 
