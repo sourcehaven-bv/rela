@@ -1122,9 +1122,16 @@ type Gantt struct {
 	// prototype showed the repeated bar reads as two pieces of work.
 	MultiParent string `yaml:"multi_parent,omitempty" json:"multi_parent"`
 	// OnCycle says what to do when the containment graph loops: "error"
-	// (default) refuses the request; "prune" stops the walk at the repeated
-	// node and renders the rest. A cycle is always a data bug — the choice is
-	// only whether the operator prefers a hard stop or a degraded render.
+	// (default) refuses the request; "prune" drops the looping component and
+	// renders the rest; "mark" renders the component in place and flags it.
+	//
+	// Three policies rather than two because a loop is not necessarily a data
+	// bug — whether "A contains B contains A" is nonsense or a legitimate
+	// mutual dependency is a property of the operator's schema, not something
+	// this package can know. "error" suits a project that intends a strict
+	// tree; "mark" suits one where a loop is expected and should still be
+	// legible. Neither is more correct in general, which is why the choice is
+	// declared rather than inferred.
 	OnCycle string `yaml:"on_cycle,omitempty" json:"on_cycle"`
 	// DefaultDepth is how many levels the SPA expands on first load
 	// (default 2). Deeper levels stay reachable by drill-down; this only

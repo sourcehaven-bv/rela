@@ -4001,7 +4001,7 @@ colour-blindness and greyscale where amber-versus-red alone would not.
 | `header` / `footer` | string | Markdown rendered above / below the chart |
 | `hierarchy` | list | Relation types traversed parent-to-child; at least one required |
 | `multi_parent` | string | `first` (default) or `error` — see below |
-| `on_cycle` | string | `error` (default) or `prune` — see below |
+| `on_cycle` | string | `error` (default), `prune` or `mark` — see below |
 | `default_depth` | int | Levels expanded on first load (default 2) |
 | `max_depth` | int | Levels per **response**, measured from the response's root (default 10). Drilling re-roots the walk, so deeper levels stay reachable; beyond-cap levels still fold into their ancestor's rolled span |
 | `max_nodes` | int | Nodes per response (default 2000); exceeding it flags the response as truncated |
@@ -4032,9 +4032,22 @@ rather than a silent default:
   honest. `error` refuses the request instead, for projects that intend a
   strict tree. There is deliberately no `duplicate`: rendering one entity
   under two ancestors double-counts every roll-up above it.
-- `on_cycle: error` refuses the request when containment loops (A contains B
-  contains A); `prune` drops the loop and renders the rest. A cycle is always
-  a data bug — the choice is only between a hard stop and a degraded render.
+- `on_cycle` says what happens when containment loops (A contains B contains
+  A). `error` (the default) refuses the request; `prune` drops the looping
+  component and renders the rest; `mark` renders it in place and flags it.
+
+  Under `mark` the loop is broken at exactly one edge: the entity the loop
+  closes back onto keeps its ordinary position under its first parent, and the
+  single edge that returned to it is not drawn. That node carries `in_cycle`
+  on the wire and a `↻` marker in the SPA, and the entity holding the cut edge
+  reports `has_more_children` — so a withheld edge never reads as a leaf. No
+  entity is drawn twice, and no roll-up counts one twice.
+
+  Which policy is right depends on the schema. A loop is a data error in a
+  project plan that intends a strict tree, so `error` fails loudly; it may be
+  a legitimate mutual containment elsewhere, which is what `mark` is for. The
+  marker is therefore worded neutrally: it reports that an edge is not shown,
+  not that something is broken.
 
 Both `error` policies evaluate against the **requesting principal's visible
 subgraph** (hidden entities must not be reportable), so under ACL the same
