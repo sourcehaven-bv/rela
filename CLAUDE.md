@@ -693,7 +693,7 @@ Rules when touching this:
   synchronous hook misses — acceptable because a miss loses only the rename
   marker, never lineage continuity. Read/restore is gated on **both** endpoints
   (FROM ∧ TO) — the FROM
-  entity only *owns* the UI placement, it is not the auth boundary (a TO-side
+  entity only _owns_ the UI placement, it is not the auth boundary (a TO-side
   oracle otherwise). Relations have NO field-level redaction today; relation
   history exposes exactly what a live relation GET does. `RelationHistoryReader`/
   `RelationVersionWriter` are SEPARATE optional capabilities, type-asserted
@@ -721,7 +721,7 @@ Rules when touching this:
   `docs/data-migration.md`). Two separate questions, deliberately not
   conflated:
 
-  *Which migrations have run* is answered by NAME, from a per-store
+  _Which migrations have run_ is answered by NAME, from a per-store
   `datamigration.StateStore`. A migration file is therefore NOT an edge in a
   hash graph, and a **data-only migration** (backfill, de-dup, correcting an
   old bug's values) is an ordinary file whose two projections match. Files are
@@ -732,7 +732,7 @@ Rules when touching this:
   collides silently across concurrent branches (BUG-TY2XQC is that defect in
   rela's own pg ladder).
 
-  *What shape the data conforms to* is the `ShapeProjection` the record also
+  _What shape the data conforms to_ is the `ShapeProjection` the record also
   stores, which the gate classifies against and `rela migrate gen` diffs.
   **Two schema hashes coexist on purpose**: `RenderProjection` (version
   rendering, `schema_versions` dedup — stability load-bearing, do not extend)
