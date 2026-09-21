@@ -2,6 +2,7 @@ package schema
 
 import (
 	"context"
+	"errors"
 	"iter"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -21,17 +22,25 @@ type PropertyError struct {
 // PropertyError for each entity whose properties fail the metamodel's
 // entity-property validation. Callers that need scope filtering should
 // filter the returned slice themselves.
-func ValidateEntityProperties(ctx context.Context, st store.Store, meta *metamodel.Metamodel) []PropertyError {
+// A non-nil error means the scan could not read every entity, so the
+// returned errors are those of the entities it COULD read. A caller
+// asserting "all properties are valid" must treat that as a failure:
+// an entity that was never read was never validated (BUG-4KPN2M).
+func ValidateEntityProperties(
+	ctx context.Context, st store.Store, meta *metamodel.Metamodel,
+) ([]PropertyError, error) {
 	if st == nil || meta == nil {
-		return nil
+		return nil, nil
 	}
 	var out []PropertyError
 	// AllStates: each content state holds its own property values, so a
 	// required property missing from one face is a real violation. The default
 	// query loads only default-state rows and would report a clean run over
 	// data it never looked at (TKT-4Y6CMV).
+	var scanErrs []error
 	for e, err := range st.ListEntities(ctx, store.EntityQuery{AllStates: true}) {
 		if err != nil {
+			scanErrs = append(scanErrs, err)
 			continue
 		}
 		errs := meta.ValidateEntity(e.ID, e.Type, e.Properties)
@@ -43,7 +52,7 @@ func ValidateEntityProperties(ctx context.Context, st store.Store, meta *metamod
 			})
 		}
 	}
-	return out
+	return out, errors.Join(scanErrs...)
 }
 
 // RelationPropertyError aggregates metamodel validation errors for a

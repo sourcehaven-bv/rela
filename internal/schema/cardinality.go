@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"iter"
-	"log/slog"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -172,7 +171,10 @@ func checkCardinalityFor(
 	}
 	var subjects []subject
 	for _, subjectType := range spec.subjectTypes {
-		entities := collectCardinalitySubjects(ctx, r, store.EntityQuery{Type: subjectType, AllStates: true})
+		entities, scanErr := collectCardinalitySubjects(ctx, r, store.EntityQuery{Type: subjectType, AllStates: true})
+		if scanErr != nil {
+			return nil, scanErr
+		}
 		for _, e := range entities {
 			if scope != nil && !scope[e.ID] {
 				continue
@@ -221,17 +223,19 @@ func checkCardinalityFor(
 // invents them — which is why that one propagates instead.
 func collectCardinalitySubjects(
 	ctx context.Context, r CardinalityReader, q store.EntityQuery,
-) []*entity.Entity {
+) ([]*entity.Entity, error) {
 	out := make([]*entity.Entity, 0)
 	for e, err := range r.ListEntities(ctx, q) {
 		if err != nil {
-			slog.Warn("schema: ListEntities iterator error; cardinality subjects may under-count",
-				"type", q.Type, "error", err)
-			return out
+			// Same reasoning as a failed count (see the CheckCardinality
+			// error policy): a subject the scan could not read is not a
+			// subject with zero relations. Reporting around it would
+			// under-count min violations while claiming a complete check.
+			return nil, fmt.Errorf("schema: list %q cardinality subjects: %w", q.Type, err)
 		}
 		out = append(out, e)
 	}
-	return out
+	return out, nil
 }
 
 // countRelationsFor counts a subject's edges at the granularity the relation's

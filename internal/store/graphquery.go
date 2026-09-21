@@ -125,6 +125,29 @@ type GraphQuery struct {
 type OrderSpec struct {
 	Property   string
 	Descending bool
+
+	// Values is the declared order of an enum-shaped property, most
+	// significant first. Empty — the usual case — means compare the text
+	// form byte-wise, which is [GraphQuery.OrderBy]'s default contract.
+	//
+	// When set, a backend ranks each value by its POSITION in this slice,
+	// and any value not listed sorts after every listed one, byte-wise
+	// among its peers. That is what lets a workflow enum read in workflow
+	// order (`backlog, ready, done`) instead of alphabetically (`backlog,
+	// done, ready`) without loading the type into memory to sort it.
+	//
+	// A backend that ranks in SQL must emit the values as LITERALS, not
+	// bind parameters: an expression index is matched by expression
+	// equivalence, and a parameterised rank stops matching a
+	// literal-valued index as soon as the plan cache goes generic —
+	// measured at 4 versus 1,915 buffers on 200k rows (TKT-9OFGH4). The
+	// values come from operator-authored schema.yaml, the same trust
+	// level the derived-index DDL already interpolates, and must still be
+	// escaped.
+	//
+	// Callers must treat a non-nil Values as read-only; backends may
+	// retain it for the life of the query.
+	Values []string
 }
 
 // GraphHeaderQueryer is the content-free projection of [GraphQueryer]:
@@ -374,6 +397,64 @@ type RelationPredicate struct {
 
 	EntityInheritThrough []string
 	EntityDepth          int
+
+	// EndpointMatch further restricts which entities on the far side of the
+	// relation count as a match, by their TYPE and their own PROPERTIES —
+	// "has a caused-by edge to a ticket whose status is done". Nil means no
+	// endpoint-entity constraint, which is the pre-existing behavior.
+	//
+	// It composes with [RelationPredicate.Endpoints] as a conjunction: an
+	// endpoint must be in the (expanded) id set AND satisfy this match. The
+	// two answer different questions — Endpoints names ids the CALLER already
+	// knows, EndpointMatch describes ids it does not — so a caller supplying
+	// only this one leaves Endpoints empty without that reading as the
+	// "any endpoint" widening Endpoints documents.
+	//
+	// Nested one level per hop, so a chain A -x-> B -y-> C is an
+	// EndpointMatch on B carrying its own relation predicate for the y hop.
+	// Nesting is bounded by EVERY backend at graphquerynaive.DepthCap, which
+	// is a REFUSAL rather than a truncation: a too-deep chain errors. It must
+	// not degrade to an unsatisfiable arm instead, because under a Negate that
+	// inverts to "match every row" — a guard becoming a row-gate bypass.
+	//
+	// A nested hop may NOT carry InheritThrough / EntityInheritThrough. The
+	// SQL backends cannot emit them there, and a backend that silently ignored
+	// an ACL-folded expansion would gate the same principal differently from
+	// one that honored it; both refuse instead.
+	//
+	// SECURITY: this predicate reads properties of entities the query does
+	// not RETURN, so a caller-supplied EndpointMatch is an inference channel
+	// — which rows come back reveals the neighbor's property values, and its
+	// existence, without any row of the neighbor ever being serialized (so
+	// response redaction never fires). A caller composing this from untrusted
+	// input MUST gate the traversed type with its own read query and MUST
+	// refuse properties whose visibility is conditional. See TKT-RELTRV.
+	EndpointMatch *EndpointPredicate
+}
+
+// EndpointPredicate constrains the entity on the far side of a relation: its
+// type, its own properties, and (for a chained traversal) its own outgoing or
+// incoming relation predicate.
+//
+// Deliberately NOT [GraphQuery]: an endpoint match is a filter on a row the
+// query does not return, so it carries no paging, no ordering, no world and no
+// face set. Reusing GraphQuery would offer all four and silently ignore them.
+type EndpointPredicate struct {
+	// EntityType restricts the endpoint to one entity type. Empty means any
+	// type. This is what a chained traversal uses to resolve a relation whose
+	// declared target is a UNION of types: without it, a property reference
+	// has no single declared type to be compared against.
+	EntityType string
+
+	// Props are the endpoint's own property predicates, ANDed. They carry the
+	// same contract as [GraphQuery.Props], including the caller's obligation
+	// to gate ordered comparisons on the declared type (see [PropPredicate]).
+	Props []PropPredicate
+
+	// HasInbound and HasOutbound chain the traversal one hop further, with
+	// the same meaning they have on [GraphQuery]. Nil means no constraint.
+	HasInbound  *RelationPredicate
+	HasOutbound *RelationPredicate
 }
 
 // GraphQueryer is the read-side interface for graph-shape queries.

@@ -932,6 +932,42 @@ func GetValidEnumValues(propDef metamodel.PropertyDef, meta *metamodel.Metamodel
 	return nil
 }
 
+// validateEntityDuplicate validates one entity type's `duplicate:` block.
+//
+// Every named property must exist on the type, and an explicitly empty list is
+// refused: absence is how a type opts out of narrowing, so an empty list would
+// be a second spelling of the default — or, read the other way, a request to
+// carry nothing, which the Duplicate affordance has no use for.
+//
+// Nil block: accepted, returns nil — absence means "carry everything visible".
+func validateEntityDuplicate(
+	meta *metamodel.Metamodel, entityType string, dup *DuplicateConfig,
+) []string {
+	if dup == nil {
+		return nil
+	}
+	entDef, ok := meta.GetEntityDef(entityType)
+	if !ok {
+		// The unknown-type error is already reported by the caller; adding a
+		// second error for the same cause would just be noise.
+		return nil
+	}
+	if dup.Properties != nil && len(dup.Properties) == 0 {
+		return []string{fmt.Sprintf(
+			"entity_views[%q]: duplicate.properties is empty "+
+				"(omit the duplicate block to carry every property)", entityType)}
+	}
+	var errs []string
+	for _, prop := range dup.Properties {
+		if _, ok := entDef.Properties[prop]; !ok {
+			errs = append(errs, fmt.Sprintf(
+				"entity_views[%q]: duplicate.properties names unknown property %q "+
+					"for entity type %q", entityType, prop, entityType))
+		}
+	}
+	return errs
+}
+
 // validateEntityViews validates entity_views entries: each key must be a known
 // entity type, and each detail_view must reference an existing view.
 func validateEntityViews(cfg *Config, meta *metamodel.Metamodel) []string {
@@ -941,9 +977,17 @@ func validateEntityViews(cfg *Config, meta *metamodel.Metamodel) []string {
 			errs = append(errs, fmt.Sprintf(
 				"entity_views: unknown entity type %q", entityType))
 		}
+		errs = append(errs, validateEntityDuplicate(meta, entityType, ev.Duplicate)...)
+
+		// An entry carrying only `duplicate:` is legitimate (TKT-Z8K2FS), so
+		// the empty-detail_view refusal applies only when nothing else is
+		// declared — otherwise the error's own advice ("omit the entry") would
+		// tell an operator to delete config that is doing something.
 		if ev.DetailView == "" {
-			errs = append(errs, fmt.Sprintf(
-				"entity_views[%q]: detail_view is empty (omit the entry instead)", entityType))
+			if ev.Duplicate == nil {
+				errs = append(errs, fmt.Sprintf(
+					"entity_views[%q]: entry declares nothing (omit the entry instead)", entityType))
+			}
 			continue
 		}
 		if _, ok := cfg.Views[ev.DetailView]; ok {
@@ -1763,6 +1807,72 @@ func collectionTypes(view ViewConfig, name string, meta *metamodel.Metamodel) []
 // A type the level CAN hold but that the map omits is not an error — it
 // renders title and id only, the same "absent means default" rule
 // [Gantt.Sources] uses, so adding a type to a relation never breaks a view.
+// validateSectionSort checks a section's sort keys against the entity types
+// the level can hold.
+//
+// A property is accepted when SOME allowed type declares it, not every one: a
+// level reached through a multi-target relation legitimately mixes types, and
+// a row whose type lacks the property simply sorts as absent (last ascending),
+// which is the same answer the store gives. Requiring every type to declare it
+// would refuse a reasonable config.
+//
+// When allowed is empty the type is not statically known — determineTargetType
+// returns "" for a multi-`to:` relation — so only the shape is checked. That
+// matches how `columns:` handles the same case: validate where the type is
+// known, skip where it is not, rather than guessing.
+//
+// "id" is always valid: every entity has one, and it is the universal sort
+// tiebreak.
+//
+// "modified" is refused EXPLICITLY. A section renders from a traversal result,
+// where modification time is not carried, so a section sorted on it would
+// silently not sort. It would also be refused as a side effect of the
+// declared-by check below — no entity type declares a property with that name
+// — but only until someone declares one, and a guard that holds by accident
+// is not a guard.
+func validateSectionSort(
+	viewID string, i int, key string, specs []SortSpec,
+	allowed []string, meta *metamodel.Metamodel,
+) []string {
+	var errs []string
+	for n, spec := range specs {
+		switch {
+		case spec.Property == "":
+			errs = append(errs, fmt.Sprintf(
+				"view %q: section[%d] %s[%d] has no property", viewID, i, key, n))
+			continue
+		case spec.Direction != "" && spec.Direction != "asc" && spec.Direction != "desc":
+			errs = append(errs, fmt.Sprintf(
+				"view %q: section[%d] %s[%d] has invalid direction %q (use \"asc\" or \"desc\")",
+				viewID, i, key, n, spec.Direction))
+		}
+		if spec.Property == "modified" {
+			errs = append(errs, fmt.Sprintf(
+				"view %q: section[%d] %s[%d] sorts on %q, which a section cannot order by "+
+					"(a traversal result carries no modification time)",
+				viewID, i, key, n, spec.Property))
+			continue
+		}
+		if spec.Property == "id" || len(allowed) == 0 {
+			continue
+		}
+		declaredBy := make([]string, 0, len(allowed))
+		for _, entityType := range allowed {
+			if def, ok := meta.GetEntityDef(entityType); ok {
+				if _, has := def.Properties[spec.Property]; has {
+					declaredBy = append(declaredBy, entityType)
+				}
+			}
+		}
+		if len(declaredBy) == 0 {
+			errs = append(errs, fmt.Sprintf(
+				"view %q: section[%d] %s[%d] sorts on %q, which no type at this level declares (types: %s)",
+				viewID, i, key, n, spec.Property, strings.Join(allowed, ", ")))
+		}
+	}
+	return errs
+}
+
 func validateLevelColumns(
 	viewID string, i int, level string, byType map[string][]ListColumn,
 	allowed []string, meta *metamodel.Metamodel,
@@ -1848,6 +1958,14 @@ func validateNestedSection(
 		if s.ChildColumns != nil {
 			errs = append(errs, nestedOnlyKeyErr(viewID, i, "child_columns", s.Display))
 		}
+		if s.ParentSort != nil {
+			errs = append(errs, nestedOnlyKeyErr(viewID, i, "parent_sort", s.Display))
+		}
+		if s.ChildSort != nil {
+			errs = append(errs, nestedOnlyKeyErr(viewID, i, "child_sort", s.Display))
+		}
+		errs = append(errs, validateSectionSort(viewID, i, "sort", s.Sort,
+			collectionTypes(view, s.Source, meta), meta)...)
 		return errs
 	}
 
@@ -1904,9 +2022,19 @@ func validateNestedSection(
 				"display: %s renders exactly two levels and cannot attribute a recursive walk",
 			viewID, i, s.Children, DisplayNested))
 	}
+	if len(s.Sort) > 0 {
+		errs = append(errs, fmt.Sprintf(
+			"view %q: section[%d] has display: %s, which takes parent_sort/child_sort "+
+				"(one per level) instead of sort",
+			viewID, i, DisplayNested))
+	}
 	errs = append(errs, validateLevelColumns(viewID, i, "parent_columns", s.ParentColumns,
 		collectionTypes(view, s.Source, meta), meta)...)
 	errs = append(errs, validateLevelColumns(viewID, i, "child_columns", s.ChildColumns,
+		collectionTypes(view, s.Children, meta), meta)...)
+	errs = append(errs, validateSectionSort(viewID, i, "parent_sort", s.ParentSort,
+		collectionTypes(view, s.Source, meta), meta)...)
+	errs = append(errs, validateSectionSort(viewID, i, "child_sort", s.ChildSort,
 		collectionTypes(view, s.Children, meta), meta)...)
 	return errs
 }

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, shallowRef, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter, useRoute, onBeforeRouteLeave } from 'vue-router'
+import { planPrefillRouting } from './prefillRouting'
 import { useSchemaStore, useEntitiesStore, useUIStore } from '@/stores'
 import { isCancelledFetch } from '@/composables/usePageData'
 import { readReturnTo } from '@/utils/returnPath'
@@ -94,6 +95,29 @@ const props = defineProps<{
   embeddedLink?: { relation: string; peer: string; linkAs: 'from' | 'to' }
   embeddedTemplate?: string
   embeddedWorld?: string
+  /**
+   * Values copied from a source entity for a Duplicate (TKT-Z8K2FS).
+   *
+   * Shaped like a template because that is what it is — a template computed
+   * from an entity rather than read from `templates/` — so it flows through
+   * `applyTemplate` and inherits its typed-value assignment and `originalData`
+   * re-baseline instead of becoming a second apply path.
+   *
+   * Its keys are registered as user-touched. The commit filter keeps an
+   * untouched key only while the dry-run reports it visible and writable, so a
+   * prefilled value on a field the user never opens would otherwise be dropped
+   * from the payload silently — the user would watch it sit in the form and
+   * then find it missing from the copy. Marking them touched moves that
+   * failure to the server's affordance gate, which refuses loudly with a
+   * rule_id (RR-2U2D reasoning, RR-DDY9LG).
+   *
+   * Read at setup time and never reactive afterwards, matching `embedded`.
+   */
+  embeddedPrefill?: {
+    properties: Record<string, unknown>
+    content: string
+    relations: Record<string, { id: string; type: string }[]>
+  }
 }>()
 
 /**
@@ -953,6 +977,118 @@ function applyTemplate(template: Template, preserveUserInput = false) {
     relations: relations.value,
     content: content.value,
   })
+}
+
+/**
+ * Applies a Duplicate's copied values (TKT-Z8K2FS).
+ *
+ * Runs through `applyTemplate` so typed values, content and relations take the
+ * one existing apply path, then marks every copied property user-touched — see
+ * the `embeddedPrefill` prop doc for why that is load-bearing rather than
+ * incidental.
+ *
+ * `preserveUserInput: false` because a duplicate is an explicit request for
+ * this entity's values: a template default that landed first must lose. Nothing
+ * the user typed can be at risk yet, since this runs before the form is
+ * interactive.
+ */
+function applyEmbeddedPrefill() {
+  const prefill = props.embeddedPrefill
+  if (!prefill) return
+  applyTemplate(
+    {
+      name: '',
+      properties: prefill.properties,
+      content: prefill.content,
+      relations: Object.entries(prefill.relations).flatMap(([relation, peers]) =>
+        peers.map((peer) => ({ relation, target: peer.id }))
+      ),
+    },
+    false
+  )
+  for (const prop of Object.keys(prefill.properties)) {
+    userTouched.value.add(prop)
+  }
+
+  // Register each peer's TYPE, the same obligation a pre-link carries
+  // (see the `link_as: to` path above). `pickerTypes` is otherwise populated
+  // only by RelationPicker, so a relation the form does not render as a field
+  // would have no type entry — and reshapeLegacyToModern returns null for an id
+  // it cannot type, aborting the WHOLE create with "Some related entities have
+  // unknown types" and advice ("reload the form") that cannot help.
+  //
+  // A duplicate is MORE exposed than a pre-link: it carries whatever the source
+  // had, including relation types this create form never renders. The type is
+  // carried on the peer rather than guessed from an id prefix, so unlike that
+  // path this cannot miss.
+  for (const [key, peers] of Object.entries(prefill.relations)) {
+    const types = pickerTypes.value[key] ?? new Map<string, string>()
+    for (const peer of peers) types.set(peer.id, peer.type)
+    pickerTypes.value[key] = types
+  }
+
+  routePrefilledCardRelations(prefill.relations)
+
+  // Re-baseline AFTER every mutation. applyTemplate baselines mid-way, and
+  // routePrefilledCardRelations then deletes the keys it took ownership of —
+  // so without this the form reads dirty the moment it opens and the discard
+  // guard stops distinguishing anything.
+  originalData.value = JSON.stringify({
+    formData: formData.value,
+    relations: relations.value,
+    content: content.value,
+  })
+}
+
+/**
+ * Applies the card-delivery routing decided by [planPrefillRouting].
+ *
+ * The decision itself is a pure function in `prefillRouting.ts` — inverse keys
+ * and symmetric self-inverse relations are where the subtlety is, and keeping
+ * them out of this component is what makes them testable without a form mount.
+ */
+function routePrefilledCardRelations(prefilled: Record<string, { id: string; type: string }[]>) {
+  // allFields, not fields: the visible set is filtered by affordances that
+  // arrive with the dry-run, which has not run when the prefill lands. Whether
+  // an edge is card-DELIVERED is a property of the form config, not of what is
+  // currently on screen.
+  const cardRelations = new Set(
+    allFields.value.filter((f) => f.relation && f.widget === 'cards').map((f) => f.relation!)
+  )
+  if (cardRelations.size === 0) return
+
+  const inverseByRelation = new Map<string, string>()
+  for (const f of allFields.value) {
+    if (!f.relation) continue
+    const inverse = schemaStore.getInverseName(f.relation)
+    if (inverse) inverseByRelation.set(f.relation, inverse)
+  }
+
+  const { cardRoutes } = planPrefillRouting(prefilled, cardRelations, inverseByRelation)
+  for (const route of cardRoutes) {
+    const state = pendingCardChanges.value.get(route.mapKey) ?? {
+      entries: [],
+      added: [],
+      removed: [],
+      updated: [],
+    }
+    for (const peer of route.peers) {
+      // `entries` is what buildRelationsPatch actually emits; `added` only
+      // decides whether the key is emitted at all. Populating one without the
+      // other sends an EMPTY edge list, which reads as "unlink everything"
+      // rather than as the copy's edges.
+      if (!state.entries.some((e) => e.id === peer.id)) {
+        state.entries.push({ id: peer.id, type: peer.type })
+      }
+      if (!state.added.some((a) => a.targetId === peer.id)) {
+        state.added.push({ targetId: peer.id })
+      }
+    }
+    pendingCardChanges.value.set(route.mapKey, state)
+    // Drop the copy the card path now owns, so one edge cannot be emitted
+    // twice under two different body keys.
+    delete relations.value[route.sourceKey]
+  }
 }
 
 function selectTemplate(name: string) {
@@ -2098,6 +2234,9 @@ onMounted(async () => {
   } else {
     initializeDefaults()
     await loadTemplates()
+    // After templates, so a duplicate's copied values win over the template's
+    // defaults: the user asked for a copy of THIS entity, not for a fresh one.
+    applyEmbeddedPrefill()
     loadState.value = 'loaded' // create mode: no entity to fetch
   }
   loading.value = false

@@ -99,6 +99,9 @@ func TestValidateGantts_Valid(t *testing.T) {
 			g.MultiParent = "error"
 			g.OnCycle = "prune"
 		})},
+		{"on_cycle mark renders the loop instead of refusing or dropping it", withGantt(func(g *Gantt) {
+			g.OnCycle = "mark"
+		})},
 		{"where clauses parse and resolve", withGantt(func(g *Gantt) {
 			g.Sources["project"] = GanttSource{Start: "planned_start", End: "planned_end",
 				Where: []string{"status=active"}}
@@ -184,6 +187,13 @@ func TestValidateGantts_Invalid(t *testing.T) {
 			name: "on_cycle unknown value",
 			g:    withGantt(func(g *Gantt) { g.OnCycle = "ignore" }),
 			want: `on_cycle "ignore" is not valid`,
+		},
+		{
+			// The message enumerates the accepted values, so an author who
+			// guessed wrong is told that "mark" exists.
+			name: "on_cycle error names every valid policy",
+			g:    withGantt(func(g *Gantt) { g.OnCycle = "ignore" }),
+			want: `valid: error, mark, prune`,
 		},
 		{
 			name: "duplicate hierarchy entry",

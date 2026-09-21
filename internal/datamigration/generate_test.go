@@ -3,13 +3,14 @@ package datamigration
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
 func TestGenerate_NilWhenInSync(t *testing.T) {
 	cur := metaV1().ShapeProjection()
-	d, err := Generate(cur, cur, nil, "")
+	d, err := Generate(cur, cur, "", testNow())
 	if err != nil || d != nil {
 		t.Fatalf("Generate on identical shapes = %v, %v; want nil, nil", d, err)
 	}
@@ -18,14 +19,14 @@ func TestGenerate_NilWhenInSync(t *testing.T) {
 func TestGenerate_NilWhenPurelyAdditive(t *testing.T) {
 	m2 := metaV1()
 	m2.Entities["task"].Properties["estimate"] = metamodel.PropertyDef{Type: "integer"}
-	d, err := Generate(metaV1().ShapeProjection(), m2.ShapeProjection(), nil, "")
+	d, err := Generate(metaV1().ShapeProjection(), m2.ShapeProjection(), "", testNow())
 	if err != nil || d != nil {
 		t.Fatalf("Generate on additive-only change = %v, %v; want nil, nil", d, err)
 	}
 }
 
 func TestGenerate_DraftForV1ToV2(t *testing.T) {
-	d, err := Generate(metaV1().ShapeProjection(), metaV2().ShapeProjection(), nil, "status rework")
+	d, err := Generate(metaV1().ShapeProjection(), metaV2().ShapeProjection(), "status rework", testNow())
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -54,13 +55,13 @@ func TestGenerate_DraftForV1ToV2(t *testing.T) {
 		t.Errorf("missing convert step:\n%s", content)
 	}
 	// The draft round-trips through the parser (Generate already asserts
-	// this, but pin the file name convention too).
-	if d.FileName != "0001-schema-change.yaml" {
-		t.Errorf("file name = %s", d.FileName)
-	}
+	// this, but pin the embedded projections too).
 	f := mustParse(t, d.FileName, d.Content)
-	if f.From != metaV1().ShapeProjection().Hash() || f.To != metaV2().ShapeProjection().Hash() {
-		t.Errorf("draft hashes wrong")
+	if f.FromProjection.Hash() != metaV1().ShapeProjection().Hash() {
+		t.Error("draft from_projection wrong")
+	}
+	if f.ToProjection.Hash() != metaV2().ShapeProjection().Hash() {
+		t.Error("draft to_projection wrong")
 	}
 }
 
@@ -68,7 +69,7 @@ func TestGenerate_DeletionsOnlyCommented(t *testing.T) {
 	m2 := metaV1()
 	delete(m2.Entities["task"].Properties, "tags")
 	delete(m2.Entities, "person")
-	d, err := Generate(metaV1().ShapeProjection(), m2.ShapeProjection(), nil, "")
+	d, err := Generate(metaV1().ShapeProjection(), m2.ShapeProjection(), "", testNow())
 	if err != nil || d == nil {
 		t.Fatalf("Generate: %v, %v", d, err)
 	}
@@ -105,7 +106,7 @@ func TestGenerate_ComputedChangesRecomputeEntityOnce(t *testing.T) {
 		Type: "integer", Computed: "entity.doubled * 2",
 	}
 
-	d, err := Generate(from.ShapeProjection(), live.ShapeProjection(), nil, "add computed values")
+	d, err := Generate(from.ShapeProjection(), live.ShapeProjection(), "add computed values", testNow())
 	if err != nil || d == nil {
 		t.Fatalf("Generate: %v, %v", d, err)
 	}
@@ -121,13 +122,58 @@ func TestGenerate_ComputedChangesRecomputeEntityOnce(t *testing.T) {
 	}
 }
 
-func TestGenerate_NextIndexSkipsGaps(t *testing.T) {
-	existing := []*File{{Name: "0001-a.yaml"}, {Name: "0007-b.yaml"}}
-	d, err := Generate(metaV1().ShapeProjection(), metaV2().ShapeProjection(), existing, "")
+// Names are timestamp-prefixed, not sequential. Sequential numbering collides
+// silently across concurrent branches — two PRs cut from the same commit pick
+// the same index and git merges both cleanly (BUG-TY2XQC).
+func TestGenerate_NamesAreTimestamped(t *testing.T) {
+	d, err := Generate(metaV1().ShapeProjection(), metaV2().ShapeProjection(), "status rework", testNow())
 	if err != nil || d == nil {
 		t.Fatalf("Generate: %v, %v", d, err)
 	}
-	if d.FileName != "0008-schema-change.yaml" {
-		t.Errorf("file name = %s, want 0008-schema-change.yaml", d.FileName)
+	if want := "20260919143022-status-rework.yaml"; d.FileName != want {
+		t.Errorf("file name = %s, want %s", d.FileName, want)
 	}
+	if !IsMigrationFileName(d.FileName) {
+		t.Errorf("generated name %q would be rejected by the loader", d.FileName)
+	}
+}
+
+// Two migrations drafted at different times sort in creation order, which is
+// what makes a plain name sort the run order.
+func TestGenerate_NamesSortChronologically(t *testing.T) {
+	first, err := Generate(metaV1().ShapeProjection(), metaV2().ShapeProjection(), "first", testNow())
+	if err != nil || first == nil {
+		t.Fatalf("Generate: %v, %v", first, err)
+	}
+	second, err := Generate(metaV1().ShapeProjection(), metaV2().ShapeProjection(), "second",
+		testNow().Add(time.Hour))
+	if err != nil || second == nil {
+		t.Fatalf("Generate: %v, %v", second, err)
+	}
+	if first.FileName >= second.FileName {
+		t.Errorf("names do not sort chronologically: %q should precede %q", first.FileName, second.FileName)
+	}
+}
+
+// A draft must never carry a from/to hash: that is what made a data-only
+// migration unrepresentable.
+func TestGenerate_EmitsNoShapeHashes(t *testing.T) {
+	d, err := Generate(metaV1().ShapeProjection(), metaV2().ShapeProjection(), "x", testNow())
+	if err != nil || d == nil {
+		t.Fatalf("Generate: %v, %v", d, err)
+	}
+	content := string(d.Content)
+	for _, key := range []string{"\nfrom:", "\nto:"} {
+		if strings.Contains(content, key) {
+			t.Errorf("draft still emits %q:\n%s", strings.TrimPrefix(key, "\n"), content)
+		}
+	}
+	// The projections stay: step validation and validateDeltasResolved need them.
+	if !strings.Contains(content, "from_projection:") || !strings.Contains(content, "to_projection:") {
+		t.Error("draft must still embed both projections")
+	}
+}
+
+func testNow() time.Time {
+	return time.Date(2026, 9, 19, 14, 30, 22, 0, time.UTC)
 }

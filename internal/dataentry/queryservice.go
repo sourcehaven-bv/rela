@@ -302,7 +302,14 @@ func (q *queryService) freeTextIDsForType(
 	return freeTextIDsForTypeResult{IDs: ids, HasFilter: true}, nil
 }
 
-// sortEntitiesMulti sorts entities by multiple sort specs using type-aware comparison.
+// sortEntitiesMulti orders search results by the shared query-sort rule, so a
+// `sort:` clause in the search bar and the same key on a list page agree
+// (TKT-9OFGH4).
+//
+// [filter.QuerySort] rather than [filter.SortMulti]: the two differed on
+// strings, dates, ids and the meaning of descending, and a search result and a
+// list page showing the same rows in different orders is the defect. The rule
+// is whatever the store can express, since only that can be pushed down.
 func (q *queryService) sortEntitiesMulti(entities []*entity.Entity, specs []filter.SortSpec) {
 	if len(specs) == 0 {
 		return
@@ -316,7 +323,7 @@ func (q *queryService) sortEntitiesMulti(entities []*entity.Entity, specs []filt
 			}
 		}
 	}
-	filter.SortMulti(entities, entityRecord, specs, entityDefs, s.Meta)
+	filter.QuerySortApply(filter.NewQuerySort(specs, entityDefs, s.Meta), entities, entityRecord, specs)
 }
 
 // matchesPropertyFilters checks whether an entity matches the given property

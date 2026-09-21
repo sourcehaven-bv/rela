@@ -60,6 +60,33 @@ func writeAnalysisJSON(count int, details any, successMsg, issuesFmt string) boo
 	return true
 }
 
+// reportPartialScan renders the incomplete-scan condition for an
+// `analyze` subcommand and returns the error the command should return.
+//
+// analyze differs from validate: its output is a human summary, so it
+// still renders the partial results above this notice. What it must not
+// do is present them as complete. The exit code matches validate's
+// (exitValidationPartial) so any script wrapping either command reads
+// "could not read all input" the same way (BUG-4KPN2M scope item 3).
+//
+// Returns nil when scanErr is nil, so call sites can `return
+// reportPartialScan(...)` unconditionally.
+func reportPartialScan(scanErr error) error {
+	if scanErr == nil {
+		return nil
+	}
+	if out.Format == "json" {
+		// The JSON body was already written by the caller; the exit code
+		// is the only channel left that a consumer reliably reads.
+		return errors.NewExitError(exitValidationPartial)
+	}
+	out.WriteError("Scan INCOMPLETE: some entities could not be read, so the counts above are lower bounds.")
+	for _, f := range analysis.IncompleteScanFiles(scanErr) {
+		out.WriteMessage("  ✗ %s", f)
+	}
+	return errors.NewExitError(exitValidationPartial)
+}
+
 // AnalyzeOrphansCmd finds entities with no connections.
 type AnalyzeOrphansCmd struct{}
 
@@ -69,20 +96,25 @@ func (c *AnalyzeOrphansCmd) Run(ctx context.Context, analyzer *analysis.Service)
 	if err != nil {
 		return err
 	}
-	orphans := analyzer.FindOrphansWithScope(ctx, *opts)
+	orphans, scanErr := analyzer.FindOrphansWithScope(ctx, *opts)
 	filter.SortByID(orphans, storeEntityRecord, false)
 
 	orphansMsg := "No orphan entities found"
 	if writeAnalysisJSON(len(orphans), orphans, orphansMsg, "Found %d orphan entities") {
-		return nil
+		return reportPartialScan(scanErr)
 	}
 
 	if len(orphans) == 0 {
-		out.WriteSuccess("No orphan entities found")
-		return nil
+		if scanErr == nil {
+			out.WriteSuccess("No orphan entities found")
+		}
+		return reportPartialScan(scanErr)
 	}
 	out.WriteWarning("Found %d orphan entities:", len(orphans))
-	return out.WriteEntities(orphans)
+	if err := out.WriteEntities(orphans); err != nil {
+		return err
+	}
+	return reportPartialScan(scanErr)
 }
 
 // AnalyzeDuplicatesCmd finds entities with similar titles.
@@ -94,7 +126,7 @@ func (c *AnalyzeDuplicatesCmd) Run(ctx context.Context, analyzer *analysis.Servi
 	if err != nil {
 		return err
 	}
-	duplicates := analyzer.FindDuplicates(ctx, *opts)
+	duplicates, scanErr := analyzer.FindDuplicates(ctx, *opts)
 
 	if out.Format == "json" {
 		type duplicateGroup struct {
@@ -107,12 +139,14 @@ func (c *AnalyzeDuplicatesCmd) Run(ctx context.Context, analyzer *analysis.Servi
 		}
 		writeAnalysisJSON(len(duplicates), details,
 			"No duplicate titles found", "Found %d groups of potential duplicates")
-		return nil
+		return reportPartialScan(scanErr)
 	}
 
 	if len(duplicates) == 0 {
-		out.WriteSuccess("No duplicate titles found")
-		return nil
+		if scanErr == nil {
+			out.WriteSuccess("No duplicate titles found")
+		}
+		return reportPartialScan(scanErr)
 	}
 	out.WriteWarning("Found %d groups of potential duplicates:", len(duplicates))
 	for _, group := range duplicates {
@@ -122,7 +156,7 @@ func (c *AnalyzeDuplicatesCmd) Run(ctx context.Context, analyzer *analysis.Servi
 			out.WriteMessage("    - %s (%s)", e.ID, e.Type)
 		}
 	}
-	return nil
+	return reportPartialScan(scanErr)
 }
 
 // AnalyzeUniqueCmd finds entities that violate a `unique: true` property
@@ -135,7 +169,7 @@ func (c *AnalyzeUniqueCmd) Run(ctx context.Context, analyzer *analysis.Service) 
 	if err != nil {
 		return err
 	}
-	violations := analyzer.FindUniqueViolations(ctx, *opts)
+	violations, scanErr := analyzer.FindUniqueViolations(ctx, *opts)
 
 	if out.Format == "json" {
 		type uniqueViolation struct {
@@ -152,12 +186,14 @@ func (c *AnalyzeUniqueCmd) Run(ctx context.Context, analyzer *analysis.Service) 
 		}
 		writeAnalysisJSON(len(violations), details,
 			"No unique constraint violations found", "Found %d unique constraint violations")
-		return nil
+		return reportPartialScan(scanErr)
 	}
 
 	if len(violations) == 0 {
-		out.WriteSuccess("No unique constraint violations found")
-		return nil
+		if scanErr == nil {
+			out.WriteSuccess("No unique constraint violations found")
+		}
+		return reportPartialScan(scanErr)
 	}
 	out.WriteWarning("Found %d unique constraint violations:", len(violations))
 	for _, v := range violations {
@@ -167,7 +203,7 @@ func (c *AnalyzeUniqueCmd) Run(ctx context.Context, analyzer *analysis.Service) 
 			out.WriteMessage("    - %s", e.ID)
 		}
 	}
-	return nil
+	return reportPartialScan(scanErr)
 }
 
 // AnalyzeGapsCmd finds gaps in ID sequences.
@@ -179,21 +215,23 @@ func (c *AnalyzeGapsCmd) Run(ctx context.Context, analyzer *analysis.Service) er
 	if err != nil {
 		return err
 	}
-	allGaps := analyzer.FindGaps(ctx, *opts)
+	allGaps, scanErr := analyzer.FindGaps(ctx, *opts)
 	gapsMsg := "No ID sequence gaps found"
 	if writeAnalysisJSON(len(allGaps), allGaps, gapsMsg, "Found gaps in %d ID sequences") {
-		return nil
+		return reportPartialScan(scanErr)
 	}
 
 	if len(allGaps) == 0 {
-		out.WriteSuccess("No ID sequence gaps found")
+		if scanErr == nil {
+			out.WriteSuccess("No ID sequence gaps found")
+		}
 	} else {
 		for _, gap := range allGaps {
 			out.WriteWarning("Gaps in %s sequence:", gap.Prefix)
 			out.WriteMessage("  Missing: %s", strings.Join(gap.Missing, ", "))
 		}
 	}
-	return nil
+	return reportPartialScan(scanErr)
 }
 
 // AnalyzeCardinalityCmd checks relation cardinality constraints.
@@ -362,7 +400,10 @@ func (c *AnalyzePropertiesCmd) Run(ctx context.Context, svc *readServices) error
 }
 
 func runPropertyValidation(ctx context.Context, svc *readServices, opts analysis.Options) error {
-	allEntityErrors := schema.ValidateEntityProperties(ctx, svc.Store, svc.Meta)
+	allEntityErrors, scanErr := schema.ValidateEntityProperties(ctx, svc.Store, svc.Meta)
+	if scanErr != nil {
+		scanErr = &analysis.IncompleteScanError{Op: "validate entity properties", Err: scanErr}
+	}
 	if opts.Scope != nil {
 		filtered := allEntityErrors[:0]
 		for _, ee := range allEntityErrors {
@@ -383,9 +424,15 @@ func runPropertyValidation(ctx context.Context, svc *readServices, opts analysis
 	}
 
 	if out.Format == "json" {
-		return writePropertyValidationJSON(allEntityErrors, allRelationErrors, errorCount)
+		if err := writePropertyValidationJSON(allEntityErrors, allRelationErrors, errorCount); err != nil {
+			return err
+		}
+		return reportPartialScan(scanErr)
 	}
-	return writePropertyValidationText(allEntityErrors, allRelationErrors, errorCount)
+	if err := writePropertyValidationText(allEntityErrors, allRelationErrors, errorCount); err != nil {
+		return err
+	}
+	return reportPartialScan(scanErr)
 }
 
 func writePropertyValidationJSON(
@@ -486,12 +533,20 @@ func runValidations(ctx context.Context, svc *readServices, analyzer *analysis.S
 	if len(rules) == 0 {
 		return writeNoValidationRules()
 	}
-	result := analyzer.RunValidations(ctx, opts)
+	result, scanErr := analyzer.RunValidations(ctx, opts)
 	errorCount, warningCount := countValidationViolationsBySeverity(result.Violations)
+	var err error
 	if out.Format == "json" {
-		return writeValidationsJSON(rules, result, errorCount, warningCount)
+		err = writeValidationsJSON(rules, result, errorCount, warningCount)
+	} else {
+		err = writeValidationsText(rules, result, errorCount, warningCount)
 	}
-	return writeValidationsText(rules, result, errorCount, warningCount)
+	// An incomplete scan outranks a violation exit: the rules did not see
+	// the whole project, so their verdict is not the finding to act on.
+	if partial := reportPartialScan(scanErr); partial != nil {
+		return partial
+	}
+	return err
 }
 
 func writeNoValidationRules() error {
@@ -633,14 +688,26 @@ func (c *AnalyzeAllCmd) Run(ctx context.Context, svc *readServices, analyzer *an
 		return err
 	}
 	summary, err := analyzer.AnalyzeAll(ctx, *opts)
-	if err != nil {
+	// An incomplete scan still yields a usable summary; anything else
+	// yields none.
+	scanErr := err
+	if err != nil && !analysis.IsIncompleteScan(err) {
 		return err
 	}
+	if !analysis.IsIncompleteScan(scanErr) {
+		scanErr = nil
+	}
 	if out.Format == "json" {
-		return writeAnalyzeAllJSON(summary)
+		if jsonErr := writeAnalyzeAllJSON(summary); jsonErr != nil {
+			return jsonErr
+		}
+		return reportPartialScan(scanErr)
 	}
 	writeAnalyzeAllSummary(svc, summary)
-	return runAnalyzeAllSections(ctx, svc, analyzer, *opts)
+	if sectionErr := runAnalyzeAllSections(ctx, svc, analyzer, *opts); sectionErr != nil {
+		return sectionErr
+	}
+	return reportPartialScan(scanErr)
 }
 
 type allAnalysisSummary struct {

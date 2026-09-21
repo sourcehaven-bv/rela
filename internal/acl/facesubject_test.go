@@ -91,14 +91,33 @@ func TestExistingGrantsUnchangedByFaceField(t *testing.T) {
 				Roles:       map[string]acl.RoleDef{"r": tc.grants},
 				Assignments: map[string]string{"alice": "r"},
 			})
-			// EntitySubject WITHOUT a Face — exactly how every existing
-			// call site constructs it.
+			// A subject that names NO face. Since BUG-Y0GNSB P5 this is
+			// stated rather than defaulted into — [acl.NewFacelessEntitySubject]
+			// is the only way to produce it — but the SEMANTIC is unchanged:
+			// no face means the default face, and a bare-type grant covers
+			// exactly that. That is what this test pins, and what makes P5 a
+			// refactor of how the subject is BUILT rather than of what it means.
 			d := req.AuthorizeWrite(context.Background(), acl.WriteRequest{
 				Op:      tc.op,
-				Subject: acl.EntitySubject{Type: tc.target, ID: "PAGE-1"},
+				Subject: acl.NewFacelessEntitySubject(tc.target, "PAGE-1"),
 			})
 			if d.Allow != tc.wantAllow {
 				t.Errorf("Allow = %v, want %v (reason: %s)", d.Allow, tc.wantAllow, d.Reason)
+			}
+
+			// The two ways to say "the default face" must decide identically.
+			// NewFacelessEntitySubject is a readability affordance for an
+			// operation that spans faces, not a third grant semantic: if these
+			// ever diverge, a rename would be authorized differently from a
+			// write to the default face of the same type.
+			zero := req.AuthorizeWrite(context.Background(), acl.WriteRequest{
+				Op:      tc.op,
+				Subject: acl.NewEntitySubject(tc.target, "PAGE-1", ""),
+			})
+			if zero.Allow != d.Allow {
+				t.Errorf("NewEntitySubject(.., \"\") Allow = %v, NewFacelessEntitySubject Allow = %v; "+
+					"the explicit zero face and the faceless subject must decide alike",
+					zero.Allow, d.Allow)
 			}
 		})
 	}
@@ -160,10 +179,8 @@ func TestFaceSubjectIsFaceGranular(t *testing.T) {
 				Assignments: map[string]string{"alice": "r"},
 			})
 			d := req.AuthorizeWrite(context.Background(), acl.WriteRequest{
-				Op: acl.OpUpdate,
-				Subject: acl.EntitySubject{
-					Type: "page", ID: "PAGE-1", Face: tc.face,
-				},
+				Op:      acl.OpUpdate,
+				Subject: acl.NewEntitySubject("page", "PAGE-1", tc.face),
 			})
 			if d.Allow != tc.wantAllow {
 				t.Errorf("update %v on face %q: Allow = %v, want %v (reason: %s)",
@@ -206,10 +223,8 @@ func TestCeilingStillClampsFaceGranularWrites(t *testing.T) {
 		t.Fatalf("ForPrincipal: %v", err)
 	}
 	dec := req.AuthorizeWrite(context.Background(), acl.WriteRequest{
-		Op: acl.OpUpdate,
-		Subject: acl.EntitySubject{
-			Type: "page", ID: "PAGE-1", Face: entity.Face("draft"),
-		},
+		Op:      acl.OpUpdate,
+		Subject: acl.NewEntitySubject("page", "PAGE-1", entity.Face("draft")),
 	})
 	if dec.Allow {
 		t.Error("a ceiling denying update on page must deny every FACE of page — " +
@@ -292,10 +307,8 @@ func TestCeilingClampsOnTypeNotLiteral(t *testing.T) {
 				t.Fatalf("ForPrincipal: %v", err)
 			}
 			dec := req.AuthorizeWrite(context.Background(), acl.WriteRequest{
-				Op: acl.OpUpdate,
-				Subject: acl.EntitySubject{
-					Type: "page", ID: "PAGE-1", Face: entity.Face("draft"),
-				},
+				Op:      acl.OpUpdate,
+				Subject: acl.NewEntitySubject("page", "PAGE-1", entity.Face("draft")),
 			})
 			if dec.Allow != tc.wantAllow {
 				t.Errorf("Allow = %v, want %v (reason: %s)", dec.Allow, tc.wantAllow, dec.Reason)
@@ -335,7 +348,7 @@ func TestCreateWithoutIDStillAuthorized(t *testing.T) {
 			})
 			d := req.AuthorizeWrite(context.Background(), acl.WriteRequest{
 				Op:      acl.OpCreate,
-				Subject: acl.EntitySubject{Type: "page"}, // no ID, no Face
+				Subject: acl.NewFacelessEntitySubject("page", ""), // no ID, no Face
 			})
 			if d.Allow != tc.wantAllow {
 				t.Errorf("Allow = %v, want %v (reason: %s)", d.Allow, tc.wantAllow, d.Reason)

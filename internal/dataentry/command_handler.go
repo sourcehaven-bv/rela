@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // commandHandler serves the user-configured command surface: the SSE-streaming
@@ -43,6 +44,16 @@ type commandHandler struct {
 	// app.acl AFTER construction, so a captured value would go stale and the
 	// handler would authorize against the wrong policy.
 	aclImpl func() acl.ACL
+
+	// redactor applies field-level `visible:` redaction to an ENTITY-context
+	// payload (BUG-G2BASF). The view context gets this for free — its
+	// viewResult arrives already row-gated and redacted from executeView
+	// (see buildViewInput) — but the entity context reads the store
+	// directly, so it owes the entity the same treatment.
+	//
+	// A closure over App for the same reason as aclImpl: tests rebind the
+	// affordance service after construction.
+	redactor visibility.FieldRedactor
 }
 
 // currentACL resolves the active ACL, or nil when the handler was constructed

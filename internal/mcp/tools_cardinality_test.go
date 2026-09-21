@@ -80,18 +80,19 @@ func TestHandleAnalyzeCardinality_CountErrorFailsTheToolCall(t *testing.T) {
 	}
 }
 
-// TestHandleAnalyzeCardinality_TruncatedScanStillAnswers covers the second
-// defect TKT-CICJSN names: the deleted copy did `if err != nil { break }` on
-// the ListEntities iterator.
+// TestHandleAnalyzeCardinality_TruncatedScanFails covers the second defect
+// TKT-CICJSN names: the deleted copy did `if err != nil { break }` on the
+// ListEntities iterator.
 //
-// The RESULT is deliberately unchanged by the fix — an under-count can only
-// miss findings, never invent them, so the tool still answers rather than
-// failing (unlike a failed count, which does invent them, and which the test
-// above pins). What the fix added is a log record, and that is asserted in
-// TestCheckCardinality_TruncatedScanIsLogged over in internal/schema, where
-// no test runs in parallel and swapping the default logger is safe. This test
-// stays parallel and covers the MCP-level contract: answer, don't fabricate.
-func TestHandleAnalyzeCardinality_TruncatedScanStillAnswers(t *testing.T) {
+// A truncated scan is the INVENTING kind of failure, not the merely-missing
+// kind, so it aborts exactly like a failed count. A subject the scan never
+// read is not a subject with zero relations: drop it and every min bound it
+// would have violated goes unreported, while the tool still claims a complete
+// check. That is a clean bill of health for a graph nobody looked at, which is
+// worse than an error. The under-count-only reasoning this test used to cite
+// applies to analyses that scan for findings, not to one that derives
+// violations from a subject population.
+func TestHandleAnalyzeCardinality_TruncatedScanFails(t *testing.T) {
 	t.Parallel()
 
 	meta, st := makeTestFixture(t)
@@ -111,11 +112,15 @@ func TestHandleAnalyzeCardinality_TruncatedScanStillAnswers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected transport error: %v", err)
 	}
-	if isErrorResult(result) {
-		t.Fatalf("a truncated scan must not fail the call: %s", getResultText(t, result))
+	if !isErrorResult(result) {
+		t.Fatalf("a truncated scan must fail the call, got: %s", getResultText(t, result))
 	}
-	if text := getResultText(t, result); strings.Contains(text, "violation") {
-		t.Errorf("invented violations for rows never scanned: %s", text)
+	text := getResultText(t, result)
+	if !strings.Contains(text, "scan interrupted") {
+		t.Errorf("error result does not carry the store error: %s", text)
+	}
+	if strings.Contains(text, "must have at least") {
+		t.Errorf("reported a violation computed from a truncated scan: %s", text)
 	}
 }
 

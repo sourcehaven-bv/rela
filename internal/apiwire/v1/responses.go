@@ -1348,7 +1348,15 @@ type GanttNode struct {
 	// Committed is an externally promised deadline (date string), or "".
 	Committed string      `json:"committed,omitempty"`
 	Breach    GanttBreach `json:"breach,omitzero"`
-	Children  []GanttNode `json:"children,omitempty"`
+	// InCycle marks a node a containment loop closes back onto, under
+	// on_cycle:"mark". The node renders in place with its first parent; the
+	// edge that returned to it is cut, and HasMoreChildren reports that
+	// withholding. Set only under that policy — "error" never returns a body
+	// and "prune" omits the component entirely. Computed on the gated tree,
+	// so it never signals a loop running through entities the principal
+	// cannot see.
+	InCycle  bool        `json:"in_cycle,omitempty"`
+	Children []GanttNode `json:"children,omitempty"`
 	// HasMoreChildren is true when this node has children the response does
 	// not carry (the depth cap or node budget withheld them). Without it a
 	// depth-capped node is byte-identical to a genuine leaf — Children is

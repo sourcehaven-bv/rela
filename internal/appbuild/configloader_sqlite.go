@@ -4,6 +4,7 @@ package appbuild
 
 import (
 	"github.com/Sourcehaven-BV/rela/internal/comments/sqlitecomments"
+	"github.com/Sourcehaven-BV/rela/internal/datamigration/sqlitemigstate"
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/config/configsql"
 	"github.com/Sourcehaven-BV/rela/internal/sqlitedb"
@@ -40,6 +41,15 @@ func backendServices(cfg Config, db *sqlitedb.DB) (backendOverrides, error) {
 	// state.KV's: a comment is content ABOUT content, so it must travel with
 	// the rows it annotates — an operator shipping rela.db would otherwise hand
 	// over every entity and leave every remark behind.
+	// The migration record goes in the database for versioning's reason
+	// (TKT-4NU9ZD), not state_kv's: it describes the CONTENT, so a record
+	// beside the file would be left behind when rela.db is shipped and the
+	// receiving copy would replay every migration (TKT-XCJ0Y2).
+	migState, err := sqlitemigstate.New(db.DB())
+	if err != nil {
+		return backendOverrides{}, err
+	}
+
 	commentStore, err := sqlitecomments.New(db.DB())
 	if err != nil {
 		return backendOverrides{}, err
@@ -48,6 +58,7 @@ func backendServices(cfg Config, db *sqlitedb.DB) (backendOverrides, error) {
 	return backendOverrides{
 		projectConfig: cfgLoader,
 		stateKV:       kv,
+		migState:      migState,
 		commentStore:  commentStore,
 	}, nil
 }

@@ -1,12 +1,9 @@
 package schema_test
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"iter"
-	"log/slog"
-	"strings"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -47,7 +44,7 @@ func (f failingListReader) ListEntities(
 //
 // No t.Parallel anywhere in this package, so swapping the default logger is
 // safe; keep it that way if you add tests here.
-func TestCheckCardinality_TruncatedScanIsLogged(t *testing.T) {
+func TestCheckCardinality_TruncatedScanAborts(t *testing.T) {
 	one := 1
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
@@ -68,21 +65,13 @@ func TestCheckCardinality_TruncatedScanIsLogged(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 
-	var logged bytes.Buffer
-	restore := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&logged, nil)))
-	t.Cleanup(func() { slog.SetDefault(restore) })
-
 	scanErr := errors.New("scan interrupted")
 	violations, err := schema.CheckCardinality(
 		ctx, failingListReader{Store: st, err: scanErr}, meta, nil)
-	if err != nil {
-		t.Fatalf("a truncated scan must not fail the run: %v", err)
+	if !errors.Is(err, scanErr) {
+		t.Fatalf("a truncated scan must abort the run, got err=%v", err)
 	}
 	if len(violations) != 0 {
-		t.Errorf("invented violations for rows never scanned: %+v", violations)
-	}
-	if !strings.Contains(logged.String(), scanErr.Error()) {
-		t.Errorf("truncated scan left no trace in the log; got: %s", logged.String())
+		t.Errorf("returned violations alongside a failed scan: %+v", violations)
 	}
 }
