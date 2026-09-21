@@ -19,11 +19,18 @@ import (
 // SELECT by type; when only one of HasInbound / HasOutbound is set,
 // only that EXISTS clause is emitted. Both nil → degenerate
 // "everything of this type" answer (covered by the conformance suite).
-// checkGraphQueryScope is retained as the single place a future graph
-// query restriction would live. World scoping is implemented in SQL as of
-// PR-C, so it currently accepts everything.
-func checkGraphQueryScope(_ store.GraphQuery) error {
-	return nil
+// checkGraphQueryScope is the single place a graph-query restriction lives.
+// World scoping is implemented in SQL as of PR-C; what remains here is the
+// EndpointMatch nesting bound.
+//
+// The bound is enforced by REFUSING the whole query, not by rendering the
+// too-deep arm unsatisfiable. An unsatisfiable arm is sound only under a
+// positive EXISTS: nested inside a NEGATED predicate it inverts to
+// `NOT EXISTS(... AND FALSE)`, which is TRUE for every row of the type — so
+// the guard against a pathological query would itself become a row-gate
+// bypass. Refusing matches graphquerynaive, which errors on the same input.
+func checkGraphQueryScope(q store.GraphQuery) error {
+	return graphquerynaive.CheckEndpointShape(q)
 }
 
 func (s *Store) GraphQuery(ctx context.Context, q store.GraphQuery) iter.Seq2[*entity.Entity, error] {
@@ -328,9 +335,21 @@ func existsCond(body string, negate bool) string {
 // the `?` operator for the same reason: it yields NULL, not false, for
 // a missing key.
 func propCond(b *sqlBuilder, p store.PropPredicate) string {
+	return propCondOn(b, "e", p)
+}
+
+// propCondOn is [propCond] against an arbitrary table alias, so the same
+// predicate spelling serves both the candidate row (`e`) and a joined
+// endpoint row in a traversal. Keeping ONE spelling is what makes an
+// endpoint filter reach the derived index: those indexes are PARTIAL on
+// `jsonb_typeof(properties->'k') = 'string'`, and PostgreSQL matches a
+// partial index only when the query implies its predicate — so a
+// hand-rolled `->>` comparison next to this one would be correct and
+// silently unindexed (TKT-RELTRV).
+func propCondOn(b *sqlBuilder, alias string, p store.PropPredicate) string {
 	propArg := b.arg(p.Property)
-	txt := fmt.Sprintf("(e.properties ->> %s)", propArg)
-	jsn := fmt.Sprintf("(e.properties -> %s)", propArg)
+	txt := fmt.Sprintf("(%s.properties ->> %s)", alias, propArg)
+	jsn := fmt.Sprintf("(%s.properties -> %s)", alias, propArg)
 	if p.Scalar && p.Op == store.PropEqual && p.Value != "" {
 		valArg := b.arg(p.Value)
 		return fmt.Sprintf("(jsonb_typeof(%s) = 'string' AND %s = %s)", jsn, txt, valArg)
@@ -625,8 +644,16 @@ func buildPredicateSQL(
 
 	// Build the EXISTS body. OfTypes is optional: when omitted, all
 	// relation types match (consistent with naive impl's behavior).
+	//
+	// An EndpointMatch adds an INNER JOIN onto the endpoint row, which is
+	// also what gives a dangling edge the naive backend's answer (no row, no
+	// match) without a separate existence test.
 	var existsSB strings.Builder
-	existsSB.WriteString("SELECT 1 FROM relations r WHERE ")
+	existsSB.WriteString("SELECT 1 FROM relations r ")
+	if p.EndpointMatch != nil {
+		fmt.Fprintf(&existsSB, "JOIN entities %s ON %s.id = %s ", prefix+"_ep", prefix+"_ep", endpointCol)
+	}
+	existsSB.WriteString("WHERE ")
 	if len(p.OfTypes) > 0 {
 		typesArg := b.arg(p.OfTypes)
 		fmt.Fprintf(&existsSB, "r.rel_type = ANY(%s) AND ", typesArg)
@@ -641,7 +668,99 @@ func buildPredicateSQL(
 	}
 	fmt.Fprintf(&existsSB, "%s IN (%s)", entityCol, entityJoin)
 
+	if m := p.EndpointMatch; m != nil {
+		alias := prefix + "_ep"
+		if m.EntityType != "" {
+			fmt.Fprintf(&existsSB, " AND %s.type = %s", alias, b.arg(m.EntityType))
+		}
+		for _, pp := range m.Props {
+			existsSB.WriteString(" AND " + propCondOn(b, alias, pp))
+		}
+		// A chained hop recurses with the endpoint as the new candidate row.
+		// The nested call emits its own `e`-relative entityJoin, so the alias
+		// is rewritten to this endpoint — see nestedPredicateSQL.
+		for _, chain := range []struct {
+			pred *store.RelationPredicate
+			dir  store.Direction
+		}{
+			{m.HasInbound, store.DirectionIncoming},
+			{m.HasOutbound, store.DirectionOutgoing},
+		} {
+			if chain.pred == nil {
+				continue
+			}
+			w, ex := nestedPredicateSQL(b, alias, *chain.pred, alias, chain.dir)
+			with = append(with, w...)
+			existsSB.WriteString(" AND " + existsCond(ex, chain.pred.Negate))
+		}
+	}
+
 	return with, existsSB.String()
+}
+
+// nestedPredicateSQL is [buildPredicateSQL] for a hop whose CANDIDATE row is
+// an endpoint alias rather than the outer `e`. It exists because
+// buildPredicateSQL hardcodes `e.id` as the candidate side (correct for the
+// top-level query, wrong one hop in), and because a nested hop must not
+// re-anchor an EntityInheritThrough closure on the outer entity type.
+//
+// A nested hop supports type, properties and further chaining; it does NOT
+// support the two inheritance expansions. Those are ACL constructs anchored on
+// the query's own entity type (see the identity-anchor note in
+// buildPredicateSQL), and silently re-anchoring them on an endpoint would
+// change who inherits from whom.
+//
+// Both the nesting bound and the refusal of those fields are enforced UP
+// FRONT by checkGraphQueryScope, so by the time this runs the predicate is
+// known to be emittable. Ignoring them here — the original behavior — made
+// this backend DIVERGE from graphquerynaive, which routes the same predicate
+// back through matchesPredicate and DOES expand both closures.
+func nestedPredicateSQL(
+	b *sqlBuilder, prefix string, p store.RelationPredicate, candidateAlias string, dir store.Direction,
+) (with []string, exists string) {
+	endpointCol, entityCol := "r.from_id", "r.to_id"
+	if dir == store.DirectionOutgoing {
+		endpointCol, entityCol = "r.to_id", "r.from_id"
+	}
+
+	var sb strings.Builder
+	sb.WriteString("SELECT 1 FROM relations r ")
+	alias := prefix + "_ep"
+	if p.EndpointMatch != nil {
+		fmt.Fprintf(&sb, "JOIN entities %s ON %s.id = %s ", alias, alias, endpointCol)
+	}
+	sb.WriteString("WHERE ")
+	if len(p.OfTypes) > 0 {
+		fmt.Fprintf(&sb, "r.rel_type = ANY(%s) AND ", b.arg(p.OfTypes))
+	}
+	if len(p.Endpoints) > 0 {
+		fmt.Fprintf(&sb, "%s = ANY(%s::text[]) AND ", endpointCol, b.arg(p.Endpoints))
+	}
+	fmt.Fprintf(&sb, "%s = %s.id", entityCol, candidateAlias)
+
+	if m := p.EndpointMatch; m != nil {
+		if m.EntityType != "" {
+			fmt.Fprintf(&sb, " AND %s.type = %s", alias, b.arg(m.EntityType))
+		}
+		for _, pp := range m.Props {
+			sb.WriteString(" AND " + propCondOn(b, alias, pp))
+		}
+		for _, chain := range []struct {
+			pred *store.RelationPredicate
+			dir  store.Direction
+		}{
+			{m.HasInbound, store.DirectionIncoming},
+			{m.HasOutbound, store.DirectionOutgoing},
+		} {
+			if chain.pred == nil {
+				continue
+			}
+			w, ex := nestedPredicateSQL(b, alias, *chain.pred, alias, chain.dir)
+			with = append(with, w...)
+			sb.WriteString(" AND " + existsCond(ex, chain.pred.Negate))
+		}
+	}
+	return with, sb.String()
 }
 
 // cappedDepth bounds depth at the naive impl's cap so the SQL and
