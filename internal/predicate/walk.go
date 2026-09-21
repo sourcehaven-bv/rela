@@ -336,6 +336,12 @@ func (w *walker) walkCall(e *ast.FuncCallExpr) (node, error) {
 	if !ok {
 		return nil, &CompileError{Line: e.Line(), Reason: "function call must target a declared function name"}
 	}
+	// The traversal form is recognized BEFORE function lookup: `related` is
+	// a reserved name compiled to its own node, never dispatched as a host
+	// function (see FuncRelated).
+	if ident.Value == FuncRelated {
+		return w.walkRelated(e)
+	}
 	sig, ok := w.env.lookupFunc(ident.Value)
 	if !ok {
 		// Variables-named-as-funcs go via the "unknown function"

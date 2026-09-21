@@ -92,6 +92,30 @@ func (er entityReader) outgoingRelations(ctx context.Context, id string) []*enti
 	return er.relations(ctx, id, store.DirectionOutgoing)
 }
 
+// outgoingRelationsOnFace returns the outgoing relations tailed at the face
+// the address names — the general form of [entityReader.outgoingRelations],
+// whose unfiltered query returns the union of every face's edges.
+//
+// That union is wrong for a faced source: a `scope: content` edge belongs to
+// ONE face, so serving the union presents another face's links as this one's
+// (BUG-VFHUWO). The zero face selects default-tail edges only, which is what a
+// caller addressing a bare id means, so a faceless project is unaffected.
+//
+// Identity-scoped edges are stored at the zero tail, so a faced address does
+// NOT see them here. Callers that need both tails ask twice — this method
+// answers exactly what the address names.
+func (er entityReader) outgoingRelationsOnFace(ctx context.Context, ref entityRef) []*entity.Relation {
+	face := ref.Face
+	rels, err := listRelationsCtx(ctx, er.store, store.RelationQuery{
+		EntityID: ref.ID, Direction: store.DirectionOutgoing, FromFace: &face,
+	})
+	if err != nil {
+		slog.Warn("dataentry: entityReader: listing outgoing relations failed; result truncated",
+			"entity", ref.ID, "face", string(ref.Face), "err", err)
+	}
+	return rels
+}
+
 // incomingRelations returns all incoming relations for id. Same error handling
 // as outgoingRelations.
 func (er entityReader) incomingRelations(ctx context.Context, id string) []*entity.Relation {

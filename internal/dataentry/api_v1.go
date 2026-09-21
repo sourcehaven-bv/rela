@@ -465,7 +465,7 @@ func scopedSortedEntitiesScoped(
 	if err != nil {
 		return nil, err
 	}
-	entities = applyV1Sorting(entities, query)
+	entities = applyV1Sorting(entities, query, a.Meta())
 	return entities, nil
 }
 
@@ -1070,17 +1070,26 @@ func writeGateError(w http.ResponseWriter, r *http.Request, err error) {
 // --- Relation Handlers ---
 
 func (a *App) handleV1EntityRelations(w http.ResponseWriter, r *http.Request, typeName, entityID string) {
+	// The path segment is an ADDRESS — `ID` or `ID@face` (BUG-VFHUWO). The
+	// bare id feeds the ACL row gate, which is face-blind by design; the face
+	// selects which tail's edges are served.
+	ref, refOK := parseEntityRef(entityID)
+	if !refOK {
+		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
+		return
+	}
+
 	// ACL gate (TKT-VQGN CRIT-2): /relations on a hidden entity 404s
 	// indistinguishably. Without the gate the endpoint confirms
 	// existence (200 vs 404) AND leaks the full neighbor-id set —
 	// closing one channel via /include filter while leaving this open
 	// would defeat the per-entity-response invariant.
-	if !a.gateReadOrNotFound(w, r, typeName, entityID) {
+	if !a.gateReadOrNotFound(w, r, typeName, ref.ID) {
 		return
 	}
 
 	s := a.State()
-	entity, found := a.reader.getEntity(r.Context(), entityID)
+	entity, found := a.reader.getEntityRef(r.Context(), ref)
 	// The gate above authorized by (type, id), which a `type@face` grant is
 	// invisible to, and this reader is the raw store — so the face half is owed
 	// here (TKT-O7R2A1). It matters even though the response carries no body:
@@ -1093,8 +1102,13 @@ func (a *App) handleV1EntityRelations(w http.ResponseWriter, r *http.Request, ty
 		return
 	}
 
-	outgoing := a.reader.outgoingRelations(r.Context(), entityID)
-	incoming := a.reader.incomingRelations(r.Context(), entityID)
+	// Outgoing edges at the ADDRESSED TAIL: a content-scoped edge belongs to
+	// one face of its source, so an unfiltered read returns the union of every
+	// face's edges and presents another face's links as this one's. Incoming
+	// edges stay entity-level — heads are faceless, so an inbound edge points
+	// at the entity and is shared by its faces.
+	outgoing := a.reader.outgoingRelationsOnFace(r.Context(), ref)
+	incoming := a.reader.incomingRelations(r.Context(), ref.ID)
 
 	// Gate hidden neighbors (BUG-ABXMAV / RR-HJV8CP). Without this, a hidden
 	// peer's `type` (via the ungated entityType read) and edge `meta` leak past
@@ -1272,7 +1286,12 @@ func (a *App) handleV1EntityRelationType(w http.ResponseWriter, r *http.Request,
 	case http.MethodGet:
 		a.handleV1GetRelationType(w, r, typeName, entityID, relType)
 	case http.MethodPost:
-		a.write.handleV1CreateRelation(w, r, typeName, entityID, relType)
+		ref, refOK := parseEntityRef(entityID)
+		if !refOK {
+			writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
+			return
+		}
+		a.write.handleV1CreateRelation(w, r, typeName, ref, relType)
 	default:
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
 	}
@@ -1288,12 +1307,19 @@ func resolveRelationEndpoints(entityID, peerID, direction string) (from, to stri
 }
 
 func (a *App) handleV1GetRelationType(w http.ResponseWriter, r *http.Request, typeName, entityID, relType string) {
-	// ACL gate (TKT-VQGN CRIT-2): see handleV1EntityRelations.
-	if !a.gateReadOrNotFound(w, r, typeName, entityID) {
+	// An ADDRESS, as in handleV1EntityRelations (BUG-VFHUWO).
+	ref, refOK := parseEntityRef(entityID)
+	if !refOK {
+		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 		return
 	}
 
-	entity, found := a.reader.getEntity(r.Context(), entityID)
+	// ACL gate (TKT-VQGN CRIT-2): see handleV1EntityRelations. BARE id.
+	if !a.gateReadOrNotFound(w, r, typeName, ref.ID) {
+		return
+	}
+
+	entity, found := a.reader.getEntityRef(r.Context(), ref)
 	// Face half of the grant, as in handleV1EntityRelations.
 	if !found || entity.Type != typeName ||
 		!faceReadable(r.Context(), entity.Type, entity.Face) {
@@ -1304,11 +1330,13 @@ func (a *App) handleV1GetRelationType(w http.ResponseWriter, r *http.Request, ty
 
 	incoming := r.URL.Query().Get("direction") == string(DirectionIncoming)
 
+	// Outgoing at the addressed tail, incoming at the entity: see
+	// handleV1EntityRelations.
 	var edges []*entityPkg.Relation
 	if incoming {
-		edges = a.reader.incomingRelations(r.Context(), entityID)
+		edges = a.reader.incomingRelations(r.Context(), ref.ID)
 	} else {
-		edges = a.reader.outgoingRelations(r.Context(), entityID)
+		edges = a.reader.outgoingRelationsOnFace(r.Context(), ref)
 	}
 
 	// Gate hidden neighbors (BUG-ABXMAV / RR-HJV8CP): same rationale as
@@ -1355,15 +1383,22 @@ func (a *App) handleV1GetRelationType(w http.ResponseWriter, r *http.Request, ty
 func (a *App) handleV1RelationTarget(
 	w http.ResponseWriter, r *http.Request, typeName, entityID, relType, targetID string,
 ) {
+	// The path segment is an ADDRESS (BUG-VFHUWO); every arm below consumes
+	// the parsed form.
+	ref, refOK := parseEntityRef(entityID)
+	if !refOK {
+		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
+		return
+	}
 	switch r.Method {
 	case http.MethodGet:
 		// Single-relation body read for sync (RR-SYNCR1): meta + content +
 		// _redacted + a relation-level ETag, dual-endpoint gated.
-		handleV1GetRelationTarget(a, w, r, typeName, entityID, relType, targetID)
+		handleV1GetRelationTarget(a, w, r, typeName, ref, relType, targetID)
 	case http.MethodPatch:
-		a.write.handleV1UpdateRelation(w, r, typeName, entityID, relType, targetID)
+		a.write.handleV1UpdateRelation(w, r, typeName, ref, relType, targetID)
 	case http.MethodDelete:
-		a.write.handleV1DeleteRelation(w, r, typeName, entityID, relType, targetID)
+		a.write.handleV1DeleteRelation(w, r, typeName, ref, relType, targetID)
 	default:
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
 	}
@@ -1379,7 +1414,12 @@ func (a *App) handleV1EntityAction(w http.ResponseWriter, r *http.Request, typeN
 
 	switch action {
 	case "clone":
-		a.write.handleV1CloneEntity(w, r, typeName, entityID)
+		ref, refOK := parseEntityRef(entityID)
+		if !refOK {
+			writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
+			return
+		}
+		a.write.handleV1CloneEntity(w, r, typeName, ref)
 	default:
 		writeV1Error(w, r, http.StatusNotFound, "unknown_action", "Unknown action", "")
 	}
@@ -2161,7 +2201,19 @@ func parseSortParam(query map[string][]string) []filter.SortSpec {
 
 // applyV1Sorting applies `sort=` query params to the entity slice. Pure data
 // transform — a free function, not App behavior (TKT-N26KLB M5.5).
-func applyV1Sorting(entities []*entityPkg.Entity, query map[string][]string) []*entityPkg.Entity {
+//
+// The ordering rule lives in [filter.QuerySort] so this path, the search and
+// dashboard path, and every store backend share one definition
+// (TKT-9OFGH4). It is store.GraphQuery.OrderBy's contract: byte-wise on the
+// text form, enum values by declared position, absent rows as the largest
+// value, id ascending as the final tiebreak — so a request reads the same
+// whether or not it was pushed into the database.
+//
+// meta may be nil; that yields byte-wise comparison for every property, which
+// is the right answer when no schema is available.
+func applyV1Sorting(
+	entities []*entityPkg.Entity, query map[string][]string, meta *metamodel.Metamodel,
+) []*entityPkg.Entity {
 	sortSpecs := parseSortParam(query)
 	if len(sortSpecs) == 0 {
 		return entities
@@ -2169,40 +2221,29 @@ func applyV1Sorting(entities []*entityPkg.Entity, query map[string][]string) []*
 
 	sorted := make([]*entityPkg.Entity, len(entities))
 	copy(sorted, entities)
-
-	// Byte-wise on the string form, a row WITHOUT the property sorting as
-	// the largest value (last ascending, first descending), id as the final
-	// tiebreak — the same order a store pages by (store.GraphQuery.OrderBy),
-	// so a request served either way reads the same. That replaced the
-	// accident of comparing "<nil>" as text, which put missing values
-	// between digits and letters.
-	sort.SliceStable(sorted, func(i, j int) bool {
-		for _, spec := range sortSpecs {
-			// A JSON null is "no value" here as it is in SQL (`->>` yields
-			// NULL), so both paths place it with the absent rows.
-			vi, oki := sorted[i].Properties[spec.Property]
-			vj, okj := sorted[j].Properties[spec.Property]
-			oki, okj = oki && vi != nil, okj && vj != nil
-			if oki != okj {
-				return oki != spec.IsDescending()
-			}
-			if !oki {
-				continue
-			}
-			si := fmt.Sprintf("%v", vi)
-			sj := fmt.Sprintf("%v", vj)
-			if si == sj {
-				continue
-			}
-			if spec.IsDescending() {
-				return si > sj
-			}
-			return si < sj
-		}
-		return sorted[i].ID < sorted[j].ID
-	})
-
+	filter.QuerySortApply(newEntityQuerySort(sortSpecs, sorted, meta), sorted, entityRecord, sortSpecs)
 	return sorted
+}
+
+// newEntityQuerySort resolves declared value orders for the types actually
+// present in rows, so a mixed-type result set ranks each property against
+// every definition that declares it.
+func newEntityQuerySort(
+	specs []filter.SortSpec, rows []*entityPkg.Entity, meta *metamodel.Metamodel,
+) *filter.QuerySort {
+	if meta == nil {
+		return filter.NewQuerySort(specs, nil, nil)
+	}
+	defs := make(map[string]*metamodel.EntityDef)
+	for _, e := range rows {
+		if _, seen := defs[e.Type]; seen {
+			continue
+		}
+		if def, ok := meta.GetEntityDef(e.Type); ok {
+			defs[e.Type] = def
+		}
+	}
+	return filter.NewQuerySort(specs, defs, meta)
 }
 
 func parseV1Pagination(query map[string][]string) (page, perPage int) {

@@ -49,7 +49,8 @@ import {
 } from './entityRefResolution'
 import { guardWriteBack, decideEmit } from './writeBackGuard'
 import { parseMentionQuery } from './mentionQuery'
-import { useMentionMenu } from './useMentionMenu'
+import { useSchemaMentionMenu, type MentionChoice } from './useMentionMenu'
+import { createMentionKeydownHandler } from './mentionKeymap'
 import { INLINE_COMMANDS, BLOCK_COMMANDS, type EditorCommand } from './editorCommands'
 import { activeCommandIds } from './activeFormats'
 import { unavailableCommandIds } from './commandAvailability'
@@ -95,10 +96,8 @@ const editor = shallowRef<Editor | null>(null)
 /** True while the document is empty, so the placeholder shows. */
 const isEmpty = ref(true)
 
-const menu = useMentionMenu()
-const menuState = computed(
-  () => menu.state as unknown as import('./useMentionMenu').MentionMenuState
-)
+// Binds the type picker to the live schema; see `useSchemaMentionMenu`.
+const menu = useSchemaMentionMenu()
 
 const showPlaceholder = computed(() => isEmpty.value)
 
@@ -122,7 +121,6 @@ const unavailableIds = ref<Set<string>>(new Set())
 const inlineCommands = INLINE_COMMANDS
 /** The toolbar's block buttons. The `/` menu offers the same set, filtered. */
 const toolbarBlockCommands = BLOCK_COMMANDS
-/** Every command the toolbar can light up, probed together on each change. */
 /** The table group, shown only while the cursor is inside a table. */
 const tableCommands = TABLE_COMMANDS
 /**
@@ -134,6 +132,7 @@ const tableCommands = TABLE_COMMANDS
  */
 const showTableGroup = ref(false)
 
+/** Every command the toolbar can light up, probed together on each change. */
 const ALL_COMMANDS = [...INLINE_COMMANDS, ...BLOCK_COMMANDS, ...TABLE_COMMANDS]
 
 const uiStore = useUIStore()
@@ -402,10 +401,26 @@ function runCommand(cmd: EditorCommand): void {
   currentView()?.focus()
 }
 
+/**
+ * Acts on a menu row: a type row scopes the search, an entity row inserts.
+ *
+ * Shared by click and by Enter/Tab so the two paths cannot diverge on what a
+ * row means. Picking a type keeps the menu open — it narrows the search, it is
+ * not the insertion, and the user still has to choose an entity.
+ */
+function commitChoice(choice: MentionChoice): void {
+  if (choice.kind === 'entity') {
+    insertRef(choice.entity)
+    return
+  }
+  menu.selectType(choice.name)
+  currentView()?.focus()
+}
+
 function onMenuPick(index: number): void {
   menu.setHighlight(index)
-  const item = menu.current()
-  if (item) insertRef(item as Entity)
+  const choice = menu.current()
+  if (choice) commitChoice(choice)
 }
 
 function onMenuHover(index: number): void {
@@ -413,47 +428,24 @@ function onMenuHover(index: number): void {
 }
 
 /**
- * Keyboard handling for whichever menu is open.
+ * Keyboard handling while the `@` menu is open.
  *
- * Bound on the wrapper in the capture phase so it runs before ProseMirror's
- * own keymap: without that, Enter inserts a paragraph break and the arrow keys
- * move the cursor instead of the highlight.
- *
- * The two menus cannot both be open: `@` needs a boundary character before it
- * and `/` only fires at the start of a block, so the triggers are mutually
- * exclusive by construction. The mention menu is still checked first, so a
- * stray overlap would resolve one way rather than acting on both.
+ * Semantics live in `mentionKeymap.ts`; this supplies the three things that
+ * need the editor itself. Bound in the capture phase on the wrapper.
  */
-function onKeydownCapture(event: KeyboardEvent): void {
-  if (!menu.state.open) return
-  switch (event.key) {
-    case 'ArrowDown':
-      event.preventDefault()
-      menu.moveHighlight(1)
-      break
-    case 'ArrowUp':
-      event.preventDefault()
-      menu.moveHighlight(-1)
-      break
-    case 'Enter':
-    case 'Tab': {
-      const item = menu.current()
-      if (!item) return
-      event.preventDefault()
-      insertRef(item as Entity)
-      break
-    }
-    case 'Escape':
-      event.preventDefault()
-      dismissedQuery = menu.state.query
-      menu.close()
-      slashProvider?.hide()
-      activeMatchLength = 0
-      break
-    default:
-      break
-  }
-}
+const onKeydownCapture = createMentionKeydownHandler(menu, {
+  queryText: () => {
+    const view = currentView()
+    return view ? slashProvider?.getContent(view) : undefined
+  },
+  commit: commitChoice,
+  dismiss: (query) => {
+    dismissedQuery = query
+    menu.close()
+    slashProvider?.hide()
+    activeMatchLength = 0
+  },
+})
 
 onMounted(async () => {
   if (!editorRoot.value || !menuRoot.value) return
@@ -803,8 +795,9 @@ onBeforeUnmount(() => {
          menu part of the document the user is editing. -->
     <div ref="menuRoot" class="mention-menu-anchor" data-show="false">
       <MentionMenu
-        :state="menuState"
+        :state="menu.state"
         :min-query-length="menu.minQueryLength"
+        :highlighted-index="menu.highlightedIndex()"
         @pick="onMenuPick"
         @hover="onMenuHover"
       />

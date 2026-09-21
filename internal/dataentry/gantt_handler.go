@@ -71,6 +71,11 @@ type ganttNode struct {
 	committed *time.Time
 	rolled    ganttSpan // envelope of descendants, filled by the fold
 	children  []string
+	// cutChildren are children dropped from THIS node's descent because the
+	// edge closed a loop (on_cycle:"mark" only). Kept so emit can report the
+	// node as having withheld children rather than looking like a leaf — the
+	// same honesty HasMoreChildren provides for the depth cap.
+	cutChildren []string
 	// props are the configured tooltip property values, read from the
 	// redacted entity — a hidden value is absent, not blank.
 	props map[string]string
@@ -163,6 +168,14 @@ type ganttForest struct {
 	nodes     map[string]*ganttNode
 	roots     []string
 	reachable map[string]bool
+	// cyclic holds the nodes a containment loop closes back onto, under
+	// on_cycle:"mark" only — "error" and "prune" leave it empty. Two writers,
+	// because a loop is cut at whichever stage first has the information:
+	// reseatCycleParents when a member had a root-reachable alternative
+	// parent, foldGantt's back-edge check when none did. Membership is
+	// derived from the gated node set exactly like reachable, so it never
+	// reflects a loop running through hidden entities.
+	cyclic map[string]bool
 }
 
 // ganttError pairs an HTTP shape with a build failure.
@@ -198,7 +211,7 @@ func (h *ganttHandler) buildGanttForest(
 func (h *ganttHandler) finishGanttForest(
 	ctx context.Context, g dataentryconfig.Gantt, nodes map[string]*ganttNode, subtreeRoot string,
 ) (*ganttForest, bool, *ganttError) {
-	parent, multiParent, external, gerr := h.linkGanttParents(ctx, g, nodes, subtreeRoot)
+	parent, allParents, multiParent, external, gerr := h.linkGanttParents(ctx, g, nodes, subtreeRoot)
 	if gerr != nil {
 		return nil, false, gerr
 	}
@@ -213,7 +226,16 @@ func (h *ganttHandler) finishGanttForest(
 				strings.Join(dedupSorted(multiParent), ", ")}
 	}
 
-	f := &ganttForest{nodes: nodes, reachable: map[string]bool{}}
+	// Under "mark", re-seating repairs nodes the sort-order parent choice
+	// stranded inside a loop, and reports the back edges it cut doing so.
+	// Loops it could NOT repair (no member has a reachable alternative
+	// parent) survive into the fold, which cuts them instead.
+	reseated := map[string]bool{}
+	if g.OnCycle == "mark" {
+		reseated = reseatCycleParents(nodes, parent, allParents)
+	}
+
+	f := &ganttForest{nodes: nodes, reachable: map[string]bool{}, cyclic: reseated}
 	for id := range nodes {
 		if _, hasParent := parent[id]; !hasParent {
 			f.roots = append(f.roots, id)
@@ -229,27 +251,52 @@ func (h *ganttHandler) finishGanttForest(
 	// unreached", and it runs on the VISIBLE subgraph only: a loop through
 	// hidden nodes must not be reportable, or on_cycle:error becomes a
 	// one-bit oracle on hidden topology.
+	markCycles := g.OnCycle == "mark"
 	for _, rootID := range f.roots {
-		foldGantt(f, rootID)
+		foldGantt(f, rootID, markCycles)
 	}
-	if len(f.reachable) < len(nodes) {
-		if g.OnCycle == "prune" {
-			// The loop members simply do not render; nothing visible is lost
-			// (no root can reach them) and nothing hidden is disclosed.
-			return f, false, nil
-		}
-		var cyclic []string
-		for id := range nodes {
-			if !f.reachable[id] {
-				cyclic = append(cyclic, id)
+	if len(f.reachable) == len(nodes) {
+		return f, false, nil
+	}
+
+	if markCycles {
+		// A pure loop — a component with no parentless member — has no root to
+		// enter by, so the walk above never saw it and it would vanish exactly
+		// as under "prune". Give each such component an entry point: the
+		// lowest-sorting unreached node becomes a root, and folding from there
+		// cuts the back edge that returns to it. Repeated because one pass
+		// reaches one component; each pass strictly shrinks the unreached set
+		// (it folds at least its own entry node), so this terminates.
+		for len(f.reachable) < len(nodes) {
+			var entry string
+			for _, id := range ganttSortedKeys(nodes) {
+				if !f.reachable[id] {
+					entry = id
+					break
+				}
 			}
+			f.roots = append(f.roots, entry)
+			foldGantt(f, entry, true)
 		}
-		sort.Strings(cyclic)
-		return nil, false, &ganttError{http.StatusUnprocessableEntity, "containment_cycle",
-			"Containment cycle detected",
-			"these entities form a containment loop no root can reach: " + strings.Join(cyclic, ", ")}
+		sort.Strings(f.roots)
+		return f, false, nil
 	}
-	return f, false, nil
+
+	if g.OnCycle == "prune" {
+		// The loop members simply do not render; nothing visible is lost
+		// (no root can reach them) and nothing hidden is disclosed.
+		return f, false, nil
+	}
+	var cyclic []string
+	for id := range nodes {
+		if !f.reachable[id] {
+			cyclic = append(cyclic, id)
+		}
+	}
+	sort.Strings(cyclic)
+	return nil, false, &ganttError{http.StatusUnprocessableEntity, "containment_cycle",
+		"Containment cycle detected",
+		"these entities form a containment loop no root can reach: " + strings.Join(cyclic, ", ")}
 }
 
 // loadGanttNodes runs pipeline steps 1-2: list each source type through the
@@ -604,6 +651,16 @@ func (h *ganttHandler) collectGanttRound(
 // endpoints are already in the gated node set; extra parents are collected
 // for the multi_parent policy rather than silently dropped.
 //
+// allParents carries EVERY candidate parent per node, because the winner is
+// chosen by sort order alone and that order is blind to whether the winner is
+// itself inside a loop. A node contained by both a genuine root and a loop
+// member can therefore be claimed by the loop, which strands it (and the
+// root's real child) where no root can reach it. "error" and "prune" never
+// notice — they discard the whole component — but "mark" renders it, so it
+// re-seats such a node via reseatCycleParents. Keeping the full candidate set
+// here means that repair reuses this function's edge filtering rather than
+// re-deriving which edges were admissible.
+//
 // In subtree mode (subtreeRoot != "") it additionally reports external=true
 // when an edge from OUTSIDE the node set claims a node inside it (other than
 // the root's own ancestry, which every drill legitimately has), or when an
@@ -612,15 +669,21 @@ func (h *ganttHandler) collectGanttRound(
 // path must decline rather than guess.
 func (h *ganttHandler) linkGanttParents(
 	ctx context.Context, g dataentryconfig.Gantt, nodes map[string]*ganttNode, subtreeRoot string,
-) (parent map[string]string, multiParent []string, external bool, gerr *ganttError) {
+) (parent map[string]string, allParents map[string][]string, multiParent []string, external bool, gerr *ganttError) {
 	parent = map[string]string{}
+	// allParents records every candidate edge, not just the winner, so the
+	// "mark" policy can re-seat a node whose first-sorting parent turned out
+	// to sit inside a loop. Collected unconditionally (it is one map append
+	// per edge) rather than behind the policy flag, so the two paths cannot
+	// see different edge sets.
+	allParents = map[string][]string{}
 	for _, relType := range g.Hierarchy {
 		edges, ext, gerr := h.ganttEdgesForType(ctx, relType, nodes, subtreeRoot)
 		if gerr != nil {
-			return nil, nil, false, gerr
+			return nil, nil, nil, false, gerr
 		}
 		if ext {
-			return nil, nil, true, nil
+			return nil, nil, nil, true, nil
 		}
 		// Deterministic parent choice under multi_parent:first — sort within
 		// the relation type, and relation types apply in config order.
@@ -631,6 +694,7 @@ func (h *ganttHandler) linkGanttParents(
 			return edges[i][1] < edges[j][1]
 		})
 		for _, e := range edges {
+			allParents[e[1]] = append(allParents[e[1]], e[0])
 			if prev, taken := parent[e[1]]; taken {
 				if prev != e[0] {
 					multiParent = append(multiParent, e[1])
@@ -646,7 +710,95 @@ func (h *ganttHandler) linkGanttParents(
 			}
 		}
 	}
-	return parent, multiParent, false, nil
+	return parent, allParents, multiParent, false, nil
+}
+
+// reseatCycleParents repairs the one shape where sort-order parent selection
+// strands a node under on_cycle:"mark": the chosen parent cannot be reached
+// from any root, but another candidate can. It moves the node to that
+// candidate so it renders where an operator expects, leaving the loop to be
+// broken by the fold's back-edge cut instead of by an accident of id order.
+//
+// Only nodes whose current parent is root-unreachable are touched, so a graph
+// with no loop is left byte-identical. Candidates are tried in the order
+// linkGanttParents collected them (sorted within each relation type, relation
+// types in config order), so the outcome does not depend on map iteration.
+//
+// Nil: nodes/parent/allParents are never nil — finishGanttForest builds all
+// three before calling.
+func reseatCycleParents(
+	nodes map[string]*ganttNode, parent map[string]string, allParents map[string][]string,
+) (cyclic map[string]bool) {
+	cyclic = map[string]bool{}
+
+	// reachable holds nodes whose parent chain is known to terminate at a
+	// root. Seeded with the parentless nodes and grown downward, so it is
+	// built by walking children — never by following parents upward, which
+	// would recurse on a DATA-controlled chain and risk the goroutine stack
+	// overflow foldGantt is iterative to avoid.
+	reachable := make(map[string]bool, len(nodes))
+	growFrom := make([]string, 0, len(nodes))
+	grow := func(seed string) {
+		growFrom = growFrom[:0]
+		growFrom = append(growFrom, seed)
+		for len(growFrom) > 0 {
+			id := growFrom[len(growFrom)-1]
+			growFrom = growFrom[:len(growFrom)-1]
+			if reachable[id] {
+				continue
+			}
+			reachable[id] = true
+			growFrom = append(growFrom, nodes[id].children...)
+		}
+	}
+	for _, id := range ganttSortedKeys(nodes) {
+		if _, has := parent[id]; !has {
+			grow(id)
+		}
+	}
+
+	// Anything still unreachable sits in a loop. Re-seat the ones that have a
+	// reachable alternative parent; each success grows the reachable set,
+	// which may in turn rescue nodes hanging off the repaired one. Sorted
+	// order keeps the choice independent of map iteration.
+	for _, id := range ganttSortedKeys(nodes) {
+		if reachable[id] {
+			continue
+		}
+		for _, cand := range allParents[id] {
+			if cand == parent[id] || !reachable[cand] {
+				continue
+			}
+			// Detach from the loop parent, attach to the reachable one. The
+			// edge just dropped IS the back edge — parent links are
+			// single-valued, so once this node moves the loop no longer
+			// exists in the structure the fold walks and nothing downstream
+			// could rediscover it. Record both ends here: the node the edge
+			// pointed at is what gets flagged, and the loop parent keeps it
+			// as a cut child so it does not read as a leaf.
+			loopParent := parent[id]
+			if p := nodes[loopParent]; p != nil {
+				p.children = removeGanttChild(p.children, id)
+				p.cutChildren = append(p.cutChildren, id)
+			}
+			cyclic[id] = true
+			parent[id] = cand
+			nodes[cand].children = append(nodes[cand].children, id)
+			grow(id) // this node and its subtree are reachable now
+			break
+		}
+	}
+	return cyclic
+}
+
+// removeGanttChild drops one occurrence of id, preserving order.
+func removeGanttChild(children []string, id string) []string {
+	for i, c := range children {
+		if c == id {
+			return append(children[:i:i], children[i+1:]...)
+		}
+	}
+	return children
 }
 
 // ganttBudget is the node-cap accounting shared by every emission site, so
@@ -718,7 +870,22 @@ func (h *ganttHandler) ganttEdgesForType(
 // DATA-controlled (a chain of containment edges), and a deep-enough chain
 // would overflow the goroutine stack — which kills the process, not the
 // request. The emit walk is depth-capped so it has no such exposure.
-func foldGantt(f *ganttForest, rootID string) {
+//
+// markCycles arms back-edge detection for on_cycle:"mark". An edge to a node
+// already ON THE ACTIVE STACK closes a loop; the walk records the target in
+// f.cyclic, drops that one edge, and carries on. On-stack is the precise test
+// — a node merely already-visited is a multi-parent diamond, which
+// multi_parent has already resolved and which must NOT be reported as a
+// cycle. Without the flag the walk is unchanged, because "error" and "prune"
+// derive their answer from the unreached set instead and must keep byte-
+// identical output.
+//
+// Cutting the back edge cannot lose a node: the target is by definition
+// already on the stack, so it is reachable and folds through its first
+// parent. What it does drop is that edge's span contribution to its own
+// ancestor — correct, since including it would make a node contribute to its
+// own roll-up.
+func foldGantt(f *ganttForest, rootID string, markCycles bool) {
 	type frame struct {
 		id   string
 		next int // index into children; len(children) means "fold and pop"
@@ -727,12 +894,29 @@ func foldGantt(f *ganttForest, rootID string) {
 	f.reachable[rootID] = true
 	sort.Strings(f.nodes[rootID].children)
 
+	// onStack is the active path, maintained only when detecting back edges.
+	var onStack map[string]bool
+	if markCycles {
+		onStack = map[string]bool{rootID: true}
+	}
+
 	for len(stack) > 0 {
 		top := &stack[len(stack)-1]
 		n := f.nodes[top.id]
 		if top.next < len(n.children) {
 			childID := n.children[top.next]
 			top.next++
+			if markCycles {
+				if onStack[childID] {
+					// Back edge: flag the node it points at and cut it. The
+					// child keeps its place under the parent that first
+					// reached it; only this repeat descent stops.
+					f.cyclic[childID] = true
+					n.cutChildren = append(n.cutChildren, childID)
+					continue
+				}
+				onStack[childID] = true
+			}
 			f.reachable[childID] = true
 			sort.Strings(f.nodes[childID].children)
 			stack = append(stack, frame{id: childID})
@@ -741,6 +925,9 @@ func foldGantt(f *ganttForest, rootID string) {
 		// Post-order: children folded; contribute upward the union of what
 		// this node declares and what rolled into it.
 		stack = stack[:len(stack)-1]
+		if markCycles {
+			delete(onStack, top.id)
+		}
 		if len(stack) > 0 {
 			parent := f.nodes[stack[len(stack)-1].id]
 			contrib := ganttSpan{start: n.start, end: n.end}
@@ -774,6 +961,28 @@ func emitGanttNode(f *ganttForest, id string, depth, maxDepth int, budget *gantt
 	out.Props = n.props
 	out.Breach.Before = n.start != nil && n.rolled.start != nil && n.rolled.start.Before(*n.start)
 	out.Breach.After = n.end != nil && n.rolled.end != nil && n.rolled.end.After(*n.end)
+	out.InCycle = f.cyclic[id]
+
+	// Under on_cycle:"mark" a cut edge stays in n.children (the fold only
+	// declined to DESCEND it), so emit must skip it too — following it here
+	// would walk the loop the fold just broke, bounded only by maxDepth and
+	// rendering the same node repeatedly.
+	children := n.children
+	if len(n.cutChildren) > 0 {
+		cut := map[string]bool{}
+		for _, id := range n.cutChildren {
+			cut[id] = true
+		}
+		children = make([]string, 0, len(n.children))
+		for _, childID := range n.children {
+			if !cut[childID] {
+				children = append(children, childID)
+			}
+		}
+		// The cut edge is a real containment edge that this response does not
+		// carry, so the node is not a leaf — same contract as the depth cap.
+		out.HasMoreChildren = true
+	}
 
 	if depth >= maxDepth {
 		// Children beyond the cap are not emitted, but their dates are
@@ -781,10 +990,10 @@ func emitGanttNode(f *ganttForest, id string, depth, maxDepth int, budget *gantt
 		// HasMoreChildren keeps the withholding visible on the wire: with
 		// Children omitempty, a capped node would otherwise be
 		// byte-identical to a genuine leaf.
-		out.HasMoreChildren = len(n.children) > 0
+		out.HasMoreChildren = out.HasMoreChildren || len(children) > 0
 		return out
 	}
-	for _, childID := range n.children {
+	for _, childID := range children {
 		if !budget.take() {
 			out.HasMoreChildren = true
 			break

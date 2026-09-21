@@ -61,7 +61,7 @@ scope_grants:
 	noScope := asClient(nil)
 	for _, op := range []acl.Op{acl.OpCreate, acl.OpUpdate, acl.OpDelete} {
 		dec := noScope.AuthorizeWrite(ctx, acl.WriteRequest{
-			Op: op, Subject: acl.EntitySubject{Type: "ticket", ID: "TKT-1"},
+			Op: op, Subject: acl.NewFacelessEntitySubject("ticket", "TKT-1"),
 		})
 		if dec.Allow {
 			t.Errorf("%s allowed under deny_write: [\"*\"]", op)
@@ -76,12 +76,12 @@ scope_grants:
 	// "a scope ... hands one capability back", and only the one it names.
 	scoped := asClient([]string{"rela.tickets.write"})
 	if dec := scoped.AuthorizeWrite(ctx, acl.WriteRequest{
-		Op: acl.OpUpdate, Subject: acl.EntitySubject{Type: "ticket", ID: "TKT-1"},
+		Op: acl.OpUpdate, Subject: acl.NewFacelessEntitySubject("ticket", "TKT-1"),
 	}); !dec.Allow {
 		t.Errorf("rela.tickets.write did not re-open ticket update: %s", dec.Reason)
 	}
 	if dec := scoped.AuthorizeWrite(ctx, acl.WriteRequest{
-		Op: acl.OpUpdate, Subject: acl.EntitySubject{Type: "person", ID: "PERS-1"},
+		Op: acl.OpUpdate, Subject: acl.NewFacelessEntitySubject("person", "PERS-1"),
 	}); dec.Allow {
 		t.Error("the scope named only ticket, but person update was allowed")
 	}
@@ -93,7 +93,7 @@ scope_grants:
 		t.Fatal(err)
 	}
 	if dec := unmatched.AuthorizeWrite(ctx, acl.WriteRequest{
-		Op: acl.OpUpdate, Subject: acl.EntitySubject{Type: "person", ID: "PERS-1"},
+		Op: acl.OpUpdate, Subject: acl.NewFacelessEntitySubject("person", "PERS-1"),
 	}); !dec.Allow {
 		t.Errorf("an interactive user was attenuated: %s", dec.Reason)
 	}

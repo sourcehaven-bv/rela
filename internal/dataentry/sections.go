@@ -336,6 +336,14 @@ func (h *viewsHandler) buildSections(ctx context.Context, sections []ViewSection
 			if !exists {
 				entities = []*entity.Entity{}
 			}
+			// `sort:` orders a FLAT section. A nested one takes parent_sort /
+			// child_sort instead and orders each level inside buildNestedTree,
+			// where the per-parent cap is; validation refuses the wrong key
+			// for the display, so only one of the two can be set here.
+			//
+			// Sorted once for the section, before the display switch, so every
+			// flat mode honors it rather than each arm remembering to.
+			entities = newEntitySorter(sec.Sort, entities, s.Meta)(entities)
 			sd.IsEmpty = len(entities) == 0
 
 			switch sec.Display {
@@ -372,7 +380,13 @@ func (h *viewsHandler) buildSections(ctx context.Context, sections []ViewSection
 					}
 					for _, gName := range groupOrder {
 						gd := GroupData{GroupName: gName}
-						sortStoreEntitiesByID(groups[gName])
+						// Grouping preserves the section's order within each
+						// group. Only re-sort by id when the author declared
+						// no `sort:` — otherwise this would discard the order
+						// they asked for, one group at a time.
+						if len(sec.Sort) == 0 {
+							sortStoreEntitiesByID(groups[gName])
+						}
 						for _, e := range groups[gName] {
 							gd.Rows = append(gd.Rows, buildRow(e))
 						}

@@ -82,6 +82,11 @@ components:
   conflict:         { in: internal/conflict }
   computed:         { in: internal/computed }
   datamigration:    { in: internal/datamigration }
+  filemigstate:     { in: internal/datamigration/filemigstate }
+  memmigstate:      { in: internal/datamigration/memmigstate }
+  pgmigstate:       { in: internal/datamigration/pgmigstate }
+  sqlitemigstate:   { in: internal/datamigration/sqlitemigstate }
+  migstatetest:     { in: internal/datamigration/migstatetest }
   entitymanager:    { in: internal/entitymanager }
   imgproc:          { in: internal/imgproc }
   importer:         { in: internal/importer }
@@ -616,6 +621,13 @@ deps:
       - pgcomments
       - sqlitecomments
       - datamigration
+      # The migration-state backends, selected here for the same reason as the
+      # comment backends: the recipe owns the handle each one needs, and the
+      # file backend is the filesystem tier's default (TKT-XCJ0Y2).
+      - filemigstate
+      - memmigstate
+      - pgmigstate
+      - sqlitemigstate
       # Bridges conditionlint's next-action condition compiler to the seam
       # dataentry declares, so the app never imports the predicate engine.
       # predicatefns + principal: the same bridge derives the query identity
@@ -962,6 +974,42 @@ deps:
       # The lua: migration step runs a sandboxed pure transform on a bare
       # gopher-lua state (no rela.* bindings) — see luastep.go.
       - gopherlua
+  # Migration-state backends (TKT-XCJ0Y2). Same shape as the comments
+  # backends: one implementation per storage tier, each selected by the
+  # composition root. They depend on datamigration for the StateStore contract
+  # and on nothing else that knows about graph content — migration state
+  # records which migrations have run, not what the graph holds.
+  #
+  # The split exists because the state must travel WITH the data: a postgres
+  # tenant's position cannot live in a file shared across tenants, and a
+  # sqlite project's cannot live beside the database file meant to ship alone.
+  filemigstate:
+    mayDependOn:
+      - datamigration
+      - storage
+  memmigstate:
+    mayDependOn:
+      - datamigration
+  # The database backends take an INJECTED handle from the composition root —
+  # the same pool the store, search backend and comments run on — so neither
+  # depends on `store`: a migration record is not graph content.
+  pgmigstate:
+    mayDependOn:
+      - datamigration
+    canUse:
+      - pgx
+  # sqlitemigstate needs no driver grant: it speaks database/sql only, and
+  # registering the driver stays sqlitedb's job.
+  sqlitemigstate:
+    mayDependOn:
+      - datamigration
+  # The conformance harness every backend must pass, so it necessarily builds
+  # fixtures from the metamodel.
+  migstatetest:
+    mayDependOn:
+      - datamigration
+      - metamodel
+
   computed:
     mayDependOn:
       - metamodel

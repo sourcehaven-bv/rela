@@ -43,7 +43,12 @@ describe('createMentionMenu', () => {
     const menu = make(bridgeReturning([{ id: 'TKT-ABC' }, { id: 'FEAT-XY' }]))
     menu.setQuery('TK')
     await settle()
-    expect(rows(menu)).toEqual(['TKT-ABC', 'FEAT-XY'])
+    // `FEAT-XY` is dropped, not listed last: the shared ranking filters as well
+    // as orders (TKT-6MZ42J), so a row matching neither the title nor the id no
+    // longer survives at the bottom. The app editor gets that from
+    // `rankMentions.ts` along with the SPA; only the SPA's type picker is local
+    // to it, since a sandboxed app cannot fetch a schema type list.
+    expect(rows(menu)).toEqual(['TKT-ABC'])
   })
 
   it('ranks an ID prefix match above a looser one', async () => {

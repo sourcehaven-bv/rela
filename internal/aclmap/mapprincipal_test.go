@@ -273,7 +273,7 @@ func runtimeVerdict(ctx context.Context, t *testing.T, req *acl.Request, verb ac
 	}
 	d := req.AuthorizeWrite(ctx, acl.WriteRequest{
 		Op:      op,
-		Subject: acl.EntitySubject{Type: typ, ID: id},
+		Subject: acl.NewFacelessEntitySubject(typ, id),
 	})
 	return d.Allow
 }

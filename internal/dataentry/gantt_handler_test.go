@@ -750,15 +750,25 @@ func TestGantt_SubtreeDrillExternalParentMatchesFull(t *testing.T) {
 // from the full build. This is the executable form of the ticket's AC1 —
 // hand-drawn fixtures kept passing while depth/multi-parent shapes diverged.
 func TestGantt_SubtreeDrillPropertyEquivalence(t *testing.T) {
+	// Both non-erroring policies: the generated graphs contain cycles, and
+	// under the default error policy the full build 422s, so equivalence over
+	// the BUILT tree is what this guards. "mark" is the sharper case — it
+	// renders the loop rather than discarding it, and its re-seating step
+	// reads the candidate-parent set, which in subtree mode holds only
+	// in-subtree edges.
+	for _, policy := range []string{"prune", "mark"} {
+		t.Run(policy, func(t *testing.T) { subtreeDrillEquivalence(t, policy) })
+	}
+}
+
+func subtreeDrillEquivalence(t *testing.T, policy string) {
+	t.Helper()
 	rng := rand.New(rand.NewSource(42))
 	for trial := range 8 {
 		app := newGanttTestApp(t, func(g *dataentryconfig.Gantt) {
 			g.MaxDepth = 99
 			g.MaxNodes = 10_000
-			// prune: generated graphs contain cycles, and under the default
-			// error policy the full build 422s — equivalence over the built
-			// tree is what this test guards.
-			g.OnCycle = "prune"
+			g.OnCycle = policy
 		})
 		nodeCount := 12 + rng.Intn(20)
 		ids := make([]string, nodeCount)
@@ -972,5 +982,164 @@ func TestGantt_SubtreeDrillBoundsItsEdgeRead(t *testing.T) {
 	small, large := drillBreadth(t, 1), drillBreadth(t, 40)
 	if small != large {
 		t.Errorf("edge read grows with unrelated trees: %d ids at 1 tree, %d at 40", small, large)
+	}
+}
+
+// TestGantt_CycleMark pins the on_cycle:"mark" policy: a containment loop
+// renders in place with the back edge cut and the node it returns to flagged,
+// instead of blanking the view (error) or vanishing (prune).
+func TestGantt_CycleMark(t *testing.T) {
+	markApp := func(t *testing.T) *App {
+		t.Helper()
+		return newGanttTestApp(t, func(g *dataentryconfig.Gantt) { g.OnCycle = "mark" })
+	}
+
+	t.Run("rooted loop keeps members in place", func(t *testing.T) {
+		// PRJ-R ⊃ PRJ-A ⊃ PRJ-B ⊃ PRJ-A. The loop hangs off a real root, so
+		// the walk enters at PRJ-R and the back edge B→A is the only cut.
+		app := markApp(t)
+		seedProject(app, "PRJ-R", "Root", map[string]any{
+			"planned_start": "2026-01-01", "planned_end": "2026-02-01"})
+		seedProject(app, "PRJ-A", "LoopA", map[string]any{
+			"planned_start": "2026-03-01", "planned_end": "2026-04-01"})
+		seedProject(app, "PRJ-B", "LoopB", map[string]any{
+			"planned_start": "2026-05-01", "planned_end": "2026-06-01"})
+		seedRelation(app, &entity.Relation{From: "PRJ-R", Type: "contains", To: "PRJ-A"})
+		seedRelation(app, &entity.Relation{From: "PRJ-A", Type: "contains", To: "PRJ-B"})
+		seedRelation(app, &entity.Relation{From: "PRJ-B", Type: "contains", To: "PRJ-A"})
+
+		resp := decodeGantt(t, ganttGet(context.Background(), app, "plan"))
+		if len(resp.Roots) != 1 || resp.Roots[0].ID != "PRJ-R" {
+			t.Fatalf("want single root PRJ-R, got %+v", resp.Roots)
+		}
+		root := resp.Roots[0]
+		if len(root.Children) != 1 || root.Children[0].ID != "PRJ-A" {
+			t.Fatalf("PRJ-A should stay nested under its parent: %+v", root.Children)
+		}
+		a := root.Children[0]
+		if !a.InCycle {
+			t.Errorf("PRJ-A is what the back edge points at; want InCycle")
+		}
+		if len(a.Children) != 1 || a.Children[0].ID != "PRJ-B" {
+			t.Fatalf("PRJ-B should render under PRJ-A: %+v", a.Children)
+		}
+		b := a.Children[0]
+		if b.InCycle {
+			t.Errorf("PRJ-B is not a back-edge target; want InCycle false")
+		}
+		if !b.HasMoreChildren {
+			t.Errorf("PRJ-B's cut edge is a withheld child; want HasMoreChildren")
+		}
+		if len(b.Children) != 0 {
+			t.Errorf("the cut edge must not be walked: %+v", b.Children)
+		}
+		// Roll-up covers both loop members exactly once, and the loop's own
+		// dates reach the root rather than being dropped as under prune.
+		if root.Rolled == nil || root.Rolled.Start != "2026-03-01" || root.Rolled.End != "2026-06-01" {
+			t.Errorf("rolled = %+v, want 2026-03-01..2026-06-01", root.Rolled)
+		}
+	})
+
+	t.Run("pure loop gets an entry point instead of vanishing", func(t *testing.T) {
+		// The prune case's graph: every member has a parent, so no root
+		// reaches it. mark must still render it.
+		app := markApp(t)
+		seedProject(app, "PRJ-OK", "Standalone", map[string]any{
+			"planned_start": "2026-01-01", "planned_end": "2026-02-01"})
+		seedProject(app, "PRJ-A", "LoopA", nil)
+		seedProject(app, "PRJ-B", "LoopB", nil)
+		seedRelation(app, &entity.Relation{From: "PRJ-A", Type: "contains", To: "PRJ-B"})
+		seedRelation(app, &entity.Relation{From: "PRJ-B", Type: "contains", To: "PRJ-A"})
+
+		resp := decodeGantt(t, ganttGet(context.Background(), app, "plan"))
+		var ids []string
+		for _, r := range resp.Roots {
+			ids = append(ids, r.ID)
+		}
+		if len(resp.Roots) != 2 || ids[0] != "PRJ-A" || ids[1] != "PRJ-OK" {
+			t.Fatalf("want roots [PRJ-A PRJ-OK] (lowest-sorting loop member adopted), got %v", ids)
+		}
+		loop := resp.Roots[0]
+		if !loop.InCycle {
+			t.Errorf("the adopted entry node closes the loop; want InCycle")
+		}
+		if len(loop.Children) != 1 || loop.Children[0].ID != "PRJ-B" {
+			t.Errorf("loop should render A ⊃ B: %+v", loop.Children)
+		}
+	})
+
+	t.Run("multi-parent diamond is not reported as a cycle", func(t *testing.T) {
+		// PRJ-R contains both A and B; both contain SHARED. That revisits a
+		// node without any back edge — multi_parent:first already resolved
+		// it, and flagging it would make the marker meaningless.
+		app := markApp(t)
+		seedProject(app, "PRJ-R", "Root", nil)
+		seedProject(app, "PRJ-A", "A", nil)
+		seedProject(app, "PRJ-B", "B", nil)
+		seedProject(app, "PRJ-S", "Shared", map[string]any{
+			"planned_start": "2026-01-01", "planned_end": "2026-02-01"})
+		seedRelation(app, &entity.Relation{From: "PRJ-R", Type: "contains", To: "PRJ-A"})
+		seedRelation(app, &entity.Relation{From: "PRJ-R", Type: "contains", To: "PRJ-B"})
+		seedRelation(app, &entity.Relation{From: "PRJ-A", Type: "contains", To: "PRJ-S"})
+		seedRelation(app, &entity.Relation{From: "PRJ-B", Type: "contains", To: "PRJ-S"})
+
+		resp := decodeGantt(t, ganttGet(context.Background(), app, "plan"))
+		body := ganttBody(t, resp)
+		if strings.Contains(body, "in_cycle") {
+			t.Errorf("a diamond is not a cycle; body=%s", body)
+		}
+	})
+
+	t.Run("self-loop marks the node", func(t *testing.T) {
+		// A self-edge is skipped as a tree edge before the fold, so it can
+		// never be a back edge — the node renders clean, exactly as it does
+		// under the other policies.
+		app := markApp(t)
+		seedProject(app, "PRJ-SELF", "Selfie", nil)
+		seedRelation(app, &entity.Relation{From: "PRJ-SELF", Type: "contains", To: "PRJ-SELF"})
+
+		resp := decodeGantt(t, ganttGet(context.Background(), app, "plan"))
+		if len(resp.Roots) != 1 || resp.Roots[0].ID != "PRJ-SELF" {
+			t.Fatalf("self-loop entity should render as a root: %+v", resp.Roots)
+		}
+		if resp.Roots[0].InCycle {
+			t.Errorf("self-loop is dropped as a tree edge, so nothing is marked")
+		}
+	})
+}
+
+// TestGantt_CycleMarkNeverRevealsHiddenTopology pins the ACL invariant for
+// the new policy: a loop running through an entity the principal cannot see
+// must not be flagged, or InCycle becomes a one-bit oracle on hidden
+// topology — the same reason on_cycle:error evaluates on the gated subgraph.
+func TestGantt_CycleMarkNeverRevealsHiddenTopology(t *testing.T) {
+	app := newGanttTestApp(t, func(g *dataentryconfig.Gantt) { g.OnCycle = "mark" })
+	// PRJ-A ⊃ EPIC-H ⊃ PRJ-A: the loop closes only through the epic.
+	seedProject(app, "PRJ-A", "Root", map[string]any{
+		"planned_start": "2026-01-01", "planned_end": "2026-02-01"})
+	seedEpic(app, "EPIC-H", "HiddenLink", "2026-03-01", "2026-04-01")
+	seedRelation(app, &entity.Relation{From: "PRJ-A", Type: "has-epic", To: "EPIC-H"})
+	seedRelation(app, &entity.Relation{From: "EPIC-H", Type: "contains", To: "PRJ-A"})
+
+	// Privileged: the loop is real and visible, so PRJ-A carries the flag.
+	priv := decodeGantt(t, ganttGet(context.Background(), app, "plan"))
+	if !strings.Contains(ganttBody(t, priv), "in_cycle") {
+		t.Fatalf("privileged view should see the loop: %s", ganttBody(t, priv))
+	}
+
+	// Alice cannot read epics, so on her subgraph there is no loop at all.
+	d := mustNewACL(t, &acl.Policy{
+		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"project"}}},
+		Assignments: map[string]string{"alice": "viewer"},
+	}, app.store)
+	app.acl = d
+
+	resp := decodeGantt(t, ganttGet(gateCtxFor(aliceCtx(), t, d), app, "plan"))
+	body := ganttBody(t, resp)
+	if strings.Contains(body, "in_cycle") {
+		t.Errorf("ORACLE: loop through a hidden entity must not be flagged; body=%s", body)
+	}
+	if strings.Contains(body, "EPIC-H") {
+		t.Errorf("hidden entity id appears in the response")
 	}
 }
