@@ -193,7 +193,7 @@ func (s *spyLock) TryAcquire(context.Context) (func(), error) {
 func TestRunner_DryRunNeverTouchesLock(t *testing.T) {
 	spy := &spyLock{}
 	r := newTestRunner(t, Deps{Store: seedStore(t), Lock: spy})
-	f := mustParse(t, "0001-test.yaml", mustFileYAML(t, metaV1(), metaV2(), v1ToV2Steps))
+	f := mustParse(t, testName("test"), mustFileYAML(t, metaV1(), metaV2(), v1ToV2Steps))
 	if _, err := r.Run(t.Context(), []*File{f}, false); err != nil {
 		t.Fatalf("dry-run: %v", err)
 	}
@@ -206,19 +206,20 @@ func TestRunner_ApplyFailsFastWhenLockHeld(t *testing.T) {
 	st := seedStore(t)
 	spy := &spyLock{heldErr: ErrLockHeld}
 	kv := newFakeKV()
-	r := newTestRunner(t, Deps{Store: st, Lock: spy, State: kv})
-	f := mustParse(t, "0001-test.yaml", mustFileYAML(t, metaV1(), metaV2(), v1ToV2Steps))
+	ms := newMigState()
+	r := newTestRunner(t, Deps{Store: st, Lock: spy, State: kv, MigState: ms})
+	f := mustParse(t, testName("test"), mustFileYAML(t, metaV1(), metaV2(), v1ToV2Steps))
 
 	_, err := r.Run(t.Context(), []*File{f}, true)
 	if !errors.Is(err, ErrLockHeld) {
 		t.Fatalf("apply err = %v, want ErrLockHeld", err)
 	}
-	// Zero writes: entities untouched, marker untouched.
+	// Zero writes: entities untouched, migration state untouched.
 	if _, has := getEntity(t, st, "TSK-1").Properties["state"]; has {
 		t.Fatalf("contended apply wrote to the store")
 	}
-	if marker, _ := LoadMarker(t.Context(), kv); marker != nil {
-		t.Fatalf("contended apply wrote the marker")
+	if got, _ := ms.Load(t.Context()); got != nil {
+		t.Fatalf("contended apply recorded migration state")
 	}
 }
 
@@ -263,8 +264,9 @@ func TestGC_ScanFailsWhenLockHeld(t *testing.T) {
 
 func TestGate_AdoptionSkipsOnContention(t *testing.T) {
 	kv := newFakeKV()
+	ms := newMigState()
 	lock := NewProcessLock()
-	g, err := NewGate(kv, lock)
+	g, err := NewGate(GateDeps{MigState: ms, State: kv, Lock: lock})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -275,24 +277,24 @@ func TestGate_AdoptionSkipsOnContention(t *testing.T) {
 	}
 	defer release()
 
-	v, err := g.Evaluate(t.Context(), metaV1())
+	v, err := g.EvaluateAndPersist(t.Context(), metaV1())
 	if err != nil {
-		t.Fatalf("Evaluate under contention must not fail: %v", err)
+		t.Fatalf("EvaluateAndPersist under contention must not fail: %v", err)
 	}
 	if v == nil || g.Verdict() != v {
 		t.Fatalf("verdict not published under contention")
 	}
-	if marker, _ := LoadMarker(t.Context(), kv); marker != nil {
-		t.Fatalf("contended adoption wrote the marker")
+	if got, _ := ms.Load(t.Context()); got != nil {
+		t.Fatalf("contended adoption recorded migration state")
 	}
 
 	// Lock released: the next evaluation persists the baseline.
 	release()
-	if _, err := g.Evaluate(t.Context(), metaV1()); err != nil {
+	if _, err := g.EvaluateAndPersist(t.Context(), metaV1()); err != nil {
 		t.Fatal(err)
 	}
-	if marker, _ := LoadMarker(t.Context(), kv); marker == nil {
-		t.Fatalf("marker not written after lock release")
+	if got, _ := ms.Load(t.Context()); got == nil {
+		t.Fatalf("migration state not recorded after lock release")
 	}
 }
 
@@ -357,15 +359,16 @@ func TestFSLock_ConcurrentStaleBreakSingleWinner(t *testing.T) {
 // never interleave a ledger write into a GC apply that holds the lock.
 func TestGate_ContendedAdoptionSkipsLedgerToo(t *testing.T) {
 	kv := newFakeKV()
+	ms := newMigState()
 	lock := NewProcessLock()
-	g, err := NewGate(kv, lock)
+	g, err := NewGate(GateDeps{MigState: ms, State: kv, Lock: lock})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, evalErr := g.Evaluate(t.Context(), metaV1()); evalErr != nil {
+	if _, evalErr := g.EvaluateAndPersist(t.Context(), metaV1()); evalErr != nil {
 		t.Fatal(evalErr)
 	}
-	markerBefore, _ := kv.Get(t.Context(), markerKey)
+	before, _ := ms.Load(t.Context())
 
 	release, err := lock.TryAcquire(t.Context())
 	if err != nil {
@@ -373,16 +376,16 @@ func TestGate_ContendedAdoptionSkipsLedgerToo(t *testing.T) {
 	}
 	defer release()
 
-	// Drift change (deleted property) under contention: no marker move, no
-	// ledger entry.
+	// Drift change (deleted property) under contention: recorded shape must
+	// not move, and nothing may enter the ledger.
 	m2 := metaV1()
 	delete(m2.Entities["task"].Properties, "tags")
-	if _, err := g.Evaluate(t.Context(), m2); err != nil {
+	if _, err := g.EvaluateAndPersist(t.Context(), m2); err != nil {
 		t.Fatalf("contended drift evaluation must not fail: %v", err)
 	}
-	markerAfter, _ := kv.Get(t.Context(), markerKey)
-	if !bytes.Equal(markerBefore, markerAfter) {
-		t.Fatalf("contended adoption moved the marker")
+	after, _ := ms.Load(t.Context())
+	if !bytes.Equal(before.Projection, after.Projection) {
+		t.Fatalf("contended adoption moved the recorded shape")
 	}
 	ledger, _ := LoadLedger(t.Context(), kv)
 	if len(ledger.Entries) != 0 {

@@ -687,22 +687,59 @@ Rules when touching this:
   echoing purged content. `schema_versions` is projection-only + FK-shared, so
   purge never deletes it. Purge is necessary-not-sufficient for erasure (live
   row / PITR backups survive) — see the postgres-backend guide.
-- **Data migration** (TKT-0C57FS, `internal/datamigration`,
-  `docs/data-migration.md`). When schema.yaml's DATA SHAPE changes, the gate
-  (evaluated per process start in `appbuild.assemble`) compares the store's
-  `state.KV` marker against `metamodel.ShapeProjection().Hash()` and adopts
-  compatible changes; incompatible ones need operator-authored `migrations/`
-  files (`rela migrate gen|data`). **Two schema hashes coexist on purpose**:
-  `RenderProjection` (version rendering, `schema_versions` dedup — stability
-  load-bearing, do not extend) vs `ShapeProjection` (migration identity —
-  includes relations + defaults, excludes id prefixes). Migration/GC writes
-  are the third sanctioned raw-store exception (after `db migrate` and
-  `history-purge`): operator-shell trust, no ACL, explicit audit records
-  (`data-migration`/`data-gc`), `store.WithAttribution`, and synchronous
-  pre-delete version capture on pg (the sweep cannot reconstruct deleted
-  rows). Migration steps must stay idempotent — re-run IS the crash
-  recovery. The Lua step is a pure transform (patch in, patch out, engine
-  applies); never hand it a write handle.
+- **Data migration** (TKT-0C57FS, TKT-XCJ0Y2, `internal/datamigration`,
+  `docs/data-migration.md`). Two separate questions, deliberately not
+  conflated:
+
+  *Which migrations have run* is answered by NAME, from a per-store
+  `datamigration.StateStore`. A migration file is therefore NOT an edge in a
+  hash graph, and a **data-only migration** (backfill, de-dup, correcting an
+  old bug's values) is an ordinary file whose two projections match. Files are
+  `<14-digit timestamp>-<lowercase-slug>.yaml`, validated through
+  `MigrationName` on both the directory listing and the applied list — the two
+  are compared by equality, so a case-folding filesystem would otherwise make
+  one file look like two entries. Don't reintroduce sequential numbering: it
+  collides silently across concurrent branches (BUG-TY2XQC is that defect in
+  rela's own pg ladder).
+
+  *What shape the data conforms to* is the `ShapeProjection` the record also
+  stores, which the gate classifies against and `rela migrate gen` diffs.
+  **Two schema hashes coexist on purpose**: `RenderProjection` (version
+  rendering, `schema_versions` dedup — stability load-bearing, do not extend)
+  vs `ShapeProjection`.
+
+  **The projections stay embedded in every migration file.** They are what
+  step `Validate(from, to)` checks targets against (a rename step is
+  well-formed only where the old property exists in the FROM shape, which the
+  live schema no longer has once a later migration ran) and what
+  `validateDeltasResolved` recomputes to refuse a file that spans a
+  needs-migration change its steps don't answer. Computing either against the
+  live schema instead collapses the whole chain into one aggregate delta and
+  reopens BUG-TMGWIN. Removing them is not an optimization.
+
+  **The state store is backend-selected**, like `comments.Store`: a COMMITTED
+  `migrations/applied.json` on fs (the gitignored `.rela/` would be absent from
+  a clone), `migration_state` in the tenant's schema on pg (so tenants at
+  different points migrate independently — a documented guarantee), the same
+  table in `rela.db` on sqlite (a shipped file must carry it). New backends
+  pass `migstatetest.RunAll`.
+
+  **`Gate.Evaluate` classifies; `Gate.Persist` writes, and only the CLI calls
+  it.** A server writing a git-tracked file at boot would dirty a working tree
+  and need a writable project dir; it also removes the concurrent-start race
+  outright. A server may serve with an unrecorded ADDITIVE change — harmless by
+  construction. With no record AND migrations present the gate refuses
+  (`StatusUnbaselined`) rather than baselining over files that may still need
+  to run; `rela migrate baseline` is the explicit override.
+
+  Migration/GC writes are the third sanctioned raw-store exception (after
+  `db migrate` and `history-purge`): operator-shell trust, no ACL, explicit
+  audit records (`data-migration`/`data-gc`), `store.WithAttribution`, and
+  synchronous pre-delete version capture on pg (the sweep cannot reconstruct
+  deleted rows). **Steps must stay idempotent — with the applied list as the
+  only double-apply guard, re-run IS the crash recovery.** The Lua step is a
+  pure transform (patch in, patch out, engine applies); never hand it a write
+  handle.
 - **Perf seeding** (TKT-1U8XYN, `internal/perfseed`, `rela dev seed`) is the
   fourth raw-store exception, under the same terms: operator shell, attributed
   (`perf-seed` tool), one `perf-seed` audit record, and it refuses a non-empty
@@ -866,6 +903,8 @@ entities/<type>/                # Markdown entity files by type
 relations/                      # Markdown relation files (FROM--type--TO.md)
 templates/entities/<type>.md    # Optional: entity templates for defaults
 templates/relations/<type>.md   # Optional: relation templates for defaults
+migrations/<stamp>-<slug>.yaml  # Optional: data migrations (committed)
+migrations/applied.json         # Which migrations have run (COMMITTED, fs tier)
 .rela/user-defaults.yaml        # Per-user defaults (gitignored)
 .rela/scheduler-state.json      # Scheduler last-run timestamps (gitignored)
 ```

@@ -16,7 +16,7 @@ func luaFixture(t *testing.T, entityTarget, script string) (*File, fstest.MapFS)
 	}
 	data := mustFileYAML(t, metaV1(), metaV2(),
 		"  - lua: {entity: '"+entityTarget+"', script: migrations/transform.lua}\n")
-	return mustParse(t, "0001-lua.yaml", data), fsys
+	return mustParse(t, testName("lua"), data), fsys
 }
 
 func TestLuaStep_PureTransformPatch(t *testing.T) {
@@ -98,14 +98,14 @@ func TestLuaStep_BadReturnFailsBeforeMarker(t *testing.T) {
 	f, fsys := luaFixture(t, "task", `function migrate(entity) return 42 end`)
 	st := seedStore(t)
 	kv := newFakeKV()
-	r := newTestRunner(t, Deps{Store: st, ScriptFS: fsys, State: kv})
+	ms := newMigState()
+	r := newTestRunner(t, Deps{Store: st, ScriptFS: fsys, State: kv, MigState: ms})
 	_, err := r.Run(t.Context(), []*File{f}, true)
 	if err == nil || !strings.Contains(err.Error(), "patch table") {
 		t.Fatalf("err = %v, want patch-table error", err)
 	}
-	marker, _ := LoadMarker(t.Context(), kv)
-	if marker != nil {
-		t.Fatalf("marker written despite failed run")
+	if got, _ := ms.Load(t.Context()); got != nil {
+		t.Fatalf("migration state recorded despite failed run")
 	}
 }
 
@@ -121,7 +121,7 @@ func TestLuaStep_MissingMigrateFunction(t *testing.T) {
 func TestLuaStep_PathTraversalRejectedAtParse(t *testing.T) {
 	data := mustFileYAML(t, metaV1(), metaV2(),
 		"  - lua: {entity: task, script: ../outside.lua}\n")
-	_, err := ParseFile("0001-lua.yaml", data)
+	_, err := ParseFile(testName("lua"), data)
 	if err == nil || !strings.Contains(err.Error(), "project-relative") {
 		t.Fatalf("err = %v, want path rejection", err)
 	}

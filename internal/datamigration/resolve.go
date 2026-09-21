@@ -10,72 +10,60 @@ import (
 // Resolve plans which migration files must run to carry a store from its
 // current shape to the live schema's shape.
 //
-// Files run in lexicographic name order (the chain order, like SQL
-// migrations); hashes and compatibility are the safety rails, not the
-// ordering mechanism. Migrations are edges you MUST take; compatible gaps
-// are edges you get for free: a store whose current shape differs from a
-// file's `from` may still take the edge when CompareShapes classifies the
-// gap as compatible (that difference was — or would have been — adopted by
-// the gate). This is what lets multi-tenant stores at different hashes catch
-// up without no-op migrations for additive changes.
+// A file runs when its NAME is absent from the store's applied list. That is
+// the whole rule, and it is the one every mainstream migration tool uses
+// (Rails' schema_migrations, Django's django_migrations, Flyway's
+// flyway_schema_history). Files run in lexicographic name order, which for the
+// timestamp-prefixed names the generator mints is chronological order.
 //
-// A file is skipped when it is already recorded in the marker's applied
-// list, or when its `to` shape is where the walk already stands. After the
-// last file, the remaining gap to the live schema must itself be compatible
-// or Resolve fails, naming the deltas that still need a migration.
+// Keying on the name rather than on a shape edge is what makes a DATA-ONLY
+// migration expressible: a backfill, a de-duplication or a correction of values
+// an old bug wrote has the same schema shape before and after, so under the
+// previous hash-edge model it could not be represented at all (TKT-XCJ0Y2).
 //
-// Taking a free edge REBASES the walk onto the file's projections: any
-// compatible divergence the store carried (an adopted-but-unmigrated
-// additive property, dropped drift) is not represented in the marker the
-// runner writes afterwards. That is safe by construction — the divergence
-// was compatible, so the next gate evaluation re-classifies it against the
-// live schema and re-adopts (additive) or re-ledgers (drift; the GC grace
-// clock restarts, which fails toward retention, never toward deletion).
+// # What the applied list does and does not guarantee
+//
+// It is now the ONLY thing preventing a double-apply — the previous model had
+// a second, independent check (skip a file whose to-shape the store had
+// already reached) that a name-keyed list cannot express. Step idempotency is
+// therefore load-bearing rather than merely advisable: every step must be safe
+// to re-run, because re-running after a crash is the documented recovery path
+// and a restored-from-backup applied list will replay whatever it has
+// forgotten.
+//
+// # The residual shape check
+//
+// After the plan, the remaining gap between the last file's to-shape (or the
+// store's current shape, when nothing is pending) and the live schema must be
+// compatible. That is not what decides the plan — it is a diagnostic, and it
+// is how an operator learns they edited schema.yaml without writing the
+// migration it needs.
 func Resolve(
 	current metamodel.ShapeProjection, applied []string,
 	live metamodel.ShapeProjection, files []*File,
 ) ([]*File, error) {
-	currentHash := current.Hash()
-	liveHash := live.Hash()
-
 	appliedSet := make(map[string]bool, len(applied))
 	for _, name := range applied {
 		appliedSet[name] = true
 	}
 
+	// pos tracks the shape the store will conform to once the plan has run, so
+	// the residual check below compares the live schema against the END of the
+	// plan rather than against where the store stands today.
 	pos := current
-	posHash := currentHash
 	var plan []*File
 	for _, f := range files {
 		if appliedSet[f.Name] {
 			continue
 		}
-		if f.To == posHash {
-			// The store already conforms to this file's outcome (it was
-			// applied before the applied list existed, or the operator made
-			// the same change by hand). Nothing to run.
-			continue
-		}
-		if f.From != posHash {
-			gap := metamodel.CompareShapes(pos, f.FromProjection)
-			if !gap.Compatible() {
-				return nil, incompatibleGapError(
-					fmt.Sprintf("cannot reach migration %s: the store's shape (%s) differs incompatibly from the migration's from-shape (%s)",
-						f.Name, short(posHash), short(f.From)), gap)
-			}
-		}
 		plan = append(plan, f)
 		pos = f.ToProjection
-		posHash = f.To
 	}
 
-	if posHash != liveHash {
-		gap := metamodel.CompareShapes(pos, live)
-		if !gap.Compatible() {
-			return nil, incompatibleGapError(
-				fmt.Sprintf("after all migrations the store's shape (%s) still differs incompatibly from the live schema (%s) — run `rela migrate gen` to draft the missing migration",
-					short(posHash), short(liveHash)), gap)
-		}
+	if gap := metamodel.CompareShapes(pos, live); !gap.Compatible() {
+		return nil, incompatibleGapError(
+			"the schema has changed in a way the pending migrations do not cover "+
+				"— run `rela migrate gen` to draft the missing migration", gap)
 	}
 	return plan, nil
 }

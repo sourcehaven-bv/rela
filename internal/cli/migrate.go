@@ -15,11 +15,12 @@ import (
 // schema shape change (TKT-0C57FS) and need the full service bundle; see
 // requiresProject in kong.go, which distinguishes them by full command path.
 type MigrateCmd struct {
-	Config MigrateConfigCmd `cmd:"" default:"withargs" help:"Migrate project config files to current syntax (default)."`
-	Status MigrateStatusCmd `cmd:"" help:"Show the data-schema migration status."`
-	Gen    MigrateGenCmd    `cmd:"" help:"Draft a data migration from the schema shape diff."`
-	Data   MigrateDataCmd   `cmd:"" help:"Run pending data migrations (dry-run by default)."`
-	Gc     MigrateGCCmd     `cmd:"" name:"gc" help:"Garbage-collect schema-orphaned data (dry-run by default)."`
+	Config   MigrateConfigCmd   `cmd:"" default:"withargs" help:"Migrate project config files to current syntax (default)."`
+	Status   MigrateStatusCmd   `cmd:"" help:"Show the data-schema migration status."`
+	Gen      MigrateGenCmd      `cmd:"" help:"Draft a data migration from the schema shape diff."`
+	Data     MigrateDataCmd     `cmd:"" help:"Run pending data migrations (dry-run by default)."`
+	Gc       MigrateGCCmd       `cmd:"" name:"gc" help:"Garbage-collect schema-orphaned data (dry-run by default)."`
+	Baseline MigrateBaselineCmd `cmd:"" help:"Record the project's migrations as already applied, without running them."`
 }
 
 // MigrateConfigCmd migrates project files (schema.yaml, etc.) to current
