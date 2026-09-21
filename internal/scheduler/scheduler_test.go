@@ -835,9 +835,114 @@ func TestDoExecuteTask_failureDoesNotCountAsRun(t *testing.T) {
 	}
 	if retryAt, ok := s.state.NextRetry["daily"]; !ok {
 		t.Error("no retry scheduled after failure")
-	} else if want := start.Add(baseRetryDelay); !retryAt.Equal(want) {
-		// Based on START, not completion, so a slow failure doesn't drift.
-		t.Errorf("retry at %v, want %v", retryAt, want)
+	} else if !retryAt.After(start) {
+		// The ladder runs from when the failure was observed. This run is
+		// near-instant, so the exact stamp is start+delay here; what must
+		// hold in general is that the retry lands in the FUTURE. See
+		// TestRecordFailure_slowFailureRetriesInTheFuture.
+		t.Errorf("retry at %v, want after %v", retryAt, start)
+	}
+}
+
+// TestRecordFailure_slowFailureRetriesInTheFuture pins a real production wedge: a run
+// that fails only AFTER the first retry rung has already elapsed must still
+// land its retry in the future.
+//
+// Basing the stamp on the run's start time instead put it in the past — for
+// the real pairing (a 20m queue timeout against a 5m rung) 15 minutes in the
+// past — which made the task due on the very next tick and every tick after,
+// forever. The clock-jump guard in runDueTasks only clamps retries too far
+// in the FUTURE, so nothing downstream caught it.
+func TestRecordFailure_slowFailureRetriesInTheFuture(t *testing.T) {
+	t.Parallel()
+
+	cfg := &Config{Tasks: []TaskConfig{
+		{Name: "daily", Script: "task.lua", Every: dailySchedule()},
+	}}
+	start := time.Date(2026, 4, 10, 0, 0, 0, 0, time.Local)
+	// The failure surfaces long after the first rung (5m) has passed —
+	// the shape of the 20m queue timeout seen in production.
+	elapsed := 20 * time.Minute
+	s := newRealPathScheduler(t, cfg, `error("boom")`, start, elapsed)
+
+	s.doExecuteTask(context.Background(), cfg.Tasks[0])
+
+	failedAt := start.Add(elapsed)
+	retryAt, ok := s.state.NextRetry["daily"]
+	if !ok {
+		t.Fatal("no retry scheduled after failure")
+	}
+	if !retryAt.After(failedAt) {
+		t.Errorf("retry at %v is not after the failure at %v — it is already due, "+
+			"so the task will spin once per tick forever", retryAt, failedAt)
+	}
+	if want := failedAt.Add(baseRetryDelay); !retryAt.Equal(want) {
+		t.Errorf("retry at %v, want %v (failure time + one rung)", retryAt, want)
+	}
+}
+
+// TestDoExecuteTask_wedgedSkipAdvancesLadder pins the second half of
+// that wedge. A skip normally records nothing: a healthy-but-slow task must
+// not be backed off. But when a retry is ALREADY armed, the previous attempt
+// failed and left a run that never cleared, and recording nothing pinned
+// Failures at 1 and NextRetry at a fixed past stamp. The ladder could never
+// climb and persistentFailureThreshold could never escalate to ERROR, so a
+// permanently wedged task stayed invisible at one skip per tick.
+func TestDoExecuteTask_wedgedSkipAdvancesLadder(t *testing.T) {
+	t.Parallel()
+
+	cfg := &Config{Tasks: []TaskConfig{
+		{Name: "daily", Script: "task.lua", Every: dailySchedule()},
+	}}
+	start := time.Date(2026, 4, 10, 0, 0, 0, 0, time.Local)
+	s := newRealPathScheduler(t, cfg, "return true\n", start, time.Second)
+	// Hold a real claim so enqueueTask takes the genuine skip path, the
+	// same one an orphaned queue row drives it down in production.
+	if _, _, err := s.claimInFlight("daily"); err != nil {
+		t.Fatalf("claimInFlight: %v", err)
+	}
+
+	// Arm the ladder: this is the state a prior failure leaves behind.
+	s.state.Failures["daily"] = 1
+	s.state.NextRetry["daily"] = start.Add(-15 * time.Minute)
+
+	s.doExecuteTask(context.Background(), cfg.Tasks[0])
+
+	if got := s.state.Failures["daily"]; got != 2 {
+		t.Errorf("Failures = %d, want 2 — a skip while retrying must advance "+
+			"the ladder, or the backoff never climbs and never escalates", got)
+	}
+	if retryAt := s.state.NextRetry["daily"]; !retryAt.After(start) {
+		t.Errorf("retry at %v is still not in the future — the task stays "+
+			"due on every tick", retryAt)
+	}
+}
+
+// TestDoExecuteTask_healthySlowSkipLeavesStateAlone guards the other side of
+// that rule: with no retry armed, a skip is a genuinely slow healthy run and
+// must still record neither success nor failure.
+func TestDoExecuteTask_healthySlowSkipLeavesStateAlone(t *testing.T) {
+	t.Parallel()
+
+	cfg := &Config{Tasks: []TaskConfig{
+		{Name: "daily", Script: "task.lua", Every: dailySchedule()},
+	}}
+	start := time.Date(2026, 4, 10, 0, 0, 0, 0, time.Local)
+	s := newRealPathScheduler(t, cfg, "return true\n", start, time.Second)
+	if _, _, err := s.claimInFlight("daily"); err != nil {
+		t.Fatalf("claimInFlight: %v", err)
+	}
+
+	s.doExecuteTask(context.Background(), cfg.Tasks[0])
+
+	if got, ok := s.state.Failures["daily"]; ok {
+		t.Errorf("Failures = %d, want unset — a slow healthy task must not back off", got)
+	}
+	if _, ok := s.state.NextRetry["daily"]; ok {
+		t.Error("a slow healthy task must not arm the retry ladder")
+	}
+	if _, ok := s.state.Tasks["daily"]; ok {
+		t.Error("a skipped run must not stamp the last-run time")
 	}
 }
 
