@@ -1845,6 +1845,13 @@ func (m *Manager) CreateRelation(
 	if fromEntity, ferr := anyFaceOf(ctx, m.deps.Store, from); ferr == nil {
 		fromType = fromEntity.Type
 	}
+	// BEFORE the ACL, so an unvalidated coordinate never becomes an
+	// authorization coordinate — and so the check still runs on the
+	// bypassACL path, where authorizeAndAudit returns without consulting
+	// any grant.
+	if fErr := m.deps.requireRelationFaceFor(relType, fromType, opts.FromFace); fErr != nil {
+		return nil, fErr
+	}
 	if aclErr := m.authorizeAndAudit(ctx, acl.WriteRequest{
 		Op: acl.OpCreate,
 		Subject: acl.RelationSubject{
@@ -1949,6 +1956,10 @@ func (m *Manager) UpdateRelation(
 	var sourceType string
 	if fromEntity, ferr := anyFaceOf(ctx, m.deps.Store, from); ferr == nil {
 		sourceType = fromEntity.Type
+	}
+	// BEFORE the ACL, for the reason given in [Manager.CreateRelation].
+	if fErr := m.deps.requireRelationFaceFor(relType, sourceType, opts.FromFace); fErr != nil {
+		return nil, fErr
 	}
 	if aclErr := m.authorizeAndAudit(ctx, acl.WriteRequest{
 		Op: acl.OpUpdate,

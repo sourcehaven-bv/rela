@@ -339,12 +339,72 @@ rela.get_relations(e.id)               -- NOT a filter: a bare id is not a
 
 | Function | Description | Returns |
 |----------|-------------|---------|
-| `rela.create_entity(type, props, content?, id?)` | Create entity | table, warnings? |
+| `rela.create_entity(type, props, content?, id?, opts?)` | Create entity | table, warnings? |
 | `rela.update_entity(id, props, content?)` | Update entity | table, warnings? |
 | `rela.delete_entity(id, cascade?)` | Delete entity | boolean |
-| `rela.create_relation(from, type, to)` | Create relation | table |
+| `rela.create_relation(from, type, to, opts?)` | Create relation | table |
 | `rela.delete_relation(from, type, to)` | Delete relation | boolean |
 | `rela.refresh()` | Reload graph from disk | boolean |
+
+#### Writing to a content state (face)
+
+When an entity type declares [content states](content-states.md), a create
+must name the one it writes. Such a type stores no row at a default
+coordinate, so there is nothing to fall back to. Pass the face in the
+trailing options table:
+
+```lua
+-- An entity type declaring `faces: {draft, published}`
+local policy = rela.create_entity("policy", {title = "Access control"},
+                                  "body", nil, { face = "draft" })
+policy.face  --> "draft"
+
+-- A `scope: content` relation belongs to one face of its SOURCE
+rela.create_relation(policy.id, "cites", "SRC-1", { face = "draft" })
+```
+
+Options accepted:
+
+| Binding | Keys |
+|---------|------|
+| `rela.create_entity` | `face` |
+| `rela.create_relation` | `face`, `content` |
+
+The name must be one the type declares. A face on a type that declares none
+is refused, as is a `scope: identity` relation given a face — such an edge
+attaches to the entity rather than to one of its states.
+
+The two creates differ in whether a face is **required**. An entity create on
+a faced type must name one: the type stores no row at a default coordinate, so
+there is nothing to fall back to. A relation create may omit it — the edge
+then attaches at the identity coordinate, which is a real and readable edge
+rather than a missing row. Omitting it on a `scope: content` type usually
+means the edge is not where you want it, but it is addressable, and it is what
+every caller that cannot yet name a face (`rela link`, the MCP tool) relies
+on. Unknown keys and
+non-string values raise rather than being ignored, so a typo cannot quietly
+become "no face". A script names a face **directly**; it is never derived
+from a world, because a world resolves through a chain that can answer with
+a fallback and a write must name the row it changes.
+
+Both read-side tables carry the state they were read at — `entity.face` and
+`relation.from_face`, empty on the default face — so a script can create a
+sibling on the same face as something it just read. Relations have no
+`to_face`: targets are faceless by construction.
+
+#### Addressing a face on the other write bindings
+
+The three id-addressed bindings differ, and the differences matter:
+
+| Binding | A `ID@face` address |
+|---------|---------------------|
+| `rela.update_entity` | Selects that face — intended behaviour |
+| `rela.delete_entity` | **Deletes the whole entity**, every face — intended behaviour |
+| `rela.delete_relation` | Ignored; removes the **default** face's edge and reports success — **known defect, BUG-YVU8CP** |
+
+The first two rows describe the design. The third is a bug awaiting a fix, not
+a contract: do not build on it. A per-face delete is not currently expressible
+from Lua.
 
 #### Validation warnings (multi-return)
 
@@ -422,7 +482,7 @@ end)
 
 | Method | Purpose |
 |--------|---------|
-| `admin.create_relation(from, type, to)` | Link, skipping the ACL deny |
+| `admin.create_relation(from, type, to, opts?)` | Link, skipping the ACL deny |
 | `admin.delete_relation(from, type, to)` | Unlink, skipping the ACL deny |
 | `admin.delete_entity(id, cascade?)` | Remove, skipping the ACL deny |
 | `admin.get_entity(id)` | Read **raw** — full properties, no redaction |
