@@ -1900,6 +1900,25 @@ validations:
   # ===================
   # These rules prevent merging PRs with incomplete work.
   # Tickets/bugs must be either not started (backlog/ready) or fully complete (done/wont-fix).
+  #
+  # SCOPE — these rules and the "Ticket done-before-merge check" job in
+  # .github/workflows/ci.yml enforce related but DIFFERENT things, and the
+  # difference is deliberate:
+  #
+  #   * These rules run over the WHOLE corpus, every run. So a status they
+  #     reject cannot exist anywhere in the repo, on any entity, touched or not.
+  #   * That job runs only over the entities a PR actually CHANGED. So it can
+  #     reject a status that is fine to exist but wrong to merge alongside code.
+  #
+  # `ready` is exactly that case, which is why there is deliberately NO
+  # ci-no-ready-* rule here: a ready item is legitimately parked in the repo
+  # (12 exist on develop today), but a PR that touches one and merges its code
+  # has shipped a stale ticket (TKT-QXHFJZ). Only the diff-scoped job can tell
+  # those apart, so `ready` is enforced there and nowhere else. Adding a rule
+  # here would fail CI on every pre-existing ready item.
+  #
+  # `blocked` is NOT that case: it is rejected by both, and the job's accept
+  # list was corrected to match these rules rather than contradict them.
   # --- Tickets in progress ---
   - name: ci-no-planning-tickets
     description: "CI: Tickets in 'planning' status cannot be merged - complete or revert"
