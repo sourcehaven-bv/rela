@@ -148,11 +148,20 @@ build-postgres: build-cli-postgres build-server-postgres
 build-sqlite: build-cli-sqlite build-server-sqlite
 
 # Install CLI to ~/bin
-install: build-cli build-server
-    @echo "Installing rela and rela-server to ~/bin..."
+#
+# Installs both backend variants: the default FS build (`rela`,
+# `rela-server`) and the postgres build (`rela-postgres`,
+# `rela-server-postgres`). The two are separate binaries because the backend
+# is chosen at compile time by build tag, and a project on postgres reaches
+# for the `-postgres` names — so installing only the FS pair leaves those
+# stale, and a fix appears not to land.
+install: build-cli build-server build-cli-postgres build-server-postgres
+    @echo "Installing rela, rela-server and their postgres variants to ~/bin..."
     @mkdir -p ~/bin
     @install {{build_dir}}/rela ~/bin/rela
     @install {{build_dir}}/rela-server ~/bin/rela-server
+    @install {{build_dir}}/rela-postgres ~/bin/rela-postgres
+    @install {{build_dir}}/rela-server-postgres ~/bin/rela-server-postgres
     @echo "Done! Make sure ~/bin is in your PATH."
 
 # Clean build artifacts

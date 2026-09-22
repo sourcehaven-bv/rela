@@ -43,6 +43,7 @@ import {
   OUTGOING_SUFFIX,
   INCOMING_SUFFIX,
 } from './relationsPatch'
+import { ownedRelationKeys, filterOwnedRelations, untypedRelationKeys } from './ownedRelations'
 import { useAutoSave } from '@/composables/useAutoSave'
 import { useFormWizard } from '@/composables/useFormWizard'
 import type { Bindings } from '@/utils/conditions'
@@ -147,6 +148,17 @@ interface LinkParams {
   as: 'from' | 'to'
 }
 const linkParams = ref<LinkParams | null>(null)
+// Relation keys a prefill channel seeded: `rel.<name>=<id>` query params and a
+// Duplicate's copied relations. (`link_relation`/`link_peer` is the third and
+// is read straight off `linkParams`.) Held at component scope because the
+// ownership filter (BUG-KQSOJ2) must exempt them — none is constrained to a
+// relation this form renders.
+//
+// Exempting them is the point: a prefilled edge is the caller's explicit
+// instruction, so dropping it writes nothing and says nothing. That is the
+// silent no-write the post-condition check in handleSubmit exists to catch,
+// and for Duplicate it would quietly narrow what "duplicate" copies.
+const prefilledRelations = ref<Set<string>>(new Set())
 const returnTo = ref<string | null>(null)
 
 // State
@@ -699,6 +711,11 @@ function initializeDefaults() {
   const query = props.embedded ? {} : route.query
   const queryProps: Record<string, string> = {}
   const queryRels: Record<string, string[]> = {}
+  // Rebuilt from the query below, not accumulated: this runs again on a
+  // template switch and on add-another, both of which reset `relations.value`.
+  // Keeping a key whose edge was just cleared would exempt a relation that is
+  // no longer prefilled.
+  prefilledRelations.value = new Set()
 
   for (const [key, value] of Object.entries(query)) {
     if (typeof value !== 'string') continue
@@ -769,6 +786,11 @@ function initializeDefaults() {
     if (!relations.value[relType]) {
       relations.value[relType] = []
     }
+    // Record the key so the ownership filter exempts it (BUG-KQSOJ2). Done
+    // even when the form renders the relation: a rendered picker types it and
+    // owns it anyway, so the exemption is redundant there rather than wrong,
+    // and tracking every key keeps the rule "a prefill is always carried".
+    prefilledRelations.value.add(relType)
     for (const target of targets) {
       if (!relations.value[relType].includes(target)) {
         relations.value[relType].push(target)
@@ -1025,6 +1047,12 @@ function applyEmbeddedPrefill() {
     const types = pickerTypes.value[key] ?? new Map<string, string>()
     for (const peer of peers) types.set(peer.id, peer.type)
     pickerTypes.value[key] = types
+    // Exempt from the ownership filter (BUG-KQSOJ2), for the reason the comment
+    // above gives: a duplicate deliberately carries relations this form does
+    // not render. They are fully typed here, so they were written before the
+    // filter existed — dropping them now would silently narrow what Duplicate
+    // copies, which is a behaviour change rather than a fix.
+    prefilledRelations.value.add(key)
   }
 
   routePrefilledCardRelations(prefill.relations)
@@ -1413,6 +1441,57 @@ function pruneWizardHiddenRelations(rels: Record<string, string[]>): Record<stri
   )
 }
 
+/**
+ * Relation keys a prefill channel seeded, which the ownership filter must keep
+ * even when no field on this form names them (BUG-KQSOJ2).
+ *
+ * There are TWO independent channels and both must be covered:
+ * `link_relation`/`link_peer` (the create button's pre-link) and `rel.<name>`
+ * query params. Neither is constrained to a relation the form renders.
+ *
+ * Carrying an unowned prefill is deliberate. Its edge is the caller's explicit
+ * instruction, so dropping it would write nothing and say nothing — the exact
+ * "create succeeds, section still empty, looks like a stale page" failure the
+ * post-condition check below exists to catch. Kept here, an untypeable prefill
+ * still fails loudly instead.
+ */
+function prefilledRelationKeys(): Set<string> | undefined {
+  const keys = new Set(prefilledRelations.value)
+  if (linkParams.value?.as === 'to') keys.add(linkParams.value.relation)
+  return keys.size > 0 ? keys : undefined
+}
+
+// Error text for a relations payload that cannot be typed.
+//
+// Names the offending relation rather than saying only "some related entities":
+// the operator reading this is the one who can fix it, and the old wording sent
+// them to a reload that could not help. `lead` distinguishes the two call sites
+// ("Save aborted" vs autosave's "Relation changes were not saved") without
+// duplicating the rest of the sentence.
+//
+// The remedy differs by cause, so the message must too. A relation this form
+// RENDERS normally gets its types from the candidate load, so a reload is
+// genuine advice. A relation carried only as a prefill (`rel.` param or a
+// create button's pre-link) has no field to load anything, so a reload changes
+// nothing — that one is a config problem, and saying "reload" would be
+// confidently wrong.
+function relationTypeErrorMessage(
+  filteredRelations: Record<string, string[]>,
+  lead: string
+): string {
+  const bad = untypedRelationKeys(filteredRelations, pickerTypes.value)
+  const which = bad.length > 0 ? ` for "${bad.join('", "')}"` : ''
+  const owned = ownedRelationKeys(allFields.value)
+  const anyRendered = bad.length === 0 || bad.some((rel) => owned.has(rel))
+  const remedy = anyRendered
+    ? `Reload the form and try again; if it persists, ask your operator to check ` +
+      `this form's relation fields.`
+    : `This form has no field for it, so it arrived as a pre-filled link. Ask ` +
+      `your operator to check the originating create button's section config ` +
+      `against this form.`
+  return `${lead}: could not resolve the entity type of every related item${which}. ${remedy}`
+}
+
 // Property keys made required right now by a matching `required_when`.
 function requiredWhenProps(scope: FormFieldOrRelation[]): Set<string> {
   const req = new Set<string>()
@@ -1542,12 +1621,32 @@ async function handleSubmit(mode: SubmitMode = 'navigate') {
     // Card-managed relations are not put into the legacy
     // `filteredRelations` IDs-only map — they're delivered through
     // pendingCardChanges and the unified PATCH-with-relations shape.
+    // `allFields`, not `fields`: whether an edge is card-DELIVERED is a
+    // property of the form config, not of what affordances currently show —
+    // same reasoning as routePrefilledCardRelations. Reading the visible set
+    // here would let an affordance-hidden card relation escape this exclusion
+    // and reach the payload as a stale full-replace.
     const cardRelations = new Set(
-      fields.value.filter((f) => f.relation && f.widget === 'cards').map((f) => f.relation!)
+      allFields.value.filter((f) => f.relation && f.widget === 'cards').map((f) => f.relation!)
     )
-    // Drop relations under a condition-hidden branch (mirrors property pruning),
-    // then exclude card-managed relations (delivered via pendingCardChanges).
-    const prunedRelations = pruneWizardHiddenRelations(relations.value)
+    const inverseByRelation = new Map<string, string>()
+    for (const f of allFields.value) {
+      if (!f.relation) continue
+      const inverse = schemaStore.getInverseName(f.relation)
+      if (inverse) inverseByRelation.set(f.relation, inverse)
+    }
+    // Drop relations this form does not own (BUG-KQSOJ2) — `relations.value` is
+    // seeded from the entity GET, which carries every relation the entity has,
+    // not just the rendered ones. `allFields`, not `fields`: ownership is a
+    // property of the config, so an affordance-hidden relation still belongs to
+    // this form.
+    const owned = ownedRelationKeys(allFields.value)
+    const prefilled = prefilledRelationKeys()
+    // Then drop relations under a condition-hidden branch (mirrors property
+    // pruning), then card-managed ones (delivered via pendingCardChanges).
+    const prunedRelations = pruneWizardHiddenRelations(
+      filterOwnedRelations(relations.value, owned, prefilled)
+    )
     const filteredRelations: Record<string, string[]> = {}
     for (const [rel, ids] of Object.entries(prunedRelations)) {
       if (!cardRelations.has(rel)) {
@@ -1560,22 +1659,16 @@ async function handleSubmit(mode: SubmitMode = 'navigate') {
     // card edits already carry per-edge meta. Incoming-suffix entries
     // become inverse-named body keys via the inverseByRelation lookup
     // (TKT-GFQK).
-    const inverseByRelation = new Map<string, string>()
-    for (const f of fields.value) {
-      if (!f.relation) continue
-      const inverse = schemaStore.getInverseName(f.relation)
-      if (inverse) inverseByRelation.set(f.relation, inverse)
-    }
     const modernRelations = buildRelationsPatch(pendingCardChanges.value, inverseByRelation)
     const reshapedPickers = reshapeLegacyToModern(filteredRelations, pickerTypes.value)
     if (!reshapedPickers) {
-      // Pathological form — no resolved type for some picker target,
-      // so we cannot emit a modern resource identifier. Abort the save
-      // and tell the user to reload (the type comes from backend Step 0
-      // and is normally always present).
-      uiStore.error(
-        'Some related entities have unknown types. Save aborted; reload the form and try again.'
-      )
+      // A target with no resolved type. Ownership filtering above removed the
+      // common cause (an unrendered relation from the entity GET), leaving two
+      // reachable cases, which relationTypeErrorMessage tells apart: a field
+      // this form renders failed to type one of its own targets (a reload may
+      // help), or a prefilled relation with no field here carried a peer whose
+      // type nothing could resolve (a config problem — a reload will not help).
+      uiStore.error(relationTypeErrorMessage(filteredRelations, 'Save aborted'))
       // Drop the outgoing card-edit Map entries so they aren't
       // mistakenly cleared on success below.
       for (const key of Array.from(pendingCardChanges.value.keys())) {
@@ -2088,16 +2181,24 @@ function buildAutoSaveRelationsBody(): ModernRelationsField | null {
   const inverseByRelation = new Map<string, string>()
   const cardRelations = new Set<string>()
   if (formConfig.value) {
-    for (const f of fields.value) {
+    // `allFields`, not `fields`: ownership is a property of the config, so an
+    // affordance-hidden relation still belongs to this form and must not be
+    // treated as foreign (and silently dropped) while it is hidden.
+    for (const f of allFields.value) {
       if (!f.relation) continue
       const inv = schemaStore.getInverseName(f.relation)
       if (inv) inverseByRelation.set(f.relation, inv)
       if (f.widget === 'cards') cardRelations.add(f.relation)
     }
   }
-  // Legacy picker edits — non-card relations from `relations.value`.
+  // Legacy picker edits — non-card relations this form owns. The ownership
+  // filter (BUG-KQSOJ2) drops keys the entity GET carried but no outgoing field
+  // renders; without it one untyped foreign key aborts the whole relations
+  // PATCH, including the edit the user just made. Autosave is edit-mode only,
+  // so there is no `link_as` prefill to exempt here.
+  const owned = ownedRelationKeys(allFields.value)
   const filteredRelations: Record<string, string[]> = {}
-  for (const [rel, ids] of Object.entries(relations.value)) {
+  for (const [rel, ids] of Object.entries(filterOwnedRelations(relations.value, owned))) {
     if (cardRelations.has(rel)) continue
     filteredRelations[rel] = ids
   }
@@ -2109,12 +2210,10 @@ function buildAutoSaveRelationsBody(): ModernRelationsField | null {
   // shape_mixed 400 otherwise).
   const reshaped = hasLegacy ? reshapeLegacyToModern(filteredRelations, pickerTypes.value) : {}
   if (reshaped === null) {
-    // Pathological: a picker target without a known type. Surface
-    // and skip — explicit Save in create mode handles this case;
-    // autosave is best-effort.
-    uiStore.error(
-      'Some related entities have unknown types; relation changes were not saved. Reload the form and try again.'
-    )
+    // A rendered picker target without a known type. Surface and skip —
+    // autosave is best-effort. Ownership filtering above already removed the
+    // unrendered-relation cause, so this is a genuine picker gap.
+    uiStore.error(relationTypeErrorMessage(filteredRelations, 'Relation changes were not saved'))
     return null
   }
   return { ...reshaped, ...modernCards }
