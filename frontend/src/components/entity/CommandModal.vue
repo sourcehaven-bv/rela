@@ -19,7 +19,7 @@ const showModal = ref(false)
 useModalStack(showModal)
 const activeCommand = ref<Command | null>(null)
 const running = ref(false)
-const output = ref<Array<{ type: 'text' | 'file'; text?: string; path?: string; label?: string }>>([])
+const output = ref<Array<{ type: 'text' | 'file'; text?: string; token?: string; label?: string }>>([])
 const success = ref<boolean | null>(null)
 
 const { confirm } = useConfirm()
@@ -72,7 +72,7 @@ async function runCommand(cmd: Command) {
           currentEvent = line.substring(7).trim()
         } else if (line.startsWith('data: ')) {
           const data = line.substring(6)
-          processSSEEvent(currentEvent, data, cmd)
+          processSSEEvent(currentEvent, data)
           currentEvent = 'message'
         }
       }
@@ -90,7 +90,7 @@ async function runCommand(cmd: Command) {
   }
 }
 
-function processSSEEvent(eventType: string, rawData: string, cmd: Command) {
+function processSSEEvent(eventType: string, rawData: string) {
   try {
     const data = JSON.parse(rawData)
     switch (eventType) {
@@ -99,16 +99,15 @@ function processSSEEvent(eventType: string, rawData: string, cmd: Command) {
         output.value.push({ type: 'text', text: data.text || '' })
         break
       case 'file':
+        // The server sends an opaque download token, never a path: the file
+        // lives on the server, so only a download is meaningful to us.
+        // A token may be absent when the server declined to serve the file
+        // (outside the project root) — we still list it, without a link.
         output.value.push({
           type: 'file',
-          path: data.path,
-          label: data.label || data.path.split('/').pop() || 'File',
+          token: data.token,
+          label: data.label || 'File',
         })
-        if (cmd.auto_open !== false && data.path) {
-          fetch(apiUrl(`/api/open-file?path=${encodeURIComponent(data.path)}&action=open`), {
-            method: 'POST',
-          })
-        }
         break
       case 'error':
         output.value.push({ type: 'text', text: `Error: ${data.text || 'Command error'}` })
@@ -125,12 +124,8 @@ function processSSEEvent(eventType: string, rawData: string, cmd: Command) {
   }
 }
 
-function openFile(path: string) {
-  fetch(apiUrl(`/api/open-file?path=${encodeURIComponent(path)}&action=open`), { method: 'POST' })
-}
-
-function revealFile(path: string) {
-  fetch(apiUrl(`/api/open-file?path=${encodeURIComponent(path)}&action=reveal`), { method: 'POST' })
+function downloadUrl(token: string) {
+  return apiUrl(`/api/command-file/${encodeURIComponent(token)}`)
 }
 
 function close() {
@@ -162,8 +157,12 @@ defineExpose({ runCommand })
           <div v-else-if="item.type === 'file'" class="output-file">
             <span class="file-icon">📄</span>
             <span class="file-label">{{ item.label }}</span>
-            <button class="file-btn" @click="openFile(item.path!)">Open</button>
-            <button class="file-btn" @click="revealFile(item.path!)">Reveal</button>
+            <a
+              v-if="item.token"
+              class="file-btn"
+              :href="downloadUrl(item.token)"
+              :download="item.label"
+            >Download</a>
           </div>
         </template>
       </div>
@@ -270,6 +269,7 @@ defineExpose({ runCommand })
   font-size: 12px;
   cursor: pointer;
   transition: background 0.15s;
+  text-decoration: none;
 }
 
 .file-btn:hover {

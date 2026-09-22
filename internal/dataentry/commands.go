@@ -6,14 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"maps"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -37,12 +36,14 @@ const commandOutputPrefix = "::rela::"
 const cancelGrace = 3 * time.Second
 
 // ResolvedCommand is a command that has been matched to a specific page context.
+//
+// Field-for-field convertible to [v1.Command] (handleV1Commands does exactly
+// that conversion), so the two must be changed together.
 type ResolvedCommand struct {
-	ID       string
-	Label    string
-	Confirm  string
-	Context  string
-	AutoOpen *bool
+	ID      string
+	Label   string
+	Confirm string
+	Context string
 }
 
 // commandDenyReason explains why a command may not run. It is deliberately
@@ -154,11 +155,10 @@ func (h *commandHandler) resolveCommands(
 		}
 		if authorizeCommand(ctx, aclImpl, cmd) {
 			result = append(result, ResolvedCommand{
-				ID:       id,
-				Label:    cmd.Label,
-				Confirm:  cmd.Confirm,
-				Context:  cmd.Context,
-				AutoOpen: cmd.AutoOpen,
+				ID:      id,
+				Label:   cmd.Label,
+				Confirm: cmd.Confirm,
+				Context: cmd.Context,
 			})
 		}
 	}
@@ -387,12 +387,24 @@ func (h *commandHandler) projectInfo() commandProjectInfo {
 
 // --- Protocol parser ---
 
-// CommandMessage is a structured message parsed from a command's stdout.
+// CommandMessage is a structured message parsed from a command's stdout, and
+// also the shape written back out as an SSE event.
+//
+// The two directions are not identical for `file` messages: a script supplies
+// Path, the server replaces it with Token, and the outbound payload carries no
+// Path at all (see [commandHandler.mintFileToken]). Path keeps `omitempty` so
+// an emitted message simply omits it — the raw server path must not reach the
+// browser, which is what the token exists to prevent.
 type CommandMessage struct {
-	Type       string `json:"type"`
-	Text       string `json:"text,omitempty"`
-	Level      string `json:"level,omitempty"`
-	Path       string `json:"path,omitempty"`
+	Type  string `json:"type"`
+	Text  string `json:"text,omitempty"`
+	Level string `json:"level,omitempty"`
+	// Path is INBOUND ONLY: the location a script reports for a `file`
+	// message. Never serialized back to the client.
+	Path string `json:"path,omitempty"`
+	// Token is OUTBOUND ONLY: the opaque handle the browser presents to
+	// /api/command-file/ to download the file Path named.
+	Token      string `json:"token,omitempty"`
 	Label      string `json:"label,omitempty"`
 	Action     string `json:"action,omitempty"`
 	ID         string `json:"id,omitempty"`
@@ -468,6 +480,15 @@ func (h *commandHandler) handleCommandExec(w http.ResponseWriter, r *http.Reques
 	if execID == "" {
 		execID = fmt.Sprintf("cmd-%d", time.Now().UnixNano())
 	}
+
+	// A SECOND, server-minted key for this run, used only to group its download
+	// tokens. Deliberately not execID: that one is client-supplied (it has to
+	// be, so the client can address /api/command-cancel/), and a caller who
+	// reuses another run's id would otherwise reach into that run's token group
+	// and start its expiry clock early. This is the same hazard runningCommands
+	// records an `owner` for (RR-YZV7SY); here there is nothing to authorize
+	// against, so the key is simply not the client's to name.
+	runKey := newRunKey()
 
 	// Build stdin JSON based on context.
 	var input *commandInput
@@ -607,6 +628,9 @@ func (h *commandHandler) handleCommandExec(w http.ResponseWriter, r *http.Reques
 		owner: principal.From(r.Context()),
 	})
 	defer runningCommands.Delete(execID)
+	// Start the download tokens' expiry clock when the run ends. Not a delete:
+	// the user clicks Download after the file is reported (TKT-93FUCV).
+	defer h.files.release(runKey)
 
 	// Capture stderr in background.
 	var stderrBuf strings.Builder
@@ -625,6 +649,9 @@ func (h *commandHandler) handleCommandExec(w http.ResponseWriter, r *http.Reques
 	for scanner.Scan() {
 		line := scanner.Text()
 		msg := parseCommandOutput(line)
+		if msg.Type == "file" {
+			msg = h.mintFileToken(runKey, commandID, cmd, msg)
+		}
 		data, _ := json.Marshal(msg)
 		writeSSEEvent(w, flusher, msg.Type, string(data))
 	}
@@ -693,163 +720,125 @@ func (h *commandHandler) handleCommandCancel(w http.ResponseWriter, r *http.Requ
 	w.WriteHeader(http.StatusOK)
 }
 
-// handleOpenFile handles POST /api/open-file to open or reveal files.
+// mintFileToken converts a `file` message from a script into one the browser
+// can act on: the raw server path is replaced by an opaque download token.
 //
-// coverage-ignore-func: requires OS interaction
-func (h *commandHandler) handleOpenFile(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
+// Two things happen here, both load-bearing (TKT-93FUCV):
+//
+//   - The path is containment-checked ONCE, now, while the project root is in
+//     hand. Everything downstream works from the resolved path stored under the
+//     token, so no later step re-derives a path from anything a client said.
+//   - The token is bound to cmd, the command this run executed, so the download
+//     can re-authorize the same way exec did.
+//
+// A path that fails containment (or does not exist) yields a file message with
+// no token. The UI renders the label without a Download button, which is the
+// honest outcome: the script named something we will not serve. It is NOT an
+// error event — a script writing a file outside the project is misconfigured,
+// not failed, and failing the whole run would be a worse trade.
+//
+// The server path is dropped either way. It is meaningless to a remote user and
+// naming it in the payload is how the old launcher grew its arbitrary-path hole.
+func (h *commandHandler) mintFileToken(
+	runKey, commandID string, cmd CommandConfig, msg CommandMessage,
+) CommandMessage {
+	label := msg.Label
+	if label == "" {
+		label = filepath.Base(msg.Path)
+	}
+
+	resolved, err := containProjectPath(h.projectRoot(), msg.Path)
+	if err != nil {
+		slog.Warn("dataentry: command file not downloadable",
+			"err", err, "command", commandID, "run", runKey)
+		return CommandMessage{Type: msg.Type, Label: label}
+	}
+
+	// Regular files only. Containment proves WHERE the path is, not WHAT it is,
+	// and a directory opens successfully — so without this a directory would
+	// mint a token, commit the download headers, and then fail the copy, giving
+	// the user a 200 and an empty file. Checked here rather than at download so
+	// the operator gets the same warning as any other unusable path, and the
+	// download path stays a straight read.
+	info, err := os.Stat(resolved.abs)
+	if err != nil || !info.Mode().IsRegular() {
+		slog.Warn("dataentry: command file is not a regular file",
+			"err", err, "command", commandID, "run", runKey)
+		return CommandMessage{Type: msg.Type, Label: label}
+	}
+
+	token, err := h.files.mint(runKey, resolved, label, cmd)
+	if err != nil {
+		// Only reachable if crypto/rand fails, which means the process is in
+		// serious trouble — Error, not Warn. The cases above are operator
+		// misconfiguration; this one is not.
+		slog.Error("dataentry: minting command file token failed",
+			"err", err, "command", commandID, "run", runKey)
+		return CommandMessage{Type: msg.Type, Label: label}
+	}
+	return CommandMessage{Type: msg.Type, Label: label, Token: token}
+}
+
+// handleCommandFile handles GET /api/command-file/{token}, streaming a file a
+// command run produced.
+//
+// This replaced POST /api/open-file, which ran an OS launcher (open/xdg-open/
+// explorer) on the SERVER. That was incoherent anywhere but a desktop install:
+// on a headless deployment it silently no-opped, and had it worked it would
+// have opened the file on the server rather than for the user who asked.
+//
+// The authorization model is the point of the route, not an addition to it:
+//
+//   - The caller presents a TOKEN, never a path. A path parameter would be the
+//     same arbitrary-server-read the launcher was, in a politer wrapper.
+//   - Holding the token is not enough. authorizeCommand re-runs against the
+//     LIVE ACL on every download, so a token stops working as soon as the grant
+//     that minted it goes away — a --read-only restart, a revoked permission.
+//     Validating only at mint time would let the capability outlive the policy.
+//
+// Unknown, expired and unauthorized all return 404, matching the attachment
+// handler's convention that hidden and nonexistent are indistinguishable. A 403
+// here would confirm that a token is real and names a file, to a caller who may
+// not have it.
+func (h *commandHandler) handleCommandFile(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	filePath := r.URL.Query().Get("path")
-	action := r.URL.Query().Get("action")
-	if filePath == "" {
-		http.Error(w, "path is required", http.StatusBadRequest)
+	token := strings.TrimPrefix(r.URL.Path, "/api/command-file/")
+	entry, ok := h.files.lookup(token)
+	if !ok {
+		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
 
-	resolved, err := containedProjectPath(h.projectRoot(), filePath)
-	switch {
-	case errors.Is(err, errPathNotFound):
-		http.Error(w, "file not found", http.StatusNotFound)
-		return
-	case err != nil:
-		http.Error(w, "path outside project", http.StatusForbidden)
-		return
-	}
-	filePath = resolved
-
-	// Fire-and-forget launcher: MUST outlive the HTTP handler. If we used
-	// r.Context() here, xdg-open on Linux would be killed before it could
-	// dispatch to the real handler (gedit, nautilus, etc. don't daemonize
-	// and die with their parent).
-	cmd := openFileCommand(runtime.GOOS, action, filePath)
-	// coverage-ignore-start: external-tool: launches the OS file opener (xdg-open/open); unsupported-platform is
-	// unreachable on the test GOOS and
-	// Start/Wait spawn a real process (project marks it coverage-ignore)
-	if cmd == nil {
-		http.Error(w, "Unsupported platform", http.StatusInternalServerError)
+	// The re-check. Same function, same config the run was authorized with.
+	if !authorizeCommand(r.Context(), h.currentACL(), entry.cmd) {
+		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
 
-	if err := cmd.Start(); err != nil {
-		http.Error(w, "Failed to open file: "+err.Error(), http.StatusInternalServerError)
+	f, err := os.Open(entry.path.abs)
+	if err != nil {
+		// The script may have cleaned up after itself, or written to a temp
+		// location that has since gone. Don't echo the path or the OS error.
+		slog.Warn("dataentry: opening command file failed", "err", err)
+		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
-	go func() { _ = cmd.Wait() }() // reap zombie
-	w.WriteHeader(http.StatusOK)
-	// coverage-ignore-end
-}
+	defer f.Close()
 
-// openFileCommand builds the OS-specific launcher for handleOpenFile.
-// Returned command has no context binding — the launcher process must
-// survive the HTTP handler's return (see handleOpenFile for rationale).
-//
-// Security: the program name is a compile-time constant on every branch and
-// filePath is passed as a distinct argv element, so no shell parses it — the
-// only injection shape left is argument injection (a path read as a flag),
-// which the `--` separator below closes. filePath has already been through
-// containedProjectPath in the caller: it is absolute, symlink-resolved, and
-// proven to be inside the project root, so it always starts with `/` (or a
-// drive letter on Windows) and can never be NUL-bearing.
-func openFileCommand(goos, action, filePath string) *exec.Cmd {
-	switch goos {
-	case "darwin":
-		if action == "reveal" {
-			// #nosec G702 -- argv array, no shell; constant program `open`.
-			// filePath is containedProjectPath-validated and `--` stops flag parsing.
-			return exec.Command("open", "-R", "--", filePath) //nolint:noctx // fire-and-forget launcher
-		}
-		// #nosec G702 -- argv array, no shell; see function doc.
-		return exec.Command("open", "--", filePath) //nolint:noctx // fire-and-forget launcher
-	case "linux":
-		if action == "reveal" {
-			// #nosec G702 -- argv array, no shell; see function doc.
-			return exec.Command("xdg-open", filepath.Dir(filePath)) //nolint:noctx // fire-and-forget launcher
-		}
-		// #nosec G702 -- argv array, no shell; see function doc.
-		return exec.Command("xdg-open", filePath) //nolint:noctx // fire-and-forget launcher
-	case "windows":
-		if action == "reveal" {
-			// #nosec G702 -- argv array, no shell; constant program `explorer`.
-			return exec.Command("explorer", "/select,", filePath) //nolint:noctx // fire-and-forget launcher
-		}
-		// #nosec G702 -- `cmd /c start` with an explicit empty title argument, so
-		// filePath lands in the path slot rather than being read as the title.
-		// filePath is containedProjectPath-validated (absolute, inside the project
-		// root, no NUL). Windows is not a supported data-entry server platform;
-		// this branch exists for the desktop build.
-		return exec.Command("cmd", "/c", "start", "", filePath) //nolint:noctx // fire-and-forget launcher
-	default:
-		return nil
-	}
-}
+	setHardenedDownloadHeaders(w.Header(), contentTypeForFilename(entry.label), entry.label)
+	// no-store is set here rather than in the shared helper because the three
+	// download endpoints genuinely differ: attachments are stable stored
+	// content and set no Cache-Control at all, while these bytes and an
+	// export's are produced per request. Same line, same reason, as export.go.
+	w.Header().Set("Cache-Control", "no-store")
 
-// handleOpenURL handles POST /api/open-url to open URLs in the default browser.
-//
-// coverage-ignore-func: requires OS interaction
-func (h *commandHandler) handleOpenURL(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	rawURL := r.URL.Query().Get("url")
-	if rawURL == "" {
-		http.Error(w, "url is required", http.StatusBadRequest)
-		return
-	}
-	if err := validateOpenURL(rawURL); err != nil {
-		http.Error(w, "Invalid URL scheme", http.StatusBadRequest)
-		return
-	}
-
-	// Fire-and-forget launcher: see handleOpenFile for why we can't bind to r.Context().
-	cmd := openURLCommand(runtime.GOOS, rawURL)
-	// coverage-ignore-start: external-tool: launches the OS URL opener (xdg-open/open); unsupported-platform is
-	// unreachable on the test GOOS and
-	// Start/Wait spawn a real process (project marks it coverage-ignore)
-	if cmd == nil {
-		http.Error(w, "Unsupported platform", http.StatusInternalServerError)
-		return
-	}
-
-	if err := cmd.Start(); err != nil {
-		http.Error(w, "Failed to open URL: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	go func() { _ = cmd.Wait() }() // reap zombie
-	w.WriteHeader(http.StatusOK)
-	// coverage-ignore-end
-}
-
-// openURLCommand builds the OS-specific URL launcher. Returned command is
-// deliberately unbound from any HTTP request context — see handleOpenURL.
-//
-// Security: the program name is a compile-time constant on every branch and
-// rawURL is a distinct argv element, so no shell parses it. rawURL has already
-// passed validateOpenURL in the caller, which parses it with net/url and
-// admits only the http, https, and mailto schemes — so it always begins with a
-// scheme name, never a `-`, closing the argument-injection shape. The `--`
-// separator below makes that structural rather than a consequence of the
-// scheme allow-list.
-func openURLCommand(goos, rawURL string) *exec.Cmd {
-	switch goos {
-	case "darwin":
-		// #nosec G702 -- argv array, no shell; validateOpenURL-restricted scheme
-		// and `--` stops flag parsing. See function doc.
-		return exec.Command("open", "--", rawURL) //nolint:noctx // fire-and-forget launcher
-	case "linux":
-		// #nosec G702 -- argv array, no shell; see function doc.
-		return exec.Command("xdg-open", rawURL) //nolint:noctx // fire-and-forget launcher
-	case "windows":
-		// #nosec G702 -- `cmd /c start` with an explicit empty title argument, so
-		// rawURL lands in the target slot rather than being read as the title.
-		// Scheme is restricted to http/https/mailto by validateOpenURL.
-		return exec.Command("cmd", "/c", "start", "", rawURL) //nolint:noctx // fire-and-forget launcher
-	default:
-		return nil
+	if _, err := io.Copy(w, f); err != nil {
+		// Headers are already written; the status can't change now.
+		slog.Warn("dataentry: streaming command file failed", "err", err)
 	}
 }
 
@@ -864,15 +853,17 @@ var errPathOutsideProject = errors.New("path outside project")
 var errPathNotFound = errors.New("path not found")
 
 // containedProjectPath cleans, resolves, and validates that filePath lives
-// inside projectRoot. The returned path has absolute, symlink-resolved form
-// suitable for passing to OS commands.
+// inside projectRoot. The returned path is absolute and symlink-resolved.
 //
-// A small TOCTOU window remains: between this check and the synchronous
-// invocation of the OS open command, an attacker with local FS write
-// privileges could swap a contained path for a symlink. The local
-// filesystem is the trust boundary; we accept this residual risk because
-// portable mitigation (file descriptor passing through `open`/`xdg-open`/
-// `explorer`) does not exist.
+// A TOCTOU window remains, and TKT-93FUCV widened it: the check runs when a
+// download token is minted, but the file is opened later, when someone clicks
+// Download. An attacker with local write access to the project directory could
+// swap a contained path for a symlink in between. The local filesystem is the
+// trust boundary here — someone who can write into the project root can also
+// edit the `commands:` config that decides what runs at all — so this is
+// accepted rather than mitigated. Closing it would mean holding an open file
+// descriptor from mint to download, which means holding one per emitted file
+// for the token's whole lifetime.
 func containedProjectPath(projectRoot, filePath string) (string, error) {
 	if strings.ContainsRune(filePath, 0) {
 		return "", errPathOutsideProject
@@ -921,21 +912,6 @@ func containedProjectPath(projectRoot, filePath string) (string, error) {
 		return resolved, nil
 	}
 	return "", errPathOutsideProject
-}
-
-// validateOpenURL allows only safe URL schemes for /api/open-url. Without
-// this, an attacker could pass file:// (file disclosure) or javascript:
-// (XSS in some default handlers).
-func validateOpenURL(raw string) error {
-	u, err := url.Parse(raw)
-	if err != nil {
-		return err
-	}
-	switch strings.ToLower(u.Scheme) {
-	case "http", "https", "mailto":
-		return nil
-	}
-	return errors.New("disallowed url scheme")
 }
 
 func (h *commandHandler) buildCommandEnv(cmd CommandConfig, input *commandInput) []string {
