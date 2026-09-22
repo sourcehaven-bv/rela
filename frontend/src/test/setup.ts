@@ -79,15 +79,19 @@ config.global.stubs = {
   RouterView: true,
 }
 
-// Mock ResizeObserver
-vi.stubGlobal(
-  'ResizeObserver',
-  vi.fn(() => ({
-    observe: vi.fn(),
-    unobserve: vi.fn(),
-    disconnect: vi.fn(),
-  }))
-)
+// Mock ResizeObserver.
+//
+// A class, not `vi.fn(() => ({...}))`. An arrow function has no [[Construct]],
+// so callers that legitimately say `new ResizeObserver(...)` got "is not a
+// constructor" — floating-ui's `autoUpdate` does exactly that, which surfaced
+// as an unhandled rejection the moment a floating UI element was positioned in
+// a test.
+class MockResizeObserver {
+  observe = vi.fn()
+  unobserve = vi.fn()
+  disconnect = vi.fn()
+}
+vi.stubGlobal('ResizeObserver', MockResizeObserver)
 
 // Mock EventSource for SSE tests
 class MockEventSource {
