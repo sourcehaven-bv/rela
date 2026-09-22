@@ -850,6 +850,7 @@ func NewApp(
 	fieldResolver FieldVerdictResolver,
 	auditSink audit.Audit,
 	stateKV state.KV,
+	commandAuthz commandAuthorizer,
 ) (*App, error) {
 	// Reject nil required collaborators up front rather than letting a
 	// downstream handler panic on the first request that exercises them.
@@ -882,6 +883,14 @@ func NewApp(
 	}
 	if stateKV == nil {
 		return nil, errors.New("dataentry.NewApp: stateKV is required (wire appbuild's Services.State())")
+	}
+	if commandAuthz == nil {
+		// Fail closed on a wiring omission: a missing command authorizer must
+		// not default to "allow shell exec". Callers pass an explicit impl —
+		// SelectCommandAuthorizer(...) in cmd/rela-server, or
+		// UngatedCommandAuthorizer() for the in-process desktop/docscapture servers.
+		return nil, errors.New("dataentry.NewApp: commandAuthz is required " +
+			"(use SelectCommandAuthorizer, or UngatedCommandAuthorizer() for a loopback/in-process server)")
 	}
 	// Construct reconstructible services from the primitives.
 	cfgLoader := config.NewFSLoader(fs, paths.Root)
@@ -1139,8 +1148,11 @@ func NewApp(
 		// closure, and App is at its plimsoll method load line.
 		schemaFile:  func() string { return filepath.Base(app.paths.SchemaPath) },
 		executeView: app.views.executeView,
-		// Late-bound: tests reassign app.acl after construction.
-		aclImpl:  func() acl.ACL { return app.acl },
+		// Chosen once at the wiring site from (ACL, bind, override) — see
+		// SelectCommandAuthorizer. Fixed for the process lifetime. Tests that
+		// need a different verdict assign app.commands.authz directly rather
+		// than reassigning app.acl (RR-CWBZVT).
+		authz:    commandAuthz,
 		files:    newCommandFileStore(),
 		redactor: appRedactor(app),
 	}

@@ -1388,20 +1388,35 @@ roles:
 The permission name is arbitrary; `command:<id>` is a readable convention, not
 a requirement.
 
-**Authorization is bimodal, by design:**
+**Authorization depends on the policy AND the bind, by design:**
 
-- **No `acl.yaml` configured** → every command runs. A project that has not
-  opted into access control behaves exactly as it did before this gating
-  existed.
 - **`acl.yaml` present** → a command runs only if its `permission:` is set and
   the principal holds it. A command with no `permission:` is **denied**: under a
   configured policy, an ungoverned shell-exec surface is treated as a
-  misconfiguration, not as an implicit grant.
-- **`--read-only`** → every command is denied, whatever the policy says.
+  misconfiguration, not as an implicit grant. The bind is irrelevant here.
+- **No `acl.yaml`, loopback bind** → every command runs. A local project that
+  has not opted into access control behaves exactly as it did before this gating
+  existed — the server host is the user's own machine.
+- **No `acl.yaml`, non-loopback bind** → command execution is **denied by
+  default**, because any client reaching the server could otherwise run an
+  arbitrary shell script unauthenticated. The operator restores it either by
+  adding an `acl.yaml` (and a `permission:` per command) or by opting in
+  explicitly with `--allow-unauthenticated-commands`
+  (`RELA_ALLOW_UNAUTHENTICATED_COMMANDS=1`) — for a single-user deployment
+  isolated at another layer only. See
+  [server-security.md](server-security.md#configured-commands-are-remote-code-execution-by-design).
+- **`--read-only`** → every command is denied, whatever the policy or bind says.
   Command execution is not an `acl.WriteRequest`, so `ReadOnlyACL` cannot deny
-  it through `AuthorizeWrite`; the command handler checks read-only mode
-  directly. Without that check, `--read-only` would not stop a command from
+  it through `AuthorizeWrite`; the wiring site installs a deny authorizer for
+  read-only directly. Without that, `--read-only` would not stop a command from
   mutating the project.
+
+The choice among these is made **once at startup** from `(acl.yaml, bind,
+--allow-unauthenticated-commands)`, not per request — the bind address is a
+deploy-time fact. This is why the read gate alone cannot decide: with no policy,
+the per-request read gate answers "permitted" for everything under both the open
+and read-only modes, so it cannot distinguish them. The startup decision is the
+distinguisher.
 
 Commands the principal cannot execute are filtered out of the command-resolution
 API, so their buttons do not render. Treat that as a UI affordance only — the

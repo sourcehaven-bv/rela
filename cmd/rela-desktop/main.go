@@ -446,6 +446,9 @@ func (d *Desktop) loadProject(dir string, keepExisting bool) string {
 		fieldResolver,
 		svc.Audit(),
 		svc.State(),
+		// Wails asset server, no network listener: the server host IS the
+		// user's machine, so commands run ungated like any local desktop app.
+		dataentry.UngatedCommandAuthorizer(),
 	)
 	if err != nil {
 		return d.failLoad(err)
