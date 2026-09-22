@@ -171,7 +171,7 @@ func TestAdopt_OccupiedDestinationWithDifferentContentIsRefused(t *testing.T) {
 	// Assert the COLLISION refusal specifically, not merely that something
 	// failed: without this the store's own duplicate-create error also names
 	// TSK-1, so the test would pass with the guard removed.
-	if !strings.Contains(err.Error(), "a row already exists there with different content") {
+	if !strings.Contains(err.Error(), "a row already exists at the destination with different content") {
 		t.Errorf("not the collision refusal: %v", err)
 	}
 	if !strings.Contains(err.Error(), "TSK-1") {
@@ -269,5 +269,45 @@ func TestAdopt_RejectsMissingCollaborators(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected a refusal for nil deps")
+	}
+}
+
+// The repair must carry a moved row's OUTGOING edges to the new face.
+//
+// adopt-face runs the same move as migrate_face (see
+// TestMigrateFace_CarriesOutgoingEdgesToTheNewFace for why deleting a face
+// takes its outgoing edges with it), so it inherits the same obligation. This
+// test exists because the two paths are only safe together by sharing
+// applyMoves — re-implementing the move here would silently destroy every
+// relation the repaired rows owned (BUG-TOX8U4).
+func TestAdopt_CarriesOutgoingEdgesToTheNewFace(t *testing.T) {
+	st := seedStore(t)
+	ctx := t.Context()
+
+	// seedStore links TSK-1 --assigned-to--> PER-1 from the bare face.
+	if _, err := Adopt(ctx, adoptDeps(t, st, "draft", "published"), AdoptRequest{
+		Entity:   "task",
+		Property: "status",
+		Mapping:  map[string]string{"open": "draft", "wip": "draft", "done": "published"},
+		Apply:    true,
+	}); err != nil {
+		t.Fatalf("Adopt: %v", err)
+	}
+
+	var got []*entity.Relation
+	for rel, err := range st.ListRelations(ctx, store.RelationQuery{}) {
+		if err != nil {
+			t.Fatalf("list relations: %v", err)
+		}
+		got = append(got, rel)
+	}
+	if len(got) != 1 {
+		t.Fatalf("the edge must survive the repair, once: got %d relation(s): %+v", len(got), got)
+	}
+	// TSK-1's status is `open`, which the mapping sends to `draft`, so the edge
+	// follows its tail onto that face rather than staying behind.
+	if got[0].From != "TSK-1" || got[0].To != "PER-1" || string(got[0].FromFace) != "draft" {
+		t.Errorf("edge should be re-tailed on the destination face: %s@%q --%s--> %s",
+			got[0].From, got[0].FromFace, got[0].Type, got[0].To)
 	}
 }

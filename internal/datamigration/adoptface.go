@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/audit"
-	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -41,12 +40,6 @@ type faceAdoption struct {
 	mapping    map[string]string
 }
 
-// plannedMove is one row and the face it is bound for.
-type plannedMove struct {
-	e  *entity.Entity
-	to string
-}
-
 // adoptionPlan is the read-only half of an adoption: which rows move where,
 // and which were left behind with the reason why.
 //
@@ -54,7 +47,7 @@ type plannedMove struct {
 // apply minus the writes — the count an operator reviews is the count that
 // will move, not an estimate computed by a second implementation.
 type adoptionPlan struct {
-	moves    []plannedMove
+	moves    []faceMove
 	unmapped map[string]int
 }
 
@@ -87,7 +80,7 @@ func (a faceAdoption) plan(ctx context.Context, st store.Store) (*adoptionPlan, 
 			p.unmapped[v]++
 			continue
 		}
-		p.moves = append(p.moves, plannedMove{e: e, to: target})
+		p.moves = append(p.moves, faceMove{e: e, to: target})
 	}
 	return p, nil
 }
@@ -109,33 +102,14 @@ func (p *adoptionPlan) notes(property string) []string {
 
 // apply performs the moves.
 //
-// Create-then-delete, so a failure between the two leaves the row duplicated
-// rather than destroyed, and a re-run converges: a destination holding the
-// source's own content counts as already moved and only the source is removed.
-// Any OTHER row at the destination is a genuine collision between two distinct
-// states, so it is refused with the id named rather than silently overwriting
-// one of them.
+// Delegates to [applyMoves], which is also what the relocating migration steps
+// run: a face move is one behavior whichever operator action reached it, and
+// the properties that make it safe — the batched transaction around each
+// create-then-delete pair, and carrying the source row's outgoing edges across
+// so the delete does not destroy them (BUG-TOX8U4) — are not ones this path
+// may quietly do without.
 func (p *adoptionPlan) apply(ctx context.Context, st store.Store) error {
-	for _, m := range p.moves {
-		existing, err := st.GetEntityState(ctx, m.e.ID, entity.Face(m.to))
-		alreadyMoved := err == nil && existing != nil && sameContent(existing, m.e)
-		if err == nil && existing != nil && !alreadyMoved {
-			return fmt.Errorf(
-				"%s: cannot move to face %q — a row already exists there with different content; "+
-					"drop or merge it first, or this move would destroy one of the two", m.e.ID, m.to)
-		}
-		if !alreadyMoved {
-			moved := *m.e
-			moved.Face = entity.Face(m.to)
-			if err := st.CreateEntity(ctx, &moved); err != nil {
-				return fmt.Errorf("%s: create at face %q: %w", m.e.ID, m.to, err)
-			}
-		}
-		if _, err := st.DeleteEntityState(ctx, m.e.ID, m.e.Face); err != nil {
-			return fmt.Errorf("%s: remove the zero-coordinate row: %w", m.e.ID, err)
-		}
-	}
-	return nil
+	return applyMoves(ctx, st, p.moves)
 }
 
 // AdoptDeps are the collaborators [Adopt] needs.
