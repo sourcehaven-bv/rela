@@ -262,4 +262,25 @@ describe('DynamicForm — duplicate prefill', () => {
 
     expect(relationsBody(create)).toEqual({})
   })
+
+  // A Duplicate deliberately carries whatever the source entity had, including
+  // relation types this create form never renders — the peers arrive fully
+  // typed, so these edges were written before the ownership filter existed
+  // (BUG-KQSOJ2). Dropping them would silently narrow what "duplicate" means,
+  // which is a behaviour change rather than a fix, so the filter exempts them.
+  it('carries a prefilled relation the form does not render', async () => {
+    const { wrapper, create } = await mountWithPrefill({
+      properties: {},
+      content: '',
+      relations: { unrendered: [{ id: 'TKT-77', type: 'ticket' }] },
+    })
+
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(create).toHaveBeenCalledTimes(1)
+    expect(relationsBody(create).unrendered).toEqual({
+      data: [{ type: 'ticket', id: 'TKT-77' }],
+    })
+  })
 })
