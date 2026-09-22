@@ -438,8 +438,9 @@ Each entry in `fields:` configures one property input:
 ### The Markdown Body Editor
 
 When a form sets `body: true`, the entity's markdown content is edited in a
-WYSIWYG editor: headings, lists, tables, quotes and code blocks render as they
-will appear on the entity page rather than as markdown source.
+WYSIWYG editor: headings, lists, tables, quotes, links, dividers and code
+blocks render as they will appear on the entity page rather than as markdown
+source.
 
 **The file on disk stays markdown.** The editor parses the body when it opens
 and writes markdown back when you save. Opening an entity and saving it
@@ -448,8 +449,9 @@ would produce against what it read, and keeps the original bytes when the
 meaning is unchanged. Your formatting is not rewritten just because you looked
 at a page.
 
-**Toolbar.** Bold, italic, strikethrough and inline code; headings 1-3;
-bullet, numbered, task and quote blocks; code block; table. A button is
+**Toolbar.** Bold, italic, strikethrough, inline code and link; headings 1-3;
+bullet, numbered, task and quote blocks; code block; table; divider; undo and
+redo. A button is
 highlighted when the cursor is already inside that formatting, and pressing it
 again removes it. A button that cannot apply where the cursor is — a heading
 inside a list item, for instance — is greyed out rather than silently doing
@@ -466,6 +468,27 @@ usual `- [ ] open` and `- [x] done` lines.
 insert row above/below, insert column left/right, delete row, delete column,
 delete table. A GFM table must keep its header row and at least one body row,
 so the operations that would break that are disabled.
+
+**Links to the web.** Select some text and press the link button to give it a
+target; with no selection, the dialog asks for the text as well. Put the cursor
+in an existing link and a small panel appears below it showing the address,
+with Edit and Remove. The toolbar covers the same ground without a pointer:
+with the cursor in a link, the link button reopens the dialog to change the
+address, and a remove-link button appears beside it. Pasting a web address over
+selected text turns that text into a link rather than replacing it.
+
+Only `http`, `https` and `mailto` addresses are accepted, and anything else is
+refused with a message rather than saved. A bare host is completed for you —
+`example.com` becomes `https://example.com` — but a relative path like
+`/other/page` is refused, because an entity body is read on several surfaces
+that do not share a base URL, so a relative target has no stable meaning.
+A `mailto:` address keeps the address and drops any `?subject=` or `?bcc=`
+parameters.
+
+This applies to links you *create*. A link already in a file is left exactly as
+written, even if its address uses a scheme the editor would not accept — your
+stored content is never rewritten behind your back. Such a link is not
+clickable anywhere in rela.
 
 **Linking to another entity.** Type `@` followed by part of a title or ID to
 open a completion menu, then Enter or click to insert. The toolbar's
@@ -4111,7 +4134,7 @@ commands:
 | `available_on` | object | Restrict where the button appears (optional)           |
 | `confirm`      | string | Confirmation prompt before execution (optional)        |
 | `env`          | map    | Custom environment variables (optional)                |
-| `auto_open`    | bool   | Auto-open output files on completion (optional)        |
+| `auto_open`    | bool   | Inert; removed by `rela migrate` (see File Downloads)  |
 | `permission`   | string | ACL permission required to run this command (optional) |
 
 ### Authorization
@@ -4280,9 +4303,8 @@ JSON. Lines without the prefix are treated as log output.
 | ---------- | -------------------------------- | ------------------------------------- |
 | `message`  | Toast notification               | `text`, `level` (info/warning/error)  |
 | `error`    | Error toast                      | `text`                                |
-| `file`     | Open or reveal a file            | `path`, `label`, `action` (open/reveal) |
+| `file`     | Offer a file for download        | `path`, `label`                       |
 | `entity`   | Entity update notification       | `id`, `entity_type`, `action` (created/updated/deleted) |
-| `open`     | Open URL in browser              | `url`                                 |
 | `group`    | Start a collapsible group        | `label`                               |
 | `endgroup` | End the current group            | —                                     |
 
@@ -4290,33 +4312,39 @@ JSON. Lines without the prefix are treated as log output.
 
 ```bash
 echo '::rela::{"type":"group","label":"Generated Files"}'
-echo '::rela::{"type":"file","path":"/tmp/report.pdf","label":"PDF Report","action":"open"}'
-echo '::rela::{"type":"file","path":"/tmp/data.csv","label":"CSV Data","action":"reveal"}'
+echo '::rela::{"type":"file","path":"out/report.pdf","label":"PDF Report"}'
+echo '::rela::{"type":"file","path":"out/data.csv","label":"CSV Data"}'
 echo '::rela::{"type":"endgroup"}'
 echo '::rela::{"type":"message","text":"Done!","level":"info"}'
 ```
 
-### Auto-Open
+### File Downloads
 
-When `auto_open: true` is set on a command, all output files with `action: "open"` are
-automatically opened when the command completes successfully, and the toast is dismissed.
-This is useful for commands that produce a single output file where the extra click to
-open it would be redundant:
+A `file` message renders a **Download** button. Clicking it downloads the file
+through the server to the browser that ran the command.
 
-```yaml
-commands:
-  generate-pdf:
-    label: "Generate PDF"
-    script: |
-      PDF="/tmp/report-${RELA_ENTITY_ID}.pdf"
-      # ... generate PDF ...
-      echo "::rela::{\"type\":\"file\",\"path\":\"$PDF\",\"label\":\"Report\",\"action\":\"open\"}"
-    context: entity
-    auto_open: true
-```
+**The file must live inside the project root.** A relative `path` is resolved
+against it; an absolute path outside it is refused. A refused file is still
+listed, but without a download button — so write output somewhere under the
+project directory (`out/` above), not to `/tmp`.
 
-If the command fails or no files have `action: "open"`, the toast stays visible with
-the normal interactive buttons.
+`label` is what the user sees and the name the file is saved as. It defaults to
+the basename of `path`.
+
+The server never sends the file's path to the browser. It sends an opaque
+one-time token, and the download endpoint re-checks the command's
+`permission:` against the current policy on every request. A token therefore
+stops working when the permission is revoked or the server is restarted with
+`--read-only`, and it expires 30 minutes after its command finishes.
+
+> **Changed:** earlier versions ran an OS "open"/"reveal" launcher on the
+> machine hosting the server, and `auto_open: true` fired it automatically.
+> That only ever made sense for a desktop install — on a server it silently did
+> nothing, and had it worked it would have opened the file on the server rather
+> than for the user. Downloads replace both. The `auto_open` key is still
+> accepted so existing configs keep loading, but it has no effect and is no
+> longer sent to the browser. Run `rela migrate` to remove it from your
+> `data-entry.yaml`.
 
 ### Streaming and Cancellation
 
@@ -4610,11 +4638,10 @@ commands:
   generate-pdf:
     label: "Generate PDF"
     script: |
-      PDF="/tmp/ticket-${RELA_ENTITY_ID}.pdf"
+      PDF="out/ticket-${RELA_ENTITY_ID}.pdf"
       # ... generate PDF ...
-      echo "::rela::{\"type\":\"file\",\"path\":\"$PDF\",\"label\":\"Ticket PDF\",\"action\":\"open\"}"
+      echo "::rela::{\"type\":\"file\",\"path\":\"$PDF\",\"label\":\"Ticket PDF\"}"
     context: entity
-    auto_open: true
     available_on:
       entity_types: [ticket]
 

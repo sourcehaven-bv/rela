@@ -50,7 +50,7 @@ func TestRouterWalk_AllAPIRoutesReachHandlers(t *testing.T) {
 		{http.MethodGet, "/api/help/ticket", 0},
 		{http.MethodPost, "/api/command/nonexistent", 0},
 		{http.MethodPost, "/api/command-cancel/nonexistent", 0},
-		{http.MethodPost, "/api/open-file", 0},
+		{http.MethodGet, "/api/command-file/nonexistent", 0},
 		// git probes are any-status: their codes depend on whether the
 		// fixture wires gitOps, which is not this test's concern.
 		{http.MethodGet, "/api/git/status", 0},

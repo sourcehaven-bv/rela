@@ -25,7 +25,6 @@ data-entry SPA does. Without active defenses, a malicious page could:
 - Create / update / delete entities in your project via cross-origin
   `fetch` requests.
 - Trigger any configured shell command via `/api/command/`.
-- Open arbitrary local files via `/api/open-file`.
 - Pivot via DNS rebinding to bypass loopback assumptions.
 
 The threat model assumes:
@@ -96,19 +95,27 @@ back as `Access-Control-Allow-Origin` (which previously let any website
 subscribe to your live project events). They are protected by the same
 Origin allowlist as the rest of `/api`.
 
-### 5. Path containment in `/api/open-file`
+### 5. Command output is downloaded by token, not by path
 
-The `path` parameter is cleaned, made absolute, and resolved through any
-symlinks. Requests that resolve to a location outside the project root are
-rejected with `403`. Paths with NUL bytes are also rejected.
+A command that reports an output file does not hand the browser a path, and
+`/api/command-file/` does not accept one. The server keeps the file's
+resolved path in memory under an opaque, unguessable token and the client may
+only present that token.
 
-### 6. URL scheme allowlist in `/api/open-url`
+The path is cleaned, made absolute, and resolved through any symlinks when the
+token is minted; anything outside the project root, or containing a NUL byte,
+never gets a token at all.
 
-Only `http`, `https`, and `mailto` URLs are accepted. `file://`,
-`javascript:`, `data:`, and other potentially dangerous schemes are
-rejected.
+Presenting a valid token is not sufficient. Every download re-runs the same
+authorization check that command execution runs, against the **current**
+policy — so a token stops working as soon as the command's `permission:` is
+revoked or the server is restarted with `--read-only`. Tokens also expire 30
+minutes after their command finishes.
 
-### 7. Per-request timeouts
+Earlier versions instead exposed `/api/open-file`, which launched an OS file
+opener on the server host, and `/api/open-url`. Both are gone.
+
+### 6. Per-request timeouts
 
 `http.Server.ReadHeaderTimeout`, `ReadTimeout`, and `IdleTimeout` are set
 to bound resource use. `WriteTimeout` is intentionally `0` (unlimited):
@@ -505,20 +512,20 @@ passed `--allowed-origin http://localhost:5173`.
 The following risks are **not** fully mitigated by the defenses above. They
 are documented here so operators can make informed decisions.
 
-### TOCTOU window in `/api/open-file`
+### TOCTOU window on command file downloads
 
-There is a small time-of-check / time-of-use window between the path
-containment check and the synchronous invocation of the OS open command
-(macOS `open`, Linux `xdg-open`, Windows `explorer`). An attacker with
-local filesystem write access could swap a contained path for a symlink
-during that window.
+There is a time-of-check / time-of-use window between the containment check
+(when a download token is minted) and the file being opened (when someone
+clicks Download). An attacker with local filesystem write access could swap a
+contained path for a symlink during that window.
 
 This is an accepted residual because:
 
-- The local filesystem is the trust boundary (anything that can write
-  files in your project can already cause harm directly).
-- Portable mitigation (file-descriptor passing through `open`/`xdg-open`/
-  `explorer`) does not exist.
+- The local filesystem is the trust boundary. Anything that can write files
+  into your project can also edit the `commands:` configuration that decides
+  what runs in the first place.
+- Closing it would mean holding an open file descriptor for every reported
+  file, for as long as its token lives.
 
 ### No authentication *by default*
 

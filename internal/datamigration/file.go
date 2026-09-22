@@ -135,6 +135,11 @@ func ParseFile(name string, data []byte) (*File, error) {
 var resolvingSteps = map[string][]string{
 	"faces_introduced": {"migrate_face"},
 
+	// A swap has exactly one right answer and it is cheap to state, the same
+	// reason the face kinds are enforced: every stored edge points the wrong
+	// way, and reversing them is the only thing that can be meant.
+	"relation_endpoints_swapped": {"reverse_relation"},
+
 	// Deliberately unresolved (TKT-1YBNQJ). Faced → flat leaves rows at named
 	// faces that no longer exist while the type's single state is the zero
 	// coordinate none of them occupies. Resolving it means moving rows the
@@ -160,6 +165,22 @@ var resolvingSteps = map[string][]string{
 	"relation_symmetry_changed":      {},
 }
 
+// resolvingStep is a [Step] that can DISCHARGE a needs-migration delta.
+//
+// It reports the delta subject it answers, in the subject's own vocabulary:
+// an entity-shaped delta names a bare type ("task"), a relation-shaped one is
+// prefixed ("rel:blocks", see CompareShapes). Getting that string wrong is
+// invisible — the lookup simply misses and the file is refused for having no
+// step — so the method exists to keep the mapping beside the step that knows
+// it, rather than in a type switch that has to be extended for each new kind.
+//
+// This WAS a type switch on *migrateFaceStep keyed by its Entity field, which
+// silently could not see any other step kind (TKT-HH7PKJ).
+type resolvingStep interface {
+	Step
+	resolvedSubject() string
+}
+
 // validateDeltasResolved refuses a file whose own edge raises a needs-migration
 // delta that the file does not answer.
 //
@@ -179,12 +200,14 @@ var resolvingSteps = map[string][]string{
 func validateDeltasResolved(name string, f *File) error {
 	present := map[string]map[string]bool{}
 	for _, s := range f.Steps {
-		if cf, ok := s.(*migrateFaceStep); ok {
-			if present[s.Kind()] == nil {
-				present[s.Kind()] = map[string]bool{}
-			}
-			present[s.Kind()][cf.Entity] = true
+		rs, ok := s.(resolvingStep)
+		if !ok {
+			continue
 		}
+		if present[s.Kind()] == nil {
+			present[s.Kind()] = map[string]bool{}
+		}
+		present[s.Kind()][rs.resolvedSubject()] = true
 	}
 
 	report := metamodel.CompareShapes(f.FromProjection, f.ToProjection)

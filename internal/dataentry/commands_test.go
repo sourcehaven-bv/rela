@@ -15,6 +15,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
@@ -119,7 +120,10 @@ func TestResolveCommands(t *testing.T) {
 		}
 	})
 
-	t.Run("auto_open propagated to resolved command", func(t *testing.T) {
+	// auto_open is parsed but no longer served (TKT-93FUCV): the launcher it
+	// selected is gone, so the wire must not advertise it. A command that sets
+	// it still resolves normally — the key is inert, not rejected.
+	t.Run("auto_open is not served", func(t *testing.T) {
 		app2, _ := testAppInstance()
 		trueVal := true
 		app2.Cfg().Commands = map[string]CommandConfig{
@@ -129,24 +133,20 @@ func TestResolveCommands(t *testing.T) {
 				Context:  "entity",
 				AutoOpen: &trueVal,
 			},
-			"normal-cmd": {
-				Label:   "Normal",
-				Script:  "echo hi",
-				Context: "entity",
-			},
 		}
 		cmds := app2.commands.resolveCommands(context.Background(), "entity", "", "ticket")
-		for _, c := range cmds {
-			if c.ID == "auto-cmd" {
-				if c.AutoOpen == nil || !*c.AutoOpen {
-					t.Error("expected auto-cmd to have AutoOpen=true")
-				}
-			}
-			if c.ID == "normal-cmd" {
-				if c.AutoOpen != nil {
-					t.Error("expected normal-cmd to have AutoOpen=nil")
-				}
-			}
+		if len(cmds) != 1 || cmds[0].ID != "auto-cmd" {
+			t.Fatalf("a command setting auto_open must still resolve, got %v", cmds)
+		}
+
+		// The resolved command is converted field-for-field into v1.Command,
+		// so serializing it is what the client actually sees.
+		payload, err := json.Marshal(v1.Command(cmds[0]))
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		if strings.Contains(string(payload), "auto_open") {
+			t.Errorf("auto_open reached the wire: %s", payload)
 		}
 	})
 
@@ -852,63 +852,6 @@ func TestHandleCommandCancel(t *testing.T) {
 	})
 }
 
-// --- Open URL handler ---
-
-func TestHandleOpenURL(t *testing.T) {
-	app, _ := testAppInstance()
-
-	t.Run("missing url", func(t *testing.T) {
-		r := httptest.NewRequest(http.MethodPost, "/api/open-url", http.NoBody)
-		w := httptest.NewRecorder()
-		app.commands.handleOpenURL(w, r)
-		if w.Code != http.StatusBadRequest {
-			t.Errorf("expected 400, got %d", w.Code)
-		}
-	})
-
-	t.Run("invalid scheme", func(t *testing.T) {
-		r := httptest.NewRequest(http.MethodPost, "/api/open-url?url=ftp://evil.com", http.NoBody)
-		w := httptest.NewRecorder()
-		app.commands.handleOpenURL(w, r)
-		if w.Code != http.StatusBadRequest {
-			t.Errorf("expected 400, got %d", w.Code)
-		}
-	})
-
-	t.Run("method not allowed", func(t *testing.T) {
-		r := httptest.NewRequest(http.MethodGet, "/api/open-url?url=https://example.com", http.NoBody)
-		w := httptest.NewRecorder()
-		app.commands.handleOpenURL(w, r)
-		if w.Code != http.StatusMethodNotAllowed {
-			t.Errorf("expected 405, got %d", w.Code)
-		}
-	})
-}
-
-// --- Open File handler ---
-
-func TestHandleOpenFile(t *testing.T) {
-	app, _ := testAppInstance()
-
-	t.Run("missing path", func(t *testing.T) {
-		r := httptest.NewRequest(http.MethodPost, "/api/open-file", http.NoBody)
-		w := httptest.NewRecorder()
-		app.commands.handleOpenFile(w, r)
-		if w.Code != http.StatusBadRequest {
-			t.Errorf("expected 400, got %d", w.Code)
-		}
-	})
-
-	t.Run("method not allowed", func(t *testing.T) {
-		r := httptest.NewRequest(http.MethodGet, "/api/open-file?path=/tmp/test", http.NoBody)
-		w := httptest.NewRecorder()
-		app.commands.handleOpenFile(w, r)
-		if w.Code != http.StatusMethodNotAllowed {
-			t.Errorf("expected 405, got %d", w.Code)
-		}
-	})
-}
-
 // --- matchesPage ---
 
 func TestMatchesPage(t *testing.T) {
@@ -1030,93 +973,6 @@ func envToMap(env []string) map[string]string {
 		}
 	}
 	return m
-}
-
-// --- openFileCommand / openURLCommand ---
-
-func TestOpenFileCommand(t *testing.T) {
-	tests := []struct {
-		name     string
-		goos     string
-		action   string
-		path     string
-		wantArgs []string // expected args including argv[0]
-	}{
-		// `--` terminates open(1) flag parsing so a path can never be read as a flag.
-		{"darwin open", "darwin", "open", "/tmp/x.pdf", []string{"open", "--", "/tmp/x.pdf"}},
-		{"darwin reveal", "darwin", "reveal", "/tmp/x.pdf", []string{"open", "-R", "--", "/tmp/x.pdf"}},
-		{"linux open", "linux", "open", "/tmp/x.pdf", []string{"xdg-open", "/tmp/x.pdf"}},
-		{"linux reveal", "linux", "reveal", "/tmp/sub/x.pdf", []string{"xdg-open", "/tmp/sub"}},
-		{"windows open", "windows", "open", `C:\x.pdf`, []string{"cmd", "/c", "start", "", `C:\x.pdf`}},
-		{"windows reveal", "windows", "reveal", `C:\x.pdf`, []string{"explorer", "/select,", `C:\x.pdf`}},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			cmd := openFileCommand(tc.goos, tc.action, tc.path)
-			if cmd == nil {
-				t.Fatalf("openFileCommand returned nil for %s", tc.name)
-			}
-			if got := cmd.Args; !equalArgs(got, tc.wantArgs) {
-				t.Errorf("args = %v, want %v", got, tc.wantArgs)
-			}
-		})
-	}
-
-	if got := openFileCommand("plan9", "open", "/tmp/x"); got != nil {
-		t.Errorf("unsupported platform should return nil, got %v", got)
-	}
-}
-
-func TestOpenURLCommand(t *testing.T) {
-	tests := []struct {
-		name     string
-		goos     string
-		url      string
-		wantArgs []string
-	}{
-		{"darwin", "darwin", "https://example.com", []string{"open", "--", "https://example.com"}},
-		{"linux", "linux", "https://example.com", []string{"xdg-open", "https://example.com"}},
-		{"windows", "windows", "https://example.com", []string{"cmd", "/c", "start", "", "https://example.com"}},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			cmd := openURLCommand(tc.goos, tc.url)
-			if cmd == nil {
-				t.Fatalf("openURLCommand returned nil for %s", tc.name)
-			}
-			if got := cmd.Args; !equalArgs(got, tc.wantArgs) {
-				t.Errorf("args = %v, want %v", got, tc.wantArgs)
-			}
-		})
-	}
-
-	if got := openURLCommand("plan9", "https://example.com"); got != nil {
-		t.Errorf("unsupported platform should return nil, got %v", got)
-	}
-}
-
-func equalArgs(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	// exec.Command resolves argv[0] to an absolute path if found on PATH;
-	// compare by basename for the program name and exact for the rest.
-	aProg := a[0]
-	if idx := strings.LastIndexByte(aProg, '/'); idx >= 0 {
-		aProg = aProg[idx+1:]
-	}
-	if idx := strings.LastIndexByte(aProg, '\\'); idx >= 0 {
-		aProg = aProg[idx+1:]
-	}
-	if aProg != b[0] {
-		return false
-	}
-	for i := 1; i < len(a); i++ {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }
 
 // --- Command authorization (TKT-MJ02AO, policy DEC-EIHQSU) ---

@@ -1153,6 +1153,7 @@ func NewApp(
 		// need a different verdict assign app.commands.authz directly rather
 		// than reassigning app.acl (RR-CWBZVT).
 		authz:    commandAuthz,
+		files:    newCommandFileStore(),
 		redactor: appRedactor(app),
 	}
 

@@ -154,6 +154,15 @@ const (
 	// Isolate with `op == "data-gc"`.
 	OpDataGC = "data-gc"
 
+	// OpDataAdoptFace records one `rela migrate adopt-face` run (TKT-FTOENU):
+	// a raw-store repair that moves stranded zero-coordinate rows onto a
+	// declared face for a type that already has faces. Distinct from
+	// OpDataMigration because no schema change is involved and no marker
+	// moves — an audit reader must be able to tell the repair from the
+	// migration. Summary carries the type, keying property, mapping and
+	// count, never content.
+	OpDataAdoptFace = "data-adopt-face"
+
 	// OpPerfSeed records a `rela dev seed` run: a raw-store bulk load of
 	// generated data (internal/perfseed). One record per run with the
 	// profile, scale, seed and counts — never the content, which is

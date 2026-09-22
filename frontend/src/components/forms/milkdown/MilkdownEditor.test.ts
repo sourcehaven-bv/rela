@@ -268,10 +268,14 @@ describe('MilkdownEditor toolbar', () => {
 
   it('renders a button for every command, each labelled for screen readers', async () => {
     const w = await mountEditor()
-    const { INLINE_COMMANDS, BLOCK_COMMANDS } = await import('./editorCommands')
+    const { INLINE_COMMANDS, BLOCK_COMMANDS, HISTORY_COMMANDS } = await import('./editorCommands')
     const buttons = w.findAll('.toolbar-button')
-    // Every command, plus the entity-reference button.
-    expect(buttons.length).toBe(INLINE_COMMANDS.length + BLOCK_COMMANDS.length + 1)
+    // Every command, plus the entity-reference button. The table group and the
+    // unlink button are absent here: both are contextual, and this fixture's
+    // cursor is in neither a table nor a link.
+    expect(buttons.length).toBe(
+      INLINE_COMMANDS.length + BLOCK_COMMANDS.length + HISTORY_COMMANDS.length + 1
+    )
     for (const b of buttons) {
       expect(b.attributes('aria-label')).toBeTruthy()
     }

@@ -227,6 +227,7 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 		// reassigning app.acl — the wiring seam, not the ctx read gate, is what
 		// distinguishes NopACL/ReadOnly/Declarative (RR-CWBZVT / RR-QWVG8Y).
 		authz:    ungatedAuthorizer{},
+		files:    newCommandFileStore(),
 		redactor: appRedactor(app),
 	}
 	// attachmentHandler mirrors production wiring: closures for the swappable

@@ -249,8 +249,19 @@ func compareRelationShapes(r *ShapeReport, from, to map[string]RelationShape) {
 		fromRel := from[name]
 		subject := "rel:" + name
 
-		compareEndpointList(r, subject, "from", fromRel.From, toRel.From)
-		compareEndpointList(r, subject, "to", fromRel.To, toRel.To)
+		// A SWAP is one fact, not two narrowings. Comparing the sides
+		// independently would report "from narrowed" and "to narrowed" — true in
+		// isolation, and useless: the operator reversed the relation, and no
+		// step can answer a narrowing (TKT-HH7PKJ).
+		if endpointsSwapped(fromRel, toRel) {
+			r.add(TierMigration, "relation_endpoints_swapped", subject, fmt.Sprintf(
+				"relation %q endpoints swapped (%v--%v → %v--%v): every stored edge points the "+
+					"wrong way and must be reversed",
+				name, fromRel.From, fromRel.To, toRel.From, toRel.To))
+		} else {
+			compareEndpointList(r, subject, "from", fromRel.From, toRel.From)
+			compareEndpointList(r, subject, "to", fromRel.To, toRel.To)
+		}
 
 		if fromRel.Symmetric != toRel.Symmetric {
 			r.add(TierMigration, "relation_symmetry_changed", subject,
@@ -270,6 +281,28 @@ func compareRelationShapes(r *ShapeReport, from, to map[string]RelationShape) {
 
 		compareProperties(r, name, fromRel.Properties, toRel.Properties, func(s string) string { return "rel:" + s })
 	}
+}
+
+// endpointsSwapped reports whether to's endpoint lists are from's, exchanged.
+//
+// Deliberately exact: both sides must be non-empty, must differ from each
+// other (otherwise the type is self-referential and a "swap" is unobservable),
+// and must match the opposite side EXACTLY. A partial overlap — `[a,b] → [b,c]`
+// — is not a reversal and stays two narrowings, which is the existing behavior
+// and the safe reading. Guessing at a half-swap would draft a whole-type
+// rewrite from an ambiguous diff.
+func endpointsSwapped(from, to RelationShape) bool {
+	if len(from.From) == 0 || len(from.To) == 0 {
+		return false
+	}
+	if slices.Equal(from.From, from.To) {
+		// Self-referential: `from` and `to` name the same types, so exchanging
+		// them changes nothing observable in the schema and there is no way to
+		// tell a swap from a no-op. The reverse step refuses such a type
+		// anyway, because it cannot tell which way a stored edge points.
+		return false
+	}
+	return slices.Equal(from.From, to.To) && slices.Equal(from.To, to.From)
 }
 
 // compareEndpointList classifies a relation endpoint (from/to) change:
@@ -314,6 +347,16 @@ func compareCardinality(r *ShapeReport, subject, bound string, from, to *int, is
 	r.add(TierMigration, "relation_cardinality_tightened", subject,
 		fmt.Sprintf("%s %s tightened %s → %s: existing relations may violate the bound", subject, bound, fmtIntPtr(from), fmtIntPtr(to)))
 }
+
+// EffectiveBound maps an absent cardinality bound to its semantic value: no
+// minimum is 0, no maximum is unbounded.
+//
+// Exported for the migration generator, which compares a relation's outgoing
+// bounds against its incoming ones to tell whether an endpoint swap carried the
+// cardinality with it. Comparing the raw pointers there would report an unset
+// bound and an explicit 0 as different, which is the same false positive this
+// normalization exists to prevent inside CompareShapes.
+func EffectiveBound(p *int, isMax bool) int { return effectiveBound(p, isMax) }
 
 // effectiveBound maps an absent bound to its semantic value: no minimum is 0,
 // no maximum is unbounded.
@@ -530,6 +573,7 @@ var migrationDeltaKinds = []string{
 	"property_type_changed",
 	"relation_cardinality_tightened",
 	"relation_endpoint_narrowed",
+	"relation_endpoints_swapped",
 	"relation_symmetry_changed",
 }
 

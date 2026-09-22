@@ -131,6 +131,32 @@ export const ICON_PARTS: Record<string, IconPart[]> = {
     { tag: 'path', attrs: { d: 'M3 9h18M9 9v11M15 9v11' } },
   ],
 
+  // Link: the two half-links of a chain, meeting at a bar.
+  link: [
+    { tag: 'path', attrs: { d: 'M10 13a5 5 0 0 0 7 0l2-2a5 5 0 0 0-7-7l-1 1' } },
+    { tag: 'path', attrs: { d: 'M14 11a5 5 0 0 0-7 0l-2 2a5 5 0 0 0 7 7l1-1' } },
+  ],
+  // Unlink: the same chain, broken, with the gap made explicit.
+  unlink: [
+    { tag: 'path', attrs: { d: 'M16 13l1-1a5 5 0 0 0-7-7l-1 1' } },
+    { tag: 'path', attrs: { d: 'M8 11l-1 1a5 5 0 0 0 7 7l1-1' } },
+    { tag: 'path', attrs: { d: 'm4 4 16 16' } },
+  ],
+  // Divider: a full-width rule, with the text it separates implied.
+  hr: [
+    { tag: 'path', attrs: { d: 'M3 12h18', 'stroke-width': 2.5 } },
+    { tag: 'path', attrs: { d: 'M6 6h12M6 18h12', opacity: 0.45 } },
+  ],
+  // Undo / redo: an arrow curving back onto the line it came from.
+  undo: [
+    { tag: 'path', attrs: { d: 'M9 14 4 9l5-5' } },
+    { tag: 'path', attrs: { d: 'M4 9h10a6 6 0 0 1 0 12h-3' } },
+  ],
+  redo: [
+    { tag: 'path', attrs: { d: 'm15 14 5-5-5-5' } },
+    { tag: 'path', attrs: { d: 'M20 9H10a6 6 0 0 0 0 12h3' } },
+  ],
+
   // Table row/column operations. Each shows the grid with the affected band
   // highlighted and a +/x marking what happens to it.
   addRowBefore: [
