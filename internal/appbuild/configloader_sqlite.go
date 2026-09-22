@@ -4,9 +4,9 @@ package appbuild
 
 import (
 	"github.com/Sourcehaven-BV/rela/internal/comments/sqlitecomments"
-	"github.com/Sourcehaven-BV/rela/internal/datamigration/sqlitemigstate"
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/config/configsql"
+	"github.com/Sourcehaven-BV/rela/internal/datamigration/sqlitemigstate"
 	"github.com/Sourcehaven-BV/rela/internal/sqlitedb"
 	"github.com/Sourcehaven-BV/rela/internal/state"
 	"github.com/Sourcehaven-BV/rela/internal/state/statesql"
