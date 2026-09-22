@@ -65,6 +65,8 @@ func parseStep(node *yaml.Node) (Step, error) {
 		step = &renameFaceStep{}
 	case "rename_relation_type":
 		step = &renameRelationTypeStep{}
+	case "reverse_relation":
+		step = &reverseRelationStep{}
 	case "map_values":
 		step = &mapValuesStep{}
 	case "migrate_face":
@@ -324,7 +326,7 @@ func (s *renameFaceStep) Run(ctx context.Context, x *Exec) (StepResult, error) {
 	for _, e := range moving {
 		moves = append(moves, faceMove{e: e, to: s.toStored})
 	}
-	return res, applyMoves(ctx, x, moves)
+	return res, applyMoves(ctx, x.Store, moves)
 }
 
 // sameContent reports whether two rows carry the same type, properties and
@@ -382,6 +384,10 @@ type migrateFaceStep struct {
 }
 
 func (s *migrateFaceStep) Kind() string { return "migrate_face" }
+
+// resolvedSubject implements resolvingStep: faces_introduced's subject is the
+// bare entity type name.
+func (s *migrateFaceStep) resolvedSubject() string { return s.Entity }
 func (s *migrateFaceStep) Target() string {
 	return s.Entity + "." + s.Property + " → face"
 }
@@ -463,55 +469,32 @@ func (s *migrateFaceStep) Validate(from, to metamodel.ShapeProjection) error {
 func (s *migrateFaceStep) Run(ctx context.Context, x *Exec) (StepResult, error) {
 	res := StepResult{Kind: s.Kind(), Target: s.Target()}
 
-	var moves []faceMove
-	unmapped := map[string]int{}
-	q := store.EntityQuery{Type: s.Entity, AllStates: true}
-	for e, err := range x.Store.ListEntities(ctx, q) {
-		if err != nil {
-			return res, err
-		}
-		if !e.Face.IsDefault() {
-			continue // already on a named face: a previous run, or hand-placed
-		}
-		v, ok := e.Properties[s.Property].(string)
-		if !ok {
-			unmapped[""]++
-			continue
-		}
-		target, ok := s.Mapping[v]
-		if !ok {
-			// Validate proved the mapping total over the DECLARED value set, so
-			// reaching here means the stored value is outside it. Reported, not
-			// guessed at — note this describes what was seen, not why: an
-			// earlier map_values or lua step in the same file can produce it
-			// just as a stale stored value can.
-			unmapped[v]++
-			continue
-		}
-		moves = append(moves, faceMove{e: e, to: target})
+	// The row move is shared with `rela migrate adopt-face` (TKT-FTOENU),
+	// which repairs the same stranded rows outside a schema change. Only the
+	// authorization differs — this path proved its mapping total against the
+	// file's embedded projections in Validate — so which rows qualify, what an
+	// occupied destination means and what makes a re-run converge are written
+	// once, in adoptface.go.
+	a := faceAdoption{entityType: s.Entity, property: s.Property, mapping: s.Mapping}
+	plan, err := a.plan(ctx, x.Store)
+	if err != nil {
+		return res, err
 	}
-
-	for _, value := range slices.Sorted(maps.Keys(unmapped)) {
-		label := value
-		if label == "" {
-			label = "(unset or non-string)"
-		}
-		res.Notes = append(res.Notes, fmt.Sprintf(
-			"%d row(s) with %s = %s are not covered by the mapping and stay at the zero coordinate",
-			unmapped[value], s.Property, label))
-	}
-
-	res.Affected = len(moves)
+	// Validate proved the mapping total over the DECLARED value set, so a row
+	// reported here carries a value outside it. The note describes what was
+	// seen, not why: an earlier map_values or lua step in the same file can
+	// produce it just as a stale stored value can.
+	res.Notes = plan.notes(s.Property)
+	res.Affected = len(plan.moves)
 	if !x.Apply {
 		return res, nil
 	}
-
-	return res, applyMoves(ctx, x, moves)
+	return res, plan.apply(ctx, x.Store)
 }
 
-// faceMove is one row and the face it is headed for. Shared by the two steps
-// that relocate rows between coordinates — `migrate_face` (off the bare id) and
-// `rename_face` (between named faces).
+// faceMove is one row and the face it is headed for. Shared by everything that
+// relocates rows between coordinates — the `migrate_face` and `rename_face`
+// steps, and the `adopt-face` command through [adoptionPlan].
 type faceMove struct {
 	e  *entity.Entity
 	to string
@@ -535,14 +518,17 @@ type faceMove struct {
 // [updateBatchSize] gives: on pg a single graph-wide transaction stalls every
 // other writer for its whole duration.
 //
-// Shared by both relocating steps rather than copied into each: they differ in
-// which coordinate a row moves FROM, never in what a half-applied move leaves
-// behind, so a second copy of this loop would be a second place to forget the
-// transaction.
-func applyMoves(ctx context.Context, x *Exec, moves []faceMove) error {
+// Shared by every relocating caller rather than copied into each: they differ
+// in which coordinate a row moves FROM and in what authorizes them, never in
+// what a half-applied move leaves behind, so a second copy of this loop would
+// be a second place to forget the transaction.
+//
+// Takes the store rather than the *Exec the steps hold: `adopt-face` runs the
+// same moves outside a migration and so has no Exec to hand over.
+func applyMoves(ctx context.Context, st store.Store, moves []faceMove) error {
 	for start := 0; start < len(moves); start += updateBatchSize {
 		batch := moves[start:min(start+updateBatchSize, len(moves))]
-		err := x.Store.Tx(ctx, func(s store.Store) error {
+		err := st.Tx(ctx, func(s store.Store) error {
 			for _, m := range batch {
 				if err := applyFaceMove(ctx, s, m.e, m.to); err != nil {
 					return err

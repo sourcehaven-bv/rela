@@ -41,7 +41,7 @@ export function relaBase(): string {
  *
  * Takes a root-absolute path (`/api/v1/_settings`, `/api/command/x`) rather
  * than one relative to `/api/v1`, so the endpoints outside that root — the
- * command, open-file and help routes — go through the same function. A helper
+ * command, command-file and help routes — go through the same function. A helper
  * that assumed `/api/v1` would silently miss them.
  */
 export function apiUrl(path: string): string {

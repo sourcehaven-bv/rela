@@ -847,10 +847,13 @@ export interface DocumentRenderResponse {
 }
 
 // Command available for a page context
+//
+// No auto_open: TKT-93FUCV removed the server-side launcher it selected, and
+// the server no longer sends the field. Command output files are downloaded by
+// explicit click.
 export interface Command {
   id: string
   label: string
   confirm?: string
   context: 'entity' | 'list' | 'view' | 'global'
-  auto_open?: boolean
 }

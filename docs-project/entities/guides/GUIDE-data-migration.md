@@ -181,6 +181,7 @@ recovery mechanism, so a step that finds nothing left to do does nothing.
 | `rename_property: {entity, from, to}` | moves the value to the new key (only where the old key exists) |
 | `rename_entity_type: {from, to}` | rewrites `type:` on every entity of the old type (IDs are unchanged) |
 | `rename_relation_type: {from, to}` | recreates each relation under the new type, then deletes the old (relation history starts a new lifetime) |
+| `reverse_relation: {type}` | swaps `from` and `to` on every stored edge of a relation type, after you swap the endpoints in `schema.yaml` |
 | `rename_face: {entity, from, to}` | moves every row stored at one content state to another (IDs are unchanged) |
 | `migrate_face: {entity, property, mapping}` | moves existing rows onto the face they belong to when a type gains its first faces; **required** in any file spanning that change |
 | `map_values: {entity, property, mapping}` | remaps enum values (scalar and list properties); unmapped values are left and reported |
@@ -231,12 +232,11 @@ face. Nothing looks broken — no row moved and no value changed — which is
 exactly why the store will not adopt the shape on its own: only you can say
 which face the existing content became.
 
-`rename_face` cannot express this move. It requires a declared face name on
-both sides, and the zero coordinate is not one, so a project crossing this
-boundary with data in it needs the rows rewritten out of band before the new
-schema is adopted. Plan the change on an empty type where you can, and treat a
-populated one as a data-export-and-reimport rather than a step in a migration
-file.
+`rename_face` cannot express this move: it requires a declared face name on
+both sides, and the zero coordinate is not one. `migrate_face` is the step that
+can, and the next section covers it — a file spanning this change without one
+is refused, so a populated type is migrated in the ordinary way rather than
+exported and reimported.
 
 Removing faces is the mirror: rows sitting at named faces belong to no declared
 face afterwards, and the type's single state is a coordinate none of them
@@ -303,6 +303,84 @@ rows go.
 Faced → flat (`faces_removed`) is the mirror case and is not covered: rows at
 named faces would have to move back, and deciding which one wins when several
 hold content is a merge rather than a move.
+
+### Repairing rows that are already stranded
+
+`migrate_face` runs across the moment a type gains faces. Rows can also be
+found at the zero coordinate on a type that has declared faces for a while —
+data written before the faces existed, a hand-edited file, an import, a seed.
+`rela analyze states` reports them as `bare-row-on-faced-type`.
+
+There is no schema change to hang a migration on here: the schema is already
+correct and the data is behind it. `rela migrate adopt-face` moves them,
+keyed the same way and dry-run by default:
+
+```bash
+rela migrate adopt-face --entity article --property status \
+    --map draft=draft --map active=published --map withdrawn=published
+rela migrate adopt-face --entity article --property status \
+    --map draft=draft --map active=published --apply
+```
+
+The mapping does **not** have to be exhaustive, and that is the one deliberate
+difference from `migrate_face`. That step runs in the same file as the
+`drop_property` that erases the values it keys on, so a value left out becomes
+unrecoverable. Nothing is dropped here: a value you leave out keeps its rows
+where they are, still reported by `analyze`, still fixable by re-running with a
+wider mapping. Rows whose value is unset or outside the mapping are reported
+rather than given a guessed face.
+
+A destination that already holds different content is refused, naming the id —
+the entity has two distinct states, so this is a merge to decide rather than a
+move to perform.
+
+### Reversing a relation
+
+Deciding that `blocks` should point from feature to ticket rather than ticket to
+feature is two changes: swap `from:` and `to:` in `schema.yaml`, and rewrite the
+stored edges to match. The schema edit is yours; `reverse_relation` does the
+data.
+
+```yaml
+steps:
+  - reverse_relation: {type: blocks}
+```
+
+The classifier recognises the swap as one `relation_endpoints_swapped` finding
+rather than two unrelated endpoint narrowings, so `rela migrate gen` drafts the
+step for you, and a file spanning the change without it is refused.
+
+**Swap the cardinality bounds too.** `min_outgoing`/`max_outgoing` and
+`min_incoming`/`max_incoming` describe the two ends, so reversing the endpoints
+without exchanging the bounds leaves the migrated data violating the schema it
+was migrated to satisfy. The generator warns when it spots this.
+
+Three kinds of relation type are refused rather than reversed:
+
+- **`scope: content`** (and any type with a state-tailed edge in the store). An
+  edge attaches to a specific content state on its TAIL, and a head has no face
+  slot at all — there is deliberately no `ToFace`, which is what makes
+  cross-world dangling references inexpressible. A reversed state-tailed edge
+  has nowhere to put the face, and since the tail is part of the edge's
+  identity, two edges differing only by it would merge into one. Checked against
+  the stored data, not the declaration.
+- **Overlapping endpoints**, where an entity type appears on both sides. An edge
+  between two entities of the shared type satisfies both directions, so nothing
+  can tell a reversed edge from one still to be reversed. (This covers
+  self-referential types such as `task --blocks--> task`.)
+- **`symmetric: true`**, where direction carries no meaning and the rewrite
+  would churn every edge to no effect.
+
+A type holding a pair that points both ways (`A → B` and `B → A`) is refused at
+the point of use, on the dry-run as well as the apply: swapping them would land
+both on the same triple and merge two distinct edges. Nothing is written.
+
+**Version history survives on the database backends.** The rewrite is pushed
+into the store, so PostgreSQL and SQLite re-key the rows in place and each edge
+keeps its lineage — history before and after the reversal reads as one
+continuous lifetime. The filesystem backend encodes the endpoints in the
+relation's FILENAME, so there it is a genuine move (and there is no version
+history to preserve).
 
 ### The Lua escape hatch
 

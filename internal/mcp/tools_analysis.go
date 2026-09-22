@@ -9,7 +9,6 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
-	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/schema"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -67,13 +66,65 @@ type cardinalityViolation struct {
 	Message  string `json:"message"`
 }
 
+// handleAnalyzeCardinality reports every relation whose declared min/max
+// bounds the graph does not satisfy.
+//
+// The check itself is [schema.CheckCardinality] — the SAME implementation
+// `rela analyze cardinality` and `rela validate --check cardinality` run, so
+// the MCP surface cannot report a different set of violations than the CLI
+// (TKT-CICJSN). It is reached as a free function over Deps.Store rather than
+// through an analysis.Service because MCP reads through a gated GraphReader,
+// not a store.Store, and must not depend on `internal/analysis`.
+//
+// A store error fails the TOOL CALL rather than being reported as an empty
+// or partial result: a failed count reads as 0, which for a min bound is
+// indistinguishable from genuinely missing relations, so reporting around
+// one would invent violations out of a backend outage.
+//
+// Adopting the shared checker changed two things an MCP caller can see, both
+// deliberate. An incoming bound is now reported against the relation's
+// INVERSE id rather than the forward name prefixed with "incoming ". And the
+// subject scan asks for AllStates, so where the reader honors that, a faced
+// entity is checked per face (TKT-4Y6CMV) and a content-scoped edge on the
+// draft no longer satisfies the published face's bound.
+//
+// The scan widening is visible on its own, separate from faces: the deleted
+// copy scanned the default state only. On a project with stranded or
+// undeclared face rows — the condition `rela analyze states` exists to find
+// (TKT-DOFYR1, BUG-UA3BK3) — a violation can now name a storage row that no
+// ordinary read path surfaces, so an agent may see an id it cannot
+// show_entity. That is the detector working, not a leak: the rows are the
+// operator's own data and the remedy is a data migration.
+//
+// Per-face checking is NOT guaranteed for every wiring, and the difference is
+// in the reader rather than here. `store.GraphQuery` has no AllStates field,
+// so when an ACL-gated reader composes one (visibility.listPushdown's Query
+// branch, taken by a principal whose grants compile to a policy query) the
+// request is dropped and each id collapses to a single world prime. Such a
+// caller checks FEWER subjects than the CLI does over a raw store. That
+// direction is safe — an unscanned face means a violation is missed, never
+// invented — but do not build on per-face coverage here as if it were
+// universal (RR-16R183; closing the gap is a store.GraphQuery change,
+// alongside TKT-O7R2A1).
 func (s *Server) handleAnalyzeCardinality(
 	ctx context.Context, _ *mcpgo.CallToolRequest,
 ) (*mcpgo.CallToolResult, error) {
-	violations := make([]cardinalityViolation, 0) //nolint:prealloc // capacity unknown
+	// One snapshot for the whole operation (CLAUDE.md "capture state once"):
+	// ReloadDeps republishes the bundle atomically on a schema.yaml edit, so
+	// two separate deps() loads could pair a new store with an old metamodel.
+	d := s.deps()
+	found, err := schema.CheckCardinality(ctx, d.Store, d.Meta, nil)
+	if err != nil {
+		return errorResult(err.Error()), nil
+	}
 
-	for relName, relDef := range s.deps().Meta.Relations {
-		violations = append(violations, s.checkCardinalityForRelation(ctx, relName, relDef)...)
+	violations := make([]cardinalityViolation, 0, len(found))
+	for _, v := range found {
+		violations = append(violations, cardinalityViolation{
+			EntityID: v.EntityID,
+			Relation: v.RelationType,
+			Message:  v.Message(),
+		})
 	}
 
 	if len(violations) == 0 {
@@ -87,65 +138,6 @@ func (s *Server) handleAnalyzeCardinality(
 	}
 	return textResult(
 		fmt.Sprintf("Found %d cardinality violations:\n\n%s", len(violations), text)), nil
-}
-
-func (s *Server) checkCardinalityForRelation(
-	ctx context.Context, relName string, relDef metamodel.RelationDef,
-) []cardinalityViolation {
-	violations := make([]cardinalityViolation, 0) //nolint:prealloc // capacity unknown
-
-	violations = append(violations,
-		s.checkCardinalityBound(ctx, relName, relDef.From, relDef.MinOutgoing, relDef.MaxOutgoing, true)...)
-
-	violations = append(violations,
-		s.checkCardinalityBound(ctx, relName, relDef.To, relDef.MinIncoming, relDef.MaxIncoming, false)...)
-
-	return violations
-}
-
-func (s *Server) checkCardinalityBound(
-	ctx context.Context, relName string, entityTypes []string, minVal, maxVal *int, outgoing bool,
-) []cardinalityViolation {
-	var violations []cardinalityViolation
-
-	st := s.deps().Store
-	for _, entityType := range entityTypes {
-		for e, err := range st.ListEntities(ctx, store.EntityQuery{Type: entityType}) {
-			if err != nil {
-				break
-			}
-
-			dir := store.DirectionOutgoing
-			if !outgoing {
-				dir = store.DirectionIncoming
-			}
-			count, _ := st.CountRelations(ctx, store.RelationQuery{
-				EntityID: e.ID, Type: relName, Direction: dir,
-			})
-
-			direction := ""
-			if !outgoing {
-				direction = "incoming "
-			}
-
-			if minVal != nil && *minVal > 0 && count < *minVal {
-				violations = append(violations, cardinalityViolation{
-					EntityID: e.ID, Relation: relName,
-					Message: fmt.Sprintf("must have at least %d %s'%s' relation(s), has %d",
-						*minVal, direction, relName, count),
-				})
-			}
-			if maxVal != nil && count > *maxVal {
-				violations = append(violations, cardinalityViolation{
-					EntityID: e.ID, Relation: relName,
-					Message: fmt.Sprintf("has more than %d %s'%s' relation(s): %d",
-						*maxVal, direction, relName, count),
-				})
-			}
-		}
-	}
-
-	return violations
 }
 
 type uniqueViolation struct {

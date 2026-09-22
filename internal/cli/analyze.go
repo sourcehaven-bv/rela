@@ -253,13 +253,7 @@ func (c *AnalyzeCardinalityCmd) Run(ctx context.Context, analyzer *analysis.Serv
 	}
 
 	for _, v := range violations {
-		if strings.HasPrefix(v.Constraint, "min_") {
-			out.WriteWarning("%s must have at least %d '%s' relation(s), has %d",
-				v.EntityID, v.Required, v.RelationType, v.Actual)
-		} else {
-			out.WriteWarning("%s has more than %d '%s' relation(s): %d",
-				v.EntityID, v.Required, v.RelationType, v.Actual)
-		}
+		out.WriteWarning("%s %s", v.EntityID, v.Message())
 	}
 	if len(violations) == 0 {
 		out.WriteSuccess("All cardinality constraints satisfied")

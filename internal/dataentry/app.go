@@ -1141,6 +1141,7 @@ func NewApp(
 		executeView: app.views.executeView,
 		// Late-bound: tests reassign app.acl after construction.
 		aclImpl:  func() acl.ACL { return app.acl },
+		files:    newCommandFileStore(),
 		redactor: appRedactor(app),
 	}
 
