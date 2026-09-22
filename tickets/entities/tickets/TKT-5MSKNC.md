@@ -5,57 +5,80 @@ title: Editor e2e specs are flaky under parallel load
 kind: test
 priority: low
 effort: s
-status: backlog
+status: done
 ---
 
 ## Problem
 
 Under `--repeat-each=3` the `tests/markdown-editor*` specs fail 1-2 runs out of
-~70, with a **different test each time**. Observed failures include "can fill
-body content and submit form", "Escape closes the picker without inserting",
-"the inserted reference renders as a titled link", and "round-trip: the saved
-body renders the rewritten link".
-
-Every one of them passes in isolation and passes on a single non-repeated run.
+~70, with a **different test each time**. Every one passes in isolation.
 
 ## This is pre-existing, and that was verified
 
 Found while implementing TKT-6MZ42J. To rule that change out, the working tree
 was stashed and the baseline measured the same way: **the baseline fails 2 of
-69**, versus 1 of 71 with the change applied. Different tests, same rate. Not a
-regression.
+69**, versus 1 of 71 with the change applied. Not a regression.
 
-## Likely cause
+## The original hypothesis was WRONG
 
-`FormPage.typeIntoEditor` clicks the ProseMirror surface and types immediately,
-with no wait for focus to settle:
+This ticket was filed blaming `FormPage.typeIntoEditor` for typing before
+ProseMirror had focus, so the tail of the string was dropped. **Measured on
+`develop` at `--repeat-each=8`: that is not what happens.** Every failing
+snapshot showed the text typed *completely* — `see @mentionzzn4zn2`, not `see`.
+The dropped-keystroke theory came from one snapshot during TKT-6MZ42J that had a
+different cause, and it was recorded here without being re-checked.
 
-```ts
-async typeIntoEditor(text: string): Promise<void> {
-  await this.proseMirror.click()
-  await this.page.keyboard.type(text)
-}
-```
+## The real cause: a section-ambiguous locator
 
-Under parallel load a keystroke can land before ProseMirror is listening, so the
-tail of the string is dropped and a later assertion fails on a half-typed query.
-A failing snapshot from TKT-6MZ42J showed the document holding `see` when `see
-@featur` had been typed.
+`mentionMenuOptions` matches `.mention-menu-item` in **both** sections of the
+menu — the type picker AND the entity results. Three tests gated on
+`mentionMenuOptions.first()` being visible and then pressed Enter:
 
-`expectEditorText(text)` was added in that ticket as a gate for exactly this,
-and the two tests that use it are stable. The fix is probably to make
-`typeIntoEditor` itself verify what it typed, rather than leaving it to each
-caller to remember.
+- `Enter inserts the reference and closes the menu`
+- `the inserted reference renders as a titled link inside the editor`
+- `round-trip: the saved body renders the rewritten link on the detail page`
 
-## Why it matters
+Under parallel load the entity search is slow, so the first visible row is a
+**type** row. Enter on a type row *scopes the search* instead of inserting, so
+the query stays plain text and no `entityRef` node is ever created — the
+assertion then fails on a missing `a[data-entity-ref]`. A failing snapshot
+confirms the mechanism: it shows a `bug` scope chip set and "No matches", which
+is only reachable if Enter selected a type.
 
-A suite that fails ~2% of the time per run trains everyone to re-run rather than
-read the failure, which is how a real regression gets waved through. The
-TKT-6MZ42J work hit this directly: a genuine product bug was initially dismissed
-as "probably the flake", and a genuine flake was initially investigated as a
-product bug.
+This is a defect in the tests introduced by TKT-6MZ42J (the type section is
+new), not in the product. The three tests were asserting "a row is visible" when
+they meant "an entity row is visible".
 
-## Out of scope
+## Fix
 
-Fixing the editor's focus handling itself — the evidence points at the test
-helper, not the component.
+Gate those three on `mentionMenuEntityOptions.first()`, which is scoped to
+`ul[data-section="entities"]`, and raise the timeout to 10s so a slow search
+waits rather than racing. `typeIntoEditor` is left alone — the evidence does not
+support changing it.
+
+## Result
+
+`--repeat-each=8` (232 runs): **4 failed → 1 failed**, and the three
+mention-insert failures are gone. `--repeat-each=3` three times over: **261/261
+passed**, where the same command previously failed 1-2 per run.
+
+## Remaining, both infrastructure not logic — out of scope here
+
+At `--repeat-each=8` (8x parallel load, well above CI's), two non-menu failures
+remain and are timeouts rather than wrong behaviour:
+
+1. `openEntityPicker` — the toolbar button resolves but does not become
+click-stable within Playwright's 5s default.
+2. A `beforeEach` fixture `POST /api/v1/features` exceeding the 5s API timeout.
+
+Both are contention on an overloaded machine. Worth a separate look at whether
+the e2e worker count and these timeouts are matched, but neither is a product
+bug and neither reproduces at the repeat level this ticket was filed about.
+
+## Why it mattered
+
+A suite that fails ~2% per run trains everyone to re-run rather than read the
+failure. TKT-6MZ42J hit this directly in both directions: a genuine product bug
+was first dismissed as "probably the flake", and a genuine flake was first
+investigated as a product bug. This ticket is itself a third instance — the
+filed cause was a guess that survived into the record unverified.

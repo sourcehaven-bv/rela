@@ -217,7 +217,11 @@ test.describe('Markdown editor @ mention autocomplete', () => {
     await form.clearEditorBuffer();
     await form.typeIntoEditor(`see @${targetTitleToken}`);
     await form.waitForMentionMenu();
-    await expect(form.mentionMenuOptions.first()).toBeVisible({ timeout: 5_000 });
+    // Wait for the ENTITY row, not just any row. `mentionMenuOptions` spans both
+    // sections, so under load a type row can render before the search returns —
+    // and Enter on a type row SCOPES instead of inserting, leaving the query as
+    // plain text and no entityRef node. That is this spec's flake (TKT-5MSKNC).
+    await expect(form.mentionMenuEntityOptions.first()).toBeVisible({ timeout: 10_000 });
     await appPage.keyboard.press('Enter');
 
     await expect(form.mentionMenu).not.toBeVisible();
@@ -237,7 +241,11 @@ test.describe('Markdown editor @ mention autocomplete', () => {
     await form.clearEditorBuffer();
     await form.typeIntoEditor(`see @${targetTitleToken}`);
     await form.waitForMentionMenu();
-    await expect(form.mentionMenuOptions.first()).toBeVisible({ timeout: 5_000 });
+    // Wait for the ENTITY row, not just any row. `mentionMenuOptions` spans both
+    // sections, so under load a type row can render before the search returns —
+    // and Enter on a type row SCOPES instead of inserting, leaving the query as
+    // plain text and no entityRef node. That is this spec's flake (TKT-5MSKNC).
+    await expect(form.mentionMenuEntityOptions.first()).toBeVisible({ timeout: 10_000 });
     await appPage.keyboard.press('Enter');
 
     // The title the menu just showed is carried onto the node, so the
@@ -335,7 +343,11 @@ test.describe('Markdown editor @ mention autocomplete', () => {
     await form.clearEditorBuffer();
     await form.typeIntoEditor(`see @${targetTitleToken}`);
     await form.waitForMentionMenu();
-    await expect(form.mentionMenuOptions.first()).toBeVisible({ timeout: 5_000 });
+    // Wait for the ENTITY row, not just any row. `mentionMenuOptions` spans both
+    // sections, so under load a type row can render before the search returns —
+    // and Enter on a type row SCOPES instead of inserting, leaving the query as
+    // plain text and no entityRef node. That is this spec's flake (TKT-5MSKNC).
+    await expect(form.mentionMenuEntityOptions.first()).toBeVisible({ timeout: 10_000 });
     await appPage.keyboard.press('Enter');
 
     const created = await form.submitAndExpectCreate('features');
