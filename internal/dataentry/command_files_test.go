@@ -490,6 +490,9 @@ func TestHandleCommandFile_ReauthorizesPerDownload(t *testing.T) {
 
 		d := commandPolicyACL(t, app)
 		app.acl = d
+		// The download re-check goes through the wired authorizer, not the ACL
+		// field, so the gated impl is installed at the seam (RR-CWBZVT).
+		app.commands.authz = mustGatedAuthorizer(t, d)
 		cmd := CommandConfig{Label: "Export", Context: "entity", Permission: "command:allowed"}
 		token, err := app.commands.files.mint("run-1", mustContain(t, root, target), "report.txt", cmd)
 		if err != nil {
@@ -523,8 +526,10 @@ func TestHandleCommandFile_ReauthorizesPerDownload(t *testing.T) {
 	t.Run("read-only restart kills a valid token", func(t *testing.T) {
 		app, d, token := mintUnder(t)
 		// The grant that minted the token is gone. The token itself is
-		// untouched and unexpired — only the live policy changed.
+		// untouched and unexpired — only the live policy changed. A --read-only
+		// restart resolves to denyAuthorizer at the seam (SelectCommandAuthorizer).
 		app.acl = acl.ReadOnlyACL{}
+		app.commands.authz = denyAuthorizer{}
 		w := downloadFile(principalCtx("alice"), t, app, d, token)
 		if w.Code != http.StatusNotFound {
 			t.Fatalf("expected 404 under --read-only, got %d", w.Code)

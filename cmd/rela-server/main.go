@@ -55,6 +55,10 @@ type serverFlags struct {
 	// refuses to enable it otherwise — the endpoint is CSRF-exempt, and
 	// that is only sound while rela verifies a bearer token itself).
 	remoteMCP bool
+	// allowUnauthCommands opts a network bind back into ungated command
+	// execution when there is no acl.yaml. Off by default: a non-loopback bind
+	// with no policy refuses commands. See docs/server-security.md.
+	allowUnauthCommands bool
 	// JWT identity: verify a signed-JWT assertion from an OIDC proxy against its
 	// JWKS and stamp the verified subject as the principal. Provider-agnostic
 	// (Pratique, oauth2-proxy, Pomerium, ...). All three of issuer/audience/jwks
@@ -115,6 +119,16 @@ func parseFlags() *serverFlags {
 			"startup is refused otherwise. Every tool call runs as the requesting "+
 			"principal and is ACL-gated like any other API request. Also enabled "+
 			"by RELA_MCP=1.")
+	flag.BoolVar(&f.allowUnauthCommands, "allow-unauthenticated-commands",
+		os.Getenv("RELA_ALLOW_UNAUTHENTICATED_COMMANDS") == "1",
+		"Allow configured commands to run WITHOUT access control on a non-loopback "+
+			"bind that has no acl.yaml. Off by default: such a bind refuses command "+
+			"execution, because a command runs an arbitrary shell script for any "+
+			"reachable client. Only for a single-user deployment isolated at another "+
+			"layer (Docker port-publishing, a host firewall, or a reverse proxy that "+
+			"authenticates). Loopback binds and deployments with an acl.yaml never "+
+			"need this. See docs/server-security.md. Also enabled by "+
+			"RELA_ALLOW_UNAUTHENTICATED_COMMANDS=1.")
 	// JWT identity flags (env fallbacks $RELA_JWT_*). Verifying a SIGNED assertion
 	// is safer than --principal-header (which merely trusts the proxy set a header).
 	flag.StringVar(&f.jwtIssuer, "jwt-issuer", os.Getenv("RELA_JWT_ISSUER"),
@@ -476,12 +490,15 @@ func main() {
 
 	fieldResolver := buildFieldResolver(svc)
 
+	commandAuthz := buildCommandAuthorizer(f, svc)
+
 	app, err := dataentry.NewApp(
 		svc.FS(), svc.Paths(), svc.Meta(), svc.Store(), svc.Versions(),
 		svc.EntityManager(), svc.Searcher(), svc.VisibleSearcher(), svc.ACL(),
 		fieldResolver,
 		svc.Audit(),
 		svc.State(),
+		commandAuthz,
 	)
 	if err != nil {
 		var configErr *dataentry.ConfigValidationError
@@ -649,6 +666,63 @@ func newHTTPServer(addr string, handler http.Handler) *http.Server {
 		WriteTimeout: 0,
 		IdleTimeout:  120 * time.Second,
 	}
+}
+
+// commandAuthorizer aliases the authorizer the dataentry package hands back.
+// The interface itself is unexported there (it is a dataentry-internal seam),
+// so this alias is how main names the value it threads into NewApp.
+type commandAuthorizer = interface {
+	Authorize(ctx context.Context, cmd dataentry.CommandConfig) bool
+}
+
+// buildCommandAuthorizer picks the command-exec authorizer once, from the
+// configured ACL plus the bind and the explicit override. Exits rather than
+// degrading: a server that cannot decide how to gate shell execution must not
+// start and quietly pick a default.
+func buildCommandAuthorizer(f *serverFlags, svc *appbuild.Services) commandAuthorizer {
+	authz, err := dataentry.SelectCommandAuthorizer(
+		svc.ACL(), svc.ACLDeclarative(), isLoopbackHost(f.bind), f.allowUnauthCommands,
+		dataentry.CommandAuthNotifier{
+			OnOverride: func() { warnUnauthenticatedCommands(f.bind) },
+			OnRefuse:   func() { warnCommandsRefused(f.bind) },
+		})
+	if err != nil {
+		slog.Error("failed to select command authorizer", "error", err)
+		os.Exit(1)
+	}
+	return authz
+}
+
+// warnUnauthenticatedCommands is invoked by SelectCommandAuthorizer when the
+// --allow-unauthenticated-commands override actually takes effect on a
+// non-loopback bind, so the hazard shows up in every boot log.
+//
+// coverage-ignore: startup log side effect.
+func warnUnauthenticatedCommands(bind string) {
+	slog.Warn("commands run WITHOUT access control on this non-loopback bind: "+
+		"--allow-unauthenticated-commands is set and there is no acl.yaml. "+
+		"Any client reaching this server can execute configured shell commands. "+
+		"See docs/server-security.md.",
+		"bind", bind)
+}
+
+// warnCommandsRefused explains a refusal at startup instead of letting the
+// operator discover it as vanished buttons and a bare 403 with nothing in the
+// log. Symmetric with warnUnauthenticatedCommands: the override is loud because
+// it opens a network shell, and the refusal is loud because it changes the
+// behavior of a deployment that used to work.
+//
+// It fires whenever the refusing authorizer is selected, without consulting the
+// command list: the authorizer is chosen before the config is loaded, and a
+// project with no commands: entries is only told that a surface it does not use
+// is closed.
+func warnCommandsRefused(bind string) {
+	slog.Warn("configured commands are REFUSED on this non-loopback bind: "+
+		"there is no acl.yaml and --allow-unauthenticated-commands is not set. "+
+		"Add an acl.yaml and give each command a permission:, or pass "+
+		"--allow-unauthenticated-commands if this deployment is isolated another way. "+
+		"See docs/server-security.md.",
+		"bind", bind)
 }
 
 // buildFieldResolver constructs the data-entry affordance resolver
