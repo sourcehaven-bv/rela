@@ -108,6 +108,28 @@ export const INLINE_COMMANDS: EditorCommand[] = [
     probe: { kind: 'mark', mark: 'inlineCode' },
     keywords: ['code', 'inline'],
   },
+  {
+    id: 'link',
+    label: 'Link',
+    // Named for completeness and for the availability dry run, but the button
+    // does NOT dispatch this directly: a link needs a URL first, so the editor
+    // intercepts it and opens the dialog. See `runCommand` in the editor.
+    //
+    // Do not "simplify" a press into `callCommand('ToggleLink')`. It is
+    // `toggleMark`, whose `removeWhenPresent` tests `.some()`, so over a
+    // selection that merely touches an existing link it REMOVES that link and
+    // drops the URL the user typed. `linkSelection.findLinkAt` is what routes
+    // the overlap case to a retarget instead.
+    //
+    // A second `ToggleLink` registration exists in
+    // `@milkdown/components/link-tooltip`. We do not install that package; if
+    // anyone does, string lookup resolves to whichever registered first and
+    // this button silently changes meaning — `commandNamesExistInEditor`
+    // cannot see it, because the NAME is still there.
+    command: 'ToggleLink',
+    probe: { kind: 'mark', mark: 'link' },
+    keywords: ['link', 'url', 'href', 'anchor'],
+  },
 ]
 
 /** Block-level structure, offered in both the toolbar and the `/` menu. */
@@ -188,6 +210,58 @@ export const BLOCK_COMMANDS: EditorCommand[] = [
     command: 'InsertTable',
     probe: { kind: 'none' },
     keywords: ['table', 'grid'],
+  },
+  {
+    id: 'hr',
+    label: 'Divider',
+    // The schema node is `hr`; `thematicBreak` is the mdast name, which is why
+    // the probe below would have to say `hr` if it probed at all. It does not:
+    // a rule is never "active" the way a heading is, since the cursor is never
+    // inside one.
+    //
+    // `InsertHr` returns true even under the availability dry run, so the
+    // button is always enabled. That is honest here — a divider is valid in
+    // any block context — but it means a passing availability check proves
+    // nothing about this command.
+    command: 'InsertHr',
+    probe: { kind: 'none' },
+    keywords: ['divider', 'rule', 'horizontal', 'hr', 'separator', 'break'],
+  },
+]
+
+/**
+ * Undo and redo.
+ *
+ * Kept in their own list because they belong in their own toolbar group, not
+ * because they need different machinery: they are ordinary `EditorCommand`
+ * descriptors with `probe: {kind: 'none'}`, which already means "never shows as
+ * active" — the right answer for a history control.
+ *
+ * Their availability does NOT come from the dry run. `Undo` and `Redo` report
+ * themselves applicable in situations where they would do nothing, so the
+ * editor overrides them from `undoDepth` / `redoDepth`, the same way
+ * `tableCommands` overrides the commands whose dry run is untrustworthy.
+ *
+ * That they flow through `EditorCommand` is what earns them the toolbar's
+ * `aria-disabled` handling. It matters more here than anywhere else on the
+ * toolbar: availability flips on every transaction, so a natively `disabled`
+ * button would drop focus to `<body>` the moment a user tabbed onto it started
+ * typing.
+ */
+export const HISTORY_COMMANDS: EditorCommand[] = [
+  {
+    id: 'undo',
+    label: 'Undo',
+    command: 'Undo',
+    probe: { kind: 'none' },
+    keywords: ['undo', 'back', 'revert'],
+  },
+  {
+    id: 'redo',
+    label: 'Redo',
+    command: 'Redo',
+    probe: { kind: 'none' },
+    keywords: ['redo', 'forward', 'repeat'],
   },
 ]
 

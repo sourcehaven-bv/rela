@@ -64,32 +64,3 @@ func TestContainedProjectPath_RejectsSymlinkOut(t *testing.T) {
 		t.Fatal("expected error for symlink escaping project root")
 	}
 }
-
-func TestValidateOpenURL(t *testing.T) {
-	ok := []string{
-		"https://example.com",
-		"http://localhost:8080/path?q=1",
-		"mailto:user@example.com",
-	}
-	bad := []string{
-		"file:///etc/passwd",
-		"javascript:alert(1)",
-		"data:text/html,<script>",
-		"ftp://example.com",
-		"",
-	}
-	for _, u := range ok {
-		t.Run("ok/"+u, func(t *testing.T) {
-			if err := validateOpenURL(u); err != nil {
-				t.Fatalf("expected ok, got %v", err)
-			}
-		})
-	}
-	for _, u := range bad {
-		t.Run("bad/"+u, func(t *testing.T) {
-			if err := validateOpenURL(u); err == nil {
-				t.Fatalf("expected error for %q", u)
-			}
-		})
-	}
-}

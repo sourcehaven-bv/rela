@@ -309,13 +309,7 @@ func runCardinalityCheck(
 		})
 	} else {
 		for _, v := range violations {
-			if strings.HasPrefix(v.Constraint, "min_") {
-				checkOut.WriteWarning("%s must have at least %d '%s' relation(s), has %d",
-					v.EntityID, v.Required, v.RelationType, v.Actual)
-			} else {
-				checkOut.WriteWarning("%s has more than %d '%s' relation(s): %d",
-					v.EntityID, v.Required, v.RelationType, v.Actual)
-			}
+			checkOut.WriteWarning("%s %s", v.EntityID, v.Message())
 		}
 	}
 	return true, nil, nil

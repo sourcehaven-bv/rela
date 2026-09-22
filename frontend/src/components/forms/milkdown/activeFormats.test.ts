@@ -28,6 +28,7 @@ const schema = new Schema({
     emphasis: {},
     strike_through: {},
     inlineCode: {},
+    link: { attrs: { href: {}, title: { default: null } } },
   },
 })
 

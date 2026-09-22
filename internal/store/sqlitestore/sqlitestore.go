@@ -114,8 +114,14 @@ const timeFmt = time.RFC3339Nano
 // interface; they sit here because they share the type's SQL builders and
 // transaction-aware handle. The other two are their shared row helpers.
 //
-//plimsoll:max-methods=58
-//plimsoll:max-exported-methods=38
+// +1 exported / +2 methods (TKT-HH7PKJ): SwapRelationEndpoints is an OPTIONAL
+// store capability (store.BulkMigrator), reached by type-asserting the store
+// handle, so it must live on this type for the assertion to find it. The
+// second method is its private pre-read helper, which exists because the
+// events name triples that no longer exist once the UPDATE has run.
+//
+//plimsoll:max-methods=60
+//plimsoll:max-exported-methods=39
 type Store struct {
 	db *sql.DB
 

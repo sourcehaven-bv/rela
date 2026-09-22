@@ -144,8 +144,16 @@ type DBTX interface {
 // (store.PositionQueryer) that must live on the type holding the graph SQL
 // builder, consumed through that one-method interface.
 //
-//plimsoll:max-exported-methods=48
-//plimsoll:max-methods=58
+// +1 exported / +1 method (TKT-HH7PKJ): SwapRelationEndpoints is an OPTIONAL
+// store capability (store.BulkMigrator) on the same terms as HeaderReader and
+// the TKT-1U8XYN pair above — consumers reach it by type-asserting the store
+// handle, so it has to live on this type or the assertion would not find it.
+// The whole point of the capability is that the rewrite happens where the rows
+// are: endpoints are a relation's identity, so a loop above the store must be
+// create-then-delete, which forks version lineage and destroys a self-edge.
+//
+//plimsoll:max-exported-methods=49
+//plimsoll:max-methods=59
 type Store struct {
 	db           DBTX
 	searchTitles SearchTitles
