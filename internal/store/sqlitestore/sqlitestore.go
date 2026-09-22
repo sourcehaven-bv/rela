@@ -108,8 +108,14 @@ const timeFmt = time.RFC3339Nano
 // CAS precondition has to be evaluated atomically with the write, so it
 // cannot live anywhere but on the type that owns the write.
 //
-//plimsoll:max-methods=53
-//plimsoll:max-exported-methods=35
+// +1 exported / +2 methods (TKT-HH7PKJ): SwapRelationEndpoints is an OPTIONAL
+// store capability (store.BulkMigrator), reached by type-asserting the store
+// handle, so it must live on this type for the assertion to find it. The
+// second method is its private pre-read helper, which exists because the
+// events name triples that no longer exist once the UPDATE has run.
+//
+//plimsoll:max-methods=55
+//plimsoll:max-exported-methods=36
 type Store struct {
 	db *sql.DB
 

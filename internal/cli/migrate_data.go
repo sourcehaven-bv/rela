@@ -433,6 +433,52 @@ func versionCaptureFor(svc *writeServices) datamigration.VersionCapture {
 	return svc.Versions
 }
 
+// MigrateAdoptFaceCmd adopts stranded zero-coordinate rows onto a declared
+// face for a type that ALREADY declares faces (TKT-FTOENU). Dry-run by
+// default, like `migrate data` and `migrate gc`.
+//
+// Separate from `migrate data` because it is not a migration: there is no
+// shape change, no from→to edge and no marker to advance. It repairs rows
+// stranded by history — written before the type declared faces:, hand-edited,
+// imported or seeded — which `rela analyze` reports as bare-row-on-faced-type.
+type MigrateAdoptFaceCmd struct {
+	Entity   string            `required:"" help:"Entity type whose stranded rows to adopt."`
+	Property string            `required:"" help:"Property whose value names the destination face."`
+	Map      map[string]string `required:"" help:"Value-to-face mapping (repeatable: --map draft=draft)."`
+	Apply    bool              `help:"Perform the moves (default is a dry-run preview)."`
+}
+
+// Run executes `rela migrate adopt-face`.
+func (c *MigrateAdoptFaceCmd) Run(ctx context.Context, svc *writeServices) error {
+	res, err := datamigration.Adopt(ctx, datamigration.AdoptDeps{
+		Store:    svc.Store,
+		Meta:     svc.Meta,
+		Audit:    svc.Audit,
+		Versions: versionCaptureFor(svc),
+		Lock:     migrationLock(svc),
+	}, datamigration.AdoptRequest{
+		Entity:   c.Entity,
+		Property: c.Property,
+		Mapping:  c.Map,
+		Apply:    c.Apply,
+	})
+	if err != nil {
+		return err
+	}
+	verb := "would adopt"
+	if c.Apply {
+		verb = "adopted"
+	}
+	fmt.Printf("%s %d stranded row(s) of %s onto faces by %s\n", verb, res.Affected, c.Entity, c.Property)
+	for _, n := range res.Notes {
+		fmt.Printf("  note: %s\n", n)
+	}
+	if !c.Apply && res.Affected > 0 {
+		fmt.Println("dry-run only — re-run with --apply to move them")
+	}
+	return nil
+}
+
 // MigrateBaselineCmd records the project's migrations as already applied
 // without running them, and adopts the live schema shape as the baseline.
 //
