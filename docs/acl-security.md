@@ -714,6 +714,14 @@ per-id / opaque-cache-id and snapshot-versioned-ACL designs were
 considered and rejected as over-engineered for a staleness signal —
 see the TKT-POT9GQ design record and IDEA-CQMKMD.)
 
+**Ungated config frames.** `refresh` and `config-error` go to every
+connection unchanged. A `config-error` frame (TKT-IMBOK) reports a rejected
+`data-entry.yaml` reload: the file name plus the validation or
+script-check message. It describes operator-authored config, which is not a
+secret (see "Sidebar menu structure is principal-independent"), and carries
+no entity content. A read failure is reported with a fixed message, because
+the loader's own error can include the host path of the project directory.
+
 **Audit isolation.** The stream deliberately does NOT carry audit
 records, principal identity, or attribution chains. A denied write
 produces a `denied-write` audit row server-side (with full attribution)
