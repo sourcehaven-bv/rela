@@ -1056,7 +1056,7 @@ the search index and every export path stays out of the product entirely.
 
 | Name | Meaning |
 | --- | --- |
-| `default` | Applies to every list and kanban of this type that names no scope. Optional; without it, screens are unfiltered. |
+| `default` | Applies to every list, kanban and sidebar `entities:` item of this type that names no scope. Optional; without it, screens are unfiltered. |
 | `all` | **Implicit and always available.** Resolves to no predicate, so `query_scope: all` withdraws the `default`. Reserved — a type cannot declare a scope by this name. |
 | anything else | Applies only where a view names it. |
 

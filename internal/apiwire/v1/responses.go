@@ -763,6 +763,29 @@ type SidebarItem struct {
 	DerivedIcon string `json:"derivedIcon,omitempty"`
 
 	Action string `json:"action,omitempty"`
+
+	// Entities is set on an `entities:` entry (TKT-PEKL8L): the query the SPA
+	// runs against the list endpoint, one sidebar link per row. Href and
+	// Label stay empty; the rows supply both.
+	//
+	// Only the query definition travels here, never the rows. They are
+	// entity content, so they come from the ACL-scoped list endpoint, and
+	// this payload stays free of per-principal data beyond the permission
+	// filter.
+	Entities *SidebarEntities `json:"entities,omitempty"`
+}
+
+// SidebarEntities is the list query behind an `entities:` navigation entry,
+// in the list endpoint's own parameter grammar.
+type SidebarEntities struct {
+	// Type is the entity type; the SPA maps it to the endpoint's URL segment.
+	Type string `json:"type"`
+	// QueryScope is sent as `?query_scope=`; empty applies the type's default.
+	QueryScope string `json:"query_scope,omitempty"`
+	// Sort is the effective order in `sort=` grammar (`title,-due`), already
+	// resolved to the type's default_sort when the entry names none; empty
+	// means id order.
+	Sort string `json:"sort,omitempty"`
 }
 
 // SidebarGroup represents a navigation group with items.

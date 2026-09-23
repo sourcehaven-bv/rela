@@ -11,6 +11,7 @@ import (
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
@@ -253,7 +254,7 @@ func (h *viewsHandler) handleV1Sidebar(w http.ResponseWriter, r *http.Request) {
 				if !permitsNavEntry(r.Context(), aclImpl, item) {
 					continue
 				}
-				sidebarItem := navEntryToSidebarItem(item)
+				sidebarItem := navEntryToSidebarItem(item, s.Meta)
 				group.Items = append(group.Items, sidebarItem)
 			}
 			// A group whose every item was filtered out is dropped rather than
@@ -269,7 +270,7 @@ func (h *viewsHandler) handleV1Sidebar(w http.ResponseWriter, r *http.Request) {
 			if !permitsNavEntry(r.Context(), aclImpl, entry) {
 				continue
 			}
-			item := navEntryToSidebarItem(entry)
+			item := navEntryToSidebarItem(entry, s.Meta)
 			navigation = append(navigation, v1.SidebarGroup{
 				Items: []v1.SidebarItem{item},
 			})
@@ -383,7 +384,11 @@ func permitsGatedUIElement(ctx context.Context, aclImpl acl.ACL, permission stri
 }
 
 // navEntryToSidebarItem converts a navigation entry to a sidebar item.
-func navEntryToSidebarItem(entry dataentryconfig.NavigationEntry) v1.SidebarItem {
+//
+// Nil: meta accepted — only an `entities:` entry reads it, to resolve the
+// type's default_sort, and without it the entry's own sort (or id order) is
+// served.
+func navEntryToSidebarItem(entry dataentryconfig.NavigationEntry, meta *metamodel.Metamodel) v1.SidebarItem {
 	item := v1.SidebarItem{
 		Label: entry.Label,
 	}
@@ -422,6 +427,15 @@ func navEntryToSidebarItem(entry dataentryconfig.NavigationEntry) v1.SidebarItem
 		// segment to fill.
 		item.Href = "/document/" + entry.Document
 		item.Icon = derived.Document
+	case entry.Entities != "":
+		// Href stays empty: the SPA expands this into one link per row it
+		// reads from the list endpoint.
+		item.Entities = &v1.SidebarEntities{
+			Type:       entry.Entities,
+			QueryScope: entry.QueryScope,
+			Sort:       dataentryconfig.SortParam(dataentryconfig.EffectiveNavSort(entry, meta)),
+		}
+		item.Icon = derived.Entity
 	case entry.Action != "":
 		item.Action = entry.Action
 		// Href stays empty — frontend renders this as a button.

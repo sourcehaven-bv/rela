@@ -2976,6 +2976,7 @@ navigation:
 | `search`    | bool   | Link to the search page                                        |
 | `settings`  | bool   | Link to the settings page                                      |
 | `action`    | string | Action ID to trigger when clicked (renders as a sidebar button)|
+| `entities`  | string | Entity type whose entities are listed as links; only inside a group (see [Entity lists in a group](#entity-lists-in-a-group)) |
 | `icon`      | string | Icon name; overrides the icon derived from the entry type (see below) |
 | `permission`| string | Hide this entry from users who lack the named ACL permission (see below) |
 
@@ -3379,6 +3380,61 @@ will reject it with a clear error message.
 
 The first navigable entry is the default landing page — the first direct item, or the first item
 inside the first group. Order matters; items appear in the sidebar in the order listed.
+
+### Entity lists in a group
+
+An `entities:` item lists entities as sidebar links, one link per entity. Use it
+for things people open often, such as the projects that are currently active:
+
+```yaml
+navigation:
+  - group: "Active projects"
+    items:
+      - entities: project
+        query_scope: active
+        sort:
+          - property: title
+```
+
+| Field         | Type   | Description |
+| ------------- | ------ | ----------- |
+| `entities`    | string | The entity type to list. |
+| `query_scope` | string | A [query scope](#query-scopes) declared on that type. Optional. |
+| `sort`        | list   | Link order, in the same form as a list's `sort:`. Optional. |
+| `icon`        | string | Icon drawn before every link. Optional. |
+| `permission`  | string | Hides the item, as for any other entry. Optional. |
+
+The rules:
+
+- **It must sit inside a group.** The group title is the heading for the links.
+  An `entities:` item at the top level is a config error.
+- **It takes no `label:`.** Each link shows its entity's display name (see
+  [Display names](#display-names)).
+- **It has exactly one kind.** Combining `entities:` with `list:`, `kanban:` or
+  another destination is a config error. `query_scope:` and `sort:` are only
+  valid next to `entities:`.
+- **Scopes work as they do for a list.** With no `query_scope:`, the type's
+  `default` scope applies; `query_scope: all` withdraws it. A scope the type does
+  not declare is a config error.
+- **Order.** Without `sort:`, the type's `default_sort` applies, and without that
+  the links are in id order.
+- **Up to 100 links are shown.** When more entities match, a line such as
+  "and 12 more" follows the links. It is not a link. If a set is often that
+  large, point a `list:` entry at it instead.
+- **A group with no matching entities is hidden**, provided every item in it is
+  an `entities:` item. It reappears when an entity starts to match.
+- **Entity links are hidden while the sidebar is collapsed.** Each link would
+  otherwise shrink to the same icon, and one icon cannot tell entities apart.
+
+The links are **per user**. The sidebar only carries the definition. The
+browser then asks the ordinary list API for the rows, so each user sees only
+the entities they may read, in the current world, and a scope that reads
+`current_user` gives each person their own set. The links update when an
+entity of that type changes, without a page reload.
+
+One limit: if a user loses access to an entity, a link they already have on
+screen stays until the next update of that entity type or a page reload.
+Following the link then shows the ordinary "not found" page.
 
 ### Hiding entries a user cannot act on (`permission:`)
 

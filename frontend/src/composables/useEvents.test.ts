@@ -213,6 +213,16 @@ describe('useEvents', () => {
       expect(spy).toHaveBeenCalledWith({ key: ['entities'] })
       expect(mockGitFetchStatus).toHaveBeenCalled()
     })
+
+    it('dispatches refresh to subscribers so config-derived state can reload', async () => {
+      const { vm } = await mountConnected()
+      const handler = vi.fn()
+      vm.on('refresh', handler)
+
+      lastSource!._emit('refresh')
+
+      expect(handler).toHaveBeenCalledTimes(1)
+    })
   })
 
   describe('disconnect', () => {

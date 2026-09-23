@@ -977,6 +977,16 @@ So `permission:` on a nav entry buys tidiness, not protection. Never
 reach for it in place of a read grant, and never assume an entry's
 absence means a principal cannot get at what it points to.
 
+**Entity lists in the sidebar keep this property** (TKT-PEKL8L). A
+navigation `entities:` item lists entities as links, but the sidebar
+payload carries only its definition: the type, the query scope and the
+sort. The browser fetches the rows from the ordinary list endpoint,
+which applies the read ACL, the world and faces and the scope, exactly as
+it does for a list page. So two principals get the same sidebar and
+different links, and a principal who may read none of the entities gets
+no links. The one channel this adds is the one a list page already has:
+whether the item shows any links at all.
+
 **Dashboard cards work the same way** (TKT-53KICM). A `permission:` on a
 `dashboard.cards[]` entry omits that card from `/api/v1/_dashboard` for
 non-holders, on exactly the reasoning above: the card's query already runs

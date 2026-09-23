@@ -122,6 +122,10 @@ export function useEvents() {
         entitiesStore.invalidateAll()
         queryCache.invalidateQueries({ key: entityKeys.root }).catch(() => {})
         gitStore.fetchStatus().catch(() => {})
+        // Also sent when data-entry.yaml reloads, so components holding
+        // config-derived state (the sidebar) can refetch it. No type: the
+        // event is not about one.
+        eventHandlers.get('refresh')?.forEach((handler) => handler({ type: '' }))
       })
 
       // Handle git events
