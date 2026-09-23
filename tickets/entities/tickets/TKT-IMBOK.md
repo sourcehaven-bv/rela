@@ -5,7 +5,7 @@ title: Hot-reload of data-entry.yaml should re-run ValidateConfig + script exist
 kind: refactor
 priority: low
 effort: s
-status: in-progress
+status: review
 ---
 
 ## Problem

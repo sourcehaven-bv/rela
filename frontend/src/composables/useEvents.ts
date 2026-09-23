@@ -3,7 +3,7 @@ import { useQueryCache } from '@pinia/colada'
 import { useGitStore, useEntitiesStore, useUIStore } from '@/stores'
 import { entityKeys } from '@/queries/entities'
 
-export type SSEEventType = 'refresh' | 'config-error' | 'git' | 'git:status' | 'entity:changed'
+export type SSEEventType = 'refresh' | 'git' | 'git:status' | 'entity:changed'
 
 /**
  * Payload of an `entity:changed` SSE event.
@@ -148,8 +148,10 @@ export function useEvents() {
       eventSource.addEventListener('config-error', (event: MessageEvent) => {
         let detail = ''
         try {
-          const data = JSON.parse(event.data) as ConfigErrorData
-          detail = `${data.file}: ${data.error}`
+          const data = JSON.parse(event.data) as Partial<ConfigErrorData>
+          if (typeof data.error === 'string') {
+            detail = typeof data.file === 'string' ? `${data.file}: ${data.error}` : data.error
+          }
         } catch {
           console.warn('Failed to parse config-error event data')
         }

@@ -2,6 +2,7 @@ package dataentry
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/migration"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
@@ -260,7 +262,7 @@ func (a *App) simulateReload(events []storage.ChangeEvent) {
 	configPath := a.paths.Root + "/" + ConfigFile
 	for _, e := range events {
 		if e.Path == configPath {
-			a.reloadConfig()
+			_ = a.reloadConfig() // callers assert on the published config
 			return
 		}
 	}
@@ -477,7 +479,7 @@ func TestReloadConfigBroadcasts(t *testing.T) {
 			ch := app.broker.subscribe()
 			defer app.broker.unsubscribe(ch)
 
-			app.reloadConfig()
+			_ = app.reloadConfig() // the broadcast is what this test checks
 
 			select {
 			case ev := <-ch:
@@ -497,6 +499,70 @@ func TestReloadConfigBroadcasts(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestReloadConfigErrorOmitsHostPath pins that a rejected reload never puts
+// the project directory on the SSE wire. The deprecated-syntax error names its
+// file by absolute path, so it is the case that would leak without the rewrite.
+func TestReloadConfigErrorOmitsHostPath(t *testing.T) {
+	root := t.TempDir()
+	app, fs := setupReloadTestAppAt(t, root)
+	_ = fs.WriteFile(filepath.Join(root, ConfigFile), []byte(`version: "1.0"
+app:
+  name: "Deprecated"
+lists:
+  tickets:
+    entity_type: ticket
+    detail_view: ticket_detail
+`), 0o644)
+	if len(migration.DetectBytes(mustReadFile(t, fs, filepath.Join(root, ConfigFile)), migration.FileTypeDataEntry)) == 0 {
+		t.Fatal("fixture no longer triggers a deprecated-syntax detection; pick another")
+	}
+	ch := app.broker.subscribe()
+	defer app.broker.unsubscribe(ch)
+
+	if err := app.reloadConfig(); err == nil {
+		t.Fatal("reloadConfig accepted deprecated syntax")
+	}
+
+	var ev sseEvent
+	select {
+	case ev = <-ch:
+	default:
+		t.Fatal("no event broadcast")
+	}
+	if ev.Name != "config-error" {
+		t.Fatalf("event = %q, want config-error", ev.Name)
+	}
+	if strings.Contains(ev.Data, root) {
+		t.Errorf("config-error frame carries the project root %q: %s", root, ev.Data)
+	}
+	if !strings.Contains(ev.Data, "deprecated syntax") {
+		t.Errorf("config-error frame lost the reason: %s", ev.Data)
+	}
+}
+
+func TestPublicConfigErrorMessage_StripsRoot(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "project")
+	err := fmt.Errorf("open %s: permission denied", filepath.Join(root, "actions", "x.lua"))
+
+	got := publicConfigErrorMessage(err, root)
+
+	if strings.Contains(got, root) {
+		t.Errorf("message still carries the root: %q", got)
+	}
+	if want := "open " + filepath.Join("actions", "x.lua") + ": permission denied"; got != want {
+		t.Errorf("message = %q, want %q", got, want)
+	}
+}
+
+func mustReadFile(t *testing.T, fs *storage.MemFS, path string) []byte {
+	t.Helper()
+	data, err := fs.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
 }
 
 // --- handleSSE tests ---
@@ -739,8 +805,12 @@ func TestConcurrentReadDuringOnReload(t *testing.T) {
 			}
 			// Hammer the actual reload path (config-driven rebuild)
 			// concurrently with reader goroutines so torn snapshots
-			// would be observable.
-			app.reloadConfig()
+			// would be observable. A rejected reload publishes nothing,
+			// which would make this test vacuous, so fail on one.
+			if err := app.reloadConfig(); err != nil {
+				t.Errorf("reloadConfig: %v", err)
+				return
+			}
 		}
 	})
 

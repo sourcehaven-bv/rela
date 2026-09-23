@@ -3,15 +3,19 @@ package dataentry
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/config"
+	"github.com/Sourcehaven-BV/rela/internal/migration"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -302,6 +306,26 @@ type configError struct {
 func (e *configError) Error() string { return e.err.Error() }
 func (e *configError) Unwrap() error { return e.err }
 
+// publicConfigErrorMessage renders a [loadConfig] error for the config-error
+// frame. The text describes operator-authored config, which is not a secret,
+// but it must not carry the host path of the project directory. The
+// deprecated-syntax error names its file by absolute path, so it is re-rendered
+// with the bare file name. Any other message is stripped of the project root as
+// a backstop, so a future error source cannot put the path on the wire either.
+func publicConfigErrorMessage(err error, root string) string {
+	var migErr *migration.Error
+	if errors.As(err, &migErr) {
+		safe := *migErr
+		safe.FilePath = ConfigFile
+		return safe.Error()
+	}
+	msg := err.Error()
+	if root = filepath.Clean(root); root != string(filepath.Separator) && root != "." {
+		msg = strings.ReplaceAll(msg, root+string(filepath.Separator), "")
+	}
+	return msg
+}
+
 // reloadConfig re-reads data-entry.yaml, publishes a fresh Schema snapshot
 // atomically, and tells browsers to refresh. Readers observe either the
 // pre-reload or the post-reload snapshot, never a torn state.
@@ -312,6 +336,8 @@ func (e *configError) Unwrap() error { return e.err }
 // first use (TKT-IMBOK). Browsers get a config-error frame instead of a
 // refresh, and the returned error is a *configError.
 func (a *App) reloadConfig() error {
+	a.reloadMu.Lock()
+	defer a.reloadMu.Unlock()
 	if a.State() == nil {
 		return nil
 	}
@@ -329,10 +355,7 @@ func (a *App) reloadConfig() error {
 	}
 	cfg, err := loadConfig(cfgData, meta, a.paths.Root)
 	if err != nil {
-		// Validation and script-check errors describe operator-authored
-		// config, which is not a secret, and script loaders already keep
-		// system paths out of their messages.
-		return reject(&configError{public: err.Error(), err: err})
+		return reject(&configError{public: publicConfigErrorMessage(err, a.paths.Root), err: err})
 	}
 	slog.Info("config reloaded")
 

@@ -90,7 +90,7 @@ type appEntityWriter interface {
 // state (logo, palette, user defaults) lives in its own self-synchronized
 // service, not the snapshot.
 //
-// Reloads (triggered by the file watcher or by Reload) derive a new Schema
+// Reloads (triggered by the file watcher via reloadConfig) derive a new Schema
 // and publish it atomically via a.schema.Reload. The previous snapshot is
 // garbage-collected once no reader holds it.
 //
@@ -399,6 +399,11 @@ type App struct {
 	// the watcher's reload path (reloadConfig → schema.Reload). Initial
 	// snapshot is published in NewApp.
 	schema schemaProvider
+
+	// reloadMu serializes reloadConfig. schema.Reload publishes by
+	// load-then-store, so two overlapping reloads could publish the older
+	// file last. Readers never take it; they go through a.State().
+	reloadMu sync.Mutex
 
 	// writeMu serializes mutation handlers (CreateEntity, UpdateEntity,
 	// etc.) against each other. Readers never take it.
@@ -1265,13 +1270,6 @@ func loadConfig(cfgData []byte, meta *metamodel.Metamodel, root string) (*Config
 	dataentryconfig.NormalizeCalendars(&cfg)
 	dataentryconfig.NormalizeGantts(&cfg)
 
-	// Non-fatal configuration warnings (e.g. a relation filter control whose
-	// incoming direction targets a type the relation never points to). Logged,
-	// not fatal — the app still serves, the filter just returns no rows.
-	for _, w := range CollectConfigWarnings(&cfg, meta) {
-		slog.Warn("data-entry config warning", "detail", w)
-	}
-
 	// Verify action scripts exist on disk (catches typos at startup).
 	// Skip set-only actions which have no script.
 	for id, action := range cfg.Actions {
@@ -1282,12 +1280,6 @@ func loadConfig(cfgData []byte, meta *metamodel.Metamodel, root string) (*Config
 			return nil, fmt.Errorf("invalid %s: action %q: %w", ConfigFile, id, err)
 		}
 	}
-
-	// Warn about scripts that mail without the grant (TKT-JVHSOZ). AFTER the
-	// existence check above, so a project with a missing script fails on that
-	// rather than on a lint that could not read it. See mailgate.go for why
-	// this is a hint rather than a check.
-	warnUngatedMailActionsFromDisk(cfg.Actions, root)
 
 	// Verify document scripts exist on disk. Shell-command documents are
 	// not checkable this way (the binary may be on PATH at render time
@@ -1305,6 +1297,22 @@ func loadConfig(cfgData []byte, meta *metamodel.Metamodel, root string) (*Config
 	if err := checkExportRenderScripts(&cfg, root); err != nil {
 		return nil, err
 	}
+
+	// Warnings come after every fatal check, so a rejected config does not
+	// leave warnings in the log for a file that never took effect.
+	//
+	// Non-fatal configuration warnings (e.g. a relation filter control whose
+	// incoming direction targets a type the relation never points to). Logged,
+	// not fatal — the app still serves, the filter just returns no rows.
+	for _, w := range CollectConfigWarnings(&cfg, meta) {
+		slog.Warn("data-entry config warning", "detail", w)
+	}
+
+	// Warn about scripts that mail without the grant (TKT-JVHSOZ). AFTER the
+	// existence checks, so a project with a missing script fails on that
+	// rather than on a lint that could not read it. See mailgate.go for why
+	// this is a hint rather than a check.
+	warnUngatedMailActionsFromDisk(cfg.Actions, root)
 	return &cfg, nil
 }
 

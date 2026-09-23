@@ -719,8 +719,10 @@ connection unchanged. A `config-error` frame (TKT-IMBOK) reports a rejected
 `data-entry.yaml` reload: the file name plus the validation or
 script-check message. It describes operator-authored config, which is not a
 secret (see "Sidebar menu structure is principal-independent"), and carries
-no entity content. A read failure is reported with a fixed message, because
-the loader's own error can include the host path of the project directory.
+no entity content. The frame never carries the host path of the project
+directory: a read failure is reported with a fixed message, the
+deprecated-syntax error names the file without its directory, and any other
+message has the project root stripped.
 
 **Audit isolation.** The stream deliberately does NOT carry audit
 records, principal identity, or attribution chains. A denied write
