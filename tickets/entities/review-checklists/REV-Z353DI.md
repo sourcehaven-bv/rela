@@ -2,17 +2,17 @@
 id: REV-Z353DI
 type: review-checklist
 title: 'Review: Hot-reload of data-entry.yaml should re-run ValidateConfig + script existence checks'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
 
 ## Automated Checks
 
-- [ ] All tests pass (`just test`)
-- [ ] Lint clean (`just lint`)
-- [ ] Comment lint gate clean (`just comment-lint`)
-- [ ] Coverage maintained (`just coverage-check`)
+- [x] All tests pass (`just test`). `dataentry` passes under `-race -shuffle=on` (418s). The frontend passes 3208/3208. The full `just ci` run hit 10m package timeouts under machine load (dataentry, docscapture, sqlitestore); none were assertion failures, and dataentry passed when rerun alone
+- [x] Lint clean (`just lint`): golangci-lint 0 issues; eslint and prettier clean on the changed files; plimsoll and arch-lint clean
+- [x] Comment lint gate clean (`just comment-lint`); comment-report shows no findings on the changed lines
+- [x] Coverage maintained (`just coverage-check`): internal/dataentry at 83.6%, floor 55
 
 **Comment findings.** `just comment-report` lists the advisory rules
 (duplication, nil-contract, param-contract, restatement). They are not a merge
@@ -33,41 +33,48 @@ unexplained suppression is a finding nobody can re-evaluate later.
 
 ## Code Review
 
-- [ ] Run `/code-review` command (invokes cranky-code-reviewer agent)
-- [ ] All critical review-responses addressed
-- [ ] All significant review-responses addressed
-- [ ] Self-reviewed the diff for unrelated changes
+- [x] Run `/code-review` command (cranky-code-reviewer + rela-security-reviewer)
+- [x] All critical review-responses addressed (none raised)
+- [x] All significant review-responses addressed (none raised)
+- [x] Self-reviewed the diff for unrelated changes
 
-**Review Responses:** <!-- List IDs of review-response entities created, e.g.,
-RR-xxxx -->
+**Review Responses:** Design: RR-J3GMA3 (deferred). Security: RR-59IX24
+(addressed). Code: RR-Z9GXXM, RR-B1DZB7, RR-WX86GF, RR-55ZOIJ, RR-HWTH5L,
+RR-6UQGYS, RR-L5A7W2, RR-ZDN549, RR-7C5HMB (addressed); RR-15H86M (deferred,
+same as RR-J3GMA3); RR-LCM0GV, RR-W6Z14S (wont-fix, reasons recorded).
 
 ## Acceptance Verification
 
-- [ ] Each acceptance criterion tested (reference planning checklist)
-- [ ] Test evidence documented in implementation checklist
+- [x] Each acceptance criterion tested (reference planning checklist)
+- [x] Test evidence documented in implementation checklist (IMPL-VPQ9S2)
 
 **Acceptance Status:**
-<!-- For each acceptance criterion, state PASS/FAIL with evidence -->
+1. Invalid config keeps previous: PASS (TestReloadRejectedConfigKeepsPrevious; manual run).
+2. Missing scripts keep previous: PASS (same test, three script kinds; manual run with a missing action script).
+3. config-error replaces refresh: PASS (TestReloadConfigBroadcasts; manual SSE capture).
+4. Reload normalizes calendars: PASS (TestReloadNormalizesCalendars).
+5. SPA error toast: PASS (useEvents.test.ts).
+6. Startup unchanged: PASS (existing NewApp tests; same error text).
 
 ## Documentation (enhancements only)
 
 Skip this section for bugs and internal refactors.
 
-- [ ] Docs-checklist created and linked via `has-docs`
-- [ ] User-facing documentation updated
-- [ ] Docs-checklist marked as done
+- [x] ~~Docs-checklist created and linked via `has-docs`~~ (N/A: kind=refactor)
+- [x] User-facing documentation updated (docs/data-entry.md Config hot-reload; docs/acl-security.md SSE section)
+- [x] ~~Docs-checklist marked as done~~ (N/A: kind=refactor)
 
-**Docs Checklist:** <!-- e.g., DOCS-xxxx -->
+**Docs Checklist:** N/A (refactor)
 
 ## Final Checks
 
-- [ ] Commit message explains the why, not just what
-- [ ] No TODOs or FIXMEs left unaddressed
-- [ ] Ready for another developer to use
+- [x] Commit message explains the why, not just what
+- [x] No TODOs or FIXMEs left unaddressed
+- [x] Ready for another developer to use
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
+- [x] Run `/pr` command to create PR and monitor CI (next step, after done)
 
 <!--
 Deliberately NOT tracked here: the PR URL and whether CI passed.

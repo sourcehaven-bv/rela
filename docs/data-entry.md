@@ -5299,21 +5299,6 @@ Editing `data-entry.yaml` to change a document's `script:` or `command:`
 takes effect on the next request; open document panels pick up the new
 renderer on their next reload.
 
-A reload runs the same checks as startup: config validation and the
-existence checks for action, document and `export_render` scripts. If a
-check fails, the server keeps the previous config, logs the error, and shows
-it to open browser tabs as an error message. Fix the file and save again to
-apply it.
-
-A few settings are read only at startup, so changing them needs a server
-restart even when the reload succeeds:
-
-- the `git:` block (enabling git sync, its mode and fetch interval);
-- `app.name` and `app.description` as the OpenAPI document title and
-  description;
-- on the PostgreSQL backend, the indexes derived from static dashboard and
-  next-action queries.
-
 ## Calendar feeds
 
 Feeds publish your entities as subscribable calendars. A feed is served as
