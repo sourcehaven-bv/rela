@@ -196,7 +196,7 @@ func StaticIndexSpecs(cfg *dataentryconfig.Config, meta *metamodel.Metamodel) []
 		spec := store.DerivedObjectSpec{Kind: store.DerivedQueryIndex, Type: sq.EntityTypes[0], Properties: props}
 		byKey[spec.Type+"\x00"+strings.Join(props, "\x00")] = spec
 	}
-	for _, list := range cfg.Lists {
+	for _, list := range listShapes(cfg, meta) {
 		// The evaluator is shared with the next-action condition path above
 		// and built lazily, since most configs declare neither.
 		if ev == nil && listDeclaresQueryScope(list, meta) {
@@ -222,6 +222,31 @@ func StaticIndexSpecs(cfg *dataentryconfig.Config, meta *metamodel.Metamodel) []
 	out := make([]store.DerivedObjectSpec, 0, len(keys))
 	for _, key := range keys {
 		out = append(out, byKey[key])
+	}
+	return out
+}
+
+// listShapes returns every list-shaped page the SPA requests from the list
+// endpoint: each `lists:` entry, plus one synthetic list per navigation
+// `entities:` entry (TKT-PEKL8L).
+//
+// A nav entry sends the same request a list with its type, scope and sort
+// sends, so it derives the same index through the same [listIndexSpec] — and
+// through the same evaluator initialisation and dedupe key, which a separate
+// loop would have to copy. Its sort is the EFFECTIVE one
+// ([dataentryconfig.EffectiveNavSort]), the order the sidebar actually
+// requests; the entry's own `sort:` alone would miss the type's default_sort.
+func listShapes(cfg *dataentryconfig.Config, meta *metamodel.Metamodel) []dataentryconfig.List {
+	out := make([]dataentryconfig.List, 0, len(cfg.Lists))
+	for _, list := range cfg.Lists {
+		out = append(out, list)
+	}
+	for _, nav := range dataentryconfig.NavEntitiesEntries(cfg.Navigation) {
+		out = append(out, dataentryconfig.List{
+			EntityType: nav.Entities,
+			QueryScope: nav.QueryScope,
+			Sort:       dataentryconfig.EffectiveNavSort(nav, meta),
+		})
 	}
 	return out
 }

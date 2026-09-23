@@ -228,12 +228,13 @@ above rather than by a clean `analyze all`.
   it.
 
   This is settled, not open: `docs/acl-security.md` § "Sidebar menu structure is
-  principal-independent" already records the decision — the menu is served
-  identically to every principal and only _counts_ are gated, because "the
-  metamodel is not a secret (it's served by `/api/v1/_schema`)" and a divergent
-  menu per principal complicates SPA caching "for no confidentiality gain".
-  Per-principal menu filtering is named there as a possible future tightening
-  **deliberately not done**. Don't reintroduce it as a security measure.
+  principal-independent" already records the decision. The menu carries no
+  per-principal data: its structure is the same for every principal except for
+  the opt-in `permission:` UX filter, and the rows behind an `entities:` entry
+  (TKT-PEKL8L) come from the ACL-gated list API, not from the menu payload. The
+  reason is that the metamodel is not a secret; it is served by
+  `/api/v1/_schema`. Per-principal menu filtering is **deliberately not done**
+  as a security measure. Don't reintroduce it as one.
 
   Two things this does NOT license. (1) _Secrets_ are not config:
   `.rela/secrets.yaml`, DSNs, and tokens stay off the wire — that is why

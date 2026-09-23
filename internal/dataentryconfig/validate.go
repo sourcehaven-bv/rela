@@ -463,6 +463,7 @@ func ValidateConfig(data []byte, cfg *Config, meta *metamodel.Metamodel) error {
 	errs = append(errs, validateStyles(cfg, meta)...)
 	errs = append(errs, validateNextActions(cfg, meta)...)
 	errs = append(errs, validateQueryScopes(cfg, meta)...)
+	errs = append(errs, validateNavEntities(cfg, meta)...)
 	errs = append(errs, validateCrossReferences(cfg)...)
 
 	if len(errs) > 0 {
@@ -524,6 +525,8 @@ func validateNavigation(cfg *Config) []string {
 		}
 	}
 
+	errs = append(errs, validateNavEntitiesPlacement(cfg.Navigation)...)
+
 	// Validate list references in navigation
 	for _, nav := range cfg.Navigation {
 		errs = append(errs, validateNavEntry(nav, cfg)...)
@@ -541,7 +544,11 @@ func validateNavEntry(nav NavigationEntry, cfg *Config) []string {
 	if label == "" {
 		label = nav.Group
 	}
+	if label == "" {
+		label = nav.Entities
+	}
 	errs = append(errs, validateIconName(nav.Icon, fmt.Sprintf("navigation %q", label))...)
+	errs = append(errs, validateNavEntitiesShape(nav)...)
 
 	if nav.List != "" {
 		if _, ok := cfg.Lists[nav.List]; !ok {
@@ -1089,21 +1096,7 @@ func validateLists(cfg *Config, meta *metamodel.Metamodel) []string {
 			}
 		}
 
-		// Validate sort
-		for i, s := range list.Sort {
-			if !validSortDirections[s.Direction] {
-				errs = append(errs, fmt.Sprintf(
-					"list %q: sort[%d] has invalid direction %q (valid: asc, desc)",
-					listID, i, s.Direction))
-			}
-			if s.Property != "" && s.Property != "id" && s.Property != "modified" {
-				if _, ok := entDef.Properties[s.Property]; !ok {
-					errs = append(errs, fmt.Sprintf(
-						"list %q: sort[%d] references unknown property %q",
-						listID, i, s.Property))
-				}
-			}
-		}
+		errs = append(errs, validateSortSpecs(fmt.Sprintf("list %q", listID), entDef, list.Sort)...)
 
 		// Validate filters
 		for i, f := range list.Filters {
@@ -2856,8 +2849,8 @@ func validateDocumentElevation(docID string, doc DocumentConfig, hasScript bool)
 	return errs
 }
 
-// validateQueryScopes checks that every `query_scope:` on a list or kanban
-// names a scope its entity type declares.
+// validateQueryScopes checks that every `query_scope:` on a list, kanban or
+// navigation `entities:` entry names a scope its entity type declares.
 //
 // An unknown name is a LOAD ERROR rather than a fallback to unfiltered. The
 // two failure directions are not symmetric: a refused config is fixed in
@@ -2880,6 +2873,9 @@ func validateQueryScopes(cfg *Config, meta *metamodel.Metamodel) []string {
 		kanban := cfg.Kanbans[id]
 		errs = append(errs, checkQueryScopeRef(meta, "kanban", id, kanban.EntityType, kanban.QueryScope)...)
 	}
+	for _, nav := range NavEntitiesEntries(cfg.Navigation) {
+		errs = append(errs, checkQueryScopeRef(meta, "navigation entities", nav.Entities, nav.Entities, nav.QueryScope)...)
+	}
 	return errs
 }
 
@@ -2893,7 +2889,7 @@ func checkQueryScopeRef(
 	def, ok := meta.GetEntityDef(entityType)
 	if !ok {
 		// The unknown entity type is already reported by validateLists /
-		// validateKanbans; adding a second error about a scope on a type that
+		// validateKanbans / validateNavEntities; adding a second error about a scope on a type that
 		// does not exist would be noise.
 		return nil
 	}

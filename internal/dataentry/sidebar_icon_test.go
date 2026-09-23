@@ -45,7 +45,7 @@ func TestNavEntryToSidebarItem_Icon(t *testing.T) {
 
 	for _, k := range kinds {
 		t.Run(k.name+"/derives its kind glyph", func(t *testing.T) {
-			got := navEntryToSidebarItem(k.entry)
+			got := navEntryToSidebarItem(k.entry, nil)
 			if got.Icon != k.derived {
 				t.Errorf("Icon = %q, want the kind-derived %q", got.Icon, k.derived)
 			}
@@ -58,7 +58,7 @@ func TestNavEntryToSidebarItem_Icon(t *testing.T) {
 		t.Run(k.name+"/an authored name wins", func(t *testing.T) {
 			e := k.entry
 			e.Icon = "inbox"
-			if got := navEntryToSidebarItem(e); got.Icon != "inbox" {
+			if got := navEntryToSidebarItem(e, nil); got.Icon != "inbox" {
 				t.Errorf("Icon = %q, want the authored \"inbox\"", got.Icon)
 			}
 		})
@@ -66,7 +66,7 @@ func TestNavEntryToSidebarItem_Icon(t *testing.T) {
 		t.Run(k.name+"/none suppresses the derived glyph", func(t *testing.T) {
 			e := k.entry
 			e.Icon = dataentryconfig.NoIcon
-			got := navEntryToSidebarItem(e)
+			got := navEntryToSidebarItem(e, nil)
 
 			if got.Icon != dataentryconfig.NoIcon {
 				t.Errorf("Icon = %q, want %q — an empty string would be dropped by "+
@@ -93,7 +93,7 @@ func TestNavEntryToSidebarItem_Icon(t *testing.T) {
 func TestNavEntryToSidebarItem_EmptyIconUnchanged(t *testing.T) {
 	got := navEntryToSidebarItem(dataentryconfig.NavigationEntry{
 		Label: "All Tickets", List: "all", Icon: "",
-	})
+	}, nil)
 	if got.Icon != "list" {
 		t.Errorf("Icon = %q, want \"list\": an empty icon: means 'derive one', "+
 			"not 'draw nothing'", got.Icon)
@@ -124,7 +124,7 @@ func TestDerivedIconsAreValidNames(t *testing.T) {
 		{Label: "A", Action: "a"},
 	}
 	for _, entry := range kinds {
-		got := navEntryToSidebarItem(entry)
+		got := navEntryToSidebarItem(entry, nil)
 		if got.Icon == "" {
 			t.Errorf("%s derives no glyph; `icon: none` on it would have nothing to "+
 				"fall back on when the sidebar collapses", entry.Label)
@@ -143,7 +143,7 @@ func TestDerivedIconsAreValidNames(t *testing.T) {
 func TestActionEntryNoneHasACollapsedFallback(t *testing.T) {
 	got := navEntryToSidebarItem(dataentryconfig.NavigationEntry{
 		Label: "Archive Sprint", Action: "archive_sprint", Icon: dataentryconfig.NoIcon,
-	})
+	}, nil)
 
 	if got.DerivedIcon == "" {
 		t.Fatal("an action entry with icon: none sends no collapsed fallback, so the " +

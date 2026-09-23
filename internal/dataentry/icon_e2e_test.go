@@ -59,7 +59,7 @@ navigation:
 		t.Fatalf("got %d items, want %d", len(items), len(want))
 	}
 	for i, w := range want {
-		got := navEntryToSidebarItem(items[i])
+		got := navEntryToSidebarItem(items[i], nil)
 		if got.Icon != w.icon || got.DerivedIcon != w.derived {
 			t.Errorf("%s: Icon=%q DerivedIcon=%q, want Icon=%q DerivedIcon=%q",
 				w.label, got.Icon, got.DerivedIcon, w.icon, w.derived)

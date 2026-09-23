@@ -1277,6 +1277,23 @@ type NavigationEntry struct {
 	// validateNavEntry.
 	Document string `yaml:"document,omitempty" json:"document,omitempty"`
 
+	// Entities names an entity type whose members the sidebar lists, one link
+	// per entity (TKT-PEKL8L). Only valid inside a group, and without a
+	// Label: the entities' display names are the labels.
+	//
+	// The server serves the definition only; the SPA reads the rows through
+	// the ACL-scoped list endpoint, so the sidebar payload stays free of
+	// per-principal data.
+	Entities string `yaml:"entities,omitempty" json:"entities,omitempty"`
+
+	// QueryScope names a `query_scopes:` entry on the Entities type; empty
+	// applies the type's default. Only valid with Entities.
+	QueryScope string `yaml:"query_scope,omitempty" json:"query_scope,omitempty"`
+
+	// Sort orders the Entities links; empty falls back to the type's
+	// default_sort (see [EffectiveNavSort]). Only valid with Entities.
+	Sort []SortSpec `yaml:"sort,omitempty" json:"sort,omitempty"`
+
 	// Icon overrides the icon derived from the entry's kind. Without it every
 	// list entry gets the same list glyph and every board the same board one,
 	// so "My Tickets" and "Open Tickets" are visually identical — the sidebar

@@ -17,6 +17,9 @@ import {
   IconWarning,
 } from '@/utils/icons'
 import NavIcon from './NavIcon.vue'
+import SidebarEntityQuery from './SidebarEntityQuery.vue'
+import { useEvents } from '@/composables/useEvents'
+import { useSidebarEmptyGroups } from '@/composables/useSidebarEmptyGroups'
 import ProjectSwitcher from './ProjectSwitcher.vue'
 import { apiUrl } from '@/api/base'
 
@@ -48,11 +51,28 @@ const appLinks = computed(() =>
 // upload/remove without a sidebar refetch.
 const logoUrl = computed(() => schemaStore.logoUrl)
 
+const {
+  entryKey,
+  itemKey,
+  setEntryShown,
+  groupIsEmpty,
+  reset: resetEmptyGroups,
+} = useSidebarEmptyGroups()
+
+// Load generation for itemKey; sidebarRequest drops a response overtaken by a
+// later load, so two quick config reloads keep the newer navigation.
+const sidebarLoad = ref(0)
+let sidebarRequest = 0
+
 // Load sidebar data
 async function loadSidebar() {
+  const request = ++sidebarRequest
   try {
     const data = await getSidebar()
+    if (request !== sidebarRequest) return
     sidebarAppName.value = data.app.name
+    resetEmptyGroups()
+    sidebarLoad.value++
     sidebarGroups.value = data.navigation
     schemaStore.setLogoUrl(data.logoUrl ?? null)
     // Principal-scoped inline-create offers ride on this payload; see
@@ -98,6 +118,12 @@ function handleKeydownAll(e: KeyboardEvent) {
     uiStore.closeMobileSidebar()
   }
 }
+
+// A `refresh` is sent when data-entry.yaml reloads. Refetching keeps an
+// `entities:` entry from requesting a scope the new config removed, which
+// would otherwise show "Could not load" until a full page reload.
+const { on: onEvent } = useEvents()
+onEvent('refresh', loadSidebar)
 
 onMounted(() => {
   document.addEventListener('keydown', handleKeydownAll)
@@ -186,73 +212,65 @@ async function handleAction(item: SidebarItem, ev?: Event) {
     </div>
 
     <nav class="sidebar-nav">
-      <template v-for="(group, index) in sidebarGroups" :key="index">
-        <div v-if="group.group" class="nav-section">
-          <div class="nav-section-title">{{ group.group }}</div>
-          <template v-for="item in group.items" :key="item.label + (item.href || item.action || '')">
-            <button
-              v-if="item.action"
-              type="button"
-              class="nav-item nav-action"
-              :aria-label="item.label"
-              :disabled="actionInFlight.has(item.action)"
-              @click="handleAction(item, $event)"
-            >
-              <NavIcon
-                :name="item.icon"
-                :fallback="item.derivedIcon"
-                :collapsed="uiStore.sidebarCollapsed"
-              />
-              <span class="nav-label">{{ item.label }}</span>
-            </button>
+      <!-- An ungrouped entry is a group without a title. -->
+      <div
+        v-for="(group, index) in sidebarGroups"
+        v-show="!groupIsEmpty(group, index)"
+        :key="index"
+        :class="{ 'nav-section': group.group }"
+      >
+        <div v-if="group.group" class="nav-section-title">{{ group.group }}</div>
+        <template v-for="(item, itemIndex) in group.items" :key="itemKey(item, index, itemIndex, sidebarLoad)">
+          <button
+            v-if="item.action"
+            type="button"
+            class="nav-item nav-action"
+            :aria-label="item.label"
+            :disabled="actionInFlight.has(item.action)"
+            @click="handleAction(item, $event)"
+          >
+            <NavIcon
+              :name="item.icon"
+              :fallback="item.derivedIcon"
+              :collapsed="uiStore.sidebarCollapsed"
+            />
+            <span class="nav-label">{{ item.label }}</span>
+          </button>
+          <RouterLink
+            v-else-if="item.href"
+            :to="item.href"
+            class="nav-item"
+            :class="{ active: isActive(item.href) }"
+          >
+            <NavIcon
+              :name="item.icon"
+              :fallback="item.derivedIcon"
+              :collapsed="uiStore.sidebarCollapsed"
+            />
+            <span class="nav-label">{{ item.label }}</span>
+          </RouterLink>
+          <SidebarEntityQuery
+            v-else-if="item.entities"
+            v-slot="{ rows, overflow, failed }"
+            :entities="item.entities"
+            @shown="(shown: boolean) => setEntryShown(entryKey(index, itemIndex), shown)"
+          >
             <RouterLink
-              v-else-if="item.href"
-              :to="item.href"
-              class="nav-item"
-              :class="{ active: isActive(item.href) }"
+              v-for="row in rows"
+              :key="row.key"
+              :to="row.to"
+              class="nav-item nav-entity"
+              :class="{ active: isActive(row.path) }"
+              :title="row.title"
             >
-              <NavIcon
-                :name="item.icon"
-                :fallback="item.derivedIcon"
-                :collapsed="uiStore.sidebarCollapsed"
-              />
-              <span class="nav-label">{{ item.label }}</span>
+              <NavIcon :name="item.icon" :fallback="item.derivedIcon" :collapsed="uiStore.sidebarCollapsed" />
+              <span class="nav-label">{{ row.title }}</span>
             </RouterLink>
-          </template>
-        </div>
-        <template v-else>
-          <template v-for="item in group.items" :key="item.label + (item.href || item.action || '')">
-            <button
-              v-if="item.action"
-              type="button"
-              class="nav-item nav-action"
-              :aria-label="item.label"
-              :disabled="actionInFlight.has(item.action)"
-              @click="handleAction(item, $event)"
-            >
-              <NavIcon
-                :name="item.icon"
-                :fallback="item.derivedIcon"
-                :collapsed="uiStore.sidebarCollapsed"
-              />
-              <span class="nav-label">{{ item.label }}</span>
-            </button>
-            <RouterLink
-              v-else-if="item.href"
-              :to="item.href"
-              class="nav-item"
-              :class="{ active: isActive(item.href) }"
-            >
-              <NavIcon
-                :name="item.icon"
-                :fallback="item.derivedIcon"
-                :collapsed="uiStore.sidebarCollapsed"
-              />
-              <span class="nav-label">{{ item.label }}</span>
-            </RouterLink>
-          </template>
+            <div v-if="overflow > 0" class="nav-note nav-label">and {{ overflow }} more</div>
+            <div v-if="failed" class="nav-note nav-label" role="status">Could not load</div>
+          </SidebarEntityQuery>
         </template>
-      </template>
+      </div>
 
       <!-- Custom apps (sandboxed-iframe extensions). Routes to /app/:id. -->
       <div v-if="appLinks.length" class="nav-section">
@@ -322,6 +340,11 @@ async function handleAction(item: SidebarItem, ev?: Event) {
 .sidebar.collapsed .nav-label,
 .sidebar.collapsed .nav-section-title,
 .sidebar.collapsed .logo {
+  display: none;
+}
+
+/* Collapsed, entity links would be a column of identical icons. */
+.sidebar.collapsed .nav-entity {
   display: none;
 }
 
@@ -437,6 +460,21 @@ async function handleAction(item: SidebarItem, ev?: Event) {
   flex: 1;
 }
 
+/* Entity titles can be long: one line per link, full title in the tooltip. */
+.nav-entity .nav-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Overflow count or load error under an `entities:` entry, label-indented. */
+.nav-note {
+  padding: 4px 16px 8px 58px;
+  font-size: 12px;
+  opacity: 0.6;
+}
+
 /* Action buttons in the sidebar — same look as RouterLink nav items */
 .nav-action {
   width: 100%;
@@ -516,6 +554,8 @@ async function handleAction(item: SidebarItem, ev?: Event) {
   .sidebar.collapsed .logo {
     display: unset;
   }
+
+  .sidebar.collapsed .nav-entity { display: flex; }
 
   .sidebar.collapsed .nav-icon {
     margin-right: 12px;

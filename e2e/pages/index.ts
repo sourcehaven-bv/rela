@@ -18,3 +18,4 @@ export { RelationHistoryPage } from './relation-history.page';
 export { CustomisationPage } from './customisation.page';
 export { PendingPage } from './pending.page';
 export { CommentsPage } from './comments.page';
+export { SidebarPage } from './sidebar.page';

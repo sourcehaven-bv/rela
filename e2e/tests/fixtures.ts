@@ -901,6 +901,10 @@ entities:
         type: string
       priority:
         type: priority
+    # TKT-PEKL8L: backs the sidebar entities group that sidebar-entities.spec.ts
+    # adds. No default scope, so no other list or view is narrowed by it.
+    query_scopes:
+      in_flight: "entity.status == 'in_progress'"
 
   bug:
     label: Bug

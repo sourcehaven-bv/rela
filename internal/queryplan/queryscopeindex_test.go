@@ -178,3 +178,69 @@ func TestListIndexSpec_UnknownScopeDerivesNothing(t *testing.T) {
 		t.Errorf("properties = %v, want none", spec.Properties)
 	}
 }
+
+// TestNavEntitiesDeriveTheListIndex pins TKT-PEKL8L: a navigation `entities:`
+// entry sends the list endpoint the same request a list with its type, scope
+// and sort sends, so it must derive the same index — including when its order
+// comes from the type's default_sort rather than its own `sort:`.
+func TestNavEntitiesDeriveTheListIndex(t *testing.T) {
+	meta := scopeIndexMeta()
+	def := meta.Entities["taak"]
+	def.DefaultSort = []dataentryconfig.SortSpec{{Property: "title"}}
+	meta.Entities["taak"] = def
+
+	navOnly := func(nav dataentryconfig.NavigationEntry) *dataentryconfig.Config {
+		return &dataentryconfig.Config{Navigation: []dataentryconfig.NavigationEntry{
+			{Group: "G", Items: []dataentryconfig.NavigationEntry{nav}},
+		}}
+	}
+	listSpecs := func(cfg *dataentryconfig.Config) []store.DerivedObjectSpec {
+		var out []store.DerivedObjectSpec
+		for _, spec := range queryplan.StaticIndexSpecs(cfg, meta) {
+			if spec.Kind == store.DerivedListIndex {
+				out = append(out, spec)
+			}
+		}
+		return out
+	}
+
+	tests := []struct {
+		name string
+		nav  dataentryconfig.NavigationEntry
+		list dataentryconfig.List
+	}{
+		{
+			name: "own sort and identity scope",
+			nav: dataentryconfig.NavigationEntry{Entities: "taak", QueryScope: "mijn",
+				Sort: []dataentryconfig.SortSpec{{Property: "status"}}},
+			list: dataentryconfig.List{EntityType: "taak", QueryScope: "mijn",
+				Sort: []dataentryconfig.SortSpec{{Property: "status"}}},
+		},
+		{
+			name: "default_sort and inherited default scope",
+			nav:  dataentryconfig.NavigationEntry{Entities: "taak"},
+			list: dataentryconfig.List{EntityType: "taak", Sort: []dataentryconfig.SortSpec{{Property: "title"}}},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := listSpecs(navOnly(tc.nav))
+			want := listSpecs(&dataentryconfig.Config{Lists: map[string]dataentryconfig.List{"l": tc.list}})
+			if len(want) != 1 {
+				t.Fatalf("equivalent list derived %d specs, want 1", len(want))
+			}
+			if len(got) != 1 || !slices.Equal(got[0].Properties, want[0].Properties) ||
+				!slices.Equal(got[0].OrderBy, want[0].OrderBy) {
+
+				t.Errorf("nav entry specs = %+v, want %+v", got, want)
+			}
+		})
+	}
+
+	// A nav entry and a list of the same shape collapse to one index.
+	cfg := navOnly(tests[0].nav)
+	cfg.Lists = map[string]dataentryconfig.List{"l": tests[0].list}
+	if got := listSpecs(cfg); len(got) != 1 {
+		t.Errorf("same-shape list and nav entry derived %d specs, want 1", len(got))
+	}
+}

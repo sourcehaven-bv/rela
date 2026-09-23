@@ -1474,6 +1474,10 @@ dashboard:
 navigation:
   - label: "Dashboard"
     dashboard: true
+  - group: "Open work"
+    items:
+      - entities: ticket
+        query_scope: open_work
   - group: "Ideation"
     items:
       - label: "All Ideas"

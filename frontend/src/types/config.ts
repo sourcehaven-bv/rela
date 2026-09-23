@@ -763,6 +763,12 @@ export interface NavigationEntry {
    *  because /_config serves the navigation tree verbatim. */
   permission?: string
   icon?: string
+  /** Entity type listed by an `entities:` entry (TKT-PEKL8L). */
+  entities?: string
+  /** Query scope for an `entities:` entry. */
+  query_scope?: string
+  /** Link order for an `entities:` entry. */
+  sort?: SortSpec[]
   // Group fields
   group?: string
   collapsed?: boolean
@@ -783,6 +789,20 @@ export interface SidebarItem {
    * neither icon nor label is invisible but still clickable. */
   derivedIcon?: string
   action?: string
+  /** Set on an `entities:` entry (TKT-PEKL8L): the list query whose rows
+   * become one link each. `label` and `href` are empty on such an item; the
+   * rows supply both. */
+  entities?: SidebarEntities
+}
+
+/** The list query behind an `entities:` sidebar entry, in the list
+ * endpoint's own parameter grammar. */
+export interface SidebarEntities {
+  type: string
+  /** Sent as `?query_scope=`; absent applies the type's default scope. */
+  query_scope?: string
+  /** Effective order in `sort=` grammar (`title,-due`); absent = id order. */
+  sort?: string
 }
 
 export interface SidebarGroup {

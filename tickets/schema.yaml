@@ -313,6 +313,9 @@ entities:
     id_type: short
     color: "#FFFDE7"
     border_color: "#FBC02D"
+    query_scopes:
+      # Picked up but not finished: everything past backlog that is not closed.
+      open_work: "entity.status ~= 'backlog' and entity.status ~= 'done' and entity.status ~= 'wont-fix'"
     properties:
       title:
         type: string
