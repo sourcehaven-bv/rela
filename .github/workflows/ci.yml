@@ -1378,11 +1378,21 @@ jobs:
           set -euo pipefail
 
           # Any ticket/bug touched by this PR must be brought to a terminal
-          # state (done / wont-fix / blocked), not left mid-flight or parked in
-          # `ready`. The `ci-no-*` validation rules already block planning /
-          # in-progress / review / analyzing / blocked; this catches the
-          # remaining hole: a work item left in `ready` while its code merges
-          # (how TKT-QXHFJZ shipped stale). backlog is allowed (untouched work).
+          # state (done / wont-fix), not left mid-flight or parked in `ready`.
+          # The `ci-no-*` validation rules already block planning / in-progress
+          # / review / analyzing / blocked; this catches the remaining hole: a
+          # work item left in `ready` while its code merges (how TKT-QXHFJZ
+          # shipped stale). backlog is allowed (untouched work).
+          #
+          # `blocked` is NOT accepted here, deliberately. It reads like a
+          # terminal state and the previous version of this list accepted it,
+          # but ci-no-blocked-tickets / ci-no-blocked-bugs are `severity:
+          # error`, so a blocked item failed validation in the same CI run that
+          # this gate waved it through. The two gates disagreed; they now
+          # agree, in the direction those rules state ("resolve or revert").
+          # A ticket genuinely parked on an external dependency stays in the
+          # repo at `blocked` — nothing stops that. What is refused is merging
+          # a PR that LEAVES its own work item blocked.
           CHANGED=$(git diff --name-only --diff-filter=AM "${BASE_SHA}"...HEAD -- \
             'tickets/entities/bugs/*.md' \
             'tickets/entities/tickets/*.md' || true)
@@ -1405,9 +1415,16 @@ jobs:
             STATUS=$(fm_field "$f" status)
             ID=$(fm_field "$f" id)
             case "$STATUS" in
-              done|wont-fix|blocked|backlog) ;;
+              done|wont-fix|backlog) ;;
               ready)
                 echo "ERROR: $ID is '$STATUS' — finish it (status=done) before merging its PR, or move it back to backlog."
+                FAIL=1
+                ;;
+              blocked)
+                # Also caught by ci-no-blocked-{tickets,bugs}; named here so the
+                # failure says what to do instead of "not a terminal state".
+                echo "ERROR: $ID is 'blocked' — resolve the blocker and finish it (status=done), or move it back to backlog."
+                echo "  A ticket may STAY blocked in the repo; what is refused is merging a PR that leaves its own work item blocked."
                 FAIL=1
                 ;;
               *)
