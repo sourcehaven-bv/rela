@@ -112,3 +112,17 @@ func TestLint_EmptyConditionsIgnored(t *testing.T) {
 		t.Fatalf("expected no errors when no conditions are set, got: %v", errs)
 	}
 }
+
+// A form condition's `form` record is a record too, so related() compiles;
+// nothing answers it there, so the lint refuses it (TKT-CXQEV0).
+func TestLint_RelatedIsRefused(t *testing.T) {
+	errs := runLint(t, dataentryconfig.Form{
+		EntityType: "ticket",
+		Fields: []dataentryconfig.FormField{
+			{Property: "status", VisibleWhen: "related(form, 'blocks')"},
+		},
+	})
+	if len(errs) != 1 || !strings.Contains(errs[0], "related(...) is only supported in query_scopes") {
+		t.Fatalf("want the related() refusal, got: %v", errs)
+	}
+}

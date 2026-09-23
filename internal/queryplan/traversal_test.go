@@ -1,7 +1,10 @@
 package queryplan
 
 import (
+	"slices"
 	"testing"
+
+	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
@@ -156,4 +159,55 @@ func TestTraversalIndexSpecs_AgreesWithValidation(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TKT-CXQEV0: an incoming hop (written as the inverse ID) lands on the
+// relation's FROM side, so that is where the index goes.
+func TestTraversalIndexSpecs_InverseIndexesTheFromType(t *testing.T) {
+	meta, err := metamodel.Parse([]byte(`version: "1.0"
+namespace: https://example.org/test#
+entities:
+  ticket: {label: Ticket, id_prefix: TKT, properties: {status: {type: string}}}
+  feature: {label: Feature, id_prefix: FEAT, properties: {status: {type: string}}}
+relations:
+  implements: {label: implements, from: [ticket], to: [feature], inverse: implementedBy}
+`))
+	if err != nil {
+		t.Fatalf("parse schema: %v", err)
+	}
+	got := TraversalIndexSpecs(
+		progFor(t, `related(entity, 'implementedBy', { status = 'open' })`), meta, "feature")
+	if len(got) != 1 || got[0].Type != "ticket" || len(got[0].Properties) != 1 || got[0].Properties[0] != "status" {
+		t.Fatalf("expected one spec on ticket(status), got %+v", got)
+	}
+}
+
+// TKT-CXQEV0: every declared query scope derives its traversal index, even
+// one no list names, because a request may select any declared scope.
+func TestStaticIndexSpecs_DerivesTraversalIndexFromEveryScope(t *testing.T) {
+	meta, err := metamodel.Parse([]byte(`version: "1.0"
+namespace: https://example.org/test#
+entities:
+  ticket: {label: Ticket, id_prefix: TKT, properties: {status: {type: string}, owner: {type: string}}}
+  feature:
+    label: Feature
+    id_prefix: FEAT
+    properties: {title: {type: string}}
+    query_scopes:
+      busy: "related(entity, 'implementedBy', { status = 'in-progress' })"
+      plain: "entity.title == 'x'"
+relations:
+  implements: {label: implements, from: [ticket], to: [feature], inverse: implementedBy}
+`))
+	if err != nil {
+		t.Fatalf("parse schema: %v", err)
+	}
+	got := StaticIndexSpecs(&dataentryconfig.Config{}, meta)
+	want := store.DerivedObjectSpec{Kind: store.DerivedQueryIndex, Type: "ticket", Properties: []string{"status"}}
+	for _, s := range got {
+		if s.Kind == want.Kind && s.Type == want.Type && slices.Equal(s.Properties, want.Properties) {
+			return
+		}
+	}
+	t.Fatalf("want %+v among %+v", want, got)
 }

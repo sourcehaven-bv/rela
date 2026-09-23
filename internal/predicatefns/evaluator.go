@@ -138,7 +138,7 @@ func (e *Evaluator) CompileFilter(entityType string, filters []*filter.Filter) (
 func (e *Evaluator) Matches(
 	ctx context.Context, prog *predicate.Program, entityType, id string, props map[string]any,
 ) (bool, error) {
-	return e.matches(ctx, prog, entityType, id, props, false)
+	return e.matches(ctx, prog, entityType, id, props, false, nil)
 }
 
 // MatchesAs evaluates a Program compiled by [Evaluator.CompileWithCurrentUser],
@@ -158,12 +158,27 @@ func (e *Evaluator) Matches(
 func (e *Evaluator) MatchesAs(
 	ctx context.Context, prog *predicate.Program, entityType, id string, props map[string]any,
 ) (bool, error) {
-	return e.matches(ctx, prog, entityType, id, props, true)
+	return e.matches(ctx, prog, entityType, id, props, true, nil)
+}
+
+// MatchesWithTraversals is [Evaluator.MatchesAs] for a program that may
+// contain `related(...)`: traversal answers each one. It is passed per call,
+// never stored, because answers are per request and per principal — a
+// resolver held on the Evaluator would be shared by every caller of a
+// compiled program.
+//
+// Nil: traversal accepted — a program containing a traversal then fails at
+// Eval, which is the engine's refusal to guess.
+func (e *Evaluator) MatchesWithTraversals(
+	ctx context.Context, prog *predicate.Program, entityType, id string, props map[string]any,
+	traversal predicate.TraversalFunc,
+) (bool, error) {
+	return e.matches(ctx, prog, entityType, id, props, true, traversal)
 }
 
 func (e *Evaluator) matches(
 	ctx context.Context, prog *predicate.Program, entityType, id string,
-	props map[string]any, withUser bool,
+	props map[string]any, withUser bool, traversal predicate.TraversalFunc,
 ) (bool, error) {
 	def, ok := e.meta.GetEntityDef(entityType)
 	if !ok {
@@ -180,6 +195,9 @@ func (e *Evaluator) matches(
 		if err := BindCurrentUser(ctx, b); err != nil {
 			return false, err
 		}
+	}
+	if traversal != nil {
+		b.SetTraversal(traversal)
 	}
 	v, err := prog.Eval(ctx, b)
 	if err != nil {

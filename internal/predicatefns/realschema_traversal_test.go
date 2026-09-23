@@ -5,8 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	"gopkg.in/yaml.v3"
-
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
 )
@@ -19,9 +17,11 @@ func TestValidateTraversals_AgainstRealSchema(t *testing.T) {
 	if err != nil {
 		t.Skipf("schema not readable: %v", err)
 	}
-	var meta metamodel.Metamodel
-	if err := yaml.Unmarshal(raw, &meta); err != nil {
-		t.Skipf("schema not parseable: %v", err)
+	// Parse, not a bare yaml.Unmarshal: the inverse-ID index is populated by
+	// the loader, and the incoming case below depends on it.
+	meta, err := metamodel.Parse(raw)
+	if err != nil {
+		t.Fatalf("parse tickets schema: %v", err)
 	}
 	env := predicate.NewEnv()
 	if err := env.DeclareVar("entity", predicate.RecordType{"status": predicate.StringType}); err != nil {
@@ -35,15 +35,22 @@ func TestValidateTraversals_AgainstRealSchema(t *testing.T) {
 		return p
 	}
 
-	bare := ValidateTraversals(&meta, "bug", mustCompile(
+	bare := ValidateTraversals(meta, "bug", mustCompile(
 		`related(entity, 'caused-by', { status = 'done' })`))
 	if bare == nil || !strings.Contains(bare.Error(), "add type=") {
 		t.Fatalf("bare union traversal must be refused, got %v", bare)
 	}
 	t.Logf("refusal: %v", bare)
 
-	if err := ValidateTraversals(&meta, "bug", mustCompile(
+	if err := ValidateTraversals(meta, "bug", mustCompile(
 		`related(entity, 'caused-by', { type = 'ticket', status = 'done' })`)); err != nil {
 		t.Fatalf("ascribed traversal must be accepted: %v", err)
+	}
+
+	// TKT-CXQEV0: a view on features filtering on the tickets that implement
+	// them walks `implements` backwards through its inverse ID.
+	if err := ValidateTraversals(meta, "feature", mustCompile(
+		`related(entity, 'implementedBy', { status = 'in-progress' })`)); err != nil {
+		t.Fatalf("incoming traversal must be accepted: %v", err)
 	}
 }

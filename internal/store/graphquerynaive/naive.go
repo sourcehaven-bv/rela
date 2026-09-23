@@ -588,11 +588,17 @@ func hasMatchingRelation(
 	typeSet, endpointSet map[string]bool, anyEndpoint bool, match *store.EndpointPredicate,
 	nesting int,
 ) (bool, error) {
+	q := store.RelationQuery{Direction: dir}
+	if match != nil {
+		// An endpoint match reads the DEFAULT state only — see
+		// [store.RelationPredicate.EndpointMatch]. matchesEndpoint already
+		// reads the endpoint's default face; pin the edge tail to match.
+		var defaultTail entity.Face
+		q.FromFace = &defaultTail
+	}
 	for _, c := range candidates {
-		for rel, err := range r.ListRelations(ctx, store.RelationQuery{
-			EntityID:  c,
-			Direction: dir,
-		}) {
+		q.EntityID = c
+		for rel, err := range r.ListRelations(ctx, q) {
 			if err != nil {
 				return false, err
 			}

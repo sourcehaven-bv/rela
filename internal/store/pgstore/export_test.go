@@ -84,3 +84,9 @@ const FeedChannelForTest = feedChannel
 func BuildGraphQuerySQLForTest(q store.GraphQuery, countOnly bool) (sqlText string, args []any) {
 	return buildGraphQuerySQL(q, countOnly)
 }
+
+// BuildMatchingIDsSQLForTest exposes the SQL [Store.MatchingIDs] issues, so
+// EXPLAIN tests can check the shape the traversal path actually runs.
+func BuildMatchingIDsSQLForTest(q store.GraphQuery, ids []string) (sqlText string, args []any) {
+	return buildMatchingIDsSQL(q, ids)
+}

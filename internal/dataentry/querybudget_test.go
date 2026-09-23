@@ -11,6 +11,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
+	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -33,7 +34,12 @@ func budgetMeta() *metamodel.Metamodel {
 		Entities: map[string]metamodel.EntityDef{
 			"ticket": {Label: "Ticket", Properties: map[string]metamodel.PropertyDef{
 				"title": {Type: "string", Required: true}, "status": {Type: "string"},
-			}, PropertyOrder: []string{"title", "status"}},
+			}, PropertyOrder: []string{"title", "status"},
+				// A named scope, so the other budgets (which apply only the
+				// default) are unaffected.
+				QueryScopes: map[string]string{
+					"feature-one": "related(entity, 'implements', { title = 'Feature 1' })",
+				}},
 			"feature": {Label: "Feature", Properties: str, PropertyOrder: []string{"title"}},
 			"person":  {Label: "Person", Properties: str, PropertyOrder: []string{"title"}},
 			"team":    {Label: "Team", Properties: str, PropertyOrder: []string{"title"}},
@@ -396,12 +402,43 @@ func TestQueryBudget_NestedSectionIsSizeIndependent(t *testing.T) {
 	assertBudget(t, "nested section", small, large, nestedSectionBudget, detail)
 }
 
+// A list page under a query scope with a traversal (TKT-CXQEV0). The
+// traversal is answered for the whole page in one gated MatchingIDs call, so
+// it adds a constant, never a read per row.
+func TestQueryBudget_TraversalScopeIsSizeIndependent(t *testing.T) {
+	small, large, detail := readsFor(t, func(t *testing.T, app *App, d *acl.Declarative, ctx context.Context) {
+		t.Helper()
+		if err := app.SetQueryScopeResolver(AdaptQueryScopes(appbuild.QueryScopes)); err != nil {
+			t.Fatalf("wire query scopes: %v", err)
+		}
+		resp, rec := listEntitiesAs(ctx, t, app, d, "ticket", "tickets", "per_page=100&query_scope=feature-one")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("list: %d %s", rec.Code, rec.Body)
+		}
+		// Tickets i with i%5 == 0 implement F1: a fifth of them.
+		if len(resp.Data) == 0 {
+			t.Fatal("the scope matched nothing, so this budget proves nothing")
+		}
+		for _, e := range resp.Data {
+			var n int
+			if _, err := fmt.Sscanf(e.ID, "TKT-%d", &n); err != nil || n%5 != 0 {
+				t.Fatalf("row %s does not implement Feature 1", e.ID)
+			}
+		}
+	})
+	assertBudget(t, "traversal scope list page", small, large, traversalScopeBudget, detail)
+}
+
 // Pinned budgets: the measured store-call count per request shape after
 // TKT-1U8XYN. Raise one only with a reason in the commit.
 const (
 	// list page: scoped count + one bounded page read (listpushdown.go),
 	// page edges, neighbor headers, membership walk.
 	listPageBudget = 6
+	// traversal-scoped list page: the type's headers, ONE MatchingIDs for
+	// the traversal, then the page's edges, neighbor headers and membership
+	// walk as on a plain page.
+	traversalScopeBudget = 6
 	// view: entry, two traverse passes, collection load, section columns +
 	// target headers, entry edges, membership walk.
 	viewSectionBudget = 11

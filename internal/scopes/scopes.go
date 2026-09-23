@@ -212,6 +212,15 @@ func Compile(m *metamodel.Metamodel) (Compiled, error) {
 					typeName, name, err, source))
 				continue
 			}
+			// A `related(...)` that cannot be resolved against the schema
+			// is a load error naming the relation, not a scope that quietly
+			// matches nothing (TKT-CXQEV0).
+			if err := predicatefns.ValidateTraversals(m, typeName, prog); err != nil {
+				errs = append(errs, fmt.Sprintf(
+					"entity %q: query scope %q: %v (expression: %s)",
+					typeName, name, err, source))
+				continue
+			}
 			if byKey == nil {
 				byKey = map[Key]*predicate.Program{}
 			}

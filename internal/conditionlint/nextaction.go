@@ -84,6 +84,10 @@ func compileNextActionSource(
 				"%s: condition does not compile against entity type %q: %v", where, t, err))
 			continue
 		}
+		if err := refuseTraversal(prog); err != nil {
+			problems = append(problems, fmt.Sprintf("%s: %v", where, err))
+			continue
+		}
 		programs[t] = prog
 	}
 	if len(problems) > 0 {

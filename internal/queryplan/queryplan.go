@@ -113,20 +113,10 @@ func declaredOnEveryType(meta *metamodel.Metamodel, types []string, prop string,
 }
 
 // StringShaped reports whether a scalar property's stored value is a string
-// whose byte order IS its order (string, enum, date, datetime, custom
-// type). The one definition the pushdown planners share, so the list page
-// pushdown and the derived indexes agree on what may be compared in SQL.
+// whose byte order IS its order. See [metamodel.Metamodel.StringShaped], the
+// one definition the pushdown planners and traversal validation share.
 func StringShaped(meta *metamodel.Metamodel, pd metamodel.PropertyDef) bool {
-	if pd.List {
-		return false
-	}
-	switch pd.Type {
-	case metamodel.PropertyTypeString, metamodel.PropertyTypeEnum,
-		metamodel.PropertyTypeDate, metamodel.PropertyTypeDatetime:
-		return true
-	}
-	_, custom := meta.Types[pd.Type]
-	return custom
+	return metamodel.StringShaped(meta, pd)
 }
 
 // DeclaredValues returns the declared order of property's values when it is
@@ -182,13 +172,6 @@ func StaticIndexSpecs(cfg *dataentryconfig.Config, meta *metamodel.Metamodel) []
 		if q.condition != "" && ev == nil {
 			ev = predicatefns.NewEvaluator(meta)
 		}
-		// A traversal indexes the type at the FAR END of the relation, which
-		// store.DerivedObjectSpec cannot express on the query's own spec (it
-		// carries one Type, and the index is partial on it). So a condition
-		// with a traversal contributes a SECOND spec — see TraversalIndexSpecs.
-		for _, ts := range staticTraversalSpecs(sq, q.condition, meta, ev) {
-			byKey[ts.Type+"\x00"+strings.Join(ts.Properties, "\x00")] = ts
-		}
 		props := staticIndexProps(sq, q.condition, meta, ev)
 		if len(props) == 0 {
 			continue
@@ -213,6 +196,9 @@ func StaticIndexSpecs(cfg *dataentryconfig.Config, meta *metamodel.Metamodel) []
 		byKey[string(spec.Kind)+"\x00"+spec.Type+"\x00"+strings.Join(spec.Properties, "\x00")+
 			"\x01"+strings.Join(spec.OrderBy, "\x00")+
 			"\x02"+orderValuesKey(spec.OrderValues)] = spec
+	}
+	for _, ts := range scopeTraversalSpecs(meta) {
+		byKey[ts.Type+"\x00"+strings.Join(ts.Properties, "\x00")] = ts
 	}
 	keys := make([]string, 0, len(byKey))
 	for key := range byKey {

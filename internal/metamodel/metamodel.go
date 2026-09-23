@@ -139,3 +139,28 @@ func (m *Metamodel) HasValidationRule(ruleName string) bool {
 	}
 	return false
 }
+
+// StringShaped reports whether a scalar property's stored value is a string
+// whose byte order IS its order (string, enum, date, datetime, custom type).
+// It is the one definition every SQL pushdown shares — the list page
+// pushdown, the derived indexes and relation-traversal validation — so what
+// may be compared in SQL means the same thing everywhere.
+//
+// A package function rather than a method: it reads only m.Types, and
+// Metamodel's exported API is capped (plimsoll).
+//
+// Nil: accepted for m; only the built-in string-shaped types qualify then.
+func StringShaped(m *Metamodel, pd PropertyDef) bool {
+	if pd.List {
+		return false
+	}
+	switch pd.Type {
+	case PropertyTypeString, PropertyTypeEnum, PropertyTypeDate, PropertyTypeDatetime:
+		return true
+	}
+	if m == nil {
+		return false
+	}
+	_, custom := m.Types[pd.Type]
+	return custom
+}

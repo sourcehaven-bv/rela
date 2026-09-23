@@ -170,5 +170,9 @@ func compileOne(
 			"%s: condition does not compile against entity type %q: %v", key, entityType, err))
 		return
 	}
+	if err := refuseTraversal(prog); err != nil {
+		*problems = append(*problems, fmt.Sprintf("%s: %v", key, err))
+		return
+	}
 	programs[key] = prog
 }
