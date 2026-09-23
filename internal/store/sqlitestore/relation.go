@@ -121,26 +121,25 @@ func buildRelationQueryFrom(q store.RelationQuery, cursorKey string) (sqlText st
 		}
 	}
 	if q.EntityIDs != nil {
-		// SQLite has no array parameters: expand to a placeholder list. An
-		// empty slice becomes a constant-false predicate so nil-vs-empty
-		// keeps its documented meaning (nil = unfiltered, empty = nothing).
-		in := "(NULL)"
-		if len(q.EntityIDs) > 0 {
-			in = "(" + strings.TrimSuffix(strings.Repeat("?,", len(q.EntityIDs)), ",") + ")"
-		}
-		for _, id := range q.EntityIDs {
-			args = append(args, id)
-		}
+		// SQLite has no array parameters, and a placeholder per id runs into
+		// SQLITE_MAX_VARIABLE_NUMBER for a large batch (a gantt subtree is
+		// unbounded, TKT-U9DYW4). The ids travel as ONE JSON array instead and
+		// json_each unpacks it, so the statement has a fixed parameter count
+		// whatever the batch size. An empty slice yields an empty set, which
+		// keeps nil-vs-empty's documented meaning (nil = unfiltered, empty =
+		// nothing).
+		ids := jsonIDs(q.EntityIDs)
+		const in = "(SELECT value FROM json_each(?))"
 		switch q.Direction {
 		case store.DirectionOutgoing:
 			conds = append(conds, "from_id IN "+in)
+			args = append(args, ids)
 		case store.DirectionIncoming:
 			conds = append(conds, "to_id IN "+in)
+			args = append(args, ids)
 		default:
-			for _, id := range q.EntityIDs {
-				args = append(args, id)
-			}
 			conds = append(conds, "(from_id IN "+in+" OR to_id IN "+in+")")
+			args = append(args, ids, ids)
 		}
 	}
 

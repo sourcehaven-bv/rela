@@ -140,6 +140,10 @@ type DBTX interface {
 // than to this type, so the public API this adds to is the store-capability
 // surface, not a new coupling point.
 //
+// GraphPosition (TKT-U9DYW4) is +1 as well: an optional store capability
+// (store.PositionQueryer) that must live on the type holding the graph SQL
+// builder, consumed through that one-method interface.
+//
 // +1 exported / +1 method (TKT-HH7PKJ): SwapRelationEndpoints is an OPTIONAL
 // store capability (store.BulkMigrator) on the same terms as HeaderReader and
 // the TKT-1U8XYN pair above — consumers reach it by type-asserting the store
@@ -148,11 +152,12 @@ type DBTX interface {
 // are: endpoints are a relation's identity, so a loop above the store must be
 // create-then-delete, which forks version lineage and destroys a self-edge.
 //
-//plimsoll:max-exported-methods=48
-//plimsoll:max-methods=58
+//plimsoll:max-exported-methods=49
+//plimsoll:max-methods=59
 type Store struct {
-	db        DBTX
-	observers []store.EntityObserver // notified synchronously after committed entity writes
+	db           DBTX
+	searchTitles SearchTitles
+	observers    []store.EntityObserver // notified synchronously after committed entity writes
 
 	// Cross-process change feed (see feed.go / listener.go). Every process
 	// LISTENs on one constant channel (feedChannel); these two fields are what
@@ -196,6 +201,12 @@ type Option func(*Store)
 // writes. A nil observer is dropped silently, matching memstore.WithObserver
 // and the app.FSFactory.AddObserver contract, so callers can pass the result
 // of an optional search-backend factory without a nil guard.
+// WithSearchTitles sets the type-to-title-property map free-text ranking
+// uses; see [SearchTitles]. Nil keeps the prefix ranking.
+func WithSearchTitles(t SearchTitles) Option {
+	return func(s *Store) { s.searchTitles = t }
+}
+
 func WithObserver(o store.EntityObserver) Option {
 	return func(s *Store) {
 		if o == nil {

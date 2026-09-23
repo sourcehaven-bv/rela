@@ -195,6 +195,13 @@ func (a *App) handleV1EntityPosition(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if pos, handled := storePosition(a, w, r, scope, id); handled {
+		if pos != nil {
+			writeV1JSON(w, http.StatusOK, *pos)
+		}
+		return
+	}
+
 	entities, err := a.resolveScope(r.Context(), scope)
 	if err != nil {
 		writeListPipelineError(w, r, err)
@@ -222,4 +229,55 @@ func (a *App) handleV1EntityPosition(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeV1JSON(w, http.StatusOK, pos)
+}
+
+// storePosition answers a list-sourced position from the store when the
+// scope is one the list page itself would serve from the store (TKT-U9DYW4).
+// handled=false means "take the Go path", which is the ordinary case for a
+// search scope (relevance ordered, mixed type — not a GraphQuery at all) and
+// for any list shape the pushdown declines. handled=true with a nil position
+// means the response — an error — has been written.
+//
+// The ACL is honored exactly as on the list page: the plan's query IS the
+// principal's compiled read query, so Total, Prev and Next describe visible
+// rows only, and an id outside them is the same not_in_scope 404.
+//
+// A function, not a method: App is at its method load line.
+func storePosition(
+	a *App, w http.ResponseWriter, r *http.Request, scope ScopeDescriptor, id string,
+) (*v1.Position, bool) {
+	if scope.Source == "search" {
+		return nil, false
+	}
+	query := scope.toQuery()
+	ctx, n, err := resolveListNarrowing(r.Context(), a, scope.Type, query)
+	if err != nil {
+		// LOAD-BEARING: declining here is safe only because the Go path
+		// (resolveScope → scopedSortedEntities) resolves the same narrowing
+		// again and refuses with the same error. A scope that fails to
+		// resolve must never degrade into an unscoped read; if the Go path
+		// ever stops re-resolving, this must return the error instead.
+		return nil, false
+	}
+	plan, ok := n.pushdownPlan(ctx, a, scope.Type, query, 1, 1)
+	if !ok {
+		return nil, false
+	}
+	sp, found, err := plan.position(ctx, a.Services().Store, id)
+	if err != nil {
+		writeListPipelineError(w, r, err)
+		return nil, true
+	}
+	if !found {
+		writeV1Error(w, r, http.StatusNotFound, "not_in_scope", "Entity not found in scope", "")
+		return nil, true
+	}
+	pos := &v1.Position{Current: sp.Index, Total: sp.Total}
+	if sp.Prev != nil {
+		pos.Prev = &v1.PositionRef{ID: sp.Prev.ID, Type: sp.Prev.Type}
+	}
+	if sp.Next != nil {
+		pos.Next = &v1.PositionRef{ID: sp.Next.ID, Type: sp.Next.Type}
+	}
+	return pos, true
 }

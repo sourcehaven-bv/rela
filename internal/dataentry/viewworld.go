@@ -275,7 +275,10 @@ func (h *viewsHandler) loadViewEntities(
 		seen[id] = struct{}{}
 		unique = append(unique, id)
 	}
-	for e, err := range h.store.ListEntities(ctx, store.EntityQuery{
+	// Headers, not entities: traversal needs ids, types and properties. The
+	// bodies a section renders are loaded once, after the gate
+	// ([viewsHandler.loadViewBodies]).
+	for hdr, err := range store.ListEntityHeaders(ctx, h.store, store.EntityQuery{
 		IDs:   unique,
 		World: w.scope,
 	}) {
@@ -285,7 +288,7 @@ func (h *viewsHandler) loadViewEntities(
 				"world", w.name, "ids", len(unique), "err", err)
 			break
 		}
-		byID[e.ID] = e
+		byID[hdr.ID] = headerEntity(hdr)
 	}
 
 	// SOURCE-GATE the traversal (BUG-9Z20WH). See [viewsHandler.gateLoadedEntities].

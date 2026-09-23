@@ -113,6 +113,11 @@ entity present and every remark on them left behind.
   observes a change that did not commit — the same guarantee the PostgreSQL
   build makes, which the filesystem build cannot.
 - **One file to back up.** Copy `.rela/rela.db` while rela is not running.
+- **List pages answered by the database.** A list with equality filters, a
+  sort and a page number is one bounded SQL read, and listings never load
+  markdown bodies they will not show. Queries that depend on relations — most
+  ACL-scoped reads among them — are still evaluated in rela's own process over
+  the rows of the type, as the filesystem build does.
 
 ## Migrating between backends
 

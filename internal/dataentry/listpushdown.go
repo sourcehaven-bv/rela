@@ -131,6 +131,73 @@ func planListPushdown(
 	return listPlan{query: gq, errClass: errClass}, true
 }
 
+// listNarrowing is what decides a list request's MEMBERSHIP beyond its
+// filter[...] params: the view's `condition:` and its query scope. It is
+// resolved once and shared by the two consumers that must agree on it — the
+// page (App.listPage) and the position inside that page
+// (handleV1EntityPosition) — because both narrowings are invisible to
+// planListPushdown. A caller that planned a pushdown without consulting them
+// would answer for the UNFILTERED superset (BUG-F1LTP1's failure shape), which
+// is why the gate lives in one function rather than at each call site.
+type listNarrowing struct {
+	cond  ViewConditionMatcher
+	scope resolvedQueryScope
+}
+
+// resolveListNarrowing resolves both narrowings and stamps the query identity
+// on ctx when either is present: both may name `current_user`, the scope
+// binds before the store read and the condition runs in Go afterwards
+// against this ctx. The bind is idempotent.
+func resolveListNarrowing(
+	ctx context.Context, a *App, typeName string, query map[string][]string,
+) (context.Context, listNarrowing, error) {
+	n := listNarrowing{
+		cond: viewCondition(a.viewConditions, a.State(), viewKindList, queryGet(query, listIDParam)),
+	}
+	scopeName, err := queryScopeParam(query)
+	if err != nil {
+		return ctx, n, err
+	}
+	if n.scope, err = viewQueryScope(a.queryScopes, a.Cfg(), a.Meta(), typeName, scopeName); err != nil {
+		return ctx, n, err
+	}
+	if n.cond != nil || n.scope.Scope != nil {
+		if ctx, err = bindQueryIdentity(ctx, n.scope); err != nil {
+			return ctx, n, err
+		}
+	}
+	return ctx, n, nil
+}
+
+// pushdownPlan is the ONE eligibility decision for serving a list request
+// from the store. The store applies neither narrowing, so it may serve only
+// when both are absent: a scope using `~=`, an ordered comparison or a
+// disjunction has a Go-side remainder, and a store-side page computed
+// without it would paginate over rows the scope excludes — wrong counts and
+// wrong page boundaries, not merely extra rows. The same holds for a
+// condition. Declining is always correct, only slower.
+func (n listNarrowing) pushdownPlan(
+	ctx context.Context, a *App, typeName string, query map[string][]string, page, perPage int,
+) (listPlan, bool) {
+	if n.cond != nil || n.scope.Scope != nil || worldFromContext(ctx).blocksAllReads() {
+		return listPlan{}, false
+	}
+	rqr := readGateFromContext(ctx).ReadQuery(ctx, typeName)
+	isRelationKey := relationFilterClassifier(a.Meta(), a.Cfg(), typeName)
+	return planListPushdown(a.Meta(), typeName, query, rqr, worldScopeFrom(ctx), page, perPage, isRelationKey)
+}
+
+// position answers where id sits in the plan's ordered, ACL-scoped result
+// (TKT-U9DYW4): the same query the page read runs, asked a different
+// question, so a page and the position inside it cannot disagree.
+func (p listPlan) position(ctx context.Context, st store.Store, id string) (store.Position, bool, error) {
+	pos, found, err := store.GraphPosition(ctx, st, p.query, id)
+	if err != nil {
+		return store.Position{}, false, fmt.Errorf("%w: %w", p.errClass, err)
+	}
+	return pos, found, nil
+}
+
 // run executes the plan: the scoped total in one count and the page in one
 // content-free read. Rows come back as content-free entities
 // (rowcontent.go), exactly what the Go path hands the handler.

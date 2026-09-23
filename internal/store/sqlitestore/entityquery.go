@@ -1,6 +1,7 @@
 package sqlitestore
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -92,10 +93,8 @@ func entityScopeWhere(q store.EntityQuery, candidate string, candArgs []any) (wh
 		args = append(args, q.Type)
 	}
 	if len(q.IDs) > 0 {
-		conds = append(conds, "id IN ("+placeholders(len(q.IDs))+")")
-		for _, id := range q.IDs {
-			args = append(args, id)
-		}
+		conds = append(conds, "id IN (SELECT value FROM json_each(?))")
+		args = append(args, jsonIDs(q.IDs))
 	}
 	conds, args = appendFaceInCond(conds, q.FaceIn, args)
 	return " WHERE " + strings.Join(conds, " AND "), args
@@ -134,10 +133,8 @@ func entityWhere(q store.EntityQuery, keysetAfter string) (where string, args []
 		args = append(args, q.Type)
 	}
 	if len(q.IDs) > 0 {
-		conds = append(conds, "id IN ("+placeholders(len(q.IDs))+")")
-		for _, id := range q.IDs {
-			args = append(args, id)
-		}
+		conds = append(conds, "id IN (SELECT value FROM json_each(?))")
+		args = append(args, jsonIDs(q.IDs))
 	}
 	conds, args = appendFaceInCond(conds, q.FaceIn, args)
 	if keysetAfter != "" {
@@ -188,4 +185,19 @@ func limitClause(n int) string {
 		return ""
 	}
 	return fmt.Sprintf(" LIMIT %d", n)
+}
+
+// jsonIDs packs an id batch into ONE bind parameter. SQLite has no array
+// parameters, and a placeholder per id runs into SQLITE_MAX_VARIABLE_NUMBER
+// once a caller batches a wide page or a subtree (TKT-U9DYW4); json_each
+// unpacks the array in SQL, so the parameter count is fixed.
+func jsonIDs(ids []string) string {
+	b, err := json.Marshal(ids)
+	if err != nil {
+		// A []string always marshals. Should that ever stop being true, "[]"
+		// would read as "match nothing" and turn a bug into an empty result,
+		// so fail loudly instead.
+		panic("sqlitestore: marshal id batch: " + err.Error())
+	}
+	return string(b)
 }

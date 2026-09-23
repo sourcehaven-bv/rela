@@ -20,6 +20,9 @@ import (
 // graphquerynaive.DepthCap so the two paths bound traversal identically.
 
 func (s *Store) GraphQuery(ctx context.Context, q store.GraphQuery) iter.Seq2[*entity.Entity, error] {
+	if rows, ok := s.simpleGraphRows(ctx, q); ok {
+		return rows
+	}
 	return graphquerynaive.Run(ctx, s, q)
 }
 

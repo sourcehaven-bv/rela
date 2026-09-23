@@ -17,6 +17,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/store/storetest"
 
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 )
@@ -947,6 +948,40 @@ func TestSidebar_GanttHiddenWithoutPermission(t *testing.T) {
 	}
 	if strings.Contains(rec.Body.String(), "/gantt/plan") {
 		t.Errorf("gated gantt entry should be hidden without the permission: %s", rec.Body)
+	}
+}
+
+// A drilled request reads only the hierarchy edges touching its subtree
+// (TKT-U9DYW4): every relation read carries the node ids, and the number of
+// ids it carries does not grow with edges elsewhere in the forest.
+func TestGantt_SubtreeDrillBoundsItsEdgeRead(t *testing.T) {
+	drillBreadth := func(t *testing.T, unrelatedTrees int) int {
+		t.Helper()
+		app := newGanttTestApp(t)
+		seedProject(app, "PRJ-A", "Root", nil)
+		seedProject(app, "PRJ-B", "Child", nil)
+		seedRelation(app, &entity.Relation{From: "PRJ-A", Type: "contains", To: "PRJ-B"})
+		for i := range unrelatedTrees {
+			parent, child := fmt.Sprintf("PRJ-X%dP", i), fmt.Sprintf("PRJ-X%dC", i)
+			seedProject(app, parent, "Other", nil)
+			seedProject(app, child, "Other child", nil)
+			seedRelation(app, &entity.Relation{From: parent, Type: "contains", To: child})
+		}
+		breadth := storetest.NewBreadth(app.gantt.store)
+		app.gantt.store = breadth
+
+		rec := ganttGet(context.Background(), app, "plan?root=PRJ-A")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status %d: %s", rec.Code, rec.Body)
+		}
+		if breadth.IDs("ListRelations") == 0 {
+			t.Fatalf("drill read relations without an id bound (%s)", breadth.String())
+		}
+		return breadth.IDs("ListRelations")
+	}
+	small, large := drillBreadth(t, 1), drillBreadth(t, 40)
+	if small != large {
+		t.Errorf("edge read grows with unrelated trees: %d ids at 1 tree, %d at 40", small, large)
 	}
 }
 

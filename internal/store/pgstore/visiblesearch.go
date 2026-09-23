@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"iter"
 	"slices"
-	"strconv"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -59,7 +58,7 @@ func (s *Store) SearchVisible(
 			return
 		}
 
-		sqlText, args, anyVisible := buildVisibleSearchSQL(q, scope)
+		sqlText, args, anyVisible := buildVisibleSearchSQL(q, scope, s.searchTitles)
 		if !anyVisible {
 			return // empty effective scope: deny everything, skip the query
 		}
@@ -103,13 +102,21 @@ var _ search.FieldVisibleSearcher = (*Store)(nil)
 // principal may not see (per hidden) is dropped, so a search cannot confirm a
 // redacted property's value by returning its entity.
 //
-// The per-field match is computed in Go over the already-scanned entity with
-// [search.MatchTextFields] — the same ground-truth matcher the generic backend
-// uses — so pgstore and the simple backends agree. This does NOT push the
-// field projection into SQL; the entity is already in hand from the visibility
-// scan, so the filter is a cheap in-memory pass over the candidate rows. A SQL
-// pushdown (matching per-column server-side) is a tracked performance
-// follow-up, not a correctness gap.
+// The per-field match is computed in Go with [search.MatchTextFields] — the
+// same ground-truth matcher the generic backend uses — so pgstore and the
+// simple backends agree. It runs in TWO passes (TKT-U9DYW4), because the
+// candidate rows no longer carry bodies:
+//
+//  1. Every row is judged from its id and properties. A row with no hidden
+//     fields, or whose match a VISIBLE property or the id already explains,
+//     is kept here.
+//  2. The rows left over are those only a body can decide. Their bodies are
+//     fetched in one statement, for exactly the (id, face) pairs the gated
+//     query resolved, and the verdict is recomputed with the body in place.
+//
+// Pass 1 can only over-approximate "needs a body": a blank Content can remove
+// the content field from the matched set, never add a field to it. So no row
+// is kept in pass 1 that the single-pass code would have dropped.
 func (s *Store) SearchVisibleFields(
 	ctx context.Context, q search.Query, scope map[string]search.TypeScope, hidden search.HiddenFieldsFunc,
 ) iter.Seq2[search.Hit, error] {
@@ -123,7 +130,7 @@ func (s *Store) SearchVisibleFields(
 			return
 		}
 
-		sqlText, args, anyVisible := buildVisibleSearchSQL(q, scope)
+		sqlText, args, anyVisible := buildVisibleSearchSQL(q, scope, s.searchTitles)
 		if !anyVisible {
 			return
 		}
@@ -135,7 +142,7 @@ func (s *Store) SearchVisibleFields(
 		}
 		defer rows.Close()
 
-		emitFieldVisibleRows(ctx, rows, q, hidden, yield)
+		emitFieldVisibleRows(ctx, s.db, rows, q, hidden, yield)
 	}
 }
 
@@ -145,10 +152,16 @@ func (s *Store) SearchVisibleFields(
 // iteration. Extracted from SearchVisibleFields to keep that closure's
 // branching within the complexity budget.
 func emitFieldVisibleRows(
-	ctx context.Context, rows pgx.Rows, q search.Query, hidden search.HiddenFieldsFunc,
+	ctx context.Context, db DBTX, rows pgx.Rows, q search.Query, hidden search.HiddenFieldsFunc,
 	yield func(search.Hit, error) bool,
 ) {
-	emitted := 0
+	// Pass 1 decides every row it can from id and properties alone, and
+	// remembers the rows whose verdict depends on the body.
+	var (
+		cands    []searchCandidate
+		bodyless []stateKey
+		decided  int
+	)
 	for rows.Next() {
 		e, scanErr := scanEntity(rows)
 		if scanErr != nil {
@@ -158,50 +171,130 @@ func emitFieldVisibleRows(
 		if !search.MatchFilters(e, q.Filters) {
 			continue
 		}
-		hit := search.Hit{ID: e.ID, Type: e.Type, Title: e.Title()}
-		keep, ferr := fieldVisibleForEntity(ctx, q, hit, e, hidden)
-		if ferr != nil {
-			yield(search.Hit{}, ferr)
+		c, err := judgeWithoutBody(ctx, q, e, hidden)
+		if err != nil {
+			yield(search.Hit{}, err)
 			return
 		}
-		if !keep {
-			continue
+		if c.needBody {
+			bodyless = append(bodyless, stateKey{id: e.ID, face: e.Face})
+		}
+		cands = append(cands, c)
+		if !c.needBody {
+			decided++
+		}
+		// Rows are emitted in order, up to q.Limit. Once that many rows are
+		// already KEPT, nothing further can be emitted — the undecided rows
+		// ahead of them can only add to the kept set — so stop buffering.
+		// This is what bounds memory when Go-side filters moved the LIMIT
+		// out of the SQL.
+		if q.Limit > 0 && decided >= q.Limit {
+			break
+		}
+	}
+	if err := rows.Err(); err != nil {
+		yield(search.Hit{}, fmt.Errorf("%w: pgstore visible search: %w", search.ErrScope, err))
+		return
+	}
+	rows.Close()
+
+	bodies, err := searchBodies(ctx, db, bodyless)
+	if err != nil {
+		yield(search.Hit{}, fmt.Errorf("%w: pgstore visible search bodies: %w", search.ErrScope, err))
+		return
+	}
+
+	emitted := 0
+	for _, c := range cands {
+		if c.needBody {
+			c.e.Content = bodies[stateKey{id: c.e.ID, face: c.e.Face}]
+			if !search.MatchHasVisibleField(search.MatchTextFields(c.e, q.Text), c.hidden) {
+				continue
+			}
 		}
 		if q.Limit > 0 && emitted >= q.Limit {
 			return
 		}
-		if !yield(hit, nil) {
+		if !yield(c.hit, nil) {
 			return
 		}
 		emitted++
 	}
-	if err := rows.Err(); err != nil {
-		yield(search.Hit{}, fmt.Errorf("%w: pgstore visible search: %w", search.ErrScope, err))
-	}
 }
 
-// fieldVisibleForEntity decides whether a hit survives the property-level
-// filter, given the already-loaded entity. Mirrors search.Visible.fieldVisible
-// but computes provenance directly with [search.MatchTextFields] (the entity is
-// in hand, no reader round-trip). Keeps the hit when field filtering does not
-// apply (no hidden func, no text) or an empty hidden set; otherwise keeps only
-// if a non-hidden field matched. A hidden-func error fails closed.
-func fieldVisibleForEntity(
-	ctx context.Context, q search.Query, h search.Hit, e *entity.Entity, hidden search.HiddenFieldsFunc,
-) (bool, error) {
-	if hidden == nil || q.Text == "" {
-		return true, nil
-	}
-	hiddenFields, err := hidden(ctx, h, e)
-	if err != nil {
-		return false, fmt.Errorf("%w: hidden-fields for %q: %w", search.ErrScope, h.ID, err)
-	}
-	if len(hiddenFields) == 0 {
-		return true, nil
-	}
-	matched := search.MatchTextFields(e, q.Text)
-	return search.MatchHasVisibleField(matched, hiddenFields), nil
+// searchCandidate is one gated search row between the two passes.
+type searchCandidate struct {
+	hit      search.Hit
+	e        *entity.Entity
+	hidden   map[string]struct{}
+	needBody bool
 }
+
+// judgeWithoutBody is pass 1 for one row: needBody is set only when the row
+// has hidden fields and neither its id nor a visible property explains the
+// match, so only its body can.
+func judgeWithoutBody(
+	ctx context.Context, q search.Query, e *entity.Entity, hidden search.HiddenFieldsFunc,
+) (searchCandidate, error) {
+	c := searchCandidate{hit: search.Hit{ID: e.ID, Type: e.Type, Title: e.Title()}, e: e}
+	if hidden == nil || q.Text == "" {
+		return c, nil
+	}
+	hf, err := hidden(ctx, c.hit, e)
+	if err != nil {
+		return c, fmt.Errorf("%w: hidden-fields for %q: %w", search.ErrScope, c.hit.ID, err)
+	}
+	if len(hf) > 0 && !search.MatchHasVisibleField(search.MatchTextFields(e, q.Text), hf) {
+		c.hidden, c.needBody = hf, true
+	}
+	return c, nil
+}
+
+// stateKey addresses one stored state of an entity.
+type stateKey struct {
+	id   string
+	face entity.Face
+}
+
+// searchBodies loads the bodies of exactly the given states. The keys are the
+// (id, face) pairs the GATED query resolved, so this statement reads no row
+// the gate did not already admit — it must never widen to "every state of
+// these ids", which would pull a face the world or the ACL withheld.
+func searchBodies(ctx context.Context, db DBTX, keys []stateKey) (map[stateKey]string, error) {
+	if len(keys) == 0 {
+		return map[stateKey]string{}, nil
+	}
+	ids, faces := make([]string, len(keys)), make([]string, len(keys))
+	for i, k := range keys {
+		ids[i], faces[i] = k.id, string(k.face)
+	}
+	rows, err := db.Query(ctx,
+		"SELECT e.id, e.face, e.content FROM entities e"+
+			" JOIN unnest($1::text[], $2::text[]) AS k(id, face) ON e.id = k.id AND e.face = k.face",
+		ids, faces)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[stateKey]string, len(keys))
+	for rows.Next() {
+		var id, face, content string
+		if err := rows.Scan(&id, &face, &content); err != nil {
+			return nil, err
+		}
+		out[stateKey{id: id, face: entity.Face(face)}] = content
+	}
+	return out, rows.Err()
+}
+
+// visibleSearchColumns is scanEntity's column list with the body projected
+// away (TKT-U9DYW4). A hit is an id, a type and a title; the property filters
+// read properties only. The one consumer of a body is the hidden-field check,
+// and only for a row whose match is not already explained by a visible
+// property — those bodies are fetched afterwards, for exactly those rows
+// (see emitFieldVisibleRows). Shipping every candidate's body was 280 ms of a
+// 290 ms search at 1000 hits.
+const visibleSearchColumns = "e.id, e.type, e.face, e.properties, ''::text AS content, e.updated_at"
 
 // buildVisibleSearchSQL emits the combined search+visibility statement.
 // The third return is false when the scope admits nothing — the caller
@@ -214,7 +307,7 @@ func fieldVisibleForEntity(
 // prefixes ("v<i>_in"/"v<i>_out") — same injection-safety property as
 // buildGraphQuerySQL.
 func buildVisibleSearchSQL(
-	q search.Query, scope map[string]search.TypeScope,
+	q search.Query, scope map[string]search.TypeScope, titles SearchTitles,
 ) (sqlText string, args []any, anyVisible bool) {
 	b := &sqlBuilder{}
 
@@ -262,11 +355,10 @@ func buildVisibleSearchSQL(
 	// what the ACL denied change WHICH face the world resolves to, which is
 	// the existence oracle that ordering exists to close.
 	if q.World.IsDefaultWorld() {
-		sb.WriteString("SELECT e.id, e.type, e.face, e.properties, e.content, e.updated_at " +
-			"FROM entities e WHERE e.face = ''")
+		sb.WriteString("SELECT " + visibleSearchColumns + " FROM entities e WHERE e.face = ''")
 	} else {
 		rank, candidate := worldSQL(q.World, "e", &b.args)
-		sb.WriteString("SELECT e.id, e.type, e.face, e.properties, e.content, e.updated_at FROM (" +
+		sb.WriteString("SELECT " + visibleSearchColumns + " FROM (" +
 			"SELECT DISTINCT ON (id) * FROM entities e WHERE " + candidate +
 			" ORDER BY id ASC, (" + rank + ") ASC, face ASC) e WHERE true")
 	}
@@ -278,8 +370,7 @@ func buildVisibleSearchSQL(
 	if q.Text != "" {
 		needle := strings.ToLower(q.Text)
 		sb.WriteString(" AND e.search_text LIKE '%' || " + b.arg(escapeLike(needle)) + ` || '%' ESCAPE '\'`)
-		orderBy = " ORDER BY similarity(left(e.search_text, " + strconv.Itoa(searchRankPrefix) + "), " +
-			b.arg(needle) + ") DESC, e.id ASC"
+		orderBy = " ORDER BY " + titles.rankSQL("e", func(v any) string { return b.arg(v) }, needle) + " DESC, e.id ASC"
 	}
 	if len(q.Types) > 0 {
 		sb.WriteString(" AND e.type = ANY(" + b.arg(q.Types) + ")")

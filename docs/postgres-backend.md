@@ -175,9 +175,13 @@ In the PostgreSQL build, search runs **in the database** — there is no bleve
 index. Matching is a case-insensitive substring match over a maintained
 `search_text` column (the id, then string properties, then the body),
 accelerated by a `pg_trgm` GIN index. Results are ranked by trigram similarity
-between the query and the first kilobyte of that column — the identity and the
-title-like properties — so an entity *about* the term outranks one that merely
-mentions it in a long body, and ranking stays cheap on a common word. Text
+between the query and each entity's **title**: its type's `display_property`,
+or a required `title`, `name` or `label`. An entity *about* the term therefore
+outranks one that merely mentions it, and entities whose title does not
+resemble the query follow in id order. A type with no such property, or with a
+templated `display_property`, ranks by its id. Ranking reads only the title,
+so it stays cheap when the term appears in most entities; what such a search
+still pays for is the match itself, which has to check every candidate row. Text
 search matches the same fields as the default backend: entity ID, content, and
 string-valued properties.
 

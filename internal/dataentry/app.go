@@ -1147,7 +1147,7 @@ func NewApp(
 		// Inline rather than an App method: its only consumer is this
 		// closure, and App is at its plimsoll method load line.
 		schemaFile:  func() string { return filepath.Base(app.paths.SchemaPath) },
-		executeView: app.views.executeView,
+		executeView: app.views.executeViewWhole,
 		// Chosen once at the wiring site from (ACL, bind, override) — see
 		// SelectCommandAuthorizer. Fixed for the process lifetime. Tests that
 		// need a different verdict assign app.commands.authz directly rather

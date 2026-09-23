@@ -71,12 +71,16 @@ func (c *poolCloser) Close() error {
 // dsn is still required, and is NOT a second route to the database: the change
 // feed's listener holds its own dedicated connection, deliberately outside the
 // pool so a slow LISTEN cannot starve query traffic. It is used for that alone.
-func Open(ctx context.Context, db DBTX, dsn string) (store.Store, search.Searcher, error) {
+func Open(ctx context.Context, db DBTX, dsn string, opts ...Option) (store.Store, search.Searcher, error) {
 	backend := NewSearchBackend(db)
-	st, err := New(db, WithObserver(backend))
+	st, err := New(db, append([]Option{WithObserver(backend)}, opts...)...)
 	if err != nil {
 		return nil, nil, fmt.Errorf("open store: %w", err)
 	}
+
+	// The gated (Store.SearchVisible) and ungated (SearchBackend) searches must
+	// rank identically, so the backend takes the store's map rather than its own.
+	backend.RankByTitles(st.searchTitles)
 
 	// Start the cross-process change-feed listener (TKT-WZYWM9). It holds its
 	// own dedicated connection (from the DSN, not the pool) so a slow LISTEN
