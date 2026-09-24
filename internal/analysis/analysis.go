@@ -401,8 +401,11 @@ func (s *Service) newValidationService() *validation.Service {
 	}
 	// Analysis runs at operator trust over the raw store (its entity reads
 	// are raw too), so rule traversals are answered ungated.
-	if b, err := relresolve.NewBinder(s.deps.Meta, relresolve.Ungated, s.deps.Store.MatchingIDs); err == nil {
+	if b, err := relresolve.NewStoreBinder(s.deps.Meta, relresolve.Ungated, s.deps.Store); err == nil {
 		svc = svc.WithTraversals(b)
+	} else {
+		// Rules using related() then report a load error when they run.
+		slog.Warn("analysis: related() in validation rules unavailable", "error", err)
 	}
 	if s.deps.LuaCache != nil {
 		return svc.WithCache(s.deps.LuaCache)

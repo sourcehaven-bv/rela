@@ -76,7 +76,7 @@ func ResolverFromProfile(
 	// One raw binder answers related() in both ACL `when:` grants and
 	// transition `when:` (TKT-205V2N): both are authorization decisions over
 	// the graph as it is.
-	traversals, err := relresolve.NewBinder(meta, relresolve.Ungated, st.MatchingIDs)
+	traversals, err := relresolve.NewStoreBinder(meta, relresolve.Ungated, st)
 	if err != nil {
 		return nil, fmt.Errorf("dataentry: acl traversals: %w", err)
 	}

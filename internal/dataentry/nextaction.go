@@ -263,6 +263,7 @@ func (a *App) nextActionOptions() nextaction.OptionFunc {
 		}
 		out := make([]nextaction.PickOption, 0, len(entities))
 		s := a.State()
+		ctx = primeVerdicts(ctx, a.fieldResolver, entities)
 		for _, e := range entities {
 			// Redact BEFORE safeDisplayTitle: its guard is presence-based
 			// ("is the display property missing?"), so against an unredacted
@@ -305,6 +306,7 @@ func (a *App) queryCandidates(
 		return nil, fmt.Errorf("next-action query %q: %w", query, err)
 	}
 	out := make([]nextaction.Candidate, 0, len(entities))
+	ctx = primeVerdicts(ctx, a.fieldResolver, entities)
 	for _, e := range entities {
 		out = append(out, nextaction.Candidate{Entity: a.redactedForSuggestion(ctx, e)})
 	}

@@ -107,8 +107,9 @@ func traversalIndexTarget(
 // [store.Store.MatchingIDs] query against the far-end type, so a scope a list
 // does not mention is still a query shape the store serves.
 //
-// [conditionTraversalSpecs] covers the data-entry conditions. A scope that does not compile contributes nothing; the metamodel loader
-// (scopes.Compile) has already refused it at boot.
+// A scope that does not compile contributes nothing; the metamodel loader
+// (scopes.Compile) has already refused it at boot. [conditionTraversalSpecs]
+// covers the data-entry conditions.
 func scopeTraversalSpecs(meta *metamodel.Metamodel) []store.DerivedObjectSpec {
 	var (
 		ev  *predicatefns.Evaluator
@@ -172,11 +173,15 @@ func conditionTraversalSpecs(cfg *dataentryconfig.Config, meta *metamodel.Metamo
 		add(list.EntityType, list.Condition)
 	}
 	for _, src := range cfg.NextActions {
-		if src.Condition == "" || src.Query == "" {
-			continue
-		}
-		for _, typeName := range searchparser.ParseQuery(src.Query).EntityTypes {
-			add(typeName, src.Condition)
+		switch {
+		case src.Condition == "":
+		case src.Context != "":
+			// A context source's candidate is the viewed entity.
+			add(src.Context, src.Condition)
+		case src.Query != "":
+			for _, typeName := range searchparser.ParseQuery(src.Query).EntityTypes {
+				add(typeName, src.Condition)
+			}
 		}
 	}
 	return out

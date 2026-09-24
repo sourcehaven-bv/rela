@@ -1462,7 +1462,7 @@ func newGatedValidator(
 	reader validator.EntityLister, gate relresolve.Gate, meta *metamodel.Metamodel, deps lua.ReadDeps,
 	st store.GraphQueryer,
 ) (*validator.GenericValidator, error) {
-	b, err := relresolve.NewBinder(meta, gate, st.MatchingIDs)
+	b, err := relresolve.NewStoreBinder(meta, gate, st)
 	if err != nil {
 		return nil, fmt.Errorf("dataentry: validator traversals: %w", err)
 	}

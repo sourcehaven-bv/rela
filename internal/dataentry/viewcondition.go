@@ -3,6 +3,7 @@ package dataentry
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
@@ -226,6 +227,10 @@ func applyViewCondition(
 		pageMatch(st))
 	if err != nil {
 		return nil, err
+	}
+	if len(verdicts) != len(rows) {
+		// coverage-ignore: invariant: MatchPage returns one verdict per row
+		return nil, fmt.Errorf("view condition: %d verdicts for %d rows", len(verdicts), len(rows))
 	}
 	kept := make([]*entityPkg.Entity, 0, len(rows))
 	for i, e := range rows {

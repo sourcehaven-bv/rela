@@ -39,6 +39,11 @@ var errNotAnswerable = errors.New("related(...) cannot be answered here")
 // traversalMemo holds answers primed for a batch of rows, keyed by entity
 // type then id. It lives on the ctx of ONE operation for ONE principal and is
 // never shared beyond it.
+//
+// The key is shared by every [PolicyResolver]. That is safe because the
+// answers come from the raw graph, not from any principal's reads, and
+// relresolve.Answers.For refuses a traversal it was not asked, which denies
+// the grant. Do not turn a miss into a guess.
 type traversalMemo struct {
 	mu   sync.Mutex
 	rows map[string]map[string]rowAnswer
@@ -59,7 +64,7 @@ type traversalMemoKey struct{}
 // is an optimization and never a correctness condition.
 //
 // Priming again on the returned ctx adds to the same memo, so a caller that
-// works in chunks primes each chunk.
+// works in chunks primes each chunk. Rows the memo already holds are skipped.
 func (r *PolicyResolver) PrimeTraversals(ctx context.Context, rows []*entity.Entity) context.Context {
 	if r.traversals == nil || len(r.traversalProgs) == 0 {
 		return ctx
@@ -70,12 +75,17 @@ func (r *PolicyResolver) PrimeTraversals(ctx context.Context, rows []*entity.Ent
 		ctx = context.WithValue(ctx, traversalMemoKey{}, memo)
 	}
 	idsByType := map[string][]string{}
+	memo.mu.Lock()
 	for _, e := range rows {
 		if e == nil || e.Face != "" || e.ID == "" || len(r.traversalProgs[e.Type]) == 0 {
 			continue // answered (or refused) live
 		}
+		if _, done := memo.rows[e.Type][e.ID]; done {
+			continue
+		}
 		idsByType[e.Type] = append(idsByType[e.Type], e.ID)
 	}
+	memo.mu.Unlock()
 	for typ, ids := range idsByType {
 		bound, err := r.traversals.Bind(ctx, typ, ids, r.traversalProgs[typ]...)
 		memo.mu.Lock()
@@ -111,7 +121,8 @@ func (r *PolicyResolver) traversalFor(ctx context.Context, e *entity.Entity) (pr
 		// coverage-ignore: invariant: New refuses a traversing `when:` without a binder
 		return nil, fmt.Errorf("%w: no store is wired", errNotAnswerable)
 	}
-	if memo, ok := ctx.Value(traversalMemoKey{}).(*traversalMemo); ok {
+	memo, _ := ctx.Value(traversalMemoKey{}).(*traversalMemo)
+	if memo != nil {
 		memo.mu.Lock()
 		ans, hit := memo.rows[e.Type][e.ID]
 		memo.mu.Unlock()
@@ -119,11 +130,23 @@ func (r *PolicyResolver) traversalFor(ctx context.Context, e *entity.Entity) (pr
 			return ans.fn, ans.err
 		}
 	}
-	bound, err := r.traversals.Bind(ctx, e.Type, []string{e.ID}, r.traversalProgs[e.Type]...)
-	if err != nil {
-		return nil, err
+	ans := rowAnswer{}
+	if bound, err := r.traversals.Bind(ctx, e.Type, []string{e.ID}, r.traversalProgs[e.Type]...); err != nil {
+		ans.err = err
+	} else {
+		ans.fn = bound(e.ID)
 	}
-	return bound(e.ID), nil
+	// A primed ctx keeps the live answer too, so the next verdict call for
+	// e in the same operation does not query again.
+	if memo != nil {
+		memo.mu.Lock()
+		if memo.rows[e.Type] == nil {
+			memo.rows[e.Type] = map[string]rowAnswer{}
+		}
+		memo.rows[e.Type][e.ID] = ans
+		memo.mu.Unlock()
+	}
+	return ans.fn, ans.err
 }
 
 // warnConditionallyVisible logs a load warning for a grant or transition

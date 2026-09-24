@@ -135,11 +135,12 @@ func (d *declarativeFeed) List(ctx context.Context, opts feedListOpts) ([]calfee
 			return nil, "", err
 		}
 		entDef, _ := d.meta.GetEntityDef(s.EntityType)
+		srcCtx := visibility.PrimeTraversals(ctx, d.redactor, ents)
 		for _, e := range ents {
 			if !since.IsZero() && !e.UpdatedAt.After(since) {
 				continue
 			}
-			ev, ok, err := d.mapEntity(ctx, e, s, entDef, filters)
+			ev, ok, err := d.mapEntity(srcCtx, e, s, entDef, filters)
 			if err != nil {
 				return nil, "", err
 			}

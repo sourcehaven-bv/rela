@@ -51,6 +51,41 @@ func TestQueryBudget_ListPageACLRelatedWhenIsSizeIndependent(t *testing.T) {
 	}
 }
 
+// A single GET evaluates the grants several times (strip, `_fields`,
+// `_relations`); the traversal behind them is answered once. The baseline is
+// the same GET under a grant that does not traverse.
+func TestQueryBudget_GetEntityACLRelatedWhenBindsOnce(t *testing.T) {
+	get := func(when string) int {
+		app, counting, _, ctx := newBudgetAppOn(t, 10, memstore.New())
+		d := mustNewACL(t, &acl.Policy{
+			Roles: map[string]acl.RoleDef{"editor": {
+				Read: []string{"*"}, Update: []string{"ticket"},
+				Visible: map[string][]acl.FieldGrant{"ticket": {
+					{Field: "title"},
+					{Field: "status", When: when},
+				}},
+			}},
+			Assignments: map[string]string{"T1": "editor"},
+		}, app.store)
+		app.acl = d
+		res, err := ResolverFromProfile("", app.Meta(), app.store, d)
+		if err != nil {
+			t.Fatal(err)
+		}
+		app.fieldResolver = res
+		counting.Reset()
+		rec := getEntityAs(ctx, t, app, d, "ticket", "tickets", "TKT-0001", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("get: %d %s", rec.Code, rec.Body)
+		}
+		return counting.Calls()["MatchingIDs"]
+	}
+	base := get("entity.title ~= ''")
+	if n := get("not related(entity, 'implements', { title = 'Feature 1' })"); n != base+1 {
+		t.Fatalf("MatchingIDs = %d, want %d (baseline %d plus one traversal)", n, base+1, base)
+	}
+}
+
 // assertStatusVerdict checks a row's status visibility against the fixture:
 // ticket i implements feature i%5+1, so every fifth ticket implements
 // Feature 1 and has its status hidden.

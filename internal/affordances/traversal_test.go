@@ -88,6 +88,48 @@ func TestResolver_PrimeTraversalsBindsOncePerPage(t *testing.T) {
 	}
 }
 
+// A primed bind error is kept for the page: every row on it is denied, and the
+// store is not asked again per row.
+func TestResolver_PrimedBindErrorDenies(t *testing.T) {
+	t.Parallel()
+	b := &stubBinder{err: errors.New("store down")}
+	r, err := affordances.New(testMeta(t), newStubLookup(), declFor(t, policyFromYAML(t, relatedPolicy)),
+		affordances.WithTraversals(b))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	rows := []*entity.Entity{ticket("T-1", nil), ticket("T-2", nil)}
+	ctx := r.PrimeTraversals(ctxAs("alice"), rows)
+	for _, e := range rows {
+		if statusWritable(r.FieldVerdicts(ctx, e)) {
+			t.Errorf("%s: a grant whose traversal failed must be denied", e.ID)
+		}
+	}
+	if b.binds != 1 {
+		t.Fatalf("binds = %d, want 1", b.binds)
+	}
+}
+
+// A row that was not primed is answered once and kept, so the next verdict
+// call on the same ctx does not query again.
+func TestResolver_LiveAnswerIsKeptOnPrimedCtx(t *testing.T) {
+	t.Parallel()
+	b := &stubBinder{answer: map[string]bool{}}
+	r, err := affordances.New(testMeta(t), newStubLookup(), declFor(t, policyFromYAML(t, relatedPolicy)),
+		affordances.WithTraversals(b))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ctx := r.PrimeTraversals(ctxAs("alice"), []*entity.Entity{ticket("T-1", nil)})
+	late := ticket("T-2", nil)
+	r.FieldVerdicts(ctx, late)
+	r.FieldVerdicts(ctx, late)
+	r.RelationVerdicts(ctx, late)
+	if b.binds != 2 {
+		t.Fatalf("binds = %d, want 2 (the page, then T-2 once)", b.binds)
+	}
+}
+
 // A row the page did not prime is answered live, never as "no match": under
 // `not related(...)` a missing answer would otherwise grant.
 func TestResolver_UnprimedRowAnsweredLive(t *testing.T) {

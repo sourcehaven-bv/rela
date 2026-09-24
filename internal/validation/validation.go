@@ -236,6 +236,7 @@ func (s *Service) ruleTraversals(
 ) (map[string]func(string) predicate.TraversalFunc, []LoadError) {
 	progsByType := map[string][]*predicate.Program{}
 	idsByType := map[string][]string{}
+	faced := map[string][]*entity.Entity{}
 	var errs []LoadError
 	for _, e := range candidates {
 		progs, seen := progsByType[e.Type]
@@ -255,11 +256,18 @@ func (s *Service) ruleTraversals(
 			continue
 		}
 		if e.Face != "" {
-			errs = append(errs, LoadError{RuleName: rule.Name, Message: fmt.Sprintf(
-				"%s(...) cannot be answered for %s on face %q", predicate.FuncRelated, e.ID, e.Face)})
+			faced[e.Type] = append(faced[e.Type], e)
 			continue
 		}
 		idsByType[e.Type] = append(idsByType[e.Type], e.ID)
+	}
+	// One error per type, not per row: a type with many faces would
+	// otherwise bury every other finding.
+	for _, typ := range slices.Sorted(maps.Keys(faced)) {
+		first := faced[typ][0]
+		errs = append(errs, LoadError{RuleName: rule.Name, Message: fmt.Sprintf(
+			"%s(...) cannot be answered on a named face: %d %q row(s) not checked, such as %s on face %q",
+			predicate.FuncRelated, len(faced[typ]), typ, first.ID, first.Face)})
 	}
 	out := map[string]func(string) predicate.TraversalFunc{}
 	for typ, progs := range progsByType {

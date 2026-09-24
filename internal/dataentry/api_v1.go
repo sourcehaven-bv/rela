@@ -365,6 +365,7 @@ func (a *App) listPage(
 	// AFTER the ACL scope and every filter, BEFORE paging and the count: the
 	// condition narrows the population the page and total describe, so
 	// applying it later would page one set and count another.
+	ctx = primeVerdicts(ctx, a.fieldResolver, all)
 	if all, err = applyViewCondition(ctx, all, cond, a.redactedForSuggestion, a.Services().Store); err != nil {
 		return nil, 0, err
 	}
@@ -909,6 +910,9 @@ func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 		return
 	}
+	// Serializing evaluates the grant traversals several times (strip,
+	// `_fields`, `_relations`); priming answers them once.
+	ctx = primeVerdicts(ctx, a.fieldResolver, []*entityPkg.Entity{entity})
 
 	query := r.URL.Query()
 
@@ -1974,6 +1978,7 @@ func (a *App) resolveV1Includes(ctx context.Context, entity *entityPkg.Entity, i
 	}
 
 	visible := a.filterVisibleIncludes(ctx, candidates)
+	ctx = primeVerdicts(ctx, a.fieldResolver, visible)
 	for _, target := range visible {
 		entityDef := s.Meta.Entities[target.Type]
 		plural := entityDef.GetPlural(target.Type)

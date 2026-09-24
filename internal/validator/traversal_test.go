@@ -162,7 +162,7 @@ func TestCheckRule_TraversalInvalidPathIsLoadError(t *testing.T) {
 }
 
 // The store answers a traversal from the default face's edges, so a row on a
-// named face is reported instead of evaluated.
+// named face is reported instead of evaluated: once per type, not per row.
 func TestCheckRule_TraversalOnNamedFaceIsLoadError(t *testing.T) {
 	st := memstore.New()
 	rule := ownedRule
@@ -170,8 +170,10 @@ func TestCheckRule_TraversalOnNamedFaceIsLoadError(t *testing.T) {
 	def := meta.Entities["ticket"]
 	def.Faces = map[string]metamodel.FaceDef{"en": {}}
 	meta.Entities["ticket"] = def
-	mustCreate(t, st, &entity.Entity{ID: "T-1", Type: "ticket", Face: entity.Face("en"),
-		Properties: map[string]any{"status": "done"}})
+	for _, id := range []string{"T-1", "T-2"} {
+		mustCreate(t, st, &entity.Entity{ID: id, Type: "ticket", Face: entity.Face("en"),
+			Properties: map[string]any{"status": "done"}})
+	}
 	v := mustValidator(validator.New(st, meta, lua.ReadDeps{Meta: meta}, binder(meta, st)))
 	full, err := v.CheckRuleFull(t.Context(), rule)
 	if err != nil {

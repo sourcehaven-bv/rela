@@ -240,7 +240,7 @@ func New(meta *metamodel.Metamodel, opts ...Option) *appbuild.Services {
 		}
 	}
 
-	valBinder, err := relresolve.NewBinder(meta, relresolve.Ungated, st.MatchingIDs)
+	valBinder, err := relresolve.NewStoreBinder(meta, relresolve.Ungated, st)
 	if err != nil {
 		panic(fmt.Sprintf("appbuildtest.New: build traversal binder: %v", err))
 	}
@@ -356,7 +356,7 @@ func buildAutomation(meta *metamodel.Metamodel, st store.Store) (*automation.Eng
 	if len(meta.Automations) == 0 {
 		return nil, nil
 	}
-	traversals, err := relresolve.NewBinder(meta, relresolve.Ungated, st.MatchingIDs)
+	traversals, err := relresolve.NewStoreBinder(meta, relresolve.Ungated, st)
 	if err != nil {
 		panic(fmt.Sprintf("appbuildtest.New: build traversal binder: %v", err))
 	}

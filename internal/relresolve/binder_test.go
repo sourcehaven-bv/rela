@@ -203,3 +203,9 @@ func TestBinder_EmptyIDIsAnError(t *testing.T) {
 		t.Fatal("want an error for an entity with no id")
 	}
 }
+
+func TestNewStoreBinder_RejectsNilStore(t *testing.T) {
+	if _, err := relresolve.NewStoreBinder(meta(), relresolve.Ungated, nil); err == nil {
+		t.Fatal("want an error for a nil store")
+	}
+}

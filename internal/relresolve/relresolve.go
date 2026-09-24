@@ -209,6 +209,16 @@ func NewBinder(meta *metamodel.Metamodel, gate Gate, match Match) (*Binder, erro
 	return &Binder{meta: meta, gate: gate, match: match}, nil
 }
 
+// NewStoreBinder is [NewBinder] answering through st.MatchingIDs. Nil:
+// rejected — taking the method value of a nil interface would panic before
+// NewBinder could refuse it.
+func NewStoreBinder(meta *metamodel.Metamodel, gate Gate, st store.GraphQueryer) (*Binder, error) {
+	if st == nil {
+		return nil, errors.New("relresolve: NewStoreBinder: store is required")
+	}
+	return NewBinder(meta, gate, st.MatchingIDs)
+}
+
 // Bind answers every traversal in progs for the candidate ids of entityType
 // and returns the per-row resolver. Traversals shared between programs (a
 // rule's when and then, a type's grants) are answered once.

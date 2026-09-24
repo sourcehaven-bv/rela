@@ -234,12 +234,14 @@ relations:
 		},
 		NextActions: map[string]dataentryconfig.NextActionSource{
 			"unowned": {Query: "type:ticket", Condition: "not related(entity, 'owned-by', { name = 'x' })"},
+			"here":    {Context: "ticket", Condition: "related(entity, 'implements', { title = 'x' })"},
 		},
 	}
 	got := StaticIndexSpecs(cfg, meta)
 	for _, want := range []store.DerivedObjectSpec{
 		{Kind: store.DerivedQueryIndex, Type: "ticket", Properties: []string{"status"}},
 		{Kind: store.DerivedQueryIndex, Type: "person", Properties: []string{"name"}},
+		{Kind: store.DerivedQueryIndex, Type: "feature", Properties: []string{"title"}},
 	} {
 		found := slices.ContainsFunc(got, func(s store.DerivedObjectSpec) bool {
 			return s.Kind == want.Kind && s.Type == want.Type && slices.Equal(s.Properties, want.Properties)

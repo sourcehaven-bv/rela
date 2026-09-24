@@ -920,7 +920,7 @@ func buildAutomation(meta *metamodel.Metamodel, st store.Store) (*automation.Eng
 	if len(meta.Automations) == 0 {
 		return nil, nil, nil
 	}
-	traversals, err := relresolve.NewBinder(meta, relresolve.Ungated, st.MatchingIDs)
+	traversals, err := relresolve.NewStoreBinder(meta, relresolve.Ungated, st)
 	if err != nil {
 		return nil, nil, fmt.Errorf("build automation engine: %w", err)
 	}
@@ -2333,7 +2333,7 @@ func (nopKV) Delete(context.Context, string) error        { return nil }
 // operator- and system-trust paths. It cannot fail: meta and st are required
 // by every caller before it gets here.
 func ungatedBinder(meta *metamodel.Metamodel, st store.Store) *relresolve.Binder {
-	b, err := relresolve.NewBinder(meta, relresolve.Ungated, st.MatchingIDs)
+	b, err := relresolve.NewStoreBinder(meta, relresolve.Ungated, st)
 	if err != nil {
 		// coverage-ignore: invariant: meta and st are non-nil at every call site
 		panic(err)
@@ -2346,7 +2346,7 @@ func ungatedBinder(meta *metamodel.Metamodel, st store.Store) *relresolve.Binder
 func newValidator(
 	reader lua.EntityReader, meta *metamodel.Metamodel, deps lua.ReadDeps, gate relresolve.Gate, st store.Store,
 ) validator.Validator {
-	b, err := relresolve.NewBinder(meta, gate, st.MatchingIDs)
+	b, err := relresolve.NewStoreBinder(meta, gate, st)
 	if err == nil {
 		var v *validator.GenericValidator
 		if v, err = validator.New(reader, meta, deps, b); err == nil {
