@@ -241,9 +241,10 @@ relations:
 		{Kind: store.DerivedQueryIndex, Type: "ticket", Properties: []string{"status"}},
 		{Kind: store.DerivedQueryIndex, Type: "person", Properties: []string{"name"}},
 	} {
-		if !slices.ContainsFunc(got, func(s store.DerivedObjectSpec) bool {
+		found := slices.ContainsFunc(got, func(s store.DerivedObjectSpec) bool {
 			return s.Kind == want.Kind && s.Type == want.Type && slices.Equal(s.Properties, want.Properties)
-		}) {
+		})
+		if !found {
 			t.Errorf("want %+v among %+v", want, got)
 		}
 	}

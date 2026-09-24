@@ -444,9 +444,9 @@ func (e *Engine) matchesCondition(
 			// has its own, so the answer would be about another entity.
 			return false, fmt.Errorf("condition %q: related(...) cannot be answered on face %q", trigger.Condition, ent.Face)
 		}
-		bound, err := e.traversals.Bind(ctx, ent.Type, []string{ent.ID}, prog)
-		if err != nil {
-			return false, fmt.Errorf("condition %q: %w", trigger.Condition, err)
+		bound, berr := e.traversals.Bind(ctx, ent.Type, []string{ent.ID}, prog)
+		if berr != nil {
+			return false, fmt.Errorf("condition %q: %w", trigger.Condition, berr)
 		}
 		traversal = bound(ent.ID)
 	}

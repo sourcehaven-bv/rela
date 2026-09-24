@@ -963,17 +963,8 @@ func NewApp(
 	// this is a hint rather than a check.
 	warnUngatedMailActionsFromDisk(cfg.Actions, paths.Root)
 
-	// Verify document scripts exist on disk. Shell-command documents are
-	// not checkable this way (the binary may be on PATH at render time
-	// but unavailable now); Lua scripts live in scripts/ under the
-	// project root so existence can be verified upfront.
-	for id, doc := range cfg.Documents {
-		if doc.Script == "" {
-			continue
-		}
-		if err := script.CheckDocumentScriptExists(paths.Root, doc.Script); err != nil {
-			return nil, fmt.Errorf("invalid %s: document %q: %w", ConfigFile, id, err)
-		}
+	if err := checkDocumentScripts(cfg.Documents, paths.Root); err != nil {
+		return nil, err
 	}
 
 	if err := checkExportRenderScripts(cfg, paths.Root); err != nil {
@@ -1064,16 +1055,9 @@ func NewApp(
 		Meta:          meta,
 		ProjectRoot:   paths.Root,
 	}
-	// Rule traversals are answered under the request's own read gate,
-	// resolved per call like gatedReader, so a rule's related() never sees
-	// an entity its reads could not.
-	valBinder, err := relresolve.NewBinder(meta, lateTraversalGate, st.MatchingIDs)
-	if err != nil {
-		return nil, fmt.Errorf("dataentry: validator traversals: %w", err)
-	}
-	val, err := validator.New(gatedReader, meta, readDeps, valBinder)
-	if err != nil {
-		return nil, fmt.Errorf("dataentry: validator: %w", err)
+	val, valErr := newGatedValidator(gatedReader, meta, readDeps, st)
+	if valErr != nil {
+		return nil, valErr
 	}
 	app.validator = val
 
@@ -1450,4 +1434,37 @@ func newViewsHandler(app *App, st store.Store, logo *logoStore) *viewsHandler {
 			return edges, err
 		},
 	}
+}
+
+// newGatedValidator builds the request-path validator. Rule traversals are
+// answered under the request's own read gate, resolved per call like
+// gatedReader, so a rule's related() never sees an entity its reads could not.
+func newGatedValidator(
+	reader validator.EntityLister, meta *metamodel.Metamodel, deps lua.ReadDeps, st store.GraphQueryer,
+) (*validator.GenericValidator, error) {
+	b, err := relresolve.NewBinder(meta, lateTraversalGate, st.MatchingIDs)
+	if err != nil {
+		return nil, fmt.Errorf("dataentry: validator traversals: %w", err)
+	}
+	val, err := validator.New(reader, meta, deps, b)
+	if err != nil {
+		return nil, fmt.Errorf("dataentry: validator: %w", err)
+	}
+	return val, nil
+}
+
+// checkDocumentScripts verifies document scripts exist on disk. Shell-command
+// documents are not checkable this way (the binary may be on PATH at render
+// time but unavailable now); Lua scripts live in scripts/ under the project
+// root so existence can be verified upfront.
+func checkDocumentScripts(docs map[string]DocumentConfig, root string) error {
+	for id, doc := range docs {
+		if doc.Script == "" {
+			continue
+		}
+		if err := script.CheckDocumentScriptExists(root, doc.Script); err != nil {
+			return fmt.Errorf("invalid %s: document %q: %w", ConfigFile, id, err)
+		}
+	}
+	return nil
 }

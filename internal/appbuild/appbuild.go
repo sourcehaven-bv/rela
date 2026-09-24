@@ -49,9 +49,9 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/relresolve"
 	"github.com/Sourcehaven-BV/rela/internal/scopes"
 	"github.com/Sourcehaven-BV/rela/internal/script"
-	"github.com/Sourcehaven-BV/rela/internal/relresolve"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/state"
 	"github.com/Sourcehaven-BV/rela/internal/statemachine"
@@ -465,7 +465,7 @@ func scriptEntityReader(
 // what keeps a validation rule's traversal from seeing more than its reads.
 func scriptReads(
 	st store.Store, d *acl.Declarative, redactor visibility.FieldRedactor,
-) (lua.EntityReader, relresolve.Gate) {
+) (scriptReader lua.EntityReader, traversalGate relresolve.Gate) {
 	if d == nil {
 		// Named, not bare: this is the NopACL path and the single largest
 		// ungated read surface in the tree, so it must show up in

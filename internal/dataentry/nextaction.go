@@ -469,7 +469,9 @@ type NextActionRequestScope func(ctx context.Context) (context.Context, error)
 // that judges a whole source at once, answering `related(...)` with the gate
 // and store query it is handed (TKT-205V2N).
 type nextActionPageMatcher interface {
-	MatchAllWith(ctx context.Context, es []*entityPkg.Entity, gate relresolve.Gate, match relresolve.Match) ([]bool, error)
+	MatchAllWith(
+		ctx context.Context, es []*entityPkg.Entity, gate relresolve.Gate, match relresolve.Match,
+	) ([]bool, error)
 }
 
 // gatedNextActionMatchers hands the engine matchers that answer a condition's

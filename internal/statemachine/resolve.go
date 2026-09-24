@@ -74,8 +74,7 @@ func (s *Set) Performable(
 			whens = append(whens, ed.when)
 		}
 	}
-	fn, bindErr := s.bindTraversals(ctx, e, whens)
-	traversal := edgeTraversal{fn: fn, err: bindErr}
+	traversal := s.bindTraversals(ctx, e, whens)
 
 	var out []TransitionVerdict
 	for key, ed := range m.edges {

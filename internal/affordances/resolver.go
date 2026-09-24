@@ -865,10 +865,10 @@ func (r *PolicyResolver) passes(
 		// coverage-ignore-end
 	}
 	if len(prog.Traversals()) > 0 {
-		traversal, err := r.traversalFor(ctx, bc.entity)
-		if err != nil {
+		traversal, terr := r.traversalFor(ctx, bc.entity)
+		if terr != nil {
 			slog.Warn("affordances: related() not answered; denying grant",
-				"role", role, "entity", bc.entity.ID, "error", err)
+				"role", role, "entity", bc.entity.ID, "error", terr)
 			return false
 		}
 		b.SetTraversal(traversal)

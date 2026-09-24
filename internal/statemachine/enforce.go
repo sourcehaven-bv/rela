@@ -56,10 +56,9 @@ func (s *Set) EnforceUpdate(ctx context.Context, old, updated *entity.Entity, gu
 	// Every changed property's `related(...)` is answered in one bind. A bind
 	// failure is not an error here: it fails the first edge that needs it, as
 	// a precondition error, like any other `when:` evaluation error.
-	traversal, bindErr := s.bindTraversals(ctx, updated, whens)
+	traversal := s.bindTraversals(ctx, updated, whens)
 	for _, mv := range moves {
-		if err := s.applyEdge(ctx, mv.m, mv.prop, mv.from, mv.to, updated, guard, lookup,
-			edgeTraversal{fn: traversal, err: bindErr}); err != nil {
+		if err := s.applyEdge(ctx, mv.m, mv.prop, mv.from, mv.to, updated, guard, lookup, traversal); err != nil {
 			return err
 		}
 	}
@@ -74,14 +73,14 @@ type edgeTraversal struct {
 }
 
 // bindTraversals answers every `related(...)` in whens for the one entity e.
-// It returns nil with no error when none of whens traverses.
+// The result has neither a func nor an error when none of whens traverses.
 //
 // A row on a named face is refused: the store answers a traversal from the
 // default face's edges, so the answer would describe another row. The
 // refusal fails the precondition, which is the closed direction.
 func (s *Set) bindTraversals(
 	ctx context.Context, e *entity.Entity, whens []*predicate.Program,
-) (predicate.TraversalFunc, error) {
+) edgeTraversal {
 	traverses := false
 	for _, w := range whens {
 		if w != nil && len(w.Traversals()) > 0 {
@@ -91,18 +90,19 @@ func (s *Set) bindTraversals(
 	}
 	switch {
 	case !traverses:
-		return nil, nil
+		return edgeTraversal{}
 	case s.traversals == nil:
 		// coverage-ignore: invariant: Compile refuses a traversing `when:` without a binder
-		return nil, fmt.Errorf("%s(...) is not available: no store is wired to answer it", predicate.FuncRelated)
+		return edgeTraversal{err: fmt.Errorf("%s(...) is not available: no store is wired to answer it",
+			predicate.FuncRelated)}
 	case e.Face != "":
-		return nil, fmt.Errorf("%s(...) cannot be answered on face %q", predicate.FuncRelated, e.Face)
+		return edgeTraversal{err: fmt.Errorf("%s(...) cannot be answered on face %q", predicate.FuncRelated, e.Face)}
 	}
 	bound, err := s.traversals.Bind(ctx, e.Type, []string{e.ID}, whens...)
 	if err != nil {
-		return nil, err
+		return edgeTraversal{err: err}
 	}
-	return bound(e.ID), nil
+	return edgeTraversal{fn: bound(e.ID)}
 }
 
 // EnforceCreate checks the entry value of every state-machine property on a

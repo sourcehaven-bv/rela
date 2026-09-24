@@ -5,7 +5,7 @@ title: 'related() in views, next-action, CLI filter, validation, automation, sta
 kind: enhancement
 priority: medium
 effort: xl
-status: in-progress
+status: review
 ---
 
 ## Description
@@ -46,3 +46,17 @@ writable. The operator authors that policy; document it in
 5. Refuse `related()` at load for form conditions, which run in the browser.
 
 Follow-up to TKT-CXQEV0 (PR #1669).
+
+## Deviations from the plan
+
+- No separate boot check for unscoped validation rules. A rule using
+`related()` reports a load error when it runs and no binder is wired.
+- View and next-action conditions are not refused at load when a traversal
+compares a conditionally visible property: `ViewConditions` has no ACL policy.
+`Request.GateTraversal` refuses it per request instead. ACL grants get a startup
+warning (`warnConditionallyVisible`).
+- `ErrConditionUnavailable` was not needed; existing errors cover every
+refusal.
+- Derived traversal indexes cover view and next-action conditions. The query
+shape is the one the existing EXPLAIN tests pin on both backends, so no new
+EXPLAIN test was added.

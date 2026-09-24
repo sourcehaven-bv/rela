@@ -121,6 +121,7 @@ func TestResolver_RelatedDeniesWhenUnanswerable(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			r, err := affordances.New(testMeta(t), newStubLookup(), declFor(t, policyFromYAML(t, relatedPolicy)),
 				affordances.WithTraversals(tc.b))
 			if err != nil {

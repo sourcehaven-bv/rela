@@ -2,11 +2,12 @@ package dataentry
 
 import (
 	"encoding/json"
-	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"net/http"
 	"net/http/httptest"
 	"sort"
 	"testing"
+
+	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 )

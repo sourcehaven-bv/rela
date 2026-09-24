@@ -7,7 +7,6 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
-	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
 
@@ -30,7 +29,7 @@ func TestQueryBudget_ListPageACLRelatedWhenIsSizeIndependent(t *testing.T) {
 			Assignments: map[string]string{"T1": "editor"},
 		}, app.store)
 		app.acl = d
-		res, err := ResolverFromProfile("", app.Meta(), app.store.(store.Store), d)
+		res, err := ResolverFromProfile("", app.Meta(), app.store, d)
 		if err != nil {
 			t.Fatal(err)
 		}

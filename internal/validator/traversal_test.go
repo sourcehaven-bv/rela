@@ -3,6 +3,7 @@ package validator_test
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -98,7 +99,7 @@ func TestCheckRule_Traversal(t *testing.T) {
 // however many candidates it has.
 func TestCheckRule_TraversalBudgetIsRowIndependent(t *testing.T) {
 	for _, n := range []int{10, 50} {
-		t.Run(fmt.Sprint(n), func(t *testing.T) {
+		t.Run(strconv.Itoa(n), func(t *testing.T) {
 			st := memstore.New()
 			seedTickets(t, st, n)
 			meta := traversalMeta(ownedRule)

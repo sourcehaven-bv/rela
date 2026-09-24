@@ -35,7 +35,9 @@ import (
 // authorizes each traversal and match answers it; the verdicts come back in
 // row order.
 type ViewConditionMatcher interface {
-	MatchPage(ctx context.Context, rows []*entityPkg.Entity, gate relresolve.Gate, match relresolve.Match) ([]bool, error)
+	MatchPage(
+		ctx context.Context, rows []*entityPkg.Entity, gate relresolve.Gate, match relresolve.Match,
+	) ([]bool, error)
 }
 
 // ViewConditionLookup returns the matcher for a configured view, or ok=false
