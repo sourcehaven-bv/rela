@@ -128,7 +128,8 @@ func (r *PolicyResolver) traversalFor(ctx context.Context, e *entity.Entity) (pr
 // filters on a property the policy does not show to everyone. The grant is
 // kept: it reads the raw graph, so its verdict is correct, but a principal
 // who cannot see that property can learn its value from which grants they
-// get. The same filter in a view or next-action condition is refused.
+// get. The same filter in a view or next-action condition is refused per
+// request by the reader's traversal gate.
 func (r *PolicyResolver) warnConditionallyVisible(
 	roleName, entityType, block string, idx int, prog *predicate.Program,
 ) {

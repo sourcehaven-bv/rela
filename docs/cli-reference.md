@@ -241,6 +241,21 @@ models that directly.
 occurrence left (a `COUNT` reached, an `UNTIL` passed); the two messages
 differ so a finished schedule is distinguishable from a typo.
 
+`--filter` also accepts `related(...)`, which filters on the entities at the
+other end of a relation. The CLI runs with operator trust, so every entity
+counts. It makes one store query per traversal, whatever the number of rows.
+
+```bash
+# tickets with no owner
+rela list ticket --filter "not related(entity, 'owned-by')"
+
+# features with at least one open ticket
+rela list feature --filter "related(entity, 'implementedBy', { status = 'open' })"
+```
+
+See [Where `related(...)` works](metamodel.md#where-related-works) for the
+path and constraint syntax.
+
 **`--where` (legacy, deprecated):**
 
 `--where` is transpiled to a predicate internally; prefer `--filter`. It
@@ -1266,6 +1281,8 @@ rela analyze validations
 
 Validation rules check entity properties against custom conditions.
 See [Metamodel Reference - Custom Validation Rules](metamodel.md#custom-validation-rules) for details.
+A rule's `when_condition:` or `then_condition:` may use `related(...)`. Here
+every entity counts, including ones a role in `acl.yaml` may not read.
 
 **Example output:**
 

@@ -1162,10 +1162,45 @@ The following limits apply:
   refused at startup. Matching on it would reveal its value to readers who
   cannot see it. After a live reload of `schema.yaml` or `acl.yaml`, the same
   case is refused per request instead.
-- `related(...)` works only in `query_scopes:`. `rela validate` refuses it in
-  a view `condition:`, a next-action `condition:` and a form condition. Other
-  expression surfaces, such as automations and validations, accept it at load
-  but fail when they evaluate it.
+- A form condition refuses `related(...)` at load. Forms evaluate their
+  conditions in the browser, which cannot read relations.
+
+#### Where `related(...)` works
+
+Every surface below checks the path and constraints when it loads. A surface
+answers each traversal once per page or batch, not once per row. Which
+entities count depends on the surface:
+
+| Surface | Which entities count |
+| --- | --- |
+| `query_scopes:` | Those the reader may see |
+| View (list) `condition:` and next-action `condition:` | Those the reader may see |
+| Validation `when_condition:` / `then_condition:` in the web app and over MCP | Those the caller may see |
+| Validation in `rela validate` and `analyze_validations` | All |
+| Automation `on.condition:` | All |
+| State-machine transition `when:` | All |
+| ACL `when:` in `acl.yaml` | All |
+
+The last four run with system trust, so a hidden entity still counts. An ACL
+`when:` therefore reveals one bit about entities the principal may not read:
+whether the grant applies. Keep such conditions to facts you are willing to
+disclose that way. A traversal whose final entity type has a property some
+role cannot see through `visible:` earns a startup warning in `acl.yaml`. In
+a view or next-action condition the same traversal fails every request that
+evaluates it.
+
+A surface refuses rather than guesses when it cannot answer a traversal:
+
+- An automation's condition, a transition's `when:` and an ACL grant fail
+  closed. The automation does not run, the transition is refused, and the
+  grant does not apply.
+- A validation rule reports a load error for the rule and checks no entity
+  against it.
+- A view or next-action condition fails the request.
+
+Entities on a named face cannot be answered, because the store walks the
+default face's edges. An ACL `when:` also denies a historical version, such as
+one read from the history view.
 
 Some grants cannot be expressed in the traversal's store query. A request from
 a principal with such a grant fails with HTTP 422 and the error code
@@ -1182,8 +1217,9 @@ other principals. The cases are:
 - a hop lands on a type that the principal reads through a role relation,
   such as `editor-of`, and the next hop walks backwards.
 
-On the PostgreSQL backend each constraint gets a derived index on the final
-entity type, so the filter does not scan every row of that type.
+On the PostgreSQL and SQLite backends each constraint gets a derived index
+on the final entity type, so the filter does not scan every row of that type.
+This covers query scopes and view and next-action conditions.
 
 A list page answers the whole scope in the store query when the scope is a
 plain conjunction. Every part joined by `and` must be one of these:

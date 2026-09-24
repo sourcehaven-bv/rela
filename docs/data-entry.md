@@ -974,7 +974,8 @@ Hiding is a presentation decision, not a delete. Use
 `visible_when` (on a step, field, or relation) hides its target when the
 expression is false. `required_when` (on a field) makes the field required only
 when the expression is true. Both are boolean expressions evaluated in the
-browser against the form's current values.
+browser against the form's current values. The browser cannot read
+relations, so `related(...)` is refused here at startup.
 
 | Feature | Syntax |
 | --- | --- |
@@ -1256,6 +1257,11 @@ filter on `afgerond_op` would also apply to the unfinished tasks and hide them.
 
 It is operator config: the expression is never accepted from a request, so a
 caller can only select among views you have declared.
+
+A condition may use `related(...)` to filter on related entities, for example
+`related(entity, 'implementedBy', { status = 'open' })`. It answers each
+traversal once per page, and only entities the reader may see count. See
+[Where `related(...)` works](metamodel.md#where-related-works).
 
 > **Lists only, for now.** A `condition:` on a `kanbans:` entry is **rejected
 > at startup** — the board still filters client-side, and a key that validated
@@ -2432,6 +2438,9 @@ Rules worth knowing:
   "dew" on record`. A condition that silently matched nothing would be
   indistinguishable from a source with nothing to say.
 - **Not available on a `count` source** — there is no entity to test.
+- **`related(...)` is allowed**, as in a list condition. It is answered once
+  per source, and only entities the reader may see count. See
+  [Where `related(...)` works](metamodel.md#where-related-works).
 - **Not available with free text in `query`** (`type:task urgent`). Free-text
   results are capped by relevance before the condition runs, so a condition
   matching only a hit past the cut would silently never fire. Select with
