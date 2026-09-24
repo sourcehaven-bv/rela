@@ -73,7 +73,15 @@ func ResolverFromProfile(
 	if policy == nil || !policy.HasAffordanceGrants() {
 		return NopFieldVerdictResolver{}, nil
 	}
-	resolver, err := affordances.New(meta, storeRelationLookup{st: st}, declarative)
+	// One raw binder answers related() in both ACL `when:` grants and
+	// transition `when:` (TKT-205V2N): both are authorization decisions over
+	// the graph as it is.
+	traversals, err := relresolve.NewBinder(meta, relresolve.Ungated, st.MatchingIDs)
+	if err != nil {
+		return nil, fmt.Errorf("dataentry: acl traversals: %w", err)
+	}
+	resolver, err := affordances.New(meta, storeRelationLookup{st: st}, declarative,
+		affordances.WithTraversals(traversals))
 	if err != nil {
 		return nil, fmt.Errorf("dataentry: compiling acl.yaml affordance predicates: %w", err)
 	}
@@ -87,10 +95,6 @@ func ResolverFromProfile(
 	// cannot disagree regardless. (Threading the entitymanager's single Set
 	// through appbuild.Services is the follow-up when the SPA status control
 	// wires the whole surface.)
-	traversals, err := relresolve.NewBinder(meta, relresolve.Ungated, st.MatchingIDs)
-	if err != nil {
-		return nil, fmt.Errorf("dataentry: state machine traversals: %w", err)
-	}
 	machines, err := statemachine.Compile(meta, statemachine.WithTraversals(traversals))
 	if err != nil {
 		return nil, fmt.Errorf("dataentry: compiling state machines: %w", err)

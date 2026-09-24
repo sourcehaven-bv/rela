@@ -88,8 +88,12 @@ func (r *PolicyReader) Filter(ctx context.Context, candidates []*entity.Entity) 
 	out := make([]*entity.Entity, 0, len(candidates))
 	for _, c := range candidates {
 		if c != nil && allowed[c.ID] && FaceAllowed(ctx, r.gate, c.Type, c.Face) {
-			out = append(out, r.redacted(ctx, c))
+			out = append(out, c)
 		}
+	}
+	ctx = PrimeTraversals(ctx, r.redact, out)
+	for i, c := range out {
+		out[i] = r.redacted(ctx, c)
 	}
 	return out
 }
@@ -120,10 +124,16 @@ func (r *PolicyReader) FilterHeaders(
 	allowed := r.permittedIDs(ctx, byType)
 
 	out := make([]store.EntityHeader, 0, len(candidates))
+	probes := make([]*entity.Entity, 0, len(candidates))
 	for _, c := range candidates {
 		if allowed[c.ID] && FaceAllowed(ctx, r.gate, c.Type, c.Face) {
-			out = append(out, RedactHeader(ctx, r.redact, c))
+			out = append(out, c)
+			probes = append(probes, headerProbe(c))
 		}
+	}
+	ctx = PrimeTraversals(ctx, r.redact, probes)
+	for i, c := range out {
+		out[i] = RedactHeader(ctx, r.redact, c)
 	}
 	return out
 }
@@ -265,8 +275,7 @@ func Redact(ctx context.Context, red FieldRedactor, e *entity.Entity) *entity.En
 // a fresh filtered map and Redacted a freshly sorted slice, never appended
 // to the input's (which may alias a caller's backing array).
 func RedactHeader(ctx context.Context, red FieldRedactor, h store.EntityHeader) store.EntityHeader {
-	probe := &entity.Entity{ID: h.ID, Type: h.Type, Properties: h.Properties}
-	hidden := red.HiddenProperties(ctx, probe)
+	hidden := red.HiddenProperties(ctx, headerProbe(h))
 	if len(hidden) == 0 {
 		return h
 	}
@@ -274,6 +283,12 @@ func RedactHeader(ctx context.Context, red FieldRedactor, h store.EntityHeader) 
 	out.Properties = filterProps(h.Properties, hidden)
 	out.Redacted = slices.Sorted(maps.Keys(hidden))
 	return out
+}
+
+// headerProbe is the entity a redactor sees for a header. It carries the face:
+// a `when:` that cannot be answered on a named face must see that it is one.
+func headerProbe(h store.EntityHeader) *entity.Entity {
+	return &entity.Entity{ID: h.ID, Type: h.Type, Face: h.Face, Properties: h.Properties}
 }
 
 // filterProps returns a fresh map of props minus hidden. Never mutates

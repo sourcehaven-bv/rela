@@ -892,7 +892,8 @@ func buildFieldRedactor(
 		return visibility.NopRedactor{}, nil
 	}
 
-	resolver, err := affordances.New(meta, storeRelationLookup{st: st}, d)
+	resolver, err := affordances.New(meta, storeRelationLookup{st: st}, d,
+		affordances.WithTraversals(ungatedBinder(meta, st)))
 	if err != nil {
 		return nil, fmt.Errorf("appbuild: compiling acl.yaml affordance predicates: %w", err)
 	}

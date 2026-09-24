@@ -760,9 +760,10 @@ func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeN
 	// Build response - always include relations for relation column support
 	data := make([]v1.Entity, 0, len(entities))
 	included := make(map[string]v1.Entity)
+	pageCtx := primeVerdicts(r.Context(), a.fieldResolver, entities)
 	for i, e := range entities {
 		v1Entity := a.serializer.forWireRelated(
-			r.Context(), e,
+			pageCtx, e,
 			outgoingByRow[i],
 			incomingByRow[i],
 			visibleNeighbors,
@@ -1821,6 +1822,7 @@ func (a *App) handleV1Search(w http.ResponseWriter, r *http.Request) {
 
 	meta := a.State().Meta
 	data := make([]v1.Entity, 0, len(entities))
+	pageCtx := primeVerdicts(r.Context(), a.fieldResolver, entities)
 	for _, e := range entities {
 		entityDef := meta.Entities[e.Type]
 		plural := entityDef.GetPlural(e.Type)
@@ -1829,7 +1831,7 @@ func (a *App) handleV1Search(w http.ResponseWriter, r *http.Request) {
 		// {ID, Title} of related entities this principal may not read.
 		// Flipping this requires per-target gating first (RR-QO01XY) —
 		// TestACLSearch_VisibleHitRelatedToHidden pins the invariant.
-		data = append(data, a.serializer.forWireRelated(r.Context(), e, nil, nil, nil, a.Meta(), plural))
+		data = append(data, a.serializer.forWireRelated(pageCtx, e, nil, nil, nil, a.Meta(), plural))
 	}
 
 	resp := v1.ListResponse{
