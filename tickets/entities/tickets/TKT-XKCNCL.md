@@ -4,8 +4,8 @@ type: ticket
 title: Push down query scopes built from related() and equalities
 kind: enhancement
 priority: high
-effort: l
-status: ready
+effort: xl
+status: in-progress
 ---
 
 ## Description
@@ -15,18 +15,18 @@ Any data-entry `query_scopes:` entry turns off list pushdown
 then receives every candidate ID of the type, not one page. The count also comes
 from the full candidate set. Cost grows with the size of the type.
 
-Fix: lower a scope that is a plain AND of `related()` terms and equalities into
-`store.GraphQuery` (`HasInbound`/`HasOutbound` plus property equalities). The
-list then keeps full pushdown: paging, ordering and the scoped count through
-`store.CountMatched`.
+Fix: lower a scope that is a plain AND of `related()` terms and constant
+equalities into `store.GraphQuery`. The list then keeps full pushdown: paging,
+ordering and the scoped count through `store.CountMatched`.
 
-Limits:
+The ACL read gate occupies `GraphQuery.HasInbound` for any principal reading a
+type through a role relation. So `GraphQuery` gains `Related`, a conjunctive,
+caller-only list of directed relation predicates, implemented in pgstore and
+`graphquerynaive` and pinned in storetest.
 
-- `GraphQuery` has one inbound slot and one outbound slot. A scope that needs
-more, or that competes with the ACL gate for the same slot, falls back to the
-current path (see TKT-44PVX2).
-- `not related(...)` needs a NOT EXISTS form that `GraphQuery` lacks. It falls
-back too.
+Scopes with `or`, `not` (including `not related`) or other functions fall back
+to the current path. The nested half of TKT-44PVX2 still applies. SQL pushdown
+on sqlite is TKT-B51CYD.
 
 Acceptance:
 
