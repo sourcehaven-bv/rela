@@ -187,6 +187,7 @@ func RunAll(t *testing.T, f Factory, sf SearchFactory, vsf VisibleSearchFactory,
 	t.Run("Query", func(t *testing.T) { RunQueryTests(t, f) })
 	t.Run("GraphQuery", func(t *testing.T) { RunGraphQueryTests(t, f) })
 	t.Run("EndpointMatch", func(t *testing.T) { RunEndpointMatchTests(t, f) })
+	t.Run("Related", func(t *testing.T) { RunRelatedTests(t, f) })
 	t.Run("GraphHeaders", func(t *testing.T) { RunGraphHeaderTests(t, f) })
 	t.Run("GraphPaging", func(t *testing.T) { RunGraphPagingTests(t, f) })
 	t.Run("GraphPosition", func(t *testing.T) { RunGraphPositionTests(t, f) })

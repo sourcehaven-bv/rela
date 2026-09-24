@@ -33,7 +33,7 @@ func TestPosition_StoreMatchesGoPath(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, ok := n.pushdownPlan(ctx, app, scope.Type, query, 1, 1); !ok {
+			if _, _, ok := n.pushdownPlan(ctx, app, scope.Type, query, 1, 1); !ok {
 				t.Fatal("scope is not pushable: the test would compare the Go path to itself")
 			}
 

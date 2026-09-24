@@ -9,6 +9,7 @@ import (
 
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // ScopeDescriptor encodes the query that defines an ordered result set the
@@ -259,14 +260,17 @@ func storePosition(
 		// ever stops re-resolving, this must return the error instead.
 		return nil, false
 	}
-	plan, ok := n.pushdownPlan(ctx, a, scope.Type, query, 1, 1)
+	plan, empty, ok := n.pushdownPlan(ctx, a, scope.Type, query, 1, 1)
 	if !ok {
 		return nil, false
 	}
-	sp, found, err := plan.position(ctx, a.Services().Store, id)
-	if err != nil {
-		writeListPipelineError(w, r, err)
-		return nil, true
+	var sp store.Position
+	found := false
+	if !empty {
+		if sp, found, err = plan.position(ctx, a.Services().Store, id); err != nil {
+			writeListPipelineError(w, r, err)
+			return nil, true
+		}
 	}
 	if !found {
 		writeV1Error(w, r, http.StatusNotFound, "not_in_scope", "Entity not found in scope", "")
