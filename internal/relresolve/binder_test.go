@@ -190,3 +190,16 @@ func TestBinder_UnknownRelationIsAnError(t *testing.T) {
 		t.Fatal("want an error for an unknown relation")
 	}
 }
+
+// An unpersisted entity has no id; answering it would read as "no match"
+// and pass `not related(...)`.
+func TestBinder_EmptyIDIsAnError(t *testing.T) {
+	r := &recorder{}
+	b, err := relresolve.NewBinder(meta(), r.gate, r.match)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.Bind(context.Background(), "ticket", []string{""}, compile(t, "not related(entity, 'owned-by')")); err == nil {
+		t.Fatal("want an error for an entity with no id")
+	}
+}

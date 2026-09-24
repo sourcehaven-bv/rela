@@ -52,8 +52,12 @@ func Ungated(_ context.Context, _ string, hop acl.TraversalHop) (*store.Relation
 }
 
 // Answers holds, per traversal (keyed by [predicate.TraversalSpec.Key]), the
-// candidate ids that satisfy it.
-type Answers map[string]map[string]bool
+// candidate ids that satisfy it, and the ids it was asked about. Only those
+// ids may be read back: see [Answers.For].
+type Answers struct {
+	asked  map[string]bool
+	bySpec map[string]map[string]bool
+}
 
 // Answer answers every spec for the candidate ids, with one gated store query
 // per distinct spec.
@@ -66,39 +70,47 @@ func Answer(
 	ctx context.Context, meta *metamodel.Metamodel, gate Gate, match Match,
 	entityType string, specs []predicate.TraversalSpec, ids []string,
 ) (Answers, error) {
+	answers := Answers{asked: make(map[string]bool, len(ids)), bySpec: make(map[string]map[string]bool, len(specs))}
+	for _, id := range ids {
+		if id == "" {
+			// An unpersisted entity has no edges to ask about; "no match"
+			// would pass a negated traversal on it.
+			return Answers{}, errors.New("related: the entity has no id yet")
+		}
+		answers.asked[id] = true
+	}
 	if len(specs) == 0 {
-		return Answers{}, nil
+		return answers, nil
 	}
 	if gate == nil || match == nil {
-		return nil, errors.New("relresolve: no gate or store to answer a traversal")
+		return Answers{}, errors.New("relresolve: no gate or store to answer a traversal")
 	}
-	answers := make(Answers, len(specs))
 	for _, spec := range specs {
 		key := spec.Key()
-		if _, done := answers[key]; done {
+		if _, done := answers.bySpec[key]; done {
 			continue
 		}
 		if len(ids) == 0 {
-			answers[key] = map[string]bool{}
+			answers.bySpec[key] = map[string]bool{}
 			continue
 		}
 		hop, err := Hop(meta, entityType, spec)
 		if err != nil {
-			return nil, err
+			return Answers{}, err
 		}
 		pred, err := gate(ctx, entityType, hop)
 		if errors.Is(err, acl.ErrTraversalDenied) {
-			answers[key] = map[string]bool{}
+			answers.bySpec[key] = map[string]bool{}
 			continue
 		}
 		if err != nil {
-			return nil, err
+			return Answers{}, err
 		}
 		got, err := match(ctx, acl.TraversalQuery(entityType, hop, pred), ids)
 		if err != nil {
-			return nil, err
+			return Answers{}, err
 		}
-		answers[key] = got
+		answers.bySpec[key] = got
 	}
 	return answers, nil
 }
@@ -150,11 +162,15 @@ func Hop(meta *metamodel.Metamodel, entityType string, spec predicate.TraversalS
 
 // For answers a traversal for ONE row from precomputed answers.
 //
-// It refuses rather than guesses: a subject other than the row itself, or a
-// traversal nobody answered, is an error. Returning false would present an
-// unanswered question as a legitimate "no match".
+// It refuses rather than guesses: a row the answers were not computed for, a
+// subject other than the row itself, or a traversal nobody answered, is an
+// error. Returning false would present an unanswered question as a
+// legitimate "no match", which passes a negated traversal.
 func (a Answers) For(rowID string) predicate.TraversalFunc {
 	return func(subject predicate.Value, spec predicate.TraversalSpec) (bool, error) {
+		if rowID == "" || !a.asked[rowID] {
+			return false, fmt.Errorf("traversal was not answered for %q", rowID)
+		}
 		rec, ok := subject.(predicate.Record)
 		if !ok {
 			return false, errors.New("traversal subject is not a record")
@@ -162,7 +178,7 @@ func (a Answers) For(rowID string) predicate.TraversalFunc {
 		if id, _ := rec.Get("id"); id != predicate.NewString(rowID) {
 			return false, errors.New("traversal subject is not the row being evaluated")
 		}
-		ans, ok := a[spec.Key()]
+		ans, ok := a.bySpec[spec.Key()]
 		if !ok {
 			return false, fmt.Errorf("traversal %v was not answered", spec.Path)
 		}

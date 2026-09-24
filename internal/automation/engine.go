@@ -9,8 +9,27 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/predicate"
 	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
 )
+
+// TraversalBinder answers the `related(...)` traversals of a condition for
+// the triggering entity (TKT-205V2N). The wiring site supplies one bound to
+// the raw store: an automation is system policy, so what it sees must not
+// depend on who made the write.
+type TraversalBinder interface {
+	Bind(ctx context.Context, entityType string, ids []string, progs ...*predicate.Program) (
+		func(rowID string) predicate.TraversalFunc, error)
+}
+
+// Option configures an engine built by [NewEngineFromMetamodel].
+type Option func(*Engine)
+
+// WithTraversals lets conditions use `related(...)`. Without it such a
+// condition is a load error.
+func WithTraversals(b TraversalBinder) Option {
+	return func(e *Engine) { e.traversals = b }
+}
 
 // Engine evaluates automations against entity events.
 type Engine struct {
@@ -29,6 +48,9 @@ type Engine struct {
 	// Guarded by evMu.
 	evMu sync.Mutex
 	ev   *predicatefns.Evaluator
+
+	// traversals answers `related(...)` in conditions; nil refuses them.
+	traversals TraversalBinder
 }
 
 // evaluator returns the predicate Evaluator bound to the current
@@ -69,7 +91,7 @@ func NewEngine(automations []Automation) *Engine {
 // operator sees the mistake at startup rather than in a diff a week
 // later.
 func NewEngineFromMetamodel(
-	meta *metamodel.Metamodel, defs []metamodel.AutomationDef,
+	meta *metamodel.Metamodel, defs []metamodel.AutomationDef, opts ...Option,
 ) (*Engine, error) {
 	automations := make([]Automation, len(defs))
 	for i, def := range defs {
@@ -81,6 +103,9 @@ func NewEngineFromMetamodel(
 	}
 	e := NewEngine(automations)
 	e.meta = meta
+	for _, opt := range opts {
+		opt(e)
+	}
 	if err := e.compileConditions(); err != nil {
 		return nil, err
 	}
@@ -117,13 +142,30 @@ func (e *Engine) compileConditions() error {
 		}
 		ev := e.evaluator()
 		for _, t := range types {
-			if _, err := ev.Compile(t, src); err != nil {
+			prog, err := ev.Compile(t, src)
+			if err != nil {
 				return fmt.Errorf("automation %q: condition %q on %q: %w",
 					auto.Name, src, t, err)
+			}
+			if err := e.checkTraversals(t, prog); err != nil {
+				return fmt.Errorf("automation %q: condition %q on %q: %w", auto.Name, src, t, err)
 			}
 		}
 	}
 	return nil
+}
+
+// checkTraversals refuses a `related(...)` the engine cannot answer: one
+// that does not resolve against the metamodel, or any at all when no binder
+// is wired.
+func (e *Engine) checkTraversals(entityType string, prog *predicate.Program) error {
+	if len(prog.Traversals()) == 0 {
+		return nil
+	}
+	if e.traversals == nil {
+		return fmt.Errorf("%s(...) is not available: no store is wired to answer it", predicate.FuncRelated)
+	}
+	return predicatefns.ValidateTraversals(e.meta, entityType, prog)
 }
 
 // SetMetamodel wires the metamodel used for type-aware `when:`/
@@ -385,7 +427,23 @@ func (e *Engine) matchesCondition(
 	if err != nil {
 		return false, fmt.Errorf("condition %q: %w", trigger.Condition, err)
 	}
-	matched, err := ev.Matches(ctx, prog, ent.Type, ent.ID, ent.Properties)
+	var traversal predicate.TraversalFunc
+	if len(prog.Traversals()) > 0 {
+		if e.traversals == nil {
+			return false, fmt.Errorf("condition %q: related(...) has no store to answer it", trigger.Condition)
+		}
+		if ent.Face != "" {
+			// The store answers from the default face's edges; a named face
+			// has its own, so the answer would be about another entity.
+			return false, fmt.Errorf("condition %q: related(...) cannot be answered on face %q", trigger.Condition, ent.Face)
+		}
+		bound, err := e.traversals.Bind(ctx, ent.Type, []string{ent.ID}, prog)
+		if err != nil {
+			return false, fmt.Errorf("condition %q: %w", trigger.Condition, err)
+		}
+		traversal = bound(ent.ID)
+	}
+	matched, err := ev.MatchesWithTraversals(ctx, prog, ent.Type, ent.ID, ent.Properties, traversal)
 	if err != nil {
 		return false, fmt.Errorf("condition %q: %w", trigger.Condition, err)
 	}

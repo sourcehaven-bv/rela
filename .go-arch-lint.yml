@@ -736,6 +736,7 @@ deps:
       - metamodel
       - project
       - script
+      - relresolve
       - search
       - state
       - storage

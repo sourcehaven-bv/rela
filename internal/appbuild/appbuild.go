@@ -51,6 +51,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/scopes"
 	"github.com/Sourcehaven-BV/rela/internal/script"
+	"github.com/Sourcehaven-BV/rela/internal/relresolve"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/state"
 	"github.com/Sourcehaven-BV/rela/internal/statemachine"
@@ -893,11 +894,18 @@ func buildFieldRedactor(
 // buildAutomation wires the automation engine + cascade runner from
 // the metamodel. Returns (nil, nil, nil) when the metamodel declares
 // no automations — Manager treats that as "automation disabled".
-func buildAutomation(meta *metamodel.Metamodel) (*automation.Engine, *autocascade.Runner, error) {
+//
+// A condition's `related(...)` is answered ungated from st: an automation is
+// system policy, so what it sees must not depend on who made the write.
+func buildAutomation(meta *metamodel.Metamodel, st store.Store) (*automation.Engine, *autocascade.Runner, error) {
 	if len(meta.Automations) == 0 {
 		return nil, nil, nil
 	}
-	autoEngine, err := automation.NewEngineFromMetamodel(meta, meta.Automations)
+	traversals, err := relresolve.NewBinder(meta, relresolve.Ungated, st.MatchingIDs)
+	if err != nil {
+		return nil, nil, fmt.Errorf("build automation engine: %w", err)
+	}
+	autoEngine, err := automation.NewEngineFromMetamodel(meta, meta.Automations, automation.WithTraversals(traversals))
 	if err != nil {
 		return nil, nil, fmt.Errorf("build automation engine: %w", err)
 	}
@@ -1749,7 +1757,7 @@ func assemble(
 		return nil, err
 	}
 
-	autoEngine, cascadeRunner, err := buildAutomation(base.meta)
+	autoEngine, cascadeRunner, err := buildAutomation(base.meta, st)
 	// coverage-ignore-start: defensive: buildAutomation only errors when autocascade.New fails, which requires a nil
 	// Engine that buildAutomation
 	// never produces (see the scupper there)

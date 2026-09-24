@@ -10,7 +10,7 @@ import (
 // as a legitimate "no match" and widen a negated traversal.
 func TestAnswersFor_Refuses(t *testing.T) {
 	spec := predicate.TraversalSpec{Subject: "entity", Path: []string{"implementedBy"}}
-	answers := Answers{spec.Key(): {"FEAT-1": true}}
+	answers := Answers{asked: map[string]bool{"FEAT-1": true}, bySpec: map[string]map[string]bool{spec.Key(): {"FEAT-1": true}}}
 	row := predicate.NewRecord(map[string]predicate.Value{"id": predicate.NewString("FEAT-1")})
 
 	ok, err := answers.For("FEAT-1")(row, spec)
@@ -35,5 +35,16 @@ func TestAnswersFor_Refuses(t *testing.T) {
 				t.Fatal("want an error")
 			}
 		})
+	}
+}
+
+// A row outside the answered set is refused, not read as "no match": a shared
+// ctx may evaluate rows (includes, neighbours) the answers never covered.
+func TestAnswersFor_RefusesUnaskedRow(t *testing.T) {
+	spec := predicate.TraversalSpec{Subject: "entity", Path: []string{"implementedBy"}}
+	answers := Answers{asked: map[string]bool{"FEAT-1": true}, bySpec: map[string]map[string]bool{spec.Key(): {}}}
+	row := predicate.NewRecord(map[string]predicate.Value{"id": predicate.NewString("FEAT-2")})
+	if _, err := answers.For("FEAT-2")(row, spec); err == nil {
+		t.Fatal("want an error for a row the answers were not computed for")
 	}
 }

@@ -29,6 +29,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/script"
+	"github.com/Sourcehaven-BV/rela/internal/relresolve"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/search/bleveindex"
 	"github.com/Sourcehaven-BV/rela/internal/state"
@@ -156,7 +157,7 @@ func New(meta *metamodel.Metamodel, opts ...Option) *appbuild.Services {
 	searcher := resolveSearcher(st, searchBackend)
 	readDeps := buildReadDeps(st, tr, searcher, meta, cfg.paths)
 
-	autoEngine, cascadeRunner := buildAutomation(meta)
+	autoEngine, cascadeRunner := buildAutomation(meta, st)
 	templater := templating.NewFSTemplater(cfg.fs, cfg.paths)
 	cfgLoader := config.NewFSLoader(cfg.fs, cfg.paths.Root)
 	stateKV := mustBuildStateKV(cfg.fs, cfg.paths)
@@ -342,11 +343,15 @@ func buildReadDeps(st store.Store, tr tracer.Tracer, searcher search.Searcher,
 	}
 }
 
-func buildAutomation(meta *metamodel.Metamodel) (*automation.Engine, *autocascade.Runner) {
+func buildAutomation(meta *metamodel.Metamodel, st store.Store) (*automation.Engine, *autocascade.Runner) {
 	if len(meta.Automations) == 0 {
 		return nil, nil
 	}
-	autoEngine, err := automation.NewEngineFromMetamodel(meta, meta.Automations)
+	traversals, err := relresolve.NewBinder(meta, relresolve.Ungated, st.MatchingIDs)
+	if err != nil {
+		panic(fmt.Sprintf("appbuildtest.New: build traversal binder: %v", err))
+	}
+	autoEngine, err := automation.NewEngineFromMetamodel(meta, meta.Automations, automation.WithTraversals(traversals))
 	if err != nil {
 		panic(fmt.Sprintf("appbuildtest.New: build automation engine: %v", err))
 	}
