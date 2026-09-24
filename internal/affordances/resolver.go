@@ -186,6 +186,16 @@ func New(
 // [New] callers. Never call WithMachines concurrently with TransitionVerdicts.
 func (r *PolicyResolver) WithMachines(m *statemachine.Set) *PolicyResolver {
 	r.machines = m
+	// A transition verdict is served to principals (`_transitions`) and its
+	// when: reads the raw graph, so it carries the same bit an ACL grant does.
+	for _, entityType := range r.meta.EntityTypes() {
+		for _, prop := range m.MachineProps(entityType) {
+			for edge, prog := range m.TraversingWhens(entityType, prop) {
+				warnConditionallyVisible(r.meta, r.policy, entityType,
+					fmt.Sprintf("transition %s.%s %s when:", entityType, prop, edge), prog)
+			}
+		}
+	}
 	return r
 }
 
@@ -382,7 +392,8 @@ func (r *PolicyResolver) compile(roleName, entityType, block string, idx int, wh
 		}
 		if err == nil {
 			r.traversalProgs[entityType] = append(r.traversalProgs[entityType], prog)
-			r.warnConditionallyVisible(roleName, entityType, block, idx, prog)
+			warnConditionallyVisible(r.meta, r.policy, entityType,
+				fmt.Sprintf("acl.yaml roles.%s.%s.%s[%d]", roleName, block, entityType, idx), prog)
 		}
 	}
 	if err != nil {

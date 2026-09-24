@@ -2,7 +2,6 @@ package dataentry
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -17,13 +16,11 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/openapi"
 	"github.com/Sourcehaven-BV/rela/internal/project"
-	"github.com/Sourcehaven-BV/rela/internal/relresolve"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/state"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
-	"github.com/Sourcehaven-BV/rela/internal/validator"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
@@ -143,20 +140,17 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 	// (TKT-3FL2S6). lateGatedReader is late-bound, so it tolerates app.acl /
 	// app.affordances being rebound below.
 	gatedReader := lateGatedReader{app: app}
-	valBinder, err := relresolve.NewBinder(svc.Meta(), lateTraversalGate, svc.Store().MatchingIDs)
-	if err != nil {
-		panic(fmt.Sprintf("validator traversals: %v", err))
-	}
-	app.validator, err = validator.New(gatedReader, svc.Meta(), lua.ReadDeps{
+	val, err := newGatedValidator(gatedReader, app.scriptTraversalGate, svc.Meta(), lua.ReadDeps{
 		VisibleReader: gatedReader,
 		Tracer:        lateGatedTracer{app: app},
 		Searcher:      svc.Searcher(),
 		Meta:          svc.Meta(),
 		ProjectRoot:   paths.Root,
-	}, valBinder)
+	}, svc.Store())
 	if err != nil {
-		panic(fmt.Sprintf("validator: %v", err))
+		panic(err.Error())
 	}
+	app.validator = val
 	app.analyze = analyzeService{reads: gatedReader, relCounts: svc.Store(), tracer: lateGatedTracer{app: app}, validator: app.validator}
 	app.templater = svc.Templater()
 	app.cfgLoader = svc.Config()

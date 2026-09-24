@@ -1176,6 +1176,10 @@ the grant applies. Keep such conditions to facts you are willing to disclose
 that way. A traversal that compares a property some role cannot see through
 `visible:` earns a startup warning naming the grant.
 
+A state-machine transition's `when:` works the same way. Whether a transition
+is performable is served to principals in `_transitions`, so it carries the
+same bit and earns the same warning.
+
 A list page or search answers each traversal once for all its rows, not once
 per row.
 

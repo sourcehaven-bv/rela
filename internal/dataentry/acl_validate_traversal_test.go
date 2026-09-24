@@ -57,4 +57,17 @@ func TestGatedValidator_TraversalIgnoresHiddenEntity(t *testing.T) {
 			}
 		})
 	}
+
+	// A caller outside the request middleware carries no read gate. The
+	// traversal takes its tier from the policy, as the reads do, rather than
+	// running ungated.
+	t.Run("no read gate on ctx", func(t *testing.T) {
+		ids, err := app.validator.CheckRule(principalCtx("alice"), rule)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(ids) != 1 {
+			t.Fatalf("violations = %v, want 1: the hidden feature must not count", ids)
+		}
+	})
 }

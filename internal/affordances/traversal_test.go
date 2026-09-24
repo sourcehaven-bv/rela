@@ -1,14 +1,18 @@
 package affordances_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
+	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 )
 
 // stubBinder answers every traversal with answer[rowID] and counts binds.
@@ -144,5 +148,46 @@ func TestResolver_RelatedRefusedAtLoad(t *testing.T) {
 	if _, err := affordances.New(testMeta(t), newStubLookup(), declFor(t, bad),
 		affordances.WithTraversals(&stubBinder{})); err == nil {
 		t.Error("unknown relation: want a compile error")
+	}
+}
+
+// A transition verdict is served to principals like a grant's, so a transition
+// when: filtering on a property some role cannot see earns the same warning.
+// Not parallel: it swaps the default logger.
+func TestResolver_WithMachinesWarnsOnHiddenTraversalFilter(t *testing.T) {
+	meta := testMeta(t)
+	meta.Types = map[string]metamodel.CustomType{"flow": {
+		Values:  []string{"a", "b"},
+		Initial: "a",
+		Transitions: []metamodel.TransitionDef{
+			{From: "a", To: "b", When: "related(entity, 'implements', { title = 'x' })"},
+		},
+	}}
+	def := meta.Entities["ticket"]
+	def.Properties["stage"] = metamodel.PropertyDef{Type: "flow"}
+	meta.Entities["ticket"] = def
+	machines, err := statemachine.Compile(meta, statemachine.WithTraversals(&stubBinder{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := affordances.New(meta, newStubLookup(), declFor(t, policyFromYAML(t, `
+roles:
+  viewer:
+    read: ["*"]
+    visible:
+      feature: []
+`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	defer slog.SetDefault(prev)
+	r.WithMachines(machines)
+
+	if out := buf.String(); !strings.Contains(out, "transition ticket.stage a→b") || !strings.Contains(out, "property=title") {
+		t.Fatalf("want a warning naming the transition and property, got %q", out)
 	}
 }

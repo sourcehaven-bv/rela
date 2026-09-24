@@ -200,14 +200,6 @@ func traversalGateFromContext(ctx context.Context) traversalGate {
 	return refusingTraversalGate{}
 }
 
-// lateTraversalGate authorizes a traversal under the read gate of the request
-// on ctx, resolved at call time; see [traversalGateFromContext].
-func lateTraversalGate(
-	ctx context.Context, candidateType string, hop acl.TraversalHop,
-) (*store.RelationPredicate, error) {
-	return traversalGateFromContext(ctx).GateTraversal(ctx, candidateType, hop)
-}
-
 type refusingTraversalGate struct{}
 
 func (refusingTraversalGate) GateTraversal(

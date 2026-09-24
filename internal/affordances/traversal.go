@@ -7,7 +7,9 @@ import (
 	"log/slog"
 	"sync"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
 	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
 )
@@ -124,26 +126,25 @@ func (r *PolicyResolver) traversalFor(ctx context.Context, e *entity.Entity) (pr
 	return bound(e.ID), nil
 }
 
-// warnConditionallyVisible logs a load warning for a grant traversal that
-// filters on a property the policy does not show to everyone. The grant is
-// kept: it reads the raw graph, so its verdict is correct, but a principal
-// who cannot see that property can learn its value from which grants they
-// get. The same filter in a view or next-action condition is refused per
+// warnConditionallyVisible logs a load warning for a grant or transition
+// traversal that filters on a property the policy does not show to everyone.
+// The rule is kept: it reads the raw graph, so its verdict is correct, but a
+// principal who cannot see that property can learn its value from the
+// verdict. The same filter in a view or next-action condition is refused per
 // request by the reader's traversal gate.
-func (r *PolicyResolver) warnConditionallyVisible(
-	roleName, entityType, block string, idx int, prog *predicate.Program,
+func warnConditionallyVisible(
+	meta *metamodel.Metamodel, policy *acl.Policy, entityType, where string, prog *predicate.Program,
 ) {
 	for _, spec := range prog.Traversals() {
-		hops, err := predicatefns.ResolveTraversal(r.meta, entityType, spec)
+		hops, err := predicatefns.ResolveTraversal(meta, entityType, spec)
 		if err != nil || len(hops) == 0 {
 			continue // compile reports it
 		}
 		target := hops[len(hops)-1].Target
 		for _, prop := range spec.PropNames() {
-			if r.policy.ConditionallyVisible(target, prop) {
+			if policy.ConditionallyVisible(target, prop) {
 				slog.Warn("acl: a when: related() filters on a property not visible to every role",
-					"grant", fmt.Sprintf("roles.%s.%s.%s[%d]", roleName, block, entityType, idx),
-					"type", target, "property", prop)
+					"where", where, "type", target, "property", prop)
 			}
 		}
 	}

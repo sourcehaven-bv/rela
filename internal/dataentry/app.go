@@ -725,6 +725,26 @@ func gatedScriptReader(aclImpl acl.ACL, store store.Store, redactor visibility.F
 	return sr
 }
 
+// scriptTraversalGate authorizes a validation rule's traversal under the same
+// tier as [gatedScriptReader], resolved at call time because a.acl is set
+// after construction. Deriving both from a.acl, not from the request on ctx,
+// keeps a rule's related() from seeing more than its reads: a ctx without the
+// middleware's read gate is refused under a policy, not answered ungated.
+func (a *App) scriptTraversalGate(
+	ctx context.Context, candidateType string, hop acl.TraversalHop,
+) (*store.RelationPredicate, error) {
+	d, ok := a.acl.(*acl.Declarative)
+	if !ok || d == nil {
+		return relresolve.Ungated(ctx, candidateType, hop)
+	}
+	gate, err := visibility.NewDeclarativeGate(d)
+	if err != nil {
+		// coverage-ignore: invariant: d is non-nil here
+		return nil, fmt.Errorf("%w: %w", acl.ErrTraversalUnsupported, err)
+	}
+	return gate.GateTraversal(ctx, candidateType, hop)
+}
+
 // scriptTracer wraps the tracer in the visibility decorator when a
 // Declarative policy is configured. Trace bindings are unchanged either
 // way — pruning happens inside the decorator.
@@ -1055,7 +1075,7 @@ func NewApp(
 		Meta:          meta,
 		ProjectRoot:   paths.Root,
 	}
-	val, valErr := newGatedValidator(gatedReader, meta, readDeps, st)
+	val, valErr := newGatedValidator(gatedReader, app.scriptTraversalGate, meta, readDeps, st)
 	if valErr != nil {
 		return nil, valErr
 	}
@@ -1436,13 +1456,13 @@ func newViewsHandler(app *App, st store.Store, logo *logoStore) *viewsHandler {
 	}
 }
 
-// newGatedValidator builds the request-path validator. Rule traversals are
-// answered under the request's own read gate, resolved per call like
-// gatedReader, so a rule's related() never sees an entity its reads could not.
+// newGatedValidator builds the request-path validator. gate must answer rule
+// traversals under the same tier as reader.
 func newGatedValidator(
-	reader validator.EntityLister, meta *metamodel.Metamodel, deps lua.ReadDeps, st store.GraphQueryer,
+	reader validator.EntityLister, gate relresolve.Gate, meta *metamodel.Metamodel, deps lua.ReadDeps,
+	st store.GraphQueryer,
 ) (*validator.GenericValidator, error) {
-	b, err := relresolve.NewBinder(meta, lateTraversalGate, st.MatchingIDs)
+	b, err := relresolve.NewBinder(meta, gate, st.MatchingIDs)
 	if err != nil {
 		return nil, fmt.Errorf("dataentry: validator traversals: %w", err)
 	}

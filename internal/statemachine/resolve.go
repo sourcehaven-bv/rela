@@ -138,3 +138,23 @@ func reasonFor(g gate) VerdictGate {
 		return VerdictAllowed
 	}
 }
+
+// TraversingWhens returns, per "from→to" edge label, the `when:` programs of
+// entityType's prop machine that use `related(...)`. A consumer that knows the
+// ACL policy uses it to warn about what a transition verdict reveals.
+func (s *Set) TraversingWhens(entityType, prop string) map[string]*predicate.Program {
+	if s.Empty() {
+		return nil
+	}
+	m := s.machines[s.propType[entityType][prop]]
+	if m == nil {
+		return nil
+	}
+	out := map[string]*predicate.Program{}
+	for key, ed := range m.edges {
+		if ed.when != nil && len(ed.when.Traversals()) > 0 {
+			out[key.from+"→"+key.to] = ed.when
+		}
+	}
+	return out
+}

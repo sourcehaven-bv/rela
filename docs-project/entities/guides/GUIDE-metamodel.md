@@ -1182,10 +1182,11 @@ entities count depends on the surface:
 | ACL `when:` in `acl.yaml` | All |
 
 The last four run with system trust, so a hidden entity still counts. An ACL
-`when:` therefore reveals one bit about entities the principal may not read:
-whether the grant applies. Keep such conditions to facts you are willing to
-disclose that way. A traversal whose final entity type has a property some
-role cannot see through `visible:` earns a startup warning in `acl.yaml`. In
+`when:` or a transition `when:` therefore reveals one bit about entities the
+principal may not read: whether the grant applies, or whether the transition
+is offered. Keep such conditions to facts you are willing to disclose that
+way. A traversal in either that compares a property some role cannot see
+through `visible:` earns a startup warning. In
 a view or next-action condition the same traversal fails every request that
 evaluates it.
 
