@@ -10,6 +10,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/relresolve"
 	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -86,7 +87,11 @@ func ResolverFromProfile(
 	// cannot disagree regardless. (Threading the entitymanager's single Set
 	// through appbuild.Services is the follow-up when the SPA status control
 	// wires the whole surface.)
-	machines, err := statemachine.Compile(meta)
+	traversals, err := relresolve.NewBinder(meta, relresolve.Ungated, st.MatchingIDs)
+	if err != nil {
+		return nil, fmt.Errorf("dataentry: state machine traversals: %w", err)
+	}
+	machines, err := statemachine.Compile(meta, statemachine.WithTraversals(traversals))
 	if err != nil {
 		return nil, fmt.Errorf("dataentry: compiling state machines: %w", err)
 	}

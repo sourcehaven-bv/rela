@@ -896,7 +896,7 @@ func buildFieldRedactor(
 	if err != nil {
 		return nil, fmt.Errorf("appbuild: compiling acl.yaml affordance predicates: %w", err)
 	}
-	machines, err := statemachine.Compile(meta)
+	machines, err := statemachine.Compile(meta, statemachine.WithTraversals(ungatedBinder(meta, st)))
 	if err != nil {
 		return nil, fmt.Errorf("appbuild: compiling state machines: %w", err)
 	}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/predicate"
 )
 
 // EnforceUpdate checks every state-machine property that changed between old and
@@ -31,6 +32,12 @@ func (s *Set) EnforceUpdate(ctx context.Context, old, updated *entity.Entity, gu
 		return nil
 	}
 
+	type move struct {
+		prop, from, to string
+		m              *Machine
+	}
+	var moves []move
+	var whens []*predicate.Program
 	for _, prop := range sortedKeys(props) {
 		m := s.machines[props[prop]]
 		from := ""
@@ -41,11 +48,61 @@ func (s *Set) EnforceUpdate(ctx context.Context, old, updated *entity.Entity, gu
 		if from == to {
 			continue // property did not change
 		}
-		if err := s.applyEdge(ctx, m, prop, from, to, updated, guard, lookup); err != nil {
+		moves = append(moves, move{prop: prop, from: from, to: to, m: m})
+		if ed, ok := m.edgeFor(from, to); ok {
+			whens = append(whens, ed.when)
+		}
+	}
+	// Every changed property's `related(...)` is answered in one bind. A bind
+	// failure is not an error here: it fails the first edge that needs it, as
+	// a precondition error, like any other `when:` evaluation error.
+	traversal, bindErr := s.bindTraversals(ctx, updated, whens)
+	for _, mv := range moves {
+		if err := s.applyEdge(ctx, mv.m, mv.prop, mv.from, mv.to, updated, guard, lookup,
+			edgeTraversal{fn: traversal, err: bindErr}); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// edgeTraversal carries the answer to an entity's `related(...)` into
+// [evalEdge], or the reason there is none.
+type edgeTraversal struct {
+	fn  predicate.TraversalFunc
+	err error
+}
+
+// bindTraversals answers every `related(...)` in whens for the one entity e.
+// It returns nil with no error when none of whens traverses.
+//
+// A row on a named face is refused: the store answers a traversal from the
+// default face's edges, so the answer would describe another row. The
+// refusal fails the precondition, which is the closed direction.
+func (s *Set) bindTraversals(
+	ctx context.Context, e *entity.Entity, whens []*predicate.Program,
+) (predicate.TraversalFunc, error) {
+	traverses := false
+	for _, w := range whens {
+		if w != nil && len(w.Traversals()) > 0 {
+			traverses = true
+			break
+		}
+	}
+	switch {
+	case !traverses:
+		return nil, nil
+	case s.traversals == nil:
+		// coverage-ignore: invariant: Compile refuses a traversing `when:` without a binder
+		return nil, fmt.Errorf("%s(...) is not available: no store is wired to answer it", predicate.FuncRelated)
+	case e.Face != "":
+		return nil, fmt.Errorf("%s(...) cannot be answered on face %q", predicate.FuncRelated, e.Face)
+	}
+	bound, err := s.traversals.Bind(ctx, e.Type, []string{e.ID}, whens...)
+	if err != nil {
+		return nil, err
+	}
+	return bound(e.ID), nil
 }
 
 // EnforceCreate checks the entry value of every state-machine property on a
@@ -88,12 +145,13 @@ func (s *Set) EnforceCreate(_ context.Context, e *entity.Entity) error {
 // never disagree about whether a transition is allowed (the drift guard).
 func (s *Set) applyEdge(
 	ctx context.Context, m *Machine, prop, from, to string, e *entity.Entity, guard Guard, lookup GraphLookup,
+	traversal edgeTraversal,
 ) error {
 	ed, ok := m.edgeFor(from, to)
 	if !ok {
 		return fmt.Errorf("%w: %s %q→%q is not a declared transition", ErrIllegalTransition, prop, from, to)
 	}
-	switch res := evalEdge(ctx, ed, prop, e, guard, lookup); res.gate {
+	switch res := evalEdge(ctx, ed, prop, e, guard, lookup, traversal); res.gate {
 	case gateNone:
 		return nil
 	case gateGuard:
@@ -131,6 +189,7 @@ type edgeResult struct {
 // implementation.
 func evalEdge(
 	ctx context.Context, ed edge, prop string, e *entity.Entity, guard Guard, lookup GraphLookup,
+	traversal edgeTraversal,
 ) edgeResult {
 	if ed.guard != "" {
 		if guard == nil || !guard.HoldsPermission(ctx, e.ID, ed.guard) {
@@ -138,7 +197,10 @@ func evalEdge(
 		}
 	}
 	if ed.when != nil {
-		ok, err := evalWhen(ctx, ed.when, e, prop, lookup)
+		if traversal.err != nil && len(ed.when.Traversals()) > 0 {
+			return edgeResult{gate: gatePrecondition, err: traversal.err}
+		}
+		ok, err := evalWhen(ctx, ed.when, e, prop, lookup, traversal.fn)
 		if err != nil {
 			return edgeResult{gate: gatePrecondition, err: err}
 		}

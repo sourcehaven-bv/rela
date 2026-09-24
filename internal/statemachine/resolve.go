@@ -5,6 +5,7 @@ import (
 	"sort"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/predicate"
 )
 
 // TransitionVerdict is the resolved, read-side view of one outgoing transition
@@ -64,6 +65,18 @@ func (s *Set) Performable(
 	m := s.machines[typeName]
 	from := e.GetString(prop)
 
+	// One bind answers every out-edge's `related(...)`. It is bound for e and
+	// serves the post-move clones below: they share e's id, and a traversal
+	// reads edges, never the moved property.
+	var whens []*predicate.Program
+	for key, ed := range m.edges {
+		if key.from == from && key.to != from {
+			whens = append(whens, ed.when)
+		}
+	}
+	fn, bindErr := s.bindTraversals(ctx, e, whens)
+	traversal := edgeTraversal{fn: fn, err: bindErr}
+
 	var out []TransitionVerdict
 	for key, ed := range m.edges {
 		if key.from != from || key.to == from {
@@ -83,7 +96,7 @@ func (s *Set) Performable(
 		// guard depends on this).
 		after := e.Clone()
 		after.SetString(prop, key.to)
-		res := evalEdge(ctx, ed, prop, after, guard, lookup)
+		res := evalEdge(ctx, ed, prop, after, guard, lookup, traversal)
 		out = append(out, TransitionVerdict{
 			To:      key.to,
 			Label:   ed.label,
