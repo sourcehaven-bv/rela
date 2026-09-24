@@ -5,7 +5,7 @@ title: 'related() in views, next-action, CLI filter, validation, automation, sta
 kind: enhancement
 priority: medium
 effort: xl
-status: review
+status: done
 ---
 
 ## Description

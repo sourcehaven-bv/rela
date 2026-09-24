@@ -2,17 +2,17 @@
 id: REV-AECG9H
 type: review-checklist
 title: 'Review: related() in views, next-action, CLI filter, validation, automation, state machine and ACL when:'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
 
 ## Automated Checks
 
-- [ ] All tests pass (`just test`)
-- [ ] Lint clean (`just lint`)
-- [ ] Comment lint gate clean (`just comment-lint`)
-- [ ] Coverage maintained (`just coverage-check`)
+- [x] All tests pass (`just test`, via `just ci`)
+- [x] Lint clean (`just lint`)
+- [x] Comment lint gate clean (`just comment-lint`)
+- [x] Coverage maintained (`just coverage-check`)
 
 **Comment findings.** `just comment-report` lists the advisory rules
 (duplication, nil-contract, param-contract, restatement). They are not a merge
@@ -33,41 +33,49 @@ unexplained suppression is a finding nobody can re-evaluate later.
 
 ## Code Review
 
-- [ ] Run `/code-review` command (invokes cranky-code-reviewer agent)
-- [ ] All critical review-responses addressed
-- [ ] All significant review-responses addressed
-- [ ] Self-reviewed the diff for unrelated changes
+- [x] Run `/code-review` command (cranky-code-reviewer and rela-security-reviewer)
+- [x] All critical review-responses addressed
+- [x] All significant review-responses addressed
+- [x] Self-reviewed the diff for unrelated changes
 
-**Review Responses:** <!-- List IDs of review-response entities created, e.g.,
-RR-xxxx -->
+**Review Responses:** RR-87VASW, RR-QZ6N76 (security, minor); RR-WHC2XQ,
+RR-UFGKQS (significant); RR-QN8BOE, RR-93N356, RR-9NBFA4, RR-KJJ2CC, RR-WPG88P
+(wont-fix), RR-CQIHCV (deferred); RR-PYZ63V, RR-9HZ570 (nits). Design review: 15
+responses, all addressed.
 
 ## Acceptance Verification
 
-- [ ] Each acceptance criterion tested (reference planning checklist)
-- [ ] Test evidence documented in implementation checklist
+- [x] Each acceptance criterion tested (reference planning checklist)
+- [x] Test evidence documented in implementation checklist
 
 **Acceptance Status:**
-<!-- For each acceptance criterion, state PASS/FAIL with evidence -->
+1. PASS: per-surface tests listed in PLAN-FHTWBQ.
+2. PASS: budget tests at 10 and 50 rows (`TestViewCondition_RelatedIsSizeIndependent`, `TestQueryBudget_ListPageACLRelatedWhenIsSizeIndependent`, `TestViewCondition_RelatedWithTraversingGrantIsSizeIndependent`).
+3. PASS: `TestQueryBudget_GetEntityACLRelatedWhenBindsOnce` baseline comparison.
+4. PASS: `TestViewCondition_RelatedUsesReaderGate`, `TestGatedReads_ValidatorTraversalUsesCallerGate`, `TestGatedValidator_TraversalIgnoresHiddenEntity`.
+5. PASS: `TestResolver_PrimedBindErrorDenies`, `TestViewCondition_RelatedUnsupportedFailsRequest`.
+6. PASS: load-time validation tests per surface.
+7. PASS: form condition refusal test.
 
 ## Documentation (enhancements only)
 
 Skip this section for bugs and internal refactors.
 
-- [ ] Docs-checklist created and linked via `has-docs`
-- [ ] User-facing documentation updated
-- [ ] Docs-checklist marked as done
+- [x] Docs-checklist created and linked via `has-docs`
+- [x] User-facing documentation updated
+- [x] Docs-checklist marked as done
 
-**Docs Checklist:** <!-- e.g., DOCS-xxxx -->
+**Docs Checklist:** DOCS-HV27K1
 
 ## Final Checks
 
-- [ ] Commit message explains the why, not just what
-- [ ] No TODOs or FIXMEs left unaddressed
-- [ ] Ready for another developer to use
+- [x] Commit message explains the why, not just what
+- [x] No TODOs or FIXMEs left unaddressed
+- [x] Ready for another developer to use
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
+- [x] Run `/pr` command to create PR and monitor CI
 
 <!--
 Deliberately NOT tracked here: the PR URL and whether CI passed.
