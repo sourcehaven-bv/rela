@@ -3,9 +3,11 @@ package dataentry
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/search"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // readGate is the dataentry-package consumer-side interface for ACL
@@ -160,6 +162,50 @@ func (nopReadGate) PermitsWorld(context.Context, string) (bool, error) { return 
 // when no policy is configured (NopACL byte-parity, TKT-BA8BSX AC9).
 func (nopReadGate) SearchScope(context.Context, []string) map[string]search.TypeScope {
 	return map[string]search.TypeScope{search.WildcardType: {AllowAll: true}}
+}
+
+// traversalGate authorizes a caller-supplied relation traversal for the
+// request's principal (TKT-CXQEV0). Separate from [readGate] because only the
+// query-scope filter asks it; see [traversalGateFromContext].
+type traversalGate interface {
+	GateTraversal(ctx context.Context, candidateType string, hop acl.TraversalHop) (*store.RelationPredicate, error)
+}
+
+// GateTraversal delegates to the request, which applies the row gate, the
+// field gate and the client ceiling per hop.
+func (g aclReadGate) GateTraversal(
+	ctx context.Context, candidateType string, hop acl.TraversalHop,
+) (*store.RelationPredicate, error) {
+	return g.req.GateTraversal(ctx, candidateType, hop)
+}
+
+// GateTraversal under no ACL lowers the traversal ungated, matching this
+// gate's ReadQuery answering AllowAll for every type.
+func (nopReadGate) GateTraversal(_ context.Context, _ string, hop acl.TraversalHop) (*store.RelationPredicate, error) {
+	return acl.UngatedTraversal(hop)
+}
+
+// traversalGateFromContext returns the traversal gate of the SAME read gate
+// every other read decision in this request uses, so a traversal is never
+// authorized by a different policy than the rows it filters.
+//
+// A request with no read gate on ctx gets the nop gate, as every other read
+// does, so under no ACL the traversal runs ungated. The refusing gate covers
+// only a read gate type that does not implement traversals: refusing beats
+// inventing a policy beside the one in force.
+func traversalGateFromContext(ctx context.Context) traversalGate {
+	if g, ok := readGateFromContext(ctx).(traversalGate); ok {
+		return g
+	}
+	return refusingTraversalGate{}
+}
+
+type refusingTraversalGate struct{}
+
+func (refusingTraversalGate) GateTraversal(
+	context.Context, string, acl.TraversalHop,
+) (*store.RelationPredicate, error) {
+	return nil, fmt.Errorf("%w: the request's read gate cannot authorize traversals", acl.ErrTraversalUnsupported)
 }
 
 // readGateCtxKey is the unexported type for context.WithValue. The

@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/conflict"
@@ -415,11 +416,11 @@ func scopedSortedEntitiesScoped(
 	// they must not be re-implemented per handler.
 	rqr := readGateFromContext(ctx).ReadQuery(ctx, typeName)
 	entities, withheld, err := scopedEntities(ctx, a.Services(), rqr, scopeRequest{
-		Type:       typeName,
-		Faces:      rqr.Faces,
-		Scope:      scope.Scope,
-		ScopeProps: scope.Props,
-		ScopeEval:  scope.Eval,
+		Type:        typeName,
+		Faces:       rqr.Faces,
+		Scope:       scope.Scope,
+		ScopeProps:  scope.Props,
+		ScopeFilter: scope.Filter,
 	})
 	if err != nil {
 		return nil, err
@@ -1029,6 +1030,16 @@ func writeListPipelineError(w http.ResponseWriter, r *http.Request, err error) {
 			"Invalid query_scope parameter", err.Error())
 	case errors.Is(err, errACLListQuery):
 		writeGateError(w, r, err)
+	case errors.Is(err, acl.ErrTraversalUnsupported):
+		// The scope's related() cannot be evaluated under this principal's
+		// grants (a named-face or inherited read, a field the client ceiling
+		// hides, a chain the gate cannot place). The cause is the policy and
+		// the schema, never a row, so the detail names config only, which is
+		// not confidential (see CLAUDE.md), and helps the operator fix it.
+		slog.Warn("dataentry: query scope traversal unsupported for principal",
+			"err", err, "path", r.URL.Path, "method", r.Method)
+		writeV1Error(w, r, http.StatusUnprocessableEntity, "query_scope_unsupported",
+			"Query scope cannot be evaluated for this principal", err.Error())
 	case errors.Is(err, errListLoad):
 		slog.Warn("dataentry: list load failed",
 			"err", err, "path", r.URL.Path, "method", r.Method)

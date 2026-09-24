@@ -267,9 +267,9 @@ func TestScopedHeaders_ScopeFiltersOnBothBranches(t *testing.T) {
 	notDone := scopeRequest{
 		Type:  "ticket",
 		Scope: "not-done",
-		ScopeEval: func(_ context.Context, _ QueryScopeHandle, _, _ string, props map[string]any) (bool, error) {
+		ScopeFilter: rowFilter(func(props map[string]any) (bool, error) {
 			return props["status"] != "done", nil
-		},
+		}),
 	}
 
 	gated := acl.ReadQueryResult{Query: &store.GraphQuery{EntityType: "ticket"}}
@@ -297,7 +297,7 @@ func TestScopedHeaders_ScopeWithoutEvaluatorIsRefused(t *testing.T) {
 
 	_, _, err := scopedHeaders(context.Background(), app.Services(),
 		acl.ReadQueryResult{AllowAll: true},
-		scopeRequest{Type: "ticket", Scope: "something", ScopeEval: nil})
+		scopeRequest{Type: "ticket", Scope: "something", ScopeFilter: nil})
 	if err == nil {
 		t.Fatal("a scope with no evaluator was accepted; it must refuse rather than serve unscoped rows")
 	}
@@ -315,9 +315,9 @@ func TestScopedHeaders_ScopeErrorPropagates(t *testing.T) {
 		acl.ReadQueryResult{AllowAll: true}, scopeRequest{
 			Type:  "ticket",
 			Scope: "identity",
-			ScopeEval: func(_ context.Context, _ QueryScopeHandle, _, _ string, _ map[string]any) (bool, error) {
+			ScopeFilter: rowFilter(func(map[string]any) (bool, error) {
 				return false, errNoIdentityForTest
-			},
+			}),
 		})
 	if err == nil {
 		t.Fatal("a scope evaluation error was swallowed; it must fail the request")
@@ -328,6 +328,29 @@ func TestScopedHeaders_ScopeErrorPropagates(t *testing.T) {
 }
 
 var errNoIdentityForTest = errors.New("no current user")
+
+// rowFilter adapts a per-row stand-in scope to [QueryScopeFilter]. The real
+// filter is a compiled predicate program; the funnel only ever calls the
+// filter, so a closure exercises the same path.
+func rowFilter(keep func(props map[string]any) (bool, error)) QueryScopeFilter {
+	return func(
+		_ context.Context, _ QueryScopeHandle, _ string, headers []store.EntityHeader,
+		_ func(context.Context, string, acl.TraversalHop) (*store.RelationPredicate, error),
+		_ func(context.Context, store.GraphQuery, []string) (map[string]bool, error),
+	) ([]store.EntityHeader, error) {
+		var out []store.EntityHeader
+		for _, h := range headers {
+			ok, err := keep(h.Properties)
+			if err != nil {
+				return nil, err
+			}
+			if ok {
+				out = append(out, h)
+			}
+		}
+		return out, nil
+	}
+}
 
 // TestScopedHeaders_ScopePropsAreASuperset pins the pushdown contract: the
 // pushed conjuncts narrow the READ, and the Go-side scope remains
@@ -347,9 +370,9 @@ func TestScopedHeaders_ScopePropsAreASuperset(t *testing.T) {
 		Type:       "ticket",
 		ScopeProps: []store.PropPredicate{{Property: "status", Op: store.PropEqual, Value: "open", Scalar: true}},
 		Scope:      "open-and-high",
-		ScopeEval: func(_ context.Context, _ QueryScopeHandle, _, _ string, props map[string]any) (bool, error) {
+		ScopeFilter: rowFilter(func(props map[string]any) (bool, error) {
 			return props["status"] == "open" && props["prio"] == "high", nil
-		},
+		}),
 	}
 	got := idsOf(context.Background(), t, app, acl.ReadQueryResult{AllowAll: true}, req)
 	if strings.Join(got, ",") != "TKT-a" {

@@ -703,6 +703,9 @@ func buildPredicateSQL(
 		fmt.Fprintf(&existsSB, "JOIN entities %s ON %s.id = %s ", prefix+"_ep", prefix+"_ep", endpointCol)
 	}
 	existsSB.WriteString("WHERE ")
+	if p.EndpointMatch != nil {
+		existsSB.WriteString(defaultStateCond(prefix + "_ep"))
+	}
 	if len(p.OfTypes) > 0 {
 		typesArg := b.arg(p.OfTypes)
 		fmt.Fprintf(&existsSB, "r.rel_type = ANY(%s) AND ", typesArg)
@@ -747,6 +750,14 @@ func buildPredicateSQL(
 	return with, existsSB.String()
 }
 
+// defaultStateCond pins an endpoint-match hop to the DEFAULT state: the
+// endpoint's default face and a default-tailed edge. See
+// [store.RelationPredicate.EndpointMatch] for why. Without it the join
+// matched ANY face of the endpoint, which the Go path never did.
+func defaultStateCond(endpointAlias string) string {
+	return "r.from_face = '' AND " + endpointAlias + ".face = '' AND "
+}
+
 // nestedPredicateSQL is [buildPredicateSQL] for a hop whose CANDIDATE row is
 // an endpoint alias rather than the outer `e`. It exists because
 // buildPredicateSQL hardcodes `e.id` as the candidate side (correct for the
@@ -779,6 +790,9 @@ func nestedPredicateSQL(
 		fmt.Fprintf(&sb, "JOIN entities %s ON %s.id = %s ", alias, alias, endpointCol)
 	}
 	sb.WriteString("WHERE ")
+	if p.EndpointMatch != nil {
+		sb.WriteString(defaultStateCond(alias))
+	}
 	if len(p.OfTypes) > 0 {
 		fmt.Fprintf(&sb, "r.rel_type = ANY(%s) AND ", b.arg(p.OfTypes))
 	}

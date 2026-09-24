@@ -8,7 +8,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
 	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
-	"github.com/Sourcehaven-BV/rela/internal/search/searchparser"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -100,22 +99,44 @@ func traversalIndexTarget(
 	return current, props
 }
 
-// staticTraversalSpecs compiles one static query's condition and returns the
-// traversal index specs it implies. A condition that does not compile
-// contributes nothing, matching [staticIndexProps]: every production entry
-// point has already refused such a config through conditionlint.
-func staticTraversalSpecs(
-	sq *searchparser.SearchQuery, condition string,
-	meta *metamodel.Metamodel, ev *predicatefns.Evaluator,
-) []store.DerivedObjectSpec {
-	if condition == "" || ev == nil || len(sq.EntityTypes) != 1 {
-		return nil
+// scopeTraversalSpecs returns the traversal index specs of EVERY declared
+// query scope, not only the ones a list names. A request may select any
+// declared scope by name, and each traversal in it issues one
+// [store.Store.MatchingIDs] query against the far-end type, so a scope a list
+// does not mention is still a query shape the store serves.
+//
+// Only query scopes answer traversals, so they are the only source of these
+// specs; conditionlint refuses related() in every data-entry condition.
+// A scope that does not compile contributes nothing; the metamodel loader
+// (scopes.Compile) has already refused it at boot.
+func scopeTraversalSpecs(meta *metamodel.Metamodel) []store.DerivedObjectSpec {
+	var (
+		ev  *predicatefns.Evaluator
+		out []store.DerivedObjectSpec
+	)
+	for _, typeName := range meta.EntityTypes() {
+		def, _ := meta.GetEntityDef(typeName)
+		names := make([]string, 0, len(def.QueryScopes))
+		for name := range def.QueryScopes {
+			names = append(names, name)
+		}
+		slices.Sort(names)
+		for _, name := range names {
+			source := def.QueryScopes[name]
+			if !strings.Contains(source, "related") {
+				continue // cheap pre-check; most scopes never traverse
+			}
+			if ev == nil {
+				ev = predicatefns.NewEvaluator(meta)
+			}
+			prog, err := ev.CompileWithCurrentUser(typeName, source)
+			if err != nil {
+				slog.Warn("queryplan: query scope skipped for traversal index derivation",
+					"type", typeName, "scope", name, "error", err)
+				continue
+			}
+			out = append(out, TraversalIndexSpecs(prog, meta, typeName)...)
+		}
 	}
-	prog, err := ev.CompileWithCurrentUser(sq.EntityTypes[0], condition)
-	if err != nil {
-		slog.Warn("queryplan: next-action condition skipped for traversal index derivation",
-			"type", sq.EntityTypes[0], "error", err)
-		return nil
-	}
-	return TraversalIndexSpecs(prog, meta, sq.EntityTypes[0])
+	return out
 }

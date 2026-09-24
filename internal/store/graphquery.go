@@ -422,6 +422,13 @@ type RelationPredicate struct {
 	// an ACL-folded expansion would gate the same principal differently from
 	// one that honored it; both refuse instead.
 	//
+	// A hop carrying an EndpointMatch reads the DEFAULT state only: the
+	// endpoint's default face, reached over a default-tailed edge. A named
+	// face belongs to a world the reader may not be granted, and the query's
+	// World scopes its RESULT rows, not the neighbors it filters on — so
+	// admitting a named face here would disclose that world's content
+	// through which candidates match. Every backend pins it (TKT-CXQEV0).
+	//
 	// SECURITY: this predicate reads properties of entities the query does
 	// not RETURN, so a caller-supplied EndpointMatch is an inference channel
 	// — which rows come back reveals the neighbor's property values, and its

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
@@ -97,17 +98,46 @@ func (r *QueryScopeResolver) Resolve(
 	return prog, props, true
 }
 
-// Evaluate applies a resolved scope to one row.
-func (r *QueryScopeResolver) Evaluate(
-	ctx context.Context, scope any, entityType, id string, props map[string]any,
-) (bool, error) {
+// Filter applies a resolved scope to a batch of rows.
+//
+// Any `related(...)` in the scope is answered first, once per distinct
+// traversal over all candidates, then each row is evaluated against those
+// answers. The answers live in this call only; see [traversalAnswers].
+func (r *QueryScopeResolver) Filter(
+	ctx context.Context, scope any, entityType string, headers []store.EntityHeader,
+	gate func(context.Context, string, acl.TraversalHop) (*store.RelationPredicate, error),
+	match func(context.Context, store.GraphQuery, []string) (map[string]bool, error),
+) ([]store.EntityHeader, error) {
 	prog, ok := scope.(*predicate.Program)
 	if !ok {
 		// The handle came from Resolve, so a mismatch means two resolvers
 		// were mixed. Fail rather than skip: skipping serves unscoped rows.
-		return false, fmt.Errorf("appbuild: query scope handle has unexpected type %T", scope)
+		return nil, fmt.Errorf("appbuild: query scope handle has unexpected type %T", scope)
 	}
-	return r.eval.MatchesAs(ctx, prog, entityType, id, props)
+	ids := make([]string, len(headers))
+	for i, h := range headers {
+		ids[i] = h.ID
+	}
+	answers, err := answerTraversals(ctx, r.meta, prog, entityType, ids, gate, match)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]store.EntityHeader, 0, len(headers))
+	for _, h := range headers {
+		if h.Type != entityType {
+			// The traversals were resolved and answered from entityType; a
+			// row of another type would be evaluated against the wrong walk.
+			return nil, fmt.Errorf("appbuild: query scope on %q got a row of type %q", entityType, h.Type)
+		}
+		ok, err := r.eval.MatchesWithTraversals(ctx, prog, h.Type, h.ID, h.Properties, answers.traversalFunc(h.ID))
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			out = append(out, h)
+		}
+	}
+	return out, nil
 }
 
 // BindRequest stamps the query identity onto ctx once per request, so a scope

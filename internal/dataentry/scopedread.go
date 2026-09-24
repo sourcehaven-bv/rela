@@ -50,14 +50,14 @@ type scopeRequest struct {
 	// Passing none is always correct, only slower.
 	ScopeProps []store.PropPredicate
 
-	// ScopeEval evaluates Scope against a row. Supplied by the caller
-	// because this package may not import predicatefns (arch-lint keeps the
-	// condition engine above the data-entry app).
+	// ScopeFilter applies Scope to the rows the store returned. Supplied by
+	// the caller because this package may not import predicatefns (arch-lint
+	// keeps the condition engine above the data-entry app).
 	//
-	// Required when Scope is non-nil; a nil evaluator with a non-nil scope
-	// is refused rather than silently skipping the filter, which would
-	// serve the unscoped set.
-	ScopeEval QueryScopeEvaluator
+	// Required when Scope is non-nil; a nil filter with a non-nil scope is
+	// refused rather than silently skipping the filter, which would serve
+	// the unscoped set.
+	ScopeFilter QueryScopeFilter
 }
 
 // QueryScopeHandle is a compiled query scope, opaque to this package.
@@ -65,18 +65,28 @@ type scopeRequest struct {
 // The concrete type is *predicate.Program, which this package may not name
 // (arch-lint: the condition/policy engine sits above the data-entry app). The
 // handle travels from the composition root, which compiled it, to
-// [QueryScopeEvaluator], which the same root supplied — so the two always
+// [QueryScopeFilter], which the same root supplied — so the two always
 // agree about the dynamic type and nothing here has to.
 type QueryScopeHandle any
 
-// QueryScopeEvaluator reports whether one row satisfies a scope.
+// QueryScopeFilter applies a scope to a batch of rows and returns the ones
+// that satisfy it.
+//
+// A batch rather than a per-row call because a scope may contain
+// `related(...)`, which is answered by one store query over all candidates —
+// per row it would be the N+1 the collection-read rules forbid. gate
+// authorizes each traversal for the request's principal; match answers it
+// against the store. Both are passed per call and never retained, so no
+// answer outlives the request that computed it.
 //
 // Errors are propagated, never folded into "no match": an identity scope
 // evaluated with no principal must fail the request rather than render an
 // empty page that reads as "you have nothing".
-type QueryScopeEvaluator func(
-	ctx context.Context, scope QueryScopeHandle, entityType, id string, props map[string]any,
-) (bool, error)
+type QueryScopeFilter func(
+	ctx context.Context, scope QueryScopeHandle, entityType string, headers []store.EntityHeader,
+	gate func(context.Context, string, acl.TraversalHop) (*store.RelationPredicate, error),
+	match func(context.Context, store.GraphQuery, []string) (map[string]bool, error),
+) ([]store.EntityHeader, error)
 
 // scopedHeaders is the ONE place a data-entry collection read resolves the
 // ACL verdict into a store query.
@@ -156,7 +166,7 @@ func scopedHeaders(
 			}
 			out = append(out, h)
 		}
-		out, err = applyScope(ctx, out, req)
+		out, err = applyScope(ctx, svc, out, req)
 		return out, false, err
 
 	case rqr.AllowAll:
@@ -170,7 +180,7 @@ func scopedHeaders(
 		if err != nil {
 			return nil, false, err
 		}
-		out, err = applyScope(ctx, out, req)
+		out, err = applyScope(ctx, svc, out, req)
 		return out, false, err
 
 	case rqr.Query == nil:
@@ -186,7 +196,7 @@ func scopedHeaders(
 		if err != nil {
 			return nil, false, err
 		}
-		out, err = applyScope(ctx, out, req)
+		out, err = applyScope(ctx, svc, out, req)
 		return out, false, err
 	}
 }
@@ -210,34 +220,32 @@ func allProps(req scopeRequest) []store.PropPredicate {
 // an ordered comparison or a disjunction reaches here unnarrowed, and dropping
 // this pass would serve those rows.
 //
-// A nil evaluator alongside a non-nil scope is an ERROR, not a skip: skipping
+// A nil filter alongside a non-nil scope is an ERROR, not a skip: skipping
 // serves the unscoped set, which is the failure direction a scope exists to
 // prevent.
 //
-// Filters IN PLACE and the caller must not retain headers. Safe at every
-// current call site because [scopedHeaders] builds the slice it passes and
-// hands it to nobody else, but the reuse is invisible from the signature.
+// A `related(...)` in the scope is authorized by the request's own read gate
+// and answered with the same world and faces as the read that produced the
+// candidates, so a traversal cannot see further than the list it filters.
 func applyScope(
-	ctx context.Context, headers []store.EntityHeader, req scopeRequest,
+	ctx context.Context, svc Services, headers []store.EntityHeader, req scopeRequest,
 ) ([]store.EntityHeader, error) {
 	if req.Scope == nil || len(headers) == 0 {
 		return headers, nil
 	}
-	if req.ScopeEval == nil {
+	if req.ScopeFilter == nil {
 		return nil, fmt.Errorf("%w: query scope on %q has no evaluator", errListLoad, req.Type)
 	}
-	out := headers[:0]
-	for _, h := range headers {
-		ok, err := req.ScopeEval(ctx, req.Scope, h.Type, h.ID, h.Properties)
-		if err != nil {
-			// Surfaced, never swallowed into a non-match: an identity scope
-			// with no principal must fail loudly rather than render an empty
-			// page that reads as "you have nothing".
-			return nil, fmt.Errorf("%w: query scope on %q: %w", errListLoad, req.Type, err)
-		}
-		if ok {
-			out = append(out, h)
-		}
+	match := func(ctx context.Context, q store.GraphQuery, ids []string) (map[string]bool, error) {
+		return svc.Store.MatchingIDs(ctx, stampScope(ctx, q, req), ids)
+	}
+	out, err := req.ScopeFilter(ctx, req.Scope, req.Type, headers,
+		traversalGateFromContext(ctx).GateTraversal, match)
+	if err != nil {
+		// Surfaced, never swallowed into a non-match: an identity scope
+		// with no principal must fail loudly rather than render an empty
+		// page that reads as "you have nothing".
+		return nil, fmt.Errorf("%w: query scope on %q: %w", errListLoad, req.Type, err)
 	}
 	return out, nil
 }

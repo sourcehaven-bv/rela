@@ -100,6 +100,13 @@ func TestCompileViewConditions(t *testing.T) {
 			}},
 			wantProb: `lists["bare"]: condition requires entity_type to be set`,
 		},
+		{
+			name: "related() is refused on a view condition",
+			cfg: &dataentryconfig.Config{Kanbans: map[string]dataentryconfig.Kanban{
+				"board": {EntityType: "taak", Condition: "related(entity, 'blocks')"},
+			}},
+			wantProb: `kanbans["board"]: related(...) is only supported in query_scopes`,
+		},
 	}
 
 	for _, tc := range tests {

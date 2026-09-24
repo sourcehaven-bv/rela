@@ -85,6 +85,13 @@ func TestCompileNextActions(t *testing.T) {
 			src:     dataentryconfig.NextActionSource{Count: "task == 0", Condition: "entity.status == 'todo'"},
 			wantErr: "not supported on a count source",
 		},
+		{
+			// Nothing on this surface answers a traversal, so it would fail
+			// on every evaluation; refuse it at load (TKT-CXQEV0).
+			name:    "related() is refused",
+			src:     dataentryconfig.NextActionSource{Query: "type:task", Condition: "related(entity, 'blocks')"},
+			wantErr: "related(...) is only supported in query_scopes",
+		},
 	}
 
 	for _, tc := range tests {

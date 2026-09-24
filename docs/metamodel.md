@@ -1104,6 +1104,81 @@ consequences follow:
   screen of that type identity-dependent, and earns a startup warning saying
   so.
 
+### Filtering on related entities
+
+A scope can filter on the entities at the other end of a relation with
+`related(entity, path, constraints)`. It is true when at least one entity
+reached by walking `path` from the row matches `constraints`.
+
+```yaml
+relations:
+  implements:
+    label: implements
+    inverse: implementedBy
+    from: [ticket]
+    to: [feature]
+
+entities:
+  feature:
+    query_scopes:
+      # Features with at least one ticket in progress.
+      busy: "related(entity, 'implementedBy', { status = 'in-progress' })"
+      # Features with none.
+      idle: "not related(entity, 'implementedBy', { status = 'in-progress' })"
+```
+
+The arguments are:
+
+- `entity`, the row being filtered. No other subject is accepted.
+- `path`, one relation name or a list of them, such as
+  `{'implementedBy', 'assigned-to'}`. The canonical name walks the relation
+  forwards, from its `from:` side to its `to:` side. The `inverse:` name walks
+  it backwards. A chain may mix the two.
+- `constraints`, an optional table. `type = 'ticket'` picks one type where the
+  relation allows several. Every other key compares a property of the final
+  entity with a string, for equality.
+
+An entity the reader may not see does not count. It neither makes a row match
+`related(...)` nor stops a row matching `not related(...)`. The result can
+therefore differ per reader, and it is never shared between readers.
+
+The following limits apply:
+
+- Only the default content state takes part. An edge from a named face, or an
+  endpoint's named face, is ignored.
+- A relation declared `symmetric: true` is refused, because it has no
+  direction to walk.
+- The constraint compares for equality with a non-empty string. The property
+  must be string-shaped: a string, enum, date, datetime or declared custom
+  type, and not a list. For an enum, the value must be one of its declared
+  values.
+- A property that some role cannot see unconditionally, through `visible:`, is
+  refused at startup. Matching on it would reveal its value to readers who
+  cannot see it. After a live reload of `schema.yaml` or `acl.yaml`, the same
+  case is refused per request instead.
+- `related(...)` works only in `query_scopes:`. `rela validate` refuses it in
+  a view `condition:`, a next-action `condition:` and a form condition. Other
+  expression surfaces, such as automations and validations, accept it at load
+  but fail when they evaluate it.
+
+Some grants cannot be expressed in the traversal's store query. A request from
+a principal with such a grant fails with HTTP 422 and the error code
+`query_scope_unsupported`, naming the cause. The same scope still works for
+other principals. The cases are:
+
+- the principal reads the type a hop lands on only on named faces, or only
+  through `inherit_roles_through`;
+- the first hop walks forwards and the principal reads the scope's own type
+  only on named faces;
+- the principal's read of a type is a disjunction, for example from several
+  `scope_grants`;
+- the client ceiling hides a compared property;
+- a hop lands on a type that the principal reads through a role relation,
+  such as `editor-of`, and the next hop walks backwards.
+
+On the PostgreSQL backend each constraint gets a derived index on the final
+entity type, so the filter does not scan every row of that type.
+
 ### Which surfaces apply scopes
 
 Scopes shape **screens**. They are deliberately absent everywhere that answers
@@ -1130,7 +1205,12 @@ query scope:
   capitalization;
 - has an empty expression;
 - fails to compile, or reads a property the entity type does not declare — the
-  error names the type, the scope and the expression.
+  error names the type, the scope and the expression;
+- uses `related(...)` with a relation that does not exist, does not start from
+  the type, or is symmetric, or compares a property that the final type does
+  not declare or that is not string-shaped;
+- uses `related(...)` on a property that some role in `acl.yaml` cannot see
+  unconditionally.
 
 A `query_scope:` in `data-entry.yaml` naming a scope the type does not declare
 is refused when that config loads, listing the names the type does declare. It

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -31,8 +32,13 @@ type QueryScopeResolver interface {
 	// guessing yields the unfiltered set.
 	Resolve(entityType, name string) (scope QueryScopeHandle, props []store.PropPredicate, ok bool)
 
-	// Evaluate applies a resolved scope to one row.
-	Evaluate(ctx context.Context, scope QueryScopeHandle, entityType, id string, props map[string]any) (bool, error)
+	// Filter applies a resolved scope to a batch of rows; see
+	// [QueryScopeFilter].
+	Filter(
+		ctx context.Context, scope QueryScopeHandle, entityType string, headers []store.EntityHeader,
+		gate func(context.Context, string, acl.TraversalHop) (*store.RelationPredicate, error),
+		match func(context.Context, store.GraphQuery, []string) (map[string]bool, error),
+	) ([]store.EntityHeader, error)
 
 	// BindRequest stamps request-scoped evaluation state — today the
 	// identity `current_user` resolves to — onto ctx ONCE per request,
@@ -120,14 +126,14 @@ func viewQueryScope(
 		return resolvedQueryScope{Bind: resolver.BindRequest}, nil
 	}
 	return resolvedQueryScope{
-		Scope: scope, Props: props, Eval: resolver.Evaluate, Bind: resolver.BindRequest,
+		Scope: scope, Props: props, Filter: resolver.Filter, Bind: resolver.BindRequest,
 	}, nil
 }
 
 // resolvedQueryScope is one view's scope, ready to apply.
 //
 // The four fields travel together because they are one contract: the program
-// was compiled by the resolver that supplied Eval, and Eval can only evaluate
+// was compiled by the resolver that supplied Filter, and Filter can only evaluate
 // it against an identity Bind stamped. Returning them separately invited
 // exactly the bug that motivated this struct — Bind was declared on the seam,
 // implemented at the composition root, adapted through two layers, and then
@@ -136,10 +142,10 @@ func viewQueryScope(
 //
 // The zero value means "no scope", which every field check treats as unscoped.
 type resolvedQueryScope struct {
-	Scope QueryScopeHandle
-	Props []store.PropPredicate
-	Eval  QueryScopeEvaluator
-	Bind  func(context.Context) (context.Context, error)
+	Scope  QueryScopeHandle
+	Props  []store.PropPredicate
+	Filter QueryScopeFilter
+	Bind   func(context.Context) (context.Context, error)
 }
 
 // bind stamps the request-scoped evaluation state a scope needs, once, before
@@ -235,7 +241,11 @@ func queryScopeParam(query map[string][]string) (string, error) {
 // seam without either package importing the other's types.
 func AdaptQueryScopes[R interface {
 	Resolve(entityType, name string) (any, []store.PropPredicate, bool)
-	Evaluate(ctx context.Context, scope any, entityType, id string, props map[string]any) (bool, error)
+	Filter(
+		ctx context.Context, scope any, entityType string, headers []store.EntityHeader,
+		gate func(context.Context, string, acl.TraversalHop) (*store.RelationPredicate, error),
+		match func(context.Context, store.GraphQuery, []string) (map[string]bool, error),
+	) ([]store.EntityHeader, error)
 	BindRequest(ctx context.Context) (context.Context, error)
 }](build func(*dataentryconfig.Config, *metamodel.Metamodel) (R, []string)) QueryScopeResolverFunc {
 	return func(cfg *dataentryconfig.Config, meta *metamodel.Metamodel) (QueryScopeResolver, []string) {
@@ -257,7 +267,11 @@ func AdaptQueryScopes[R interface {
 
 type adaptedQueryScopes[R interface {
 	Resolve(entityType, name string) (any, []store.PropPredicate, bool)
-	Evaluate(ctx context.Context, scope any, entityType, id string, props map[string]any) (bool, error)
+	Filter(
+		ctx context.Context, scope any, entityType string, headers []store.EntityHeader,
+		gate func(context.Context, string, acl.TraversalHop) (*store.RelationPredicate, error),
+		match func(context.Context, store.GraphQuery, []string) (map[string]bool, error),
+	) ([]store.EntityHeader, error)
 	BindRequest(ctx context.Context) (context.Context, error)
 }] struct{ r R }
 
@@ -267,10 +281,12 @@ func (a adaptedQueryScopes[R]) Resolve(
 	return a.r.Resolve(entityType, name)
 }
 
-func (a adaptedQueryScopes[R]) Evaluate(
-	ctx context.Context, scope QueryScopeHandle, entityType, id string, props map[string]any,
-) (bool, error) {
-	return a.r.Evaluate(ctx, scope, entityType, id, props)
+func (a adaptedQueryScopes[R]) Filter(
+	ctx context.Context, scope QueryScopeHandle, entityType string, headers []store.EntityHeader,
+	gate func(context.Context, string, acl.TraversalHop) (*store.RelationPredicate, error),
+	match func(context.Context, store.GraphQuery, []string) (map[string]bool, error),
+) ([]store.EntityHeader, error) {
+	return a.r.Filter(ctx, scope, entityType, headers, gate, match)
 }
 
 func (a adaptedQueryScopes[R]) BindRequest(ctx context.Context) (context.Context, error) {
