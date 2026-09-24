@@ -48,7 +48,7 @@ func CompileNextActions(
 		if src.Condition == "" {
 			continue
 		}
-		progs, msgs := compileNextActionSource(id, src, ev)
+		progs, msgs := compileNextActionSource(id, src, ev, meta)
 		problems = append(problems, msgs...)
 		if len(progs) > 0 {
 			programs[id] = progs
@@ -61,7 +61,7 @@ func CompileNextActions(
 // compileNextActionSource compiles one source's condition against each entity
 // type its query names.
 func compileNextActionSource(
-	id string, src dataentryconfig.NextActionSource, ev *predicatefns.Evaluator,
+	id string, src dataentryconfig.NextActionSource, ev *predicatefns.Evaluator, meta *metamodel.Metamodel,
 ) (programs NextActionPrograms, problems []string) {
 	where := fmt.Sprintf("next_actions[%q]", id)
 
@@ -84,7 +84,7 @@ func compileNextActionSource(
 				"%s: condition does not compile against entity type %q: %v", where, t, err))
 			continue
 		}
-		if err := refuseTraversal(prog); err != nil {
+		if err := predicatefns.ValidateTraversals(meta, t, prog); err != nil {
 			problems = append(problems, fmt.Sprintf("%s: %v", where, err))
 			continue
 		}
