@@ -180,3 +180,18 @@ func (g DeclarativeGate) PermittedFaces(
 	}
 	return r.ReadQuery(ctx, entityType).Faces, nil
 }
+
+// GateTraversal authorizes a `related(...)` traversal for the ctx principal
+// through the same per-operation acl.Request every other decision here uses
+// (TKT-205V2N). It gives surfaces with no data-entry read gate on ctx (a
+// validation run under a principal, the transition verdicts) a gate that
+// cannot disagree with their row gate.
+func (g DeclarativeGate) GateTraversal(
+	ctx context.Context, candidateType string, hop acl.TraversalHop,
+) (*store.RelationPredicate, error) {
+	r, err := g.request(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return r.GateTraversal(ctx, candidateType, hop)
+}
