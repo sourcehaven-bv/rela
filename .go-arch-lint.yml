@@ -390,6 +390,7 @@ deps:
       - sqlitestore
       - predicate
       - predicatefns
+      - relresolve
       - principal
       - project
       - projectsetup

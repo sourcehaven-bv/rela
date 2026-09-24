@@ -193,7 +193,7 @@ func TestApplyListFilters(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := applyListFilters(context.Background(), all, tc.where, tc.filter, "ticket", meta)
+			got, err := applyListFilters(context.Background(), all, tc.where, tc.filter, "ticket", meta, nil)
 			if err != nil {
 				t.Fatalf("applyListFilters: %v", err)
 			}
@@ -209,10 +209,10 @@ func TestApplyListFilters(t *testing.T) {
 func TestApplyListFilters_Errors(t *testing.T) {
 	meta := filterTestMeta(t)
 	all := []*entity.Entity{tkt("T-1", "a", "ready", 1)}
-	if _, err := applyListFilters(context.Background(), all, nil, "entity.nope == 'x'", "ticket", meta); err == nil {
+	if _, err := applyListFilters(context.Background(), all, nil, "entity.nope == 'x'", "ticket", meta, nil); err == nil {
 		t.Error("expected error for unknown property in --filter")
 	}
-	if _, err := applyListFilters(context.Background(), all, []string{"status=ready"}, "", "", meta); err == nil {
+	if _, err := applyListFilters(context.Background(), all, []string{"status=ready"}, "", "", meta, nil); err == nil {
 		t.Error("expected error when entity type omitted")
 	}
 }

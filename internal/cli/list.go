@@ -11,6 +11,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
 	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
+	"github.com/Sourcehaven-BV/rela/internal/relresolve"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -36,7 +37,7 @@ func (c *ListCmd) Run(ctx context.Context, svc *readServices) error {
 		return err
 	}
 
-	entities, err = applyListFilters(ctx, entities, c.Where, c.Filter, entityTypeName, meta)
+	entities, err = applyListFilters(ctx, entities, c.Where, c.Filter, entityTypeName, meta, svc.Store.MatchingIDs)
 	if err != nil {
 		return err
 	}
@@ -80,6 +81,10 @@ func collectListEntities(ctx context.Context, st store.Store, q store.EntityQuer
 // and/or --where (legacy filter strings, transpiled to predicate). Both
 // compile once through a metamodel-scoped predicatefns.Evaluator and
 // evaluate per entity. --where and --filter may be combined (ANDed).
+//
+// A `related(...)` in --filter is answered through match, once per distinct
+// traversal over all listed entities, and ungated: `rela list` already reads
+// the raw store on operator trust.
 func applyListFilters(
 	ctx context.Context,
 	entities []*entity.Entity,
@@ -87,6 +92,7 @@ func applyListFilters(
 	filterExpr string,
 	entityTypeName string,
 	meta *metamodel.Metamodel,
+	match relresolve.Match,
 ) ([]*entity.Entity, error) {
 	if len(where) == 0 && filterExpr == "" {
 		return entities, nil
@@ -132,12 +138,20 @@ func applyListFilters(
 		if err != nil {
 			return nil, fmt.Errorf("invalid --filter expression: %w", err)
 		}
+		if err := predicatefns.ValidateTraversals(meta, entityTypeName, prog); err != nil {
+			return nil, fmt.Errorf("invalid --filter expression: %w", err)
+		}
 		progs = append(progs, prog)
+	}
+
+	traversals, err := bindListTraversals(ctx, meta, match, entityTypeName, entities, progs)
+	if err != nil {
+		return nil, fmt.Errorf("filter error: %w", err)
 	}
 
 	var filtered []*entity.Entity
 	for _, e := range entities {
-		match, err := listEntityMatches(ctx, ev, progs, legacyWhere, entityDef, meta, e)
+		match, err := listEntityMatches(ctx, ev, progs, traversals(e.ID), legacyWhere, entityDef, meta, e)
 		if err != nil {
 			return nil, err
 		}
@@ -148,19 +162,40 @@ func applyListFilters(
 	return filtered, nil
 }
 
+// bindListTraversals answers the traversals of progs for every listed
+// entity. With none it touches nothing, so a plain --filter costs no query.
+func bindListTraversals(
+	ctx context.Context, meta *metamodel.Metamodel, match relresolve.Match,
+	entityType string, entities []*entity.Entity, progs []*predicate.Program,
+) (func(string) predicate.TraversalFunc, error) {
+	if len(relresolve.Specs(progs...)) == 0 {
+		return func(string) predicate.TraversalFunc { return nil }, nil
+	}
+	b, err := relresolve.NewBinder(meta, relresolve.Ungated, match)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, len(entities))
+	for i, e := range entities {
+		ids[i] = e.ID
+	}
+	return b.Bind(ctx, entityType, ids, progs...)
+}
+
 // listEntityMatches reports whether an entity passes every compiled
 // predicate Program AND the legacy --where fallback (if any).
 func listEntityMatches(
 	ctx context.Context,
 	ev *predicatefns.Evaluator,
 	progs []*predicate.Program,
+	traversal predicate.TraversalFunc,
 	legacyWhere []*filter.Filter,
 	entityDef *metamodel.EntityDef,
 	meta *metamodel.Metamodel,
 	e *entity.Entity,
 ) (bool, error) {
 	for _, prog := range progs {
-		ok, err := ev.Matches(ctx, prog, e.Type, e.ID, e.Properties)
+		ok, err := ev.MatchesWithTraversals(ctx, prog, e.Type, e.ID, e.Properties, traversal)
 		if err != nil {
 			return false, fmt.Errorf("filter error: %w", err)
 		}
