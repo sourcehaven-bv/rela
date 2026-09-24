@@ -140,7 +140,7 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 	// (TKT-3FL2S6). lateGatedReader is late-bound, so it tolerates app.acl /
 	// app.affordances being rebound below.
 	gatedReader := lateGatedReader{app: app}
-	val, err := newGatedValidator(gatedReader, app.scriptTraversalGate, svc.Meta(), lua.ReadDeps{
+	val, err := newGatedValidator(gatedReader, scriptTraversalGate(app), svc.Meta(), lua.ReadDeps{
 		VisibleReader: gatedReader,
 		Tracer:        lateGatedTracer{app: app},
 		Searcher:      svc.Searcher(),

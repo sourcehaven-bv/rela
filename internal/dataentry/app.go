@@ -730,19 +730,19 @@ func gatedScriptReader(aclImpl acl.ACL, store store.Store, redactor visibility.F
 // after construction. Deriving both from a.acl, not from the request on ctx,
 // keeps a rule's related() from seeing more than its reads: a ctx without the
 // middleware's read gate is refused under a policy, not answered ungated.
-func (a *App) scriptTraversalGate(
-	ctx context.Context, candidateType string, hop acl.TraversalHop,
-) (*store.RelationPredicate, error) {
-	d, ok := a.acl.(*acl.Declarative)
-	if !ok || d == nil {
-		return relresolve.Ungated(ctx, candidateType, hop)
+func scriptTraversalGate(a *App) relresolve.Gate {
+	return func(ctx context.Context, candidateType string, hop acl.TraversalHop) (*store.RelationPredicate, error) {
+		d, ok := a.acl.(*acl.Declarative)
+		if !ok || d == nil {
+			return relresolve.Ungated(ctx, candidateType, hop)
+		}
+		gate, err := visibility.NewDeclarativeGate(d)
+		if err != nil {
+			// coverage-ignore: invariant: d is non-nil here
+			return nil, fmt.Errorf("%w: %w", acl.ErrTraversalUnsupported, err)
+		}
+		return gate.GateTraversal(ctx, candidateType, hop)
 	}
-	gate, err := visibility.NewDeclarativeGate(d)
-	if err != nil {
-		// coverage-ignore: invariant: d is non-nil here
-		return nil, fmt.Errorf("%w: %w", acl.ErrTraversalUnsupported, err)
-	}
-	return gate.GateTraversal(ctx, candidateType, hop)
 }
 
 // scriptTracer wraps the tracer in the visibility decorator when a
@@ -1075,7 +1075,7 @@ func NewApp(
 		Meta:          meta,
 		ProjectRoot:   paths.Root,
 	}
-	val, valErr := newGatedValidator(gatedReader, app.scriptTraversalGate, meta, readDeps, st)
+	val, valErr := newGatedValidator(gatedReader, scriptTraversalGate(app), meta, readDeps, st)
 	if valErr != nil {
 		return nil, valErr
 	}
