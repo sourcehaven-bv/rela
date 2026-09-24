@@ -5,9 +5,11 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
 	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
+	"github.com/Sourcehaven-BV/rela/internal/search/searchparser"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -105,9 +107,7 @@ func traversalIndexTarget(
 // [store.Store.MatchingIDs] query against the far-end type, so a scope a list
 // does not mention is still a query shape the store serves.
 //
-// Only query scopes answer traversals, so they are the only source of these
-// specs; conditionlint refuses related() in every data-entry condition.
-// A scope that does not compile contributes nothing; the metamodel loader
+// [conditionTraversalSpecs] covers the data-entry conditions. A scope that does not compile contributes nothing; the metamodel loader
 // (scopes.Compile) has already refused it at boot.
 func scopeTraversalSpecs(meta *metamodel.Metamodel) []store.DerivedObjectSpec {
 	var (
@@ -136,6 +136,47 @@ func scopeTraversalSpecs(meta *metamodel.Metamodel) []store.DerivedObjectSpec {
 				continue
 			}
 			out = append(out, TraversalIndexSpecs(prog, meta, typeName)...)
+		}
+	}
+	return out
+}
+
+// conditionTraversalSpecs returns the traversal index specs of every list
+// and next-action condition. Each traversal in one issues a
+// [store.Store.MatchingIDs] query per page, the same shape a scope's does.
+//
+// A condition that does not compile contributes nothing; conditionlint has
+// already refused it at config load.
+func conditionTraversalSpecs(cfg *dataentryconfig.Config, meta *metamodel.Metamodel) []store.DerivedObjectSpec {
+	var (
+		ev  *predicatefns.Evaluator
+		out []store.DerivedObjectSpec
+	)
+	add := func(typeName, source string) {
+		if !strings.Contains(source, "related") {
+			return
+		}
+		if ev == nil {
+			ev = predicatefns.NewEvaluator(meta)
+		}
+		prog, err := ev.CompileWithCurrentUser(typeName, source)
+		if err != nil {
+			slog.Warn("queryplan: condition skipped for traversal index derivation",
+				"type", typeName, "error", err)
+			return
+		}
+		out = append(out, TraversalIndexSpecs(prog, meta, typeName)...)
+	}
+	// Map order is fine: StaticIndexSpecs dedups and sorts the result.
+	for _, list := range cfg.Lists {
+		add(list.EntityType, list.Condition)
+	}
+	for _, src := range cfg.NextActions {
+		if src.Condition == "" || src.Query == "" {
+			continue
+		}
+		for _, typeName := range searchparser.ParseQuery(src.Query).EntityTypes {
+			add(typeName, src.Condition)
 		}
 	}
 	return out
