@@ -1179,6 +1179,24 @@ other principals. The cases are:
 On the PostgreSQL backend each constraint gets a derived index on the final
 entity type, so the filter does not scan every row of that type.
 
+A list page answers the whole scope in the store query when the scope is a
+plain conjunction. Every part joined by `and` must be one of these:
+
+- `related(...)`;
+- an equality between a string-shaped property, as defined above, and a
+  non-empty string;
+- `entity.x == current_user.id` or `is_current_user(entity.x)`.
+
+Each property may appear in only one equality. The page and its total then
+cost the same at any list size.
+
+Any other scope, for example one with `not`, `or` or an ordered comparison, is
+still correct. It is evaluated after the store read, and its cost grows with
+the number of rows of the type. The same slower path applies when the rest of
+the request does not suit the store, for example with free-text search, a view
+`condition:`, a relation filter, or a sort on a property that is not
+string-shaped.
+
 ### Which surfaces apply scopes
 
 Scopes shape **screens**. They are deliberately absent everywhere that answers

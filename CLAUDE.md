@@ -319,7 +319,12 @@ above rather than by a clean `analyze all`.
   per row). When the request's shape allows it, the list handler pushes paging,
   ordering and equality filters into `store.GraphQuery` (`listpushdown.go`) and
   takes the scoped count through `store.CountMatched`, never `GraphCount`'s
-  total. New read paths pin their cost with a `storetest.Counting` budget test
+  total. A query scope joins that pushdown only when `queryplan.LowerScope`
+  lowers it EXACTLY (TKT-XKCNCL): nothing re-checks a pushed scope, so a
+  superset pre-filter is not enough, and a scope that does not lower keeps the
+  Go path. Its traversals ride in `GraphQuery.Related`, never in
+  `HasInbound`/`HasOutbound`, which belong to the ACL read gate. New read
+  paths pin their cost with a `storetest.Counting` budget test
   asserting the count is the same at 10 and 50 rows. Measure on the postgres
   backend with `rela-server -verbose` (`Server-Timing`, one `request` log line
   each) against `prototypes/perf/project` seeded by `rela dev seed`.

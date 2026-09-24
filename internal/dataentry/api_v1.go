@@ -351,7 +351,10 @@ func (a *App) listPage(
 	if err != nil {
 		return nil, 0, err
 	}
-	if plan, ok := n.pushdownPlan(ctx, a, typeName, query, page, perPage); ok {
+	if plan, empty, ok := n.pushdownPlan(ctx, a, typeName, query, page, perPage); ok {
+		if empty {
+			return nil, 0, nil
+		}
 		return plan.run(ctx, a.Services().Store)
 	}
 	cond, scope := n.cond, n.scope

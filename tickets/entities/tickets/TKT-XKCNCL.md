@@ -5,7 +5,7 @@ title: Push down query scopes built from related() and equalities
 kind: enhancement
 priority: high
 effort: xl
-status: in-progress
+status: done
 ---
 
 ## Description

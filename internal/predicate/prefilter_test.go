@@ -1,6 +1,9 @@
 package predicate
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 // prefilterEnv is the request-scoped shape: an entity record with mixed
 // property types plus a constant current_user record and the two sugar
@@ -396,5 +399,85 @@ func TestProgram_InspectCoversEveryNodeType(t *testing.T) {
 			}
 			_ = prog.Functions()
 		})
+	}
+}
+
+func TestConjunction(t *testing.T) {
+	tests := []struct {
+		name      string
+		src       string
+		wantOK    bool
+		wantEqs   []ConstEquality
+		wantPaths [][]string
+	}{
+		{
+			name:      "equalities and traversals on the spine",
+			src:       "entity.status == 'open' and related(entity, 'implements') and is_current_user(entity.assignee)",
+			wantOK:    true,
+			wantEqs:   []ConstEquality{{Attribute: "status", Value: "open"}, {Attribute: "assignee", FromVar: "id"}},
+			wantPaths: [][]string{{"implements"}},
+		},
+		{
+			name:      "a lone traversal",
+			src:       "related(entity, { 'a', 'b' }, { type = 'C', status = 'done' })",
+			wantOK:    true,
+			wantPaths: [][]string{{"a", "b"}},
+		},
+		{
+			name:    "an attribute constrained twice is reported twice",
+			src:     "entity.status == 'a' and entity.status == 'b'",
+			wantOK:  true,
+			wantEqs: []ConstEquality{{Attribute: "status", Value: "a"}, {Attribute: "status", Value: "b"}},
+		},
+		{
+			name:    "a membership keeps List",
+			src:     "has_current_user(entity.watchers)",
+			wantOK:  true,
+			wantEqs: []ConstEquality{{Attribute: "watchers", FromVar: "id", List: true}},
+		},
+		{name: "or is not exact", src: "entity.status == 'a' or related(entity, 'x')"},
+		{name: "not is not exact", src: "not related(entity, 'x')"},
+		{name: "inequality is not exact", src: "entity.status ~= 'a' and related(entity, 'x')"},
+		{name: "a typed equality is not exact", src: "entity.count == 3 and related(entity, 'x')"},
+		{name: "an empty literal is not exact", src: "entity.status == '' and related(entity, 'x')"},
+		{name: "an unlisted host call is not exact", src: "is_reporter(entity.reporter)"},
+		{name: "a comparison between two attributes is not exact", src: "entity.status == entity.reporter"},
+		{name: "a literal leaf is not exact", src: "true and related(entity, 'x')"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			prog, err := Compile(prefilterEnv(t), tc.src)
+			if err != nil {
+				t.Fatalf("compile %q: %v", tc.src, err)
+			}
+			eqs, travs, ok := prog.Conjunction(fullSpec)
+			if ok != tc.wantOK {
+				t.Fatalf("ok = %v, want %v", ok, tc.wantOK)
+			}
+			if !ok {
+				return
+			}
+			if !reflect.DeepEqual(eqs, tc.wantEqs) {
+				t.Errorf("eqs = %#v, want %#v", eqs, tc.wantEqs)
+			}
+			var paths [][]string
+			for _, s := range travs {
+				paths = append(paths, s.Path)
+			}
+			if !reflect.DeepEqual(paths, tc.wantPaths) {
+				t.Errorf("paths = %v, want %v", paths, tc.wantPaths)
+			}
+		})
+	}
+}
+
+func TestConjunction_TraversalOnAnotherRecordIsNotExact(t *testing.T) {
+	env := prefilterEnv(t)
+	prog, err := Compile(env, "related(current_user, 'x')")
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	if _, _, ok := prog.Conjunction(fullSpec); ok {
+		t.Fatal("a traversal from current_user must not lower as the row's traversal")
 	}
 }

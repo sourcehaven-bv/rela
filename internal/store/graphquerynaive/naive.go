@@ -49,6 +49,11 @@ func CheckEndpointShape(q store.GraphQuery) error {
 			return err
 		}
 	}
+	for i := range q.Related {
+		if err := checkEndpointShape(&q.Related[i].Pred, 0); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -407,6 +412,16 @@ func matches(ctx context.Context, r Reader, e *entity.Entity, q store.GraphQuery
 	}
 	if q.HasOutbound != nil {
 		ok, err := matchesPredicate(ctx, r, e, *q.HasOutbound, store.DirectionOutgoing)
+		if err != nil || !ok {
+			return ok, err
+		}
+	}
+	for _, rel := range q.Related {
+		dir := store.DirectionOutgoing
+		if rel.Incoming {
+			dir = store.DirectionIncoming
+		}
+		ok, err := matchesPredicate(ctx, r, e, rel.Pred, dir)
 		if err != nil || !ok {
 			return ok, err
 		}

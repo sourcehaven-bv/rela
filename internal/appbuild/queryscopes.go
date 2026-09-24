@@ -2,6 +2,7 @@ package appbuild
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -148,4 +149,68 @@ func (r *QueryScopeResolver) Filter(
 // than one shared with a different feature.
 func (r *QueryScopeResolver) BindRequest(ctx context.Context) (context.Context, error) {
 	return nextActionRequestScope(ctx)
+}
+
+// Lower rewrites a resolved scope as store predicates, for a list the store
+// can then page by itself (TKT-XKCNCL). The outcome is one of:
+//
+//   - ok=false: the scope does not lower exactly, or a traversal cannot be
+//     gated for this principal. The caller takes the [QueryScopeResolver.Filter]
+//     path, which reproduces the same rows or the same error.
+//   - ok=true, empty=true: a traversal is denied outright and none is
+//     refused, so no row can match. This is the answer Filter gives, reached
+//     without reading the type.
+//   - ok=true: frag carries Props and Related to AND onto the read query.
+//
+// Every traversal is gated here, per request, by the caller's gate; nothing
+// is cached on the resolver, which is shared across principals. The identity
+// comes from ctx, which BindRequest has stamped.
+func (r *QueryScopeResolver) Lower(
+	ctx context.Context, scope any, entityType string,
+	gate func(context.Context, string, acl.TraversalHop) (*store.RelationPredicate, error),
+) (frag store.GraphQuery, empty, ok bool) {
+	prog, isProg := scope.(*predicate.Program)
+	if !isProg || gate == nil {
+		return store.GraphQuery{}, false, false
+	}
+	var identity string
+	if id, bound := predicatefns.QueryIdentityFrom(ctx); bound {
+		identity = id.ID()
+	}
+	lowered, ok := queryplan.LowerScope(prog, r.meta, entityType, identity)
+	if !ok {
+		return store.GraphQuery{}, false, false
+	}
+	frag.Props = lowered.Props
+	seen := make(map[string]bool, len(lowered.Traversals))
+	for _, spec := range lowered.Traversals {
+		// A repeated traversal adds nothing to a conjunction; skip it as
+		// answerTraversals does, rather than gate and join it twice.
+		if seen[spec.Key()] {
+			continue
+		}
+		seen[spec.Key()] = true
+		hop, err := traversalHop(r.meta, entityType, spec)
+		if err != nil {
+			return store.GraphQuery{}, false, false
+		}
+		pred, err := gate(ctx, entityType, hop)
+		switch {
+		case errors.Is(err, acl.ErrTraversalDenied):
+			// Keep gating the rest: a refused term must still surface as
+			// the error Filter reports, so "denied" wins only if nothing
+			// is refused.
+			empty = true
+			continue
+		case err != nil, pred == nil:
+			// A nil predicate would match every row; fall back rather than
+			// widen or dereference it.
+			return store.GraphQuery{}, false, false
+		}
+		frag.Related = append(frag.Related, store.DirectedRelation{Incoming: hop.Incoming, Pred: *pred})
+	}
+	if empty {
+		return store.GraphQuery{}, true, true
+	}
+	return frag, false, true
 }

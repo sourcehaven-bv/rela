@@ -125,14 +125,28 @@ func viewQueryScope(
 		// "is there a scope" check still reads this as unscoped.
 		return resolvedQueryScope{Bind: resolver.BindRequest}, nil
 	}
-	return resolvedQueryScope{
+	resolved = resolvedQueryScope{
 		Scope: scope, Props: props, Filter: resolver.Filter, Bind: resolver.BindRequest,
-	}, nil
+	}
+	if l, ok := resolver.(queryScopeLowerer); ok {
+		resolved.Lower = l.Lower
+	}
+	return resolved, nil
+}
+
+// queryScopeLowerer is the optional capability a resolver offers to answer a
+// scope in the store; see [QueryScopeLower]. Optional so a resolver without it
+// keeps every scoped list on the Go path, which is always correct.
+type queryScopeLowerer interface {
+	Lower(
+		ctx context.Context, scope QueryScopeHandle, entityType string,
+		gate func(context.Context, string, acl.TraversalHop) (*store.RelationPredicate, error),
+	) (frag store.GraphQuery, empty, ok bool)
 }
 
 // resolvedQueryScope is one view's scope, ready to apply.
 //
-// The four fields travel together because they are one contract: the program
+// The fields travel together because they are one contract: the program
 // was compiled by the resolver that supplied Filter, and Filter can only evaluate
 // it against an identity Bind stamped. Returning them separately invited
 // exactly the bug that motivated this struct — Bind was declared on the seam,
@@ -140,12 +154,27 @@ func viewQueryScope(
 // never called, so `is_current_user(...)` in a scope failed every page of its
 // type with ErrNoCurrentUser instead of scoping it.
 //
+// Lower, when set, is the same resolver's store rewrite of Scope (see
+// [QueryScopeLower]); nil keeps the list on the Go path.
+//
 // The zero value means "no scope", which every field check treats as unscoped.
 type resolvedQueryScope struct {
 	Scope  QueryScopeHandle
 	Props  []store.PropPredicate
 	Filter QueryScopeFilter
+	Lower  QueryScopeLower
 	Bind   func(context.Context) (context.Context, error)
+}
+
+// lower rewrites the scope for the pushed list path; ok=false keeps the Go
+// path. See [QueryScopeLower].
+func (r resolvedQueryScope) lower(
+	ctx context.Context, entityType string,
+) (frag store.GraphQuery, empty, ok bool) {
+	if r.Scope == nil || r.Lower == nil {
+		return store.GraphQuery{}, false, false
+	}
+	return r.Lower(ctx, r.Scope, entityType, traversalGateFromContext(ctx).GateTraversal)
 }
 
 // bind stamps the request-scoped evaluation state a scope needs, once, before
@@ -246,6 +275,10 @@ func AdaptQueryScopes[R interface {
 		gate func(context.Context, string, acl.TraversalHop) (*store.RelationPredicate, error),
 		match func(context.Context, store.GraphQuery, []string) (map[string]bool, error),
 	) ([]store.EntityHeader, error)
+	Lower(
+		ctx context.Context, scope any, entityType string,
+		gate func(context.Context, string, acl.TraversalHop) (*store.RelationPredicate, error),
+	) (frag store.GraphQuery, empty, ok bool)
 	BindRequest(ctx context.Context) (context.Context, error)
 }](build func(*dataentryconfig.Config, *metamodel.Metamodel) (R, []string)) QueryScopeResolverFunc {
 	return func(cfg *dataentryconfig.Config, meta *metamodel.Metamodel) (QueryScopeResolver, []string) {
@@ -272,6 +305,10 @@ type adaptedQueryScopes[R interface {
 		gate func(context.Context, string, acl.TraversalHop) (*store.RelationPredicate, error),
 		match func(context.Context, store.GraphQuery, []string) (map[string]bool, error),
 	) ([]store.EntityHeader, error)
+	Lower(
+		ctx context.Context, scope any, entityType string,
+		gate func(context.Context, string, acl.TraversalHop) (*store.RelationPredicate, error),
+	) (frag store.GraphQuery, empty, ok bool)
 	BindRequest(ctx context.Context) (context.Context, error)
 }] struct{ r R }
 
@@ -287,6 +324,13 @@ func (a adaptedQueryScopes[R]) Filter(
 	match func(context.Context, store.GraphQuery, []string) (map[string]bool, error),
 ) ([]store.EntityHeader, error) {
 	return a.r.Filter(ctx, scope, entityType, headers, gate, match)
+}
+
+func (a adaptedQueryScopes[R]) Lower(
+	ctx context.Context, scope QueryScopeHandle, entityType string,
+	gate func(context.Context, string, acl.TraversalHop) (*store.RelationPredicate, error),
+) (frag store.GraphQuery, empty, ok bool) {
+	return a.r.Lower(ctx, scope, entityType, gate)
 }
 
 func (a adaptedQueryScopes[R]) BindRequest(ctx context.Context) (context.Context, error) {

@@ -231,6 +231,11 @@ func buildPredicateParts(b *sqlBuilder, q store.GraphQuery, typeArg string) (wit
 		with = append(with, w...)
 		conds = append(conds, existsCond(ex, q.HasOutbound.Negate))
 	}
+	for i, rel := range q.Related {
+		w, ex := buildPredicateSQL(b, relatedPrefix(i), rel.Pred, typeArg, relatedDirection(rel))
+		with = append(with, w...)
+		conds = append(conds, existsCond(ex, rel.Pred.Negate))
+	}
 	for _, p := range q.Props {
 		conds = append(conds, propCond(b, p))
 	}
@@ -435,8 +440,10 @@ func equalsCond(b *sqlBuilder, txt, jsn, value string) string {
 //   - those placeholder strings (already `$N`-formatted by arg)
 //   - compile-time string literals (CTE names like
 //     `in_endpoint_closure`, column names like `r.from_id`)
-//   - the `prefix` argument to buildPredicateSQL, which is one of
-//     the in-package constants `"in"` / `"out"`
+//   - the `prefix` argument to buildPredicateSQL, which is an
+//     in-package constant (`"in"`, `"out"`) or one built from such a
+//     constant and an integer index ([relatedPrefix], the `Any` and
+//     visibility prefixes)
 //
 // User data never reaches the SQL text. The same property holds
 // when BuildGraphQuerySQLForTest is invoked from tests — the
@@ -892,4 +899,18 @@ type sqlBuilder struct {
 func (b *sqlBuilder) arg(v any) string {
 	b.args = append(b.args, v)
 	return fmt.Sprintf("$%d", len(b.args))
+}
+
+// relatedPrefix names the CTEs of the i-th [store.GraphQuery.Related] entry.
+// Indexed so two entries, or an entry and HasInbound/HasOutbound, never
+// share a CTE name.
+func relatedPrefix(i int) string { return "rel" + strconv.Itoa(i) }
+
+// relatedDirection maps a [store.DirectedRelation] onto the direction
+// buildPredicateSQL reads its predicate in.
+func relatedDirection(rel store.DirectedRelation) store.Direction {
+	if rel.Incoming {
+		return store.DirectionIncoming
+	}
+	return store.DirectionOutgoing
 }

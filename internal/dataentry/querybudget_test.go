@@ -39,6 +39,9 @@ func budgetMeta() *metamodel.Metamodel {
 				// default) are unaffected.
 				QueryScopes: map[string]string{
 					"feature-one": "related(entity, 'implements', { title = 'Feature 1' })",
+					// `not` keeps a scope off the pushed path (TKT-XKCNCL),
+					// so this one pins the Go path's budget.
+					"not-feature-one": "not related(entity, 'implements', { title = 'Feature 1' })",
 				}},
 			"feature": {Label: "Feature", Properties: str, PropertyOrder: []string{"title"}},
 			"person":  {Label: "Person", Properties: str, PropertyOrder: []string{"title"}},
@@ -402,12 +405,41 @@ func TestQueryBudget_NestedSectionIsSizeIndependent(t *testing.T) {
 	assertBudget(t, "nested section", small, large, nestedSectionBudget, detail)
 }
 
-// A list page under a query scope with a traversal (TKT-CXQEV0). The
-// traversal is answered for the whole page in one gated MatchingIDs call, so
-// it adds a constant, never a read per row.
+// A list page under a query scope the store cannot answer alone
+// (TKT-CXQEV0). The traversal is answered for the whole candidate set in one
+// gated MatchingIDs call, so it adds a constant, never a read per row.
 func TestQueryBudget_TraversalScopeIsSizeIndependent(t *testing.T) {
 	small, large, detail := readsFor(t, func(t *testing.T, app *App, d *acl.Declarative, ctx context.Context) {
 		t.Helper()
+		if err := app.SetQueryScopeResolver(AdaptQueryScopes(appbuild.QueryScopes)); err != nil {
+			t.Fatalf("wire query scopes: %v", err)
+		}
+		resp, rec := listEntitiesAs(ctx, t, app, d, "ticket", "tickets", "per_page=100&query_scope=not-feature-one")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("list: %d %s", rec.Code, rec.Body)
+		}
+		if len(resp.Data) == 0 {
+			t.Fatal("the scope matched nothing, so this budget proves nothing")
+		}
+		for _, e := range resp.Data {
+			var n int
+			if _, err := fmt.Sscanf(e.ID, "TKT-%d", &n); err != nil || n%5 == 0 {
+				t.Fatalf("row %s implements Feature 1", e.ID)
+			}
+		}
+	})
+	assertBudget(t, "traversal scope list page", small, large, traversalScopeBudget, detail)
+}
+
+// A list page under a scope that lowers exactly is served by the store
+// (TKT-XKCNCL). A read COUNT cannot tell the two paths apart, since both cost
+// the same number of calls; what differs is WHICH calls. The pushed path
+// counts in the store and answers no traversal over a candidate set.
+func TestQueryBudget_TraversalScopeIsPushedDown(t *testing.T) {
+	reads := make([]int, 0, 2)
+	var detail string
+	for _, n := range []int{10, 50} {
+		app, counting, d, ctx := newBudgetApp(t, n)
 		if err := app.SetQueryScopeResolver(AdaptQueryScopes(appbuild.QueryScopes)); err != nil {
 			t.Fatalf("wire query scopes: %v", err)
 		}
@@ -416,17 +448,25 @@ func TestQueryBudget_TraversalScopeIsSizeIndependent(t *testing.T) {
 			t.Fatalf("list: %d %s", rec.Code, rec.Body)
 		}
 		// Tickets i with i%5 == 0 implement F1: a fifth of them.
-		if len(resp.Data) == 0 {
-			t.Fatal("the scope matched nothing, so this budget proves nothing")
+		if len(resp.Data) != n/5 || resp.Meta.Total != n/5 {
+			t.Fatalf("n=%d: got %d rows, total %d, want %d", n, len(resp.Data), resp.Meta.Total, n/5)
 		}
 		for _, e := range resp.Data {
-			var n int
-			if _, err := fmt.Sscanf(e.ID, "TKT-%d", &n); err != nil || n%5 != 0 {
+			var i int
+			if _, err := fmt.Sscanf(e.ID, "TKT-%d", &i); err != nil || i%5 != 0 {
 				t.Fatalf("row %s does not implement Feature 1", e.ID)
 			}
 		}
-	})
-	assertBudget(t, "traversal scope list page", small, large, traversalScopeBudget, detail)
+		// The scoped count is the pushed path's signature: the Go path counts
+		// its slice in memory and answers the traversal with MatchingIDs.
+		calls := counting.Calls()
+		if calls["MatchingIDs"] != 0 || calls["GraphCount"] != 1 {
+			t.Errorf("n=%d: the scope was not pushed down: %s", n, counting)
+		}
+		reads = append(reads, counting.Reads())
+		detail = counting.String()
+	}
+	assertBudget(t, "pushed traversal scope list page", reads[0], reads[1], listPageBudget, detail)
 }
 
 // Pinned budgets: the measured store-call count per request shape after
@@ -435,9 +475,10 @@ const (
 	// list page: scoped count + one bounded page read (listpushdown.go),
 	// page edges, neighbor headers, membership walk.
 	listPageBudget = 6
-	// traversal-scoped list page: the type's headers, ONE MatchingIDs for
-	// the traversal, then the page's edges, neighbor headers and membership
-	// walk as on a plain page.
+	// traversal-scoped list page on the Go path (a scope that does not
+	// lower): the type's headers, ONE MatchingIDs for the traversal, then the
+	// page's edges, neighbor headers and membership walk as on a plain page.
+	// A scope that lowers costs listPageBudget instead.
 	traversalScopeBudget = 6
 	// view: entry, two traverse passes, collection load, section columns +
 	// target headers, entry edges, membership walk.
