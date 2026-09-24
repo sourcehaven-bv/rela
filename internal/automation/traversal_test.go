@@ -41,6 +41,22 @@ func (s *stubBinder) Bind(
 	}, nil
 }
 
+// updAutomation is condAutomation on a property change: a `created` trigger
+// refuses related(), since the entity's relations do not exist yet.
+func updAutomation(cond string) metamodel.AutomationDef {
+	def := condAutomation(cond)
+	def.On.Created = false
+	def.On.Property = "due"
+	return def
+}
+
+// updated fires updAutomation: due changes on id.
+func updated(id string) Event {
+	old := buildEntity(testutil.Entity("taak").ID(id).With("due", "2026-01-01"))
+	cur := buildEntity(testutil.Entity("taak").ID(id).With("due", "2026-02-01"))
+	return Event{Type: EventEntityUpdated, Entity: cur, OldEntity: old}
+}
+
 func TestProcess_Traversal(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
@@ -56,12 +72,11 @@ func TestProcess_Traversal(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			engine, err := NewEngineFromMetamodel(traversalMeta(),
-				[]metamodel.AutomationDef{condAutomation(tc.cond)}, WithTraversals(tc.binder))
+				[]metamodel.AutomationDef{updAutomation(tc.cond)}, WithTraversals(tc.binder))
 			if err != nil {
 				t.Fatal(err)
 			}
-			ent := buildEntity(testutil.Entity("taak").ID("taak-1"))
-			res := engine.Process(context.Background(), Event{Type: EventEntityCreated, Entity: ent})
+			res := engine.Process(context.Background(), updated("taak-1"))
 			if fired := res.PropertiesSet["status"] == "due-soon"; fired != tc.wantFire {
 				t.Fatalf("fired = %v, want %v", fired, tc.wantFire)
 			}
@@ -78,11 +93,11 @@ func TestProcess_Traversal(t *testing.T) {
 func TestProcess_NoTraversalNoBind(t *testing.T) {
 	b := &stubBinder{}
 	engine, err := NewEngineFromMetamodel(traversalMeta(),
-		[]metamodel.AutomationDef{condAutomation("entity.status == nil")}, WithTraversals(b))
+		[]metamodel.AutomationDef{updAutomation("entity.status == nil")}, WithTraversals(b))
 	if err != nil {
 		t.Fatal(err)
 	}
-	engine.Process(context.Background(), Event{Type: EventEntityCreated, Entity: buildEntity(testutil.Entity("taak"))})
+	engine.Process(context.Background(), updated("taak-1"))
 	if b.calls != 0 {
 		t.Fatalf("Bind calls = %d, want 0 for a condition without related()", b.calls)
 	}
@@ -91,15 +106,17 @@ func TestProcess_NoTraversalNoBind(t *testing.T) {
 func TestNewEngine_RelatedRefusedAtLoad(t *testing.T) {
 	for _, tc := range []struct {
 		name string
-		cond string
+		def  metamodel.AutomationDef
 		opts []Option
 		want string
 	}{
-		{"no binder", "related(entity, 'owned-by')", nil, "no store"},
-		{"unknown relation", "related(entity, 'nope')", []Option{WithTraversals(&stubBinder{})}, "nope"},
+		{"no binder", updAutomation("related(entity, 'owned-by')"), nil, "no store"},
+		{"unknown relation", updAutomation("related(entity, 'nope')"), []Option{WithTraversals(&stubBinder{})}, "nope"},
+		{"created trigger", condAutomation("related(entity, 'owned-by')"), []Option{WithTraversals(&stubBinder{})},
+			"created"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := NewEngineFromMetamodel(traversalMeta(), []metamodel.AutomationDef{condAutomation(tc.cond)}, tc.opts...)
+			_, err := NewEngineFromMetamodel(traversalMeta(), []metamodel.AutomationDef{tc.def}, tc.opts...)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("err = %v, want one mentioning %q", err, tc.want)
 			}
@@ -112,13 +129,13 @@ func TestNewEngine_RelatedRefusedAtLoad(t *testing.T) {
 func TestProcess_TraversalOnNamedFaceDoesNotFire(t *testing.T) {
 	b := &stubBinder{answer: false}
 	engine, err := NewEngineFromMetamodel(traversalMeta(),
-		[]metamodel.AutomationDef{condAutomation("not related(entity, 'owned-by')")}, WithTraversals(b))
+		[]metamodel.AutomationDef{updAutomation("not related(entity, 'owned-by')")}, WithTraversals(b))
 	if err != nil {
 		t.Fatal(err)
 	}
-	ent := buildEntity(testutil.Entity("taak").ID("taak-1"))
-	ent.Face = "draft"
-	res := engine.Process(context.Background(), Event{Type: EventEntityCreated, Entity: ent})
+	ev := updated("taak-1")
+	ev.Entity.Face, ev.OldEntity.Face = "draft", "draft"
+	res := engine.Process(context.Background(), ev)
 	if res.PropertiesSet["status"] == "due-soon" || len(res.Warnings) == 0 {
 		t.Fatalf("fired on a named face (set=%v warnings=%v)", res.PropertiesSet, res.Warnings)
 	}

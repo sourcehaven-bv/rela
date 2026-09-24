@@ -147,6 +147,13 @@ func (e *Engine) compileConditions() error {
 				return fmt.Errorf("automation %q: condition %q on %q: %w",
 					auto.Name, src, t, err)
 			}
+			if auto.On.Created && len(prog.Traversals()) > 0 {
+				// The entity is persisted before any of its relations, so on
+				// create `related(...)` is always false and `not related` is
+				// always true: a condition that looks meaningful and is not.
+				return fmt.Errorf("automation %q: condition %q: %s(...) cannot be used on a `created` trigger; "+
+					"the entity's relations are written after it", auto.Name, src, predicate.FuncRelated)
+			}
 			if err := e.checkTraversals(t, prog); err != nil {
 				return fmt.Errorf("automation %q: condition %q on %q: %w", auto.Name, src, t, err)
 			}
