@@ -16,6 +16,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/predicate"
 	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
 )
 
@@ -107,6 +108,27 @@ type Service struct {
 	// deps.Meta.
 	evOnce sync.Once
 	ev     *predicatefns.Evaluator
+
+	// traversals answers `related(...)` in when/then conditions
+	// (TKT-205V2N). Nil until WithTraversals supplies one; a rule using
+	// related() then reports a LoadError rather than evaluating.
+	traversals TraversalBinder
+}
+
+// TraversalBinder answers the `related(...)` traversals of condition
+// programs for a batch of candidates. The wiring site decides what it may
+// see: the operator-trust paths bind the raw store, a run under a principal
+// binds that principal's gate, so a violation list never reveals an entity
+// the requester cannot read.
+type TraversalBinder interface {
+	Bind(ctx context.Context, entityType string, ids []string, progs ...*predicate.Program) (
+		func(rowID string) predicate.TraversalFunc, error)
+}
+
+// WithTraversals wires the binder that answers `related(...)` in conditions.
+func (s *Service) WithTraversals(b TraversalBinder) *Service {
+	s.traversals = b
+	return s
 }
 
 // evaluator returns the predicate Evaluator bound to the service's
@@ -171,7 +193,11 @@ func (s *Service) compileRuleConditions(
 		}
 		seen[e.Type] = true
 		for _, src := range sources {
-			if _, err := s.evaluator().Compile(e.Type, src); err != nil {
+			prog, err := s.evaluator().Compile(e.Type, src)
+			if err == nil {
+				err = s.checkTraversals(e.Type, prog)
+			}
+			if err != nil {
 				errs = append(errs, LoadError{
 					RuleName: rule.Name,
 					Message: fmt.Sprintf("condition %q on %q: %v",
@@ -183,16 +209,86 @@ func (s *Service) compileRuleConditions(
 	return errs
 }
 
+// checkTraversals refuses a `related(...)` the service cannot answer: one
+// that does not resolve against the metamodel, or any at all when no binder
+// is wired.
+func (s *Service) checkTraversals(entityType string, prog *predicate.Program) error {
+	if len(prog.Traversals()) == 0 {
+		return nil
+	}
+	if s.traversals == nil {
+		return fmt.Errorf("%s(...) is not available: no store is wired to answer it", predicate.FuncRelated)
+	}
+	return predicatefns.ValidateTraversals(s.deps.Meta, entityType, prog)
+}
+
+// ruleTraversals answers the rule's `related(...)` traversals for every
+// candidate, once per entity type over all of that type's candidates, before
+// any entity is evaluated. That ordering is what keeps a traversal failure
+// loud: answered per entity, an error in `when_condition:` would silently
+// skip the rule for that entity.
+//
+// A candidate on a named face is left out and reported: the store answers
+// traversals from the default face's edges, so its answer would describe
+// another row. The returned map has no entry for a type without traversals.
+func (s *Service) ruleTraversals(
+	ctx context.Context, rule metamodel.ValidationRule, candidates []*entity.Entity,
+) (map[string]func(string) predicate.TraversalFunc, []LoadError) {
+	progsByType := map[string][]*predicate.Program{}
+	idsByType := map[string][]string{}
+	var errs []LoadError
+	for _, e := range candidates {
+		progs, seen := progsByType[e.Type]
+		if !seen {
+			for _, src := range []string{rule.WhenCondition, rule.ThenCondition} {
+				if src == "" {
+					continue
+				}
+				// Compiled (and cached) by compileRuleConditions already.
+				if prog, err := s.evaluator().Compile(e.Type, src); err == nil && len(prog.Traversals()) > 0 {
+					progs = append(progs, prog)
+				}
+			}
+			progsByType[e.Type] = progs
+		}
+		if len(progs) == 0 {
+			continue
+		}
+		if e.Face != "" {
+			errs = append(errs, LoadError{RuleName: rule.Name, Message: fmt.Sprintf(
+				"%s(...) cannot be answered for %s on face %q", predicate.FuncRelated, e.ID, e.Face)})
+			continue
+		}
+		idsByType[e.Type] = append(idsByType[e.Type], e.ID)
+	}
+	out := map[string]func(string) predicate.TraversalFunc{}
+	for typ, progs := range progsByType {
+		if len(progs) == 0 {
+			continue
+		}
+		bound, err := s.traversals.Bind(ctx, typ, idsByType[typ], progs...)
+		if err != nil {
+			return nil, append(errs, LoadError{RuleName: rule.Name, Message: fmt.Sprintf(
+				"%s(...) on %q could not be answered: %v", predicate.FuncRelated, typ, err)})
+		}
+		out[typ] = bound
+	}
+	return out, errs
+}
+
 // matchCondition compiles and evaluates a predicate expression against
 // one entity. Unlike matchFilters there is no legacy fallback: an
 // expression has only ever had one meaning, so a compile failure is a
-// real error rather than a dialect mismatch.
-func (s *Service) matchCondition(ctx context.Context, e *entity.Entity, source string) (bool, error) {
+// real error rather than a dialect mismatch. traversal answers any
+// `related(...)`; nil is fine for an expression without one.
+func (s *Service) matchCondition(
+	ctx context.Context, e *entity.Entity, source string, traversal predicate.TraversalFunc,
+) (bool, error) {
 	prog, err := s.evaluator().Compile(e.Type, source)
 	if err != nil {
 		return false, err
 	}
-	return s.evaluator().Matches(ctx, prog, e.Type, e.ID, e.Properties)
+	return s.evaluator().MatchesWithTraversals(ctx, prog, e.Type, e.ID, e.Properties, traversal)
 }
 
 // matchFilters evaluates an ANDed set of filter clauses against an
@@ -347,6 +443,12 @@ func (s *Service) CheckRule(
 		result.LoadErrors = append(result.LoadErrors, loadErrs...)
 		return result
 	}
+	traversals, travErrs := s.ruleTraversals(ctx, rule, candidates)
+	if traversals == nil {
+		result.LoadErrors = append(result.LoadErrors, travErrs...)
+		return result
+	}
+	result.LoadErrors = append(result.LoadErrors, travErrs...)
 
 	hasLua := rule.Lua != "" || rule.LuaFile != ""
 	if hasLua {
@@ -370,7 +472,14 @@ func (s *Service) CheckRule(
 	}()
 
 	for _, e := range candidates {
-		entityResult := s.checkEntityAgainstRule(ctx, e, rule, whenFilters, thenFilters, luaCtx)
+		var traversal predicate.TraversalFunc
+		if bound, ok := traversals[e.Type]; ok {
+			if e.Face != "" {
+				continue // reported by ruleTraversals
+			}
+			traversal = bound(e.ID)
+		}
+		entityResult := s.checkEntityAgainstRule(ctx, e, rule, whenFilters, thenFilters, luaCtx, traversal)
 		result.Violations = append(result.Violations, entityResult.Violations...)
 		result.ScriptErrors = append(result.ScriptErrors, entityResult.ScriptErrors...)
 		result.LoadErrors = append(result.LoadErrors, entityResult.LoadErrors...)
@@ -440,6 +549,7 @@ func (s *Service) checkEntityAgainstRule(
 	rule metamodel.ValidationRule,
 	whenFilters, thenFilters []*filter.Filter,
 	luaCtx *luaRuleContext,
+	traversal predicate.TraversalFunc,
 ) entityResult {
 	// An unknown entity type has no rules to apply.
 	if _, ok := s.deps.Meta.GetEntityDef(e.Type); !ok {
@@ -467,7 +577,7 @@ func (s *Service) checkEntityAgainstRule(
 	// routing it through filter.Parse would silently reinterpret it as a
 	// filter on a nonexistent property and select nothing.
 	if rule.WhenCondition != "" {
-		if matches, err := s.matchCondition(ctx, e, rule.WhenCondition); err != nil || !matches {
+		if matches, err := s.matchCondition(ctx, e, rule.WhenCondition, traversal); err != nil || !matches {
 			return entityResult{}
 		}
 	}
@@ -483,7 +593,7 @@ func (s *Service) checkEntityAgainstRule(
 		// so it is a violation — the same direction as a `then:` clause
 		// that fails to match. A malformed expression never reaches
 		// here: compileRuleConditions abandons the rule first.
-		if satisfies, err := s.matchCondition(ctx, e, rule.ThenCondition); err != nil || !satisfies {
+		if satisfies, err := s.matchCondition(ctx, e, rule.ThenCondition, traversal); err != nil || !satisfies {
 			return entityResult{Violations: []Violation{s.newViolation(rule, e, rule.Description)}}
 		}
 	}

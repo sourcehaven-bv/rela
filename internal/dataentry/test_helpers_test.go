@@ -2,6 +2,7 @@ package dataentry
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -16,6 +17,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/openapi"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/relresolve"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/state"
@@ -141,13 +143,20 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 	// (TKT-3FL2S6). lateGatedReader is late-bound, so it tolerates app.acl /
 	// app.affordances being rebound below.
 	gatedReader := lateGatedReader{app: app}
-	app.validator = validator.New(gatedReader, svc.Meta(), lua.ReadDeps{
+	valBinder, err := relresolve.NewBinder(svc.Meta(), lateTraversalGate, svc.Store().MatchingIDs)
+	if err != nil {
+		panic(fmt.Sprintf("validator traversals: %v", err))
+	}
+	app.validator, err = validator.New(gatedReader, svc.Meta(), lua.ReadDeps{
 		VisibleReader: gatedReader,
 		Tracer:        lateGatedTracer{app: app},
 		Searcher:      svc.Searcher(),
 		Meta:          svc.Meta(),
 		ProjectRoot:   paths.Root,
-	})
+	}, valBinder)
+	if err != nil {
+		panic(fmt.Sprintf("validator: %v", err))
+	}
 	app.analyze = analyzeService{reads: gatedReader, relCounts: svc.Store(), tracer: lateGatedTracer{app: app}, validator: app.validator}
 	app.templater = svc.Templater()
 	app.cfgLoader = svc.Config()

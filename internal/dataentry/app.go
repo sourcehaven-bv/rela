@@ -26,6 +26,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/migration"
 	"github.com/Sourcehaven-BV/rela/internal/openapi"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/relresolve"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/state"
@@ -1063,7 +1064,17 @@ func NewApp(
 		Meta:          meta,
 		ProjectRoot:   paths.Root,
 	}
-	val := validator.New(gatedReader, meta, readDeps)
+	// Rule traversals are answered under the request's own read gate,
+	// resolved per call like gatedReader, so a rule's related() never sees
+	// an entity its reads could not.
+	valBinder, err := relresolve.NewBinder(meta, lateTraversalGate, st.MatchingIDs)
+	if err != nil {
+		return nil, fmt.Errorf("dataentry: validator traversals: %w", err)
+	}
+	val, err := validator.New(gatedReader, meta, readDeps, valBinder)
+	if err != nil {
+		return nil, fmt.Errorf("dataentry: validator: %w", err)
+	}
 	app.validator = val
 
 	// analyzeService entity reads route through the same gated reader; relation

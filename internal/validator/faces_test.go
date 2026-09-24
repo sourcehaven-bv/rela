@@ -39,7 +39,7 @@ func TestValidate_SeesEveryFace(t *testing.T) {
 
 	rule := metamodel.ValidationRule{Name: "title-required", EntityType: "guide", Then: []string{"title!="}}
 	meta := facedMeta(rule)
-	v := validator.New(st, meta, lua.ReadDeps{Meta: meta})
+	v := mustValidator(validator.New(st, meta, lua.ReadDeps{Meta: meta}, binder(meta, st)))
 
 	full, err := v.CheckRuleFull(ctx, rule)
 	if err != nil {
@@ -72,7 +72,7 @@ func TestValidate_UnfacedTypeReportsNoFace(t *testing.T) {
 			Properties: map[string]metamodel.PropertyDef{"title": {Type: "string", Required: true}}}},
 		Validations: []metamodel.ValidationRule{rule},
 	}
-	v := validator.New(st, meta, lua.ReadDeps{Meta: meta})
+	v := mustValidator(validator.New(st, meta, lua.ReadDeps{Meta: meta}, binder(meta, st)))
 
 	full, err := v.CheckRuleFull(ctx, rule)
 	if err != nil {
@@ -103,7 +103,7 @@ func TestValidate_RuleScopedToOneFace(t *testing.T) {
 		Faces: []string{"nl"}, Then: []string{"title!="},
 	}
 	meta := facedMeta(rule)
-	v := validator.New(st, meta, lua.ReadDeps{Meta: meta})
+	v := mustValidator(validator.New(st, meta, lua.ReadDeps{Meta: meta}, binder(meta, st)))
 
 	full, err := v.CheckRuleFull(ctx, rule)
 	if err != nil {
@@ -132,7 +132,7 @@ func TestValidate_RuleScopedToTheOtherFace(t *testing.T) {
 		Faces: []string{"en"}, Then: []string{"title!="},
 	}
 	meta := facedMeta(rule)
-	v := validator.New(st, meta, lua.ReadDeps{Meta: meta})
+	v := mustValidator(validator.New(st, meta, lua.ReadDeps{Meta: meta}, binder(meta, st)))
 
 	full, err := v.CheckRuleFull(ctx, rule)
 	if err != nil {

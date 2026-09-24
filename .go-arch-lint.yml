@@ -481,6 +481,11 @@ deps:
       - openapi
       - project
       - queryplan
+      # Answers `related(...)` in validation rules (TKT-205V2N). Its API is
+      # funcs over acl and store types, so this edge does not hand dataentry
+      # the predicate engine; the validator evaluates, dataentry only picks
+      # the per-request gate.
+      - relresolve
       - script
       - search
       - searchparser
@@ -770,6 +775,7 @@ deps:
       - lua
       - metamodel
       - project
+      - relresolve
       - schema
       - storage
       - store

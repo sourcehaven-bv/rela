@@ -240,6 +240,15 @@ func New(meta *metamodel.Metamodel, opts ...Option) *appbuild.Services {
 		}
 	}
 
+	valBinder, err := relresolve.NewBinder(meta, relresolve.Ungated, st.MatchingIDs)
+	if err != nil {
+		panic(fmt.Sprintf("appbuildtest.New: build traversal binder: %v", err))
+	}
+	val, err := validator.New(st, meta, readDeps, valBinder)
+	if err != nil {
+		panic(fmt.Sprintf("appbuildtest.New: build validator: %v", err))
+	}
+
 	svc, err := appbuild.NewFromCollaborators(appbuild.Collaborators{
 		FS:            cfg.fs,
 		Paths:         cfg.paths,
@@ -248,7 +257,7 @@ func New(meta *metamodel.Metamodel, opts ...Option) *appbuild.Services {
 		Searcher:      searcher,
 		EntityManager: mgr,
 		Tracer:        tr,
-		Validator:     validator.New(st, meta, readDeps),
+		Validator:     val,
 		Templater:     templater,
 		CfgLoader:     cfgLoader,
 		StateKV:       stateKV,

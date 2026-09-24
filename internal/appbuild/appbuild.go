@@ -454,12 +454,24 @@ func (s *Services) luaReadDepsFor(redactor visibility.FieldRedactor) lua.ReadDep
 func scriptEntityReader(
 	st store.Store, d *acl.Declarative, redactor visibility.FieldRedactor,
 ) lua.EntityReader {
+	reader, _ := scriptReads(st, d, redactor)
+	return reader
+}
+
+// scriptReads returns the principal-bound script reader and the traversal gate
+// that answers `related(...)` under the SAME tier: unrestricted reads get
+// [relresolve.Ungated], policy reads get the ctx principal's gate, and a
+// refused reader gets a gate that refuses too. Deriving both in one place is
+// what keeps a validation rule's traversal from seeing more than its reads.
+func scriptReads(
+	st store.Store, d *acl.Declarative, redactor visibility.FieldRedactor,
+) (lua.EntityReader, relresolve.Gate) {
 	if d == nil {
 		// Named, not bare: this is the NopACL path and the single largest
 		// ungated read surface in the tree, so it must show up in
 		// `grep -rn visibility.Unrestricted` like every other one
 		// (TKT-1WV50C).
-		return visibility.Unrestricted(st)
+		return visibility.Unrestricted(st), relresolve.Ungated
 	}
 	if redactor == nil {
 		redactor = visibility.NopRedactor{}
@@ -467,19 +479,25 @@ func scriptEntityReader(
 	gate, err := visibility.NewDeclarativeGate(d)
 	if err != nil {
 		slog.Error("appbuild: ACL gate unavailable; script reads REFUSED", "err", err)
-		return visibility.DenyReader{}
+		return visibility.DenyReader{}, refuseTraversal
 	}
 	reader, err := visibility.NewPolicyReader(gate, redactor, st)
 	if err != nil {
 		slog.Error("appbuild: policy reader unavailable; script reads REFUSED", "err", err)
-		return visibility.DenyReader{}
+		return visibility.DenyReader{}, refuseTraversal
 	}
 	sr, err := visibility.NewScriptReader(reader, st, gate)
 	if err != nil {
 		slog.Error("appbuild: script reader unavailable; script reads REFUSED", "err", err)
-		return visibility.DenyReader{}
+		return visibility.DenyReader{}, refuseTraversal
 	}
-	return sr
+	return sr, gate.GateTraversal
+}
+
+// refuseTraversal pairs with [visibility.DenyReader]: reads are refused, so
+// traversals are too, as an error rather than "no match".
+func refuseTraversal(context.Context, string, acl.TraversalHop) (*store.RelationPredicate, error) {
+	return nil, fmt.Errorf("%w: script reads are refused", acl.ErrTraversalUnsupported)
 }
 
 // scriptTracer returns the traversal handle for a script runtime, wrapped
@@ -584,7 +602,7 @@ func (s *Services) ScheduledLuaWriteDeps() lua.WriteDeps {
 // visibility.PolicyReader implements only FilterRelations, so a surviving edge
 // still carries all of its meta.
 func (s *Services) GatedReads() GatedReadBundle {
-	reader := scriptEntityReader(s.store, s.aclDeclarative, s.fieldRedactor)
+	reader, gate := scriptReads(s.store, s.aclDeclarative, s.fieldRedactor)
 	tr := scriptTracer(s.tracer, s.store, s.aclDeclarative, s.fieldRedactor)
 
 	deps := s.LuaReadDeps()
@@ -594,7 +612,7 @@ func (s *Services) GatedReads() GatedReadBundle {
 	return GatedReadBundle{
 		Reader:    gatedGraphReader{rows: reader, raw: s.store},
 		Tracer:    tr,
-		Validator: validator.New(reader, s.meta, deps),
+		Validator: newValidator(reader, s.meta, deps, gate, s.store),
 	}
 }
 
@@ -1848,7 +1866,10 @@ func assemble(
 	}
 	// coverage-ignore-end
 
-	val := validator.New(st, base.meta, readDeps)
+	val, err := validator.New(st, base.meta, readDeps, ungatedBinder(base.meta, st))
+	if err != nil { // coverage-ignore: defensive: validator.New only fails on a nil dep; all are built above
+		return nil, err
+	}
 
 	// Start the backend's version-reconciliation sweep (postgres and sqlite
 	// builds; a no-op elsewhere). It captures create/update versions for
@@ -2306,3 +2327,31 @@ type nopKV struct{}
 func (nopKV) Get(context.Context, string) ([]byte, error) { return nil, os.ErrNotExist }
 func (nopKV) Put(context.Context, string, []byte) error   { return nil }
 func (nopKV) Delete(context.Context, string) error        { return nil }
+
+// ungatedBinder answers `related(...)` against the raw store, for the
+// operator- and system-trust paths. It cannot fail: meta and st are required
+// by every caller before it gets here.
+func ungatedBinder(meta *metamodel.Metamodel, st store.Store) *relresolve.Binder {
+	b, err := relresolve.NewBinder(meta, relresolve.Ungated, st.MatchingIDs)
+	if err != nil {
+		// coverage-ignore: invariant: meta and st are non-nil at every call site
+		panic(err)
+	}
+	return b
+}
+
+// newValidator builds the principal-bound validator of [Services.GatedReads].
+// Its traversals go through gate, the same tier as reader.
+func newValidator(
+	reader lua.EntityReader, meta *metamodel.Metamodel, deps lua.ReadDeps, gate relresolve.Gate, st store.Store,
+) validator.Validator {
+	b, err := relresolve.NewBinder(meta, gate, st.MatchingIDs)
+	if err == nil {
+		var v *validator.GenericValidator
+		if v, err = validator.New(reader, meta, deps, b); err == nil {
+			return v
+		}
+	}
+	// coverage-ignore: invariant: every argument is non-nil at the one call site
+	panic(err)
+}
