@@ -5,7 +5,7 @@ title: 'sqlitestore: push GraphQuery down into SQL like pgstore'
 kind: enhancement
 priority: high
 effort: xl
-status: ready
+status: backlog
 ---
 
 ## Description
