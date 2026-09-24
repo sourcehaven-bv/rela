@@ -119,8 +119,9 @@ entity present and every remark on them left behind.
   build also derives the same indexes from your static queries and lists. It
   creates `rela_derived_query__…` and `rela_derived_list__…` indexes at
   startup, so a list page sorted ascending reads one index range instead of
-  sorting the whole type. A descending sort still sorts its last key. The PostgreSQL guide's "Derived schema" section describes which
-  queries qualify; the rules are the same here.
+  sorting the whole type. A descending sort still sorts its last key. The
+  PostgreSQL guide's "Derived schema" section describes which queries qualify;
+  the rules are the same here.
 
 ## Derived indexes
 
@@ -138,8 +139,9 @@ rela db reconcile --dry-run # show what WOULD change; non-zero exit if anything 
 `rela db reconcile` opens the database, so it cannot run while a server has the
 project open. A dry run changes nothing: with no database yet it says so and
 exits 0, and it refuses a database whose schema is older than the binary
-instead of migrating it. `unique: true` does not produce an index on this build: the
-single-writer lock above is what makes the application-level check sound.
+instead of migrating it. `unique: true` does not produce an index on this
+build: the single-writer lock above is what makes the application-level check
+sound.
 
 ## Migrating between backends
 
