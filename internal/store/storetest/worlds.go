@@ -633,6 +633,100 @@ func RunWorldTests(t *testing.T, f Factory) {
 		}
 	})
 
+	// The world picks the face; the predicates then decide whether that
+	// face is in the result (BUG-2SKLD3). A backend that filtered the faces
+	// first and ranked the survivors would answer a list with a face the
+	// world did not choose: PF-1's published prime is closed, so
+	// status=open must not reach it through the default face a GET would
+	// never serve. Any and FaceIn are the opposite: they trim the
+	// CANDIDATES, so the world ranks what they leave.
+	t.Run("PredicatesTestThePrimeNotALowerRankedFace", func(t *testing.T) {
+		s := f(t)
+		withStatus := func(e *entity.Entity, status string) *entity.Entity {
+			e.SetString("status", status)
+			return e
+		}
+		mustCreate(t, s, withStatus(newState(t, "PF-1", "page", "", "PF-1 default"), "open"))
+		mustCreate(t, s, withStatus(newState(t, "PF-1", "page", "published", "PF-1 published"), "closed"))
+		// PF-2 has no published face, so its default state is the prime.
+		mustCreate(t, s, withStatus(newState(t, "PF-2", "page", "", "PF-2 default"), "open"))
+		mustCreate(t, s, withStatus(newState(t, "PF-3", "page", "", "PF-3 default"), "closed"))
+		mustCreate(t, s, withStatus(newState(t, "PF-3", "page", "published", "PF-3 published"), "open"))
+
+		world := scope(t, "page", store.FallbackDefaultState, "published")
+		open := store.PropPredicate{Property: "status", Op: store.PropEqual, Value: "open", Scalar: true}
+		rows := func(t *testing.T, q store.GraphQuery) map[string]string {
+			t.Helper()
+			got := map[string]string{}
+			for e, err := range s.GraphQuery(ctx(), q) {
+				require.NoError(t, err)
+				got[e.ID] = e.GetString("title")
+			}
+			return got
+		}
+		primesOpen := map[string]string{"PF-2": "PF-2 default", "PF-3": "PF-3 published"}
+
+		for _, tc := range []struct {
+			name string
+			q    store.GraphQuery
+		}{
+			{"Props", store.GraphQuery{EntityType: "page", World: world, Props: []store.PropPredicate{open}}},
+			{"Narrowing", store.GraphQuery{EntityType: "page", World: world,
+				Narrowing: []store.NarrowBranch{{Props: []store.PropPredicate{open}}}}},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				q := tc.q
+				assert.Equal(t, primesOpen, rows(t, q))
+
+				var headers []string
+				for h, err := range store.GraphQueryHeaders(ctx(), s, q) {
+					require.NoError(t, err)
+					headers = append(headers, h.ID)
+				}
+				assert.Equal(t, []string{"PF-2", "PF-3"}, headers)
+
+				matched, total, err := s.GraphCount(ctx(), q)
+				require.NoError(t, err)
+				assert.Equal(t, 2, matched, "the count must agree with the rows")
+				assert.Equal(t, 3, total, "the denominator counts every prime in the world")
+				n, err := store.CountMatched(ctx(), s, q)
+				require.NoError(t, err)
+				assert.Equal(t, 2, n)
+
+				ids, err := s.MatchingIDs(ctx(), q, []string{"PF-1", "PF-2", "PF-3"})
+				require.NoError(t, err)
+				assert.False(t, ids["PF-1"])
+				assert.True(t, ids["PF-2"])
+				assert.True(t, ids["PF-3"])
+
+				paged := q
+				paged.OrderBy = []store.OrderSpec{{Property: "title"}}
+				paged.Limit, paged.Offset = 1, 1
+				assert.Equal(t, map[string]string{"PF-3": "PF-3 published"}, rows(t, paged))
+			})
+		}
+
+		// A branch that admits only the default face removes every published
+		// face from the candidates, so the default face is the prime and
+		// the filter tests it: PF-1 matches through its default face now,
+		// and PF-3 does not.
+		t.Run("AnyTrimsCandidatesBeforeTheRank", func(t *testing.T) {
+			q := store.GraphQuery{
+				EntityType: "page", World: world, Props: []store.PropPredicate{open},
+				Any: []store.GraphBranch{{FaceIn: []entity.Face{""}}},
+			}
+			assert.Equal(t, map[string]string{"PF-1": "PF-1 default", "PF-2": "PF-2 default"}, rows(t, q))
+			n, err := store.CountMatched(ctx(), s, q)
+			require.NoError(t, err)
+			assert.Equal(t, 2, n)
+			ids, err := s.MatchingIDs(ctx(), q, []string{"PF-1", "PF-2", "PF-3"})
+			require.NoError(t, err)
+			assert.True(t, ids["PF-1"])
+			assert.True(t, ids["PF-2"])
+			assert.False(t, ids["PF-3"])
+		})
+	})
+
 	t.Run("AllStatesWithWorldIsRejected", func(t *testing.T) {
 		s := f(t)
 		mustCreate(t, s, newState(t, "PAGE-1", "page", "", "default"))

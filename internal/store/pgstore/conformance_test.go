@@ -43,6 +43,10 @@ func TestConformance(t *testing.T) {
 // TestVisibleFieldConformance runs the property-level (match-on-hidden-field)
 // suite against the pgstore-native FieldVisibleSearcher (TKT-GGQ0JT).
 // DB-gated on RELA_TEST_DATABASE_URL like the rest of the suite.
+func TestGraphDifferential(t *testing.T) {
+	storetest.RunGraphDifferential(t, factory)
+}
+
 func TestVisibleFieldConformance(t *testing.T) {
 	storetest.RunVisibleFieldSearchTests(t, fieldVisibleSearchFactory)
 }

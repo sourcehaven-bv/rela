@@ -124,53 +124,6 @@ func runDBReconcile(dryRun, showValues bool) error {
 	return nil
 }
 
-// printDerivedDrift prints the reconcile outcomes and reports whether any object
-// drifted (was/would-be created, dropped, or is unenforced). When dryRun, the
-// verbs are phrased as "would ...".
-func printDerivedDrift(outcomes []store.DerivedObjectOutcome, dryRun bool) (drift bool) {
-	var enforced int
-	for _, o := range outcomes {
-		switch o.State {
-		case store.DerivedEnforced:
-			enforced++
-		case store.DerivedCreated:
-			drift = true
-			verb := "created"
-			if dryRun {
-				verb = "would create"
-			}
-			if o.Spec.Kind == store.DerivedQueryIndex {
-				fmt.Printf("  + %s query index on %s.%v\n", verb, o.Spec.Type, o.Spec.Properties)
-			} else {
-				fmt.Printf("  + %s unique constraint on %s.%s\n", verb, o.Spec.Type, o.Spec.Property)
-			}
-		case store.DerivedDropped:
-			drift = true
-			verb := "dropped"
-			if dryRun {
-				verb = "would drop"
-			}
-			fmt.Printf("  - %s %s\n", verb, o.Reason)
-		case store.DerivedUnenforced:
-			drift = true
-			if o.Spec.Kind == store.DerivedQueryIndex {
-				fmt.Printf("  ! NOT created: query index on %s.%v — %s\n",
-					o.Spec.Type, o.Spec.Properties, o.Reason)
-			} else {
-				fmt.Printf("  ! NOT enforced: unique on %s.%s — %s (%d duplicate value group(s))\n",
-					o.Spec.Type, o.Spec.Property, o.Reason, o.BlockingCount)
-			}
-			for _, v := range o.SampleValues {
-				fmt.Printf("      duplicate value: %s\n", v)
-			}
-		}
-	}
-	if !drift {
-		fmt.Printf("Derived schema: up to date (%d object(s) enforced).\n", enforced)
-	}
-	return drift
-}
-
 // loadDerivedSpecs discovers the project and returns unique constraints plus
 // indexes derived from valid static data-entry queries. ok is false when the
 // complete desired set cannot be loaded; callers must not reconcile a partial

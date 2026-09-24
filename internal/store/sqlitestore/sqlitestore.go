@@ -120,7 +120,13 @@ const timeFmt = time.RFC3339Nano
 // second method is its private pre-read helper, which exists because the
 // events name triples that no longer exist once the UPDATE has run.
 //
-//plimsoll:max-methods=60
+// +3 exported / +3 methods (TKT-B51CYD): GraphQueryHeaders, CountMatched and
+// ListEntityHeaders are the OPTIONAL capabilities store.GraphHeaderQueryer,
+// store.MatchedCounter and store.HeaderReader, found by type assertion, so
+// they must live on this type. The SQL they run is built by free functions in
+// graphsql.go.
+//
+//plimsoll:max-methods=58
 //plimsoll:max-exported-methods=39
 type Store struct {
 	db *sql.DB

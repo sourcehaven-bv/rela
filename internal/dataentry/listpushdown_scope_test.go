@@ -194,7 +194,7 @@ func assertScopeMatchesGoPath(t *testing.T, app *App, d *acl.Declarative, counti
 						if lowerableScopes[scope] && user != "erin" && calls["MatchingIDs"] != 0 {
 							t.Errorf("%s was not pushed down for %s: %s", scope, user, counting)
 						}
-						if !lowerableScopes[scope] && user != "erin" && calls["GraphCount"] != 0 {
+						if !lowerableScopes[scope] && user != "erin" && calls["CountMatched"] != 0 {
 							t.Errorf("%s must stay on the Go path: %s", scope, counting)
 						}
 					})
@@ -222,7 +222,7 @@ func TestListPushdown_IncomingScopeKeepsRelationGate(t *testing.T) {
 	if strings.Join(got, ",") != strings.Join(want, ",") || resp.Meta.Total != len(want) {
 		t.Fatalf("got %v (total %d), want %v", got, resp.Meta.Total, want)
 	}
-	if counting.Calls()["GraphCount"] != 1 {
+	if counting.Calls()["CountMatched"] != 1 {
 		t.Errorf("expected the pushed path: %s", counting)
 	}
 }
@@ -241,7 +241,7 @@ func TestListPushdown_DeniedTraversalIsEmptyWithoutAScan(t *testing.T) {
 		t.Fatalf("got %d rows, total %d; want none", len(resp.Data), resp.Meta.Total)
 	}
 	calls := counting.Calls()
-	if calls["ListEntityHeaders"] != 0 || calls["GraphQuery"] != 0 || calls["GraphCount"] != 0 {
+	if calls["ListEntityHeaders"] != 0 || calls["GraphQueryHeaders"] != 0 || calls["CountMatched"] != 0 {
 		t.Errorf("a denied traversal read the store: %s", counting)
 	}
 }

@@ -547,7 +547,11 @@ entitymanager, so two writers would have no backstop and the violation would be
 silent. It takes the strong `Tx` tier (rollback, post-commit-only events) and,
 since TKT-4NU9ZD, content versioning too — so history comes from the database
 rather than from git, which it cannot use because the markdown files are not the
-source of truth. It also refuses to open on a filesystem where WAL cannot be
+source of truth. Since TKT-B51CYD its graph queries run as SQL, like pgstore's,
+with `graphquerynaive` as the reference: `storetest.RunGraphDifferential`
+compares the two on randomized queries for both database backends, and a name
+the builder cannot render as a literal JSON path falls back to the naive
+path. It also refuses to open on a filesystem where WAL cannot be
 enabled (iCloud/Dropbox/SMB), because SQLite is unsafe there.
 
 Rules when touching this:
@@ -789,13 +793,18 @@ Rules when touching this:
   `appbuild.Discover` reads the env into `appbuild.Config.DatabaseURL`; the `db`
   commands read the env directly. Don't add a DSN flag.
 - **Derived static-query indexes are all-or-nothing desired state.** The
-  PostgreSQL reconciler owns only `rela_derived_query__*` and derives those
-  indexes from validated static dashboard/next-action query shapes. Never
+  PostgreSQL and SQLite reconcilers own only `rela_derived_query__*` /
+  `rela_derived_list__*` and derive those indexes from validated static
+  dashboard/next-action/list shapes (`appbuild.staticIndexSpecs`, shared by
+  both). Never
   reconcile a partial set after a `data-entry.yaml` read/parse/validation
   failure: an absent desired object means DROP, so partial input is destructive.
   Runtime/ad-hoc queries never issue DDL. Pushdown and index inference must use
   the same `internal/queryplan` eligibility decision, and an EXPLAIN test must
-  prove each newly supported SQL shape actually uses its generated index. A
+  prove each newly supported SQL shape actually uses its generated index, on
+  both backends (`EXPLAIN QUERY PLAN` on sqlite). SQLite matches an expression
+  index only when the query spells the expression identically, so its DDL is
+  built with the query builder's own helpers (`sqlitestore/derivedschema.go`). A
   next-action `condition:` participates on both sides: its store-safe scalar
   equalities (`entity.x == 'lit'`, `entity.x == current_user.id`,
   `is_current_user(entity.x)`) are pushed with the query and derive columns of

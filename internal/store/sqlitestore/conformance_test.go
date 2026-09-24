@@ -166,3 +166,7 @@ func FuzzCloneNestedValues(f *testing.F) {
 func FuzzPropertyValuesTypeZoo(f *testing.F) {
 	storetest.FuzzPropertyValuesTypeZoo(f, fuzzFactory())
 }
+
+func TestGraphDifferential(t *testing.T) {
+	storetest.RunGraphDifferential(t, factory)
+}

@@ -1,18 +1,18 @@
 package cli
 
-// DBCmd groups database-administration subcommands for the PostgreSQL build.
-// The schema is applied automatically when the store first opens (see
-// pgstore.Open); these commands exist for operators who want to apply or check
+// DBCmd groups database-administration subcommands for the PostgreSQL and
+// SQLite builds. The schema is applied automatically when the store first
+// opens; these commands exist for operators who want to apply or check
 // migrations explicitly — e.g. as a separate, privileged deploy step, or a CI
 // gate — rather than relying on auto-migrate.
 //
-// The subcommands are only functional in the `postgres` build. In the default
-// (filesystem) and `memorybackend` builds they return a clear "not available"
+// The subcommands are only functional in the `postgres` and `sqlite` builds.
+// In the default (filesystem) and `memorybackend` builds they return a clear "not available"
 // error (see runDBMigrate / runDBStatus in the build-tagged db_*.go files).
 type DBCmd struct {
 	Migrate   DBMigrateCmd   `cmd:"" help:"Apply pending PostgreSQL schema migrations."`
 	Status    DBStatusCmd    `cmd:"" help:"Report the database schema version (read-only; non-zero exit if behind)."`
-	Reconcile DBReconcileCmd `cmd:"" help:"Converge derived-schema objects (unique indexes) with the metamodel."`
+	Reconcile DBReconcileCmd `cmd:"" help:"Converge derived-schema objects (unique and query indexes) with the configuration."`
 }
 
 // DBMigrateCmd applies pending schema migrations to the database named by the
@@ -36,13 +36,15 @@ func (c *DBStatusCmd) Run() error {
 	return runDBStatus()
 }
 
-// DBReconcileCmd converges the database's derived-schema objects — partial
-// unique indexes synthesized from the metamodel's `unique: true` properties
-// (TKT-3Q0GP1) — creating missing ones and dropping ones no longer declared.
+// DBReconcileCmd converges the database's derived-schema objects, creating
+// missing ones and dropping ones no longer declared: partial unique indexes
+// from the metamodel's `unique: true` properties (TKT-3Q0GP1, postgres only)
+// and query and list indexes from data-entry.yaml (both database builds).
 //
 // This is the explicit operator affordance for the same reconciliation that
 // runs automatically at store-open. Its trust boundary is the operator shell
-// (like `db migrate`): it takes no ACL and reads the DSN from RELA_DATABASE_URL.
+// (like `db migrate`): it takes no ACL. On postgres it reads the DSN from
+// RELA_DATABASE_URL.
 //
 // With --dry-run it computes and prints the plan WITHOUT changing anything, and
 // exits non-zero if the live schema differs from the metamodel — a pre-flight/CI
