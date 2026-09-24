@@ -445,10 +445,18 @@ func NewServer(deps Deps, version string, opts ...Option) (*Server, error) {
 // how identity works: the transport passes the *http.Request ctx through to
 // handlers, and Server.principalMiddleware preserves a principal already
 // stamped there in preference to the construction-time one.
+//
+// The go-sdk's DNS-rebinding guard is disabled. It rejects any non-loopback
+// Host on a connection accepted over loopback, which is every request in
+// production: rela-server binds 0.0.0.0 and the proxy in front of it connects
+// over 127.0.0.1, forwarding the public Host. The guard protects
+// unauthenticated local servers. This endpoint is only mounted behind the
+// verified-JWT gate (see dataentry.App.SetRemoteMCP), and a rebinding page
+// cannot produce a signed assertion.
 func (s *Server) HTTPHandler() http.Handler {
 	return mcpgo.NewStreamableHTTPHandler(
 		func(*http.Request) *mcpgo.Server { return s.mcp },
-		&mcpgo.StreamableHTTPOptions{Stateless: true},
+		&mcpgo.StreamableHTTPOptions{Stateless: true, DisableLocalhostProtection: true},
 	)
 }
 

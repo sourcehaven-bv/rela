@@ -74,6 +74,8 @@ type MCPHandlerFactory func() (http.Handler, error)
 //     declarative-ACL deployment would still fail closed
 //     (`acl.ErrUnstampedPrincipal` rejects `unknown`), but a NopACL deployment
 //     would not, and this must not depend on a second, unrelated setting.
+//     The go-sdk's DNS-rebinding guard is disabled on the same grounds (see
+//     mcp.Server.HTTPHandler); relaxing this refusal must re-enable it.
 //
 // The same reasoning as `validateIdentityFlags` in cmd/rela-server: an
 // auth downgrade happens per request, long after anyone reads a startup
