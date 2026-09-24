@@ -18,7 +18,7 @@ import (
 // graphquerynaive returns for the same query over the same data — rows AND
 // order — including the values SQL and Go are most likely to read
 // differently: numbers, booleans, JSON null, lists, quotes, non-ASCII text.
-func TestSimpleGraphSQL_MatchesNaive(t *testing.T) {
+func TestGraphSQL_MatchesNaive(t *testing.T) {
 	s := open(t)
 	ctx := context.Background()
 
@@ -105,7 +105,7 @@ func TestSimpleGraphSQL_MatchesNaive(t *testing.T) {
 // null, absent), the ordered read is served in SQL and must still equal the
 // naive order. The mixed fixture above cannot show this: its floats, list and
 // object make the exactness probe decline every ordering on `key`.
-func TestSimpleGraphSQL_OrdersExactScalarsInSQL(t *testing.T) {
+func TestGraphSQL_OrdersExactScalarsInSQL(t *testing.T) {
 	s := open(t)
 	ctx := context.Background()
 	for i, v := range []any{"open", "Open", "", nil, 7, 10, -3, true, false, "émigré", `q"uote`} {

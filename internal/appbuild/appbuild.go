@@ -1848,10 +1848,12 @@ func assemble(
 	// entitymanager hook above.
 	startVersionSweepIfSupported(st, base.meta)
 
-	// Reconcile the derived schema (postgres build only; a no-op elsewhere):
-	// synthesize the metamodel's `unique: true` properties into partial unique
-	// indexes so uniqueness is enforced atomically, and publish the current
-	// unique pairs so a violation can be attributed to a property (TKT-3Q0GP1).
+	// Reconcile the derived schema (the database builds; a no-op elsewhere):
+	// derive query and list indexes from data-entry.yaml (both), and on
+	// postgres synthesize the metamodel's `unique: true` properties into
+	// partial unique indexes so uniqueness is enforced atomically, publishing
+	// the current unique pairs so a violation can be attributed to a property
+	// (TKT-3Q0GP1).
 	// Failures degrade to warnings — a derived-schema problem never fails boot.
 	//
 	// STORE-OPEN ONLY, skipped on re-assembly. `pgstore.Store.Reconcile` is
