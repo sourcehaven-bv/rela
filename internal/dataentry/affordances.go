@@ -181,6 +181,24 @@ type FieldVerdictResolver interface {
 	RelationVerdicts(ctx context.Context, e *entityPkg.Entity) RelationVerdicts
 }
 
+// traversalPrimer is the OPTIONAL capability of a [FieldVerdictResolver]
+// whose grants evaluate `related(...)` (TKT-205V2N): it answers those for a
+// whole page at once and returns a ctx carrying the answers. Only the
+// policy-backed resolver has it.
+type traversalPrimer interface {
+	PrimeTraversals(ctx context.Context, rows []*entityPkg.Entity) context.Context
+}
+
+// primeVerdicts primes res for a page of rows so serializing the page costs
+// one store query per grant traversal, not one per row. Serializing on the
+// unprimed ctx is still correct, only slower.
+func primeVerdicts(ctx context.Context, res FieldVerdictResolver, rows []*entityPkg.Entity) context.Context {
+	if p, ok := res.(traversalPrimer); ok && len(rows) > 0 {
+		return p.PrimeTraversals(ctx, rows)
+	}
+	return ctx
+}
+
 // TransitionResolver is the OPTIONAL sibling of [FieldVerdictResolver] that
 // answers state-machine transition verdicts for an entity (TKT-3G93B8). It is
 // kept separate — and type-asserted, not embedded — because only the

@@ -124,6 +124,25 @@ type FieldRedactor interface {
 	HiddenProperties(ctx context.Context, e *entity.Entity) map[string]struct{}
 }
 
+// TraversalPrimer is the optional capability of a [FieldRedactor] whose
+// verdicts evaluate `related(...)` (TKT-205V2N). PrimeTraversals answers those
+// for a batch of rows at once and returns a ctx carrying the answers, so
+// redacting the batch on that ctx costs one store query per traversal rather
+// than one per row. Priming is an optimization: an unprimed row is answered
+// on its own.
+type TraversalPrimer interface {
+	PrimeTraversals(ctx context.Context, rows []*entity.Entity) context.Context
+}
+
+// PrimeTraversals primes red for rows when it is a [TraversalPrimer], and
+// returns ctx unchanged otherwise.
+func PrimeTraversals(ctx context.Context, red FieldRedactor, rows []*entity.Entity) context.Context {
+	if p, ok := red.(TraversalPrimer); ok && len(rows) > 0 {
+		return p.PrimeTraversals(ctx, rows)
+	}
+	return ctx
+}
+
 // EntityGetter is the single-entity load this package needs from the
 // store. Satisfied by store.Store.
 type EntityGetter interface {

@@ -66,7 +66,7 @@ func newTestValidator(t *testing.T) *validator.GenericValidator {
 	// individual service fields are not exercised here.
 	deps := lua.ReadDeps{Meta: meta}
 
-	return validator.New(s, meta, deps)
+	return mustValidator(validator.New(s, meta, deps, binder(meta, s)))
 }
 
 func TestGenericValidator_CheckRule(t *testing.T) {
@@ -148,7 +148,7 @@ func TestGenericValidator_CheckRuleFull_ContentDetail(t *testing.T) {
 		Entities:    map[string]metamodel.EntityDef{"ncr": {Label: "NCR"}},
 		Validations: []metamodel.ValidationRule{rule},
 	}
-	v := validator.New(s, meta, lua.ReadDeps{Meta: meta})
+	v := mustValidator(validator.New(s, meta, lua.ReadDeps{Meta: meta}, binder(meta, s)))
 
 	full, err := v.CheckRuleFull(ctx, rule)
 	if err != nil {

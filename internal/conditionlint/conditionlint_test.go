@@ -122,7 +122,7 @@ func TestLint_RelatedIsRefused(t *testing.T) {
 			{Property: "status", VisibleWhen: "related(form, 'blocks')"},
 		},
 	})
-	if len(errs) != 1 || !strings.Contains(errs[0], "related(...) is only supported in query_scopes") {
+	if len(errs) != 1 || !strings.Contains(errs[0], "related(...) is not available in form conditions") {
 		t.Fatalf("want the related() refusal, got: %v", errs)
 	}
 }

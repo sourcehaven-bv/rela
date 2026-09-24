@@ -26,6 +26,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/migration"
 	"github.com/Sourcehaven-BV/rela/internal/openapi"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/relresolve"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/state"
@@ -724,6 +725,26 @@ func gatedScriptReader(aclImpl acl.ACL, store store.Store, redactor visibility.F
 	return sr
 }
 
+// scriptTraversalGate authorizes a validation rule's traversal under the same
+// tier as [gatedScriptReader], resolved at call time because a.acl is set
+// after construction. Deriving both from a.acl, not from the request on ctx,
+// keeps a rule's related() from seeing more than its reads: a ctx without the
+// middleware's read gate is refused under a policy, not answered ungated.
+func scriptTraversalGate(a *App) relresolve.Gate {
+	return func(ctx context.Context, candidateType string, hop acl.TraversalHop) (*store.RelationPredicate, error) {
+		d, ok := a.acl.(*acl.Declarative)
+		if !ok || d == nil {
+			return relresolve.Ungated(ctx, candidateType, hop)
+		}
+		gate, err := visibility.NewDeclarativeGate(d)
+		if err != nil {
+			// coverage-ignore: invariant: d is non-nil here
+			return nil, fmt.Errorf("%w: %w", acl.ErrTraversalUnsupported, err)
+		}
+		return gate.GateTraversal(ctx, candidateType, hop)
+	}
+}
+
 // scriptTracer wraps the tracer in the visibility decorator when a
 // Declarative policy is configured. Trace bindings are unchanged either
 // way — pruning happens inside the decorator.
@@ -962,17 +983,8 @@ func NewApp(
 	// this is a hint rather than a check.
 	warnUngatedMailActionsFromDisk(cfg.Actions, paths.Root)
 
-	// Verify document scripts exist on disk. Shell-command documents are
-	// not checkable this way (the binary may be on PATH at render time
-	// but unavailable now); Lua scripts live in scripts/ under the
-	// project root so existence can be verified upfront.
-	for id, doc := range cfg.Documents {
-		if doc.Script == "" {
-			continue
-		}
-		if err := script.CheckDocumentScriptExists(paths.Root, doc.Script); err != nil {
-			return nil, fmt.Errorf("invalid %s: document %q: %w", ConfigFile, id, err)
-		}
+	if err := checkDocumentScripts(cfg.Documents, paths.Root); err != nil {
+		return nil, err
 	}
 
 	if err := checkExportRenderScripts(cfg, paths.Root); err != nil {
@@ -1063,7 +1075,10 @@ func NewApp(
 		Meta:          meta,
 		ProjectRoot:   paths.Root,
 	}
-	val := validator.New(gatedReader, meta, readDeps)
+	val, valErr := newGatedValidator(gatedReader, scriptTraversalGate(app), meta, readDeps, st)
+	if valErr != nil {
+		return nil, valErr
+	}
 	app.validator = val
 
 	// analyzeService entity reads route through the same gated reader; relation
@@ -1439,4 +1454,37 @@ func newViewsHandler(app *App, st store.Store, logo *logoStore) *viewsHandler {
 			return edges, err
 		},
 	}
+}
+
+// newGatedValidator builds the request-path validator. gate must answer rule
+// traversals under the same tier as reader.
+func newGatedValidator(
+	reader validator.EntityLister, gate relresolve.Gate, meta *metamodel.Metamodel, deps lua.ReadDeps,
+	st store.GraphQueryer,
+) (*validator.GenericValidator, error) {
+	b, err := relresolve.NewStoreBinder(meta, gate, st)
+	if err != nil {
+		return nil, fmt.Errorf("dataentry: validator traversals: %w", err)
+	}
+	val, err := validator.New(reader, meta, deps, b)
+	if err != nil {
+		return nil, fmt.Errorf("dataentry: validator: %w", err)
+	}
+	return val, nil
+}
+
+// checkDocumentScripts verifies document scripts exist on disk. Shell-command
+// documents are not checkable this way (the binary may be on PATH at render
+// time but unavailable now); Lua scripts live in scripts/ under the project
+// root so existence can be verified upfront.
+func checkDocumentScripts(docs map[string]DocumentConfig, root string) error {
+	for id, doc := range docs {
+		if doc.Script == "" {
+			continue
+		}
+		if err := script.CheckDocumentScriptExists(root, doc.Script); err != nil {
+			return fmt.Errorf("invalid %s: document %q: %w", ConfigFile, id, err)
+		}
+	}
+	return nil
 }

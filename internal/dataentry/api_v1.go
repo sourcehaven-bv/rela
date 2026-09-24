@@ -365,7 +365,8 @@ func (a *App) listPage(
 	// AFTER the ACL scope and every filter, BEFORE paging and the count: the
 	// condition narrows the population the page and total describe, so
 	// applying it later would page one set and count another.
-	if all, err = applyViewCondition(ctx, all, cond, a.redactedForSuggestion); err != nil {
+	ctx = primeVerdicts(ctx, a.fieldResolver, all)
+	if all, err = applyViewCondition(ctx, all, cond, a.redactedForSuggestion, a.Services().Store); err != nil {
 		return nil, 0, err
 	}
 	total = len(all)
@@ -760,9 +761,10 @@ func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeN
 	// Build response - always include relations for relation column support
 	data := make([]v1.Entity, 0, len(entities))
 	included := make(map[string]v1.Entity)
+	pageCtx := primeVerdicts(r.Context(), a.fieldResolver, entities)
 	for i, e := range entities {
 		v1Entity := a.serializer.forWireRelated(
-			r.Context(), e,
+			pageCtx, e,
 			outgoingByRow[i],
 			incomingByRow[i],
 			visibleNeighbors,
@@ -908,6 +910,9 @@ func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 		return
 	}
+	// Serializing evaluates the grant traversals several times (strip,
+	// `_fields`, `_relations`); priming answers them once.
+	ctx = primeVerdicts(ctx, a.fieldResolver, []*entityPkg.Entity{entity})
 
 	query := r.URL.Query()
 
@@ -1821,6 +1826,7 @@ func (a *App) handleV1Search(w http.ResponseWriter, r *http.Request) {
 
 	meta := a.State().Meta
 	data := make([]v1.Entity, 0, len(entities))
+	pageCtx := primeVerdicts(r.Context(), a.fieldResolver, entities)
 	for _, e := range entities {
 		entityDef := meta.Entities[e.Type]
 		plural := entityDef.GetPlural(e.Type)
@@ -1829,7 +1835,7 @@ func (a *App) handleV1Search(w http.ResponseWriter, r *http.Request) {
 		// {ID, Title} of related entities this principal may not read.
 		// Flipping this requires per-target gating first (RR-QO01XY) —
 		// TestACLSearch_VisibleHitRelatedToHidden pins the invariant.
-		data = append(data, a.serializer.forWireRelated(r.Context(), e, nil, nil, nil, a.Meta(), plural))
+		data = append(data, a.serializer.forWireRelated(pageCtx, e, nil, nil, nil, a.Meta(), plural))
 	}
 
 	resp := v1.ListResponse{
@@ -1972,6 +1978,7 @@ func (a *App) resolveV1Includes(ctx context.Context, entity *entityPkg.Entity, i
 	}
 
 	visible := a.filterVisibleIncludes(ctx, candidates)
+	ctx = primeVerdicts(ctx, a.fieldResolver, visible)
 	for _, target := range visible {
 		entityDef := s.Meta.Entities[target.Type]
 		plural := entityDef.GetPlural(target.Type)

@@ -1161,6 +1161,46 @@ is no `_title` fallback to worry about; the redaction is a straight
 value-omission from `meta`. A relation type with no `visible:` block emits
 its meta unchanged (permissive default).
 
+## `related(...)` in a grant's `when:`
+
+A grant's `when:` may use `related(...)` to depend on the entities at the
+other end of a relation:
+
+```yaml
+roles:
+  reviewer:
+    fields:
+      ticket:
+        - field: status
+          when: "related(entity, 'implements', { status = 'open' })"
+```
+
+The traversal reads the graph with system trust, not with the principal's
+read gate. Its verdict is therefore the same for every principal, but it
+reveals one bit to a principal who cannot read the related entities: whether
+the grant applies. Keep such conditions to facts you are willing to disclose
+that way. A traversal that compares a property some role cannot see through
+`visible:` earns a startup warning naming the grant.
+
+A state-machine transition's `when:` works the same way. Whether a transition
+is performable is served to principals in `_transitions`, so it carries the
+same bit and earns the same warning.
+
+A list page or search answers each traversal once for all its rows, not once
+per row.
+
+The grant does not apply, rather than guessing, when the traversal cannot be
+answered:
+
+- the store query fails;
+- the entity is on a named face, because the store walks the default face's
+  edges;
+- the entity is a historical version, such as one shown in the history view.
+
+A relation or property the path names that does not exist is a startup error.
+See [Where `related(...)` works](metamodel.md#where-related-works) for the
+other surfaces and how each counts hidden entities.
+
 ## What still leaks (deferred)
 
 - **`/api/v1/_position` per-id semantics** — `_position` is gated on

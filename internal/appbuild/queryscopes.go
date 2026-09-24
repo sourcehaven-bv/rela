@@ -11,6 +11,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
 	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
 	"github.com/Sourcehaven-BV/rela/internal/queryplan"
+	"github.com/Sourcehaven-BV/rela/internal/relresolve"
 	"github.com/Sourcehaven-BV/rela/internal/scopes"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -103,7 +104,7 @@ func (r *QueryScopeResolver) Resolve(
 //
 // Any `related(...)` in the scope is answered first, once per distinct
 // traversal over all candidates, then each row is evaluated against those
-// answers. The answers live in this call only; see [traversalAnswers].
+// answers. The answers live in this call only; see [relresolve.Answers].
 func (r *QueryScopeResolver) Filter(
 	ctx context.Context, scope any, entityType string, headers []store.EntityHeader,
 	gate func(context.Context, string, acl.TraversalHop) (*store.RelationPredicate, error),
@@ -119,7 +120,7 @@ func (r *QueryScopeResolver) Filter(
 	for i, h := range headers {
 		ids[i] = h.ID
 	}
-	answers, err := answerTraversals(ctx, r.meta, prog, entityType, ids, gate, match)
+	answers, err := relresolve.Answer(ctx, r.meta, gate, match, entityType, prog.Traversals(), ids)
 	if err != nil {
 		return nil, err
 	}
@@ -130,7 +131,7 @@ func (r *QueryScopeResolver) Filter(
 			// row of another type would be evaluated against the wrong walk.
 			return nil, fmt.Errorf("appbuild: query scope on %q got a row of type %q", entityType, h.Type)
 		}
-		ok, err := r.eval.MatchesWithTraversals(ctx, prog, h.Type, h.ID, h.Properties, answers.traversalFunc(h.ID))
+		ok, err := r.eval.MatchesWithTraversals(ctx, prog, h.Type, h.ID, h.Properties, answers.For(h.ID))
 		if err != nil {
 			return nil, err
 		}
@@ -185,12 +186,12 @@ func (r *QueryScopeResolver) Lower(
 	seen := make(map[string]bool, len(lowered.Traversals))
 	for _, spec := range lowered.Traversals {
 		// A repeated traversal adds nothing to a conjunction; skip it as
-		// answerTraversals does, rather than gate and join it twice.
+		// relresolve.Answer does, rather than gate and join it twice.
 		if seen[spec.Key()] {
 			continue
 		}
 		seen[spec.Key()] = true
-		hop, err := traversalHop(r.meta, entityType, spec)
+		hop, err := relresolve.Hop(r.meta, entityType, spec)
 		if err != nil {
 			return store.GraphQuery{}, false, false
 		}

@@ -88,9 +88,9 @@ func TestCompileNextActions(t *testing.T) {
 		{
 			// Nothing on this surface answers a traversal, so it would fail
 			// on every evaluation; refuse it at load (TKT-CXQEV0).
-			name:    "related() is refused",
+			name:    "related() over an unknown relation is refused",
 			src:     dataentryconfig.NextActionSource{Query: "type:task", Condition: "related(entity, 'blocks')"},
-			wantErr: "related(...) is only supported in query_scopes",
+			wantErr: "blocks",
 		},
 	}
 

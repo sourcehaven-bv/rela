@@ -18,6 +18,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/relresolve"
 	"github.com/Sourcehaven-BV/rela/internal/schema"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -397,6 +398,14 @@ func (s *Service) newValidationService() *validation.Service {
 			"error", err)
 	} else {
 		svc = svc.WithGraph(g)
+	}
+	// Analysis runs at operator trust over the raw store (its entity reads
+	// are raw too), so rule traversals are answered ungated.
+	if b, err := relresolve.NewStoreBinder(s.deps.Meta, relresolve.Ungated, s.deps.Store); err == nil {
+		svc = svc.WithTraversals(b)
+	} else {
+		// Rules using related() then report a load error when they run.
+		slog.Warn("analysis: related() in validation rules unavailable", "error", err)
 	}
 	if s.deps.LuaCache != nil {
 		return svc.WithCache(s.deps.LuaCache)

@@ -21,7 +21,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/state"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
-	"github.com/Sourcehaven-BV/rela/internal/validator"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
@@ -141,13 +140,17 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 	// (TKT-3FL2S6). lateGatedReader is late-bound, so it tolerates app.acl /
 	// app.affordances being rebound below.
 	gatedReader := lateGatedReader{app: app}
-	app.validator = validator.New(gatedReader, svc.Meta(), lua.ReadDeps{
+	val, err := newGatedValidator(gatedReader, scriptTraversalGate(app), svc.Meta(), lua.ReadDeps{
 		VisibleReader: gatedReader,
 		Tracer:        lateGatedTracer{app: app},
 		Searcher:      svc.Searcher(),
 		Meta:          svc.Meta(),
 		ProjectRoot:   paths.Root,
-	})
+	}, svc.Store())
+	if err != nil {
+		panic(err.Error())
+	}
+	app.validator = val
 	app.analyze = analyzeService{reads: gatedReader, relCounts: svc.Store(), tracer: lateGatedTracer{app: app}, validator: app.validator}
 	app.templater = svc.Templater()
 	app.cfgLoader = svc.Config()

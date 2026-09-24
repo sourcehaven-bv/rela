@@ -5,6 +5,7 @@ import (
 	"sort"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/predicate"
 )
 
 // TransitionVerdict is the resolved, read-side view of one outgoing transition
@@ -64,6 +65,17 @@ func (s *Set) Performable(
 	m := s.machines[typeName]
 	from := e.GetString(prop)
 
+	// One bind answers every out-edge's `related(...)`. It is bound for e and
+	// serves the post-move clones below: they share e's id, and a traversal
+	// reads edges, never the moved property.
+	var whens []*predicate.Program
+	for key, ed := range m.edges {
+		if key.from == from && key.to != from {
+			whens = append(whens, ed.when)
+		}
+	}
+	traversal := s.bindTraversals(ctx, e, whens)
+
 	var out []TransitionVerdict
 	for key, ed := range m.edges {
 		if key.from != from || key.to == from {
@@ -83,7 +95,7 @@ func (s *Set) Performable(
 		// guard depends on this).
 		after := e.Clone()
 		after.SetString(prop, key.to)
-		res := evalEdge(ctx, ed, prop, after, guard, lookup)
+		res := evalEdge(ctx, ed, prop, after, guard, lookup, traversal)
 		out = append(out, TransitionVerdict{
 			To:      key.to,
 			Label:   ed.label,
@@ -125,4 +137,24 @@ func reasonFor(g gate) VerdictGate {
 	default:
 		return VerdictAllowed
 	}
+}
+
+// TraversingWhens returns, per "from→to" edge label, the `when:` programs of
+// entityType's prop machine that use `related(...)`. A consumer that knows the
+// ACL policy uses it to warn about what a transition verdict reveals.
+func (s *Set) TraversingWhens(entityType, prop string) map[string]*predicate.Program {
+	if s.Empty() {
+		return nil
+	}
+	m := s.machines[s.propType[entityType][prop]]
+	if m == nil {
+		return nil
+	}
+	out := map[string]*predicate.Program{}
+	for key, ed := range m.edges {
+		if ed.when != nil && len(ed.when.Traversals()) > 0 {
+			out[key.from+"→"+key.to] = ed.when
+		}
+	}
+	return out
 }

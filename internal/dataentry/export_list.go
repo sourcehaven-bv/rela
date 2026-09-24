@@ -75,7 +75,8 @@ func (h *exportHandler) handleV1ExportList(w http.ResponseWriter, r *http.Reques
 			writeListPipelineError(w, r, err)
 			return
 		}
-		if entities, err = applyViewCondition(ctx, entities, cond, h.redactForCondition); err != nil {
+		ctx = visibility.PrimeTraversals(ctx, h.redactor, entities)
+		if entities, err = applyViewCondition(ctx, entities, cond, h.redactForCondition, h.store); err != nil {
 			writeListPipelineError(w, r, err)
 			return
 		}

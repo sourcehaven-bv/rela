@@ -417,6 +417,7 @@ func (b *caldavBackend) listTodos(ctx context.Context, name string) ([]caldav.Ca
 		return nil, err
 	}
 	entDef, _ := b.app.State().Meta.GetEntityDef(cfg.EntityType)
+	ctx = visibility.PrimeTraversals(ctx, b.fieldRedactor(), ents)
 
 	out := make([]caldav.CalendarObject, 0, len(ents))
 	for _, e := range ents {

@@ -6,10 +6,11 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/appbuild"
+
 	"github.com/stretchr/testify/require"
 
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
-	"github.com/Sourcehaven-BV/rela/internal/conditionlint"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 )
@@ -24,7 +25,7 @@ import (
 func wireRealViewConditions(t *testing.T, app *App) {
 	t.Helper()
 	require.NoError(t, app.SetViewConditions(
-		AdaptViewConditions(conditionlint.ViewConditionMatchers)))
+		AdaptViewConditions(appbuild.ViewConditions)))
 }
 
 func listIDs(t *testing.T, app *App, url string) []string {

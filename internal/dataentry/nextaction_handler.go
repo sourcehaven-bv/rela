@@ -340,7 +340,7 @@ func (a *App) nextActionEngine(displayWorld string) (*nextaction.Engine, NextAct
 		// leave matchers unwired so New fails loudly for a source that
 		// declares a condition, rather than silently keeping every candidate.
 		if l, s, issues := a.nextActionMatchers(cfg, st.Meta); len(issues) == 0 && l != nil {
-			lookup, scope = l, s
+			lookup, scope = gatedNextActionMatchers(l, a.Services().Store), s
 			opts = append(opts, nextaction.WithMatchers(lookup))
 		}
 	}

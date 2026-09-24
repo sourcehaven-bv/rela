@@ -65,8 +65,12 @@ func buildEnv(_ metamodel.CustomType) (*predicate.Env, error) {
 // precondition failure) rather than silently passing.
 func evalWhen(
 	ctx context.Context, prog *predicate.Program, e *entity.Entity, prop string, lookup GraphLookup,
+	traversal predicate.TraversalFunc,
 ) (bool, error) {
 	b := predicate.NewBindings()
+	if traversal != nil {
+		b.SetTraversal(traversal)
+	}
 	// coverage-ignore-start: defensive: SetVar with the fixed name "entity" and the always-non-nil record from
 	// entityRecord never errors
 	if err := b.SetVar("entity", entityRecord(e, prop)); err != nil {

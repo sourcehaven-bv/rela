@@ -7,7 +7,8 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/Sourcehaven-BV/rela/internal/conditionlint"
+	"github.com/Sourcehaven-BV/rela/internal/appbuild"
+
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 )
 
@@ -31,7 +32,7 @@ func scopeAndConditionApp(t *testing.T, list dataentryconfig.List) *App {
 	app := newScopeTestApp(t)
 	app.Cfg().Lists["taken"] = list
 	if err := app.SetViewConditions(
-		AdaptViewConditions(conditionlint.ViewConditionMatchers)); err != nil {
+		AdaptViewConditions(appbuild.ViewConditions)); err != nil {
 		t.Fatalf("wire view conditions: %v", err)
 	}
 	return app

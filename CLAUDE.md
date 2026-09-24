@@ -408,6 +408,7 @@ Domain and storage:
 | `internal/metamodel`     | Schema: entity types, relations, properties, validation                                          |
 | `internal/store`         | Storage abstraction — CRUD + events; `fsstore`/`memstore`/`pgstore`                              |
 | `internal/tracer`        | Pure-reader graph traversal (trace, path, orphans, cycles)                                       |
+| `internal/relresolve`    | Answers `related(...)` in predicate programs: one gated store query per traversal per batch      |
 | `internal/calfeed`       | Pure calendar-feed model + iCalendar/JSON serializers (event-granular; no store/vendor)          |
 | `internal/mailrender`    | Pure message model → sanitized, CSS-inlined branded HTML + text/plain (leaf; no store/metamodel) |
 | `internal/mail`          | Outbound email: `Sender` seam, SMTP + memory transports, `.rela/mail.yaml`, best-effort outbox   |

@@ -211,3 +211,43 @@ relations:
 	}
 	t.Fatalf("want %+v among %+v", want, got)
 }
+
+// List and next-action conditions answer related() with the same store query
+// a scope does, so they derive the same far-end index.
+func TestStaticIndexSpecs_DerivesTraversalIndexFromConditions(t *testing.T) {
+	meta, err := metamodel.Parse([]byte(`version: "1.0"
+namespace: https://example.org/test#
+entities:
+  ticket: {label: Ticket, id_prefix: TKT, properties: {status: {type: string}}}
+  feature: {label: Feature, id_prefix: FEAT, properties: {title: {type: string}}}
+  person: {label: Person, id_prefix: P, properties: {name: {type: string}}}
+relations:
+  implements: {label: implements, from: [ticket], to: [feature], inverse: implementedBy}
+  owned-by: {label: owned by, from: [ticket], to: [person]}
+`))
+	if err != nil {
+		t.Fatalf("parse schema: %v", err)
+	}
+	cfg := &dataentryconfig.Config{
+		Lists: map[string]dataentryconfig.List{
+			"features": {EntityType: "feature", Condition: "related(entity, 'implementedBy', { status = 'open' })"},
+		},
+		NextActions: map[string]dataentryconfig.NextActionSource{
+			"unowned": {Query: "type:ticket", Condition: "not related(entity, 'owned-by', { name = 'x' })"},
+			"here":    {Context: "ticket", Condition: "related(entity, 'implements', { title = 'x' })"},
+		},
+	}
+	got := StaticIndexSpecs(cfg, meta)
+	for _, want := range []store.DerivedObjectSpec{
+		{Kind: store.DerivedQueryIndex, Type: "ticket", Properties: []string{"status"}},
+		{Kind: store.DerivedQueryIndex, Type: "person", Properties: []string{"name"}},
+		{Kind: store.DerivedQueryIndex, Type: "feature", Properties: []string{"title"}},
+	} {
+		found := slices.ContainsFunc(got, func(s store.DerivedObjectSpec) bool {
+			return s.Kind == want.Kind && s.Type == want.Type && slices.Equal(s.Properties, want.Properties)
+		})
+		if !found {
+			t.Errorf("want %+v among %+v", want, got)
+		}
+	}
+}
