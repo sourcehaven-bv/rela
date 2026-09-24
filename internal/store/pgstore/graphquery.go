@@ -383,6 +383,14 @@ func propCond(b *sqlBuilder, p store.PropPredicate) string {
 // hand-rolled `->>` comparison next to this one would be correct and
 // silently unindexed (TKT-RELTRV).
 func propCondOn(b *sqlBuilder, alias string, p store.PropPredicate) string {
+	if p.Op == store.PropNotEqualOrEmpty && p.Value == "" {
+		// The Lua `~=` reading: not this value, OR not set at all. An empty
+		// Value makes this degenerate (everything matches); rendering it as
+		// TRUE keeps the SQL honest rather than silently meaning something
+		// narrower. Decided before the property is bound: an unreferenced
+		// placeholder makes PostgreSQL reject the statement (42P18).
+		return "TRUE"
+	}
 	propArg := b.arg(p.Property)
 	txt := fmt.Sprintf("(%s.properties ->> %s)", alias, propArg)
 	jsn := fmt.Sprintf("(%s.properties -> %s)", alias, propArg)
@@ -402,13 +410,6 @@ func propCondOn(b *sqlBuilder, alias string, p store.PropPredicate) string {
 	case p.Value == "" && p.Op == store.PropNotEqual:
 		return "NOT " + isEmpty
 	case p.Op == store.PropNotEqualOrEmpty:
-		// The Lua `~=` reading: not this value, OR not set at all. An empty
-		// Value makes this degenerate (everything matches); rendering it as
-		// TRUE keeps the SQL honest rather than silently meaning something
-		// narrower.
-		if p.Value == "" {
-			return "TRUE"
-		}
 		return fmt.Sprintf("(%s OR NOT %s)", isEmpty, equalsCond(b, txt, jsn, p.Value))
 	case p.Op == store.PropGreaterEqual, p.Op == store.PropLessEqual:
 		return orderedCond(b, txt, jsn, p.Op, p.Value)
@@ -421,6 +422,8 @@ func propCondOn(b *sqlBuilder, alias string, p store.PropPredicate) string {
 
 // orderedCond renders [store.PropGreaterEqual] / [store.PropLessEqual] as
 // a byte-wise text comparison, matching graphquerynaive's matchesOrdered.
+// COLLATE "C" is what makes it byte-wise: under the database's default
+// collation `'Zed' >= 'alpha'` is true, and in Go it is false.
 //
 // The jsonb_typeof guard is load-bearing, not defensive. `->>` renders an
 // array as its JSON text (`["a", "b"]`) where Go's fmt.Sprint gives
@@ -433,7 +436,7 @@ func orderedCond(b *sqlBuilder, txt, jsn string, op store.PropOp, value string) 
 	if op == store.PropLessEqual {
 		cmp = "<="
 	}
-	return fmt.Sprintf("(jsonb_typeof(%s) <> 'array' AND %s <> '' AND %s %s %s)",
+	return fmt.Sprintf(`(jsonb_typeof(%s) <> 'array' AND %s <> '' AND %s COLLATE "C" %s %s)`,
 		jsn, txt, txt, cmp, b.arg(value))
 }
 
