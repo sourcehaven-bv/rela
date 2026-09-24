@@ -96,6 +96,7 @@ components:
   templating:       { in: internal/templating }
   predicate:        { in: internal/predicate }
   predicatefns:     { in: internal/predicatefns }
+  relresolve:       { in: internal/relresolve }
   statemachine:     { in: internal/statemachine }
   tracer:           { in: internal/tracer }
   validation:       { in: internal/validation }
@@ -642,6 +643,8 @@ deps:
       # arrangement as the next-action matchers above.
       - queryscopes
       - predicate
+      # relresolve: answers related(...) for every condition surface it wires.
+      - relresolve
       - principal
       - computed
       - dataentryconfig
@@ -1056,6 +1059,15 @@ deps:
       - predicate
       - filter
       - metamodel
+  # relresolve answers related(...) traversals in batches for every surface
+  # that evaluates them (TKT-205V2N): gated through acl, answered by store.
+  relresolve:
+    mayDependOn:
+      - acl
+      - metamodel
+      - predicate
+      - predicatefns
+      - store
   statemachine:
     mayDependOn:
       - entity
