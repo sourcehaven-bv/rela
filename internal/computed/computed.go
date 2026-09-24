@@ -82,6 +82,14 @@ func CompileWithClock(meta *metamodel.Metamodel, now func() time.Time) (*Set, er
 				problems = append(problems, fmt.Sprintf("entity %q property %q computed: %v", entityType, name, err))
 				continue
 			}
+			if len(prog.Traversals()) > 0 {
+				// A value stored at write time cannot follow later changes
+				// to the related entities, and nothing here binds a store.
+				problems = append(problems, fmt.Sprintf(
+					"entity %q property %q computed: %s(...) is not supported in computed properties",
+					entityType, name, predicate.FuncRelated))
+				continue
+			}
 			compiled[name] = compiledProperty{name: name, def: pd, program: prog, dependencies: prog.Attributes("entity")}
 		}
 		order, err := topo(entityType, compiled)
