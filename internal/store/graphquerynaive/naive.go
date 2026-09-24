@@ -280,10 +280,13 @@ func MatchingIDs(ctx context.Context, r Reader, q store.GraphQuery, ids []string
 	if len(out) == 0 {
 		return out, nil
 	}
-	for e, err := range r.ListEntities(ctx, store.EntityQuery{Type: q.EntityType, World: q.World, FaceIn: q.FaceIn}) {
-		if err != nil {
-			return nil, err
-		}
+	// The same candidates Run ranks, so an Any branch's face set trims the
+	// faces BEFORE the world picks the prime here too (BUG-2SKLD3).
+	cands, err := collectByType(ctx, r, q)
+	if err != nil {
+		return nil, err
+	}
+	for _, e := range cands {
 		if _, want := out[e.ID]; !want {
 			continue
 		}

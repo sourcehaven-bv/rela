@@ -192,27 +192,11 @@ func (s *Store) MatchingIDs(ctx context.Context, q store.GraphQuery, ids []strin
 func buildMatchingIDsSQL(q store.GraphQuery, ids []string) (sqlText string, args []any) {
 	b := &sqlBuilder{}
 	typeArg := b.arg(q.EntityType)
-
-	withParts, condParts := buildPredicateParts(b, q, typeArg)
-	idsArg := b.arg(ids)
-
-	var sb strings.Builder
-	if len(withParts) > 0 {
-		sb.WriteString("WITH RECURSIVE ")
-		sb.WriteString(strings.Join(withParts, ",\n"))
-		sb.WriteByte('\n')
-	}
 	// World-scoped RESULT rows (TKT-WAV8XP PR-C); relation traversal
 	// stays tail-unscoped to match graphquerynaive over ListRelations,
 	// and the recursive CTE seeds stay un-worlded on purpose (Q5).
-	scope, distinctOn, rankOrder := graphWorldScope(b, q)
-	sb.WriteString("SELECT " + distinctOn + "e.id FROM entities e WHERE " + scope + " AND e.type = " + typeArg)
-	sb.WriteString(" AND e.id = ANY(" + idsArg + ")")
-	for _, c := range condParts {
-		sb.WriteString(" AND " + c)
-	}
-	sb.WriteString(rankOrder)
-	return sb.String(), b.args
+	with, source := graphSource(b, q, typeArg, "e.id = ANY("+b.arg(ids)+")")
+	return withClause(with) + "SELECT e.id FROM " + source, b.args
 }
 
 // buildPredicateParts emits the CTE definitions and the WHERE-clause
@@ -220,34 +204,80 @@ func buildMatchingIDsSQL(q store.GraphQuery, ids []string) (sqlText string, args
 // relation predicates (as EXISTS / NOT EXISTS) and property predicates
 // (as jsonb comparisons). Kept in one place so the two query shapes
 // cannot drift.
-func buildPredicateParts(b *sqlBuilder, q store.GraphQuery, typeArg string) (with, conds []string) {
+//
+// The conjuncts come back in two groups because a world ranks between them
+// (BUG-2SKLD3). pre trims the CANDIDATE faces before the rank: the relation
+// predicates, which depend on the id alone, and Any, whose branch face sets
+// are documented as candidate filters. post tests the PRIME the world picked:
+// Props and Narrowing. Filtering the faces on those first would let a
+// lower-ranked face answer for an entity whose prime fails the filter.
+func buildPredicateParts(b *sqlBuilder, q store.GraphQuery, typeArg string) (with, pre, post []string) {
 	if q.HasInbound != nil {
 		w, ex := buildPredicateSQL(b, "in", *q.HasInbound, typeArg, store.DirectionIncoming)
 		with = append(with, w...)
-		conds = append(conds, existsCond(ex, q.HasInbound.Negate))
+		pre = append(pre, existsCond(ex, q.HasInbound.Negate))
 	}
 	if q.HasOutbound != nil {
 		w, ex := buildPredicateSQL(b, "out", *q.HasOutbound, typeArg, store.DirectionOutgoing)
 		with = append(with, w...)
-		conds = append(conds, existsCond(ex, q.HasOutbound.Negate))
+		pre = append(pre, existsCond(ex, q.HasOutbound.Negate))
 	}
 	for i, rel := range q.Related {
 		w, ex := buildPredicateSQL(b, relatedPrefix(i), rel.Pred, typeArg, relatedDirection(rel))
 		with = append(with, w...)
-		conds = append(conds, existsCond(ex, rel.Pred.Negate))
-	}
-	for _, p := range q.Props {
-		conds = append(conds, propCond(b, p))
+		pre = append(pre, existsCond(ex, rel.Pred.Negate))
 	}
 	if len(q.Any) > 0 {
 		w, cond := buildAnySQL(b, "any", q.Any, typeArg)
 		with = append(with, w...)
-		conds = append(conds, cond)
+		pre = append(pre, cond)
+	}
+	for _, p := range q.Props {
+		post = append(post, propCond(b, p))
 	}
 	if len(q.Narrowing) > 0 {
-		conds = append(conds, buildNarrowingSQL(b, q.Narrowing))
+		post = append(post, buildNarrowingSQL(b, q.Narrowing))
 	}
-	return with, conds
+	return with, pre, post
+}
+
+// graphSource renders what follows `SELECT <list> FROM ` in every graph
+// query: the entity rows in scope that satisfy q, one per id, aliased e.
+//
+// In the default world each id has one row, so everything is one WHERE
+// clause and the derived indexes apply as before. Under a world the primes
+// are picked in an inner DISTINCT ON query over the candidates that pass pre,
+// and post is applied to them outside it (see [buildPredicateParts]).
+// idIn, when set, is an id restriction ANDed with pre. It may sit before the
+// rank only because it depends on the id alone; a face-dependent conjunct
+// passed here would reintroduce BUG-2SKLD3.
+func graphSource(b *sqlBuilder, q store.GraphQuery, typeArg, idIn string) (with []string, source string) {
+	with, pre, post := buildPredicateParts(b, q, typeArg)
+	scope, distinctOn, rankOrder := graphWorldScope(b, q)
+	if (distinctOn == "") != (rankOrder == "") {
+		panic("pgstore: graphWorldScope returned DISTINCT ON without its ORDER BY, or vice versa")
+	}
+	where := append([]string{scope, "e.type = " + typeArg}, pre...)
+	if idIn != "" {
+		where = append(where, idIn)
+	}
+	if distinctOn == "" {
+		where = append(where, post...)
+		return with, "entities e WHERE " + strings.Join(where, " AND ")
+	}
+	source = "(SELECT " + distinctOn + "e.* FROM entities e WHERE " + strings.Join(where, " AND ") + rankOrder + ") e"
+	if len(post) > 0 {
+		source += " WHERE " + strings.Join(post, " AND ")
+	}
+	return with, source
+}
+
+// withClause renders the recursive CTE prefix, or nothing.
+func withClause(with []string) string {
+	if len(with) == 0 {
+		return ""
+	}
+	return "WITH RECURSIVE " + strings.Join(with, ",\n") + "\n"
 }
 
 // buildNarrowingSQL renders [store.GraphQuery.Narrowing] as ONE conjunct: a
@@ -478,95 +508,39 @@ func buildGraphQuerySQLSelect(q store.GraphQuery, sel graphSelect) (sqlText stri
 	// $1 is always q.EntityType.
 	typeArg := b.arg(q.EntityType)
 
-	withParts, condParts := buildPredicateParts(b, q, typeArg)
-
-	// Branch the SELECT list + ORDER BY: count queries skip column
-	// fetching and ordering; row queries return the standard entity
-	// columns (or the header subset) and stable id-ascending order. The
-	// rest of the query (WITH, FROM, WHERE, EXISTS chain) is identical.
-	countOnly := sel == graphSelectCount
-	selectList := graphSelectLists[sel]
-	orderBy := " ORDER BY e.id"
-	if countOnly {
-		// A world-scoped count must count PRIMES: DISTINCT ON cannot be
-		// combined with an aggregate, and count(*) over the widened
-		// candidate set would over-count every family holding several
-		// coordinates. count(DISTINCT e.id) is exact here because the
-		// world admits at most one prime per id.
-		selectList = "count(*)"
-		if !effectiveWorld(q.World, q.EntityType).IsDefaultWorld() {
-			selectList = "count(DISTINCT e.id)"
-		}
-		orderBy = ""
-	}
-
 	// World-scoped RESULT rows (TKT-WAV8XP PR-C). Relation predicates
 	// and their recursive CTEs stay un-worlded on purpose (Q5): identity
 	// structure must not depend on the reader's world.
-	scope, distinctOn, rankOrder := graphWorldScope(b, q)
-	if countOnly {
-		// The aggregate replaces DISTINCT ON / rank ordering entirely.
-		distinctOn, rankOrder = "", ""
-	} else if rankOrder != "" {
-		// DISTINCT ON requires its expression to lead ORDER BY, so the
-		// world's ranking ordering REPLACES the plain id ordering (it
-		// still orders by e.id first, so the contract is preserved).
-		orderBy = ""
+	with, source := graphSource(b, q, typeArg, "")
+	if sel == graphSelectCount {
+		// graphSource yields one row per id in every world, so count(*)
+		// counts entities, never faces.
+		return withClause(with) + "SELECT count(*) FROM " + source, b.args
 	}
 
 	var sb strings.Builder
-	if len(withParts) > 0 {
-		sb.WriteString("WITH RECURSIVE ")
-		sb.WriteString(strings.Join(withParts, ",\n"))
-		sb.WriteByte('\n')
-	}
-	sb.WriteString("SELECT " + distinctOn + selectList + " FROM entities e WHERE " + scope + " AND e.type = " + typeArg)
-	for _, c := range condParts {
-		sb.WriteString(" AND " + c)
-	}
-	sb.WriteString(orderBy)
-	sb.WriteString(rankOrder)
-
-	if countOnly || (len(q.OrderBy) == 0 && q.Limit == 0 && q.Offset == 0) {
-		return sb.String(), b.args
-	}
-	// Ordering and paging (TKT-1U8XYN). A world query's DISTINCT ON owns its
-	// ORDER BY (it must lead with e.id), so the page is taken over the
-	// resolved primes in an outer query; a default-world query pages
-	// directly, its plain id ordering replaced. Either way the sort is
-	// byte-wise on the property's text form (COLLATE "C" — the Go
-	// comparator's semantics) with PostgreSQL's default null placement,
-	// which treats an absent value as the largest: last ascending, first
-	// descending. That default is deliberate — it is what lets one
-	// expression index serve both directions (a backward scan of an ASC
-	// index is exactly DESC NULLS FIRST) — and the Go comparators mirror it.
-	// graphWorldScope returns distinctOn and rankOrder as a pair: both empty
-	// (default world; the plain id ORDER BY is ours to replace) or both set
-	// (world; the DISTINCT ON owns its ORDER BY, so we wrap). A one-sided
-	// return would corrupt the SQL silently, hence the guard.
-	if (distinctOn == "") != (rankOrder == "") {
-		panic("pgstore: graphWorldScope returned DISTINCT ON without its ORDER BY, or vice versa")
-	}
-	inner := sb.String()
-	if distinctOn != "" {
-		inner = "SELECT * FROM (" + inner + ") e"
-	} else {
-		inner = strings.TrimSuffix(inner, orderBy)
-	}
-	var page strings.Builder
-	page.WriteString(inner)
-	page.WriteString(" ORDER BY ")
+	sb.WriteString(withClause(with))
+	sb.WriteString("SELECT " + graphSelectLists[sel] + " FROM " + source)
+	// Ordering and paging (TKT-1U8XYN). The sort is byte-wise on the
+	// property's text form (COLLATE "C" — the Go comparator's semantics)
+	// with PostgreSQL's default null placement, which treats an absent value
+	// as the largest: last ascending, first descending. That default is
+	// deliberate — it is what lets one expression index serve both
+	// directions (a backward scan of an ASC index is exactly DESC NULLS
+	// FIRST) — and the Go comparators mirror it. The id tiebreak keeps the
+	// order total, and is the whole order when q names none.
+	sb.WriteString(" ORDER BY ")
 	for _, spec := range q.OrderBy {
-		page.WriteString(orderKeySQL(b, spec) + ", ")
+		sb.WriteString(orderKeySQL(b, spec) + ", ")
 	}
-	page.WriteString("e.id ASC")
+	sb.WriteString("e.id ASC")
 	if q.Limit > 0 {
-		page.WriteString(" LIMIT " + b.arg(q.Limit))
+		sb.WriteString(" LIMIT " + b.arg(q.Limit))
 	}
 	if q.Offset > 0 {
-		page.WriteString(" OFFSET " + b.arg(q.Offset))
+		sb.WriteString(" OFFSET " + b.arg(q.Offset))
 	}
-	return page.String(), b.args
+	return sb.String(), b.args
 }
 
 // orderKeySQL renders one sort key: a byte-wise text comparison, or a rank

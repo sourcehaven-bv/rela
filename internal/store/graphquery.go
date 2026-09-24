@@ -19,10 +19,18 @@ import (
 // Related entry) holds. A zero-value GraphQuery
 // beyond EntityType matches every entity of that type.
 //
-// All three backends ship a default implementation that delegates to
-// [internal/store/graphquerynaive] (iterate-and-filter in Go). A
-// future SQL-pushdown implementation in pgstore is tracked as a
-// follow-up.
+// graphquerynaive (iterate-and-filter in Go) is the reference
+// implementation; pgstore renders the same query as SQL.
+//
+// # Under a world: which predicates run before the rank
+//
+// FaceIn and each Any branch's face set trim the CANDIDATE faces; the world
+// then picks one prime per entity from what is left. Props and Narrowing
+// test that prime (BUG-2SKLD3): filtering the faces on them first would let
+// a lower-ranked face answer for an entity whose prime fails the filter,
+// serving a list row a GET of the same entity would not. The relation
+// predicates depend on the entity id alone, so the order does not matter
+// for them.
 type GraphQuery struct {
 	EntityType  string
 	Props       []PropPredicate    // entity's own properties match (AND)
