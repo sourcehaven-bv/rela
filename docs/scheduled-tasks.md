@@ -299,7 +299,8 @@ Where the run state lives depends on the build:
   same runs, so several nodes can run the scheduler safely.
 
 An older `.rela/scheduler-state.json` is imported on first start and then
-deleted. Runs that ended more than 14 days ago are pruned.
+deleted. Runs that ended more than 14 days ago are pruned, or twice the longest
+task period ago if that is longer.
 
 On the filesystem and desktop builds, the job queue is in memory. If the process
 exits while a run is queued or running, that job is gone, and the task waits
@@ -359,7 +360,8 @@ The scheduler responds to SIGINT (Ctrl+C) and SIGTERM. On receiving a signal, it
 2. Stops the job queue, which gives running jobs time to finish
 3. Exits cleanly
 
-A run cut off by shutdown is marked `abandoned` once its lease expires.
+A run cut off by shutdown is recorded as `failed` and retried on the ladder. A
+run still queued at shutdown is marked `abandoned` once its lease expires.
 
 ### Logging
 
@@ -389,7 +391,9 @@ These lines point at a problem:
 | `run abandoned`                                        | ERROR | The run's lease expired before it finished; the worker probably died. The task retries.     |
 | `task due but its previous run is still active, skipping` | INFO  | The previous run has not finished. Frequent lines mean the task is slower than its interval. |
 | `duplicate delivery skipped, run is no longer queued`  | WARN  | The queue delivered a job twice; the second copy did nothing.                               |
-| `late result discarded, run had already ended`         | WARN  | A run finished after it was already marked abandoned; its result was not recorded.          |
+| `late result discarded, run had already ended`         | WARN  | A run failed after it was already marked abandoned; the abandonment already counted it.     |
+| `late success recorded, run had already been abandoned` | WARN  | A run succeeded after it was marked abandoned. The task counts as run, so it does not repeat. |
+| `child skipped, subject already settled or its run has ended` | WARN | A `for_each` subject was delivered again, or its run was replaced by a retry. It did not run twice. |
 | `could not create run` / `could not record run outcome` | ERROR | The run state could not be written, usually a database problem.                             |
 
 ## Failure Handling and Retries

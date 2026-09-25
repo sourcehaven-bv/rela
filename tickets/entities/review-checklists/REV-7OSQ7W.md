@@ -2,17 +2,17 @@
 id: REV-7OSQ7W
 type: review-checklist
 title: 'Review: Scheduler stalls: durable jobs over 30s never complete and block their idempotency key'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
 
 ## Automated Checks
 
-- [ ] All tests pass (`just test`)
-- [ ] Lint clean (`just lint`)
-- [ ] Comment lint gate clean (`just comment-lint`)
-- [ ] Coverage maintained (`just coverage-check`)
+- [x] All tests pass (`just test`)
+- [x] Lint clean (`just lint`)
+- [x] Comment lint gate clean (`just comment-lint`)
+- [x] Coverage maintained (`just coverage-check`)
 
 **Comment findings.** `just comment-report` lists the advisory rules
 (duplication, nil-contract, param-contract, restatement). They are not a merge
@@ -33,41 +33,56 @@ unexplained suppression is a finding nobody can re-evaluate later.
 
 ## Code Review
 
-- [ ] Run `/code-review` command (invokes cranky-code-reviewer agent)
-- [ ] All critical review-responses addressed
-- [ ] All significant review-responses addressed
-- [ ] Self-reviewed the diff for unrelated changes
+- [x] Run `/code-review` command (invokes cranky-code-reviewer agent)
+- [x] All critical review-responses addressed
+- [x] All significant review-responses addressed
+- [x] Self-reviewed the diff for unrelated changes
 
-**Review Responses:** <!-- List IDs of review-response entities created, e.g.,
-RR-xxxx -->
+**Review Responses:** Security review: no findings. Code review: RR-W90XOO,
+RR-5VZWU7, RR-3WK5WQ, RR-25450U (significant, addressed); RR-5HF18L,
+RR-2HJXEF, RR-5Z2VPA, RR-AEW5FM, RR-1TWZ95, RR-T3U8C1 (minor, addressed);
+RR-BCBX0O (minor, wont-fix); RR-C6V3AB (minor, deferred); RR-3L3OU7 (nit,
+addressed).
 
 ## Acceptance Verification
 
-- [ ] Each acceptance criterion tested (reference planning checklist)
-- [ ] Test evidence documented in implementation checklist
+- [x] Each acceptance criterion tested (reference planning checklist)
+- [x] Test evidence documented in implementation checklist
 
 **Acceptance Status:**
-<!-- For each acceptance criterion, state PASS/FAIL with evidence -->
+
+- Scheduler enqueues and continues without waiting: PASS
+(TestTick_NeverWaitsAndSkipsWhileActive).
+- Durable, queryable run state: PASS (schedulerstatetest on kvstate and
+pgschedstate).
+- Idempotent run creation across processes: PASS (ConcurrentCreateAdmitsOne,
+TestTick_TwoSchedulersShareOneStore).
+- Recovery after worker or process failure: PASS
+(TestRun_LostRunIsAbandonedAndRetried, ReapAbandonsOnlyExpiredRuns).
+- Missed-run detection and retry ladder preserved: PASS (TestTick_DueDecisions,
+TestRun_FailureAdvancesLadder, TestRun_RetryLadderReplacesSchedule).
+- Long durable job completes once: PASS
+(TestPostgresQueue_HandlerOutlivesDefaultIdleTxTimeout).
 
 ## Documentation (enhancements only)
 
 Skip this section for bugs and internal refactors.
 
-- [ ] Docs-checklist created and linked via `has-docs`
-- [ ] User-facing documentation updated
-- [ ] Docs-checklist marked as done
+- [x] ~~Docs-checklist created and linked via `has-docs`~~ (N/A: bug fix; scheduled-tasks and postgres-backend docs updated in the diff)
+- [x] ~~User-facing documentation updated~~ (N/A: bug fix; docs updated in the diff anyway)
+- [x] ~~Docs-checklist marked as done~~ (N/A: bug fix)
 
 **Docs Checklist:** <!-- e.g., DOCS-xxxx -->
 
 ## Final Checks
 
-- [ ] Commit message explains the why, not just what
-- [ ] No TODOs or FIXMEs left unaddressed
-- [ ] Ready for another developer to use
+- [x] Commit message explains the why, not just what
+- [x] No TODOs or FIXMEs left unaddressed
+- [x] Ready for another developer to use
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
+- [x] Run `/pr` command to create PR and monitor CI
 
 <!--
 Deliberately NOT tracked here: the PR URL and whether CI passed.

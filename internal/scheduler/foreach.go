@@ -110,7 +110,8 @@ func (s *Scheduler) expand(ctx context.Context, run schedulerstate.Run, occurren
 		return 0, fmt.Errorf("scheduler: read delivered subjects of %q: %w", name, err)
 	}
 	slices.Sort(ids)
-	pending := slices.DeleteFunc(slices.Compact(ids), func(id string) bool {
+	ids = slices.Compact(ids)
+	pending := slices.DeleteFunc(slices.Clone(ids), func(id string) bool {
 		_, found := slices.BinarySearch(delivered, id)
 		return found
 	})
@@ -149,6 +150,11 @@ func (s *Scheduler) expand(ctx context.Context, run schedulerstate.Run, occurren
 // A failing attempt that has retries left returns its error, and the queue
 // retries it; the subject settles only on success or on its final attempt, so
 // the run's outcome reflects what each subject finally did.
+//
+// Every attempt first claims the subject (StartChild). A child whose subject
+// already settled is a redelivery, and a child whose run ended belongs to a
+// run a retry has replaced; running either would repeat a side effect the
+// subject already had, or is about to get from the retry.
 func (s *Scheduler) runChildJob(ctx context.Context, job jobs.Job) error {
 	name, _ := job.Payload[payloadTaskName].(string)
 	runID, _ := job.Payload[payloadRunID].(string)
@@ -158,12 +164,26 @@ func (s *Scheduler) runChildJob(ctx context.Context, job jobs.Job) error {
 		return nil
 	}
 
-	// Progress: the run is alive as long as its children keep starting.
-	if err := s.runs.ExtendLease(ctx, runID, s.now().Add(runningLease)); err != nil {
-		s.logger.Warn("could not extend run lease", "task", name, "run_id", runID, "error", err)
+	// Claiming also extends the lease: the run is alive while its children
+	// keep starting.
+	claimed, err := s.runs.StartChild(ctx, runID, subject, s.now().Add(runningLease))
+	switch {
+	case errors.Is(err, schedulerstate.ErrNoRun):
+		s.logger.Warn("child skipped, its run record no longer exists",
+			"task", name, "run_id", runID, "subject", subject)
+		return nil
+	case err != nil:
+		// Not executed; the queue retries the claim.
+		s.logger.Error("could not claim for_each subject",
+			"task", name, "run_id", runID, "subject", subject, "error", err)
+		return err
+	case !claimed:
+		s.logger.Warn("child skipped, subject already settled or its run has ended",
+			"task", name, "run_id", runID, "subject", subject, "attempt", job.Attempt)
+		return nil
 	}
 
-	err := s.runChild(ctx, name, subject)
+	err = s.runChild(ctx, name, subject)
 	if err != nil && !job.FinalAttempt() {
 		s.logger.Warn("for_each subject failed, will retry",
 			"task", name, "run_id", runID, "subject", subject, "attempt", job.Attempt, "error", err)

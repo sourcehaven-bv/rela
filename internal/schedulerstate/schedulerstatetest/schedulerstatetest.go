@@ -45,13 +45,18 @@ func RunAll(t *testing.T, newStore NewStore) {
 		{"FinishRunIsIdempotent", testFinishRunIsIdempotent},
 		{"QueuedRunCanFinish", testQueuedRunCanFinish},
 		{"ReapAbandonsOnlyExpiredRuns", testReapAbandonsOnlyExpiredRuns},
-		{"LateResultAfterReapIsDiscarded", testLateResultAfterReapIsDiscarded},
-		{"ExtendLeaseOnlyMovesForward", testExtendLeaseOnlyMovesForward},
+		{"LateFailureAfterReapIsDiscarded", testLateFailureAfterReapIsDiscarded},
+		{"LateSuccessAfterReapStampsLastRun", testLateSuccessAfterReapStampsLastRun},
+		{"StartChildClaimsAndExtendsLease", testStartChildClaimsAndExtendsLease},
+		{"StartChildRefusesSettledSubjectOrEndedRun", testStartChildRefusesSettledSubjectOrEndedRun},
+		{"ExpectChildrenIsIdempotent", testExpectChildrenIsIdempotent},
+		{"SettleChildOfAbandonedRunDoesNotRevive", testSettleChildOfAbandonedRunDoesNotRevive},
 		{"ChildrenSettleOnceAndFinishTheRun", testChildrenSettleOnceAndFinishTheRun},
 		{"ChildrenAllSucceeding", testChildrenAllSucceeding},
 		{"SucceededSubjectsSpanRunsOfOneOccurrence", testSucceededSubjectsSpanRunsOfOneOccurrence},
 		{"WritesAreIsolatedPerTask", testWritesAreIsolatedPerTask},
 		{"SeedNeverOverwrites", testSeedNeverOverwrites},
+		{"SeedWithoutTimesIsNoOp", testSeedWithoutTimesIsNoOp},
 		{"LoadIsScopedToNamedTasks", testLoadIsScopedToNamedTasks},
 		{"PruneDropsOnlyStaleRecords", testPruneDropsOnlyStaleRecords},
 		{"InvalidArgumentsRejected", testInvalidArgumentsRejected},
@@ -279,36 +284,131 @@ func testReapAbandonsOnlyExpiredRuns(t *testing.T, s schedulerstate.Store) {
 	require.Empty(t, again, "reaping is idempotent")
 }
 
-func testLateResultAfterReapIsDiscarded(t *testing.T, s schedulerstate.Store) {
+// reapedRun leaves run r1 of task abandoned after one failure.
+func reapedRun(t *testing.T, s schedulerstate.Store, task string) {
 	t.Helper()
 	ctx := context.Background()
-	require.NoError(t, s.CreateRun(ctx, newRun("task", "r1"), 0))
+	require.NoError(t, s.CreateRun(ctx, newRun(task, "r1"), 0))
 	_, err := s.StartRun(ctx, "r1", "node-a", base, base.Add(time.Minute))
 	require.NoError(t, err)
-	_, err = s.Reap(ctx, base.Add(time.Hour), ladder)
+	reaped, err := s.Reap(ctx, base.Add(time.Hour), ladder)
 	require.NoError(t, err)
-
-	late, err := s.FinishRun(ctx, "r1", schedulerstate.Outcome{At: base.Add(2 * time.Hour)}, ladder)
-	require.NoError(t, err)
-	require.False(t, late.Applied, "a run already abandoned cannot be revived by its late worker")
-	require.Equal(t, schedulerstate.RunAbandoned, late.Run.Status)
-	require.Equal(t, 1, load(t, s, "task").Failures)
+	require.Len(t, reaped, 1)
 }
 
-func testExtendLeaseOnlyMovesForward(t *testing.T, s schedulerstate.Store) {
+func testLateFailureAfterReapIsDiscarded(t *testing.T, s schedulerstate.Store) {
+	t.Helper()
+	reapedRun(t, s, "task")
+
+	late, err := s.FinishRun(context.Background(), "r1",
+		schedulerstate.Outcome{Error: "boom", At: base.Add(2 * time.Hour)}, ladder)
+	require.NoError(t, err)
+	require.False(t, late.Applied, "a run already abandoned cannot be revived by its late worker")
+	require.False(t, late.LateSuccess)
+	require.Equal(t, schedulerstate.RunAbandoned, late.Run.Status)
+	require.Equal(t, 1, load(t, s, "task").Failures, "the abandonment already counted this failure")
+}
+
+// testLateSuccessAfterReapStampsLastRun pins that work which did happen is not
+// run again: the run stays abandoned, but the task records it as done.
+func testLateSuccessAfterReapStampsLastRun(t *testing.T, s schedulerstate.Store) {
+	t.Helper()
+	reapedRun(t, s, "task")
+
+	late, err := s.FinishRun(context.Background(), "r1", schedulerstate.Outcome{At: base.Add(2 * time.Hour)}, ladder)
+	require.NoError(t, err)
+	require.False(t, late.Applied)
+	require.True(t, late.LateSuccess)
+	require.Equal(t, schedulerstate.RunAbandoned, late.Run.Status)
+
+	ts := load(t, s, "task")
+	require.True(t, ts.LastRun.Equal(base), "LastRun is the run's creation time")
+	require.Zero(t, ts.Failures)
+	require.True(t, ts.NextRetry.IsZero())
+}
+
+// fanOutRun creates, starts and fans out run r1 of task "fan" to subjects.
+func fanOutRun(t *testing.T, s schedulerstate.Store, subjects ...string) {
 	t.Helper()
 	ctx := context.Background()
-	require.NoError(t, s.CreateRun(ctx, newRun("task", "r1"), 0))
+	require.NoError(t, s.CreateRun(ctx, newRun("fan", "r1"), 0))
 	_, err := s.StartRun(ctx, "r1", "node-a", base, base.Add(time.Minute))
 	require.NoError(t, err)
+	require.NoError(t, s.ExpectChildren(ctx, "r1", subjects))
+}
 
-	require.NoError(t, s.ExtendLease(ctx, "r1", base.Add(time.Hour)))
-	require.NoError(t, s.ExtendLease(ctx, "r1", base.Add(2*time.Minute)))
-	require.True(t, load(t, s, "task").Active.LeaseUntil.Equal(base.Add(time.Hour)))
+func testStartChildClaimsAndExtendsLease(t *testing.T, s schedulerstate.Store) {
+	t.Helper()
+	ctx := context.Background()
+	fanOutRun(t, s, "a", "b")
+
+	claimed, err := s.StartChild(ctx, "r1", "a", base.Add(time.Hour))
+	require.NoError(t, err)
+	require.True(t, claimed)
+	claimed, err = s.StartChild(ctx, "r1", "a", base.Add(2*time.Minute))
+	require.NoError(t, err)
+	require.True(t, claimed, "a subject stays claimable until it settles, for the queue's retries")
+	require.True(t, load(t, s, "fan").Active.LeaseUntil.Equal(base.Add(time.Hour)), "a lease never moves backwards")
 
 	reaped, err := s.Reap(ctx, base.Add(leaseWindow), ladder)
 	require.NoError(t, err)
 	require.Empty(t, reaped, "an extended lease protects the run")
+
+	_, err = s.StartChild(ctx, "r1", "unknown", base.Add(time.Hour))
+	require.Error(t, err, "a subject the run never expected is rejected")
+	_, err = s.StartChild(ctx, "missing", "a", base.Add(time.Hour))
+	require.ErrorIs(t, err, schedulerstate.ErrNoRun)
+}
+
+// testStartChildRefusesSettledSubjectOrEndedRun pins the guard against a
+// repeated side effect: a redelivered child, and a child of a run a retry has
+// replaced, must not execute.
+func testStartChildRefusesSettledSubjectOrEndedRun(t *testing.T, s schedulerstate.Store) {
+	t.Helper()
+	ctx := context.Background()
+	fanOutRun(t, s, "a", "b")
+
+	_, _, err := s.SettleChild(ctx, "r1", "a", schedulerstate.Outcome{At: base}, ladder)
+	require.NoError(t, err)
+	claimed, err := s.StartChild(ctx, "r1", "a", base.Add(time.Hour))
+	require.NoError(t, err)
+	require.False(t, claimed, "a settled subject is not executed again")
+
+	_, err = s.Reap(ctx, base.Add(time.Hour), ladder)
+	require.NoError(t, err)
+	claimed, err = s.StartChild(ctx, "r1", "b", base.Add(2*time.Hour))
+	require.NoError(t, err)
+	require.False(t, claimed, "a child of an abandoned run is not executed")
+}
+
+// testExpectChildrenIsIdempotent covers a redelivered expansion: recording the
+// same subjects again must not inflate the count the run waits for.
+func testExpectChildrenIsIdempotent(t *testing.T, s schedulerstate.Store) {
+	t.Helper()
+	ctx := context.Background()
+	fanOutRun(t, s, "a", "b")
+	require.NoError(t, s.ExpectChildren(ctx, "r1", []string{"b", "a"}))
+	require.Equal(t, 2, load(t, s, "fan").Active.Children)
+
+	for _, subject := range []string{"a", "b"} {
+		_, _, err := s.SettleChild(ctx, "r1", subject, schedulerstate.Outcome{At: base}, ladder)
+		require.NoError(t, err)
+	}
+	require.Nil(t, load(t, s, "fan").Active, "the run ends once both subjects settle")
+}
+
+func testSettleChildOfAbandonedRunDoesNotRevive(t *testing.T, s schedulerstate.Store) {
+	t.Helper()
+	ctx := context.Background()
+	fanOutRun(t, s, "a")
+	_, err := s.Reap(ctx, base.Add(time.Hour), ladder)
+	require.NoError(t, err)
+
+	settled, done, err := s.SettleChild(ctx, "r1", "a", schedulerstate.Outcome{At: base.Add(time.Hour)}, ladder)
+	require.NoError(t, err)
+	require.True(t, settled, "the subject's own outcome is still recorded")
+	require.Nil(t, done, "an abandoned run does not end a second time")
+	require.Equal(t, 1, load(t, s, "fan").Failures)
 }
 
 func testChildrenSettleOnceAndFinishTheRun(t *testing.T, s schedulerstate.Store) {
@@ -426,6 +526,14 @@ func testSeedNeverOverwrites(t *testing.T, s schedulerstate.Store) {
 		"an import must never overwrite newer state")
 }
 
+func testSeedWithoutTimesIsNoOp(t *testing.T, s schedulerstate.Store) {
+	t.Helper()
+	require.NoError(t, s.Seed(context.Background(), "empty", schedulerstate.TaskState{Failures: 1}))
+	got, err := s.Load(context.Background(), []string{"empty"})
+	require.NoError(t, err)
+	require.NotContains(t, got, "empty", "a record with nothing to date it by is not stored")
+}
+
 func testLoadIsScopedToNamedTasks(t *testing.T, s schedulerstate.Store) {
 	t.Helper()
 	runToEnd(t, s, "a", "r1", base, schedulerstate.Outcome{At: base})
@@ -467,7 +575,6 @@ func testInvalidArgumentsRejected(t *testing.T, s schedulerstate.Store) {
 	require.ErrorIs(t, s.Seed(ctx, "", schedulerstate.TaskState{}), schedulerstate.ErrNoTask)
 	_, err := s.FinishRun(ctx, "missing", schedulerstate.Outcome{At: base}, ladder)
 	require.ErrorIs(t, err, schedulerstate.ErrNoRun)
-	require.ErrorIs(t, s.ExtendLease(ctx, "missing", base), schedulerstate.ErrNoRun)
 	require.ErrorIs(t, s.ExpectChildren(ctx, "missing", []string{"a"}), schedulerstate.ErrNoRun)
 }
 
@@ -489,6 +596,8 @@ func testClosedStoreRejectsEverything(t *testing.T, s schedulerstate.Store) {
 	_, err = s.Prune(ctx, base)
 	require.ErrorIs(t, err, schedulerstate.ErrClosed)
 	_, err = s.SucceededSubjects(ctx, "task", "occ")
+	require.ErrorIs(t, err, schedulerstate.ErrClosed)
+	_, err = s.StartChild(ctx, "r1", "a", base)
 	require.ErrorIs(t, err, schedulerstate.ErrClosed)
 }
 

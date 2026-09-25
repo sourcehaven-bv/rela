@@ -2179,6 +2179,12 @@ func (s *Services) Close() error {
 		// Close following a CloseAssembly does not stop these twice.
 		s.assemblyCloseOnce.Do(s.stopBackgroundServices)
 
+		// After the queue drained, so no job handler still records a run.
+		// Never fails on either backend; it only marks the store closed.
+		if s.schedulerState != nil {
+			_ = s.schedulerState.Close()
+		}
+
 		if s.store != nil {
 			if lc, ok := s.store.(store.Lifecycle); ok {
 				// coverage-ignore-start: defensive: fsstore/memstore Close does not return an error under normal test

@@ -90,12 +90,24 @@ const (
 	runningLease = 20 * time.Minute
 )
 
-// Run-state housekeeping. pruneAge must exceed the longest schedule (a week),
-// or a weekly task's record could be pruned just before it is due.
+// Run-state housekeeping. pruneAge is the minimum age at which a task's
+// record is pruned; a schedule longer than half of it raises the age (see
+// pruneAgeFor), because pruning a record before its task is next due would run
+// the task early.
 const (
 	pruneInterval = time.Hour
 	pruneAge      = 14 * 24 * time.Hour
 )
+
+// pruneAgeFor returns the prune age for tasks: pruneAge, or twice the longest
+// period among them.
+func pruneAgeFor(tasks []TaskConfig) time.Duration {
+	age := pruneAge
+	for _, task := range tasks {
+		age = max(age, 2*task.Every.Period())
+	}
+	return age
+}
 
 // maxLadderSteps is the failure count at which doubling first reaches
 // maxRetryDelay; beyond it every retry is capped. Derived rather than written
@@ -277,6 +289,9 @@ type Scheduler struct {
 	// lastPrune is when the tick last pruned run-state. Only the scheduler
 	// goroutine touches it.
 	lastPrune time.Time
+
+	// pruneAge is how long an idle task's record is kept; see pruneAgeFor.
+	pruneAge time.Duration
 }
 
 // New creates a Scheduler.
@@ -305,13 +320,14 @@ func New(
 		return nil, errors.New("scheduler: the workspace provides no run-state store")
 	}
 	return &Scheduler{
-		config: cfg,
-		engine: engine,
-		ws:     ws,
-		runs:   runs,
-		logger: logger,
-		now:    time.Now,
-		node:   nodeID(),
+		config:   cfg,
+		engine:   engine,
+		ws:       ws,
+		runs:     runs,
+		logger:   logger,
+		now:      time.Now,
+		node:     nodeID(),
+		pruneAge: pruneAgeFor(cfg.Tasks),
 	}, nil
 }
 
@@ -398,7 +414,9 @@ func (s *Scheduler) tick(ctx context.Context) {
 			continue
 		}
 		if ts.Active != nil {
-			s.logger.Info("task due but its previous run is still active, skipping",
+			// DEBUG: a slow task repeats this every tick. A run that is
+			// genuinely stuck surfaces as "run abandoned" instead.
+			s.logger.Debug("task due but its previous run is still active, skipping",
 				"task", task.Name,
 				"run_id", ts.Active.ID,
 				"status", ts.Active.Status,
@@ -448,14 +466,18 @@ func (s *Scheduler) queueRun(ctx context.Context, task TaskConfig, version int64
 		CreatedAt:  now,
 		LeaseUntil: now.Add(queuedLease),
 	}
-	job, err := s.jobFor(task, run.ID, now)
-	if err == nil {
-		run.Occurrence, _ = job.Payload[payloadOccurrence].(string)
-		err = s.runs.CreateRun(ctx, run, version)
+	job, occurrence, err := s.jobFor(task, run.ID, now)
+	if err != nil {
+		s.logger.Error("could not build job", "task", task.Name, "error", err)
+		return
 	}
+	run.Occurrence = occurrence
+	err = s.runs.CreateRun(ctx, run, version)
 	switch {
 	case errors.Is(err, schedulerstate.ErrRunActive), errors.Is(err, schedulerstate.ErrStale):
-		s.logger.Info("task already handled by another scheduler, skipping",
+		// Another scheduler queued it, or a run finished since this tick
+		// read the state.
+		s.logger.Info("task state changed since this tick read it, skipping",
 			"task", task.Name, "reason", err)
 		return
 	case err != nil:
@@ -484,14 +506,14 @@ func (s *Scheduler) maybePrune(ctx context.Context, now time.Time) {
 		return
 	}
 	s.lastPrune = now
-	removed, err := s.runs.Prune(ctx, now.Add(-pruneAge))
+	removed, err := s.runs.Prune(ctx, now.Add(-s.pruneAge))
 	if err != nil {
 		s.logger.Warn("scheduler: could not prune run-state", "error", err)
 		return
 	}
 	if len(removed) > 0 {
 		s.logger.Info("pruned run-state for tasks idle since the cut-off",
-			"tasks", removed, "cutoff", now.Add(-pruneAge))
+			"tasks", removed, "cutoff", now.Add(-s.pruneAge))
 	}
 }
 
@@ -552,7 +574,12 @@ func (s *Scheduler) finish(ctx context.Context, run schedulerstate.Run, runErr e
 // failures persist.
 func (s *Scheduler) logFinished(fin schedulerstate.Finished) {
 	run := fin.Run
-	if !fin.Applied {
+	switch {
+	case fin.LateSuccess:
+		s.logger.Warn("late success recorded, run had already been abandoned",
+			"task", run.Task, "run_id", run.ID)
+		return
+	case !fin.Applied:
 		s.logger.Warn("late result discarded, run had already ended",
 			"task", run.Task, "run_id", run.ID, "status", run.Status)
 		return
@@ -628,6 +655,9 @@ func retryDelay(failures int) time.Duration {
 func (s *Scheduler) importLegacyState(ctx context.Context) {
 	data, err := s.ws.State().Get(ctx, stateFile)
 	if err != nil {
+		if !os.IsNotExist(err) {
+			s.logger.Error("could not read legacy scheduler state", "error", err)
+		}
 		return
 	}
 	legacy := parseState(data)

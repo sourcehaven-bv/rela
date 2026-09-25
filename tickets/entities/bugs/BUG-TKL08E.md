@@ -11,7 +11,7 @@ why3: rela never set postgres.WithTransactionTimeout; so neoq's 30 s default idl
 why4: The scheduler assumes exactly one completion signal per run delivered to an in-process channel in the submitting process. Its correctness depends on the queue's delivery being exactly-once and same-process; neoq is at-least-once and cross-process; so any lost or duplicated completion (rerun; restart; other node; handler timeout) turns into a stall of the single sequential scheduler goroutine.
 why5: Run lifecycle state lives only in process memory and in neoq's internal table. Neither is a queryable; durable record rela owns. The jobstest conformance suite only uses millisecond handlers; so no test ever exercised a job longer than a backend timeout; and the queue seam had no contract for how long a handler may run.
 prevention: AM-durable-job-outlives-idle-tx pins a handler longer than the idle-tx timeout completing once on the postgres queue. AM-scheduler-run-state-conformance holds every run-state backend to one lifecycle contract. The scheduler no longer waits for a run; a lost completion is detected by lease expiry and retried; so no single job can stall the scheduler.
-status: review
+status: done
 ---
 
 ## Symptom (Atlas, postgres build)

@@ -100,11 +100,14 @@ func (s *Scheduler) UseQueue(q jobs.Client) error {
 // task-name key made the queue a second, invisible source of truth: a job row
 // the queue could not complete held the key forever and rejected every later
 // run as "already pending" (BUG-TKL08E).
-func (s *Scheduler) jobFor(task TaskConfig, runID string, now time.Time) (jobs.Job, error) {
+//
+// It also returns the run's occurrence: the calendar slot a for_each run
+// serves, or "" for a plain task.
+func (s *Scheduler) jobFor(task TaskConfig, runID string, now time.Time) (jobs.Job, string, error) {
 	if task.ForEach != nil {
 		occurrence, ok := task.Every.Occurrence(now)
 		if !ok {
-			return jobs.Job{}, fmt.Errorf("scheduler: task %q has for_each without a calendar occurrence", task.Name)
+			return jobs.Job{}, "", fmt.Errorf("scheduler: task %q has for_each without a calendar occurrence", task.Name)
 		}
 		return jobs.Job{
 			Kind: ExpandKind,
@@ -115,7 +118,7 @@ func (s *Scheduler) jobFor(task TaskConfig, runID string, now time.Time) (jobs.J
 			},
 			Retry:          jobs.RetryNever,
 			IdempotencyKey: runID,
-		}, nil
+		}, occurrence, nil
 	}
 
 	http, ai, mail, writeFile, secrets := task.Capabilities.Fields()
@@ -134,7 +137,7 @@ func (s *Scheduler) jobFor(task TaskConfig, runID string, now time.Time) (jobs.J
 		},
 		Retry:          jobs.RetryNever,
 		IdempotencyKey: runID,
-	}, nil
+	}, "", nil
 }
 
 // runTaskJob is the handler that executes a scheduled script and records its

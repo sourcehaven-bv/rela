@@ -182,6 +182,13 @@ above rather than by a clean `analyze all`.
   on a completion that never arrived. Deadlines are for work whose value
   genuinely expires; schedules are not that.
 
+  The scheduler itself keys each job by its RUN id, not by task name
+  (BUG-TKL08E). "One run per task at a time" is enforced by the run-state
+  store (`internal/schedulerstate`), which every node can query. A task-name
+  key made the queue a second, invisible source of truth: a job row the queue
+  could not complete held the key forever and blocked every later run. Do not
+  move non-overlap back into the queue key.
+
   _A job enqueued inside `store.Store.Tx` must not become runnable until that
   transaction commits._ Otherwise a worker reads it on another connection that
   cannot see the uncommitted writes and acts on the pre-write world — a race

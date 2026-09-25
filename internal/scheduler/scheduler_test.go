@@ -294,6 +294,34 @@ func TestTick_PrunesHourly(t *testing.T) {
 	require.True(t, ok, "prune runs at most once per interval")
 }
 
+// TestTick_PruneKeepsLongIntervalTasks pins that pruning cannot make a task
+// with a period longer than the default prune age run early: its record must
+// survive until well after it is next due.
+func TestTick_PruneKeepsLongIntervalTasks(t *testing.T) {
+	t.Parallel()
+	ws := newMockWorkspace(t)
+	monthly := TaskConfig{Name: "monthly", Script: "m.lua", Every: intervalSchedule(30 * 24 * time.Hour)}
+	lastRun := t0.Add(-20 * 24 * time.Hour)
+	seed(t, ws, "monthly", schedulerstate.TaskState{LastRun: lastRun})
+	s, q, _ := newTestScheduler(t, ws, t0, monthly)
+
+	s.tick(context.Background())
+
+	ts, ok := taskState(t, ws, "monthly")
+	require.True(t, ok, "a 30-day task's record outlives the 14-day default")
+	require.True(t, ts.LastRun.Equal(lastRun))
+	require.Empty(t, q.jobs(), "the task is not due for another 10 days")
+}
+
+func TestPruneAgeFor(t *testing.T) {
+	t.Parallel()
+	require.Equal(t, pruneAge, pruneAgeFor(nil))
+	require.Equal(t, pruneAge, pruneAgeFor([]TaskConfig{{Every: dailySchedule()}}))
+	require.Equal(t, 60*24*time.Hour, pruneAgeFor([]TaskConfig{
+		{Every: dailySchedule()}, {Every: intervalSchedule(30 * 24 * time.Hour)},
+	}))
+}
+
 func TestImportLegacyState(t *testing.T) {
 	t.Parallel()
 	ws := newMockWorkspace(t)

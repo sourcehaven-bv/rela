@@ -129,6 +129,10 @@ func (s *Store) Seed(ctx context.Context, task string, st schedulerstate.TaskSta
 	if task == "" {
 		return schedulerstate.ErrNoTask
 	}
+	if st.LastRun.IsZero() && st.NextRetry.IsZero() {
+		// Nothing to carry over, and no time to date the record by.
+		return nil
+	}
 	touched := st.LastRun
 	if st.NextRetry.After(touched) {
 		touched = st.NextRetry
@@ -218,22 +222,36 @@ func (s *Store) StartRun(
 	return current, schedulerstate.ErrNotQueued
 }
 
-// ExtendLease implements [schedulerstate.Store].
-func (s *Store) ExtendLease(ctx context.Context, id string, leaseUntil time.Time) error {
+// StartChild implements [schedulerstate.Store].
+func (s *Store) StartChild(ctx context.Context, id, subject string, leaseUntil time.Time) (bool, error) {
 	if s.closed.Load() {
-		return schedulerstate.ErrClosed
+		return false, schedulerstate.ErrClosed
 	}
-	tag, err := s.db.Exec(ctx, `
+	var (
+		active  bool
+		settled *bool
+	)
+	err := s.db.QueryRow(ctx, `
+		SELECT r.status IN `+activeStatuses+`, c.settled
+		FROM scheduler_runs r
+		LEFT JOIN scheduler_run_children c ON c.run_id = r.id AND c.subject = $2
+		WHERE r.id = $1`, id, subject).Scan(&active, &settled)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return false, schedulerstate.ErrNoRun
+	case err != nil:
+		return false, fmt.Errorf("pgschedstate: claim %q/%q: %w", id, subject, err)
+	case settled == nil:
+		return false, fmt.Errorf("pgschedstate: run %q does not expect subject %q", id, subject)
+	case !active || *settled:
+		return false, nil
+	}
+	if _, err := s.db.Exec(ctx, `
 		UPDATE scheduler_runs SET lease_until = $2
-		WHERE id = $1 AND status IN `+activeStatuses+` AND lease_until < $2`, id, leaseUntil)
-	if err != nil {
-		return fmt.Errorf("pgschedstate: extend lease %q: %w", id, err)
+		WHERE id = $1 AND status IN `+activeStatuses+` AND lease_until < $2`, id, leaseUntil); err != nil {
+		return false, fmt.Errorf("pgschedstate: extend lease %q: %w", id, err)
 	}
-	if tag.RowsAffected() == 0 {
-		_, err := getRun(ctx, s.db, id, false)
-		return err
-	}
-	return nil
+	return true, nil
 }
 
 // ExpectChildren implements [schedulerstate.Store].
@@ -360,7 +378,11 @@ func (s *Store) FinishRun(
 		}
 		if !run.Status.Active() {
 			fin = schedulerstate.Finished{Run: run}
-			return nil
+			if run.Status != schedulerstate.RunAbandoned || out.Error != "" {
+				return nil
+			}
+			_, fin.LateSuccess, err = applyOutcome(ctx, tx, run, out, policy)
+			return err
 		}
 		fin, err = finish(ctx, tx, run, out, run.Status, policy)
 		return err
@@ -465,6 +487,24 @@ func finish(
 	}
 	run.Status, run.FinishedAt, run.Error = status, out.At, out.Error
 
+	next, _, err := applyOutcome(ctx, tx, run, out, policy)
+	if err != nil {
+		return schedulerstate.Finished{}, err
+	}
+	fin := schedulerstate.Finished{Run: run, Applied: true}
+	if out.Error != "" {
+		fin.Failures = next.Failures
+		fin.NextRetry = next.NextRetry
+	}
+	return fin, nil
+}
+
+// applyOutcome applies out to run's task under a row lock, and reports the
+// task's state after it and whether it changed.
+func applyOutcome(
+	ctx context.Context, tx pgx.Tx, run schedulerstate.Run, out schedulerstate.Outcome,
+	policy schedulerstate.RetryPolicy,
+) (schedulerstate.TaskState, bool, error) {
 	var (
 		ts                 schedulerstate.TaskState
 		lastRun, nextRetry *time.Time
@@ -472,7 +512,7 @@ func finish(
 	if err := tx.QueryRow(ctx, `SELECT last_run, failures, next_retry, version
 		FROM scheduler_tasks WHERE task = $1 FOR UPDATE`, run.Task).
 		Scan(&lastRun, &ts.Failures, &nextRetry, &ts.Version); err != nil {
-		return schedulerstate.Finished{}, fmt.Errorf("pgschedstate: lock task %q: %w", run.Task, err)
+		return ts, false, fmt.Errorf("pgschedstate: lock task %q: %w", run.Task, err)
 	}
 	ts.LastRun, ts.NextRetry = timeOf(lastRun), timeOf(nextRetry)
 
@@ -483,16 +523,10 @@ func finish(
 			WHERE task = $1`,
 			run.Task, nullTime(next.LastRun), next.Failures, nullTime(next.NextRetry), next.Version, out.At,
 		); err != nil {
-			return schedulerstate.Finished{}, fmt.Errorf("pgschedstate: record outcome of %q: %w", run.Task, err)
+			return ts, false, fmt.Errorf("pgschedstate: record outcome of %q: %w", run.Task, err)
 		}
 	}
-
-	fin := schedulerstate.Finished{Run: run, Applied: true}
-	if out.Error != "" {
-		fin.Failures = next.Failures
-		fin.NextRetry = next.NextRetry
-	}
-	return fin, nil
+	return next, changed, nil
 }
 
 // getRun reads one run, locking it when forUpdate is set.

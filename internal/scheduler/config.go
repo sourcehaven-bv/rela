@@ -164,6 +164,22 @@ func (s Schedule) String() string {
 	// constants; no valid Schedule has another kind
 }
 
+// Period is the longest time between two runs of this schedule.
+func (s Schedule) Period() time.Duration {
+	const (
+		day  = 24 * time.Hour
+		week = 7 * day
+	)
+	switch s.kind {
+	case dayKind:
+		return day
+	case weekdayKind:
+		return week
+	default:
+		return s.interval
+	}
+}
+
 // Occurrence returns the stable local-date identity for a calendar schedule.
 // Interval schedules deliberately have no occurrence identity.
 func (s Schedule) Occurrence(now time.Time) (string, bool) {

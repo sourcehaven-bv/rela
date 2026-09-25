@@ -23,10 +23,20 @@
 //
 // Stated plainly rather than left to be discovered, exactly as
 // kvuserstate does for the same trade.
+//
+// # for_each subjects live outside the document
+//
+// A fan-out run has up to 10,000 subjects, and each one is claimed and settled
+// separately. Were the subjects part of the document, every settle would
+// rewrite all of them, so a run would cost writes quadratic in its size, all
+// behind the mutex the scheduler's tick also takes. Each subject is instead
+// one small key, written when it settles, plus one index key per run listing
+// its subjects. The document keeps only the run's counters.
 package kvstate
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -47,6 +57,17 @@ import (
 // must not silently read a document written in the new shape. The scheduler
 // imports the legacy document once through [Store.Seed] and then deletes it.
 const StateKey = "scheduler-run-state.json"
+
+// childKeyPrefix holds the per-run subject keys: "<prefix><run>.json" is the
+// run's subject index and "<prefix><run>-<subject>" one subject's state. Both
+// ids are hex-encoded, so any id makes a valid key and no id can reach
+// outside the prefix.
+const childKeyPrefix = "scheduler-run-children/"
+
+// leaseStep is the smallest lease extension StartChild writes. Children start
+// in bursts, and writing the document for each would put a whole-document
+// write back on every subject.
+const leaseStep = time.Minute
 
 // keepEndedRuns is how many ended runs are kept per task.
 //
@@ -83,6 +104,9 @@ var _ schedulerstate.Store = (*Store)(nil)
 type document struct {
 	Tasks map[string]taskRecord `json:"tasks"`
 	Runs  map[string]*runRecord `json:"runs,omitempty"`
+
+	// dropped lists deleted runs whose subject keys are still to be removed.
+	dropped []string
 }
 
 type taskRecord struct {
@@ -96,8 +120,6 @@ type taskRecord struct {
 
 type runRecord struct {
 	schedulerstate.Run
-	// Subjects maps each for_each subject to where it is.
-	Subjects map[string]subjectState `json:"subjects,omitempty"`
 }
 
 // subjectState is one for_each subject's progress within a run.
@@ -108,6 +130,12 @@ const (
 	subjectSucceeded subjectState = "succeeded"
 	subjectFailed    subjectState = "failed"
 )
+
+func indexKey(run string) string { return childKeyPrefix + hex.EncodeToString([]byte(run)) + ".json" }
+
+func subjectKey(run, subject string) string {
+	return childKeyPrefix + hex.EncodeToString([]byte(run)) + "-" + hex.EncodeToString([]byte(subject))
+}
 
 func (r taskRecord) state() schedulerstate.TaskState {
 	return schedulerstate.TaskState{
@@ -125,7 +153,7 @@ func recordOf(ts schedulerstate.TaskState, touched time.Time) taskRecord {
 // Load implements [schedulerstate.Store].
 func (s *Store) Load(ctx context.Context, tasks []string) (map[string]schedulerstate.TaskState, error) {
 	out := make(map[string]schedulerstate.TaskState, len(tasks))
-	err := s.view(ctx, func(doc *document) {
+	err := s.view(ctx, func(doc *document) error {
 		for _, name := range tasks {
 			rec, ok := doc.Tasks[name]
 			active := doc.activeRun(name)
@@ -139,6 +167,7 @@ func (s *Store) Load(ctx context.Context, tasks []string) (map[string]schedulers
 			}
 			out[name] = ts
 		}
+		return nil
 	})
 	if err != nil {
 		return nil, err
@@ -153,6 +182,10 @@ func (s *Store) Seed(ctx context.Context, task string, st schedulerstate.TaskSta
 	}
 	return s.mutate(ctx, func(doc *document) (bool, error) {
 		if _, ok := doc.Tasks[task]; ok {
+			return false, nil
+		}
+		if st.LastRun.IsZero() && st.NextRetry.IsZero() {
+			// Nothing to carry over, and no time to date the record by.
 			return false, nil
 		}
 		st.Version = 0
@@ -209,19 +242,29 @@ func (s *Store) StartRun(
 	return out, err
 }
 
-// ExtendLease implements [schedulerstate.Store].
-func (s *Store) ExtendLease(ctx context.Context, id string, leaseUntil time.Time) error {
-	return s.mutate(ctx, func(doc *document) (bool, error) {
+// StartChild implements [schedulerstate.Store].
+func (s *Store) StartChild(ctx context.Context, id, subject string, leaseUntil time.Time) (bool, error) {
+	claimed := false
+	err := s.mutate(ctx, func(doc *document) (bool, error) {
 		rec, ok := doc.Runs[id]
 		if !ok {
 			return false, schedulerstate.ErrNoRun
 		}
-		if !rec.Status.Active() || !leaseUntil.After(rec.LeaseUntil) {
+		if !rec.Status.Active() {
+			return false, nil
+		}
+		st, err := s.subject(ctx, id, subject)
+		if err != nil || st != subjectPending {
+			return false, err
+		}
+		claimed = true
+		if !leaseUntil.After(rec.LeaseUntil.Add(leaseStep)) {
 			return false, nil
 		}
 		rec.LeaseUntil = leaseUntil
 		return true, nil
 	})
+	return claimed, err
 }
 
 // ExpectChildren implements [schedulerstate.Store].
@@ -231,19 +274,38 @@ func (s *Store) ExpectChildren(ctx context.Context, id string, subjects []string
 		if !ok {
 			return false, schedulerstate.ErrNoRun
 		}
-		if rec.Subjects == nil {
-			rec.Subjects = make(map[string]subjectState, len(subjects))
+		index, err := s.index(ctx, id)
+		if err != nil {
+			return false, err
 		}
-		added := false
+		known := make(map[string]bool, len(index))
+		for _, subject := range index {
+			known[subject] = true
+		}
+		added := 0
 		for _, subject := range subjects {
-			if _, known := rec.Subjects[subject]; known {
+			if known[subject] {
 				continue
 			}
-			rec.Subjects[subject] = subjectPending
-			rec.Children++
-			added = true
+			known[subject] = true
+			index = append(index, subject)
+			if putErr := s.putSubject(ctx, id, subject, subjectPending); putErr != nil {
+				return false, putErr
+			}
+			added++
 		}
-		return added, nil
+		if added == 0 {
+			return false, nil
+		}
+		data, err := json.Marshal(index)
+		if err != nil {
+			return false, fmt.Errorf("kvstate: marshal subjects of %q: %w", id, err)
+		}
+		if err := s.kv.Put(ctx, indexKey(id), data); err != nil {
+			return false, fmt.Errorf("kvstate: write subjects of %q: %w", id, err)
+		}
+		rec.Children += added
+		return true, nil
 	})
 }
 
@@ -260,18 +322,20 @@ func (s *Store) SettleChild(
 		if !ok {
 			return false, schedulerstate.ErrNoRun
 		}
-		current, known := rec.Subjects[subject]
-		if !known {
-			return false, fmt.Errorf("kvstate: run %q does not expect subject %q", id, subject)
+		current, err := s.subject(ctx, id, subject)
+		if err != nil || current != subjectPending {
+			return false, err
 		}
-		if current != subjectPending {
-			return false, nil
+		final := subjectSucceeded
+		if out.Error != "" {
+			final = subjectFailed
+		}
+		if err := s.putSubject(ctx, id, subject, final); err != nil {
+			return false, err
 		}
 		settled = true
-		rec.Subjects[subject] = subjectSucceeded
 		rec.ChildrenSettled++
 		if out.Error != "" {
-			rec.Subjects[subject] = subjectFailed
 			rec.ChildrenFailed++
 			if rec.Error == "" {
 				rec.Error = out.Error
@@ -292,17 +356,26 @@ func (s *Store) SettleChild(
 // SucceededSubjects implements [schedulerstate.Store].
 func (s *Store) SucceededSubjects(ctx context.Context, task, occurrence string) ([]string, error) {
 	var out []string
-	err := s.view(ctx, func(doc *document) {
+	err := s.view(ctx, func(doc *document) error {
 		for _, rec := range doc.Runs {
-			if rec.Task != task || rec.Occurrence != occurrence {
+			if rec.Task != task || rec.Occurrence != occurrence || rec.Children == 0 {
 				continue
 			}
-			for subject, st := range rec.Subjects {
+			index, err := s.index(ctx, rec.ID)
+			if err != nil {
+				return err
+			}
+			for _, subject := range index {
+				st, err := s.subject(ctx, rec.ID, subject)
+				if err != nil {
+					return err
+				}
 				if st == subjectSucceeded {
 					out = append(out, subject)
 				}
 			}
 		}
+		return nil
 	})
 	if err != nil {
 		return nil, err
@@ -323,7 +396,15 @@ func (s *Store) FinishRun(
 		}
 		if !rec.Status.Active() {
 			fin = schedulerstate.Finished{Run: rec.Run}
-			return false, nil
+			if rec.Status != schedulerstate.RunAbandoned || out.Error != "" {
+				return false, nil
+			}
+			ts, changed := schedulerstate.ApplyOutcome(doc.Tasks[rec.Task].state(), rec.CreatedAt, out, policy)
+			if changed {
+				doc.Tasks[rec.Task] = recordOf(ts, out.At)
+				fin.LateSuccess = true
+			}
+			return changed, nil
 		}
 		fin = doc.finish(rec, out, rec.Status, policy)
 		return true, nil
@@ -359,16 +440,20 @@ func (s *Store) Prune(ctx context.Context, before time.Time) ([]string, error) {
 	var removed []string
 	err := s.mutate(ctx, func(doc *document) (bool, error) {
 		changed := false
-		for id, rec := range doc.Runs {
-			if !rec.Status.Active() && rec.FinishedAt.Before(before) {
-				delete(doc.Runs, id)
-				changed = true
-			}
-		}
 		for name, rec := range doc.Tasks {
 			if rec.Touched.Before(before) && doc.activeRun(name) == nil {
 				removed = append(removed, name)
 				delete(doc.Tasks, name)
+				changed = true
+			}
+		}
+		for id, rec := range doc.Runs {
+			if rec.Status.Active() {
+				continue
+			}
+			_, taskKept := doc.Tasks[rec.Task]
+			if rec.FinishedAt.Before(before) || !taskKept {
+				doc.dropRun(id)
 				changed = true
 			}
 		}
@@ -448,8 +533,17 @@ func (doc *document) trimEnded(task string) {
 		if current != "" && rec.Occurrence == current {
 			continue
 		}
-		delete(doc.Runs, rec.ID)
+		doc.dropRun(rec.ID)
 	}
+}
+
+// dropRun deletes a run from the document and queues its subject keys for
+// deletion once the document is written.
+func (doc *document) dropRun(id string) {
+	if doc.Runs[id].Children > 0 {
+		doc.dropped = append(doc.dropped, id)
+	}
+	delete(doc.Runs, id)
 }
 
 func latest(a, b time.Time) time.Time {
@@ -460,7 +554,7 @@ func latest(a, b time.Time) time.Time {
 }
 
 // view runs fn over a freshly-read document without writing.
-func (s *Store) view(ctx context.Context, fn func(*document)) error {
+func (s *Store) view(ctx context.Context, fn func(*document) error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
@@ -470,8 +564,7 @@ func (s *Store) view(ctx context.Context, fn func(*document)) error {
 	if err != nil {
 		return err
 	}
-	fn(doc)
-	return nil
+	return fn(doc)
 }
 
 // mutate applies fn to a freshly-read document and writes the result when fn
@@ -495,7 +588,63 @@ func (s *Store) mutate(ctx context.Context, fn func(*document) (bool, error)) er
 	if err != nil || !changed {
 		return err
 	}
-	return s.write(ctx, doc)
+	if err := s.write(ctx, doc); err != nil {
+		return err
+	}
+	s.deleteChildren(ctx, doc.dropped)
+	return nil
+}
+
+// deleteChildren removes the subject keys of runs already deleted from the
+// document. Best effort: a key left behind is never read again, because
+// every read of a subject goes through a run the document still holds.
+func (s *Store) deleteChildren(ctx context.Context, runs []string) {
+	for _, id := range runs {
+		index, err := s.index(ctx, id)
+		if err != nil {
+			continue
+		}
+		for _, subject := range index {
+			_ = s.kv.Delete(ctx, subjectKey(id, subject))
+		}
+		_ = s.kv.Delete(ctx, indexKey(id))
+	}
+}
+
+// index returns the subjects recorded for run, or none.
+func (s *Store) index(ctx context.Context, run string) ([]string, error) {
+	data, err := s.kv.Get(ctx, indexKey(run))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("kvstate: read subjects of %q: %w", run, err)
+	}
+	var index []string
+	if err := json.Unmarshal(data, &index); err != nil {
+		return nil, fmt.Errorf("kvstate: decode subjects of %q: %w", run, err)
+	}
+	return index, nil
+}
+
+// subject returns one subject's state within run. A subject the run does not
+// expect is an error: it would corrupt the run's counters.
+func (s *Store) subject(ctx context.Context, run, subject string) (subjectState, error) {
+	data, err := s.kv.Get(ctx, subjectKey(run, subject))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", fmt.Errorf("kvstate: run %q does not expect subject %q", run, subject)
+		}
+		return "", fmt.Errorf("kvstate: read subject %q of %q: %w", subject, run, err)
+	}
+	return subjectState(data), nil
+}
+
+func (s *Store) putSubject(ctx context.Context, run, subject string, st subjectState) error {
+	if err := s.kv.Put(ctx, subjectKey(run, subject), []byte(st)); err != nil {
+		return fmt.Errorf("kvstate: write subject %q of %q: %w", subject, run, err)
+	}
+	return nil
 }
 
 // read returns the stored document, or an empty one when the key is absent.

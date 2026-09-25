@@ -117,6 +117,51 @@ func TestForEach_RunEndsWhenChildrenSettle(t *testing.T) {
 	require.Equal(t, "user:P-1", rec.runs[0].RunAs, "each child runs as its subject's principal")
 }
 
+// TestForEach_ChildOfAbandonedRunDoesNotExecute pins that a child still queued
+// when its run is reaped does not run: the retry run owns the subject, and
+// running both would deliver twice.
+func TestForEach_ChildOfAbandonedRunDoesNotExecute(t *testing.T) {
+	t.Parallel()
+	ws := newForEachWorkspace(t, "P-1")
+	s, q, c := newTestScheduler(t, ws, t0, digestTask())
+	rec := &recorder{}
+	s.engineRunner = rec.run
+
+	s.tick(context.Background())
+	require.NoError(t, q.deliver(t, q.take()[0]))
+	stale := q.take()
+	require.Len(t, stale, 1)
+
+	c.Advance(runningLease + time.Minute)
+	s.tick(context.Background())
+	ts, _ := taskState(t, ws, "digest")
+	require.Equal(t, 1, ts.Failures, "the run was abandoned")
+
+	require.NoError(t, q.deliver(t, stale[0]))
+	require.Zero(t, rec.count(), "a child of an abandoned run must not execute")
+}
+
+// TestForEach_RedeliveredChildDoesNotExecuteAgain pins that a child delivered
+// again after it settled (the queue could not record its completion) does not
+// repeat its side effect.
+func TestForEach_RedeliveredChildDoesNotExecuteAgain(t *testing.T) {
+	t.Parallel()
+	ws := newForEachWorkspace(t, "P-1", "P-2")
+	s, q, _ := newTestScheduler(t, ws, t0, digestTask())
+	rec := &recorder{}
+	s.engineRunner = rec.run
+
+	s.tick(context.Background())
+	require.NoError(t, q.deliver(t, q.take()[0]))
+	children := q.take()
+	require.NoError(t, q.deliver(t, children[0]))
+	require.NoError(t, q.deliver(t, children[0]))
+
+	require.Equal(t, 1, rec.count(), "the redelivered child is skipped")
+	ts, _ := taskState(t, ws, "digest")
+	require.NotNil(t, ts.Active, "the run still waits for its other subject")
+}
+
 // TestForEach_ChildFailureFailsTheRun pins BUG-1YMHIS
 // (AM-foreach-child-failure-records-failure): a fan-out where a child failed
 // records a failure, so the ladder advances.

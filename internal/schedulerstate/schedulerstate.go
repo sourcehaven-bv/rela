@@ -207,9 +207,12 @@ type RetryPolicy func(failures int) time.Duration
 type Finished struct {
 	// Run is the run as stored after the call.
 	Run Run
-	// Applied is false when the run had already ended, so nothing changed.
-	// A late result for an abandoned run lands here.
+	// Applied is false when the run had already ended, so its record did
+	// not change. A late result for an abandoned run lands here.
 	Applied bool
+	// LateSuccess reports that a success arrived for a run already abandoned,
+	// and was still stamped as the task's LastRun.
+	LateSuccess bool
 	// Failures and NextRetry are the task's ladder after a failure; both are
 	// zero after a success.
 	Failures  int
@@ -252,9 +255,19 @@ type Store interface {
 	// duplicate delivery and must not execute it.
 	StartRun(ctx context.Context, id, node string, now, leaseUntil time.Time) (Run, error)
 
-	// ExtendLease moves an active run's lease forward. A no-op for a run that
-	// has ended; never moves a lease backwards.
-	ExtendLease(ctx context.Context, id string, leaseUntil time.Time) error
+	// StartChild claims one for_each subject for execution and moves the
+	// run's lease forward to leaseUntil (never backwards).
+	//
+	// It returns false, and changes nothing, when the run has ended or the
+	// subject has already settled. The caller must then not execute the
+	// subject: its run was abandoned and a retry owns the subject, or this is
+	// a redelivery of a child that already ran. Settling is what makes a
+	// subject final, so a claimed subject whose attempt failed stays
+	// claimable for the queue's next attempt.
+	//
+	// A backend may skip a lease extension of under a minute, to avoid a
+	// write per subject.
+	StartChild(ctx context.Context, id, subject string, leaseUntil time.Time) (bool, error)
 
 	// ExpectChildren records the for_each subjects a running run fans out to.
 	// Call it before enqueueing any child, so a child can never settle
@@ -286,7 +299,10 @@ type Store interface {
 	// policy's delay).
 	//
 	// A run that has already ended is left alone and reported with
-	// Applied=false.
+	// Applied=false. One exception: a success for an ABANDONED run still
+	// stamps the task's LastRun (LateSuccess). The work did happen, and
+	// discarding it would run the task again. The run keeps its abandoned
+	// status.
 	FinishRun(ctx context.Context, id string, out Outcome, policy RetryPolicy) (Finished, error)
 
 	// Reap abandons every active run whose lease is before now, advancing
