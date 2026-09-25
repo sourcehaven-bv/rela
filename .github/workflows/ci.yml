@@ -987,6 +987,19 @@ jobs:
           fi
           echo "OK: comment backends ran against PostgreSQL with no skips."
 
+      # Scheduler run-state conformance, DB-gated on the same terms and, like
+      # pgcomments, untagged.
+      - name: Run scheduler run-state conformance (race) against PostgreSQL
+        run: |
+          set -euo pipefail
+          go test -race -v ./internal/schedulerstate/... 2>&1 | tee schedstate-test.log
+          if grep -q -- '--- SKIP' schedstate-test.log; then
+            echo "::error::scheduler run-state tests SKIPPED in the Postgres Backend job."
+            grep -- '--- SKIP' schedstate-test.log
+            exit 1
+          fi
+          echo "OK: scheduler run-state backends ran against PostgreSQL with no skips."
+
       # The step above covers the STORE under -tags postgres. Nothing covered
       # the WIRING: `internal/appbuild` and `internal/cli` were compiled with
       # the tag but never run with it, so every build-agnostic composition-root

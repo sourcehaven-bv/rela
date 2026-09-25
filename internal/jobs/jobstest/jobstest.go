@@ -12,6 +12,7 @@ package jobstest
 import (
 	"context"
 	"errors"
+	"slices"
 	"strconv"
 	"sync"
 	"testing"
@@ -280,6 +281,10 @@ func testRetryNeverRunsOnce(t *testing.T, newQueue NewQueue) {
 	}))
 
 	rec.waitFired(t)
+	first, ok := rec.last()
+	require.True(t, ok)
+	require.Equal(t, 1, first.Attempt, "the first delivery is attempt 1")
+	require.True(t, first.FinalAttempt(), "a RetryNever job's only attempt is its final one")
 
 	// Wait past the backend's minimum retry backoff (~16s) before concluding
 	// no retry happened. A shorter wait would pass even against a backend
@@ -321,6 +326,16 @@ func testRetryBoundedRetries(t *testing.T, newQueue NewQueue) {
 	rec.waitFired(t)
 	require.Eventually(t, func() bool { return attempts.get() > 1 }, retryTimeout, retryPollInterval,
 		"RetryBounded must attempt more than once")
+
+	// The attempt number comes from the backend's own retry counter, so it
+	// must climb across redeliveries on BOTH tiers. A handler recording its
+	// outcome durably relies on it to recognize its final attempt.
+	rec.mu.Lock()
+	seen := slices.Clone(rec.jobs)
+	rec.mu.Unlock()
+	require.Equal(t, 1, seen[0].Attempt)
+	require.Equal(t, 2, seen[1].Attempt)
+	require.False(t, seen[0].FinalAttempt(), "a RetryBounded job's first attempt is not its last")
 }
 
 func testPastDeadlineNeverRuns(t *testing.T, newQueue NewQueue) {
