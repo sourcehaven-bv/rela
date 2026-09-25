@@ -5,7 +5,7 @@ title: Migrate rela-desktop to Wails v3
 kind: enhancement
 priority: medium
 effort: l
-status: backlog
+status: wont-fix
 ---
 
 Move `cmd/rela-desktop` from Wails v2.15.0 to v3.0.0-beta.16, then add
@@ -49,3 +49,8 @@ prose in a comment rather than code. Both rewritten and mutation-checked.
 
 The Windows build — no host available. The Linux desktop release target was
 dropped; v3 requires GTK4/WebKitGTK 6.0 and the dock service is a stub there.
+
+## Resolution
+
+Closed: Shipped in #1546. Status is wont-fix, not done, because this ticket has
+no review checklist.

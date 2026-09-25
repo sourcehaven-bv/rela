@@ -5,7 +5,7 @@ title: rela import bypasses transition guards on create and update
 kind: enhancement
 priority: medium
 effort: m
-status: backlog
+status: wont-fix
 ---
 
 ## Description
@@ -39,3 +39,8 @@ Option 2 has a real argument: import is a bulk operator tool, and a guard that
 rejects half a dataset mid-import leaves a partially-loaded project. Option 1
 has the stronger one: a guard that any operator can bypass by reaching for a
 different command is not an access-control measure, it is a suggestion.
+
+## Resolution
+
+Closed: Superseded by TKT-G8TOX5 (done), which documents why import bypasses
+transition guards.

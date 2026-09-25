@@ -5,7 +5,7 @@ title: Open several projects at once in rela-desktop
 kind: enhancement
 priority: medium
 effort: l
-status: backlog
+status: wont-fix
 ---
 
 Mount each open project at `/p/<id>/` so File > Open Project adds a project in
@@ -66,3 +66,8 @@ project's window opens against whichever project happens to be active.
 `rela-server`, where the same mechanism needs a slug scheme, the app-iframe CSP
 moved in lockstep, and `internal/lua/urls.go` handled — operator scripts already
 emit `/entity/...` and would silently lose the prefix.
+
+## Resolution
+
+Closed: Shipped in #1551. Status is wont-fix, not done, because this ticket has
+no review checklist.

@@ -4,7 +4,7 @@ type: ticket
 title: 'Scheduled Lua tasks get row gating but no field-level visible: redaction (appbuild has no affordance resolver)'
 kind: enhancement
 priority: medium
-status: backlog
+status: wont-fix
 ---
 
 `appbuild.ScheduledLuaWriteDeps` calls `luaWriteDepsFor(nil)` — a nil redactor,
@@ -55,3 +55,8 @@ from "nothing redacted" once this lands; TKT-FJ6END decided against three-way
 branching because "unevaluated" is a property of the runtime rather than of an
 entity, and closing this gap removes the main case where that distinction would
 have mattered.
+
+## Resolution
+
+Closed: Done: Services.ScheduledLuaWriteDeps passes s.fieldRedactor. Status is
+wont-fix, not done, because this ticket has no review checklist.

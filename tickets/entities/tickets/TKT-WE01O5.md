@@ -5,7 +5,7 @@ title: 'Two-way fsstore↔pgstore sync: hash-based push/pull with manual conflic
 kind: enhancement
 priority: medium
 effort: l
-status: backlog
+status: wont-fix
 ---
 
 ## Goal
@@ -70,3 +70,8 @@ PowerSync upload-through-backend, Dolt cell-level merge, Replicache rebase,
 rejected CRDTs) live in FEAT-NJ9FEN and the brainstorm. Start hash-only +
 full-manifest; the cursor lets the server add an O(changes) delta later without
 touching the client.
+
+## Resolution
+
+Closed: Done: push/pull/sync exist in internal/cli/sync. Status is wont-fix, not
+done, because this ticket has no review checklist.

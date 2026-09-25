@@ -5,7 +5,7 @@ title: Decide whether help/schema descriptions are config or data
 kind: docs
 priority: low
 effort: s
-status: backlog
+status: wont-fix
 ---
 
 ## Description
@@ -43,3 +43,8 @@ squarely address *descriptions*.
 
 Options and a recommendation are in
 `.ignored/issue-round/DISCUSS-1176-help-endpoint-gate.md`.
+
+## Resolution
+
+Closed: Settled by the CLAUDE.md rule "The configuration is not a secret; the
+data is."
