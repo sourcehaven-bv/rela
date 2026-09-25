@@ -329,7 +329,7 @@ func testRetryBoundedRetries(t *testing.T, newQueue NewQueue) {
 
 	// The attempt number comes from the backend's own retry counter, so it
 	// must climb across redeliveries on BOTH tiers. A handler recording its
-	// outcome durably relies on it to recognise its final attempt.
+	// outcome durably relies on it to recognize its final attempt.
 	rec.mu.Lock()
 	seen := slices.Clone(rec.jobs)
 	rec.mu.Unlock()

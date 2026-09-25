@@ -50,6 +50,8 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/relresolve"
+	"github.com/Sourcehaven-BV/rela/internal/schedulerstate"
+	"github.com/Sourcehaven-BV/rela/internal/schedulerstate/kvstate"
 	"github.com/Sourcehaven-BV/rela/internal/scopes"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/search"
@@ -122,7 +124,11 @@ import (
 // build the `rela migrate` commands, and this bundle is the only boundary it
 // can cross. Still a ratchet target under TKT-N0IKN9.
 //
-//plimsoll:max-exported-methods=34
+// 34 → 35 (BUG-TKL08E): [Services.SchedulerState], a scheduler.WorkspaceProvider
+// method. The run-state backend is chosen here to match the job queue's reach,
+// the same per-recipe choice as [Services.MigState].
+//
+//plimsoll:max-exported-methods=35
 type Services struct {
 	fs    storage.FS
 	paths *project.Context
@@ -151,6 +157,7 @@ type Services struct {
 	cfgLoader       config.Loader
 	stateKV         state.KV
 	migState        datamigration.StateStore
+	schedulerState  schedulerstate.Store
 	// jobQueue is the background-job seam (TKT-YOED3R). Its backend is a
 	// per-tier choice made by the recipe: ephemeral in-process on fs/mem,
 	// durable PostgreSQL on the postgres build. Torn down in Close.
@@ -372,6 +379,11 @@ func (s *Services) MigState() datamigration.StateStore { return s.migState }
 // queue, since a nil queue would turn every Enqueue into a panic at the
 // call site rather than a wiring error here.
 func (s *Services) Jobs() jobs.Client { return s.jobQueue }
+
+// SchedulerState returns the scheduler's task and run records. It satisfies
+// scheduler.WorkspaceProvider. The backend matches the job queue's reach:
+// postgres when the queue is durable, kvstate over [Services.State] otherwise.
+func (s *Services) SchedulerState() schedulerstate.Store { return s.schedulerState }
 
 // CalDAVAliases is the CalDAV<->rela resource alias service. Never nil: the
 // service is always constructed (an empty table is the normal first-run state),
@@ -1751,6 +1763,14 @@ type backendOverrides struct {
 	// Nil leaves the filesystem backend in place, which is correct for the fs,
 	// memory and desktop tiers.
 	commentStore comments.Store
+
+	// schedulerState replaces the state.KV-backed scheduler run-state
+	// (BUG-TKL08E). Supplied by the postgres recipe, whose job queue is
+	// durable and shared: a run queued by one process may execute on
+	// another, so its record must live where both can see it. Nil selects
+	// kvstate over the state store, which is right for every tier whose
+	// queue is in-process.
+	schedulerState schedulerstate.Store
 }
 
 // assemble builds the services bundle from an opened store.
@@ -1853,6 +1873,12 @@ func assemble(
 	if err != nil {
 		return nil, err
 	}
+	schedState := overrides.schedulerState
+	if schedState == nil {
+		if schedState, err = kvstate.New(stateKV); err != nil {
+			return nil, err
+		}
+	}
 	// coverage-ignore-end
 
 	// Upstream's parameter order (readDeps after cascadeRunner) with the
@@ -1908,7 +1934,7 @@ func assemble(
 	return newServices(
 		base, st, background, searcher, visible, searchCloser, mgr, tr, val,
 		templater, cfgLoader, stateKV, migState, jobQueue, aliases, commentSvc, versions,
-		resolvedACL, aclDeclarative, fieldRedactor,
+		resolvedACL, aclDeclarative, fieldRedactor, schedState,
 	), nil
 }
 
@@ -1923,7 +1949,7 @@ func newServices(
 	templater templating.Templater, cfgLoader config.Loader, stateKV state.KV,
 	migState datamigration.StateStore, jobQueue jobs.Queue, aliases *caldavalias.Service, commentSvc *comments.Service,
 	versions store.VersionService, resolvedACL acl.ACL, aclDeclarative *acl.Declarative,
-	fieldRedactor visibility.FieldRedactor,
+	fieldRedactor visibility.FieldRedactor, schedState schedulerstate.Store,
 ) *Services {
 	cfg := base.cfg
 	return &Services{
@@ -1947,6 +1973,7 @@ func newServices(
 		cfgLoader:       cfgLoader,
 		stateKV:         stateKV,
 		migState:        migState,
+		schedulerState:  schedState,
 		jobQueue:        jobQueue,
 		caldavAliases:   aliases,
 		comments:        commentSvc,

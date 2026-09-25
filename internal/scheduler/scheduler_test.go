@@ -2,1049 +2,474 @@ package scheduler
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"log/slog"
 	"os"
 	"path/filepath"
-	"slices"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/Sourcehaven-BV/rela/internal/config"
-	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/stretchr/testify/require"
+
+	"github.com/Sourcehaven-BV/rela/internal/jobs"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
-	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/schedulerstate"
 	"github.com/Sourcehaven-BV/rela/internal/script"
-	"github.com/Sourcehaven-BV/rela/internal/state"
 )
 
-// --- test helpers ---
+var t0 = time.Date(2026, 4, 10, 14, 0, 0, 0, time.UTC)
 
-type mockWorkspace struct {
-	mu              sync.Mutex
-	cacheFiles      map[string][]byte
-	paths           *project.Context
-	luaDepsCalls    int
-	luaDepsProvider func() lua.WriteDeps
-}
-
-func newMockWorkspace(t *testing.T) *mockWorkspace {
+// seed stores a task's state as if earlier runs had recorded it.
+func seed(t *testing.T, ws WorkspaceProvider, task string, st schedulerstate.TaskState) {
 	t.Helper()
-	return &mockWorkspace{
-		cacheFiles: make(map[string][]byte),
-		paths:      &project.Context{Root: t.TempDir()},
-	}
+	require.NoError(t, ws.SchedulerState().Seed(context.Background(), task, st))
 }
 
-func (m *mockWorkspace) Paths() *project.Context { return m.paths }
-
-func (m *mockWorkspace) Config() config.Loader { return &mockConfig{m: m} }
-
-func (m *mockWorkspace) State() state.KV { return &mockState{m: m} }
-
-func (m *mockWorkspace) ScheduledLuaWriteDeps() lua.WriteDeps {
-	m.mu.Lock()
-	m.luaDepsCalls++
-	provider := m.luaDepsProvider
-	m.mu.Unlock()
-	if provider != nil {
-		return provider()
-	}
-	return lua.WriteDeps{}
+// recorder is an engineRunner that records each run and returns err.
+type recorder struct {
+	mu   sync.Mutex
+	runs []TaskConfig
+	err  error
 }
 
-type mockConfig struct{ m *mockWorkspace }
-
-func (c *mockConfig) Load(_ context.Context, name string) ([]byte, error) {
-	c.m.mu.Lock()
-	defer c.m.mu.Unlock()
-	data, ok := c.m.cacheFiles["project:"+name]
-	if !ok {
-		return nil, &notFoundError{name}
-	}
-	return data, nil
+func (r *recorder) run(_ context.Context, task TaskConfig) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.runs = append(r.runs, task)
+	return r.err
 }
 
-// List reports no directory-shaped config: the scheduler reads
-// schedules.yaml by name and nothing else.
-func (c *mockConfig) List(_ context.Context, _ string) ([]string, error) { return nil, nil }
-
-type mockState struct{ m *mockWorkspace }
-
-func (s *mockState) Get(_ context.Context, key string) ([]byte, error) {
-	s.m.mu.Lock()
-	defer s.m.mu.Unlock()
-	data, ok := s.m.cacheFiles[key]
-	if !ok {
-		return nil, &notFoundError{key}
-	}
-	return data, nil
+func (r *recorder) count() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.runs)
 }
 
-func (s *mockState) Put(_ context.Context, key string, data []byte) error {
-	s.m.mu.Lock()
-	defer s.m.mu.Unlock()
-	s.m.cacheFiles[key] = append([]byte(nil), data...)
-	return nil
-}
-
-func (s *mockState) Delete(_ context.Context, key string) error {
-	s.m.mu.Lock()
-	defer s.m.mu.Unlock()
-	delete(s.m.cacheFiles, key)
-	return nil
-}
-
-type notFoundError struct{ name string }
-
-func (e *notFoundError) Error() string { return "not found: " + e.name }
-
-// errBoom is the injected failure used by the retry-ladder tests.
-var errBoom = errors.New("boom")
-
-// stubMutator satisfies lua.Mutator so a writer runtime can be constructed.
-// The real-path tests run scripts that never mutate, so every method returning
-// an error is correct: if one is ever called, the test should fail loudly
-// rather than silently exercise a no-op write.
-type stubMutator struct{}
-
-var errStubMutator = errors.New("stubMutator: unexpected write from a test script")
-
-func (stubMutator) CreateEntity(
-	context.Context, *entity.Entity, entity.CreateOptions,
-) (*entity.CreateResult, error) {
-	return nil, errStubMutator
-}
-
-func (stubMutator) UpdateEntity(context.Context, *entity.Entity) (*entity.UpdateResult, error) {
-	return nil, errStubMutator
-}
-
-func (stubMutator) PatchEntity(context.Context, string, entity.Patch) (*entity.UpdateResult, error) {
-	return nil, errStubMutator
-}
-
-func (stubMutator) DeleteEntity(context.Context, string, bool) (*entity.DeleteResult, error) {
-	return nil, errStubMutator
-}
-
-func (stubMutator) CreateRelation(
-	context.Context, string, string, string, entity.RelationOptions,
-) (*entity.Relation, error) {
-	return nil, errStubMutator
-}
-
-func (stubMutator) DeleteRelation(context.Context, string, string, string) error {
-	return errStubMutator
-}
-
-type mockTracker struct {
-	mu    sync.Mutex
-	calls []string
-	times []time.Time
-}
-
-func (m *mockTracker) record(path string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.calls = append(m.calls, path)
-}
-
-// recordAt records a call together with the time the run started, so tests can
-// assert WHEN a task fired rather than inferring it from the clock afterwards.
-func (m *mockTracker) recordAt(path string, at time.Time) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.calls = append(m.calls, path)
-	m.times = append(m.times, at)
-}
-
-func (m *mockTracker) getTimes() []time.Time {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return slices.Clone(m.times)
-}
-
-func (m *mockTracker) getCalls() []string {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	result := make([]string, len(m.calls))
-	copy(result, m.calls)
-	return result
-}
-
-func discardLogger() *slog.Logger {
-	return slog.New(slog.DiscardHandler)
-}
-
-func newTestScheduler(
-	t *testing.T,
-	cfg *Config,
-	now time.Time,
-) (*Scheduler, *mockWorkspace, *mockTracker) {
-	t.Helper()
-	ws := newMockWorkspace(t)
-	tracker := &mockTracker{}
-	s := &Scheduler{
-		config: cfg,
-		ws:     ws,
-		state:  newState(),
-		logger: discardLogger(),
-		now:    func() time.Time { return now },
-	}
-	s.executeTaskFunc = func(ctx context.Context, task TaskConfig) {
-		tracker.record(task.Script)
-		s.state.Tasks[task.Name] = s.now()
-		s.saveState(ctx)
-	}
-	return s, ws, tracker
-}
-
-func dailySchedule() Schedule {
-	return Schedule{kind: dayKind, set: true}
-}
-
-func intervalSchedule(d time.Duration) Schedule {
-	return Schedule{kind: intervalKind, interval: d, set: true}
-}
-
-// --- tests ---
-
-func TestRunDueTasks_firstEver(t *testing.T) {
+func TestTick_DueDecisions(t *testing.T) {
 	t.Parallel()
-
-	cfg := &Config{
-		Tasks: []TaskConfig{
-			{Name: "check", Script: "check.lua", Every: dailySchedule()},
-		},
-	}
-	now := time.Date(2026, 4, 10, 14, 0, 0, 0, time.UTC)
-	s, _, tracker := newTestScheduler(t, cfg, now)
-
-	s.runDueTasks(context.Background())
-
-	calls := tracker.getCalls()
-	if len(calls) != 1 || calls[0] != "check.lua" {
-		t.Errorf("expected 1 call to check.lua, got %v", calls)
-	}
-}
-
-func TestRunDueTasks_missedDay(t *testing.T) {
-	t.Parallel()
-
-	cfg := &Config{
-		Tasks: []TaskConfig{
-			{Name: "daily", Script: "daily.lua", Every: dailySchedule()},
-		},
-	}
-	now := time.Date(2026, 4, 10, 14, 0, 0, 0, time.Local)
-	lastRun := time.Date(2026, 4, 9, 9, 0, 0, 0, time.Local) // yesterday
-
-	s, _, tracker := newTestScheduler(t, cfg, now)
-	s.state.Tasks["daily"] = lastRun
-
-	s.runDueTasks(context.Background())
-
-	calls := tracker.getCalls()
-	if len(calls) != 1 || calls[0] != "daily.lua" {
-		t.Errorf("expected 1 missed run call, got %v", calls)
-	}
-}
-
-func TestRunDueTasks_notDue(t *testing.T) {
-	t.Parallel()
-
-	cfg := &Config{
-		Tasks: []TaskConfig{
-			{Name: "daily", Script: "daily.lua", Every: dailySchedule()},
-		},
-	}
-	now := time.Date(2026, 4, 10, 9, 30, 0, 0, time.Local)
-	lastRun := time.Date(2026, 4, 10, 9, 5, 0, 0, time.Local) // ran today
-
-	s, _, tracker := newTestScheduler(t, cfg, now)
-	s.state.Tasks["daily"] = lastRun
-
-	s.runDueTasks(context.Background())
-
-	if calls := tracker.getCalls(); len(calls) != 0 {
-		t.Errorf("expected no calls, got %v", calls)
-	}
-}
-
-func TestRunDueTasks_intervalDue(t *testing.T) {
-	t.Parallel()
-
-	cfg := &Config{
-		Tasks: []TaskConfig{
-			{Name: "check", Script: "check.lua", Every: intervalSchedule(30 * time.Minute)},
-		},
-	}
-	now := time.Date(2026, 4, 10, 10, 0, 0, 0, time.UTC)
-	lastRun := time.Date(2026, 4, 10, 9, 25, 0, 0, time.UTC) // 35min ago
-
-	s, _, tracker := newTestScheduler(t, cfg, now)
-	s.state.Tasks["check"] = lastRun
-
-	s.runDueTasks(context.Background())
-
-	calls := tracker.getCalls()
-	if len(calls) != 1 {
-		t.Errorf("expected 1 call, got %v", calls)
-	}
-}
-
-func TestRunDueTasks_intervalNotDue(t *testing.T) {
-	t.Parallel()
-
-	cfg := &Config{
-		Tasks: []TaskConfig{
-			{Name: "check", Script: "check.lua", Every: intervalSchedule(30 * time.Minute)},
-		},
-	}
-	now := time.Date(2026, 4, 10, 9, 20, 0, 0, time.UTC)
-	lastRun := time.Date(2026, 4, 10, 9, 0, 0, 0, time.UTC) // 20min ago
-
-	s, _, tracker := newTestScheduler(t, cfg, now)
-	s.state.Tasks["check"] = lastRun
-
-	s.runDueTasks(context.Background())
-
-	if calls := tracker.getCalls(); len(calls) != 0 {
-		t.Errorf("expected no calls, got %v", calls)
-	}
-}
-
-func TestScheduler_statePersistedAfterRun(t *testing.T) {
-	t.Parallel()
-
-	cfg := &Config{
-		Tasks: []TaskConfig{
-			{Name: "test", Script: "test.lua", Every: dailySchedule()},
-		},
-	}
-	now := time.Date(2026, 4, 10, 14, 0, 0, 0, time.UTC)
-	s, ws, _ := newTestScheduler(t, cfg, now)
-
-	s.runDueTasks(context.Background())
-
-	data, err := ws.State().Get(context.Background(), stateFile)
-	if err != nil {
-		t.Fatalf("state file not written: %v", err)
-	}
-	var saved State
-	if err := json.Unmarshal(data, &saved); err != nil {
-		t.Fatalf("invalid state JSON: %v", err)
-	}
-	if _, ok := saved.Tasks["test"]; !ok {
-		t.Error("expected 'test' task in saved state")
-	}
-}
-
-func TestScheduler_loadState_noFile(t *testing.T) {
-	t.Parallel()
-
-	ws := newMockWorkspace(t)
-	s := &Scheduler{ws: ws, logger: discardLogger()}
-	s.loadState(context.Background())
-
-	if s.state == nil || s.state.Tasks == nil {
-		t.Fatal("expected initialized state")
-	}
-}
-
-func TestScheduler_loadState_existing(t *testing.T) {
-	t.Parallel()
-
-	ws := newMockWorkspace(t)
-	ts := time.Date(2026, 4, 10, 9, 0, 0, 0, time.UTC)
-	stateData, _ := json.Marshal(State{Tasks: map[string]time.Time{"daily": ts}})
-	ws.cacheFiles[stateFile] = stateData
-
-	s := &Scheduler{ws: ws, logger: discardLogger()}
-	s.loadState(context.Background())
-
-	if got := s.state.Tasks["daily"]; !got.Equal(ts) {
-		t.Errorf("loaded state: daily = %v, want %v", got, ts)
-	}
-}
-
-func TestScheduler_Run_emptyConfig(t *testing.T) {
-	t.Parallel()
-
-	ws := newMockWorkspace(t)
-	s := &Scheduler{
-		config: &Config{Tasks: nil},
-		ws:     ws,
-		logger: discardLogger(),
-		now:    time.Now,
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	if err := s.Run(ctx); err != nil {
-		t.Errorf("Run with empty config should return nil, got %v", err)
-	}
-}
-
-func TestRunDueTasks_cancelledContext(t *testing.T) {
-	t.Parallel()
-
-	cfg := &Config{
-		Tasks: []TaskConfig{
-			{Name: "a", Script: "a.lua", Every: dailySchedule()},
-			{Name: "b", Script: "b.lua", Every: dailySchedule()},
-		},
-	}
-	now := time.Date(2026, 4, 10, 14, 0, 0, 0, time.UTC)
-	s, _, tracker := newTestScheduler(t, cfg, now)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	s.runDueTasks(ctx)
-
-	if calls := tracker.getCalls(); len(calls) != 0 {
-		t.Errorf("expected no calls with cancelled context, got %v", calls)
-	}
-}
-
-func TestRunDueTasks_sequential(t *testing.T) {
-	t.Parallel()
-
-	cfg := &Config{
-		Tasks: []TaskConfig{
-			{Name: "a", Script: "a.lua", Every: dailySchedule()},
-			{Name: "b", Script: "b.lua", Every: dailySchedule()},
-			{Name: "c", Script: "c.lua", Every: dailySchedule()},
-		},
-	}
-	now := time.Date(2026, 4, 10, 14, 0, 0, 0, time.UTC)
-	s, _, tracker := newTestScheduler(t, cfg, now)
-
-	s.runDueTasks(context.Background())
-
-	calls := tracker.getCalls()
-	if len(calls) != 3 {
-		t.Fatalf("expected 3 calls, got %d", len(calls))
-	}
-	// Verify execution order matches config order.
-	if calls[0] != "a.lua" || calls[1] != "b.lua" || calls[2] != "c.lua" {
-		t.Errorf("expected [a.lua b.lua c.lua], got %v", calls)
-	}
-}
-
-func TestStartBackground_NoConfig(t *testing.T) {
-	// When schedules.yaml is missing, StartBackground should silently
-	// no-op without starting a goroutine.
-	ws := newMockWorkspace(t)
-
-	// ws.Config().Load returns notFoundError for missing file.
-	ctx := t.Context()
-
-	// Should not panic, should not log errors.
-	StartBackground(ctx, ws, discardLogger())
-}
-
-func TestStartBackground_InvalidConfig(t *testing.T) {
-	ws := newMockWorkspace(t)
-	ws.cacheFiles["project:"+ConfigFile] = []byte("not: valid: yaml: at all:")
-
-	ctx := t.Context()
-
-	// Should log error and return without starting a goroutine.
-	StartBackground(ctx, ws, discardLogger())
-}
-
-func TestStartBackground_EmptyTasks(t *testing.T) {
-	ws := newMockWorkspace(t)
-	ws.cacheFiles["project:"+ConfigFile] = []byte("tasks: []\n")
-
-	ctx := t.Context()
-
-	StartBackground(ctx, ws, discardLogger())
-}
-
-func TestNew(t *testing.T) {
-	cfg := &Config{Tasks: []TaskConfig{{Name: "t", Script: "t.lua"}}}
-	ws := newMockWorkspace(t)
-
-	s := New(cfg, nil, ws, discardLogger())
-	if s == nil {
-		t.Fatal("New returned nil")
-	}
-	if s.config != cfg {
-		t.Error("config not wired")
-	}
-	if s.ws != ws {
-		t.Error("ws not wired")
-	}
-}
-
-// TestDoExecuteTask_PullsLuaWriteDeps exercises the real doExecuteTask path
-// (no executeTaskFunc override) to verify the scheduler pulls lua.WriteDeps
-// from its WorkspaceProvider before invoking the engine. The Lua script is
-// intentionally absent, so ExecuteFile returns an error — what we're
-// verifying is that LuaWriteDeps() was called regardless.
-func TestDoExecuteTask_PullsLuaWriteDeps(t *testing.T) {
-	t.Parallel()
-
-	cfg := &Config{
-		Tasks: []TaskConfig{
-			{Name: "t", Script: "missing.lua", Every: dailySchedule()},
-		},
-	}
-	ws := newMockWorkspace(t)
-	s := New(cfg, script.NewEngine(), ws, discardLogger())
-	s.now = func() time.Time { return time.Date(2026, 4, 10, 14, 0, 0, 0, time.UTC) }
-	s.state = newState()
-	attachTestQueue(t, s)
-
-	s.doExecuteTask(context.Background(), cfg.Tasks[0])
-
-	ws.mu.Lock()
-	calls := ws.luaDepsCalls
-	ws.mu.Unlock()
-	if calls != 1 {
-		t.Errorf("expected LuaWriteDeps called once, got %d", calls)
-	}
-}
-
-// --- BUG-ZKK2UL: failed-task retry ladder ---
-//
-// Pins AM-scheduler-failed-task-not-rescheduled-immediately. Before the fix a
-// failing task left no state behind, so it stayed perpetually due and ran on
-// every 60s tick — a `day` task executed ~1440x/day.
-
-// newRetryTestScheduler builds a scheduler with a MUTABLE clock and a
-// failure-injecting executeTaskFunc. The shared newTestScheduler helper is
-// unusable here: its clock is fixed and its override always simulates success,
-// so no failure scheduling could be observed through it.
-//
-// The override delegates to the real recordFailure/success bookkeeping so the
-// tests exercise the actual state transitions rather than a reimplementation.
-func newRetryTestScheduler(
-	t *testing.T,
-	cfg *Config,
-	clock *time.Time,
-	fail func() bool,
-) (*Scheduler, *mockTracker) {
-	t.Helper()
-	ws := newMockWorkspace(t)
-	tracker := &mockTracker{}
-	s := &Scheduler{
-		config: cfg,
-		ws:     ws,
-		state:  newState(),
-		logger: discardLogger(),
-		now:    func() time.Time { return *clock },
-	}
-	s.executeTaskFunc = func(ctx context.Context, task TaskConfig) {
-		start := s.now()
-		// Record the START time, not the clock after the run: a real
-		// doExecuteTask advances the clock while the script executes, so
-		// attributing a post-run timestamp would misreport when the task
-		// actually fired (RR-14NHU6).
-		tracker.recordAt(task.Script, start)
-		if fail() {
-			s.recordFailure(ctx, task, start, 0, errBoom)
-			return
-		}
-		// Call the SAME bookkeeping the production path uses. Hand-copying
-		// it here is what previously let a reverted start-time fix pass
-		// green (RR-F6182G / RR-3BCWQ4).
-		s.recordSuccess(ctx, task, start)
-	}
-	return s, tracker
-}
-
-// tickFor advances the clock in `step` increments for `total`, calling
-// runDueTasks at each tick, and returns the times at which the task started.
-// Times come from the tracker (recorded inside the run) rather than from the
-// clock after runDueTasks returns, so one tick firing N tasks is not
-// indistinguishable from one task firing N times.
-func tickFor(
-	s *Scheduler,
-	clock *time.Time,
-	tracker *mockTracker,
-	step, total time.Duration,
-) []time.Time {
-	base := *clock
-	for elapsed := time.Duration(0); elapsed <= total; elapsed += step {
-		*clock = base.Add(elapsed)
-		s.runDueTasks(context.Background())
-	}
-	return tracker.getTimes()
-}
-
-// TestRunDueTasks_failingTaskDoesNotHotLoop is the direct regression for the
-// reported symptom: a daily task whose script fails must not run on every tick.
-func TestRunDueTasks_failingTaskDoesNotHotLoop(t *testing.T) {
-	t.Parallel()
-
-	cfg := &Config{Tasks: []TaskConfig{
-		{Name: "daily", Script: "daily.lua", Every: dailySchedule()},
-	}}
-	clock := time.Date(2026, 4, 10, 9, 0, 0, 0, time.Local)
-	s, tracker := newRetryTestScheduler(t, cfg, &clock, func() bool { return true })
-
-	// 10 ticks a minute apart, all inside the same calendar day. Pre-fix this
-	// produced 10 executions.
-	fired := tickFor(s, &clock, tracker, time.Minute, 9*time.Minute)
-
-	// Only the initial run plus the 5m ladder step fall in this window.
-	if len(fired) != 2 {
-		t.Fatalf("expected 2 executions (initial + 5m retry) in 9m, got %d at %v", len(fired), fired)
-	}
-	if got := fired[1].Sub(fired[0]); got != baseRetryDelay {
-		t.Errorf("first retry after %v, want %v", got, baseRetryDelay)
-	}
-}
-
-// TestRunDueTasks_retryLadder pins the exact backoff steps.
-func TestRunDueTasks_retryLadder(t *testing.T) {
-	t.Parallel()
-
-	cfg := &Config{Tasks: []TaskConfig{
-		{Name: "daily", Script: "daily.lua", Every: dailySchedule()},
-	}}
-	base := time.Date(2026, 4, 10, 0, 0, 0, 0, time.Local)
-	clock := base
-	s, tracker := newRetryTestScheduler(t, cfg, &clock, func() bool { return true })
-
-	// Tick every minute for 8h: initial run at t=0, then 5m, 10m, 20m, 40m,
-	// 80m, then capped at 2h.
-	fired := tickFor(s, &clock, tracker, time.Minute, 8*time.Hour)
-
-	want := []time.Duration{
-		0,
-		5 * time.Minute,   // +5m
-		15 * time.Minute,  // +10m
-		35 * time.Minute,  // +20m
-		75 * time.Minute,  // +40m
-		155 * time.Minute, // +80m
-		275 * time.Minute, // +2h (capped)
-		395 * time.Minute, // +2h
-	}
-	if len(fired) != len(want) {
-		t.Fatalf("got %d executions, want %d (offsets %v)", len(fired), len(want), offsets(fired, base))
-	}
-	for i, w := range want {
-		if got := fired[i].Sub(base); got != w {
-			t.Errorf("execution %d at +%v, want +%v", i, got, w)
-		}
-	}
-}
-
-// TestRunDueTasks_shortIntervalTaskBacksOff covers the user's explicit
-// requirement: a failing 5m task must climb the ladder, not keep firing at its
-// normal 5m cadence.
-func TestRunDueTasks_shortIntervalTaskBacksOff(t *testing.T) {
-	t.Parallel()
-
-	cfg := &Config{Tasks: []TaskConfig{
-		{Name: "freq", Script: "freq.lua", Every: intervalSchedule(5 * time.Minute)},
-	}}
-	base := time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC)
-	clock := base
-	s, tracker := newRetryTestScheduler(t, cfg, &clock, func() bool { return true })
-
-	fired := tickFor(s, &clock, tracker, time.Minute, 6*time.Hour)
-
-	// On its normal 5m cadence a 6h window would yield ~73 runs. The ladder
-	// must cut that to the same handful of steps a daily task gets.
-	if len(fired) > 8 {
-		t.Fatalf("failing 5m task ran %d times in 6h — not backing off (offsets %v)",
-			len(fired), offsets(fired, base))
-	}
-	// The gaps must widen rather than hold at the 5m schedule.
-	if got := fired[1].Sub(fired[0]); got != baseRetryDelay {
-		t.Errorf("first retry after %v, want %v", got, baseRetryDelay)
-	}
-	if got := fired[2].Sub(fired[1]); got != 2*baseRetryDelay {
-		t.Errorf("second retry after %v, want %v", got, 2*baseRetryDelay)
-	}
-	// By 6h the ladder has climbed past its rungs and holds at the cap.
-	last := fired[len(fired)-1].Sub(fired[len(fired)-2])
-	if last != maxRetryDelay {
-		t.Errorf("final gap %v, want the %v cap", last, maxRetryDelay)
-	}
-}
-
-// TestRunDueTasks_scheduleSuppressedWhileFailing verifies reading A: while a
-// retry is pending the normal schedule must not fire the task.
-func TestRunDueTasks_scheduleSuppressedWhileFailing(t *testing.T) {
-	t.Parallel()
-
-	cfg := &Config{Tasks: []TaskConfig{
-		{Name: "freq", Script: "freq.lua", Every: intervalSchedule(time.Minute)},
-	}}
-	base := time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC)
-	clock := base
-	s, tracker := newRetryTestScheduler(t, cfg, &clock, func() bool { return true })
-
-	// A 1m schedule would fire on nearly every tick if the schedule were still
-	// consulted while failing.
-	fired := tickFor(s, &clock, tracker, 30*time.Second, 4*time.Minute)
-
-	if len(fired) != 1 {
-		t.Fatalf("expected only the initial run within 4m (5m ladder step not yet due), got %d at %v",
-			len(fired), offsets(fired, base))
-	}
-}
-
-// TestRunDueTasks_successResetsLadder verifies the ladder clears on success and
-// the task returns to its normal schedule.
-func TestRunDueTasks_successResetsLadder(t *testing.T) {
-	t.Parallel()
-
-	cfg := &Config{Tasks: []TaskConfig{
-		{Name: "daily", Script: "daily.lua", Every: dailySchedule()},
-	}}
-	base := time.Date(2026, 4, 10, 0, 0, 0, 0, time.Local)
-	clock := base
-	failing := true
-	s, _ := newRetryTestScheduler(t, cfg, &clock, func() bool { return failing })
-
-	// Fail once to arm the ladder.
-	s.runDueTasks(context.Background())
-	if s.state.Failures["daily"] != 1 {
-		t.Fatalf("expected 1 failure recorded, got %d", s.state.Failures["daily"])
-	}
-	if _, pending := s.state.NextRetry["daily"]; !pending {
-		t.Fatal("expected a pending retry after failure")
-	}
-
-	// Succeed on the 5m retry.
-	failing = false
-	clock = base.Add(baseRetryDelay)
-	s.runDueTasks(context.Background())
-
-	if n, ok := s.state.Failures["daily"]; ok {
-		t.Errorf("failure count not cleared after success: %d", n)
-	}
-	if _, pending := s.state.NextRetry["daily"]; pending {
-		t.Error("pending retry not cleared after success")
-	}
-	if got := s.state.Tasks["daily"]; !got.Equal(clock) {
-		t.Errorf("last-run stamped %v, want the run start %v", got, clock)
-	}
-}
-
-// newRealPathScheduler builds a scheduler that runs the PRODUCTION
-// doExecuteTask against a real script engine and a real script on disk.
-//
-// The retry tests drive executeTaskFunc, which bypasses doExecuteTask
-// entirely; the state bookkeeping inside it therefore needs its own coverage,
-// or reverting it passes green (RR-F6182G).
-//
-// The clock advances by runDuration on every call after the first, simulating
-// a script that takes time to run — which is exactly what distinguishes the
-// start timestamp from the completion timestamp.
-func newRealPathScheduler(
-	t *testing.T,
-	cfg *Config,
-	luaSource string,
-	start time.Time,
-	runDuration time.Duration,
-) *Scheduler {
-	t.Helper()
-	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, "scripts"), 0o750); err != nil {
-		t.Fatalf("mkdir scripts: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "scripts", "task.lua"), []byte(luaSource), 0o600); err != nil {
-		t.Fatalf("write script: %v", err)
-	}
-
-	ws := newMockWorkspace(t)
-	ws.luaDepsProvider = func() lua.WriteDeps {
-		return lua.WriteDeps{
-			ReadDeps: lua.ReadDeps{ProjectRoot: root},
-			// A writer runtime panics without one. These scripts never
-			// mutate, so a stub that fails loudly if called is enough.
-			EntityManager: stubMutator{},
-		}
-	}
-
-	s := New(cfg, script.NewEngine(), ws, discardLogger())
-	calls := 0
-	s.now = func() time.Time {
-		defer func() { calls++ }()
-		if calls == 0 {
-			return start
-		}
-		return start.Add(runDuration)
-	}
-	attachTestQueue(t, s)
-	return s
-}
-
-// TestDoExecuteTask_recordsStartTimeNotCompletion pins the secondary defect
-// through the REAL doExecuteTask: a task starting at 23:59 that runs past
-// midnight must stamp its start time, or it consumes the next day's slot.
-func TestDoExecuteTask_recordsStartTimeNotCompletion(t *testing.T) {
-	t.Parallel()
-
-	every := dailySchedule()
-	cfg := &Config{Tasks: []TaskConfig{
-		{Name: "daily", Script: "task.lua", Every: every},
-	}}
-	start := time.Date(2026, 4, 10, 23, 59, 0, 0, time.Local)
-	// The script runs for two minutes, crossing midnight.
-	s := newRealPathScheduler(t, cfg, "return true\n", start, 2*time.Minute)
-
-	s.doExecuteTask(context.Background(), cfg.Tasks[0])
-
-	got, ok := s.state.Tasks["daily"]
-	if !ok {
-		t.Fatal("successful run recorded no timestamp")
-	}
-	if !got.Equal(start) {
-		t.Fatalf("recorded %v, want the start time %v", got, start)
-	}
-	// The next day's slot must still be due.
-	if !every.IsDue(got, start.Add(24*time.Hour)) {
-		t.Error("next day's run was skipped — completion time was recorded instead of start")
-	}
-}
-
-// TestDoExecuteTask_failureDoesNotCountAsRun pins recordFailure's core
-// invariant through the real path: a failed attempt must not stamp
-// state.Tasks, which is the "last SUCCESSFUL run" the schedule is evaluated
-// against. Without this, injecting that write passes green (RR-QOSJZ5).
-func TestDoExecuteTask_failureDoesNotCountAsRun(t *testing.T) {
-	t.Parallel()
-
-	cfg := &Config{Tasks: []TaskConfig{
-		{Name: "daily", Script: "task.lua", Every: dailySchedule()},
-	}}
-	start := time.Date(2026, 4, 10, 9, 0, 0, 0, time.Local)
-	s := newRealPathScheduler(t, cfg, `error("boom")`, start, time.Second)
-
-	s.doExecuteTask(context.Background(), cfg.Tasks[0])
-
-	if _, ok := s.state.Tasks["daily"]; ok {
-		t.Error("a failed run stamped state.Tasks — the schedule would treat it as having succeeded")
-	}
-	if got := s.state.Failures["daily"]; got != 1 {
-		t.Errorf("Failures = %d, want 1", got)
-	}
-	if retryAt, ok := s.state.NextRetry["daily"]; !ok {
-		t.Error("no retry scheduled after failure")
-	} else if !retryAt.After(start) {
-		// The ladder runs from when the failure was observed. This run is
-		// near-instant, so the exact stamp is start+delay here; what must
-		// hold in general is that the retry lands in the FUTURE. See
-		// TestRecordFailure_slowFailureRetriesInTheFuture.
-		t.Errorf("retry at %v, want after %v", retryAt, start)
-	}
-}
-
-// TestRecordFailure_slowFailureRetriesInTheFuture pins a real production wedge: a run
-// that fails only AFTER the first retry rung has already elapsed must still
-// land its retry in the future.
-//
-// Basing the stamp on the run's start time instead put it in the past — for
-// the real pairing (a 20m queue timeout against a 5m rung) 15 minutes in the
-// past — which made the task due on the very next tick and every tick after,
-// forever. The clock-jump guard in runDueTasks only clamps retries too far
-// in the FUTURE, so nothing downstream caught it.
-func TestRecordFailure_slowFailureRetriesInTheFuture(t *testing.T) {
-	t.Parallel()
-
-	cfg := &Config{Tasks: []TaskConfig{
-		{Name: "daily", Script: "task.lua", Every: dailySchedule()},
-	}}
-	start := time.Date(2026, 4, 10, 0, 0, 0, 0, time.Local)
-	// The failure surfaces long after the first rung (5m) has passed —
-	// the shape of the 20m queue timeout seen in production.
-	elapsed := 20 * time.Minute
-	s := newRealPathScheduler(t, cfg, `error("boom")`, start, elapsed)
-
-	s.doExecuteTask(context.Background(), cfg.Tasks[0])
-
-	failedAt := start.Add(elapsed)
-	retryAt, ok := s.state.NextRetry["daily"]
-	if !ok {
-		t.Fatal("no retry scheduled after failure")
-	}
-	if !retryAt.After(failedAt) {
-		t.Errorf("retry at %v is not after the failure at %v — it is already due, "+
-			"so the task will spin once per tick forever", retryAt, failedAt)
-	}
-	if want := failedAt.Add(baseRetryDelay); !retryAt.Equal(want) {
-		t.Errorf("retry at %v, want %v (failure time + one rung)", retryAt, want)
-	}
-}
-
-// TestDoExecuteTask_wedgedSkipAdvancesLadder pins the second half of
-// that wedge. A skip normally records nothing: a healthy-but-slow task must
-// not be backed off. But when a retry is ALREADY armed, the previous attempt
-// failed and left a run that never cleared, and recording nothing pinned
-// Failures at 1 and NextRetry at a fixed past stamp. The ladder could never
-// climb and persistentFailureThreshold could never escalate to ERROR, so a
-// permanently wedged task stayed invisible at one skip per tick.
-func TestDoExecuteTask_wedgedSkipAdvancesLadder(t *testing.T) {
-	t.Parallel()
-
-	cfg := &Config{Tasks: []TaskConfig{
-		{Name: "daily", Script: "task.lua", Every: dailySchedule()},
-	}}
-	start := time.Date(2026, 4, 10, 0, 0, 0, 0, time.Local)
-	s := newRealPathScheduler(t, cfg, "return true\n", start, time.Second)
-	// Hold a real claim so enqueueTask takes the genuine skip path, the
-	// same one an orphaned queue row drives it down in production.
-	if _, _, err := s.claimInFlight("daily"); err != nil {
-		t.Fatalf("claimInFlight: %v", err)
-	}
-
-	// Arm the ladder: this is the state a prior failure leaves behind.
-	s.state.Failures["daily"] = 1
-	s.state.NextRetry["daily"] = start.Add(-15 * time.Minute)
-
-	s.doExecuteTask(context.Background(), cfg.Tasks[0])
-
-	if got := s.state.Failures["daily"]; got != 2 {
-		t.Errorf("Failures = %d, want 2 — a skip while retrying must advance "+
-			"the ladder, or the backoff never climbs and never escalates", got)
-	}
-	if retryAt := s.state.NextRetry["daily"]; !retryAt.After(start) {
-		t.Errorf("retry at %v is still not in the future — the task stays "+
-			"due on every tick", retryAt)
-	}
-}
-
-// TestDoExecuteTask_healthySlowSkipLeavesStateAlone guards the other side of
-// that rule: with no retry armed, a skip is a genuinely slow healthy run and
-// must still record neither success nor failure.
-func TestDoExecuteTask_healthySlowSkipLeavesStateAlone(t *testing.T) {
-	t.Parallel()
-
-	cfg := &Config{Tasks: []TaskConfig{
-		{Name: "daily", Script: "task.lua", Every: dailySchedule()},
-	}}
-	start := time.Date(2026, 4, 10, 0, 0, 0, 0, time.Local)
-	s := newRealPathScheduler(t, cfg, "return true\n", start, time.Second)
-	if _, _, err := s.claimInFlight("daily"); err != nil {
-		t.Fatalf("claimInFlight: %v", err)
-	}
-
-	s.doExecuteTask(context.Background(), cfg.Tasks[0])
-
-	if got, ok := s.state.Failures["daily"]; ok {
-		t.Errorf("Failures = %d, want unset — a slow healthy task must not back off", got)
-	}
-	if _, ok := s.state.NextRetry["daily"]; ok {
-		t.Error("a slow healthy task must not arm the retry ladder")
-	}
-	if _, ok := s.state.Tasks["daily"]; ok {
-		t.Error("a skipped run must not stamp the last-run time")
-	}
-}
-
-// TestRunDueTasks_implausibleRetryTimeIsClamped covers a clock jump or a
-// hand-edited state file: an unbounded future retry would wedge the task
-// forever, silently, since the not-yet-due branch logs nothing (RR-R6YXKM).
-func TestRunDueTasks_implausibleRetryTimeIsClamped(t *testing.T) {
-	t.Parallel()
-
-	cfg := &Config{Tasks: []TaskConfig{
-		{Name: "daily", Script: "daily.lua", Every: dailySchedule()},
-	}}
-	base := time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC)
-	clock := base
-	s, tracker := newRetryTestScheduler(t, cfg, &clock, func() bool { return false })
-	s.state.NextRetry["daily"] = base.AddDate(100, 0, 0)
-
-	s.runDueTasks(context.Background())
-
-	if got := len(tracker.getCalls()); got != 1 {
-		t.Fatalf("task ran %d times, want 1 — an implausible retry time wedged it", got)
-	}
-}
-
-// TestPruneOrphanedState covers state left behind by tasks removed from
-// schedules.yaml, which nothing else cleans up (RR-7GYJ60).
-func TestPruneOrphanedState(t *testing.T) {
-	t.Parallel()
-
-	cfg := &Config{Tasks: []TaskConfig{
-		{Name: "live", Script: "live.lua", Every: dailySchedule()},
-	}}
-	ts := time.Date(2026, 4, 10, 9, 0, 0, 0, time.UTC)
-	seeded := &State{
-		Tasks:     map[string]time.Time{"live": ts, "removed": ts},
-		Failures:  map[string]int{"removed": 3},
-		NextRetry: map[string]time.Time{"removed": ts},
-	}
-	data, err := json.Marshal(seeded)
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-
-	ws := newMockWorkspace(t)
-	ws.cacheFiles[stateFile] = data
-	s := New(cfg, nil, ws, discardLogger())
-
-	s.loadState(context.Background())
-
-	if _, ok := s.state.Tasks["live"]; !ok {
-		t.Error("pruned a task that is still configured")
-	}
-	for _, m := range []string{"Tasks", "Failures", "NextRetry"} {
-		var present bool
-		switch m {
-		case "Tasks":
-			_, present = s.state.Tasks["removed"]
-		case "Failures":
-			_, present = s.state.Failures["removed"]
-		case "NextRetry":
-			_, present = s.state.NextRetry["removed"]
-		}
-		if present {
-			t.Errorf("%s still holds an entry for a task no longer in the config", m)
-		}
-	}
-}
-
-func TestRetryDelay(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
-		name     string
-		failures int
-		want     time.Duration
+		name  string
+		every Schedule
+		seed  *schedulerstate.TaskState
+		want  bool
 	}{
-		{"corrupt zero count treated as first failure", 0, baseRetryDelay},
-		{"negative count treated as first failure", -5, baseRetryDelay},
-		{"first failure", 1, 5 * time.Minute},
-		{"second doubles", 2, 10 * time.Minute},
-		{"third doubles", 3, 20 * time.Minute},
-		{"fourth doubles", 4, 40 * time.Minute},
-		{"fifth doubles", 5, 80 * time.Minute},
-		{"sixth reaches the cap", 6, maxRetryDelay},
-		{"holds at the cap", 7, maxRetryDelay},
-		{"large count never exceeds the cap", 50, maxRetryDelay},
-		{"overflow-sized count never exceeds the cap", 1 << 40, maxRetryDelay},
+		{"first ever run", dailySchedule(), nil, true},
+		{"missed day", dailySchedule(), &schedulerstate.TaskState{LastRun: t0.Add(-26 * time.Hour)}, true},
+		{"already ran today", dailySchedule(), &schedulerstate.TaskState{LastRun: t0.Add(-time.Hour)}, false},
+		{"interval elapsed", intervalSchedule(time.Hour), &schedulerstate.TaskState{LastRun: t0.Add(-61 * time.Minute)}, true},
+		{"interval not elapsed", intervalSchedule(time.Hour), &schedulerstate.TaskState{LastRun: t0.Add(-59 * time.Minute)}, false},
+		{"retry pending", intervalSchedule(time.Minute), &schedulerstate.TaskState{
+			LastRun: t0.Add(-time.Hour), Failures: 1, NextRetry: t0.Add(time.Minute)}, false},
+		{"retry due", dailySchedule(), &schedulerstate.TaskState{
+			LastRun: t0.Add(-time.Hour), Failures: 1, NextRetry: t0}, true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if got := retryDelay(tc.failures); got != tc.want {
-				t.Errorf("retryDelay(%d) = %v, want %v", tc.failures, got, tc.want)
+			ws := newMockWorkspace(t)
+			if tc.seed != nil {
+				seed(t, ws, "task", *tc.seed)
 			}
+			s, q, _ := newTestScheduler(t, ws, t0, TaskConfig{Name: "task", Script: "t.lua", Every: tc.every})
+			s.tick(context.Background())
+			require.Equal(t, tc.want, len(q.jobs()) == 1)
 		})
 	}
 }
 
-func offsets(times []time.Time, base time.Time) []time.Duration {
-	out := make([]time.Duration, len(times))
-	for i, tm := range times {
-		out[i] = tm.Sub(base)
+// TestTick_NeverWaitsAndSkipsWhileActive pins the heart of BUG-TKL08E: a tick
+// returns as soon as the run is queued, and a task whose run is still active is
+// skipped rather than stacked.
+func TestTick_NeverWaitsAndSkipsWhileActive(t *testing.T) {
+	t.Parallel()
+	ws := newMockWorkspace(t)
+	s, q, c := newTestScheduler(t, ws, t0,
+		TaskConfig{Name: "slow", Script: "slow.lua", Every: intervalSchedule(time.Minute)},
+		TaskConfig{Name: "other", Script: "other.lua", Every: intervalSchedule(time.Minute)})
+
+	s.tick(context.Background()) // nothing is ever delivered: the runs stay queued
+	require.Len(t, q.jobs(), 2)
+
+	c.Advance(5 * time.Minute)
+	s.tick(context.Background())
+	require.Len(t, q.jobs(), 2, "a task with an active run must be skipped, not stacked")
+
+	ts, ok := taskState(t, ws, "slow")
+	require.True(t, ok)
+	require.NotNil(t, ts.Active)
+	require.Equal(t, schedulerstate.RunQueued, ts.Active.Status)
+}
+
+// TestRun_SuccessStampsStartTime pins that success records when the run was
+// decided, not when it finished: a run that starts at 23:59 and ends after
+// midnight must not consume the next day's slot.
+func TestRun_SuccessStampsStartTime(t *testing.T) {
+	t.Parallel()
+	ws := newMockWorkspace(t)
+	start := time.Date(2026, 4, 10, 23, 59, 0, 0, time.UTC)
+	s, q, c := newTestScheduler(t, ws, start, TaskConfig{Name: "daily", Script: "d.lua", Every: dailySchedule()})
+	s.engineRunner = func(context.Context, TaskConfig) error {
+		c.Advance(2 * time.Minute)
+		return nil
 	}
-	return out
+
+	s.tick(context.Background())
+	q.drain(t)
+
+	ts, ok := taskState(t, ws, "daily")
+	require.True(t, ok)
+	require.True(t, ts.LastRun.Equal(start), "LastRun = %v, want the start %v", ts.LastRun, start)
+	require.Nil(t, ts.Active)
+}
+
+// TestRun_FailureAdvancesLadder pins BUG-ZKK2UL through the queue: a failed
+// run arms a retry measured from when the failure was observed, and does not
+// count as having run.
+func TestRun_FailureAdvancesLadder(t *testing.T) {
+	t.Parallel()
+	ws := newMockWorkspace(t)
+	s, q, c := newTestScheduler(t, ws, t0, TaskConfig{Name: "flaky", Script: "f.lua", Every: dailySchedule()})
+	s.engineRunner = func(context.Context, TaskConfig) error {
+		c.Advance(30 * time.Minute) // longer than the first rung
+		return errBoom
+	}
+
+	s.tick(context.Background())
+	q.drain(t)
+
+	ts, ok := taskState(t, ws, "flaky")
+	require.True(t, ok)
+	require.Equal(t, 1, ts.Failures)
+	require.True(t, ts.LastRun.IsZero(), "a failed run must not stamp a last successful run")
+	require.True(t, ts.NextRetry.Equal(t0.Add(30*time.Minute+baseRetryDelay)),
+		"a slow failure must retry in the future, not immediately")
+}
+
+// TestRun_RetryLadderReplacesSchedule drives a one-minute task that always
+// fails: it fires on ladder rungs only, never on its cadence.
+func TestRun_RetryLadderReplacesSchedule(t *testing.T) {
+	t.Parallel()
+	ws := newMockWorkspace(t)
+	s, q, c := newTestScheduler(t, ws, t0, TaskConfig{Name: "broken", Script: "b.lua", Every: intervalSchedule(time.Minute)})
+	var fired []time.Duration
+	s.engineRunner = func(context.Context, TaskConfig) error {
+		fired = append(fired, c.Now().Sub(t0))
+		return errBoom
+	}
+
+	for range 60 { // one hour of ticks
+		s.tick(context.Background())
+		q.drain(t)
+		c.Advance(time.Minute)
+	}
+	require.Equal(t, []time.Duration{0, 5 * time.Minute, 15 * time.Minute, 35 * time.Minute}, fired)
+}
+
+func TestRun_SuccessResetsLadder(t *testing.T) {
+	t.Parallel()
+	ws := newMockWorkspace(t)
+	seed(t, ws, "task", schedulerstate.TaskState{Failures: 3, NextRetry: t0})
+	s, q, _ := newTestScheduler(t, ws, t0, TaskConfig{Name: "task", Script: "t.lua", Every: dailySchedule()})
+	s.engineRunner = (&recorder{}).run
+
+	s.tick(context.Background())
+	q.drain(t)
+
+	ts, _ := taskState(t, ws, "task")
+	require.Zero(t, ts.Failures)
+	require.True(t, ts.NextRetry.IsZero())
+	require.True(t, ts.LastRun.Equal(t0))
+}
+
+// TestRun_LostRunIsAbandonedAndRetried is the recovery path: a run whose job
+// never reports back (a dead worker, a lost job) is abandoned when its lease
+// expires, the ladder advances, and the task runs again. A late delivery of
+// the lost job then does nothing.
+func TestRun_LostRunIsAbandonedAndRetried(t *testing.T) {
+	t.Parallel()
+	ws := newMockWorkspace(t)
+	s, q, c := newTestScheduler(t, ws, t0, TaskConfig{Name: "task", Script: "t.lua", Every: dailySchedule()})
+	rec := &recorder{}
+	s.engineRunner = rec.run
+
+	s.tick(context.Background())
+	lost := q.take()
+	require.Len(t, lost, 1)
+
+	c.Advance(queuedLease + time.Minute)
+	s.tick(context.Background())
+	ts, _ := taskState(t, ws, "task")
+	require.Nil(t, ts.Active, "the expired run must be abandoned")
+	require.Equal(t, 1, ts.Failures)
+
+	c.Advance(baseRetryDelay)
+	s.tick(context.Background())
+	q.drain(t)
+	require.Equal(t, 1, rec.count())
+
+	require.NoError(t, q.deliver(t, lost[0]))
+	require.Equal(t, 1, rec.count(), "a late delivery of an abandoned run must not execute")
+	ts, _ = taskState(t, ws, "task")
+	require.True(t, ts.LastRun.Equal(t0.Add(queuedLease+time.Minute+baseRetryDelay)))
+}
+
+// TestRun_DuplicateDeliveryRunsOnce pins at-least-once delivery: the queue may
+// hand the same job over twice, and the script must still run once.
+func TestRun_DuplicateDeliveryRunsOnce(t *testing.T) {
+	t.Parallel()
+	ws := newMockWorkspace(t)
+	s, q, _ := newTestScheduler(t, ws, t0, TaskConfig{Name: "task", Script: "t.lua", Every: dailySchedule()})
+	rec := &recorder{}
+	s.engineRunner = rec.run
+
+	s.tick(context.Background())
+	job := q.take()[0]
+	require.NoError(t, q.deliver(t, job))
+	require.NoError(t, q.deliver(t, job))
+	require.Equal(t, 1, rec.count())
+}
+
+// TestRun_EnqueueFailureFailsTheRun pins that a run whose job never reached the
+// queue ends at once, so the task is not held until the lease expires.
+func TestRun_EnqueueFailureFailsTheRun(t *testing.T) {
+	t.Parallel()
+	ws := newMockWorkspace(t)
+	s, q, _ := newTestScheduler(t, ws, t0, TaskConfig{Name: "task", Script: "t.lua", Every: dailySchedule()})
+	q.enqueErr = errors.New("queue down")
+
+	s.tick(context.Background())
+
+	ts, _ := taskState(t, ws, "task")
+	require.Nil(t, ts.Active)
+	require.Equal(t, 1, ts.Failures)
+}
+
+// TestTick_TwoSchedulersShareOneStore is the multi-process guarantee in
+// miniature: two schedulers ticking over one store queue one run.
+func TestTick_TwoSchedulersShareOneStore(t *testing.T) {
+	t.Parallel()
+	ws := newMockWorkspace(t)
+	task := TaskConfig{Name: "task", Script: "t.lua", Every: dailySchedule()}
+	a, qa, _ := newTestScheduler(t, ws, t0, task)
+	b, qb, _ := newTestScheduler(t, ws, t0, task)
+	rec := &recorder{}
+	a.engineRunner, b.engineRunner = rec.run, rec.run
+
+	a.tick(context.Background())
+	b.tick(context.Background())
+	require.Len(t, append(qa.jobs(), qb.jobs()...), 1)
+
+	// The node that executes records the outcome, whichever one queued it.
+	for _, job := range qa.take() {
+		require.NoError(t, qb.deliver(t, job))
+	}
+	ts, _ := taskState(t, ws, "task")
+	require.True(t, ts.LastRun.Equal(t0))
+}
+
+func TestTick_ImplausibleRetryTimeIsClamped(t *testing.T) {
+	t.Parallel()
+	ws := newMockWorkspace(t)
+	seed(t, ws, "task", schedulerstate.TaskState{Failures: 1, NextRetry: t0.Add(30 * 24 * time.Hour)})
+	s, q, _ := newTestScheduler(t, ws, t0, TaskConfig{Name: "task", Script: "t.lua", Every: dailySchedule()})
+
+	s.tick(context.Background())
+	require.Len(t, q.jobs(), 1, "a retry beyond the longest rung must be treated as due now")
+}
+
+func TestTick_PrunesHourly(t *testing.T) {
+	t.Parallel()
+	ws := newMockWorkspace(t)
+	seed(t, ws, "gone", schedulerstate.TaskState{LastRun: t0.Add(-pruneAge - time.Hour)})
+	s, _, c := newTestScheduler(t, ws, t0, TaskConfig{Name: "task", Script: "t.lua", Every: dailySchedule()})
+
+	s.tick(context.Background())
+	_, ok := taskState(t, ws, "gone")
+	require.False(t, ok, "a task idle since before the cut-off is pruned")
+
+	seed(t, ws, "gone", schedulerstate.TaskState{LastRun: t0.Add(-pruneAge - time.Hour)})
+	c.Advance(time.Minute)
+	s.tick(context.Background())
+	_, ok = taskState(t, ws, "gone")
+	require.True(t, ok, "prune runs at most once per interval")
+}
+
+func TestImportLegacyState(t *testing.T) {
+	t.Parallel()
+	ws := newMockWorkspace(t)
+	last := t0.Add(-2 * time.Hour)
+	retry := t0.Add(10 * time.Minute)
+	ws.files[stateFile] = []byte(`{"tasks":{"daily":"` + last.Format(time.RFC3339Nano) + `"},` +
+		`"failures":{"flaky":2},"next_retry":{"flaky":"` + retry.Format(time.RFC3339Nano) + `"}}`)
+	s, _, _ := newTestScheduler(t, ws, t0, TaskConfig{Name: "daily", Script: "d.lua", Every: dailySchedule()})
+
+	s.importLegacyState(context.Background())
+
+	daily, ok := taskState(t, ws, "daily")
+	require.True(t, ok)
+	require.True(t, daily.LastRun.Equal(last))
+	flaky, ok := taskState(t, ws, "flaky")
+	require.True(t, ok)
+	require.Equal(t, 2, flaky.Failures)
+	require.True(t, flaky.NextRetry.Equal(retry))
+	require.NotContains(t, ws.files, stateFile, "the legacy document is deleted once imported")
+}
+
+func TestParseState_CorruptIsEmpty(t *testing.T) {
+	t.Parallel()
+	st := parseState([]byte("not json"))
+	require.Empty(t, st.Tasks)
+	require.NotNil(t, st.Failures)
+	require.NotNil(t, st.NextRetry)
+}
+
+func TestNew_RejectsNil(t *testing.T) {
+	t.Parallel()
+	ws := newMockWorkspace(t)
+	cfg := &Config{}
+	engine := script.NewEngine()
+	for name, build := range map[string]func() (*Scheduler, error){
+		"config":    func() (*Scheduler, error) { return New(nil, engine, ws, discardLogger()) },
+		"engine":    func() (*Scheduler, error) { return New(cfg, nil, ws, discardLogger()) },
+		"workspace": func() (*Scheduler, error) { return New(cfg, engine, nil, discardLogger()) },
+		"logger":    func() (*Scheduler, error) { return New(cfg, engine, ws, nil) },
+		"run-state": func() (*Scheduler, error) {
+			return New(cfg, engine, &noRunState{mockWorkspace: ws}, discardLogger())
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			_, err := build()
+			require.Error(t, err)
+		})
+	}
+}
+
+type noRunState struct{ *mockWorkspace }
+
+func (*noRunState) SchedulerState() schedulerstate.Store { return nil }
+
+func TestStartBackground_NoOps(t *testing.T) {
+	t.Parallel()
+	for name, file := range map[string][]byte{
+		"missing": nil,
+		"invalid": []byte("not: valid: yaml: at all:"),
+		"empty":   []byte("tasks: []\n"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			ws := newMockWorkspace(t)
+			if file != nil {
+				ws.files["project:"+ConfigFile] = file
+			}
+			StartBackground(t.Context(), ws, discardLogger())
+		})
+	}
+}
+
+// queueWorkspace is a mockWorkspace that also carries a job queue, matching
+// what appbuild.Services provides in production.
+type queueWorkspace struct {
+	*mockWorkspace
+	q jobs.Client
+}
+
+func (w *queueWorkspace) Jobs() jobs.Client { return w.q }
+
+// TestStartBackground_UsesQueue pins the production wiring: StartBackground
+// attaches the provider's queue and runs a first tick through it.
+func TestStartBackground_UsesQueue(t *testing.T) {
+	t.Parallel()
+	q := newFakeQueue()
+	ws := &queueWorkspace{mockWorkspace: newMockWorkspace(t), q: q}
+	ws.files["project:"+ConfigFile] = []byte("tasks:\n  - name: t\n    script: t.lua\n    every: 1h\n")
+
+	StartBackground(t.Context(), ws, discardLogger())
+
+	require.Eventually(t, func() bool { return len(q.jobs()) == 1 }, 5*time.Second, 20*time.Millisecond,
+		"StartBackground must attach the job queue and queue the first-ever run")
+}
+
+// TestNewWithQueue_RejectsProviderWithoutQueue pins the constructor entry
+// points must use: a scheduler without a queue would fail every task.
+func TestNewWithQueue_RejectsProviderWithoutQueue(t *testing.T) {
+	t.Parallel()
+	_, err := NewWithQueue(&Config{}, script.NewEngine(), newMockWorkspace(t), discardLogger())
+	require.Error(t, err)
+}
+
+func TestNewWithQueue_AttachesQueue(t *testing.T) {
+	t.Parallel()
+	q := newFakeQueue()
+	s, err := NewWithQueue(&Config{}, script.NewEngine(),
+		&queueWorkspace{mockWorkspace: newMockWorkspace(t), q: q}, discardLogger())
+	require.NoError(t, err)
+	require.NotNil(t, s)
+	require.Contains(t, q.handlers, TaskKind)
+	require.Contains(t, q.handlers, ExpandKind)
+	require.Contains(t, q.handlers, ChildKind)
+}
+
+func TestUseQueue_RejectsNil(t *testing.T) {
+	t.Parallel()
+	s, _, _ := newTestScheduler(t, newMockWorkspace(t), t0)
+	require.Error(t, s.UseQueue(nil))
+}
+
+// TestRun_RealEnginePullsLuaWriteDeps runs the real engine path: the script
+// is missing, so the run fails, but the deps must have been pulled once.
+func TestRun_RealEnginePullsLuaWriteDeps(t *testing.T) {
+	t.Parallel()
+	ws := newMockWorkspace(t)
+	s, q, _ := newTestScheduler(t, ws, t0, TaskConfig{Name: "t", Script: "missing.lua", Every: dailySchedule()})
+
+	s.tick(context.Background())
+	q.drain(t)
+
+	require.Equal(t, 1, ws.luaDepsCalls)
+	ts, _ := taskState(t, ws, "t")
+	require.Equal(t, 1, ts.Failures)
+}
+
+// TestRun_RealEngineRunsScript runs a real Lua script end to end.
+func TestRun_RealEngineRunsScript(t *testing.T) {
+	t.Parallel()
+	ws := newMockWorkspace(t)
+	root := ws.paths.Root
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "scripts"), 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "scripts", "task.lua"), []byte("local x = 1\n"), 0o600))
+	ws.luaDepsProvider = func() lua.WriteDeps {
+		return lua.WriteDeps{ReadDeps: lua.ReadDeps{ProjectRoot: root}, EntityManager: stubMutator{}}
+	}
+	s, q, _ := newTestScheduler(t, ws, t0, TaskConfig{Name: "t", Script: "task.lua", Every: dailySchedule()})
+
+	s.tick(context.Background())
+	q.drain(t)
+
+	ts, _ := taskState(t, ws, "t")
+	require.Zero(t, ts.Failures)
+	require.True(t, ts.LastRun.Equal(t0))
+}
+
+func TestRetryDelay(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		failures int
+		want     time.Duration
+	}{
+		{0, baseRetryDelay},
+		{-5, baseRetryDelay},
+		{1, 5 * time.Minute},
+		{2, 10 * time.Minute},
+		{3, 20 * time.Minute},
+		{4, 40 * time.Minute},
+		{5, 80 * time.Minute},
+		{6, maxRetryDelay},
+		{7, maxRetryDelay},
+		{50, maxRetryDelay},
+		{1 << 40, maxRetryDelay},
+	}
+	for _, tc := range tests {
+		require.Equal(t, tc.want, retryDelay(tc.failures), "retryDelay(%d)", tc.failures)
+	}
 }

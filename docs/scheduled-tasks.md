@@ -245,9 +245,9 @@ See the [Lua Scripting guide](GUIDE-lua-scripting.md) for the full API reference
 
 ## Missed Run Detection
 
-The scheduler tracks the last successful run time for each task in
-`.rela/scheduler-state.json`. On startup, it checks whether any tasks missed their
-scheduled window while the scheduler was not running.
+The scheduler records the last successful run time for each task in its run
+state (see [Run State](#run-state)). On startup, it checks whether any tasks
+missed their scheduled window while the scheduler was not running.
 
 **Example**: You have a daily task. The scheduler was stopped on Monday evening and
 restarted on Wednesday morning. On startup, the scheduler detects that Tuesday's run
@@ -264,11 +264,47 @@ This applies to all schedule types:
 When a task has no recorded history (new task or fresh project), it executes immediately
 on startup.
 
-### State File
+### Run State
 
-The state file `.rela/scheduler-state.json` is gitignored. Each developer or deployment
-maintains its own scheduler state. If you delete this file, all tasks will execute on
-the next startup.
+Each tick, the scheduler queues every due task as a **run** on the
+background-job queue and moves on. It never waits for a run to finish. A worker
+executes the run and records its outcome in the run state, so a slow or lost
+job cannot block other tasks.
+
+A run moves through these statuses:
+
+| Status      | Meaning                                                  |
+| ----------- | -------------------------------------------------------- |
+| `queued`    | Created and handed to the queue; no worker has taken it. |
+| `running`   | A worker claimed it.                                     |
+| `succeeded` | It finished without error.                               |
+| `failed`    | It finished with an error; the retry ladder advances.    |
+| `abandoned` | Its lease expired before it finished; counted as failed. |
+
+A task has at most one active (`queued` or `running`) run. A task that is due
+while its previous run is still active is skipped for that tick, which also
+stops a slow task from piling up work.
+
+Every active run carries a **lease**: 30 minutes while queued and 20 minutes
+once running. A `for_each` run extends its lease each time a subject starts.
+If the lease expires, for example because the process running the job died, the
+next tick marks the run `abandoned` and the task retries on the ladder.
+
+Where the run state lives depends on the build:
+
+- **Filesystem, SQLite and desktop builds**: `.rela/scheduler-run-state.json`,
+  which is gitignored. If you delete it, all tasks run on the next startup.
+- **PostgreSQL build**: the `scheduler_tasks`, `scheduler_runs` and
+  `scheduler_run_children` tables in the tenant's schema. Every node sees the
+  same runs, so several nodes can run the scheduler safely.
+
+An older `.rela/scheduler-state.json` is imported on first start and then
+deleted. Runs that ended more than 14 days ago are pruned.
+
+On the filesystem and desktop builds, the job queue is in memory. If the process
+exits while a run is queued or running, that job is gone, and the task waits
+for the lease to expire before it retries. On the PostgreSQL build the queue is
+durable, so a job left by a crashed node is picked up by another.
 
 ## Deployment
 
@@ -320,25 +356,41 @@ WantedBy=multi-user.target
 The scheduler responds to SIGINT (Ctrl+C) and SIGTERM. On receiving a signal, it:
 
 1. Stops checking for new due tasks
-2. Waits for any currently-running task to finish
+2. Stops the job queue, which gives running jobs time to finish
 3. Exits cleanly
+
+A run cut off by shutdown is marked `abandoned` once its lease expires.
 
 ### Logging
 
 All task activity is logged to stderr with structured fields:
 
 ```text
-level=INFO msg="scheduled task" name=daily-check every=day script=daily-check.lua
-level=INFO msg="first run, executing immediately" name=daily-check
-level=INFO msg="task started" name=daily-check script=daily-check.lua
-level=INFO msg="task completed" name=daily-check duration=45.2ms
-level=INFO msg="scheduler started" tasks=1
+level=INFO msg="scheduled task" task=daily-check every=day script=daily-check.lua
+level=INFO msg="scheduler started" tasks=1 node=web-1:4182
+level=INFO msg="run queued" task=daily-check run_id=5f0c... reason="first run"
+level=INFO msg="run started" task=daily-check run_id=5f0c... node=web-1:4182 attempt=1 queue_wait=12ms
+level=INFO msg="run finished" task=daily-check run_id=5f0c... status=succeeded duration=45ms
 ```
 
-Failed tasks are logged with the error message, at WARN for the first few
+Every line about a run carries its `run_id`, so you can follow one run from
+queue to outcome, across nodes. `queue_wait` is how long the run waited for a
+worker; a growing value means the workers cannot keep up.
+
+Failed runs are logged with the error message, at WARN for the first few
 consecutive failures and escalating to ERROR once retries are clearly not
-helping. The scheduler continues running — a failed task does not stop other
+helping. The scheduler continues running: a failed task does not stop other
 tasks from executing.
+
+These lines point at a problem:
+
+| Message                                                | Level | Meaning                                                                                     |
+| ------------------------------------------------------ | ----- | ------------------------------------------------------------------------------------------- |
+| `run abandoned`                                        | ERROR | The run's lease expired before it finished; the worker probably died. The task retries.     |
+| `task due but its previous run is still active, skipping` | INFO  | The previous run has not finished. Frequent lines mean the task is slower than its interval. |
+| `duplicate delivery skipped, run is no longer queued`  | WARN  | The queue delivered a job twice; the second copy did nothing.                               |
+| `late result discarded, run had already ended`         | WARN  | A run finished after it was already marked abandoned; its result was not recorded.          |
+| `could not create run` / `could not record run outcome` | ERROR | The run state could not be written, usually a database problem.                             |
 
 ## Failure Handling and Retries
 
@@ -370,15 +422,15 @@ that fails at 09:00 and succeeds on the 11:35 retry has run for that day, and
 will not run again until the next day — so a recovered run can land some hours
 after its nominal slot.
 
-Retry state is persisted in `.rela/scheduler-state.json` alongside the last-run
-timestamps, so a task mid-backoff keeps its position across a scheduler restart.
+Retry state is kept in the run state alongside the last-run timestamps, so a
+task mid-backoff keeps its position across a scheduler restart.
 
 ```text
-level=WARN msg="task failed" name=daily-check duration=4.4ms failures=1 \
-  retry_in=5m0s retry_at=2026-08-13T23:12:04+02:00 error="..."
-level=INFO msg="retrying failed task" name=daily-check failures=1 scheduled_for=...
-level=ERROR msg="task failed" name=daily-check duration=4.1ms failures=4 \
-  retry_in=40m0s retry_at=2026-08-14T00:15:00+02:00 error="..."
+level=WARN msg="run finished" task=daily-check run_id=... status=failed duration=4ms \
+  failures=1 retry_at=2026-08-13T23:12:04+02:00 error="..."
+level=INFO msg="run queued" task=daily-check run_id=... reason=retry
+level=ERROR msg="run finished" task=daily-check run_id=... status=failed duration=4ms \
+  failures=4 retry_at=2026-08-14T00:15:00+02:00 error="..."
 ```
 
 If the scheduler finds a retry time further out than the 2-hour maximum — a

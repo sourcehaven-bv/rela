@@ -10,8 +10,8 @@ why2: neoq never recorded the job as processed. Its handler runs inside the tran
 why3: rela never set postgres.WithTransactionTimeout; so neoq's 30 s default idle_in_transaction_session_timeout applies to every worker connection. That default is shorter than handlerTimeout (15 m) which rela chose for the same work.
 why4: The scheduler assumes exactly one completion signal per run delivered to an in-process channel in the submitting process. Its correctness depends on the queue's delivery being exactly-once and same-process; neoq is at-least-once and cross-process; so any lost or duplicated completion (rerun; restart; other node; handler timeout) turns into a stall of the single sequential scheduler goroutine.
 why5: Run lifecycle state lives only in process memory and in neoq's internal table. Neither is a queryable; durable record rela owns. The jobstest conformance suite only uses millisecond handlers; so no test ever exercised a job longer than a backend timeout; and the queue seam had no contract for how long a handler may run.
-prevention: 'Planned: AM-durable-job-outlives-idle-tx (postgres conformance case with a handler longer than the backend idle-tx timeout; asserting one execution and a released key). Scheduler run lifecycle moves to a durable per-run record so a lost completion is detected by lease expiry instead of blocking the scheduler goroutine.'
-status: in-progress
+prevention: AM-durable-job-outlives-idle-tx pins a handler longer than the idle-tx timeout completing once on the postgres queue. AM-scheduler-run-state-conformance holds every run-state backend to one lifecycle contract. The scheduler no longer waits for a run; a lost completion is detected by lease expiry and retried; so no single job can stall the scheduler.
+status: review
 ---
 
 ## Symptom (Atlas, postgres build)
@@ -114,3 +114,28 @@ Deleted: `claimInFlight`, `releaseInFlight`, `reportInFlight`, the run token,
 
 Out of scope: `RunTaskNow` (TKT-NLWV9P) builds on this by waiting for a run
 record to finish; `for_each` on interval schedules stays rejected.
+
+## Implemented
+
+Part 1 landed as planned. The regression test is
+`TestPostgresQueue_HandlerOutlivesDefaultIdleTxTimeout` in
+`internal/jobs/pgqueue_test.go`.
+
+Part 2 differs from the plan in these points:
+
+- Leases: 30 m while queued, 20 m once running. The queued lease covers queue
+wait on a busy pool; the running lease exceeds the 15 m handler timeout.
+- Backends: postgres builds use `pgschedstate` (migration 0017:
+`scheduler_tasks`, `scheduler_runs`, `scheduler_run_children`). Every other
+build uses `kvstate` over `state.KV`, key `scheduler-run-state.json`. The run
+state reaches exactly as far as the job queue does.
+- A retried `for_each` run skips subjects that an earlier run of the same
+occurrence already delivered (`SucceededSubjects`), so recipients are not mailed
+twice.
+- The legacy `scheduler-state.json` is imported once at start and deleted.
+- Ended runs are pruned after 14 days, hourly.
+- On the ephemeral queue (fs, desktop), a restart loses queued jobs. The task
+then waits for the lease to expire before it retries. Accepted: the queue is
+ephemeral by design, and a restart rarely falls inside a run.
+
+Also fixes BUG-1YMHIS: a failed child now fails the `for_each` run.

@@ -950,7 +950,7 @@ templates/relations/<type>.md   # Optional: relation templates for defaults
 migrations/<stamp>-<slug>.yaml  # Optional: data migrations (committed)
 migrations/applied.json         # Which migrations have run (COMMITTED, fs tier)
 .rela/user-defaults.yaml        # Per-user defaults (gitignored)
-.rela/scheduler-state.json      # Scheduler last-run timestamps (gitignored)
+.rela/scheduler-run-state.json  # Scheduler runs + last-run times, non-pg builds (gitignored)
 ```
 
 ## Working documents

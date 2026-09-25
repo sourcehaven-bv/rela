@@ -139,6 +139,7 @@ components:
   sqlitecomments:   { in: internal/comments/sqlitecomments }
   schedulerstate:   { in: internal/schedulerstate }
   kvschedstate:     { in: internal/schedulerstate/kvstate }
+  pgschedstate:     { in: internal/schedulerstate/pgschedstate }
   pattern:          { in: internal/pattern }
   search:           { in: internal/search }
   bleveindex:       { in: internal/search/bleveindex }
@@ -635,6 +636,10 @@ deps:
       - memmigstate
       - pgmigstate
       - sqlitemigstate
+      # The scheduler run-state backends, selected here for the same reason.
+      - schedulerstate
+      - kvschedstate
+      - pgschedstate
       # Bridges conditionlint's next-action condition compiler to the seam
       # dataentry declares, so the app never imports the predicate engine.
       # predicatefns + principal: the same bridge derives the query identity
@@ -1231,6 +1236,14 @@ deps:
     mayDependOn:
       - state
       - schedulerstate
+  # The postgres backend is one row per task and per run, so several
+  # rela-server processes share one schedule safely (BUG-TKL08E). Like
+  # pgcomments it takes an injected handle and never imports store.
+  pgschedstate:
+    mayDependOn:
+      - schedulerstate
+    canUse:
+      - pgx
   # nextaction is the resolution engine. It depends on NO store, searcher or
   # ACL type: candidates arrive through a consumer-side CandidateFunc that the
   # wiring site supplies already read-gated. That is what keeps the engine
@@ -1291,8 +1304,11 @@ deps:
       - filter
       - principal
       - project
+      - schedulerstate
       - script
       - state
+    canUse:
+      - uuid
   script:
     mayDependOn:
       - ai
