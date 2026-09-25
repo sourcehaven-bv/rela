@@ -114,6 +114,11 @@ func newNeoqQueue(nq neoq.Neoq, logger *slog.Logger, concurrency int) (*neoqQueu
 	// rela's handler, level and format. That is where its most useful
 	// diagnostics land (a failed status update, a killed worker session), so
 	// an operator searching rela's log would not find them.
+	//
+	// At DEBUG, neoq logs every job's full payload. Today's payloads hold
+	// config-level data only (task names, script paths, capability flags,
+	// secret NAMES). A kind whose payload carries entity content or a secret
+	// VALUE would put it in rela's log whenever debug logging is on.
 	nq.SetLogger(logger.With("component", "neoq"))
 
 	return &neoqQueue{
