@@ -79,7 +79,7 @@ func wireRemoteMCP(app *dataentry.App, svc *appbuild.Services, f *serverFlags) e
 		return nil
 	}
 
-	factory := func() (http.Handler, error) {
+	factory := func(host dataentry.MCPHost) (http.Handler, error) {
 		reads := svc.GatedReads()
 
 		deps := relamcp.Deps{
@@ -94,6 +94,7 @@ func wireRemoteMCP(app *dataentry.App, svc *appbuild.Services, f *serverFlags) e
 			LuaCache:      svc.ScriptEngine().LuaCache(),
 			Watcher:       noopWatcher{},
 			ProjectRoot:   svc.Paths().Root,
+			Attachments:   remoteAttachmentDeps(svc, host),
 		}
 
 		srv, err := relamcp.NewServer(deps, mcpServerVersion,
@@ -109,6 +110,24 @@ func wireRemoteMCP(app *dataentry.App, svc *appbuild.Services, f *serverFlags) e
 	}
 
 	return app.SetRemoteMCP(factory)
+}
+
+// remoteAttachmentDeps wires the MCP attachment tools onto the web upload
+// path's policy: the App's live schema (so an operator's edit to `accept:`,
+// `scan:` or `max_attachment_bytes` applies to MCP uploads immediately), its
+// command runner, and its write mutex. The snapshot is rebuilt per tool call,
+// which costs one struct allocation.
+func remoteAttachmentDeps(svc *appbuild.Services, host dataentry.MCPHost) relamcp.AttachmentDeps {
+	return relamcp.AttachmentDeps{
+		Snapshot: func() (relamcp.AttachmentSnapshot, error) {
+			meta, limit := host.AttachmentPolicy()
+			return relamcp.NewAttachmentSnapshot(
+				svc.Store(), svc.EntityManager(), meta, host.AttachmentRunner, limit)
+		},
+		Authorizer: svc.ACL(),
+		Audit:      svc.Audit(),
+		WriteLock:  host.WriteLock,
+	}
 }
 
 // noopWatcher satisfies [relamcp.Watcher] for the HTTP transport, which has

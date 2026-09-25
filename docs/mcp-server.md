@@ -141,6 +141,63 @@ status=draft,proposed
 | `refresh` | Force re-sync the graph from disk | (none) |
 | `export` | Export entities/relations | `format` (json/yaml/csv), `type?` |
 
+### Attachment Tools
+
+These tools work on the files held by `file`-type properties.
+
+| Tool | Description | Parameters |
+|------|-------------|------------|
+| `list_attachments` | List an entity's attached files with type and size | `id` |
+| `read_attachment` | Return one file's content | `id`, `property`, `file_name` |
+| `attach_file` | Attach a file to a file-type property | `id`, `property`, `file_name`, `content` |
+| `delete_attachment` | Remove a file from a file-type property | `id`, `property`, `file_name?` |
+
+**Reading.** `read_attachment` returns a file in one of three forms:
+
+- PNG, JPEG, GIF and WebP files are image content, when the bytes match the
+  extension.
+- Files with a `text/*` type (from the extension, or from the bytes when the
+  extension is unknown) that are valid UTF-8 are text. HTML is returned as
+  text too; it is never rendered.
+- Anything else is a base64 blob with the URI
+  `rela://attachment/{id}/{property}/{file_name}`, each segment URL-escaped.
+  The blob keeps its MIME type only for PDF, JSON, plain text and CSV. Every
+  other type, including SVG, is labeled `application/octet-stream`, because a
+  client might render it.
+
+Files larger than 10 MiB are refused.
+
+**Writing.** `attach_file` takes the file as base64 in `content`. It does not
+accept a local path. The limit is 16 MiB of decoded content. The rules are the
+same as for a web upload:
+
+- On a single-file property (`max: 1`), the new file replaces the current one.
+- On a multi-file property, the file is added. A clashing name gets a numbered
+  suffix, such as `report (1).pdf`. When the property is full, the call fails.
+- The upload policy applies: the MIME allowlist, `scan_cmd` and transforms.
+  See [attachment-security.md](attachment-security.md).
+- A rejected upload is recorded in the audit log as `denied-write` with
+  `op=attachment-write`.
+
+`delete_attachment` may omit `file_name` when the property holds exactly one
+file. Deleting a named file that is not there succeeds, says that nothing was
+removed, and does not write the entity, so a retry is safe.
+
+**Access control.** Every attachment tool first reads the entity through the
+same ACL gate as `show_entity`:
+
+- A hidden entity gets the same answer as a nonexistent one.
+- A file property hidden by `visible:` is left out of `list_attachments`.
+  Reading, attaching or deleting a file on it answers "attachment not found".
+- `attach_file` and `delete_attachment` need `update` permission on the entity.
+  rela checks this before it stores any bytes. A denied call is recorded in the
+  audit log.
+
+**Stdio differences.** `rela mcp` has no command sandbox runner. A property
+with a configured `scan_cmd` or command transform therefore rejects every MCP
+upload over stdio. `max_attachment_bytes` in `data-entry.yaml` applies only to
+the remote transport; stdio uses the 16 MiB tool limit.
+
 ## Resources
 
 Resources expose rela data as readable URIs.
@@ -269,6 +326,12 @@ allowlist is not built yet.
   served, and the 401 carries a `WWW-Authenticate` challenge only when your
   assertion header is literally `Authorization`. Point your client at the IdP
   by configuration.
+- **Request size.** A request body may be up to about 22.3 MiB, enough for a
+  16 MiB `attach_file` upload after base64 encoding. At most two requests
+  larger than 4 MiB (or with no `Content-Length`) are processed at a time;
+  the rest wait before their body is read, so concurrent uploads cannot
+  exhaust memory. Smaller requests never wait. The same 22.3 MiB limit applies
+  to one message over stdio.
 
 ## Audit log
 

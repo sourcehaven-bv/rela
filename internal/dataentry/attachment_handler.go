@@ -18,7 +18,7 @@ import (
 // It holds the full store.Store because attachment.New (the shared HTTP/CLI
 // write-policy service) requires it. The write handle is NOT the full manager:
 // this handler never calls it, only passes it to attachment.New, so it holds
-// exactly attachment's own one-method attachment.EntityUpdater (TKT-IVSJV6). The
+// exactly attachment's own one-method attachment.EntityPatcher (TKT-IVSJV6). The
 // swappable collaborators (acl, audit sink, field resolver, command runner) are closures over
 // App so tests that reassign app.acl / app.fieldResolver after construction
 // stay effective — same rationale as affordanceService. gateRead is App's
@@ -32,7 +32,7 @@ import (
 type attachmentHandler struct {
 	schema     func() *Schema
 	store      store.Store
-	manager    attachment.EntityUpdater
+	manager    attachment.EntityPatcher
 	runner     func() attachment.CommandRunner
 	reader     entityReader
 	serializer entitySerializer

@@ -28,28 +28,28 @@ type Info struct {
 	Size        int64
 }
 
-// Result is the outcome of [Service.Attach].
+// Result is the outcome of [Service.Attach] and [Service.WriteAttachment].
 type Result struct {
 	Path     string
 	FileName string
+
+	// Entity is the post-write entity as stored, unredacted. A caller that
+	// serves it must apply its own read-side redaction.
+	Entity *entity.Entity
 }
 
-// EntityUpdater is the write surface the attachment service needs: recording
-// an attachment is a whole-entity save of a record this package just read and
-// modified. See the internal/entitymanager package doc for the consumer-side
+// EntityPatcher is the write surface the attachment service needs: recording
+// an attachment changes exactly one property, the file property's stamped
+// path(s). See the internal/entitymanager package doc for the consumer-side
 // rule this follows (TKT-IVSJV6).
 //
-// One method. Attaching a file never creates, deletes, renames or relates —
-// it updates the attachment properties of an entity that already exists.
-// Taking the whole write interface would let a future edit here reach for a
-// delete or a rename without that showing up as a dependency change
-// (TKT-IVSJV6).
-//
-// UpdateEntity rather than PatchEntity is deliberate: [Service.Attach] holds
-// the entity it read and owns the full record for the duration of the save,
-// which is the case UpdateEntity is for.
-type EntityUpdater interface {
-	UpdateEntity(ctx context.Context, e *entity.Entity) (*entity.UpdateResult, error)
+// PatchEntity rather than UpdateEntity: a whole-entity save would hold the
+// record across the processor run (a scan may take up to a minute) and
+// overwrite any property edited meanwhile. A patch names only the file
+// property, so the service needs the entity's identity, never an owned full
+// record, and a caller may hand it an entity read through a redacting reader.
+type EntityPatcher interface {
+	PatchEntity(ctx context.Context, id string, p entity.Patch) (*entity.UpdateResult, error)
 }
 
 // Deps is the dependency bundle [New] requires. Store, Meta and
@@ -59,7 +59,7 @@ type EntityUpdater interface {
 type Deps struct {
 	Store         store.Store
 	Meta          *metamodel.Metamodel
-	EntityManager EntityUpdater
+	EntityManager EntityPatcher
 
 	// Processor inspects/rewrites attachment bytes before they are persisted
 	// (scan, MIME validation, transform). Optional; defaults to [NoopProcessor].
@@ -137,6 +137,35 @@ func (s *Service) Attach(ctx context.Context, entityID, filePath, property strin
 	return s.WriteAttachment(ctx, e, propDef, propName, filepath.Base(filePath), src)
 }
 
+// Open returns the bytes of one attachment. The caller closes the reader and
+// is responsible for ACL gating. A missing file wraps [store.ErrNotFound].
+func (s *Service) Open(ctx context.Context, entityID, property, fileName string) (io.ReadCloser, error) {
+	return s.deps.Store.ReadAttachment(ctx, entityID, property, fileName)
+}
+
+// fileProperty loads the raw entity and resolves property to a declared
+// file-type property of its type.
+func (s *Service) fileProperty(
+	ctx context.Context, entityID, property string,
+) (*entity.Entity, metamodel.PropertyDef, error) {
+	e, err := s.deps.Store.GetEntity(ctx, entityID)
+	if err != nil {
+		return nil, metamodel.PropertyDef{}, fmt.Errorf("get entity %s: %w", entityID, err)
+	}
+	entityDef, ok := s.deps.Meta.GetEntityDef(e.Type)
+	if !ok {
+		return nil, metamodel.PropertyDef{}, fmt.Errorf("unknown entity type: %s", e.Type)
+	}
+	propDef, ok := entityDef.Properties[property]
+	if !ok {
+		return nil, metamodel.PropertyDef{}, fmt.Errorf("property %q not defined for entity type %s", property, e.Type)
+	}
+	if propDef.Type != metamodel.PropertyTypeFile {
+		return nil, metamodel.PropertyDef{}, fmt.Errorf("property %q is not a file type (is %s)", property, propDef.Type)
+	}
+	return e, propDef, nil
+}
+
 // ErrAtCapacity is returned by [Service.WriteAttachment] when a multi-file
 // property already holds its `max` attachments. Callers (the HTTP handler)
 // map it to a 409.
@@ -189,7 +218,7 @@ func (s *Service) WriteAttachment(
 	}
 
 	// Write the new bytes first. On failure the existing files are untouched.
-	if err := s.deps.Store.AttachFile(ctx, e.ID, propName, fileName, r); err != nil {
+	if err = s.deps.Store.AttachFile(ctx, e.ID, propName, fileName, r); err != nil {
 		return nil, fmt.Errorf("store attachment: %w", err)
 	}
 
@@ -214,76 +243,99 @@ func (s *Service) WriteAttachment(
 		sort.Strings(names)
 	}
 
-	stampPropertyNames(e, propName, maxCount, names)
 	key := attachPath(e.ID, propName, fileName)
-	if _, err := s.deps.EntityManager.UpdateEntity(ctx, e); err != nil {
-		// The file landed on disk before UpdateEntity ran, so a failure
-		// here leaves an orphan. CleanupOrphanedTempFiles (analysis
-		// facade) sweeps these — surface the path in the error so the
-		// operator can find it.
+	res, err := s.stamp(ctx, e, propName, maxCount, names)
+	if err != nil {
+		// The file landed on disk before the stamp ran, so a failure here
+		// leaves an orphan. CleanupOrphanedTempFiles (analysis facade)
+		// sweeps these — surface the path in the error so the operator can
+		// find it.
 		return nil, fmt.Errorf("update entity (attachment %s orphaned; run `rela gc --temp-files`): %w", key, err)
 	}
 
-	return &Result{Path: key, FileName: fileName}, nil
+	return &Result{Path: key, FileName: fileName, Entity: res.Entity}, nil
 }
 
 // DeleteAttachment removes one file from a property and re-stamps it,
 // shared with the HTTP delete handler. The caller is responsible for ACL
 // gating; this performs the store delete + property re-stamp + persist.
+// Deleting a file that is not there still re-stamps and succeeds.
 func (s *Service) DeleteAttachment(
 	ctx context.Context, e *entity.Entity, propDef metamodel.PropertyDef, propName, fileName string,
 ) error {
-	err := s.deps.Store.DeleteAttachment(ctx, e.ID, propName, fileName)
-	if err != nil && !errors.Is(err, store.ErrNotFound) {
-		return fmt.Errorf("delete attachment: %w", err)
-	}
-	if err := s.stampProperty(ctx, e, propName, propDef.FileMax()); err != nil {
-		return err
-	}
-	if _, err := s.deps.EntityManager.UpdateEntity(ctx, e); err != nil {
-		return fmt.Errorf("update entity: %w", err)
-	}
-	return nil
+	_, err := s.deleteFile(ctx, e, propDef, propName, fileName)
+	return err
 }
 
-// Detach removes one attachment from a file-type property. If fileName is
-// empty and the property holds exactly one file, that file is removed; if
-// it holds several, an error asks the caller to disambiguate. The property
-// is re-stamped from the store's remaining files and persisted.
-func (s *Service) Detach(ctx context.Context, entityID, property, fileName string) error {
-	e, err := s.deps.Store.GetEntity(ctx, entityID)
+// deleteFile is [Service.DeleteAttachment], also reporting whether the file
+// was there.
+func (s *Service) deleteFile(
+	ctx context.Context, e *entity.Entity, propDef metamodel.PropertyDef, propName, fileName string,
+) (bool, error) {
+	err := s.deps.Store.DeleteAttachment(ctx, e.ID, propName, fileName)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		return false, fmt.Errorf("delete attachment: %w", err)
+	}
+	existed := err == nil
+	names, err := s.attachmentFileNames(ctx, e.ID, propName)
 	if err != nil {
-		return fmt.Errorf("get entity %s: %w", entityID, err)
+		return false, fmt.Errorf("list attachments: %w", err)
 	}
-	entityDef, ok := s.deps.Meta.GetEntityDef(e.Type)
-	if !ok {
-		return fmt.Errorf("unknown entity type: %s", e.Type)
+	// A retried delete changes nothing, so it must not write the entity: a
+	// write is audited and runs `on: update` automations. A stale property
+	// value is still repaired.
+	if !existed && sameStamp(e.Properties[propName], stampValue(e.ID, propName, propDef.FileMax(), names)) {
+		return false, nil
 	}
-	propDef, ok := entityDef.Properties[property]
-	if !ok {
-		return fmt.Errorf("property %q not defined for entity type %s", property, e.Type)
+	if _, err := s.stamp(ctx, e, propName, propDef.FileMax(), names); err != nil {
+		return false, fmt.Errorf("update entity: %w", err)
 	}
-	if propDef.Type != metamodel.PropertyTypeFile {
-		return fmt.Errorf("property %q is not a file type (is %s)", property, propDef.Type)
-	}
+	return existed, nil
+}
 
-	existing, err := s.attachmentFileNames(ctx, entityID, property)
+// ErrNoFileToDetach is returned by [Service.DetachFile] when no file name was
+// given and the property holds no file, or several.
+var ErrNoFileToDetach = errors.New("no file to detach")
+
+// Detach removes one attachment from a file-type property of entityID; see
+// [Service.DetachFile] for the fileName rules and the result.
+func (s *Service) Detach(ctx context.Context, entityID, property, fileName string) (string, error) {
+	e, propDef, err := s.fileProperty(ctx, entityID, property)
 	if err != nil {
-		return fmt.Errorf("list attachments: %w", err)
+		return "", err
 	}
-	if len(existing) == 0 {
-		return fmt.Errorf("property %q has no attachment", property)
-	}
-	target := fileName
-	if target == "" {
-		if len(existing) > 1 {
-			return fmt.Errorf("property %q holds %d files; specify which to detach: %v",
-				property, len(existing), existing)
+	return s.DetachFile(ctx, e, propDef, property, fileName)
+}
+
+// DetachFile removes one attachment from a file-type property and returns
+// the name of the file it removed. A named file is deleted idempotently: when
+// it is not there, DetachFile succeeds and returns "". An empty fileName
+// removes the property's only file, and errors when the property holds none
+// or several (the caller must disambiguate). The caller is responsible for
+// ACL gating.
+func (s *Service) DetachFile(
+	ctx context.Context, e *entity.Entity, propDef metamodel.PropertyDef, property, fileName string,
+) (string, error) {
+	if fileName == "" {
+		existing, err := s.attachmentFileNames(ctx, e.ID, property)
+		if err != nil {
+			return "", fmt.Errorf("list attachments: %w", err)
 		}
-		target = existing[0]
+		switch len(existing) {
+		case 0:
+			return "", fmt.Errorf("%w: property %q has no attachment", ErrNoFileToDetach, property)
+		case 1:
+			fileName = existing[0]
+		default:
+			return "", fmt.Errorf("%w: property %q holds %d files; specify which to detach: %v",
+				ErrNoFileToDetach, property, len(existing), existing)
+		}
 	}
-
-	return s.DeleteAttachment(ctx, e, propDef, property, target)
+	existed, err := s.deleteFile(ctx, e, propDef, property, fileName)
+	if err != nil || !existed {
+		return "", err
+	}
+	return fileName, nil
 }
 
 // attachmentFileNames lists the file names currently on the property, in
@@ -308,36 +360,61 @@ func (s *Service) attachmentFileNames(ctx context.Context, entityID, property st
 	return names, nil
 }
 
-// stampProperty re-reads the store's current files for the property and
-// stamps them. Used by the delete path, where the post-delete set is the
-// store's truth. The write path uses stampPropertyNames with the set it
-// already computed, to avoid a redundant ListAttachments.
-func (s *Service) stampProperty(ctx context.Context, e *entity.Entity, property string, maxCount int) error {
-	names, err := s.attachmentFileNames(ctx, e.ID, property)
-	if err != nil {
-		return fmt.Errorf("list attachments: %w", err)
-	}
-	stampPropertyNames(e, property, maxCount, names)
-	return nil
+// stamp records names as the property's value with a patch that names only
+// that property (see [EntityPatcher]). e supplies identity only and is not
+// modified.
+func (s *Service) stamp(
+	ctx context.Context, e *entity.Entity, property string, maxCount int, names []string,
+) (*entity.UpdateResult, error) {
+	patch := entity.Patch{Properties: map[string]any{property: stampValue(e.ID, property, maxCount, names)}}
+	return s.deps.EntityManager.PatchEntity(ctx, entity.FormatStateRef(e.ID, e.Face), patch)
 }
 
-// stampPropertyNames writes the property value from a known set of file
-// names: a scalar path for a single-cap property (empty when none), a list
-// of paths for a multi-cap property.
-func stampPropertyNames(e *entity.Entity, property string, maxCount int, names []string) {
+// stampValue is the property value for a known set of file names: a scalar
+// path for a single-cap property (empty when none), a list of paths for a
+// multi-cap property.
+func stampValue(entityID, property string, maxCount int, names []string) any {
 	if maxCount <= 1 {
 		if len(names) == 0 {
-			e.SetString(property, "")
-			return
+			return ""
 		}
-		e.SetString(property, attachPath(e.ID, property, names[0]))
-		return
+		return attachPath(entityID, property, names[0])
 	}
 	paths := make([]string, 0, len(names))
 	for _, n := range names {
-		paths = append(paths, attachPath(e.ID, property, n))
+		paths = append(paths, attachPath(entityID, property, n))
 	}
-	e.Properties[property] = paths
+	return paths
+}
+
+// sameStamp reports whether a stored property value equals want, a
+// [stampValue] result. A list may load as []string or []any, and an unset
+// value equals the empty stamp.
+func sameStamp(stored, want any) bool {
+	switch w := want.(type) {
+	case string:
+		s, _ := stored.(string)
+		return s == w
+	case []string:
+		var got []string
+		switch v := stored.(type) {
+		case []string:
+			got = v
+		case []any:
+			for _, x := range v {
+				str, ok := x.(string)
+				if !ok {
+					return false
+				}
+				got = append(got, str)
+			}
+		case nil:
+		default:
+			return false
+		}
+		return slices.Equal(got, w)
+	}
+	return false
 }
 
 func attachPath(entityID, property, fileName string) string {
