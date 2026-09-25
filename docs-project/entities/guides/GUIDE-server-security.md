@@ -398,7 +398,7 @@ project root (alongside `schema.yaml`). Three modes:
 |---|---|---|
 | **Open** (default) | No `acl.yaml` present | Every authenticated request can write. Reads have no filtering. Suitable for single-user local projects. |
 | **Read-only** | `rela-server --read-only` or `RELA_READ_ONLY=1` | Every write returns HTTP 403; reads unaffected. Useful for demos, maintenance, observe-only deployments. Wins over `acl.yaml` — explicit flag overrides policy. |
-| **Policy** | `acl.yaml` present | Writes are gated by role assignments and delegate permissions. Reads are filtered on the data-entry HTTP surface: per-entity GETs 404 like not-found for hidden entities; lists / pagination / `?include=` / `/_position` / `/_search` return only the visible subset; and `visible:`-denied properties are redacted from every response body. MCP read surfaces are not yet filtered. See [GUIDE-acl-security]. |
+| **Policy** | `acl.yaml` present | Writes are gated by role assignments and delegate permissions. Reads are filtered on the data-entry HTTP surface: per-entity GETs 404 like not-found for hidden entities; lists / pagination / `?include=` / `/_position` / `/_search` return only the visible subset; and `visible:`-denied properties are redacted from every response body. Remote MCP (`-mcp`) read tools go through the same row gate and `visible:` redaction, with known gaps: relation properties are not redacted (TKT-0RBFN0), and some write-tool results report counts that include hidden relations. Local `rela mcp` over stdio is not filtered, because the filesystem is its trust boundary. See [GUIDE-acl-security]. |
 
 A startup warning fires when the server binds **beyond loopback**
 (`--bind` non-loopback) **without** `acl.yaml` AND **without**
@@ -597,20 +597,23 @@ with an `acl.yaml` never need this flag.
 > pass `--allow-unauthenticated-commands`. This is deliberate — the old
 > default exposed unauthenticated shell execution to the network.
 
-### Remote MCP exposes every tool, with no per-transport allowlist
+### Remote MCP exposes every tool except Lua, with no per-transport allowlist
 
 `-mcp` (see [mcp-server.md](mcp-server.md#remote-mcp-over-http)) serves the
-full MCP tool set over HTTP, including `lua_eval` and `lua_run`. Every call is
-authenticated (the flag refuses to start without verified JWT identity),
-authorized by the same ACL as the web API, and audited as the requesting
-principal — so a remote caller can do exactly what that person could do
-through the UI, no more.
+MCP tool set over HTTP. Every call is authenticated (the flag refuses to start
+without verified JWT identity), authorized by the same ACL as the web API, and
+audited as the requesting principal. A remote caller can do exactly what that
+person could do through the UI, no more.
 
-What is *not* built is a per-transport allowlist: a tool added for local stdio
-use becomes remotely reachable the moment `-mcp` is on. The Lua tools run
-sandboxed (no OS libraries) and gated, so this is a defense-in-depth gap
-rather than an escape hatch, but operators enabling `-mcp` should know the
-surface is "all tools", not a curated subset.
+The one exclusion is the Lua tools (`lua_eval`, `lua_run`, `lua_list`). The
+Lua runtime MCP uses reads the graph without the read gate, so over HTTP it
+would bypass row gating and `visible:` redaction. The remote server does not
+register these tools, and a call to one fails as an unknown tool.
+
+What is *not* built is a general per-transport allowlist: any other tool added
+for local stdio use becomes remotely reachable the moment `-mcp` is on.
+Operators enabling `-mcp` should know the surface is "all tools except Lua",
+not a curated subset.
 
 Two related gaps, both deliberate and tracked:
 
