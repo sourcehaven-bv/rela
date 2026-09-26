@@ -5,12 +5,13 @@ title: Add dry-run mode for automation testing via EntityRelationStore abstracti
 kind: enhancement
 priority: medium
 effort: m
-status: backlog
+status: wont-fix
 ---
 
 # Add Dry-Run Mode for Automation Testing
 
-Enable testing automations without persisting changes by introducing an `EntityRelationStore` abstraction layer.
+Enable testing automations without persisting changes by introducing an
+`EntityRelationStore` abstraction layer.
 
 ## Architecture
 
@@ -111,3 +112,7 @@ for _, e := range changes.Created {
 - **Faster tests**: Use MemERS for unit tests (no I/O)
 - **Transactions**: Could rollback by discarding overlay
 - **Previews**: Show diffs before committing changes
+
+## Resolution
+
+Closed: Obsolete: designed on the deleted Workspace layer.

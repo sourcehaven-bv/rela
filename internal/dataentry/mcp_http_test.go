@@ -7,6 +7,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
 
@@ -23,9 +24,11 @@ type stubMCPFactory struct {
 	mu   sync.Mutex
 	seen []principal.Principal
 	err  error
+	host MCPHost
 }
 
-func (f *stubMCPFactory) build() (http.Handler, error) {
+func (f *stubMCPFactory) build(host MCPHost) (http.Handler, error) {
+	f.host = host
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -307,7 +310,7 @@ func TestSetRemoteMCP_FactoryErrorRefusesAtStartup(t *testing.T) {
 
 		// nilnil is the exact shape under test: a factory that reports
 		// success but hands back nothing to serve.
-		nilFactory := func() (http.Handler, error) {
+		nilFactory := func(MCPHost) (http.Handler, error) {
 			return nil, nil //nolint:nilnil // the invalid input under test
 		}
 		err := app.SetRemoteMCP(nilFactory)
@@ -400,3 +403,34 @@ var errFactoryTest = &factoryTestError{}
 type factoryTestError struct{}
 
 func (*factoryTestError) Error() string { return "test factory failure" }
+
+// TestRemoteMCP_HostSharesUploadPolicy pins what the MCP attachment tools get
+// from the App (TKT-R6U15C): the App's own write mutex, its command runner,
+// and the LIVE schema, so a policy reload reaches MCP uploads.
+func TestRemoteMCP_HostSharesUploadPolicy(t *testing.T) {
+	app := newTestAppV1(t)
+	mustSetJWTGate(t, app)
+	f := &stubMCPFactory{}
+	if err := app.SetRemoteMCP(f.build); err != nil {
+		t.Fatalf("SetRemoteMCP: %v", err)
+	}
+
+	if f.host.WriteLock != &app.writeMu {
+		t.Error("WriteLock is not the App's write mutex; MCP and web writes would not serialize")
+	}
+	if f.host.AttachmentRunner != app.attachmentRunner {
+		t.Error("AttachmentRunner is not the App's runner")
+	}
+
+	next := *app.schema.Current()
+	next.Meta = &metamodel.Metamodel{}
+	cfg := *next.Cfg
+	cfg.App.MaxAttachmentBytes = 1234
+	next.Cfg = &cfg
+	app.schema.Publish(&next)
+
+	meta, limit := f.host.AttachmentPolicy()
+	if meta != next.Meta || limit != 1234 {
+		t.Errorf("AttachmentPolicy() = (%p, %d), want the reloaded schema (%p, 1234)", meta, limit, next.Meta)
+	}
+}

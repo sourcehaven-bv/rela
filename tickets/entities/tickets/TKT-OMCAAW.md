@@ -7,7 +7,7 @@ priority: low
 effort: s
 tags:
     - needs-investigation
-status: backlog
+status: wont-fix
 ---
 
 ## Observed
@@ -66,3 +66,8 @@ with a longer wait in the test.
 `go test -race -shuffle=on -count=20 ./internal/jobs/`, and when it reproduces
 note the shuffle seed the failing run prints so it can be replayed
 deterministically.
+
+## Resolution
+
+Closed: Fixed by BUG-BPHP79 (#1500). Status is wont-fix, not done, because this
+ticket has no review checklist.

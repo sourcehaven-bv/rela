@@ -5,7 +5,7 @@ title: 'appbuild: make the database DSN an explicit parameter instead of an ambi
 kind: refactor
 priority: medium
 effort: s
-status: backlog
+status: wont-fix
 ---
 
 ## Description
@@ -114,19 +114,19 @@ unchanged.
 
 ## Do not consolidate the call sites
 
-Considered and **rejected** (2026-08-13). The four `internal/cli` sites look like
-duplication but differ in ways a shared helper would have to re-expose:
+Considered and **rejected** (2026-08-13). The four `internal/cli` sites look
+like duplication but differ in ways a shared helper would have to re-expose:
 
 - `kong.go:170` is conditional on `requiresProject(ktx.Command())`, owns
-  `defer svc.Close()`, and its error path prints `relaerrors.WrapDiscoverError`
-  and returns an exit code.
+`defer svc.Close()`, and its error path prints `relaerrors.WrapDiscoverError`
+and returns an exit code.
 - `flow.go:43` starts from a directory derived from a **script path**, not the
-  project flag, and deliberately replaces the error with
-  `"no project found for script %s"`.
+project flag, and deliberately replaces the error with `"no project found for
+script %s"`.
 - `validate.go:83` runs *after* an early return on `result.MetamodelError`, so it
-  cannot be hoisted to a common point.
+cannot be hoisted to a common point.
 - `mcp_wiring.go:43` passes `WithACL(acl.NopACL{})` behind a documented
-  trust-boundary justification.
+trust-boundary justification.
 
 A helper covering all four would take a start dir, an options slice, and an
 error-wrapping strategy — i.e. it would be `appbuild.Discover` with a layer on
@@ -147,3 +147,8 @@ the four build-agnostic fields (`appbuild.go:660-674`). Keep that split — do n
 move DSN validation into `validate()`, since FS/memory builds ignore the field.
 - `MigrateDSN` / `StatusDSN` (`pgstore/open.go:80-98`) and the `db` commands read
 the env directly and are **not** part of this ticket.
+
+## Resolution
+
+Closed: Shipped in #1318. Status is wont-fix, not done, because this ticket has
+no review checklist.

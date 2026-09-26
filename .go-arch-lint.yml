@@ -563,7 +563,12 @@ deps:
   # as a plain string rather than a *project.Context.
   mcp:
     mayDependOn:
+      # acl + attachment: the attachment tools (TKT-R6U15C) authorize an
+      # `update` before any bytes are stored, and drive attachment.Service,
+      # the write policy the CLI and web upload paths share.
+      - acl
       - ai
+      - attachment
       - audit
       - config
       - dataentryconfig

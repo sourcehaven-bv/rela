@@ -1,9 +1,12 @@
 package mcp
 
 import (
+	"sync"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
+	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -40,6 +43,25 @@ func newTestDeps(t *testing.T, meta *metamodel.Metamodel, st store.Store) Deps {
 		// resolves a Lua write relative to that root; align the two if
 		// one ever does.
 		ProjectRoot: t.TempDir(),
+		Attachments: testAttachmentDeps(t, svc, meta, audit.Nop{}),
+	}
+}
+
+// testAttachmentDeps wires the attachment tools over svc the way `rela mcp`
+// does (no command runner, store backstop limit), with sink as the audit log.
+func testAttachmentDeps(
+	t *testing.T, svc *appbuild.Services, meta *metamodel.Metamodel, sink audit.Audit,
+) AttachmentDeps {
+	t.Helper()
+	snap, err := NewAttachmentSnapshot(svc.Store(), svc.EntityManager(), meta, nil, store.MaxAttachmentBytes)
+	if err != nil {
+		t.Fatalf("NewAttachmentSnapshot: %v", err)
+	}
+	return AttachmentDeps{
+		Snapshot:   func() (AttachmentSnapshot, error) { return snap, nil },
+		Authorizer: svc.ACL(),
+		Audit:      sink,
+		WriteLock:  &sync.Mutex{},
 	}
 }
 

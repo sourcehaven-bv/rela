@@ -37,6 +37,12 @@ func (s *Server) registerTools() {
 	s.mcp.AddTool(toolListEntityTypes(), bind(s, selSchemaRes, schemaResourceHandler.handleListEntityTypes))
 	s.mcp.AddTool(toolListRelationTypes(), bind(s, selSchemaRes, schemaResourceHandler.handleListRelationTypes))
 
+	// Attachment tools
+	s.mcp.AddTool(toolListAttachments(), bind(s, selAttach, attachmentHandler.handleListAttachments))
+	s.mcp.AddTool(toolReadAttachment(), bind(s, selAttach, attachmentHandler.handleReadAttachment))
+	s.mcp.AddTool(toolAttachFile(), bind(s, selAttach, attachmentHandler.handleAttachFile))
+	s.mcp.AddTool(toolDeleteAttachment(), bind(s, selAttach, attachmentHandler.handleDeleteAttachment))
+
 	// Utility tools
 	s.mcp.AddTool(toolExport(), bind(s, selExport, exportHandler.handleExport))
 

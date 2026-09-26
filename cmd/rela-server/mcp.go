@@ -81,8 +81,8 @@ func wireRemoteMCP(app *dataentry.App, svc *appbuild.Services, f *serverFlags) e
 		return nil
 	}
 
-	factory := func() (http.Handler, error) {
-		srv, err := newRemoteMCPServer(svc)
+	factory := func(host dataentry.MCPHost) (http.Handler, error) {
+		srv, err := newRemoteMCPServer(svc, host)
 		if err != nil {
 			return nil, err
 		}
@@ -95,7 +95,7 @@ func wireRemoteMCP(app *dataentry.App, svc *appbuild.Services, f *serverFlags) e
 // newRemoteMCPServer builds the MCP server the HTTP endpoint serves. Split
 // from [wireRemoteMCP] so tests can exercise the exact remote tool set and
 // read wiring without a JWT gate in front.
-func newRemoteMCPServer(svc *appbuild.Services) (*relamcp.Server, error) {
+func newRemoteMCPServer(svc *appbuild.Services, host dataentry.MCPHost) (*relamcp.Server, error) {
 	reads := svc.GatedReads()
 
 	// No LuaWriteDeps / LuaCache, and no relamcp.WithLuaTools: the Lua
@@ -113,6 +113,7 @@ func newRemoteMCPServer(svc *appbuild.Services) (*relamcp.Server, error) {
 		Config:        svc.Config(),
 		Watcher:       noopWatcher{},
 		ProjectRoot:   svc.Paths().Root,
+		Attachments:   remoteAttachmentDeps(svc, host),
 	}
 
 	return relamcp.NewServer(deps, mcpServerVersion,
@@ -120,6 +121,24 @@ func newRemoteMCPServer(svc *appbuild.Services) (*relamcp.Server, error) {
 			User: principal.SystemUser(),
 			Tool: principal.ToolMCP,
 		}))
+}
+
+// remoteAttachmentDeps wires the MCP attachment tools onto the web upload
+// path's policy: the App's live schema (so an operator's edit to `accept:`,
+// `scan:` or `max_attachment_bytes` applies to MCP uploads immediately), its
+// command runner, and its write mutex. The snapshot is rebuilt per tool call,
+// which costs one struct allocation.
+func remoteAttachmentDeps(svc *appbuild.Services, host dataentry.MCPHost) relamcp.AttachmentDeps {
+	return relamcp.AttachmentDeps{
+		Snapshot: func() (relamcp.AttachmentSnapshot, error) {
+			meta, limit := host.AttachmentPolicy()
+			return relamcp.NewAttachmentSnapshot(
+				svc.Store(), svc.EntityManager(), meta, host.AttachmentRunner, limit)
+		},
+		Authorizer: svc.ACL(),
+		Audit:      svc.Audit(),
+		WriteLock:  host.WriteLock,
+	}
 }
 
 // noopWatcher satisfies [relamcp.Watcher] for the HTTP transport, which has

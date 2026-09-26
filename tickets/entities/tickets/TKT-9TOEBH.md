@@ -5,7 +5,7 @@ title: 'pgstore: one shared NOTIFY channel with schema in the payload, not one c
 kind: refactor
 priority: medium
 effort: m
-status: backlog
+status: wont-fix
 ---
 
 ## Description
@@ -139,3 +139,8 @@ trust boundary, not a formality (RES-D54281 already requires
 `^[a-z][a-z0-9_]{0,30}$` for tenant schema names).
 - `docs/postgres-backend.md:103-110` documents the per-schema channel and the
 "one extra connection" cost; update both.
+
+## Resolution
+
+Closed: Shipped in #1322 (one shared rela_changed NOTIFY channel). Status is
+wont-fix, not done, because this ticket has no review checklist.

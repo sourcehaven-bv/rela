@@ -203,10 +203,13 @@ func (s *Store) CreateRelation(
 	// a Tx the UPDATE autocommits, so the INSERT's rollback cannot take it back.
 	// Reading the counter inside the INSERT makes allocation a consequence of a
 	// successful insert rather than a precondition for attempting one.
+	editorUser, editorTool := store.AttributionColumns(ctx)
 	if _, err = s.write(ctx, `INSERT INTO relations
-		(from_id, from_face, rel_type, to_id, properties, content, updated_at, rel_record_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, (SELECT next FROM rel_record_seq WHERE id = 1))`,
-		from, string(face), relType, to, props, content, now.Format(timeFmt)); err != nil {
+		(from_id, from_face, rel_type, to_id, properties, content, updated_at,
+		 last_edited_by_user, last_edited_by_tool, rel_record_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT next FROM rel_record_seq WHERE id = 1))`,
+		from, string(face), relType, to, props, content, now.Format(timeFmt),
+		editorUser, editorTool); err != nil {
 		if isUniqueViolation(err) {
 			return nil, fmt.Errorf("sqlitestore: create relation: %w", store.ErrConflict)
 		}
@@ -267,9 +270,12 @@ func (s *Store) UpdateRelationState(
 	if err != nil {
 		return nil, err
 	}
-	res, err := s.write(ctx, `UPDATE relations SET properties = ?, content = ?, updated_at = ?
+	editorUser, editorTool := store.AttributionColumns(ctx)
+	res, err := s.write(ctx, `UPDATE relations SET properties = ?, content = ?, updated_at = ?,
+		    last_edited_by_user = ?, last_edited_by_tool = ?
 		WHERE from_id = ? AND rel_type = ? AND to_id = ? AND from_face = ?`,
-		props, data.Content, time.Now().UTC().Format(timeFmt), from, relType, to, string(p))
+		props, data.Content, time.Now().UTC().Format(timeFmt), editorUser, editorTool,
+		from, relType, to, string(p))
 	if err != nil {
 		return nil, fmt.Errorf("sqlitestore: update relation: %w", err)
 	}

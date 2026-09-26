@@ -6,12 +6,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	mcpgo "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
+	"github.com/Sourcehaven-BV/rela/internal/dataentry"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
@@ -86,7 +88,11 @@ func remoteMCPClient(t *testing.T) *mcpgo.ClientSession {
 	svc := appbuildtest.New(meta, appbuildtest.WithStore(st), appbuildtest.WithDeclarative(d))
 	t.Cleanup(func() { _ = svc.Close() })
 
-	srv, err := newRemoteMCPServer(svc)
+	host := dataentry.MCPHost{
+		AttachmentPolicy: func() (*metamodel.Metamodel, int64) { return meta, 0 },
+		WriteLock:        &sync.Mutex{},
+	}
+	srv, err := newRemoteMCPServer(svc, host)
 	if err != nil {
 		t.Fatalf("newRemoteMCPServer: %v", err)
 	}

@@ -64,6 +64,37 @@
     }
   },
   {
+    "name": "attach_file",
+    "description": "Attach a file to an entity's file-type property. On a single-file property this replaces the current file; on a multi-file property it adds one, renaming it on a name clash. The upload policy (allowed types, scanning, size) applies. Maximum 16777216 bytes.",
+    "inputSchema": {
+      "properties": {
+        "content": {
+          "description": "File content, base64-encoded (standard alphabet, padded)",
+          "type": "string"
+        },
+        "file_name": {
+          "description": "File name, including extension",
+          "type": "string"
+        },
+        "id": {
+          "description": "Entity ID",
+          "type": "string"
+        },
+        "property": {
+          "description": "File-type property to attach to",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "property",
+        "file_name",
+        "content"
+      ],
+      "type": "object"
+    }
+  },
+  {
     "name": "create_entity",
     "description": "Create a new entity of the specified type. The result text begins with `WARNINGS (n):` when soft validation issues occurred (required field missing, value out of enum, type mismatch, etc.). The write still succeeded; warnings are advisory. Hard errors (unknown entity type, bad ID prefix) still come back via the standard error channel.",
     "inputSchema": {
@@ -124,6 +155,31 @@
         "from",
         "type",
         "to"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "delete_attachment",
+    "description": "Remove a file from an entity's file-type property. Deleting a named file that is not there succeeds.",
+    "inputSchema": {
+      "properties": {
+        "file_name": {
+          "description": "File to remove. May be omitted when the property holds exactly one file",
+          "type": "string"
+        },
+        "id": {
+          "description": "Entity ID",
+          "type": "string"
+        },
+        "property": {
+          "description": "File-type property holding the file",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "property"
       ],
       "type": "object"
     }
@@ -235,6 +291,22 @@
     "inputSchema": {
       "properties": {},
       "required": [],
+      "type": "object"
+    }
+  },
+  {
+    "name": "list_attachments",
+    "description": "List the files attached to an entity's file-type properties",
+    "inputSchema": {
+      "properties": {
+        "id": {
+          "description": "Entity ID",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
       "type": "object"
     }
   },
@@ -353,6 +425,32 @@
       },
       "required": [
         "path"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "read_attachment",
+    "description": "Read one attached file. Raster images are returned as image content, UTF-8 text as text, and anything else as a base64 blob. Files over 10485760 bytes are refused.",
+    "inputSchema": {
+      "properties": {
+        "file_name": {
+          "description": "File name, as returned by list_attachments",
+          "type": "string"
+        },
+        "id": {
+          "description": "Entity ID",
+          "type": "string"
+        },
+        "property": {
+          "description": "File-type property holding the file",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "property",
+        "file_name"
       ],
       "type": "object"
     }
