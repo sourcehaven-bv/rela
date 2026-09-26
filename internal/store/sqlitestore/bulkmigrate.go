@@ -36,10 +36,16 @@ func (s *Store) SwapRelationEndpoints(ctx context.Context, relType string) (int,
 	// statement spells out: the version sweep selects candidates by it, and a
 	// reversal is captured by no synchronous hook, so a row that still looks
 	// settled could have its new triple never recorded.
+	//
+	// The editor columns move too: the sweep credits the new triple to them,
+	// and leaving the previous editor there would name them as the author of
+	// the reversal.
+	editorUser, editorTool := store.AttributionColumns(ctx)
 	res, err := s.write(ctx,
-		`UPDATE relations SET from_id = to_id, to_id = from_id, updated_at = ?
+		`UPDATE relations SET from_id = to_id, to_id = from_id, updated_at = ?,
+		        last_edited_by_user = ?, last_edited_by_tool = ?
 		  WHERE rel_type = ? AND from_id <> to_id`,
-		time.Now().UTC().Format(timeFmt), relType)
+		time.Now().UTC().Format(timeFmt), editorUser, editorTool, relType)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return 0, fmt.Errorf(

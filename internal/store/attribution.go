@@ -51,3 +51,41 @@ func AttributionFrom(ctx context.Context) Attribution {
 	a, _ := ctx.Value(attributionKey{}).(Attribution)
 	return a
 }
+
+// SweepPrincipalTool is the system principal a version sweep credits a
+// create/update version to when the row records no editor.
+const SweepPrincipalTool = "version-sweep"
+
+// AttributionColumns returns the last_edited_by_user / last_edited_by_tool
+// values a backend stores for the Attribution on ctx. An absent or empty
+// component is nil, i.e. NULL: that is the "no recorded editor" encoding
+// [SweptPrincipal] keys on (RR-U964M0). Every write that changes a row's
+// content stores these, so an unattributed write clears the previous editor
+// rather than leaving them credited with bytes they did not write.
+func AttributionColumns(ctx context.Context) (user, tool *string) {
+	a := AttributionFrom(ctx)
+	if a.User != "" {
+		user = &a.User
+	}
+	if a.Tool != "" {
+		tool = &a.Tool
+	}
+	return user, tool
+}
+
+// SweptPrincipal returns the principal a version sweep stamps on a captured
+// create/update version, given the row's last_edited_by_* columns: the
+// recorded editor when either is set, else [SweepPrincipalTool]. The sweep
+// never guesses an author.
+func SweptPrincipal(editorUser, editorTool *string) (user, tool string) {
+	if editorUser == nil && editorTool == nil {
+		return "", SweepPrincipalTool
+	}
+	if editorUser != nil {
+		user = *editorUser
+	}
+	if editorTool != nil {
+		tool = *editorTool
+	}
+	return user, tool
+}

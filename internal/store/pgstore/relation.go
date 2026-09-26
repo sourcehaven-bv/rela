@@ -149,7 +149,7 @@ func (s *Store) CreateRelation(
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // rollback after commit is a no-op
 
-	editorUser, editorTool := attributionValues(ctx)
+	editorUser, editorTool := store.AttributionColumns(ctx)
 	const q = `
 		INSERT INTO relations (from_id, from_face, rel_type, to_id, properties, content, updated_at,
 		                       last_edited_by_user, last_edited_by_tool)
@@ -204,7 +204,7 @@ func (s *Store) UpdateRelationState(
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // rollback after commit is a no-op
 
-	editorUser, editorTool := attributionValues(ctx)
+	editorUser, editorTool := store.AttributionColumns(ctx)
 	const q = `
 		UPDATE relations
 		SET properties = $4, content = $5, updated_at = now(), seq = nextval('rela_seq'),
