@@ -8,6 +8,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/comments"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
@@ -164,13 +165,12 @@ type anchorContext struct {
 // section anchor: a section ref names an operator-authored view heading that
 // lives in data-entry.yaml, not on the entity, and its absence from this set
 // means "not a property", not "gone".
-func (h *commentsHandler) liveAnchors(ctx context.Context, target comments.Target) anchorContext {
+//
+// ent is the row the request gate resolved, so anchors are judged against the
+// face the thread belongs to.
+func (h *commentsHandler) liveAnchors(target comments.Target, ent *entity.Entity) anchorContext {
 	def, ok := h.meta().GetEntityDef(target.Type)
 	if !ok {
-		return anchorContext{}
-	}
-	ent, found, err := h.visibleReader.getVisible(ctx, target.Type, target.ID)
-	if err != nil || !found {
 		return anchorContext{}
 	}
 
@@ -206,22 +206,16 @@ func (h *commentsHandler) liveAnchors(ctx context.Context, target comments.Targe
 // quote resolves to the first occurrence, which is how a comment on "Geordend"
 // ended up highlighting "Ongeordend".
 //
-// The body read goes through the visibility wrapper, so a principal can only
-// anchor to text it may already read.
-func (h *commentsHandler) buildTextAnchor(
-	ctx context.Context, target comments.Target, quote, prefix, suffix string,
-) (*comments.TextAnchor, error) {
+// ent is the row the request gate resolved through the visibility wrapper, so
+// a principal can only anchor to text it may already read, and only within the
+// face the thread belongs to.
+func buildTextAnchor(ent *entity.Entity, quote, prefix, suffix string) (*comments.TextAnchor, error) {
 	quote = strings.TrimSpace(quote)
 	if len([]rune(quote)) < comments.MinQuoteRunes {
 		return nil, fmt.Errorf("selected text must be at least %d characters", comments.MinQuoteRunes)
 	}
 	if len(quote) > comments.MaxQuoteBytes {
 		return nil, fmt.Errorf("selected text exceeds %d bytes", comments.MaxQuoteBytes)
-	}
-
-	ent, found, err := h.visibleReader.getVisible(ctx, target.Type, target.ID)
-	if err != nil || !found {
-		return nil, errors.New("could not read the entity body")
 	}
 
 	// The quote came from RENDERED markdown, so it is display text: no list
