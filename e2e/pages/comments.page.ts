@@ -112,6 +112,28 @@ export class CommentsPage extends BasePage {
     await expect(this.page.locator(".tsc-form")).toHaveCount(0);
   }
 
+  /** Suggest replacing the current selection with `replacement`. */
+  async suggestOnSelection(replacement: string) {
+    await this.selectionButton().click();
+    await this.page.locator(".tsc-suggest").click();
+    await this.page.locator("#tsc-replacement").fill(replacement);
+    await this.page.locator(".tsc-submit").click();
+    await expect(this.page.locator(".tsc-form")).toHaveCount(0);
+  }
+
+  /** The removed/added diff of a suggestion in the open thread. */
+  threadDiff(): Locator {
+    return this.page.locator(".tcp [data-testid=suggestion-diff]");
+  }
+
+  /** Accept the suggestion in the open highlight thread. */
+  async acceptInThread() {
+    await this.page
+      .locator(".tcp")
+      .getByRole("button", { name: "Accept", exact: true })
+      .click();
+  }
+
   // ── Highlights ─────────────────────────────────────────────────────
 
   /** Highlights rendered over commented body text. */
