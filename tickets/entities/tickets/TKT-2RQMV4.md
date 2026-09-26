@@ -5,7 +5,7 @@ title: 'SPA cannot create an entity on a faced type: CreateEntity has no face fi
 kind: enhancement
 priority: high
 effort: s
-status: backlog
+status: wont-fix
 ---
 
 ## Problem
@@ -51,3 +51,8 @@ creating from a `@published` view should create the published face.
 This is the client half of BUG-HC6I2T. That bug fixed the server: the authorized
 face and the written face are now the same value. This ticket gives clients a
 way to name that value.
+
+## Resolution
+
+Closed: Done: CreateEntity carries world (frontend/src/types/entity.ts). Status
+is wont-fix, not done, because this ticket has no review checklist.

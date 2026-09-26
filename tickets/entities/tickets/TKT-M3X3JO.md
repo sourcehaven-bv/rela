@@ -8,7 +8,7 @@ effort: s
 tags:
     - tech-debt
     - security
-status: backlog
+status: wont-fix
 ---
 
 Sub-ticket of [[TKT-N0IKN9]], continuing the `lua.Runtime` arc after
@@ -82,3 +82,8 @@ Receiver + field renames only, no logic edits. Struct doc entry `46 → 36
 (TKT-…)` with the reason the cluster was separable. Ratchet
 `//plimsoll:max-methods` at runtime.go:102 to 36. `go test ./internal/lua/...`,
 `just plimsoll`, `just comment-lint`, `just coverage-check`.
+
+## Resolution
+
+Closed: Obsolete: lua.Runtime is already under the 40-method line (plimsoll
+max-methods=38).

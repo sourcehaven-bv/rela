@@ -5,7 +5,7 @@ title: 'ACL relation permissions: design record + umbrella (split into TKT-K2VN9
 kind: enhancement
 priority: high
 effort: m
-status: backlog
+status: wont-fix
 ---
 
 ## SPLIT INTO INCREMENTS (2026-08-19)
@@ -157,8 +157,8 @@ framing was the defect; do not reintroduce it.
 A security trace of the proposed design against the existing hardening found
 that the original framing — *"holding the named permission is SUFFICIENT to
 authorize the relation write"* — **breaks two security properties**. Both come
-from the same mistake: making the new check a **short-circuit allow** instead
-of an **additional allow source evaluated after the existing clamps**.
+from the same mistake: making the new check a **short-circuit allow** instead of
+an **additional allow source evaluated after the existing clamps**.
 
 ### Correct semantics (supersedes "sufficient")
 
@@ -178,13 +178,13 @@ unconditional.
 
 ### Break 1 — delegate-X / RR-7O6Q self-promotion (critical)
 
-`relations: {member-of: {create: some-perm}}` alongside
-`role_relations: {member-of: {requires_permission: delegate-membership}}` would
-let a principal holding `some-perm` but NOT `delegate-membership` write
-`alice --member-of--> admins` and self-promote to any role assigned to a group.
-That is a verbatim reinstatement of the attack RR-7O6Q exists to prevent
-(`policy.go:394-421`), which `docs/acl-security.md:9-38` calls mandatory to
-gate and `aclaudit` flags at severity High (`tier_a.go:81-101`).
+`relations: {member-of: {create: some-perm}}` alongside `role_relations:
+{member-of: {requires_permission: delegate-membership}}` would let a principal
+holding `some-perm` but NOT `delegate-membership` write `alice --member-of-->
+admins` and self-promote to any role assigned to a group. That is a verbatim
+reinstatement of the attack RR-7O6Q exists to prevent (`policy.go:394-421`),
+which `docs/acl-security.md:9-38` calls mandatory to gate and `aclaudit` flags
+at severity High (`tier_a.go:81-101`).
 
 **Rule:** gate A (`authz_write.go:48-58`) stays structurally FIRST and
 unconditional. The `relations:` check must never be placed at or above it, nor
@@ -215,18 +215,18 @@ CLAUDE.md rule "A ceiling only ever NARROWS".
 
 **Rules:**
 1. `r.ceiling.permitsVerb(op, s.FromType)` must still be evaluated and must
-   still be able to DENY even when the `relations:` permission is held.
+still be able to DENY even when the `relations:` permission is held.
 2. The permission check MUST route through `r.holdsPermission` /
-   `r.grantsPermission` — never `slices.Contains(policy.Roles[...].Permissions)`
-   or any fresh traversal. `grantsPermission` (`resolver.go:272-289`) applies
-   `permitsPermission` at `:275` and `roleFor` at `:280`, so routing through it
-   inherits BOTH ceiling axes for free. `filterPermissions`
-   (`ceilingcompile.go:302-320`) has the same wildcard-preservation behaviour,
-   so a fresh lookup escapes the permission axis too.
+`r.grantsPermission` — never `slices.Contains(policy.Roles[...].Permissions)` or
+any fresh traversal. `grantsPermission` (`resolver.go:272-289`) applies
+`permitsPermission` at `:275` and `roleFor` at `:280`, so routing through it
+inherits BOTH ceiling axes for free. `filterPermissions`
+(`ceilingcompile.go:302-320`) has the same wildcard-preservation behaviour, so a
+fresh lookup escapes the permission axis too.
 3. **Preferred structure:** leave `authorizeRelationWrite` returning through
-   `decideFromAttrs`, and pass the `relations:` grant in as an additional allow
-   source checked AFTER the ceiling test at `:87`. This reuses the existing
-   ceiling placement rather than re-deriving it.
+`decideFromAttrs`, and pass the `relations:` grant in as an additional allow
+source checked AFTER the ceiling test at `:87`. This reuses the existing ceiling
+placement rather than re-deriving it.
 
 ### Not a new hazard (keep it that way)
 
@@ -245,33 +245,33 @@ passing `roleFor`. It is an EXEMPTION list, so a new file fails closed
 
 **Blind spot:** the regex matches only `.Roles[`. A new `policy.Relations[...]`
 read that decides an allow is INVISIBLE to it, yet escapes the ceiling just as
-thoroughly. This ticket must add a positive test: *a `deny_write: ["*"]`
-ceiling still denies a relation write for a principal holding the `relations:`
+thoroughly. This ticket must add a positive test: *a `deny_write: ["*"]` ceiling
+still denies a relation write for a principal holding the `relations:`
 permission.* Prose in a godoc will not catch the regression.
 
 A new implementation file (e.g. `internal/acl/authz_relations.go`) must NOT be
-added to `exemptFiles` — every current exemption is "no principal in scope",
-and a relation-authz file has a principal in scope by definition. Expressing
-the check as `r.grantsPermission(attrs, perm)` satisfies the guard for free.
+added to `exemptFiles` — every current exemption is "no principal in scope", and
+a relation-authz file has a principal in scope by definition. Expressing the
+check as `r.grantsPermission(attrs, perm)` satisfies the guard for free.
 
 ### Validation (Policy.Validate — no metamodel needed)
 
 1. Blank relation-type key → hard error (parallel to the `role_relations` check
-   at `:665-669`; a blank key would grant the permission path on EVERY relation
-   type).
+at `:665-669`; a blank key would grant the permission path on EVERY relation
+type).
 2. Blank permission name under any verb → hard error. Fails closed, but
-   silently-inert config is the failure mode operators least notice — the
-   codebase consistently rejects it (`policy.go:544-549`, `ceiling.go:246-249`).
+silently-inert config is the failure mode operators least notice — the codebase
+consistently rejects it (`policy.go:544-549`, `ceiling.go:246-249`).
 3. Relation type in both `relations:` and gated `role_relations:` → hard error
-   (Break 1 above).
+(Break 1 above).
 4. Unknown verb keys under a relation entry (anything but create/update/delete)
-   → reject. `read:` there is meaningless — relation reads gate through the
-   row-level visibility path.
+→ reject. `read:` there is meaningless — relation reads gate through the
+row-level visibility path.
 5. Add the new key to `knownPolicyKeys` (`policy.go:429-443`) — otherwise
-   LoadPolicy warn-and-ignores it (`:465-471`). **`TestKnownPolicyKeysMatchStruct`
-   (`policy_parity_test.go`) enforces this**, so the test fails until it is done.
-   Add a `normalize*` pass trimming keys and permission names (RR-IK355A
-   precedent, `policy.go:544-563`).
+LoadPolicy warn-and-ignores it (`:465-471`). **`TestKnownPolicyKeysMatchStruct`
+(`policy_parity_test.go`) enforces this**, so the test fails until it is done.
+Add a `normalize*` pass trimming keys and permission names (RR-IK355A precedent,
+`policy.go:544-563`).
 
 **Version-skew footgun to document:** unknown top-level keys are
 warn-and-continue, not fatal (`policy.go:465-471`). On an older binary a
@@ -290,15 +290,15 @@ therefore be a BOOT ERROR rather than only an advisory audit finding. Decide
 which; boot-error is the stronger option and matches the existing treatment of
 an undeclared `user_entity_type`.
 
-Advisory (`aclaudit`, needs no new interface): a named permission no role
-grants (dead config — same shape as the existing `tier_a.go:160` check).
+Advisory (`aclaudit`, needs no new interface): a named permission no role grants
+(dead config — same shape as the existing `tier_a.go:160` check).
 
 ### Naming (decide before writing code)
 
 `relations:` is ALREADY an `acl.yaml` key — `RoleDef.Relations`
 (`policy.go:298`), nested under a role, keyed by ENTITY type, consumed by
-`internal/affordances`. A top-level `relations:` keyed by RELATION type would
-be the same word at a different nesting level with a different key space and
+`internal/affordances`. A top-level `relations:` keyed by RELATION type would be
+the same word at a different nesting level with a different key space and
 different semantics. It is also already user-facing documented as "a separate
 grant vocabulary (`relations:` on a role)" — `docs/acl-overview.md:456`.
 
@@ -356,16 +356,16 @@ destroying edge types you cannot delete directly.
 ~~This is cheaper and safer than it first appears:~~
 
 - ~~**Pure pre-flight.** `incoming`/`outgoing` are already collected at
-  `manager.go:862-869`, *before* the first mutation.~~ **WRONG — the store
-  re-derives its own set inside the lock. See DR-1.**
+`manager.go:862-869`, *before* the first mutation.~~ **WRONG — the store
+re-derives its own set inside the lock. See DR-1.**
 - ~~**Postgres is transactional regardless.**~~ **Non-sequitur — the tx does
-  not span the authorization; READ COMMITTED sees rows committed after it began.**
+not span the authorization; READ COMMITTED sees rows committed after it began.**
 - **fsstore/memstore have a write mutex, not a transaction**
-  (`fsstore/tx.go:60-64`). Still true; `Store.Tx` is the sanctioned seam that
-  makes the check and the delete mutually exclusive (DEC-8UIL0).
+(`fsstore/tx.go:60-64`). Still true; `Store.Tx` is the sanctioned seam that
+makes the check and the delete mutually exclusive (DEC-8UIL0).
 - **Document the consequence:** an entity delete can now fail on a *relation*
-  grant. Intended least-privilege semantics, but a behaviour change operators
-  must be told about.
+grant. Intended least-privilege semantics, but a behaviour change operators must
+be told about.
 
 ### Automation decision (B3) — gate as the triggering principal
 
@@ -386,11 +386,11 @@ explicit in the same struct: `AllowACLBypass` is documented "**Ignored for
 non-Lua actions**", so a Lua action must DECLARE bypass to skip the gate while
 the declarative `create_relation:` action skips it unconditionally. Backwards.
 
-**`create_entity` is not a counter-example.** `cascadeHost.CreateEntity`
-(`:46`) routes through `createCore`; `WriteEntity` (`:91`) re-runs metamodel
-validation, `checkUniqueProperties` and `Transitions.EnforceCreate`, with the
-comment "the create path must not be the weaker one" (BUG-KIMZRK). Only
-`WriteRelation` does neither.
+**`create_entity` is not a counter-example.** `cascadeHost.CreateEntity` (`:46`)
+routes through `createCore`; `WriteEntity` (`:91`) re-runs metamodel validation,
+`checkUniqueProperties` and `Transitions.EnforceCreate`, with the comment "the
+create path must not be the weaker one" (BUG-KIMZRK). Only `WriteRelation` does
+neither.
 
 **Failure semantics — the real work.** Unlike B1 (pre-flight over a
 pre-collected slice), B3 fires INSIDE the cascade runner, mid-run, where earlier
@@ -415,8 +415,8 @@ or unreadable (deliberate — BUG-K6FEVB requires authz BEFORE the peer-existenc
 lookup). Only `ApplyRelation` (`apply.go:243`) always populates it, because
 `requireEndpoint` hard-fails first.
 
-Today an empty `FromType` fails closed only because no role lists `""` — **except
-a role holding `"*"`, which matches an empty target** (`grantsVerb`,
+Today an empty `FromType` fails closed only because no role lists `""` —
+**except a role holding `"*"`, which matches an empty target** (`grantsVerb`,
 `policy.go:317-320`).
 
 > **CORRECTED 2026-08-19 — see DR-4.** The earlier claim that a `s.Type`-keyed
@@ -536,17 +536,17 @@ below and struck from the sections above where they appeared.
 ### DR-1 (F1) — B1's "pure pre-flight ⇒ no race" is WRONG. TOCTOU in cascade delete.
 
 The claim "authorization happens with nothing yet written, so no rollback is
-needed" is true about *mutation ordering* and false as a *safety* argument.
-The pre-flight authorizes a snapshot collected **outside any lock**
+needed" is true about *mutation ordering* and false as a *safety* argument. The
+pre-flight authorizes a snapshot collected **outside any lock**
 (`ListRelations`, `core.go:240-254`, called at `manager.go:861-869`). Both
 stores then **independently re-derive** the set inside their lock/tx and delete
 *that* set:
 
 - fsstore rebuilds from the live index under `s.mu.Lock()`
-  (`fsstore/entity.go:308-313`) — VERIFIED by direct read.
+(`fsstore/entity.go:308-313`) — VERIFIED by direct read.
 - pgstore re-reads inside the tx (`pgstore/entity.go:371-376`) and deletes with
-  an unqualified `DELETE FROM relations WHERE from_id=$1 OR to_id=$1` (`:382`).
-  The tx begins at `:357`, long AFTER the manager's collection.
+an unqualified `DELETE FROM relations WHERE from_id=$1 OR to_id=$1` (`:382`).
+The tx begins at `:357`, long AFTER the manager's collection.
 
 So the window `[collect :869, store lock :911]` admits new incident relations
 from any concurrent writer, each deleted with **zero authorization**. Postgres
@@ -554,8 +554,8 @@ transactionality does not help — `READ COMMITTED` sees rows committed after th
 tx began, and **the transaction does not span the authorization**. The earlier
 "pg is genuinely transactional anyway" rationale is a non-sequitur; DELETE IT.
 
-Attack: a low-privilege principal races `CreateRelation(victim, sensitive-rel, X)`
-against a cascade `DeleteEntity(victim)` by a principal lacking delete on
+Attack: a low-privilege principal races `CreateRelation(victim, sensitive-rel,
+X)` against a cascade `DeleteEntity(victim)` by a principal lacking delete on
 `sensitive-rel`. Pre-flight never sees the edge; the store deletes it.
 
 **Fix (preferred):** move collect + authorize + delete inside `store.Store.Tx` —
@@ -584,8 +584,8 @@ Complete list of non-test consumers (VERIFIED by grep): `cli/create.go:71`,
 have ZERO references.**
 
 So B3 as written produces, on SPA/MCP/**Lua**: HTTP 200 / success, edge silently
-absent, no error anywhere. That is a **bit-for-bit reproduction of the motivating
-outage** — on the same Lua transport — caused by the fix.
+absent, no error anywhere. That is a **bit-for-bit reproduction of the
+motivating outage** — on the same Lua transport — caused by the fix.
 
 **(c) The `allow_acl_bypass` escape hatch has no data path.** `AllowACLBypass`
 lives on `metamodel.AutomationAction` (`types.go:656`) and reaches Lua only via
@@ -608,17 +608,17 @@ There are **three** ways writing a relation confers roles:
 
 1. `role_relations` — covered. ✅
 2. **`MembershipRelation`** (default `member-of`, `policy.go:111`,
-   `EffectiveMembershipRelation` at `:243-248` — VERIFIED). The resolver walks
-   it for group roles (`resolver.go:90`) and it **need not appear in
-   `role_relations` at all** — its own godoc says so (`policy.go:395-404`).
-   So `relation_grants: {member-of: {create: some-perm}}` with NO
-   `role_relations` entry **passes the planned validation cleanly and hands over
-   the RR-7O6Q self-promotion primitive verbatim.** Gate A doesn't fire either
-   (it keys on `RoleRelations[s.Type]`, `authz_write.go:47`).
+`EffectiveMembershipRelation` at `:243-248` — VERIFIED). The resolver walks it
+for group roles (`resolver.go:90`) and it **need not appear in `role_relations`
+at all** — its own godoc says so (`policy.go:395-404`). So `relation_grants:
+{member-of: {create: some-perm}}` with NO `role_relations` entry **passes the
+planned validation cleanly and hands over the RR-7O6Q self-promotion primitive
+verbatim.** Gate A doesn't fire either (it keys on `RoleRelations[s.Type]`,
+`authz_write.go:47`).
 3. **`InheritRolesThrough`** (`policy.go:116`). `Request.ancestors`
-   (`resolver.go:205-237`) BFS-walks these; `computeForEntity` (`:180-186`)
-   confers local roles across the chain. **No delegate gate exists for these at
-   all.** A permission-holder can graft any subtree under any parent.
+(`resolver.go:205-237`) BFS-walks these; `computeForEntity` (`:180-186`) confers
+local roles across the chain. **No delegate gate exists for these at all.** A
+permission-holder can graft any subtree under any parent.
 
 `aclaudit` A2 does not backstop it: `checkUngatedRoleRelations`
 (`tier_a.go:79-101`) iterates `p.RoleRelations` only.
@@ -643,24 +643,23 @@ unreadable**. `CreateRelation`'s later `GetEntity` at `:1100` masks this by
 accident of ordering; `DeleteRelation` (`manager.go:1240-1250`) has **no
 source-existence check at all**.
 
-**Fix.** Gate the new allow source on a resolved source:
-`if s.FromType != "" && r.grantsPermission(attrs, perm)`. Negative test:
-principal holds only the relation permission, source absent ⇒ DENIED. Same for
-`DeleteRelation`. Document empty `FromType` as a fail-closed sentinel.
+**Fix.** Gate the new allow source on a resolved source: `if s.FromType != "" &&
+r.grantsPermission(attrs, perm)`. Negative test: principal holds only the
+relation permission, source absent ⇒ DENIED. Same for `DeleteRelation`. Document
+empty `FromType` as a fail-closed sentinel.
 
 ### DR-5 (F7) — incoming-side renumber mutates relations from unauthorized sources. Remove "Fine." from the B5 row.
 
-`runRenumberAfterUpdate` fires an **incoming** query
-`{To: to, Type: relType}` (`manager_order.go:222`) selecting relations of that
-type pointing at `to` **from arbitrary other source entities of arbitrary
-types**, then writes each via `Store.UpdateRelation` directly, deliberately
-bypassing authz (`:186-202`).
+`runRenumberAfterUpdate` fires an **incoming** query `{To: to, Type: relType}`
+(`manager_order.go:222`) selecting relations of that type pointing at `to`
+**from arbitrary other source entities of arbitrary types**, then writes each
+via `Store.UpdateRelation` directly, deliberately bypassing authz (`:186-202`).
 
-After this change a principal can hold `relation_grants: {R: {update: reorder-R}}`
-and **no entity-type update grant at all**, then one authorized PATCH on their
-own edge triggers writes to `A --R--> shared`, `B --R--> shared` … Bounded to the
-order property, but order is semantically meaningful and the audit rows attribute
-it to a principal who demonstrably lacks authority.
+After this change a principal can hold `relation_grants: {R: {update:
+reorder-R}}` and **no entity-type update grant at all**, then one authorized
+PATCH on their own edge triggers writes to `A --R--> shared`, `B --R--> shared`
+… Bounded to the order property, but order is semantically meaningful and the
+audit rows attribute it to a principal who demonstrably lacks authority.
 
 **Fix.** Authorize the incoming-side renumber plan entries before applying —
 `manager_order.go:180-182` is already two-phase, so it is a loop over `plan`.
@@ -676,22 +675,22 @@ with DR-3 where the type is role-conferring.
 
 ### DR-7 (A1) — `decideFromAttrs` must not become a two-mode function.
 
-Threading a relation-only param into a helper shared with
-`authorizeEntityWrite` (`authz_write.go:43`) is the "this function does two
-things" smell. **Extract `ceilingDenial(attrs, op, target) *Decision`** instead;
-`authorizeRelationWrite` then reads linearly with its allow-sources visible at
-the call site, and `decideFromAttrs` keeps its exact signature (entity path
-byte-identical). This also makes a real subtlety visible: **the ceiling keys on
-`FromType` while the grant keys on `s.Type`**, so `deny_write: ["*"]` denies but
-`deny_write: [person]` does not deny a `spawnt` edge from `terugkerend`. Correct,
-but it must be a commented decision, not an accident.
+Threading a relation-only param into a helper shared with `authorizeEntityWrite`
+(`authz_write.go:43`) is the "this function does two things" smell. **Extract
+`ceilingDenial(attrs, op, target) *Decision`** instead; `authorizeRelationWrite`
+then reads linearly with its allow-sources visible at the call site, and
+`decideFromAttrs` keeps its exact signature (entity path byte-identical). This
+also makes a real subtlety visible: **the ceiling keys on `FromType` while the
+grant keys on `s.Type`**, so `deny_write: ["*"]` denies but `deny_write:
+[person]` does not deny a `spawnt` edge from `terugkerend`. Correct, but it must
+be a commented decision, not an accident.
 
 ### DR-8 (B1-naming) — `RelationGrantDef` collides with the existing `acl.RelationGrant`.
 
 Three characters apart, **same package**, genuinely different semantics
 (default-permissive affordance hint vs universal write allow-source). Worse than
-the YAML collision, since Go has no nesting to disambiguate.
-**Use `RelationWriteGrant` for the Go type, `relation_grants:` for the YAML key**
+the YAML collision, since Go has no nesting to disambiguate. **Use
+`RelationWriteGrant` for the Go type, `relation_grants:` for the YAML key**
 (`ClientBaseline`/`client_baselines` already differ in shape). Cross-reference
 both godocs.
 
@@ -715,13 +714,14 @@ This ticket names two causes: no edge verb, and **"silent under every static
 check"**. The plan fixes the first and defers the second. `internal/aclmap` has
 **zero** `acl.RelationSubject` references; `Can` is entity-shaped throughout
 (`can.go:52-61`). So an operator writing `relation_grants:` has **no way to
-verify it** short of attempting the write in production — and the ticket adds one
-more invisible allow source.
+verify it** short of attempting the write in production — and the ticket adds
+one more invisible allow source.
 
 **Fix (pull into scope).** A thin `rela acl can --relation <type> --from <id>
 <verb>` that builds a `RelationSubject` and calls `AuthorizeWrite` directly,
 printing `RuleKind`/`RuleID`/`Reason`. It IS the runtime path, so it cannot
-drift, and needs no `AccessRoutes` extension. Route-level explanation can follow.
+drift, and needs no `AccessRoutes` extension. Route-level explanation can
+follow.
 
 ### DR-11 (C1) — the `RelationGrant` overlap needs the contract test, not just prose.
 
@@ -738,52 +738,52 @@ convergence follow-up (derive `RelationGrant` verdicts FROM the write gate) so
 ## MINOR / NIT (fold in during implementation)
 
 - **DR-12 (A2):** allow Decision needs `RuleKind: "relation-grant"`, `RuleID:
-  <permission>` — otherwise the audit cannot distinguish "allowed by source-type
-  grant" from "allowed by relation permission". That IS the observability fix.
+<permission>` — otherwise the audit cannot distinguish "allowed by source-type
+grant" from "allowed by relation permission". That IS the observability fix.
 - **DR-13 (N1):** when a `relation_grants` entry exists for `s.Type`, extend the
-  deny `Reason` to name the permission that would have satisfied it. Directly
-  addresses the "silent under every static check" root cause.
+deny `Reason` to name the permission that would have satisfied it. Directly
+addresses the "silent under every static check" root cause.
 - **DR-14 (N2):** a B3 denial must record a denied-write audit row;
-  `cascadeHost.recordCascade` (`cascadehost.go:248-265`) has no denial branch.
-  Add it to `cascadeHost` — do NOT give it a `*Manager` back-reference (that
-  re-creates the elevation-propagation hazard `gated()` prevents,
-  `manager.go:98-103`).
+`cascadeHost.recordCascade` (`cascadehost.go:248-265`) has no denial branch. Add
+it to `cascadeHost` — do NOT give it a `*Manager` back-reference (that
+re-creates the elevation-propagation hazard `gated()` prevents,
+`manager.go:98-103`).
 - **DR-15 (F2):** `CreateRelation`/`UpdateRelation` authorize on `fromType` from
-  `:1085` then re-fetch at `:1100`. Reuse the single fetch so authorized type
-  and validated type are provably identical.
+`:1085` then re-fetch at `:1100`. Reuse the single fetch so authorized type and
+validated type are provably identical.
 - **DR-16 (F8):** state that the coarse `update:` gates WHETHER a relation may be
-  updated; `RelationGrant.Fields` gates WHICH meta-fields, dataentry-path only.
+updated; `RelationGrant.Fields` gates WHICH meta-fields, dataentry-path only.
 - **DR-17 (F9):** keep shorthand mutual-exclusivity, but the error must name the
-  exact expansion so operators can copy-paste the fix — a failed policy load on a
-  running deployment is an outage.
+exact expansion so operators can copy-paste the fix — a failed policy load on a
+running deployment is an outage.
 - **DR-18 (D1):** reject `read:` with a DISTINCT explanatory error (not "unknown
-  verb"). `read:` is not meaningless — it is coherent and deliberately
-  unsupported. That error message is the highest-leverage documentation in the
-  ticket.
+verb"). `read:` is not meaningless — it is coherent and deliberately
+unsupported. That error message is the highest-leverage documentation in the
+ticket.
 - **DR-19 (F2-plimsoll):** VERIFIED — no `//plimsoll:` directives in
-  `internal/acl`. `Policy` 12→13 exported fields (limit 20), `Request` 24→25
-  methods (limit 40). Comfortable. Do NOT add a directive to a compliant type.
+`internal/acl`. `Policy` 12→13 exported fields (limit 20), `Request` 24→25
+methods (limit 40). Comfortable. Do NOT add a directive to a compliant type.
 - **DR-20 (E4):** assert AC8's no-partial-write property on **memstore**, not
-  only under `RELA_TEST_DATABASE_URL` — otherwise it is unasserted in default CI.
+only under `RELA_TEST_DATABASE_URL` — otherwise it is unasserted in default CI.
 - **DR-21 (F2-audit):** dedupe B1's pre-flight by `(relationType, op)` — a denied
-  5,000-edge cascade otherwise writes 5,000 audit rows.
+5,000-edge cascade otherwise writes 5,000 audit rows.
 - **DR-22 (H2):** `slog.Info` at load when `relation_grants:` is non-empty. The
-  version-skew footgun ("old binary warn-and-ignores") is otherwise
-  indistinguishable from "active but granting nothing".
+version-skew footgun ("old binary warn-and-ignores") is otherwise
+indistinguishable from "active but granting nothing".
 - **DR-23 (H4):** add `Description` to the new type for the `rela docs`
-  generator, per the `Policy.Description` / `RoleDef.Description` precedent.
+generator, per the `Policy.Description` / `RoleDef.Description` precedent.
 - **DR-24 (H5):** state the SPA impact — no change needed; the SPA may render an
-  add-relation control the write then 403s (attempt-and-recover, accepted in
-  Reframe #2).
+add-relation control the write then 403s (attempt-and-recover, accepted in
+Reframe #2).
 - **DR-25 (H7):** close open question 5 (answered in B2) and **pin the
-  `OpRename` unreachability with a test**, so a future `RelationSubject` +
-  `OpRename` caller can't silently inherit `Update` semantics.
+`OpRename` unreachability with a test**, so a future `RelationSubject` +
+`OpRename` caller can't silently inherit `Update` semantics.
 - **DR-26:** AC numbering runs 1-7, 9, 10, 8. Renumber.
 
 ## Revised scope
 
-**This ticket:** `relation_grants:` block + `authorizeRelationWrite` seam
-(DR-7 shape) + validation incl. the widened role-conferring check (DR-3) +
+**This ticket:** `relation_grants:` block + `authorizeRelationWrite` seam (DR-7
+shape) + validation incl. the widened role-conferring check (DR-3) +
 empty-FromType guard (DR-4) + ceiling regression test (DR-9) + **B1 done
 transactionally (DR-1)** + renumber fix (DR-5) + **CLI verification (DR-10)** +
 contract test (DR-11) + docs.
@@ -798,10 +798,10 @@ change and propagation to dataentry/MCP/Lua. ACs 9 and 10 move here.
 Rationale for the split: B3 needs nothing from this ticket (it has no ACL call
 today, so gating it is valuable against the CURRENT source-type gate), and this
 ticket is fully useful without B3 (the motivating incident was a *Lua*
-`create_relation`, already gated). Rollback is asymmetric — the block is additive
-and inert until configured; B3 breaks every automation-using deployment with no
-opt-out until Follow-up A lands. And a reviewer with ACL expertise and one with
-cascade expertise are different people.
+`create_relation`, already gated). Rollback is asymmetric — the block is
+additive and inert until configured; B3 breaks every automation-using deployment
+with no opt-out until Follow-up A lands. And a reviewer with ACL expertise and
+one with cascade expertise are different people.
 
 **Effort: this ticket stays `l`** (B1-under-Tx and the CLI surface offset B3
 leaving). Follow-up B is `m`-to-`l` on its own.
@@ -932,3 +932,9 @@ hook may make this entire direction moot).
 attempt-and-recover)
 - ACL v0: TKT-GN5LN
 - Reframes driven by user feedback, 2026-05-21 and 2026-08-19 sessions
+
+## Resolution
+
+Closed: Umbrella: increments TKT-K2VN9D, TKT-VR61XC and TKT-8HDPQW shipped in
+#1424. Status is wont-fix, not done, because this ticket has no review
+checklist.
