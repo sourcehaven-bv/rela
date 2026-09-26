@@ -66,10 +66,9 @@ func TestWorldCapablePath(t *testing.T) {
 		{"/api/v1/tickets/TKT-1", true, "single-entity GET is world-scoped"},
 		{"/api/v1/tickets/TKT-1/relations", false, "sub-resource reads through the ungated reader"},
 		{"/api/v1/tickets/TKT-1/_export", false, "export reads through the ungated reader"},
-		{"/api/v1/_search", false,
-			"NOT because search is world-blind — it is world-scoped now. The " +
-				"cross-type /_search surface itself has never been scoped or " +
-				"tested end to end, so the allowlist's default-deny still applies"},
+		{"/api/v1/_search", true,
+			"cross-type search takes the world on every executeQuery branch (BUG-SMPOZB)"},
+		{"/api/v1/_search/x", false, "the match is exact, not a prefix"},
 		{"/api/v1/_views/board", false,
 			"a two-segment _views path is the standalone-view surface, which is NOT scoped"},
 		{"/api/v1/_views/policy/POL-1", true,
@@ -430,6 +429,10 @@ func TestWorldCapableRoutesDoNotUseUngatedReader(t *testing.T) {
 		// but the reads still go through executeQuery / scopedSortedEntities,
 		// which are scanned in their own right.
 		"handleV1NextAction": true,
+		// `_search` (BUG-SMPOZB). It reads through executeQuery and loads
+		// bodies by (id, face) through loadRowContent; neither reaches the
+		// entity reader.
+		"handleV1Search": true,
 	}
 
 	entries, err := os.ReadDir(".")
@@ -1075,7 +1078,7 @@ func TestDefaultWorld_DoesNotBreakNonWorldCapableRoutes(t *testing.T) {
 	a := appWithDefaultWorld(t, "published")
 	for _, path := range []string{
 		"/api/v1/tickets/TKT-1/relations",
-		"/api/v1/_search?q=x",
+		"/api/v1/_position",
 	} {
 		got, code := boundWorld(context.Background(), t, a, http.MethodGet, path)
 		if code != http.StatusOK {

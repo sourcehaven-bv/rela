@@ -237,8 +237,8 @@ func resolveWorld(r *http.Request, lookup WorldLookup, configured string) (world
 //
 // Deliberately conservative, and the list has grown deliberately: the
 // collection list (`/{plural}`), the single-entity GET (`/{plural}/{id}`) and
-// exactly three underscore routes named one at a time below — `_views`,
-// `_history` and `_next_action`. Every other underscore endpoint (analyze,
+// exactly four underscore routes named one at a time below — `_views`,
+// `_history`, `_next_action` and `_search`. Every other underscore endpoint (analyze,
 // documents, feeds, sync, position) is refused, along with every sub-resource
 // of an entity (relations, attachments, export), because each reaches content
 // through a path that is still world-blind.
@@ -295,6 +295,15 @@ func worldCapablePath(path string) bool {
 	// they were being shown was computed for somewhere else, and an operator
 	// had no way to say "only nag about this while in editorial".
 	if trimmed == "_next_action" {
+		return true
+	}
+	// The FOURTH, named exactly: cross-type search (BUG-SMPOZB). Every branch
+	// of executeQuery takes the world from ctx — the free-text search, the
+	// type listing, and the denied-world guard ahead of both — and hits load
+	// the face the searcher matched. Refusing it left `app.default_world`
+	// unapplied here, so the command palette and entity picker could not find
+	// a faced entity that has no default face.
+	if trimmed == "_search" {
 		return true
 	}
 	if strings.HasPrefix(trimmed, "_") {
