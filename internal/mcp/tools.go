@@ -111,7 +111,7 @@ func toolUpdateEntity() *mcpgo.Tool {
 			"Set a property to null in `properties` to remove it from the entity. "+
 			"Empty string is treated as no value (silently ignored — use null to delete). "+
 			"Clearing a required property succeeds with a warning per DEC-HWZHA."+warningsConvention),
-		withString("id", required(), description("Entity ID to update")),
+		withString("id", required(), description("Entity ID, or ID@face (e.g. POL-001@adopted) to update one content state")),
 		withObject("properties", description(propsDesc)),
 		withString("content", description("New markdown body content")),
 	)
@@ -120,7 +120,7 @@ func toolUpdateEntity() *mcpgo.Tool {
 func toolDeleteEntity() *mcpgo.Tool {
 	return newTool("delete_entity",
 		withDescription("Delete an entity and optionally its relations"),
-		withString("id", required(), description("Entity ID to delete")),
+		withString("id", required(), description("Entity ID to delete; deletes every face")),
 		withBoolean("cascade", description("Also delete all relations (default false)")),
 	)
 }

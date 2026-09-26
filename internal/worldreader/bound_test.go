@@ -56,8 +56,8 @@ func mustFace(t *testing.T, name string) entity.Face {
 	return f
 }
 
-func fixedSource(b worldreader.Binding) worldreader.Source {
-	return func(context.Context) (worldreader.Binding, error) { return b, nil }
+func fixedSource(b store.WorldScope) worldreader.Source {
+	return func(context.Context) (store.WorldScope, error) { return b, nil }
 }
 
 func titles(t *testing.T, seq iter.Seq2[*entity.Entity, error]) []string {
@@ -73,12 +73,12 @@ func titles(t *testing.T, seq iter.Seq2[*entity.Entity, error]) []string {
 
 func TestBoundReader_GetEntity(t *testing.T) {
 	st, scope := boundFixture(t)
-	world := worldreader.Binding{Scope: scope}
+	world := scope
 	tests := []struct {
-		name    string
-		binding worldreader.Binding
-		ref     string
-		want    string // title; "" means not found
+		name  string
+		world store.WorldScope
+		ref   string
+		want  string // title; "" means not found
 	}{
 		{"bare id resolves to the world's first choice", world, "POL-3", "adopted three"},
 		{"bare id falls through the chain", world, "POL-2", "concept two"},
@@ -86,14 +86,13 @@ func TestBoundReader_GetEntity(t *testing.T) {
 		{"explicit face is served literally", world, "POL-3@concept", "concept three"},
 		{"explicit face that does not exist", world, "POL-1@concept", ""},
 		{"faceless type is unaffected", world, "TSK-1", "a task"},
-		{"default world has no row for a faced entity", worldreader.Binding{}, "POL-1", ""},
-		{"explicit face works in the default world", worldreader.Binding{}, "POL-1@adopted", "adopted one"},
-		{"denied world finds nothing", worldreader.Binding{Scope: scope, Denied: true}, "TSK-1", ""},
+		{"default world has no row for a faced entity", store.WorldScope{}, "POL-1", ""},
+		{"explicit face works in the default world", store.WorldScope{}, "POL-1@adopted", "adopted one"},
 		{"invalid address is a miss", world, "not an id", ""},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			r, err := worldreader.NewBoundReader(st, fixedSource(tc.binding))
+			r, err := worldreader.NewBoundReader(st, fixedSource(tc.world))
 			require.NoError(t, err)
 			e, err := r.GetEntity(context.Background(), tc.ref)
 			if tc.want == "" {
@@ -109,46 +108,42 @@ func TestBoundReader_GetEntity(t *testing.T) {
 
 func TestBoundReader_ListEntities(t *testing.T) {
 	st, scope := boundFixture(t)
-	world := worldreader.Binding{Scope: scope}
+	world := scope
 	concept := mustFace(t, "concept")
 	tests := []struct {
-		name    string
-		binding worldreader.Binding
-		q       store.EntityQuery
-		want    []string
+		name  string
+		world store.WorldScope
+		q     store.EntityQuery
+		want  []string
 	}{
 		{
-			name: "typed list serves one prime per entity", binding: world,
+			name: "typed list serves one prime per entity", world: world,
 			q:    store.EntityQuery{Type: "policy"},
 			want: []string{"POL-1=adopted one", "POL-2=concept two", "POL-3=adopted three"},
 		},
 		{
-			name: "faceless type is unaffected", binding: world,
+			name: "faceless type is unaffected", world: world,
 			q:    store.EntityQuery{Type: "task"},
 			want: []string{"TSK-1=a task"},
 		},
 		{
-			name: "a face set narrows the candidates before the world ranks", binding: world,
+			name: "a face set narrows the candidates before the world ranks", world: world,
 			q:    store.EntityQuery{Type: "policy", FaceIn: []entity.Face{concept}},
 			want: []string{"POL-2=concept two", "POL-3=concept three"},
 		},
 		{
-			name: "a query naming AllStates is passed through", binding: world,
+			name: "a query naming AllStates is passed through", world: world,
 			q:    store.EntityQuery{IDs: []string{"POL-3"}, AllStates: true},
 			want: []string{"POL-3=adopted three", "POL-3=concept three"},
 		},
 		{
-			name: "default world lists no faced rows", binding: worldreader.Binding{},
+			name: "default world lists no faced rows", world: store.WorldScope{},
 			q: store.EntityQuery{Type: "policy"},
-		},
-		{
-			name: "denied world lists nothing", binding: worldreader.Binding{Scope: scope, Denied: true},
-			q: store.EntityQuery{Type: "task"},
 		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			r, err := worldreader.NewBoundReader(st, fixedSource(tc.binding))
+			r, err := worldreader.NewBoundReader(st, fixedSource(tc.world))
 			require.NoError(t, err)
 			assert.Equal(t, tc.want, titles(t, r.ListEntities(context.Background(), tc.q)))
 		})
@@ -181,7 +176,7 @@ func (r faceHidingReader) ListEntities(ctx context.Context, q store.EntityQuery)
 func TestBoundReader_GetEntity_RanksOnlyReadableFaces(t *testing.T) {
 	st, scope := boundFixture(t)
 	inner := faceHidingReader{MemStore: st, hidden: mustFace(t, "adopted")}
-	r, err := worldreader.NewBoundReader(inner, fixedSource(worldreader.Binding{Scope: scope}))
+	r, err := worldreader.NewBoundReader(inner, fixedSource(scope))
 	require.NoError(t, err)
 
 	e, err := r.GetEntity(context.Background(), "POL-3")
@@ -195,8 +190,8 @@ func TestBoundReader_GetEntity_RanksOnlyReadableFaces(t *testing.T) {
 func TestBoundReader_SourceErrorIsReturned(t *testing.T) {
 	st, _ := boundFixture(t)
 	boom := errors.New("config unavailable")
-	r, err := worldreader.NewBoundReader(st, func(context.Context) (worldreader.Binding, error) {
-		return worldreader.Binding{}, boom
+	r, err := worldreader.NewBoundReader(st, func(context.Context) (store.WorldScope, error) {
+		return store.WorldScope{}, boom
 	})
 	require.NoError(t, err)
 
@@ -212,7 +207,7 @@ func TestBoundReader_SourceErrorIsReturned(t *testing.T) {
 
 func TestNewBoundReader_RejectsNil(t *testing.T) {
 	st, _ := boundFixture(t)
-	_, err := worldreader.NewBoundReader(nil, fixedSource(worldreader.Binding{}))
+	_, err := worldreader.NewBoundReader(nil, fixedSource(store.WorldScope{}))
 	require.Error(t, err)
 	_, err = worldreader.NewBoundReader(st, nil)
 	assert.Error(t, err)

@@ -2,13 +2,17 @@ package mcp
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 
 	mcpgo "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // typeResolver maps user-supplied type names onto metamodel entity types —
@@ -48,6 +52,41 @@ func (r typeResolver) resolveType(typeName string) string {
 // trimID trims whitespace from an entity ID
 func trimID(id string) string {
 	return strings.TrimSpace(id)
+}
+
+// entityReadFailed answers a failed entity read. A miss, which is also the
+// answer for a hidden entity, reads "<label> not found". Any other error, such
+// as a world that no longer resolves, is logged and answered generically so
+// an outage is not mistaken for a missing entity.
+func entityReadFailed(label, id string, err error) *mcpgo.CallToolResult {
+	if errors.Is(err, store.ErrNotFound) {
+		return errorResult(label + " not found: " + id)
+	}
+	slog.Warn("mcp: entity read failed", "entity", id, "err", err)
+	return errorResult("reading " + id + " failed")
+}
+
+// wholeEntityRef refuses an `ID@face` address for a tool that acts on the
+// whole entity (delete, rename, trace, find_path). The entity store resolves
+// such an address to one face, so without this the existence check would
+// pass and the tool would then use the fused string as an id.
+func wholeEntityRef(ref string) *mcpgo.CallToolResult {
+	id, face, err := entity.ParseStateRef(ref)
+	if err != nil || face.IsDefault() {
+		return nil
+	}
+	return errorResult(fmt.Sprintf("%s names one face; this tool acts on the whole entity, so pass %s", ref, id))
+}
+
+// faceAddressRequired refuses a bare id that the world resolved to a named
+// face. A write to a bare id addresses the default face, which a faced entity
+// may not have, so the caller must name the face they mean.
+func faceAddressRequired(ref string, e *entity.Entity) *mcpgo.CallToolResult {
+	if e.Face.IsDefault() || strings.Contains(ref, "@") {
+		return nil
+	}
+	return errorResult(fmt.Sprintf("%s has no default face; it resolves to %s here. Address that face explicitly",
+		ref, entity.FormatStateRef(e.ID, e.Face)))
 }
 
 func (r typeResolver) resolveEntityType(typeName string) (string, *metamodel.EntityDef, error) {

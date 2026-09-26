@@ -381,7 +381,7 @@ func TestBuildStoreRelations_NoEdges(t *testing.T) {
 	e := buildEntity(testutil.EntityFor(meta, "requirement").ID("REQ-001"))
 	seedEntity(t, st, e)
 
-	rels := buildStoreRelations(context.Background(), e.ID, st)
+	rels := buildStoreRelations(context.Background(), e.ID, "", st)
 	if rels != nil {
 		t.Error("expected nil relations for entity with no edges")
 	}
@@ -397,7 +397,7 @@ func TestBuildStoreRelations_OutgoingOnly(t *testing.T) {
 	seedEntity(t, st, req)
 	seedRelation(t, st, sol.ID, "addresses", req.ID)
 
-	rels := buildStoreRelations(context.Background(), sol.ID, st)
+	rels := buildStoreRelations(context.Background(), sol.ID, "", st)
 	if rels == nil {
 		t.Fatal("expected non-nil relations")
 	}
@@ -425,7 +425,7 @@ func TestBuildStoreRelations_IncomingOnly(t *testing.T) {
 	seedEntity(t, st, sol)
 	seedRelation(t, st, sol.ID, "addresses", req.ID)
 
-	rels := buildStoreRelations(context.Background(), req.ID, st)
+	rels := buildStoreRelations(context.Background(), req.ID, "", st)
 	if rels == nil {
 		t.Fatal("expected non-nil relations")
 	}
@@ -450,7 +450,7 @@ func TestBuildStoreRelations_BothDirections(t *testing.T) {
 	seedRelation(t, st, "SOL-001", "addresses", "REQ-001")
 	seedRelation(t, st, "REQ-001", "motivates", "DEC-001")
 
-	rels := buildStoreRelations(context.Background(), "REQ-001", st)
+	rels := buildStoreRelations(context.Background(), "REQ-001", "", st)
 	if rels == nil {
 		t.Fatal("expected non-nil relations")
 	}
@@ -855,5 +855,40 @@ func TestConvertStoreEntity_NamesTheFace(t *testing.T) {
 		if parsed.Face != want {
 			t.Errorf("%s face = %q, want %q", e.ID, parsed.Face, want)
 		}
+	}
+}
+
+// A content-scoped edge belongs to one face of its source. show_entity serves
+// one face, so it must list that face's outgoing edges only, not the union of
+// every face's (BUG-VFHUWO on the data-entry GET; BUG-6XTX0G review).
+func TestBuildStoreRelations_OutgoingEdgesOfTheServedFaceOnly(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st := memstore.New()
+	for _, e := range []*entity.Entity{
+		{ID: "SOL-001", Type: "solution", Face: "concept"},
+		{ID: "SOL-001", Type: "solution", Face: "adopted"},
+		{ID: "REQ-001", Type: "requirement"},
+		{ID: "REQ-002", Type: "requirement"},
+	} {
+		seedEntity(t, st, e)
+	}
+	for _, edge := range []struct {
+		to   string
+		face entity.Face
+	}{{"REQ-001", "concept"}, {"REQ-002", "adopted"}} {
+		if _, err := st.CreateRelation(ctx, "SOL-001", "addresses", edge.to,
+			&store.RelationData{FromFace: edge.face}); err != nil {
+			t.Fatalf("seed edge to %s: %v", edge.to, err)
+		}
+	}
+
+	rels := buildStoreRelations(ctx, "SOL-001", "adopted", st)
+	if rels == nil {
+		t.Fatal("expected the adopted face's edge")
+	}
+	got := rels.Outgoing["addresses"]
+	if len(got) != 1 || got[0].ID != "REQ-002" {
+		t.Errorf("outgoing addresses = %v, want only REQ-002 (the adopted face's edge)", got)
 	}
 }

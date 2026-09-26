@@ -12,7 +12,7 @@ import (
 )
 
 // WorldBound returns b with its entity reads and searches resolved through
-// the world source returns (BUG-6XTX0G).
+// the world that source returns (BUG-6XTX0G).
 //
 // A consumer of [Services.GatedReads] addresses entities by id and never
 // names a world, so without this it reads the default world, where a faced
@@ -93,16 +93,13 @@ func bindSearcher(inner search.Searcher, source worldreader.Source) search.Searc
 
 func (w worldSearcher) Search(ctx context.Context, q search.Query) iter.Seq2[search.Hit, error] {
 	return func(yield func(search.Hit, error) bool) {
-		binding, err := w.source(ctx)
+		scope, err := w.source(ctx)
 		if err != nil {
 			yield(search.Hit{}, err)
 			return
 		}
-		if binding.Denied {
-			return
-		}
 		if q.World.IsDefaultWorld() {
-			q.World = binding.Scope
+			q.World = scope
 		}
 		for h, err := range w.inner.Search(ctx, q) {
 			if !yield(h, err) || err != nil {

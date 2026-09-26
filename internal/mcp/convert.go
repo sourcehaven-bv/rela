@@ -74,7 +74,7 @@ func convertStoreEntity(ctx context.Context, e *entity.Entity, st GraphReader, i
 		Content:    e.Content,
 	}
 	if includeRelations {
-		ej.Relations = buildStoreRelations(ctx, e.ID, st)
+		ej.Relations = buildStoreRelations(ctx, e.ID, e.Face, st)
 	}
 	return marshalJSON(ej)
 }
@@ -97,7 +97,12 @@ func convertStoreEntitySummary(e *entity.Entity) map[string]any {
 	return result
 }
 
-// buildStoreRelations builds relation JSON for an entity using the store.
+// buildStoreRelations builds relation JSON for one face of an entity.
+//
+// Outgoing edges are the ones tailed at face: a content-scoped edge belongs to
+// one face of its source, so an unfiltered read would present another face's
+// links as this one's (BUG-VFHUWO, the same rule as the data-entry entity
+// GET). Incoming edges stay entity-level, because heads are faceless.
 //
 // Neighbor visibility (RR-CFFL52): a relation is only reported when the
 // entity at its far end is READABLE through st. Listing the edge while
@@ -108,13 +113,13 @@ func convertStoreEntitySummary(e *entity.Entity) map[string]any {
 // GetEntity on a hidden neighbor returns not-found and the edge drops;
 // under the stdio (NopACL) wiring every GetEntity succeeds and the output is
 // unchanged.
-func buildStoreRelations(ctx context.Context, entityID string, st GraphReader) *relationsJSON {
+func buildStoreRelations(ctx context.Context, entityID string, face entity.Face, st GraphReader) *relationsJSON {
 	rels := &relationsJSON{
 		Outgoing: make(map[string][]relationTargetJSON),
 		Incoming: make(map[string][]relationTargetJSON),
 	}
 
-	outQ := store.RelationQuery{EntityID: entityID, Direction: store.DirectionOutgoing}
+	outQ := store.RelationQuery{EntityID: entityID, Direction: store.DirectionOutgoing, FromFace: &face}
 	for r, err := range st.ListRelations(ctx, outQ) {
 		if err != nil {
 			break

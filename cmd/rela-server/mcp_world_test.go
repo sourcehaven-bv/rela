@@ -51,7 +51,11 @@ entities:
     properties:
       title:
         type: string
-relations: {}
+relations:
+  cites:
+    from: [policy]
+    to: [task]
+    scope: content
 worlds:
   current:
     select: [adopted, concept]
@@ -61,17 +65,20 @@ worlds:
 const worldPolicy = `roles:
   viewer:
     read: [policy, task, "world:current"]
+  drafter:
+    read: ["policy@concept", task, "world:current"]
 role_relations:
   member-of:
     requires_permission: delegate-membership
 assignments:
   alice: viewer
+  carol: drafter
 `
 
 // defaultWorldOnly is the world source of a deployment with no
 // `app.default_world`.
-func defaultWorldOnly(context.Context) (worldreader.Binding, error) {
-	return worldreader.Binding{}, nil
+func defaultWorldOnly(context.Context) (store.WorldScope, error) {
+	return store.WorldScope{}, nil
 }
 
 // newWorldServices builds services over worldMetamodel and worldPolicy and
@@ -122,20 +129,36 @@ func newWorldServices(t *testing.T) *appbuild.Services {
 			t.Fatalf("seed %s: %v", seed.id, err)
 		}
 	}
+	// POL-002 has both faces, and only its concept face cites TSK-001. The
+	// world serves the adopted face, so that edge is not the adopted policy's.
+	for _, face := range []string{"concept", "adopted"} {
+		f, err := entity.ParseFace(face)
+		if err != nil {
+			t.Fatal(err)
+		}
+		e := entity.New("POL-002", "policy")
+		e.SetString("title", "Archive policy")
+		e.Face = f
+		if err := svc.Store().CreateEntity(context.Background(), e); err != nil {
+			t.Fatalf("seed POL-002@%s: %v", face, err)
+		}
+	}
+	if _, err := svc.Store().CreateRelation(context.Background(), "POL-002", "cites", "TSK-001",
+		&store.RelationData{FromFace: "concept"}); err != nil {
+		t.Fatalf("seed concept-tailed edge: %v", err)
+	}
 	return svc
 }
 
 // worldSource binds the compiled world `current`, as mcpReadWorld does for a
 // deployment with `app.default_world: current`.
-func worldSource(t *testing.T, svc *appbuild.Services, denied bool) worldreader.Source {
+func worldSource(t *testing.T, svc *appbuild.Services) worldreader.Source {
 	t.Helper()
 	scope, ok := appbuild.CompiledWorlds(svc).Lookup("current")
 	if !ok {
 		t.Fatal("world current is not compiled")
 	}
-	return func(context.Context) (worldreader.Binding, error) {
-		return worldreader.Binding{Scope: scope, Denied: denied}, nil
-	}
+	return func(context.Context) (store.WorldScope, error) { return scope, nil }
 }
 
 func aliceCtx() context.Context {
@@ -175,7 +198,7 @@ func searchIDs(t *testing.T, s search.Searcher) []string {
 // hide a type the role may not read.
 func TestRemoteMCPDeps_FacedEntitiesResolveThroughTheWorld(t *testing.T) {
 	svc := newWorldServices(t)
-	deps, err := remoteMCPDeps(svc, dataentry.MCPHost{ReadWorld: worldSource(t, svc, false)})
+	deps, err := remoteMCPDeps(svc, dataentry.MCPHost{ReadWorld: worldSource(t, svc)})
 	if err != nil {
 		t.Fatalf("remoteMCPDeps: %v", err)
 	}
@@ -213,7 +236,7 @@ func TestRemoteMCPDeps_FacedEntitiesResolveThroughTheWorld(t *testing.T) {
 		got := listIDs(t, func(yield func(*entity.Entity, error) bool) {
 			deps.Store.ListEntities(ctx, store.EntityQuery{Type: "policy"})(yield)
 		})
-		if want := []string{"POL-001@adopted"}; !slices.Equal(got, want) {
+		if want := []string{"POL-001@adopted", "POL-002@adopted"}; !slices.Equal(got, want) {
 			t.Errorf("list policy = %v, want %v", got, want)
 		}
 	})
@@ -221,7 +244,7 @@ func TestRemoteMCPDeps_FacedEntitiesResolveThroughTheWorld(t *testing.T) {
 		got := listIDs(t, func(yield func(*entity.Entity, error) bool) {
 			deps.LuaWriteDeps.VisibleReader.ListEntities(ctx, store.EntityQuery{Type: "policy"})(yield)
 		})
-		if want := []string{"POL-001@adopted"}; !slices.Equal(got, want) {
+		if want := []string{"POL-001@adopted", "POL-002@adopted"}; !slices.Equal(got, want) {
 			t.Errorf("list policy = %v, want %v", got, want)
 		}
 	})
@@ -240,26 +263,30 @@ func TestRemoteMCPDeps_FacedEntitiesResolveThroughTheWorld(t *testing.T) {
 	}
 }
 
-// A world the caller holds no grant for binds as denied, and every read then
-// finds nothing, as on the data-entry API.
-func TestRemoteMCPDeps_DeniedWorldReadsNothing(t *testing.T) {
+// A reader granted only the concept face gets the concept face of an entity
+// whose world prime is adopted: the gate filters the faces before the world
+// ranks them, as on the data-entry entity GET. Ranking first would pick the
+// adopted face and then hide it, so the entity would vanish.
+func TestRemoteMCPDeps_FaceRestrictedReaderGetsTheFaceTheyMayRead(t *testing.T) {
 	svc := newWorldServices(t)
-	deps, err := remoteMCPDeps(svc, dataentry.MCPHost{ReadWorld: worldSource(t, svc, true)})
+	deps, err := remoteMCPDeps(svc, dataentry.MCPHost{ReadWorld: worldSource(t, svc)})
 	if err != nil {
 		t.Fatalf("remoteMCPDeps: %v", err)
 	}
-	ctx := aliceCtx()
-	if _, err := deps.Store.GetEntity(ctx, "TSK-001"); err == nil {
-		t.Error("GetEntity(TSK-001) succeeded under a denied world")
+	carol := principal.With(context.Background(), principal.Principal{User: "carol", Tool: principal.ToolMCP})
+
+	e, err := deps.Store.GetEntity(carol, "POL-002")
+	if err != nil {
+		t.Fatalf("GetEntity(POL-002) = %v, want the concept face", err)
 	}
-	got := listIDs(t, func(yield func(*entity.Entity, error) bool) {
-		deps.Store.ListEntities(ctx, store.EntityQuery{Type: "task"})(yield)
-	})
-	if len(got) != 0 {
-		t.Errorf("list task = %v under a denied world, want nothing", got)
+	if e.Face.String() != "concept" {
+		t.Errorf("face = %q, want concept", e.Face)
 	}
-	if got := searchIDs(t, deps.Searcher); len(got) != 0 {
-		t.Errorf("search = %v under a denied world, want nothing", got)
+	if _, err := deps.Store.GetEntity(carol, "POL-001"); err == nil {
+		t.Error("GetEntity(POL-001) succeeded; its only face is adopted, which carol may not read")
+	}
+	if _, err := deps.Store.GetEntity(carol, "POL-002@adopted"); err == nil {
+		t.Error("GetEntity(POL-002@adopted) succeeded; carol may not read the adopted face")
 	}
 }
 

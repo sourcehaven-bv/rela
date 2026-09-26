@@ -194,7 +194,7 @@
           "type": "boolean"
         },
         "id": {
-          "description": "Entity ID to delete",
+          "description": "Entity ID to delete; deletes every face",
           "type": "string"
         }
       },
@@ -570,7 +570,7 @@
           "type": "string"
         },
         "id": {
-          "description": "Entity ID to update",
+          "description": "Entity ID, or ID@face (e.g. POL-001@adopted) to update one content state",
           "type": "string"
         },
         "properties": {

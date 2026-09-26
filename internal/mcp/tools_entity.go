@@ -89,7 +89,7 @@ func (s *Server) handleShowEntity(
 	st := s.deps().Store
 	e, getErr := st.GetEntity(ctx, id)
 	if getErr != nil {
-		return errorResult("entity not found: " + id), nil
+		return entityReadFailed("entity", id, getErr), nil
 	}
 
 	text, err := convertStoreEntity(ctx, e, st, true)
@@ -251,7 +251,10 @@ func (s *Server) handleUpdateEntity(
 	st := s.deps().Store
 	e, getErr := st.GetEntity(ctx, id)
 	if getErr != nil {
-		return errorResult("entity not found: " + id), nil
+		return entityReadFailed("entity", id, getErr), nil
+	}
+	if refused := faceAddressRequired(id, e); refused != nil {
+		return refused, nil
 	}
 
 	properties := extractPropertiesAllowNil(request)
@@ -343,11 +346,14 @@ func (s *Server) handleDeleteEntity(
 		return errorResult(err.Error()), nil
 	}
 	id = trimID(id)
+	if refused := wholeEntityRef(id); refused != nil {
+		return refused, nil
+	}
 	cascade := args.GetBool("cascade", false)
 
 	st := s.deps().Store
 	if _, getErr := st.GetEntity(ctx, id); getErr != nil {
-		return errorResult("entity not found: " + id), nil
+		return entityReadFailed("entity", id, getErr), nil
 	}
 
 	// Every count reported here is of the relations the caller can see. The
@@ -379,6 +385,9 @@ func (s *Server) handleRenameEntity(
 		return errorResult(err.Error()), nil
 	}
 	oldID = trimID(oldID)
+	if refused := wholeEntityRef(oldID); refused != nil {
+		return refused, nil
+	}
 
 	newID, err := args.RequireString("new_id")
 	if err != nil {

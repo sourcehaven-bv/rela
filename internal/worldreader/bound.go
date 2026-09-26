@@ -4,29 +4,20 @@ import (
 	"context"
 	"errors"
 	"iter"
+	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
-// Binding is the world one read operation runs in.
-type Binding struct {
-	// Scope is the compiled world. The zero value is the default world.
-	Scope store.WorldScope
-
-	// Denied marks a world that exists but that the caller holds no read
-	// grant for. Every read then finds nothing, the same answer a genuine
-	// miss produces, so a denial does not disclose which entities exist.
-	Denied bool
-}
-
-// Source resolves the world for the operation on ctx. A [BoundReader] calls
-// it once per read, so a source may read hot-reloaded configuration and the
-// ctx principal's grants.
+// Source resolves the world for the operation on ctx. The zero
+// [store.WorldScope] is the default world. A [BoundReader] calls it once per
+// read, so a source may read hot-reloaded configuration and the ctx
+// principal's grants.
 //
-// An error is an infrastructure failure, never a denial: it is returned to
-// the caller rather than rendered as an empty result.
-type Source func(ctx context.Context) (Binding, error)
+// An error is an infrastructure failure: it is returned to the caller rather
+// than rendered as an empty result.
+type Source func(ctx context.Context) (store.WorldScope, error)
 
 // EntityReader is the read surface a [BoundReader] wraps and serves. In
 // production it is the ACL-gated reader, so every row the world ranks has
@@ -47,16 +38,17 @@ type EntityReader interface {
 //   - an explicit `ID@face` is served literally in every world, because the
 //     caller named the row and there is nothing left for a world to decide;
 //   - a list query that names no world and no AllStates gets the bound world
-//     stamped on it. A FaceIn set still composes: it narrows the candidates
-//     the world ranks. A query that names a world or AllStates is passed
-//     through.
+//     stamped on it. A query that names a world or AllStates is passed
+//     through. A FaceIn set narrows the candidates the world ranks, but the
+//     ACL pushdown in the production reader replaces it with the grant's own
+//     face set, so do not rely on it there.
 type BoundReader struct {
 	inner  EntityReader
 	source Source
 }
 
-// NewBoundReader wraps inner so its reads resolve through the world source
-// returns.
+// NewBoundReader wraps inner so its reads resolve through the world that
+// source returns.
 //
 // Nil: inner and source are rejected — a reader with no world would silently
 // read the default world, which is the defect this type exists to remove.
@@ -78,12 +70,9 @@ func NewBoundReader(inner EntityReader, source Source) (*BoundReader, error) {
 // `policy@concept` under `select: [adopted, concept]` gets the concept face
 // rather than a not-found.
 func (b *BoundReader) GetEntity(ctx context.Context, ref string) (*entity.Entity, error) {
-	binding, err := b.source(ctx)
+	scope, err := b.source(ctx)
 	if err != nil {
 		return nil, err
-	}
-	if binding.Denied {
-		return nil, store.ErrNotFound
 	}
 	id, face, err := entity.ParseStateRef(ref)
 	if err != nil {
@@ -96,10 +85,10 @@ func (b *BoundReader) GetEntity(ctx context.Context, ref string) (*entity.Entity
 		// only, and FaceIn would then narrow those to nothing.
 		return b.first(ctx, store.EntityQuery{IDs: []string{id}, FaceIn: []entity.Face{face}, AllStates: true})
 	}
-	if binding.Scope.IsDefaultWorld() {
+	if scope.IsDefaultWorld() {
 		return b.inner.GetEntity(ctx, id)
 	}
-	return b.prime(ctx, id, binding.Scope)
+	return b.prime(ctx, id, scope)
 }
 
 // ListEntities yields the entities q matches in the bound world.
@@ -110,16 +99,13 @@ func (b *BoundReader) GetEntity(ctx context.Context, ref string) (*entity.Entity
 // whose prime is a face they may not read. That only ever narrows the result.
 func (b *BoundReader) ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error] {
 	return func(yield func(*entity.Entity, error) bool) {
-		binding, err := b.source(ctx)
+		scope, err := b.source(ctx)
 		if err != nil {
 			yield(nil, err)
 			return
 		}
-		if binding.Denied {
-			return
-		}
 		if q.World.IsDefaultWorld() && !q.AllStates {
-			q.World = binding.Scope
+			q.World = scope
 		}
 		for e, err := range b.inner.ListEntities(ctx, q) {
 			if !yield(e, err) || err != nil {
@@ -164,7 +150,9 @@ func (b *BoundReader) first(ctx context.Context, q store.EntityQuery) (*entity.E
 		if err != nil {
 			return nil, err
 		}
-		if e != nil {
+		// The id check guards against a reader that drops IDs from the query,
+		// as the ACL pushdown does for a typed query.
+		if e != nil && slices.Contains(q.IDs, e.ID) {
 			return e, nil
 		}
 	}

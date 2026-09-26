@@ -11,6 +11,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/attachment"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/worldreader"
 )
 
@@ -107,20 +108,56 @@ func mcpHost(a *App) MCPHost {
 // mcpReadWorld returns the world source for the remote MCP endpoint.
 //
 // The configuration is read per call, never captured, because the watcher
-// hot-reloads data-entry.yaml. A world the caller holds no grant for binds as
-// denied, so every read finds nothing, as on the data-entry API.
+// hot-reloads data-entry.yaml.
+//
+// A caller without a read grant on the configured world reads the default
+// world. On the data-entry API such a caller gets an empty result and can
+// still ask for `?world=default`, which needs no grant. MCP tools take no
+// world, so an empty result would lock the caller out of every tool,
+// including writes the ACL permits. Falling back discloses nothing: the
+// default world is the one any caller may read, and the row and face gates
+// still apply to every entity in it.
 func mcpReadWorld(a *App) worldreader.Source {
-	return func(ctx context.Context) (worldreader.Binding, error) {
-		name := configuredDefaultWorld(a)
-		handle, err := resolveNamedWorld(ctx, a.worlds, name)
-		switch {
-		case errors.Is(err, errWorldDenied):
-			return worldreader.Binding{Denied: true}, nil
-		case err != nil:
-			return worldreader.Binding{}, fmt.Errorf("resolving app.default_world %q: %w", name, err)
+	return func(ctx context.Context) (store.WorldScope, error) {
+		if memo, ok := ctx.Value(mcpWorldKey{}).(*mcpWorldMemo); ok {
+			memo.once.Do(func() { memo.scope, memo.err = resolveMCPWorld(ctx, a) })
+			return memo.scope, memo.err
 		}
-		return worldreader.Binding{Scope: handle.scope}, nil
+		return resolveMCPWorld(ctx, a)
 	}
+}
+
+// mcpWorldKey carries an [mcpWorldMemo] on an MCP request's ctx.
+type mcpWorldKey struct{}
+
+// mcpWorldMemo holds the world resolved for one MCP request. Every read in a
+// tool call then runs in the same world, even if the configuration reloads
+// part-way through, and the grant check runs once rather than once per read.
+type mcpWorldMemo struct {
+	once  sync.Once
+	scope store.WorldScope
+	err   error
+}
+
+// withMCPWorldMemo gives each request its own [mcpWorldMemo]. The stateless
+// transport serves one JSON-RPC exchange per request.
+func withMCPWorldMemo(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), mcpWorldKey{}, &mcpWorldMemo{})
+		h.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+func resolveMCPWorld(ctx context.Context, a *App) (store.WorldScope, error) {
+	name := configuredDefaultWorld(a)
+	handle, err := resolveNamedWorld(ctx, a.worlds, name)
+	switch {
+	case errors.Is(err, errWorldDenied):
+		return store.WorldScope{}, nil
+	case err != nil:
+		return store.WorldScope{}, fmt.Errorf("resolving app.default_world %q: %w", name, err)
+	}
+	return handle.scope, nil
 }
 
 // SetRemoteMCP enables the remote MCP endpoint, which is OFF by default.
@@ -165,7 +202,7 @@ func (a *App) SetRemoteMCP(factory MCPHandlerFactory) error {
 	if h == nil {
 		return errors.New("dataentry: the MCP handler factory returned a nil handler")
 	}
-	a.mcpHandler = h
+	a.mcpHandler = withMCPWorldMemo(h)
 	return nil
 }
 
