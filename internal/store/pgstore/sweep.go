@@ -366,7 +366,7 @@ func (s *sweep) captureOne(
 	if err != nil {
 		return err
 	}
-	principalUser, principalTool := sweepAttribution(c.editorUser, c.editorTool)
+	principalUser, principalTool := store.SweptPrincipal(c.editorUser, c.editorTool)
 	in := store.VersionInput{
 		EntityID:      c.id,
 		Face:          entity.Face(c.face),
@@ -402,24 +402,6 @@ func (s *sweep) captureOne(
 		in.Op = store.VersionOpCreate
 	}
 	return insertVersion(ctx, conn, in, contentHash)
-}
-
-// sweepAttribution returns the principal to stamp on a swept create/update
-// version: the row's recorded last_edited_by_* editor when present, else the
-// version-sweep system principal. NULL columns (legacy rows, writes that
-// carried no store.Attribution) keep the pre-TKT-ZIRMGM fallback — the sweep
-// never guesses an author.
-func sweepAttribution(editorUser, editorTool *string) (user, tool string) {
-	if editorUser == nil && editorTool == nil {
-		return "", "version-sweep"
-	}
-	if editorUser != nil {
-		user = *editorUser
-	}
-	if editorTool != nil {
-		tool = *editorTool
-	}
-	return user, tool
 }
 
 // relationSweepCandidate is one relation the sweep may snapshot: its current
@@ -515,7 +497,7 @@ func (s *sweep) captureRelation(
 	if err != nil {
 		return err
 	}
-	principalUser, principalTool := sweepAttribution(c.editorUser, c.editorTool)
+	principalUser, principalTool := store.SweptPrincipal(c.editorUser, c.editorTool)
 	in := store.RelationVersionInput{
 		RecordID:      c.recordID,
 		FromFace:      entity.Face(c.fromFace),

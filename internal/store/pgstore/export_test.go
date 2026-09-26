@@ -1,10 +1,13 @@
 package pgstore
 
 import (
+	"context"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -89,4 +92,24 @@ func BuildGraphQuerySQLForTest(q store.GraphQuery, countOnly bool) (sqlText stri
 // EXPLAIN tests can check the shape the traversal path actually runs.
 func BuildMatchingIDsSQLForTest(q store.GraphQuery, ids []string) (sqlText string, args []any) {
 	return buildMatchingIDsSQL(q, ids)
+}
+
+// SweepNow runs exactly one reconciliation tick synchronously, so a test can
+// capture versions without waiting out a ticker interval. Test-only; the
+// sqlitestore counterpart has the same signature.
+func (s *Store) SweepNow(ctx context.Context, p store.ProjectionProvider, cfg store.SweepConfig) error {
+	pool, ok := s.db.(*pgxpool.Pool)
+	if !ok {
+		return errors.New("pgstore: SweepNow needs a store built over a *pgxpool.Pool")
+	}
+	sw := &sweep{pool: pool, provider: p, cfg: sweepDefaults(cfg)}
+	if err := sw.tick(ctx); err != nil {
+		return err
+	}
+	// tick skips silently when another session holds the sweep lock, which a
+	// test would otherwise see only as "no version was captured".
+	if sw.consecutiveSkips > 0 {
+		return errors.New("pgstore: SweepNow skipped; another session holds the sweep lock")
+	}
+	return nil
 }

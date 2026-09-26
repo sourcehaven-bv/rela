@@ -130,9 +130,11 @@ func (s *Store) createEntityLocked(ctx context.Context, e *entity.Entity) error 
 		updated = time.Now().UTC()
 	}
 
-	_, err = s.write(ctx, `INSERT INTO entities (id, face, type, properties, content, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?)`,
-		e.ID, string(e.Face), e.Type, props, e.Content, updated.Format(timeFmt))
+	editorUser, editorTool := store.AttributionColumns(ctx)
+	_, err = s.write(ctx, `INSERT INTO entities (id, face, type, properties, content, updated_at,
+		                      last_edited_by_user, last_edited_by_tool)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		e.ID, string(e.Face), e.Type, props, e.Content, updated.Format(timeFmt), editorUser, editorTool)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return fmt.Errorf("sqlitestore: create %s: %w",
@@ -178,9 +180,11 @@ func (s *Store) UpdateEntity(ctx context.Context, e *entity.Entity) error {
 		updated = time.Now().UTC()
 	}
 
-	res, err := s.write(ctx, `UPDATE entities SET type = ?, properties = ?, content = ?, updated_at = ?
+	editorUser, editorTool := store.AttributionColumns(ctx)
+	res, err := s.write(ctx, `UPDATE entities SET type = ?, properties = ?, content = ?, updated_at = ?,
+		    last_edited_by_user = ?, last_edited_by_tool = ?
 		WHERE id = ? AND face = ?`,
-		e.Type, props, e.Content, updated.Format(timeFmt), e.ID, string(e.Face))
+		e.Type, props, e.Content, updated.Format(timeFmt), editorUser, editorTool, e.ID, string(e.Face))
 	if err != nil {
 		return fmt.Errorf("sqlitestore: update %s: %w", e.ID, err)
 	}

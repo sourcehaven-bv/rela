@@ -188,6 +188,10 @@ type sweepCandidate struct {
 	props      string
 	latestHash string
 	hasVersion bool
+	// editorUser/editorTool are the row's last_edited_by_* columns; nil means
+	// the last write carried no attribution.
+	editorUser *string
+	editorTool *string
 }
 
 // selectCandidates returns up to Batch entities that have SETTLED (updated_at
@@ -250,6 +254,7 @@ type sweepCandidate struct {
 func (s *sweep) selectCandidates(ctx context.Context) ([]sweepCandidate, error) {
 	const q = `
 		SELECT e.id, e.face, e.type, e.content, e.properties,
+		       e.last_edited_by_user, e.last_edited_by_tool,
 		       (SELECT ev.content_hash FROM entity_versions ev
 		         WHERE ev.entity_id = e.id AND ev.face = e.face
 		           AND ev.vseq > COALESCE((SELECT max(d.vseq) FROM entity_versions d
@@ -288,6 +293,7 @@ func (s *sweep) selectCandidates(ctx context.Context) ([]sweepCandidate, error) 
 			lvCreated  *string
 		)
 		if err := rows.Scan(&c.id, &c.face, &c.typ, &c.content, &c.props,
+			&c.editorUser, &c.editorTool,
 			&latestHash, &lvVseq, &lvOp, &lvCreated); err != nil {
 			return nil, err
 		}
@@ -324,21 +330,17 @@ func (s *sweep) captureOne(
 	if err != nil {
 		return err
 	}
+	user, tool := store.SweptPrincipal(c.editorUser, c.editorTool)
 	in := store.VersionInput{
-		EntityID:   c.id,
-		Face:       entity.Face(c.face),
-		Type:       c.typ,
-		Content:    c.content,
-		Properties: props,
-		SchemaHash: schemaHash,
-		Projection: projJSON,
-		// sqlitestore's live rows carry no last_edited_by_* columns, so a swept
-		// capture has no author to copy and takes the system principal. This is
-		// the documented fallback, NOT a guess: attributing the sweep's own
-		// write to a real user it never observed would be worse than saying
-		// "version-sweep" plainly. The editing principal remains recoverable
-		// from the audit log.
-		PrincipalTool: sweepPrincipalTool,
+		EntityID:      c.id,
+		Face:          entity.Face(c.face),
+		Type:          c.typ,
+		Content:       c.content,
+		Properties:    props,
+		SchemaHash:    schemaHash,
+		Projection:    projJSON,
+		PrincipalUser: user,
+		PrincipalTool: tool,
 	}
 	contentHash := contentHashOf(in)
 
@@ -356,10 +358,6 @@ func (s *sweep) captureOne(
 	return insertVersion(ctx, s.store.db, in, contentHash)
 }
 
-// sweepPrincipalTool is the system principal stamped on sweep-captured
-// create/update versions.
-const sweepPrincipalTool = "version-sweep"
-
 // --- Relations ------------------------------------------------------------
 
 // relationSweepCandidate is one relation row the sweep may snapshot.
@@ -374,6 +372,9 @@ type relationSweepCandidate struct {
 	props      string
 	latestHash string
 	hasVersion bool
+	// editorUser/editorTool mirror sweepCandidate's.
+	editorUser *string
+	editorTool *string
 }
 
 // selectRelationCandidates is [sweep.selectCandidates] for relations.
@@ -385,7 +386,7 @@ type relationSweepCandidate struct {
 func (s *sweep) selectRelationCandidates(ctx context.Context) ([]relationSweepCandidate, error) {
 	const q = `
 		SELECT r.rel_record_id, r.from_id, r.from_face, r.rel_type, r.to_id,
-		       r.content, r.properties,
+		       r.content, r.properties, r.last_edited_by_user, r.last_edited_by_tool,
 		       (SELECT rv.content_hash FROM relation_versions rv
 		         WHERE rv.rel_record_id = r.rel_record_id
 		         ORDER BY rv.vseq DESC LIMIT 1) AS latest_hash,
@@ -413,7 +414,7 @@ func (s *sweep) selectRelationCandidates(ctx context.Context) ([]relationSweepCa
 			lvCreated  *string
 		)
 		if err := rows.Scan(&c.recordID, &c.from, &c.fromFace, &c.relType, &c.to,
-			&c.content, &c.props, &latestHash, &lvCreated); err != nil {
+			&c.content, &c.props, &c.editorUser, &c.editorTool, &latestHash, &lvCreated); err != nil {
 			return nil, err
 		}
 		if latestHash != nil {
@@ -433,6 +434,7 @@ func (s *sweep) captureRelation(
 	if err != nil {
 		return err
 	}
+	user, tool := store.SweptPrincipal(c.editorUser, c.editorTool)
 	in := store.RelationVersionInput{
 		RecordID:      c.recordID,
 		From:          c.from,
@@ -443,7 +445,8 @@ func (s *sweep) captureRelation(
 		Properties:    props,
 		SchemaHash:    schemaHash,
 		Projection:    projJSON,
-		PrincipalTool: sweepPrincipalTool,
+		PrincipalUser: user,
+		PrincipalTool: tool,
 	}
 	contentHash := contentHashOfRelation(in)
 	if c.latestHash != "" && contentHash == c.latestHash {
