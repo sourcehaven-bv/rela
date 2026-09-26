@@ -1465,12 +1465,17 @@ Notes:
 - A relation whose name is not a plain identifier (e.g. contains a hyphen)
   cannot be deep-linked as a filter (the URL parser only accepts
   `[a-zA-Z_][a-zA-Z0-9_]*` filter keys).
+- Kanban boards use the same filter controls as lists: the same widgets, the
+  same URL sync, and the same server-side filtering, relation controls
+  included. When two screens of one entity type configure the same relation
+  control with different `direction:`s, lists win over kanbans, then the lowest
+  ID; a load-time warning names the ignored one.
 
 ### URL Sync for Filters
 
 Interactive filter selections are mirrored into the page's URL query string so
-lists are deep-linkable and survive browser back/forward. The format is
-bracketed:
+lists and kanban boards are deep-linkable and survive browser back/forward. The
+format is bracketed:
 
 ```text
 /list/all_tasks?filter[status]=open

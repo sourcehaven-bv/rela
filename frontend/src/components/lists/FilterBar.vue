@@ -14,7 +14,9 @@ import type {
 } from '@/types'
 
 const props = defineProps<{
-  config: ListConfig
+  // Only the filter controls are read, so a board (KanbanConfig) passes its
+  // own config as a list does.
+  config: Pick<ListConfig, 'filter_controls'>
   entityType?: EntityType
   filters: FilterState
 }>()
