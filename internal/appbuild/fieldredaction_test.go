@@ -16,9 +16,14 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/appbuild"
+	"github.com/Sourcehaven-BV/rela/internal/search"
+
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -381,5 +386,165 @@ assignments:
 		t.Errorf("leaked = %q, want \"NO_SALARY\" — an automation cascade read a "+
 			"`visible:`-hidden value and copied it onto a readable field; cascade "+
 			"reads are ACL-bound to the acting user (DEC-O59WM4)", got)
+	}
+}
+
+// searchIDs runs a gated search as bob and returns the hit ids.
+func searchIDs(t *testing.T, svc interface {
+	GatedReads() appbuild.GatedReadBundle
+}, text string) []string {
+	t.Helper()
+	var ids []string
+	for hit, err := range svc.GatedReads().Searcher.Search(bobCtx(principal.ToolMCP), search.Query{Text: text}) {
+		if err != nil {
+			t.Fatalf("search %q: %v", text, err)
+		}
+		ids = append(ids, hit.ID)
+	}
+	return ids
+}
+
+// TestGatedReads_SearchHidesRedactedFieldMatch pins the field half of gated
+// search: bob may read the person but not the salary, so searching for the
+// salary value must not find the person. A hit there confirms the hidden
+// value.
+func TestGatedReads_SearchHidesRedactedFieldMatch(t *testing.T) {
+	root := writeRedactionProject(t)
+	svc, err := appbuildOnDisk(t, root)
+	if err != nil {
+		t.Fatalf("appbuild.New: %v", err)
+	}
+	defer svc.Close()
+
+	if ids := searchIDs(t, svc, "Alice"); !slices.Equal(ids, []string{"PERS-1"}) {
+		t.Errorf("search Alice = %v, want [PERS-1]: a visible field must stay searchable", ids)
+	}
+	if ids := searchIDs(t, svc, "99000"); len(ids) != 0 {
+		t.Errorf("LEAK: search on the hidden salary value found %v", ids)
+	}
+}
+
+// TestGatedReads_SearchHidesUnreadableRows pins the row half: a type bob may
+// not read never appears in his search results.
+func TestGatedReads_SearchHidesUnreadableRows(t *testing.T) {
+	root := t.TempDir()
+	writeMetamodelBody(t, root, `version: "1.0"
+entities:
+  person:
+    label: Person
+    plural: people
+    id_prefix: "PERS-"
+    id_type: sequential
+    properties:
+      name: { type: string }
+  secret:
+    label: Secret
+    id_prefix: "SEC-"
+    id_type: sequential
+    properties:
+      name: { type: string }
+relations: {}
+`)
+	writePolicy(t, root, `roles:
+  viewer:
+    read: ["person"]
+assignments:
+  bob: viewer
+`)
+	for _, f := range []struct{ dir, id, typ string }{
+		{"people", "PERS-1", "person"},
+		{"secrets", "SEC-1", "secret"},
+	} {
+		path := filepath.Join(root, "entities", f.dir)
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		body := "---\nid: " + f.id + "\ntype: " + f.typ + "\nname: Alice\n---\n"
+		if err := os.WriteFile(filepath.Join(path, f.id+".md"), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	svc, err := appbuildOnDisk(t, root)
+	if err != nil {
+		t.Fatalf("appbuild.New: %v", err)
+	}
+	defer svc.Close()
+
+	if ids := searchIDs(t, svc, "Alice"); !slices.Equal(ids, []string{"PERS-1"}) {
+		t.Errorf("search Alice = %v, want [PERS-1]: the secret must be absent", ids)
+	}
+}
+
+// TestGatedReads_TraversalOnHiddenFieldIsNotAnswered pins the field half of
+// the traversal binder: bob may read the person but not the salary, so a
+// related(...) constraint on salary must not report whether it matches.
+func TestGatedReads_TraversalOnHiddenFieldIsNotAnswered(t *testing.T) {
+	root := t.TempDir()
+	writeMetamodelBody(t, root, `version: "1.0"
+entities:
+  person:
+    label: Person
+    plural: people
+    id_prefix: "PERS-"
+    id_type: sequential
+    properties:
+      name: { type: string }
+      salary: { type: string }
+  team:
+    label: Team
+    id_prefix: "TEAM-"
+    id_type: sequential
+    properties:
+      name: { type: string }
+relations:
+  member:
+    label: member
+    from: [team]
+    to: [person]
+`)
+	writePolicy(t, root, redactionPolicy)
+	for path, body := range map[string]string{
+		"entities/people/PERS-1.md":           "---\nid: PERS-1\ntype: person\nname: Alice\nsalary: \"99000\"\n---\n",
+		"entities/teams/TEAM-1.md":            "---\nid: TEAM-1\ntype: team\nname: Core\n---\n",
+		"relations/TEAM-1--member--PERS-1.md": "---\nfrom: TEAM-1\nrelation: member\nto: PERS-1\n---\n",
+	} {
+		full := filepath.Join(root, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	svc, err := appbuildOnDisk(t, root)
+	if err != nil {
+		t.Fatalf("appbuild.New: %v", err)
+	}
+	defer svc.Close()
+
+	ev := predicatefns.NewEvaluator(svc.Meta())
+	ctx := bobCtx(principal.ToolMCP)
+	bind := func(expr string) (bool, error) {
+		t.Helper()
+		prog, err := ev.Compile("team", expr)
+		if err != nil {
+			t.Fatalf("compile %q: %v", expr, err)
+		}
+		answer, err := svc.GatedReads().Traversals.Bind(ctx, "team", []string{"TEAM-1"}, prog)
+		if err != nil {
+			return false, err
+		}
+		return ev.MatchesWithTraversals(ctx, prog, "team", "TEAM-1", map[string]any{"name": "Core"}, answer("TEAM-1"))
+	}
+
+	// Control: a constraint on a visible field is answered, so a refusal
+	// below is about the hidden field and not a broken fixture.
+	if matched, err := bind("related(entity, 'member', { name = 'Alice' })"); err != nil || !matched {
+		t.Fatalf("visible-field traversal: matched=%v err=%v, want a match", matched, err)
+	}
+	if matched, err := bind("related(entity, 'member', { salary = '99000' })"); err == nil {
+		t.Errorf("LEAK: traversal on a hidden field was answered: matched=%v", matched)
 	}
 }

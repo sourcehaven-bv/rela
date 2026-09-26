@@ -86,7 +86,7 @@ func wireRemoteMCP(app *dataentry.App, svc *appbuild.Services, f *serverFlags) e
 			Store:         reads.Reader,
 			Meta:          svc.Meta(),
 			Tracer:        reads.Tracer,
-			Searcher:      svc.Searcher(),
+			Searcher:      reads.Searcher,
 			Validator:     reads.Validator,
 			EntityManager: svc.EntityManager(),
 			Config:        svc.Config(),
@@ -94,6 +94,9 @@ func wireRemoteMCP(app *dataentry.App, svc *appbuild.Services, f *serverFlags) e
 			LuaCache:      svc.ScriptEngine().LuaCache(),
 			Watcher:       noopWatcher{},
 			ProjectRoot:   svc.Paths().Root,
+		}
+		if reads.Traversals != nil {
+			deps.Traversals = reads.Traversals
 		}
 
 		srv, err := relamcp.NewServer(deps, mcpServerVersion,

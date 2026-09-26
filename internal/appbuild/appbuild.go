@@ -581,7 +581,7 @@ func (s *Services) ScheduledLuaWriteDeps() lua.WriteDeps {
 // candidate set comes from that same gated reader.
 //
 // This is the read bundle for an identity-bearing, non-HTTP consumer. The MCP
-// server is the caller: its handlers, resources, prompts, analyze and export
+// server is the caller: its handlers, resources, prompts and analyze
 // surfaces all read through the returned reader, so gating is decided once
 // here rather than per handler (DEC-ZBI39P).
 //
@@ -621,20 +621,47 @@ func (s *Services) GatedReads() GatedReadBundle {
 	deps.VisibleReader = reader
 	deps.Tracer = tr
 
+	b, err := relresolve.NewStoreBinder(s.meta, gate, s.store)
+	if err != nil { // coverage-ignore: invariant: meta, gate and store are non-nil here
+		panic(fmt.Sprintf("appbuild: GatedReads: %v", err))
+	}
 	return GatedReadBundle{
-		Reader:    gatedGraphReader{rows: reader, raw: s.store},
-		Tracer:    tr,
-		Validator: newValidator(reader, s.meta, deps, gate, s.store),
+		Reader:     gatedGraphReader{rows: reader, raw: s.store},
+		Tracer:     tr,
+		Validator:  newValidator(reader, s.meta, deps, gate, s.store),
+		Traversals: b,
+		Searcher:   s.gatedSearch(),
 	}
 }
 
-// GatedReadBundle is the result of [Services.GatedReads]: the three read
-// handles an identity-bearing consumer needs, each ACL-bound to the ctx
-// principal at call time.
+// gatedSearch returns the search half of [Services.GatedReads]: the raw
+// searcher when no policy is configured, else [gatedSearcher]. A gate that
+// cannot be built refuses search, matching [scriptReads].
+func (s *Services) gatedSearch() search.Searcher {
+	if s.aclDeclarative == nil {
+		return s.searcher
+	}
+	gate, err := visibility.NewDeclarativeGate(s.aclDeclarative)
+	if err != nil { // coverage-ignore: invariant: aclDeclarative is non-nil here
+		return refusedSearcher{err: fmt.Errorf("%w: %w", search.ErrScope, err)}
+	}
+	var redactor visibility.FieldRedactor = visibility.NopRedactor{}
+	if s.fieldRedactor != nil {
+		redactor = s.fieldRedactor
+	}
+	return newGatedSearcher(s.visibleSearcher, gate, redactor, s.meta.EntityTypes())
+}
+
+// GatedReadBundle is the result of [Services.GatedReads]: the read handles an
+// identity-bearing consumer needs, each ACL-bound to the ctx principal at call
+// time. Traversals answers `related(...)` in a filter under the same gate as
+// Reader; Searcher returns only hits the principal may read.
 type GatedReadBundle struct {
-	Reader    GatedGraphReader
-	Tracer    tracer.Tracer
-	Validator validator.Validator
+	Reader     GatedGraphReader
+	Tracer     tracer.Tracer
+	Validator  validator.Validator
+	Traversals *relresolve.Binder
+	Searcher   search.Searcher
 }
 
 // GatedGraphReader is the row-and-tally read surface returned by

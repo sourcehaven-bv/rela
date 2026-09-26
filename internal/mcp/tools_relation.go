@@ -15,18 +15,24 @@ import (
 func (s *Server) handleListRelations(
 	ctx context.Context, request *mcpgo.CallToolRequest,
 ) (*mcpgo.CallToolResult, error) {
+	snap := s.state.current()
 	args := newToolRequest(request)
-	relType := args.GetString("type", "")
-	from := args.GetString("from", "")
-	to := args.GetString("to", "")
-	limit := args.GetInt("limit", 0)
+	relType := strings.TrimSpace(args.GetString("type", ""))
+	from := trimID(args.GetString("from", ""))
+	to := trimID(args.GetString("to", ""))
+	limit := limitArg(args, defaultListLimit)
 	offset := args.GetInt("offset", 0)
 
-	st := s.deps().Store
+	d := snap.deps
+	if relType != "" {
+		if _, ok := d.Meta.GetRelationDef(relType); !ok {
+			return errorResult("unknown relation type: " + relType), nil
+		}
+	}
 	q := store.RelationQuery{Type: relType, From: from, To: to}
 
 	all := make([]*entity.Relation, 0)
-	for r, err := range st.ListRelations(ctx, q) {
+	for r, err := range d.Store.ListRelations(ctx, q) {
 		if err != nil {
 			return errorResult(err.Error()), nil
 		}
@@ -34,21 +40,15 @@ func (s *Server) handleListRelations(
 	}
 
 	sortStoreRelations(all)
+	total := len(all)
+	all = applyPagination(all, offset, limit)
 
-	// Apply offset/limit
-	if offset > 0 {
-		if offset >= len(all) {
-			all = nil
-		} else {
-			all = all[offset:]
-		}
-	}
-	if limit > 0 && limit < len(all) {
-		all = all[:limit]
-	}
-
-	text, err := convertStoreRelationsList(all)
-	if err != nil {
+	text, err := marshalJSON(struct {
+		Total     int            `json:"total"`
+		HasMore   bool           `json:"has_more"`
+		Relations []relationJSON `json:"relations"`
+	}{total, max(offset, 0)+len(all) < total, convertStoreRelationsList(all)})
+	if err != nil { // coverage-ignore: defensive: relation DTOs of strings and YAML-derived maps; cannot fail.
 		return errorResult(err.Error()), nil
 	}
 	return textResult(text), nil
@@ -57,6 +57,7 @@ func (s *Server) handleListRelations(
 func (s *Server) handleCreateRelation(
 	ctx context.Context, request *mcpgo.CallToolRequest,
 ) (*mcpgo.CallToolResult, error) {
+	snap := s.state.current()
 	args := newToolRequest(request)
 	fromID, err := args.RequireString("from")
 	if err != nil {
@@ -83,7 +84,7 @@ func (s *Server) handleCreateRelation(
 		Content:    nilIfEmpty(args.GetString("content", "")),
 	}
 
-	if _, createErr := s.deps().EntityManager.CreateRelation(ctx, fromID, relType, toID, opts); createErr != nil {
+	if _, createErr := snap.deps.EntityManager.CreateRelation(ctx, fromID, relType, toID, opts); createErr != nil {
 		return errorResult(createErr.Error()), nil
 	}
 
@@ -94,6 +95,7 @@ func (s *Server) handleCreateRelation(
 func (s *Server) handleDeleteRelation(
 	ctx context.Context, request *mcpgo.CallToolRequest,
 ) (*mcpgo.CallToolResult, error) {
+	snap := s.state.current()
 	args := newToolRequest(request)
 	fromID, err := args.RequireString("from")
 	if err != nil {
@@ -111,13 +113,13 @@ func (s *Server) handleDeleteRelation(
 	}
 	toID = trimID(toID)
 
-	st := s.deps().Store
+	st := snap.deps.Store
 	if _, getErr := st.GetRelation(ctx, fromID, relType, toID); getErr != nil {
 		return errorResult(
 			fmt.Sprintf("relation not found: %s --%s--> %s", fromID, relType, toID)), nil
 	}
 
-	if delErr := s.deps().EntityManager.DeleteRelation(ctx, fromID, relType, toID); delErr != nil {
+	if delErr := snap.deps.EntityManager.DeleteRelation(ctx, fromID, relType, toID); delErr != nil {
 		return errorResult(delErr.Error()), nil
 	}
 

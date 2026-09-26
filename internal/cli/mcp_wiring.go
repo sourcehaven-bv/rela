@@ -212,7 +212,7 @@ func (s *mcpServices) watchSchema(srv *relamcp.Server) {
 // The three read handles come from [appbuild.Services.GatedReads] rather
 // than the raw accessors. Under this command's NopACL wiring they ARE the
 // raw store / tracer / validator, so `rela mcp` behaves exactly as before —
-// but every MCP read surface (tools, resources, prompts, analyze, export)
+// but every MCP read surface (tools, resources, prompts, analyze)
 // now reaches the graph through one seam that a networked wiring can
 // substitute, instead of each handler holding the store directly. That is
 // what makes the remote transport a wiring change rather than a rewrite of
@@ -226,11 +226,11 @@ func (s *mcpServices) Deps() relamcp.Deps {
 // deps builds the bundle from the current services. Caller holds mu.
 func (s *mcpServices) deps() relamcp.Deps {
 	reads := s.svc.GatedReads()
-	return relamcp.Deps{
+	deps := relamcp.Deps{
 		Store:         reads.Reader,
 		Meta:          s.svc.Meta(),
 		Tracer:        reads.Tracer,
-		Searcher:      s.svc.Searcher(),
+		Searcher:      reads.Searcher,
 		Validator:     reads.Validator,
 		EntityManager: s.svc.EntityManager(),
 		Config:        s.svc.Config(),
@@ -239,6 +239,10 @@ func (s *mcpServices) deps() relamcp.Deps {
 		Watcher:       s.watcher,
 		ProjectRoot:   s.svc.Paths().Root,
 	}
+	if reads.Traversals != nil {
+		deps.Traversals = reads.Traversals
+	}
+	return deps
 }
 
 // Close stops the watcher and releases the underlying services (store
