@@ -510,7 +510,7 @@
     "inputSchema": {
       "properties": {
         "id": {
-          "description": "Entity ID (e.g. REQ-001)",
+          "description": "Entity ID (e.g. REQ-001), or ID@face (e.g. POL-001@adopted) to read one content state",
           "type": "string"
         }
       },

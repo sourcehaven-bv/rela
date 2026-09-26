@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -82,7 +83,11 @@ func wireRemoteMCP(app *dataentry.App, svc *appbuild.Services, f *serverFlags) e
 	}
 
 	factory := func(host dataentry.MCPHost) (http.Handler, error) {
-		srv, err := relamcp.NewServer(remoteMCPDeps(svc, host), mcpServerVersion,
+		deps, err := remoteMCPDeps(svc, host)
+		if err != nil {
+			return nil, err
+		}
+		srv, err := relamcp.NewServer(deps, mcpServerVersion,
 			relamcp.WithPrincipal(principal.Principal{
 				User: principal.SystemUser(),
 				Tool: principal.ToolMCP,
@@ -120,11 +125,18 @@ func remoteAttachmentDeps(svc *appbuild.Services, host dataentry.MCPHost) relamc
 // [appbuild.Services.GatedReads]. The Lua tools get no elevated handle, so a
 // remote caller cannot use rela.bypass_acl.
 //
+// Entity reads and searches resolve through the host's world source, the
+// operator's `app.default_world`, so a faced entity is visible to MCP exactly
+// as it is to the data-entry API (BUG-6XTX0G).
+//
 // LuaCache is nil on purpose. The script engine's cache is shared with
 // data-entry and keyed by script path, not by principal, so a memoized gated
 // read by one caller would be served to the next.
-func remoteMCPDeps(svc *appbuild.Services, host dataentry.MCPHost) relamcp.Deps {
-	reads := svc.GatedReads()
+func remoteMCPDeps(svc *appbuild.Services, host dataentry.MCPHost) (relamcp.Deps, error) {
+	reads, err := appbuild.WorldBound(svc.GatedReads(), host.ReadWorld)
+	if err != nil {
+		return relamcp.Deps{}, fmt.Errorf("binding MCP reads to a world: %w", err)
+	}
 	return relamcp.Deps{
 		Store:         reads.Reader,
 		Meta:          svc.Meta(),
@@ -140,7 +152,7 @@ func remoteMCPDeps(svc *appbuild.Services, host dataentry.MCPHost) relamcp.Deps 
 		Watcher:     noopWatcher{},
 		ProjectRoot: svc.Paths().Root,
 		Attachments: remoteAttachmentDeps(svc, host),
-	}
+	}, nil
 }
 
 // noopWatcher satisfies [relamcp.Watcher] for the HTTP transport, which has

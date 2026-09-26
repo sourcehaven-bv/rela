@@ -14,8 +14,11 @@ import (
 
 // entityJSON represents an entity for JSON output in MCP responses.
 type entityJSON struct {
-	ID         string         `json:"id"`
-	Type       string         `json:"type"`
+	ID   string `json:"id"`
+	Type string `json:"type"`
+	// Face names the content state served, omitted for the default state.
+	// `ID@face` addresses this exact row in show_entity and update_entity.
+	Face       string         `json:"face,omitempty"`
 	Properties map[string]any `json:"properties,omitempty"`
 	Content    string         `json:"content,omitempty"`
 	Relations  *relationsJSON `json:"relations,omitempty"`
@@ -66,6 +69,7 @@ func convertStoreEntity(ctx context.Context, e *entity.Entity, st GraphReader, i
 	ej := entityJSON{
 		ID:         e.ID,
 		Type:       e.Type,
+		Face:       e.Face.String(),
 		Properties: e.Properties,
 		Content:    e.Content,
 	}
@@ -80,6 +84,9 @@ func convertStoreEntitySummary(e *entity.Entity) map[string]any {
 	result := map[string]any{
 		"id":   e.ID,
 		"type": e.Type,
+	}
+	if !e.Face.IsDefault() {
+		result["face"] = e.Face.String()
 	}
 	if title := e.Title(); title != "" {
 		result["title"] = title

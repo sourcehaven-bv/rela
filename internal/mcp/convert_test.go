@@ -823,3 +823,37 @@ func TestExtractPropertiesAllowNil_JSONNullArg(t *testing.T) {
 		t.Errorf("expected nil for JSON 'null' as properties arg, got %v", props)
 	}
 }
+
+// A faced row names its face so an agent can address it as ID@face; a
+// default-state row carries no face key (BUG-6XTX0G).
+func TestConvertStoreEntity_NamesTheFace(t *testing.T) {
+	t.Parallel()
+	adopted, err := entity.ParseFace("adopted")
+	if err != nil {
+		t.Fatal(err)
+	}
+	faced := newEntity("POL-1", "policy", "retention")
+	faced.Face = adopted
+	plain := newEntity("TKT-1", "ticket", "a ticket")
+
+	if got := convertStoreEntitySummary(faced)["face"]; got != "adopted" {
+		t.Errorf("summary face = %v, want adopted", got)
+	}
+	if _, ok := convertStoreEntitySummary(plain)["face"]; ok {
+		t.Error("a default-state summary must carry no face key")
+	}
+
+	for e, want := range map[*entity.Entity]string{faced: "adopted", plain: ""} {
+		out, err := convertStoreEntity(context.Background(), e, memstore.New(), false)
+		if err != nil {
+			t.Fatalf("convertStoreEntity(%s): %v", e.ID, err)
+		}
+		var parsed entityJSON
+		if err := json.Unmarshal([]byte(out), &parsed); err != nil {
+			t.Fatal(err)
+		}
+		if parsed.Face != want {
+			t.Errorf("%s face = %q, want %q", e.ID, parsed.Face, want)
+		}
+	}
+}

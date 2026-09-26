@@ -1,6 +1,7 @@
 package dataentry
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/attachment"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/worldreader"
 )
 
 // MCPPath is the mount point for the remote MCP endpoint.
@@ -81,6 +83,12 @@ type MCPHost struct {
 	// WriteLock is the App's mutation mutex. MCP attachment writes hold it so
 	// they serialize with every data-entry write.
 	WriteLock sync.Locker
+
+	// ReadWorld resolves the world an MCP read runs in: the operator's
+	// browsing default (`app.default_world`), with the caller's world grant
+	// checked, exactly as for a data-entry API read that names no world
+	// (BUG-6XTX0G). Without it a faced entity is invisible to every MCP tool.
+	ReadWorld worldreader.Source
 }
 
 // mcpHost builds the [MCPHost] for this App.
@@ -92,6 +100,26 @@ func mcpHost(a *App) MCPHost {
 		},
 		AttachmentRunner: a.attachmentRunner,
 		WriteLock:        &a.writeMu,
+		ReadWorld:        mcpReadWorld(a),
+	}
+}
+
+// mcpReadWorld returns the world source for the remote MCP endpoint.
+//
+// The configuration is read per call, never captured, because the watcher
+// hot-reloads data-entry.yaml. A world the caller holds no grant for binds as
+// denied, so every read finds nothing, as on the data-entry API.
+func mcpReadWorld(a *App) worldreader.Source {
+	return func(ctx context.Context) (worldreader.Binding, error) {
+		name := configuredDefaultWorld(a)
+		handle, err := resolveNamedWorld(ctx, a.worlds, name)
+		switch {
+		case errors.Is(err, errWorldDenied):
+			return worldreader.Binding{Denied: true}, nil
+		case err != nil:
+			return worldreader.Binding{}, fmt.Errorf("resolving app.default_world %q: %w", name, err)
+		}
+		return worldreader.Binding{Scope: handle.scope}, nil
 	}
 }
 

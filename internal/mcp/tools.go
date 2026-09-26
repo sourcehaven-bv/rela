@@ -67,7 +67,7 @@ func toolListEntities() *mcpgo.Tool {
 func toolShowEntity() *mcpgo.Tool {
 	return newTool("show_entity",
 		withDescription("Get full entity details including properties, content, and relations"),
-		withString("id", required(), description("Entity ID (e.g. REQ-001)")),
+		withString("id", required(), description("Entity ID (e.g. REQ-001), or ID@face (e.g. POL-001@adopted) to read one content state")),
 	)
 }
 

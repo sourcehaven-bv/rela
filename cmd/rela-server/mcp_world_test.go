@@ -1,0 +1,271 @@
+//go:build !postgres
+
+package main
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"slices"
+	"testing"
+
+	"github.com/Sourcehaven-BV/rela/internal/appbuild"
+	"github.com/Sourcehaven-BV/rela/internal/audit"
+	"github.com/Sourcehaven-BV/rela/internal/dataentry"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/script"
+	"github.com/Sourcehaven-BV/rela/internal/search"
+	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/worldreader"
+)
+
+// The shape of the BUG-6XTX0G report: a faced policy type whose entities have
+// no default-face row, a faceless task type beside it, and a world that
+// selects [adopted, concept]. `secret` is a type the role may not read.
+const worldMetamodel = `version: "1.0"
+entities:
+  policy:
+    label: Policy
+    id_prefix: "POL-"
+    id_type: sequential
+    faces:
+      concept: {}
+      adopted: {}
+    properties:
+      title:
+        type: string
+  task:
+    label: Task
+    id_prefix: "TSK-"
+    id_type: sequential
+    properties:
+      title:
+        type: string
+  secret:
+    label: Secret
+    id_prefix: "SEC-"
+    id_type: sequential
+    properties:
+      title:
+        type: string
+relations: {}
+worlds:
+  current:
+    select: [adopted, concept]
+    otherwise: exclude
+`
+
+const worldPolicy = `roles:
+  viewer:
+    read: [policy, task, "world:current"]
+role_relations:
+  member-of:
+    requires_permission: delegate-membership
+assignments:
+  alice: viewer
+`
+
+// defaultWorldOnly is the world source of a deployment with no
+// `app.default_world`.
+func defaultWorldOnly(context.Context) (worldreader.Binding, error) {
+	return worldreader.Binding{}, nil
+}
+
+// newWorldServices builds services over worldMetamodel and worldPolicy and
+// seeds POL-001 (adopted face only), TSK-001 and SEC-001, each titled with the
+// word "retention" so one search can reach all three.
+func newWorldServices(t *testing.T) *appbuild.Services {
+	t.Helper()
+	root := t.TempDir()
+	for _, d := range []string{"entities", "relations", filepath.Join(".rela", "audit")} {
+		if err := os.MkdirAll(filepath.Join(root, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, body := range map[string]string{"metamodel.yaml": worldMetamodel, "acl.yaml": worldPolicy} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fs := storage.NewSafeFS(storage.NewOsFS())
+	paths, err := project.Discover(root, fs)
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	svc, err := appbuild.New(appbuild.Config{
+		FS: fs, Paths: paths, ScriptEngine: script.NewEngine(), Audit: audit.Nop{},
+	})
+	if err != nil {
+		t.Fatalf("appbuild.New: %v", err)
+	}
+	t.Cleanup(func() { _ = svc.Close() })
+
+	adopted, err := entity.ParseFace("adopted")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, seed := range []struct {
+		id, typ, title string
+		face           entity.Face
+	}{
+		{"POL-001", "policy", "Retention policy", adopted},
+		{"TSK-001", "task", "Retention task", ""},
+		{"SEC-001", "secret", "Retention secret", ""},
+	} {
+		e := entity.New(seed.id, seed.typ)
+		e.SetString("title", seed.title)
+		e.Face = seed.face
+		if err := svc.Store().CreateEntity(context.Background(), e); err != nil {
+			t.Fatalf("seed %s: %v", seed.id, err)
+		}
+	}
+	return svc
+}
+
+// worldSource binds the compiled world `current`, as mcpReadWorld does for a
+// deployment with `app.default_world: current`.
+func worldSource(t *testing.T, svc *appbuild.Services, denied bool) worldreader.Source {
+	t.Helper()
+	scope, ok := appbuild.CompiledWorlds(svc).Lookup("current")
+	if !ok {
+		t.Fatal("world current is not compiled")
+	}
+	return func(context.Context) (worldreader.Binding, error) {
+		return worldreader.Binding{Scope: scope, Denied: denied}, nil
+	}
+}
+
+func aliceCtx() context.Context {
+	return principal.With(context.Background(), principal.Principal{User: "alice", Tool: principal.ToolMCP})
+}
+
+func listIDs(t *testing.T, seq func(func(*entity.Entity, error) bool)) []string {
+	t.Helper()
+	var ids []string
+	for e, err := range seq {
+		if err != nil {
+			t.Fatalf("list: %v", err)
+		}
+		ids = append(ids, entity.FormatStateRef(e.ID, e.Face))
+	}
+	slices.Sort(ids)
+	return ids
+}
+
+func searchIDs(t *testing.T, s search.Searcher) []string {
+	t.Helper()
+	var ids []string
+	for h, err := range s.Search(aliceCtx(), search.Query{Text: "retention"}) {
+		if err != nil {
+			t.Fatalf("search: %v", err)
+		}
+		ids = append(ids, entity.FormatStateRef(h.ID, h.Face))
+	}
+	slices.Sort(ids)
+	return ids
+}
+
+// TestRemoteMCPDeps_FacedEntitiesResolveThroughTheWorld is the BUG-6XTX0G
+// regression. Every remote MCP read handle — the tools' store and searcher,
+// and the Lua reader and searcher — must serve a faced entity through the
+// deployment's default world, serve an explicit ID@face literally, and still
+// hide a type the role may not read.
+func TestRemoteMCPDeps_FacedEntitiesResolveThroughTheWorld(t *testing.T) {
+	svc := newWorldServices(t)
+	deps, err := remoteMCPDeps(svc, dataentry.MCPHost{ReadWorld: worldSource(t, svc, false)})
+	if err != nil {
+		t.Fatalf("remoteMCPDeps: %v", err)
+	}
+	ctx := aliceCtx()
+
+	readers := map[string]interface {
+		GetEntity(ctx context.Context, id string) (*entity.Entity, error)
+	}{
+		"tools store": deps.Store,
+		"lua reader":  deps.LuaWriteDeps.VisibleReader,
+	}
+	for name, r := range readers {
+		t.Run(name+" resolves a bare id", func(t *testing.T) {
+			e, err := r.GetEntity(ctx, "POL-001")
+			if err != nil {
+				t.Fatalf("GetEntity(POL-001) = %v, want the adopted face", err)
+			}
+			if e.Face.String() != "adopted" {
+				t.Errorf("face = %q, want adopted", e.Face)
+			}
+		})
+		t.Run(name+" serves an explicit face", func(t *testing.T) {
+			if _, err := r.GetEntity(ctx, "POL-001@adopted"); err != nil {
+				t.Errorf("GetEntity(POL-001@adopted) = %v", err)
+			}
+		})
+		t.Run(name+" hides an unreadable type", func(t *testing.T) {
+			if _, err := r.GetEntity(ctx, "SEC-001"); err == nil {
+				t.Error("GetEntity(SEC-001) succeeded; the role may not read secret")
+			}
+		})
+	}
+
+	t.Run("tools store lists the faced type", func(t *testing.T) {
+		got := listIDs(t, func(yield func(*entity.Entity, error) bool) {
+			deps.Store.ListEntities(ctx, store.EntityQuery{Type: "policy"})(yield)
+		})
+		if want := []string{"POL-001@adopted"}; !slices.Equal(got, want) {
+			t.Errorf("list policy = %v, want %v", got, want)
+		}
+	})
+	t.Run("lua reader lists the faced type", func(t *testing.T) {
+		got := listIDs(t, func(yield func(*entity.Entity, error) bool) {
+			deps.LuaWriteDeps.VisibleReader.ListEntities(ctx, store.EntityQuery{Type: "policy"})(yield)
+		})
+		if want := []string{"POL-001@adopted"}; !slices.Equal(got, want) {
+			t.Errorf("list policy = %v, want %v", got, want)
+		}
+	})
+
+	searchers := map[string]search.Searcher{
+		"tools searcher": deps.Searcher,
+		"lua searcher":   deps.LuaWriteDeps.Searcher,
+	}
+	for name, s := range searchers {
+		t.Run(name+" finds the faced entity and hides the unreadable one", func(t *testing.T) {
+			want := []string{"POL-001@adopted", "TSK-001"}
+			if got := searchIDs(t, s); !slices.Equal(got, want) {
+				t.Errorf("search = %v, want %v", got, want)
+			}
+		})
+	}
+}
+
+// A world the caller holds no grant for binds as denied, and every read then
+// finds nothing, as on the data-entry API.
+func TestRemoteMCPDeps_DeniedWorldReadsNothing(t *testing.T) {
+	svc := newWorldServices(t)
+	deps, err := remoteMCPDeps(svc, dataentry.MCPHost{ReadWorld: worldSource(t, svc, true)})
+	if err != nil {
+		t.Fatalf("remoteMCPDeps: %v", err)
+	}
+	ctx := aliceCtx()
+	if _, err := deps.Store.GetEntity(ctx, "TSK-001"); err == nil {
+		t.Error("GetEntity(TSK-001) succeeded under a denied world")
+	}
+	got := listIDs(t, func(yield func(*entity.Entity, error) bool) {
+		deps.Store.ListEntities(ctx, store.EntityQuery{Type: "task"})(yield)
+	})
+	if len(got) != 0 {
+		t.Errorf("list task = %v under a denied world, want nothing", got)
+	}
+	if got := searchIDs(t, deps.Searcher); len(got) != 0 {
+		t.Errorf("search = %v under a denied world, want nothing", got)
+	}
+}
+
+func TestRemoteMCPDeps_RequiresAWorldSource(t *testing.T) {
+	svc := newWorldServices(t)
+	if _, err := remoteMCPDeps(svc, dataentry.MCPHost{}); err == nil {
+		t.Error("remoteMCPDeps accepted a host with no world source; MCP would read the default world only")
+	}
+}
