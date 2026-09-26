@@ -12,6 +12,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
+	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
@@ -107,6 +108,7 @@ func gatedServer(t *testing.T) (*Server, context.Context) {
 		LuaWriteDeps:  svc.LuaWriteDeps(),
 		Watcher:       nopWatcher{},
 		ProjectRoot:   t.TempDir(),
+		Attachments:   testAttachmentDeps(t, svc, meta, audit.Nop{}),
 	}
 
 	srv := &Server{logger: slog.New(slog.DiscardHandler)}

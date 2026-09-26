@@ -50,6 +50,8 @@ entities:
 type attachmentFixture struct {
 	svc  *attachment.Service
 	st   store.Store
+	mgr  attachment.EntityPatcher
+	meta *metamodel.Metamodel
 	root string
 }
 
@@ -109,7 +111,7 @@ func setupAttachmentService(t *testing.T) attachmentFixture {
 	if err != nil {
 		t.Fatalf("attachment.New: %v", err)
 	}
-	return attachmentFixture{svc: svc, st: st, root: root}
+	return attachmentFixture{svc: svc, st: st, mgr: mgr, meta: meta, root: root}
 }
 
 func TestService_AttachAndList(t *testing.T) {
@@ -307,5 +309,133 @@ func TestService_MultiAppendAndCap(t *testing.T) {
 	// Duplicate name auto-suffixes (this would exceed 3 → at-capacity first).
 	if _, err := f.svc.WriteAttachment(ctx, e, def, "gallery", "d.pdf", strings.NewReader("d")); !errors.Is(err, attachment.ErrAtCapacity) {
 		t.Errorf("4th append: err = %v, want ErrAtCapacity", err)
+	}
+}
+
+func TestService_DetachFile(t *testing.T) {
+	f := setupAttachmentService(t)
+	ctx := context.Background()
+	e := entity.New("T-1", "ticket")
+	if err := f.st.CreateEntity(ctx, e); err != nil {
+		t.Fatalf("create entity: %v", err)
+	}
+	gallery := metamodel.PropertyDef{Type: metamodel.PropertyTypeFile, Max: 3}
+
+	// Unnamed on an empty property: nothing to pick.
+	if _, err := f.svc.DetachFile(ctx, e, gallery, "gallery", ""); err == nil {
+		t.Fatal("unnamed detach on an empty property: want error")
+	}
+	// Named but absent: succeeds and reports that nothing was removed.
+	if removed, err := f.svc.DetachFile(ctx, e, gallery, "gallery", "gone.pdf"); err != nil || removed != "" {
+		t.Fatalf("absent file: removed=%q err=%v, want \"\" and nil", removed, err)
+	}
+
+	for _, n := range []string{"a.pdf", "b.pdf"} {
+		if _, err := f.svc.WriteAttachment(ctx, e, gallery, "gallery", n, strings.NewReader(n)); err != nil {
+			t.Fatalf("attach %s: %v", n, err)
+		}
+	}
+	// Unnamed with two files: the caller must choose.
+	if _, err := f.svc.DetachFile(ctx, e, gallery, "gallery", ""); err == nil || !strings.Contains(err.Error(), "a.pdf") {
+		t.Fatalf("unnamed detach with two files: err = %v, want one listing the files", err)
+	}
+	if removed, err := f.svc.DetachFile(ctx, e, gallery, "gallery", "a.pdf"); err != nil || removed != "a.pdf" {
+		t.Fatalf("named detach: removed=%q err=%v", removed, err)
+	}
+	// Unnamed with one file left removes it.
+	if removed, err := f.svc.DetachFile(ctx, e, gallery, "gallery", ""); err != nil || removed != "b.pdf" {
+		t.Fatalf("unnamed detach: removed=%q err=%v", removed, err)
+	}
+	got, err := f.st.GetEntity(ctx, "T-1")
+	if err != nil {
+		t.Fatalf("get entity: %v", err)
+	}
+	if paths, _ := got.Properties["gallery"].([]string); len(paths) != 0 {
+		t.Fatalf("gallery after detaching all = %#v, want empty", got.Properties["gallery"])
+	}
+}
+
+// TestService_StampPreservesOtherProperties pins that stamping names only the
+// file property: an edit made after the caller read the entity survives.
+func TestService_StampPreservesOtherProperties(t *testing.T) {
+	f := setupAttachmentService(t)
+	ctx := context.Background()
+	e := entity.New("T-1", "ticket")
+	e.SetString("title", "before")
+	if err := f.st.CreateEntity(ctx, e); err != nil {
+		t.Fatalf("create entity: %v", err)
+	}
+
+	// A concurrent edit lands after the caller's read of e.
+	edited := e.Clone()
+	edited.SetString("title", "after")
+	if err := f.st.UpdateEntity(ctx, edited); err != nil {
+		t.Fatalf("concurrent edit: %v", err)
+	}
+
+	spec := metamodel.PropertyDef{Type: metamodel.PropertyTypeFile}
+	res, err := f.svc.WriteAttachment(ctx, e, spec, "spec", "s.pdf", strings.NewReader("s"))
+	if err != nil {
+		t.Fatalf("attach: %v", err)
+	}
+	if e.GetString("spec") != "" {
+		t.Error("WriteAttachment modified the caller's entity")
+	}
+	got, err := f.st.GetEntity(ctx, "T-1")
+	if err != nil {
+		t.Fatalf("get entity: %v", err)
+	}
+	if got.GetString("title") != "after" {
+		t.Errorf("title = %q, want the concurrent edit preserved", got.GetString("title"))
+	}
+	if got.GetString("spec") != res.Path || res.Entity == nil || res.Entity.GetString("spec") != res.Path {
+		t.Errorf("spec = %q, result %+v", got.GetString("spec"), res)
+	}
+}
+
+// countingPatcher counts entity writes.
+type countingPatcher struct {
+	attachment.EntityPatcher
+	n int
+}
+
+func (c *countingPatcher) PatchEntity(ctx context.Context, id string, p entity.Patch) (*entity.UpdateResult, error) {
+	c.n++
+	return c.EntityPatcher.PatchEntity(ctx, id, p)
+}
+
+// TestService_DeleteAbsentFileDoesNotWrite pins that a retried delete leaves
+// the entity alone: every write is audited and runs automations.
+func TestService_DeleteAbsentFileDoesNotWrite(t *testing.T) {
+	f := setupAttachmentService(t)
+	ctx := context.Background()
+	e := entity.New("T-1", "ticket")
+	if err := f.st.CreateEntity(ctx, e); err != nil {
+		t.Fatalf("create entity: %v", err)
+	}
+	counter := &countingPatcher{EntityPatcher: f.mgr}
+	svc, err := attachment.New(attachment.Deps{Store: f.st, Meta: f.meta, EntityManager: counter})
+	if err != nil {
+		t.Fatalf("attachment.New: %v", err)
+	}
+	for _, def := range []metamodel.PropertyDef{
+		{Type: metamodel.PropertyTypeFile},
+		{Type: metamodel.PropertyTypeFile, Max: 3},
+	} {
+		if _, err := svc.DetachFile(ctx, e, def, "gallery", "gone.pdf"); err != nil {
+			t.Fatalf("detach absent file: %v", err)
+		}
+	}
+	if counter.n != 0 {
+		t.Fatalf("PatchEntity called %d times for absent files, want 0", counter.n)
+	}
+
+	// A stale value naming a file that is gone is still repaired.
+	e.Properties["spec"] = "attachments/T-1/spec/gone.pdf"
+	if _, err := svc.DetachFile(ctx, e, metamodel.PropertyDef{Type: metamodel.PropertyTypeFile}, "spec", "gone.pdf"); err != nil {
+		t.Fatalf("detach stale file: %v", err)
+	}
+	if counter.n != 1 {
+		t.Fatalf("PatchEntity called %d times for a stale value, want 1", counter.n)
 	}
 }

@@ -549,6 +549,11 @@ contract:
 - **Existing files are not retroactively processed.** Scanning, the allowlist,
   and transforms are write-time gates. Tightening policy does not re-scan or
   re-strip attachments already stored. (A bulk rescan tool may come later.)
+- **Every ingress gets the same policy.** The web upload form, the CLI
+  (`rela attach`) and the MCP `attach_file` tool all run the same processor.
+  The remote MCP endpoint reads the live schema, so a policy change reaches it
+  when it reaches the web form. Over stdio, `rela mcp` has no command runner, so
+  a property with a `scan_cmd` or command transform rejects MCP uploads.
 - **Synchronous.** Processing runs during the upload request, so the browser's
   progress bar covers it. Keep `scan_cmd`/transforms fast for large files.
 - **Scanning is fail-closed.** Once a `scan_cmd` is configured, uploads to that

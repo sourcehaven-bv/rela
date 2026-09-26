@@ -19,7 +19,7 @@
 //
 // Each consumer now declares its own narrow interface at its call site, naming
 // only what it invokes — [github.com/Sourcehaven-BV/rela/internal/lua.Mutator]
-// (6 methods), attachment.EntityUpdater (1), mcp.EntityWriter (6), and the
+// (6 methods), attachment.EntityPatcher (1), mcp.EntityWriter (6), and the
 // unexported ones in internal/cli and internal/dataentry. *Manager satisfies
 // each structurally, so adding a method here breaks nothing and a consumer
 // reaching for a new capability has to say so in its own interface.
