@@ -98,6 +98,13 @@ func (s *Server) handleShowEntity(
 	return textResult(text), nil
 }
 
+// Search result bounds. maxSearchLimit caps the work one call can cause: a
+// limit of 0 would otherwise mean "no cap" to the search backend.
+const (
+	defaultSearchLimit = 20
+	maxSearchLimit     = 200
+)
+
 func (s *Server) handleSearchEntities(
 	ctx context.Context, request *mcpgo.CallToolRequest,
 ) (*mcpgo.CallToolResult, error) {
@@ -107,34 +114,57 @@ func (s *Server) handleSearchEntities(
 		return errorResult(err.Error()), nil
 	}
 	entityType := args.GetString("type", "")
-	const defaultSearchLimit = 20
-	limit := args.GetInt("limit", defaultSearchLimit)
+	limit := min(max(args.GetInt("limit", defaultSearchLimit), 1), maxSearchLimit)
 
 	q := search.Query{Text: query, Limit: limit}
 	if entityType != "" {
 		q.Types = []string{group(s, selTypes).resolveType(entityType)}
 	}
 
-	st := s.deps().Store
-	summaries := make([]map[string]any, 0)
-	for hit, searchErr := range s.deps().Searcher.Search(ctx, q) {
+	d := s.deps()
+	var ids []string
+	for hit, searchErr := range d.Searcher.Search(ctx, q) {
 		if searchErr != nil {
 			return errorResult(fmt.Sprintf("search failed: %v", searchErr)), nil
 		}
-		summary := map[string]any{"id": hit.ID, "type": hit.Type}
-		if hit.Title != "" {
-			summary["title"] = hit.Title
-		}
-		if e, getErr := st.GetEntity(ctx, hit.ID); getErr == nil {
-			if status := e.GetString("status"); status != "" {
-				summary["status"] = status
+		ids = append(ids, hit.ID)
+	}
+
+	// Hydrate the hits through Store, the same (possibly gated) reader
+	// show_entity uses, in one batched read, and build each summary from that
+	// entity only. A hit the caller may not read is absent from the batch and
+	// dropped, and the title comes from the redacted entity, never from the
+	// index. So a hidden row or a `visible:`-hidden title cannot reach the
+	// result even if the wired searcher is ungated. The same convention as
+	// rela.search (internal/lua).
+	loaded := make(map[string]*entity.Entity, len(ids))
+	if len(ids) > 0 {
+		for e, getErr := range d.Store.ListEntities(ctx, store.EntityQuery{IDs: ids}) {
+			if getErr != nil {
+				return errorResult(fmt.Sprintf("search failed: %v", getErr)), nil
 			}
+			loaded[e.ID] = e
+		}
+	}
+
+	summaries := make([]map[string]any, 0, len(loaded))
+	for _, id := range ids {
+		e, ok := loaded[id]
+		if !ok {
+			continue
+		}
+		summary := map[string]any{"id": e.ID, "type": e.Type}
+		if title := e.Title(); title != "" {
+			summary["title"] = title
+		}
+		if status := e.Status(); status != "" {
+			summary["status"] = status
 		}
 		summaries = append(summaries, summary)
 	}
 
 	text, err := marshalJSON(summaries)
-	if err != nil { // coverage-ignore: defensive: summaries is []map[string]any of search-hit id/type/title/status
+	if err != nil { // coverage-ignore: defensive: summaries is []map[string]any of entity id/type/title/status
 		// strings; json.Marshal cannot fail.
 		return errorResult(err.Error()), nil
 	}

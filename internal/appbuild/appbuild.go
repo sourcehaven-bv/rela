@@ -577,8 +577,9 @@ func (s *Services) ScheduledLuaWriteDeps() lua.WriteDeps {
 }
 
 // GatedReads returns the read handles bound to whatever principal is on the
-// ctx AT CALL TIME — the reader, the traversal handle, and a validator whose
-// candidate set comes from that same gated reader.
+// ctx AT CALL TIME: the reader, the traversal handle, a validator whose
+// candidate set comes from that same gated reader, and a searcher whose hits
+// are limited to what the principal may read (see [gatedSearcher]).
 //
 // This is the read bundle for an identity-bearing, non-HTTP consumer. The MCP
 // server is the caller: its handlers, resources, prompts, analyze and export
@@ -625,16 +626,19 @@ func (s *Services) GatedReads() GatedReadBundle {
 		Reader:    gatedGraphReader{rows: reader, raw: s.store},
 		Tracer:    tr,
 		Validator: newValidator(reader, s.meta, deps, gate, s.store),
+		Searcher: newGatedSearcher(s.searcher, s.visibleSearcher, s.meta,
+			s.aclDeclarative, s.fieldRedactor),
 	}
 }
 
-// GatedReadBundle is the result of [Services.GatedReads]: the three read
+// GatedReadBundle is the result of [Services.GatedReads]: the read
 // handles an identity-bearing consumer needs, each ACL-bound to the ctx
 // principal at call time.
 type GatedReadBundle struct {
 	Reader    GatedGraphReader
 	Tracer    tracer.Tracer
 	Validator validator.Validator
+	Searcher  search.Searcher
 }
 
 // GatedGraphReader is the row-and-tally read surface returned by

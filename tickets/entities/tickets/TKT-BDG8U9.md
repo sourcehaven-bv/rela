@@ -179,11 +179,16 @@ authenticated, and is ACL-gated per caller — not for all eight.
   triggered by what shipped here (the stateless handler does not fan a batch
   out across goroutines today), but it is latent the moment one does.
   `ForPrincipal` does no graph traffic, so a per-tool-call Request is the fix.
-- **The remote tool allowlist.** Every stdio tool is currently reachable
-  remotely, including `lua_eval` / `lua_run`. Those run sandboxed
-  (`SkipOpenLibs: true`) and ACL-gated, so this is not an escape hatch — but
-  "a new tool is stdio-only until someone adds it" is the safer default and
-  is the seam TKT-G3PPD needs.
+- **The remote tool allowlist.** Every stdio tool except the Lua tools is
+  reachable remotely. "A new tool is stdio-only until someone adds it" is the
+  safer default and is the seam TKT-G3PPD needs.
+
+  _Correction (BUG-RIJR6R):_ this item originally said `lua_eval` / `lua_run`
+  were reachable remotely and "ACL-gated". That was wrong. Their reads went
+  through `visibility.Unrestricted`, so they bypassed row gating and
+  `visible:` redaction, and TKT-UIR41P AC 7 required them to be absent. As
+  shipped here they were registered remotely; BUG-RIJR6R removed them and
+  gated `search_entities`, which also used the raw searcher.
 
 ## What shipped
 

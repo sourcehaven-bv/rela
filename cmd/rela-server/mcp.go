@@ -68,8 +68,10 @@ func wireIdentityAndMCP(app *dataentry.App, svc *appbuild.Services, f *serverFla
 // placeholder, so an unattributed write is recorded as the server itself
 // rather than as a guessed user.
 //
-// **Reads are ACL-gated.** The read handles come from
-// [appbuild.Services.GatedReads], which resolves the ctx principal per call.
+// **Reads are ACL-gated.** The read handles, including the searcher, come
+// from [appbuild.Services.GatedReads], which resolves the ctx principal per
+// call. The Lua tools are not registered on this transport (see the comment
+// on deps below).
 // This is the opposite of the stdio wiring's deliberate NopACL: there the
 // filesystem is the trust boundary (anyone who can run `rela mcp` can edit
 // the files directly), so a gate would defend nothing. A remote caller has no
@@ -80,36 +82,45 @@ func wireRemoteMCP(app *dataentry.App, svc *appbuild.Services, f *serverFlags) e
 	}
 
 	factory := func(host dataentry.MCPHost) (http.Handler, error) {
-		reads := svc.GatedReads()
-
-		deps := relamcp.Deps{
-			Store:         reads.Reader,
-			Meta:          svc.Meta(),
-			Tracer:        reads.Tracer,
-			Searcher:      svc.Searcher(),
-			Validator:     reads.Validator,
-			EntityManager: svc.EntityManager(),
-			Config:        svc.Config(),
-			LuaWriteDeps:  svc.LuaWriteDeps(),
-			LuaCache:      svc.ScriptEngine().LuaCache(),
-			Watcher:       noopWatcher{},
-			ProjectRoot:   svc.Paths().Root,
-			Attachments:   remoteAttachmentDeps(svc, host),
-		}
-
-		srv, err := relamcp.NewServer(deps, mcpServerVersion,
-			relamcp.WithPrincipal(principal.Principal{
-				User: principal.SystemUser(),
-				Tool: principal.ToolMCP,
-			}))
+		srv, err := newRemoteMCPServer(svc, host)
 		if err != nil {
 			return nil, err
 		}
-
 		return srv.HTTPHandler(), nil
 	}
 
 	return app.SetRemoteMCP(factory)
+}
+
+// newRemoteMCPServer builds the MCP server the HTTP endpoint serves. Split
+// from [wireRemoteMCP] so tests can exercise the exact remote tool set and
+// read wiring without a JWT gate in front.
+func newRemoteMCPServer(svc *appbuild.Services, host dataentry.MCPHost) (*relamcp.Server, error) {
+	reads := svc.GatedReads()
+
+	// No LuaWriteDeps / LuaCache, and no relamcp.WithLuaTools: the Lua
+	// tools are stdio-only. appbuild's LuaWriteDeps reads are
+	// unrestricted, so offering lua_eval / lua_run here would bypass
+	// the row gate and `visible:` redaction for every remote caller
+	// (TKT-UIR41P, AC 7).
+	deps := relamcp.Deps{
+		Store:         reads.Reader,
+		Meta:          svc.Meta(),
+		Tracer:        reads.Tracer,
+		Searcher:      reads.Searcher,
+		Validator:     reads.Validator,
+		EntityManager: svc.EntityManager(),
+		Config:        svc.Config(),
+		Watcher:       noopWatcher{},
+		ProjectRoot:   svc.Paths().Root,
+		Attachments:   remoteAttachmentDeps(svc, host),
+	}
+
+	return relamcp.NewServer(deps, mcpServerVersion,
+		relamcp.WithPrincipal(principal.Principal{
+			User: principal.SystemUser(),
+			Tool: principal.ToolMCP,
+		}))
 }
 
 // remoteAttachmentDeps wires the MCP attachment tools onto the web upload

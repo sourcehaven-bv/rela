@@ -229,6 +229,29 @@ func TestACL_ListEntities_OmitsHidden(t *testing.T) {
 	}
 }
 
+// TestACL_SearchEntities_OmitsHidden pins that search_entities hydrates every
+// hit through Deps.Store. The fixture wires the RAW searcher on purpose, so the
+// hidden feature IS a search hit; the handler must still drop it and must not
+// echo its index title.
+func TestACL_SearchEntities_OmitsHidden(t *testing.T) {
+	t.Parallel()
+	s, ctx := gatedServer(t)
+
+	for _, q := range []string{"classified", "visible"} {
+		result, err := s.handleSearchEntities(ctx, makeToolRequest(map[string]any{"query": q}))
+		if err != nil {
+			t.Fatalf("search_entities(%q): %v", q, err)
+		}
+		text := getResultText(t, result)
+		if strings.Contains(text, hiddenID) || strings.Contains(text, hiddenTitle) {
+			t.Errorf("LEAK: hidden entity in search_entities(%q): %s", q, text)
+		}
+		if q == "visible" && !strings.Contains(text, visibleID) {
+			t.Errorf("expected the readable ticket in search_entities(%q), got: %s", q, text)
+		}
+	}
+}
+
 // TestACL_ShowEntity_WithholdsHiddenNeighbor is RR-CFFL52: show_entity on a
 // READABLE entity must not disclose an unreadable neighbor through its
 // embedded relations block — neither the title nor, crucially, the id, since

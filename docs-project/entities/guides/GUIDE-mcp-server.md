@@ -313,11 +313,15 @@ gets through the web UI:
   `principal.tool: "mcp"`.
 - A denied entity is indistinguishable from a nonexistent one.
 
-Note the current scope: **every tool is exposed remotely**, including
-`lua_eval` and `lua_run`. Those run in a sandboxed interpreter with no OS
-libraries and are ACL-gated like everything else, so they are not an escape
-hatch — but if you would rather a new tool were opt-in per transport, that
-allowlist is not built yet.
+- `search_entities` returns only entities the caller may read. A match on a
+  `visible:`-hidden property does not count, and a hidden title is left out
+  of the result.
+
+The Lua tools (`lua_eval`, `lua_run`, `lua_list`) are **not offered
+remotely**. The Lua runtime reads the graph without the ACL read gate, so a
+remote script could read rows and fields its caller cannot. They stay
+available over stdio. Every other tool is exposed remotely; there is no
+per-transport allowlist beyond this exclusion.
 
 ### Differences from stdio
 

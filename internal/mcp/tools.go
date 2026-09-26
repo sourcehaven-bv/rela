@@ -46,7 +46,10 @@ func (s *Server) registerTools() {
 	// Utility tools
 	s.mcp.AddTool(toolExport(), bind(s, selExport, exportHandler.handleExport))
 
-	// Lua scripting tools
+	// Lua scripting tools: stdio only (see WithLuaTools).
+	if !s.luaTools {
+		return
+	}
 	s.mcp.AddTool(toolLuaEval(), bind(s, selLua, luaHandler.handleLuaEval))
 	s.mcp.AddTool(toolLuaRun(), bind(s, selLua, luaHandler.handleLuaRun))
 	s.mcp.AddTool(toolLuaList(), bind(s, selLua, luaHandler.handleLuaList))
@@ -76,7 +79,7 @@ func toolSearchEntities() *mcpgo.Tool {
 		withDescription("Full-text search across entity titles and properties"),
 		withString("query", required(), description("Search query string")),
 		withString("type", description("Restrict search to entity type")),
-		withNumber("limit", description("Maximum number of results (default 20)")),
+		withNumber("limit", description("Maximum number of results (default 20, max 200)")),
 	)
 }
 
