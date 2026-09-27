@@ -20,11 +20,23 @@ the raw searcher and `svc.LuaWriteDeps()` (elevated handles for
 `rela.bypass_acl`), and `internal/cli` may not import `worldreader`. It needs a
 world source read from `data-entry.yaml` (no grant check under NopACL) and a
 binding for the Lua write deps.
-2. **Tracer start node.** `trace_from`, `trace_to` and `find_path` call
-`tracer.GetEntity` on the raw store, so a faced id is "not found".
+2. **Tracer.** `trace_from`, `trace_to` and `find_path` pass the existence
+check through the world but then traverse bare-id edges in the default world.
+3. **Validator and analyze tools.** `analyze_validations` reads the default
+world (the validator is built over the unbound reader), while
+`analyze_properties`/`analyze_unique` now see world primes only and
+`analyze_cardinality` uses AllStates. Decide which set each tool checks.
+4. **Lua `readFace`.** It sends `IDs` + `FaceIn` without `AllStates`, so the
+world is stamped on it and a face outside the chain is not found.
+5. **ACL pushdown.** For a typed query, `visibility.listPushdown` drops
+`q.IDs` and `q.AllStates` and replaces `q.FaceIn`; `BoundReader` works around it
+with type-less queries and an id check.
 
 ## Acceptance
 
 - `rela mcp` list, show, search and Lua reads resolve faced entities through
 `app.default_world`, matching remote MCP.
 - `trace_from` on a faced id starts from its world prime.
+- The analyze tools check a documented, consistent entity set.
+- A typed `ListEntities` through the gated reader honours `IDs`, `AllStates`
+and a caller's `FaceIn`.

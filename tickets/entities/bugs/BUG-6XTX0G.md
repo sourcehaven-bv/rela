@@ -11,7 +11,7 @@ why3: When app.default_world moved server-side (QA finding 1) it was added as ro
 why4: The zero WorldScope is defined as the pre-worlds default world, so a read path that forgets the world compiles and returns plausible results. Faceless types still work, and the MCP and Lua test fixtures declare no faces, so nothing failed.
 why5: 'Systemic: world binding is opt-in per consumer with a silently compatible zero value, and no parity test asserts that web, MCP and Lua see the same entities for the same principal on a faced schema.'
 prevention: Bind the world in the gated read bundle (appbuild.WorldBound) so every consumer of GatedReads inherits it instead of stamping it per call site. Add a faced-schema parity test over the MCP read tools and Lua reads.
-status: review
+status: done
 ---
 
 ## Report
