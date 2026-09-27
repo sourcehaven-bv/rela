@@ -59,8 +59,24 @@ call (hot-reloaded config) and checks the world grant, as `resolveWorld` does
 for the web API. `remoteMCPDeps` wraps the bundle with it.
 5. MCP list and show output carry `face` for faced rows, as search already does.
 
+## Added on review
+
+An agent must be able to read content states other than the default world's
+choice, such as a policy's concept face. The same PR adds:
+
+- a `world` argument on `list_entities`, `search_entities` and
+`show_entity`, checked against the caller's world grant like `?world=`; a denied
+or unknown world is refused with an error;
+- a `list_worlds` tool that names the worlds, their `select:` order, and
+whether the caller may select each one;
+- `other_faces` on `show_entity`: the entity's other faces the caller may
+read, each with its `ID@face` ref.
+
+The stdio server does not resolve worlds and accepts only `world: "default"`.
+
 ## Out of scope
 
 - Web `/_search` ignores the world: separate bug and PR.
+- A `world` argument on Lua reads, `list_relations` and the trace tools: TKT-PQMBL5.
 - Tracer start-node lookup (`trace_from`/`trace_to`) on a faced id: follow-up.
 - Create landing on the world's create face: FEAT-CRWFACE.

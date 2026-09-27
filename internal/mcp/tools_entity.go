@@ -27,7 +27,12 @@ func (s *Server) handleListEntities(
 	limit := args.GetInt("limit", 0)
 	offset := args.GetInt("offset", 0)
 
-	st := s.deps().Store
+	deps := s.deps()
+	ctx, refused := selectWorld(ctx, deps.Worlds, args)
+	if refused != nil {
+		return refused, nil
+	}
+	st := deps.Store
 	q := store.EntityQuery{}
 	if entityType != "" {
 		q.Type = group(s, selTypes).resolveType(entityType)
@@ -86,13 +91,20 @@ func (s *Server) handleShowEntity(
 	}
 	id = trimID(id)
 
-	st := s.deps().Store
+	deps := s.deps()
+	ctx, refused := selectWorld(ctx, deps.Worlds, args)
+	if refused != nil {
+		return refused, nil
+	}
+	st := deps.Store
 	e, getErr := st.GetEntity(ctx, id)
 	if getErr != nil {
 		return entityReadFailed("entity", id, getErr), nil
 	}
 
-	text, err := convertStoreEntity(ctx, e, st, true)
+	ej := buildEntityJSON(ctx, e, st, true)
+	ej.OtherFaces = otherFaces(ctx, st, deps.Meta, e)
+	text, err := marshalJSON(ej)
 	if err != nil {
 		return errorResult(err.Error()), nil
 	}
@@ -116,14 +128,19 @@ func (s *Server) handleSearchEntities(
 		q.Types = []string{group(s, selTypes).resolveType(entityType)}
 	}
 
+	deps := s.deps()
+	ctx, refused := selectWorld(ctx, deps.Worlds, args)
+	if refused != nil {
+		return refused, nil
+	}
 	var hits []search.Hit
-	for hit, searchErr := range s.deps().Searcher.Search(ctx, q) {
+	for hit, searchErr := range deps.Searcher.Search(ctx, q) {
 		if searchErr != nil {
 			return errorResult(fmt.Sprintf("search failed: %v", searchErr)), nil
 		}
 		hits = append(hits, hit)
 	}
-	summaries, err := hydrateHits(ctx, s.deps().Store, hits)
+	summaries, err := hydrateHits(ctx, deps.Store, hits)
 	if err != nil {
 		return errorResult(fmt.Sprintf("search failed: %v", err)), nil
 	}

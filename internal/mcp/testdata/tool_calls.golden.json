@@ -126,6 +126,12 @@
     "text": "[\n  {\n    \"from\": \"DEC-001\",\n    \"relation\": \"addresses\",\n    \"to\": \"REQ-001\"\n  }\n]"
   },
   {
+    "tool": "list_worlds",
+    "args": "{}",
+    "isError": false,
+    "text": "{\n  \"default_world\": \"default\",\n  \"worlds\": [\n    {\n      \"name\": \"default\",\n      \"readable\": true\n    }\n  ],\n  \"note\": \"this server does not resolve worlds; only `default` can be selected\"\n}"
+  },
+  {
     "tool": "lua_eval",
     "args": "{\"code\":\"return 1\"}",
     "isError": false,

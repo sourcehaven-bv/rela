@@ -78,6 +78,13 @@ type Deps struct {
 	Watcher       Watcher
 	ProjectRoot   string
 	Attachments   AttachmentDeps
+
+	// Worlds lets a read tool name the world it reads in, and serves
+	// list_worlds.
+	//
+	// Nil: accepted. The stdio server does not resolve worlds, so a tool
+	// call naming a world other than `default` is refused there.
+	Worlds WorldSelector
 }
 
 // GraphReader is the read capability MCP requires of its store — the exact

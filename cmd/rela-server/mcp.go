@@ -152,8 +152,22 @@ func remoteMCPDeps(svc *appbuild.Services, host dataentry.MCPHost) (relamcp.Deps
 		Watcher:     noopWatcher{},
 		ProjectRoot: svc.Paths().Root,
 		Attachments: remoteAttachmentDeps(svc, host),
+		Worlds:      hostWorlds{host},
 	}, nil
 }
+
+// hostWorlds adapts the host's world functions to [relamcp.WorldSelector].
+type hostWorlds struct{ host dataentry.MCPHost }
+
+func (w hostWorlds) SelectWorld(ctx context.Context, name string) (context.Context, error) {
+	return w.host.SelectWorld(ctx, name)
+}
+
+func (w hostWorlds) WorldReadable(ctx context.Context, name string) (bool, error) {
+	return w.host.WorldReadable(ctx, name)
+}
+
+func (w hostWorlds) DefaultWorld() string { return w.host.DefaultWorld() }
 
 // noopWatcher satisfies [relamcp.Watcher] for the HTTP transport, which has
 // no use for file-change callbacks.

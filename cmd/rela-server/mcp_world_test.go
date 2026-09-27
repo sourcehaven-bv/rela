@@ -296,3 +296,35 @@ func TestRemoteMCPDeps_RequiresAWorldSource(t *testing.T) {
 		t.Error("remoteMCPDeps accepted a host with no world source; MCP would read the default world only")
 	}
 }
+
+// The remote server lets a tool name its world, through the host's selector.
+func TestRemoteMCPDeps_PassesTheHostWorldSelector(t *testing.T) {
+	svc := newWorldServices(t)
+	host := dataentry.MCPHost{
+		ReadWorld: worldSource(t, svc),
+		SelectWorld: func(ctx context.Context, name string) (context.Context, error) {
+			return context.WithValue(ctx, selectedKey{}, name), nil
+		},
+		WorldReadable: func(_ context.Context, name string) (bool, error) { return name == "current", nil },
+		DefaultWorld:  func() string { return "current" },
+	}
+	deps, err := remoteMCPDeps(svc, host)
+	if err != nil {
+		t.Fatalf("remoteMCPDeps: %v", err)
+	}
+	if deps.Worlds == nil {
+		t.Fatal("remoteMCPDeps left Worlds nil; the world argument would be refused remotely")
+	}
+	ctx, err := deps.Worlds.SelectWorld(context.Background(), "current")
+	if err != nil || ctx.Value(selectedKey{}) != "current" {
+		t.Errorf("SelectWorld did not reach the host: %v", err)
+	}
+	if ok, _ := deps.Worlds.WorldReadable(context.Background(), "current"); !ok {
+		t.Error("WorldReadable did not reach the host")
+	}
+	if got := deps.Worlds.DefaultWorld(); got != "current" {
+		t.Errorf("DefaultWorld = %q, want current", got)
+	}
+}
+
+type selectedKey struct{}

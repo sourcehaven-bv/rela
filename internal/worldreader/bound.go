@@ -150,9 +150,9 @@ func (b *BoundReader) first(ctx context.Context, q store.EntityQuery) (*entity.E
 		if err != nil {
 			return nil, err
 		}
-		// The id check guards against a reader that drops IDs from the query,
-		// as the ACL pushdown does for a typed query.
-		if e != nil && slices.Contains(q.IDs, e.ID) {
+		// The id and face checks guard against a reader that replaces the
+		// query's IDs or FaceIn, as the ACL pushdown does for a typed query.
+		if e != nil && slices.Contains(q.IDs, e.ID) && (len(q.FaceIn) == 0 || slices.Contains(q.FaceIn, e.Face)) {
 			return e, nil
 		}
 	}

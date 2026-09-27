@@ -1,12 +1,19 @@
 package mcp
 
-import mcpgo "github.com/modelcontextprotocol/go-sdk/mcp"
+import (
+	"context"
+
+	mcpgo "github.com/modelcontextprotocol/go-sdk/mcp"
+)
 
 func (s *Server) registerTools() {
 	// Entity tools
 	s.mcp.AddTool(toolListEntities(), s.handleListEntities)
 	s.mcp.AddTool(toolShowEntity(), s.handleShowEntity)
 	s.mcp.AddTool(toolSearchEntities(), s.handleSearchEntities)
+	s.mcp.AddTool(toolListWorlds(), func(ctx context.Context, _ *mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+		return handleListWorlds(ctx, s.deps()), nil
+	})
 	s.mcp.AddTool(toolCreateEntity(), s.handleCreateEntity)
 	s.mcp.AddTool(toolUpdateEntity(), s.handleUpdateEntity)
 	s.mcp.AddTool(toolDeleteEntity(), s.handleDeleteEntity)
@@ -61,13 +68,16 @@ func toolListEntities() *mcpgo.Tool {
 		withString("where", description("Filter expression (e.g. status=accepted, priority!=low)")),
 		withNumber("limit", description("Maximum number of results to return")),
 		withNumber("offset", description("Number of results to skip")),
+		withString("world", description(worldArgDescription)),
 	)
 }
 
 func toolShowEntity() *mcpgo.Tool {
 	return newTool("show_entity",
-		withDescription("Get full entity details including properties, content, and relations"),
+		withDescription("Get full entity details including properties, content, and relations. "+
+			"`other_faces` lists the entity's other content states you may read, each with the ID@face ref that reads it"),
 		withString("id", required(), description("Entity ID (e.g. REQ-001), or ID@face (e.g. POL-001@adopted) to read one content state")),
+		withString("world", description(worldArgDescription)),
 	)
 }
 
@@ -77,6 +87,7 @@ func toolSearchEntities() *mcpgo.Tool {
 		withString("query", required(), description("Search query string")),
 		withString("type", description("Restrict search to entity type")),
 		withNumber("limit", description("Maximum number of results (default 20)")),
+		withString("world", description(worldArgDescription)),
 	)
 }
 

@@ -90,6 +90,23 @@ type MCPHost struct {
 	// checked, exactly as for a data-entry API read that names no world
 	// (BUG-6XTX0G). Without it a faced entity is invisible to every MCP tool.
 	ReadWorld worldreader.Source
+
+	// SelectWorld binds the named world for every read on the returned ctx,
+	// for an MCP tool call that names one. It applies the same lookup and
+	// world grant as `?world=` on the data-entry API. Unlike that API it
+	// refuses a denied world with an error rather than an empty result: world
+	// names and their readability are already served by `list_worlds`, so
+	// the error discloses nothing, and an agent needs to know why a world
+	// shows nothing.
+	SelectWorld func(ctx context.Context, name string) (context.Context, error)
+
+	// WorldReadable reports whether the ctx principal may select name.
+	WorldReadable func(ctx context.Context, name string) (bool, error)
+
+	// DefaultWorld names the world a read that names none runs in:
+	// `app.default_world`, or "default" when none is configured. Read per
+	// call because the configuration hot-reloads.
+	DefaultWorld func() string
 }
 
 // mcpHost builds the [MCPHost] for this App.
@@ -102,7 +119,51 @@ func mcpHost(a *App) MCPHost {
 		AttachmentRunner: a.attachmentRunner,
 		WriteLock:        &a.writeMu,
 		ReadWorld:        mcpReadWorld(a),
+		SelectWorld: func(ctx context.Context, name string) (context.Context, error) {
+			return mcpSelectWorld(ctx, a, name)
+		},
+		WorldReadable: func(ctx context.Context, name string) (bool, error) {
+			return mcpWorldReadable(ctx, a, name)
+		},
+		DefaultWorld: func() string {
+			if name := configuredDefaultWorld(a); name != "" {
+				return name
+			}
+			return defaultWorldName
+		},
 	}
+}
+
+// mcpSelectedWorldKey carries the world an MCP tool call selected. Its value
+// is a [store.WorldScope] that has passed the lookup and the grant check.
+type mcpSelectedWorldKey struct{}
+
+// mcpSelectWorld resolves name for the ctx principal and binds it on the
+// returned ctx, where [mcpReadWorld] finds it.
+func mcpSelectWorld(ctx context.Context, a *App, name string) (context.Context, error) {
+	handle, err := resolveNamedWorld(ctx, a.worlds, name)
+	switch {
+	case errors.Is(err, errWorldUnknown):
+		return ctx, fmt.Errorf("no such world %q; list_worlds names the worlds", name)
+	case errors.Is(err, errWorldDenied):
+		return ctx, fmt.Errorf("world %q is not readable by you", name)
+	case err != nil:
+		return ctx, fmt.Errorf("resolving world %q: %w", name, err)
+	}
+	return context.WithValue(ctx, mcpSelectedWorldKey{}, handle.scope), nil
+}
+
+// mcpWorldReadable reports whether the ctx principal may select name. An
+// unknown world is not readable.
+func mcpWorldReadable(ctx context.Context, a *App, name string) (bool, error) {
+	_, err := resolveNamedWorld(ctx, a.worlds, name)
+	switch {
+	case errors.Is(err, errWorldUnknown), errors.Is(err, errWorldDenied):
+		return false, nil
+	case err != nil:
+		return false, err
+	}
+	return true, nil
 }
 
 // mcpReadWorld returns the world source for the remote MCP endpoint.
@@ -112,13 +173,19 @@ func mcpHost(a *App) MCPHost {
 //
 // A caller without a read grant on the configured world reads the default
 // world. On the data-entry API such a caller gets an empty result and can
-// still ask for `?world=default`, which needs no grant. MCP tools take no
-// world, so an empty result would lock the caller out of every tool,
-// including writes the ACL permits. Falling back discloses nothing: the
+// still ask for `?world=default`, which needs no grant. Most MCP tools take
+// no world, so an empty result would lock the caller out of them, including
+// writes the ACL permits. Falling back discloses nothing: the
 // default world is the one any caller may read, and the row and face gates
 // still apply to every entity in it.
+//
+// A world the tool call selected through [MCPHost.SelectWorld] takes
+// precedence over the configured default.
 func mcpReadWorld(a *App) worldreader.Source {
 	return func(ctx context.Context) (store.WorldScope, error) {
+		if scope, ok := ctx.Value(mcpSelectedWorldKey{}).(store.WorldScope); ok {
+			return scope, nil
+		}
 		if memo, ok := ctx.Value(mcpWorldKey{}).(*mcpWorldMemo); ok {
 			memo.once.Do(func() { memo.scope, memo.err = resolveMCPWorld(ctx, a) })
 			return memo.scope, memo.err

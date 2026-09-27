@@ -22,6 +22,16 @@ type entityJSON struct {
 	Properties map[string]any `json:"properties,omitempty"`
 	Content    string         `json:"content,omitempty"`
 	Relations  *relationsJSON `json:"relations,omitempty"`
+	// OtherFaces lists the entity's other faces the caller may read, on
+	// show_entity only. Omitted when there are none.
+	OtherFaces []faceJSON `json:"other_faces,omitempty"`
+}
+
+// faceJSON names another face of an entity and the address that reads it.
+type faceJSON struct {
+	Face  string `json:"face"`
+	Label string `json:"label,omitempty"`
+	Ref   string `json:"ref"`
 }
 
 // relationsJSON groups outgoing and incoming relations.
@@ -66,6 +76,11 @@ type pathStepJSON struct {
 
 // convertStoreEntity converts an entity.Entity to JSON string with optional relations from store.
 func convertStoreEntity(ctx context.Context, e *entity.Entity, st GraphReader, includeRelations bool) (string, error) {
+	return marshalJSON(buildEntityJSON(ctx, e, st, includeRelations))
+}
+
+// buildEntityJSON is [convertStoreEntity] before marshaling.
+func buildEntityJSON(ctx context.Context, e *entity.Entity, st GraphReader, includeRelations bool) entityJSON {
 	ej := entityJSON{
 		ID:         e.ID,
 		Type:       e.Type,
@@ -76,7 +91,7 @@ func convertStoreEntity(ctx context.Context, e *entity.Entity, st GraphReader, i
 	if includeRelations {
 		ej.Relations = buildStoreRelations(ctx, e.ID, e.Face, st)
 	}
-	return marshalJSON(ej)
+	return ej
 }
 
 // convertStoreEntitySummary returns a brief summary map from an entity.Entity.
