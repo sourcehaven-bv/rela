@@ -5,10 +5,15 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"slices"
+	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // Cross-type search under a world (BUG-SMPOZB).
@@ -140,6 +145,106 @@ func TestSearch_DeniedWorldFindsNothing(t *testing.T) {
 			}
 			if len(resp.Data) != 0 {
 				t.Errorf("a denied world must find nothing; got %v", resp.Data)
+			}
+		})
+	}
+}
+
+// reviewWorlds declares `rv`, which prefers a ticket's review face over its
+// published one and excludes a ticket with neither.
+type reviewWorlds struct{}
+
+func (reviewWorlds) Lookup(name string) (store.WorldScope, bool) {
+	if name != "rv" {
+		return store.WorldScope{}, false
+	}
+	return store.NewWorldScope(map[string]store.TypeResolution{
+		"ticket": {
+			Chain:    []entity.Face{entity.Face("review"), entity.Face("published")},
+			Fallback: store.FallbackExclude,
+		},
+	}), true
+}
+
+// TestSearch_FaceGrantIsHonored pins the BUG-SMPOZB review finding: a query
+// without free text lists entities by type, and that listing must apply a
+// `type@face` grant before the world ranks, as the list endpoint does.
+// Otherwise the world picks a withheld face and serves its title.
+func TestSearch_FaceGrantIsHonored(t *testing.T) {
+	const secret = "SECRET"
+	app := newTestAppV1(t)
+	seedEntity(app, &entity.Entity{
+		ID: "TKT-1", Type: "ticket", Properties: map[string]any{"title": secret + " draft"},
+	})
+	for face, title := range map[string]string{"published": "public one", "review": secret + " review"} {
+		if err := app.store.CreateEntity(context.Background(), &entity.Entity{
+			ID: "TKT-1", Type: "ticket", Face: entity.Face(face),
+			Properties: map[string]any{"title": title},
+		}); err != nil {
+			t.Fatalf("seed %s face: %v", face, err)
+		}
+	}
+	seedEntity(app, &entity.Entity{
+		ID: "TKT-2", Type: "ticket", Properties: map[string]any{"title": secret + " only draft"},
+	})
+	app.SetWorlds(reviewWorlds{})
+
+	search := func(t *testing.T, user string, read []string, path string) string {
+		t.Helper()
+		app.acl = mustNewACL(t, &acl.Policy{
+			Roles:       map[string]acl.RoleDef{"r": {Read: read}},
+			Assignments: map[string]string{user: "r"},
+		}, app.store)
+		app.SetPrincipalResolver(func(*http.Request) principal.Principal {
+			return principal.Principal{User: user, Tool: principal.ToolDataEntry}
+		})
+		rec := viewRecord(t, app, path)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: got %d %s", path, rec.Code, rec.Body)
+		}
+		return rec.Body.String()
+	}
+
+	restricted := []string{"ticket@published", "world:rv"}
+	for _, path := range []string{
+		"/api/v1/_search?q=type:ticket",
+		"/api/v1/_search?q=type:ticket&world=rv",
+		"/api/v1/_search?q=prop:title=SECRET%20review&world=rv",
+	} {
+		t.Run(path, func(t *testing.T) {
+			if body := search(t, "alice", restricted, path); strings.Contains(body, secret) {
+				t.Errorf("a ticket@published principal was served a withheld face: %s", body)
+			}
+		})
+	}
+	t.Run("the readable face is still served", func(t *testing.T) {
+		body := search(t, "alice", restricted, "/api/v1/_search?q=type:ticket&world=rv")
+		if !strings.Contains(body, "public one") {
+			t.Errorf("want TKT-1's published face; got %s", body)
+		}
+	})
+	t.Run("control: an unrestricted principal gets the review face", func(t *testing.T) {
+		body := search(t, "bob", []string{"ticket", "world:rv"}, "/api/v1/_search?q=type:ticket&world=rv")
+		if !strings.Contains(body, secret+" review") {
+			t.Errorf("want the review face for an unrestricted reader; got %s", body)
+		}
+	})
+}
+
+// A search result links to the entity page, which asks `_position` for
+// prev/next within the same search. Both must run in the same world, or every
+// faced hit is not_in_scope.
+func TestSearch_PositionAgreesUnderTheDefaultWorld(t *testing.T) {
+	app := seedSearchWorld(t, true)
+	for _, tc := range []struct{ q, id string }{{"narwhal", "TKT-ONLY"}, {"walrus", "TKT-PUB"}} {
+		t.Run(tc.q, func(t *testing.T) {
+			if got := searchIDs(t, app, "/api/v1/_search?q="+tc.q); !slices.Equal(got, []string{tc.id}) {
+				t.Fatalf("search = %v, want [%s]", got, tc.id)
+			}
+			scope := url.QueryEscape(`{"source":"search","q":"` + tc.q + `"}`)
+			rec := viewRecord(t, app, "/api/v1/_position?id="+tc.id+"&scope="+scope)
+			if rec.Code != http.StatusOK {
+				t.Errorf("_position for a search hit: got %d %s", rec.Code, rec.Body)
 			}
 		})
 	}

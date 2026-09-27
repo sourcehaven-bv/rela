@@ -203,15 +203,23 @@ export async function deleteEntity(type: string, id: string): Promise<void> {
  * Searches entities by query text, optionally filtered by type.
  * Pass an AbortSignal to cancel an in-flight request — the command palette
  * uses this to abort superseded searches as the user types.
+ *
+ * `world` selects the world the hits are resolved in. Omitted, the server
+ * applies `app.default_world`; callers on a page pass `useWorld().worldParam`
+ * so search agrees with the page the user is browsing.
  */
 export async function searchEntities(
   query: string,
   type?: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  world?: string
 ): Promise<ListResponse<Entity>> {
   const params: Record<string, string> = { q: query }
   if (type) {
     params.type = type
+  }
+  if (world) {
+    params.world = world
   }
   return api.get<ListResponse<Entity>>('/_search', params, signal)
 }

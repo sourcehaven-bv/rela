@@ -555,7 +555,13 @@ func visibleEntitiesOfType(
 	// the one verdict switch (scopedread.go) rather than reimplementing it —
 	// which is how the RR-GQWRLD world bug reached two sites.
 	rqr := acl.ReadQueryResult{AllowAll: ts.AllowAll, Query: ts.Query}
-	entities, _, err := scopedEntities(ctx, svc, rqr, scopeRequest{Type: typ, Props: props})
+	// The face allowlist comes from the gate directly, because TypeScope
+	// cannot carry it. Without it a `type@face` grant is ignored here and the
+	// world ranks withheld faces too, serving their titles (BUG-SMPOZB
+	// review). It narrows the candidates before the world ranks them, as on
+	// the list path.
+	faces := readGateFromContext(ctx).ReadQuery(ctx, typ).Faces
+	entities, _, err := scopedEntities(ctx, svc, rqr, scopeRequest{Type: typ, Props: props, Faces: faces})
 	return entities, err
 }
 

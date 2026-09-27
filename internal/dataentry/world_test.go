@@ -80,7 +80,7 @@ func TestWorldCapablePath(t *testing.T) {
 		{"/api/v1/_sidepanel/policy/POL-1", false,
 			"the side panel shares executeView but was never scoped; it passes defaultViewWorld()"},
 		{"/api/v1/_documents/report", false, "document render and its cache key are world-blind"},
-		{"/api/v1/_position", false, "position reads through the search path"},
+		{"/api/v1/_position", true, "position recomputes a search or list page's set in its world (BUG-SMPOZB)"},
 		{"/api/v1/_analyze", false, "whole-graph, tracer-backed"},
 		// BUG-2: history WAS refused as "an orthogonal version axis". It is not
 		// orthogonal — `entity_versions` is keyed by content state (TKT-C1XUA8),
@@ -433,6 +433,9 @@ func TestWorldCapableRoutesDoNotUseUngatedReader(t *testing.T) {
 		// bodies by (id, face) through loadRowContent; neither reaches the
 		// entity reader.
 		"handleV1Search": true,
+		// `_position` (BUG-SMPOZB). Reads through resolveScope and the list
+		// pushdown, both world-scoped.
+		"handleV1EntityPosition": true,
 	}
 
 	entries, err := os.ReadDir(".")
@@ -1078,7 +1081,7 @@ func TestDefaultWorld_DoesNotBreakNonWorldCapableRoutes(t *testing.T) {
 	a := appWithDefaultWorld(t, "published")
 	for _, path := range []string{
 		"/api/v1/tickets/TKT-1/relations",
-		"/api/v1/_position",
+		"/api/v1/_analyze",
 	} {
 		got, code := boundWorld(context.Background(), t, a, http.MethodGet, path)
 		if code != http.StatusOK {
@@ -1231,7 +1234,7 @@ func TestAttachWorld_DeniedWorldRefusedLikePermitted(t *testing.T) {
 		"/api/v1/_analyze?world=published",
 		// Underscore routes refused wholesale by the allowlist.
 		"/api/v1/_documents/report?world=published",
-		"/api/v1/_position?world=published",
+		"/api/v1/_sidepanel/ticket/TKT-900?world=published",
 		// A sub-resource of an entity — the third-segment refusal.
 		"/api/v1/tickets/TKT-900/relations?world=published",
 		"/api/v1/tickets/TKT-900/_export?world=published",
