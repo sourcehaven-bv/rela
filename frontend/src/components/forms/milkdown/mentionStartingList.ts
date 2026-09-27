@@ -34,14 +34,23 @@ export const STARTING_LIST_SIZE = 8
  */
 export const RECENTLY_MODIFIED_TTL_MS = 60_000
 
+/** The entity being edited. */
+export interface StartingListSelf {
+  /** The bare id. */
+  id: string
+  type: string
+  /** The face being edited, or '' for an entity without one. */
+  face: string
+}
+
 export interface StartingListSources {
   /**
    * The entity being edited, or null for a new entity. Read on every load,
    * since a form can switch entities without remounting its editor.
    */
-  self: () => { id: string; type: string } | null
+  self: () => StartingListSelf | null
   /** Entities related to `self`. Not called when there is no `self`. */
-  related: (self: { id: string; type: string }) => Promise<Entity[]>
+  related: (self: StartingListSelf) => Promise<Entity[]>
   /** The browser-local recently viewed list, newest first. */
   recent: () => RecentEntity[]
   /** Loads one entity, or null when it is gone or hidden from this user. */
@@ -86,15 +95,17 @@ export function createStartingList(src: StartingListSources): StartingList {
     return rows
   }
 
-  function relatedOnce(self: { id: string; type: string } | null): Promise<Entity[]> {
+  function relatedOnce(self: StartingListSelf | null): Promise<Entity[]> {
     if (!self) return Promise.resolve([])
-    let p = related.get(self.id)
+    // Each face has its own links, so the face is part of the key.
+    const key = `${self.id}@${self.face}`
+    let p = related.get(key)
     if (!p) {
       p = src.related(self).catch(() => {
-        related.delete(self.id)
+        related.delete(key)
         return []
       })
-      related.set(self.id, p)
+      related.set(key, p)
     }
     return p
   }

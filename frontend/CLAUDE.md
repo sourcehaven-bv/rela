@@ -451,6 +451,12 @@ re-derived from the query on every keystroke; the controller keeps no scope of
 its own. The recently viewed list stores only IDs and reloads each through the
 read gate, so localStorage never holds a title.
 
+**Every read the menu makes goes through one world** (`mentionWorld.ts`): the
+world `worldForFace` names for the face being edited, else the page's
+`?world=`. The reference it writes is a bare id either way, so the world only
+decides what can be found and whose title a row shows. Starting lists are kept
+per world, because their caches hold rows resolved in one.
+
 **A type scope is document text, not menu state.** Choosing a type rewrites
 `@ti` to `@ticket:`; `mentionArm.ts` draws a chip over it as a decoration.
 Backspace over the `:` unscopes through ordinary editing, which is why the keymap

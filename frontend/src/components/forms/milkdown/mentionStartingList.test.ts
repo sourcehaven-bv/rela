@@ -13,7 +13,7 @@ function ent(id: string, type = 'ticket'): Entity {
 
 function sources(over: Partial<StartingListSources> = {}): StartingListSources {
   return {
-    self: () => ({ id: 'TKT-SELF', type: 'ticket' }),
+    self: () => ({ id: 'TKT-SELF', type: 'ticket', face: '' }),
     related: vi.fn(async () => []),
     recent: () => [],
     load: vi.fn(async (r) => ent(r.id, r.type)),
@@ -123,6 +123,19 @@ describe('createStartingList', () => {
     t = RECENTLY_MODIFIED_TTL_MS
     await list.load(null)
     expect(recentlyModified).toHaveBeenCalledTimes(3)
+  })
+
+  it('keeps the related entities of each face apart', async () => {
+    let face = 'draft'
+    const related = vi.fn(async () => [ent('TKT-R')])
+    const list = createStartingList(
+      sources({ self: () => ({ id: 'TKT-SELF', type: 'ticket', face }), related })
+    )
+    await list.load(null)
+    face = 'published'
+    await list.load(null)
+    expect(related).toHaveBeenCalledTimes(2)
+    expect(related).toHaveBeenLastCalledWith({ id: 'TKT-SELF', type: 'ticket', face: 'published' })
   })
 
   it('retries a source that failed', async () => {

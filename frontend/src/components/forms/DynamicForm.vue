@@ -342,7 +342,11 @@ const isEdit = computed(() => !!props.entityId)
 /** The entity whose body the editor holds; the `@` menu starts from it. */
 const mentionSelf = computed(() =>
   props.entityId && formConfig.value
-    ? { id: refBareId(props.entityId), type: formConfig.value.entity }
+    ? {
+        id: refBareId(props.entityId),
+        type: formConfig.value.entity,
+        face: refFace(props.entityId),
+      }
     : undefined
 )
 const formMode = computed(() => (isEdit.value ? 'edit' : 'create') as 'create' | 'edit')

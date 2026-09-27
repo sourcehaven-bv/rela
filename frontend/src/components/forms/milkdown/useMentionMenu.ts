@@ -25,12 +25,14 @@
  */
 import { reactive, readonly, watch, type DeepReadonly } from 'vue'
 import { ApiError, getEntity, listRecentlyModified, searchEntities } from '@/api'
+import { useWorld } from '@/composables/useWorld'
 import { useSchemaStore } from '@/stores/schema'
 import type { Entity } from '@/types'
 import { listRecentEntities } from '@/utils/recentEntities'
 import { createMentionMenuMachine, type MentionMenuSnapshot } from './mentionMenuState'
 import { planMention, type MentionPlan, type MentionTypeInfo } from './mentionPlan'
-import { createStartingList, type StartingList } from './mentionStartingList'
+import { createStartingList, type StartingList, type StartingListSelf } from './mentionStartingList'
+import { mentionWorld } from './mentionWorld'
 import { rankMentions } from './rankMentions'
 
 /** What the highlight currently sits on. Enter means different things per kind. */
@@ -122,10 +124,7 @@ export interface MentionTransport {
 }
 
 /** The entity being edited, which the starting list excludes and starts from. */
-export interface MentionSelf {
-  id: string
-  type: string
-}
+export type MentionSelf = StartingListSelf
 
 /**
  * A mention menu wired to the live schema and the API.
@@ -137,22 +136,44 @@ export interface MentionSelf {
  */
 export function useSchemaMentionMenu(self: () => MentionSelf | null): MentionMenuController {
   const schemaStore = useSchemaStore()
+  const { worldParam } = useWorld()
   const typeNames = (): string[] => schemaStore.entityTypeList.map(([name]) => name)
+  // Read per request, so a world switch applies to the next keystroke.
+  const world = (): string | undefined =>
+    mentionWorld(self(), schemaStore.worldForFace, worldParam.value)
 
-  const menu = useMentionMenu({
-    search: async (text, type, signal) => (await searchEntities(text, type, signal)).data,
-    startingList: createStartingList({
+  // One starting list per world: its caches hold rows resolved in one world,
+  // and a row from another would show the wrong face's title, or an entity
+  // that world does not have.
+  const startingLists = new Map<string, StartingList>()
+  const startingListFor = (w: string | undefined): StartingList => {
+    const key = w ?? ''
+    let list = startingLists.get(key)
+    if (!list) {
+      list = createStartingListIn(w)
+      startingLists.set(key, list)
+    }
+    return list
+  }
+
+  function createStartingListIn(w: string | undefined): StartingList {
+    return createStartingList({
       self,
       related: async (s) => {
-        // `include=*` returns the neighbours the principal may read, already
-        // gated server-side; a hidden neighbour is simply absent.
-        const entity = await getEntity(s.type, s.id, { include: '*' })
+        // The face being edited, by its address, so its own links are the
+        // ones offered; the neighbours resolve through `w`. `include=*`
+        // returns only neighbours the principal may read.
+        const address = s.face ? `${s.id}@${s.face}` : s.id
+        const entity = await getEntity(s.type, address, {
+          include: '*',
+          ...(w ? { world: w } : {}),
+        })
         return Object.values(entity.included ?? {})
       },
       recent: listRecentEntities,
       load: async (ref) => {
         try {
-          return await getEntity(ref.type, ref.id)
+          return await getEntity(ref.type, ref.id, w ? { world: w } : undefined)
         } catch (err) {
           // Gone, renamed or hidden from this user: not offered. Any other
           // failure is rethrown so the starting list retries it next time
@@ -161,9 +182,15 @@ export function useSchemaMentionMenu(self: () => MentionSelf | null): MentionMen
           throw err
         }
       },
-      recentlyModified: async (types, limit) => (await listRecentlyModified(types, limit)).data,
+      recentlyModified: async (types, limit) =>
+        (await listRecentlyModified(types, limit, undefined, w)).data,
       allTypes: typeNames,
-    }),
+    })
+  }
+
+  const menu = useMentionMenu({
+    search: async (text, type, signal) => (await searchEntities(text, type, signal, world())).data,
+    startingList: { load: (type) => startingListFor(world()).load(type) },
   })
 
   watch(
