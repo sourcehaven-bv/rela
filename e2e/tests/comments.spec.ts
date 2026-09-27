@@ -144,14 +144,14 @@ test.describe('Comments', () => {
     await comments.suggestOnSelection('integration tests for auth');
 
     await comments.openHighlight('unit tests for auth');
-    await expect(comments.threadDiff().locator('del')).toHaveText('unit tests for auth');
-    await expect(comments.threadDiff().locator('ins')).toHaveText('integration tests for auth');
+    await expect(comments.threadDiffRemoved()).toHaveText('unit tests for auth');
+    await expect(comments.threadDiffAdded()).toHaveText('integration tests for auth');
 
     await comments.acceptInThread();
 
     // The body is rewritten on the server and shown without a reload, and
     // accepting resolves the suggestion.
-    await expect(appPage.locator('.content-body')).toContainText(
+    await expect(comments.entityBody()).toContainText(
       'Write integration tests for auth module.',
     );
     const res = await api.listComments(TYPE, ID);
@@ -159,7 +159,7 @@ test.describe('Comments', () => {
 
     // A reload proves it was stored, not only patched into the view.
     await comments.openEntity(TYPE, ID);
-    await expect(appPage.locator('.content-body')).toContainText(
+    await expect(comments.entityBody()).toContainText(
       'Write integration tests for auth module.',
     );
   });

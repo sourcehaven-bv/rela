@@ -121,9 +121,19 @@ export class CommentsPage extends BasePage {
     await expect(this.page.locator(".tsc-form")).toHaveCount(0);
   }
 
-  /** The removed/added diff of a suggestion in the open thread. */
-  threadDiff(): Locator {
-    return this.page.locator(".tcp [data-testid=suggestion-diff]");
+  /** The text a suggestion in the open thread removes. */
+  threadDiffRemoved(): Locator {
+    return this.page.locator(".tcp [data-testid=suggestion-diff] del");
+  }
+
+  /** The text a suggestion in the open thread adds. */
+  threadDiffAdded(): Locator {
+    return this.page.locator(".tcp [data-testid=suggestion-diff] ins");
+  }
+
+  /** The rendered entity body. */
+  entityBody(): Locator {
+    return this.page.locator(".content-body");
   }
 
   /** Accept the suggestion in the open highlight thread. */
