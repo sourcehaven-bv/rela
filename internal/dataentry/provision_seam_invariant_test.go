@@ -29,6 +29,8 @@ func TestProvisionSeam_EveryWriteHandlerUsesWithProvision(t *testing.T) {
 		"actions.go",
 		"attachment_handler.go",
 		"handlers_attachment.go",
+		"comments_wiring.go",
+		"comments_handler.go",
 	}
 	// Handlers that do not write. Adding one here needs a reason.
 	notWrites := map[string]string{
