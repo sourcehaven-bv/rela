@@ -16,16 +16,14 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"slices"
 	"testing"
-
-	"github.com/Sourcehaven-BV/rela/internal/appbuild"
-	"github.com/Sourcehaven-BV/rela/internal/search"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // redactionMetamodel declares a type with a property a policy can hide.
@@ -389,26 +387,24 @@ assignments:
 	}
 }
 
-// searchIDs runs a gated search as bob and returns the hit ids.
-func searchIDs(t *testing.T, svc interface {
-	GatedReads() appbuild.GatedReadBundle
-}, text string) []string {
+// searchIDs runs q through s and returns the hit ids, failing on an error.
+func searchIDs(ctx context.Context, t *testing.T, s search.Searcher, text string) []string {
 	t.Helper()
 	var ids []string
-	for hit, err := range svc.GatedReads().Searcher.Search(bobCtx(principal.ToolMCP), search.Query{Text: text}) {
+	for h, err := range s.Search(ctx, search.Query{Text: text}) {
 		if err != nil {
-			t.Fatalf("search %q: %v", text, err)
+			t.Fatalf("Search(%q): %v", text, err)
 		}
-		ids = append(ids, hit.ID)
+		ids = append(ids, h.ID)
 	}
 	return ids
 }
 
-// TestGatedReads_SearchHidesRedactedFieldMatch pins the field half of gated
-// search: bob may read the person but not the salary, so searching for the
-// salary value must not find the person. A hit there confirms the hidden
-// value.
-func TestGatedReads_SearchHidesRedactedFieldMatch(t *testing.T) {
+// TestGatedReads_SearchDropsHiddenFieldMatch (TKT-4QSZ8Y): the remote MCP
+// search goes through GatedReads, so a match on a `visible:`-hidden value must
+// not confirm that value. A match on a visible property still finds the row,
+// which proves the drop is field-level rather than the whole type going dark.
+func TestGatedReads_SearchDropsHiddenFieldMatch(t *testing.T) {
 	root := writeRedactionProject(t)
 	svc, err := appbuildOnDisk(t, root)
 	if err != nil {
@@ -416,63 +412,32 @@ func TestGatedReads_SearchHidesRedactedFieldMatch(t *testing.T) {
 	}
 	defer svc.Close()
 
-	if ids := searchIDs(t, svc, "Alice"); !slices.Equal(ids, []string{"PERS-1"}) {
-		t.Errorf("search Alice = %v, want [PERS-1]: a visible field must stay searchable", ids)
+	s := svc.GatedReads().Searcher
+	if _, ok := s.(*visibility.Searcher); !ok {
+		t.Fatalf("GatedReads().Searcher = %T, want *visibility.Searcher", s)
 	}
-	if ids := searchIDs(t, svc, "99000"); len(ids) != 0 {
-		t.Errorf("LEAK: search on the hidden salary value found %v", ids)
+	ctx := bobCtx(principal.ToolMCP)
+	if got := searchIDs(ctx, t, s, "Alice"); len(got) != 1 || got[0] != "PERS-1" {
+		t.Errorf("search on a visible value = %v, want [PERS-1]", got)
+	}
+	if got := searchIDs(ctx, t, s, "99000"); len(got) != 0 {
+		t.Errorf("search on the hidden salary = %v, want no hits — the hit confirms the value", got)
 	}
 }
 
-// TestGatedReads_SearchHidesUnreadableRows pins the row half: a type bob may
-// not read never appears in his search results.
-func TestGatedReads_SearchHidesUnreadableRows(t *testing.T) {
+// TestNoPolicy_GatedSearcherIsRaw pins NopACL parity for search: with no
+// acl.yaml, GatedReads hands out the raw searcher unchanged.
+func TestNoPolicy_GatedSearcherIsRaw(t *testing.T) {
 	root := t.TempDir()
-	writeMetamodelBody(t, root, `version: "1.0"
-entities:
-  person:
-    label: Person
-    plural: people
-    id_prefix: "PERS-"
-    id_type: sequential
-    properties:
-      name: { type: string }
-  secret:
-    label: Secret
-    id_prefix: "SEC-"
-    id_type: sequential
-    properties:
-      name: { type: string }
-relations: {}
-`)
-	writePolicy(t, root, `roles:
-  viewer:
-    read: ["person"]
-assignments:
-  bob: viewer
-`)
-	for _, f := range []struct{ dir, id, typ string }{
-		{"people", "PERS-1", "person"},
-		{"secrets", "SEC-1", "secret"},
-	} {
-		path := filepath.Join(root, "entities", f.dir)
-		if err := os.MkdirAll(path, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		body := "---\nid: " + f.id + "\ntype: " + f.typ + "\nname: Alice\n---\n"
-		if err := os.WriteFile(filepath.Join(path, f.id+".md"), []byte(body), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-
+	writeMetamodelBody(t, root, redactionMetamodel)
 	svc, err := appbuildOnDisk(t, root)
 	if err != nil {
 		t.Fatalf("appbuild.New: %v", err)
 	}
 	defer svc.Close()
 
-	if ids := searchIDs(t, svc, "Alice"); !slices.Equal(ids, []string{"PERS-1"}) {
-		t.Errorf("search Alice = %v, want [PERS-1]: the secret must be absent", ids)
+	if got, want := svc.GatedReads().Searcher, svc.Searcher(); got != want {
+		t.Errorf("GatedReads().Searcher = %T, want the raw searcher %T", got, want)
 	}
 }
 

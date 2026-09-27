@@ -30,6 +30,12 @@ func (s *Server) registerTools() {
 	addTool(s, toolAnalyze(), s.handleAnalyze)
 	addTool(s, toolSchema(), bind(s, selSchemaRes, schemaResourceHandler.handleSchema))
 
+	// Attachment tools
+	addTool(s, toolListAttachments(), bind(s, selAttach, attachmentHandler.handleListAttachments))
+	addTool(s, toolReadAttachment(), bind(s, selAttach, attachmentHandler.handleReadAttachment))
+	addTool(s, toolAttachFile(), bind(s, selAttach, attachmentHandler.handleAttachFile))
+	addTool(s, toolDeleteAttachment(), bind(s, selAttach, attachmentHandler.handleDeleteAttachment))
+
 	// Lua scripting tools
 	addTool(s, toolLuaEval(), bind(s, selLua, luaHandler.handleLuaEval))
 	addTool(s, toolLuaRun(), bind(s, selLua, luaHandler.handleLuaRun))

@@ -5,7 +5,7 @@ title: Decide and document the timing exposure of property-level field redaction
 kind: docs
 priority: medium
 effort: s
-status: backlog
+status: wont-fix
 ---
 
 ## Description
@@ -47,3 +47,7 @@ Whatever is decided, the guide's entity-level *"no hidden-row work to measure
 through timing"* claim needs a qualifying sentence. As written a reader
 reasonably concludes the whole ACL is timing-safe, which is the actively
 misleading part rather than merely the incomplete one.
+
+## Resolution
+
+Closed: Decided in docs/acl-security.md ("Redaction is not constant-time").

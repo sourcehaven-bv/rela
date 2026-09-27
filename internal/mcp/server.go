@@ -81,6 +81,7 @@ type Deps struct {
 	LuaCache      *lua.Cache
 	Watcher       Watcher
 	ProjectRoot   string
+	Attachments   AttachmentDeps
 }
 
 // GraphReader is the read capability MCP requires of its store — the exact
@@ -184,7 +185,7 @@ func (d Deps) validate() error {
 	case d.ProjectRoot == "":
 		return errors.New("mcp: Deps.ProjectRoot is required")
 	}
-	return nil
+	return d.Attachments.validate()
 }
 
 // Watcher is the narrow file-watching capability MCP requires from
@@ -324,6 +325,7 @@ type handlerSet struct {
 	lua       luaHandler
 	schemaRes schemaResourceHandler
 	prompts   promptHandler
+	attach    attachmentHandler
 }
 
 // handlers builds the extracted handler groups a [Server] carries. One
@@ -337,6 +339,7 @@ func (d Deps) handlers() handlerSet {
 		lua:       luaHandler{writeDeps: d.LuaWriteDeps, cache: d.LuaCache, projectRoot: d.ProjectRoot},
 		schemaRes: schemaResourceHandler{store: d.Store, meta: d.Meta},
 		prompts:   promptHandler{store: d.Store, meta: d.Meta, tracer: d.Tracer, types: types},
+		attach:    attachmentHandler{store: d.Store, deps: d.Attachments},
 	}
 }
 
@@ -478,6 +481,9 @@ func serverInstructions(meta *metamodel.Metamodel) string {
 // handlers, and Server.principalMiddleware preserves a principal already
 // stamped there in preference to the construction-time one.
 //
+// The request body limit is raised from the go-sdk's 4 MiB default to fit an
+// attach_file call at [MaxUploadBytes]; see maxRequestBodyBytes.
+//
 // The go-sdk's DNS-rebinding guard is disabled. It rejects any non-loopback
 // Host on a connection accepted over loopback, which is every request in
 // production: rela-server binds 0.0.0.0 and the proxy in front of it connects
@@ -486,10 +492,15 @@ func serverInstructions(meta *metamodel.Metamodel) string {
 // verified-JWT gate (see dataentry.App.SetRemoteMCP), and a rebinding page
 // cannot produce a signed assertion.
 func (s *Server) HTTPHandler() http.Handler {
-	return mcpgo.NewStreamableHTTPHandler(
+	h := mcpgo.NewStreamableHTTPHandler(
 		func(*http.Request) *mcpgo.Server { return s.mcp },
-		&mcpgo.StreamableHTTPOptions{Stateless: true, DisableLocalhostProtection: true},
+		&mcpgo.StreamableHTTPOptions{
+			Stateless:                  true,
+			DisableLocalhostProtection: true,
+			MaxRequestBodyBytes:        maxRequestBodyBytes,
+		},
 	)
+	return newLargeRequestGate(largeRequestSlots).wrap(h)
 }
 
 // Serve starts the MCP server on stdio and blocks until the peer
@@ -527,6 +538,6 @@ func (s *Server) Serve(ctx context.Context) error {
 
 	defer s.deps().Watcher.Stop()
 
-	return s.mcp.Run(ctx, &mcpgo.StdioTransport{})
+	return s.mcp.Run(ctx, stdioTransport())
 	// coverage-ignore-end
 }

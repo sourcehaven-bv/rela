@@ -132,18 +132,23 @@ func titleOrEmpty(id, title string) string {
 type entitySummary struct {
 	ID     string `json:"id"`
 	Type   string `json:"type"`
+	Face   string `json:"face,omitempty"`
 	Title  string `json:"title,omitempty"`
 	Status string `json:"status,omitempty"`
 }
 
 // convertStoreEntitySummary returns the summary form of e.
 func convertStoreEntitySummary(meta *metamodel.Metamodel, e *entity.Entity) entitySummary {
-	return entitySummary{
+	summary := entitySummary{
 		ID:     e.ID,
 		Type:   e.Type,
 		Title:  displayTitle(meta, e),
 		Status: e.Status(),
 	}
+	if !e.Face.IsDefault() {
+		summary.Face = e.Face.String()
+	}
+	return summary
 }
 
 // buildStoreRelations builds relation JSON for an entity using the store.

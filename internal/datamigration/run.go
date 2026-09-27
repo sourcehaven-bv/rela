@@ -19,7 +19,7 @@ import (
 )
 
 // migrationTool is the attribution tool name stamped on every write a
-// migration run makes (store.WithAttribution → last_edited_by_tool on pg).
+// migration run makes (store.WithAttribution → last_edited_by_tool).
 const migrationTool = "data-migration"
 
 // updateBatchSize bounds how many entity updates share one store.Tx. One

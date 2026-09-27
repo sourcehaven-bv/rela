@@ -179,6 +179,13 @@ var toolCalls = map[string]struct {
 	"schema":          {args: `{"type":"requirement"}`},
 	"lua_eval":        {args: `{"code":"return 1"}`},
 	"lua_run":         {args: `{"path":"missing.lua"}`, wantErr: true}, // no scripts dir in fixture
+	// The shared fixture declares no file property; these three decode their
+	// arguments and fail the property check. tools_attachment_test.go covers
+	// the behavior.
+	"list_attachments":  {args: `{"id":"REQ-001"}`},
+	"read_attachment":   {args: `{"id":"REQ-001","property":"title","file_name":"a.txt"}`, wantErr: true},
+	"attach_file":       {args: `{"id":"REQ-001","property":"title","file_name":"a.txt","content":"aGk="}`, wantErr: true},
+	"delete_attachment": {args: `{"id":"REQ-001","property":"title"}`, wantErr: true},
 }
 
 // TestDispatch_AnalyzeEveryCheck drives every analyze check through a real

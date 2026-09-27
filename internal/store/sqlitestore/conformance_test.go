@@ -8,6 +8,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/sqlitedb"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -90,6 +92,10 @@ func TestConformance(t *testing.T) {
 		Attachments: true,
 		TxRollback:  true,
 		Versioning:  true,
+		SweepNow: func(t *testing.T, s store.Store) {
+			t.Helper()
+			require.NoError(t, s.(*sqlitestore.Store).SweepNow(t.Context(), fixedProjection{}, immediateSweep(100)))
+		},
 	})
 }
 

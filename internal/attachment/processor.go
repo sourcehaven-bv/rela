@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 )
 
 // Processor inspects and optionally rewrites an attachment's bytes on the
@@ -65,6 +66,12 @@ type ProcessInfo struct {
 // MIME type, …) so callers distinguish a deliberate 4xx rejection from an
 // internal 5xx failure. Use [Rejectedf] to construct one.
 var ErrRejected = errors.New("attachment: rejected by processor")
+
+// RejectionReason returns the human-readable reason of an error wrapping
+// [ErrRejected], without the sentinel's prefix.
+func RejectionReason(err error) string {
+	return strings.TrimPrefix(err.Error(), ErrRejected.Error()+": ")
+}
 
 // Rejectedf builds a rejection error wrapping [ErrRejected] with a
 // caller-facing message.

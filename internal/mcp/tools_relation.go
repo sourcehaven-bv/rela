@@ -10,6 +10,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 func (s *Server) handleListRelations(
@@ -82,6 +83,14 @@ func (s *Server) handleCreateRelation(
 	opts := entity.RelationOptions{
 		Properties: extractProperties(request),
 		Content:    nilIfEmpty(args.GetString("content", "")),
+	}
+
+	// Gate both endpoints first: the write path answers differently for a
+	// hidden entity and a missing one, which would confirm it exists.
+	for _, id := range []string{fromID, toID} {
+		if !visibility.Readable(ctx, snap.deps.Store, id) {
+			return errorResult("entity not found: " + id), nil
+		}
 	}
 
 	if _, createErr := snap.deps.EntityManager.CreateRelation(ctx, fromID, relType, toID, opts); createErr != nil {

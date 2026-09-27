@@ -5,7 +5,10 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 
+	"github.com/Sourcehaven-BV/rela/internal/attachment"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
 
@@ -56,7 +59,41 @@ func toolForPath(p string) string {
 //
 // Returning an error refuses to build the router at all, so a broken MCP
 // wiring is a startup failure rather than a per-request 500 discovered later.
-type MCPHandlerFactory func() (http.Handler, error)
+type MCPHandlerFactory func(host MCPHost) (http.Handler, error)
+
+// MCPHost is what the App lends the remote MCP server so its attachment tools
+// apply the same upload policy as the web path (TKT-R6U15C). Passed to the
+// factory rather than exposed as App methods, since App is over its method
+// load line.
+type MCPHost struct {
+	// AttachmentPolicy returns the current metamodel and the effective
+	// per-attachment byte limit, from ONE schema snapshot. It is a function,
+	// not a value, because the App reloads its schema at runtime: a value
+	// captured at boot would keep MCP uploads on the old MIME allowlist,
+	// scan and `max_attachment_bytes` after the operator changed them.
+	AttachmentPolicy func() (*metamodel.Metamodel, int64)
+
+	// AttachmentRunner runs scan/transform commands. It is the web path's
+	// runner, so both share its bounded pool. Nil when the runner could not
+	// be built; a configured scan then rejects the upload.
+	AttachmentRunner attachment.CommandRunner
+
+	// WriteLock is the App's mutation mutex. MCP attachment writes hold it so
+	// they serialize with every data-entry write.
+	WriteLock sync.Locker
+}
+
+// mcpHost builds the [MCPHost] for this App.
+func mcpHost(a *App) MCPHost {
+	return MCPHost{
+		AttachmentPolicy: func() (*metamodel.Metamodel, int64) {
+			s := a.schema.Current()
+			return s.Meta, maxAttachmentBytes(s)
+		},
+		AttachmentRunner: a.attachmentRunner,
+		WriteLock:        &a.writeMu,
+	}
+}
 
 // SetRemoteMCP enables the remote MCP endpoint, which is OFF by default.
 //
@@ -93,7 +130,7 @@ func (a *App) SetRemoteMCP(factory MCPHandlerFactory) error {
 			"while rela verifies a bearer token itself. Header identity fails open " +
 			"to \"unknown\". See docs/server-security.md")
 	}
-	h, err := factory()
+	h, err := factory(mcpHost(a))
 	if err != nil {
 		return fmt.Errorf("dataentry: building the MCP handler: %w", err)
 	}

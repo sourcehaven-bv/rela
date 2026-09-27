@@ -278,6 +278,11 @@ CREATE TABLE IF NOT EXISTS entities (
 	properties  TEXT NOT NULL DEFAULT '{}',
 	content     TEXT NOT NULL DEFAULT '',
 	updated_at  TEXT NOT NULL,
+	-- last_edited_by_* record who made the most recent write, so the version
+	-- sweep can attribute a create/update to its real author. NULL means the
+	-- write carried no attribution. Added to older databases by addEditorColumns.
+	last_edited_by_user TEXT,
+	last_edited_by_tool TEXT,
 	PRIMARY KEY (id, face)
 ) STRICT;
 CREATE INDEX IF NOT EXISTS entities_type_idx ON entities(type);
@@ -322,6 +327,9 @@ CREATE TABLE IF NOT EXISTS relations (
 	-- nothing should ever keep it: CreateRelation mints an id from
 	-- rel_record_seq.
 	rel_record_id INTEGER NOT NULL DEFAULT 0,
+	-- Same meaning as on entities.
+	last_edited_by_user TEXT,
+	last_edited_by_tool TEXT,
 	PRIMARY KEY (from_id, from_face, rel_type, to_id)
 ) STRICT;
 CREATE INDEX IF NOT EXISTS relations_from_idx ON relations(from_id);

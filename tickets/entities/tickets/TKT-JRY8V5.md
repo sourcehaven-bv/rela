@@ -5,7 +5,7 @@ title: Gate the launcher routes (/api/open-file, handleOpenURL) — currently AC
 kind: enhancement
 priority: medium
 effort: s
-status: backlog
+status: wont-fix
 ---
 
 ## Description
@@ -98,3 +98,8 @@ same gate
 producing command (regression test — this is what a naive gate breaks)
 - The `handleOpenURL` mount decision is recorded in the code comment
 - `docs/acl-security.md` states the launcher routes' authorization posture
+
+## Resolution
+
+Closed: Obsolete: /api/open-file was replaced by the token-gated
+/api/command-file download.
