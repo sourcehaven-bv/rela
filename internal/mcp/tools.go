@@ -36,7 +36,10 @@ func (s *Server) registerTools() {
 	addTool(s, toolAttachFile(), bind(s, selAttach, attachmentHandler.handleAttachFile))
 	addTool(s, toolDeleteAttachment(), bind(s, selAttach, attachmentHandler.handleDeleteAttachment))
 
-	// Lua scripting tools
+	// Lua scripting tools: stdio only (see WithLuaTools).
+	if !s.luaTools {
+		return
+	}
 	addTool(s, toolLuaEval(), bind(s, selLua, luaHandler.handleLuaEval))
 	addTool(s, toolLuaRun(), bind(s, selLua, luaHandler.handleLuaRun))
 }
