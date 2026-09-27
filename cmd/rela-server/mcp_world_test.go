@@ -192,8 +192,8 @@ func searchIDs(t *testing.T, s search.Searcher) []string {
 }
 
 // TestRemoteMCPDeps_FacedEntitiesResolveThroughTheWorld is the BUG-6XTX0G
-// regression. Every remote MCP read handle — the tools' store and searcher,
-// and the Lua reader and searcher — must serve a faced entity through the
+// regression. Every remote MCP read handle, the store and the searcher, must
+// serve a faced entity through the
 // deployment's default world, serve an explicit ID@face literally, and still
 // hide a type the role may not read.
 func TestRemoteMCPDeps_FacedEntitiesResolveThroughTheWorld(t *testing.T) {
@@ -208,7 +208,6 @@ func TestRemoteMCPDeps_FacedEntitiesResolveThroughTheWorld(t *testing.T) {
 		GetEntity(ctx context.Context, id string) (*entity.Entity, error)
 	}{
 		"tools store": deps.Store,
-		"lua reader":  deps.LuaWriteDeps.VisibleReader,
 	}
 	for name, r := range readers {
 		t.Run(name+" resolves a bare id", func(t *testing.T) {
@@ -240,18 +239,8 @@ func TestRemoteMCPDeps_FacedEntitiesResolveThroughTheWorld(t *testing.T) {
 			t.Errorf("list policy = %v, want %v", got, want)
 		}
 	})
-	t.Run("lua reader lists the faced type", func(t *testing.T) {
-		got := listIDs(t, func(yield func(*entity.Entity, error) bool) {
-			deps.LuaWriteDeps.VisibleReader.ListEntities(ctx, store.EntityQuery{Type: "policy"})(yield)
-		})
-		if want := []string{"POL-001@adopted", "POL-002@adopted"}; !slices.Equal(got, want) {
-			t.Errorf("list policy = %v, want %v", got, want)
-		}
-	})
-
 	searchers := map[string]search.Searcher{
 		"tools searcher": deps.Searcher,
-		"lua searcher":   deps.LuaWriteDeps.Searcher,
 	}
 	for name, s := range searchers {
 		t.Run(name+" finds the faced entity and hides the unreadable one", func(t *testing.T) {
