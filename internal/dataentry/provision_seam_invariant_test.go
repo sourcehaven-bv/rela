@@ -16,8 +16,8 @@ import (
 // per-handler bypass the reject design review found. Before TKT-WE0S2K the
 // guard keyed on the process-wide write lock, which every handler had to take;
 // with that lock gone, the invariant is stated directly: every handle* method
-// on writeHandler and attachmentHandler calls withProvision, unless it is
-// listed in notWrites below.
+// on writeHandler and attachmentHandler, and every route in otherWrites,
+// calls withProvision, unless it is listed in notWrites below.
 //
 // This is a source check rather than a driven test because the action and
 // attachment paths need heavy fixture setup to drive; the CRUD path IS driven
@@ -38,8 +38,12 @@ func TestProvisionSeam_EveryWriteHandlerUsesWithProvision(t *testing.T) {
 		"handleV1GetAttachment":       "read",
 		"handleV1AttachmentRoute":     "dispatcher; the PUT/DELETE handlers it calls provision",
 		"handleV1AttachmentFileRoute": "dispatcher; the GET/DELETE handlers it calls provision",
+		"handleV1Comments": "dispatcher; comment writes go to the comment store, not the graph, " +
+			"and commentAccept, the one entity write it routes to, provisions",
 	}
-	receivers := map[string]bool{"writeHandler": true, "attachmentHandler": true}
+	receivers := map[string]bool{"writeHandler": true, "attachmentHandler": true, "commentsHandler": true}
+	// Write routes whose names do not start with "handle".
+	otherWrites := map[string]bool{"commentAccept": true}
 
 	fset := token.NewFileSet()
 	seen := 0
@@ -50,7 +54,9 @@ func TestProvisionSeam_EveryWriteHandlerUsesWithProvision(t *testing.T) {
 		}
 		for _, decl := range f.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Recv == nil || !strings.HasPrefix(fn.Name.Name, "handle") {
+			if !ok || fn.Recv == nil ||
+				(!strings.HasPrefix(fn.Name.Name, "handle") && !otherWrites[fn.Name.Name]) {
+
 				continue
 			}
 			star, ok := fn.Recv.List[0].Type.(*ast.StarExpr)
