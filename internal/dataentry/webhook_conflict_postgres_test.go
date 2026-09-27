@@ -561,6 +561,13 @@ func TestWebhookConflict_SchemaPinnedDSNIsIsolated(t *testing.T) {
 	).Scan(&inA))
 	require.Equal(t, 1, inA, "the row must be in the pinned schema (unqualified name resolves there)")
 
+	// A fresh database has no public.entities at all, which also means the row
+	// did not leak there.
+	var publicTable *string
+	require.NoError(t, poolA.QueryRow(ctx, `SELECT to_regclass('public.entities')::text`).Scan(&publicTable))
+	if publicTable == nil {
+		return
+	}
 	var inPublic int
 	require.NoError(t, poolA.QueryRow(ctx,
 		`SELECT count(*) FROM public.entities WHERE id = $1`, "INC-ISOLATED",
