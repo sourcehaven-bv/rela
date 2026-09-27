@@ -10,6 +10,7 @@ import (
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/nextaction"
+	"github.com/Sourcehaven-BV/rela/internal/relresolve"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/userstate"
 )
@@ -262,6 +263,7 @@ func (a *App) nextActionOptions() nextaction.OptionFunc {
 		}
 		out := make([]nextaction.PickOption, 0, len(entities))
 		s := a.State()
+		ctx = primeVerdicts(ctx, a.fieldResolver, entities)
 		for _, e := range entities {
 			// Redact BEFORE safeDisplayTitle: its guard is presence-based
 			// ("is the display property missing?"), so against an unredacted
@@ -304,6 +306,7 @@ func (a *App) queryCandidates(
 		return nil, fmt.Errorf("next-action query %q: %w", query, err)
 	}
 	out := make([]nextaction.Candidate, 0, len(entities))
+	ctx = primeVerdicts(ctx, a.fieldResolver, entities)
 	for _, e := range entities {
 		out = append(out, nextaction.Candidate{Entity: a.redactedForSuggestion(ctx, e)})
 	}
@@ -463,3 +466,49 @@ type NextActionMatcherFunc func(
 // whole request (the binder found the request's identity inconsistent), and
 // the handler reports it rather than resolving without a scope.
 type NextActionRequestScope func(ctx context.Context) (context.Context, error)
+
+// nextActionPageMatcher is the capability of a compiled next-action matcher
+// that judges a whole source at once, answering `related(...)` with the gate
+// and store query it is handed (TKT-205V2N).
+type nextActionPageMatcher interface {
+	MatchAllWith(
+		ctx context.Context, es []*entityPkg.Entity, gate relresolve.Gate, match relresolve.Match,
+	) ([]bool, error)
+}
+
+// gatedNextActionMatchers hands the engine matchers that answer a condition's
+// `related(...)` under the request's own read gate and world, like a view
+// condition, so a suggestion never rests on an entity the reader cannot see.
+func gatedNextActionMatchers(lookup nextaction.MatcherFunc, st store.GraphQueryer) nextaction.MatcherFunc {
+	return func(id string) (nextaction.Matcher, bool) {
+		m, ok := lookup(id)
+		if !ok {
+			return nil, false
+		}
+		pm, ok := m.(nextActionPageMatcher)
+		if !ok {
+			return m, true
+		}
+		return gatedNextActionMatcher{Matcher: m, page: pm, st: st}, true
+	}
+}
+
+type gatedNextActionMatcher struct {
+	nextaction.Matcher
+	page nextActionPageMatcher
+	st   store.GraphQueryer
+}
+
+// Prefilters forwards [ConditionPrefilterer], which the wrapper would
+// otherwise hide from the candidate query.
+func (g gatedNextActionMatcher) Prefilters(ctx context.Context, meta *metamodel.Metamodel) []store.PropPredicate {
+	if p, ok := g.Matcher.(ConditionPrefilterer); ok {
+		return p.Prefilters(ctx, meta)
+	}
+	return nil
+}
+
+// MatchAll implements [nextaction.BatchMatcher].
+func (g gatedNextActionMatcher) MatchAll(ctx context.Context, es []*entityPkg.Entity) ([]bool, error) {
+	return g.page.MatchAllWith(ctx, es, traversalGateFromContext(ctx).GateTraversal, pageMatch(g.st))
+}

@@ -5,7 +5,7 @@ title: Command file actions (open/reveal) launch xdg-open on the server — no-o
 kind: enhancement
 priority: medium
 effort: m
-status: backlog
+status: wont-fix
 ---
 
 ## Description
@@ -102,3 +102,8 @@ Open/Reveal do nothing.
 
 Reproduced on `f25fa238` and current `develop`. On `develop` the handler moved
 into `command_handler.go`/`commands.go` via a refactor; behaviour unchanged.
+
+## Resolution
+
+Closed: Obsolete: /api/open-file was replaced by the token-gated
+/api/command-file download.

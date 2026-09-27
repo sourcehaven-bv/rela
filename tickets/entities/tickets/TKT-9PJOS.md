@@ -5,7 +5,7 @@ title: Reload-during-write conformance test in storetest
 kind: test
 priority: medium
 effort: s
-status: backlog
+status: wont-fix
 ---
 
 ## Problem
@@ -42,3 +42,7 @@ fsstore/memstore implementations (closes RR-065O2).
 - They fail when a regression reintroduces a torn-snapshot read or a
 goroutine-leak path.
 - Documented in `internal/store/doc.go` "Reload contract" section.
+
+## Resolution
+
+Closed: Obsolete: store.Store no longer has a Reload method.

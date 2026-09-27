@@ -7,6 +7,8 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/predicate"
+	"github.com/Sourcehaven-BV/rela/internal/relresolve"
 )
 
 // ViewConditionMatcher restates the method set internal/dataentry
@@ -18,7 +20,7 @@ import (
 // identical at the call site; a drift would be a compile error at the
 // SetViewConditions call in cmd/, which is where they meet.
 type ViewConditionMatcher interface {
-	Matches(ctx context.Context, e *entity.Entity) (bool, error)
+	MatchPage(ctx context.Context, rows []*entity.Entity, gate relresolve.Gate, match relresolve.Match) ([]bool, error)
 }
 
 // ViewConditions compiles the `condition:` of every list and kanban, adapting
@@ -46,6 +48,66 @@ func ViewConditions(
 			// NextActionMatchers guards against for the same reason.
 			return nil, false
 		}
-		return m, true
+		return viewConditionMatcher{m: m, meta: meta}, true
+	}, nil
+}
+
+// viewConditionMatcher answers a view condition for a page of rows. Its
+// `related(...)` are answered for the whole page first, with the gate and
+// store query the caller passes: the request's read gate, so a condition
+// never sees an entity the list could not show (TKT-205V2N).
+type viewConditionMatcher struct {
+	m    *conditionlint.ViewConditionMatcher
+	meta *metamodel.Metamodel
+}
+
+// MatchPage returns one verdict per row, in order. An evaluation error is
+// returned, never read as "no match".
+func (v viewConditionMatcher) MatchPage(
+	ctx context.Context, rows []*entity.Entity, gate relresolve.Gate, match relresolve.Match,
+) ([]bool, error) {
+	bound, err := bindPage(ctx, v.meta, gate, match, v.m.EntityType(), rows, v.m.Program())
+	if err != nil {
+		return nil, err
+	}
+	out := make([]bool, len(rows))
+	for i, e := range rows {
+		if out[i], err = v.m.MatchesWith(ctx, e, bound(e)); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+// bindPage answers prog's `related(...)` for the rows of entityType and
+// returns the per-row resolver. With no traversal it makes no store call and
+// every row gets nil. A row of another type gets nil too; its evaluation
+// then fails rather than guessing.
+func bindPage(
+	ctx context.Context, meta *metamodel.Metamodel, gate relresolve.Gate, match relresolve.Match,
+	entityType string, rows []*entity.Entity, prog *predicate.Program,
+) (func(*entity.Entity) predicate.TraversalFunc, error) {
+	if len(prog.Traversals()) == 0 {
+		return func(*entity.Entity) predicate.TraversalFunc { return nil }, nil
+	}
+	b, err := relresolve.NewBinder(meta, gate, match)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(rows))
+	for _, e := range rows {
+		if e.Type == entityType {
+			ids = append(ids, e.ID)
+		}
+	}
+	bound, err := b.Bind(ctx, entityType, ids, prog)
+	if err != nil {
+		return nil, err
+	}
+	return func(e *entity.Entity) predicate.TraversalFunc {
+		if e.Type != entityType {
+			return nil
+		}
+		return bound(e.ID)
 	}, nil
 }

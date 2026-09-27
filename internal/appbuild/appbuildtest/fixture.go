@@ -28,6 +28,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/relresolve"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/search/bleveindex"
@@ -156,7 +157,7 @@ func New(meta *metamodel.Metamodel, opts ...Option) *appbuild.Services {
 	searcher := resolveSearcher(st, searchBackend)
 	readDeps := buildReadDeps(st, tr, searcher, meta, cfg.paths)
 
-	autoEngine, cascadeRunner := buildAutomation(meta)
+	autoEngine, cascadeRunner := buildAutomation(meta, st)
 	templater := templating.NewFSTemplater(cfg.fs, cfg.paths)
 	cfgLoader := config.NewFSLoader(cfg.fs, cfg.paths.Root)
 	stateKV := mustBuildStateKV(cfg.fs, cfg.paths)
@@ -239,6 +240,15 @@ func New(meta *metamodel.Metamodel, opts ...Option) *appbuild.Services {
 		}
 	}
 
+	valBinder, err := relresolve.NewStoreBinder(meta, relresolve.Ungated, st)
+	if err != nil {
+		panic(fmt.Sprintf("appbuildtest.New: build traversal binder: %v", err))
+	}
+	val, err := validator.New(st, meta, readDeps, valBinder)
+	if err != nil {
+		panic(fmt.Sprintf("appbuildtest.New: build validator: %v", err))
+	}
+
 	svc, err := appbuild.NewFromCollaborators(appbuild.Collaborators{
 		FS:            cfg.fs,
 		Paths:         cfg.paths,
@@ -247,7 +257,7 @@ func New(meta *metamodel.Metamodel, opts ...Option) *appbuild.Services {
 		Searcher:      searcher,
 		EntityManager: mgr,
 		Tracer:        tr,
-		Validator:     validator.New(st, meta, readDeps),
+		Validator:     val,
 		Templater:     templater,
 		CfgLoader:     cfgLoader,
 		StateKV:       stateKV,
@@ -342,11 +352,15 @@ func buildReadDeps(st store.Store, tr tracer.Tracer, searcher search.Searcher,
 	}
 }
 
-func buildAutomation(meta *metamodel.Metamodel) (*automation.Engine, *autocascade.Runner) {
+func buildAutomation(meta *metamodel.Metamodel, st store.Store) (*automation.Engine, *autocascade.Runner) {
 	if len(meta.Automations) == 0 {
 		return nil, nil
 	}
-	autoEngine, err := automation.NewEngineFromMetamodel(meta, meta.Automations)
+	traversals, err := relresolve.NewStoreBinder(meta, relresolve.Ungated, st)
+	if err != nil {
+		panic(fmt.Sprintf("appbuildtest.New: build traversal binder: %v", err))
+	}
+	autoEngine, err := automation.NewEngineFromMetamodel(meta, meta.Automations, automation.WithTraversals(traversals))
 	if err != nil {
 		panic(fmt.Sprintf("appbuildtest.New: build automation engine: %v", err))
 	}

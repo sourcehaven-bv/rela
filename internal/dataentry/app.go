@@ -26,6 +26,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/migration"
 	"github.com/Sourcehaven-BV/rela/internal/openapi"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/relresolve"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/state"
@@ -90,7 +91,7 @@ type appEntityWriter interface {
 // state (logo, palette, user defaults) lives in its own self-synchronized
 // service, not the snapshot.
 //
-// Reloads (triggered by the file watcher or by Reload) derive a new Schema
+// Reloads (triggered by the file watcher via reloadConfig) derive a new Schema
 // and publish it atomically via a.schema.Reload. The previous snapshot is
 // garbage-collected once no reader holds it.
 //
@@ -396,9 +397,14 @@ type App struct {
 
 	// schema publishes the current reloadable co-derived core (config,
 	// metamodel, style map, OpenAPI generator). Readers: a.State(). Writers:
-	// the watcher's reload path (rebuildState → schema.Reload). Initial
+	// the watcher's reload path (reloadConfig → schema.Reload). Initial
 	// snapshot is published in NewApp.
 	schema schemaProvider
+
+	// reloadMu serializes reloadConfig. schema.Reload publishes by
+	// load-then-store, so two overlapping reloads could publish the older
+	// file last. Readers never take it; they go through a.State().
+	reloadMu sync.Mutex
 
 	// writeMu serializes mutation handlers (CreateEntity, UpdateEntity,
 	// etc.) against each other. Readers never take it.
@@ -724,6 +730,26 @@ func gatedScriptReader(aclImpl acl.ACL, store store.Store, redactor visibility.F
 	return sr
 }
 
+// scriptTraversalGate authorizes a validation rule's traversal under the same
+// tier as [gatedScriptReader], resolved at call time because a.acl is set
+// after construction. Deriving both from a.acl, not from the request on ctx,
+// keeps a rule's related() from seeing more than its reads: a ctx without the
+// middleware's read gate is refused under a policy, not answered ungated.
+func scriptTraversalGate(a *App) relresolve.Gate {
+	return func(ctx context.Context, candidateType string, hop acl.TraversalHop) (*store.RelationPredicate, error) {
+		d, ok := a.acl.(*acl.Declarative)
+		if !ok || d == nil {
+			return relresolve.Ungated(ctx, candidateType, hop)
+		}
+		gate, err := visibility.NewDeclarativeGate(d)
+		if err != nil {
+			// coverage-ignore: invariant: d is non-nil here
+			return nil, fmt.Errorf("%w: %w", acl.ErrTraversalUnsupported, err)
+		}
+		return gate.GateTraversal(ctx, candidateType, hop)
+	}
+}
+
 // scriptTracer wraps the tracer in the visibility decorator when a
 // Declarative policy is configured. Trace bindings are unchanged either
 // way — pruning happens inside the decorator.
@@ -836,7 +862,7 @@ func (a *App) SetJWTGate(cfg JWTGateConfig) error {
 // [App.StartWatching] via the [storeWatcher] interface; callers do
 // not wire it.
 //
-//nolint:gocognit,funlen // composition root: validates and wires many optional collaborators, each guarded independently; the branches are wiring steps, not shared logic to extract.
+//nolint:funlen // composition root: validates and wires many optional collaborators, each guarded independently; the branches are wiring steps, not shared logic to extract.
 func NewApp(
 	fs storage.FS,
 	paths *project.Context,
@@ -912,70 +938,8 @@ func NewApp(
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", ConfigFile, err)
 	}
-	// Check for deprecated syntax that needs migration
-	configPath := filepath.Join(paths.Root, ConfigFile)
-	detections := migration.DetectBytes(cfgData, migration.FileTypeDataEntry)
-	if len(detections) > 0 {
-		return nil, &migration.Error{
-			FilePath:   configPath,
-			Detections: detections,
-		}
-	}
-
-	var cfg Config
-	if unmarshalErr := yaml.Unmarshal(cfgData, &cfg); unmarshalErr != nil {
-		return nil, fmt.Errorf("parsing %s: %w", ConfigFile, unmarshalErr)
-	}
-
-	// Validate config against metamodel
-	if validationErr := ValidateConfig(cfgData, &cfg, meta); validationErr != nil {
-		return nil, fmt.Errorf("invalid %s: %w", ConfigFile, validationErr)
-	}
-
-	// Fill in calendar defaults. AFTER validation, deliberately: normalizing
-	// first would replace an author's invalid default_view with "month" and
-	// report nothing, turning a typo into silently different behavior.
-	dataentryconfig.NormalizeCalendars(&cfg)
-	dataentryconfig.NormalizeGantts(&cfg)
-
-	// Non-fatal configuration warnings (e.g. a relation filter control whose
-	// incoming direction targets a type the relation never points to). Logged,
-	// not fatal — the app still serves, the filter just returns no rows.
-	for _, w := range CollectConfigWarnings(&cfg, meta) {
-		slog.Warn("data-entry config warning", "detail", w)
-	}
-
-	// Verify action scripts exist on disk (catches typos at startup).
-	// Skip set-only actions which have no script.
-	for id, action := range cfg.Actions {
-		if action.Script == "" {
-			continue
-		}
-		if err := script.CheckActionScriptExists(paths.Root, action.Script); err != nil {
-			return nil, fmt.Errorf("invalid %s: action %q: %w", ConfigFile, id, err)
-		}
-	}
-
-	// Warn about scripts that mail without the grant (TKT-JVHSOZ). AFTER the
-	// existence check above, so a project with a missing script fails on that
-	// rather than on a lint that could not read it. See mailgate.go for why
-	// this is a hint rather than a check.
-	warnUngatedMailActionsFromDisk(cfg.Actions, paths.Root)
-
-	// Verify document scripts exist on disk. Shell-command documents are
-	// not checkable this way (the binary may be on PATH at render time
-	// but unavailable now); Lua scripts live in scripts/ under the
-	// project root so existence can be verified upfront.
-	for id, doc := range cfg.Documents {
-		if doc.Script == "" {
-			continue
-		}
-		if err := script.CheckDocumentScriptExists(paths.Root, doc.Script); err != nil {
-			return nil, fmt.Errorf("invalid %s: document %q: %w", ConfigFile, id, err)
-		}
-	}
-
-	if err := checkExportRenderScripts(cfg, paths.Root); err != nil {
+	cfg, err := loadConfig(cfgData, meta, paths.Root)
+	if err != nil {
 		return nil, err
 	}
 
@@ -984,7 +948,7 @@ func NewApp(
 	slog.Info("loaded project", "entities", entCount, "relations", relCount)
 
 	// Build style map from config styles
-	styleMap, styledTypes := buildStyleMap(&cfg, meta)
+	styleMap, styledTypes := buildStyleMap(cfg, meta)
 
 	scriptEngine := script.NewEngine()
 	app := &App{
@@ -1063,7 +1027,10 @@ func NewApp(
 		Meta:          meta,
 		ProjectRoot:   paths.Root,
 	}
-	val := validator.New(gatedReader, meta, readDeps)
+	val, valErr := newGatedValidator(gatedReader, scriptTraversalGate(app), meta, readDeps, st)
+	if valErr != nil {
+		return nil, valErr
+	}
 	app.validator = val
 
 	// analyzeService entity reads route through the same gated reader; relation
@@ -1161,7 +1128,7 @@ func NewApp(
 	// state lives here; there are no convenience aliases on App to keep
 	// in sync.
 	app.schema.Publish(&Schema{
-		Cfg:         &cfg,
+		Cfg:         cfg,
 		Meta:        meta,
 		StyleMap:    styleMap,
 		StyledTypes: styledTypes,
@@ -1224,7 +1191,7 @@ func NewApp(
 	// commentsHandler owns the commentary routes, likewise extracted to keep
 	// App under its method cap. Built unconditionally: the SERVICE it wraps is
 	// installed later by SetComments and stays nil when commenting is off.
-	app.comments = newCommentsHandler(app)
+	app.comments = newCommentsHandler(app, em)
 
 	// attachmentHandler owns the entity-attachment routes. Constructed after
 	// the runner wiring above so it captures the resolved runner. The acl/
@@ -1294,6 +1261,76 @@ func NewApp(
 	return app, nil
 }
 
+// loadConfig turns the raw bytes of data-entry.yaml into a validated,
+// normalized Config. It is the single pipeline for both startup (NewApp) and
+// hot reload (App.reloadConfig), so a config the server would refuse at boot
+// is refused on reload too (TKT-IMBOK). It logs non-fatal config warnings.
+//
+// Nil: never returned with a nil error.
+func loadConfig(cfgData []byte, meta *metamodel.Metamodel, root string) (*Config, error) {
+	// Check for deprecated syntax that needs migration
+	configPath := filepath.Join(root, ConfigFile)
+	detections := migration.DetectBytes(cfgData, migration.FileTypeDataEntry)
+	if len(detections) > 0 {
+		return nil, &migration.Error{
+			FilePath:   configPath,
+			Detections: detections,
+		}
+	}
+
+	var cfg Config
+	if unmarshalErr := yaml.Unmarshal(cfgData, &cfg); unmarshalErr != nil {
+		return nil, fmt.Errorf("parsing %s: %w", ConfigFile, unmarshalErr)
+	}
+
+	// Validate config against metamodel
+	if validationErr := ValidateConfig(cfgData, &cfg, meta); validationErr != nil {
+		return nil, fmt.Errorf("invalid %s: %w", ConfigFile, validationErr)
+	}
+
+	// Fill in calendar defaults. AFTER validation, deliberately: normalizing
+	// first would replace an author's invalid default_view with "month" and
+	// report nothing, turning a typo into silently different behavior.
+	dataentryconfig.NormalizeCalendars(&cfg)
+	dataentryconfig.NormalizeGantts(&cfg)
+
+	// Verify action scripts exist on disk (catches typos at startup).
+	// Skip set-only actions which have no script.
+	for id, action := range cfg.Actions {
+		if action.Script == "" {
+			continue
+		}
+		if err := script.CheckActionScriptExists(root, action.Script); err != nil {
+			return nil, fmt.Errorf("invalid %s: action %q: %w", ConfigFile, id, err)
+		}
+	}
+
+	if err := checkDocumentScripts(cfg.Documents, root); err != nil {
+		return nil, err
+	}
+
+	if err := checkExportRenderScripts(&cfg, root); err != nil {
+		return nil, err
+	}
+
+	// Warnings come after every fatal check, so a rejected config does not
+	// leave warnings in the log for a file that never took effect.
+	//
+	// Non-fatal configuration warnings (e.g. a relation filter control whose
+	// incoming direction targets a type the relation never points to). Logged,
+	// not fatal — the app still serves, the filter just returns no rows.
+	for _, w := range CollectConfigWarnings(&cfg, meta) {
+		slog.Warn("data-entry config warning", "detail", w)
+	}
+
+	// Warn about scripts that mail without the grant (TKT-JVHSOZ). AFTER the
+	// existence checks, so a project with a missing script fails on that
+	// rather than on a lint that could not read it. See mailgate.go for why
+	// this is a hint rather than a check.
+	warnUngatedMailActionsFromDisk(cfg.Actions, root)
+	return &cfg, nil
+}
+
 // checkExportRenderScripts verifies every configured export render override
 // resolves to a real script under scripts/, for the same reason and by the
 // same mechanism as the documents:/actions: checks in NewApp — an operator
@@ -1302,7 +1339,7 @@ func NewApp(
 // Both override kinds are checked. The per-type one (views.<type>.export_render)
 // went unverified until the per-list one was added, which was an oversight
 // rather than a decision.
-func checkExportRenderScripts(cfg Config, root string) error {
+func checkExportRenderScripts(cfg *Config, root string) error {
 	for id, list := range cfg.Lists {
 		if list.ExportRender == "" {
 			continue
@@ -1439,4 +1476,37 @@ func newViewsHandler(app *App, st store.Store, logo *logoStore) *viewsHandler {
 			return edges, err
 		},
 	}
+}
+
+// newGatedValidator builds the request-path validator. gate must answer rule
+// traversals under the same tier as reader.
+func newGatedValidator(
+	reader validator.EntityLister, gate relresolve.Gate, meta *metamodel.Metamodel, deps lua.ReadDeps,
+	st store.GraphQueryer,
+) (*validator.GenericValidator, error) {
+	b, err := relresolve.NewStoreBinder(meta, gate, st)
+	if err != nil {
+		return nil, fmt.Errorf("dataentry: validator traversals: %w", err)
+	}
+	val, err := validator.New(reader, meta, deps, b)
+	if err != nil {
+		return nil, fmt.Errorf("dataentry: validator: %w", err)
+	}
+	return val, nil
+}
+
+// checkDocumentScripts verifies document scripts exist on disk. Shell-command
+// documents are not checkable this way (the binary may be on PATH at render
+// time but unavailable now); Lua scripts live in scripts/ under the project
+// root so existence can be verified upfront.
+func checkDocumentScripts(docs map[string]DocumentConfig, root string) error {
+	for id, doc := range docs {
+		if doc.Script == "" {
+			continue
+		}
+		if err := script.CheckDocumentScriptExists(root, doc.Script); err != nil {
+			return fmt.Errorf("invalid %s: document %q: %w", ConfigFile, id, err)
+		}
+	}
+	return nil
 }

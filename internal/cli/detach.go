@@ -16,13 +16,14 @@ type DetachCmd struct {
 
 // Run dispatches `rela detach <entity-id> <property> [--file <name>]`.
 func (c *DetachCmd) Run(ctx context.Context, att *attachment.Service) error {
-	if err := att.Detach(ctx, c.EntityID, c.Property, c.File); err != nil {
+	removed, err := att.Detach(ctx, c.EntityID, c.Property, c.File)
+	if err != nil {
 		return err
 	}
-	if c.File != "" {
-		out.WriteSuccess("Detached %s from %s.%s", c.File, c.EntityID, c.Property)
-	} else {
-		out.WriteSuccess("Detached attachment from %s.%s", c.EntityID, c.Property)
+	if removed == "" {
+		out.WriteSuccess("%s was not attached to %s.%s; nothing to detach", c.File, c.EntityID, c.Property)
+		return nil
 	}
+	out.WriteSuccess("Detached %s from %s.%s", removed, c.EntityID, c.Property)
 	return nil
 }

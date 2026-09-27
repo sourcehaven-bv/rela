@@ -424,6 +424,14 @@ func buildVisibilityDisjunction(b *sqlBuilder, scope map[string]search.TypeScope
 				withParts = append(withParts, w...)
 				part.WriteString(" AND EXISTS (" + ex + ")")
 			}
+			// The ACL never fills Related today. It is rendered anyway,
+			// because skipping a field of the gate's query would widen it.
+			for j, rel := range ts.Query.Related {
+				w, ex := buildPredicateSQL(b, fmt.Sprintf("v%d_%s", i, relatedPrefix(j)), rel.Pred, typeArg,
+					relatedDirection(rel))
+				withParts = append(withParts, w...)
+				part.WriteString(" AND " + existsCond(ex, rel.Pred.Negate))
+			}
 			if len(ts.Query.Any) > 0 {
 				w, cond := buildAnySQL(b, fmt.Sprintf("v%d_any", i), ts.Query.Any, typeArg)
 				withParts = append(withParts, w...)

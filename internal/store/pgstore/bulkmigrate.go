@@ -57,11 +57,17 @@ func (s *Store) SwapRelationEndpoints(ctx context.Context, relType string) (int,
 	// this on the grounds that a miss costs only the rename marker; that
 	// reasoning does not transfer, because nothing captures a reversal
 	// synchronously, so a miss would cost the version itself.
+	//
+	// The editor columns move too: the sweep credits the new triple to them,
+	// and leaving the previous editor there would name them as the author of
+	// the reversal.
+	editorUser, editorTool := store.AttributionColumns(ctx)
 	tag, err := tx.Exec(ctx,
 		`UPDATE relations
 		    SET from_id = to_id, to_id = from_id,
-		        updated_at = now(), seq = nextval('rela_seq')
-		  WHERE rel_type = $1 AND from_id <> to_id`, relType)
+		        updated_at = now(), seq = nextval('rela_seq'),
+		        last_edited_by_user = $2, last_edited_by_tool = $3
+		  WHERE rel_type = $1 AND from_id <> to_id`, relType, editorUser, editorTool)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {

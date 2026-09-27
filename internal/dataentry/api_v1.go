@@ -351,7 +351,10 @@ func (a *App) listPage(
 	if err != nil {
 		return nil, 0, err
 	}
-	if plan, ok := n.pushdownPlan(ctx, a, typeName, query, page, perPage); ok {
+	if plan, empty, ok := n.pushdownPlan(ctx, a, typeName, query, page, perPage); ok {
+		if empty {
+			return nil, 0, nil
+		}
 		return plan.run(ctx, a.Services().Store)
 	}
 	cond, scope := n.cond, n.scope
@@ -362,7 +365,8 @@ func (a *App) listPage(
 	// AFTER the ACL scope and every filter, BEFORE paging and the count: the
 	// condition narrows the population the page and total describe, so
 	// applying it later would page one set and count another.
-	if all, err = applyViewCondition(ctx, all, cond, a.redactedForSuggestion); err != nil {
+	ctx = primeVerdicts(ctx, a.fieldResolver, all)
+	if all, err = applyViewCondition(ctx, all, cond, a.redactedForSuggestion, a.Services().Store); err != nil {
 		return nil, 0, err
 	}
 	total = len(all)
@@ -757,9 +761,10 @@ func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeN
 	// Build response - always include relations for relation column support
 	data := make([]v1.Entity, 0, len(entities))
 	included := make(map[string]v1.Entity)
+	pageCtx := primeVerdicts(r.Context(), a.fieldResolver, entities)
 	for i, e := range entities {
 		v1Entity := a.serializer.forWireRelated(
-			r.Context(), e,
+			pageCtx, e,
 			outgoingByRow[i],
 			incomingByRow[i],
 			visibleNeighbors,
@@ -905,6 +910,9 @@ func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 		return
 	}
+	// Serializing evaluates the grant traversals several times (strip,
+	// `_fields`, `_relations`); priming answers them once.
+	ctx = primeVerdicts(ctx, a.fieldResolver, []*entityPkg.Entity{entity})
 
 	query := r.URL.Query()
 
@@ -1776,16 +1784,54 @@ func (a *App) handleV1Config(w http.ResponseWriter, r *http.Request) {
 	writeV1JSON(w, http.StatusOK, config)
 }
 
+// maxSearchLimit bounds the `limit` parameter of /_search. It matches the
+// list endpoint's per_page ceiling.
+const maxSearchLimit = 100
+
+// parseSearchLimit reads the optional `limit` parameter of /_search. An empty
+// value means no limit and returns 0. The second result is false for a value
+// that is not an integer in [1, maxSearchLimit].
+//
+// The editor's mention menu is the motivating caller: `sort:modified:desc`
+// with a small limit lists recently modified entities without shipping every
+// visible row to the browser.
+func parseSearchLimit(raw string) (int, bool) {
+	if raw == "" {
+		return 0, true
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 1 || n > maxSearchLimit {
+		return 0, false
+	}
+	return n, true
+}
+
 func (a *App) handleV1Search(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
 		return
 	}
 
+	limit, ok := parseSearchLimit(r.URL.Query().Get("limit"))
+	if !ok {
+		writeV1Error(w, r, http.StatusBadRequest, "invalid_limit",
+			fmt.Sprintf("limit must be an integer between 1 and %d", maxSearchLimit), "")
+		return
+	}
 	query := r.URL.Query().Get("q")
 	if query == "" {
 		writeV1JSON(w, http.StatusOK, v1.ListResponse{Data: []v1.Entity{}, Meta: v1.ListMeta{}})
 		return
+	}
+
+	// A `type` parameter also joins the query as a `type:` clause, so a
+	// free-text search is scoped BEFORE its relevance cap rather than
+	// filtered after it, where the cap could have spent every slot on
+	// other types. Only a declared type name is spliced in; any other value
+	// cannot match a row, which the exact filter below still ensures.
+	typeFilter := r.URL.Query().Get("type")
+	if _, declared := a.State().Meta.Entities[typeFilter]; declared {
+		query = "type:" + typeFilter + " " + query
 	}
 
 	// executeQuery is read-gated (TKT-BA8BSX): only entities the
@@ -1797,8 +1843,9 @@ func (a *App) handleV1Search(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Apply type filter if provided
-	if typeFilter := r.URL.Query().Get("type"); typeFilter != "" {
+	// The exact filter stays: a `type:` clause already in `q` unions with
+	// the spliced one.
+	if typeFilter != "" {
 		filtered := make([]*entityPkg.Entity, 0)
 		for _, e := range entities {
 			if e.Type == typeFilter {
@@ -1806,6 +1853,11 @@ func (a *App) handleV1Search(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		entities = filtered
+	}
+	// Truncated after the read gate and the type filter, so the cap counts
+	// only rows this principal may see and a hidden row cannot take a slot.
+	if limit > 0 && len(entities) > limit {
+		entities = entities[:limit]
 	}
 	// Search rows are content-free (rowcontent.go); bodies are opt-in and
 	// bounded by the search result cap.
@@ -1818,6 +1870,7 @@ func (a *App) handleV1Search(w http.ResponseWriter, r *http.Request) {
 
 	meta := a.State().Meta
 	data := make([]v1.Entity, 0, len(entities))
+	pageCtx := primeVerdicts(r.Context(), a.fieldResolver, entities)
 	for _, e := range entities {
 		entityDef := meta.Entities[e.Type]
 		plural := entityDef.GetPlural(e.Type)
@@ -1826,7 +1879,7 @@ func (a *App) handleV1Search(w http.ResponseWriter, r *http.Request) {
 		// {ID, Title} of related entities this principal may not read.
 		// Flipping this requires per-target gating first (RR-QO01XY) —
 		// TestACLSearch_VisibleHitRelatedToHidden pins the invariant.
-		data = append(data, a.serializer.forWireRelated(r.Context(), e, nil, nil, nil, a.Meta(), plural))
+		data = append(data, a.serializer.forWireRelated(pageCtx, e, nil, nil, nil, a.Meta(), plural))
 	}
 
 	resp := v1.ListResponse{
@@ -1969,6 +2022,7 @@ func (a *App) resolveV1Includes(ctx context.Context, entity *entityPkg.Entity, i
 	}
 
 	visible := a.filterVisibleIncludes(ctx, candidates)
+	ctx = primeVerdicts(ctx, a.fieldResolver, visible)
 	for _, target := range visible {
 		entityDef := s.Meta.Entities[target.Type]
 		plural := entityDef.GetPlural(target.Type)

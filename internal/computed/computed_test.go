@@ -80,3 +80,16 @@ func TestCompile_RejectsCyclesAndTypeMismatch(t *testing.T) {
 		t.Fatalf("type error = %v", err)
 	}
 }
+
+// related() would fail every write (nothing binds a store) and a stored value
+// could not follow later changes to the related entities: refuse at load.
+func TestCompile_RejectsRelated(t *testing.T) {
+	m := meta(map[string]metamodel.PropertyDef{
+		"blocked": {Type: metamodel.PropertyTypeBoolean, Computed: "related(entity, 'blocks')"},
+	})
+	m.Relations = map[string]metamodel.RelationDef{"blocks": {From: []string{"item"}, To: []string{"item"}}}
+	_, err := computed.Compile(m)
+	if err == nil || !strings.Contains(err.Error(), "related") {
+		t.Fatalf("err = %v, want a related() refusal", err)
+	}
+}

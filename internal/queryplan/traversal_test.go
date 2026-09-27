@@ -44,6 +44,9 @@ func progFor(t *testing.T, src string) *predicate.Program {
 	if err := env.DeclareVar("entity", predicate.RecordType{"status": predicate.StringType}); err != nil {
 		t.Fatal(err)
 	}
+	if err := predicatefns.DeclareCurrentUser(env); err != nil {
+		t.Fatal(err)
+	}
 	p, err := predicate.Compile(env, src)
 	if err != nil {
 		t.Fatalf("compile %q: %v", src, err)
@@ -81,6 +84,39 @@ func TestTraversalIndexSpecs_ChainIndexesTheFinalType(t *testing.T) {
 		traversalIndexMeta(), "ticket")
 	if len(got) != 1 || got[0].Type != "person" {
 		t.Fatalf("expected one spec on person, got %+v", got)
+	}
+}
+
+// An `id` constraint is answered by the relation's endpoint column, which the
+// relations indexes already serve, so it derives no property index: an index
+// on a property nobody filters on would be reconciled and never used. A
+// property compared against current_user.id is still a property filter, and
+// is indexed like a literal one.
+func TestTraversalIndexSpecs_IDDerivesNoPropertyIndex(t *testing.T) {
+	meta := traversalIndexMeta()
+	for _, tc := range []struct {
+		name, src string
+		want      []string
+	}{
+		{"literal id", `related(entity, { 'derives', 'about' }, { id = 'alice' })`, nil},
+		{"current_user id", `related(entity, { 'derives', 'about' }, { id = current_user.id })`, nil},
+		{"id beside a property", `related(entity, { 'derives', 'about' }, { id = current_user.id, name = 'a' })`,
+			[]string{"name"}},
+		{"property from current_user", `related(entity, { 'derives', 'about' }, { name = current_user.id })`,
+			[]string{"name"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := TraversalIndexSpecs(progFor(t, tc.src), meta, "ticket")
+			if tc.want == nil {
+				if len(got) != 0 {
+					t.Fatalf("expected no spec, got %+v", got)
+				}
+				return
+			}
+			if len(got) != 1 || got[0].Type != "person" || !slices.Equal(got[0].Properties, tc.want) {
+				t.Fatalf("got %+v, want one spec on person with %v", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -210,4 +246,44 @@ relations:
 		}
 	}
 	t.Fatalf("want %+v among %+v", want, got)
+}
+
+// List and next-action conditions answer related() with the same store query
+// a scope does, so they derive the same far-end index.
+func TestStaticIndexSpecs_DerivesTraversalIndexFromConditions(t *testing.T) {
+	meta, err := metamodel.Parse([]byte(`version: "1.0"
+namespace: https://example.org/test#
+entities:
+  ticket: {label: Ticket, id_prefix: TKT, properties: {status: {type: string}}}
+  feature: {label: Feature, id_prefix: FEAT, properties: {title: {type: string}}}
+  person: {label: Person, id_prefix: P, properties: {name: {type: string}}}
+relations:
+  implements: {label: implements, from: [ticket], to: [feature], inverse: implementedBy}
+  owned-by: {label: owned by, from: [ticket], to: [person]}
+`))
+	if err != nil {
+		t.Fatalf("parse schema: %v", err)
+	}
+	cfg := &dataentryconfig.Config{
+		Lists: map[string]dataentryconfig.List{
+			"features": {EntityType: "feature", Condition: "related(entity, 'implementedBy', { status = 'open' })"},
+		},
+		NextActions: map[string]dataentryconfig.NextActionSource{
+			"unowned": {Query: "type:ticket", Condition: "not related(entity, 'owned-by', { name = 'x' })"},
+			"here":    {Context: "ticket", Condition: "related(entity, 'implements', { title = 'x' })"},
+		},
+	}
+	got := StaticIndexSpecs(cfg, meta)
+	for _, want := range []store.DerivedObjectSpec{
+		{Kind: store.DerivedQueryIndex, Type: "ticket", Properties: []string{"status"}},
+		{Kind: store.DerivedQueryIndex, Type: "person", Properties: []string{"name"}},
+		{Kind: store.DerivedQueryIndex, Type: "feature", Properties: []string{"title"}},
+	} {
+		found := slices.ContainsFunc(got, func(s store.DerivedObjectSpec) bool {
+			return s.Kind == want.Kind && s.Type == want.Type && slices.Equal(s.Properties, want.Properties)
+		})
+		if !found {
+			t.Errorf("want %+v among %+v", want, got)
+		}
+	}
 }

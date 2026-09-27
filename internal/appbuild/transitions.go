@@ -99,7 +99,9 @@ type TransitionWiring struct {
 // [acl.Request] is denied rather than allowed (RR-UOBUC). With NopACL /
 // ReadOnlyACL there is no policy, so the guard stays inert.
 func CompileTransitions(meta *metamodel.Metamodel, st store.Store, resolvedACL acl.ACL) (TransitionWiring, error) {
-	set, err := statemachine.Compile(meta)
+	// A `when:` related() reads the raw store on both sides: enforcement is a
+	// write-path decision, and Performable must agree with it (TKT-205V2N).
+	set, err := statemachine.Compile(meta, statemachine.WithTraversals(ungatedBinder(meta, st)))
 	if err != nil {
 		return TransitionWiring{}, err
 	}

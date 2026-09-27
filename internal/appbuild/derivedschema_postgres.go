@@ -6,12 +6,9 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"os"
 
 	"github.com/Sourcehaven-BV/rela/internal/config"
-	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/queryplan"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/pgstore"
 )
@@ -51,22 +48,12 @@ func reconcileDerivedSchemaIfSupported(
 	// already-present unique index may still reject a concurrent write, and the
 	// error must remain attributable to its property.
 	s.SetUniqueSpecProvider(uniqueSpecs)
-	specs := append([]store.DerivedObjectSpec(nil), uniqueSpecs...)
-	// Read through the config seam rather than the filesystem. A packaged
-	// project carries data-entry.yaml in its database, and reading the file
-	// directly would find nothing there — silently dropping every derived
-	// static-query index, with no error to explain the missing indexes.
-	if data, err := cfg.Load(ctx, dataentryconfig.ConfigFile); err == nil {
-		querySpecs, err := queryplan.LoadStaticIndexSpecs(data, base.meta)
-		if err != nil {
-			slog.Warn("appbuild: derived-schema reconcile skipped; invalid data-entry config", "error", err)
-			return
-		}
-		specs = append(specs, querySpecs...)
-	} else if !os.IsNotExist(err) {
-		slog.Warn("appbuild: derived-schema reconcile skipped; data-entry config unreadable", "error", err)
+	querySpecs, err := staticIndexSpecs(ctx, base.meta, cfg)
+	if err != nil {
+		slog.Warn("appbuild: derived-schema reconcile skipped", "error", err)
 		return
 	}
+	specs := append(append([]store.DerivedObjectSpec(nil), uniqueSpecs...), querySpecs...)
 
 	outcomes, err := s.Reconcile(ctx, specs, store.ReconcileOptions{})
 	switch {
@@ -81,32 +68,7 @@ func reconcileDerivedSchemaIfSupported(
 			"error", err)
 		return
 	}
-	for _, o := range outcomes {
-		switch o.State {
-		case store.DerivedUnenforced:
-			if o.Spec.Kind == store.DerivedQueryIndex {
-				slog.Warn("appbuild: derived static-query index NOT created",
-					"type", o.Spec.Type, "properties", o.Spec.Properties, "reason", o.Reason)
-			} else {
-				slog.Warn("appbuild: derived unique constraint NOT enforced",
-					"type", o.Spec.Type, "property", o.Spec.Property,
-					"blocking_value_groups", o.BlockingCount, "reason", o.Reason)
-			}
-		case store.DerivedCreated:
-			if o.Spec.Kind == store.DerivedQueryIndex {
-				slog.Info("appbuild: derived static-query index created",
-					"type", o.Spec.Type, "properties", o.Spec.Properties)
-			} else {
-				slog.Info("appbuild: derived unique constraint created",
-					"type", o.Spec.Type, "property", o.Spec.Property)
-			}
-		case store.DerivedDropped:
-			slog.Info("appbuild: derived schema object dropped (no longer declared)",
-				"reason", o.Reason)
-		case store.DerivedEnforced:
-			// Already present and correct — the steady-state case, nothing to log.
-		}
-	}
+	logDerivedOutcomes(outcomes)
 }
 
 // uniqueSpecsFromMetamodel collects the (type, property) pairs the derived-schema

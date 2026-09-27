@@ -1135,8 +1135,10 @@ The arguments are:
   forwards, from its `from:` side to its `to:` side. The `inverse:` name walks
   it backwards. A chain may mix the two.
 - `constraints`, an optional table. `type = 'ticket'` picks one type where the
-  relation allows several. Every other key compares a property of the final
-  entity with a string, for equality.
+  relation allows several. `id = 'PERS-001'` matches the final entity by its
+  id. Every other key compares a property of the final entity with a string,
+  for equality. A value may also be `current_user.id`, as described under
+  [Matching the current user](#matching-the-current-user).
 
 An entity the reader may not see does not count. It neither makes a row match
 `related(...)` nor stops a row matching `not related(...)`. The result can
@@ -1148,18 +1150,87 @@ The following limits apply:
   endpoint's named face, is ignored.
 - A relation declared `symmetric: true` is refused, because it has no
   direction to walk.
-- The constraint compares for equality with a non-empty string. The property
-  must be string-shaped: a string, enum, date, datetime or declared custom
-  type, and not a list. For an enum, the value must be one of its declared
-  values.
+- The constraint compares for equality with a non-empty string or with
+  `current_user.id`. The property must be string-shaped: a string, enum, date,
+  datetime or declared custom type, and not a list. For an enum, the value
+  must be one of its declared values, so `current_user.id` is refused on an
+  enum.
 - A property that some role cannot see unconditionally, through `visible:`, is
   refused at startup. Matching on it would reveal its value to readers who
   cannot see it. After a live reload of `schema.yaml` or `acl.yaml`, the same
   case is refused per request instead.
-- `related(...)` works only in `query_scopes:`. `rela validate` refuses it in
-  a view `condition:`, a next-action `condition:` and a form condition. Other
-  expression surfaces, such as automations and validations, accept it at load
-  but fail when they evaluate it.
+- A form condition refuses `related(...)` at load. Forms evaluate their
+  conditions in the browser, which cannot read relations.
+
+#### Matching the current user
+
+When ownership is a relation rather than a property, compare the final
+entity's id with `current_user.id`. With a relation `verantwoordelijk_voor`
+from `persoon` to `taak`, whose inverse is `heeft_verantwoordelijke`, and
+`user_entity_type: persoon` in `acl.yaml`, this scope lists the open tasks of
+the signed-in user:
+
+```yaml
+entities:
+  taak:
+    query_scopes:
+      mijn: "entity.status ~= 'gereed' and related(entity, 'heeft_verantwoordelijke', { id = current_user.id })"
+```
+
+`current_user.id` is the only variable a constraint may read. It may stand
+for `id` or for a string-shaped property that is not an enum.
+
+The scope reads the identity, so the rules under
+[Identity in a scope](#identity-in-a-scope) apply. A request without a
+resolved user fails; it never returns rows.
+
+The user's own entity follows the same read rules as any other. If the
+reader's role cannot read the user entity type, the walk reaches nothing:
+`related(...)` matches no row, and `not related(...)` matches every row the
+reader can see. Grant read access on the user entity type when a scope must
+tell the user's rows apart.
+
+An ACL `when:` in `acl.yaml` refuses `current_user.id` in `related(...)` at
+load. A grant must not depend on a second derivation of who is calling. Use
+`role_relations:` to grant access through a relation to the user.
+
+#### Where `related(...)` works
+
+Every surface below checks the path and constraints when it loads. A surface
+answers each traversal once per page or batch, not once per row. Which
+entities count depends on the surface:
+
+| Surface | Which entities count |
+| --- | --- |
+| `query_scopes:` | Those the reader may see |
+| View (list) `condition:` and next-action `condition:` | Those the reader may see |
+| Validation `when_condition:` / `then_condition:` in the web app and over MCP | Those the caller may see |
+| Validation in `rela validate` and `analyze_validations` | All |
+| Automation `on.condition:` | All |
+| State-machine transition `when:` | All |
+| ACL `when:` in `acl.yaml` | All |
+
+The last four run with system trust, so a hidden entity still counts. An ACL
+`when:` or a transition `when:` therefore reveals one bit about entities the
+principal may not read: whether the grant applies, or whether the transition
+is offered. Keep such conditions to facts you are willing to disclose that
+way. A traversal in either that compares a property some role cannot see
+through `visible:` earns a startup warning. In
+a view or next-action condition the same traversal fails every request that
+evaluates it.
+
+A surface refuses rather than guesses when it cannot answer a traversal:
+
+- An automation's condition, a transition's `when:` and an ACL grant fail
+  closed. The automation does not run, the transition is refused, and the
+  grant does not apply.
+- A validation rule reports a load error for the rule and checks no entity
+  against it.
+- A view or next-action condition fails the request.
+
+Entities on a named face cannot be answered, because the store walks the
+default face's edges. An ACL `when:` also denies a historical version, such as
+one read from the history view.
 
 Some grants cannot be expressed in the traversal's store query. A request from
 a principal with such a grant fails with HTTP 422 and the error code
@@ -1176,8 +1247,28 @@ other principals. The cases are:
 - a hop lands on a type that the principal reads through a role relation,
   such as `editor-of`, and the next hop walks backwards.
 
-On the PostgreSQL backend each constraint gets a derived index on the final
-entity type, so the filter does not scan every row of that type.
+On the PostgreSQL and SQLite backends each property constraint gets a derived
+index on the final entity type, so the filter does not scan every row of that
+type. This covers query scopes and view and next-action conditions. An `id`
+constraint derives no index: the store looks the named entity up by its key.
+
+A list page answers the whole scope in the store query when the scope is a
+plain conjunction. Every part joined by `and` must be one of these:
+
+- `related(...)`;
+- an equality between a string-shaped property, as defined above, and a
+  non-empty string;
+- `entity.x == current_user.id` or `is_current_user(entity.x)`.
+
+Each property may appear in only one equality. The page and its total then
+cost the same at any list size.
+
+Any other scope, for example one with `not`, `or` or an ordered comparison, is
+still correct. It is evaluated after the store read, and its cost grows with
+the number of rows of the type. The same slower path applies when the rest of
+the request does not suit the store, for example with free-text search, a view
+`condition:`, a relation filter, or a sort on a property that is not
+string-shaped.
 
 ### Which surfaces apply scopes
 

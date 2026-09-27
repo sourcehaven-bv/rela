@@ -15,13 +15,22 @@ import (
 // stable shape.
 //
 // All predicates are ANDed: an entity matches when every PropPredicate
-// holds AND both relation predicates hold. A zero-value GraphQuery
+// holds AND every relation predicate (HasInbound, HasOutbound and each
+// Related entry) holds. A zero-value GraphQuery
 // beyond EntityType matches every entity of that type.
 //
-// All three backends ship a default implementation that delegates to
-// [internal/store/graphquerynaive] (iterate-and-filter in Go). A
-// future SQL-pushdown implementation in pgstore is tracked as a
-// follow-up.
+// graphquerynaive (iterate-and-filter in Go) is the reference
+// implementation; pgstore renders the same query as SQL.
+//
+// # Under a world: which predicates run before the rank
+//
+// FaceIn and each Any branch's face set trim the CANDIDATE faces; the world
+// then picks one prime per entity from what is left. Props and Narrowing
+// test that prime (BUG-2SKLD3): filtering the faces on them first would let
+// a lower-ranked face answer for an entity whose prime fails the filter,
+// serving a list row a GET of the same entity would not. The relation
+// predicates depend on the entity id alone, so the order does not matter
+// for them.
 type GraphQuery struct {
 	EntityType  string
 	Props       []PropPredicate    // entity's own properties match (AND)
@@ -102,6 +111,17 @@ type GraphQuery struct {
 	// append a compile error rather than a review catch.
 	Narrowing []NarrowBranch
 
+	// Related is a CONJUNCTION of caller-supplied relation predicates, each
+	// ANDed with everything else. A data-entry query scope lowers each
+	// `related(...)` term into one entry (TKT-XKCNCL).
+	//
+	// It exists because HasInbound and HasOutbound are single slots, and the
+	// ACL read path owns HasInbound whenever a principal reads the type
+	// through a role relation. A caller's traversal written into that slot
+	// would either be refused or overwrite the row gate; here it can only
+	// narrow. Like [GraphQuery.Narrowing], the ACL never writes this field.
+	Related []DirectedRelation
+
 	// OrderBy, Limit and Offset page a ROW query (GraphQuery,
 	// GraphQueryHeaders) inside the backend (TKT-1U8XYN), so a list page
 	// costs one bounded read instead of a whole-type scan sorted and sliced
@@ -119,6 +139,19 @@ type GraphQuery struct {
 	OrderBy []OrderSpec
 	Limit   int
 	Offset  int
+}
+
+// DirectedRelation is one entry of [GraphQuery.Related]: a relation
+// predicate and the side of the edge the entity stands on.
+//
+// Incoming is a bool rather than a [Direction] on purpose: Direction's zero
+// value is DirectionBoth, which backends read differently, and an entry here
+// must mean exactly what HasInbound or HasOutbound means.
+type DirectedRelation struct {
+	// Incoming reads the entity's incoming edges, as HasInbound does. False
+	// reads its outgoing edges, as HasOutbound does.
+	Incoming bool
+	Pred     RelationPredicate
 }
 
 // OrderSpec is one GraphQuery sort key.

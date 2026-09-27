@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -77,12 +79,107 @@ func TestPostgresQueue_SchemaPinnedDSN(t *testing.T) {
 	// A schema name unique to this test, created empty so the queue has to run
 	// neoq's migrations from scratch — the state the bug fired in.
 	const schema = "rela_jobs_schemapin_test"
+	dsn := schemaPinnedDSN(t, admin, schema)
+
+	queue, err := jobs.NewPostgresQueue(ctx, discardLogger(), dsn)
+	require.NoError(t, err, "queue must initialize against a schema-pinned DSN")
+	t.Cleanup(func() { _ = queue.Close(context.Background()) })
+
+	// The tables must land in the pinned schema, not in public: rela submits
+	// every kind to one queue name and neoq's insert trigger does
+	// pg_notify(NEW.queue), so tables shared across tenants would mean tenants
+	// consuming each other's jobs.
+	var inSchema bool
+	require.NoError(t, pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM information_schema.tables
+		   WHERE table_schema = $1 AND table_name = 'neoq_jobs')`, schema,
+	).Scan(&inSchema))
+	require.True(t, inSchema, "neoq_jobs must be created in the pinned schema")
+}
+
+// TestPostgresQueue_HandlerOutlivesDefaultIdleTxTimeout pins BUG-TKL08E.
+//
+// neoq runs a handler inside the transaction holding the job's row lock, and
+// its default idle_in_transaction_session_timeout is 30 s. A handler longer
+// than that had its session killed underneath it: the outcome update failed,
+// the row stayed pending, neoq redelivered it every minute forever, and its
+// idempotency key rejected every later enqueue. On Atlas that stalled the
+// scheduler until a restart.
+//
+// Uses the production constructor and a handler just over the old 30 s limit,
+// because the defect was the absence of an option, and only the real value
+// shows it is present. Slow by nature, so skipped under -short.
+func TestPostgresQueue_HandlerOutlivesDefaultIdleTxTimeout(t *testing.T) {
+	dsn := os.Getenv("RELA_TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("RELA_TEST_DATABASE_URL not set; skipping postgres long-handler case")
+	}
+	if testing.Short() {
+		t.Skip("needs a handler longer than neoq's 30 s default; run without -short")
+	}
+	ctx := context.Background()
+
+	q, err := jobs.NewPostgresQueue(ctx, discardLogger(), schemaPinnedDSN(t, dsn, "rela_jobs_longhandler_test"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = q.Close(ctx) })
+
+	const longRun = 35 * time.Second
+	kind := jobs.NewKind("jobstest", "long")
+	var longDeliveries, shortRuns atomic.Int32
+	require.NoError(t, q.Register(kind, func(_ context.Context, job jobs.Job) error {
+		if job.Payload["long"] == true {
+			longDeliveries.Add(1)
+			time.Sleep(longRun)
+			return nil
+		}
+		shortRuns.Add(1)
+		return nil
+	}))
+	require.NoError(t, q.Start(ctx))
+
+	started := time.Now()
+	require.NoError(t, q.Enqueue(ctx, jobs.Job{
+		Kind: kind, Retry: jobs.RetryNever, IdempotencyKey: "long",
+		Payload: map[string]any{"long": true},
+	}))
+
+	// The key frees only once neoq has COMMITTED the outcome, which is the step
+	// the killed session could never complete.
+	//
+	// Bounded well below neoq's 60 s pending-job poll. Without the fix the key
+	// still frees eventually: the poll redelivers the stranded row, and that
+	// rerun commits. So a generous bound would pass on the broken code, and
+	// the first delivery committing is only visible as the key freeing BEFORE
+	// any redelivery was possible.
+	short := jobs.Job{Kind: kind, Retry: jobs.RetryNever, IdempotencyKey: "long"}
+	require.Eventually(t, func() bool { return q.Enqueue(ctx, short) == nil },
+		longRun+15*time.Second-time.Since(started), 250*time.Millisecond,
+		"a handler longer than 30 s must commit its outcome on the first delivery")
+	require.Eventually(t, func() bool { return shortRuns.Load() == 1 }, 10*time.Second, 50*time.Millisecond)
+	require.Equal(t, int32(1), longDeliveries.Load(), "the long job must not be redelivered")
+}
+
+// schemaPinnedDSN creates an empty schema, drops it when the test ends, and
+// returns admin's DSN with its search_path pinned there.
+func schemaPinnedDSN(t *testing.T, admin, schema string) string {
+	t.Helper()
+	ctx := context.Background()
+
+	pool, err := pgxpool.New(ctx, admin)
+	require.NoError(t, err)
+	defer pool.Close()
+
 	_, err = pool.Exec(ctx, fmt.Sprintf(`DROP SCHEMA IF EXISTS %s CASCADE`, pgx.Identifier{schema}.Sanitize()))
 	require.NoError(t, err)
 	_, err = pool.Exec(ctx, fmt.Sprintf(`CREATE SCHEMA %s`, pgx.Identifier{schema}.Sanitize()))
 	require.NoError(t, err)
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(),
+		cleanup, err := pgxpool.New(context.Background(), admin)
+		if err != nil {
+			return
+		}
+		defer cleanup.Close()
+		_, _ = cleanup.Exec(context.Background(),
 			fmt.Sprintf(`DROP SCHEMA IF EXISTS %s CASCADE`, pgx.Identifier{schema}.Sanitize()))
 	})
 
@@ -98,19 +195,5 @@ func TestPostgresQueue_SchemaPinnedDSN(t *testing.T) {
 	q := u.Query()
 	q.Set("search_path", schema+",public")
 	u.RawQuery = q.Encode()
-
-	queue, err := jobs.NewPostgresQueue(ctx, discardLogger(), u.String())
-	require.NoError(t, err, "queue must initialize against a schema-pinned DSN")
-	t.Cleanup(func() { _ = queue.Close(context.Background()) })
-
-	// The tables must land in the pinned schema, not in public: rela submits
-	// every kind to one queue name and neoq's insert trigger does
-	// pg_notify(NEW.queue), so tables shared across tenants would mean tenants
-	// consuming each other's jobs.
-	var inSchema bool
-	require.NoError(t, pool.QueryRow(ctx,
-		`SELECT EXISTS (SELECT 1 FROM information_schema.tables
-		   WHERE table_schema = $1 AND table_name = 'neoq_jobs')`, schema,
-	).Scan(&inSchema))
-	require.True(t, inSchema, "neoq_jobs must be created in the pinned schema")
+	return u.String()
 }

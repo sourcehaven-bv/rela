@@ -146,11 +146,3 @@ func splitRelationKey(key string) (from, face, relType, to string, ok bool) {
 	}
 	return parts[0], parts[1], parts[2], parts[3], true
 }
-
-// placeholders returns "?, ?, ..." for an IN clause of n values.
-func placeholders(n int) string {
-	if n <= 0 {
-		return ""
-	}
-	return strings.TrimSuffix(strings.Repeat("?, ", n), ", ")
-}

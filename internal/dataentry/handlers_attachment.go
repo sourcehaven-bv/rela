@@ -17,7 +17,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -219,11 +218,13 @@ func (h *attachmentHandler) handleV1PutAttachment(
 	}
 	propDef := filePropertyDef(s, typeName, property)
 	capped := store.CapAttachmentReader(file, limit)
-	if _, err := svc.WriteAttachment(ctx, entity, propDef, property, header.Filename, capped); err != nil {
+	written, err := svc.WriteAttachment(ctx, entity, propDef, property, header.Filename, capped)
+	if err != nil {
 		h.auditRejectedUpload(ctx, entity, property, header.Filename, err)
 		writeAttachmentWriteError(w, r, limit, err)
 		return
 	}
+	entity = written.Entity
 
 	result := h.serializer.forWire(ctx, entity, h.reader.outgoingRelations(ctx, entity.ID), s.Meta, plural)
 	writeV1JSON(w, http.StatusOK, result)
@@ -255,16 +256,8 @@ func (h *attachmentHandler) auditRejectedUpload(
 	if !errors.Is(err, attachment.ErrRejected) {
 		return
 	}
-	h.audit().Record(audit.Record{
-		Time:        time.Now().UTC(),
-		Op:          audit.OpDeniedWrite,
-		Subject:     &audit.Subject{Kind: "entity", Type: e.Type, ID: e.ID},
-		Principal:   principal.From(ctx),
-		TriggeredBy: audit.TriggeredByFrom(ctx),
-		Summary: fmt.Sprintf("rejected upload %q to property %q: %s (op=attachment-write)",
-			fileName, property,
-			strings.TrimPrefix(err.Error(), "attachment: rejected by processor: ")),
-	})
+	h.audit().Record(audit.AttachmentRejected(ctx, e.Type, e.ID, property, fileName,
+		attachment.RejectionReason(err)))
 }
 
 // writeAttachmentWriteError maps a Service.WriteAttachment failure to the
@@ -284,7 +277,7 @@ func writeAttachmentWriteError(w http.ResponseWriter, r *http.Request, limit int
 	// client error, not a server fault: 422 with the reason, not a 500.
 	if errors.Is(err, attachment.ErrRejected) {
 		writeV1Error(w, r, http.StatusUnprocessableEntity, "attachment_rejected",
-			"Attachment rejected", strings.TrimPrefix(err.Error(), "attachment: rejected by processor: "))
+			"Attachment rejected", attachment.RejectionReason(err))
 		return
 	}
 	if writeForbiddenIfACLDenied(w, err) {
@@ -481,15 +474,8 @@ func (h *attachmentHandler) attachmentWritePreflight(
 	// so an ACL deny happens before any bytes are written to the store.
 	decision := h.acl().AuthorizeWrite(ctx, translateVerb("update", entity.Type, entity.ID, entity.Face))
 	if !decision.Allow {
-		h.audit().Record(audit.Record{
-			Time:        time.Now().UTC(),
-			Op:          audit.OpDeniedWrite,
-			Subject:     &audit.Subject{Kind: "entity", Type: entity.Type, ID: entity.ID},
-			Principal:   principal.From(ctx),
-			TriggeredBy: audit.TriggeredByFrom(ctx),
-			Summary: fmt.Sprintf("denied: %s (rule_kind=%s rule_id=%s op=attachment-write)",
-				decision.Reason, decision.RuleKind, decision.RuleID),
-		})
+		h.audit().Record(audit.AttachmentWriteDenied(ctx, entity.Type, entity.ID,
+			decision.Reason, decision.RuleKind, decision.RuleID))
 		writeForbiddenIfACLDenied(w, &acl.ForbiddenError{Decision: decision})
 		return nil, false
 	}

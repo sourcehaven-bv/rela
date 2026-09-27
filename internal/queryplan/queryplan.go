@@ -200,6 +200,9 @@ func StaticIndexSpecs(cfg *dataentryconfig.Config, meta *metamodel.Metamodel) []
 	for _, ts := range scopeTraversalSpecs(meta) {
 		byKey[ts.Type+"\x00"+strings.Join(ts.Properties, "\x00")] = ts
 	}
+	for _, ts := range conditionTraversalSpecs(cfg, meta) {
+		byKey[ts.Type+"\x00"+strings.Join(ts.Properties, "\x00")] = ts
+	}
 	keys := make([]string, 0, len(byKey))
 	for key := range byKey {
 		keys = append(keys, key)

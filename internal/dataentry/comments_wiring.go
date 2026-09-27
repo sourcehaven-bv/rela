@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/comments"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -26,6 +29,25 @@ type commentsHandler struct {
 	meta          func() *metamodel.Metamodel
 	acl           func() acl.ACL
 	visibleReader visibleReader
+
+	// The accept route (TKT-S5C0K3) writes the entity body, so it needs what
+	// every other mutation handler has: the RAW reader for the splice base
+	// and version token, the manager to apply the patch, and the shared write
+	// lock with its provision seam.
+	reader    entityReader
+	patcher   suggestionPatcher
+	writeMu   *sync.Mutex
+	provision func(context.Context) context.Context
+	// audit records an accept the ACL refuses before the manager is reached.
+	audit func() audit.Audit
+}
+
+// suggestionPatcher is the one write the accept route performs.
+//
+// Declared here, at its only consumer, so the comments handler depends on a
+// single manager method rather than the whole write surface.
+type suggestionPatcher interface {
+	PatchEntity(ctx context.Context, id string, p entity.Patch) (*entity.UpdateResult, error)
 }
 
 // newCommentsHandler builds the handler over app's collaborators.
@@ -33,12 +55,29 @@ type commentsHandler struct {
 // A handler is returned even when commenting is disabled — the nil service is
 // checked per request, so the route stays registered and answers a JSON 404
 // rather than falling through to the stdlib's unregistered-route handling.
-func newCommentsHandler(app *App) *commentsHandler {
+func newCommentsHandler(app *App, patcher suggestionPatcher) *commentsHandler {
 	return &commentsHandler{
 		meta:          app.Meta,
 		acl:           func() acl.ACL { return app.acl },
 		visibleReader: app.visibleReader,
+		reader:        app.reader,
+		patcher:       patcher,
+		writeMu:       &app.writeMu,
+		provision:     newProvisionSeam(app),
+		audit:         func() audit.Audit { return app.auditSink },
 	}
+}
+
+// enterWrite acquires writeMu and runs the provision seam under it, returning
+// the request with the re-stamped context. The caller must defer
+// h.writeMu.Unlock(). The same shape as the other write handlers, which
+// provision_seam_invariant_test.go holds every writeMu user to.
+func (h *commentsHandler) enterWrite(r *http.Request) *http.Request {
+	h.writeMu.Lock()
+	if h.provision != nil {
+		return r.WithContext(h.provision(r.Context()))
+	}
+	return r
 }
 
 // SetComments installs the commentary service.
@@ -166,11 +205,14 @@ type anchorContext struct {
 // lives in data-entry.yaml, not on the entity, and its absence from this set
 // means "not a property", not "gone".
 //
-// ent is the row the request gate resolved, so anchors are judged against the
-// face the thread belongs to.
+// ent is the entity the target gate resolved, passed in rather than re-read:
+// the gate settled which FACE the thread belongs to, and a re-read by bare id
+// lands on the default face (or, under a world, must not name a face at all).
+// Reading it twice is how a draft thread came to resolve its anchors against
+// the published body.
 func (h *commentsHandler) liveAnchors(target comments.Target, ent *entity.Entity) anchorContext {
 	def, ok := h.meta().GetEntityDef(target.Type)
-	if !ok {
+	if !ok || ent == nil {
 		return anchorContext{}
 	}
 
@@ -216,6 +258,10 @@ func buildTextAnchor(ent *entity.Entity, quote, prefix, suffix string) (*comment
 	}
 	if len(quote) > comments.MaxQuoteBytes {
 		return nil, fmt.Errorf("selected text exceeds %d bytes", comments.MaxQuoteBytes)
+	}
+
+	if ent == nil {
+		return nil, errors.New("could not read the entity body")
 	}
 
 	// The quote came from RENDERED markdown, so it is display text: no list

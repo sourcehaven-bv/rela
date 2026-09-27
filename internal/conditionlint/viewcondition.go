@@ -62,11 +62,11 @@ func CompileViewConditions(
 	programs = make(map[ViewConditionKey]*predicate.Program)
 
 	for id, v := range cfg.Lists {
-		compileOne(ev, ViewConditionKey{ViewConditionList, id},
+		compileOne(ev, meta, ViewConditionKey{ViewConditionList, id},
 			v.EntityType, v.Condition, programs, &problems)
 	}
 	for id, v := range cfg.Kanbans {
-		compileOne(ev, ViewConditionKey{ViewConditionKanban, id},
+		compileOne(ev, meta, ViewConditionKey{ViewConditionKanban, id},
 			v.EntityType, v.Condition, programs, &problems)
 	}
 
@@ -104,6 +104,29 @@ func (m *ViewConditionMatcher) Matches(ctx context.Context, e *entity.Entity) (b
 	}
 	return ok, nil
 }
+
+// MatchesWith is [ViewConditionMatcher.Matches] for a condition using
+// `related(...)`: traversal answers each one for e. Nil is fine for a
+// condition without one.
+func (m *ViewConditionMatcher) MatchesWith(
+	ctx context.Context, e *entity.Entity, traversal predicate.TraversalFunc,
+) (bool, error) {
+	if m == nil || e == nil {
+		return false, nil
+	}
+	ok, err := m.ev.MatchesWithTraversals(ctx, m.prog, m.entityType, e.ID, e.Properties, traversal)
+	if err != nil {
+		return false, fmt.Errorf("conditionlint: evaluating view condition for %s: %w", e.ID, err)
+	}
+	return ok, nil
+}
+
+// Program returns the compiled condition, so a caller can answer its
+// traversals for a batch of rows before evaluating them.
+func (m *ViewConditionMatcher) Program() *predicate.Program { return m.prog }
+
+// EntityType returns the entity type the condition was compiled against.
+func (m *ViewConditionMatcher) EntityType() string { return m.entityType }
 
 // ViewConditionMatchers compiles every view condition and returns a lookup
 // keyed by (kind, id) — the pair the config uses, since a list and a kanban
@@ -150,7 +173,7 @@ func entityTypeFor(cfg *dataentryconfig.Config, key ViewConditionKey) string {
 // compileOne compiles a single surface's condition, appending a diagnostic
 // rather than returning early so one bad view does not hide the next.
 func compileOne(
-	ev *predicatefns.Evaluator, key ViewConditionKey, entityType, condition string,
+	ev *predicatefns.Evaluator, meta *metamodel.Metamodel, key ViewConditionKey, entityType, condition string,
 	programs map[ViewConditionKey]*predicate.Program, problems *[]string,
 ) {
 	if condition == "" {
@@ -170,7 +193,7 @@ func compileOne(
 			"%s: condition does not compile against entity type %q: %v", key, entityType, err))
 		return
 	}
-	if err := refuseTraversal(prog); err != nil {
+	if err := predicatefns.ValidateTraversals(meta, entityType, prog); err != nil {
 		*problems = append(*problems, fmt.Sprintf("%s: %v", key, err))
 		return
 	}

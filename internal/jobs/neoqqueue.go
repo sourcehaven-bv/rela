@@ -110,6 +110,17 @@ func newNeoqQueue(nq neoq.Neoq, logger *slog.Logger, concurrency int) (*neoqQueu
 	if concurrency < 1 {
 		return nil, fmt.Errorf("jobs: concurrency must be >= 1, got %d", concurrency)
 	}
+	// neoq otherwise logs through its own text handler on stdout, outside
+	// rela's handler, level and format. That is where its most useful
+	// diagnostics land (a failed status update, a killed worker session), so
+	// an operator searching rela's log would not find them.
+	//
+	// At DEBUG, neoq logs every job's full payload. Today's payloads hold
+	// config-level data only (task names, script paths, capability flags,
+	// secret NAMES). A kind whose payload carries entity content or a secret
+	// VALUE would put it in rela's log whenever debug logging is on.
+	nq.SetLogger(logger.With("component", "neoq"))
+
 	return &neoqQueue{
 		nq:          nq,
 		logger:      logger,
@@ -403,7 +414,7 @@ func (q *neoqQueue) dispatch(ctx context.Context) error {
 
 	// Retry is carried through so a handler inspecting it sees the policy the
 	// caller actually chose, not the zero value.
-	job := Job{Kind: kind, Payload: payload, Retry: retry}
+	job := Job{Kind: kind, Payload: payload, Retry: retry, Attempt: attempt}
 	if hasDeadline {
 		job.Deadline = deadline
 	}

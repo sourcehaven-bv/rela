@@ -127,7 +127,7 @@ func (m *Manager) gated() *Manager {
 // There is deliberately no assertion against a package-local write
 // interface: the wide EntityManager one was deleted in TKT-IVSJV6, and its
 // replacements are declared at each CONSUMER (lua.Mutator,
-// attachment.EntityUpdater, mcp.EntityWriter, and the unexported ones in
+// attachment.EntityPatcher, mcp.EntityWriter, and the unexported ones in
 // internal/cli and internal/dataentry). Asserting against them here would
 // re-import every consumer and reinstate the coupling the split removed;
 // each is checked where it is used, at its own wiring site.

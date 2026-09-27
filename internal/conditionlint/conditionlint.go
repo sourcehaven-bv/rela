@@ -84,22 +84,23 @@ func check(env *predicate.Env, expr, where string, errs *[]string) {
 	}
 	prog, err := predicate.Compile(env, expr)
 	if err == nil {
-		err = refuseTraversal(prog)
+		err = refuseFormTraversal(prog)
 	}
 	if err != nil {
 		*errs = append(*errs, fmt.Sprintf("%s: %v", where, err))
 	}
 }
 
-// refuseTraversal refuses a `related(...)` on a surface that binds no
-// traversal resolver. The expression would compile and then fail on every
-// evaluation, so the operator hears about it at load instead of as a request
-// error. Only `query_scopes:` answer traversals today (TKT-CXQEV0).
-func refuseTraversal(prog *predicate.Program) error {
+// refuseFormTraversal refuses a `related(...)` in a form condition. The SPA
+// evaluates form conditions in the browser against the form's own values, so
+// it has no graph to traverse; the operator hears about it at load instead of
+// as a condition that never holds.
+func refuseFormTraversal(prog *predicate.Program) error {
 	if len(prog.Traversals()) == 0 {
 		return nil
 	}
-	return fmt.Errorf("%s(...) is only supported in query_scopes", predicate.FuncRelated)
+	return fmt.Errorf("%s(...) is not available in form conditions: they are evaluated in the browser, "+
+		"which cannot read relations; use a view condition or an ACL when: instead", predicate.FuncRelated)
 }
 
 // formEnv builds a predicate Env whose `form` variable is a record of the

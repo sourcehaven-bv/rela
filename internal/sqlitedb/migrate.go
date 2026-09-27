@@ -12,7 +12,7 @@ import (
 // schemaVersion is the shape of the tables this binary expects. Bump it
 // whenever schemaSQL changes shape, and append the step that carries an
 // existing database forward to [migrations].
-const schemaVersion = 6
+const schemaVersion = 7
 
 // SchemaVersion reports the table shape this binary expects, so the CLI can
 // show a real number rather than prose.
@@ -109,6 +109,48 @@ var migrations = []migration{
 		to:    6,
 		apply: sqlSteps(migrationStateDDL),
 	},
+	{
+		// v6 → v7: write attribution on live rows (BUG-07DNNY), pgstore's
+		// TKT-ZIRMGM columns. Without them the version sweep has no author to
+		// copy and attributes every create/update to its system principal.
+		to:    7,
+		apply: addEditorColumns,
+	},
+}
+
+// editorColumnTables are the tables that carry last_edited_by_user and
+// last_edited_by_tool.
+var editorColumnTables = []string{"entities", "relations"}
+
+// addEditorColumns adds the attribution columns to every table that lacks
+// them. Existing rows keep NULL, which the sweep reads as "no recorded editor"
+// and attributes to its system principal, as it did before.
+//
+// Probed per column rather than run blind: ALTER TABLE ADD COLUMN has no
+// IF NOT EXISTS form. The step commits with its version bump, so it normally
+// runs once; the probe keeps a re-run safe anyway, as the ladder asks of every
+// step, instead of failing with "duplicate column name".
+func addEditorColumns(ctx context.Context, conn *sql.Conn) error {
+	for _, table := range editorColumnTables {
+		for _, column := range []string{"last_edited_by_user", "last_edited_by_tool"} {
+			var n int
+			// table and column come from the literals above, never from input;
+			// pragma_table_info takes its table name as a bind parameter.
+			if err := conn.QueryRowContext(ctx,
+				`SELECT count(*) FROM pragma_table_info(?) WHERE name = ?`, table, column,
+			).Scan(&n); err != nil {
+				return fmt.Errorf("probe %s.%s: %w", table, column, err)
+			}
+			if n > 0 {
+				continue
+			}
+			if _, err := conn.ExecContext(ctx,
+				fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s TEXT", table, column)); err != nil {
+				return fmt.Errorf("add %s.%s: %w", table, column, err)
+			}
+		}
+	}
+	return nil
 }
 
 // migrateToVersion4 installs the content-versioning schema on an existing

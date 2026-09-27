@@ -68,39 +68,24 @@ func wireIdentityAndMCP(app *dataentry.App, svc *appbuild.Services, f *serverFla
 // placeholder, so an unattributed write is recorded as the server itself
 // rather than as a guessed user.
 //
-// **Reads are ACL-gated.** The read handles come from
-// [appbuild.Services.GatedReads], which resolves the ctx principal per call.
+// **Reads are ACL-gated.** Every read handle comes from
+// [appbuild.Services.GatedReads] via [remoteMCPDeps], which resolves the ctx
+// principal per call.
 // This is the opposite of the stdio wiring's deliberate NopACL: there the
 // filesystem is the trust boundary (anyone who can run `rela mcp` can edit
 // the files directly), so a gate would defend nothing. A remote caller has no
 // filesystem access, so the ACL is the ONLY boundary.
+//
+// **No Lua tools.** The server is built without [relamcp.WithLuaTools], so
+// lua_eval, lua_run and lua_list do not exist here. A remote caller may not
+// run scripts in the server process.
 func wireRemoteMCP(app *dataentry.App, svc *appbuild.Services, f *serverFlags) error {
 	if !f.remoteMCP {
 		return nil
 	}
 
-	factory := func() (http.Handler, error) {
-		reads := svc.GatedReads()
-
-		deps := relamcp.Deps{
-			Store:         reads.Reader,
-			Meta:          svc.Meta(),
-			Tracer:        reads.Tracer,
-			Searcher:      svc.Searcher(),
-			Validator:     reads.Validator,
-			EntityManager: svc.EntityManager(),
-			Config:        svc.Config(),
-			LuaWriteDeps:  svc.LuaWriteDeps(),
-			LuaCache:      svc.ScriptEngine().LuaCache(),
-			Watcher:       noopWatcher{},
-			ProjectRoot:   svc.Paths().Root,
-		}
-
-		srv, err := relamcp.NewServer(deps, mcpServerVersion,
-			relamcp.WithPrincipal(principal.Principal{
-				User: principal.SystemUser(),
-				Tool: principal.ToolMCP,
-			}))
+	factory := func(host dataentry.MCPHost) (http.Handler, error) {
+		srv, err := newRemoteMCPServer(svc, host)
 		if err != nil {
 			return nil, err
 		}
@@ -109,6 +94,54 @@ func wireRemoteMCP(app *dataentry.App, svc *appbuild.Services, f *serverFlags) e
 	}
 
 	return app.SetRemoteMCP(factory)
+}
+
+// remoteAttachmentDeps wires the MCP attachment tools onto the web upload
+// path's policy: the App's live schema (so an operator's edit to `accept:`,
+// `scan:` or `max_attachment_bytes` applies to MCP uploads immediately), its
+// command runner, and its write mutex. The snapshot is rebuilt per tool call,
+// which costs one struct allocation.
+func remoteAttachmentDeps(svc *appbuild.Services, host dataentry.MCPHost) relamcp.AttachmentDeps {
+	return relamcp.AttachmentDeps{
+		Snapshot: func() (relamcp.AttachmentSnapshot, error) {
+			meta, limit := host.AttachmentPolicy()
+			return relamcp.NewAttachmentSnapshot(
+				svc.Store(), svc.EntityManager(), meta, host.AttachmentRunner, limit)
+		},
+		Authorizer: svc.ACL(),
+		Audit:      svc.Audit(),
+		WriteLock:  host.WriteLock,
+	}
+}
+
+// newRemoteMCPServer builds the remote MCP server. It does not pass
+// [relamcp.WithLuaTools]; see [wireRemoteMCP].
+func newRemoteMCPServer(svc *appbuild.Services, host dataentry.MCPHost) (*relamcp.Server, error) {
+	return relamcp.NewServer(remoteMCPDeps(svc, host), mcpServerVersion,
+		relamcp.WithPrincipal(principal.Principal{
+			User: principal.SystemUser(),
+			Tool: principal.ToolMCP,
+		}))
+}
+
+// remoteMCPDeps builds the MCP dependencies for the remote endpoint. Every
+// read handle, including search, comes from [appbuild.Services.GatedReads].
+// LuaWriteDeps and LuaCache stay zero because the remote server has no Lua
+// tools.
+func remoteMCPDeps(svc *appbuild.Services, host dataentry.MCPHost) relamcp.Deps {
+	reads := svc.GatedReads()
+	return relamcp.Deps{
+		Store:         reads.Reader,
+		Meta:          svc.Meta(),
+		Tracer:        reads.Tracer,
+		Searcher:      reads.Searcher,
+		Validator:     reads.Validator,
+		EntityManager: svc.EntityManager(),
+		Config:        svc.Config(),
+		Watcher:       noopWatcher{},
+		ProjectRoot:   svc.Paths().Root,
+		Attachments:   remoteAttachmentDeps(svc, host),
+	}
 }
 
 // noopWatcher satisfies [relamcp.Watcher] for the HTTP transport, which has

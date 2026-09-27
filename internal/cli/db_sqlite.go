@@ -4,13 +4,16 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 
+	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/sqlitedb"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // dbFileName duplicates appbuild's constant rather than importing it: the
@@ -88,15 +91,29 @@ func runDBStatus() error {
 	return nil
 }
 
-// runDBReconcile is a successful no-op: this build synthesizes no
-// derived-schema objects, so there is nothing that could drift.
-//
-// Returning nil rather than an error is deliberate. `rela db reconcile
-// --dry-run` is a documented CI drift gate on the postgres build, and a sqlite
-// build in that same pipeline must not fail unconditionally.
-func runDBReconcile(_, _ bool) error {
-	fmt.Println("Nothing to reconcile: the sqlite build synthesizes no derived-schema")
-	fmt.Println("objects. `unique:` is enforced by the application-level check, which")
-	fmt.Println("is sound here because the store admits only one writer at a time.")
+// runDBReconcile converges (or, with dryRun, reports) the derived query and
+// list indexes (TKT-B51CYD). A dry run with drift exits non-zero, matching the
+// postgres build's CI gate. showValues has no effect: this build derives no
+// unique constraints, so there are no duplicate values to show.
+func runDBReconcile(dryRun, _ bool) error {
+	fs := storage.NewSafeFS(storage.NewOsFS())
+	paths, err := project.Discover("", fs)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Reconciling derived indexes for %s\n", paths.Root)
+	outcomes, err := appbuild.ReconcileDerivedIndexes(context.Background(), fs, paths,
+		store.ReconcileOptions{DryRun: dryRun})
+	if errors.Is(err, appbuild.ErrNoDatabase) {
+		// Not drift: startup creates the database and its indexes together.
+		fmt.Println("No database yet; startup will create it with its derived indexes.")
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if printDerivedDrift(outcomes, dryRun) && dryRun {
+		os.Exit(1)
+	}
 	return nil
 }

@@ -5,7 +5,7 @@ title: pgstore rename should emit EntityRenamed, not delete+put
 kind: refactor
 priority: medium
 effort: s
-status: backlog
+status: wont-fix
 ---
 
 Design doc §12.4. pgstore rename emits `notifyDelete(oldID)` +
@@ -14,3 +14,8 @@ exists on pgstore at all (only fsstore has one). Harmless today only because the
 pg search backend is a no-op observer — any observer with real behaviour sees a
 transient delete on rename. Align with the store contract callback (`store.go`
 EntityRenamed) before states multiply observer traffic.
+
+## Resolution
+
+Closed: Done: pgstore rename emits EntityRenamed via notifyRenamed. Status is
+wont-fix, not done, because this ticket has no review checklist.

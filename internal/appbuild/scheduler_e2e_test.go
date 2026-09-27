@@ -2,11 +2,9 @@ package appbuild_test
 
 import (
 	"context"
-	"encoding/json"
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +13,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/cli"
 	"github.com/Sourcehaven-BV/rela/internal/scheduler"
+	"github.com/Sourcehaven-BV/rela/internal/schedulerstate"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -152,15 +151,10 @@ func TestScheduler_EndToEnd_FailingScriptAdvancesTheLadder(t *testing.T) {
 
 	runScheduler(t, svc)
 
-	// The scheduler persists its ladder to .rela/scheduler-state.json, which is
-	// the same surface an operator would inspect.
-	state := readSchedulerState(t, svc)
-	require.Contains(t, state, `"failures"`,
-		"a failing script must advance the retry ladder")
-	require.Contains(t, state, `"next_retry"`,
-		"a failed task must have a pending retry (BUG-ZKK2UL)")
-	require.NotContains(t, state, `"tasks": {\n    "tick"`,
-		"a failed run must not stamp a last-successful-run time")
+	ts := tickState(t, svc)
+	require.Equal(t, 1, ts.Failures, "a failing script must advance the retry ladder")
+	require.False(t, ts.NextRetry.IsZero(), "a failed task must have a pending retry (BUG-ZKK2UL)")
+	require.True(t, ts.LastRun.IsZero(), "a failed run must not stamp a last-successful-run time")
 }
 
 // TestSchedulerCmd_EndToEnd drives the `rela scheduler` COMMAND, not the
@@ -196,8 +190,8 @@ func TestSchedulerCmd_EndToEnd(t *testing.T) {
 	}, settleFor, 20*time.Millisecond,
 		"the scheduler command did not execute its task; check that it attaches the job queue")
 
-	// The note is what the task DOES; the state file is how the scheduler
-	// records that it is DONE, and recordSuccess writes it AFTER the note
+	// The note is what the task DOES; the run record is how the scheduler
+	// records that it is DONE, and the worker writes it AFTER the note
 	// exists. Returning on the note alone lets that write race t.TempDir's
 	// RemoveAll, which then fails with ".rela: directory not empty"
 	// (BUG-PRFSTS). Wait for the run's last write, not its first visible one.
@@ -232,7 +226,7 @@ func runScheduler(t *testing.T, svc *appbuild.Services) {
 	require.NoError(t, err)
 
 	// Run executes due tasks immediately on start, so the first run lands
-	// without waiting for a tick. Stop as soon as the state file shows it.
+	// without waiting for a tick. Stop as soon as the run has ended.
 	runUntil(t, s, func() bool { return schedulerSettled(svc) },
 		"the scheduler did not finish a task run")
 }
@@ -263,8 +257,8 @@ func runUntil(t *testing.T, s *scheduler.Scheduler, settled func() bool, msg str
 
 // runSchedulerTwice runs one scheduler through two task executions.
 //
-// Between them it rewinds the persisted last-run stamp so the task is due
-// again, rather than waiting out a real interval.
+// Between them it forgets the task's run-state, so the task is due again as a
+// first run, rather than waiting out a real interval.
 func runSchedulerTwice(t *testing.T, svc *appbuild.Services) {
 	t.Helper()
 
@@ -279,84 +273,48 @@ func runSchedulerTwice(t *testing.T, svc *appbuild.Services) {
 	runUntil(t, s, func() bool { return schedulerSettled(svc) },
 		"first run did not complete")
 
-	// Rewind so the task is due, then run the SAME scheduler again.
-	rewound := rewindLastRun(t, svc)
+	// Prune with a cut-off in the future drops every idle record, so the task
+	// is due again on the same scheduler's first tick.
+	forgotten := time.Now()
+	_, err = svc.SchedulerState().Prune(context.Background(), forgotten.Add(time.Hour))
+	require.NoError(t, err)
 
 	// Both conditions, for the reason given in TestSchedulerCmd_EndToEnd: the
-	// note proves the task ran, the state write proves the run is over. The
-	// plain schedulerSettled is useless here -- rewindLastRun leaves "tick"
-	// in the file, so it is already true before the second run starts. Wait
-	// for the stamp to move FORWARD off the rewound value instead
-	// (BUG-PRFSTS).
+	// note proves the task ran, the run record proves the run is over.
 	runUntil(t, s, func() bool {
 		notes := listNotes(t, svc)
-		return len(notes) > 0 && notes[0] == "2" && lastRunAfter(svc, rewound)
+		return len(notes) > 0 && notes[0] == "2" && lastRunAfter(svc, forgotten)
 	}, "second run did not complete")
 }
 
-// schedulerStateFile is the scheduler's state file inside .rela/. The
-// scheduler names it in its own unexported const; duplicated here because
-// this is an external test package.
-const schedulerStateFile = "scheduler-state.json"
-
-// rewindLastRun pushes the task's last-run stamp far enough into the past that
-// the scheduler considers it due on its next evaluation.
-func rewindLastRun(t *testing.T, svc *appbuild.Services) time.Time {
+// tickState returns the run-state of the "tick" task.
+func tickState(t *testing.T, svc *appbuild.Services) schedulerstate.TaskState {
 	t.Helper()
-
-	ctx := context.Background()
-	data, err := svc.State().Get(ctx, schedulerStateFile)
+	got, err := svc.SchedulerState().Load(context.Background(), []string{"tick"})
 	require.NoError(t, err)
-
-	stamp := time.Now().Add(-48 * time.Hour)
-	old := stamp.Format(time.RFC3339Nano)
-	var st map[string]map[string]any
-	require.NoError(t, json.Unmarshal(data, &st))
-	require.Contains(t, st, "tasks")
-	st["tasks"]["tick"] = old
-
-	out, err := json.Marshal(st)
-	require.NoError(t, err)
-	require.NoError(t, svc.State().Put(ctx, schedulerStateFile, out))
-	return stamp
+	return got["tick"]
 }
 
-// lastRunAfter reports whether the persisted last-run stamp for "tick" has
-// moved strictly past want. Used to wait for a SPECIFIC run's state write
-// when an earlier one already left the task present in the file.
+// lastRunAfter reports whether the last successful run of "tick" started
+// strictly after want.
 func lastRunAfter(svc *appbuild.Services, want time.Time) bool {
-	data, err := svc.State().Get(context.Background(), schedulerStateFile)
+	got, err := svc.SchedulerState().Load(context.Background(), []string{"tick"})
 	if err != nil {
 		return false
 	}
-	var st struct {
-		Tasks map[string]time.Time `json:"tasks"`
-	}
-	if err := json.Unmarshal(data, &st); err != nil {
-		return false
-	}
-	got, ok := st.Tasks["tick"]
-	return ok && got.After(want)
+	ts, ok := got["tick"]
+	return ok && ts.Active == nil && ts.LastRun.After(want)
 }
 
-// schedulerSettled reports whether the scheduler has written an outcome —
-// either a successful run or a failure — to its state file.
+// schedulerSettled reports whether a run of "tick" has ended, successfully or
+// not.
 func schedulerSettled(svc *appbuild.Services) bool {
-	data, err := svc.State().Get(context.Background(), schedulerStateFile)
+	got, err := svc.SchedulerState().Load(context.Background(), []string{"tick"})
 	if err != nil {
 		return false
 	}
-	body := string(data)
-	return strings.Contains(body, `"tick"`)
-}
-
-// readSchedulerState returns the persisted scheduler state as text.
-func readSchedulerState(t *testing.T, svc *appbuild.Services) string {
-	t.Helper()
-
-	data, err := svc.State().Get(context.Background(), schedulerStateFile)
-	require.NoError(t, err)
-	return string(data)
+	ts, ok := got["tick"]
+	return ok && ts.Active == nil && (!ts.LastRun.IsZero() || ts.Failures > 0)
 }
 
 // discardTestLogger keeps expected failure output out of the test log.

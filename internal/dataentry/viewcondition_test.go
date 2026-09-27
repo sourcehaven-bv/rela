@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/relresolve"
 )
 
 // stubMatcher matches rows whose `status` equals want, or fails on failOn.
@@ -16,12 +17,18 @@ type stubMatcher struct {
 	failOn string
 }
 
-func (m stubMatcher) Matches(_ context.Context, e *entityPkg.Entity) (bool, error) {
-	if m.failOn != "" && e.ID == m.failOn {
-		return false, errors.New("boom")
+func (m stubMatcher) MatchPage(
+	_ context.Context, rows []*entityPkg.Entity, _ relresolve.Gate, _ relresolve.Match,
+) ([]bool, error) {
+	out := make([]bool, len(rows))
+	for i, e := range rows {
+		if m.failOn != "" && e.ID == m.failOn {
+			return nil, errors.New("boom")
+		}
+		s, _ := e.Properties["status"].(string)
+		out[i] = s == m.want
 	}
-	s, _ := e.Properties["status"].(string)
-	return s == m.want, nil
+	return out, nil
 }
 
 func rows(ids ...string) []*entityPkg.Entity {
@@ -43,13 +50,13 @@ func TestApplyViewCondition(t *testing.T) {
 
 	t.Run("nil matcher is a no-op, not an empty result", func(t *testing.T) {
 		in := rows("A", "B")
-		got, err := applyViewCondition(ctx, in, nil, nil)
+		got, err := applyViewCondition(ctx, in, nil, nil, nil)
 		require.NoError(t, err)
 		require.Equal(t, in, got)
 	})
 
 	t.Run("filters and preserves order", func(t *testing.T) {
-		got, err := applyViewCondition(ctx, rows("A", "B", "C"), stubMatcher{want: "open"}, nil)
+		got, err := applyViewCondition(ctx, rows("A", "B", "C"), stubMatcher{want: "open"}, nil, nil)
 		require.NoError(t, err)
 		require.Len(t, got, 2)
 		require.Equal(t, "A", got[0].ID)
@@ -59,7 +66,7 @@ func TestApplyViewCondition(t *testing.T) {
 	// An unjudgeable row must not be silently dropped: that would narrow the
 	// view with no diagnostic, the inverse of BUG-WHEREWIDE.
 	t.Run("an evaluation error aborts rather than dropping the row", func(t *testing.T) {
-		_, err := applyViewCondition(ctx, rows("A", "B"), stubMatcher{want: "open", failOn: "A"}, nil)
+		_, err := applyViewCondition(ctx, rows("A", "B"), stubMatcher{want: "open", failOn: "A"}, nil, nil)
 		require.Error(t, err)
 	})
 }

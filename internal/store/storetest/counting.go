@@ -21,7 +21,14 @@ import (
 // Reads are counted; writes pass through uncounted (a test seeds through
 // the same handle, and seeding is not the thing under measurement). The
 // optional capabilities a consumer type-asserts are forwarded: the header
-// reader (counted), and the transaction view (its reads counted too).
+// readers and the matched counter (counted), and the transaction view (its
+// reads counted too).
+//
+// Its exported methods are the store read surface it decorates plus the
+// optional capabilities above, so the count moves with store.Store rather than
+// with this type.
+//
+//plimsoll:max-exported-methods=22
 type Counting struct {
 	store.Store
 
@@ -168,6 +175,20 @@ func (c *Counting) GraphCount(ctx context.Context, q store.GraphQuery) (matched,
 func (c *Counting) MatchingIDs(ctx context.Context, q store.GraphQuery, ids []string) (map[string]bool, error) {
 	c.hit("MatchingIDs")
 	return c.Store.MatchingIDs(ctx, q, ids)
+}
+
+// GraphQueryHeaders forwards to the wrapped store's native header query, or
+// to the generic projection of GraphQuery — either way one read.
+func (c *Counting) GraphQueryHeaders(ctx context.Context, q store.GraphQuery) iter.Seq2[store.EntityHeader, error] {
+	c.hit("GraphQueryHeaders")
+	return store.GraphQueryHeaders(ctx, c.Store, q)
+}
+
+// CountMatched forwards to the wrapped store's matched counter, or to
+// GraphCount's matched half — either way one read.
+func (c *Counting) CountMatched(ctx context.Context, q store.GraphQuery) (int, error) {
+	c.hit("CountMatched")
+	return store.CountMatched(ctx, c.Store, q)
 }
 
 // ListEntityHeaders forwards to the wrapped store's header reader, or to

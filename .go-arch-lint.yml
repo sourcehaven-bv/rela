@@ -96,6 +96,7 @@ components:
   templating:       { in: internal/templating }
   predicate:        { in: internal/predicate }
   predicatefns:     { in: internal/predicatefns }
+  relresolve:       { in: internal/relresolve }
   statemachine:     { in: internal/statemachine }
   tracer:           { in: internal/tracer }
   validation:       { in: internal/validation }
@@ -138,6 +139,7 @@ components:
   sqlitecomments:   { in: internal/comments/sqlitecomments }
   schedulerstate:   { in: internal/schedulerstate }
   kvschedstate:     { in: internal/schedulerstate/kvstate }
+  pgschedstate:     { in: internal/schedulerstate/pgschedstate }
   pattern:          { in: internal/pattern }
   search:           { in: internal/search }
   bleveindex:       { in: internal/search/bleveindex }
@@ -319,7 +321,8 @@ deps:
   # (dataentry) and the protocol server it mounts inside it (mcp) — the same
   # pairing `cli` already has for the stdio transport. Keeping the MCP wiring
   # here is what lets `dataentry` take a plain http.Handler and stay off the
-  # go-sdk (TKT-BDG8U9).
+  # go-sdk (TKT-BDG8U9). It names `lua` only to pair the gated Lua read
+  # bundle with the entity manager for the remote MCP Lua tools (TKT-4QSZ8Y).
   cmdServer:
     mayDependOn:
       - acl
@@ -328,6 +331,7 @@ deps:
       - cmdexec
       - dataentry
       - jwtauth
+      - lua
       - mcp
       - principal
       - scheduler
@@ -389,6 +393,7 @@ deps:
       - sqlitestore
       - predicate
       - predicatefns
+      - relresolve
       - principal
       - project
       - projectsetup
@@ -479,6 +484,11 @@ deps:
       - openapi
       - project
       - queryplan
+      # Answers `related(...)` in validation rules and state-machine `when:`
+      # (TKT-205V2N). Its API is funcs over acl and store types, so this edge
+      # does not hand dataentry the predicate engine; dataentry only picks the
+      # gate (the request gate for rules, the raw store for transitions).
+      - relresolve
       - script
       - search
       - searchparser
@@ -555,7 +565,12 @@ deps:
   # as a plain string rather than a *project.Context.
   mcp:
     mayDependOn:
+      # acl + attachment: the attachment tools (TKT-R6U15C) authorize an
+      # `update` before any bytes are stored, and drive attachment.Service,
+      # the write policy the CLI and web upload paths share.
+      - acl
       - ai
+      - attachment
       - audit
       - config
       - dataentryconfig
@@ -570,6 +585,9 @@ deps:
       - store
       - tracer
       - validator
+      # visibility.Readable: the write tools gate the ids they name through
+      # the injected (gated) reader before calling entitymanager.
+      - visibility
     canUse:
       - mcpgo
       - fsnotify
@@ -628,6 +646,10 @@ deps:
       - memmigstate
       - pgmigstate
       - sqlitemigstate
+      # The scheduler run-state backends, selected here for the same reason.
+      - schedulerstate
+      - kvschedstate
+      - pgschedstate
       # Bridges conditionlint's next-action condition compiler to the seam
       # dataentry declares, so the app never imports the predicate engine.
       # predicatefns + principal: the same bridge derives the query identity
@@ -642,6 +664,8 @@ deps:
       # arrangement as the next-action matchers above.
       - queryscopes
       - predicate
+      # relresolve: answers related(...) for every condition surface it wires.
+      - relresolve
       - principal
       - computed
       - dataentryconfig
@@ -732,6 +756,7 @@ deps:
       - metamodel
       - project
       - script
+      - relresolve
       - search
       - state
       - storage
@@ -765,6 +790,7 @@ deps:
       - lua
       - metamodel
       - project
+      - relresolve
       - schema
       - storage
       - store
@@ -876,6 +902,9 @@ deps:
       - affordances
       - entity
       - principal
+      # visibility.Searcher gates search hits for identity-bearing consumers
+      # (remote MCP, Lua), the pattern search.VisibleSearcher started.
+      - search
       - store
       - tracer
   audit:
@@ -1056,11 +1085,21 @@ deps:
       - predicate
       - filter
       - metamodel
+  # relresolve answers related(...) traversals in batches for every surface
+  # that evaluates them (TKT-205V2N): gated through acl, answered by store.
+  relresolve:
+    mayDependOn:
+      - acl
+      - metamodel
+      - predicate
+      - predicatefns
+      - store
   statemachine:
     mayDependOn:
       - entity
       - metamodel
       - predicate
+      - predicatefns
   tracer:
     mayDependOn:
       - store
@@ -1210,6 +1249,14 @@ deps:
     mayDependOn:
       - state
       - schedulerstate
+  # The postgres backend is one row per task and per run, so several
+  # rela-server processes share one schedule safely (BUG-TKL08E). Like
+  # pgcomments it takes an injected handle and never imports store.
+  pgschedstate:
+    mayDependOn:
+      - schedulerstate
+    canUse:
+      - pgx
   # nextaction is the resolution engine. It depends on NO store, searcher or
   # ACL type: candidates arrive through a consumer-side CandidateFunc that the
   # wiring site supplies already read-gated. That is what keeps the engine
@@ -1247,6 +1294,9 @@ deps:
       - secrets
       - store
       - tracer
+      # visibility.Readable: the write bindings gate the ids they name through
+      # the runtime's VisibleReader before calling the manager.
+      - visibility
     canUse:
       - goldmark
       - gopherlua
@@ -1270,8 +1320,11 @@ deps:
       - filter
       - principal
       - project
+      - schedulerstate
       - script
       - state
+    canUse:
+      - uuid
   script:
     mayDependOn:
       - ai

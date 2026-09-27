@@ -5,7 +5,7 @@ title: Separate metamodel reload from data reload in watcher
 kind: refactor
 priority: high
 effort: m
-status: backlog
+status: wont-fix
 ---
 
 > **Sweep note (2026-07-20): the described mechanism is gone — there is no Reload()/Sync() split or manual watch-file list; App.StartWatching delegates to the store-level watcher via the storeWatcher interface + startStoreEventBridge (SSE). If metamodel-vs-data reload granularity is still wanted, redesign against the store watcher/change-feed path.**
@@ -18,8 +18,8 @@ entity/relation changes (the common case) don't need a metamodel reload, and
 metamodel changes don't need the full entity parse if nothing else changed.
 
 More importantly, the metamodel's `includes:` files (e.g., `types.yaml`,
-`entities.yaml`) are not in the watcher's file list, so changes to include
-files don't trigger any reload at all.
+`entities.yaml`) are not in the watcher's file list, so changes to include files
+don't trigger any reload at all.
 
 See `.ignored/database-lessons.md` proposal #2 ("Catalog vs. Data Lifecycle").
 
@@ -30,7 +30,7 @@ See `.ignored/database-lessons.md` proposal #2 ("Catalog vs. Data Lifecycle").
    - If only entities/relations changed → `Sync()` (graph only, keep current meta)
 2. **Add include files to the watch list** so changes to `types.yaml` etc. trigger reloads
 3. The metamodel's `Includes` field (post-parse) lists the include paths. After initial
-   load, pass these to the watcher as extra files.
+load, pass these to the watcher as extra files.
 
 ## Scope
 
@@ -54,3 +54,8 @@ See `.ignored/database-lessons.md` proposal #2 ("Catalog vs. Data Lifecycle").
 5. Mixed changes (metamodel + entities in same batch) trigger `Reload()`
 6. All existing tests pass
 7. `go test -race ./...`, `just lint`, `go-arch-lint check` all pass
+
+## Resolution
+
+Closed: Shipped in #376. Status is wont-fix, not done, because this ticket has
+no review checklist.

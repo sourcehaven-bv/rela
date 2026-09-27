@@ -41,12 +41,13 @@ const entityColumns = "id, type, face, properties, content, updated_at"
 // and resolve a prime from a partial view, which is the wrong-prime hazard
 // storeutil.PaginateWorldPrimes exists to avoid on the other backends.
 func buildEntitySelectSQL(q store.EntityQuery, keysetAfter, columns string) (sqlText string, args []any) {
+	b := &sqlBuilder{}
 	if q.World.IsDefaultWorld() {
-		where, wargs := entityWhere(q, keysetAfter)
-		return `SELECT ` + columns + ` FROM entities` + where + ` ORDER BY id, face`, wargs
+		where := entityWhere(b, q, keysetAfter)
+		return `SELECT ` + columns + ` FROM entities` + where + ` ORDER BY id, face`, b.args
 	}
 
-	rank, rankArgs, candidate, candArgs := worldSQL(q.World, "")
+	rank, candidate := worldSQL(b, q.World, "")
 
 	// ROW_NUMBER() OVER (PARTITION BY id ORDER BY rank, face) is SQLite's
 	// DISTINCT ON: rn = 1 is the family's prime. The face tiebreak makes the
@@ -54,29 +55,17 @@ func buildEntitySelectSQL(q store.EntityQuery, keysetAfter, columns string) (sql
 	// ELSE-0 arms can produce.
 	inner := `SELECT ` + columns +
 		`, ROW_NUMBER() OVER (PARTITION BY id ORDER BY (` + rank + `), face) AS rn` +
-		` FROM entities`
-	scope, scopeArgs := entityScopeWhere(q, candidate, candArgs)
-	inner += scope
-
-	// Positional '?' binds in the order the placeholders appear IN THE
-	// STATEMENT TEXT, not in the order SQLite evaluates the clauses. The window
-	// function sits in the SELECT list, so the rank's placeholders precede the
-	// WHERE clause's even though the WHERE is evaluated first. Getting this
-	// backwards produces a statement that runs, binds the type name where a
-	// coordinate belongs, matches nothing, and silently excludes every entity.
-	args = append(args, rankArgs...)
-	args = append(args, scopeArgs...)
+		` FROM entities` + entityScopeWhere(b, q, candidate)
 
 	outer := `SELECT ` + columns + ` FROM (` + inner + `) WHERE rn = 1`
 	if keysetAfter != "" {
 		// Cursor semantics match the default-world path: an unparseable cursor
 		// RESTARTS rather than comparing against garbage.
 		if cursorID, cursorFace, err := entity.ParseStateRef(keysetAfter); err == nil {
-			outer += ` AND (id, face) > (?, ?)`
-			args = append(args, cursorID, string(cursorFace))
+			outer += ` AND (id, face) > (` + b.arg(cursorID) + `, ` + b.arg(string(cursorFace)) + `)`
 		}
 	}
-	return outer + ` ORDER BY id, face`, args
+	return outer + ` ORDER BY id, face`, b.args
 }
 
 // entityScopeWhere builds the WHERE clause for a WORLD-scoped listing: the
@@ -85,34 +74,40 @@ func buildEntitySelectSQL(q store.EntityQuery, keysetAfter, columns string) (sql
 // It carries no keyset condition on purpose. Paging a world-scoped query must
 // page over PRIMES, not candidate rows, so the cursor is applied OUTSIDE the
 // window — see buildEntitySelectSQL.
-func entityScopeWhere(q store.EntityQuery, candidate string, candArgs []any) (where string, args []any) {
+func entityScopeWhere(b *sqlBuilder, q store.EntityQuery, candidate string) string {
 	conds := []string{candidate}
-	args = append(args, candArgs...)
 	if q.Type != "" {
-		conds = append(conds, "type = ?")
-		args = append(args, q.Type)
+		conds = append(conds, "type = "+b.arg(q.Type))
 	}
 	if len(q.IDs) > 0 {
-		conds = append(conds, "id IN (SELECT value FROM json_each(?))")
-		args = append(args, jsonIDs(q.IDs))
+		conds = append(conds, "id IN (SELECT value FROM json_each("+b.arg(jsonIDs(q.IDs))+"))")
 	}
-	conds, args = appendFaceInCond(conds, q.FaceIn, args)
-	return " WHERE " + strings.Join(conds, " AND "), args
+	conds = appendFaceInCond(b, conds, q.FaceIn)
+	return " WHERE " + strings.Join(conds, " AND ")
 }
 
 // appendFaceInCond ANDs the FaceIn allowlist onto conds. Nil means every
 // face (no condition). Applied to BOTH the default-world and the world-scoped
 // candidate predicate: the ACL read path compiles a role's face grants into
 // this set, and a backend that ignores it fails open (store.EntityQuery.FaceIn).
-func appendFaceInCond(conds []string, faces []entity.Face, args []any) (outConds []string, outArgs []any) {
+func appendFaceInCond(b *sqlBuilder, conds []string, faces []entity.Face) []string {
 	if len(faces) == 0 {
-		return conds, args
+		return conds
 	}
-	conds = append(conds, "face IN ("+placeholders(len(faces))+")")
-	for _, f := range faces {
-		args = append(args, string(f))
+	vals := make([]string, len(faces))
+	for i, f := range faces {
+		vals[i] = string(f)
 	}
-	return conds, args
+	return append(conds, "face IN ("+argList(b, vals)+")")
+}
+
+// argList binds each value and returns the comma-joined placeholders.
+func argList(b *sqlBuilder, vals []string) string {
+	ps := make([]string, len(vals))
+	for i, v := range vals {
+		ps[i] = b.arg(v)
+	}
+	return strings.Join(ps, ", ")
 }
 
 // entityWhere builds the WHERE clause for a DEFAULT-world listing.
@@ -120,7 +115,7 @@ func appendFaceInCond(conds []string, faces []entity.Face, args []any) (outConds
 // A non-default World does NOT come through here: it needs the widened
 // candidate predicate plus a rank, which only buildEntitySelectSQL can pair up
 // — see entityScopeWhere.
-func entityWhere(q store.EntityQuery, keysetAfter string) (where string, args []any) {
+func entityWhere(b *sqlBuilder, q store.EntityQuery, keysetAfter string) string {
 	var conds []string
 	// Default-world scope: the zero-value query returns default states only —
 	// byte-identical behavior for faceless projects. AllStates is the raw
@@ -129,14 +124,12 @@ func entityWhere(q store.EntityQuery, keysetAfter string) (where string, args []
 		conds = append(conds, "face = ''")
 	}
 	if q.Type != "" {
-		conds = append(conds, "type = ?")
-		args = append(args, q.Type)
+		conds = append(conds, "type = "+b.arg(q.Type))
 	}
 	if len(q.IDs) > 0 {
-		conds = append(conds, "id IN (SELECT value FROM json_each(?))")
-		args = append(args, jsonIDs(q.IDs))
+		conds = append(conds, "id IN (SELECT value FROM json_each("+b.arg(jsonIDs(q.IDs))+"))")
 	}
-	conds, args = appendFaceInCond(conds, q.FaceIn, args)
+	conds = appendFaceInCond(b, conds, q.FaceIn)
 	if keysetAfter != "" {
 		// The cursor encodes the state key ("id" or "id@face"); a pre-states
 		// cursor parses as a bare id with the zero face, so it keeps resuming
@@ -146,14 +139,13 @@ func entityWhere(q store.EntityQuery, keysetAfter string) (where string, args []
 		// silently skip every row sorting below it, which a paging caller
 		// cannot tell from end-of-results.
 		if cursorID, cursorFace, err := entity.ParseStateRef(keysetAfter); err == nil {
-			conds = append(conds, "(id, face) > (?, ?)")
-			args = append(args, cursorID, string(cursorFace))
+			conds = append(conds, "(id, face) > ("+b.arg(cursorID)+", "+b.arg(string(cursorFace))+")")
 		}
 	}
 	if len(conds) == 0 {
-		return "", args
+		return ""
 	}
-	return " WHERE " + strings.Join(conds, " AND "), args
+	return " WHERE " + strings.Join(conds, " AND ")
 }
 
 // buildEntityCountSQL counts the entities in scope.
@@ -169,13 +161,12 @@ func entityWhere(q store.EntityQuery, keysetAfter string) (where string, args []
 // publication bit, so an unscoped tally would tell a published-world surface
 // how many unpublished drafts exist.
 func buildEntityCountSQL(q store.EntityQuery) (sqlText string, args []any) {
+	b := &sqlBuilder{}
 	if q.World.IsDefaultWorld() {
-		where, wargs := entityWhere(q, "")
-		return "SELECT count(*) FROM entities" + where, wargs
+		return "SELECT count(*) FROM entities" + entityWhere(b, q, ""), b.args
 	}
-	_, _, candidate, candArgs := worldSQL(q.World, "")
-	scope, scopeArgs := entityScopeWhere(q, candidate, candArgs)
-	return "SELECT count(DISTINCT id) FROM entities" + scope, scopeArgs
+	_, candidate := worldSQL(b, q.World, "")
+	return "SELECT count(DISTINCT id) FROM entities" + entityScopeWhere(b, q, candidate), b.args
 }
 
 // limitClause appends "LIMIT n" for a positive n. Interpolated rather than

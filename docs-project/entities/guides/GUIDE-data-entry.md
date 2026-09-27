@@ -200,6 +200,27 @@ navigation:                # Sidebar menu (supports groups)
         list: all_tasks
 ```
 
+### Reloading the file while the server runs
+
+The server watches `data-entry.yaml` and reloads it when the file changes. A
+reload runs the same checks as startup. The file must parse and pass validation
+against the schema. Every `script:` it names for an action, a document or an
+`export_render` override must exist.
+
+If a check fails, the server rejects the reload and keeps serving the previous
+config. It logs the error and sends it to open browsers, which show it as an
+error message. Fix the file and save it again. The first save that passes the
+checks is applied.
+
+Some settings are read only at startup. A reload accepts changes to them, but
+they take effect only after a restart:
+
+- the `git:` block;
+- `app.name` and `app.description` where they form the OpenAPI title and
+  description;
+- on the PostgreSQL backend, the derived indexes for static dashboard and
+  next-action queries.
+
 ## App
 
 Display metadata shown in the header:
@@ -980,7 +1001,8 @@ Hiding is a presentation decision, not a delete. Use
 `visible_when` (on a step, field, or relation) hides its target when the
 expression is false. `required_when` (on a field) makes the field required only
 when the expression is true. Both are boolean expressions evaluated in the
-browser against the form's current values.
+browser against the form's current values. The browser cannot read
+relations, so `related(...)` is refused here at startup.
 
 | Feature | Syntax |
 | --- | --- |
@@ -1262,6 +1284,11 @@ filter on `afgerond_op` would also apply to the unfinished tasks and hide them.
 
 It is operator config: the expression is never accepted from a request, so a
 caller can only select among views you have declared.
+
+A condition may use `related(...)` to filter on related entities, for example
+`related(entity, 'implementedBy', { status = 'open' })`. It answers each
+traversal once per page, and only entities the reader may see count. See
+[Where `related(...)` works](metamodel.md#where-related-works).
 
 > **Lists only, for now.** A `condition:` on a `kanbans:` entry is **rejected
 > at startup** — the board still filters client-side, and a key that validated
@@ -2438,6 +2465,9 @@ Rules worth knowing:
   "dew" on record`. A condition that silently matched nothing would be
   indistinguishable from a source with nothing to say.
 - **Not available on a `count` source** — there is no entity to test.
+- **`related(...)` is allowed**, as in a list condition. It is answered once
+  per source, and only entities the reader may see count. See
+  [Where `related(...)` works](metamodel.md#where-related-works).
 - **Not available with free text in `query`** (`type:task urgent`). Free-text
   results are capped by relevance before the condition runs, so a condition
   matching only a hit past the cut would silently never fire. Select with
@@ -2474,6 +2504,10 @@ next_actions:
 - `has_current_user(entity.watchers)` — membership, for a **list** property:
   true when the current user is one of the values. (Lists cannot be compared
   with `==`; this is the way to ask.)
+- `related(entity, 'heeft_verantwoordelijke', { id = current_user.id })` — for
+  ownership held in a **relation** rather than a property: true when the walk
+  reaches the current user's entity. See
+  [Matching the current user](metamodel.md#matching-the-current-user).
 
 `current_user.id` is the user **entity id** when your ACL policy declares a
 `user_entity_type` and the signed-in principal resolves to one of its
@@ -5303,7 +5337,9 @@ covered in the **User defaults** section earlier in this guide.
 
 Editing `data-entry.yaml` to change a document's `script:` or `command:`
 takes effect on the next request; open document panels pick up the new
-renderer on their next reload.
+renderer on their next reload. A reload that fails its checks, for example
+because the new `script:` does not exist, keeps the previous config. See
+"Reloading the file while the server runs".
 
 ## Calendar feeds
 

@@ -62,6 +62,12 @@ type Capabilities struct {
 	// interface incorrectly or partially, and silently SKIP for one that meant
 	// to. The flag makes the claim explicit and the suite then holds it to it.
 	Versioning bool
+
+	// SweepNow runs one version-sweep tick on s synchronously, treating every
+	// row as settled. Required when Versioning is set: who a swept create or
+	// update is attributed to is contract, not mechanism, and a backend whose
+	// sweep cannot be driven cannot show it keeps that contract (BUG-07DNNY).
+	SweepNow func(t *testing.T, s store.Store)
 }
 
 func ctx() context.Context { return context.Background() }
@@ -187,6 +193,7 @@ func RunAll(t *testing.T, f Factory, sf SearchFactory, vsf VisibleSearchFactory,
 	t.Run("Query", func(t *testing.T) { RunQueryTests(t, f) })
 	t.Run("GraphQuery", func(t *testing.T) { RunGraphQueryTests(t, f) })
 	t.Run("EndpointMatch", func(t *testing.T) { RunEndpointMatchTests(t, f) })
+	t.Run("Related", func(t *testing.T) { RunRelatedTests(t, f) })
 	t.Run("GraphHeaders", func(t *testing.T) { RunGraphHeaderTests(t, f) })
 	t.Run("GraphPaging", func(t *testing.T) { RunGraphPagingTests(t, f) })
 	t.Run("GraphPosition", func(t *testing.T) { RunGraphPositionTests(t, f) })
@@ -224,5 +231,10 @@ func RunAll(t *testing.T, f Factory, sf SearchFactory, vsf VisibleSearchFactory,
 	// a backend cannot claim the tier and quietly not have it.
 	if caps.Versioning {
 		t.Run("Version", func(t *testing.T) { RunVersionTests(t, f) })
+		t.Run("SweepAttribution", func(t *testing.T) {
+			require.NotNil(t, caps.SweepNow,
+				"store declared Capabilities.Versioning but no Capabilities.SweepNow driver")
+			RunSweepAttributionTests(t, f, caps.SweepNow)
+		})
 	}
 }

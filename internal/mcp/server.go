@@ -73,10 +73,14 @@ type Deps struct {
 	Validator     validator.Validator
 	EntityManager EntityWriter
 	Config        config.Loader
-	LuaWriteDeps  lua.WriteDeps
-	LuaCache      *lua.Cache
-	Watcher       Watcher
-	ProjectRoot   string
+	// LuaWriteDeps and LuaCache back the lua_* tools, which exist only
+	// when the server is built [WithLuaTools]. A wiring that does not pass
+	// that option leaves both zero.
+	LuaWriteDeps lua.WriteDeps
+	LuaCache     *lua.Cache
+	Watcher      Watcher
+	ProjectRoot  string
+	Attachments  AttachmentDeps
 }
 
 // GraphReader is the read capability MCP requires of its store — the exact
@@ -172,6 +176,19 @@ func (d Deps) validate() error {
 	case d.ProjectRoot == "":
 		return errors.New("mcp: Deps.ProjectRoot is required")
 	}
+	return d.Attachments.validate()
+}
+
+// validateFor is Deps.validate plus the checks that depend on how s was
+// built: a server [WithLuaTools] needs the Lua write deps. A free function to
+// keep Server under its plimsoll load line.
+func validateFor(s *Server, d Deps) error {
+	if err := d.validate(); err != nil {
+		return err
+	}
+	if s.luaTools && d.LuaWriteDeps.EntityManager == nil {
+		return errors.New("mcp: WithLuaTools requires Deps.LuaWriteDeps")
+	}
 	return nil
 }
 
@@ -228,6 +245,10 @@ type Server struct {
 	logger    *slog.Logger
 	principal principal.Principal
 
+	// luaTools registers lua_eval / lua_run / lua_list. Off unless the wiring
+	// asks for it with [WithLuaTools]; see that option for why.
+	luaTools bool
+
 	// state publishes the reloadable (Deps, handlerSet) pair. Read it per
 	// request via [Server.deps] / the s.<group>() accessors, never by
 	// caching the result across a call — a schema hot-reload (TKT-NU247U)
@@ -271,7 +292,7 @@ func (s *Server) deps() Deps { return s.state.current().deps }
 // resolved the snapshot completes against it; the next one sees the new
 // bundle.
 func (s *Server) ReloadDeps(d Deps) error {
-	if err := d.validate(); err != nil {
+	if err := validateFor(s, d); err != nil {
 		return err
 	}
 	setDeps(s, d)
@@ -314,6 +335,7 @@ type handlerSet struct {
 	lua       luaHandler
 	schemaRes schemaResourceHandler
 	prompts   promptHandler
+	attach    attachmentHandler
 }
 
 // handlers builds the extracted handler groups a [Server] carries. One
@@ -328,6 +350,7 @@ func (d Deps) handlers() handlerSet {
 		lua:       luaHandler{writeDeps: d.LuaWriteDeps, cache: d.LuaCache, projectRoot: d.ProjectRoot},
 		schemaRes: schemaResourceHandler{store: d.Store, meta: d.Meta},
 		prompts:   promptHandler{store: d.Store, meta: d.Meta, tracer: d.Tracer, types: types},
+		attach:    attachmentHandler{store: d.Store, deps: d.Attachments},
 	}
 }
 
@@ -341,6 +364,19 @@ type Option func(*Server)
 // handlers (registration-time wrapping, not per-handler opt-in).
 func WithPrincipal(p principal.Principal) Option {
 	return func(s *Server) { s.principal = p }
+}
+
+// WithLuaTools registers the Lua scripting tools (lua_eval, lua_run,
+// lua_list). Only the stdio wiring passes it.
+//
+// Opt-in because a script is caller-supplied code that runs in the server
+// process. Over stdio the caller already controls the machine. Over HTTP it
+// would let any remote caller run arbitrary scripts, which is a
+// denial-of-service surface the remote API does not need. Making the default
+// "absent" means a new networked wiring cannot expose them by forgetting to
+// opt out.
+func WithLuaTools() Option {
+	return func(s *Server) { s.luaTools = true }
 }
 
 // principalMiddleware stamps the server's Principal on every inbound
@@ -392,7 +428,7 @@ func NewServer(deps Deps, version string, opts ...Option) (*Server, error) {
 	if s.principal.IsZero() {
 		return nil, errors.New("mcp.NewServer: Principal is required (use WithPrincipal)")
 	}
-	if err := deps.validate(); err != nil {
+	if err := validateFor(s, deps); err != nil {
 		return nil, err
 	}
 	setDeps(s, deps)
@@ -448,11 +484,27 @@ func NewServer(deps Deps, version string, opts ...Option) (*Server, error) {
 // how identity works: the transport passes the *http.Request ctx through to
 // handlers, and Server.principalMiddleware preserves a principal already
 // stamped there in preference to the construction-time one.
+//
+// The request body limit is raised from the go-sdk's 4 MiB default to fit an
+// attach_file call at [MaxUploadBytes]; see maxRequestBodyBytes.
+//
+// The go-sdk's DNS-rebinding guard is disabled. It rejects any non-loopback
+// Host on a connection accepted over loopback, which is every request in
+// production: rela-server binds 0.0.0.0 and the proxy in front of it connects
+// over 127.0.0.1, forwarding the public Host. The guard protects
+// unauthenticated local servers. This endpoint is only mounted behind the
+// verified-JWT gate (see dataentry.App.SetRemoteMCP), and a rebinding page
+// cannot produce a signed assertion.
 func (s *Server) HTTPHandler() http.Handler {
-	return mcpgo.NewStreamableHTTPHandler(
+	h := mcpgo.NewStreamableHTTPHandler(
 		func(*http.Request) *mcpgo.Server { return s.mcp },
-		&mcpgo.StreamableHTTPOptions{Stateless: true},
+		&mcpgo.StreamableHTTPOptions{
+			Stateless:                  true,
+			DisableLocalhostProtection: true,
+			MaxRequestBodyBytes:        maxRequestBodyBytes,
+		},
 	)
+	return newLargeRequestGate(largeRequestSlots).wrap(h)
 }
 
 // Serve starts the MCP server on stdio and blocks until the peer
@@ -490,6 +542,6 @@ func (s *Server) Serve(ctx context.Context) error {
 
 	defer s.deps().Watcher.Stop()
 
-	return s.mcp.Run(ctx, &mcpgo.StdioTransport{})
+	return s.mcp.Run(ctx, stdioTransport())
 	// coverage-ignore-end
 }

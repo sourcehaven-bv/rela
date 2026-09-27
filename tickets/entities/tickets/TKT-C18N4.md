@@ -7,7 +7,7 @@ priority: medium
 effort: s
 tags:
     - tech-debt
-status: backlog
+status: wont-fix
 ---
 
 > **Sweep note (2026-07-20): the core ask already landed via a different path — demos live in scripts/demo-*.sh and a CI "Demos" job runs them on every PR (ci.yml). Remaining scope is only: `just demo`/`just demos-test` targets and the CLAUDE.md "every feature ships a demo" convention. The demos/*/demo.sh layout in the body is dead.**
@@ -93,3 +93,8 @@ demos:
 
 - Audit which features lack demos and prioritize writing them (flow, scheduler, migrations, MCP).
 - Consider a `demos-test --record` mode that captures demo output as a golden file for snapshot diffing on future changes.
+
+## Resolution
+
+Closed: Done: the CI "Demos" job runs the demo scripts. Status is wont-fix, not
+done, because this ticket has no review checklist.

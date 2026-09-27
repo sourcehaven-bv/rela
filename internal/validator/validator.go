@@ -10,6 +10,7 @@ package validator
 
 import (
 	"context"
+	"errors"
 	"iter"
 	"log/slog"
 
@@ -123,8 +124,23 @@ var _ Validator = (*GenericValidator)(nil)
 // same visibility, the rest of the rule evaluation uses. A nil VisibleReader
 // leaves the graph unwired, and the engine then reports those constraints as
 // unevaluable rather than satisfied.
-func New(r EntityLister, meta *metamodel.Metamodel, deps lua.ReadDeps) *GenericValidator {
-	svc := validation.New(meta, deps)
+//
+// traversals answers `related(...)` in rule conditions. It must see what r
+// sees: the raw store for an operator path, the requester's gate for a
+// principal-bound one. Nil: rejected, like r and meta — a rule using
+// related() would otherwise fail on first use instead of at wiring.
+func New(
+	r EntityLister, meta *metamodel.Metamodel, deps lua.ReadDeps, traversals validation.TraversalBinder,
+) (*GenericValidator, error) {
+	switch {
+	case r == nil:
+		return nil, errors.New("validator: entity lister is required")
+	case meta == nil:
+		return nil, errors.New("validator: metamodel is required")
+	case traversals == nil:
+		return nil, errors.New("validator: traversal binder is required")
+	}
+	svc := validation.New(meta, deps).WithTraversals(traversals)
 	// Mirrors analysis.newValidationService: both entry points into a
 	// Service must wire this the same way, or a `relations:` gate would
 	// mean something different depending on which one ran it.
@@ -144,7 +160,7 @@ func New(r EntityLister, meta *metamodel.Metamodel, deps lua.ReadDeps) *GenericV
 		r:    r,
 		meta: meta,
 		svc:  svc,
-	}
+	}, nil
 }
 
 // CheckRule returns IDs of entities that violate the given rule.

@@ -38,6 +38,11 @@ type scopeRequest struct {
 	// field is the authoritative re-check that makes the pushdown a
 	// superset optimisation rather than the filter itself.
 	//
+	// A list page does not come here at all when its scope lowers exactly
+	// (TKT-XKCNCL): listPage narrows its store query with
+	// resolvedQueryScope.lower instead, and this Go pass is the fallback
+	// for scopes that do not lower.
+	//
 	// Typed as an opaque handle rather than a *predicate.Program because
 	// arch-lint keeps the condition engine above this package: the
 	// composition root compiles the scope and supplies a matching
@@ -88,6 +93,20 @@ type QueryScopeFilter func(
 	match func(context.Context, store.GraphQuery, []string) (map[string]bool, error),
 ) ([]store.EntityHeader, error)
 
+// QueryScopeLower rewrites a scope as store predicates, so a list the store
+// can page by itself stays paged when a scope applies (TKT-XKCNCL).
+//
+// ok=false means the scope does not lower exactly, or a traversal cannot be
+// gated for this principal: take the [QueryScopeFilter] path, which gives the
+// same rows or the same error. empty=true means a traversal is denied and
+// none is refused, so no row matches. Otherwise frag's Props and Related are
+// ANDed onto the read query. gate is the request's traversal gate, the one
+// [QueryScopeFilter] receives.
+type QueryScopeLower func(
+	ctx context.Context, scope QueryScopeHandle, entityType string,
+	gate func(context.Context, string, acl.TraversalHop) (*store.RelationPredicate, error),
+) (frag store.GraphQuery, empty, ok bool)
+
 // scopedHeaders is the ONE place a data-entry collection read resolves the
 // ACL verdict into a store query.
 //
@@ -133,7 +152,9 @@ type QueryScopeFilter func(
 // cannot route through here and return a slice. The two serve one endpoint by
 // different routes: a narrowing added to this function and not to that one
 // makes a list's pushed-down page disagree with its Go-filtered page, which
-// looks like a paging bug and is not one. Change both.
+// looks like a paging bug and is not one. Change both. A query scope reaches
+// the pushed path only through [QueryScopeLower], whose contract is that it
+// selects exactly the rows [applyScope] keeps.
 //
 // Returns content-free headers (rowcontent.go); a caller that needs bodies
 // loads them for the served page only.

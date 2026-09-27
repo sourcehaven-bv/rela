@@ -3,10 +3,13 @@ package dataentry
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/relresolve"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // ViewConditionMatcher evaluates one view's compiled `condition:` against a
@@ -27,8 +30,15 @@ import (
 // cannot be judged is not the same as a row judged false: silently dropping it
 // would be the BUG-WHEREWIDE failure inverted, narrowing a view with no
 // diagnostic. The caller decides what an error means for the request.
+//
+// MatchPage judges a whole page at once, so a condition using `related(...)`
+// costs one store query per traversal rather than one per row. gate
+// authorizes each traversal and match answers it; the verdicts come back in
+// row order.
 type ViewConditionMatcher interface {
-	Matches(ctx context.Context, e *entityPkg.Entity) (bool, error)
+	MatchPage(
+		ctx context.Context, rows []*entityPkg.Entity, gate relresolve.Gate, match relresolve.Match,
+	) ([]bool, error)
 }
 
 // ViewConditionLookup returns the matcher for a configured view, or ok=false
@@ -201,24 +211,45 @@ func viewCondition(fn ViewConditionFunc, s *Schema, kind, id string) ViewConditi
 // a caller holding one must pass it.
 func applyViewCondition(
 	ctx context.Context, rows []*entityPkg.Entity, m ViewConditionMatcher,
-	redact func(context.Context, *entityPkg.Entity) *entityPkg.Entity,
+	redact func(context.Context, *entityPkg.Entity) *entityPkg.Entity, st store.GraphQueryer,
 ) ([]*entityPkg.Entity, error) {
 	if m == nil || len(rows) == 0 {
 		return rows, nil
 	}
+	candidates := rows
+	if redact != nil {
+		candidates = make([]*entityPkg.Entity, len(rows))
+		for i, e := range rows {
+			candidates[i] = redact(ctx, e)
+		}
+	}
+	verdicts, err := m.MatchPage(ctx, candidates, traversalGateFromContext(ctx).GateTraversal,
+		pageMatch(st))
+	if err != nil {
+		return nil, err
+	}
+	if len(verdicts) != len(rows) {
+		// coverage-ignore: invariant: MatchPage returns one verdict per row
+		return nil, fmt.Errorf("view condition: %d verdicts for %d rows", len(verdicts), len(rows))
+	}
 	kept := make([]*entityPkg.Entity, 0, len(rows))
-	for _, e := range rows {
-		candidate := e
-		if redact != nil {
-			candidate = redact(ctx, e)
-		}
-		ok, err := m.Matches(ctx, candidate)
-		if err != nil {
-			return nil, err
-		}
-		if ok {
+	for i, e := range rows {
+		if verdicts[i] {
 			kept = append(kept, e)
 		}
 	}
 	return kept, nil
+}
+
+// pageMatch answers a traversal in the request's world, as [applyScope] does,
+// so a condition cannot see further than the list it filters. It adds no face
+// narrowing: the rows here are already the list's faces, and an allowlist
+// built from them would drop default-face rows from a mixed page.
+func pageMatch(st store.GraphQueryer) relresolve.Match {
+	return func(ctx context.Context, q store.GraphQuery, ids []string) (map[string]bool, error) {
+		if st == nil {
+			return nil, errors.New("view condition: no store to answer related()")
+		}
+		return st.MatchingIDs(ctx, stampScope(ctx, q, scopeRequest{}), ids)
+	}
 }

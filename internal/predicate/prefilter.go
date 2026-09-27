@@ -236,3 +236,67 @@ func attrTypeOf(n node) Type {
 	}
 	return nil
 }
+
+// Conjunction splits the program into the leaves of its top-level AND spine,
+// for a caller that will REPLACE the Go evaluation with a store query rather
+// than pre-filter ahead of it.
+//
+// [Program.ConstEqualities] is a sound SUBSET: it skips what it cannot read
+// and keeps one binding per attribute, because the Go pass still runs and
+// catches everything it left out. Here nothing catches it, so this is exact
+// or nothing. ok is true only when every leaf is a constant equality (the
+// shapes ConstEqualities reports) or a `related(...)` whose subject is
+// spec.RecordVar itself. Any other leaf (`or`, `not`, an ordered comparison,
+// a host call outside spec.ConstFuncs, a literal) makes ok false.
+//
+// Leaves are returned as written: an attribute constrained twice appears
+// twice, and a membership keeps List set. Deciding which of those a store can
+// answer exactly is the caller's job, since it depends on the metamodel.
+func (p *Program) Conjunction(spec PrefilterSpec) (eqs []ConstEquality, traversals []TraversalSpec, ok bool) {
+	if p == nil || spec.RecordVar == "" {
+		return nil, nil, false
+	}
+	var leaves []node
+	collectConjuncts(p.root, &leaves)
+	for _, n := range leaves {
+		switch x := n.(type) {
+		case *relationalNode:
+			if x.op != "==" {
+				return nil, nil, false
+			}
+			_, eq, found := constEqualityFrom(x.lhs, x.rhs, spec)
+			if !found {
+				_, eq, found = constEqualityFrom(x.rhs, x.lhs, spec)
+			}
+			if !found {
+				return nil, nil, false
+			}
+			eqs = append(eqs, eq)
+		case *callNode:
+			_, eq, found := constFuncEquality(x, spec)
+			if !found {
+				return nil, nil, false
+			}
+			eqs = append(eqs, eq)
+		case *traversalNode:
+			v, isVar := x.subject.(*varNode)
+			if !isVar || v.name != spec.RecordVar {
+				return nil, nil, false
+			}
+			traversals = append(traversals, x.spec)
+		default:
+			return nil, nil, false
+		}
+	}
+	return eqs, traversals, true
+}
+
+// collectConjuncts flattens the top-level AND spine into its leaves.
+func collectConjuncts(n node, out *[]node) {
+	if l, isLogical := n.(*logicalNode); isLogical && l.op == "and" {
+		collectConjuncts(l.lhs, out)
+		collectConjuncts(l.rhs, out)
+		return
+	}
+	*out = append(*out, n)
+}

@@ -52,9 +52,12 @@
 //
 // # Semantics worth knowing before you write a handler
 //
-// A job is delivered AT LEAST once in principle and, in the ordinary case,
-// exactly once. Two properties are worth stating because the opposite is a
-// common default elsewhere:
+// A job is delivered AT LEAST once and, in the ordinary case, exactly once.
+// On the durable backend a handler that finished can run AGAIN: neoq records
+// the outcome in the transaction that holds the job's row lock, so if that
+// commit fails (a lost connection, a killed session) the row is still pending
+// and is redelivered. Two further properties are worth stating because the
+// opposite is a common default elsewhere:
 //
 //   - Submitting the same payload twice produces two jobs and two executions.
 //     There is no deduplication by payload contents. Two triggers that both
@@ -256,6 +259,24 @@ type Job struct {
 	// makes the job vanish under load, when the queue is exactly as busy as
 	// the caller most wants the work done. See internal/scheduler.
 	Deadline time.Time
+
+	// Attempt is which execution of this job the handler is running,
+	// starting at 1. Set by the queue on delivery and ignored on Enqueue.
+	//
+	// A handler that records its own outcome somewhere durable needs it to
+	// tell a failure the queue will retry from the one that is final: see
+	// [Job.FinalAttempt].
+	Attempt int
+}
+
+// FinalAttempt reports whether a failure of this attempt is the last one the
+// job's [Retry] policy allows, so no further delivery will follow it.
+//
+// Counts attempts only. A RetryPersistent job can also stop at its time
+// window, which this does not predict; such a job is never final by count
+// until its attempt budget is spent.
+func (j Job) FinalAttempt() bool {
+	return j.Attempt >= j.Retry.maxAttempts()
 }
 
 // Handler runs a job. Returning a non-nil error marks the attempt failed and
