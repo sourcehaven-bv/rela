@@ -205,8 +205,8 @@ Accepting does two things on the server:
 
 rela only applies a suggestion when it can locate the quoted text with
 certainty. If the quoted text was edited, or rela cannot tell which of several
-occurrences was meant, **Accept** is not offered and the server refuses with 409. The suggestion stays open, and you
-can apply the change by hand.
+occurrences was meant, **Accept** is not offered and the server refuses with
+409. The suggestion stays open, and you can apply the change by hand.
 
 Some limits apply:
 
