@@ -187,7 +187,7 @@ export async function updateEntity(
   id: string,
   patch: EntityPatch,
   etag?: string,
-  signal?: AbortSignal,
+  signal?: AbortSignal
 ): Promise<Entity> {
   const path = `/${getPlural(type)}/${id}`
   const res = await api.patch<Entity>(path, patch, etag, signal)
@@ -213,6 +213,23 @@ export async function searchEntities(
   if (type) {
     params.type = type
   }
+  return api.get<ListResponse<Entity>>('/_search', params, signal)
+}
+
+/**
+ * The most recently modified entities of the given types, newest first.
+ *
+ * Uses the search query language (`type:` plus `sort:modified:desc`) with the
+ * endpoint's `limit`, so only `limit` rows cross the wire. The server applies
+ * the read gate before the limit. Type names come from the schema, never from
+ * user input.
+ */
+export async function listRecentlyModified(
+  types: string[],
+  limit: number,
+  signal?: AbortSignal
+): Promise<ListResponse<Entity>> {
+  const params = { q: `type:${types.join(',')} sort:modified:desc`, limit: String(limit) }
   return api.get<ListResponse<Entity>>('/_search', params, signal)
 }
 
@@ -266,7 +283,7 @@ export interface EntityPosition {
 export async function getEntityPosition(
   id: string,
   scope: ScopeDescriptor,
-  signal?: AbortSignal,
+  signal?: AbortSignal
 ): Promise<EntityPosition> {
   return api.get<EntityPosition>('/_position', { id, scope: JSON.stringify(scope) }, signal)
 }
@@ -361,7 +378,6 @@ export async function deleteRelation(
   const query = direction === 'incoming' ? `?direction=${direction}` : ''
   return api.delete(`/${getPlural(type)}/${entityId}/relations/${relationName}/${targetId}${query}`)
 }
-
 
 /**
  * Fetch the single advisory suggestion to show now, or null when nothing is
