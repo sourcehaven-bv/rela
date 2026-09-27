@@ -11,7 +11,7 @@ why3: worldCapablePath is a deny-by-default allowlist. _search was left out beca
 why4: The world arc scoped routes one at a time, and the search used by the command palette and entity picker was never scheduled. The allowlist test recorded the refusal as intended rather than as open work.
 why5: A read surface that is not world-capable silently serves the default world instead of failing, so the gap looks like missing data rather than an error.
 prevention: Admit _search to worldCapablePath and stamp the ctx world on every executeQuery branch, with a denied-world guard. searchworld_test.go pins the default, explicit and denied worlds through the real router.
-status: review
+status: done
 ---
 
 ## Description
