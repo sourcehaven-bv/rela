@@ -306,3 +306,37 @@ func TestEach_NilReceiver(t *testing.T) {
 		t.Fatal("nil Compiled must not yield")
 	})
 }
+
+const traversalScopeSchema = `version: "1.0"
+namespace: https://example.org/test#
+entities:
+  ticket:
+    label: Ticket
+    id_prefix: TKT
+    properties: {status: {type: string}}
+  feature:
+    label: Feature
+    id_prefix: FEAT
+    properties: {status: {type: string}}
+    query_scopes:
+      busy: "related(entity, 'implementedBy', { status = 'in-progress' })"
+relations:
+  implements: {label: implements, from: [ticket], to: [feature], inverse: implementedBy}
+`
+
+// A scope using related() is validated against the schema at compile, so a
+// traversal that cannot resolve is a load error naming the relation rather
+// than a scope that silently matches nothing (TKT-CXQEV0).
+func TestCompile_ValidatesTraversals(t *testing.T) {
+	if _, err := scopes.Compile(parse(t, traversalScopeSchema)); err != nil {
+		t.Fatalf("a resolvable incoming traversal must compile: %v", err)
+	}
+	broken := strings.Replace(traversalScopeSchema, "'implementedBy'", "'implements'", 1)
+	_, err := scopes.Compile(parse(t, broken))
+	if err == nil || !strings.Contains(err.Error(), `relation "implements" does not start from "feature"`) {
+		t.Fatalf("expected a load error naming the relation, got %v", err)
+	}
+	if !strings.Contains(err.Error(), `query scope "busy"`) {
+		t.Errorf("error should name the scope: %v", err)
+	}
+}

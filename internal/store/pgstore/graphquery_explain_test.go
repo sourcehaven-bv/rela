@@ -283,3 +283,101 @@ func traversalExplainProgram(t *testing.T) *predicate.Program {
 	require.NoError(t, err)
 	return prog
 }
+
+// TestInboundEndpointMatchExplainUsesDerivedIndex is the incoming-hop twin of
+// [TestEndpointMatchExplainUsesDerivedIndex] (TKT-CXQEV0): a feature filtered
+// on the tickets that implement it. The endpoint is the relation's FROM side,
+// so the index queryplan derives must sit on ticket, and the lowering must
+// reach it.
+func TestInboundEndpointMatchExplainUsesDerivedIndex(t *testing.T) {
+	const tickets = 5000
+	pool := newScopedPool(t)
+	s, err := pgstore.New(pool)
+	require.NoError(t, err)
+	ctx := context.Background()
+
+	meta, err := metamodel.Parse([]byte(`version: "1.0"
+namespace: https://example.org/test#
+types:
+  ticket_status: {values: [active, rare]}
+entities:
+  ticket: {label: Ticket, id_prefix: TKT, properties: {status: {type: ticket_status}}}
+  feature: {label: Feature, id_prefix: FEAT, properties: {title: {type: string}}}
+relations:
+  implements: {label: implements, from: [ticket], to: [feature], inverse: implementedBy}
+`))
+	require.NoError(t, err)
+	env := predicate.NewEnv()
+	require.NoError(t, env.DeclareVar("entity", predicate.RecordType{}))
+	prog, err := predicate.Compile(env, `related(entity, 'implementedBy', { status = 'rare' })`)
+	require.NoError(t, err)
+
+	specs := queryplan.TraversalIndexSpecs(prog, meta, "feature")
+	require.Len(t, specs, 1, "queryplan must derive exactly one traversal index spec")
+	require.Equal(t, "ticket", specs[0].Type)
+	_, err = s.Reconcile(ctx, specs, store.ReconcileOptions{})
+	require.NoError(t, err)
+
+	// 500 features; 5000 tickets spread over them, exactly one 'rare'.
+	const features = 500
+	for i := range features {
+		require.NoError(t, s.CreateEntity(ctx, entity.New(fmt.Sprintf("FEAT-%06d", i), "feature")))
+	}
+	for i := range tickets {
+		status := "active"
+		if i == tickets-1 {
+			status = "rare"
+		}
+		id := fmt.Sprintf("TKT-%06d", i)
+		e := entity.New(id, "ticket")
+		e.Properties["status"] = status
+		require.NoError(t, s.CreateEntity(ctx, e))
+		_, err = s.CreateRelation(ctx, id, "implements", fmt.Sprintf("FEAT-%06d", i%features), nil)
+		require.NoError(t, err)
+	}
+	_, err = pool.Exec(ctx, "ANALYZE entities; ANALYZE relations")
+	require.NoError(t, err)
+
+	q := store.GraphQuery{
+		EntityType: "feature",
+		HasInbound: &store.RelationPredicate{
+			OfTypes: []string{"implements"},
+			EndpointMatch: &store.EndpointPredicate{
+				EntityType: "ticket",
+				Props: []store.PropPredicate{{
+					Property: "status", Op: store.PropEqual, Value: "rare", Scalar: true,
+				}},
+			},
+		},
+	}
+	plan := explainGraphQuery(t, pool, q)
+	t.Logf("plan:\n%s", plan)
+	if !strings.Contains(plan, "rela_derived_query__") {
+		t.Fatalf("inbound endpoint-match filter does not reach the derived index on the "+
+			"traversed-FROM type:\n%s", plan)
+	}
+
+	// The data-entry query scope issues MatchingIDs for one page of
+	// candidates, not the bare GraphQuery above. Whichever side the planner
+	// drives from, it must not scan every entity row to answer a page.
+	page := make([]string, 50)
+	for i := range page {
+		page[i] = fmt.Sprintf("FEAT-%06d", i)
+	}
+	sqlText, args := pgstore.BuildMatchingIDsSQLForTest(q, page)
+	rows, err := pool.Query(ctx, "EXPLAIN "+sqlText, args...)
+	require.NoError(t, err)
+	var lines []string
+	for rows.Next() {
+		var line string
+		require.NoError(t, rows.Scan(&line))
+		lines = append(lines, line)
+	}
+	rows.Close()
+	require.NoError(t, rows.Err())
+	idsPlan := strings.Join(lines, "\n")
+	t.Logf("MatchingIDs plan:\n%s", idsPlan)
+	if strings.Contains(idsPlan, "Seq Scan on entities") || strings.Contains(idsPlan, "Seq Scan on relations") {
+		t.Fatalf("MatchingIDs for one page scans a whole table:\n%s", idsPlan)
+	}
+}

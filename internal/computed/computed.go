@@ -66,23 +66,12 @@ func CompileWithClock(meta *metamodel.Metamodel, now func() time.Time) (*Set, er
 			if pd.Computed == "" {
 				continue
 			}
-			if pd.List || pd.Type == metamodel.PropertyTypeFile {
-				// The metamodel loader normally catches these; retain the guard
-				// for programmatically-built metamodels used by embedders/tests.
-				problems = append(problems, fmt.Sprintf("entity %q property %q: computed requires a supported scalar type", entityType, name))
+			cp, problem := compileProperty(meta, env, entityType, name, pd)
+			if problem != "" {
+				problems = append(problems, problem)
 				continue
 			}
-			typ, ok := predicatefns.ScalarTypeForProp(meta, &pd)
-			if !ok {
-				problems = append(problems, fmt.Sprintf("entity %q property %q: type %q is not supported by computed expressions", entityType, name, pd.Type))
-				continue
-			}
-			prog, err := predicate.CompileValue(env, pd.Computed, predicate.ValueProfile(typ))
-			if err != nil {
-				problems = append(problems, fmt.Sprintf("entity %q property %q computed: %v", entityType, name, err))
-				continue
-			}
-			compiled[name] = compiledProperty{name: name, def: pd, program: prog, dependencies: prog.Attributes("entity")}
+			compiled[name] = cp
 		}
 		order, err := topo(entityType, compiled)
 		if err != nil {
@@ -102,6 +91,35 @@ func CompileWithClock(meta *metamodel.Metamodel, now func() time.Time) (*Set, er
 		return nil, fmt.Errorf("computed: invalid definitions:\n  %s", joinLines(problems))
 	}
 	return set, nil
+}
+
+// compileProperty compiles one computed property, or returns why it cannot be.
+func compileProperty(
+	meta *metamodel.Metamodel, env *predicate.Env, entityType, name string, pd metamodel.PropertyDef,
+) (cp compiledProperty, problem string) {
+	if pd.List || pd.Type == metamodel.PropertyTypeFile {
+		// The metamodel loader normally catches these; retain the guard
+		// for programmatically-built metamodels used by embedders/tests.
+		return compiledProperty{}, fmt.Sprintf(
+			"entity %q property %q: computed requires a supported scalar type", entityType, name)
+	}
+	typ, ok := predicatefns.ScalarTypeForProp(meta, &pd)
+	if !ok {
+		return compiledProperty{}, fmt.Sprintf(
+			"entity %q property %q: type %q is not supported by computed expressions", entityType, name, pd.Type)
+	}
+	prog, err := predicate.CompileValue(env, pd.Computed, predicate.ValueProfile(typ))
+	if err != nil {
+		return compiledProperty{}, fmt.Sprintf("entity %q property %q computed: %v", entityType, name, err)
+	}
+	if len(prog.Traversals()) > 0 {
+		// A value stored at write time cannot follow later changes
+		// to the related entities, and nothing here binds a store.
+		return compiledProperty{}, fmt.Sprintf(
+			"entity %q property %q computed: %s(...) is not supported in computed properties",
+			entityType, name, predicate.FuncRelated)
+	}
+	return compiledProperty{name: name, def: pd, program: prog, dependencies: prog.Attributes("entity")}, ""
 }
 
 // Evaluate recomputes every computed property of e in dependency order. Nil

@@ -2,6 +2,7 @@ package pgstore_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -37,12 +38,22 @@ func TestConformance(t *testing.T) {
 		// what a caller may rely on, and BOTH backends answer to it rather
 		// than each describing whatever it happens to do.
 		Versioning: true,
+		SweepNow: func(t *testing.T, s store.Store) {
+			t.Helper()
+			require.NoError(t, s.(*pgstore.Store).SweepNow(t.Context(),
+				stubProvider{hash: "schema-1", json: []byte(`{"v":1}`)},
+				store.SweepConfig{Idle: time.Nanosecond, MaxStaleness: time.Hour, Batch: 100}))
+		},
 	})
 }
 
 // TestVisibleFieldConformance runs the property-level (match-on-hidden-field)
 // suite against the pgstore-native FieldVisibleSearcher (TKT-GGQ0JT).
 // DB-gated on RELA_TEST_DATABASE_URL like the rest of the suite.
+func TestGraphDifferential(t *testing.T) {
+	storetest.RunGraphDifferential(t, factory)
+}
+
 func TestVisibleFieldConformance(t *testing.T) {
 	storetest.RunVisibleFieldSearchTests(t, fieldVisibleSearchFactory)
 }

@@ -5,7 +5,7 @@ title: 'appbuild: separate the shared, tenant-independent base from the per-stor
 kind: refactor
 priority: medium
 effort: l
-status: backlog
+status: wont-fix
 ---
 
 ## Description
@@ -148,3 +148,8 @@ does, that is a signal the base is leaking accessors it should not have.
 - `appbuildtest.New` (`internal/appbuild/appbuildtest/fixture.go`) constructs
 services for tests and roots its own state KV — keep it working, and prefer
 routing it through the same new path so tests exercise production wiring.
+
+## Resolution
+
+Closed: Shipped in #1342 (appbuild.SharedBase). Status is wont-fix, not done,
+because this ticket has no review checklist.

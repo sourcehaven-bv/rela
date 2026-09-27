@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
 	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
@@ -100,22 +101,88 @@ func traversalIndexTarget(
 	return current, props
 }
 
-// staticTraversalSpecs compiles one static query's condition and returns the
-// traversal index specs it implies. A condition that does not compile
-// contributes nothing, matching [staticIndexProps]: every production entry
-// point has already refused such a config through conditionlint.
-func staticTraversalSpecs(
-	sq *searchparser.SearchQuery, condition string,
-	meta *metamodel.Metamodel, ev *predicatefns.Evaluator,
-) []store.DerivedObjectSpec {
-	if condition == "" || ev == nil || len(sq.EntityTypes) != 1 {
-		return nil
+// scopeTraversalSpecs returns the traversal index specs of EVERY declared
+// query scope, not only the ones a list names. A request may select any
+// declared scope by name, and each traversal in it issues one
+// [store.Store.MatchingIDs] query against the far-end type, so a scope a list
+// does not mention is still a query shape the store serves.
+//
+// A scope that does not compile contributes nothing; the metamodel loader
+// (scopes.Compile) has already refused it at boot. [conditionTraversalSpecs]
+// covers the data-entry conditions.
+func scopeTraversalSpecs(meta *metamodel.Metamodel) []store.DerivedObjectSpec {
+	var (
+		ev  *predicatefns.Evaluator
+		out []store.DerivedObjectSpec
+	)
+	for _, typeName := range meta.EntityTypes() {
+		def, _ := meta.GetEntityDef(typeName)
+		names := make([]string, 0, len(def.QueryScopes))
+		for name := range def.QueryScopes {
+			names = append(names, name)
+		}
+		slices.Sort(names)
+		for _, name := range names {
+			source := def.QueryScopes[name]
+			if !strings.Contains(source, "related") {
+				continue // cheap pre-check; most scopes never traverse
+			}
+			if ev == nil {
+				ev = predicatefns.NewEvaluator(meta)
+			}
+			prog, err := ev.CompileWithCurrentUser(typeName, source)
+			if err != nil {
+				slog.Warn("queryplan: query scope skipped for traversal index derivation",
+					"type", typeName, "scope", name, "error", err)
+				continue
+			}
+			out = append(out, TraversalIndexSpecs(prog, meta, typeName)...)
+		}
 	}
-	prog, err := ev.CompileWithCurrentUser(sq.EntityTypes[0], condition)
-	if err != nil {
-		slog.Warn("queryplan: next-action condition skipped for traversal index derivation",
-			"type", sq.EntityTypes[0], "error", err)
-		return nil
+	return out
+}
+
+// conditionTraversalSpecs returns the traversal index specs of every list
+// and next-action condition. Each traversal in one issues a
+// [store.Store.MatchingIDs] query per page, the same shape a scope's does.
+//
+// A condition that does not compile contributes nothing; conditionlint has
+// already refused it at config load.
+func conditionTraversalSpecs(cfg *dataentryconfig.Config, meta *metamodel.Metamodel) []store.DerivedObjectSpec {
+	var (
+		ev  *predicatefns.Evaluator
+		out []store.DerivedObjectSpec
+	)
+	add := func(typeName, source string) {
+		if !strings.Contains(source, "related") {
+			return
+		}
+		if ev == nil {
+			ev = predicatefns.NewEvaluator(meta)
+		}
+		prog, err := ev.CompileWithCurrentUser(typeName, source)
+		if err != nil {
+			slog.Warn("queryplan: condition skipped for traversal index derivation",
+				"type", typeName, "error", err)
+			return
+		}
+		out = append(out, TraversalIndexSpecs(prog, meta, typeName)...)
 	}
-	return TraversalIndexSpecs(prog, meta, sq.EntityTypes[0])
+	// Map order is fine: StaticIndexSpecs dedups and sorts the result.
+	for _, list := range cfg.Lists {
+		add(list.EntityType, list.Condition)
+	}
+	for _, src := range cfg.NextActions {
+		switch {
+		case src.Condition == "":
+		case src.Context != "":
+			// A context source's candidate is the viewed entity.
+			add(src.Context, src.Condition)
+		case src.Query != "":
+			for _, typeName := range searchparser.ParseQuery(src.Query).EntityTypes {
+				add(typeName, src.Condition)
+			}
+		}
+	}
+	return out
 }

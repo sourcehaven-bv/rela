@@ -141,3 +141,46 @@ func TestRelated_EvaluatesThroughTheBoundResolver(t *testing.T) {
 		t.Errorf("resolver saw spec %+v", seen)
 	}
 }
+
+// The subject is recorded so a metamodel-aware caller can refuse a traversal
+// that does not start from the row entity (TKT-CXQEV0).
+func TestRelated_RecordsTheSubject(t *testing.T) {
+	prog, err := Compile(traversalEnv(t), `related(entity, 'caused-by')`)
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	if got := prog.Traversals()[0].Subject; got != "entity" {
+		t.Fatalf("subject = %q, want entity", got)
+	}
+}
+
+// Key identifies the question a traversal asks: equal for the same question
+// regardless of how the constraint table was ordered, and different when any
+// part of it differs — including a value's type, so '1' and 1 never share an
+// answer.
+func TestTraversalSpec_Key(t *testing.T) {
+	key := func(src string) string {
+		t.Helper()
+		prog, err := Compile(traversalEnv(t), src)
+		if err != nil {
+			t.Fatalf("compile %q: %v", src, err)
+		}
+		return prog.Traversals()[0].Key()
+	}
+	base := key(`related(entity, 'r', { type = 't', a = 'x', b = 'y' })`)
+	if got := key(`related(entity, 'r', { b = 'y', type = 't', a = 'x' })`); got != base {
+		t.Errorf("reordered table changed the key:\n%s\n%s", base, got)
+	}
+	for _, src := range []string{
+		`related(entity, 'q', { type = 't', a = 'x', b = 'y' })`,
+		`related(entity, { 'r', 'r' }, { type = 't', a = 'x', b = 'y' })`,
+		`related(entity, 'r', { type = 'u', a = 'x', b = 'y' })`,
+		`related(entity, 'r', { type = 't', a = 'x', b = 'z' })`,
+		`related(entity, 'r', { type = 't', a = 'x' })`,
+		`related(entity, 'r', { type = 't', a = 'x', b = 1 })`,
+	} {
+		if key(src) == base {
+			t.Errorf("%s shares a key with the base spec", src)
+		}
+	}
+}

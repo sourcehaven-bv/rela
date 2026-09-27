@@ -277,22 +277,6 @@ func (s *Store) PropertyValues(ctx context.Context, property string, limit int) 
 
 // --- EntityWriter ---
 
-// attributionValues returns the last_edited_by_user / last_edited_by_tool SQL
-// values for the boundary-populated store.Attribution on ctx. Absent (or
-// empty-component) attribution maps to NULL, never to an empty or placeholder
-// string — NULL is the "unknown editor" encoding the version sweep's
-// system-principal fallback keys on (TKT-ZIRMGM, RR-U964M0).
-func attributionValues(ctx context.Context) (user, tool *string) {
-	a := store.AttributionFrom(ctx)
-	if a.User != "" {
-		user = &a.User
-	}
-	if a.Tool != "" {
-		tool = &a.Tool
-	}
-	return user, tool
-}
-
 // originValues returns the origin_* SQL values for the boundary-populated
 // store.Origin on ctx. A zero Origin maps to four NULLs, never to empty
 // strings or a placeholder kind: NULL is the "direct edit" encoding a reader
@@ -375,7 +359,7 @@ func (s *Store) CreateEntity(ctx context.Context, e *entity.Entity) error {
 		}
 	}
 
-	editorUser, editorTool := attributionValues(ctx)
+	editorUser, editorTool := store.AttributionColumns(ctx)
 	o := originValues(ctx)
 	const q = `
 		INSERT INTO entities (id, face, type, properties, content, search_text, updated_at,
@@ -489,7 +473,7 @@ func (s *Store) updateEntityIf(
 		}
 	}
 
-	editorUser, editorTool := attributionValues(ctx)
+	editorUser, editorTool := store.AttributionColumns(ctx)
 	// Stamped unconditionally, including the NULL case: an unmarked write must
 	// CLEAR a prior origin, or a hand edit of a copied row would inherit the
 	// copy's provenance and its swept version would claim to be a copy.

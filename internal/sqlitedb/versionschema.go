@@ -79,10 +79,10 @@ CREATE TABLE IF NOT EXISTS schema_versions (
 --
 -- op is 'create' | 'update' | 'rename' | 'delete'. content_hash is
 -- canonical.HashEntity of the snapshot, used to dedup no-op captures. The
--- principal_* / triggered_by columns carry attribution for synchronously
--- captured ops (rename/delete); sweep-captured create/update rows carry the
--- system principal (tool='version-sweep'), and the editing principal for those
--- is recoverable from the audit log.
+-- principal_* / triggered_by columns carry attribution. Synchronously
+-- captured ops (rename/delete) get it from the write; sweep-captured
+-- create/update rows copy the live row's last_edited_by_* columns, or carry
+-- the system principal (tool='version-sweep') when both are NULL.
 --
 -- The origin_* columns encode store.Origin (pgstore migration 0013): all-NULL
 -- is the zero Origin, i.e. a direct edit, so "not applicable" and "empty

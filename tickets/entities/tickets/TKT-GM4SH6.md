@@ -5,7 +5,7 @@ title: 'Gantt on_cycle: mark — render containment loops in place instead of bl
 kind: enhancement
 priority: medium
 effort: m
-status: backlog
+status: wont-fix
 ---
 
 ## Description
@@ -71,3 +71,8 @@ Go tests, `internal/dataentry` race-clean, frontend suite green, plus arch-lint,
 plimsoll, comment-lint, golangci-lint and coverage. The existing `error` and
 `prune` tests passed unchanged throughout, which is what confirms those two
 policies are byte-identical.
+
+## Resolution
+
+Closed: Shipped in #1660. Status is wont-fix, not done, because this ticket has
+no review checklist.

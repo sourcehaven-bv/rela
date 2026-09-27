@@ -124,6 +124,15 @@ type Matcher interface {
 	Match(ctx context.Context, e *entity.Entity) (bool, error)
 }
 
+// BatchMatcher is the optional capability of a [Matcher] that judges all of a
+// source's candidates at once and returns one verdict per candidate, in
+// order. A condition using `related(...)` needs it: answered per candidate,
+// each traversal would cost a store query per candidate. The engine uses it
+// when present.
+type BatchMatcher interface {
+	MatchAll(ctx context.Context, es []*entity.Entity) ([]bool, error)
+}
+
 // CandidateFunc produces candidates for one source. Supplied by the wiring
 // site so this package depends on no store, searcher or ACL type: it is the
 // consumer-side interface that keeps the engine testable without a graph.
@@ -379,9 +388,26 @@ func (e *Engine) applyCondition(
 	if !ok || m == nil {
 		return nil, fmt.Errorf("nextaction: source %q declares a condition but no matcher was compiled for it", id)
 	}
+	verdict := func(i int) (bool, error) { return m.Match(ctx, cands[i].Entity) }
+	if bm, ok := m.(BatchMatcher); ok {
+		es := make([]*entity.Entity, len(cands))
+		for i, c := range cands {
+			es[i] = c.Entity
+		}
+		all, err := bm.MatchAll(ctx, es)
+		if err == nil && len(all) != len(cands) {
+			err = fmt.Errorf("matcher returned %d verdicts for %d candidates", len(all), len(cands))
+		}
+		verdict = func(i int) (bool, error) {
+			if err != nil {
+				return false, err
+			}
+			return all[i], nil
+		}
+	}
 	out := make([]Candidate, 0, len(cands))
-	for _, c := range cands {
-		match, err := m.Match(ctx, c.Entity)
+	for i, c := range cands {
+		match, err := verdict(i)
 		if errors.Is(err, ErrIdentityRequired) {
 			// A per-user condition for a caller with no identity: this
 			// source has nothing to say to them. Skip it — see the

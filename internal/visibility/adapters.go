@@ -100,6 +100,11 @@ func NewPolicyRedactor(r *affordances.PolicyResolver) (PolicyRedactor, error) {
 	return PolicyRedactor{r: r}, nil
 }
 
+// PrimeTraversals implements [TraversalPrimer].
+func (p PolicyRedactor) PrimeTraversals(ctx context.Context, rows []*entity.Entity) context.Context {
+	return p.r.PrimeTraversals(ctx, rows)
+}
+
 // HiddenProperties implements [FieldRedactor].
 func (p PolicyRedactor) HiddenProperties(ctx context.Context, e *entity.Entity) map[string]struct{} {
 	v := p.r.FieldVerdicts(ctx, e)

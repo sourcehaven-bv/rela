@@ -36,6 +36,12 @@
     "text": "No custom validation rules defined in metamodel"
   },
   {
+    "tool": "attach_file",
+    "args": "{\"id\":\"REQ-001\",\"property\":\"title\",\"file_name\":\"a.txt\",\"content\":\"aGk=\"}",
+    "isError": true,
+    "text": "property \"title\" is not a file type (is string)"
+  },
+  {
     "tool": "create_entity",
     "args": "{\"type\":\"requirement\",\"properties\":{\"title\":\"Created via dispatch\"}}",
     "isError": false,
@@ -46,6 +52,12 @@
     "args": "{\"from\":\"DEC-001\",\"type\":\"addresses\",\"to\":\"REQ-002\"}",
     "isError": false,
     "text": "Created link: DEC-001 --addresses--\u003e REQ-002"
+  },
+  {
+    "tool": "delete_attachment",
+    "args": "{\"id\":\"REQ-001\",\"property\":\"title\"}",
+    "isError": true,
+    "text": "property \"title\" is not a file type (is string)"
   },
   {
     "tool": "delete_entity",
@@ -82,6 +94,12 @@
     "args": "{}",
     "isError": false,
     "text": "{\n  \"entities\": {\n    \"decision\": {\n      \"Label\": \"Decision\",\n      \"LabelPlural\": \"\",\n      \"Description\": \"\",\n      \"Plural\": \"\",\n      \"Aliases\": null,\n      \"IDType\": \"\",\n      \"IDCaps\": \"\",\n      \"IDPrefix\": \"DEC\",\n      \"IDPrefixes\": null,\n      \"RDFType\": \"\",\n      \"Properties\": {\n        \"status\": {\n          \"Type\": \"string\",\n          \"Required\": false,\n          \"Values\": null,\n          \"Labels\": null,\n          \"Default\": \"\",\n          \"Description\": \"\",\n          \"Format\": \"\",\n          \"List\": false,\n          \"Unique\": false,\n          \"Max\": 0,\n          \"Accept\": null,\n          \"Scan\": 0,\n          \"ScanCmd\": null,\n          \"Transform\": null\n        },\n        \"title\": {\n          \"Type\": \"string\",\n          \"Required\": true,\n          \"Values\": null,\n          \"Labels\": null,\n          \"Default\": \"\",\n          \"Description\": \"\",\n          \"Format\": \"\",\n          \"List\": false,\n          \"Unique\": false,\n          \"Max\": 0,\n          \"Accept\": null,\n          \"Scan\": 0,\n          \"ScanCmd\": null,\n          \"Transform\": null\n        }\n      },\n      \"PropertyOrder\": null,\n      \"DefaultSort\": null,\n      \"Color\": \"\",\n      \"BorderColor\": \"\",\n      \"DisplayProperty\": \"\",\n      \"Faces\": null,\n      \"QueryScopes\": null\n    },\n    \"requirement\": {\n      \"Label\": \"Requirement\",\n      \"LabelPlural\": \"\",\n      \"Description\": \"\",\n      \"Plural\": \"\",\n      \"Aliases\": null,\n      \"IDType\": \"\",\n      \"IDCaps\": \"\",\n      \"IDPrefix\": \"REQ\",\n      \"IDPrefixes\": null,\n      \"RDFType\": \"\",\n      \"Properties\": {\n        \"priority\": {\n          \"Type\": \"string\",\n          \"Required\": false,\n          \"Values\": null,\n          \"Labels\": null,\n          \"Default\": \"\",\n          \"Description\": \"\",\n          \"Format\": \"\",\n          \"List\": false,\n          \"Unique\": false,\n          \"Max\": 0,\n          \"Accept\": null,\n          \"Scan\": 0,\n          \"ScanCmd\": null,\n          \"Transform\": null\n        },\n        \"status\": {\n          \"Type\": \"string\",\n          \"Required\": false,\n          \"Values\": null,\n          \"Labels\": null,\n          \"Default\": \"\",\n          \"Description\": \"\",\n          \"Format\": \"\",\n          \"List\": false,\n          \"Unique\": false,\n          \"Max\": 0,\n          \"Accept\": null,\n          \"Scan\": 0,\n          \"ScanCmd\": null,\n          \"Transform\": null\n        },\n        \"title\": {\n          \"Type\": \"string\",\n          \"Required\": true,\n          \"Values\": null,\n          \"Labels\": null,\n          \"Default\": \"\",\n          \"Description\": \"\",\n          \"Format\": \"\",\n          \"List\": false,\n          \"Unique\": false,\n          \"Max\": 0,\n          \"Accept\": null,\n          \"Scan\": 0,\n          \"ScanCmd\": null,\n          \"Transform\": null\n        }\n      },\n      \"PropertyOrder\": null,\n      \"DefaultSort\": null,\n      \"Color\": \"\",\n      \"BorderColor\": \"\",\n      \"DisplayProperty\": \"\",\n      \"Faces\": null,\n      \"QueryScopes\": null\n    }\n  },\n  \"namespace\": \"\",\n  \"relations\": {\n    \"addresses\": {\n      \"Label\": \"addresses\",\n      \"Description\": \"\",\n      \"From\": [\n        \"decision\"\n      ],\n      \"To\": [\n        \"requirement\"\n      ],\n      \"Inverse\": null,\n      \"Symmetric\": false,\n      \"MinOutgoing\": null,\n      \"MaxOutgoing\": null,\n      \"MinIncoming\": null,\n      \"MaxIncoming\": null,\n      \"Scope\": \"\",\n      \"Properties\": null,\n      \"Content\": false,\n      \"Orderable\": \"\"\n    }\n  },\n  \"types\": null,\n  \"version\": \"\"\n}"
+  },
+  {
+    "tool": "list_attachments",
+    "args": "{\"id\":\"REQ-001\"}",
+    "isError": false,
+    "text": "[]"
   },
   {
     "tool": "list_entities",
@@ -124,6 +142,12 @@
     "args": "{\"path\":\"missing.lua\"}",
     "isError": true,
     "text": "scripts directory not found: openat scripts: no such file or directory"
+  },
+  {
+    "tool": "read_attachment",
+    "args": "{\"id\":\"REQ-001\",\"property\":\"title\",\"file_name\":\"a.txt\"}",
+    "isError": true,
+    "text": "property \"title\" is not a file type (is string)"
   },
   {
     "tool": "rename_entity",

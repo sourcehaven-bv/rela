@@ -7,6 +7,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
+	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
 )
 
 // Compile builds the executable state-machine [Set] from a metamodel's
@@ -19,7 +20,7 @@ import (
 // then a no-op and every write behaves exactly as it did before this feature.
 //
 // meta must not be nil (a required input from appbuild).
-func Compile(meta *metamodel.Metamodel) (*Set, error) {
+func Compile(meta *metamodel.Metamodel, opts ...Option) (*Set, error) {
 	if meta == nil {
 		return nil, errors.New("statemachine: Compile: nil metamodel")
 	}
@@ -27,6 +28,9 @@ func Compile(meta *metamodel.Metamodel) (*Set, error) {
 	set := &Set{
 		machines: map[string]*Machine{},
 		propType: map[string]map[string]string{},
+	}
+	for _, opt := range opts {
+		opt(set)
 	}
 	var problems []string
 
@@ -69,6 +73,7 @@ func Compile(meta *metamodel.Metamodel) (*Set, error) {
 				set.propType[etName] = map[string]string{}
 			}
 			set.propType[etName][propName] = pd.Type
+			problems = append(problems, set.traversalProblems(meta, etName, propName, pd.Type)...)
 		}
 	}
 
@@ -153,4 +158,29 @@ func compileMachine(typeName string, ct metamodel.CustomType) (machine *Machine,
 	}
 
 	return &Machine{name: typeName, edges: edges, entry: entry}, problems
+}
+
+// traversalProblems checks the `related(...)` in a machine's `when:` programs
+// for ONE (entity type, property) pair. A machine is declared on a custom type
+// and may be shared by several entity types, and a relation path resolves
+// from the entity type, so the same `when:` can be valid on one type and not
+// on another. Each pair that uses the machine is checked on its own.
+func (s *Set) traversalProblems(meta *metamodel.Metamodel, etName, propName, typeName string) []string {
+	m := s.machines[typeName]
+	var problems []string
+	for _, key := range m.sortedKeys() {
+		ed := m.edges[key]
+		if ed.when == nil || len(ed.when.Traversals()) == 0 {
+			continue
+		}
+		err := predicatefns.ValidateTraversals(meta, etName, ed.when)
+		if err == nil && s.traversals == nil {
+			err = fmt.Errorf("%s(...) is not available: no store is wired to answer it", predicate.FuncRelated)
+		}
+		if err != nil {
+			problems = append(problems, fmt.Sprintf("entity %q property %q: transition %s→%s when: %v",
+				etName, propName, key.from, key.to, err))
+		}
+	}
+	return problems
 }

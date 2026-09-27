@@ -1,12 +1,13 @@
 // Package scheduler runs Lua scripts on recurring schedules defined in
 // schedules.yaml.
 //
-// The scheduler is a single-threaded sequential loop: tasks execute one at
-// a time in config order. Each task gets a fresh ws.LuaWriteDeps() from the
-// workspace; the store is the source of truth, so no explicit sync is
-// needed. Last-run timestamps are persisted in .rela/scheduler-state.json.
-// Tasks that missed their scheduled window run immediately on startup.
-// Shutdown is graceful on SIGINT/SIGTERM.
+// Each tick decides which tasks are due, records a run for each in the
+// [schedulerstate.Store], and enqueues it on the job queue. It never waits for
+// a run to finish: the worker that executes a run records its outcome, and a
+// run whose worker vanished is abandoned when its lease expires (BUG-TKL08E).
+// A task with an active run is skipped, so a slow task never stacks behind
+// itself. Tasks that missed their scheduled window run on the first tick after
+// startup. Shutdown is graceful on SIGINT/SIGTERM.
 //
 // Schedule values in schedules.yaml:
 //
@@ -31,13 +32,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"iter"
 	"log/slog"
-	"maps"
-	"slices"
-	"sync"
-	"sync/atomic"
+	"os"
+	"strconv"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/config"
@@ -45,6 +45,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/schedulerstate"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/state"
 )
@@ -64,10 +65,49 @@ const (
 	maxRetryDelay  = 2 * time.Hour
 
 	// persistentFailureThreshold is the consecutive-failure count at which
-	// "task failed" escalates from WARN to ERROR — by this point the retries
-	// are demonstrably not helping and the job needs a human.
+	// "run finished" with a failure escalates from WARN to ERROR — by this
+	// point the retries are demonstrably not helping and the job needs a
+	// human.
 	persistentFailureThreshold = 4
 )
+
+// Run leases. A run whose lease passes without an outcome is abandoned by the
+// next tick of any scheduler sharing the store, and counts as a failure.
+//
+// Fixed rather than heartbeat-renewed: the queue already caps a handler at 15
+// minutes, so a run that is still genuinely executing can never outlive
+// runningLease. The margins also absorb clock skew between nodes, since each
+// node stamps leases from its own clock.
+const (
+	// queuedLease bounds the wait between enqueue and a worker starting the
+	// run. Generous, because a busy queue is not a lost run. A job that starts
+	// after its run was abandoned finds it no longer queued and does nothing.
+	queuedLease = 30 * time.Minute
+
+	// runningLease must exceed the queue's per-handler cap (15m) with margin,
+	// so a run is abandoned only when its result is genuinely lost, never
+	// merely because a script was slow. for_each progress extends it.
+	runningLease = 20 * time.Minute
+)
+
+// Run-state housekeeping. pruneAge is the minimum age at which a task's
+// record is pruned; a schedule longer than half of it raises the age (see
+// pruneAgeFor), because pruning a record before its task is next due would run
+// the task early.
+const (
+	pruneInterval = time.Hour
+	pruneAge      = 14 * 24 * time.Hour
+)
+
+// pruneAgeFor returns the prune age for tasks: pruneAge, or twice the longest
+// period among them.
+func pruneAgeFor(tasks []TaskConfig) time.Duration {
+	age := pruneAge
+	for _, task := range tasks {
+		age = max(age, 2*task.Every.Period())
+	}
+	return age
+}
 
 // maxLadderSteps is the failure count at which doubling first reaches
 // maxRetryDelay; beyond it every retry is capped. Derived rather than written
@@ -81,11 +121,18 @@ var maxLadderSteps = func() int {
 	return steps
 }()
 
-// WorkspaceProvider is the subset of workspace.Workspace the scheduler needs.
+// WorkspaceProvider is the subset of the application services the scheduler
+// needs.
 type WorkspaceProvider interface {
 	Paths() *project.Context
 	Config() config.Loader
+
+	// State holds the legacy scheduler-state.json, read once to import it.
 	State() state.KV
+
+	// SchedulerState is where task state and runs live. Shared by every
+	// process on the same backend, which is what lets them coordinate.
+	SchedulerState() schedulerstate.Store
 
 	// ScheduledLuaWriteDeps returns the per-task capability bundle. Its
 	// reads are ACL-bound to whatever principal is on the ctx at call time
@@ -118,10 +165,8 @@ func StartBackground(
 		return
 	}
 
-	engine := script.NewEngine()
-	s := New(cfg, engine, ws, logger)
-
-	if err := attachQueue(s, ws); err != nil {
+	s, err := NewWithQueue(cfg, script.NewEngine(), ws, logger)
+	if err != nil {
 		logger.Error("scheduler not started", "error", err)
 		return
 	}
@@ -179,7 +224,10 @@ func attachQueue(s *Scheduler, ws WorkspaceProvider) error {
 func NewWithQueue(
 	cfg *Config, engine *script.Engine, ws WorkspaceProvider, logger *slog.Logger,
 ) (*Scheduler, error) {
-	s := New(cfg, engine, ws, logger)
+	s, err := New(cfg, engine, ws, logger)
+	if err != nil {
+		return nil, err
+	}
 	if err := attachQueue(s, ws); err != nil {
 		return nil, err
 	}
@@ -215,32 +263,22 @@ func stampTaskAuditContext(ctx context.Context, taskName, runAs string) context.
 	return audit.WithTriggeredBy(out, "schedule:"+taskName)
 }
 
-// Scheduler runs Lua scripts sequentially on simple recurring schedules.
+// Scheduler decides which tasks are due and hands them to the job queue.
 type Scheduler struct {
 	config *Config
 	engine *script.Engine
 	ws     WorkspaceProvider
-	state  *State
+	runs   schedulerstate.Store
 	logger *slog.Logger
 	now    func() time.Time // for testing
 
-	// executeTaskFunc overrides task execution for testing.
-	// When nil, doExecuteTask is used.
-	executeTaskFunc func(ctx context.Context, task TaskConfig)
+	// node identifies this process on the runs it executes, so an operator
+	// can tell which node ran (or lost) a run.
+	node string
 
 	// engineRunner overrides the Lua engine call for testing, WITHOUT
-	// bypassing the job handler around it.
-	//
-	// Distinct from executeTaskFunc, which replaces the whole execution step:
-	// a test that wants to exercise the queue path must keep the real handler
-	// (it is what reports completion back to the waiting submitter) and
-	// substitute only the engine. When nil, the real engine runs.
-	//
-	// Two nil-able override hooks on one struct is one more than is
-	// comfortable, and a third would be the signal to stop: the honest shape
-	// is a constructor-injected engine interface, collapsing both into one
-	// real dependency. Not done here because executeTaskFunc predates the
-	// queue port and rewiring it touches every scheduler test.
+	// bypassing the job handler around it: the handler is what records the
+	// run's outcome, so a test must keep it. When nil, the real engine runs.
 	engineRunner func(ctx context.Context, task TaskConfig) error
 
 	// queue is where script execution happens. REQUIRED: there is no inline
@@ -248,55 +286,78 @@ type Scheduler struct {
 	// wiring time — see jobs.go.
 	queue jobs.Client
 
-	// inflight tracks the one running execution per task, so a slow task is
-	// skipped rather than queued behind itself. Guarded by inflightMu because
-	// the writer is the scheduler goroutine and the reader is a queue worker.
-	inflightMu sync.Mutex
-	inflight   map[string]inflightRun
-	// runSeq mints in-flight run tokens; see inflightRun.
-	runSeq atomic.Uint64
+	// lastPrune is when the tick last pruned run-state. Only the scheduler
+	// goroutine touches it.
+	lastPrune time.Time
+
+	// pruneAge is how long an idle task's record is kept; see pruneAgeFor.
+	pruneAge time.Duration
 }
 
 // New creates a Scheduler.
+//
+// Nil: rejected — cfg, engine, ws, logger and ws.SchedulerState() are all
+// required. A scheduler without run-state would treat every task as due on
+// every tick.
 func New(
 	cfg *Config,
 	engine *script.Engine,
 	ws WorkspaceProvider,
 	logger *slog.Logger,
-) *Scheduler {
-	return &Scheduler{
-		config: cfg,
-		engine: engine,
-		ws:     ws,
-		logger: logger,
-		now:    time.Now,
-		// Initialized here, not left for loadState: recordFailure and
-		// recordSuccess write three maps unconditionally, so a nil state
-		// turns any call ordering other than Run's into a nil-map panic.
-		state: newState(),
+) (*Scheduler, error) {
+	switch {
+	case cfg == nil:
+		return nil, errors.New("scheduler: config must not be nil")
+	case engine == nil:
+		return nil, errors.New("scheduler: script engine must not be nil")
+	case ws == nil:
+		return nil, errors.New("scheduler: workspace must not be nil")
+	case logger == nil:
+		return nil, errors.New("scheduler: logger must not be nil")
 	}
+	runs := ws.SchedulerState()
+	if runs == nil {
+		return nil, errors.New("scheduler: the workspace provides no run-state store")
+	}
+	return &Scheduler{
+		config:   cfg,
+		engine:   engine,
+		ws:       ws,
+		runs:     runs,
+		logger:   logger,
+		now:      time.Now,
+		node:     nodeID(),
+		pruneAge: pruneAgeFor(cfg.Tasks),
+	}, nil
+}
+
+// nodeID names this process: host and pid.
+func nodeID() string {
+	host, err := os.Hostname()
+	if err != nil || host == "" {
+		host = "unknown-host"
+	}
+	return host + ":" + strconv.Itoa(os.Getpid())
 }
 
 // Run starts the scheduler and blocks until ctx is cancelled.
-// Tasks are executed sequentially in a single goroutine — no concurrent
-// script execution, no mutexes needed.
 func (s *Scheduler) Run(ctx context.Context) error {
-	s.loadState(ctx)
-
 	if len(s.config.Tasks) == 0 {
 		s.logger.Info("no tasks configured, waiting for shutdown")
 		<-ctx.Done()
 		return nil
 	}
 
+	s.importLegacyState(ctx)
+
 	for _, t := range s.config.Tasks {
-		s.logger.Info("scheduled task", "name", t.Name, "every", t.Every, "script", t.Script)
+		s.logger.Info("scheduled task", "task", t.Name, "every", t.Every, "script", t.Script)
 	}
 
 	// Run due tasks immediately (handles first-ever and missed runs).
-	s.runDueTasks(ctx)
+	s.tick(ctx)
 
-	s.logger.Info("scheduler started", "tasks", len(s.config.Tasks))
+	s.logger.Info("scheduler started", "tasks", len(s.config.Tasks), "node", s.node)
 
 	ticker := time.NewTicker(tickInterval)
 	defer ticker.Stop()
@@ -307,128 +368,245 @@ func (s *Scheduler) Run(ctx context.Context) error {
 			s.logger.Info("scheduler stopped")
 			return nil
 		case <-ticker.C:
-			s.runDueTasks(ctx)
+			s.tick(ctx)
 		}
 	}
 }
 
-// runDueTasks checks each task and executes it if due. All execution is
-// sequential in the caller's goroutine.
-func (s *Scheduler) runDueTasks(ctx context.Context) {
+// tick abandons lost runs, then queues a run for every due task. It never
+// waits for a run, so one slow or lost run cannot delay any other task.
+func (s *Scheduler) tick(ctx context.Context) {
 	now := s.now()
+
+	reaped, err := s.runs.Reap(ctx, now, retryDelay)
+	if err != nil {
+		s.logger.Error("scheduler: could not reap expired runs", "error", err)
+	}
+	for _, fin := range reaped {
+		s.logger.Error("run abandoned",
+			"task", fin.Run.Task,
+			"run_id", fin.Run.ID,
+			"node", fin.Run.Node,
+			"reason", fin.Run.Error,
+			"failures", fin.Failures,
+			"retry_at", fin.NextRetry)
+	}
+
+	names := make([]string, 0, len(s.config.Tasks))
+	for _, task := range s.config.Tasks {
+		names = append(names, task.Name)
+	}
+	states, err := s.runs.Load(ctx, names)
+	if err != nil {
+		// Without state every task would look due. Skipping the tick is the
+		// safe direction: the next one tries again.
+		s.logger.Error("scheduler: could not load run-state, skipping tick", "error", err)
+		return
+	}
+
 	for _, task := range s.config.Tasks {
 		if ctx.Err() != nil {
 			return
 		}
-
-		// A failing task is driven ENTIRELY by the retry ladder: while a
-		// retry is pending, the ordinary schedule is suppressed, so the
-		// task fires exactly once per ladder step and never on its normal
-		// cadence. This is the gate that closes BUG-ZKK2UL — a failed
-		// attempt always sets NextRetry, so it can no longer fall through
-		// to the "first run" branch below and execute on every tick.
-		if retryAt, retrying := s.state.NextRetry[task.Name]; retrying {
-			// A pending retry can never legitimately be further out than
-			// the longest rung. Anything beyond that came from a clock
-			// that jumped (VM snapshot resume, NTP step, bad RTC) or a
-			// hand-edited state file, and because the file is the source
-			// of truth it would otherwise wedge the task FOREVER — silently,
-			// since this branch is the one that logs nothing.
-			if retryAt.Sub(now) > maxRetryDelay {
-				s.logger.Warn("retry time is implausibly far in the future, retrying now",
-					"name", task.Name,
-					"scheduled_for", retryAt,
-					"max_delay", maxRetryDelay)
-				retryAt = now
-				s.state.NextRetry[task.Name] = retryAt
-			}
-			if !now.Before(retryAt) {
-				s.logger.Info("retrying failed task",
-					"name", task.Name,
-					"failures", s.state.Failures[task.Name],
-					"scheduled_for", retryAt)
-				s.executeTask(ctx, task)
-			}
+		ts, recorded := states[task.Name]
+		reason, due := s.dueReason(task, ts, recorded, now)
+		if !due {
 			continue
 		}
-
-		lastRun, recorded := s.state.Tasks[task.Name]
-		if !recorded {
-			s.logger.Info("first run, executing immediately", "name", task.Name)
-			s.executeTask(ctx, task)
+		if ts.Active != nil {
+			// DEBUG: a slow task repeats this every tick. A run that is
+			// genuinely stuck surfaces as "run abandoned" instead.
+			s.logger.Debug("task due but its previous run is still active, skipping",
+				"task", task.Name,
+				"run_id", ts.Active.ID,
+				"status", ts.Active.Status,
+				"node", ts.Active.Node,
+				"age", now.Sub(ts.Active.CreatedAt).Round(time.Second))
 			continue
 		}
-
-		if task.Every.IsDue(lastRun, now) {
-			s.logger.Info("task due", "name", task.Name, "last_run", lastRun)
-			s.executeTask(ctx, task)
-		}
+		s.queueRun(ctx, task, ts.Version, reason, now)
 	}
+
+	s.maybePrune(ctx, now)
 }
 
-func (s *Scheduler) executeTask(ctx context.Context, task TaskConfig) {
-	if s.executeTaskFunc != nil {
-		s.executeTaskFunc(ctx, task)
-		return
+// dueReason reports whether task is due at now, and why.
+func (s *Scheduler) dueReason(
+	task TaskConfig, ts schedulerstate.TaskState, recorded bool, now time.Time,
+) (string, bool) {
+	// A failing task is driven ENTIRELY by the retry ladder: while a retry
+	// is pending, the ordinary schedule is suppressed, so the task fires
+	// exactly once per ladder step and never on its normal cadence
+	// (BUG-ZKK2UL).
+	if ts.Failing() {
+		clamped, fixed := schedulerstate.ClampRetry(ts, now, maxRetryDelay)
+		if fixed {
+			s.logger.Warn("retry time is implausibly far in the future, retrying now",
+				"task", task.Name,
+				"scheduled_for", ts.NextRetry,
+				"max_delay", maxRetryDelay)
+		}
+		return "retry", !now.Before(clamped.NextRetry)
 	}
-	s.doExecuteTask(ctx, task)
+	if !recorded || ts.LastRun.IsZero() {
+		return "first run", true
+	}
+	return "due", task.Every.IsDue(ts.LastRun, now)
 }
 
-func (s *Scheduler) doExecuteTask(ctx context.Context, task TaskConfig) {
-	if ctx.Err() != nil {
-		s.logger.Warn("skipping task, scheduler shutting down", "name", task.Name)
-		return
+// queueRun records a run of task and enqueues the job that executes it.
+//
+// Creation is conditional on the task-state version the tick read, so two
+// schedulers ticking at once create one run, and a scheduler whose view went
+// stale (another node just finished this task) creates none.
+func (s *Scheduler) queueRun(ctx context.Context, task TaskConfig, version int64, reason string, now time.Time) {
+	run := schedulerstate.Run{
+		ID:         uuid.NewString(),
+		Task:       task.Name,
+		CreatedAt:  now,
+		LeaseUntil: now.Add(queuedLease),
 	}
-
-	s.logger.Info("task started", "name", task.Name, "script", task.Script)
-	start := s.now()
-
-	err := s.enqueueTask(ctx, task)
-	elapsed := s.now().Sub(start)
-
-	// A task whose previous run has not finished is SKIPPED, and the skip
-	// records neither success nor failure.
-	//
-	// Not a failure: the task has not gone wrong, it is merely slow, and
-	// advancing the retry ladder would back off a healthy task and suppress
-	// its normal cadence. Not a success either: it did not run, and stamping
-	// the last-run time would make a permanently stuck task look healthy
-	// forever while nothing executed. Leaving state untouched lets the next
-	// tick evaluate it normally.
-	//
-	// Two routes reach here — an in-process claim (errTaskInFlight) and the
-	// queue collapsing a duplicate (errTaskPending). They mean the same thing
-	// to the scheduler; the second also covers other processes.
-	if errors.Is(err, errTaskInFlight) || errors.Is(err, errTaskPending) {
-		s.logger.Warn("skipping task, a run is already pending",
-			"name", task.Name, "duration", elapsed)
-		// ...unless the ladder is already armed. Then the previous attempt
-		// did NOT merely run long: it failed, and the run it left behind
-		// never cleared. Leaving state untouched there pins Failures at 1
-		// and NextRetry at a fixed stamp, so the backoff can never climb
-		// and persistentFailureThreshold can never escalate to ERROR — the
-		// task stays wedged, silently, at one skip per tick.
-		if _, retrying := s.state.NextRetry[task.Name]; retrying {
-			s.recordFailure(ctx, task, start, elapsed, err)
-		}
-		return
-	}
-
+	job, occurrence, err := s.jobFor(task, run.ID, now)
 	if err != nil {
-		s.recordFailure(ctx, task, start, elapsed, err)
+		s.logger.Error("could not build job", "task", task.Name, "error", err)
+		return
+	}
+	run.Occurrence = occurrence
+	err = s.runs.CreateRun(ctx, run, version)
+	switch {
+	case errors.Is(err, schedulerstate.ErrRunActive), errors.Is(err, schedulerstate.ErrStale):
+		// Another scheduler queued it, or a run finished since this tick
+		// read the state.
+		s.logger.Info("task state changed since this tick read it, skipping",
+			"task", task.Name, "reason", err)
+		return
+	case err != nil:
+		s.logger.Error("could not create run", "task", task.Name, "error", err)
 		return
 	}
 
-	s.logger.Info("task completed", "name", task.Name, "duration", elapsed)
-	s.recordSuccess(ctx, task, start)
+	if s.queue == nil {
+		err = errNoQueue
+	} else {
+		err = s.queue.Enqueue(ctx, job)
+	}
+	if err != nil {
+		// The run exists but its job does not, so nothing will ever start
+		// it. Ending it now advances the ladder immediately instead of
+		// holding the task until the queued lease expires.
+		s.finish(ctx, run, fmt.Errorf("enqueue: %w", err))
+		return
+	}
+	s.logger.Info("run queued", "task", task.Name, "run_id", run.ID, "reason", reason)
+}
+
+// maybePrune drops old run-state at most once per pruneInterval.
+func (s *Scheduler) maybePrune(ctx context.Context, now time.Time) {
+	if now.Sub(s.lastPrune) < pruneInterval {
+		return
+	}
+	s.lastPrune = now
+	removed, err := s.runs.Prune(ctx, now.Add(-s.pruneAge))
+	if err != nil {
+		s.logger.Warn("scheduler: could not prune run-state", "error", err)
+		return
+	}
+	if len(removed) > 0 {
+		s.logger.Info("pruned run-state for tasks idle since the cut-off",
+			"tasks", removed, "cutoff", now.Add(-s.pruneAge))
+	}
+}
+
+// beginRun claims a queued run for execution on this node. It returns false
+// when this delivery must not execute: the run already started or ended (a
+// duplicate or late delivery), or its record is gone.
+func (s *Scheduler) beginRun(ctx context.Context, job jobs.Job, id, task string) (schedulerstate.Run, bool) {
+	now := s.now()
+	run, err := s.runs.StartRun(ctx, id, s.node, now, now.Add(runningLease))
+	switch {
+	case errors.Is(err, schedulerstate.ErrNotQueued):
+		s.logger.Warn("duplicate delivery skipped, run is no longer queued",
+			"task", task, "run_id", id, "status", run.Status, "node", run.Node, "attempt", job.Attempt)
+		return run, false
+	case errors.Is(err, schedulerstate.ErrNoRun):
+		s.logger.Warn("job skipped, its run record no longer exists", "task", task, "run_id", id)
+		return run, false
+	case err != nil:
+		// Not executed: the run stays queued and is abandoned when its lease
+		// expires, which is the recoverable direction.
+		s.logger.Error("could not start run", "task", task, "run_id", id, "error", err)
+		return run, false
+	}
+	s.logger.Info("run started",
+		"task", task,
+		"run_id", id,
+		"node", s.node,
+		"attempt", job.Attempt,
+		"queue_wait", now.Sub(run.CreatedAt).Round(time.Millisecond))
+	return run, true
+}
+
+// finishTimeout bounds recording an outcome. The handler's own ctx may already
+// be cancelled (shutdown, the queue's handler timeout), and the outcome must be
+// recorded regardless.
+const finishTimeout = 30 * time.Second
+
+// finish ends run with runErr's outcome and logs it.
+func (s *Scheduler) finish(ctx context.Context, run schedulerstate.Run, runErr error) {
+	out := schedulerstate.Outcome{At: s.now()}
+	if runErr != nil {
+		out.Error = runErr.Error()
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), finishTimeout)
+	defer cancel()
+	fin, err := s.runs.FinishRun(ctx, run.ID, out, retryDelay)
+	if err != nil {
+		// The lease reaps it later and the task retries; logged because the
+		// real outcome is lost.
+		s.logger.Error("could not record run outcome",
+			"task", run.Task, "run_id", run.ID, "outcome_error", out.Error, "error", err)
+		return
+	}
+	s.logFinished(fin)
+}
+
+// logFinished reports a run's end: INFO on success, WARN on failure, ERROR once
+// failures persist.
+func (s *Scheduler) logFinished(fin schedulerstate.Finished) {
+	run := fin.Run
+	switch {
+	case fin.LateSuccess:
+		s.logger.Warn("late success recorded, run had already been abandoned",
+			"task", run.Task, "run_id", run.ID)
+		return
+	case !fin.Applied:
+		s.logger.Warn("late result discarded, run had already ended",
+			"task", run.Task, "run_id", run.ID, "status", run.Status)
+		return
+	}
+	attrs := []any{"task", run.Task, "run_id", run.ID, "status", run.Status}
+	if !run.StartedAt.IsZero() {
+		attrs = append(attrs, "duration", run.FinishedAt.Sub(run.StartedAt).Round(time.Millisecond))
+	}
+	if run.Children > 0 {
+		attrs = append(attrs, "subjects", run.Children, "subjects_failed", run.ChildrenFailed)
+	}
+	if run.Status == schedulerstate.RunSucceeded {
+		s.logger.Info("run finished", attrs...)
+		return
+	}
+	logAt := s.logger.Warn
+	if fin.Failures >= persistentFailureThreshold {
+		logAt = s.logger.Error
+	}
+	attrs = append(attrs,
+		"failures", fin.Failures,
+		"retry_at", fin.NextRetry,
+		"error", run.Error)
+	logAt("run finished", attrs...)
 }
 
 // runEngine executes a task's script, honoring the engineRunner test override.
-//
-// Called only from the job handler: there is one execution path, and it goes
-// through the queue. Keeping the override here rather than around the whole
-// execution step is what lets a test substitute Lua while still exercising the
-// handler, the completion reporting and the state bookkeeping.
 func (s *Scheduler) runEngine(ctx context.Context, task TaskConfig) error {
 	if s.engineRunner != nil {
 		return s.engineRunner(ctx, task)
@@ -446,78 +624,6 @@ func (s *Scheduler) runEngine(ctx context.Context, task TaskConfig) error {
 	return s.engine.ExecuteFile(ctx, task.Script, deps, nil, nil)
 }
 
-// recordSuccess stamps a completed run and clears any retry ladder.
-//
-// It takes the run's START time rather than reading s.now(): the schedule is
-// evaluated against this stamp, so recording completion would let a task that
-// begins at 23:59 and runs past midnight land on the next day and silently
-// skip that day's execution. It also keeps interval schedules from drifting
-// forward by each run's duration.
-//
-// This is a method rather than inline bookkeeping so tests exercising the
-// scheduling loop through executeTaskFunc can call the SAME code the
-// production path uses. A hand-copied double here is what previously let a
-// reverted start-time fix pass green (RR-F6182G/RR-3BCWQ4).
-func (s *Scheduler) recordSuccess(ctx context.Context, task TaskConfig, start time.Time) {
-	// No mutex needed, single goroutine.
-	s.state.Tasks[task.Name] = start
-
-	// Success clears the ladder. This is the ONLY reset: elapsed scheduled
-	// slots must not clear it, or a short-interval task (whose slots pass
-	// faster than the ladder climbs) would never back off at all.
-	delete(s.state.Failures, task.Name)
-	delete(s.state.NextRetry, task.Name)
-
-	s.saveState(ctx)
-}
-
-// recordFailure advances the retry ladder for a failed task and persists it.
-//
-// Every failure writes state, so a failed task always has a pending retry and
-// can never be perpetually due — that omission was BUG-ZKK2UL. Note it does
-// NOT touch s.state.Tasks: the schedule is evaluated against the last
-// *successful* run, so a failure must not count as having run.
-func (s *Scheduler) recordFailure(
-	ctx context.Context,
-	task TaskConfig,
-	start time.Time,
-	elapsed time.Duration,
-	err error,
-) {
-	failures := s.state.Failures[task.Name] + 1
-	delay := retryDelay(failures)
-	// The ladder is measured from when the failure was OBSERVED, not from
-	// when the run began. recordSuccess deliberately stamps the START time
-	// so a long run doesn't drift the schedule; that reasoning does NOT
-	// carry over here. A run that fails after `delay` has already elapsed —
-	// the 20m taskResultTimeout against a 5m first rung always does — would
-	// otherwise get a retry stamped in the PAST, be due on the very next
-	// tick, and spin once per tick forever. The clock-jump
-	// guard in runDueTasks only clamps retries too far in the future, so
-	// nothing downstream catches it.
-	retryAt := start.Add(elapsed).Add(delay)
-
-	s.state.Failures[task.Name] = failures
-	s.state.NextRetry[task.Name] = retryAt
-
-	// Escalate severity with consecutive failures: an intermittent blip that
-	// recovers on the next retry should not read like a job that has been
-	// broken for hours.
-	logAt := s.logger.Warn
-	if failures >= persistentFailureThreshold {
-		logAt = s.logger.Error
-	}
-	logAt("task failed",
-		"name", task.Name,
-		"duration", elapsed,
-		"failures", failures,
-		"retry_in", delay,
-		"retry_at", retryAt,
-		"error", err)
-
-	s.saveState(ctx)
-}
-
 // retryDelay returns the backoff for the nth consecutive failure (n >= 1):
 // 5m, 10m, 20m, 40m, 80m, then capped at maxRetryDelay and repeating.
 //
@@ -527,8 +633,8 @@ func (s *Scheduler) recordFailure(
 // (an intermittent failure recovers without waiting 24h).
 func retryDelay(failures int) time.Duration {
 	if failures < 1 {
-		// Only reachable from a corrupt or hand-edited state file; treat
-		// it as the first failure rather than computing a nonsense delay.
+		// Only reachable from a corrupt or hand-edited record; treat it as
+		// the first failure rather than computing a nonsense delay.
 		failures = 1
 	}
 	// maxLadderSteps is where doubling first meets the cap, so anything
@@ -540,66 +646,43 @@ func retryDelay(failures int) time.Duration {
 	return min(baseRetryDelay<<(failures-1), maxRetryDelay)
 }
 
-func (s *Scheduler) loadState(ctx context.Context) {
+// importLegacyState moves a scheduler-state.json written by an older release
+// into the run-state store, then deletes it.
+//
+// Seed never overwrites, so a second process importing the same file, or a
+// file that reappears, cannot roll newer state back. The file is deleted only
+// after every task seeded, so a failed import is retried on the next start.
+func (s *Scheduler) importLegacyState(ctx context.Context) {
 	data, err := s.ws.State().Get(ctx, stateFile)
 	if err != nil {
-		s.state = newState()
+		if !os.IsNotExist(err) {
+			s.logger.Error("could not read legacy scheduler state", "error", err)
+		}
 		return
 	}
-	s.state = parseState(data)
-	s.pruneOrphanedState()
-}
-
-// pruneOrphanedState drops entries for tasks no longer in schedules.yaml.
-//
-// Nothing else removes them: runDueTasks only ever reads state by the names in
-// the current config, so a deleted or renamed task's rows would accumulate
-// indefinitely — and with the retry ladder that is up to three entries per
-// dead task rather than one stale timestamp.
-func (s *Scheduler) pruneOrphanedState() {
-	if s.config == nil {
-		// Nothing to prune against; keep the state as loaded rather than
-		// treating every task as orphaned.
-		return
-	}
-	live := make(map[string]struct{}, len(s.config.Tasks))
-	for _, t := range s.config.Tasks {
-		live[t.Name] = struct{}{}
-	}
-	orphans := make(map[string]struct{})
-	for _, m := range []iter.Seq[string]{
-		maps.Keys(s.state.Tasks),
-		maps.Keys(s.state.Failures),
-		maps.Keys(s.state.NextRetry),
-	} {
-		for name := range m {
-			if _, ok := live[name]; !ok {
-				orphans[name] = struct{}{}
-			}
+	legacy := parseState(data)
+	for name, lastRun := range legacy.Tasks {
+		if err := s.runs.Seed(ctx, name, schedulerstate.TaskState{
+			LastRun: lastRun, Failures: legacy.Failures[name], NextRetry: legacy.NextRetry[name],
+		}); err != nil {
+			s.logger.Error("could not import legacy scheduler state", "task", name, "error", err)
+			return
 		}
 	}
-	if len(orphans) == 0 {
+	for name, retryAt := range legacy.NextRetry {
+		if _, seeded := legacy.Tasks[name]; seeded {
+			continue
+		}
+		if err := s.runs.Seed(ctx, name, schedulerstate.TaskState{
+			Failures: legacy.Failures[name], NextRetry: retryAt,
+		}); err != nil {
+			s.logger.Error("could not import legacy scheduler state", "task", name, "error", err)
+			return
+		}
+	}
+	if err := s.ws.State().Delete(ctx, stateFile); err != nil {
+		s.logger.Warn("imported legacy scheduler state but could not delete it", "error", err)
 		return
 	}
-	for name := range orphans {
-		delete(s.state.Tasks, name)
-		delete(s.state.Failures, name)
-		delete(s.state.NextRetry, name)
-	}
-	dropped := slices.Sorted(maps.Keys(orphans))
-	s.logger.Info("pruned state for tasks no longer configured", "tasks", dropped)
-}
-
-func (s *Scheduler) saveState(ctx context.Context) {
-	data, err := s.state.marshal()
-	if err != nil {
-		// coverage-ignore-start: defensive: json.MarshalIndent of State{map[string]time.Time} cannot fail — no
-		// unsupported types or cycles
-		s.logger.Error("failed to marshal scheduler state", "error", err)
-		return
-		// coverage-ignore-end
-	}
-	if err := s.ws.State().Put(ctx, stateFile, data); err != nil {
-		s.logger.Error("failed to save scheduler state", "error", err)
-	}
+	s.logger.Info("imported legacy scheduler state", "tasks", len(legacy.Tasks))
 }

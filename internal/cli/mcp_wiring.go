@@ -50,6 +50,10 @@ type mcpServices struct {
 	// service generation — job queue, mail worker, GC sweep — against a store
 	// Close has already torn down, and nothing would ever stop them.
 	closed bool
+	// attachMu serializes the MCP attachment writes of this process. It
+	// outlives reloads, so writes under an old and a new schema still
+	// exclude each other.
+	attachMu sync.Mutex
 }
 
 // current returns the live services bundle.
@@ -227,6 +231,7 @@ func (s *mcpServices) Deps() relamcp.Deps {
 func (s *mcpServices) deps() relamcp.Deps {
 	reads := s.svc.GatedReads()
 	return relamcp.Deps{
+		Attachments:   s.attachmentDeps(),
 		Store:         reads.Reader,
 		Meta:          s.svc.Meta(),
 		Tracer:        reads.Tracer,
@@ -238,6 +243,22 @@ func (s *mcpServices) deps() relamcp.Deps {
 		LuaCache:      s.svc.ScriptEngine().LuaCache(),
 		Watcher:       s.watcher,
 		ProjectRoot:   s.svc.Paths().Root,
+	}
+}
+
+// attachmentDeps wires the MCP attachment tools like `rela attach`: raw
+// store, no command runner (so a configured scan rejects the upload), and the
+// store's backstop as the size limit, capped at [relamcp.MaxUploadBytes]. The
+// snapshot is built once per assembly because the metamodel only changes on
+// reload, which rebuilds the Deps. Caller holds mu.
+func (s *mcpServices) attachmentDeps() relamcp.AttachmentDeps {
+	snap, err := relamcp.NewAttachmentSnapshot(
+		s.svc.Store(), s.svc.EntityManager(), s.svc.Meta(), nil, store.MaxAttachmentBytes)
+	return relamcp.AttachmentDeps{
+		Snapshot:   func() (relamcp.AttachmentSnapshot, error) { return snap, err },
+		Authorizer: s.svc.ACL(),
+		Audit:      s.svc.Audit(),
+		WriteLock:  &s.attachMu,
 	}
 }
 

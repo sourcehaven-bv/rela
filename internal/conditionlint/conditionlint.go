@@ -82,9 +82,25 @@ func check(env *predicate.Env, expr, where string, errs *[]string) {
 	if expr == "" {
 		return
 	}
-	if _, err := predicate.Compile(env, expr); err != nil {
+	prog, err := predicate.Compile(env, expr)
+	if err == nil {
+		err = refuseFormTraversal(prog)
+	}
+	if err != nil {
 		*errs = append(*errs, fmt.Sprintf("%s: %v", where, err))
 	}
+}
+
+// refuseFormTraversal refuses a `related(...)` in a form condition. The SPA
+// evaluates form conditions in the browser against the form's own values, so
+// it has no graph to traverse; the operator hears about it at load instead of
+// as a condition that never holds.
+func refuseFormTraversal(prog *predicate.Program) error {
+	if len(prog.Traversals()) == 0 {
+		return nil
+	}
+	return fmt.Errorf("%s(...) is not available in form conditions: they are evaluated in the browser, "+
+		"which cannot read relations; use a view condition or an ACL when: instead", predicate.FuncRelated)
 }
 
 // formEnv builds a predicate Env whose `form` variable is a record of the

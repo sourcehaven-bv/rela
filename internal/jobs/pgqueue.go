@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/acaloiaro/neoq"
 	"github.com/acaloiaro/neoq/backends/postgres"
@@ -51,6 +52,7 @@ func NewPostgresQueue(ctx context.Context, logger *slog.Logger, databaseURL stri
 	nq, err := neoq.New(ctx,
 		neoq.WithBackend(postgres.Backend),
 		postgres.WithConnectionString(dsn),
+		postgres.WithTransactionTimeout(int(pgIdleTxTimeout.Milliseconds())),
 	)
 	if err != nil {
 		// The DSN carries credentials, so it must never reach the error
@@ -59,6 +61,21 @@ func NewPostgresQueue(ctx context.Context, logger *slog.Logger, databaseURL stri
 	}
 	return newNeoqQueue(nq, logger, pgConcurrency)
 }
+
+// pgIdleTxTimeout is the idle_in_transaction_session_timeout neoq sets on
+// every worker connection.
+//
+// neoq runs a handler INSIDE the transaction that holds the job's row lock and
+// records the outcome in that same transaction. While the handler runs, the
+// transaction is idle as far as PostgreSQL is concerned. neoq's default for
+// this timeout is 30 s, so any handler longer than that had its session killed
+// underneath it: the outcome update failed, the row stayed pending, neoq
+// redelivered it every minute forever, and its idempotency key rejected every
+// later enqueue (BUG-TKL08E).
+//
+// Derived from handlerTimeout so a handler that stays within its own timeout
+// can always commit. The margin covers the status update itself.
+const pgIdleTxTimeout = handlerTimeout + time.Minute
 
 // poolHeadroom is the spare connections above the worker count.
 //

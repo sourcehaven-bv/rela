@@ -43,6 +43,12 @@ func ValidateTraversals(meta *metamodel.Metamodel, fromType string, prog *predic
 	return nil
 }
 
+// traversalSubject is the only identifier a traversal may start from. The
+// path resolves from the type of the row being evaluated, so any other record
+// (`current_user`, say) would be validated, indexed and answered as if it
+// started from the wrong type.
+const traversalSubject = "entity"
+
 func validateTraversal(meta *metamodel.Metamodel, fromType string, spec predicate.TraversalSpec) error {
 	target, err := ResolveTraversalTarget(meta, fromType, spec)
 	if err != nil {
@@ -51,71 +57,157 @@ func validateTraversal(meta *metamodel.Metamodel, fromType string, spec predicat
 	return validateTraversalProps(meta, target, spec)
 }
 
+// ResolvedHop is one hop of a traversal after the metamodel has resolved it:
+// the canonical relation type, the direction it is walked in, and the entity
+// type the hop lands on.
+type ResolvedHop struct {
+	// Relation is the CANONICAL relation type, even when the author wrote its
+	// inverse ID. Stored edges carry only canonical names.
+	Relation string
+
+	// Incoming is true when the hop walks the edge backwards (TO -> FROM),
+	// which is what writing the relation's inverse ID means.
+	Incoming bool
+
+	// Target is the entity type at the far end of the hop.
+	Target string
+}
+
 // ResolveTraversalTarget walks a traversal's hops and returns the entity type
-// the FINAL hop lands on, or an error naming why it cannot be resolved.
-//
-// This is the ONE definition of how a chain resolves, shared by validation
-// (which surfaces the error at config load) and by index derivation in
-// internal/queryplan (which treats any error as "derive no index"). They must
-// agree: if validation accepts a chain that derivation cannot resolve, the
-// condition loads fine and its index is silently never created — the query
-// then scans every row of the target type, which is the regression the
-// derived index exists to prevent. Two copies of this walk WILL drift, and
-// that is the direction they drift in.
+// the FINAL hop lands on, or an error naming why it cannot be resolved. It is
+// [ResolveTraversal] for callers that only need the final type.
 func ResolveTraversalTarget(
 	meta *metamodel.Metamodel, fromType string, spec predicate.TraversalSpec,
 ) (string, error) {
-	if meta == nil {
-		return "", errors.New("related: no metamodel")
+	hops, err := ResolveTraversal(meta, fromType, spec)
+	if err != nil || len(hops) == 0 {
+		return "", err
 	}
+	return hops[len(hops)-1].Target, nil
+}
+
+// ResolveTraversal walks a traversal's hops against the metamodel.
+//
+// This is the ONE definition of how a chain resolves, shared by validation
+// (which surfaces the error at config load), by index derivation in
+// internal/queryplan (which treats any error as "derive no index") and by the
+// lowering into an ACL-gated store predicate. They must agree: if validation
+// accepts a chain that derivation cannot resolve, the condition loads fine
+// and its index is silently never created — the query then scans every row
+// of the target type, which is the regression the derived index exists to
+// prevent. Two copies of this walk WILL drift, and that is the direction they
+// drift in.
+//
+// # Direction
+//
+// A path element names either a canonical relation type (walked FROM -> TO)
+// or the inverse ID a relation declares (walked TO -> FROM). Canonical names
+// are tried first; the metamodel loader already refuses an inverse ID that
+// shadows a canonical name, so the two lookups cannot both match.
+//
+// A symmetric relation is refused in either spelling. Its edges are stored
+// once, in whichever direction they were written, so walking one direction
+// would silently miss the edges written the other way.
+func ResolveTraversal(
+	meta *metamodel.Metamodel, fromType string, spec predicate.TraversalSpec,
+) ([]ResolvedHop, error) {
+	if meta == nil {
+		return nil, errors.New("related: no metamodel")
+	}
+	if spec.Subject != traversalSubject {
+		return nil, fmt.Errorf("related: the first argument must be %q", traversalSubject)
+	}
+	hops := make([]ResolvedHop, 0, len(spec.Path))
 	current := fromType
-	for i, relType := range spec.Path {
-		def, ok := meta.GetRelationDef(relType)
-		if !ok {
-			return "", fmt.Errorf("related: unknown relation type %q", relType)
+	for i, name := range spec.Path {
+		relType, incoming, def, err := resolveHopRelation(meta, name)
+		if err != nil {
+			return nil, err
 		}
-		// The FROM side must admit the type we are standing on. Checking it
+		// Which side we stand on and which side we walk to depends on the
+		// direction; everything after this is direction-agnostic.
+		near, far := def.From, def.To
+		if incoming {
+			near, far = def.To, def.From
+		}
+		// The near side must admit the type we are standing on. Checking it
 		// turns a traversal that could never match into a load error naming
 		// the relation, rather than a silently empty result.
-		if current != "" && len(def.From) > 0 && !slices.Contains(def.From, current) {
-			return "", fmt.Errorf("related: relation %q does not start from %q (declared from: %s)",
-				relType, current, strings.Join(def.From, ", "))
+		if current != "" && len(near) > 0 && !slices.Contains(near, current) {
+			if incoming {
+				return nil, fmt.Errorf("related: %q walks %q backwards, which does not end at %q (declared to: %s)",
+					name, relType, current, strings.Join(near, ", "))
+			}
+			return nil, fmt.Errorf("related: relation %q does not start from %q (declared from: %s)",
+				relType, current, strings.Join(near, ", "))
 		}
 
-		targets := def.To
-		last := i == len(spec.Path)-1
-		switch {
-		case len(targets) == 0:
-			return "", fmt.Errorf("related: relation %q declares no target type", relType)
-		case len(targets) == 1:
-			current = targets[0]
-			if last && spec.EntityType != "" && spec.EntityType != current {
-				return "", fmt.Errorf("related: type %q does not match the target of %q (%s)",
-					spec.EntityType, relType, current)
-			}
-		default:
-			// A union. Only the LAST hop can carry the ascription, so an
-			// intermediate union is unresolvable and must be refused rather
-			// than guessed.
-			if !last {
-				return "", fmt.Errorf(
-					"related: intermediate relation %q has %d target types (%s) and cannot be "+
-						"resolved; a chained hop must traverse single-target relations",
-					relType, len(targets), strings.Join(targets, ", "))
-			}
-			if spec.EntityType == "" {
-				return "", fmt.Errorf(
-					"related: relation %q has %d target types (%s); add type='<one of them>' to "+
-						"say which one is meant", relType, len(targets), strings.Join(targets, ", "))
-			}
-			if !slices.Contains(targets, spec.EntityType) {
-				return "", fmt.Errorf("related: type %q is not a target of %q (declared to: %s)",
-					spec.EntityType, relType, strings.Join(targets, ", "))
-			}
-			current = spec.EntityType
+		target, err := resolveHopTarget(name, far, i == len(spec.Path)-1, spec.EntityType)
+		if err != nil {
+			return nil, err
+		}
+		current = target
+		hops = append(hops, ResolvedHop{Relation: relType, Incoming: incoming, Target: target})
+	}
+	return hops, nil
+}
+
+// resolveHopRelation maps one path element to its canonical relation and
+// direction.
+func resolveHopRelation(
+	meta *metamodel.Metamodel, name string,
+) (relType string, incoming bool, def *metamodel.RelationDef, err error) {
+	relType = name
+	def, ok := meta.GetRelationDef(name)
+	if !ok {
+		owner, isInverse := meta.InverseOwner(name)
+		if !isInverse {
+			return "", false, nil, fmt.Errorf("related: unknown relation type %q", name)
+		}
+		relType, incoming = owner, true
+		if def, ok = meta.GetRelationDef(owner); !ok {
+			return "", false, nil, fmt.Errorf("related: inverse %q names unknown relation %q", name, owner)
 		}
 	}
-	return current, nil
+	if def.Symmetric {
+		return "", false, nil, fmt.Errorf(
+			"related: relation %q is symmetric and cannot be traversed: its edges are stored "+
+				"in either direction, so one direction would miss some of them", relType)
+	}
+	return relType, incoming, def, nil
+}
+
+// resolveHopTarget picks the type a hop lands on from the far side's
+// declared types, applying the `type =` ascription rule. name is the path
+// element as written, so errors quote what the author typed.
+func resolveHopTarget(name string, far []string, last bool, ascribed string) (string, error) {
+	switch {
+	case len(far) == 0:
+		return "", fmt.Errorf("related: relation %q declares no type on the side it walks to", name)
+	case len(far) == 1:
+		if last && ascribed != "" && ascribed != far[0] {
+			return "", fmt.Errorf("related: type %q does not match the target of %q (%s)",
+				ascribed, name, far[0])
+		}
+		return far[0], nil
+	case !last:
+		// A union. Only the LAST hop can carry the ascription, so an
+		// intermediate union is unresolvable and must be refused rather than
+		// guessed.
+		return "", fmt.Errorf(
+			"related: intermediate relation %q has %d target types (%s) and cannot be "+
+				"resolved; a chained hop must traverse single-target relations",
+			name, len(far), strings.Join(far, ", "))
+	case ascribed == "":
+		return "", fmt.Errorf(
+			"related: relation %q has %d target types (%s); add type='<one of them>' to "+
+				"say which one is meant", name, len(far), strings.Join(far, ", "))
+	case !slices.Contains(far, ascribed):
+		return "", fmt.Errorf("related: type %q is not a target of %q (declared: %s)",
+			ascribed, name, strings.Join(far, ", "))
+	default:
+		return ascribed, nil
+	}
 }
 
 // validateTraversalProps checks each constrained property is declared on the
@@ -146,10 +238,42 @@ func validateTraversalProps(meta *metamodel.Metamodel, targetType string, spec p
 			return fmt.Errorf("related: property %q on %q is a list and cannot be filtered in a traversal",
 				name, targetType)
 		}
-		if _, ok := spec.Props[name].(predicate.String); !ok {
+		if !metamodel.StringShaped(meta, pd) {
+			// The store compares as a string (and the derived index is a
+			// string index); an integer or boolean would silently never
+			// match in SQL while matching in Go.
+			return fmt.Errorf("related: property %q on %q has type %q, which cannot be compared in a traversal",
+				name, targetType, pd.Type)
+		}
+		str, ok := spec.Props[name].(predicate.String)
+		if !ok {
 			return fmt.Errorf("related: property %q on %q must be compared against a string literal",
 				name, targetType)
 		}
+		if str.String() == "" {
+			// An empty string is ambiguous in the store: an unset property
+			// and one set to "" read differently per backend.
+			return fmt.Errorf("related: property %q on %q must not be compared against an empty string",
+				name, targetType)
+		}
+		// A misspelled enum value would match nothing, so `not related(...)`
+		// would quietly match every row.
+		if allowed := enumValues(meta, pd); allowed != nil && !slices.Contains(allowed, str.String()) {
+			return fmt.Errorf("related: %q is not a declared value of %q on %q (allowed: %s)",
+				str.String(), name, targetType, strings.Join(allowed, ", "))
+		}
+	}
+	return nil
+}
+
+// enumValues returns the declared values of an enum-shaped property: inline
+// `values:` or a custom type's. Nil means the property is not an enum.
+func enumValues(meta *metamodel.Metamodel, pd metamodel.PropertyDef) []string {
+	if len(pd.Values) > 0 {
+		return pd.Values
+	}
+	if ct, ok := meta.Types[pd.Type]; ok && len(ct.Values) > 0 {
+		return ct.Values
 	}
 	return nil
 }

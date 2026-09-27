@@ -5,7 +5,7 @@ title: Block agent session-attribution trailers from git history
 kind: enhancement
 priority: low
 effort: s
-status: backlog
+status: wont-fix
 ---
 
 Agent sessions append an attribution trailer (`Claude-Session: <url>`) to commit
@@ -48,10 +48,15 @@ does not trip it — this ticket's own PR body would otherwise fail.
 
 ## Enforcement note
 
-Making the check required needs the qualified status context
-`no-session-trailer / No Session Trailer` — a reusable workflow reports as
-`<caller-job> / <job-name>`. Requiring the bare job name yields a PR that is
-green and permanently unmergeable.
+Making the check required needs the qualified status context `no-session-trailer
+/ No Session Trailer` — a reusable workflow reports as `<caller-job> /
+<job-name>`. Requiring the bare job name yields a PR that is green and
+permanently unmergeable.
 
 Complementary local guard: a `PreToolUse` hook blocks the agent writing the
 trailer in the first place, so CI is the backstop rather than the only line.
+
+## Resolution
+
+Closed: Shipped in #1517 (session-trailer check on PRs). Status is wont-fix, not
+done, because this ticket has no review checklist.

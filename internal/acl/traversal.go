@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -22,7 +23,11 @@ type TraversalHop struct {
 	// any type, matching [store.RelationPredicate.OfTypes].
 	RelationTypes []string
 
-	// EntityType is the traversed-TO type. REQUIRED: the gate resolves a
+	// Incoming walks the edge backwards: the hop stands on the relation's TO
+	// side and lands on its FROM side (TKT-CXQEV0).
+	Incoming bool
+
+	// EntityType is the type the hop lands on. REQUIRED: the gate resolves a
 	// read query for it, and there is no read query for "some type". This
 	// is the same ascription that resolves a union-targeted relation, so a
 	// caller that already needs it for typing has it to hand.
@@ -36,10 +41,79 @@ type TraversalHop struct {
 }
 
 // ErrTraversalDenied reports that a traversal cannot be authorized: the
-// principal may not read the traversed-to type at all, so no rows could
-// match. Callers surface it as an empty result, never as an error naming
-// the entity type's contents.
+// principal may not read a traversed-to type at all, so no rows could
+// match. Callers present it as "no candidate matches", which is exact:
+// a hidden entity is a nonexistent one.
 var ErrTraversalDenied = errors.New("acl: traversal denied")
+
+// ErrTraversalUnsupported reports that a traversal cannot be gated for this
+// principal: the far type is only PARTLY readable in a way an endpoint
+// predicate cannot express (a face restriction, a disjunctive ceiling, a read
+// granted through inheritance), or the property is one the principal may not
+// filter on.
+//
+// Distinct from [ErrTraversalDenied] because "no match" is NOT a safe
+// reading here: under `not related(...)` it would match every candidate and
+// widen the filter. Callers surface it as an error.
+var ErrTraversalUnsupported = errors.New("acl: traversal cannot be gated")
+
+// TraversalQuery builds the query that answers a lowered traversal for rows
+// of candidateType: the predicate goes in the slot matching the first hop's
+// direction. Built fresh rather than folded into an existing query, whose
+// ACL predicate may already occupy that slot.
+func TraversalQuery(candidateType string, hop TraversalHop, p *store.RelationPredicate) store.GraphQuery {
+	q := store.GraphQuery{EntityType: candidateType}
+	if hop.Incoming {
+		q.HasInbound = p
+	} else {
+		q.HasOutbound = p
+	}
+	return q
+}
+
+// UngatedTraversal lowers a traversal with NO authorization. It exists for
+// deployments that configure no ACL policy, where every read is already
+// unrestricted; anything with a policy goes through [Request.GateTraversal].
+func UngatedTraversal(hop TraversalHop) (*store.RelationPredicate, error) {
+	return lowerTraversal(hop, func(h TraversalHop) (*store.EndpointPredicate, error) {
+		if h.EntityType == "" {
+			return nil, errors.New("acl: traversal hop: entity type is required")
+		}
+		return &store.EndpointPredicate{EntityType: h.EntityType, Props: slices.Clone(h.Props)}, nil
+	})
+}
+
+// lowerTraversal turns a hop chain into a store predicate, asking endpoint
+// for each hop's endpoint filter. It is the ONE place direction and chaining
+// are decided, so the gated and ungated lowerings cannot disagree about them.
+func lowerTraversal(
+	hop TraversalHop, endpoint func(TraversalHop) (*store.EndpointPredicate, error),
+) (*store.RelationPredicate, error) {
+	match, err := endpoint(hop)
+	if err != nil {
+		return nil, err
+	}
+	if next := hop.Next; next != nil {
+		nested, err := lowerTraversal(*next, endpoint)
+		if err != nil {
+			return nil, err
+		}
+		slot := &match.HasOutbound
+		if next.Incoming {
+			slot = &match.HasInbound
+		}
+		if *slot != nil {
+			// The endpoint's read query already constrains its inbound
+			// edges, and EndpointPredicate has one slot per direction.
+			// Overwriting would drop that row gate; there is no field to
+			// merge into. Refuse.
+			return nil, fmt.Errorf("%w: chained incoming hop into %q collides with its read gate",
+				ErrTraversalUnsupported, hop.EntityType)
+		}
+		*slot = nested
+	}
+	return &store.RelationPredicate{OfTypes: hop.RelationTypes, EndpointMatch: match}, nil
+}
 
 // GateTraversal compiles an untrusted traversal request into a store
 // predicate the principal is permitted to evaluate.
@@ -61,17 +135,42 @@ var ErrTraversalDenied = errors.New("acl: traversal denied")
 //  2. FIELD GATE. A property whose `visible:` grant is CONDITIONAL is not
 //     filterable, at all, by anyone. The row gate does not help here: the
 //     principal can see the row and still not be entitled to the value, and a
-//     filter would reveal it. See [Policy.ConditionallyVisible].
-//  3. NO INHERITANCE EXPANSION. The gate never emits InheritThrough or
-//     EntityInheritThrough. Those are anchored on the query's own entity type
-//     and re-anchoring them mid-traversal would change who inherits from whom.
+//     filter would reveal it. See [Policy.ConditionallyVisible]. The policy
+//     is the Request's own, so no caller can skip this by passing none.
+//  3. NO INHERITANCE EXPANSION. Every hop's gate sits inside an endpoint
+//     match — a NESTED position, where no backend emits InheritThrough or
+//     EntityInheritThrough. A read granted through inheritance is therefore
+//     [ErrTraversalUnsupported], never silently dropped.
 //
-// A denied read on ANY hop returns [ErrTraversalDenied] rather than a
-// predicate matching nothing, so the caller decides how to present it —
-// but both readings are safe, because the gate never widens.
+// A denied read on ANY hop returns [ErrTraversalDenied]; a read the
+// predicate cannot express returns [ErrTraversalUnsupported]. Neither ever
+// widens.
 func (r *Request) GateTraversal(
-	ctx context.Context, meta FieldVisibility, hop TraversalHop,
+	ctx context.Context, candidateType string, hop TraversalHop,
 ) (*store.RelationPredicate, error) {
+	// An outgoing first hop reads edges owned by the CANDIDATE, and the
+	// store reads them from the default state's tail. That tail holds the
+	// default face's content-scoped edges, so for a reader granted only
+	// named faces of the candidate type it would match on edges from a face
+	// they cannot read. An incoming first hop reads the far entity's edges,
+	// and gateHop already refuses a face-restricted far type.
+	if !hop.Incoming {
+		if candidateType == "" {
+			return nil, errors.New("acl: traversal: candidate type is required")
+		}
+		if rq := r.ReadQuery(ctx, candidateType); len(rq.Faces) > 0 {
+			return nil, fmt.Errorf("%w: %q is readable only on named faces, whose edges a traversal cannot read",
+				ErrTraversalUnsupported, candidateType)
+		}
+	}
+	return lowerTraversal(hop, func(h TraversalHop) (*store.EndpointPredicate, error) {
+		return r.gateHop(ctx, h)
+	})
+}
+
+// gateHop builds one hop's endpoint filter: the author's props plus the rows
+// of h.EntityType this principal may read.
+func (r *Request) gateHop(ctx context.Context, hop TraversalHop) (*store.EndpointPredicate, error) {
 	if hop.EntityType == "" {
 		// Without a type there is nothing to authorize against. Refusing is
 		// the only safe reading: resolving "any type" would mean composing no
@@ -91,15 +190,15 @@ func (r *Request) GateTraversal(
 	// for an attenuated client is the correct direction.
 	ceiling := r.FieldCeilingFor(hop.EntityType)
 	for _, p := range hop.Props {
-		if meta != nil && meta.ConditionallyVisible(hop.EntityType, p.Property) {
+		if r.d.policy.ConditionallyVisible(hop.EntityType, p.Property) {
 			return nil, fmt.Errorf(
-				"acl: traversal hop: property %q on %q is not unconditionally visible "+
-					"and cannot be filtered on", p.Property, hop.EntityType)
+				"%w: property %q on %q is not unconditionally visible and cannot be filtered on",
+				ErrTraversalUnsupported, p.Property, hop.EntityType)
 		}
 		if ceilingHidesField(ceiling, p.Property) {
 			return nil, fmt.Errorf(
-				"acl: traversal hop: property %q on %q is hidden by the client ceiling %q "+
-					"and cannot be filtered on", p.Property, hop.EntityType, ceiling.Baseline)
+				"%w: property %q on %q is hidden by the client ceiling %q and cannot be filtered on",
+				ErrTraversalUnsupported, p.Property, hop.EntityType, ceiling.Baseline)
 		}
 	}
 
@@ -109,23 +208,20 @@ func (r *Request) GateTraversal(
 	}
 	// A face-restricted read means only SOME content states of the endpoint
 	// are readable, and [store.EndpointPredicate] has no face field — so the
-	// predicate cannot express the restriction. Emitting it anyway would
-	// traverse through states the principal may not read. Refuse instead:
-	// this is the same fail-closed direction the Any branch takes below, and
-	// it is why faces are checked before the query is folded rather than
-	// after.
+	// predicate cannot express the restriction. Checked before the query is
+	// folded so the refusal cannot be reached with a half-built predicate.
 	if len(rq.Faces) > 0 {
-		return nil, ErrTraversalDenied
+		return nil, fmt.Errorf("%w: read of %q is face-restricted", ErrTraversalUnsupported, hop.EntityType)
 	}
-
 	// A disjunctive authorization ceiling cannot be expressed inside a single
 	// endpoint predicate without flattening it into an OR that
-	// EndpointPredicate has no field for. Refusing is the fail-closed reading;
-	// widening to "no constraint" would be the escalation. Checked BEFORE
-	// anything is composed so the refusal cannot be reached with a
-	// half-built predicate.
+	// EndpointPredicate has no field for.
 	if !rq.AllowAll && rq.Query != nil && len(rq.Query.Any) > 0 {
-		return nil, ErrTraversalDenied
+		return nil, fmt.Errorf("%w: read of %q is a disjunction", ErrTraversalUnsupported, hop.EntityType)
+	}
+	if !rq.AllowAll && rq.Query != nil && !foldsIntoEndpoint(*rq.Query) {
+		return nil, fmt.Errorf("%w: read of %q constrains more than an endpoint can carry",
+			ErrTraversalUnsupported, hop.EntityType)
 	}
 
 	// COPY the caller's props rather than aliasing them. `append` onto the
@@ -142,50 +238,29 @@ func (r *Request) GateTraversal(
 	// omission.
 	if !rq.AllowAll && rq.Query != nil {
 		match.Props = append(match.Props, rq.Query.Props...)
-		if rq.Query.HasInbound != nil {
-			// The ACL's own inbound predicate carries its role-relation
-			// expansions, which are anchored on the traversed-to type — it is
-			// the ACL's, not the caller's, so its expansions are correct here.
-			match.HasInbound = rq.Query.HasInbound
+		if inb := rq.Query.HasInbound; inb != nil {
+			if len(inb.InheritThrough) > 0 || len(inb.EntityInheritThrough) > 0 {
+				// See rule 3: this sits in a nested position on every hop,
+				// where every backend refuses the expansion.
+				return nil, fmt.Errorf("%w: read of %q is granted through inheritance",
+					ErrTraversalUnsupported, hop.EntityType)
+			}
+			match.HasInbound = inb
 		}
 	}
-
-	if hop.Next != nil {
-		// A CHAINED hop's gate travels through the nested SQL emitter, which
-		// cannot express the two inheritance expansions — and the Go backend
-		// CAN, so emitting them here would gate the same principal differently
-		// per backend. Refuse rather than diverge. A single-hop traversal is
-		// unaffected: its predicate rides the top-level emitter, which does
-		// expand them.
-		inb := match.HasInbound
-		if inb != nil && (len(inb.InheritThrough) > 0 || len(inb.EntityInheritThrough) > 0) {
-			return nil, ErrTraversalDenied
-		}
-		nested, err := r.GateTraversal(ctx, meta, *hop.Next)
-		if err != nil {
-			return nil, err
-		}
-		match.HasOutbound = nested
-	}
-
-	return &store.RelationPredicate{
-		OfTypes:       hop.RelationTypes,
-		EndpointMatch: match,
-	}, nil
+	return match, nil
 }
 
-// FieldVisibility answers whether a property's read visibility is
-// CONDITIONAL — granted by a `visible:` rule carrying a `when:`.
-//
-// Declared at the consumer (CLAUDE.md "interfaces at the call site") so the
-// gate binds to the one question it asks rather than to a whole policy.
-// Nil: accepted — a caller with no policy skips the field gate, which is
-// correct only when no `visible:` grants exist at all.
-type FieldVisibility interface {
-	ConditionallyVisible(entityType, property string) bool
+// foldsIntoEndpoint reports whether a read query uses only the fields gateHop
+// folds into an endpoint (EntityType, Props, HasInbound). Anything else is a
+// constraint the traversal would silently drop, leaving it wider than a plain
+// read, so a new GraphQuery field is refused here until gateHop handles it.
+func foldsIntoEndpoint(q store.GraphQuery) bool {
+	q.EntityType, q.Props, q.HasInbound = "", nil, nil
+	return reflect.ValueOf(q).IsZero()
 }
 
-// ConditionallyVisible implements [FieldVisibility]: it reports whether a
+// ConditionallyVisible reports whether a
 // property's read visibility is anything less than unconditional for EVERY
 // role, in which case it must not be filterable.
 //

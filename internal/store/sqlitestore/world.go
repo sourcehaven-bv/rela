@@ -3,6 +3,7 @@ package sqlitestore
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -45,15 +46,9 @@ import (
 // generated SQL is deterministic, which keeps SQLite's statement cache warm and
 // the builder's unit tests readable.
 //
-// # Why each expression carries its OWN args
-//
-// SQLite binds POSITIONAL '?' placeholders, where pgstore binds numbered $N.
-// pgstore can therefore emit a coordinate once and reference it from both
-// expressions; here every placeholder consumes the next argument in statement
-// order, so the two expressions cannot share bindings. Returning
-// (expr, args) pairs makes that explicit — a caller splices each expression
-// wherever it belongs and appends the matching args at that point, and the
-// compiler stops it pairing one expression with the other's bindings.
+// Placeholders are numbered (?N) through b, as in pgstore, so a coordinate is
+// bound once and referenced from both expressions wherever the caller splices
+// them.
 //
 // The caller must have established the world is non-default; passing the
 // default world here would generate a pointless CASE over zero types.
@@ -63,7 +58,7 @@ import (
 // rewriting generated SQL with ReplaceAll would corrupt any column whose name
 // merely CONTAINS "face" — from_face is one — and would break silently the
 // moment this function emits a new column.
-func worldSQL(w store.WorldScope, alias string) (rank string, rankArgs []any, candidate string, candArgs []any) {
+func worldSQL(b *sqlBuilder, w store.WorldScope, alias string) (rank, candidate string) {
 	col := func(name string) string {
 		if alias == "" {
 			return name
@@ -74,22 +69,19 @@ func worldSQL(w store.WorldScope, alias string) (rank string, rankArgs []any, ca
 	sort.Strings(types)
 
 	var rankArms, candArms, typeTests []string
-	var typeTestArgs []any
 	for _, typ := range types {
 		res, ok := w.For(typ)
 		if !ok {
 			continue // unreachable: Types() lists only scoped types
 		}
-		typeTests = append(typeTests, col("type")+" = ?")
-		typeTestArgs = append(typeTestArgs, typ)
+		typeArg := b.arg(typ)
+		typeTests = append(typeTests, col("type")+" = "+typeArg)
 
 		var whens, coords []string
-		var whenArgs, coordArgs []any
 		for i, coord := range res.Chain {
-			whens = append(whens, fmt.Sprintf("WHEN %s = ? THEN %d", col("face"), i))
-			whenArgs = append(whenArgs, string(coord))
-			coords = append(coords, col("face")+" = ?")
-			coordArgs = append(coordArgs, string(coord))
+			c := b.arg(string(coord))
+			whens = append(whens, fmt.Sprintf("WHEN %s = %s THEN %d", col("face"), c, i))
+			coords = append(coords, col("face")+" = "+c)
 		}
 		if res.Fallback == store.FallbackDefaultState {
 			// Last resort: must rank BELOW every coordinate, hence len(chain)
@@ -103,26 +95,19 @@ func worldSQL(w store.WorldScope, alias string) (rank string, rankArgs []any, ca
 			// nothing. An explicit false arm keeps the trailing arm meaning
 			// ONLY "unscoped type" (rule 1) rather than silently absorbing
 			// this case. SQLite has no boolean literal, so 0 is false.
-			rankArms = append(rankArms, "WHEN "+col("type")+" = ? THEN 0")
-			rankArgs = append(rankArgs, typ)
-			candArms = append(candArms, "("+col("type")+" = ? AND 0)")
-			candArgs = append(candArgs, typ)
+			rankArms = append(rankArms, "WHEN "+col("type")+" = "+typeArg+" THEN 0")
+			candArms = append(candArms, "("+col("type")+" = "+typeArg+" AND 0)")
 			continue
 		}
 		rankArms = append(rankArms,
-			"WHEN "+col("type")+" = ? THEN (CASE "+strings.Join(whens, " ")+" ELSE 0 END)")
-		rankArgs = append(rankArgs, typ)
-		rankArgs = append(rankArgs, whenArgs...)
-
+			"WHEN "+col("type")+" = "+typeArg+" THEN (CASE "+strings.Join(whens, " ")+" ELSE 0 END)")
 		candArms = append(candArms,
-			"("+col("type")+" = ? AND ("+strings.Join(coords, " OR ")+"))")
-		candArgs = append(candArgs, typ)
-		candArgs = append(candArgs, coordArgs...)
+			"("+col("type")+" = "+typeArg+" AND ("+strings.Join(coords, " OR ")+"))")
 	}
 
 	if len(rankArms) == 0 {
 		// No scoped types: every type takes rule 1.
-		return "0", nil, col("face") + " = ''", nil
+		return "0", col("face") + " = ''"
 	}
 
 	rank = "CASE " + strings.Join(rankArms, " ") + " ELSE 0 END"
@@ -131,6 +116,33 @@ func worldSQL(w store.WorldScope, alias string) (rank string, rankArgs []any, ca
 	// candidate in its family.
 	candidate = "(" + strings.Join(candArms, " OR ") +
 		" OR (NOT (" + strings.Join(typeTests, " OR ") + ") AND " + col("face") + " = ''))"
-	candArgs = append(candArgs, typeTestArgs...)
-	return rank, rankArgs, candidate, candArgs
+	return rank, candidate
+}
+
+// effectiveWorld collapses a world to the default world for a query bound to
+// ONE entity type the world does not scope, as pgstore's does (TKT-1U8XYN):
+// every row of such a type is its own prime, so the window would only cost.
+func effectiveWorld(w store.WorldScope, entityType string) store.WorldScope {
+	if entityType == "" || w.IsDefaultWorld() {
+		return w
+	}
+	if _, scoped := w.For(entityType); scoped {
+		return w
+	}
+	return store.DefaultWorld()
+}
+
+// sqlBuilder accumulates bound values and hands out numbered placeholders
+// (?N). Numbered rather than positional because a builder appends arguments
+// in construction order, not in the order they appear in the statement text.
+type sqlBuilder struct {
+	args []any
+	// unsafe records that a name or value could not be rendered as a literal
+	// (see jsonPath); the statement must not run.
+	unsafe bool
+}
+
+func (b *sqlBuilder) arg(v any) string {
+	b.args = append(b.args, v)
+	return "?" + strconv.Itoa(len(b.args))
 }

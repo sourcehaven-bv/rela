@@ -78,6 +78,13 @@ type PolicyResolver struct {
 	// were reduced to globals-only (see resolveViaDeclarative) fails closed
 	// rather than defaulting to all-visible (TKT-73C6B2).
 	typesWithVisible map[string]bool
+
+	// traversals answers `related(...)` in `when:`; nil unless
+	// [WithTraversals] is passed to [New].
+	traversals TraversalBinder
+	// traversalProgs lists, per entity type, every compiled `when:` of any
+	// role that uses related(), so one bind answers all of a row's grants.
+	traversalProgs map[string][]*predicate.Program
 }
 
 type grantKey struct {
@@ -125,7 +132,7 @@ type compiledGrants struct {
 // carries OutgoingCounts; consolidating them is a follow-up cleanup.
 func New(
 	meta *metamodel.Metamodel,
-	lookup RelationLookup, declarative *acl.Declarative,
+	lookup RelationLookup, declarative *acl.Declarative, opts ...Option,
 ) (*PolicyResolver, error) {
 	if meta == nil {
 		return nil, errors.New("affordances: New: meta must be non-nil")
@@ -145,6 +152,10 @@ func New(
 		envs:             map[string]*predicate.Env{},
 		grants:           map[grantKey]*compiledGrants{},
 		typesWithVisible: map[string]bool{},
+		traversalProgs:   map[string][]*predicate.Program{},
+	}
+	for _, opt := range opts {
+		opt(r)
 	}
 	if policy == nil {
 		return r, nil
@@ -175,6 +186,16 @@ func New(
 // [New] callers. Never call WithMachines concurrently with TransitionVerdicts.
 func (r *PolicyResolver) WithMachines(m *statemachine.Set) *PolicyResolver {
 	r.machines = m
+	// A transition verdict is served to principals (`_transitions`) and its
+	// when: reads the raw graph, so it carries the same bit an ACL grant does.
+	for _, entityType := range r.meta.EntityTypes() {
+		for _, prop := range m.MachineProps(entityType) {
+			for edge, prog := range m.TraversingWhens(entityType, prop) {
+				warnConditionallyVisible(r.meta, r.policy, entityType,
+					fmt.Sprintf("transition %s.%s %s when:", entityType, prop, edge), prog)
+			}
+		}
+	}
 	return r
 }
 
@@ -364,6 +385,17 @@ func (r *PolicyResolver) compile(roleName, entityType, block string, idx int, wh
 		return nil, fmt.Errorf("roles.%s.%s.%s[%d]: %w", roleName, block, entityType, idx, err)
 	}
 	prog, err := predicate.Compile(env, when)
+	if err == nil && len(prog.Traversals()) > 0 {
+		err = predicatefns.ValidateTraversals(r.meta, entityType, prog)
+		if err == nil && r.traversals == nil {
+			err = fmt.Errorf("%s(...) is not available: no store is wired to answer it", predicate.FuncRelated)
+		}
+		if err == nil {
+			r.traversalProgs[entityType] = append(r.traversalProgs[entityType], prog)
+			warnConditionallyVisible(r.meta, r.policy, entityType,
+				fmt.Sprintf("acl.yaml roles.%s.%s.%s[%d]", roleName, block, entityType, idx), prog)
+		}
+	}
 	if err != nil {
 		return nil, fmt.Errorf("roles.%s.%s.%s[%d].when: %w", roleName, block, entityType, idx, err)
 	}
@@ -842,6 +874,15 @@ func (r *PolicyResolver) passes(
 			"role", role, "entity", bc.entity.ID, "error", err)
 		return false
 		// coverage-ignore-end
+	}
+	if len(prog.Traversals()) > 0 {
+		traversal, terr := r.traversalFor(ctx, bc.entity)
+		if terr != nil {
+			slog.Warn("affordances: related() not answered; denying grant",
+				"role", role, "entity", bc.entity.ID, "error", terr)
+			return false
+		}
+		b.SetTraversal(traversal)
 	}
 	v, err := prog.Eval(ctx, b)
 	if err != nil {

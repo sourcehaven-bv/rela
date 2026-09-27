@@ -37,6 +37,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
 )
@@ -100,6 +101,25 @@ type GraphLookup interface {
 	OutgoingCounts(ctx context.Context, fromID string) map[string]int
 }
 
+// TraversalBinder answers the `related(...)` traversals of `when:` programs for
+// a batch of entities of one type. Defined at the consumer; the wiring site
+// supplies a raw-store binder, because a transition is enforced on the write
+// path where the store is the authority, and [Set.Performable] must agree with
+// that enforcement (the drift guard) rather than with the viewer's reads.
+type TraversalBinder interface {
+	Bind(ctx context.Context, entityType string, ids []string, progs ...*predicate.Program) (
+		func(rowID string) predicate.TraversalFunc, error)
+}
+
+// Option configures [Compile].
+type Option func(*Set)
+
+// WithTraversals wires the binder that answers `related(...)` in `when:`.
+// Without it, a `when:` using related() is a compile problem.
+func WithTraversals(b TraversalBinder) Option {
+	return func(s *Set) { s.traversals = b }
+}
+
 // edge is one compiled transition. guard is the (possibly empty) ACL
 // permission; when is the (possibly nil) compiled precondition; label is the
 // (possibly empty) display text for the move, surfaced on a read verdict for a
@@ -122,6 +142,21 @@ type Machine struct {
 
 type transitionKey struct{ from, to string }
 
+// sortedKeys returns the machine's edge keys in (from, to) order.
+func (m *Machine) sortedKeys() []transitionKey {
+	keys := make([]transitionKey, 0, len(m.edges))
+	for k := range m.edges {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].from != keys[j].from {
+			return keys[i].from < keys[j].from
+		}
+		return keys[i].to < keys[j].to
+	})
+	return keys
+}
+
 // edgeFor returns the compiled edge for from→to and whether it is declared.
 func (m *Machine) edgeFor(from, to string) (edge, bool) {
 	e, ok := m.edges[transitionKey{from, to}]
@@ -138,6 +173,9 @@ type Set struct {
 	// for properties whose type is a state machine. Absent entries are not
 	// machines (unconstrained, historical behavior).
 	propType map[string]map[string]string
+	// traversals answers `related(...)` in `when:`; nil when none is wired,
+	// in which case Compile refuses any `when:` that uses it.
+	traversals TraversalBinder
 }
 
 // Empty reports whether the set has no machines. A metamodel with no

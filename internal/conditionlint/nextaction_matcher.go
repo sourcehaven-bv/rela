@@ -55,6 +55,26 @@ func (m *NextActionMatcher) Match(ctx context.Context, e *entity.Entity) (bool, 
 	return ok, nil
 }
 
+// MatchWith is [NextActionMatcher.Match] for a condition using
+// `related(...)`: traversal answers each one for e. Nil is fine for a
+// condition without one.
+func (m *NextActionMatcher) MatchWith(
+	ctx context.Context, e *entity.Entity, traversal predicate.TraversalFunc,
+) (bool, error) {
+	if e == nil {
+		return false, nil
+	}
+	prog, ok := m.progs[e.Type]
+	if !ok {
+		return false, nil
+	}
+	ok, err := m.ev.MatchesWithTraversals(ctx, prog, e.Type, e.ID, e.Properties, traversal)
+	if err != nil {
+		return false, fmt.Errorf("conditionlint: evaluating condition for %s: %w", e.ID, err)
+	}
+	return ok, nil
+}
+
 // Program returns the compiled condition for one entity type, for a caller
 // that lowers part of it to the store (internal/queryplan.ConditionPrefilters)
 // before Match runs the whole of it in Go. The programs for the types a

@@ -182,6 +182,13 @@ above rather than by a clean `analyze all`.
   on a completion that never arrived. Deadlines are for work whose value
   genuinely expires; schedules are not that.
 
+  The scheduler itself keys each job by its RUN id, not by task name
+  (BUG-TKL08E). "One run per task at a time" is enforced by the run-state
+  store (`internal/schedulerstate`), which every node can query. A task-name
+  key made the queue a second, invisible source of truth: a job row the queue
+  could not complete held the key forever and blocked every later run. Do not
+  move non-overlap back into the queue key.
+
   _A job enqueued inside `store.Store.Tx` must not become runnable until that
   transaction commits._ Otherwise a worker reads it on another connection that
   cannot see the uncommitted writes and acts on the pre-write world — a race
@@ -319,7 +326,12 @@ above rather than by a clean `analyze all`.
   per row). When the request's shape allows it, the list handler pushes paging,
   ordering and equality filters into `store.GraphQuery` (`listpushdown.go`) and
   takes the scoped count through `store.CountMatched`, never `GraphCount`'s
-  total. New read paths pin their cost with a `storetest.Counting` budget test
+  total. A query scope joins that pushdown only when `queryplan.LowerScope`
+  lowers it EXACTLY (TKT-XKCNCL): nothing re-checks a pushed scope, so a
+  superset pre-filter is not enough, and a scope that does not lower keeps the
+  Go path. Its traversals ride in `GraphQuery.Related`, never in
+  `HasInbound`/`HasOutbound`, which belong to the ACL read gate. New read
+  paths pin their cost with a `storetest.Counting` budget test
   asserting the count is the same at 10 and 50 rows. Measure on the postgres
   backend with `rela-server -verbose` (`Server-Timing`, one `request` log line
   each) against `prototypes/perf/project` seeded by `rela dev seed`.
@@ -403,6 +415,7 @@ Domain and storage:
 | `internal/metamodel`     | Schema: entity types, relations, properties, validation                                          |
 | `internal/store`         | Storage abstraction — CRUD + events; `fsstore`/`memstore`/`pgstore`                              |
 | `internal/tracer`        | Pure-reader graph traversal (trace, path, orphans, cycles)                                       |
+| `internal/relresolve`    | Answers `related(...)` in predicate programs: one gated store query per traversal per batch      |
 | `internal/calfeed`       | Pure calendar-feed model + iCalendar/JSON serializers (event-granular; no store/vendor)          |
 | `internal/mailrender`    | Pure message model → sanitized, CSS-inlined branded HTML + text/plain (leaf; no store/metamodel) |
 | `internal/mail`          | Outbound email: `Sender` seam, SMTP + memory transports, `.rela/mail.yaml`, best-effort outbox   |
@@ -542,7 +555,11 @@ entitymanager, so two writers would have no backstop and the violation would be
 silent. It takes the strong `Tx` tier (rollback, post-commit-only events) and,
 since TKT-4NU9ZD, content versioning too — so history comes from the database
 rather than from git, which it cannot use because the markdown files are not the
-source of truth. It also refuses to open on a filesystem where WAL cannot be
+source of truth. Since TKT-B51CYD its graph queries run as SQL, like pgstore's,
+with `graphquerynaive` as the reference: `storetest.RunGraphDifferential`
+compares the two on randomized queries for both database backends, and a name
+the builder cannot render as a literal JSON path falls back to the naive
+path. It also refuses to open on a filesystem where WAL cannot be
 enabled (iCloud/Dropbox/SMB), because SQLite is unsafe there.
 
 Rules when touching this:
@@ -784,13 +801,18 @@ Rules when touching this:
   `appbuild.Discover` reads the env into `appbuild.Config.DatabaseURL`; the `db`
   commands read the env directly. Don't add a DSN flag.
 - **Derived static-query indexes are all-or-nothing desired state.** The
-  PostgreSQL reconciler owns only `rela_derived_query__*` and derives those
-  indexes from validated static dashboard/next-action query shapes. Never
+  PostgreSQL and SQLite reconcilers own only `rela_derived_query__*` /
+  `rela_derived_list__*` and derive those indexes from validated static
+  dashboard/next-action/list shapes (`appbuild.staticIndexSpecs`, shared by
+  both). Never
   reconcile a partial set after a `data-entry.yaml` read/parse/validation
   failure: an absent desired object means DROP, so partial input is destructive.
   Runtime/ad-hoc queries never issue DDL. Pushdown and index inference must use
   the same `internal/queryplan` eligibility decision, and an EXPLAIN test must
-  prove each newly supported SQL shape actually uses its generated index. A
+  prove each newly supported SQL shape actually uses its generated index, on
+  both backends (`EXPLAIN QUERY PLAN` on sqlite). SQLite matches an expression
+  index only when the query spells the expression identically, so its DDL is
+  built with the query builder's own helpers (`sqlitestore/derivedschema.go`). A
   next-action `condition:` participates on both sides: its store-safe scalar
   equalities (`entity.x == 'lit'`, `entity.x == current_user.id`,
   `is_current_user(entity.x)`) are pushed with the query and derive columns of
@@ -935,7 +957,7 @@ templates/relations/<type>.md   # Optional: relation templates for defaults
 migrations/<stamp>-<slug>.yaml  # Optional: data migrations (committed)
 migrations/applied.json         # Which migrations have run (COMMITTED, fs tier)
 .rela/user-defaults.yaml        # Per-user defaults (gitignored)
-.rela/scheduler-state.json      # Scheduler last-run timestamps (gitignored)
+.rela/scheduler-run-state.json  # Scheduler runs + last-run times, non-pg builds (gitignored)
 ```
 
 ## Working documents

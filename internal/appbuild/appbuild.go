@@ -28,6 +28,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -48,6 +49,9 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/relresolve"
+	"github.com/Sourcehaven-BV/rela/internal/schedulerstate"
+	"github.com/Sourcehaven-BV/rela/internal/schedulerstate/kvstate"
 	"github.com/Sourcehaven-BV/rela/internal/scopes"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/search"
@@ -120,7 +124,11 @@ import (
 // build the `rela migrate` commands, and this bundle is the only boundary it
 // can cross. Still a ratchet target under TKT-N0IKN9.
 //
-//plimsoll:max-exported-methods=34
+// 34 → 35 (BUG-TKL08E): [Services.SchedulerState], a scheduler.WorkspaceProvider
+// method. The run-state backend is chosen here to match the job queue's reach,
+// the same per-recipe choice as [Services.MigState].
+//
+//plimsoll:max-exported-methods=35
 type Services struct {
 	fs    storage.FS
 	paths *project.Context
@@ -149,6 +157,7 @@ type Services struct {
 	cfgLoader       config.Loader
 	stateKV         state.KV
 	migState        datamigration.StateStore
+	schedulerState  schedulerstate.Store
 	// jobQueue is the background-job seam (TKT-YOED3R). Its backend is a
 	// per-tier choice made by the recipe: ephemeral in-process on fs/mem,
 	// durable PostgreSQL on the postgres build. Torn down in Close.
@@ -371,6 +380,11 @@ func (s *Services) MigState() datamigration.StateStore { return s.migState }
 // call site rather than a wiring error here.
 func (s *Services) Jobs() jobs.Client { return s.jobQueue }
 
+// SchedulerState returns the scheduler's task and run records. It satisfies
+// scheduler.WorkspaceProvider. The backend matches the job queue's reach:
+// postgres when the queue is durable, kvstate over [Services.State] otherwise.
+func (s *Services) SchedulerState() schedulerstate.Store { return s.schedulerState }
+
 // CalDAVAliases is the CalDAV<->rela resource alias service. Never nil: the
 // service is always constructed (an empty table is the normal first-run state),
 // so consumers need no nil check.
@@ -452,12 +466,24 @@ func (s *Services) luaReadDepsFor(redactor visibility.FieldRedactor) lua.ReadDep
 func scriptEntityReader(
 	st store.Store, d *acl.Declarative, redactor visibility.FieldRedactor,
 ) lua.EntityReader {
+	reader, _ := scriptReads(st, d, redactor)
+	return reader
+}
+
+// scriptReads returns the principal-bound script reader and the traversal gate
+// that answers `related(...)` under the SAME tier: unrestricted reads get
+// [relresolve.Ungated], policy reads get the ctx principal's gate, and a
+// refused reader gets a gate that refuses too. Deriving both in one place is
+// what keeps a validation rule's traversal from seeing more than its reads.
+func scriptReads(
+	st store.Store, d *acl.Declarative, redactor visibility.FieldRedactor,
+) (scriptReader lua.EntityReader, traversalGate relresolve.Gate) {
 	if d == nil {
 		// Named, not bare: this is the NopACL path and the single largest
 		// ungated read surface in the tree, so it must show up in
 		// `grep -rn visibility.Unrestricted` like every other one
 		// (TKT-1WV50C).
-		return visibility.Unrestricted(st)
+		return visibility.Unrestricted(st), relresolve.Ungated
 	}
 	if redactor == nil {
 		redactor = visibility.NopRedactor{}
@@ -465,19 +491,25 @@ func scriptEntityReader(
 	gate, err := visibility.NewDeclarativeGate(d)
 	if err != nil {
 		slog.Error("appbuild: ACL gate unavailable; script reads REFUSED", "err", err)
-		return visibility.DenyReader{}
+		return visibility.DenyReader{}, refuseTraversal
 	}
 	reader, err := visibility.NewPolicyReader(gate, redactor, st)
 	if err != nil {
 		slog.Error("appbuild: policy reader unavailable; script reads REFUSED", "err", err)
-		return visibility.DenyReader{}
+		return visibility.DenyReader{}, refuseTraversal
 	}
 	sr, err := visibility.NewScriptReader(reader, st, gate)
 	if err != nil {
 		slog.Error("appbuild: script reader unavailable; script reads REFUSED", "err", err)
-		return visibility.DenyReader{}
+		return visibility.DenyReader{}, refuseTraversal
 	}
-	return sr
+	return sr, gate.GateTraversal
+}
+
+// refuseTraversal pairs with [visibility.DenyReader]: reads are refused, so
+// traversals are too, as an error rather than "no match".
+func refuseTraversal(context.Context, string, acl.TraversalHop) (*store.RelationPredicate, error) {
+	return nil, fmt.Errorf("%w: script reads are refused", acl.ErrTraversalUnsupported)
 }
 
 // scriptTracer returns the traversal handle for a script runtime, wrapped
@@ -573,7 +605,8 @@ func (s *Services) ScheduledLuaWriteDeps() lua.WriteDeps {
 // (the field-level half of TKT-3FL2S6).
 //
 // SCOPE: field redaction covers entity properties only. Relation meta is NOT
-// redacted here — [gatedGraphReader.GetRelation] reads raw, and relation-level
+// redacted here — [gatedGraphReader.GetRelation] returns the raw edge once both
+// endpoints pass the row gate, and relation-level
 // `visible:` grants (acl.RelationGrant.Visible, honored on the dataentry wire
 // via affordances.RelationFieldVerdicts) are not consulted. Relations are gated
 // at the ROW level on both endpoints; their properties are not. Do not read the
@@ -582,27 +615,73 @@ func (s *Services) ScheduledLuaWriteDeps() lua.WriteDeps {
 // visibility.PolicyReader implements only FilterRelations, so a surviving edge
 // still carries all of its meta.
 func (s *Services) GatedReads() GatedReadBundle {
-	reader := scriptEntityReader(s.store, s.aclDeclarative, s.fieldRedactor)
+	reader, gate := scriptReads(s.store, s.aclDeclarative, s.fieldRedactor)
 	tr := scriptTracer(s.tracer, s.store, s.aclDeclarative, s.fieldRedactor)
 
 	deps := s.LuaReadDeps()
 	deps.VisibleReader = reader
 	deps.Tracer = tr
+	deps.Searcher = gatedSearcher(s.searcher, s.visibleSearcher, s.aclDeclarative, s.fieldRedactor, s.meta)
 
 	return GatedReadBundle{
-		Reader:    gatedGraphReader{rows: reader, raw: s.store},
+		Reader: gatedGraphReader{
+			rows: reader, raw: s.store, gateEndpoints: s.aclDeclarative != nil,
+		},
 		Tracer:    tr,
-		Validator: validator.New(reader, s.meta, deps),
+		Validator: newValidator(reader, s.meta, deps, gate, s.store),
+		Searcher:  deps.Searcher,
+		LuaReads:  deps,
 	}
 }
 
-// GatedReadBundle is the result of [Services.GatedReads]: the three read
-// handles an identity-bearing consumer needs, each ACL-bound to the ctx
-// principal at call time.
+// GatedReadBundle is the result of [Services.GatedReads]: the read handles an
+// identity-bearing consumer needs, each ACL-bound to the ctx principal at call
+// time.
 type GatedReadBundle struct {
 	Reader    GatedGraphReader
 	Tracer    tracer.Tracer
 	Validator validator.Validator
+
+	// Searcher gates hits by the principal's read scope, drops hits that
+	// matched only hidden properties, and clears the indexed title (see
+	// [visibility.Searcher]). Take titles from Reader.
+	Searcher search.Searcher
+
+	// LuaReads is the Lua read bundle over the same gated reader, tracer and
+	// searcher. It grants no capabilities and holds no elevated handle; a
+	// writer runtime pairs it with an EntityManager.
+	LuaReads lua.ReadDeps
+}
+
+// gatedSearcher returns the search handle for an identity-bearing consumer.
+// Under NopACL it is the raw searcher (byte-identical to pre-ACL behavior). A
+// construction failure REFUSES via [visibility.DenySearcher] rather than
+// degrading to raw hits (RR-GKCZO5).
+func gatedSearcher(
+	raw search.Searcher, vs search.VisibleSearcher, d *acl.Declarative,
+	redactor visibility.FieldRedactor, meta *metamodel.Metamodel,
+) search.Searcher {
+	if d == nil {
+		return raw
+	}
+	if redactor == nil {
+		redactor = visibility.NopRedactor{}
+	}
+	gate, err := visibility.NewDeclarativeGate(d)
+	if err != nil {
+		slog.Error("appbuild: ACL gate unavailable; search REFUSED", "err", err)
+		return visibility.DenySearcher{}
+	}
+	types := make([]string, 0, len(meta.Entities))
+	for name := range meta.Entities {
+		types = append(types, name)
+	}
+	gs, err := visibility.NewSearcher(vs, gate, redactor, types)
+	if err != nil {
+		slog.Error("appbuild: gated searcher unavailable; search REFUSED", "err", err)
+		return visibility.DenySearcher{}
+	}
+	return gs
 }
 
 // GatedGraphReader is the row-and-tally read surface returned by
@@ -629,19 +708,22 @@ type GatedGraphReader interface {
 //     STRUCTURAL: it says how many rows of a declared type exist, never which.
 //     Entity *existence* is the secret the row gate protects; an aggregate
 //     tally of a type the metamodel already publishes is not.
-//   - GetRelation goes to the raw store because a relation is addressed by its
-//     two endpoint ids, which the caller must already hold. Reading one
-//     therefore confirms nothing about entities the caller could not already
-//     name. That argument is about ROW-level exposure (whether the edge
-//     exists) and does not extend to the edge's meta VALUES: relations carry
-//     no field-level redaction on this path today (see docs/acl-security.md
-//     and TKT-0RBFN0), so this matches what a live relation GET exposes only
-//     until that ticket lands.
+//   - GetRelation answers not-found unless both endpoints pass the row gate,
+//     then reads the raw store. Holding two ids is not the same as being
+//     allowed to read them: without the endpoint check, a caller could learn
+//     that a hidden entity exists and is linked (TKT-4QSZ8Y). The edge's meta
+//     VALUES are not redacted: relations carry no field-level redaction on
+//     this path today (see docs/acl-security.md and TKT-0RBFN0).
 //
 // If either judgement changes, this is the one type to fix.
 type gatedGraphReader struct {
 	rows lua.EntityReader
 	raw  store.Store
+
+	// gateEndpoints requires both endpoints of a GetRelation to be readable.
+	// Off under NopACL, where every entity is readable and a dangling edge
+	// must stay readable as before.
+	gateEndpoints bool
 }
 
 func (g gatedGraphReader) GetEntity(ctx context.Context, id string) (*entity.Entity, error) {
@@ -663,6 +745,9 @@ func (g gatedGraphReader) ListRelations(
 func (g gatedGraphReader) GetRelation(
 	ctx context.Context, from, relType, to string,
 ) (*entity.Relation, error) {
+	if g.gateEndpoints && (!visibility.Readable(ctx, g.rows, from) || !visibility.Readable(ctx, g.rows, to)) {
+		return nil, store.ErrNotFound
+	}
 	return g.raw.GetRelation(ctx, from, relType, to)
 }
 
@@ -872,11 +957,12 @@ func buildFieldRedactor(
 		return visibility.NopRedactor{}, nil
 	}
 
-	resolver, err := affordances.New(meta, storeRelationLookup{st: st}, d)
+	resolver, err := affordances.New(meta, storeRelationLookup{st: st}, d,
+		affordances.WithTraversals(ungatedBinder(meta, st)))
 	if err != nil {
 		return nil, fmt.Errorf("appbuild: compiling acl.yaml affordance predicates: %w", err)
 	}
-	machines, err := statemachine.Compile(meta)
+	machines, err := statemachine.Compile(meta, statemachine.WithTraversals(ungatedBinder(meta, st)))
 	if err != nil {
 		return nil, fmt.Errorf("appbuild: compiling state machines: %w", err)
 	}
@@ -892,11 +978,18 @@ func buildFieldRedactor(
 // buildAutomation wires the automation engine + cascade runner from
 // the metamodel. Returns (nil, nil, nil) when the metamodel declares
 // no automations — Manager treats that as "automation disabled".
-func buildAutomation(meta *metamodel.Metamodel) (*automation.Engine, *autocascade.Runner, error) {
+//
+// A condition's `related(...)` is answered ungated from st: an automation is
+// system policy, so what it sees must not depend on who made the write.
+func buildAutomation(meta *metamodel.Metamodel, st store.Store) (*automation.Engine, *autocascade.Runner, error) {
 	if len(meta.Automations) == 0 {
 		return nil, nil, nil
 	}
-	autoEngine, err := automation.NewEngineFromMetamodel(meta, meta.Automations)
+	traversals, err := relresolve.NewStoreBinder(meta, relresolve.Ungated, st)
+	if err != nil {
+		return nil, nil, fmt.Errorf("build automation engine: %w", err)
+	}
+	autoEngine, err := automation.NewEngineFromMetamodel(meta, meta.Automations, automation.WithTraversals(traversals))
 	if err != nil {
 		return nil, nil, fmt.Errorf("build automation engine: %w", err)
 	}
@@ -1476,6 +1569,9 @@ func prepare(cfg Config, opts []Option) (*SharedBase, error) {
 		return nil, fmt.Errorf("compile query scopes: %w", err)
 	}
 	warnQueryScopes(&compiledScopes, meta, aclPolicy)
+	if problems := QueryScopeTraversalFieldErrors(&compiledScopes, meta, aclPolicy); len(problems) > 0 {
+		return nil, fmt.Errorf("compile query scopes: %s", strings.Join(problems, "; "))
+	}
 
 	return &SharedBase{
 		cfg: cfg, opts: o, acl: resolvedACL, aclPolicy: aclPolicy,
@@ -1720,6 +1816,14 @@ type backendOverrides struct {
 	// Nil leaves the filesystem backend in place, which is correct for the fs,
 	// memory and desktop tiers.
 	commentStore comments.Store
+
+	// schedulerState replaces the state.KV-backed scheduler run-state
+	// (BUG-TKL08E). Supplied by the postgres recipe, whose job queue is
+	// durable and shared: a run queued by one process may execute on
+	// another, so its record must live where both can see it. Nil selects
+	// kvstate over the state store, which is right for every tier whose
+	// queue is in-process.
+	schedulerState schedulerstate.Store
 }
 
 // assemble builds the services bundle from an opened store.
@@ -1745,7 +1849,7 @@ func assemble(
 		return nil, err
 	}
 
-	autoEngine, cascadeRunner, err := buildAutomation(base.meta)
+	autoEngine, cascadeRunner, err := buildAutomation(base.meta, st)
 	// coverage-ignore-start: defensive: buildAutomation only errors when autocascade.New fails, which requires a nil
 	// Engine that buildAutomation
 	// never produces (see the scupper there)
@@ -1822,6 +1926,12 @@ func assemble(
 	if err != nil {
 		return nil, err
 	}
+	schedState := overrides.schedulerState
+	if schedState == nil {
+		if schedState, err = kvstate.New(stateKV); err != nil {
+			return nil, err
+		}
+	}
 	// coverage-ignore-end
 
 	// Upstream's parameter order (readDeps after cascadeRunner) with the
@@ -1836,7 +1946,10 @@ func assemble(
 	}
 	// coverage-ignore-end
 
-	val := validator.New(st, base.meta, readDeps)
+	val, err := validator.New(st, base.meta, readDeps, ungatedBinder(base.meta, st))
+	if err != nil { // coverage-ignore: defensive: validator.New only fails on a nil dep; all are built above
+		return nil, err
+	}
 
 	// Start the backend's version-reconciliation sweep (postgres and sqlite
 	// builds; a no-op elsewhere). It captures create/update versions for
@@ -1844,10 +1957,12 @@ func assemble(
 	// entitymanager hook above.
 	startVersionSweepIfSupported(st, base.meta)
 
-	// Reconcile the derived schema (postgres build only; a no-op elsewhere):
-	// synthesize the metamodel's `unique: true` properties into partial unique
-	// indexes so uniqueness is enforced atomically, and publish the current
-	// unique pairs so a violation can be attributed to a property (TKT-3Q0GP1).
+	// Reconcile the derived schema (the database builds; a no-op elsewhere):
+	// derive query and list indexes from data-entry.yaml (both), and on
+	// postgres synthesize the metamodel's `unique: true` properties into
+	// partial unique indexes so uniqueness is enforced atomically, publishing
+	// the current unique pairs so a violation can be attributed to a property
+	// (TKT-3Q0GP1).
 	// Failures degrade to warnings — a derived-schema problem never fails boot.
 	//
 	// STORE-OPEN ONLY, skipped on re-assembly. `pgstore.Store.Reconcile` is
@@ -1872,7 +1987,7 @@ func assemble(
 	return newServices(
 		base, st, background, searcher, visible, searchCloser, mgr, tr, val,
 		templater, cfgLoader, stateKV, migState, jobQueue, aliases, commentSvc, versions,
-		resolvedACL, aclDeclarative, fieldRedactor,
+		resolvedACL, aclDeclarative, fieldRedactor, schedState,
 	), nil
 }
 
@@ -1887,7 +2002,7 @@ func newServices(
 	templater templating.Templater, cfgLoader config.Loader, stateKV state.KV,
 	migState datamigration.StateStore, jobQueue jobs.Queue, aliases *caldavalias.Service, commentSvc *comments.Service,
 	versions store.VersionService, resolvedACL acl.ACL, aclDeclarative *acl.Declarative,
-	fieldRedactor visibility.FieldRedactor,
+	fieldRedactor visibility.FieldRedactor, schedState schedulerstate.Store,
 ) *Services {
 	cfg := base.cfg
 	return &Services{
@@ -1911,6 +2026,7 @@ func newServices(
 		cfgLoader:       cfgLoader,
 		stateKV:         stateKV,
 		migState:        migState,
+		schedulerState:  schedState,
 		jobQueue:        jobQueue,
 		caldavAliases:   aliases,
 		comments:        commentSvc,
@@ -2116,6 +2232,12 @@ func (s *Services) Close() error {
 		// Close following a CloseAssembly does not stop these twice.
 		s.assemblyCloseOnce.Do(s.stopBackgroundServices)
 
+		// After the queue drained, so no job handler still records a run.
+		// Never fails on either backend; it only marks the store closed.
+		if s.schedulerState != nil {
+			_ = s.schedulerState.Close()
+		}
+
 		if s.store != nil {
 			if lc, ok := s.store.(store.Lifecycle); ok {
 				// coverage-ignore-start: defensive: fsstore/memstore Close does not return an error under normal test
@@ -2292,3 +2414,31 @@ type nopKV struct{}
 func (nopKV) Get(context.Context, string) ([]byte, error) { return nil, os.ErrNotExist }
 func (nopKV) Put(context.Context, string, []byte) error   { return nil }
 func (nopKV) Delete(context.Context, string) error        { return nil }
+
+// ungatedBinder answers `related(...)` against the raw store, for the
+// operator- and system-trust paths. It cannot fail: meta and st are required
+// by every caller before it gets here.
+func ungatedBinder(meta *metamodel.Metamodel, st store.Store) *relresolve.Binder {
+	b, err := relresolve.NewStoreBinder(meta, relresolve.Ungated, st)
+	if err != nil {
+		// coverage-ignore: invariant: meta and st are non-nil at every call site
+		panic(err)
+	}
+	return b
+}
+
+// newValidator builds the principal-bound validator of [Services.GatedReads].
+// Its traversals go through gate, the same tier as reader.
+func newValidator(
+	reader lua.EntityReader, meta *metamodel.Metamodel, deps lua.ReadDeps, gate relresolve.Gate, st store.Store,
+) validator.Validator {
+	b, err := relresolve.NewStoreBinder(meta, gate, st)
+	if err == nil {
+		var v *validator.GenericValidator
+		if v, err = validator.New(reader, meta, deps, b); err == nil {
+			return v
+		}
+	}
+	// coverage-ignore: invariant: every argument is non-nil at the one call site
+	panic(err)
+}

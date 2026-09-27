@@ -10,9 +10,11 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/nextaction"
+	"github.com/Sourcehaven-BV/rela/internal/predicate"
 	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/queryplan"
+	"github.com/Sourcehaven-BV/rela/internal/relresolve"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -28,7 +30,8 @@ import (
 // and the Go pass cannot disagree about whose rows they select, and a
 // resolve over N candidates costs one derivation, not N.
 type nextActionMatcher struct {
-	m *conditionlint.NextActionMatcher
+	m    *conditionlint.NextActionMatcher
+	meta *metamodel.Metamodel
 }
 
 // Match evaluates the whole condition against the identity on ctx.
@@ -40,6 +43,41 @@ func (w nextActionMatcher) Match(ctx context.Context, e *entity.Entity) (bool, e
 		return false, fmt.Errorf("%w: %w", nextaction.ErrIdentityRequired, err)
 	}
 	return ok, err
+}
+
+// MatchAllWith judges every candidate, answering the condition's
+// `related(...)` for all of them first: one store query per traversal and
+// entity type. gate authorizes each traversal and match answers it; the
+// caller passes the request's read gate, so a condition never sees an
+// entity the reader could not (TKT-205V2N).
+func (w nextActionMatcher) MatchAllWith(
+	ctx context.Context, es []*entity.Entity, gate relresolve.Gate, match relresolve.Match,
+) ([]bool, error) {
+	bound := map[string]func(*entity.Entity) predicate.TraversalFunc{}
+	for _, t := range w.m.Types() {
+		prog, _ := w.m.Program(t)
+		b, err := bindPage(ctx, w.meta, gate, match, t, es, prog)
+		if err != nil {
+			return nil, err
+		}
+		bound[t] = b
+	}
+	out := make([]bool, len(es))
+	for i, e := range es {
+		var traversal predicate.TraversalFunc
+		if b, ok := bound[e.Type]; ok {
+			traversal = b(e)
+		}
+		ok, err := w.m.MatchWith(ctx, e, traversal)
+		if errors.Is(err, predicatefns.ErrNoCurrentUser) {
+			return nil, fmt.Errorf("%w: %w", nextaction.ErrIdentityRequired, err)
+		}
+		if err != nil {
+			return nil, err
+		}
+		out[i] = ok
+	}
+	return out, nil
 }
 
 // Prefilters lowers the condition's store-evaluable conjuncts for the types
@@ -159,6 +197,6 @@ func NextActionMatchers(
 			// wrapping a nil *NextActionMatcher — the classic typed-nil trap.
 			return nil, false
 		}
-		return nextActionMatcher{m: m}, true
+		return nextActionMatcher{m: m, meta: meta}, true
 	}, nextActionRequestScope, nil
 }

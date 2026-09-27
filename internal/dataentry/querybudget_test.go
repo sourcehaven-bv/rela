@@ -11,10 +11,12 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
+	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/store/storetest"
 )
@@ -33,7 +35,15 @@ func budgetMeta() *metamodel.Metamodel {
 		Entities: map[string]metamodel.EntityDef{
 			"ticket": {Label: "Ticket", Properties: map[string]metamodel.PropertyDef{
 				"title": {Type: "string", Required: true}, "status": {Type: "string"},
-			}, PropertyOrder: []string{"title", "status"}},
+			}, PropertyOrder: []string{"title", "status"},
+				// A named scope, so the other budgets (which apply only the
+				// default) are unaffected.
+				QueryScopes: map[string]string{
+					"feature-one": "related(entity, 'implements', { title = 'Feature 1' })",
+					// `not` keeps a scope off the pushed path (TKT-XKCNCL),
+					// so this one pins the Go path's budget.
+					"not-feature-one": "not related(entity, 'implements', { title = 'Feature 1' })",
+				}},
 			"feature": {Label: "Feature", Properties: str, PropertyOrder: []string{"title"}},
 			"person":  {Label: "Person", Properties: str, PropertyOrder: []string{"title"}},
 			"team":    {Label: "Team", Properties: str, PropertyOrder: []string{"title"}},
@@ -155,13 +165,14 @@ const budgetTicketsPerEpic = 5
 // the parent dimension stops being measured.
 func budgetEpics(n int) int { return (n + budgetTicketsPerEpic - 1) / budgetTicketsPerEpic }
 
-// newBudgetApp seeds n tickets (each implementing a feature, assigned to a
-// person, and blocking TKT-0001) into a counting memstore BEFORE the app is
-// assembled, so the search index backfills from it, then wires an ACL whose
-// role is reached through a member-of walk (person P1 → team T1).
-func newBudgetApp(t *testing.T, n int) (*App, *storetest.Counting, *acl.Declarative, context.Context) {
+// newBudgetAppOn seeds n tickets (each implementing a feature, assigned to a
+// person, and blocking TKT-0001) into a counting wrapper over base, which must
+// be empty, BEFORE the app is assembled, so the search index backfills from
+// it. It then wires an ACL whose role is reached through a member-of walk
+// (person P1 → team T1).
+func newBudgetAppOn(t *testing.T, n int, base store.Store) (*App, *storetest.Counting, *acl.Declarative, context.Context) {
 	t.Helper()
-	counting := storetest.NewCounting(memstore.New())
+	counting := storetest.NewCounting(base)
 	ctx := context.Background()
 	must := func(err error) {
 		t.Helper()
@@ -234,11 +245,20 @@ func newBudgetApp(t *testing.T, n int) (*App, *storetest.Counting, *acl.Declarat
 }
 
 // readsFor runs op at both sizes and returns the read counts.
-func readsFor(t *testing.T, op func(t *testing.T, app *App, d *acl.Declarative, ctx context.Context)) (small, large int, detail string) {
+func readsFor(t *testing.T, op budgetOp) (small, large int, detail string) {
+	t.Helper()
+	return readsForOn(t, func(*testing.T) store.Store { return memstore.New() }, op)
+}
+
+// budgetOp is one request shape a budget test measures.
+type budgetOp func(t *testing.T, app *App, d *acl.Declarative, ctx context.Context)
+
+// readsForOn is readsFor over a fresh store from newStore per size.
+func readsForOn(t *testing.T, newStore func(*testing.T) store.Store, op budgetOp) (small, large int, detail string) {
 	t.Helper()
 	counts := make([]int, 0, 2)
 	for _, n := range []int{10, 50} {
-		app, counting, d, ctx := newBudgetApp(t, n)
+		app, counting, d, ctx := newBudgetAppOn(t, n, newStore(t))
 		op(t, app, d, ctx)
 		counts = append(counts, counting.Reads())
 		detail = counting.String()
@@ -261,17 +281,19 @@ func assertBudget(t *testing.T, name string, small, large, pinned int, detail st
 // (per row: outgoing + incoming edges, a GetEntity per neighbor, and two
 // membership walks per affordance verb).
 func TestQueryBudget_ListPageIsSizeIndependent(t *testing.T) {
-	small, large, detail := readsFor(t, func(t *testing.T, app *App, d *acl.Declarative, ctx context.Context) {
-		t.Helper()
-		resp, rec := listEntitiesAs(ctx, t, app, d, "ticket", "tickets", "per_page=100")
-		if rec.Code != http.StatusOK {
-			t.Fatalf("list: %d %s", rec.Code, rec.Body)
-		}
-		if len(resp.Data) < 10 {
-			t.Fatalf("list returned %d rows", len(resp.Data))
-		}
-	})
+	small, large, detail := readsFor(t, listPageOp)
 	assertBudget(t, "list page", small, large, listPageBudget, detail)
+}
+
+var listPageOp budgetOp = func(t *testing.T, app *App, d *acl.Declarative, ctx context.Context) {
+	t.Helper()
+	resp, rec := listEntitiesAs(ctx, t, app, d, "ticket", "tickets", "per_page=100")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list: %d %s", rec.Code, rec.Body)
+	}
+	if len(resp.Data) < 10 {
+		t.Fatalf("list returned %d rows", len(resp.Data))
+	}
 }
 
 // A view whose table section has two relation columns over the blockers of
@@ -396,12 +418,86 @@ func TestQueryBudget_NestedSectionIsSizeIndependent(t *testing.T) {
 	assertBudget(t, "nested section", small, large, nestedSectionBudget, detail)
 }
 
+// A list page under a query scope the store cannot answer alone
+// (TKT-CXQEV0). The traversal is answered for the whole candidate set in one
+// gated MatchingIDs call, so it adds a constant, never a read per row.
+func TestQueryBudget_TraversalScopeIsSizeIndependent(t *testing.T) {
+	small, large, detail := readsFor(t, func(t *testing.T, app *App, d *acl.Declarative, ctx context.Context) {
+		t.Helper()
+		if err := app.SetQueryScopeResolver(AdaptQueryScopes(appbuild.QueryScopes)); err != nil {
+			t.Fatalf("wire query scopes: %v", err)
+		}
+		resp, rec := listEntitiesAs(ctx, t, app, d, "ticket", "tickets", "per_page=100&query_scope=not-feature-one")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("list: %d %s", rec.Code, rec.Body)
+		}
+		if len(resp.Data) == 0 {
+			t.Fatal("the scope matched nothing, so this budget proves nothing")
+		}
+		for _, e := range resp.Data {
+			var n int
+			if _, err := fmt.Sscanf(e.ID, "TKT-%d", &n); err != nil || n%5 == 0 {
+				t.Fatalf("row %s implements Feature 1", e.ID)
+			}
+		}
+	})
+	assertBudget(t, "traversal scope list page", small, large, traversalScopeBudget, detail)
+}
+
+// A list page under a scope that lowers exactly is served by the store
+// (TKT-XKCNCL). A read COUNT cannot tell the two paths apart, since both cost
+// the same number of calls; what differs is WHICH calls. The pushed path
+// counts in the store and answers no traversal over a candidate set.
+func TestQueryBudget_TraversalScopeIsPushedDown(t *testing.T) {
+	assertScopePushedDown(t, func(*testing.T) store.Store { return memstore.New() })
+}
+
+func assertScopePushedDown(t *testing.T, newStore func(*testing.T) store.Store) {
+	t.Helper()
+	reads := make([]int, 0, 2)
+	var detail string
+	for _, n := range []int{10, 50} {
+		app, counting, d, ctx := newBudgetAppOn(t, n, newStore(t))
+		if err := app.SetQueryScopeResolver(AdaptQueryScopes(appbuild.QueryScopes)); err != nil {
+			t.Fatalf("wire query scopes: %v", err)
+		}
+		resp, rec := listEntitiesAs(ctx, t, app, d, "ticket", "tickets", "per_page=100&query_scope=feature-one")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("list: %d %s", rec.Code, rec.Body)
+		}
+		// Tickets i with i%5 == 0 implement F1: a fifth of them.
+		if len(resp.Data) != n/5 || resp.Meta.Total != n/5 {
+			t.Fatalf("n=%d: got %d rows, total %d, want %d", n, len(resp.Data), resp.Meta.Total, n/5)
+		}
+		for _, e := range resp.Data {
+			var i int
+			if _, err := fmt.Sscanf(e.ID, "TKT-%d", &i); err != nil || i%5 != 0 {
+				t.Fatalf("row %s does not implement Feature 1", e.ID)
+			}
+		}
+		// The scoped count is the pushed path's signature: the Go path counts
+		// its slice in memory and answers the traversal with MatchingIDs.
+		calls := counting.Calls()
+		if calls["MatchingIDs"] != 0 || calls["CountMatched"] != 1 {
+			t.Errorf("n=%d: the scope was not pushed down: %s", n, counting)
+		}
+		reads = append(reads, counting.Reads())
+		detail = counting.String()
+	}
+	assertBudget(t, "pushed traversal scope list page", reads[0], reads[1], listPageBudget, detail)
+}
+
 // Pinned budgets: the measured store-call count per request shape after
 // TKT-1U8XYN. Raise one only with a reason in the commit.
 const (
 	// list page: scoped count + one bounded page read (listpushdown.go),
 	// page edges, neighbor headers, membership walk.
 	listPageBudget = 6
+	// traversal-scoped list page on the Go path (a scope that does not
+	// lower): the type's headers, ONE MatchingIDs for the traversal, then the
+	// page's edges, neighbor headers and membership walk as on a plain page.
+	// A scope that lowers costs listPageBudget instead.
+	traversalScopeBudget = 6
 	// view: entry, two traverse passes, collection load, section columns +
 	// target headers, entry edges, membership walk.
 	viewSectionBudget = 11

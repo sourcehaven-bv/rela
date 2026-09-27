@@ -113,11 +113,35 @@ entity present and every remark on them left behind.
   observes a change that did not commit — the same guarantee the PostgreSQL
   build makes, which the filesystem build cannot.
 - **One file to back up.** Copy `.rela/rela.db` while rela is not running.
-- **List pages answered by the database.** A list with equality filters, a
-  sort and a page number is one bounded SQL read, and listings never load
-  markdown bodies they will not show. Queries that depend on relations — most
-  ACL-scoped reads among them — are still evaluated in rela's own process over
-  the rows of the type, as the filesystem build does.
+- **Queries answered in the database.** Lists, counts, query scopes and the
+  ACL's relation gates run as one SQL statement each, as on PostgreSQL, and
+  listings never load markdown bodies they will not show. The
+  build also derives the same indexes from your static queries and lists. It
+  creates `rela_derived_query__…` and `rela_derived_list__…` indexes at
+  startup, so a list page sorted ascending reads one index range instead of
+  sorting the whole type. A descending sort still sorts its last key. The
+  PostgreSQL guide's "Derived schema" section describes which queries qualify;
+  the rules are the same here.
+
+## Derived indexes
+
+Startup converges the derived indexes on what `data-entry.yaml` declares:
+missing ones are created, undeclared ones are dropped. A missing
+`data-entry.yaml` is valid. An invalid or unreadable one skips the reconcile
+and keeps the existing indexes, because dropping them on a half-read file would
+be worse than leaving them stale.
+
+```bash
+rela db reconcile           # create/drop derived indexes to match the configuration
+rela db reconcile --dry-run # show what WOULD change; non-zero exit if anything would
+```
+
+`rela db reconcile` opens the database, so it cannot run while a server has the
+project open. A dry run changes nothing: with no database yet it says so and
+exits 0, and it refuses a database whose schema is older than the binary
+instead of migrating it. `unique: true` does not produce an index on this
+build: the single-writer lock above is what makes the application-level check
+sound.
 
 ## Migrating between backends
 

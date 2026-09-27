@@ -37,6 +37,11 @@ import (
 // compiled read query (or an unconstrained one for an allow-all principal)
 // with the request's world and face set stamped on a copy, and the total is
 // the scoped count — never the type's row count (RR-SSPCCI, RR-J1VAW0).
+//
+// A query scope is pushed only when it lowers EXACTLY (queryplan.LowerScope):
+// its equalities join the props and each `related(...)` becomes a
+// [store.GraphQuery.Related] entry gated for the principal. A scope that does
+// not lower keeps the whole request on the Go path (TKT-XKCNCL).
 
 // listPlan is a list request the store can page by itself. errClass is
 // the failure the Go path would have reported for the same principal —
@@ -170,21 +175,38 @@ func resolveListNarrowing(
 }
 
 // pushdownPlan is the ONE eligibility decision for serving a list request
-// from the store. The store applies neither narrowing, so it may serve only
-// when both are absent: a scope using `~=`, an ordered comparison or a
-// disjunction has a Go-side remainder, and a store-side page computed
-// without it would paginate over rows the scope excludes — wrong counts and
-// wrong page boundaries, not merely extra rows. The same holds for a
-// condition. Declining is always correct, only slower.
+// from the store. ok is false when the store may not serve it, and the caller
+// keeps the Go path. empty reports a scope whose traversal the gate denied: no
+// row matches, and the Go path would read the whole type to learn that.
+//
+// Every narrowing must be one the store applies. A condition never is. A
+// scope is only when it lowers exactly (TKT-XKCNCL); one using `~=`, an
+// ordered comparison or a disjunction has a Go-side remainder, and a
+// store-side page computed without it would paginate over rows the scope
+// excludes: wrong counts and wrong page boundaries, not merely extra rows.
+// Declining is always correct, only slower. The plan's own checks run before
+// the scope is lowered, because lowering gates every traversal and that work
+// is wasted on a request the plan would decline anyway.
 func (n listNarrowing) pushdownPlan(
 	ctx context.Context, a *App, typeName string, query map[string][]string, page, perPage int,
-) (listPlan, bool) {
-	if n.cond != nil || n.scope.Scope != nil || worldFromContext(ctx).blocksAllReads() {
-		return listPlan{}, false
+) (plan listPlan, empty, ok bool) {
+	if n.cond != nil || worldFromContext(ctx).blocksAllReads() {
+		return listPlan{}, false, false
 	}
 	rqr := readGateFromContext(ctx).ReadQuery(ctx, typeName)
 	isRelationKey := relationFilterClassifier(a.Meta(), a.Cfg(), typeName)
-	return planListPushdown(a.Meta(), typeName, query, rqr, worldScopeFrom(ctx), page, perPage, isRelationKey)
+	plan, ok = planListPushdown(a.Meta(), typeName, query, rqr, worldScopeFrom(ctx), page, perPage, isRelationKey)
+	if !ok || n.scope.Scope == nil {
+		return plan, false, ok
+	}
+	frag, denied, lowered := n.scope.lower(ctx, typeName)
+	switch {
+	case !lowered:
+		return listPlan{}, false, false
+	case denied:
+		return listPlan{}, true, true
+	}
+	return plan.narrowed(frag), false, true
 }
 
 // position answers where id sits in the plan's ordered, ACL-scoped result
@@ -196,6 +218,15 @@ func (p listPlan) position(ctx context.Context, st store.Store, id string) (stor
 		return store.Position{}, false, fmt.Errorf("%w: %w", p.errClass, err)
 	}
 	return pos, found, nil
+}
+
+// narrowed ANDs a lowered query scope onto the plan (TKT-XKCNCL). Both
+// slices are copied: the base query may share its backing arrays with the
+// ACL layer's per-principal ReadQueryResult.
+func (p listPlan) narrowed(frag store.GraphQuery) listPlan {
+	p.query.Props = append(append([]store.PropPredicate(nil), p.query.Props...), frag.Props...)
+	p.query.Related = append(append([]store.DirectedRelation(nil), p.query.Related...), frag.Related...)
+	return p
 }
 
 // run executes the plan: the scoped total in one count and the page in one

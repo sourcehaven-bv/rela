@@ -176,3 +176,43 @@ func joinWithAnd(parts []string) string {
 	}
 	return parts[0] + ", " + joinWithAnd(parts[1:])
 }
+
+// QueryScopeTraversalFieldErrors reports query scopes whose `related(...)`
+// filters a far-side property that is not unconditionally visible.
+//
+// Unlike [QueryScopeVisibilityConflicts] this is a REFUSAL. A traversal
+// filters on a row the reader does not get back, so the ACL read gate does
+// not stand in front of it the way it does for the scope's own properties;
+// which rows match reveals the far entity's value. [acl.Request.GateTraversal]
+// refuses such a filter per request; this reports it at load, where the
+// operator can fix it, because the answer is the same for every principal
+// ([acl.Policy.ConditionallyVisible] is policy-wide by design).
+//
+// Nil: a nil metamodel or policy yields no errors.
+func QueryScopeTraversalFieldErrors(
+	compiled *scopes.Compiled, meta *metamodel.Metamodel, policy *acl.Policy,
+) []string {
+	if meta == nil || policy == nil {
+		return nil
+	}
+	var out []string
+	compiled.Each(func(key scopes.Key, prog *predicate.Program) {
+		for _, spec := range prog.Traversals() {
+			target, err := predicatefns.ResolveTraversalTarget(meta, key.EntityType, spec)
+			if err != nil {
+				continue // scopes.Compile already refused it
+			}
+			for _, prop := range spec.PropNames() {
+				if policy.ConditionallyVisible(target, prop) {
+					out = append(out, fmt.Sprintf(
+						"entity %q: query scope %q filters %q on %q through related(), but %q is not "+
+							"visible to every role unconditionally; a traversal filter on it would "+
+							"reveal the value",
+						key.EntityType, key.Name, prop, target, prop))
+				}
+			}
+		}
+	})
+	sort.Strings(out)
+	return out
+}

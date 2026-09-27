@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
-	"github.com/Sourcehaven-BV/rela/internal/conditionlint"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
@@ -32,7 +31,7 @@ func TestExport_List_AppliesTheViewCondition(t *testing.T) {
 		Columns:    []dataentryconfig.ListColumn{{Property: "title"}},
 	}
 	if err := app.SetViewConditions(
-		AdaptViewConditions(conditionlint.ViewConditionMatchers)); err != nil {
+		AdaptViewConditions(appbuild.ViewConditions)); err != nil {
 		t.Fatalf("wire view conditions: %v", err)
 	}
 
@@ -69,7 +68,7 @@ func TestExport_List_ConditionWithCurrentUser(t *testing.T) {
 		Columns:    []dataentryconfig.ListColumn{{Property: "title"}},
 	}
 	if err := app.SetViewConditions(
-		AdaptViewConditions(conditionlint.ViewConditionMatchers)); err != nil {
+		AdaptViewConditions(appbuild.ViewConditions)); err != nil {
 		t.Fatalf("wire view conditions: %v", err)
 	}
 	if err := app.SetQueryScopeResolver(AdaptQueryScopes(appbuild.QueryScopes)); err != nil {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/yuin/gopher-lua/ast"
 )
@@ -47,6 +48,27 @@ type TraversalSpec struct {
 	// Sorted access is via [TraversalSpec.PropNames] so a lowering emits
 	// predicates in a deterministic order.
 	Props map[string]Value
+
+	// Subject is the identifier the traversal starts from (`entity` in
+	// `related(entity, ...)`), or "" when the first argument is not a bare
+	// identifier. The engine accepts any record there; a metamodel-aware
+	// caller decides which subjects it can resolve, because it resolves the
+	// path from ONE known type and a different record would start elsewhere.
+	Subject string
+}
+
+// Key returns a canonical string identifying the traversal: two specs with
+// equal keys ask the same question of the graph. A caller answering
+// traversals in a batch keys its answers by this, since the spec itself
+// holds a map and cannot be a map key.
+func (s TraversalSpec) Key() string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%q|%q|%q", s.Subject, s.Path, s.EntityType)
+	for _, name := range s.PropNames() {
+		v := s.Props[name]
+		fmt.Fprintf(&b, "|%q=%s:%#v", name, v.Type().typeName(), v)
+	}
+	return b.String()
 }
 
 // PropNames returns the property keys in sorted order.
@@ -108,6 +130,9 @@ func (w *walker) walkRelated(e *ast.FuncCallExpr) (node, error) {
 	}
 
 	spec := TraversalSpec{Path: path, Props: map[string]Value{}}
+	if ident, isIdent := e.Args[0].(*ast.IdentExpr); isIdent {
+		spec.Subject = ident.Value
+	}
 	if len(e.Args) == 3 {
 		if err := w.applyConstraints(e, e.Args[2], &spec); err != nil {
 			return nil, err

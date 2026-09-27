@@ -14,10 +14,15 @@ import (
 // it cannot be typed.
 func traversalMeta() *metamodel.Metamodel {
 	return &metamodel.Metamodel{
+		Types: map[string]metamodel.CustomType{
+			"ticket_status":  {Values: []string{"open", "done"}},
+			"concept_status": {Values: []string{"open", "done"}},
+		},
 		Entities: map[string]metamodel.EntityDef{
 			"ticket": {Properties: map[string]metamodel.PropertyDef{
-				"status": {Type: "ticket_status"},
-				"tags":   {Type: metamodel.PropertyTypeString, List: true},
+				"status":   {Type: "ticket_status"},
+				"tags":     {Type: metamodel.PropertyTypeString, List: true},
+				"estimate": {Type: metamodel.PropertyTypeInteger},
 			}},
 			"concept": {Properties: map[string]metamodel.PropertyDef{
 				"status": {Type: "concept_status"},
@@ -94,6 +99,24 @@ func TestValidateTraversals(t *testing.T) {
 			name:    "list property is refused",
 			src:     `related(entity, 'caused-by', { type = 'ticket', tags = 'x' })`,
 			wantErr: "is a list",
+		},
+		{
+			// A typo would match nothing, so `not related` would match all.
+			name:    "undeclared enum value is refused",
+			src:     `related(entity, 'caused-by', { type = 'ticket', status = 'opne' })`,
+			wantErr: "not a declared value",
+		},
+		{
+			name:    "empty string literal is refused",
+			src:     `related(entity, 'caused-by', { type = 'ticket', status = '' })`,
+			wantErr: "empty string",
+		},
+		{
+			// The store compares as a string; an integer would never match
+			// in SQL while matching in Go.
+			name:    "non-string-shaped property is refused",
+			src:     `related(entity, 'caused-by', { type = 'ticket', estimate = '3' })`,
+			wantErr: "cannot be compared in a traversal",
 		},
 		{
 			name:    "intermediate union hop is refused",

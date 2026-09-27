@@ -647,8 +647,9 @@ than the lens.
 ### Not a substitute for gating the client itself
 
 stdio MCP has no authentication, so no verified claim exists to key a
-baseline on, and its read path does not yet route through the ACL read
-gate at all (TKT-G3PPD). Client attenuation makes the *policy*
+baseline on, and its read path does not route through the ACL read
+gate: it runs with the operator's own access. The remote endpoint
+(`rela-server -mcp`) is gated. Client attenuation makes the *policy*
 expressible; it does not by itself restrict a locally-launched
 `rela mcp`.
 
@@ -1184,6 +1185,46 @@ is no `_title` fallback to worry about; the redaction is a straight
 value-omission from `meta`. A relation type with no `visible:` block emits
 its meta unchanged (permissive default).
 
+## `related(...)` in a grant's `when:`
+
+A grant's `when:` may use `related(...)` to depend on the entities at the
+other end of a relation:
+
+```yaml
+roles:
+  reviewer:
+    fields:
+      ticket:
+        - field: status
+          when: "related(entity, 'implements', { status = 'open' })"
+```
+
+The traversal reads the graph with system trust, not with the principal's
+read gate. Its verdict is therefore the same for every principal, but it
+reveals one bit to a principal who cannot read the related entities: whether
+the grant applies. Keep such conditions to facts you are willing to disclose
+that way. A traversal that compares a property some role cannot see through
+`visible:` earns a startup warning naming the grant.
+
+A state-machine transition's `when:` works the same way. Whether a transition
+is performable is served to principals in `_transitions`, so it carries the
+same bit and earns the same warning.
+
+A list page or search answers each traversal once for all its rows, not once
+per row.
+
+The grant does not apply, rather than guessing, when the traversal cannot be
+answered:
+
+- the store query fails;
+- the entity is on a named face, because the store walks the default face's
+  edges;
+- the entity is a historical version, such as one shown in the history view.
+
+A relation or property the path names that does not exist is a startup error.
+See [Where `related(...)` works](metamodel.md#where-related-works) for the
+other surfaces and how each counts hidden entities.
+
 ## What still leaks (deferred)
 
 - **`/api/v1/_position` per-id semantics** — `_position` is gated on
@@ -1195,11 +1236,25 @@ its meta unchanged (permissive default).
   neighbor-disclosure analysis (a visible neighbor's id confirms a
   visible entity, but gap analysis around hidden entities needs its
   own treatment).
-- **MCP transport** — tracked as TKT-G3PPD. MCP read tools
-  (`show_entity`, `list_entities`, `search_entities`, trace) apply
-  neither the entity-level read gate nor `visible:` redaction; they
-  return full entity bodies. The MCP server is local-only (stdio), so
-  this is an accepted gap at this stage.
+- **Local stdio MCP (`rela mcp`)** applies no ACL. It has no
+  authentication, so there is no principal to gate for; it runs with the
+  operator's own file access, like the CLI. The **remote** MCP endpoint
+  (`rela-server -mcp`) is JWT-authenticated and gated (TKT-4QSZ8Y): entity
+  and relation reads, `search_entities`, trace, resources and the Lua tools
+  all read through `GatedReads`. Search drops hits that matched only hidden
+  properties, and the Lua tools get no `rela.bypass_acl`. These residuals
+  remain on the remote endpoint:
+  - relation meta values are not field-redacted (TKT-0RBFN0), the same as
+    on every other read path;
+  - a create or rename that picks a new id which a hidden entity already
+    holds fails with a conflict, which confirms that id exists. The
+    data-entry write path has the same property;
+  - `delete_entity` without `cascade` on an entity whose only edges lead
+    to hidden entities fails with "entity has relations". That shows some
+    hidden edge exists, but not how many or to what. The counts that
+    `delete_entity` and `rename_entity` report cover visible edges only;
+  - `analyze_cardinality` and `analyze_orphans` use structural relation
+    counts, the same rule the data-entry analyze view follows.
 - **Markdown body (`content`) is not field-redacted, on any read path.**
   `visible:` is a **property-values** guard: it omits hidden *property* and
   *relation-meta* values from the wire. It makes no claim over the markdown
@@ -1217,7 +1272,7 @@ see above); `visible:` property/meta redaction applies to every data-entry
 HTTP read body — and **sync inherits it by reading through `/api/v1`**
 (TKT-8P1TM7); and `/_search`
 cannot be used as a hidden-field oracle. The remaining read-side gaps are
-the MCP transport (TKT-G3PPD) and the markdown body (never field-redacted,
+relation meta (TKT-0RBFN0) and the markdown body (never field-redacted,
 by design — see above); within the data-entry server every property/meta
 read channel a browser or a replica can reach is tight.
 

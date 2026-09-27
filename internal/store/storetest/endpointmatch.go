@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -235,6 +236,8 @@ func RunEndpointMatchTests(t *testing.T, f Factory) {
 		require.Error(t, err, "nesting past the cap must be refused")
 	})
 
+	runInboundEndpointMatchTests(t, f)
+
 	t.Run("nil_EndpointMatch_is_unconstrained", func(t *testing.T) {
 		s := f(t)
 		seed(t, s)
@@ -246,6 +249,225 @@ func RunEndpointMatchTests(t *testing.T, f Factory) {
 		})
 		require.Equal(t, []string{"TKT-1", "TKT-2", "TKT-3"}, got)
 	})
+}
+
+// runInboundEndpointMatchTests covers an endpoint match reached by walking an
+// edge BACKWARDS (TKT-CXQEV0): the candidate is the relation's TO side and the
+// endpoint filtered on is its FROM side. Every backend takes the direction as
+// a parameter, so these pin that none of them assumes the outgoing shape.
+func runInboundEndpointMatchTests(t *testing.T, f Factory) {
+	t.Helper()
+
+	// TKT-open -implements-> FEAT-1, TKT-done -implements-> FEAT-2,
+	// TKT-missing -implements-> FEAT-3 is dangling: its FROM row is never
+	// written. FEAT-4 has no incoming edge. FEAT-1 -requires-> CON-1.
+	seed := func(t *testing.T, s store.Store) {
+		t.Helper()
+		seedEntityWithProps(t, s, "ticket", "TKT-open", map[string]any{"status": "open"})
+		seedEntityWithProps(t, s, "ticket", "TKT-done", map[string]any{"status": "done"})
+		seedGraphQueryEntities(t, s, "feature", "FEAT-1", "FEAT-2", "FEAT-3", "FEAT-4")
+		seedGraphQueryEntities(t, s, "concept", "CON-1", "CON-2")
+		mustRel(t, s, "TKT-open", "implements", "FEAT-1")
+		mustRel(t, s, "TKT-done", "implements", "FEAT-2")
+		mustRel(t, s, "TKT-missing", "implements", "FEAT-3")
+		mustRel(t, s, "FEAT-1", "requires", "CON-1")
+		mustRel(t, s, "FEAT-2", "requires", "CON-2")
+	}
+	openTicket := func() *store.EndpointPredicate {
+		return &store.EndpointPredicate{
+			EntityType: "ticket",
+			Props: []store.PropPredicate{
+				{Property: "status", Op: store.PropEqual, Value: "open", Scalar: true},
+			},
+		}
+	}
+
+	t.Run("HasInbound_filters_by_the_FROM_endpoint", func(t *testing.T) {
+		s := f(t)
+		seed(t, s)
+		got := runGraphQuery(t, s, store.GraphQuery{
+			EntityType: "feature",
+			HasInbound: &store.RelationPredicate{OfTypes: []string{"implements"}, EndpointMatch: openTicket()},
+		})
+		// FEAT-3's edge has no FROM row, so it cannot match: a pushed-down
+		// INNER JOIN drops it, and the Go path must agree.
+		require.Equal(t, []string{"FEAT-1"}, got)
+	})
+
+	t.Run("HasInbound_negated", func(t *testing.T) {
+		s := f(t)
+		seed(t, s)
+		got := runGraphQuery(t, s, store.GraphQuery{
+			EntityType: "feature",
+			HasInbound: &store.RelationPredicate{
+				OfTypes: []string{"implements"}, Negate: true, EndpointMatch: openTicket(),
+			},
+		})
+		require.Equal(t, []string{"FEAT-2", "FEAT-3", "FEAT-4"}, got)
+	})
+
+	t.Run("chain_inbound_then_inbound", func(t *testing.T) {
+		s := f(t)
+		seed(t, s)
+		// concept <-requires- feature <-implements- open ticket
+		got := runGraphQuery(t, s, store.GraphQuery{
+			EntityType: "concept",
+			HasInbound: &store.RelationPredicate{
+				OfTypes: []string{"requires"},
+				EndpointMatch: &store.EndpointPredicate{
+					EntityType: "feature",
+					HasInbound: &store.RelationPredicate{
+						OfTypes: []string{"implements"}, EndpointMatch: openTicket(),
+					},
+				},
+			},
+		})
+		require.Equal(t, []string{"CON-1"}, got)
+	})
+
+	t.Run("chain_outbound_then_inbound", func(t *testing.T) {
+		s := f(t)
+		seed(t, s)
+		// ticket -implements-> feature <-implements- open ticket: the tickets
+		// that share a feature with an open ticket (including itself).
+		got := runGraphQuery(t, s, store.GraphQuery{
+			EntityType: "ticket",
+			HasOutbound: &store.RelationPredicate{
+				OfTypes: []string{"implements"},
+				EndpointMatch: &store.EndpointPredicate{
+					EntityType: "feature",
+					HasInbound: &store.RelationPredicate{
+						OfTypes: []string{"implements"}, EndpointMatch: openTicket(),
+					},
+				},
+			},
+		})
+		require.Equal(t, []string{"TKT-open"}, got)
+	})
+
+	// A caller traversal answers from the DEFAULT state only: the endpoint's
+	// default face and default-tailed edges. A named face belongs to a world
+	// the reader may not be granted, so letting it satisfy the filter would
+	// disclose draft content through which candidates match (TKT-CXQEV0
+	// design review). The backends disagreed here before: postgres joined any
+	// face of the endpoint, the Go path read only the default one.
+	t.Run("named_face_of_the_endpoint_does_not_match", func(t *testing.T) {
+		s := f(t)
+		seedGraphQueryEntities(t, s, "feature", "FEAT-1")
+		seedEntityWithProps(t, s, "ticket", "TKT-1", map[string]any{"status": "done"})
+		draft := entity.New("TKT-1", "ticket")
+		draft.Face = draftFace(t)
+		draft.Properties["status"] = "open"
+		require.NoError(t, s.CreateEntity(ctx(), draft))
+		mustRel(t, s, "TKT-1", "implements", "FEAT-1")
+
+		got := runGraphQuery(t, s, store.GraphQuery{
+			EntityType: "feature",
+			HasInbound: &store.RelationPredicate{OfTypes: []string{"implements"}, EndpointMatch: openTicket()},
+		})
+		require.Empty(t, got, "only the draft face is open; the default face is done")
+	})
+
+	t.Run("named_face_tailed_edge_does_not_match", func(t *testing.T) {
+		s := f(t)
+		seedGraphQueryEntities(t, s, "feature", "FEAT-1")
+		seedEntityWithProps(t, s, "ticket", "TKT-1", map[string]any{"status": "open"})
+		draft := entity.New("TKT-1", "ticket")
+		draft.Face = draftFace(t)
+		draft.Properties["status"] = "open"
+		require.NoError(t, s.CreateEntity(ctx(), draft))
+		// Only the draft state implements the feature.
+		_, err := s.CreateRelation(ctx(), "TKT-1", "implements", "FEAT-1",
+			&store.RelationData{FromFace: draftFace(t)})
+		require.NoError(t, err)
+
+		got := runGraphQuery(t, s, store.GraphQuery{
+			EntityType: "feature",
+			HasInbound: &store.RelationPredicate{OfTypes: []string{"implements"}, EndpointMatch: openTicket()},
+		})
+		require.Empty(t, got, "the only edge is tailed on the draft face")
+	})
+
+	// The candidate side: an OUTGOING hop reads the candidate's own edges,
+	// and only its default-state tail counts.
+	t.Run("outbound_named_face_tailed_edge_does_not_match", func(t *testing.T) {
+		s := f(t)
+		seedGraphQueryEntities(t, s, "feature", "FEAT-1")
+		for _, id := range []string{"TKT-1", "TKT-2"} {
+			seedEntityWithProps(t, s, "ticket", id, map[string]any{"status": "open"})
+		}
+		draft := entity.New("TKT-1", "ticket")
+		draft.Face = draftFace(t)
+		require.NoError(t, s.CreateEntity(ctx(), draft))
+		_, err := s.CreateRelation(ctx(), "TKT-1", "implements", "FEAT-1",
+			&store.RelationData{FromFace: draftFace(t)})
+		require.NoError(t, err)
+		mustRel(t, s, "TKT-2", "implements", "FEAT-1")
+
+		got := runGraphQuery(t, s, store.GraphQuery{
+			EntityType: "ticket",
+			HasOutbound: &store.RelationPredicate{
+				OfTypes: []string{"implements"}, EndpointMatch: &store.EndpointPredicate{EntityType: "feature"},
+			},
+		})
+		require.Equal(t, []string{"TKT-2"}, got, "TKT-1's only edge is tailed on its draft face")
+	})
+
+	// A nested hop is pinned to the default state too, not only the first.
+	t.Run("chain_second_hop_named_face_tailed_edge_does_not_match", func(t *testing.T) {
+		s := f(t)
+		seedGraphQueryEntities(t, s, "feature", "FEAT-1")
+		seedEntityWithProps(t, s, "ticket", "TKT-1", map[string]any{"status": "open"})
+		seedGraphQueryEntities(t, s, "user", "USR-1")
+		draft := entity.New("USR-1", "user")
+		draft.Face = draftFace(t)
+		require.NoError(t, s.CreateEntity(ctx(), draft))
+		mustRel(t, s, "TKT-1", "implements", "FEAT-1")
+		_, err := s.CreateRelation(ctx(), "USR-1", "reports", "TKT-1",
+			&store.RelationData{FromFace: draftFace(t)})
+		require.NoError(t, err)
+
+		chain := func() store.GraphQuery {
+			return store.GraphQuery{
+				EntityType: "feature",
+				HasInbound: &store.RelationPredicate{
+					OfTypes: []string{"implements"},
+					EndpointMatch: &store.EndpointPredicate{
+						EntityType: "ticket",
+						HasInbound: &store.RelationPredicate{
+							OfTypes: []string{"reports"}, EndpointMatch: &store.EndpointPredicate{EntityType: "user"},
+						},
+					},
+				},
+			}
+		}
+		require.Empty(t, runGraphQuery(t, s, chain()), "the only reports edge is tailed on the draft face")
+
+		mustRel(t, s, "USR-1", "reports", "TKT-1")
+		require.Equal(t, []string{"FEAT-1"}, runGraphQuery(t, s, chain()), "a default-tailed edge matches")
+	})
+
+	t.Run("MatchingIDs_answers_an_inbound_match", func(t *testing.T) {
+		s := f(t)
+		seed(t, s)
+		got, err := s.MatchingIDs(ctx(), store.GraphQuery{
+			EntityType: "feature",
+			HasInbound: &store.RelationPredicate{OfTypes: []string{"implements"}, EndpointMatch: openTicket()},
+		}, []string{"FEAT-1", "FEAT-2", "FEAT-3", "FEAT-4"})
+		require.NoError(t, err)
+		require.True(t, got["FEAT-1"], "FEAT-1 has an open implementing ticket")
+		for _, id := range []string{"FEAT-2", "FEAT-3", "FEAT-4"} {
+			require.False(t, got[id], "%s must not match", id)
+		}
+	})
+}
+
+// draftFace is the named face the endpoint-match tests put out of reach.
+func draftFace(t *testing.T) entity.Face {
+	t.Helper()
+	p, err := entity.ParseFace("draft")
+	require.NoError(t, err)
+	return p
 }
 
 // graphQueryErr drains a GraphQuery and returns the first error, or nil.

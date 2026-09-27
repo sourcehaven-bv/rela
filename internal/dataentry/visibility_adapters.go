@@ -50,3 +50,10 @@ type affRedactor struct {
 func (a affRedactor) HiddenProperties(ctx context.Context, e *entityPkg.Entity) map[string]struct{} {
 	return a.aff().hiddenProperties(ctx, e)
 }
+
+// PrimeTraversals implements [visibility.TraversalPrimer], so a
+// [visibility.PolicyReader] over this redactor answers the page's grant
+// traversals in one batch.
+func (a affRedactor) PrimeTraversals(ctx context.Context, rows []*entityPkg.Entity) context.Context {
+	return primeVerdicts(ctx, a.aff().resolver(), rows)
+}

@@ -49,6 +49,11 @@ func CheckEndpointShape(q store.GraphQuery) error {
 			return err
 		}
 	}
+	for i := range q.Related {
+		if err := checkEndpointShape(&q.Related[i].Pred, 0); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -275,10 +280,13 @@ func MatchingIDs(ctx context.Context, r Reader, q store.GraphQuery, ids []string
 	if len(out) == 0 {
 		return out, nil
 	}
-	for e, err := range r.ListEntities(ctx, store.EntityQuery{Type: q.EntityType, World: q.World, FaceIn: q.FaceIn}) {
-		if err != nil {
-			return nil, err
-		}
+	// The same candidates Run ranks, so an Any branch's face set trims the
+	// faces BEFORE the world picks the prime here too (BUG-2SKLD3).
+	cands, err := collectByType(ctx, r, q)
+	if err != nil {
+		return nil, err
+	}
+	for _, e := range cands {
 		if _, want := out[e.ID]; !want {
 			continue
 		}
@@ -407,6 +415,16 @@ func matches(ctx context.Context, r Reader, e *entity.Entity, q store.GraphQuery
 	}
 	if q.HasOutbound != nil {
 		ok, err := matchesPredicate(ctx, r, e, *q.HasOutbound, store.DirectionOutgoing)
+		if err != nil || !ok {
+			return ok, err
+		}
+	}
+	for _, rel := range q.Related {
+		dir := store.DirectionOutgoing
+		if rel.Incoming {
+			dir = store.DirectionIncoming
+		}
+		ok, err := matchesPredicate(ctx, r, e, rel.Pred, dir)
 		if err != nil || !ok {
 			return ok, err
 		}
@@ -588,11 +606,17 @@ func hasMatchingRelation(
 	typeSet, endpointSet map[string]bool, anyEndpoint bool, match *store.EndpointPredicate,
 	nesting int,
 ) (bool, error) {
+	q := store.RelationQuery{Direction: dir}
+	if match != nil {
+		// An endpoint match reads the DEFAULT state only — see
+		// [store.RelationPredicate.EndpointMatch]. matchesEndpoint already
+		// reads the endpoint's default face; pin the edge tail to match.
+		var defaultTail entity.Face
+		q.FromFace = &defaultTail
+	}
 	for _, c := range candidates {
-		for rel, err := range r.ListRelations(ctx, store.RelationQuery{
-			EntityID:  c,
-			Direction: dir,
-		}) {
+		q.EntityID = c
+		for rel, err := range r.ListRelations(ctx, q) {
 			if err != nil {
 				return false, err
 			}

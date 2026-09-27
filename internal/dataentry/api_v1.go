@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/conflict"
@@ -350,7 +351,10 @@ func (a *App) listPage(
 	if err != nil {
 		return nil, 0, err
 	}
-	if plan, ok := n.pushdownPlan(ctx, a, typeName, query, page, perPage); ok {
+	if plan, empty, ok := n.pushdownPlan(ctx, a, typeName, query, page, perPage); ok {
+		if empty {
+			return nil, 0, nil
+		}
 		return plan.run(ctx, a.Services().Store)
 	}
 	cond, scope := n.cond, n.scope
@@ -361,7 +365,8 @@ func (a *App) listPage(
 	// AFTER the ACL scope and every filter, BEFORE paging and the count: the
 	// condition narrows the population the page and total describe, so
 	// applying it later would page one set and count another.
-	if all, err = applyViewCondition(ctx, all, cond, a.redactedForSuggestion); err != nil {
+	ctx = primeVerdicts(ctx, a.fieldResolver, all)
+	if all, err = applyViewCondition(ctx, all, cond, a.redactedForSuggestion, a.Services().Store); err != nil {
 		return nil, 0, err
 	}
 	total = len(all)
@@ -415,11 +420,11 @@ func scopedSortedEntitiesScoped(
 	// they must not be re-implemented per handler.
 	rqr := readGateFromContext(ctx).ReadQuery(ctx, typeName)
 	entities, withheld, err := scopedEntities(ctx, a.Services(), rqr, scopeRequest{
-		Type:       typeName,
-		Faces:      rqr.Faces,
-		Scope:      scope.Scope,
-		ScopeProps: scope.Props,
-		ScopeEval:  scope.Eval,
+		Type:        typeName,
+		Faces:       rqr.Faces,
+		Scope:       scope.Scope,
+		ScopeProps:  scope.Props,
+		ScopeFilter: scope.Filter,
 	})
 	if err != nil {
 		return nil, err
@@ -756,9 +761,10 @@ func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeN
 	// Build response - always include relations for relation column support
 	data := make([]v1.Entity, 0, len(entities))
 	included := make(map[string]v1.Entity)
+	pageCtx := primeVerdicts(r.Context(), a.fieldResolver, entities)
 	for i, e := range entities {
 		v1Entity := a.serializer.forWireRelated(
-			r.Context(), e,
+			pageCtx, e,
 			outgoingByRow[i],
 			incomingByRow[i],
 			visibleNeighbors,
@@ -904,6 +910,9 @@ func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 		return
 	}
+	// Serializing evaluates the grant traversals several times (strip,
+	// `_fields`, `_relations`); priming answers them once.
+	ctx = primeVerdicts(ctx, a.fieldResolver, []*entityPkg.Entity{entity})
 
 	query := r.URL.Query()
 
@@ -1029,6 +1038,16 @@ func writeListPipelineError(w http.ResponseWriter, r *http.Request, err error) {
 			"Invalid query_scope parameter", err.Error())
 	case errors.Is(err, errACLListQuery):
 		writeGateError(w, r, err)
+	case errors.Is(err, acl.ErrTraversalUnsupported):
+		// The scope's related() cannot be evaluated under this principal's
+		// grants (a named-face or inherited read, a field the client ceiling
+		// hides, a chain the gate cannot place). The cause is the policy and
+		// the schema, never a row, so the detail names config only, which is
+		// not confidential (see CLAUDE.md), and helps the operator fix it.
+		slog.Warn("dataentry: query scope traversal unsupported for principal",
+			"err", err, "path", r.URL.Path, "method", r.Method)
+		writeV1Error(w, r, http.StatusUnprocessableEntity, "query_scope_unsupported",
+			"Query scope cannot be evaluated for this principal", err.Error())
 	case errors.Is(err, errListLoad):
 		slog.Warn("dataentry: list load failed",
 			"err", err, "path", r.URL.Path, "method", r.Method)
@@ -1807,6 +1826,7 @@ func (a *App) handleV1Search(w http.ResponseWriter, r *http.Request) {
 
 	meta := a.State().Meta
 	data := make([]v1.Entity, 0, len(entities))
+	pageCtx := primeVerdicts(r.Context(), a.fieldResolver, entities)
 	for _, e := range entities {
 		entityDef := meta.Entities[e.Type]
 		plural := entityDef.GetPlural(e.Type)
@@ -1815,7 +1835,7 @@ func (a *App) handleV1Search(w http.ResponseWriter, r *http.Request) {
 		// {ID, Title} of related entities this principal may not read.
 		// Flipping this requires per-target gating first (RR-QO01XY) —
 		// TestACLSearch_VisibleHitRelatedToHidden pins the invariant.
-		data = append(data, a.serializer.forWireRelated(r.Context(), e, nil, nil, nil, a.Meta(), plural))
+		data = append(data, a.serializer.forWireRelated(pageCtx, e, nil, nil, nil, a.Meta(), plural))
 	}
 
 	resp := v1.ListResponse{
@@ -1958,6 +1978,7 @@ func (a *App) resolveV1Includes(ctx context.Context, entity *entityPkg.Entity, i
 	}
 
 	visible := a.filterVisibleIncludes(ctx, candidates)
+	ctx = primeVerdicts(ctx, a.fieldResolver, visible)
 	for _, target := range visible {
 		entityDef := s.Meta.Entities[target.Type]
 		plural := entityDef.GetPlural(target.Type)

@@ -10,6 +10,7 @@ import (
 
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/transform"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
@@ -39,6 +40,9 @@ type exportHandler struct {
 	// Nil means no condition is ever applied, which is the pre-condition
 	// behavior: the ACL-scoped superset of the view, never more.
 	viewCondition func(listID string) ViewConditionMatcher
+
+	// store answers a condition's `related(...)`, under the request's gate.
+	store store.GraphQueryer
 
 	// bindIdentity stamps the query identity a `current_user` condition
 	// needs. Separate from viewCondition because the two seams answer
@@ -115,6 +119,7 @@ func newExportHandler(app *App) (*exportHandler, error) {
 		viewCondition: func(listID string) ViewConditionMatcher {
 			return viewCondition(app.viewConditions, app.State(), viewKindList, listID)
 		},
+		store: app.store,
 		bindIdentity: func(
 			ctx context.Context, typeName string, query map[string][]string,
 		) (context.Context, error) {

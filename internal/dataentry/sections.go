@@ -345,6 +345,7 @@ func (h *viewsHandler) buildSections(ctx context.Context, sections []ViewSection
 			// flat mode honors it rather than each arm remembering to.
 			entities = newEntitySorter(sec.Sort, entities, s.Meta)(entities)
 			sd.IsEmpty = len(entities) == 0
+			ctx = primeVerdicts(ctx, h.affordances.resolver(), entities)
 
 			switch sec.Display {
 			case "properties", "list":

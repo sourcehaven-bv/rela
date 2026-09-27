@@ -5,7 +5,7 @@ title: Postgres-backed state.KV so render cache, settings and scheduler state su
 kind: enhancement
 priority: medium
 effort: m
-status: backlog
+status: wont-fix
 ---
 
 ## Description
@@ -148,3 +148,8 @@ should not need it, but keep it for FS builds.
 — on disk it grew unbounded per node, which was survivable; one shared table
 across a fleet grows faster. Not required for this ticket, but note it rather
 than discover it.
+
+## Resolution
+
+Closed: Shipped in #1327 (postgres-backed state.KV). Status is wont-fix, not
+done, because this ticket has no review checklist.
