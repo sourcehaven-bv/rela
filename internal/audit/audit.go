@@ -163,6 +163,17 @@ const (
 	// count, never content.
 	OpDataAdoptFace = "data-adopt-face"
 
+	// OpRestoreEntity records the undo of a soft delete from the data-entry
+	// Undo toast: the entity and its relations are back unchanged. The
+	// matching delete is the earlier delete-entity record whose summary says
+	// "deleted (undoable)".
+	OpRestoreEntity = "restore-entity"
+
+	// OpPurgeDeletedEntity records the garbage-collection job removing a
+	// soft-deleted entity for real once the undo window has passed. The
+	// Principal is the user who deleted it, with Tool "soft-delete-gc".
+	OpPurgeDeletedEntity = "purge-deleted-entity"
+
 	// OpPerfSeed records a `rela dev seed` run: a raw-store bulk load of
 	// generated data (internal/perfseed). One record per run with the
 	// profile, scale, seed and counts — never the content, which is

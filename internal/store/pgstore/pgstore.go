@@ -152,8 +152,11 @@ type DBTX interface {
 // are: endpoints are a relation's identity, so a loop above the store must be
 // create-then-delete, which forks version lineage and destroys a self-edge.
 //
-//plimsoll:max-exported-methods=49
-//plimsoll:max-methods=59
+// +1 exported / +1 method: SoftDelete, the optional store.SoftDeleteProvider
+// accessor. The work lives on softDeleter and free functions in softdelete.go.
+//
+//plimsoll:max-exported-methods=50
+//plimsoll:max-methods=60
 type Store struct {
 	db           DBTX
 	searchTitles SearchTitles

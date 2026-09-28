@@ -25,6 +25,9 @@ func (s *Store) GetRelation(ctx context.Context, from, relType, to string) (*ent
 	           FROM relations WHERE from_id = $1 AND rel_type = $2 AND to_id = $3 AND from_face = ''`
 	r, err := scanRelation(s.db.QueryRow(ctx, q, from, relType, to))
 	if errors.Is(err, pgx.ErrNoRows) {
+		r, err = revealedRelation(ctx, s, from, relType, to)
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
 	if err != nil {
@@ -56,6 +59,19 @@ func (s *Store) ListRelations(ctx context.Context, q store.RelationQuery) iter.S
 		}
 		if err := rows.Err(); err != nil {
 			yield(nil, err)
+			return
+		}
+		// Closed before the next query: on a Tx view both share one connection.
+		rows.Close()
+		revealed, err := revealedRelations(ctx, s, q)
+		if err != nil {
+			yield(nil, err)
+			return
+		}
+		for _, r := range revealed {
+			if !yield(r, nil) {
+				return
+			}
 		}
 	}
 }

@@ -32,6 +32,7 @@ func TestProvisionSeam_EveryWriteHandlerUsesEnterWrite(t *testing.T) {
 	// The files that hold writeMu-taking mutation handlers.
 	files := []string{
 		"write_handler.go",
+		"softdelete_handler.go",
 		"actions.go",
 		"attachment_handler.go",
 		"handlers_attachment.go",

@@ -61,6 +61,7 @@ Every record is one line of JSON:
 | `op` | Meaning |
 |------|---------|
 | `create-entity`, `update-entity`, `delete-entity`, `rename-entity` | Entity writes |
+| `restore-entity`, `purge-deleted-entity` | Undo of a web-app delete, and the final removal once the undo window has passed. See "Undoable deletes" below |
 | `create-relation`, `update-relation`, `delete-relation` | Relation writes |
 | `denied-write` | A write the ACL refused, or an upload the attachment policy refused. Subject names the would-be target; the summary carries the rule that fired |
 | `acl-bypass`, `acl-bypass-read` | A write or read that skipped the ACL through an elevated automation handle. The principal is the REAL triggering identity |
@@ -197,6 +198,7 @@ When a write is caused by an automation cascade or scheduler task,
 - `schedule:<task-name>` — a scheduler-driven Lua task.
 - `cascade:delete-entity:<id>` — a relation deleted as a side effect
   of `delete-entity` with `cascade=true`.
+- `restore-entity:<id>` — a relation brought back by `restore-entity`.
 
 **One label per record: the outermost cause wins.** A write can have
 more than one true cause — a scheduled task whose write trips an
@@ -205,6 +207,21 @@ stack. The enclosing label is kept, so every row a scheduled task
 produced (including the ones an automation cascaded underneath it)
 answers `triggered_by == "schedule:<task>"`. Querying "what did last
 night's run do?" therefore returns the complete set.
+
+## Undoable deletes
+
+A delete from the web app can be undone for a short while (see the data
+entry guide). It is logged as an ordinary `delete-entity`, with
+`delete-relation` rows for its relations, all with the summary
+`deleted (undoable)`.
+
+- An undo writes `restore-entity`, plus a `create-relation` row with the
+  summary `restored` for each relation that came back.
+- When the undo window passes, the server writes `purge-deleted-entity`. Its
+  `principal.user` is the user who deleted the entity, and its
+  `principal.tool` is `soft-delete-gc`. On backends with version history,
+  the delete is recorded in the history at this point, not at the moment of
+  the delete, so an undone delete leaves no trace there.
 
 ## Known gaps
 

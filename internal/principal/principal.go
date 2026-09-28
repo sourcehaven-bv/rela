@@ -390,6 +390,9 @@ const (
 	// audit log distinguishes an auto-provisioned stub from a human edit; paired
 	// with [UserProvisioner].
 	ToolProvisioner = "provisioner"
+	// ToolSoftDeleteGC attributes the purge that finishes a soft delete once
+	// the undo window has passed. The user stays the one who deleted.
+	ToolSoftDeleteGC = "soft-delete-gc"
 )
 
 // UserScheduler is the default [Principal.User] for scheduled tasks that

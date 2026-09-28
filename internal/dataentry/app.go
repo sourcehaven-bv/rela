@@ -1224,9 +1224,10 @@ func NewApp(
 	// so both paths stay behaviorally identical. writeMu is shared by face
 	// so these writes serialize with every other mutation handler.
 	app.write = &writeHandler{
-		schema:  app.State,
-		store:   st,
-		manager: em, // concrete; writeHandler narrows to entityMutator
+		schema:      app.State,
+		store:       st,
+		manager:     em, // concrete; writeHandler narrows to entityMutator
+		softDeletes: softDeletesFor(em),
 
 		reader:      app.reader,
 		serializer:  app.serializer,

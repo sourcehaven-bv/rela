@@ -181,8 +181,8 @@ type attachMeta struct {
 // CAS precondition has to be evaluated atomically with the write, so it
 // cannot live anywhere but on the type that owns the write.
 //
-//plimsoll:max-methods=97
-//plimsoll:max-exported-methods=37
+//plimsoll:max-methods=98
+//plimsoll:max-exported-methods=38
 type FSStore struct {
 	// rooted is the validated-key I/O surface. Every read, write,
 	// directory op, and remove that operates on files under the
@@ -225,6 +225,9 @@ type FSStore struct {
 	relationOrder []string
 	attachments   map[string]attachMeta     // "entityID/property" → meta
 	propCache     map[string]map[string]int // property → value → count
+	// marked holds the soft-deleted families, out of the index above (see
+	// softdelete.go). Nil until the first mark.
+	marked map[string]*fsMarked
 
 	// observers notified synchronously on entity writes
 	observers []store.EntityObserver
@@ -319,6 +322,9 @@ func New(cfg Config) (*FSStore, error) {
 	s.cleanupTempFiles()
 
 	if err := s.syncIndex(); err != nil {
+		return nil, err
+	}
+	if err := applyPendingDeletes(s); err != nil {
 		return nil, err
 	}
 	s.loadAttachmentsIndex()

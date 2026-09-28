@@ -20,10 +20,17 @@ func defaultTailKey(from, relType, to string) string {
 	return relKey(from, "", relType, to)
 }
 
-func (s *FSStore) GetRelation(_ context.Context, from, relType, to string) (*entity.Relation, error) {
+func (s *FSStore) GetRelation(ctx context.Context, from, relType, to string) (*entity.Relation, error) {
 	s.mu.RLock()
 	key := defaultTailKey(from, relType, to)
 	_, ok := s.relations[key]
+	if !ok {
+		if id, revealed := store.RevealedFor(ctx, from, to); revealed {
+			if fam, marked := markedFamilyOf(s, id); marked {
+				_, ok = fam.relations[key]
+			}
+		}
+	}
 	s.mu.RUnlock()
 
 	if !ok {
@@ -37,7 +44,7 @@ func (s *FSStore) GetRelation(_ context.Context, from, relType, to string) (*ent
 	return r, nil
 }
 
-func (s *FSStore) ListRelations(_ context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error] {
+func (s *FSStore) ListRelations(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error] {
 	s.mu.RLock()
 
 	match := storeutil.NewRelationMatcher(q)
@@ -47,6 +54,9 @@ func (s *FSStore) ListRelations(_ context.Context, q store.RelationQuery) iter.S
 			continue
 		}
 		matches = append(matches, s.relations[key])
+	}
+	if q.EntityID != "" && q.EntityID == store.RevealedID(ctx) {
+		matches = append(matches, revealedRelations(ctx, s, match)...)
 	}
 	s.mu.RUnlock()
 

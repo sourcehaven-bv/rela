@@ -271,6 +271,7 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 		schema:      app.State,
 		store:       svc.Store(),
 		manager:     svc.EntityManager(),
+		softDeletes: softDeletesFor(svc.EntityManager()),
 		reader:      app.reader,
 		serializer:  app.serializer,
 		affordances: app.affordances,

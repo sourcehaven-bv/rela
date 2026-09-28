@@ -183,6 +183,9 @@ type Services struct {
 	// gcStop terminates this store's data-migration GC sweep goroutine
 	// (TKT-0C57FS). Per-assembled, torn down in Close like searchCloser.
 	gcStop func()
+	// softDeleteStop stops the soft-delete GC ticker. It runs before the job
+	// queue closes, so no tick enqueues into a closed queue.
+	softDeleteStop func()
 	// fieldRedactor applies field-level `visible:` policy to the unattended
 	// and identity-bearing read paths (TKT-425426). Never nil after
 	// construction: [visibility.NopRedactor] when no policy declares
@@ -1702,21 +1705,27 @@ func resolveVisibleSearcher(
 // more optional services are added — each is independently nil-able and none
 // may fail boot.
 type backgroundServices struct {
-	gcStop   func()
-	mailStop func()
-	mail     *mailRuntime
+	gcStop         func()
+	softDeleteStop func()
+	mailStop       func()
+	mail           *mailRuntime
 }
 
 // startBackgroundServices launches the optional per-store subsystems: the
-// data-migration gate and GC sweep, and the mail outbox worker.
+// data-migration gate and GC sweep, the soft-delete GC, and the mail outbox
+// worker.
 //
 // Neither may fail boot. Each returns a stop function that is always safe to
 // call, so Close needs no nil checks beyond the ones it already has.
 func startBackgroundServices(
 	base *SharedBase, st store.Store, stateKV state.KV, migState datamigration.StateStore,
-	cfgLoader config.Loader, versions store.VersionService,
+	cfgLoader config.Loader, versions store.VersionService, mgr *entitymanager.Manager, q jobs.Client,
 ) backgroundServices {
 	cfg := base.cfg
+
+	softDeleteStop := startSoftDeleteGC(mgr, q,
+		envDuration("RELA_SOFT_DELETE_DELAY", defaultSoftDeleteDelay),
+		envDuration("RELA_SOFT_DELETE_GC_INTERVAL", defaultSoftDeleteGCInterval))
 
 	gcStop := startDataMigration(
 		stateKV, migState, base.meta, st, cfg.Audit, versions, cfg.Paths.CacheDir,
@@ -1730,9 +1739,10 @@ func startBackgroundServices(
 	mailRuntime, mailStop := startMailRuntime(cfg.Paths)
 
 	return backgroundServices{
-		gcStop:   gcStop,
-		mailStop: mailStop,
-		mail:     mailRuntime,
+		gcStop:         gcStop,
+		softDeleteStop: softDeleteStop,
+		mailStop:       mailStop,
+		mail:           mailRuntime,
 	}
 }
 
@@ -1982,7 +1992,7 @@ func assemble(
 	// changes, warn on incompatible ones) and start the drift GC sweep
 	// (TKT-0C57FS). Never fails boot; the stop func is torn down in Close —
 	// per-assembled, like the search closer.
-	background := startBackgroundServices(base, st, stateKV, migState, cfgLoader, versions)
+	background := startBackgroundServices(base, st, stateKV, migState, cfgLoader, versions, mgr, jobQueue)
 
 	return newServices(
 		base, st, background, searcher, visible, searchCloser, mgr, tr, val,
@@ -2008,6 +2018,7 @@ func newServices(
 	return &Services{
 		base:            base,
 		gcStop:          background.gcStop,
+		softDeleteStop:  background.softDeleteStop,
 		mailStop:        background.mailStop,
 		mail:            background.mail,
 		fs:              cfg.FS,
@@ -2189,6 +2200,10 @@ func (s *Services) stopBackgroundServices() {
 	if s.gcStop != nil {
 		s.gcStop()
 		s.gcStop = nil
+	}
+	if s.softDeleteStop != nil {
+		s.softDeleteStop()
+		s.softDeleteStop = nil
 	}
 	if s.jobQueue != nil {
 		closeJobQueue(s.jobQueue)

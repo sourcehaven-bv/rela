@@ -505,6 +505,20 @@ independently: `rela migrate data` resolves each store's own chain (see the
   two `migrate data --apply` invocations against the same schema cannot
   interleave, while different schemas stay independent.
 
+## Undoable deletes
+
+A web-app delete can be undone for a short while (see the data entry guide).
+While it waits, the deleted rows sit in two side tables, `marked_entities` and
+`marked_relations` (migration 0018), so no query on `entities` or `relations`
+can see them. The delete itself writes the usual tombstones and change
+notifications, and an undo gives the rows a fresh sequence number, so other
+processes see a delete followed by a create.
+
+The soft-delete GC runs through the durable job queue with one fixed
+idempotency key, so several servers against one schema run one purge at a
+time. `RELA_SOFT_DELETE_DELAY` and `RELA_SOFT_DELETE_GC_INTERVAL` set the
+window and the check interval.
+
 ## Other scope notes
 
 - The desktop app (`rela-desktop`) is filesystem-only; there is no PostgreSQL

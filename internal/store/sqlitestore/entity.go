@@ -131,16 +131,27 @@ func (s *Store) createEntityLocked(ctx context.Context, e *entity.Entity) error 
 	}
 
 	editorUser, editorTool := store.AttributionColumns(ctx)
-	_, err = s.write(ctx, `INSERT INTO entities (id, face, type, properties, content, updated_at,
+	// The NOT EXISTS keeps a soft-deleted id held until it is purged. It sits
+	// in the INSERT itself so no mark can land between probe and write.
+	res, err := s.write(ctx, `INSERT INTO entities (id, face, type, properties, content, updated_at,
 		                      last_edited_by_user, last_edited_by_tool)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		e.ID, string(e.Face), e.Type, props, e.Content, updated.Format(timeFmt), editorUser, editorTool)
+		SELECT ?, ?, ?, ?, ?, ?, ?, ?
+		WHERE NOT EXISTS (SELECT 1 FROM marked_entities WHERE lower(id) = lower(?))`,
+		e.ID, string(e.Face), e.Type, props, e.Content, updated.Format(timeFmt), editorUser, editorTool, e.ID)
+	var inserted int64
+	if err == nil {
+		inserted, err = res.RowsAffected()
+	}
 	if err != nil {
 		if isUniqueViolation(err) {
 			return fmt.Errorf("sqlitestore: create %s: %w",
 				entity.FormatStateRef(e.ID, e.Face), store.ErrConflict)
 		}
 		return fmt.Errorf("sqlitestore: create %s: %w", e.ID, err)
+	}
+	if inserted == 0 {
+		return fmt.Errorf("sqlitestore: create %s: soft-deleted id: %w",
+			entity.FormatStateRef(e.ID, e.Face), store.ErrConflict)
 	}
 
 	s.notifyPut(e)

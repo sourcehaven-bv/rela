@@ -28,6 +28,9 @@ func (s *Store) GetRelation(ctx context.Context, from, relType, to string) (*ent
 		from, relType, to)
 	r, err := scanRelation(row)
 	if errors.Is(err, sql.ErrNoRows) {
+		r, err = revealedRelation(ctx, s, from, relType, to)
+	}
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("sqlitestore: get relation %s--%s->%s: %w", from, relType, to, store.ErrNotFound)
 	}
 	return r, err
@@ -51,6 +54,19 @@ func (s *Store) ListRelations(ctx context.Context, q store.RelationQuery) iter.S
 		}
 		if err := rows.Err(); err != nil {
 			yield(nil, fmt.Errorf("sqlitestore: list relations: %w", err))
+			return
+		}
+		// Closed before the next query: inside a Tx both share one connection.
+		_ = rows.Close()
+		revealed, err := revealedRelations(ctx, s, q)
+		if err != nil {
+			yield(nil, err)
+			return
+		}
+		for _, r := range revealed {
+			if !yield(r, nil) {
+				return
+			}
 		}
 	}
 }

@@ -12,7 +12,7 @@ import (
 // schemaVersion is the shape of the tables this binary expects. Bump it
 // whenever schemaSQL changes shape, and append the step that carries an
 // existing database forward to [migrations].
-const schemaVersion = 7
+const schemaVersion = 8
 
 // SchemaVersion reports the table shape this binary expects, so the CLI can
 // show a real number rather than prose.
@@ -115,6 +115,12 @@ var migrations = []migration{
 		// copy and attributes every create/update to its system principal.
 		to:    7,
 		apply: addEditorColumns,
+	},
+	{
+		// v7 → v8: the soft-delete side tables behind the data-entry Undo.
+		// Pure CREATE IF NOT EXISTS, a no-op where schemaSQL already made them.
+		to:    8,
+		apply: sqlSteps(softDeleteDDL),
 	},
 }
 

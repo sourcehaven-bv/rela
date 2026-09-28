@@ -79,6 +79,41 @@ one in a new tab would mean nothing.
 Note that a list row is a link across its whole width, which means dragging to
 select text inside a row is not possible; use the entity page for that.
 
+### Undoing a delete
+
+Deleting an entity in the web app can be undone for a short while. The
+delete takes effect at once: the entity and its relations disappear from
+lists, search, views and the API for everyone. The server keeps the rows
+aside, and the Undo button in the confirmation message puts them back
+exactly as they were.
+
+After the undo window the server removes the rows for good. The window is
+60 seconds by default. Two environment variables tune it:
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `RELA_SOFT_DELETE_DELAY` | `60s` | How long a deleted entity can still be restored |
+| `RELA_SOFT_DELETE_GC_INTERVAL` | `15s` | How often the server looks for deletes past the window |
+
+Both take Go durations such as `90s` or `2m`. An invalid value falls back to
+the default. An entity is removed between the delay and the delay plus one
+interval after its delete.
+
+While a deleted entity waits, it keeps its ID and its `unique:` values. A new
+entity cannot take either, so an undo never fails because something else
+took its place.
+
+Undo covers only a delete of a whole entity from the web app. Deleting one
+content state (`ID@face`), and deletes from the CLI, MCP or Lua, are
+immediate and final. On the filesystem backend the list of waiting deletes is
+kept in `.rela/pending-deletes.json`, so it survives a restart.
+
+The API behind Undo is `POST /api/v1/{plural}/{id}/restore`. It answers
+`204 No Content` on success and `404` when there is nothing to restore. A
+restore needs the same delete permission the delete needed. The caller must
+also be able to read the entity, or be the user who deleted it; anyone else
+gets the same `404` as for an ID that was never deleted.
+
 ## Quick Start
 
 ### 1. Create data-entry.yaml

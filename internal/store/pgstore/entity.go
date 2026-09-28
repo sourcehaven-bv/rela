@@ -219,7 +219,9 @@ func (s *Store) HighestID(ctx context.Context, prefix string) (int, error) {
 	// twice is harmless. The old `face = ''` predicate saw a faced type not
 	// at all, so the generator minted one id for every entity of it
 	// (BUG-HC6I2T).
-	const q = `SELECT DISTINCT id FROM entities WHERE id LIKE $1`
+	// marked_entities too: a soft-deleted id may yet come back.
+	const q = `SELECT id FROM entities WHERE id LIKE $1
+	           UNION SELECT id FROM marked_entities WHERE id LIKE $1`
 	rows, err := s.db.Query(ctx, q, pfx+"%")
 	if err != nil {
 		return 0, err
@@ -315,6 +317,13 @@ func (s *Store) CreateEntity(ctx context.Context, e *entity.Entity) error {
 	// with it too.
 	if lockErr := lockFamily(ctx, tx, e.ID); lockErr != nil {
 		return lockErr
+	}
+	// A soft-deleted id stays held until it is purged. Checked under the
+	// family lock, which MarkDeleted also takes.
+	if held, heldErr := markedIDTaken(ctx, tx, e.ID, ""); heldErr != nil {
+		return heldErr
+	} else if held {
+		return store.ErrConflict
 	}
 
 	{
@@ -828,6 +837,11 @@ func (s *Store) RenameEntity(ctx context.Context, oldID, newID string) (*store.R
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
+	}
+	if held, heldErr := markedIDTaken(ctx, tx, newID, oldID); heldErr != nil {
+		return nil, heldErr
+	} else if held {
+		return nil, store.ErrConflict
 	}
 
 	renamedStates, renamed, err := rekeyStateFamily(ctx, tx, oldID, newID)

@@ -202,20 +202,25 @@ func (s *FSStore) HighestID(_ context.Context, prefix string) (int, error) {
 
 	highest := 0
 	pfx := prefix + "-"
-	for _, meta := range s.entities {
-		// Every face is scanned. States share their family's number, so
-		// seeing a family more than once is harmless — max is idempotent —
-		// while skipping non-default faces made a faced type invisible to
-		// the generator entirely (BUG-HC6I2T).
-		id := meta.ID
+	consider := func(id string) {
 		if !strings.HasPrefix(id, pfx) {
-			continue
+			return
 		}
-		suffix := id[len(pfx):]
 		var n int
-		if _, err := fmt.Sscanf(suffix, "%d", &n); err == nil && n > highest {
+		if _, err := fmt.Sscanf(id[len(pfx):], "%d", &n); err == nil && n > highest {
 			highest = n
 		}
+	}
+	// Every face is scanned. States share their family's number, so
+	// seeing a family more than once is harmless — max is idempotent —
+	// while skipping non-default faces made a faced type invisible to
+	// the generator entirely (BUG-HC6I2T).
+	for _, meta := range s.entities {
+		consider(meta.ID)
+	}
+	// A soft-deleted id still counts: it may yet come back.
+	for id := range s.marked {
+		consider(id)
 	}
 	return highest, nil
 }
@@ -296,6 +301,10 @@ func (s *FSStore) createEntity(_ context.Context, e *entity.Entity) error {
 	defer s.mu.Unlock()
 
 	key := stateKey(e.ID, e.Face)
+	// A soft-deleted id stays held until it is purged, for every face.
+	if markedTaken(s, e.ID, "") {
+		return store.ErrConflict
+	}
 	if e.Face.IsDefault() {
 		// Case-folded: on a case-insensitive filesystem (macOS, Windows)
 		// "ABC" and "abc" are the same file, so a byte-exact check here
@@ -835,7 +844,7 @@ func (s *FSStore) renameEntity(_ context.Context, oldID, newID string) (*store.R
 	// except=oldID: an entity may change its own casing (abc -> ABC).
 	// idTaken folds on the bare id, so ANY state of another entity under
 	// the new id is a conflict.
-	if idTaken(s.entities, newID, oldID) {
+	if idTaken(s.entities, newID, oldID) || markedTaken(s, newID, oldID) {
 		return nil, store.ErrConflict
 	}
 

@@ -41,6 +41,7 @@ func fuzzFactory() store.Store {
 func TestConformance(t *testing.T) {
 	storetest.RunAll(t, factory, searchFactory, visibleSearchFactory, storetest.Capabilities{
 		Attachments: true,
+		SoftDelete:  true,
 		Observers: func(t *testing.T, obs ...store.EntityObserver) store.Store {
 			t.Helper()
 			opts := make([]memstore.Option, 0, len(obs))
