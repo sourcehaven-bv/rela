@@ -81,9 +81,13 @@ type MCPHost struct {
 	// be built; a configured scan then rejects the upload.
 	AttachmentRunner attachment.CommandRunner
 
-	// WriteLock is the App's mutation mutex. MCP attachment writes hold it so
-	// they serialize with every data-entry write.
-	WriteLock sync.Locker
+	// AttachmentLocker is the App's attachment lock, so MCP attachment writes
+	// and web uploads to one property exclude each other.
+	AttachmentLocker attachment.Locker
+
+	// AttachmentUploads is the App's upload bound, so MCP and web uploads
+	// share one budget.
+	AttachmentUploads *attachment.Limiter
 
 	// ReadWorld resolves the world an MCP read runs in: the operator's
 	// browsing default (`app.default_world`), with the caller's world grant
@@ -116,9 +120,10 @@ func mcpHost(a *App) MCPHost {
 			s := a.schema.Current()
 			return s.Meta, maxAttachmentBytes(s)
 		},
-		AttachmentRunner: a.attachmentRunner,
-		WriteLock:        &a.writeMu,
-		ReadWorld:        mcpReadWorld(a),
+		AttachmentRunner:  a.attachmentRunner,
+		AttachmentLocker:  a.attachmentLocker,
+		AttachmentUploads: a.attachmentUploads,
+		ReadWorld:         mcpReadWorld(a),
 		SelectWorld: func(ctx context.Context, name string) (context.Context, error) {
 			return mcpSelectWorld(ctx, a, name)
 		},

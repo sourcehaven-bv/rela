@@ -1,14 +1,22 @@
 package dataentry
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/comments"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // commentsPathPrefix is the reserved route segment for the commentary layer.
@@ -20,6 +28,7 @@ const commentsPathPrefix = "/api/v1/_comments/"
 //	POST   /api/v1/_comments/{type}/{id}              → add one
 //	PATCH  /api/v1/_comments/{type}/{id}/{commentID}  → edit body / resolve
 //	DELETE /api/v1/_comments/{type}/{id}/{commentID}  → remove one
+//	POST   /api/v1/_comments/{type}/{id}/{commentID}/accept → apply its suggestion
 //
 // # Gating
 //
@@ -63,7 +72,14 @@ func (h *commentsHandler) handleV1Comments(w http.ResponseWriter, r *http.Reques
 	// Validate the path segments before they reach storage. The file backend
 	// guards itself too, but refusing here keeps an unsafe id from reaching any
 	// backend at all, and gives a 400 rather than an opaque store error.
-	if !isSafePathSegment(typeName) || !isSafeStateRefSegment(entityID) {
+	//
+	// The id segment is an ADDRESS (`ID` or `ID@face`) and is parsed here,
+	// once, into the bare id and the face (BUG-R1PQY9). Handing the raw
+	// segment to a bare-id reader resolves on memstore/fsstore only because
+	// their index key is the same string, and matches nothing on the database
+	// backends or under a query-shaped read grant.
+	ref, refOK := parseEntityRef(entityID)
+	if !isSafePathSegment(typeName) || !isSafeStateRefSegment(entityID) || !refOK {
 		writeV1Error(w, r, http.StatusBadRequest, "invalid_path",
 			"Invalid entity type or id", "")
 		return
@@ -77,15 +93,17 @@ func (h *commentsHandler) handleV1Comments(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	target := comments.Target{Type: typeName, ID: entityID}
+	addr := commentAddress{typeName: typeName, ref: ref}
 
 	switch {
 	case len(parts) == 3 && parts[2] == "resolve":
-		h.commentResolveCheck(w, r, target)
+		h.commentResolveCheck(w, r, addr)
 	case len(parts) == 2:
-		h.commentCollection(w, r, target)
+		h.commentCollection(w, r, addr)
 	case len(parts) == 3 && parts[2] != "":
-		h.commentItem(w, r, target, parts[2])
+		h.commentItem(w, r, addr, parts[2])
+	case len(parts) == 4 && parts[2] != "" && parts[3] == "accept":
+		h.commentAccept(w, r, addr, parts[2])
 	default:
 		writeV1Error(w, r, http.StatusBadRequest, "invalid_path",
 			"Path must be /_comments/{type}/{id}[/{commentID}]", "")
@@ -94,14 +112,14 @@ func (h *commentsHandler) handleV1Comments(w http.ResponseWriter, r *http.Reques
 
 // commentCollection handles the target-level routes.
 func (h *commentsHandler) commentCollection(
-	w http.ResponseWriter, r *http.Request, target comments.Target,
+	w http.ResponseWriter, r *http.Request, addr commentAddress,
 ) {
 	switch r.Method {
 	case http.MethodGet:
-		h.listComments(w, r, target)
+		h.listComments(w, r, addr)
 	case http.MethodPost:
 		if !h.refuseIfReadOnly(w, r) {
-			h.addComment(w, r, target)
+			h.addComment(w, r, addr)
 		}
 	case http.MethodOptions:
 		w.Header().Set("Allow", "GET, POST, OPTIONS")
@@ -114,16 +132,16 @@ func (h *commentsHandler) commentCollection(
 
 // commentItem handles the single-comment routes.
 func (h *commentsHandler) commentItem(
-	w http.ResponseWriter, r *http.Request, target comments.Target, commentID string,
+	w http.ResponseWriter, r *http.Request, addr commentAddress, commentID string,
 ) {
 	switch r.Method {
 	case http.MethodPatch:
 		if !h.refuseIfReadOnly(w, r) {
-			h.updateComment(w, r, target, commentID)
+			h.updateComment(w, r, addr, commentID)
 		}
 	case http.MethodDelete:
 		if !h.refuseIfReadOnly(w, r) {
-			h.deleteComment(w, r, target, commentID)
+			h.deleteComment(w, r, addr, commentID)
 		}
 	case http.MethodOptions:
 		w.Header().Set("Allow", "PATCH, DELETE, OPTIONS")
@@ -145,6 +163,17 @@ type resolveCheckRequest struct {
 type resolveCheckResponse struct {
 	Anchorable bool   `json:"anchorable"`
 	Reason     string `json:"reason,omitempty"`
+	// SourceQuote is the markdown SOURCE the selection maps to, which is what
+	// a suggested replacement replaces. A client pre-filling a suggestion must
+	// start from this, not from the rendered selection: the two differ
+	// wherever markup sits inside the range, and editing the rendered form
+	// would drop that markup on accept. It is a substring of a body the caller
+	// may already read.
+	SourceQuote string `json:"source_quote,omitempty"`
+	// Suggestable reports whether a replacement for this selection would be
+	// accepted, so a client can hide the option instead of letting someone
+	// type a suggestion that is refused on submit.
+	Suggestable bool `json:"suggestable,omitempty"`
 }
 
 // commentResolveCheck reports whether a selection can be anchored, WITHOUT
@@ -158,14 +187,14 @@ type resolveCheckResponse struct {
 // Gated exactly like a create: it reveals whether a string appears in the body,
 // which is a read of the body, so `comment:add` plus the target read verdict.
 func (h *commentsHandler) commentResolveCheck(
-	w http.ResponseWriter, r *http.Request, target comments.Target,
+	w http.ResponseWriter, r *http.Request, addr commentAddress,
 ) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", "POST")
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
 		return
 	}
-	target, ok := h.gateCommentTarget(w, r, target)
+	target, ent, ok := h.gateCommentTarget(w, r, addr)
 	if !ok {
 		return
 	}
@@ -181,13 +210,16 @@ func (h *commentsHandler) commentResolveCheck(
 		return
 	}
 
-	if _, err := h.buildTextAnchor(r.Context(), target, req.Quote, req.Prefix, req.Suffix); err != nil {
+	text, err := buildTextAnchor(ent, req.Quote, req.Prefix, req.Suffix)
+	if err != nil {
 		// A failure here is the ANSWER, not an error: the caller asked whether
 		// this selection works, and "no, because…" is a successful reply.
 		writeV1JSON(w, http.StatusOK, resolveCheckResponse{Reason: err.Error()})
 		return
 	}
-	writeV1JSON(w, http.StatusOK, resolveCheckResponse{Anchorable: true})
+	writeV1JSON(w, http.StatusOK, resolveCheckResponse{
+		Anchorable: true, SourceQuote: text.Quote, Suggestable: comments.Replaceable(text),
+	})
 }
 
 // commentListResponse is the list wire shape.
@@ -226,6 +258,9 @@ type anchorWire struct {
 	// Uncertain marks the middle band: located, but far enough from an exact
 	// match that the UI should say the text may have moved.
 	Uncertain bool `json:"uncertain,omitempty"`
+	// Replacement is the suggested substitute for Quote. A pointer so a
+	// deletion suggestion ("") is distinguishable from none.
+	Replacement *string `json:"replacement,omitempty"`
 }
 
 type commentWire struct {
@@ -244,17 +279,23 @@ type commentWire struct {
 	// re-authorizes every write, so a client that ignores them gains nothing.
 	Editable  bool `json:"editable"`
 	Deletable bool `json:"deletable"`
+	// Acceptable reports that the suggestion could be applied to the current
+	// body: it has one, the comment is open, and the quote still locates
+	// unambiguously. It does NOT include the entity update right; a client
+	// combines it with the entity's `_actions.update`, and the accept route
+	// re-checks everything.
+	Acceptable bool `json:"acceptable,omitempty"`
 }
 
 func (h *commentsHandler) listComments(
-	w http.ResponseWriter, r *http.Request, target comments.Target,
+	w http.ResponseWriter, r *http.Request, addr commentAddress,
 ) {
 	ctx := r.Context()
 	auth := h.commentAuthorizer()
 
 	// Read floor first: a caller who cannot read the target — or a target that
 	// does not exist — gets the same 404, so comments never confirm existence.
-	target, ok := h.gateCommentTarget(w, r, target)
+	target, ent, ok := h.gateCommentTarget(w, r, addr)
 	if !ok {
 		return
 	}
@@ -272,20 +313,21 @@ func (h *commentsHandler) listComments(
 	}
 
 	user := principal.From(ctx).User
-	anchors := h.liveAnchors(ctx, target)
+	anchors := h.liveAnchors(target, ent)
 	out := make([]commentWire, 0, len(list))
 	for _, c := range list {
 		anchor, detached := resolveAnchor(anchors, c.Anchor)
 		out = append(out, commentWire{
-			ID:        c.ID,
-			Author:    c.Author,
-			CreatedAt: c.CreatedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
-			Anchor:    anchor,
-			Body:      c.Body,
-			Resolved:  c.Resolved,
-			Detached:  detached,
-			Editable:  auth.CanUpdate(ctx, target, c, user),
-			Deletable: auth.CanDelete(ctx, target, c, user),
+			ID:         c.ID,
+			Author:     c.Author,
+			CreatedAt:  c.CreatedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
+			Anchor:     anchor,
+			Body:       c.Body,
+			Resolved:   c.Resolved,
+			Detached:   detached,
+			Editable:   auth.CanUpdate(ctx, target, c, user),
+			Deletable:  auth.CanDelete(ctx, target, c, user),
+			Acceptable: !c.Resolved && anchors.loaded && comments.Acceptable(anchors.body, c.Anchor),
 		})
 	}
 
@@ -315,16 +357,19 @@ type addCommentRequest struct {
 		// a comment on "Geordend" came to highlight "Ongeordend".
 		QuotePrefix string `json:"quote_prefix"`
 		QuoteSuffix string `json:"quote_suffix"`
+		// Replacement suggests substitute text for the quote (text anchors
+		// only). Null or absent means no suggestion; "" suggests deletion.
+		Replacement *string `json:"replacement"`
 	} `json:"anchor"`
 	Body string `json:"body"`
 }
 
 func (h *commentsHandler) addComment(
-	w http.ResponseWriter, r *http.Request, target comments.Target,
+	w http.ResponseWriter, r *http.Request, addr commentAddress,
 ) {
 	ctx := r.Context()
 
-	target, ok := h.gateCommentTarget(w, r, target)
+	target, ent, ok := h.gateCommentTarget(w, r, addr)
 	if !ok {
 		return
 	}
@@ -341,11 +386,12 @@ func (h *commentsHandler) addComment(
 	}
 
 	anchor := comments.Anchor{
-		Kind: comments.AnchorKind(req.Anchor.Kind),
-		Ref:  req.Anchor.Ref,
+		Kind:        comments.AnchorKind(req.Anchor.Kind),
+		Ref:         req.Anchor.Ref,
+		Replacement: req.Anchor.Replacement,
 	}
 	if anchor.Kind == comments.AnchorText {
-		text, aerr := h.buildTextAnchor(ctx, target, req.Anchor.Quote, req.Anchor.QuotePrefix, req.Anchor.QuoteSuffix)
+		text, aerr := buildTextAnchor(ent, req.Anchor.Quote, req.Anchor.QuotePrefix, req.Anchor.QuoteSuffix)
 		if aerr != nil {
 			writeV1Error(w, r, http.StatusBadRequest, "invalid_comment", aerr.Error(), "")
 			return
@@ -384,11 +430,11 @@ type updateCommentRequest struct {
 }
 
 func (h *commentsHandler) updateComment(
-	w http.ResponseWriter, r *http.Request, target comments.Target, commentID string,
+	w http.ResponseWriter, r *http.Request, addr commentAddress, commentID string,
 ) {
 	ctx := r.Context()
 
-	target, existing, ok := h.gateCommentMutation(w, r, target, commentID, mutationUpdate)
+	target, existing, ok := h.gateCommentMutation(w, r, addr, commentID, mutationUpdate)
 	if !ok {
 		return
 	}
@@ -416,9 +462,9 @@ func (h *commentsHandler) updateComment(
 }
 
 func (h *commentsHandler) deleteComment(
-	w http.ResponseWriter, r *http.Request, target comments.Target, commentID string,
+	w http.ResponseWriter, r *http.Request, addr commentAddress, commentID string,
 ) {
-	target, _, ok := h.gateCommentMutation(w, r, target, commentID, mutationDelete)
+	target, _, ok := h.gateCommentMutation(w, r, addr, commentID, mutationDelete)
 	if !ok {
 		return
 	}
@@ -446,11 +492,11 @@ const (
 // this point the caller has proven it can read the target.
 func (h *commentsHandler) gateCommentMutation(
 	w http.ResponseWriter, r *http.Request,
-	target comments.Target, commentID string, kind mutationKind,
+	addr commentAddress, commentID string, kind mutationKind,
 ) (comments.Target, comments.Comment, bool) {
 	ctx := r.Context()
 
-	target, ok := h.gateCommentTarget(w, r, target)
+	target, _, ok := h.gateCommentTarget(w, r, addr)
 	if !ok {
 		return target, comments.Comment{}, false
 	}
@@ -482,6 +528,13 @@ func (h *commentsHandler) gateCommentMutation(
 	return target, existing, true
 }
 
+// commentAddress is the parsed target of a comments request: the entity type
+// and its address, face included.
+type commentAddress struct {
+	typeName string
+	ref      entityRef
+}
+
 // gateCommentTarget resolves the target entity, reporting whether the request
 // may proceed.
 //
@@ -491,26 +544,31 @@ func (h *commentsHandler) gateCommentMutation(
 // so gating on the verdict alone would let a comment route confirm that an
 // arbitrary id is absent, and (worse) accept comments filed against entities
 // that were never there.
+//
+// The resolved entity is returned so the anchor code reads the SAME row the
+// gate admitted. Re-reading it by id would lose the face: the thread is keyed
+// by (id, face), and a bare-id read returns whichever face the world selects,
+// which is how a draft comment came to be anchored in the published body.
 func (h *commentsHandler) gateCommentTarget(
-	w http.ResponseWriter, r *http.Request, target comments.Target,
-) (comments.Target, bool) {
-	ent, found, err := h.visibleReader.getVisible(r.Context(), target.Type, target.ID)
+	w http.ResponseWriter, r *http.Request, addr commentAddress,
+) (comments.Target, *entity.Entity, bool) {
+	target := comments.Target{Type: addr.typeName, ID: addr.ref.ID, Face: addr.ref.Face}
+	ent, found, err := h.visibleReader.getVisibleRef(r.Context(), addr.typeName, addr.ref)
 	if err != nil {
 		writeGateError(w, r, err)
-		return target, false
+		return target, nil, false
 	}
 	if !found {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
-		return target, false
+		return target, nil, false
 	}
 	// Scope the thread to the face this request actually resolved to
-	// (FEAT-9CD2MX). Taken from the RESOLVED entity rather than parsed from the
-	// URL: a bare id under a world resolves to whichever face that world
-	// selects, and the thread must match the content on screen. Returning it
-	// from the gate means no call site can forget to apply it.
+	// (FEAT-9CD2MX). Taken from the RESOLVED entity rather than the address:
+	// a bare id under a world resolves to whichever face that world selects,
+	// and the thread must match the content on screen.
 	target.ID = ent.ID
 	target.Face = ent.Face
-	return target, true
+	return target, ent, true
 }
 
 // refuseIfReadOnly denies a comment write on a read-only instance, reporting
@@ -558,7 +616,7 @@ func isSafeStateRefSegment(s string) bool {
 // anchor's range is resolved per read, so echoing one here would be a second
 // code path producing the same number.
 func newAnchorWire(a comments.Anchor) anchorWire {
-	out := anchorWire{Kind: string(a.Kind), Ref: a.Ref}
+	out := anchorWire{Kind: string(a.Kind), Ref: a.Ref, Replacement: a.Replacement}
 	if a.Text != nil {
 		out.Quote = a.Text.Quote
 	}
@@ -616,7 +674,8 @@ func writeCommentError(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, comments.ErrEmptyBody),
 		errors.Is(err, comments.ErrBodyTooLong),
 		errors.Is(err, comments.ErrBodyControlChars),
-		errors.Is(err, comments.ErrInvalidAnchor):
+		errors.Is(err, comments.ErrInvalidAnchor),
+		errors.Is(err, comments.ErrInvalidReplacement):
 		writeV1Error(w, r, http.StatusBadRequest, "invalid_comment", err.Error(), "")
 	case errors.Is(err, comments.ErrTooManyComments):
 		writeV1Error(w, r, http.StatusConflict, "too_many_comments", err.Error(), "")
@@ -629,4 +688,203 @@ func writeCommentError(w http.ResponseWriter, r *http.Request, err error) {
 		writeV1Error(w, r, http.StatusInternalServerError, "comments_failed",
 			"Could not save the comment", "")
 	}
+}
+
+// authorizeBodyWrite pre-checks the `update` write the accept will perform,
+// recording a denial the way the attachment handler does. It writes the 403
+// and returns false on a deny.
+func (h *commentsHandler) authorizeBodyWrite(ctx context.Context, w http.ResponseWriter, e *entity.Entity) bool {
+	decision := h.acl().AuthorizeWrite(ctx, translateVerb("update", e.Type, e.ID, e.Face))
+	if decision.Allow {
+		return true
+	}
+	h.audit().Record(audit.Record{
+		Time:        time.Now().UTC(),
+		Op:          audit.OpDeniedWrite,
+		Subject:     &audit.Subject{Kind: "entity", Type: e.Type, ID: e.ID},
+		Principal:   principal.From(ctx),
+		TriggeredBy: audit.TriggeredByFrom(ctx),
+		Summary: fmt.Sprintf("denied: %s (rule_kind=%s rule_id=%s op=accept-suggestion)",
+			decision.Reason, decision.RuleKind, decision.RuleID),
+	})
+	writeForbiddenIfACLDenied(w, &acl.ForbiddenError{Decision: decision})
+	return false
+}
+
+// openSuggestion loads the comment an accept applies. It writes the error and
+// returns false unless the comment exists, is readable, suggests a
+// replacement and is still open.
+func (h *commentsHandler) openSuggestion(
+	w http.ResponseWriter, r *http.Request, target comments.Target, commentID string,
+) (comments.Comment, bool) {
+	ctx := r.Context()
+	// Before the lookup, so a principal without comment:read cannot tell an
+	// existing comment id (403) from an unknown one (404).
+	if !h.commentAuthorizer().CanRead(ctx, target) {
+		writeV1Error(w, r, http.StatusForbidden, "forbidden",
+			"Accepting a suggestion requires the comment:read permission", "")
+		return comments.Comment{}, false
+	}
+	existing, err := h.svc.Get(ctx, target, commentID)
+	if err != nil {
+		writeCommentError(w, r, err)
+		return comments.Comment{}, false
+	}
+	if existing.Anchor.Replacement == nil {
+		writeV1Error(w, r, http.StatusConflict, "no_suggestion",
+			"This comment does not suggest a replacement", "")
+		return comments.Comment{}, false
+	}
+	if existing.Resolved {
+		writeV1Error(w, r, http.StatusConflict, "comment_resolved",
+			"This comment is already resolved", "")
+		return comments.Comment{}, false
+	}
+	return existing, true
+}
+
+// acceptResponse is the accept route's success body.
+//
+// Content is the body the write submitted, so the SPA can show the change at
+// once. A backend that reformats on write (fsstore reflows to 80 columns) may
+// store it differently; the SPA reloads the view for the stored form. Warnings
+// are the soft validation findings of the write (DEC-HWZHA).
+type acceptResponse struct {
+	Content  string           `json:"content"`
+	Warnings []entity.Warning `json:"warnings,omitempty"`
+}
+
+// commentAccept applies a comment's suggested replacement to the entity body
+// and resolves the comment (TKT-S5C0K3).
+//
+// # Authorization
+//
+// Two independent grants, both required. `comment:read` (with the target read
+// floor) covers seeing the suggestion. The entity write is authorized by
+// PatchEntity itself, exactly as any other body edit, so a principal who could
+// not have typed this change cannot accept it either. That write is also
+// pre-checked, so a certain denial never touches the comment. `comment:update-*` is
+// NOT required to resolve the comment here: the accepter is usually not its
+// author, and closing a suggestion by applying it is part of the edit.
+//
+// The person accepting is the author of record for the body change (audit log,
+// version history), in the way whoever merges a pull request is responsible
+// for it.
+//
+// # Order: claim, then write
+//
+// The comment and the entity live in different stores, so this cannot be
+// atomic. Resolving FIRST makes the partial failure "resolved but not applied",
+// which the user can see and undo by reopening. The other order fails as
+// "applied but still open", and a replacement that keeps the quoted text
+// ("brown fox" → "brown fox jumps") still matches, so a retry would apply it
+// twice.
+//
+// The resolve is a conditional [comments.Service.SetResolved], not a write of
+// the whole comment. The flip is what stops two requests, on one server
+// process or several sharing a database, from both applying the suggestion,
+// and it leaves a concurrent edit to the comment's body intact. The patch
+// carries the raw row's version, so a body write landing after the reads
+// fails the patch instead of being overwritten.
+func (h *commentsHandler) commentAccept(
+	w http.ResponseWriter, r *http.Request, addr commentAddress, commentID string,
+) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", "POST")
+		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
+		return
+	}
+	if h.refuseIfReadOnly(w, r) {
+		return
+	}
+	r = h.withProvision(r)
+	ctx := r.Context()
+
+	target, visible, ok := h.gateCommentTarget(w, r, addr)
+	if !ok {
+		return
+	}
+	existing, ok := h.openSuggestion(w, r, target, commentID)
+	if !ok {
+		return
+	}
+
+	// The splice base and version token come from the RAW row at the face the
+	// gate resolved. The visible entity may have redacted properties, and a
+	// version token hashed over redacted properties never matches the store.
+	raw, found := h.reader.getEntityRef(ctx, entityRef{ID: target.ID, Face: target.Face})
+	if !found {
+		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
+		return
+	}
+	if raw.IsLocked() {
+		writeV1Error(w, r, http.StatusUnprocessableEntity, "encrypted_inaccessible",
+			"Cannot edit an inaccessible entity", "File is git-crypt encrypted; run `git-crypt unlock` first.")
+		return
+	}
+	// The manager stays the authority on the write, but a caller it is certain
+	// to refuse must not get to resolve and reopen someone else's comment on
+	// the way to that refusal.
+	if !h.authorizeBodyWrite(ctx, w, raw) {
+		return
+	}
+	// The accepter reviewed the suggestion against the body they can see. If
+	// that differs from the stored body, writing would splice into text they
+	// never saw, so refuse. Body redaction does not exist today, so in practice
+	// this is a concurrent write landing between the two reads; the message
+	// says so.
+	if raw.Content != visible.Content {
+		writeV1Error(w, r, http.StatusConflict, "suggestion_stale",
+			"The entity body changed while accepting; reload and try again", "")
+		return
+	}
+
+	newBody, err := comments.ApplyReplacement(raw.Content, existing.Anchor)
+	if err != nil {
+		writeV1Error(w, r, http.StatusConflict, "suggestion_stale",
+			"The suggested text no longer matches the entity body", "")
+		return
+	}
+
+	// Claim the comment. The flip is conditional in the store, so of two
+	// accepts racing (even on two server processes) exactly one proceeds.
+	claimed, err := h.svc.SetResolved(ctx, target, commentID, true)
+	if err != nil {
+		writeCommentError(w, r, err)
+		return
+	}
+	if !claimed {
+		writeV1Error(w, r, http.StatusConflict, "comment_resolved",
+			"This comment is already resolved", "")
+		return
+	}
+
+	result, err := h.patcher.PatchEntity(ctx, target.Key(), entity.Patch{
+		Content:         &newBody,
+		ExpectedVersion: string(store.VersionOf(raw)),
+	})
+	if err != nil {
+		if _, uerr := h.svc.SetResolved(ctx, target, commentID, false); uerr != nil {
+			slog.ErrorContext(ctx, "accept suggestion: reopen after failed write",
+				"target", target.Key(), "comment", commentID, "write_error", err, "reopen_error", uerr)
+			writeV1Error(w, r, http.StatusInternalServerError, "comments_failed",
+				"The suggestion was not applied, but the comment stayed resolved; reopen it to try again", "")
+			return
+		}
+		if errors.Is(err, entitymanager.ErrEntityNotFound) || errors.Is(err, store.ErrNotFound) {
+			writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
+			return
+		}
+		writePatchError(w, r, err)
+		return
+	}
+
+	resp := acceptResponse{Content: newBody}
+	if result != nil {
+		if result.Entity != nil {
+			resp.Content = result.Entity.Content
+		}
+		resp.Warnings = result.Warnings
+	}
+	writeV1JSON(w, http.StatusOK, resp)
 }

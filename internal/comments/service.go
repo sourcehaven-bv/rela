@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
 
@@ -141,6 +142,13 @@ func (s *Service) Update(ctx context.Context, target Target, id, body string, re
 	return s.store.Update(ctx, target, id, body, resolved)
 }
 
+// SetResolved flips a comment's resolved flag only if it differs, reporting
+// whether this call changed it. See [Store.SetResolved]. Authorization is the
+// caller's job.
+func (s *Service) SetResolved(ctx context.Context, target Target, id string, resolved bool) (bool, error) {
+	return s.store.SetResolved(ctx, target, id, resolved)
+}
+
 // Delete removes one comment. Authorization is the caller's job.
 func (s *Service) Delete(ctx context.Context, target Target, id string) error {
 	return s.store.Delete(ctx, target, id)
@@ -176,6 +184,15 @@ func (s *Service) EntityDeleted(ctx context.Context, entityID string) error {
 	// All faces: the entity is gone, so a thread left on any face would be
 	// stranded at an id nothing can reach.
 	return s.store.DeleteAllFaces(ctx, entityID)
+}
+
+// EntityFaceDeleted drops the thread of one deleted face, leaving the entity's
+// other faces untouched.
+//
+// Dropped for the reason EntityDeleted gives: a face of the same name created
+// later would otherwise inherit remarks about content that no longer exists.
+func (s *Service) EntityFaceDeleted(ctx context.Context, entityID string, face entity.Face) error {
+	return s.store.DeleteTarget(ctx, Target{ID: entityID, Face: face})
 }
 
 // authorFrom resolves the comment author from ctx.

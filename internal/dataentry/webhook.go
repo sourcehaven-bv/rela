@@ -16,6 +16,12 @@ import (
 // does not exist in the loaded config — an operator misconfiguration.
 var errWebhookActionMissing = errors.New("dataentry: configured webhook action not found")
 
+// errWebhookActionEntityBound is returned when the configured provisioning
+// action has available_on. Such an action needs an entity and is gated on
+// the invoking user; the webhook supplies neither (TKT-VVS16W).
+var errWebhookActionEntityBound = errors.New(
+	"dataentry: configured webhook action has available_on and can only run from a detail page")
+
 // WebhookClaims is the verified subset of an inbound webhook the receiver acts
 // on. It mirrors jwtauth.WebhookClaims but is declared HERE so the dataentry
 // package needn't import jwtauth (the inward-pointing layering rule — the same
@@ -34,8 +40,8 @@ type WebhookClaims struct {
 const webhookMaxBody = 64 << 10 // 64 KiB
 
 // webhookActionTimeout bounds the provisioning action (which fetches the user
-// from the IdP over HTTP, then upserts). Longer than the interactive
-// actionTimeout because the network round-trip to the IdP dominates.
+// from the IdP over HTTP, then upserts). Tighter than lua.DefaultTimeout so a
+// slow IdP answers the webhook sender before it gives up and redelivers.
 const webhookActionTimeout = 15 * time.Second
 
 // webhookDedupTTL is how long a processed webhook id is remembered so a redelivery
@@ -85,7 +91,7 @@ func (a *App) registerWebhookRoutes(mux *http.ServeMux) {
 		return
 	}
 	// The handler lives on the receiver; the App only supplies the dispatch
-	// closure (which routes through the writeHandler: engine, schema, writeMu). This
+	// closure (which routes through the writeHandler: engine, schema). This
 	// keeps the HTTP-flow logic off the (already large) App type.
 	rec := a.webhook
 	mux.HandleFunc("POST /webhooks/idp", func(w http.ResponseWriter, r *http.Request) {
@@ -146,8 +152,9 @@ func (rec *webhookReceiver) handle(
 }
 
 // dispatchWebhookAction runs the provisioning action with the webhook's claims as
-// params, under the webhook-receiver principal. Serialized against other
-// mutations via writeMu (the action upserts an entity), matching handleV1Action.
+// params, under the webhook-receiver principal. It runs concurrently with other
+// writes, like handleV1Action; an upsert keyed on a `unique:` property stays
+// single because the manager checks uniqueness and writes inside one store.Tx.
 // A free function taking the writeHandler explicitly (it is dispatch wiring,
 // not a route handler).
 func dispatchWebhookAction(ctx context.Context, h *writeHandler, actionID string, claims WebhookClaims) error {
@@ -158,6 +165,13 @@ func dispatchWebhookAction(ctx context.Context, h *writeHandler, actionID string
 		// the log; the 502 the caller sends will surface it operationally too.
 		slog.Error("idp webhook: configured action not found", "action", actionID)
 		return errWebhookActionMissing
+	}
+	// The webhook runs as the webhook-receiver principal, not a user, so an
+	// action's `permission:` does not apply here: the verified callback is the
+	// authorization. An entity-bound action cannot run here at all.
+	if action.AvailableOn != nil {
+		slog.Error("idp webhook: configured action has available_on", "action", actionID)
+		return errWebhookActionEntityBound
 	}
 
 	// Stamp the webhook-receiver principal so the provisioned entity is attributed
@@ -173,9 +187,6 @@ func dispatchWebhookAction(ctx context.Context, h *writeHandler, actionID string
 		"user_id": claims.UserID,
 		"org_id":  claims.OrgID,
 	}
-
-	h.writeMu.Lock()
-	defer h.writeMu.Unlock()
 
 	// TKT-YH52OM: the webhook path resolves the SAME `actions:` entry as the
 	// HTTP endpoint, so it honors the same `capabilities:` declaration. This

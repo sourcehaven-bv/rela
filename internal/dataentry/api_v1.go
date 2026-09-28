@@ -176,8 +176,7 @@ const (
 
 // handleV1DynamicRoutes routes requests to the appropriate entity handler
 // based on URL. Read operations work against the snapshot returned by
-// a.State() with no locking; write operations take a.writeMu for the
-// duration of the mutation.
+// a.State() with no locking.
 func (a *App) handleV1DynamicRoutes(w http.ResponseWriter, r *http.Request) {
 	// Skip system routes (already handled)
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/")
@@ -283,7 +282,7 @@ func (a *App) handleV1EntityCollection(w http.ResponseWriter, r *http.Request, t
 		// TKT-3I5U: ?dry_run=true evaluates affordances + soft validation
 		// against the candidate WITHOUT persisting, so the create form can
 		// gate fields / options / hidden as the user types. Read-shaped:
-		// dispatched before handleV1CreateEntity acquires the write lock.
+		// dispatched before handleV1CreateEntity, and never persists.
 		if r.URL.Query().Get("dry_run") == "true" {
 			a.write.handleV1DryRunCreate(w, r, typeName, plural)
 			return
@@ -458,7 +457,7 @@ func scopedSortedEntitiesScoped(
 	// Classify each filter[<key>] param as property vs relation ONCE, up
 	// front, so both passes agree on routing. The config's FilterControls are
 	// authoritative (RR-0HWAS0 / RR-B0JPPL): a relation filter applies only
-	// when a control on a list of this type configures it. Name-based
+	// when a list or kanban control of this type configures it. Name-based
 	// GetRelationDef is only a fallback and only ever routes AWAY from
 	// properties, never toward relations without a control.
 	isRelationKey := relationFilterClassifier(a.Meta(), a.Cfg(), typeName)
@@ -480,7 +479,7 @@ func scopedSortedEntitiesScoped(
 //
 // Relation filtering is restricted to configured filter_controls (RR-B0JPPL):
 // a `filter[<rel>]` param routes to the relation pass ONLY when a relation
-// FilterControl on a list of this entity type configures it. An arbitrary
+// FilterControl on a list or kanban of this entity type configures it. An arbitrary
 // metamodel relation with no control is NOT filterable and falls through to
 // applyV1Filters (where, absent a matching property, it fails closed rather
 // than silently widening the set).
@@ -527,10 +526,11 @@ func relationFilterClassifier(
 // filter present in the query. isRelationKey (the config-backed classifier
 // built in scopedSortedEntities) decides which `filter[<key>]` params are
 // relation filters; property filters are handled by applyV1Filters. Matching is
-// direction-aware: the FilterControl config on a list of this entity type
-// supplies the direction (default outgoing), and an entity matches iff it has
-// an edge of that (relation, direction) to a READABLE neighbor whose display
-// title equals the requested value.
+// direction-aware: the FilterControl config on a list or kanban of this
+// entity type supplies the direction (default outgoing; precedence in
+// dataentryconfig.Config.RelationFilterDirection), and an entity matches iff
+// it has an edge of that (relation, direction) to a READABLE neighbor whose
+// display title equals the requested value.
 //
 // Operators: only `eq` (the bare `filter[<rel>]` form) and `ne`
 // (`filter[<rel>][ne]`) are supported. Any other operator segment is rejected
@@ -1784,16 +1784,54 @@ func (a *App) handleV1Config(w http.ResponseWriter, r *http.Request) {
 	writeV1JSON(w, http.StatusOK, config)
 }
 
+// maxSearchLimit bounds the `limit` parameter of /_search. It matches the
+// list endpoint's per_page ceiling.
+const maxSearchLimit = 100
+
+// parseSearchLimit reads the optional `limit` parameter of /_search. An empty
+// value means no limit and returns 0. The second result is false for a value
+// that is not an integer in [1, maxSearchLimit].
+//
+// The editor's mention menu is the motivating caller: `sort:modified:desc`
+// with a small limit lists recently modified entities without shipping every
+// visible row to the browser.
+func parseSearchLimit(raw string) (int, bool) {
+	if raw == "" {
+		return 0, true
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 1 || n > maxSearchLimit {
+		return 0, false
+	}
+	return n, true
+}
+
 func (a *App) handleV1Search(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
 		return
 	}
 
+	limit, ok := parseSearchLimit(r.URL.Query().Get("limit"))
+	if !ok {
+		writeV1Error(w, r, http.StatusBadRequest, "invalid_limit",
+			fmt.Sprintf("limit must be an integer between 1 and %d", maxSearchLimit), "")
+		return
+	}
 	query := r.URL.Query().Get("q")
 	if query == "" {
 		writeV1JSON(w, http.StatusOK, v1.ListResponse{Data: []v1.Entity{}, Meta: v1.ListMeta{}})
 		return
+	}
+
+	// A `type` parameter also joins the query as a `type:` clause, so a
+	// free-text search is scoped BEFORE its relevance cap rather than
+	// filtered after it, where the cap could have spent every slot on
+	// other types. Only a declared type name is spliced in; any other value
+	// cannot match a row, which the exact filter below still ensures.
+	typeFilter := r.URL.Query().Get("type")
+	if _, declared := a.State().Meta.Entities[typeFilter]; declared {
+		query = "type:" + typeFilter + " " + query
 	}
 
 	// executeQuery is read-gated (TKT-BA8BSX): only entities the
@@ -1805,8 +1843,9 @@ func (a *App) handleV1Search(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Apply type filter if provided
-	if typeFilter := r.URL.Query().Get("type"); typeFilter != "" {
+	// The exact filter stays: a `type:` clause already in `q` unions with
+	// the spliced one.
+	if typeFilter != "" {
 		filtered := make([]*entityPkg.Entity, 0)
 		for _, e := range entities {
 			if e.Type == typeFilter {
@@ -1814,6 +1853,11 @@ func (a *App) handleV1Search(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		entities = filtered
+	}
+	// Truncated after the read gate and the type filter, so the cap counts
+	// only rows this principal may see and a hidden row cannot take a slot.
+	if limit > 0 && len(entities) > limit {
+		entities = entities[:limit]
 	}
 	// Search rows are content-free (rowcontent.go); bodies are opt-in and
 	// bounded by the search result cap.
@@ -1835,7 +1879,13 @@ func (a *App) handleV1Search(w http.ResponseWriter, r *http.Request) {
 		// {ID, Title} of related entities this principal may not read.
 		// Flipping this requires per-target gating first (RR-QO01XY) —
 		// TestACLSearch_VisibleHitRelatedToHidden pins the invariant.
-		data = append(data, a.serializer.forWireRelated(pageCtx, e, nil, nil, nil, a.Meta(), plural))
+		row := a.serializer.forWireRelated(pageCtx, e, nil, nil, nil, a.Meta(), plural)
+		// Same provenance a list row carries, and nil in the default world
+		// for the same reason (see handleV1ListEntities).
+		if !worldScopeFrom(r.Context()).IsDefaultWorld() {
+			row.World = worldProvenance(r.Context(), e)
+		}
+		data = append(data, row)
 	}
 
 	resp := v1.ListResponse{

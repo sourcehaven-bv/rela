@@ -10,7 +10,9 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
+	"github.com/Sourcehaven-BV/rela/internal/attachment"
 	"github.com/Sourcehaven-BV/rela/internal/config"
+	"github.com/Sourcehaven-BV/rela/internal/lock"
 	relamcp "github.com/Sourcehaven-BV/rela/internal/mcp"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -50,10 +52,13 @@ type mcpServices struct {
 	// service generation — job queue, mail worker, GC sweep — against a store
 	// Close has already torn down, and nothing would ever stop them.
 	closed bool
-	// attachMu serializes the MCP attachment writes of this process. It
-	// outlives reloads, so writes under an old and a new schema still
-	// exclude each other.
-	attachMu sync.Mutex
+	// attachLocker serializes the MCP attachment writes of this process per
+	// (entity, property). It outlives reloads, so writes under an old and a
+	// new schema still exclude each other.
+	attachLocker lock.Locker
+	// attachUploads bounds this process's concurrent MCP uploads. It
+	// outlives reloads for the same reason.
+	attachUploads *attachment.Limiter
 }
 
 // current returns the live services bundle.
@@ -81,9 +86,11 @@ func newMCPServices(startDir string) (*mcpServices, error) {
 		return nil, err
 	}
 	return &mcpServices{
-		svc:     svc,
-		origin:  svc,
-		watcher: &mcpWatcher{store: svc.Store()},
+		svc:           svc,
+		origin:        svc,
+		watcher:       &mcpWatcher{store: svc.Store()},
+		attachLocker:  lock.For(svc.Store()),
+		attachUploads: attachment.NewLimiter(attachment.DefaultMaxUploads),
 	}, nil
 }
 
@@ -216,7 +223,7 @@ func (s *mcpServices) watchSchema(srv *relamcp.Server) {
 // The three read handles come from [appbuild.Services.GatedReads] rather
 // than the raw accessors. Under this command's NopACL wiring they ARE the
 // raw store / tracer / validator, so `rela mcp` behaves exactly as before —
-// but every MCP read surface (tools, resources, prompts, analyze, export)
+// but every MCP read surface (tools, resources, prompts, analyze)
 // now reaches the graph through one seam that a networked wiring can
 // substitute, instead of each handler holding the store directly. That is
 // what makes the remote transport a wiring change rather than a rewrite of
@@ -230,12 +237,12 @@ func (s *mcpServices) Deps() relamcp.Deps {
 // deps builds the bundle from the current services. Caller holds mu.
 func (s *mcpServices) deps() relamcp.Deps {
 	reads := s.svc.GatedReads()
-	return relamcp.Deps{
+	deps := relamcp.Deps{
 		Attachments:   s.attachmentDeps(),
 		Store:         reads.Reader,
 		Meta:          s.svc.Meta(),
 		Tracer:        reads.Tracer,
-		Searcher:      s.svc.Searcher(),
+		Searcher:      reads.Searcher,
 		Validator:     reads.Validator,
 		EntityManager: s.svc.EntityManager(),
 		Config:        s.svc.Config(),
@@ -244,6 +251,10 @@ func (s *mcpServices) deps() relamcp.Deps {
 		Watcher:       s.watcher,
 		ProjectRoot:   s.svc.Paths().Root,
 	}
+	if reads.Traversals != nil {
+		deps.Traversals = reads.Traversals
+	}
+	return deps
 }
 
 // attachmentDeps wires the MCP attachment tools like `rela attach`: raw
@@ -253,12 +264,12 @@ func (s *mcpServices) deps() relamcp.Deps {
 // reload, which rebuilds the Deps. Caller holds mu.
 func (s *mcpServices) attachmentDeps() relamcp.AttachmentDeps {
 	snap, err := relamcp.NewAttachmentSnapshot(
-		s.svc.Store(), s.svc.EntityManager(), s.svc.Meta(), nil, store.MaxAttachmentBytes)
+		s.svc.Store(), s.svc.EntityManager(), s.attachLocker, s.svc.ACL(), s.svc.Meta(), nil, store.MaxAttachmentBytes)
 	return relamcp.AttachmentDeps{
 		Snapshot:   func() (relamcp.AttachmentSnapshot, error) { return snap, err },
+		Uploads:    s.attachUploads,
 		Authorizer: s.svc.ACL(),
 		Audit:      s.svc.Audit(),
-		WriteLock:  &s.attachMu,
 	}
 }
 

@@ -205,7 +205,7 @@ export interface ApiHelpers {
   setEntityContent(plural: string, id: string, content: string): Promise<EntityResponse>;
   /** A target's comment thread (TKT-FIO205). Comments live outside the entity
    *  store, so seeding and cleanup do not ride entity CRUD. */
-  listComments(type: string, id: string): Promise<{ comments: { id: string }[] }>;
+  listComments(type: string, id: string): Promise<{ comments: { id: string; resolved: boolean }[] }>;
   deleteComment(type: string, id: string, commentId: string): Promise<void>;
   createRelation(
     fromPlural: string,
@@ -1457,6 +1457,11 @@ kanbans:
     filter_controls:
       - property: priority
         label: Priority
+      # A relation control: its options are the relation's targets, and the
+      # board filters server-side like a list (FEAT-001 blocks FEAT-003).
+      - relation: blocks
+        direction: outgoing
+        label: Blocks
 
   bug-board:
     entity_type: bug

@@ -71,6 +71,22 @@ unchanged: they always carry `content`, as do ETags computed over it. A row
 whose entity has an empty body looks the same with or without the flag, which
 is the reason the field is omitted rather than sent empty.
 
+## Limiting search results
+
+`GET /api/v1/_search` accepts an optional `limit` (an integer from 1 to 100)
+that caps the number of rows returned. The cap applies after the read gate, the
+`type` filter and any `sort:` clause, so it counts only rows the caller may see.
+Any other value is a `400 invalid_limit`.
+
+The limit shrinks the response, not the server's work: the query still reads
+and sorts every matching row before the cut.
+
+```text
+GET /api/v1/_search?q=type:ticket,feature sort:modified:desc&limit=8
+```
+
+The editor's `@` mention menu uses this form to list recently modified entities.
+
 ## Relations field
 
 Each value of the `relations` map is one of TWO shapes:
@@ -165,7 +181,7 @@ Everything else previous drafts would 422 on. The API performs the requested
 write and returns warnings in the response body so UIs surface them
 non-blockingly. Each warning is `{code, path, detail}` where:
 
-- `code` is stable and matches the corresponding `analyze_*` finding code
+- `code` is stable and matches the corresponding `analyze` finding code
 - `path` is an RFC 6901 JSON Pointer to the offending field
 - `detail` is a human-readable explanation
 
@@ -191,7 +207,7 @@ Warning codes:
 | `required_meta_unset` | Required meta property absent after merge |
 | `meta_type_mismatch` | Meta value's type doesn't match the declared property type |
 
-A read of `analyze_orphans` / `analyze_validations` will surface the same
+The `orphans` and `validations` analyze checks surface the same
 findings; clients may de-duplicate by `code`.
 
 Entity-level warnings reflect the **post-write entity state** — if the
@@ -216,7 +232,10 @@ The validation-first ordering means a relation 422 leaves the entity
 **untouched**. The unavoidable atomicity gap is mid-write-loop store failures
 (disk full, permission denied, etc.) — these are rare, irrecoverable, and
 return a 500 with `relation_write_failed`. The legacy reconciler had the same
-property; this PR doesn't make it worse.
+property; this PR doesn't make it worse. Concurrent requests that add or drop
+the same edge are not failures: the reconciler switches between update and
+create when it finds the edge in the other state, and answers 409 `conflict`
+only if the edge keeps flipping under it.
 
 The store interface (internal/store/store.go) intentionally has no
 transaction primitive — adding one would fight the pluggable-backends goal
@@ -262,10 +281,11 @@ Mismatch → 412 Precondition Failed.
 
 The precondition is re-checked by the store, atomically with the write
 (TKT-34XS2R). Previously the compare and the write were separate steps made
-safe only by a process-local write lock, so two `rela-server` processes against
-one PostgreSQL database could both pass the compare and the second could
-overwrite the first. A write that loses that race now returns 412 as well — the
-same status, and the same remedy for the client: re-read, re-apply, retry.
+safe only by a process-local write lock (removed in TKT-WE0S2K), so two
+`rela-server` processes against one PostgreSQL database could both pass the
+compare and the second could overwrite the first. A write that loses that race
+now returns 412 as well — the same status, and the same remedy for the client:
+re-read, re-apply, retry.
 
 ## MCP and Lua content semantics
 
@@ -329,6 +349,28 @@ the ACL layer learns to represent them (gated on a separate ACL v0.5
 work item). Until then the SPA continues to render workflow controls
 unconditionally and falls back to the server's 403 on disallowed
 transitions.
+
+### Detail-page actions (`action:<id>`)
+
+A per-item `_actions` map may also carry keys of the form `action:<id>`, one
+per [action with `available_on`](../data-entry.md#actions-on-the-detail-page)
+that the principal may run against this entity at its face. These keys are
+only ever `true`. **Absence means "not offered"**, the opposite of the verb
+keys, because only the server can list which actions apply.
+
+```json
+"_actions": { "update": true, "action:regenerate-soa": true }
+```
+
+`POST /api/v1/_action/<id>` with `{"entity_id": "<ID>@<face>"}` checks the same
+rules before the script runs:
+
+| Status | Error code | When |
+|---|---|---|
+| 403 | `permission_required` | The caller lacks the action's `permission:`. Applies to every action, with or without `available_on` |
+| 404 | `entity_not_found` | No `entity_id`, or the entity does not exist or the caller may not read it at that face |
+| 403 | `action_not_available` | Type, face or `when` does not match |
+| 409 | `config_reloaded` | The configuration was reloaded while the request waited; retry |
 
 ### Always present
 
@@ -409,7 +451,7 @@ that's expected and documents the scope.
   path doesn't propagate at all; an independent ticket would address it if
   needed.
 - **Cardinality enforcement.** `min_outgoing` / `max_outgoing` are advisory
-  (surfaced via `analyze_*`), never enforced at write time.
+  (surfaced via `analyze`), never enforced at write time.
 - **Granular relations diff verbs** (à la GraphQL `connect`/`disconnect`).
   v1 is replacement-only at the list level + upsert at the per-edge level.
 - **Cross-entity atomic transactions.** A single PATCH targets one entity;
@@ -572,8 +614,8 @@ The handler runs the same defaults + affordance evaluation the real
 create would, against the candidate (type + supplied properties, no
 persisted ID), and returns a normal per-entity response shape —
 `_fields`, `_relations`, stripped hidden `properties`, and DEC-HWZHA
-soft `warnings` — **without persisting anything, without an audit row,
-and without taking the write lock** (it is a read-shaped operation).
+soft `warnings` — **without persisting anything and without an audit row**
+(it is a read-shaped operation).
 The response is `Cache-Control: no-store` with no ETag.
 
 Properties:
@@ -835,6 +877,17 @@ on the property's `max`:
   (normalized) name already exists is **auto-suffixed** (`report.pdf` →
   `report (1).pdf`) so it never overwrites a sibling. Uploading past the cap
   returns `409 attachment_limit`.
+
+Concurrent uploads and deletes to the same property take turns, so the cap
+and the replace hold under concurrency. The write permission is checked again
+when a write's turn comes, so a permission revoked during a slow upload still
+stops it. Upload bytes are received before the wait starts, so a slow upload
+never holds up another writer.
+
+A write answers `503 attachment_busy` with `Retry-After: 1` when it waits more
+than 60 seconds for its turn, or when the server is already handling its
+maximum number of concurrent uploads (4 per process). Nothing was written, and
+the client may retry.
 
 **Access inherits the owning entity's `update` permission** — an
 attachment write mutates the entity, so it is authorized as an `update`,

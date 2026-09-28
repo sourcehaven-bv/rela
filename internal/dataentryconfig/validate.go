@@ -577,9 +577,11 @@ func validateNavEntry(nav NavigationEntry, cfg *Config) []string {
 	}
 
 	if nav.Action != "" {
-		if _, ok := cfg.Actions[nav.Action]; !ok {
+		if a, ok := cfg.Actions[nav.Action]; !ok {
 			errs = append(errs, fmt.Sprintf(
 				"navigation: references unknown action %q", nav.Action))
+		} else if a.AvailableOn != nil {
+			errs = append(errs, entityBoundActionRefError("navigation", nav.Action))
 		}
 	}
 
@@ -1150,23 +1152,23 @@ func validateLists(cfg *Config, meta *metamodel.Metamodel) []string {
 // deterministically-ordered []string so the caller can log each and tests can
 // assert on the set.
 //
-// It flags two conditions:
+// It flags two conditions, over the filter controls of every list and kanban
+// (both feed the shared list pipeline):
 //
-//   - A relation FilterControl declared `direction: incoming` whose list
+//   - A relation FilterControl declared `direction: incoming` whose screen's
 //     entity_type is not a `to:` side of the relation. Such a filter follows
 //     incoming edges into a type that is never the target, so it can only ever
 //     match zero rows — a config smell, but not fatal (the filter still
 //     behaves, it just filters everything out).
-//   - Two lists of the same entity type configuring the same relation filter
+//   - Two screens of the same entity type configuring the same relation filter
 //     with conflicting directions. The shared list pipeline is keyed by entity
-//     type (not list ID), so RelationFilterDirection resolves a single winner
-//     (lowest list ID); the loser's declared direction is silently ignored,
-//     which the author should know about (RR-9MJRJG).
+//     type (not screen ID), so RelationFilterDirection resolves a single winner
+//     (lists before kanbans, then lowest ID); the loser's declared direction is
+//     silently ignored, which the author should know about (RR-9MJRJG).
 func CollectConfigWarnings(cfg *Config, meta *metamodel.Metamodel) []string {
 	var warnings []string
-	for _, listID := range sortedListIDs(cfg) {
-		list := cfg.Lists[listID]
-		for i, fc := range list.FilterControls {
+	for _, src := range cfg.filterControlSources() {
+		for i, fc := range src.Controls {
 			if fc.Relation == "" || !fc.Direction.IsIncoming() {
 				continue
 			}
@@ -1174,13 +1176,13 @@ func CollectConfigWarnings(cfg *Config, meta *metamodel.Metamodel) []string {
 			if !ok {
 				continue // unknown relation already caught as a hard error
 			}
-			if slices.Contains(relDef.To, list.EntityType) {
+			if slices.Contains(relDef.To, src.EntityType) {
 				continue
 			}
 			warnings = append(warnings, fmt.Sprintf(
-				"list %q: filter_controls[%d] relation %q with direction: incoming targets entity type %q, "+
+				"%s %q: filter_controls[%d] relation %q with direction: incoming targets entity type %q, "+
 					"which is not a `to:` side of the relation (valid: %s); this filter will match no rows",
-				listID, i, fc.Relation, list.EntityType, strings.Join(relDef.To, ", ")))
+				src.Kind, src.ID, i, fc.Relation, src.EntityType, strings.Join(relDef.To, ", ")))
 		}
 	}
 	warnings = append(warnings, conflictingRelationDirectionWarnings(cfg)...)
@@ -1411,58 +1413,59 @@ func viewCommandPermissionWarnings(cfg *Config) []string {
 	return warnings
 }
 
-// relationPropertyNameCollisionWarnings flags a relation FilterControl whose
-// name also names a property of the list's entity type, with no property
-// FilterControl to disambiguate. Properties (per-type) and relations (global)
-// are disjoint namespaces, so nothing forbids the collision; the runtime
-// resolves it in favor of the PROPERTY (safe, backward-compatible), which means
-// the relation filter the author configured silently does nothing. Warn so the
-// ambiguity is visible at load (RR-0HWAS0).
+// relationPropertyNameCollisionWarnings flags a relation FilterControl (on a
+// list or kanban) whose name also names a property of the screen's entity
+// type, with no property FilterControl to disambiguate. Properties (per-type)
+// and relations (global) are disjoint namespaces, so nothing forbids the
+// collision; the runtime resolves it in favor of the PROPERTY (safe,
+// backward-compatible), which means the relation filter the author configured
+// silently does nothing. Warn so the ambiguity is visible at load (RR-0HWAS0).
 func relationPropertyNameCollisionWarnings(cfg *Config, meta *metamodel.Metamodel) []string {
 	var warnings []string
-	for _, listID := range sortedListIDs(cfg) {
-		list := cfg.Lists[listID]
-		entDef, ok := meta.GetEntityDef(list.EntityType)
+	for _, src := range cfg.filterControlSources() {
+		entDef, ok := meta.GetEntityDef(src.EntityType)
 		if !ok {
 			continue
 		}
-		for i, fc := range list.FilterControls {
+		for i, fc := range src.Controls {
 			if fc.Relation == "" {
 				continue
 			}
 			if _, isProp := entDef.Properties[fc.Relation]; !isProp {
 				continue
 			}
-			if cfg.HasPropertyFilterControl(list.EntityType, fc.Relation) {
+			if cfg.HasPropertyFilterControl(src.EntityType, fc.Relation) {
 				continue // an explicit property control resolves the routing
 			}
 			warnings = append(warnings, fmt.Sprintf(
-				"list %q: filter_controls[%d] relation %q collides with a property of entity type %q; "+
+				"%s %q: filter_controls[%d] relation %q collides with a property of entity type %q; "+
 					"the filter will match the PROPERTY, not the relation — rename or add a property "+
 					"filter control to disambiguate",
-				listID, i, fc.Relation, list.EntityType))
+				src.Kind, src.ID, i, fc.Relation, src.EntityType))
 		}
 	}
 	return warnings
 }
 
 // conflictingRelationDirectionWarnings flags (entityType, relation) pairs where
-// two or more lists of the same type configure the same relation filter with
-// conflicting directions. RelationFilterDirection resolves to the lowest list
-// ID, so any other list's declared direction is ignored at runtime.
+// two or more screens (lists and kanbans) of the same type configure the same
+// relation filter with conflicting directions. RelationFilterDirection
+// resolves to the first in filterControlSources order (lists before kanbans,
+// then lowest ID), so any other screen's declared direction is ignored at
+// runtime.
 func conflictingRelationDirectionWarnings(cfg *Config) []string {
-	// Group the (listID, direction) each list declares for a given
-	// (entityType, relation), in sorted-list-ID order so the winner and the
-	// warning text are deterministic.
+	// Group the screens declaring a given (entityType, relation), in
+	// filterControlSources order so the winner and the warning text are
+	// deterministic.
 	type decl struct {
-		listID    string
+		kind      string
+		id        string
 		direction Direction
 	}
 	byPair := map[string][]decl{}
 	var pairOrder []string
-	for _, listID := range sortedListIDs(cfg) {
-		list := cfg.Lists[listID]
-		for _, fc := range list.FilterControls {
+	for _, src := range cfg.filterControlSources() {
+		for _, fc := range src.Controls {
 			if fc.Relation == "" {
 				continue
 			}
@@ -1470,11 +1473,11 @@ func conflictingRelationDirectionWarnings(cfg *Config) []string {
 			if fc.Direction.IsIncoming() {
 				dir = DirectionIncoming
 			}
-			key := list.EntityType + "\x00" + fc.Relation
+			key := src.EntityType + "\x00" + fc.Relation
 			if _, seen := byPair[key]; !seen {
 				pairOrder = append(pairOrder, key)
 			}
-			byPair[key] = append(byPair[key], decl{listID: listID, direction: dir})
+			byPair[key] = append(byPair[key], decl{kind: src.Kind, id: src.ID, direction: dir})
 		}
 	}
 
@@ -1495,16 +1498,14 @@ func conflictingRelationDirectionWarnings(cfg *Config) []string {
 		entityType, relation := parts[0], parts[1]
 		winner := decls[0]
 		var others []string
-		for _, d := range decls {
-			if d.listID == winner.listID {
-				continue
-			}
-			others = append(others, fmt.Sprintf("%s=%s", d.listID, d.direction))
+		for _, d := range decls[1:] {
+			others = append(others, fmt.Sprintf("%s %s=%s", d.kind, d.id, d.direction))
 		}
 		warnings = append(warnings, fmt.Sprintf(
-			"entity type %q: relation %q filter is configured with conflicting directions across lists; "+
-				"list %q (direction: %s) wins (lowest list ID), ignoring %s",
-			entityType, relation, winner.listID, winner.direction, strings.Join(others, ", ")))
+			"entity type %q: relation %q filter is configured with conflicting directions "+
+				"across lists and kanbans; %s %q (direction: %s) wins (lists before kanbans, "+
+				"then lowest ID), ignoring %s",
+			entityType, relation, winner.kind, winner.id, winner.direction, strings.Join(others, ", ")))
 	}
 	return warnings
 }
@@ -2387,6 +2388,7 @@ func validateActions(cfg *Config, meta *metamodel.Metamodel) []string {
 		}
 
 		errs = append(errs, validateActionRequest(id, action, hasScript)...)
+		errs = append(errs, validateActionScope(id, action, hasScript, meta)...)
 
 		// Key validation (optional — only required when referenced by a list)
 		if action.Key != "" {
@@ -2411,6 +2413,11 @@ func validateActions(cfg *Config, meta *metamodel.Metamodel) []string {
 				errs = append(errs, fmt.Sprintf(
 					"list %q: references unknown action %q", listID, actionID))
 				continue
+			}
+
+			if action.AvailableOn != nil {
+				errs = append(errs, entityBoundActionRefError(
+					fmt.Sprintf("list %q", listID), actionID))
 			}
 
 			// Actions referenced by lists must have label and key
@@ -2442,6 +2449,58 @@ func validateActions(cfg *Config, meta *metamodel.Metamodel) []string {
 	}
 
 	return errs
+}
+
+// validateActionScope checks the detail-page keys of one action
+// (TKT-VVS16W): available_on, and when, which only means something with it.
+// The when expression itself is compiled by conditionlint, which knows the
+// predicate language; this checks only the structure.
+func validateActionScope(id string, action Action, hasScript bool, meta *metamodel.Metamodel) []string {
+	var errs []string
+	scope := action.AvailableOn
+	if scope == nil {
+		if action.When != "" {
+			errs = append(errs, fmt.Sprintf(
+				"actions: %q has when but no available_on (when decides which detail pages "+
+					"offer the action, so it needs available_on to apply to)", id))
+		}
+		return errs
+	}
+	if !hasScript {
+		errs = append(errs, fmt.Sprintf(
+			"actions: %q has available_on but no script (a detail-page action runs a script)", id))
+	}
+	if len(scope.EntityTypes) == 0 {
+		errs = append(errs, fmt.Sprintf(
+			"actions: %q available_on needs at least one entity type in entity_types", id))
+	}
+	for _, et := range scope.EntityTypes {
+		def, ok := meta.GetEntityDef(et)
+		if !ok {
+			errs = append(errs, fmt.Sprintf(
+				"actions: %q available_on references unknown entity type %q", id, et))
+			continue
+		}
+		for _, face := range scope.Faces {
+			if _, declared := def.Faces[face]; !declared {
+				errs = append(errs, fmt.Sprintf(
+					"actions: %q available_on face %q is not declared on entity type %q",
+					id, face, et))
+			}
+		}
+	}
+	return errs
+}
+
+// entityBoundActionRefError reports a reference to an action with
+// available_on from a surface that cannot supply the entity address such an
+// action requires. Without it the button would render and every click would
+// fail.
+func entityBoundActionRefError(where, actionID string) string {
+	return fmt.Sprintf(
+		"%s: references action %q, which has available_on and runs only against one entity "+
+			"on its detail page; declare a separate action (it may share the script) for this surface",
+		where, actionID)
 }
 
 func validateCommands(cfg *Config, meta *metamodel.Metamodel) []string {
