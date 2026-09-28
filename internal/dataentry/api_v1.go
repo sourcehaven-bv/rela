@@ -176,8 +176,7 @@ const (
 
 // handleV1DynamicRoutes routes requests to the appropriate entity handler
 // based on URL. Read operations work against the snapshot returned by
-// a.State() with no locking; write operations take a.writeMu for the
-// duration of the mutation.
+// a.State() with no locking.
 func (a *App) handleV1DynamicRoutes(w http.ResponseWriter, r *http.Request) {
 	// Skip system routes (already handled)
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/")
@@ -223,17 +222,7 @@ func (a *App) handleV1DynamicRoutes(w http.ResponseWriter, r *http.Request) {
 			a.handleV1SingleEntity(w, r, typeName, plural, parts[1])
 		}
 	case 3:
-		// /{plural}/{id}/relations, /{plural}/{id}/_export or /{plural}/{id}/restore
-		switch parts[2] {
-		case "relations":
-			a.handleV1EntityRelations(w, r, typeName, parts[1])
-		case "_export":
-			a.export.handleV1ExportEntity(w, r, typeName, parts[1])
-		case "restore":
-			a.write.handleV1RestoreEntity(w, r, typeName, parts[1])
-		default:
-			writeV1Error(w, r, http.StatusNotFound, "not_found", "Resource not found", "")
-		}
+		a.handleV1EntitySubresource(w, r, typeName, parts[1], parts[2])
 	case segmentsSubResource:
 		// /{plural}/{id}/relations/{relType}, /{plural}/{id}/_actions/{action},
 		// or /{plural}/{id}/_attachments/{property}
@@ -285,7 +274,7 @@ func (a *App) handleV1EntityCollection(w http.ResponseWriter, r *http.Request, t
 		// TKT-3I5U: ?dry_run=true evaluates affordances + soft validation
 		// against the candidate WITHOUT persisting, so the create form can
 		// gate fields / options / hidden as the user types. Read-shaped:
-		// dispatched before handleV1CreateEntity acquires the write lock.
+		// dispatched before handleV1CreateEntity, and never persists.
 		if r.URL.Query().Get("dry_run") == "true" {
 			a.write.handleV1DryRunCreate(w, r, typeName, plural)
 			return
@@ -460,7 +449,7 @@ func scopedSortedEntitiesScoped(
 	// Classify each filter[<key>] param as property vs relation ONCE, up
 	// front, so both passes agree on routing. The config's FilterControls are
 	// authoritative (RR-0HWAS0 / RR-B0JPPL): a relation filter applies only
-	// when a control on a list of this type configures it. Name-based
+	// when a list or kanban control of this type configures it. Name-based
 	// GetRelationDef is only a fallback and only ever routes AWAY from
 	// properties, never toward relations without a control.
 	isRelationKey := relationFilterClassifier(a.Meta(), a.Cfg(), typeName)
@@ -482,7 +471,7 @@ func scopedSortedEntitiesScoped(
 //
 // Relation filtering is restricted to configured filter_controls (RR-B0JPPL):
 // a `filter[<rel>]` param routes to the relation pass ONLY when a relation
-// FilterControl on a list of this entity type configures it. An arbitrary
+// FilterControl on a list or kanban of this entity type configures it. An arbitrary
 // metamodel relation with no control is NOT filterable and falls through to
 // applyV1Filters (where, absent a matching property, it fails closed rather
 // than silently widening the set).
@@ -529,10 +518,11 @@ func relationFilterClassifier(
 // filter present in the query. isRelationKey (the config-backed classifier
 // built in scopedSortedEntities) decides which `filter[<key>]` params are
 // relation filters; property filters are handled by applyV1Filters. Matching is
-// direction-aware: the FilterControl config on a list of this entity type
-// supplies the direction (default outgoing), and an entity matches iff it has
-// an edge of that (relation, direction) to a READABLE neighbor whose display
-// title equals the requested value.
+// direction-aware: the FilterControl config on a list or kanban of this
+// entity type supplies the direction (default outgoing; precedence in
+// dataentryconfig.Config.RelationFilterDirection), and an entity matches iff
+// it has an edge of that (relation, direction) to a READABLE neighbor whose
+// display title equals the requested value.
 //
 // Operators: only `eq` (the bare `filter[<rel>]` form) and `ne`
 // (`filter[<rel>][ne]`) are supported. Any other operator segment is rejected
@@ -1881,7 +1871,13 @@ func (a *App) handleV1Search(w http.ResponseWriter, r *http.Request) {
 		// {ID, Title} of related entities this principal may not read.
 		// Flipping this requires per-target gating first (RR-QO01XY) —
 		// TestACLSearch_VisibleHitRelatedToHidden pins the invariant.
-		data = append(data, a.serializer.forWireRelated(pageCtx, e, nil, nil, nil, a.Meta(), plural))
+		row := a.serializer.forWireRelated(pageCtx, e, nil, nil, nil, a.Meta(), plural)
+		// Same provenance a list row carries, and nil in the default world
+		// for the same reason (see handleV1ListEntities).
+		if !worldScopeFrom(r.Context()).IsDefaultWorld() {
+			row.World = worldProvenance(r.Context(), e)
+		}
+		data = append(data, row)
 	}
 
 	resp := v1.ListResponse{
@@ -2919,4 +2915,19 @@ func sectionEntityToV1(e SectionEntityData) v1.ViewEntity {
 	v1Ent.World = e.World
 	v1Ent.Self = e.Self
 	return v1Ent
+}
+
+// handleV1EntitySubresource routes /{plural}/{id}/{sub}: relations, _export
+// and restore.
+func (a *App) handleV1EntitySubresource(w http.ResponseWriter, r *http.Request, typeName, id, sub string) {
+	switch sub {
+	case "relations":
+		a.handleV1EntityRelations(w, r, typeName, id)
+	case "_export":
+		a.export.handleV1ExportEntity(w, r, typeName, id)
+	case "restore":
+		a.write.handleV1RestoreEntity(w, r, typeName, id)
+	default:
+		writeV1Error(w, r, http.StatusNotFound, "not_found", "Resource not found", "")
+	}
 }
