@@ -194,15 +194,7 @@ func (a *App) handleV1DynamicRoutes(w http.ResponseWriter, r *http.Request) {
 
 	plural := parts[0]
 
-	// Find entity type by plural
-	var typeName string
-	for name, def := range a.State().Meta.Entities {
-		if def.GetPlural(name) == plural {
-			typeName = name
-			break
-		}
-	}
-
+	typeName := entityTypeForPlural(a.State().Meta, plural)
 	if typeName == "" {
 		writeV1Error(w, r, http.StatusNotFound, "unknown_type", "Unknown entity type", "")
 		return
@@ -222,7 +214,17 @@ func (a *App) handleV1DynamicRoutes(w http.ResponseWriter, r *http.Request) {
 			a.handleV1SingleEntity(w, r, typeName, plural, parts[1])
 		}
 	case 3:
-		a.handleV1EntitySubresource(w, r, typeName, parts[1], parts[2])
+		// /{plural}/{id}/relations, /{plural}/{id}/_export or /{plural}/{id}/restore
+		switch parts[2] {
+		case "relations":
+			a.handleV1EntityRelations(w, r, typeName, parts[1])
+		case "_export":
+			a.export.handleV1ExportEntity(w, r, typeName, parts[1])
+		case "restore":
+			a.write.handleV1RestoreEntity(w, r, typeName, parts[1])
+		default:
+			writeV1Error(w, r, http.StatusNotFound, "not_found", "Resource not found", "")
+		}
 	case segmentsSubResource:
 		// /{plural}/{id}/relations/{relType}, /{plural}/{id}/_actions/{action},
 		// or /{plural}/{id}/_attachments/{property}
@@ -2917,17 +2919,13 @@ func sectionEntityToV1(e SectionEntityData) v1.ViewEntity {
 	return v1Ent
 }
 
-// handleV1EntitySubresource routes /{plural}/{id}/{sub}: relations, _export
-// and restore.
-func (a *App) handleV1EntitySubresource(w http.ResponseWriter, r *http.Request, typeName, id, sub string) {
-	switch sub {
-	case "relations":
-		a.handleV1EntityRelations(w, r, typeName, id)
-	case "_export":
-		a.export.handleV1ExportEntity(w, r, typeName, id)
-	case "restore":
-		a.write.handleV1RestoreEntity(w, r, typeName, id)
-	default:
-		writeV1Error(w, r, http.StatusNotFound, "not_found", "Resource not found", "")
+// entityTypeForPlural returns the entity type whose plural is plural, or ""
+// when none matches.
+func entityTypeForPlural(meta *metamodel.Metamodel, plural string) string {
+	for name, def := range meta.Entities {
+		if def.GetPlural(name) == plural {
+			return name
+		}
 	}
+	return ""
 }
