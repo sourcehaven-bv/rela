@@ -65,7 +65,10 @@ func TestWorldCapablePath(t *testing.T) {
 		{"/api/v1/tickets", true, "collection list is world-scoped"},
 		{"/api/v1/tickets/TKT-1", true, "single-entity GET is world-scoped"},
 		{"/api/v1/tickets/TKT-1/relations", false, "sub-resource reads through the ungated reader"},
-		{"/api/v1/tickets/TKT-1/_export", false, "export reads through the ungated reader"},
+		{"/api/v1/tickets/TKT-1/_export", true,
+			"entity export resolves through the world like the entity GET (BUG-PLZDPR)"},
+		{"/api/v1/tickets/_export", false, "the LIST export is not world-scoped"},
+		{"/api/v1/tickets/_x/_export", false, "an underscore id segment is a route, not an entity"},
 		{"/api/v1/_search", true,
 			"cross-type search takes the world on every executeQuery branch (BUG-SMPOZB)"},
 		{"/api/v1/_search/x", false, "the match is exact, not a prefix"},
@@ -1237,7 +1240,6 @@ func TestAttachWorld_DeniedWorldRefusedLikePermitted(t *testing.T) {
 		"/api/v1/_sidepanel/ticket/TKT-900?world=published",
 		// A sub-resource of an entity — the third-segment refusal.
 		"/api/v1/tickets/TKT-900/relations?world=published",
-		"/api/v1/tickets/TKT-900/_export?world=published",
 	} {
 		t.Run(path, func(t *testing.T) {
 			t.Parallel()

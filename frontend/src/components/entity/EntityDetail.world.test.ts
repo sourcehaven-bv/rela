@@ -9,6 +9,7 @@ import { useUIStore } from '@/stores/ui'
 import type { Entity, CopyOffer, EntityWorld } from '@/types'
 import type { ViewEntity, ViewResponse, ViewSection } from '@/api'
 import type { CopyInvokeResult } from '@/api/copies'
+import { registerEntityPlurals } from '@/api/entities'
 
 // The world-bound DETAIL surface (TKT-F2D5U5).
 //
@@ -662,6 +663,25 @@ describe('EntityDetail world binding', () => {
       rendersProof(w)
       expect(w.text()).toContain('Run publish script')
       expect(w.findComponent(CommandModal).props('entityId')).toBe('POL-1')
+    })
+
+    // BUG-PLZDPR: the export renders what is on screen, so it names the
+    // served face and resolves the entry's links in the page's world.
+    it('exports the served ADDRESS in the page world, not the route id', async () => {
+      registerEntityPlurals(new Map([[entityType, 'policys']]))
+      mockRoute.query = { world: 'published' }
+      const w = await mountDetail(viewResponse(standIn()))
+      rendersProof(w)
+      const urlFor: (t: string) => string = w.findComponent({ name: 'ExportMenu' }).props('urlFor')
+      expect(urlFor('pdf')).toBe('/api/v1/policys/POL-1%40published/_export?transform=pdf&world=published')
+    })
+
+    it('exports the BARE id when no face is served', async () => {
+      registerEntityPlurals(new Map([[entityType, 'policys']]))
+      const w = await mountDetail(viewResponse())
+      rendersProof(w)
+      const urlFor: (t: string) => string = w.findComponent({ name: 'ExportMenu' }).props('urlFor')
+      expect(urlFor('pdf')).toBe('/api/v1/policys/POL-1/_export?transform=pdf')
     })
 
     it('deletes by the served ADDRESS and names the face', async () => {
