@@ -199,7 +199,7 @@ func FuzzConcurrentOps(f *testing.F, factory FuzzFactory) {
 				case 4: // RenameEntity
 					_, _ = s.RenameEntity(bg, "E-2", "E-renamed")
 				case 5: // ListEntities
-					for _, err := range s.ListEntities(bg, store.EntityQuery{}) {
+					for _, err := range s.ListEntities(bg, store.EntityQuery{Faces: store.InWorld(store.DefaultWorld())}) {
 						_ = err
 					}
 				case 6: // Subscribe + use

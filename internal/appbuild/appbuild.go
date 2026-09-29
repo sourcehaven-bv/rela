@@ -423,6 +423,7 @@ func (s *Services) LuaReadDeps() lua.ReadDeps {
 		Searcher:      s.searcher,
 		Meta:          s.meta,
 		ProjectRoot:   root,
+		World:         s.worlds.Default(),
 	}
 }
 
@@ -1321,12 +1322,12 @@ func warnUndeclaredFaces(st store.Store, meta *metamodel.Metamodel, projectRoot 
 		return
 	}
 	ctx := context.Background()
-	all, err := st.CountEntities(ctx, store.EntityQuery{AllStates: true})
+	all, err := st.CountEntities(ctx, store.EntityQuery{Faces: store.AllFaces()})
 	if err != nil {
 		slog.Debug("appbuild: content-state probe failed; skipping warning", "error", err)
 		return
 	}
-	defaults, err := st.CountEntities(ctx, store.EntityQuery{})
+	defaults, err := st.CountEntities(ctx, store.EntityQuery{Faces: store.AtFaces(entity.Face(""))})
 	if err != nil {
 		slog.Debug("appbuild: content-state probe failed; skipping warning", "error", err)
 		return
@@ -1887,6 +1888,7 @@ func cascadeReadDeps(
 		Searcher:      searcher,
 		Meta:          meta,
 		ProjectRoot:   projectRoot,
+		World:         world,
 	}
 }
 

@@ -223,7 +223,7 @@ type Exec struct {
 //
 // # Every content state, not just the bare row
 //
-// The query sets AllStates, so a step sees each FACE of an entity as its own
+// The query selects AllFaces, so a step sees each FACE of an entity as its own
 // row. Without it (the zero value means default-state rows only) a project
 // using faces got half-migrated: `rename_property` would rewrite the bare row
 // and leave every `@nl` row on the old name, silently (TKT-O0A8FO).
@@ -240,7 +240,7 @@ type Exec struct {
 func (x *Exec) forEachEntity(
 	ctx context.Context, typ string, fn func(e *entity.Entity) (bool, error), res *StepResult,
 ) error {
-	q := store.EntityQuery{AllStates: true}
+	q := store.EntityQuery{Faces: store.AllFaces()}
 	if typ != "*" {
 		q.Type = typ
 	}

@@ -216,7 +216,7 @@ func (h *viewsHandler) loadViewBodies(ctx context.Context, result *viewResult, w
 		return
 	}
 	content := make(map[string]string, len(ids))
-	for e, err := range h.store.ListEntities(ctx, store.EntityQuery{IDs: ids, World: w.scope}) {
+	for e, err := range h.store.ListEntities(ctx, store.EntityQuery{IDs: ids, Faces: store.InWorld(w.scope)}) {
 		if err != nil {
 			slog.Warn("dataentry: view: loading collection bodies failed; bodies omitted",
 				"world", w.name, "ids", len(ids), "err", err)
@@ -522,7 +522,7 @@ func (h *viewsHandler) ownedEdges(
 	}
 	if len(ids) > 0 && !w.denied {
 		for hdr, err := range store.ListEntityHeaders(ctx, h.store, store.EntityQuery{
-			IDs: ids, World: w.scope,
+			IDs: ids, Faces: store.InWorld(w.scope),
 		}) {
 			if err != nil {
 				slog.Warn("dataentry: view traversal: resolving edge sources failed; "+
@@ -595,7 +595,7 @@ func (h *viewsHandler) readableViewIDs(ctx context.Context, ids []string, w view
 		face entity.Face
 	}
 	hdrs := make(map[string]idHeader, len(ids))
-	q := store.EntityQuery{IDs: ids, World: w.scope}
+	q := store.EntityQuery{IDs: ids, Faces: store.InWorld(w.scope)}
 	for hdr, err := range store.ListEntityHeaders(ctx, h.store, q) {
 		if err != nil {
 			// A header-scan fault is not "everything is hidden", but it is

@@ -88,6 +88,11 @@ type Deps struct {
 	Watcher      Watcher
 	ProjectRoot  string
 	Attachments  AttachmentDeps
+	// World is the world the list and count surfaces (list_entities, the
+	// schema resource's counts, the overview prompt) read in. The zero value
+	// is the default world; wiring passes worlds.Compiled.Default, so
+	// TKT-7IZHP0 changes no call site.
+	World store.WorldScope
 }
 
 // GraphReader is the read capability MCP requires of its store — the exact
@@ -383,8 +388,8 @@ func (d Deps) handlers() handlerSet {
 		types:     types,
 		trace:     traceHandler{store: d.Store, tracer: d.Tracer, meta: d.Meta},
 		lua:       luaHandler{writeDeps: d.LuaWriteDeps, cache: d.LuaCache, projectRoot: d.ProjectRoot},
-		schemaRes: schemaResourceHandler{store: d.Store, meta: d.Meta},
-		prompts:   promptHandler{store: d.Store, meta: d.Meta, tracer: d.Tracer, types: types},
+		schemaRes: schemaResourceHandler{store: d.Store, meta: d.Meta, world: d.World},
+		prompts:   promptHandler{store: d.Store, meta: d.Meta, tracer: d.Tracer, types: types, world: d.World},
 		attach:    attachmentHandler{store: d.Store, deps: d.Attachments},
 	}
 }

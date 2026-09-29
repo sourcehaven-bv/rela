@@ -74,12 +74,10 @@ func (v CardinalityViolation) Message() string {
 // violations. The CLI runs under operator trust and passes [Ungated] over the
 // raw store, which gets raw counts on the same code path.
 //
-// What ListEntities yields likewise defines the subject population, including
-// how much of the AllStates request it honors. A reader that composes a
-// `store.GraphQuery` collapses each id to one world prime, so the check sees
-// fewer subjects and reports fewer violations. That is the safe direction
-// (missed, never invented), but per-face coverage is a property of the reader,
-// not a guarantee of this function (RR-16R183).
+// What ListEntities yields likewise defines the subject population. The scan
+// asks for AllFaces; a raw `store.Store` returns every face, and an ACL-gated
+// reader returns every face its grant admits, because a composed
+// `store.GraphQuery` carries the same selection (RR-16R183).
 type CardinalityReader interface {
 	ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error]
 	ListRelationsStrict(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error]
@@ -371,7 +369,8 @@ func (c subjectCache) list(ctx context.Context, r CardinalityReader, typeName st
 		return hs, nil
 	}
 	hs := make([]store.EntityHeader, 0)
-	for h, err := range store.ListEntityHeaders(ctx, r, store.EntityQuery{Type: typeName, AllStates: true}) {
+	q := store.EntityQuery{Type: typeName, Faces: store.AllFaces()}
+	for h, err := range store.ListEntityHeaders(ctx, r, q) {
 		if err != nil {
 			return nil, fmt.Errorf("schema: list %q cardinality subjects: %w", typeName, err)
 		}

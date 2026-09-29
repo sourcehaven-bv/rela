@@ -191,7 +191,7 @@ func RunTxStressTest(t *testing.T, f Factory) {
 				return
 			}
 			n := 0
-			for _, err := range s.ListEntities(ctx(), store.EntityQuery{Type: "feature"}) {
+			for _, err := range s.ListEntities(ctx(), store.EntityQuery{Type: "feature", Faces: store.InWorld(store.DefaultWorld())}) {
 				if err != nil {
 					// Tolerated: fsstore loads entity files lazily during
 					// iteration, so a concurrent delete between the index

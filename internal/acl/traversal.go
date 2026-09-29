@@ -70,8 +70,15 @@ var ErrTraversalUnsupported = errors.New("acl: traversal cannot be gated")
 // of candidateType: the predicate goes in the slot matching the first hop's
 // direction. Built fresh rather than folded into an existing query, whose
 // ACL predicate may already occupy that slot.
+//
+// It selects the candidates in the default world, explicitly: that is what
+// the query did before selections existed, and widening it to faced
+// candidate types waits for its own security review (TKT-7IZHP0). A caller
+// that reads in another world stamps that world over this (the data-entry
+// stampScope). The endpoint side is not affected: a gated hop carries the
+// request's world itself (see [Request.GateTraversal]).
 func TraversalQuery(candidateType string, hop TraversalHop, p *store.RelationPredicate) store.GraphQuery {
-	q := store.GraphQuery{EntityType: candidateType}
+	q := store.GraphQuery{EntityType: candidateType, Faces: store.InWorld(store.DefaultWorld())}
 	if hop.Incoming {
 		q.HasInbound = p
 	} else {
@@ -161,8 +168,18 @@ func lowerTraversal(
 // A denied read on ANY hop returns [ErrTraversalDenied]; a read the
 // predicate cannot express returns [ErrTraversalUnsupported]. Neither ever
 // widens.
+//
+// # The request's world
+//
+// Every gated hop reads its endpoint in world, the world of the request the
+// traversal serves, whatever selection the query that runs it carries
+// ([store.EndpointPredicate.Faces]; stage-2 design section 12, RR-QUXMAF).
+// The row gate folded into a hop was written for the rows a reader sees,
+// which are the rows of their world. Evaluated under an AllFaces or AtFaces
+// query instead, the hop would match when ANY face of the endpoint passes the
+// gate, and so could grant through a face the request's world never serves.
 func (r *Request) GateTraversal(
-	ctx context.Context, candidateType string, hop TraversalHop,
+	ctx context.Context, candidateType string, world store.WorldScope, hop TraversalHop,
 ) (*store.RelationPredicate, error) {
 	// An outgoing first hop reads edges owned by the CANDIDATE, and the
 	// store reads them from the default state's tail. That tail holds the
@@ -180,7 +197,12 @@ func (r *Request) GateTraversal(
 		}
 	}
 	return lowerTraversal(hop, func(h TraversalHop) (*store.EndpointPredicate, error) {
-		return r.gateHop(ctx, h)
+		m, err := r.gateHop(ctx, h)
+		if err != nil {
+			return nil, err
+		}
+		m.Faces = store.InWorld(world)
+		return m, nil
 	})
 }
 

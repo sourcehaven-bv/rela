@@ -69,9 +69,9 @@ func TestFaceGrantParity_ListAndGetAgree(t *testing.T) {
 	// LIST: only the granted face may appear.
 	var listed []*entity.Entity
 	for e, err := range app.store.ListEntities(gctx, store.EntityQuery{
-		Type:      "ticket",
-		AllStates: true,
-		FaceIn:    gate.ReadQuery(gctx, "ticket").Faces,
+		Type:   "ticket",
+		Faces:  store.AllFaces(),
+		FaceIn: gate.ReadQuery(gctx, "ticket").Faces,
 	}) {
 		if err != nil {
 			t.Fatalf("list: %v", err)

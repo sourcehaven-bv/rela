@@ -95,11 +95,11 @@ func TestWorldParity_ComposedQueryBranchCarriesTheWorld(t *testing.T) {
 	red := &countingRedactor{}
 	// A composed ACL query: this is what an ACL-GATED principal produces,
 	// and the branch the bug lived on.
-	p := stubProvider{res: acl.ReadQueryResult{Query: &store.GraphQuery{EntityType: "ticket"}}}
+	p := stubProvider{res: acl.ReadQueryResult{Query: &store.GraphQuery{EntityType: "ticket", Faces: store.InWorld(store.DefaultWorld())}}}
 
 	world := testWorld()
 	_, ok := listPushdown(context.Background(), p, spy, red.redact,
-		store.EntityQuery{Type: "ticket", World: world})
+		store.EntityQuery{Type: "ticket", Faces: store.InWorld(world)})
 	if !ok {
 		t.Fatal("pushdown declined a composable query")
 	}
@@ -108,12 +108,12 @@ func TestWorldParity_ComposedQueryBranchCarriesTheWorld(t *testing.T) {
 	}
 
 	got := spy.graphQueries[0]
-	if got.World.IsDefaultWorld() {
+	if worldOf(got.Faces).IsDefaultWorld() {
 		t.Fatal("the composed GraphQuery reached the store with the DEFAULT world: " +
 			"a world-scoped list silently degraded to unscoped for an ACL-gated " +
 			"principal — drafts leak and `otherwise: exclude` stops excluding (RR-GQWRLD)")
 	}
-	res, scoped := got.World.For("ticket")
+	res, scoped := worldOf(got.Faces).For("ticket")
 	if !scoped {
 		t.Fatal("the world arrived but lost its ticket resolution")
 	}
@@ -137,14 +137,14 @@ func TestWorldParity_AllowAllBranchCarriesTheWorld(t *testing.T) {
 
 	world := testWorld()
 	_, ok := listPushdown(context.Background(), p, spy, red.redact,
-		store.EntityQuery{Type: "ticket", World: world})
+		store.EntityQuery{Type: "ticket", Faces: store.InWorld(world)})
 	if !ok {
 		t.Fatal("pushdown declined the AllowAll branch")
 	}
 	if len(spy.entityQueries) != 1 {
 		t.Fatalf("ListEntities calls = %d, want 1", len(spy.entityQueries))
 	}
-	if spy.entityQueries[0].World.IsDefaultWorld() {
+	if worldOf(spy.entityQueries[0].Faces).IsDefaultWorld() {
 		t.Fatal("the AllowAll branch dropped the world")
 	}
 }
@@ -159,21 +159,21 @@ func TestWorldParity_BothBranchesAgree(t *testing.T) {
 
 	composedSpy := &worldCapturingSpy{}
 	red := &countingRedactor{}
-	composed := stubProvider{res: acl.ReadQueryResult{Query: &store.GraphQuery{EntityType: "ticket"}}}
+	composed := stubProvider{res: acl.ReadQueryResult{Query: &store.GraphQuery{EntityType: "ticket", Faces: store.InWorld(store.DefaultWorld())}}}
 	if _, ok := listPushdown(context.Background(), composed, composedSpy, red.redact,
-		store.EntityQuery{Type: "ticket", World: world}); !ok {
+		store.EntityQuery{Type: "ticket", Faces: store.InWorld(world)}); !ok {
 		t.Fatal("composed branch declined")
 	}
 
 	allowSpy := &worldCapturingSpy{}
 	allow := stubProvider{res: acl.ReadQueryResult{AllowAll: true}}
 	if _, ok := listPushdown(context.Background(), allow, allowSpy, red.redact,
-		store.EntityQuery{Type: "ticket", World: world}); !ok {
+		store.EntityQuery{Type: "ticket", Faces: store.InWorld(world)}); !ok {
 		t.Fatal("AllowAll branch declined")
 	}
 
-	gotComposed := composedSpy.graphQueries[0].World
-	gotAllow := allowSpy.entityQueries[0].World
+	gotComposed := worldOf(composedSpy.graphQueries[0].Faces)
+	gotAllow := worldOf(allowSpy.entityQueries[0].Faces)
 
 	// Compare the OBSERVABLE scope rather than the struct: WorldScope
 	// holds an unexported map, and the contract is what For() answers.
@@ -207,13 +207,20 @@ func TestWorldParity_DefaultWorldStaysDefault(t *testing.T) {
 	t.Parallel()
 	spy := &worldCapturingSpy{}
 	red := &countingRedactor{}
-	p := stubProvider{res: acl.ReadQueryResult{Query: &store.GraphQuery{EntityType: "ticket"}}}
+	p := stubProvider{res: acl.ReadQueryResult{Query: &store.GraphQuery{EntityType: "ticket", Faces: store.InWorld(store.DefaultWorld())}}}
 
 	if _, ok := listPushdown(context.Background(), p, spy, red.redact,
-		store.EntityQuery{Type: "ticket"}); !ok {
+		store.EntityQuery{Type: "ticket", Faces: store.InWorld(store.DefaultWorld())}); !ok {
 		t.Fatal("pushdown declined")
 	}
-	if !spy.graphQueries[0].World.IsDefaultWorld() {
+	if !worldOf(spy.graphQueries[0].Faces).IsDefaultWorld() {
 		t.Error("a world-free query must reach the store world-free")
 	}
+}
+
+// worldOf is the world of an InWorld selection; any other mode reads as the
+// zero (default) world, which these assertions treat as "world dropped".
+func worldOf(sel store.FaceSelection) store.WorldScope {
+	w, _ := sel.World()
+	return w
 }

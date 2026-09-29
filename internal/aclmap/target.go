@@ -27,7 +27,7 @@ func (e *Engine) target(ctx context.Context, addr string) (resolvedTarget, error
 	}
 	t := resolvedTarget{ref: ref}
 	faceFound := false
-	q := store.EntityQuery{IDs: []string{ref.ID}, AllStates: true}
+	q := store.EntityQuery{IDs: []string{ref.ID}, Faces: store.AllFaces()}
 	for h, err := range store.ListEntityHeaders(ctx, e.src, q) {
 		if err != nil {
 			return resolvedTarget{}, fmt.Errorf("aclmap: load entity %q: %w", ref.ID, err)

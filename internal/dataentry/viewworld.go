@@ -250,7 +250,7 @@ func (h *viewsHandler) loadViewEntities(
 	// ([viewsHandler.loadViewBodies]).
 	for hdr, err := range store.ListEntityHeaders(ctx, h.store, store.EntityQuery{
 		IDs:   unique,
-		World: w.scope,
+		Faces: store.InWorld(w.scope),
 	}) {
 		if err != nil {
 			slog.Warn("dataentry: view traversal: loading collected entities failed; "+

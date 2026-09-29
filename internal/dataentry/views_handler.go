@@ -956,8 +956,11 @@ func (h *viewsHandler) relationColumnTargets(
 // read, in one header batch gated through the viewReader; ids the gate drops
 // (or the store no longer has) are absent from the result.
 func (h *viewsHandler) visibleTitles(ctx context.Context, svc Services, ids []string) map[string]string {
+	// The request's world picks the row each title comes from, and the gate
+	// then decides on that row.
+	sel := store.InWorld(worldScopeFrom(ctx))
 	var headers []store.EntityHeader
-	for hd, err := range store.ListEntityHeaders(ctx, svc.Store, store.EntityQuery{IDs: ids}) {
+	for hd, err := range store.ListEntityHeaders(ctx, svc.Store, store.EntityQuery{IDs: ids, Faces: sel}) {
 		if err != nil {
 			slog.Warn("dataentry: view section relation titles dropped; header read failed",
 				"targets", len(ids), "err", err)
@@ -971,7 +974,7 @@ func (h *viewsHandler) visibleTitles(ctx context.Context, svc Services, ids []st
 	} else {
 		// No header capability: gate the same batch as whole entities.
 		ents := make([]*entityPkg.Entity, 0, len(headers))
-		for e, err := range svc.Store.ListEntities(ctx, store.EntityQuery{IDs: ids}) {
+		for e, err := range svc.Store.ListEntities(ctx, store.EntityQuery{IDs: ids, Faces: sel}) {
 			if err != nil {
 				slog.Warn("dataentry: view section relation titles dropped; entity read failed",
 					"targets", len(ids), "err", err)

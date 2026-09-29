@@ -8,6 +8,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // DeclarativeGate adapts *acl.Declarative to [RowGate]. The per-principal
@@ -27,6 +28,18 @@ import (
 // binding makes the operation a single consistent, amortized scope.
 type DeclarativeGate struct {
 	d *acl.Declarative
+
+	// world is the world the gated hops of a traversal read their endpoints
+	// in ([DeclarativeGate.GateTraversal]). The zero value is the default
+	// world, which every surface built on this gate reads in until
+	// TKT-7IZHP0.
+	world store.WorldScope
+}
+
+// WithWorld returns a copy of g whose traversals gate their endpoints in w.
+func (g DeclarativeGate) WithWorld(w store.WorldScope) DeclarativeGate {
+	g.world = w
+	return g
 }
 
 // Bind opens one acl.Request for the ctx principal and attaches it to

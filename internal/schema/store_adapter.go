@@ -33,7 +33,7 @@ type storeCounter struct {
 func NewStoreCounter(ctx context.Context, st TypeCounts) TypeCounter {
 	return &storeCounter{
 		countEntities: func(entityType string) int {
-			n, _ := st.CountEntities(ctx, store.EntityQuery{Type: entityType})
+			n, _ := st.CountEntities(ctx, store.EntityQuery{Type: entityType, Faces: store.AllFaces()})
 			return n
 		},
 		countRelations: func(relationType string) int {

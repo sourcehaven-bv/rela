@@ -349,7 +349,7 @@ func (q *queryService) matchesPropertyFilters(e *entity.Entity, filters []*filte
 
 // loadHitHeaders reads the content-free rows the hits name, grouped by
 // face: default-face hits in one IDs query, each other face in one
-// AllStates query narrowed to that face on the way out. Returns only rows
+// AtFaces query at that face on the way out. Returns only rows
 // that exist, as content-free entities (see rowcontent.go).
 func loadHitHeaders(ctx context.Context, st store.Store, hits []search.Hit) (map[entity.Ref]*entity.Entity, error) {
 	byFace := make(map[entity.Face][]string)
@@ -364,13 +364,10 @@ func loadHitHeaders(ctx context.Context, st store.Store, hits []search.Hit) (map
 	}
 	out := make(map[entity.Ref]*entity.Entity, len(seen))
 	for face, ids := range byFace {
-		q := store.EntityQuery{IDs: ids, AllStates: !face.IsDefault()}
+		q := store.EntityQuery{IDs: ids, Faces: store.AtFaces(face)}
 		for h, err := range store.ListEntityHeaders(ctx, st, q) {
 			if err != nil {
 				return nil, err
-			}
-			if h.Face != face {
-				continue // AllStates over-returns the family's other faces
 			}
 			out[entity.Ref{ID: h.ID, Face: h.Face}] = headerEntity(h)
 		}

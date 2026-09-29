@@ -60,7 +60,7 @@ func checkUniqueProperties(
 		return nil
 	}
 
-	// AllStates, then filtered to THIS face. Without it the scan sees only
+	// AllFaces, then filtered to THIS face. Without it the scan sees only
 	// zero-coordinate rows, which a type declaring faces has none of — so
 	// `unique:` silently enforced nothing on exactly the types most likely
 	// to want it (BUG-HC6I2T).
@@ -71,7 +71,7 @@ func checkUniqueProperties(
 	// second half true. Whether an operator can ask for the stronger
 	// per-entity reading is TKT-HXT2P9.
 	var violations []*metamodel.ValidationError
-	q := store.EntityQuery{Type: e.Type, AllStates: true}
+	q := store.EntityQuery{Type: e.Type, Faces: store.AllFaces()}
 	for other, err := range st.ListEntities(ctx, q) {
 		if err != nil {
 			// A partial scan cannot prove uniqueness — fail the write loud

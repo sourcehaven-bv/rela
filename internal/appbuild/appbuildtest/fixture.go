@@ -305,7 +305,7 @@ func backfill(ctx context.Context, backend *bleveindex.Index, s store.Store) err
 	}
 	entities := make([]*entity.Entity, 0)
 	var listErrs []error
-	for e, err := range s.ListEntities(ctx, store.EntityQuery{}) {
+	for e, err := range s.ListEntities(ctx, store.EntityQuery{Faces: store.AllFaces()}) {
 		if err != nil {
 			listErrs = append(listErrs, err)
 			continue

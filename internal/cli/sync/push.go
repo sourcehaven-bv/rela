@@ -284,7 +284,7 @@ func (e *Engine) pluralForLocalEntity(ctx context.Context, id string) (string, e
 // entity, which has no zero-face row (DEC-NPZICR), is found by its bare id.
 // No stored face is [store.ErrNotFound].
 func (e *Engine) localType(ctx context.Context, id string) (string, error) {
-	q := store.EntityQuery{IDs: []string{id}, AllStates: true}
+	q := store.EntityQuery{IDs: []string{id}, Faces: store.AllFaces()}
 	for h, err := range store.ListEntityHeaders(ctx, e.store, q) {
 		if err != nil {
 			return "", err

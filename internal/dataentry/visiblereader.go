@@ -276,7 +276,11 @@ func loadDefaultFaceHeaders(
 func listIDHeaders(
 	ctx context.Context, st store.EntityLister, ids []string, allFaces bool,
 ) iter.Seq2[store.EntityHeader, error] {
-	return store.ListEntityHeaders(ctx, st, store.EntityQuery{IDs: ids, AllStates: allFaces})
+	sel := store.AtFaces(entitypkg.Face(""))
+	if allFaces {
+		sel = store.AllFaces()
+	}
+	return store.ListEntityHeaders(ctx, st, store.EntityQuery{IDs: ids, Faces: sel})
 }
 
 // rowOf drops the provenance a [visibility.Resolved] carries. The data-entry
@@ -384,7 +388,7 @@ func (vr visibleReader) visibleHeaderIDs(ctx context.Context, candidates []store
 	}
 	// The face grant is the other half of filterVisible's gate (TKT-O7R2A1);
 	// a header carries its Face, so applying it here keeps the two gates
-	// from drifting when a caller one day passes AllStates or a World.
+	// from drifting whichever face selection a caller passes.
 	for _, c := range candidates {
 		if allowed[c.ID] && faceReadable(ctx, c.Type, c.Face) {
 			out[c.ID] = true

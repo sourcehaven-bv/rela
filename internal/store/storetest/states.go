@@ -14,7 +14,7 @@ import (
 
 // RunStateTests is the content-states conformance suite (TKT-DOFYR1):
 // addressing by (id, face), the write-path row-family invariants,
-// default-vs-AllStates query semantics, relation tail faces in both
+// default-vs-AllFaces query semantics, relation tail faces in both
 // match implementations, and the delete/rename cascades over a state
 // family. These cases define the contract BEFORE the second backend
 // implements — they are what keep storeutil.MatchRelation and pgstore's
@@ -197,24 +197,24 @@ func RunStateTests(t *testing.T, f Factory) {
 		mustCreate(t, s, newState(t, "PAGE-9", "page", "", "other"))
 
 		// The zero-value query is today's semantics: default states only.
-		defaults := collectIter(t, s.ListEntities(ctx(), store.EntityQuery{Type: "page"}))
+		defaults := collectIter(t, s.ListEntities(ctx(), store.EntityQuery{Type: "page", Faces: store.InWorld(store.DefaultWorld())}))
 		require.Len(t, defaults, 2)
 		for _, e := range defaults {
 			assert.True(t, e.Face.IsDefault())
 		}
-		n, err := s.CountEntities(ctx(), store.EntityQuery{Type: "page"})
+		n, err := s.CountEntities(ctx(), store.EntityQuery{Type: "page", Faces: store.InWorld(store.DefaultWorld())})
 		require.NoError(t, err)
 		assert.Equal(t, 2, n)
 
-		// AllStates is raw storage truth: every state row.
-		all := collectIter(t, s.ListEntities(ctx(), store.EntityQuery{Type: "page", AllStates: true}))
+		// AllFaces is raw storage truth: every state row.
+		all := collectIter(t, s.ListEntities(ctx(), store.EntityQuery{Type: "page", Faces: store.AllFaces()}))
 		assert.Len(t, all, 3)
-		n, err = s.CountEntities(ctx(), store.EntityQuery{Type: "page", AllStates: true})
+		n, err = s.CountEntities(ctx(), store.EntityQuery{Type: "page", Faces: store.AllFaces()})
 		require.NoError(t, err)
 		assert.Equal(t, 3, n)
 
-		// IDs filters on the BARE id, so IDs+AllStates selects the family.
-		family := collectIter(t, s.ListEntities(ctx(), store.EntityQuery{IDs: []string{"PAGE-8"}, AllStates: true}))
+		// IDs filters on the BARE id, so IDs+AllFaces selects the family.
+		family := collectIter(t, s.ListEntities(ctx(), store.EntityQuery{IDs: []string{"PAGE-8"}, Faces: store.AllFaces()}))
 		assert.Len(t, family, 2)
 	})
 

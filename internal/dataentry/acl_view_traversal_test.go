@@ -391,7 +391,7 @@ func TestACLViewTraversal_FrontierAppliesFaceGate(t *testing.T) {
 	}
 	var resolved bool
 	for hdr, herr := range store.ListEntityHeaders(ctx, app.store,
-		store.EntityQuery{IDs: ids, World: draftWorld.scope}) {
+		store.EntityQuery{IDs: ids, Faces: store.InWorld(draftWorld.scope)}) {
 		if herr != nil {
 			t.Fatalf("header scan: %v", herr)
 		}

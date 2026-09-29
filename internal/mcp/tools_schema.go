@@ -22,6 +22,7 @@ import (
 type schemaResourceHandler struct {
 	store GraphReader
 	meta  *metamodel.Metamodel
+	world store.WorldScope // [Deps.World]
 }
 
 // The schema tool answers in two sizes. The overview is one short record per
@@ -143,7 +144,7 @@ func (h schemaResourceHandler) overview(ctx context.Context) any {
 		if def == nil {
 			continue
 		}
-		count, _ := h.store.CountEntities(ctx, store.EntityQuery{Type: name})
+		count, _ := h.store.CountEntities(ctx, store.EntityQuery{Type: name, Faces: store.InWorld(h.world)})
 		entities = append(entities, entityTypeSummary{
 			Name:       name,
 			Label:      labelUnlessName(def.GetLabel(), name),
@@ -177,7 +178,7 @@ func (h schemaResourceHandler) overview(ctx context.Context) any {
 func (h schemaResourceHandler) entityDetail(
 	ctx context.Context, name string, def *metamodel.EntityDef,
 ) entityTypeDetail {
-	count, _ := h.store.CountEntities(ctx, store.EntityQuery{Type: name})
+	count, _ := h.store.CountEntities(ctx, store.EntityQuery{Type: name, Faces: store.InWorld(h.world)})
 	detail := entityTypeDetail{
 		Name:            name,
 		Label:           labelUnlessName(def.GetLabel(), name),

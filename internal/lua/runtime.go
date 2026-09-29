@@ -818,6 +818,7 @@ func (r *Runtime) registerBindings(allowWrites bool) {
 				er:       r.deps.ElevatedReader,
 				recorder: r.deps.ElevationRecorder,
 				ctxFn:    r.callerCtx,
+				world:    r.deps.World,
 			}
 			r.L.SetField(rela, "bypass_acl", r.L.NewFunction(eb.luaBypassACL))
 		}
@@ -1208,7 +1209,9 @@ func (r *Runtime) luaListEntities(ls *lua.LState) int {
 	// caller cannot tell "that is everything" from "the rest was filtered".
 	// Resolving that needs the cursor -- DEC-IYHLNF stage 2.
 	entities := make([]*entity.Entity, 0, min(opts.limit, initialRowCapacity))
-	for e, err := range rd.ListEntities(r.callerCtx(), store.EntityQuery{Type: entityType}) {
+	for e, err := range rd.ListEntities(r.callerCtx(), store.EntityQuery{
+		Type: entityType, Faces: store.InWorld(r.deps.World),
+	}) {
 		if err != nil {
 			// RAISE, never break-and-return-what-we-have (TKT-FVQ4). A short
 			// list is indistinguishable from a genuinely short result, so

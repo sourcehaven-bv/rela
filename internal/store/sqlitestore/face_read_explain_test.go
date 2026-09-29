@@ -64,27 +64,27 @@ func TestFaceReadExplain(t *testing.T) {
 		sorts []string
 	}{
 		{"default-face page", func() (string, error) {
-			return s.ExplainEntityPage(ctx, store.EntityQuery{Type: "task", Limit: 100})
+			return s.ExplainEntityPage(ctx, store.EntityQuery{Type: "task", Limit: 100, Faces: store.InWorld(store.DefaultWorld())})
 		}, pageIndex, nil},
 		{"all-faces page", func() (string, error) {
-			return s.ExplainEntityPage(ctx, store.EntityQuery{Type: "policy", AllStates: true, Limit: 100})
+			return s.ExplainEntityPage(ctx, store.EntityQuery{Type: "policy", Faces: store.AllFaces(), Limit: 100})
 		}, pageIndex, nil},
 		{"world page", func() (string, error) {
-			return s.ExplainEntityPage(ctx, store.EntityQuery{Type: "policy", World: published, Limit: 100})
+			return s.ExplainEntityPage(ctx, store.EntityQuery{Type: "policy", Faces: store.InWorld(published), Limit: 100})
 		}, pageIndex, worldSorts},
 		{"world page after a cursor", func() (string, error) {
 			return s.ExplainEntityPage(ctx, store.EntityQuery{
-				Type: "policy", World: published, Limit: 100,
+				Type: "policy", Faces: store.InWorld(published), Limit: 100,
 				Cursor: storeutil.EncodeCursor("POL-001200@published"),
 			})
 		}, pageIndex, worldSorts},
 		{"explicit-faces page", func() (string, error) {
 			return s.ExplainEntityPage(ctx, store.EntityQuery{
-				Type: "policy", AllStates: true, FaceIn: []entity.Face{"published"}, Limit: 100,
+				Type: "policy", Faces: store.AllFaces(), FaceIn: []entity.Face{"published"}, Limit: 100,
 			})
 		}, pageIndex, nil},
 		{"family read", func() (string, error) {
-			return s.ExplainEntityPage(ctx, store.EntityQuery{IDs: family, AllStates: true})
+			return s.ExplainEntityPage(ctx, store.EntityQuery{IDs: family, Faces: store.AllFaces()})
 		}, "USING INDEX sqlite_autoindex_entities_1", nil},
 		{"single row", func() (string, error) {
 			return s.ExplainGetEntityState(ctx, "POL-000007", "published")

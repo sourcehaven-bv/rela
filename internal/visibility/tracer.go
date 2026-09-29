@@ -250,7 +250,7 @@ func tailReadable(tail tracer.Tail, nodes map[string]tracer.Node) bool {
 // for their redacted titles. A failed read is returned; a gate error hides
 // that type fail-closed, logged.
 func (t *VisibleTracer) FindOrphans(ctx context.Context) ([]tracer.Orphan, error) {
-	stored, err := t.res.storedHeaders(ctx, store.EntityQuery{AllStates: true})
+	stored, err := t.res.storedHeaders(ctx, store.EntityQuery{Faces: store.AllFaces()})
 	if err != nil {
 		return nil, err
 	}

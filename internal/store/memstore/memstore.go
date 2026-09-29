@@ -316,7 +316,7 @@ func (m *MemStore) ListEntities(_ context.Context, q store.EntityQuery) iter.Seq
 	}
 	m.mu.RUnlock()
 
-	snapshot = worldKeep(q.World, snapshot)
+	snapshot = worldKeep(storeutil.RankingWorld(q), snapshot)
 
 	return func(yield func(*entity.Entity, error) bool) {
 		for _, e := range snapshot {
@@ -355,7 +355,7 @@ func (m *MemStore) ListEntityHeaders(
 	}
 	// Resolve BEFORE projecting: the world picks whole rows, and a
 	// header carries the face that identifies which face it is.
-	matched = worldKeep(q.World, matched)
+	matched = worldKeep(storeutil.RankingWorld(q), matched)
 
 	snapshot := make([]store.EntityHeader, 0, len(matched))
 	for _, e := range matched {
@@ -398,14 +398,14 @@ func (m *MemStore) ListEntitiesPage(_ context.Context, q store.EntityQuery) (sto
 	matches := func(id string) bool { return matchEntityQuery(m.entities[id], q, idSet) }
 
 	var keys storeutil.PageKeys
-	if q.World.IsDefaultWorld() {
+	if storeutil.RankingWorld(q).IsDefaultWorld() {
 		keys = storeutil.PaginateSortedKeysFunc(
 			m.entityOrder, cursorKey, q.Limit, matches, storeutil.CompareStateKeys)
 	} else {
 		// The world path buffers ONE family at a time and counts PRIMES
 		// against the limit — see storeutil.PaginateWorldPrimes.
 		keys = storeutil.PaginateWorldPrimes(
-			m.entityOrder, cursorKey, q.Limit, q.World, matches,
+			m.entityOrder, cursorKey, q.Limit, storeutil.RankingWorld(q), matches,
 			func(key string) (storeutil.WorldCandidate, bool) {
 				e, ok := m.entities[key]
 				if !ok {
@@ -465,7 +465,7 @@ func (m *MemStore) CountEntities(_ context.Context, q store.EntityQuery) (int, e
 	// The default world resolves every row to itself, so counting needs
 	// no buffer — and this is the common path for a project that never
 	// declares a face, which must stay allocation-free.
-	if q.World.IsDefaultWorld() {
+	if storeutil.RankingWorld(q).IsDefaultWorld() {
 		n := 0
 		for _, e := range m.entities {
 			if matchEntityQuery(e, q, idSet) {
@@ -483,7 +483,7 @@ func (m *MemStore) CountEntities(_ context.Context, q store.EntityQuery) (int, e
 	}
 	// Counts must be world-scoped, not raw: an unscoped tally tells a
 	// published-world surface how many unpublished drafts exist.
-	return len(worldKeep(q.World, matched)), nil
+	return len(worldKeep(storeutil.RankingWorld(q), matched)), nil
 }
 
 func (m *MemStore) HighestID(_ context.Context, prefix string) (int, error) {

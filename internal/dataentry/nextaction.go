@@ -364,7 +364,9 @@ func (a *App) countCandidates(
 // countIsZero reports whether the caller sees no entities of entityType.
 func (a *App) countIsZero(ctx context.Context, entityType string, ungated bool) (bool, error) {
 	if ungated {
-		_, total, err := a.Services().Store.GraphCount(ctx, store.GraphQuery{EntityType: entityType})
+		_, total, err := a.Services().Store.GraphCount(ctx, store.GraphQuery{
+			EntityType: entityType, Faces: store.InWorld(worldScopeFrom(ctx)),
+		})
 		if err != nil {
 			return false, fmt.Errorf("next-action count for %q: %w", entityType, err)
 		}

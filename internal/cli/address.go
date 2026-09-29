@@ -79,7 +79,7 @@ func storedFamily(ctx context.Context, st store.EntityLister, id string) (string
 		typ   string
 		faces []entity.Face
 	)
-	for h, err := range store.ListEntityHeaders(ctx, st, store.EntityQuery{IDs: []string{id}, AllStates: true}) {
+	for h, err := range store.ListEntityHeaders(ctx, st, store.EntityQuery{IDs: []string{id}, Faces: store.AllFaces()}) {
 		if err != nil {
 			return "", nil, fmt.Errorf("read the faces of %q: %w", id, err)
 		}
@@ -105,7 +105,7 @@ func rowsInWorld(
 	if len(ids) == 0 {
 		return out
 	}
-	for h, err := range store.ListEntityHeaders(ctx, st, store.EntityQuery{IDs: ids, World: world}) {
+	for h, err := range store.ListEntityHeaders(ctx, st, store.EntityQuery{IDs: ids, Faces: store.InWorld(world)}) {
 		if err != nil { // coverage-ignore: defensive: a failed title read degrades to showing ids
 			slog.DebugContext(ctx, "neighbor titles: read failed", "ids", len(ids), "err", err)
 			break

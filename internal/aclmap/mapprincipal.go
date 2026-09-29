@@ -325,10 +325,18 @@ func (e *Engine) typeExceptions(
 ) ([]EntityException, bool, error) {
 	var exceptions []EntityException
 	var sawNonEveryone bool
-	for ent, err := range e.src.ListEntities(ctx, store.EntityQuery{Type: typ}) {
+	// Every face: access routes are decided per id, and a faced entity has
+	// no default row. Rows arrive ordered by id, so a repeated id is the
+	// same family and is decided once.
+	var last string
+	for ent, err := range e.src.ListEntities(ctx, store.EntityQuery{Type: typ, Faces: store.AllFaces()}) {
 		if err != nil {
 			return nil, false, fmt.Errorf("aclmap: list %s entities: %w", typ, err)
 		}
+		if ent.ID == last {
+			continue
+		}
+		last = ent.ID
 		extra, saw, err := e.entityExtra(ctx, req, typ, ent.ID, verbs)
 		if err != nil {
 			return nil, false, err

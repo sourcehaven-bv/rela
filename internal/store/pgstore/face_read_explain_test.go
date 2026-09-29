@@ -90,18 +90,18 @@ func TestFaceReadExplain(t *testing.T) {
 		return shape{name, sqlText, args, "entities_type_id_face_idx", sortOK}
 	}
 	highestSQL, highestArgs := pgstore.BuildHighestIDSQLForTest("POL")
-	familySQL, familyArgs := pgstore.BuildEntityListSQLForTest(t, store.EntityQuery{IDs: family, AllStates: true})
+	familySQL, familyArgs := pgstore.BuildEntityListSQLForTest(t, store.EntityQuery{IDs: family, Faces: store.AllFaces()})
 
 	for _, tc := range []shape{
-		page("default-face page", store.EntityQuery{Type: "task", Limit: 100}, false),
-		page("all-faces page", store.EntityQuery{Type: "policy", AllStates: true, Limit: 100}, false),
-		page("world page", store.EntityQuery{Type: "policy", World: published, Limit: 100}, false),
+		page("default-face page", store.EntityQuery{Type: "task", Limit: 100, Faces: store.InWorld(store.DefaultWorld())}, false),
+		page("all-faces page", store.EntityQuery{Type: "policy", Faces: store.AllFaces(), Limit: 100}, false),
+		page("world page", store.EntityQuery{Type: "policy", Faces: store.InWorld(published), Limit: 100}, false),
 		page("world page after a cursor", store.EntityQuery{
-			Type: "policy", World: published, Limit: 100,
+			Type: "policy", Faces: store.InWorld(published), Limit: 100,
 			Cursor: storeutil.EncodeCursor("POL-001200@published"),
 		}, false),
 		page("explicit-faces page", store.EntityQuery{
-			Type: "policy", AllStates: true, FaceIn: []entity.Face{"published"}, Limit: 100,
+			Type: "policy", Faces: store.AllFaces(), FaceIn: []entity.Face{"published"}, Limit: 100,
 		}, false),
 		{"family read", familySQL, familyArgs, "entities_pkey", true},
 		{"single row", pgstore.GetEntityStateSQLForTest, []any{"POL-000007", "published"}, "entities_pkey", false},

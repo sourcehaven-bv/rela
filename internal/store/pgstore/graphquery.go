@@ -143,9 +143,9 @@ func (s *Store) GraphCount(ctx context.Context, q store.GraphQuery) (matched, to
 func buildGraphTotalSQL(q store.GraphQuery) (sqlText string, args []any) {
 	b := &sqlBuilder{}
 	typeArg := b.arg(q.EntityType)
-	scope, _, _ := graphWorldScope(b, q)
+	scope, distinctOn, _ := graphWorldScope(b, q)
 	agg := "count(*)"
-	if !effectiveWorld(q.World, q.EntityType).IsDefaultWorld() {
+	if distinctOn != "" {
 		agg = "count(DISTINCT e.id)"
 	}
 	return "SELECT " + agg + " FROM entities e WHERE e.type = " + typeArg + " AND " + scope, b.args
@@ -213,22 +213,22 @@ func buildMatchingIDsSQL(q store.GraphQuery, ids []string) (sqlText string, args
 // lower-ranked face answer for an entity whose prime fails the filter.
 func buildPredicateParts(b *sqlBuilder, q store.GraphQuery, typeArg string) (with, pre, post []string) {
 	if q.HasInbound != nil {
-		w, ex := buildPredicateSQL(b, "in", *q.HasInbound, typeArg, store.DirectionIncoming)
+		w, ex := buildPredicateSQL(b, "in", *q.HasInbound, typeArg, store.DirectionIncoming, q.Faces)
 		with = append(with, w...)
 		pre = append(pre, existsCond(ex, q.HasInbound.Negate))
 	}
 	if q.HasOutbound != nil {
-		w, ex := buildPredicateSQL(b, "out", *q.HasOutbound, typeArg, store.DirectionOutgoing)
+		w, ex := buildPredicateSQL(b, "out", *q.HasOutbound, typeArg, store.DirectionOutgoing, q.Faces)
 		with = append(with, w...)
 		pre = append(pre, existsCond(ex, q.HasOutbound.Negate))
 	}
 	for i, rel := range q.Related {
-		w, ex := buildPredicateSQL(b, relatedPrefix(i), rel.Pred, typeArg, relatedDirection(rel))
+		w, ex := buildPredicateSQL(b, relatedPrefix(i), rel.Pred, typeArg, relatedDirection(rel), q.Faces)
 		with = append(with, w...)
 		pre = append(pre, existsCond(ex, rel.Pred.Negate))
 	}
 	if len(q.Any) > 0 {
-		w, cond := buildAnySQL(b, "any", q.Any, typeArg)
+		w, cond := buildAnySQL(b, "any", q.Any, typeArg, q.Faces)
 		with = append(with, w...)
 		pre = append(pre, cond)
 	}
@@ -313,14 +313,14 @@ func buildNarrowingSQL(b *sqlBuilder, branches []store.NarrowBranch) string {
 // semantics FaceIn already has, per branch. Shared by the graph queries and
 // the visible-search disjunction so the two cannot drift.
 func buildAnySQL(
-	b *sqlBuilder, prefix string, branches []store.GraphBranch, typeArg string,
+	b *sqlBuilder, prefix string, branches []store.GraphBranch, typeArg string, sel store.FaceSelection,
 ) (with []string, cond string) {
 	parts := make([]string, 0, len(branches))
 	for i, br := range branches {
 		var conj []string
 		if br.HasInbound != nil {
 			w, ex := buildPredicateSQL(b, fmt.Sprintf("%s%d_in", prefix, i), *br.HasInbound,
-				typeArg, store.DirectionIncoming)
+				typeArg, store.DirectionIncoming, sel)
 			with = append(with, w...)
 			conj = append(conj, existsCond(ex, br.HasInbound.Negate))
 		}
@@ -537,6 +537,11 @@ func buildGraphQuerySQLSelect(q store.GraphQuery, sel graphSelect) (sqlText stri
 		sb.WriteString(orderKeySQL(b, spec) + ", ")
 	}
 	sb.WriteString("e.id ASC")
+	if _, inWorld := q.Faces.World(); !inWorld {
+		// AllFaces and AtFaces return several rows per id; the face
+		// tiebreak keeps their order total, as graphquerynaive's is.
+		sb.WriteString(", e.face ASC")
+	}
 	if q.Limit > 0 {
 		sb.WriteString(" LIMIT " + b.arg(q.Limit))
 	}
@@ -605,10 +610,14 @@ func orderKeySQL(b *sqlBuilder, spec store.OrderSpec) string {
 // The endpoint and entity expansions are independent: each emits its
 // own CTE only when Predicate.InheritThrough / EntityInheritThrough
 // is non-empty AND the corresponding Depth is > 0. When omitted, the
-// EXISTS query references the seed directly.
+// EXISTS query references the seed directly. Both closures follow
+// identity-scoped edges only (a "" tail): content-scoped edges confer no
+// inheritance (stage-2 ruling D5).
+//
+// sel is the selection an EndpointMatch inherits when it sets none.
 func buildPredicateSQL(
 	b *sqlBuilder, prefix string,
-	p store.RelationPredicate, typeArg string, dir store.Direction,
+	p store.RelationPredicate, typeArg string, dir store.Direction, sel store.FaceSelection,
 ) (with []string, exists string) {
 	// The endpoints arg is registered LAZILY: with no endpoints named
 	// ("any endpoint") nothing references it, and an unreferenced
@@ -636,7 +645,7 @@ func buildPredicateSQL(
     SELECT r.to_id, c.depth + 1
     FROM relations r
     JOIN %s c ON r.from_id = c.id
-    WHERE r.rel_type = ANY(%s)
+    WHERE r.from_face = '' AND r.rel_type = ANY(%s)
       AND c.depth < %s
 )`, cteName, endpointsArg, cteName, throughArg, depthArg))
 		endpointSrc = "SELECT id FROM " + cteName
@@ -652,18 +661,19 @@ func buildPredicateSQL(
 		entityDepthArg := b.arg(cappedDepth(p.EntityDepth))
 		cteName := prefix + "_entity_closure"
 		with = append(with, fmt.Sprintf(`%s(id, root, depth) AS (
-    -- e0.face = '': IDENTITY ANCHOR (TKT-WAV8XP Q5). The CTE seed
-    -- stays UN-WORLDED on purpose: role/containment climbing is
-    -- world-insensitive, so who an entity inherits from must not change
-    -- with the reader's world. Widest blast radius in this file — shared
-    -- between the graph-query and visible-search paths via
+    -- IDENTITY ANCHOR (TKT-WAV8XP Q5). The seed is ENTITY-level: one row
+    -- per id of the type, whatever faces it has, so a faced candidate
+    -- inherits exactly as an unfaced one does. It stays UN-WORLDED on
+    -- purpose: role/containment climbing is world-insensitive, so who an
+    -- entity inherits from must not change with the reader's world.
+    -- Shared between the graph-query and visible-search paths via
     -- buildPredicateSQL, so a world arm here would leak into search too.
-    SELECT e0.id, e0.id, 0 FROM entities e0 WHERE e0.face = '' AND e0.type = %s
+    SELECT DISTINCT e0.id, e0.id, 0 FROM entities e0 WHERE e0.type = %s
     UNION
     SELECT r.to_id, c.root, c.depth + 1
     FROM relations r
     JOIN %s c ON r.from_id = c.id
-    WHERE r.rel_type = ANY(%s)
+    WHERE r.from_face = '' AND r.rel_type = ANY(%s)
       AND c.depth < %s
 )`, cteName, typeArg, cteName, entityThroughArg, entityDepthArg))
 		entityJoin = fmt.Sprintf("(SELECT id FROM %s WHERE root = e.id)", cteName)
@@ -681,6 +691,7 @@ func buildPredicateSQL(
 	// An EndpointMatch adds an INNER JOIN onto the endpoint row, which is
 	// also what gives a dangling edge the naive backend's answer (no row, no
 	// match) without a separate existence test.
+	epSel := endpointSelection(p.EndpointMatch, sel)
 	var existsSB strings.Builder
 	existsSB.WriteString("SELECT 1 FROM relations r ")
 	if p.EndpointMatch != nil {
@@ -688,7 +699,7 @@ func buildPredicateSQL(
 	}
 	existsSB.WriteString("WHERE ")
 	if p.EndpointMatch != nil {
-		existsSB.WriteString(defaultStateCond(prefix + "_ep"))
+		existsSB.WriteString(endpointHopCond(b, prefix+"_ep", epSel))
 	}
 	if len(p.OfTypes) > 0 {
 		typesArg := b.arg(p.OfTypes)
@@ -725,7 +736,7 @@ func buildPredicateSQL(
 			if chain.pred == nil {
 				continue
 			}
-			w, ex := nestedPredicateSQL(b, alias, *chain.pred, alias, chain.dir)
+			w, ex := nestedPredicateSQL(b, alias, *chain.pred, alias, chain.dir, epSel)
 			with = append(with, w...)
 			existsSB.WriteString(" AND " + existsCond(ex, chain.pred.Negate))
 		}
@@ -734,12 +745,40 @@ func buildPredicateSQL(
 	return with, existsSB.String()
 }
 
-// defaultStateCond pins an endpoint-match hop to the DEFAULT state: the
-// endpoint's default face and a default-tailed edge. See
-// [store.RelationPredicate.EndpointMatch] for why. Without it the join
-// matched ANY face of the endpoint, which the Go path never did.
-func defaultStateCond(endpointAlias string) string {
-	return "r.from_face = '' AND " + endpointAlias + ".face = '' AND "
+// endpointHopCond is the leading conjunct of an endpoint-match hop: the edge
+// is identity-scoped, and the endpoint row is the one sel reads. See
+// [store.RelationPredicate.EndpointMatch].
+func endpointHopCond(b *sqlBuilder, endpointAlias string, sel store.FaceSelection) string {
+	out := "r.from_face = '' AND "
+	if c := endpointFaceCond(b, endpointAlias, sel); c != "" {
+		out += c + " AND "
+	}
+	return out
+}
+
+// endpointFaceCond renders the face an endpoint alias is read at under sel,
+// or "" when every face is read. Under a non-default world the endpoint row
+// must be its family's prime: a candidate no better-ranked candidate of the
+// same id beats. Candidates of one family never tie on rank (a chain lists
+// each face once), so the strict comparison picks exactly one row.
+func endpointFaceCond(b *sqlBuilder, alias string, sel store.FaceSelection) string {
+	if w, ok := sel.World(); ok && !w.IsDefaultWorld() {
+		rival := alias + "_w"
+		rank, cand := worldSQL(w, alias, &b.args)
+		rivalRank, rivalCand := worldSQL(w, rival, &b.args)
+		return "(" + cand + " AND NOT EXISTS (SELECT 1 FROM entities " + rival + " WHERE " + rival + ".id = " +
+			alias + ".id AND " + rivalCand + " AND (" + rivalRank + ") < (" + rank + ")))"
+	}
+	return faceSelectionCond(sel, alias, &b.args)
+}
+
+// endpointSelection is the selection an endpoint match is evaluated at: its
+// own when set, else the enclosing one.
+func endpointSelection(m *store.EndpointPredicate, enclosing store.FaceSelection) store.FaceSelection {
+	if m != nil && !m.Faces.IsZero() {
+		return m.Faces
+	}
+	return enclosing
 }
 
 // nestedPredicateSQL is [buildPredicateSQL] for a hop whose CANDIDATE row is
@@ -761,12 +800,14 @@ func defaultStateCond(endpointAlias string) string {
 // back through matchesPredicate and DOES expand both closures.
 func nestedPredicateSQL(
 	b *sqlBuilder, prefix string, p store.RelationPredicate, candidateAlias string, dir store.Direction,
+	sel store.FaceSelection,
 ) (with []string, exists string) {
 	endpointCol, entityCol := "r.from_id", "r.to_id"
 	if dir == store.DirectionOutgoing {
 		endpointCol, entityCol = "r.to_id", "r.from_id"
 	}
 
+	epSel := endpointSelection(p.EndpointMatch, sel)
 	var sb strings.Builder
 	sb.WriteString("SELECT 1 FROM relations r ")
 	alias := prefix + "_ep"
@@ -775,7 +816,7 @@ func nestedPredicateSQL(
 	}
 	sb.WriteString("WHERE ")
 	if p.EndpointMatch != nil {
-		sb.WriteString(defaultStateCond(alias))
+		sb.WriteString(endpointHopCond(b, alias, epSel))
 	}
 	if len(p.OfTypes) > 0 {
 		fmt.Fprintf(&sb, "r.rel_type = ANY(%s) AND ", b.arg(p.OfTypes))
@@ -802,7 +843,7 @@ func nestedPredicateSQL(
 			if chain.pred == nil {
 				continue
 			}
-			w, ex := nestedPredicateSQL(b, alias, *chain.pred, alias, chain.dir)
+			w, ex := nestedPredicateSQL(b, alias, *chain.pred, alias, chain.dir, epSel)
 			with = append(with, w...)
 			sb.WriteString(" AND " + existsCond(ex, chain.pred.Negate))
 		}
@@ -831,15 +872,17 @@ func cappedDepth(d int) int {
 // into SQL text, never a SQL-injection surface even when callers
 // pass arbitrary strings.
 // graphWorldScope returns the WHERE fragment scoping a graph query's
-// RESULT rows to the world, plus the DISTINCT ON / ORDER BY pieces the
-// caller needs to pick one prime per family (TKT-WAV8XP PR-C).
+// RESULT rows to its selection, plus, under a non-default world, the
+// DISTINCT ON / ORDER BY pieces the caller needs to pick one prime per
+// family (TKT-WAV8XP PR-C). Under AllFaces and AtFaces every selected row is
+// a result row, so no rank is returned.
 //
 // Scope applies to the entities the query RETURNS. Relation predicates
 // and their CTEs walk the graph's IDENTITY structure and are deliberately
 // NOT world-resolved (Q5): who an entity is related to, and what it
 // inherits through a containment or role chain, must not depend on the
-// reader's world. That is why the recursive CTE seeds keep a bare
-// `e0.face = ”` — see the annotation there.
+// reader's world. That is why the recursive CTE seeds are entity-level —
+// see the annotation there.
 //
 // For the default world this is the historical `e.face = ”`, costing
 // exactly what it did before worlds existed.
@@ -847,7 +890,6 @@ func cappedDepth(d int) int {
 // filter cannot be applied at one call site and forgotten at another — all
 // three graph paths go through here (TKT-O7R2A1).
 func graphWorldScope(b *sqlBuilder, q store.GraphQuery) (where, distinctOn, rankOrder string) {
-	w := effectiveWorld(q.World, q.EntityType)
 	faceIn := func(base string) string {
 		if len(q.FaceIn) == 0 {
 			return base
@@ -861,8 +903,16 @@ func graphWorldScope(b *sqlBuilder, q store.GraphQuery) (where, distinctOn, rank
 		// candidate rather than vanishing.
 		return "(" + base + ") AND e.face = ANY(" + b.arg(vals) + ")"
 	}
-	if w.IsDefaultWorld() {
-		return faceIn("e.face = ''"), "", ""
+	w, ok := q.Faces.World()
+	if ok {
+		w = effectiveWorld(w, q.EntityType)
+	}
+	if !ok || w.IsDefaultWorld() {
+		base := faceSelectionCond(q.Faces, "e", &b.args)
+		if base == "" {
+			base = "TRUE"
+		}
+		return faceIn(base), "", ""
 	}
 	// "e" is the alias the graph queries give the entities table.
 	rank, candidate := worldSQL(w, "e", &b.args)

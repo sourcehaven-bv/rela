@@ -68,7 +68,7 @@ func facedCLIServices(t *testing.T) *writeServices {
 func facesOf(t *testing.T, st store.Store, id string) map[entity.Face]bool {
 	t.Helper()
 	faces := map[entity.Face]bool{}
-	for e, err := range st.ListEntities(context.Background(), store.EntityQuery{IDs: []string{id}, AllStates: true}) {
+	for e, err := range st.ListEntities(context.Background(), store.EntityQuery{IDs: []string{id}, Faces: store.AllFaces()}) {
 		if err != nil {
 			t.Fatalf("ListEntities: %v", err)
 		}

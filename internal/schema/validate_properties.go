@@ -37,12 +37,12 @@ func ValidateEntityProperties(
 		return nil, nil
 	}
 	var out []PropertyError
-	// AllStates: each content state holds its own property values, so a
-	// required property missing from one face is a real violation. The default
+	// AllFaces: each content state holds its own property values, so a
+	// required property missing from one face is a real violation. A default-world
 	// query loads only default-state rows and would report a clean run over
 	// data it never looked at (TKT-4Y6CMV).
 	var scanErrs []error
-	for e, err := range st.ListEntities(ctx, store.EntityQuery{AllStates: true}) {
+	for e, err := range st.ListEntities(ctx, store.EntityQuery{Faces: store.AllFaces()}) {
 		if err != nil {
 			scanErrs = append(scanErrs, err)
 			continue

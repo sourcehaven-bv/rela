@@ -137,7 +137,7 @@ func TestTxPoolExhaustion(t *testing.T) {
 		require.NoError(t, err, "worker %d (starved on a 2-conn pool?)", w)
 	}
 
-	n, err := s.CountEntities(ctx, store.EntityQuery{Type: "feature"})
+	n, err := s.CountEntities(ctx, store.EntityQuery{Type: "feature", Faces: store.InWorld(store.DefaultWorld())})
 	require.NoError(t, err)
 	require.Equal(t, workers*3, n)
 

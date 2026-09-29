@@ -49,7 +49,11 @@ func (e *Engine) enumeratePrincipals(ctx context.Context) ([]string, error) {
 
 	// User-entity-type entities.
 	if ut := policy.UserEntityType; ut != "" {
-		for ent, err := range e.src.ListEntities(ctx, store.EntityQuery{Type: ut}) {
+		// The default world, as the principal lookup reads it: a principal
+		// is identified on the default rows only until TKT-7IZHP0.
+		for ent, err := range e.src.ListEntities(ctx, store.EntityQuery{
+			Type: ut, Faces: store.InWorld(store.DefaultWorld()),
+		}) {
 			if err != nil {
 				return nil, fmt.Errorf("aclmap: list %s entities: %w", ut, err)
 			}

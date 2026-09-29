@@ -149,7 +149,7 @@ func (s *Service) Search(ctx context.Context, q Query) iter.Seq2[Hit, error] {
 func (s *Service) listAll(ctx context.Context, q Query) iter.Seq2[Hit, error] {
 	return func(yield func(Hit, error) bool) {
 		emitted := 0
-		for e, err := range s.reader.ListEntities(ctx, store.EntityQuery{}) {
+		for e, err := range s.reader.ListEntities(ctx, store.EntityQuery{Faces: store.InWorld(q.World)}) {
 			if err != nil {
 				if !yield(Hit{}, err) {
 					return
@@ -169,7 +169,7 @@ func (s *Service) listAll(ctx context.Context, q Query) iter.Seq2[Hit, error] {
 				continue
 			}
 
-			if !yield(Hit{ID: e.ID, Type: e.Type, Title: e.Title()}, nil) {
+			if !yield(Hit{ID: e.ID, Type: e.Type, Title: e.Title(), Face: e.Face}, nil) {
 				return
 			}
 			emitted++

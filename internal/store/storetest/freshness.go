@@ -87,7 +87,7 @@ func RunFreshnessTests(t *testing.T, f Factory) {
 		// on every poll.
 		_, err = s.GetEntity(ctx(), "FEAT-001")
 		require.NoError(t, err)
-		_, err = s.CountEntities(ctx(), store.EntityQuery{})
+		_, err = s.CountEntities(ctx(), store.EntityQuery{Faces: store.InWorld(store.DefaultWorld())})
 		require.NoError(t, err)
 
 		second, err := s.LastModified(ctx())

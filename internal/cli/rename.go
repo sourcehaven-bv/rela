@@ -94,7 +94,9 @@ func resolveRenameEntity(svc *writeServices, oldType, newType, renamePlural stri
 		return nil, err
 	}
 	_, statErr := svc.FS.Stat(oldTemplatePath)
-	entityCount, _ := svc.Store.CountEntities(context.Background(), store.EntityQuery{Type: resolvedOld})
+	entityCount, _ := svc.Store.CountEntities(context.Background(), store.EntityQuery{
+		Type: resolvedOld, Faces: store.AllFaces(),
+	})
 
 	return &renameEntityInfo{
 		resolvedOld:     resolvedOld,

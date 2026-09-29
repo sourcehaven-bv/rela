@@ -138,8 +138,8 @@ func FuzzDifferential(f *testing.F) {
 				}
 
 			case 2: // CountEntities
-				c1, err1 := mem.CountEntities(bg, store.EntityQuery{})
-				c2, err2 := fss.CountEntities(bg, store.EntityQuery{})
+				c1, err1 := mem.CountEntities(bg, store.EntityQuery{Faces: store.InWorld(store.DefaultWorld())})
+				c2, err2 := fss.CountEntities(bg, store.EntityQuery{Faces: store.InWorld(store.DefaultWorld())})
 				assertSameError(t, err1, err2, "CountEntities")
 				if err1 == nil {
 					assert.Equal(t, c1, c2, "CountEntities mismatch")
@@ -217,8 +217,8 @@ func FuzzDifferential(f *testing.F) {
 		}
 
 		// Final consistency check: compare full entity and relation listings.
-		ents1, err1 := collectEntities(mem.ListEntities(bg, store.EntityQuery{}))
-		ents2, err2 := collectEntities(fss.ListEntities(bg, store.EntityQuery{}))
+		ents1, err1 := collectEntities(mem.ListEntities(bg, store.EntityQuery{Faces: store.InWorld(store.DefaultWorld())}))
+		ents2, err2 := collectEntities(fss.ListEntities(bg, store.EntityQuery{Faces: store.InWorld(store.DefaultWorld())}))
 		assertSameError(t, err1, err2, "final ListEntities")
 		if err1 == nil {
 			assertSameEntityList(t, ents1, ents2, "final entities")

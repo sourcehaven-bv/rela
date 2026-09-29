@@ -204,8 +204,7 @@ type cardinalityViolation struct {
 // Adopting the shared checker changed two things an MCP caller can see, both
 // deliberate. An incoming bound is now reported against the relation's
 // INVERSE id rather than the forward name prefixed with "incoming ". And the
-// subject scan asks for AllStates, so where the reader honors that, a faced
-// entity is checked per face (TKT-4Y6CMV) and a content-scoped edge on the
+// subject scan asks for AllFaces, so a faced entity is checked per face (TKT-4Y6CMV) and a content-scoped edge on the
 // draft no longer satisfies the published face's bound.
 //
 // The scan widening is visible on its own, separate from faces: the deleted
@@ -216,16 +215,10 @@ type cardinalityViolation struct {
 // show_entity. That is the detector working, not a leak: the rows are the
 // operator's own data and the remedy is a data migration.
 //
-// Per-face checking is NOT guaranteed for every wiring, and the difference is
-// in the reader rather than here. `store.GraphQuery` has no AllStates field,
-// so when an ACL-gated reader composes one (visibility.listPushdown's Query
-// branch, taken by a principal whose grants compile to a policy query) the
-// request is dropped and each id collapses to a single world prime. Such a
-// caller checks FEWER subjects than the CLI does over a raw store. That
-// direction is safe — an unscanned face means a violation is missed, never
-// invented — but do not build on per-face coverage here as if it were
-// universal (RR-16R183; closing the gap is a store.GraphQuery change,
-// alongside TKT-O7R2A1).
+// An ACL-gated reader that composes a `store.GraphQuery`
+// (visibility.listPushdown's Query branch) carries the AllFaces selection
+// into it, so a gated caller is checked per face too, over the faces its
+// grant admits (RR-16R183, closed by TKT-KQXVF7).
 func (s *Server) handleAnalyzeCardinality(
 	ctx context.Context, _ *mcpgo.CallToolRequest,
 ) (*mcpgo.CallToolResult, error) {
@@ -291,7 +284,7 @@ func (s *Server) handleAnalyzeUnique(
 				continue
 			}
 			byValue := map[faceValue][]string{}
-			q := store.EntityQuery{Type: typeName, AllStates: true}
+			q := store.EntityQuery{Type: typeName, Faces: store.AllFaces()}
 			for e, err := range snap.deps.Store.ListEntities(ctx, q) {
 				if err != nil {
 					return errorResult(err.Error()), nil
@@ -346,7 +339,7 @@ func (s *Server) handleAnalyzeProperties(
 
 	// Validate entity properties, every face: each holds its own values, and
 	// a faced type has no default row (BUG-95W7MV).
-	for e, err := range st.ListEntities(ctx, store.EntityQuery{AllStates: true}) {
+	for e, err := range st.ListEntities(ctx, store.EntityQuery{Faces: store.AllFaces()}) {
 		if err != nil {
 			break
 		}

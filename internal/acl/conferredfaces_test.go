@@ -61,7 +61,7 @@ func TestReadQuery_ConferredRolesKeepTheirOwnFaces(t *testing.T) {
 			t.Fatalf("%s: want a composed query, got %+v", user, rqr)
 		}
 		q := *rqr.Query
-		q.World = world
+		q.Faces = store.InWorld(world)
 		q.FaceIn = rqr.Faces
 		m, err := st.MatchingIDs(ctx, q, []string{"POL-1"})
 		if err != nil {

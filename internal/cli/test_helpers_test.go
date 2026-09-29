@@ -57,7 +57,7 @@ func fixtureEntities(t *testing.T, st store.Store, entityType string) []*entity.
 	out := make([]*entity.Entity, 0)
 	for e, err := range st.ListEntities(
 		context.Background(),
-		store.EntityQuery{Type: entityType},
+		store.EntityQuery{Type: entityType, Faces: store.InWorld(store.DefaultWorld())},
 	) {
 		if err != nil {
 			continue
@@ -71,7 +71,7 @@ func fixtureEntities(t *testing.T, st store.Store, entityType string) []*entity.
 func fixtureAllEntities(t *testing.T, st store.Store) []*entity.Entity {
 	t.Helper()
 	out := make([]*entity.Entity, 0)
-	for e, err := range st.ListEntities(context.Background(), store.EntityQuery{}) {
+	for e, err := range st.ListEntities(context.Background(), store.EntityQuery{Faces: store.InWorld(store.DefaultWorld())}) {
 		if err != nil {
 			continue
 		}

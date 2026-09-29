@@ -12,8 +12,8 @@ import (
 
 // RunWorldTests is the world-resolution conformance suite (TKT-WAV8XP):
 // the three resolution rules, chain order, the at-most-one-prime
-// invariant, exclude-vs-default fallback, the zero-value default-world
-// fast path, and the AllStates+World refusal.
+// invariant, exclude-vs-default fallback, and the zero-value default-world
+// fast path. The other selection modes are [RunFaceSelectionTests].
 //
 // These cases define the contract BEFORE the second backend implements
 // it. fs/mem resolve in shared Go (storeutil); pgstore resolves in SQL
@@ -102,7 +102,7 @@ func RunWorldTests(t *testing.T, f Factory) {
 
 		got := titles(t, s, store.EntityQuery{
 			Type:  "page",
-			World: scope(t, "page", store.FallbackExclude, "review", "published"),
+			Faces: store.InWorld(scope(t, "page", store.FallbackExclude, "review", "published")),
 		})
 		assert.Equal(t, map[string]string{
 			"PAGE-1": "1 review",    // review outranks published
@@ -120,11 +120,11 @@ func RunWorldTests(t *testing.T, f Factory) {
 
 		forward := titles(t, s, store.EntityQuery{
 			Type:  "page",
-			World: scope(t, "page", store.FallbackExclude, "review", "published"),
+			Faces: store.InWorld(scope(t, "page", store.FallbackExclude, "review", "published")),
 		})
 		reverse := titles(t, s, store.EntityQuery{
 			Type:  "page",
-			World: scope(t, "page", store.FallbackExclude, "published", "review"),
+			Faces: store.InWorld(scope(t, "page", store.FallbackExclude, "published", "review")),
 		})
 		assert.Equal(t, "review face", forward["PAGE-1"])
 		assert.Equal(t, "published face", reverse["PAGE-1"],
@@ -142,7 +142,7 @@ func RunWorldTests(t *testing.T, f Factory) {
 
 		got := titles(t, s, store.EntityQuery{
 			Type:  "page",
-			World: scope(t, "page", store.FallbackExclude, "published"),
+			Faces: store.InWorld(scope(t, "page", store.FallbackExclude, "published")),
 		})
 		assert.Equal(t, map[string]string{"PAGE-1": "1 published"}, got)
 		assert.NotContains(t, got, "PAGE-2",
@@ -160,7 +160,7 @@ func RunWorldTests(t *testing.T, f Factory) {
 
 		got := titles(t, s, store.EntityQuery{
 			Type:  "page",
-			World: scope(t, "page", store.FallbackDefaultState, "published"),
+			Faces: store.InWorld(scope(t, "page", store.FallbackDefaultState, "published")),
 		})
 		assert.Equal(t, map[string]string{
 			"PAGE-1": "1 published",
@@ -180,7 +180,7 @@ func RunWorldTests(t *testing.T, f Factory) {
 
 		// A world naming only `page`; `ticket` is absent from the map.
 		got := titles(t, s, store.EntityQuery{
-			World: scope(t, "page", store.FallbackExclude, "published"),
+			Faces: store.InWorld(scope(t, "page", store.FallbackExclude, "published")),
 		})
 		assert.Equal(t, "page published", got["PAGE-1"])
 		assert.Equal(t, "ticket default", got["TKT-1"],
@@ -198,7 +198,7 @@ func RunWorldTests(t *testing.T, f Factory) {
 
 		q := store.EntityQuery{
 			Type:  "page",
-			World: scope(t, "page", store.FallbackDefaultState, "review", "published"),
+			Faces: store.InWorld(scope(t, "page", store.FallbackDefaultState, "review", "published")),
 		}
 		titles(t, s, q) // fatals on a duplicate id
 
@@ -215,8 +215,8 @@ func RunWorldTests(t *testing.T, f Factory) {
 		mustCreate(t, s, newState(t, "PAGE-1", "page", "", "default face"))
 		mustCreate(t, s, newState(t, "PAGE-1", "page", "published", "published face"))
 
-		bare := titles(t, s, store.EntityQuery{Type: "page"})
-		zero := titles(t, s, store.EntityQuery{Type: "page", World: store.DefaultWorld()})
+		bare := titles(t, s, store.EntityQuery{Type: "page", Faces: store.InWorld(store.DefaultWorld())})
+		zero := titles(t, s, store.EntityQuery{Type: "page", Faces: store.InWorld(store.DefaultWorld())})
 		assert.Equal(t, map[string]string{"PAGE-1": "default face"}, bare)
 		assert.Equal(t, bare, zero, "the zero WorldScope must not change any result")
 	})
@@ -229,10 +229,10 @@ func RunWorldTests(t *testing.T, f Factory) {
 		mustCreate(t, s, newState(t, "TKT-2", "ticket", "", "two"))
 
 		want := map[string]string{"TKT-1": "one", "TKT-2": "two"}
-		assert.Equal(t, want, titles(t, s, store.EntityQuery{Type: "ticket"}))
+		assert.Equal(t, want, titles(t, s, store.EntityQuery{Type: "ticket", Faces: store.InWorld(store.DefaultWorld())}))
 		assert.Equal(t, want, titles(t, s, store.EntityQuery{
 			Type:  "ticket",
-			World: scope(t, "page", store.FallbackExclude, "published"),
+			Faces: store.InWorld(scope(t, "page", store.FallbackExclude, "published")),
 		}), "a world scoping another type must not touch this one")
 	})
 
@@ -251,7 +251,7 @@ func RunWorldTests(t *testing.T, f Factory) {
 
 		q := store.EntityQuery{
 			Type:  "page",
-			World: scope(t, "page", store.FallbackExclude, "published"),
+			Faces: store.InWorld(scope(t, "page", store.FallbackExclude, "published")),
 		}
 		var got []*entity.Entity
 		for e, err := range s.ListEntities(ctx(), q) {
@@ -300,7 +300,7 @@ func RunWorldTests(t *testing.T, f Factory) {
 		}
 
 		// Unpaged is the oracle.
-		assert.Equal(t, want, titles(t, s, store.EntityQuery{Type: "page", World: world}))
+		assert.Equal(t, want, titles(t, s, store.EntityQuery{Type: "page", Faces: store.InWorld(world)}))
 
 		// Paging one prime at a time must produce the same set: every
 		// page boundary falls between two families.
@@ -309,7 +309,7 @@ func RunWorldTests(t *testing.T, f Factory) {
 			cursor := ""
 			for range 10 { // bounded: 3 primes, so this always terminates
 				page, err := s.ListEntitiesPage(ctx(), store.EntityQuery{
-					Type: "page", World: world, Limit: limit, Cursor: cursor,
+					Type: "page", Faces: store.InWorld(world), Limit: limit, Cursor: cursor,
 				})
 				require.NoError(t, err)
 				for _, e := range page.Items {
@@ -351,7 +351,7 @@ func RunWorldTests(t *testing.T, f Factory) {
 
 		q := store.EntityQuery{
 			Type:  "page",
-			World: scope(t, "page", store.FallbackExclude, "published"),
+			Faces: store.InWorld(scope(t, "page", store.FallbackExclude, "published")),
 		}
 		got := map[string]string{}
 		for h, err := range store.ListEntityHeaders(ctx(), s, q) {
@@ -382,7 +382,7 @@ func RunWorldTests(t *testing.T, f Factory) {
 		mustCreate(t, s, newState(t, "GQ-2", "page", "", "GQ-2 default only"))
 
 		world := scope(t, "page", store.FallbackExclude, "published")
-		q := store.GraphQuery{EntityType: "page", World: world}
+		q := store.GraphQuery{EntityType: "page", Faces: store.InWorld(world)}
 
 		got := map[string]string{}
 		for e, err := range s.GraphQuery(ctx(), q) {
@@ -409,10 +409,6 @@ func RunWorldTests(t *testing.T, f Factory) {
 			"an entity the world excludes must not match")
 	})
 
-	// AllStates and World are mutually exclusive (decision Q3): raw
-	// storage truth versus resolution. The refusal is shared so every
-	// backend inherits it; silently honoring one would be a precedence
-	// rule nobody remembers.
 	// A chain carrying the ZERO coordinate must be matched at its own RANK,
 	// like any other coordinate — not diverted into the rule-1/rule-3 path by
 	// a default-ness special case.
@@ -464,7 +460,7 @@ func RunWorldTests(t *testing.T, f Factory) {
 				// which is why the exclude arm must return it too.
 				last := titles(t, s, store.EntityQuery{
 					Type:  "page",
-					World: coordScope("page", fb.fb, "published", def),
+					Faces: store.InWorld(coordScope("page", fb.fb, "published", def)),
 				})
 				assert.Equal(t, "1 published", last["PAGE-1"],
 					"a higher-ranked coordinate still wins over the zero one")
@@ -476,7 +472,7 @@ func RunWorldTests(t *testing.T, f Factory) {
 				// The zero coordinate FIRST: it now outranks published.
 				first := titles(t, s, store.EntityQuery{
 					Type:  "page",
-					World: coordScope("page", fb.fb, def, "published"),
+					Faces: store.InWorld(coordScope("page", fb.fb, def, "published")),
 				})
 				assert.Equal(t, "1 default", first["PAGE-1"],
 					"chain ORDER governs the zero coordinate exactly as it does "+
@@ -504,7 +500,7 @@ func RunWorldTests(t *testing.T, f Factory) {
 		// compiles to FaceIn beside the request's World.
 		world := scope(t, "page", store.FallbackDefaultState, "published")
 		denied := store.GraphQuery{
-			EntityType: "page", World: world, FaceIn: []entity.Face{ptr(t, "published")},
+			EntityType: "page", Faces: store.InWorld(world), FaceIn: []entity.Face{ptr(t, "published")},
 		}
 		var got []string
 		for e, err := range s.GraphQuery(ctx(), denied) {
@@ -523,7 +519,7 @@ func RunWorldTests(t *testing.T, f Factory) {
 		// P-2's excluded published face falls through to it. Without this the
 		// case would pass against a backend that returns nothing for every
 		// FaceIn.
-		bare := store.GraphQuery{EntityType: "page", World: world, FaceIn: []entity.Face{""}}
+		bare := store.GraphQuery{EntityType: "page", Faces: store.InWorld(world), FaceIn: []entity.Face{""}}
 		m, err = s.MatchingIDs(ctx(), bare, []string{"P-1", "P-2"})
 		require.NoError(t, err)
 		assert.Equal(t, map[string]bool{"P-1": true, "P-2": true}, m)
@@ -545,13 +541,13 @@ func RunWorldTests(t *testing.T, f Factory) {
 		world := scope(t, "page", store.FallbackDefaultState, "draft", "published")
 
 		want := map[string]string{"PAGE-1": "PAGE-1 draft", "PAGE-2": "PAGE-2 draft"}
-		assert.Equal(t, want, titles(t, s, store.EntityQuery{Type: "page", World: world}))
+		assert.Equal(t, want, titles(t, s, store.EntityQuery{Type: "page", Faces: store.InWorld(world)}))
 
 		got := map[string]string{}
 		cursor := ""
 		for range 10 {
 			page, err := s.ListEntitiesPage(ctx(), store.EntityQuery{
-				Type: "page", World: world, Limit: 1, Cursor: cursor,
+				Type: "page", Faces: store.InWorld(world), Limit: 1, Cursor: cursor,
 			})
 			require.NoError(t, err)
 			for _, e := range page.Items {
@@ -615,7 +611,7 @@ func RunWorldTests(t *testing.T, f Factory) {
 			{"owner has no candidate the published world selects", "U-owner", published, false},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
-				q := store.GraphQuery{EntityType: "page", World: tc.world, Any: branches(tc.who)}
+				q := store.GraphQuery{EntityType: "page", Faces: store.InWorld(tc.world), Any: branches(tc.who)}
 				m, err := s.MatchingIDs(ctx(), q, []string{"P-1"})
 				require.NoError(t, err)
 				assert.Equal(t, tc.want, m["P-1"], "MatchingIDs")
@@ -670,8 +666,8 @@ func RunWorldTests(t *testing.T, f Factory) {
 			name string
 			q    store.GraphQuery
 		}{
-			{"Props", store.GraphQuery{EntityType: "page", World: world, Props: []store.PropPredicate{open}}},
-			{"Narrowing", store.GraphQuery{EntityType: "page", World: world,
+			{"Props", store.GraphQuery{EntityType: "page", Faces: store.InWorld(world), Props: []store.PropPredicate{open}}},
+			{"Narrowing", store.GraphQuery{EntityType: "page", Faces: store.InWorld(world),
 				Narrowing: []store.NarrowBranch{{Props: []store.PropPredicate{open}}}}},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
@@ -712,7 +708,7 @@ func RunWorldTests(t *testing.T, f Factory) {
 		// and PF-3 does not.
 		t.Run("AnyTrimsCandidatesBeforeTheRank", func(t *testing.T) {
 			q := store.GraphQuery{
-				EntityType: "page", World: world, Props: []store.PropPredicate{open},
+				EntityType: "page", Faces: store.InWorld(world), Props: []store.PropPredicate{open},
 				Any: []store.GraphBranch{{FaceIn: []entity.Face{""}}},
 			}
 			assert.Equal(t, map[string]string{"PF-1": "PF-1 default", "PF-2": "PF-2 default"}, rows(t, q))
@@ -725,28 +721,5 @@ func RunWorldTests(t *testing.T, f Factory) {
 			assert.True(t, ids["PF-2"])
 			assert.False(t, ids["PF-3"])
 		})
-	})
-
-	t.Run("AllStatesWithWorldIsRejected", func(t *testing.T) {
-		s := f(t)
-		mustCreate(t, s, newState(t, "PAGE-1", "page", "", "default"))
-
-		q := store.EntityQuery{
-			Type:      "page",
-			AllStates: true,
-			World:     scope(t, "page", store.FallbackExclude, "published"),
-		}
-		var got error
-		for _, err := range s.ListEntities(ctx(), q) {
-			if err != nil {
-				got = err
-				break
-			}
-		}
-		assert.ErrorIs(t, got, store.ErrInvalidQuery,
-			"a contradictory query must be refused, not silently resolved")
-
-		_, err := s.CountEntities(ctx(), q)
-		assert.ErrorIs(t, err, store.ErrInvalidQuery)
 	})
 }

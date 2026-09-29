@@ -699,8 +699,8 @@ func normalizeTitle(s string) string {
 //
 // Each content state (face) of an entity is a separate stored row holding its
 // own property values, so a check about whether content conforms must see all
-// of them. Leaving AllStates false — the zero value, "default-state rows only"
-// — makes such a check report a clean run over data it never loaded, which is
+// of them, so it selects AllFaces. Reading one world instead makes such a
+// check report a clean run over data it never loaded, which is
 // worse than no check because it is a claim (TKT-4Y6CMV).
 //
 // An analysis about an entity's IDENTITY (duplicates, unique keys, gaps)
@@ -708,5 +708,5 @@ func normalizeTitle(s string) string {
 // otherwise be absent (BUG-95W7MV). Those checks fold the rows of one id
 // themselves so a family is never reported against itself.
 func allStatesQuery() store.EntityQuery {
-	return store.EntityQuery{AllStates: true}
+	return store.EntityQuery{Faces: store.AllFaces()}
 }

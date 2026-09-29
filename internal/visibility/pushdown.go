@@ -113,15 +113,19 @@ func listPushdown(
 	// itself — arch-lint forbids it importing metamodel, so it cannot
 	// compile a WorldScope — which is why the copy happens at this
 	// wiring seam instead. Pinned by the decorator/pushdown parity test.
-	// COPY the composed query before stamping the world. The ACL layer
+	// The composed query is a TEMPLATE with no selection of its own; the
+	// EntityQuery's selection completes it, whichever mode it is.
+	//
+	// COPY the composed query before stamping the selection. The ACL layer
 	// may cache or reuse the ReadQueryResult per principal, so mutating
 	// *rqr.Query in place would leak one request's world into the next
 	// caller's — a cross-request scope bleed. The copy is shallow, which
-	// is exactly right here: World is a value field, so assigning it
-	// touches only this copy, while the predicate faces it shares
-	// (HasInbound/HasOutbound/Props) are read-only downstream.
+	// is exactly right here: Faces is a value whose face list is copied on
+	// construction and read, so assigning it touches only this copy, while
+	// the predicate faces it shares (HasInbound/HasOutbound/Props) are
+	// read-only downstream.
 	worldQuery := *rqr.Query
-	worldQuery.World = q.World
+	worldQuery.Faces = q.Faces
 	// The face allowlist travels with the world, for the same reason and on
 	// the same copy: it is computed by the ACL layer but composed here, and
 	// mutating rqr.Query in place would leak one principal's face set into
@@ -196,7 +200,8 @@ func (g DeclarativeGate) ReadableFaces(ctx context.Context, entityType string) (
 // through the same per-operation acl.Request every other decision here uses
 // (TKT-205V2N). It gives surfaces with no data-entry read gate on ctx (a
 // validation run under a principal, the transition verdicts) a gate that
-// cannot disagree with their row gate.
+// cannot disagree with their row gate. Gated hops read their endpoints in
+// the gate's world ([DeclarativeGate.WithWorld]).
 func (g DeclarativeGate) GateTraversal(
 	ctx context.Context, candidateType string, hop acl.TraversalHop,
 ) (*store.RelationPredicate, error) {
@@ -204,5 +209,5 @@ func (g DeclarativeGate) GateTraversal(
 	if err != nil {
 		return nil, err
 	}
-	return r.GateTraversal(ctx, candidateType, hop)
+	return r.GateTraversal(ctx, candidateType, g.world, hop)
 }

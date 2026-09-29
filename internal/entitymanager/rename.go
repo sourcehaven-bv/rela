@@ -86,7 +86,7 @@ func planRename(ctx context.Context, st store.Store, oldID, newID string) (*enti
 // for one entity, not a collection read, and no store query folds ids.
 func idTakenByOther(ctx context.Context, st store.Store, id, except string) (bool, error) {
 	folded, exceptFolded := strings.ToLower(id), strings.ToLower(except)
-	for h, err := range store.ListEntityHeaders(ctx, st, store.EntityQuery{AllStates: true}) {
+	for h, err := range store.ListEntityHeaders(ctx, st, store.EntityQuery{Faces: store.AllFaces()}) {
 		if err != nil {
 			return false, err
 		}

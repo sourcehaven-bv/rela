@@ -559,6 +559,7 @@ func (a *App) luaWriteDeps() lua.WriteDeps {
 			Searcher:      a.searcher,
 			Meta:          a.Meta(),
 			ProjectRoot:   a.paths.Root,
+			World:         defaultWorldScope(a.worlds),
 		},
 		EntityManager: a.entityManager,
 	}
@@ -1017,7 +1018,7 @@ func NewApp(
 		return nil, err
 	}
 
-	entCount, _ := st.CountEntities(context.Background(), store.EntityQuery{})
+	entCount, _ := st.CountEntities(context.Background(), store.EntityQuery{Faces: store.AllFaces()})
 	relCount, _ := st.CountRelations(context.Background(), store.RelationQuery{})
 	slog.Info("loaded project", "entities", entCount, "relations", relCount)
 

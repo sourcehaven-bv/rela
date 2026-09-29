@@ -113,7 +113,7 @@ func runSchemaOverview(ctx context.Context, svc *readServices) error {
 	maxCount := 0
 	st := svc.Store
 	for _, name := range entityNames {
-		count, _ := st.CountEntities(ctx, store.EntityQuery{Type: name})
+		count, _ := st.CountEntities(ctx, store.EntityQuery{Type: name, Faces: store.AllFaces()})
 		entityCounts[name] = count
 		if count > maxCount {
 			maxCount = count

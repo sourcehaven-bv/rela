@@ -243,7 +243,7 @@ func TestGatedReads_RedactsOnListPath(t *testing.T) {
 
 	seen := 0
 	for e, err := range svc.GatedReads().Reader.ListEntities(
-		bobCtx(principal.ToolMCP), store.EntityQuery{Type: "person"},
+		bobCtx(principal.ToolMCP), store.EntityQuery{Type: "person", Faces: store.InWorld(store.DefaultWorld())},
 	) {
 		if err != nil {
 			t.Fatalf("ListEntities: %v", err)

@@ -65,7 +65,7 @@ func facedDeleteServer(t *testing.T) (*Server, *memstore.MemStore) {
 func storedFaces(t *testing.T, st store.Store, id string) map[entity.Face]bool {
 	t.Helper()
 	faces := map[entity.Face]bool{}
-	q := store.EntityQuery{IDs: []string{id}, AllStates: true}
+	q := store.EntityQuery{IDs: []string{id}, Faces: store.AllFaces()}
 	for e, err := range st.ListEntities(context.Background(), q) {
 		if err != nil {
 			t.Fatalf("ListEntities: %v", err)

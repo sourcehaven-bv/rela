@@ -51,6 +51,7 @@ func RunVisibleSearchTests(t *testing.T, vsf VisibleSearchFactory) {
 				Endpoints: []string{"PRJ-1"},
 				OfTypes:   []string{"belongs-to"},
 			},
+			Faces: store.InWorld(store.DefaultWorld()),
 		}
 	}
 	// ticketsInPRJ1Transitive additionally walks the ticket's own
@@ -64,6 +65,7 @@ func RunVisibleSearchTests(t *testing.T, vsf VisibleSearchFactory) {
 				EntityInheritThrough: []string{"belongs-to"},
 				EntityDepth:          3,
 			},
+			Faces: store.InWorld(store.DefaultWorld()),
 		}
 	}
 

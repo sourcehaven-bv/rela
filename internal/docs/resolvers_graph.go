@@ -325,7 +325,7 @@ func (dr *docRuntime) luaResolution(ls *lua.LState) int {
 	// What the world answers with, per entity. An id absent here is one the
 	// projection dropped.
 	selected := map[string]entity.Face{}
-	for e, lerr := range dr.store.ListEntities(dr.ctx, store.EntityQuery{Type: typ, World: scope}) {
+	for e, lerr := range dr.store.ListEntities(dr.ctx, store.EntityQuery{Type: typ, Faces: store.InWorld(scope)}) {
 		if lerr != nil {
 			return dr.luaFail(ls, "resolution: %v", lerr)
 		}
@@ -450,7 +450,7 @@ func (dr *docRuntime) facesOf(typ, id string) ([]entity.Face, error) {
 	// Every stored face in one header read, then the bare-id row first and
 	// each declared face that exists on this entity in name order.
 	stored := map[entity.Face]bool{}
-	q := store.EntityQuery{IDs: []string{id}, AllStates: true}
+	q := store.EntityQuery{IDs: []string{id}, Faces: store.AllFaces()}
 	for h, err := range store.ListEntityHeaders(dr.ctx, dr.store, q) {
 		if err != nil {
 			return nil, err

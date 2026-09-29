@@ -77,8 +77,13 @@ func visibleRelationIDs(
 	// batch is what store.EntityQuery.IDs exists for. An id the store no
 	// longer has (a dangling edge) is simply absent, as the per-id lookup's
 	// not-found was.
+	//
+	// The request's world picks each neighbor's row, and the gate then
+	// decides on that row: world first, gate second, the read path's order.
 	candidates := make([]store.EntityHeader, 0, len(neighborIDs))
-	for h, err := range store.ListEntityHeaders(ctx, reader.store, store.EntityQuery{IDs: neighborIDs}) {
+	for h, err := range store.ListEntityHeaders(ctx, reader.store, store.EntityQuery{
+		IDs: neighborIDs, Faces: store.InWorld(worldScopeFrom(ctx)),
+	}) {
 		if err != nil {
 			slog.Warn("dataentry: visibleRelationIDs: header batch failed; neighbors dropped fail-closed",
 				"neighbors", len(neighborIDs), "err", err)

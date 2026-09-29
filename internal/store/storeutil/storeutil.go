@@ -378,49 +378,41 @@ func endpointMatches(r *entity.Relation, dir store.Direction, want func(id strin
 	}
 }
 
-// ValidateEntityQuery rejects a query whose fields contradict each
-// other. Today that is AllStates together with a non-default World
-// (TKT-WAV8XP): AllStates is raw storage truth and world resolution is
-// its opposite, so honoring both is impossible and honoring one
-// silently is a precedence rule nobody remembers.
-//
-// It lives here rather than in each backend so every implementation
-// inherits the same refusal — a backend that forgot the check would
-// answer a contradictory query with a plausible-looking result, which
-// is worse than an error. Pinned by the shared conformance suite.
+// ValidateEntityQuery rejects a query with no face selection
+// ([store.FaceSelection.IsZero]) with [store.ErrInvalidQuery]. fs, mem and
+// the generic header fallback share it so every backend refuses the same
+// shapes.
 func ValidateEntityQuery(q store.EntityQuery) error {
-	if q.AllStates && !q.World.IsDefaultWorld() {
-		return fmt.Errorf(
-			"%w: AllStates and World are mutually exclusive — AllStates is raw storage "+
-				"truth, a World resolves each entity to one state", store.ErrInvalidQuery)
-	}
-	return nil
+	return q.Faces.Validate()
 }
 
-// MatchEntityQuery reports whether an entity with the given type,
-// bare id and face satisfies q's Type, IDs and AllStates filters.
-// idSet must be pre-computed from q.IDs (see the backends' entityIDSet)
-// and matches the BARE id, so IDs+AllStates selects every state of the
-// listed entities.
+// MatchEntityQuery reports whether an entity with the given type, bare id
+// and face satisfies q's Type, IDs, FaceIn and selection filters. idSet must
+// be pre-computed from q.IDs (see the backends' entityIDSet) and matches the
+// BARE id, so IDs with AllFaces selects every face of the listed entities.
 //
-// It takes the three fields rather than an *entity.Entity because
-// fsstore matches against its in-memory index metadata, which
-// deliberately holds no loaded entity — the previous byte-similar
-// copies in fsstore and memstore had diverged in signature only.
+// It takes the three fields rather than an *entity.Entity because fsstore
+// matches against its in-memory index metadata, which deliberately holds no
+// loaded entity.
 //
-// This is NOT world resolution and cannot be: a world picks at most one
-// state per entity, which is a per-FAMILY ranked choice, so no
-// per-row predicate can express it. World-scoped listing resolves
-// primes separately, after matching.
+// The selection is applied per mode:
 //
-// Under a non-default World the face filter is WIDENED rather than
-// applied: every state of a family is a candidate, and resolution
-// chooses among them afterwards. Keeping the default-only filter here
-// would discard the very rows the chain selects, leaving a world able
-// to return only default states — the failure would look like "the
-// world does nothing" rather than an error.
+//   - AllFaces: no face filter.
+//   - AtFaces: set membership.
+//   - InWorld of the default world: the "" face only.
+//   - InWorld of any other world: every face is a candidate. A world picks at
+//     most one face per entity, which is a per-FAMILY ranked choice no
+//     per-row predicate can express, so the caller resolves primes after
+//     matching (see [WorldPrimes]). Filtering here would discard the very
+//     rows the chain selects.
+//
+// The zero selection matches nothing; callers validate first.
 func MatchEntityQuery(entityType, id string, p entity.Face, q store.EntityQuery, idSet map[string]bool) bool {
-	if !q.AllStates && q.World.IsDefaultWorld() && !p.IsDefault() {
+	if q.Faces.IsDefaultWorld() {
+		if !p.IsDefault() {
+			return false
+		}
+	} else if !q.Faces.Admits(p) {
 		return false
 	}
 	if q.Type != "" && entityType != q.Type {
@@ -437,6 +429,16 @@ func MatchEntityQuery(entityType, id string, p entity.Face, q store.EntityQuery,
 		return false
 	}
 	return true
+}
+
+// RankingWorld returns the world q's rows are ranked by: the world of an
+// InWorld selection, and the default world (which ranks nothing) for AllFaces
+// and AtFaces, whose rows are returned as matched. The fs, mem and sqlite
+// listings branch on its IsDefaultWorld to buffer whole families only when a
+// world needs resolving.
+func RankingWorld(q store.EntityQuery) store.WorldScope {
+	w, _ := q.Faces.World()
+	return w
 }
 
 // WorldCandidate is [store.WorldCandidate]; the fs/mem/sqlite listings build

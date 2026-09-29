@@ -20,11 +20,7 @@ import (
 )
 
 // checkQueryScope rejects a query this backend cannot answer: the shared
-// AllStates+World contradiction rule (storeutil.ValidateEntityQuery).
-//
-// The transitional refusal of a non-default World is GONE as of PR-C —
-// world scoping is pushed into SQL (see worldSQL / buildEntitySelectSQL),
-// so there is nothing left to refuse.
+// no-selection rule (storeutil.ValidateEntityQuery).
 func checkQueryScope(q store.EntityQuery) error {
 	return storeutil.ValidateEntityQuery(q)
 }
@@ -156,7 +152,7 @@ func (s *Store) ListEntitiesPage(ctx context.Context, q store.EntityQuery) (stor
 	if q.Limit > 0 && len(items) > q.Limit {
 		last := items[q.Limit-1]
 		items = items[:q.Limit]
-		// The cursor is the STATE key so AllStates pagination resumes
+		// The cursor is the STATE key so AllFaces pagination resumes
 		// mid-family; for default-only queries it degenerates to the
 		// historical bare id.
 		next = storeutil.EncodeCursor(entity.FormatStateRef(last.ID, last.Face))
@@ -190,12 +186,12 @@ func (s *Store) CountEntities(ctx context.Context, q store.EntityQuery) (int, er
 // the publication bit, so an unscoped tally would tell a published-world
 // surface how many unpublished drafts exist.
 func buildEntityCountSQL(q store.EntityQuery) (sql string, args []any) {
-	q.World = effectiveWorld(q.World, q.Type)
-	if q.World.IsDefaultWorld() {
+	w := effectiveWorld(storeutil.RankingWorld(q), q.Type)
+	if w.IsDefaultWorld() {
 		where, wargs := entityWhere(q, "")
 		return "SELECT count(*) FROM entities" + where, wargs
 	}
-	_, candidate := worldSQL(q.World, "", &args)
+	_, candidate := worldSQL(w, "", &args)
 	scope := entityScopeWhere(q, candidate, &args)
 	return "SELECT count(DISTINCT id) FROM entities" + scope, args
 }
@@ -1057,7 +1053,7 @@ func scanEntityHeader(row scanner) (store.EntityHeader, error) {
 // cursor. Ordering is ascending (id, face): for the default-only
 // zero-value query that is exactly the contract's historical
 // ascending-id order (the face column is constant ”); under
-// AllStates the states of an id sort immediately after its default row.
+// AllFaces the states of an id sort immediately after its default row.
 //
 // That contiguity is a SHARED contract, not a pgstore detail: fs/mem
 // match it via storeutil.CompareStateKeys, which orders their index by
@@ -1104,8 +1100,8 @@ func buildEntityHeaderListSQL(q store.EntityQuery, keysetAfter string) (sql stri
 // family, so the first limit rows the outer query keeps are among the first
 // limit+1 primes.
 func buildEntitySelectSQL(q store.EntityQuery, keysetAfter, columns string, limit int) (sql string, args []any) {
-	q.World = effectiveWorld(q.World, q.Type)
-	if q.World.IsDefaultWorld() {
+	w := effectiveWorld(storeutil.RankingWorld(q), q.Type)
+	if w.IsDefaultWorld() {
 		where, wargs := entityWhere(q, keysetAfter)
 		return `SELECT ` + columns + ` FROM entities` + where + ` ORDER BY id ASC, face ASC` + limitClause(limit), wargs
 	}
@@ -1113,7 +1109,7 @@ func buildEntitySelectSQL(q store.EntityQuery, keysetAfter, columns string, limi
 	// ONE worldSQL call produces both expressions, so the coordinate
 	// parameters are bound exactly once and the rank's placeholders are
 	// the same ones the candidate predicate uses.
-	rank, candidate := worldSQL(q.World, "", &args)
+	rank, candidate := worldSQL(w, "", &args)
 	scope := entityScopeWhere(q, candidate, &args)
 
 	// Cursor semantics match the default-world path: an unparseable
@@ -1181,6 +1177,33 @@ func entityScopeWhere(q store.EntityQuery, candidate string, args *[]any) string
 // Empty set: no condition. Nil FaceIn means every face, which is what every
 // pre-faces caller and every wildcard read grant passes, so the emitted SQL is
 // byte-identical to before.
+// faceSelectionCond renders a selection that ranks nothing as a row
+// predicate on alias's face column (alias "" for an unqualified column): the
+// default world is `face = ”`, AtFaces is `face = ANY($n)` (an empty set is
+// `false`), and AllFaces has no condition (""). A non-default InWorld
+// selection is never passed here; it needs worldSQL's rank as well.
+func faceSelectionCond(sel store.FaceSelection, alias string, args *[]any) string {
+	col := "face"
+	if alias != "" {
+		col = alias + ".face"
+	}
+	if faces, ok := sel.Faces(); ok {
+		if len(faces) == 0 {
+			return "false"
+		}
+		vals := make([]string, len(faces))
+		for i, f := range faces {
+			vals[i] = f.String()
+		}
+		*args = append(*args, vals)
+		return fmt.Sprintf("%s = ANY($%d)", col, len(*args))
+	}
+	if sel.IsAll() {
+		return ""
+	}
+	return col + " = ''"
+}
+
 func appendFaceInCond(conds []string, faces []entity.Face, args *[]any) []string {
 	if len(faces) == 0 {
 		return conds
@@ -1195,15 +1218,14 @@ func appendFaceInCond(conds []string, faces []entity.Face, args *[]any) []string
 
 func entityWhere(q store.EntityQuery, keysetAfter string) (where string, args []any) {
 	var conds []string
-	// Default-world scope: the zero-value query returns default states
-	// only — byte-identical behavior for faceless projects. AllStates
-	// is the raw storage-truth escape hatch (see store.EntityQuery).
+	// A selection that ranks nothing: the default world (`face = ''`, the
+	// historical query for faceless projects), AllFaces or AtFaces.
 	//
-	// A non-default World does NOT come through here: it needs the
+	// A non-default world does NOT come through here: it needs the
 	// widened candidate predicate plus a rank, which only
 	// buildEntitySelectSQL can pair up — see entityScopeWhere.
-	if !q.AllStates {
-		conds = append(conds, "face = ''")
+	if c := faceSelectionCond(q.Faces, "", &args); c != "" {
+		conds = append(conds, c)
 	}
 	conds = appendFaceInCond(conds, q.FaceIn, &args)
 	if q.Type != "" {

@@ -139,7 +139,7 @@ func (m *mockWorkspace) Meta() *metamodel.Metamodel {
 // entityCount returns the number of entities currently in the mock's store.
 func (m *mockWorkspace) entityCount(ctx context.Context) int {
 	n := 0
-	for _, err := range m.store.ListEntities(ctx, store.EntityQuery{}) {
+	for _, err := range m.store.ListEntities(ctx, store.EntityQuery{Faces: store.InWorld(store.DefaultWorld())}) {
 		if err != nil {
 			continue
 		}
@@ -314,7 +314,7 @@ func (s *mockSearcher) Search(ctx context.Context, q search.Query) iter.Seq2[sea
 	return func(yield func(search.Hit, error) bool) {
 		query := strings.ToLower(q.Text)
 		count := 0
-		for e, err := range s.ws.store.ListEntities(ctx, store.EntityQuery{}) {
+		for e, err := range s.ws.store.ListEntities(ctx, store.EntityQuery{Faces: store.InWorld(store.DefaultWorld())}) {
 			if err != nil {
 				continue
 			}

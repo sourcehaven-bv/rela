@@ -80,7 +80,7 @@ func (c *ExportCmd) Run(ctx context.Context, svc *readServices) error {
 func (c *ExportCmd) exportEntities(ctx context.Context, svc *readServices, entityType string) error {
 	st := svc.Store
 	entities := make([]*entity.Entity, 0)
-	for e, err := range st.ListEntities(ctx, store.EntityQuery{Type: entityType}) {
+	for e, err := range st.ListEntities(ctx, store.EntityQuery{Type: entityType, Faces: store.InWorld(svc.World)}) {
 		if err != nil { // coverage-ignore: defensive: memstore.ListEntities iterator never yields a non-nil error
 			return err
 		}
@@ -119,7 +119,7 @@ func (c *ExportCmd) exportAllData(ctx context.Context, svc *readServices) error 
 	st := svc.Store
 
 	allEntities := make([]*entity.Entity, 0)
-	for e, err := range st.ListEntities(ctx, store.EntityQuery{}) {
+	for e, err := range st.ListEntities(ctx, store.EntityQuery{Faces: store.AllFaces()}) {
 		if err != nil { // coverage-ignore: defensive: memstore.ListEntities iterator never yields a non-nil error
 			return err
 		}

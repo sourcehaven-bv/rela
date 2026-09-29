@@ -204,7 +204,7 @@ func (wn *worldNeighbors) resolveHeads(
 	out := make(map[string]*entityPkg.Entity, len(ids))
 	for h, err := range store.ListEntityHeaders(ctx, wn.store, store.EntityQuery{
 		IDs:   ids,
-		World: worldScopeFrom(ctx),
+		Faces: store.InWorld(worldScopeFrom(ctx)),
 	}) {
 		if err != nil {
 			return nil, fmt.Errorf("resolving neighbor heads: %w", err)

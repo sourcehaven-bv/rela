@@ -110,7 +110,7 @@ func (h *stubHost) EntityType(ctx context.Context, id string) (string, error) {
 	if h.store == nil {
 		return "", errors.New("stubHost.EntityType: no store configured")
 	}
-	q := store.EntityQuery{IDs: []string{id}, AllStates: true}
+	q := store.EntityQuery{IDs: []string{id}, Faces: store.AllFaces()}
 	for hd, err := range store.ListEntityHeaders(ctx, h.store, q) {
 		if err != nil {
 			return "", err

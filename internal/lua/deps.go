@@ -99,6 +99,12 @@ type ReadDeps struct {
 	// every plain ExecuteCode/ExecuteFile caller — which is how the scheduler
 	// runs. See the WithCapabilities godoc.
 	Capabilities Capabilities
+
+	// World is the world script list reads resolve in: rela.list_entities,
+	// admin.list_entities and rela.md.entity_refs list each entity at the
+	// face this world serves. The zero value is the default world; wiring
+	// passes worlds.Compiled.Default, so TKT-7IZHP0 changes no call site.
+	World store.WorldScope
 }
 
 // Mutator is the consumer-side write surface Lua bindings call into

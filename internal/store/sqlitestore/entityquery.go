@@ -7,6 +7,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/store/storeutil"
 )
 
 // The entity columns every read path selects, in the order scanEntity expects.
@@ -17,7 +18,7 @@ const entityColumns = "id, type, face, properties, content, updated_at"
 //
 // Ordering is ascending (id, face): for the default-only zero-value query that
 // is exactly the contract's historical ascending-id order (the face column is
-// then constant, holding the empty default coordinate); under AllStates the
+// then constant, holding the empty default coordinate); under AllFaces the
 // states of an id sort immediately after its default row.
 //
 // That contiguity is a SHARED contract, not a detail of this backend: fs/mem
@@ -42,12 +43,13 @@ const entityColumns = "id, type, face, properties, content, updated_at"
 // storeutil.PaginateWorldPrimes exists to avoid on the other backends.
 func buildEntitySelectSQL(q store.EntityQuery, keysetAfter, columns string) (sqlText string, args []any) {
 	b := &sqlBuilder{}
-	if q.World.IsDefaultWorld() {
+	w := storeutil.RankingWorld(q)
+	if w.IsDefaultWorld() {
 		where := entityWhere(b, q, keysetAfter)
 		return `SELECT ` + columns + ` FROM entities` + where + ` ORDER BY id, face`, b.args
 	}
 
-	rank, candidate := worldSQL(b, q.World, "")
+	rank, candidate := worldSQL(b, w, "")
 
 	// ROW_NUMBER() OVER (PARTITION BY id ORDER BY rank, face) is SQLite's
 	// DISTINCT ON: rn = 1 is the family's prime. The face tiebreak makes the
@@ -110,18 +112,16 @@ func argList(b *sqlBuilder, vals []string) string {
 	return strings.Join(ps, ", ")
 }
 
-// entityWhere builds the WHERE clause for a DEFAULT-world listing.
+// entityWhere builds the WHERE clause for a listing that ranks nothing: the
+// default world, AllFaces or AtFaces.
 //
-// A non-default World does NOT come through here: it needs the widened
+// A non-default world does NOT come through here: it needs the widened
 // candidate predicate plus a rank, which only buildEntitySelectSQL can pair up
 // — see entityScopeWhere.
 func entityWhere(b *sqlBuilder, q store.EntityQuery, keysetAfter string) string {
 	var conds []string
-	// Default-world scope: the zero-value query returns default states only —
-	// byte-identical behavior for faceless projects. AllStates is the raw
-	// storage-truth escape hatch (see store.EntityQuery).
-	if !q.AllStates {
-		conds = append(conds, "face = ''")
+	if c := faceSelectionCond(b, q.Faces, ""); c != "" {
+		conds = append(conds, c)
 	}
 	if q.Type != "" {
 		conds = append(conds, "type = "+b.arg(q.Type))
@@ -162,11 +162,38 @@ func entityWhere(b *sqlBuilder, q store.EntityQuery, keysetAfter string) string 
 // how many unpublished drafts exist.
 func buildEntityCountSQL(q store.EntityQuery) (sqlText string, args []any) {
 	b := &sqlBuilder{}
-	if q.World.IsDefaultWorld() {
+	w := storeutil.RankingWorld(q)
+	if w.IsDefaultWorld() {
 		return "SELECT count(*) FROM entities" + entityWhere(b, q, ""), b.args
 	}
-	_, candidate := worldSQL(b, q.World, "")
+	_, candidate := worldSQL(b, w, "")
 	return "SELECT count(DISTINCT id) FROM entities" + entityScopeWhere(b, q, candidate), b.args
+}
+
+// faceSelectionCond renders a selection that ranks nothing as a row
+// predicate on alias's face column (alias "" for an unqualified column): the
+// default world is `face = ”`, AtFaces is set membership (an empty set is
+// `0`, matching nothing), and AllFaces has no condition (""). A non-default
+// InWorld selection is never passed here; it needs worldSQL's rank as well.
+func faceSelectionCond(b *sqlBuilder, sel store.FaceSelection, alias string) string {
+	col := "face"
+	if alias != "" {
+		col = alias + ".face"
+	}
+	if faces, ok := sel.Faces(); ok {
+		if len(faces) == 0 {
+			return "0"
+		}
+		vals := make([]string, len(faces))
+		for i, f := range faces {
+			vals[i] = string(f)
+		}
+		return col + " IN (SELECT value FROM json_each(" + b.arg(jsonIDs(vals)) + "))"
+	}
+	if sel.IsAll() {
+		return ""
+	}
+	return col + " = ''"
 }
 
 // limitClause appends "LIMIT n" for a positive n. Interpolated rather than

@@ -134,7 +134,7 @@ func TestLoad_WritesEverythingIntoStore(t *testing.T) {
 	require.Positive(t, progress)
 
 	ctx := context.Background()
-	gotE, err := st.CountEntities(ctx, store.EntityQuery{AllStates: true})
+	gotE, err := st.CountEntities(ctx, store.EntityQuery{Faces: store.AllFaces()})
 	require.NoError(t, err)
 	require.Equal(t, wantE, gotE, "every row, faces included, must be in the store")
 	gotR, err := st.CountRelations(ctx, store.RelationQuery{})

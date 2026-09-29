@@ -179,7 +179,7 @@ func scopedHeaders(
 		// surface with no world in ctx pays nothing for this.
 		for h, err := range store.ListEntityHeaders(ctx, svc.Store, store.EntityQuery{
 			Type:   req.Type,
-			World:  worldScopeFrom(ctx),
+			Faces:  store.InWorld(worldScopeFrom(ctx)),
 			FaceIn: req.Faces,
 		}) {
 			if err != nil {
@@ -277,7 +277,7 @@ func applyScope(
 // place: if this function does not mention a dimension, no data-entry
 // collection read applies it.
 func stampScope(ctx context.Context, q store.GraphQuery, req scopeRequest) store.GraphQuery {
-	q.World = worldScopeFrom(ctx)
+	q.Faces = store.InWorld(worldScopeFrom(ctx))
 	if len(req.Faces) > 0 {
 		q.FaceIn = req.Faces
 	}

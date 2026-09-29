@@ -26,7 +26,7 @@ func TestGraphPosition_OneStatementAtAnySize(t *testing.T) {
 			require.NoError(t, st.CreateEntity(context.Background(), e))
 		}
 		ctx, stats := store.WithQueryStats(context.Background())
-		q := store.GraphQuery{EntityType: "ticket", OrderBy: []store.OrderSpec{{Property: "due"}}}
+		q := store.GraphQuery{EntityType: "ticket", OrderBy: []store.OrderSpec{{Property: "due"}}, Faces: store.InWorld(store.DefaultWorld())}
 		pos, found, err := store.GraphPosition(ctx, st, q, "T-003")
 		require.NoError(t, err)
 		require.True(t, found)
