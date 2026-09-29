@@ -443,10 +443,24 @@ func worldNeighborsForPage(
 	ctx context.Context, wn *worldNeighbors, visReader visibleReader,
 	entities []*entityPkg.Entity,
 ) (outgoing, incoming [][]*entityPkg.Relation, visible map[string]bool, err error) {
+	outgoing, incoming, visible, _, err = worldNeighborsForPageWithHeads(ctx, wn, visReader, entities)
+	return outgoing, incoming, visible, err
+}
+
+// worldNeighborsForPageWithHeads is [worldNeighborsForPage] that also returns
+// the world-resolved neighbor rows it gated, keyed by id. They are content-free
+// headers, UNGATED and UNREDACTED: a caller renders only the ids in visible,
+// and redacts each before use.
+func worldNeighborsForPageWithHeads(
+	ctx context.Context, wn *worldNeighbors, visReader visibleReader,
+	entities []*entityPkg.Entity,
+) (outgoing, incoming [][]*entityPkg.Relation, visible map[string]bool,
+	heads map[string]*entityPkg.Entity, err error,
+) {
 	outgoing = make([][]*entityPkg.Relation, len(entities))
 	incoming = make([][]*entityPkg.Relation, len(entities))
 	if wn == nil {
-		return outgoing, incoming, nil, nil
+		return outgoing, incoming, nil, nil, nil
 	}
 
 	// Pass 1: each row's edges, under that row's own resolved face — batched
@@ -458,7 +472,7 @@ func worldNeighborsForPage(
 	}
 	edgesByRow, nerr := wn.relations.NeighborsForPage(ctx, rows, store.DirectionBoth)
 	if nerr != nil {
-		return nil, nil, nil, fmt.Errorf("world neighbors for page: %w", nerr)
+		return nil, nil, nil, nil, fmt.Errorf("world neighbors for page: %w", nerr)
 	}
 	var headIDs []string
 	seen := make(map[string]struct{})
@@ -475,11 +489,10 @@ func worldNeighborsForPage(
 
 	// Pass 2: ONE world resolution over the page's whole neighbor set, then
 	// ONE gate pass. World first, gate second — see the worldNeighbors doc.
-	var heads map[string]*entityPkg.Entity
 	if len(headIDs) > 0 {
 		heads, err = wn.resolveHeads(ctx, headIDs)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		}
 	}
 	if heads == nil {
@@ -503,7 +516,7 @@ func worldNeighborsForPage(
 	for i, e := range entities {
 		outgoing[i], incoming[i] = worldEdgesForWire(edgesByRow[i], e.ID, heads, visible)
 	}
-	return outgoing, incoming, visible, nil
+	return outgoing, incoming, visible, heads, nil
 }
 
 // includeCandidates collects the neighbor entities an `?include=` expression
@@ -819,6 +832,50 @@ func servedFaceEdges(
 		return reader.outgoingRelations(ctx, e.ID), nil, nil
 	}
 	return worldOutgoingForEntity(ctx, wn, visReader, e)
+}
+
+// servedFaceNeighbors is [servedFacePageEdges] for one entity, returning the
+// VISIBLE neighbors as rows rather than as an id set: the entity export
+// renders their titles, and a title must come from the same world resolution
+// that decided the edge, or a published export names a neighbor by its draft
+// title. Neighbor rows are UNREDACTED; the caller redacts each once.
+//
+// On the unwired path (wn nil, no content states) each visible neighbor is
+// read by bare id, which is the pre-worlds behavior and cannot merge faces.
+func servedFaceNeighbors(
+	ctx context.Context, reader entityReader, wn *worldNeighbors,
+	visReader visibleReader, e *entityPkg.Entity,
+) (outgoing, incoming []*entityPkg.Relation, neighbors map[string]*entityPkg.Entity, err error) {
+	neighbors = make(map[string]*entityPkg.Entity)
+	if wn == nil {
+		out, in, visible, perr := servedFacePageEdges(ctx, reader, nil, visReader, []*entityPkg.Entity{e})
+		if perr != nil {
+			return nil, nil, nil, perr
+		}
+		for id, ok := range visible {
+			if !ok {
+				continue
+			}
+			node, found := reader.getEntity(ctx, id)
+			if !found {
+				// Visible but unreadable as a row: keep the link, titled by id.
+				node = &entityPkg.Entity{ID: id}
+			}
+			neighbors[id] = node
+		}
+		return out[0], in[0], neighbors, nil
+	}
+	out, in, visible, heads, err := worldNeighborsForPageWithHeads(
+		ctx, wn, visReader, []*entityPkg.Entity{e})
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	for id, head := range heads {
+		if visible[id] {
+			neighbors[id] = head
+		}
+	}
+	return out[0], in[0], neighbors, nil
 }
 
 // servedFacePageEdges is [servedFaceEdges] for a whole list page: each row's

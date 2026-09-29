@@ -1875,7 +1875,11 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
           <RouterLink v-if="showHistory" class="btn btn-secondary" :to="historyTarget"
             >History</RouterLink
           >
-          <ExportMenu :url-for="(t: string) => entityExportUrl(entityType, entityId, t)" />
+          <!--
+            Exports what is on screen (BUG-PLZDPR): the served face's address,
+            and the page's world, in which the export resolves the entry's links.
+          -->
+          <ExportMenu :url-for="(t: string) => entityExportUrl(entityType, servedRef, t, worldParam)" />
           <!--
             Duplicate. Gated on `inline_create` rather than `_actions` (there is
             no `create` key on an entity response); the mobile block below gates

@@ -240,8 +240,9 @@ func resolveWorld(r *http.Request, lookup WorldLookup, configured string) (world
 // exactly five underscore routes named one at a time below — `_views`,
 // `_history`, `_next_action`, `_search` and `_position`. Every other
 // underscore endpoint (analyze, documents, feeds, sync) is refused, along
-// with every sub-resource of an entity (relations, attachments, export),
-// because each reaches content through a path that is still world-blind.
+// with every sub-resource of an entity except its export (relations,
+// attachments, the list export), because each reaches content through a path
+// that is still world-blind.
 //
 // Each admission carries its own justification at the call site rather than a
 // prefix rule, so widening this stays one reviewable edit per route.
@@ -320,8 +321,13 @@ func worldCapablePath(path string) bool {
 	if strings.HasPrefix(trimmed, "_") {
 		return false
 	}
+	// The one entity sub-resource admitted, named exactly: the entity
+	// export (BUG-PLZDPR). See [isWorldCapableEntityExportPath].
+	if isWorldCapableEntityExportPath(trimmed) {
+		return true
+	}
 	// `{plural}` or `{plural}/{id}` only. A third segment is a
-	// sub-resource (relations, attachments, _export) and is refused.
+	// sub-resource (relations, attachments) and is refused.
 	return strings.Count(trimmed, "/") <= 1 &&
 		!strings.Contains(trimmed, "/_")
 }
@@ -410,6 +416,24 @@ func refuseWorldIncapablePath(w http.ResponseWriter, r *http.Request, requested 
 func isWorldCapableViewPath(trimmed string) bool {
 	parts := strings.Split(trimmed, "/")
 	return len(parts) == 3 && parts[0] == "_views" && parts[1] != "" && parts[2] != ""
+}
+
+// isWorldCapableEntityExportPath matches `{plural}/{id}/_export`, the export
+// of one entity.
+//
+// It renders the page the reader is looking at, so it has to read in the same
+// world. Refused, it resolved the entry's links in the zero world, where a
+// type with faces stores nothing: every link to a faced entity vanished from
+// the export while the detail page listed it. Its whole read path takes the
+// world from ctx: the entry through getVisibleRef (world deny, row gate, face
+// gate), its edges and neighbor rows through servedFaceNeighbors.
+//
+// The LIST export (`{plural}/_export`) is not admitted. It reads through
+// scopedSortedEntities and has not been world-scoped or tested.
+func isWorldCapableEntityExportPath(trimmed string) bool {
+	parts := strings.Split(trimmed, "/")
+	return len(parts) == 3 && parts[0] != "" && parts[1] != "" &&
+		!strings.HasPrefix(parts[1], "_") && parts[2] == "_export"
 }
 
 // isWorldCapableHistoryPath matches `_history/{type}/{id}` and
