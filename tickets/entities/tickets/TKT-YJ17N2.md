@@ -5,7 +5,7 @@ title: Guard test forbids zero-face reads outside a shrinking allowlist; faced f
 kind: enhancement
 priority: high
 effort: m
-status: ready
+status: done
 description: 'Stage 0 of RES-Y6JA37: a go/ast guard test pins today''s zero-face read call sites and fails on new ones; tests use realistic faced fixtures.'
 ---
 
