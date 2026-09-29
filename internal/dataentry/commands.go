@@ -21,6 +21,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/project"
@@ -353,61 +354,54 @@ func (h *commandHandler) redactEntity(ctx context.Context, e *entity.Entity) *en
 	return visibility.Redact(ctx, h.redactor, e)
 }
 
-func (h *commandHandler) buildEntityInput(ctx context.Context, e *entity.Entity) *commandInput {
+// buildEntityInput assembles the stdin JSON for an entity-context command.
+// A failed relation read or gate is returned: the command must not run on a
+// payload that claims e has no edges when the read never finished.
+func (h *commandHandler) buildEntityInput(
+	ctx context.Context, meta *metamodel.Metamodel, e *entity.Entity,
+) (*commandInput, error) {
+	rels, err := h.relationsForEntity(ctx, meta, e)
+	if err != nil {
+		return nil, err
+	}
 	return &commandInput{
 		Context:   "entity",
 		Entity:    e,
-		Relations: h.relationsForEntity(ctx, e),
+		Relations: rels,
 		Project:   h.projectInfo(),
-	}
+	}, nil
 }
 
 // relationsForEntity returns the relations incident to e that may travel
 // with it to a command's stdin (BUG-BZQQDP, TKT-2FDTJE).
 //
-// Two rules apply, and the payload leaves the process, so both fail closed:
+// Two rules apply:
 //
 //   - An outgoing content-scoped edge travels only with the face that owns
 //     it ([ownedByFace]). e is served at one face; another face's content
-//     edge would present that face's content as e's.
-//   - Both endpoints must be readable, as [visibleReader.endpointsReadable]
+//     edge would present that face's content as e's. An incoming content
+//     edge belongs to its source's tail face, which the next rule gates.
+//   - Both endpoints must be readable, as [visibleReader.readableRelations]
 //     decides: the peer at some face, a content-scoped tail at its own face.
 //     A hidden peer's id must not reach the script.
 //
 // The cost is two store reads for any number of edges: one relation query
 // and one header batch for every endpoint.
-func (h *commandHandler) relationsForEntity(ctx context.Context, e *entity.Entity) []*entity.Relation {
-	meta := h.schema().Meta
+func (h *commandHandler) relationsForEntity(
+	ctx context.Context, meta *metamodel.Metamodel, e *entity.Entity,
+) ([]*entity.Relation, error) {
 	var candidates []*entity.Relation
 	q := store.RelationQuery{EntityID: e.ID, Direction: store.DirectionBoth}
 	for r, err := range h.services().Store.ListRelations(ctx, q) {
 		if err != nil {
-			slog.Warn("dataentry: command relation read failed; sending no relations",
-				"entity", e.ID, "err", err)
-			return []*entity.Relation{}
+			return nil, fmt.Errorf("list relations of %s: %w", e.ID, err)
 		}
 		if r.From == e.ID && !ownedByFace(meta, r, e.Face) {
 			continue
 		}
 		candidates = append(candidates, r)
 	}
-	return readableRelations(ctx, h.visible, candidates)
-}
-
-// readableRelations keeps the relations whose endpoints the principal may
-// read, in order. The result is never nil, so the payload says "no edges"
-// rather than omitting the field.
-func readableRelations(ctx context.Context, vr visibleReader, rels []*entity.Relation) []*entity.Relation {
-	out := make([]*entity.Relation, 0, len(rels))
-	if len(rels) == 0 {
-		return out
-	}
-	for i, ok := range vr.endpointsReadable(ctx, rels) {
-		if ok {
-			out = append(out, rels[i])
-		}
-	}
-	return out
+	return h.visible.readableRelations(ctx, candidates)
 }
 
 func (h *commandHandler) buildListInput(listID string, entities []*entity.Entity) *commandInput {
@@ -423,9 +417,15 @@ func (h *commandHandler) buildListInput(listID string, entities []*entity.Entity
 // viewResult it receives is already row-gated + field-redacted (executeView,
 // DEC-ZBI39P): a command script sees the same visibility the HTTP view does, so
 // a property hidden from the invoking principal is absent from the entity JSON
-// rather than raw. (Behavior change since BUG-9QL9XV: previously raw.)
-func (h *commandHandler) buildViewInput(ctx context.Context, viewID string, vr *viewResult) *commandInput {
-	rels := h.viewRelations(ctx, vr)
+// rather than raw. (Behavior change since BUG-9QL9XV: previously raw.) A failed
+// relation read is returned, as in [commandHandler.buildEntityInput].
+func (h *commandHandler) buildViewInput(
+	ctx context.Context, meta *metamodel.Metamodel, viewID string, vr *viewResult,
+) (*commandInput, error) {
+	rels, err := h.viewRelations(ctx, meta, vr)
+	if err != nil {
+		return nil, err
+	}
 
 	collections := make(map[string][]*entity.Entity, len(vr.Collections))
 	maps.Copy(collections, vr.Collections)
@@ -437,7 +437,7 @@ func (h *commandHandler) buildViewInput(ctx context.Context, viewID string, vr *
 		Collections: collections,
 		Relations:   rels,
 		Project:     h.projectInfo(),
-	}
+	}, nil
 }
 
 // viewRelations returns the edges between entities in the view result, in
@@ -446,9 +446,12 @@ func (h *commandHandler) buildViewInput(ctx context.Context, viewID string, vr *
 // Every entity in vr is already row-gated and face-gated by executeView, and
 // an edge is kept only when both ends are in vr, so the peers need no second
 // gate. What executeView does not decide is which face owns an edge: a
-// content-scoped edge is kept only when its tail face is the face vr serves
-// its source at ([ownedByFace], BUG-BZQQDP).
-func (h *commandHandler) viewRelations(ctx context.Context, vr *viewResult) []*entity.Relation {
+// content-scoped edge is kept only when its tail face is a face vr serves its
+// source at ([ownedByFace], BUG-BZQQDP). One id may be served at several
+// faces, so each id keeps the set of faces it is served at.
+func (h *commandHandler) viewRelations(
+	ctx context.Context, meta *metamodel.Metamodel, vr *viewResult,
+) ([]*entity.Relation, error) {
 	served := make(map[string][]entity.Face)
 	add := func(e *entity.Entity) {
 		if e != nil && !slices.Contains(served[e.ID], e.Face) {
@@ -461,15 +464,15 @@ func (h *commandHandler) viewRelations(ctx context.Context, vr *viewResult) []*e
 			add(e)
 		}
 	}
-	ids := slices.Sorted(maps.Keys(served))
-	meta := h.schema().Meta
+	if len(served) == 0 {
+		return nil, nil // nil EntityIDs would read every relation
+	}
 
 	var rels []*entity.Relation
-	q := store.RelationQuery{EntityIDs: ids, Direction: store.DirectionOutgoing}
+	q := store.RelationQuery{EntityIDs: slices.Sorted(maps.Keys(served)), Direction: store.DirectionOutgoing}
 	for r, err := range h.services().Store.ListRelations(ctx, q) {
 		if err != nil {
-			slog.Warn("dataentry: command view relation read failed; sending no relations", "err", err)
-			return nil
+			return nil, fmt.Errorf("list view relations: %w", err)
 		}
 		if _, ok := served[r.To]; !ok {
 			continue
@@ -478,7 +481,7 @@ func (h *commandHandler) viewRelations(ctx context.Context, vr *viewResult) []*e
 			rels = append(rels, r)
 		}
 	}
-	return rels
+	return rels, nil
 }
 
 func (h *commandHandler) buildGlobalInput() *commandInput {
@@ -565,6 +568,91 @@ var (
 
 // --- HTTP Handlers ---
 
+// buildCommandInput builds the stdin JSON for cmd from the request. When it
+// cannot, it has already written the error response and returns false; the
+// command must not run.
+func (h *commandHandler) buildCommandInput(
+	w http.ResponseWriter, r *http.Request, s *Schema, cmd CommandConfig, commandID string,
+) (*commandInput, bool) {
+	var input *commandInput
+	switch cmd.Context {
+	case "entity":
+		entityID := r.URL.Query().Get("entity_id")
+		// An ADDRESS, as everywhere an id is accepted: `ID` or `ID@face`,
+		// resolved through the entity GET's resolver: the row gate, then the
+		// face gate, then redaction below (BUG-G2BASF review). A command
+		// request carries no entity type, so the gates run on the stored
+		// type. Every failure is the one not-found a missing entity
+		// produces, and a gate error is a denial, not a pass.
+		//
+		// `authorizeCommand` does NOT cover this: it decides whether this
+		// COMMAND may run, not which rows it may see.
+		entityDomain, found, gerr := h.visible.untypedAddress(r.Context(), entityID)
+		if gerr != nil || !found {
+			if gerr != nil {
+				// The 404 keeps the command's answer shape; the log keeps
+				// the fault visible to the operator.
+				slog.Warn("dataentry: command entity read gate failed; answering not-found",
+					"command", commandID, "entity_id", entityID, "err", gerr)
+			}
+			http.Error(w, "Entity not found: "+entityID, http.StatusNotFound)
+			return nil, false
+		}
+		var berr error
+		input, berr = h.buildEntityInput(r.Context(), s.Meta, h.redactEntity(r.Context(), entityDomain))
+		if berr != nil {
+			slog.Error("dataentry: command payload read failed; not running the command",
+				"command", commandID, "err", berr)
+			http.Error(w, "Failed to build input", http.StatusInternalServerError)
+			return nil, false
+		}
+	case "list":
+		listID := r.URL.Query().Get("list_id")
+		listCfg, found := s.Cfg.Lists[listID]
+		if !found {
+			http.Error(w, "List not found: "+listID, http.StatusNotFound)
+			return nil, false
+		}
+		entities := listFromStoreByTypes(r.Context(), h.services(), []string{listCfg.EntityType})
+		entities = applyFilters(entities, listCfg.Filters)
+		input = h.buildListInput(listID, entities)
+	case "view":
+		viewID := r.URL.Query().Get("view_id")
+		entityID := r.URL.Query().Get("entity_id")
+		viewCfg, found := s.Cfg.Views[viewID]
+		if !found {
+			http.Error(w, "View not found: "+viewID, http.StatusNotFound)
+			return nil, false
+		}
+		// DEFAULT WORLD, named explicitly — and this is the call site the
+		// explicit-parameter design exists for. The viewResult below is
+		// marshaled to JSON and piped to an operator shell script's stdin, so
+		// a world applied here changes what an EXTERNAL PROCESS receives, past
+		// any layer that could observe it. Scoping the command surface for
+		// worlds is its own ticket, with its own thinking about what a
+		// world-bound command even means.
+		vr, err := h.executeView(r.Context(), viewCfg, entityID, defaultViewWorld())
+		if err != nil {
+			http.Error(w, "View error: "+err.Error(), http.StatusBadRequest)
+			return nil, false
+		}
+		var berr error
+		input, berr = h.buildViewInput(r.Context(), s.Meta, viewID, vr)
+		if berr != nil {
+			slog.Error("dataentry: command payload read failed; not running the command",
+				"command", commandID, "err", berr)
+			http.Error(w, "Failed to build input", http.StatusInternalServerError)
+			return nil, false
+		}
+	case "global":
+		input = h.buildGlobalInput()
+	default:
+		http.Error(w, "Invalid command context: "+cmd.Context, http.StatusBadRequest)
+		return nil, false
+	}
+	return input, true
+}
+
 // handleCommandExec handles POST /api/command/{commandID} and streams results as SSE.
 //
 // Restricted to POST: this endpoint runs configured shell commands and a GET
@@ -610,66 +698,8 @@ func (h *commandHandler) handleCommandExec(w http.ResponseWriter, r *http.Reques
 	runKey := newRunKey()
 
 	// Build stdin JSON based on context.
-	var input *commandInput
-	switch cmd.Context {
-	case "entity":
-		entityID := r.URL.Query().Get("entity_id")
-		// An ADDRESS, as everywhere an id is accepted: `ID` or `ID@face`,
-		// resolved through the entity GET's resolver: the row gate, then the
-		// face gate, then redaction below (BUG-G2BASF review). A command
-		// request carries no entity type, so the gates run on the stored
-		// type. Every failure is the one not-found a missing entity
-		// produces, and a gate error is a denial, not a pass.
-		//
-		// `authorizeCommand` does NOT cover this: it decides whether this
-		// COMMAND may run, not which rows it may see.
-		entityDomain, found, gerr := h.visible.untypedAddress(r.Context(), entityID)
-		if gerr != nil || !found {
-			if gerr != nil {
-				// The 404 keeps the command's answer shape; the log keeps
-				// the fault visible to the operator.
-				slog.Warn("dataentry: command entity read gate failed; answering not-found",
-					"command", commandID, "entity_id", entityID, "err", gerr)
-			}
-			http.Error(w, "Entity not found: "+entityID, http.StatusNotFound)
-			return
-		}
-		input = h.buildEntityInput(r.Context(), h.redactEntity(r.Context(), entityDomain))
-	case "list":
-		listID := r.URL.Query().Get("list_id")
-		listCfg, found := s.Cfg.Lists[listID]
-		if !found {
-			http.Error(w, "List not found: "+listID, http.StatusNotFound)
-			return
-		}
-		entities := listFromStoreByTypes(r.Context(), h.services(), []string{listCfg.EntityType})
-		entities = applyFilters(entities, listCfg.Filters)
-		input = h.buildListInput(listID, entities)
-	case "view":
-		viewID := r.URL.Query().Get("view_id")
-		entityID := r.URL.Query().Get("entity_id")
-		viewCfg, found := s.Cfg.Views[viewID]
-		if !found {
-			http.Error(w, "View not found: "+viewID, http.StatusNotFound)
-			return
-		}
-		// DEFAULT WORLD, named explicitly — and this is the call site the
-		// explicit-parameter design exists for. The viewResult below is
-		// marshaled to JSON and piped to an operator shell script's stdin, so
-		// a world applied here changes what an EXTERNAL PROCESS receives, past
-		// any layer that could observe it. Scoping the command surface for
-		// worlds is its own ticket, with its own thinking about what a
-		// world-bound command even means.
-		vr, err := h.executeView(r.Context(), viewCfg, entityID, defaultViewWorld())
-		if err != nil {
-			http.Error(w, "View error: "+err.Error(), http.StatusBadRequest)
-			return
-		}
-		input = h.buildViewInput(r.Context(), viewID, vr)
-	case "global":
-		input = h.buildGlobalInput()
-	default:
-		http.Error(w, "Invalid command context: "+cmd.Context, http.StatusBadRequest)
+	input, ok := h.buildCommandInput(w, r, s, cmd, commandID)
+	if !ok {
 		return
 	}
 

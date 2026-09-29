@@ -1552,7 +1552,7 @@ script:
 
 | context | what the script receives | scoped by |
 | ------- | ------------------------ | --------- |
-| `entity` | the entity at the caller-supplied `entity_id`, plus its incident relations | the row gate, the face gate and field redaction on the entity; a relation travels only when both endpoints are readable, and a content-scoped edge only with the face that owns it |
+| `entity` | the entity at the caller-supplied `entity_id`, plus its incident relations | the row gate, the face gate and field redaction on the entity; a relation travels only when both endpoints are readable (a content-scoped tail at its own face), and an outgoing content-scoped edge only with the face the entity is served at |
 | `list` | every entity in the caller-supplied `list_id`, post-filter | nothing — any configured list (TKT-2FDTJE) |
 | `global` | project paths only | n/a |
 | `view` | the entry entity plus the entire traversal closure | *not grantable — see below* |

@@ -43,8 +43,7 @@ type ganttHandler struct {
 	// Edge visibility is NOT re-derived here: an edge is used only when BOTH
 	// endpoints are already in the gated node set, which is strictly narrower
 	// than PolicyReader.FilterRelations' both-endpoints rule and costs no
-	// extra reads. A content-scoped edge must also be owned by its parent
-	// node's face (ganttEdgesForType). Edge properties never reach the response — relation meta
+	// extra reads. Edge properties never reach the response — relation meta
 	// carries no redaction on this path (TKT-0RBFN0).
 	store store.Store
 	// scoped is App.scopedSortedEntities: the ACL-scoped entity lister.
@@ -468,6 +467,14 @@ func (h *ganttHandler) addGanttNodes(
 				continue
 			}
 		}
+		if prev, dup := nodes[red.ID]; dup && prev.face != red.Face {
+			// A node knows one face, and ganttEdgesForType decides edge
+			// ownership by it, so two faces of one id would make the tree
+			// depend on read order. Refuse rather than pick one.
+			slog.Error("gantt: two faces of one entity in the node set",
+				"entity", red.ID, "faces", []entity.Face{prev.face, red.Face})
+			return &ganttError{http.StatusInternalServerError, "internal", "Ambiguous entity face", ""}
+		}
 		nodes[red.ID] = &ganttNode{
 			id:        red.ID,
 			entType:   typeName,
@@ -524,6 +531,21 @@ func ganttSubtreeVerdicts(
 	return verdicts, nil
 }
 
+// ganttHasFacedSource reports whether any source type declares faces. The
+// drill closure (collectGanttRound) queries without a face selection, so on
+// a faced type it would load rows at every face, including faces the
+// principal's grant withholds, and pick one per id by read order. The full
+// build reads through scopedHeaders with the grant's face set, so the drill
+// declines to it (BUG-BZQQDP review). TKT-KQXVF7 gives the closure a world.
+func ganttHasFacedSource(meta *metamodel.Metamodel, g dataentryconfig.Gantt) bool {
+	for typeName := range g.Sources {
+		if def, ok := meta.Entities[typeName]; ok && len(def.Faces) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // buildGanttSubtree is the ?root= fast path (TKT-5LUGYP, closes RR-FJWAZS):
 // resolve the drilled subtree with per-type GraphQuery pushdown instead of
 // building and discarding the global forest.
@@ -560,6 +582,9 @@ func (h *ganttHandler) buildGanttSubtree(
 ) (*ganttForest, *ganttError) {
 	if g.MultiParent == "error" {
 		return nil, nil // global integrity policy needs the global build
+	}
+	if ganttHasFacedSource(s.Meta, g) {
+		return nil, nil // the closure is face-blind; see ganttHasFacedSource
 	}
 	verdicts, verdictErr := ganttSubtreeVerdicts(ctx, g)
 	if verdicts == nil {

@@ -118,3 +118,42 @@ func TestGanttEdges_ContentEdgeOnlyWithItsFace(t *testing.T) {
 		t.Error("subtree drill with a disowned edge in its set must decline (external)")
 	}
 }
+
+// A node keeps the face its row was loaded at, since edge ownership is decided
+// by it, and a second face of the same id is refused rather than overwriting
+// the first.
+func TestGanttNodes_KeepTheirFace(t *testing.T) {
+	app := facedGanttApp(t)
+	s := app.schema.Current()
+	g := s.Cfg.Gantts["plan"]
+	row := func(face entity.Face) *entity.Entity {
+		return &entity.Entity{ID: "PRJ-A", Type: "project", Face: face, Properties: map[string]any{"title": "A"}}
+	}
+
+	nodes := map[string]*ganttNode{}
+	if gerr := app.gantt.addGanttNodes(s, g, "project", []*entity.Entity{row("published")}, nodes); gerr != nil {
+		t.Fatalf("addGanttNodes: %+v", gerr)
+	}
+	if got := nodes["PRJ-A"].face; got != "published" {
+		t.Fatalf("node face = %q, want published", got)
+	}
+
+	if gerr := app.gantt.addGanttNodes(s, g, "project", []*entity.Entity{row("draft")}, nodes); gerr == nil {
+		t.Error("a second face of PRJ-A was accepted; want a refusal")
+	}
+	if got := nodes["PRJ-A"].face; got != "published" {
+		t.Errorf("node face after refusal = %q, want published", got)
+	}
+}
+
+// The drill closure selects no face, so on a faced source type it would load
+// faces the grant withholds. It declines to the full build, which reads with
+// the grant's face set.
+func TestGanttSubtree_DeclinesForFacedSources(t *testing.T) {
+	app := facedGanttApp(t)
+	s := app.schema.Current()
+	f, gerr := app.gantt.buildGanttSubtree(context.Background(), s, s.Cfg.Gantts["plan"], "EPIC-P")
+	if f != nil || gerr != nil {
+		t.Fatalf("buildGanttSubtree = %v, %+v; want a decline (nil, nil)", f, gerr)
+	}
+}
