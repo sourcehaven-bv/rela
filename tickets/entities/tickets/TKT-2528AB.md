@@ -22,5 +22,5 @@ BUG-8J3LSB (if not already fixed in Stage 0).
 
 ## Acceptance
 
-- No dataentry, mcp or lua read path calls the store directly for a single entity; the guard allowlist has no entries in those packages.
+- No dataentry, mcp or lua read-out path calls the store directly for a single entity; write-prep reads stay raw, per CLAUDE.md. The guard allowlist keeps only those write-prep entries in those packages.
 - A handler cannot obtain a row without the face gate having run.
