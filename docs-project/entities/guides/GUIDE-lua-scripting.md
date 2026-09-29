@@ -1184,7 +1184,7 @@ script runs in a specialized mode with extra context exposed:
 |--------------------------|---------|
 | `rela.mode`              | `"document"` in this context; absent elsewhere |
 | `rela.document.id`       | The key under `documents:` in `data-entry.yaml` |
-| `rela.document.entry_id` | The ID of the entity being rendered |
+| `rela.document.entry_id` | The address of the entity being rendered: its ID, or `ID@face` for a type that declares faces. Pass it to `rela.get_entity` to read that face. |
 
 **List renders** (a `lists.<id>.export_render` view export, see
 [Transforms](../../../docs/transforms.md#custom-per-list-rendering)) run in the

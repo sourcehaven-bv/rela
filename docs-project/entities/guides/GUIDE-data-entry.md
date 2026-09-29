@@ -5205,7 +5205,7 @@ When invoked in document mode, the runtime exposes extra context:
 |----------------------------|---------|
 | `rela.mode`                | Always `"document"` in this context; `nil` elsewhere |
 | `rela.document.id`         | The key under `documents:` in `data-entry.yaml` |
-| `rela.document.entry_id`   | The ID of the entity being rendered; **`nil` for a standalone document** |
+| `rela.document.entry_id`   | The address of the entity being rendered: its ID, or `ID@face` for a type that declares faces; **`nil` for a standalone document** |
 
 A script shared between both document kinds should branch on `entry_id`
 rather than assume it:

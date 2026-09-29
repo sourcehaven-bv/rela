@@ -28,8 +28,9 @@ import (
 const exportSegment = dataentryconfig.ReservedExportSegment
 
 // resolvedDocument is what the gate chain produces: a render config for a
-// document the caller has been authorized to render, plus the entry entity ID
-// ("" for a standalone document).
+// document the caller has been authorized to render, plus the entry entity's
+// ADDRESS (`ID` or `ID@face`, "" for a standalone document): the exact row the
+// gates cleared, which is the row the renderer reads.
 //
 // It deliberately carries nothing else. Everything the HTML path additionally
 // needs — the return_to rewrite target, the refresh flag, the disk cache — is
@@ -160,12 +161,22 @@ func resolveAnchoredDocument(
 		return resolvedDocument{}, false
 	}
 
-	// ACL gate (TKT-C0R07J), FIRST — see the ordering note in the doc comment.
-	// Document rendering serves entity-derived content and may run a Lua script
-	// that reads related entities, so a denied caller must never reach the
-	// renderer, and must not learn whether the id exists.
-	// The BARE id: the row gate is face-blind by design.
-	if !a.gateReadOrNotFound(w, r, docCfg.EntityType, ref.ID) {
+	// ACL gates (TKT-C0R07J), FIRST — see the ordering note in the doc
+	// comment. Document rendering serves entity-derived content and may run a
+	// Lua script that reads related entities, so a denied caller must never
+	// reach the renderer, and must not learn whether the id exists.
+	//
+	// getVisibleRef is the gate pair every addressed read owes (BUG-8J3LSB):
+	// the face-blind row gate on the BARE id, then the face gate on the row it
+	// read. A denied face answers the same not-found as a missing entity, so a
+	// `policy@published` reader cannot render a document over the draft.
+	ent, found, gateErr := a.visibleReader.getVisibleRef(r.Context(), docCfg.EntityType, ref)
+	if gateErr != nil {
+		writeGateError(w, r, gateErr)
+		return resolvedDocument{}, false
+	}
+	if !found {
+		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 		return resolvedDocument{}, false
 	}
 
@@ -189,22 +200,33 @@ func resolveAnchoredDocument(
 	// docs shown for an entity, but an HTTP caller can hit
 	// /_documents/<doc>/<wrong-type-id> directly.
 	//
-	// The read is safe here because the gate above already authorized this
-	// principal for this id; a miss gets the SAME uniform 404 a denial gets,
-	// so the two remain indistinguishable (entityNotFoundTitle's godoc
-	// requires exactly this).
-	ent, entErr := a.store.GetEntityState(r.Context(), ref.ID, ref.Face)
-	if entErr != nil {
-		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
-		return resolvedDocument{}, false
-	}
+	// The gates above judged the row against the DOCUMENT's type, and a grant
+	// covering every row of that type passes whatever id it is handed. A row
+	// of another type must therefore clear the full gate pair against its OWN
+	// type before the 400 names that type; otherwise the 400 is an existence
+	// and type oracle on rows the caller may not read.
 	if ent.Type != docCfg.EntityType {
+		_, own, ownErr := a.visibleReader.getVisibleRef(r.Context(), ent.Type, refOf(ent))
+		if ownErr != nil {
+			writeGateError(w, r, ownErr)
+			return resolvedDocument{}, false
+		}
+		if !own {
+			writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
+			return resolvedDocument{}, false
+		}
 		writeV1Error(w, r, http.StatusBadRequest, "entity_type_mismatch",
 			documentTypeMismatch(docName, docCfg.EntityType, entityID, ent.Type), "")
 		return resolvedDocument{}, false
 	}
 
-	return resolvedDocument{cfg: a.toDocumentRenderConfig(docName, &docCfg), entryID: entityID}, true
+	// The render is keyed on the address of the row the gates cleared, so the
+	// renderer reads that same row rather than the zero face.
+	//
+	// This address is also what a script sees as rela.document.entry_id. For a
+	// faceless type it is the bare id, exactly as before; for a faced row it is
+	// `ID@face`, which no bare-id request could render until BUG-8J3LSB.
+	return resolvedDocument{cfg: a.toDocumentRenderConfig(docName, &docCfg), entryID: refOf(ent).String()}, true
 }
 
 // handleV1ExportDocument serves the document export routes:
@@ -267,14 +289,15 @@ func handleV1ExportDocument(a *App, w http.ResponseWriter, r *http.Request, docN
 		return []byte(md), nil
 	})
 
-	a.export.convertAndWrite(w, r, reg, name, renderer, exportBaseName(docName, entityID),
+	a.export.convertAndWrite(w, r, reg, name, renderer, exportBaseName(docName, resolved.entryID),
 		"document", docName)
 }
 
 // exportBaseName is the download filename stem: the document name for a
-// standalone export, "<doc>-<id>" when anchored to an entity. Both components
-// have already passed isSafePathSegment, and safeAttachmentFilename sanitizes
-// the result again downstream.
+// standalone export, "<doc>-<address>" when anchored to an entity, using the
+// address of the row that was rendered. The document name has passed
+// isSafePathSegment, the address was built from a stored row, and
+// safeAttachmentFilename sanitizes the result again downstream.
 func exportBaseName(docName, entityID string) string {
 	if entityID == "" {
 		return docName
