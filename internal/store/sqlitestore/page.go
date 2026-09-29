@@ -25,18 +25,9 @@ func (s *Store) ListEntitiesPage(
 	if err := storeutil.ValidateEntityQuery(q); err != nil {
 		return store.Page[*entity.Entity]{}, err
 	}
-	cursorKey, err := storeutil.DecodeCursor(q.Cursor)
+	sqlText, args, err := entityPageSQL(q)
 	if err != nil {
 		return store.Page[*entity.Entity]{}, err
-	}
-
-	sqlText, args := buildEntitySelectSQL(q, cursorKey, entityColumns)
-	// Fetch one extra row to learn whether a further page exists, without a
-	// second COUNT query. Under a world the rows are already PRIMES — the
-	// window resolves each family before LIMIT applies — so limit+1 counts
-	// entities rather than candidate state rows.
-	if q.Limit > 0 {
-		sqlText += limitClause(q.Limit + 1)
 	}
 
 	rows, err := s.q().QueryContext(ctx, sqlText, args...)
@@ -145,4 +136,23 @@ func splitRelationKey(key string) (from, face, relType, to string, ok bool) {
 		return "", "", "", "", false
 	}
 	return parts[0], parts[1], parts[2], parts[3], true
+}
+
+// entityPageSQL is the query [Store.ListEntitiesPage] sends for q, cursor
+// decoded.
+//
+// It fetches one extra row to learn whether a further page exists, without
+// a second COUNT query. Under a world the rows are already PRIMES — the
+// window resolves each family before LIMIT applies — so limit+1 counts
+// entities rather than candidate state rows.
+func entityPageSQL(q store.EntityQuery) (sqlText string, args []any, err error) {
+	cursorKey, err := storeutil.DecodeCursor(q.Cursor)
+	if err != nil {
+		return "", nil, err
+	}
+	sqlText, args = buildEntitySelectSQL(q, cursorKey, entityColumns)
+	if q.Limit > 0 {
+		sqlText += limitClause(q.Limit + 1)
+	}
+	return sqlText, args, nil
 }

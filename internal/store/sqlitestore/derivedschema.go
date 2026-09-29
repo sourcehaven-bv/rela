@@ -188,6 +188,12 @@ func ownedIndexes(ctx context.Context, conn querier) (map[string]string, error) 
 // filters: keyed on the type and each property's `->>`, partial on the default
 // face and on each property holding a string, which is exactly what
 // scalarEqualCond tests.
+//
+// The trailing id gives the rows in the query's ORDER BY id. It is what keeps
+// SQLite choosing this index (TKT-KQXVF7): the planner runs without
+// statistics, so it prefers an index that avoids a sort over one with more
+// equality columns, and entities_type_id_face_idx (type, id, face) offers id
+// order for every type. With id here, this index offers both.
 func queryIndexDDL(spec store.DerivedObjectSpec) (name, ddl string, ok bool) {
 	if spec.Type == "" || len(spec.Properties) == 0 {
 		return "", "", false
@@ -200,6 +206,7 @@ func queryIndexDDL(spec store.DerivedObjectSpec) (name, ddl string, ok bool) {
 		cols = append(cols, rawExpr("", path))
 		guards = append(guards, typeExpr("", path)+" = 'text'")
 	}
+	cols = append(cols, "id")
 	name = derivedQueryPrefix + specHash(spec)
 	return name, `CREATE INDEX "` + name + `" ON entities (` + strings.Join(cols, ", ") + `) WHERE ` +
 		strings.Join(guards, " AND "), !b.unsafe

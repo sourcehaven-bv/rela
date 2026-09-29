@@ -12,7 +12,7 @@ import (
 // schemaVersion is the shape of the tables this binary expects. Bump it
 // whenever schemaSQL changes shape, and append the step that carries an
 // existing database forward to [migrations].
-const schemaVersion = 7
+const schemaVersion = 8
 
 // SchemaVersion reports the table shape this binary expects, so the CLI can
 // show a real number rather than prose.
@@ -115,6 +115,19 @@ var migrations = []migration{
 		// copy and attributes every create/update to its system principal.
 		to:    7,
 		apply: addEditorColumns,
+	},
+	{
+		// v7 → v8: the type page index serves every face (TKT-KQXVF7).
+		// schemaSQL has already created entities_type_id_face_idx by the
+		// time this runs, so the rung's create is a no-op kept to state
+		// what v8 means; the rung drops the (type) index it replaces and
+		// moves the stamp. Both statements are IF [NOT] EXISTS, so a re-run
+		// after a crash is a no-op.
+		to: 8,
+		apply: sqlSteps(
+			`DROP INDEX IF EXISTS entities_type_idx`,
+			entitiesTypeIDFaceIndexDDL,
+		),
 	},
 }
 

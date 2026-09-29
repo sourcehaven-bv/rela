@@ -352,7 +352,7 @@ func TestMatchingIDsEntityClosureSeedsFromThePage(t *testing.T) {
 	plan, err := s.ExplainMatchingIDs(context.Background(), q, page)
 	require.NoError(t, err)
 	t.Logf("plan:\n%s", plan)
-	require.NotContains(t, plan, "entities_type_idx", "the closure seeds from the whole type")
+	require.NotContains(t, plan, "entities_type_id_face_idx (type=?)", "the closure seeds from the whole type")
 	requireNoTableScan(t, plan)
 
 	got, err := s.MatchingIDs(context.Background(), q, page)

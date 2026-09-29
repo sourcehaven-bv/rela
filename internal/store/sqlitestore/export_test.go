@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -26,6 +27,33 @@ func (s *Store) ExplainGraphQuery(ctx context.Context, q store.GraphQuery) (stri
 // ExplainMatchingIDs is ExplainGraphQuery for MatchingIDs over ids.
 func (s *Store) ExplainMatchingIDs(ctx context.Context, q store.GraphQuery, ids []string) (string, error) {
 	sqlText, args, _ := buildMatchingIDsSQL(q, ids)
+	return s.explain(ctx, sqlText, args)
+}
+
+// ExplainEntityPage is ExplainGraphQuery for the page ListEntitiesPage reads
+// for q, cursor and LIMIT included.
+func (s *Store) ExplainEntityPage(ctx context.Context, q store.EntityQuery) (string, error) {
+	sqlText, args, err := entityPageSQL(q)
+	if err != nil {
+		return "", err
+	}
+	return s.explain(ctx, sqlText, args)
+}
+
+// ExplainGetEntityState is ExplainGraphQuery for GetEntityState(id, face).
+func (s *Store) ExplainGetEntityState(ctx context.Context, id string, face entity.Face) (string, error) {
+	return s.explain(ctx, getEntityStateSQL, []any{id, string(face)})
+}
+
+// BuildHighestIDSQLForTest exposes the SQL [Store.HighestID] issues for
+// prefix. Test-only.
+func BuildHighestIDSQLForTest(prefix string) (sqlText string, args []any) {
+	return buildHighestIDSQL(prefix)
+}
+
+// ExplainHighestID is ExplainGraphQuery for HighestID(prefix).
+func (s *Store) ExplainHighestID(ctx context.Context, prefix string) (string, error) {
+	sqlText, args := buildHighestIDSQL(prefix)
 	return s.explain(ctx, sqlText, args)
 }
 

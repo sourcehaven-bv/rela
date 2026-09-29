@@ -96,6 +96,24 @@ func RunQueryTests(t *testing.T, f Factory) {
 		assert.Equal(t, 0, n)
 	})
 
+	// The SQL backends read HighestID as a range over "<prefix>-" (TKT-KQXVF7),
+	// and used to read it as a LIKE pattern. Ids just outside the range, and a
+	// prefix holding a LIKE wildcard, must not count.
+	t.Run("HighestIDIsExactPrefix", func(t *testing.T) {
+		s := f(t)
+		for _, id := range []string{"FEAT-4", "FEATURE-99", "FEAT_9", "FEA-50", "FEAT", "A_B-4", "AXB-9"} {
+			require.NoError(t, s.CreateEntity(ctx(), entity.New(id, "feature")), id)
+		}
+
+		n, err := s.HighestID(ctx(), "FEAT")
+		require.NoError(t, err)
+		assert.Equal(t, 4, n)
+
+		n, err = s.HighestID(ctx(), "A_B")
+		require.NoError(t, err)
+		assert.Equal(t, 4, n, "_ in the prefix is a literal, not a wildcard")
+	})
+
 	t.Run("PropertyValues", func(t *testing.T) {
 		s := f(t)
 		seedEntities(t, s)

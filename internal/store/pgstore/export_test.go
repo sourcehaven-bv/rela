@@ -88,6 +88,28 @@ func BuildGraphQuerySQLForTest(q store.GraphQuery, countOnly bool) (sqlText stri
 	return buildGraphQuerySQL(q, countOnly)
 }
 
+// BuildEntityListSQLForTest exposes the SQL [Store.ListEntitiesPage] issues
+// for q, cursor and LIMIT included, so EXPLAIN tests can check the plan of
+// each face selection. Test-only.
+func BuildEntityListSQLForTest(t *testing.T, q store.EntityQuery) (sqlText string, args []any) {
+	t.Helper()
+	sqlText, args, err := entityPageSQL(q)
+	if err != nil {
+		t.Fatalf("entity page sql: %v", err)
+	}
+	return sqlText, args
+}
+
+// GetEntityStateSQLForTest is the SQL [Store.GetEntityState] issues.
+// Test-only.
+const GetEntityStateSQLForTest = getEntityStateSQL
+
+// BuildHighestIDSQLForTest exposes the SQL [Store.HighestID] issues for
+// prefix. Test-only.
+func BuildHighestIDSQLForTest(prefix string) (sqlText string, args []any) {
+	return buildHighestIDSQL(prefix)
+}
+
 // BuildMatchingIDsSQLForTest exposes the SQL [Store.MatchingIDs] issues, so
 // EXPLAIN tests can check the shape the traversal path actually runs.
 func BuildMatchingIDsSQLForTest(q store.GraphQuery, ids []string) (sqlText string, args []any) {
