@@ -148,23 +148,15 @@ func handleV1History(a *App, w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	scoped, capable := faceHistoryReader(a.versions, subject.ref.Face)
-	if !capable {
-		// The backend has entity history but not the FACE-scoped capability,
-		// so it cannot answer this question. Refuse rather than serve another
-		// face's history: a wrong record is worse than a named refusal.
-		writeV1Error(w, r, http.StatusNotImplemented, "history_face_unsupported",
-			"The active storage backend cannot serve per-face version history", "")
-		return
-	}
-
+	// Every read below names subject.ref, so it is scoped to the one face
+	// the subject resolved to: the store's history is per face.
 	switch {
 	case restore:
-		restoreHistoryVersion(a, w, r, scoped, typeName, subject, parts[2])
+		restoreHistoryVersion(a, w, r, a.versions, typeName, subject, parts[2])
 	case len(parts) >= 3 && parts[2] != "":
-		serveHistoryVersion(a, w, r, scoped, typeName, ref.ID, parts[2])
+		serveHistoryVersion(a, w, r, a.versions, typeName, subject.ref, parts[2])
 	default:
-		serveHistoryTimeline(w, r, scoped, typeName, ref.ID, subject.ref.Face, subject.live == nil)
+		serveHistoryTimeline(w, r, a.versions, typeName, subject.ref, subject.live == nil)
 	}
 }
 
@@ -197,9 +189,10 @@ func historyMethodAllowed(w http.ResponseWriter, r *http.Request, restore bool) 
 // type's face grant.
 func serveHistoryTimeline(
 	w http.ResponseWriter, r *http.Request, reader store.HistoryReader,
-	typeName, entityID string, face entityPkg.Face, deleted bool,
+	typeName string, subjectRef entityPkg.Ref, deleted bool,
 ) {
-	metas, err := reader.ListVersions(r.Context(), entityID)
+	entityID, face := subjectRef.ID, subjectRef.Face
+	metas, err := reader.ListVersions(r.Context(), subjectRef)
 	if err != nil {
 		// Scrub backend detail from the wire (RR-372L): a store error must not
 		// echo table/column names.
@@ -277,7 +270,7 @@ func lineageOfType(metas []store.VersionMeta, typeName string) bool {
 // serializer so hidden (`visible:`-denied) properties never reach the client.
 func serveHistoryVersion(a *App,
 	w http.ResponseWriter, r *http.Request, reader store.HistoryReader,
-	typeName, entityID, versionStr string,
+	typeName string, subjectRef entityPkg.Ref, versionStr string,
 ) {
 	version, convErr := strconv.Atoi(versionStr)
 	if convErr != nil || version < 1 {
@@ -286,7 +279,8 @@ func serveHistoryVersion(a *App,
 		return
 	}
 
-	snap, err := reader.GetVersion(r.Context(), entityID, version)
+	entityID := subjectRef.ID
+	snap, err := reader.GetVersion(r.Context(), subjectRef, version)
 	if errors.Is(err, store.ErrNotFound) {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 		return

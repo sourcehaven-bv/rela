@@ -46,13 +46,13 @@ func (c *RestoreCmd) Run(ctx context.Context, svc *writeServices) error {
 			"(restore needs the PostgreSQL or SQLite build).")
 		return nil
 	}
-	var reader store.StateHistoryReader = svc.Versions
+	var reader store.HistoryReader = svc.Versions
 	ref, err := historyAddress(ctx, svc.Store, svc.Meta, reader, c.ID)
 	if err != nil {
 		return err
 	}
 
-	snap, err := reader.GetStateVersion(ctx, ref.ID, ref.Face, c.Version)
+	snap, err := reader.GetVersion(ctx, ref, c.Version)
 	if errors.Is(err, store.ErrNotFound) {
 		return fmt.Errorf("no version %d for %q", c.Version, ref)
 	}
@@ -69,7 +69,7 @@ func (c *RestoreCmd) Run(ctx context.Context, svc *writeServices) error {
 	// ErrNotFound (update raced a delete) or ErrEntityAlreadyExists (create
 	// raced a recreate). Map either to a clear "state changed, retry" message
 	// rather than a baffling raw error.
-	live, getErr := svc.Store.GetEntityState(ctx, ref.ID, ref.Face)
+	live, getErr := svc.Store.GetEntity(ctx, ref)
 	if getErr != nil {
 		live = nil
 	}

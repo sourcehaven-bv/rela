@@ -45,15 +45,11 @@ type SeedOp struct {
 type seedWriter interface {
 	CreateEntity(ctx context.Context, e *entity.Entity) error
 	CreateRelation(ctx context.Context, from, relType, to string, data *store.RelationData) (*entity.Relation, error)
-	// GetEntity reads back what seeding wrote. face() and edit() need it —
-	// face() to resolve the type of an id it is given, edit() to confirm the
-	// entity exists and to return the edited result.
-	GetEntity(ctx context.Context, id string) (*entity.Entity, error)
-	// GetEntityState reads ONE face. Needed because a type declaring faces
-	// stores no row at the zero coordinate (BUG-HC6I2T), so GetEntity alone
-	// cannot find a seeded faced entity at all.
-	GetEntityState(ctx context.Context, id string, p entity.Face) (*entity.Entity, error)
-	// ListEntities backs the family lookup the two above cannot do: find any
+	// GetEntity reads back ONE face of what seeding wrote. face() and edit()
+	// need it — face() to resolve the type of an id it is given, edit() to
+	// confirm the entity exists and to return the edited result.
+	GetEntity(ctx context.Context, ref entity.Ref) (*entity.Entity, error)
+	// ListEntities backs the family lookup GetEntity cannot do: find any
 	// row of an id without knowing which face it was seeded at.
 	ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error]
 
@@ -264,7 +260,7 @@ func ApplySeedWith(ctx context.Context, st store.Store, patcher SeedPatcher, ops
 // the seed bindings can pass their own seedWriter-shaped handle rather than a
 // full store.Store.
 type seedEditStore interface {
-	GetEntityState(ctx context.Context, id string, p entity.Face) (*entity.Entity, error)
+	GetEntity(ctx context.Context, ref entity.Ref) (*entity.Entity, error)
 	ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error]
 	UpdateEntity(ctx context.Context, e *entity.Entity) error
 }
@@ -293,7 +289,7 @@ func applyEdit(ctx context.Context, st seedEditStore, patcher SeedPatcher, op Se
 		return err
 	}
 
-	e, err := st.GetEntityState(ctx, op.ID, op.Face)
+	e, err := st.GetEntity(ctx, entity.Ref{ID: op.ID, Face: op.Face})
 	if err != nil {
 		return err
 	}
@@ -459,7 +455,7 @@ func seedRowOf(ctx context.Context, st seedEditStore, id string) (*entity.Entity
 	base := id
 	if ref, perr := entity.ParseRef(id); perr == nil {
 		if !ref.Face.IsDefault() {
-			return st.GetEntityState(ctx, ref.ID, ref.Face)
+			return st.GetEntity(ctx, entity.Ref{ID: ref.ID, Face: ref.Face})
 		}
 		base = ref.ID
 	}

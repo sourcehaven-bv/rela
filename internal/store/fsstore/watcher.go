@@ -226,19 +226,10 @@ func (s *FSStore) reconcileEntityPath(path string) {
 	s.echoes.Recorded(path, rawData)
 
 	key := stateKey(e.ID, e.Face)
-	existing, known := s.entities[key]
-	if known && existing.Face.IsDefault() {
-		removed, loadErr := s.loadEntityMeta(existing)
-		if loadErr == nil {
-			removeEntityFromCache(s.propCache, removed)
-		}
-	}
+	_, known := s.entities[key]
 	s.entities[key] = entityMeta{ID: e.ID, Type: e.Type, Face: e.Face}
 	if !known {
 		s.entityOrder = storeutil.SortedInsertFunc(s.entityOrder, key, storeutil.CompareStateKeys)
-	}
-	if e.Face.IsDefault() {
-		addEntityToCache(s.propCache, e)
 	}
 	s.notifyPut(e)
 
@@ -264,11 +255,6 @@ func (s *FSStore) handleEntityRemoval(path string) {
 		return
 	}
 
-	if meta.Face.IsDefault() {
-		if e, err := s.loadEntityMeta(meta); err == nil {
-			removeEntityFromCache(s.propCache, e)
-		}
-	}
 	delete(s.entities, stem)
 	s.entityOrder = storeutil.SortedRemoveFunc(s.entityOrder, stem, storeutil.CompareStateKeys)
 	// Face-aware observers can evict exactly the removed face. Bare-id

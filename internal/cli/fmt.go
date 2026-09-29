@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 
 	"github.com/Sourcehaven-BV/rela/internal/errors"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -66,7 +67,7 @@ func (c *FmtCmd) formatEntities(
 	}
 	modified := 0
 	for _, id := range entityIDs {
-		changed, err := f.FormatEntity(ctx, id, dryRun)
+		changed, err := f.FormatEntity(ctx, entity.Ref{ID: id}, dryRun)
 		if err != nil {
 			out.WriteWarning("Failed to format %s: %v", id, err)
 			continue

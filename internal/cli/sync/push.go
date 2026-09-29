@@ -339,7 +339,7 @@ func (e *Engine) recordCreate(ctx context.Context, ch LocalChange, res *PushResu
 	// baseline with an empty Local, which would force a spurious re-push forever);
 	// a re-run resumes cleanly since the record is now under its minted id.
 	// The rename keeps the face, so the adopted row is at the pushed row's.
-	ent, err := e.store.GetEntityState(ctx, newID, ch.Record.Entity.Face)
+	ent, err := e.store.GetEntity(ctx, entity.Ref{ID: newID, Face: ch.Record.Entity.Face})
 	if err != nil {
 		return PushRecordResult{}, fmt.Errorf("re-baseline created %q after adopt: %w", newID, err)
 	}

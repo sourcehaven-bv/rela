@@ -666,5 +666,5 @@ func (m *Manager) getEntityByRef(ctx context.Context, ref string) (*entity.Entit
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s", store.ErrNotFound, ref)
 	}
-	return m.deps.Store.GetEntityState(ctx, r.ID, r.Face)
+	return m.deps.Store.GetEntity(ctx, entity.Ref{ID: r.ID, Face: r.Face})
 }

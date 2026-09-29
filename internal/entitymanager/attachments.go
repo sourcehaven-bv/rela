@@ -252,7 +252,7 @@ func cleanupContext(ctx context.Context) (context.Context, context.CancelFunc) {
 // caller's read. A failure is returned: the caller's write has committed, so
 // it reports the leftover bytes rather than failing.
 func sweepUnreferencedFiles(ctx context.Context, st store.Store, id string) error {
-	infos, err := st.ListAttachments(ctx, id)
+	infos, err := st.ListFamilyAttachments(ctx, id)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			return nil
@@ -272,7 +272,7 @@ func sweepUnreferencedFiles(ctx context.Context, st store.Store, id string) erro
 		if familyReferences(family, info.Property, key) {
 			continue
 		}
-		derr := st.DeleteAttachment(ctx, id, info.Property, key)
+		derr := st.DeleteFamilyAttachment(ctx, id, info.Property, key)
 		if derr != nil && !errors.Is(derr, store.ErrNotFound) {
 			errs = append(errs, fmt.Errorf("delete attachment %s/%s/%s: %w", id, info.Property, key, derr))
 		}

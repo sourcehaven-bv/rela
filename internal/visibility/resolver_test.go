@@ -328,7 +328,7 @@ func TestResolver_RedactsOnceAndReportsTheRule(t *testing.T) {
 	if res.Via != store.ResolutionChain || res.ChainPosition != 1 {
 		t.Errorf("provenance = (%v, %d), want (chain, 1)", res.Via, res.ChainPosition)
 	}
-	stored, _ := st.GetEntityState(context.Background(), "POL-1", faceDraft)
+	stored, _ := st.GetEntity(context.Background(), entity.Ref{ID: "POL-1", Face: faceDraft})
 	if _, kept := stored.Properties["salary"]; !kept {
 		t.Error("redaction mutated the stored row")
 	}

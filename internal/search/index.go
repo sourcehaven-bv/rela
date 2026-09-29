@@ -115,7 +115,7 @@ func (s *Service) Search(ctx context.Context, q Query) iter.Seq2[Hit, error] {
 			// hit scored against a different face — the mismatch between what
 			// was searched and what is shown that world-scoped search exists
 			// to close.
-			e, err := s.reader.GetEntityState(ctx, f.ID, f.Face)
+			e, err := s.reader.GetEntity(ctx, entity.Ref{ID: f.ID, Face: f.Face})
 			if err != nil {
 				continue // face may have been deleted since indexing
 			}

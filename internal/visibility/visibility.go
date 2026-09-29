@@ -139,10 +139,10 @@ func PrimeTraversals(ctx context.Context, red FieldRedactor, rows []*entity.Enti
 }
 
 // EntityGetter is the single-entity load this package needs from the
-// store. Satisfied by store.Store. It loads by (id, face): the stores take a
-// bare id, so a caller holding an address splits it first (BUG-R1PQY9).
+// store. Satisfied by store.Store. It loads one face row by its Ref; a
+// caller holding an address parses it first (BUG-R1PQY9).
 type EntityGetter interface {
-	GetEntityState(ctx context.Context, id string, face entity.Face) (*entity.Entity, error)
+	GetEntity(ctx context.Context, ref entity.Ref) (*entity.Entity, error)
 }
 
 // Reader is the row-gating, field-redacting read-out surface for

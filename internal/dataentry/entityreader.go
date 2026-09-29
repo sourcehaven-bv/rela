@@ -88,7 +88,7 @@ func (er entityReader) writePrepRow(ctx context.Context, ref entity.Ref) (*entit
 // readWritePrep is [entityReader.writePrepRow] that returns the read error,
 // for a write path that must tell a transient fault from a missing row.
 func (er entityReader) readWritePrep(ctx context.Context, ref entity.Ref) (*entity.Entity, error) {
-	return er.store.GetEntityState(ctx, ref.ID, ref.Face)
+	return er.store.GetEntity(ctx, entity.Ref{ID: ref.ID, Face: ref.Face})
 }
 
 // writePrepFamily reads the raw row of every face of id, in face order, with

@@ -66,7 +66,7 @@ func TestDeleteEntityState_RacingFaceCreateKeepsAttachments(t *testing.T) {
 
 	delDone := make(chan error, 1)
 	go func() {
-		_, dErr := s.DeleteEntityState(ctx, "POL-1", "draft")
+		_, dErr := s.DeleteFace(ctx, entity.Ref{ID: "POL-1", Face: "draft"})
 		delDone <- dErr
 	}()
 
@@ -99,6 +99,6 @@ func TestDeleteEntityState_RacingFaceCreateKeepsAttachments(t *testing.T) {
 	infos, err := s.ListAttachments(ctx, "POL-1")
 	require.NoError(t, err)
 	require.Len(t, infos, 1, "the surviving published face lost the entity's attachments")
-	_, err = s.GetEntityState(ctx, "POL-1", "published")
+	_, err = s.GetEntity(ctx, entity.Ref{ID: "POL-1", Face: "published"})
 	require.NoError(t, err)
 }

@@ -256,7 +256,7 @@ type stampAfterRead struct {
 }
 
 func (s *stampAfterRead) GetEntityState(ctx context.Context, id string, f entity.Face) (*entity.Entity, error) {
-	e, err := s.Store.GetEntityState(ctx, id, f)
+	e, err := s.Store.GetEntity(ctx, entity.Ref{ID: id, Face: f})
 	if err == nil && id == "DOC-1" {
 		s.once.Do(s.stamp)
 	}

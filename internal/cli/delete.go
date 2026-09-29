@@ -96,7 +96,7 @@ func (c *DeleteCmd) Run(ctx context.Context, svc *writeServices) error {
 // delete removes every face anyway.
 func deleteTarget(ctx context.Context, st store.Store, ref entity.Ref) (*entity.Entity, error) {
 	if !ref.Face.IsDefault() {
-		return st.GetEntityState(ctx, ref.ID, ref.Face)
+		return st.GetEntity(ctx, entity.Ref{ID: ref.ID, Face: ref.Face})
 	}
 	q := store.EntityQuery{IDs: []string{ref.ID}, Faces: store.AllFaces()}
 	for e, err := range st.ListEntities(ctx, q) {

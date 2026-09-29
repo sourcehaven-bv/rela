@@ -43,7 +43,7 @@ func (f familyDeleteFixture) facesAt(t *testing.T, id string) []entity.Face {
 	t.Helper()
 	var faces []entity.Face
 	for _, face := range bothFaces {
-		_, err := f.st.GetEntityState(context.Background(), id, face)
+		_, err := f.st.GetEntity(context.Background(), entity.Ref{ID: id, Face: face})
 		switch {
 		case err == nil:
 			faces = append(faces, face)

@@ -664,7 +664,7 @@ func (s *documentService) loadEntry(ctx context.Context, addr string) (*entity.E
 	if err != nil {
 		return nil, fmt.Errorf("parse entry address %q: %w", addr, err)
 	}
-	return s.store.GetEntityState(ctx, id, face)
+	return s.store.GetEntity(ctx, entity.Ref{ID: id, Face: face})
 }
 
 // hashEntities computes a FNV-64a hash of the given entities' content.

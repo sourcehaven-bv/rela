@@ -22,7 +22,7 @@ var errFaceRequired = errors.New("address one face")
 // addressLoader is the raw read [readAddress] needs. Satisfied by
 // store.Store.
 type addressLoader interface {
-	GetEntityState(ctx context.Context, id string, face entity.Face) (*entity.Entity, error)
+	GetEntity(ctx context.Context, ref entity.Ref) (*entity.Entity, error)
 	ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error]
 }
 

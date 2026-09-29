@@ -2,7 +2,6 @@ package sqlitestore
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"sort"
@@ -80,61 +79,7 @@ func buildHighestIDSQL(prefix string) (sqlText string, args []any) {
 		[]any{prefix + "-", prefix + "."}
 }
 
-// PropertyValues returns the distinct values of a property, most frequent
-// first. Counting is done here; the ranking is shared via storeutil.TopValues
-// so every backend orders identically.
-func (s *Store) PropertyValues(ctx context.Context, property string, limit int) ([]string, error) {
-	if err := storeutil.ValidateProperty(property); err != nil {
-		return nil, fmt.Errorf("sqlitestore: property values: %w", err)
-	}
-
-	// Iterate json_each rather than building a '$.<name>' path.
-	//
-	// A path has to be CONSTRUCTED as a string, and SQLite's JSON path syntax
-	// has its own quoting rules — a property name containing a double quote
-	// produces `$."` and a "bad JSON path" error, as the fuzz suite found. The
-	// property name would have to be escaped for a second grammar nested inside
-	// the SQL string, which is the shape that goes wrong quietly later.
-	// json_each yields the keys as VALUES instead, so the name is compared as a
-	// bound parameter and needs no escaping at all.
-	// face = '': a DEFAULT-WORLD aggregate, deliberately un-worlded (TKT-DOFYR1).
-	// This feeds value suggestions, and counting every state would let a draft's
-	// property value surface as a suggestion in a published world.
-	rows, err := s.q().QueryContext(ctx,
-		`SELECT j.value, j.type, count(*)
-		 FROM entities, json_each(entities.properties) AS j
-		 WHERE j.key = ? AND entities.face = ''
-		 GROUP BY j.value, j.type`, property)
-	if err != nil {
-		return nil, fmt.Errorf("sqlitestore: property values for %q: %w", property, err)
-	}
-	defer rows.Close()
-
-	counts := map[string]int{}
-	for rows.Next() {
-		var (
-			value    sql.NullString
-			jsonType string
-			n        int
-		)
-		if err := rows.Scan(&value, &jsonType, &n); err != nil {
-			return nil, fmt.Errorf("sqlitestore: property values for %q: %w", property, err)
-		}
-		// Skip arrays and objects: a composite has no single scalar value to
-		// count, matching what the in-memory backends do. NULL and empty are
-		// skipped as "no value set".
-		if jsonType == "array" || jsonType == "object" || !value.Valid || value.String == "" {
-			continue
-		}
-		counts[value.String] += n
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("sqlitestore: property values for %q: %w", property, err)
-	}
-	return storeutil.TopValues(counts, limit), nil
-}
-
-// RenameEntity changes an entity's id and re-keys every relation referencing
+// RenameFamily changes an entity's id and re-keys every relation referencing
 // it, atomically.
 //
 // Atomicity is the whole point: a rename that updated the entity and then
@@ -142,7 +87,7 @@ func (s *Store) PropertyValues(ctx context.Context, property string, limit int) 
 // that no longer exists. Running inside a transaction — and emitting the
 // rename event only after it commits — is what makes the operation safe to
 // interrupt.
-func (s *Store) RenameEntity(ctx context.Context, oldID, newID string) (*store.RenameResult, error) {
+func (s *Store) RenameFamily(ctx context.Context, oldID, newID string) (*store.RenameResult, error) {
 	if err := storeutil.ValidateID(newID); err != nil {
 		return nil, fmt.Errorf("sqlitestore: rename to %q: %w", newID, err)
 	}

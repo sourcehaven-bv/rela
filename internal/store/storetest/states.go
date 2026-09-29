@@ -48,25 +48,25 @@ func RunStateTests(t *testing.T, f Factory) {
 		mustCreate(t, s, newState(t, "PAGE-1", "page", "draft", "draft face"))
 
 		// Bare id = the default state.
-		got, err := s.GetEntity(ctx(), "PAGE-1")
+		got, err := s.GetEntity(ctx(), entity.Ref{ID: "PAGE-1"})
 		require.NoError(t, err)
 		assert.Equal(t, "default face", got.GetString("title"))
 		assert.True(t, got.Face.IsDefault())
 
 		// The pair addresses the state; the id stays bare on the result.
-		draft, err := s.GetEntityState(ctx(), "PAGE-1", ptr(t, "draft"))
+		draft, err := s.GetEntity(ctx(), entity.Ref{ID: "PAGE-1", Face: ptr(t, "draft")})
 		require.NoError(t, err)
 		assert.Equal(t, "PAGE-1", draft.ID, "the joined form must never leak into the id")
 		assert.Equal(t, ptr(t, "draft"), draft.Face)
 		assert.Equal(t, "draft face", draft.GetString("title"))
 
 		// GetEntityState with the zero face ≡ GetEntity.
-		def, err := s.GetEntityState(ctx(), "PAGE-1", "")
+		def, err := s.GetEntity(ctx(), entity.Ref{ID: "PAGE-1"})
 		require.NoError(t, err)
 		assert.Equal(t, "default face", def.GetString("title"))
 
 		// A missing state is ErrNotFound even though siblings exist.
-		_, err = s.GetEntityState(ctx(), "PAGE-1", ptr(t, "published"))
+		_, err = s.GetEntity(ctx(), entity.Ref{ID: "PAGE-1", Face: ptr(t, "published")})
 		assert.ErrorIs(t, err, store.ErrNotFound)
 	})
 
@@ -81,17 +81,18 @@ func RunStateTests(t *testing.T, f Factory) {
 		mustCreate(t, s, newState(t, "PAGE-9", "page", "", "default face"))
 		mustCreate(t, s, newState(t, "PAGE-9", "page", "draft", "draft face"))
 
-		_, err := s.GetEntity(ctx(), "PAGE-9@draft")
+		_, err := s.GetEntity(ctx(), entity.Ref{ID: "PAGE-9@draft"})
 		assert.ErrorIs(t, err, store.ErrNotFound, "GetEntity takes a bare id")
 
-		_, err = s.GetEntityState(ctx(), "PAGE-9@draft", "")
-		assert.ErrorIs(t, err, store.ErrNotFound, "GetEntityState takes a bare id")
-
-		// The parsed address reaches the row, through the shared helper too.
-		got, err := store.GetEntityAt(ctx(), s, "PAGE-9@draft")
+		// The parsed address reaches the row.
+		ref, err := entity.ParseRef("PAGE-9@draft")
+		require.NoError(t, err)
+		got, err := s.GetEntity(ctx(), ref)
 		require.NoError(t, err)
 		assert.Equal(t, "draft face", got.GetString("title"))
-		got, err = store.GetEntityAt(ctx(), s, "PAGE-9")
+		ref, err = entity.ParseRef("PAGE-9")
+		require.NoError(t, err)
+		got, err = s.GetEntity(ctx(), ref)
 		require.NoError(t, err)
 		assert.Equal(t, "default face", got.GetString("title"))
 	})
@@ -107,7 +108,7 @@ func RunStateTests(t *testing.T, f Factory) {
 		e.Face = unusual
 		mustCreate(t, s, e)
 
-		got, err := s.GetEntityState(ctx(), "PAGE-2", unusual)
+		got, err := s.GetEntity(ctx(), entity.Ref{ID: "PAGE-2", Face: unusual})
 		require.NoError(t, err)
 		assert.Equal(t, unusual, got.Face)
 		assert.Equal(t, "odd face", got.GetString("title"))
@@ -138,11 +139,11 @@ func RunStateTests(t *testing.T, f Factory) {
 			err := s.CreateEntity(ctx(), newState(t, "PAGE-3", "page", "draft", "no default"))
 			require.NoError(t, err, "a named face is a row in its own right")
 
-			got, gerr := s.GetEntityState(ctx(), "PAGE-3", "draft")
+			got, gerr := s.GetEntity(ctx(), entity.Ref{ID: "PAGE-3", Face: "draft"})
 			require.NoError(t, gerr)
 			assert.Equal(t, "no default", got.GetString("title"))
 
-			_, gerr = s.GetEntity(ctx(), "PAGE-3")
+			_, gerr = s.GetEntity(ctx(), entity.Ref{ID: "PAGE-3"})
 			assert.Error(t, gerr, "nothing was written at the zero coordinate")
 		})
 
@@ -218,12 +219,7 @@ func RunStateTests(t *testing.T, f Factory) {
 		assert.Len(t, family, 2)
 	})
 
-	t.Run("DefaultWorldAggregates", func(t *testing.T) {
-		// PropertyValues and HighestID are default-world aggregates.
-		// The count-ORDER assertion is the load-bearing part: with one
-		// "open" default and two "closed" defaults, "closed" must sort
-		// first — two states carrying "open" would flip that order if
-		// states leaked into the counts.
+	t.Run("HighestIDCountsEveryFace", func(t *testing.T) {
 		s := f(t)
 		def := newState(t, "PAGE-20", "page", "", "default")
 		def.SetString("status", "open")
@@ -239,14 +235,11 @@ func RunStateTests(t *testing.T, f Factory) {
 			mustCreate(t, s, e)
 		}
 
-		vals, err := s.PropertyValues(ctx(), "status", 0)
-		require.NoError(t, err)
-		assert.Equal(t, []string{"closed", "open"}, vals,
-			"states must not inflate suggestion counts (open would outrank closed)")
+		mustCreate(t, s, newState(t, "PAGE-30", "page", "draft", "faced only"))
 
 		high, err := s.HighestID(ctx(), "PAGE")
 		require.NoError(t, err)
-		assert.Equal(t, 22, high)
+		assert.Equal(t, 30, high, "an id stored only at a named face is taken")
 	})
 
 	t.Run("RelationTails", func(t *testing.T) {
@@ -331,14 +324,14 @@ func RunStateTests(t *testing.T, f Factory) {
 		_, err = s.CreateRelation(ctx(), "SPEC-2", "links", "PAGE-11", nil)
 		require.NoError(t, err)
 
-		res, err := s.DeleteEntity(ctx(), "PAGE-11", true)
+		res, err := s.DeleteFamily(ctx(), "PAGE-11", true)
 		require.NoError(t, err)
 		assert.Len(t, res.DeletedEntities, 2, "both states deleted")
 		assert.Len(t, res.DeletedRelations, 3, "edges of every tail plus incoming")
 
-		_, err = s.GetEntity(ctx(), "PAGE-11")
+		_, err = s.GetEntity(ctx(), entity.Ref{ID: "PAGE-11"})
 		assert.ErrorIs(t, err, store.ErrNotFound)
-		_, err = s.GetEntityState(ctx(), "PAGE-11", ptr(t, "draft"))
+		_, err = s.GetEntity(ctx(), entity.Ref{ID: "PAGE-11", Face: ptr(t, "draft")})
 		assert.ErrorIs(t, err, store.ErrNotFound)
 		left := collectRelations(t, s, store.RelationQuery{EntityID: "PAGE-11"})
 		assert.Empty(t, left)
@@ -358,20 +351,20 @@ func RunStateTests(t *testing.T, f Factory) {
 		mustCreate(t, s, newState(t, "PAGE-20", "page", "draft", "draft"))
 		mustCreate(t, s, newState(t, "PAGE-20", "page", "published", "published"))
 
-		res, err := s.DeleteEntityState(ctx(), "PAGE-20", ptr(t, "draft"))
+		res, err := s.DeleteFace(ctx(), entity.Ref{ID: "PAGE-20", Face: ptr(t, "draft")})
 		require.NoError(t, err)
 		require.Len(t, res.DeletedEntities, 1, "exactly one face deleted")
 		assert.Equal(t, ptr(t, "draft"), res.DeletedEntities[0].Face)
 
-		_, err = s.GetEntityState(ctx(), "PAGE-20", ptr(t, "draft"))
+		_, err = s.GetEntity(ctx(), entity.Ref{ID: "PAGE-20", Face: ptr(t, "draft")})
 		assert.ErrorIs(t, err, store.ErrNotFound, "the discarded face is gone")
 
 		// The siblings must be untouched, contents included — a backend that
 		// deleted the family would fail here rather than in a count.
-		def, err := s.GetEntity(ctx(), "PAGE-20")
+		def, err := s.GetEntity(ctx(), entity.Ref{ID: "PAGE-20"})
 		require.NoError(t, err)
 		assert.Equal(t, "default", def.GetString("title"))
-		pub, err := s.GetEntityState(ctx(), "PAGE-20", ptr(t, "published"))
+		pub, err := s.GetEntity(ctx(), entity.Ref{ID: "PAGE-20", Face: ptr(t, "published")})
 		require.NoError(t, err)
 		assert.Equal(t, "published", pub.GetString("title"))
 	})
@@ -394,7 +387,7 @@ func RunStateTests(t *testing.T, f Factory) {
 		_, err = s.CreateRelation(ctx(), "OTHER-5", "links", "PAGE-21", nil)
 		require.NoError(t, err)
 
-		res, err := s.DeleteEntityState(ctx(), "PAGE-21", draft)
+		res, err := s.DeleteFace(ctx(), entity.Ref{ID: "PAGE-21", Face: draft})
 		require.NoError(t, err)
 		require.Len(t, res.DeletedRelations, 1,
 			"only the draft face's own outgoing edge goes with it")
@@ -422,10 +415,10 @@ func RunStateTests(t *testing.T, f Factory) {
 		// It resolved there only because `bare_face` pointed a declared face
 		// at it (BUG-HC6I2T); with no face privileged, the zero coordinate is
 		// one row among siblings and deleting it orphans nothing.
-		_, err := s.DeleteEntityState(ctx(), "PAGE-22", "")
+		_, err := s.DeleteFace(ctx(), entity.Ref{ID: "PAGE-22"})
 		require.NoError(t, err)
 
-		got, gerr := s.GetEntityState(ctx(), "PAGE-22", "draft")
+		got, gerr := s.GetEntity(ctx(), entity.Ref{ID: "PAGE-22", Face: "draft"})
 		require.NoError(t, gerr, "the sibling must survive and stay addressable")
 		assert.Equal(t, "draft", got.GetString("title"))
 	})
@@ -436,11 +429,11 @@ func RunStateTests(t *testing.T, f Factory) {
 
 		// The default face is deletable when it is the ONLY face: no sibling
 		// is orphaned, so the refusal above does not apply.
-		res, err := s.DeleteEntityState(ctx(), "PAGE-23", "")
+		res, err := s.DeleteFace(ctx(), entity.Ref{ID: "PAGE-23"})
 		require.NoError(t, err)
 		assert.Len(t, res.DeletedEntities, 1)
 
-		_, err = s.GetEntity(ctx(), "PAGE-23")
+		_, err = s.GetEntity(ctx(), entity.Ref{ID: "PAGE-23"})
 		assert.ErrorIs(t, err, store.ErrNotFound)
 	})
 
@@ -451,7 +444,7 @@ func RunStateTests(t *testing.T, f Factory) {
 
 		events, cancel := s.Subscribe(16)
 		defer cancel()
-		_, err := s.DeleteEntityState(ctx(), "PAGE-28", ptr(t, "draft"))
+		_, err := s.DeleteFace(ctx(), entity.Ref{ID: "PAGE-28", Face: ptr(t, "draft")})
 		require.NoError(t, err)
 
 		// EXACTLY ONE delete event, carrying the discarded face's coordinate.
@@ -479,9 +472,9 @@ func RunStateTests(t *testing.T, f Factory) {
 		s := f(t)
 		mustCreate(t, s, newState(t, "PAGE-24", "page", "", "default"))
 
-		_, err := s.DeleteEntityState(ctx(), "PAGE-24", ptr(t, "nosuchface"))
+		_, err := s.DeleteFace(ctx(), entity.Ref{ID: "PAGE-24", Face: ptr(t, "nosuchface")})
 		assert.ErrorIs(t, err, store.ErrNotFound)
-		_, err = s.DeleteEntityState(ctx(), "NO-SUCH-ENTITY", ptr(t, "draft"))
+		_, err = s.DeleteFace(ctx(), entity.Ref{ID: "NO-SUCH-ENTITY", Face: ptr(t, "draft")})
 		assert.ErrorIs(t, err, store.ErrNotFound)
 	})
 
@@ -642,18 +635,18 @@ func RunStateTests(t *testing.T, f Factory) {
 			&store.RelationData{FromFace: ptr(t, "draft")})
 		require.NoError(t, err)
 
-		res, err := s.RenameEntity(ctx(), "PAGE-12", "PAGE-99")
+		res, err := s.RenameFamily(ctx(), "PAGE-12", "PAGE-99")
 		require.NoError(t, err)
 		assert.Equal(t, 1, res.RelationsUpdated)
 
 		// Every state re-keyed onto the new id.
-		def, err := s.GetEntity(ctx(), "PAGE-99")
+		def, err := s.GetEntity(ctx(), entity.Ref{ID: "PAGE-99"})
 		require.NoError(t, err)
 		assert.Equal(t, "default", def.GetString("title"))
-		draft, err := s.GetEntityState(ctx(), "PAGE-99", ptr(t, "draft"))
+		draft, err := s.GetEntity(ctx(), entity.Ref{ID: "PAGE-99", Face: ptr(t, "draft")})
 		require.NoError(t, err)
 		assert.Equal(t, "draft", draft.GetString("title"))
-		_, err = s.GetEntityState(ctx(), "PAGE-12", ptr(t, "draft"))
+		_, err = s.GetEntity(ctx(), entity.Ref{ID: "PAGE-12", Face: ptr(t, "draft")})
 		assert.ErrorIs(t, err, store.ErrNotFound)
 
 		// The tail face rode along.
@@ -663,7 +656,7 @@ func RunStateTests(t *testing.T, f Factory) {
 
 		// Any state of an existing entity blocks the rename target.
 		mustCreate(t, s, newState(t, "PAGE-13", "page", "", "blocker"))
-		_, err = s.RenameEntity(ctx(), "PAGE-99", "PAGE-13")
+		_, err = s.RenameFamily(ctx(), "PAGE-99", "PAGE-13")
 		assert.ErrorIs(t, err, store.ErrConflict)
 	})
 
@@ -674,7 +667,7 @@ func RunStateTests(t *testing.T, f Factory) {
 
 		mustCreate(t, s, newState(t, "PAGE-14", "page", "", "default"))
 		mustCreate(t, s, newState(t, "PAGE-14", "page", "draft", "draft"))
-		_, err := s.DeleteEntity(ctx(), "PAGE-14", true)
+		_, err := s.DeleteFamily(ctx(), "PAGE-14", true)
 		require.NoError(t, err)
 
 		// Bounded blocking receive: backends with async delivery (the pg

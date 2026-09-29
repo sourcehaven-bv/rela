@@ -431,7 +431,7 @@ func NewAllowAllCopyVisibility(st store.Store) (AllowAllCopyVisibility, error) {
 func (v AllowAllCopyVisibility) Get(
 	ctx context.Context, _, id string, face entity.Face,
 ) (*entity.Entity, bool, error) {
-	e, err := v.store.GetEntityState(ctx, id, face)
+	e, err := v.store.GetEntity(ctx, entity.Ref{ID: id, Face: face})
 	if err != nil {
 		return nil, false, nil //nolint:nilerr // a miss, to match copyVisibility's shape; see the doc comment
 	}
@@ -963,7 +963,7 @@ func (m *Manager) UpdateEntity(ctx context.Context, e *entity.Entity) (*entity.U
 	// the old spelling decided against e.Face and then read a different row
 	// — the same authorize-here/write-there split BUG-HC6I2T removed from
 	// the create path, and on a faced type it simply never found anything.
-	oldEntity, getErr := m.deps.Store.GetEntityState(ctx, e.ID, e.Face)
+	oldEntity, getErr := m.deps.Store.GetEntity(ctx, entity.Ref{ID: e.ID, Face: e.Face})
 	if getErr != nil {
 		// Fails closed: only a genuine miss is reported as missing, so a
 		// transient store error cannot reach the not-found branch that
@@ -1004,7 +1004,7 @@ func updateKeepingFileValues(
 	first := true
 	return patchWithRetry(ctx, true, func(bool) (*entity.UpdateResult, error) {
 		if !first {
-			fresh, err := m.deps.Store.GetEntityState(ctx, e.ID, e.Face)
+			fresh, err := m.deps.Store.GetEntity(ctx, entity.Ref{ID: e.ID, Face: e.Face})
 			if err != nil {
 				if errors.Is(err, store.ErrNotFound) {
 					return nil, fmt.Errorf("%w: %s", ErrEntityNotFound, e.ID)
@@ -1519,7 +1519,7 @@ func (m *Manager) deleteEntityInTx(
 	// the relation files and the entity file under a single lock and aborts
 	// fail-secure if any relation file cannot be removed — so the entity is
 	// never deleted while a relation is left behind (issue #888).
-	res, delErr := tx.DeleteEntity(ctx, id, cascade)
+	res, delErr := tx.DeleteFamily(ctx, id, cascade)
 	if delErr != nil {
 		// Propagate res AND the capture, not nil: a non-transactional backend
 		// reports the relations it DID remove before aborting, and the caller
@@ -1761,7 +1761,7 @@ func (m *Manager) recordFamilyDeleteAudit(ctx context.Context, deleted []*entity
 // the worse error for a log whose value is that it does not lie.
 func facesStillStored(ctx context.Context, st store.Store, deleted []*entity.Entity) bool {
 	for _, e := range deleted {
-		_, err := st.GetEntityState(ctx, e.ID, e.Face)
+		_, err := st.GetEntity(ctx, entity.Ref{ID: e.ID, Face: e.Face})
 		if err == nil {
 			return true
 		}
@@ -1863,7 +1863,7 @@ func (m *Manager) DeleteEntityFace(
 	if face.IsDefault() {
 		return nil, fmt.Errorf("delete face: %s names the bare face; delete the entity instead", id)
 	}
-	current, err := m.deps.Store.GetEntityState(ctx, id, face)
+	current, err := m.deps.Store.GetEntity(ctx, entity.Ref{ID: id, Face: face})
 	if err != nil {
 		// Fails closed, as in DeleteEntity: the ACL check is below.
 		if !errors.Is(err, store.ErrNotFound) {
@@ -1888,7 +1888,7 @@ func (m *Manager) DeleteEntityFace(
 		// record must carry the row this transaction deletes, not one a
 		// concurrent update has since replaced. A row whose type changed in
 		// between is a different ACL subject and is authorized again.
-		inTx, rErr := tx.GetEntityState(ctx, id, face)
+		inTx, rErr := tx.GetEntity(ctx, entity.Ref{ID: id, Face: face})
 		if rErr != nil {
 			if errors.Is(rErr, store.ErrNotFound) {
 				return fmt.Errorf("%w: %s", ErrEntityNotFound, entity.FormatStateRef(id, face))
@@ -1922,7 +1922,7 @@ func (m *Manager) DeleteEntityFace(
 			}
 		}
 		var dErr error
-		res, dErr = tx.DeleteEntityState(ctx, id, face)
+		res, dErr = tx.DeleteFace(ctx, entity.Ref{ID: id, Face: face})
 		if dErr != nil {
 			return fmt.Errorf("delete face: %w", dErr)
 		}

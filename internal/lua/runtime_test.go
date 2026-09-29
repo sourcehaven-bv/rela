@@ -288,7 +288,7 @@ func (m *mockManager) DeleteEntityFace(
 ) (*entity.DeleteResult, error) {
 	m.deletedFace = face
 	m.faceDeleteCalls++
-	res, err := m.ws.store.DeleteEntityState(ctx, id, face)
+	res, err := m.ws.store.DeleteFace(ctx, entity.Ref{ID: id, Face: face})
 	if err != nil {
 		return nil, err
 	}

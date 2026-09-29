@@ -223,8 +223,7 @@ type FSStore struct {
 	entityOrder   []string
 	relations     map[string]relationMeta // key (from--type--to) → meta
 	relationOrder []string
-	attachments   map[string]attachMeta     // "entityID/property" → meta
-	propCache     map[string]map[string]int // property → value → count
+	attachments   map[string]attachMeta // "entityID/property" → meta
 
 	// observers notified synchronously on entity writes
 	observers []store.EntityObserver
@@ -311,7 +310,6 @@ func New(cfg Config) (*FSStore, error) {
 		entities:           make(map[string]entityMeta),
 		relations:          make(map[string]relationMeta),
 		attachments:        make(map[string]attachMeta),
-		propCache:          make(map[string]map[string]int),
 		subscribers:        make(map[int]chan store.Event),
 		echoes:             newEchoTracker(recentHashCapacity),
 	}

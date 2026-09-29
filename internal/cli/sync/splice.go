@@ -50,7 +50,7 @@ func (e *Engine) spliceEntity(ctx context.Context, key string, fe *FetchedEntity
 		Content: fe.Body.Content,
 	}
 	// The splice base is the local row the apply below overwrites.
-	prior, err := e.store.GetEntityState(ctx, key, syncFace)
+	prior, err := e.store.GetEntity(ctx, entity.Ref{ID: key, Face: syncFace})
 	switch {
 	case err == nil:
 		// exists locally → splice onto the raw record

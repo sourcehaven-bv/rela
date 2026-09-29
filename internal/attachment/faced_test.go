@@ -151,7 +151,7 @@ func (f facedFixture) seedLive(t *testing.T, id string) {
 
 func (f facedFixture) references(t *testing.T, id string, face entity.Face) bool {
 	t.Helper()
-	e, err := f.st.GetEntityState(context.Background(), id, face)
+	e, err := f.st.GetEntity(context.Background(), entity.Ref{ID: id, Face: face})
 	if errors.Is(err, store.ErrNotFound) {
 		return false
 	}
@@ -187,7 +187,7 @@ func (f facedFixture) specKeys(t *testing.T, id string) []string {
 // specValue returns the raw spec value of id at face.
 func (f facedFixture) specValue(t *testing.T, id string, face entity.Face) any {
 	t.Helper()
-	e, err := f.st.GetEntityState(context.Background(), id, face)
+	e, err := f.st.GetEntity(context.Background(), entity.Ref{ID: id, Face: face})
 	if err != nil {
 		t.Fatalf("read %s@%s: %v", id, face, err)
 	}
@@ -197,7 +197,7 @@ func (f facedFixture) specValue(t *testing.T, id string, face entity.Face) any {
 // readSpec reads name through PAGE-1's face's own value, as a download does.
 func (f facedFixture) readSpec(t *testing.T, face entity.Face, name string) (string, error) {
 	t.Helper()
-	e, err := f.st.GetEntityState(context.Background(), "PAGE-1", face)
+	e, err := f.st.GetEntity(context.Background(), entity.Ref{ID: "PAGE-1", Face: face})
 	if err != nil {
 		t.Fatalf("read PAGE-1@%s: %v", face, err)
 	}
@@ -334,7 +334,7 @@ func (f facedFixture) attachTo(t *testing.T, ref entity.Ref, name string) {
 
 func (f facedFixture) specNames(t *testing.T, id string, face entity.Face) []string {
 	t.Helper()
-	e, err := f.st.GetEntityState(context.Background(), id, face)
+	e, err := f.st.GetEntity(context.Background(), entity.Ref{ID: id, Face: face})
 	if err != nil {
 		t.Fatalf("read %s@%s: %v", id, face, err)
 	}
@@ -461,7 +461,7 @@ func TestFaced_MultiFileSuffixIsPerFace(t *testing.T) {
 
 	put := func(face entity.Face) string {
 		t.Helper()
-		e, err := f.st.GetEntityState(ctx, "PAGE-1", face)
+		e, err := f.st.GetEntity(ctx, entity.Ref{ID: "PAGE-1", Face: face})
 		if err != nil {
 			t.Fatal(err)
 		}

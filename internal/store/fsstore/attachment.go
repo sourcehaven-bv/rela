@@ -14,7 +14,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store/storeutil"
 )
 
-// AttachFile streams r to `<attachKey>/<entityID>/<property>/<fileName>`.
+// AttachFamilyFile streams r to `<attachKey>/<entityID>/<property>/<fileName>`.
 //
 // The write goes through RootedFS so the path is validated before it
 // reaches the underlying FS. On OS-backed filesystems the data is
@@ -103,7 +103,7 @@ func (s *FSStore) attachFile(_ context.Context, entityID, property, fileName str
 // it streams via RootedFS.OpenForWrite (constant memory); on MemFS it
 // buffers via WriteFile since MemFS has no streaming primitive.
 //
-// Parent directory creation is guaranteed by AttachFile's MkdirAll
+// Parent directory creation is guaranteed by AttachFamilyFile's MkdirAll
 // above.
 func (s *FSStore) writeAttachment(key string, r io.Reader) (int64, error) {
 	if s.streamingSupported {
@@ -126,9 +126,9 @@ func (s *FSStore) writeAttachment(key string, r io.Reader) (int64, error) {
 	return int64(len(data)), nil
 }
 
-// ReadAttachment returns a streaming reader over the attachment's
+// ReadFamilyAttachment returns a streaming reader over the attachment's
 // bytes. Callers MUST Close the returned reader.
-func (s *FSStore) ReadAttachment(_ context.Context, entityID, property, fileName string) (io.ReadCloser, error) {
+func (s *FSStore) ReadFamilyAttachment(_ context.Context, entityID, property, fileName string) (io.ReadCloser, error) {
 	s.mu.RLock()
 	a, ok := s.attachments[attachmentKey(entityID, property, fileName)]
 	s.mu.RUnlock()
@@ -160,7 +160,7 @@ func (s *FSStore) deleteAttachment(_ context.Context, entityID, property, fileNa
 	return nil
 }
 
-func (s *FSStore) ListAttachments(_ context.Context, entityID string) ([]store.AttachmentInfo, error) {
+func (s *FSStore) ListFamilyAttachments(_ context.Context, entityID string) ([]store.AttachmentInfo, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -187,7 +187,7 @@ func (s *FSStore) ListAttachments(_ context.Context, entityID string) ([]store.A
 // regardless of whether the on-disk dir exists. Must be called with
 // s.mu held.
 //
-// Called from DeleteEntity and RenameEntity: under the per-entity
+// Called from DeleteFamily and RenameFamily: under the per-entity
 // layout, attachments are 1:1 owned by the entity.
 func (s *FSStore) removeAttachmentDir(entityID string) error {
 	// Prune in-memory index entries first — runs even when the

@@ -91,7 +91,7 @@ func newCascadeFaceManager(t *testing.T, st store.Store) (*entitymanager.Manager
 func setPolicyStatus(t *testing.T, mgr *entitymanager.Manager, st store.Store, face entity.Face, status string) {
 	t.Helper()
 	ctx := context.Background()
-	cur, err := st.GetEntityState(ctx, "POL-1", face)
+	cur, err := st.GetEntity(ctx, entity.Ref{ID: "POL-1", Face: face})
 	if err != nil {
 		t.Fatalf("read POL-1@%s: %v", face, err)
 	}
@@ -164,7 +164,7 @@ func TestCascade_ContentEdgesKeepTheTriggerFace(t *testing.T) {
 			if len(second) != 1 || second[0] == first[0] {
 				t.Fatalf("draft checklists after the replace = %v, want one other than %v", second, first)
 			}
-			if _, err := st.GetEntityState(ctx, first[0], ""); err == nil {
+			if _, err := st.GetEntity(ctx, entity.Ref{ID: first[0]}); err == nil {
 				t.Errorf("replaced checklist %s still exists", first[0])
 			}
 		})
@@ -262,7 +262,7 @@ type updateBeforeTx struct {
 
 func (s *updateBeforeTx) Tx(ctx context.Context, fn func(store.Store) error) error {
 	s.once.Do(func() {
-		cur, err := s.GetEntityState(ctx, "POL-1", "draft")
+		cur, err := s.GetEntity(ctx, entity.Ref{ID: "POL-1", Face: "draft"})
 		if err != nil {
 			panic(err)
 		}

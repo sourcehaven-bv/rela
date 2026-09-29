@@ -557,7 +557,7 @@ func applyMoves(ctx context.Context, st store.Store, moves []faceMove) error {
 // on pg.
 func applyFaceMove(ctx context.Context, s store.Store, e *entity.Entity, to string) error {
 	var alreadyMoved bool
-	if existing, err := s.GetEntityState(ctx, e.ID, entity.Face(to)); err == nil && existing != nil {
+	if existing, err := s.GetEntity(ctx, entity.Ref{ID: e.ID, Face: entity.Face(to)}); err == nil && existing != nil {
 		alreadyMoved = sameContent(existing, e)
 		if !alreadyMoved {
 			return fmt.Errorf(
@@ -583,7 +583,7 @@ func applyFaceMove(ctx context.Context, s store.Store, e *entity.Entity, to stri
 	// DeleteResult names exactly what went, which is why the result is read
 	// rather than discarded: the store reports what it destroyed and this is
 	// the code that has to listen.
-	del, err := s.DeleteEntityState(ctx, e.ID, e.Face)
+	del, err := s.DeleteFace(ctx, entity.Ref{ID: e.ID, Face: e.Face})
 	if err != nil {
 		return fmt.Errorf("%s: remove the source row at face %q: %w", e.ID, e.Face, err)
 	}
@@ -1086,7 +1086,7 @@ func (s *dropEntitiesStep) Run(ctx context.Context, x *Exec) (StepResult, error)
 				return res, capErr
 			}
 		}
-		del, err := x.Store.DeleteEntity(ctx, id, true)
+		del, err := x.Store.DeleteFamily(ctx, id, true)
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
 				continue

@@ -55,7 +55,7 @@ func TestMigrateFace_MovesRowsByPropertyValue(t *testing.T) {
 		{"TSK-2", "draft", "two"},       // wip
 		{"TSK-3", "published", "three"}, // done
 	} {
-		got, err := st.GetEntityState(ctx, tc.id, entity.Face(tc.face))
+		got, err := st.GetEntity(ctx, entity.Ref{ID: tc.id, Face: entity.Face(tc.face)})
 		if err != nil {
 			t.Errorf("%s should exist at face %q: %v", tc.id, tc.face, err)
 			continue
@@ -64,7 +64,7 @@ func TestMigrateFace_MovesRowsByPropertyValue(t *testing.T) {
 			t.Errorf("%s lost content on the move: %v", tc.id, got.Properties)
 		}
 		// And it is no longer at the zero coordinate.
-		if _, err := st.GetEntityState(ctx, tc.id, entity.Face("")); err == nil {
+		if _, err := st.GetEntity(ctx, entity.Ref{ID: tc.id}); err == nil {
 			t.Errorf("%s still exists at the zero coordinate — the move left a duplicate", tc.id)
 		}
 	}
@@ -88,7 +88,7 @@ func TestMigrateFace_IsIdempotent(t *testing.T) {
 	if got := res.Files[0].Steps[0].Affected; got != 0 {
 		t.Errorf("second run affected = %d, want 0 — the step is not idempotent", got)
 	}
-	if _, err := st.GetEntityState(ctx, "TSK-1", entity.Face("draft")); err != nil {
+	if _, err := st.GetEntity(ctx, entity.Ref{ID: "TSK-1", Face: entity.Face("draft")}); err != nil {
 		t.Errorf("TSK-1 lost its face on re-run: %v", err)
 	}
 }
@@ -250,7 +250,7 @@ func TestMigrateFace_ReportsRowsOutsideTheDeclaredValueSet(t *testing.T) {
 	if !strings.Contains(notes, "not covered by the mapping") {
 		t.Errorf("expected a note about the uncovered row, got: %q", notes)
 	}
-	if _, err := st.GetEntityState(ctx, "TSK-4", entity.Face("")); err != nil {
+	if _, err := st.GetEntity(ctx, entity.Ref{ID: "TSK-4"}); err != nil {
 		t.Errorf("TSK-4 should have been left in place: %v", err)
 	}
 }
@@ -269,7 +269,7 @@ func TestMigrateFace_DryRunMovesNothing(t *testing.T) {
 	if got := res.Files[0].Steps[0].Affected; got != 3 {
 		t.Errorf("dry-run affected = %d, want 3", got)
 	}
-	if _, err := st.GetEntityState(ctx, "TSK-1", entity.Face("draft")); err == nil {
+	if _, err := st.GetEntity(ctx, entity.Ref{ID: "TSK-1", Face: entity.Face("draft")}); err == nil {
 		t.Error("dry-run wrote a row")
 	}
 }
@@ -397,10 +397,10 @@ func TestFaces_RowCanLeaveTheZeroCoordinate(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("create at a named face: %v", err)
 	}
-	if _, err := st.DeleteEntityState(ctx, "TSK-9", entity.Face("")); err != nil {
+	if _, err := st.DeleteFace(ctx, entity.Ref{ID: "TSK-9"}); err != nil {
 		t.Fatalf("the zero-coordinate row must be deletable once the row lives at a face: %v", err)
 	}
-	if _, err := st.GetEntityState(ctx, "TSK-9", entity.Face("draft")); err != nil {
+	if _, err := st.GetEntity(ctx, entity.Ref{ID: "TSK-9", Face: entity.Face("draft")}); err != nil {
 		t.Errorf("the moved row should survive: %v", err)
 	}
 }

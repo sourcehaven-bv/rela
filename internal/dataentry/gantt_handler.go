@@ -599,7 +599,7 @@ func (h *ganttHandler) buildGanttSubtree(
 
 	// The root itself: must exist, be a permitted source type, and survive
 	// its own where: filter — otherwise it is indistinguishable from absent.
-	rootEnt, err := h.store.GetEntity(ctx, rootID)
+	rootEnt, err := h.store.GetEntity(ctx, entity.Ref{ID: rootID})
 	if err != nil || rootEnt == nil {
 		return empty, nil
 	}

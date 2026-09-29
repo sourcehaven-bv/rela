@@ -24,9 +24,6 @@ type persistedIndex struct {
 	Entities  map[string]indexedEntity   `json:"entities"`  // id → meta
 	Relations map[string]indexedRelation `json:"relations"` // key → meta
 
-	// PropCacheMtime is the newest entity file mtime when the prop cache was built.
-	PropCacheMtime time.Time                 `json:"prop_cache_mtime"`
-	PropCache      map[string]map[string]int `json:"prop_cache"` // property → value → count
 }
 
 type indexedEntity struct {
@@ -64,15 +61,11 @@ func (s *FSStore) savePersistedIndex() error {
 		return nil
 	}
 
-	newestFile := s.newestEntityFileMtime()
-
 	idx := persistedIndex{
 		EntitiesDirMtime:  s.entitiesDirMtime(),
 		RelationsDirMtime: s.relationsDirMtime(),
 		Entities:          make(map[string]indexedEntity, len(s.entities)),
 		Relations:         make(map[string]indexedRelation, len(s.relations)),
-		PropCacheMtime:    newestFile,
-		PropCache:         s.propCache,
 	}
 
 	for key, meta := range s.entities {
@@ -106,14 +99,7 @@ func (s *FSStore) syncIndex() error {
 	if err := s.syncRelations(cached); err != nil {
 		return err
 	}
-
-	newestFile := s.newestEntityFileMtime()
-
-	if cached != nil && cached.PropCache != nil && !newestFile.After(cached.PropCacheMtime) {
-		s.propCache = cached.PropCache
-		return nil
-	}
-	return s.rebuildPropCache()
+	return nil
 }
 
 // syncEntities builds the entity index from directory structure.
@@ -150,28 +136,6 @@ func (s *FSStore) syncRelations(cached *persistedIndex) error {
 	}
 
 	return s.scanRelationDir()
-}
-
-// rebuildPropCache reads every entity file to repopulate the property cache.
-// Called when the cached cache is stale (newer entity files exist on disk).
-//
-// DEFAULT states only, matching addEntityToCache/removeEntityFromCache's
-// call-site guards: counting a state row here would double-count its
-// family on every reopen while deletes decrement once — a permanent
-// ghost in the suggestion counts (TKT-DOFYR1 review).
-func (s *FSStore) rebuildPropCache() error {
-	s.propCache = make(map[string]map[string]int)
-	for _, meta := range s.entities {
-		if !meta.Face.IsDefault() {
-			continue
-		}
-		e, err := s.loadEntityMeta(meta)
-		if err != nil {
-			continue
-		}
-		addEntityToCache(s.propCache, e)
-	}
-	return nil
 }
 
 // scanEntityDirs walks the entity type directories concurrently and

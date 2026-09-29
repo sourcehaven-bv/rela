@@ -70,7 +70,7 @@ func (failingHeaders) ListEntityHeaders(context.Context, store.EntityQuery) iter
 // route a live face the caller cannot see to that rule.
 func TestFacedHistory_StoredFacesReadErrorIsAnError(t *testing.T) {
 	app, d := facedHistoryApp(t, historyEditors(t))
-	if _, err := app.store.DeleteEntityState(context.Background(), "TKT-1", "draft"); err != nil {
+	if _, err := app.store.DeleteFace(context.Background(), entity.Ref{ID: "TKT-1", Face: "draft"}); err != nil {
 		t.Fatalf("delete draft: %v", err)
 	}
 	ctx := gateCtxFor(principalCtx("bob"), t, d)
@@ -94,7 +94,7 @@ func TestFacedHistory_StoredFacesReadErrorIsAnError(t *testing.T) {
 // answer does not tell the two apart.
 func TestFacedHistory_DeniedWorldHidesNamedFaces(t *testing.T) {
 	app, d := facedHistoryApp(t, historyEditors(t))
-	if _, err := app.store.DeleteEntityState(context.Background(), "TKT-1", "draft"); err != nil {
+	if _, err := app.store.DeleteFace(context.Background(), entity.Ref{ID: "TKT-1", Face: "draft"}); err != nil {
 		t.Fatalf("delete draft: %v", err)
 	}
 	ctx := withWorld(gateCtxFor(principalCtx("bob"), t, d), worldHandle{name: "published", denied: true})
@@ -125,7 +125,7 @@ func TestFacedHistory_DeletedFaceGates(t *testing.T) {
 		}, st)
 	}
 	app, d := facedHistoryApp(t, draftOnly)
-	if _, err := app.store.DeleteEntityState(context.Background(), "TKT-1", "draft"); err != nil {
+	if _, err := app.store.DeleteFace(context.Background(), entity.Ref{ID: "TKT-1", Face: "draft"}); err != nil {
 		t.Fatalf("delete draft: %v", err)
 	}
 	versions := facedHistory()

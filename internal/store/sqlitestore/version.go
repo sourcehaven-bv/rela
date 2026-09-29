@@ -294,17 +294,10 @@ const lineageJoin = `
 
 // --- Read -----------------------------------------------------------------
 
-// ListVersions implements [store.HistoryReader], reading the default face.
-func (v *VersionStore) ListVersions(ctx context.Context, id string) ([]store.VersionMeta, error) {
-	return v.ListStateVersions(ctx, id, "")
-}
-
-// ListStateVersions implements [store.StateHistoryReader]: the same fenced
-// lineage walk for one face. The zero face IS the default face, which is what
-// makes ListVersions a delegation rather than a second query.
-func (v *VersionStore) ListStateVersions(
-	ctx context.Context, id string, p entity.Face,
-) ([]store.VersionMeta, error) {
+// ListVersions implements [store.HistoryReader]: the fenced lineage walk of
+// one face. Ref{ID: id} is the implicit face of a faceless type.
+func (v *VersionStore) ListVersions(ctx context.Context, ref entity.Ref) ([]store.VersionMeta, error) {
+	id, p := ref.ID, ref.Face
 	sel := lineageCTE + `
 		SELECT DISTINCT ev.vseq, ev.op, ev.prev_id, ev.type, ev.content_hash, ev.schema_hash,
 		       ev.principal_user, ev.principal_tool, ev.triggered_by, ev.face,
@@ -340,24 +333,18 @@ func (v *VersionStore) ListStateVersions(
 	return metas, nil
 }
 
-// GetVersion implements [store.HistoryReader] for the default face.
+// GetVersion implements [store.HistoryReader].
 //
-// version is a 1-based ordinal over the fenced lineage ordered by vseq. The
-// ordinal is only meaningful relative to a ListVersions read taken at the same
-// time — the lineage is append-only, so an ordinal a caller already holds stays
-// valid, but callers should treat it as a cursor into a specific list result.
+// version is a 1-based ordinal over the face's fenced lineage ordered by vseq,
+// so version 1 of draft and version 1 of published are different snapshots.
+// The ordinal is only meaningful relative to a ListVersions read taken at the
+// same time — the lineage is append-only, so an ordinal a caller already holds
+// stays valid, but callers should treat it as a cursor into a specific list
+// result.
 func (v *VersionStore) GetVersion(
-	ctx context.Context, id string, version int,
+	ctx context.Context, ref entity.Ref, version int,
 ) (*store.VersionSnapshot, error) {
-	return v.GetStateVersion(ctx, id, "", version)
-}
-
-// GetStateVersion implements [store.StateHistoryReader]. Ordinal semantics are
-// as [VersionStore.GetVersion], but scoped to the FACE's lineage — version 1 of
-// draft and version 1 of published are different snapshots.
-func (v *VersionStore) GetStateVersion(
-	ctx context.Context, id string, p entity.Face, version int,
-) (*store.VersionSnapshot, error) {
+	id, p := ref.ID, ref.Face
 	if version < 1 {
 		return nil, store.ErrNotFound
 	}

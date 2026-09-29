@@ -39,7 +39,7 @@ func restoreHistoryVersion(a *App,
 	}
 
 	ctx := r.Context()
-	snap, err := reader.GetVersion(ctx, subject.ref.ID, version)
+	snap, err := reader.GetVersion(ctx, subject.ref, version)
 	if errors.Is(err, store.ErrNotFound) {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 		return

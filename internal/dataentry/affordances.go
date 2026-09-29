@@ -1346,7 +1346,7 @@ func (svc affordanceService) computeAttachments(
 	if selfHref == "" {
 		return out
 	}
-	infos, err := svc.store.ListAttachments(ctx, e.ID)
+	infos, err := svc.store.ListFamilyAttachments(ctx, e.ID)
 	if err != nil {
 		// Treat a list failure as "no attachments" rather than failing the
 		// whole entity response — the bytes endpoint still gates and serves

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"io"
 	"testing"
 
@@ -148,7 +149,7 @@ func TestLoad_WritesEverythingIntoStore(t *testing.T) {
 		if e.Type != "policy" || e.Face.IsDefault() {
 			continue
 		}
-		got, err := st.GetEntityState(ctx, e.ID, e.Face)
+		got, err := st.GetEntity(ctx, entity.Ref{ID: e.ID, Face: e.Face})
 		require.NoError(t, err)
 		require.Equal(t, e.GetString("title"), got.GetString("title"))
 		face := e.Face

@@ -128,7 +128,7 @@ func TestFacedIDWrite_AuthorizesTheFaceItWrites(t *testing.T) {
 			// The status alone is not the contract — assert the bytes on disk.
 			// A denial that still wrote would be the worst outcome, and is
 			// exactly what the pre-fix code did while returning 200.
-			after, err := st.GetEntityState(ctx, "POL-1", published)
+			after, err := st.GetEntity(ctx, entity.Ref{ID: "POL-1", Face: published})
 			if err != nil {
 				t.Fatalf("re-read published face: %v", err)
 			}
@@ -197,7 +197,7 @@ func TestFacedIDWrite_ExplicitFaceGrantStillWorks(t *testing.T) {
 		t.Fatalf("PATCH POL-1@published with an explicit policy@published grant = %d, "+
 			"want 200 (body %s)", rec.Code, rec.Body.String())
 	}
-	after, err := st.GetEntityState(ctx, "POL-1", published)
+	after, err := st.GetEntity(ctx, entity.Ref{ID: "POL-1", Face: published})
 	if err != nil {
 		t.Fatalf("re-read published face: %v", err)
 	}

@@ -111,7 +111,7 @@ func TestPurgeForceLiveIsScopedToOneFace(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	draft, err := v.ListStateVersions(t.Context(), "FEAT-1", "draft")
+	draft, err := v.ListVersions(t.Context(), entity.Ref{ID: "FEAT-1", Face: "draft"})
 	require.NoError(t, err)
 	require.Len(t, draft, 1, "purging the default face erased the draft face's history")
 	require.Equal(t, store.VersionOpUpdate, draft[0].Op)

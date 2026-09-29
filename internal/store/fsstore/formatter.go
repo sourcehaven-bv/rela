@@ -4,23 +4,25 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // FSStore satisfies store.Formatter directly.
 var _ store.Formatter = (*FSStore)(nil)
 
-// FormatEntity reads the persisted entity file, formats the canonical version,
-// and compares. If they differ and !dryRun, it rewrites the file.
-func (s *FSStore) FormatEntity(ctx context.Context, id string, dryRun bool) (bool, error) {
-	e, err := s.GetEntity(ctx, id)
+// FormatEntity reads the persisted file of the face ref addresses, formats
+// the canonical version, and compares. If they differ and !dryRun, it
+// rewrites the file.
+func (s *FSStore) FormatEntity(ctx context.Context, ref entity.Ref, dryRun bool) (bool, error) {
+	e, err := s.GetEntity(ctx, ref)
 	if err != nil {
 		return false, fmt.Errorf("get entity: %w", err)
 	}
 
 	s.mu.RLock()
 	order := s.layout.propertyOrder(e.Type)
-	key := s.layout.entityFileKey(e.Type, e.ID)
+	key := s.layout.entityFileKey(e.Type, stateKey(e.ID, e.Face))
 	s.mu.RUnlock()
 
 	formatted, err := formatEntity(e, order)

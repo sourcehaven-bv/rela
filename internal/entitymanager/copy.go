@@ -358,7 +358,7 @@ func (ce *copyEngine) planCopy(
 // face — a silent full overwrite whose audit record cheerfully says
 // created=true. Only ErrNotFound means absent.
 func (ce *copyEngine) probeCopyTarget(ctx context.Context, plan *copyPlan) error {
-	existing, err := ce.m.deps.Store.GetEntityState(ctx, plan.targetID, plan.targetTail)
+	existing, err := ce.m.deps.Store.GetEntity(ctx, entity.Ref{ID: plan.targetID, Face: plan.targetTail})
 	switch {
 	case err == nil:
 		if existing.Type != plan.to.Type {
@@ -384,7 +384,7 @@ func (ce *copyEngine) readCopySource(
 		// RAW and elevated. The read feeds a write, and a redacted read that
 		// feeds a write destroys the hidden fields it could not see — the
 		// precise bug the never-redact-a-write-prep rule pins.
-		e, err := ce.m.deps.Store.GetEntityState(ctx, plan.sourceID, ptr)
+		e, err := ce.m.deps.Store.GetEntity(ctx, entity.Ref{ID: plan.sourceID, Face: ptr})
 		if err != nil {
 			return nil, fmt.Errorf("%w: %s", ErrCopySourceMissing, plan.sourceID)
 		}
@@ -395,7 +395,7 @@ func (ce *copyEngine) readCopySource(
 	// wired, which is the CLI/no-policy case — the raw read is then what
 	// every other read on that deployment already does.
 	if ce.m.deps.CopyVisibility == nil {
-		e, err := ce.m.deps.Store.GetEntityState(ctx, plan.sourceID, ptr)
+		e, err := ce.m.deps.Store.GetEntity(ctx, entity.Ref{ID: plan.sourceID, Face: ptr})
 		if err != nil {
 			return nil, fmt.Errorf("%w: %s", ErrCopySourceMissing, plan.sourceID)
 		}

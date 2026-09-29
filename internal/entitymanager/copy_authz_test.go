@@ -207,7 +207,7 @@ func TestCopy_UnguardedCopyNeedsUpdate(t *testing.T) {
 	if !errors.As(err, &forbidden) {
 		t.Fatalf("an UNGUARDED copy must be authorized as an ordinary write; got err=%v", err)
 	}
-	got, gerr := st.GetEntityState(ctx, "PAGE-1", entity.Face("draft"))
+	got, gerr := st.GetEntity(ctx, entity.Ref{ID: "PAGE-1", Face: entity.Face("draft")})
 	if gerr != nil || got.Properties["title"] != "draft" {
 		t.Errorf("the draft must be untouched after a refused revert; got %v %v", got.Properties, gerr)
 	}
@@ -432,7 +432,7 @@ func TestCopy_GuardIsTheAuthorizationForASameEntityCopy(t *testing.T) {
 		// to the unsuffixed id. With no privileged face the zero coordinate is
 		// a separate row that this copy does not write, so asking it would
 		// assert the copy went somewhere it never claimed to go.
-		got, gerr := st.GetEntityState(ctx, "PAGE-1", entity.Face("draft"))
+		got, gerr := st.GetEntity(ctx, entity.Ref{ID: "PAGE-1", Face: entity.Face("draft")})
 		if gerr != nil || got.Properties["title"] != "NEXT" {
 			t.Errorf("the promote must have landed in the draft face; got %v %v", got.Properties, gerr)
 		}
@@ -525,7 +525,7 @@ func TestCopy_GuardDoesNotOverruleACrossEntityWrite(t *testing.T) {
 		t.Errorf("the ordinary write check must be what refuses; got RuleKind=%q reason=%q",
 			forbidden.Decision.RuleKind, forbidden.Decision.Reason)
 	}
-	v, _ := st.GetEntityState(ctx, "PAGE-1", "published")
+	v, _ := st.GetEntity(ctx, entity.Ref{ID: "PAGE-1", Face: "published"})
 	if v.Properties["title"] != "victim" {
 		t.Errorf("the published face must be untouched; got %v", v.Properties)
 	}

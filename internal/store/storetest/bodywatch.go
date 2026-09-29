@@ -145,17 +145,10 @@ func (b *BodyWatch) countingSeq(
 	}
 }
 
-func (b *BodyWatch) GetEntity(ctx context.Context, id string) (*entity.Entity, error) {
+func (b *BodyWatch) GetEntity(ctx context.Context, ref entity.Ref) (*entity.Entity, error) {
 	b.call("GetEntity")
-	e, err := b.Store.GetEntity(ctx, id)
+	e, err := b.Store.GetEntity(ctx, ref)
 	b.body("GetEntity", e)
-	return e, err
-}
-
-func (b *BodyWatch) GetEntityState(ctx context.Context, id string, face entity.Face) (*entity.Entity, error) {
-	b.call("GetEntityState")
-	e, err := b.Store.GetEntityState(ctx, id, face)
-	b.body("GetEntityState", e)
 	return e, err
 }
 
@@ -226,17 +219,10 @@ type bodyWatchView struct {
 	parent *BodyWatch
 }
 
-func (v *bodyWatchView) GetEntity(ctx context.Context, id string) (*entity.Entity, error) {
+func (v *bodyWatchView) GetEntity(ctx context.Context, ref entity.Ref) (*entity.Entity, error) {
 	v.parent.call("GetEntity")
-	e, err := v.Store.GetEntity(ctx, id)
+	e, err := v.Store.GetEntity(ctx, ref)
 	v.parent.body("GetEntity", e)
-	return e, err
-}
-
-func (v *bodyWatchView) GetEntityState(ctx context.Context, id string, face entity.Face) (*entity.Entity, error) {
-	v.parent.call("GetEntityState")
-	e, err := v.Store.GetEntityState(ctx, id, face)
-	v.parent.body("GetEntityState", e)
 	return e, err
 }
 

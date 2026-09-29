@@ -239,7 +239,7 @@ func TestContentEdges_IncomingRelationFilterMatchesTheServedFace(t *testing.T) {
 			ctx := withWorld(gateCtxFor(principal.With(context.Background(),
 				principal.Principal{User: "alice", Tool: principal.ToolDataEntry}), t, d),
 				worldHandle{name: "published", scope: policyPublishedScope()})
-			pub, err := app.store.GetEntityState(ctx, "POL-1", "published")
+			pub, err := app.store.GetEntity(ctx, entity.Ref{ID: "POL-1", Face: "published"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -315,7 +315,7 @@ func TestContentEdges_BareIdSurfacesServeOnlyTheOwningFace(t *testing.T) {
 	app, d := contentEdgeApp(t, contentEdgeReaders[0])
 	ctx := gateCtxFor(principal.With(context.Background(),
 		principal.Principal{User: "alice", Tool: principal.ToolDataEntry}), t, d)
-	pub, err := app.store.GetEntityState(ctx, "POL-1", "published")
+	pub, err := app.store.GetEntity(ctx, entity.Ref{ID: "POL-1", Face: "published"})
 	if err != nil {
 		t.Fatal(err)
 	}

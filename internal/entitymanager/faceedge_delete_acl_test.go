@@ -160,10 +160,10 @@ func TestDeleteEntityFace_ContentEdgeAuthorizedByItsTail(t *testing.T) {
 			if len(res.DeletedRelations) != 1 || res.DeletedRelations[0].To != "CTL-1" {
 				t.Errorf("DeletedRelations = %+v, want the draft's edge to CTL-1", res.DeletedRelations)
 			}
-			if _, gErr := f.st.GetEntityState(context.Background(), "POL-1", "draft"); !errors.Is(gErr, store.ErrNotFound) {
+			if _, gErr := f.st.GetEntity(context.Background(), entity.Ref{ID: "POL-1", Face: "draft"}); !errors.Is(gErr, store.ErrNotFound) {
 				t.Errorf("POL-1@draft after delete: err = %v, want ErrNotFound", gErr)
 			}
-			if _, gErr := f.st.GetEntityState(context.Background(), "POL-1", "published"); gErr != nil {
+			if _, gErr := f.st.GetEntity(context.Background(), entity.Ref{ID: "POL-1", Face: "published"}); gErr != nil {
 				t.Errorf("POL-1@published must survive: %v", gErr)
 			}
 			if got := f.edgesFrom(t, "published"); len(got) != 1 || got[0] != "CTL-2" {
@@ -190,7 +190,7 @@ func TestDeleteEntityFace_ContentEdgeDeniedWritesNothing(t *testing.T) {
 				t.Errorf("denied by %q (%s), want the implements permission gate",
 					forbidden.Decision.RuleKind, forbidden.Decision.Reason)
 			}
-			if _, gErr := f.st.GetEntityState(context.Background(), "POL-1", "draft"); gErr != nil {
+			if _, gErr := f.st.GetEntity(context.Background(), entity.Ref{ID: "POL-1", Face: "draft"}); gErr != nil {
 				t.Errorf("POL-1@draft must survive a denied delete: %v", gErr)
 			}
 			if got := f.edgesFrom(t, "draft"); len(got) != 1 {
@@ -334,7 +334,7 @@ func TestDeleteEntityFace_SourceReadErrorAborts(t *testing.T) {
 	if !errors.Is(err, errTailRead) {
 		t.Fatalf("DeleteEntityFace = %v, want the tail read error", err)
 	}
-	if _, gErr := f.st.GetEntityState(context.Background(), "POL-1", "draft"); gErr != nil {
+	if _, gErr := f.st.GetEntity(context.Background(), entity.Ref{ID: "POL-1", Face: "draft"}); gErr != nil {
 		t.Errorf("POL-1@draft must survive an aborted delete: %v", gErr)
 	}
 	if got := f.edgesFrom(t, "draft"); len(got) != 1 {

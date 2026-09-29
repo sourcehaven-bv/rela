@@ -7,7 +7,6 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // historySubject is the face lineage one history request reads, resolved
@@ -130,56 +129,4 @@ func historySubjectOr404(
 		return historySubject{}, false
 	}
 	return subject, true
-}
-
-// faceHistoryReader narrows a history reader to ONE FACE, or returns the
-// unscoped reader for the zero face.
-//
-// The face-scoped capability ([store.StateHistoryReader]) is OPTIONAL and
-// asserted separately from [store.HistoryReader], mirroring how every other
-// optional store capability is reached. A backend that captures per-face
-// versions but does not implement the face-scoped reader would otherwise
-// silently serve the zero face's history for a named face, a wrong record
-// presented as the right one, so the assertion FAILS the request rather
-// than falling back.
-//
-// Nil: never returned with ok=true.
-func faceHistoryReader(
-	reader store.HistoryReader, p entityPkg.Face,
-) (store.HistoryReader, bool) {
-	if p == "" {
-		// The zero face IS HistoryReader (see the StateHistoryReader doc),
-		// so there is nothing to narrow.
-		return reader, true
-	}
-	sh, ok := reader.(store.StateHistoryReader)
-	if !ok {
-		return nil, false
-	}
-	return stateHistoryAdapter{sh: sh, p: p}, true
-}
-
-// stateHistoryAdapter presents one FACE of an entity's history through the
-// unscoped [store.HistoryReader] shape, so the timeline, snapshot and restore
-// handlers need no face-aware branch of their own.
-//
-// Binding the face at construction rather than threading it through every
-// call site is what keeps the handlers from being able to forget it: once a
-// handler holds one of these, every read it makes is face-scoped by
-// construction.
-type stateHistoryAdapter struct {
-	sh store.StateHistoryReader
-	p  entityPkg.Face
-}
-
-func (a stateHistoryAdapter) ListVersions(
-	ctx context.Context, id string,
-) ([]store.VersionMeta, error) {
-	return a.sh.ListStateVersions(ctx, id, a.p)
-}
-
-func (a stateHistoryAdapter) GetVersion(
-	ctx context.Context, id string, version int,
-) (*store.VersionSnapshot, error) {
-	return a.sh.GetStateVersion(ctx, id, a.p, version)
 }

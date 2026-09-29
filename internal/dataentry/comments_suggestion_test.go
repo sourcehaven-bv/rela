@@ -383,7 +383,7 @@ func TestCommentSuggestion_AcceptWritesOnlyItsFace(t *testing.T) {
 	rec := accept(t, app, draftPath, id, suggestAuthor)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 
-	d, err := app.store.GetEntityState(t.Context(), "TKT-001", draft)
+	d, err := app.store.GetEntity(t.Context(), entity.Ref{ID: "TKT-001", Face: draft})
 	require.NoError(t, err)
 	require.Contains(t, d.Content, "offers new wording")
 	require.Equal(t, fixtureBody, storedBody(t, app), "the default face must be untouched")

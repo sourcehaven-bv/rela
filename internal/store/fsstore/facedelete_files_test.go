@@ -71,7 +71,7 @@ func TestFsFaceDeleteTouchesOnlyItsOwnFiles(t *testing.T) {
 	before := files()
 	t.Logf("BEFORE: %v", before)
 
-	_, err = s.DeleteEntityState(ctx, "PAGE-1", draft)
+	_, err = s.DeleteFace(ctx, entity.Ref{ID: "PAGE-1", Face: draft})
 	require.NoError(t, err)
 	after := files()
 	t.Logf("AFTER:  %v", after)

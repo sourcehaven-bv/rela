@@ -67,7 +67,7 @@ func TestImport_FacedRowsAndTails(t *testing.T) {
 			result.EntitiesCreated, result.RelationsCreated)
 	}
 	for _, face := range []entity.Face{"draft", "published"} {
-		if _, getErr := st.GetEntityState(ctx(), "POL-1", face); getErr != nil {
+		if _, getErr := st.GetEntity(ctx(), entity.Ref{ID: "POL-1", Face: face}); getErr != nil {
 			t.Errorf("POL-1@%s: %v", face, getErr)
 		}
 	}

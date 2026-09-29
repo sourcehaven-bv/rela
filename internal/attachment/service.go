@@ -50,7 +50,7 @@ var ErrFaceRequired = errors.New("attachment: address one face")
 // Resolve reads the face ref addresses, raw. A bare id of a faced entity is
 // refused with [ErrFaceRequired], naming the faces.
 func (s *Service) Resolve(ctx context.Context, ref entity.Ref) (*entity.Entity, error) {
-	e, err := s.deps.Store.GetEntityState(ctx, ref.ID, ref.Face)
+	e, err := s.deps.Store.GetEntity(ctx, entity.Ref{ID: ref.ID, Face: ref.Face})
 	if err == nil {
 		return e, nil
 	}
@@ -125,7 +125,7 @@ func (s *Service) Open(ctx context.Context, e *entity.Entity, property, fileName
 	if !ok {
 		return nil, fmt.Errorf("attachment %s/%s: %w", property, fileName, store.ErrNotFound)
 	}
-	return s.deps.Store.ReadAttachment(ctx, e.ID, property, key)
+	return s.deps.Store.ReadFamilyAttachment(ctx, e.ID, property, key)
 }
 
 // References reports whether the face e's own value of property names
@@ -269,7 +269,7 @@ func (s *Service) WriteAttachment(
 
 	// Write the new bytes first, under a key nothing references yet. On
 	// failure the existing files are untouched.
-	if err = s.deps.Store.AttachFile(ctx, e.ID, propName, fresh.Key, spool); err != nil {
+	if err = s.deps.Store.AttachFamilyFile(ctx, e.ID, propName, fresh.Key, spool); err != nil {
 		return nil, fmt.Errorf("store attachment: %w", err)
 	}
 
@@ -394,7 +394,7 @@ func (s *Service) dropUnreferenced(ctx context.Context, id, property string, key
 		if slices.Contains(others, key) {
 			continue
 		}
-		err := s.deps.Store.DeleteAttachment(ctx, id, property, key)
+		err := s.deps.Store.DeleteFamilyAttachment(ctx, id, property, key)
 		if err != nil && !errors.Is(err, store.ErrNotFound) {
 			slog.Warn("attachment: unreferenced bytes left behind",
 				"entity", id, "property", property, "file", key, "err", err)
@@ -585,7 +585,7 @@ func (s *Service) DetachFile(
 // write path chooses keys against this list: acting on a degraded view could
 // overwrite bytes another face references.
 func (s *Service) byteKeys(ctx context.Context, entityID, property string) ([]string, error) {
-	infos, err := s.deps.Store.ListAttachments(ctx, entityID)
+	infos, err := s.deps.Store.ListFamilyAttachments(ctx, entityID)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			return nil, nil
@@ -694,7 +694,7 @@ func (s *Service) List(ctx context.Context, ref entity.Ref) ([]Info, error) {
 // no persisted metadata sidecar. e may be a redacted read, in which case a
 // hidden property lists nothing.
 func (s *Service) ListFace(ctx context.Context, e *entity.Entity) ([]Info, error) {
-	items, err := s.deps.Store.ListAttachments(ctx, e.ID)
+	items, err := s.deps.Store.ListFamilyAttachments(ctx, e.ID)
 	if err != nil {
 		return nil, err
 	}

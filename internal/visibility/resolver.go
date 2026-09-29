@@ -20,7 +20,7 @@ import (
 // [store.HeaderReader] never loads a body there, and one that does not falls
 // back to ListEntities.
 type Loader interface {
-	GetEntityState(ctx context.Context, id string, face entity.Face) (*entity.Entity, error)
+	GetEntity(ctx context.Context, ref entity.Ref) (*entity.Entity, error)
 	ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error]
 }
 
@@ -262,7 +262,7 @@ func (r *Resolver) admit(ctx context.Context, w World, entityType, id string) (F
 
 // loadRef reads one row by its address.
 func (r *Resolver) loadRef(ctx context.Context, entityType string, ref entity.Ref) (*entity.Entity, bool) {
-	e, err := r.load.GetEntityState(ctx, ref.ID, ref.Face)
+	e, err := r.load.GetEntity(ctx, entity.Ref{ID: ref.ID, Face: ref.Face})
 	if err != nil {
 		if !errors.Is(err, store.ErrNotFound) {
 			warnLoad("ref", entityType, ref, err)

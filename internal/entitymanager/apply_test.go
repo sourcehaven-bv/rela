@@ -372,7 +372,7 @@ func (s *flakyProbeStore) GetEntityState(
 		s.failed = true
 		return nil, s.failErr
 	}
-	return s.Store.GetEntityState(ctx, id, p)
+	return s.Store.GetEntity(ctx, entity.Ref{ID: id, Face: p})
 }
 
 // ListEntities carries the fault for an ids-scoped family read: a relation

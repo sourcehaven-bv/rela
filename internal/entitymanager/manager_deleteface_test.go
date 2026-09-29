@@ -72,7 +72,7 @@ func TestDeleteEntityFace_RemovesOnlyTheFaceAndItsTail(t *testing.T) {
 		t.Errorf("DeletedRelations = %+v, want the one edge tailed at the published face", res.DeletedRelations)
 	}
 
-	if _, gErr := st.GetEntityState(ctx, "REQ-1", published); gErr == nil {
+	if _, gErr := st.GetEntity(ctx, entity.Ref{ID: "REQ-1", Face: published}); gErr == nil {
 		t.Error("the published face must be gone")
 	}
 	if _, gErr := st.GetEntity(ctx, "REQ-1"); gErr != nil {

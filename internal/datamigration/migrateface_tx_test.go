@@ -53,7 +53,7 @@ func (p *faceMoveProbe) DeleteEntityState(
 	ctx context.Context, id string, f entity.Face,
 ) (*store.DeleteResult, error) {
 	p.note()
-	return p.Store.DeleteEntityState(ctx, id, f)
+	return p.Store.DeleteFace(ctx, entity.Ref{ID: id, Face: f})
 }
 
 func (p *faceMoveProbe) note() {

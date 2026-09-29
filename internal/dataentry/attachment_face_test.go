@@ -116,7 +116,7 @@ func storedContents(t *testing.T, app *App) []string {
 // rawScreenshot returns the stored screenshot value of TKT-1 at face.
 func rawScreenshot(t *testing.T, app *App, face entity.Face) any {
 	t.Helper()
-	e, err := app.store.GetEntityState(context.Background(), "TKT-1", face)
+	e, err := app.store.GetEntity(context.Background(), entity.Ref{ID: "TKT-1", Face: face})
 	if err != nil {
 		t.Fatalf("read TKT-1@%s: %v", face, err)
 	}

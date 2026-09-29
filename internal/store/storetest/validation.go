@@ -72,7 +72,7 @@ func RunValidationTests(t *testing.T, f Factory) {
 			&store.RelationData{Content: "from-C"})
 		require.NoError(t, err)
 
-		_, err = s.RenameEntity(ctx(), "A", "C")
+		_, err = s.RenameFamily(ctx(), "A", "C")
 		assert.ErrorIs(t, err, store.ErrConflict)
 	})
 
@@ -98,7 +98,7 @@ func RunValidationTests(t *testing.T, f Factory) {
 			"creating \"ABC\" while \"abc\" exists must conflict, not silently overwrite")
 
 		// The original must be intact and still reachable under its own ID.
-		got, err := s.GetEntity(ctx(), "abc")
+		got, err := s.GetEntity(ctx(), entity.Ref{ID: "abc"})
 		require.NoError(t, err)
 		assert.Equal(t, "abc", got.ID)
 	})
@@ -109,7 +109,7 @@ func RunValidationTests(t *testing.T, f Factory) {
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("abc", "t")))
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("other", "t")))
 
-		_, err := s.RenameEntity(ctx(), "other", "ABC")
+		_, err := s.RenameFamily(ctx(), "other", "ABC")
 		assert.ErrorIsf(t, err, store.ErrConflict,
 			"renaming to \"ABC\" while \"abc\" exists must conflict")
 	})
@@ -122,10 +122,10 @@ func RunValidationTests(t *testing.T, f Factory) {
 
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("abc", "t")))
 
-		_, err := s.RenameEntity(ctx(), "abc", "ABC")
+		_, err := s.RenameFamily(ctx(), "abc", "ABC")
 		require.NoError(t, err, "an entity may change its own casing")
 
-		got, err := s.GetEntity(ctx(), "ABC")
+		got, err := s.GetEntity(ctx(), entity.Ref{ID: "ABC"})
 		require.NoError(t, err)
 		assert.Equal(t, "ABC", got.ID)
 	})
@@ -154,7 +154,7 @@ func RunValidationTests(t *testing.T, f Factory) {
 			e.Properties[name] = "v"
 			require.NoErrorf(t, s.CreateEntity(ctx(), e), "create with property %q", name)
 
-			got, err := s.GetEntity(ctx(), id)
+			got, err := s.GetEntity(ctx(), entity.Ref{ID: id})
 			require.NoErrorf(t, err, "read back entity with property %q", name)
 			assert.Equalf(t, "v", got.Properties[name], "property %q lost its value", name)
 		}
@@ -175,14 +175,14 @@ func RunValidationTests(t *testing.T, f Factory) {
 			err := s.CreateEntity(ctx(), e)
 			require.Errorf(t, err, "create with %s invalid UTF-8 must fail", name)
 			assert.Contains(t, err.Error(), "invalid UTF-8")
-			_, err = s.GetEntity(ctx(), e.ID)
+			_, err = s.GetEntity(ctx(), entity.Ref{ID: e.ID})
 			assert.ErrorIs(t, err, store.ErrNotFound, "a refused create must persist nothing")
 		}
 
 		good := entity.New("E-good", "t")
 		good.SetString("p", "héllo ☃")
 		require.NoError(t, s.CreateEntity(ctx(), good))
-		got, err := s.GetEntity(ctx(), "E-good")
+		got, err := s.GetEntity(ctx(), entity.Ref{ID: "E-good"})
 		require.NoError(t, err)
 		assert.Equal(t, "héllo ☃", got.GetString("p"), "valid non-ASCII must round-trip untouched")
 
@@ -191,7 +191,7 @@ func RunValidationTests(t *testing.T, f Factory) {
 		err = s.UpdateEntity(ctx(), upd)
 		require.Error(t, err, "update with invalid UTF-8 must fail")
 		assert.Contains(t, err.Error(), "invalid UTF-8")
-		got, err = s.GetEntity(ctx(), "E-good")
+		got, err = s.GetEntity(ctx(), entity.Ref{ID: "E-good"})
 		require.NoError(t, err)
 		assert.Equal(t, "héllo ☃", got.GetString("p"), "a refused update must leave the stored value alone")
 

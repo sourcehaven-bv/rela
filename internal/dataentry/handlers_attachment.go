@@ -103,7 +103,7 @@ func (h *attachmentHandler) handleV1GetAttachment(
 		return
 	}
 
-	rc, err := h.store.ReadAttachment(ctx, entity.ID, property, key)
+	rc, err := h.store.ReadFamilyAttachment(ctx, entity.ID, property, key)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")

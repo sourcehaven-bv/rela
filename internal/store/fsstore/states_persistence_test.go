@@ -48,7 +48,7 @@ func TestStatePersistence_FamilySurvivesReopen(t *testing.T) {
 	s2 := openStore(t, fs)
 	defer func() { require.NoError(t, s2.Close()) }()
 
-	got, err := s2.GetEntityState(ctx, "REQ-1", mustPtr(t, "draft"))
+	got, err := s2.GetEntity(ctx, entity.Ref{ID: "REQ-1", Face: mustPtr(t, "draft")})
 	require.NoError(t, err)
 	assert.Equal(t, "REQ-1", got.ID)
 	assert.Equal(t, "Draft face", got.Properties["title"])
