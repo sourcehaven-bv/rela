@@ -21,3 +21,8 @@ the data-entry app read the zero-face row:
 
 These paths accept `ID@face` and never create or look up a zero-face row for a
 type that declares faces.
+
+## Also in scope (reported by the BUG-1YN750 fix, #1708)
+
+- `internal/entitymanager/cascadehost.go:182`: an automation-driven delete is face-blind; it writes one audit record and no per-face version capture.
+- CLI `delete` and MCP `delete_entity` answer "entity not found" for a faced entity.
