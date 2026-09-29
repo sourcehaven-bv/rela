@@ -49,7 +49,7 @@ func TestWriteVersionAndList(t *testing.T) {
 	in2.Op = store.VersionOpUpdate
 	require.NoError(t, s.VersionStore().WriteVersion(ctx, in2))
 
-	metas, err := s.VersionStore().ListVersions(ctx, "TKT-1")
+	metas, err := s.VersionStore().ListVersions(ctx, entity.Ref{ID: "TKT-1"})
 	require.NoError(t, err)
 	require.Len(t, metas, 2)
 	require.Equal(t, 1, metas[0].Version)
@@ -59,16 +59,16 @@ func TestWriteVersionAndList(t *testing.T) {
 	require.Equal(t, "alice", metas[1].PrincipalUser)
 
 	// GetVersion returns the full snapshot for a 1-based ordinal.
-	snap, err := s.VersionStore().GetVersion(ctx, "TKT-1", 1)
+	snap, err := s.VersionStore().GetVersion(ctx, entity.Ref{ID: "TKT-1"}, 1)
 	require.NoError(t, err)
 	require.Equal(t, "first", snap.Content)
 	require.Equal(t, "one", snap.Properties["title"])
 	require.NotEmpty(t, snap.Projection)
 
 	// Out-of-range ordinals are ErrNotFound.
-	_, err = s.VersionStore().GetVersion(ctx, "TKT-1", 99)
+	_, err = s.VersionStore().GetVersion(ctx, entity.Ref{ID: "TKT-1"}, 99)
 	require.ErrorIs(t, err, store.ErrNotFound)
-	_, err = s.VersionStore().GetVersion(ctx, "TKT-1", 0)
+	_, err = s.VersionStore().GetVersion(ctx, entity.Ref{ID: "TKT-1"}, 0)
 	require.ErrorIs(t, err, store.ErrNotFound)
 }
 
@@ -77,7 +77,7 @@ func TestListVersionsUnknownEntity(t *testing.T) {
 	s, err := pgstore.New(newScopedPool(t))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = s.Close() })
-	metas, err := s.VersionStore().ListVersions(context.Background(), "NOPE-1")
+	metas, err := s.VersionStore().ListVersions(context.Background(), entity.Ref{ID: "NOPE-1"})
 	require.NoError(t, err)
 	require.Empty(t, metas)
 }
@@ -108,7 +108,7 @@ func TestRenameLineage(t *testing.T) {
 	require.NoError(t, s.VersionStore().WriteVersion(ctx, upd))
 
 	// Listing by the NEW id returns the FULL lineage, oldest first.
-	metas, err := s.VersionStore().ListVersions(ctx, "NEW-1")
+	metas, err := s.VersionStore().ListVersions(ctx, entity.Ref{ID: "NEW-1"})
 	require.NoError(t, err)
 	require.Len(t, metas, 3, "lineage should include the pre-rename version")
 	require.Equal(t, store.VersionOpCreate, metas[0].Op)
@@ -140,19 +140,19 @@ func TestSweepCapturesSettledEntities(t *testing.T) {
 		pgstore.SweepConfig{Interval: 50 * time.Millisecond, Idle: time.Minute, MaxStaleness: time.Hour, Batch: 100})
 
 	require.Eventually(t, func() bool {
-		metas, e := s.VersionStore().ListVersions(ctx, "SET-1")
+		metas, e := s.VersionStore().ListVersions(ctx, entity.Ref{ID: "SET-1"})
 		return e == nil && len(metas) == 1
 	}, 3*time.Second, 25*time.Millisecond, "sweep should capture the settled entity exactly once")
 
 	// The fresh entity must NOT be versioned (hasn't settled).
-	fresh, err := s.VersionStore().ListVersions(ctx, "FRESH-1")
+	fresh, err := s.VersionStore().ListVersions(ctx, entity.Ref{ID: "FRESH-1"})
 	require.NoError(t, err)
 	require.Empty(t, fresh, "fresh entity should not be versioned yet")
 
 	// Dedup: after the first capture, further ticks add no new version (content
 	// unchanged). Give it a few ticks and re-check the count is still 1.
 	time.Sleep(200 * time.Millisecond)
-	metas, err := s.VersionStore().ListVersions(ctx, "SET-1")
+	metas, err := s.VersionStore().ListVersions(ctx, entity.Ref{ID: "SET-1"})
 	require.NoError(t, err)
 	require.Len(t, metas, 1, "unchanged content must not produce duplicate versions")
 }
@@ -185,22 +185,22 @@ func TestReusedIDDoesNotMergeHistories(t *testing.T) {
 
 	// B's history is A(create) -> A(update) -> B(rename): the pre-rename life,
 	// NOT the unrelated new A.
-	bHist, err := s.VersionStore().ListVersions(ctx, "B")
+	bHist, err := s.VersionStore().ListVersions(ctx, entity.Ref{ID: "B"})
 	require.NoError(t, err)
 	require.Len(t, bHist, 3, "B lineage must be its pre-rename life only")
 	require.Equal(t, store.VersionOpRename, bHist[2].Op)
 	for _, m := range bHist {
-		snap, gErr := s.VersionStore().GetVersion(ctx, "B", m.Version)
+		snap, gErr := s.VersionStore().GetVersion(ctx, entity.Ref{ID: "B"}, m.Version)
 		require.NoError(t, gErr)
 		require.NotEqual(t, "UNRELATED-new-A", snap.Content,
 			"the unrelated new-A content must not appear in B's history")
 	}
 
 	// The new A's history is ONLY its own create, not the old A's create+update.
-	aHist, err := s.VersionStore().ListVersions(ctx, "A")
+	aHist, err := s.VersionStore().ListVersions(ctx, entity.Ref{ID: "A"})
 	require.NoError(t, err)
 	require.Len(t, aHist, 1, "reclaimed id A must see only its own lifecycle")
-	snap, err := s.VersionStore().GetVersion(ctx, "A", 1)
+	snap, err := s.VersionStore().GetVersion(ctx, entity.Ref{ID: "A"}, 1)
 	require.NoError(t, err)
 	require.Equal(t, "UNRELATED-new-A", snap.Content)
 }
@@ -233,7 +233,7 @@ func TestDeleteThenRecreateIdenticalContent(t *testing.T) {
 		pgstore.SweepConfig{Interval: 50 * time.Millisecond, Idle: time.Minute, MaxStaleness: time.Hour, Batch: 100})
 
 	require.Eventually(t, func() bool {
-		metas, e := s.VersionStore().ListVersions(ctx, "X")
+		metas, e := s.VersionStore().ListVersions(ctx, entity.Ref{ID: "X"})
 		if e != nil || len(metas) == 0 {
 			return false
 		}
@@ -268,7 +268,7 @@ func TestWriteVersionRejectsInvalidText(t *testing.T) {
 			require.Error(t, writeErr)
 			require.Contains(t, writeErr.Error(), "store: property")
 
-			metas, listErr := s.VersionStore().ListVersions(ctx, "TKT-V")
+			metas, listErr := s.VersionStore().ListVersions(ctx, entity.Ref{ID: "TKT-V"})
 			require.NoError(t, listErr)
 			require.Empty(t, metas, "a refused version write must persist nothing")
 		})

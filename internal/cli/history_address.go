@@ -23,7 +23,7 @@ import (
 // names the faces the id has, live or in history.
 func historyAddress(
 	ctx context.Context, st store.EntityLister, meta *metamodel.Metamodel,
-	versions store.StateHistoryReader, raw string,
+	versions store.HistoryReader, raw string,
 ) (entity.Ref, error) {
 	ref, err := entity.ParseRef(raw)
 	if err != nil {
@@ -41,7 +41,7 @@ func historyAddress(
 		return ref, nil
 	}
 	if len(faces) == 0 {
-		zero, err := versions.ListStateVersions(ctx, ref.ID, "")
+		zero, err := versions.ListVersions(ctx, ref)
 		if err != nil {
 			return entity.Ref{}, fmt.Errorf("read history for %q: %w", ref.ID, err)
 		}
@@ -56,7 +56,7 @@ func historyAddress(
 		if slices.Contains(faces, face) {
 			continue
 		}
-		metas, err := versions.ListStateVersions(ctx, ref.ID, face)
+		metas, err := versions.ListVersions(ctx, entity.Ref{ID: ref.ID, Face: face})
 		if err != nil {
 			return entity.Ref{}, fmt.Errorf("read history for %q: %w", entity.FormatStateRef(ref.ID, face), err)
 		}

@@ -84,7 +84,7 @@ func readFace(r *PolicyReader, e *entity.Entity) (*entity.Entity, bool, error) {
 	return res.Entity, ok, err
 }
 
-func (g faceGetter) GetEntityState(context.Context, string, entity.Face) (*entity.Entity, error) {
+func (g faceGetter) GetEntity(context.Context, entity.Ref) (*entity.Entity, error) {
 	if g.e == nil {
 		return nil, errors.New("not found")
 	}

@@ -37,10 +37,10 @@ func TestPush_CreateUpdateDelete_Converges(t *testing.T) {
 		t.Fatalf("server missing minted entity %q after push", mintedID)
 	}
 	// The replica renamed its local doc to the minted id (temp id gone).
-	if _, err := h.st.GetEntity(ctx, "tmp-1"); err == nil {
+	if _, err := h.st.GetEntity(ctx, entity.Ref{ID: "tmp-1"}); err == nil {
 		t.Fatal("local temp id tmp-1 should be renamed away after adoption")
 	}
-	if _, err := h.st.GetEntity(ctx, mintedID); err != nil {
+	if _, err := h.st.GetEntity(ctx, entity.Ref{ID: mintedID}); err != nil {
 		t.Fatalf("local doc not renamed to minted id %q: %v", mintedID, err)
 	}
 
@@ -63,7 +63,7 @@ func TestPush_CreateUpdateDelete_Converges(t *testing.T) {
 	}
 
 	// Delete + push → mirrored remote delete.
-	if _, err := h.st.DeleteEntity(ctx, mintedID, false); err != nil {
+	if _, err := h.st.DeleteFamily(ctx, mintedID, false); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
 	rep, _ = h.engine.Push(ctx)
@@ -111,7 +111,7 @@ func TestPull_RedactedField_PreservesLocalHiddenValue(t *testing.T) {
 		t.Fatalf("pull: %v", err)
 	}
 
-	got, err := h.st.GetEntity(ctx, "TKT-R")
+	got, err := h.st.GetEntity(ctx, entity.Ref{ID: "TKT-R"})
 	if err != nil {
 		t.Fatalf("local TKT-R missing after pull: %v", err)
 	}
@@ -127,7 +127,7 @@ func TestPull_RedactedField_PreservesLocalHiddenValue(t *testing.T) {
 // baseline Local token in a test.
 func canonicalOf(t *testing.T, h *harness, id string) string {
 	t.Helper()
-	e, err := h.st.GetEntity(context.Background(), id)
+	e, err := h.st.GetEntity(context.Background(), entity.Ref{ID: id})
 	if err != nil {
 		t.Fatalf("hash local %s: %v", id, err)
 	}
@@ -148,7 +148,7 @@ func TestPull_RemoteChanges_Mirror(t *testing.T) {
 	if rep.Applied != 1 {
 		t.Fatalf("pull create: applied=%d, want 1", rep.Applied)
 	}
-	got, err := h.st.GetEntity(ctx, "DEC-1")
+	got, err := h.st.GetEntity(ctx, entity.Ref{ID: "DEC-1"})
 	if err != nil {
 		t.Fatalf("local DEC-1 missing after pull: %v", err)
 	}
@@ -172,7 +172,7 @@ func TestPull_RemoteChanges_Mirror(t *testing.T) {
 	if rep.Deleted != 1 {
 		t.Fatalf("pull delete: deleted=%d, want 1", rep.Deleted)
 	}
-	if _, err := h.st.GetEntity(ctx, "DEC-1"); err == nil {
+	if _, err := h.st.GetEntity(ctx, entity.Ref{ID: "DEC-1"}); err == nil {
 		t.Fatal("local DEC-1 still present after remote delete pulled")
 	}
 }
@@ -269,7 +269,7 @@ func TestPush_CreateConflict409_HaltsOneRecordAndRunContinues(t *testing.T) {
 	}
 	tempsRemaining := 0
 	for _, id := range []string{"tmp-a", "tmp-b"} {
-		if _, gerr := h.st.GetEntity(ctx, id); gerr == nil {
+		if _, gerr := h.st.GetEntity(ctx, entity.Ref{ID: id}); gerr == nil {
 			tempsRemaining++
 		}
 	}

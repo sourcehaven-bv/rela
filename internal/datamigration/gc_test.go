@@ -4,6 +4,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
+
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -102,7 +104,7 @@ func TestGC_GracePeriodHoldsThenDeletes(t *testing.T) {
 	if _, has := getEntity(t, st, "TSK-1").Properties["tags"]; has {
 		t.Errorf("orphaned property survived GC")
 	}
-	if _, err := st.GetEntity(t.Context(), "PER-1"); err == nil {
+	if _, err := st.GetEntity(t.Context(), entity.Ref{ID: "PER-1"}); err == nil {
 		t.Errorf("orphaned entity survived GC")
 	}
 	// Ledger entries consumed.

@@ -37,10 +37,10 @@ func RunAttachmentTests(t *testing.T, f Factory) {
 		s := f(t)
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("T-1", "ticket")))
 
-		err := s.AttachFile(ctx(), "T-1", "screenshot", "bug.png", strings.NewReader("image data"))
+		err := s.AttachFamilyFile(ctx(), "T-1", "screenshot", "bug.png", strings.NewReader("image data"))
 		require.NoError(t, err)
 
-		rc, err := s.ReadAttachment(ctx(), "T-1", "screenshot", "bug.png")
+		rc, err := s.ReadFamilyAttachment(ctx(), "T-1", "screenshot", "bug.png")
 		require.NoError(t, err)
 		defer rc.Close()
 
@@ -62,23 +62,34 @@ func RunAttachmentTests(t *testing.T, f Factory) {
 			require.NoError(t, s.CreateEntity(ctx(), e))
 		}
 
-		require.NoError(t, s.AttachFile(ctx(), "P-1", "file", "a.txt", strings.NewReader("a")))
-		infos, err := s.ListAttachments(ctx(), "P-1")
+		require.NoError(t, s.AttachFamilyFile(ctx(), "P-1", "file", "a.txt", strings.NewReader("a")))
+		infos, err := s.ListFamilyAttachments(ctx(), "P-1")
 		require.NoError(t, err)
 		require.Len(t, infos, 1)
 
 		nl, err := entity.ParseFace("nl")
 		require.NoError(t, err)
-		_, err = s.DeleteEntityState(ctx(), "P-1", nl)
+		_, err = s.DeleteFace(ctx(), entity.Ref{ID: "P-1", Face: nl})
 		require.NoError(t, err)
-		infos, err = s.ListAttachments(ctx(), "P-1")
+		infos, err = s.ListFamilyAttachments(ctx(), "P-1")
 		require.NoError(t, err)
 		assert.Len(t, infos, 1, "bytes survive while a face remains")
+
+		// The last face takes the bytes with it, and a family with no face
+		// cannot be attached to.
+		en, err := entity.ParseFace("en")
+		require.NoError(t, err)
+		_, err = s.DeleteFace(ctx(), entity.Ref{ID: "P-1", Face: en})
+		require.NoError(t, err)
+		_, err = s.ReadFamilyAttachment(ctx(), "P-1", "file", "a.txt")
+		assert.ErrorIs(t, err, store.ErrNotFound, "bytes go with the last face")
+		err = s.AttachFamilyFile(ctx(), "P-1", "file", "b.txt", strings.NewReader("b"))
+		assert.ErrorIs(t, err, store.ErrNotFound, "no face, no family to attach to")
 	})
 
 	t.Run("AttachEntityNotFound", func(t *testing.T) {
 		s := f(t)
-		err := s.AttachFile(ctx(), "NOPE", "prop", "f.txt", strings.NewReader("x"))
+		err := s.AttachFamilyFile(ctx(), "NOPE", "prop", "f.txt", strings.NewReader("x"))
 		assert.ErrorIs(t, err, store.ErrNotFound)
 	})
 
@@ -86,35 +97,35 @@ func RunAttachmentTests(t *testing.T, f Factory) {
 		s := f(t)
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("T-1", "ticket")))
 
-		_, err := s.ReadAttachment(ctx(), "T-1", "noprop", "x")
+		_, err := s.ReadFamilyAttachment(ctx(), "T-1", "noprop", "x")
 		assert.ErrorIs(t, err, store.ErrNotFound)
 	})
 
 	t.Run("Delete", func(t *testing.T) {
 		s := f(t)
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("T-1", "ticket")))
-		require.NoError(t, s.AttachFile(ctx(), "T-1", "screenshot", "bug.png", strings.NewReader("data")))
+		require.NoError(t, s.AttachFamilyFile(ctx(), "T-1", "screenshot", "bug.png", strings.NewReader("data")))
 
-		err := s.DeleteAttachment(ctx(), "T-1", "screenshot", "bug.png")
+		err := s.DeleteFamilyAttachment(ctx(), "T-1", "screenshot", "bug.png")
 		require.NoError(t, err)
 
-		_, err = s.ReadAttachment(ctx(), "T-1", "screenshot", "bug.png")
+		_, err = s.ReadFamilyAttachment(ctx(), "T-1", "screenshot", "bug.png")
 		assert.ErrorIs(t, err, store.ErrNotFound)
 	})
 
 	t.Run("DeleteNotFound", func(t *testing.T) {
 		s := f(t)
-		err := s.DeleteAttachment(ctx(), "T-1", "noprop", "x")
+		err := s.DeleteFamilyAttachment(ctx(), "T-1", "noprop", "x")
 		assert.ErrorIs(t, err, store.ErrNotFound)
 	})
 
 	t.Run("List", func(t *testing.T) {
 		s := f(t)
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("T-1", "ticket")))
-		require.NoError(t, s.AttachFile(ctx(), "T-1", "screenshot", "bug.png", strings.NewReader("img")))
-		require.NoError(t, s.AttachFile(ctx(), "T-1", "log", "app.log", strings.NewReader("log data here")))
+		require.NoError(t, s.AttachFamilyFile(ctx(), "T-1", "screenshot", "bug.png", strings.NewReader("img")))
+		require.NoError(t, s.AttachFamilyFile(ctx(), "T-1", "log", "app.log", strings.NewReader("log data here")))
 
-		infos, err := s.ListAttachments(ctx(), "T-1")
+		infos, err := s.ListFamilyAttachments(ctx(), "T-1")
 		require.NoError(t, err)
 		assert.Len(t, infos, 2)
 
@@ -134,7 +145,7 @@ func RunAttachmentTests(t *testing.T, f Factory) {
 		s := f(t)
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("T-1", "ticket")))
 
-		infos, err := s.ListAttachments(ctx(), "T-1")
+		infos, err := s.ListFamilyAttachments(ctx(), "T-1")
 		require.NoError(t, err)
 		assert.Empty(t, infos)
 	})
@@ -143,7 +154,7 @@ func RunAttachmentTests(t *testing.T, f Factory) {
 		s := f(t)
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("T-1", "ticket")))
 
-		err := s.AttachFile(ctx(), "T-1", "", "f.txt", strings.NewReader("x"))
+		err := s.AttachFamilyFile(ctx(), "T-1", "", "f.txt", strings.NewReader("x"))
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "empty property")
 	})
@@ -152,11 +163,11 @@ func RunAttachmentTests(t *testing.T, f Factory) {
 		s := f(t)
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("E-1", "t")))
 
-		err := s.AttachFile(ctx(), "E-1", "some/prop", "f.txt", strings.NewReader("data"))
+		err := s.AttachFamilyFile(ctx(), "E-1", "some/prop", "f.txt", strings.NewReader("data"))
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "slash")
 
-		err = s.AttachFile(ctx(), "E-1", "screenshot", "f.png", strings.NewReader("data"))
+		err = s.AttachFamilyFile(ctx(), "E-1", "screenshot", "f.png", strings.NewReader("data"))
 		require.NoError(t, err)
 	})
 
@@ -164,13 +175,13 @@ func RunAttachmentTests(t *testing.T, f Factory) {
 		s := f(t)
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("T-1", "ticket")))
 
-		err := s.AttachFile(ctx(), "T-1", "doc", "f.txt", &failReader{})
+		err := s.AttachFamilyFile(ctx(), "T-1", "doc", "f.txt", &failReader{})
 		assert.Error(t, err)
 	})
 
 	t.Run("ListEntityNotFound", func(t *testing.T) {
 		s := f(t)
-		_, err := s.ListAttachments(ctx(), "NOPE")
+		_, err := s.ListFamilyAttachments(ctx(), "NOPE")
 		assert.ErrorIs(t, err, store.ErrNotFound)
 	})
 
@@ -183,11 +194,11 @@ func RunAttachmentTests(t *testing.T, f Factory) {
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("T-1", "ticket")))
 
 		oversize := io.LimitReader(constReader('a'), store.MaxAttachmentBytes+1)
-		err := s.AttachFile(ctx(), "T-1", "screenshot", "big.bin", oversize)
+		err := s.AttachFamilyFile(ctx(), "T-1", "screenshot", "big.bin", oversize)
 		assert.ErrorIs(t, err, store.ErrAttachmentTooLarge)
 
 		// The rejected write must not leave a half-attachment behind.
-		infos, listErr := s.ListAttachments(ctx(), "T-1")
+		infos, listErr := s.ListFamilyAttachments(ctx(), "T-1")
 		require.NoError(t, listErr)
 		assert.Empty(t, infos, "oversize attach must not persist a partial attachment")
 	})
@@ -198,15 +209,15 @@ func RunAttachmentTests(t *testing.T, f Factory) {
 		// swapped in on success.
 		s := f(t)
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("T-1", "ticket")))
-		require.NoError(t, s.AttachFile(ctx(), "T-1", "screenshot", "ok.png", strings.NewReader("original")))
+		require.NoError(t, s.AttachFamilyFile(ctx(), "T-1", "screenshot", "ok.png", strings.NewReader("original")))
 
 		// Same property, oversize — must be rejected.
 		oversize := io.LimitReader(constReader('a'), store.MaxAttachmentBytes+1)
-		err := s.AttachFile(ctx(), "T-1", "screenshot", "huge.bin", oversize)
+		err := s.AttachFamilyFile(ctx(), "T-1", "screenshot", "huge.bin", oversize)
 		assert.ErrorIs(t, err, store.ErrAttachmentTooLarge)
 
 		// The original attachment must still be intact and readable.
-		rc, readErr := s.ReadAttachment(ctx(), "T-1", "screenshot", "ok.png")
+		rc, readErr := s.ReadFamilyAttachment(ctx(), "T-1", "screenshot", "ok.png")
 		require.NoError(t, readErr)
 		defer rc.Close()
 		data, _ := io.ReadAll(rc)
@@ -219,15 +230,15 @@ func RunAttachmentTests(t *testing.T, f Factory) {
 		// cap/replace policy lives in the write path, not the store.
 		s := f(t)
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("T-1", "ticket")))
-		require.NoError(t, s.AttachFile(ctx(), "T-1", "doc", "v1.txt", strings.NewReader("version 1")))
-		require.NoError(t, s.AttachFile(ctx(), "T-1", "doc", "v2.txt", strings.NewReader("version 2")))
+		require.NoError(t, s.AttachFamilyFile(ctx(), "T-1", "doc", "v1.txt", strings.NewReader("version 1")))
+		require.NoError(t, s.AttachFamilyFile(ctx(), "T-1", "doc", "v2.txt", strings.NewReader("version 2")))
 
-		infos, _ := s.ListAttachments(ctx(), "T-1")
+		infos, _ := s.ListFamilyAttachments(ctx(), "T-1")
 		assert.Len(t, infos, 2, "two differently-named files on one property must coexist")
 
 		// Each is readable by its own filename.
 		for name, want := range map[string]string{"v1.txt": "version 1", "v2.txt": "version 2"} {
-			rc, err := s.ReadAttachment(ctx(), "T-1", "doc", name)
+			rc, err := s.ReadFamilyAttachment(ctx(), "T-1", "doc", name)
 			require.NoError(t, err)
 			data, _ := io.ReadAll(rc)
 			rc.Close()
@@ -240,19 +251,19 @@ func RunAttachmentTests(t *testing.T, f Factory) {
 		// sibling files on the property are untouched.
 		s := f(t)
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("T-1", "ticket")))
-		require.NoError(t, s.AttachFile(ctx(), "T-1", "doc", "a.txt", strings.NewReader("a1")))
-		require.NoError(t, s.AttachFile(ctx(), "T-1", "doc", "b.txt", strings.NewReader("b1")))
-		require.NoError(t, s.AttachFile(ctx(), "T-1", "doc", "a.txt", strings.NewReader("a2"))) // replace a
+		require.NoError(t, s.AttachFamilyFile(ctx(), "T-1", "doc", "a.txt", strings.NewReader("a1")))
+		require.NoError(t, s.AttachFamilyFile(ctx(), "T-1", "doc", "b.txt", strings.NewReader("b1")))
+		require.NoError(t, s.AttachFamilyFile(ctx(), "T-1", "doc", "a.txt", strings.NewReader("a2"))) // replace a
 
-		infos, _ := s.ListAttachments(ctx(), "T-1")
+		infos, _ := s.ListFamilyAttachments(ctx(), "T-1")
 		assert.Len(t, infos, 2, "same-name re-attach must not add a row")
 
-		rcA, _ := s.ReadAttachment(ctx(), "T-1", "doc", "a.txt")
+		rcA, _ := s.ReadFamilyAttachment(ctx(), "T-1", "doc", "a.txt")
 		dataA, _ := io.ReadAll(rcA)
 		rcA.Close()
 		assert.Equal(t, "a2", string(dataA), "a.txt should be replaced")
 
-		rcB, _ := s.ReadAttachment(ctx(), "T-1", "doc", "b.txt")
+		rcB, _ := s.ReadFamilyAttachment(ctx(), "T-1", "doc", "b.txt")
 		dataB, _ := io.ReadAll(rcB)
 		rcB.Close()
 		assert.Equal(t, "b1", string(dataB), "b.txt must be untouched")
@@ -261,14 +272,14 @@ func RunAttachmentTests(t *testing.T, f Factory) {
 	t.Run("PerFileDeleteLeavesSiblings", func(t *testing.T) {
 		s := f(t)
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("T-1", "ticket")))
-		require.NoError(t, s.AttachFile(ctx(), "T-1", "doc", "a.txt", strings.NewReader("a")))
-		require.NoError(t, s.AttachFile(ctx(), "T-1", "doc", "b.txt", strings.NewReader("b")))
+		require.NoError(t, s.AttachFamilyFile(ctx(), "T-1", "doc", "a.txt", strings.NewReader("a")))
+		require.NoError(t, s.AttachFamilyFile(ctx(), "T-1", "doc", "b.txt", strings.NewReader("b")))
 
-		require.NoError(t, s.DeleteAttachment(ctx(), "T-1", "doc", "a.txt"))
+		require.NoError(t, s.DeleteFamilyAttachment(ctx(), "T-1", "doc", "a.txt"))
 
-		_, err := s.ReadAttachment(ctx(), "T-1", "doc", "a.txt")
+		_, err := s.ReadFamilyAttachment(ctx(), "T-1", "doc", "a.txt")
 		assert.ErrorIs(t, err, store.ErrNotFound)
-		rc, err := s.ReadAttachment(ctx(), "T-1", "doc", "b.txt")
+		rc, err := s.ReadFamilyAttachment(ctx(), "T-1", "doc", "b.txt")
 		require.NoError(t, err, "deleting one file must leave its siblings")
 		rc.Close()
 	})
@@ -278,11 +289,11 @@ func RunAttachmentTests(t *testing.T, f Factory) {
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("T-1", "ticket")))
 
 		for _, bad := range []string{"", "a/b.txt", "a\\b.txt", "a\x00b", "..", "."} {
-			err := s.AttachFile(ctx(), "T-1", "doc", bad, strings.NewReader("x"))
+			err := s.AttachFamilyFile(ctx(), "T-1", "doc", bad, strings.NewReader("x"))
 			assert.Error(t, err, "file name %q should be rejected", bad)
 		}
 		// A clean name still works.
-		require.NoError(t, s.AttachFile(ctx(), "T-1", "doc", "ok.txt", strings.NewReader("x")))
+		require.NoError(t, s.AttachFamilyFile(ctx(), "T-1", "doc", "ok.txt", strings.NewReader("x")))
 	})
 
 	t.Run("FileNameEndingInNewRoundTrips", func(t *testing.T) {
@@ -290,15 +301,15 @@ func RunAttachmentTests(t *testing.T, f Factory) {
 		// marker must not collide with a valid user filename (RR-BN2MDO).
 		s := f(t)
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("T-1", "ticket")))
-		require.NoError(t, s.AttachFile(ctx(), "T-1", "doc", "report.new", strings.NewReader("payload")))
+		require.NoError(t, s.AttachFamilyFile(ctx(), "T-1", "doc", "report.new", strings.NewReader("payload")))
 
-		rc, err := s.ReadAttachment(ctx(), "T-1", "doc", "report.new")
+		rc, err := s.ReadFamilyAttachment(ctx(), "T-1", "doc", "report.new")
 		require.NoError(t, err)
 		defer rc.Close()
 		data, _ := io.ReadAll(rc)
 		assert.Equal(t, "payload", string(data))
 
-		infos, _ := s.ListAttachments(ctx(), "T-1")
+		infos, _ := s.ListFamilyAttachments(ctx(), "T-1")
 		require.Len(t, infos, 1)
 		assert.Equal(t, "report.new", infos[0].FileName)
 	})
@@ -306,20 +317,20 @@ func RunAttachmentTests(t *testing.T, f Factory) {
 	t.Run("RenameMovesAttachments", func(t *testing.T) {
 		s := f(t)
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("T-1", "ticket")))
-		require.NoError(t, s.AttachFile(ctx(), "T-1", "spec", "doc.pdf", strings.NewReader("pdf bytes")))
-		require.NoError(t, s.AttachFile(ctx(), "T-1", "spec", "extra.txt", strings.NewReader("extra")))
+		require.NoError(t, s.AttachFamilyFile(ctx(), "T-1", "spec", "doc.pdf", strings.NewReader("pdf bytes")))
+		require.NoError(t, s.AttachFamilyFile(ctx(), "T-1", "spec", "extra.txt", strings.NewReader("extra")))
 
-		_, err := s.RenameEntity(ctx(), "T-1", "T-2")
+		_, err := s.RenameFamily(ctx(), "T-1", "T-2")
 		require.NoError(t, err)
 
-		_, err = s.ListAttachments(ctx(), "T-1")
+		_, err = s.ListFamilyAttachments(ctx(), "T-1")
 		assert.ErrorIs(t, err, store.ErrNotFound)
 
-		infos, err := s.ListAttachments(ctx(), "T-2")
+		infos, err := s.ListFamilyAttachments(ctx(), "T-2")
 		require.NoError(t, err)
 		require.Len(t, infos, 2, "all files on the property move with the rename")
 
-		rc, err := s.ReadAttachment(ctx(), "T-2", "spec", "doc.pdf")
+		rc, err := s.ReadFamilyAttachment(ctx(), "T-2", "spec", "doc.pdf")
 		require.NoError(t, err)
 		defer rc.Close()
 		got, _ := io.ReadAll(rc)
@@ -329,14 +340,14 @@ func RunAttachmentTests(t *testing.T, f Factory) {
 	t.Run("DeleteCascadesAttachments", func(t *testing.T) {
 		s := f(t)
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("T-1", "ticket")))
-		require.NoError(t, s.AttachFile(ctx(), "T-1", "spec", "doc.pdf", strings.NewReader("pdf bytes")))
+		require.NoError(t, s.AttachFamilyFile(ctx(), "T-1", "spec", "doc.pdf", strings.NewReader("pdf bytes")))
 
-		_, err := s.DeleteEntity(ctx(), "T-1", false)
+		_, err := s.DeleteFamily(ctx(), "T-1", false)
 		require.NoError(t, err)
 
 		// Re-create with the same ID; stale attachments must not resurrect.
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("T-1", "ticket")))
-		infos, err := s.ListAttachments(ctx(), "T-1")
+		infos, err := s.ListFamilyAttachments(ctx(), "T-1")
 		require.NoError(t, err)
 		assert.Empty(t, infos)
 	})

@@ -42,10 +42,10 @@ func seedAttachment(t *testing.T, app *App, entityID, fileName string, data []by
 	t.Helper()
 	const property = "screenshot"
 	ctx := context.Background()
-	if err := app.store.AttachFile(ctx, entityID, property, fileName, bytes.NewReader(data)); err != nil {
+	if err := app.store.AttachFamilyFile(ctx, entityID, property, fileName, bytes.NewReader(data)); err != nil {
 		t.Fatalf("AttachFile(%s, %s): %v", entityID, property, err)
 	}
-	e, err := app.store.GetEntity(ctx, entityID)
+	e, err := app.store.GetEntity(ctx, entity.Ref{ID: entityID})
 	if err != nil {
 		t.Fatalf("GetEntity(%s): %v", entityID, err)
 	}
@@ -184,7 +184,7 @@ func TestAttachment_ResolvesByCurrentIDAfterRename(t *testing.T) {
 	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "T1"}})
 	seedAttachment(t, app, "TKT-001", "shot.png", []byte("bytes"))
 
-	if _, err := app.store.RenameEntity(context.Background(), "TKT-001", "TKT-999"); err != nil {
+	if _, err := app.store.RenameFamily(context.Background(), "TKT-001", "TKT-999"); err != nil {
 		t.Fatalf("RenameEntity: %v", err)
 	}
 

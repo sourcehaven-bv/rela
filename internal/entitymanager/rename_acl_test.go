@@ -26,7 +26,7 @@ type flakyGetStore struct {
 	creates atomic.Int32
 }
 
-func (s *flakyGetStore) GetEntity(_ context.Context, _ string) (*entity.Entity, error) {
+func (s *flakyGetStore) GetEntity(_ context.Context, _ entity.Ref) (*entity.Entity, error) {
 	return nil, s.err
 }
 
@@ -34,9 +34,9 @@ func (s *flakyGetStore) ListEntities(context.Context, store.EntityQuery) iter.Se
 	return func(yield func(*entity.Entity, error) bool) { yield(nil, s.err) }
 }
 
-func (s *flakyGetStore) DeleteEntity(ctx context.Context, id string, cascade bool) (*store.DeleteResult, error) {
+func (s *flakyGetStore) DeleteFamily(ctx context.Context, id string, cascade bool) (*store.DeleteResult, error) {
 	s.deletes.Add(1)
-	return s.Store.DeleteEntity(ctx, id, cascade)
+	return s.Store.DeleteFamily(ctx, id, cascade)
 }
 
 func (s *flakyGetStore) CreateEntity(ctx context.Context, e *entity.Entity) error {

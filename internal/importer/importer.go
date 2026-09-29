@@ -345,7 +345,7 @@ func (imp *Importer) validateEntityData(ed *EntityData) error {
 	}
 
 	// Check if entity already exists, at the face the row is written to
-	if _, err := imp.store.GetEntityState(context.Background(), ref.ID, ref.Face); err == nil {
+	if _, err := imp.store.GetEntity(context.Background(), entity.Ref{ID: ref.ID, Face: ref.Face}); err == nil {
 		if !imp.opts.Update {
 			return errors.New("entity already exists (use --update to overwrite)")
 		}
@@ -519,7 +519,7 @@ func (imp *Importer) importEntity(ed *EntityData) (created bool, err error) {
 	}
 
 	// Check if updating: the row at this face, which is the row written
-	_, getErr := imp.store.GetEntityState(ctx, ref.ID, ref.Face)
+	_, getErr := imp.store.GetEntity(ctx, entity.Ref{ID: ref.ID, Face: ref.Face})
 	exists := getErr == nil
 
 	if exists {

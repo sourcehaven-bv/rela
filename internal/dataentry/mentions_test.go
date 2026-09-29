@@ -411,15 +411,11 @@ type flakyStore struct {
 	good *entity.Entity
 }
 
-func (f *flakyStore) GetEntity(_ context.Context, id string) (*entity.Entity, error) {
-	if f.good != nil && f.good.ID == id {
+func (f *flakyStore) GetEntity(_ context.Context, ref entity.Ref) (*entity.Entity, error) {
+	if f.good != nil && f.good.ID == ref.ID {
 		return f.good, nil
 	}
 	return nil, f.err
-}
-
-func (f *flakyStore) GetEntityState(ctx context.Context, id string, _ entity.Face) (*entity.Entity, error) {
-	return f.GetEntity(ctx, id)
 }
 
 func (f *flakyStore) ListEntities(_ context.Context, _ store.EntityQuery) iter.Seq2[*entity.Entity, error] {
@@ -436,8 +432,4 @@ func (f *flakyStore) CountEntities(_ context.Context, _ store.EntityQuery) (int,
 
 func (f *flakyStore) HighestID(_ context.Context, _ string) (int, error) {
 	panic("flakyStore: HighestID not implemented")
-}
-
-func (f *flakyStore) PropertyValues(_ context.Context, _ string, _ int) ([]string, error) {
-	panic("flakyStore: PropertyValues not implemented")
 }

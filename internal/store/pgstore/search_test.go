@@ -28,7 +28,7 @@ func TestSearchAfterMixedCaseRename(t *testing.T) {
 	ctx := context.Background()
 	require.NoError(t, st.CreateEntity(ctx, entity.New("Old-ID", "ticket")))
 
-	_, err = st.RenameEntity(ctx, "Old-ID", "New-MixedCase")
+	_, err = st.RenameFamily(ctx, "Old-ID", "New-MixedCase")
 	require.NoError(t, err)
 
 	// The backend matches case-insensitively, so a lowercased query for the new

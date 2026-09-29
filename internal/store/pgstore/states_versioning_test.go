@@ -50,12 +50,12 @@ func TestSweep_CapturesEachFaceInItsOwnLineage(t *testing.T) {
 	// The concrete VersionStore already carries the face-aware methods; the
 	// assertion is that it satisfies the optional store capability, which is
 	// how a consumer reaches them.
-	var sh store.StateHistoryReader = s.VersionStore()
+	var sh store.HistoryReader = s.VersionStore()
 
 	// Both faces are captured, each exactly once.
 	require.Eventually(t, func() bool {
-		def, e1 := s.VersionStore().ListVersions(ctx, "PAGE-1")
-		dr, e2 := sh.ListStateVersions(ctx, "PAGE-1", p)
+		def, e1 := s.VersionStore().ListVersions(ctx, entity.Ref{ID: "PAGE-1"})
+		dr, e2 := sh.ListVersions(ctx, entity.Ref{ID: "PAGE-1", Face: p})
 		return e1 == nil && e2 == nil && len(def) == 1 && len(dr) == 1
 	}, 3*time.Second, 25*time.Millisecond, "each face should be captured once")
 
@@ -65,21 +65,21 @@ func TestSweep_CapturesEachFaceInItsOwnLineage(t *testing.T) {
 	// Step-1 skip existed to prevent.
 	time.Sleep(300 * time.Millisecond)
 
-	def, err := s.VersionStore().ListVersions(ctx, "PAGE-1")
+	def, err := s.VersionStore().ListVersions(ctx, entity.Ref{ID: "PAGE-1"})
 	require.NoError(t, err)
 	require.Len(t, def, 1, "the default face's lineage must hold only its own row")
 
-	dr, err := sh.ListStateVersions(ctx, "PAGE-1", p)
+	dr, err := sh.ListVersions(ctx, entity.Ref{ID: "PAGE-1", Face: p})
 	require.NoError(t, err)
 	require.Len(t, dr, 1, "the draft face's lineage must hold only its own row")
 
 	// The snapshots must be the faces' OWN content — the sharpest way to
 	// catch a lineage that resolved to the wrong face.
-	defSnap, err := s.VersionStore().GetVersion(ctx, "PAGE-1", 1)
+	defSnap, err := s.VersionStore().GetVersion(ctx, entity.Ref{ID: "PAGE-1"}, 1)
 	require.NoError(t, err)
 	require.Equal(t, "default face", defSnap.Content)
 
-	drSnap, err := sh.GetStateVersion(ctx, "PAGE-1", p, 1)
+	drSnap, err := sh.GetVersion(ctx, entity.Ref{ID: "PAGE-1", Face: p}, 1)
 	require.NoError(t, err)
 	require.Equal(t, "draft face", drSnap.Content)
 }
@@ -230,19 +230,19 @@ func TestFacesWithIdenticalContentDoNotDedupAgainstEachOther(t *testing.T) {
 	s.StartVersionSweep(stubProvider{hash: "schema-abc", json: []byte(`{"entities":{},"types":{}}`)},
 		pgstore.SweepConfig{Interval: 50 * time.Millisecond, Idle: time.Minute, MaxStaleness: time.Hour, Batch: 100})
 
-	var sh store.StateHistoryReader = s.VersionStore()
+	var sh store.HistoryReader = s.VersionStore()
 	require.Eventually(t, func() bool {
-		def, e1 := s.VersionStore().ListVersions(ctx, "PAGE-9")
-		pub, e2 := sh.ListStateVersions(ctx, "PAGE-9", p)
+		def, e1 := s.VersionStore().ListVersions(ctx, entity.Ref{ID: "PAGE-9"})
+		pub, e2 := sh.ListVersions(ctx, entity.Ref{ID: "PAGE-9", Face: p})
 		return e1 == nil && e2 == nil && len(def) == 1 && len(pub) == 1
 	}, 3*time.Second, 25*time.Millisecond,
 		"both faces must be captured despite holding identical content — a face "+
 			"deduping against its SIBLING's hash loses a version silently")
 
 	// And the hashes differ, which is the structural half of the guarantee.
-	def, err := s.VersionStore().ListVersions(ctx, "PAGE-9")
+	def, err := s.VersionStore().ListVersions(ctx, entity.Ref{ID: "PAGE-9"})
 	require.NoError(t, err)
-	pub, err := sh.ListStateVersions(ctx, "PAGE-9", p)
+	pub, err := sh.ListVersions(ctx, entity.Ref{ID: "PAGE-9", Face: p})
 	require.NoError(t, err)
 	require.NotEqual(t, def[0].ContentHash, pub[0].ContentHash,
 		"the face must participate in the content hash, or a purge tombstone "+

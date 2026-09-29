@@ -57,17 +57,17 @@ func (v *VersionStore) PurgeVersions(ctx context.Context, req store.VersionPurge
 	defer advisoryUnlock(context.WithoutCancel(ctx), conn, sweepAdvisoryLockKey)
 
 	// Resolve the target lineage ids (fenced) and the current live content hash.
-	ids, err := v.entityLineageIDsForPurge(ctx, conn, req.EntityID, req.Face)
+	ids, err := v.entityLineageIDsForPurge(ctx, conn, req.Ref.ID, req.Ref.Face)
 	if err != nil {
 		return nil, err
 	}
-	liveHash, liveExists, err := v.liveEntityHash(ctx, conn, req.EntityID, req.Face)
+	liveHash, liveExists, err := v.liveEntityHash(ctx, conn, req.Ref.ID, req.Ref.Face)
 	if err != nil {
 		return nil, err
 	}
 
 	targets, err := selectPurgeTargets(ctx, conn, entityPurgeQ,
-		[]any{ids, string(req.Face)}, req.Selector)
+		[]any{ids, string(req.Ref.Face)}, req.Selector)
 	if err != nil {
 		return nil, err
 	}
@@ -94,7 +94,7 @@ func (v *VersionStore) PurgeVersions(ctx context.Context, req store.VersionPurge
 	// does not re-capture the live content (its content_hash = the live hash
 	// dedups against the sweep's lvc probe).
 	if liveExists && req.ForceLive {
-		if err := writeEntityPurgeTombstone(ctx, conn, req.EntityID, req.Face, liveHash); err != nil {
+		if err := writeEntityPurgeTombstone(ctx, conn, req.Ref.ID, req.Ref.Face, liveHash); err != nil {
 			return nil, err
 		}
 		res.TombstoneWritten = true

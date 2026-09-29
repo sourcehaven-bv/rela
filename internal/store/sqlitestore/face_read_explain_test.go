@@ -87,7 +87,7 @@ func TestFaceReadExplain(t *testing.T) {
 			return s.ExplainEntityPage(ctx, store.EntityQuery{IDs: family, Faces: store.AllFaces()})
 		}, "USING INDEX sqlite_autoindex_entities_1", nil},
 		{"single row", func() (string, error) {
-			return s.ExplainGetEntityState(ctx, "POL-000007", "published")
+			return s.ExplainGetEntity(ctx, entity.Ref{ID: "POL-000007", Face: "published"})
 		}, "USING INDEX sqlite_autoindex_entities_1", nil},
 		{"highest id", func() (string, error) {
 			return s.ExplainHighestID(ctx, "POL")

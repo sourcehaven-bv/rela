@@ -11,12 +11,12 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
 
-// fakeFaceHistory answers ListStateVersions from a map keyed by the state
+// fakeFaceHistory answers ListVersions from a map keyed by the state
 // address (`ID` or `ID@face`). An absent key is an empty lineage.
 type fakeFaceHistory map[string]int
 
-func (f fakeFaceHistory) ListStateVersions(_ context.Context, id string, face entity.Face) ([]store.VersionMeta, error) {
-	n := f[entity.FormatStateRef(id, face)]
+func (f fakeFaceHistory) ListVersions(_ context.Context, ref entity.Ref) ([]store.VersionMeta, error) {
+	n := f[entity.FormatStateRef(ref.ID, ref.Face)]
 	metas := make([]store.VersionMeta, n)
 	for i := range metas {
 		metas[i] = store.VersionMeta{Version: i + 1}
@@ -24,9 +24,7 @@ func (f fakeFaceHistory) ListStateVersions(_ context.Context, id string, face en
 	return metas, nil
 }
 
-func (f fakeFaceHistory) GetStateVersion(
-	context.Context, string, entity.Face, int,
-) (*store.VersionSnapshot, error) {
+func (f fakeFaceHistory) GetVersion(context.Context, entity.Ref, int) (*store.VersionSnapshot, error) {
 	return nil, store.ErrNotFound
 }
 

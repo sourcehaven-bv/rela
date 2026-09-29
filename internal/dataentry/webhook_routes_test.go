@@ -181,7 +181,7 @@ func TestWebhookRoutes_ThreeWorkflows(t *testing.T) {
 			t.Errorf("hit action = %q, want updated", got)
 		}
 
-		got, err := app.store.GetEntity(context.Background(), created.Entity.ID)
+		got, err := app.store.GetEntity(context.Background(), created.Entity.Ref())
 		if err != nil {
 			t.Fatalf("reload: %v", err)
 		}
@@ -552,7 +552,7 @@ func TestWebhookRoutes_PatchPreservesUnnamedProperties(t *testing.T) {
 		t.Fatalf("status = %d (%s)", rec.Code, rec.Body.String())
 	}
 
-	got, err := app.store.GetEntity(context.Background(), created.Entity.ID)
+	got, err := app.store.GetEntity(context.Background(), created.Entity.Ref())
 	if err != nil {
 		t.Fatalf("reload: %v", err)
 	}
@@ -596,7 +596,7 @@ func TestWebhookRoutes_AppendSectionCreatesMissingSection(t *testing.T) {
 		t.Fatalf("status = %d (%s)", rec.Code, rec.Body.String())
 	}
 
-	got, err := app.store.GetEntity(context.Background(), created.Entity.ID)
+	got, err := app.store.GetEntity(context.Background(), created.Entity.Ref())
 	if err != nil {
 		t.Fatalf("reload: %v", err)
 	}

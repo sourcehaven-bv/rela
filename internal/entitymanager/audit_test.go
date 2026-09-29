@@ -1041,7 +1041,7 @@ func (p *partialCascadeStore) Tx(_ context.Context, fn func(store.Store) error) 
 	return fn(p)
 }
 
-func (p *partialCascadeStore) DeleteEntity(
+func (p *partialCascadeStore) DeleteFamily(
 	_ context.Context, _ string, _ bool,
 ) (*store.DeleteResult, error) {
 	// DeletedEntities deliberately empty: the entity survived.

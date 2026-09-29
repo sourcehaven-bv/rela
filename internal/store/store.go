@@ -25,7 +25,7 @@ var (
 	ErrNotFound     = errors.New("store: not found")
 	ErrConflict     = errors.New("store: already exists")
 	ErrHasRelations = errors.New("store: entity has relations")
-	// ErrAttachmentTooLarge is returned by AttachFile when the supplied
+	// ErrAttachmentTooLarge is returned by AttachFamilyFile when the supplied
 	// bytes exceed MaxAttachmentBytes. Every backend enforces this as a
 	// backstop so no storage path is ever unbounded; the HTTP/API layer
 	// caps at its own ingress for a clean 413 before reaching the store.
@@ -79,7 +79,7 @@ func (l *cappedAttachmentReader) Read(p []byte) (int, error) {
 // on-disk path leaf in fsstore), so it must not be empty, contain a path
 // separator or NUL, or be a directory-traversal token. Callers should
 // normalize with [NormalizeFileName] before storing; this is the hard gate
-// every backend's AttachFile applies.
+// every backend's AttachFamilyFile applies.
 func ValidateFileName(name string) error {
 	if name == "" {
 		return errors.New("store: empty attachment file name")
@@ -230,21 +230,20 @@ type Freshness interface {
 // underlying data has not changed, so cursors remain valid between pages.
 // The default order is ascending by ID.
 type EntityReader interface {
-	// GetEntity returns a single entity by ID.
-	// Returns ErrNotFound if the entity does not exist.
+	// GetEntity returns the one row ref addresses: the face ref.Face of the
+	// family ref.ID. Returns ErrNotFound if that row does not exist,
+	// including when other faces of the family do.
 	//
-	// With content states (TKT-DOFYR1) the bare id addresses the DEFAULT
-	// state; GetEntity(id) ≡ GetEntityState(id, zero Face).
+	// The zero Face is a real coordinate, not a default: it is the implicit
+	// face of a faceless type. A faced type stores no row there
+	// (BUG-HC6I2T), so Ref{ID: id} on a faced family is ErrNotFound. The
+	// store cannot tell the two cases apart, because it holds no metamodel;
+	// the caller names the face it means (DEC-NPZICR).
 	//
-	// id is a BARE id. A serialized address (`ID@face`) is ErrNotFound on
-	// every backend; parse it first, or use [GetEntityAt] (BUG-R1PQY9).
-	GetEntity(ctx context.Context, id string) (*entity.Entity, error)
-
-	// GetEntityState returns the entity's content state addressed by
-	// (id, p); the zero Face addresses the default state, making this
-	// a strict generalization of GetEntity. Returns ErrNotFound if that
-	// state does not exist — including when other states of the id do.
-	GetEntityState(ctx context.Context, id string, p entity.Face) (*entity.Entity, error)
+	// GetEntity does no parsing. ref.ID is a bare id: Ref{ID: "X@draft"}
+	// and the zero Ref are ErrNotFound on every backend, as is a malformed
+	// face, never a path or I/O error.
+	GetEntity(ctx context.Context, ref entity.Ref) (*entity.Entity, error)
 
 	// ListEntities returns an iterator over entities matching the query.
 	// If an error is yielded, the iterator terminates. Cursor and Limit
@@ -267,13 +266,10 @@ type EntityReader interface {
 	CountEntities(ctx context.Context, q EntityQuery) (int, error)
 
 	// HighestID returns the highest sequential number found for the
-	// given prefix (e.g. "FEAT" → 42 if FEAT-042 is the highest).
-	// Returns 0 if no entities with the prefix exist.
+	// given prefix (e.g. "FEAT" → 42 if FEAT-042 is the highest), over
+	// every face of every family: an id stored only at named faces is
+	// taken. Returns 0 if no entities with the prefix exist.
 	HighestID(ctx context.Context, prefix string) (int, error)
-
-	// PropertyValues returns distinct values for a property, sorted by
-	// frequency (most common first), up to limit results.
-	PropertyValues(ctx context.Context, property string, limit int) ([]string, error)
 }
 
 // EntityQuery filters entity listings.
@@ -363,8 +359,10 @@ type EntityWriter interface {
 		ctx context.Context, e *entity.Entity, cond UpdateCondition,
 	) (EntityVersion, error)
 
-	// DeleteEntity removes an entity and optionally its relations.
-	// Returns ErrNotFound if the entity does not exist.
+	// DeleteFamily removes every face of id and, with cascade, every
+	// relation incident to the family on both sides and every tail.
+	// Returns ErrNotFound if no face of id exists. Without cascade, a family
+	// that still has an incident relation is refused with ErrHasRelations.
 	//
 	// A non-nil *DeleteResult MAY accompany a non-nil error — the one place
 	// this package departs from "error means ignore the value". A
@@ -379,43 +377,48 @@ type EntityWriter interface {
 	// error. It lists only what really happened — DeletedEntities is
 	// populated if and only if the entity file was removed, so on a partial
 	// cascade (which aborts before or at that removal) it is empty.
-	DeleteEntity(ctx context.Context, id string, cascade bool) (*DeleteResult, error)
+	DeleteFamily(ctx context.Context, id string, cascade bool) (*DeleteResult, error)
 
-	// DeleteEntityState removes ONE content state (face) of an entity,
-	// leaving the rest of the family standing (TKT-C1XUA8).
+	// DeleteFace removes the one face row ref addresses, leaving the rest of
+	// the family standing (TKT-C1XUA8). Ref{ID: id} is a valid address: the
+	// implicit face of a faceless type.
 	//
-	// This is NOT a narrower DeleteEntity, and the difference is the whole
-	// point: DeleteEntity addresses the bare id and sweeps the entire state
-	// family plus every incident relation on BOTH sides. Deleting a face
-	// removes one row and only the edges that belong to that face.
-	//
-	// Which edges belong to a face:
+	// This is NOT a narrower DeleteFamily. Deleting a face removes one row
+	// and only the edges that belong to it:
 	//
 	//   - OUTGOING edges whose tail is this face go WITH it. They
 	//     were written against this face and nothing else can own them.
-	//   - INCOMING edges SURVIVE. Heads are entity-level (design doc §2.3),
-	//     so an inbound edge points at the ENTITY, not at one of its faces —
-	//     deleting them would let removing a draft silently cut links that
-	//     unrelated entities hold on the published face.
+	//   - INCOMING edges SURVIVE while any face remains. Heads are
+	//     entity-level (design doc §2.3), so an inbound edge points at the
+	//     ENTITY, not at one of its faces — deleting them would let removing
+	//     a draft silently cut links that unrelated entities hold on the
+	//     published face.
 	//
-	// Deleting the DEFAULT face while non-default faces remain is ALLOWED.
-	// It was once refused (a family was required to keep a default row), but
+	// Deleting the LAST face leaves no entity, so it also removes every
+	// relation still incident to the family: inbound edges and edges on any
+	// other tail (RR-2466U1). Otherwise they would point at, or start from,
+	// an entity that no longer exists. The last-face delete therefore
+	// removes exactly what DeleteFamily(id, true) removes, and
+	// DeleteResult.DeletedRelations lists every one of them, so the caller
+	// can authorize, version and audit them. The caller that must not cut
+	// those edges checks the family size first.
+	//
+	// Deleting the implicit face while named faces remain is ALLOWED. It
+	// was once refused (a family was required to keep a default row), but
 	// BUG-HC6I2T removed that invariant: a type declaring `faces:` stores
 	// nothing at the zero coordinate, so the refusal would have made the
 	// flat→faced migration impossible. It is what migrate_face and
 	// `rela migrate adopt-face` do on every row they move, and
 	// TestFaces_RowCanLeaveTheZeroCoordinate pins it.
 	//
-	// Returns ErrNotFound if that face does not exist. Deleting the only
-	// remaining face is allowed and leaves no entity behind — it is
-	// equivalent to DeleteEntity for a single-face entity.
-	DeleteEntityState(ctx context.Context, id string, p entity.Face) (*DeleteResult, error)
+	// Returns ErrNotFound if that face does not exist.
+	DeleteFace(ctx context.Context, ref entity.Ref) (*DeleteResult, error)
 
-	// RenameEntity changes an entity's ID. All relations referencing the
-	// old ID are updated atomically.
-	// Returns ErrNotFound if the entity does not exist.
-	// Returns ErrConflict if newID already exists.
-	RenameEntity(ctx context.Context, oldID, newID string) (*RenameResult, error)
+	// RenameFamily changes the id of every face of oldID, and every
+	// relation endpoint and tail that names it, atomically.
+	// Returns ErrNotFound if no face of oldID exists.
+	// Returns ErrConflict if any face of newID already exists.
+	RenameFamily(ctx context.Context, oldID, newID string) (*RenameResult, error)
 }
 
 // DeleteResult describes what was removed.
@@ -577,17 +580,24 @@ type AttachmentInfo struct {
 	Size        int64
 }
 
-// AttachmentManager provides file attachment operations. A property can
-// hold multiple attachments, each keyed by its (normalized) file name —
-// so reads and deletes target a specific (entityID, property, fileName).
-// AttachFile appends; it does not overwrite other files on the property.
-// Enforcing a per-property cap (the metamodel `max`) and replace-at-1
-// semantics is the write path's job, not the store's.
+// AttachmentManager provides file attachment operations. Attachment bytes
+// belong to the FAMILY, not to one face: every face of an id shares one
+// byte store, and a face's property value only names the files it uses
+// (TKT-KQXVF7, Stage 1 design section 4). The method names say so.
+//
+// A property can hold multiple attachments, each keyed by its (normalized)
+// file name — so reads and deletes target a specific (entityID, property,
+// fileName). AttachFamilyFile appends; it does not overwrite other files on
+// the property. Enforcing a per-property cap (the metamodel `max`) and
+// replace-at-1 semantics is the write path's job, not the store's.
 type AttachmentManager interface {
-	AttachFile(ctx context.Context, entityID, property, fileName string, r io.Reader) error
-	ReadAttachment(ctx context.Context, entityID, property, fileName string) (io.ReadCloser, error)
-	DeleteAttachment(ctx context.Context, entityID, property, fileName string) error
-	ListAttachments(ctx context.Context, entityID string) ([]AttachmentInfo, error)
+	// AttachFamilyFile stores bytes for the family entityID. Returns
+	// ErrNotFound when no face of entityID exists, and accepts the write
+	// when any face does.
+	AttachFamilyFile(ctx context.Context, entityID, property, fileName string, r io.Reader) error
+	ReadFamilyAttachment(ctx context.Context, entityID, property, fileName string) (io.ReadCloser, error)
+	DeleteFamilyAttachment(ctx context.Context, entityID, property, fileName string) error
+	ListFamilyAttachments(ctx context.Context, entityID string) ([]AttachmentInfo, error)
 }
 
 // EntityHeader is an entity WITHOUT its body content.
@@ -724,7 +734,7 @@ func ListEntityHeaders(
 // partner, and — on the versioning backends — a fresh version lineage per edge,
 // since delete+create mints a new rel_record_id. An in-place re-key keeps the
 // row, so it keeps its identity and its history; this is the same property that
-// made [EntityWriter.RenameEntity] atomic.
+// made [EntityWriter.RenameFamily] atomic.
 //
 // # Vocabulary
 //
@@ -908,10 +918,11 @@ func swapRelationEndpointsFallback(ctx context.Context, s Store, relType string)
 // concern specific to each backend. Stores that have a canonical serialized
 // format (markdown files, YAML, etc.) provide their own Formatter.
 type Formatter interface {
-	// FormatEntity checks whether the entity's persisted form differs from its
-	// canonical formatted form. If dryRun is false and it differs, the entity
-	// is rewritten. Returns changed=true if a rewrite was (or would be) needed.
-	FormatEntity(ctx context.Context, id string, dryRun bool) (changed bool, err error)
+	// FormatEntity checks whether the persisted form of the row ref
+	// addresses differs from its canonical formatted form. If dryRun is false
+	// and it differs, the row is rewritten. Returns changed=true if a rewrite
+	// was (or would be) needed, and ErrNotFound if the row does not exist.
+	FormatEntity(ctx context.Context, ref entity.Ref, dryRun bool) (changed bool, err error)
 
 	// FormatRelation behaves like FormatEntity but for relations.
 	FormatRelation(ctx context.Context, from, relType, to string, dryRun bool) (changed bool, err error)
@@ -1117,49 +1128,33 @@ type TypeWatermark interface {
 	EntityTypeWatermark(ctx context.Context, entityType string) (int64, error)
 }
 
-// HistoryReader reads an entity's captured version history. Like Formatter it
-// is NOT part of the Store interface — content versioning is a backend-specific
-// capability (only pgstore implements it today). Callers type-assert a Store to
-// HistoryReader and degrade gracefully when the assertion fails.
-type HistoryReader interface {
-	// ListVersions returns the version timeline for an entity id, oldest
-	// first, walking rename lineage so a renamed entity's pre-rename history
-	// is included. Returns an empty slice (not an error) when the id has no
-	// history. The id may name a live or an already-deleted entity.
-	ListVersions(ctx context.Context, id string) ([]VersionMeta, error)
-
-	// GetVersion returns the full snapshot for a specific 1-based version
-	// ordinal in the entity's lineage. Returns ErrNotFound if the id has no
-	// such version.
-	GetVersion(ctx context.Context, id string, version int) (*VersionSnapshot, error)
-}
-
-// StateHistoryReader reads the history of ONE CONTENT STATE (face) of an
-// entity, rather than the default face [HistoryReader] serves (TKT-C1XUA8).
+// HistoryReader reads the captured version history of one face row. Like
+// Formatter it is NOT part of the Store interface — content versioning is a
+// backend-specific capability (pgstore and sqlitestore implement it). Callers
+// type-assert a Store to HistoryReader and degrade gracefully when the
+// assertion fails.
 //
-// A separate optional capability rather than a face parameter on
-// HistoryReader, deliberately. Every existing consumer — the data-entry
-// history route, restore, the CLI — asks about the default face, and
-// widening the two HistoryReader signatures would touch all of them plus
-// three hand-written test stubs to say something they already say. The
-// zero-face call IS HistoryReader, so the two are the same query with a
-// different face.
-//
-// Type-asserted like [Formatter] and the other optional store capabilities:
-// fs/mem return nothing, pgstore implements it.
+// A lineage is per (id, face): the history of POL-1@concept never folds in
+// POL-1@vastgesteld. Ref{ID: id} reads the implicit face of a faceless type.
+// A ref that no row can have (see storeutil.Addressable) has no history: an
+// empty timeline and ErrNotFound for every version.
 //
 // NOTE for read-path callers: a face's history is as sensitive as the face,
 // and the face is caller-supplied. A surface that lets a principal name a
 // face must authorize that face — the world read grant (TKT-DN37J2), not
 // merely the entity's read verdict. The store does not and cannot check it.
-type StateHistoryReader interface {
-	// ListStateVersions is [HistoryReader.ListVersions] for one face.
-	ListStateVersions(ctx context.Context, id string, p entity.Face) ([]VersionMeta, error)
+type HistoryReader interface {
+	// ListVersions returns the version timeline of the face ref addresses,
+	// oldest first, walking rename lineage so a renamed entity's
+	// pre-rename history is included. Every row carries ref.Face in
+	// [VersionMeta.Face]. Returns an empty slice (not an error) when the
+	// face has no history. The face may be live or already deleted.
+	ListVersions(ctx context.Context, ref entity.Ref) ([]VersionMeta, error)
 
-	// GetStateVersion is [HistoryReader.GetVersion] for one face.
-	GetStateVersion(
-		ctx context.Context, id string, p entity.Face, version int,
-	) (*VersionSnapshot, error)
+	// GetVersion returns the full snapshot for a specific 1-based version
+	// ordinal in that face's lineage. Returns ErrNotFound if it has no such
+	// version.
+	GetVersion(ctx context.Context, ref entity.Ref, version int) (*VersionSnapshot, error)
 }
 
 // --- Relation versioning (TKT-92JL8P) ---
@@ -1354,7 +1349,7 @@ type PurgeSelector struct {
 	All         bool   // purge the entire fenced lineage
 }
 
-// VersionPurgeRequest is one entity-version purge. Target is the entity id whose
+// VersionPurgeRequest is one entity-version purge. Ref is the face whose
 // lineage is addressed. Reason is a required operator-supplied justification
 // recorded in the audit trail (the one record that survives a purge). ForceLive
 // overrides the refuse-when-a-live-row-exists guard by writing a no-content
@@ -1362,13 +1357,12 @@ type PurgeSelector struct {
 // returns the target rows WITHOUT deleting. Attribution arrives here from ctx at
 // the boundary — the store never learns the principal by another route.
 type VersionPurgeRequest struct {
-	EntityID string
-
-	// Face names the FACE whose history is purged; zero is the default
-	// face (TKT-C1XUA8). Purge is scoped to one face: each face has its own
-	// fenced lineage, and erasing a sibling's history because it shares
-	// bytes would destroy records the operator did not ask about.
-	Face entity.Face
+	// Ref names the face whose history is purged; Ref{ID: id} is the
+	// implicit face of a faceless type (TKT-C1XUA8). Purge is scoped to one
+	// face: each face has its own fenced lineage, and erasing a sibling's
+	// history because it shares bytes would destroy records the operator did
+	// not ask about.
+	Ref entity.Ref
 
 	Selector      PurgeSelector
 	Reason        string
@@ -1465,11 +1459,6 @@ type RelationVersionPurger interface {
 // not a cross-subsystem service locator.
 type VersionService interface {
 	HistoryReader
-	// StateHistoryReader is part of the umbrella for the same reason the others
-	// are: per-face history is version I/O over the same connection. A backend
-	// that versions entities at all versions their faces — the face is a
-	// coordinate on the row, not a separate capability to negotiate.
-	StateHistoryReader
 	VersionWriter
 	RelationHistoryReader
 	RelationVersionWriter
@@ -1656,27 +1645,4 @@ type TypeResolver interface {
 type EntityTypeSchema struct {
 	Plural        string
 	PropertyOrder []string
-}
-
-// StateGetter is the single-row load [GetEntityAt] needs.
-type StateGetter interface {
-	GetEntityState(ctx context.Context, id string, p entity.Face) (*entity.Entity, error)
-}
-
-// GetEntityAt loads the row an entity ADDRESS names: a bare id, or `ID@face`.
-//
-// For entry points that take an address from a user (CLI arguments, MCP tool
-// input). [EntityReader.GetEntity] takes a bare id only, so handing it an
-// address finds nothing.
-//
-// A string the address grammar rejects is looked up literally at the default
-// face, as entitymanager's getEntityByRef does: a hand-edited file may carry an
-// id the current grammar would refuse, and it must stay readable. A string
-// that still contains the separator is ErrNotFound from every backend.
-func GetEntityAt(ctx context.Context, r StateGetter, addr string) (*entity.Entity, error) {
-	id, face, err := entity.ParseStateRef(addr)
-	if err != nil {
-		return r.GetEntityState(ctx, addr, "")
-	}
-	return r.GetEntityState(ctx, id, face)
 }

@@ -111,7 +111,7 @@ assignments:
 			}
 
 			// The stored entity must remain a secret with its original title.
-			got, err := app.store.GetEntity(context.Background(), "SECRET-1")
+			got, err := app.store.GetEntity(context.Background(), entity.Ref{ID: "SECRET-1"})
 			if err != nil {
 				t.Fatalf("%s: GetEntity(SECRET-1): %v", p.name, err)
 			}
@@ -122,7 +122,7 @@ assignments:
 				t.Fatalf("%s: stored title overwritten to %q", p.name, got.GetString("title"))
 			}
 			// No note-typed entity with the target id may exist.
-			if n, err := app.store.GetEntity(context.Background(), "SECRET-1"); err == nil && n.Type == "note" {
+			if n, err := app.store.GetEntity(context.Background(), entity.Ref{ID: "SECRET-1"}); err == nil && n.Type == "note" {
 				t.Fatalf("%s: SECRET-1 was re-typed to note", p.name)
 			}
 		})

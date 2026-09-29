@@ -39,17 +39,9 @@ func (s *raceCreateStore) UpdateEntity(ctx context.Context, e *entity.Entity) er
 	return s.Store.UpdateEntity(ctx, e)
 }
 
-// GetEntity reports the id as absent so ApplyEntity resolves CREATE intent,
+// GetEntity reports the row as absent so ApplyEntity resolves CREATE intent,
 // while the wrapped store separately holds the seeded winner for verification.
-func (s *raceCreateStore) GetEntity(_ context.Context, _ string) (*entity.Entity, error) {
-	return nil, store.ErrNotFound
-}
-
-// GetEntityState is the probe ApplyEntity actually uses (BUG-HC6I2T); it must
-// report the same absence or the create intent is never resolved.
-func (s *raceCreateStore) GetEntityState(
-	_ context.Context, _ string, _ entity.Face,
-) (*entity.Entity, error) {
+func (s *raceCreateStore) GetEntity(_ context.Context, _ entity.Ref) (*entity.Entity, error) {
 	return nil, store.ErrNotFound
 }
 
@@ -96,7 +88,7 @@ func TestApplyEntity_CreateConflict_RejectsAndDoesNotClobber(t *testing.T) {
 	}
 
 	// The seeded winner must be untouched: still a secret, original title.
-	got, err := inner.GetEntity(context.Background(), "SECRET-1")
+	got, err := inner.GetEntity(context.Background(), entity.Ref{ID: "SECRET-1"})
 	if err != nil {
 		t.Fatalf("GetEntity(SECRET-1): %v", err)
 	}
@@ -139,7 +131,7 @@ func TestApplyEntity_SameTypeCreateConflict_NoClobber(t *testing.T) {
 	if st.updateCalls != 0 {
 		t.Fatalf("same-type create fell through to UpdateEntity %d time(s) — must never clobber", st.updateCalls)
 	}
-	got, err := inner.GetEntity(context.Background(), "NOTE-1")
+	got, err := inner.GetEntity(context.Background(), entity.Ref{ID: "NOTE-1"})
 	if err != nil {
 		t.Fatalf("GetEntity(NOTE-1): %v", err)
 	}
@@ -157,14 +149,7 @@ type raceUpdateStore struct {
 	stored      *entity.Entity
 }
 
-func (s *raceUpdateStore) GetEntity(_ context.Context, _ string) (*entity.Entity, error) {
-	return s.stored, nil
-}
-
-// GetEntityState is the probe ApplyEntity actually uses (BUG-HC6I2T).
-func (s *raceUpdateStore) GetEntityState(
-	_ context.Context, _ string, _ entity.Face,
-) (*entity.Entity, error) {
+func (s *raceUpdateStore) GetEntity(_ context.Context, _ entity.Ref) (*entity.Entity, error) {
 	return s.stored, nil
 }
 

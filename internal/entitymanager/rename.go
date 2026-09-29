@@ -28,7 +28,7 @@ func renameEntity(
 		return planRename(ctx, st, oldID, newID)
 	}
 
-	res, err := st.RenameEntity(ctx, oldID, newID)
+	res, err := st.RenameFamily(ctx, oldID, newID)
 	if err != nil {
 		return nil, translateRenameErr(err, oldID, newID)
 	}

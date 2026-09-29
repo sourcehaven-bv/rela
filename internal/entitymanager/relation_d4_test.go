@@ -131,7 +131,7 @@ func TestDelete_CascadeIdentityEdgeFromFacedSourceNeedsEveryFace(t *testing.T) {
 					if !errors.Is(err, acl.ErrForbidden) {
 						t.Fatalf("DeleteEntity err = %v, want ErrForbidden", err)
 					}
-					if _, gErr := st.GetEntityState(context.Background(), "CTL-1", ""); gErr != nil {
+					if _, gErr := st.GetEntity(context.Background(), entity.Ref{ID: "CTL-1"}); gErr != nil {
 						t.Errorf("CTL-1 after a denied delete: %v", gErr)
 					}
 				})

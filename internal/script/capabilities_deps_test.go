@@ -34,7 +34,7 @@ func (nopMutator) DeleteEntity(context.Context, string, bool) (*entity.DeleteRes
 func (nopMutator) CreateRelation(context.Context, string, string, string, entity.RelationOptions) (*entity.Relation, error) {
 	return nil, errNoMutate
 }
-func (nopMutator) DeleteEntityFace(context.Context, string, entity.Face) (*entity.DeleteResult, error) {
+func (nopMutator) DeleteEntityFace(context.Context, string, entity.Face, bool) (*entity.DeleteResult, error) {
 	return nil, errNoMutate
 }
 func (nopMutator) DeleteRelationState(context.Context, string, entity.Face, string, string) error {

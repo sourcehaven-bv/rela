@@ -85,7 +85,7 @@ func RunFreshnessTests(t *testing.T, f Factory) {
 		waitForClock()
 		// Reads must not advance it — otherwise a consumer rebuilds its index
 		// on every poll.
-		_, err = s.GetEntity(ctx(), "FEAT-001")
+		_, err = s.GetEntity(ctx(), entity.Ref{ID: "FEAT-001"})
 		require.NoError(t, err)
 		_, err = s.CountEntities(ctx(), store.EntityQuery{Faces: store.InWorld(store.DefaultWorld())})
 		require.NoError(t, err)

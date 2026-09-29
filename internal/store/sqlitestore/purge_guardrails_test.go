@@ -45,7 +45,7 @@ func TestPurgeDryRunNeverDeletes(t *testing.T) {
 	seedV(t, v, "", store.VersionOpRename, "v2")
 
 	res, err := v.PurgeVersions(t.Context(), store.VersionPurgeRequest{
-		EntityID: "FEAT-1", Selector: store.PurgeSelector{All: true},
+		Ref: entity.Ref{ID: "FEAT-1"}, Selector: store.PurgeSelector{All: true},
 		Reason: "r", DryRun: true, ForceLive: true,
 	})
 	require.NoError(t, err)
@@ -55,7 +55,7 @@ func TestPurgeDryRunNeverDeletes(t *testing.T) {
 	require.True(t, res.LiveRowExists, "DryRun must still report the live row")
 	require.NotEmpty(t, res.Targets, "DryRun must still resolve targets for the caller to render")
 
-	got, err := v.ListVersions(t.Context(), "FEAT-1")
+	got, err := v.ListVersions(t.Context(), entity.Ref{ID: "FEAT-1"})
 	require.NoError(t, err)
 	require.Len(t, got, 2, "DryRun removed history")
 }
@@ -69,13 +69,13 @@ func TestPurgeRefusesARenameRowEvenWithForceLive(t *testing.T) {
 	seedV(t, v, "", store.VersionOpRename, "renamed")
 
 	res, err := v.PurgeVersions(t.Context(), store.VersionPurgeRequest{
-		EntityID: "FEAT-1", Selector: store.PurgeSelector{All: true},
+		Ref: entity.Ref{ID: "FEAT-1"}, Selector: store.PurgeSelector{All: true},
 		Reason: "r", ForceLive: true,
 	})
 	require.NoError(t, err)
 	require.True(t, res.RenameInTargets)
 	require.Zero(t, res.Purged, "a rename row was purged; the lineage walk would fork")
-	got, err := v.ListVersions(t.Context(), "FEAT-1")
+	got, err := v.ListVersions(t.Context(), entity.Ref{ID: "FEAT-1"})
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 }
@@ -89,7 +89,7 @@ func TestPurgeRefusesALiveRowWithoutForceLive(t *testing.T) {
 	seedV(t, v, "", store.VersionOpUpdate, "v1")
 
 	res, err := v.PurgeVersions(t.Context(), store.VersionPurgeRequest{
-		EntityID: "FEAT-1", Selector: store.PurgeSelector{All: true}, Reason: "r",
+		Ref: entity.Ref{ID: "FEAT-1"}, Selector: store.PurgeSelector{All: true}, Reason: "r",
 	})
 	require.NoError(t, err)
 	require.True(t, res.LiveRowExists)
@@ -106,12 +106,12 @@ func TestPurgeForceLiveIsScopedToOneFace(t *testing.T) {
 	seedV(t, v, "draft", store.VersionOpUpdate, "draft")
 
 	_, err := v.PurgeVersions(t.Context(), store.VersionPurgeRequest{
-		EntityID: "FEAT-1", Face: "", Selector: store.PurgeSelector{All: true},
+		Ref: entity.Ref{ID: "FEAT-1", Face: ""}, Selector: store.PurgeSelector{All: true},
 		Reason: "r", ForceLive: true,
 	})
 	require.NoError(t, err)
 
-	draft, err := v.ListStateVersions(t.Context(), "FEAT-1", "draft")
+	draft, err := v.ListVersions(t.Context(), entity.Ref{ID: "FEAT-1", Face: "draft"})
 	require.NoError(t, err)
 	require.Len(t, draft, 1, "purging the default face erased the draft face's history")
 	require.Equal(t, store.VersionOpUpdate, draft[0].Op)
@@ -127,12 +127,12 @@ func TestPurgeRefusesAnEmptySelector(t *testing.T) {
 	seedV(t, v, "", store.VersionOpUpdate, "v1")
 
 	_, err := v.PurgeVersions(t.Context(), store.VersionPurgeRequest{
-		EntityID: "FEAT-1", Reason: "r",
+		Ref: entity.Ref{ID: "FEAT-1"}, Reason: "r",
 	})
 	require.Error(t, err, "an empty selector must be refused, not interpreted")
 	require.Contains(t, err.Error(), "selector")
 
-	got, listErr := v.ListVersions(t.Context(), "FEAT-1")
+	got, listErr := v.ListVersions(t.Context(), entity.Ref{ID: "FEAT-1"})
 	require.NoError(t, listErr)
 	require.Len(t, got, 1, "the refused purge still deleted rows")
 }
@@ -156,11 +156,11 @@ func TestPurgeAllUsesTheFencedLineage(t *testing.T) {
 	// Lifetime B: a brand-new, unrelated FEAT-1.
 	seedV(t, v, "", store.VersionOpCreate, "new unrelated life")
 
-	before, err := v.ListVersions(t.Context(), "FEAT-1")
+	before, err := v.ListVersions(t.Context(), entity.Ref{ID: "FEAT-1"})
 	require.NoError(t, err)
 
 	res, err := v.PurgeVersions(t.Context(), store.VersionPurgeRequest{
-		EntityID: "FEAT-1", Selector: store.PurgeSelector{All: true},
+		Ref: entity.Ref{ID: "FEAT-1"}, Selector: store.PurgeSelector{All: true},
 		Reason: "r", ForceLive: true,
 	})
 	require.NoError(t, err)
@@ -168,12 +168,12 @@ func TestPurgeAllUsesTheFencedLineage(t *testing.T) {
 	// Whatever was purged, the FEAT-2 lineage's own rows must be reachable
 	// only through their own lineage — a flat id delete would have taken rows
 	// the FEAT-1 fence does not own.
-	after, err := v.ListVersions(t.Context(), "FEAT-1")
+	after, err := v.ListVersions(t.Context(), entity.Ref{ID: "FEAT-1"})
 	require.NoError(t, err)
 	require.Lessf(t, len(after), len(before)+1,
 		"purge grew the history it was asked to erase (purged=%d)", res.Purged)
 
-	two, err := v.ListVersions(t.Context(), "FEAT-2")
+	two, err := v.ListVersions(t.Context(), entity.Ref{ID: "FEAT-2"})
 	require.NoError(t, err)
 	require.NotEmpty(t, two,
 		"purging FEAT-1's fenced lineage destroyed FEAT-2's history: the delete is keyed on the bare id")

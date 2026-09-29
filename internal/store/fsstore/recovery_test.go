@@ -46,12 +46,12 @@ func TestDeleteEntity_RelationRemoveError_FailsSecure(t *testing.T) {
 	defer s2.Close()
 
 	// Cascade delete must fail (the relation file can't be removed)...
-	_, err = s2.DeleteEntity(ctx, "REQ-1", true)
+	_, err = s2.DeleteFamily(ctx, "REQ-1", true)
 	require.Error(t, err)
 
 	// ...and the entity must still exist — not orphaned behind a deleted
 	// entity. The relation is still present too.
-	_, err = s2.GetEntity(ctx, "REQ-1")
+	_, err = s2.GetEntity(ctx, entity.Ref{ID: "REQ-1"})
 	require.NoError(t, err, "entity must survive a failed cascade delete")
 	_, err = s2.GetRelation(ctx, "SOL-1", "implements", "REQ-1")
 	require.NoError(t, err, "relation must survive a failed cascade delete")
@@ -98,7 +98,7 @@ func TestDeleteEntity_PartialCascade_ReportsWhatWasRemoved(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { require.NoError(t, s2.Close()) }()
 
-	res, err := s2.DeleteEntity(ctx, "REQ-1", true)
+	res, err := s2.DeleteFamily(ctx, "REQ-1", true)
 	require.Error(t, err, "the cascade must still fail")
 
 	// The partial result names exactly the relation that came off disk.
@@ -114,7 +114,7 @@ func TestDeleteEntity_PartialCascade_ReportsWhatWasRemoved(t *testing.T) {
 	require.Error(t, err, "SOL-1's relation file was removed and stays removed")
 	_, err = s2.GetRelation(ctx, "SOL-2", "implements", "REQ-1")
 	require.NoError(t, err, "SOL-2's relation must survive")
-	_, err = s2.GetEntity(ctx, "REQ-1")
+	_, err = s2.GetEntity(ctx, entity.Ref{ID: "REQ-1"})
 	require.NoError(t, err, "the entity must survive a failed cascade delete")
 }
 
@@ -144,11 +144,57 @@ func TestDeleteEntity_PartialCascade_FirstRelationFails(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { require.NoError(t, s2.Close()) }()
 
-	res, err := s2.DeleteEntity(ctx, "REQ-1", true)
+	res, err := s2.DeleteFamily(ctx, "REQ-1", true)
 	require.Error(t, err)
 	require.NotNil(t, res)
 	assert.Empty(t, res.DeletedRelations, "nothing was removed, so nothing may be reported")
 	assert.Empty(t, res.DeletedEntities)
+}
+
+// A last-face delete takes every incident edge, so a failure part-way leaves
+// some relation files gone. Like DeleteFamily it reports those, drops them
+// from the index, and keeps the face (RR-2466U1, TKT-A23L87).
+func TestDeleteFace_LastFacePartialCascade_ReportsWhatWasRemoved(t *testing.T) {
+	mem := storage.NewMemFS()
+	ctx := context.Background()
+
+	s1 := openStore(t, mem)
+	require.NoError(t, s1.CreateEntity(ctx, entity.New("REQ-1", "requirement")))
+	require.NoError(t, s1.CreateEntity(ctx, entity.New("SOL-1", "solution")))
+	require.NoError(t, s1.CreateEntity(ctx, entity.New("SOL-2", "solution")))
+	for _, from := range []string{"SOL-1", "SOL-2"} {
+		_, err := s1.CreateRelation(ctx, from, "implements", "REQ-1", nil)
+		require.NoError(t, err)
+	}
+	require.NoError(t, s1.Close())
+
+	errFS := storage.NewErrorFS(mem)
+	errFS.RemoveError = errors.New("simulated I/O failure")
+	errFS.RemoveErrorOn = func(path string) bool {
+		return strings.Contains(path, "/relations/") && strings.Contains(path, "SOL-2")
+	}
+	rooted, err := storage.NewRootedFS(errFS, "/")
+	require.NoError(t, err)
+	cfg := newConfig(mem)
+	cfg.FS = errFS
+	cfg.Rooted = rooted
+	s2, err := fsstore.New(cfg)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, s2.Close()) }()
+
+	res, err := s2.DeleteFace(ctx, entity.Ref{ID: "REQ-1"})
+	require.Error(t, err)
+	require.NotNil(t, res)
+	require.Len(t, res.DeletedRelations, 1)
+	assert.Equal(t, "SOL-1", res.DeletedRelations[0].From)
+	assert.Empty(t, res.DeletedEntities)
+
+	_, err = s2.GetRelation(ctx, "SOL-1", "implements", "REQ-1")
+	require.Error(t, err, "the index must not list a removed relation")
+	_, err = s2.GetRelation(ctx, "SOL-2", "implements", "REQ-1")
+	require.NoError(t, err)
+	_, err = s2.GetEntity(ctx, entity.Ref{ID: "REQ-1"})
+	require.NoError(t, err, "the face survives a failed delete")
 }
 
 // --- Orphaned temp file cleanup ---
@@ -173,7 +219,7 @@ func TestRecovery_OrphanedEntityTempFile(t *testing.T) {
 	assert.True(t, isNotExist(err), "orphaned .new file should be cleaned up on startup")
 
 	// Original entity still accessible.
-	_, err = s2.GetEntity(ctx, "REQ-1")
+	_, err = s2.GetEntity(ctx, entity.Ref{ID: "REQ-1"})
 	require.NoError(t, err)
 }
 
@@ -222,7 +268,7 @@ func TestRecovery_OrphanedSafeFSTempFile(t *testing.T) {
 	}
 
 	// Pre-existing entity still accessible.
-	_, err := s2.GetEntity(ctx, "REQ-1")
+	_, err := s2.GetEntity(ctx, entity.Ref{ID: "REQ-1"})
 	require.NoError(t, err)
 }
 
@@ -249,7 +295,7 @@ title: Orphaned entity
 	s2 := openStore(t, fs)
 	defer s2.Close()
 
-	got, err := s2.GetEntity(ctx, "REQ-1")
+	got, err := s2.GetEntity(ctx, entity.Ref{ID: "REQ-1"})
 	require.NoError(t, err)
 	assert.Equal(t, "Orphaned entity", got.Properties["title"])
 }
@@ -318,10 +364,10 @@ to: REQ-NEW
 	defer s2.Close()
 
 	// Both entities should be accessible (the store doesn't know about the rename).
-	_, err = s2.GetEntity(ctx, "REQ-OLD")
+	_, err = s2.GetEntity(ctx, entity.Ref{ID: "REQ-OLD"})
 	require.NoError(t, err, "old entity should still be accessible")
 
-	_, err = s2.GetEntity(ctx, "REQ-NEW")
+	_, err = s2.GetEntity(ctx, entity.Ref{ID: "REQ-NEW"})
 	require.NoError(t, err, "new entity should be accessible")
 
 	// Both relation variants accessible.
@@ -359,7 +405,7 @@ func TestRecovery_PartialCascadeDelete(t *testing.T) {
 	s2 := openStore(t, fs)
 	defer s2.Close()
 
-	_, err = s2.GetEntity(ctx, "REQ-1")
+	_, err = s2.GetEntity(ctx, entity.Ref{ID: "REQ-1"})
 	require.ErrorIs(t, err, store.ErrNotFound)
 
 	// The surviving orphaned relation is still loadable.
@@ -415,9 +461,9 @@ func TestRecovery_SearchIndexRebuilt(t *testing.T) {
 	assert.Equal(t, "REQ-2", results[0].ID)
 }
 
-// --- Property cache rebuilt after crash (stale cache) ---
+// --- Index rebuilt after crash (stale index) ---
 
-func TestRecovery_PropertyCacheAfterCrashMidUpdate(t *testing.T) {
+func TestRecovery_IndexAfterCrashMidUpdate(t *testing.T) {
 	fs := storage.NewMemFS()
 	ctx := context.Background()
 
@@ -441,9 +487,9 @@ status: closed
 	s2 := openStore(t, fs)
 	defer s2.Close()
 
-	vals, err := s2.PropertyValues(ctx, "status", 0)
+	got, err := s2.GetEntity(ctx, entity.Ref{ID: "T-1"})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"closed"}, vals)
+	assert.Equal(t, "closed", got.Properties["status"])
 }
 
 // --- Multiple temp files from repeated crash-restart cycles ---
@@ -483,7 +529,7 @@ type: requirement
 
 	// Valid entity untouched.
 	ctx := context.Background()
-	_, err := s2.GetEntity(ctx, "REQ-3")
+	_, err := s2.GetEntity(ctx, entity.Ref{ID: "REQ-3"})
 	require.NoError(t, err)
 }
 
@@ -496,7 +542,7 @@ func TestRecovery_OrphanedAttachmentAfterEntityDelete(t *testing.T) {
 	// Create entity with attachment.
 	s1 := openStore(t, fs)
 	require.NoError(t, s1.CreateEntity(ctx, entity.New("DOC-1", "document")))
-	require.NoError(t, s1.AttachFile(ctx, "DOC-1", "diagram", "arch.png",
+	require.NoError(t, s1.AttachFamilyFile(ctx, "DOC-1", "diagram", "arch.png",
 		strings.NewReader("PNG-DATA")))
 	require.NoError(t, s1.Close())
 
@@ -507,13 +553,13 @@ func TestRecovery_OrphanedAttachmentAfterEntityDelete(t *testing.T) {
 	s2 := openStore(t, fs)
 	defer s2.Close()
 
-	_, err := s2.GetEntity(ctx, "DOC-1")
+	_, err := s2.GetEntity(ctx, entity.Ref{ID: "DOC-1"})
 	require.ErrorIs(t, err, store.ErrNotFound)
 
 	// Attachment is still physically on disk (orphaned) but the store
 	// loads attachment index from walking the directory, so it's indexed.
 	// However, the entity doesn't exist, so operations should handle gracefully.
-	_, err = s2.ListAttachments(ctx, "DOC-1")
+	_, err = s2.ListFamilyAttachments(ctx, "DOC-1")
 	require.ErrorIs(t, err, store.ErrNotFound, "attachments for missing entity should return not found")
 }
 
@@ -551,7 +597,7 @@ func TestDeleteEntity_AttachmentDirFailure_StillSucceeds(t *testing.T) {
 
 	s1 := openStore(t, mem)
 	require.NoError(t, s1.CreateEntity(ctx, entity.New("REQ-1", "requirement")))
-	require.NoError(t, s1.AttachFile(ctx, "REQ-1", "spec", "a.txt", strings.NewReader("x")))
+	require.NoError(t, s1.AttachFamilyFile(ctx, "REQ-1", "spec", "a.txt", strings.NewReader("x")))
 	require.NoError(t, s1.Close())
 
 	// Fail only inside the attachment tree, so relations and the entity file
@@ -568,12 +614,12 @@ func TestDeleteEntity_AttachmentDirFailure_StillSucceeds(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { require.NoError(t, s2.Close()) }()
 
-	res, err := s2.DeleteEntity(ctx, "REQ-1", true)
+	res, err := s2.DeleteFamily(ctx, "REQ-1", true)
 	require.NoError(t, err, "attachment cleanup failure must not fail the delete")
 	require.NotNil(t, res)
 	require.Len(t, res.DeletedEntities, 1,
 		"the entity was removed, so it must be reported — anything else is the under-reporting #929 fixes")
 
-	_, err = s2.GetEntity(ctx, "REQ-1")
+	_, err = s2.GetEntity(ctx, entity.Ref{ID: "REQ-1"})
 	require.Error(t, err, "the entity really is gone")
 }

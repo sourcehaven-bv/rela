@@ -347,11 +347,11 @@ func TestFacedAddress_PatchWritesTheNamedFace(t *testing.T) {
 	if got.Self != "/api/v1/policys/POL-1@published" {
 		t.Errorf("PATCH response _self = %q, want the face that was written", got.Self)
 	}
-	pub, err := app.store.GetEntityState(ctx, "POL-1", "published")
+	pub, err := app.store.GetEntity(ctx, entity.Ref{ID: "POL-1", Face: "published"})
 	if err != nil || pub.Properties["title"] != "PUBLISHED v2" {
 		t.Errorf("published face after PATCH: %v %v, want PUBLISHED v2", pub, err)
 	}
-	draft, err := app.store.GetEntityState(ctx, "POL-1", "draft")
+	draft, err := app.store.GetEntity(ctx, entity.Ref{ID: "POL-1", Face: "draft"})
 	if err != nil || draft.Properties["title"] != "DRAFT TEXT" {
 		t.Errorf("the draft must be untouched by a write to the published face; got %v %v", draft, err)
 	}
@@ -362,7 +362,7 @@ func TestFacedAddress_PatchWritesTheNamedFace(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("PATCH POL-1@draft = %d, want 200 (%s)", rec.Code, rec.Body)
 	}
-	if draft, _ = app.store.GetEntityState(ctx, "POL-1", "draft"); draft.Properties["title"] != "DRAFT v2" {
+	if draft, _ = app.store.GetEntity(ctx, entity.Ref{ID: "POL-1", Face: "draft"}); draft.Properties["title"] != "DRAFT v2" {
 		t.Errorf("POL-1@draft must write the draft row; got %v", draft.Properties["title"])
 	}
 
@@ -475,7 +475,7 @@ func TestFacedAddress_WritesDenyAsNotFound(t *testing.T) {
 				tc.name, existing.Body, missing.Body)
 		}
 	}
-	if _, err := app.store.GetEntityState(context.Background(), "POL-1", "draft"); err != nil {
+	if _, err := app.store.GetEntity(context.Background(), entity.Ref{ID: "POL-1", Face: "draft"}); err != nil {
 		t.Errorf("the denied delete must not have removed the draft: %v", err)
 	}
 }
@@ -515,19 +515,19 @@ func TestFacedAddress_DeleteRemovesOnlyTheFace(t *testing.T) {
 	if rec = deleteEntityAs(alice, t, app, d, "policy", "policys", "POL-1@published"); rec.Code != http.StatusForbidden {
 		t.Errorf("DELETE POL-1@published with a draft-only grant = %d, want 403", rec.Code)
 	}
-	if _, err := app.store.GetEntityState(ctx, "POL-1", "published"); err != nil {
+	if _, err := app.store.GetEntity(ctx, entity.Ref{ID: "POL-1", Face: "published"}); err != nil {
 		t.Fatalf("the denied delete must not have removed the face: %v", err)
 	}
 
 	if rec = deleteEntityAs(bob, t, app, d, "policy", "policys", "POL-1@published"); rec.Code != http.StatusNoContent {
 		t.Fatalf("DELETE POL-1@published = %d, want 204 (%s)", rec.Code, rec.Body)
 	}
-	if _, err := app.store.GetEntityState(ctx, "POL-1", "published"); err == nil {
+	if _, err := app.store.GetEntity(ctx, entity.Ref{ID: "POL-1", Face: "published"}); err == nil {
 		t.Errorf("the published face must be gone")
 	}
 	// The claim the whole test is named for: removing one face leaves the
 	// entity's other faces standing.
-	if _, err := app.store.GetEntityState(ctx, "POL-1", "draft"); err != nil {
+	if _, err := app.store.GetEntity(ctx, entity.Ref{ID: "POL-1", Face: "draft"}); err != nil {
 		t.Errorf("deleting a face must leave the entity's other faces standing: %v", err)
 	}
 	if rec = deleteEntityAs(bob, t, app, d, "policy", "policys", "POL-1@published"); rec.Code != http.StatusNotFound {
@@ -540,7 +540,7 @@ func TestFacedAddress_DeleteRemovesOnlyTheFace(t *testing.T) {
 	if rec = deleteEntityAs(bob, t, app, d, "policy", "policys", "POL-1@draft"); rec.Code != http.StatusNoContent {
 		t.Fatalf("DELETE POL-1@draft = %d, want 204 (%s)", rec.Code, rec.Body)
 	}
-	if _, err := app.store.GetEntityState(ctx, "POL-1", "draft"); err == nil {
+	if _, err := app.store.GetEntity(ctx, entity.Ref{ID: "POL-1", Face: "draft"}); err == nil {
 		t.Errorf("the draft face must be gone")
 	}
 }

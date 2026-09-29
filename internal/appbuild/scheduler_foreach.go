@@ -64,16 +64,13 @@ func (s *Services) ScheduledForEachPrincipal(ctx context.Context, entityID strin
 	// A principal is an entity, not one of its faces, so the type check
 	// reads the family's headers: a faced user type has no zero-face row
 	// (DEC-NPZICR).
+	headers, err := store.FamilyHeaders(ctx, s.store, entityID)
+	if err != nil {
+		return "", err
+	}
 	var typ string
-	q := store.EntityQuery{IDs: []string{entityID}, Faces: store.AllFaces()}
-	for h, err := range store.ListEntityHeaders(ctx, s.store, q) {
-		if err != nil {
-			return "", err
-		}
-		if h.ID == entityID {
-			typ = h.Type
-			break
-		}
+	if len(headers) > 0 {
+		typ = headers[0].Type
 	}
 	if typ == "" || s.aclPolicy == nil || s.aclPolicy.UserEntityType == "" || typ != s.aclPolicy.UserEntityType {
 		return "", nil

@@ -133,7 +133,7 @@ func TestSearchIndex_DeleteRemovesFromSearch(t *testing.T) {
 	e.SetString("title", "Deletable thing")
 	require.NoError(t, s.CreateEntity(ctx, e))
 
-	_, err := s.DeleteEntity(ctx, "REQ-1", false)
+	_, err := s.DeleteFamily(ctx, "REQ-1", false)
 	require.NoError(t, err)
 
 	results := make([]search.Hit, 0)
@@ -152,7 +152,7 @@ func TestSearchIndex_RenameUpdatesSearch(t *testing.T) {
 	e.SetString("title", "Renameable entity")
 	require.NoError(t, s.CreateEntity(ctx, e))
 
-	_, err := s.RenameEntity(ctx, "REQ-OLD", "REQ-NEW")
+	_, err := s.RenameFamily(ctx, "REQ-OLD", "REQ-NEW")
 	require.NoError(t, err)
 
 	results := make([]search.Hit, 0)

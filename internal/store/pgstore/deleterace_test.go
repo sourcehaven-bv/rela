@@ -70,7 +70,7 @@ func TestDeleteEntity_RacingStateCreateIsAtomicPerFamily(t *testing.T) {
 		}()
 		go func() {
 			defer wg.Done()
-			_, _ = s.DeleteEntity(ctx, id, true)
+			_, _ = s.DeleteFamily(ctx, id, true)
 		}()
 		wg.Wait()
 

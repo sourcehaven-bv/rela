@@ -65,26 +65,24 @@ func (s *FSStore) UpdateEntityIf(
 	return s.updateEntityIf(ctx, e, cond)
 }
 
-// DeleteEntity implements store.EntityWriter.
-// Returns store.ErrNotFound if the entity does not exist.
-func (s *FSStore) DeleteEntity(ctx context.Context, id string, cascade bool) (*store.DeleteResult, error) {
+// DeleteFamily implements store.EntityWriter.
+// Returns store.ErrNotFound if no face of id exists.
+func (s *FSStore) DeleteFamily(ctx context.Context, id string, cascade bool) (*store.DeleteResult, error) {
 	defer s.lockTx()()
 	return s.deleteEntity(ctx, id, cascade)
 }
 
-// DeleteEntityState implements store.EntityWriter.
+// DeleteFace implements store.EntityWriter.
 // Returns store.ErrNotFound if that face does not exist.
-func (s *FSStore) DeleteEntityState(
-	ctx context.Context, id string, p entity.Face,
-) (*store.DeleteResult, error) {
+func (s *FSStore) DeleteFace(ctx context.Context, ref entity.Ref) (*store.DeleteResult, error) {
 	defer s.lockTx()()
-	return s.deleteEntityState(ctx, id, p)
+	return s.deleteFace(ctx, ref)
 }
 
-// RenameEntity implements store.EntityWriter.
+// RenameFamily implements store.EntityWriter.
 // Returns store.ErrNotFound if oldID is absent, store.ErrConflict if
 // newID exists.
-func (s *FSStore) RenameEntity(ctx context.Context, oldID, newID string) (*store.RenameResult, error) {
+func (s *FSStore) RenameFamily(ctx context.Context, oldID, newID string) (*store.RenameResult, error) {
 	defer s.lockTx()()
 	return s.renameEntity(ctx, oldID, newID)
 }
@@ -127,14 +125,14 @@ func (s *FSStore) DeleteRelationState(
 	return s.deleteRelationState(ctx, from, p, relType, to)
 }
 
-// AttachFile implements store.AttachmentManager.
-func (s *FSStore) AttachFile(ctx context.Context, entityID, property, fileName string, r io.Reader) error {
+// AttachFamilyFile implements store.AttachmentManager.
+func (s *FSStore) AttachFamilyFile(ctx context.Context, entityID, property, fileName string, r io.Reader) error {
 	defer s.lockTx()()
 	return s.attachFile(ctx, entityID, property, fileName, r)
 }
 
-// DeleteAttachment implements store.AttachmentManager.
-func (s *FSStore) DeleteAttachment(ctx context.Context, entityID, property, fileName string) error {
+// DeleteFamilyAttachment implements store.AttachmentManager.
+func (s *FSStore) DeleteFamilyAttachment(ctx context.Context, entityID, property, fileName string) error {
 	defer s.lockTx()()
 	return s.deleteAttachment(ctx, entityID, property, fileName)
 }
@@ -164,17 +162,15 @@ func (t txStore) UpdateEntityIf(
 	return t.updateEntityIf(ctx, e, cond)
 }
 
-func (t txStore) DeleteEntity(ctx context.Context, id string, cascade bool) (*store.DeleteResult, error) {
+func (t txStore) DeleteFamily(ctx context.Context, id string, cascade bool) (*store.DeleteResult, error) {
 	return t.deleteEntity(ctx, id, cascade)
 }
 
-func (t txStore) DeleteEntityState(
-	ctx context.Context, id string, p entity.Face,
-) (*store.DeleteResult, error) {
-	return t.deleteEntityState(ctx, id, p)
+func (t txStore) DeleteFace(ctx context.Context, ref entity.Ref) (*store.DeleteResult, error) {
+	return t.deleteFace(ctx, ref)
 }
 
-func (t txStore) RenameEntity(ctx context.Context, oldID, newID string) (*store.RenameResult, error) {
+func (t txStore) RenameFamily(ctx context.Context, oldID, newID string) (*store.RenameResult, error) {
 	return t.renameEntity(ctx, oldID, newID)
 }
 
@@ -206,11 +202,11 @@ func (t txStore) DeleteRelationState(
 	return t.deleteRelationState(ctx, from, p, relType, to)
 }
 
-func (t txStore) AttachFile(ctx context.Context, entityID, property, fileName string, r io.Reader) error {
+func (t txStore) AttachFamilyFile(ctx context.Context, entityID, property, fileName string, r io.Reader) error {
 	return t.attachFile(ctx, entityID, property, fileName, r)
 }
 
-func (t txStore) DeleteAttachment(ctx context.Context, entityID, property, fileName string) error {
+func (t txStore) DeleteFamilyAttachment(ctx context.Context, entityID, property, fileName string) error {
 	return t.deleteAttachment(ctx, entityID, property, fileName)
 }
 

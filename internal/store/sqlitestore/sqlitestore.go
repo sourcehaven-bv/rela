@@ -85,7 +85,7 @@ const timeFmt = time.RFC3339Nano
 // fail with no error anywhere. Still a net -2 against the pre-split count.
 //
 // The content-states surface (TKT-DOFYR1 / TKT-C1XUA8 / TKT-WAV8XP) is the
-// latest interface growth: GetEntityState, DeleteEntityState and
+// latest interface growth: the per-face read, DeleteFace and
 // DeleteRelationState are store.Store methods, and each brought its own locked
 // helper plus the family/relation scan helpers the family-wide semantics need.
 // Interface-driven again, so the numbers move with store.Store rather than
@@ -126,8 +126,8 @@ const timeFmt = time.RFC3339Nano
 // they must live on this type. The SQL they run is built by free functions in
 // graphsql.go.
 //
-//plimsoll:max-methods=58
-//plimsoll:max-exported-methods=39
+//plimsoll:max-methods=56
+//plimsoll:max-exported-methods=37
 type Store struct {
 	db *sql.DB
 

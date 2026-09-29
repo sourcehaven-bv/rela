@@ -68,7 +68,7 @@ func (PanicOnUse) DeleteRelation(context.Context, string, string, string) error 
 }
 
 // DeleteEntityFace panics.
-func (PanicOnUse) DeleteEntityFace(context.Context, string, entity.Face) (*entity.DeleteResult, error) {
+func (PanicOnUse) DeleteEntityFace(context.Context, string, entity.Face, bool) (*entity.DeleteResult, error) {
 	panic("entitymanagertest.PanicOnUse.DeleteEntityFace: not expected in this test")
 }
 

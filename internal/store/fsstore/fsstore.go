@@ -144,17 +144,17 @@ type attachMeta struct {
 // the interface size as the non-interface public methods
 // (FormatEntity/Relation, Start/StopWatching) move to composed helpers.
 //
-// (95 → 102 / 33 → 34 with content states, TKT-DOFYR1: GetEntityState
-// joined the mandated store.Store interface, and the state-family
-// helpers — loadEntityMeta/loadRelationMeta/relationFileKeyMeta/
+// (95 → 102 / 33 → 34 with content states, TKT-DOFYR1: a per-face read
+// (GetEntity on a Ref since TKT-KQXVF7) joined the mandated store.Store
+// interface, and the state-family helpers — loadEntityMeta/loadRelationMeta/relationFileKeyMeta/
 // stateFamily/emitFamilyDeleted/rewriteRelationFiles — serve that
 // contract change. Interface growth, not internal sprawl; keep
 // ratcheting the pre-existing surplus down per TKT-N0IKN9.)
 //
 // (+2 methods / +2 exported with per-face delete, TKT-C1XUA8:
-// DeleteEntityState and DeleteRelationState joined the mandated
-// store.Store interface. Required-interface exception, not accreted
-// API — the counts ratchet only if store.Store itself narrows.)
+// DeleteFace and DeleteRelationState joined the mandated store.Store
+// interface. Required-interface exception, not accreted API — the counts
+// ratchet only if store.Store itself narrows.)
 //
 // +1 (TKT-9KZGJO): per-face index notification joined the observer
 // dispatch when indexers stopped skipping non-default faces. One
@@ -172,7 +172,7 @@ type attachMeta struct {
 // (92 → 93, TKT-A23L87: unexported forgetStates added — the entity-side
 // counterpart to forgetRelations, so a partially-failed cascade delete can
 // drop the index entries for states already off disk. It mutates the index
-// (s.entities, s.entityOrder, s.propCache) under s.mu, so it belongs on the
+// (s.entities, s.entityOrder) under s.mu, so it belongs on the
 // receiver rather than beside it.)
 //
 // +1 exported / +2 methods (TKT-34XS2R): UpdateEntityIf joined the mandated
@@ -181,8 +181,8 @@ type attachMeta struct {
 // CAS precondition has to be evaluated atomically with the write, so it
 // cannot live anywhere but on the type that owns the write.
 //
-//plimsoll:max-methods=97
-//plimsoll:max-exported-methods=37
+//plimsoll:max-methods=94
+//plimsoll:max-exported-methods=35
 type FSStore struct {
 	// rooted is the validated-key I/O surface. Every read, write,
 	// directory op, and remove that operates on files under the
@@ -223,8 +223,7 @@ type FSStore struct {
 	entityOrder   []string
 	relations     map[string]relationMeta // key (from--type--to) → meta
 	relationOrder []string
-	attachments   map[string]attachMeta     // "entityID/property" → meta
-	propCache     map[string]map[string]int // property → value → count
+	attachments   map[string]attachMeta // "entityID/property" → meta
 
 	// observers notified synchronously on entity writes
 	observers []store.EntityObserver
@@ -311,7 +310,6 @@ func New(cfg Config) (*FSStore, error) {
 		entities:           make(map[string]entityMeta),
 		relations:          make(map[string]relationMeta),
 		attachments:        make(map[string]attachMeta),
-		propCache:          make(map[string]map[string]int),
 		subscribers:        make(map[int]chan store.Event),
 		echoes:             newEchoTracker(recentHashCapacity),
 	}

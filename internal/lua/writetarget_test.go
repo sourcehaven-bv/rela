@@ -56,9 +56,19 @@ func TestWriteTargetReadable(t *testing.T) {
 }
 
 // rawAddressReader is an ungated EntityReader without Family: it reads an
-// address with store.GetEntityAt.
+// address with readAddress.
 type rawAddressReader struct{ store.Store }
 
 func (r rawAddressReader) GetAddress(ctx context.Context, addr string) (*entity.Entity, error) {
-	return store.GetEntityAt(ctx, r.Store, addr)
+	return readAddress(ctx, r.Store, addr)
+}
+
+// readAddress loads the row an address (`ID` or `ID@face`) names. An address
+// that does not parse is ErrNotFound, as it is for the store.
+func readAddress(ctx context.Context, s store.Store, addr string) (*entity.Entity, error) {
+	ref, err := entity.ParseRef(addr)
+	if err != nil {
+		return nil, store.ErrNotFound
+	}
+	return s.GetEntity(ctx, ref)
 }

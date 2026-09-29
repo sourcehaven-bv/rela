@@ -871,7 +871,7 @@ func TestBuildStoreRelations_ReadBudget(t *testing.T) {
 				t.Fatalf("target %+v lacks its title", target)
 			}
 		}
-		if calls := st.Calls(); calls["ListEntities"]+calls["GetEntityState"]+calls["GetEntity"] != 0 {
+		if calls := st.Calls(); calls["ListEntities"]+calls["GetEntity"] != 0 {
 			t.Errorf("a neighbor title loaded a body: %s", st)
 		}
 		return st.Reads()

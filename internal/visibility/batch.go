@@ -72,11 +72,7 @@ func (r *Resolver) ResolveHeaders(
 // every fault as a failed request (a 500, not a per-id answer), which then
 // says nothing about which id exists.
 func (r *Resolver) ReadableTypes(ctx context.Context, ids []string) (map[string]string, error) {
-	refs := make([]entity.Ref, len(ids))
-	for i, id := range ids {
-		refs[i] = entity.Ref{ID: id}
-	}
-	faces, err := r.scanHeaders(ctx, refIDs(refs), func(_ string, err error) error { return err })
+	faces, err := r.scanHeaders(ctx, distinctIDs(ids), func(_ string, err error) error { return err })
 	if err != nil {
 		return nil, err
 	}
@@ -131,15 +127,24 @@ func wellFormed(refs []entity.Ref) []entity.Ref {
 
 // refIDs returns the distinct non-empty ids of refs, in first-seen order.
 func refIDs(refs []entity.Ref) []string {
-	seen := make(map[string]bool, len(refs))
-	var ids []string
-	for _, ref := range refs {
-		if ref.ID != "" && !seen[ref.ID] {
-			seen[ref.ID] = true
-			ids = append(ids, ref.ID)
+	ids := make([]string, len(refs))
+	for i, ref := range refs {
+		ids[i] = ref.ID
+	}
+	return distinctIDs(ids)
+}
+
+// distinctIDs returns the distinct non-empty ids, in first-seen order.
+func distinctIDs(ids []string) []string {
+	seen := make(map[string]bool, len(ids))
+	var out []string
+	for _, id := range ids {
+		if id != "" && !seen[id] {
+			seen[id] = true
+			out = append(out, id)
 		}
 	}
-	return ids
+	return out
 }
 
 // readableHeaders reads every stored face header of ids in one query and
@@ -152,7 +157,7 @@ func (r *Resolver) readableHeaders(
 	ctx context.Context, ids []string,
 ) (map[string]map[entity.Face]store.EntityHeader, bool) {
 	out, err := r.scanHeaders(ctx, ids, func(typ string, err error) error {
-		warnGate("batch", typ, entity.Ref{}, err)
+		warnGate("batch", typ, "", err)
 		return nil
 	})
 	if err != nil {

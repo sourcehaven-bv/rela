@@ -224,7 +224,7 @@ func ctxFor(user string) context.Context {
 // for parity and no-mutation assertions.
 func mustGet(t *testing.T, st store.Store, id string) *entity.Entity {
 	t.Helper()
-	e, err := st.GetEntity(context.Background(), id)
+	e, err := st.GetEntity(context.Background(), entity.Ref{ID: id})
 	if err != nil {
 		t.Fatalf("store.GetEntity(%s): %v", id, err)
 	}

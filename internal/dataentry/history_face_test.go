@@ -95,7 +95,7 @@ func historyAs(
 // has no row.
 func titleAt(t *testing.T, app *App, face entity.Face) string {
 	t.Helper()
-	e, err := app.store.GetEntityState(context.Background(), "TKT-1", face)
+	e, err := app.store.GetEntity(context.Background(), entity.Ref{ID: "TKT-1", Face: face})
 	if err != nil {
 		return ""
 	}
@@ -167,7 +167,7 @@ func TestFacedHistory_RestoreRecreatesADeletedFace(t *testing.T) {
 			Assignments: map[string]string{"bob": "editor"},
 		}, st)
 	})
-	if _, err := app.store.DeleteEntityState(context.Background(), "TKT-1", "draft"); err != nil {
+	if _, err := app.store.DeleteFace(context.Background(), entity.Ref{ID: "TKT-1", Face: "draft"}); err != nil {
 		t.Fatalf("delete draft: %v", err)
 	}
 

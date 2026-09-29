@@ -371,7 +371,7 @@ assignments:
 	}
 
 	// Re-read the store: the cascade's write lands after the returned snapshot.
-	after, err := svc.Store().GetEntity(ctx, "TKT-1")
+	after, err := svc.Store().GetEntity(ctx, entity.Ref{ID: "TKT-1"})
 	if err != nil {
 		t.Fatalf("re-read: %v", err)
 	}

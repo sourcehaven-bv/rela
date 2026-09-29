@@ -58,11 +58,11 @@ func (v *VersionStore) PurgeVersions(
 	v.store.versionMu.Lock()
 	defer v.store.versionMu.Unlock()
 
-	ids, err := v.entityLineageIDsForPurge(ctx, req.EntityID, req.Face)
+	ids, err := v.entityLineageIDsForPurge(ctx, req.Ref.ID, req.Ref.Face)
 	if err != nil {
 		return nil, err
 	}
-	liveHash, liveExists, err := v.liveEntityHash(ctx, req.EntityID, req.Face)
+	liveHash, liveExists, err := v.liveEntityHash(ctx, req.Ref.ID, req.Ref.Face)
 	if err != nil {
 		return nil, err
 	}
@@ -74,7 +74,7 @@ func (v *VersionStore) PurgeVersions(
 		WHERE entity_id IN (` + idPH + `) AND face = ?`
 	baseArgs := make([]any, 0, len(idArgs)+1)
 	baseArgs = append(baseArgs, idArgs...)
-	baseArgs = append(baseArgs, string(req.Face))
+	baseArgs = append(baseArgs, string(req.Ref.Face))
 
 	targets, err := selectPurgeTargets(ctx, v.db, baseQ, baseArgs, req.Selector)
 	if err != nil {
@@ -109,7 +109,7 @@ func (v *VersionStore) PurgeVersions(
 		if !liveExists || !req.ForceLive {
 			return deleted, false, nil
 		}
-		if terr := writeEntityPurgeTombstone(ctx, tx, req.EntityID, req.Face, liveHash); terr != nil {
+		if terr := writeEntityPurgeTombstone(ctx, tx, req.Ref.ID, req.Ref.Face, liveHash); terr != nil {
 			return 0, false, terr
 		}
 		return deleted, true, nil

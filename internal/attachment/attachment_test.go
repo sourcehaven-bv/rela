@@ -149,7 +149,7 @@ func TestService_AttachAndList(t *testing.T) {
 
 	// The bytes live under the storage key the stamped value names:
 	// "<token>-design.pdf", never the bare display name.
-	stored, err := f.st.GetEntityState(context.Background(), "T-1", "")
+	stored, err := f.st.GetEntity(context.Background(), entity.Ref{ID: "T-1"})
 	if err != nil {
 		t.Fatalf("read entity: %v", err)
 	}
@@ -305,7 +305,7 @@ func TestService_ReplaceFailureKeepsExisting(t *testing.T) {
 	}
 
 	// The original must still be present and readable.
-	stored, err := f.st.GetEntityState(ctx, "T-1", "")
+	stored, err := f.st.GetEntity(ctx, entity.Ref{ID: "T-1"})
 	require(err, "read entity")
 	rc, readErr := f.svc.Open(ctx, stored, "spec", "ok.pdf")
 	if readErr != nil {
@@ -374,7 +374,7 @@ func TestService_DetachFile(t *testing.T) {
 	if removed, err := f.svc.DetachFile(ctx, e, gallery, "gallery", ""); err != nil || removed != "b.pdf" {
 		t.Fatalf("unnamed detach: removed=%q err=%v", removed, err)
 	}
-	got, err := f.st.GetEntity(ctx, "T-1")
+	got, err := f.st.GetEntity(ctx, entity.Ref{ID: "T-1"})
 	if err != nil {
 		t.Fatalf("get entity: %v", err)
 	}
@@ -409,7 +409,7 @@ func TestService_StampPreservesOtherProperties(t *testing.T) {
 	if e.GetString("spec") != "" {
 		t.Error("WriteAttachment modified the caller's entity")
 	}
-	got, err := f.st.GetEntity(ctx, "T-1")
+	got, err := f.st.GetEntity(ctx, entity.Ref{ID: "T-1"})
 	if err != nil {
 		t.Fatalf("get entity: %v", err)
 	}

@@ -13,7 +13,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store/pgstore"
 )
 
-// TestDeleteEntityState_RacingFaceCreateKeepsAttachments pins that deleting
+// TestDeleteFace_RacingFaceCreateKeepsAttachments pins that deleting
 // the last face serializes with a create of a new face on the family lock,
 // before the delete reads anything, and that the attachments survive when the
 // create wins (BUG-J3PBFN).
@@ -29,7 +29,7 @@ import (
 // releases it, and the test waits until the delete is observed queued on that
 // lock. With the bare-row lock the delete queues on a row lock instead, and
 // the test fails at its deadline.
-func TestDeleteEntityState_RacingFaceCreateKeepsAttachments(t *testing.T) {
+func TestDeleteFace_RacingFaceCreateKeepsAttachments(t *testing.T) {
 	// Four connections: the create transaction and the delete each hold one
 	// while the test polls pg_locks on a third.
 	pool := newScopedPoolSized(t, 4)
@@ -41,7 +41,7 @@ func TestDeleteEntityState_RacingFaceCreateKeepsAttachments(t *testing.T) {
 	draft := entity.New("POL-1", "policy")
 	draft.Face = "draft"
 	require.NoError(t, s.CreateEntity(ctx, draft))
-	require.NoError(t, s.AttachFile(ctx, "POL-1", "file", "a.txt", bytes.NewReader([]byte("a"))))
+	require.NoError(t, s.AttachFamilyFile(ctx, "POL-1", "file", "a.txt", bytes.NewReader([]byte("a"))))
 
 	created := make(chan struct{})
 	release := make(chan struct{})
@@ -66,7 +66,7 @@ func TestDeleteEntityState_RacingFaceCreateKeepsAttachments(t *testing.T) {
 
 	delDone := make(chan error, 1)
 	go func() {
-		_, dErr := s.DeleteEntityState(ctx, "POL-1", "draft")
+		_, dErr := s.DeleteFace(ctx, entity.Ref{ID: "POL-1", Face: "draft"})
 		delDone <- dErr
 	}()
 
@@ -79,7 +79,7 @@ func TestDeleteEntityState_RacingFaceCreateKeepsAttachments(t *testing.T) {
 			close(release)
 			require.NoError(t, <-txDone)
 			require.NoError(t, dErr)
-			t.Fatal("DeleteEntityState finished while a create of the same family held the family lock")
+			t.Fatal("DeleteFace finished while a create of the same family held the family lock")
 		default:
 		}
 		require.NoError(t, pool.QueryRow(ctx,
@@ -87,7 +87,7 @@ func TestDeleteEntityState_RacingFaceCreateKeepsAttachments(t *testing.T) {
 			pgstore.FamilyAdvisoryLockKeyForTest).Scan(&waiting))
 		if time.Now().After(deadline) {
 			close(release)
-			t.Fatal("DeleteEntityState did not queue on the family lock")
+			t.Fatal("DeleteFace did not queue on the family lock")
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
@@ -96,9 +96,9 @@ func TestDeleteEntityState_RacingFaceCreateKeepsAttachments(t *testing.T) {
 	require.NoError(t, <-txDone)
 	require.NoError(t, <-delDone)
 
-	infos, err := s.ListAttachments(ctx, "POL-1")
+	infos, err := s.ListFamilyAttachments(ctx, "POL-1")
 	require.NoError(t, err)
 	require.Len(t, infos, 1, "the surviving published face lost the entity's attachments")
-	_, err = s.GetEntityState(ctx, "POL-1", "published")
+	_, err = s.GetEntity(ctx, entity.Ref{ID: "POL-1", Face: "published"})
 	require.NoError(t, err)
 }

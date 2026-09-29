@@ -32,7 +32,7 @@ func RunSweepAttributionTests(t *testing.T, f Factory, sweepNow func(t *testing.
 	}
 	requireEntityAuthor := func(t *testing.T, v store.VersionService, id string, ord int, user, tool string) {
 		t.Helper()
-		metas, err := v.ListVersions(ctx(), id)
+		metas, err := v.ListVersions(ctx(), entity.Ref{ID: id})
 		require.NoError(t, err)
 		require.Len(t, metas, ord, "versions of %s", id)
 		require.Equal(t, user, metas[ord-1].PrincipalUser, "user of %s v%d", id, ord)

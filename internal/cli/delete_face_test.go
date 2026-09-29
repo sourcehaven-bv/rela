@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
@@ -143,5 +144,48 @@ func TestUnlinkCmd_FaceTail(t *testing.T) {
 	// The bare id names the identity tail, which holds no edge here.
 	if err := (&UnlinkCmd{From: "POL-1", Relation: "implements", To: "CTL-1"}).Run(ctx, svc); err == nil {
 		t.Error("unlink of the identity tail succeeded, want relation not found")
+	}
+}
+
+// A face delete counts only the face's edges until it is the last face; then
+// it removes the entity, so every incident edge counts (RR-2466U1).
+func TestDeleteTarget_LastFaceIsTheWholeEntity(t *testing.T) {
+	ctx := context.Background()
+	svc := facedCLIServices(t)
+	draft := entity.Ref{ID: "POL-1", Face: "draft"}
+
+	_, whole, err := deleteTarget(ctx, svc.Store, draft)
+	if err != nil || whole {
+		t.Fatalf("deleteTarget(draft) with two faces = whole %v, %v; want false, nil", whole, err)
+	}
+	if _, err = svc.Store.DeleteFace(ctx, entity.Ref{ID: "POL-1", Face: "published"}); err != nil {
+		t.Fatalf("delete published: %v", err)
+	}
+	_, whole, err = deleteTarget(ctx, svc.Store, draft)
+	if err != nil || !whole {
+		t.Fatalf("deleteTarget(draft) as the last face = whole %v, %v; want true, nil", whole, err)
+	}
+	if q := deleteScope(draft, whole); q.Direction != store.DirectionBoth || q.FromFace != nil {
+		t.Errorf("deleteScope(last face) = %+v, want every incident edge", q)
+	}
+	if _, _, err = deleteTarget(ctx, svc.Store, entity.Ref{ID: "POL-1", Face: "published"}); err == nil {
+		t.Error("deleteTarget(deleted face) succeeded, want ErrNotFound")
+	}
+}
+
+// --cascade guards the last face too: deleting it removes the entity.
+func TestDeleteCmd_LastFaceNeedsCascade(t *testing.T) {
+	ctx := context.Background()
+	svc := facedCLIServices(t)
+	withOutput(t, output.FormatTable)
+	if _, err := svc.Store.DeleteFace(ctx, entity.Ref{ID: "POL-1", Face: "published"}); err != nil {
+		t.Fatalf("delete published: %v", err)
+	}
+	err := (&DeleteCmd{ID: "POL-1@draft", Force: true}).Run(ctx, svc)
+	if err == nil || !strings.Contains(err.Error(), "use --cascade") {
+		t.Fatalf("last-face delete without --cascade = %v, want the refusal", err)
+	}
+	if err = (&DeleteCmd{ID: "POL-1@draft", Force: true, Cascade: true}).Run(ctx, svc); err != nil {
+		t.Fatalf("delete POL-1@draft --cascade: %v", err)
 	}
 }

@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
+
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -25,7 +27,7 @@ func TestEntityTypeWatermark_MovesOnWrite(t *testing.T) {
 	require.NoError(t, err)
 	require.Greater(t, afterCreate, empty, "create must move the watermark")
 
-	e, err := st.GetEntity(ctx, "REQ-1")
+	e, err := st.GetEntity(ctx, entity.Ref{ID: "REQ-1"})
 	require.NoError(t, err)
 	e.SetString("title", "changed")
 	require.NoError(t, st.UpdateEntity(ctx, e))
@@ -51,7 +53,7 @@ func TestEntityTypeWatermark_DeleteDoesNotGoBackwards(t *testing.T) {
 	require.NoError(t, err)
 
 	// Delete the NEWEST row: without tombstones this is the case that regresses.
-	_, err = st.DeleteEntity(ctx, "REQ-2", false)
+	_, err = st.DeleteFamily(ctx, "REQ-2", false)
 	require.NoError(t, err)
 
 	afterDelete, err := st.EntityTypeWatermark(ctx, "requirement")

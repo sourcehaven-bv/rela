@@ -56,6 +56,25 @@ func IsStateRef(id string) bool {
 	return strings.Contains(id, entity.StateRefSeparator)
 }
 
+// Addressable reports whether ref can name a stored row at all: a non-empty
+// bare id and a face that is either the implicit face or passes
+// [entity.ParseFace]. Every face a project can declare passes that grammar
+// (it is checked when the metamodel loads), so a ref that fails this names no
+// row, and every backend answers it with ErrNotFound before it reaches a map
+// key, a path or a query parameter. That
+// keeps a malformed face (`../x`, `a@b`, a NUL byte) from becoming a path or
+// an encoding error on one backend and a miss on another (RR-6NZ4YD).
+func Addressable(ref entity.Ref) bool {
+	if ref.ID == "" || IsStateRef(ref.ID) || strings.ContainsRune(ref.ID, 0) {
+		return false
+	}
+	if ref.Face.IsDefault() {
+		return true
+	}
+	_, err := entity.ParseFace(string(ref.Face))
+	return err == nil
+}
+
 // ValidateRelationType rejects relation types that would cause
 // relation-key collisions or storage hazards. The rules mirror
 // [ValidateID]: relation types are embedded in the same

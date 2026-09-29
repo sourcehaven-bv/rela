@@ -1,12 +1,5 @@
 package archguard
 
-// allowed is one file's pinned direct-read count and why it may read
-// directly.
-type allowed struct {
-	n      int
-	reason string
-}
-
 // directReadAllowlist pins the direct entity reads on the gated surfaces
 // (see directReads). It may only shrink: PR 3 and PR 5 of TKT-2528AB remove
 // entries until only write-prep reads remain.
@@ -21,6 +14,8 @@ var directReadAllowlist = map[string]allowed{
 	"internal/dataentry/document.go": {1, "loadEntry reads the entry row the document route already " +
 		"gated; the render plumbing is shared with export, which moves in PR 4"},
 	"internal/dataentry/entityreader.go": {1, "readWritePrep: write-prep, liveness and relation-source policy read, never served"},
+	"internal/dataentry/gantt_handler.go": {1, "gantt root read: raw so the roll-up can run " +
+		"gate-then-redact-then-fold; the type verdict and visibility.Redact run before any value is served"},
 	"internal/dataentry/queryservice.go": {1, "loadHitHeaders: id-batch header load for search hits, " +
 		"gated afterwards"},
 	"internal/dataentry/relation_visibility.go": {1, "visibleRelationIDs: id-batch header load for a " +

@@ -118,7 +118,7 @@ func TestFaceGrant_AttachmentDownloadIsFaceGated(t *testing.T) {
 	ctx := context.Background()
 	app := facedTicketApp(t)
 	seedDeclaredFaceTicket(ctx, t, app)
-	if err := app.store.AttachFile(ctx, "TKT-1", "screenshot", "a.txt",
+	if err := app.store.AttachFamilyFile(ctx, "TKT-1", "screenshot", "a.txt",
 		strings.NewReader("draft bytes")); err != nil {
 		t.Fatalf("attach: %v", err)
 	}
@@ -352,8 +352,8 @@ func TestEntityETag_FoldsTheServedFaceNotTheWorld(t *testing.T) {
 	app := facedTicketApp(t)
 	ctx := context.Background()
 	seedDeclaredFaceTicket(ctx, t, app)
-	draft, _ := app.store.GetEntityState(ctx, "TKT-1", "draft")
-	published, _ := app.store.GetEntityState(ctx, "TKT-1", "published")
+	draft, _ := app.store.GetEntity(ctx, entity.Ref{ID: "TKT-1", Face: "draft"})
+	published, _ := app.store.GetEntity(ctx, entity.Ref{ID: "TKT-1", Face: "published"})
 	scope := store.NewWorldScope(map[string]store.TypeResolution{
 		"ticket": {Chain: []entity.Face{"published"}, Fallback: store.FallbackDefaultState},
 	})

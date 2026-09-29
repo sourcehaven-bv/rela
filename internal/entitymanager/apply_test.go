@@ -65,7 +65,7 @@ func TestApplyEntity_PreservesExplicitSequentialID(t *testing.T) {
 		t.Fatal("expected CreateEntity to reject an explicit ID for a sequential id_type")
 	}
 
-	got, err := st.GetEntity(context.Background(), "REQ-fromPeer")
+	got, err := st.GetEntity(context.Background(), entity.Ref{ID: "REQ-fromPeer"})
 	if err != nil {
 		t.Fatalf("GetEntity: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestApplyEntity_Idempotent(t *testing.T) {
 		t.Fatalf("second apply: %v", err)
 	}
 
-	got, err := st.GetEntity(ctx, "REQ-1")
+	got, err := st.GetEntity(ctx, entity.Ref{ID: "REQ-1"})
 	if err != nil {
 		t.Fatalf("GetEntity: %v", err)
 	}
@@ -151,7 +151,7 @@ func TestApplyEntity_RejectsInvalidContent(t *testing.T) {
 	if !errors.As(err, &vErr) {
 		t.Fatalf("expected *ValidationError, got %T: %v", err, err)
 	}
-	if _, getErr := st.GetEntity(ctx, "ZZ-bad"); getErr == nil {
+	if _, getErr := st.GetEntity(ctx, entity.Ref{ID: "ZZ-bad"}); getErr == nil {
 		t.Fatal("invalid entity was persisted despite the validation error")
 	}
 }
@@ -173,7 +173,7 @@ func TestApplyEntity_SoftWarningStillApplies(t *testing.T) {
 	if len(res.Warnings) == 0 {
 		t.Fatal("expected a soft warning for the missing required title")
 	}
-	if _, getErr := st.GetEntity(ctx, "REQ-soft"); getErr != nil {
+	if _, getErr := st.GetEntity(ctx, entity.Ref{ID: "REQ-soft"}); getErr != nil {
 		t.Fatalf("entity not persisted: %v", getErr)
 	}
 }
@@ -355,24 +355,12 @@ type flakyProbeStore struct {
 	failed  bool
 }
 
-func (s *flakyProbeStore) GetEntity(ctx context.Context, id string) (*entity.Entity, error) {
-	if id == s.failID && !s.failed {
+func (s *flakyProbeStore) GetEntity(ctx context.Context, ref entity.Ref) (*entity.Entity, error) {
+	if ref.ID == s.failID && !s.failed {
 		s.failed = true
 		return nil, s.failErr
 	}
-	return s.Store.GetEntity(ctx, id)
-}
-
-// GetEntityState carries the same fault: ApplyEntity probes the face the body
-// names (BUG-HC6I2T), so stubbing GetEntity alone would inject nothing.
-func (s *flakyProbeStore) GetEntityState(
-	ctx context.Context, id string, p entity.Face,
-) (*entity.Entity, error) {
-	if id == s.failID && !s.failed {
-		s.failed = true
-		return nil, s.failErr
-	}
-	return s.Store.GetEntityState(ctx, id, p)
+	return s.Store.GetEntity(ctx, ref)
 }
 
 // ListEntities carries the fault for an ids-scoped family read: a relation
@@ -461,7 +449,7 @@ func TestApplyEntity_ACLDenied(t *testing.T) {
 	if !errors.As(applyErr, &forbidden) {
 		t.Fatalf("expected *acl.ForbiddenError, got %T: %v", applyErr, applyErr)
 	}
-	if _, getErr := st.GetEntity(context.Background(), "REQ-1"); getErr == nil {
+	if _, getErr := st.GetEntity(context.Background(), entity.Ref{ID: "REQ-1"}); getErr == nil {
 		t.Fatal("entity was persisted despite ACL denial")
 	}
 }
@@ -499,7 +487,7 @@ func TestApplyEntity_NoStatusAppliesAsIs(t *testing.T) {
 	if _, err := mgr.ApplyEntity(ctx, e); err != nil {
 		t.Fatalf("ApplyEntity: %v", err)
 	}
-	got, err := st.GetEntity(ctx, "REQ-1")
+	got, err := st.GetEntity(ctx, entity.Ref{ID: "REQ-1"})
 	if err != nil {
 		t.Fatalf("GetEntity: %v", err)
 	}
@@ -532,7 +520,7 @@ func TestRecreateEntity_IsCreateOnly(t *testing.T) {
 	if !errors.Is(err, entitymanager.ErrEntityAlreadyExists) {
 		t.Fatalf("RecreateEntity of a live row = %v, want ErrEntityAlreadyExists", err)
 	}
-	got, err := st.GetEntity(ctx, "REQ-back")
+	got, err := st.GetEntity(ctx, entity.Ref{ID: "REQ-back"})
 	if err != nil {
 		t.Fatalf("GetEntity: %v", err)
 	}

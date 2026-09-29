@@ -38,6 +38,9 @@ relations:
     from: [policy]
     to: [control]
     scope: content
+  covers:
+    from: [control]
+    to: [policy]
 `
 
 // faceEdgePolicy: drafter may delete the draft face and so its edges;
@@ -47,6 +50,8 @@ const faceEdgePolicy = `
 role_relations:
   implements:
     requires_permission: manage-implements
+  covers:
+    requires_permission: manage-covers
 roles:
   drafter:
     read: ["*"]
@@ -57,7 +62,7 @@ roles:
     delete: ["policy@draft"]
   admin:
     read: ["*"]
-    permissions: [manage-implements]
+    permissions: [manage-implements, manage-covers]
     delete: ["policy@draft", "policy@published", "control"]
 assignments:
   drafter: drafter
@@ -153,17 +158,17 @@ func TestDeleteEntityFace_ContentEdgeAuthorizedByItsTail(t *testing.T) {
 		t.Run(b.name, func(t *testing.T) {
 			f := newFaceEdgeFixture(t, b)
 
-			res, err := f.mgr.DeleteEntityFace(asUser("drafter"), "POL-1", "draft")
+			res, err := f.mgr.DeleteEntityFace(asUser("drafter"), "POL-1", "draft", true)
 			if err != nil {
 				t.Fatalf("DeleteEntityFace POL-1@draft as drafter: %v", err)
 			}
 			if len(res.DeletedRelations) != 1 || res.DeletedRelations[0].To != "CTL-1" {
 				t.Errorf("DeletedRelations = %+v, want the draft's edge to CTL-1", res.DeletedRelations)
 			}
-			if _, gErr := f.st.GetEntityState(context.Background(), "POL-1", "draft"); !errors.Is(gErr, store.ErrNotFound) {
+			if _, gErr := f.st.GetEntity(context.Background(), entity.Ref{ID: "POL-1", Face: "draft"}); !errors.Is(gErr, store.ErrNotFound) {
 				t.Errorf("POL-1@draft after delete: err = %v, want ErrNotFound", gErr)
 			}
-			if _, gErr := f.st.GetEntityState(context.Background(), "POL-1", "published"); gErr != nil {
+			if _, gErr := f.st.GetEntity(context.Background(), entity.Ref{ID: "POL-1", Face: "published"}); gErr != nil {
 				t.Errorf("POL-1@published must survive: %v", gErr)
 			}
 			if got := f.edgesFrom(t, "published"); len(got) != 1 || got[0] != "CTL-2" {
@@ -180,7 +185,7 @@ func TestDeleteEntityFace_ContentEdgeDeniedWritesNothing(t *testing.T) {
 		t.Run(b.name, func(t *testing.T) {
 			f := newFaceEdgeFixture(t, b)
 
-			_, err := f.mgr.DeleteEntityFace(asUser("gated-drafter"), "POL-1", "draft")
+			_, err := f.mgr.DeleteEntityFace(asUser("gated-drafter"), "POL-1", "draft", true)
 
 			var forbidden *acl.ForbiddenError
 			if !errors.As(err, &forbidden) {
@@ -190,7 +195,7 @@ func TestDeleteEntityFace_ContentEdgeDeniedWritesNothing(t *testing.T) {
 				t.Errorf("denied by %q (%s), want the implements permission gate",
 					forbidden.Decision.RuleKind, forbidden.Decision.Reason)
 			}
-			if _, gErr := f.st.GetEntityState(context.Background(), "POL-1", "draft"); gErr != nil {
+			if _, gErr := f.st.GetEntity(context.Background(), entity.Ref{ID: "POL-1", Face: "draft"}); gErr != nil {
 				t.Errorf("POL-1@draft must survive a denied delete: %v", gErr)
 			}
 			if got := f.edgesFrom(t, "draft"); len(got) != 1 {
@@ -285,7 +290,7 @@ func TestDelete_CascadeSourceFallback(t *testing.T) {
 				case !tc.wantAllow && !errors.As(err, &forbidden):
 					t.Fatalf("DeleteEntity %s as admin = %v, want *acl.ForbiddenError", ctl.ID, err)
 				}
-				_, gErr := f.st.GetEntity(ctx, ctl.ID)
+				_, gErr := f.st.GetEntity(ctx, ctl.Ref())
 				if gone := errors.Is(gErr, store.ErrNotFound); gone != tc.wantAllow {
 					t.Errorf("%s gone = %v, want %v (err %v)", ctl.ID, gone, tc.wantAllow, gErr)
 				}
@@ -329,12 +334,12 @@ func TestDeleteEntityFace_SourceReadErrorAborts(t *testing.T) {
 		t.Fatalf("entitymanager.New: %v", err)
 	}
 
-	_, err = mgr.DeleteEntityFace(asUser("drafter"), "POL-1", "draft")
+	_, err = mgr.DeleteEntityFace(asUser("drafter"), "POL-1", "draft", true)
 
 	if !errors.Is(err, errTailRead) {
 		t.Fatalf("DeleteEntityFace = %v, want the tail read error", err)
 	}
-	if _, gErr := f.st.GetEntityState(context.Background(), "POL-1", "draft"); gErr != nil {
+	if _, gErr := f.st.GetEntity(context.Background(), entity.Ref{ID: "POL-1", Face: "draft"}); gErr != nil {
 		t.Errorf("POL-1@draft must survive an aborted delete: %v", gErr)
 	}
 	if got := f.edgesFrom(t, "draft"); len(got) != 1 {

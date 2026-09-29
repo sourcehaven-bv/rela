@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
+
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sourcehaven-BV/rela/internal/sqlitedb"
@@ -82,7 +84,7 @@ func TestSQLiteVersionServiceIsUsable(t *testing.T) {
 		Projection: []byte(`{"v":1}`),
 	}))
 
-	got, err := svc.ListVersions(ctx, "FEAT-1")
+	got, err := svc.ListVersions(ctx, entity.Ref{ID: "FEAT-1"})
 	require.NoError(t, err)
 	require.Len(t, got, 1, "the version just written did not read back")
 }

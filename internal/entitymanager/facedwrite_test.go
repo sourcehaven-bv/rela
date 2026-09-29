@@ -97,7 +97,7 @@ func TestCreate_AuthorizesTheFaceItWrites(t *testing.T) {
 		t.Fatalf("CreateEntity: %v", err)
 	}
 
-	stored, err := st.GetEntityState(ctx, res.Entity.ID, entity.Face("concept"))
+	stored, err := st.GetEntity(ctx, entity.Ref{ID: res.Entity.ID, Face: entity.Face("concept")})
 	if err != nil {
 		t.Fatalf("the row is not at the face that was authorized: %v", err)
 	}
@@ -107,7 +107,7 @@ func TestCreate_AuthorizesTheFaceItWrites(t *testing.T) {
 	if gate.asked[0] != stored.Face {
 		t.Errorf("authorized face %q but wrote face %q", gate.asked[0], stored.Face)
 	}
-	if _, bareErr := st.GetEntity(ctx, res.Entity.ID); bareErr == nil {
+	if _, bareErr := st.GetEntity(ctx, entity.Ref{ID: res.Entity.ID}); bareErr == nil {
 		t.Error("a faced type must write no row at the zero coordinate")
 	}
 }
@@ -190,7 +190,7 @@ entities:
 
 // UpdateEntity had the same authorize-here/read-there split as the create
 // path: it authorized against e.Face and then read its pre-image with
-// GetEntity, which is GetEntityState(id, ZERO). On a faced type that row does
+// GetEntity at the zero face. On a faced type that row does
 // not exist, so every faced update returned not-found.
 func TestUpdate_ReadsThePreImageAtTheAuthorizedFace(t *testing.T) {
 	mgr, _ := facedWriteManager(t, acl.NopACL{})
@@ -300,7 +300,7 @@ func TestApply_ProbesTheFaceTheBodyNames(t *testing.T) {
 		t.Errorf("authorized against %q, want the face the body named", gate.asked)
 	}
 
-	got, gerr := st.GetEntityState(ctx, "POL-1", entity.Face("vastgesteld"))
+	got, gerr := st.GetEntity(ctx, entity.Ref{ID: "POL-1", Face: entity.Face("vastgesteld")})
 	if gerr != nil {
 		t.Fatalf("the refusal removed the row: %v", gerr)
 	}
@@ -364,7 +364,7 @@ entities:
 // TestPatch_AddressesTheFaceTheRefNames pins that PatchEntity resolves the
 // fused boundary form rather than always asking the zero coordinate.
 //
-// Store.GetEntity is GetEntityState(id, zero) in every backend, so before this
+// A bare-id read addresses the zero face in every backend, so before this
 // a patch of `POL-1@concept` reported "not found" for a row that plainly
 // exists — and on a faceless type it worked, which is what kept the gap hidden.
 //
@@ -407,11 +407,11 @@ func TestPatch_AddressesTheFaceTheRefNames(t *testing.T) {
 		t.Fatalf("patching a faced address must resolve that row; got %v", err)
 	}
 
-	got, err := st.GetEntityState(ctx, "POL-1", entity.Face("concept"))
+	got, err := st.GetEntity(ctx, entity.Ref{ID: "POL-1", Face: entity.Face("concept")})
 	if err != nil || got.Properties["title"] != "patched" {
 		t.Errorf("concept face = %v (err %v), want the patched title", got.Properties, err)
 	}
-	sib, err := st.GetEntityState(ctx, "POL-1", entity.Face("draft"))
+	sib, err := st.GetEntity(ctx, entity.Ref{ID: "POL-1", Face: entity.Face("draft")})
 	if err != nil || sib.Properties["title"] != "draft text" {
 		t.Errorf("draft face = %v (err %v), want it untouched", sib.Properties, err)
 	}

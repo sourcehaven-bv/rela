@@ -574,14 +574,11 @@ func lookupFamily(ctx context.Context, st store.EntityLister, ref string) (entit
 		id = base
 	}
 	fam := entityFamily{id: id}
-	q := store.EntityQuery{IDs: []string{id}, Faces: store.AllFaces()}
-	for h, err := range store.ListEntityHeaders(ctx, st, q) {
-		if err != nil {
-			return entityFamily{}, err
-		}
-		if h.ID != id {
-			continue
-		}
+	headers, err := store.FamilyHeaders(ctx, st, id)
+	if err != nil {
+		return entityFamily{}, err
+	}
+	for _, h := range headers {
 		if fam.typ == "" {
 			fam.typ = h.Type
 		}
@@ -666,5 +663,5 @@ func (m *Manager) getEntityByRef(ctx context.Context, ref string) (*entity.Entit
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s", store.ErrNotFound, ref)
 	}
-	return m.deps.Store.GetEntityState(ctx, r.ID, r.Face)
+	return m.deps.Store.GetEntity(ctx, entity.Ref{ID: r.ID, Face: r.Face})
 }

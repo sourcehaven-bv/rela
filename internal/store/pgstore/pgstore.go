@@ -110,13 +110,14 @@ type DBTX interface {
 // hoisted into a service would still need exactly this pool, gaining a type
 // but no separation.
 //
-// +1 (38→39, TKT-DOFYR1): GetEntityState joined the mandated store.Store
-// interface — the required-interface exception, not internal sprawl.
+// +1 (38→39, TKT-DOFYR1): a per-face read (GetEntity on a Ref since
+// TKT-KQXVF7) joined the mandated store.Store interface — the
+// required-interface exception, not internal sprawl.
 //
 // (+2 methods / +2 exported with per-face delete, TKT-C1XUA8:
-// DeleteEntityState and DeleteRelationState joined the mandated
-// store.Store interface. Required-interface exception, not accreted
-// API — the counts ratchet only if store.Store itself narrows.)
+// DeleteFace and DeleteRelationState joined the mandated store.Store
+// interface. Required-interface exception, not accreted API — the counts
+// ratchet only if store.Store itself narrows.)
 //
 // (+1 exported, TKT-WRLDAPI: the world-scoped read surface joined the
 // mandated store.Store interface on the same terms. Required-interface
@@ -152,8 +153,8 @@ type DBTX interface {
 // are: endpoints are a relation's identity, so a loop above the store must be
 // create-then-delete, which forks version lineage and destroys a self-edge.
 //
-//plimsoll:max-exported-methods=49
-//plimsoll:max-methods=59
+//plimsoll:max-exported-methods=47
+//plimsoll:max-methods=57
 type Store struct {
 	db           DBTX
 	searchTitles SearchTitles

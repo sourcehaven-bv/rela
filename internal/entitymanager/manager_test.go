@@ -122,9 +122,9 @@ func (s *countingStore) UpdateEntityIf(
 	s.updates.Add(1)
 	return s.Store.UpdateEntityIf(ctx, e, cond)
 }
-func (s *countingStore) DeleteEntity(ctx context.Context, id string, cascade bool) (*store.DeleteResult, error) {
+func (s *countingStore) DeleteFamily(ctx context.Context, id string, cascade bool) (*store.DeleteResult, error) {
 	s.deletes.Add(1)
-	return s.Store.DeleteEntity(ctx, id, cascade)
+	return s.Store.DeleteFamily(ctx, id, cascade)
 }
 func (s *countingStore) ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error] {
 	s.scans.Add(1)
@@ -787,7 +787,7 @@ func TestRename_DryRunDoesNotChangeStore(t *testing.T) {
 	}
 
 	// Entity still present at old ID.
-	if _, err := cs.GetEntity(ctx, req.ID); err != nil {
+	if _, err := cs.GetEntity(ctx, req.Ref()); err != nil {
 		t.Errorf("entity missing at old ID after dry-run: %v", err)
 	}
 }
@@ -857,14 +857,14 @@ func TestRename_TargetExistsDoesNotOverwrite(t *testing.T) {
 
 	// Both entities still present at their original IDs, with their
 	// original titles — the target was not overwritten by the source.
-	gotDst, err := cs.GetEntity(ctx, dst.ID)
+	gotDst, err := cs.GetEntity(ctx, dst.Ref())
 	if err != nil {
 		t.Fatalf("target entity missing after conflicting rename: %v", err)
 	}
 	if title := gotDst.GetString("title"); title != "occupied target" {
 		t.Errorf("target title = %q, want %q — target was clobbered", title, "occupied target")
 	}
-	if _, err := cs.GetEntity(ctx, src.ID); err != nil {
+	if _, err := cs.GetEntity(ctx, src.Ref()); err != nil {
 		t.Errorf("source entity missing after failed rename: %v", err)
 	}
 }

@@ -214,7 +214,7 @@ func TestDropEntities_AbortsWhenCaptureFails(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "capture") {
 		t.Fatalf("apply err = %v, want capture failure", err)
 	}
-	if _, gerr := st.GetEntity(t.Context(), "PER-1"); gerr != nil {
+	if _, gerr := st.GetEntity(t.Context(), entity.Ref{ID: "PER-1"}); gerr != nil {
 		t.Fatalf("entity was deleted despite failed capture: %v", gerr)
 	}
 }
@@ -259,7 +259,7 @@ type partialCascadeStore struct {
 	removed []*entity.Relation
 }
 
-func (p *partialCascadeStore) DeleteEntity(
+func (p *partialCascadeStore) DeleteFamily(
 	context.Context, string, bool,
 ) (*store.DeleteResult, error) {
 	return &store.DeleteResult{DeletedRelations: p.removed},

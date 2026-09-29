@@ -27,24 +27,25 @@ type DeleteCmd struct {
 // the family standing (BUG-J3PBFN). Either way the row is found by its
 // address, so a faced entity is not reported missing.
 //
-// --cascade guards the family delete only. The edges tailed at a face are
-// that face's content, as its properties are, so a face delete always takes
-// them; the data-entry app and the Lua binding do the same.
+// --cascade guards every delete that removes the entity: the family delete,
+// and a face delete of the family's last face, which takes every incident
+// edge (RR-2466U1). The edges tailed at a face that is not the last are that
+// face's content, as its properties are, so such a delete always takes them.
 func (c *DeleteCmd) Run(ctx context.Context, svc *writeServices) error {
 	ref, err := entity.ParseRef(c.ID)
 	if err != nil {
 		return &entityNotFoundError{ID: c.ID}
 	}
-	target, err := deleteTarget(ctx, svc.Store, ref)
+	target, wholeEntity, err := deleteTarget(ctx, svc.Store, ref)
 	if err != nil {
 		return classifyReadError(c.ID, err)
 	}
 
-	totalRelations, err := svc.Store.CountRelations(ctx, deleteScope(ref))
+	totalRelations, err := svc.Store.CountRelations(ctx, deleteScope(ref, wholeEntity))
 	if err != nil {
 		return fmt.Errorf("count relations of %s: %w", c.ID, err)
 	}
-	if totalRelations > 0 && !c.Cascade && ref.Face.IsDefault() {
+	if totalRelations > 0 && !c.Cascade && wholeEntity {
 		return fmt.Errorf("entity %s has %d relation(s); use --cascade to delete them too", c.ID, totalRelations)
 	}
 
@@ -74,7 +75,7 @@ func (c *DeleteCmd) Run(ctx context.Context, svc *writeServices) error {
 	if ref.Face.IsDefault() {
 		result, err = svc.EntityManager.DeleteEntity(ctx, ref.ID, c.Cascade)
 	} else {
-		result, err = svc.EntityManager.DeleteEntityFace(ctx, ref.ID, ref.Face)
+		result, err = svc.EntityManager.DeleteEntityFace(ctx, ref.ID, ref.Face, c.Cascade)
 	}
 	if err != nil {
 		if errors.Is(err, entitymanager.ErrHasRelations) {
@@ -91,29 +92,41 @@ func (c *DeleteCmd) Run(ctx context.Context, svc *writeServices) error {
 }
 
 // deleteTarget reads the row a delete of ref names, for the confirmation
-// prompt. A face address reads that face. A bare id reads the family and
-// returns its first row: a faced type stores no bare row, and the family
-// delete removes every face anyway.
-func deleteTarget(ctx context.Context, st store.Store, ref entity.Ref) (*entity.Entity, error) {
-	if !ref.Face.IsDefault() {
-		return st.GetEntityState(ctx, ref.ID, ref.Face)
+// prompt, and reports whether the delete removes the whole entity. A face
+// address reads that face; it removes the entity when it is the family's
+// last face. A bare id reads the family and returns its first row: a faced
+// type stores no bare row, and the family delete removes every face anyway.
+func deleteTarget(ctx context.Context, st store.Store, ref entity.Ref) (*entity.Entity, bool, error) {
+	family, err := store.Family(ctx, st, ref.ID)
+	if err != nil {
+		return nil, false, err
 	}
-	q := store.EntityQuery{IDs: []string{ref.ID}, Faces: store.AllFaces()}
-	for e, err := range st.ListEntities(ctx, q) {
-		if err != nil {
-			return nil, err
+	if ref.Face.IsDefault() {
+		if len(family) == 0 {
+			return nil, false, store.ErrNotFound
 		}
-		if e.ID == ref.ID {
-			return e, nil
+		// The prompt shows one row; pick the lowest face so it is stable.
+		first := family[0]
+		for _, e := range family[1:] {
+			if e.Face < first.Face {
+				first = e
+			}
+		}
+		return first, true, nil
+	}
+	for _, e := range family {
+		if e.Face == ref.Face {
+			return e, len(family) == 1, nil
 		}
 	}
-	return nil, store.ErrNotFound
+	return nil, false, store.ErrNotFound
 }
 
 // deleteScope is the set of edges a delete of ref removes: every incident
-// edge for a family, the outgoing edges tailed at the face for a face.
-func deleteScope(ref entity.Ref) store.RelationQuery {
-	if ref.Face.IsDefault() {
+// edge when the entity goes, the outgoing edges tailed at the face when only
+// the face goes (see store.EntityWriter.DeleteFace).
+func deleteScope(ref entity.Ref, wholeEntity bool) store.RelationQuery {
+	if wholeEntity {
 		return store.RelationQuery{EntityID: ref.ID, Direction: store.DirectionBoth}
 	}
 	face := ref.Face

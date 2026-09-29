@@ -119,13 +119,13 @@ func applyEntity(ctx context.Context, m *Manager, e *entity.Entity, createOnly b
 	}
 
 	// The probe addresses the row the body NAMES, not the zero coordinate.
-	// GetEntity(id) is GetEntityState(id, zero), which a type declaring faces
-	// has no row at — so every faced apply resolved as a CREATE, the update
+	// The old probe read the zero face, which a type declaring faces has no
+	// row at — so every faced apply resolved as a CREATE, the update
 	// branch below was unreachable, and the ErrFaceImmutable guard that
 	// branch carries never ran. A sync body could then be authorized against
 	// its own face while a sibling row of the same id already existed
 	// (BUG-HC6I2T).
-	stored, getErr := m.deps.Store.GetEntityState(ctx, e.ID, e.Face)
+	stored, getErr := m.deps.Store.GetEntity(ctx, entity.Ref{ID: e.ID, Face: e.Face})
 	op, err := resolveUpsertOp(getErr, audit.OpCreateEntity, audit.OpUpdateEntity)
 	if err != nil {
 		return nil, fmt.Errorf("entitymanager: ApplyEntity: existence check for %s: %w", e.ID, err)

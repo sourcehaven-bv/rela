@@ -104,7 +104,7 @@ func TestFaceReadExplain(t *testing.T) {
 			Type: "policy", Faces: store.AllFaces(), FaceIn: []entity.Face{"published"}, Limit: 100,
 		}, false),
 		{"family read", familySQL, familyArgs, "entities_pkey", true},
-		{"single row", pgstore.GetEntityStateSQLForTest, []any{"POL-000007", "published"}, "entities_pkey", false},
+		{"single row", pgstore.GetEntitySQLForTest, []any{"POL-000007", "published"}, "entities_pkey", false},
 		{"highest id", highestSQL, highestArgs, "entities_pkey", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

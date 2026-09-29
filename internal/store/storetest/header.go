@@ -112,7 +112,7 @@ func RunHeaderTests(t *testing.T, f Factory) {
 			h.Properties["title"] = "mutated"
 		}
 
-		got, err := s.GetEntity(ctx(), "A-001")
+		got, err := s.GetEntity(ctx(), entity.Ref{ID: "A-001"})
 		require.NoError(t, err)
 		assert.Equal(t, "original", got.GetString("title"),
 			"mutating a header's Properties must not write through to the store")

@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"iter"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -27,21 +26,17 @@ func checkQueryScope(q store.EntityQuery) error {
 
 // --- EntityReader ---
 
-// GetEntity returns a single entity by ID, or store.ErrNotFound. The
-// bare id addresses the DEFAULT state (TKT-DOFYR1).
-func (s *Store) GetEntity(ctx context.Context, id string) (*entity.Entity, error) {
-	return s.GetEntityState(ctx, id, "")
-}
-
-// getEntityStateSQL reads one face row by its primary key (id, face).
-const getEntityStateSQL = `SELECT id, type, face, properties, content, updated_at
+// getEntitySQL reads one face row by its primary key (id, face).
+const getEntitySQL = `SELECT id, type, face, properties, content, updated_at
 	FROM entities WHERE id = $1 AND face = $2`
 
-// GetEntityState returns the content state addressed by (id, p); the
-// zero face is the default state. ErrNotFound covers a missing state
-// even when sibling states exist.
-func (s *Store) GetEntityState(ctx context.Context, id string, p entity.Face) (*entity.Entity, error) {
-	e, err := scanEntity(s.db.QueryRow(ctx, getEntityStateSQL, id, p))
+// GetEntity returns the face row ref addresses, or store.ErrNotFound. A
+// missing face is ErrNotFound even when sibling faces exist.
+func (s *Store) GetEntity(ctx context.Context, ref entity.Ref) (*entity.Entity, error) {
+	if !storeutil.Addressable(ref) {
+		return nil, store.ErrNotFound
+	}
+	e, err := scanEntity(s.db.QueryRow(ctx, getEntitySQL, ref.ID, string(ref.Face)))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
@@ -259,38 +254,6 @@ func (s *Store) HighestID(ctx context.Context, prefix string) (int, error) {
 		}
 	}
 	return highest, rows.Err()
-}
-
-// PropertyValues returns distinct values of a top-level property, ordered by
-// frequency (desc), then value (asc) for stable ties. Values are stringified
-// to match memstore's fmt.Sprintf("%v") behavior; empty strings are skipped.
-func (s *Store) PropertyValues(ctx context.Context, property string, limit int) ([]string, error) {
-	// face = '': DEFAULT-WORLD aggregate, deliberately un-worlded
-	// (TKT-WAV8XP PR-C). Suggestion counts are a default-world aggregate
-	// (TKT-DOFYR1) — a state row must not inflate its family's values.
-	const q = `SELECT properties -> $1 AS v FROM entities WHERE properties ? $1 AND face = ''`
-	rows, err := s.db.Query(ctx, q, property)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	counts := make(map[string]int)
-	for rows.Next() {
-		var raw []byte
-		if err := rows.Scan(&raw); err != nil {
-			return nil, err
-		}
-		val := stringifyJSONValue(raw)
-		if val != "" {
-			counts[val]++
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	return storeutil.TopValues(counts, limit), nil
 }
 
 // --- EntityWriter ---
@@ -564,10 +527,11 @@ func (s *Store) UpdateEntityIf(
 	return s.updateEntityIf(ctx, e, cond)
 }
 
-// DeleteEntity removes an entity. Without cascade, returns store.ErrHasRelations
-// if any relation references it. With cascade, deletes referencing relations
-// and the entity's attachments in one transaction, returning the removed rows.
-func (s *Store) DeleteEntity(ctx context.Context, id string, cascade bool) (*store.DeleteResult, error) {
+// DeleteFamily removes every face of id. Without cascade, returns
+// store.ErrHasRelations if any relation references it. With cascade, deletes
+// referencing relations and the entity's attachments in one transaction,
+// returning the removed rows.
+func (s *Store) DeleteFamily(ctx context.Context, id string, cascade bool) (*store.DeleteResult, error) {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -660,29 +624,33 @@ func (s *Store) DeleteEntity(ctx context.Context, id string, cascade bool) (*sto
 	return &store.DeleteResult{DeletedEntities: family, DeletedRelations: related}, nil
 }
 
-// DeleteEntityState removes ONE content state (face) and only the edges
-// belonging to it (TKT-C1XUA8).
+// DeleteFace removes ONE face row and only the edges belonging to it
+// (TKT-C1XUA8).
 //
-// Contrast DeleteEntity above, whose three statements are all `WHERE id =
+// Contrast DeleteFamily above, whose three statements are all `WHERE id =
 // $1` / `from_id = $1 OR to_id = $1` and sweep the entire family plus every
 // incident edge on both sides. Reusing that shape here would make
 // discarding a draft destroy the published face and cut every inbound link
 // unrelated entities hold on it — so this deletes by (id, face) and only
-// outgoing edges on the matching tail.
-func (s *Store) DeleteEntityState(
-	ctx context.Context, id string, p entity.Face,
-) (*store.DeleteResult, error) {
+// outgoing edges on the matching tail. The last face is the exception: with
+// no entity left, every incident edge goes too (RR-2466U1, see
+// store.EntityWriter.DeleteFace).
+func (s *Store) DeleteFace(ctx context.Context, ref entity.Ref) (*store.DeleteResult, error) {
+	if !storeutil.Addressable(ref) {
+		return nil, store.ErrNotFound
+	}
+	id, p := ref.ID, ref.Face
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // rollback after commit is a no-op
 
-	// Same family lock as DeleteEntity and CreateEntity, for the sibling
+	// Same family lock as DeleteFamily and CreateEntity, for the sibling
 	// count below. A faced type stores no bare row, so the row lock this
 	// replaces locked nothing (BUG-J3PBFN): a create of a new face could
-	// commit after the count saw zero siblings, and the attachment sweep
-	// below then deleted the attachments the new face serves.
+	// commit after the count saw zero siblings, and the attachment and
+	// last-face edge sweeps below then deleted what the new face serves.
 	if lockErr := lockFamily(ctx, tx, id); lockErr != nil {
 		return nil, lockErr
 	}
@@ -696,20 +664,30 @@ func (s *Store) DeleteEntityState(
 		return nil, store.ErrNotFound
 	}
 
-	// OUTGOING edges on this tail only. INCOMING edges are deliberately NOT
-	// matched: heads are entity-level (§2.3), so an inbound edge points at
-	// the entity and survives its faces.
+	var size int
+	if cerr := tx.QueryRow(ctx,
+		`SELECT count(*) FROM entities WHERE id = $1`, id).Scan(&size); cerr != nil {
+		return nil, cerr
+	}
+	last := size == 1
+
+	// OUTGOING edges on this tail only while a face remains. INCOMING edges
+	// are then deliberately NOT matched: heads are entity-level (§2.3), so
+	// an inbound edge points at the entity and survives its faces. The last
+	// face takes every incident edge, as DeleteFamily does.
+	ownedWhere, ownedArgs := `from_id = $1 AND from_face = $2`, []any{id, string(p)}
+	if last {
+		ownedWhere, ownedArgs = `from_id = $1 OR to_id = $1`, []any{id}
+	}
 	owned, err := scanRelations(ctx, tx,
 		`SELECT from_id, from_face, rel_type, to_id, properties, content, updated_at
-		 FROM relations WHERE from_id = $1 AND from_face = $2
-		 ORDER BY rel_type, to_id`, id, string(p))
+		 FROM relations WHERE `+ownedWhere+`
+		 ORDER BY from_id, from_face, rel_type, to_id`, ownedArgs...)
 	if err != nil {
 		return nil, err
 	}
 
-	if _, err := tx.Exec(ctx,
-		`DELETE FROM relations WHERE from_id = $1 AND from_face = $2`,
-		id, string(p)); err != nil {
+	if _, err := tx.Exec(ctx, `DELETE FROM relations WHERE `+ownedWhere, ownedArgs...); err != nil {
 		return nil, err
 	}
 	if _, err := tx.Exec(ctx,
@@ -720,12 +698,7 @@ func (s *Store) DeleteEntityState(
 	// Attachments are keyed to the bare id, so they belong to the ENTITY, not
 	// to a face: only sweep them once the last face is gone. A discarded
 	// draft must not destroy attachments the surviving faces serve.
-	var left int
-	if cerr := tx.QueryRow(ctx,
-		`SELECT count(*) FROM entities WHERE id = $1`, id).Scan(&left); cerr != nil {
-		return nil, cerr
-	}
-	if left == 0 {
+	if last {
 		if _, err := tx.Exec(ctx,
 			`DELETE FROM attachments WHERE entity_id = $1`, id); err != nil {
 			return nil, err
@@ -756,7 +729,7 @@ func (s *Store) DeleteEntityState(
 	// nothing until the family is empty, since a bare-id delete cannot
 	// address a face and acting on it would de-index a live entity.
 	notifyFaceDelete(s, id, p)
-	if left == 0 {
+	if last {
 		notifyLastFaceDelete(s, id)
 	}
 	s.emitAll(evs)
@@ -813,10 +786,10 @@ func rekeyStateFamily(
 	return states, renamed, nil
 }
 
-// RenameEntity changes an entity's ID, rewriting every relation endpoint and
+// RenameFamily changes an entity's ID, rewriting every relation endpoint and
 // re-keying attachments atomically. Returns store.ErrNotFound if oldID is
 // absent, store.ErrConflict if newID exists.
-func (s *Store) RenameEntity(ctx context.Context, oldID, newID string) (*store.RenameResult, error) {
+func (s *Store) RenameFamily(ctx context.Context, oldID, newID string) (*store.RenameResult, error) {
 	if err := validateID(newID); err != nil {
 		return nil, err
 	}
@@ -1335,31 +1308,6 @@ func normalizeJSONMap(m map[string]any) map[string]any {
 		m[k] = normalizeJSONNumbers(v)
 	}
 	return m
-}
-
-// stringifyJSONValue renders a raw JSONB value the way memstore's
-// fmt.Sprintf("%v", v) would, so PropertyValues output matches across backends.
-// JSON strings render without quotes; numbers without scientific notation where
-// possible; everything else falls back to its JSON text.
-func stringifyJSONValue(raw []byte) string {
-	var v any
-	if err := json.Unmarshal(raw, &v); err != nil {
-		return strings.TrimSpace(string(raw))
-	}
-	switch t := v.(type) {
-	case nil:
-		return ""
-	case string:
-		return t
-	case float64:
-		// Match fmt %v for whole numbers (e.g. 5 not 5e+00).
-		if t == float64(int64(t)) {
-			return strconv.FormatInt(int64(t), 10)
-		}
-		return fmt.Sprintf("%v", t)
-	default:
-		return fmt.Sprintf("%v", t)
-	}
 }
 
 // entitySearchText builds the lowercased text the search Backend matches

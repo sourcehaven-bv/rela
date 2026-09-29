@@ -55,14 +55,15 @@ import (
 // included — only to drop the body immediately, which is the cost the
 // capability exists to remove. Interface-driven like the Tx split above.
 //
-// (43 → 45 / 29 → 30 with content states, TKT-DOFYR1: GetEntityState
-// joined the mandated store.Store interface; rekeyFamily serves the
-// family-wide rename that contract requires.)
+// (43 → 45 / 29 → 30 with content states, TKT-DOFYR1: a per-face read
+// (GetEntity on a Ref since TKT-KQXVF7) joined the mandated store.Store
+// interface; rekeyFamily serves the family-wide rename that contract
+// requires.)
 //
 // (+2 methods / +2 exported with per-face delete, TKT-C1XUA8:
-// DeleteEntityState and DeleteRelationState joined the mandated
-// store.Store interface. Required-interface exception, not accreted
-// API — the counts ratchet only if store.Store itself narrows.)
+// DeleteFace and DeleteRelationState joined the mandated store.Store
+// interface. Required-interface exception, not accreted API — the counts
+// ratchet only if store.Store itself narrows.)
 //
 // +1 (TKT-9KZGJO): per-face index notification joined the observer
 // dispatch when indexers stopped skipping non-default faces. One
@@ -75,8 +76,8 @@ import (
 // CAS precondition has to be evaluated atomically with the write, so it
 // cannot live anywhere but on the type that owns the write.
 //
-//plimsoll:max-methods=54
-//plimsoll:max-exported-methods=34
+//plimsoll:max-methods=52
+//plimsoll:max-exported-methods=32
 type MemStore struct {
 	// txMu serializes an open Tx against ordinary writers: Tx holds it
 	// for the whole callback, every exported write method takes it
@@ -279,20 +280,14 @@ type famEntry struct {
 
 // --- EntityReader ---
 
-func (m *MemStore) GetEntity(ctx context.Context, id string) (*entity.Entity, error) {
-	// The bare id IS the default state's key (entity.FormatStateRef with
-	// the zero face).
-	return m.GetEntityState(ctx, id, "")
-}
-
-func (m *MemStore) GetEntityState(_ context.Context, id string, p entity.Face) (*entity.Entity, error) {
-	if storeutil.IsStateRef(id) {
+func (m *MemStore) GetEntity(_ context.Context, ref entity.Ref) (*entity.Entity, error) {
+	if !storeutil.Addressable(ref) {
 		return nil, store.ErrNotFound
 	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	e, ok := m.entities[entity.FormatStateRef(id, p)]
+	e, ok := m.entities[entity.FormatStateRef(ref.ID, ref.Face)]
 	if !ok {
 		return nil, store.ErrNotFound
 	}
@@ -510,26 +505,6 @@ func (m *MemStore) HighestID(_ context.Context, prefix string) (int, error) {
 	return highest, nil
 }
 
-func (m *MemStore) PropertyValues(_ context.Context, property string, limit int) ([]string, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	counts := make(map[string]int)
-	for _, e := range m.entities {
-		if !e.Face.IsDefault() {
-			continue // suggestion counts stay default-world (TKT-DOFYR1)
-		}
-		if v, ok := e.Properties[property]; ok {
-			s := fmt.Sprintf("%v", v)
-			if s != "" {
-				counts[s]++
-			}
-		}
-	}
-
-	return storeutil.TopValues(counts, limit), nil
-}
-
 // --- EntityWriter ---
 
 func (m *MemStore) createEntity(_ context.Context, e *entity.Entity) error {
@@ -715,28 +690,33 @@ func (m *MemStore) deleteEntity(_ context.Context, id string, cascade bool) (*st
 	return result, nil
 }
 
-// deleteEntityState removes ONE face and only the edges that belong to it
+// deleteFace removes ONE face and only the edges that belong to it
 // (TKT-C1XUA8). Contrast deleteEntity above, which sweeps the whole family
 // and every incident edge on both sides — reusing that here would make
 // discarding a draft destroy the published face and its inbound links.
-func (m *MemStore) deleteEntityState(
-	_ context.Context, id string, p entity.Face,
-) (*store.DeleteResult, error) {
+// The last face is the exception: with no entity left, every incident edge
+// goes too (RR-2466U1, see store.EntityWriter.DeleteFace).
+func (m *MemStore) deleteFace(_ context.Context, ref entity.Ref) (*store.DeleteResult, error) {
+	if !storeutil.Addressable(ref) {
+		return nil, store.ErrNotFound
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	id, p := ref.ID, ref.Face
 	key := entity.FormatStateRef(id, p)
 	target, ok := m.entities[key]
 	if !ok {
 		return nil, store.ErrNotFound
 	}
+	last := familySize(m.entities, id) == 1
 
-	// OUTGOING edges on this tail go with the face. INCOMING edges do NOT:
-	// heads are entity-level (§2.3), so an inbound edge points at the entity
-	// and survives its faces.
+	// OUTGOING edges on this tail go with the face. INCOMING edges do NOT
+	// while a face remains: heads are entity-level (§2.3), so an inbound
+	// edge points at the entity and survives its faces.
 	var owned []*entity.Relation
 	for _, r := range m.relations {
-		if r.From == id && r.FromFace == p {
+		if (r.From == id && r.FromFace == p) || (last && (r.From == id || r.To == id)) {
 			owned = append(owned, r)
 		}
 	}
@@ -749,7 +729,7 @@ func (m *MemStore) deleteEntityState(
 	// Attachments are keyed to the bare id, so they belong to the ENTITY.
 	// Only sweep them when this was the last face standing.
 	m.notifyFaceDelete(id, p)
-	if familySize(m.entities, id) == 0 {
+	if last {
 		for k, a := range m.attachments {
 			if a.entityID == id {
 				delete(m.attachments, k)
@@ -1190,7 +1170,7 @@ func (m *MemStore) attachFile(_ context.Context, entityID, property, fileName st
 	return nil
 }
 
-func (m *MemStore) ReadAttachment(_ context.Context, entityID, property, fileName string) (io.ReadCloser, error) {
+func (m *MemStore) ReadFamilyAttachment(_ context.Context, entityID, property, fileName string) (io.ReadCloser, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -1213,7 +1193,7 @@ func (m *MemStore) deleteAttachment(_ context.Context, entityID, property, fileN
 	return nil
 }
 
-func (m *MemStore) ListAttachments(_ context.Context, entityID string) ([]store.AttachmentInfo, error) {
+func (m *MemStore) ListFamilyAttachments(_ context.Context, entityID string) ([]store.AttachmentInfo, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 

@@ -137,3 +137,29 @@ func TestHandleDeleteRelation_FaceTail(t *testing.T) {
 		t.Errorf("identity-tail delete = %v, %v; want relation not found", res, err)
 	}
 }
+
+// Deleting the last face removes the entity, so cascade guards it like a
+// family delete, and the count covers every incident edge (RR-2466U1).
+func TestHandleDeleteEntity_LastFaceNeedsCascade(t *testing.T) {
+	s, st := facedDeleteServer(t)
+	ctx := context.Background()
+	if _, err := st.DeleteFace(ctx, entity.Ref{ID: "POL-1", Face: "published"}); err != nil {
+		t.Fatalf("delete published: %v", err)
+	}
+
+	res, err := s.handleDeleteEntity(ctx, makeToolRequest(map[string]any{"id": "POL-1@draft"}))
+	if err != nil || !isErrorResult(res) || !strings.Contains(getResultText(t, res), "has 1 relation(s)") {
+		t.Fatalf("last-face delete without cascade = %v, %v; want the refusal", res, err)
+	}
+	if got := storedFaces(t, st, "POL-1"); !got["draft"] {
+		t.Fatalf("POL-1@draft must survive the refusal, faces = %v", got)
+	}
+
+	res, err = s.handleDeleteEntity(ctx, makeToolRequest(map[string]any{"id": "POL-1@draft", "cascade": true}))
+	if err != nil || isErrorResult(res) {
+		t.Fatalf("delete POL-1@draft with cascade: %v %s", err, getResultText(t, res))
+	}
+	if got := getResultText(t, res); got != "Deleted POL-1@draft and 1 relation(s)" {
+		t.Errorf("result = %q", got)
+	}
+}

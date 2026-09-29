@@ -362,7 +362,7 @@ func TestWebhookConflict_BlindUpdateLosesAppends(t *testing.T) {
 
 	// Every writer captures the SAME stale base first, then writes — the
 	// read-modify-write pattern applyWebhookSteps must not reproduce.
-	stale, err := st.GetEntity(ctx, "INC-APPEND")
+	stale, err := st.GetEntity(ctx, entity.Ref{ID: "INC-APPEND"})
 	require.NoError(t, err)
 
 	const appenders = 6
@@ -378,7 +378,7 @@ func TestWebhookConflict_BlindUpdateLosesAppends(t *testing.T) {
 	}
 	wg.Wait()
 
-	final, err := st.GetEntity(ctx, "INC-APPEND")
+	final, err := st.GetEntity(ctx, entity.Ref{ID: "INC-APPEND"})
 	require.NoError(t, err)
 
 	landed := 0
@@ -450,7 +450,7 @@ func TestWebhookConflict_PipelineAppendsAllLand(t *testing.T) {
 		require.Equal(t, http.StatusOK, code, "delivery %d did not succeed", i)
 	}
 
-	final, err := st.GetEntity(ctx, "INC-PIPE")
+	final, err := st.GetEntity(ctx, entity.Ref{ID: "INC-PIPE"})
 	require.NoError(t, err)
 	for i := range deliveries {
 		require.Contains(t, final.Content, fmt.Sprintf("- alert %d", i),
@@ -522,7 +522,7 @@ func TestWebhookConflict_CrossProcessAppendsAllLand(t *testing.T) {
 		require.Equal(t, http.StatusOK, code, "cross-process delivery %d failed", i)
 	}
 
-	final, err := stA.GetEntity(ctx, "INC-XPROC")
+	final, err := stA.GetEntity(ctx, entity.Ref{ID: "INC-XPROC"})
 	require.NoError(t, err)
 	for i := range deliveries {
 		require.Contains(t, final.Content, fmt.Sprintf("- alert %d", i),
@@ -548,7 +548,7 @@ func TestWebhookConflict_SchemaPinnedDSNIsIsolated(t *testing.T) {
 	require.NoError(t, stA.CreateEntity(ctx, e))
 
 	// B must not see A's row.
-	_, err := stB.GetEntity(ctx, "INC-ISOLATED")
+	_, err := stB.GetEntity(ctx, entity.Ref{ID: "INC-ISOLATED"})
 	require.Error(t, err, "schema B must not see schema A's entity — the DSN is not pinned")
 
 	// And the ROW must live in A's own schema, not in public. Asserting on the

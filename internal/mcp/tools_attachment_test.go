@@ -187,7 +187,7 @@ func (f attachFixture) list(ctx context.Context, t *testing.T, id string) []atta
 // stored returns the raw stored value of property on id.
 func (f attachFixture) stored(t *testing.T, id, property string) any {
 	t.Helper()
-	e, err := f.svc.Store().GetEntity(context.Background(), id)
+	e, err := f.svc.Store().GetEntity(context.Background(), entity.Ref{ID: id})
 	if err != nil {
 		t.Fatalf("get %s: %v", id, err)
 	}
@@ -358,7 +358,7 @@ func TestAttachments_InlineReadCap(t *testing.T) {
 	ctx := context.Background()
 
 	big := bytes.Repeat([]byte("a"), MaxInlineReadBytes+1)
-	if err := f.svc.Store().AttachFile(ctx, docID, "file", "big.txt", bytes.NewReader(big)); err != nil {
+	if err := f.svc.Store().AttachFamilyFile(ctx, docID, "file", "big.txt", bytes.NewReader(big)); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	// A read serves only files the value references, so stamp it too.
@@ -609,7 +609,7 @@ func TestAttachments_ACL_DeniedWriteLeavesBytes(t *testing.T) {
 	if !ok {
 		t.Fatal("the stored value no longer references a.txt")
 	}
-	rc, err := f.svc.Store().ReadAttachment(context.Background(), docID, "file", key)
+	rc, err := f.svc.Store().ReadFamilyAttachment(context.Background(), docID, "file", key)
 	if err != nil {
 		t.Fatalf("read back: %v", err)
 	}

@@ -30,7 +30,7 @@ func (c *HistoryCmd) Run(ctx context.Context, svc *readServices) error {
 			"deployments use git instead).")
 		return nil
 	}
-	var reader store.StateHistoryReader = svc.Versions
+	var reader store.HistoryReader = svc.Versions
 	ref, err := historyAddress(ctx, svc.Store, svc.Meta, reader, c.ID)
 	if err != nil {
 		return err
@@ -43,8 +43,8 @@ func (c *HistoryCmd) Run(ctx context.Context, svc *readServices) error {
 }
 
 // printTimeline lists the version metadata rows oldest-first.
-func (c *HistoryCmd) printTimeline(ctx context.Context, reader store.StateHistoryReader, ref entity.Ref) error {
-	metas, err := reader.ListStateVersions(ctx, ref.ID, ref.Face)
+func (c *HistoryCmd) printTimeline(ctx context.Context, reader store.HistoryReader, ref entity.Ref) error {
+	metas, err := reader.ListVersions(ctx, ref)
 	if err != nil {
 		return fmt.Errorf("read history for %q: %w", ref, err)
 	}
@@ -86,8 +86,8 @@ func (c *HistoryCmd) printTimeline(ctx context.Context, reader store.StateHistor
 
 // printSnapshot writes one version's content + properties as JSON to stdout, so
 // two invocations can be diffed by an external tool.
-func (c *HistoryCmd) printSnapshot(ctx context.Context, reader store.StateHistoryReader, ref entity.Ref) error {
-	snap, err := reader.GetStateVersion(ctx, ref.ID, ref.Face, c.Version)
+func (c *HistoryCmd) printSnapshot(ctx context.Context, reader store.HistoryReader, ref entity.Ref) error {
+	snap, err := reader.GetVersion(ctx, ref, c.Version)
 	if errors.Is(err, store.ErrNotFound) {
 		return fmt.Errorf("no version %d for %q", c.Version, ref)
 	}

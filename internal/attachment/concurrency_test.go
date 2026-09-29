@@ -78,7 +78,7 @@ func TestService_ConcurrentSingleFileUploadsLeaveOneFile(t *testing.T) {
 	if len(files) != 1 {
 		t.Fatalf("spec holds %v, want exactly one file", files)
 	}
-	stored, err := f.st.GetEntity(context.Background(), raceEntity)
+	stored, err := f.st.GetEntity(context.Background(), entity.Ref{ID: raceEntity})
 	if err != nil {
 		t.Fatalf("get entity: %v", err)
 	}
@@ -115,7 +115,7 @@ func TestService_ConcurrentAppendsRespectCap(t *testing.T) {
 	if len(files) != 3 {
 		t.Fatalf("gallery holds %v, want 3 files", files)
 	}
-	stored, err := f.st.GetEntity(context.Background(), raceEntity)
+	stored, err := f.st.GetEntity(context.Background(), entity.Ref{ID: raceEntity})
 	if err != nil {
 		t.Fatalf("get entity: %v", err)
 	}
@@ -210,7 +210,7 @@ func TestService_ReauthorizesUnderLock(t *testing.T) {
 	if _, err := f.svc.WriteAttachment(ctx, e, def, "spec", "approved.pdf", strings.NewReader("v1")); err != nil {
 		t.Fatalf("seed attachment: %v", err)
 	}
-	seeded, err := f.st.GetEntity(ctx, raceEntity)
+	seeded, err := f.st.GetEntity(ctx, entity.Ref{ID: raceEntity})
 	if err != nil {
 		t.Fatal(err)
 	}

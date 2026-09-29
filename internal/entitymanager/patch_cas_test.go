@@ -20,7 +20,7 @@ func seedCASEntity(t *testing.T, st store.Store) (*entity.Entity, store.EntityVe
 	e.SetString("title", "Login")
 	require.NoError(t, st.CreateEntity(context.Background(), e))
 
-	stored, err := st.GetEntity(context.Background(), e.ID)
+	stored, err := st.GetEntity(context.Background(), e.Ref())
 	require.NoError(t, err)
 	return stored, store.VersionOf(stored)
 }
@@ -38,7 +38,7 @@ func TestPatchEntity_ExpectedVersionAppliesWhenUnchanged(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	got, err := st.GetEntity(context.Background(), stored.ID)
+	got, err := st.GetEntity(context.Background(), stored.Ref())
 	require.NoError(t, err)
 	assert.Equal(t, "Login v2", got.GetString("title"))
 }
@@ -82,7 +82,7 @@ func TestPatchEntity_StaleExpectedVersionSurvivesAsTypedConflict(t *testing.T) {
 	require.ErrorIs(t, err, store.ErrConflict,
 		"errors.Is(err, store.ErrConflict) must also match")
 
-	got, err := st.GetEntity(context.Background(), stored.ID)
+	got, err := st.GetEntity(context.Background(), stored.Ref())
 	require.NoError(t, err)
 	assert.Equal(t, "Written by someone else", got.GetString("title"),
 		"the rejected patch must have written nothing")
@@ -105,7 +105,7 @@ func TestPatchEntity_EmptyExpectedVersionNeverFailsOnConflict(t *testing.T) {
 	})
 	require.NoError(t, err, "a patch with no ExpectedVersion must not fail on a conflict")
 
-	got, err := st.GetEntity(context.Background(), stored.ID)
+	got, err := st.GetEntity(context.Background(), stored.Ref())
 	require.NoError(t, err)
 	assert.Equal(t, "Unconditional", got.GetString("title"))
 }
@@ -142,7 +142,7 @@ func TestPatchEntity_ConflictRetryLoopConverges(t *testing.T) {
 	}
 	require.NoError(t, lastErr, "the retry loop must converge")
 
-	got, err := st.GetEntity(ctx, stored.ID)
+	got, err := st.GetEntity(ctx, stored.Ref())
 	require.NoError(t, err)
 	assert.Equal(t, "Login v2", got.GetString("title"))
 	assert.Equal(t, "open", got.GetString("status"),

@@ -431,7 +431,7 @@ func NewAllowAllCopyVisibility(st store.Store) (AllowAllCopyVisibility, error) {
 func (v AllowAllCopyVisibility) Get(
 	ctx context.Context, _, id string, face entity.Face,
 ) (*entity.Entity, bool, error) {
-	e, err := v.store.GetEntityState(ctx, id, face)
+	e, err := v.store.GetEntity(ctx, entity.Ref{ID: id, Face: face})
 	if err != nil {
 		return nil, false, nil //nolint:nilerr // a miss, to match copyVisibility's shape; see the doc comment
 	}
@@ -959,11 +959,11 @@ func (m *Manager) UpdateEntity(ctx context.Context, e *entity.Entity) (*entity.U
 	}
 
 	// The pre-image is read at the face this write AUTHORIZED against, not
-	// at the zero coordinate. GetEntity(id) is GetEntityState(id, zero), so
-	// the old spelling decided against e.Face and then read a different row
+	// at the zero coordinate. The old spelling read GetEntity(id), the zero
+	// face, so it decided against e.Face and then read a different row
 	// — the same authorize-here/write-there split BUG-HC6I2T removed from
 	// the create path, and on a faced type it simply never found anything.
-	oldEntity, getErr := m.deps.Store.GetEntityState(ctx, e.ID, e.Face)
+	oldEntity, getErr := m.deps.Store.GetEntity(ctx, entity.Ref{ID: e.ID, Face: e.Face})
 	if getErr != nil {
 		// Fails closed: only a genuine miss is reported as missing, so a
 		// transient store error cannot reach the not-found branch that
@@ -1004,7 +1004,7 @@ func updateKeepingFileValues(
 	first := true
 	return patchWithRetry(ctx, true, func(bool) (*entity.UpdateResult, error) {
 		if !first {
-			fresh, err := m.deps.Store.GetEntityState(ctx, e.ID, e.Face)
+			fresh, err := m.deps.Store.GetEntity(ctx, entity.Ref{ID: e.ID, Face: e.Face})
 			if err != nil {
 				if errors.Is(err, store.ErrNotFound) {
 					return nil, fmt.Errorf("%w: %s", ErrEntityNotFound, e.ID)
@@ -1120,10 +1120,9 @@ func (m *Manager) patchEntityOnce(
 	// a raw store handle of their own.
 	//
 	// The id may be the fused boundary form ("POL-1@published"), so it is
-	// PARSED rather than handed to GetEntity whole: GetEntity is
-	// GetEntityState(id, zero) in every backend, and a type declaring faces
-	// stores no row at the zero coordinate, so the faced form would resolve
-	// nothing (BUG-HC6I2T). The authorization below already reads the face
+	// PARSED rather than used as a bare id: a bare id addresses the zero
+	// face, and a type declaring faces stores no row at the zero
+	// coordinate, so the faced form would resolve nothing (BUG-HC6I2T). The authorization below already reads the face
 	// off the stored row, so resolving it here is what makes that correct
 	// rather than accidentally right for unfaced types only.
 	stored, getErr := m.getEntityByRef(ctx, id)
@@ -1519,7 +1518,7 @@ func (m *Manager) deleteEntityInTx(
 	// the relation files and the entity file under a single lock and aborts
 	// fail-secure if any relation file cannot be removed — so the entity is
 	// never deleted while a relation is left behind (issue #888).
-	res, delErr := tx.DeleteEntity(ctx, id, cascade)
+	res, delErr := tx.DeleteFamily(ctx, id, cascade)
 	if delErr != nil {
 		// Propagate res AND the capture, not nil: a non-transactional backend
 		// reports the relations it DID remove before aborting, and the caller
@@ -1683,16 +1682,7 @@ func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*e
 //
 // IDs-scoped, never a full scan, like lookupFamily.
 func familyRows(ctx context.Context, st store.Store, id string) ([]*entity.Entity, error) {
-	var family []*entity.Entity
-	for e, err := range st.ListEntities(ctx, store.EntityQuery{IDs: []string{id}, Faces: store.AllFaces()}) {
-		if err != nil {
-			return nil, err
-		}
-		if e.ID == id {
-			family = append(family, e)
-		}
-	}
-	return family, nil
+	return store.Family(ctx, st, id)
 }
 
 // familyAuthorization is the set of (type, face) subjects one family-wide
@@ -1761,7 +1751,7 @@ func (m *Manager) recordFamilyDeleteAudit(ctx context.Context, deleted []*entity
 // the worse error for a log whose value is that it does not lie.
 func facesStillStored(ctx context.Context, st store.Store, deleted []*entity.Entity) bool {
 	for _, e := range deleted {
-		_, err := st.GetEntityState(ctx, e.ID, e.Face)
+		_, err := st.GetEntity(ctx, entity.Ref{ID: e.ID, Face: e.Face})
 		if err == nil {
 			return true
 		}
@@ -1838,6 +1828,16 @@ func relationKey(r *entity.Relation) string {
 	return r.From + "--" + r.Type + "--" + r.To
 }
 
+// readFaceToDelete reads the face a delete removes, mapping a missing row to
+// [ErrEntityNotFound].
+func readFaceToDelete(ctx context.Context, st store.Store, id string, face entity.Face) (*entity.Entity, error) {
+	e, err := st.GetEntity(ctx, entity.Ref{ID: id, Face: face})
+	if errors.Is(err, store.ErrNotFound) {
+		return nil, fmt.Errorf("%w: %s", ErrEntityNotFound, entity.FormatStateRef(id, face))
+	}
+	return e, err
+}
+
 // DeleteEntityFace removes ONE non-bare content state of an entity and the
 // content-scoped edges that belong to it, leaving the rest of the family
 // standing — what a DELETE addressed to `ID@face` means, and the only way to
@@ -1846,8 +1846,13 @@ func relationKey(r *entity.Relation) string {
 // It is [Manager.DeleteEntity]'s sibling, not a narrower spelling of it:
 // DeleteEntity sweeps the whole family and every incident edge on both sides,
 // whereas a face owns only the OUTGOING edges tailed at that face — incoming
-// edges point at the entity, not at one of its states, and survive (see
-// [store.Store.DeleteEntityState] for the rule). The bare face is refused
+// edges point at the entity, not at one of its states, and survive while any
+// face remains (see [store.EntityWriter.DeleteFace] for the rule). Deleting
+// the family's LAST face removes the entity, so every incident edge goes with
+// it and each is authorized like a DeleteEntity cascade (RR-2466U1). The
+// cascade flag means what it means for DeleteEntity, and applies only to the
+// last face: without it, a last face with edges is [ErrHasRelations]. A face
+// that is not the last always takes its own edges. The bare face is refused
 // here rather than delegated, because "delete the bare face" is either the
 // whole entity (when no other face exists) or undefined (when one does), and
 // neither is what a caller who spelled a face meant.
@@ -1858,18 +1863,15 @@ func relationKey(r *entity.Relation) string {
 // inside the transaction for the reason DeleteEntity gives: the store
 // re-derives the set under its own lock and deletes THAT set.
 func (m *Manager) DeleteEntityFace(
-	ctx context.Context, id string, face entity.Face,
+	ctx context.Context, id string, face entity.Face, cascade bool,
 ) (*entity.DeleteResult, error) {
 	if face.IsDefault() {
 		return nil, fmt.Errorf("delete face: %s names the bare face; delete the entity instead", id)
 	}
-	current, err := m.deps.Store.GetEntityState(ctx, id, face)
+	// Fails closed, as in DeleteEntity: the ACL check is below.
+	current, err := readFaceToDelete(ctx, m.deps.Store, id, face)
 	if err != nil {
-		// Fails closed, as in DeleteEntity: the ACL check is below.
-		if !errors.Is(err, store.ErrNotFound) {
-			return nil, err
-		}
-		return nil, fmt.Errorf("%w: %s", ErrEntityNotFound, entity.FormatStateRef(id, face))
+		return nil, err
 	}
 	if aclErr := m.authorizeAndAudit(ctx, acl.WriteRequest{
 		Op:      acl.OpDelete,
@@ -1879,8 +1881,9 @@ func (m *Manager) DeleteEntityFace(
 	}
 
 	var (
-		res      *store.DeleteResult
-		outgoing []*entity.Relation
+		res                *store.DeleteResult
+		lastFace           bool
+		incoming, outgoing []*entity.Relation
 	)
 	txErr := m.deps.Store.Tx(ctx, func(tx store.Store) error {
 		// Re-read the face under the transaction (BUG-J3PBFN). The read above
@@ -1888,11 +1891,8 @@ func (m *Manager) DeleteEntityFace(
 		// record must carry the row this transaction deletes, not one a
 		// concurrent update has since replaced. A row whose type changed in
 		// between is a different ACL subject and is authorized again.
-		inTx, rErr := tx.GetEntityState(ctx, id, face)
+		inTx, rErr := readFaceToDelete(ctx, tx, id, face)
 		if rErr != nil {
-			if errors.Is(rErr, store.ErrNotFound) {
-				return fmt.Errorf("%w: %s", ErrEntityNotFound, entity.FormatStateRef(id, face))
-			}
 			return rErr
 		}
 		if inTx.Type != current.Type {
@@ -1905,30 +1905,35 @@ func (m *Manager) DeleteEntityFace(
 		}
 		current = inTx
 
-		// Only the edges TAILED AT THIS FACE go with it; the query's FromFace
-		// is an equality match on the tail, so the bare face's edges and the
-		// other faces' edges are not collected and not authorized here.
-		tail := face
 		var cErr error
-		outgoing, cErr = collectRelations(ctx, tx, store.RelationQuery{
-			EntityID: id, Direction: store.DirectionOutgoing, FromFace: &tail,
-		})
+		incoming, outgoing, lastFace, cErr = faceDeleteEdges(ctx, tx, id, face)
 		if cErr != nil {
-			return fmt.Errorf("collect outgoing relations for %q: %w", entity.FormatStateRef(id, face), cErr)
+			return cErr
 		}
-		if len(outgoing) > 0 {
-			if aErr := m.authorizeCascadeRelations(ctx, tx, id, nil, outgoing); aErr != nil {
+		// The last face removes the entity, so it takes the same opt-in a
+		// family delete does before cutting edges (RR-2466U1).
+		if lastFace && !cascade && len(incoming)+len(outgoing) > 0 {
+			return ErrHasRelations
+		}
+		if len(incoming)+len(outgoing) > 0 {
+			if aErr := m.authorizeCascadeRelations(ctx, tx, id, incoming, outgoing); aErr != nil {
 				return aErr
 			}
 		}
 		var dErr error
-		res, dErr = tx.DeleteEntityState(ctx, id, face)
+		res, dErr = tx.DeleteFace(ctx, entity.Ref{ID: id, Face: face})
 		if dErr != nil {
 			return fmt.Errorf("delete face: %w", dErr)
 		}
-		return nil
+		// The store decides "last face" again under its own lock. Every edge
+		// it removed must be one authorized above; otherwise fail, so a
+		// transactional backend rolls the delete back.
+		return requireAuthorizedEdges(res.DeletedRelations, incoming, outgoing)
 	})
 	if txErr != nil {
+		// A non-transactional backend can fail part-way with some relation
+		// files already gone (TKT-A23L87); record those, as DeleteEntity does.
+		m.recordPartialCascade(ctx, id, res, &cascadeCapture{incoming: incoming, outgoing: outgoing})
 		return nil, txErr
 	}
 
@@ -1936,6 +1941,10 @@ func (m *Manager) DeleteEntityFace(
 	// as DeleteEntity orders them and for the same reasons.
 	m.recordEntityVersion(ctx, store.VersionOpDelete, current, "")
 	notifyAliasesOfFaceDelete(ctx, m.deps.AliasRewriter, id, face)
+	if lastFace {
+		// The entity is gone, not just a face of it.
+		m.notifyAliasesOfDelete(ctx, id)
+	}
 	ref := entity.FormatStateRef(id, face)
 	cascadeCtx := ctx
 	if len(res.DeletedRelations) > 0 {
@@ -1962,6 +1971,66 @@ func (m *Manager) DeleteEntityFace(
 		DeletedEntities:  []*entity.Entity{current},
 		DeletedRelations: res.DeletedRelations,
 	}, nil
+}
+
+// faceDeleteEdges collects the edges a delete of id@face removes, and reports
+// whether face is the family's last. A face that is not the last takes only
+// the edges TAILED AT IT; the query's FromFace is an equality match on the
+// tail, so the other faces' edges are not collected. The last face takes
+// every incident edge, as a family delete does (RR-2466U1).
+//
+// tx is the transaction view, so the store's own last-face check, which runs
+// under the same serialization, reaches the same answer.
+func faceDeleteEdges(
+	ctx context.Context, tx store.Store, id string, face entity.Face,
+) (incoming, outgoing []*entity.Relation, last bool, err error) {
+	siblings, err := store.FamilyHeaders(ctx, tx, id)
+	if err != nil {
+		return nil, nil, false, fmt.Errorf("read the faces of %q: %w", id, err)
+	}
+	last = len(siblings) == 1
+	outQuery := store.RelationQuery{EntityID: id, Direction: store.DirectionOutgoing}
+	if !last {
+		tail := face
+		outQuery.FromFace = &tail
+	}
+	outgoing, err = collectRelations(ctx, tx, outQuery)
+	if err != nil {
+		return nil, nil, false, fmt.Errorf("collect outgoing relations for %q: %w",
+			entity.FormatStateRef(id, face), err)
+	}
+	if last {
+		incoming, err = collectRelations(ctx, tx, store.RelationQuery{
+			EntityID: id, Direction: store.DirectionIncoming,
+		})
+		if err != nil {
+			return nil, nil, false, fmt.Errorf("collect incoming relations for %q: %w", id, err)
+		}
+	}
+	return incoming, outgoing, last, nil
+}
+
+// requireAuthorizedEdges reports an error when deleted holds an edge that is
+// in neither authorized set. Edges are matched on (from, from face, type, to).
+func requireAuthorizedEdges(deleted []*entity.Relation, authorized ...[]*entity.Relation) error {
+	type key struct {
+		from     string
+		fromFace entity.Face
+		typ, to  string
+	}
+	ok := make(map[key]bool)
+	for _, set := range authorized {
+		for _, r := range set {
+			ok[key{r.From, r.FromFace, r.Type, r.To}] = true
+		}
+	}
+	for _, r := range deleted {
+		if !ok[key{r.From, r.FromFace, r.Type, r.To}] {
+			return fmt.Errorf("delete face: the store removed %s --%s--> %s, which was not authorized",
+				entity.FormatStateRef(r.From, r.FromFace), r.Type, r.To)
+		}
+	}
+	return nil
 }
 
 // RenameEntity changes an entity's ID and rewrites all incident

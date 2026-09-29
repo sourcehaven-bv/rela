@@ -486,7 +486,7 @@ func TestModern_AC14_ValueBasedNoOp(t *testing.T) {
 // AC17: validation failure leaves entity AND relations untouched.
 func TestModern_AC17_ValidationFailureLeavesStateUntouched(t *testing.T) {
 	app := newRelationsTestApp(t)
-	before, _ := app.store.GetEntity(context.Background(), "TKT-001")
+	before, _ := app.store.GetEntity(context.Background(), entity.Ref{ID: "TKT-001"})
 	titleBefore := before.Properties["title"]
 
 	body := `{
@@ -498,7 +498,7 @@ func TestModern_AC17_ValidationFailureLeavesStateUntouched(t *testing.T) {
 		t.Fatalf("status=%d, want 422; body=%s", rec.Code, rec.Body.String())
 	}
 
-	after, _ := app.store.GetEntity(context.Background(), "TKT-001")
+	after, _ := app.store.GetEntity(context.Background(), entity.Ref{ID: "TKT-001"})
 	if after.Properties["title"] != titleBefore {
 		t.Errorf("title changed to %q, want %q (entity should be untouched on relation 422)",
 			after.Properties["title"], titleBefore)
@@ -574,7 +574,7 @@ func TestModern_AC16_CombinedPatch(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	got, _ := app.store.GetEntity(context.Background(), "TKT-001")
+	got, _ := app.store.GetEntity(context.Background(), entity.Ref{ID: "TKT-001"})
 	if got.Properties["status"] != "in-progress" {
 		t.Errorf("status=%v, want in-progress", got.Properties["status"])
 	}

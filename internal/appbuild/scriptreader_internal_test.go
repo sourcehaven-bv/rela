@@ -97,7 +97,7 @@ func TestScriptEntityReader_NoPolicyIsPassThrough(t *testing.T) {
 	// SEC-1 is the entity the gated tests above prove is HIDDEN under a
 	// policy. With no policy it must be readable: that is what ungated means.
 	for _, id := range []string{"TKT-1", "SEC-1"} {
-		if _, err := st.GetEntity(ctx, id); err != nil {
+		if _, err := st.GetEntity(ctx, entity.Ref{ID: id}); err != nil {
 			t.Fatalf("fixture: %s missing from the raw store: %v", id, err)
 		}
 		if _, err := rd.GetAddress(ctx, id); err != nil {

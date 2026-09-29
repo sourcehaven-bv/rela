@@ -154,7 +154,7 @@ func TestResolver_ResolveHeadersTypeAndRedaction(t *testing.T) {
 	if primer.primed != 1 {
 		t.Errorf("primed %d times, want once per batch", primer.primed)
 	}
-	stored, _ := base.GetEntityState(ctx, "TKT-1", "")
+	stored, _ := base.GetEntity(ctx, entity.Ref{ID: "TKT-1"})
 	if _, kept := stored.Properties["salary"]; !kept {
 		t.Error("redaction mutated the stored row")
 	}

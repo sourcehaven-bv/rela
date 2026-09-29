@@ -221,7 +221,7 @@ func TestConcurrency_DisjointPatchesAllLand(t *testing.T) {
 			for i, err := range errs {
 				require.NoError(t, err, "patch %d", i)
 			}
-			got, err := st.GetEntity(context.Background(), note.ID)
+			got, err := st.GetEntity(context.Background(), note.Ref())
 			require.NoError(t, err)
 			for i := range n {
 				assert.Equal(t, "set", got.GetString(fmt.Sprintf("p%d", i)), "patch %d was lost", i)
@@ -320,7 +320,7 @@ func TestConcurrency_PostAutomationRewriteKeepsInterleavedWrite(t *testing.T) {
 	inner := memstore.New()
 	st := &interleavingStore{Store: inner}
 	st.afterCreate = func(ctx context.Context, e *entity.Entity) {
-		stored, err := inner.GetEntity(ctx, e.ID)
+		stored, err := inner.GetEntity(ctx, e.Ref())
 		require.NoError(t, err)
 		next := stored.Clone()
 		next.SetString("p0", "concurrent")
@@ -350,7 +350,7 @@ func TestConcurrency_PostAutomationRewriteKeepsInterleavedWrite(t *testing.T) {
 	require.NoError(t, err)
 
 	created := mustCreateNote(t, mgr, "raced")
-	got, err := inner.GetEntity(context.Background(), created.ID)
+	got, err := inner.GetEntity(context.Background(), created.Ref())
 	require.NoError(t, err)
 	assert.Equal(t, "concurrent", got.GetString("p0"), "the interleaved write was overwritten")
 	assert.Equal(t, "automated", got.GetString("p7"), "the automation's property was not written")

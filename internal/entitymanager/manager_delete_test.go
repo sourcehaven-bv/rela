@@ -22,7 +22,7 @@ type failingDeleteStore struct {
 	err error
 }
 
-func (s *failingDeleteStore) DeleteEntity(context.Context, string, bool) (*store.DeleteResult, error) {
+func (s *failingDeleteStore) DeleteFamily(context.Context, string, bool) (*store.DeleteResult, error) {
 	return nil, s.err
 }
 

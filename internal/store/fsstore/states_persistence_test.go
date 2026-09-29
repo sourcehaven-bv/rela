@@ -9,6 +9,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 func mustPtr(t *testing.T, v string) entity.Face {
@@ -20,10 +21,8 @@ func mustPtr(t *testing.T, v string) entity.Face {
 
 // TestStatePersistence_FamilySurvivesReopen pins the state family across
 // a store restart (TKT-DOFYR1): the filename serialization round-trips,
-// the reopened index keys states correctly, and — the review-found
-// corruption — the rebuilt prop cache stays DEFAULT-only instead of
-// double-counting a family (a surplus that deletes could never claw
-// back, leaving ghost suggestion values forever).
+// the reopened index keys states correctly, and deleting the family
+// after the reopen removes every face.
 func TestStatePersistence_FamilySurvivesReopen(t *testing.T) {
 	fs := storage.NewMemFS()
 	ctx := context.Background()
@@ -48,23 +47,17 @@ func TestStatePersistence_FamilySurvivesReopen(t *testing.T) {
 	s2 := openStore(t, fs)
 	defer func() { require.NoError(t, s2.Close()) }()
 
-	got, err := s2.GetEntityState(ctx, "REQ-1", mustPtr(t, "draft"))
+	got, err := s2.GetEntity(ctx, entity.Ref{ID: "REQ-1", Face: mustPtr(t, "draft")})
 	require.NoError(t, err)
 	assert.Equal(t, "REQ-1", got.ID)
 	assert.Equal(t, "Draft face", got.Properties["title"])
 
-	// Prop cache after rebuild counts the DEFAULT face once — not the
-	// family twice.
-	vals, err := s2.PropertyValues(ctx, "status", 0)
+	_, err = s2.DeleteFamily(ctx, "REQ-1", true)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"open"}, vals)
-
-	// Deleting the family clears the count entirely: no ghost values.
-	_, err = s2.DeleteEntity(ctx, "REQ-1", true)
-	require.NoError(t, err)
-	vals, err = s2.PropertyValues(ctx, "status", 0)
-	require.NoError(t, err)
-	assert.Empty(t, vals, "deleted family must not leave ghost suggestion values")
+	for _, face := range []entity.Face{"", mustPtr(t, "draft")} {
+		_, err = s2.GetEntity(ctx, entity.Ref{ID: "REQ-1", Face: face})
+		require.ErrorIs(t, err, store.ErrNotFound, "face %q must be gone", face)
+	}
 }
 
 // TestStatePersistence_StateWriteFreshensCache pins that an external

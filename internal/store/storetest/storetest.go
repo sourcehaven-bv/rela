@@ -208,6 +208,8 @@ func RunAll(t *testing.T, f Factory, sf SearchFactory, vsf VisibleSearchFactory,
 		t.Run("Attachment", func(t *testing.T) { RunAttachmentTests(t, f) })
 	}
 	t.Run("States", func(t *testing.T) { RunStateTests(t, f) })
+	t.Run("Address", func(t *testing.T) { RunAddressTests(t, f) })
+	t.Run("Family", func(t *testing.T) { RunFamilyTests(t, f) })
 	// World resolution is part of the store contract, not an optional
 	// capability: every backend resolves an InWorld selection (TKT-WAV8XP).
 	t.Run("Worlds", func(t *testing.T) { RunWorldTests(t, f) })

@@ -57,8 +57,7 @@ func (c *HistoryPurgeCmd) Run(ctx context.Context, svc *writeServices) error {
 	target := ref.String()
 	p := principal.From(ctx)
 	req := store.VersionPurgeRequest{
-		EntityID:      ref.ID,
-		Face:          ref.Face,
+		Ref:           ref,
 		Selector:      store.PurgeSelector{Vseq: c.Vseq, ContentHash: c.ContentHash, All: c.All},
 		Reason:        c.Reason,
 		ForceLive:     c.ForceLive,
