@@ -95,6 +95,7 @@ async function mountCreate(
     embeddedLink?: { relation: string; peer: string; linkAs: 'from' | 'to' }
     embeddedTemplate?: string
     embeddedWorld?: string
+    embeddedFace?: string
   } = {}
 ) {
   const schema = useSchemaStore()
@@ -321,6 +322,22 @@ describe('DynamicForm — embedded pre-link props', () => {
     expect(createRelationMock).toHaveBeenCalledWith('ticket', CREATED.id, 'implements', 'no-prefix-id')
   })
 
+  // BUG-FYEEVX: a content-scoped edge belongs to the face just created.
+  it('links from the created face, addressed by its _self', async () => {
+    const api = await import('@/api')
+    const createRelationMock = vi.mocked(api.createRelation)
+    const { wrapper, create } = await mountCreate({
+      embedded: true,
+      embeddedLink: { relation: 'implements', peer: 'no-prefix-id', linkAs: 'from' },
+    })
+    create.mockResolvedValue({ ...CREATED, _self: '/api/v1/tickets/TKT-9@draft' })
+
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(createRelationMock).toHaveBeenCalledWith('ticket', 'TKT-9@draft', 'implements', 'no-prefix-id')
+  })
+
   it('surfaces a link failure instead of silently creating an unlinked entity', async () => {
     // RR-8SP2UG: the old code skipped the link when it could not resolve a peer
     // type and said nothing, so the user got an orphan and no indication.
@@ -354,6 +371,22 @@ describe('DynamicForm — embedded pre-link props', () => {
     await flushPromises()
 
     expect((create.mock.calls[0][1] as { world?: string }).world).toBe('published')
+  })
+
+  // BUG-FYEEVX: a duplicate of a face is created on that face.
+  it('creates on the face the host named, and names no world', async () => {
+    const { wrapper, create } = await mountCreate({
+      embedded: true,
+      embeddedWorld: 'published',
+      embeddedFace: 'draft',
+    })
+
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    const body = create.mock.calls[0][1] as { world?: string; face?: string }
+    expect(body.face).toBe('draft')
+    expect(body.world).toBeUndefined()
   })
 
   it('carries no world when the host had none', async () => {

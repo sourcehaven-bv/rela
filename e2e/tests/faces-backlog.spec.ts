@@ -67,7 +67,7 @@ test.describe('Faces backlog: anchored documents (BUG-8J3LSB)', () => {
   test.describe('as the published-only reader', () => {
     test.use({ facedUser: FACED_USERS.reader });
 
-    test.fixme('the document renders the published face and never the draft', async ({
+    test('the document renders the published face and never the draft', async ({
       appPage,
     }) => {
       const faces = new FacesPage(appPage);
@@ -80,7 +80,7 @@ test.describe('Faces backlog: anchored documents (BUG-8J3LSB)', () => {
 });
 
 test.describe('Faces backlog: comments panel in a world (BUG-FYEEVX)', () => {
-  test.fixme('the bare address in a world comments on the face that world serves', async ({
+  test('the bare address in a world comments on the face that world serves', async ({
     appPage,
     facedApi,
   }) => {
@@ -99,7 +99,7 @@ test.describe('Faces backlog: comments panel in a world (BUG-FYEEVX)', () => {
 });
 
 test.describe('Faces backlog: duplicate and relations to a faced target (BUG-FYEEVX, BUG-BZQQDP)', () => {
-  test.fixme('duplicating the draft face creates a new draft', async ({ appPage, facedApi }) => {
+  test('duplicating the draft face creates a new draft', async ({ appPage, facedApi }) => {
     const entity = new EntityPage(appPage);
     const faces = new FacesPage(appPage);
     await faces.openEntity('policy', POL1_DRAFT);
@@ -113,7 +113,7 @@ test.describe('Faces backlog: duplicate and relations to a faced target (BUG-FYE
     expect(await facedApi.getPolicy(`${newId}@${FACE.published}`)).toBeNull();
   });
 
-  test.fixme('a control can relate to a draft-only policy', async ({ appPage }) => {
+  test('a control can relate to a draft-only policy', async ({ appPage }) => {
     const faces = new FacesPage(appPage);
     const form = new FormPage(appPage);
     await form.navigateToEditForm('control', CTL.visitors.id);

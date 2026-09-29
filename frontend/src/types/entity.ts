@@ -317,6 +317,9 @@ export interface CreateEntity {
   // it the create is refused. Rides the body because `?world=` is refused on
   // every write (a read chain can answer with a fallback).
   world?: string
+  // The face to create on, named directly. Mutually exclusive with `world`;
+  // the server refuses a body naming both.
+  face?: string
   properties: Record<string, unknown>
   content?: string
   // Modern JSON:API §9 wrapper shape only. The legacy IDs-only form

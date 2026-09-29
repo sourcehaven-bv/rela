@@ -245,6 +245,19 @@ describe('DynamicForm — attachments on create', () => {
     expect(mockUpload).toHaveBeenCalledWith('bug', 'BUG-7', 'screenshot', file)
   })
 
+  // BUG-FYEEVX: the created row's ADDRESS, so a file staged on a create in a
+  // face-creating world lands on the face that was created.
+  it('uploads to the created face, not the bare id', async () => {
+    const { wrapper, create } = await mountCreate()
+    create.mockResolvedValue({ ...CREATED, _self: '/api/v1/bugs/BUG-7@draft' })
+    const file = textFile('shot.png', 'image/png')
+
+    await stage(wrapper, 'screenshot', file)
+    await submit(wrapper)
+
+    expect(mockUpload).toHaveBeenCalledWith('bug', 'BUG-7@draft', 'screenshot', file)
+  })
+
   it('never sends the file property in the create payload', async () => {
     // Staged files live outside formData precisely so a File (or a fake path)
     // is not POSTed as the property's value — the server stamps it itself.

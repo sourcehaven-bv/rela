@@ -469,7 +469,10 @@ describe('RelationPicker incoming label resolution', () => {
 describe('RelationPicker — face badge (BUG-3)', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
-    useSchemaStore().worlds.set('published', { readable: true, messages: { stand_in: 'stand-in' } } as never)
+    useSchemaStore().worlds.set('published', {
+      readable: true,
+      messages: { stand_in: 'stand-in' },
+    } as never)
   })
 
   function faced(id: string, world?: Entity['_world']): Entity {
@@ -559,6 +562,104 @@ describe('RelationPicker — face badge (BUG-3)', () => {
     expect(typeIdx).toBeGreaterThanOrEqual(0)
     expect(badgeIdx).toBeGreaterThan(labelIdx)
     expect(labelIdx).toBeGreaterThan(typeIdx)
+  })
+})
+
+// BUG-FYEEVX — a relation's head is the entity, not a face (DEC-NPZICR), so a
+// faced target the ambient world excludes is still a valid target. The picker
+// widens a faced target type to the other readable worlds and names the face
+// of each row the ambient world does not serve.
+describe('RelationPicker — faced targets span every readable world (BUG-FYEEVX)', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+  })
+
+  function seedFaced() {
+    seedSchema('policy')
+    const schema = useSchemaStore()
+    schema.entityTypes.set('policy', {
+      name: 'policy',
+      label: 'Policy',
+      properties: {},
+      faces: { draft: { label: 'Concept' }, published: { label: 'Published' } },
+    } as never)
+    schema.defaultWorld = 'published'
+    schema.worlds.set('published', { readable: true } as never)
+    schema.worlds.set('editorial', { readable: true } as never)
+    schema.worlds.set('hidden', { readable: false } as never)
+  }
+
+  function pol(id: string, face: string, title: string): Entity {
+    return {
+      id,
+      type: 'policy',
+      properties: {},
+      _title: title,
+      _self: `/api/v1/policies/${id}@${face}`,
+    }
+  }
+
+  async function mountFaced(failingWorld = '') {
+    seedFaced()
+    const entitiesStore = useEntitiesStore()
+    const byWorld: Record<string, Entity[]> = {
+      published: [pol('POL-1', 'published', 'Access')],
+      editorial: [pol('POL-1', 'draft', 'Access (draft)'), pol('POL-2', 'draft', 'Retention')],
+    }
+    entitiesStore.fetchAllList = vi.fn(async (_type: string, params?: { world?: string }) => {
+      if (params?.world === failingWorld) throw new Error('boom')
+      const data = byWorld[params?.world ?? ''] ?? []
+      return {
+        data,
+        meta: { total: data.length, page: 1, per_page: 100, has_more: false },
+        included: {},
+      }
+    }) as never
+    const field: FormFieldOrRelation = { relation: 'affects', label: 'Affects' }
+    const wrapper = mount(RelationPicker, {
+      props: { field, entityType: 'ticket', value: [] },
+      attachTo: document.body,
+    })
+    await flushPromises()
+    await wrapper.find('input[role="combobox"]').trigger('focus')
+    return { wrapper, entitiesStore }
+  }
+
+  it('offers a target only another world serves, naming its face', async () => {
+    const { wrapper, entitiesStore } = await mountFaced()
+    const items = wrapper.findAll('.dropdown-item')
+    expect(items.map((i) => i.find('.entity-label').text())).toEqual([
+      'Access (POL-1)',
+      'Retention (POL-2)',
+    ])
+    // The ambient world's row wins for POL-1, so it names no face.
+    expect(items[0].find('.face-hint').exists()).toBe(false)
+    expect(items[1].find('.face-hint').text()).toBe('Concept')
+    // A world the reader may not select is not queried.
+    const worlds = vi.mocked(entitiesStore.fetchAllList).mock.calls.map((c) => c[1]?.world)
+    expect(worlds).toEqual(['published', 'editorial'])
+  })
+
+  it('still offers the ambient rows when another world fails to load', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const { wrapper } = await mountFaced('editorial')
+    const items = wrapper.findAll('.dropdown-item')
+    expect(items.map((i) => i.find('.entity-label').text())).toEqual(['Access (POL-1)'])
+    expect(error).toHaveBeenCalled()
+    error.mockRestore()
+  })
+
+  it('does not widen a faceless target type', async () => {
+    seedSchema()
+    useSchemaStore().worlds.set('editorial', { readable: true } as never)
+    seedCandidates([entity('TKT-1')])
+    const field: FormFieldOrRelation = { relation: 'affects', label: 'Affects' }
+    mount(RelationPicker, {
+      props: { field, entityType: 'ticket', value: [] },
+      attachTo: document.body,
+    })
+    await flushPromises()
+    expect(useEntitiesStore().fetchAllList).toHaveBeenCalledTimes(1)
   })
 })
 
