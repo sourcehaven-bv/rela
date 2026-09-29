@@ -26,3 +26,9 @@ type that declares faces.
 
 - `internal/entitymanager/cascadehost.go:182`: an automation-driven delete is face-blind; it writes one audit record and no per-face version capture.
 - CLI `delete` and MCP `delete_entity` answer "entity not found" for a faced entity.
+
+## Remaining zero-face reads in entitymanager (from BUG-58BL9I review)
+
+- `findExistingRelationTarget` in `internal/entitymanager/core.go` and `internal/entitymanager/apply.go` read at the zero face and miss faced entities.
+- `DeleteEntityFace` reads the face outside the transaction.
+- `relation_grants` evaluation ignores faces.
