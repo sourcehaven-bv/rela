@@ -76,26 +76,34 @@ func recordHistoryReveal(ctx context.Context, sink audit.Audit, entityType, enti
 	})
 }
 
-// handleV1History serves an entity's version history (postgres-backed only).
+// handleV1History serves an entity face's version history (database
+// backends only).
 //
 // Routes:
 //
-//	GET /api/v1/_history/{type}/{id}           → the version timeline (metadata)
-//	GET /api/v1/_history/{type}/{id}/{version} → one version's full snapshot
+//	GET  /api/v1/_history/{type}/{addr}                   → the version timeline (metadata)
+//	GET  /api/v1/_history/{type}/{addr}/{version}         → one version's full snapshot
+//	POST /api/v1/_history/{type}/{addr}/{version}/restore → restore that version
+//
+// {addr} is `ID@face` or a bare `ID`. A lineage is keyed by (id, face), so
+// the address resolves to ONE face and every read and write below is scoped
+// to it (BUG-4SYAA6). See [resolveHistorySubject] for how the face is chosen
+// and who may read it.
 //
 // Security (design-review findings):
-//   - A LIVE entity's history is gated by the SAME read verdict as reading the
-//     entity (getEntity + type check + gateReadOrNotFound), so a hidden-or-nonexistent id
-//     returns an indistinguishable 404 (RR-KDXGYK / RR-NGMI).
-//   - A DELETED entity has no per-entity verdict to evaluate (its conferring
-//     relations are gone), so its history requires the global acl.PermHistoryRead
-//     permission. A NON-holder gets the SAME 404 as a nonexistent id — never a
-//     403 that would confirm the deleted entity ever existed.
-//   - Every snapshot is rendered through the serializer's forWire so field-level
-//     (`visible:`) redaction strips hidden properties exactly as on a live GET
-//     (RR-YDMJV7) — a raw snapshot would bypass the serializer-layer redaction.
+//   - A LIVE face's history is gated by the SAME resolver read as the entity
+//     GET, so a hidden, mistyped or nonexistent address is an
+//     indistinguishable 404 (RR-KDXGYK / RR-NGMI).
+//   - A DELETED face has no per-entity verdict to evaluate (its conferring
+//     relations are gone), so its history requires the global
+//     acl.PermHistoryRead permission. A NON-holder gets the SAME 404 as a
+//     nonexistent id, never a 403 that would confirm it ever existed.
+//   - Every snapshot is rendered through the serializer's forWire so
+//     field-level (`visible:`) redaction strips hidden properties exactly as
+//     on a live GET (RR-YDMJV7).
+//   - A restore reads the same way before it writes, then writes as an
+//     update (or, for a deleted face, a create) of `type@face`.
 func handleV1History(a *App, w http.ResponseWriter, r *http.Request) {
-	// Path: /api/v1/_history/{type}/{id}[/{version}[/restore]]
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/_history/")
 	parts := strings.Split(strings.Trim(path, "/"), "/")
 	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
@@ -104,15 +112,11 @@ func handleV1History(a *App, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	typeName := parts[0]
-	// The id segment is an ADDRESS (`ID` or `ID@face`). An explicit face
-	// names the timeline directly; a bare id lets the request's world
-	// resolve it below. The row gate and the reader work on the bare id.
 	ref, refErr := entityPkg.ParseRef(parts[1])
 	if refErr != nil {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 		return
 	}
-	entityID := ref.ID
 
 	if a.versions == nil {
 		// A backend with no version-history capability — fsstore (which gets
@@ -122,147 +126,88 @@ func handleV1History(a *App, w http.ResponseWriter, r *http.Request) {
 			"The active storage backend does not support version history", "")
 		return
 	}
-	var reader store.HistoryReader = a.versions
 
-	// POST .../{version}/restore is the one write on this route.
-	if len(parts) == 4 && parts[3] == "restore" {
-		if r.Method != http.MethodPost {
-			w.Header().Set("Allow", "POST, OPTIONS")
-			if r.Method == http.MethodOptions {
-				w.WriteHeader(http.StatusNoContent)
-				return
-			}
-			writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
+	restore := len(parts) == 4 && parts[3] == "restore"
+	if !historyMethodAllowed(w, r, restore) {
+		return
+	}
+
+	subject, ok := historySubjectOr404(w, r, a.visibleReader, typeName, ref)
+	if !ok {
+		return
+	}
+	if subject.worldAbsent {
+		if restore {
+			// Unreachable: restore refuses `?world=`, and only a world makes
+			// a subject absent. Answered as absent, never as a write.
+			writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 			return
 		}
-		restoreHistoryVersion(a, w, r, reader, typeName, entityID, parts[2])
-		return
-	}
-
-	if r.Method != http.MethodGet {
-		w.Header().Set("Allow", "GET, OPTIONS")
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
-		return
-	}
-
-	// Authorize reads: live entity → same read gate as a GET; deleted entity →
-	// PermHistoryRead, else an indistinguishable 404.
-	if !authorizeHistoryRead(a, w, r, typeName, ref) {
-		return
-	}
-
-	// Narrow the reader to the FACE the request's world resolves (BUG-2).
-	// Versioning is per-face, so a world-bound page asking for "the history"
-	// means the history of the face on screen — serving the default face's
-	// instead is the wrong record presented as the right one.
-	//
-	// This runs AFTER authorizeHistoryRead, so the face is only ever resolved
-	// for a caller already cleared to read the entity.
-	face, present, ferr := historyFace(r.Context(), a.store, entityID)
-	if ferr != nil {
-		writeGateError(w, r, ferr)
-		return
-	}
-	if !ref.Face.IsDefault() {
-		// An addressed face is the face, whatever the world would have
-		// resolved: the caller named the timeline they want. A denied
-		// world still answers as absent (historyFace said so above).
-		if present || !worldFromContext(r.Context()).blocksAllReads() {
-			face, present = ref.Face, true
-		}
-	}
-	if !present {
-		// The world resolves no face for this entity, so there is no history
-		// in this world. An EMPTY timeline, not a 404: the entity exists and
-		// this caller may read it (the gate above said so), and a 404 here
-		// would contradict the entity view, which answers the same question
-		// with `_world_absent` and the default face.
 		writeV1JSON(w, http.StatusOK, map[string]any{
-			"id": entityID, "versions": []map[string]any{}, "world_face_absent": true,
+			"id": ref.ID, "versions": []map[string]any{}, "world_face_absent": true,
 		})
 		return
 	}
-	// The row gate in authorizeHistoryRead is face-blind; the face being
-	// served — the default one, or the world's resolution — must pass the
-	// face half too, or a `type@published` principal reads the draft's
-	// timeline and snapshots here while the entity GET 404s.
-	if !faceReadable(r.Context(), typeName, face) {
-		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
-		return
-	}
-	scoped, capable := faceHistoryReader(reader, face)
+	scoped, capable := faceHistoryReader(a.versions, subject.ref.Face)
 	if !capable {
-		// The backend has entity history but not the FACE-scoped capability, so
-		// it cannot answer this question. Refuse rather than serving the
-		// default face's history under a world — a wrong record is worse than a
-		// named refusal (the same posture the 501 above takes).
+		// The backend has entity history but not the FACE-scoped capability,
+		// so it cannot answer this question. Refuse rather than serve another
+		// face's history: a wrong record is worse than a named refusal.
 		writeV1Error(w, r, http.StatusNotImplemented, "history_face_unsupported",
-			"The active storage backend cannot serve per-face version history",
-			"omit ?world= to read the default face's history")
+			"The active storage backend cannot serve per-face version history", "")
 		return
 	}
 
-	if len(parts) >= 3 && parts[2] != "" {
-		serveHistoryVersion(a, w, r, scoped, typeName, entityID, parts[2])
-		return
+	switch {
+	case restore:
+		restoreHistoryVersion(a, w, r, scoped, typeName, subject, parts[2])
+	case len(parts) >= 3 && parts[2] != "":
+		serveHistoryVersion(a, w, r, scoped, typeName, ref.ID, parts[2])
+	default:
+		serveHistoryTimeline(w, r, scoped, typeName, ref.ID, subject.ref.Face, subject.live == nil)
 	}
-	serveHistoryTimeline(w, r, scoped, typeName, entityID, face)
 }
 
-// authorizeHistoryRead returns true if the caller may read this entity's
-// history, writing the appropriate (indistinguishable-404) response otherwise.
-//
-// The URL {type} is attacker-controlled and the store keys history by ID ONLY,
-// so the type MUST be checked against the entity's real type — otherwise a
-// principal denied type A but allowed type B could request /_history/B/<A-id>
-// and read A's history under B's (permissive) read verdict (a confused-deputy
-// cross-type leak). The live GET handler makes the same check (entity.Type !=
-// typeName ⇒ 404); the version-read/restore paths additionally verify the
-// SNAPSHOT's type matches (see verifySnapshotType), so a deleted entity of a
-// mismatched type is a 404 too.
-func authorizeHistoryRead(a *App, w http.ResponseWriter, r *http.Request, typeName string, ref entityPkg.Ref) bool {
-	ctx := r.Context()
-	gate := readGateFromContext(ctx)
-	entityID := ref.ID
-
-	// Live entity: gate exactly as a GET would (PermitsRead), so a hidden or
-	// nonexistent id is an indistinguishable 404. A type mismatch is ALSO a 404
-	// (indistinguishable), so the URL type can't be used to borrow another
-	// type's read verdict.
-	if live, found := liveHistorySubject(ctx, a.reader, a.visibleReader, typeName, ref); found {
-		if live.Type != typeName {
-			writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
-			return false
-		}
-		return a.gateReadOrNotFound(w, r, typeName, entityID)
+// historyMethodAllowed accepts POST for a restore and GET otherwise, and
+// writes the refusal (or the OPTIONS answer) itself.
+func historyMethodAllowed(w http.ResponseWriter, r *http.Request, restore bool) bool {
+	want, allow := http.MethodGet, "GET, OPTIONS"
+	if restore {
+		want, allow = http.MethodPost, "POST, OPTIONS"
 	}
-
-	// Not live: either genuinely absent, or deleted-with-surviving-history.
-	// Reading a deleted entity's history requires the global permission; a
-	// non-holder gets the SAME 404 as a nonexistent id (no existence oracle).
-	// The deleted entity's type is verified against the URL when a snapshot is
-	// read (verifySnapshotType); the timeline endpoint exposes only metadata.
-	if !gate.HoldsPermission(ctx, acl.PermHistoryRead) {
-		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
+	if r.Method == want {
+		return true
+	}
+	w.Header().Set("Allow", allow)
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
 		return false
 	}
-	return true
+	writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
+	return false
 }
 
 // serveHistoryTimeline writes the version metadata list (oldest first).
+//
+// deleted marks a face with no live row, whose history was opened on the
+// global history permission. Such a timeline is served only when it is
+// non-empty and every version is of the URL type: an empty one would tell a
+// permission holder "no such lineage" apart from the 404 of a hidden live
+// face, and a mismatched one would open another type's lineage under this
+// type's face grant.
 func serveHistoryTimeline(
 	w http.ResponseWriter, r *http.Request, reader store.HistoryReader,
-	typeName, entityID string, face entityPkg.Face,
+	typeName, entityID string, face entityPkg.Face, deleted bool,
 ) {
 	metas, err := reader.ListVersions(r.Context(), entityID)
 	if err != nil {
 		// Scrub backend detail from the wire (RR-372L): a store error must not
 		// echo table/column names.
 		writeGateError(w, r, err)
+		return
+	}
+	if deleted && !lineageOfType(metas, typeName) {
+		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 		return
 	}
 	ctx := r.Context()
@@ -314,6 +259,20 @@ func serveHistoryTimeline(
 	writeV1JSON(w, http.StatusOK, body)
 }
 
+// lineageOfType reports whether metas is non-empty and every version is of
+// typeName.
+func lineageOfType(metas []store.VersionMeta, typeName string) bool {
+	if len(metas) == 0 {
+		return false
+	}
+	for _, m := range metas {
+		if m.Type != typeName {
+			return false
+		}
+	}
+	return true
+}
+
 // serveHistoryVersion writes one version's full snapshot, redacted through the
 // serializer so hidden (`visible:`-denied) properties never reach the client.
 func serveHistoryVersion(a *App,
@@ -338,7 +297,7 @@ func serveHistoryVersion(a *App,
 	}
 	// The snapshot's type must match the URL type — otherwise a deleted entity
 	// of type A could be read via /_history/B/<A-id> under B's read verdict
-	// (the cross-type leak, see authorizeHistoryRead). Mismatch → indistinguishable 404.
+	// (the cross-type leak). Mismatch → indistinguishable 404.
 	if snap.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 		return
@@ -367,6 +326,7 @@ func serveHistoryVersion(a *App,
 	//     all-or-nothing reveal this permission grants.
 	ctx := r.Context()
 	snapEntity := entityPkg.New(entityID, snap.Type)
+	snapEntity.Face = snap.Face
 	snapEntity.Content = snap.Content
 	snapEntity.Properties = cloneProps(snap.Properties) // N1: don't alias the snapshot map
 	meta := a.Meta()
@@ -404,65 +364,4 @@ func serveHistoryVersion(a *App,
 		payload["origin"] = o
 	}
 	writeV1JSON(w, http.StatusOK, payload)
-}
-
-// liveHistorySubject finds the LIVE row whose read verdict gates this history
-// request, or reports that no live row answers the address.
-//
-// The {id} path segment is an ADDRESS, not a stored coordinate, and the two
-// spellings resolve differently:
-//
-//   - `ID@face` names one row, so it is read directly.
-//   - A bare `ID` names no row on a type that declares faces (BUG-HC6I2T
-//     removed the privileged face). The REQUEST'S WORLD resolves it, exactly
-//     as it resolves the same address on the entity GET.
-//
-// The bare arm resolves in the same order the entity GET's resolver does
-// (ACL trims the candidate faces, then the world ranks what is left), so this
-// endpoint cannot answer with a face the entity view would not. Picking "some
-// live face" instead would be a second, weaker implementation of world
-// resolution, the implicit face choice this arc exists to remove.
-//
-// These reads are RAW, deliberately: liveness must be told apart from
-// visibility here, because a live-but-hidden entity and a deleted one take
-// different branches below. Moving this route onto [visibility.Resolver] is
-// BUG-4SYAA6.
-//
-// In the DEFAULT world the bare arm reads the zero coordinate, so a bare
-// address on a type that declares faces finds nothing and 404s. That is not a
-// gap: the entity GET answers the same address the same way, and the two
-// surfaces must agree about what an address names. A caller who wants a
-// faced timeline in the default world spells the face.
-//
-// found=false means no live row, which routes the caller to the deleted-entity
-// branch and its global acl.PermHistoryRead check. That is correct for a
-// genuinely deleted entity and for one the world excludes: in the latter case
-// the face gate below withholds the timeline anyway.
-//
-// Takes the two readers rather than an *App because those are the only
-// collaborators it needs, which also keeps it off App's method set (the type
-// is at its plimsoll load line, and a gating helper is not what that budget is
-// for).
-//
-// Nil: never returned with found=true.
-func liveHistorySubject(
-	ctx context.Context, reader entityReader, visible visibleReader,
-	typeName string, ref entityPkg.Ref,
-) (*entityPkg.Entity, bool) {
-	scope := worldScopeFrom(ctx)
-	if !ref.Face.IsDefault() || scope.IsDefaultWorld() {
-		return reader.writePrepRow(ctx, ref)
-	}
-	q := store.EntityQuery{
-		IDs:    []string{ref.ID},
-		World:  scope,
-		FaceIn: readGateFromContext(ctx).ReadQuery(ctx, typeName).Faces,
-	}
-	for e, err := range visible.store.ListEntities(ctx, q) {
-		if err != nil {
-			return nil, false
-		}
-		return e, true
-	}
-	return nil, false
 }

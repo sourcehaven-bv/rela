@@ -38,16 +38,17 @@ func TestHistoryFace_ResolvesTheFaceOnScreen(t *testing.T) {
 
 	// The default world addresses the default face, spelled as the zero
 	// face — byte-identical to the pre-BUG-2 unscoped read.
-	p, ok, err := historyFace(context.Background(), app.store, "TKT-H")
-	if err != nil || !ok || p != "" {
-		t.Fatalf("default world: got (%q,%v,%v), want (\"\",true,nil)", p, ok, err)
+	bare := entityPkg.Ref{ID: "TKT-H"}
+	s, ok, err := resolveHistorySubject(context.Background(), app.visibleReader, "ticket", bare)
+	if err != nil || !ok || s.ref.Face != "" || s.live == nil {
+		t.Fatalf("default world: got (%+v,%v,%v), want the live default face", s, ok, err)
 	}
 
-	p, ok, err = historyFace(worldCtx(pubScope), app.store, "TKT-H")
+	s, ok, err = resolveHistorySubject(worldCtx(pubScope), app.visibleReader, "ticket", bare)
 	if err != nil || !ok {
-		t.Fatalf("published world: got (%q,%v,%v)", p, ok, err)
+		t.Fatalf("published world: got (%+v,%v,%v)", s, ok, err)
 	}
-	if p != entityPkg.Face("published") {
+	if p := s.ref.Face; p != entityPkg.Face("published") {
 		t.Errorf("the history face must be the face the WORLD resolved, not the "+
 			"default one — versioning is per-face, so this is the difference "+
 			"between the right record and a plausible wrong one; got %q", p)
@@ -72,13 +73,14 @@ func TestHistoryFace_AbsentWhenTheWorldResolvesNothing(t *testing.T) {
 		},
 	})
 
-	p, ok, err := historyFace(worldCtx(pubScope), app.store, "TKT-DONLY")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	s, ok, err := resolveHistorySubject(worldCtx(pubScope), app.visibleReader, "ticket",
+		entityPkg.Ref{ID: "TKT-DONLY"})
+	if err != nil || !ok {
+		t.Fatalf("unexpected (%v,%v)", ok, err)
 	}
-	if ok {
+	if !s.worldAbsent {
 		t.Errorf("a draft with no published face must resolve NO face in the "+
-			"published world; got face %q", p)
+			"published world; got face %q", s.ref.Face)
 	}
 }
 
@@ -241,27 +243,26 @@ func TestFaceHistoryReader_ReachesThroughTheVersionServiceInterface(t *testing.T
 	}
 }
 
-// TestHistoryFace_DefaultWorldNeverProbesTheStore pins the property that keeps
+// TestHistoryFace_DeletedEntityResolvesItsLineage pins the property that keeps
 // DELETED-entity history working.
 //
-// A deleted entity has surviving versions but no live row, and
-// authorizeHistoryRead admits it on the global acl.PermHistoryRead. If the
-// default-world path probed the store for a face, it would report absence and
-// serve an empty timeline for a record the caller is entitled to read — a
-// regression invisible from the response, which would look like "no versions
-// recorded yet".
-func TestHistoryFace_DefaultWorldNeverProbesTheStore(t *testing.T) {
+// A deleted entity has surviving versions but no live row, and the global
+// acl.PermHistoryRead admits it. Reporting absence instead would serve an
+// empty timeline for a record the caller is entitled to read, a regression
+// invisible from the response, which would look like "no versions recorded
+// yet".
+func TestHistoryFace_DeletedEntityResolvesItsLineage(t *testing.T) {
 	app := newTestAppV1(t)
 
 	// Nothing seeded: the deleted-entity shape, as the handler sees it.
-	p, ok, err := historyFace(t.Context(), app.store, "GONE-1")
+	s, ok, err := resolveHistorySubject(t.Context(), app.visibleReader, "ticket", entityPkg.Ref{ID: "GONE-1"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !ok || p != "" {
+	if !ok || s.ref.Face != "" || s.worldAbsent || s.live != nil {
 		t.Errorf("under the default world an absent LIVE row must still resolve "+
 			"the default face — a deleted entity's history is a supported read; "+
-			"got (%q,%v)", p, ok)
+			"got (%+v,%v)", s, ok)
 	}
 }
 
@@ -320,7 +321,7 @@ func TestHistoryTimeline_LabelsHowTheFaceWasChosen(t *testing.T) {
 			req = req.WithContext(withReadGate(worldCtx(scope), fakeGate{holdsPermission: true}))
 			rec := httptest.NewRecorder()
 
-			serveHistoryTimeline(rec, req, &stubHistory{}, "policy", "POL-1", tc.face)
+			serveHistoryTimeline(rec, req, &stubHistory{}, "policy", "POL-1", tc.face, false)
 
 			if rec.Code != http.StatusOK {
 				t.Fatalf("timeline: got %d, want 200; body=%s", rec.Code, rec.Body)

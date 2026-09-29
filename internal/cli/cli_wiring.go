@@ -75,7 +75,11 @@ type writeServices struct {
 	// "only breaks pull" the old comment claimed. The wiring site holds the
 	// concrete *entitymanager.Manager, so assigning this field is checked by
 	// the compiler and the failure mode is gone (TKT-IVSJV6).
-	SyncApplier  syncclient.LocalApplier
+	SyncApplier syncclient.LocalApplier
+	// Recreator brings a deleted face back at its own id on `rela restore`,
+	// create-only: unlike SyncApplier.ApplyEntity it never falls through to a
+	// whole-record update when the face was recreated in the meantime.
+	Recreator    entityRecreator
 	Validator    validator.Validator
 	Audit        audit.Audit
 	LuaCache     *lua.Cache
@@ -187,6 +191,7 @@ func newCLIBundles(svc *appbuild.Services) (*cliBundles, error) {
 		readServices:  read,
 		EntityManager: svc.EntityManager(),
 		SyncApplier:   svc.EntityManager(),
+		Recreator:     entitymanager.Recreator{M: svc.EntityManager()},
 		Validator:     svc.Validator(),
 		Audit:         svc.Audit(),
 		LuaCache:      svc.ScriptEngine().LuaCache(),

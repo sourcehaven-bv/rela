@@ -283,7 +283,7 @@ func (v *VersionStore) resolveLineageIDs(
 		}
 		head = id
 	} else {
-		ok, err := v.recordIDIsHeadOfKey(ctx, head, q.From, q.Type, q.To)
+		ok, err := v.recordIDIsHeadOfKey(ctx, head, q.From, q.FromFace, q.Type, q.To)
 		if err != nil {
 			return nil, err
 		}
@@ -295,10 +295,12 @@ func (v *VersionStore) resolveLineageIDs(
 }
 
 // recordIDIsHeadOfKey reports whether recordID is a lineage whose FINAL version
-// row carries (from,type,to) — a valid lifetime handle for this key. This is the
+// row carries (from,type,to) on the fromFace tail — a valid lifetime handle
+// for this key. The tail is part of the key: without it a record id of a
+// sibling tail would pass. This is the
 // membership check that keeps a caller-supplied RecordID bounded to the key.
 func (v *VersionStore) recordIDIsHeadOfKey(
-	ctx context.Context, recordID int64, from, relType, to string,
+	ctx context.Context, recordID int64, from string, fromFace entity.Face, relType, to string,
 ) (bool, error) {
 	const q = `
 		SELECT EXISTS (
@@ -307,9 +309,11 @@ func (v *VersionStore) recordIDIsHeadOfKey(
 		    WHERE rv.rel_record_id = ?
 		      AND rv.vseq = (SELECT max(vseq) FROM relation_versions WHERE rel_record_id = ?)
 		      AND rv.from_id = ? AND rv.rel_type = ? AND rv.to_id = ?
+		      AND rv.from_face = ?
 		)`
 	var ok bool
-	if err := v.db.QueryRowContext(ctx, q, recordID, recordID, from, relType, to).Scan(&ok); err != nil {
+	if err := v.db.QueryRowContext(ctx, q, recordID, recordID, from, relType, to,
+		string(fromFace)).Scan(&ok); err != nil {
 		return false, err
 	}
 	return ok, nil

@@ -963,10 +963,17 @@ const (
 // human-facing 1-based ordinal within the entity's lineage (computed at read
 // time), newest last.
 type VersionMeta struct {
-	Version       int
-	Op            VersionOp
-	PrevID        string // set only for VersionOpRename: the entity's former ID
-	Type          string
+	Version int
+	Op      VersionOp
+	PrevID  string // set only for VersionOpRename: the entity's former ID
+	Type    string
+
+	// Face is the face this version captured; zero is the implicit face of a
+	// faceless type. A lineage is per (id, face), so every row of one
+	// timeline carries the face it was read at. Restoring a deleted face
+	// recreates it here (TKT-7R0ABK).
+	Face entity.Face
+
 	ContentHash   string
 	SchemaHash    string
 	PrincipalUser string
@@ -1397,7 +1404,12 @@ type VersionPurgeRequest struct {
 // its composite key.
 type RelationVersionPurgeRequest struct {
 	From, Type, To string
-	Selector       PurgeSelector
+	// FromFace is the source face (the TAIL) of the edge whose history is
+	// purged; zero is the default tail. The tail is part of the key, as in
+	// [RelationHistoryQuery.FromFace], so a purge reaches one tail's
+	// lineages only and never a sibling tail's (BUG-4SYAA6).
+	FromFace entity.Face
+	Selector PurgeSelector
 	// RecordID selects which lifetime of a reused key to purge (0 = newest). A
 	// key that was deleted-and-recreated has multiple lifetimes; purging without a
 	// selector would silently erase only the newest and leave older lifetimes'

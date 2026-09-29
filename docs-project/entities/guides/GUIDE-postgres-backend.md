@@ -391,6 +391,11 @@ entity requires the global `history:read` permission — see
 [ACL security](acl-security.md). Restore is a normal write: it is authorized,
 validated, and audited like any edit, and produces a new version.
 
+Faces: on a type that declares `faces:`, each face has its own history. The
+CLI, the API and purge all take an `ID@face` address, and a bare id of a faced
+entity is refused on the command line. A purge reaches one face only. See
+[Content states](content-states.md).
+
 Scope: an entity version captures that entity's content and properties. Its
 *relation set* as-of the version is not part of the entity snapshot, so an entity
 restore recovers content and properties — relations are versioned separately (see

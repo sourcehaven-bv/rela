@@ -48,6 +48,14 @@ const userDefaultsFile = "user-defaults.yaml"
 // userPaletteFile is the filename for user-specific palette overrides within the .rela directory.
 const userPaletteFile = "palette.yaml"
 
+// entityRecreator is the create-only write a history restore of a deleted
+// face needs. It never falls through to an update: a face recreated between
+// the restore's resolve and its write surfaces as ErrEntityAlreadyExists, not
+// as a whole-record overwrite of the live row (see entitymanager.RecreateEntity).
+type entityRecreator interface {
+	RecreateEntity(ctx context.Context, e *entity.Entity) (*entity.UpdateResult, error)
+}
+
 // appEntityWriter is the write surface App itself calls — the CalDAV write
 // path, entity/relation history restore, and the value it hands to the Lua
 // writer runtime. See the internal/entitymanager package doc for the
@@ -218,6 +226,10 @@ type App struct {
 	// sub-interface they need rather than type-asserting the store.
 	versions      store.VersionService
 	entityManager appEntityWriter
+
+	// recreator brings a deleted face back at its own id on a history
+	// restore, create-only (see entitymanager.RecreateEntity).
+	recreator entityRecreator
 
 	// caldavAliases links CalDAV resources to entities. Optional: nil when no
 	// alias service is wired, in which case the CalDAV routes are not served
@@ -989,6 +1001,7 @@ func NewApp(
 		store:           st,
 		versions:        versions,
 		entityManager:   em,
+		recreator:       entitymanager.Recreator{M: em},
 		searcher:        searcher,
 		visibleSearcher: visibleSearcher,
 		visibleReader:   visible,

@@ -405,7 +405,7 @@ func TestHistoryRestore_KeepsLiveFileValues(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/_history/ticket/TKT-001/1/restore", http.NoBody)
 	rec := httptest.NewRecorder()
-	restoreHistoryVersion(app, rec, req, app.versions, "ticket", "TKT-001", "1")
+	handleV1History(app, rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("restore = %d (%s)", rec.Code, rec.Body)
 	}

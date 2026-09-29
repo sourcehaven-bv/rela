@@ -21,9 +21,6 @@ var directReadAllowlist = map[string]allowed{
 	"internal/dataentry/document.go": {1, "loadEntry reads the entry row the document route already " +
 		"gated; the render plumbing is shared with export, which moves in PR 4"},
 	"internal/dataentry/entityreader.go": {1, "writePrepRow: write-prep and liveness read, never served"},
-	"internal/dataentry/history_handler.go": {1, "liveHistorySubject: history stays raw until " +
-		"PR 6 (BUG-4SYAA6)"},
-	"internal/dataentry/historyworld.go": {1, "historyFace: history stays raw until PR 6 (BUG-4SYAA6)"},
 	"internal/dataentry/queryservice.go": {1, "loadHitHeaders: id-batch header load for search hits, " +
 		"gated afterwards"},
 	"internal/dataentry/relation_visibility.go": {1, "visibleRelationIDs: id-batch header load for a " +
