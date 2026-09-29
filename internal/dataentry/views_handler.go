@@ -911,8 +911,10 @@ func (h *viewsHandler) relationColumnTargets(
 	ctx context.Context, svc Services, s *Schema, columns []dataentryconfig.ListColumn, rows []*entityPkg.Entity,
 ) (targets map[string]map[int][]string, targetIDs []string) {
 	byType := make(map[string][]string)
+	rowFace := make(map[string]entityPkg.Face, len(rows))
 	for _, e := range rows {
 		byType[e.Type] = append(byType[e.Type], e.ID)
+		rowFace[e.ID] = e.Face
 	}
 	targets = make(map[string]map[int][]string, len(rows))
 	seenTarget := make(map[string]struct{})
@@ -932,8 +934,16 @@ func (h *viewsHandler) relationColumnTargets(
 					break
 				}
 				rowID, targetID := r.From, r.To
+				// A content-scoped edge is served only with the face of its
+				// source that owns it (BUG-ISJHML): the row's face when the row
+				// is the source; see incomingOwnedAtZero for an incoming edge.
+				sourceFace := rowFace[rowID]
 				if dir.IsIncoming() {
 					rowID, targetID = r.To, r.From
+					sourceFace = incomingSourceFace(r, rowFace[rowID])
+				}
+				if !ownedByFace(s.Meta, r, sourceFace) {
+					continue
 				}
 				if targets[rowID] == nil {
 					targets[rowID] = make(map[int][]string)

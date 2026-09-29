@@ -234,7 +234,9 @@ func (h *attachmentHandler) handleV1PutAttachment(
 	}
 	entity = written.Entity
 
-	result := h.serializer.forWire(ctx, entity, h.reader.outgoingRelations(ctx, entity.ID), s.Meta, plural)
+	// The written face's own edges, not every face's (BUG-ISJHML).
+	rels := edgesOwnedBy(s.Meta, h.reader.outgoingRelations(ctx, entity.ID), entity.Face)
+	result := h.serializer.forWire(ctx, entity, rels, s.Meta, plural)
 	writeV1JSON(w, http.StatusOK, result)
 }
 

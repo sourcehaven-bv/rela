@@ -624,45 +624,101 @@ func matchRelationFilterMany(
 	if len(rows) == 0 {
 		return matched, nil
 	}
+	edges, neighborIDs, err := relationFilterEdges(ctx, svc, rows, relation, direction)
+	if err != nil || len(neighborIDs) == 0 {
+		return matched, err
+	}
+
+	// Which neighbors carry the wanted title, by type — then gate per type.
+	// A neighbor is read at the face the request's world serves and must
+	// pass the face gate before its title is compared: matching on another
+	// face's title, or on a face the reader may not read, turns the filter
+	// into an oracle on that face (BUG-ISJHML). The served face is kept so an
+	// incoming content-scoped edge counts only when that face owns it.
+	candidatesByType := map[string][]string{}
+	neighborFace := make(map[string]entityPkg.Face, len(neighborIDs))
+	for h, err := range store.ListEntityHeaders(ctx, svc.Store, store.EntityQuery{
+		IDs: neighborIDs, World: worldScopeFrom(ctx),
+	}) {
+		if err != nil {
+			return nil, err
+		}
+		if !faceReadable(ctx, h.Type, h.Face) {
+			continue
+		}
+		neighborFace[h.ID] = h.Face
+		if svc.Meta.DisplayTitle(h.ID, h.Type, h.Properties) == want {
+			candidatesByType[h.Type] = append(candidatesByType[h.Type], h.ID)
+		}
+	}
+	readable := readableCandidates(ctx, candidatesByType)
+	for _, re := range edges {
+		if !readable[re.targetID] {
+			continue
+		}
+		if direction.IsIncoming() {
+			if f, ok := neighborFace[re.targetID]; !ok || !ownedByFace(svc.Meta, re.rel, f) {
+				continue
+			}
+		}
+		matched[re.rowID] = true
+	}
+	return matched, nil
+}
+
+// relationFilterEdge is one edge of a relation filter, oriented from the
+// filtered row to its neighbor.
+type relationFilterEdge struct {
+	rowID, targetID string
+	rel             *entityPkg.Relation
+}
+
+// relationFilterEdges reads the edges of every row over relation in ONE
+// query, and returns them with the distinct neighbor ids. An outgoing
+// content-scoped edge of another face of the row is dropped: matching on it
+// would tell a reader what a face they were not served links to
+// (BUG-ISJHML). Incoming edges are checked by the caller, which knows the
+// neighbor's face.
+func relationFilterEdges(
+	ctx context.Context, svc Services, rows []*entityPkg.Entity,
+	relation string, direction dataentryconfig.Direction,
+) ([]relationFilterEdge, []string, error) {
 	ids := make([]string, 0, len(rows))
+	rowFace := make(map[string]entityPkg.Face, len(rows))
 	for _, e := range rows {
 		ids = append(ids, e.ID)
+		rowFace[e.ID] = e.Face
 	}
 	q := store.RelationQuery{EntityIDs: ids, Type: relation, Direction: relationDirection(direction)}
-	neighborsOf := make(map[string][]string, len(rows)) // row id → neighbor ids
+	var edges []relationFilterEdge
 	var neighborIDs []string
 	seen := make(map[string]struct{})
 	for r, err := range svc.Store.ListRelations(ctx, q) {
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		rowID, targetID := r.From, r.To
 		if direction.IsIncoming() {
 			rowID, targetID = r.To, r.From
+		} else if !ownedByFace(svc.Meta, r, rowFace[rowID]) {
+			continue
 		}
-		neighborsOf[rowID] = append(neighborsOf[rowID], targetID)
+		edges = append(edges, relationFilterEdge{rowID: rowID, targetID: targetID, rel: r})
 		if _, dup := seen[targetID]; !dup {
 			seen[targetID] = struct{}{}
 			neighborIDs = append(neighborIDs, targetID)
 		}
 	}
-	if len(neighborIDs) == 0 {
-		return matched, nil
-	}
+	return edges, neighborIDs, nil
+}
 
-	// Which neighbors carry the wanted title, by type — then gate per type.
-	candidatesByType := map[string][]string{}
-	for h, err := range store.ListEntityHeaders(ctx, svc.Store, store.EntityQuery{IDs: neighborIDs}) {
-		if err != nil {
-			return nil, err
-		}
-		if svc.Meta.DisplayTitle(h.ID, h.Type, h.Properties) == want {
-			candidatesByType[h.Type] = append(candidatesByType[h.Type], h.ID)
-		}
-	}
+// readableCandidates gates candidate ids with one probe per type. A type
+// whose probe fails contributes nothing: a relation filter only ever
+// narrows on an unreadable neighbor.
+func readableCandidates(ctx context.Context, byType map[string][]string) map[string]bool {
 	readable := make(map[string]bool)
 	gate := readGateFromContext(ctx)
-	for typ, cids := range candidatesByType {
+	for typ, cids := range byType {
 		perm, err := gate.PermitsReadMany(ctx, typ, cids)
 		if err != nil {
 			continue
@@ -673,15 +729,7 @@ func matchRelationFilterMany(
 			}
 		}
 	}
-	for rowID, targets := range neighborsOf {
-		for _, t := range targets {
-			if readable[t] {
-				matched[rowID] = true
-				break
-			}
-		}
-	}
-	return matched, nil
+	return readable
 }
 
 // parseRelationFilterKey parses a `filter[<rel>]` or `filter[<rel>][<op>]` key
@@ -1127,7 +1175,7 @@ func (a *App) handleV1EntityRelations(w http.ResponseWriter, r *http.Request, ty
 	// edges stay entity-level — heads are faceless, so an inbound edge points
 	// at the entity and is shared by its faces.
 	outgoing := a.reader.outgoingRelationsOnFace(r.Context(), ref)
-	incoming := a.reader.incomingRelations(r.Context(), ref.ID)
+	incoming := incomingOwnedAtZero(s.Meta, a.reader.incomingRelations(r.Context(), ref.ID), entity)
 
 	// Gate hidden neighbors (BUG-ABXMAV / RR-HJV8CP). Without this, a hidden
 	// peer's `type` (via the ungated entityType read) and edge `meta` leak past
@@ -1351,9 +1399,10 @@ func (a *App) handleV1GetRelationType(w http.ResponseWriter, r *http.Request, ty
 
 	// Outgoing at the addressed tail, incoming at the entity: see
 	// handleV1EntityRelations.
+	meta := a.State().Meta
 	var edges []*entityPkg.Relation
 	if incoming {
-		edges = a.reader.incomingRelations(r.Context(), ref.ID)
+		edges = incomingOwnedAtZero(meta, a.reader.incomingRelations(r.Context(), ref.ID), entity)
 	} else {
 		edges = a.reader.outgoingRelationsOnFace(r.Context(), ref)
 	}
@@ -1379,7 +1428,7 @@ func (a *App) handleV1GetRelationType(w http.ResponseWriter, r *http.Request, ty
 	relations, pendingStrips := buildRelationTypeRows(r.Context(), a.reader, edges, relType, incoming, visibleNeighbors)
 
 	// Apply orderable sort when the type declares the relevant side.
-	if relDef, ok := a.State().Meta.Relations[relType]; ok {
+	if relDef, ok := meta.Relations[relType]; ok {
 		var prop string
 		if incoming {
 			prop = relDef.IncomingOrderProperty()

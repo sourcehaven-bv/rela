@@ -421,13 +421,15 @@ func (h *exportHandler) gatherListPeers(
 			needOut = true
 		}
 	}
+	meta := h.meta()
 	for _, e := range entities {
 		var outgoing, incoming []*entityPkg.Relation
+		// Only the edges this row's face owns (BUG-ISJHML).
 		if needOut {
-			outgoing = h.reader.outgoingRelations(ctx, e.ID)
+			outgoing = edgesOwnedBy(meta, h.reader.outgoingRelations(ctx, e.ID), e.Face)
 		}
 		if needIn {
-			incoming = h.reader.incomingRelations(ctx, e.ID)
+			incoming = incomingOwnedAtZero(meta, h.reader.incomingRelations(ctx, e.ID), e)
 		}
 		for _, c := range relCols {
 			inbound := c.Direction == dataentryconfig.DirectionIncoming
