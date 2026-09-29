@@ -230,6 +230,19 @@ it already holds the wildcard. This is deliberate: the alternative would mean
 every existing admin grant silently acquiring authority over `published` the
 moment a type declared its first face.
 
+#### Deleting an entity needs delete on every face
+
+Deleting an entity by its bare id removes every face it has. The delete is
+therefore authorized on each face, and it is refused if any face is denied.
+Nothing is deleted in that case. To remove one face, address it:
+`DELETE /policy/POL-1@draft` needs delete on that face only.
+
+This refusal carries one bit. A role that may delete `policy@draft` but cannot
+read `policy@published` learns from a refused bare delete that a published
+face exists. The refusal is necessary, because deleting only the readable faces
+would change what the operation does. Treat this as an accepted membership
+channel, not as a face that is fully concealed.
+
 #### World grants select a lens
 
 A `world:` grant does **not** keep a role away from a face. It scopes which
