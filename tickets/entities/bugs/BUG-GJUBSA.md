@@ -2,6 +2,7 @@
 id: BUG-GJUBSA
 type: bug
 title: Rename affordance and doc ACL assertions decide rename and delete per face
+description: The data-entry rename affordance and the doc ACL assertions decide rename and delete on one face while the manager authorizes every face.
 priority: medium
 effort: s
 status: backlog
