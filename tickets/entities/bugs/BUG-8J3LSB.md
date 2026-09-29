@@ -5,7 +5,13 @@ title: 'Anchored documents skip the face gate: a published-only reader renders t
 description: The document route row-gates the bare id and loads the addressed face without faceReadable, disclosing a face the principal may not read.
 priority: high
 effort: s
-status: backlog
+why1: resolveAnchoredDocument row-gates the bare id and then reads GetEntityState(id, face) without calling faceReadable; documentService then re-reads the entry with store.GetEntity(address), which never names a faced row, so every ID@face render 500s.
+why2: 'Face support was added to the document route by parsing the address (BUG-VFHUWO) but the gate pair was not reused: the route kept its own hand-written gate sequence instead of calling visibleReader.getVisibleRef.'
+why3: Each read-out handler owns its gate sequence, so a new gate dimension (faces, TKT-O7R2A1) must be added to every copy by hand; the document copy was missed.
+why4: The document tests use faceless fixtures and a fake script engine, so no test rendered a faced address through the real store and Lua reader.
+why5: Faces were bolted onto APIs built for one record per id (DEC-NPZICR context); there is no single typed resolver every entity-addressed surface must use, so the face gate is opt-in per surface.
+prevention: The document route now resolves through getVisibleRef and renders the exact address it cleared; TestAnchoredDocument_FaceGate pins the gate and the render on the faced fixture. Stage 1 of RES-Y6JA37 (one typed address resolver) removes the per-surface opt-in.
+status: done
 ---
 
 ## Problem

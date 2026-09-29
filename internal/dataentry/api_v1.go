@@ -2759,7 +2759,7 @@ func handleV1AnchoredDocument(a *App, w http.ResponseWriter, r *http.Request, do
 	// principal-independent command: render. Never widen this to script:
 	// docs, and never call GetCached from a per-principal path (RR-2QSGLU).
 	if !forceRefresh && renderCfg.Script == "" {
-		result := a.documents.GetCached(r.Context(), entityID)
+		result := a.documents.GetCached(r.Context(), resolved.entryID)
 		if result != nil {
 			html := RewriteDocumentLinks(result.HTML, returnPath, nil)
 			writeV1JSON(w, http.StatusOK, v1.DocumentResponse{
@@ -2772,7 +2772,7 @@ func handleV1AnchoredDocument(a *App, w http.ResponseWriter, r *http.Request, do
 	}
 
 	// Render the document
-	result, err := a.documents.Render(r.Context(), entityID, renderCfg)
+	result, err := a.documents.Render(r.Context(), resolved.entryID, renderCfg)
 	if err != nil {
 		var se *lua.ScriptError
 		if errors.As(err, &se) {
