@@ -2,6 +2,8 @@ package attachment
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -12,6 +14,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
@@ -21,19 +24,23 @@ import (
 
 // # The model: bytes per entity, value per face (BUG-CTUW2N)
 //
-// Bytes are keyed (entity id, property, file name) and shared by every face
-// of the entity. A face's files are the base names in its OWN property value
-// ([metamodel.FileNames]). Listing and download serve only those names, so a
-// face never sees another face's upload. Writes run under the entity's
-// attachment lock ([entitymanager.AttachmentLockKey]) and read the whole
-// family raw: that is write-prep, and it
-// must include faces the caller cannot read, or an upload could overwrite
-// their bytes. Bytes are deleted when the last face stops referencing them.
+// Bytes are keyed (entity id, property, storage key) and shared by every
+// face of the entity. A face's files are the entries of its OWN property
+// value ([metamodel.FileRefs]): each has a display name, unique within the
+// face, and a storage key. Listing, download and delete address the display
+// name and resolve it to a key through the face's value, so a face never
+// sees another face's upload. Writes run under the entity's attachment lock
+// ([entitymanager.AttachmentLockKey]) and read the whole family raw: that
+// is write-prep, and it must include faces the caller cannot read, or an
+// upload could overwrite their bytes. Bytes are deleted when the last face
+// stops referencing their key.
 //
-// Names are unique per entity, so an upload whose name another face uses
-// is suffixed (see resolveAttachName). A writer on one face can therefore
-// learn that some face of the entity holds a file of that name, but not
-// read it. That is an accepted one-bit channel (docs/acl-security.md).
+// Every upload gets a fresh storage key, and its display name is made
+// unique against the face's own names only. So an upload on one face
+// behaves exactly as if no other face held a file of that name: a file name
+// is a property value, and a face's hidden values must not leak through
+// another face's upload. A copy carries entries verbatim, keys included, so
+// copied faces share the bytes.
 
 // ErrFaceRequired is returned when a bare id names an entity whose faces
 // are all stored at a named face: there is no bare face to attach to, and
@@ -114,19 +121,42 @@ func (s *Service) Attach(ctx context.Context, ref entity.Ref, filePath, property
 // responsible for ACL gating; e may be a redacted read, in which case a
 // hidden property references nothing.
 func (s *Service) Open(ctx context.Context, e *entity.Entity, property, fileName string) (io.ReadCloser, error) {
-	if !References(e, property, fileName) {
+	key, ok := StorageKey(e, property, fileName)
+	if !ok {
 		return nil, fmt.Errorf("attachment %s/%s: %w", property, fileName, store.ErrNotFound)
 	}
-	return s.deps.Store.ReadAttachment(ctx, e.ID, property, fileName)
+	return s.deps.Store.ReadAttachment(ctx, e.ID, property, key)
 }
 
 // References reports whether the face e's own value of property names
 // fileName. It is the face gate for the shared bytes.
 func References(e *entity.Entity, property, fileName string) bool {
+	_, ok := StorageKey(e, property, fileName)
+	return ok
+}
+
+// StorageKey resolves the display name fileName through the face e's own
+// value of property to the store key of its bytes. ok is false when the
+// face does not reference the name: the value is the face's capability to
+// the shared bytes, so the key must never come from anywhere else.
+func StorageKey(e *entity.Entity, property, fileName string) (key string, ok bool) {
 	if e == nil {
-		return false
+		return "", false
 	}
-	return slices.Contains(metamodel.FileNames(e.Properties[property]), fileName)
+	ref, ok := ownRef(metamodel.FileRefs(e.Properties[property]), fileName)
+	return ref.Key, ok
+}
+
+// ownRef returns the entry named name in a face's refs. Names are unique per
+// face; should a value hold two (only a hand-edited file could), the first
+// in [metamodel.FileRefs] order wins, consistently for every caller.
+func ownRef(refs []metamodel.FileRef, name string) (metamodel.FileRef, bool) {
+	for _, r := range refs {
+		if r.Name == name {
+			return r, true
+		}
+	}
+	return metamodel.FileRef{}, false
 }
 
 // filePropertyDef resolves property to a declared file-type property.
@@ -193,7 +223,7 @@ func (s *Service) WriteAttachment(
 	if err != nil {
 		return nil, err
 	}
-	fileName, err := resolveAttachName(rawFileName, refs, maxCount)
+	fileName, err := resolveAttachName(rawFileName, refs.own, maxCount)
 	if err != nil {
 		return nil, err
 	}
@@ -228,55 +258,80 @@ func (s *Service) WriteAttachment(
 	// Resolve against the references as they are now: a concurrent upload
 	// may have filled the property or taken the name since the check above,
 	// and a transform may have changed the name.
-	fileName, err = resolveAttachName(fileName, refs, maxCount)
+	fileName, err = resolveAttachName(fileName, refs.own, maxCount)
+	if err != nil {
+		return nil, err
+	}
+	fresh, err := newFileRef(e.ID, propName, fileName, refs)
 	if err != nil {
 		return nil, err
 	}
 
-	// Write the new bytes first. On failure the existing files are untouched.
-	if err = s.deps.Store.AttachFile(ctx, e.ID, propName, fileName, spool); err != nil {
+	// Write the new bytes first, under a key nothing references yet. On
+	// failure the existing files are untouched.
+	if err = s.deps.Store.AttachFile(ctx, e.ID, propName, fresh.Key, spool); err != nil {
 		return nil, fmt.Errorf("store attachment: %w", err)
 	}
 
-	// The face's new names come from its value, not from the byte listing,
-	// which also holds the other faces' files.
-	var names, dropped []string
+	// The face's new entries come from its value, not from the byte listing,
+	// which also holds the other faces' files. At max==1 the upload replaces
+	// the face's file; above 1 it is added (its name was suffixed clear of
+	// the face's own names).
+	var own []metamodel.FileRef
+	var dropped []string
 	if maxCount <= 1 {
-		names = []string{fileName}
-		for _, old := range refs.own {
-			if old != fileName {
-				dropped = append(dropped, old)
-			}
+		for _, r := range refs.own {
+			dropped = append(dropped, r.Key)
 		}
 	} else {
-		names = append(names, refs.own...)
-		if !slices.Contains(names, fileName) {
-			names = append(names, fileName)
-		}
-		sort.Strings(names)
+		own = slices.Clone(refs.own)
 	}
+	own = append(own, fresh)
+	metamodel.SortFileRefs(own)
 
-	key := attachPath(e.ID, propName, fileName)
-	res, err := s.stamp(ctx, e, propName, maxCount, names)
+	res, err := s.stamp(ctx, e, propName, maxCount, own)
 	if err != nil {
-		// Nothing references fresh bytes until the stamp lands, so they go
-		// again. Bytes replaced in place (the face's own name) cannot be
-		// restored; the error names the path.
-		if !slices.Contains(refs.own, fileName) && !slices.Contains(refs.others, fileName) {
-			s.dropUnreferenced(ctx, e.ID, propName, []string{fileName}, nil)
-		}
-		return nil, fmt.Errorf("update entity (attachment %s): %w", key, err)
+		// Nothing references the fresh key, so its bytes go again.
+		s.dropUnreferenced(ctx, e.ID, propName, []string{fresh.Key}, nil)
+		return nil, fmt.Errorf("update entity (attachment %s): %w", fresh.Entry, err)
 	}
 	s.dropUnreferenced(ctx, e.ID, propName, dropped, refs.others)
 
-	return &Result{Path: key, FileName: fileName, Entity: res.Entity}, nil
+	return &Result{Path: fresh.Entry, FileName: fileName, Entity: res.Entity}, nil
+}
+
+// maxKeyAttempts bounds the draws for a storage key no other file of the
+// property uses. A draw collides with probability n/2^64 for n files, so a
+// second draw is already never needed in practice.
+const maxKeyAttempts = 8
+
+// newFileRef is the entry for a fresh upload of name: a new random token,
+// re-drawn while its key is referenced or has bytes, so the upload can never
+// overwrite or adopt bytes that exist.
+func newFileRef(entityID, property, name string, r refState) (metamodel.FileRef, error) {
+	for range maxKeyAttempts {
+		var b [metamodel.FileTokenLen / 2]byte
+		if _, err := rand.Read(b[:]); err != nil {
+			return metamodel.FileRef{}, fmt.Errorf("attachment key: %w", err)
+		}
+		tok := hex.EncodeToString(b[:])
+		key := metamodel.FileKey(tok, name)
+		ownKey := slices.ContainsFunc(r.own, func(o metamodel.FileRef) bool { return o.Key == key })
+		if ownKey || slices.Contains(r.bytes, key) || slices.Contains(r.others, key) {
+			continue
+		}
+		return metamodel.FileRef{
+			Entry: metamodel.KeyedFileEntry(entityID, property, tok, name), Name: name, Key: key,
+		}, nil
+	}
+	return metamodel.FileRef{}, errors.New("attachment key: no free storage key")
 }
 
 // refState is the reference state of one (entity, property) at one moment:
-// the addressed face's own names, the names every other face of the family
-// references, and the names that have bytes.
+// the addressed face's own entries, the storage keys every other face of
+// the family references, and the keys that have bytes.
 type refState struct {
-	own    []string
+	own    []metamodel.FileRef
 	others []string
 	bytes  []string
 }
@@ -292,20 +347,19 @@ func (s *Service) references(ctx context.Context, e *entity.Entity, property str
 	var out refState
 	found := false
 	for _, f := range family {
-		names := metamodel.FileNames(f.Properties[property])
 		if f.Face == e.Face {
-			out.own = names
+			out.own = metamodel.FileRefs(f.Properties[property])
 			found = true
 			continue
 		}
-		out.others = append(out.others, names...)
+		out.others = append(out.others, metamodel.FileKeys(f.Properties[property])...)
 	}
 	if !found {
 		return refState{}, fmt.Errorf("get entity %s: %w", entity.FormatStateRef(e.ID, e.Face), store.ErrNotFound)
 	}
 	sort.Strings(out.others)
 	out.others = slices.Compact(out.others)
-	out.bytes, err = s.byteNames(ctx, e.ID, property)
+	out.bytes, err = s.byteKeys(ctx, e.ID, property)
 	if err != nil {
 		return refState{}, fmt.Errorf("list attachments: %w", err)
 	}
@@ -326,24 +380,24 @@ func (s *Service) family(ctx context.Context, id string) ([]*entity.Entity, erro
 	return family, nil
 }
 
-// dropUnreferenced deletes the bytes of names no other face references.
-// The caller holds the entity's attachment lock and has already stamped the
-// face without them (or failed to stamp fresh bytes). A failure leaves
-// unreachable bytes (nothing lists or serves a name no face references), so
-// it is logged and does not fail the write; the manager's next sweep of the
-// entity collects them. The deletes outlive a cancelled request: the write
-// they follow has already happened.
-func (s *Service) dropUnreferenced(ctx context.Context, id, property string, names, others []string) {
+// dropUnreferenced deletes the bytes of storage keys no other face
+// references. The caller holds the entity's attachment lock and has already
+// stamped the face without them (or failed to stamp fresh bytes). A failure
+// leaves unreachable bytes (nothing lists or serves a key no face
+// references), so it is logged and does not fail the write; the manager's
+// next sweep of the entity collects them. The deletes outlive a cancelled
+// request: the write they follow has already happened.
+func (s *Service) dropUnreferenced(ctx context.Context, id, property string, keys, others []string) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), lockWait)
 	defer cancel()
-	for _, name := range names {
-		if slices.Contains(others, name) {
+	for _, key := range keys {
+		if slices.Contains(others, key) {
 			continue
 		}
-		err := s.deps.Store.DeleteAttachment(ctx, id, property, name)
+		err := s.deps.Store.DeleteAttachment(ctx, id, property, key)
 		if err != nil && !errors.Is(err, store.ErrNotFound) {
 			slog.Warn("attachment: unreferenced bytes left behind",
-				"entity", id, "property", property, "file", name, "err", err)
+				"entity", id, "property", property, "file", key, "err", err)
 		}
 	}
 }
@@ -359,7 +413,7 @@ const lockWait = 60 * time.Second
 // attachment lock for longer than the service waits, and stands for a full [Limiter] at the
 // upload handlers. Nothing was written; the caller may retry. The HTTP
 // handler maps it to a 503.
-var ErrBusy = errors.New("attachment: another write to this property is in progress")
+var ErrBusy = errors.New("attachment: another write to this entity's attachments is in progress")
 
 // lockForWrite takes the entity's attachment lock and then re-authorizes the write, so
 // the decision holds for everything done under the lock. On a denial the lock
@@ -420,7 +474,7 @@ func spoolAttachment(r io.Reader) (*os.File, error) {
 // DeleteAttachment removes one file from the face's property, shared with
 // the HTTP delete handler. The caller gates the read; the write is
 // authorized by Deps.Authorizer under the attachment lock. The bytes go when
-// no other face references the name. Deleting a name the face does not
+// no other face references their key. Deleting a name the face does not
 // reference changes nothing and succeeds.
 func (s *Service) DeleteAttachment(
 	ctx context.Context, e *entity.Entity, propDef metamodel.PropertyDef, propName, fileName string,
@@ -448,14 +502,26 @@ func (s *Service) deleteFile(
 	// write the entity: a write is audited and runs `on: update`
 	// automations. It must not touch the bytes either: they may be another
 	// face's.
-	if !slices.Contains(refs.own, fileName) {
+	if _, ok := ownRef(refs.own, fileName); !ok {
 		return false, nil
 	}
-	names := slices.DeleteFunc(slices.Clone(refs.own), func(n string) bool { return n == fileName })
-	if _, err := s.stamp(ctx, e, propName, propDef.FileMax(), names); err != nil {
+	// Every entry of that name goes: names are unique per face, but a
+	// hand-edited value may repeat one, and deleting only the first would
+	// leave the file listed as if the delete had not happened.
+	var rest []metamodel.FileRef
+	var gone, kept []string
+	for _, r := range refs.own {
+		if r.Name == fileName {
+			gone = append(gone, r.Key)
+			continue
+		}
+		rest = append(rest, r)
+		kept = append(kept, r.Key)
+	}
+	if _, err := s.stamp(ctx, e, propName, propDef.FileMax(), rest); err != nil {
 		return false, fmt.Errorf("update entity: %w", err)
 	}
-	s.dropUnreferenced(ctx, e.ID, propName, []string{fileName}, refs.others)
+	s.dropUnreferenced(ctx, e.ID, propName, gone, append(kept, refs.others...))
 	return true, nil
 }
 
@@ -497,10 +563,14 @@ func (s *Service) DetachFile(
 		case 0:
 			return "", fmt.Errorf("%w: property %q has no attachment", ErrNoFileToDetach, property)
 		case 1:
-			fileName = refs.own[0]
+			fileName = refs.own[0].Name
 		default:
+			names := make([]string, 0, len(refs.own))
+			for _, r := range refs.own {
+				names = append(names, r.Name)
+			}
 			return "", fmt.Errorf("%w: property %q holds %d files; specify which to detach: %v",
-				ErrNoFileToDetach, property, len(refs.own), refs.own)
+				ErrNoFileToDetach, property, len(refs.own), names)
 		}
 	}
 	existed, err := s.deleteFile(ctx, e, propDef, property, fileName, refs)
@@ -510,11 +580,11 @@ func (s *Service) DetachFile(
 	return fileName, nil
 }
 
-// byteNames lists the file names that have bytes on the property, in
+// byteKeys lists the storage keys that have bytes on the property, in
 // stable order. A real store error is returned (not swallowed) because the
-// write path chooses names from this list: acting on a degraded view could
+// write path chooses keys against this list: acting on a degraded view could
 // overwrite bytes another face references.
-func (s *Service) byteNames(ctx context.Context, entityID, property string) ([]string, error) {
+func (s *Service) byteKeys(ctx context.Context, entityID, property string) ([]string, error) {
 	infos, err := s.deps.Store.ListAttachments(ctx, entityID)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
@@ -532,70 +602,80 @@ func (s *Service) byteNames(ctx context.Context, entityID, property string) ([]s
 	return names, nil
 }
 
-// stamp records names as the face's property value through the manager's
+// stamp records refs as the face's property value through the manager's
 // one file-property write (see [Stamper]). e supplies identity only and is
 // not modified.
 func (s *Service) stamp(
-	ctx context.Context, e *entity.Entity, property string, maxCount int, names []string,
+	ctx context.Context, e *entity.Entity, property string, maxCount int, refs []metamodel.FileRef,
 ) (*entity.UpdateResult, error) {
 	return s.deps.EntityManager.StampAttachments(ctx, entity.Ref{ID: e.ID, Face: e.Face}, property,
-		stampValue(e.ID, property, maxCount, names))
+		stampValue(maxCount, refs))
 }
 
-// stampValue is the property value for a known set of file names: a scalar
-// path for a single-cap property (empty when none), a list of paths for a
-// multi-cap property.
-func stampValue(entityID, property string, maxCount int, names []string) any {
-	if maxCount <= 1 {
-		if len(names) == 0 {
+// stampValue is the property value for a face's entries: a scalar path for
+// a single-cap property (empty when none), a list of paths for a multi-cap
+// property. Existing entries are written verbatim, so a file stored before
+// storage tokens keeps its key. A single-cap property still holding several
+// entries (its `max` was lowered) keeps them all as a list: writing only the
+// first would drop the others' references without deleting their bytes.
+func stampValue(maxCount int, refs []metamodel.FileRef) any {
+	if maxCount <= 1 && len(refs) <= 1 {
+		if len(refs) == 0 {
 			return ""
 		}
-		return attachPath(entityID, property, names[0])
+		return refs[0].Entry
 	}
-	paths := make([]string, 0, len(names))
-	for _, n := range names {
-		paths = append(paths, attachPath(entityID, property, n))
+	paths := make([]string, 0, len(refs))
+	for _, r := range refs {
+		paths = append(paths, r.Entry)
 	}
 	return paths
 }
 
-func attachPath(entityID, property, fileName string) string {
-	return filepath.ToSlash(filepath.Join("attachments", entityID, property, fileName))
+// resolveAttachName applies the filename policy for an attach: normalize
+// (NormalizeFileName always yields a usable name, never ""), then make it
+// unique among the face's own names. Only the face's own names count: the
+// bytes get a fresh storage key ([newFileRef]), so no other face's file
+// can collide with the upload or show through its name.
+//
+// At max==1 the upload replaces the face's file, so its name is kept. At
+// max>1 the face's own names are taken, and the cap counts them:
+// [ErrAtCapacity] when full.
+func resolveAttachName(rawName string, own []metamodel.FileRef, maxCount int) (string, error) {
+	name := capNameLen(store.NormalizeFileName(rawName))
+	if maxCount <= 1 {
+		return name, nil
+	}
+	if len(own) >= maxCount {
+		return "", ErrAtCapacity
+	}
+	return store.SuffixOnCollision(name, func(c string) bool {
+		_, taken := ownRef(own, c)
+		return taken
+	}), nil
 }
 
-// resolveAttachName applies the filename policy for an attach: normalize
-// (NormalizeFileName always yields a usable name, never ""), then
-// auto-suffix against the names already taken.
-//
-// Taken are the other faces' names and every name with bytes: bytes are
-// shared, so reusing either would overwrite a file another face serves. At
-// max==1 the face's own file is replaced in place when no other face
-// references it. At max>1 the face's own names are taken too, and the cap
-// counts them: [ErrAtCapacity] when full.
-func resolveAttachName(rawName string, r refState, maxCount int) (string, error) {
-	name := store.NormalizeFileName(rawName)
-	taken := make(map[string]bool, len(r.others)+len(r.bytes)+len(r.own))
-	for _, f := range r.others {
-		taken[f] = true
+// maxNameBytes caps a display name so its storage key ("<token>-<name>",
+// plus a " (n)" suffix at max>1) still fits the 255-byte file-name limit of
+// the filesystem backend.
+const maxNameBytes = 255 - metamodel.FileTokenLen - 1 - len(" (99)")
+
+// capNameLen shortens name to [maxNameBytes], cutting the stem on a rune
+// boundary and keeping the extension when it is short enough to keep.
+func capNameLen(name string) string {
+	if len(name) <= maxNameBytes {
+		return name
 	}
-	for _, f := range r.bytes {
-		taken[f] = true
+	ext := filepath.Ext(name)
+	if len(ext) > maxNameBytes/2 {
+		ext = ""
 	}
-	if maxCount <= 1 {
-		for _, f := range r.own {
-			if !slices.Contains(r.others, f) {
-				delete(taken, f)
-			}
-		}
-	} else {
-		if len(r.own) >= maxCount {
-			return "", ErrAtCapacity
-		}
-		for _, f := range r.own {
-			taken[f] = true
-		}
+	stem := strings.TrimSuffix(name, ext)
+	limit := maxNameBytes - len(ext)
+	for limit > 0 && !utf8.RuneStart(stem[limit]) {
+		limit--
 	}
-	return store.SuffixOnCollision(name, func(c string) bool { return taken[c] }), nil
+	return stem[:limit] + ext
 }
 
 // List returns the attachments of the face ref addresses; see
@@ -618,33 +698,69 @@ func (s *Service) ListFace(ctx context.Context, e *entity.Entity) ([]Info, error
 	if err != nil {
 		return nil, err
 	}
-	infos := make([]Info, 0, len(items))
-	for _, it := range FaceAttachments(e, items) {
+	faced := faceFiles(e, items)
+	infos := make([]Info, 0, len(faced))
+	for _, f := range faced {
 		infos = append(infos, Info{
-			Property:    it.Property,
-			Path:        attachPath(it.EntityID, it.Property, it.FileName),
-			FileName:    it.FileName,
-			ContentType: contentTypeForName(it.FileName),
-			Size:        it.Size,
+			Property:    f.info.Property,
+			Path:        f.entry,
+			FileName:    f.info.FileName,
+			ContentType: contentTypeForName(f.info.FileName),
+			Size:        f.info.Size,
 		})
 	}
 	return infos, nil
 }
 
 // FaceAttachments filters an entity's byte listing to the files the face e
-// references, in (property, name) order.
+// references, in (property, name) order. Each result's FileName is the
+// face's display name, not the storage key the listing held.
 func FaceAttachments(e *entity.Entity, items []store.AttachmentInfo) []store.AttachmentInfo {
-	out := make([]store.AttachmentInfo, 0, len(items))
+	faced := faceFiles(e, items)
+	out := make([]store.AttachmentInfo, 0, len(faced))
+	for _, f := range faced {
+		out = append(out, f.info)
+	}
+	return out
+}
+
+// faceFile is one of a face's files: its byte listing with the display
+// name, and the value entry that references it.
+type faceFile struct {
+	info  store.AttachmentInfo
+	entry string
+}
+
+// faceFiles joins the byte listing items (by storage key) with the face e's
+// own entries, in (property, name) order. A face entry with no bytes is
+// left out.
+func faceFiles(e *entity.Entity, items []store.AttachmentInfo) []faceFile {
+	var out []faceFile
+	if e == nil {
+		return out
+	}
+	refs := make(map[string][]metamodel.FileRef)
 	for _, it := range items {
-		if References(e, it.Property, it.FileName) {
-			out = append(out, it)
+		own, seen := refs[it.Property]
+		if !seen {
+			own = metamodel.FileRefs(e.Properties[it.Property])
+			refs[it.Property] = own
+		}
+		for _, r := range own {
+			// List only what download serves: the entry a name resolves to.
+			if first, _ := ownRef(own, r.Name); r.Key != it.FileName || first != r {
+				continue
+			}
+			info := it
+			info.FileName = r.Name
+			out = append(out, faceFile{info: info, entry: r.Entry})
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {
-		if out[i].Property != out[j].Property {
-			return out[i].Property < out[j].Property
+		if out[i].info.Property != out[j].info.Property {
+			return out[i].info.Property < out[j].info.Property
 		}
-		return out[i].FileName < out[j].FileName
+		return out[i].info.FileName < out[j].info.FileName
 	})
 	return out
 }

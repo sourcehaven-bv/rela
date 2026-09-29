@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -16,8 +18,8 @@ import (
 )
 
 // Per-face attachments (BUG-CTUW2N). Bytes are keyed per entity and shared
-// by its faces; a face lists and serves only the names its own file value
-// references, and only the attachments API may change that value.
+// by its faces under storage keys; a face lists and serves only the files
+// its own value references, and only the attachments API may change it.
 
 // facedAttachmentApp is facedTicketApp with TKT-1 seeded at `draft` and
 // `published`, and the policy under test installed as the app's ACL.
@@ -82,21 +84,43 @@ func attachmentsOf(ctx context.Context, t *testing.T, app *App, d *acl.Declarati
 	return names
 }
 
-func storedBytes(t *testing.T, app *App, name string) (string, bool) {
+// storedContents returns the contents of every stored byte blob of TKT-1's
+// screenshot property, sorted, whichever face references it.
+func storedContents(t *testing.T, app *App) []string {
 	t.Helper()
-	rc, err := app.store.ReadAttachment(context.Background(), "TKT-1", "screenshot", name)
-	if errors.Is(err, store.ErrNotFound) {
-		return "", false
+	ctx := context.Background()
+	infos, err := app.store.ListAttachments(ctx, "TKT-1")
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("ListAttachments: %v", err)
 	}
+	var out []string
+	for _, info := range infos {
+		if info.Property != "screenshot" {
+			continue
+		}
+		rc, err := app.store.ReadAttachment(ctx, "TKT-1", "screenshot", info.FileName)
+		if err != nil {
+			t.Fatalf("ReadAttachment %s: %v", info.FileName, err)
+		}
+		data, err := io.ReadAll(rc)
+		_ = rc.Close()
+		if err != nil {
+			t.Fatalf("read %s: %v", info.FileName, err)
+		}
+		out = append(out, string(data))
+	}
+	slices.Sort(out)
+	return out
+}
+
+// rawScreenshot returns the stored screenshot value of TKT-1 at face.
+func rawScreenshot(t *testing.T, app *App, face entity.Face) any {
+	t.Helper()
+	e, err := app.store.GetEntityState(context.Background(), "TKT-1", face)
 	if err != nil {
-		t.Fatalf("ReadAttachment %s: %v", name, err)
+		t.Fatalf("read TKT-1@%s: %v", face, err)
 	}
-	defer rc.Close()
-	data, err := io.ReadAll(rc)
-	if err != nil {
-		t.Fatalf("read %s: %v", name, err)
-	}
-	return string(data), true
+	return e.Properties["screenshot"]
 }
 
 func TestFacedAttachment_UploadStaysOnItsFace(t *testing.T) {
@@ -127,15 +151,81 @@ func TestFacedAttachment_UploadStaysOnItsFace(t *testing.T) {
 	if got := downloadAs(bob, t, app, d, "TKT-1@draft", "a.txt"); got.Body.String() != "draft bytes" {
 		t.Errorf("a published upload clobbered draft's file: %q", got.Body)
 	}
-	pub := attachmentsOf(bob, t, app, d, "TKT-1@published")
-	if len(pub) != 1 || pub[0] == "a.txt" {
-		t.Fatalf("published lists %v, want one suffixed name", pub)
-	}
-	if got := downloadAs(bob, t, app, d, "TKT-1@published", pub[0]); got.Body.String() != "published bytes" {
+	if got := downloadAs(bob, t, app, d, "TKT-1@published", "a.txt"); got.Body.String() != "published bytes" {
 		t.Errorf("published download = %q", got.Body)
 	}
-	if got := downloadAs(bob, t, app, d, "TKT-1@draft", pub[0]); got.Code != http.StatusNotFound {
-		t.Errorf("published's upload served through draft: %d", got.Code)
+}
+
+// TestFacedAttachment_UploadRevealsNoOtherFaceName is the file-name oracle
+// fix (BUG-CTUW2N, PR 4b). A file name is a property value, so an upload on
+// published whose name matches a file on draft must behave exactly as if
+// draft had no such file: same name, no suffix, same value shape. Otherwise
+// a writer who cannot read draft learns its file names.
+func TestFacedAttachment_UploadRevealsNoOtherFaceName(t *testing.T) {
+	upload := func(t *testing.T, draftHasFile bool) (listed []string, value any) {
+		t.Helper()
+		app, d := facedAttachmentApp(t, func(st store.Store) *acl.Declarative {
+			return mustNewACL(t, &acl.Policy{
+				Roles: map[string]acl.RoleDef{
+					"editor":           {Read: allTicketFaces, Update: allTicketFaces},
+					"published-editor": {Read: []string{"ticket@published"}, Update: []string{"ticket@published"}},
+				},
+				Assignments: map[string]string{"bob": "editor", "carol": "published-editor"},
+			}, st)
+		})
+		if draftHasFile {
+			rec := putAttachmentAs(principalCtx("bob"), t, app, d, "TKT-1@draft", "screenshot", "a.txt", []byte("secret"))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("draft upload = %d (%s)", rec.Code, rec.Body)
+			}
+		}
+		carol := principalCtx("carol")
+		if rec := putAttachmentAs(carol, t, app, d, "TKT-1@published", "screenshot", "a.txt", []byte("mine")); rec.Code != http.StatusOK {
+			t.Fatalf("published upload = %d (%s)", rec.Code, rec.Body)
+		}
+		if rec := downloadAs(carol, t, app, d, "TKT-1@published", "a.txt"); rec.Body.String() != "mine" {
+			t.Errorf("published download = %d %q, want its own bytes", rec.Code, rec.Body)
+		}
+		return attachmentsOf(carol, t, app, d, "TKT-1@published"), rawScreenshot(t, app, "published")
+	}
+
+	listedWith, valueWith := upload(t, true)
+	listedWithout, valueWithout := upload(t, false)
+	if !slices.Equal(listedWith, listedWithout) || !slices.Equal(listedWith, []string{"a.txt"}) {
+		t.Errorf("published lists %v with a draft file, %v without; want [a.txt] both", listedWith, listedWithout)
+	}
+	shape := regexp.MustCompile(`^attachments/TKT-1/screenshot/[0-9a-f]{16}/a\.txt$`)
+	for _, v := range []any{valueWith, valueWithout} {
+		if s, _ := v.(string); !shape.MatchString(s) {
+			t.Errorf("published value = %v, want a keyed entry for a.txt", v)
+		}
+	}
+}
+
+// TestFacedAttachment_LegacyValueServes: a value stamped before storage
+// keys existed ("attachments/<id>/<prop>/<name>") keeps serving the bytes
+// stored under its name, with no migration.
+func TestFacedAttachment_LegacyValueServes(t *testing.T) {
+	app, d := facedAttachmentApp(t, faceEditors(t, "bob"))
+	bob := principalCtx("bob")
+	if err := app.store.AttachFile(bob, "TKT-1", "screenshot", "old.txt", strings.NewReader("legacy")); err != nil {
+		t.Fatalf("seed bytes: %v", err)
+	}
+	if _, err := app.attachmentOwner.StampAttachments(bob, entity.Ref{ID: "TKT-1", Face: "draft"},
+		"screenshot", "attachments/TKT-1/screenshot/old.txt"); err != nil {
+		t.Fatalf("stamp: %v", err)
+	}
+	if rec := downloadAs(bob, t, app, d, "TKT-1@draft", "old.txt"); rec.Code != http.StatusOK || rec.Body.String() != "legacy" {
+		t.Fatalf("legacy download = %d %q", rec.Code, rec.Body)
+	}
+	if got := attachmentsOf(bob, t, app, d, "TKT-1@draft"); !slices.Equal(got, []string{"old.txt"}) {
+		t.Errorf("draft lists %v, want [old.txt]", got)
+	}
+	if rec := deleteAttachmentAs(bob, t, app, d, "TKT-1@draft", "screenshot", "old.txt"); rec.Code != http.StatusNoContent {
+		t.Fatalf("legacy delete = %d (%s)", rec.Code, rec.Body)
+	}
+	if got := storedContents(t, app); len(got) != 0 {
+		t.Errorf("legacy bytes survived their delete: %v", got)
 	}
 }
 
@@ -151,15 +241,15 @@ func TestFacedAttachment_DeleteCountsReferences(t *testing.T) {
 	// What a copy with `fields: all` does: published references the same
 	// bytes through the trusted stamp.
 	if _, err := app.attachmentOwner.StampAttachments(bob, entity.Ref{ID: "TKT-1", Face: "published"},
-		"screenshot", "attachments/TKT-1/screenshot/a.txt"); err != nil {
+		"screenshot", rawScreenshot(t, app, "draft")); err != nil {
 		t.Fatalf("stamp published: %v", err)
 	}
 
 	if rec := deleteAttachmentAs(bob, t, app, d, "TKT-1@draft", "screenshot", "a.txt"); rec.Code != http.StatusNoContent {
 		t.Fatalf("delete on draft = %d (%s)", rec.Code, rec.Body)
 	}
-	if _, ok := storedBytes(t, app, "a.txt"); !ok {
-		t.Fatal("delete on draft removed bytes published still references")
+	if got := storedContents(t, app); !slices.Equal(got, []string{"shared"}) {
+		t.Fatalf("after the draft delete the stored bytes are %v, want [shared]", got)
 	}
 	if rec := downloadAs(bob, t, app, d, "TKT-1@published", "a.txt"); rec.Code != http.StatusOK {
 		t.Errorf("published download after draft delete = %d", rec.Code)
@@ -171,8 +261,8 @@ func TestFacedAttachment_DeleteCountsReferences(t *testing.T) {
 	if rec := deleteAttachmentAs(bob, t, app, d, "TKT-1@published", "screenshot", "a.txt"); rec.Code != http.StatusNoContent {
 		t.Fatalf("delete on published = %d (%s)", rec.Code, rec.Body)
 	}
-	if _, ok := storedBytes(t, app, "a.txt"); ok {
-		t.Error("bytes survived the last reference's delete")
+	if got := storedContents(t, app); len(got) != 0 {
+		t.Errorf("bytes survived the last reference's delete: %v", got)
 	}
 }
 
@@ -189,11 +279,8 @@ func TestFacedAttachment_FaceDeleteDropsUnreferencedBytes(t *testing.T) {
 	if _, err := app.write.manager.DeleteEntityFace(bob, "TKT-1", "draft"); err != nil {
 		t.Fatalf("delete draft face: %v", err)
 	}
-	if _, ok := storedBytes(t, app, "d.txt"); ok {
-		t.Error("the deleted face's bytes survived")
-	}
-	if _, ok := storedBytes(t, app, "p.txt"); !ok {
-		t.Error("the remaining face's bytes were removed")
+	if got := storedContents(t, app); !slices.Equal(got, []string{"p.txt"}) {
+		t.Errorf("after the draft face delete the stored bytes are %v, want only published's [p.txt]", got)
 	}
 }
 
@@ -248,8 +335,8 @@ func TestFacedAttachment_ACLOnTypeAtFace(t *testing.T) {
 			}
 		})
 	}
-	if got, _ := storedBytes(t, app, "a.txt"); got != "draft" {
-		t.Errorf("draft's bytes changed under denied writes: %q", got)
+	if rec := downloadAs(bob, t, app, d, "TKT-1@draft", "a.txt"); rec.Body.String() != "draft" {
+		t.Errorf("draft's bytes changed under denied writes: %d %q", rec.Code, rec.Body)
 	}
 }
 

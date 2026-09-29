@@ -643,7 +643,11 @@ Attach file(s) to an entity.
 rela attach <entity-id> <file>... [flags]
 ```
 
-Each file is stored at `attachments/<entity-id>/<property>/<filename>`.
+Each file is recorded on the property as
+`attachments/<entity-id>/<property>/<token>/<filename>`. The token gives
+every upload its own storage key; values written before tokens existed keep
+the shorter `attachments/<entity-id>/<property>/<filename>` form. The
+recorded path is a reference, not the location of the bytes on disk.
 A file-type property holds one attachment by default; set `max` above 1 on
 the property (see the metamodel reference) to allow several.
 

@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/attachment"
@@ -38,6 +40,7 @@ entities:
     properties:
       title: {type: string}
       spec: {type: file}
+      gallery: {type: file, max: 3}
   sheet:
     label: Sheet
     id_prefix: SHEET
@@ -158,17 +161,56 @@ func (f facedFixture) references(t *testing.T, id string, face entity.Face) bool
 	return attachment.References(e, "spec", "spec.txt")
 }
 
+// hasBytes reports whether id's spec property has any stored bytes.
 func (f facedFixture) hasBytes(t *testing.T, id string) bool {
 	t.Helper()
-	rc, err := f.st.ReadAttachment(context.Background(), id, "spec", "spec.txt")
-	if errors.Is(err, store.ErrNotFound) {
-		return false
+	return len(f.specKeys(t, id)) > 0
+}
+
+// specKeys returns the storage keys that have bytes on id's spec property.
+func (f facedFixture) specKeys(t *testing.T, id string) []string {
+	t.Helper()
+	infos, err := f.st.ListAttachments(context.Background(), id)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("list bytes of %s: %v", id, err)
 	}
+	var keys []string
+	for _, info := range infos {
+		if info.Property == "spec" {
+			keys = append(keys, info.FileName)
+		}
+	}
+	slices.Sort(keys)
+	return keys
+}
+
+// specValue returns the raw spec value of id at face.
+func (f facedFixture) specValue(t *testing.T, id string, face entity.Face) any {
+	t.Helper()
+	e, err := f.st.GetEntityState(context.Background(), id, face)
 	if err != nil {
-		t.Fatalf("read bytes of %s: %v", id, err)
+		t.Fatalf("read %s@%s: %v", id, face, err)
 	}
-	_ = rc.Close()
-	return true
+	return e.Properties["spec"]
+}
+
+// readSpec reads name through PAGE-1's face's own value, as a download does.
+func (f facedFixture) readSpec(t *testing.T, face entity.Face, name string) (string, error) {
+	t.Helper()
+	e, err := f.st.GetEntityState(context.Background(), "PAGE-1", face)
+	if err != nil {
+		t.Fatalf("read PAGE-1@%s: %v", face, err)
+	}
+	rc, err := f.svc.Open(context.Background(), e, "spec", name)
+	if err != nil {
+		return "", err
+	}
+	defer rc.Close()
+	data, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatalf("read bytes: %v", err)
+	}
+	return string(data), nil
 }
 
 // A copy with `fields: all` gives the target face a reference to the same
@@ -185,6 +227,10 @@ func TestFaced_CopyFieldsAllSharesBytes(t *testing.T) {
 	}
 	if !f.references(t, "PAGE-1", "review") {
 		t.Fatal("the copy did not carry the file reference to review")
+	}
+	live, review := metamodel.FileKeys(f.specValue(t, "PAGE-1", "live")), metamodel.FileKeys(f.specValue(t, "PAGE-1", "review"))
+	if !slices.Equal(live, review) || !slices.Equal(f.specKeys(t, "PAGE-1"), live) {
+		t.Fatalf("keys: live %v, review %v, stored %v; want one shared key", live, review, f.specKeys(t, "PAGE-1"))
 	}
 
 	if _, err := f.svc.Detach(ctx, entity.Ref{ID: "PAGE-1", Face: "live"}, "spec", "spec.txt"); err != nil {
@@ -355,5 +401,245 @@ func TestFaced_CrossEntityCopyKeepsTargetFileValue(t *testing.T) {
 	}
 	if got := f.specNames(t, "SHEET-1", ""); !slices.Equal(got, []string{"own.txt"}) {
 		t.Errorf("sheet spec = %v, want its own upload [own.txt]", got)
+	}
+}
+
+// seedReview creates PAGE-1's review face with no files.
+func (f facedFixture) seedReview(t *testing.T) {
+	t.Helper()
+	const id = "PAGE-1"
+	if err := f.st.CreateEntity(context.Background(), &entity.Entity{
+		ID: id, Type: "page", Face: "review", Properties: map[string]any{"title": "review"},
+	}); err != nil {
+		t.Fatalf("seed %s@review: %v", id, err)
+	}
+}
+
+// An upload on review with the name of live's file keeps that name, gets
+// its own bytes, and leaves live's alone (the file-name oracle fix,
+// BUG-CTUW2N PR 4b). Download and detach stay per face.
+func TestFaced_SameNameOnTwoFacesIsIsolated(t *testing.T) {
+	f := newFacedFixture(t)
+	ctx := context.Background()
+	f.seedLive(t, "PAGE-1")
+	f.seedReview(t)
+	f.attachTo(t, entity.Ref{ID: "PAGE-1", Face: "review"}, "spec.txt")
+
+	if got := f.specNames(t, "PAGE-1", "review"); !slices.Equal(got, []string{"spec.txt"}) {
+		t.Fatalf("review spec = %v, want [spec.txt] unsuffixed", got)
+	}
+	if n := len(f.specKeys(t, "PAGE-1")); n != 2 {
+		t.Fatalf("stored %d byte blobs, want one per face", n)
+	}
+	for face, want := range map[entity.Face]string{"live": "spec bytes", "review": "spec.txt bytes"} {
+		if got, err := f.readSpec(t, face, "spec.txt"); err != nil || got != want {
+			t.Errorf("%s reads %q (%v), want %q", face, got, err, want)
+		}
+	}
+
+	if _, err := f.svc.Detach(ctx, entity.Ref{ID: "PAGE-1", Face: "review"}, "spec", "spec.txt"); err != nil {
+		t.Fatalf("detach on review: %v", err)
+	}
+	if got, err := f.readSpec(t, "live", "spec.txt"); err != nil || got != "spec bytes" {
+		t.Errorf("after review's detach live reads %q (%v)", got, err)
+	}
+	if n := len(f.specKeys(t, "PAGE-1")); n != 1 {
+		t.Errorf("after review's detach %d byte blobs remain, want live's one", n)
+	}
+	if _, err := f.readSpec(t, "review", "spec.txt"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("review still serves a detached file: %v", err)
+	}
+}
+
+// On a multi-file property the name is suffixed against the face's own
+// names only: another face's file of that name does not count.
+func TestFaced_MultiFileSuffixIsPerFace(t *testing.T) {
+	f := newFacedFixture(t)
+	ctx := context.Background()
+	f.seedLive(t, "PAGE-1")
+	f.seedReview(t)
+
+	put := func(face entity.Face) string {
+		t.Helper()
+		e, err := f.st.GetEntityState(ctx, "PAGE-1", face)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res, err := f.svc.WriteAttachment(ctx, e, metamodel.PropertyDef{Type: metamodel.PropertyTypeFile, Max: 3},
+			"gallery", "a.txt", strings.NewReader(string(face)))
+		if err != nil {
+			t.Fatalf("upload on %s: %v", face, err)
+		}
+		return res.FileName
+	}
+	if got := put("live"); got != "a.txt" {
+		t.Fatalf("live upload named %q", got)
+	}
+	if got := put("review"); got != "a.txt" {
+		t.Errorf("review upload named %q, want a.txt: live's file must not count", got)
+	}
+	if got := put("review"); got != "a (1).txt" {
+		t.Errorf("second review upload named %q, want a (1).txt", got)
+	}
+}
+
+// A copy mapping into the file property may not keep a source name while
+// naming other bytes: the storage key must match the source's too.
+func TestFaced_CopyForgedStorageKeyRefused(t *testing.T) {
+	f := newFacedFixture(t)
+	ctx := context.Background()
+	f.seedLive(t, "PAGE-1")
+	forged := metamodel.KeyedFileEntry("PAGE-1", "spec", strings.Repeat("0", metamodel.FileTokenLen), "spec.txt")
+	if _, err := f.mgr.PatchEntity(ctx, entity.Ref{ID: "PAGE-1", Face: "live"}.String(),
+		entity.Patch{Properties: map[string]any{"title": forged}}); err != nil {
+		t.Fatalf("set title: %v", err)
+	}
+
+	_, err := f.mgr.CopyState(ctx, entitymanager.CopyRequest{Definition: "mint-review", SourceID: "PAGE-1"})
+	if !errors.Is(err, entitymanager.ErrCopyFileReference) {
+		t.Fatalf("copy err = %v, want ErrCopyFileReference", err)
+	}
+}
+
+// A value stamped before storage keys ("attachments/<id>/<prop>/<name>")
+// resolves to the bytes stored under the bare name, so existing data needs
+// no migration; replacing it drops those bytes.
+func TestFaced_LegacyValueStillServes(t *testing.T) {
+	f := newFacedFixture(t)
+	ctx := context.Background()
+	f.seedReview(t)
+	if err := f.st.AttachFile(ctx, "PAGE-1", "spec", "old.txt", strings.NewReader("legacy")); err != nil {
+		t.Fatal(err)
+	}
+	owner, err := entitymanager.AttachmentsOf(f.mgr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = owner.StampAttachments(ctx, entity.Ref{ID: "PAGE-1", Face: "review"}, "spec",
+		"attachments/PAGE-1/spec/old.txt"); err != nil {
+		t.Fatal(err)
+	}
+	if got, rerr := f.readSpec(t, "review", "old.txt"); rerr != nil || got != "legacy" {
+		t.Fatalf("legacy read = %q (%v)", got, rerr)
+	}
+	f.attachTo(t, entity.Ref{ID: "PAGE-1", Face: "review"}, "old.txt")
+	if got, rerr := f.readSpec(t, "review", "old.txt"); rerr != nil || got != "old.txt bytes" {
+		t.Errorf("after replace read = %q (%v)", got, rerr)
+	}
+	if keys := f.specKeys(t, "PAGE-1"); len(keys) != 1 || keys[0] == "old.txt" {
+		t.Errorf("stored keys = %v, want only the new keyed blob", keys)
+	}
+}
+
+// stampRaw seeds bytes under each key and stamps value on PAGE-1@review's
+// prop through the trusted stamp, as sync or a migration could.
+func (f facedFixture) stampRaw(t *testing.T, prop string, keys []string, value any) {
+	t.Helper()
+	ctx := context.Background()
+	for _, k := range keys {
+		if err := f.st.AttachFile(ctx, "PAGE-1", prop, k, strings.NewReader(k)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	owner, err := entitymanager.AttachmentsOf(f.mgr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = owner.StampAttachments(ctx, entity.Ref{ID: "PAGE-1", Face: "review"}, prop, value); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A single-file property still holding several files (its max was lowered)
+// keeps the others when one is deleted.
+func TestFaced_DeleteOnLoweredMaxKeepsOtherFiles(t *testing.T) {
+	f := newFacedFixture(t)
+	f.seedReview(t)
+	var keys []string
+	var value []any
+	for _, n := range []string{"a", "b", "c"} {
+		tok := strings.Repeat(n, metamodel.FileTokenLen)
+		keys = append(keys, metamodel.FileKey(tok, n+".txt"))
+		value = append(value, metamodel.KeyedFileEntry("PAGE-1", "spec", tok, n+".txt"))
+	}
+	f.stampRaw(t, "spec", keys, value)
+
+	if _, err := f.svc.Detach(context.Background(), entity.Ref{ID: "PAGE-1", Face: "review"}, "spec", "a.txt"); err != nil {
+		t.Fatalf("detach: %v", err)
+	}
+	if got := f.specNames(t, "PAGE-1", "review"); !slices.Equal(got, []string{"b.txt", "c.txt"}) {
+		t.Errorf("review spec = %v, want [b.txt c.txt]", got)
+	}
+	if got := f.specKeys(t, "PAGE-1"); !slices.Equal(got, keys[1:]) {
+		t.Errorf("stored keys = %v, want %v", got, keys[1:])
+	}
+}
+
+// A value mixing legacy and keyed entries lists both, and deleting one keeps
+// the other's bytes.
+func TestFaced_MixedLegacyAndKeyedEntries(t *testing.T) {
+	f := newFacedFixture(t)
+	f.seedReview(t)
+	tok := strings.Repeat("c", metamodel.FileTokenLen)
+	f.stampRaw(t, "gallery", []string{"old.txt", metamodel.FileKey(tok, "new.txt")}, []any{
+		"attachments/PAGE-1/gallery/old.txt",
+		metamodel.KeyedFileEntry("PAGE-1", "gallery", tok, "new.txt"),
+	})
+	ref := entity.Ref{ID: "PAGE-1", Face: "review"}
+	infos, err := f.svc.List(context.Background(), ref)
+	if err != nil || len(infos) != 2 {
+		t.Fatalf("list = %v (%v), want two files", infos, err)
+	}
+	if _, err = f.svc.Detach(context.Background(), ref, "gallery", "old.txt"); err != nil {
+		t.Fatalf("detach: %v", err)
+	}
+	infos, err = f.svc.List(context.Background(), ref)
+	if err != nil || len(infos) != 1 || infos[0].FileName != "new.txt" {
+		t.Fatalf("after detach list = %v (%v), want [new.txt]", infos, err)
+	}
+}
+
+// A display name long enough that its storage key would pass the 255-byte
+// file-name limit is shortened, keeping its extension, so the upload works
+// on the filesystem backend. Linux counts bytes and macOS counts UTF-16
+// units, so an ASCII name is the case that fails on both.
+func TestService_LongNameIsCapped(t *testing.T) {
+	for _, tc := range []struct{ name, upload string }{
+		{"multi-byte", strings.Repeat("é", 125) + ".pdf"}, // 254 bytes
+		{"ascii", strings.Repeat("a", 251) + ".pdf"},      // 255 bytes
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := setupAttachmentService(t)
+			ctx := context.Background()
+			e := entity.New("T-1", "ticket")
+			if err := f.st.CreateEntity(ctx, e); err != nil {
+				t.Fatal(err)
+			}
+			res, err := f.svc.WriteAttachment(ctx, e, metamodel.PropertyDef{Type: metamodel.PropertyTypeFile},
+				"spec", tc.upload, strings.NewReader("x"))
+			if err != nil {
+				t.Fatalf("upload: %v", err)
+			}
+			keyLen := len(metamodel.FileKey(strings.Repeat("0", metamodel.FileTokenLen), res.FileName))
+			if !strings.HasSuffix(res.FileName, ".pdf") || !utf8.ValidString(res.FileName) || keyLen > 255 {
+				t.Errorf("name = %q (%d bytes), want a valid capped name keeping .pdf", res.FileName, len(res.FileName))
+			}
+		})
+	}
+}
+
+// Harmless path variants of a keyed entry still resolve to its key, never
+// to a legacy blob of the same name.
+func TestStorageKey_CleansEntry(t *testing.T) {
+	tok := strings.Repeat("d", metamodel.FileTokenLen)
+	for _, v := range []string{
+		"attachments/X-1/spec/" + tok + "/a.txt",
+		"/attachments/X-1/spec/" + tok + "/a.txt",
+		"./attachments//X-1/spec/" + tok + "/a.txt",
+	} {
+		e := &entity.Entity{Properties: map[string]any{"spec": v}}
+		if key, ok := attachment.StorageKey(e, "spec", "a.txt"); !ok || key != metamodel.FileKey(tok, "a.txt") {
+			t.Errorf("%q: key = %q (%v)", v, key, ok)
+		}
 	}
 }

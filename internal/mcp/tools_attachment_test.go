@@ -603,7 +603,13 @@ func TestAttachments_ACL_DeniedWriteLeavesBytes(t *testing.T) {
 	mustFail(t, f.call(as("alice"), t, "delete_attachment",
 		map[string]any{"id": docID, "property": "file", "file_name": "a.txt"}), "forbidden")
 
-	rc, err := f.svc.Store().ReadAttachment(context.Background(), docID, "file", "a.txt")
+	key, ok := attachment.StorageKey(&entity.Entity{Properties: map[string]any{
+		"file": f.stored(t, docID, "file"),
+	}}, "file", "a.txt")
+	if !ok {
+		t.Fatal("the stored value no longer references a.txt")
+	}
+	rc, err := f.svc.Store().ReadAttachment(context.Background(), docID, "file", key)
 	if err != nil {
 		t.Fatalf("read back: %v", err)
 	}

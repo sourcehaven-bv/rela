@@ -879,6 +879,13 @@ its own file property names. A copy that carries the file property, such as
 bytes, so nothing is duplicated. A copy can only carry files the source face
 already references.
 
+File names are unique per face, not per entity. Every upload gets its own
+storage key, which the file property records next to the name. So two faces
+can each hold a `report.pdf` with different contents. An upload behaves
+exactly as if no other face held a file of that name: it is never renamed
+because of another face, so it reveals nothing about files the writer
+cannot read.
+
 Deleting a file from one face keeps the bytes while another face still
 references them. The last reference takes the bytes with it, and so does
 deleting a face that held the last reference.
