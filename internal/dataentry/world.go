@@ -191,6 +191,14 @@ func resolveWorld(r *http.Request, lookup WorldLookup, configured string) (world
 		// tests the name. The two are no longer the same question.
 		name = configured
 	}
+	return resolveNamedWorld(r.Context(), lookup, name)
+}
+
+// resolveNamedWorld is [resolveWorld] after the name is known: the lookup and
+// the per-world read grant. The remote MCP endpoint shares it through
+// [mcpReadWorld], so an MCP read and a data-entry read of the same world are
+// resolved and authorized by one function.
+func resolveNamedWorld(ctx context.Context, lookup WorldLookup, name string) (worldHandle, error) {
 	if name == "" || name == defaultWorldName {
 		// The default world needs no grant beyond the ordinary read gates
 		// that already run per entity: it IS today's graph.
@@ -203,7 +211,7 @@ func resolveWorld(r *http.Request, lookup WorldLookup, configured string) (world
 	if !ok {
 		return worldHandle{}, errWorldUnknown
 	}
-	permitted, err := readGateFromContext(r.Context()).PermitsWorld(r.Context(), name)
+	permitted, err := readGateFromContext(ctx).PermitsWorld(ctx, name)
 	if err != nil {
 		// An infrastructure failure is NOT a denial. Rendering it as an
 		// empty result would hide an outage behind a page that looks like a

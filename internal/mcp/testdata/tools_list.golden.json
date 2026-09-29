@@ -161,7 +161,7 @@
           "type": "boolean"
         },
         "id": {
-          "description": "Entity ID",
+          "description": "Entity ID; deletes every face",
           "type": "string"
         }
       },
@@ -254,6 +254,10 @@
         "type": {
           "description": "Entity type (required with filter)",
           "type": "string"
+        },
+        "world": {
+          "description": "World to read in (see list_worlds). A world picks one content state per entity; `default` reads the default state. Omitted, the server's default world applies",
+          "type": "string"
         }
       },
       "required": [],
@@ -286,6 +290,15 @@
           "type": "string"
         }
       },
+      "required": [],
+      "type": "object"
+    }
+  },
+  {
+    "name": "list_worlds",
+    "description": "List the worlds the read tools accept as `world`. A world picks one content state (face) per entity: `select` is the preferred order of faces, `overrides` replaces it per entity type, and `otherwise` says what happens to an entity with none of them (`exclude` or `default`). `readable` says whether you may select the world, and `default_world` is the world used when a call names none",
+    "inputSchema": {
+      "properties": {},
       "required": [],
       "type": "object"
     }
@@ -405,6 +418,10 @@
         "type": {
           "description": "Restrict to entity type",
           "type": "string"
+        },
+        "world": {
+          "description": "World to read in (see list_worlds). A world picks one content state per entity; `default` reads the default state. Omitted, the server's default world applies",
+          "type": "string"
         }
       },
       "required": [
@@ -415,7 +432,7 @@
   },
   {
     "name": "show_entity",
-    "description": "Get one entity: properties, markdown content, and relations grouped by type",
+    "description": "Get one entity: properties, markdown content, and relations grouped by type. `other_faces` lists its other content states you may read, each with the ID@face ref that reads it",
     "inputSchema": {
       "properties": {
         "content": {
@@ -423,7 +440,11 @@
           "type": "boolean"
         },
         "id": {
-          "description": "Entity ID",
+          "description": "Entity ID, or ID@face to read one content state",
+          "type": "string"
+        },
+        "world": {
+          "description": "World to read in (see list_worlds). A world picks one content state per entity; `default` reads the default state. Omitted, the server's default world applies",
           "type": "string"
         }
       },
@@ -471,7 +492,7 @@
           "type": "string"
         },
         "id": {
-          "description": "Entity ID",
+          "description": "Entity ID, or ID@face to update one content state",
           "type": "string"
         },
         "properties": {

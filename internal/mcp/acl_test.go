@@ -324,7 +324,7 @@ func TestACL_BuildStoreRelations_WithholdsUnreadableEdge(t *testing.T) {
 		t.Fatalf("seed relation: %v", err)
 	}
 
-	rels := buildStoreRelations(ctx, visibleID, denyEntityReader{raw: st, deny: hiddenID}, testMeta())
+	rels := buildStoreRelations(ctx, visibleID, "", denyEntityReader{raw: st, deny: hiddenID}, testMeta())
 	if rels == nil {
 		return // withheld entirely — correct
 	}

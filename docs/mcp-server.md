@@ -92,9 +92,10 @@ fetching each one. A summary of a faced entity also carries its `face`.
 
 | Tool | Description | Parameters |
 |------|-------------|------------|
-| `list_entities` | List entity summaries, sorted by ID | `type?`, `filter?`, `limit?` (default 50), `offset?` |
-| `show_entity` | Get one entity with its relations | `id`, `content?` (default true) |
-| `search_entities` | Full-text search across entities | `query`, `type?`, `limit?` (default 20) |
+| `list_entities` | List entity summaries, sorted by ID | `type?`, `filter?`, `limit?` (default 50), `offset?`, `world?` |
+| `list_worlds` | List the worlds the read tools accept, and which you may select | none |
+| `show_entity` | Get one entity with its relations, and `other_faces` for a faced entity | `id`, `content?` (default true), `world?` |
+| `search_entities` | Full-text search across entities | `query`, `type?`, `limit?` (default 20), `world?` |
 | `create_entity` | Create an entity | `type`, `properties`, `content?`, `id?` |
 | `update_entity` | Update named properties or the body | `id`, `properties?`, `content?` |
 | `delete_entity` | Delete an entity | `id`, `cascade?` |
@@ -119,6 +120,25 @@ related(entity, 'implements', { status = 'open' })
 
 In `update_entity`, a `null` property value removes the property, and an empty
 string is ignored.
+
+**Content states (faces) and worlds:**
+
+An entity type can declare faces, such as `concept` and `adopted`. A world
+picks one face per entity, in the order its `select:` names them.
+
+- A bare id resolves through a world. Without `world`, the remote server uses
+  `app.default_world`; the stdio server uses the default world.
+- `ID@face`, such as `POL-001@concept`, reads that face in any world.
+  `update_entity` edits it.
+- `world` on `list_entities`, `search_entities` and `show_entity` reads in
+  that world, so `world: "review"` lists what a `review` world selects.
+  `list_worlds` names the worlds, their `select:` order, and whether you may
+  select each one. A world you may not read is refused with an error.
+- `show_entity` lists the entity's other faces you may read under
+  `other_faces`, each with the `ref` that reads it.
+
+The stdio server does not resolve worlds. It accepts only `world: "default"`
+and has no `app.default_world`.
 
 ### Relation Tools
 

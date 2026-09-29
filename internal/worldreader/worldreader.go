@@ -21,8 +21,13 @@
 // and the world then ranks what is left. A reader granted only
 // `policy@published` under `select: [review, published]` is served the
 // published face — the world is a view onto the part of the graph that is
-// visible to them, not onto the whole graph. The single-entity path and the
-// list path both run that one query, so they cannot disagree.
+// visible to them, not onto the whole graph.
+//
+// [BoundReader] is a second resolution site: its single-entity read ranks,
+// with [store.ResolveWorldPrimes], the faces the gated reader returns. A
+// type-less list is resolved by the store before the gate filters it, so it
+// can drop an entity whose prime is a face the reader may not see. That only
+// narrows the result.
 //
 // The resolver itself still never consults a gate: it cannot, and that is
 // what keeps "same candidates, same prime" true.
