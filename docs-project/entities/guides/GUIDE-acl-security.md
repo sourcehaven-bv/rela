@@ -1577,9 +1577,10 @@ in advance. Deferred until the traversal is read-gate scoped.
 
 Restore (`POST /api/v1/_history/<type>/<id>/<version>/restore`) is a **write**,
 not a read: it is authorized as an ordinary update (or create, if the entity was
-deleted) on the restored face (`type@face` on a type with faces), runs the per-field write gate on exactly the fields that change (so it
-cannot set or clear a field the principal lacks write access to), and is audited
-and re-versioned like any edit.
+deleted) on the restored face (`type@face` on a type with faces), runs the
+per-field write gate on exactly the fields that change (so it cannot set or
+clear a field the principal lacks write access to), and is audited and
+re-versioned like any edit.
 
 Not point-in-time: history read uses the *current* ACL, not the ACL as-of each
 version. Reading a live entity's history exposes its **entire** history from
