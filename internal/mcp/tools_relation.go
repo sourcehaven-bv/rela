@@ -79,11 +79,11 @@ func (s *Server) handleCreateRelation(
 	// rather than "set body to empty". MCP clients can omit the field or
 	// pass null to mean the same; an explicit "" today never reaches a
 	// no-content-meant-empty case in practice.
-	opts := entity.RelationOptions{
-		Properties: extractProperties(request),
-		Content:    nilIfEmpty(args.GetString("content", "")),
+	// A relation's target has no face; refuse `ID@face` rather than let the
+	// store reject it as a malformed id after authorization.
+	if strings.Contains(toID, entity.StateRefSeparator) {
+		return errorResult("to must be a bare entity id: a relation's target has no face"), nil
 	}
-
 	// Gate both endpoints first: the write path answers differently for a
 	// hidden entity and a missing one, which would confirm it exists.
 	for _, id := range []string{fromID, toID} {
@@ -91,8 +91,17 @@ func (s *Server) handleCreateRelation(
 			return errorResult("entity not found: " + id), nil
 		}
 	}
+	// readable accepted fromID, so it parses. `ID@face` names the tail of a
+	// content-scoped edge (BUG-J3PBFN).
+	from, _ := entity.ParseRef(fromID)
 
-	if _, createErr := snap.deps.EntityManager.CreateRelation(ctx, fromID, relType, toID, opts); createErr != nil {
+	opts := entity.RelationOptions{
+		Properties: extractProperties(request),
+		Content:    nilIfEmpty(args.GetString("content", "")),
+		FromFace:   from.Face,
+	}
+
+	if _, createErr := snap.deps.EntityManager.CreateRelation(ctx, from.ID, relType, toID, opts); createErr != nil {
 		return errorResult(createErr.Error()), nil
 	}
 
@@ -121,18 +130,37 @@ func (s *Server) handleDeleteRelation(
 	}
 	toID = trimID(toID)
 
-	st := snap.deps.Store
-	if _, getErr := st.GetRelation(ctx, fromID, relType, toID); getErr != nil {
+	// The tail is part of the edge's identity: `ID@face` names the
+	// content-scoped edge on that face, a bare id the default-tail edge
+	// (BUG-J3PBFN).
+	from, parseErr := entity.ParseRef(fromID)
+	if parseErr != nil || !edgeVisible(ctx, snap.deps.Store, from, relType, toID) {
 		return errorResult(
 			fmt.Sprintf("relation not found: %s --%s--> %s", fromID, relType, toID)), nil
 	}
 
-	if delErr := snap.deps.EntityManager.DeleteRelation(ctx, fromID, relType, toID); delErr != nil {
+	delErr := snap.deps.EntityManager.DeleteRelationState(ctx, from.ID, from.Face, relType, toID)
+	if delErr != nil {
 		return errorResult(delErr.Error()), nil
 	}
 
 	return textResult(
 		fmt.Sprintf("Removed link: %s --%s--> %s", fromID, relType, toID)), nil
+}
+
+// edgeVisible reports whether the gated store serves the edge tailed at from.
+func edgeVisible(ctx context.Context, st GraphReader, from entity.Ref, relType, to string) bool {
+	face := from.Face
+	q := store.RelationQuery{From: from.ID, FromFace: &face, Type: relType, To: to}
+	for rel, err := range st.ListRelations(ctx, q) {
+		if err != nil {
+			return false
+		}
+		if rel.From == from.ID && rel.FromFace == face && rel.Type == relType && rel.To == to {
+			return true
+		}
+	}
+	return false
 }
 
 // nilIfEmpty returns nil when s is empty, else &s. Used to translate

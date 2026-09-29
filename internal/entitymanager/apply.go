@@ -305,32 +305,34 @@ func (m *Manager) ApplyRelation(ctx context.Context, r *entity.Relation) (*entit
 		return nil, fmt.Errorf("entitymanager: ApplyRelation: relation %s has inaccessible fields", r.Key())
 	}
 
-	fromEntity, err := m.requireEndpoint(ctx, r.From, "source")
+	source, err := m.requireEndpoint(ctx, r.From, "source")
 	if err != nil {
 		return nil, err
 	}
-	toEntity, err := m.requireEndpoint(ctx, r.To, "target")
+	target, err := m.requireEndpoint(ctx, r.To, "target")
 	if err != nil {
 		return nil, err
+	}
+	if fErr := m.deps.requireRelationFaceFor(r.Type, source.typ, r.FromFace); fErr != nil {
+		return nil, fErr
 	}
 
-	_, getErr := m.deps.Store.GetRelation(ctx, r.From, r.Type, r.To)
+	// Addressed by tail as well as triple: two edges on one triple with
+	// different tails are two relations (BUG-64MU2Q).
+	_, getErr := getRelationOnFace(ctx, m.deps.Store, r.From, r.FromFace, r.Type, r.To)
 	op, err := resolveUpsertOp(getErr, audit.OpCreateRelation, audit.OpUpdateRelation)
 	if err != nil {
 		return nil, fmt.Errorf("entitymanager: ApplyRelation: existence check for %s: %w", r.Key(), err)
 	}
 
 	if aclErr := m.authorizeAndAudit(ctx, acl.WriteRequest{
-		Op: op.aclOp,
-		Subject: acl.RelationSubject{
-			Type:     r.Type,
-			FromType: fromEntity.Type, FromID: r.From,
-		},
+		Op:      op.aclOp,
+		Subject: relationWriteSubject(r.Type, source, r.From, r.FromFace),
 	}); aclErr != nil {
 		return nil, aclErr
 	}
 
-	if vErr := m.deps.Meta.ValidateRelation(r.Type, fromEntity.Type, toEntity.Type); vErr != nil {
+	if vErr := m.deps.Meta.ValidateRelation(r.Type, source.typ, target.typ); vErr != nil {
 		return nil, fmt.Errorf("entitymanager: ApplyRelation: invalid relation: %w", vErr)
 	}
 
@@ -349,11 +351,11 @@ func (m *Manager) ApplyRelation(ctx context.Context, r *entity.Relation) (*entit
 // persistApplyEntity: no create-then-update fallback, so a create-intent
 // write that races a concurrent create is rejected, not silently merged.
 func (m *Manager) persistApplyRelation(ctx context.Context, op acl.Op, r *entity.Relation) error {
-	data := store.RelationData{Properties: r.Properties, Content: r.Content}
+	data := store.RelationData{Properties: r.Properties, Content: r.Content, FromFace: r.FromFace}
 	if op == acl.OpCreate {
 		if _, err := m.deps.Store.CreateRelation(ctx, r.From, r.Type, r.To, &data); err != nil {
 			if errors.Is(err, store.ErrConflict) {
-				return fmt.Errorf("%w: %s --%s--> %s", ErrRelationAlreadyExists, r.From, r.Type, r.To)
+				return fmt.Errorf("%w: %s --%s--> %s", ErrRelationAlreadyExists, entity.FormatStateRef(r.From, r.FromFace), r.Type, r.To)
 			}
 			return fmt.Errorf("entitymanager: ApplyRelation: %w", err)
 		}
@@ -363,30 +365,33 @@ func (m *Manager) persistApplyRelation(ctx context.Context, op acl.Op, r *entity
 	// which run in one Tx; otherwise that update would write back the row it
 	// read and drop this one.
 	err := m.deps.Store.Tx(ctx, func(view store.Store) error {
-		_, err := view.UpdateRelation(ctx, r.From, r.Type, r.To, data)
+		_, err := view.UpdateRelationState(ctx, r.From, r.FromFace, r.Type, r.To, data)
 		return err
 	})
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			return fmt.Errorf("%w: %s --%s--> %s", ErrRelationNotFound, r.From, r.Type, r.To)
+			return fmt.Errorf("%w: %s --%s--> %s", ErrRelationNotFound, entity.FormatStateRef(r.From, r.FromFace), r.Type, r.To)
 		}
 		return fmt.Errorf("entitymanager: ApplyRelation: %w", err)
 	}
 	return nil
 }
 
-// requireEndpoint loads a relation endpoint, distinguishing a genuine
+// requireEndpoint loads a relation endpoint's family, distinguishing a genuine
 // not-found (mapped to [ErrEntityNotFound] so the sync layer retries) from a
 // transient store error (returned as-is so the retry loop is not spun forever).
 // role is "source" or "target" for the error message.
-func (m *Manager) requireEndpoint(ctx context.Context, id, role string) (*entity.Entity, error) {
-	ent, err := m.deps.Store.GetEntity(ctx, id)
+//
+// By family, because an endpoint is an entity and a faced type stores no
+// zero-face row (BUG-J3PBFN).
+func (m *Manager) requireEndpoint(ctx context.Context, id, role string) (entityFamily, error) {
+	fam, err := lookupFamily(ctx, m.deps.Store, id)
 	switch {
 	case err == nil:
-		return ent, nil
+		return fam, nil
 	case errors.Is(err, store.ErrNotFound):
-		return nil, fmt.Errorf("%s %w: %s", role, ErrEntityNotFound, id)
+		return entityFamily{}, fmt.Errorf("%s %w: %s", role, ErrEntityNotFound, id)
 	default:
-		return nil, fmt.Errorf("entitymanager: ApplyRelation: load %s endpoint %s: %w", role, id, err)
+		return entityFamily{}, fmt.Errorf("entitymanager: ApplyRelation: load %s endpoint %s: %w", role, id, err)
 	}
 }

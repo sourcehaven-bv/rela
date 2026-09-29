@@ -34,7 +34,12 @@ func (nopMutator) DeleteEntity(context.Context, string, bool) (*entity.DeleteRes
 func (nopMutator) CreateRelation(context.Context, string, string, string, entity.RelationOptions) (*entity.Relation, error) {
 	return nil, errNoMutate
 }
-func (nopMutator) DeleteRelation(context.Context, string, string, string) error { return errNoMutate }
+func (nopMutator) DeleteEntityFace(context.Context, string, entity.Face) (*entity.DeleteResult, error) {
+	return nil, errNoMutate
+}
+func (nopMutator) DeleteRelationState(context.Context, string, entity.Face, string, string) error {
+	return errNoMutate
+}
 
 // capProject writes a throwaway project whose script asserts, from inside Lua,
 // that the capabilities it was promised are actually present. Asserting in Lua

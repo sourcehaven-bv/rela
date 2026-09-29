@@ -3,6 +3,8 @@ package entitymanager_test
 import (
 	"context"
 	"errors"
+	"iter"
+	"slices"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -371,6 +373,16 @@ func (s *flakyProbeStore) GetEntityState(
 		return nil, s.failErr
 	}
 	return s.Store.GetEntityState(ctx, id, p)
+}
+
+// ListEntities carries the fault for an ids-scoped family read: a relation
+// endpoint is resolved as a family (BUG-J3PBFN), not by one row.
+func (s *flakyProbeStore) ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error] {
+	if slices.Contains(q.IDs, s.failID) && !s.failed {
+		s.failed = true
+		return func(yield func(*entity.Entity, error) bool) { yield(nil, s.failErr) }
+	}
+	return s.Store.ListEntities(ctx, q)
 }
 
 // TestApplyEntity_ExistenceProbeFailsClosed is the critical RR-review

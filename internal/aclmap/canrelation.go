@@ -87,9 +87,21 @@ func (e *Engine) CanRelation(
 		return nil, errors.New("aclmap: relation type must not be empty")
 	}
 
-	from, fromType, err := e.target(ctx, fromID)
+	from, err := e.target(ctx, fromID)
 	if err != nil {
 		return nil, err
+	}
+	// The subject the entitymanager builds (ruling D4, TKT-KQXVF7): a named
+	// tail is authorized at that face, and a zero tail from a faced family on
+	// every face it stores.
+	subject := acl.RelationSubject{
+		Type:     relType,
+		FromType: from.typ,
+		FromID:   from.ref.ID,
+		FromFace: from.ref.Face,
+	}
+	if from.ref.Face.IsDefault() {
+		subject.FamilyFaces = from.familyFaces()
 	}
 
 	user, rawShown, err := e.resolveEffective(ctx, rawPrincipal)
@@ -102,15 +114,7 @@ func (e *Engine) CanRelation(
 		return nil, fmt.Errorf("aclmap: open resolver for %q: %w", user, err)
 	}
 
-	d := req.AuthorizeWrite(ctx, acl.WriteRequest{
-		Op: op,
-		Subject: acl.RelationSubject{
-			Type:     relType,
-			FromType: fromType,
-			FromID:   from.ID,
-			FromFace: from.Face,
-		},
-	})
+	d := req.AuthorizeWrite(ctx, acl.WriteRequest{Op: op, Subject: subject})
 
 	return &CanRelationResult{
 		SchemaVersion: schemaVersion,
@@ -119,7 +123,7 @@ func (e *Engine) CanRelation(
 		Verb:          string(verb),
 		Relation:      relType,
 		From:          fromID,
-		FromType:      fromType,
+		FromType:      from.typ,
 		Allowed:       d.Allow,
 		RuleKind:      d.RuleKind,
 		RuleID:        d.RuleID,

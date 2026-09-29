@@ -170,6 +170,13 @@ type mockManager struct {
 	// test asserting only on the face would pass against that bug.
 	createCalls   int
 	relationCalls int
+	// The address the last delete reached the manager with, and which
+	// method took it.
+	deletedFace      entity.Face
+	faceDeleteCalls  int
+	familyDeletes    int
+	unlinkedFace     entity.Face
+	relationUnlinked int
 }
 
 var _ Mutator = (*mockManager)(nil)
@@ -243,6 +250,7 @@ func (e fakeNotFoundError) EntityNotFound() bool { return true }
 func (m *mockManager) DeleteEntity(
 	ctx context.Context, id string, cascade bool,
 ) (*entity.DeleteResult, error) {
+	m.familyDeletes++
 	current, err := m.ws.store.GetEntity(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("entity not found: %s", id)
@@ -275,8 +283,24 @@ func (m *mockManager) CreateRelation(
 	return m.ws.store.CreateRelation(ctx, from, relType, to, data)
 }
 
-func (m *mockManager) DeleteRelation(ctx context.Context, from, relType, to string) error {
-	return m.ws.store.DeleteRelation(ctx, from, relType, to)
+func (m *mockManager) DeleteEntityFace(
+	ctx context.Context, id string, face entity.Face,
+) (*entity.DeleteResult, error) {
+	m.deletedFace = face
+	m.faceDeleteCalls++
+	res, err := m.ws.store.DeleteEntityState(ctx, id, face)
+	if err != nil {
+		return nil, err
+	}
+	return &entity.DeleteResult{DeletedEntities: res.DeletedEntities, DeletedRelations: res.DeletedRelations}, nil
+}
+
+func (m *mockManager) DeleteRelationState(
+	ctx context.Context, from string, face entity.Face, relType, to string,
+) error {
+	m.unlinkedFace = face
+	m.relationUnlinked++
+	return m.ws.store.DeleteRelationState(ctx, from, face, relType, to)
 }
 
 // mockSearcher is a naive title-substring searcher used by lua tests.

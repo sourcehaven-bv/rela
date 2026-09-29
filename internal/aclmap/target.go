@@ -20,43 +20,61 @@ var ErrFaceAddress = errors.New("aclmap: this report is per entity; pass the bar
 // so a faced entity, which has no row at the zero face (DEC-NPZICR), is found
 // by its bare id. A named face must exist. A missing entity or face is
 // [ErrEntityNotFound].
-func (e *Engine) target(ctx context.Context, addr string) (entity.Ref, string, error) {
+func (e *Engine) target(ctx context.Context, addr string) (resolvedTarget, error) {
 	ref, err := entity.ParseRef(addr)
 	if err != nil {
-		return entity.Ref{}, "", fmt.Errorf("aclmap: invalid entity address %q: %w", addr, err)
+		return resolvedTarget{}, fmt.Errorf("aclmap: invalid entity address %q: %w", addr, err)
 	}
-	var (
-		typ       string
-		faceFound bool
-	)
+	t := resolvedTarget{ref: ref}
+	faceFound := false
 	q := store.EntityQuery{IDs: []string{ref.ID}, AllStates: true}
 	for h, err := range store.ListEntityHeaders(ctx, e.src, q) {
 		if err != nil {
-			return entity.Ref{}, "", fmt.Errorf("aclmap: load entity %q: %w", ref.ID, err)
+			return resolvedTarget{}, fmt.Errorf("aclmap: load entity %q: %w", ref.ID, err)
 		}
 		if h.ID != ref.ID {
 			continue
 		}
-		typ = h.Type
+		t.typ = h.Type
+		t.faces = append(t.faces, h.Face)
 		if h.Face == ref.Face {
 			faceFound = true
 		}
 	}
-	if typ == "" || (!ref.Face.IsDefault() && !faceFound) {
-		return entity.Ref{}, "", fmt.Errorf("%w: %s", ErrEntityNotFound, addr)
+	if t.typ == "" || (!ref.Face.IsDefault() && !faceFound) {
+		return resolvedTarget{}, fmt.Errorf("%w: %s", ErrEntityNotFound, addr)
 	}
-	return ref, typ, nil
+	return t, nil
+}
+
+// resolvedTarget is the entity an address names: the parsed address, the
+// family's type, and every face the family stores.
+type resolvedTarget struct {
+	ref   entity.Ref
+	typ   string
+	faces []entity.Face
+}
+
+// familyFaces lists the stored faces of a faced family, and nil for a
+// faceless one, whose only row is the zero face.
+func (t resolvedTarget) familyFaces() []entity.Face {
+	for _, f := range t.faces {
+		if !f.IsDefault() {
+			return t.faces
+		}
+	}
+	return nil
 }
 
 // entityTarget is Engine.target for a report that answers per entity: an
 // `ID@face` address is refused with [ErrFaceAddress].
 func (e *Engine) entityTarget(ctx context.Context, addr string) (id, typ string, err error) {
-	ref, typ, err := e.target(ctx, addr)
+	t, err := e.target(ctx, addr)
 	if err != nil {
 		return "", "", err
 	}
-	if !ref.Face.IsDefault() {
-		return "", "", fmt.Errorf("%w: %s", ErrFaceAddress, ref.ID)
+	if !t.ref.Face.IsDefault() {
+		return "", "", fmt.Errorf("%w: %s", ErrFaceAddress, t.ref.ID)
 	}
-	return ref.ID, typ, nil
+	return t.ref.ID, t.typ, nil
 }

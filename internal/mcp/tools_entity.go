@@ -415,22 +415,37 @@ func (s *Server) handleDeleteEntity(
 	if !readable(ctx, st, id) {
 		return errorResult("entity not found: " + id), nil
 	}
+	// readable accepted the address, so it parses. A bare id deletes the
+	// family; `ID@face` deletes that face and the edges tailed at it
+	// (BUG-J3PBFN).
+	ref, _ := entity.ParseRef(id)
 
 	// Every count reported here is of the relations the caller can see. The
 	// manager's own counts include edges to hidden entities, so reporting
 	// them would disclose how many hidden neighbors the entity has.
-	visible := visibleRelationCount(ctx, st, id)
-	if !cascade && visible > 0 {
+	//
+	// cascade guards the family delete only: the edges tailed at a face are
+	// that face's content, so a face delete always takes them, including
+	// any to a target the caller cannot see (the manager authorizes each).
+	visible := visibleDeleteScopeCount(ctx, st, ref)
+	faceDelete := !ref.Face.IsDefault()
+	if !cascade && !faceDelete && visible > 0 {
 		return errorResult(
 			fmt.Sprintf("entity %s has %d relation(s); set cascade=true to delete them too", id, visible)), nil
 	}
 
-	if _, delErr := snap.deps.EntityManager.DeleteEntity(ctx, id, cascade); delErr != nil {
+	var delErr error
+	if ref.Face.IsDefault() {
+		_, delErr = snap.deps.EntityManager.DeleteEntity(ctx, ref.ID, cascade)
+	} else {
+		_, delErr = snap.deps.EntityManager.DeleteEntityFace(ctx, ref.ID, ref.Face)
+	}
+	if delErr != nil {
 		return errorResult(delErr.Error()), nil
 	}
 
 	msg := "Deleted " + id
-	if cascade && visible > 0 {
+	if (cascade || faceDelete) && visible > 0 {
 		msg += fmt.Sprintf(" and %d relation(s)", visible)
 	}
 	return textResult(msg), nil
@@ -489,6 +504,25 @@ func (s *Server) handleRenameEntity(
 func visibleRelationCount(ctx context.Context, st GraphReader, id string) int {
 	n := 0
 	for _, err := range st.ListRelations(ctx, store.RelationQuery{EntityID: id, Direction: store.DirectionBoth}) {
+		if err != nil {
+			break
+		}
+		n++
+	}
+	return n
+}
+
+// visibleDeleteScopeCount counts the visible edges a delete of ref removes:
+// every incident edge for a family, the outgoing edges tailed at the face for
+// a face.
+func visibleDeleteScopeCount(ctx context.Context, st GraphReader, ref entity.Ref) int {
+	if ref.Face.IsDefault() {
+		return visibleRelationCount(ctx, st, ref.ID)
+	}
+	face := ref.Face
+	n := 0
+	q := store.RelationQuery{EntityID: ref.ID, Direction: store.DirectionOutgoing, FromFace: &face}
+	for _, err := range st.ListRelations(ctx, q) {
 		if err != nil {
 			break
 		}

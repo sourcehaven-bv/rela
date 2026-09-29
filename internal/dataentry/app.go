@@ -85,6 +85,10 @@ type appEntityWriter interface {
 		ctx context.Context, from, relType, to string, opts entity.RelationOptions,
 	) (*entity.Relation, error)
 	DeleteRelation(ctx context.Context, from, relType, to string) error
+	// The two face-addressed deletes are here for the script runtime's
+	// Mutator, which App hands a.entityManager as.
+	DeleteEntityFace(ctx context.Context, id string, face entity.Face) (*entity.DeleteResult, error)
+	DeleteRelationState(ctx context.Context, from string, face entity.Face, relType, to string) error
 }
 
 // App is the central application struct for the data-entry server.

@@ -106,11 +106,18 @@ func (h *stubHost) DeleteEntity(_ context.Context, entityType, id string, cascad
 	return nil
 }
 
-func (h *stubHost) GetEntity(ctx context.Context, id string) (*entity.Entity, error) {
+func (h *stubHost) EntityType(ctx context.Context, id string) (string, error) {
 	if h.store == nil {
-		return nil, errors.New("stubHost.GetEntity: no store configured")
+		return "", errors.New("stubHost.EntityType: no store configured")
 	}
-	return h.store.GetEntity(ctx, id)
+	q := store.EntityQuery{IDs: []string{id}, AllStates: true}
+	for hd, err := range store.ListEntityHeaders(ctx, h.store, q) {
+		if err != nil {
+			return "", err
+		}
+		return hd.Type, nil
+	}
+	return "", store.ErrNotFound
 }
 
 func (h *stubHost) ValidateRelation(relType, fromType, toType string) error {
@@ -120,8 +127,11 @@ func (h *stubHost) ValidateRelation(relType, fromType, toType string) error {
 	return h.meta.ValidateRelation(relType, fromType, toType)
 }
 
-func (h *stubHost) FindExistingRelationTarget(_ context.Context, sourceID, relationType, targetType string) *entity.Entity {
-	h.Calls = append(h.Calls, "FindExistingRelationTarget:"+sourceID+":"+relationType+":"+targetType)
+func (h *stubHost) FindExistingRelationTarget(
+	_ context.Context, source entity.Ref, relationType, targetType string,
+) *entity.Entity {
+	h.Calls = append(h.Calls,
+		"FindExistingRelationTarget:"+source.String()+":"+relationType+":"+targetType)
 	return h.existingTarget
 }
 

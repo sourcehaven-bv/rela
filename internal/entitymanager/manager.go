@@ -87,6 +87,14 @@ type Manager struct {
 	// dispatch sites, which pass `m.gated()` as the Mutator), so elevation
 	// never propagates to descendant writes.
 	bypassACL bool
+
+	// cascadeWrite marks a handle an automation cascade writes through
+	// (cascadeHost). Its writes were authorized by the write that triggered
+	// the cascade, so authorizeAndAudit neither consults the ACL nor records
+	// a bypass: every cascadeHost write has always been ungated, and a bypass
+	// row per cascade step would misreport an ordinary automation as an
+	// elevated one. Set only by cascadeHost, on a throwaway handle.
+	cascadeWrite bool
 }
 
 // elevated returns a throwaway Manager handle whose writes skip the ACL deny.
@@ -108,15 +116,16 @@ func (m *Manager) Elevated() autocascade.Mutator {
 }
 
 // gated returns a non-elevated Manager sharing the receiver's deps. On a normal
-// Manager it returns the receiver; on an elevated handle it strips the bypass.
-// Used at cascade-dispatch sites so a nested cascade triggered by an elevated
-// write runs with normal ACL authority — elevation does not propagate to
-// descendants (the leak the ctx-marker approach would have had).
+// Manager it returns the receiver; on an elevated or cascade-writer handle it
+// strips the bypass. Used at cascade-dispatch sites so a nested cascade
+// triggered by an elevated write runs with normal ACL authority — elevation
+// does not propagate to descendants (the leak the ctx-marker approach would
+// have had).
 func (m *Manager) gated() *Manager {
-	if !m.bypassACL {
+	if !m.bypassACL && !m.cascadeWrite {
 		return m
 	}
-	return &Manager{deps: m.deps, bypassACL: false}
+	return &Manager{deps: m.deps}
 }
 
 // Compile-time assertion: Manager must satisfy the autocascade.Mutator
@@ -572,6 +581,9 @@ func requireCopyGates(d Deps) error {
 // which writes were elevated and on whose behalf. We do NOT recordDeniedWrite
 // on the bypass path — there is no denial to record.
 func (m *Manager) authorizeAndAudit(ctx context.Context, req acl.WriteRequest) error {
+	if m.cascadeWrite {
+		return nil
+	}
 	if m.bypassACL {
 		if !isAffordanceProbe(ctx) {
 			m.recordACLBypass(ctx, req)
@@ -1363,15 +1375,20 @@ func (m *Manager) authorizeCascadeRelations(
 	// collapsing draft- and published-tailed edges into one check would let
 	// a `policy@published` grant stand for a draft-tailed edge. The
 	// cardinality stays bounded by (types × faces), which is small.
+	//
+	// familyFaces joins the source family's faces, because an identity edge
+	// from a faced source is authorized on each of them (D4): two sources of
+	// one type that store different faces are different decisions.
 	type subject struct {
 		relType, fromType string
 		fromFace          entity.Face
+		familyFaces       string
 	}
 	seen := make(map[subject]bool)
 	// One lookup per source id, not per edge: every face of a family has the
 	// same type, so a hub's thousands of edges from a few sources cost a few
 	// reads.
-	typeOf := make(map[string]string)
+	familyOf := make(map[string]entityFamily)
 
 	check := func(rel *entity.Relation) error {
 		if rel == nil {
@@ -1388,17 +1405,21 @@ func (m *Manager) authorizeCascadeRelations(
 		// closed. A store error aborts the delete, unlike the live relation
 		// writes, which still proceed with an empty type: both refuse, but
 		// only this one reports the real cause.
-		fromType, known := typeOf[rel.From]
+		fam, known := familyOf[rel.From]
 		if !known {
 			var err error
-			fromType, err = edgeSourceType(ctx, tx, rel)
-			if err != nil {
+			fam, err = lookupFamily(ctx, tx, rel.From)
+			if err != nil && !errors.Is(err, store.ErrNotFound) {
 				return fmt.Errorf("resolve source of %s --%s--> %s: %w",
 					entity.FormatStateRef(rel.From, rel.FromFace), rel.Type, rel.To, err)
 			}
-			typeOf[rel.From] = fromType
+			familyOf[rel.From] = fam
 		}
-		key := subject{relType: rel.Type, fromType: fromType, fromFace: rel.FromFace}
+		sub := relationWriteSubject(rel.Type, fam, "", rel.FromFace)
+		key := subject{
+			relType: rel.Type, fromType: sub.FromType, fromFace: rel.FromFace,
+			familyFaces: fmt.Sprint(sub.FamilyFaces),
+		}
 		if seen[key] {
 			return nil
 		}
@@ -1413,14 +1434,7 @@ func (m *Manager) authorizeCascadeRelations(
 		// would find nothing, though it was equally refused. An empty
 		// FromID says "this type-and-face class", which is what was
 		// actually decided.
-		return m.authorizeAndAudit(ctx, acl.WriteRequest{
-			Op: acl.OpDelete,
-			Subject: acl.RelationSubject{
-				Type:     rel.Type,
-				FromType: fromType,
-				FromFace: rel.FromFace,
-			},
-		})
+		return m.authorizeAndAudit(ctx, acl.WriteRequest{Op: acl.OpDelete, Subject: sub})
 	}
 
 	// Split by direction so the error can name the FAR endpoint. For an
@@ -1534,8 +1548,8 @@ func (m *Manager) deleteEntityInTx(
 // without deleting anything.
 func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*entity.DeleteResult, error) {
 	// Every face, not one: a delete addresses the whole FAMILY, so it is
-	// authorized on each face it removes (BUG-1YN750). Authorizing the one row
-	// anyFaceOf returned let a principal holding delete on `policy@draft` only
+	// authorized on each face it removes (BUG-1YN750). Authorizing the single row
+	// a one-face read returned let a principal holding delete on `policy@draft` only
 	// remove `policy@published` as well.
 	//
 	// Fails closed on a non-not-found error: collapsing every failure into
@@ -1667,7 +1681,7 @@ func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*e
 // familyRows returns every stored face of the entity family id, in the
 // store's stable order. An empty result means the family does not exist.
 //
-// IDs-scoped, never a full scan, like anyFaceOf.
+// IDs-scoped, never a full scan, like lookupFamily.
 func familyRows(ctx context.Context, st store.Store, id string) ([]*entity.Entity, error) {
 	var family []*entity.Entity
 	for e, err := range st.ListEntities(ctx, store.EntityQuery{IDs: []string{id}, AllStates: true}) {
@@ -1869,6 +1883,28 @@ func (m *Manager) DeleteEntityFace(
 		outgoing []*entity.Relation
 	)
 	txErr := m.deps.Store.Tx(ctx, func(tx store.Store) error {
+		// Re-read the face under the transaction (BUG-J3PBFN). The read above
+		// only answers not-found and denial early; the version and audit
+		// record must carry the row this transaction deletes, not one a
+		// concurrent update has since replaced. A row whose type changed in
+		// between is a different ACL subject and is authorized again.
+		inTx, rErr := tx.GetEntityState(ctx, id, face)
+		if rErr != nil {
+			if errors.Is(rErr, store.ErrNotFound) {
+				return fmt.Errorf("%w: %s", ErrEntityNotFound, entity.FormatStateRef(id, face))
+			}
+			return rErr
+		}
+		if inTx.Type != current.Type {
+			if aErr := m.authorizeAndAudit(ctx, acl.WriteRequest{
+				Op:      acl.OpDelete,
+				Subject: acl.NewEntitySubject(inTx.Type, id, inTx.Face),
+			}); aErr != nil {
+				return aErr
+			}
+		}
+		current = inTx
+
 		// Only the edges TAILED AT THIS FACE go with it; the query's FromFace
 		// is an equality match on the tail, so the bare face's edges and the
 		// other faces' edges are not collected and not authorized here.
@@ -2154,49 +2190,41 @@ func (m *Manager) CreateRelation(
 	// grant check; it is best-effort (empty if the source doesn't exist
 	// yet), mirroring UpdateRelation/DeleteRelation. Authorization must be
 	// decided from inputs that don't depend on peer existence.
-	var fromType string
-	if fromEntity, ferr := anyFaceOf(ctx, m.deps.Store, from); ferr == nil {
-		fromType = fromEntity.Type
-	}
+	source, srcErr := lookupFamily(ctx, m.deps.Store, from)
 	// BEFORE the ACL, so an unvalidated coordinate never becomes an
 	// authorization coordinate — and so the check still runs on the
 	// bypassACL path, where authorizeAndAudit returns without consulting
 	// any grant.
-	if fErr := m.deps.requireRelationFaceFor(relType, fromType, opts.FromFace); fErr != nil {
+	if fErr := m.deps.requireRelationFaceFor(relType, source.typ, opts.FromFace); fErr != nil {
 		return nil, fErr
 	}
 	if aclErr := m.authorizeAndAudit(ctx, acl.WriteRequest{
-		Op: acl.OpCreate,
-		Subject: acl.RelationSubject{
-			Type:     relType,
-			FromType: fromType, FromID: from,
-			FromFace: opts.FromFace,
-		},
+		Op:      acl.OpCreate,
+		Subject: relationWriteSubject(relType, source, from, opts.FromFace),
 	}); aclErr != nil {
 		return nil, aclErr
 	}
 
-	// anyFaceOf, not GetEntity: an endpoint is an ENTITY and only its type is
+	// By family, not GetEntity: an endpoint is an ENTITY and only its type is
 	// read here, so asking the zero coordinate would report every faced
 	// entity as missing (BUG-HC6I2T).
 	//
 	// Both fail closed: a transient store error must not be reported as a
 	// missing endpoint, which would read as an ordinary validation refusal.
-	fromEntity, err := anyFaceOf(ctx, m.deps.Store, from)
-	if err != nil {
-		if !errors.Is(err, store.ErrNotFound) {
-			return nil, err
+	if srcErr != nil {
+		if !errors.Is(srcErr, store.ErrNotFound) {
+			return nil, srcErr
 		}
 		return nil, fmt.Errorf("source %w: %s", ErrEntityNotFound, from)
 	}
-	toEntity, err := anyFaceOf(ctx, m.deps.Store, to)
+	target, err := lookupFamily(ctx, m.deps.Store, to)
 	if err != nil {
 		if !errors.Is(err, store.ErrNotFound) {
 			return nil, err
 		}
 		return nil, fmt.Errorf("target %w: %s", ErrEntityNotFound, to)
 	}
-	if vErr := m.deps.Meta.ValidateRelation(relType, fromEntity.Type, toEntity.Type); vErr != nil {
+	if vErr := m.deps.Meta.ValidateRelation(relType, source.typ, target.typ); vErr != nil {
 		return nil, fmt.Errorf("invalid relation: %w", vErr)
 	}
 	// Keyed on the TAIL too: two edges on the same triple with different
@@ -2278,21 +2306,15 @@ func (m *Manager) UpdateRelation(
 	// missing relation must not let a denied caller skip the ACL and get
 	// a soft not-found. The source type feeds the type-level grant check;
 	// it is best-effort (empty if the source doesn't exist).
-	var sourceType string
-	if fromEntity, ferr := anyFaceOf(ctx, m.deps.Store, from); ferr == nil {
-		sourceType = fromEntity.Type
-	}
+	// A lookup error leaves the family zero, whose empty type matches no grant.
+	source, _ := lookupFamily(ctx, m.deps.Store, from)
 	// BEFORE the ACL, for the reason given in [Manager.CreateRelation].
-	if fErr := m.deps.requireRelationFaceFor(relType, sourceType, opts.FromFace); fErr != nil {
+	if fErr := m.deps.requireRelationFaceFor(relType, source.typ, opts.FromFace); fErr != nil {
 		return nil, fErr
 	}
 	if aclErr := m.authorizeAndAudit(ctx, acl.WriteRequest{
-		Op: acl.OpUpdate,
-		Subject: acl.RelationSubject{
-			Type:     relType,
-			FromType: sourceType, FromID: from,
-			FromFace: opts.FromFace,
-		},
+		Op:      acl.OpUpdate,
+		Subject: relationWriteSubject(relType, source, from, opts.FromFace),
 	}); aclErr != nil {
 		return nil, aclErr
 	}
@@ -2386,17 +2408,11 @@ func (m *Manager) DeleteRelationState(
 	// Authorize BEFORE touching the store (BUG-K6FEVB). The source type
 	// feeds the type-level grant check; it is best-effort (empty if the
 	// source doesn't exist).
-	var sourceType string
-	if fromEntity, ferr := anyFaceOf(ctx, m.deps.Store, from); ferr == nil {
-		sourceType = fromEntity.Type
-	}
+	// A lookup error leaves the family zero, whose empty type matches no grant.
+	source, _ := lookupFamily(ctx, m.deps.Store, from)
 	if aclErr := m.authorizeAndAudit(ctx, acl.WriteRequest{
-		Op: acl.OpDelete,
-		Subject: acl.RelationSubject{
-			Type:     relType,
-			FromType: sourceType, FromID: from,
-			FromFace: face,
-		},
+		Op:      acl.OpDelete,
+		Subject: relationWriteSubject(relType, source, from, face),
 	}); aclErr != nil {
 		return aclErr
 	}

@@ -682,11 +682,12 @@ func (s *Store) DeleteEntityState(
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // rollback after commit is a no-op
 
-	// Same lock as DeleteEntity, for the sibling count below: without it a
-	// state create (FOR SHARE) could commit between the count and the
-	// delete of the default row, leaving that new state headless.
-	if _, lockErr := tx.Exec(ctx,
-		`SELECT 1 FROM entities WHERE id = $1 AND face = '' FOR UPDATE`, id); lockErr != nil {
+	// Same family lock as DeleteEntity and CreateEntity, for the sibling
+	// count below. A faced type stores no bare row, so the row lock this
+	// replaces locked nothing (BUG-J3PBFN): a create of a new face could
+	// commit after the count saw zero siblings, and the attachment sweep
+	// below then deleted the attachments the new face serves.
+	if lockErr := lockFamily(ctx, tx, id); lockErr != nil {
 		return nil, lockErr
 	}
 	face, err := scanEntities(ctx, tx,

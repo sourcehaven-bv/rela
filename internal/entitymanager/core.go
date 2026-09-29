@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"maps"
 	"math/rand/v2"
+	"slices"
 	"sort"
 	"strings"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -342,29 +344,59 @@ func collectRelations(
 	return out, nil
 }
 
-// findExistingRelationTarget locates an existing target entity of the
-// given type that is the target of a relation from sourceID with the
-// given relationType. Returns nil if none exists.
+// findExistingRelationTarget locates an existing target entity of the given
+// type that is the target of a relationType edge from source. Returns nil if
+// none exists.
+//
+// The edge is looked up where the cascade would write it: on source's face
+// for a `scope: content` type, on the identity tail otherwise (see
+// cascadeTail). A faced trigger's draft must not find the checklist
+// its published face already owns.
+//
+// The target is an entity, so it is found by family: a faced target stores
+// no zero-face row, and reading that row missed it (BUG-J3PBFN). The first
+// stored face stands for the family; the runner reads only its id and type.
 func findExistingRelationTarget(
-	ctx context.Context, st store.Store, sourceID, relationType, targetType string,
+	ctx context.Context, d Deps, source entity.Ref, relationType, targetType string,
 ) *entity.Entity {
-	for rel, err := range st.ListRelations(ctx, store.RelationQuery{
-		EntityID:  sourceID,
+	tail := d.cascadeTail(relationType, source.Face)
+	for rel, err := range d.Store.ListRelations(ctx, store.RelationQuery{
+		EntityID:  source.ID,
 		Direction: store.DirectionOutgoing,
 		Type:      relationType,
+		FromFace:  &tail,
 	}) {
 		if err != nil {
 			continue
 		}
-		target, getErr := st.GetEntity(ctx, rel.To)
-		if getErr != nil {
+		family, fErr := familyRows(ctx, d.Store, rel.To)
+		if fErr != nil || len(family) == 0 {
 			continue
 		}
-		if target.Type == targetType {
-			return target
+		if family[0].Type == targetType {
+			return family[0]
 		}
 	}
 	return nil
+}
+
+// cascadeTail is the tail a cascade-written edge of relType carries when its
+// source is the row at face: that face for a `scope: content` type, the zero
+// (identity) tail otherwise. An unknown relation type is treated as identity;
+// the metamodel check that follows rejects it.
+func (d Deps) cascadeTail(relType string, face entity.Face) entity.Face {
+	if d.isIdentityRelation(relType) {
+		return ""
+	}
+	return face
+}
+
+// isIdentityRelation reports whether relType's edges attach to the entity as
+// such (`scope: identity`, the default) rather than to one face. An unknown
+// type counts as identity.
+func (d Deps) isIdentityRelation(relType string) bool {
+	def, ok := d.Meta.GetRelationDef(relType)
+	return !ok || def.Scope.IsIdentity()
 }
 
 // requireCreateFaceFor enforces that a create names exactly the faces its type
@@ -406,9 +438,9 @@ func (d Deps) requireCreateFaceFor(entityType string, face entity.Face) error {
 //
 // It guards the manager write path only. The cascade host writes relations
 // straight to the store (cascadehost.go WriteRelation), so it does not pass
-// through here — safe today because it supplies no face at all and therefore
-// only ever writes the zero tail, which is legal. A future cascade that wants
-// to choose a face must route through the manager or repeat this check.
+// through here. That is safe because the host picks the tail itself: the
+// zero tail for an identity-scoped edge, and for a content edge the face of
+// the trigger row, which exists and so is declared (Deps.cascadeTail).
 //
 //   - `scope: identity` edges attach to the entity as such, so they have no
 //     per-face existence and the only valid tail is the zero face. Accepting
@@ -500,91 +532,84 @@ func sortedFaceNames(def *metamodel.EntityDef) []string {
 	return names
 }
 
-// anyFaceOf returns any stored row of an entity, for the checks that ask a
-// question every face of a family answers the same way — its TYPE.
-//
-// Relation endpoints are the motivating case. A relation attaches to the
-// ENTITY, not to one of its content states (`scope: identity`), so validating
-// `from`/`to` needs the family's type and nothing face-specific. Reading that
-// with Store.GetEntity asks the ZERO coordinate, where a type declaring faces
-// stores no row at all — so every relation touching a faced entity reported
-// the entity as missing (BUG-HC6I2T).
-//
-// Prefers the addressed row when `id` carries a face, so a caller who named
-// one is answered about it; otherwise takes the first row the family has.
-// Which row that is does not matter: the callers use only the type, and every
-// state of a family shares it (the store refuses a divergent one).
-//
-// FAILS CLOSED. Only a genuine [store.ErrNotFound] falls through to the next
-// lookup; any other error is returned as-is. Swallowing a transient backend
-// error here would report the entity as missing, and every caller's not-found
-// branch skips the ACL check by design (existence is itself a secret), so a
-// store hiccup would turn an ACL-gated operation into an ungated one — the
-// defect TestRename_FailsClosedOnNonNotFoundFetchError pins.
-//
-// Nil: never returned with a nil error.
-func anyFaceOf(ctx context.Context, st store.Store, id string) (*entity.Entity, error) {
-	e, err := st.GetEntity(ctx, id)
-	if err == nil {
-		return e, nil
-	}
-	if !errors.Is(err, store.ErrNotFound) {
-		return nil, err
-	}
-	base, face, perr := entity.ParseStateRef(id)
-	if perr == nil && !face.IsDefault() {
-		faced, serr := st.GetEntityState(ctx, base, face)
-		if serr == nil {
-			return faced, nil
-		}
-		if !errors.Is(serr, store.ErrNotFound) {
-			return nil, serr
-		}
-	} else {
-		base = id
-	}
-	// IDs-scoped, never a full scan: this runs on the relation write path,
-	// once per endpoint, and an unbounded scan there is the per-row lookup
-	// the collection-read rules exist to prevent.
-	q := store.EntityQuery{IDs: []string{base}, AllStates: true}
-	for e, err := range st.ListEntities(ctx, q) {
-		if err != nil {
-			return nil, err
-		}
-		if e.ID == base {
-			return e, nil
-		}
-	}
-	return nil, store.ErrNotFound
+// entityFamily is the entity-level view of one id: its type and the faces it
+// stores. It answers the questions every face of a family answers the same
+// way, which is all a relation endpoint needs: a relation attaches to the
+// ENTITY, and heads are entity-level.
+type entityFamily struct {
+	id    string
+	typ   string
+	faces []entity.Face
 }
 
-// edgeSourceType resolves the entity type of rel's source (BUG-58BL9I). A
-// named tail face is read first: it is the row a content-scoped edge belongs
-// to, and a faced type stores no zero-face row for a bare-id read to find. An
-// identity-scoped edge, or a tail face that no longer exists, falls back to
-// [anyFaceOf], because every face of a family has the same type.
+// isFaced reports whether the family stores any named face.
+func (f entityFamily) isFaced() bool {
+	for _, face := range f.faces {
+		if !face.IsDefault() {
+			return true
+		}
+	}
+	return false
+}
+
+// lookupFamily reads the family of the entity ref names, from headers only.
+// ref may be a bare id or the fused `ID@face` form; either way the family of
+// the id is returned, because its type and faces are what the callers need.
 //
-// A source that resolves to nothing returns "" with no error; an empty source
-// type matches no grant, so the caller's check fails closed. Any other store
-// error is returned, as [anyFaceOf] does.
-func edgeSourceType(ctx context.Context, st store.Store, rel *entity.Relation) (string, error) {
-	if !rel.FromFace.IsDefault() {
-		from, err := st.GetEntityState(ctx, rel.From, rel.FromFace)
-		if err == nil {
-			return from.Type, nil
+// Reading the zero-face row instead (Store.GetEntity) found nothing for a
+// type that declares faces, so every relation touching a faced entity
+// reported it missing (BUG-HC6I2T, BUG-J3PBFN).
+//
+// IDs-scoped, never a full scan: this runs on the relation write path, once
+// per endpoint, and an unbounded scan there is the per-row lookup the
+// collection-read rules exist to prevent.
+//
+// FAILS CLOSED. A missing family is [store.ErrNotFound]; any other error is
+// returned as-is. Reporting a transient backend error as "missing" would skip
+// the ACL check in every caller's not-found branch (existence is itself a
+// secret), the defect TestRename_FailsClosedOnNonNotFoundFetchError pins.
+func lookupFamily(ctx context.Context, st store.EntityLister, ref string) (entityFamily, error) {
+	id := ref
+	if base, _, err := entity.ParseStateRef(ref); err == nil {
+		id = base
+	}
+	fam := entityFamily{id: id}
+	q := store.EntityQuery{IDs: []string{id}, AllStates: true}
+	for h, err := range store.ListEntityHeaders(ctx, st, q) {
+		if err != nil {
+			return entityFamily{}, err
 		}
-		if !errors.Is(err, store.ErrNotFound) {
-			return "", err
+		if h.ID != id {
+			continue
 		}
+		if fam.typ == "" {
+			fam.typ = h.Type
+		}
+		fam.faces = append(fam.faces, h.Face)
 	}
-	from, err := anyFaceOf(ctx, st, rel.From)
-	if err == nil {
-		return from.Type, nil
+	if len(fam.faces) == 0 {
+		return entityFamily{}, store.ErrNotFound
 	}
-	if errors.Is(err, store.ErrNotFound) {
-		return "", nil
+	slices.Sort(fam.faces)
+	return fam, nil
+}
+
+// relationWriteSubject builds the authorization subject for a relation write from
+// source, applying ruling D4 (TKT-KQXVF7). An edge with a named tail is
+// authorized at that face. A zero-tailed edge from a faced source is
+// authorized on every face the family stores, because it belongs to the
+// entity as a whole. That holds for a `scope: content` edge at the zero tail
+// too: it is the identity coordinate, so a bare-type grant, which covers only
+// the zero face, must not be enough for it either. A missing source leaves
+// the type empty, which matches no grant.
+func relationWriteSubject(
+	relType string, source entityFamily, from string, tail entity.Face,
+) acl.RelationSubject {
+	s := acl.RelationSubject{Type: relType, FromType: source.typ, FromID: from, FromFace: tail}
+	if tail.IsDefault() && source.isFaced() {
+		s.FamilyFaces = source.faces
 	}
-	return "", err
+	return s
 }
 
 // getRelationOnFace returns the edge of this triple whose TAIL is exactly
@@ -626,26 +651,20 @@ func getRelationOnFace(
 // getEntityByRef resolves an entity ADDRESS — either a bare id or the fused
 // boundary form `ID@face` — to the row it names.
 //
-// Store.GetEntity is GetEntityState(id, zero) in every backend, so it can only
-// ever answer for the zero coordinate. A type declaring `faces:` stores no row
-// there (BUG-HC6I2T removed the privileged face), which means a caller handed
-// `POL-1@draft` and passing it straight to GetEntity gets ErrNotFound for a row
-// that plainly exists.
+// A bare id names the implicit face of a faceless type. A type declaring
+// `faces:` stores no row there (BUG-HC6I2T removed the privileged face), so a
+// bare id on such a type reports not found; the caller must name the face.
+// An unparseable ref names no row at all.
 //
-// Fails closed on a non-not-found error, for the same reason [anyFaceOf] does:
-// a caller's not-found branch typically returns before authorizing, so a
-// transient store error reported as "absent" would skip an ACL check.
+// Fails closed on a non-not-found error, for the same reason [lookupFamily]
+// does: a caller's not-found branch typically returns before authorizing, so
+// a transient store error reported as "absent" would skip an ACL check.
 //
 // Nil: never returned with a nil error.
 func (m *Manager) getEntityByRef(ctx context.Context, ref string) (*entity.Entity, error) {
-	base, face, perr := entity.ParseStateRef(ref)
-	if perr != nil {
-		// Not a parseable ref: let the store answer for the literal id, which
-		// preserves the error the caller would have seen before.
-		return m.deps.Store.GetEntity(ctx, ref)
+	r, err := entity.ParseRef(ref)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s", store.ErrNotFound, ref)
 	}
-	if face.IsDefault() {
-		return m.deps.Store.GetEntity(ctx, base)
-	}
-	return m.deps.Store.GetEntityState(ctx, base, face)
+	return m.deps.Store.GetEntityState(ctx, r.ID, r.Face)
 }

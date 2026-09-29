@@ -19,17 +19,11 @@ package archguard
 // count cannot tell reads apart, so removing one read and adding another in
 // the same file passes; review covers that swap.
 var zeroFaceAllowlist = map[string]int{
-	"internal/autocascade/runner.go":        1,
-	"internal/cli/delete.go":                1,
-	"internal/dataentry/gantt_handler.go":   1,
-	"internal/entitymanager/apply.go":       1,
-	"internal/entitymanager/cascadehost.go": 2,
-	"internal/entitymanager/core.go":        4,
-	"internal/importer/importer.go":         4,
-	"internal/store/fsstore/entity.go":      1,
-	"internal/store/fsstore/formatter.go":   1,
-	"internal/store/memstore/memstore.go":   1,
-	"internal/store/pgstore/entity.go":      1,
-	"internal/store/sqlitestore/entity.go":  2,
-	"internal/store/store.go":               1,
+	"internal/dataentry/gantt_handler.go":  1,
+	"internal/store/fsstore/entity.go":     1,
+	"internal/store/fsstore/formatter.go":  1,
+	"internal/store/memstore/memstore.go":  1,
+	"internal/store/pgstore/entity.go":     1,
+	"internal/store/sqlitestore/entity.go": 2,
+	"internal/store/store.go":              1,
 }

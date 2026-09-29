@@ -226,26 +226,34 @@ func (imp *Importer) validateEntities(entities []EntityData, result *Result) ([]
 	return valid, nil
 }
 
+// knownEntities indexes the entities a relation may name, by base id, to
+// their type: the type an import batch row declares (validateEntityData has
+// accepted it), or the stored type, which wins for an id the store holds.
+type knownEntities map[string]string
+
 // validateRelations validates all relations and returns valid ones
 func (imp *Importer) validateRelations(
 	relations []RelationData, validEntities []EntityData, result *Result,
 ) ([]RelationData, error) {
-	// Build set of known entity IDs
+	// Build the set of known entities. Every face counts: a faced type
+	// stores no bare row, so a bare-row listing would miss it (BUG-J3PBFN).
 	ctx := context.Background()
-	entityIDs := make(map[string]bool)
+	known := make(knownEntities)
 	for _, ed := range validEntities {
-		entityIDs[ed.ID] = true
-	}
-	for e, err := range imp.store.ListEntities(ctx, store.EntityQuery{}) {
-		if err != nil {
-			break
+		if ref, err := entity.ParseRef(ed.ID); err == nil {
+			known[ref.ID] = ed.Type
 		}
-		entityIDs[e.ID] = true
+	}
+	for h, err := range store.ListEntityHeaders(ctx, imp.store, store.EntityQuery{AllStates: true}) {
+		if err != nil {
+			return nil, fmt.Errorf("list entities: %w", err)
+		}
+		known[h.ID] = h.Type
 	}
 
 	valid := make([]RelationData, 0, len(relations))
 	for _, rd := range relations {
-		if err := imp.validateRelationData(&rd, entityIDs); err != nil {
+		if err := imp.validateRelationData(&rd, known); err != nil {
 			impErr := ImportError{Type: "relation", ID: rd.From + "--" + rd.Relation + "--" + rd.To, Message: err.Error()}
 			if imp.opts.SkipErrors {
 				result.Errors = append(result.Errors, impErr)
@@ -309,7 +317,12 @@ func (imp *Importer) validateEntityData(ed *EntityData) error {
 	if ed.ID == "" {
 		return errors.New("missing required field: id")
 	}
-	if err := storeutil.ValidateID(ed.ID); err != nil {
+	// The id may name a face: `ID@face` (BUG-J3PBFN).
+	ref, err := entity.ParseRef(ed.ID)
+	if err != nil {
+		return err
+	}
+	if err := storeutil.ValidateID(ref.ID); err != nil {
 		return err
 	}
 
@@ -327,15 +340,19 @@ func (imp *Importer) validateEntityData(ed *EntityData) error {
 		return fmt.Errorf("unknown entity type: %s", ed.Type)
 	}
 
-	// Check if entity already exists
-	if _, err := imp.store.GetEntity(context.Background(), ed.ID); err == nil {
+	if err := requireFace(ed.Type, entityDef, ref.Face); err != nil {
+		return err
+	}
+
+	// Check if entity already exists, at the face the row is written to
+	if _, err := imp.store.GetEntityState(context.Background(), ref.ID, ref.Face); err == nil {
 		if !imp.opts.Update {
 			return errors.New("entity already exists (use --update to overwrite)")
 		}
 	}
 
 	// Build entity for validation
-	e := entity.New(ed.ID, ed.Type)
+	e := entity.New(ref.ID, ed.Type)
 	maps.Copy(e.Properties, ed.Properties)
 
 	// Apply default status if not provided
@@ -360,7 +377,7 @@ func (imp *Importer) validateEntityData(ed *EntityData) error {
 }
 
 // validateRelationData validates relation data before import
-func (imp *Importer) validateRelationData(rd *RelationData, knownIDs map[string]bool) error {
+func (imp *Importer) validateRelationData(rd *RelationData, known knownEntities) error {
 	if rd.From == "" {
 		return errors.New("missing required field: from")
 	}
@@ -371,32 +388,81 @@ func (imp *Importer) validateRelationData(rd *RelationData, knownIDs map[string]
 		return errors.New("missing required field: to")
 	}
 
+	// `from` may name the tail of a content-scoped edge: `ID@face`.
+	from, err := entity.ParseRef(rd.From)
+	if err != nil {
+		return err
+	}
+
 	// Check entities exist (either in graph or in import batch)
-	if !knownIDs[rd.From] {
+	fromType, fromKnown := known[from.ID]
+	if !fromKnown {
 		return fmt.Errorf("source entity not found: %s", rd.From)
 	}
-	if !knownIDs[rd.To] {
+	toType, toKnown := known[rd.To]
+	if !toKnown {
 		return fmt.Errorf("target entity not found: %s", rd.To)
 	}
 
-	// Get entity types for relation validation
-	ctx := context.Background()
-	var fromType, toType string
-	if e, err := imp.store.GetEntity(ctx, rd.From); err == nil {
-		fromType = e.Type
-	} else {
-		// Must be in the import batch - we'll validate after entities are created
-		// For now, skip metamodel validation
-		return nil
+	if err := imp.requireTail(rd.Relation, fromType, from.Face); err != nil {
+		return err
 	}
-	if e, err := imp.store.GetEntity(ctx, rd.To); err == nil {
-		toType = e.Type
-	} else {
+
+	// A type is "" only when neither the batch nor the store names one;
+	// ValidateRelation cannot check such an endpoint.
+	if fromType == "" || toType == "" {
 		return nil
 	}
 
 	// Validate relation against metamodel
 	return imp.meta.ValidateRelation(rd.Relation, fromType, toType)
+}
+
+// requireFace enforces that an imported row names exactly the faces its type
+// declares: one of them for a faced type, none for a faceless one. A faced
+// type stores no bare row, so a bare id would write a row no face owns.
+func requireFace(typ string, def *metamodel.EntityDef, face entity.Face) error {
+	if len(def.Faces) == 0 {
+		if !face.IsDefault() {
+			return fmt.Errorf("type %s declares no faces, so %q names nothing", typ, face)
+		}
+		return nil
+	}
+	if face.IsDefault() {
+		return fmt.Errorf("type %s declares faces; write the id as ID@face", typ)
+	}
+	if _, ok := def.Faces[face.String()]; !ok {
+		return fmt.Errorf("type %s does not declare face %q", typ, face)
+	}
+	return nil
+}
+
+// requireTail rejects a relation tail the relation type or the source type
+// cannot carry: an identity-scoped edge has none, and a content edge's tail
+// must be a face its source type declares. A source with no known type is
+// checked on the relation scope alone.
+func (imp *Importer) requireTail(relType, fromType string, face entity.Face) error {
+	if face.IsDefault() {
+		return nil
+	}
+	relDef, ok := imp.meta.GetRelationDef(relType)
+	if !ok {
+		return nil // ValidateRelation reports the unknown type
+	}
+	if relDef.Scope.IsIdentity() {
+		return fmt.Errorf("relation %s is scope: identity, so it attaches to the entity, not to %q", relType, face)
+	}
+	if fromType == "" {
+		return nil
+	}
+	def, ok := imp.meta.GetEntityDef(fromType)
+	if !ok {
+		return nil
+	}
+	if _, declared := def.Faces[face.String()]; !declared {
+		return fmt.Errorf("source type %s does not declare face %q", fromType, face)
+	}
+	return nil
 }
 
 // importEntity creates or updates an entity.
@@ -435,7 +501,13 @@ func (imp *Importer) importEntity(ed *EntityData) (created bool, err error) {
 	entityDef, _ := imp.meta.GetEntityDef(ed.Type)
 	ctx := context.Background()
 
-	e := entity.New(ed.ID, ed.Type)
+	// validateEntityData parsed and checked the address already.
+	ref, err := entity.ParseRef(ed.ID)
+	if err != nil {
+		return false, err
+	}
+	e := entity.New(ref.ID, ed.Type)
+	e.Face = ref.Face
 	maps.Copy(e.Properties, ed.Properties)
 
 	// Apply default status if not provided
@@ -446,8 +518,8 @@ func (imp *Importer) importEntity(ed *EntityData) (created bool, err error) {
 		}
 	}
 
-	// Check if updating
-	_, getErr := imp.store.GetEntity(ctx, ed.ID)
+	// Check if updating: the row at this face, which is the row written
+	_, getErr := imp.store.GetEntityState(ctx, ref.ID, ref.Face)
 	exists := getErr == nil
 
 	if exists {
@@ -467,17 +539,31 @@ func (imp *Importer) importEntity(ed *EntityData) (created bool, err error) {
 func (imp *Importer) importRelation(rd *RelationData) (created bool, err error) {
 	ctx := context.Background()
 
-	// Check if relation already exists
-	if _, err := imp.store.GetRelation(ctx, rd.From, rd.Relation, rd.To); err == nil {
+	// validateRelationData parsed and checked the tail already.
+	from, err := entity.ParseRef(rd.From)
+	if err != nil {
+		return false, err
+	}
+
+	// Check if relation already exists. The tail is part of the edge's
+	// identity, so the check is on the tail the edge is written to.
+	tail := from.Face
+	n, err := imp.store.CountRelations(ctx, store.RelationQuery{
+		From: from.ID, FromFace: &tail, Type: rd.Relation, To: rd.To,
+	})
+	if err != nil {
+		return false, fmt.Errorf("check relation: %w", err)
+	}
+	if n > 0 {
 		return false, nil
 	}
 
 	var data *store.RelationData
-	if len(rd.Properties) > 0 {
-		data = &store.RelationData{Properties: rd.Properties}
+	if len(rd.Properties) > 0 || !tail.IsDefault() {
+		data = &store.RelationData{Properties: rd.Properties, FromFace: tail}
 	}
 
-	if _, err := imp.store.CreateRelation(ctx, rd.From, rd.Relation, rd.To, data); err != nil {
+	if _, err := imp.store.CreateRelation(ctx, from.ID, rd.Relation, rd.To, data); err != nil {
 		return false, fmt.Errorf("failed to create relation: %w", err)
 	}
 

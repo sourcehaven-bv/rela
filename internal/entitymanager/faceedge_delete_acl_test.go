@@ -3,6 +3,7 @@ package entitymanager_test
 import (
 	"context"
 	"errors"
+	"iter"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -293,7 +294,7 @@ func TestDelete_CascadeSourceFallback(t *testing.T) {
 	}
 }
 
-// failingTailStore fails every GetEntityState inside a transaction, so the
+// failingTailStore fails every family read inside a transaction, so the
 // cascade check cannot resolve an edge's source.
 type failingTailStore struct{ store.Store }
 
@@ -305,8 +306,10 @@ type failingTailTx struct{ store.Store }
 
 var errTailRead = errors.New("tail read failed")
 
-func (failingTailTx) GetEntityState(context.Context, string, entity.Face) (*entity.Entity, error) {
-	return nil, errTailRead
+// ListEntities fails: an edge's source is resolved as a family (BUG-J3PBFN).
+// The face row itself still reads, so the failure is the tail's.
+func (failingTailTx) ListEntities(context.Context, store.EntityQuery) iter.Seq2[*entity.Entity, error] {
+	return func(yield func(*entity.Entity, error) bool) { yield(nil, errTailRead) }
 }
 
 // A store error while resolving an edge's source aborts the delete with that
