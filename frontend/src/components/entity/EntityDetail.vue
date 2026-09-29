@@ -149,9 +149,10 @@ const servedRef = computed(() => (entry.value ? entityRef(entry.value) : props.e
 // The face on screen, '' for the bare face. A fact read off the response,
 // never derived from the world.
 const servedFace = computed(() => refFace(servedRef.value))
-// The bare id, for surfaces addressed per ENTITY rather than per row:
-// documents, history, scope navigation. NOT commands — a command acts on the
-// face on screen and takes servedRef (BUG-G2BASF).
+// The bare id, for surfaces addressed per ENTITY rather than per row: scope
+// navigation, same-entity copies and the delete prompt's wording. Every
+// sub-resource of the row on screen (comments, documents, export, history,
+// commands, actions) takes servedRef instead (BUG-G2BASF, BUG-FYEEVX).
 const bareEntityId = computed(() => refBareId(props.entityId))
 
 // Scope navigation (prev/next within a list) and back affordance
@@ -218,12 +219,13 @@ const commandModalRef = ref<InstanceType<typeof CommandModal> | null>(null)
 // Each is the single source of truth for its destination, shared with the
 // keyboard shortcut so both routes agree.
 //
-// History is PER-FACE (`entity_versions` is keyed by content state), so the
-// world has to ride along: dropping it sent the reader to the DEFAULT face's
-// history from a world-bound page — a genuinely different record, presented as
-// the right one with nothing on screen naming the face (BUG-2).
+// History is PER-FACE (`entity_versions` is keyed by content state), so it is
+// addressed by the face on screen: the bare id under a world re-resolved the
+// face on the history page, which is a different face whenever this page shows
+// the default face in a world that has none (BUG-2, BUG-FYEEVX). The world
+// still rides along so the way back lands in the world the reader came from.
 const historyTarget = computed<RouteLocationRaw>(() => ({
-  path: `/history/${props.entityType}/${bareEntityId.value}`,
+  path: `/history/${props.entityType}/${servedRef.value}`,
   query: worldParam.value ? { world: worldParam.value } : {},
 }))
 
@@ -284,10 +286,11 @@ const duplicateFormId = computed(() =>
 const canDuplicate = computed(() => !!duplicateFormId.value && !!entry.value)
 const showDuplicateModal = ref(false)
 
-function handleDuplicated(created: { id: string; type: string }) {
+function handleDuplicated(created: { id: string; type: string; _self?: string }) {
   showDuplicateModal.value = false
   uiStore.showToast('success', `Created ${created.id}`)
-  void router.push(`/entity/${created.type}/${created.id}`)
+  // The face written, so a duplicated draft lands on the draft.
+  void router.push(`/entity/${created.type}/${entityRef(created)}`)
 }
 
 // Nil: undefined when editing is unavailable (no configured form, an
@@ -351,23 +354,12 @@ function commentsForProperty(name: string): Comment[] {
   return commentsByProperty.value.get(name) ?? []
 }
 
-/**
- * The entity id addressed for comments, carrying the resolved face.
- *
- * Comments are per content state (FEAT-9CD2MX): a remark on the draft is not a
- * remark on the published version. The view response reports which face the
- * world actually served, so the thread follows the content on screen rather
- * than always addressing the default face.
- */
-const commentEntityId = computed(() => {
-  const face = viewData.value?.entry?._world?.face
-  return face ? `${props.entityId}@${face}` : props.entityId
-})
-
+// Comments go to the face on screen, not the bare id a world would re-resolve:
+// a remark on the draft is not a remark on the published version (FEAT-9CD2MX).
 async function loadComments() {
   if (!commentsEnabled.value) return
   try {
-    comments.value = await listComments(props.entityType, commentEntityId.value)
+    comments.value = await listComments(props.entityType, servedRef.value)
   } catch {
     // A failure here means "cannot read the target, or commenting is off" —
     // the server makes those indistinguishable on purpose. Either way there is
@@ -517,7 +509,7 @@ async function acceptSuggestion(c: Comment) {
       uiStore.error('Could not save pending changes; the suggestion was not applied')
       return
     }
-    const res = await acceptComment(props.entityType, commentEntityId.value, c.id)
+    const res = await acceptComment(props.entityType, servedRef.value, c.id)
     const view = viewData.value
     if (view?.entry) {
       const nextSections = view.sections.map((s) =>
@@ -1875,7 +1867,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
           <RouterLink v-if="showHistory" class="btn btn-secondary" :to="historyTarget"
             >History</RouterLink
           >
-          <ExportMenu :url-for="(t: string) => entityExportUrl(entityType, entityId, t)" />
+          <ExportMenu :url-for="(t: string) => entityExportUrl(entityType, servedRef, t)" />
           <!--
             Duplicate. Gated on `inline_create` rather than `_actions` (there is
             no `create` key on an entity response); the mobile block below gates
@@ -2130,7 +2122,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
             <template v-if="commentsEnabled" #label-affordance="{ property, index }">
               <CommentIndicator
                 :entity-type="entityType"
-                :entity-id="commentEntityId"
+                :entity-id="servedRef"
                 :anchor="{ kind: 'property', ref: property.name }"
                 :comments="commentsForProperty(property.name)"
                 :flip="shouldFlipPopover(section.fields, index)"
@@ -2161,7 +2153,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
             <TextSelectionComment
               v-if="commentsEnabled"
               :entity-type="entityType"
-              :entity-id="commentEntityId"
+              :entity-id="servedRef"
               :container="contentRef"
               @added="loadComments"
             />
@@ -2172,7 +2164,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
             <BlockCommentOverlay
               v-if="commentsEnabled"
               :entity-type="entityType"
-              :entity-id="commentEntityId"
+              :entity-id="servedRef"
               :container="contentRef"
               :render-key="renderedEntryContent"
               :comments="comments"
@@ -2184,7 +2176,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
             <TextCommentPopover
               v-if="commentsEnabled && textCommentPos && openTextComments.length > 0"
               :entity-type="entityType"
-              :entity-id="commentEntityId"
+              :entity-id="servedRef"
               :comments="openTextComments"
               :position="textCommentPos"
               :can-accept="canAccept"
@@ -2609,14 +2601,14 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
              Nested here (not a sibling of .sections) so it picks up the
              container's flex `gap` for free instead of duplicating that
              spacing via its own margin. -->
-        <DocumentsPanel :entity-type="entityType" :entity-id="entityId" />
+        <DocumentsPanel :entity-type="entityType" :entity-id="servedRef" />
 
         <!-- Comment thread. Self-gating: renders nothing unless the schema
              marks this type commentable, so a project with no `comments:`
              block sees the page it always saw. -->
         <CommentsPanel
           :entity-type="entityType"
-          :entity-id="commentEntityId"
+          :entity-id="servedRef"
           :comments="comments"
           :section-ids="commentSectionIds"
           :can-accept="canAccept"

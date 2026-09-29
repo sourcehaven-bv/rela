@@ -97,6 +97,12 @@ const props = defineProps<{
   embeddedTemplate?: string
   embeddedWorld?: string
   /**
+   * The face an embedded create lands on, named directly. Wins over
+   * `embeddedWorld`; the server refuses a body naming both. Duplicate sets it
+   * so a copy of a draft is a draft whatever world the page is in.
+   */
+  embeddedFace?: string
+  /**
    * Values copied from a source entity for a Duplicate (TKT-Z8K2FS).
    *
    * Shaped like a template because that is what it is — a template computed
@@ -643,7 +649,8 @@ async function loadEntity(force = false) {
 }
 
 // uploadStagedFiles pushes every create-mode staged file to the attachment
-// endpoint against the just-created id, and returns the failures.
+// endpoint against the just-created row's address (face included, so a file
+// lands on the face that was created), and returns the failures.
 //
 // Continue-on-error (RR-Z7C3CY): every file is attempted even after one is
 // rejected, so the user is told about all of them at once rather than
@@ -1726,6 +1733,7 @@ async function handleSubmit(mode: SubmitMode = 'navigate') {
       id?: string
       prefix?: string
       world?: string
+      face?: string
       properties: Record<string, unknown>
       relations: ModernRelationsField
       content?: string
@@ -1766,7 +1774,8 @@ async function handleSubmit(mode: SubmitMode = 'navigate') {
     // `embedded` could silently break, the way the empty-query rule would
     // otherwise suggest the world is dropped too.
     const createWorld = props.embedded ? props.embeddedWorld : worldParam.value
-    if (createWorld) payload.world = createWorld
+    if (props.embedded && props.embeddedFace) payload.face = props.embeddedFace
+    else if (createWorld) payload.world = createWorld
     Object.assign(payload, idControls.buildPayloadFields())
     const entity = await entitiesStore.create(formConfig.value.entity, payload)
     createdEntityId.value = entity.id
@@ -1806,7 +1815,8 @@ async function handleSubmit(mode: SubmitMode = 'navigate') {
         // lookup fails for a legitimately prefix-less id (the demo project's
         // category ids are `backend`, `devops`), so the old form of this call
         // could not link to one at all. The new entity's type is known outright.
-        await createRelation(entity.type, entity.id, relation, peer)
+        // By ADDRESS: a content-scoped edge belongs to the face just created.
+        await createRelation(entity.type, entityRef(entity), relation, peer)
       } catch (linkErr) {
         console.warn('Auto-link failed:', linkErr)
         // Surfaced on EVERY path, not just 'again'. The older reasoning — that
@@ -1827,7 +1837,7 @@ async function handleSubmit(mode: SubmitMode = 'navigate') {
     // toast, so that a failure can keep the form dirty, still reach the
     // inline-create host, and avoid claiming success it didn't achieve.
     const uploadFailures = hasStagedFiles()
-      ? await uploadStagedFiles(formConfig.value.entity, entity.id)
+      ? await uploadStagedFiles(formConfig.value.entity, entityRef(entity))
       : []
     // RR-4QO887: clear staged files and drop the dirty flag even when an
     // upload failed. Keeping them looks like it preserves a retry, but this
