@@ -34,8 +34,8 @@ var ErrReaderUnavailable = errors.New("visibility: read gate unavailable; refusi
 // failure is diagnosable and never mistaken for "no such entity".
 type DenyReader struct{}
 
-// GetEntity implements the script read surface: always refuses.
-func (DenyReader) GetEntity(context.Context, string) (*entity.Entity, error) {
+// GetAddress implements the script read surface: always refuses.
+func (DenyReader) GetAddress(context.Context, string) (*entity.Entity, error) {
 	return nil, ErrReaderUnavailable
 }
 

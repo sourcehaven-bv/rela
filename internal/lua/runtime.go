@@ -1171,7 +1171,7 @@ func (r *Runtime) luaGetEntity(ls *lua.LState) int {
 		return 0
 	}
 
-	e, err := rd.GetEntity(r.callerCtx(), id)
+	e, err := rd.GetAddress(r.callerCtx(), id)
 	if err != nil {
 		ls.Push(lua.LNil)
 		return 1
@@ -1716,7 +1716,7 @@ func (r *Runtime) luaSearch(ls *lua.LState) int {
 		// see ReadDeps.Searcher. A hit names the face it matched, so it is
 		// read at that face: a bare id would resolve through the world and
 		// could return a different face, or miss a faced one.
-		e, err := rd.GetEntity(ctx, entity.Ref{ID: hit.ID, Face: hit.Face}.String())
+		e, err := rd.GetAddress(ctx, entity.Ref{ID: hit.ID, Face: hit.Face}.String())
 		if err != nil {
 			// A denied hit arrives as ErrNotFound and is skipped silently —
 			// that is the gate working. Anything else is a real fault, and
@@ -1819,7 +1819,7 @@ func writtenEntityTable(ctx context.Context, ls *lua.LState, rd EntityReader, wr
 
 // readFace reads one face of id through rd, by its explicit address.
 func readFace(ctx context.Context, rd EntityReader, id string, face entity.Face) (*entity.Entity, error) {
-	return rd.GetEntity(ctx, entity.Ref{ID: id, Face: face}.String())
+	return rd.GetAddress(ctx, entity.Ref{ID: id, Face: face}.String())
 }
 
 // gateWriteTarget raises "entity not found" unless the caller may read every

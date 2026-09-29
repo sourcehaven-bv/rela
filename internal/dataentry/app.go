@@ -618,8 +618,8 @@ func (r lateGatedReader) reader() lua.EntityReader {
 	return r.app.scriptReader(appRedactor(r.app))
 }
 
-func (r lateGatedReader) GetEntity(ctx context.Context, id string) (*entity.Entity, error) {
-	return r.reader().GetEntity(ctx, id)
+func (r lateGatedReader) GetAddress(ctx context.Context, addr string) (*entity.Entity, error) {
+	return r.reader().GetAddress(ctx, addr)
 }
 
 func (r lateGatedReader) ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error] {

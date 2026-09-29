@@ -57,7 +57,7 @@ func (s *Services) RunScheduledTemplate(ctx context.Context, name, recipientID s
 	}
 
 	deps := s.ScheduledLuaWriteDeps()
-	model, contributed, err := mailtemplate.Build(ctx, s.meta, deps.VisibleReader, tmpl, time.Now())
+	model, contributed, err := mailtemplate.Build(ctx, s.meta, deps.VisibleReader, s.worlds.Default(), tmpl, time.Now())
 	if err != nil {
 		return err
 	}

@@ -121,7 +121,7 @@ func (h *writeHandler) handleV1Action(w http.ResponseWriter, r *http.Request) {
 	deps.Capabilities = luaCapabilities(action.Capabilities)
 	var ent *entity.Entity
 	if payload.EntityID != "" && action.AvailableOn == nil {
-		if e, getErr := deps.VisibleReader.GetEntity(r.Context(), payload.EntityID); getErr == nil {
+		if e, getErr := deps.VisibleReader.GetAddress(r.Context(), payload.EntityID); getErr == nil {
 			ent = e
 		}
 	}

@@ -61,8 +61,8 @@ func TestReaders_ResolveAnAddressToItsFace(t *testing.T) {
 	}{
 		{"PolicyReader", viaReader(policy)},
 		{"AllowAllReader", viaReader(allowAll)},
-		{"ScriptReader", func(addr string) (*entity.Entity, error) { return script.GetEntity(ctx, addr) }},
-		{"UnrestrictedReader", func(addr string) (*entity.Entity, error) { return unrestricted.GetEntity(ctx, addr) }},
+		{"ScriptReader", func(addr string) (*entity.Entity, error) { return script.GetAddress(ctx, addr) }},
+		{"UnrestrictedReader", func(addr string) (*entity.Entity, error) { return unrestricted.GetAddress(ctx, addr) }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			for addr, want := range map[string]string{"TKT-1": "bare", "TKT-1@draft": "draft"} {

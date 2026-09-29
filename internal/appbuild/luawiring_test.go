@@ -14,6 +14,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // TKT-ZF2DTV: these pin the SCHEDULER wiring — the path that carries
@@ -119,8 +120,8 @@ func TestScheduledLuaWriteDeps_WritePrepStaysRaw(t *testing.T) {
 	// patches through the manager now. The surviving invariants are that
 	// reads are gated, and that the only remaining ungated path stays
 	// opt-in.
-	if deps.VisibleReader == lua.EntityReader(st) {
-		t.Error("VisibleReader IS the raw store under a configured policy — reads are ungated")
+	if _, ungated := deps.VisibleReader.(*visibility.UnrestrictedReader); ungated {
+		t.Error("VisibleReader is the ungated reader under a configured policy — reads are ungated")
 	}
 	if deps.ElevatedReader != nil {
 		t.Error("ElevatedReader is set on a scheduled runtime — " +

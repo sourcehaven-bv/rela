@@ -12,6 +12,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/fsstore"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 func mustFace(t *testing.T, v string) entity.Face {
@@ -155,7 +156,7 @@ func TestCheckStates_ToleratedDiskShapes(t *testing.T) {
 	}}
 	tr := tracer.New(st)
 	svc, err := analysis.New(analysis.Deps{Store: st, Meta: meta, Tracer: tr,
-		LuaReadDeps: lua.ReadDeps{VisibleReader: st, Tracer: tr, Meta: meta}})
+		LuaReadDeps: lua.ReadDeps{VisibleReader: visibility.Unrestricted(st), Tracer: tr, Meta: meta}})
 	if err != nil {
 		t.Fatal(err)
 	}

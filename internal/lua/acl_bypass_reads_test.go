@@ -28,12 +28,12 @@ import (
 // which reader a binding used.
 type gatedReader struct{ raw store.Store }
 
-// GetEntity reports a hidden entity as store.ErrNotFound, matching
+// GetAddress reports a hidden entity as store.ErrNotFound, matching
 // visibility.ScriptReader: a denial is indistinguishable from a genuine
 // miss, so the gated path leaks no existence oracle. Returning (nil, nil)
 // would violate the EntityReader contract and nil-deref the binding.
-func (g gatedReader) GetEntity(ctx context.Context, id string) (*entity.Entity, error) {
-	e, err := g.raw.GetEntity(ctx, id)
+func (g gatedReader) GetAddress(ctx context.Context, addr string) (*entity.Entity, error) {
+	e, err := store.GetEntityAt(ctx, g.raw, addr)
 	if err != nil {
 		return nil, err
 	}
@@ -100,8 +100,8 @@ func (g gatedReader) ListRelations(ctx context.Context, q store.RelationQuery) i
 // resumed and the panic would fire.
 type failingElevatedReader struct{ raw store.Store }
 
-func (f failingElevatedReader) GetEntity(ctx context.Context, id string) (*entity.Entity, error) {
-	return f.raw.GetEntity(ctx, id)
+func (f failingElevatedReader) GetAddress(ctx context.Context, addr string) (*entity.Entity, error) {
+	return store.GetEntityAt(ctx, f.raw, addr)
 }
 
 func (f failingElevatedReader) ListEntities(
@@ -123,12 +123,12 @@ func (f failingElevatedReader) ListRelations(
 	return func(func(*entity.Relation, error) bool) {}
 }
 
-// brokenElevatedReader fails every GetEntity with an INFRASTRUCTURE error
+// brokenElevatedReader fails every GetAddress with an INFRASTRUCTURE error
 // (not a miss), to pin that such errors surface rather than masquerading as
 // "does not exist".
 type brokenElevatedReader struct{}
 
-func (brokenElevatedReader) GetEntity(context.Context, string) (*entity.Entity, error) {
+func (brokenElevatedReader) GetAddress(context.Context, string) (*entity.Entity, error) {
 	return nil, errors.New("connection refused: database is down")
 }
 
@@ -189,7 +189,7 @@ func elevatedReadFixtureWithRecorder(
 	deps.ElevatedManager = &recordingMutator{}
 	deps.ElevationRecorder = rec
 	if grantReads {
-		deps.ElevatedReader = ws.store
+		deps.ElevatedReader = rawAddressReader{ws.store}
 	}
 	var buf bytes.Buffer
 	r := NewWriter(deps, &buf)
@@ -435,8 +435,8 @@ func TestElevatedRead_ReaderOnlyHandle(t *testing.T) {
 	ws := newMockWorkspace(t)
 	deps := ws.services("/tmp")
 	deps.VisibleReader = gatedReader{raw: ws.store}
-	deps.ElevatedReader = ws.store // read capability only...
-	deps.ElevatedManager = nil     // ...no elevated Mutator.
+	deps.ElevatedReader = rawAddressReader{ws.store} // read capability only...
+	deps.ElevatedManager = nil                       // ...no elevated Mutator.
 	var buf bytes.Buffer
 	r := NewWriter(deps, &buf)
 	defer r.Close()
@@ -735,7 +735,7 @@ func TestElevatedRead_NilRecorderIsNotFatal(t *testing.T) {
 	deps := ws.services("/tmp")
 	deps.VisibleReader = gatedReader{raw: ws.store}
 	deps.ElevatedManager = &recordingMutator{}
-	deps.ElevatedReader = ws.store
+	deps.ElevatedReader = rawAddressReader{ws.store}
 	deps.ElevationRecorder = nil // no sink wired
 	var buf bytes.Buffer
 	r := NewWriter(deps, &buf)

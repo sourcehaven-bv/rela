@@ -30,7 +30,8 @@ func (s *Services) ScheduledForEachEntities(
 		return nil, 0, errors.New("appbuild: scheduled for_each has no visible reader")
 	}
 	ids = make([]string, 0, limit)
-	for e, listErr := range deps.VisibleReader.ListEntities(ctx, store.EntityQuery{Type: entityType}) {
+	q := store.EntityQuery{Type: entityType, World: s.worlds.Default()}
+	for e, listErr := range deps.VisibleReader.ListEntities(ctx, q) {
 		if listErr != nil {
 			return nil, 0, listErr
 		}

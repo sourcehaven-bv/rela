@@ -45,10 +45,10 @@ func TestUnrestricted_IsPassThrough(t *testing.T) {
 	r := visibility.Unrestricted(st)
 	ctx := context.Background()
 
-	t.Run("GetEntity matches the store", func(t *testing.T) {
-		got, err := r.GetEntity(ctx, "TKT-1")
+	t.Run("GetAddress matches the store", func(t *testing.T) {
+		got, err := r.GetAddress(ctx, "TKT-1")
 		if err != nil {
-			t.Fatalf("GetEntity: %v", err)
+			t.Fatalf("GetAddress: %v", err)
 		}
 		want, err := st.GetEntity(ctx, "TKT-1")
 		if err != nil {
@@ -64,8 +64,8 @@ func TestUnrestricted_IsPassThrough(t *testing.T) {
 		}
 	})
 
-	t.Run("GetEntity propagates a miss", func(t *testing.T) {
-		if _, err := r.GetEntity(ctx, "NOPE-1"); err == nil {
+	t.Run("GetAddress propagates a miss", func(t *testing.T) {
+		if _, err := r.GetAddress(ctx, "NOPE-1"); err == nil {
 			t.Error("expected an error for a missing entity")
 		}
 	})
@@ -118,9 +118,9 @@ func TestUnrestricted_ExposesOnlyTheReadSurface(t *testing.T) {
 	// faces of an id exist, from headers, which ListEntityHeaders already
 	// answers. WithWorld returns a copy that resolves bare ids in another
 	// world; it reads nothing and writes nothing. ResolveHeaders (TKT-2528AB
-	// PR 5b) is GetEntity and Family for a batch, projected to headers.
+	// PR 5b) is GetAddress and Family for a batch, projected to headers.
 	want := map[string]bool{
-		"GetEntity": true, "ListEntities": true, "ListRelations": true,
+		"GetAddress": true, "ListEntities": true, "ListRelations": true,
 		"ListEntityHeaders": true, "Family": true, "WithWorld": true,
 		"ResolveHeaders": true,
 	}
@@ -181,7 +181,7 @@ func TestUnrestricted_NilStorePanics(t *testing.T) {
 // lua.EntityReader, which is what structural satisfaction relies on.
 func TestUnrestricted_SatisfiesReadSurfaceNonNil(t *testing.T) {
 	type entityReader interface {
-		GetEntity(ctx context.Context, id string) (*entity.Entity, error)
+		GetAddress(ctx context.Context, addr string) (*entity.Entity, error)
 		ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error]
 		ListRelations(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error]
 	}
@@ -196,7 +196,7 @@ func TestUnrestricted_SatisfiesReadSurfaceNonNil(t *testing.T) {
 		t.Fatal("the interface holds a NIL face — a caller's `== nil` deny " +
 			"check would report 'wired' and the first read would nil-deref")
 	}
-	if _, err := r.GetEntity(context.Background(), "TKT-1"); err != nil {
+	if _, err := r.GetAddress(context.Background(), "TKT-1"); err != nil {
 		t.Errorf("read through the structural interface failed: %v", err)
 	}
 }

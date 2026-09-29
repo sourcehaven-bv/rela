@@ -303,14 +303,10 @@ func NewRelation(from, relationType, to string) *Relation {
 	}
 }
 
-// Key returns a unique key for this relation.
+// Key returns a unique string key for this relation: the text form of
+// [Relation.Identity], so the tail face is part of it.
 func (r *Relation) Key() string {
-	// The FROM slot carries the tail face via the codec serialization
-	// (TKT-DOFYR1) — two edges on the same triple with different tails
-	// are two relations, so the face is part of the key. The face
-	// grammar forbids "--", keeping the key unambiguous; a default-tail
-	// key is byte-identical to the historical form.
-	return FormatStateRef(r.From, r.FromFace) + "--" + r.Type + "--" + r.To
+	return r.Identity().String()
 }
 
 // CloneRelation returns a deep copy of the relation.

@@ -66,10 +66,10 @@ func TestScriptEntityReader_GatesOnActingIdentity(t *testing.T) {
 		User: "alice", Tool: principal.ToolDataEntry,
 	})
 
-	if _, err := rd.GetEntity(ctx, "TKT-1"); err != nil {
+	if _, err := rd.GetAddress(ctx, "TKT-1"); err != nil {
 		t.Errorf("granted entity unreadable: %v", err)
 	}
-	if _, err := rd.GetEntity(ctx, "SEC-1"); err == nil {
+	if _, err := rd.GetAddress(ctx, "SEC-1"); err == nil {
 		t.Error("cascade reads are NOT gated — an automation read an entity the " +
 			"triggering user cannot see")
 	}
@@ -98,7 +98,7 @@ func TestScriptEntityReader_NoPolicyIsPassThrough(t *testing.T) {
 		if _, err := st.GetEntity(ctx, id); err != nil {
 			t.Fatalf("fixture: %s missing from the raw store: %v", id, err)
 		}
-		if _, err := rd.GetEntity(ctx, id); err != nil {
+		if _, err := rd.GetAddress(ctx, id); err != nil {
 			t.Errorf("NopACL path gated a read of %s (%v) — with no policy "+
 				"every entity the store holds must be readable", id, err)
 		}

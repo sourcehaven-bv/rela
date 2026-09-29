@@ -10,6 +10,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // newFSService builds an analysis.Service with a real (in-memory) filesystem,
@@ -34,7 +35,7 @@ func newFSService(t *testing.T, files map[string]string) *analysis.Service {
 	tr := tracer.New(st)
 	svc, err := analysis.New(analysis.Deps{
 		Store: st, Meta: meta, Tracer: tr, FS: fs, Paths: paths,
-		LuaReadDeps: lua.ReadDeps{VisibleReader: st, Tracer: tr, Meta: meta},
+		LuaReadDeps: lua.ReadDeps{VisibleReader: visibility.Unrestricted(st), Tracer: tr, Meta: meta},
 	})
 	if err != nil {
 		t.Fatalf("analysis.New: %v", err)
@@ -216,7 +217,7 @@ func TestCheckRelationFilenames_NoFS(t *testing.T) {
 	tr := tracer.New(st)
 	svc, err := analysis.New(analysis.Deps{
 		Store: st, Meta: meta, Tracer: tr,
-		LuaReadDeps: lua.ReadDeps{VisibleReader: st, Tracer: tr, Meta: meta},
+		LuaReadDeps: lua.ReadDeps{VisibleReader: visibility.Unrestricted(st), Tracer: tr, Meta: meta},
 	})
 	if err != nil {
 		t.Fatalf("analysis.New: %v", err)

@@ -49,9 +49,15 @@ type Compiled struct {
 	byName map[string]store.WorldScope
 }
 
-// Default returns the implicit default world — total, every entity via
-// its default state. Always available, declared or not.
-func Default() store.WorldScope { return store.DefaultWorld() }
+// Default returns the world a surface uses when the request names none.
+// Today that is the implicit default world, [store.DefaultWorld]: every type
+// at its implicit face. Always available, declared or not.
+//
+// This is the one seam for that choice. Surfaces with no request world take
+// their world from here, never from store.DefaultWorld directly, so
+// TKT-7IZHP0 can change this body without revisiting a call site. Today that
+// is CLI list, scheduled for_each and scheduled mail.
+func (c Compiled) Default() store.WorldScope { return store.DefaultWorld() }
 
 // Lookup returns the compiled scope for a world name.
 //
@@ -61,7 +67,7 @@ func Default() store.WorldScope { return store.DefaultWorld() }
 // the default world, which would silently widen a world-bound surface.
 func (c Compiled) Lookup(name string) (scope store.WorldScope, ok bool) {
 	if name == metamodel.DefaultWorldName {
-		return Default(), true
+		return c.Default(), true
 	}
 	scope, ok = c.byName[name]
 	return scope, ok

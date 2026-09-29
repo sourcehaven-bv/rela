@@ -2414,9 +2414,9 @@ type ctxSpyStore struct {
 	rec *ctxRecorder
 }
 
-func (s *ctxSpyStore) GetEntity(ctx context.Context, id string) (*entity.Entity, error) {
-	s.rec.record(ctx, "Store.GetEntity")
-	return s.Store.GetEntity(ctx, id)
+func (s *ctxSpyStore) GetAddress(ctx context.Context, addr string) (*entity.Entity, error) {
+	s.rec.record(ctx, "Store.GetAddress")
+	return store.GetEntityAt(ctx, s.Store, addr)
 }
 
 func (s *ctxSpyStore) ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error] {
@@ -2433,7 +2433,7 @@ func (s *ctxSpyStore) ListRelations(ctx context.Context, q store.RelationQuery) 
 // actually invoke today. ctxSpyStore must satisfy this so the test
 // declares which Store methods are recorded and tooling can flag drift.
 type readStore interface {
-	GetEntity(ctx context.Context, id string) (*entity.Entity, error)
+	GetAddress(ctx context.Context, addr string) (*entity.Entity, error)
 	ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error]
 	ListRelations(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error]
 }

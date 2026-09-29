@@ -74,7 +74,7 @@ var errStubRead = errors.New("stubReader: not expected to be called")
 // stubReader is a non-nil lua.EntityReader standing in for the raw store.
 type stubReader struct{}
 
-func (stubReader) GetEntity(context.Context, string) (*entity.Entity, error) {
+func (stubReader) GetAddress(context.Context, string) (*entity.Entity, error) {
 	return nil, errStubRead
 }
 func (stubReader) ListEntities(context.Context, store.EntityQuery) iter.Seq2[*entity.Entity, error] {
