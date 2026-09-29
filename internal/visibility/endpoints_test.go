@@ -325,7 +325,7 @@ func TestNewScriptReader_RequiresAResolver(t *testing.T) {
 func TestScriptReader_ListRelationsStrictReturnsGateFaults(t *testing.T) {
 	ctx := context.Background()
 	st := resolverStore(t)
-	if _, err := st.CreateRelation(ctx, "TKT-1", "implements", "FEAT-1", nil); err != nil {
+	if _, err := st.CreateRelation(ctx, entity.RelationKey{From: "TKT-1", Type: "implements", To: "FEAT-1"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct {

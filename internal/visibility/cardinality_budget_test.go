@@ -38,7 +38,7 @@ func TestScriptReader_CardinalityReadBudget(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if _, err := counting.CreateRelation(ctx, tkt, "affects", con, nil); err != nil {
+			if _, err := counting.CreateRelation(ctx, entity.RelationKey{From: tkt, Type: "affects", To: con}, nil); err != nil {
 				t.Fatal(err)
 			}
 		}
