@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/sqlitedb"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/storeutil"
 )
@@ -125,16 +126,21 @@ func (s *Store) createEntityLocked(ctx context.Context, e *entity.Entity) error 
 	if err != nil {
 		return err
 	}
-	updated := e.UpdatedAt
-	if updated.IsZero() {
-		updated = time.Now().UTC()
-	}
+	// The store stamps the write time itself, as every backend does: a
+	// caller's UpdatedAt is usually the stored value carried through a
+	// read-modify-write, and keeping it would stop the sweep's settle window
+	// and store.Freshness from ever seeing the edit.
+	updated := time.Now()
 
 	editorUser, editorTool := store.AttributionColumns(ctx)
+	o := originColumns(store.OriginFrom(ctx))
 	_, err = s.write(ctx, `INSERT INTO entities (id, face, type, properties, content, updated_at,
-		                      last_edited_by_user, last_edited_by_tool)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		e.ID, string(e.Face), e.Type, props, e.Content, updated.Format(timeFmt), editorUser, editorTool)
+		                      last_edited_by_user, last_edited_by_tool,
+		                      origin_kind, origin_source, origin_source_face,
+		                      origin_source_type, origin_definition)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		e.ID, string(e.Face), e.Type, props, e.Content, sqlitedb.FormatTime(updated), editorUser, editorTool,
+		o.kind, o.source, o.sourceFace, o.sourceType, o.definition)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return fmt.Errorf("sqlitestore: create %s: %w",
@@ -175,16 +181,19 @@ func (s *Store) UpdateEntity(ctx context.Context, e *entity.Entity) error {
 	if err != nil {
 		return err
 	}
-	updated := e.UpdatedAt
-	if updated.IsZero() {
-		updated = time.Now().UTC()
-	}
+	updated := time.Now() // store-stamped; see CreateEntity
 
+	// Every update restamps the origin, so an unmarked write clears a copy
+	// marker: the columns describe the most recent write (see store.Origin).
 	editorUser, editorTool := store.AttributionColumns(ctx)
+	o := originColumns(store.OriginFrom(ctx))
 	res, err := s.write(ctx, `UPDATE entities SET type = ?, properties = ?, content = ?, updated_at = ?,
-		    last_edited_by_user = ?, last_edited_by_tool = ?
+		    last_edited_by_user = ?, last_edited_by_tool = ?,
+		    origin_kind = ?, origin_source = ?, origin_source_face = ?,
+		    origin_source_type = ?, origin_definition = ?
 		WHERE id = ? AND face = ?`,
-		e.Type, props, e.Content, updated.Format(timeFmt), editorUser, editorTool, e.ID, string(e.Face))
+		e.Type, props, e.Content, sqlitedb.FormatTime(updated), editorUser, editorTool,
+		o.kind, o.source, o.sourceFace, o.sourceType, o.definition, e.ID, string(e.Face))
 	if err != nil {
 		return fmt.Errorf("sqlitestore: update %s: %w", e.ID, err)
 	}
@@ -533,7 +542,7 @@ func (s *Store) LastModified(ctx context.Context) (time.Time, error) {
 	if !raw.Valid || raw.String == "" {
 		return time.Time{}, nil // empty store: zero time, per contract
 	}
-	t, err := time.Parse(timeFmt, raw.String)
+	t, err := parseTime(raw.String)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("sqlitestore: last modified: %w", err)
 	}
@@ -567,7 +576,7 @@ func scanEntity(sc scanner) (*entity.Entity, error) {
 		return nil, fmt.Errorf("sqlitestore: entity %s: %w", e.ID, err)
 	}
 	e.Properties = props2
-	t, err := time.Parse(timeFmt, updated)
+	t, err := parseTime(updated)
 	if err != nil {
 		return nil, fmt.Errorf("sqlitestore: parse updated_at for %s: %w", e.ID, err)
 	}

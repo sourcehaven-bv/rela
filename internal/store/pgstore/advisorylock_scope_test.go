@@ -168,7 +168,7 @@ func TestWriteTxDoesNotBlockAnotherSchema(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		done <- sB.Tx(ctx, func(tx store.Store) error {
-			return tx.CreateEntity(ctx, mkEntity("TENANT-B-TX", "ticket", "written under Tx"))
+			return tx.CreateEntity(ctx, mkEntity("TENANT-B-TX", "written under Tx"))
 		})
 	}()
 
@@ -228,7 +228,7 @@ func TestSweepCapturesWhileAnotherSchemaHoldsLock(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = sB.Close() })
 
-	require.NoError(t, sB.CreateEntity(ctx, mkEntity("TENANT-B-1", "ticket", "b writes too")))
+	require.NoError(t, sB.CreateEntity(ctx, mkEntity("TENANT-B-1", "b writes too")))
 	_, err = poolB.Exec(ctx,
 		`UPDATE entities SET updated_at = now() - interval '1 hour' WHERE id = 'TENANT-B-1'`)
 	require.NoError(t, err)

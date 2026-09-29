@@ -32,8 +32,9 @@ import (
 // served as if it were valid.
 const maxValueBytes = 32 << 20 // 32 MiB
 
-// timeFmt is the on-disk timestamp format, matching what the store writes to
-// its own rows: RFC3339Nano, timezone retained.
+// timeFmt is the on-disk timestamp format: RFC3339Nano, timezone retained.
+// It differs from the store's fixed-width sqlitedb.TimeFormat on purpose: this
+// column is only read back, never compared in SQL, so its width does not matter.
 const timeFmt = time.RFC3339Nano
 
 // KV is the SQL-backed durable key/value store.

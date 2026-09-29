@@ -46,12 +46,14 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
-// timeFmt is the on-disk timestamp format for entity and relation rows.
-// RFC3339Nano keeps the timezone, which is load-bearing: a naive timestamp
-// parses back to a time that compares wrong against every consumer's clock,
-// and store.Freshness is consumed by index-rebuild logic that does exactly
-// that comparison.
-const timeFmt = time.RFC3339Nano
+// parseTime reads a timestamp column written by sqlitedb.FormatTime. It parses
+// as RFC3339Nano because Go's fixed-width layout rejects fewer than nine
+// fractional digits, while RFC3339Nano accepts any count, nine included.
+//
+// The timezone is load-bearing: a naive timestamp parses back to a time that
+// compares wrong against every consumer's clock, and store.Freshness is
+// consumed by index-rebuild logic that does exactly that comparison.
+func parseTime(s string) (time.Time, error) { return time.Parse(time.RFC3339Nano, s) }
 
 // Store is a SQLite-backed [store.Store].
 //

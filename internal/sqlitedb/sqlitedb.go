@@ -280,9 +280,18 @@ CREATE TABLE IF NOT EXISTS entities (
 	updated_at  TEXT NOT NULL,
 	-- last_edited_by_* record who made the most recent write, so the version
 	-- sweep can attribute a create/update to its real author. NULL means the
-	-- write carried no attribution. Added to older databases by addEditorColumns.
+	-- write carried no attribution. Added to older databases by the v7 rung.
 	last_edited_by_user TEXT,
 	last_edited_by_tool TEXT,
+	-- origin_* record how the most recent write was produced (store.Origin),
+	-- so the sweep can mark a copied entity's version as a copy. All NULL
+	-- means a direct edit; see pgstore migration 0013. Added to older
+	-- databases by the v9 rung.
+	origin_kind        TEXT,
+	origin_source      TEXT,
+	origin_source_face TEXT,
+	origin_source_type TEXT,
+	origin_definition  TEXT,
 	PRIMARY KEY (id, face)
 ) STRICT;
 CREATE INDEX IF NOT EXISTS entities_type_idx ON entities(type);

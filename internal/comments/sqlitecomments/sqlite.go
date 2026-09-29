@@ -37,18 +37,16 @@ import (
 
 // timeFmt is the on-disk timestamp format.
 //
-// Deliberately NOT sqlitestore.timeFmt (RFC3339Nano), despite the two tables
-// living in one file. List orders by this column, and the ordering happens in
-// SQL as a STRING compare — which RFC3339Nano gets WRONG, because Go strips
+// Deliberately NOT RFC3339Nano. List orders by this column, and the ordering
+// happens in SQL as a STRING compare — which RFC3339Nano gets WRONG, because Go strips
 // trailing zeros from the fractional part and omits it entirely at a whole
 // second. So "12:00:00Z" sorts AFTER "12:00:00.000000005Z" ('Z' is 0x5A, '.'
 // is 0x2E), and a thread would silently reorder between reads.
 //
 // This format is fixed-width: always nine fractional digits, zero-padded, so
-// lexical and chronological order coincide. The store's own columns are not
-// changed here — that is a separate concern (its sweep does the same string
-// comparison against time windows, where the same flaw is a missed capture
-// rather than a visible reordering).
+// lexical and chronological order coincide. The store's own columns use the
+// same layout (sqlitedb.TimeFormat, BUG-HEIAVS); it is repeated here rather
+// than imported so this package keeps depending on database/sql alone.
 const timeFmt = "2006-01-02T15:04:05.000000000Z07:00"
 
 // DBTX is the database handle this store runs on: the *sql.DB owned by
