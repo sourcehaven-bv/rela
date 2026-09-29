@@ -2,82 +2,58 @@
 id: REV-QRNW0G
 type: review-checklist
 title: 'Review: Cardinality analysis: batch relation counts and count visible edges only'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
 
 ## Automated Checks
 
-- [ ] All tests pass (`just test`)
-- [ ] Lint clean (`just lint`)
-- [ ] Comment lint gate clean (`just comment-lint`)
-- [ ] Coverage maintained (`just coverage-check`)
-
-**Comment findings.** `just comment-report` lists the advisory rules
-(duplication, nil-contract, param-contract, restatement). They are not a merge
-gate, but a finding your diff *introduces* should be fixed or suppressed — don't
-grow the backlog.
-
-Every rule is a heuristic over prose, so false positives are expected. To
-suppress one, prefer the inline form on the declaration line, which travels with
-the code and is reviewed in this diff:
-
-```go
-func f(p string) {} //commentlint:ignore param-contract  p is contained by Clone
-```
-
-Use `.commentlint.yml` (`ignore:` path globs, `allow-phrases:`) only when the
-same prose recurs across many sites. A reason is required either way — an
-unexplained suppression is a finding nobody can re-evaluate later.
+- [x] All tests pass (`just test`)
+- [x] Lint clean (`just lint`)
+- [x] Comment lint gate clean (`just comment-lint`)
+- [x] Coverage maintained (`just coverage-check`)
 
 ## Code Review
 
-- [ ] Run `/code-review` command (invokes cranky-code-reviewer agent)
-- [ ] All critical review-responses addressed
-- [ ] All significant review-responses addressed
-- [ ] Self-reviewed the diff for unrelated changes
+- [x] Run `/code-review` command (invokes cranky-code-reviewer agent)
+- [x] All critical review-responses addressed
+- [x] All significant review-responses addressed
+- [x] Self-reviewed the diff for unrelated changes
 
-**Review Responses:** <!-- List IDs of review-response entities created, e.g.,
-RR-xxxx -->
+**Review Responses:** RR-YHKWB8, RR-7A1C52, RR-6UZ85W (significant,
+addressed); RR-01AH5L, RR-8TM8XD, RR-7QQPYC, RR-N22CGX (addressed);
+RR-X873OB, RR-W2RINP (deferred); RR-JH5WPS, RR-F1FYU1 (wont-fix).
 
 ## Acceptance Verification
 
-- [ ] Each acceptance criterion tested (reference planning checklist)
-- [ ] Test evidence documented in implementation checklist
+- [x] Each acceptance criterion tested (reference planning checklist)
+- [x] Test evidence documented in implementation checklist
 
 **Acceptance Status:**
-<!-- For each acceptance criterion, state PASS/FAIL with evidence -->
+
+- AC1 PASS: `TestCheckCardinality_ReadBudget` (raw) and
+  `TestScriptReader_CardinalityReadBudget` (gated) read the same number of
+  times at 10 and 50 subjects.
+- AC2 PASS: data-entry and MCP visible-edge tests; a gate fault fails the
+  check (`TestScriptReader_ListRelationsStrictReturnsGateFaults`,
+  `TestAnalyzeCardinality_GateFaultReportsOneIssue`).
+- AC3 PASS: the CLI runs `schema.Ungated(store)` through the same checker.
 
 ## Documentation (enhancements only)
 
-Skip this section for bugs and internal refactors.
+- [x] Docs-checklist created and linked via `has-docs`
+- [x] User-facing documentation updated
+- [x] Docs-checklist marked as done
 
-- [ ] Docs-checklist created and linked via `has-docs`
-- [ ] User-facing documentation updated
-- [ ] Docs-checklist marked as done
-
-**Docs Checklist:** <!-- e.g., DOCS-xxxx -->
+**Docs Checklist:** DOCS-UGZLQ8
 
 ## Final Checks
 
-- [ ] Commit message explains the why, not just what
-- [ ] No TODOs or FIXMEs left unaddressed
-- [ ] Ready for another developer to use
+- [x] Commit message explains the why, not just what
+- [x] No TODOs or FIXMEs left unaddressed
+- [x] Ready for another developer to use
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
-
-<!--
-Deliberately NOT tracked here: the PR URL and whether CI passed.
-
-Both post-date this checklist. `/pr` requires the ticket to be `done` and
-validating clean before it opens the PR, and a `done` review-checklist may have
-no unchecked items — so an item asking for the PR URL can only be satisfied by a
-PR that does not exist yet. Checking it early would mean asserting "CI passed"
-before CI ran, which turns the checklist from evidence into a formality.
-
-GitHub records both authoritatively, and the branch and commit messages carry
-the ticket ID, so the ticket-to-PR link is recoverable without duplicating it
-here. See TKT-UFV01M. -->
+- [x] ~~Run `/pr` command to create PR and monitor CI~~ (N/A: PR opened directly against faces-intrinsic as the coordinator directed)
