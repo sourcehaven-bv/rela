@@ -46,7 +46,7 @@ func RunGraphDifferential(t *testing.T, f Factory) {
 	ref := memstore.New()
 	seedGraphDiff(t, ref)
 	c := context.Background()
-	ids := []string{"GRP-1", "NOPE-1"}
+	ids := []string{"GRP-1", "NOPE-1", graphDiffFacedOnly}
 	for i := range graphDiffItems {
 		ids = append(ids, fmt.Sprintf("ITM-%02d", i))
 	}
@@ -258,7 +258,21 @@ func seedGraphDiff(t *testing.T, s store.Store) {
 			rel(fmt.Sprintf("GRP-%d", i%4+1), "owns", id, "")
 		}
 	}
+
+	// A family with no default row, joined to the graph by identity edges,
+	// and a content-tailed closure edge: the entity closure seeds per id and
+	// follows "" tails only (stage-2 ruling D5).
+	only := entity.New(graphDiffFacedOnly, "item")
+	only.Face = published
+	only.Properties = map[string]any{"status": "open", "title": "faced-only", "prio": 1}
+	require.NoError(t, s.CreateEntity(c, only))
+	rel(graphDiffFacedOnly, "childOf", "ITM-02", "")
+	rel(graphDiffFacedOnly, "implements", "GRP-1", "")
+	rel("ITM-03", "childOf", "ITM-10", draft)
 }
+
+// graphDiffFacedOnly is the seeded item that exists only at a named face.
+const graphDiffFacedOnly = "ITM-FO"
 
 func pick[T any](rng *rand.Rand, xs []T) T { return xs[rng.IntN(len(xs))] }
 
@@ -342,7 +356,7 @@ func genSelection(rng *rand.Rand, faces []entity.Face) store.FaceSelection {
 }
 
 func genGraphQuery(rng *rand.Rand) store.GraphQuery {
-	q := store.GraphQuery{EntityType: "item", Faces: store.InWorld(store.DefaultWorld())}
+	q := store.GraphQuery{EntityType: "item"} // Faces is drawn below
 	for range rng.IntN(3) {
 		q.Props = append(q.Props, genProp(rng))
 	}

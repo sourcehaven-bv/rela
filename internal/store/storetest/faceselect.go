@@ -28,6 +28,9 @@ func RunFaceSelectionTests(t *testing.T, f Factory) {
 	draftWorld := store.NewWorldScope(map[string]store.TypeResolution{
 		"doc": {Chain: []entity.Face{draft}, Fallback: store.FallbackDefaultState},
 	})
+	publishedWorld := store.NewWorldScope(map[string]store.TypeResolution{
+		"doc": {Chain: []entity.Face{published}, Fallback: store.FallbackDefaultState},
+	})
 
 	seed := func(t *testing.T) store.Store {
 		t.Helper()
@@ -186,6 +189,13 @@ func RunFaceSelectionTests(t *testing.T, f Factory) {
 				owners},
 			{"own default world overrides AllFaces", store.AllFaces(), store.InWorld(store.DefaultWorld()),
 				[]string{"OWN-3"}},
+			// DOC-1's published prime is closed although its draft row is
+			// open, and DOC-2 has no published or default row: ranking, not
+			// "any face", decides.
+			{"own world reads the prime only", store.AllFaces(), store.InWorld(publishedWorld),
+				[]string{"OWN-3"}},
+			{"inherits a non-default world", store.InWorld(publishedWorld), store.FaceSelection{},
+				[]string{"OWN-3"}},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
 				q := store.GraphQuery{EntityType: "owner", Faces: tc.query, HasOutbound: &store.RelationPredicate{
@@ -210,6 +220,66 @@ func RunFaceSelectionTests(t *testing.T, f Factory) {
 				}
 			})
 		}
+	})
+
+	// Inheritance closures (stage-2 ruling D5): a candidate climbs from its
+	// id, whatever faces it has, and both closures follow identity-tailed
+	// ("") edges only; a content-tailed edge belongs to one face and confers
+	// nothing.
+	t.Run("InheritanceClosures", func(t *testing.T) {
+		s := f(t)
+		mk := func(id, typ string, face entity.Face) {
+			t.Helper()
+			e := entity.New(id, typ)
+			e.Face = face
+			require.NoError(t, s.CreateEntity(ctx(), e))
+		}
+		rel := func(from, typ, to string, face entity.Face) {
+			t.Helper()
+			var data *store.RelationData
+			if face != "" {
+				data = &store.RelationData{FromFace: face}
+			}
+			_, err := s.CreateRelation(ctx(), from, typ, to, data)
+			require.NoError(t, err, "%s --%s--> %s", from, typ, to)
+		}
+		mk("alice", "user", def)
+		mk("FOLD-1", "folder", def)
+		rel("alice", "member", "FOLD-1", def)
+		// DOC-A exists only at a named face and climbs by an identity edge.
+		mk("DOC-A", "doc", published)
+		rel("DOC-A", "partOf", "FOLD-1", def)
+		// DOC-B's only climbing edge is tailed on its draft face.
+		mk("DOC-B", "doc", def)
+		mk("DOC-B", "doc", draft)
+		rel("DOC-B", "partOf", "FOLD-1", draft)
+
+		entityClimb := store.GraphQuery{EntityType: "doc", Faces: store.AllFaces(), HasInbound: &store.RelationPredicate{
+			OfTypes: []string{"member"}, Endpoints: []string{"alice"},
+			EntityInheritThrough: []string{"partOf"}, EntityDepth: 3,
+		}}
+		assert.Equal(t, []string{"DOC-A"}, runGraphQuery(t, s, entityClimb),
+			"a faced-only candidate inherits; a content-tailed edge does not confer")
+
+		// Endpoint closure: GRP-1 includes GRP-2 by an identity edge and
+		// GRP-3 only from its draft face.
+		mk("GRP-1", "group", def)
+		mk("GRP-1", "group", draft)
+		mk("GRP-2", "group", def)
+		mk("GRP-3", "group", def)
+		rel("GRP-1", "includes", "GRP-2", def)
+		rel("GRP-1", "includes", "GRP-3", draft)
+		mk("DOC-C", "doc", def)
+		mk("DOC-D", "doc", def)
+		rel("GRP-2", "grants", "DOC-C", def)
+		rel("GRP-3", "grants", "DOC-D", def)
+
+		endpointClimb := store.GraphQuery{EntityType: "doc", Faces: store.AllFaces(), HasInbound: &store.RelationPredicate{
+			OfTypes: []string{"grants"}, Endpoints: []string{"GRP-1"},
+			InheritThrough: []string{"includes"}, Depth: 3,
+		}}
+		assert.Equal(t, []string{"DOC-C"}, runGraphQuery(t, s, endpointClimb),
+			"the endpoint closure does not expand through a content-tailed edge")
 	})
 }
 
