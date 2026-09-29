@@ -90,7 +90,7 @@ type entityMutator interface {
 // stable services are held by value (store/manager/reader/serializer/
 // affordances), swappable-in-test collaborators are closures over App (schema/
 // acl/audit), and the shared helpers used by BOTH the read and write paths are
-// passed as closures (gateRead, denyAfford, computeETag, currentEdgesByPeer)
+// passed as closures (denyAfford, computeETag, currentEdgesByPeer)
 // so the two paths cannot drift (uniform-404 read gate, affordance-denial
 // audit, one ETag definition).
 //
@@ -118,8 +118,12 @@ type writeHandler struct {
 	luaDeps          func() lua.WriteDeps
 	fullScriptDetail func(r *http.Request) bool
 
+	// visible is the read path's resolver. Every addressed write resolves its
+	// row through it first, so a row the caller may not read, at any face, is
+	// the same 404 on a write as on a GET.
+	visible visibleReader
+
 	// Shared App helpers (also used by the read path — stay on App).
-	gateRead   func(w http.ResponseWriter, r *http.Request, typeName, entityID string) bool
 	denyAfford func(
 		ctx context.Context, w http.ResponseWriter, target *entityPkg.Entity, denial AffordanceDenialError,
 	)
@@ -155,7 +159,7 @@ type writeHandler struct {
 //
 // It returns the re-stamped *http.Request (not just a context) on purpose: the
 // downstream read gate is consulted via helpers that take r and read
-// r.Context() internally (h.gateRead, the serializer/reader), so the rebuilt
+// r.Context() internally (h.visible, the serializer/reader), so the rebuilt
 // ACL request + read gate must ride ON r — a bare context threaded only to the
 // manager call would leave those reads on the stale, unmatched principal and
 // redact the just-provisioned entity out of the response (RR-VI9XMY gap 2).
@@ -346,7 +350,7 @@ func (h *writeHandler) writeCreateRelations(
 	// content-scoped edges (BUG-64MU2Q). The address comes from the row the
 	// manager returned, not from the request: a create mints its id during
 	// the write, so the row it produced is what names the face.
-	ws, err = h.applyRelationsModern(r.Context(), refOf(created), desired)
+	ws, err = h.applyRelationsModern(r.Context(), created.Ref(), desired)
 	warnings = append(warnings, ws...)
 	if err != nil {
 		h.writeRelationsApplyError(w, r, err)
@@ -663,34 +667,18 @@ func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Reque
 
 	s := h.schema()
 
-	// The path segment is an ADDRESS — `ID` or `ID@face` (see entityRef). A
-	// write names the row it edits by address and never by world, which is
-	// why attachWorld refuses `?world=` on this method: the face rides here.
-	ref, ok := parseEntityRef(entityID)
-	if !ok {
-		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
+	// The path segment is an ADDRESS, `ID` or `ID@face`. A write names the
+	// row it edits by address and never by world, which is why attachWorld
+	// refuses `?world=` on this method: the face rides here.
+	//
+	// The resolver read runs BEFORE body parse, If-Match and IsLocked (RR-FGUZ,
+	// RR-NGMI), so "exists but hidden" and "denied face" answer the same 404 as
+	// "absent". A 400, 403, 412 or 422 here would be an existence oracle.
+	entity, found := readAddressedOr404(w, r, h.visible, typeName, entityID)
+	if !found {
 		return
 	}
-
-	// ACL gate (TKT-VQGN): runs BEFORE getEntity (RR-NGMI timing) AND
-	// before body parse / If-Match / IsLocked so the only observable
-	// for "this id exists but you can't see it" is the same 404 as
-	// "this id doesn't exist" (RR-FGUZ). A 400 / 412 / 422 here would
-	// be an existence oracle. On the BARE id: the row gate is face-blind.
-	if !h.gateRead(w, r, typeName, ref.ID) {
-		return
-	}
-
-	// The FACE gate, as on the read path: a face this principal may not read
-	// must 404 here exactly as it does on GET. Without it a denied face
-	// reaches the write ACL and answers 403 while an absent one answers 404,
-	// and the status code alone tells a probing caller which content states
-	// exist — the existence the `type@face` read grant withholds.
-	entity, found := h.reader.getEntityRef(r.Context(), ref)
-	if !found || entity.Type != typeName || !faceReadable(r.Context(), typeName, entity.Face) {
-		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
-		return
-	}
+	ref := entity.Ref()
 
 	// Refuse to write through an inaccessible entity. The on-disk file
 	// is unreadable (e.g. git-crypt encrypted, no key locally) — writing
@@ -883,29 +871,17 @@ func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Reque
 func (h *writeHandler) handleV1DeleteEntity(w http.ResponseWriter, r *http.Request, typeName, _, entityID string) {
 	r = h.withProvision(r)
 
-	// The path segment is an ADDRESS (see entityRef). `ID` and `ID@<bare>`
-	// delete the whole entity; `ID@face` for a non-bare face deletes THAT
-	// face only — the "unpublish" the address grammar makes expressible.
-	ref, ok := parseEntityRef(entityID)
-	if !ok {
-		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
+	// The path segment is an ADDRESS. `ID` and `ID@<bare>` delete the whole
+	// entity; `ID@face` for a non-bare face deletes THAT face only, the
+	// "unpublish" the address grammar makes expressible.
+	//
+	// The resolver read runs BEFORE AuthorizeWrite (RR-3532), so a hidden
+	// target or a denied face 404s rather than answering 403-with-rule_id.
+	entity, found := readAddressedOr404(w, r, h.visible, typeName, entityID)
+	if !found {
 		return
 	}
-
-	// ACL gate (TKT-VQGN): runs BEFORE getEntity (RR-NGMI timing) AND
-	// before AuthorizeWrite (RR-3532 — so a hidden target 404s, not
-	// 403-with-rule_id). On the BARE id: the row gate is face-blind.
-	if !h.gateRead(w, r, typeName, ref.ID) {
-		return
-	}
-
-	// The FACE gate too — see handleV1UpdateEntity: a denied face must be the
-	// same 404 as an absent one, never a 403 that confirms it exists.
-	entity, found := h.reader.getEntityRef(r.Context(), ref)
-	if !found || entity.Type != typeName || !faceReadable(r.Context(), typeName, entity.Face) {
-		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
-		return
-	}
+	ref := entity.Ref()
 
 	var err error
 	if ref.Face.IsDefault() {
@@ -941,6 +917,11 @@ func (h *writeHandler) writeRelationsValidationError(w http.ResponseWriter, r *h
 		writeV1Error(w, r, http.StatusUnprocessableEntity, se.Code, se.Detail, se.Path)
 		return
 	}
+	var gerr *gateFaultError
+	if errors.As(err, &gerr) {
+		writeGateError(w, r, gerr.err)
+		return
+	}
 	writeV1Error(w, r, http.StatusUnprocessableEntity,
 		"relation_failed", "Failed to validate relations", err.Error())
 }
@@ -973,23 +954,19 @@ func (h *writeHandler) writeRelationsApplyError(w http.ResponseWriter, r *http.R
 }
 
 func (h *writeHandler) handleV1CreateRelation(
-	w http.ResponseWriter, r *http.Request, typeName string, ref entityRef, relType string,
+	w http.ResponseWriter, r *http.Request, typeName, addr, relType string,
 ) {
 	r = h.withProvision(r)
 
-	// ACL gate (TKT-VQGN CRIT-2): runs BEFORE body parse (RR-FGUZ
-	// applied to relation writes) and BEFORE the affordance check —
-	// otherwise a 400/403 confirms the entity exists. The BARE id: the row
-	// gate is face-blind.
-	if !h.gateRead(w, r, typeName, ref.ID) {
+	// ACL gate (TKT-VQGN CRIT-2): runs BEFORE body parse (RR-FGUZ applied to
+	// relation writes) and BEFORE the affordance check, otherwise a 400/403
+	// confirms the entity exists. The resolver applies the face gate too, so
+	// a face the caller may not read is the same 404 (BUG-BZQQDP).
+	entity, found := readAddressedOr404(w, r, h.visible, typeName, addr)
+	if !found {
 		return
 	}
-
-	entity, found := h.reader.getEntityRef(r.Context(), ref)
-	if !found || entity.Type != typeName {
-		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
-		return
-	}
+	ref := entity.Ref()
 
 	var req struct {
 		ID        string         `json:"id"`
@@ -1023,16 +1000,14 @@ func (h *writeHandler) handleV1CreateRelation(
 	//
 	// The target's type comes from the STORE, not from its id prefix: a
 	// prefix-derived type is exactly the fragile lookup that made a
-	// legitimately prefix-less id unlinkable. A target that does not exist and
-	// one the caller may not read collapse to the same 404 carrying the shared
-	// entityNotFoundTitle, so the two stay indistinguishable — whether an
+	// legitimately prefix-less id unlinkable. The body names an entity, not a
+	// face, so the check is the entity-level one: some face of it the caller
+	// may read. A faced target has no zero-face row, so a row read here would
+	// refuse every faced peer. A target that does not exist and one the caller
+	// may not read collapse to the same 404 carrying the shared
+	// entityNotFoundTitle, so the two stay indistinguishable. Whether an
 	// entity exists is a genuine secret (docs/acl-security.md).
-	target, targetFound := h.reader.getEntity(r.Context(), req.ID)
-	if !targetFound {
-		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
-		return
-	}
-	if !h.gateRead(w, r, target.Type, target.ID) {
+	if !familyReadableOr404(w, r, h.visible, req.ID) {
 		return
 	}
 
@@ -1081,20 +1056,21 @@ func (h *writeHandler) handleV1CreateRelation(
 }
 
 func (h *writeHandler) handleV1UpdateRelation(
-	w http.ResponseWriter, r *http.Request, typeName string, ref entityRef, relType, targetID string,
+	w http.ResponseWriter, r *http.Request, typeName, addr, relType, targetID string,
 ) {
 	r = h.withProvision(r)
 
-	// ACL gate (TKT-VQGN CRIT-2): see handleV1CreateRelation. BARE id.
-	if !h.gateRead(w, r, typeName, ref.ID) {
+	// ACL gate (TKT-VQGN CRIT-2): see handleV1CreateRelation. The peer is
+	// gated too, before the edge or its affordances are touched, so a hidden
+	// peer is the same 404 as an absent one (design 8.2).
+	entity, found := readAddressedOr404(w, r, h.visible, typeName, addr)
+	if !found {
 		return
 	}
-
-	entity, found := h.reader.getEntityRef(r.Context(), ref)
-	if !found || entity.Type != typeName {
-		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
+	if !familyReadableOr404(w, r, h.visible, targetID) {
 		return
 	}
+	ref := entity.Ref()
 
 	var req struct {
 		Meta      map[string]any `json:"meta"`
@@ -1169,20 +1145,21 @@ func (h *writeHandler) handleV1UpdateRelation(
 }
 
 func (h *writeHandler) handleV1DeleteRelation(
-	w http.ResponseWriter, r *http.Request, typeName string, ref entityRef, relType, targetID string,
+	w http.ResponseWriter, r *http.Request, typeName, addr, relType, targetID string,
 ) {
 	r = h.withProvision(r)
 
-	// ACL gate (TKT-VQGN CRIT-2): see handleV1CreateRelation. BARE id.
-	if !h.gateRead(w, r, typeName, ref.ID) {
+	// ACL gate (TKT-VQGN CRIT-2): see handleV1CreateRelation. The peer is
+	// gated too, before the edge or its affordances are touched, so a hidden
+	// peer is the same 404 as an absent one (design 8.2).
+	entity, found := readAddressedOr404(w, r, h.visible, typeName, addr)
+	if !found {
 		return
 	}
-
-	entity, found := h.reader.getEntityRef(r.Context(), ref)
-	if !found || entity.Type != typeName {
-		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
+	if !familyReadableOr404(w, r, h.visible, targetID) {
 		return
 	}
+	ref := entity.Ref()
 
 	// Affordance gate: removable check, evaluated against the SOURCE
 	// of the edge (the path entity for outgoing; the peer for
@@ -1215,22 +1192,16 @@ func (h *writeHandler) handleV1DeleteRelation(
 }
 
 func (h *writeHandler) handleV1CloneEntity(
-	w http.ResponseWriter, r *http.Request, typeName string, ref entityRef,
+	w http.ResponseWriter, r *http.Request, typeName, addr string,
 ) {
 	r = h.withProvision(r)
 
 	s := h.schema()
 
-	// ACL gate (TKT-VQGN): runs BEFORE getEntity (RR-NGMI timing) so
-	// a clone from a hidden source 404s with the same shape and
-	// timing as a clone from a nonexistent source. BARE id.
-	if !h.gateRead(w, r, typeName, ref.ID) {
-		return
-	}
-
-	entity, found := h.reader.getEntityRef(r.Context(), ref)
-	if !found || entity.Type != typeName {
-		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
+	// ACL gate (TKT-VQGN): a clone from a hidden source, or from a face the
+	// caller may not read, 404s like a clone from a nonexistent source.
+	entity, found := readAddressedOr404(w, r, h.visible, typeName, addr)
+	if !found {
 		return
 	}
 
@@ -1365,10 +1336,9 @@ func (h *writeHandler) authorizeConflictResolve(
 ) bool {
 	var aclReq acl.WriteRequest
 	if rel != nil {
-		var fromType string
-		if fromEntity, ok := h.reader.getEntity(ctx, rel.From); ok {
-			fromType = fromEntity.Type
-		}
+		// Write authorization needs the real type whether or not the caller
+		// may read the row, and a faced source has no zero-face row.
+		fromType := storedTypeOf(ctx, h.store, rel.From)
 		aclReq = translateRelationWrite(rel.Type, fromType, rel.From)
 	} else {
 		aclReq = translateVerb("update", e.Type, e.ID, e.Face)

@@ -107,8 +107,8 @@ func handleV1History(a *App, w http.ResponseWriter, r *http.Request) {
 	// The id segment is an ADDRESS (`ID` or `ID@face`). An explicit face
 	// names the timeline directly; a bare id lets the request's world
 	// resolve it below. The row gate and the reader work on the bare id.
-	ref, ok := parseEntityRef(parts[1])
-	if !ok {
+	ref, refErr := entityPkg.ParseRef(parts[1])
+	if refErr != nil {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 		return
 	}
@@ -167,7 +167,7 @@ func handleV1History(a *App, w http.ResponseWriter, r *http.Request) {
 		writeGateError(w, r, ferr)
 		return
 	}
-	if ref.Explicit {
+	if !ref.Face.IsDefault() {
 		// An addressed face is the face, whatever the world would have
 		// resolved: the caller named the timeline they want. A denied
 		// world still answers as absent (historyFace said so above).
@@ -224,7 +224,7 @@ func handleV1History(a *App, w http.ResponseWriter, r *http.Request) {
 // typeName ⇒ 404); the version-read/restore paths additionally verify the
 // SNAPSHOT's type matches (see verifySnapshotType), so a deleted entity of a
 // mismatched type is a 404 too.
-func authorizeHistoryRead(a *App, w http.ResponseWriter, r *http.Request, typeName string, ref entityRef) bool {
+func authorizeHistoryRead(a *App, w http.ResponseWriter, r *http.Request, typeName string, ref entityPkg.Ref) bool {
 	ctx := r.Context()
 	gate := readGateFromContext(ctx)
 	entityID := ref.ID
@@ -417,19 +417,22 @@ func serveHistoryVersion(a *App,
 //     removed the privileged face). The REQUEST'S WORLD resolves it, exactly
 //     as it resolves the same address on the entity GET.
 //
-// The bare arm delegates to [visibleReader.getWorldEntity] rather than
-// resolving anything here. That keeps one resolution site and one ordering
+// The bare arm resolves in the same order the entity GET's resolver does
 // (ACL trims the candidate faces, then the world ranks what is left), so this
 // endpoint cannot answer with a face the entity view would not. Picking "some
 // live face" instead would be a second, weaker implementation of world
-// resolution — the implicit face choice this arc exists to remove.
+// resolution, the implicit face choice this arc exists to remove.
 //
-// In the DEFAULT world getWorldEntity reads the zero coordinate, so a bare
+// These reads are RAW, deliberately: liveness must be told apart from
+// visibility here, because a live-but-hidden entity and a deleted one take
+// different branches below. Moving this route onto [visibility.Resolver] is
+// BUG-4SYAA6.
+//
+// In the DEFAULT world the bare arm reads the zero coordinate, so a bare
 // address on a type that declares faces finds nothing and 404s. That is not a
-// gap: the entity GET answers the same address the same way (getVisibleRef
-// takes the identical bare-id branch), and the two surfaces must agree about
-// what an address names. A caller who wants a faced timeline in the default
-// world spells the face.
+// gap: the entity GET answers the same address the same way, and the two
+// surfaces must agree about what an address names. A caller who wants a
+// faced timeline in the default world spells the face.
 //
 // found=false means no live row, which routes the caller to the deleted-entity
 // branch and its global acl.PermHistoryRead check. That is correct for a
@@ -444,14 +447,22 @@ func serveHistoryVersion(a *App,
 // Nil: never returned with found=true.
 func liveHistorySubject(
 	ctx context.Context, reader entityReader, visible visibleReader,
-	typeName string, ref entityRef,
+	typeName string, ref entityPkg.Ref,
 ) (*entityPkg.Entity, bool) {
-	if ref.Explicit {
-		return reader.getEntityRef(ctx, ref)
+	scope := worldScopeFrom(ctx)
+	if !ref.Face.IsDefault() || scope.IsDefaultWorld() {
+		return reader.writePrepRow(ctx, ref)
 	}
-	e, err := visible.getWorldEntity(ctx, typeName, ref.ID)
-	if err != nil {
-		return nil, false
+	q := store.EntityQuery{
+		IDs:    []string{ref.ID},
+		World:  scope,
+		FaceIn: readGateFromContext(ctx).ReadQuery(ctx, typeName).Faces,
 	}
-	return e, true
+	for e, err := range visible.store.ListEntities(ctx, q) {
+		if err != nil {
+			return nil, false
+		}
+		return e, true
+	}
+	return nil, false
 }

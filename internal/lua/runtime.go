@@ -1850,10 +1850,8 @@ type familyReader interface {
 // at the zero coordinate, so asking for that row alone would refuse every
 // faced entity. A read error and an unparseable address count as unreadable.
 //
-// The bare-id check is [visibility.Resolver.Family] when rd provides it. A
-// reader that does not (a raw store in tests, and the data-entry wiring's
-// late-bound reader until it forwards Family) is asked through its own gated
-// list read instead, which answers the same question at a higher cost.
+// The bare-id check is [visibility.Resolver.Family]. A reader without it is
+// refused: every gated reader provides it, so its absence is a wiring bug.
 func writeTargetReadable(ctx context.Context, rd EntityReader, addr string) bool {
 	ref, err := entity.ParseRef(addr)
 	if err != nil {
@@ -1863,19 +1861,12 @@ func writeTargetReadable(ctx context.Context, rd EntityReader, addr string) bool
 		e, gerr := readFace(ctx, rd, ref.ID, ref.Face)
 		return gerr == nil && e != nil
 	}
-	if fr, ok := rd.(familyReader); ok {
-		_, found, ferr := fr.Family(ctx, ref.ID)
-		return ferr == nil && found
+	fr, ok := rd.(familyReader)
+	if !ok {
+		return false
 	}
-	for e, lerr := range rd.ListEntities(ctx, store.EntityQuery{IDs: []string{ref.ID}, AllStates: true}) {
-		if lerr != nil {
-			return false
-		}
-		if e != nil && e.ID == ref.ID {
-			return true
-		}
-	}
-	return false
+	_, found, ferr := fr.Family(ctx, ref.ID)
+	return ferr == nil && found
 }
 
 // luaUpdateEntity implements rela.update_entity(id, properties, content?) -> (entity, warnings).

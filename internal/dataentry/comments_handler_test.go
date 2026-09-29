@@ -290,6 +290,27 @@ func TestComments_UnknownTargetIs404(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, rec.Code)
 }
 
+// A path type that is not the row's own type is the uniform miss (design
+// ruling 9.2): a thread is reached only under the type the entity has, and
+// the answer must not differ from an absent id.
+func TestComments_TypeMismatchIsTheUniformMiss(t *testing.T) {
+	app := commentsApp(t)
+	app.State().Meta.Comments.On = []string{"ticket", "feature"}
+	seedEntity(app, &entity.Entity{ID: "FEAT-001", Type: "feature", Properties: map[string]any{"title": "f"}})
+
+	mismatch := doComments(t, app, http.MethodGet, "/api/v1/_comments/ticket/FEAT-001", "", "alice@example.com")
+	absent := doComments(t, app, http.MethodGet, "/api/v1/_comments/ticket/TKT-999", "", "alice@example.com")
+	require.Equal(t, http.StatusNotFound, mismatch.Code, mismatch.Body.String())
+	require.Equal(t, problemShape(t, absent.Body.Bytes()), problemShape(t, mismatch.Body.Bytes()))
+
+	posted := doComments(t, app, http.MethodPost, "/api/v1/_comments/ticket/FEAT-001", addBody, "alice@example.com")
+	require.Equal(t, http.StatusNotFound, posted.Code, posted.Body.String())
+
+	// Control: the row's own type reaches its thread.
+	own := doComments(t, app, http.MethodGet, "/api/v1/_comments/feature/FEAT-001", "", "alice@example.com")
+	require.Equal(t, http.StatusOK, own.Code, own.Body.String())
+}
+
 func TestComments_MethodNotAllowed(t *testing.T) {
 	app := commentsApp(t)
 

@@ -7,96 +7,38 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 )
 
-// entityRef is an entity ADDRESS as it arrives in a URL path segment,
-// parsed once at the HTTP boundary: the bare id, or `ID@face` naming one
-// stored content state (TKT-SLFURL).
-//
-// # The face is part of the address, exactly as the id is
-//
-// A world is a read-side rule that picks a face when the caller names none.
-// When the caller DOES name one, there is nothing left for the world to
-// decide, so an explicit address is served literally under every world —
-// the same row a default-world read of it returns — and the response's
-// `_self` round-trips to the row on screen. Before this existed the write
-// path accepted `ID@face` (and authorized the face it wrote, BUG-Y0GNSB) while
-// the read path treated the whole string as an id: on fsstore that happened
-// to hit the right index key, on pgstore it never matched, and under a
-// configured `default_world` it 404'd everywhere. A client following the
-// server's own `_self` broke on the GET.
-//
-// # One spelling per face
+// An entity ADDRESS arrives in a URL path segment as the bare id or as
+// `ID@face`, naming one stored content state (TKT-SLFURL). It stays a string
+// until it reaches [visibleReader.address], which hands it to
+// [visibility.Resolver.Address]: a named face is read literally under every
+// world, and a bare id is resolved by the request's world. A resolved row
+// gives its own address back with [entity.Entity.Ref].
 //
 // The path carries the operator's declared face name, the same vocabulary
 // `_world.face` and `_faces[].label` use, and that name IS the coordinate the
-// row is stored at (BUG-HC6I2T) — so an address needs no translation and no
-// face answers to two spellings. An unsuffixed id names a row only for a type
-// declaring no faces; for a faced type it names no row at all, and the
-// request's world is what turns it into one.
-type entityRef struct {
-	// ID is the bare entity id. Every ACL row gate keys on this: the row
-	// gate is face-blind by design (guard rule 1) and a suffixed string
-	// handed to it matches nothing under a query-shaped policy.
-	ID string
-	// Face is the coordinate the address names; zero when the path named no
-	// face, which is a row only for a type declaring none.
-	Face entity.Face
-	// Explicit reports that the path named a face. An explicit address
-	// bypasses world resolution; a bare one is resolved by the request's
-	// world as before.
-	Explicit bool
-}
-
-// parseEntityRef parses one path segment into an entityRef.
-//
-// Returns ok=false for anything the grammar rejects — an invalid id, two
-// separators, a face that fails [entity.ParseFace]. Callers render that as
-// the SAME not-found a missing entity produces: a syntactically impossible
-// address cannot name a row, and a distinct 400 would only tell a caller
-// which strings are worth probing.
-//
-// An undeclared face name is NOT rejected here. It is taken as the coordinate
-// it spells and the store answers whether such a row exists — the same answer
-// `selfHref` gives an undeclared face, so a row written under a face the
-// schema has since dropped stays addressable by the `_self` it hands out.
-// That is why the metamodel is not consulted: a name needs no lookup to
-// become a coordinate.
-func parseEntityRef(raw string) (entityRef, bool) {
-	id, face, err := entity.ParseStateRef(raw)
-	if err != nil {
-		return entityRef{}, false
-	}
-	if face.IsDefault() {
-		return entityRef{ID: id}, true
-	}
-	return entityRef{ID: id, Face: face, Explicit: true}, true
-}
+// row is stored at (BUG-HC6I2T), so an address needs no translation and no
+// face answers to two spellings. An address the grammar rejects names no row
+// and gets the same not-found a missing row does: a distinct 400 would only
+// tell a caller which strings are worth probing.
 
 // bareEntityID parses an address and returns its BARE id, for the surfaces
 // that are addressed per entity rather than per row: attachments (files are
-// keyed by entity id in every store), documents, commands, scope navigation.
-// ok=false for an address the grammar rejects, rendered as the uniform
-// not-found by the caller.
+// keyed by entity id in every store). ok=false for an address the grammar
+// rejects, rendered as the uniform not-found by the caller. The attachment
+// routes move onto the resolver in BUG-CTUW2N, which deletes this.
 func bareEntityID(raw string) (string, bool) {
-	ref, ok := parseEntityRef(raw)
-	if !ok {
+	ref, err := entity.ParseRef(raw)
+	if err != nil {
 		return "", false
 	}
 	return ref.ID, true
 }
 
-// String renders the address back in its boundary serialization — the bare
-// id for the zero coordinate, `ID@face` otherwise. Used for error detail and
-// diagnostics, never as a store key.
-func (ref entityRef) String() string {
-	return entity.FormatStateRef(ref.ID, ref.Face)
-}
-
-// refOf is the address of a row already in hand — the inverse of parsing one
-// out of a path. A create has no request address to carry (the id is minted
-// during the write), so the row it produced is what names the face its
-// content-scoped edges belong to.
-func refOf(e *entity.Entity) entityRef {
-	return entityRef{ID: e.ID, Face: e.Face, Explicit: !e.Face.IsDefault()}
+// isExplicitAddress reports whether the address names a face. A malformed
+// address names none.
+func isExplicitAddress(raw string) bool {
+	ref, err := entity.ParseRef(raw)
+	return err == nil && !ref.Face.IsDefault()
 }
 
 // addressedProvenance labels a face served because the CALLER NAMED IT, as

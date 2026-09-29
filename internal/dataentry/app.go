@@ -648,6 +648,23 @@ func (r lateGatedReader) ListRelations(ctx context.Context, q store.RelationQuer
 	return r.reader().ListRelations(ctx, q)
 }
 
+// familyReader is the header-only "which faces of this id may the caller
+// read" check a script write target needs.
+type familyReader interface {
+	Family(ctx context.Context, id string) (visibility.Family, bool, error)
+}
+
+// Family forwards to the live gated reader. Every reader gatedScriptReader
+// returns provides it; one that did not would be a wiring bug, so it is
+// refused rather than answered ungated.
+func (r lateGatedReader) Family(ctx context.Context, id string) (visibility.Family, bool, error) {
+	fr, ok := r.reader().(familyReader)
+	if !ok {
+		return visibility.Family{}, false, errors.New("dataentry: script reader has no Family")
+	}
+	return fr.Family(ctx, id)
+}
+
 // lateGatedTracer is the tracer.Tracer counterpart of lateGatedReader: it
 // resolves the gated tracer (scriptTracer, which prunes hidden nodes and fails
 // closed) from the LIVE App per call, so a rule's rela.trace_from/trace_to/
@@ -953,6 +970,11 @@ func NewApp(
 	// Build style map from config styles
 	styleMap, styledTypes := buildStyleMap(cfg, meta)
 
+	visible, err := newVisibleReader(st)
+	if err != nil {
+		return nil, err
+	}
+
 	scriptEngine := script.NewEngine()
 	app := &App{
 		fs:              fs,
@@ -962,7 +984,7 @@ func NewApp(
 		entityManager:   em,
 		searcher:        searcher,
 		visibleSearcher: visibleSearcher,
-		visibleReader:   newVisibleReader(st),
+		visibleReader:   visible,
 		reader:          entityReader{store: st},
 		tracer:          trc,
 		templater:       templater,
@@ -1131,6 +1153,7 @@ func NewApp(
 		authz:    commandAuthz,
 		files:    newCommandFileStore(),
 		redactor: appRedactor(app),
+		visible:  app.visibleReader,
 	}
 
 	// Build and publish the initial Schema snapshot. All reloadable
@@ -1229,7 +1252,7 @@ func NewApp(
 	// writeHandler owns the entity/relation CRUD + clone + conflict-resolve
 	// nucleus. Same collaborator rationale as attachmentHandler above: fixed
 	// services by value, test-swappable deps as closures over App, and the
-	// shared read/write helpers (gateRead/denyAfford/computeETag) as closures
+	// shared read/write helpers (visible/denyAfford/computeETag) as closures
 	// so both paths stay behaviorally identical.
 	app.write = &writeHandler{
 		schema:  app.State,
@@ -1241,7 +1264,7 @@ func NewApp(
 		affordances: app.affordances,
 		acl:         func() acl.ACL { return app.acl },
 		audit:       func() audit.Audit { return app.auditSink },
-		gateRead:    app.gateReadOrNotFound,
+		visible:     app.visibleReader,
 		denyAfford:  app.denyAffordance,
 		computeETag: app.computeEntityETag,
 		faceEdges: func(ctx context.Context, e *entity.Entity) ([]*entity.Relation, map[string]bool, error) {
@@ -1471,6 +1494,7 @@ func newViewsHandler(app *App, st store.Store, logo *logoStore) *viewsHandler {
 		serializer:  app.serializer,
 		affordances: app.affordances,
 		viewReader:  app.viewReader,
+		visible:     app.visibleReader,
 		services:    app.Services,
 		logo:        logo,
 		gateRead:    app.gateReadOrNotFound,

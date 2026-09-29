@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/transform"
 )
 
@@ -138,10 +139,10 @@ func resolveAnchoredDocument(
 	// names a CACHE FILE, so "this path is unusable" is the honest answer and
 	// the caller learns nothing about which entities exist — the id never
 	// reaches the store. It is also what keeps a reserved segment in the entity
-	// position (`/_documents/sales/_EXPORT`) a 400: `parseEntityRef` rejects a
+	// position (`/_documents/sales/_EXPORT`) a 400: `entity.ParseRef` rejects a
 	// leading underscore, which is exactly the case this route must not serve.
-	ref, refOK := parseEntityRef(entityID)
-	if !isSafePathSegment(docName) || !isSafeStateRefSegment(entityID) || !refOK {
+	ref, refErr := entity.ParseRef(entityID)
+	if !isSafePathSegment(docName) || !isSafeStateRefSegment(entityID) || refErr != nil {
 		writeV1Error(w, r, http.StatusBadRequest, "invalid_path", "Path segment contains forbidden characters", "")
 		return resolvedDocument{}, false
 	}
@@ -166,11 +167,25 @@ func resolveAnchoredDocument(
 	// Lua script that reads related entities, so a denied caller must never
 	// reach the renderer, and must not learn whether the id exists.
 	//
-	// getVisibleRef is the gate pair every addressed read owes (BUG-8J3LSB):
-	// the face-blind row gate on the BARE id, then the face gate on the row it
+	// The resolver runs the gates every addressed read owes (BUG-8J3LSB): the
+	// face-blind row gate on the BARE id, then the face gate on the row it
 	// read. A denied face answers the same not-found as a missing entity, so a
 	// `policy@published` reader cannot render a document over the draft.
-	ent, found, gateErr := a.visibleReader.getVisibleRef(r.Context(), docCfg.EntityType, ref)
+	//
+	// The row is judged against its OWN stored type, not the document's. A
+	// grant covering every row of the document's type would pass whatever id
+	// it is handed, so judging a row of another type against it would let the
+	// type-mismatch 400 below become an existence and type oracle on rows the
+	// caller may not read.
+	//
+	// An absent id still runs the gates, against the document's type, so a
+	// miss costs at least what a denial does and the response time does not
+	// tell a hidden id from an absent one (RR-NGMI).
+	typ := a.visibleReader.storedType(r.Context(), ref.ID)
+	if typ == "" {
+		typ = docCfg.EntityType
+	}
+	ent, found, gateErr := a.visibleReader.addressRef(r.Context(), typ, ref)
 	if gateErr != nil {
 		writeGateError(w, r, gateErr)
 		return resolvedDocument{}, false
@@ -200,21 +215,9 @@ func resolveAnchoredDocument(
 	// docs shown for an entity, but an HTTP caller can hit
 	// /_documents/<doc>/<wrong-type-id> directly.
 	//
-	// The gates above judged the row against the DOCUMENT's type, and a grant
-	// covering every row of that type passes whatever id it is handed. A row
-	// of another type must therefore clear the full gate pair against its OWN
-	// type before the 400 names that type; otherwise the 400 is an existence
-	// and type oracle on rows the caller may not read.
+	// The row has cleared the gates against its own type above, so naming
+	// that type here discloses nothing the caller may not read.
 	if ent.Type != docCfg.EntityType {
-		_, own, ownErr := a.visibleReader.getVisibleRef(r.Context(), ent.Type, refOf(ent))
-		if ownErr != nil {
-			writeGateError(w, r, ownErr)
-			return resolvedDocument{}, false
-		}
-		if !own {
-			writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
-			return resolvedDocument{}, false
-		}
 		writeV1Error(w, r, http.StatusBadRequest, "entity_type_mismatch",
 			documentTypeMismatch(docName, docCfg.EntityType, entityID, ent.Type), "")
 		return resolvedDocument{}, false
@@ -226,7 +229,7 @@ func resolveAnchoredDocument(
 	// This address is also what a script sees as rela.document.entry_id. For a
 	// faceless type it is the bare id, exactly as before; for a faced row it is
 	// `ID@face`, which no bare-id request could render until BUG-8J3LSB.
-	return resolvedDocument{cfg: a.toDocumentRenderConfig(docName, &docCfg), entryID: refOf(ent).String()}, true
+	return resolvedDocument{cfg: a.toDocumentRenderConfig(docName, &docCfg), entryID: ent.Ref().String()}, true
 }
 
 // handleV1ExportDocument serves the document export routes:

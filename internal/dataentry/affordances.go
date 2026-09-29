@@ -9,6 +9,7 @@ import (
 	"maps"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -1357,6 +1358,10 @@ func (svc affordanceService) computeFaces(
 		return out
 	}
 	current := e.Face.String()
+	// The entity's stored faces, read once and only when some other face is
+	// readable: one header query instead of a probe per declared face.
+	var present []entityPkg.Face
+	probed := false
 	for name := range def.Faces {
 		stored := name
 		if stored == current {
@@ -1368,7 +1373,11 @@ func (svc affordanceService) computeFaces(
 		if !faceReadable(ctx, e.Type, entityPkg.Face(stored)) {
 			continue
 		}
-		if _, err := svc.store.GetEntityState(ctx, e.ID, entityPkg.Face(stored)); err != nil {
+		if !probed {
+			_, present = storedFacesOf(ctx, svc.store, e.ID)
+			probed = true
+		}
+		if !slices.Contains(present, entityPkg.Face(stored)) {
 			continue // no such face on this entity — the common case
 		}
 		// The operator's `label:` when declared, else the coordinate name.

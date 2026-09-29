@@ -53,13 +53,13 @@ type viewResult struct {
 // the command runner's `kind: view`). That is why the world arrives as an
 // explicit PARAMETER rather than being read off ctx — see [viewWorld].
 //
-// entryID is an ADDRESS (`ID` or `ID@face`, see [entityRef]); an address the
+// entryID is an ADDRESS (`ID` or `ID@face`, see [entity.ParseRef]); an address the
 // grammar rejects is the same not-found a missing entry is.
 func (h *viewsHandler) executeView(
 	ctx context.Context, view ViewConfig, entryID string, w viewWorld,
 ) (*viewResult, error) {
-	ref, ok := parseEntityRef(entryID)
-	if !ok {
+	ref, err := entity.ParseRef(entryID)
+	if err != nil {
 		return nil, errViewEntryNotFound(entryID)
 	}
 	return h.executeViewRef(ctx, view, ref, w)
@@ -74,15 +74,15 @@ func (h *viewsHandler) executeView(
 func (h *viewsHandler) executeViewWhole(
 	ctx context.Context, view ViewConfig, entryID string, w viewWorld,
 ) (*viewResult, error) {
-	ref, ok := parseEntityRef(entryID)
-	if !ok {
+	ref, err := entity.ParseRef(entryID)
+	if err != nil {
 		return nil, errViewEntryNotFound(entryID)
 	}
 	return h.executeViewBodies(ctx, view, ref, w, allViewBodies())
 }
 
 func (h *viewsHandler) executeViewRef(
-	ctx context.Context, view ViewConfig, entryRef entityRef, w viewWorld,
+	ctx context.Context, view ViewConfig, entryRef entity.Ref, w viewWorld,
 ) (*viewResult, error) {
 	return h.executeViewBodies(ctx, view, entryRef, w, viewBodyCollections(view.Sections))
 }
@@ -130,32 +130,19 @@ func viewBodyCollections(sections []ViewSection) viewBodies {
 // executeViewBodies is the view engine. bodies decides which collections are
 // completed with their markdown after traversal, gating and redaction.
 func (h *viewsHandler) executeViewBodies(
-	ctx context.Context, view ViewConfig, entryRef entityRef, w viewWorld, bodies viewBodies,
+	ctx context.Context, view ViewConfig, entryRef entity.Ref, w viewWorld, bodies viewBodies,
 ) (*viewResult, error) {
-	entry, err := h.viewEntry(ctx, entryRef, w)
+	// The entry is resolved as the VIEW's type, so a row of another type is
+	// the ordinary not-found. The resolver also row-gates it (BUG-9Z20WH).
+	// Every production caller gated the entry already (the `_views` route,
+	// the form side-panel, the command runner's `kind: view`), so this is
+	// normally the same verdict again. It is kept because executeView is a
+	// SHARED ENGINE reachable via the synthetic ViewConfig in sections.go, and
+	// a future caller must not be able to feed it an entry the principal
+	// cannot read.
+	entry, err := h.viewEntry(ctx, view.Entry.Type, entryRef, w)
 	if err != nil {
 		return nil, err
-	}
-	if entry.Type != view.Entry.Type {
-		return nil, fmt.Errorf("entry entity %s is type %s, expected %s", entryRef, entry.Type, view.Entry.Type)
-	}
-	// Source-gate the entry (BUG-9Z20WH). Every production caller already
-	// row-gates the entry before invoking executeView (the `_views` route, the
-	// form side-panel, the command runner's `kind: view`), so this is normally
-	// a redundant same-principal probe returning the same verdict. It is kept
-	// as defense in depth: executeView is a SHARED ENGINE reachable via the
-	// synthetic ViewConfig in sections.go, and a future caller must not be able
-	// to feed it an entry the principal cannot read.
-	//
-	// This does NOT contradict viewEntry's "the entry is not row-gated here"
-	// note: that note is about not RE-gating an entry the handler just cleared,
-	// and this gate is world-INDEPENDENT (guard rule 1), so for every caller
-	// that did gate it returns the identical verdict and cannot 404 a cleared
-	// entry. A hidden entry is reported as the ordinary not-found so it stays
-	// indistinguishable from a missing one. Under NopACL the gate permits, so
-	// behavior is unchanged for a full-read principal.
-	if ok, gerr := readGateFromContext(ctx).PermitsRead(ctx, entry.Type, entry.ID); gerr != nil || !ok {
-		return nil, errViewEntryNotFound(entryRef.String())
 	}
 
 	result := &viewResult{

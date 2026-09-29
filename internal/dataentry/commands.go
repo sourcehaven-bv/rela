@@ -328,23 +328,6 @@ type commandProjectInfo struct {
 	Metamodel string `json:"metamodel"`
 }
 
-// entityReadable reports whether this principal may read the given row: the
-// world block, the face-blind row gate, then the FACE gate — the same three
-// checks [visibleReader.getVisibleRef] applies, in the same order.
-//
-// Not delegated to getVisibleRef because that resolves an address to a row and
-// this caller already holds one: a command request carries no entity type, so
-// the type has to come off the stored entity. Re-reading through getVisibleRef
-// would mean a second store round-trip to reach the identical verdict on the
-// identical row.
-//
-// A gate ERROR is a denial, not a pass. The caller renders every false as the
-// uniform not-found, so a denied face stays indistinguishable from an absent
-// one (the row-level rule).
-func (h *commandHandler) entityReadable(ctx context.Context, e *entity.Entity) bool {
-	return entityReadableInRequest(ctx, e)
-}
-
 // redactEntity applies field-level `visible:` redaction to an entity bound for
 // a command's stdin.
 //
@@ -577,37 +560,17 @@ func (h *commandHandler) handleCommandExec(w http.ResponseWriter, r *http.Reques
 	switch cmd.Context {
 	case "entity":
 		entityID := r.URL.Query().Get("entity_id")
-		svc := h.services()
-		// An ADDRESS, as everywhere an id is accepted: `ID` or `ID@face`.
-		// Parsed rather than handed to the store whole — on fsstore the raw
-		// string happens to hit a faced row's index key, on pgstore it never
-		// does, and a command that runs on one backend and 404s on the
-		// other is the split this grammar exists to remove.
-		id, face, perr := entity.ParseStateRef(entityID)
-		if perr != nil {
-			http.Error(w, "Entity not found: "+entityID, http.StatusNotFound)
-			return
-		}
-		entityDomain, err := svc.Store.GetEntityState(r.Context(), id, face)
-		if err != nil {
-			http.Error(w, "Entity not found: "+entityID, http.StatusNotFound)
-			return
-		}
-		// READ-GATE the row, then its FACE, then redact — the chain this
-		// branch owed and did not have (BUG-G2BASF review). The view branch
-		// gets all three from executeView; this one reads the raw store, so
-		// it applies them itself.
-		//
-		// Ordered read-then-gate rather than gate-then-read because the row
-		// gate needs the entity TYPE and a command request carries only an
-		// address. That is the same order executeViewRef uses, and it
-		// discloses nothing: every failure below is the one not-found a
-		// missing entity produces, and nothing derived from the row is
-		// written before the gates clear.
+		// An ADDRESS, as everywhere an id is accepted: `ID` or `ID@face`,
+		// resolved through the entity GET's resolver: the row gate, then the
+		// face gate, then redaction below (BUG-G2BASF review). A command
+		// request carries no entity type, so the gates run on the stored
+		// type. Every failure is the one not-found a missing entity
+		// produces, and a gate error is a denial, not a pass.
 		//
 		// `authorizeCommand` does NOT cover this: it decides whether this
 		// COMMAND may run, not which rows it may see.
-		if !h.entityReadable(r.Context(), entityDomain) {
+		entityDomain, found, gerr := h.visible.untypedAddress(r.Context(), entityID)
+		if gerr != nil || !found {
 			http.Error(w, "Entity not found: "+entityID, http.StatusNotFound)
 			return
 		}

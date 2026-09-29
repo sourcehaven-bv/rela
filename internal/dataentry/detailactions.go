@@ -216,17 +216,3 @@ func (svc affordanceService) computeDetailActions(ctx context.Context, e *entity
 	}
 	return out
 }
-
-// entityReadableInRequest reports whether the principal on ctx may read e at
-// its face: the world does not block reads, the row gate admits it, and the
-// face is readable. Every refusal is the same answer as a missing entity.
-func entityReadableInRequest(ctx context.Context, e *entityPkg.Entity) bool {
-	if worldFromContext(ctx).blocksAllReads() {
-		return false
-	}
-	ok, err := readGateFromContext(ctx).PermitsRead(ctx, e.Type, e.ID)
-	if err != nil || !ok {
-		return false
-	}
-	return faceReadable(ctx, e.Type, e.Face)
-}
