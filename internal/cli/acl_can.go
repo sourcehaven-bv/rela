@@ -8,9 +8,9 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/aclmap"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/errors"
 	"github.com/Sourcehaven-BV/rela/internal/output"
-	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // ACLCanCmd implements `rela acl can <principal> <verb> <entity>`. It is
@@ -38,7 +38,7 @@ import (
 type ACLCanCmd struct {
 	Principal string `arg:"" help:"Principal to check (a user entity ID, or the raw identifier — email/UPN — when principal_property is set)."`
 	Verb      string `arg:"" help:"Access verb to check: read|create|update|delete." enum:"read,create,update,delete"`
-	Entity    string `arg:"" help:"Entity ID to check access against (e.g. INC-042)."`
+	Entity    string `arg:"" help:"Entity ID to check access against (e.g. INC-042). The answer is per entity, so a faced entity takes its bare id, not ID@face."`
 }
 
 // Run executes `rela acl can`.
@@ -83,10 +83,10 @@ func (c *ACLCanCmd) Run(ctx context.Context, svc *readServices) error {
 // a green exit on nothing (the same gate engine.Can enforces under a
 // policy).
 func (c *ACLCanCmd) runNoPolicy(ctx context.Context, svc *readServices) error {
-	if _, err := svc.Store.GetEntity(ctx, c.Entity); err != nil {
-		if stderrors.Is(err, store.ErrNotFound) {
-			return fmt.Errorf("entity %q not found", c.Entity)
-		}
+	if ref, err := entity.ParseRef(c.Entity); err == nil && !ref.Face.IsDefault() {
+		return fmt.Errorf("%w: %s", aclmap.ErrFaceAddress, ref.ID)
+	}
+	if err := requireAddressExists(ctx, svc.Store, c.Entity); err != nil {
 		return err
 	}
 	out.WriteSuccess("No acl.yaml found; every principal has full access (no policy).")

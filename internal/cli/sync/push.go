@@ -7,6 +7,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/canonical"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // PushOutcome classifies what happened to one record during a push.
@@ -271,11 +272,28 @@ func (e *Engine) pushRelationUpsert(ctx context.Context, ch LocalChange) (PushRe
 // primary's schema. Used to build relation-write routes (keyed by the FROM
 // entity's plural).
 func (e *Engine) pluralForLocalEntity(ctx context.Context, id string) (string, error) {
-	ent, err := e.store.GetEntity(ctx, id)
+	typ, err := e.localType(ctx, id)
 	if err != nil {
 		return "", fmt.Errorf("resolve type of local entity %q for relation route: %w", id, err)
 	}
-	return e.pluralFor(ent.Type)
+	return e.pluralFor(typ)
+}
+
+// localType returns the type of a local entity from one content-free read of
+// its stored faces. A type is per entity, so any face answers it, and a faced
+// entity, which has no zero-face row (DEC-NPZICR), is found by its bare id.
+// No stored face is [store.ErrNotFound].
+func (e *Engine) localType(ctx context.Context, id string) (string, error) {
+	q := store.EntityQuery{IDs: []string{id}, AllStates: true}
+	for h, err := range store.ListEntityHeaders(ctx, e.store, q) {
+		if err != nil {
+			return "", err
+		}
+		if h.ID == id {
+			return h.Type, nil
+		}
+	}
+	return "", store.ErrNotFound
 }
 
 // recordCreate handles a push-create outcome: the primary minted an id, so the
@@ -320,7 +338,8 @@ func (e *Engine) recordCreate(ctx context.Context, ch LocalChange, res *PushResu
 	// already succeeded on the primary, so a read failure here must surface (not
 	// baseline with an empty Local, which would force a spurious re-push forever);
 	// a re-run resumes cleanly since the record is now under its minted id.
-	ent, err := e.store.GetEntity(ctx, newID)
+	// The rename keeps the face, so the adopted row is at the pushed row's.
+	ent, err := e.store.GetEntityState(ctx, newID, ch.Record.Entity.Face)
 	if err != nil {
 		return PushRecordResult{}, fmt.Errorf("re-baseline created %q after adopt: %w", newID, err)
 	}

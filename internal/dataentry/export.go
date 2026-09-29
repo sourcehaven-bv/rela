@@ -384,6 +384,14 @@ func (h *exportHandler) entityRelationGroups(ctx context.Context, e *entityPkg.E
 	neighborIDs := neighborIDsOf(outgoing, incoming)
 	visible := visibleRelationIDs(ctx, h.reader, h.visibleReader, neighborIDs)
 
+	visibleIDs := make([]string, 0, len(visible))
+	for id, ok := range visible {
+		if ok {
+			visibleIDs = append(visibleIDs, id)
+		}
+	}
+	rows := h.reader.defaultWorldHeaders(ctx, visibleIDs)
+
 	// label -> ordered neighbor titles.
 	byLabel := map[string][]string{}
 	addNeighbor := func(label, neighborID string) {
@@ -391,7 +399,7 @@ func (h *exportHandler) entityRelationGroups(ctx context.Context, e *entityPkg.E
 			return
 		}
 		title := neighborID
-		if node, ok := h.reader.getEntity(ctx, neighborID); ok {
+		if node, ok := rows[neighborID]; ok {
 			// Redact BEFORE deriving the title: a visible neighbor whose
 			// display property is hidden must render as its ID, never the
 			// hidden value (the RR-5N4K35 title-leak class).

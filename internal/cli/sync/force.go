@@ -135,11 +135,11 @@ func (e *Engine) forceRecordType(ctx context.Context, kind Kind, key string) (st
 		return base.Type, nil
 	}
 	if kind == KindEntity {
-		ent, err := e.store.GetEntity(ctx, key)
+		typ, err := e.localType(ctx, key)
 		if err != nil {
 			return "", fmt.Errorf("resolve type of %q for force: %w", key, err)
 		}
-		return ent.Type, nil
+		return typ, nil
 	}
 	_, relType, _, ok := splitRelationKey(key)
 	if !ok {

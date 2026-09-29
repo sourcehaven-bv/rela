@@ -3,6 +3,8 @@ package dataentry
 import (
 	"context"
 	"log/slog"
+	"slices"
+	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -41,27 +43,81 @@ type entityReader struct {
 	store store.Store
 }
 
-// getEntity looks up an entity by ID via the store.
-func (er entityReader) getEntity(ctx context.Context, id string) (*entity.Entity, bool) {
-	e, err := er.store.GetEntity(ctx, id)
+// defaultWorldRows reads, in one batch, the raw row the default world selects
+// for each of ids, keyed by id: its default face. An id with no such row is
+// absent, and so is every id when the read fails (logged).
+//
+// Only a route this reader may serve calls it, so the request is in the
+// default world (see the type comment). The rows are raw: the caller gates
+// the ids before asking and redacts a row before serving any of it.
+func (er entityReader) defaultWorldRows(ctx context.Context, ids []string) map[string]*entity.Entity {
+	rows, err := loadDefaultFaceRows(ctx, er.store, ids)
+	if err != nil {
+		slog.Warn("dataentry: entityReader: loading neighbor rows failed", "ids", len(ids), "err", err)
+	}
+	return rows
+}
+
+// defaultWorldHeaders is [entityReader.defaultWorldRows] content-free: for a
+// caller that needs a neighbor's properties, such as its title, and never its
+// body.
+func (er entityReader) defaultWorldHeaders(ctx context.Context, ids []string) map[string]*entity.Entity {
+	rows, err := loadDefaultFaceHeaders(ctx, er.store, ids)
+	if err != nil {
+		slog.Warn("dataentry: entityReader: loading neighbor headers failed", "ids", len(ids), "err", err)
+	}
+	return rows
+}
+
+// writePrepRow reads the raw row ref names, with no gate and no redaction.
+//
+// It is for write-prep, liveness and relation-source policy evaluation, never
+// for a response: a version token or a splice base must hash the stored
+// properties, the history routes must tell a live entity from a deleted one
+// whether or not the caller may read it, and an affordance gate evaluates the
+// relation's true source row. A read that serves a row goes through
+// [visibleReader].
+func (er entityReader) writePrepRow(ctx context.Context, ref entity.Ref) (*entity.Entity, bool) {
+	e, err := er.readWritePrep(ctx, ref)
 	if err != nil {
 		return nil, false
 	}
 	return e, true
 }
 
-// writePrepRow reads the raw row ref names, with no gate and no redaction.
-//
-// It is for write-prep and liveness only, never for a response: a version
-// token or a splice base must hash the stored properties, and the history
-// routes must tell a live entity from a deleted one whether or not the caller
-// may read it. A read that serves a row goes through [visibleReader].
-func (er entityReader) writePrepRow(ctx context.Context, ref entity.Ref) (*entity.Entity, bool) {
-	e, err := er.store.GetEntityState(ctx, ref.ID, ref.Face)
+// readWritePrep is [entityReader.writePrepRow] that returns the read error,
+// for a write path that must tell a transient fault from a missing row.
+func (er entityReader) readWritePrep(ctx context.Context, ref entity.Ref) (*entity.Entity, error) {
+	return er.store.GetEntityState(ctx, ref.ID, ref.Face)
+}
+
+// writePrepFamily reads the raw row of every face of id, in face order, with
+// no gate and no redaction; empty when id has no stored row. Like
+// [entityReader.writePrepRow] it is for policy evaluation, never a response:
+// an affordance gate whose relation source has no row at the edge's tail
+// judges the write against the whole family.
+func (er entityReader) writePrepFamily(ctx context.Context, id string) ([]*entity.Entity, error) {
+	families, err := loadStoredFamilies(ctx, er.store, []string{id})
 	if err != nil {
-		return nil, false
+		return nil, err
 	}
-	return e, true
+	faces := families[id].faces
+	keys := make([]entity.Ref, len(faces))
+	for i, f := range faces {
+		keys[i] = entity.Ref{ID: id, Face: f}
+	}
+	rows, err := loadRows(ctx, er.store, keys)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*entity.Entity, 0, len(rows))
+	for _, k := range keys {
+		if e, ok := rows[k]; ok {
+			out = append(out, e)
+		}
+	}
+	slices.SortFunc(out, func(a, b *entity.Entity) int { return strings.Compare(string(a.Face), string(b.Face)) })
+	return out, nil
 }
 
 // entityType returns the type of the entity with the given ID, or empty

@@ -43,7 +43,7 @@ import (
 // authorize against the raw principal. See internal/acl/declarative.go.
 type ACLWhoCanCmd struct {
 	Verb   string `arg:"" help:"Access verb to check: read|create|update|delete." enum:"read,create,update,delete"`
-	Entity string `arg:"" help:"Entity ID to report access for (e.g. INC-042)."`
+	Entity string `arg:"" help:"Entity ID to report access for (e.g. INC-042). The report is per entity, so a faced entity takes its bare id, not ID@face."`
 }
 
 // Run executes `rela acl who-can`.

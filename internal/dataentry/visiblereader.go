@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"iter"
 	"log/slog"
 	"net/http"
 
@@ -210,19 +211,72 @@ func loadStoredFaces(ctx context.Context, st store.EntityLister, id string) (str
 	if id == "" {
 		return "", nil, nil
 	}
-	var typ string
-	var faces []entitypkg.Face
-	q := store.EntityQuery{IDs: []string{id}, AllStates: true}
-	for h, err := range store.ListEntityHeaders(ctx, st, q) {
+	fams, err := loadStoredFamilies(ctx, st, []string{id})
+	if err != nil {
+		return "", nil, err
+	}
+	fam := fams[id]
+	return fam.typ, fam.faces, nil
+}
+
+// storedFamily is one id's stored type and faces, as [loadStoredFamilies]
+// reads them.
+type storedFamily struct {
+	typ   string
+	faces []entitypkg.Face
+}
+
+// loadStoredFamilies is [loadStoredFaces] for many ids in one header read,
+// keyed by id. An id with no stored face is absent. The same caveat applies:
+// no gate runs, so the answer decides liveness or the gate's type, never what
+// is served.
+func loadStoredFamilies(ctx context.Context, st store.EntityLister, ids []string) (map[string]storedFamily, error) {
+	out := make(map[string]storedFamily, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	for h, err := range listIDHeaders(ctx, st, ids, true) {
 		if err != nil {
-			return "", nil, err
+			return nil, err
 		}
-		if h.ID == id {
-			typ = h.Type
-			faces = append(faces, h.Face)
+		fam := out[h.ID]
+		fam.typ = h.Type
+		fam.faces = append(fam.faces, h.Face)
+		out[h.ID] = fam
+	}
+	return out, nil
+}
+
+// loadDefaultFaceHeaders reads each id's default-face row content-free, in one
+// header read, keyed by id. It is the row the default world selects, so it
+// suits a caller that serves only the default world, such as a neighbor
+// title. An id with no such row is absent. No gate runs and nothing is
+// redacted: the caller gates the ids first and redacts a row before serving
+// any of it.
+func loadDefaultFaceHeaders(
+	ctx context.Context, st store.EntityLister, ids []string,
+) (map[string]*entitypkg.Entity, error) {
+	out := make(map[string]*entitypkg.Entity, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	for h, err := range listIDHeaders(ctx, st, ids, false) {
+		if err != nil {
+			return map[string]*entitypkg.Entity{}, err
+		}
+		if h.Face.IsDefault() {
+			out[h.ID] = headerEntity(h)
 		}
 	}
-	return typ, faces, nil
+	return out, nil
+}
+
+// listIDHeaders is the one header read by id this file makes: every stored
+// face of ids when allFaces is set, else the default face only.
+func listIDHeaders(
+	ctx context.Context, st store.EntityLister, ids []string, allFaces bool,
+) iter.Seq2[store.EntityHeader, error] {
+	return store.ListEntityHeaders(ctx, st, store.EntityQuery{IDs: ids, AllStates: allFaces})
 }
 
 // rowOf drops the provenance a [visibility.Resolved] carries. The data-entry

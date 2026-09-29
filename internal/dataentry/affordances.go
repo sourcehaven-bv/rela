@@ -114,8 +114,13 @@ type affordanceService struct {
 	resolver func() FieldVerdictResolver
 	store    store.Store
 	meta     func() *metamodel.Metamodel
-	// getEntity resolves an entity by ID for relation-source attribution.
-	getEntity func(ctx context.Context, id string) (*entityPkg.Entity, bool)
+	// sourceRow reads the raw row of a relation's source, at the edge's
+	// tail, for relation-source attribution. It is never served.
+	sourceRow func(ctx context.Context, ref entityPkg.Ref) (*entityPkg.Entity, bool)
+	// sourceFamily reads the raw row of every face of a relation's source,
+	// for a write gate whose source has no row at the edge's tail. It is
+	// never served either.
+	sourceFamily func(ctx context.Context, id string) ([]*entityPkg.Entity, error)
 	// copies lists the copy affordances available from one face (RULING 9's
 	// promote / translate buttons). OPTIONAL, unlike the accessors above: nil
 	// when the entity manager does not expose the capability, in which case
@@ -597,26 +602,77 @@ const (
 	RelationOpRemove
 )
 
-// relationSourceEntity returns the entity whose verdict should gate a
-// per-relation write. For outgoing-direction operations the source IS
-// the path entity (the canonical case). For incoming-direction
-// operations the path entity is the TARGET; the source is the peer,
-// so the resolver must be asked about the peer's affordance, not the
-// path entity's.
+// relationSources returns the rows whose verdicts gate a per-relation write.
+// For outgoing-direction operations the source IS the path entity (the
+// canonical case). For incoming-direction operations the path entity is the
+// TARGET; the source is the peer, so the resolver must be asked about the
+// peer's affordance, not the path entity's.
 //
-// Returns the path entity when the peer can't be found locally (404
-// upstream — should not happen in practice; safe-fail).
-func (svc affordanceService) relationSourceEntity(
-	ctx context.Context, pathEntity *entityPkg.Entity, peerID, direction string,
-) *entityPkg.Entity {
+// peer is the source at the edge's tail: the tail an existing edge carries, or
+// the tail a new incoming edge will get. When the peer has no row there, the
+// gate uses every row of its family, and a write passes only if every face
+// permits it. That is the case for a new or identity-scoped edge from a faced
+// peer: its zero face holds no row (DEC-NPZICR), and falling back to the path
+// entity would judge the edge by the wrong type's policy.
+//
+// A peer with no stored row at all falls back to the path entity. No edge to
+// it can be written, because the manager refuses a missing endpoint, and the
+// fallback keeps the answer for a missing peer what it was.
+//
+// A read fault is returned: the caller must not write on a guess.
+func (svc affordanceService) relationSources(
+	ctx context.Context, pathEntity *entityPkg.Entity, peer entityPkg.Ref, direction string,
+) ([]*entityPkg.Entity, error) {
 	if direction != string(DirectionIncoming) {
-		return pathEntity
+		return []*entityPkg.Entity{pathEntity}, nil
 	}
-	peer, ok := svc.getEntity(ctx, peerID)
-	if !ok {
-		return pathEntity
+	if src, ok := svc.sourceRow(ctx, peer); ok {
+		return []*entityPkg.Entity{src}, nil
 	}
-	return peer
+	family, err := svc.sourceFamily(ctx, peer.ID)
+	if err != nil {
+		return nil, fmt.Errorf("reading relation source %s: %w", peer.ID, err)
+	}
+	if len(family) == 0 {
+		return []*entityPkg.Entity{pathEntity}, nil
+	}
+	return family, nil
+}
+
+// relationOpDenial is [affordanceService.validateRelationOp] over every row
+// [affordanceService.relationSources] returned. It reports the first denial
+// and the row that produced it, which is the write's audit subject.
+func (svc affordanceService) relationOpDenial(
+	ctx context.Context, sources []*entityPkg.Entity, relType string, op RelationOp,
+) (*entityPkg.Entity, *AffordanceDenialError) {
+	for _, src := range sources {
+		if denial := svc.validateRelationOp(ctx, src, relType, op); denial != nil {
+			return src, denial
+		}
+	}
+	return nil, nil
+}
+
+// relationMetaDenial is [affordanceService.validateRelationMetaWrite] over
+// every source row, like [affordanceService.relationOpDenial].
+func (svc affordanceService) relationMetaDenial(
+	ctx context.Context, sources []*entityPkg.Entity, relType string, meta map[string]any, metaUnset []string,
+) (*entityPkg.Entity, *AffordanceDenialError) {
+	for _, src := range sources {
+		if denial := svc.validateRelationMetaWrite(ctx, src, relType, meta, metaUnset); denial != nil {
+			return src, denial
+		}
+	}
+	return nil, nil
+}
+
+// newIncomingEdgeSource is the source row of an incoming edge a request is
+// about to create: the peer at the zero face. An incoming edge's tail belongs
+// to the peer, whose face the request does not choose, so a new one tails at
+// the zero face (applyRelationsModern, BUG-64MU2Q).
+func newIncomingEdgeSource(peerID string) entityPkg.Ref {
+	var tail entityPkg.Face
+	return entityPkg.Ref{ID: peerID, Face: tail}
 }
 
 // validateRelationOp reports the first AffordanceDenialError that the
@@ -666,13 +722,12 @@ func (svc affordanceService) validateRelationOp(
 //
 // Called from the unified PATCH handler before
 // [writeHandler.applyRelationsModern]. Returns nil when every relation
-// operation is permitted.
-//
-//nolint:gocognit // walks every relation op against per-op ACL affordances; each branch is an independent verb check, not shared logic to extract.
+// operation is permitted, a *AffordanceDenialError for a denial, and any other
+// error when a source row cannot be read.
 func (svc affordanceService) validateRelationsModernAffordances(
 	ctx context.Context, entityID string, e *entityPkg.Entity,
 	desired map[string]v1.RelationsUpdate,
-) *AffordanceDenialError {
+) error {
 	if e == nil || len(desired) == 0 {
 		return nil
 	}
@@ -685,50 +740,67 @@ func (svc affordanceService) validateRelationsModernAffordances(
 		if !ok {
 			continue // structural error surfaces via the existing validator
 		}
-
-		desiredByID := make(map[string]v1.ResourceIdentifier, len(upd.Data))
-		for _, ref := range upd.Data {
-			desiredByID[ref.ID] = ref
-		}
-		current := svc.currentEdgesByPeer(ctx, entityID, canonical, incoming)
-
 		// For incoming-direction body keys the SOURCE of every edge is
 		// the peer entity, not the path entity. Verdicts are evaluated
-		// against the source — see [App.relationSourceEntity] for the
-		// rationale. Outgoing edges resolve to the path entity.
+		// against the source — see [affordanceService.relationSources] for
+		// the rationale. Outgoing edges resolve to the path entity.
 		direction := ""
 		if incoming {
 			direction = string(DirectionIncoming)
 		}
+		current := svc.currentEdgesByPeer(ctx, entityID, canonical, incoming)
+		if err := svc.validateRelationDiff(ctx, e, canonical, direction, upd.Data, current); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
-		// Adds: any desired edge whose peer isn't currently linked.
-		for _, ref := range upd.Data {
-			source := svc.relationSourceEntity(ctx, e, ref.ID, direction)
-			if _, exists := current[ref.ID]; exists {
-				// Upsert path: not a create, but the meta may change.
-				denial := svc.validateRelationMetaWrite(ctx, source, canonical, ref.Meta, ref.MetaUnset)
-				if denial != nil {
-					return denial
-				}
-				continue
-			}
-			if denial := svc.validateRelationOp(ctx, source, canonical, RelationOpCreate); denial != nil {
-				return denial
-			}
-			if denial := svc.validateRelationMetaWrite(ctx, source, canonical, ref.Meta, ref.MetaUnset); denial != nil {
+// validateRelationDiff is [affordanceService.validateRelationsModernAffordances]
+// for one relation type: the adds, upserts and removes that turn current into
+// desired.
+func (svc affordanceService) validateRelationDiff(
+	ctx context.Context, e *entityPkg.Entity, canonical, direction string,
+	desired []v1.ResourceIdentifier, current map[string]*entityPkg.Relation,
+) error {
+	desiredByID := make(map[string]v1.ResourceIdentifier, len(desired))
+	for _, ref := range desired {
+		desiredByID[ref.ID] = ref
+	}
+
+	// Adds and upserts: every desired edge. An upsert is not a create, but
+	// the meta may change.
+	for _, ref := range desired {
+		peer := newIncomingEdgeSource(ref.ID)
+		edge, exists := current[ref.ID]
+		if exists {
+			peer.Face = edge.FromFace
+		}
+		sources, err := svc.relationSources(ctx, e, peer, direction)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			if _, denial := svc.relationOpDenial(ctx, sources, canonical, RelationOpCreate); denial != nil {
 				return denial
 			}
 		}
+		if _, denial := svc.relationMetaDenial(ctx, sources, canonical, ref.Meta, ref.MetaUnset); denial != nil {
+			return denial
+		}
+	}
 
-		// Removes: any current edge not in the desired set.
-		for peerID := range current {
-			if _, kept := desiredByID[peerID]; kept {
-				continue
-			}
-			source := svc.relationSourceEntity(ctx, e, peerID, direction)
-			if denial := svc.validateRelationOp(ctx, source, canonical, RelationOpRemove); denial != nil {
-				return denial
-			}
+	// Removes: any current edge not in the desired set.
+	for peerID, edge := range current {
+		if _, kept := desiredByID[peerID]; kept {
+			continue
+		}
+		sources, err := svc.relationSources(ctx, e, entityPkg.Ref{ID: peerID, Face: edge.FromFace}, direction)
+		if err != nil {
+			return err
+		}
+		if _, denial := svc.relationOpDenial(ctx, sources, canonical, RelationOpRemove); denial != nil {
+			return denial
 		}
 	}
 	return nil
@@ -1023,9 +1095,8 @@ func (svc affordanceService) stripHiddenProperties(ctx context.Context, e *entit
 // visibleRelationMeta returns a copy of a relation edge's property map with
 // hidden meta keys removed, honoring the relation `visible:` grants resolved for
 // the edge's SOURCE entity (TKT-B1F5Q1). meta is the raw edge property map; from
-// is the relation's source entity (use [affordanceService.relationSourceEntity]
-// to resolve it for incoming edges, where the source is the peer, not the path
-// entity); relType is the canonical relation type.
+// is the relation's source entity (for incoming edges the peer, not the path
+// entity; see [affordanceService.visibleRelationMetaIncoming]); relType is the canonical relation type.
 //
 // It NEVER mutates the argument: when at least one key is redacted it returns a
 // fresh copy with those keys removed; when nothing is redacted it returns the
@@ -1066,19 +1137,18 @@ func (svc affordanceService) visibleRelationMeta(
 }
 
 // visibleRelationMetaIncoming redacts an INCOMING edge's meta, resolving the
-// relation grant against the edge's true source (the peer, peerID) rather than
-// the entity being viewed (the TO side). It FAILS CLOSED if the peer cannot be
+// relation grant against the edge's true source (the peer's row at the edge's
+// tail) rather than the entity being viewed (the TO side). It FAILS CLOSED if the peer cannot be
 // fetched (RR-B1F5-N1): a peer deleted between the neighbor-visibility pass and
 // this read would otherwise leave the source unresolvable, and falling back to
 // the wrong-type path entity — whose type likely has no `visible:` block for this
 // relation — would silently emit the meta un-redacted. When the active resolver
 // can redact at all (implements [RelationVisibilityResolver]) and the source is
-// unresolvable, drop the whole meta map rather than leak it. (The analogous
-// fallback in relationSourceEntity is correct for the WRITE path, where a denied
-// write is the safe failure; the read/redaction consumer needs the opposite bias,
-// so it is handled here rather than by changing the shared helper.)
+// unresolvable, drop the whole meta map rather than leak it. The write gate,
+// [affordanceService.relationSources], resolves a missing tail row through the
+// family instead; this read keeps the stricter rule, which only ever hides meta.
 func (svc affordanceService) visibleRelationMetaIncoming(
-	ctx context.Context, peerID, relType string, meta map[string]any,
+	ctx context.Context, peer entityPkg.Ref, relType string, meta map[string]any,
 ) map[string]any {
 	if len(meta) == 0 {
 		return meta
@@ -1086,7 +1156,7 @@ func (svc affordanceService) visibleRelationMetaIncoming(
 	if _, canRedact := svc.resolver().(RelationVisibilityResolver); !canRedact {
 		return meta // Nop / Demo: no redaction at all, matching pre-B1F5Q1.
 	}
-	src, ok := svc.getEntity(ctx, peerID)
+	src, ok := svc.sourceRow(ctx, peer)
 	if !ok {
 		// Source gone mid-request → cannot resolve its grants → fail closed.
 		return map[string]any{}
@@ -1098,7 +1168,7 @@ func (svc affordanceService) visibleRelationMetaIncoming(
 // (TKT-B1F5Q1) — the shared relation-meta redaction chokepoint both live handlers
 // route through. The strip is the single source of truth for whether the edge is
 // incoming: an outgoing edge resolves the grant against pathEntity; an incoming
-// edge resolves against its peer (s.peerID), failing closed if the peer is gone
+// edge resolves against its peer (s.peer), failing closed if the peer is gone
 // ([affordanceService.visibleRelationMetaIncoming]). Do NOT reintroduce an
 // `incoming` parameter alongside s.incoming — a caller that disagreed with the
 // strip could route an incoming edge down the outgoing branch and silently
@@ -1109,7 +1179,7 @@ func (svc affordanceService) redactRelationMetaStrip(
 ) {
 	meta, _ := s.rel["meta"].(map[string]any)
 	if s.incoming {
-		s.rel["meta"] = svc.visibleRelationMetaIncoming(ctx, s.peerID, relType, meta)
+		s.rel["meta"] = svc.visibleRelationMetaIncoming(ctx, s.peer, relType, meta)
 		return
 	}
 	s.rel["meta"] = svc.visibleRelationMeta(ctx, pathEntity, relType, meta)

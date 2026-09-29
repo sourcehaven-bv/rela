@@ -77,7 +77,8 @@ func (c *CreateCmd) Run(ctx context.Context, svc *writeServices) error {
 
 	out.WriteSuccess("Created %s %s", resolvedType, entity.ID)
 	if outputFormat == "json" {
-		if e, err := svc.Store.GetEntity(ctx, entity.ID); err == nil {
+		// Re-read the row the create wrote, at its own face.
+		if e, err := svc.Store.GetEntityState(ctx, entity.ID, entity.Face); err == nil {
 			_ = out.WriteEntities([]*entitypkg.Entity{e})
 		}
 	}

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/mail"
 	"github.com/Sourcehaven-BV/rela/internal/mailrender"
 	"github.com/Sourcehaven-BV/rela/internal/mailtemplate"
@@ -35,13 +36,17 @@ func (s *Services) RunScheduledTemplate(ctx context.Context, name, recipientID s
 	}
 
 	// The raw recipient record is used only to address the envelope. It is
-	// never supplied to content rendering, which remains ACL-visible.
-	recipient, err := s.store.GetEntity(ctx, recipientID)
+	// never supplied to content rendering, which remains ACL-visible. It is
+	// the face the default world selects, the world scheduled mail iterates
+	// in (TKT-KQXVF7 D7).
+	recipient, found, err := s.defaultWorldRow(ctx, recipientID)
 	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			return nil
-		}
 		return err
+	}
+	if !found {
+		slog.WarnContext(ctx, "scheduled mail recipient has no row in the default world; skipping",
+			"recipient", recipientID)
+		return nil
 	}
 	raw, ok := recipient.Properties[tmpl.AddressProperty]
 	if !ok {
@@ -103,4 +108,20 @@ func skipBadAddress(ctx context.Context, recipientID, property string) error {
 	slog.WarnContext(ctx, "scheduled mail recipient has no usable address; skipping",
 		"recipient", recipientID, "property", property)
 	return nil
+}
+
+// defaultWorldRow reads the raw row the default world selects for id. found
+// is false when the world selects none: no such entity, or a faced type the
+// default world does not resolve until TKT-7IZHP0.
+func (s *Services) defaultWorldRow(ctx context.Context, id string) (row *entity.Entity, found bool, err error) {
+	q := store.EntityQuery{IDs: []string{id}, World: s.worlds.Default()}
+	for e, lerr := range s.store.ListEntities(ctx, q) {
+		if lerr != nil {
+			return nil, false, lerr
+		}
+		if e.ID == id {
+			return e, true, nil
+		}
+	}
+	return nil, false, nil
 }

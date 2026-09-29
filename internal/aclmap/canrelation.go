@@ -8,7 +8,6 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
-	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // CanRelationResult is the answer to "may principal P create/update/delete a
@@ -88,12 +87,9 @@ func (e *Engine) CanRelation(
 		return nil, errors.New("aclmap: relation type must not be empty")
 	}
 
-	from, err := e.src.GetEntity(ctx, fromID)
+	from, fromType, err := e.target(ctx, fromID)
 	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			return nil, fmt.Errorf("%w: %s", ErrEntityNotFound, fromID)
-		}
-		return nil, fmt.Errorf("aclmap: load entity %q: %w", fromID, err)
+		return nil, err
 	}
 
 	user, rawShown, err := e.resolveEffective(ctx, rawPrincipal)
@@ -110,8 +106,9 @@ func (e *Engine) CanRelation(
 		Op: op,
 		Subject: acl.RelationSubject{
 			Type:     relType,
-			FromType: from.Type,
-			FromID:   fromID,
+			FromType: fromType,
+			FromID:   from.ID,
+			FromFace: from.Face,
 		},
 	})
 
@@ -122,7 +119,7 @@ func (e *Engine) CanRelation(
 		Verb:          string(verb),
 		Relation:      relType,
 		From:          fromID,
-		FromType:      from.Type,
+		FromType:      fromType,
 		Allowed:       d.Allow,
 		RuleKind:      d.RuleKind,
 		RuleID:        d.RuleID,

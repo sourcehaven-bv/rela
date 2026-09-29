@@ -1068,7 +1068,7 @@ func (s *dropEntitiesStep) Validate(_, to metamodel.ShapeProjection) error {
 
 func (s *dropEntitiesStep) Run(ctx context.Context, x *Exec) (StepResult, error) {
 	res := StepResult{Kind: s.Kind(), Target: s.Target()}
-	ids, err := collectEntityIDs(ctx, x.Store, s.Type)
+	ids, faces, err := collectEntityFaces(ctx, x.Store, s.Type)
 	if err != nil {
 		return res, err
 	}
@@ -1077,17 +1077,14 @@ func (s *dropEntitiesStep) Run(ctx context.Context, x *Exec) (StepResult, error)
 		return res, nil
 	}
 	for _, id := range ids {
-		// Capture BEFORE the delete: the row is gone afterwards and no
-		// sweep can reconstruct it (amendment A1).
-		e, err := x.Store.GetEntity(ctx, id)
-		if err != nil {
-			if errors.Is(err, store.ErrNotFound) {
-				continue // already deleted by a prior crashed run
+		// Capture every face BEFORE the delete: the rows are gone afterwards
+		// and no sweep can reconstruct them (amendment A1). A row a prior
+		// crashed run already deleted is not listed, so it is not captured
+		// twice.
+		for _, e := range faces[id] {
+			if capErr := x.captureEntityDelete(ctx, e); capErr != nil {
+				return res, capErr
 			}
-			return res, err
-		}
-		if capErr := x.captureEntityDelete(ctx, e); capErr != nil {
-			return res, capErr
 		}
 		del, err := x.Store.DeleteEntity(ctx, id, true)
 		if err != nil {
@@ -1187,15 +1184,23 @@ func isEmptyValue(v any) bool {
 
 // ---- shared collection helpers ----
 
-func collectEntityIDs(ctx context.Context, st store.Store, typ string) ([]string, error) {
-	var ids []string
-	for e, err := range st.ListEntities(ctx, store.EntityQuery{Type: typ}) {
+// collectEntityFaces returns every id of type typ, in listing order, and each
+// id's rows at every face. A dropped type goes as a whole entity, so a faced
+// type's rows, which have no zero face (DEC-NPZICR), are dropped with it.
+func collectEntityFaces(
+	ctx context.Context, st store.Store, typ string,
+) (ids []string, faces map[string][]*entity.Entity, err error) {
+	faces = map[string][]*entity.Entity{}
+	for e, err := range st.ListEntities(ctx, store.EntityQuery{Type: typ, AllStates: true}) {
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		ids = append(ids, e.ID)
+		if _, seen := faces[e.ID]; !seen {
+			ids = append(ids, e.ID)
+		}
+		faces[e.ID] = append(faces[e.ID], e)
 	}
-	return ids, nil
+	return ids, faces, nil
 }
 
 func collectRelations(ctx context.Context, st store.Store, typ string) ([]*entity.Relation, error) {

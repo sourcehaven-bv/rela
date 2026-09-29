@@ -3370,7 +3370,7 @@ func TestV1UpdateEntity_Relations_OnlyPATCH_ETagChangesButEntityStable(t *testin
 	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "T"}})
 	seedEntity(app, &entity.Entity{ID: "FEAT-001", Type: "feature", Properties: map[string]any{"title": "F"}})
 
-	entityBefore, _ := app.reader.getEntity(context.Background(), "TKT-001")
+	entityBefore, _ := app.reader.writePrepRow(context.Background(), entity.Ref{ID: "TKT-001"})
 	etagBefore := app.computeEntityETag(context.Background(), entityBefore)
 
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/tickets/TKT-001",
@@ -3381,7 +3381,7 @@ func TestV1UpdateEntity_Relations_OnlyPATCH_ETagChangesButEntityStable(t *testin
 		t.Fatalf("PATCH returned %d: %s", rec.Code, rec.Body.String())
 	}
 
-	entityAfter, _ := app.reader.getEntity(context.Background(), "TKT-001")
+	entityAfter, _ := app.reader.writePrepRow(context.Background(), entity.Ref{ID: "TKT-001"})
 	// Entity fields (id/type/props/content) should be byte-identical.
 	if entityAfter.Content != entityBefore.Content ||
 		len(entityAfter.Properties) != len(entityBefore.Properties) {
@@ -4727,7 +4727,7 @@ func TestV1Affordance_PatchReadOnlyField_Forbidden(t *testing.T) {
 			t.Fatalf("got %d, want 403; body=%s", code, body)
 		}
 		// Verify title was NOT updated.
-		e, _ := app.reader.getEntity(context.Background(), "TKT-001")
+		e, _ := app.reader.writePrepRow(context.Background(), entity.Ref{ID: "TKT-001"})
 		if e.Properties["title"] != "Original" {
 			t.Errorf("title must not be applied when status fails: got %v", e.Properties["title"])
 		}

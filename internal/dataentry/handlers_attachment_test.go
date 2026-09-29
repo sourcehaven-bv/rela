@@ -242,7 +242,7 @@ func TestAttachment_MetadataOnEntityGET(t *testing.T) {
 // mustGet loads an entity or fails the test.
 func mustGet(t *testing.T, app *App, id string) *entity.Entity {
 	t.Helper()
-	e, ok := app.reader.getEntity(context.Background(), id)
+	e, ok := app.reader.writePrepRow(context.Background(), entity.Ref{ID: id})
 	if !ok {
 		t.Fatalf("getEntity(%s) not found", id)
 	}

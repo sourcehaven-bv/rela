@@ -36,6 +36,25 @@ formatting:
 | ----------------------- | ----------------------------------------- | ------- |
 | `formatting.line_width` | Maximum line width for paragraph wrapping | 80      |
 
+## Entity addresses
+
+A command that reads one entity takes an address. For a type without faces,
+the address is the entity ID, such as `REQ-001`. For a type with faces, write
+`ID@face`, such as `DOC-1@draft`, to name one face.
+
+A bare ID of an entity with faces reads the face the default world selects.
+Until the project declares a default world that ranks faces, it selects none,
+so the command stops and lists the faces to choose from:
+
+```text
+$ rela show DOC-1
+address one face: DOC-1 has faces; name one: DOC-1@draft, DOC-1@published
+```
+
+The `acl can` and `acl who-can` reports answer per entity, so they take the
+bare ID of a faced entity and refuse `ID@face`. `acl can-relation --from`
+accepts `ID@face` for the tail of a content-scoped edge.
+
 ## Commands
 
 ### rela init
@@ -332,15 +351,18 @@ rela show <id>
 
 **Arguments:**
 
-- `id` - Entity ID to show
+- `id` - Entity ID to show, or `ID@face` for a type with faces (see
+  [Entity addresses](#entity-addresses))
 
-Shows the entity's properties plus all incoming and outgoing relations.
+Shows the entity's properties plus all incoming and outgoing relations. For
+`ID@face`, the outgoing relations are the ones that face owns.
 
 **Examples:**
 
 ```bash
 rela show REQ-001
 rela show DEC-042 -o json
+rela show DOC-1@draft
 ```
 
 ---

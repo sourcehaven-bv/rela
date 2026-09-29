@@ -416,6 +416,10 @@ deps:
       - tracer
       - transform
       - validator
+      # The CLI address helper resolves `ID@face` through the allow-all
+      # visibility.Resolver: the operator shell reads everything, but a
+      # single-entity read still takes one mode (TKT-KQXVF7).
+      - visibility
     canUse:
       - kong
       - color

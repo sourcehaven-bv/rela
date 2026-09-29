@@ -25,6 +25,7 @@ import (
 	"io"
 	"iter"
 	"maps"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -364,6 +365,10 @@ func (m *MemStore) ListEntityHeaders(
 			Face:       e.Face,
 			Properties: maps.Clone(e.Properties),
 			UpdatedAt:  e.UpdatedAt,
+			// Carried like every backend's header: a header must never look
+			// more complete than the entity it projects.
+			Redacted:     slices.Clone(e.Redacted),
+			Inaccessible: slices.Clone(e.Inaccessible),
 		})
 	}
 	m.mu.RUnlock()

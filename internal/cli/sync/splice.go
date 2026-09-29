@@ -33,11 +33,24 @@ import (
 // boundary. We then land the merged whole record through the sanctioned
 // id-preserving, automation-suppressed ApplyEntity/ApplyRelation.
 
+// syncFace is the face every pulled entity is read and applied at. The wire
+// body names no face, because the sync protocol is default-world (TKT-KQXVF7
+// ruling D8). A faced type has no row here (DEC-NPZICR); making sync carry a
+// face is left to the protocol, not guessed per record.
+var syncFace entity.Face
+
 // spliceEntity merges a redacted entity fetch onto the raw local entity (or
 // creates it if absent) and applies the result. It returns the entity as
 // applied so the caller can canonically hash it for the index Local token.
 func (e *Engine) spliceEntity(ctx context.Context, key string, fe *FetchedEntity) (*entity.Entity, error) {
-	prior, err := e.store.GetEntity(ctx, key)
+	ent := &entity.Entity{
+		ID:      nonEmpty(fe.Body.ID, key),
+		Type:    fe.Body.Type,
+		Face:    syncFace,
+		Content: fe.Body.Content,
+	}
+	// The splice base is the local row the apply below overwrites.
+	prior, err := e.store.GetEntityState(ctx, key, syncFace)
 	switch {
 	case err == nil:
 		// exists locally → splice onto the raw record
@@ -47,14 +60,7 @@ func (e *Engine) spliceEntity(ctx context.Context, key string, fe *FetchedEntity
 		return nil, fmt.Errorf("read local entity %s: %w", key, err)
 	}
 
-	merged := mergeProperties(priorProps(prior), fe.Body.Properties, fe.Body.Redacted)
-
-	ent := &entity.Entity{
-		ID:         nonEmpty(fe.Body.ID, key),
-		Type:       fe.Body.Type,
-		Properties: merged,
-		Content:    fe.Body.Content,
-	}
+	ent.Properties = mergeProperties(priorProps(prior), fe.Body.Properties, fe.Body.Redacted)
 	if _, err := e.applier.ApplyEntity(ctx, ent); err != nil {
 		return nil, fmt.Errorf("apply entity %s: %w", key, err)
 	}

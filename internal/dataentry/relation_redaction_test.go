@@ -95,7 +95,7 @@ func TestRelationRedaction_LiveIncoming_UsesSourceGrant(t *testing.T) {
 	}
 
 	// View from TKT-002 (the TO side): the incoming edge appears under the inverse
-	// key. The grant is keyed on TKT-001's type, resolved via relationSourceEntity.
+	// key. The grant is keyed on TKT-001's type, resolved against the edge's source.
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/TKT-002/relations", http.NoBody)
 	req = req.WithContext(principal.With(req.Context(),
 		principal.Principal{User: "alice", Tool: principal.ToolDataEntry}))
@@ -475,10 +475,10 @@ func TestRelHistoryRestore_ReadsRawMeta_PreservesHidden(t *testing.T) {
 func TestVisibleRelationMetaIncoming_SourceGone_FailsClosed(t *testing.T) {
 	app := buildPolicyApp(t, relationRedactionACL, nil)
 	svc := app.affordances
-	svc.getEntity = func(context.Context, string) (*entity.Entity, bool) { return nil, false }
+	svc.sourceRow = func(context.Context, entity.Ref) (*entity.Entity, bool) { return nil, false }
 
 	meta := map[string]any{"reason": "blocked", "secret": "s3cr3t"}
-	got := svc.visibleRelationMetaIncoming(context.Background(), "TKT-001", "depends_on", meta)
+	got := svc.visibleRelationMetaIncoming(context.Background(), entity.Ref{ID: "TKT-001"}, "depends_on", meta)
 	if len(got) != 0 {
 		t.Errorf("source gone must fail closed (empty meta), got %v", got)
 	}

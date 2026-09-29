@@ -79,16 +79,8 @@ func historyAddress(
 // liveFacesOf returns the faces id has a live row at, from one raw header
 // read. The operator shell reads without ACL, like every other CLI command.
 func liveFacesOf(ctx context.Context, st store.EntityLister, id string) ([]entity.Face, error) {
-	var faces []entity.Face
-	for h, err := range store.ListEntityHeaders(ctx, st, store.EntityQuery{IDs: []string{id}, AllStates: true}) {
-		if err != nil {
-			return nil, fmt.Errorf("read the faces of %q: %w", id, err)
-		}
-		if h.ID == id {
-			faces = append(faces, h.Face)
-		}
-	}
-	return faces, nil
+	_, faces, err := storedFamily(ctx, st, id)
+	return faces, err
 }
 
 // declaredFaces returns every face any type declares, each once, sorted. A
