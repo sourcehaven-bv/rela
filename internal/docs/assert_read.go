@@ -8,6 +8,7 @@ import (
 	lua "github.com/yuin/gopher-lua"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
@@ -90,6 +91,11 @@ func luaReadClaim(dr *docRuntime, ls *lua.LState, wantVisible bool) int {
 	}
 
 	target := readTarget(id, face)
+	if _, perr := entity.ParseRef(target); perr != nil {
+		// The resolver answers an address it cannot parse as a miss, which
+		// hidden{} would accept against any policy. Refuse it instead.
+		return dr.luaFail(ls, "%s{id=%q}: not a valid entity address: %v", verb, target, perr)
+	}
 
 	// The vacuous-pass guard for hidden{}: a row that does not exist is hidden
 	// from everyone, so the claim would hold against any policy — including one

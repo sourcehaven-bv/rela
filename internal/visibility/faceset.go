@@ -61,13 +61,16 @@ func (s FaceSet) Contains(f entity.Face) bool {
 // face, the list otherwise.
 //
 // The empty set has no FaceIn spelling, because nil means every face there
-// too. Callers stop on [FaceSet.IsNone] before building a query; reaching
-// here with the empty set is a bug, and the result would widen the read.
-func (s FaceSet) QueryFaces() []entity.Face {
+// too, so it reports ok=false and the caller must not query at all. Making
+// the caller branch keeps the one wrong use from widening the read.
+func (s FaceSet) QueryFaces() (faces []entity.Face, ok bool) {
 	if s.all {
-		return nil
+		return nil, true
 	}
-	return slices.Clone(s.faces)
+	if len(s.faces) == 0 {
+		return nil, false
+	}
+	return slices.Clone(s.faces), true
 }
 
 // FaceSetGate is the optional capability of a [RowGate] that can say "no
@@ -85,16 +88,26 @@ type FaceSetGate interface {
 //     list, where an empty list means every face, or every face for a gate
 //     that declares no faces.
 //
-// A gate error gives the empty set, so a failure hides rather than reveals.
-func ReadableFaces(ctx context.Context, gate RowGate, entityType string) FaceSet {
+// A gate error is returned with the empty set, so a caller that ignores it
+// still hides rather than reveals. The [Resolver] returns it, like a row-gate
+// error.
+func ReadableFaces(ctx context.Context, gate RowGate, entityType string) (FaceSet, error) {
 	if sg, ok := gate.(FaceSetGate); ok {
 		set, err := sg.ReadableFaces(ctx, entityType)
 		if err != nil {
-			return NoFaces()
+			return NoFaces(), err
 		}
-		return set
+		return set, nil
 	}
-	return faceGateSet(ctx, gate, entityType)
+	fg, ok := gate.(FaceGate)
+	if !ok {
+		return AllFaces(), nil
+	}
+	faces, err := fg.PermittedFaces(ctx, entityType)
+	if err != nil {
+		return NoFaces(), err
+	}
+	return faceListSet(faces), nil
 }
 
 // faceGateSet is the face set a [FaceGate] reports, or every face for a gate
@@ -108,6 +121,11 @@ func faceGateSet(ctx context.Context, gate RowGate, entityType string) FaceSet {
 	if err != nil {
 		return NoFaces()
 	}
+	return faceListSet(faces)
+}
+
+// faceListSet reads a [FaceGate] list: empty means every face.
+func faceListSet(faces []entity.Face) FaceSet {
 	if len(faces) == 0 {
 		return AllFaces()
 	}

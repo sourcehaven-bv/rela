@@ -29,6 +29,7 @@ type resolverGate struct {
 	deny    map[string]bool // ids the row gate refuses
 	err     error           // returned by PermitsRead
 	faces   map[string]visibility.FaceSet
+	faceErr error // returned by ReadableFaces
 	rowHits *int
 }
 
@@ -51,6 +52,9 @@ func (g resolverGate) PermitsReadMany(_ context.Context, _ string, ids []string)
 }
 
 func (g resolverGate) ReadableFaces(_ context.Context, entityType string) (visibility.FaceSet, error) {
+	if g.faceErr != nil {
+		return visibility.NoFaces(), g.faceErr
+	}
 	if s, ok := g.faces[entityType]; ok {
 		return s, nil
 	}
@@ -155,6 +159,8 @@ func TestResolver_GateOrder(t *testing.T) {
 		{name: "row gate denies", gate: resolverGate{deny: map[string]bool{"TKT-1": true}},
 			call: addr(def, "ticket", "TKT-1"), wantRows: 1},
 		{name: "row gate errors", gate: resolverGate{err: gateDown},
+			call: addr(def, "ticket", "TKT-1"), wantErr: true, wantRows: 1},
+		{name: "readable faces error", gate: resolverGate{faceErr: gateDown},
 			call: addr(def, "ticket", "TKT-1"), wantErr: true, wantRows: 1},
 		{name: "no readable face, default world", gate: resolverGate{faces: none},
 			call: addr(def, "ticket", "TKT-1"), wantRows: 1},
@@ -430,16 +436,24 @@ func TestFaceSet(t *testing.T) {
 		t.Error("the zero, NoFaces and empty SomeFaces sets must all be none")
 	}
 	if visibility.AllFaces().IsNone() || !visibility.AllFaces().Contains("anything") ||
-		visibility.AllFaces().QueryFaces() != nil {
+		!queryFaces(visibility.AllFaces(), nil, true) {
 
 		t.Error("AllFaces must hold every face and push no FaceIn")
 	}
+	if !queryFaces(visibility.NoFaces(), nil, false) {
+		t.Error("NoFaces must refuse to become a query")
+	}
 	some := visibility.SomeFaces(facePublished)
 	if some.Contains(faceDraft) || !some.Contains(facePublished) ||
-		!slices.Equal(some.QueryFaces(), []entity.Face{facePublished}) {
+		!queryFaces(some, []entity.Face{facePublished}, true) {
 
 		t.Error("SomeFaces must hold exactly its list")
 	}
+}
+
+func queryFaces(s visibility.FaceSet, want []entity.Face, wantOK bool) bool {
+	got, ok := s.QueryFaces()
+	return ok == wantOK && (got == nil) == (want == nil) && slices.Equal(got, want)
 }
 
 // failingLoader fails every read with err.

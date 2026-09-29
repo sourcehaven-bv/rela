@@ -18,9 +18,9 @@ import (
 // on a returned gate error, on the served row, and on its provenance.
 //
 // The comparison target is the entity GET's verdict: getVisibleRef plus the
-// stored-type check the handler applies after it. The resolver is built over the same per-request gate (ctxRowGate) and the
-// same store, with no redaction, so the only thing compared is the gate
-// order and the load.
+// stored-type check the handler applies after it. The resolver is built over
+// the same per-request gate (ctxRowGate) and the same store, with no
+// redaction, so the only thing compared is the gate order and the load.
 func TestResolverParity_GetVisibleRef(t *testing.T) {
 	st := appbuildtest.New(facedMeta(t)).Store()
 	seedPolicyFaces(t, st)
@@ -101,13 +101,28 @@ func TestResolverParity_GetVisibleRef(t *testing.T) {
 					if got.Via.String() != wantRule {
 						t.Errorf("via: want %s, resolver %s", wantRule, got.Via)
 					}
-					if wantPos != nil && *wantPos != got.ChainPosition {
+					switch {
+					case wantPos != nil && *wantPos != got.ChainPosition:
 						t.Errorf("chain position: want %d, resolver %d", *wantPos, got.ChainPosition)
+					case wantPos == nil && got.ChainPosition != 0:
+						t.Errorf("chain position: want none, resolver %d", got.ChainPosition)
 					}
 				})
 			}
 		}
 	}
+	// An address the grammar refuses: the GET 404s before any read
+	// (parseEntityRef), and the resolver misses without an error.
+	for _, bad := range []string{"not an id", "POL-1@@", "POL-1@Published"} {
+		if _, ok := parseEntityRef(bad); ok {
+			t.Fatalf("fixture %q parses; pick an address the grammar refuses", bad)
+		}
+		got, ok, err := res.Address(as("alice"), visibility.World{}, "policy", bad)
+		if ok || err != nil || got.Entity != nil {
+			t.Errorf("resolver on %q = (%v, %v), want a clean miss", bad, ok, err)
+		}
+	}
+
 	// Guard the fixture: a matrix in which every read misses would pass
 	// vacuously.
 	if hits == 0 {

@@ -19,6 +19,7 @@ import (
 type PolicyReader struct {
 	gate   RowGate
 	redact FieldRedactor
+	load   Loader
 	res    *Resolver
 }
 
@@ -29,7 +30,7 @@ func NewPolicyReader(gate RowGate, redact FieldRedactor, load Loader) (*PolicyRe
 	if err != nil {
 		return nil, fmt.Errorf("visibility: NewPolicyReader: %w", err)
 	}
-	return &PolicyReader{gate: gate, redact: redact, res: res}, nil
+	return &PolicyReader{gate: gate, redact: redact, load: load, res: res}, nil
 }
 
 // Resolver returns the single-entity read over this reader's gate, redactor
@@ -125,7 +126,7 @@ func (r *PolicyReader) FilterRelations(ctx context.Context, rels []*entity.Relat
 				continue
 			}
 			seen[id] = true
-			e, err := r.res.load.GetEntityState(ctx, id, "")
+			e, err := r.load.GetEntityState(ctx, id, "")
 			if err != nil {
 				continue // missing endpoint: stays out of allowed → relation hidden
 			}

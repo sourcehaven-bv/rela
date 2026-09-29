@@ -11,7 +11,9 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
-// Loader is the raw read the [Resolver] needs. Satisfied by store.Store.
+// Loader is the raw read the [Resolver] needs. Satisfied by store.Store. It
+// is [EntityGetter] plus ListEntities; EntityGetter remains for the tracer
+// and ScriptReader, which never query a world.
 //
 // [Resolver.Family] reads content-free headers. It gets them through
 // [store.ListEntityHeaders], so a Loader that also implements
@@ -78,7 +80,8 @@ type Family struct {
 // face-denied, world-denied and a failed load: the caller cannot tell them
 // apart, so a miss is never an existence oracle. A load failure other than
 // [store.ErrNotFound] is logged with slog.Warn before it becomes a miss
-// (RR-FE1EGP). Only a row-gate failure is returned as an error.
+// (RR-FE1EGP). Only a gate failure (step 2 or 3) is returned as an error: it
+// happens before any load, so it discloses nothing about the row.
 //
 // The policy and allow-all capabilities are the same type with different
 // collaborators; see [NewResolver] and [NewAllowAllResolver].
@@ -164,6 +167,9 @@ func (r *Resolver) InWorld(ctx context.Context, w World, entityType, id string) 
 		if !faces.Contains("") {
 			return Resolved{}, false, nil
 		}
+		// The implicit face "" is the default world's answer for a bare id
+		// until TKT-7IZHP0 generates a default world for faced types; that
+		// ticket removes this read.
 		e, ok = r.loadRef(ctx, entityType, entity.Ref{ID: id})
 	} else {
 		e, ok = r.loadInWorld(ctx, w.scope, entityType, id, faces)
@@ -225,7 +231,10 @@ func (r *Resolver) admit(ctx context.Context, w World, entityType, id string) (F
 	if !ok {
 		return FaceSet{}, false, nil
 	}
-	faces := ReadableFaces(ctx, r.gate, entityType)
+	faces, err := ReadableFaces(ctx, r.gate, entityType)
+	if err != nil {
+		return FaceSet{}, false, err
+	}
 	if faces.IsNone() {
 		return FaceSet{}, false, nil
 	}
@@ -248,7 +257,11 @@ func (r *Resolver) loadRef(ctx context.Context, entityType string, ref entity.Re
 func (r *Resolver) loadInWorld(
 	ctx context.Context, scope store.WorldScope, entityType, id string, faces FaceSet,
 ) (*entity.Entity, bool) {
-	q := store.EntityQuery{IDs: []string{id}, World: scope, FaceIn: faces.QueryFaces()}
+	faceIn, ok := faces.QueryFaces()
+	if !ok {
+		return nil, false
+	}
+	q := store.EntityQuery{IDs: []string{id}, World: scope, FaceIn: faceIn}
 	for e, err := range r.load.ListEntities(ctx, q) {
 		if err != nil {
 			warnLoad("world", entityType, entity.Ref{ID: id}, err)

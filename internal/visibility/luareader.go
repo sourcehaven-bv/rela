@@ -20,8 +20,8 @@ import (
 // A [Resolver] gates BEFORE the load and therefore needs the entity type up
 // front, but a script asks by bare ID (`rela.get_entity(id)`). Rather than
 // invent a type claim — which would reintroduce the BUG-ZWTDH9 cross-type
-// surface the Resolver's type check exists to close — ScriptReader loads raw and then
-// runs the result through [Reader.Filter], which gates on the entity's
+// surface the Resolver's type check exists to close — ScriptReader loads raw
+// and then runs the result through [Reader.Filter], which gates on the entity's
 // STORED type. A denied entity comes back as a not-found error, which is
 // what the bindings already translate into nil.
 //

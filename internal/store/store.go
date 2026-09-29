@@ -293,7 +293,9 @@ type EntityQuery struct {
 	// the storage-inspection escape hatch for infrastructure that must
 	// see rows exactly as they are stored — undeclared-face
 	// detection, observer backfill (TKT-9OJ3S0) — not for read paths
-	// choosing which face of an entity to show.
+	// choosing which face of an entity to show. The one read-path use is
+	// visibility.Resolver.Family, which reads HEADERS only and drops every
+	// face the principal may not read before anything leaves it.
 	AllStates bool
 
 	// FaceIn narrows the result to these content states — a SET filter,

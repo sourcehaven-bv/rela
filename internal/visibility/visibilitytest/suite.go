@@ -35,30 +35,26 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
-// ReaderMaker builds the Reader under test from the suite's collaborators.
-// Production impls compose exactly these three; a wiring under test (PR
-// 2/3) adapts its own construction to this shape. The Reader must also
-// expose its single-entity read as `Resolver() *visibility.Resolver`, as
+// ResolvingReader is a Reader that also exposes its single-entity read, as
 // [visibility.PolicyReader] and [visibility.AllowAllReader] do.
-type ReaderMaker func(
-	t *testing.T, gate visibility.RowGate, redact visibility.FieldRedactor, load visibility.Loader,
-) visibility.Reader
-
-// resolving is the single-entity half a Reader under test exposes.
-type resolving interface {
+type ResolvingReader interface {
+	visibility.Reader
 	Resolver() *visibility.Resolver
 }
 
+// ReaderMaker builds the Reader under test from the suite's collaborators.
+// Production impls compose exactly these three; a wiring under test (PR
+// 2/3) adapts its own construction to this shape.
+type ReaderMaker func(
+	t *testing.T, gate visibility.RowGate, redact visibility.FieldRedactor, load visibility.Loader,
+) ResolvingReader
+
 // getOne reads one entity through r's resolver in the default world.
 func getOne(
-	ctx context.Context, t *testing.T, r visibility.Reader, typ, id string,
+	ctx context.Context, t *testing.T, r ResolvingReader, typ, id string,
 ) (*entity.Entity, bool, error) {
 	t.Helper()
-	rr, ok := r.(resolving)
-	if !ok {
-		t.Fatalf("%T exposes no Resolver", r)
-	}
-	res, found, err := rr.Resolver().Address(ctx, visibility.World{}, typ, id)
+	res, found, err := r.Resolver().Address(ctx, visibility.World{}, typ, id)
 	return res.Entity, found, err
 }
 

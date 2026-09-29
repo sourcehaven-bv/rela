@@ -211,10 +211,12 @@ func (h *exportHandler) handleV1ExportEntity(w http.ResponseWriter, r *http.Requ
 	}
 
 	// The id segment is an ADDRESS (`ID` or `ID@face`). Export renders the
-	// bare face only: the redacting reader below reads by bare id, so a
-	// non-bare address is answered with the same not-found a missing entity
-	// gets rather than with the bare face's document under a faced name.
-	// Exporting a non-bare face is a follow-up (TKT-5SZG2L records the gap).
+	// bare face only, because the `export_render:` override below renders
+	// by bare id, so a non-bare address is answered with the same not-found
+	// a missing entity gets. `_export` is not a world-capable path
+	// (refuseWorldIncapablePath 422s a named world first), so the world
+	// handed to the resolver is always the default one. Exporting a non-bare
+	// face is a follow-up (TKT-5SZG2L records the gap).
 	ref, ok := parseEntityRef(entityID)
 	if !ok || !ref.Face.IsDefault() {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
@@ -228,7 +230,6 @@ func (h *exportHandler) handleV1ExportEntity(w http.ResponseWriter, r *http.Requ
 	// a FIELD-REDACTED copy — the renderer below can never see a property
 	// the caller's `visible:` policy hides (the #1188 IB-review finding).
 	res, found, err := h.resolver.Address(ctx, worldFromContext(ctx).visibility(), typeName, entityID)
-	entity := res.Entity
 	if err != nil {
 		writeGateError(w, r, err)
 		return
@@ -237,6 +238,7 @@ func (h *exportHandler) handleV1ExportEntity(w http.ResponseWriter, r *http.Requ
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 		return
 	}
+	entity := res.Entity
 
 	// A per-type `export_render:` view config (RR-BM0KIJ: config-selected,
 	// never request-selected — no query param chooses the script) renders via

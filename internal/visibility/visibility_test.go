@@ -16,7 +16,7 @@ import (
 func TestPolicyReaderConformance(t *testing.T) {
 	visibilitytest.RunReaderTests(t, func(
 		t *testing.T, gate visibility.RowGate, redact visibility.FieldRedactor, load visibility.Loader,
-	) visibility.Reader {
+	) visibilitytest.ResolvingReader {
 		t.Helper()
 		r, err := visibility.NewPolicyReader(gate, redact, load)
 		if err != nil {
