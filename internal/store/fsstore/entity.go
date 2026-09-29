@@ -676,16 +676,27 @@ func (s *FSStore) deleteFace(_ context.Context, ref entity.Ref) (*store.DeleteRe
 		deletedRelations = append(deletedRelations, r)
 	}
 
-	for _, rm := range owned {
+	// A failure part-way reports the relation files that did come off disk
+	// and drops them from the index, as deleteEntity does (TKT-A23L87): the
+	// caller records those deletions, so the index must not keep listing
+	// them. The last face can take many edges, so this is not hypothetical.
+	removed := make([]*entity.Relation, 0, len(owned))
+	removedMeta := make([]relationMeta, 0, len(owned))
+	for i, rm := range owned {
 		fileKey := s.layout.relationFileKeyMeta(rm)
 		if rerr := s.rooted.Remove(fileKey); rerr != nil && !os.IsNotExist(rerr) {
-			return nil, fmt.Errorf("delete relation file %s: %w", rm.key(), rerr)
+			forgetRelations(s, removedMeta)
+			return &store.DeleteResult{DeletedRelations: removed},
+				fmt.Errorf("delete relation file %s: %w", rm.key(), rerr)
 		}
+		removed = append(removed, deletedRelations[i])
+		removedMeta = append(removedMeta, rm)
 		s.echoes.Forget(s.layout.absPath(fileKey))
 	}
 	entKey := s.layout.entityFileKey(meta.Type, key)
 	if rerr := s.rooted.Remove(entKey); rerr != nil && !os.IsNotExist(rerr) {
-		return nil, rerr
+		forgetRelations(s, removedMeta)
+		return &store.DeleteResult{DeletedRelations: removed}, rerr
 	}
 	s.echoes.Forget(s.layout.absPath(entKey))
 
@@ -693,15 +704,13 @@ func (s *FSStore) deleteFace(_ context.Context, ref entity.Ref) (*store.DeleteRe
 	// it only goes when the last face does — a discarded draft must not
 	// destroy attachments the surviving faces serve.
 	//
-	// This runs BEFORE the index mutations below, matching deleteEntity's
-	// fail-secure ordering: every fallible filesystem operation completes
-	// first, so an error returns with the in-memory index still matching what
-	// is on disk. Removing it afterwards would leave a caller who saw an
-	// error with the entity already gutted from the index — a divergence
-	// nothing reconciles until restart.
+	// A failure is non-fatal for the reason deleteEntity gives: the face and
+	// its edges are already off disk, so the delete has happened, and
+	// removeAttachmentDir prunes the attachment index before any I/O.
 	if lastFace {
 		if aerr := s.removeAttachmentDir(id); aerr != nil {
-			return nil, aerr
+			slog.Warn("fsstore: last face deleted but its attachment directory could not be removed",
+				"entity", id, "error", aerr)
 		}
 	}
 

@@ -32,7 +32,7 @@ func (r *recordingMutator) CreateRelation(_ context.Context, from, relType, to s
 	r.relations = append(r.relations, from+"--"+relType+"-->"+to)
 	return entity.NewRelation(from, relType, to), nil
 }
-func (r *recordingMutator) DeleteEntityFace(context.Context, string, entity.Face) (*entity.DeleteResult, error) {
+func (r *recordingMutator) DeleteEntityFace(context.Context, string, entity.Face, bool) (*entity.DeleteResult, error) {
 	return &entity.DeleteResult{}, nil
 }
 func (r *recordingMutator) DeleteRelationState(context.Context, string, entity.Face, string, string) error {

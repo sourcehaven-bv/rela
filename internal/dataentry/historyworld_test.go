@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
@@ -98,7 +99,7 @@ func (s *stubHistory) ListVersions(_ context.Context, ref entityPkg.Ref) ([]stor
 
 func (s *stubHistory) GetVersion(_ context.Context, ref entityPkg.Ref, _ int) (*store.VersionSnapshot, error) {
 	s.gotGet = ref.Face
-	return &store.VersionSnapshot{}, nil
+	return &store.VersionSnapshot{VersionMeta: store.VersionMeta{Face: ref.Face}}, nil
 }
 
 // TestHistoryReads_CarryTheFace pins that BOTH history reads carry the
@@ -120,6 +121,33 @@ func TestHistoryReads_CarryTheFace(t *testing.T) {
 	}
 	if stub.gotGet != ref.Face {
 		t.Errorf("the snapshot read must carry the face too; got %q", stub.gotGet)
+	}
+}
+
+// wrongFaceHistory answers every snapshot read with another face's row, as
+// a HistoryReader that ignored ref.Face would.
+type wrongFaceHistory struct{ stubHistory }
+
+func (*wrongFaceHistory) GetVersion(context.Context, entityPkg.Ref, int) (*store.VersionSnapshot, error) {
+	return &store.VersionSnapshot{
+		VersionMeta: store.VersionMeta{Version: 1, Type: "ticket", Face: "draft"},
+		Content:     "DRAFT BODY",
+	}, nil
+}
+
+// A snapshot of another face is a 404, not content served under the
+// requested face's grant: the handler checks the face as restore does.
+func TestHistoryVersion_RefusesASnapshotOfAnotherFace(t *testing.T) {
+	app := newTestAppV1(t)
+	ref := entityPkg.Ref{ID: "TKT-1", Face: entityPkg.Face("published")}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/_history/ticket/TKT-1@published/1", http.NoBody)
+	req = req.WithContext(withReadGate(req.Context(), fakeGate{holdsPermission: true}))
+	rec := httptest.NewRecorder()
+
+	serveHistoryVersion(app, rec, req, &wrongFaceHistory{}, "ticket", ref, "1")
+
+	if rec.Code != http.StatusNotFound || strings.Contains(rec.Body.String(), "DRAFT BODY") {
+		t.Fatalf("snapshot of another face = %d %s, want a 404", rec.Code, rec.Body)
 	}
 }
 

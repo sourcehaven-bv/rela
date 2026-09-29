@@ -126,8 +126,8 @@ const timeFmt = time.RFC3339Nano
 // they must live on this type. The SQL they run is built by free functions in
 // graphsql.go.
 //
-//plimsoll:max-methods=58
-//plimsoll:max-exported-methods=39
+//plimsoll:max-methods=56
+//plimsoll:max-exported-methods=37
 type Store struct {
 	db *sql.DB
 

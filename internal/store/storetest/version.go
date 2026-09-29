@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -39,6 +40,7 @@ func RunVersionTests(t *testing.T, f Factory) {
 	t.Run("EntityHistory", func(t *testing.T) { runEntityHistoryTests(t, f) })
 	t.Run("Faces", func(t *testing.T) { runFaceHistoryTests(t, f) })
 	t.Run("Lineage", func(t *testing.T) { runLineageTests(t, f) })
+	t.Run("FaceLineage", func(t *testing.T) { runFaceLineageTests(t, f) })
 	t.Run("RelationHistory", func(t *testing.T) { runRelationHistoryTests(t, f) })
 	t.Run("RelationTails", func(t *testing.T) { runRelationTailTests(t, f) })
 	t.Run("Purge", func(t *testing.T) { runPurgeTests(t, f) })
@@ -294,6 +296,61 @@ func runLineageTests(t *testing.T, f Factory) {
 		bHist, err := v.ListVersions(ctx(), entity.Ref{ID: "FEAT-B"})
 		require.NoError(t, err)
 		require.Len(t, bHist, 2, "B's lineage must not absorb the reused id's rows")
+	})
+}
+
+// runFaceLineageTests pins the lineage fence per face: a face's timeline
+// follows its own rename and never absorbs another face's rows or a reused
+// id's (TKT-KQXVF7).
+func runFaceLineageTests(t *testing.T, f Factory) {
+	t.Run("RenameAndReuseStayPerFace", func(t *testing.T) {
+		v := versionsOf(t, f(t))
+		for _, in := range []store.VersionInput{
+			{EntityID: "FEAT-A", Face: "draft", Op: store.VersionOpUpdate, Content: "A draft"},
+			{EntityID: "FEAT-A", Face: "published", Op: store.VersionOpUpdate, Content: "A published"},
+			{EntityID: "FEAT-B", Face: "draft", Op: store.VersionOpRename, PrevID: "FEAT-A", Content: "B draft"},
+			{EntityID: "FEAT-B", Face: "published", Op: store.VersionOpRename, PrevID: "FEAT-A", Content: "B published"},
+			{EntityID: "FEAT-A", Face: "draft", Op: store.VersionOpCreate, Content: "reused A draft"},
+		} {
+			in.Type = "feature"
+			writeVersion(t, v, in)
+		}
+
+		for _, tc := range []struct {
+			ref  entity.Ref
+			want []string
+		}{
+			{entity.Ref{ID: "FEAT-B", Face: "draft"}, []string{"A draft", "B draft"}},
+			{entity.Ref{ID: "FEAT-B", Face: "published"}, []string{"A published", "B published"}},
+			{entity.Ref{ID: "FEAT-A", Face: "draft"}, []string{"reused A draft"}},
+			{entity.Ref{ID: "FEAT-A", Face: "published"}, nil},
+			{entity.Ref{ID: "FEAT-B"}, nil},
+		} {
+			metas, err := v.ListVersions(ctx(), tc.ref)
+			require.NoError(t, err, "%s", tc.ref)
+			require.Len(t, metas, len(tc.want), "%s", tc.ref)
+			for i, m := range metas {
+				assert.Equal(t, tc.ref.Face, m.Face, "%s version %d names its face", tc.ref, i+1)
+				snap, err := v.GetVersion(ctx(), tc.ref, i+1)
+				require.NoError(t, err)
+				assert.Equal(t, tc.want[i], snap.Content, "%s version %d", tc.ref, i+1)
+				assert.Equal(t, tc.ref.Face, snap.Face)
+			}
+		}
+	})
+
+	t.Run("UnaddressableRefHasNoHistory", func(t *testing.T) {
+		v := versionsOf(t, f(t))
+		writeVersion(t, v, store.VersionInput{
+			EntityID: "FEAT-A", Face: "draft", Op: store.VersionOpUpdate, Type: "feature", Content: "x",
+		})
+		for _, ref := range []entity.Ref{{}, {ID: "FEAT-A@draft"}, {ID: "FEAT-A", Face: "../x"}} {
+			metas, err := v.ListVersions(ctx(), ref)
+			require.NoError(t, err, "%q", ref)
+			assert.Empty(t, metas, "%q", ref)
+			_, err = v.GetVersion(ctx(), ref, 1)
+			assert.ErrorIs(t, err, store.ErrNotFound, "%q", ref)
+		}
 	})
 }
 

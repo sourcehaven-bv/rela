@@ -351,7 +351,7 @@ func (denyMutator) CreateRelation(
 	return nil, errors.New("writes are not expected in this test")
 }
 
-func (denyMutator) DeleteEntityFace(context.Context, string, entity.Face) (*entity.DeleteResult, error) {
+func (denyMutator) DeleteEntityFace(context.Context, string, entity.Face, bool) (*entity.DeleteResult, error) {
 	return nil, errors.New("writes are not expected in this test")
 }
 

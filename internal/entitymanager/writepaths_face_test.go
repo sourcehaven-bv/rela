@@ -295,7 +295,7 @@ func TestDeleteEntityFace_RecordsTheRowReadInsideTheTx(t *testing.T) {
 				t.Fatalf("entitymanager.New: %v", err)
 			}
 
-			res, err := mgr.DeleteEntityFace(context.Background(), "POL-1", "draft")
+			res, err := mgr.DeleteEntityFace(context.Background(), "POL-1", "draft", true)
 			if err != nil {
 				t.Fatalf("DeleteEntityFace: %v", err)
 			}

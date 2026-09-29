@@ -180,7 +180,7 @@ type EntityWriter interface {
 	CreateEntity(ctx context.Context, e *entity.Entity, opts entity.CreateOptions) (*entity.CreateResult, error)
 	PatchEntity(ctx context.Context, id string, p entity.Patch) (*entity.UpdateResult, error)
 	DeleteEntity(ctx context.Context, id string, cascade bool) (*entity.DeleteResult, error)
-	DeleteEntityFace(ctx context.Context, id string, face entity.Face) (*entity.DeleteResult, error)
+	DeleteEntityFace(ctx context.Context, id string, face entity.Face, cascade bool) (*entity.DeleteResult, error)
 	RenameEntity(
 		ctx context.Context, oldID, newID string, opts entity.RenameOptions,
 	) (*entity.RenameResult, error)

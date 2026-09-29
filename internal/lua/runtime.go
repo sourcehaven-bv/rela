@@ -2001,8 +2001,8 @@ func relationQuery(s *lua.LState) (store.RelationQuery, error) {
 // luaDeleteEntity implements rela.delete_entity(id, cascade?) -> boolean
 //
 // A bare id deletes the whole family. `ID@face` deletes that face and the
-// edges tailed at it, whatever cascade says: a face owns those edges
-// (BUG-J3PBFN).
+// edges tailed at it (BUG-J3PBFN). cascade guards every delete that removes
+// the entity, the last face included (RR-2466U1); the manager enforces it.
 func (r *Runtime) luaDeleteEntity(ls *lua.LState) int {
 	id := ls.CheckString(1)
 	if id == "" {
@@ -2036,7 +2036,7 @@ func deleteByAddress(ctx context.Context, em Mutator, addr string, cascade bool)
 		_, err = em.DeleteEntity(ctx, ref.ID, cascade)
 		return err
 	}
-	_, err = em.DeleteEntityFace(ctx, ref.ID, ref.Face)
+	_, err = em.DeleteEntityFace(ctx, ref.ID, ref.Face, cascade)
 	return err
 }
 

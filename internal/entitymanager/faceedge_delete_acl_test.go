@@ -158,7 +158,7 @@ func TestDeleteEntityFace_ContentEdgeAuthorizedByItsTail(t *testing.T) {
 		t.Run(b.name, func(t *testing.T) {
 			f := newFaceEdgeFixture(t, b)
 
-			res, err := f.mgr.DeleteEntityFace(asUser("drafter"), "POL-1", "draft")
+			res, err := f.mgr.DeleteEntityFace(asUser("drafter"), "POL-1", "draft", true)
 			if err != nil {
 				t.Fatalf("DeleteEntityFace POL-1@draft as drafter: %v", err)
 			}
@@ -185,7 +185,7 @@ func TestDeleteEntityFace_ContentEdgeDeniedWritesNothing(t *testing.T) {
 		t.Run(b.name, func(t *testing.T) {
 			f := newFaceEdgeFixture(t, b)
 
-			_, err := f.mgr.DeleteEntityFace(asUser("gated-drafter"), "POL-1", "draft")
+			_, err := f.mgr.DeleteEntityFace(asUser("gated-drafter"), "POL-1", "draft", true)
 
 			var forbidden *acl.ForbiddenError
 			if !errors.As(err, &forbidden) {
@@ -334,7 +334,7 @@ func TestDeleteEntityFace_SourceReadErrorAborts(t *testing.T) {
 		t.Fatalf("entitymanager.New: %v", err)
 	}
 
-	_, err = mgr.DeleteEntityFace(asUser("drafter"), "POL-1", "draft")
+	_, err = mgr.DeleteEntityFace(asUser("drafter"), "POL-1", "draft", true)
 
 	if !errors.Is(err, errTailRead) {
 		t.Fatalf("DeleteEntityFace = %v, want the tail read error", err)

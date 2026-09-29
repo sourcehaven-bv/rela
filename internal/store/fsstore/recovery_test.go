@@ -151,6 +151,52 @@ func TestDeleteEntity_PartialCascade_FirstRelationFails(t *testing.T) {
 	assert.Empty(t, res.DeletedEntities)
 }
 
+// A last-face delete takes every incident edge, so a failure part-way leaves
+// some relation files gone. Like DeleteFamily it reports those, drops them
+// from the index, and keeps the face (RR-2466U1, TKT-A23L87).
+func TestDeleteFace_LastFacePartialCascade_ReportsWhatWasRemoved(t *testing.T) {
+	mem := storage.NewMemFS()
+	ctx := context.Background()
+
+	s1 := openStore(t, mem)
+	require.NoError(t, s1.CreateEntity(ctx, entity.New("REQ-1", "requirement")))
+	require.NoError(t, s1.CreateEntity(ctx, entity.New("SOL-1", "solution")))
+	require.NoError(t, s1.CreateEntity(ctx, entity.New("SOL-2", "solution")))
+	for _, from := range []string{"SOL-1", "SOL-2"} {
+		_, err := s1.CreateRelation(ctx, from, "implements", "REQ-1", nil)
+		require.NoError(t, err)
+	}
+	require.NoError(t, s1.Close())
+
+	errFS := storage.NewErrorFS(mem)
+	errFS.RemoveError = errors.New("simulated I/O failure")
+	errFS.RemoveErrorOn = func(path string) bool {
+		return strings.Contains(path, "/relations/") && strings.Contains(path, "SOL-2")
+	}
+	rooted, err := storage.NewRootedFS(errFS, "/")
+	require.NoError(t, err)
+	cfg := newConfig(mem)
+	cfg.FS = errFS
+	cfg.Rooted = rooted
+	s2, err := fsstore.New(cfg)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, s2.Close()) }()
+
+	res, err := s2.DeleteFace(ctx, entity.Ref{ID: "REQ-1"})
+	require.Error(t, err)
+	require.NotNil(t, res)
+	require.Len(t, res.DeletedRelations, 1)
+	assert.Equal(t, "SOL-1", res.DeletedRelations[0].From)
+	assert.Empty(t, res.DeletedEntities)
+
+	_, err = s2.GetRelation(ctx, "SOL-1", "implements", "REQ-1")
+	require.Error(t, err, "the index must not list a removed relation")
+	_, err = s2.GetRelation(ctx, "SOL-2", "implements", "REQ-1")
+	require.NoError(t, err)
+	_, err = s2.GetEntity(ctx, entity.Ref{ID: "REQ-1"})
+	require.NoError(t, err, "the face survives a failed delete")
+}
+
 // --- Orphaned temp file cleanup ---
 
 func TestRecovery_OrphanedEntityTempFile(t *testing.T) {

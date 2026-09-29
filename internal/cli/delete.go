@@ -27,11 +27,10 @@ type DeleteCmd struct {
 // the family standing (BUG-J3PBFN). Either way the row is found by its
 // address, so a faced entity is not reported missing.
 //
-// --cascade guards the family delete only. The edges tailed at a face are
-// that face's content, as its properties are, so a face delete always takes
-// them; the data-entry app and the Lua binding do the same. Deleting the last
-// face removes the entity, so it takes every incident edge, and the prompt
-// counts them.
+// --cascade guards every delete that removes the entity: the family delete,
+// and a face delete of the family's last face, which takes every incident
+// edge (RR-2466U1). The edges tailed at a face that is not the last are that
+// face's content, as its properties are, so such a delete always takes them.
 func (c *DeleteCmd) Run(ctx context.Context, svc *writeServices) error {
 	ref, err := entity.ParseRef(c.ID)
 	if err != nil {
@@ -46,7 +45,7 @@ func (c *DeleteCmd) Run(ctx context.Context, svc *writeServices) error {
 	if err != nil {
 		return fmt.Errorf("count relations of %s: %w", c.ID, err)
 	}
-	if totalRelations > 0 && !c.Cascade && ref.Face.IsDefault() {
+	if totalRelations > 0 && !c.Cascade && wholeEntity {
 		return fmt.Errorf("entity %s has %d relation(s); use --cascade to delete them too", c.ID, totalRelations)
 	}
 
@@ -76,7 +75,7 @@ func (c *DeleteCmd) Run(ctx context.Context, svc *writeServices) error {
 	if ref.Face.IsDefault() {
 		result, err = svc.EntityManager.DeleteEntity(ctx, ref.ID, c.Cascade)
 	} else {
-		result, err = svc.EntityManager.DeleteEntityFace(ctx, ref.ID, ref.Face)
+		result, err = svc.EntityManager.DeleteEntityFace(ctx, ref.ID, ref.Face, c.Cascade)
 	}
 	if err != nil {
 		if errors.Is(err, entitymanager.ErrHasRelations) {
@@ -106,7 +105,14 @@ func deleteTarget(ctx context.Context, st store.Store, ref entity.Ref) (*entity.
 		if len(family) == 0 {
 			return nil, false, store.ErrNotFound
 		}
-		return family[0], true, nil
+		// The prompt shows one row; pick the lowest face so it is stable.
+		first := family[0]
+		for _, e := range family[1:] {
+			if e.Face < first.Face {
+				first = e
+			}
+		}
+		return first, true, nil
 	}
 	for _, e := range family {
 		if e.Face == ref.Face {

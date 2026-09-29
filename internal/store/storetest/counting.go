@@ -28,7 +28,7 @@ import (
 // optional capabilities above, so the count moves with store.Store rather than
 // with this type.
 //
-//plimsoll:max-exported-methods=22
+//plimsoll:max-exported-methods=20
 type Counting struct {
 	store.Store
 

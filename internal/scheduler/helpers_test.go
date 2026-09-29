@@ -145,7 +145,7 @@ func (stubMutator) CreateRelation(
 	return nil, errStubMutator
 }
 
-func (stubMutator) DeleteEntityFace(context.Context, string, entity.Face) (*entity.DeleteResult, error) {
+func (stubMutator) DeleteEntityFace(context.Context, string, entity.Face, bool) (*entity.DeleteResult, error) {
 	return nil, errStubMutator
 }
 

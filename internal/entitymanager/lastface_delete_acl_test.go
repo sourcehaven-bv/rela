@@ -7,6 +7,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -48,7 +49,7 @@ func TestDeleteEntityFace_LastFaceAuthorizesInboundEdges(t *testing.T) {
 		t.Run(b.name, func(t *testing.T) {
 			f := lastFaceFixture(t, b)
 
-			_, err := f.mgr.DeleteEntityFace(asUser("drafter"), "POL-1", "draft")
+			_, err := f.mgr.DeleteEntityFace(asUser("drafter"), "POL-1", "draft", true)
 			var forbidden *acl.ForbiddenError
 			if !errors.As(err, &forbidden) {
 				t.Fatalf("DeleteEntityFace as drafter = %v, want *acl.ForbiddenError for the inbound edge", err)
@@ -71,7 +72,7 @@ func TestDeleteEntityFace_LastFaceRemovesInboundEdges(t *testing.T) {
 		t.Run(b.name, func(t *testing.T) {
 			f := lastFaceFixture(t, b)
 
-			res, err := f.mgr.DeleteEntityFace(asUser("admin"), "POL-1", "draft")
+			res, err := f.mgr.DeleteEntityFace(asUser("admin"), "POL-1", "draft", true)
 			if err != nil {
 				t.Fatalf("DeleteEntityFace as admin: %v", err)
 			}
@@ -105,11 +106,43 @@ func TestDeleteEntityFace_NotLastKeepsInboundEdges(t *testing.T) {
 			}
 			// drafter cannot delete a covers edge, so success also shows the
 			// inbound edge was not part of the authorized cascade.
-			if _, err := f.mgr.DeleteEntityFace(asUser("drafter"), "POL-1", "draft"); err != nil {
+			if _, err := f.mgr.DeleteEntityFace(asUser("drafter"), "POL-1", "draft", true); err != nil {
 				t.Fatalf("DeleteEntityFace as drafter: %v", err)
 			}
 			if n := f.inboundCovers(t); n != 1 {
 				t.Errorf("inbound edges = %d, want 1", n)
+			}
+		})
+	}
+}
+
+// Without cascade, the last face with edges is refused like a family delete,
+// and nothing is written.
+func TestDeleteEntityFace_LastFaceNeedsCascade(t *testing.T) {
+	for _, b := range concBackends {
+		t.Run(b.name, func(t *testing.T) {
+			f := lastFaceFixture(t, b)
+			_, err := f.mgr.DeleteEntityFace(asUser("admin"), "POL-1", "draft", false)
+			if !errors.Is(err, entitymanager.ErrHasRelations) {
+				t.Fatalf("DeleteEntityFace without cascade = %v, want ErrHasRelations", err)
+			}
+			if _, gErr := f.st.GetEntity(context.Background(), entity.Ref{ID: "POL-1", Face: "draft"}); gErr != nil {
+				t.Errorf("POL-1@draft must survive: %v", gErr)
+			}
+			if n := f.deleteRecords(); n != 0 {
+				t.Errorf("a refused delete wrote %d delete audit records, want 0", n)
+			}
+		})
+	}
+}
+
+// A face that is not the last takes its own edges without cascade.
+func TestDeleteEntityFace_NotLastIgnoresCascade(t *testing.T) {
+	for _, b := range concBackends {
+		t.Run(b.name, func(t *testing.T) {
+			f := newFaceEdgeFixture(t, b)
+			if _, err := f.mgr.DeleteEntityFace(asUser("drafter"), "POL-1", "draft", false); err != nil {
+				t.Fatalf("DeleteEntityFace without cascade: %v", err)
 			}
 		})
 	}

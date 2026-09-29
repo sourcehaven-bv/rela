@@ -26,24 +26,54 @@ var bareRefGuard = guard{
 //
 // The match is syntactic, like the other guards here. A literal is a Ref when
 // its type is an identifier `Ref` or a selector ending in `.Ref` (any import
-// alias); entity.Ref is the only type of that name in the module. Not caught:
+// alias); entity.Ref is the only type of that name in the module. An element
+// of a slice, array or map literal of Refs, whose type is elided, counts too.
+// Not caught:
 // a face variable that happens to be empty, a positional literal, and
 // entity.ParseRef of a bare id handed to the store. Review covers those; the
 // CLI address helper and the resolver are the sanctioned parsers.
 func bareRefs(fset *token.FileSet, file *ast.File) []token.Position {
 	var found []token.Position
-	ast.Inspect(file, func(n ast.Node) bool {
-		lit, ok := n.(*ast.CompositeLit)
-		if !ok || !isRefType(lit.Type) {
-			return true
-		}
+	check := func(lit *ast.CompositeLit) {
 		face, hasFace := keyValue(lit, "Face")
 		if _, hasID := keyValue(lit, "ID"); hasID && (!hasFace || isEmptyString(face)) {
 			found = append(found, fset.Position(lit.Pos()))
 		}
+	}
+	ast.Inspect(file, func(n ast.Node) bool {
+		lit, ok := n.(*ast.CompositeLit)
+		if !ok {
+			return true
+		}
+		if isRefType(lit.Type) {
+			check(lit)
+			return true
+		}
+		if refElem(lit.Type) {
+			for _, elt := range lit.Elts {
+				if kv, ok := elt.(*ast.KeyValueExpr); ok {
+					elt = kv.Value
+				}
+				if inner, ok := elt.(*ast.CompositeLit); ok && inner.Type == nil {
+					check(inner)
+				}
+			}
+		}
 		return true
 	})
 	return found
+}
+
+// refElem reports whether t is a slice, array or map type whose element is a
+// Ref, so its elements may be written with the type elided.
+func refElem(t ast.Expr) bool {
+	switch t := t.(type) {
+	case *ast.ArrayType:
+		return isRefType(t.Elt)
+	case *ast.MapType:
+		return isRefType(t.Value)
+	}
+	return false
 }
 
 func isRefType(e ast.Expr) bool {
@@ -112,6 +142,10 @@ func TestBareRefs(t *testing.T) {
 		{"in a call", `st.GetEntity(ctx, entity.Ref{ID: id})`, 1},
 		{"other type", `r := store.RelationKey{ID: id}; _ = r`, 0},
 		{"entity's own ref", `st.GetEntity(ctx, e.Ref())`, 0},
+		{"elided in a slice", `rs := []entity.Ref{{ID: id}, {ID: id, Face: face}}; _ = rs`, 1},
+		{"elided in an array", `rs := [1]entity.Ref{{ID: id}}; _ = rs`, 1},
+		{"elided in a map", `m := map[string]entity.Ref{"k": {ID: id}}; _ = m`, 1},
+		{"slice of another type", `rs := []store.RelationKey{{ID: id}}; _ = rs`, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

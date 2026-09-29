@@ -87,7 +87,7 @@ type appEntityWriter interface {
 	DeleteRelation(ctx context.Context, from, relType, to string) error
 	// The two face-addressed deletes are here for the script runtime's
 	// Mutator, which App hands a.entityManager as.
-	DeleteEntityFace(ctx context.Context, id string, face entity.Face) (*entity.DeleteResult, error)
+	DeleteEntityFace(ctx context.Context, id string, face entity.Face, cascade bool) (*entity.DeleteResult, error)
 	DeleteRelationState(ctx context.Context, from string, face entity.Face, relType, to string) error
 }
 

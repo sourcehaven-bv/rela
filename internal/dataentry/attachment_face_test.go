@@ -276,7 +276,7 @@ func TestFacedAttachment_FaceDeleteDropsUnreferencedBytes(t *testing.T) {
 			t.Fatalf("upload %s = %d (%s)", up.addr, rec.Code, rec.Body)
 		}
 	}
-	if _, err := app.write.manager.DeleteEntityFace(bob, "TKT-1", "draft"); err != nil {
+	if _, err := app.write.manager.DeleteEntityFace(bob, "TKT-1", "draft", true); err != nil {
 		t.Fatalf("delete draft face: %v", err)
 	}
 	if got := storedContents(t, app); !slices.Equal(got, []string{"p.txt"}) {

@@ -50,7 +50,7 @@ type entityMutator interface {
 	DeleteEntity(ctx context.Context, id string, cascade bool) (*entityPkg.DeleteResult, error)
 	// DeleteEntityFace removes ONE non-bare content state — what a DELETE
 	// addressed to `ID@face` means. See entitymanager.Manager.DeleteEntityFace.
-	DeleteEntityFace(ctx context.Context, id string, face entityPkg.Face) (*entityPkg.DeleteResult, error)
+	DeleteEntityFace(ctx context.Context, id string, face entityPkg.Face, cascade bool) (*entityPkg.DeleteResult, error)
 	CreateRelation(
 		ctx context.Context, from, relType, to string, opts entityPkg.RelationOptions,
 	) (*entityPkg.Relation, error)
@@ -912,7 +912,7 @@ func (h *writeHandler) handleV1DeleteEntity(w http.ResponseWriter, r *http.Reque
 	if ref.Face.IsDefault() {
 		_, err = h.manager.DeleteEntity(r.Context(), ref.ID, true)
 	} else {
-		_, err = h.manager.DeleteEntityFace(r.Context(), ref.ID, ref.Face)
+		_, err = h.manager.DeleteEntityFace(r.Context(), ref.ID, ref.Face, true)
 	}
 	if err != nil {
 		if writeForbiddenIfACLDenied(w, err) {

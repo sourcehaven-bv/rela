@@ -284,7 +284,7 @@ func (m *mockManager) CreateRelation(
 }
 
 func (m *mockManager) DeleteEntityFace(
-	ctx context.Context, id string, face entity.Face,
+	ctx context.Context, id string, face entity.Face, _ bool,
 ) (*entity.DeleteResult, error) {
 	m.deletedFace = face
 	m.faceDeleteCalls++

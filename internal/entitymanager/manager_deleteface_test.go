@@ -61,7 +61,7 @@ func TestDeleteEntityFace_RemovesOnlyTheFaceAndItsTail(t *testing.T) {
 	}
 
 	before := len(mem.Records())
-	res, err := mgr.DeleteEntityFace(ctx, "REQ-1", published)
+	res, err := mgr.DeleteEntityFace(ctx, "REQ-1", published, true)
 	if err != nil {
 		t.Fatalf("DeleteEntityFace: %v", err)
 	}
@@ -133,13 +133,13 @@ func TestDeleteEntityFace_RefusesTheBareFace(t *testing.T) {
 	// "Delete the bare face" is either the whole entity or undefined; neither
 	// is what a caller who spelled a face meant, so it is refused rather than
 	// guessed — and nothing is removed.
-	if _, dErr := mgr.DeleteEntityFace(ctx, "REQ-1", ""); dErr == nil {
+	if _, dErr := mgr.DeleteEntityFace(ctx, "REQ-1", "", true); dErr == nil {
 		t.Fatal("deleting the bare face through DeleteEntityFace must be refused")
 	}
 	if _, gErr := st.GetEntity(ctx, entity.Ref{ID: "REQ-1"}); gErr != nil {
 		t.Errorf("a refused delete must leave the entity: %v", gErr)
 	}
-	if _, dErr := mgr.DeleteEntityFace(ctx, "REQ-1", "published"); dErr == nil {
+	if _, dErr := mgr.DeleteEntityFace(ctx, "REQ-1", "published", true); dErr == nil {
 		t.Fatal("a face the entity does not have must be not-found")
 	}
 }

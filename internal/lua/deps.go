@@ -26,7 +26,7 @@ import (
 type EntityReader interface {
 	// GetAddress reads an entity ADDRESS (`ID` or `ID@face`), not an id: a
 	// bare id resolves in the reader's world. A store does not satisfy this
-	// method, because its GetEntity takes an id.
+	// method, because its GetEntity takes an entity.Ref.
 	GetAddress(ctx context.Context, addr string) (*entity.Entity, error)
 	ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error]
 	ListRelations(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error]
@@ -127,7 +127,7 @@ type Mutator interface {
 	UpdateEntity(ctx context.Context, e *entity.Entity) (*entity.UpdateResult, error)
 	PatchEntity(ctx context.Context, id string, p entity.Patch) (*entity.UpdateResult, error)
 	DeleteEntity(ctx context.Context, id string, cascade bool) (*entity.DeleteResult, error)
-	DeleteEntityFace(ctx context.Context, id string, face entity.Face) (*entity.DeleteResult, error)
+	DeleteEntityFace(ctx context.Context, id string, face entity.Face, cascade bool) (*entity.DeleteResult, error)
 	CreateRelation(ctx context.Context, from, relType, to string, opts entity.RelationOptions) (*entity.Relation, error)
 	DeleteRelationState(ctx context.Context, from string, face entity.Face, relType, to string) error
 }

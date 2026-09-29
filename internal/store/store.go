@@ -1136,6 +1136,8 @@ type TypeWatermark interface {
 //
 // A lineage is per (id, face): the history of POL-1@concept never folds in
 // POL-1@vastgesteld. Ref{ID: id} reads the implicit face of a faceless type.
+// A ref that no row can have (see storeutil.Addressable) has no history: an
+// empty timeline and ErrNotFound for every version.
 //
 // NOTE for read-path callers: a face's history is as sensitive as the face,
 // and the face is caller-supplied. A surface that lets a principal name a

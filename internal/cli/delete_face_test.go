@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
@@ -169,5 +170,22 @@ func TestDeleteTarget_LastFaceIsTheWholeEntity(t *testing.T) {
 	}
 	if _, _, err = deleteTarget(ctx, svc.Store, entity.Ref{ID: "POL-1", Face: "published"}); err == nil {
 		t.Error("deleteTarget(deleted face) succeeded, want ErrNotFound")
+	}
+}
+
+// --cascade guards the last face too: deleting it removes the entity.
+func TestDeleteCmd_LastFaceNeedsCascade(t *testing.T) {
+	ctx := context.Background()
+	svc := facedCLIServices(t)
+	withOutput(t, output.FormatTable)
+	if _, err := svc.Store.DeleteFace(ctx, entity.Ref{ID: "POL-1", Face: "published"}); err != nil {
+		t.Fatalf("delete published: %v", err)
+	}
+	err := (&DeleteCmd{ID: "POL-1@draft", Force: true}).Run(ctx, svc)
+	if err == nil || !strings.Contains(err.Error(), "use --cascade") {
+		t.Fatalf("last-face delete without --cascade = %v, want the refusal", err)
+	}
+	if err = (&DeleteCmd{ID: "POL-1@draft", Force: true, Cascade: true}).Run(ctx, svc); err != nil {
+		t.Fatalf("delete POL-1@draft --cascade: %v", err)
 	}
 }

@@ -291,8 +291,10 @@ func serveHistoryVersion(a *App,
 	}
 	// The snapshot's type must match the URL type — otherwise a deleted entity
 	// of type A could be read via /_history/B/<A-id> under B's read verdict
-	// (the cross-type leak). Mismatch → indistinguishable 404.
-	if snap.Type != typeName {
+	// (the cross-type leak). The face must match too, as restore checks: the
+	// row gate ran for subjectRef.Face, so a snapshot of another face would
+	// be served under the wrong grant. Mismatch → indistinguishable 404.
+	if snap.Type != typeName || snap.Face != subjectRef.Face {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 		return
 	}

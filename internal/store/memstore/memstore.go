@@ -56,13 +56,14 @@ import (
 // capability exists to remove. Interface-driven like the Tx split above.
 //
 // (43 → 45 / 29 → 30 with content states, TKT-DOFYR1: a per-face read
-// (GetEntity on a Ref since TKT-KQXVF7) joined the mandated store.Store interface; rekeyFamily serves the
-// family-wide rename that contract requires.)
+// (GetEntity on a Ref since TKT-KQXVF7) joined the mandated store.Store
+// interface; rekeyFamily serves the family-wide rename that contract
+// requires.)
 //
 // (+2 methods / +2 exported with per-face delete, TKT-C1XUA8:
-// DeleteFace (then DeleteEntityState) and DeleteRelationState joined the mandated
-// store.Store interface. Required-interface exception, not accreted
-// API — the counts ratchet only if store.Store itself narrows.)
+// DeleteFace and DeleteRelationState joined the mandated store.Store
+// interface. Required-interface exception, not accreted API — the counts
+// ratchet only if store.Store itself narrows.)
 //
 // +1 (TKT-9KZGJO): per-face index notification joined the observer
 // dispatch when indexers stopped skipping non-default faces. One
@@ -75,8 +76,8 @@ import (
 // CAS precondition has to be evaluated atomically with the write, so it
 // cannot live anywhere but on the type that owns the write.
 //
-//plimsoll:max-methods=54
-//plimsoll:max-exported-methods=34
+//plimsoll:max-methods=52
+//plimsoll:max-exported-methods=32
 type MemStore struct {
 	// txMu serializes an open Tx against ordinary writers: Tx holds it
 	// for the whole callback, every exported write method takes it

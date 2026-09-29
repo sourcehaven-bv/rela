@@ -142,7 +142,7 @@ func TestAliasHook_FiresOnFaceDelete(t *testing.T) {
 		t.Fatalf("seed draft face: %v", err)
 	}
 
-	if _, err := mgr.DeleteEntityFace(t.Context(), "TSK-1", "draft"); err != nil {
+	if _, err := mgr.DeleteEntityFace(t.Context(), "TSK-1", "draft", true); err != nil {
 		t.Fatalf("DeleteEntityFace: %v", err)
 	}
 	if len(rw.faceDeletes) != 1 || rw.faceDeletes[0] != "TSK-1@draft" {
@@ -176,7 +176,7 @@ func TestFaceDelete_DropsTheRealCommentThread(t *testing.T) {
 		}
 	}
 
-	if _, err := mgr.DeleteEntityFace(ctx, "TSK-1", "draft"); err != nil {
+	if _, err := mgr.DeleteEntityFace(ctx, "TSK-1", "draft", true); err != nil {
 		t.Fatalf("DeleteEntityFace: %v", err)
 	}
 

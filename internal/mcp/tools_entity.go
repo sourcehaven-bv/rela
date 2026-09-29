@@ -424,12 +424,16 @@ func (s *Server) handleDeleteEntity(
 	// manager's own counts include edges to hidden entities, so reporting
 	// them would disclose how many hidden neighbors the entity has.
 	//
-	// cascade guards the family delete only: the edges tailed at a face are
-	// that face's content, so a face delete always takes them, including
-	// any to a target the caller cannot see (the manager authorizes each).
-	visible := visibleDeleteScopeCount(ctx, st, ref)
-	faceDelete := !ref.Face.IsDefault()
-	if !cascade && !faceDelete && visible > 0 {
+	// cascade guards every delete that removes the entity: the family, or
+	// its last face (RR-2466U1). The edges tailed at a face that is not the
+	// last are that face's content, so such a delete always takes them,
+	// including any to a target the caller cannot see (the manager
+	// authorizes each). "Last" is judged on the faces the caller can read,
+	// so a hidden sibling only makes the check stricter, never an oracle;
+	// the manager applies the same rule to the stored family.
+	wholeEntity := wholeEntityDelete(ctx, st, ref)
+	visible := visibleDeleteScopeCount(ctx, st, ref, wholeEntity)
+	if !cascade && wholeEntity && visible > 0 {
 		return errorResult(
 			fmt.Sprintf("entity %s has %d relation(s); set cascade=true to delete them too", id, visible)), nil
 	}
@@ -438,14 +442,14 @@ func (s *Server) handleDeleteEntity(
 	if ref.Face.IsDefault() {
 		_, delErr = snap.deps.EntityManager.DeleteEntity(ctx, ref.ID, cascade)
 	} else {
-		_, delErr = snap.deps.EntityManager.DeleteEntityFace(ctx, ref.ID, ref.Face)
+		_, delErr = snap.deps.EntityManager.DeleteEntityFace(ctx, ref.ID, ref.Face, cascade)
 	}
 	if delErr != nil {
 		return errorResult(delErr.Error()), nil
 	}
 
 	msg := "Deleted " + id
-	if (cascade || faceDelete) && visible > 0 {
+	if (cascade || !wholeEntity) && visible > 0 {
 		msg += fmt.Sprintf(" and %d relation(s)", visible)
 	}
 	return textResult(msg), nil
@@ -512,11 +516,22 @@ func visibleRelationCount(ctx context.Context, st GraphReader, id string) int {
 	return n
 }
 
-// visibleDeleteScopeCount counts the visible edges a delete of ref removes:
-// every incident edge for a family, the outgoing edges tailed at the face for
-// a face.
-func visibleDeleteScopeCount(ctx context.Context, st GraphReader, ref entity.Ref) int {
+// wholeEntityDelete reports whether a delete of ref removes the entity: a
+// bare id always does, a face does when it is the only face the caller can
+// read.
+func wholeEntityDelete(ctx context.Context, st GraphReader, ref entity.Ref) bool {
 	if ref.Face.IsDefault() {
+		return true
+	}
+	fam, found, err := st.Family(ctx, ref.ID)
+	return err != nil || !found || len(fam.Faces) <= 1
+}
+
+// visibleDeleteScopeCount counts the visible edges a delete of ref removes:
+// every incident edge when the entity goes, the outgoing edges tailed at the
+// face otherwise.
+func visibleDeleteScopeCount(ctx context.Context, st GraphReader, ref entity.Ref, wholeEntity bool) int {
+	if wholeEntity {
 		return visibleRelationCount(ctx, st, ref.ID)
 	}
 	face := ref.Face

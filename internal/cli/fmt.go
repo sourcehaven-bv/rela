@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
-
 	"github.com/Sourcehaven-BV/rela/internal/errors"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )

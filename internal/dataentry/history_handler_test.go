@@ -28,7 +28,9 @@ func (h historyStore) ListVersions(_ context.Context, ref entity.Ref) ([]store.V
 	snaps := h.versions[entity.FormatStateRef(ref.ID, ref.Face)]
 	metas := make([]store.VersionMeta, 0, len(snaps))
 	for _, s := range snaps {
-		metas = append(metas, s.VersionMeta)
+		m := s.VersionMeta
+		m.Face = ref.Face // as every backend stamps it
+		metas = append(metas, m)
 	}
 	return metas, nil
 }
@@ -39,6 +41,7 @@ func (h historyStore) GetVersion(_ context.Context, ref entity.Ref, version int)
 		return nil, store.ErrNotFound
 	}
 	s := snaps[version-1]
+	s.Face = ref.Face // as every backend stamps it
 	return &s, nil
 }
 
