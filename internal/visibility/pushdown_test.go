@@ -8,7 +8,9 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
 
 // countingRedactor records how many rows it redacted and strips "secret".
@@ -245,5 +247,65 @@ func TestListPushdown_DeclinesWhenNotApplicable(t *testing.T) {
 		context.Background(), stubProvider{}, seededSpy(), red.redact, q,
 	); ok {
 		t.Error("pushdown accepted a zero ReadQueryResult instead of falling back")
+	}
+}
+
+// An AllFaces list through the pushdown, for a principal with a scoped,
+// face-restricted grant, returns exactly the face rows that satisfy the scope
+// and sit inside the grant's faces. This is the access delta of TKT-KQXVF7:
+// before face selections were required, the template ran in the default world
+// and a faced entity with no default row was never listed.
+func TestListPushdown_AllFacesScopedPrincipalGetsGrantedFaceRowsOnly(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st := memstore.New()
+	for _, e := range []*entity.Entity{
+		{ID: "POL-1", Type: "policy"},
+		{ID: "POL-2", Type: "policy", Face: "published"},
+		{ID: "POL-2", Type: "policy", Face: "draft"},
+		{ID: "POL-3", Type: "policy", Face: "published"},
+		{ID: "alice", Type: "user"},
+	} {
+		if err := st.CreateEntity(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, to := range []string{"POL-1", "POL-2"} {
+		if _, err := st.CreateRelation(ctx, "alice", "reviews", to, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	d, err := acl.NewDeclarative(&acl.Policy{
+		Roles:         map[string]acl.RoleDef{"reviewer": {Read: []string{"policy@published"}}},
+		RoleRelations: map[string]acl.RoleRelationDef{"reviews": {Confers: "reviewer"}},
+	}, acl.NewStoreGraph(st), st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := d.ForPrincipal(principal.Principal{User: "alice", Tool: principal.ToolDataEntry})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rqr := req.ReadQuery(ctx, "policy")
+	if rqr.Query == nil {
+		t.Fatalf("want a scoped verdict, got %+v", rqr)
+	}
+	identity := func(_ context.Context, e *entity.Entity) *entity.Entity { return e }
+	seq, ok := listPushdown(ctx, stubProvider{res: rqr}, st, identity,
+		store.EntityQuery{Type: "policy", Faces: store.AllFaces()})
+	if !ok {
+		t.Fatal("pushdown declined a composable query")
+	}
+	rows, err := drain(t, seq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, e := range rows {
+		got = append(got, e.ID+"@"+e.Face.String())
+	}
+	if len(got) != 1 || got[0] != "POL-2@published" {
+		t.Fatalf("rows = %v, want [POL-2@published]: POL-1 has no granted face, POL-2@draft is "+
+			"outside the grant's faces, POL-3 is outside the scope", got)
 	}
 }

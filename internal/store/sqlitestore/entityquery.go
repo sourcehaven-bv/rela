@@ -173,7 +173,8 @@ func buildEntityCountSQL(q store.EntityQuery) (sqlText string, args []any) {
 // faceSelectionCond renders a selection that ranks nothing as a row
 // predicate on alias's face column (alias "" for an unqualified column): the
 // default world is `face = ”`, AtFaces is set membership (an empty set is
-// `0`, matching nothing), and AllFaces has no condition (""). A non-default
+// `0`, matching nothing), AllFaces has no condition ("") and the zero
+// selection is `0`. A non-default
 // InWorld selection is never passed here; it needs worldSQL's rank as well.
 func faceSelectionCond(b *sqlBuilder, sel store.FaceSelection, alias string) string {
 	col := "face"
@@ -192,6 +193,9 @@ func faceSelectionCond(b *sqlBuilder, sel store.FaceSelection, alias string) str
 	}
 	if sel.IsAll() {
 		return ""
+	}
+	if sel.IsZero() {
+		return "0" // fail closed: a caller that skipped Validate reads nothing
 	}
 	return col + " = ''"
 }

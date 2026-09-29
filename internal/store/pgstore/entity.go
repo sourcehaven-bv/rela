@@ -1165,23 +1165,12 @@ func entityScopeWhere(q store.EntityQuery, candidate string, args *[]any) string
 	return " WHERE " + strings.Join(conds, " AND ")
 }
 
-// appendFaceInCond ANDs the FaceIn set beside whatever scope predicate the
-// caller already built (TKT-O7R2A1).
-//
-// It sits BESIDE the world's candidate predicate rather than replacing it, and
-// before the rank: the world proposes candidates, this narrows them, and the
-// caller's DISTINCT ON still picks exactly one row per id. An entity whose
-// top-choice face is excluded therefore falls through to the next candidate
-// the reader may see instead of vanishing.
-//
-// Empty set: no condition. Nil FaceIn means every face, which is what every
-// pre-faces caller and every wildcard read grant passes, so the emitted SQL is
-// byte-identical to before.
 // faceSelectionCond renders a selection that ranks nothing as a row
 // predicate on alias's face column (alias "" for an unqualified column): the
 // default world is `face = ”`, AtFaces is `face = ANY($n)` (an empty set is
-// `false`), and AllFaces has no condition (""). A non-default InWorld
-// selection is never passed here; it needs worldSQL's rank as well.
+// `false`), AllFaces has no condition ("") and the zero selection is `false`.
+// A non-default InWorld selection is never passed here; it needs worldSQL's
+// rank as well.
 func faceSelectionCond(sel store.FaceSelection, alias string, args *[]any) string {
 	col := "face"
 	if alias != "" {
@@ -1201,9 +1190,24 @@ func faceSelectionCond(sel store.FaceSelection, alias string, args *[]any) strin
 	if sel.IsAll() {
 		return ""
 	}
+	if sel.IsZero() {
+		return "false" // fail closed: a caller that skipped Validate reads nothing
+	}
 	return col + " = ''"
 }
 
+// appendFaceInCond ANDs the FaceIn set beside whatever scope predicate the
+// caller already built (TKT-O7R2A1).
+//
+// It sits BESIDE the world's candidate predicate rather than replacing it, and
+// before the rank: the world proposes candidates, this narrows them, and the
+// caller's DISTINCT ON still picks exactly one row per id. An entity whose
+// top-choice face is excluded therefore falls through to the next candidate
+// the reader may see instead of vanishing.
+//
+// Empty set: no condition. Nil FaceIn means every face, which is what every
+// pre-faces caller and every wildcard read grant passes, so the emitted SQL is
+// byte-identical to before.
 func appendFaceInCond(conds []string, faces []entity.Face, args *[]any) []string {
 	if len(faces) == 0 {
 		return conds

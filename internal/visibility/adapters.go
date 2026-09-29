@@ -37,6 +37,8 @@ type DeclarativeGate struct {
 }
 
 // WithWorld returns a copy of g whose traversals gate their endpoints in w.
+// The gate does not follow the request: a caller that reads in a non-default
+// world must call this, or its gated hops read the default world.
 func (g DeclarativeGate) WithWorld(w store.WorldScope) DeclarativeGate {
 	g.world = w
 	return g
