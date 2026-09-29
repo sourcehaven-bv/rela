@@ -831,7 +831,7 @@ func TestFacedAddress_SingleRelationPatchHitsItsOwnTail(t *testing.T) {
 
 	noteAt := func(face entity.Face) string {
 		t.Helper()
-		rel, err := edgeOnFace(ctx, app.store, "POL-1", face, "cites", "FEAT-1")
+		rel, err := app.store.GetRelation(ctx, entity.RelationKey{From: "POL-1", FromFace: face, Type: "cites", To: "FEAT-1"})
 		if err != nil {
 			t.Fatalf("read %s-tailed edge: %v", face, err)
 		}

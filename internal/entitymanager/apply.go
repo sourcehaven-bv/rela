@@ -319,7 +319,7 @@ func (m *Manager) ApplyRelation(ctx context.Context, r *entity.Relation) (*entit
 
 	// Addressed by tail as well as triple: two edges on one triple with
 	// different tails are two relations (BUG-64MU2Q).
-	_, getErr := getRelationOnFace(ctx, m.deps.Store, r.From, r.FromFace, r.Type, r.To)
+	_, getErr := m.deps.Store.GetRelation(ctx, r.Identity())
 	op, err := resolveUpsertOp(getErr, audit.OpCreateRelation, audit.OpUpdateRelation)
 	if err != nil {
 		return nil, fmt.Errorf("entitymanager: ApplyRelation: existence check for %s: %w", r.Key(), err)

@@ -181,6 +181,10 @@ type attachMeta struct {
 // CAS precondition has to be evaluated atomically with the write, so it
 // cannot live anywhere but on the type that owns the write.
 //
+// -2 exported (TKT-KQXVF7): UpdateRelationState and
+// DeleteRelationState folded into UpdateRelation and DeleteRelation, which
+// now take an entity.RelationKey that carries the tail.
+//
 //plimsoll:max-methods=94
 //plimsoll:max-exported-methods=35
 type FSStore struct {

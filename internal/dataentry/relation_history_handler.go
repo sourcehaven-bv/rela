@@ -419,10 +419,12 @@ func restoreRelationHistoryVersion(a *App,
 	// through the entitymanager, which authorizes, validates endpoints, and
 	// audits. A missing endpoint surfaces as ErrEntityNotFound → 409.
 	//
-	// Liveness is probed on the addressed tail for the same reason:
-	// store.GetRelation reads the default tail, so a live faced edge would
-	// look absent and take the create branch.
-	_, liveErr := edgeOnFace(ctx, a.store, from, fromRef.Face, relType, to)
+	// Liveness is probed on the addressed tail for the same reason: a probe
+	// of the default tail would find a live faced edge absent and take the
+	// create branch.
+	_, liveErr := a.store.GetRelation(ctx, entityPkg.RelationKey{
+		From: from, FromFace: fromRef.Face, Type: relType, To: to,
+	})
 	var writeErr error
 	if liveErr == nil {
 		_, writeErr = a.entityManager.UpdateRelation(ctx, from, relType, to, opts)

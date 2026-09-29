@@ -2300,7 +2300,7 @@ func (m *Manager) CreateRelation(
 	// tails are two relations, so a faced create must not be rejected by
 	// the default face's edge (BUG-64MU2Q). Advisory either way — the
 	// store's atomic create below is the real guard.
-	if _, gErr := getRelationOnFace(ctx, m.deps.Store, from, opts.FromFace, relType, to); gErr == nil {
+	if _, gErr := m.deps.Store.GetRelation(ctx, entity.RelationKey{From: from, FromFace: opts.FromFace, Type: relType, To: to}); gErr == nil {
 		return nil, fmt.Errorf("%w: %s --%s--> %s", ErrRelationAlreadyExists,
 			entity.FormatStateRef(from, opts.FromFace), relType, to)
 	}
@@ -2406,12 +2406,13 @@ func (m *Manager) UpdateRelation(
 	var rel *entity.Relation
 	var oldProps map[string]any
 	err := m.deps.Store.Tx(ctx, func(view store.Store) error {
-		// Addressed by TAIL as well as triple (BUG-64MU2Q): GetRelation reads
-		// the default-tail edge, so on a faced source it would load a
-		// DIFFERENT edge and the merge below would write the caller's
-		// properties onto it.
+		// Addressed by TAIL as well as triple (BUG-64MU2Q): the default-tail
+		// edge is a DIFFERENT relation on a faced source, and the merge below
+		// would write the caller's properties onto it.
 		var gErr error
-		rel, gErr = getRelationOnFace(ctx, view, from, opts.FromFace, relType, to)
+		rel, gErr = view.GetRelation(ctx, entity.RelationKey{
+			From: from, FromFace: opts.FromFace, Type: relType, To: to,
+		})
 		if gErr != nil {
 			return fmt.Errorf("%w: %s --%s--> %s", ErrRelationNotFound,
 				entity.FormatStateRef(from, opts.FromFace), relType, to)
@@ -2491,7 +2492,7 @@ func (m *Manager) DeleteRelationState(
 	//
 	// Addressed by tail: reading the default edge here would version and audit
 	// a different relation than the one being deleted.
-	rel, getErr := getRelationOnFace(ctx, m.deps.Store, from, face, relType, to)
+	rel, getErr := m.deps.Store.GetRelation(ctx, entity.RelationKey{From: from, FromFace: face, Type: relType, To: to})
 	// Capture the final pre-delete version BEFORE the store delete, while the
 	// live row (and its rel_record_id) still exists — the same order-before
 	// rationale as entity delete. Skipped if the relation was already gone.
