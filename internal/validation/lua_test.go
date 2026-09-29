@@ -68,7 +68,7 @@ func newMockWorkspace() *mockWorkspace {
 	for _, e := range entities {
 		_ = st.CreateEntity(ctx, e)
 	}
-	_, _ = st.CreateRelation(ctx, "TKT-001", "child-of", "PARENT-001", nil)
+	_, _ = st.CreateRelation(ctx, entity.RelationKey{From: "TKT-001", Type: "child-of", To: "PARENT-001"}, nil)
 
 	return &mockWorkspace{meta: meta, store: st}
 }

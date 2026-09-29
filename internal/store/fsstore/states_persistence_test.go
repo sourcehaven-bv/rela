@@ -39,7 +39,7 @@ func TestStatePersistence_FamilySurvivesReopen(t *testing.T) {
 	draft.Properties["status"] = "open"
 	require.NoError(t, s1.CreateEntity(ctx, draft))
 
-	_, err := s1.CreateRelation(ctx, "REQ-1", "refines", "REQ-1", nil)
+	_, err := s1.CreateRelation(ctx, entity.RelationKey{From: "REQ-1", Type: "refines", To: "REQ-1"}, nil)
 	require.NoError(t, err)
 	require.NoError(t, s1.Close())
 

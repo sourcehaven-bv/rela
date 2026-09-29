@@ -17,13 +17,12 @@ import (
 
 // --- RelationReader ---
 
-// GetRelation returns a relation by its three-part key, or
-// store.ErrNotFound. It addresses the DEFAULT-tail edge of the triple
-// (TKT-DOFYR1) — see store.RelationData.FromFace.
-func (s *Store) GetRelation(ctx context.Context, from, relType, to string) (*entity.Relation, error) {
+// GetRelation returns the relation at k, tail included, or
+// store.ErrNotFound.
+func (s *Store) GetRelation(ctx context.Context, k entity.RelationKey) (*entity.Relation, error) {
 	const q = `SELECT from_id, from_face, rel_type, to_id, properties, content, updated_at
-	           FROM relations WHERE from_id = $1 AND rel_type = $2 AND to_id = $3 AND from_face = ''`
-	r, err := scanRelation(s.db.QueryRow(ctx, q, from, relType, to))
+	           FROM relations WHERE from_id = $1 AND rel_type = $2 AND to_id = $3 AND from_face = $4`
+	r, err := scanRelation(s.db.QueryRow(ctx, q, k.From, k.Type, k.To, string(k.FromFace)))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
@@ -117,24 +116,22 @@ func (s *Store) CountRelations(ctx context.Context, q store.RelationQuery) (int,
 
 // --- RelationWriter ---
 
-// CreateRelation inserts a new relation. Returns store.ErrConflict if the
-// (from, type, to) key already exists.
+// CreateRelation inserts a new relation at k. Returns store.ErrConflict if
+// the key, tail included, already exists.
 func (s *Store) CreateRelation(
-	ctx context.Context, from, relType, to string, data *store.RelationData,
+	ctx context.Context, k entity.RelationKey, data *store.RelationData,
 ) (*entity.Relation, error) {
-	for _, id := range []string{from, to} {
+	for _, id := range []string{k.From, k.To} {
 		if err := validateID(id); err != nil {
 			return nil, err
 		}
 	}
-	if err := storeutil.ValidateRelationType(relType); err != nil {
+	if err := storeutil.ValidateRelationType(k.Type); err != nil {
 		return nil, err
 	}
-	var fp entity.Face
 	var props map[string]any
 	content := ""
 	if data != nil {
-		fp = data.FromFace
 		content = data.Content
 		props = data.Properties
 	}
@@ -156,7 +153,7 @@ func (s *Store) CreateRelation(
 		VALUES ($1, $2, $3, $4, $5, $6, now(), $7, $8)
 		ON CONFLICT (from_id, from_face, rel_type, to_id) DO NOTHING
 		RETURNING from_id, from_face, rel_type, to_id, properties, content, updated_at`
-	r, err := scanRelation(tx.QueryRow(ctx, q, from, fp, relType, to, rawProps, content,
+	r, err := scanRelation(tx.QueryRow(ctx, q, k.From, string(k.FromFace), k.Type, k.To, rawProps, content,
 		editorUser, editorTool))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrConflict
@@ -165,7 +162,7 @@ func (s *Store) CreateRelation(
 		return nil, err
 	}
 
-	ev := store.Event{Op: store.EventRelationCreated, RelationType: relType, From: from, To: to, Face: fp}
+	ev := store.Event{Op: store.EventRelationCreated, RelationType: k.Type, From: k.From, To: k.To, Face: k.FromFace}
 	s.notify(ctx, tx, ev)
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
@@ -174,24 +171,11 @@ func (s *Store) CreateRelation(
 	return r, nil
 }
 
-// UpdateRelation overwrites the DEFAULT-tail edge's data. Returns
-// store.ErrNotFound if it does not exist. Nil data.Properties clears the
-// property set. UpdateRelationState is the general form.
+// UpdateRelation overwrites the data of the edge at k, tail included
+// (BUG-64MU2Q). Returns store.ErrNotFound if it does not exist. Nil
+// data.Properties clears the property set.
 func (s *Store) UpdateRelation(
-	ctx context.Context, from, relType, to string, data store.RelationData,
-) (*entity.Relation, error) {
-	return s.UpdateRelationState(ctx, from, "", relType, to, data)
-}
-
-// UpdateRelationState updates the edge with EXACTLY this tail (BUG-64MU2Q).
-//
-// The tail is part of a relation's identity, so addressing the wrong one
-// writes the caller's properties onto a DIFFERENT edge rather than failing —
-// the same hazard DeleteRelationState exists to make unavailable.
-//
-// data.FromFace is ignored; p is the address.
-func (s *Store) UpdateRelationState(
-	ctx context.Context, from string, p entity.Face, relType, to string, data store.RelationData,
+	ctx context.Context, k entity.RelationKey, data store.RelationData,
 ) (*entity.Relation, error) {
 	rawProps, err := marshalProps(data.Properties)
 	if err != nil {
@@ -211,8 +195,8 @@ func (s *Store) UpdateRelationState(
 		    last_edited_by_user = $6, last_edited_by_tool = $7
 		WHERE from_id = $1 AND rel_type = $2 AND to_id = $3 AND from_face = $8
 		RETURNING from_id, from_face, rel_type, to_id, properties, content, updated_at`
-	r, err := scanRelation(tx.QueryRow(ctx, q, from, relType, to, rawProps, data.Content,
-		editorUser, editorTool, string(p)))
+	r, err := scanRelation(tx.QueryRow(ctx, q, k.From, k.Type, k.To, rawProps, data.Content,
+		editorUser, editorTool, string(k.FromFace)))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
@@ -221,7 +205,7 @@ func (s *Store) UpdateRelationState(
 	}
 
 	ev := store.Event{
-		Op: store.EventRelationUpdated, RelationType: relType, From: from, To: to, Face: p,
+		Op: store.EventRelationUpdated, RelationType: k.Type, From: k.From, To: k.To, Face: k.FromFace,
 	}
 	s.notify(ctx, tx, ev)
 	if err := tx.Commit(ctx); err != nil {
@@ -231,19 +215,9 @@ func (s *Store) UpdateRelationState(
 	return r, nil
 }
 
-// DeleteRelation removes a relation. Returns store.ErrNotFound if absent.
-//
-// Addresses the DEFAULT-tail edge; DeleteRelationState is the general form.
-func (s *Store) DeleteRelation(ctx context.Context, from, relType, to string) error {
-	return s.DeleteRelationState(ctx, from, "", relType, to)
-}
-
-// DeleteRelationState removes the edge with EXACTLY this tail. The tail is
-// part of a relation's identity, so addressing the wrong one deletes a
-// different edge rather than failing (TKT-C1XUA8).
-func (s *Store) DeleteRelationState(
-	ctx context.Context, from string, p entity.Face, relType, to string,
-) error {
+// DeleteRelation removes the edge at k, tail included (TKT-C1XUA8).
+// Returns store.ErrNotFound if absent.
+func (s *Store) DeleteRelation(ctx context.Context, k entity.RelationKey) error {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return err
@@ -252,7 +226,7 @@ func (s *Store) DeleteRelationState(
 
 	const q = `DELETE FROM relations
 	           WHERE from_id = $1 AND rel_type = $2 AND to_id = $3 AND from_face = $4`
-	tag, err := tx.Exec(ctx, q, from, relType, to, string(p))
+	tag, err := tx.Exec(ctx, q, k.From, k.Type, k.To, string(k.FromFace))
 	if err != nil {
 		return err
 	}
@@ -262,13 +236,13 @@ func (s *Store) DeleteRelationState(
 
 	// Record a tombstone in the same tx so the durable manifest can report the
 	// removal after the live row is gone (FEAT-NJ9FEN).
-	if err := s.writeRelationTombstone(ctx, tx, from, p, relType, to); err != nil {
+	if err := s.writeRelationTombstone(ctx, tx, k.From, k.FromFace, k.Type, k.To); err != nil {
 		return err
 	}
 
 	ev := store.Event{
-		Op: store.EventRelationDeleted, RelationType: relType,
-		From: from, To: to, Face: p,
+		Op: store.EventRelationDeleted, RelationType: k.Type,
+		From: k.From, To: k.To, Face: k.FromFace,
 	}
 	s.notify(ctx, tx, ev)
 	if err := tx.Commit(ctx); err != nil {

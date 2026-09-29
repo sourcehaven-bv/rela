@@ -159,7 +159,7 @@ func newWorld(t *testing.T) *world {
 		{"SEC-3", "relates", "SEC-4"},
 		{"SEC-4", "relates", "SEC-3"},
 	} {
-		if _, err := st.CreateRelation(ctx, r[0], r[1], r[2], nil); err != nil {
+		if _, err := st.CreateRelation(ctx, entity.RelationKey{From: r[0], Type: r[1], To: r[2]}, nil); err != nil {
 			t.Fatalf("seed relation %v: %v", r, err)
 		}
 	}

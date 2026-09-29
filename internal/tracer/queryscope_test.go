@@ -41,7 +41,7 @@ func TestTraceFrom_IgnoresQueryScopes(t *testing.T) {
 	archived.SetString("status", "gearchiveerd")
 	require.NoError(t, s.CreateEntity(t.Context(), archived))
 
-	_, err := s.CreateRelation(t.Context(), "DEC-1", "implements", "REQ-1", nil)
+	_, err := s.CreateRelation(t.Context(), entity.RelationKey{From: "DEC-1", Type: "implements", To: "REQ-1"}, nil)
 	require.NoError(t, err)
 
 	result := tracer.New(s, store.WorldScope{}).TraceFrom(t.Context(), "DEC-1", 0)

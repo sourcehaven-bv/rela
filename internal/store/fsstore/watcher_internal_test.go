@@ -175,7 +175,7 @@ func TestExternalRelationDelete(t *testing.T) {
 
 	require.NoError(t, s.CreateEntity(context.Background(), &entity.Entity{ID: "A", Type: "ticket"}))
 	require.NoError(t, s.CreateEntity(context.Background(), &entity.Entity{ID: "B", Type: "ticket"}))
-	_, err := s.CreateRelation(context.Background(), "A", "blocks", "B", nil)
+	_, err := s.CreateRelation(context.Background(), entity.RelationKey{From: "A", Type: "blocks", To: "B"}, nil)
 	require.NoError(t, err)
 
 	ch, cancel := s.Subscribe(16)

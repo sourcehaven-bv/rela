@@ -3,6 +3,7 @@ package acl
 import (
 	"context"
 	"errors"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"log/slog"
 
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -36,7 +37,7 @@ func NewStoreGraph(s store.Store) *StoreGraph { return &StoreGraph{S: s} }
 // request, and scanning the full outgoing-by-relType list per call
 // is a quadratic foot-cannon on densely-connected nodes.
 func (g *StoreGraph) HasEdge(ctx context.Context, from, relType, to string) bool {
-	_, err := g.S.GetRelation(ctx, from, relType, to)
+	_, err := g.S.GetRelation(ctx, entity.RelationKey{From: from, Type: relType, To: to})
 	if err == nil {
 		return true
 	}

@@ -77,8 +77,7 @@ relations:
 		to   string
 		tail entity.Face
 	}{{"EPIC-D", "draft"}, {"EPIC-P", "published"}} {
-		if _, err := app.store.CreateRelation(context.Background(), "PRJ-A", "has-epic", e.to,
-			&store.RelationData{FromFace: e.tail}); err != nil {
+		if _, err := app.store.CreateRelation(context.Background(), entity.RelationKey{From: "PRJ-A", FromFace: e.tail, Type: "has-epic", To: e.to}, &store.RelationData{}); err != nil {
 			t.Fatalf("seed PRJ-A has-epic %s: %v", e.to, err)
 		}
 	}

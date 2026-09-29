@@ -41,7 +41,7 @@ func buildLookupACL(t *testing.T) *acl.Declarative {
 	if err := ms.CreateEntity(ctx, entity.New("ROLE-MD", "rol")); err != nil {
 		t.Fatalf("create ROLE-MD: %v", err)
 	}
-	if _, err := ms.CreateRelation(ctx, "PERS-JV", "heeft_rol", "ROLE-MD", nil); err != nil {
+	if _, err := ms.CreateRelation(ctx, entity.RelationKey{From: "PERS-JV", Type: "heeft_rol", To: "ROLE-MD"}, nil); err != nil {
 		t.Fatalf("create heeft_rol: %v", err)
 	}
 

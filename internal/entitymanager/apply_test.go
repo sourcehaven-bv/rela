@@ -277,7 +277,7 @@ func TestApplyRelation_UpsertAndAudit(t *testing.T) {
 		t.Fatalf("ApplyRelation (second): %v", err)
 	}
 
-	if _, err := st.GetRelation(ctx, "REQ-1", "has-checklist", "CL-1"); err != nil {
+	if _, err := st.GetRelation(ctx, entity.RelationKey{From: "REQ-1", Type: "has-checklist", To: "CL-1"}); err != nil {
 		t.Fatalf("relation not persisted: %v", err)
 	}
 
@@ -322,7 +322,7 @@ func TestApplyRelation_RejectsInvalidType(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an invalid-relation error for a reversed relation type")
 	}
-	if _, getErr := st.GetRelation(ctx, "CL-1", "has-checklist", "REQ-1"); getErr == nil {
+	if _, getErr := st.GetRelation(ctx, entity.RelationKey{From: "CL-1", Type: "has-checklist", To: "REQ-1"}); getErr == nil {
 		t.Fatal("invalid relation was persisted")
 	}
 }

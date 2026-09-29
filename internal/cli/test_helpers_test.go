@@ -35,7 +35,7 @@ func (ss *storeSeeder) addEntity(b *testutil.EntityBuilder) {
 }
 
 func (ss *storeSeeder) addRelation(from, relType, to string) {
-	if _, err := ss.s.CreateRelation(context.Background(), from, relType, to, nil); err != nil {
+	if _, err := ss.s.CreateRelation(context.Background(), entity.RelationKey{From: from, Type: relType, To: to}, nil); err != nil {
 		panic(err)
 	}
 }

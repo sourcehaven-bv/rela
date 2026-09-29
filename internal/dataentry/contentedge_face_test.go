@@ -68,8 +68,7 @@ func contentEdgeApp(t *testing.T, reader contentEdgeReader) (*App, *acl.Declarat
 		{"cites", "FEAT-PUB", "published"},
 		{"implements", "FEAT-1", ""},
 	} {
-		if _, err := app.store.CreateRelation(ctx, "POL-1", e.typ, e.to,
-			&store.RelationData{FromFace: e.tail}); err != nil {
+		if _, err := app.store.CreateRelation(ctx, entity.RelationKey{From: "POL-1", FromFace: e.tail, Type: e.typ, To: e.to}, &store.RelationData{}); err != nil {
 			t.Fatalf("seed POL-1 %s %s: %v", e.typ, e.to, err)
 		}
 	}

@@ -46,7 +46,7 @@ func relationWorkspace(
 		}
 	}
 	for _, r := range rels {
-		if _, err := st.CreateRelation(ctx, r[0], r[1], r[2], nil); err != nil {
+		if _, err := st.CreateRelation(ctx, entity.RelationKey{From: r[0], Type: r[1], To: r[2]}, nil); err != nil {
 			t.Fatalf("create relation %v: %v", r, err)
 		}
 	}

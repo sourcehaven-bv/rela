@@ -30,7 +30,7 @@ func TestTx_ReadsViaOuterHandleDoNotDeadlock(t *testing.T) {
 	if err := s.CreateEntity(ctx, entity.New("SOL-1", "solution")); err != nil {
 		t.Fatalf("seed entity: %v", err)
 	}
-	if _, err := s.CreateRelation(ctx, "REQ-1", "satisfied-by", "SOL-1", nil); err != nil {
+	if _, err := s.CreateRelation(ctx, entity.RelationKey{From: "REQ-1", Type: "satisfied-by", To: "SOL-1"}, nil); err != nil {
 		t.Fatalf("seed relation: %v", err)
 	}
 
@@ -42,7 +42,7 @@ func TestTx_ReadsViaOuterHandleDoNotDeadlock(t *testing.T) {
 			if _, err := s.GetEntity(ctx, entity.Ref{ID: "REQ-1"}); err != nil {
 				return err
 			}
-			if _, err := s.GetRelation(ctx, "REQ-1", "satisfied-by", "SOL-1"); err != nil {
+			if _, err := s.GetRelation(ctx, entity.RelationKey{From: "REQ-1", Type: "satisfied-by", To: "SOL-1"}); err != nil {
 				return err
 			}
 			for _, err := range s.ListRelations(ctx, store.RelationQuery{

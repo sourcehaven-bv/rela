@@ -2,6 +2,7 @@ package pgstore_test
 
 import (
 	"context"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"testing"
 	"time"
 
@@ -29,9 +30,7 @@ func relRecordID(ctx context.Context, t *testing.T, pool *pgxpool.Pool, from, re
 func newRelVersionInput(recordID int64, from, relType, to, content string) store.RelationVersionInput {
 	return store.RelationVersionInput{
 		RecordID:      recordID,
-		From:          from,
-		Type:          relType,
-		To:            to,
+		Key:           entity.RelationKey{From: from, Type: relType, To: to},
 		Content:       content,
 		Properties:    map[string]any{"weight": "high"},
 		SchemaHash:    "schema-rel",
@@ -50,8 +49,7 @@ func TestRelationVersionWriteAndList(t *testing.T) {
 	t.Cleanup(func() { _ = s.Close() })
 	ctx := context.Background()
 
-	_, err = s.CreateRelation(ctx, "TKT-1", "blocks", "TKT-2",
-		&store.RelationData{Content: "first", Properties: map[string]any{"weight": "high"}})
+	_, err = s.CreateRelation(ctx, entity.RelationKey{From: "TKT-1", Type: "blocks", To: "TKT-2"}, &store.RelationData{Content: "first", Properties: map[string]any{"weight": "high"}})
 	require.NoError(t, err)
 	rid := relRecordID(ctx, t, pool, "TKT-1", "blocks", "TKT-2")
 
@@ -63,7 +61,7 @@ func TestRelationVersionWriteAndList(t *testing.T) {
 	u.Op = store.VersionOpUpdate
 	require.NoError(t, s.VersionStore().WriteRelationVersion(ctx, u))
 
-	metas, err := s.VersionStore().ListRelationVersions(ctx, store.RelationHistoryQuery{From: "TKT-1", Type: "blocks", To: "TKT-2"})
+	metas, err := s.VersionStore().ListRelationVersions(ctx, store.RelationHistoryQuery{Key: entity.RelationKey{From: "TKT-1", Type: "blocks", To: "TKT-2"}})
 	require.NoError(t, err)
 	require.Len(t, metas, 2)
 	require.Equal(t, 1, metas[0].Version)
@@ -72,7 +70,7 @@ func TestRelationVersionWriteAndList(t *testing.T) {
 	require.Equal(t, store.VersionOpUpdate, metas[1].Op)
 	require.Equal(t, "alice", metas[1].PrincipalUser)
 
-	snap, err := s.VersionStore().GetRelationVersion(ctx, store.RelationHistoryQuery{From: "TKT-1", Type: "blocks", To: "TKT-2"}, 1)
+	snap, err := s.VersionStore().GetRelationVersion(ctx, store.RelationHistoryQuery{Key: entity.RelationKey{From: "TKT-1", Type: "blocks", To: "TKT-2"}}, 1)
 	require.NoError(t, err)
 	require.Equal(t, "first", snap.Content)
 	require.Equal(t, "high", snap.Properties["weight"])
@@ -89,7 +87,7 @@ func TestRelationVersionDeletedKeyResolves(t *testing.T) {
 	t.Cleanup(func() { _ = s.Close() })
 	ctx := context.Background()
 
-	_, err = s.CreateRelation(ctx, "A", "links", "B", &store.RelationData{Content: "x"})
+	_, err = s.CreateRelation(ctx, entity.RelationKey{From: "A", Type: "links", To: "B"}, &store.RelationData{Content: "x"})
 	require.NoError(t, err)
 	rid := relRecordID(ctx, t, pool, "A", "links", "B")
 
@@ -101,10 +99,10 @@ func TestRelationVersionDeletedKeyResolves(t *testing.T) {
 	d := newRelVersionInput(rid, "A", "links", "B", "x")
 	d.Op = store.VersionOpDelete
 	require.NoError(t, s.VersionStore().WriteRelationVersion(ctx, d))
-	require.NoError(t, s.DeleteRelation(ctx, "A", "links", "B"))
+	require.NoError(t, s.DeleteRelation(ctx, entity.RelationKey{From: "A", Type: "links", To: "B"}))
 
 	// History must still be readable via the composite key (no live row now).
-	metas, err := s.VersionStore().ListRelationVersions(ctx, store.RelationHistoryQuery{From: "A", Type: "links", To: "B"})
+	metas, err := s.VersionStore().ListRelationVersions(ctx, store.RelationHistoryQuery{Key: entity.RelationKey{From: "A", Type: "links", To: "B"}})
 	require.NoError(t, err)
 	require.Len(t, metas, 2)
 	require.Equal(t, store.VersionOpDelete, metas[1].Op)
@@ -119,16 +117,16 @@ func TestRelationVersionRecreateStartsFreshLineage(t *testing.T) {
 	t.Cleanup(func() { _ = s.Close() })
 	ctx := context.Background()
 
-	_, err = s.CreateRelation(ctx, "A", "links", "B", &store.RelationData{Content: "gen1"})
+	_, err = s.CreateRelation(ctx, entity.RelationKey{From: "A", Type: "links", To: "B"}, &store.RelationData{Content: "gen1"})
 	require.NoError(t, err)
 	rid1 := relRecordID(ctx, t, pool, "A", "links", "B")
 	c1 := newRelVersionInput(rid1, "A", "links", "B", "gen1")
 	c1.Op = store.VersionOpCreate
 	require.NoError(t, s.VersionStore().WriteRelationVersion(ctx, c1))
-	require.NoError(t, s.DeleteRelation(ctx, "A", "links", "B"))
+	require.NoError(t, s.DeleteRelation(ctx, entity.RelationKey{From: "A", Type: "links", To: "B"}))
 
 	// Recreate the same triple — the row gets a fresh rel_record_id.
-	_, err = s.CreateRelation(ctx, "A", "links", "B", &store.RelationData{Content: "gen2"})
+	_, err = s.CreateRelation(ctx, entity.RelationKey{From: "A", Type: "links", To: "B"}, &store.RelationData{Content: "gen2"})
 	require.NoError(t, err)
 	rid2 := relRecordID(ctx, t, pool, "A", "links", "B")
 	require.NotEqual(t, rid1, rid2, "recreated relation must get a fresh rel_record_id")
@@ -139,10 +137,10 @@ func TestRelationVersionRecreateStartsFreshLineage(t *testing.T) {
 
 	// ListRelationVersions resolves to the CURRENT (gen2) lineage only — the
 	// gen1 history is not merged in.
-	metas, err := s.VersionStore().ListRelationVersions(ctx, store.RelationHistoryQuery{From: "A", Type: "links", To: "B"})
+	metas, err := s.VersionStore().ListRelationVersions(ctx, store.RelationHistoryQuery{Key: entity.RelationKey{From: "A", Type: "links", To: "B"}})
 	require.NoError(t, err)
 	require.Len(t, metas, 1, "current lineage only; gen1 not merged")
-	snap, err := s.VersionStore().GetRelationVersion(ctx, store.RelationHistoryQuery{From: "A", Type: "links", To: "B"}, 1)
+	snap, err := s.VersionStore().GetRelationVersion(ctx, store.RelationHistoryQuery{Key: entity.RelationKey{From: "A", Type: "links", To: "B"}}, 1)
 	require.NoError(t, err)
 	require.Equal(t, "gen2", snap.Content)
 }
@@ -181,7 +179,7 @@ func TestRelationVersionRenameAtomicPath(t *testing.T) {
 	// A live edge A--links-->X with a captured create version.
 	require.NoError(t, s.CreateEntity(ctx, mkEntity("A", "ticket", "")))
 	require.NoError(t, s.CreateEntity(ctx, mkEntity("X", "ticket", "")))
-	_, err = s.CreateRelation(ctx, "A", "links", "X", &store.RelationData{Content: "v1"})
+	_, err = s.CreateRelation(ctx, entity.RelationKey{From: "A", Type: "links", To: "X"}, &store.RelationData{Content: "v1"})
 	require.NoError(t, err)
 	rid := relRecordID(ctx, t, pool, "A", "links", "X")
 	c := newRelVersionInput(rid, "A", "links", "X", "v1")
@@ -207,7 +205,7 @@ func TestRelationVersionRenameAtomicPath(t *testing.T) {
 
 	// History via the new key is one continuous timeline on the surviving
 	// lineage: the pre-rename create + the rename row. No orphaned lineage.
-	metas, err := s.VersionStore().ListRelationVersions(ctx, store.RelationHistoryQuery{From: "A2", Type: "links", To: "X"})
+	metas, err := s.VersionStore().ListRelationVersions(ctx, store.RelationHistoryQuery{Key: entity.RelationKey{From: "A2", Type: "links", To: "X"}})
 	require.NoError(t, err)
 	require.Len(t, metas, 2, "continuous timeline on the surviving rel_record_id")
 	require.Equal(t, store.VersionOpCreate, metas[0].Op)
@@ -248,7 +246,7 @@ func TestRelationRenameDoesNotBumpUpdatedAt(t *testing.T) {
 
 	require.NoError(t, s.CreateEntity(ctx, mkEntity("A", "ticket", "")))
 	require.NoError(t, s.CreateEntity(ctx, mkEntity("X", "ticket", "")))
-	_, err = s.CreateRelation(ctx, "A", "links", "X", &store.RelationData{Content: "v1"})
+	_, err = s.CreateRelation(ctx, entity.RelationKey{From: "A", Type: "links", To: "X"}, &store.RelationData{Content: "v1"})
 	require.NoError(t, err)
 
 	var before string
@@ -276,11 +274,9 @@ func TestSweepCapturesSettledRelations(t *testing.T) {
 	t.Cleanup(func() { _ = s.Close() })
 	ctx := context.Background()
 
-	_, err = s.CreateRelation(ctx, "SET-A", "blocks", "SET-B",
-		&store.RelationData{Content: "settled"})
+	_, err = s.CreateRelation(ctx, entity.RelationKey{From: "SET-A", Type: "blocks", To: "SET-B"}, &store.RelationData{Content: "settled"})
 	require.NoError(t, err)
-	_, err = s.CreateRelation(ctx, "FRESH-A", "blocks", "FRESH-B",
-		&store.RelationData{Content: "fresh"})
+	_, err = s.CreateRelation(ctx, entity.RelationKey{From: "FRESH-A", Type: "blocks", To: "FRESH-B"}, &store.RelationData{Content: "fresh"})
 	require.NoError(t, err)
 	// Backdate the settled relation so the idle filter admits it.
 	_, err = pool.Exec(ctx,
@@ -291,17 +287,17 @@ func TestSweepCapturesSettledRelations(t *testing.T) {
 		pgstore.SweepConfig{Interval: 50 * time.Millisecond, Idle: time.Minute, MaxStaleness: time.Hour, Batch: 100})
 
 	require.Eventually(t, func() bool {
-		metas, e := s.VersionStore().ListRelationVersions(ctx, store.RelationHistoryQuery{From: "SET-A", Type: "blocks", To: "SET-B"})
+		metas, e := s.VersionStore().ListRelationVersions(ctx, store.RelationHistoryQuery{Key: entity.RelationKey{From: "SET-A", Type: "blocks", To: "SET-B"}})
 		return e == nil && len(metas) == 1 && metas[0].Op == store.VersionOpCreate
 	}, 3*time.Second, 25*time.Millisecond, "sweep should capture the settled relation once as create")
 
-	fresh, err := s.VersionStore().ListRelationVersions(ctx, store.RelationHistoryQuery{From: "FRESH-A", Type: "blocks", To: "FRESH-B"})
+	fresh, err := s.VersionStore().ListRelationVersions(ctx, store.RelationHistoryQuery{Key: entity.RelationKey{From: "FRESH-A", Type: "blocks", To: "FRESH-B"}})
 	require.NoError(t, err)
 	require.Empty(t, fresh, "fresh relation should not be versioned yet")
 
 	// Dedup: unchanged content produces no further versions across ticks.
 	time.Sleep(200 * time.Millisecond)
-	metas, err := s.VersionStore().ListRelationVersions(ctx, store.RelationHistoryQuery{From: "SET-A", Type: "blocks", To: "SET-B"})
+	metas, err := s.VersionStore().ListRelationVersions(ctx, store.RelationHistoryQuery{Key: entity.RelationKey{From: "SET-A", Type: "blocks", To: "SET-B"}})
 	require.NoError(t, err)
 	require.Len(t, metas, 1, "unchanged relation content must not duplicate versions")
 }

@@ -2340,10 +2340,9 @@ func (m *Manager) CreateRelation(
 		if err := m.assignManagedOrder(ctx, st, rel, relType); err != nil {
 			return err
 		}
-		_, err := st.CreateRelation(ctx, from, relType, to, &store.RelationData{
+		_, err := st.CreateRelation(ctx, entity.RelationKey{From: from, FromFace: opts.FromFace, Type: relType, To: to}, &store.RelationData{
 			Properties: rel.Properties,
 			Content:    rel.Content,
-			FromFace:   opts.FromFace,
 		})
 		return err
 	}
@@ -2436,11 +2435,10 @@ func (m *Manager) UpdateRelation(
 		// UpdateRelation, not upsert: the read above established the triple
 		// exists (else ErrRelationNotFound), so this is unambiguously an
 		// update (BUG-ZWTDH9).
-		_, wErr := view.UpdateRelationState(ctx, from, opts.FromFace, relType, to,
-			store.RelationData{
-				Properties: rel.Properties,
-				Content:    rel.Content,
-			})
+		_, wErr := view.UpdateRelation(ctx, entity.RelationKey{From: from, FromFace: opts.FromFace, Type: relType, To: to}, store.RelationData{
+			Properties: rel.Properties,
+			Content:    rel.Content,
+		})
 		return wErr
 	})
 	if err != nil {
@@ -2500,7 +2498,7 @@ func (m *Manager) DeleteRelationState(
 	if getErr == nil {
 		m.recordRelationVersion(ctx, store.VersionOpDelete, rel, "", "", "")
 	}
-	if err := m.deps.Store.DeleteRelationState(ctx, from, face, relType, to); err != nil {
+	if err := m.deps.Store.DeleteRelation(ctx, entity.RelationKey{From: from, FromFace: face, Type: relType, To: to}); err != nil {
 		return fmt.Errorf("delete relation: %w", err)
 	}
 	if getErr == nil {

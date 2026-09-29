@@ -24,7 +24,7 @@ func bodiesApp(t *testing.T) (*App, *storetest.Counting) {
 		}
 	}
 	for _, to := range []string{"TKT-A", "TKT-B"} {
-		if _, err := counting.CreateRelation(ctx, "TKT-ENTRY", "links", to, nil); err != nil {
+		if _, err := counting.CreateRelation(ctx, entity.RelationKey{From: "TKT-ENTRY", Type: "links", To: to}, nil); err != nil {
 			t.Fatal(err)
 		}
 	}

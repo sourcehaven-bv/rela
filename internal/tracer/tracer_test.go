@@ -30,8 +30,8 @@ func seedGraph(t *testing.T) *tracer.GenericTracer {
 	} {
 		require.NoError(t, s.CreateEntity(ctx(), e))
 	}
-	s.CreateRelation(ctx(), "A", "implements", "B", nil)
-	s.CreateRelation(ctx(), "B", "requires", "C", nil)
+	s.CreateRelation(ctx(), entity.RelationKey{From: "A", Type: "implements", To: "B"}, nil)
+	s.CreateRelation(ctx(), entity.RelationKey{From: "B", Type: "requires", To: "C"}, nil)
 
 	return tracer.New(s, store.WorldScope{})
 }
@@ -158,8 +158,8 @@ func TestHasCycle_WithCycle(t *testing.T) {
 	s := memstore.New()
 	s.CreateEntity(ctx(), entity.New("X", "t"))
 	s.CreateEntity(ctx(), entity.New("Y", "t"))
-	s.CreateRelation(ctx(), "X", "dep", "Y", nil)
-	s.CreateRelation(ctx(), "Y", "dep", "X", nil)
+	s.CreateRelation(ctx(), entity.RelationKey{From: "X", Type: "dep", To: "Y"}, nil)
+	s.CreateRelation(ctx(), entity.RelationKey{From: "Y", Type: "dep", To: "X"}, nil)
 
 	tr := tracer.New(s, store.WorldScope{})
 	assert.True(t, tr.HasCycle(ctx(), "X"))

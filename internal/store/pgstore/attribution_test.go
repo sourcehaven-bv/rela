@@ -2,6 +2,7 @@ package pgstore_test
 
 import (
 	"context"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"testing"
 	"time"
 
@@ -60,8 +61,7 @@ func TestAttributionColumnsStamped(t *testing.T) {
 
 	// Relations: create + update stamp the same columns.
 	require.NoError(t, s.CreateEntity(ctx, mkEntity("ATTR-2", "ticket", "peer")))
-	_, err = s.CreateRelation(attributedCtx("carol", "mcp"), "ATTR-1", "blocks", "ATTR-2",
-		&store.RelationData{Content: "why"})
+	_, err = s.CreateRelation(attributedCtx("carol", "mcp"), entity.RelationKey{From: "ATTR-1", Type: "blocks", To: "ATTR-2"}, &store.RelationData{Content: "why"})
 	require.NoError(t, err)
 	require.NoError(t, pool.QueryRow(ctx,
 		`SELECT last_edited_by_user, last_edited_by_tool FROM relations
@@ -70,7 +70,7 @@ func TestAttributionColumnsStamped(t *testing.T) {
 	require.Equal(t, "carol", *user)
 	require.Equal(t, "mcp", *tool)
 
-	_, err = s.UpdateRelation(ctx, "ATTR-1", "blocks", "ATTR-2", store.RelationData{Content: "changed"})
+	_, err = s.UpdateRelation(ctx, entity.RelationKey{From: "ATTR-1", Type: "blocks", To: "ATTR-2"}, store.RelationData{Content: "changed"})
 	require.NoError(t, err)
 	require.NoError(t, pool.QueryRow(ctx,
 		`SELECT last_edited_by_user, last_edited_by_tool FROM relations
@@ -94,7 +94,7 @@ func TestSweepAttributesRealEditor(t *testing.T) {
 		mkEntity("WHO-1", "ticket", "policy text")))
 	require.NoError(t, s.CreateEntity(ctx, mkEntity("WHO-2", "ticket", "peer")))
 	_, err = s.CreateRelation(attributedCtx("alice@example.com", "data-entry"),
-		"WHO-1", "blocks", "WHO-2", &store.RelationData{Content: "reason"})
+		entity.RelationKey{From: "WHO-1", Type: "blocks", To: "WHO-2"}, &store.RelationData{Content: "reason"})
 	require.NoError(t, err)
 
 	// Backdate so both settle past the idle window.
@@ -119,12 +119,12 @@ func TestSweepAttributesRealEditor(t *testing.T) {
 
 	require.Eventually(t, func() bool {
 		rm, e := s.VersionStore().ListRelationVersions(ctx,
-			store.RelationHistoryQuery{From: "WHO-1", Type: "blocks", To: "WHO-2"})
+			store.RelationHistoryQuery{Key: entity.RelationKey{From: "WHO-1", Type: "blocks", To: "WHO-2"}})
 		return e == nil && len(rm) == 1
 	}, 3*time.Second, 25*time.Millisecond)
 
 	rm, err := s.VersionStore().ListRelationVersions(ctx,
-		store.RelationHistoryQuery{From: "WHO-1", Type: "blocks", To: "WHO-2"})
+		store.RelationHistoryQuery{Key: entity.RelationKey{From: "WHO-1", Type: "blocks", To: "WHO-2"}})
 	require.NoError(t, err)
 	require.Equal(t, "alice@example.com", rm[0].PrincipalUser)
 	require.Equal(t, "data-entry", rm[0].PrincipalTool)

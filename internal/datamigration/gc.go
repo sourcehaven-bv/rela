@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"log/slog"
 	"strings"
 	"time"
@@ -242,7 +243,7 @@ func dropRelationProperty(ctx context.Context, x *Exec, relType, prop string) (S
 		}
 		delete(r.Properties, prop)
 		data := store.RelationData{Properties: r.Properties, Content: r.Content}
-		if _, err := x.Store.UpdateRelation(ctx, r.From, r.Type, r.To, data); err != nil {
+		if _, err := x.Store.UpdateRelation(ctx, entity.RelationKey{From: r.From, Type: r.Type, To: r.To}, data); err != nil {
 			return res, err
 		}
 	}

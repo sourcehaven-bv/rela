@@ -58,8 +58,7 @@ func facedCLIServices(t *testing.T) *writeServices {
 		}
 	}
 	for _, face := range []entity.Face{"draft", "published"} {
-		if _, err := st.CreateRelation(ctx, "POL-1", "implements", "CTL-1",
-			&store.RelationData{FromFace: face}); err != nil {
+		if _, err := st.CreateRelation(ctx, entity.RelationKey{From: "POL-1", FromFace: face, Type: "implements", To: "CTL-1"}, &store.RelationData{}); err != nil {
 			t.Fatalf("seed edge: %v", err)
 		}
 	}

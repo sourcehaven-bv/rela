@@ -559,11 +559,12 @@ func (imp *Importer) importRelation(rd *RelationData) (created bool, err error) 
 	}
 
 	var data *store.RelationData
-	if len(rd.Properties) > 0 || !tail.IsDefault() {
-		data = &store.RelationData{Properties: rd.Properties, FromFace: tail}
+	if len(rd.Properties) > 0 {
+		data = &store.RelationData{Properties: rd.Properties}
 	}
 
-	if _, err := imp.store.CreateRelation(ctx, from.ID, rd.Relation, rd.To, data); err != nil {
+	k := entity.RelationKey{From: from.ID, FromFace: tail, Type: rd.Relation, To: rd.To}
+	if _, err := imp.store.CreateRelation(ctx, k, data); err != nil {
 		return false, fmt.Errorf("failed to create relation: %w", err)
 	}
 

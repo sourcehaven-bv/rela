@@ -2,6 +2,7 @@ package analysis_test
 
 import (
 	"context"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"strings"
 	"testing"
 
@@ -33,8 +34,7 @@ func addOrderedRelation(s store.Store, to string, order any) {
 	if order != nil {
 		props[metamodel.OrderPropertyOut] = order
 	}
-	if _, err := s.CreateRelation(context.Background(), "REC-1", "has-step", to,
-		&store.RelationData{Properties: props}); err != nil {
+	if _, err := s.CreateRelation(context.Background(), entity.RelationKey{From: "REC-1", Type: "has-step", To: to}, &store.RelationData{Properties: props}); err != nil {
 		panic(err)
 	}
 }

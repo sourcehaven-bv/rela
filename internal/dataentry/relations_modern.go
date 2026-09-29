@@ -504,8 +504,9 @@ func (h *writeHandler) writeCreateRelation(
 	// Soft condition (type-allowlist mismatch): write directly through
 	// the store, skipping the workspace's pre-write validation. Safe
 	// because the EntityManager already ran the ACL above.
-	data := &store.RelationData{Properties: finalProps, Content: finalContent, FromFace: tail}
-	if _, sErr := h.store.CreateRelation(ctx, from, relType, to, data); sErr != nil {
+	data := &store.RelationData{Properties: finalProps, Content: finalContent}
+	k := entity.RelationKey{From: from, FromFace: tail, Type: relType, To: to}
+	if _, sErr := h.store.CreateRelation(ctx, k, data); sErr != nil {
 		return &relationError{
 			RelType: relType, Target: ref.ID, Op: "create",
 			Reason: "create_failed", Err: sErr,
@@ -560,7 +561,7 @@ func (h *writeHandler) writeUpdateRelation(
 		}
 		finalProps, finalContent, _ := mergeEdgeMeta(current, ref)
 		data := store.RelationData{Properties: finalProps, Content: finalContent}
-		_, sErr := view.UpdateRelationState(ctx, from, tail, relType, to, data)
+		_, sErr := view.UpdateRelation(ctx, entity.RelationKey{From: from, FromFace: tail, Type: relType, To: to}, data)
 		return sErr
 	})
 	if txErr != nil {

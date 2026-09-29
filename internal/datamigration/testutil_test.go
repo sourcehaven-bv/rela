@@ -179,8 +179,7 @@ func seedStore(t *testing.T) store.Store {
 			t.Fatalf("seed %s: %v", e.ID, err)
 		}
 	}
-	if _, err := st.CreateRelation(ctx, "TSK-1", "assigned-to", "PER-1",
-		&store.RelationData{Properties: map[string]any{"weight": "high"}}); err != nil {
+	if _, err := st.CreateRelation(ctx, entity.RelationKey{From: "TSK-1", Type: "assigned-to", To: "PER-1"}, &store.RelationData{Properties: map[string]any{"weight": "high"}}); err != nil {
 		t.Fatalf("seed relation: %v", err)
 	}
 	return st

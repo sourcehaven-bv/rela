@@ -676,7 +676,7 @@ func doCommentsAs(
 func TestComments_FacedThreadUnderRelationConferredGrant(t *testing.T) {
 	app := commentsApp(t)
 	seedDraftTicket(t, app)
-	_, err := app.store.CreateRelation(t.Context(), "alice", "owned-by", "TKT-001", nil)
+	_, err := app.store.CreateRelation(t.Context(), entity.RelationKey{From: "alice", Type: "owned-by", To: "TKT-001"}, nil)
 	require.NoError(t, err)
 
 	const draftPath = "/api/v1/_comments/ticket/TKT-001@draft"

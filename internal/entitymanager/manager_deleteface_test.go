@@ -49,14 +49,13 @@ func TestDeleteEntityFace_RemovesOnlyTheFaceAndItsTail(t *testing.T) {
 	}
 	// An edge tailed at the PUBLISHED face, one at the BARE face, and an
 	// INCOMING edge from DEC-1 to the entity.
-	if _, rErr := st.CreateRelation(ctx, "REQ-1", "addresses", "DEC-1",
-		&store.RelationData{FromFace: published}); rErr != nil {
+	if _, rErr := st.CreateRelation(ctx, entity.RelationKey{From: "REQ-1", FromFace: published, Type: "addresses", To: "DEC-1"}, &store.RelationData{}); rErr != nil {
 		t.Fatalf("seed published-tail edge: %v", rErr)
 	}
-	if _, rErr := st.CreateRelation(ctx, "REQ-1", "addresses", "DEC-1", nil); rErr != nil {
+	if _, rErr := st.CreateRelation(ctx, entity.RelationKey{From: "REQ-1", Type: "addresses", To: "DEC-1"}, nil); rErr != nil {
 		t.Fatalf("seed bare-tail edge: %v", rErr)
 	}
-	if _, rErr := st.CreateRelation(ctx, "DEC-1", "addresses", "REQ-1", nil); rErr != nil {
+	if _, rErr := st.CreateRelation(ctx, entity.RelationKey{From: "DEC-1", Type: "addresses", To: "REQ-1"}, nil); rErr != nil {
 		t.Fatalf("seed incoming edge: %v", rErr)
 	}
 

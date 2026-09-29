@@ -4,6 +4,7 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"strings"
 
 	mcpgo "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -122,9 +123,17 @@ func (h schemaResourceHandler) handleReadRelation(
 		return nil, fmt.Errorf("invalid relation URI: %s", uri)
 	}
 	fromID, relType, toID := segments[0], segments[1], segments[2]
+	// The from segment names the tail: `ID` for an identity edge, `ID@face`
+	// for a content edge, as in the relation's text key.
+	tail, parseErr := entity.ParseRef(fromID)
+	if parseErr != nil {
+		return nil, fmt.Errorf("relation not found: %s --%s--> %s", fromID, relType, toID)
+	}
 
 	st := h.store
-	relation, getErr := st.GetRelation(ctx, fromID, relType, toID)
+	relation, getErr := st.GetRelation(ctx, entity.RelationKey{
+		From: tail.ID, FromFace: tail.Face, Type: relType, To: toID,
+	})
 	if getErr != nil {
 		return nil, fmt.Errorf("relation not found: %s --%s--> %s", fromID, relType, toID)
 	}

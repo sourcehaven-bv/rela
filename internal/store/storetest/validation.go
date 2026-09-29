@@ -50,11 +50,11 @@ func RunValidationTests(t *testing.T, f Factory) {
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("A-B", "t")))
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("C-D", "t")))
 
-		_, err = s.CreateRelation(ctx(), "A-B", "req--ires", "C-D", nil)
+		_, err = s.CreateRelation(ctx(), entity.RelationKey{From: "A-B", Type: "req--ires", To: "C-D"}, nil)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "consecutive dashes")
 
-		_, err = s.CreateRelation(ctx(), "A-B", "requires", "C-D", nil)
+		_, err = s.CreateRelation(ctx(), entity.RelationKey{From: "A-B", Type: "requires", To: "C-D"}, nil)
 		require.NoError(t, err)
 	})
 
@@ -65,11 +65,9 @@ func RunValidationTests(t *testing.T, f Factory) {
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("C", "t")))
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("X", "t")))
 
-		_, err := s.CreateRelation(ctx(), "A", "requires", "X",
-			&store.RelationData{Content: "from-A"})
+		_, err := s.CreateRelation(ctx(), entity.RelationKey{From: "A", Type: "requires", To: "X"}, &store.RelationData{Content: "from-A"})
 		require.NoError(t, err)
-		_, err = s.CreateRelation(ctx(), "C", "requires", "X",
-			&store.RelationData{Content: "from-C"})
+		_, err = s.CreateRelation(ctx(), entity.RelationKey{From: "C", Type: "requires", To: "X"}, &store.RelationData{Content: "from-C"})
 		require.NoError(t, err)
 
 		_, err = s.RenameFamily(ctx(), "A", "C")
@@ -196,21 +194,18 @@ func RunValidationTests(t *testing.T, f Factory) {
 		assert.Equal(t, "héllo ☃", got.GetString("p"), "a refused update must leave the stored value alone")
 
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("E-other", "t")))
-		_, err = s.CreateRelation(ctx(), "E-good", "rel", "E-other",
-			&store.RelationData{Properties: map[string]any{"p": bad}})
+		_, err = s.CreateRelation(ctx(), entity.RelationKey{From: "E-good", Type: "rel", To: "E-other"}, &store.RelationData{Properties: map[string]any{"p": bad}})
 		require.Error(t, err, "relation create with invalid UTF-8 must fail")
 		assert.Contains(t, err.Error(), "invalid UTF-8")
-		_, err = s.GetRelation(ctx(), "E-good", "rel", "E-other")
+		_, err = s.GetRelation(ctx(), entity.RelationKey{From: "E-good", Type: "rel", To: "E-other"})
 		assert.ErrorIs(t, err, store.ErrNotFound)
 
-		_, err = s.CreateRelation(ctx(), "E-good", "rel", "E-other",
-			&store.RelationData{Properties: map[string]any{"p": "ok"}})
+		_, err = s.CreateRelation(ctx(), entity.RelationKey{From: "E-good", Type: "rel", To: "E-other"}, &store.RelationData{Properties: map[string]any{"p": "ok"}})
 		require.NoError(t, err)
-		_, err = s.UpdateRelation(ctx(), "E-good", "rel", "E-other",
-			store.RelationData{Properties: map[string]any{"p": bad}})
+		_, err = s.UpdateRelation(ctx(), entity.RelationKey{From: "E-good", Type: "rel", To: "E-other"}, store.RelationData{Properties: map[string]any{"p": bad}})
 		require.Error(t, err, "relation update with invalid UTF-8 must fail")
 		assert.Contains(t, err.Error(), "invalid UTF-8")
-		r, err := s.GetRelation(ctx(), "E-good", "rel", "E-other")
+		r, err := s.GetRelation(ctx(), entity.RelationKey{From: "E-good", Type: "rel", To: "E-other"})
 		require.NoError(t, err)
 		assert.Equal(t, "ok", r.Properties["p"], "a refused relation update must leave the stored value alone")
 	})

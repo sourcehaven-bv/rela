@@ -99,8 +99,8 @@ func (g rawGraph) Resolve(ctx context.Context, addr string) (*entity.Entity, err
 	return g.GetAddress(ctx, addr)
 }
 
-func (g rawGraph) GetRelation(ctx context.Context, from, relType, to string) (*entity.Relation, error) {
-	return g.st.GetRelation(ctx, from, relType, to)
+func (g rawGraph) GetRelation(ctx context.Context, k entity.RelationKey) (*entity.Relation, error) {
+	return g.st.GetRelation(ctx, k)
 }
 
 func (g rawGraph) CountEntities(ctx context.Context, q store.EntityQuery) (int, error) {

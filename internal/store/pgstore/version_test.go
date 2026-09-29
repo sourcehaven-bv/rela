@@ -275,7 +275,7 @@ func TestWriteVersionRejectsInvalidText(t *testing.T) {
 	}
 
 	rel := store.RelationVersionInput{
-		From: "TKT-V", Type: "blocks", To: "TKT-W", RecordID: 1,
+		Key: entity.RelationKey{From: "TKT-V", Type: "blocks", To: "TKT-W"}, RecordID: 1,
 		Op: store.VersionOpCreate, Properties: map[string]any{"p": "\xc8"},
 		SchemaHash: "schema-abc", Projection: []byte(`{"entities":{},"types":{}}`),
 	}

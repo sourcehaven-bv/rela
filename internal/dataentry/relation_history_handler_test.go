@@ -43,7 +43,7 @@ func bareRelKey(from, relType, to string) string {
 func (h relHistoryStore) ListRelationVersions(
 	_ context.Context, q store.RelationHistoryQuery,
 ) ([]store.RelationVersionMeta, error) {
-	snaps := h.versions[relKey(q.From, q.FromFace, q.Type, q.To)]
+	snaps := h.versions[relKey(q.Key.From, q.Key.FromFace, q.Key.Type, q.Key.To)]
 	metas := make([]store.RelationVersionMeta, 0, len(snaps))
 	for _, s := range snaps {
 		metas = append(metas, s.RelationVersionMeta)
@@ -54,7 +54,7 @@ func (h relHistoryStore) ListRelationVersions(
 func (h relHistoryStore) GetRelationVersion(
 	_ context.Context, q store.RelationHistoryQuery, version int,
 ) (*store.RelationVersionSnapshot, error) {
-	snaps := h.versions[relKey(q.From, q.FromFace, q.Type, q.To)]
+	snaps := h.versions[relKey(q.Key.From, q.Key.FromFace, q.Key.Type, q.Key.To)]
 	if version < 1 || version > len(snaps) {
 		return nil, store.ErrNotFound
 	}
@@ -66,12 +66,12 @@ func (h relHistoryStore) GetRelationVersion(
 // versions — enough for the handler tests (which exercise the timeline/version
 // paths, not multi-lifetime enumeration; that is covered by the pgstore DB tests).
 func (h relHistoryStore) ListRelationLifetimes(
-	_ context.Context, from string, fromFace entity.Face, relType, to string,
+	_ context.Context, k entity.RelationKey,
 ) ([]store.RelationLifetime, error) {
-	if lts, ok := h.lifetimes[relKey(from, fromFace, relType, to)]; ok {
+	if lts, ok := h.lifetimes[relKey(k.From, k.FromFace, k.Type, k.To)]; ok {
 		return lts, nil
 	}
-	snaps := h.versions[relKey(from, fromFace, relType, to)]
+	snaps := h.versions[relKey(k.From, k.FromFace, k.Type, k.To)]
 	if len(snaps) == 0 {
 		return nil, nil
 	}

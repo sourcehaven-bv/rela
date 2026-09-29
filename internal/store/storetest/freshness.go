@@ -64,7 +64,7 @@ func RunFreshnessTests(t *testing.T, f Factory) {
 		require.NoError(t, err)
 
 		waitForClock()
-		_, err = s.CreateRelation(ctx(), "FEAT-001", "requires", "REQ-001", nil)
+		_, err = s.CreateRelation(ctx(), entity.RelationKey{From: "FEAT-001", Type: "requires", To: "REQ-001"}, nil)
 		require.NoError(t, err)
 
 		after, err := s.LastModified(ctx())

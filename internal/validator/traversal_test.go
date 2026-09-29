@@ -63,7 +63,7 @@ func seedTickets(t *testing.T, st *memstore.MemStore, n int) {
 		id := fmt.Sprintf("T-%03d", i)
 		mustCreate(t, st, &entity.Entity{ID: id, Type: "ticket", Properties: map[string]any{"status": "done"}})
 		if i%2 == 0 {
-			if _, err := st.CreateRelation(t.Context(), id, "owned-by", "P-1", nil); err != nil {
+			if _, err := st.CreateRelation(t.Context(), entity.RelationKey{From: id, Type: "owned-by", To: "P-1"}, nil); err != nil {
 				t.Fatal(err)
 			}
 		}

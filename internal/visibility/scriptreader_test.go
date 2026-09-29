@@ -27,10 +27,10 @@ func seedScriptWorld(t *testing.T) store.Store {
 			t.Fatalf("seed %s: %v", e.ID, err)
 		}
 	}
-	if _, err := st.CreateRelation(ctx, "TKT-1", "relates", "SEC-1", nil); err != nil {
+	if _, err := st.CreateRelation(ctx, entity.RelationKey{From: "TKT-1", Type: "relates", To: "SEC-1"}, nil); err != nil {
 		t.Fatalf("seed relation: %v", err)
 	}
-	if _, err := st.CreateRelation(ctx, "TKT-1", "relates", "TKT-2", nil); err != nil {
+	if _, err := st.CreateRelation(ctx, entity.RelationKey{From: "TKT-1", Type: "relates", To: "TKT-2"}, nil); err != nil {
 		t.Fatalf("seed relation: %v", err)
 	}
 	return st

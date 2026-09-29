@@ -38,8 +38,7 @@ func relStore(t *testing.T, edges ...[2]string) store.Store {
 		}
 	}
 	for _, e := range edges {
-		if _, err := st.CreateRelation(ctx, e[0], "assigned-to", e[1],
-			&store.RelationData{Properties: map[string]any{"weight": e[0] + "->" + e[1]}}); err != nil {
+		if _, err := st.CreateRelation(ctx, entity.RelationKey{From: e[0], Type: "assigned-to", To: e[1]}, &store.RelationData{Properties: map[string]any{"weight": e[0] + "->" + e[1]}}); err != nil {
 			t.Fatalf("seed edge %v: %v", e, err)
 		}
 	}
@@ -74,14 +73,14 @@ func TestReverseRelation_RewritesEveryEdge(t *testing.T) {
 	}
 
 	// The edge exists reversed, carrying its properties.
-	got, err := st.GetRelation(ctx, "PER-1", "assigned-to", "TSK-1")
+	got, err := st.GetRelation(ctx, entity.RelationKey{From: "PER-1", Type: "assigned-to", To: "TSK-1"})
 	if err != nil {
 		t.Fatalf("reversed edge missing: %v", err)
 	}
 	if got.Properties["weight"] != "TSK-1->PER-1" {
 		t.Errorf("properties lost: %v", got.Properties)
 	}
-	if _, err := st.GetRelation(ctx, "TSK-1", "assigned-to", "PER-1"); err == nil {
+	if _, err := st.GetRelation(ctx, entity.RelationKey{From: "TSK-1", Type: "assigned-to", To: "PER-1"}); err == nil {
 		t.Error("the original direction still exists")
 	}
 }
@@ -96,7 +95,7 @@ func TestReverseRelation_DryRunCountsWithoutWriting(t *testing.T) {
 	if got := res.Files[0].Steps[0].Affected; got != 1 {
 		t.Fatalf("affected = %d, want 1", got)
 	}
-	if _, err := st.GetRelation(t.Context(), "TSK-1", "assigned-to", "PER-1"); err != nil {
+	if _, err := st.GetRelation(t.Context(), entity.RelationKey{From: "TSK-1", Type: "assigned-to", To: "PER-1"}); err != nil {
 		t.Error("dry run rewrote an edge")
 	}
 }
@@ -111,8 +110,7 @@ func TestReverseRelation_RefusesAStateTailedEdge(t *testing.T) {
 		Properties: map[string]any{"title": "draft"}}); err != nil {
 		t.Fatalf("seed face: %v", err)
 	}
-	if _, err := st.CreateRelation(ctx, "TSK-1", "assigned-to", "PER-1",
-		&store.RelationData{FromFace: "draft"}); err != nil {
+	if _, err := st.CreateRelation(ctx, entity.RelationKey{From: "TSK-1", FromFace: "draft", Type: "assigned-to", To: "PER-1"}, &store.RelationData{}); err != nil {
 		t.Fatalf("seed tailed edge: %v", err)
 	}
 
@@ -147,8 +145,7 @@ func TestReverseRelation_TailRefusalFiresOnDryRun(t *testing.T) {
 		Properties: map[string]any{"title": "draft"}}); err != nil {
 		t.Fatalf("seed face: %v", err)
 	}
-	if _, err := st.CreateRelation(ctx, "TSK-1", "assigned-to", "PER-1",
-		&store.RelationData{FromFace: "draft"}); err != nil {
+	if _, err := st.CreateRelation(ctx, entity.RelationKey{From: "TSK-1", FromFace: "draft", Type: "assigned-to", To: "PER-1"}, &store.RelationData{}); err != nil {
 		t.Fatalf("seed tailed edge: %v", err)
 	}
 	if _, err := runReverse(t, st, false); err == nil {
@@ -161,10 +158,10 @@ func TestReverseRelation_TailRefusalFiresOnDryRun(t *testing.T) {
 func TestReverseRelation_RefusesBothDirections(t *testing.T) {
 	st := relStore(t)
 	ctx := t.Context()
-	if _, err := st.CreateRelation(ctx, "TSK-1", "assigned-to", "TSK-2", nil); err != nil {
+	if _, err := st.CreateRelation(ctx, entity.RelationKey{From: "TSK-1", Type: "assigned-to", To: "TSK-2"}, nil); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	if _, err := st.CreateRelation(ctx, "TSK-2", "assigned-to", "TSK-1", nil); err != nil {
+	if _, err := st.CreateRelation(ctx, entity.RelationKey{From: "TSK-2", Type: "assigned-to", To: "TSK-1"}, nil); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 
@@ -172,7 +169,7 @@ func TestReverseRelation_RefusesBothDirections(t *testing.T) {
 		t.Fatal("expected a refusal")
 	}
 	for _, e := range [][2]string{{"TSK-1", "TSK-2"}, {"TSK-2", "TSK-1"}} {
-		if _, err := st.GetRelation(ctx, e[0], "assigned-to", e[1]); err != nil {
+		if _, err := st.GetRelation(ctx, entity.RelationKey{From: e[0], Type: "assigned-to", To: e[1]}); err != nil {
 			t.Errorf("edge %v was destroyed by a refused run: %v", e, err)
 		}
 	}
@@ -185,10 +182,10 @@ func TestReverseRelation_RefusesBothDirections(t *testing.T) {
 func TestReverseRelation_DryRunRefusesBothDirections(t *testing.T) {
 	st := relStore(t)
 	ctx := t.Context()
-	if _, err := st.CreateRelation(ctx, "TSK-1", "assigned-to", "TSK-2", nil); err != nil {
+	if _, err := st.CreateRelation(ctx, entity.RelationKey{From: "TSK-1", Type: "assigned-to", To: "TSK-2"}, nil); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	if _, err := st.CreateRelation(ctx, "TSK-2", "assigned-to", "TSK-1", nil); err != nil {
+	if _, err := st.CreateRelation(ctx, entity.RelationKey{From: "TSK-2", Type: "assigned-to", To: "TSK-1"}, nil); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 
@@ -212,13 +209,13 @@ func TestReverseRelation_DryRunRefusesBothDirections(t *testing.T) {
 func TestReverseRelation_SelfEdgeSurvives(t *testing.T) {
 	st := relStore(t)
 	ctx := t.Context()
-	if _, err := st.CreateRelation(ctx, "TSK-1", "assigned-to", "TSK-1", nil); err != nil {
+	if _, err := st.CreateRelation(ctx, entity.RelationKey{From: "TSK-1", Type: "assigned-to", To: "TSK-1"}, nil); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	if _, err := runReverse(t, st, true); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if _, err := st.GetRelation(ctx, "TSK-1", "assigned-to", "TSK-1"); err != nil {
+	if _, err := st.GetRelation(ctx, entity.RelationKey{From: "TSK-1", Type: "assigned-to", To: "TSK-1"}); err != nil {
 		t.Errorf("the self-edge was destroyed: %v", err)
 	}
 }

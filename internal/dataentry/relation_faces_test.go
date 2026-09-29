@@ -87,8 +87,7 @@ func TestRelationWrites_DeniedFaceIsTheUniformMiss(t *testing.T) {
 	app, d := publishedEditor(t)
 	ctx := context.Background()
 	// An edge on the denied face, so update and delete have something to hit.
-	if _, err := app.store.CreateRelation(ctx, "POL-1", "cites", "FEAT-1",
-		&store.RelationData{FromFace: "draft"}); err != nil {
+	if _, err := app.store.CreateRelation(ctx, entity.RelationKey{From: "POL-1", FromFace: "draft", Type: "cites", To: "FEAT-1"}, &store.RelationData{}); err != nil {
 		t.Fatalf("seed draft-tailed edge: %v", err)
 	}
 
@@ -134,8 +133,7 @@ func TestRelationWrites_DeniedFaceIsTheUniformMiss(t *testing.T) {
 func TestRelationGet_EdgeOnAnotherFaceIsNotFound(t *testing.T) {
 	app, d := publishedEditor(t)
 	ctx := context.Background()
-	if _, err := app.store.CreateRelation(ctx, "POL-1", "cites", "FEAT-1",
-		&store.RelationData{FromFace: "draft", Content: "DRAFT EDGE BODY"}); err != nil {
+	if _, err := app.store.CreateRelation(ctx, entity.RelationKey{From: "POL-1", FromFace: "draft", Type: "cites", To: "FEAT-1"}, &store.RelationData{Content: "DRAFT EDGE BODY"}); err != nil {
 		t.Fatalf("seed draft-tailed edge: %v", err)
 	}
 	for _, addr := range []string{"POL-1@draft", "POL-1@published"} {
@@ -155,7 +153,7 @@ func TestRelationWrites_HiddenPeerIsTheUniformMiss(t *testing.T) {
 	if err := app.store.CreateEntity(ctx, draftOnly("POL-2")); err != nil {
 		t.Fatalf("seed POL-2: %v", err)
 	}
-	if _, err := app.store.CreateRelation(ctx, "FEAT-1", "governs", "POL-2", nil); err != nil {
+	if _, err := app.store.CreateRelation(ctx, entity.RelationKey{From: "FEAT-1", Type: "governs", To: "POL-2"}, nil); err != nil {
 		t.Fatalf("seed edge to the hidden peer: %v", err)
 	}
 	for _, tc := range []struct{ method, body string }{
@@ -173,7 +171,7 @@ func TestRelationWrites_HiddenPeerIsTheUniformMiss(t *testing.T) {
 			}
 		})
 	}
-	if _, err := app.store.GetRelation(ctx, "FEAT-1", "governs", "POL-2"); err != nil {
+	if _, err := app.store.GetRelation(ctx, entity.RelationKey{From: "FEAT-1", Type: "governs", To: "POL-2"}); err != nil {
 		t.Errorf("the refused delete must leave the edge: %v", err)
 	}
 }
@@ -275,7 +273,7 @@ func TestRelationPeerReadFault_FailsTheWrite(t *testing.T) {
 func TestRelationGet_IdentityEdgeOnFacedSource(t *testing.T) {
 	app, d := publishedEditor(t)
 	ctx := context.Background()
-	if _, err := app.store.CreateRelation(ctx, "POL-1", "implements", "FEAT-1", nil); err != nil {
+	if _, err := app.store.CreateRelation(ctx, entity.RelationKey{From: "POL-1", Type: "implements", To: "FEAT-1"}, nil); err != nil {
 		t.Fatalf("seed identity edge: %v", err)
 	}
 	for _, addr := range []string{"POL-1", "POL-1@published"} {

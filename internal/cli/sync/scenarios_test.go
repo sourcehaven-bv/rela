@@ -317,7 +317,7 @@ func TestPush_TopologicalOrder_EntitiesBeforeRelations(t *testing.T) {
 	h.createLocalEntity(t, "tmp-a", map[string]any{"title": "a"})
 	h.createLocalEntity(t, "tmp-b", map[string]any{"title": "b"})
 	rd := store.RelationData{Content: "link"}
-	if _, err := h.st.CreateRelation(ctx, "tmp-a", "blocks", "tmp-b", &rd); err != nil {
+	if _, err := h.st.CreateRelation(ctx, entity.RelationKey{From: "tmp-a", Type: "blocks", To: "tmp-b"}, &rd); err != nil {
 		t.Fatalf("create relation: %v", err)
 	}
 
@@ -470,7 +470,7 @@ func TestPull_RelationTombstone_IdempotentOnResume(t *testing.T) {
 	h.createLocalEntity(t, "A", map[string]any{"title": "a"})
 	h.createLocalEntity(t, "B", map[string]any{"title": "b"})
 	rd := store.RelationData{Content: "link"}
-	if _, err := h.st.CreateRelation(ctx, "A", "rel", "B", &rd); err != nil {
+	if _, err := h.st.CreateRelation(ctx, entity.RelationKey{From: "A", Type: "rel", To: "B"}, &rd); err != nil {
 		t.Fatalf("create relation: %v", err)
 	}
 	if _, err := h.engine.Push(ctx); err != nil {
@@ -487,7 +487,7 @@ func TestPull_RelationTombstone_IdempotentOnResume(t *testing.T) {
 	if _, err := h.engine.Pull(ctx); err != nil {
 		t.Fatalf("first pull: %v", err)
 	}
-	if _, err := h.st.GetRelation(ctx, "A", "rel", "B"); err == nil {
+	if _, err := h.st.GetRelation(ctx, entity.RelationKey{From: "A", Type: "rel", To: "B"}); err == nil {
 		t.Fatal("relation still present locally after tombstone pulled")
 	}
 

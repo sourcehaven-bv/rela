@@ -175,8 +175,7 @@ func TestModern_AC1_AddEdgeWithMeta(t *testing.T) {
 // AC2: upsert meta on existing edge (no duplicate created).
 func TestModern_AC2_UpsertMeta(t *testing.T) {
 	app := newRelationsTestApp(t)
-	if _, err := app.store.CreateRelation(context.Background(), "TKT-001", "tagged", "L-001",
-		&store.RelationData{Properties: map[string]any{"weight": float64(5)}}); err != nil {
+	if _, err := app.store.CreateRelation(context.Background(), entity.RelationKey{From: "TKT-001", Type: "tagged", To: "L-001"}, &store.RelationData{Properties: map[string]any{"weight": float64(5)}}); err != nil {
 		t.Fatal(err)
 	}
 	body := `{"relations": {"tagged": {"data": [{"type":"label","id":"L-001","meta":{"weight":7}}]}}}`
@@ -196,11 +195,10 @@ func TestModern_AC2_UpsertMeta(t *testing.T) {
 // AC3: meta_unset clears keys.
 func TestModern_AC3_MetaUnset(t *testing.T) {
 	app := newRelationsTestApp(t)
-	if _, err := app.store.CreateRelation(context.Background(), "TKT-001", "tagged", "L-001",
-		&store.RelationData{Properties: map[string]any{
-			"weight":   float64(5),
-			"added_by": "alice",
-		}}); err != nil {
+	if _, err := app.store.CreateRelation(context.Background(), entity.RelationKey{From: "TKT-001", Type: "tagged", To: "L-001"}, &store.RelationData{Properties: map[string]any{
+		"weight":   float64(5),
+		"added_by": "alice",
+	}}); err != nil {
 		t.Fatal(err)
 	}
 	body := `{"relations": {"tagged": {"data": [{"type":"label","id":"L-001","meta_unset":["weight"]}]}}}`
@@ -248,7 +246,7 @@ func TestModern_AC4_ContentUpsertAndClear(t *testing.T) {
 func TestModern_AC5_EmptyDataRemovesAll(t *testing.T) {
 	app := newRelationsTestApp(t)
 	for _, id := range []string{"L-001", "L-002", "L-003"} {
-		if _, err := app.store.CreateRelation(context.Background(), "TKT-001", "tagged", id, nil); err != nil {
+		if _, err := app.store.CreateRelation(context.Background(), entity.RelationKey{From: "TKT-001", Type: "tagged", To: id}, nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -266,7 +264,7 @@ func TestModern_AC5_EmptyDataRemovesAll(t *testing.T) {
 func TestModern_AC6_Replacement(t *testing.T) {
 	app := newRelationsTestApp(t)
 	for _, id := range []string{"L-001", "L-002", "L-003"} {
-		if _, err := app.store.CreateRelation(context.Background(), "TKT-001", "tagged", id, nil); err != nil {
+		if _, err := app.store.CreateRelation(context.Background(), entity.RelationKey{From: "TKT-001", Type: "tagged", To: id}, nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -299,7 +297,7 @@ func TestModern_AC6_Replacement(t *testing.T) {
 // AC7: absent relation type leaves alone.
 func TestModern_AC7_AbsentTypeLeavesAlone(t *testing.T) {
 	app := newRelationsTestApp(t)
-	if _, err := app.store.CreateRelation(context.Background(), "TKT-001", "tagged", "L-001", nil); err != nil {
+	if _, err := app.store.CreateRelation(context.Background(), entity.RelationKey{From: "TKT-001", Type: "tagged", To: "L-001"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	seedEntity(app, &entity.Entity{ID: "C-002", Type: "category", Properties: map[string]any{"title": "Frontend"}})
@@ -455,8 +453,7 @@ func TestModern_AC13_ContentOnNonContentTypeReturns422(t *testing.T) {
 // AC14: value-based no-op suppression — re-PATCHing identical state writes nothing.
 func TestModern_AC14_ValueBasedNoOp(t *testing.T) {
 	app := newRelationsTestApp(t)
-	if _, err := app.store.CreateRelation(context.Background(), "TKT-001", "tagged", "L-001",
-		&store.RelationData{Properties: map[string]any{"weight": float64(5)}}); err != nil {
+	if _, err := app.store.CreateRelation(context.Background(), entity.RelationKey{From: "TKT-001", Type: "tagged", To: "L-001"}, &store.RelationData{Properties: map[string]any{"weight": float64(5)}}); err != nil {
 		t.Fatal(err)
 	}
 

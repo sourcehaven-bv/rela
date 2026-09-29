@@ -55,7 +55,7 @@ func facedGatedServer(t *testing.T, read []string, extra ...*entity.Entity) (*Se
 			t.Fatalf("seed %s@%s: %v", e.ID, e.Face, err)
 		}
 	}
-	if _, err := st.CreateRelation(ctx, "POL-1", "cites", "CTL-1", &store.RelationData{FromFace: "draft"}); err != nil {
+	if _, err := st.CreateRelation(ctx, entity.RelationKey{From: "POL-1", FromFace: "draft", Type: "cites", To: "CTL-1"}, &store.RelationData{}); err != nil {
 		t.Fatalf("seed relation: %v", err)
 	}
 	d, err := acl.NewDeclarative(&acl.Policy{

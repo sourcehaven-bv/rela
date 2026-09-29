@@ -109,7 +109,7 @@ func TestWorldNeighbors_ExcludedHeadIsAbsent(t *testing.T) {
 
 	ctx := context.Background()
 	for _, to := range []string{"FEAT-PUB", "FEAT-DRAFT"} {
-		if _, err := app.store.CreateRelation(ctx, "TKT-1", "implements", to, nil); err != nil {
+		if _, err := app.store.CreateRelation(ctx, entity.RelationKey{From: "TKT-1", Type: "implements", To: to}, nil); err != nil {
 			t.Fatalf("seed edge to %s: %v", to, err)
 		}
 	}
@@ -170,7 +170,7 @@ func TestWorldNeighbors_PerLinkFallback(t *testing.T) {
 
 	ctx := context.Background()
 	for _, to := range []string{"FEAT-NL", "FEAT-EN"} {
-		if _, err := app.store.CreateRelation(ctx, "TKT-1", "implements", to, nil); err != nil {
+		if _, err := app.store.CreateRelation(ctx, entity.RelationKey{From: "TKT-1", Type: "implements", To: to}, nil); err != nil {
 			t.Fatalf("seed edge to %s: %v", to, err)
 		}
 	}
@@ -247,18 +247,16 @@ func TestWorldNeighbors_ContentEdgesAreFaceSpecific(t *testing.T) {
 	}
 
 	// An IDENTITY edge (implements): no tail, belongs to the entity.
-	if _, err := app.store.CreateRelation(ctx, "TKT-1", "implements", "FEAT-IDENT", nil); err != nil {
+	if _, err := app.store.CreateRelation(ctx, entity.RelationKey{From: "TKT-1", Type: "implements", To: "FEAT-IDENT"}, nil); err != nil {
 		t.Fatalf("seed identity edge: %v", err)
 	}
 	// CONTENT edges (cites): one on the DRAFT tail, one on the PUBLISHED tail.
 	draftTail := entity.Face("")
 	pubTail := entity.Face("published")
-	if _, err := app.store.CreateRelation(ctx, "TKT-1", "cites", "FEAT-DRAFTCITE",
-		&store.RelationData{FromFace: draftTail}); err != nil {
+	if _, err := app.store.CreateRelation(ctx, entity.RelationKey{From: "TKT-1", FromFace: draftTail, Type: "cites", To: "FEAT-DRAFTCITE"}, &store.RelationData{}); err != nil {
 		t.Fatalf("seed draft-tail content edge: %v", err)
 	}
-	if _, err := app.store.CreateRelation(ctx, "TKT-1", "cites", "FEAT-PUBCITE",
-		&store.RelationData{FromFace: pubTail}); err != nil {
+	if _, err := app.store.CreateRelation(ctx, entity.RelationKey{From: "TKT-1", FromFace: pubTail, Type: "cites", To: "FEAT-PUBCITE"}, &store.RelationData{}); err != nil {
 		t.Fatalf("seed published-tail content edge: %v", err)
 	}
 
@@ -332,7 +330,7 @@ func TestWorldNeighbors_WorldResolvesBeforeGate(t *testing.T) {
 		ID: "FEAT-HIDDEN", Type: "feature", Properties: map[string]any{"title": "secret"},
 	})
 	seedFace(t, app, "FEAT-HIDDEN", "feature", "published", "published secret")
-	if _, err := app.store.CreateRelation(ctx, "TKT-1", "implements", "FEAT-HIDDEN", nil); err != nil {
+	if _, err := app.store.CreateRelation(ctx, entity.RelationKey{From: "TKT-1", Type: "implements", To: "FEAT-HIDDEN"}, nil); err != nil {
 		t.Fatalf("seed edge: %v", err)
 	}
 
@@ -430,7 +428,7 @@ func TestWorldNeighbors_IncludeAgreesWithRelations(t *testing.T) {
 		ID: "FEAT-DRAFT", Type: "feature", Properties: map[string]any{"title": "unpublished"},
 	})
 	for _, to := range []string{"FEAT-PUB", "FEAT-DRAFT"} {
-		if _, err := app.store.CreateRelation(ctx, "TKT-1", "implements", to, nil); err != nil {
+		if _, err := app.store.CreateRelation(ctx, entity.RelationKey{From: "TKT-1", Type: "implements", To: to}, nil); err != nil {
 			t.Fatalf("seed edge: %v", err)
 		}
 	}
@@ -483,7 +481,7 @@ func TestWorldNeighbors_DefaultWorldUnchanged(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID: "FEAT-1", Type: "feature", Properties: map[string]any{"title": "f"},
 	})
-	if _, err := app.store.CreateRelation(ctx, "TKT-1", "implements", "FEAT-1", nil); err != nil {
+	if _, err := app.store.CreateRelation(ctx, entity.RelationKey{From: "TKT-1", Type: "implements", To: "FEAT-1"}, nil); err != nil {
 		t.Fatalf("seed edge: %v", err)
 	}
 
@@ -688,7 +686,7 @@ func TestIncludeTrailingDot_MatchesPreRefactorOutput(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID: "FEAT-1", Type: "feature", Properties: map[string]any{"title": "f"},
 	})
-	if _, err := app.store.CreateRelation(ctx, "TKT-1", "implements", "FEAT-1", nil); err != nil {
+	if _, err := app.store.CreateRelation(ctx, entity.RelationKey{From: "TKT-1", Type: "implements", To: "FEAT-1"}, nil); err != nil {
 		t.Fatalf("seed edge: %v", err)
 	}
 	e, found, err := app.visibleReader.inWorld(ctx, "ticket", "TKT-1")
@@ -754,7 +752,7 @@ func TestWorldETag_ReflectsWorldResolvedEdges(t *testing.T) {
 	before := app.computeEntityETag(wctx, face)
 
 	// Add an edge that IS visible in this world (both endpoints published).
-	if _, err := app.store.CreateRelation(ctx, "TKT-1", "implements", "FEAT-1", nil); err != nil {
+	if _, err := app.store.CreateRelation(ctx, entity.RelationKey{From: "TKT-1", Type: "implements", To: "FEAT-1"}, nil); err != nil {
 		t.Fatalf("seed edge: %v", err)
 	}
 	after := app.computeEntityETag(wctx, face)
@@ -794,7 +792,7 @@ func TestWorldETag_DoesNotFoldDefaultWorldEdges(t *testing.T) {
 	}
 
 	before := app.computeEntityETag(wctx, face)
-	if _, err := app.store.CreateRelation(ctx, "TKT-1", "implements", "FEAT-DRAFT", nil); err != nil {
+	if _, err := app.store.CreateRelation(ctx, entity.RelationKey{From: "TKT-1", Type: "implements", To: "FEAT-DRAFT"}, nil); err != nil {
 		t.Fatalf("seed edge: %v", err)
 	}
 	after := app.computeEntityETag(wctx, face)
@@ -840,7 +838,7 @@ func TestWorldNeighbors_SelfEdgeSurvives(t *testing.T) {
 		ID: "TKT-1", Type: "ticket", Properties: map[string]any{"title": "draft"},
 	})
 	seedFace(t, app, "TKT-1", "ticket", "published", "published")
-	if _, err := app.store.CreateRelation(ctx, "TKT-1", "blocks", "TKT-1", nil); err != nil {
+	if _, err := app.store.CreateRelation(ctx, entity.RelationKey{From: "TKT-1", Type: "blocks", To: "TKT-1"}, nil); err != nil {
 		t.Fatalf("seed self edge: %v", err)
 	}
 
@@ -926,7 +924,7 @@ func TestIncludeSpec_DefaultWorldParityWithPreRefactor(t *testing.T) {
 		{"TKT-2", "blocks", "TKT-3"},
 		{"TKT-2", "implements", "FEAT-1"},
 	} {
-		if _, err := app.store.CreateRelation(ctx, e.from, e.typ, e.to, nil); err != nil {
+		if _, err := app.store.CreateRelation(ctx, entity.RelationKey{From: e.from, Type: e.typ, To: e.to}, nil); err != nil {
 			t.Fatalf("seed %s-%s->%s: %v", e.from, e.typ, e.to, err)
 		}
 	}
@@ -1082,14 +1080,13 @@ func TestDefaultWorld_ContentEdgesAreFaceScoped(t *testing.T) {
 
 	ctx := context.Background()
 	// The draft (default) face cites FEAT-B only.
-	if _, err := app.store.CreateRelation(ctx, "TKT-1", "cites", "FEAT-B", nil); err != nil {
+	if _, err := app.store.CreateRelation(ctx, entity.RelationKey{From: "TKT-1", Type: "cites", To: "FEAT-B"}, nil); err != nil {
 		t.Fatalf("seed draft edge: %v", err)
 	}
 	// The published face cites both — FEAT-B is shared, which is what made
 	// the union show a duplicate.
 	for _, to := range []string{"FEAT-A", "FEAT-B"} {
-		if _, err := app.store.CreateRelation(ctx, "TKT-1", "cites", to,
-			&store.RelationData{FromFace: entity.Face("published")}); err != nil {
+		if _, err := app.store.CreateRelation(ctx, entity.RelationKey{From: "TKT-1", FromFace: entity.Face("published"), Type: "cites", To: to}, &store.RelationData{}); err != nil {
 			t.Fatalf("seed published edge to %s: %v", to, err)
 		}
 	}
@@ -1145,7 +1142,7 @@ func TestDefaultWorld_IdentityEdgesAreFaceIndependent(t *testing.T) {
 
 	ctx := context.Background()
 	// `implements` is identity-scoped: one edge, owned by the entity.
-	if _, err := app.store.CreateRelation(ctx, "TKT-1", "implements", "FEAT-A", nil); err != nil {
+	if _, err := app.store.CreateRelation(ctx, entity.RelationKey{From: "TKT-1", Type: "implements", To: "FEAT-A"}, nil); err != nil {
 		t.Fatalf("seed identity edge: %v", err)
 	}
 
@@ -1194,12 +1191,11 @@ func TestDefaultWorld_ListRowContentEdgesAreFaceScoped(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	if _, err := app.store.CreateRelation(ctx, "TKT-1", "cites", "FEAT-B", nil); err != nil {
+	if _, err := app.store.CreateRelation(ctx, entity.RelationKey{From: "TKT-1", Type: "cites", To: "FEAT-B"}, nil); err != nil {
 		t.Fatalf("seed draft edge: %v", err)
 	}
 	for _, to := range []string{"FEAT-A", "FEAT-B"} {
-		if _, err := app.store.CreateRelation(ctx, "TKT-1", "cites", to,
-			&store.RelationData{FromFace: entity.Face("published")}); err != nil {
+		if _, err := app.store.CreateRelation(ctx, entity.RelationKey{From: "TKT-1", FromFace: entity.Face("published"), Type: "cites", To: to}, &store.RelationData{}); err != nil {
 			t.Fatalf("seed published edge to %s: %v", to, err)
 		}
 	}

@@ -118,7 +118,7 @@ func TestHistoryRedaction_SubjectConditional_FailsClosed(t *testing.T) {
 	})
 	// Live edge present → the grant passes on a LIVE read.
 	if _, err := app.store.CreateRelation(context.Background(),
-		"TKT-001", "depends_on", "TKT-002", nil); err != nil {
+		entity.RelationKey{From: "TKT-001", Type: "depends_on", To: "TKT-002"}, nil); err != nil {
 		t.Fatalf("CreateRelation: %v", err)
 	}
 	app.versions = historyStore{
@@ -176,7 +176,7 @@ role_relations:
 	})
 	// Live edge alice --owns--> TKT-001 confers `owner` on alice for this entity.
 	if _, err := app.store.CreateRelation(context.Background(),
-		"alice", "owns", "TKT-001", nil); err != nil {
+		entity.RelationKey{From: "alice", Type: "owns", To: "TKT-001"}, nil); err != nil {
 		t.Fatalf("CreateRelation: %v", err)
 	}
 	app.versions = historyStore{

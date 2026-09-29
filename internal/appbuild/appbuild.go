@@ -28,6 +28,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -735,7 +736,10 @@ type GatedGraphReader interface {
 	Family(ctx context.Context, id string) (visibility.Family, bool, error)
 	ResolveHeaders(ctx context.Context, refs []entity.Ref) map[entity.Ref]visibility.ResolvedHeader
 	ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error]
-	GetRelation(ctx context.Context, from, relType, to string) (*entity.Relation, error)
+	// GetRelation reads the edge at k, tail included. It answers not-found
+	// unless the caller may read both endpoints and, for a content edge, the
+	// tail face itself.
+	GetRelation(ctx context.Context, k entity.RelationKey) (*entity.Relation, error)
 	ListRelations(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error]
 	ListRelationsStrict(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error]
 	CountEntities(ctx context.Context, q store.EntityQuery) (int, error)
@@ -757,9 +761,10 @@ type GatedGraphReader interface {
 //     neighbors; cardinality analysis therefore folds its counts from
 //     ListRelationsStrict instead (TKT-5LW875).
 //   - GetRelation answers not-found unless both endpoints have a readable
-//     face ([visibility.Resolver.Family]), then reads the raw store. The
-//     store returns the edge at the default tail, which is entity level, so
-//     the family check is the whole gate (RR-2IK76Z). Holding two ids is not the same as being
+//     face ([visibility.Resolver.Family]), then reads the raw store. An edge
+//     at the zero tail is entity level, so the family check is the whole gate
+//     for it (RR-2IK76Z); a content edge belongs to its tail face, so that
+//     face must itself be readable (TKT-KQXVF7). Holding two ids is not the same as being
 //     allowed to read them: without the endpoint check, a caller could learn
 //     that a hidden entity exists and is linked (TKT-4QSZ8Y). The edge's meta
 //     VALUES are not redacted: relations carry no field-level redaction on
@@ -817,23 +822,29 @@ func (g gatedGraphReader) ListRelationsStrict(
 }
 
 func (g gatedGraphReader) GetRelation(
-	ctx context.Context, from, relType, to string,
+	ctx context.Context, k entity.RelationKey,
 ) (*entity.Relation, error) {
-	if g.gateEndpoints && (!g.familyReadable(ctx, from) || !g.familyReadable(ctx, to)) {
+	if g.gateEndpoints && (!g.faceReadable(ctx, k.Tail()) || !g.faceReadable(ctx, entity.Ref{ID: k.To})) {
 		return nil, store.ErrNotFound
 	}
-	return g.raw.GetRelation(ctx, from, relType, to)
+	return g.raw.GetRelation(ctx, k)
 }
 
-// familyReadable reports whether the caller may read some face of id. A gate
-// failure is logged and hides, like every other gated read.
-func (g gatedGraphReader) familyReadable(ctx context.Context, id string) bool {
-	_, ok, err := g.rows.Family(ctx, id)
+// faceReadable reports whether the caller may read ref. The zero face asks
+// about the family: an identity-scoped edge and a head are entity level, so
+// any readable face admits them. A named face must itself be readable, since
+// a content-scoped edge belongs to its tail face. A gate failure is logged
+// and hides, like every other gated read.
+func (g gatedGraphReader) faceReadable(ctx context.Context, ref entity.Ref) bool {
+	fam, ok, err := g.rows.Family(ctx, ref.ID)
 	if err != nil {
-		slog.Warn("appbuild: relation endpoint gate failed; answering not-found", "id", id, "err", err)
+		slog.Warn("appbuild: relation endpoint gate failed; answering not-found", "id", ref.ID, "err", err)
 		return false
 	}
-	return ok
+	if !ok {
+		return false
+	}
+	return ref.Face.IsDefault() || slices.Contains(fam.Faces, ref.Face)
 }
 
 func (g gatedGraphReader) CountEntities(ctx context.Context, q store.EntityQuery) (int, error) {
@@ -2216,10 +2227,7 @@ func (r relationVersionRecorder) RecordRelationVersion(
 	ctx context.Context, v entitymanager.RelationVersionRecord,
 ) error {
 	return r.w.WriteRelationVersion(ctx, store.RelationVersionInput{
-		From:          v.From,
-		FromFace:      v.FromFace,
-		Type:          v.Type,
-		To:            v.To,
+		Key:           entity.RelationKey{From: v.From, FromFace: v.FromFace, Type: v.Type, To: v.To},
 		Op:            v.Op,
 		PrevFrom:      v.PrevFrom,
 		PrevTo:        v.PrevTo,

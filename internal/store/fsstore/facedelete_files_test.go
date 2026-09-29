@@ -47,10 +47,9 @@ func TestFsFaceDeleteTouchesOnlyItsOwnFiles(t *testing.T) {
 	mk("SPEC-1", "")
 
 	draft := entity.Face("draft")
-	_, err = s.CreateRelation(ctx, "PAGE-1", "references", "SPEC-1", nil)
+	_, err = s.CreateRelation(ctx, entity.RelationKey{From: "PAGE-1", Type: "references", To: "SPEC-1"}, nil)
 	require.NoError(t, err)
-	_, err = s.CreateRelation(ctx, "PAGE-1", "references", "SPEC-1",
-		&store.RelationData{FromFace: draft})
+	_, err = s.CreateRelation(ctx, entity.RelationKey{From: "PAGE-1", FromFace: draft, Type: "references", To: "SPEC-1"}, &store.RelationData{})
 	require.NoError(t, err)
 
 	files := func() []string {

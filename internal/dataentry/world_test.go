@@ -759,7 +759,7 @@ func TestWorldListGetParity_ACLGatedPrincipal(t *testing.T) {
 	// the principal as the endpoint): alice owns both tickets, so both are in her
 	// read scope and the world — not the ACL — is what removes TKT-200.
 	for _, id := range []string{"TKT-100", "TKT-200"} {
-		if _, err := app.store.CreateRelation(ctx, "alice", "owned-by", id, nil); err != nil {
+		if _, err := app.store.CreateRelation(ctx, entity.RelationKey{From: "alice", Type: "owned-by", To: id}, nil); err != nil {
 			t.Fatalf("seed owned-by for %s: %v", id, err)
 		}
 	}

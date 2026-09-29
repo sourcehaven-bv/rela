@@ -89,40 +89,24 @@ func (s *FSStore) RenameFamily(ctx context.Context, oldID, newID string) (*store
 
 // CreateRelation implements store.RelationWriter.
 func (s *FSStore) CreateRelation(
-	ctx context.Context, from, relType, to string, data *store.RelationData,
+	ctx context.Context, k entity.RelationKey, data *store.RelationData,
 ) (*entity.Relation, error) {
 	defer s.lockTx()()
-	return s.createRelation(ctx, from, relType, to, data)
+	return s.createRelation(ctx, k, data)
 }
 
 // UpdateRelation implements store.RelationWriter.
 func (s *FSStore) UpdateRelation(
-	ctx context.Context, from, relType, to string, data store.RelationData,
+	ctx context.Context, k entity.RelationKey, data store.RelationData,
 ) (*entity.Relation, error) {
 	defer s.lockTx()()
-	return s.updateRelation(ctx, from, relType, to, data)
-}
-
-// UpdateRelationState implements store.RelationWriter.
-func (s *FSStore) UpdateRelationState(
-	ctx context.Context, from string, p entity.Face, relType, to string, data store.RelationData,
-) (*entity.Relation, error) {
-	defer s.lockTx()()
-	return s.updateRelationState(ctx, from, p, relType, to, data)
+	return s.updateRelation(ctx, k, data)
 }
 
 // DeleteRelation implements store.RelationWriter.
-func (s *FSStore) DeleteRelation(ctx context.Context, from, relType, to string) error {
+func (s *FSStore) DeleteRelation(ctx context.Context, k entity.RelationKey) error {
 	defer s.lockTx()()
-	return s.deleteRelation(ctx, from, relType, to)
-}
-
-// DeleteRelationState implements store.RelationWriter.
-func (s *FSStore) DeleteRelationState(
-	ctx context.Context, from string, p entity.Face, relType, to string,
-) error {
-	defer s.lockTx()()
-	return s.deleteRelationState(ctx, from, p, relType, to)
+	return s.deleteRelation(ctx, k)
 }
 
 // AttachFamilyFile implements store.AttachmentManager.
@@ -175,31 +159,19 @@ func (t txStore) RenameFamily(ctx context.Context, oldID, newID string) (*store.
 }
 
 func (t txStore) CreateRelation(
-	ctx context.Context, from, relType, to string, data *store.RelationData,
+	ctx context.Context, k entity.RelationKey, data *store.RelationData,
 ) (*entity.Relation, error) {
-	return t.createRelation(ctx, from, relType, to, data)
+	return t.createRelation(ctx, k, data)
 }
 
 func (t txStore) UpdateRelation(
-	ctx context.Context, from, relType, to string, data store.RelationData,
+	ctx context.Context, k entity.RelationKey, data store.RelationData,
 ) (*entity.Relation, error) {
-	return t.updateRelation(ctx, from, relType, to, data)
+	return t.updateRelation(ctx, k, data)
 }
 
-func (t txStore) UpdateRelationState(
-	ctx context.Context, from string, p entity.Face, relType, to string, data store.RelationData,
-) (*entity.Relation, error) {
-	return t.updateRelationState(ctx, from, p, relType, to, data)
-}
-
-func (t txStore) DeleteRelation(ctx context.Context, from, relType, to string) error {
-	return t.deleteRelation(ctx, from, relType, to)
-}
-
-func (t txStore) DeleteRelationState(
-	ctx context.Context, from string, p entity.Face, relType, to string,
-) error {
-	return t.deleteRelationState(ctx, from, p, relType, to)
+func (t txStore) DeleteRelation(ctx context.Context, k entity.RelationKey) error {
+	return t.deleteRelation(ctx, k)
 }
 
 func (t txStore) AttachFamilyFile(ctx context.Context, entityID, property, fileName string, r io.Reader) error {

@@ -31,8 +31,8 @@ func TestStoreCounter_Analyze(t *testing.T) {
 	s.CreateEntity(ctx, e3)
 
 	// Seed relations
-	s.CreateRelation(ctx, "DEC-001", "implements", "REQ-001", nil)
-	s.CreateRelation(ctx, "REQ-002", "depends-on", "REQ-001", nil)
+	s.CreateRelation(ctx, entity.RelationKey{From: "DEC-001", Type: "implements", To: "REQ-001"}, nil)
+	s.CreateRelation(ctx, entity.RelationKey{From: "REQ-002", Type: "depends-on", To: "REQ-001"}, nil)
 
 	// Run Analyze with StoreCounter — same metamodel as newTestMetamodel()
 	meta := newTestMetamodel()
@@ -68,8 +68,8 @@ func TestStoreCounter_LowUsage(t *testing.T) {
 	s.CreateEntity(ctx, entity.New("REQ-001", "requirement"))
 	s.CreateEntity(ctx, entity.New("REQ-002", "requirement"))
 	s.CreateEntity(ctx, entity.New("DEC-001", "decision"))
-	s.CreateRelation(ctx, "DEC-001", "implements", "REQ-001", nil)
-	s.CreateRelation(ctx, "REQ-002", "depends-on", "REQ-001", nil)
+	s.CreateRelation(ctx, entity.RelationKey{From: "DEC-001", Type: "implements", To: "REQ-001"}, nil)
+	s.CreateRelation(ctx, entity.RelationKey{From: "REQ-002", Type: "depends-on", To: "REQ-001"}, nil)
 
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{

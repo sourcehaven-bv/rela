@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/errors"
@@ -97,7 +98,7 @@ func (c *FmtCmd) formatRelations(
 	}
 	modified := 0
 	for _, k := range relKeys {
-		changed, err := f.FormatRelation(ctx, k.from, k.typ, k.to, dryRun)
+		changed, err := f.FormatRelation(ctx, entity.RelationKey{From: k.from, Type: k.typ, To: k.to}, dryRun)
 		if err != nil {
 			out.WriteWarning("Failed to format relation %s--%s--%s: %v", k.from, k.typ, k.to, err)
 			continue

@@ -159,10 +159,9 @@ func (h *cascadeHost) WriteRelation(ctx context.Context, r *entity.Relation) err
 	// belongs to that face; an identity-scoped one to the entity, whose only
 	// valid tail is the zero face (see requireRelationFaceFor).
 	r.FromFace = h.deps.cascadeTail(r.Type, r.FromFace)
-	if _, err := h.deps.Store.CreateRelation(ctx, r.From, r.Type, r.To, &store.RelationData{
+	if _, err := h.deps.Store.CreateRelation(ctx, r.Identity(), &store.RelationData{
 		Properties: r.Properties,
 		Content:    r.Content,
-		FromFace:   r.FromFace,
 	}); err != nil {
 		if errors.Is(err, store.ErrConflict) {
 			return nil

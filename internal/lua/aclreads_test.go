@@ -75,7 +75,7 @@ func newACLWorld(t *testing.T) (store.Store, lua.WriteDeps) {
 		}
 	}
 	for _, r := range [][3]string{{"TKT-1", "owns", "P-1"}, {"TKT-1", "owns", "SEC-1"}} {
-		if _, err := st.CreateRelation(ctx, r[0], r[1], r[2], nil); err != nil {
+		if _, err := st.CreateRelation(ctx, entity.RelationKey{From: r[0], Type: r[1], To: r[2]}, nil); err != nil {
 			t.Fatalf("seed relation %v: %v", r, err)
 		}
 	}
