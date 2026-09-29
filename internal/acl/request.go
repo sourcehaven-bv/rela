@@ -209,7 +209,7 @@ func (r *Request) matching(
 	// DenyAll are false Query
 	// is non-nil — a zero ReadQueryResult cannot occur
 	case rqr.Query == nil:
-		return nil, errors.New("acl: PermitsReadMany: readQuery returned zero ReadQueryResult")
+		return nil, errors.New("acl: read gate: readQuery returned zero ReadQueryResult")
 	}
 	q := *rqr.Query
 	q.Faces = sel

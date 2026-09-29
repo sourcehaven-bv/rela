@@ -329,7 +329,7 @@ func (e *Engine) typeExceptions(
 	// no default row. Rows arrive ordered by id, so a repeated id is the
 	// same family and is decided once.
 	var last string
-	for ent, err := range e.src.ListEntities(ctx, store.EntityQuery{Type: typ, Faces: store.AllFaces()}) {
+	for ent, err := range store.ListEntityHeaders(ctx, e.src, store.EntityQuery{Type: typ, Faces: store.AllFaces()}) {
 		if err != nil {
 			return nil, false, fmt.Errorf("aclmap: list %s entities: %w", typ, err)
 		}

@@ -1177,8 +1177,14 @@ func faceSelectionCond(sel store.FaceSelection, alias string, args *[]any) strin
 		col = alias + ".face"
 	}
 	if faces, ok := sel.Faces(); ok {
-		if len(faces) == 0 {
+		switch len(faces) {
+		case 0:
 			return "false"
+		case 1:
+			// Equality, not = ANY: the hot single-face reads keep the plan
+			// the per-face index was built for.
+			*args = append(*args, faces[0].String())
+			return fmt.Sprintf("%s = $%d", col, len(*args))
 		}
 		vals := make([]string, len(faces))
 		for i, f := range faces {

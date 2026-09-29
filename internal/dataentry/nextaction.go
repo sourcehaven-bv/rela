@@ -364,8 +364,10 @@ func (a *App) countCandidates(
 // countIsZero reports whether the caller sees no entities of entityType.
 func (a *App) countIsZero(ctx context.Context, entityType string, ungated bool) (bool, error) {
 	if ungated {
+		// Every face: the operator question is "does anything exist?", and a
+		// type stored only at named faces must not look empty.
 		_, total, err := a.Services().Store.GraphCount(ctx, store.GraphQuery{
-			EntityType: entityType, Faces: store.InWorld(worldScopeFrom(ctx)),
+			EntityType: entityType, Faces: store.AllFaces(),
 		})
 		if err != nil {
 			return false, fmt.Errorf("next-action count for %q: %w", entityType, err)

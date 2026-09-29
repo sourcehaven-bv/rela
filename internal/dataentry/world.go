@@ -126,7 +126,7 @@ func worldFromContext(ctx context.Context) worldHandle {
 
 // worldScopeFrom returns the store scope to stamp onto a query built from
 // ctx. Spelled as its own helper so query-construction sites read as
-// `q.World = worldScopeFrom(ctx)` and a reviewer can grep for the ones that
+// `Faces: store.InWorld(worldScopeFrom(ctx))` and a reviewer can grep for the ones that
 // forgot.
 func worldScopeFrom(ctx context.Context) store.WorldScope {
 	return worldFromContext(ctx).scope
@@ -615,7 +615,7 @@ func attachWorld(next http.Handler, a *App) http.Handler {
 // # Labeling, not re-resolving
 //
 // Resolution itself happens exactly once, in the store: the world scope rides
-// the query ([store.EntityQuery.World]) and the backend picks the prime. This
+// the query (an InWorld selection on [store.EntityQuery.Faces]) and the backend picks the prime. This
 // function reads the answer back — the coordinate the returned row was stored
 // at — and names the rule that must have produced it. It never fetches, never
 // walks the chain, and cannot disagree with the store about WHICH face was

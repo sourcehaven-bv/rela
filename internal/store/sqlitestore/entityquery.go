@@ -182,8 +182,13 @@ func faceSelectionCond(b *sqlBuilder, sel store.FaceSelection, alias string) str
 		col = alias + ".face"
 	}
 	if faces, ok := sel.Faces(); ok {
-		if len(faces) == 0 {
+		switch len(faces) {
+		case 0:
 			return "0"
+		case 1:
+			// Equality, not IN (json_each): the hot single-face reads keep
+			// the plan the per-face index was built for.
+			return col + " = " + b.arg(string(faces[0]))
 		}
 		vals := make([]string, len(faces))
 		for i, f := range faces {

@@ -358,7 +358,7 @@ func headOnWire(id string, heads map[string]*entityPkg.Entity, visible map[strin
 // STORE already resolved.
 //
 // The entity on these handlers does not come from a worldreader.Resolver — it
-// comes from the store path (store.EntityQuery.World), which is the second of
+// comes from the store path (an InWorld selection on store.EntityQuery.Faces), which is the second of
 // the two resolution mechanisms worldreader's package doc names. So the
 // Resolved handed to Neighbors is reconstructed rather than produced, and
 // exactly ONE field of it is load-bearing here: Face, the coordinate the

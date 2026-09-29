@@ -51,6 +51,55 @@ func TestNoNewUnselectedEntityQueries(t *testing.T) {
 	}
 }
 
+// unselectedGraphQueryGuard is the vocabulary of the GraphQuery selection
+// rule. A zero GraphQuery selection fails at run time as ErrInvalidQuery,
+// which a user sees as a 500, so a new literal must say which faces it reads.
+var unselectedGraphQueryGuard = guard{
+	what: "GraphQuery literal without Faces",
+	list: "unselectedGraphQueryAllowlist",
+	advice: "set Faces in the literal, as for EntityQuery. An ACL template or a literal a helper " +
+		"completes before it runs (a stampScope caller, a \"no query\" return) may be listed with a reason",
+}
+
+// unselectedGraphQueries returns the position of every GraphQuery composite
+// literal that does not set the Faces key. Syntactic, with the same blind
+// spots as unselectedQueries.
+func unselectedGraphQueries(fset *token.FileSet, file *ast.File) []token.Position {
+	var found []token.Position
+	ast.Inspect(file, func(n ast.Node) bool {
+		if lit, ok := n.(*ast.CompositeLit); ok && isNamed(lit.Type, "GraphQuery") && !setsKey(lit, "Faces") {
+			found = append(found, fset.Position(lit.Pos()))
+		}
+		return true
+	})
+	return found
+}
+
+// isNamed reports whether e names the type name, bare or package-qualified.
+func isNamed(e ast.Expr, name string) bool {
+	switch t := e.(type) {
+	case *ast.Ident:
+		return t.Name == name
+	case *ast.SelectorExpr:
+		return t.Sel.Name == name
+	}
+	return false
+}
+
+// TestNoNewUnselectedGraphQueries pins every GraphQuery literal without a
+// face selection to unselectedGraphQueryAllowlist, exactly.
+func TestNoNewUnselectedGraphQueries(t *testing.T) {
+	t.Parallel()
+	got := scanTree(t, repoRoot, scannedRoots, unselectedGraphQueries)
+	counts := make(map[string]int, len(unselectedGraphQueryAllowlist))
+	for path, e := range unselectedGraphQueryAllowlist {
+		counts[path] = e.n
+	}
+	for _, msg := range diffAllowlist(unselectedGraphQueryGuard, got, counts) {
+		t.Error(msg)
+	}
+}
+
 // defaultWorldGuard is the vocabulary of the DefaultWorld rule.
 var defaultWorldGuard = guard{
 	what: "store.DefaultWorld call",
@@ -106,8 +155,9 @@ func TestNoNewDefaultWorldCalls(t *testing.T) {
 func TestFaceSelectionAllowlists_HaveReasons(t *testing.T) {
 	t.Parallel()
 	for name, list := range map[string]map[string]allowed{
-		"unselectedQueryAllowlist": unselectedQueryAllowlist,
-		"defaultWorldAllowlist":    defaultWorldAllowlist,
+		"unselectedQueryAllowlist":      unselectedQueryAllowlist,
+		"unselectedGraphQueryAllowlist": unselectedGraphQueryAllowlist,
+		"defaultWorldAllowlist":         defaultWorldAllowlist,
 	} {
 		for path, e := range list {
 			if strings.TrimSpace(e.reason) == "" {
@@ -117,6 +167,28 @@ func TestFaceSelectionAllowlists_HaveReasons(t *testing.T) {
 				t.Errorf("%s: %s: count %d; delete the entry instead", name, path, e.n)
 			}
 		}
+	}
+}
+
+func TestUnselectedGraphQueries(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		body string
+		want int
+	}{
+		{"qualified, no Faces", `_ = store.GraphQuery{EntityType: "x"}`, 1},
+		{"bare, no Faces", `_ = GraphQuery{}`, 1},
+		{"with Faces", `_ = store.GraphQuery{EntityType: "x", Faces: store.AllFaces()}`, 0},
+		{"other type", `_ = store.EntityQuery{Type: "x"}`, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := unselectedGraphQueries(parseBody(t, tc.body)); len(got) != tc.want {
+				t.Errorf("found = %v, want %d", got, tc.want)
+			}
+		})
 	}
 }
 

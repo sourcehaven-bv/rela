@@ -78,8 +78,10 @@ func visibleRelationIDs(
 	// longer has (a dangling edge) is simply absent, as the per-id lookup's
 	// not-found was.
 	//
-	// The request's world picks each neighbor's row, and the gate then
-	// decides on that row: world first, gate second, the read path's order.
+	// The request's world picks each neighbor's row: world first, gate
+	// second, the read path's order. The bare-id gate (PermitsReadMany)
+	// still evaluates a scoped verdict on the default-world row until
+	// TKT-7IZHP0.
 	candidates := make([]store.EntityHeader, 0, len(neighborIDs))
 	for h, err := range store.ListEntityHeaders(ctx, reader.store, store.EntityQuery{
 		IDs: neighborIDs, Faces: store.InWorld(worldScopeFrom(ctx)),

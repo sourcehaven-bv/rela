@@ -201,7 +201,8 @@ func (g DeclarativeGate) ReadableFaces(ctx context.Context, entityType string) (
 // (TKT-205V2N). It gives surfaces with no data-entry read gate on ctx (a
 // validation run under a principal, the transition verdicts) a gate that
 // cannot disagree with their row gate. Gated hops read their endpoints in
-// the gate's world ([DeclarativeGate.WithWorld]).
+// the default world: none of those surfaces reads in another world yet
+// (TKT-7IZHP0).
 func (g DeclarativeGate) GateTraversal(
 	ctx context.Context, candidateType string, hop acl.TraversalHop,
 ) (*store.RelationPredicate, error) {
@@ -209,5 +210,5 @@ func (g DeclarativeGate) GateTraversal(
 	if err != nil {
 		return nil, err
 	}
-	return r.GateTraversal(ctx, candidateType, g.world, hop)
+	return r.GateTraversal(ctx, candidateType, store.DefaultWorld(), hop)
 }

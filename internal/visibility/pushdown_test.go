@@ -308,4 +308,9 @@ func TestListPushdown_AllFacesScopedPrincipalGetsGrantedFaceRowsOnly(t *testing.
 		t.Fatalf("rows = %v, want [POL-2@published]: POL-1 has no granted face, POL-2@draft is "+
 			"outside the grant's faces, POL-3 is outside the scope", got)
 	}
+	// The ACL result is a template: it carries no selection, and the
+	// pushdown stamps its own onto a copy.
+	if !rqr.Query.Faces.IsZero() {
+		t.Fatalf("template left with selection %s after pushdown", rqr.Query.Faces)
+	}
 }

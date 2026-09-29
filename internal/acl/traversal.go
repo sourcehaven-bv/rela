@@ -245,8 +245,8 @@ func (r *Request) gateHop(ctx context.Context, hop TraversalHop) (*store.Endpoin
 		return nil, ErrTraversalDenied
 	}
 	// A face-restricted read means only SOME content states of the endpoint
-	// are readable, and [store.EndpointPredicate] has no face field — so the
-	// predicate cannot express the restriction. Checked before the query is
+	// are readable. The traversal stamps the request world on the endpoint,
+	// not a face ceiling, so it cannot express the restriction. Checked before the query is
 	// folded so the refusal cannot be reached with a half-built predicate.
 	if len(rq.Faces) > 0 {
 		return nil, fmt.Errorf("%w: read of %q is face-restricted", ErrTraversalUnsupported, hop.EntityType)
