@@ -662,9 +662,49 @@ The expression uses rela's strict, typed Lua-compatible expression language,
 not the full Lua runtime. It has no statements, loops, dynamic property access,
 store/relations, network or filesystem access. Supported value constructs are
 scalar literals, `entity.<property>` reads, checked integer arithmetic, string
-concatenation (`..`), and the pure expression functions documented under
+concatenation (`..`), value selection with `and`/`or` (below), and the pure
+expression functions documented under
 [automation conditions](#expression-conditions-condition), including `today`, `date_add`,
 `days_between`, and `rrule_next`.
+
+#### Choosing a value with `and`/`or`
+
+There is no `if` expression. As in Lua, `c and x or y` chooses a value: `x`
+when `c` is true, otherwise `y`. This maps one enum to another or a number to a
+band:
+
+```yaml
+level:
+  type: assurance # enum: low, medium, high
+  computed: >-
+    (entity.method == 'password_otp' and 'medium')
+    or ((entity.method == 'passkey' or entity.method == 'hardware_key') and 'high')
+    or 'low'
+band:
+  type: integer
+  computed: entity.score >= 80 and 3 or entity.score >= 50 and 2 or 1
+```
+
+The rules:
+
+- `c and x` gives `x` when `c` is true and nil when it is false. `c` must be a
+  boolean, and it must have a value: when `entity.flag` is unset,
+  `entity.flag and 'on' or 'off'` is an evaluation error, which rejects the
+  write. Compare instead: `entity.flag == true and 'on' or 'off'`.
+- `x or y` gives `x` unless `x` is nil. `entity.nickname or 'anonymous'`
+  supplies a default for a missing property. An empty string is a value, not
+  nil.
+- `x` and `y` must have the same type: string, number, integer or date. With
+  boolean operands `and`/`or` are ordinary logic, so a boolean cannot be chosen.
+  String literals for a date property follow the property's `format:`.
+- **A nil value falls through.** In `c and entity.opt or 'low'`, a missing `opt`
+  gives `'low'` even when `c` is true. Write `c and (entity.opt or 'none') or
+  'low'` when that matters.
+
+The same form works in conditions and `--filter`, for example
+`(entity.priority > 4 and 'high' or 'low') == 'high'`. Keep the parentheses:
+`and`/`or` bind more loosely than `==`, so without them the comparison
+applies to `'low'` only.
 
 Dependencies are inferred from the compiled expression. Computed properties may
 depend on other computed properties; rela evaluates them in dependency order.
@@ -1205,7 +1245,8 @@ entities count depends on the surface:
 | `query_scopes:` | Those the reader may see |
 | View (list) `condition:` and next-action `condition:` | Those the reader may see |
 | Validation `when_condition:` / `then_condition:` in the web app and over MCP | Those the caller may see |
-| Validation in `rela validate` and `analyze_validations` | All |
+| MCP `list_entities` `filter` | Those the caller may see |
+| Validation in `rela validate` and `rela analyze validations` | All |
 | Automation `on.condition:` | All |
 | State-machine transition `when:` | All |
 | ACL `when:` in `acl.yaml` | All |
@@ -1278,11 +1319,11 @@ Scopes shape **screens**. They are deliberately absent everywhere that answers
 | Applies | Does not apply |
 | --- | --- |
 | Lists, kanbans, and list search in the web app | `rela list`, `rela export`, `rela validate` |
-| The list API, where `?query_scope=` selects one | `analyze_*` (cardinality, orphans, properties, validations) |
+| The list API, where `?query_scope=` selects one | `rela analyze` and the MCP `analyze` tool |
 | | MCP `list_entities`, Lua `rela.list_entities` |
 | | Trace and orphan reports |
 
-The split is not an oversight. If `analyze_cardinality` honoured a `default`
+The split is not an oversight. If the cardinality check honoured a `default`
 scope that hides archived rows, archiving an entity with a missing required
 relation would silence the violation — and `rela validate` would report clean
 over data it was never shown.
@@ -2735,7 +2776,9 @@ automations:
         value: "due-soon"
 ```
 
-Both keys are optional and AND together. Available functions include
+Both keys are optional and AND together. An expression can choose a value with
+`c and x or y`; see
+[choosing a value](#choosing-a-value-with-andor). Available functions include
 `today()`, `days_between(a, b)`, `date_add(d, n, unit)`,
 `rrule_next(rule, after)`, plus the string matchers `match`, `regex`,
 `fuzzy`, and `contains`.

@@ -77,7 +77,7 @@ func wireIdentityAndMCP(app *dataentry.App, svc *appbuild.Services, f *serverFla
 // filesystem access, so the ACL is the ONLY boundary.
 //
 // **No Lua tools.** The server is built without [relamcp.WithLuaTools], so
-// lua_eval, lua_run and lua_list do not exist here. A remote caller may not
+// lua_eval and lua_run do not exist here. A remote caller may not
 // run scripts in the server process.
 func wireRemoteMCP(app *dataentry.App, svc *appbuild.Services, f *serverFlags) error {
 	if !f.remoteMCP {
@@ -99,18 +99,18 @@ func wireRemoteMCP(app *dataentry.App, svc *appbuild.Services, f *serverFlags) e
 // remoteAttachmentDeps wires the MCP attachment tools onto the web upload
 // path's policy: the App's live schema (so an operator's edit to `accept:`,
 // `scan:` or `max_attachment_bytes` applies to MCP uploads immediately), its
-// command runner, and its write mutex. The snapshot is rebuilt per tool call,
-// which costs one struct allocation.
+// command runner, and its attachment locker. The snapshot is rebuilt per tool
+// call, which costs one struct allocation.
 func remoteAttachmentDeps(svc *appbuild.Services, host dataentry.MCPHost) relamcp.AttachmentDeps {
 	return relamcp.AttachmentDeps{
 		Snapshot: func() (relamcp.AttachmentSnapshot, error) {
 			meta, limit := host.AttachmentPolicy()
 			return relamcp.NewAttachmentSnapshot(
-				svc.Store(), svc.EntityManager(), meta, host.AttachmentRunner, limit)
+				svc.Store(), svc.EntityManager(), host.AttachmentLocker, svc.ACL(), meta, host.AttachmentRunner, limit)
 		},
+		Uploads:    host.AttachmentUploads,
 		Authorizer: svc.ACL(),
 		Audit:      svc.Audit(),
-		WriteLock:  host.WriteLock,
 	}
 }
 
@@ -130,7 +130,7 @@ func newRemoteMCPServer(svc *appbuild.Services, host dataentry.MCPHost) (*relamc
 // tools.
 func remoteMCPDeps(svc *appbuild.Services, host dataentry.MCPHost) relamcp.Deps {
 	reads := svc.GatedReads()
-	return relamcp.Deps{
+	deps := relamcp.Deps{
 		Store:         reads.Reader,
 		Meta:          svc.Meta(),
 		Tracer:        reads.Tracer,
@@ -142,6 +142,10 @@ func remoteMCPDeps(svc *appbuild.Services, host dataentry.MCPHost) relamcp.Deps 
 		ProjectRoot:   svc.Paths().Root,
 		Attachments:   remoteAttachmentDeps(svc, host),
 	}
+	if reads.Traversals != nil {
+		deps.Traversals = reads.Traversals
+	}
+	return deps
 }
 
 // noopWatcher satisfies [relamcp.Watcher] for the HTTP transport, which has

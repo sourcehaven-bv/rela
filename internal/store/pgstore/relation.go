@@ -63,9 +63,9 @@ func (s *Store) ListRelations(ctx context.Context, q store.RelationQuery) iter.S
 		}
 		// Closed before the next query: on a Tx view both share one connection.
 		rows.Close()
-		revealed, err := revealedRelations(ctx, s, q)
-		if err != nil {
-			yield(nil, err)
+		revealed, revealErr := revealedRelations(ctx, s, q)
+		if revealErr != nil {
+			yield(nil, revealErr)
 			return
 		}
 		for _, r := range revealed {

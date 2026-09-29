@@ -64,8 +64,7 @@ func (h *writeHandler) handleV1RestoreEntity(w http.ResponseWriter, r *http.Requ
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
 		return
 	}
-	r = h.enterWrite(r)
-	defer h.writeMu.Unlock()
+	r = h.withProvision(r)
 	ctx := r.Context()
 
 	// Only a whole entity is soft-deleted, so only a bare id can be restored.

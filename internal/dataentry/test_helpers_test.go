@@ -12,6 +12,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/attachment"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/lock"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/openapi"
@@ -193,6 +194,8 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 		getEntity:          app.reader.getEntity,
 		currentEdgesByPeer: app.currentEdgesByPeer,
 		copies:             copyOffers,
+		schema:             app.State,
+		actionConditions:   func() ViewConditionFunc { return app.viewConditions },
 	}
 	app.serializer = entitySerializer{affordances: app.affordances}
 	// viewReader mirrors the production wiring (NewApp) so view-pipeline reads
@@ -201,7 +204,7 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 	// swallow as the logo/palette stores.
 	app.viewReader, _ = visibility.NewPolicyReader(ctxRowGate{}, appRedactor(app), svc.Store())
 	// Rebuild the sync handler (manifest-only) over the rebound store. The record
-	// write path was retired in TKT-8P1TM7, so there is no writeMu/provision here.
+	// write path was retired in TKT-8P1TM7, so there is no provision seam here.
 	app.sync = newSyncHandler(svc.Store())
 	// The SAME constructor production uses, not a copy of it. The literal
 	// that stood here called itself a mirror of NewApp's wiring and then
@@ -233,6 +236,8 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 		files:    newCommandFileStore(),
 		redactor: appRedactor(app),
 	}
+	app.attachmentLocker = lock.For(svc.Store())
+	app.attachmentUploads = attachment.NewLimiter(attachment.DefaultMaxUploads)
 	// attachmentHandler mirrors production wiring: closures for the swappable
 	// acl/audit/field-resolver fields (attachment ACL tests reassign app.acl
 	// after this rebind), values for the fixed store/manager handles.
@@ -247,7 +252,8 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 		audit:      func() audit.Audit { return app.auditSink },
 		fields:     func() FieldVerdictResolver { return app.fieldResolver },
 		gateRead:   app.gateReadOrNotFound,
-		writeMu:    &app.writeMu,
+		locker:     app.attachmentLocker,
+		uploads:    app.attachmentUploads,
 		provision:  newProvisionSeam(app),
 	}
 
@@ -288,7 +294,6 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 		luaDeps:            app.luaWriteDeps,
 		fullScriptDetail:   app.allowFullScriptDetail,
 		paths:              paths,
-		writeMu:            &app.writeMu,
 		provision:          newProvisionSeam(app),
 	}
 }
