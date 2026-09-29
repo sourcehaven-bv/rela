@@ -192,8 +192,8 @@ func RestoreEntity(ctx context.Context, m *Manager, id string) (*entity.DeleteRe
 		if !ok {
 			return fmt.Errorf("%w: %s", ErrEntityNotFound, id)
 		}
-		if err := authorizeRestore(store.WithRevealed(ctx, id), m, tx, marked); err != nil {
-			return err
+		if authErr := authorizeRestore(store.WithRevealed(ctx, id), m, tx, marked); authErr != nil {
+			return authErr
 		}
 		res, err = sd.SoftDelete().Unmark(ctx, id)
 		if errors.Is(err, store.ErrNotFound) {

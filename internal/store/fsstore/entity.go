@@ -832,6 +832,19 @@ func (s *FSStore) rewriteRelationFiles(metas []relationMeta, oldID, newID string
 	return nil
 }
 
+// rekeyEntityIndex moves every state of family onto newID in the entity
+// index. The caller holds s.mu.
+func rekeyEntityIndex(s *FSStore, family []entityMeta, newID string) {
+	for _, meta := range family {
+		oldKey := stateKey(meta.ID, meta.Face)
+		delete(s.entities, oldKey)
+		s.entityOrder = storeutil.SortedRemoveFunc(s.entityOrder, oldKey, storeutil.CompareStateKeys)
+		newKey := stateKey(newID, meta.Face)
+		s.entities[newKey] = entityMeta{ID: newID, Type: meta.Type, Face: meta.Face}
+		s.entityOrder = storeutil.SortedInsertFunc(s.entityOrder, newKey, storeutil.CompareStateKeys)
+	}
+}
+
 func (s *FSStore) renameEntity(_ context.Context, oldID, newID string) (*store.RenameResult, error) {
 	if err := storeutil.ValidateID(newID); err != nil {
 		return nil, err
@@ -895,15 +908,7 @@ func (s *FSStore) renameEntity(_ context.Context, oldID, newID string) (*store.R
 		return nil, err
 	}
 
-	// Update entity index.
-	for _, meta := range family {
-		oldKey := stateKey(meta.ID, meta.Face)
-		delete(s.entities, oldKey)
-		s.entityOrder = storeutil.SortedRemoveFunc(s.entityOrder, oldKey, storeutil.CompareStateKeys)
-		newKey := stateKey(newID, meta.Face)
-		s.entities[newKey] = entityMeta{ID: newID, Type: meta.Type, Face: meta.Face}
-		s.entityOrder = storeutil.SortedInsertFunc(s.entityOrder, newKey, storeutil.CompareStateKeys)
-	}
+	rekeyEntityIndex(s, family, newID)
 	// EVERY face is renamed (TKT-9KZGJO). Indexes key documents per face, so
 	// each one needs its own re-key; announcing only the default face would
 	// strand every sibling under an id that no longer exists.
