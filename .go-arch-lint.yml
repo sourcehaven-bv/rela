@@ -595,8 +595,9 @@ deps:
       - store
       - tracer
       - validator
-      # visibility.Readable: the write tools gate the ids they name through
-      # the injected (gated) reader before calling entitymanager.
+      # visibility.Family: GraphReader.Family returns it; the write tools
+      # gate the ids they name through the injected (gated) reader before
+      # calling entitymanager.
       - visibility
     canUse:
       - mcpgo
@@ -1304,7 +1305,7 @@ deps:
       - secrets
       - store
       - tracer
-      # visibility.Readable: the write bindings gate the ids they name through
+      # visibility.Family: the write bindings gate the ids they name through
       # the runtime's VisibleReader before calling the manager.
       - visibility
     canUse:

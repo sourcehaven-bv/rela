@@ -84,7 +84,7 @@ func (h promptHandler) handleAnalyzeTraceabilityPrompt(
 	}
 
 	st := h.store
-	e, getErr := st.GetEntity(ctx, id)
+	e, getErr := st.Resolve(ctx, id)
 	if getErr != nil {
 		return nil, fmt.Errorf("entity not found: %s", id)
 	}
@@ -160,7 +160,7 @@ func (h promptHandler) handleReviewOrphansPrompt(
 	}
 	summaries := make([]orphanSummary, 0)
 	for _, id := range orphanIDs {
-		e, err := st.GetEntity(ctx, id)
+		e, err := st.Resolve(ctx, id)
 		if err != nil {
 			continue
 		}
@@ -302,7 +302,7 @@ func (h promptHandler) handleReviewEntityPrompt(
 	}
 
 	st := h.store
-	entity, getErr := st.GetEntity(ctx, id)
+	entity, getErr := st.Resolve(ctx, id)
 	if getErr != nil {
 		return nil, fmt.Errorf("entity not found: %s", id)
 	}

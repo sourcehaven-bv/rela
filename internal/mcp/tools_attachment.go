@@ -235,7 +235,7 @@ func attachmentNotFound(id, property, fileName string) *mcpgo.CallToolResult {
 // entity both answer "entity not found". Any other read failure is logged and
 // answered generically, so an outage is not mistaken for a missing entity.
 func (h attachmentHandler) gatedEntity(ctx context.Context, id string) (*entity.Entity, *mcpgo.CallToolResult) {
-	e, err := h.store.GetEntity(ctx, id)
+	e, err := h.store.Resolve(ctx, id)
 	switch {
 	case errors.Is(err, store.ErrNotFound) || (err == nil && e == nil):
 		return nil, errorResult("entity not found: " + id)

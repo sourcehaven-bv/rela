@@ -139,41 +139,22 @@ func PrimeTraversals(ctx context.Context, red FieldRedactor, rows []*entity.Enti
 }
 
 // EntityGetter is the single-entity load this package needs from the
-// store. Satisfied by store.Store.
-//
-// It loads by (id, face) rather than by id because the readers accept an
-// ADDRESS (`ID` or `ID@face`) and parse it themselves; see [parseAddress].
+// store. Satisfied by store.Store. It loads by (id, face): the stores take a
+// bare id, so a caller holding an address splits it first (BUG-R1PQY9).
 type EntityGetter interface {
 	GetEntityState(ctx context.Context, id string, face entity.Face) (*entity.Entity, error)
-}
-
-// parseAddress splits an entity address into the bare id and the face it
-// names.
-//
-// Readers parse rather than pass the string through because the stores take a
-// bare id: an unparsed `ID@face` matches no row, and a row gate keyed on the
-// bare id matches nothing either (BUG-R1PQY9). A string the grammar rejects is
-// returned whole at the default face, as [store.GetEntityAt] does, so a
-// hand-edited id the current grammar would refuse stays readable. The fallback
-// cannot pair a gate on one id with a load of another: a rejected string that
-// contains the separator is refused by every store.
-//
-// It splits instead of delegating to [store.GetEntityAt] because the row gate
-// needs the bare id before the load.
-func parseAddress(addr string) (id string, face entity.Face) {
-	id, face, err := entity.ParseStateRef(addr)
-	if err != nil {
-		return addr, ""
-	}
-	return id, face
 }
 
 // Reader is the row-gating, field-redacting read-out surface for
 // collections. Implementations: [PolicyReader] (policy-enforcing) and
 // [AllowAllReader] (explicit pass-through capability for system jobs). A
-// single entity is read through a [Resolver], which both implementations
-// expose.
+// single entity is read through the [Resolver] each one exposes.
 type Reader interface {
+	// Resolver returns the single-entity read that applies the same policy.
+	// Nil: never returned by either implementation; [NewScriptReader]
+	// rejects it.
+	Resolver() *Resolver
+
 	// Filter drops candidates the ctx principal may not read and redacts
 	// the survivors. Order is preserved; the returned slice is fresh; a
 	// gate error drops that whole type fail-closed (logged loud). Nil for
@@ -183,9 +164,11 @@ type Reader interface {
 	// FilterRelations keeps only relations whose BOTH endpoints are
 	// visible to the ctx principal (FROM ∧ TO — the relation-history
 	// precedent: the FROM side owns UI placement, it is not the auth
-	// boundary). Order preserved, fresh slice, fail-closed on gate error
-	// or a missing endpoint. Relations carry no field-level redaction
-	// today; row-gating is the whole contract.
+	// boundary). The tail of a content-scoped edge is its FromFace, which
+	// must itself be readable; every other end is entity level (see
+	// [Resolver.EndpointsReadable]). Order preserved, fresh slice,
+	// fail-closed on gate error or a missing endpoint. Relations carry no
+	// field-level redaction today; row-gating is the whole contract.
 	FilterRelations(ctx context.Context, rels []*entity.Relation) []*entity.Relation
 }
 

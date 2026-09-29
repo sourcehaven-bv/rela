@@ -470,6 +470,15 @@ func scriptEntityReader(
 	return reader
 }
 
+// scriptEntityReaderFamily is the script read surface plus the entity-level
+// read the MCP write tools ask before they name an id. Every reader
+// [scriptReads] returns implements it: [visibility.ScriptReader],
+// [visibility.UnrestrictedReader] and [visibility.DenyReader].
+type scriptEntityReaderFamily interface {
+	lua.EntityReader
+	Family(ctx context.Context, id string) (visibility.Family, bool, error)
+}
+
 // scriptReads returns the principal-bound script reader and the traversal gate
 // that answers `related(...)` under the SAME tier: unrestricted reads get
 // [relresolve.Ungated], policy reads get the ctx principal's gate, and a
@@ -477,7 +486,7 @@ func scriptEntityReader(
 // what keeps a validation rule's traversal from seeing more than its reads.
 func scriptReads(
 	st store.Store, d *acl.Declarative, redactor visibility.FieldRedactor,
-) (scriptReader lua.EntityReader, traversalGate relresolve.Gate) {
+) (scriptReader scriptEntityReaderFamily, traversalGate relresolve.Gate) {
 	if d == nil {
 		// Named, not bare: this is the NopACL path and the single largest
 		// ungated read surface in the tree, so it must show up in
@@ -695,8 +704,13 @@ func gatedSearcher(
 // GatedGraphReader is the row-and-tally read surface returned by
 // [Services.GatedReads]. Row reads are ACL-gated; the two counts are not —
 // see [gatedGraphReader] for why.
+//
+// Resolve takes an entity ADDRESS (`ID` or `ID@face`) and reads the face it
+// names, or the face the reader's world resolves a bare id to. Family answers
+// which faces of a bare id the caller may read, from headers only.
 type GatedGraphReader interface {
-	GetEntity(ctx context.Context, id string) (*entity.Entity, error)
+	Resolve(ctx context.Context, addr string) (*entity.Entity, error)
+	Family(ctx context.Context, id string) (visibility.Family, bool, error)
 	ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error]
 	GetRelation(ctx context.Context, from, relType, to string) (*entity.Relation, error)
 	ListRelations(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error]
@@ -716,8 +730,10 @@ type GatedGraphReader interface {
 //     STRUCTURAL: it says how many rows of a declared type exist, never which.
 //     Entity *existence* is the secret the row gate protects; an aggregate
 //     tally of a type the metamodel already publishes is not.
-//   - GetRelation answers not-found unless both endpoints pass the row gate,
-//     then reads the raw store. Holding two ids is not the same as being
+//   - GetRelation answers not-found unless both endpoints have a readable
+//     face ([visibility.Resolver.Family]), then reads the raw store. The
+//     store returns the edge at the default tail, which is entity level, so
+//     the family check is the whole gate (RR-2IK76Z). Holding two ids is not the same as being
 //     allowed to read them: without the endpoint check, a caller could learn
 //     that a hidden entity exists and is linked (TKT-4QSZ8Y). The edge's meta
 //     VALUES are not redacted: relations carry no field-level redaction on
@@ -725,7 +741,7 @@ type GatedGraphReader interface {
 //
 // If either judgement changes, this is the one type to fix.
 type gatedGraphReader struct {
-	rows lua.EntityReader
+	rows scriptEntityReaderFamily
 	raw  store.Store
 
 	// gateEndpoints requires both endpoints of a GetRelation to be readable.
@@ -734,8 +750,12 @@ type gatedGraphReader struct {
 	gateEndpoints bool
 }
 
-func (g gatedGraphReader) GetEntity(ctx context.Context, id string) (*entity.Entity, error) {
-	return g.rows.GetEntity(ctx, id)
+func (g gatedGraphReader) Resolve(ctx context.Context, addr string) (*entity.Entity, error) {
+	return g.rows.GetEntity(ctx, addr)
+}
+
+func (g gatedGraphReader) Family(ctx context.Context, id string) (visibility.Family, bool, error) {
+	return g.rows.Family(ctx, id)
 }
 
 func (g gatedGraphReader) ListEntities(
@@ -753,10 +773,21 @@ func (g gatedGraphReader) ListRelations(
 func (g gatedGraphReader) GetRelation(
 	ctx context.Context, from, relType, to string,
 ) (*entity.Relation, error) {
-	if g.gateEndpoints && (!visibility.Readable(ctx, g.rows, from) || !visibility.Readable(ctx, g.rows, to)) {
+	if g.gateEndpoints && (!g.familyReadable(ctx, from) || !g.familyReadable(ctx, to)) {
 		return nil, store.ErrNotFound
 	}
 	return g.raw.GetRelation(ctx, from, relType, to)
+}
+
+// familyReadable reports whether the caller may read some face of id. A gate
+// failure is logged and hides, like every other gated read.
+func (g gatedGraphReader) familyReadable(ctx context.Context, id string) bool {
+	_, ok, err := g.rows.Family(ctx, id)
+	if err != nil {
+		slog.Warn("appbuild: relation endpoint gate failed; answering not-found", "id", id, "err", err)
+		return false
+	}
+	return ok
 }
 
 func (g gatedGraphReader) CountEntities(ctx context.Context, q store.EntityQuery) (int, error) {

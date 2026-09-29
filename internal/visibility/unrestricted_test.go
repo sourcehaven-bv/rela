@@ -113,9 +113,14 @@ func TestUnrestricted_ExposesOnlyTheReadSurface(t *testing.T) {
 	// with the body projected away — so it cannot widen a wiring site's
 	// capability. Anything that is not a strict narrowing of an existing
 	// read method still belongs outside this set.
+	//
+	// Family (TKT-2528AB) is the same kind of narrowing: it reports which
+	// faces of an id exist, from headers, which ListEntityHeaders already
+	// answers. WithWorld returns a copy that resolves bare ids in another
+	// world; it reads nothing and writes nothing.
 	want := map[string]bool{
 		"GetEntity": true, "ListEntities": true, "ListRelations": true,
-		"ListEntityHeaders": true,
+		"ListEntityHeaders": true, "Family": true, "WithWorld": true,
 	}
 
 	typ := reflect.TypeOf(visibility.Unrestricted(seedStore(t)))

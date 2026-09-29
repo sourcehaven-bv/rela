@@ -19,7 +19,6 @@ import (
 type PolicyReader struct {
 	gate   RowGate
 	redact FieldRedactor
-	load   Loader
 	res    *Resolver
 }
 
@@ -30,7 +29,7 @@ func NewPolicyReader(gate RowGate, redact FieldRedactor, load Loader) (*PolicyRe
 	if err != nil {
 		return nil, fmt.Errorf("visibility: NewPolicyReader: %w", err)
 	}
-	return &PolicyReader{gate: gate, redact: redact, load: load, res: res}, nil
+	return &PolicyReader{gate: gate, redact: redact, res: res}, nil
 }
 
 // Resolver returns the single-entity read over this reader's gate, redactor
@@ -108,36 +107,19 @@ func (r *PolicyReader) FilterHeaders(
 }
 
 // FilterRelations implements [Reader]: a relation survives only when BOTH
-// endpoints are visible (FROM ∧ TO). Endpoint types are resolved with one
-// load per distinct endpoint id; visibility with one PermitsReadMany per
-// distinct type. A missing endpoint or a gate error hides fail-closed.
+// endpoints are readable (FROM ∧ TO), as [Resolver.EndpointsReadable]
+// decides. That reads headers in one query for the whole batch, so a faced
+// endpoint is found at its stored faces, and a content-scoped tail is gated
+// at the face it attaches to (RR-2IK76Z). A missing endpoint or a gate error
+// hides fail-closed.
 func (r *PolicyReader) FilterRelations(ctx context.Context, rels []*entity.Relation) []*entity.Relation {
 	if len(rels) == 0 {
 		return nil
 	}
-	byType := make(map[string][]string)
-	seen := make(map[string]bool)
-	for _, rel := range rels {
-		if rel == nil {
-			continue // fail-closed: a nil relation must not panic the filter
-		}
-		for _, id := range [2]string{rel.From, rel.To} {
-			if seen[id] {
-				continue
-			}
-			seen[id] = true
-			e, err := r.load.GetEntityState(ctx, id, "")
-			if err != nil {
-				continue // missing endpoint: stays out of allowed → relation hidden
-			}
-			byType[e.Type] = append(byType[e.Type], id)
-		}
-	}
-	allowed := r.permittedIDs(ctx, byType)
-
+	readable := r.res.EndpointsReadable(ctx, rels)
 	out := make([]*entity.Relation, 0, len(rels))
-	for _, rel := range rels {
-		if rel != nil && allowed[rel.From] && allowed[rel.To] {
+	for i, rel := range rels {
+		if readable[i] {
 			out = append(out, rel)
 		}
 	}

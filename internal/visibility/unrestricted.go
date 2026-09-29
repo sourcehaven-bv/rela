@@ -34,7 +34,9 @@ import (
 // nothing else, so it cannot be passed where a full store is wanted (a
 // write path, say) and cannot silently widen back into one.
 type UnrestrictedReader struct {
-	st store.Store
+	st    store.Store
+	res   *Resolver
+	world World
 }
 
 // Unrestricted wraps a raw store as an explicitly ungated script read
@@ -69,13 +71,34 @@ func Unrestricted(st store.Store) *UnrestrictedReader {
 	if st == nil {
 		panic("visibility.Unrestricted: store must be non-nil")
 	}
-	return &UnrestrictedReader{st: st}
+	res, err := NewAllowAllResolver(st)
+	if err != nil { // coverage-ignore: invariant: st is non-nil here, the resolver's only requirement
+		panic("visibility.Unrestricted: " + err.Error())
+	}
+	return &UnrestrictedReader{st: st, res: res}
 }
 
-// GetEntity implements the script read surface: a pass-through that accepts
-// an address (`ID` or `ID@face`), as the gated [ScriptReader] does.
+// WithWorld returns a copy of r whose bare-id reads resolve in w. The wiring
+// sets it; the zero World is the default world.
+func (r *UnrestrictedReader) WithWorld(w World) *UnrestrictedReader {
+	c := *r
+	c.world = w
+	return &c
+}
+
+// GetEntity implements the script read surface. It resolves addr exactly as
+// the gated [ScriptReader.GetEntity] does, through the allow-all [Resolver]:
+// `ID@face` reads that face, a bare id resolves in the reader's world, and an
+// address the grammar refuses misses. Only the gate and the redaction are
+// absent.
 func (r *UnrestrictedReader) GetEntity(ctx context.Context, addr string) (*entity.Entity, error) {
-	return store.GetEntityAt(ctx, r.st, addr)
+	return r.res.addressAny(ctx, r.world, addr)
+}
+
+// Family reports every stored face of the entity id, reading headers only.
+// See [ScriptReader.Family].
+func (r *UnrestrictedReader) Family(ctx context.Context, id string) (Family, bool, error) {
+	return r.res.familyAny(ctx, id)
 }
 
 // ListEntities implements the script read surface: straight pass-through.

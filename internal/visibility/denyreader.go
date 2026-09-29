@@ -38,6 +38,11 @@ func (DenyReader) GetEntity(context.Context, string) (*entity.Entity, error) {
 	return nil, ErrReaderUnavailable
 }
 
+// Family implements the script read surface: always refuses.
+func (DenyReader) Family(context.Context, string) (Family, bool, error) {
+	return Family{}, false, ErrReaderUnavailable
+}
+
 // ListEntities implements the script read surface: always refuses.
 func (DenyReader) ListEntities(
 	context.Context, store.EntityQuery,

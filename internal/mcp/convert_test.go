@@ -94,7 +94,7 @@ func TestConvertStoreEntity_WithoutRelations(t *testing.T) {
 	e := buildEntity(testutil.EntityFor(meta, "requirement").ID("REQ-001").With("title", "Test requirement").WithContent("Some content"))
 	seedEntity(t, st, e)
 
-	result, err := convertStoreEntity(context.Background(), e, st, meta, entityView{content: true})
+	result, err := convertStoreEntity(context.Background(), e, graphOf(st), meta, entityView{content: true})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -131,7 +131,7 @@ func TestConvertStoreEntity_WithRelations(t *testing.T) {
 	seedEntity(t, st, e2)
 	seedRelation(t, st, e2.ID, "addresses", e1.ID)
 
-	result, err := convertStoreEntity(context.Background(), e1, st, meta, entityView{relations: true})
+	result, err := convertStoreEntity(context.Background(), e1, graphOf(st), meta, entityView{relations: true})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -161,7 +161,7 @@ func TestConvertStoreEntity_NoRelationsPresent(t *testing.T) {
 	e := buildEntity(testutil.EntityFor(meta, "requirement").ID("REQ-001"))
 	seedEntity(t, st, e)
 
-	result, err := convertStoreEntity(context.Background(), e, st, meta, entityView{relations: true})
+	result, err := convertStoreEntity(context.Background(), e, graphOf(st), meta, entityView{relations: true})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -371,7 +371,7 @@ func TestBuildStoreRelations_NoEdges(t *testing.T) {
 	e := buildEntity(testutil.EntityFor(meta, "requirement").ID("REQ-001"))
 	seedEntity(t, st, e)
 
-	rels := buildStoreRelations(context.Background(), e.ID, st, meta)
+	rels := buildStoreRelations(context.Background(), e, graphOf(st), meta)
 	if rels != nil {
 		t.Error("expected nil relations for entity with no edges")
 	}
@@ -387,7 +387,7 @@ func TestBuildStoreRelations_OutgoingOnly(t *testing.T) {
 	seedEntity(t, st, req)
 	seedRelation(t, st, sol.ID, "addresses", req.ID)
 
-	rels := buildStoreRelations(context.Background(), sol.ID, st, meta)
+	rels := buildStoreRelations(context.Background(), sol, graphOf(st), meta)
 	if rels == nil {
 		t.Fatal("expected non-nil relations")
 	}
@@ -415,7 +415,7 @@ func TestBuildStoreRelations_IncomingOnly(t *testing.T) {
 	seedEntity(t, st, sol)
 	seedRelation(t, st, sol.ID, "addresses", req.ID)
 
-	rels := buildStoreRelations(context.Background(), req.ID, st, meta)
+	rels := buildStoreRelations(context.Background(), req, graphOf(st), meta)
 	if rels == nil {
 		t.Fatal("expected non-nil relations")
 	}
@@ -440,7 +440,7 @@ func TestBuildStoreRelations_BothDirections(t *testing.T) {
 	seedRelation(t, st, "SOL-001", "addresses", "REQ-001")
 	seedRelation(t, st, "REQ-001", "motivates", "DEC-001")
 
-	rels := buildStoreRelations(context.Background(), "REQ-001", st, meta)
+	rels := buildStoreRelations(context.Background(), &entity.Entity{ID: "REQ-001", Type: "requirement"}, graphOf(st), meta)
 	if rels == nil {
 		t.Fatal("expected non-nil relations")
 	}
@@ -456,6 +456,60 @@ func TestBuildStoreRelations_BothDirections(t *testing.T) {
 	if len(rels.Incoming["addresses"]) != 1 {
 		t.Errorf("expected 1 incoming addresses, got %d", len(rels.Incoming["addresses"]))
 	}
+}
+
+// TestBuildStoreRelations_FaceOwnership pins BUG-ISJHML on MCP: a
+// content-scoped edge is listed only with the face that owns it, an incoming
+// one names its tail face, and a faced neighbor without a default-world
+// face is still listed, by id alone.
+func TestBuildStoreRelations_FaceOwnership(t *testing.T) {
+	t.Parallel()
+	meta := testMeta()
+	meta.Relations["cites"] = metamodel.RelationDef{
+		Label: "Cites", From: []string{"solution"}, To: []string{"requirement"}, Scope: metamodel.ScopeContent,
+	}
+	ctx := context.Background()
+	st := memstore.New()
+	draft := &entity.Entity{ID: "SOL-1", Type: "solution", Face: "draft", Properties: map[string]any{"title": "D"}}
+	published := &entity.Entity{ID: "SOL-1", Type: "solution", Face: "published", Properties: map[string]any{"title": "P"}}
+	req := &entity.Entity{ID: "REQ-1", Type: "requirement", Properties: map[string]any{"title": "R"}}
+	for _, e := range []*entity.Entity{draft, published, req} {
+		seedEntity(t, st, e)
+	}
+	if _, err := st.CreateRelation(ctx, "SOL-1", "cites", "REQ-1", &store.RelationData{FromFace: "draft"}); err != nil {
+		t.Fatal(err)
+	}
+	seedRelation(t, st, "SOL-1", "addresses", "REQ-1")
+
+	t.Run("owning face lists the content edge", func(t *testing.T) {
+		t.Parallel()
+		rels := buildStoreRelations(ctx, draft, graphOf(st), meta)
+		if rels == nil || len(rels.Outgoing["cites"]) != 1 || len(rels.Outgoing["addresses"]) != 1 {
+			t.Fatalf("draft outgoing = %+v, want cites and addresses", rels)
+		}
+	})
+	t.Run("another face omits it", func(t *testing.T) {
+		t.Parallel()
+		rels := buildStoreRelations(ctx, published, graphOf(st), meta)
+		if rels == nil || len(rels.Outgoing["cites"]) != 0 || len(rels.Outgoing["addresses"]) != 1 {
+			t.Fatalf("published outgoing = %+v, want addresses only", rels)
+		}
+	})
+	t.Run("incoming edges name their tail", func(t *testing.T) {
+		t.Parallel()
+		rels := buildStoreRelations(ctx, req, graphOf(st), meta)
+		if rels == nil {
+			t.Fatal("no relations")
+		}
+		cites := rels.Incoming["cites"]
+		if len(cites) != 1 || cites[0].ID != "SOL-1@draft" || cites[0].Title != "D" {
+			t.Errorf("incoming cites = %+v, want SOL-1@draft titled D", cites)
+		}
+		addr := rels.Incoming["addresses"]
+		if len(addr) != 1 || addr[0].ID != "SOL-1" || addr[0].Title != "" {
+			t.Errorf("incoming addresses = %+v, want SOL-1 by id alone", addr)
+		}
+	})
 }
 
 func TestConvertStoreRelationsList(t *testing.T) {
@@ -606,7 +660,7 @@ func TestConvertStoreEntity_WithProperties(t *testing.T) {
 	e := buildEntity(testutil.EntityFor(meta, "decision").ID("DEC-001").With("title", "Use Go").With("status", "accepted").With("priority", "high"))
 	seedEntity(t, st, e)
 
-	result, err := convertStoreEntity(context.Background(), e, st, meta, entityView{content: true})
+	result, err := convertStoreEntity(context.Background(), e, graphOf(st), meta, entityView{content: true})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

@@ -19,7 +19,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/relresolve"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/store"
-	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 func (s *Server) handleListEntities(
@@ -155,7 +154,7 @@ func (s *Server) handleShowEntity(
 	id = trimID(id)
 
 	d := snap.deps
-	e, getErr := d.Store.GetEntity(ctx, id)
+	e, getErr := d.Store.Resolve(ctx, id)
 	if getErr != nil {
 		return errorResult("entity not found: " + id), nil
 	}
@@ -284,7 +283,7 @@ func (s *Server) handleCreateEntity(
 	created := result.Entity
 
 	d := snap.deps
-	e, _ := d.Store.GetEntity(ctx, created.ID)
+	e, _ := d.Store.Resolve(ctx, created.Ref().String())
 	if e == nil {
 		// Fallback: return minimal info
 		return textResult(fmt.Sprintf("Created %s %s", resolvedType, created.ID)), nil
@@ -312,7 +311,7 @@ func (s *Server) handleUpdateEntity(
 
 	d := snap.deps
 	st := d.Store
-	e, getErr := st.GetEntity(ctx, id)
+	e, getErr := st.Resolve(ctx, id)
 	if getErr != nil {
 		return errorResult("entity not found: " + id), nil
 	}
@@ -357,7 +356,8 @@ func (s *Server) handleUpdateEntity(
 		return errorResult(updateErr.Error()), nil
 	}
 
-	updated, _ := st.GetEntity(ctx, id)
+	// Re-read the face that was written, by its explicit address.
+	updated, _ := st.Resolve(ctx, e.Ref().String())
 	if updated == nil {
 		return textResult(prefixWarnings(updateResult.Warnings) + "Updated " + id), nil
 	}
@@ -412,7 +412,7 @@ func (s *Server) handleDeleteEntity(
 	cascade := args.GetBool("cascade", false)
 
 	st := snap.deps.Store
-	if _, getErr := st.GetEntity(ctx, id); getErr != nil {
+	if !readable(ctx, st, id) {
 		return errorResult("entity not found: " + id), nil
 	}
 
@@ -457,7 +457,7 @@ func (s *Server) handleRenameEntity(
 
 	// Gate the source id first: the write path answers "forbidden" for an
 	// entity that exists but is hidden, which would confirm it exists.
-	if !visibility.Readable(ctx, snap.deps.Store, oldID) {
+	if !readable(ctx, snap.deps.Store, oldID) {
 		return errorResult("entity not found: " + oldID), nil
 	}
 

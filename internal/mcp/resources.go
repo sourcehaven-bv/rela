@@ -88,7 +88,7 @@ func (h schemaResourceHandler) handleReadEntity(
 	entityType, id := segments[0], segments[1]
 
 	st := h.store
-	e, getErr := st.GetEntity(ctx, id)
+	e, getErr := st.Resolve(ctx, id)
 	if getErr != nil {
 		return nil, fmt.Errorf("entity not found: %s", id)
 	}

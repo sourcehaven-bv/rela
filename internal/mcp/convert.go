@@ -17,6 +17,7 @@ import (
 type entityJSON struct {
 	ID         string         `json:"id"`
 	Type       string         `json:"type"`
+	Face       string         `json:"face,omitempty"`
 	Title      string         `json:"title,omitempty"`
 	Properties map[string]any `json:"properties,omitempty"`
 	Content    string         `json:"content,omitempty"`
@@ -29,7 +30,9 @@ type relationsJSON struct {
 	Incoming map[string][]relationTargetJSON `json:"incoming,omitempty"`
 }
 
-// relationTargetJSON represents a related entity.
+// relationTargetJSON represents a related entity. ID is the neighbor's
+// address: the tail of a content-scoped incoming edge is one face of its
+// source, so it is named `ID@face`.
 type relationTargetJSON struct {
 	ID    string `json:"id"`
 	Title string `json:"title,omitempty"`
@@ -37,7 +40,10 @@ type relationTargetJSON struct {
 
 // relationJSON represents a relation for JSON output.
 type relationJSON struct {
-	From       string         `json:"from"`
+	From string `json:"from"`
+	// FromFace is the source face a content-scoped edge attaches to; empty
+	// for an identity-scoped edge.
+	FromFace   string         `json:"from_face,omitempty"`
 	Type       string         `json:"relation"`
 	To         string         `json:"to"`
 	Properties map[string]any `json:"properties,omitempty"`
@@ -79,6 +85,7 @@ func convertStoreEntity(
 	ej := entityJSON{
 		ID:         e.ID,
 		Type:       e.Type,
+		Face:       e.Face.String(),
 		Title:      derivedTitle(meta, e),
 		Properties: e.Properties,
 	}
@@ -86,7 +93,7 @@ func convertStoreEntity(
 		ej.Content = e.Content
 	}
 	if view.relations {
-		ej.Relations = buildStoreRelations(ctx, e.ID, st, meta)
+		ej.Relations = buildStoreRelations(ctx, e, st, meta)
 	}
 	return marshalJSON(ej)
 }
@@ -151,49 +158,50 @@ func convertStoreEntitySummary(meta *metamodel.Metamodel, e *entity.Entity) enti
 	return summary
 }
 
-// buildStoreRelations builds relation JSON for an entity using the store.
+// buildStoreRelations builds relation JSON for the served face e.
 //
-// Neighbor visibility (RR-CFFL52): a relation is only reported when the
-// entity at its far end is READABLE through st. Listing the edge while
-// dropping only the unreadable neighbor's title would still disclose that
-// neighbor's ID — and an ID is exactly what the row-level rule protects,
-// since whether an entity EXISTS is a genuine secret. So the whole edge is
-// withheld. `st` is the gated GraphReader, so under a networked wiring
-// GetEntity on a hidden neighbor returns not-found and the edge drops;
-// under the stdio (NopACL) wiring every GetEntity succeeds and the output is
-// unchanged.
+// Face ownership (BUG-ISJHML): a content-scoped edge belongs to one face of
+// its source. An OUTGOING edge is therefore listed only when e's own face is
+// its tail; identity-scoped edges belong to the entity and are listed with
+// every face. An INCOMING edge's head is e, which is entity level, so every
+// incoming edge is e's; its tail is named by address, `From@face` for a
+// content-scoped one.
+//
+// Neighbor visibility (RR-CFFL52): an edge is only reported when the entity
+// at its far end is readable through st. Listing the edge while dropping
+// only the unreadable neighbor's title would still disclose that neighbor's
+// ID, and an ID is exactly what the row-level rule protects, since whether
+// an entity EXISTS is a genuine secret. So the whole edge is withheld. See
+// [neighbor] for how each end is checked.
 func buildStoreRelations(
-	ctx context.Context, entityID string, st GraphReader, meta *metamodel.Metamodel,
+	ctx context.Context, e *entity.Entity, st GraphReader, meta *metamodel.Metamodel,
 ) *relationsJSON {
 	rels := &relationsJSON{
 		Outgoing: make(map[string][]relationTargetJSON),
 		Incoming: make(map[string][]relationTargetJSON),
 	}
 
-	outQ := store.RelationQuery{EntityID: entityID, Direction: store.DirectionOutgoing}
+	outQ := store.RelationQuery{EntityID: e.ID, Direction: store.DirectionOutgoing}
 	for r, err := range st.ListRelations(ctx, outQ) {
 		if err != nil {
 			break
 		}
-		e, getErr := st.GetEntity(ctx, r.To)
-		if getErr != nil {
-			continue // neighbor hidden or absent — withhold the edge entirely
+		if metamodel.IsContentScoped(meta, r.Type) && r.FromFace != e.Face {
+			continue // another face's content edge
 		}
-		rels.Outgoing[r.Type] = append(rels.Outgoing[r.Type],
-			relationTargetJSON{ID: r.To, Title: displayTitle(meta, e)})
+		if t, ok := neighbor(ctx, st, meta, entity.Ref{ID: r.To}); ok {
+			rels.Outgoing[r.Type] = append(rels.Outgoing[r.Type], t)
+		}
 	}
 
-	inQ := store.RelationQuery{EntityID: entityID, Direction: store.DirectionIncoming}
+	inQ := store.RelationQuery{EntityID: e.ID, Direction: store.DirectionIncoming}
 	for r, err := range st.ListRelations(ctx, inQ) {
 		if err != nil {
 			break
 		}
-		e, getErr := st.GetEntity(ctx, r.From)
-		if getErr != nil {
-			continue // neighbor hidden or absent — withhold the edge entirely
+		if t, ok := neighbor(ctx, st, meta, entity.Ref{ID: r.From, Face: r.FromFace}); ok {
+			rels.Incoming[r.Type] = append(rels.Incoming[r.Type], t)
 		}
-		rels.Incoming[r.Type] = append(rels.Incoming[r.Type],
-			relationTargetJSON{ID: r.From, Title: displayTitle(meta, e)})
 	}
 
 	if len(rels.Outgoing) == 0 {
@@ -208,10 +216,33 @@ func buildStoreRelations(
 	return rels
 }
 
+// neighbor returns the far end of an edge as the caller may see it, or false
+// when the caller may not read it (hidden and absent alike).
+//
+// An end with a face (a content-scoped tail) is that face, read with
+// [GraphReader.Resolve]. An end without one is entity level: it is readable
+// when some face of it is ([GraphReader.Family]). Its title belongs to a
+// face, so it comes from the face the world resolves the bare id to; a faced
+// neighbor has none in the default world until TKT-7IZHP0, and is listed by
+// id alone.
+func neighbor(
+	ctx context.Context, st GraphReader, meta *metamodel.Metamodel, ref entity.Ref,
+) (relationTargetJSON, bool) {
+	addr := ref.String()
+	if e, err := st.Resolve(ctx, addr); err == nil && e != nil {
+		return relationTargetJSON{ID: addr, Title: displayTitle(meta, e)}, true
+	}
+	if !ref.Face.IsDefault() || !readable(ctx, st, ref.ID) {
+		return relationTargetJSON{}, false
+	}
+	return relationTargetJSON{ID: ref.ID}, true
+}
+
 // convertStoreRelation converts an entity.Relation to JSON string.
 func convertStoreRelation(r *entity.Relation) (string, error) {
 	rj := relationJSON{
 		From:       r.From,
+		FromFace:   r.FromFace.String(),
 		Type:       r.Type,
 		To:         r.To,
 		Properties: r.Properties,
@@ -270,6 +301,7 @@ func convertStoreRelationsList(relations []*entity.Relation) []relationJSON {
 	for i, r := range relations {
 		result[i] = relationJSON{
 			From:       r.From,
+			FromFace:   r.FromFace.String(),
 			Type:       r.Type,
 			To:         r.To,
 			Properties: r.Properties,

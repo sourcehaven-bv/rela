@@ -50,7 +50,7 @@ func seedHits(t *testing.T, n int) (*storetest.Counting, []search.Hit) {
 func TestHydrateHits_FacedHitSurvives(t *testing.T) {
 	st, hits := seedHits(t, 1)
 	missing := search.Hit{ID: "TKT-GONE", Type: "ticket"}
-	got, err := hydrateHits(context.Background(), st, hydrateMeta, append(hits, missing))
+	got, err := hydrateHits(context.Background(), graphOf(st), hydrateMeta, append(hits, missing))
 	if err != nil {
 		t.Fatalf("hydrateHits: %v", err)
 	}
@@ -69,7 +69,7 @@ func TestHydrateHits_ReadBudget(t *testing.T) {
 	reads := func(n int) int {
 		st, hits := seedHits(t, n)
 		st.Reset()
-		if _, err := hydrateHits(context.Background(), st, hydrateMeta, hits); err != nil {
+		if _, err := hydrateHits(context.Background(), graphOf(st), hydrateMeta, hits); err != nil {
 			t.Fatalf("hydrateHits: %v", err)
 		}
 		return st.Reads()

@@ -19,6 +19,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // These tests pin the read-gating contract MCP must satisfy before it can be
@@ -324,7 +325,7 @@ func TestACL_BuildStoreRelations_WithholdsUnreadableEdge(t *testing.T) {
 		t.Fatalf("seed relation: %v", err)
 	}
 
-	rels := buildStoreRelations(ctx, visibleID, denyEntityReader{raw: st, deny: hiddenID}, testMeta())
+	rels := buildStoreRelations(ctx, newEntity(visibleID, "ticket", "visible ticket"), denyEntityReader{raw: st, deny: hiddenID}, testMeta())
 	if rels == nil {
 		return // withheld entirely — correct
 	}
@@ -338,17 +339,24 @@ func TestACL_BuildStoreRelations_WithholdsUnreadableEdge(t *testing.T) {
 }
 
 // denyEntityReader lists every relation (as an ungated backend would) but
-// refuses GetEntity for one id, isolating buildStoreRelations' own check.
+// refuses every read of one id, isolating buildStoreRelations' own check.
 type denyEntityReader struct {
 	raw  *memstore.MemStore
 	deny string
 }
 
-func (d denyEntityReader) GetEntity(ctx context.Context, id string) (*entity.Entity, error) {
-	if id == d.deny {
+func (d denyEntityReader) Resolve(ctx context.Context, addr string) (*entity.Entity, error) {
+	if addr == d.deny {
 		return nil, errDenied
 	}
-	return d.raw.GetEntity(ctx, id)
+	return visibility.Unrestricted(d.raw).GetEntity(ctx, addr)
+}
+
+func (d denyEntityReader) Family(ctx context.Context, id string) (visibility.Family, bool, error) {
+	if id == d.deny {
+		return visibility.Family{}, false, nil
+	}
+	return visibility.Unrestricted(d.raw).Family(ctx, id)
 }
 
 func (d denyEntityReader) ListEntities(

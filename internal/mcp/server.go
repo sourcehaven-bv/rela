@@ -41,6 +41,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
 	"github.com/Sourcehaven-BV/rela/internal/validator"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // Deps is the focused bundle of backend services the MCP server needs.
@@ -63,9 +64,11 @@ type Deps struct {
 	// than merely discouraged (the TKT-80EWGM "make the mistake
 	// impossible" pattern, applied to reads).
 	//
-	// The wiring site decides what this is. `rela mcp` (stdio) passes the
-	// raw store — the filesystem is the trust boundary there, so a gate
-	// would defend nothing. A networked wiring passes a
+	// The wiring site decides what this is. Both wirings pass
+	// [appbuild.Services.GatedReads]' reader. Under `rela mcp` (stdio)
+	// with no acl.yaml that is [visibility.Unrestricted]: the filesystem
+	// is the trust boundary there, so a gate would defend nothing, but
+	// addresses still resolve the same way. Under a policy it is a
 	// visibility-wrapped reader that resolves the ctx principal per call.
 	// Either way the handlers are identical; gating is entirely a wiring
 	// decision (DEC-ZBI39P).
@@ -99,16 +102,24 @@ type Deps struct {
 // not which ones — and `internal/dataentry` already draws this exact line
 // (`analyzeService.relCounts` is "raw (ungated) on purpose").
 //
-// `store.Store` satisfies the whole thing structurally, so the stdio wiring
-// passes one unchanged; a visibility decorator satisfies the gated half,
-// which is the point.
+// A raw `store.Store` does NOT satisfy it: Resolve and Family are resolver
+// reads, which the visibility readers provide. That keeps a raw read of the
+// zero coordinate, which a faced type does not have, out of every handler.
 type GraphReader interface {
 	GraphCounter
 
-	// GetEntity takes an entity ADDRESS (`ID` or `ID@face`), as tool input
-	// may name a face. The visibility readers the wiring supplies parse it; a
-	// raw store.Store would take a bare id only.
-	GetEntity(ctx context.Context, id string) (*entity.Entity, error)
+	// Resolve reads one face through the resolver
+	// ([visibility.Resolver.Address]). addr is an entity ADDRESS: `ID@face`
+	// reads that face, and a bare id reads the face the reader's world
+	// resolves it to. A faced type misses by bare id in the default world
+	// until TKT-7IZHP0. Every miss is [store.ErrNotFound].
+	Resolve(ctx context.Context, addr string) (*entity.Entity, error)
+
+	// Family reports which faces of the bare id the caller may read, from
+	// headers only ([visibility.Resolver.Family]). It answers entity-level
+	// questions: does the entity exist for this caller, before a write or a
+	// traversal names it.
+	Family(ctx context.Context, id string) (visibility.Family, bool, error)
 	ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error]
 	GetRelation(ctx context.Context, from, relType, to string) (*entity.Relation, error)
 	ListRelations(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error]
