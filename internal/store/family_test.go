@@ -51,7 +51,7 @@ func TestFamily_KeepsOnlyTheExactID(t *testing.T) {
 	if !slices.Equal(faces, []entity.Face{"draft", "published"}) {
 		t.Errorf("faces = %v, want [draft published]", faces)
 	}
-	if !l.got.AllStates || !slices.Equal(l.got.IDs, []string{"DOC-1"}) {
+	if !l.got.Faces.IsAll() || !slices.Equal(l.got.IDs, []string{"DOC-1"}) {
 		t.Errorf("query = %+v, want IDs [DOC-1] over every face", l.got)
 	}
 
