@@ -1293,6 +1293,10 @@ func (m *Manager) authorizeCascadeRelations(
 		fromFace          entity.Face
 	}
 	seen := make(map[subject]bool)
+	// One lookup per source id, not per edge: every face of a family has the
+	// same type, so a hub's thousands of edges from a few sources cost a few
+	// reads.
+	typeOf := make(map[string]string)
 
 	check := func(rel *entity.Relation) error {
 		if rel == nil {
@@ -1305,11 +1309,19 @@ func (m *Manager) authorizeCascadeRelations(
 		// pgstore the outer handle is the pool, so this would also take a
 		// second connection while the first is held.
 		//
-		// Best-effort, as the live relation-write path resolves it: an
-		// unresolvable source yields an empty FromType, which fails closed.
-		var fromType string
-		if from, err := tx.GetEntity(ctx, rel.From); err == nil {
-			fromType = from.Type
+		// An unresolvable source yields an empty FromType, which fails
+		// closed. A store error aborts the delete, unlike the live relation
+		// writes, which still proceed with an empty type: both refuse, but
+		// only this one reports the real cause.
+		fromType, known := typeOf[rel.From]
+		if !known {
+			var err error
+			fromType, err = edgeSourceType(ctx, tx, rel)
+			if err != nil {
+				return fmt.Errorf("resolve source of %s --%s--> %s: %w",
+					entity.FormatStateRef(rel.From, rel.FromFace), rel.Type, rel.To, err)
+			}
+			typeOf[rel.From] = fromType
 		}
 		key := subject{relType: rel.Type, fromType: fromType, fromFace: rel.FromFace}
 		if seen[key] {
@@ -1344,7 +1356,7 @@ func (m *Manager) authorizeCascadeRelations(
 	for _, rel := range incoming {
 		if err := check(rel); err != nil {
 			return fmt.Errorf("cannot delete %s: its incoming %s relation from %s: %w",
-				id, rel.Type, rel.From, err)
+				id, rel.Type, entity.FormatStateRef(rel.From, rel.FromFace), err)
 		}
 	}
 	for _, rel := range outgoing {

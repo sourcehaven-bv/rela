@@ -186,11 +186,10 @@ test.describe('Faces backlog: export as the published-only reader (BUG-CTUW2N)',
   });
 });
 
-test.describe('Faces backlog: face delete with a content-scoped edge (untracked, found by TKT-WCMW47)', () => {
-  // DELETE /policies/POL-1@draft answers 403 "no role grants delete on
-  // relations from type \"\"": the cascade check resolves the edge source by
-  // its bare id, which a faced type does not store.
-  test.fixme('deleting the draft face removes its edges and keeps the published face', async ({
+test.describe('Faces backlog: face delete with a content-scoped edge (BUG-58BL9I)', () => {
+  // The cascade check resolves each edge's source type at the edge's tail
+  // face, so POL-1@draft's content edge no longer reads as type "".
+  test('deleting the draft face removes its edges and keeps the published face', async ({
     appPage,
     facedApi,
   }) => {
@@ -212,9 +211,8 @@ test.describe('Faces backlog: face delete with a content-scoped edge (untracked,
 test.describe('Faces backlog: family delete under a draft-only grant (BUG-1YN750)', () => {
   // `actions/retire.lua` deletes by bare id, which is a family delete. The
   // editor's delete grant names `policy@draft` only, so it must be refused.
-  // POL-2 is published first so it has two faces and no edges: POL-1's
-  // content edges would trip the cascade defect above and refuse the delete
-  // for the wrong reason.
+  // POL-2 is published first so it has two faces and no edges, which keeps
+  // the refusal on the face grant alone.
   test.fixme('a draft-only deleter cannot remove the published face', async ({
     appPage,
     facedApi,

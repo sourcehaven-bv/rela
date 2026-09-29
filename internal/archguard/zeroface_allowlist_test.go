@@ -69,7 +69,6 @@ var zeroFaceAllowlist = map[string]int{
 	"internal/entitymanager/apply.go":                1,
 	"internal/entitymanager/cascadehost.go":          2,
 	"internal/entitymanager/core.go":                 4,
-	"internal/entitymanager/manager.go":              1,
 	"internal/importer/importer.go":                  4,
 	"internal/lua/elevation.go":                      1,
 	"internal/lua/runtime.go":                        3,
