@@ -7,10 +7,12 @@
 package analysis
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sort"
 	"strings"
 
@@ -40,7 +42,36 @@ type Options struct {
 	Scope map[string]bool
 }
 
-// DuplicateGroup represents entities with the same normalized title.
+// Coverage states what one finding of a check stands for (BUG-95W7MV). Each
+// report prints it in its header, so a reader knows whether a faced type was
+// judged per face or per family.
+const (
+	// CoverageFamily: one finding per id, judged over all of its faces.
+	CoverageFamily = "families (one finding per id, over every face)"
+	// CoverageEveryFace: every face row is compared, but rows of one id
+	// never match each other.
+	CoverageEveryFace = "every face (rows of different ids)"
+	// CoveragePerFace: rows are compared only with rows of the same face.
+	CoveragePerFace = "per face (ids sharing a value within one face)"
+	// CoverageEachRow: every face row is checked on its own.
+	CoverageEachRow = "every face (each row checked on its own)"
+	// CoverageCardinality: see [schema.CardinalityViolation].
+	CoverageCardinality = "per face for outgoing content-scoped bounds, otherwise families"
+)
+
+// Orphan is a family no edge connects, on any of its faces. Title is set
+// for a faceless entity only: a faced family has no row at the bare id, so
+// it is reported by id and faces.
+type Orphan struct {
+	ID    string        `json:"id"`
+	Type  string        `json:"type"`
+	Title string        `json:"title,omitempty"`
+	Faces []entity.Face `json:"faces,omitempty"`
+}
+
+// DuplicateGroup represents entity rows with the same normalized title. Each
+// row carries its Face, so a faced row is reported by its ref. A group always
+// spans at least two ids.
 type DuplicateGroup struct {
 	Title    string
 	Entities []*entity.Entity
@@ -52,9 +83,13 @@ type DuplicateGroup struct {
 // which may already exist in data that predates the constraint. Reported
 // by [Service.FindUniqueViolations] so an operator can find and fix
 // pre-existing duplicates before (or after) enabling `unique: true`.
+//
+// A violation is judged within one face: Face names it, and every entity
+// in Entities is a row of that face.
 type UniqueViolation struct {
 	EntityType string
 	Property   string
+	Face       entity.Face
 	Value      string
 	Entities   []*entity.Entity
 }
@@ -145,41 +180,35 @@ func New(d Deps) (*Service, error) {
 //
 // The warn-and-skip this replaces was documented as a known follow-up
 // (BUG-4KPN2M why4); a skipped orphan silently lowered the count.
-func (s *Service) FindOrphansWithScope(ctx context.Context, opts Options) ([]*entity.Entity, error) {
-	ids, err := s.deps.Tracer.FindOrphans(ctx)
+//
+// Coverage is [CoverageFamily]: a family is an orphan when no edge touches
+// it on any face. The result is sorted by id. A title is the tracer's: the
+// title of the face its world serves, as `rela trace` shows it.
+func (s *Service) FindOrphansWithScope(ctx context.Context, opts Options) ([]Orphan, error) {
+	found, err := s.deps.Tracer.FindOrphans(ctx)
 	if err != nil {
 		return nil, &IncompleteScanError{Op: "find orphans", Err: err}
 	}
-	st := s.deps.Store
-	out := make([]*entity.Entity, 0, len(ids))
-	var scanErrs []error
-	for _, id := range ids {
-		if !inScope(id, opts.Scope) {
-			continue
+	out := make([]Orphan, 0, len(found))
+	for _, o := range found {
+		if inScope(o.ID, opts.Scope) {
+			out = append(out, Orphan{ID: o.ID, Type: o.Type, Title: o.Title, Faces: o.Faces})
 		}
-		e, err := st.GetEntity(ctx, id)
-		if err != nil {
-			scanErrs = append(scanErrs, &IncompleteScanError{
-				Op:  "read orphan " + id,
-				Err: err,
-			})
-			continue
-		}
-		out = append(out, e)
 	}
-	return out, errors.Join(scanErrs...)
+	return out, nil
 }
 
 // --- Duplicate analysis ---
 
-// FindDuplicates returns groups of entities with similar titles,
+// FindDuplicates returns groups of entity rows with similar titles,
 // filtered by scope.
-// Deliberately the default query, not allStatesQuery: duplicate detection asks
-// whether two ENTITIES are the same thing, and an entity's translations are not
-// duplicates of each other. Widening would report every faced entity as a
-// duplicate of itself.
+//
+// Coverage is [CoverageEveryFace]: every face row takes part, because a
+// faced type has no row at the bare id and would otherwise be absent
+// (BUG-95W7MV). An entity's faces are not duplicates of each other, so a
+// group counts only when it spans at least two ids.
 func (s *Service) FindDuplicates(ctx context.Context, opts Options) ([]DuplicateGroup, error) {
-	collected, scanErr := collectEntities(ctx, s.deps.Store, store.EntityQuery{})
+	collected, scanErr := collectEntities(ctx, s.deps.Store, allStatesQuery())
 	entities := filterByScope(collected, opts.Scope)
 
 	titleGroups := make(map[string][]*entity.Entity)
@@ -192,13 +221,20 @@ func (s *Service) FindDuplicates(ctx context.Context, opts Options) ([]Duplicate
 
 	var duplicates []DuplicateGroup
 	for _, group := range titleGroups {
-		if len(group) > 1 {
+		if distinctIDs(group) > 1 {
+			sortRows(group)
 			duplicates = append(duplicates, DuplicateGroup{
 				Title:    group[0].Title(),
 				Entities: group,
 			})
 		}
 	}
+	// One id can lead two groups, one per face title, so the order breaks
+	// ties on face and then title to stay deterministic.
+	slices.SortFunc(duplicates, func(a, b DuplicateGroup) int {
+		x, y := a.Entities[0], b.Entities[0]
+		return cmp.Or(cmp.Compare(x.ID, y.ID), cmp.Compare(x.Face, y.Face), cmp.Compare(a.Title, b.Title))
+	})
 	return duplicates, scanErr
 }
 
@@ -214,10 +250,9 @@ func (s *Service) FindDuplicates(ctx context.Context, opts Options) ([]Duplicate
 // contains collisions, which the constraint does not retroactively clean.
 // List properties are skipped (a natural key is a scalar), matching the
 // write-path check.
-// Deliberately the default query, not allStatesQuery: a `unique:` natural key
-// identifies an ENTITY, and its states share that identity by construction —
-// they are the same entity. Widening would make every faced entity collide with
-// itself.
+//
+// Coverage is [CoveragePerFace], the write path's rule: two ids may not share
+// a value within one face, and two faces of one id never collide.
 func (s *Service) FindUniqueViolations(ctx context.Context, opts Options) ([]UniqueViolation, error) {
 	// (type, property) pairs the metamodel declares unique + non-list.
 	type uniqueProp struct{ entityType, property string }
@@ -233,12 +268,15 @@ func (s *Service) FindUniqueViolations(ctx context.Context, opts Options) ([]Uni
 		return nil, nil
 	}
 
-	collected, scanErr := collectEntities(ctx, s.deps.Store, store.EntityQuery{})
+	collected, scanErr := collectEntities(ctx, s.deps.Store, allStatesQuery())
 	entities := filterByScope(collected, opts.Scope)
 
-	// Group by (type, property, value); a group with >1 entity is a
-	// violation. valueGroups keyed on the uniqueProp then the value.
-	type groupKey struct{ up uniqueProp }
+	// Group by (type, property, face, value); a group spanning >1 id is a
+	// violation. valueGroups keyed on the uniqueProp and face, then the value.
+	type groupKey struct {
+		up   uniqueProp
+		face entity.Face
+	}
 	valueGroups := make(map[groupKey]map[string][]*entity.Entity)
 	for _, e := range entities {
 		for _, up := range uniqueProps {
@@ -249,7 +287,7 @@ func (s *Service) FindUniqueViolations(ctx context.Context, opts Options) ([]Uni
 			if v == "" {
 				continue // empty values are exempt, per the write-path check
 			}
-			k := groupKey{up}
+			k := groupKey{up, e.Face}
 			if valueGroups[k] == nil {
 				valueGroups[k] = make(map[string][]*entity.Entity)
 			}
@@ -260,24 +298,25 @@ func (s *Service) FindUniqueViolations(ctx context.Context, opts Options) ([]Uni
 	var violations []UniqueViolation
 	for k, byValue := range valueGroups {
 		for value, group := range byValue {
-			if len(group) > 1 {
+			if distinctIDs(group) > 1 {
+				sortRows(group)
 				violations = append(violations, UniqueViolation{
 					EntityType: k.up.entityType,
 					Property:   k.up.property,
+					Face:       k.face,
 					Value:      value,
 					Entities:   group,
 				})
 			}
 		}
 	}
-	sort.Slice(violations, func(i, j int) bool {
-		if violations[i].EntityType != violations[j].EntityType {
-			return violations[i].EntityType < violations[j].EntityType
-		}
-		if violations[i].Property != violations[j].Property {
-			return violations[i].Property < violations[j].Property
-		}
-		return violations[i].Value < violations[j].Value
+	slices.SortFunc(violations, func(a, b UniqueViolation) int {
+		return cmp.Or(
+			cmp.Compare(a.EntityType, b.EntityType),
+			cmp.Compare(a.Property, b.Property),
+			cmp.Compare(a.Face, b.Face),
+			cmp.Compare(a.Value, b.Value),
+		)
 	})
 	return violations, scanErr
 }
@@ -286,9 +325,9 @@ func (s *Service) FindUniqueViolations(ctx context.Context, opts Options) ([]Uni
 
 // FindGaps returns gaps in ID sequences, filtered by scope. Excludes
 // entity types with manual (string) IDs.
-// Deliberately the default query, not allStatesQuery: a gap is "this entity is
-// missing an expected link", asked once per entity. Reporting the same gap once
-// per state would be noise, not coverage.
+//
+// Coverage is [CoverageFamily]: every face is scanned, so a faced type is
+// never absent, and each id counts once however many faces it has.
 func (s *Service) FindGaps(ctx context.Context, opts Options) ([]GapResult, error) {
 	meta := s.deps.Meta
 	stringIDPrefixes := make(map[string]bool)
@@ -301,12 +340,14 @@ func (s *Service) FindGaps(ctx context.Context, opts Options) ([]GapResult, erro
 		}
 	}
 
-	collected, scanErr := collectEntities(ctx, s.deps.Store, store.EntityQuery{})
+	collected, scanErr := collectEntities(ctx, s.deps.Store, allStatesQuery())
 	prefixGroups := make(map[string][]int)
+	seen := make(map[string]bool, len(collected))
 	for _, e := range collected {
-		if !inScope(e.ID, opts.Scope) {
+		if seen[e.ID] || !inScope(e.ID, opts.Scope) {
 			continue
 		}
+		seen[e.ID] = true
 		parsed, err := entity.ParseEntityID(e.ID)
 		if err != nil || parsed.Prefix == "" {
 			continue
@@ -625,6 +666,25 @@ func inScope(entityID string, scope map[string]bool) bool {
 	return exists
 }
 
+// distinctIDs counts the ids among rows.
+func distinctIDs(rows []*entity.Entity) int {
+	ids := make(map[string]struct{}, len(rows))
+	for _, e := range rows {
+		ids[e.ID] = struct{}{}
+	}
+	return len(ids)
+}
+
+// sortRows orders rows by id, then face.
+func sortRows(rows []*entity.Entity) {
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].ID != rows[j].ID {
+			return rows[i].ID < rows[j].ID
+		}
+		return rows[i].Face < rows[j].Face
+	})
+}
+
 // normalizeTitle normalizes a title for duplicate detection.
 func normalizeTitle(s string) string {
 	s = strings.ToLower(s)
@@ -641,11 +701,10 @@ func normalizeTitle(s string) string {
 // — makes such a check report a clean run over data it never loaded, which is
 // worse than no check because it is a claim (TKT-4Y6CMV).
 //
-// NOT every analysis wants this. A question about an entity's IDENTITY — is
-// this a duplicate of that one, is this natural key unique, is this entity
-// orphaned — is asked once per entity, and widening it would report the same
-// entity once per state. Those keep the default query deliberately; see their
-// call sites.
+// An analysis about an entity's IDENTITY (duplicates, unique keys, gaps)
+// uses it too, because a faced type has no default-state row and would
+// otherwise be absent (BUG-95W7MV). Those checks fold the rows of one id
+// themselves so a family is never reported against itself.
 func allStatesQuery() store.EntityQuery {
 	return store.EntityQuery{AllStates: true}
 }

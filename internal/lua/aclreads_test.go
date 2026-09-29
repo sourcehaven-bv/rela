@@ -108,7 +108,11 @@ func newACLWorld(t *testing.T) (store.Store, lua.WriteDeps) {
 	if err != nil {
 		t.Fatalf("NewScriptReader: %v", err)
 	}
-	visTracer, err := visibility.NewVisibleTracer(tracer.New(st), gate, redactor, st)
+	visRes, err := visibility.NewResolver(gate, redactor, st)
+	if err != nil {
+		t.Fatalf("NewResolver: %v", err)
+	}
+	visTracer, err := visibility.NewVisibleTracer(tracer.New(st, store.WorldScope{}), visRes, st, store.WorldScope{})
 	if err != nil {
 		t.Fatalf("NewVisibleTracer: %v", err)
 	}
@@ -370,7 +374,7 @@ func TestScriptReads_NilReaderDenies(t *testing.T) {
 	deps := lua.WriteDeps{
 		ReadDeps: lua.ReadDeps{
 			VisibleReader: nil, // the wiring omission under test
-			Tracer:        tracer.New(st),
+			Tracer:        tracer.New(st, store.WorldScope{}),
 			Meta:          aclWorldMeta(),
 			ProjectRoot:   t.TempDir(),
 		},

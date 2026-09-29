@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/store"
+
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -75,7 +77,7 @@ func newMockWorkspace() *mockWorkspace {
 func (m *mockWorkspace) services(projectRoot string) lua.ReadDeps {
 	return lua.ReadDeps{
 		VisibleReader: visibility.Unrestricted(m.store),
-		Tracer:        tracer.New(m.store),
+		Tracer:        tracer.New(m.store, store.WorldScope{}),
 		Meta:          m.meta,
 		ProjectRoot:   projectRoot,
 	}

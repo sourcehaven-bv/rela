@@ -701,7 +701,7 @@ func (t lateGatedTracer) FindPath(ctx context.Context, fromID, toID string) []tr
 	return t.tracer().FindPath(ctx, fromID, toID)
 }
 
-func (t lateGatedTracer) FindOrphans(ctx context.Context) ([]string, error) {
+func (t lateGatedTracer) FindOrphans(ctx context.Context) ([]tracer.Orphan, error) {
 	return t.tracer().FindOrphans(ctx)
 }
 
@@ -799,7 +799,17 @@ func (a *App) scriptTracer(redactor visibility.FieldRedactor) tracer.Tracer {
 		slog.Error("dataentry: ACL gate unavailable; traversal REFUSED", "err", err)
 		return visibility.DenyTracer{}
 	}
-	vt, err := visibility.NewVisibleTracer(a.tracer, gate, redactor, a.store)
+	res, err := visibility.NewResolver(gate, redactor, a.store)
+	if err != nil {
+		slog.Error("dataentry: resolver unavailable; traversal REFUSED", "err", err)
+		return visibility.DenyTracer{}
+	}
+	gatable, ok := a.tracer.(visibility.EdgeGatable)
+	if !ok {
+		slog.Error("dataentry: tracer cannot gate edges; traversal REFUSED", "tracer", fmt.Sprintf("%T", a.tracer))
+		return visibility.DenyTracer{}
+	}
+	vt, err := visibility.NewVisibleTracer(gatable, res, a.store, defaultWorldScope(a.worlds))
 	if err != nil {
 		slog.Error("dataentry: visible tracer unavailable; traversal REFUSED", "err", err)
 		return visibility.DenyTracer{}
@@ -966,7 +976,8 @@ func NewApp(
 	// those back to this node's .rela/ — the bug where an uploaded logo is
 	// visible only on whichever node served the POST (TKT-VC27L3).
 	kv := stateKV
-	trc := tracer.New(st)
+	// The default world until SetWorlds supplies the lookup and rebuilds it.
+	trc := tracer.New(st, defaultWorldScope(nil))
 	templater := templating.NewFSTemplater(fs, paths)
 	// The validator (val) is built AFTER app.affordances below — its reader is
 	// now GATED (TKT-3FL2S6, superseding DEC-O59WM4), which needs the redactor

@@ -3,6 +3,8 @@ package cli
 import (
 	"context"
 	"fmt"
+
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // TraceCmd is the parent of trace from/to/path.
@@ -20,8 +22,8 @@ type TraceFromCmd struct {
 
 // Run dispatches `rela trace from <id>`.
 func (c *TraceFromCmd) Run(ctx context.Context, svc *readServices) error {
-	if _, err := svc.Store.GetEntity(ctx, c.ID); err != nil {
-		return &entityNotFoundError{ID: c.ID}
+	if err := requireFamily(ctx, svc.Store, c.ID); err != nil {
+		return err
 	}
 	result := svc.Tracer.TraceFrom(ctx, c.ID, c.Depth)
 	if result == nil {
@@ -39,8 +41,8 @@ type TraceToCmd struct {
 
 // Run dispatches `rela trace to <id>`.
 func (c *TraceToCmd) Run(ctx context.Context, svc *readServices) error {
-	if _, err := svc.Store.GetEntity(ctx, c.ID); err != nil {
-		return &entityNotFoundError{ID: c.ID}
+	if err := requireFamily(ctx, svc.Store, c.ID); err != nil {
+		return err
 	}
 	result := svc.Tracer.TraceTo(ctx, c.ID, c.Depth)
 	if result == nil {
@@ -59,11 +61,14 @@ type TracePathCmd struct {
 
 // Run dispatches `rela trace path <from> <to>`.
 func (c *TracePathCmd) Run(ctx context.Context, svc *readServices) error {
-	if _, err := svc.Store.GetEntity(ctx, c.From); err != nil {
-		return fmt.Errorf("source entity not found: %s", c.From)
-	}
-	if _, err := svc.Store.GetEntity(ctx, c.To); err != nil {
-		return fmt.Errorf("target entity not found: %s", c.To)
+	for _, end := range []struct{ role, id string }{{"source", c.From}, {"target", c.To}} {
+		ok, err := familyExists(ctx, svc.Store, end.id)
+		if err != nil {
+			return fmt.Errorf("read %s entity %s: %w", end.role, end.id, err)
+		}
+		if !ok {
+			return fmt.Errorf("%s entity not found: %s", end.role, end.id)
+		}
 	}
 	path := svc.Tracer.FindPath(ctx, c.From, c.To)
 	if path == nil {
@@ -71,4 +76,27 @@ func (c *TracePathCmd) Run(ctx context.Context, svc *readServices) error {
 		return nil
 	}
 	return out.WritePath(path)
+}
+
+// familyExists reports whether id has a row on any face. A trace is entity
+// level, and a faced type has no row at the bare id (BUG-95W7MV). A failed
+// read is returned, so it is not reported as a missing entity.
+func familyExists(ctx context.Context, st store.EntityLister, id string) (bool, error) {
+	for _, err := range store.ListEntityHeaders(ctx, st, store.EntityQuery{IDs: []string{id}, AllStates: true}) {
+		return err == nil, err
+	}
+	return false, nil
+}
+
+// requireFamily is [familyExists] as the not-found error the trace commands
+// return.
+func requireFamily(ctx context.Context, st store.EntityLister, id string) error {
+	ok, err := familyExists(ctx, st, id)
+	if err != nil {
+		return fmt.Errorf("read entity %s: %w", id, err)
+	}
+	if !ok {
+		return &entityNotFoundError{ID: id}
+	}
+	return nil
 }

@@ -10,6 +10,7 @@ import (
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/tracer"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
@@ -137,7 +138,24 @@ func worldScopeFrom(ctx context.Context) store.WorldScope {
 // `?world=` naming something else — which is the correct posture for a
 // surface whose wiring never opted in, and means a deployment that does not
 // use worlds cannot accidentally acquire the parameter.
-func (a *App) SetWorlds(w WorldLookup) { a.worlds = w }
+//
+// It also rebuilds the base tracer, whose node titles come from the default
+// world (BUG-95W7MV): NewApp built it before any world lookup existed.
+func (a *App) SetWorlds(w WorldLookup) {
+	a.worlds = w
+	a.tracer = tracer.New(a.store, defaultWorldScope(w))
+}
+
+// defaultWorldScope is the scope of the default world in w, the world a
+// surface uses when the request names none. A nil lookup, or one without the
+// default world, yields the zero scope, which is the default world today.
+func defaultWorldScope(w WorldLookup) store.WorldScope {
+	if w == nil {
+		return store.WorldScope{}
+	}
+	scope, _ := w.Lookup(defaultWorldName)
+	return scope
+}
 
 // resolveWorld resolves the request's `?world=` parameter into a handle,
 // applying the per-world read grant BEFORE any resolver is constructed.

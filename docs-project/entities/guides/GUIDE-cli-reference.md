@@ -1272,6 +1272,23 @@ rela import backup.json
 
 Run quality analysis checks.
 
+Every check reads every face of a faced type (see
+[content states](content-states.md)). Each report states its coverage, in
+the text output as a `Coverage:` line and in JSON as a `coverage` field:
+
+| Check         | Coverage                                                        |
+| ------------- | --------------------------------------------------------------- |
+| `orphans`     | Families: one finding per id, which lists the faces it has      |
+| `duplicates`  | Every face; only rows of different ids are compared             |
+| `unique`      | Per face: ids that share a value within one face                |
+| `gaps`        | Families: an id counts as used when any face of it exists       |
+| `cardinality` | Per face for outgoing content-scoped relations, else families   |
+| `properties`, `validations` | Every face, each row checked on its own        |
+
+In JSON, an orphan entry is an object with `id`, `type`, `title` and, for a
+faced type, `faces`. `trace` and `path` show one node per id, with the faces
+the reader can see.
+
 #### rela analyze orphans
 
 Find entities with no connections.

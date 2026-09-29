@@ -11,6 +11,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/output"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/testutil"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
 )
@@ -135,7 +136,7 @@ func TestRunValidationChecks_JSONOutput(t *testing.T) {
 
 	buf := withOutput(t, output.FormatJSON)
 
-	tr := tracer.New(svc.Store())
+	tr := tracer.New(svc.Store(), store.WorldScope{})
 	an, err := analysis.New(analysis.Deps{
 		Store:       svc.Store(),
 		Meta:        svc.Meta(),

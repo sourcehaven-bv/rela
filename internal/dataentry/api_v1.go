@@ -1922,6 +1922,7 @@ func (a *App) handleV1Analyze(w http.ResponseWriter, r *http.Request) {
 		issue, section := vi.issue, vi.section
 		api := APIIssue{
 			EntityID:    issue.EntityID,
+			Face:        string(issue.Face),
 			EntityType:  issue.EntityType,
 			Title:       issue.Title,
 			Message:     issue.Message,

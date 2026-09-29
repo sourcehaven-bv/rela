@@ -3,6 +3,8 @@ package analysis_test
 import (
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/store"
+
 	"github.com/Sourcehaven-BV/rela/internal/analysis"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -32,7 +34,7 @@ func newFSService(t *testing.T, files map[string]string) *analysis.Service {
 
 	st := memstore.New()
 	meta := &metamodel.Metamodel{Entities: map[string]metamodel.EntityDef{}}
-	tr := tracer.New(st)
+	tr := tracer.New(st, store.WorldScope{})
 	svc, err := analysis.New(analysis.Deps{
 		Store: st, Meta: meta, Tracer: tr, FS: fs, Paths: paths,
 		LuaReadDeps: lua.ReadDeps{VisibleReader: visibility.Unrestricted(st), Tracer: tr, Meta: meta},
@@ -214,7 +216,7 @@ func TestCheckRelationFilenames_NoFS(t *testing.T) {
 
 	st := memstore.New()
 	meta := &metamodel.Metamodel{Entities: map[string]metamodel.EntityDef{}}
-	tr := tracer.New(st)
+	tr := tracer.New(st, store.WorldScope{})
 	svc, err := analysis.New(analysis.Deps{
 		Store: st, Meta: meta, Tracer: tr,
 		LuaReadDeps: lua.ReadDeps{VisibleReader: visibility.Unrestricted(st), Tracer: tr, Meta: meta},

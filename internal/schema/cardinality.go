@@ -12,8 +12,13 @@ import (
 )
 
 // CardinalityViolation represents a cardinality constraint violation.
+//
+// Face is set when the bound was counted per face: an outgoing bound of a
+// content-scoped relation. Any other bound is counted once per family and
+// reported once, with the zero face (BUG-95W7MV).
 type CardinalityViolation struct {
 	EntityID     string
+	Face         entity.Face `json:",omitempty"`
 	RelationType string
 	Constraint   string // "min_outgoing", "max_outgoing", "min_incoming", "max_incoming"
 	Required     int
@@ -165,11 +170,9 @@ func checkCardinalityFor(
 	// ordering. Collapsing this into a single count-and-emit pass would
 	// interleave min and max violations and reorder the output the
 	// pinning tests guard.
-	type subject struct {
-		id    string
-		count int
-	}
-	var subjects []subject
+	perFace := countsPerFace(meta, spec)
+	var subjects []cardinalitySubject
+	seen := make(map[string]bool)
 	for _, subjectType := range spec.subjectTypes {
 		entities, scanErr := collectCardinalitySubjects(ctx, r, store.EntityQuery{Type: subjectType, AllStates: true})
 		if scanErr != nil {
@@ -179,42 +182,60 @@ func checkCardinalityFor(
 			if scope != nil && !scope[e.ID] {
 				continue
 			}
+			var face entity.Face
+			if perFace {
+				face = e.Face
+			} else if seen[e.ID] {
+				continue // a family-wide count: one subject per id
+			}
+			seen[e.ID] = true
 			count, err := countRelationsFor(ctx, r, meta, e, spec)
 			if err != nil {
 				return nil, fmt.Errorf("schema: count %s %q relations of %s: %w", dirWord, spec.relName, e.ID, err)
 			}
-			subjects = append(subjects, subject{id: e.ID, count: count})
+			subjects = append(subjects, cardinalitySubject{id: e.ID, face: face, count: count})
 		}
 	}
 
 	var violations []CardinalityViolation
 	if minActive {
-		for _, sub := range subjects {
-			if sub.count < *spec.minBound {
-				violations = append(violations, CardinalityViolation{
-					EntityID:     sub.id,
-					RelationType: spec.relationLabel,
-					Constraint:   spec.minConstraint,
-					Required:     *spec.minBound,
-					Actual:       sub.count,
-				})
-			}
-		}
+		violations = spec.outOfBound(violations, subjects, spec.minConstraint, *spec.minBound,
+			func(count int) bool { return count < *spec.minBound })
 	}
 	if maxActive {
-		for _, sub := range subjects {
-			if sub.count > *spec.maxBound {
-				violations = append(violations, CardinalityViolation{
-					EntityID:     sub.id,
-					RelationType: spec.relationLabel,
-					Constraint:   spec.maxConstraint,
-					Required:     *spec.maxBound,
-					Actual:       sub.count,
-				})
-			}
-		}
+		violations = spec.outOfBound(violations, subjects, spec.maxConstraint, *spec.maxBound,
+			func(count int) bool { return count > *spec.maxBound })
 	}
 	return violations, nil
+}
+
+// cardinalitySubject is one counted subject: an id, and its face when the
+// bound is counted per face.
+type cardinalitySubject struct {
+	id    string
+	face  entity.Face
+	count int
+}
+
+// outOfBound appends a violation of constraint to dst for each subject whose
+// count breaks the bound.
+func (spec cardinalitySpec) outOfBound(
+	dst []CardinalityViolation, subjects []cardinalitySubject,
+	constraint string, bound int, breaks func(count int) bool,
+) []CardinalityViolation {
+	for _, sub := range subjects {
+		if breaks(sub.count) {
+			dst = append(dst, CardinalityViolation{
+				EntityID:     sub.id,
+				Face:         sub.face,
+				RelationType: spec.relationLabel,
+				Constraint:   constraint,
+				Required:     bound,
+				Actual:       sub.count,
+			})
+		}
+	}
+	return dst
 }
 
 // collectCardinalitySubjects materializes the subject population for one
@@ -261,10 +282,17 @@ func countRelationsFor(
 		Direction: spec.direction,
 		Type:      spec.relName,
 	}
-	def, ok := meta.Relations[spec.relName]
-	if ok && def.Scope.IsContent() && spec.direction == store.DirectionOutgoing {
+	if countsPerFace(meta, spec) {
 		face := e.Face
 		q.FromFace = &face
 	}
 	return r.CountRelations(ctx, q)
+}
+
+// countsPerFace reports whether spec's bound is counted per face: the
+// outgoing side of a content-scoped relation. Every other bound is a claim
+// about the whole family.
+func countsPerFace(meta *metamodel.Metamodel, spec cardinalitySpec) bool {
+	def, ok := meta.Relations[spec.relName]
+	return ok && def.Scope.IsContent() && spec.direction == store.DirectionOutgoing
 }

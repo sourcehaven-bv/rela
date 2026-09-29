@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/store"
+
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager/entitymanagertest"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
@@ -22,7 +24,7 @@ func testWriteDeps(projectRoot string) lua.WriteDeps {
 	return lua.WriteDeps{
 		ReadDeps: lua.ReadDeps{
 			VisibleReader: visibility.Unrestricted(st),
-			Tracer:        tracer.New(st),
+			Tracer:        tracer.New(st, store.WorldScope{}),
 			ProjectRoot:   projectRoot,
 		},
 		EntityManager: entitymanagertest.PanicOnUse{},

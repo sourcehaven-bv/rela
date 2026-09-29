@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/store"
+
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -48,7 +50,7 @@ func relationWorkspace(
 			t.Fatalf("create relation %v: %v", r, err)
 		}
 	}
-	return lua.ReadDeps{VisibleReader: visibility.Unrestricted(st), Tracer: tracer.New(st), Meta: meta}
+	return lua.ReadDeps{VisibleReader: visibility.Unrestricted(st), Tracer: tracer.New(st, store.WorldScope{}), Meta: meta}
 }
 
 // newWithGraph builds a Service wired exactly as production does: the same

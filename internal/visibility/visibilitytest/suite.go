@@ -59,10 +59,11 @@ func getOne(
 }
 
 // TracerMaker builds the visibility-decorated tracer under test over the
-// suite's base tracer and collaborators.
+// suite's base tracer and collaborators. st is the store the base tracer
+// reads, for header and edge reads.
 type TracerMaker func(
 	t *testing.T, base tracer.Tracer,
-	gate visibility.RowGate, redact visibility.FieldRedactor, get visibility.EntityGetter,
+	gate visibility.RowGate, redact visibility.FieldRedactor, st store.Store,
 ) tracer.Tracer
 
 // world is the canonical fixture: a seeded memstore plus the real ACL
@@ -183,7 +184,7 @@ func newWorld(t *testing.T) *world {
 	if err != nil {
 		t.Fatalf("NewPolicyRedactor: %v", err)
 	}
-	return &world{store: st, base: tracer.New(st), gate: gate, redact: redact}
+	return &world{store: st, base: tracer.New(st, store.WorldScope{}), gate: gate, redact: redact}
 }
 
 // storeLookup implements affordances.RelationLookup over the store.
@@ -590,8 +591,15 @@ func testOrphansFiltered(t *testing.T, mk TracerMaker) {
 	if err != nil {
 		t.Fatalf("FindOrphans: %v", err)
 	}
-	if !reflect.DeepEqual(got, []string{"PRJ-3"}) {
-		t.Fatalf("orphans for bob = %v, want [PRJ-3] (SEC-2 hidden)", got)
+	ids := make([]string, 0, len(got))
+	for _, o := range got {
+		ids = append(ids, o.ID)
+	}
+	// Gate before fold (A4, RR-VN71BT): PRJ-2 and PRJ-4 are connected only
+	// through hidden secrets, so for bob they are orphans. Leaving them out
+	// would disclose that a hidden edge exists. SEC-2 is hidden itself.
+	if !reflect.DeepEqual(ids, []string{"PRJ-2", "PRJ-3", "PRJ-4"}) {
+		t.Fatalf("orphans for bob = %v, want [PRJ-2 PRJ-3 PRJ-4] (SEC-2 hidden)", got)
 	}
 }
 

@@ -116,7 +116,7 @@ func (DenyTracer) FindPath(context.Context, string, string) []tracer.PathStep { 
 
 // FindOrphans implements [tracer.Tracer]: refuses with an error, since this
 // one CAN report failure rather than looking like an empty graph.
-func (DenyTracer) FindOrphans(context.Context) ([]string, error) {
+func (DenyTracer) FindOrphans(context.Context) ([]tracer.Orphan, error) {
 	return nil, ErrReaderUnavailable
 }
 

@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/store"
+
 	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -104,7 +106,7 @@ func TestScriptEntityReader_NoPolicyIsPassThrough(t *testing.T) {
 		}
 	}
 
-	if got := scriptTracer(tracer.New(st), st, nil, nil); got == nil {
+	if got := scriptTracer(tracer.New(st, store.WorldScope{}), st, nil, nil, store.WorldScope{}); got == nil {
 		t.Error("scriptTracer returned nil with no policy")
 	}
 }
@@ -115,7 +117,7 @@ func TestScriptTracer_GatesOnActingIdentity(t *testing.T) {
 	if _, err := st.CreateRelation(context.Background(), "TKT-1", "relates", "SEC-1", nil); err != nil {
 		t.Fatalf("seed relation: %v", err)
 	}
-	tr := scriptTracer(tracer.New(st), st, mustDeclarative(t, st), nil)
+	tr := scriptTracer(tracer.New(st, store.WorldScope{}), st, mustDeclarative(t, st), nil, store.WorldScope{})
 
 	ctx := principal.With(context.Background(), principal.Principal{
 		User: "alice", Tool: principal.ToolDataEntry,

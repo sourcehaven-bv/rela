@@ -58,6 +58,7 @@ type traceNodeJSON struct {
 	ID       string           `json:"id"`
 	Type     string           `json:"type"`
 	Title    string           `json:"title,omitempty"`
+	Faces    []entity.Face    `json:"faces,omitempty"`
 	Relation string           `json:"relation,omitempty"`
 	Incoming bool             `json:"incoming,omitempty"`
 	Children []*traceNodeJSON `json:"children,omitempty"`
@@ -65,10 +66,11 @@ type traceNodeJSON struct {
 
 // pathStepJSON represents a path step for JSON output.
 type pathStepJSON struct {
-	ID       string `json:"id"`
-	Type     string `json:"type"`
-	Title    string `json:"title,omitempty"`
-	Relation string `json:"relation,omitempty"`
+	ID       string        `json:"id"`
+	Type     string        `json:"type"`
+	Title    string        `json:"title,omitempty"`
+	Faces    []entity.Face `json:"faces,omitempty"`
+	Relation string        `json:"relation,omitempty"`
 }
 
 // entityView selects the optional parts of an entity rendered by
@@ -296,6 +298,7 @@ func convertTraceNode(tr *tracer.TraceResult, meta *metamodel.Metamodel) *traceN
 		ID:       tr.ID,
 		Type:     tr.Type,
 		Title:    titleOrEmpty(tr.ID, meta.DisplayTitle(tr.ID, tr.Type, tr.Properties)),
+		Faces:    tr.Faces,
 		Relation: tr.Relation,
 		Incoming: tr.Incoming,
 	}
@@ -315,6 +318,7 @@ func convertPathSteps(steps []tracer.PathStep, title func(tracer.PathStep) strin
 			ID:       s.ID,
 			Type:     s.Type,
 			Title:    title(s),
+			Faces:    s.Faces,
 			Relation: s.Relation,
 		}
 	}

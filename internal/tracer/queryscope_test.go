@@ -3,6 +3,8 @@ package tracer_test
 import (
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/store"
+
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -42,7 +44,7 @@ func TestTraceFrom_IgnoresQueryScopes(t *testing.T) {
 	_, err := s.CreateRelation(t.Context(), "DEC-1", "implements", "REQ-1", nil)
 	require.NoError(t, err)
 
-	result := tracer.New(s).TraceFrom(t.Context(), "DEC-1", 0)
+	result := tracer.New(s, store.WorldScope{}).TraceFrom(t.Context(), "DEC-1", 0)
 	require.NotNil(t, result)
 
 	if !tracedIDs(result)["REQ-1"] {
@@ -65,12 +67,12 @@ func TestFindOrphans_IgnoresQueryScopes(t *testing.T) {
 	orphan.SetString("status", "gearchiveerd")
 	require.NoError(t, s.CreateEntity(t.Context(), orphan))
 
-	orphans, err := tracer.New(s).FindOrphans(t.Context())
+	orphans, err := tracer.New(s, store.WorldScope{}).FindOrphans(t.Context())
 	require.NoError(t, err)
 
 	found := false
 	for _, id := range orphans {
-		if id == "REQ-9" {
+		if id.ID == "REQ-9" {
 			found = true
 		}
 	}
