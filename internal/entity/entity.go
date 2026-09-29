@@ -144,6 +144,11 @@ func (e *Entity) SetString(key, value string) {
 	e.Properties[key] = value
 }
 
+// Ref returns the address of the face row e is: its id and face.
+func (e *Entity) Ref() Ref {
+	return Ref{ID: e.ID, Face: e.Face}
+}
+
 // Title returns the entity's title.
 func (e *Entity) Title() string {
 	return e.GetString("title")

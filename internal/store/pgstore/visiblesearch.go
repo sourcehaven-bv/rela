@@ -159,7 +159,7 @@ func emitFieldVisibleRows(
 	// remembers the rows whose verdict depends on the body.
 	var (
 		cands    []searchCandidate
-		bodyless []stateKey
+		bodyless []entity.Ref
 		decided  int
 	)
 	for rows.Next() {
@@ -177,7 +177,7 @@ func emitFieldVisibleRows(
 			return
 		}
 		if c.needBody {
-			bodyless = append(bodyless, stateKey{id: e.ID, face: e.Face})
+			bodyless = append(bodyless, e.Ref())
 		}
 		cands = append(cands, c)
 		if !c.needBody {
@@ -207,7 +207,7 @@ func emitFieldVisibleRows(
 	emitted := 0
 	for _, c := range cands {
 		if c.needBody {
-			c.e.Content = bodies[stateKey{id: c.e.ID, face: c.e.Face}]
+			c.e.Content = bodies[c.e.Ref()]
 			if !search.MatchHasVisibleField(search.MatchTextFields(c.e, q.Text), c.hidden) {
 				continue
 			}
@@ -250,23 +250,17 @@ func judgeWithoutBody(
 	return c, nil
 }
 
-// stateKey addresses one stored state of an entity.
-type stateKey struct {
-	id   string
-	face entity.Face
-}
-
 // searchBodies loads the bodies of exactly the given states. The keys are the
 // (id, face) pairs the GATED query resolved, so this statement reads no row
 // the gate did not already admit — it must never widen to "every state of
 // these ids", which would pull a face the world or the ACL withheld.
-func searchBodies(ctx context.Context, db DBTX, keys []stateKey) (map[stateKey]string, error) {
+func searchBodies(ctx context.Context, db DBTX, keys []entity.Ref) (map[entity.Ref]string, error) {
 	if len(keys) == 0 {
-		return map[stateKey]string{}, nil
+		return map[entity.Ref]string{}, nil
 	}
 	ids, faces := make([]string, len(keys)), make([]string, len(keys))
 	for i, k := range keys {
-		ids[i], faces[i] = k.id, string(k.face)
+		ids[i], faces[i] = k.ID, string(k.Face)
 	}
 	rows, err := db.Query(ctx,
 		"SELECT e.id, e.face, e.content FROM entities e"+
@@ -276,13 +270,13 @@ func searchBodies(ctx context.Context, db DBTX, keys []stateKey) (map[stateKey]s
 		return nil, err
 	}
 	defer rows.Close()
-	out := make(map[stateKey]string, len(keys))
+	out := make(map[entity.Ref]string, len(keys))
 	for rows.Next() {
 		var id, face, content string
 		if err := rows.Scan(&id, &face, &content); err != nil {
 			return nil, err
 		}
-		out[stateKey{id: id, face: entity.Face(face)}] = content
+		out[entity.Ref{ID: id, Face: entity.Face(face)}] = content
 	}
 	return out, rows.Err()
 }

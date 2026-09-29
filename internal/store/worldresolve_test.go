@@ -147,28 +147,28 @@ func TestResolveWorldPrimes(t *testing.T) {
 	})
 }
 
-// ResolutionAt answers for a face already chosen, where the family is not in
+// RuleAt answers for a face already chosen, where the family is not in
 // hand. It is a total mapping rather than a walk, so every input must produce
 // a rule.
-func TestResolutionAt(t *testing.T) {
+func TestWorldScope_RuleAt(t *testing.T) {
 	t.Parallel()
 	const published, draft, nl = entity.Face("published"), entity.Face("draft"), entity.Face("nl")
 	scope := policyScope(store.FallbackDefaultState, published, draft)
 
 	t.Run("a chain member reports its position", func(t *testing.T) {
 		t.Parallel()
-		rule, pos := store.ResolutionAt(scope, "policy", published)
+		rule, pos := scope.RuleAt("policy", published)
 		assert.Equal(t, store.ResolutionChain, rule)
 		assert.Equal(t, 0, pos)
 
-		rule, pos = store.ResolutionAt(scope, "policy", draft)
+		rule, pos = scope.RuleAt("policy", draft)
 		assert.Equal(t, store.ResolutionChain, rule)
 		assert.Equal(t, 1, pos)
 	})
 
 	t.Run("a face outside the chain is the fallback", func(t *testing.T) {
 		t.Parallel()
-		rule, pos := store.ResolutionAt(scope, "policy", nl)
+		rule, pos := scope.RuleAt("policy", nl)
 		assert.Equal(t, store.ResolutionFallbackDefault, rule)
 		assert.Equal(t, 0, pos)
 	})
@@ -178,8 +178,25 @@ func TestResolutionAt(t *testing.T) {
 		// The doc requires a CANONICAL type name: an alias reads as unknown,
 		// which is rule 1 rather than an error, so a caller passing an alias
 		// silently gets the pre-worlds answer.
-		rule, pos := store.ResolutionAt(scope, "control", published)
+		rule, pos := scope.RuleAt("control", published)
 		assert.Equal(t, store.ResolutionUnscoped, rule)
 		assert.Equal(t, 0, pos)
 	})
+}
+
+func TestWorldCandidate_Ref(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		c    store.WorldCandidate
+		want entity.Ref
+	}{
+		{"faceless", store.WorldCandidate{ID: "A-1", Type: "note"}, entity.Ref{ID: "A-1"}},
+		{"faced", store.WorldCandidate{ID: "POL-1", Type: "policy", Face: "draft"}, entity.Ref{ID: "POL-1", Face: "draft"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, tc.c.Ref())
+		})
+	}
 }

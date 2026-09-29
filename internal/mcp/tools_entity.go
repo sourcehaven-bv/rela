@@ -209,12 +209,6 @@ func (s *Server) handleSearchEntities(
 	return textResult(text), nil
 }
 
-// hitKey identifies one face of one entity.
-type hitKey struct {
-	id   string
-	face entity.Face
-}
-
 // hydrateHits builds the search summaries from the store, in hit order. The
 // hits are read in ONE query over every face, because a faced type has no
 // default row and a per-hit GetEntity would miss it. A hit the store does not
@@ -231,17 +225,17 @@ func hydrateHits(
 	for _, h := range hits {
 		ids = append(ids, h.ID)
 	}
-	found := make(map[hitKey]*entity.Entity, len(hits))
+	found := make(map[entity.Ref]*entity.Entity, len(hits))
 	for e, err := range st.ListEntities(ctx, store.EntityQuery{IDs: ids, AllStates: true}) {
 		if err != nil {
 			return nil, err
 		}
 		if e != nil {
-			found[hitKey{e.ID, e.Face}] = e
+			found[e.Ref()] = e
 		}
 	}
 	for _, h := range hits {
-		e, ok := found[hitKey{h.ID, h.Face}]
+		e, ok := found[entity.Ref{ID: h.ID, Face: h.Face}]
 		if !ok {
 			continue
 		}
