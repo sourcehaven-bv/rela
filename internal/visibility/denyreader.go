@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"iter"
+	"log/slog"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -41,6 +42,16 @@ func (DenyReader) GetEntity(context.Context, string) (*entity.Entity, error) {
 // Family implements the script read surface: always refuses.
 func (DenyReader) Family(context.Context, string) (Family, bool, error) {
 	return Family{}, false, ErrReaderUnavailable
+}
+
+// ResolveHeaders implements the script read surface: every address misses,
+// because the reader is unavailable. The batch has no error result, so the
+// refusal is logged instead of returned as [ErrReaderUnavailable].
+func (DenyReader) ResolveHeaders(_ context.Context, refs []entity.Ref) map[entity.Ref]ResolvedHeader {
+	if len(refs) > 0 {
+		slog.Warn("visibility: reader unavailable; answering every address as not-found", "refs", len(refs))
+	}
+	return nil
 }
 
 // ListEntities implements the script read surface: always refuses.

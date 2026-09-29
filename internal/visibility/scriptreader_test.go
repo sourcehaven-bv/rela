@@ -172,6 +172,9 @@ func TestDenyReader_RefusesEverything(t *testing.T) {
 		t.Error("ErrReaderUnavailable must not be a not-found — a gate fault is not 'no such entity'")
 	}
 
+	if got := dr.ResolveHeaders(ctx, []entity.Ref{{ID: "TKT-1"}}); len(got) != 0 {
+		t.Errorf("ResolveHeaders = %v, want no hits", got)
+	}
 	for _, err := range dr.ListEntities(ctx, store.EntityQuery{Type: "ticket"}) {
 		if !errors.Is(err, visibility.ErrReaderUnavailable) {
 			t.Errorf("ListEntities err = %v, want ErrReaderUnavailable", err)

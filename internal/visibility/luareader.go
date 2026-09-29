@@ -132,6 +132,13 @@ func (s *ScriptReader) Family(ctx context.Context, id string) (Family, bool, err
 	return s.res.familyAny(s.bind(ctx), id)
 }
 
+// ResolveHeaders answers a batch of addresses from headers only, gated and
+// redacted, with the reader's world for bare ids. See
+// [Resolver.ResolveHeaders].
+func (s *ScriptReader) ResolveHeaders(ctx context.Context, refs []entity.Ref) map[entity.Ref]ResolvedHeader {
+	return s.res.ResolveHeaders(s.bind(ctx), s.world, refs)
+}
+
 // ListEntities yields only the entities the caller may read, redacted.
 //
 // Prefers ACL PUSHDOWN: when the gate can compose the caller's scope as a

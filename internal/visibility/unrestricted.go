@@ -101,6 +101,12 @@ func (r *UnrestrictedReader) Family(ctx context.Context, id string) (Family, boo
 	return r.res.familyAny(ctx, id)
 }
 
+// ResolveHeaders answers a batch of addresses from headers only. See
+// [ScriptReader.ResolveHeaders].
+func (r *UnrestrictedReader) ResolveHeaders(ctx context.Context, refs []entity.Ref) map[entity.Ref]ResolvedHeader {
+	return r.res.ResolveHeaders(ctx, r.world, refs)
+}
+
 // ListEntities implements the script read surface: straight pass-through.
 func (r *UnrestrictedReader) ListEntities(
 	ctx context.Context, q store.EntityQuery,

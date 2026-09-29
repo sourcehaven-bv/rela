@@ -11,6 +11,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // entityJSON represents an entity for JSON output in MCP responses.
@@ -173,13 +174,18 @@ func convertStoreEntitySummary(meta *metamodel.Metamodel, e *entity.Entity) enti
 // ID, and an ID is exactly what the row-level rule protects, since whether
 // an entity EXISTS is a genuine secret. So the whole edge is withheld. See
 // [neighbor] for how each end is checked.
+//
+// Every neighbor is answered by ONE [GraphReader.ResolveHeaders] batch, so
+// the cost does not grow with the number of edges (RR-XD7YN9).
 func buildStoreRelations(
 	ctx context.Context, e *entity.Entity, st GraphReader, meta *metamodel.Metamodel,
 ) *relationsJSON {
-	rels := &relationsJSON{
-		Outgoing: make(map[string][]relationTargetJSON),
-		Incoming: make(map[string][]relationTargetJSON),
+	type edge struct {
+		typ string
+		ref entity.Ref
 	}
+	var out, in []edge
+	var refs []entity.Ref
 
 	outQ := store.RelationQuery{EntityID: e.ID, Direction: store.DirectionOutgoing}
 	for r, err := range st.ListRelations(ctx, outQ) {
@@ -189,9 +195,9 @@ func buildStoreRelations(
 		if metamodel.IsContentScoped(meta, r.Type) && r.FromFace != e.Face {
 			continue // another face's content edge
 		}
-		if t, ok := neighbor(ctx, st, meta, entity.Ref{ID: r.To}); ok {
-			rels.Outgoing[r.Type] = append(rels.Outgoing[r.Type], t)
-		}
+		ref := entity.Ref{ID: r.To}
+		out = append(out, edge{typ: r.Type, ref: ref})
+		refs = append(refs, ref)
 	}
 
 	inQ := store.RelationQuery{EntityID: e.ID, Direction: store.DirectionIncoming}
@@ -199,8 +205,27 @@ func buildStoreRelations(
 		if err != nil {
 			break
 		}
-		if t, ok := neighbor(ctx, st, meta, entity.Ref{ID: r.From, Face: r.FromFace}); ok {
-			rels.Incoming[r.Type] = append(rels.Incoming[r.Type], t)
+		ref := entity.Ref{ID: r.From, Face: r.FromFace}
+		in = append(in, edge{typ: r.Type, ref: ref})
+		refs = append(refs, ref)
+	}
+
+	if len(refs) == 0 {
+		return nil
+	}
+	resolved := st.ResolveHeaders(ctx, refs)
+	rels := &relationsJSON{
+		Outgoing: make(map[string][]relationTargetJSON),
+		Incoming: make(map[string][]relationTargetJSON),
+	}
+	for _, ed := range out {
+		if t, ok := neighbor(meta, ed.ref, resolved[ed.ref]); ok {
+			rels.Outgoing[ed.typ] = append(rels.Outgoing[ed.typ], t)
+		}
+	}
+	for _, ed := range in {
+		if t, ok := neighbor(meta, ed.ref, resolved[ed.ref]); ok {
+			rels.Incoming[ed.typ] = append(rels.Incoming[ed.typ], t)
 		}
 	}
 
@@ -217,22 +242,24 @@ func buildStoreRelations(
 }
 
 // neighbor returns the far end of an edge as the caller may see it, or false
-// when the caller may not read it (hidden and absent alike).
+// when the caller may not read it (hidden and absent alike). res is the
+// batch answer for ref.
 //
-// An end with a face (a content-scoped tail) is that face, read with
-// [GraphReader.Resolve]. An end without one is entity level: it is readable
-// when some face of it is ([GraphReader.Family]). Its title belongs to a
-// face, so it comes from the face the world resolves the bare id to; a faced
-// neighbor has none in the default world until TKT-7IZHP0, and is listed by
-// id alone.
+// An end with a face (a content-scoped tail) is that face, and must be
+// served. An end without one is entity level: it is readable when some face
+// of it is (res.Family). Its title belongs to a face, so it comes from the
+// face the world resolves the bare id to; a faced neighbor has none in the
+// default world until TKT-7IZHP0, and is listed by id alone.
 func neighbor(
-	ctx context.Context, st GraphReader, meta *metamodel.Metamodel, ref entity.Ref,
+	meta *metamodel.Metamodel, ref entity.Ref, res visibility.ResolvedHeader,
 ) (relationTargetJSON, bool) {
 	addr := ref.String()
-	if e, err := st.Resolve(ctx, addr); err == nil && e != nil {
-		return relationTargetJSON{ID: addr, Title: displayTitle(meta, e)}, true
+	if res.Served() {
+		h := res.Header
+		title := titleOrEmpty(h.ID, meta.DisplayTitle(h.ID, h.Type, h.Properties))
+		return relationTargetJSON{ID: addr, Title: title}, true
 	}
-	if !ref.Face.IsDefault() || !readable(ctx, st, ref.ID) {
+	if !ref.Face.IsDefault() || !res.Family {
 		return relationTargetJSON{}, false
 	}
 	return relationTargetJSON{ID: ref.ID}, true

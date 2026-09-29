@@ -117,10 +117,12 @@ func TestUnrestricted_ExposesOnlyTheReadSurface(t *testing.T) {
 	// Family (TKT-2528AB) is the same kind of narrowing: it reports which
 	// faces of an id exist, from headers, which ListEntityHeaders already
 	// answers. WithWorld returns a copy that resolves bare ids in another
-	// world; it reads nothing and writes nothing.
+	// world; it reads nothing and writes nothing. ResolveHeaders (TKT-2528AB
+	// PR 5b) is GetEntity and Family for a batch, projected to headers.
 	want := map[string]bool{
 		"GetEntity": true, "ListEntities": true, "ListRelations": true,
 		"ListEntityHeaders": true, "Family": true, "WithWorld": true,
+		"ResolveHeaders": true,
 	}
 
 	typ := reflect.TypeOf(visibility.Unrestricted(seedStore(t)))
