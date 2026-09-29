@@ -236,7 +236,7 @@ Resources expose rela data as readable URIs.
 |-----|-------------|
 | `rela://metamodel` | Full metamodel schema (JSON) |
 | `rela://entity/{type}/{id}` | Single entity with properties and relations |
-| `rela://relation/{from}/{type}/{to}` | Single relation |
+| `rela://relation/{from}/{type}/{to}` | Single relation. `{from}` is `ID` for an identity edge or `ID@face` for an edge from that face |
 
 ## Prompts
 
