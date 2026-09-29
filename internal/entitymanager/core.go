@@ -558,6 +558,35 @@ func anyFaceOf(ctx context.Context, st store.Store, id string) (*entity.Entity, 
 	return nil, store.ErrNotFound
 }
 
+// edgeSourceType resolves the entity type of rel's source (BUG-58BL9I). A
+// named tail face is read first: it is the row a content-scoped edge belongs
+// to, and a faced type stores no zero-face row for a bare-id read to find. An
+// identity-scoped edge, or a tail face that no longer exists, falls back to
+// [anyFaceOf], because every face of a family has the same type.
+//
+// A source that resolves to nothing returns "" with no error; an empty source
+// type matches no grant, so the caller's check fails closed. Any other store
+// error is returned, as [anyFaceOf] does.
+func edgeSourceType(ctx context.Context, st store.Store, rel *entity.Relation) (string, error) {
+	if !rel.FromFace.IsDefault() {
+		from, err := st.GetEntityState(ctx, rel.From, rel.FromFace)
+		if err == nil {
+			return from.Type, nil
+		}
+		if !errors.Is(err, store.ErrNotFound) {
+			return "", err
+		}
+	}
+	from, err := anyFaceOf(ctx, st, rel.From)
+	if err == nil {
+		return from.Type, nil
+	}
+	if errors.Is(err, store.ErrNotFound) {
+		return "", nil
+	}
+	return "", err
+}
+
 // getRelationOnFace returns the edge of this triple whose TAIL is exactly
 // face, or [store.ErrNotFound].
 //

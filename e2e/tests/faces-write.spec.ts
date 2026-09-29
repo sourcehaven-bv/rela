@@ -69,7 +69,7 @@ test.describe('Faces: write', () => {
   });
 
   // POL-2 is used because it has no edges. Deleting a face that has a
-  // content-scoped edge is refused today; see faces-backlog.spec.ts.
+  // content-scoped edge is covered in faces-backlog.spec.ts (BUG-58BL9I).
   test('deleting the draft face keeps the published face', async ({ appPage, facedApi }) => {
     const faces = new FacesPage(appPage);
     await facedApi.invokeCopy('publish', POL2.id);
