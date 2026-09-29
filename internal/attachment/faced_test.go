@@ -601,23 +601,30 @@ func TestFaced_MixedLegacyAndKeyedEntries(t *testing.T) {
 
 // A display name long enough that its storage key would pass the 255-byte
 // file-name limit is shortened, keeping its extension, so the upload works
-// on the filesystem backend.
+// on the filesystem backend. Linux counts bytes and macOS counts UTF-16
+// units, so an ASCII name is the case that fails on both.
 func TestService_LongNameIsCapped(t *testing.T) {
-	f := setupAttachmentService(t)
-	ctx := context.Background()
-	e := entity.New("T-1", "ticket")
-	if err := f.st.CreateEntity(ctx, e); err != nil {
-		t.Fatal(err)
-	}
-	long := strings.Repeat("é", 125) + ".pdf" // 254 bytes
-	res, err := f.svc.WriteAttachment(ctx, e, metamodel.PropertyDef{Type: metamodel.PropertyTypeFile},
-		"spec", long, strings.NewReader("x"))
-	if err != nil {
-		t.Fatalf("upload: %v", err)
-	}
-	keyLen := len(metamodel.FileKey(strings.Repeat("0", metamodel.FileTokenLen), res.FileName))
-	if !strings.HasSuffix(res.FileName, ".pdf") || !utf8.ValidString(res.FileName) || keyLen > 255 {
-		t.Errorf("name = %q (%d bytes), want a valid capped name keeping .pdf", res.FileName, len(res.FileName))
+	for _, tc := range []struct{ name, upload string }{
+		{"multi-byte", strings.Repeat("é", 125) + ".pdf"}, // 254 bytes
+		{"ascii", strings.Repeat("a", 251) + ".pdf"},      // 255 bytes
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := setupAttachmentService(t)
+			ctx := context.Background()
+			e := entity.New("T-1", "ticket")
+			if err := f.st.CreateEntity(ctx, e); err != nil {
+				t.Fatal(err)
+			}
+			res, err := f.svc.WriteAttachment(ctx, e, metamodel.PropertyDef{Type: metamodel.PropertyTypeFile},
+				"spec", tc.upload, strings.NewReader("x"))
+			if err != nil {
+				t.Fatalf("upload: %v", err)
+			}
+			keyLen := len(metamodel.FileKey(strings.Repeat("0", metamodel.FileTokenLen), res.FileName))
+			if !strings.HasSuffix(res.FileName, ".pdf") || !utf8.ValidString(res.FileName) || keyLen > 255 {
+				t.Errorf("name = %q (%d bytes), want a valid capped name keeping .pdf", res.FileName, len(res.FileName))
+			}
+		})
 	}
 }
 

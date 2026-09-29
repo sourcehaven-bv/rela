@@ -2,6 +2,8 @@ package fsstore
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"io"
 	"maps"
@@ -72,7 +74,10 @@ func (s *FSStore) attachFile(_ context.Context, entityID, property, fileName str
 	// trims leading dots — so this marker can never collide with a real
 	// upload, and the index loader skips it by that prefix. (A plain ".new"
 	// suffix would clash with a legitimate upload literally named "x.new".)
-	tmpKey := path.Join(dirKey, attachTempPrefix+fileName)
+	// The rest is a fixed-length digest of the name, not the name itself, so
+	// a name at the 255-byte limit still has a temp name that fits.
+	sum := sha256.Sum256([]byte(fileName))
+	tmpKey := path.Join(dirKey, attachTempPrefix+hex.EncodeToString(sum[:8]))
 	// Backstop size guard: cap reads at MaxAttachmentBytes so no caller can
 	// write an unbounded attachment (the API layer also caps at ingress).
 	n, err := s.writeAttachment(tmpKey, storeutil.LimitAttachmentReader(r))
