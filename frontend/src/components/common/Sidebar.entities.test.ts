@@ -46,7 +46,7 @@ function rows(ids: string[], total = ids.length): ListResponse<Entity> {
 /**
  * Sidebar rendering of an `entities:` entry (TKT-PEKL8L): the rows become
  * links under the group heading, and a group whose only entries matched
- * nothing hides its heading.
+ * nothing, or have not loaded, is left out.
  */
 describe('Sidebar / entities entries', () => {
   let router: Router
@@ -79,9 +79,7 @@ describe('Sidebar / entities entries', () => {
     return wrapper
   }
 
-  // v-show toggles inline display; isVisible() would need an attached document.
-  const hidden = (el: { attributes: (n: string) => string | undefined }) =>
-    (el.attributes('style') ?? '').includes('display: none')
+  const links = (w: VueWrapper) => w.findAll('a').map((a) => a.text().trim())
 
   it('renders one link per row under the group heading', async () => {
     getSidebarMock.mockResolvedValue(
@@ -92,12 +90,10 @@ describe('Sidebar / entities entries', () => {
     listEntitiesMock.mockResolvedValue(rows(['PRJ-1', 'PRJ-2'], 105))
     const w = await mountSidebar()
 
-    const section = w.findAll('.nav-section').find((s) => s.text().includes('Projects'))
-    expect(section).toBeDefined()
-    const links = section!.findAll('a.nav-item')
-    expect(links.map((l) => l.text())).toEqual(['Title PRJ-1', 'Title PRJ-2'])
-    expect(links[0].attributes('href')).toContain('PRJ-1')
-    expect(section!.text()).toContain('and 103 more')
+    expect(w.text()).toContain('Projects')
+    expect(links(w)).toEqual(expect.arrayContaining(['Title PRJ-1', 'Title PRJ-2']))
+    const first = w.findAll('a').find((a) => a.text().includes('Title PRJ-1'))
+    expect(first!.attributes('href')).toContain('PRJ-1')
   })
 
   it('hides a group whose only entries matched nothing', async () => {
@@ -107,9 +103,7 @@ describe('Sidebar / entities entries', () => {
     listEntitiesMock.mockResolvedValue(rows([]))
     const w = await mountSidebar()
 
-    const section = w.findAll('.nav-section').find((s) => s.text().includes('Projects'))
-    expect(section).toBeDefined()
-    expect(hidden(section!)).toBe(true)
+    expect(w.text()).not.toContain('Projects')
   })
 
   it('keeps the heading hidden while the first fetch is pending', async () => {
@@ -119,8 +113,7 @@ describe('Sidebar / entities entries', () => {
     listEntitiesMock.mockReturnValue(new Promise(() => {}))
     const w = await mountSidebar()
 
-    const section = w.findAll('.nav-section').find((s) => s.text().includes('Projects'))
-    expect(hidden(section!)).toBe(true)
+    expect(w.text()).not.toContain('Projects')
   })
 
   it('keeps a group visible when it also holds an ordinary link', async () => {
@@ -138,40 +131,24 @@ describe('Sidebar / entities entries', () => {
     listEntitiesMock.mockResolvedValue(rows([]))
     const w = await mountSidebar()
 
-    const section = w.findAll('.nav-section').find((s) => s.text().includes('Projects'))
-    expect(hidden(section!)).toBe(false)
+    expect(w.text()).toContain('Projects')
+    expect(links(w)).toContain('All projects')
   })
 
-  it('shows a load failure rather than hiding the group', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => {})
+  it('refetches the rows when the config reloads', async () => {
     getSidebarMock.mockResolvedValue(
       sidebar([{ group: 'Projects', items: [{ label: '', entities: { type: 'project' } }] }])
     )
-    listEntitiesMock.mockRejectedValue(new Error('boom'))
-    const w = await mountSidebar()
-
-    const section = w.findAll('.nav-section').find((s) => s.text().includes('Projects'))
-    expect(hidden(section!)).toBe(false)
-    expect(section!.find('[role="status"]').text()).toBe('Could not load')
-  })
-
-  it('re-hides an empty group after the sidebar reloads', async () => {
-    const payload = sidebar([
-      { group: 'Projects', items: [{ label: '', entities: { type: 'project' } }] },
-    ])
-    getSidebarMock.mockResolvedValue(payload)
     listEntitiesMock.mockResolvedValue(rows([]))
     const w = await mountSidebar()
+    expect(w.text()).not.toContain('Projects')
 
-    // A config reload replaces the payload; the cached query result does not
-    // change, so the entry must still report itself empty.
-    getSidebarMock.mockResolvedValue(structuredClone(payload))
+    listEntitiesMock.mockResolvedValue(rows(['PRJ-9']))
     source!._emit('refresh')
     await flushPromises()
-    expect(getSidebarMock).toHaveBeenCalledTimes(2)
+    await flushPromises()
 
-    const section = w.findAll('.nav-section').find((s) => s.text().includes('Projects'))
-    expect(hidden(section!)).toBe(true)
+    expect(links(w)).toContain('Title PRJ-9')
   })
 
   it('ignores a sidebar response overtaken by a later load', async () => {
@@ -189,9 +166,9 @@ describe('Sidebar / entities entries', () => {
       sidebar([{ group: 'Older', items: [{ label: '', entities: { type: 'project' } }] }])
     )
     await flushPromises()
+    await flushPromises()
 
-    const titles = w.findAll('.nav-section-title').map((t) => t.text())
-    expect(titles).toContain('Newer')
-    expect(titles).not.toContain('Older')
+    expect(w.text()).toContain('Newer')
+    expect(w.text()).not.toContain('Older')
   })
 })

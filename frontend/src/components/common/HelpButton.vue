@@ -89,9 +89,9 @@ function handleOverlayClick(e: MouseEvent) {
   width: 44px;
   height: 44px;
   border-radius: 50%;
-  border: 1px solid var(--border-color);
-  background: var(--card-bg);
-  color: var(--muted-text);
+  border: 1px solid var(--rl-color-border);
+  background: var(--rl-color-bg-raised);
+  color: var(--rl-color-text-muted);
   font-size: 16px;
   font-weight: 600;
   cursor: pointer;
@@ -101,9 +101,9 @@ function handleOverlayClick(e: MouseEvent) {
 
 .help-button:hover,
 .help-button[aria-expanded='true'] {
-  background: var(--hover-bg);
-  color: var(--text-color);
-  border-color: var(--accent-color);
+  background: var(--rl-color-bg-hover);
+  color: var(--rl-color-text);
+  border-color: var(--rl-color-accent);
 }
 
 .help-button__overlay {
@@ -117,7 +117,7 @@ function handleOverlayClick(e: MouseEvent) {
 }
 
 .help-button__modal {
-  background: var(--card-bg);
+  background: var(--rl-color-bg-raised);
   border-radius: 12px;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
   max-width: 700px;
@@ -133,7 +133,7 @@ function handleOverlayClick(e: MouseEvent) {
   align-items: center;
   justify-content: space-between;
   padding: 16px 20px;
-  border-bottom: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--rl-color-border);
 }
 
 .help-button__header h3 {
@@ -146,14 +146,14 @@ function handleOverlayClick(e: MouseEvent) {
   background: none;
   border: none;
   font-size: 24px;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   cursor: pointer;
   padding: 0;
   line-height: 1;
 }
 
 .help-button__close:hover {
-  color: var(--text-color);
+  color: var(--rl-color-text);
 }
 
 .help-button__body {

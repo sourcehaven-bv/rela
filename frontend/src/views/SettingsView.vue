@@ -2,7 +2,16 @@
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useSchemaStore, useUIStore } from '@/stores'
 import { useConfirm } from '@/composables/useConfirm'
-import { getSettings, saveSettings, savePalette, uploadLogo, removeLogo, exportTheme, importTheme, getErrorMessage } from '@/api'
+import {
+  getSettings,
+  saveSettings,
+  savePalette,
+  uploadLogo,
+  removeLogo,
+  exportTheme,
+  importTheme,
+  getErrorMessage,
+} from '@/api'
 import type {
   SettingsData,
   SettingsPropertyDef,
@@ -12,7 +21,6 @@ import type {
   PaletteConfig,
 } from '@/api/settings'
 import TagSelect from '@/components/ui/TagSelect.vue'
-import PendingButton from '@/components/common/PendingButton.vue'
 import {
   parsePalette,
   parseRelaPalette,
@@ -24,6 +32,11 @@ import {
 } from '@/utils/palette'
 import { buildPalettePayload, loadPaletteState } from './SettingsView.palette'
 import { apiUrl } from '@/api/base'
+import RlButton from 'rela-components/components/common/RlButton.vue'
+import RlIconButton from 'rela-components/components/common/RlIconButton.vue'
+import RlStatusRegion from 'rela-components/components/feedback/RlStatusRegion.vue'
+import RlSelect from 'rela-components/components/form/RlSelect.vue'
+import type { SelectOption } from 'rela-components/components/form/types'
 
 // Per-role color text inputs accept hex with optional `#` and 3 or 6
 // digits. Used for whitespace-trim + normalize on paste.
@@ -42,6 +55,10 @@ const timezoneOptions = computed<string[]>(() => {
   }
   return intlWithValues.supportedValuesOf?.('timeZone') ?? []
 })
+const timezoneChoices = computed<SelectOption[]>(() => [
+  { value: '', label: `Browser default (${uiStore.effectiveTimezone})` },
+  ...timezoneOptions.value.map((tz) => ({ value: tz, label: tz })),
+])
 const displayTimezone = computed<string>({
   get: () => uiStore.datetimeTimezone,
   set: (tz: string) => uiStore.setDatetimeTimezone(tz),
@@ -80,8 +97,8 @@ const removingLogo = ref(false)
 
 // The staged preview is a local blob: URL and must NOT be prefixed. Only the
 // server-supplied logoUrl is a path relative to the project base.
-const logoPreviewSrc = computed(() =>
-  stagedLogoPreviewUrl.value ?? (logoUrl.value ? apiUrl(logoUrl.value) : null),
+const logoPreviewSrc = computed(
+  () => stagedLogoPreviewUrl.value ?? (logoUrl.value ? apiUrl(logoUrl.value) : null)
 )
 
 const ACCEPT_LOGO_TYPES = 'image/png,image/jpeg,image/svg+xml,image/webp'
@@ -184,7 +201,9 @@ async function handleThemePicked(ev: Event) {
   if (!file) return
   // Always reset the input value so picking the same file twice in a
   // row still fires @change.
-  const reset = () => { target.value = '' }
+  const reset = () => {
+    target.value = ''
+  }
 
   // If the user has unsaved palette edits, confirm before stomping
   // them. The saved palette in palette.yaml is untouched either way;
@@ -265,7 +284,7 @@ function applyImportedPalette(palette: PaletteConfig) {
   const state = loadPaletteState(
     palette,
     paletteRoles.map((r) => r.key),
-    schemaStore.darkDisabled,
+    schemaStore.darkDisabled
   )
   paletteMode.value = state.mode
   paletteColors.value = state.light
@@ -404,8 +423,33 @@ function handleDeriveDark() {
 }
 
 // UI state for adding new items
-const selectedNewProperty = ref('')
-const selectedNewRelation = ref('')
+// Bumped after each add, so the "Add …" selects remount showing their
+// placeholder instead of the option that was just picked and removed.
+const addSelectKey = ref(0)
+
+const NONE_OPTION: SelectOption = { value: '', label: 'None' }
+const BOOLEAN_OPTIONS: SelectOption[] = [
+  NONE_OPTION,
+  { value: 'true', label: 'true' },
+  { value: 'false', label: 'false' },
+]
+
+function enumOptions(values: readonly string[] | undefined): SelectOption[] {
+  return [NONE_OPTION, ...(values ?? []).map((v) => ({ value: v, label: v }))]
+}
+
+function relationTargetOptions(relName: string): SelectOption[] {
+  const targets = getRelationDef(relName)?.targets ?? []
+  return [NONE_OPTION, ...targets.map((t) => ({ value: t.id, label: t.title }))]
+}
+
+function propertyChoices(props: { name: string; type: string }[]): SelectOption[] {
+  return props.map((p) => ({ value: p.name, label: `${p.name} (${p.type})` }))
+}
+
+function relationChoices(rels: { name: string; targetType?: string }[]): SelectOption[] {
+  return rels.map((r) => ({ value: r.name, label: r.targetType ? `${r.name} -> ${r.targetType}` : r.name }))
+}
 
 // Computed
 const availableProperties = computed(() => {
@@ -451,7 +495,7 @@ async function loadSettings() {
     const state = loadPaletteState(
       data.userPalette,
       paletteRoles.map((r) => r.key),
-      schemaStore.darkDisabled,
+      schemaStore.darkDisabled
     )
     paletteMode.value = state.mode
     paletteColors.value = state.light
@@ -531,16 +575,18 @@ async function handleResetPalette() {
  *  In Light+Dark mode, empty dark slots inherit from light so the
  *  preview matches what the backend will produce after save.
  */
-const previewVars = computed<{ light: Record<string, string>; dark: Record<string, string> }>(() => {
-  const light = deriveTheme(paletteColors.value, paletteBadges.value)
-  if (paletteMode.value === 'regular') {
-    return { light, dark: light }
+const previewVars = computed<{ light: Record<string, string>; dark: Record<string, string> }>(
+  () => {
+    const light = deriveTheme(paletteColors.value, paletteBadges.value)
+    if (paletteMode.value === 'regular') {
+      return { light, dark: light }
+    }
+    const mergedColors = { ...paletteColors.value, ...stripEmpty(paletteDarkColors.value) }
+    const mergedBadges = { ...paletteBadges.value, ...stripEmpty(paletteDarkBadges.value) }
+    const dark = deriveTheme(mergedColors, mergedBadges)
+    return { light, dark }
   }
-  const mergedColors = { ...paletteColors.value, ...stripEmpty(paletteDarkColors.value) }
-  const mergedBadges = { ...paletteBadges.value, ...stripEmpty(paletteDarkBadges.value) }
-  const dark = deriveTheme(mergedColors, mergedBadges)
-  return { light, dark }
-})
+)
 
 function stripEmpty(o: Record<string, string>): Record<string, string> {
   const out: Record<string, string> = {}
@@ -644,20 +690,20 @@ function clearDarkColor(key: string) {
   delete paletteDarkColors.value[key]
 }
 
-function addPropertyDefault() {
-  if (!selectedNewProperty.value) return
-  propertyDefaults.value[selectedNewProperty.value] = ''
-  selectedNewProperty.value = ''
+function addPropertyDefault(name: string) {
+  if (!name) return
+  propertyDefaults.value[name] = ''
+  addSelectKey.value++
 }
 
 function removePropertyDefault(name: string) {
   delete propertyDefaults.value[name]
 }
 
-function addRelationDefault() {
-  if (!selectedNewRelation.value) return
-  relationDefaults.value[selectedNewRelation.value] = ''
-  selectedNewRelation.value = ''
+function addRelationDefault(name: string) {
+  if (!name) return
+  relationDefaults.value[name] = ''
+  addSelectKey.value++
 }
 
 function removeRelationDefault(name: string) {
@@ -679,6 +725,7 @@ function removeOverrideGroup(index: number) {
 function addOverrideProperty(overrideIndex: number, propName: string) {
   if (!propName) return
   overrides.value[overrideIndex].defaults[propName] = ''
+  addSelectKey.value++
 }
 
 function removeOverrideProperty(overrideIndex: number, propName: string) {
@@ -688,6 +735,7 @@ function removeOverrideProperty(overrideIndex: number, propName: string) {
 function addOverrideRelation(overrideIndex: number, relName: string) {
   if (!relName) return
   overrides.value[overrideIndex].relationDefaults[relName] = ''
+  addSelectKey.value++
 }
 
 function removeOverrideRelation(overrideIndex: number, relName: string) {
@@ -719,15 +767,14 @@ onMounted(() => {
       </div>
     </div>
 
-    <div v-if="loading" class="loading-state">
-      <div class="spinner"/>
-      <span>Loading settings...</span>
-    </div>
+    <RlStatusRegion v-if="loading">Loading settings...</RlStatusRegion>
 
-    <div v-else-if="error" class="error-state">
+    <RlStatusRegion v-else-if="error" tone="error">
       {{ error }}
-      <button class="btn btn-secondary btn-sm" @click="loadSettings">Retry</button>
-    </div>
+      <template #actions>
+        <RlButton variant="secondary" size="sm" @click="loadSettings">Retry</RlButton>
+      </template>
+    </RlStatusRegion>
 
     <form v-else class="settings-form" @submit.prevent="handleSave">
       <!-- Property Defaults -->
@@ -736,35 +783,26 @@ onMounted(() => {
         <p class="description">Default values applied when creating any entity type.</p>
 
         <div class="settings-rows">
-          <div
-            v-for="(_, propName) in propertyDefaults"
-            :key="propName"
-            class="settings-row"
-          >
+          <div v-for="(_, propName) in propertyDefaults" :key="propName" class="settings-row">
             <span class="row-label">{{ propName }}</span>
             <div class="row-value">
               <template v-if="getPropertyDef(propName as string)">
-                <select
+                <RlSelect
                   v-if="getPropertyDef(propName as string)?.values?.length"
                   v-model="propertyDefaults[propName as string]"
-                >
-                  <option value="">-</option>
-                  <option
-                    v-for="val in getPropertyDef(propName as string)?.values"
-                    :key="val"
-                    :value="val"
-                  >
-                    {{ val }}
-                  </option>
-                </select>
-                <select
+                  :label="propName as string"
+                  label-hidden
+                  size="sm"
+                  :options="enumOptions(getPropertyDef(propName as string)?.values)"
+                />
+                <RlSelect
                   v-else-if="getPropertyDef(propName as string)?.type === 'boolean'"
                   v-model="propertyDefaults[propName as string]"
-                >
-                  <option value="">-</option>
-                  <option value="true">true</option>
-                  <option value="false">false</option>
-                </select>
+                  :label="propName as string"
+                  label-hidden
+                  size="sm"
+                  :options="BOOLEAN_OPTIONS"
+                />
                 <input
                   v-else-if="getPropertyDef(propName as string)?.type === 'date'"
                   v-model="propertyDefaults[propName as string]"
@@ -775,11 +813,7 @@ onMounted(() => {
                   v-model="propertyDefaults[propName as string]"
                   type="number"
                 />
-                <input
-                  v-else
-                  v-model="propertyDefaults[propName as string]"
-                  type="text"
-                />
+                <input v-else v-model="propertyDefaults[propName as string]" type="text" />
               </template>
               <template v-else>
                 <input v-model="propertyDefaults[propName as string]" type="text" />
@@ -797,12 +831,15 @@ onMounted(() => {
         </div>
 
         <div class="add-row">
-          <select v-model="selectedNewProperty" @change="addPropertyDefault">
-            <option value="">Add property default...</option>
-            <option v-for="prop in availableProperties" :key="prop.name" :value="prop.name">
-              {{ prop.name }} ({{ prop.type }})
-            </option>
-          </select>
+          <RlSelect
+            :key="addSelectKey"
+            label="Add property default"
+            label-hidden
+            size="sm"
+            placeholder="Add property default…"
+            :options="propertyChoices(availableProperties)"
+            @update:model-value="addPropertyDefault"
+          />
         </div>
       </div>
 
@@ -812,24 +849,17 @@ onMounted(() => {
         <p class="description">Default relations created when making a new entity.</p>
 
         <div class="settings-rows">
-          <div
-            v-for="(_, relName) in relationDefaults"
-            :key="relName"
-            class="settings-row"
-          >
+          <div v-for="(_, relName) in relationDefaults" :key="relName" class="settings-row">
             <span class="row-label">{{ relName }}</span>
             <div class="row-value">
               <template v-if="getRelationDef(relName as string)">
-                <select v-model="relationDefaults[relName as string]">
-                  <option value="">-</option>
-                  <option
-                    v-for="target in getRelationDef(relName as string)?.targets"
-                    :key="target.id"
-                    :value="target.id"
-                  >
-                    {{ target.title }}
-                  </option>
-                </select>
+                <RlSelect
+                  v-model="relationDefaults[relName as string]"
+                  :label="relName as string"
+                  label-hidden
+                  size="sm"
+                  :options="relationTargetOptions(relName as string)"
+                />
               </template>
               <template v-else>
                 <input v-model="relationDefaults[relName as string]" type="text" readonly />
@@ -847,12 +877,15 @@ onMounted(() => {
         </div>
 
         <div class="add-row">
-          <select v-model="selectedNewRelation" @change="addRelationDefault">
-            <option value="">Add relation default...</option>
-            <option v-for="rel in availableRelations" :key="rel.name" :value="rel.name">
-              {{ rel.name }}{{ rel.targetType ? ` -> ${rel.targetType}` : '' }}
-            </option>
-          </select>
+          <RlSelect
+            :key="addSelectKey"
+            label="Add relation default"
+            label-hidden
+            size="sm"
+            placeholder="Add relation default…"
+            :options="relationChoices(availableRelations)"
+            @update:model-value="addRelationDefault"
+          />
         </div>
       </div>
 
@@ -864,11 +897,7 @@ onMounted(() => {
         </p>
 
         <div class="override-groups">
-          <div
-            v-for="(override, idx) in overrides"
-            :key="idx"
-            class="override-group"
-          >
+          <div v-for="(override, idx) in overrides" :key="idx" class="override-group">
             <div class="override-header">
               <div class="override-types">
                 <label>Entity Types</label>
@@ -878,11 +907,7 @@ onMounted(() => {
                   placeholder="Select entity types..."
                 />
               </div>
-              <button
-                type="button"
-                class="remove-btn large"
-                @click="removeOverrideGroup(idx)"
-              >
+              <button type="button" class="remove-btn large" @click="removeOverrideGroup(idx)">
                 &times;
               </button>
             </div>
@@ -898,27 +923,22 @@ onMounted(() => {
                   <span class="row-label">{{ propName }}</span>
                   <div class="row-value">
                     <template v-if="getPropertyDef(propName as string)">
-                      <select
+                      <RlSelect
                         v-if="getPropertyDef(propName as string)?.values?.length"
                         v-model="override.defaults[propName as string]"
-                      >
-                        <option value="">-</option>
-                        <option
-                          v-for="val in getPropertyDef(propName as string)?.values"
-                          :key="val"
-                          :value="val"
-                        >
-                          {{ val }}
-                        </option>
-                      </select>
-                      <select
+                        :label="propName as string"
+                        label-hidden
+                        size="sm"
+                        :options="enumOptions(getPropertyDef(propName as string)?.values)"
+                      />
+                      <RlSelect
                         v-else-if="getPropertyDef(propName as string)?.type === 'boolean'"
                         v-model="override.defaults[propName as string]"
-                      >
-                        <option value="">-</option>
-                        <option value="true">true</option>
-                        <option value="false">false</option>
-                      </select>
+                        :label="propName as string"
+                        label-hidden
+                        size="sm"
+                        :options="BOOLEAN_OPTIONS"
+                      />
                       <input
                         v-else-if="getPropertyDef(propName as string)?.type === 'date'"
                         v-model="override.defaults[propName as string]"
@@ -945,19 +965,16 @@ onMounted(() => {
                   </button>
                 </div>
               </div>
-              <select
+              <RlSelect
+                :key="addSelectKey"
                 class="add-select"
-                @change="(e) => { addOverrideProperty(idx, (e.target as HTMLSelectElement).value); (e.target as HTMLSelectElement).value = '' }"
-              >
-                <option value="">Add property...</option>
-                <option
-                  v-for="prop in getAvailableOverrideProperties(idx)"
-                  :key="prop.name"
-                  :value="prop.name"
-                >
-                  {{ prop.name }} ({{ prop.type }})
-                </option>
-              </select>
+                label="Add property"
+                label-hidden
+                size="sm"
+                placeholder="Add property…"
+                :options="propertyChoices(getAvailableOverrideProperties(idx))"
+                @update:model-value="(name) => addOverrideProperty(idx, name)"
+              />
             </div>
 
             <div class="override-section">
@@ -971,16 +988,13 @@ onMounted(() => {
                   <span class="row-label">{{ relName }}</span>
                   <div class="row-value">
                     <template v-if="getRelationDef(relName as string)">
-                      <select v-model="override.relationDefaults[relName as string]">
-                        <option value="">-</option>
-                        <option
-                          v-for="target in getRelationDef(relName as string)?.targets"
-                          :key="target.id"
-                          :value="target.id"
-                        >
-                          {{ target.title }}
-                        </option>
-                      </select>
+                      <RlSelect
+                        v-model="override.relationDefaults[relName as string]"
+                        :label="relName as string"
+                        label-hidden
+                        size="sm"
+                        :options="relationTargetOptions(relName as string)"
+                      />
                     </template>
                     <template v-else>
                       <input
@@ -1000,26 +1014,23 @@ onMounted(() => {
                   </button>
                 </div>
               </div>
-              <select
+              <RlSelect
+                :key="addSelectKey"
                 class="add-select"
-                @change="(e) => { addOverrideRelation(idx, (e.target as HTMLSelectElement).value); (e.target as HTMLSelectElement).value = '' }"
-              >
-                <option value="">Add relation...</option>
-                <option
-                  v-for="rel in getAvailableOverrideRelations(idx)"
-                  :key="rel.name"
-                  :value="rel.name"
-                >
-                  {{ rel.name }}{{ rel.targetType ? ` -> ${rel.targetType}` : '' }}
-                </option>
-              </select>
+                label="Add relation"
+                label-hidden
+                size="sm"
+                placeholder="Add relation…"
+                :options="relationChoices(getAvailableOverrideRelations(idx))"
+                @update:model-value="(name) => addOverrideRelation(idx, name)"
+              />
             </div>
           </div>
         </div>
 
-        <button type="button" class="btn btn-secondary btn-sm" @click="addOverrideGroup">
-          + Add override group
-        </button>
+        <RlButton variant="secondary" size="sm" icon="plus" @click="addOverrideGroup">
+          Add override group
+        </RlButton>
       </div>
 
       <!-- Appearance / Palette -->
@@ -1051,21 +1062,25 @@ onMounted(() => {
             class="toggle-pill"
             :class="{ active: paletteMode === 'regular' }"
             @click="paletteMode = 'regular'"
-          >Regular</button>
+          >
+            Regular
+          </button>
           <button
             type="button"
             class="toggle-pill"
             :class="{ active: paletteMode === 'light-dark' }"
             @click="paletteMode = 'light-dark'"
-          >Light + Dark</button>
+          >
+            Light + Dark
+          </button>
         </div>
         <p class="mode-hint">
           <template v-if="paletteMode === 'regular'">
             Single palette. Dark mode is disabled for this project.
           </template>
           <template v-else>
-            Edit Light and Dark themes side by side. Empty Dark slots
-            inherit from Light. Click <strong>Derive Dark from Light</strong>
+            Edit Light and Dark themes side by side. Empty Dark slots inherit from Light. Click
+            <strong>Derive Dark from Light</strong>
             to auto-fill the Dark column from your Light values.
           </template>
         </p>
@@ -1076,7 +1091,10 @@ onMounted(() => {
              Light and Dark themes side-by-side in Light+Dark mode so
              the user can compare without toggling. -->
         <h4 class="section-subtitle">Preview</h4>
-        <div class="palette-preview" :class="{ 'palette-preview--split': paletteMode === 'light-dark' }">
+        <div
+          class="palette-preview"
+          :class="{ 'palette-preview--split': paletteMode === 'light-dark' }"
+        >
           <div class="palette-preview-pane" :style="previewStyleAttr(previewVars.light)">
             <span class="palette-preview-label">Light</span>
             <div class="palette-preview-frame">
@@ -1088,7 +1106,9 @@ onMounted(() => {
                   <div class="palette-preview-text">Sample text</div>
                   <div class="palette-preview-muted">Muted text</div>
                   <div class="palette-preview-buttons">
-                    <button type="button" class="palette-preview-btn palette-preview-btn-accent">Action</button>
+                    <button type="button" class="palette-preview-btn palette-preview-btn-accent">
+                      Action
+                    </button>
                     <span class="palette-preview-badge palette-preview-badge-success">ok</span>
                     <span class="palette-preview-badge palette-preview-badge-error">err</span>
                     <span class="palette-preview-badge palette-preview-badge-warning">warn</span>
@@ -1113,7 +1133,9 @@ onMounted(() => {
                   <div class="palette-preview-text">Sample text</div>
                   <div class="palette-preview-muted">Muted text</div>
                   <div class="palette-preview-buttons">
-                    <button type="button" class="palette-preview-btn palette-preview-btn-accent">Action</button>
+                    <button type="button" class="palette-preview-btn palette-preview-btn-accent">
+                      Action
+                    </button>
                     <span class="palette-preview-badge palette-preview-badge-success">ok</span>
                     <span class="palette-preview-badge palette-preview-badge-error">err</span>
                     <span class="palette-preview-badge palette-preview-badge-warning">warn</span>
@@ -1128,45 +1150,57 @@ onMounted(() => {
         <h4 class="section-subtitle">Theme Colors</h4>
 
         <!-- Column header band (Light+Dark mode) -->
-        <div v-if="paletteMode === 'light-dark'" class="palette-grid palette-grid--split palette-header">
-          <span /> <!-- label column spacer -->
+        <div
+          v-if="paletteMode === 'light-dark'"
+          class="palette-grid palette-grid--split palette-header"
+        >
+          <span />
+          <!-- label column spacer -->
           <div class="palette-column-header">
             <span>Light</span>
-            <button
-              type="button"
-              class="btn btn-secondary btn-xs"
+            <RlButton
+              variant="secondary"
+              size="sm"
               title="Import a palette file into the Light column"
               @click="lightFileInput?.click()"
-            >Import</button>
+              >Import</RlButton
+            >
           </div>
           <div class="palette-column-header">
             <span>Dark</span>
             <div class="palette-column-actions">
-              <button
-                type="button"
-                class="btn btn-secondary btn-xs"
+              <RlButton
+                variant="secondary"
+                size="sm"
                 :disabled="!canDeriveDark"
-                :title="canDeriveDark ? 'Auto-fill the Dark column from the Light palette' : 'Set at least one Light color first'"
+                :title="
+                  canDeriveDark
+                    ? 'Auto-fill the Dark column from the Light palette'
+                    : 'Set at least one Light color first'
+                "
                 @click="handleDeriveDark"
-              >Derive from Light</button>
-              <button
-                type="button"
-                class="btn btn-secondary btn-xs"
+                >Derive from Light</RlButton
+              >
+              <RlButton
+                variant="secondary"
+                size="sm"
                 title="Import a palette file into the Dark column"
                 @click="darkFileInput?.click()"
-              >Import</button>
+                >Import</RlButton
+              >
             </div>
           </div>
         </div>
 
         <!-- Single-column header band (Regular mode) -->
         <div v-else class="palette-header palette-header--single">
-          <button
-            type="button"
-            class="btn btn-secondary btn-xs"
+          <RlButton
+            variant="secondary"
+            size="sm"
             title="Import a palette file"
             @click="lightFileInput?.click()"
-          >Import</button>
+            >Import</RlButton
+          >
         </div>
 
         <!-- Inline overwrite confirm appears right below the column
@@ -1174,19 +1208,12 @@ onMounted(() => {
              Derive (RR-finding #5: confirm was rendered far below the
              color grid and felt like the button did nothing). -->
         <div v-if="showDeriveConfirm" class="derive-confirm">
-          <p>Overwrite all dark colors with values derived from the
-            current light palette?</p>
+          <p>Overwrite all dark colors with values derived from the current light palette?</p>
           <div class="derive-confirm-actions">
-            <button
-              type="button"
-              class="btn btn-primary btn-sm"
-              @click="applyDeriveDark"
-            >Overwrite</button>
-            <button
-              type="button"
-              class="btn btn-secondary btn-sm"
-              @click="showDeriveConfirm = false"
-            >Cancel</button>
+            <RlButton variant="primary" size="sm" @click="applyDeriveDark">Overwrite</RlButton>
+            <RlButton variant="secondary" size="sm" @click="showDeriveConfirm = false">
+              Cancel
+            </RlButton>
           </div>
         </div>
 
@@ -1212,13 +1239,12 @@ onMounted(() => {
                 class="color-text"
                 @input="setLightColor(role.key, ($event.target as HTMLInputElement).value)"
               />
-              <button
+              <RlIconButton
                 v-if="paletteColors[role.key]"
-                type="button"
-                class="btn-icon btn-remove"
-                title="Clear (use default)"
+                icon="close"
+                label="Clear (use default)"
                 @click="clearLightColor(role.key)"
-              >&times;</button>
+              />
             </div>
             <div v-if="paletteMode === 'light-dark'" class="palette-cell palette-input-cell">
               <input
@@ -1234,13 +1260,12 @@ onMounted(() => {
                 class="color-text"
                 @input="setDarkColor(role.key, ($event.target as HTMLInputElement).value)"
               />
-              <button
+              <RlIconButton
                 v-if="paletteDarkColors[role.key]"
-                type="button"
-                class="btn-icon btn-remove"
-                title="Clear (inherit from light)"
+                icon="close"
+                label="Clear (inherit from light)"
                 @click="clearDarkColor(role.key)"
-              >&times;</button>
+              />
             </div>
           </template>
         </div>
@@ -1265,13 +1290,12 @@ onMounted(() => {
                 class="color-text"
                 @input="setLightBadge(name, ($event.target as HTMLInputElement).value)"
               />
-              <button
+              <RlIconButton
                 v-if="paletteBadges[name]"
-                type="button"
-                class="btn-icon btn-remove"
-                title="Clear (use default)"
+                icon="close"
+                label="Clear (use default)"
                 @click="clearLightBadge(name)"
-              >&times;</button>
+              />
             </div>
             <div v-if="paletteMode === 'light-dark'" class="palette-cell palette-input-cell">
               <input
@@ -1287,30 +1311,27 @@ onMounted(() => {
                 class="color-text"
                 @input="setDarkBadge(name, ($event.target as HTMLInputElement).value)"
               />
-              <button
+              <RlIconButton
                 v-if="paletteDarkBadges[name]"
-                type="button"
-                class="btn-icon btn-remove"
-                title="Clear (inherit from light)"
+                icon="close"
+                label="Clear (inherit from light)"
                 @click="clearDarkBadge(name)"
-              >&times;</button>
+              />
             </div>
           </template>
         </div>
 
         <div class="palette-actions">
-          <PendingButton
-            class="btn btn-primary btn-sm"
-            :pending="savingPalette"
-            label="Save Palette"
+          <RlButton
+            variant="primary"
+            size="sm"
+            :loading="savingPalette"
             pending-label="Saving…"
             @click="handleSavePalette"
-          />
-          <button
-            type="button"
-            class="btn btn-secondary btn-sm"
-            @click="handleResetPalette"
-          >Reset</button>
+          >
+            Save Palette
+          </RlButton>
+          <RlButton variant="secondary" size="sm" @click="handleResetPalette">Reset</RlButton>
         </div>
       </div>
 
@@ -1318,21 +1339,17 @@ onMounted(() => {
       <div class="settings-card">
         <h3>Display timezone</h3>
         <p class="description">
-          The time zone datetime fields are shown and entered in (applies to all
-          times, this browser only). Stored values are always kept in UTC — this
-          setting changes only how they are displayed, never the underlying value.
+          The time zone datetime fields are shown and entered in (applies to all times, this browser
+          only). Stored values are always kept in UTC — this setting changes only how they are
+          displayed, never the underlying value.
         </p>
         <div class="settings-row">
-          <label for="display-timezone-select" class="tz-label">Time zone</label>
-          <select
-            id="display-timezone-select"
+          <RlSelect
             v-model="displayTimezone"
-            class="input tz-select"
-            aria-label="Display timezone for datetime fields"
-          >
-            <option value="">Browser default ({{ uiStore.effectiveTimezone }})</option>
-            <option v-for="tz in timezoneOptions" :key="tz" :value="tz">{{ tz }}</option>
-          </select>
+            class="tz-select"
+            label="Time zone"
+            :options="timezoneChoices"
+          />
         </div>
       </div>
 
@@ -1340,8 +1357,7 @@ onMounted(() => {
       <div class="settings-card">
         <h3>Logo</h3>
         <p class="description">
-          Upload an image to replace the sidebar app name. PNG, JPEG, SVG,
-          or WebP. Max 256 KiB.
+          Upload an image to replace the sidebar app name. PNG, JPEG, SVG, or WebP. Max 256 KiB.
         </p>
         <p class="file-path">.rela/theme/logo</p>
 
@@ -1363,27 +1379,34 @@ onMounted(() => {
               class="file-input-hidden"
               @change="handleLogoPicked"
             />
-            <button
-              type="button"
-              class="btn btn-secondary btn-sm"
+            <RlButton
+              variant="secondary"
+              size="sm"
               :disabled="uploadingLogo || removingLogo"
               @click="logoFileInput?.click()"
-            >Choose image</button>
-            <PendingButton
-              class="btn btn-primary btn-sm"
-              :pending="uploadingLogo"
-              :disabled="!stagedLogo"
-              label="Upload"
+              >Choose image</RlButton
+            >
+            <RlButton
+              variant="primary"
+              size="sm"
+              :loading="uploadingLogo"
               pending-label="Uploading…"
+              :disabled="!stagedLogo"
               @click="handleLogoUpload"
-            />
-            <button
+            >
+              Upload
+            </RlButton>
+            <RlButton
               v-if="logoUrl"
-              type="button"
-              class="btn btn-danger btn-sm"
-              :disabled="removingLogo"
+              variant="secondary"
+              tone="danger"
+              size="sm"
+              :loading="removingLogo"
+              pending-label="Removing…"
               @click="handleLogoRemove"
-            >{{ removingLogo ? 'Removing...' : 'Remove' }}</button>
+            >
+              Remove
+            </RlButton>
           </div>
         </div>
       </div>
@@ -1393,9 +1416,9 @@ onMounted(() => {
         <h3>Theme package</h3>
         <p class="description">
           Bundle the current palette and logo into a portable
-          <code>.relatheme</code> file, or install one shared by someone
-          else. Installing applies the logo immediately and stages the
-          palette in the editor above — click <strong>Save Palette</strong>
+          <code>.relatheme</code> file, or install one shared by someone else. Installing applies
+          the logo immediately and stages the palette in the editor above — click
+          <strong>Save Palette</strong>
           to persist colors.
         </p>
 
@@ -1407,18 +1430,24 @@ onMounted(() => {
             class="file-input-hidden"
             @change="handleThemePicked"
           />
-          <button
-            type="button"
-            class="btn btn-secondary btn-sm"
-            :disabled="exportingTheme"
+          <RlButton
+            variant="secondary"
+            size="sm"
+            :loading="exportingTheme"
+            pending-label="Exporting…"
             @click="handleThemeExport"
-          >{{ exportingTheme ? 'Exporting...' : 'Export' }}</button>
-          <button
-            type="button"
-            class="btn btn-primary btn-sm"
-            :disabled="importingTheme"
+          >
+            Export
+          </RlButton>
+          <RlButton
+            variant="primary"
+            size="sm"
+            :loading="importingTheme"
+            pending-label="Installing…"
             @click="themeFileInput?.click()"
-          >{{ importingTheme ? 'Installing...' : 'Install' }}</button>
+          >
+            Install
+          </RlButton>
         </div>
       </div>
 
@@ -1455,14 +1484,10 @@ onMounted(() => {
 
       <!-- Form Actions -->
       <div class="form-actions">
-        <PendingButton
-          type="submit"
-          class="btn btn-primary"
-          :pending="saving"
-          label="Save"
-          pending-label="Saving…"
-        />
-        <button type="button" class="btn btn-secondary" @click="loadSettings">Reset</button>
+        <RlButton type="submit" variant="primary" :loading="saving" pending-label="Saving…">
+          Save
+        </RlButton>
+        <RlButton variant="secondary" @click="loadSettings">Reset</RlButton>
       </div>
     </form>
   </div>
@@ -1482,7 +1507,7 @@ h1 {
 }
 
 .subtitle {
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   font-size: 14px;
   margin: 0 0 4px;
 }
@@ -1490,13 +1515,13 @@ h1 {
 .file-path {
   font-family: monospace;
   font-size: 12px;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   margin: 0;
 }
 
 .settings-card {
-  background: var(--card-bg);
-  border: 1px solid var(--border-color);
+  background: var(--rl-color-bg-raised);
+  border: 1px solid var(--rl-color-border);
   border-radius: 8px;
   padding: 20px;
   margin-bottom: 20px;
@@ -1509,7 +1534,7 @@ h1 {
 }
 
 .description {
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   font-size: 13px;
   margin: 0 0 16px;
 }
@@ -1525,7 +1550,7 @@ h1 {
   align-items: center;
   gap: 12px;
   padding: 8px 12px;
-  background: var(--hover-bg);
+  background: var(--rl-color-bg-hover);
   border-radius: 6px;
 }
 
@@ -1533,7 +1558,7 @@ h1 {
   min-width: 120px;
   font-size: 13px;
   font-weight: 500;
-  color: var(--text-color);
+  color: var(--rl-color-text);
 }
 
 .row-value {
@@ -1543,29 +1568,33 @@ h1 {
   gap: 8px;
 }
 
-.row-value select,
 .row-value input {
   flex: 1;
   padding: 6px 10px;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--rl-color-border);
   border-radius: 6px;
   font-size: 13px;
-  background: var(--input-bg);
-  color: var(--text-color);
+  background: var(--rl-color-bg-raised);
+  color: var(--rl-color-text);
+}
+
+/* Placement only: RlSelect draws the control. */
+.row-value > .rl-field {
+  flex: 1;
 }
 
 .remove-btn {
   background: none;
   border: none;
   font-size: 18px;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   cursor: pointer;
   padding: 0 4px;
   line-height: 1;
 }
 
 .remove-btn:hover {
-  color: var(--error-color);
+  color: var(--rl-color-danger);
 }
 
 .remove-btn.large {
@@ -1575,8 +1604,8 @@ h1 {
 }
 
 .stale-badge {
-  background: color-mix(in srgb, var(--warning-color) 15%, transparent);
-  color: var(--warning-color);
+  background: color-mix(in srgb, var(--rl-color-status-amber) 15%, transparent);
+  color: var(--rl-color-status-amber);
   font-size: 11px;
   padding: 2px 6px;
   border-radius: 4px;
@@ -1587,16 +1616,6 @@ h1 {
   margin-top: 12px;
 }
 
-.add-row select,
-.add-select {
-  width: 100%;
-  padding: 8px 12px;
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
-  font-size: 13px;
-  color: var(--muted-text);
-  background: var(--input-bg);
-}
 
 .override-groups {
   display: flex;
@@ -1606,10 +1625,10 @@ h1 {
 }
 
 .override-group {
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--rl-color-border);
   border-radius: 8px;
   padding: 16px;
-  background: var(--hover-bg);
+  background: var(--rl-color-bg-hover);
 }
 
 .override-header {
@@ -1628,7 +1647,7 @@ h1 {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   margin-bottom: 6px;
 }
 
@@ -1642,7 +1661,7 @@ h1 {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   margin-bottom: 6px;
 }
 
@@ -1660,24 +1679,24 @@ h1 {
   display: flex;
   justify-content: space-between;
   padding: 8px 12px;
-  background: var(--hover-bg);
+  background: var(--rl-color-bg-hover);
   border-radius: 6px;
 }
 
 .info-label {
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   font-size: 14px;
 }
 
 .info-value {
   font-size: 14px;
   font-weight: 500;
-  color: var(--text-color);
+  color: var(--rl-color-text);
 }
 
 /* Genuine action PAIR (Save + Reset), so the two share a width.
  *
- * PendingButton reserves enough width for its longest state ("Saving…"),
+ * RlButton reserves enough width for its longest state ("Saving…"),
  * which on its own would leave "Save" sitting in a visibly over-padded box
  * beside a snugly-fitted "Reset" — a static asymmetry on every visit.
  * Equalising absorbs the reservation into a width Reset helps set.
@@ -1692,7 +1711,12 @@ h1 {
   margin-top: 24px;
 }
 
-.form-actions > .btn {
+/*
+ * `:deep` because RlButton's own styles are scoped: a plain `.rl-button`
+ * selector in this block compiles with this component's data attribute and
+ * would never match the library's element.
+ */
+.form-actions > :deep(.rl-button) {
   flex: 0 1 auto;
   /* Literal rather than a var(): the custom property was never declared
      anywhere, so the fallback was always what applied — a var() whose
@@ -1704,7 +1728,7 @@ h1 {
 .section-subtitle {
   font-size: 13px;
   font-weight: 600;
-  color: var(--text-color);
+  color: var(--rl-color-text);
   margin: 16px 0 8px;
 }
 
@@ -1720,48 +1744,29 @@ h1 {
   width: 32px;
   height: 32px;
   padding: 2px;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--rl-color-border);
   border-radius: 4px;
   cursor: pointer;
-  background: var(--input-bg);
+  background: var(--rl-color-bg-raised);
   flex-shrink: 0;
 }
 
 .color-text {
   width: 90px;
   padding: 6px 10px;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--rl-color-border);
   border-radius: 6px;
   font-size: 13px;
   font-family: monospace;
-  background: var(--input-bg);
-  color: var(--text-color);
-}
-
-.btn-icon {
-  background: none;
-  border: none;
-  font-size: 18px;
-  color: var(--muted-text);
-  cursor: pointer;
-  padding: 0 4px;
-  line-height: 1;
-}
-
-.btn-icon:hover {
-  color: var(--error-color);
-}
-
-.btn-xs {
-  font-size: 11px;
-  padding: 4px 10px;
+  background: var(--rl-color-bg-raised);
+  color: var(--rl-color-text);
 }
 
 .derive-confirm {
   margin-top: 12px;
   padding: 12px 14px;
-  background: var(--card-bg);
-  border: 1px solid var(--warning-color);
+  background: var(--rl-color-bg-raised);
+  border: 1px solid var(--rl-color-status-amber);
   border-radius: 6px;
   font-size: 13px;
 }
@@ -1778,7 +1783,7 @@ h1 {
 .mode-hint {
   margin: 4px 0 12px;
   font-size: 12px;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
 }
 
 /* --- Live preview swatch --- */
@@ -1813,23 +1818,23 @@ h1 {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
 }
 
 .palette-preview-frame {
   display: flex;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--rl-color-border);
   border-radius: 6px;
   overflow: hidden;
   min-height: 110px;
-  background: var(--bg-color);
-  color: var(--text-color);
+  background: var(--rl-color-bg);
+  color: var(--rl-color-text);
 }
 
 .palette-preview-sidebar {
   width: 60px;
-  background: var(--sidebar-bg);
-  color: var(--sidebar-text);
+  background: var(--rl-color-bg-sunken);
+  color: var(--rl-color-text);
   padding: 10px 8px;
   font-size: 11px;
 }
@@ -1843,12 +1848,12 @@ h1 {
 .palette-preview-body {
   flex: 1;
   padding: 10px;
-  background: var(--bg-color);
+  background: var(--rl-color-bg);
 }
 
 .palette-preview-card {
-  background: var(--card-bg);
-  border: 1px solid var(--border-color);
+  background: var(--rl-color-bg-raised);
+  border: 1px solid var(--rl-color-border);
   border-radius: 6px;
   padding: 10px;
   display: flex;
@@ -1857,13 +1862,13 @@ h1 {
 }
 
 .palette-preview-text {
-  color: var(--text-color);
+  color: var(--rl-color-text);
   font-size: 12px;
   font-weight: 500;
 }
 
 .palette-preview-muted {
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   font-size: 11px;
 }
 
@@ -1884,7 +1889,7 @@ h1 {
 }
 
 .palette-preview-btn-accent {
-  background: var(--accent-color);
+  background: var(--rl-color-accent);
   color: white;
 }
 
@@ -1897,19 +1902,19 @@ h1 {
 }
 
 .palette-preview-badge-success {
-  background: var(--success-color);
+  background: var(--rl-color-status-green);
 }
 
 .palette-preview-badge-error {
-  background: var(--error-color);
+  background: var(--rl-color-danger);
 }
 
 .palette-preview-badge-warning {
-  background: var(--warning-color);
+  background: var(--rl-color-status-amber);
 }
 
 .palette-preview-badge-info {
-  background: var(--info-color);
+  background: var(--rl-color-status-blue);
 }
 
 .palette-actions {
@@ -1936,9 +1941,9 @@ h1 {
   display: flex;
   align-items: center;
   justify-content: center;
-  border: 1px dashed var(--border-color);
+  border: 1px dashed var(--rl-color-border);
   border-radius: 6px;
-  background: var(--card-bg, transparent);
+  background: var(--rl-color-bg-raised, transparent);
   overflow: hidden;
 }
 
@@ -1949,7 +1954,7 @@ h1 {
 }
 
 .logo-preview-empty {
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   font-size: 13px;
 }
 
@@ -1984,7 +1989,7 @@ h1 {
 
 .palette-cell {
   padding: 6px 12px;
-  background: var(--hover-bg);
+  background: var(--rl-color-bg-hover);
   border-radius: 6px;
   display: flex;
   align-items: center;
@@ -2006,7 +2011,7 @@ h1 {
 
 .palette-desc {
   font-size: 11px;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
 }
 
 .palette-input-cell {
@@ -2029,7 +2034,7 @@ h1 {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
 }
 
 .palette-header.palette-grid--split {
@@ -2058,7 +2063,7 @@ h1 {
   display: flex;
   gap: 0;
   margin: 16px 0 8px;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--rl-color-border);
   border-radius: 6px;
   overflow: hidden;
   width: fit-content;
@@ -2069,22 +2074,22 @@ h1 {
   font-size: 13px;
   font-weight: 500;
   border: none;
-  background: var(--input-bg);
-  color: var(--muted-text);
+  background: var(--rl-color-bg-raised);
+  color: var(--rl-color-text-muted);
   cursor: pointer;
-  transition: background 0.15s, color 0.15s;
+  transition:
+    background 0.15s,
+    color 0.15s;
 }
 
 .toggle-pill.active {
-  background: var(--accent-color);
+  background: var(--rl-color-accent);
   color: white;
 }
 
 .toggle-pill:hover:not(.active) {
-  background: var(--hover-bg);
+  background: var(--rl-color-bg-hover);
 }
-
-/* Uses global .btn, .btn-primary, .btn-secondary, .btn-sm, .loading-state, .spinner, .error-state from App.vue */
 
 @media (max-width: 768px) {
   .settings-row {

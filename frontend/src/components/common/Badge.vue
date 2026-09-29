@@ -93,38 +93,38 @@ const displayText = computed(() => label.value ?? props.value)
 }
 
 .badge--blue {
-  background-color: color-mix(in srgb, var(--badge-blue) 18%, transparent);
-  color: var(--badge-blue);
+  background-color: color-mix(in srgb, var(--rl-color-status-blue) 18%, transparent);
+  color: var(--rl-color-status-blue);
 }
 
 .badge--purple {
-  background-color: color-mix(in srgb, var(--badge-purple) 18%, transparent);
-  color: var(--badge-purple);
+  background-color: color-mix(in srgb, var(--rl-color-accent) 18%, transparent);
+  color: var(--rl-color-accent);
 }
 
 .badge--green {
-  background-color: color-mix(in srgb, var(--badge-green) 18%, transparent);
-  color: var(--badge-green);
+  background-color: color-mix(in srgb, var(--rl-color-status-green) 18%, transparent);
+  color: var(--rl-color-status-green);
 }
 
 .badge--gray {
-  background-color: var(--hover-bg);
-  color: var(--muted-text);
+  background-color: var(--rl-color-bg-hover);
+  color: var(--rl-color-text-muted);
 }
 
 .badge--red {
-  background-color: color-mix(in srgb, var(--badge-red) 18%, transparent);
-  color: var(--badge-red);
+  background-color: color-mix(in srgb, var(--rl-color-status-red) 18%, transparent);
+  color: var(--rl-color-status-red);
 }
 
 .badge--orange {
-  background-color: color-mix(in srgb, var(--badge-orange) 18%, transparent);
-  color: var(--badge-orange);
+  background-color: color-mix(in srgb, var(--rl-color-status-amber) 18%, transparent);
+  color: var(--rl-color-status-amber);
 }
 
 .badge--yellow {
-  background-color: color-mix(in srgb, var(--badge-yellow) 18%, transparent);
-  color: var(--badge-yellow);
+  background-color: color-mix(in srgb, var(--rl-color-status-amber) 18%, transparent);
+  color: var(--rl-color-status-amber);
 }
 </style>
 

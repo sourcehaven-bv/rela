@@ -60,6 +60,7 @@ func TestRouterWalk_AllAPIRoutesReachHandlers(t *testing.T) {
 		{http.MethodGet, "/api/v1/_schema", http.StatusOK},
 		{http.MethodGet, "/api/v1/_schema/ticket", 0},
 		{http.MethodGet, "/api/v1/_config", http.StatusOK},
+		{http.MethodGet, "/api/v1/_me", http.StatusOK},
 		{http.MethodGet, "/api/v1/_feeds/nope.ics", http.StatusNotFound}, // registered; unknown feed → 404
 		{http.MethodGet, "/api/v1/_search?q=ticket", 0},
 		{http.MethodGet, "/api/v1/_position?type=ticket&id=TKT-001", 0},
@@ -74,6 +75,8 @@ func TestRouterWalk_AllAPIRoutesReachHandlers(t *testing.T) {
 		{http.MethodPost, "/api/v1/_theme/import", 0},
 		{http.MethodGet, "/api/v1/_sidepanel/ticket/TKT-001", 0},
 		{http.MethodGet, "/api/v1/_sidebar", http.StatusOK},
+		{http.MethodGet, "/api/v1/_nav_status", http.StatusOK},
+		{http.MethodGet, "/api/v1/_nav_items", http.StatusOK},
 		{http.MethodGet, "/api/v1/_dashboard", http.StatusOK},
 		// Comments: the fixture declares no `comments:` block, so the handler
 		// answers 404 itself — a JSON error from a registered handler, not the

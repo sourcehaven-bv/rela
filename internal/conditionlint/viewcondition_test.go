@@ -219,3 +219,64 @@ func TestViewConditionMatchers_ActionWhen(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "taak", m.EntityType())
 }
+
+// A navigation status rule compiles against the entity type of the list its
+// entry opens, is keyed by entry key and rule index, and a bad one names the
+// entry and rule rather than an opaque key.
+func TestCompileViewConditions_NavStatus(t *testing.T) {
+	cfg := &dataentryconfig.Config{
+		Lists: map[string]dataentryconfig.List{"taken": {EntityType: "taak"}},
+		Navigation: []dataentryconfig.NavigationEntry{
+			{Group: "Werk", Items: []dataentryconfig.NavigationEntry{
+				{Label: "Mijn taken", List: "taken", Status: []dataentryconfig.NavStatusRule{
+					{Tone: "error", Label: "{count}", Condition: "is_current_user(entity.status)"},
+					{Tone: "new", Label: "{count}"}, // no condition: nothing to compile
+				}},
+			}},
+		},
+	}
+	progs, problems := CompileViewConditions(cfg, vcMeta())
+	require.Empty(t, problems)
+	require.Len(t, progs, 1)
+	require.Contains(t, progs, ViewConditionKey{ViewConditionNavStatus, "0.0#0"})
+
+	lookup, problems := ViewConditionMatchers(cfg, vcMeta())
+	require.Empty(t, problems)
+	m, ok := lookup(string(ViewConditionNavStatus), "0.0#0")
+	require.True(t, ok)
+	require.Equal(t, "taak", m.entityType)
+
+	cfg.Navigation[0].Items[0].Status[1].Condition = "entity.staus == 'x'"
+	_, problems = CompileViewConditions(cfg, vcMeta())
+	require.Len(t, problems, 1)
+	require.Contains(t, problems[0], `navigation["Mijn taken"].status[1]: condition does not compile`)
+}
+
+// A status rule inside a space compiles like a top-level one, under a key
+// prefixed with the space id, and a bad one names the space.
+func TestCompileViewConditions_NavStatusInSpace(t *testing.T) {
+	cfg := &dataentryconfig.Config{
+		Lists: map[string]dataentryconfig.List{"taken": {EntityType: "taak"}},
+		Spaces: []dataentryconfig.Space{{ID: "crm", Label: "CRM", Navigation: []dataentryconfig.NavigationEntry{
+			{Group: "Werk", Items: []dataentryconfig.NavigationEntry{
+				{Label: "Mijn taken", List: "taken", Status: []dataentryconfig.NavStatusRule{
+					{Tone: "error", Label: "{count}", Condition: "is_current_user(entity.status)"},
+				}},
+			}},
+		}}},
+	}
+	progs, problems := CompileViewConditions(cfg, vcMeta())
+	require.Empty(t, problems)
+	require.Contains(t, progs, ViewConditionKey{ViewConditionNavStatus, "crm:0.0#0"})
+
+	lookup, problems := ViewConditionMatchers(cfg, vcMeta())
+	require.Empty(t, problems)
+	m, ok := lookup(string(ViewConditionNavStatus), "crm:0.0#0")
+	require.True(t, ok)
+	require.Equal(t, "taak", m.entityType)
+
+	cfg.Spaces[0].Navigation[0].Items[0].Status[0].Condition = "entity.staus == 'x'"
+	_, problems = CompileViewConditions(cfg, vcMeta())
+	require.Len(t, problems, 1)
+	require.Contains(t, problems[0], `spaces[crm].navigation["Mijn taken"].status[0]: condition does not compile`)
+}

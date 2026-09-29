@@ -19,6 +19,8 @@ import type { RelationCardState } from './relationsPatch'
 import type { RelationAffordance } from '@/types'
 import { ORDER_PROPERTY_OUT, ORDER_PROPERTY_IN } from '@/types/schema'
 import { computeNewOrder, extractFiniteNumber } from '@/composables/useRelationReorder'
+import RlButton from 'rela-components/components/common/RlButton.vue'
+import RlSpinner from 'rela-components/components/common/RlSpinner.vue'
 
 // Re-export so existing `import type { RelationCardState } from './RelationCards.vue'`
 // callers keep working without a churn rename.
@@ -650,7 +652,7 @@ function onDragEnd() {
           :placeholder="`Search ${targetTypes.join(', ')}...`"
           class="search-input"
         />
-        <div v-if="searching" class="search-spinner" />
+        <RlSpinner v-if="searching" class="search-spinner" :size="16" label="Searching" />
 
         <div v-if="searchResults.length" class="search-results">
           <div
@@ -740,21 +742,21 @@ function onDragEnd() {
         </div>
 
         <div class="new-relation-actions">
-          <button type="button" class="btn btn-secondary" @click="cancelAdd">Cancel</button>
-          <button type="button" class="btn btn-primary" :disabled="!canLink" @click="addRelation">
+          <RlButton variant="secondary" @click="cancelAdd">Cancel</RlButton>
+          <RlButton variant="primary" :disabled="!canLink" @click="addRelation">
             Link
-          </button>
+          </RlButton>
         </div>
       </div>
 
-      <button
+      <RlButton
         v-if="!selectedTarget"
-        type="button"
-        class="btn btn-secondary cancel-search"
+        variant="secondary"
+        class="cancel-search"
         @click="cancelAdd"
       >
         Cancel
-      </button>
+      </RlButton>
 
       <InlineCreateFormModal
         v-if="createFormId"
@@ -787,7 +789,7 @@ function onDragEnd() {
 .section-label {
   font-size: 14px;
   font-weight: 500;
-  color: var(--text-color);
+  color: var(--rl-color-text);
   display: flex;
   align-items: center;
   gap: 8px;
@@ -796,7 +798,7 @@ function onDragEnd() {
 .pending-badge {
   font-size: 11px;
   font-weight: 500;
-  color: var(--warning-color, #f59e0b);
+  color: var(--rl-color-status-amber, #f59e0b);
   background: rgba(245, 158, 11, 0.1);
   padding: 1px 6px;
   border-radius: 3px;
@@ -809,22 +811,22 @@ function onDragEnd() {
 }
 
 .relation-card {
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--rl-color-border);
   border-radius: 6px;
   padding: 12px;
-  background: var(--card-bg);
+  background: var(--rl-color-bg-raised);
   transition:
     border-color 0.15s,
     background 0.15s;
 }
 
 .relation-card.card-added {
-  border-color: var(--success-color, #22c55e);
+  border-color: var(--rl-color-status-green, #22c55e);
   background: rgba(34, 197, 94, 0.03);
 }
 
 .relation-card.card-updated {
-  border-color: var(--warning-color, #f59e0b);
+  border-color: var(--rl-color-status-amber, #f59e0b);
   background: rgba(245, 158, 11, 0.03);
 }
 
@@ -841,18 +843,18 @@ function onDragEnd() {
 }
 
 /* A drop-target highlight, NOT a focus ring — so it deliberately does not use
-   --focus-ring. It was authored at 25% alpha (heavier than the 0.1 focus
+   --rl-color-focus. It was authored at 25% alpha (heavier than the 0.1 focus
    rings), and the TKT-FRING7 sweep briefly converted it because it matched the
    same rgba literal, which made a pointer-drag state render as "focused". It
    keeps its own translucent weight, derived from the accent so it still
    follows the theme. */
 .relation-card.card-drag-over {
-  border-color: var(--accent-color, #6366f1);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-color) 25%, transparent);
+  border-color: var(--rl-color-accent, #6366f1);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--rl-color-accent) 25%, transparent);
 }
 
 .drag-handle {
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   font-size: 16px;
   line-height: 1;
   cursor: grab;
@@ -882,7 +884,7 @@ function onDragEnd() {
 .entity-id {
   font-family: monospace;
   font-size: 12px;
-  color: var(--accent-color, #6366f1);
+  color: var(--rl-color-accent, #6366f1);
   white-space: nowrap;
   /* Real links now; keep the previous resting appearance. */
   text-decoration: none;
@@ -895,7 +897,7 @@ function onDragEnd() {
 
 .entity-title {
   font-size: 14px;
-  color: var(--text-color);
+  color: var(--rl-color-text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -910,7 +912,7 @@ function onDragEnd() {
 .remove-btn {
   background: none;
   border: none;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   font-size: 20px;
   cursor: pointer;
   padding: 0 4px;
@@ -919,13 +921,13 @@ function onDragEnd() {
 }
 
 .remove-btn:hover {
-  color: var(--error-color, #ef4444);
+  color: var(--rl-color-danger, #ef4444);
 }
 
 .history-btn {
   background: none;
-  border: 1px solid var(--border-color);
-  color: var(--muted-text);
+  border: 1px solid var(--rl-color-border);
+  color: var(--rl-color-text-muted);
   font-size: 0.72em;
   cursor: pointer;
   padding: 2px 8px;
@@ -935,8 +937,8 @@ function onDragEnd() {
 }
 
 .history-btn:hover {
-  color: var(--text-color);
-  border-color: var(--accent-color, var(--text-color));
+  color: var(--rl-color-text);
+  border-color: var(--rl-color-accent, var(--rl-color-text));
 }
 
 .card-properties {
@@ -945,7 +947,7 @@ function onDragEnd() {
   gap: 10px;
   margin-top: 10px;
   padding-top: 10px;
-  border-top: 1px solid var(--border-color);
+  border-top: 1px solid var(--rl-color-border);
   align-items: center;
 }
 
@@ -957,18 +959,18 @@ function onDragEnd() {
 }
 
 .prop-label {
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   white-space: nowrap;
 }
 
 .inline-edit,
 .inline-select {
   padding: 4px 8px;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--rl-color-border);
   border-radius: 4px;
   font-size: 13px;
-  background: var(--input-bg);
-  color: var(--text-color);
+  background: var(--rl-color-bg-raised);
+  color: var(--rl-color-text);
   min-width: 100px;
   transition: border-color 0.15s;
 }
@@ -981,10 +983,10 @@ function onDragEnd() {
 .inline-edit:focus,
 .inline-select:focus {
   outline: none;
-  border-color: var(--accent-color, #6366f1);
+  border-color: var(--rl-color-accent, #6366f1);
   box-shadow:
-    0 0 0 2px var(--focus-ring-gap),
-    0 0 0 4px var(--focus-ring);
+    0 0 0 2px var(--rl-color-bg),
+    0 0 0 4px var(--rl-color-focus);
 }
 
 /* The `.inline-edit-checkbox` rules that used to live here are gone: both
@@ -996,9 +998,9 @@ function onDragEnd() {
 .empty-state {
   padding: 16px;
   text-align: center;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   font-size: 14px;
-  border: 1px dashed var(--border-color);
+  border: 1px dashed var(--rl-color-border);
   border-radius: 6px;
 }
 
@@ -1016,44 +1018,32 @@ function onDragEnd() {
 .search-input {
   width: 100%;
   padding: 10px 12px;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--rl-color-border);
   border-radius: 6px;
   font-size: 14px;
-  background: var(--input-bg);
-  color: var(--text-color);
+  background: var(--rl-color-bg-raised);
+  color: var(--rl-color-text);
   box-sizing: border-box;
 }
 
 .search-input:focus {
   outline: none;
-  border-color: var(--accent-color, #6366f1);
+  border-color: var(--rl-color-accent, #6366f1);
   box-shadow:
-    0 0 0 2px var(--focus-ring-gap),
-    0 0 0 4px var(--focus-ring);
+    0 0 0 2px var(--rl-color-bg),
+    0 0 0 4px var(--rl-color-focus);
 }
 
+/* RlSpinner owns the glyph, the animation and its reduced-motion fallback;
+   only the placement inside the search field is ours. It animates an inner
+   element rather than itself, so `transform` is free here for the centring —
+   the negative-margin workaround this rule used to need is gone. */
 .search-spinner {
   position: absolute;
   right: 12px;
   top: 50%;
-  /* Centred with a negative margin rather than translateY(-50%), so
-     `transform` is free for the rotation alone. An animated transform
-     REPLACES the static one for the animation's duration, so the old
-     translate-based centring only worked because this component carried
-     private keyframes that re-applied it (`translateY(-50%) rotate(...)`).
-     Those keyframes are now shared from styles/pending.css and rotate
-     only — keeping the translate here would drop the spinner half its
-     height the moment it started.
-
-     -8px is half the box: `box-sizing: border-box` is global (App.vue), so
-     the 16px height already includes the 2px borders. */
-  margin-top: -8px;
-  width: 16px;
-  height: 16px;
-  border: 2px solid var(--border-color);
-  border-top-color: var(--accent-color);
-  border-radius: 50%;
-  animation: spin 0.6s linear infinite;
+  transform: translateY(-50%);
+  color: var(--rl-color-accent);
 }
 
 .search-results {
@@ -1061,8 +1051,8 @@ function onDragEnd() {
   top: 100%;
   left: 0;
   right: 0;
-  background: var(--card-bg);
-  border: 1px solid var(--border-color);
+  background: var(--rl-color-bg-raised);
+  border: 1px solid var(--rl-color-border);
   border-radius: 6px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
   margin-top: 4px;
@@ -1081,20 +1071,20 @@ function onDragEnd() {
 }
 
 .search-result:hover {
-  background: var(--hover-bg, rgba(99, 102, 241, 0.05));
+  background: var(--rl-color-bg-hover, rgba(99, 102, 241, 0.05));
 }
 
 .result-id {
   font-family: monospace;
   font-size: 12px;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   white-space: nowrap;
 }
 
 .result-title {
   flex: 1;
   font-size: 14px;
-  color: var(--text-color);
+  color: var(--rl-color-text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1103,8 +1093,8 @@ function onDragEnd() {
 .result-type {
   font-size: 11px;
   text-transform: uppercase;
-  color: var(--muted-text);
-  background: var(--border-color);
+  color: var(--rl-color-text-muted);
+  background: var(--rl-color-border);
   padding: 2px 6px;
   border-radius: 3px;
   white-space: nowrap;
@@ -1113,7 +1103,7 @@ function onDragEnd() {
 .search-empty {
   padding: 12px;
   text-align: center;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   font-size: 13px;
 }
 
@@ -1123,10 +1113,10 @@ function onDragEnd() {
 
 /* New relation form */
 .new-relation-form {
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--rl-color-border);
   border-radius: 6px;
   padding: 12px;
-  background: var(--card-bg);
+  background: var(--rl-color-bg-raised);
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -1134,12 +1124,12 @@ function onDragEnd() {
 
 .selected-target {
   font-size: 14px;
-  color: var(--text-color);
+  color: var(--rl-color-text);
 }
 
 .selected-target strong {
   font-family: monospace;
-  color: var(--accent-color, #6366f1);
+  color: var(--rl-color-accent, #6366f1);
 }
 
 .new-meta-fields {
@@ -1157,7 +1147,7 @@ function onDragEnd() {
 .form-field label {
   font-size: 13px;
   font-weight: 500;
-  color: var(--text-color);
+  color: var(--rl-color-text);
 }
 
 .form-field input[type='text'],
@@ -1165,24 +1155,24 @@ function onDragEnd() {
 .form-field input[type='date'],
 .form-field select {
   padding: 8px 10px;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--rl-color-border);
   border-radius: 6px;
   font-size: 14px;
-  background: var(--input-bg);
-  color: var(--text-color);
+  background: var(--rl-color-bg-raised);
+  color: var(--rl-color-text);
 }
 
 .form-field input:focus,
 .form-field select:focus {
   outline: none;
-  border-color: var(--accent-color, #6366f1);
+  border-color: var(--rl-color-accent, #6366f1);
   box-shadow:
-    0 0 0 2px var(--focus-ring-gap),
-    0 0 0 4px var(--focus-ring);
+    0 0 0 2px var(--rl-color-bg),
+    0 0 0 4px var(--rl-color-focus);
 }
 
 .required {
-  color: var(--error-color, #ef4444);
+  color: var(--rl-color-danger, #ef4444);
   margin-left: 2px;
 }
 
@@ -1199,28 +1189,28 @@ function onDragEnd() {
   gap: 6px;
   margin-top: 8px;
   padding-top: 8px;
-  border-top: 1px solid var(--border-color);
+  border-top: 1px solid var(--rl-color-border);
 }
 
 .add-new-btn {
   padding: 6px 10px;
   background: none;
-  border: 1px dashed var(--border-color);
+  border: 1px dashed var(--rl-color-border);
   border-radius: 6px;
-  color: var(--accent-color, #6366f1);
+  color: var(--rl-color-accent, #6366f1);
   font-size: 13px;
   cursor: pointer;
 }
 
 .add-new-btn:hover {
-  background: var(--hover-bg);
+  background: var(--rl-color-bg-hover);
 }
 
 .created-notice {
   margin: 0 0 8px;
   padding: 6px 10px;
   border-radius: 6px;
-  background: var(--hover-bg);
+  background: var(--rl-color-bg-hover);
   color: var(--text-secondary);
   font-size: 13px;
 }
@@ -1231,10 +1221,10 @@ function onDragEnd() {
   align-items: center;
   justify-content: center;
   padding: 8px 12px;
-  background: var(--hover-bg);
-  border: 1px dashed var(--border-color);
+  background: var(--rl-color-bg-hover);
+  border: 1px dashed var(--rl-color-border);
   border-radius: 6px;
-  color: var(--accent-color, #6366f1);
+  color: var(--rl-color-accent, #6366f1);
   font-size: 13px;
   font-weight: 500;
   cursor: pointer;
@@ -1242,59 +1232,26 @@ function onDragEnd() {
 }
 
 .add-btn:hover {
-  background: var(--accent-color, #6366f1);
-  border-color: var(--accent-color, #6366f1);
+  background: var(--rl-color-accent, #6366f1);
+  border-color: var(--rl-color-accent, #6366f1);
   color: white;
-}
-
-.btn {
-  padding: 8px 14px;
-  border-radius: 6px;
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  border: none;
-  transition: all 0.15s;
-}
-
-.btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.btn-primary {
-  background: var(--accent-color, #6366f1);
-  color: white;
-}
-
-.btn-primary:hover:not(:disabled) {
-  filter: brightness(1.1);
-}
-
-.btn-secondary {
-  background: var(--border-color);
-  color: var(--text-color);
-}
-
-.btn-secondary:hover:not(:disabled) {
-  filter: brightness(0.95);
 }
 
 .loading-indicator {
   padding: 12px;
   text-align: center;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   font-size: 13px;
 }
 
 /* A surface tint behind error text — stays translucent, so it derives from
-   --error-color directly rather than using the opaque --error-ring token. */
+   --rl-color-danger directly rather than using the opaque --rl-color-error-ring token. */
 .error-message {
   padding: 10px 12px;
-  background: color-mix(in srgb, var(--error-color) 10%, transparent);
-  border: 1px solid var(--error-color, #ef4444);
+  background: color-mix(in srgb, var(--rl-color-danger) 10%, transparent);
+  border: 1px solid var(--rl-color-danger, #ef4444);
   border-radius: 6px;
-  color: var(--error-color, #ef4444);
+  color: var(--rl-color-danger, #ef4444);
   font-size: 14px;
 }
 
@@ -1323,59 +1280,50 @@ function onDragEnd() {
     min-width: 0;
   }
 }
-/* Reduced motion. This is a SCOPED style, so styles/pending.css cannot
-   reach .search-spinner — a scoped selector carries a [data-v-*] attribute and
-   outranks an unscoped rule. The suppression has to live beside the
-   declaration. */
-@media (prefers-reduced-motion: reduce) {
-  .search-spinner {
-    animation: none;
-  }
-}
 
 </style>
 
 <style>
 /* SlimSelect dark mode overrides (unscoped — .ss-content is portaled to body) */
 .relation-cards .ss-main {
-  border: 1px solid var(--border-color, #e2e8f0);
+  border: 1px solid var(--rl-color-border, #e2e8f0);
   border-radius: 4px;
   min-height: 30px;
   font-size: 13px;
-  background: var(--input-bg);
-  color: var(--text-color);
+  background: var(--rl-color-bg-raised);
+  color: var(--rl-color-text);
 }
 
 .relation-cards .ss-main:focus-within {
-  border-color: var(--accent-color, #6366f1);
+  border-color: var(--rl-color-accent, #6366f1);
   box-shadow:
-    0 0 0 2px var(--focus-ring-gap),
-    0 0 0 4px var(--focus-ring);
+    0 0 0 2px var(--rl-color-bg),
+    0 0 0 4px var(--rl-color-focus);
 }
 
 /* .ss-content is portaled to <body>, so we need !important */
 .ss-content {
-  border: 1px solid var(--border-color, #e2e8f0) !important;
+  border: 1px solid var(--rl-color-border, #e2e8f0) !important;
   border-radius: 6px !important;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1) !important;
-  background: var(--card-bg) !important;
+  background: var(--rl-color-bg-raised) !important;
 }
 
 .ss-content .ss-option {
-  color: var(--text-color);
+  color: var(--rl-color-text);
 }
 
 .ss-content .ss-option.ss-highlighted {
-  background: var(--hover-bg);
+  background: var(--rl-color-bg-hover);
 }
 
 .ss-content .ss-option.ss-selected {
-  background: color-mix(in srgb, var(--accent-color) 20%, transparent);
-  color: var(--accent-color);
+  background: color-mix(in srgb, var(--rl-color-accent) 20%, transparent);
+  color: var(--rl-color-accent);
 }
 
 .ss-content .ss-search input {
-  background: var(--input-bg);
-  color: var(--text-color);
+  background: var(--rl-color-bg-raised);
+  color: var(--rl-color-text);
 }
 </style>

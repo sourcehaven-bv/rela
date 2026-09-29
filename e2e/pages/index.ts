@@ -19,3 +19,7 @@ export { CustomisationPage } from './customisation.page';
 export { PendingPage } from './pending.page';
 export { CommentsPage } from './comments.page';
 export { SidebarPage } from './sidebar.page';
+export { MobileLayoutPage } from './mobile-layout.page';
+export { FlyoutPage } from './flyout.page';
+export { PageTabsPage } from './page-tabs.page';
+export { SpacesPage } from './spaces.page';

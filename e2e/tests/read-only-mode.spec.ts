@@ -122,7 +122,7 @@ const test = base.extend<{ readOnlyServerUrl: string }>({
 });
 
 test.describe('Read-only mode hides entity-CRUD controls (AC10)', () => {
-  test('list page has no "+ New" button and no delete buttons', async ({
+  test('list page has no "+ New" button and no delete', async ({
     browser,
     readOnlyServerUrl,
   }) => {
@@ -134,11 +134,11 @@ test.describe('Read-only mode hides entity-CRUD controls (AC10)', () => {
 
     const listPage = new ListPage(page);
     await listPage.waitForRowsRendered();
-    // "+ New" gated on collection `_actions.create=false`; row delete
-    // buttons gated on per-entity `_actions.delete=false`. Both denied
+    // "+ New" gated on collection `_actions.create=false`; the bulk bar's
+    // Delete gated on per-entity `_actions.delete=false`. Both denied
     // under ReadOnlyACL.
     await listPage.expectNoCreateAffordance();
-    await listPage.expectNoRowDeleteButtons();
+    await listPage.expectNoDeleteAffordance();
 
     await context.close();
   });

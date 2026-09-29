@@ -44,7 +44,7 @@ describe('SectionCreateButton', () => {
     // choose between one option.
     const wrapper = mount(SectionCreateButton, { props: { create: affordance() } })
 
-    const btn = wrapper.find('button.btn-section-create')
+    const btn = wrapper.find('.section-create button')
     expect(btn.exists()).toBe(true)
     expect(btn.text()).toContain('Task')
     expect(btn.attributes('aria-haspopup')).toBeUndefined()
@@ -54,7 +54,7 @@ describe('SectionCreateButton', () => {
     const create = affordance()
     const wrapper = mount(SectionCreateButton, { props: { create } })
 
-    await wrapper.find('button.btn-section-create').trigger('click')
+    await wrapper.find('.section-create button').trigger('click')
 
     const emitted = wrapper.emitted('select')
     expect(emitted).toHaveLength(1)
@@ -71,7 +71,7 @@ describe('SectionCreateButton', () => {
     })
     const wrapper = mount(SectionCreateButton, { props: { create } })
 
-    const toggle = wrapper.find('button.btn-section-create')
+    const toggle = wrapper.find('.section-create button')
     expect(toggle.attributes('aria-haspopup')).toBe('menu')
     expect(toggle.attributes('aria-expanded')).toBe('false')
     expect(wrapper.find('.create-menu').exists()).toBe(false)
@@ -99,7 +99,7 @@ describe('SectionCreateButton', () => {
     })
     const wrapper = mount(SectionCreateButton, { props: { create } })
 
-    await wrapper.find('button.btn-section-create').trigger('click')
+    await wrapper.find('.section-create button').trigger('click')
 
     expect(wrapper.emitted('select')![0][1]).toMatchObject({ template: 'bugfix' })
   })

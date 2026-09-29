@@ -23,6 +23,7 @@ import { useModalStack } from '@/composables/modalStack'
 import { isCancelledFetch } from '@/composables/usePageData'
 import { useWorld } from '@/composables/useWorld'
 import type { Entity } from '@/types'
+import RlSpinner from 'rela-components/components/common/RlSpinner.vue'
 
 const DEBOUNCE_MS = 150
 const MIN_QUERY_LEN = 2
@@ -249,7 +250,12 @@ const showNoMatches = computed(
             :aria-expanded="results.length > 0"
             :aria-activedescendant="activeDescendant"
           />
-          <span v-if="loading" class="entity-picker-spinner" aria-hidden="true" />
+          <!--
+            Silenced deliberately. RlSpinner is role="status", and this sits in
+            a combobox that announces its own results — a live region firing on
+            every keystroke would talk over the listbox.
+          -->
+          <RlSpinner v-if="loading" class="entity-picker-spinner" :size="16" aria-hidden="true" />
         </div>
 
         <div v-if="showEmptyHint" class="entity-picker-hint">Type to search entities</div>
@@ -299,7 +305,7 @@ const showNoMatches = computed(
 }
 
 .entity-picker-modal {
-  background: var(--card-bg);
+  background: var(--rl-color-bg-raised);
   border-radius: 12px;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25);
   width: 90%;
@@ -312,7 +318,7 @@ const showNoMatches = computed(
 
 .entity-picker-input-wrap {
   position: relative;
-  border-bottom: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--rl-color-border);
 }
 
 .entity-picker-input {
@@ -321,39 +327,31 @@ const showNoMatches = computed(
   border: none;
   outline: none;
   background: transparent;
-  color: var(--text-color);
+  color: var(--rl-color-text);
   font-size: 16px;
   font-family: inherit;
 }
 
+/* RlSpinner owns the glyph, the animation and its reduced-motion fallback;
+   only the placement inside the search field is ours. It animates an inner
+   element, so this transform no longer has to be restated in a keyframe. */
 .entity-picker-spinner {
   position: absolute;
   top: 50%;
   right: 16px;
   transform: translateY(-50%);
-  width: 16px;
-  height: 16px;
-  border: 2px solid var(--border-color);
-  border-top-color: var(--accent-color);
-  border-radius: 50%;
-  animation: entity-picker-spin 0.8s linear infinite;
-}
-
-@keyframes entity-picker-spin {
-  to {
-    transform: translateY(-50%) rotate(360deg);
-  }
+  color: var(--rl-color-accent);
 }
 
 .entity-picker-hint {
   padding: 24px 18px;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   font-size: 14px;
   text-align: center;
 }
 
 .entity-picker-error {
-  color: var(--error-color);
+  color: var(--rl-color-danger);
 }
 
 .entity-picker-results {
@@ -374,7 +372,7 @@ const showNoMatches = computed(
 }
 
 .entity-picker-option-active {
-  background: var(--hover-bg);
+  background: var(--rl-color-bg-hover);
 }
 
 .entity-picker-type {
@@ -382,20 +380,20 @@ const showNoMatches = computed(
   text-transform: uppercase;
   letter-spacing: 0.04em;
   padding: 2px 8px;
-  background: var(--hover-bg);
-  color: var(--muted-text);
+  background: var(--rl-color-bg-hover);
+  color: var(--rl-color-text-muted);
   border-radius: 4px;
   font-weight: 500;
   flex-shrink: 0;
 }
 
 .entity-picker-option-active .entity-picker-type {
-  background: var(--card-bg);
+  background: var(--rl-color-bg-raised);
 }
 
 .entity-picker-title {
   flex: 1;
-  color: var(--text-color);
+  color: var(--rl-color-text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -404,17 +402,7 @@ const showNoMatches = computed(
 .entity-picker-id {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 12px;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   flex-shrink: 0;
-}
-
-/* Reduced motion. This is a SCOPED style, so styles/pending.css cannot
-   reach .entity-picker-spinner — a scoped selector carries a [data-v-*] attribute and
-   outranks an unscoped rule. The suppression has to live beside the
-   declaration. */
-@media (prefers-reduced-motion: reduce) {
-  .entity-picker-spinner {
-    animation: none;
-  }
 }
 </style>

@@ -212,9 +212,9 @@ const compactTypes = computed(() => !props.state.typesFirst && props.state.items
   max-width: 420px;
   max-height: 280px;
   overflow-y: auto;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--rl-color-border);
   border-radius: var(--radius-lg);
-  background: var(--card-bg);
+  background: var(--rl-color-bg-raised);
   box-shadow: var(--shadow-lg);
   font-size: var(--font-size-base);
 }
@@ -244,44 +244,44 @@ const compactTypes = computed(() => !props.state.typesFirst && props.state.items
 .mention-menu-list.is-compact .mention-menu-item {
   padding: 0 var(--space-xs);
   border-radius: var(--radius-sm);
-  background: var(--hover-bg);
+  background: var(--rl-color-bg-hover);
   font-family: monospace;
   font-size: var(--font-size-sm);
 }
 
 .mention-menu-item.is-highlighted {
-  background: var(--hover-bg);
+  background: var(--rl-color-bg-hover);
 }
 
 .mention-menu-title {
   overflow: hidden;
-  color: var(--text-color);
+  color: var(--rl-color-text);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .mention-menu-id {
   flex-shrink: 0;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   font-size: var(--font-size-sm);
   font-family: monospace;
 }
 
 .mention-menu-note {
   padding: var(--space-sm) var(--space-md);
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
 }
 
 .mention-menu-section {
   padding: var(--space-2xs) var(--space-md);
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   font-size: var(--font-size-sm);
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
 
 .mention-menu-block + .mention-menu-block {
-  border-top: 1px solid var(--border-color);
+  border-top: 1px solid var(--rl-color-border);
   margin-top: var(--space-2xs);
   padding-top: var(--space-2xs);
 }
@@ -291,27 +291,27 @@ const compactTypes = computed(() => !props.state.typesFirst && props.state.items
   gap: var(--space-sm);
   align-items: baseline;
   padding: var(--space-xs) var(--space-md);
-  border-bottom: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--rl-color-border);
 }
 
 .mention-menu-chip {
   padding: 0 var(--space-xs);
   border-radius: var(--radius-sm);
-  background: var(--hover-bg);
-  color: var(--text-color);
+  background: var(--rl-color-bg-hover);
+  color: var(--rl-color-text);
   font-size: var(--font-size-sm);
   font-family: monospace;
 }
 
 .mention-menu-chip-hint {
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   font-size: var(--font-size-sm);
 }
 
 .mention-menu-error {
-  /* `--error-color` is the token this theme actually defines; the fallback
+  /* `--rl-color-danger` is the token this theme actually defines; the fallback
      literal that used to stand in here was a light-theme red that never
      adapted to dark mode. */
-  color: var(--error-color);
+  color: var(--rl-color-danger);
 }
 </style>

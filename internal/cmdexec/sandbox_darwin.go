@@ -90,6 +90,18 @@ func (d darwinSandbox) Wrap(argv []string, spec Spec) ([]string, error) {
 	b.WriteString("(allow default)\n") // (1)
 	if !spec.Network {
 		b.WriteString("(deny network*)\n")
+		// Linux reaches a scanner daemon by binding its socket into the mount
+		// view, which the network namespace never sees. Here the socket
+		// connect is itself a network operation, so the deny above blocks it;
+		// each extra path is let back in for outbound unix-socket connects
+		// only. Last match wins, so these follow the deny.
+		for _, p := range spec.ExtraReadOnly {
+			resolved, err := filepath.EvalSymlinks(p)
+			if err != nil {
+				continue // a missing path is skipped, as on Linux
+			}
+			fmt.Fprintf(&b, "(allow network-outbound (remote unix-socket (subpath %s)))\n", sbplString(resolved))
+		}
 	}
 
 	b.WriteString("(deny file-write*)\n") // (2) broad deny first…

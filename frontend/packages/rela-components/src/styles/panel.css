@@ -1,0 +1,136 @@
+/*
+ * The floating panels: a menu's list, a tooltip's bubble, a multi-select's
+ * options.
+ *
+ * Global rather than scoped because these panels are teleported to `<body>`
+ * to escape any clipping ancestor. A teleported node leaves its component's
+ * DOM subtree, so the `data-v-*` attribute that scoped CSS matches on is
+ * never applied to it and a scoped rule would not reach it.
+ *
+ * Position, width and max-height are not set here — `useAnchoredPanel`
+ * writes them inline after measuring the trigger and the space around it.
+ */
+
+.rl-panel {
+  /* Positioned against the viewport, so no clipping ancestor applies. */
+  position: fixed;
+  top: 0;
+  left: 0;
+  border-radius: var(--rl-radius-md);
+  background: var(--rl-color-bg-raised);
+  box-shadow: var(--rl-shadow-md);
+}
+
+.rl-panel--menu {
+  z-index: var(--rl-z-menu);
+  min-width: 180px;
+  /* Scrolls only once the size middleware caps the height. */
+  overflow-y: auto;
+  padding: var(--rl-space-1);
+  border: 1px solid var(--rl-color-border-raised);
+}
+
+.rl-panel--options {
+  z-index: var(--rl-z-menu);
+  overflow-y: auto;
+  padding: var(--rl-space-1);
+  border: 1px solid var(--rl-color-border-raised);
+}
+
+/*
+ * A popover: prose and a control or two, anchored to what opened it. Wider
+ * than a menu because it holds sentences rather than labels, and padded like a
+ * small card rather than like a list, since nothing inside it is a row.
+ */
+.rl-panel--popover {
+  z-index: var(--rl-z-menu);
+  width: 280px;
+  max-width: calc(100vw - 2 * var(--rl-space-4));
+  overflow-y: auto;
+  padding: var(--rl-space-4);
+  border: 1px solid var(--rl-color-border-raised);
+  text-align: left;
+}
+
+.rl-panel--tooltip {
+  z-index: var(--rl-z-tooltip);
+  max-width: 240px;
+  padding: var(--rl-space-1) var(--rl-space-2);
+  border-radius: var(--rl-radius-sm);
+  background: var(--rl-color-text);
+  color: var(--rl-color-text-inverse);
+  font-size: var(--rl-font-size-sm);
+  line-height: var(--rl-line-height-tight);
+  box-shadow: none;
+  /* A tooltip is never a pointer target: hovering it must not keep it open. */
+  pointer-events: none;
+}
+
+/*
+ * One option row in a multi-select panel. Global for the same reason as the
+ * panel: these rows are plain children of the teleported node, so unlike a
+ * slotted component they carry no scope attribute of their own.
+ */
+.rl-multi__option {
+  display: flex;
+  align-items: center;
+  gap: var(--rl-space-2);
+  padding: var(--rl-space-2);
+  border-radius: var(--rl-radius-sm);
+  font-size: var(--rl-font-size-md);
+  cursor: pointer;
+}
+
+.rl-multi__option:hover { background: var(--rl-color-bg-hover); }
+.rl-multi__option--disabled { opacity: 0.5; cursor: not-allowed; }
+
+/*
+ * A comment popover: a thread plus a composer, so it is taller and wider than
+ * a menu and scrolls its list rather than the whole panel.
+ */
+.rl-panel--comment {
+  z-index: var(--rl-z-menu);
+  width: 320px;
+  max-width: calc(100vw - 2 * var(--rl-space-4));
+  border: 1px solid var(--rl-color-border-raised);
+  box-shadow: var(--rl-shadow-lg);
+  text-align: left;
+}
+
+/*
+ * One option row in an RlOptionSelect list. Global for the same reason as the
+ * multi-select's rows: the panel is teleported, so a scoped rule in the
+ * component would never match these.
+ *
+ * The active row is the one the keyboard is on; the selected row is the one
+ * currently chosen. They are marked differently because they are different
+ * things and are often not the same row.
+ */
+.rl-option-select__option {
+  display: flex;
+  align-items: center;
+  gap: var(--rl-space-2);
+  padding: var(--rl-space-2);
+  border-radius: var(--rl-radius-sm);
+  font-size: var(--rl-font-size-md);
+  cursor: pointer;
+}
+
+.rl-option-select__option--active { background: var(--rl-color-bg-hover); }
+
+.rl-option-select__option--selected { font-weight: var(--rl-font-weight-medium); }
+
+/*
+ * A choice a rule forbids. Shown rather than hidden, so the list is the same
+ * list for everyone and the user can see the option exists; dimmed as a whole
+ * because what is drawn inside it — a badge, a dot — carries its own colour
+ * that a text rule would not reach.
+ */
+.rl-option-select__option--disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+@media (pointer: coarse) {
+  .rl-option-select__option { min-height: var(--rl-tap-target); }
+}

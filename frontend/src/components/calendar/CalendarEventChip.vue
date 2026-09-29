@@ -116,10 +116,10 @@ defineEmits<{
   width: 100%;
   padding: var(--space-xs);
   border: none;
-  border-left: 3px solid var(--calendar-chip-accent, var(--accent-color));
+  border-left: 3px solid var(--calendar-chip-accent, var(--rl-color-accent));
   border-radius: var(--radius-sm);
-  background: var(--calendar-chip-bg, var(--hover-bg));
-  color: var(--text-color);
+  background: var(--calendar-chip-bg, var(--rl-color-bg-hover));
+  color: var(--rl-color-text);
   /* Base rather than sm: a chip is the primary content of a day cell, not a
      dense table cell, and a title nobody can read is not information. */
   font-size: var(--font-size-base);
@@ -143,7 +143,7 @@ defineEmits<{
    the other four days are coming with it. */
 .calendar-chip--dragging {
   opacity: 0.55;
-  outline: 1px dashed var(--calendar-chip-accent, var(--accent-color));
+  outline: 1px dashed var(--calendar-chip-accent, var(--rl-color-accent));
   outline-offset: 1px;
 }
 
@@ -168,7 +168,7 @@ defineEmits<{
 
 .calendar-chip-time {
   flex: none;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   font-variant-numeric: tabular-nums;
 }
 
@@ -178,7 +178,7 @@ defineEmits<{
   flex: none;
   margin-left: auto;
   padding-left: var(--space-xs);
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   font-size: var(--font-size-sm);
   line-height: 1;
 }
@@ -188,21 +188,21 @@ defineEmits<{
    calendar restyles with the rest of the app instead of pinning colours the
    theme cannot reach. */
 .calendar-chip--blue {
-  --calendar-chip-accent: var(--badge-blue);
+  --calendar-chip-accent: var(--rl-color-status-blue);
 }
 .calendar-chip--green {
-  --calendar-chip-accent: var(--badge-green);
+  --calendar-chip-accent: var(--rl-color-status-green);
 }
 .calendar-chip--amber {
-  --calendar-chip-accent: var(--badge-orange);
+  --calendar-chip-accent: var(--rl-color-status-amber);
 }
 .calendar-chip--red {
-  --calendar-chip-accent: var(--badge-red);
+  --calendar-chip-accent: var(--rl-color-status-red);
 }
 .calendar-chip--violet {
-  --calendar-chip-accent: var(--badge-purple);
+  --calendar-chip-accent: var(--rl-color-accent);
 }
 .calendar-chip--slate {
-  --calendar-chip-accent: var(--badge-gray);
+  --calendar-chip-accent: var(--rl-color-status-grey);
 }
 </style>

@@ -15,7 +15,7 @@ export class AnalyzePage extends BasePage {
   constructor(page: Page) {
     super(page);
     this.heading = page.locator('h1');
-    this.loadingState = page.locator('.loading-state');
+    this.loadingState = page.locator('.rl-status-region--pending');
     this.checkCards = page.locator('.check-card');
     this.checkTitles = page.locator('.check-title');
     this.checkCounts = page.locator('.check-count');

@@ -20,9 +20,13 @@
  *    Modal-in-modal is unreachable rather than merely discouraged, because
  *    `modalStack` is a Set and cannot say which dialog is topmost.
  */
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, ref } from 'vue'
 import DynamicForm from './DynamicForm.vue'
 import { useModalStack } from '@/composables/modalStack'
+// RlModal owns the scrim, Tab trap, scroll lock, Escape and focus restore.
+// `useModalStack` below stays: rela's registry is what suppresses global
+// shortcuts, and the library's overlay stack answers a different question.
+import RlModal from 'rela-components/components/overlay/RlModal.vue'
 import { provideInlineCreateDepth } from '@/composables/useInlineCreate'
 import { useConfirm } from '@/composables/useConfirm'
 import { useSchemaStore } from '@/stores'
@@ -57,11 +61,25 @@ const props = defineProps<{
    * so omitting it is a refusal rather than a silent default.
    */
   world?: string
+  /**
+   * Offer "Create & add another". Only for a host that has no link step: each
+   * extra record arrives through `created-another` and the dialog stays open.
+   * A relation field leaves it off, since it links exactly one entity.
+   */
+  addAnother?: boolean
+  /**
+   * Property values the new entity starts with, such as the group value of
+   * the list section whose Add opened this dialog. Marked as user input, so
+   * a value the form cannot write is refused by the server rather than
+   * dropped without a word (see `embeddedPrefill` on DynamicForm).
+   */
+  prefill?: { properties: Record<string, unknown> }
 }>()
 
 const emit = defineEmits<{
   close: []
   created: [entity: Entity]
+  'created-another': [entity: Entity]
 }>()
 
 const schemaStore = useSchemaStore()
@@ -70,8 +88,6 @@ const { confirm } = useConfirm()
 useModalStack(computed(() => props.show))
 provideInlineCreateDepth()
 
-const dialogRef = ref<HTMLElement | null>(null)
-const previouslyFocused = ref<HTMLElement | null>(null)
 // The embedded form's exposed handle (isDirty / isSaving / submit). We ASK the
 // form for its state rather than sniffing DOM events, because a relation
 // selection, a wizard step and a markdown body edit all emit Vue events that
@@ -82,29 +98,8 @@ const formRef = ref<{
   submit: () => void
 } | null>(null)
 
-// Teleport puts this at document.body, so a static id would collide if two
-// instances ever mounted at once.
-const titleId = `inline-create-title-${Math.random().toString(36).slice(2, 10)}`
-
 const typeLabel = computed(
   () => schemaStore.getEntityType(props.entityType)?.label || props.entityType
-)
-
-watch(
-  () => props.show,
-  async (isOpen, wasOpen) => {
-    if (isOpen && !wasOpen) {
-      previouslyFocused.value = document.activeElement as HTMLElement | null
-      // Focus the dialog itself; the form's first field is the user's next
-      // Tab stop. Focusing a specific field would fight the wizard, whose
-      // first step varies.
-      await nextTick()
-      dialogRef.value?.focus()
-    } else if (!isOpen && wasOpen) {
-      previouslyFocused.value?.focus?.()
-      previouslyFocused.value = null
-    }
-  }
 )
 
 async function requestClose() {
@@ -126,18 +121,13 @@ function handleCreated(entity: Entity) {
   emit('created', entity)
 }
 
-// Bound to the dialog element rather than `document` so these cannot reach past
-// this dialog — the host form's own handlers stay untouched.
-//
-// Cmd/Ctrl+Enter submits: the embedded form deliberately does NOT register its
-// document-level listener (two live forms would both act on one keypress), so
-// the dialog owns the shortcut its Create button advertises.
+// Bound to the dialog panel (RlModal forwards attrs onto it) rather than to
+// `document`, so it cannot reach past this dialog — the host form's own
+// handlers stay untouched. Cmd/Ctrl+Enter submits: the embedded form
+// deliberately does NOT register its document-level listener (two live forms
+// would both act on one keypress), so the dialog owns the shortcut its Create
+// button advertises. Escape is RlModal's.
 function handleKeydown(e: KeyboardEvent) {
-  if (e.key === 'Escape') {
-    e.stopPropagation()
-    void requestClose()
-    return
-  }
   if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
     e.preventDefault()
     e.stopPropagation()
@@ -147,55 +137,38 @@ function handleKeydown(e: KeyboardEvent) {
 </script>
 
 <template>
-  <Teleport to="body">
-    <div v-if="show" class="modal-overlay" @click.self="requestClose">
-      <div
-        ref="dialogRef"
-        class="modal inline-create-modal"
-        role="dialog"
-        aria-modal="true"
-        :aria-labelledby="titleId"
-        tabindex="-1"
-        @keydown="handleKeydown"
-      >
-        <header class="inline-create-header">
-          <h2 :id="titleId">New {{ typeLabel }}</h2>
-          <button type="button" class="close-btn" aria-label="Close" @click="requestClose">
-            &times;
-          </button>
-        </header>
-
-        <div class="inline-create-body">
-          <!-- v-if, not v-show: see the component doc. -->
-          <DynamicForm
-            ref="formRef"
-            :form-id="formId"
-            embedded
-            :embedded-template="template"
-            :embedded-link="link"
-            :embedded-world="world"
-            @inline-created="handleCreated"
-            @inline-cancelled="requestClose"
-          />
-        </div>
-      </div>
-    </div>
-  </Teleport>
+  <RlModal
+    :open="show"
+    :title="`New ${typeLabel}`"
+    size="lg"
+    panel-class="inline-create-panel"
+    :layer="900"
+    @keydown="handleKeydown"
+    @close="requestClose"
+  >
+    <!-- v-if, not v-show: see the component doc. -->
+    <DynamicForm
+      ref="formRef"
+      :form-id="formId"
+      embedded
+      :embedded-template="template"
+      :embedded-link="link"
+      :embedded-world="world"
+      :embedded-add-another="addAnother"
+      :embedded-prefill="prefill"
+      @inline-created="handleCreated"
+      @inline-created-another="emit('created-another', $event)"
+      @inline-cancelled="requestClose"
+    />
+  </RlModal>
 </template>
 
 <style scoped>
-/* Below ConfirmModal's overlay (z-index 1000 in App.vue). Both Teleport to
-   body, so at equal z-index the later-mounted one wins on DOM order — which
-   would put the discard-confirm UNDERNEATH this dialog, leaving the user
-   staring at a frozen modal awaiting an invisible answer. */
-.modal-overlay {
-  z-index: 900;
-}
-
-/* Wider than the shared .modal default: this hosts a full form, not a
-   sentence. Height is capped so a long or multi-step form scrolls inside the
-   dialog instead of pushing its actions off-screen. */
-.inline-create-modal {
+/* Wider than RlModal's `lg`: this hosts a full form, not a sentence. Height is
+   capped so a long or multi-step form scrolls inside the dialog instead of
+   pushing its actions off-screen. The `layer` prop above keeps it below
+   ConfirmModal's 1000 — see the component doc. */
+:global(.inline-create-panel) {
   width: min(760px, 92vw);
   max-width: none;
   max-height: 88vh;

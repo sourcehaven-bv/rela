@@ -90,9 +90,14 @@ describe('DynamicForm unsaved-changes guard', () => {
     return { wrapper, router }
   }
 
+  // The confirm dialog is an RlConfirmDialog (rela-components) now, so it is
+  // an [role="alertdialog"] with its buttons in RlModal's footer. Matched by
+  // role rather than by rela's old .modal-actions class.
   function modalButtons(): HTMLButtonElement[] {
     return Array.from(
-      document.querySelectorAll<HTMLButtonElement>('.modal-actions button')
+      document.querySelectorAll<HTMLButtonElement>(
+        '[role="alertdialog"] .rl-modal__footer button'
+      )
     )
   }
 
@@ -103,7 +108,7 @@ describe('DynamicForm unsaved-changes guard', () => {
     await router.push('/other')
     await flushPromises()
 
-    expect(document.querySelector('.modal-overlay')).toBeNull()
+    expect(document.querySelector('[role="alertdialog"]')).toBeNull()
     expect(router.currentRoute.value.path).toBe('/other')
     wrapper.unmount()
   })
@@ -116,7 +121,7 @@ describe('DynamicForm unsaved-changes guard', () => {
     await flushPromises()
 
     // Modal is visible; navigation is suspended.
-    const overlay = document.querySelector<HTMLElement>('.modal-overlay')
+    const overlay = document.querySelector<HTMLElement>('[role="alertdialog"]')
     expect(overlay).not.toBeNull()
     expect(overlay?.textContent).toContain('Unsaved changes')
 
@@ -127,7 +132,7 @@ describe('DynamicForm unsaved-changes guard', () => {
 
     expect(router.currentRoute.value.path).toBe('/')
     expect(dirty.value).toBe(true) // dirty preserved
-    expect(document.querySelector('.modal-overlay')).toBeNull()
+    expect(document.querySelector('[role="alertdialog"]')).toBeNull()
     wrapper.unmount()
   })
 
@@ -192,7 +197,7 @@ describe('DynamicForm unsaved-changes guard', () => {
     router.back()
     await flushPromises()
     expect(router.currentRoute.value.path).toBe('/')
-    expect(document.querySelector('.modal-overlay')).toBeNull()
+    expect(document.querySelector('[role="alertdialog"]')).toBeNull()
     wrapper.unmount()
   })
 
@@ -212,7 +217,7 @@ describe('DynamicForm unsaved-changes guard', () => {
     const nav2 = router.push('/')
     await flushPromises()
     await nav2
-    expect(document.querySelector('.modal-overlay')).toBeNull()
+    expect(document.querySelector('[role="alertdialog"]')).toBeNull()
     wrapper.unmount()
   })
 })

@@ -3,6 +3,8 @@ import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { PiniaColada } from '@pinia/colada'
 import EntityDetail from './EntityDetail.vue'
+import EntityActionsMenu from './EntityActionsMenu.vue'
+import type { EntityAction } from './entityActions'
 import { useSchemaStore } from '@/stores/schema'
 import { useUIStore } from '@/stores/ui'
 import type { ActionConfig, Entity } from '@/types'
@@ -111,9 +113,9 @@ describe('EntityDetail detail actions', () => {
 
   it('offers the actions in the mobile overflow menu too', async () => {
     const w = await mountDetail(viewResponse({ 'action:regenerate-soa': true }))
-    await w.find('.mobile-overflow-btn').trigger('click')
-    const items = w.findAll('.overflow-menu-item').map((b) => b.text().trim())
-    expect(items).toContain('Regenerate')
+    const menu = w.find('.mobile-actions').findComponent(EntityActionsMenu)
+    const labels = (menu.props('actions') as EntityAction[]).map((a) => a.label)
+    expect(labels).toContain('Regenerate')
   })
 
   it('shows the confirm text, runs against the served face, toasts and reloads', async () => {

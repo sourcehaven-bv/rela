@@ -1,0 +1,384 @@
+:root {
+  /*
+   * Light is the default theme. The dark palette overrides these colour
+   * tokens in `dark.css`, from the OS setting or a `.dark` class; every
+   * colour token declared here needs a counterpart there.
+   *
+   * Some consumers generate a copy of this palette rather than importing it,
+   * for surfaces this stylesheet cannot reach: rela builds one for the
+   * iframes its custom apps run in. A copy goes stale silently here and
+   * fails a test there, so a change to a colour value, and not only a new
+   * token, is a change those consumers have to regenerate.
+   */
+  color-scheme: light;
+
+  /* Neutrals */
+  --rl-color-bg: #ffffff;
+  --rl-color-bg-sunken: #fbfbfa;
+  --rl-color-bg-hover: #f4f4f3;
+  --rl-color-bg-active: #ececeb;
+  --rl-color-border: #e8e8e6;
+  --rl-color-border-strong: #d8d8d5;
+
+  /*
+   * Anything floating above the page: a modal, a drawer, a menu panel, a
+   * toast. The surface equals `--rl-color-bg` here and the raised edge equals
+   * `--rl-color-border`, because on a white page a scrim and a shadow already
+   * separate the layers. The dark theme lifts the surface and lightens the
+   * edges, where a black panel on a scrimmed black page would not read as a
+   * separate surface at all.
+   *
+   * `-scrimmed` is the edge on a modal or drawer specifically, and is
+   * transparent here because the design has no outline on those.
+   */
+  --rl-color-bg-raised: #ffffff;
+  --rl-color-border-raised: #e8e8e6;
+  --rl-color-border-scrimmed: transparent;
+
+  /*
+   * A switch's thumb. Not a surface, despite looking like one here: it rides
+   * on the track, so it contrasts with that rather than with the page, and
+   * stays light in both themes while the raised surface does not.
+   *
+   * A radio's dot is deliberately NOT this. That dot is knocked out of an
+   * accent fill, and the accent is light in both themes, so it takes
+   * `--rl-color-bg` and reads as the page showing through.
+   */
+  --rl-color-knob: #ffffff;
+
+  /*
+   * The selected chip in a segmented control. Like the knob it rides on a
+   * track rather than on the page, so it contrasts with `--rl-color-bg-hover`
+   * and not with `--rl-color-bg`.
+   *
+   * Not `--rl-color-knob` itself: that thumb is a bare shape, while this chip
+   * carries a label, so it has to stay dark enough for `--rl-color-text` in
+   * the dark theme. Not `--rl-color-bg-raised` either, which is pulled *down*
+   * in the dark theme to keep controls from reading as holes in a panel; a
+   * chip on a track needs the opposite.
+   *
+   * Here it equals `--rl-color-bg`, which is what the chip was before this
+   * token existed and is already lighter than the track.
+   */
+  --rl-color-chip-raised: #ffffff;
+
+  /* Text */
+  --rl-color-text: #23241f;
+  --rl-color-text-muted: #6b6f76;
+  /*
+   * Tertiary text. AA on the hover background forces this to the same
+   * lightness as text-muted, so the two are deliberately equal: the
+   * hierarchy is carried by size and weight, not by colour alone.
+   * Kept as its own token so it can diverge on a lighter surface.
+   */
+  --rl-color-text-subtle: #696d74;
+  --rl-color-text-inverse: #ffffff;
+
+  /* Accent */
+  --rl-color-accent: #2563eb;
+  --rl-color-accent-hover: #1d4ed8;
+  /*
+   * Fill for the row or card whose detail is open. Tinted towards the accent
+   * so selection reads as "this one is showing", distinct from the neutral
+   * hover fill, while staying light enough to keep body text at AA.
+   */
+  --rl-color-bg-selected: #eff4fe;
+
+  /*
+   * Danger. Used by destructive controls. The base tone clears 4.5:1 as text
+   * on every surface in this file, and carries white text at 6.5:1 when it is
+   * the fill, so one token serves both the solid and the text-only variant.
+   */
+  --rl-color-danger: #b91c1c;
+  --rl-color-danger-hover: #991b1b;
+  --rl-color-danger-bg: #fde4e4;
+  --rl-color-danger-bg-hover: #fbd0d0;
+
+  /*
+   * Message surfaces. Each `-fg` clears 4.5:1 on its own `-bg`, so banners
+   * and callouts carry body text rather than just a coloured edge.
+   */
+  --rl-color-info-bg: #e8f0fe;     --rl-color-info-fg: #1c4bb0;
+  --rl-color-success-bg: #dcf5e4;  --rl-color-success-fg: #146c32;
+  --rl-color-warning-bg: #fdeed3;  --rl-color-warning-fg: #8a4708;
+
+  /* Status dots */
+  --rl-color-status-green: #16a34a;
+  --rl-color-status-amber: #b45309;
+  --rl-color-status-red: #ef4444;
+  --rl-color-status-grey: #6b7280;
+  --rl-color-status-blue: #2563eb;
+
+  /* Tag palette: soft bg + readable fg */
+  --rl-tag-grey-bg: #f0f0ef;    --rl-tag-grey-fg: #5c6066;
+  --rl-tag-blue-bg: #e3edfd;    --rl-tag-blue-fg: #1d4ed8;
+  --rl-tag-green-bg: #dcf5e4;   --rl-tag-green-fg: #146c32;
+  --rl-tag-amber-bg: #fdeed3;   --rl-tag-amber-fg: #94480a;
+  --rl-tag-red-bg: #fde4e4;     --rl-tag-red-fg: #b91c1c;
+  --rl-tag-purple-bg: #ece6fb;  --rl-tag-purple-fg: #6d28d9;
+
+  /* Spacing: 4px base */
+  --rl-space-1: 4px;
+  --rl-space-2: 8px;
+  --rl-space-3: 12px;
+  --rl-space-4: 16px;
+  --rl-space-5: 20px;
+  --rl-space-6: 24px;
+  --rl-space-8: 32px;
+
+  /* Radius */
+  --rl-radius-sm: 4px;
+  --rl-radius-md: 6px;
+  --rl-radius-lg: 8px;
+  --rl-radius-pill: 999px;
+
+  /* Typography */
+  --rl-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif;
+  /*
+   * Code, and anything that has to line up by column: a Lua snippet, a YAML
+   * fragment, an id. Its own token because a consumer shipping a licensed
+   * mono face wants to swap it without touching the body font.
+   */
+  --rl-font-family-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --rl-font-size-xs: 11px;
+  --rl-font-size-sm: 13px;
+  --rl-font-size-md: 14px;
+  --rl-font-size-lg: 16px;
+  --rl-font-size-xl: 20px;
+  --rl-font-size-2xl: 28px;
+  --rl-line-height-tight: 1.3;
+  --rl-line-height-normal: 1.5;
+  --rl-line-height-relaxed: 1.65;
+  --rl-font-weight-normal: 400;
+  --rl-font-weight-medium: 500;
+  --rl-font-weight-semibold: 600;
+
+  /* Accents used by single components */
+  --rl-color-starred: #a67908;
+  --rl-color-focus: #1d4ed8;
+  /*
+   * Focus ring. Two shadows: an opaque gap in the page background, then the
+   * ring itself. Drawn with box-shadow rather than outline so it follows a
+   * rounded corner exactly, and opaque so it stays visible over any fill
+   * (WCAG 2.2 SC 1.4.11 needs 3:1 against what is behind it).
+   */
+  --rl-focus-ring-width: 2px;
+  --rl-focus-ring-gap: 2px;
+  --rl-color-error-ring: #b91c1c;
+
+  /* Attachment type colours, all >= 4.5:1 against white glyphs */
+  --rl-color-file-pdf: #c81e24;
+  --rl-color-file-doc: #1d4ed8;
+  --rl-color-file-sheet: #127049;
+  --rl-color-file-image: #6d28d9;
+  --rl-color-file-other: #5c6066;
+
+  /*
+   * Scrim behind a modal, drawer or off-canvas nav. A token rather than a
+   * literal because it must deepen in the dark theme, where a translucent
+   * dark wash over an already-dark page barely separates the two layers.
+   */
+  --rl-color-scrim: rgba(16, 24, 40, 0.4);
+
+  /*
+   * Motion. Three durations, named for what moves rather than by size, because
+   * the choice is about how much of the screen changes and not about taste.
+   *
+   * - `fast` is a state change in place: a hover fill, a colour, a border, a
+   *   caret turning. The element stays where it is.
+   * - `base` is something small travelling a short distance: a switch thumb, a
+   *   bar sliding in, a panel in a stack.
+   * - `slow` is a large surface crossing the screen: the shell's drawer and its
+   *   detail panel, which are most of the viewport and read as jerky when they
+   *   move at `base`.
+   *
+   * Looping indicators — the spinner, the skeleton shimmer, the activity bar —
+   * are deliberately NOT here. Their periods are tuned per indicator against
+   * what they are indicating, and pulling them onto a shared scale would couple
+   * a spinner's speed to a drawer's, where changing one to suit the other makes
+   * both wrong. They stay as literals in the component that owns them.
+   *
+   * An app retuning these should move them together: they are a ratio as much
+   * as three values, and `slow` below `base` makes the big surfaces look
+   * broken rather than quick.
+   */
+  --rl-duration-fast: 120ms;
+  --rl-duration-base: 150ms;
+  --rl-duration-slow: 200ms;
+
+  /*
+   * One easing for everything that is not a loop. `ease` in, `ease-out` on the
+   * way out is the usual refinement, but every transition in this library is
+   * short enough that the difference is not visible, and two tokens invite a
+   * choice where there is nothing to choose.
+   */
+  --rl-ease: ease;
+
+  /* Elevation */
+  --rl-shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.06);
+  --rl-shadow-md: 0 4px 12px rgba(16, 24, 40, 0.08);
+  --rl-shadow-lg: 0 12px 32px rgba(16, 24, 40, 0.12);
+
+  /* Layout */
+  --rl-sidebar-width: 260px;
+  --rl-row-height: 41px;
+
+  /*
+   * Height of a table section's sticky header, and so the offset its column
+   * header parks at. The header sets this as its own min-height, so the two
+   * cannot drift apart: a taller control inside the header would otherwise
+   * push it past the offset and leave a gap the rows scroll through.
+   */
+  --rl-table-header-offset: 38px;
+
+  /*
+   * Where a sidebar subheading parks: directly below the group header it
+   * sits under, so the two stack instead of overlapping. The group header
+   * sets this as its own min-height, so the two cannot drift apart.
+   */
+  --rl-sidebar-subheading-offset: 24px;
+  --rl-detail-panel-width: 720px;
+
+  /*
+   * Widths of a slide-out panel. Tokens rather than measurements, because
+   * the stack computes each panel's offset from the widths of the ones
+   * before it: a measured layout would settle a frame late and the panel
+   * would jump as it slid.
+   */
+  --rl-slide-panel-width-sm: 280px;
+  --rl-slide-panel-width-md: 428px;
+  --rl-slide-panel-width-lg: 560px;
+
+  /* Form controls share one height so a field and a button line up in a row. */
+  --rl-control-height: 34px;
+  --rl-control-height-sm: 28px;
+  --rl-control-height-lg: 40px;
+
+  /*
+   * Overlay stacking. Each layer sits above the one before it, so a menu
+   * opened from inside a modal is never painted behind it.
+   *
+   * Sticky headers are in-page furniture rather than an overlay, so they sit
+   * below every layer here: a menu opened from a sticky header must still
+   * paint above it. Within the sticky band, a section header outranks the
+   * column header it pushes off screen.
+   *
+   * An app is free to rebase these onto its own scale, but must move the
+   * whole ladder rather than part of it, because the order is the contract
+   * and the numbers are not. Menus and tooltips are teleported to `<body>`,
+   * so they do not inherit the stacking context of whatever opened them and
+   * compete on these values directly: raising the shell tokens alone above
+   * `--rl-z-menu` leaves a menu opened inside a slide panel painted behind
+   * that panel, drawn but unclickable.
+   */
+  --rl-z-sticky: 1;
+  --rl-z-sticky-raised: 2;
+  /*
+   * The app shell's own regions, which float over the content without being
+   * overlays in their own right: the detail panel when it covers the content
+   * rather than sharing the row, and the slide-out stack above it. The stack
+   * wins because it is opened from the navigation over whatever is already
+   * on screen, and the detail panel is part of what it covers.
+   */
+  --rl-z-shell-panel: 15;
+  --rl-z-shell-panel-full: 25;
+  --rl-z-shell-flyout: 30;
+  /*
+   * The narrow-width navigation drawer and the scrim beneath it. Its own pair
+   * rather than a reuse of the flyout value: the two are never on screen
+   * together, but they are different things, and a token named for one of them
+   * would send anyone rebasing the ladder looking for a relationship that is
+   * not there.
+   *
+   * The scrim sits directly below the drawer it dims and above everything the
+   * drawer covers, which is what puts this pair between the shell's own panel
+   * layers and the drawer proper.
+   */
+  --rl-z-shell-nav-scrim: 20;
+  --rl-z-shell-nav: 30;
+  --rl-z-drawer: 60;
+  --rl-z-modal: 100;
+  --rl-z-menu: 200;
+  --rl-z-tooltip: 300;
+  --rl-z-toast: 400;
+
+  /* Minimum comfortable tap target (WCAG 2.5.8 requires 24px). */
+  --rl-tap-target: 40px;
+
+  /*
+   * Safe area. On a notched phone the viewport reaches under the status bar,
+   * the home indicator and, in landscape, the notch itself. `env()` reports
+   * how much of each edge is obscured; it is zero on every other device and
+   * on any page that does not set `viewport-fit=cover`, so components can
+   * add these unconditionally.
+   *
+   * Components use the `-inset` tokens rather than `env()` directly, so an
+   * app that renders inside its own already-inset container can zero them on
+   * a subtree and stop the padding being applied twice.
+   */
+  --rl-safe-inset-top: env(safe-area-inset-top, 0px);
+  --rl-safe-inset-right: env(safe-area-inset-right, 0px);
+  --rl-safe-inset-bottom: env(safe-area-inset-bottom, 0px);
+  --rl-safe-inset-left: env(safe-area-inset-left, 0px);
+
+  /*
+   * What a sidebar must clear on its own. Equal to the raw insets by default,
+   * which is what a sidebar standing against the screen edge needs.
+   *
+   * These exist so the two cannot both apply the same inset. A container that
+   * has already inset a sidebar — the app shell's drawer does, so that a
+   * consumer's own markup in that slot is protected too — sets these to zero
+   * on it, and the sidebar then adds nothing on top.
+   */
+  --rl-sidebar-safe-top: var(--rl-safe-inset-top);
+  --rl-sidebar-safe-bottom: var(--rl-safe-inset-bottom);
+  --rl-sidebar-safe-left: var(--rl-safe-inset-left);
+
+  /*
+   * Breakpoints. CSS custom properties cannot be used in media queries, so
+   * these are documentation of the values hard-coded across components:
+   *   compact  <= 767px   phone: drawer nav, full-screen detail
+   *   medium   <= 1079px  tablet: narrower panel, no sidebar
+   *   wide     >= 1080px  desktop: the three-pane layout
+   */
+}
+
+/*
+ * Phones get tighter page gutters so content is not squeezed. Each gutter
+ * also clears the safe area on its own side, so a rotated phone puts the
+ * notch in the margin rather than through the first words of a line. The
+ * gutters are separate tokens because the two edges are inset by different
+ * amounts: in landscape only the notch side is obscured.
+ */
+@media (max-width: 767px) {
+  :root {
+    --rl-page-gutter: var(--rl-space-4);
+  }
+}
+
+@media (min-width: 768px) {
+  :root {
+    --rl-page-gutter: var(--rl-space-8);
+  }
+}
+
+/*
+ * Trailing space claimed by something drawn over the right of the content,
+ * which today is the app shell's overlay panel. Zero unless a layout sets it.
+ *
+ * The right gutter adds it, so every scroll container already padding from
+ * that gutter keeps its last column reachable from under the panel. Both are
+ * redeclared together by whoever sets the inset, because a custom property is
+ * resolved where it is declared: a gutter substituted here would keep the
+ * zero it saw at the root however deep the element setting the inset is.
+ */
+:root {
+  --rl-overlay-inset: 0px;
+}
+
+:root {
+  --rl-page-gutter-left: calc(var(--rl-page-gutter) + var(--rl-safe-inset-left));
+  --rl-page-gutter-right: calc(
+    var(--rl-page-gutter) + var(--rl-safe-inset-right) + var(--rl-overlay-inset)
+  );
+}

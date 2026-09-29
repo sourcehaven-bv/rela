@@ -16,6 +16,7 @@ function renderField(opts: {
   readonly?: boolean
   optionVerdicts?: Record<string, boolean>
   transitionOptions?: TransitionOption[]
+  error?: string
 }) {
   return mount(FieldRenderer, {
     props: {
@@ -25,6 +26,7 @@ function renderField(opts: {
       readonly: opts.readonly,
       optionVerdicts: opts.optionVerdicts,
       transitionOptions: opts.transitionOptions,
+      error: opts.error,
     },
     attachTo: document.body,
   })
@@ -243,5 +245,72 @@ describe('FieldRenderer label fallback', () => {
     })
     expect(wrapper.find('label').text()).toContain('Laatste contact')
     wrapper.unmount()
+  })
+})
+
+/**
+ * FieldShell renders the help and error text and owns their ids; the widget
+ * renders the control. Neither can reach the other, so the shell passes the
+ * wiring through its slot and FieldRenderer forwards it as props.
+ *
+ * This is the seam that breaks silently: drop the forwarding and every
+ * individual component still renders correctly, with the association simply
+ * absent. So it is asserted through the real dispatch rather than on either
+ * side alone.
+ */
+describe('FieldRenderer accessibility wiring', () => {
+  it('associates the help text with the dispatched widget', () => {
+    const wrapper = renderField({
+      field: { property: 'title', label: 'Title', help: 'keep it short' },
+      propertyDef: { type: 'string' },
+      value: 'hello',
+    })
+
+    const helpId = wrapper.find('.field-help').attributes('id')
+    expect(helpId).toBeTruthy()
+    expect(wrapper.find('input[type="text"]').attributes('aria-describedby')).toBe(helpId)
+  })
+
+  it('marks the dispatched widget invalid and points it at the message', () => {
+    const wrapper = renderField({
+      field: { property: 'title', label: 'Title' },
+      propertyDef: { type: 'string' },
+      value: '',
+      error: 'Title is required',
+    })
+
+    const input = wrapper.find('input[type="text"]')
+    expect(input.attributes('aria-invalid')).toBe('true')
+    expect(input.attributes('aria-describedby')).toBe(
+      wrapper.find('.field-error').attributes('id')
+    )
+  })
+
+  it('leaves a healthy field undescribed and unmarked', () => {
+    const wrapper = renderField({
+      field: { property: 'title', label: 'Title' },
+      propertyDef: { type: 'string' },
+      value: 'hello',
+    })
+
+    const input = wrapper.find('input[type="text"]')
+    expect(input.attributes('aria-describedby')).toBeUndefined()
+    expect(input.attributes('aria-invalid')).toBeUndefined()
+  })
+
+  /**
+   * The widgets dropped ~30 identical lines of input CSS each for the
+   * library's global `.rl-control`. Vitest does not apply scoped SFC styles, so
+   * this asserts the class is present rather than what it draws -- the class
+   * reaching the element is the part that can regress.
+   */
+  it('draws the control with the shared library class', () => {
+    const wrapper = renderField({
+      field: { property: 'title', label: 'Title' },
+      propertyDef: { type: 'string' },
+      value: 'hello',
+    })
+
+    expect(wrapper.find('input[type="text"]').classes()).toContain('rl-control')
   })
 })

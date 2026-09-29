@@ -238,7 +238,7 @@ describe('CalendarView rendering', () => {
     await flushPromises()
 
     expect(wrapper.find('.calendar-empty').exists()).toBe(true)
-    expect(wrapper.find('.loading-state').exists()).toBe(false)
+    expect(wrapper.find('.rl-status-region--pending').exists()).toBe(false)
   })
 
   it('warns when a source hit the page cap instead of looking merely quiet', async () => {
@@ -607,7 +607,7 @@ describe('CalendarView event click', () => {
 
     // No navigation: the user stays on the calendar, keeping their period.
     expect(routerPush).not.toHaveBeenCalled()
-    expect(document.querySelector('.entity-preview')).not.toBeNull()
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull()
   })
 
   it('shows no edit, history or delete toolbar in the preview', async () => {
@@ -624,13 +624,13 @@ describe('CalendarView event click', () => {
     await wrapper.find('.calendar-chip').trigger('click')
     await flushPromises()
 
-    const modal = document.querySelector('.entity-preview') as HTMLElement
+    const modal = document.querySelector('[role="dialog"]') as HTMLElement
     expect(modal).not.toBeNull()
     expect(modal.querySelector('.header-actions')).toBeNull()
 
     // The footer still offers exactly one Edit. Both actions are real links
     // now (TKT-3CSZRG) so cmd/middle-click opens them in a tab.
-    const footerButtons = [...modal.querySelectorAll('.modal-actions button, .modal-actions a')].map((b) =>
+    const footerButtons = [...modal.querySelectorAll('.rl-modal__footer a')].map((b) =>
       b.textContent?.trim()
     )
     expect(footerButtons).toEqual(['Open full page', 'Edit'])
@@ -643,8 +643,8 @@ describe('CalendarView event click', () => {
     await wrapper.find('.calendar-chip').trigger('click')
     await flushPromises()
 
-    const modal = document.querySelector('.entity-preview') as HTMLElement
-    const footerButtons = [...modal.querySelectorAll('.modal-actions button, .modal-actions a')].map((b) =>
+    const modal = document.querySelector('[role="dialog"]') as HTMLElement
+    const footerButtons = [...modal.querySelectorAll('.rl-modal__footer a')].map((b) =>
       b.textContent?.trim()
     )
     expect(footerButtons).toEqual(['Open full page'])
@@ -656,13 +656,14 @@ describe('CalendarView event click', () => {
 
     await wrapper.find('.calendar-chip').trigger('click')
     await flushPromises()
-    expect(document.querySelector('.entity-preview')).not.toBeNull()
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull()
 
-    const close = document.querySelector('.entity-preview-close') as HTMLElement
+    // RlModal renders the close affordance in its own header.
+    const close = document.querySelector('.rl-modal__close') as HTMLElement
     close.click()
     await flushPromises()
 
-    expect(document.querySelector('.entity-preview')).toBeNull()
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
     expect(routerPush).not.toHaveBeenCalled()
   })
 })

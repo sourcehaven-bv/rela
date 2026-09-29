@@ -3,6 +3,10 @@ import { ref, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { getConflicts, getConflictDetail, resolveConflict, getErrorMessage, type ConflictItem, type ConflictDetail } from '@/api'
 import { useGitStore } from '@/stores'
+import RlButton from 'rela-components/components/common/RlButton.vue'
+import RlEmptyState from 'rela-components/components/feedback/RlEmptyState.vue'
+import RlStatusRegion from 'rela-components/components/feedback/RlStatusRegion.vue'
+import RlKbd from 'rela-components/components/data/RlKbd.vue'
 
 const router = useRouter()
 const gitStore = useGitStore()
@@ -127,19 +131,19 @@ onMounted(() => {
           <h2>Merge Conflicts</h2>
           <p>Files with unresolved git conflicts</p>
         </div>
-        <button class="btn btn-secondary" @click="router.push('/')">
+        <RlButton variant="secondary" @click="router.push('/')">
           Back to Dashboard
-        </button>
+        </RlButton>
       </div>
 
-      <div v-if="loading" class="loading-state">
-        Loading conflicts...
-      </div>
+      <RlStatusRegion v-if="loading">Loading conflicts...</RlStatusRegion>
 
-      <div v-else-if="error" class="error-state">
+      <RlStatusRegion v-else-if="error" tone="error">
         {{ error }}
-        <button @click="loadConflicts">Retry</button>
-      </div>
+        <template #actions>
+          <RlButton variant="secondary" size="sm" @click="loadConflicts">Retry</RlButton>
+        </template>
+      </RlStatusRegion>
 
       <template v-else-if="hasConflicts">
         <div class="conflict-summary">
@@ -183,11 +187,13 @@ onMounted(() => {
         </div>
       </template>
 
-      <div v-else class="conflict-empty">
-        <div class="conflict-empty-icon">OK</div>
-        <h3>No conflicts detected</h3>
-        <p>All entity and relation files are clean.</p>
-      </div>
+      <RlEmptyState
+        v-else
+        class="conflict-empty"
+        icon="shield-check"
+        title="No conflicts detected"
+        description="All entity and relation files are clean."
+      />
     </template>
 
     <!-- Detail View -->
@@ -197,28 +203,37 @@ onMounted(() => {
           <h2>Resolve Conflict</h2>
           <p>{{ selectedPath }}</p>
         </div>
-        <button class="btn btn-secondary" @click="backToList">
+        <RlButton variant="secondary" @click="backToList">
           Back to Conflicts
-        </button>
+        </RlButton>
       </div>
 
-      <div v-if="detailLoading" class="loading-state">
-        Loading conflict details...
-      </div>
+      <RlStatusRegion v-if="detailLoading" size="sm">Loading conflict details...</RlStatusRegion>
 
-      <div v-else-if="detailError" class="error-state">
+      <RlStatusRegion v-else-if="detailError" tone="error" size="sm">
         {{ detailError }}
-        <button @click="selectConflict(selectedPath!)">Retry</button>
-      </div>
+        <template #actions>
+          <RlButton variant="secondary" size="sm" @click="selectConflict(selectedPath!)">
+            Retry
+          </RlButton>
+        </template>
+      </RlStatusRegion>
 
       <template v-else-if="detail">
         <div class="resolve-actions-top">
-          <button class="btn btn-secondary" @click="selectAllSide('ours')">
-            Select All Ours <kbd>O</kbd>
-          </button>
-          <button class="btn btn-secondary" @click="selectAllSide('theirs')">
-            Select All Theirs <kbd>T</kbd>
-          </button>
+          <!--
+            The shortcut hint goes in `trailing`, outside the label cell: it is
+            identical in both states, so including it would inflate the pending
+            width reservation for nothing.
+          -->
+          <RlButton variant="secondary" @click="selectAllSide('ours')">
+            Select All Ours
+            <template #trailing><RlKbd keys="O" /></template>
+          </RlButton>
+          <RlButton variant="secondary" @click="selectAllSide('theirs')">
+            Select All Theirs
+            <template #trailing><RlKbd keys="T" /></template>
+          </RlButton>
         </div>
 
         <div class="card resolve-card">
@@ -299,13 +314,20 @@ onMounted(() => {
         </div>
 
         <div class="resolve-actions-bottom">
-          <button
-            class="btn btn-primary"
-            :disabled="resolving"
+          <!--
+            `pendingLabel` rather than a ternary on `resolving`: the label was
+            wired straight to the boolean, so a fast resolve flashed "Applying"
+            for a few frames. RlButton holds the resting label until the action
+            has run long enough to be worth reporting.
+          -->
+          <RlButton
+            variant="primary"
+            :loading="resolving"
+            pending-label="Applying…"
             @click="applyResolution"
           >
-            {{ resolving ? 'Applying...' : 'Apply Resolution' }}
-          </button>
+            Apply Resolution
+          </RlButton>
         </div>
       </template>
     </template>
@@ -335,19 +357,6 @@ onMounted(() => {
   opacity: 0.7;
 }
 
-.loading-state,
-.error-state {
-  padding: 40px;
-  text-align: center;
-  background: var(--card-bg, #fff);
-  border-radius: 8px;
-  border: 1px solid var(--border-color, #e5e7eb);
-}
-
-.error-state button {
-  margin-top: 12px;
-}
-
 .conflict-summary {
   margin-bottom: 16px;
 }
@@ -362,9 +371,9 @@ onMounted(() => {
 }
 
 .card {
-  background: var(--card-bg, #fff);
+  background: var(--rl-color-bg-raised, #fff);
   border-radius: 8px;
-  border: 1px solid var(--border-color, #e5e7eb);
+  border: 1px solid var(--rl-color-border, #e5e7eb);
   overflow: hidden;
 }
 
@@ -377,7 +386,7 @@ onMounted(() => {
 .conflicts-table td {
   padding: 12px 16px;
   text-align: left;
-  border-bottom: 1px solid var(--border-color, #e5e7eb);
+  border-bottom: 1px solid var(--rl-color-border, #e5e7eb);
 }
 
 .conflicts-table th {
@@ -391,7 +400,7 @@ onMounted(() => {
 }
 
 .conflict-row:hover {
-  background: var(--hover-bg, #f3f4f6);
+  background: var(--rl-color-bg-hover, #f3f4f6);
 }
 
 .conflict-path {
@@ -426,35 +435,15 @@ onMounted(() => {
   color: white;
 }
 
+/* RlEmptyState draws the icon, heading and description; the card chrome
+   around them is this view's. The old hand-rolled badge — a 64px green circle
+   containing the literal text "OK", on a hardcoded #10b981 that ignored the
+   theme — is now the allowlisted `shield-check` glyph. */
 .conflict-empty {
-  text-align: center;
   padding: 60px 24px;
-  background: var(--card-bg, #fff);
+  background: var(--rl-color-bg-raised, #fff);
   border-radius: 8px;
-  border: 1px solid var(--border-color, #e5e7eb);
-}
-
-.conflict-empty-icon {
-  width: 64px;
-  height: 64px;
-  margin: 0 auto 16px;
-  background: #10b981;
-  color: white;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 24px;
-  font-weight: bold;
-}
-
-.conflict-empty h3 {
-  margin: 0 0 8px 0;
-}
-
-.conflict-empty p {
-  margin: 0;
-  opacity: 0.7;
+  border: 1px solid var(--rl-color-border, #e5e7eb);
 }
 
 /* Resolution UI */
@@ -483,7 +472,7 @@ onMounted(() => {
 .resolve-table td {
   padding: 8px 12px;
   text-align: left;
-  border: 1px solid var(--border-color, #e5e7eb);
+  border: 1px solid var(--rl-color-border, #e5e7eb);
 }
 
 .resolve-table th {
@@ -509,15 +498,15 @@ onMounted(() => {
 }
 
 /* Surface TINTS, not focus rings — so these stay translucent and must NOT use
-   --focus-ring (which is fully opaque; it would paint solid accent blocks over
-   the text). Derived from --accent-color so they still follow the theme. */
+   --rl-color-focus (which is fully opaque; it would paint solid accent blocks over
+   the text). Derived from --rl-color-accent so they still follow the theme. */
 .resolve-value-selectable:hover {
-  background: color-mix(in srgb, var(--accent-color) 10%, transparent);
+  background: color-mix(in srgb, var(--rl-color-accent) 10%, transparent);
 }
 
 .resolve-value-selected {
-  background: color-mix(in srgb, var(--accent-color) 20%, transparent);
-  border-color: var(--accent-color);
+  background: color-mix(in srgb, var(--rl-color-accent) 20%, transparent);
+  border-color: var(--rl-color-accent);
 }
 
 .resolve-content-choice {
@@ -574,7 +563,7 @@ onMounted(() => {
   width: 100%;
   font-family: monospace;
   padding: 12px;
-  border: 1px solid var(--border-color, #e5e7eb);
+  border: 1px solid var(--rl-color-border, #e5e7eb);
   border-radius: 4px;
   resize: vertical;
 }
@@ -585,5 +574,4 @@ onMounted(() => {
   justify-content: flex-end;
 }
 
-/* Uses global .btn, .btn-primary, .btn-secondary, kbd from App.vue */
 </style>

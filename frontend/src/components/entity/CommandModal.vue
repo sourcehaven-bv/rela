@@ -5,6 +5,11 @@ import { useModalStack } from '@/composables/modalStack'
 import { getErrorMessage } from '@/api'
 import { useConfirm } from '@/composables/useConfirm'
 import { apiUrl } from '@/api/base'
+// RlModal brings the scrim, Tab trap, scroll lock, Escape and focus restore
+// this dialog never had. `useModalStack` above stays: it is rela's separate
+// registry, and it is what stops global shortcuts firing underneath.
+import RlModal from 'rela-components/components/overlay/RlModal.vue'
+import RlButton from 'rela-components/components/common/RlButton.vue'
 
 const props = defineProps<{
   entityId: string
@@ -140,63 +145,62 @@ defineExpose({ runCommand })
 </script>
 
 <template>
-  <div v-if="showModal" class="modal-overlay" @click.self="!running && close()">
-    <div class="modal command-modal">
-      <div class="command-header">
-        <h3>{{ activeCommand?.label }}</h3>
-        <span v-if="running" class="command-status running">Running...</span>
-        <span v-else-if="success === true" class="command-status success">Completed</span>
-        <span v-else-if="success === false" class="command-status error">Failed</span>
-      </div>
-      <div class="command-output">
-        <template v-if="output.length === 0">
-          <div class="output-line">Starting...</div>
-        </template>
-        <template v-for="(item, idx) in output" :key="idx">
-          <div v-if="item.type === 'text'" class="output-line">{{ item.text }}</div>
-          <div v-else-if="item.type === 'file'" class="output-file">
-            <span class="file-icon">📄</span>
-            <span class="file-label">{{ item.label }}</span>
-            <a
-              v-if="item.token"
-              class="file-btn"
-              :href="downloadUrl(item.token)"
-              :download="item.label"
-            >Download</a>
-          </div>
-        </template>
-      </div>
-      <div class="modal-actions">
-        <button
-          class="btn btn-secondary"
-          :disabled="running"
-          @click="close"
-        >
-          Close
-        </button>
-      </div>
+  <RlModal
+    :open="showModal"
+    :title="activeCommand?.label ?? 'Command'"
+    size="lg"
+    :persistent="running"
+    @close="close"
+  >
+    <div class="command-status-row">
+      <span v-if="running" class="command-status running">Running...</span>
+      <span v-else-if="success === true" class="command-status success">Completed</span>
+      <span v-else-if="success === false" class="command-status error">Failed</span>
     </div>
-  </div>
+    <div class="command-output">
+      <template v-if="output.length === 0">
+        <div class="output-line">Starting...</div>
+      </template>
+      <template v-for="(item, idx) in output" :key="idx">
+        <div v-if="item.type === 'text'" class="output-line">{{ item.text }}</div>
+        <div v-else-if="item.type === 'file'" class="output-file">
+          <span class="file-icon">📄</span>
+          <span class="file-label">{{ item.label }}</span>
+          <a
+            v-if="item.token"
+            class="file-btn"
+            :href="downloadUrl(item.token)"
+            :download="item.label"
+          >Download</a>
+        </div>
+      </template>
+    </div>
+
+    <template #actions>
+      <div class="command-actions">
+        <RlButton variant="secondary" :disabled="running" @click="close">
+          Close
+        </RlButton>
+      </div>
+    </template>
+  </RlModal>
 </template>
 
 <style scoped>
-/* Uses global .modal-overlay, .modal, .modal-actions from App.vue */
+/* The frame, its title and the footer are RlModal's. */
 
-.command-modal {
-  max-width: 600px;
-  width: 90%;
+/*
+ * The status sat beside the title in the old header. RlModal owns the title
+ * row, so it moves to the top of the body instead of being squeezed in
+ * alongside; it keeps its own row so the output below starts on a clean line.
+ */
+.command-status-row:not(:empty) {
+  margin-bottom: var(--space-md);
 }
 
-.command-header {
+.command-actions {
   display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 16px;
-}
-
-.command-header h3 {
-  margin: 0;
-  flex: 1;
+  justify-content: flex-end;
 }
 
 .command-status {
@@ -207,18 +211,18 @@ defineExpose({ runCommand })
 }
 
 .command-status.running {
-  background: color-mix(in srgb, var(--warning-color, #f59e0b) 20%, transparent);
-  color: var(--warning-color, #f59e0b);
+  background: color-mix(in srgb, var(--rl-color-status-amber, #f59e0b) 20%, transparent);
+  color: var(--rl-color-status-amber, #f59e0b);
 }
 
 .command-status.success {
-  background: color-mix(in srgb, var(--success-color, #10b981) 20%, transparent);
-  color: var(--success-color, #10b981);
+  background: color-mix(in srgb, var(--rl-color-status-green, #10b981) 20%, transparent);
+  color: var(--rl-color-status-green, #10b981);
 }
 
 .command-status.error {
-  background: color-mix(in srgb, var(--error-color, #ef4444) 20%, transparent);
-  color: var(--error-color, #ef4444);
+  background: color-mix(in srgb, var(--rl-color-danger, #ef4444) 20%, transparent);
+  color: var(--rl-color-danger, #ef4444);
 }
 
 .command-output {

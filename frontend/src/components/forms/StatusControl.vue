@@ -129,7 +129,7 @@ onBeforeUnmount(() => document.removeEventListener('click', handleClickOutside))
   border: none;
   border-radius: 6px;
   background: transparent;
-  color: var(--text-color);
+  color: var(--rl-color-text);
   cursor: pointer;
   font-size: 14px;
   transition: background 0.15s;
@@ -145,7 +145,7 @@ onBeforeUnmount(() => document.removeEventListener('click', handleClickOutside))
 }
 
 .status-trigger:hover:not(:disabled) {
-  background: var(--hover-bg);
+  background: var(--rl-color-bg-hover);
 }
 
 .status-trigger:disabled,
@@ -171,8 +171,8 @@ onBeforeUnmount(() => document.removeEventListener('click', handleClickOutside))
   padding: 4px;
   list-style: none;
   min-width: 180px;
-  background: var(--input-bg);
-  border: 1px solid var(--border-color);
+  background: var(--rl-color-bg-raised);
+  border: 1px solid var(--rl-color-border);
   border-radius: 6px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
 }
@@ -185,13 +185,13 @@ onBeforeUnmount(() => document.removeEventListener('click', handleClickOutside))
   border: none;
   border-radius: 4px;
   background: transparent;
-  color: var(--text-color);
+  color: var(--rl-color-text);
   cursor: pointer;
   font-size: 14px;
   text-align: left;
 }
 
 .status-move:hover {
-  background: var(--hover-bg);
+  background: var(--rl-color-bg-hover);
 }
 </style>

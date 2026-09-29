@@ -125,7 +125,7 @@ describe('CommentIndicator', () => {
 
     await w.find('.ci-btn').trigger('click')
     await w
-      .findAll('.ci-mini')
+      .findAll('.rl-button')
       .find((b) => b.text() === 'Resolve')
       ?.trigger('click')
     await vi.waitFor(() => expect(mockUpdate).toHaveBeenCalled())
@@ -142,7 +142,7 @@ describe('CommentIndicator', () => {
 
     await w.find('.ci-btn').trigger('click')
     await w
-      .findAll('.ci-mini')
+      .findAll('.rl-button')
       .find((b) => b.text() === 'Delete')
       ?.trigger('click')
     await vi.waitFor(() => expect(mockConfirm).toHaveBeenCalled())
@@ -156,7 +156,7 @@ describe('CommentIndicator', () => {
 
     await w.find('.ci-btn').trigger('click')
 
-    expect(w.findAll('.ci-cmt .ci-mini')).toHaveLength(0)
+    expect(w.findAll('.ci-cmt .rl-button')).toHaveLength(0)
   })
 
   it('opens right-aligned when told to flip', async () => {

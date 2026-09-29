@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { createRouter, createMemoryHistory } from 'vue-router'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import NextActionOffers from './NextActionOffers.vue'
@@ -37,7 +38,19 @@ const mockGet = vi.mocked(getNextAction)
 const mockFeedback = vi.mocked(sendNextActionFeedback)
 const mockRunAction = vi.mocked(runAction)
 
-const stubs = { RouterLink: { template: '<a :to="to"><slot/></a>', props: ['to'] } }
+/**
+ * A real router rather than a `RouterLink` stub. The navigate and pick_one
+ * offers now render through `<RlButton :as="RouterLink">`, where RouterLink is
+ * passed as a PROP VALUE -- the imported component object, not a resolved tag
+ * name -- so the stub registry never sees it and the real one runs, needing a
+ * route to inject.
+ */
+const router = createRouter({
+  history: createMemoryHistory(),
+  routes: [{ path: '/:pathMatch(.*)*', component: { template: '<div />' } }],
+})
+
+const globalMount = { plugins: [router] }
 
 function mountOffers(
   offers: NextActionOffer[],
@@ -45,7 +58,7 @@ function mountOffers(
 ) {
   return mount(NextActionOffers, {
     props: { offers, entityId: 'TASK-1', pickOptions },
-    global: { stubs },
+    global: globalMount,
   })
 }
 
@@ -83,13 +96,16 @@ describe('NextActionOffers', () => {
       const w = mountOffers([{ navigate: '/entity/task/{id}', label: 'Open it' }])
 
       expect(w.text()).toContain('Open it')
-      expect(w.find('.btn-primary').exists()).toBe(true)
+      expect(w.find('.rl-button--primary').exists()).toBe(true)
     })
 
     it('interpolates the entity id into the navigate target', () => {
       const w = mountOffers([{ navigate: '/entity/task/{id}' }])
 
-      expect(w.find('a').attributes('to')).toBe('/entity/task/TASK-1')
+      // `href`, not `to`: a real RouterLink resolves the target rather than
+      // passing it through as an attribute, so this now proves the URL is
+      // routable and not merely forwarded.
+      expect(w.find('a').attributes('href')).toBe('/entity/task/TASK-1')
     })
 
     it('renders acknowledge', () => {
@@ -109,12 +125,12 @@ describe('NextActionOffers', () => {
       const w = mountOffers([actOffer])
 
       expect(w.text()).toContain('Regenerate')
-      expect(w.find('.btn-primary').exists()).toBe(true)
+      expect(w.find('.rl-button--primary').exists()).toBe(true)
     })
 
     it('runs the configured action against the suggested entity', async () => {
       const w = mountOffers([actOffer])
-      await w.find('.btn-primary').trigger('click')
+      await w.find('.rl-button--primary').trigger('click')
       await flushPromises()
 
       // No entity TYPE: the server reads it off the stored row and ignores a
@@ -127,7 +143,7 @@ describe('NextActionOffers', () => {
     // operator who set it is owed the prompt.
     it('prompts before running when confirm is set', async () => {
       const w = mountOffers([{ ...actOffer, confirm: true }])
-      await w.find('.btn-primary').trigger('click')
+      await w.find('.rl-button--primary').trigger('click')
       await flushPromises()
 
       expect(confirmMock).toHaveBeenCalled()
@@ -138,7 +154,7 @@ describe('NextActionOffers', () => {
     it('runs nothing when the confirmation is declined', async () => {
       confirmMock.mockResolvedValue(false)
       const w = mountOffers([{ ...actOffer, confirm: true }])
-      await w.find('.btn-primary').trigger('click')
+      await w.find('.rl-button--primary').trigger('click')
       await flushPromises()
 
       expect(mockRunAction).not.toHaveBeenCalled()
@@ -146,7 +162,7 @@ describe('NextActionOffers', () => {
 
     it('does not prompt when confirm is absent', async () => {
       const w = mountOffers([actOffer])
-      await w.find('.btn-primary').trigger('click')
+      await w.find('.rl-button--primary').trigger('click')
       await flushPromises()
 
       expect(confirmMock).not.toHaveBeenCalled()
@@ -157,7 +173,7 @@ describe('NextActionOffers', () => {
     it('re-resolves the suggestion after a successful run', async () => {
       const w = mountOffers([actOffer])
       mockGet.mockClear()
-      await w.find('.btn-primary').trigger('click')
+      await w.find('.rl-button--primary').trigger('click')
       await flushPromises()
 
       expect(mockGet).toHaveBeenCalled()
@@ -171,7 +187,7 @@ describe('NextActionOffers', () => {
       confirmMock.mockImplementation(() => new Promise<boolean>((r) => { resolveConfirm = r }))
 
       const w = mountOffers([{ ...actOffer, confirm: true }])
-      const btn = w.find('.btn-primary')
+      const btn = w.find('.rl-button--primary')
       await btn.trigger('click')
       await btn.trigger('click')
       resolveConfirm(true)
@@ -183,7 +199,7 @@ describe('NextActionOffers', () => {
 
     it('runs once for a double-click without confirm', async () => {
       const w = mountOffers([actOffer])
-      const btn = w.find('.btn-primary')
+      const btn = w.find('.rl-button--primary')
       await btn.trigger('click')
       await btn.trigger('click')
       await flushPromises()
@@ -195,11 +211,11 @@ describe('NextActionOffers', () => {
     it('can be retried after the confirmation is declined', async () => {
       confirmMock.mockResolvedValue(false)
       const w = mountOffers([{ ...actOffer, confirm: true }])
-      await w.find('.btn-primary').trigger('click')
+      await w.find('.rl-button--primary').trigger('click')
       await flushPromises()
 
       confirmMock.mockResolvedValue(true)
-      await w.find('.btn-primary').trigger('click')
+      await w.find('.rl-button--primary').trigger('click')
       await flushPromises()
 
       expect(mockRunAction).toHaveBeenCalledTimes(1)
@@ -210,7 +226,7 @@ describe('NextActionOffers', () => {
     it('follows a redirect the script returned', async () => {
       mockRunAction.mockResolvedValue({ redirect: '/entity/task/TASK-2' })
       const w = mountOffers([actOffer])
-      await w.find('.btn-primary').trigger('click')
+      await w.find('.rl-button--primary').trigger('click')
       await flushPromises()
 
       expect(routerPush).toHaveBeenCalledWith('/entity/task/TASK-2')
@@ -220,7 +236,7 @@ describe('NextActionOffers', () => {
     it('survives a failing action', async () => {
       mockRunAction.mockRejectedValue(new Error('boom'))
       const w = mountOffers([actOffer])
-      await w.find('.btn-primary').trigger('click')
+      await w.find('.rl-button--primary').trigger('click')
       await flushPromises()
 
       expect(w.text()).toContain('Regenerate')
@@ -242,10 +258,10 @@ describe('NextActionOffers', () => {
     it('renders no action button without an entity id', () => {
       const w = mount(NextActionOffers, {
         props: { offers: [actOffer] },
-        global: { stubs },
+        global: globalMount,
       })
 
-      expect(w.find('.btn-primary').exists()).toBe(false)
+      expect(w.find('.rl-button--primary').exists()).toBe(false)
     })
   })
 
@@ -272,7 +288,7 @@ describe('NextActionOffers', () => {
     it('links each option to its entity', () => {
       const w = mountOffers([pickOffer], { '0': [{ entity_id: 'T-9', label: 'One' }] })
 
-      expect(w.find('.rela-na-pick').attributes('to')).toBe('/entity/T-9')
+      expect(w.find('.rela-na-pick').attributes('href')).toBe('/entity/T-9')
     })
 
     // An empty option row is worse than no affordance: it says "choose" and

@@ -571,6 +571,20 @@ jobs:
       - name: Build
         run: npm run build
 
+      # The component library is an npm workspace (frontend/packages). Its
+      # guards and story tests run here; its stories run in a real browser.
+      - name: Component library checks
+        working-directory: frontend/packages/rela-components
+        run: npx vue-tsc -b && npm run check
+
+      - name: Install Playwright browser (component library)
+        working-directory: frontend/packages/rela-components
+        run: npx playwright install --with-deps chromium
+
+      - name: Component library tests
+        working-directory: frontend/packages/rela-components
+        run: npm test
+
       - name: Work tree clean after build
         # Whole-repo tripwire: fails when any step of this job modified
         # tracked files or left untracked files behind (e.g. the vue-tsc

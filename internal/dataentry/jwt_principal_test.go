@@ -16,6 +16,8 @@ type stubVerifier struct {
 	subject    string
 	orgID      string
 	orgSlug    string
+	orgName    string
+	email      string
 	roles      []string
 	// principalType and scopes drive client attenuation (TKT-IAC8TX).
 	principalType string
@@ -30,6 +32,8 @@ func (s stubVerifier) VerifyAssertion(_ context.Context, raw string) (AssertedId
 		Subject:       s.subject,
 		OrgID:         s.orgID,
 		OrgSlug:       s.orgSlug,
+		OrgName:       s.orgName,
+		Email:         s.email,
 		Roles:         s.roles,
 		PrincipalType: s.principalType,
 		Scopes:        s.scopes,

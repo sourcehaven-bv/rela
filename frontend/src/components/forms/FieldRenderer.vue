@@ -78,38 +78,47 @@ const currentValue = computed(() => (props.value == null ? '' : String(props.val
     :label-position="isCheckbox ? 'after' : 'before'"
     :span="field.span"
   >
-    <StatusControl
-      v-if="isMachineField"
-      :model-value="currentValue"
-      :property="field.property || ''"
-      :entity-type="entityType"
-      :transitions="transitionOptions || []"
-      :disabled="readonly"
-      @update:model-value="emit('update', $event)"
-    />
-    <component
-      :is="widgetComponent"
-      v-else
-      :id="fieldId"
-      :model-value="value"
-      :mode="'edit'"
-      :property-def="propertyDef"
-      :property-name="field.property"
-      :disabled="readonly"
-      :required="propertyDef?.required"
-      :error="error"
-      :placeholder="placeholder"
-      :help="help"
-      :option-verdicts="optionVerdicts"
-      :transitions="field.transitions"
-      :attachments="attachments"
-      :staged-files="stagedFiles"
-      :max="max"
-      :entity-type="entityType"
-      :entity-id="entityId"
-      @update:model-value="emit('update', $event)"
-      @attachment-changed="emit('attachment-changed')"
-      @update:staged-files="emit('update:staged-files', $event)"
-    />
+    <!--
+      `control` carries the shell's describedby/invalid wiring. Forwarded to the
+      widget so it can put them on the element it actually renders -- the shell
+      cannot reach across the component boundary to do it.
+    -->
+    <template #default="control">
+      <StatusControl
+        v-if="isMachineField"
+        :model-value="currentValue"
+        :property="field.property || ''"
+        :entity-type="entityType"
+        :transitions="transitionOptions || []"
+        :disabled="readonly"
+        @update:model-value="emit('update', $event)"
+      />
+      <component
+        :is="widgetComponent"
+        v-else
+        :id="fieldId"
+        :described-by="control.describedBy"
+        :invalid="control.invalid"
+        :model-value="value"
+        :mode="'edit'"
+        :property-def="propertyDef"
+        :property-name="field.property"
+        :disabled="readonly"
+        :required="propertyDef?.required"
+        :error="error"
+        :placeholder="placeholder"
+        :help="help"
+        :option-verdicts="optionVerdicts"
+        :transitions="field.transitions"
+        :attachments="attachments"
+        :staged-files="stagedFiles"
+        :max="max"
+        :entity-type="entityType"
+        :entity-id="entityId"
+        @update:model-value="emit('update', $event)"
+        @attachment-changed="emit('attachment-changed')"
+        @update:staged-files="emit('update:staged-files', $event)"
+      />
+    </template>
   </FieldShell>
 </template>

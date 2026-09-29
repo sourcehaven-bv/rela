@@ -166,4 +166,33 @@ describe('listAllEntities', () => {
     expect(res.meta.has_more).toBe(true)
     expect(res.meta.total).toBe(9999)
   })
+
+  it('stops at maxRows and trims the last page, reporting the rest as has_more', async () => {
+    let n = 0
+    getMock.mockImplementation(async () => {
+      const first = n
+      n += 3
+      return page([1, 2, 3].map((i) => makeEntity(`T-${first + i}`)), {
+        total: 20,
+        page: first / 3 + 1,
+        has_more: true,
+      })
+    })
+
+    const res = await listAllEntities('ticket', undefined, undefined, { maxRows: 5 })
+
+    expect(getMock).toHaveBeenCalledTimes(2)
+    expect(res.data.map((e) => e.id)).toEqual(['T-1', 'T-2', 'T-3', 'T-4', 'T-5'])
+    expect(res.meta.has_more).toBe(true)
+    expect(res.meta.total).toBe(20)
+  })
+
+  it('reports a set that fits maxRows exactly as complete', async () => {
+    getMock.mockResolvedValueOnce(page([makeEntity('T-1'), makeEntity('T-2')], { total: 2 }))
+
+    const res = await listAllEntities('ticket', undefined, undefined, { maxRows: 2 })
+
+    expect(res.data).toHaveLength(2)
+    expect(res.meta.has_more).toBe(false)
+  })
 })

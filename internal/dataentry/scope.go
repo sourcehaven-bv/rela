@@ -42,6 +42,13 @@ type ScopeDescriptor struct {
 	// not_in_scope. Empty means the default, which is correct for a list
 	// that named no scope.
 	QueryScope string `json:"query_scope,omitempty"`
+
+	// ScopePage, ScopeTab and Anchor carry the entity-page tab a list was
+	// shown in (pagescope.go), for the same reason as QueryScope: prev/next
+	// walks the rows the tab showed, not the whole type. All three or none.
+	ScopePage string `json:"scope_page,omitempty"`
+	ScopeTab  string `json:"scope_tab,omitempty"`
+	Anchor    string `json:"anchor,omitempty"`
 }
 
 // knownScopeSources gates Source. Extending scope to a new origin is a
@@ -85,6 +92,11 @@ func scopeFromParam(raw string, meta entityTypeChecker) (scope ScopeDescriptor, 
 	case "search":
 		if strings.TrimSpace(d.Q) == "" {
 			return ScopeDescriptor{}, false, "scope q is required for search"
+		}
+		// The search pipeline does not narrow to a page tab, so it would
+		// walk more rows than the tab showed. A tab sends source "list".
+		if d.ScopePage != "" || d.ScopeTab != "" || d.Anchor != "" {
+			return ScopeDescriptor{}, false, "a page scope needs source list"
 		}
 	}
 	if d.Type != "" && !meta.HasEntityType(d.Type) {
@@ -161,6 +173,13 @@ func (d ScopeDescriptor) toQuery() url.Values {
 	}
 	if d.QueryScope != "" {
 		q.Set(QueryScopeParam, d.QueryScope)
+	}
+	// Set when any is present, so a half-named page scope reaches
+	// resolvePageScope and is refused there instead of widening the set.
+	if d.ScopePage != "" || d.ScopeTab != "" || d.Anchor != "" {
+		q.Set(scopePageParam, d.ScopePage)
+		q.Set(scopeTabParam, d.ScopeTab)
+		q.Set(scopeAnchorParam, d.Anchor)
 	}
 	return q
 }

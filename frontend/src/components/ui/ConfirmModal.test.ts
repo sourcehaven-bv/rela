@@ -1,144 +1,151 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
-import type { VueWrapper } from '@vue/test-utils'
 import ConfirmModal from './ConfirmModal.vue'
+import { _resetModalStack, isAnyModalOpen } from '@/composables/modalStack'
 
-// The modal uses <Teleport to="body">, so mounted DOM lives on document.body,
-// not inside wrapper.element. Tests query the real DOM and dispatch native
-// events; assertions on emits still go through the wrapper.
+/**
+ * ConfirmModal is an adapter over `RlConfirmDialog` (rela-components). These
+ * assert the CONTRACT `useConfirm()` depends on — what renders, what is
+ * emitted, where focus goes — rather than the markup underneath, which now
+ * belongs to the library and is its to change.
+ *
+ * The dialog teleports to `<body>`, so DOM queries go through the document
+ * and assertions on emits go through the wrapper.
+ */
 
 describe('ConfirmModal', () => {
   beforeEach(() => {
+    _resetModalStack()
     document.body.innerHTML = ''
   })
 
   afterEach(() => {
+    _resetModalStack()
     document.body.innerHTML = ''
+    vi.useRealTimers()
   })
 
-  function factory(
-    props: Record<string, unknown> = {},
-    slots: Record<string, string> = {}
-  ): VueWrapper {
+  // Annotated so `setProps` keeps the component's prop types; an inferred
+  // return from a generic factory widens them away.
+  type Wrapper = ReturnType<typeof mount<typeof ConfirmModal>>
+
+  function factory(props: Record<string, unknown> = {}): Wrapper {
     return mount(ConfirmModal, {
       props: {
         open: true,
         title: 'Test',
         ...props,
       },
-      slots,
       attachTo: document.body,
     })
   }
 
-  function overlay(): HTMLElement {
-    const el = document.querySelector<HTMLElement>('.modal-overlay')
-    if (!el) throw new Error('modal-overlay not in DOM')
+  function dialog(): HTMLElement {
+    const el = document.querySelector<HTMLElement>('[role="alertdialog"]')
+    if (!el) throw new Error('confirm dialog not in DOM')
     return el
   }
 
+  /** [cancel, confirm] — DOM order, which is also the tab order. */
   function buttons(): HTMLButtonElement[] {
-    return Array.from(
-      document.querySelectorAll<HTMLButtonElement>('.modal-actions button')
-    )
+    return Array.from(dialog().querySelectorAll<HTMLButtonElement>('button'))
   }
 
   describe('rendering', () => {
     it('does not render when closed', () => {
       factory({ open: false })
-      expect(document.querySelector('.modal-overlay')).toBeNull()
+      expect(document.querySelector('[role="alertdialog"]')).toBeNull()
     })
 
-    it('renders when open', () => {
+    it('renders the title and message when open', () => {
       factory({ open: true, title: 'Delete Entity?', message: 'Are you sure?' })
-      expect(document.querySelector('.modal-overlay')).not.toBeNull()
-      expect(document.querySelector('h3')?.textContent).toBe('Delete Entity?')
-      expect(document.querySelector('p')?.textContent).toBe('Are you sure?')
+
+      expect(dialog().getAttribute('aria-modal')).toBe('true')
+      expect(dialog().textContent).toContain('Delete Entity?')
+      expect(dialog().textContent).toContain('Are you sure?')
     })
 
-    it('renders default slot content in place of message', () => {
-      factory(
-        { open: true, title: 'T', message: 'fallback' },
-        { default: '<strong>slot content</strong>' }
-      )
-      expect(document.querySelector('p strong')?.textContent).toBe('slot content')
+    it('omits the message paragraph when there is no message', () => {
+      factory({ open: true, title: 'Just a title' })
+      expect(dialog().querySelector('p')).toBeNull()
     })
 
-    it('omits paragraph when no message and no slot', () => {
-      factory({ open: true, title: 'T' })
-      expect(document.querySelector('.modal p')).toBeNull()
-    })
-
-    // A caller that lists items ("these fields will be cleared: …") separates
-    // them with newlines. Default `white-space` collapses those to spaces and
-    // the list renders as one run-on paragraph, which is unreadable exactly
-    // when the message matters most.
+    /**
+     * A caller may present a list ("these fields will be cleared"); without
+     * `pre-line` it collapses into one run-on paragraph. The rule is scoped
+     * from this component onto the library's paragraph, so it only applies if
+     * the class actually reaches through — which is what this really pins.
+     */
     it('marks the message so authored line breaks survive', () => {
-      factory({ open: true, title: 'T', message: 'line one\nline two' })
-      const p = document.querySelector('.modal p')
-      expect(p?.classList.contains('modal-message')).toBe(true)
-      expect(p?.textContent).toBe('line one\nline two')
+      factory({ open: true, message: 'One\nTwo' })
+
+      const paragraph = dialog().querySelector('.rl-confirm-dialog__description')
+      expect(paragraph).not.toBeNull()
+      expect(document.querySelector('.rela-confirm')).not.toBeNull()
     })
 
     it('uses default labels', () => {
       factory()
-      const b = buttons()
-      expect(b[0].textContent?.trim()).toBe('Cancel')
-      expect(b[1].textContent?.trim()).toBe('Confirm')
+      expect(buttons().map((b) => b.textContent?.trim())).toEqual([
+        'Cancel',
+        'Confirm',
+      ])
     })
 
     it('uses custom labels', () => {
       factory({ confirmLabel: 'Delete', cancelLabel: 'Keep' })
-      const b = buttons()
-      expect(b[0].textContent?.trim()).toBe('Keep')
-      expect(b[1].textContent?.trim()).toBe('Delete')
+      expect(buttons().map((b) => b.textContent?.trim())).toEqual([
+        'Keep',
+        'Delete',
+      ])
     })
 
-    it('applies btn-danger class when danger=true', () => {
-      factory({ danger: true })
-      const [, confirmButton] = buttons()
-      expect(confirmButton.classList.contains('btn-danger')).toBe(true)
-      expect(confirmButton.classList.contains('btn-primary')).toBe(false)
-    })
+    /**
+     * `danger` used to pick a `btn-danger` class. It now selects the library's
+     * danger TONE, so the assertion is that the two states differ and that the
+     * dialog says which it is — not the name of a class rela no longer owns.
+     */
+    it('distinguishes a destructive confirm from a neutral one', () => {
+      const dangerous = factory({ danger: true })
+      const dangerClasses = buttons()[1].className
+      dangerous.unmount()
+      document.body.innerHTML = ''
 
-    it('applies btn-primary class when danger=false', () => {
       factory({ danger: false })
-      const [, confirmButton] = buttons()
-      expect(confirmButton.classList.contains('btn-primary')).toBe(true)
-      expect(confirmButton.classList.contains('btn-danger')).toBe(false)
+      expect(buttons()[1].className).not.toBe(dangerClasses)
     })
   })
 
   describe('focus behavior', () => {
-    it('focuses Cancel button on open', async () => {
-      const wrapper = mount(ConfirmModal, {
+    /**
+     * Cancel, not Confirm: a stray Enter or Space on an alertdialog must not
+     * perform the destructive action. Mirrors `window.confirm`.
+     */
+    it('focuses Cancel on open', async () => {
+      const wrapper: Wrapper = mount(ConfirmModal, {
         props: { open: false, title: 'T' },
         attachTo: document.body,
       })
       await wrapper.setProps({ open: true })
       await flushPromises()
 
-      const [cancelButton] = buttons()
-      expect(document.activeElement).toBe(cancelButton)
+      expect(document.activeElement).toBe(buttons()[0])
       wrapper.unmount()
     })
 
-    it('restores previously focused element on close', async () => {
+    it('restores the previously focused element on close', async () => {
       const trigger = document.createElement('button')
-      trigger.textContent = 'Open'
       document.body.appendChild(trigger)
       trigger.focus()
-      expect(document.activeElement).toBe(trigger)
 
-      const wrapper = mount(ConfirmModal, {
+      const wrapper: Wrapper = mount(ConfirmModal, {
         props: { open: false, title: 'T' },
         attachTo: document.body,
       })
 
       await wrapper.setProps({ open: true })
       await flushPromises()
-      const [cancelButton] = buttons()
-      expect(document.activeElement).toBe(cancelButton)
+      expect(document.activeElement).toBe(buttons()[0])
 
       await wrapper.setProps({ open: false })
       await flushPromises()
@@ -149,87 +156,143 @@ describe('ConfirmModal', () => {
   })
 
   describe('emits', () => {
-    it('emits confirm when confirm button clicked', () => {
+    it('emits confirm when the confirm button is clicked', () => {
       const wrapper = factory()
       buttons()[1].click()
       expect(wrapper.emitted('confirm')).toHaveLength(1)
     })
 
-    it('emits cancel when cancel button clicked', () => {
+    it('emits cancel when the cancel button is clicked', () => {
       const wrapper = factory()
       buttons()[0].click()
       expect(wrapper.emitted('cancel')).toHaveLength(1)
     })
 
-    it('emits cancel on overlay click', () => {
+    it('emits cancel on a scrim click', () => {
       const wrapper = factory()
-      // Click with target === currentTarget (bare overlay click, not bubbled)
-      overlay().dispatchEvent(new MouseEvent('click', { bubbles: true }))
+
+      const scrim = document.querySelector<HTMLElement>('.rl-modal__scrim')!
+      scrim.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+
       expect(wrapper.emitted('cancel')).toHaveLength(1)
     })
 
-    it('does not emit cancel when clicking inside modal content', () => {
+    it('does not emit cancel when the click is inside the dialog', () => {
       const wrapper = factory()
-      const modal = document.querySelector<HTMLElement>('.modal')!
-      modal.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      dialog().dispatchEvent(new MouseEvent('click', { bubbles: true }))
       expect(wrapper.emitted('cancel')).toBeUndefined()
     })
 
-    it('emits cancel on Escape keydown', () => {
+    /** Escape is handled on the document now, by the shared overlay stack. */
+    it('emits cancel on Escape', () => {
       const wrapper = factory()
-      overlay().dispatchEvent(
+
+      document.dispatchEvent(
         new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })
       )
+
       expect(wrapper.emitted('cancel')).toHaveLength(1)
     })
 
-    it('stops propagation of Escape keydown', () => {
-      factory()
-      const event = new KeyboardEvent('keydown', {
-        key: 'Escape',
-        bubbles: true,
-        cancelable: true,
-      })
-      const stopSpy = vi.spyOn(event, 'stopPropagation')
-      overlay().dispatchEvent(event)
-      expect(stopSpy).toHaveBeenCalled()
-    })
-
-    it('does not emit cancel for non-Escape keys', () => {
+    it('does not emit cancel for other keys', () => {
       const wrapper = factory()
-      overlay().dispatchEvent(
+
+      document.dispatchEvent(
         new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })
       )
+
       expect(wrapper.emitted('cancel')).toBeUndefined()
     })
   })
 
   describe('busy state', () => {
-    it('disables both buttons when busy=true', () => {
+    /**
+     * `aria-disabled`, not native `disabled`, on the primary action: native
+     * disabled drops focus to `<body>` mid-interaction and strands a keyboard
+     * user on the control they just pressed (RR-R5VL59).
+     *
+     * Cancel stays focusable and keeps its enabled appearance; the library
+     * suppresses the action itself while `confirming`, which the behavioural
+     * cases below assert. So this checks the confirm button's contract and
+     * leaves "can you still cancel" to the emit tests, where it is observable.
+     */
+    it('marks the confirm action busy without stranding focus', () => {
       factory({ busy: true })
-      const b = buttons()
-      expect(b[0].disabled).toBe(true)
-      expect(b[1].disabled).toBe(true)
+      const [, confirm] = buttons()
+
+      expect(confirm.getAttribute('aria-disabled')).toBe('true')
+      expect(confirm.getAttribute('aria-busy')).toBe('true')
     })
 
-    it('shows loading label on confirm button when busy', () => {
-      factory({ busy: true, confirmLabel: 'Delete' })
-      const [, confirmButton] = buttons()
-      expect(confirmButton.textContent?.trim()).toBe('Delete\u2026')
-    })
-
-    it('does not emit cancel on overlay click while busy', () => {
+    it('does not emit confirm from a click while busy', () => {
       const wrapper = factory({ busy: true })
-      overlay().dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      buttons()[1].click()
+      expect(wrapper.emitted('confirm')).toBeUndefined()
+    })
+
+    it('does not emit cancel from the cancel button while busy', () => {
+      const wrapper = factory({ busy: true })
+      buttons()[0].click()
+      expect(wrapper.emitted('cancel')).toBeUndefined()
+    })
+
+    it('does not emit cancel on a scrim click while busy', () => {
+      const wrapper = factory({ busy: true })
+
+      const scrim = document.querySelector<HTMLElement>('.rl-modal__scrim')!
+      scrim.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+
       expect(wrapper.emitted('cancel')).toBeUndefined()
     })
 
     it('does not emit cancel on Escape while busy', () => {
       const wrapper = factory({ busy: true })
-      overlay().dispatchEvent(
+
+      document.dispatchEvent(
         new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })
       )
+
       expect(wrapper.emitted('cancel')).toBeUndefined()
     })
+
+    /**
+     * The label swap is GATED, where this component used to swap instantly.
+     * rela's own rule is "never wire an indicator straight to a boolean" — a
+     * 40ms request should flash nothing at all — and the library applies the
+     * same 500ms delay rela uses for an explicit action.
+     */
+    it('holds the resting label through a fast action', async () => {
+      vi.useFakeTimers()
+      const wrapper: Wrapper = mount(ConfirmModal, {
+        props: { open: true, title: 'T', confirmLabel: 'Delete', busy: false },
+        attachTo: document.body,
+      })
+
+      await wrapper.setProps({ busy: true })
+      vi.advanceTimersByTime(100)
+      await flushPromises()
+
+      expect(buttons()[1].textContent?.trim()).toBe('Delete')
+      wrapper.unmount()
+    })
+  })
+
+  /**
+   * rela's modal stack is a separate registry from the library's overlay
+   * stack: `isAnyModalOpen()` is what suppresses global keyboard shortcuts.
+   */
+  it('registers with rela’s modal stack while open', async () => {
+    const wrapper: Wrapper = mount(ConfirmModal, {
+      props: { open: false, title: 'T' },
+      attachTo: document.body,
+    })
+    expect(isAnyModalOpen()).toBe(false)
+
+    await wrapper.setProps({ open: true })
+    expect(isAnyModalOpen()).toBe(true)
+
+    await wrapper.setProps({ open: false })
+    expect(isAnyModalOpen()).toBe(false)
+    wrapper.unmount()
   })
 })

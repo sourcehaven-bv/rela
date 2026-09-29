@@ -3,7 +3,7 @@
  * The page-level next-action surface: ONE suggestion, or nothing.
  *
  * Renders only the `banner` and `notice` prominences — the tiers that belong
- * on the page. A `statusbar` suggestion is rendered by StatusBar instead, so
+ * on the page. A `statusbar` suggestion is rendered by SidebarFooter instead, so
  * this component stays empty for it rather than duplicating the slot.
  *
  * When nothing is owed it renders NOTHING: no empty state, no "you're all
@@ -68,8 +68,8 @@ watch(
  * layout: a bounded "card" variant was removed because it and the banner were
  * cleared by the same shrug — two spellings of one interruption model.
  *
- * Tokens are the app's own (--card-bg, --border-color, --accent-color,
- * --muted-text, --radius-lg, --font-size-*). An earlier pass invented names
+ * Tokens are the app's own (--rl-color-bg-raised, --rl-color-border, --rl-color-accent,
+ * --rl-color-text-muted, --radius-lg, --font-size-*). An earlier pass invented names
  * like --space-4 and --color-primary that do not exist in this codebase, so
  * every rule silently ran on its fallback and nothing lined up with the
  * surrounding UI.
@@ -96,10 +96,10 @@ watch(
    would make a suggestion read as an error. The band chip carries the colour;
    the border just says "this one matters". */
 .na--banner {
-  border: 1px solid var(--accent-color);
+  border: 1px solid var(--rl-color-accent);
   border-radius: var(--radius-lg);
   padding: 16px;
-  background: var(--card-bg);
+  background: var(--rl-color-bg-raised);
 }
 
 .na--banner .na__message {
@@ -117,14 +117,14 @@ watch(
   gap: 12px;
   flex-wrap: wrap;
   padding: 8px 0 12px;
-  border-bottom: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--rl-color-border);
 }
 
 .na--notice .na__message {
   margin: 0;
   flex: 1 1 auto;
   min-width: 240px;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   font-size: var(--font-size-base);
 }
 
@@ -135,7 +135,7 @@ watch(
   margin-bottom: 8px;
   padding: 2px 8px;
   border-radius: var(--radius-sm);
-  background: var(--accent-color);
+  background: var(--rl-color-accent);
   color: white;
   font-size: var(--font-size-xs);
   font-weight: 500;

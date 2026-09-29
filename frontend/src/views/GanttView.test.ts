@@ -135,6 +135,20 @@ describe('GanttView fetch policy', () => {
     w.unmount()
   })
 
+  // An entity page's timeline tab pins the chart to its anchor (`scope: root`).
+  // The URL's drill path then continues below the anchor, never above it.
+  it('pins a root: fetches its subtree and keeps it out of ?path=', async () => {
+    getGanttMock.mockResolvedValue({ roots: [node('B', [node('C', [node('D')])])], truncated: false })
+    const w = mount(GanttView, { props: { id: 'plan', root: 'B' } })
+    await flushPromises()
+    expect(getGanttMock).toHaveBeenLastCalledWith('plan', 'B')
+    expect(w.find('.crumb').text()).not.toBe('All work')
+
+    await w.find('[data-node-id="C"] .bar').trigger('click')
+    expect(routeQuery.value.path).toBe('C')
+    w.unmount()
+  })
+
   it('clicking the drilled root opens the entity instead of growing the path', async () => {
     getGanttMock.mockResolvedValue(forest(false))
     const w = mountGantt()

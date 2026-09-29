@@ -18,6 +18,8 @@
  */
 import { computed, ref, onBeforeUnmount } from 'vue'
 import type { ViewSectionCreate, ViewSectionCreateTarget } from '@/api/views'
+import RlButton from 'rela-components/components/common/RlButton.vue'
+import RlIcon from 'rela-components/components/common/RlIcon.vue'
 
 const props = defineProps<{
   create?: ViewSectionCreate
@@ -63,26 +65,24 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick, tru
 
 <template>
   <div v-if="targets.length > 0" ref="root" class="section-create">
-    <button
-      v-if="single"
-      type="button"
-      class="btn-section-create"
-      @click="choose(single)"
-    >
-      + {{ single.label }}
-    </button>
+    <RlButton v-if="single" variant="secondary" size="sm" icon="plus" @click="choose(single)">
+      {{ single.label }}
+    </RlButton>
 
     <template v-else>
-      <button
-        type="button"
-        class="btn-section-create"
+      <RlButton
+        variant="secondary"
+        size="sm"
+        icon="plus"
         :aria-expanded="open"
         aria-haspopup="menu"
         @click="toggle"
       >
-        + {{ menuLabel || 'New' }}
-        <span class="caret" aria-hidden="true">▾</span>
-      </button>
+        {{ menuLabel || 'New' }}
+        <template #trailing>
+          <RlIcon name="chevron-down" :size="14" aria-hidden="true" />
+        </template>
+      </RlButton>
       <div v-if="open" class="create-menu" role="menu">
         <button
           v-for="target in targets"
@@ -105,36 +105,6 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick, tru
   display: inline-block;
 }
 
-.btn-section-create {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-xs);
-  padding: var(--space-xs) var(--space-sm);
-  font-size: var(--font-size-sm);
-  color: var(--text-secondary);
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
-  cursor: pointer;
-}
-
-.btn-section-create:hover {
-  color: var(--text-primary);
-  border-color: var(--accent-color);
-}
-
-.btn-section-create:focus-visible {
-  outline: none;
-  box-shadow:
-    0 0 0 2px var(--focus-ring-gap),
-    0 0 0 4px var(--focus-ring);
-}
-
-.caret {
-  font-size: var(--font-size-sm);
-  line-height: 1;
-}
-
 .create-menu {
   position: absolute;
   right: 0;
@@ -143,7 +113,7 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick, tru
   margin-top: var(--space-xs);
   padding: var(--space-xs);
   background: var(--bg-primary);
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--rl-color-border);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-md);
 }
@@ -168,7 +138,7 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick, tru
 .create-menu-item:focus-visible {
   outline: none;
   box-shadow:
-    0 0 0 2px var(--focus-ring-gap),
-    0 0 0 4px var(--focus-ring);
+    0 0 0 2px var(--rl-color-bg),
+    0 0 0 4px var(--rl-color-focus);
 }
 </style>

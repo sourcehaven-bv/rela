@@ -945,6 +945,9 @@ func NewApp(
 	if err != nil {
 		return nil, err
 	}
+	if avatarErr := checkAvatarUserType(cfg.Account, aclImpl, meta); avatarErr != nil {
+		return nil, fmt.Errorf("invalid %s: %w", ConfigFile, avatarErr)
+	}
 
 	entCount, _ := st.CountEntities(context.Background(), store.EntityQuery{})
 	relCount, _ := st.CountRelations(context.Background(), store.RelationQuery{})
@@ -1300,6 +1303,7 @@ func loadConfig(cfgData []byte, meta *metamodel.Metamodel, root string) (*Config
 	// report nothing, turning a typo into silently different behavior.
 	dataentryconfig.NormalizeCalendars(&cfg)
 	dataentryconfig.NormalizeGantts(&cfg)
+	dataentryconfig.NormalizeListGroupBy(&cfg)
 
 	// Verify action scripts exist on disk (catches typos at startup).
 	// Skip set-only actions which have no script.

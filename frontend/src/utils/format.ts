@@ -114,7 +114,7 @@ export function localInputToUtcISO(local: string | null | undefined, tz: string)
 // same zone the edit widget uses via utcISOToLocalInput — so viewing and
 // editing agree (RR-P9NKU7). A value WITH a zone marker is an absolute
 // instant and resolves identically however it is parsed.
-const NAIVE_DATETIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?$/
+export const NAIVE_DATETIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?$/
 
 export function formatDatetime(value: string, tz: string, locale?: string): string | null {
   // Parse a naive value as wall-clock in `tz`; parse a zoned/absolute value

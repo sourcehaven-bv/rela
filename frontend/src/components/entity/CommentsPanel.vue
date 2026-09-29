@@ -11,6 +11,7 @@ import {
 import { getErrorMessage } from '@/api/errors'
 import { useConfirm } from '@/composables/useConfirm'
 import SuggestionDiff from './SuggestionDiff.vue'
+import RlButton from 'rela-components/components/common/RlButton.vue'
 
 /**
  * The entity's comment thread (TKT-FIO205, stage 1).
@@ -266,8 +267,8 @@ watch(
           <div v-if="editingId === comment.id" class="comment-edit">
             <textarea v-model="editBody" class="comment-input" rows="3" />
             <div class="comment-actions">
-              <button class="btn btn-sm btn-primary" @click="saveEdit(comment)">Save</button>
-              <button class="btn btn-sm btn-secondary" @click="cancelEdit">Cancel</button>
+              <RlButton variant="primary" size="sm" @click="saveEdit(comment)">Save</RlButton>
+              <RlButton variant="secondary" size="sm" @click="cancelEdit">Cancel</RlButton>
             </div>
           </div>
 
@@ -279,34 +280,39 @@ watch(
             />
             <p class="comment-body">{{ comment.body }}</p>
             <div class="comment-actions">
-              <button
+              <RlButton
                 v-if="comment.acceptable && canAccept"
-                class="btn btn-sm btn-primary"
+                variant="primary"
+                size="sm"
                 @click="emit('accept', comment)"
               >
                 Accept
-              </button>
-              <button
+              </RlButton>
+              <RlButton
                 v-if="comment.editable"
-                class="btn btn-sm btn-secondary"
+                variant="secondary"
+                size="sm"
                 @click="toggleResolved(comment)"
               >
                 {{ comment.resolved ? 'Reopen' : 'Resolve' }}
-              </button>
-              <button
+              </RlButton>
+              <RlButton
                 v-if="comment.editable"
-                class="btn btn-sm btn-secondary"
+                variant="secondary"
+                size="sm"
                 @click="startEdit(comment)"
               >
                 Edit
-              </button>
-              <button
+              </RlButton>
+              <RlButton
                 v-if="comment.deletable"
-                class="btn btn-sm btn-danger"
+                variant="secondary"
+                size="sm"
+                tone="danger"
                 @click="remove(comment)"
               >
                 Delete
-              </button>
+              </RlButton>
             </div>
           </template>
         </li>
@@ -329,13 +335,16 @@ watch(
           placeholder="Add a comment…"
           aria-label="Comment body"
         />
-        <button
+        <RlButton
           type="submit"
-          class="btn btn-sm btn-primary"
-          :disabled="submitting || !newBody.trim() || !newAnchorKey"
+          variant="primary"
+          size="sm"
+          :loading="submitting"
+          pending-label="Adding…"
+          :disabled="!newBody.trim() || !newAnchorKey"
         >
-          {{ submitting ? 'Adding…' : 'Add comment' }}
-        </button>
+          Add comment
+        </RlButton>
       </form>
     </template>
   </section>
@@ -343,8 +352,8 @@ watch(
 
 <style scoped>
 .comments-panel {
-  background: var(--card-bg);
-  border: 1px solid var(--border-color);
+  background: var(--rl-color-bg-raised);
+  border: 1px solid var(--rl-color-border);
   border-radius: 8px;
   margin-bottom: 24px;
   overflow: hidden;
@@ -355,7 +364,7 @@ watch(
   align-items: center;
   gap: 10px;
   padding: 16px 24px;
-  border-bottom: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--rl-color-border);
   cursor: pointer;
   user-select: none;
 }
@@ -363,12 +372,12 @@ watch(
 .panel-header:focus-visible {
   outline: none;
   box-shadow:
-    0 0 0 2px var(--focus-ring-gap),
-    0 0 0 4px var(--focus-ring);
+    0 0 0 2px var(--rl-color-bg),
+    0 0 0 4px var(--rl-color-focus);
 }
 
 .chev {
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   font-size: var(--font-size-sm);
 }
 
@@ -377,13 +386,13 @@ watch(
 .panel-summary {
   margin-left: auto;
   font-size: var(--font-size-sm);
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
 }
 
 .panel-header h2 {
   margin: 0;
   font-size: 18px;
-  color: var(--text-color);
+  color: var(--rl-color-text);
   display: flex;
   align-items: center;
   gap: 12px;
@@ -394,18 +403,18 @@ watch(
   font-weight: 500;
   padding: 2px 8px;
   border-radius: 10px;
-  background: var(--accent-color);
+  background: var(--rl-color-accent);
   color: var(--accent-contrast-text, #fff);
 }
 
 .comments-state {
   padding: 16px 24px;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   font-size: 14px;
 }
 
 .comments-error {
-  color: var(--error-color, #c00);
+  color: var(--rl-color-danger, #c00);
 }
 
 .comment-list {
@@ -416,7 +425,7 @@ watch(
 
 .comment {
   padding: 16px 24px;
-  border-bottom: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--rl-color-border);
 }
 
 .comment-resolved {
@@ -429,7 +438,7 @@ watch(
   flex-wrap: wrap;
   gap: 8px;
   font-size: 12px;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   margin-bottom: 8px;
 }
 
@@ -437,27 +446,27 @@ watch(
   font-family: var(--mono-font, monospace);
   padding: 2px 6px;
   border-radius: 4px;
-  background: var(--input-bg);
-  color: var(--text-color);
+  background: var(--rl-color-bg-raised);
+  color: var(--rl-color-text);
 }
 
 .comment-detached {
   padding: 2px 6px;
   border-radius: 4px;
-  background: var(--warning-color, #b58900);
+  background: var(--rl-color-status-amber, #b58900);
   color: #fff;
 }
 
 .comment-author {
   font-weight: 600;
-  color: var(--text-color);
+  color: var(--rl-color-text);
 }
 
 .comment-body {
   margin: 0 0 8px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  color: var(--text-color);
+  color: var(--rl-color-text);
 }
 
 .comment-actions {
@@ -470,17 +479,17 @@ watch(
   flex-direction: column;
   gap: 8px;
   padding: 16px 24px;
-  border-top: 1px solid var(--border-color);
+  border-top: 1px solid var(--rl-color-border);
 }
 
 .comment-input,
 .anchor-select {
   width: 100%;
   padding: 8px 12px;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--rl-color-border);
   border-radius: 6px;
-  background: var(--input-bg);
-  color: var(--text-color);
+  background: var(--rl-color-bg-raised);
+  color: var(--rl-color-text);
   font-size: 14px;
   font-family: inherit;
 }
@@ -488,17 +497,16 @@ watch(
 .comment-input:focus,
 .anchor-select:focus {
   outline: none;
-  border-color: var(--accent-color);
+  border-color: var(--rl-color-accent);
   box-shadow:
-    0 0 0 2px var(--focus-ring-gap),
-    0 0 0 4px var(--focus-ring);
+    0 0 0 2px var(--rl-color-bg),
+    0 0 0 4px var(--rl-color-focus);
 }
 
-/* `.btn`, `.btn-sm` and the variants are global (unscoped, App.vue) — only the
- * panel-specific placement is declared here. Redeclaring them scoped would
- * compile to a [data-v-*] selector that outranks and silently forks the themed
- * originals. */
-.comment-form .btn {
+/* The button is an RlButton; only its placement in this panel is declared
+ * here. `:deep` because the library's own styles are scoped, so a bare
+ * `.rl-button` would carry this component's data attribute and match nothing. */
+.comment-form :deep(.rl-button) {
   align-self: flex-start;
 }
 </style>

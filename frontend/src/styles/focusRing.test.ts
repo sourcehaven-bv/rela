@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
-// TKT-FRING7. Focus rings are `var(--focus-ring)`, never a hardcoded colour.
+// TKT-FRING7. Focus rings are `var(--rl-color-focus)`, never a hardcoded colour.
 //
 // These are GREP tests over the source, deliberately, and it is worth saying
 // why rather than reaching for a mounted-component assertion: Vitest does not
@@ -95,7 +95,7 @@ describe('focus rings use the shared token', () => {
 
   // The error-state ring has the identical defect and was found BY the guard
   // above, not by the survey that scoped this ticket: six widgets drew
-  // `rgba(239, 68, 68, …)`, a red that is not --error-color (#e5484d /
+  // `rgba(239, 68, 68, …)`, a red that is not --rl-color-danger (#e5484d /
   // #f87171) and does not follow the theme.
   it('no rgba(239, 68, 68, …) error-ring literal remains', () => {
     const RED = /rgba?\(\s*239\s*,\s*68\s*,\s*68/

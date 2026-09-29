@@ -279,7 +279,7 @@ func (h *viewsHandler) buildSectionEntityData(
 		ID:            e.ID,
 		Title:         s.Meta.DisplayTitle(e.ID, e.Type, e.Properties),
 		Type:          e.Type,
-		EditFormID:    h.editFormForType(e.Type),
+		EditFormID:    editFormForType(h.schema().Cfg, e.Type),
 		Props:         h.affordances.copyVisibleProperties(ctx, e),
 		FieldVerdicts: h.affordances.computeFieldAffordances(ctx, e),
 		World:         w.provenanceFor(e),

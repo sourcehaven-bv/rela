@@ -12,15 +12,27 @@ import {
   useVisualViewportOffset,
 } from '@/composables'
 import { useConfirmHost } from '@/composables/useConfirm'
+import { useDetailPanelOutlet } from '@/composables/useDetailPanel'
+import { usePageHeaderOutlet } from '@/composables/usePageHeader'
 import { useBackTarget } from '@/composables/useBackTarget'
 import ActivityBar from '@/components/common/ActivityBar.vue'
+import RlAppShell from 'rela-components/components/layout/RlAppShell.vue'
+import RlPageHeader from 'rela-components/components/layout/RlPageHeader.vue'
+import RlViewTabs from 'rela-components/components/layout/RlViewTabs.vue'
+import SpaceCreateMenu from '@/components/common/SpaceCreateMenu.vue'
+import { useSpaceStore } from '@/stores/space'
+import { SIDEBAR_DEFAULT_WIDTH } from '@/stores/ui'
 import Sidebar from '@/components/common/Sidebar.vue'
-import StatusBar from '@/components/common/StatusBar.vue'
-import Toast from '@/components/common/Toast.vue'
+import SidebarFlyout from '@/components/flyout/SidebarFlyout.vue'
+import RlToastHost from 'rela-components/components/feedback/RlToastHost.vue'
+import { useToasts } from 'rela-components/components/feedback/useToasts'
 import ScriptErrorDialog from '@/components/common/ScriptErrorDialog.vue'
 import KeyboardShortcutsModal from '@/components/ui/KeyboardShortcutsModal.vue'
 import CommandPaletteModal from '@/components/ui/CommandPaletteModal.vue'
 import ConfirmModal from '@/components/ui/ConfirmModal.vue'
+import RlButton from 'rela-components/components/common/RlButton.vue'
+import RlStatusRegion from 'rela-components/components/feedback/RlStatusRegion.vue'
+import RlIconButton from 'rela-components/components/common/RlIconButton.vue'
 
 // Hamburger only shows on "top-level" screens — those routed directly from
 // the sidebar. Detail/edit/form/document/view screens render their own Back
@@ -37,12 +49,61 @@ import ConfirmModal from '@/components/ui/ConfirmModal.vue'
 const route = useRoute()
 const backTarget = useBackTarget()
 const NON_TOP_LEVEL_ROUTES = new Set(['form-create', 'form-edit'])
+/*
+ * The page header band. Hoisted out of the views so it spans the content and
+ * the panel both; the routed view still decides what goes in it. A screen
+ * that sets none renders no band at all, which is how every screen not yet
+ * migrated keeps its own in-view header.
+ */
+const pageHeader = usePageHeaderOutlet()
+const pageTabs = computed(() => {
+  const frame = pageHeader.frame.value
+  return frame && frame.tabs.length > 1 ? frame : null
+})
+// Gate 3 — hoisted header: RlPageHeader renders its own nav toggle, so a
+// screen that fills the header slot already has one and this button would
+// be a second hamburger sitting above it.
 const showHamburger = computed(
-  () => backTarget.value === null && !NON_TOP_LEVEL_ROUTES.has(route.name as string),
+  () =>
+    backTarget.value === null &&
+    !NON_TOP_LEVEL_ROUTES.has(route.name as string) &&
+    !pageHeader.present.value,
 )
 
 const schemaStore = useSchemaStore()
 const uiStore = useUIStore()
+// The one toast host. Every toast, whether raised through uiStore or straight
+// on the library queue, lands in this queue.
+const { toasts, dismiss: dismissToast } = useToasts()
+const spaceStore = useSpaceStore()
+
+/*
+ * The shell's drawer, bridged onto the store so every existing caller —
+ * Sidebar's own close, the keyboard shortcuts — still drives one piece of
+ * state. RlAppShell owns the scrim, the Escape handler and the scroll lock
+ * that rela used to hand-roll.
+ */
+const navOpen = computed({
+  get: () => uiStore.sidebarMobileOpen,
+  set: (open) => (open ? uiStore.openMobileSidebar() : uiStore.closeMobileSidebar()),
+})
+/*
+ * The detail panel beside a list. The routed view decides what goes in it
+ * (see useDetailPanel); the shell only renders what it is given, so a screen
+ * with no panel costs nothing here.
+ */
+const detailPanel = useDetailPanelOutlet()
+
+/*
+ * The dragged sidebar width. Unset on the collapsed rail, which has a fixed
+ * width and no handle. The frame carries the same token so the flyout layer
+ * starts where the dragged sidebar ends.
+ */
+const sidebarWidth = computed(() => (uiStore.sidebarCollapsed ? undefined : uiStore.sidebarWidth))
+const frameStyle = computed(() =>
+  sidebarWidth.value === undefined ? undefined : { '--rl-sidebar-width': `${sidebarWidth.value}px` },
+)
+
 const loading = ref(true)
 const error = ref<string | null>(null)
 
@@ -127,39 +188,116 @@ watch(
   -->
   <ActivityBar :active="navigationPending.isNavigating.value" />
 
-  <div v-if="loading" class="loading-screen">
-    <div class="spinner"/>
-    <p>Loading...</p>
+  <!--
+    The boot screens stand in for the whole app, so they get their own
+    full-viewport wrapper: RlStatusRegion grows to fill its parent, and at boot
+    there is no parent pane for it to fill.
+  -->
+  <div v-if="loading" class="boot-screen">
+    <RlStatusRegion>Loading...</RlStatusRegion>
   </div>
 
-  <div v-else-if="error" class="error-screen">
-    <h1>Error</h1>
-    <p>{{ error }}</p>
-    <button @click="schemaStore.reload()">Retry</button>
+  <div v-else-if="error" class="boot-screen">
+    <RlStatusRegion tone="error">
+      {{ error }}
+      <template #actions>
+        <RlButton variant="primary" @click="schemaStore.reload()">Retry</RlButton>
+      </template>
+    </RlStatusRegion>
   </div>
 
-  <div v-else class="app-layout">
-    <Sidebar />
-    <button
-      v-if="showHamburger"
-      class="mobile-menu-btn"
-      :aria-expanded="uiStore.sidebarMobileOpen"
-      aria-label="Toggle navigation"
-      aria-controls="main-sidebar"
-      @click="uiStore.sidebarMobileOpen ? uiStore.closeMobileSidebar() : uiStore.openMobileSidebar()"
+  <!--
+    The frame, around the shell rather than inside it, so the flyout layer
+    measures against the window: a layer inside the content would start
+    below whatever header the page puts above it, and the flyout would open
+    at a different height on each screen.
+  -->
+  <div
+    v-else
+    class="app-frame"
+    :class="{ 'app-frame--sidebar-collapsed': uiStore.sidebarCollapsed }"
+    :style="frameStyle"
+  >
+    <RlAppShell
+      v-model:nav-open="navOpen"
+      class="app-layout"
+      :sidebar-width="sidebarWidth"
+      :sidebar-default-width="SIDEBAR_DEFAULT_WIDTH"
+      :panel-open="detailPanel.open.value"
+      :panel-mode="detailPanel.mode.value"
+      @update:sidebar-width="uiStore.setSidebarWidth"
     >
-      ☰
-    </button>
-    <main class="main-content" :class="{ 'sidebar-collapsed': uiStore.sidebarCollapsed }">
+      <template #sidebar><Sidebar /></template>
+
+      <!--
+        The view supplies the title and the slot content; the shell decides how
+        the band looks and where it sits. Star and overflow menu are off because
+        rela has neither.
+      -->
+      <template v-if="pageHeader.present.value" #header>
+        <RlPageHeader
+          :title="pageHeader.title.value"
+          :show-star="false"
+          :show-menu="false"
+          @open-nav="navOpen = true"
+        >
+          <template v-if="pageHeader.menu.value" #menu>
+            <component :is="pageHeader.menu.value" />
+          </template>
+          <template v-if="pageHeader.badge.value" #status>
+            <component :is="pageHeader.badge.value" />
+          </template>
+          <!-- A page's tab bar (TKT-ITQ0HL). One tab left needs no bar. -->
+          <template v-if="pageTabs" #tabs>
+            <RlViewTabs
+              :tabs="pageTabs.tabs"
+              :model-value="pageTabs.active"
+              :show-add="false"
+              @update:model-value="pageTabs.select"
+            />
+          </template>
+          <template v-if="pageHeader.content.value?.actions || spaceStore.create.length" #actions>
+            <component :is="pageHeader.content.value.actions" v-if="pageHeader.content.value?.actions" />
+            <SpaceCreateMenu />
+          </template>
+          <template v-if="pageHeader.content.value?.tools" #tools>
+            <component :is="pageHeader.content.value.tools" />
+          </template>
+        </RlPageHeader>
+      </template>
+
+      <template v-if="detailPanel.content.value" #panel>
+        <component
+          :is="detailPanel.content.value.component"
+          v-bind="detailPanel.content.value.props"
+        />
+      </template>
+      <!--
+        The hamburger sits inside the shell's main pane rather than fixed to the
+        viewport: the shell owns the drawer, so the trigger belongs to the pane
+        the drawer covers.
+      -->
+      <RlIconButton
+        v-if="showHamburger"
+        class="mobile-menu-btn"
+        icon="menu"
+        label="Toggle navigation"
+        :aria-expanded="navOpen"
+        aria-controls="main-sidebar"
+        @click="navOpen = !navOpen"
+      />
       <RouterView />
-    </main>
-    <StatusBar />
-    <Toast />
-    <ScriptErrorDialog />
-    <KeyboardShortcutsModal
-      :open="shortcutsModalOpen"
-      @close="shortcutsModalOpen = false"
-    />
+      <RlToastHost :toasts="toasts" @dismiss="dismissToast" />
+      <ScriptErrorDialog />
+      <KeyboardShortcutsModal
+        :open="shortcutsModalOpen"
+        @close="shortcutsModalOpen = false"
+      />
+    </RlAppShell>
+
+    <div class="app-frame__flyout">
+      <SidebarFlyout />
+    </div>
   </div>
 
   <!-- Mounted unconditionally so Cmd+K works during schema loading and on
@@ -184,9 +322,9 @@ watch(
 </template>
 
 <style>
-/* Theme tokens (:root / :root.dark) live in src/styles/tokens.css, imported
-   from main.ts — they are a shared source so custom apps can serve the same
-   values. See tokens.css. */
+/* The palette is rela-components', in rl/styles/tokens.css + dark.css. rela
+   no longer keeps one of its own: two palettes drifted, and the shell painted
+   light on a dark page. See src/styles/tokens.css. */
 
 * {
   box-sizing: border-box;
@@ -194,148 +332,131 @@ watch(
   padding: 0;
 }
 
+/* Matches the library's own body rule (base.css), which rela does not import
+   because that file also carries a reset. Reading the same tokens is what
+   keeps the page behind a component the same colour as the component. */
 body {
-  font-family: 'Open Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-  background: var(--bg-color);
-  color: var(--text-color);
-  line-height: 1.5;
+  font-family: var(--rl-font-family);
+  font-size: var(--rl-font-size-md);
+  background: var(--rl-color-bg);
+  line-height: var(--rl-line-height-normal);
   transition: background-color 0.2s ease, color 0.2s ease;
 }
 
-.app-layout {
-  display: flex;
-  min-height: 100vh;
-}
-
-.main-content {
-  flex: 1;
-  /* Without min-width: 0 a flex child defaults to min-width: auto, which
-     equals its content's intrinsic min-width. One unbreakable token
-     (long URL, no-space title) then forces the whole layout wider than
-     the viewport. min-width: 0 lets descendants honour overflow-wrap. */
-  min-width: 0;
-  margin-left: 240px;
+/*
+ * RlAppShell draws the frame: sidebar, drawer, scrim and the panes. It is
+ * `100dvh` with each pane scrolling internally, so the margin-left that used
+ * to reserve space beside a fixed sidebar is gone — the sidebar is a flex
+ * child now and takes its own width, collapsed or not.
+ *
+ * What remains here is rela's page padding and the iOS safe-area insets,
+ * which the library has no notion of. No `:deep` needed: this block is
+ * unscoped, so a plain class reaches the shell's element.
+ */
+.app-layout .rl-app-shell__main {
   /* --page-padding-x exposes the horizontal padding to PageLayout so
      its sticky topbar / actionbar can bleed full-width via negative
      margin without each view re-asserting the value. Stays in sync
-     across breakpoints below. */
-  --page-padding-x: 24px;
-  padding: 24px;
+     across breakpoints below.
+
+     Taken from the library's page gutter rather than a number of our own:
+     the header band is painted by the shell and pads itself with the same
+     token, so any other value here leaves the content misaligned with the
+     title above it. The token already carries its own breakpoints and the
+     iOS safe-area inset. */
+  --page-padding-x: var(--rl-page-gutter-left);
+  padding: var(--rl-space-5) var(--rl-page-gutter-right) var(--rl-space-5) var(--rl-page-gutter-left);
   padding-bottom: 48px; /* Account for status bar */
-  transition: margin-left 0.2s ease;
+  /* The pane is the scroll container, so PageLayout's sticky bars stick
+     against it rather than against the document. */
+  overflow-y: auto;
 }
 
-.main-content.sidebar-collapsed {
-  margin-left: 60px;
+.app-frame {
+  position: relative;
 }
 
-.loading-screen,
-.error-screen {
+/*
+ * Starts where the sidebar ends, so a flyout slides out of the nav that
+ * opened it and covers the content from its top edge. Pointer-transparent:
+ * the stack inside decides what is clickable, this layer only says where the
+ * panels may reach.
+ */
+.app-frame__flyout {
+  position: absolute;
+  inset: 0 0 0 var(--rl-sidebar-width);
+  pointer-events: none;
+}
+
+/* The collapsed rail; the same width Sidebar.vue gives it. */
+.app-frame--sidebar-collapsed .app-frame__flyout {
+  left: 60px;
+}
+
+/* The sidebar is an off-canvas drawer here, so there is no rail to clear. */
+@media (max-width: 767px) {
+  .app-frame__flyout,
+  .app-frame--sidebar-collapsed .app-frame__flyout {
+    left: 0;
+  }
+}
+
+.boot-screen {
   display: flex;
-  flex-direction: column;
+  min-height: 100vh;
+}
+
+/* Placement only: RlIconButton draws the control. The shell owns the drawer,
+   so its trigger belongs to the pane the drawer covers rather than to the
+   viewport. This is the fallback for views that do not yet fill the header
+   slot — RlPageHeader renders its own toggle for those that do.
+
+   Three classes so the hiding outranks RlIconButton's scoped
+   `.rl-icon-button[data-v]` `display: flex` on specificity alone. A bare
+   class lost to it, which left an invisible full-width button over the top
+   of every desktop page; two classes would tie and depend on bundle order. */
+.app-layout .mobile-menu-btn.rl-icon-button {
+  /* The shell sets this token whenever its sidebar is off-canvas: below
+     768px, and up to 1079px while a detail panel is open. Following it
+     keeps this button in step with the shell's own breakpoints. */
+  display: var(--rl-nav-toggle-display, none);
   align-items: center;
   justify-content: center;
-  min-height: 100vh;
-  gap: 16px;
-}
-
-.spinner {
-  width: 40px;
-  height: 40px;
-  border: 3px solid var(--border-color);
-  border-top-color: var(--accent-color);
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
-}
-
-.error-screen h1 {
-  color: var(--error-color);
-}
-
-.error-screen button {
-  padding: 8px 16px;
-  background: var(--accent-color);
-  color: white;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-}
-
-/* Mobile hamburger button — visible only on small screens. Sits inside the
-   sticky list/page header, so it renders as a transparent ghost icon
-   (no own border/shadow/background) — the header bar provides the chrome. */
-.mobile-menu-btn {
-  display: none;
-  position: fixed;
-  top: calc(env(safe-area-inset-top, 0px) + 8px);
-  left: calc(env(safe-area-inset-left, 0px) + 8px);
+  /* Sticky, not fixed: the button scrolls with its pane's padding box and
+     stays put as the content moves under it. Fixed would pin it to the
+     viewport, where it would sit over the drawer the shell slides in. */
+  position: sticky;
+  float: left;
+  /* No safe-area term: the shell pads the frame, so this button's containing
+     block already starts below the notch. */
+  top: 8px;
+  margin-left: calc(0px - var(--page-padding-x, 16px) + 8px);
   z-index: 101;
-  width: 44px;
-  height: 44px;
-  background: transparent;
-  border: none;
-  font-size: 22px;
-  line-height: 1;
-  color: var(--text-color);
-  cursor: pointer;
 }
 
 @media (max-width: 768px) {
-  /* Reserve safe-area at top of layout so titles/content don't sit under
-     the iOS status bar / dynamic island. Subtract the safe-area inset
-     from min-height so the page doesn't scroll beyond its content just
-     because of the safe-area padding — that scrollable strip otherwise
-     lets the user push the sticky-topbar background out of the
-     status-bar area. */
-  .app-layout {
-    padding-top: env(safe-area-inset-top, 0px);
-    padding-left: env(safe-area-inset-left, 0px);
-    padding-right: env(safe-area-inset-right, 0px);
-    min-height: calc(100vh - env(safe-area-inset-top, 0px));
-  }
-
-  .mobile-menu-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-
-  .main-content {
-    margin-left: 0;
-    --page-padding-x: 16px;
-    padding: 16px;
-    /* Space for the hamburger button (only present on top-level screens).
+  /* The iOS safe-area insets are RlAppShell's, not ours. With no header slot
+     it pads the FRAME, which sits outside the scroll container — so the inset
+     cannot scroll away with the content. Adding `env()` again here would
+     stack a second inset on a notched device, and no test would catch it: the
+     mobile assertions are lower bounds and Pixel 7 reports no inset at all. */
+  .app-layout .rl-app-shell__main {
+    /* Horizontal padding is not restated: --rl-page-gutter drops to 16px
+       below 768px on its own, and restating it here would let the content
+       drift from the header band the next time the library retunes it.
+       Space for the hamburger button (only present on top-level screens).
        On detail/edit screens the hamburger is hidden, but we still need
-       breathing room below the safe-area inset, so keep the same top
-       padding regardless. */
+       breathing room, so keep the same top padding regardless. */
     padding-top: 60px;
-    /* Extra bottom padding so the last card's rounded corners aren't
-       flush against the home-indicator / screen edge. */
-    padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+    /* Extra bottom padding so the last card's rounded corners aren't flush
+       against the screen edge. */
+    padding-bottom: 24px;
   }
 
-  .main-content.sidebar-collapsed {
-    margin-left: 0;
-  }
-
-  .page-header {
-    flex-wrap: wrap;
-    gap: 8px;
-    margin-bottom: 16px;
-  }
-
-  .page-header h1 {
-    font-size: 20px;
-  }
-
-  .header-actions {
-    flex-wrap: wrap;
-    gap: 8px;
-  }
-
-  /* Hide keyboard shortcut hints on mobile — !important needed to
-     override scoped component styles that set display: inline-flex */
-  kbd {
+  /* Hide keyboard shortcut hints on mobile: a touch device has no keys to
+     press. !important because RlKbd sets display: inline-flex in its own
+     scoped style, which this has to beat. */
+  .rl-kbd {
     display: none !important;
   }
 
@@ -347,224 +468,15 @@ body {
 }
 
 @media (max-width: 480px) {
-  .main-content {
-    --page-padding-x: 12px;
-    padding: 12px;
+  .app-layout .rl-app-shell__main {
+    /* Same as above: the gutter token owns the horizontal padding. */
     padding-top: 56px;
-    padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
-  }
-
-  .modal {
-    padding: 16px;
-    width: 95%;
+    padding-bottom: 24px;
   }
 }
 
-/* Keyboard shortcut hints */
-kbd {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 18px;
-  height: 18px;
-  padding: 0 4px;
-  background: var(--card-bg);
-  border: 1px solid var(--border-color);
-  border-bottom-width: 2px;
-  border-radius: 3px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 10px;
-  color: var(--muted-text);
-  line-height: 1;
-  vertical-align: middle;
-}
 
-kbd + kbd {
-  margin-left: 2px;
-}
 
-.btn kbd,
-button kbd {
-  background: rgba(255, 255, 255, 0.2);
-  border-color: rgba(255, 255, 255, 0.3);
-  color: rgba(255, 255, 255, 0.8);
-  font-size: 10px;
-  height: 16px;
-  min-width: 16px;
-  margin-left: 4px;
-}
-
-.btn-secondary kbd {
-  background: var(--bg-color);
-  border-color: var(--border-color);
-  color: var(--muted-text);
-}
-
-.sidebar kbd {
-  background: rgba(255, 255, 255, 0.1);
-  border-color: rgba(255, 255, 255, 0.2);
-  color: rgba(255, 255, 255, 0.4);
-}
-
-/* ==========================================================================
-   Shared Button Utilities
-   ========================================================================== */
-
-.btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 8px 16px;
-  border-radius: 6px;
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-  border: none;
-  transition: all 0.15s ease;
-  text-decoration: none;
-  white-space: nowrap;
-}
-
-.btn:disabled,
-.btn[aria-disabled='true'] {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-/* A pending button carries aria-disabled rather than native disabled (so
-   focus is not dropped mid-interaction), which means `:disabled` alone
-   would leave it looking fully live while it silently swallows clicks —
-   a worse affordance than the greyed-out button it replaced. Hover and
-   active feedback go too: they imply the click will do something. */
-.btn[aria-disabled='true']:hover,
-.btn[aria-disabled='true']:active {
-  opacity: 0.6;
-  transform: none;
-  filter: none;
-}
-
-.btn-sm {
-  padding: 6px 12px;
-  font-size: 13px;
-}
-
-.btn-primary {
-  background: var(--accent-color);
-  color: white;
-}
-
-.btn-primary:hover:not(:disabled) {
-  filter: brightness(1.1);
-}
-
-.btn-secondary {
-  background: var(--border-color);
-  color: var(--text-color);
-}
-
-.btn-secondary:hover:not(:disabled) {
-  filter: brightness(0.95);
-}
-
-.btn-danger {
-  background: var(--error-color);
-  color: white;
-}
-
-.btn-danger:hover:not(:disabled) {
-  filter: brightness(0.9);
-}
-
-.btn-ghost {
-  background: transparent;
-  color: var(--text-color);
-}
-
-.btn-ghost:hover:not(:disabled) {
-  background: var(--hover-bg);
-}
-
-/* ==========================================================================
-   Shared Loading States
-   ========================================================================== */
-
-.loading-state {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 48px;
-  gap: 16px;
-  color: var(--muted-text);
-}
-
-.error-state {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 48px;
-  gap: 16px;
-  color: var(--muted-text);
-}
-
-/* ==========================================================================
-   Shared Modal Styles
-   ========================================================================== */
-
-.modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.5);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-}
-
-.modal {
-  background: var(--card-bg);
-  border-radius: 12px;
-  padding: 24px;
-  max-width: 500px;
-  width: 90%;
-  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.2);
-}
-
-.modal h3 {
-  margin: 0 0 12px;
-  color: var(--text-color);
-}
-
-.modal p {
-  margin: 0 0 24px;
-  color: var(--muted-text);
-}
-
-.modal-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 12px;
-}
-
-/* ==========================================================================
-   Page Header Utility
-   ========================================================================== */
-
-.page-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 24px;
-}
-
-.page-header h1 {
-  margin: 0;
-}
-
-.header-actions {
-  display: flex;
-  gap: 12px;
-}
+/* `.page-header` and `.header-actions` are gone — RlPageHeader owns the page
+   header now and the app shell renders it. */
 </style>

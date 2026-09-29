@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref, shallowRef, computed, watch, onMounted, onUnmounted, type Component } from 'vue'
+import { ref, shallowRef, computed, watch, nextTick, onMounted, onUnmounted, type Component } from 'vue'
 import { RouterLink, useRoute, useRouter, type RouteLocationRaw } from 'vue-router'
-import { useQuery, useMutation, useQueryCache } from '@pinia/colada'
+import { useQuery, useQueryCache } from '@pinia/colada'
 import { useSchemaStore, useUIStore } from '@/stores'
 import { useListKeyboard } from '@/composables/useListKeyboard'
 import { useListSelection } from '@/composables/useListSelection'
@@ -9,14 +9,16 @@ import { useListActions } from '@/composables/useListActions'
 import { useUrlFilterSync } from '@/composables/useUrlFilterSync'
 import { useWorld } from '@/composables/useWorld'
 import { useCreateTarget } from '@/composables/useCreateTarget'
-import { listEntities, deleteEntity, getErrorMessage } from '@/api'
+import { useListGrouping, type ListSection } from '@/composables/useListGrouping'
+import { listEntities, listAllEntities, getErrorMessage } from '@/api'
 import { entityKeys } from '@/queries/entities'
-import { beginOptimisticRemove, rollbackOptimistic } from '@/queries/optimisticList'
-import { toApiOperator, filterStateToApiParams } from '@/utils/filters'
+import { beginOptimisticRemove } from '@/queries/optimisticList'
+import { filterStateToApiParams } from '@/utils/filters'
+import { groupedSort, listBaseParams, sortParam } from '@/utils/listParams'
 import { entityDetailHref } from '@/utils/entityRoute'
-import { entityRef, refFace } from '@/utils/entityRef'
+import { entityRef } from '@/utils/entityRef'
 import { worldText } from '@/utils/worldText'
-import { safeInternalHref, shouldDeferToBrowser } from '@/utils/openIntent'
+import { safeInternalHref } from '@/utils/openIntent'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
 import { renderMarkdown } from '@/utils/markdown'
 import { actionAllowed } from '@/utils/affordancesWarning'
@@ -24,7 +26,7 @@ import { getCellValue, formatCellValue } from '@/utils/format'
 import { densePropertyRoutingHint, isDenseEmpty } from '@/widgets/viewRouting'
 import { defaultRegistry } from '@/widgets/registry'
 import type { DenseRoutingHint } from '@/widgets/viewRouting'
-import type { Entity, ListMeta, ListParams, ListResponse, FilterState } from '@/types'
+import type { Entity, ListMeta, ListParams, ListResponse, FilterState, PageScope } from '@/types'
 import { viewHeaderMarkdown, viewFooterMarkdown } from '@/types'
 import FilterBar from './FilterBar.vue'
 import Pagination from './Pagination.vue'
@@ -32,14 +34,33 @@ import SearchBox from './SearchBox.vue'
 import AdHocFilterMenu from './AdHocFilterMenu.vue'
 import BackButton from '@/components/common/BackButton.vue'
 import ExportMenu from '@/components/entity/ExportMenu.vue'
+import PageHeaderContent from '@/components/common/PageHeaderContent'
+import InlineCreateFormModal from '@/components/forms/InlineCreateFormModal.vue'
+import { useCreateModal } from '@/composables/useCreateModal'
+import { usePageTabScope } from '@/composables/usePageTabScope'
 import WorldBadge from '@/components/entity/WorldBadge.vue'
 import WorldBanner from '@/components/common/WorldBanner.vue'
 import { listExportUrl } from '@/api/transforms'
 import { useBackTarget } from '@/composables/useBackTarget'
 import { useConfirm } from '@/composables/useConfirm'
+import { useBulkDelete, useDeleteKey } from '@/composables/useBulkDelete'
+import { useDetailPanel } from '@/composables/useDetailPanel'
+import EntityDetailPanel from '@/components/entity/EntityDetailPanel.vue'
+import RlBulkActionBar from 'rela-components/components/data/RlBulkActionBar.vue'
+import RlButton from 'rela-components/components/common/RlButton.vue'
+import RlBanner from 'rela-components/components/feedback/RlBanner.vue'
+import RlEmptyState from 'rela-components/components/feedback/RlEmptyState.vue'
+import RlStatusRegion from 'rela-components/components/feedback/RlStatusRegion.vue'
+import RlKbd from 'rela-components/components/data/RlKbd.vue'
+import RlTable from 'rela-components/components/table/RlTable.vue'
+import type { SortClickEvent, TableColumn } from 'rela-components/components/table/types'
+import { listColumnOf, nameColumn, toTableColumns, toTableNameColumn } from './tableColumns'
+import { fromPageQuery } from '@/utils/pageContext'
 
 const props = defineProps<{
   listId: string
+  /** Set when the list is a tab of an entity page: rows are those the anchor reaches. */
+  pageScope?: PageScope
 }>()
 
 const route = useRoute()
@@ -50,6 +71,27 @@ const { confirm } = useConfirm()
 
 // Back affordance — renders when ?return_to= or ?from= is present. See TKT-JIEKC.
 const backTarget = useBackTarget()
+
+/*
+ * The detail panel, addressed by `?selected=<id>`.
+ *
+ * The URL is the ONLY state: there is no local `selected` ref that the query
+ * mirrors. That is what makes the panel survive a reload, a back step and a
+ * pasted link without a second code path — the same reason filters and sort
+ * already live in the query. A mirrored ref would need reconciling with the
+ * route on every external navigation, which is the bug useUrlFilterSync's
+ * echo-signature exists to manage; with no local copy there is no echo.
+ *
+ * The entity TYPE is not in the query. It is `listConfig.entity`, so putting
+ * it in the URL would let a link name a row this list cannot contain.
+ */
+const panel = useDetailPanel()
+
+const selectedEntityId = computed(() => {
+  const raw = route.query.selected
+  const value = Array.isArray(raw) ? raw[raw.length - 1] : raw
+  return typeof value === 'string' && value !== '' ? value : null
+})
 
 // Responsive: detect mobile for card vs table layout
 const mobileQuery = typeof window !== 'undefined' ? window.matchMedia('(max-width: 768px)') : null
@@ -129,6 +171,15 @@ const collectionActions = computed<Record<string, boolean> | undefined>(
 function canCreate(): boolean {
   return actionAllowed({ _actions: collectionActions.value }, 'create')
 }
+
+// The table's own Add button, below the rows: the same dialog as New, and
+// hidden under the same gate. In a grouped list each section has one, and the
+// new row starts with that section's value so it lands where it was added.
+const createPrefill = ref<{ properties: Record<string, unknown> }>()
+function onTableAdd(section: ListSection | { prefill?: undefined }) {
+  createPrefill.value = section.prefill ? { properties: section.prefill } : undefined
+  createModal.show()
+}
 // From `_actions` alone, under every world. The server computes the map for
 // the FACE it served (a stand-in published face reports `update: false`
 // unless a grant names that face), and every write this list makes goes to
@@ -137,8 +188,9 @@ function canCreate(): boolean {
 // every list read-only under a configured `default_world` — including lists
 // of types that declare no faces at all (atlas worlds issue 2).
 //
-// canUpdate gates the bulk-action bar (via anySelectedAllowsUpdate); canDelete
-// gates the row delete button AND the Delete/Backspace shortcut.
+// canUpdate gates the configured bulk actions (via anySelectedAllowsUpdate);
+// canDelete gates row selection, the bar's Delete and the Delete/Backspace
+// shortcut.
 function canDelete(entity: Entity): boolean {
   return actionAllowed(entity, 'delete')
 }
@@ -160,8 +212,58 @@ function anySelectedAllowsUpdate(): boolean {
 }
 
 // Selection and actions
-const { selectedIds, toggle: toggleSelection, clear: clearActionSelection, isSelected, selectAll } = useListSelection()
+const { selectedIds, toggle: toggleSelection, clear: clearActionSelection, selectAll } = useListSelection()
 const hasSelection = computed(() => selectedIds.value.size > 0)
+
+// The selected rows on this page that the principal may delete. A selected
+// row without a delete grant is left out of the delete and stays selected.
+const deletableSelection = computed(() =>
+  entities.value.filter((e) => selectedIds.value.has(e.id) && canDelete(e))
+)
+const anyRowDeletable = computed(() => entities.value.some(canDelete))
+
+// Bulk delete, with no confirm: the server keeps a deleted entity for a grace
+// period, and the toast that reports the delete offers Undo.
+const { deleting, deleteMany } = useBulkDelete({
+  noun: () => entityNoun.value,
+  // Rows leave at once; the refetch afterwards brings back any that failed.
+  onStart: (ids) => {
+    for (const id of ids) beginOptimisticRemove(queryCache, listKey.value, id)
+  },
+  // Rows that were not deleted stay selected: those whose delete failed, and
+  // those the principal could not delete. The entities watcher below clears
+  // the selection whenever the rows change, so this waits for it to run.
+  onSettled: async ({ deleted }) => {
+    await nextTick()
+    const gone = new Set(deleted)
+    selectedIds.value = new Set([...selectionBeforeDelete].filter((id) => !gone.has(id)))
+  },
+  // Every param variant: a deleted entity may appear under other filters.
+  refresh: () => queryCache.invalidateQueries({ key: entityKeys.list(listConfig.value?.entity ?? '') }),
+})
+let selectionBeforeDelete = new Set<string>()
+
+function deleteSelected() {
+  const rows = deletableSelection.value
+  if (rows.length === 0) return
+  selectionBeforeDelete = new Set(selectedIds.value)
+  // Addressed to the ROW: on a bare face this deletes the entity, on a
+  // non-bare face it removes that face only (the server's rule for `ID@face`).
+  void deleteMany(rows.map((e) => ({ id: e.id, type: e.type, ref: entityRef(e) })))
+}
+
+useDeleteKey({
+  enabled: () => deletableSelection.value.length > 0,
+  onDelete: deleteSelected,
+})
+
+// What the bulk bar counts, in the schema's own words ("3 taken selected").
+const entityNoun = computed(() => {
+  const type = listConfig.value?.entity ?? ''
+  const def = schemaStore.getEntityType(type)
+  const singular = def?.label || type || 'item'
+  return { singular, plural: def?.label_plural || def?.plural || undefined }
+})
 
 const listIdRef = computed(() => props.listId)
 
@@ -210,7 +312,6 @@ async function requestActionConfirm(
 
 // Static (config-pinned) filter properties — used by useUrlFilterSync to
 // reject URL filters that would silently override the list's intended scope.
-// Computed inline (not via configuredFilters) to avoid a forward reference.
 function staticFilterProperties(): Set<string> {
   const list = schemaStore.getList(props.listId)
   const set = new Set<string>()
@@ -245,11 +346,34 @@ const projectionNote = computed<string>(() => {
 
 // The create button's destination — see useCreateTarget for why a create
 // button carries a world of its own. Whether it SHOWS is `_actions.create`.
-const { target: createFormTarget } = useCreateTarget(
+const { target: createFormTarget, targetWorld: createWorld } = useCreateTarget(
   computed(() => listConfig.value?.create_form),
   computed(() => listConfig.value?.create_world),
   worldParam,
+  computed(() => fromPageQuery(route)),
 )
+
+// New opens the create form in a dialog over the list; the new entity then
+// opens in the detail panel, as if its row had been clicked.
+function refreshAfterCreate() {
+  void queryCache.invalidateQueries({ key: entityKeys.list(listConfig.value?.entity ?? '') })
+}
+// In an entity-page tab a new row is linked to the anchor first, so the
+// refresh already shows it in the tab.
+const tabScope = usePageTabScope(() => props.pageScope)
+const createModal = useCreateModal(async (entity) => {
+  await tabScope.linkCreated(entity)
+  refreshAfterCreate()
+  openPanel(entity)
+}, async (entity) => {
+  await tabScope.linkCreated(entity)
+  refreshAfterCreate()
+})
+// A section's prefill belongs to the one dialog it opened. New and the `n`
+// shortcut open the dialog without one.
+watch(createModal.open, (open) => {
+  if (!open) createPrefill.value = undefined
+})
 
 // The operator's announcement for the world on screen, or '' to announce
 // nothing. Config, not data — `/_schema`.worlds is served identically to every
@@ -268,10 +392,21 @@ interface SortSpec {
 }
 const sortSpecs = ref<SortSpec[]>([])
 
-// Computed for keyboard navigation
-const itemCount = computed(() => entities.value.length)
-const hasPrevPage = computed(() => page.value > 1)
-const hasNextPage = computed(() => meta.value.has_more || page.value * meta.value.per_page < meta.value.total)
+// The rows in the order the table shows them, for the keyboard cursor. A
+// grouped list shows them section by section with closed sections skipped,
+// which is not necessarily the order they arrived in.
+const visibleRows = computed<Entity[]>(() =>
+  grouping.grouped.value
+    ? grouping.sections.value.filter((s) => !s.collapsed).flatMap((s) => s.items)
+    : entities.value,
+)
+
+// Computed for keyboard navigation. A grouped list is one page.
+const itemCount = computed(() => visibleRows.value.length)
+const hasPrevPage = computed(() => !grouping.grouped.value && page.value > 1)
+const hasNextPage = computed(
+  () => !grouping.grouped.value && (meta.value.has_more || page.value * meta.value.per_page < meta.value.total),
+)
 
 // Keyboard navigation
 const { selectedIndex, clearSelection } = useListKeyboard({
@@ -280,33 +415,22 @@ const { selectedIndex, clearSelection } = useListKeyboard({
   hasNextPage,
   hasSelection,
   onOpen: (index) => {
-    const entity = entities.value[index]
+    const entity = visibleRows.value[index]
     if (entity) navigateToEntity(entity)
   },
   onEdit: (index) => {
     // The form opens on the row's ADDRESS, face included, so an edit from a
     // world-bound list edits the face the row showed and not its bare id.
-    const entity = entities.value[index]
+    const entity = visibleRows.value[index]
     if (entity && listConfig.value?.edit_form) {
       router.push(`/form/${listConfig.value.edit_form}/${entityRef(entity)}`)
     }
   },
   onCreate: () => {
-    if (createFormTarget.value) {
-      router.push(createFormTarget.value)
-    }
-  },
-  onDelete: (index) => {
-    const entity = entities.value[index]
-    if (!entity) return
-    if (!canDelete(entity)) {
-      uiStore.warning('Delete not permitted for this entity')
-      return
-    }
-    void requestDelete(entity)
+    if (createFormTarget.value) createModal.show()
   },
   onSelect: (index) => {
-    const entity = entities.value[index]
+    const entity = visibleRows.value[index]
     if (entity) toggleSelection(entity.id)
   },
   onClearSelection: () => {
@@ -337,6 +461,16 @@ const entityType = computed(() => {
   return schemaStore.getEntityType(listConfig.value.entity)
 })
 
+// `group_by:` splits the rows into sections; see useListGrouping.
+const groupBy = computed(() => listConfig.value?.group_by)
+const grouping = useListGrouping({
+  listId: () => props.listId,
+  groupBy: () => groupBy.value,
+  entityType: () => entityType.value,
+  response: () => listQueryRef.value?.data.value,
+  filterParams: () => queryParams.value as Record<string, unknown>,
+})
+
 // listExportUrlFor builds the export URL for the current list view + chosen
 // transform, forwarding the active filter[...] and q params from the URL so the
 // export matches what the user is looking at (the backend re-applies the same
@@ -354,6 +488,9 @@ function listExportUrlFor(transform: string): string {
   // scoped list silently widens to the type's default — a file that looks
   // complete and is not.
   if (cfg.query_scope) params.set('query_scope', cfg.query_scope)
+  for (const [key, value] of Object.entries(tabScope.params.value)) {
+    if (value) params.set(key, value)
+  }
   return listExportUrl(cfg.entity, props.listId, transform, params)
 }
 
@@ -368,45 +505,26 @@ const headerHtml = computed(() =>
 )
 const footerHtml = computed(() => renderMarkdown(viewFooterMarkdown(listConfig.value)))
 
-// Pre-configured filters from list config
-const configuredFilters = computed(() => {
-  return listConfig.value?.filters?.filter(f => f.operator && f.value) || []
-})
-
 // Check if any columns reference relations (need to include related entities)
 const hasRelationColumns = computed(() => {
   return listConfig.value?.columns?.some(col => col.relation) || false
 })
 
 const hasActions = computed(() => resolvedActions.value.length > 0)
+// Rows are selectable when there is something to do with a selection: a
+// configured bulk action, or a row the principal may delete.
+const selectable = computed(() => hasActions.value || anyRowDeletable.value)
 
 // Build query params. Reads `page` (input state), never `meta` (query
 // output) — otherwise the query key would depend on its own result.
 const queryParams = computed((): ListParams => {
-  const params: ListParams = {
-    page: page.value,
-    per_page: listConfig.value?.page_size || 25,
-    // Names the configured list so the server can apply its `condition:`.
-    // Sent unconditionally rather than only when a condition exists: the SPA
-    // would otherwise have to know which lists carry one, duplicating a
-    // server-side fact that changes on config reload. An id for a list with
-    // no condition simply resolves to no constraint.
-    list_id: props.listId,
-  }
-
-  // Add pre-configured filters from list config
-  for (const filter of configuredFilters.value) {
-    const apiOp = toApiOperator(filter.operator)
-    const key = `filter[${filter.property}][${apiOp}]`
-    const filterValue = filter.value
-    // Append to existing filter or create new
-    const existing = (params as Record<string, string | number | undefined>)[key]
-    if (existing) {
-      (params as Record<string, string | number | undefined>)[key] = `${existing},${filterValue}`
-    } else {
-      (params as Record<string, string | number | undefined>)[key] = filterValue as string
-    }
-  }
+  // The config's share of the read (list_id, static filters, default sort,
+  // scope) comes from the helper the sidebar flyout uses too.
+  const params: ListParams = listConfig.value
+    ? listBaseParams(props.listId, listConfig.value)
+    : { per_page: 25, list_id: props.listId }
+  // A grouped list is read whole, so it has no page to name.
+  if (!groupBy.value) params.page = page.value
 
   // Add user-selected filters via the shared serializer so EntityList and
   // useScopeNavigation stay in lockstep on the wire format.
@@ -433,17 +551,10 @@ const queryParams = computed((): ListParams => {
     paramsRecord.q = searchQuery.value
   }
 
-  // Add sorting - supports multi-field sorting
-  if (sortSpecs.value.length > 0) {
-    params.sort = sortSpecs.value
-      .map((s) => (s.direction === 'desc' ? `-${s.property}` : s.property))
-      .join(',')
-  } else if (listConfig.value?.default_sort?.length) {
-    const defaultSort = listConfig.value.default_sort
-      .map((s) => (s.direction === 'desc' ? `-${s.property}` : s.property))
-      .join(',')
-    params.sort = defaultSort
-  }
+  // The reader's sort replaces the configured default the base carries.
+  // Multi-field: the header's shift-click appends. A grouped list keeps its
+  // group property in front, so the reader's sort orders rows within a group.
+  if (sortSpecs.value.length > 0) params.sort = sortParam(groupedSort(groupBy.value, sortSpecs.value))
 
   // Include related entities for relation columns — under a world too.
   //
@@ -465,13 +576,7 @@ const queryParams = computed((): ListParams => {
     params.world = worldParam.value
   }
 
-  // The list's configured scope. Sent because the endpoint is keyed by entity
-  // TYPE, so the server cannot tell which list is on screen — without this the
-  // view falls back to the type's `default` and a list declaring
-  // `query_scope: archief` renders unscoped.
-  if (listConfig.value?.query_scope) {
-    params.query_scope = listConfig.value.query_scope
-  }
+  Object.assign(params, tabScope.params.value)
 
   return params
 })
@@ -487,11 +592,23 @@ const queryParams = computed((): ListParams => {
 // stale and background-refetches while mounted, so lists go live (they
 // never reacted to SSE before). placeholderData keeps the previous rows
 // visible during a param change instead of flashing the spinner.
+//
+// A grouped list reads every row up to `max_rows` instead of one page, since a
+// page boundary would cut a section in half. Same paged loop the board uses.
+const listKey = computed(() => {
+  const type = listConfig.value?.entity ?? ''
+  return groupBy.value
+    ? entityKeys.listAll(type, queryParams.value, groupBy.value.max_rows)
+    : entityKeys.listParams(type, queryParams.value)
+})
 const listQuery = useQuery({
-  key: () => entityKeys.listParams(listConfig.value?.entity ?? '', queryParams.value),
-  query: () => {
+  key: () => listKey.value,
+  query: ({ signal }) => {
     const config = listConfig.value
     if (!config) throw new Error(`unknown list: ${props.listId}`)
+    if (config.group_by) {
+      return listAllEntities(config.entity, queryParams.value, signal, { maxRows: config.group_by.max_rows })
+    }
     return listEntities(config.entity, queryParams.value)
   },
   enabled: () => !!listConfig.value,
@@ -532,11 +649,150 @@ function handleSort(field: string, event: MouseEvent) {
   page.value = 1
 }
 
-// Helper to get sort index and direction for a field
-function getSortInfo(field: string): { index: number; direction: 'asc' | 'desc' | null } {
-  const idx = sortSpecs.value.findIndex((s) => s.property === field)
-  if (idx < 0) return { index: -1, direction: null }
-  return { index: idx, direction: sortSpecs.value[idx].direction }
+/*
+ * A column for the property the list is grouped by repeats its section's
+ * heading on every row, so it is left out. Not for date buckets: a bucket
+ * spans days, and the column still says which one.
+ */
+const visibleListColumns = computed(() => {
+  const columns = listConfig.value?.columns ?? []
+  const grouping = groupBy.value
+  if (!grouping || grouping.buckets) return columns
+  return columns.filter((column) => column.property !== grouping.property)
+})
+
+/**
+ * The list's columns in the library's shape, minus the title column which the
+ * table renders itself through the `name` slot.
+ *
+ * Annotated rather than inferred on purpose: a `cell-<key>` slot that matches
+ * no column renders EMPTY and Vue reports nothing, so the compiler seeing
+ * these as `TableColumn[]` is what turns a future key rename into an error
+ * instead of a blank column. See tableColumns.ts.
+ */
+const tableColumns = computed<TableColumn[]>(() =>
+  toTableColumns(visibleListColumns.value).map((column) => ({
+    ...column,
+    /*
+     * A stacked row drops an empty cell so a bare label is never left beside
+     * a blank value. The row cannot see inside a slot, so emptiness has to be
+     * declared here — and it is rela's own definition: a LOCKED cell is not
+     * empty, because the 🔒 is information rather than absence.
+     */
+    isEmpty: (item: unknown) => {
+      const listColumn = listColumnOf(column)
+      if (!listColumn) return true
+      const entity = item as Entity
+      if (isCellInaccessible(entity, listColumn)) return false
+      return getFormattedCellValue(entity, listColumn) === ''
+    },
+    /*
+     * Which columns survive `compact: 'compress'`, the one-line layout the
+     * list takes beside an open detail panel.
+     *
+     * An enum badge earns the space and a date does not: the badge is the
+     * state you scan the list for, while the rest of the row is in the panel
+     * already. A face column is that kind of state too. Derived from the widget hint rather than from config, because
+     * `ListColumn` has no way to say it — an operator-facing `primary:` is
+     * the extensibility pass, not this one.
+     */
+    primary: !!listColumnOf(column)?.face || isEnumColumn(column),
+  })),
+)
+
+/** Whether a column renders as an enum badge, per the widget routing. */
+function isEnumColumn(column: TableColumn): boolean {
+  const listColumn = listColumnOf(column)
+  if (!listColumn?.property) return false
+  const hint = columnWidgets.value.get(listColumn.property)?.hint
+  return hint?.kind === 'enum' || hint?.kind === 'enum-list'
+}
+
+/**
+ * The column whose value fills the table's name cell.
+ *
+ * `link` names the title column when the list config declares one; otherwise
+ * it is the first column, the same rule the old card layout and the world
+ * badge both used. The badge rides this cell through the `meta` slot, so
+ * "the title", "the thing you click" and "the thing the badge sits beside"
+ * stay one cell — separating them would put the badge next to an unrelated
+ * value.
+ */
+const titleColumn = computed(
+  () => linkColumn.value ?? nameColumn(listConfig.value?.columns ?? []),
+)
+
+/**
+ * The title column as a `TableColumn`, which gives the name header a sort
+ * control. Without it the table renders a plain label and the title — the
+ * column users most often sort by — cannot be sorted at all.
+ */
+const tableNameColumn = computed(() => toTableNameColumn(titleColumn.value))
+
+/**
+ * The rows, as the sections the library's table wants.
+ *
+ * A flat list is one section whose title is never shown. A grouped list has
+ * one per group, from useListGrouping. `title` on each item satisfies
+ * `CollectionItem`; the cell slots render the real contents, so this value is
+ * only a fallback for the table's own name column, which the `name` slot
+ * replaces anyway.
+ */
+function toTableItem(entity: Entity) {
+  return { ...entity, title: entityDisplayTitle(entity) }
+}
+const tableSections = computed(() =>
+  grouping.grouped.value
+    ? grouping.sections.value.map((section) => ({ ...section, items: section.items.map(toTableItem) }))
+    : [{ id: 'entities', title: '', items: entities.value.map(toTableItem) }],
+)
+
+function onSectionCollapse(section: { id: string }, collapsed: boolean) {
+  grouping.setCollapsed(section.id, collapsed)
+}
+
+/** rela's sort specs in the library's shape, primary key first. */
+const tableSort = computed(() =>
+  sortSpecs.value.map((spec) => ({ key: `prop:${spec.property}`, dir: spec.direction })),
+)
+
+/**
+ * Bridges the table's sort gesture onto rela's existing sort cycle.
+ *
+ * The header reports WHAT was pressed and leaves the meaning to us, so the
+ * asc → desc → removed cycle and shift-to-append stay rela's, which matters
+ * because an operator's `default_sort` can seed a multi-key sort the user
+ * then edits. `handleSort` already implements that cycle against a
+ * MouseEvent, so this reconstructs only the one bit it reads.
+ *
+ * Reaching the table's own button also fixes a real defect: rela's sort
+ * control was a bare `<th>` with a click handler, so it had no keyboard route
+ * at all and announced no sort state.
+ */
+function onSortClick(column: TableColumn, event: SortClickEvent) {
+  const property = listColumnOf(column)?.property
+  if (!property) return
+  handleSort(property, { shiftKey: event.additive } as MouseEvent)
+}
+
+/**
+ * Per-row attributes. Carries `data-entity-id`, which e2e uses to address a
+ * row: a git-crypt entity with every column locked renders no link, so the
+ * href is not a usable key for it.
+ *
+ */
+function rowAttrs(item: { id: string }) {
+  return { 'data-entity-id': item.id }
+}
+
+/** A table row carries the entity id, so selection maps straight across. */
+function onTableToggle(item: { id: string }) {
+  toggleSelection(item.id)
+}
+
+function onTableToggleAll(_section: unknown, checked: boolean) {
+  if (checked) selectAll(entities.value.map((e) => e.id))
+  else clearActionSelection()
 }
 
 function handleFilter(newFilters: FilterState) {
@@ -610,25 +866,6 @@ function resolveLinkTarget(link: string, entityType: string, entityId: string): 
 // unrelated value.
 const linkColumn = computed(() => listConfig.value?.columns?.find((col) => col.link))
 
-// The column the per-row WorldBadge attaches to.
-//
-// A world badge is a statement about the ROW, not about any one property, so
-// it must appear exactly ONCE per row — one badge per cell would repeat the
-// same fact across every column. It rides the title because that is what a
-// reader scans and what they click through to.
-//
-// `link` names the title column when the list config declares one; otherwise
-// the first column is the title by the same convention the mobile card layout
-// already uses (`listConfig.columns[0]` is its card title).
-const badgeColumn = computed(() => linkColumn.value ?? listConfig.value?.columns?.[0])
-
-// Whether this cell is the one that carries the row's badge. Compared by
-// object identity: listConfig.columns is a stable array, so the column objects
-// are the same references the template iterates.
-function isBadgeColumn(column: object): boolean {
-  return badgeColumn.value === column
-}
-
 // entityTarget is the SINGLE source of truth for a row's destination — used both
 // by the row's plain-click push AND by the title cell's RouterLink `to`.
 // Building the href separately would silently drop the query below: the tab
@@ -645,6 +882,8 @@ function entityTarget(entity: Entity): RouteLocationRaw | undefined {
   const query: Record<string, string | string[]> = {
     from: props.listId,
     scope: `list:${props.listId}`,
+    // Inside a page tab, Back on the entity returns to the tab.
+    ...fromPageQuery(route),
   }
 
   // Include sort if active
@@ -701,29 +940,122 @@ function entityTarget(entity: Entity): RouteLocationRaw | undefined {
   return { path, query }
 }
 
-// navigateToEntity handles a plain left-click on the row. The row is a <tr>, so
-// it cannot be an anchor; the link affordance comes from the stretched
-// .row-link in the first cell, which is what cmd/middle/right-click act on.
-function navigateToEntity(entity: Entity) {
-  const target = rowTargets.value.get(entity.id) ?? entityTarget(entity)
-  if (!target) return
-  router.push(target)
-}
-
-// onRowClick backs the row's plain-click navigation. It defers to the browser
-// on a modifier or non-primary click so the stretched .row-link's own default
-// action runs (opening a tab/window) instead of routing in place.
-function onRowClick(entity: Entity, event: MouseEvent) {
-  if (shouldDeferToBrowser(event)) return
-  navigateToEntity(entity)
-}
-
 // Row targets, computed ONCE per entity rather than per template reference
 // (RR-SYFX1B -- the same reason columnWidgets below is per-column, not
 // per-cell). entityTarget walks route.query, maps sortSpecs and scans columns,
 // and the template reads it twice per row (the v-else-if and the :to), so at 25
 // rows that was 50 traversals per render, re-running on every reactive tick
 // including hover-driven selectedIndex changes.
+// navigateToEntity backs the keyboard Enter on the cursor row. The row's
+// MOUSE navigation is the RouterLink in the table's `name` slot, which the
+// library stretches over the whole row — so a pointer click, cmd-click and
+// middle-click are all the anchor's own default action, and none of them
+// reach this. Nil: does nothing when no safe internal path resolves.
+function navigateToEntity(entity: Entity) {
+  const target = rowTargets.value.get(entity.id) ?? entityTarget(entity)
+  if (!target) return
+  router.push(target)
+}
+
+/*
+ * Open the panel on a row. A `replace`, not a `push`: stepping through rows
+ * is browsing one list, so it should not bury the screen the reader arrived
+ * from under one history entry per row they glanced at. Back returns to
+ * wherever they came from, which is what they mean by it.
+ */
+function openPanel(entity: Entity) {
+  if (entity.id === selectedEntityId.value) return
+  void router.replace({ query: { ...route.query, selected: entity.id } })
+}
+
+function closePanel() {
+  const query = { ...route.query }
+  delete query.selected
+  void router.replace({ query })
+}
+
+/*
+ * The canonical item view. A panel previews a row of this list; the entity's
+ * own page is the address you share when you mean the entity rather than
+ * this view of it. Pushed, because leaving the list IS a place change, and
+ * it carries the row's full navigation context (scope, sort, filters) the
+ * same way a row click does.
+ */
+function expandPanel() {
+  const entity = selectedEntity.value
+  if (!entity) return
+  const target = rowTargets.value.get(entity.id) ?? entityTarget(entity)
+  if (target) router.push(target)
+}
+
+/*
+ * A plain click on a row opens the panel instead of following the link.
+ *
+ * Only a plain one. Cmd/ctrl-click, shift-click and middle-click are how a
+ * reader asks for a new tab or window, and the destination they expect is
+ * the entity's own page, not this list with a query param. Those stay the
+ * anchor's own default action, untouched — which is also why the row keeps
+ * being a real RouterLink with a real href: it is what gives the row a
+ * hover URL preview and a working "copy link address".
+ *
+ * `button !== 0` never actually arrives here (a middle click fires `auxclick`,
+ * not `click`) but is checked anyway, because the cost of being wrong about
+ * that is hijacking a new-tab gesture.
+ */
+function onRowClick(entity: Entity, event: MouseEvent) {
+  if (event.defaultPrevented) return
+  if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+  if (event.button !== 0) return
+  // Capture phase: RouterLink's own click handler is on the anchor and would
+  // otherwise still run and navigate. preventDefault alone does not stop it,
+  // because it checks its own guard conditions rather than defaultPrevented.
+  event.preventDefault()
+  event.stopPropagation()
+  openPanel(entity)
+}
+
+/*
+ * The row named by `?selected=`, or null when the param names a row this
+ * page does not hold. Both cases are reachable from a shared link: a stale
+ * id, or a valid row on another page of the same list.
+ */
+const selectedEntity = computed(() => {
+  const id = selectedEntityId.value
+  if (!id) return null
+  return entities.value.find((e) => e.id === id) ?? null
+})
+
+/*
+ * Feed the shell's panel outlet. Driven by the URL rather than by the click
+ * handler, so a deep link, a back step and a click all arrive the same way.
+ *
+ * Waits for the row to be present before opening: the id alone would be
+ * enough to render EntityDetail, but a `?selected=` that no row on this page
+ * matches is more likely a stale link than a request to show a hidden row,
+ * and opening on it would report an error the reader cannot act on from
+ * here. Silence leaves the list usable and the param harmless.
+ */
+watch(
+  [selectedEntity, () => listConfig.value?.entity],
+  ([entity, entityType]) => {
+    if (!entity || !entityType) {
+      panel.clear()
+      return
+    }
+    panel.show({
+      component: EntityDetailPanel,
+      props: {
+        entityType: entity.type || entityType,
+        entityId: entityRef(entity),
+        onClose: closePanel,
+        onExpand: expandPanel,
+      },
+      mode: 'inline',
+    })
+  },
+  { immediate: true },
+)
+
 const rowTargets = computed(() => {
   const byId = new Map<string, RouteLocationRaw | undefined>()
   for (const entity of entities.value) {
@@ -759,7 +1091,7 @@ const columnWidgets = computed(() => {
 // see isDenseEmpty). Both fall through to the plain string span.
 function cellWidget(
   entity: Entity,
-  column: { property?: string; relation?: string; direction?: 'outgoing' | 'incoming' }
+  column: { property?: string; relation?: string; direction?: 'outgoing' | 'incoming'; face?: boolean }
 ) {
   if (!column.property) return undefined
   const entry = columnWidgets.value.get(column.property)
@@ -795,7 +1127,7 @@ const cellCache = new WeakMap<Entity, Map<object, ResolvedCell | undefined>>()
 
 function resolveCell(
   entity: Entity,
-  column: { property?: string; relation?: string; direction?: 'outgoing' | 'incoming' }
+  column: { property?: string; relation?: string; direction?: 'outgoing' | 'incoming'; face?: boolean }
 ): ResolvedCell | undefined {
   let perEntity = cellCache.get(entity)
   if (!perEntity) {
@@ -842,24 +1174,25 @@ function relationCellKey(relation: string, direction?: 'outgoing' | 'incoming'):
   return relation
 }
 
-// Mobile cards: drop columns whose cell is empty for this entity — a
-// dangling label with a blank value wastes card space. ACL-locked cells
-// stay visible: the 🔒 marker is information, not emptiness.
-function visibleMobileColumns(entity: Entity) {
-  return (listConfig.value?.columns.slice(1) ?? []).filter(
-    (column) => isCellInaccessible(entity, column) || getFormattedCellValue(entity, column) !== ''
-  )
+// The label of the face this row was served in. The server sends it as
+// `_world.face` on each row under a world; under the default world there is
+// none, and the cell stays empty.
+function faceLabel(entity: Entity): string {
+  const face = entity._world?.face
+  if (!face) return ''
+  return schemaStore.getEntityType(entity.type)?.faces?.[face]?.label || face
 }
 
 function getFormattedCellValue(
   entity: Entity,
-  column: { property?: string; relation?: string; direction?: 'outgoing' | 'incoming' },
+  column: { property?: string; relation?: string; direction?: 'outgoing' | 'incoming'; face?: boolean },
 ): string {
   // For relation columns, resolve IDs to titles using included entities.
   // Outgoing edges are serialized under the relation type; incoming edges
   // under the relation's INVERSE key (matching the backend serializer, see
   // MECHANISM.md). The included map carries both target and source entities
   // because the list is fetched with ?include=*.
+  if (column.face) return faceLabel(entity)
   if (column.relation) {
     const key = relationCellKey(column.relation, column.direction)
     const relationIds = entity.relations?.[key] || []
@@ -874,59 +1207,6 @@ function getFormattedCellValue(
   // Pass the user's effective display zone so datetime cells honor the
   // Settings display-timezone preference, matching the form widget (RR-K3WEW2).
   return formatCellValue(value, column.property, entityType.value, uiStore.effectiveTimezone)
-}
-
-function handleDelete(entity: Entity, event: Event) {
-  event.stopPropagation()
-  void requestDelete(entity)
-}
-
-// Delete as an optimistic mutation: the row vanishes immediately, rolls
-// back on failure, and the list prefix is invalidated on settle so every
-// param variant (other pages/filters where the entity might appear)
-// refetches and reconciles with the server.
-const { mutate: deleteEntityMutation } = useMutation({
-  // Addressed to the ROW: on a bare face this deletes the entity, on a
-  // non-bare face it removes that face only (the server's rule for `ID@face`).
-  mutation: ({ entity }: { entity: Entity }) => deleteEntity(entity.type, entityRef(entity)),
-  onMutate({ entity }: { entity: Entity }) {
-    return beginOptimisticRemove(
-      queryCache,
-      entityKeys.listParams(entity.type, queryParams.value),
-      entity.id
-    )
-  },
-  onError(err, _vars, context) {
-    rollbackOptimistic(queryCache, context)
-    uiStore.error(getErrorMessage(err, 'Failed to delete entity'))
-  },
-  onSuccess(_data, { entity }) {
-    uiStore.success(`Deleted ${entity.id}`)
-  },
-  async onSettled(_data, _err, { entity }) {
-    // Invalidate the whole list (all param variants), not just the
-    // visible page — the deleted entity may appear under other filters.
-    await queryCache.invalidateQueries({ key: entityKeys.list(entity.type) })
-  },
-})
-
-async function requestDelete(entity: Entity) {
-  // Addressed to the row. On a bare face that is the entity; on a non-bare
-  // face it is that face only (the server's rule for `ID@face`), and the
-  // confirm says so — "delete" must not read as "unpublish" or the reverse.
-  const face = refFace(entityRef(entity))
-  const faceLabel = face ? schemaStore.faceLabel(entity.type, face) || face : ''
-  const ok = await confirm({
-    title: face ? 'Delete Face?' : 'Delete Entity?',
-    message: face
-      ? `Are you sure you want to delete the ${faceLabel} face of '${entity.id}'? ` +
-        'Its other faces are kept. This action cannot be undone.'
-      : `Are you sure you want to delete '${entity.id}'? This action cannot be undone.`,
-    confirmLabel: 'Delete',
-    danger: true,
-  })
-  if (!ok) return
-  deleteEntityMutation({ entity })
 }
 
 // Reconcile input `page` with the server's returned page. If the backend
@@ -973,35 +1253,56 @@ watch(searchQuery, () => {
 
 <template>
   <div v-if="listConfig" class="entity-list" :data-testid="`page-state-${pageState}`">
-    <header class="list-header mobile-topbar mobile-topbar--with-menu">
-      <div class="header-left">
+    <!--
+      Painted by the app shell, above BOTH this list and the detail panel
+      beside it, so opening a panel no longer cuts the page title in half.
+      Declared here so the refs and handlers still resolve from this
+      component; see PageHeaderContent.
+    -->
+    <PageHeaderContent :title="listConfig.title || listConfig.entity">
+      <template #actions>
         <BackButton v-if="backTarget" :target="backTarget" />
-        <h1 id="entity-list-heading">{{ listConfig.title || listConfig.entity }}</h1>
-      </div>
-      <div class="header-actions">
         <ExportMenu :url-for="listExportUrlFor" />
-        <RouterLink
+        <RlButton
           v-if="createFormTarget && canCreate()"
+          :as="RouterLink"
           :to="createFormTarget"
-          class="btn btn-primary"
+          variant="primary"
+          icon="plus"
+          @click.capture="createModal.onClick"
         >
-          + New <kbd>N</kbd>
-        </RouterLink>
-      </div>
-    </header>
+          New
+          <template #trailing><RlKbd keys="N" /></template>
+        </RlButton>
+      </template>
+
+      <template #tools>
+        <!--
+          Rendered under a world too. It was OMITTED while search could not be
+          world-scoped, because a box that returned default-world hits on a
+          published page would have surfaced drafts. Search is scoped to the
+          world now, so the affordance is real: it searches the same faces this
+          list shows, and an entity absent from the world is absent from its
+          search. The banner below says so.
+        -->
+        <SearchBox
+          ref="searchBoxRef"
+          :model-value="searchQuery"
+          :placeholder="`Search ${listConfig.entity}s...`"
+          @update:model-value="handleSearchUpdate"
+        />
+        <AdHocFilterMenu
+          ref="filterMenuRef"
+          mode="list"
+          :entity-type="entityType"
+          :locked-properties="lockedAdHocProperties"
+          @apply="handleAdHocApply"
+        />
+      </template>
+    </PageHeaderContent>
 
     <!-- eslint-disable-next-line vue/no-v-html -- sanitized by renderMarkdown -->
     <div v-if="headerHtml" class="view-info view-info--top" v-html="headerHtml"/>
-
-    <div v-if="configuredFilters.length" class="configured-filters">
-      <span
-        v-for="filter in configuredFilters"
-        :key="`${filter.property}-${filter.operator}-${filter.value}`"
-        class="filter-chip"
-      >
-        {{ filter.property }} {{ filter.operator }} {{ filter.value }}
-      </span>
-    </div>
 
     <!--
       Gated on `!loadError`: the banner ASSERTS "you are looking at world X",
@@ -1019,30 +1320,6 @@ watch(searchQuery, () => {
     <WorldBanner v-if="isWorldBound && !loadError && (worldBanner || projectionNote)" :label="worldBanner">
       {{ projectionNote }}
     </WorldBanner>
-
-    <div class="search-row">
-      <!--
-        Rendered under a world too. It was OMITTED while search could not be
-        world-scoped, because a box that returned default-world hits on a
-        published page would have surfaced drafts. Search is scoped to the
-        world now, so the affordance is real: it searches the same faces this
-        list shows, and an entity absent from the world is absent from its
-        search. The banner above says so.
-      -->
-      <SearchBox
-        ref="searchBoxRef"
-        :model-value="searchQuery"
-        :placeholder="`Search ${listConfig.entity}s...`"
-        @update:model-value="handleSearchUpdate"
-      />
-      <AdHocFilterMenu
-        ref="filterMenuRef"
-        mode="list"
-        :entity-type="entityType"
-        :locked-properties="lockedAdHocProperties"
-        @apply="handleAdHocApply"
-      />
-    </div>
 
     <div v-if="adHocFilterChips.length" class="adhoc-filter-chips">
       <span
@@ -1070,252 +1347,202 @@ watch(searchQuery, () => {
         :filters="filters"
         @filter="handleFilter"
       />
-      <div v-if="loading" class="loading-state">
-        <div class="spinner"/>
-        <span>Loading...</span>
-      </div>
+      <!--
+        A grouped list loads up to its row cap and no further, so past the cap
+        the sections are a prefix of the list. Said once, above them, rather
+        than left for the reader to infer from counts that look complete.
+      -->
+      <RlBanner
+        v-if="grouping.truncated.value && !loading"
+        tone="warning"
+        data-testid="group-truncated"
+      >
+        Showing the first {{ entities.length }} of {{ grouping.total.value }} rows. Filter the list to see the rest.
+      </RlBanner>
+      <RlStatusRegion v-if="loading">Loading...</RlStatusRegion>
 
       <div v-else-if="loadError" class="empty-state load-error">
         <p>{{ loadError }}</p>
-        <button type="button" class="btn btn-secondary" @click="listQuery.refetch()">
-          Retry
-        </button>
+        <RlButton variant="secondary" @click="listQuery.refetch()">Retry</RlButton>
       </div>
 
-      <div v-else-if="entities.length === 0" class="empty-state">
-        <p v-if="searchQuery">No matches for &ldquo;{{ searchQuery }}&rdquo;.</p>
-        <p v-else>No {{ listConfig.entity }}s found.</p>
-        <button
-          v-if="searchQuery"
-          type="button"
-          class="btn btn-secondary"
-          @click="handleSearchUpdate('')"
-        >
-          Clear search
-        </button>
-        <RouterLink
-          v-else-if="createFormTarget && canCreate()"
-          :to="createFormTarget"
-          class="btn btn-secondary"
-        >
-          Create one
-        </RouterLink>
-      </div>
+      <!--
+        The two cases need different words and different offers, which is the
+        distinction RlEmptyState is built around: a filter matched nothing and
+        wants widening, or nothing exists yet and wants creating.
+      -->
+      <RlEmptyState
+        v-else-if="entities.length === 0"
+        class="empty-state"
+        :icon="searchQuery ? 'search' : 'inbox'"
+        :title="
+          searchQuery
+            ? `No matches for \u201c${searchQuery}\u201d.`
+            : `No ${listConfig.entity}s found.`
+        "
+      >
+        <template #actions>
+          <RlButton v-if="searchQuery" variant="secondary" @click="handleSearchUpdate('')">
+            Clear search
+          </RlButton>
+          <RlButton
+            v-else-if="createFormTarget && canCreate()"
+            :as="RouterLink"
+            :to="createFormTarget"
+            variant="secondary"
+            @click.capture="createModal.onClick"
+          >
+            Create one
+          </RlButton>
+        </template>
+      </RlEmptyState>
 
       <template v-else>
-      <!-- Mobile card layout -->
-      <div v-if="isMobile" class="mobile-card-list">
-        <div
-          v-for="(entity, index) in entities"
-          :key="'card-' + entity.id"
-          class="mobile-card"
-          :class="{ selected: index === selectedIndex, 'action-selected': isSelected(entity.id) }"
-          @click="onRowClick(entity, $event)"
-        >
-          <div class="mobile-card-header">
-            <!-- The card holds a delete <button>, and an <a> may not contain
-                 interactive content — so the link wraps the title, not the
-                 card. Stretched over the card by .mobile-card-title::after. -->
-            <RouterLink
-              v-if="rowTargets.get(entity.id)"
-              class="mobile-card-title text-wrap-anywhere text-clamp-2"
-              :to="rowTargets.get(entity.id)!"
-            >
-              {{ getFormattedCellValue(entity, listConfig.columns[0]) }}
-            </RouterLink>
-            <span v-else class="mobile-card-title text-wrap-anywhere text-clamp-2">
-              {{ getFormattedCellValue(entity, listConfig.columns[0]) }}
-              <!-- Same per-row provenance as the table below, on the card's
-                   title. A narrow screen is not a reason to drop the one
-                   signal separating a real face from a stand-in. -->
-              <WorldBadge :world="entity._world" :entity-type="entity.type" />
-            </span>
-            <button
-              v-if="canDelete(entity)"
-              class="delete-btn"
-              title="Delete"
-              @click="handleDelete(entity, $event)"
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="3 6 5 6 21 6"/>
-                <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
-              </svg>
-            </button>
-          </div>
-          <div v-if="visibleMobileColumns(entity).length" class="mobile-card-fields">
-            <div
-              v-for="column in visibleMobileColumns(entity)"
-              :key="column.property || column.relation"
-              class="mobile-card-field"
-            >
-              <span class="mobile-card-label">{{ column.label || column.property || column.relation }}</span>
-              <span
-                v-if="isCellInaccessible(entity, column)"
-                class="inaccessible-cell"
-                title="inaccessible"
-              >🔒</span>
-              <component
-                :is="resolveCell(entity, column)!.component"
-                v-else-if="resolveCell(entity, column)"
-                class="mobile-card-value"
-                :model-value="resolveCell(entity, column)!.modelValue"
-                :mode="'display'"
-                :property-name="resolveCell(entity, column)!.propertyName"
-                :entity-type="listConfig.entity"
-              />
-              <span v-else class="mobile-card-value">{{ getFormattedCellValue(entity, column) }}</span>
-            </div>
-          </div>
-        </div>
-      </div>
+      <!--
+        One table for every width: RlTable reshapes its own rows once they no
+        longer fit, which is what rela's separate `v-if="isMobile"` card
+        branch used to do by hand. It measures ITSELF, not the window, so an
+        open detail panel narrows it without the viewport changing.
 
-      <!-- Desktop table layout -->
-      <div v-else class="table-scroll-wrapper">
-      <table class="entity-table" aria-labelledby="entity-list-heading">
-        <thead>
-          <tr v-if="hasSelection" class="action-header-row">
-            <th class="select-column">
-              <input
-                type="checkbox"
-                :checked="selectedIds.size === entities.length"
-                :indeterminate="selectedIds.size > 0 && selectedIds.size < entities.length"
-                @change="selectedIds.size === entities.length ? clearActionSelection() : selectAll(entities.map(e => e.id))"
-              />
-            </th>
-            <th :colspan="listConfig.columns.length + 1" class="action-header-cell">
-              <span class="action-header-count">{{ selectedIds.size }} selected</span>
-              <button
-                v-for="{ id, config } in resolvedActions"
-                v-show="anySelectedAllowsUpdate()"
-                :key="id"
-                class="action-header-btn"
-                :disabled="actionProcessing"
-                @click="(e) => triggerAction(id, config, e)"
-              >
-                <kbd>{{ config.key }}</kbd>
-                {{ config.label }}
-              </button>
-            </th>
-          </tr>
-          <tr v-else>
-            <th v-if="hasActions" scope="col" class="select-column">
-              <input
-                type="checkbox"
-                :checked="false"
-                @change="selectAll(entities.map(e => e.id))"
-              />
-            </th>
-            <th
-              v-for="column in listConfig.columns"
-              :key="column.property || column.relation"
-              scope="col"
-              :class="{
-                sortable: column.sortable !== false && column.property,
-                sorted: getSortInfo(column.property || '').index >= 0,
-                'sorted-desc': getSortInfo(column.property || '').direction === 'desc',
-              }"
-              @click="column.sortable !== false && column.property && handleSort(column.property, $event)"
-            >
-              {{ column.label || column.property || column.relation }}
-              <span v-if="getSortInfo(column.property || '').index >= 0" class="sort-indicator">
-                <span v-if="sortSpecs.length > 1" class="sort-order">{{ getSortInfo(column.property || '').index + 1 }}</span>
-                {{ getSortInfo(column.property || '').direction === 'desc' ? '▼' : '▲' }}
-              </span>
-            </th>
-            <th scope="col" class="actions-column"/>
-          </tr>
-        </thead>
-        <TransitionGroup tag="tbody" name="row">
-          <tr
-            v-for="(entity, index) in entities"
-            :key="entity.id"
-            class="entity-row"
-            :data-entity-id="entity.id"
-            :class="{ selected: index === selectedIndex, 'action-selected': isSelected(entity.id) }"
-            @click="onRowClick(entity, $event)"
+        `compress` rather than the default `stack`: this list is a master list
+        beside that panel, so a row is an index entry into fields the panel is
+        already showing. Stacking them would repeat the panel at three times
+        the height. Only columns marked `primary` survive — see tableColumns.
+      -->
+      <RlTable
+        :sections="tableSections"
+        :columns="tableColumns"
+        :sort="tableSort"
+        :selected-ids="selectable ? selectedIds : undefined"
+        :selected-id="selectedEntityId ?? undefined"
+        :cursor-id="visibleRows[selectedIndex]?.id"
+        :row-attrs="rowAttrs"
+        :name-column="tableNameColumn"
+        :show-section-header="grouping.grouped.value"
+        :show-add="!!createFormTarget && canCreate()"
+        compact="compress"
+        @sort-click="onSortClick"
+        @toggle="onTableToggle"
+        @toggle-all="onTableToggleAll"
+        @add="onTableAdd"
+        @collapse="onSectionCollapse"
+      >
+        <!--
+          The row's primary control. A plain link with no class of its own:
+          the row wraps this in a `display: contents` span and stretches ONE
+          overlay over whatever it gets, so rela keeps cmd/middle-click and a
+          hover URL preview without the `.row-link::after` it used to own.
+          Two stretched overlays would fight, which is why this slot exists.
+        -->
+        <template #name="{ item }">
+          <span v-if="titleColumn && isCellInaccessible(item as Entity, titleColumn)" class="inaccessible-cell" title="inaccessible">🔒</span>
+          <RouterLink
+            v-else-if="rowTargets.get(item.id)"
+            :to="rowTargets.get(item.id)!"
+            @click.capture="onRowClick(item as Entity, $event)"
           >
-            <td v-if="hasActions" class="select-cell" @click.stop>
-              <input
-                type="checkbox"
-                :checked="isSelected(entity.id)"
-                @change="toggleSelection(entity.id)"
-              />
-            </td>
-            <td
-              v-for="(column, colIndex) in listConfig.columns"
-              :key="column.property || column.relation"
-            >
-              <span
-                v-if="isCellInaccessible(entity, column)"
-                class="inaccessible-cell"
-                title="inaccessible"
-              >🔒</span>
-              <!-- The first column's content is wrapped in the row's real link,
-                   stretched over the whole row by .row-link::after. A <tr>
-                   cannot be an anchor, so this is what gives the row
-                   cmd/middle/right-click and a hover URL preview. It wraps real
-                   text (not an empty box) so it has an accessible name. -->
-              <RouterLink
-                v-else-if="colIndex === 0 && rowTargets.get(entity.id)"
-                class="row-link"
-                :to="rowTargets.get(entity.id)!"
-              >
-                <component
-                  :is="resolveCell(entity, column)!.component"
-                  v-if="resolveCell(entity, column)"
-                  :model-value="resolveCell(entity, column)!.modelValue"
-                  :mode="'display'"
-                  :property-name="resolveCell(entity, column)!.propertyName"
-                  :entity-type="listConfig.entity"
-                />
-                <template v-else>{{ getFormattedCellValue(entity, column) }}</template>
-              </RouterLink>
-              <component
-                :is="resolveCell(entity, column)!.component"
-                v-else-if="resolveCell(entity, column)"
-                :model-value="resolveCell(entity, column)!.modelValue"
-                :mode="'display'"
-                :property-name="resolveCell(entity, column)!.propertyName"
-                :entity-type="listConfig.entity"
-              />
-              <span v-else>
-                {{ getFormattedCellValue(entity, column) }}
-              </span>
-              <!--
-                Per-ROW face provenance, on the title cell only (see
-                `badgeColumn`). Each row resolved through the world
-                independently, so one list can mix a first-choice hit and a
-                stand-in — and the two are otherwise byte-identical, which is
-                the whole reason the badge exists.
+            <component
+              :is="resolveCell(item as Entity, titleColumn!)!.component"
+              v-if="titleColumn && resolveCell(item as Entity, titleColumn)"
+              :model-value="resolveCell(item as Entity, titleColumn)!.modelValue"
+              :mode="'display'"
+              :property-name="resolveCell(item as Entity, titleColumn)!.propertyName"
+              :entity-type="listConfig.entity"
+            />
+            <template v-else>{{ titleColumn ? getFormattedCellValue(item as Entity, titleColumn) : item.title }}</template>
+          </RouterLink>
+          <span v-else>{{ titleColumn ? getFormattedCellValue(item as Entity, titleColumn) : item.title }}</span>
+        </template>
 
-                Only the STAND-IN rows render anything: WorldBadge is a no-op
-                for a first-choice hit and under the default world (where
-                `_world` is absent entirely), so a typical list shows no badges
-                at all and the ones it does show are the exceptions.
-              -->
-              <WorldBadge v-if="isBadgeColumn(column)" :world="entity._world" :entity-type="entity.type" />
-            </td>
-            <td class="actions-cell">
-              <button
-                v-if="canDelete(entity)"
-                class="delete-btn"
-                title="Delete"
-                @click="handleDelete(entity, $event)"
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <polyline points="3 6 5 6 21 6"/>
-                  <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
-                </svg>
-              </button>
-            </td>
-          </tr>
-        </TransitionGroup>
-      </table>
-      </div>
+        <!--
+          Per-ROW face provenance, beside the title. Each row resolves through
+          the world independently, so one list can mix a first-choice hit and
+          a stand-in, and the two are otherwise byte-identical — which is the
+          whole reason the badge exists. WorldBadge is a no-op for a
+          first-choice hit and under the default world, so a typical list
+          shows none at all.
+        -->
+        <template #meta="{ item }">
+          <WorldBadge :world="(item as Entity)._world" :entity-type="(item as Entity).type" />
+        </template>
+
+        <!--
+          Every cell goes through the generic slot: a rela cell is a property
+          widget, a relation chip, or a lock for a git-crypt-inaccessible
+          value, never the plain string `column.field` would cover.
+        -->
+        <template #cell="{ item, column }">
+          <span
+            v-if="listColumnOf(column!) && isCellInaccessible(item as Entity, listColumnOf(column!)!)"
+            class="inaccessible-cell"
+            title="inaccessible"
+          >🔒</span>
+          <span v-else class="list-cell">
+            <component
+              :is="resolveCell(item as Entity, listColumnOf(column!)!)!.component"
+              v-if="listColumnOf(column!) && resolveCell(item as Entity, listColumnOf(column!)!)"
+              :model-value="resolveCell(item as Entity, listColumnOf(column!)!)!.modelValue"
+              :mode="'display'"
+              :property-name="resolveCell(item as Entity, listColumnOf(column!)!)!.propertyName"
+              :entity-type="listConfig.entity"
+            />
+            <template v-else>{{ listColumnOf(column!) ? getFormattedCellValue(item as Entity, listColumnOf(column!)!) : '' }}</template>
+          </span>
+        </template>
+
+      </RlTable>
       </template>
 
+      <!--
+        The selection's actions float over the bottom of the list rather than
+        replacing the column headers. A zero-height sticky anchor holds the
+        bar at the bottom of the visible pane while the list scrolls beneath.
+      -->
+      <div v-if="selectable" class="entity-list__bulk-anchor">
+        <RlBulkActionBar
+          :count="selectedIds.size"
+          :label="entityNoun.singular"
+          :plural-label="entityNoun.plural"
+          @clear="clearActionSelection"
+        >
+          <!--
+            `confirm` is the only destructive signal an action config carries,
+            so it is what picks the danger tone.
+          -->
+          <RlButton
+            v-for="{ id, config } in resolvedActions"
+            v-show="anySelectedAllowsUpdate()"
+            :key="id"
+            variant="secondary"
+            size="sm"
+            :tone="config.confirm ? 'danger' : 'default'"
+            :disabled="actionProcessing"
+            data-testid="bulk-action"
+            @click="(e: MouseEvent) => triggerAction(id, config, e)"
+          >
+            <RlKbd v-if="config.key" :keys="config.key" />
+            {{ config.label }}
+          </RlButton>
+          <!--
+            No confirm: the delete can be undone from the toast it raises.
+            Hidden when no selected row may be deleted.
+          -->
+          <RlButton
+            v-if="deletableSelection.length > 0"
+            variant="secondary"
+            size="sm"
+            tone="danger"
+            :disabled="deleting"
+            data-testid="bulk-delete"
+            @click="deleteSelected"
+          >
+            Delete
+          </RlButton>
+        </RlBulkActionBar>
+      </div>
+
       <Pagination
-        v-if="meta.total > meta.per_page"
+        v-if="!grouping.grouped.value && meta.total > meta.per_page"
         :meta="meta"
         @page-change="handlePageChange"
       />
@@ -1323,15 +1550,55 @@ watch(searchQuery, () => {
 
     <!-- eslint-disable-next-line vue/no-v-html -- sanitized by renderMarkdown -->
     <div v-if="footerHtml" class="view-info view-info--bottom" v-html="footerHtml"/>
+
+    <!--
+      No "Create & add another" when a section's Add opened the dialog: the
+      form clears itself for the next record and the section's value would go
+      with it, so the second row would land outside the section.
+    -->
+    <InlineCreateFormModal
+      v-if="createModal.open.value && listConfig.create_form"
+      :show="true"
+      :form-id="listConfig.create_form"
+      :entity-type="listConfig.entity"
+      :world="createWorld || undefined"
+      :prefill="createPrefill"
+      :add-another="!createPrefill"
+      @close="createModal.close"
+      @created="createModal.created"
+      @created-another="createModal.createdAnother"
+    />
   </div>
 
-  <div v-else class="error-state">
-    <h2>List not found</h2>
-    <p>The list "{{ listId }}" does not exist in the configuration.</p>
-  </div>
+  <RlStatusRegion v-else tone="error">
+    The list "{{ listId }}" does not exist in the configuration.
+  </RlStatusRegion>
 </template>
 
 <style scoped>
+.entity-list__bulk-anchor {
+  position: sticky;
+  bottom: 0;
+  height: 0;
+  z-index: var(--rl-z-sticky-raised);
+}
+
+/*
+ * One line per cell, as the library's own text cells are: a long value
+ * ellipsizes instead of wrapping in its fixed-width column and making the
+ * row as tall as the text. The detail view shows the whole value.
+ */
+.list-cell {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.list-cell :deep(*) {
+  white-space: nowrap;
+}
+
 .inaccessible-cell {
   color: var(--color-text-muted, #888);
   font-style: italic;
@@ -1341,98 +1608,38 @@ watch(searchQuery, () => {
 /* Info-region styles (.view-info) live in styles/view-info.css — shared with
    KanbanView so both views render admin-authored markdown identically. */
 
-.entity-list {
-  max-width: 1200px;
-}
-
-.list-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 24px;
-}
-
-.list-header h1 {
-  margin: 0;
-}
-
-.header-left {
-  display: flex;
-  align-items: center;
-  gap: var(--space-md);
-}
-
-.header-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm);
-}
-
-.btn {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-xs);
-  padding: 8px 16px;
-  border-radius: var(--radius-md);
-  font-size: var(--font-size-base);
-  font-weight: 500;
-  text-decoration: none;
-  cursor: pointer;
-  border: none;
-  transition: all 0.15s;
-}
-
-.btn-primary {
-  background: var(--accent-color, #6366f1);
-  color: white;
-}
-
-.btn-primary:hover {
-  filter: brightness(0.9);
-}
-
-.btn-secondary {
-  background: var(--border-color);
-  color: var(--text-color);
-}
-
-.btn-secondary:hover {
-  background: var(--hover-bg);
-}
-
-.configured-filters {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-sm);
-  margin-top: 12px;
-  margin-bottom: 12px;
-}
+/*
+ * No width cap. A master list is read by scanning down one column and across
+ * to the state beside it, so the columns want the whole pane; a 1200px cap
+ * left the table short of its own container and the rows re-wrapped long
+ * before the pane ran out of room.
+ */
 
 
 .filter-chip {
   display: inline-flex;
   align-items: center;
   padding: 4px 10px;
-  background: var(--hover-bg);
-  border: 1px solid var(--border-color);
+  background: var(--rl-color-bg-hover);
+  border: 1px solid var(--rl-color-border);
   border-radius: 16px;
-  font-size: var(--font-size-sm);
-  color: var(--text-color);
+  font-size: var(--rl-font-size-sm);
+  color: var(--rl-color-text);
 }
 
 .filter-chip.removable {
-  gap: var(--space-xs);
+  gap: var(--rl-space-1);
   padding-right: 4px;
-  background: color-mix(in srgb, var(--accent-color) 15%, transparent);
-  border-color: color-mix(in srgb, var(--accent-color) 30%, transparent);
-  color: var(--accent-color);
+  background: color-mix(in srgb, var(--rl-color-accent) 15%, transparent);
+  border-color: color-mix(in srgb, var(--rl-color-accent) 30%, transparent);
+  color: var(--rl-color-accent);
 }
 
 .chip-remove {
   background: none;
   border: none;
   cursor: pointer;
-  font-size: var(--font-size-base);
+  font-size: var(--rl-font-size-md);
   line-height: 1;
   padding: 0 4px;
   color: inherit;
@@ -1443,160 +1650,50 @@ watch(searchQuery, () => {
   opacity: 1;
 }
 
-.search-row {
-  display: flex;
-  align-items: stretch;
-  gap: var(--space-sm);
-  margin-bottom: 12px;
-}
-
 .adhoc-filter-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-sm);
+  gap: var(--rl-space-2);
   margin-bottom: 12px;
 }
 
+/*
+ * Layout only. The table paints its own surface, so a card colour here showed
+ * through as a lighter frame around a darker table.
+ *
+ * It also carries the full bleed: the table reaches the pane's edges while the
+ * title, filter chips and banners above it keep the page gutter. A bordered
+ * table inset from its own container reads as a card floating in the page
+ * rather than as the page's content, and the header band above it is already
+ * full-bleed — so the inset showed up as the table's rules failing to line up
+ * with the header's underline.
+ *
+ * No `overflow: hidden` here. It was clipping the corners of a rounded card
+ * this stopped being, and it would now crop the bleed back off.
+ */
 .list-content {
-  background: var(--card-bg);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-sm);
-  overflow: hidden;
+  margin-inline: calc(-1 * var(--rl-page-gutter-left)) calc(-1 * var(--rl-page-gutter-right));
 }
 
-.loading-state,
+/*
+ * ...but only the table wants it. The filter bar, the loading and empty
+ * states and the pager are prose-width chrome and stay lined up with the
+ * title above them, so they take the gutter back on their own terms. Same
+ * shape as RlDetailPanel's `.rl-detail-panel-bleed`, inverted: there the body
+ * pads and one child escapes, here the row bleeds and the others opt back in.
+ */
+.list-content > :not(.rl-table) {
+  padding-inline: var(--rl-page-gutter-left) var(--rl-page-gutter-right);
+}
+
 .empty-state {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   padding: 48px;
-  gap: var(--space-lg);
-  color: var(--muted-text);
-}
-
-.spinner {
-  width: 32px;
-  height: 32px;
-  border: 3px solid var(--border-color);
-  border-top-color: var(--accent-color);
-  border-radius: var(--radius-circle);
-  animation: spin 1s linear infinite;
-}
-
-.entity-table {
-  width: 100%;
-  border-collapse: collapse;
-}
-
-.entity-table thead {
-  position: sticky;
-  top: 0;
-  z-index: 5;
-}
-
-.entity-table th {
-  text-align: left;
-  padding: 12px 16px;
-  background: var(--hover-bg);
-  border-bottom: 1px solid var(--border-color);
-  font-size: var(--font-size-sm);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: var(--muted-text);
-}
-
-.action-header-row th {
-  background: var(--hover-bg);
-}
-
-.action-header-cell {
-  text-transform: none;
-  letter-spacing: normal;
-}
-
-.action-header-count {
-  font-weight: 600;
-  font-size: var(--font-size-dense);
-  color: var(--text-color);
-  margin-right: 0.75rem;
-}
-
-.action-header-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
-  margin-right: 0.5rem;
-  vertical-align: middle;
-  padding: 0.2rem 0.6rem;
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm);
-  background: var(--card-bg);
-  color: var(--text-color);
-  font-size: var(--font-size-sm);
-  cursor: pointer;
-  transition: background 0.15s;
-}
-
-.action-header-btn:hover:not(:disabled) {
-  background: var(--hover-bg);
-}
-
-.action-header-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.action-header-btn kbd {
-  display: inline-block;
-  padding: 0.05rem 0.3rem;
-  border: 1px solid var(--border-color);
-  border-radius: 3px;
-  background: var(--hover-bg);
-  font-family: monospace;
-  font-size: var(--font-size-xs);
-  line-height: 1;
-}
-
-.entity-table th.sortable {
-  cursor: pointer;
-  user-select: none;
-}
-
-.entity-table th.sortable:hover {
-  filter: brightness(0.95);
-}
-
-.entity-table th.sorted {
-  color: var(--accent-color);
-}
-
-.sort-indicator {
-  margin-left: 4px;
-  font-size: 10px;
-}
-
-.sort-order {
-  font-size: 9px;
-  background: var(--accent-color);
-  color: white;
-  padding: 1px 4px;
-  border-radius: var(--radius-lg);
-  margin-right: 2px;
-}
-
-.entity-table td {
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--border-color);
-  font-size: var(--font-size-base);
-}
-
-.entity-row {
-  cursor: pointer;
-  transition: background 0.15s;
-  /* Containing block for the stretched .row-link below. */
-  position: relative;
+  gap: var(--rl-space-4);
+  color: var(--rl-color-text-muted);
 }
 
 /* Stretched link (the Bootstrap `.stretched-link` pattern). A <tr> may not be
@@ -1606,75 +1703,7 @@ watch(searchQuery, () => {
    per row in the accessibility tree.
    Known trade-off (accepted, TKT-3CSZRG): the overlay sits above the row's text,
    so text selection within a row is not possible. */
-.entity-row .row-link {
-  color: inherit;
-  text-decoration: none;
-}
-
-.entity-row .row-link::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  /* Below the interactive cells lifted to z-index 1 below. */
-  z-index: 0;
-}
-
 /* Nested controls must stay above the overlay or they become unclickable. */
-.entity-row .select-cell,
-.entity-row .actions-cell {
-  position: relative;
-  z-index: 1;
-}
-
-.entity-row:hover {
-  background: var(--hover-bg);
-}
-
-.entity-row.selected {
-  background: color-mix(in srgb, var(--accent-color) 15%, transparent);
-  outline: 2px solid var(--accent-color);
-  outline-offset: -2px;
-}
-
-.entity-row.selected:hover {
-  background: color-mix(in srgb, var(--accent-color) 25%, transparent);
-}
-
-.entity-row.action-selected {
-  background: color-mix(in srgb, var(--accent-color) 10%, transparent);
-}
-
-.entity-row.action-selected:hover {
-  background: color-mix(in srgb, var(--accent-color) 20%, transparent);
-}
-
-.row-leave-active {
-  transition: opacity 0.35s ease, background-color 0.35s ease;
-  overflow: hidden;
-}
-
-.row-leave-active td {
-  transition: padding 0.35s ease, line-height 0.35s ease, font-size 0.35s ease, border-color 0.35s ease;
-  overflow: hidden;
-}
-
-.row-leave-from {
-  opacity: 1;
-}
-
-.row-leave-to {
-  opacity: 0;
-  background-color: color-mix(in srgb, var(--accent-color) 20%, transparent);
-}
-
-.row-leave-to td {
-  padding-top: 0;
-  padding-bottom: 0;
-  line-height: 0;
-  font-size: 0;
-  border-color: transparent;
-}
-
 .select-column,
 .select-cell {
   width: 32px;
@@ -1684,17 +1713,7 @@ watch(searchQuery, () => {
 .select-cell input[type="checkbox"],
 .select-column input[type="checkbox"] {
   cursor: pointer;
-  accent-color: var(--accent-color, #6366f1);
-}
-
-.error-state {
-  padding: 48px;
-  text-align: center;
-  color: var(--muted-text);
-}
-
-.error-state h2 {
-  color: var(--error-color, #ef4444);
+  accent-color: var(--rl-color-accent, #6366f1);
 }
 
 .actions-column {
@@ -1706,150 +1725,8 @@ watch(searchQuery, () => {
   white-space: nowrap;
 }
 
-.delete-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  background: transparent;
-  border: none;
-  border-radius: var(--radius-sm);
-  color: var(--muted-text);
-  cursor: pointer;
-  transition: all 0.15s;
-}
-
-.delete-btn:hover {
-  background: color-mix(in srgb, var(--error-color) 15%, transparent);
-  color: var(--error-color);
-}
-
 .table-scroll-wrapper {
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
-}
-
-.mobile-card {
-  background: var(--card-bg);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-lg);
-  padding: 12px;
-  cursor: pointer;
-  transition: all 0.15s;
-  /* Containing block for the stretched title link. */
-  position: relative;
-}
-
-/* Same stretched-link pattern as the desktop row: the title is the real link,
-   expanded over the card so the whole card supports cmd/middle/right-click. */
-a.mobile-card-title {
-  color: inherit;
-  text-decoration: none;
-}
-
-a.mobile-card-title::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-}
-
-/* The delete button must stay above the overlay. */
-.mobile-card .delete-btn {
-  position: relative;
-  z-index: 1;
-}
-
-.mobile-card + .mobile-card {
-  margin-top: 8px;
-}
-
-.mobile-card:hover {
-  border-color: var(--accent-color, #6366f1);
-}
-
-.mobile-card.selected {
-  background: color-mix(in srgb, var(--accent-color) 15%, transparent);
-  outline: 2px solid var(--accent-color);
-  outline-offset: -2px;
-}
-
-.mobile-card.action-selected {
-  background: color-mix(in srgb, var(--accent-color) 10%, transparent);
-}
-
-.mobile-card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: var(--space-sm);
-}
-
-.mobile-card-title {
-  font-size: 15px;
-  font-weight: 500;
-  color: var(--text-color);
-  flex: 1;
-  min-width: 0;
-}
-
-.mobile-card-fields {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 16px;
-  margin-top: 8px;
-  padding-top: 8px;
-  border-top: 1px solid var(--border-color);
-}
-
-.mobile-card-field {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2xs);
-  font-size: var(--font-size-dense);
-}
-
-.mobile-card-label {
-  color: var(--muted-text);
-}
-
-.mobile-card-label::after {
-  content: ':';
-}
-
-.mobile-card-value {
-  color: var(--text-color);
-}
-
-@media (max-width: 768px) {
-  /* .list-header uses .mobile-topbar.mobile-topbar--with-menu from
-     mobile-bars.css (sticky chrome + safe-area math + hamburger room). */
-  .list-header h1 {
-    font-size: var(--font-size-lg);
-  }
-
-  .list-content {
-    background: none;
-    box-shadow: none;
-    border-radius: 0;
-    overflow: visible;
-  }
-
-  .mobile-card .delete-btn {
-    width: 44px;
-    height: 44px;
-  }
-}
-
-@media (max-width: 480px) {
-  /* .main-content drops to 12px horizontal padding at this breakpoint;
-     the sticky header's full-bleed negative margin must match or the
-     header pokes 4px past each screen edge and triggers horizontal scroll. */
-  .list-header {
-    margin-left: -12px;
-    margin-right: -12px;
-  }
 }
 </style>

@@ -190,7 +190,9 @@ func resolveListNarrowing(
 func (n listNarrowing) pushdownPlan(
 	ctx context.Context, a *App, typeName string, query map[string][]string, page, perPage int,
 ) (plan listPlan, empty, ok bool) {
-	if n.cond != nil || worldFromContext(ctx).blocksAllReads() {
+	// A page scope (pagescope.go) narrows membership the way a condition does,
+	// so it declines too.
+	if n.cond != nil || hasPageScope(query) || worldFromContext(ctx).blocksAllReads() {
 		return listPlan{}, false, false
 	}
 	rqr := readGateFromContext(ctx).ReadQuery(ctx, typeName)

@@ -41,6 +41,18 @@ export interface WidgetProps<T = unknown> {
   id?: string
   placeholder?: string
   help?: string
+  // Accessibility wiring handed down by FieldShell through its slot. The shell
+  // renders the help and error text and owns their ids, but cannot reach across
+  // the component boundary to associate them with the control -- so the widget
+  // puts them on the element it actually renders.
+  //
+  // Both are optional and absent outside a form: `mode: 'display'` and the
+  // shell-less call sites (cards, list cells) pass neither.
+  describedBy?: string
+  // Whether the field is in error, for `aria-invalid`. Distinct from `error`,
+  // which is the message TEXT: a widget needs the boolean to mark the control
+  // and the shell needs the text to render it.
+  invalid?: boolean
   // Sparse per-option allow map (select / multi-select). Only `false`
   // entries appear; absent keys default to allowed.
   optionVerdicts?: Record<string, boolean>

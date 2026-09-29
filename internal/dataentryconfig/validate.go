@@ -38,10 +38,13 @@ var validTopLevelKeys = map[string]bool{
 	"actions":      true,
 	"webhooks":     true,
 	"navigation":   true,
+	"spaces":       true,
+	"pages":        true,
 	"palette":      true,
 
 	"next_action_bands": true,
 	"next_actions":      true,
+	"account":           true,
 }
 
 // Known typos with suggestions
@@ -445,8 +448,12 @@ func ValidateConfig(data []byte, cfg *Config, meta *metamodel.Metamodel) error {
 
 	// Phase 2: Semantic validation (cross-references, types, etc.)
 	errs = append(errs, validateNavigation(cfg)...)
+	errs = append(errs, validateNavItemsFrom(cfg, meta)...)
+	errs = append(errs, validateSpaces(cfg, meta)...)
+	errs = append(errs, validatePages(cfg, meta)...)
 	errs = append(errs, validateForms(cfg, meta)...)
 	errs = append(errs, validateLists(cfg, meta)...)
+	errs = append(errs, validateListsGroupBy(cfg, meta)...)
 	errs = append(errs, validateViews(cfg, meta)...)
 	errs = append(errs, validateEntityViews(cfg, meta)...)
 	errs = append(errs, validateKanbans(cfg, meta)...)
@@ -464,6 +471,7 @@ func ValidateConfig(data []byte, cfg *Config, meta *metamodel.Metamodel) error {
 	errs = append(errs, validateNextActions(cfg, meta)...)
 	errs = append(errs, validateQueryScopes(cfg, meta)...)
 	errs = append(errs, validateNavEntities(cfg, meta)...)
+	errs = append(errs, validateAccount(data, cfg, meta)...)
 	errs = append(errs, validateCrossReferences(cfg)...)
 
 	if len(errs) > 0 {
@@ -509,11 +517,28 @@ func checkUnknownKeys(data []byte) []string {
 	return errs
 }
 
-// validateNavigation validates navigation entries.
+// validateNavigation validates navigation entries: the top-level tree and
+// the tree of every space, so an entry inside a space is held to exactly the
+// rules of a top-level one. An error from a space's tree names the space.
 func validateNavigation(cfg *Config) []string {
 	var errs []string
+	for _, tree := range NavigationTrees(cfg) {
+		treeErrs := validateNavTree(tree.Entries, cfg)
+		if tree.Space != "" {
+			for i, e := range treeErrs {
+				treeErrs[i] = fmt.Sprintf("spaces[%s]: %s", tree.Space, e)
+			}
+		}
+		errs = append(errs, treeErrs...)
+	}
+	return errs
+}
 
-	for _, nav := range cfg.Navigation {
+// validateNavTree validates one navigation tree.
+func validateNavTree(entries []NavigationEntry, cfg *Config) []string {
+	var errs []string
+
+	for _, nav := range entries {
 		if nav.IsGroup() {
 			for _, child := range nav.Items {
 				if child.IsGroup() {
@@ -525,10 +550,10 @@ func validateNavigation(cfg *Config) []string {
 		}
 	}
 
-	errs = append(errs, validateNavEntitiesPlacement(cfg.Navigation)...)
+	errs = append(errs, validateNavEntitiesPlacement(entries)...)
 
 	// Validate list references in navigation
-	for _, nav := range cfg.Navigation {
+	for _, nav := range entries {
 		errs = append(errs, validateNavEntry(nav, cfg)...)
 	}
 
@@ -550,57 +575,12 @@ func validateNavEntry(nav NavigationEntry, cfg *Config) []string {
 	errs = append(errs, validateIconName(nav.Icon, fmt.Sprintf("navigation %q", label))...)
 	errs = append(errs, validateNavEntitiesShape(nav)...)
 
-	if nav.List != "" {
-		if _, ok := cfg.Lists[nav.List]; !ok {
-			errs = append(errs, fmt.Sprintf(
-				"navigation: references unknown list %q", nav.List))
-		}
+	for _, e := range navTargetErrors(nav, cfg) {
+		errs = append(errs, "navigation: "+e)
 	}
 
-	if nav.Kanban != "" {
-		if _, ok := cfg.Kanbans[nav.Kanban]; !ok {
-			errs = append(errs, fmt.Sprintf(
-				"navigation: references unknown kanban %q", nav.Kanban))
-		}
-	}
-	if nav.Calendar != "" {
-		if _, ok := cfg.Calendars[nav.Calendar]; !ok {
-			errs = append(errs, fmt.Sprintf(
-				"navigation: references unknown calendar %q", nav.Calendar))
-		}
-	}
-	if nav.Gantt != "" {
-		if _, ok := cfg.Gantts[nav.Gantt]; !ok {
-			errs = append(errs, fmt.Sprintf(
-				"navigation: references unknown gantt %q", nav.Gantt))
-		}
-	}
-
-	if nav.Action != "" {
-		if a, ok := cfg.Actions[nav.Action]; !ok {
-			errs = append(errs, fmt.Sprintf(
-				"navigation: references unknown action %q", nav.Action))
-		} else if a.AvailableOn != nil {
-			errs = append(errs, entityBoundActionRefError("navigation", nav.Action))
-		}
-	}
-
-	if nav.Document != "" {
-		doc, ok := cfg.Documents[nav.Document]
-		switch {
-		case !ok:
-			errs = append(errs, fmt.Sprintf(
-				"navigation: references unknown document %q", nav.Document))
-		case !doc.IsStandalone():
-			// An entity-anchored document needs an entry id in its URL, and a
-			// sidebar entry has no entity to supply one. Rejecting at config
-			// load beats emitting a link that always 400s.
-			errs = append(errs, fmt.Sprintf(
-				"navigation: document %q has entity_type %q so it cannot be a navigation entry "+
-					"(only documents without entity_type can; they render at /document/%s)",
-				nav.Document, doc.EntityType, nav.Document))
-		}
-	}
+	errs = append(errs, validateNavOpen(nav, label)...)
+	errs = append(errs, validateNavStatus(nav, label, cfg)...)
 
 	if nav.IsGroup() {
 		// A group is a container, not a destination — there is nothing for a
@@ -624,6 +604,121 @@ func validateNavEntry(nav NavigationEntry, cfg *Config) []string {
 		}
 	}
 
+	return errs
+}
+
+// navTargetErrors checks that the view an entry opens exists. The messages
+// carry no prefix, so a navigation entry and a space home can each name
+// themselves.
+func navTargetErrors(nav NavigationEntry, cfg *Config) []string {
+	var errs []string
+	if nav.List != "" {
+		if _, ok := cfg.Lists[nav.List]; !ok {
+			errs = append(errs, fmt.Sprintf("references unknown list %q", nav.List))
+		}
+	}
+	if nav.Kanban != "" {
+		if _, ok := cfg.Kanbans[nav.Kanban]; !ok {
+			errs = append(errs, fmt.Sprintf("references unknown kanban %q", nav.Kanban))
+		}
+	}
+	if nav.Calendar != "" {
+		if _, ok := cfg.Calendars[nav.Calendar]; !ok {
+			errs = append(errs, fmt.Sprintf("references unknown calendar %q", nav.Calendar))
+		}
+	}
+	if nav.Gantt != "" {
+		if _, ok := cfg.Gantts[nav.Gantt]; !ok {
+			errs = append(errs, fmt.Sprintf("references unknown gantt %q", nav.Gantt))
+		}
+	}
+	if nav.Page != "" {
+		page, ok := cfg.Pages[nav.Page]
+		switch {
+		case !ok:
+			errs = append(errs, fmt.Sprintf("references unknown page %q", nav.Page))
+		case page.IsEntityPage():
+			// An entity page needs an entity id in its URL, and a navigation
+			// entry has none to supply, like an entity-anchored document.
+			errs = append(errs, fmt.Sprintf(
+				"page %q has entity_type %q so it cannot be a navigation destination "+
+					"(it opens from an entity, at /p/%s/<id>)", nav.Page, page.EntityType, nav.Page))
+		}
+	}
+	if nav.Action != "" {
+		if a, ok := cfg.Actions[nav.Action]; !ok {
+			errs = append(errs, fmt.Sprintf("references unknown action %q", nav.Action))
+		} else if a.AvailableOn != nil {
+			errs = append(errs, entityBoundActionRefError("navigation", nav.Action))
+		}
+	}
+	if nav.Document != "" {
+		doc, ok := cfg.Documents[nav.Document]
+		switch {
+		case !ok:
+			errs = append(errs, fmt.Sprintf("references unknown document %q", nav.Document))
+		case !doc.IsStandalone():
+			// An entity-anchored document needs an entry id in its URL, and a
+			// sidebar entry has no entity to supply one. Rejecting at config
+			// load beats emitting a link that always 400s.
+			errs = append(errs, fmt.Sprintf(
+				"document %q has entity_type %q so it cannot be a navigation entry "+
+					"(only documents without entity_type can; they render at /document/%s)",
+				nav.Document, doc.EntityType, nav.Document))
+		}
+	}
+	return errs
+}
+
+// validateNavOpen checks `open:` on a navigation entry.
+func validateNavOpen(nav NavigationEntry, label string) []string {
+	switch nav.Open {
+	case "", NavOpenPage:
+		return nil
+	case NavOpenFlyout:
+		if nav.List == "" {
+			return []string{fmt.Sprintf(
+				"navigation %q: open: flyout is only supported on a list entry", label)}
+		}
+		return nil
+	default:
+		return []string{fmt.Sprintf(
+			"navigation %q: unknown open %q (valid: %s, %s)", label, nav.Open, NavOpenPage, NavOpenFlyout)}
+	}
+}
+
+// validateNavStatus checks `status:` on a navigation entry. The rule
+// conditions are compiled separately, with the view conditions, because
+// compiling needs the metamodel.
+func validateNavStatus(nav NavigationEntry, label string, cfg *Config) []string {
+	if len(nav.Status) == 0 {
+		return nil
+	}
+	if nav.Page != "" {
+		if errs := validatePageStatus(nav, label, cfg); len(errs) > 0 {
+			return errs
+		}
+	} else if nav.List == "" {
+		return []string{fmt.Sprintf(
+			"navigation %q: status is only supported on a list or page entry", label)}
+	}
+	var errs []string
+	if len(nav.Status) > NavStatusMaxRules {
+		errs = append(errs, fmt.Sprintf(
+			"navigation %q: status has %d rules (at most %d)", label, len(nav.Status), NavStatusMaxRules))
+	}
+	for i, rule := range nav.Status {
+		switch rule.Tone {
+		case NavStatusToneNew, NavStatusToneInfo, NavStatusToneWarning, NavStatusToneError, NavStatusToneSuccess:
+		default:
+			errs = append(errs, fmt.Sprintf(
+				"navigation %q: status[%d]: unknown tone %q (valid: %s, %s, %s, %s, %s)", label, i, rule.Tone,
+				NavStatusToneNew, NavStatusToneInfo, NavStatusToneWarning, NavStatusToneError, NavStatusToneSuccess))
+		}
+		if strings.TrimSpace(rule.Label) == "" {
+			errs = append(errs, fmt.Sprintf("navigation %q: status[%d]: label is required", label, i))
+		}
+	}
 	return errs
 }
 
@@ -1080,6 +1175,19 @@ func validateLists(cfg *Config, meta *metamodel.Metamodel) []string {
 
 		// Validate columns
 		for i, c := range list.Columns {
+			if c.Face {
+				if c.Property != "" || c.Relation != "" {
+					errs = append(errs, fmt.Sprintf(
+						"list %q: column[%d] sets face together with property or relation; a face column takes neither",
+						listID, i))
+				}
+				if len(entDef.Faces) == 0 {
+					errs = append(errs, fmt.Sprintf(
+						"list %q: column[%d] is a face column, but entity %q declares no faces",
+						listID, i, list.EntityType))
+				}
+				continue
+			}
 			if c.Relation != "" {
 				if _, ok := meta.GetRelationDef(c.Relation); !ok {
 					errs = append(errs, fmt.Sprintf(
@@ -2932,7 +3040,7 @@ func validateQueryScopes(cfg *Config, meta *metamodel.Metamodel) []string {
 		kanban := cfg.Kanbans[id]
 		errs = append(errs, checkQueryScopeRef(meta, "kanban", id, kanban.EntityType, kanban.QueryScope)...)
 	}
-	for _, nav := range NavEntitiesEntries(cfg.Navigation) {
+	for _, nav := range AllNavEntitiesEntries(cfg) {
 		errs = append(errs, checkQueryScopeRef(meta, "navigation entities", nav.Entities, nav.Entities, nav.QueryScope)...)
 	}
 	return errs

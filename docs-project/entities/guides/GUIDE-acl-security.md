@@ -1010,6 +1010,11 @@ it does for a list page. So two principals get the same sidebar and
 different links, and a principal who may read none of the entities gets
 no links. The one channel this adds is the one a list page already has:
 whether the item shows any links at all.
+**A space `permission:` works the same way.** It keeps a space out of
+the switcher of a principal who does not hold the permission. It is a
+UX filter, not concealment: `/api/v1/_config` still serves every space,
+and the lists and entities of a hidden space stay reachable by URL under
+the normal ACL. A space is an entry point, not a security boundary.
 
 **Dashboard cards work the same way** (TKT-53KICM). A `permission:` on a
 `dashboard.cards[]` entry omits that card from `/api/v1/_dashboard` for
@@ -1024,6 +1029,24 @@ principal-independent by design and must stay that way: it keeps serving the
 whole `dashboard:` block, `permission:` values included, to everyone.
 `/api/v1/_dashboard` is the per-principal view; `_config` is the config. Do not
 collapse them.
+
+**Nav status counts are per principal and live apart from the sidebar.**
+A `status:` rule on a nav entry puts a count next to it. A count is about
+data, so it is served by `/api/v1/_nav_status` and never by `_sidebar`,
+which keeps the sidebar identical for every principal; the sidebar only
+carries each entry's `status_key`. The count is taken over the rows the
+list shows that principal: rows are gated and redacted before they are
+counted, and the response is `no-store`, never cached across principals.
+An entry hidden by `permission:` gets no count.
+
+**Generated nav entries are per principal too.** A group with `items_from:`
+lists entity titles, and a title is data. So the entries are served by
+`/api/v1/_nav_items`, never by `_sidebar`; the sidebar carries only the
+group's `items_key`. The entries are the rows the list shows that principal:
+rows are gated, each row is redacted before its title is taken, and
+`truncated` is computed after that filtering. A letter badge taken from a
+related entity appears only when the principal may read that entity and its
+title. The response is `no-store`.
 
 The same holds for the rest of the app's configuration.
 `/api/v1/_config` serves lists, views, kanbans, documents and

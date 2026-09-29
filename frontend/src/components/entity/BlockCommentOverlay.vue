@@ -4,6 +4,7 @@ import { useUIStore } from '@/stores'
 import { addComment, type Comment } from '@/api/comments'
 import { getErrorMessage } from '@/api/errors'
 import { findCommentableBlocks, type CommentableBlock } from '@/utils/blockAnchor'
+import RlButton from 'rela-components/components/common/RlButton.vue'
 
 /**
  * Comment affordances for body blocks that cannot be text-selected
@@ -207,10 +208,10 @@ async function submit(b: Placed) {
         />
         <div class="bco-actions">
           <span class="bco-hint">⌘↵ to post</span>
-          <button type="button" class="bco-cancel" @click="cancel">Cancel</button>
-          <button type="submit" class="bco-submit" :disabled="submitting || !body.trim()">
+          <RlButton type="button" variant="secondary" size="sm" @click="cancel">Cancel</RlButton>
+          <RlButton type="submit" variant="primary" size="sm" :disabled="submitting || !body.trim()">
             {{ submitting ? 'Adding…' : 'Comment' }}
-          </button>
+          </RlButton>
         </div>
       </form>
     </div>
@@ -236,10 +237,10 @@ async function submit(b: Placed) {
   align-items: center;
   gap: 3px;
   padding: 3px 7px;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--rl-color-border);
   border-radius: 10px;
-  background: var(--card-bg);
-  color: var(--muted-text);
+  background: var(--rl-color-bg-raised);
+  color: var(--rl-color-text-muted);
   box-shadow: var(--shadow-sm, 0 1px 3px rgb(0 0 0 / 12%));
   cursor: pointer;
   font: 600 var(--font-size-sm) / 1 inherit;
@@ -249,7 +250,7 @@ async function submit(b: Placed) {
 .bco-btn:hover,
 .bco-btn:focus-visible {
   opacity: 1;
-  border-color: var(--accent-color);
+  border-color: var(--rl-color-accent);
 }
 .bco-btn svg {
   width: 12px;
@@ -259,13 +260,13 @@ async function submit(b: Placed) {
   opacity: 1;
   background: var(--comment-highlight);
   border-color: var(--comment-highlight);
-  color: var(--text-color);
+  color: var(--rl-color-text);
 }
 .bco-btn:focus-visible {
   outline: none;
   box-shadow:
-    0 0 0 2px var(--focus-ring-gap),
-    0 0 0 4px var(--focus-ring);
+    0 0 0 2px var(--rl-color-bg),
+    0 0 0 4px var(--rl-color-focus);
 }
 
 .bco-form {
@@ -275,16 +276,16 @@ async function submit(b: Placed) {
   z-index: 27;
   width: 320px;
   padding: 10px;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--rl-color-border);
   border-radius: var(--radius-lg, 8px);
-  background: var(--card-bg);
+  background: var(--rl-color-bg-raised);
   box-shadow: var(--shadow-lg, 0 10px 30px rgb(0 0 0 / 16%));
 }
 
 .bco-target {
   margin: 0 0 8px;
   font-size: var(--font-size-sm);
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
 }
 
 .bco-list {
@@ -296,7 +297,7 @@ async function submit(b: Placed) {
 }
 .bco-cmt {
   padding: 6px 0;
-  border-bottom: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--rl-color-border);
   font-size: var(--font-size-sm);
 }
 .bco-cmt:last-child {
@@ -304,7 +305,7 @@ async function submit(b: Placed) {
 }
 .bco-cmt p {
   margin: 2px 0 0;
-  color: var(--text-color);
+  color: var(--rl-color-text);
   white-space: pre-wrap;
 }
 
@@ -312,19 +313,19 @@ async function submit(b: Placed) {
   width: 100%;
   padding: 6px 8px;
   resize: vertical;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--rl-color-border);
   border-radius: var(--radius-sm, 5px);
-  background: var(--input-bg);
-  color: var(--text-color);
+  background: var(--rl-color-bg-raised);
+  color: var(--rl-color-text);
   font: inherit;
   font-size: var(--font-size-base);
 }
 .bco-input:focus {
   outline: none;
-  border-color: var(--accent-color);
+  border-color: var(--rl-color-accent);
   box-shadow:
-    0 0 0 2px var(--focus-ring-gap),
-    0 0 0 4px var(--focus-ring);
+    0 0 0 2px var(--rl-color-bg),
+    0 0 0 4px var(--rl-color-focus);
 }
 
 .bco-actions {
@@ -336,27 +337,6 @@ async function submit(b: Placed) {
 .bco-hint {
   margin-right: auto;
   font-size: var(--font-size-sm);
-  color: var(--muted-text);
-}
-.bco-cancel,
-.bco-submit {
-  padding: 4px 11px;
-  border-radius: var(--radius-sm, 5px);
-  font: 600 var(--font-size-sm) / 1.4 inherit;
-  cursor: pointer;
-}
-.bco-cancel {
-  border: 1px solid var(--border-color);
-  background: var(--bg-color);
-  color: var(--text-color);
-}
-.bco-submit {
-  border: 1px solid var(--accent-color);
-  background: var(--accent-color);
-  color: #fff;
-}
-.bco-submit:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
+  color: var(--rl-color-text-muted);
 }
 </style>

@@ -33,6 +33,8 @@ function onChange(event: Event) {
     type="checkbox"
     :checked="boolValue"
     :disabled="disabled"
+    :aria-describedby="describedBy"
+    :aria-invalid="invalid || undefined"
     @change="onChange"
   />
 </template>
@@ -63,9 +65,9 @@ input[type='checkbox'] {
   appearance: none;
   width: 18px;
   height: 18px;
-  border: 2px solid var(--border-color);
+  border: 2px solid var(--rl-color-border);
   border-radius: var(--radius-sm);
-  background: var(--input-bg);
+  background: var(--rl-color-bg-raised);
   position: relative;
   cursor: pointer;
 
@@ -78,8 +80,8 @@ input[type='checkbox'] {
 }
 
 input[type='checkbox']:checked {
-  background: var(--accent-color, #6366f1);
-  border-color: var(--accent-color, #6366f1);
+  background: var(--rl-color-accent, #6366f1);
+  border-color: var(--rl-color-accent, #6366f1);
 }
 
 /* The checkmark: the right and bottom borders of a box, rotated 45°, so the
@@ -116,26 +118,26 @@ input[type='checkbox']:checked::after {
 }
 
 input[type='checkbox']:hover:not(:disabled) {
-  border-color: var(--accent-color, #6366f1);
+  border-color: var(--rl-color-accent, #6366f1);
 }
 
 /* The shared ring token (TKT-FRING7). This widget originally carried its own
    local `color-mix` at 30% — the first fix for the hardcoded indigo — which is
-   now hoisted into `--focus-ring` and used by every focusable control. The
+   now hoisted into `--rl-color-focus` and used by every focusable control. The
    token is fully opaque because no translucent ring reaches WCAG 2.2's 3:1
    non-text minimum; 30% scored 1.46:1.
 
-   TWO shadows, not one, via the shared --focus-ring-gap band. This widget is
+   TWO shadows, not one, via the shared --rl-color-bg band. This widget is
    the extreme case that motivated the token: a CHECKED checkbox is FILLED with
-   --accent-color and the ring is that same colour, so a single ring abuts its
+   --rl-color-accent and the ring is that same colour, so a single ring abuts its
    own fill at 1:1 contrast and disappears entirely — focused+checked would
    look identical to unfocused. Every other control has the milder version of
    the same problem (accent border against accent ring). */
 input[type='checkbox']:focus-visible {
   outline: none;
   box-shadow:
-    0 0 0 2px var(--focus-ring-gap),
-    0 0 0 4px var(--focus-ring);
+    0 0 0 2px var(--rl-color-bg),
+    0 0 0 4px var(--rl-color-focus);
 }
 
 /* `:not(.display-checkbox)` is load-bearing, not defensive.
@@ -157,7 +159,7 @@ input[type='checkbox']:disabled:not(.display-checkbox) {
    the browser's native disabled greying; with `appearance: none` it became the
    ENTIRE read-only signal, and a 15% reduction on an accent-filled box is
    near-imperceptible. The sibling widgets' disabled treatment
-   (`background: var(--hover-bg)`) can't be borrowed here: on a checkbox the
+   (`background: var(--rl-color-bg-hover)`) can't be borrowed here: on a checkbox the
    background IS the checked signal, so overwriting it would erase state to
    convey read-only. Dimming preserves both. */
 .display-checkbox:disabled {

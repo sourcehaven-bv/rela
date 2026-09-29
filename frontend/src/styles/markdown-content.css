@@ -30,7 +30,7 @@
   --md-list-pad: 26px;
   font-size: 15px;
   line-height: 1.7;
-  color: var(--text-color);
+  color: var(--rl-color-text);
   /* A long unbroken token (URL, inline code) must wrap rather than trip the
      container's horizontal scroll (see the overflow-x note in the Tables
      section) and drag a scrollbar across the whole body. */
@@ -46,7 +46,7 @@
 .md-body h5,
 .md-body h6 {
   margin: 24px 0 12px;
-  color: var(--text-color);
+  color: var(--rl-color-text);
   line-height: 1.3;
   font-weight: 600;
 }
@@ -71,7 +71,7 @@
 .md-body h5,
 .md-body h6 {
   font-size: 14px;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
 }
 
 /* ── Text blocks ────────────────────────────────────────────────────────── */
@@ -115,7 +115,7 @@
 }
 
 .md-body li::marker {
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
 }
 
 /* Task-list items (GFM `- [ ]`) render a checkbox + text; drop the bullet so
@@ -146,16 +146,16 @@
 /* ── Code ───────────────────────────────────────────────────────────────── */
 
 .md-body code {
-  background: var(--hover-bg);
-  color: var(--text-color);
+  background: var(--rl-color-bg-hover);
+  color: var(--rl-color-text);
   padding: 2px 6px;
   border-radius: 4px;
   font-size: 13px;
 }
 
 .md-body pre {
-  background: var(--hover-bg);
-  border: 1px solid var(--border-color);
+  background: var(--rl-color-bg-hover);
+  border: 1px solid var(--rl-color-border);
   border-radius: 6px;
   padding: 14px 16px;
   overflow-x: auto;
@@ -176,9 +176,9 @@
 .md-body blockquote {
   margin: 0 0 14px;
   padding: 8px 16px;
-  background: var(--hover-bg);
-  border-left: 4px solid var(--accent-color);
-  color: var(--muted-text);
+  background: var(--rl-color-bg-hover);
+  border-left: 4px solid var(--rl-color-accent);
+  color: var(--rl-color-text-muted);
   border-radius: 0 4px 4px 0;
 }
 
@@ -191,7 +191,7 @@
 
 .md-body hr {
   border: none;
-  border-top: 1px solid var(--border-color);
+  border-top: 1px solid var(--rl-color-border);
   margin: 28px 0;
 }
 
@@ -201,7 +201,7 @@
 }
 
 .md-body a {
-  color: var(--accent-color);
+  color: var(--rl-color-accent);
   text-decoration: underline;
   text-underline-offset: 2px;
 }
@@ -243,8 +243,8 @@
 .md-table-scroll:focus-visible {
   outline: none;
   box-shadow:
-    0 0 0 2px var(--focus-ring-gap),
-    0 0 0 4px var(--focus-ring);
+    0 0 0 2px var(--rl-color-bg),
+    0 0 0 4px var(--rl-color-focus);
 }
 
 /*
@@ -313,7 +313,7 @@
 .md-body td {
   padding: 8px 12px;
   text-align: left;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--rl-color-border);
 }
 
 .md-body:not(.milkdown-prose) th,
@@ -337,7 +337,7 @@
 }
 
 .md-body th {
-  background: var(--hover-bg);
+  background: var(--rl-color-bg-hover);
   font-weight: 600;
 }
 
@@ -345,8 +345,8 @@
 
 .md-body kbd {
   padding: 2px 6px;
-  background: var(--hover-bg);
-  border: 1px solid var(--border-color);
+  background: var(--rl-color-bg-hover);
+  border: 1px solid var(--rl-color-border);
   border-radius: 4px;
   font-size: 12px;
   font-family: inherit;

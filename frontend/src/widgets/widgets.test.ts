@@ -46,6 +46,9 @@ vi.mock('@/api/attachments', async () => {
   }
 })
 
+const { mockConfirm } = vi.hoisted(() => ({ mockConfirm: vi.fn().mockResolvedValue(true) }))
+vi.mock('@/composables/useConfirm', () => ({ useConfirm: () => ({ confirm: mockConfirm }) }))
+
 describe('TextWidget', () => {
   it('renders the value and emits update:modelValue on input', async () => {
     const w = mount(TextWidget, { props: { modelValue: 'hello', mode: 'edit' as const, propertyName: '' } })
@@ -527,14 +530,14 @@ describe('FileWidget', () => {
     const w = mount(FileWidget, {
       props: { modelValue: '', mode: 'display' as const, propertyName: 'screenshot', attachments: [att] },
     })
-    const img = w.find('img.file-preview')
+    const img = w.find('img.rl-attachment-card__preview')
     expect(img.exists()).toBe(true)
     expect(img.attributes('src')).toBe(att.href)
-    const link = w.find('a.file-name')
+    const link = w.find('a.rl-attachment-card__main')
     expect(link.attributes('href')).toBe(att.href)
     expect(link.attributes('download')).toBe('shot.png')
     expect(w.text()).toContain('shot.png')
-    expect(w.text()).toContain('2.0 KB')
+    expect(w.text()).toContain('IMAGE · Download')
   })
 
   it('renders a download link without preview for a non-image attachment', () => {
@@ -542,10 +545,10 @@ describe('FileWidget', () => {
     const w = mount(FileWidget, {
       props: { modelValue: '', mode: 'display' as const, propertyName: 'doc', attachments: [pdf] },
     })
-    expect(w.find('img.file-preview').exists()).toBe(false)
-    expect(w.find('a.file-name').attributes('href')).toBe('/h')
+    expect(w.find('img.rl-attachment-card__preview').exists()).toBe(false)
+    expect(w.find('a.rl-attachment-card__main').attributes('href')).toBe('/h')
     expect(w.text()).toContain('doc.pdf')
-    expect(w.text()).toContain('500 B')
+    expect(w.text()).toContain('PDF · Download')
   })
 
   it('renders all files of a multi-attachment property', () => {
@@ -615,7 +618,7 @@ describe('FileWidget', () => {
     expect(w.text()).toContain('notes.txt')
     expect(w.text()).toContain('Pending save')
     // Nothing to download yet — the bytes are still local.
-    expect(w.find('a.file-name').exists()).toBe(false)
+    expect(w.find('a.rl-attachment-card__main').exists()).toBe(false)
   })
 
   // Simulate a real pick: set `files` on the hidden input and fire `change`,
@@ -641,7 +644,7 @@ describe('FileWidget', () => {
     const keep = textFile('keep.txt')
     const drop = textFile('drop.txt')
     const w = mount(FileWidget, { props: stagedProps({ stagedFiles: [keep, drop], max: 3 }) })
-    await w.findAll('.file-remove')[1].trigger('click')
+    await w.findAll('.rl-attachment-card__remove')[1].trigger('click')
     const emitted = w.emitted('update:staged-files')
     expect(emitted![0][0]).toEqual([keep])
   })
@@ -758,10 +761,27 @@ describe('FileWidget upload', () => {
         max: 1, entityType: 'ticket', entityId: 'TKT-1',
       },
     })
-    await w.find('.file-remove').trigger('click')
+    await w.find('.rl-attachment-card__remove').trigger('click')
     await flushPromises()
+    expect(mockConfirm).toHaveBeenCalledWith(expect.objectContaining({ danger: true }))
     // Deletes via the server-provided per-file href (single escaper).
     expect(mockDelete).toHaveBeenCalledWith('/h')
     expect(w.emitted('attachment-changed')).toBeTruthy()
+  })
+
+  it('keeps the file when the delete is not confirmed', async () => {
+    mockConfirm.mockResolvedValueOnce(false)
+    mockDelete.mockClear()
+    const w = mount(FileWidget, {
+      props: {
+        modelValue: '', mode: 'edit' as const, propertyName: 'screenshot',
+        attachments: [{ id: 'shot.png', filename: 'shot.png', size: 1, contentType: 'image/png', href: '/h' }],
+        max: 1, entityType: 'ticket', entityId: 'TKT-1',
+      },
+    })
+    await w.find('.rl-attachment-card__remove').trigger('click')
+    await flushPromises()
+    expect(mockDelete).not.toHaveBeenCalled()
+    expect(w.emitted('attachment-changed')).toBeFalsy()
   })
 })

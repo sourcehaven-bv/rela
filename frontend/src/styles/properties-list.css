@@ -77,7 +77,7 @@
 .property-item .property-label {
   font-size: var(--font-size-sm);
   font-weight: 600;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   margin: 0;
 }
 
@@ -85,7 +85,7 @@
 .property-item .property-value {
   margin: 0;
   font-size: var(--font-size-base);
-  color: var(--text-color);
+  color: var(--rl-color-text);
   line-height: 1.5;
   min-width: 0;
 }
@@ -95,6 +95,20 @@
  * what the author declared. Overrides the authored span on purpose. */
 .property-item.property-long {
   grid-column: span 12;
+}
+
+/* Label/value rows (the detail view's properties, TKT-ME8LEI). Each item is
+ * the library's RlDetailField, which lays out its own label and value side by
+ * side, so it takes only the grid placement here and none of .property-item's
+ * stacked typography. Rows sit closer than stacked items: the label is beside
+ * the value, not above it. */
+.properties-list--rows {
+  row-gap: var(--rl-space-3);
+}
+
+.property-row {
+  grid-column: span var(--field-span, 12);
+  min-width: 0;
 }
 
 /* Compact variant for narrow rails (the form side panel). Always one column:
@@ -121,7 +135,8 @@
   }
 
   .property-item,
-  .property-item.property-long {
+  .property-item.property-long,
+  .property-row {
     grid-column: span 1;
   }
 }

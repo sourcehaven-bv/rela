@@ -1311,7 +1311,22 @@ forms:
     fields:
       - property: name
 
+actions:
+  approve:
+    label: "Approve"
+    key: "a"
+    set:
+      status: approved
+
 lists:
+  bugs_triage:
+    entity_type: bug
+    title: "Bug triage"
+    columns:
+      - property: title
+      - property: status
+    actions: [approve]
+
   features:
     entity_type: feature
     title: "Features"
@@ -1520,6 +1535,10 @@ navigation:
     kanban: feature-board
   - label: "Bugs"
     list: bugs
+  # flyout.spec.ts: the same list, slid out of the sidebar over the page.
+  - label: "Triage"
+    list: bugs
+    open: flyout
   - label: "Bug Board"
     kanban: bug-board
   - label: "Tasks"

@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { ref, shallowRef, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
-import { useRouter, useRoute, onBeforeRouteLeave } from 'vue-router'
+import { RouterLink, useRouter, useRoute, onBeforeRouteLeave } from 'vue-router'
 import { planPrefillRouting } from './prefillRouting'
 import { useSchemaStore, useEntitiesStore, useUIStore } from '@/stores'
 import { isCancelledFetch } from '@/composables/usePageData'
 import { readReturnTo } from '@/utils/returnPath'
+import { pageTabPath, readFromPage } from '@/utils/pageContext'
 import { useWorld, DEFAULT_WORLD } from '@/composables/useWorld'
 import { actionAllowed } from '@/utils/affordancesWarning'
 import { entityRef, refBareId, refFace } from '@/utils/entityRef'
@@ -55,9 +56,11 @@ import MarkdownEditor from './milkdown/MilkdownEditor.vue'
 import { makeRefResolver } from '@/utils/entityRefResolver'
 import SidePanel from './SidePanel.vue'
 import HelpModal from '@/components/ui/HelpModal.vue'
-import PendingButton from '@/components/common/PendingButton.vue'
 import { useDelayedPending } from '@/composables/useDelayedPending'
 import { PENDING_TIMINGS } from '@/composables/pendingTimings'
+import RlButton from 'rela-components/components/common/RlButton.vue'
+import RlStatusRegion from 'rela-components/components/feedback/RlStatusRegion.vue'
+import RlKbd from 'rela-components/components/data/RlKbd.vue'
 
 const props = defineProps<{
   formId: string
@@ -97,6 +100,15 @@ const props = defineProps<{
   embeddedTemplate?: string
   embeddedWorld?: string
   /**
+   * Offer "Create & add another" in an EMBEDDED form. Off by default: a host
+   * that links the new entity (a relation picker) waits for exactly one. A
+   * collection's New dialog has no such step, so it opts in and hears about
+   * each record through `inline-created-another` while the dialog stays open.
+   *
+   * Read at setup time and never reactive afterwards, matching `embedded`.
+   */
+  embeddedAddAnother?: boolean
+  /**
    * Values copied from a source entity for a Duplicate (TKT-Z8K2FS).
    *
    * Shaped like a template because that is what it is — a template computed
@@ -112,12 +124,17 @@ const props = defineProps<{
    * failure to the server's affordance gate, which refuses loudly with a
    * rule_id (RR-2U2D reasoning, RR-DDY9LG).
    *
+   * Also used by a grouped list's per-section Add, which passes only the
+   * group property. `content` and `relations` are optional for that caller:
+   * left out, the template's body and relations stand, where an empty value
+   * would erase them.
+   *
    * Read at setup time and never reactive afterwards, matching `embedded`.
    */
   embeddedPrefill?: {
     properties: Record<string, unknown>
-    content: string
-    relations: Record<string, { id: string; type: string }[]>
+    content?: string
+    relations?: Record<string, { id: string; type: string }[]>
   }
 }>()
 
@@ -128,6 +145,7 @@ const props = defineProps<{
  */
 const emit = defineEmits<{
   'inline-created': [entity: Entity]
+  'inline-created-another': [entity: Entity]
   'inline-cancelled': []
 }>()
 
@@ -1028,12 +1046,13 @@ function applyTemplate(template: Template, preserveUserInput = false) {
 function applyEmbeddedPrefill() {
   const prefill = props.embeddedPrefill
   if (!prefill) return
+  const prefillRelations = prefill.relations ?? {}
   applyTemplate(
     {
       name: '',
       properties: prefill.properties,
-      content: prefill.content,
-      relations: Object.entries(prefill.relations).flatMap(([relation, peers]) =>
+      content: prefill.content ?? content.value,
+      relations: Object.entries(prefillRelations).flatMap(([relation, peers]) =>
         peers.map((peer) => ({ relation, target: peer.id }))
       ),
     },
@@ -1054,7 +1073,7 @@ function applyEmbeddedPrefill() {
   // had, including relation types this create form never renders. The type is
   // carried on the peer rather than guessed from an id prefix, so unlike that
   // path this cannot miss.
-  for (const [key, peers] of Object.entries(prefill.relations)) {
+  for (const [key, peers] of Object.entries(prefillRelations)) {
     const types = pickerTypes.value[key] ?? new Map<string, string>()
     for (const peer of peers) types.set(peer.id, peer.type)
     pickerTypes.value[key] = types
@@ -1066,7 +1085,7 @@ function applyEmbeddedPrefill() {
     prefilledRelations.value.add(key)
   }
 
-  routePrefilledCardRelations(prefill.relations)
+  routePrefilledCardRelations(prefillRelations)
 
   // Re-baseline AFTER every mutation. applyTemplate baselines mid-way, and
   // routePrefilledCardRelations then deletes the keys it took ownership of —
@@ -1600,7 +1619,7 @@ async function handleSubmit(mode: SubmitMode = 'navigate') {
   flushEditor()
   await nextTick()
   if (!formConfig.value) return
-  // RR-HJLLUF: re-entrancy guard. PendingButton suppresses its own repeat
+  // RR-HJLLUF: re-entrancy guard. RlButton suppresses its own repeat
   // clicks, but handleKeydown calls handleSubmit() directly, so Cmd+Enter
   // twice would run the whole create path twice — two entities, and (since
   // TKT-7K3BJF) two sets of uploads. The guard belongs on the operation, not
@@ -1844,11 +1863,14 @@ async function handleSubmit(mode: SubmitMode = 'navigate') {
     // unmount the form that opened us, taking its draft with it) and no toast
     // — the host reports the creation itself, next to the link step the user
     // still has to complete.
-    if (props.embedded) {
+    if (props.embedded && mode !== 'again') {
       if (uploadFailures.length > 0) uiStore.error(stagedFailureMessage(uploadFailures))
       emit('inline-created', entity)
       return
     }
+    // The dialog stays open for the next record, so the host only refreshes.
+    // The toast and the reset below are the same as on the page.
+    if (props.embedded) emit('inline-created-another', entity)
 
     if (uploadFailures.length > 0) {
       // The entity exists — say so, and name exactly which files did not make
@@ -1879,7 +1901,7 @@ async function handleSubmit(mode: SubmitMode = 'navigate') {
     // `saving` true across the whole reset, so the window in which
     // `createdEntityId` has been released but the form is not yet blank is
     // closed. That matters because handleKeydown calls handleSubmit()
-    // directly — Cmd+Enter bypasses PendingButton's repeat-click suppression
+    // directly — Cmd+Enter bypasses RlButton's repeat-click suppression
     // entirely.
     if (mode === 'again') {
       await resetCreateForm()
@@ -1960,6 +1982,12 @@ function handleCancel() {
   }
   if (hasAppHistory()) {
     router.back()
+    return
+  }
+  // Opened cold from a page tab: back to the tab (TKT-ITQ0HL).
+  const page = readFromPage(route.query)
+  if (page) {
+    router.push(pageTabPath(page))
     return
   }
   // Opened cold: fall back to the entity type's list, or the dashboard when
@@ -2580,10 +2608,7 @@ defineExpose({
         </button>
       </div>
 
-      <div v-if="showBlockLoader" class="loading-state">
-        <div class="spinner" />
-        <span>Loading…</span>
-      </div>
+      <RlStatusRegion v-if="showBlockLoader">Loading…</RlStatusRegion>
       <div v-else-if="loading" class="form-loading-placeholder" />
 
       <div v-else-if="notEditable" class="not-editable-state">
@@ -2594,13 +2619,14 @@ defineExpose({
           <code>{{ entityId }}</code
           >. Return to the entity view to see available actions.
         </p>
-        <router-link
+        <RlButton
           v-if="formConfig && entityId"
+          :as="RouterLink"
+          variant="secondary"
           :to="`/entity/${formConfig.entity}/${entityId}`"
-          class="btn btn-secondary"
         >
           ← Back to entity
-        </router-link>
+        </RlButton>
       </div>
 
       <!-- `handleSubmit('navigate')`, not a bare reference: the DOM passes the
@@ -2694,7 +2720,6 @@ defineExpose({
             :model-value="content"
             :ref-resolver="refResolver"
             :mention-self="mentionSelf"
-            placeholder="Markdown content..."
             @update:model-value="updateContent"
           />
         </div>
@@ -2726,46 +2751,32 @@ defineExpose({
         -->
         <div v-if="wizard.currentStepDef.value" class="form-actions mobile-actionbar">
           <!-- Leave-the-form control (autosave Back in edit, Cancel in create). -->
-          <button
-            type="button"
-            class="btn btn-secondary"
-            :disabled="!autoSave && saving"
-            @click="handleCancel"
-          >
-            {{ autoSave ? 'Back' : 'Cancel' }} <kbd>Esc</kbd>
-          </button>
+          <RlButton variant="secondary" :disabled="!autoSave && saving" @click="handleCancel">
+            {{ autoSave ? 'Back' : 'Cancel' }}
+            <template #trailing><RlKbd keys="Esc" /></template>
+          </RlButton>
 
           <!-- Step navigation (multi-step only). -->
           <template v-if="wizard.isMultiStep.value">
-            <button
-              type="button"
-              class="btn btn-secondary"
-              :disabled="wizard.isFirstStep.value"
-              @click="handleBack"
-            >
+            <RlButton variant="secondary" :disabled="wizard.isFirstStep.value" @click="handleBack">
               ← Prev step
-            </button>
-            <button
-              v-if="!wizard.isLastStep.value"
-              type="button"
-              class="btn btn-primary"
-              @click="handleNext"
-            >
+            </RlButton>
+            <RlButton v-if="!wizard.isLastStep.value" variant="primary" @click="handleNext">
               Next step →
-            </button>
+            </RlButton>
           </template>
 
           <!-- Create only: the commit button, on the last (or only) step. -->
-          <PendingButton
+          <RlButton
             v-if="!isEdit && wizard.isLastStep.value"
             type="submit"
-            class="btn btn-primary"
-            :pending="saving"
-            label="Create"
+            variant="primary"
+            :loading="saving"
             pending-label="Saving…"
           >
-            <template #adornment><kbd>&#8984;&#8629;</kbd></template>
-          </PendingButton>
+            Create
+            <template #trailing><RlKbd keys="&#8984;+&#8629;" /></template>
+          </RlButton>
 
           <!--
             TKT-7YHKD1: second terminal outcome for the create path — create,
@@ -2773,18 +2784,18 @@ defineExpose({
 
             `type="button"`, not submit: two submit buttons in one form make
             Enter ambiguous, and @submit.prevent must keep meaning the primary
-            Create. Hidden when embedded — an inline-create host is waiting for
-            exactly one entity to link, so "add another" has no meaning there.
+            Create. Hidden when embedded unless the host opts in with
+            `embeddedAddAnother` (see the prop).
           -->
-          <PendingButton
-            v-if="!isEdit && !embedded && wizard.isLastStep.value"
-            type="button"
-            class="btn btn-secondary"
-            :pending="saving"
-            label="Create & add another"
+          <RlButton
+            v-if="!isEdit && (!embedded || embeddedAddAnother) && wizard.isLastStep.value"
+            variant="secondary"
+            :loading="saving"
             pending-label="Saving…"
             @click="handleSubmit('again')"
-          />
+          >
+            Create &amp; add another
+          </RlButton>
 
           <!-- Edit: ambient autosave status stands in for a Save button. -->
           <AutoSaveIndicator
@@ -2800,10 +2811,9 @@ defineExpose({
     <SidePanel v-if="isEdit && entityId" :form-id="formId" :entity-id="entityId" />
   </div>
 
-  <div v-else class="error-state">
-    <h2>Form not found</h2>
-    <p>The form "{{ formId }}" does not exist in the configuration.</p>
-  </div>
+  <RlStatusRegion v-else tone="error">
+    The form "{{ formId }}" does not exist in the configuration.
+  </RlStatusRegion>
 
   <!-- Help Modal -->
   <HelpModal
@@ -2839,6 +2849,15 @@ defineExpose({
   min-width: 0;
 }
 
+/* The dialog is already the surface, so the page's card would draw a second
+   edge inside it and indent the fields past the Content editor. */
+.dynamic-form.embedded .form-section {
+  padding: 0;
+  border: none;
+  box-shadow: none;
+  background: none;
+}
+
 .form-header {
   margin-bottom: 24px;
   display: flex;
@@ -2857,26 +2876,24 @@ defineExpose({
   width: 28px;
   height: 28px;
   padding: 0;
-  background: var(--bg-color);
-  border: 1px solid var(--border-color);
+  background: var(--rl-color-bg);
+  border: 1px solid var(--rl-color-border);
   border-radius: 50%;
   font-size: 14px;
   font-weight: 600;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   cursor: pointer;
   transition: all 0.15s;
 }
 
 .help-btn:hover {
-  background: var(--accent-color, #6366f1);
-  border-color: var(--accent-color, #6366f1);
+  background: var(--rl-color-accent, #6366f1);
+  border-color: var(--rl-color-accent, #6366f1);
   color: white;
 }
 
-/* Uses global .loading-state and .spinner from App.vue */
-
 .form-section {
-  background: var(--card-bg);
+  background: var(--rl-color-bg-raised);
   border-radius: 8px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
   padding: 24px;
@@ -2889,7 +2906,7 @@ defineExpose({
 }
 
 .section-description {
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   margin-bottom: 24px;
 }
 
@@ -2909,9 +2926,9 @@ defineExpose({
   gap: 8px;
   padding: 6px 12px;
   border-radius: 999px;
-  background: var(--card-bg);
-  border: 1px solid var(--border-color);
-  color: var(--muted-text);
+  background: var(--rl-color-bg-raised);
+  border: 1px solid var(--rl-color-border);
+  color: var(--rl-color-text-muted);
   font-size: 13px;
   font-family: inherit;
   cursor: pointer;
@@ -2921,12 +2938,12 @@ defineExpose({
 }
 
 .wizard-step-pill:hover {
-  border-color: var(--accent-color);
-  color: var(--text-color);
+  border-color: var(--rl-color-accent);
+  color: var(--rl-color-text);
 }
 
 .wizard-step-pill:focus-visible {
-  outline: 2px solid var(--accent-color);
+  outline: 2px solid var(--rl-color-accent);
   outline-offset: 2px;
 }
 
@@ -2934,14 +2951,14 @@ defineExpose({
    of the error color, so an active step still reads as active even when it also
    has an error (see .active.has-errors below). */
 .wizard-step-pill.active {
-  background: var(--accent-color);
-  border-color: var(--accent-color);
+  background: var(--rl-color-accent);
+  border-color: var(--rl-color-accent);
   color: #fff;
   font-weight: 600;
 }
 
 .wizard-step-pill.done {
-  color: var(--text-color);
+  color: var(--rl-color-text);
 }
 
 .wizard-step-num {
@@ -2951,47 +2968,47 @@ defineExpose({
   width: 20px;
   height: 20px;
   border-radius: 50%;
-  background: var(--border-color);
+  background: var(--rl-color-border);
   font-size: 12px;
 }
 
 .wizard-step-pill.done .wizard-step-num {
-  background: var(--accent-color);
+  background: var(--rl-color-accent);
   color: #fff;
 }
 
 /* On the filled active pill, the number badge is inverted (light on accent). */
 .wizard-step-pill.active .wizard-step-num {
   background: #fff;
-  color: var(--accent-color);
+  color: var(--rl-color-accent);
 }
 
 /* An errored step: red outline + red number badge, but NOT active. */
 .wizard-step-pill.has-errors:not(.active) {
-  border-color: var(--error-color);
-  color: var(--error-color);
+  border-color: var(--rl-color-danger);
+  color: var(--rl-color-danger);
 }
 
 .wizard-step-pill.has-errors:not(.active) .wizard-step-num {
-  background: var(--error-color);
+  background: var(--rl-color-danger);
   color: #fff;
 }
 
 /* The active step that also has an error: filled with the error color, so it
    still reads as "you are here" while signalling the problem. */
 .wizard-step-pill.active.has-errors {
-  background: var(--error-color);
-  border-color: var(--error-color);
+  background: var(--rl-color-danger);
+  border-color: var(--rl-color-danger);
   color: #fff;
 }
 
 .wizard-step-pill.active.has-errors .wizard-step-num {
   background: #fff;
-  color: var(--error-color);
+  color: var(--rl-color-danger);
 }
 
 .wizard-error-summary {
-  color: var(--error-color);
+  color: var(--rl-color-danger);
   font-size: 13px;
   font-weight: 600;
   margin: 0 0 12px;
@@ -3051,7 +3068,7 @@ defineExpose({
 .form-field label {
   font-size: 14px;
   font-weight: 500;
-  color: var(--text-color);
+  color: var(--rl-color-text);
 }
 
 .id-field {
@@ -3061,31 +3078,31 @@ defineExpose({
 .id-field input,
 .id-field select {
   padding: 10px 12px;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--rl-color-border);
   border-radius: 6px;
   font-size: 14px;
-  background: var(--input-bg);
-  color: var(--text-color);
+  background: var(--rl-color-bg-raised);
+  color: var(--rl-color-text);
 }
 
 .id-display {
   padding: 10px 12px;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--rl-color-border);
   border-radius: 6px;
   font-size: 14px;
-  background: var(--input-bg);
-  color: var(--muted-text);
+  background: var(--rl-color-bg-raised);
+  color: var(--rl-color-text-muted);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 .required {
-  color: var(--error-color, #ef4444);
+  color: var(--rl-color-danger, #ef4444);
   margin-left: 2px;
 }
 
 .field-help {
   font-size: 12px;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   margin: 0;
 }
 
@@ -3115,17 +3132,7 @@ defineExpose({
   padding-top: 24px;
 }
 
-/* Uses global .btn, .btn-primary, .btn-secondary from App.vue */
-
-.error-state {
-  padding: 48px;
-  text-align: center;
-  color: var(--muted-text);
-}
-
-.error-state h2 {
-  color: var(--error-color, #ef4444);
-}
+/* Buttons are RlButton; only their placement is declared here. */
 
 .template-selector {
   display: flex;
@@ -3139,20 +3146,20 @@ defineExpose({
   font-size: 14px;
   font-weight: 500;
   cursor: pointer;
-  border: 1px solid var(--border-color, #e2e8f0);
-  background: var(--bg-color, #f8fafc);
-  color: var(--text-color, #1e293b);
+  border: 1px solid var(--rl-color-border, #e2e8f0);
+  background: var(--rl-color-bg, #f8fafc);
+  color: var(--rl-color-text, #1e293b);
   transition: all 0.15s;
 }
 
 .template-pill:hover {
-  border-color: var(--accent-color, #6366f1);
-  background: var(--card-bg);
+  border-color: var(--rl-color-accent, #6366f1);
+  background: var(--rl-color-bg-raised);
 }
 
 .template-pill.active {
-  background: var(--accent-color, #6366f1);
-  border-color: var(--accent-color, #6366f1);
+  background: var(--rl-color-accent, #6366f1);
+  border-color: var(--rl-color-accent, #6366f1);
   color: white;
 }
 
@@ -3194,7 +3201,8 @@ defineExpose({
 
   /* .form-actions uses .mobile-actionbar from mobile-bars.css. */
 
-  .form-actions .btn {
+  /* `:deep` reaches RlButton, whose own styles are scoped to the library. */
+  .form-actions :deep(.rl-button) {
     flex: 1;
     justify-content: center;
     min-height: 44px;

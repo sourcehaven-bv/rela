@@ -454,10 +454,13 @@ neither.
 rela binds the well-known locations of both, read-only:
 
 ```text
-sockets   /var/run/clamav/clamd.ctl        configs  /etc/clamav/clamd.conf
-          /run/clamav/clamd.sock                    /usr/local/etc/clamav/clamd.conf
-          /var/run/clamav/clamd.sock
+sockets   /var/run/clamav/clamd.ctl                 configs  /etc/clamav/clamd.conf
+          /run/clamav/clamd.ctl                              /usr/local/etc/clamav/clamd.conf
+          /var/run/clamav/clamd.sock                         /opt/homebrew/etc/clamav/clamd.conf
+          /run/clamav/clamd.sock
           /tmp/clamd.socket
+          /opt/homebrew/var/run/clamav/clamd.sock
+          /usr/local/var/run/clamav/clamd.sock
 ```
 
 so a stock ClamAV install (Debian/Ubuntu `clamav-daemon`, Homebrew `clamav`)
@@ -469,6 +472,11 @@ filesystem object, and the network namespace stays isolated. `--stream` over a
 `LocalSocket` therefore works with no egress at all; only a **TCP** `clamd` on
 another host needs it, and the sandbox has no per-command egress opt-in, so
 provide that at the deployment layer.
+
+On macOS there is no mount namespace. Connecting to a unix socket counts as a
+network operation there, so the profile's network deny would block it. rela
+allows outbound connects to exactly these paths and keeps every other network
+operation denied.
 
 If your `clamd.conf` lives elsewhere, or its `LocalSocket` points outside those
 paths, bind the extra paths explicitly:

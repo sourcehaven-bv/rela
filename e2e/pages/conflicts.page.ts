@@ -13,7 +13,7 @@ export class ConflictsPage extends BasePage {
     this.view = page.locator('.conflicts-view');
     this.header = page.locator('.page-header');
     this.emptyState = page.locator('.conflict-empty');
-    this.backToDashboard = page.locator('.page-header .btn');
+    this.backToDashboard = page.getByRole('button', { name: 'Back to Dashboard' });
   }
 
   async navigate() {

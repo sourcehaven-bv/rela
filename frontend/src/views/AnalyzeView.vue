@@ -7,7 +7,8 @@ import BackButton from '@/components/common/BackButton.vue'
 import PageLayout from '@/components/common/PageLayout.vue'
 import PageTitle from '@/components/common/PageTitle.vue'
 import IssuesTable from '@/components/common/IssuesTable.vue'
-import PendingButton from '@/components/common/PendingButton.vue'
+import RlButton from 'rela-components/components/common/RlButton.vue'
+import RlStatusRegion from 'rela-components/components/feedback/RlStatusRegion.vue'
 
 const backTarget = useBackTarget()
 
@@ -150,19 +151,19 @@ onMounted(() => {
     </template>
 
     <template #actions>
-      <PendingButton
-        class="btn btn-secondary"
-        :pending="loading"
-        label="Refresh"
+      <RlButton
+        variant="secondary"
+        :loading="loading"
         pending-label="Refreshing…"
         @click="loadAnalysis"
-      />
+      >
+        Refresh
+      </RlButton>
     </template>
 
-    <div v-if="loading" class="loading-state">
-      <div class="spinner" />
-      <span>Running analysis...</span>
-    </div>
+    <RlStatusRegion v-if="loading" pending-label="Analysing">
+      Running analysis...
+    </RlStatusRegion>
 
     <template v-else-if="result">
       <!-- Summary badge -->
@@ -223,46 +224,6 @@ onMounted(() => {
   max-width: 1000px;
 }
 
-.btn {
-  padding: 8px 16px;
-  border-radius: 6px;
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-  border: none;
-  transition: all 0.15s;
-}
-
-.btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.btn-secondary {
-  background: var(--hover-bg);
-  color: var(--text-color);
-}
-
-.btn-secondary:hover:not(:disabled) {
-  background: var(--border-color);
-}
-
-.loading-state {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 48px;
-  color: var(--muted-text);
-}
-
-.spinner {
-  width: 24px;
-  height: 24px;
-  border: 3px solid var(--border-color);
-  border-top-color: var(--accent-color);
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
-}
 
 /* Summary badge */
 .summary-badge {
@@ -280,13 +241,13 @@ onMounted(() => {
 }
 
 .badge.error {
-  background: color-mix(in srgb, var(--error-color) 15%, transparent);
-  color: var(--error-color);
+  background: color-mix(in srgb, var(--rl-color-danger) 15%, transparent);
+  color: var(--rl-color-danger);
 }
 
 .badge.warning {
-  background: color-mix(in srgb, var(--warning-color) 15%, transparent);
-  color: var(--warning-color);
+  background: color-mix(in srgb, var(--rl-color-status-amber) 15%, transparent);
+  color: var(--rl-color-status-amber);
 }
 
 /* Check cards */
@@ -297,15 +258,15 @@ onMounted(() => {
 }
 
 .check-card {
-  background: var(--card-bg);
-  border: 1px solid var(--border-color);
+  background: var(--rl-color-bg-raised);
+  border: 1px solid var(--rl-color-border);
   border-radius: 8px;
   overflow: hidden;
 }
 
 .check-header {
   padding: 16px 20px;
-  border-bottom: 1px solid var(--border-color, #e2e8f0);
+  border-bottom: 1px solid var(--rl-color-border, #e2e8f0);
 }
 
 .check-title {
@@ -315,12 +276,12 @@ onMounted(() => {
   margin: 0 0 4px;
   font-size: 16px;
   font-weight: 600;
-  color: var(--text-color);
+  color: var(--rl-color-text);
 }
 
 .check-count {
-  background: var(--border-color);
-  color: var(--muted-text);
+  background: var(--rl-color-border);
+  color: var(--rl-color-text-muted);
   padding: 2px 10px;
   border-radius: 12px;
   font-size: 13px;
@@ -328,24 +289,24 @@ onMounted(() => {
 }
 
 .check-count.has-issues {
-  background: color-mix(in srgb, var(--warning-color) 15%, transparent);
-  color: var(--warning-color);
+  background: color-mix(in srgb, var(--rl-color-status-amber) 15%, transparent);
+  color: var(--rl-color-status-amber);
 }
 
 .check-description {
   margin: 0;
   font-size: 13px;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
 }
 
 .check-truncated {
   margin: 8px 0 0;
   padding: 8px 12px;
-  border-left: 3px solid var(--warning-color);
-  background: var(--hover-bg);
+  border-left: 3px solid var(--rl-color-status-amber);
+  background: var(--rl-color-bg-hover);
   border-radius: 4px;
   font-size: 13px;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
 }
 
 .no-issues {
@@ -353,7 +314,7 @@ onMounted(() => {
   align-items: center;
   gap: 8px;
   padding: 16px 20px;
-  color: var(--success-color);
+  color: var(--rl-color-status-green);
   font-size: 14px;
 }
 

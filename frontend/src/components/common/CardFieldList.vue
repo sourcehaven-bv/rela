@@ -94,7 +94,7 @@ function relationLabel(relation: string): string | undefined {
 
 .field-label {
   flex: none;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
 }
 
 .field-value {

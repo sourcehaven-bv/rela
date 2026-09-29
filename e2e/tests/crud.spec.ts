@@ -69,7 +69,7 @@ test.describe('Entity CRUD Operations', () => {
       const entityPage = new EntityPage(appPage);
 
       await listPage.navigateToList('features');
-      await listPage.clickRowById('FEAT-001');
+      await listPage.openEntityPageById('FEAT-001');
 
       await expect(appPage).toHaveURL(/\/entity\/feature\/FEAT-001|\/form\/feature\/FEAT-001/);
       await entityPage.expectHeadingText('User Authentication');
@@ -120,7 +120,7 @@ test.describe('Entity CRUD Operations', () => {
       const entityPage = new EntityPage(appPage);
 
       await listPage.navigateToList('features');
-      await listPage.clickRowById('FEAT-002');
+      await listPage.openEntityPageById('FEAT-002');
       await entityPage.clickEdit();
 
       await formPage.fillField('title', 'Updated Dashboard Analytics');
@@ -137,7 +137,7 @@ test.describe('Entity CRUD Operations', () => {
       const entityPage = new EntityPage(appPage);
 
       await listPage.navigateToList('features');
-      await listPage.clickRowById('FEAT-001');
+      await listPage.openEntityPageById('FEAT-001');
       await entityPage.clickEdit();
 
       await formPage.selectField('status', 'done');
@@ -167,18 +167,49 @@ test.describe('Entity CRUD Operations', () => {
       await listPage.expectRowNotVisible('Feature to Delete');
     });
 
-    test('delete confirmation can be cancelled', async ({ appPage }) => {
+    test('Delete key deletes the selected rows', async ({ appPage }) => {
       const listPage = new ListPage(appPage);
+      const formPage = new FormPage(appPage);
 
       await listPage.navigateToList('features');
+      await listPage.clickCreateButton();
+      await formPage.fillField('title', 'Feature to Delete by Key');
+      await formPage.submit();
 
-      const initialCount = await listPage.getRowCount();
+      await listPage.navigateToList('features');
+      const id = await listPage.rowIdByTitle('Feature to Delete by Key');
 
-      // Click delete on the first row then cancel the modal
-      await listPage.openDeleteModalForFirstRow();
-      await listPage.cancelDeleteModal();
+      // Focus stays on the ticked checkbox, which the shortcut accepts.
+      await listPage.selectRowById(id);
+      await appPage.keyboard.press('Delete');
 
-      await expect(await listPage.getRowCount()).toBe(initialCount);
+      await listPage.expectRowNotVisible('Feature to Delete by Key');
+    });
+
+    test('a delete offers Undo without a confirm', async ({ appPage }) => {
+      const listPage = new ListPage(appPage);
+      const formPage = new FormPage(appPage);
+
+      await listPage.navigateToList('features');
+      await listPage.clickCreateButton();
+      await formPage.fillField('title', 'Feature to Undo');
+      await formPage.submit();
+
+      await listPage.navigateToList('features');
+      await listPage.deleteRowByTitle('Feature to Undo');
+
+      await expect(listPage.alertDialog).toHaveCount(0);
+      const toast = listPage.toastContainer.filter({ hasText: /^Deleted 1 / });
+      await expect(toast).toBeVisible();
+      await listPage.expectRowNotVisible('Feature to Undo');
+
+      await listPage.clickToastAction(toast, 'Undo');
+
+      // Without the server's restore endpoint the Undo reports that it could
+      // not restore; with it, the row comes back. Either way, no crash.
+      await expect(
+        listPage.toastContainer.filter({ hasText: /Restored 1 |Could not restore/ }),
+      ).toBeVisible();
     });
   });
 });

@@ -1,0 +1,9 @@
+node_modules
+dist
+storybook-static
+*.log
+.DS_Store
+
+# Vitest browser-mode failure artefacts
+.vitest-attachments
+src/__screenshots__

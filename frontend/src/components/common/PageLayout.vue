@@ -27,9 +27,11 @@
  *   topbar's own content (back button, title) fills it.
  *
  * Page-padding contract:
- *   Negative horizontal margins use var(--page-padding-x), set on
- *   .main-content by App.vue (16px <=768px, 12px <=480px). Update this
- *   variable in App.vue if the breakpoints shift; PageLayout follows.
+ *   Negative horizontal margins use var(--page-padding-x), set on the main
+ *   pane by App.vue from the library's `--rl-page-gutter-left` (32px on
+ *   desktop, 16px below 768px, plus safe-area insets). The gutter is the
+ *   library's decision so page content lines up with the header band above
+ *   it; PageLayout follows whatever App.vue resolves.
  */
 defineProps<{
   /**
@@ -136,10 +138,10 @@ defineSlots<{
        64px slot this bar reserves — an opaque bar above it would hide
        the button (same reasoning as .mobile-topbar--with-menu). */
     z-index: 10;
-    background: var(--bg-color);
-    /* Pull the sticky stack up under .main-content's 60px padding-top
+    background: var(--rl-color-bg);
+    /* Pull the sticky stack up under the main pane's 60px padding-top
        plus the safe-area inset, so its background fills the status-bar
-       area. The negative horizontal margin matches .main-content's
+       area. The negative horizontal margin matches the main pane's
        horizontal padding (--page-padding-x), set by App.vue per
        breakpoint. */
     margin:
@@ -149,7 +151,7 @@ defineSlots<{
       calc(0px - var(--page-padding-x, 16px));
     padding-top: calc(10px + env(safe-area-inset-top, 0px));
     padding-bottom: 10px;
-    border-bottom: 1px solid var(--border-color);
+    border-bottom: 1px solid var(--rl-color-border);
     /* iOS WebKit anchors sticky to the layout viewport. When the
        keyboard opens, the visual viewport shifts up — translate the
        bar to follow it so it doesn't slide under the status bar.
@@ -190,7 +192,7 @@ defineSlots<{
     position: sticky;
     bottom: 0;
     z-index: 10;
-    background: var(--bg-color);
+    background: var(--rl-color-bg);
     margin:
       0
       calc(0px - var(--page-padding-x, 16px))
@@ -198,7 +200,7 @@ defineSlots<{
       calc(0px - var(--page-padding-x, 16px));
     padding: 12px var(--page-padding-x, 16px);
     padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
-    border-top: 1px solid var(--border-color);
+    border-top: 1px solid var(--rl-color-border);
     box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.08);
   }
 
@@ -209,7 +211,7 @@ defineSlots<{
     bottom: 0;
     z-index: 50;
     margin: 0;
-    /* Inside .main-content the viewport-edge bleed is automatic via
+    /* Inside the main pane the viewport-edge bleed is automatic via
        margin; once fixed-positioned we lose that, so re-add safe-area
        insets to keep content off the home indicator and screen edges. */
     padding-left: calc(var(--page-padding-x, 16px) + env(safe-area-inset-left, 0px));

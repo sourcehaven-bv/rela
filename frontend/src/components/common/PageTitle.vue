@@ -34,7 +34,7 @@ defineProps<{
 .page-title__subtitle {
   margin: 0;
   font-size: 14px;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
 }
 
 @media (max-width: 768px) {

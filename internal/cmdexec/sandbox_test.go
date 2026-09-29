@@ -170,17 +170,24 @@ func TestSandboxBlocksReadOutsideAllowlist(t *testing.T) {
 // command cannot reach it — unless its path is bound via WithExtraReadOnly. The
 // bind grants reachability WITHOUT network egress (a socket is a filesystem
 // object). Verified by connecting to a listener over a bound socket path.
+//
+// On macOS the same holds by a different route: the connect is a network
+// operation there, so the profile's network deny blocks it until the path is
+// allowed for outbound unix-socket connects.
 func TestSandboxExtraReadOnlyReachesBoundSocket(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("bwrap mount-namespace behavior")
+	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
+		t.Skip("no sandbox backend on this platform")
 	}
 	python := pythonPath(t)
 
-	// A unix socket in a dir that is NOT in the default allowlist.
-	sockDir := filepath.Join(t.TempDir(), "sock")
-	if err := os.MkdirAll(sockDir, 0o755); err != nil {
+	// A unix socket in a dir that is NOT in the default allowlist. Under /tmp
+	// rather than t.TempDir: macOS caps a socket path at 104 bytes, which the
+	// per-test temp dir under /var/folders exceeds.
+	sockDir, err := os.MkdirTemp("/tmp", "sock") //nolint:usetesting // socket path length, see above
+	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { os.RemoveAll(sockDir) })
 	sockPath := filepath.Join(sockDir, "clamd.ctl")
 
 	ln, err := net.Listen("unix", sockPath)

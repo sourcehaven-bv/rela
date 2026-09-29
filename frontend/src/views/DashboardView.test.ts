@@ -108,7 +108,7 @@ describe('DashboardView', () => {
     const wrapper = mount(DashboardView)
     await flushPromises()
 
-    expect(wrapper.find('.loading-state').exists()).toBe(true)
+    expect(wrapper.text()).toContain('Loading dashboard')
     expect(wrapper.find('.dashboard-empty').exists()).toBe(false)
 
     store.dashboard = { title: 'Overview', cards: [card({ title: 'Open' })] }
@@ -116,7 +116,7 @@ describe('DashboardView', () => {
     resolveLoad()
     await flushPromises()
 
-    expect(wrapper.find('.loading-state').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('Loading dashboard')
     expect(wrapper.text()).toContain('Open')
   })
 

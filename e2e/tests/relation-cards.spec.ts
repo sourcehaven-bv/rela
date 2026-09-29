@@ -1,5 +1,5 @@
-import { test, expect, SEED } from './fixtures';
-import { RelationCardsPage } from '../pages';
+import { test, expect, SEED } from "./fixtures";
+import { RelationCardsPage } from "../pages";
 
 /**
  * widget: cards relation UI tests.
@@ -12,20 +12,51 @@ import { RelationCardsPage } from '../pages';
  * (outgoing + incoming) with widget: cards.
  */
 
-test.describe('Relation Cards', () => {
-  test('edit form shows relation cards for tagged and blocks relations', async ({ appPage }) => {
+test.describe("Relation Cards", () => {
+  test("edit form shows relation cards for tagged and blocks relations", async ({
+    appPage,
+  }) => {
     const rc = new RelationCardsPage(appPage);
-    await rc.navigateToEdit('feature', SEED.features.authentication);
+    await rc.navigateToEdit("feature", SEED.features.authentication);
 
     expect(await rc.widgetCount()).toBeGreaterThanOrEqual(2);
     const labels = (await rc.sectionLabels()).map((l) => l.toLowerCase());
-    expect(labels.some((l) => l.includes('tagged'))).toBeTruthy();
-    expect(labels.some((l) => l.includes('blocks'))).toBeTruthy();
+    expect(labels.some((l) => l.includes("tagged"))).toBeTruthy();
+    expect(labels.some((l) => l.includes("blocks"))).toBeTruthy();
   });
 
-  test('cards display existing entries with properties', async ({ appPage }) => {
+  /*
+   * REGRESSION (code review, significant). This widget's in-field spinner is
+   * absolutely centred, and a rotation keyframe on the SAME element that
+   * carries the centring `transform` REPLACES it — so the spinner dropped
+   * half its height the instant it animated.
+   *
+   * RlSpinner makes that structurally impossible by animating an inner
+   * element, so the placement transform and the rotation are no longer on one
+   * element. Kept as a measurement of the OUTCOME, both so the guarantee
+   * survives a change to how the component achieves it and because "centred"
+   * is a geometric fact no static CSS read can confirm.
+   */
+  test("the picker spinner stays centred once it animates", async ({
+    appPage,
+  }) => {
     const rc = new RelationCardsPage(appPage);
-    await rc.navigateToEdit('feature', SEED.features.authentication);
+    await rc.navigateToEdit("feature", SEED.features.authentication);
+
+    const widget = rc.widgetByLabel("blocks");
+    await rc.withStalledPickerSearch(widget, async (spinner) => {
+      const offset = await rc.centringOffsetMidAnimation(spinner);
+      // Sub-pixel tolerance: a translate-loss regression is a half-box jump,
+      // not a rounding difference.
+      expect(Math.abs(offset)).toBeLessThan(1.5);
+    });
+  });
+
+  test("cards display existing entries with properties", async ({
+    appPage,
+  }) => {
+    const rc = new RelationCardsPage(appPage);
+    await rc.navigateToEdit("feature", SEED.features.authentication);
 
     const card = rc.cardByTargetId(SEED.features.exportData);
     await expect(card).toBeVisible();
@@ -35,30 +66,36 @@ test.describe('Relation Cards', () => {
     expect(propLabels.some((l) => /Severity/i.test(l))).toBeTruthy();
   });
 
-  test('existing relation property values are populated', async ({ appPage }) => {
+  test("existing relation property values are populated", async ({
+    appPage,
+  }) => {
     const rc = new RelationCardsPage(appPage);
-    await rc.navigateToEdit('feature', SEED.features.authentication);
+    await rc.navigateToEdit("feature", SEED.features.authentication);
 
     const card = rc.cardByTargetId(SEED.features.exportData);
     await expect(card).toBeVisible();
-    expect(await rc.getTextInputValue(card)).toBe('test block');
+    expect(await rc.getTextInputValue(card)).toBe("test block");
   });
 
-  test('editing a text property triggers the unsaved badge', async ({ appPage }) => {
+  test("editing a text property triggers the unsaved badge", async ({
+    appPage,
+  }) => {
     const rc = new RelationCardsPage(appPage);
-    await rc.navigateToEdit('feature', SEED.features.authentication);
+    await rc.navigateToEdit("feature", SEED.features.authentication);
 
     const card = rc.cardByTargetId(SEED.features.exportData);
     await expect(card).toBeVisible();
-    await rc.editTextInput(card, 'updated block reason');
+    await rc.editTextInput(card, "updated block reason");
     expect(await rc.hasAnyUnsavedBadge()).toBeTruthy();
   });
 
-  test('removing a card immediately decrements count and shows unsaved badge', async ({ appPage }) => {
+  test("removing a card immediately decrements count and shows unsaved badge", async ({
+    appPage,
+  }) => {
     const rc = new RelationCardsPage(appPage);
-    await rc.navigateToEdit('feature', SEED.features.authentication);
+    await rc.navigateToEdit("feature", SEED.features.authentication);
 
-    const tagged = rc.widgetByLabel('tagged').first();
+    const tagged = rc.widgetByLabel("tagged").first();
     await expect(tagged).toBeVisible();
     const before = await rc.cardCount(tagged);
     expect(before).toBeGreaterThanOrEqual(1);
@@ -68,64 +105,82 @@ test.describe('Relation Cards', () => {
     expect(await rc.hasAnyUnsavedBadge()).toBeTruthy();
   });
 
-  test('adding a new relation with a reason persists on Save', async ({ appPage, api }) => {
+  test("adding a new relation with a reason persists on Save", async ({
+    appPage,
+    api,
+  }) => {
     // Create a new feature to link to.
-    const target = await api.createEntity('features', {
-      properties: { title: 'E2E Blocks Target', status: 'draft', priority: 'low' },
+    const target = await api.createEntity("features", {
+      properties: {
+        title: "E2E Blocks Target",
+        status: "draft",
+        priority: "low",
+      },
     });
 
     try {
       const rc = new RelationCardsPage(appPage);
-      await rc.navigateToEdit('feature', SEED.features.authentication);
+      await rc.navigateToEdit("feature", SEED.features.authentication);
 
-      const outgoingBlocks = rc.widgetByLabel('blocks').first();
+      const outgoingBlocks = rc.widgetByLabel("blocks").first();
       await expect(outgoingBlocks).toBeVisible();
 
       const newCard = await rc.linkTargetByIdWithSearch(
         outgoingBlocks,
         target.id,
-        'E2E Blocks Target',
-        'blocks due to dependency',
+        "E2E Blocks Target",
+        "blocks due to dependency",
       );
       await expect(newCard).toBeVisible();
       await rc.expectCardHasClass(newCard, /card-added/);
     } finally {
-      await api.deleteEntity('features', target.id).catch(() => {});
+      await api.deleteEntity("features", target.id).catch(() => {});
     }
   });
 
-  test('autosave persists relation card text edits', async ({ appPage, api }) => {
+  test("autosave persists relation card text edits", async ({
+    appPage,
+    api,
+  }) => {
     // Was: 'batch save: changes are not persisted until Save is clicked'.
     // After TKT-E6094 there is no explicit Save in edit mode; autosave
     // fires automatically after a debounce. Assert the server reflects
     // the edit after blur + the autosave PATCH lands.
     const rc = new RelationCardsPage(appPage);
-    await rc.navigateToEdit('feature', SEED.features.authentication);
+    await rc.navigateToEdit("feature", SEED.features.authentication);
 
     const card = rc.cardByTargetId(SEED.features.exportData);
     await expect(card).toBeVisible();
 
-    const updated = 'batch save test reason';
+    const updated = "batch save test reason";
     await rc.editTextInput(card, updated);
 
-    await appPage.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    await appPage.evaluate(() =>
+      (document.activeElement as HTMLElement | null)?.blur(),
+    );
     await appPage.waitForResponse(
       (r) =>
         r.url().includes(`/api/v1/features/${SEED.features.authentication}`) &&
-        r.request().method() === 'PATCH',
+        r.request().method() === "PATCH",
     );
 
-    const after = await api.listRelations('features', SEED.features.authentication, 'blocks');
-    expect(after.find((r) => r.id === SEED.features.exportData)?.meta?.reason).toBe(updated);
+    const after = await api.listRelations(
+      "features",
+      SEED.features.authentication,
+      "blocks",
+    );
+    expect(
+      after.find((r) => r.id === SEED.features.exportData)?.meta?.reason,
+    ).toBe(updated);
   });
 
-  test('autosave persists relation card removal', async ({ appPage, api }) => {
+  test("autosave persists relation card removal", async ({ appPage, api }) => {
     // Was: 'removing a relation is only persisted on save'. Same
     // TKT-E6094 rationale as above: autosave fires the PATCH directly.
     const rc = new RelationCardsPage(appPage);
-    await rc.navigateToEdit('feature', SEED.features.authentication);
+    await rc.navigateToEdit("feature", SEED.features.authentication);
 
-    const tagged = rc.widgetByLabel('tagged').first();
+    const tagged = rc.widgetByLabel("tagged").first();
     await expect(tagged).toBeVisible();
     const firstId = await rc.getFirstCardEntityId(tagged);
     await rc.clickRemoveFirstCardIn(tagged);
@@ -133,51 +188,55 @@ test.describe('Relation Cards', () => {
     await appPage.waitForResponse(
       (r) =>
         r.url().includes(`/api/v1/features/${SEED.features.authentication}`) &&
-        r.request().method() === 'PATCH',
+        r.request().method() === "PATCH",
     );
 
-    const after = await api.listRelations('features', SEED.features.authentication, 'tagged');
+    const after = await api.listRelations(
+      "features",
+      SEED.features.authentication,
+      "tagged",
+    );
     expect(after.some((r) => r.id === firstId)).toBeFalsy();
   });
 });
 
-test.describe('Relation card field types', () => {
-  test('date input renders for date properties', async ({ appPage }) => {
+test.describe("Relation card field types", () => {
+  test("date input renders for date properties", async ({ appPage }) => {
     const rc = new RelationCardsPage(appPage);
-    await rc.navigateToEdit('feature', SEED.features.authentication);
-    const blocks = rc.widgetByLabel('blocks').first();
+    await rc.navigateToEdit("feature", SEED.features.authentication);
+    const blocks = rc.widgetByLabel("blocks").first();
     await expect(blocks).toBeVisible();
     await rc.expectDateInputVisibleIn(blocks);
   });
 
-  test('number input renders for integer properties', async ({ appPage }) => {
+  test("number input renders for integer properties", async ({ appPage }) => {
     const rc = new RelationCardsPage(appPage);
-    await rc.navigateToEdit('feature', SEED.features.authentication);
-    await rc.expectNumberInputVisibleIn(rc.widgetByLabel('blocks').first());
+    await rc.navigateToEdit("feature", SEED.features.authentication);
+    await rc.expectNumberInputVisibleIn(rc.widgetByLabel("blocks").first());
   });
 
-  test('checkbox renders for boolean properties', async ({ appPage }) => {
+  test("checkbox renders for boolean properties", async ({ appPage }) => {
     const rc = new RelationCardsPage(appPage);
-    await rc.navigateToEdit('feature', SEED.features.authentication);
-    await rc.expectCheckboxVisibleIn(rc.widgetByLabel('blocks').first());
+    await rc.navigateToEdit("feature", SEED.features.authentication);
+    await rc.expectCheckboxVisibleIn(rc.widgetByLabel("blocks").first());
   });
 });
 
-test.describe('Relation cards save flow', () => {
-  test('unsaved badge clears after save', async ({ appPage }) => {
+test.describe("Relation cards save flow", () => {
+  test("unsaved badge clears after save", async ({ appPage }) => {
     const rc = new RelationCardsPage(appPage);
-    await rc.navigateToEdit('feature', SEED.features.authentication);
+    await rc.navigateToEdit("feature", SEED.features.authentication);
 
     const card = rc.cardByTargetId(SEED.features.exportData);
     await expect(card).toBeVisible();
-    await rc.editTextInput(card, 'save-clear-test');
+    await rc.editTextInput(card, "save-clear-test");
     expect(await rc.hasAnyUnsavedBadge()).toBeTruthy();
 
     await rc.saveAndWaitForNavigation();
     // After save the form navigates away; there is no pending-badge on the
     // new page. If the app left us on the form (validation failure), the badge
     // should still clear.
-    if (appPage.url().includes('/form/')) {
+    if (appPage.url().includes("/form/")) {
       await rc.expectNoPendingBadges();
     }
   });

@@ -15,6 +15,7 @@
 import { ref, watch, computed, nextTick, onBeforeUnmount } from 'vue'
 import { useModalStack } from '@/composables/modalStack'
 import { normalizeLinkUrl } from './linkUrl'
+import RlButton from 'rela-components/components/common/RlButton.vue'
 
 const props = defineProps<{
   open: boolean
@@ -210,8 +211,8 @@ function onOverlayClick(event: MouseEvent): void {
           </p>
 
           <div class="link-dialog-actions">
-            <button type="button" class="btn" @click="emit('close')">Cancel</button>
-            <button type="submit" class="btn btn-primary">{{ submitLabel }}</button>
+            <RlButton type="button" variant="secondary" @click="emit('close')">Cancel</RlButton>
+            <RlButton type="submit" variant="primary">{{ submitLabel }}</RlButton>
           </div>
         </form>
       </div>
@@ -232,7 +233,7 @@ function onOverlayClick(event: MouseEvent): void {
 }
 
 .link-dialog {
-  background: var(--card-bg);
+  background: var(--rl-color-bg-raised);
   border-radius: 12px;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25);
   width: 90%;
@@ -244,7 +245,7 @@ function onOverlayClick(event: MouseEvent): void {
   margin: 0 0 var(--space-md);
   font-size: var(--font-size-lg);
   font-weight: 600;
-  color: var(--text-color);
+  color: var(--rl-color-text);
 }
 
 .link-dialog-form {
@@ -261,35 +262,35 @@ function onOverlayClick(event: MouseEvent): void {
 
 .link-dialog-label {
   font-size: var(--font-size-sm);
-  color: var(--text-muted);
+  color: var(--rl-color-text-muted);
 }
 
 .link-dialog-input {
   width: 100%;
   padding: 8px 10px;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--rl-color-border);
   border-radius: var(--radius-md);
-  background: var(--input-bg, var(--card-bg));
-  color: var(--text-color);
+  background: var(--rl-color-bg);
+  color: var(--rl-color-text);
   font-size: var(--font-size-base);
 }
 
 .link-dialog-input:focus-visible {
   outline: none;
-  border-color: var(--accent-color);
+  border-color: var(--rl-color-accent);
   box-shadow:
-    0 0 0 2px var(--focus-ring-gap),
-    0 0 0 4px var(--focus-ring);
+    0 0 0 2px var(--rl-color-bg),
+    0 0 0 4px var(--rl-color-focus);
 }
 
 .link-dialog-input.has-error {
-  border-color: var(--error-color, #dc2626);
+  border-color: var(--rl-color-danger);
 }
 
 .link-dialog-input.has-error:focus-visible {
   box-shadow:
-    0 0 0 2px var(--focus-ring-gap),
-    0 0 0 4px var(--error-ring);
+    0 0 0 2px var(--rl-color-bg),
+    0 0 0 4px var(--rl-color-error-ring);
 }
 
 /* Reserves its line whether or not there is a message, so showing one does
@@ -298,7 +299,7 @@ function onOverlayClick(event: MouseEvent): void {
   margin: 0;
   min-height: 1.2em;
   font-size: var(--font-size-sm);
-  color: var(--error-color, #dc2626);
+  color: var(--rl-color-danger);
 }
 
 .link-dialog-actions {
@@ -311,7 +312,7 @@ function onOverlayClick(event: MouseEvent): void {
 .link-dialog-actions .btn:focus-visible {
   outline: none;
   box-shadow:
-    0 0 0 2px var(--focus-ring-gap),
-    0 0 0 4px var(--focus-ring);
+    0 0 0 2px var(--rl-color-bg),
+    0 0 0 4px var(--rl-color-focus);
 }
 </style>

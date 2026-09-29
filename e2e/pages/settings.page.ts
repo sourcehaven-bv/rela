@@ -79,7 +79,8 @@ export class SettingsPage extends BasePage {
   }
 
   async addOverrideGroup() {
-    await this.overridesCard.locator('button:has-text("+ Add override group")').click();
+    // By name: the leading "+" is now an icon rather than part of the label.
+    await this.overridesCard.getByRole('button', { name: 'Add override group' }).click();
   }
 
   async removeOverrideGroup(index: number) {

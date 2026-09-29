@@ -176,11 +176,12 @@ export class FormPage extends BasePage {
     const button = this.page.locator(
       '.form-actions button:has-text("Create & add another")',
     );
-    // The 24px fixed .status-bar footer sits over the bottom of the viewport,
-    // and this button is the LAST in the action row — so at some scroll
-    // positions it lands under the footer and Playwright's actionability check
-    // reports "footer intercepts pointer events". Scroll it clear first rather
-    // than forcing the click, which would mask a genuine overlay.
+    // This button is the LAST in the action row, so at some scroll positions it
+    // sits at the very bottom edge of the viewport and Playwright's
+    // actionability check can report another element intercepting the pointer.
+    // (The original interceptor was the fixed 24px status bar, now the
+    // sidebar's footer, but a sticky actionbar reaches the same state.) Scroll
+    // it clear rather than forcing the click, which would mask a real overlay.
     await button.scrollIntoViewIfNeeded();
     const [response] = await Promise.all([responsePromise, button.click()]);
     expect(response.ok()).toBeTruthy();
@@ -429,7 +430,7 @@ export class FormPage extends BasePage {
 
   /** The inline-create dialog. */
   get inlineCreateModal(): Locator {
-    return this.page.locator(".inline-create-modal");
+    return this.page.locator(".inline-create-panel");
   }
 
   async expectInlineFormVisible() {
@@ -1068,12 +1069,12 @@ export class FormPage extends BasePage {
   /** Filenames currently listed on a `file` property — staged or uploaded. */
   async attachedFileNames(property: string): Promise<string[]> {
     await this.waitForFileWidget(property);
-    return this.fileWidget(property).locator(".file-name").allInnerTexts();
+    return this.fileWidget(property).locator(".rl-attachment-card__name").allInnerTexts();
   }
 
   /** Remove the file at `index` from a `file` property's list. */
   async removeAttachedFile(property: string, index = 0) {
-    await this.fileWidget(property).locator(".file-remove").nth(index).click();
+    await this.fileWidget(property).locator(".rl-attachment-card__remove").nth(index).click();
   }
 
   /** Whether the add/replace control is offered for a `file` property.
@@ -1121,7 +1122,7 @@ export class FormPage extends BasePage {
    *  failure path, where the entity IS created but an upload was rejected —
    *  the message is the only thing telling the user which files to re-attach. */
   async errorToastText(): Promise<string> {
-    const toast = this.toastContainer.first();
+    const toast = this.errorToast.first();
     await expect(toast).toBeVisible();
     return toast.innerText();
   }

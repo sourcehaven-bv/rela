@@ -60,3 +60,4 @@ prototypes/data-entry/remote.git/
 # Editor element build artifacts (TKT-5F9V56); rebuilt by npm run build
 internal/dataentry/app_editor_dist/*
 !internal/dataentry/app_editor_dist/.gitkeep
+

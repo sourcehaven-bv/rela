@@ -86,11 +86,75 @@ describe('wrapCss', () => {
       expect(beforeLayer(out)).not.toContain('.fa-rotate-90')
     })
 
-    it('does NOT carve out :root nested inside @media', () => {
-      // A conditional override of a component, not part of the token contract.
-      const out = wrapCss('@media(min-width:0){:root{--a:1}}.b{c:d}') ?? ''
+    it('carves out a bare theme class like .dark', () => {
+      // rela-components declares its dark palette on `.dark` (which themes a
+      // SUBTREE, so it cannot be written as `:root.dark`). Layering it while
+      // the light `:root` palette stayed unlayered meant light won at any
+      // specificity: the app rendered light with `.dark` on the html element.
+      const out = wrapCss('.dark{--rl-color-bg:#0d0d0f}.b{c:d}') ?? ''
+      expect(beforeLayer(out)).toContain('--rl-color-bg')
+      expect(insideLayer(out)).toContain('.b')
+    })
+
+    it('carves out a palette that also sets color-scheme', () => {
+      // Both tokens.css and dark.css set `color-scheme` beside their tokens —
+      // it picks the built-in treatment for form controls and scrollbars, so
+      // it is part of the same decision. A tokens-only test would have let the
+      // real palette stay layered.
+      const out = wrapCss(':root{color-scheme:light;--rl-color-bg:#fff}.b{c:d}') ?? ''
+      expect(beforeLayer(out)).toContain('--rl-color-bg')
+      expect(insideLayer(out)).toContain('.b')
+    })
+
+    it('does NOT carve out a rule of nothing but color-scheme', () => {
+      // No tokens means no contract to protect.
+      const out = wrapCss(':root{color-scheme:light}.b{c:d}') ?? ''
+      expect(insideLayer(out)).toContain('color-scheme')
+    })
+
+    it('carves out a palette inside @media (prefers-color-scheme)', () => {
+      // How a palette reaches the OS preference. Carved out WITH its at-rule,
+      // or the OS-dark tokens lose to the unlayered light ones.
+      const src = '@media(prefers-color-scheme:dark){:root:not(.light){--a:2}}.b{c:d}'
+      const out = wrapCss(src) ?? ''
+      expect(beforeLayer(out)).toContain('--a:2')
+      expect(insideLayer(out)).not.toContain('--a:2')
+    })
+
+    it('does NOT carve out an @media block that sets ordinary properties', () => {
+      // A responsive component override, not a palette. The distinction is the
+      // body: only custom-property declarations qualify.
+      const out = wrapCss('@media(min-width:0){.panel{color:red}}.b{c:d}') ?? ''
       expect(insideLayer(out)).toContain('@media')
-      expect(insideLayer(out)).toContain('--a:1')
+      expect(insideLayer(out)).toContain('.panel')
+    })
+
+    it('does NOT carve out a .dark rule that paints, rather than declaring tokens', () => {
+      // dark.css has both: the palette, and a `.dark{background:…}` rule that
+      // paints a dark subtree. Only the palette is a token contract.
+      const out = wrapCss('.dark{background:var(--rl-color-bg)}.b{c:d}') ?? ''
+      expect(insideLayer(out)).toContain('background')
+      expect(beforeLayer(out)).not.toContain('background')
+    })
+
+    it('SPLITS a rule the minifier merged from a palette and a paint rule', () => {
+      // The real regression. dark.css declares `.dark` twice — palette, then
+      // the subtree paint rule — and lightningcss merges them into one rule
+      // declaring both. Rejecting that as "not a pure palette" layered the
+      // entire dark palette, so the unlayered light `:root` beat it at any
+      // specificity and the app rendered light with `.dark` on <html>.
+      const out = wrapCss('.dark{--rl-color-bg:#0d0d0f;background:var(--rl-color-bg)}') ?? ''
+      expect(beforeLayer(out)).toContain('--rl-color-bg:#0d0d0f')
+      expect(beforeLayer(out)).not.toContain('background')
+      expect(insideLayer(out)).toContain('background')
+    })
+
+    it('splits a merged palette nested in @media too', () => {
+      const src = '@media(prefers-color-scheme:dark){:root:not(.light){--a:2;background:#000}}'
+      const out = wrapCss(src) ?? ''
+      expect(beforeLayer(out)).toContain('--a:2')
+      expect(beforeLayer(out)).not.toContain('background')
+      expect(insideLayer(out)).toContain('background')
     })
 
     it('does NOT carve out a comma-selector list containing :root', () => {

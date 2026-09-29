@@ -57,7 +57,7 @@ src/components/   → Reusable UI components
 | `src/components/forms/milkdown/` | The WYSIWYG markdown editor (Milkdown/ProseMirror) and everything it owns: entity-ref node, `@` completion, toolbar, write-back guard |
 | `src/app-editor/` | `<rela-editor>`, the Custom Element custom apps embed. Built as a standalone IIFE (`vite.editor.config.ts`), not part of the SPA bundle. Imports the editor's shared modules; holds only the plain-DOM toolbar and `@` menu that replace the SPA's Vue ones |
 | `src/components/lists/` | EntityList, FilterBar, Pagination |
-| `src/components/common/` | Sidebar, StatusBar, Badge, Toast, BackButton |
+| `src/components/common/` | Sidebar, StatusBar, Badge, BackButton |
 | `src/composables/` | Vue composables: useKeyboardShortcuts, useEvents (SSE), useListKeyboard, useScopeNavigation, useBackTarget |
 | `src/styles/` | Shared CSS loaded from `main.ts` (e.g. `back-button.css` for the `.scope-nav-btn` class reused across EntityDetail, CustomView, and standalone BackButton) |
 | `src/types/` | TypeScript interfaces for entities, schema, and config |
@@ -107,7 +107,9 @@ widget is that it renders something text cannot.
 
 - **schemaStore**: Loads metamodel (entity/relation types) and config (forms, lists, views, navigation) on app mount
 - **entitiesStore**: Entity CRUD with 1-minute TTL cache, invalidates on mutations
-- **uiStore**: Toast notifications, sidebar collapse state, theme (dark/light)
+- **uiStore**: Toast notifications (a facade over the library's `useToasts`,
+  rendered by the one `RlToastHost` in `App.vue`), sidebar collapse state,
+  theme (dark/light)
 - **gitStore**: Git status polling for uncommitted changes indicator
 
 ### SSE Real-time Updates
@@ -195,15 +197,23 @@ site.
 - **One indicator per user act.** A save shows the button state, never the
   bar. Create-then-redirect is sequential: the button owns the save, the bar
   takes over at the route change.
-- **`@keyframes spin` lives once, in `styles/pending.css`.** Do not
-  re-declare it in a component; it was previously copied ten times.
-- **A new spinner needs its OWN `prefers-reduced-motion` rule unless it is
-  unscoped.** `pending.css` suppresses `.spinner` because that class is
-  declared in App.vue's unscoped `<style>`. A class declared in a *scoped*
-  component `<style>` compiles to a `[data-v-*]` selector that outranks any
-  unscoped rule, so adding it to `pending.css` would silently do nothing —
-  put the rule beside the declaration instead, as `.spinner-sm`,
-  `.search-spinner`, `.cmdk-spinner` and `.entity-picker-spinner` now do.
+- **Spinners are `RlSpinner`; do not hand-roll one.** It owns the glyph, the
+  animation and its own `prefers-reduced-motion` fallback, so a call site
+  supplies only placement. `styles/pending.css` and its shared
+  `@keyframes spin` are gone with the last hand-rolled copy.
+
+  This retired a rule rather than restating it. The animation had been copied
+  ten times, and the fix at the time was one shared unscoped keyframe — which
+  only half worked: an unscoped `prefers-reduced-motion` rule cannot reach a
+  class declared in a *scoped* component `<style>`, because the compiled
+  `[data-v-*]` selector outranks it. So every scoped spinner needed its own
+  suppression rule, four of them carried one, and a fifth (`.spinner-sm`) was
+  dead CSS nobody noticed. A component cannot drift from itself, so the
+  scoping hazard no longer has anywhere to arise.
+
+  A spinner still earns its place only on a COLD load, where a region has no
+  previous content to hold on screen. The three-indicator model above leaves
+  few standing.
 
 ### Two sanctioned exceptions
 
@@ -238,9 +248,11 @@ halves are mutation-verified — swapping `visibility: hidden` for
 `display: none` fails the e2e width tests, and replacing the navigation
 tracker with a counter fails `useNavigationPending.test.ts`.
 
-When asserting a computed style in e2e, remember the scoping rule above: a
-probe element built with `document.createElement` only picks up *unscoped*
-CSS, so it can verify `.spinner` but not any scoped class.
+When asserting a computed style in e2e, remember that a probe element built
+with `document.createElement` only picks up *unscoped* CSS — the classes in
+App.vue's `<style>` and the files `main.ts` imports. A scoped component class
+compiles to a `[data-v-*]` selector the probe's element does not carry, so it
+reads as unstyled. Query the real element instead.
 
 ## The markdown editor (Milkdown/ProseMirror)
 
@@ -494,13 +506,40 @@ this class of bug at all.
 The sandboxed app editor (`src/app-editor/`) deliberately stays on EasyMDE —
 see TKT-D2JML7 and the CSP note in `internal/dataentry/CLAUDE.md`.
 
+## Component library
+
+The `Rl*` components live in `packages/rela-components`, an npm workspace of
+this package. Import them by package name, with the path under its `src/`:
+
+```ts
+import RlButton from 'rela-components/components/common/RlButton.vue'
+import { useToasts } from 'rela-components/components/feedback/useToasts'
+import type { NavItem } from 'rela-components/types'
+```
+
+Do not import the root `rela-components` barrel: it pulls in the library's
+`base.css`, and rela loads the library's styles selectively in
+`src/styles/rl.css`. The library keeps its own Storybook, guards and browser
+tests; run them from `packages/rela-components` (`npm run storybook`,
+`npm run check`, `npm test`). rela's ESLint skips `packages/`.
+
+After changing a library colour or token, run `npm run gen:tokens` and copy
+`src/styles/tokens.css` to `internal/dataentry/apps_tokens.css`, or
+`TestAppTokensCSSInSyncWithFrontend` fails.
+
 ## CSS Architecture
 
-Global styles in `App.vue` use CSS custom properties for theming:
+`App.vue`'s global block is being emptied onto rela-components. The shared
+utility classes it used to carry — `.btn` and its variants, `.modal`,
+`.page-header`, `.header-actions` — are gone; use `RlButton`, `RlModal` and
+`RlPageHeader` instead. `.loading-state` and `.error-state` survive as bare
+class names that style nothing, waiting on a library component for the
+"centred region replacing a pane" shape.
 
-- Light/dark mode via `:root.dark` class
-- Shared utility classes: `.btn`, `.btn-primary`, `.modal`, `.page-header`
-- Components use scoped styles with BEM-like naming
+Do not add a global rule to `App.vue` that paints a component. If the library
+has no component for what you need, ask for one and leave the screen plain —
+a private copy of a decision the library owns is the drift this migration
+exists to end.
 
 ### Design tokens: two files, different contracts
 

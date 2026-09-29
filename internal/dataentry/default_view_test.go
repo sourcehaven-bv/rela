@@ -12,10 +12,11 @@ func newDefaultViewMetamodel() *metamodel.Metamodel {
 			"ticket": {
 				Label: "Ticket",
 				Properties: map[string]metamodel.PropertyDef{
-					"title":  {Type: "string", Required: true},
-					"status": {Type: "string"},
+					"title":    {Type: "string", Required: true},
+					"status":   {Type: "string"},
+					"priority": {Type: "string"},
 				},
-				PropertyOrder: []string{"title", "status"},
+				PropertyOrder: []string{"title", "status", "priority"},
 			},
 			"feature": {
 				Label: "Feature",
@@ -121,8 +122,8 @@ func TestBuildDefaultViewConfig_PropertyOrderPreserved(t *testing.T) {
 	if got, want := len(propsSec.Fields), 2; got != want {
 		t.Fatalf("fields: want %d, got %d", want, got)
 	}
-	if propsSec.Fields[0].Property != "title" || propsSec.Fields[1].Property != "status" {
-		t.Errorf("field order: want [title, status], got [%s, %s]",
+	if propsSec.Fields[0].Property != "status" || propsSec.Fields[1].Property != "priority" {
+		t.Errorf("field order: want [status, priority], got [%s, %s]",
 			propsSec.Fields[0].Property, propsSec.Fields[1].Property)
 	}
 }
@@ -236,6 +237,24 @@ func TestBuildDefaultViewConfig_SectionOrderingDeterministic(t *testing.T) {
 				t.Errorf("section[%d].source differs: %q vs %q",
 					i, again.Sections[i].Source, first.Sections[i].Source)
 			}
+		}
+	}
+}
+
+// The title property is the page heading, which edits it in place, so the
+// generated properties section leaves it out rather than showing it twice.
+func TestBuildDefaultViewConfig_OmitsTitleProperty(t *testing.T) {
+	view, ok := buildDefaultViewConfig(newDefaultViewMetamodel(), "ticket")
+	if !ok {
+		t.Fatal("expected ok=true")
+	}
+	props := view.Sections[0]
+	if props.Display != "properties" {
+		t.Fatalf("section[0].display: want properties, got %q", props.Display)
+	}
+	for _, f := range props.Fields {
+		if f.Property == "title" {
+			t.Errorf("fields: title should be omitted, got %+v", props.Fields)
 		}
 	}
 }

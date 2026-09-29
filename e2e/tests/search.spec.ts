@@ -127,16 +127,45 @@ test.describe('Search', () => {
   });
 
   test.describe('Search Results', () => {
-    test('clicking result navigates to entity', async ({ appPage }) => {
+    test('clicking a result opens it in the panel beside the results', async ({ appPage }) => {
       const searchPage = new SearchPage(appPage);
 
       await searchPage.navigateToSearch();
-
       await searchPage.search('Authentication');
+      await expect(searchPage.resultItems.filter({ hasText: 'FEAT-001' })).toBeVisible();
+      const count = await searchPage.getResultCount();
 
       await searchPage.clickResultById('FEAT-001');
 
-      await expect(appPage).toHaveURL(/\/entity\/feature\/FEAT-001|\/form\/feature\/FEAT-001/);
+      await expect(appPage).toHaveURL(/\/search\?.*selected=FEAT-001/);
+      await expect(searchPage.detailPanel).toBeVisible();
+      await expect(searchPage.resultItems).toHaveCount(count);
+    });
+
+    test('with the panel open at tablet width, the hamburger brings the sidebar back', async ({ appPage }) => {
+      // Between 768 and 1079px an open panel pushes the sidebar off-canvas.
+      await appPage.setViewportSize({ width: 900, height: 800 });
+      const searchPage = new SearchPage(appPage);
+      const toggle = searchPage.navToggle;
+
+      await searchPage.navigateToSearch();
+      await searchPage.search('Authentication');
+      await expect(toggle).toBeHidden();
+
+      await searchPage.clickResultById('FEAT-001');
+      await expect(searchPage.detailPanel).toBeVisible();
+      await expect(toggle).toBeVisible();
+    });
+
+    test('expanding the panel opens the entity page', async ({ appPage }) => {
+      const searchPage = new SearchPage(appPage);
+
+      await searchPage.navigateToSearch();
+      await searchPage.search('Authentication');
+      await searchPage.clickResultById('FEAT-001');
+      await searchPage.expandPanel();
+
+      await expect(appPage).toHaveURL(/\/entity\/feature\/FEAT-001/);
     });
 
     test('results show entity type badge', async ({ appPage }) => {
