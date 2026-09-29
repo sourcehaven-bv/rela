@@ -16,7 +16,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/attachment"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
-	"github.com/Sourcehaven-BV/rela/internal/lock"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
@@ -98,7 +97,6 @@ func assertNoLuaTools(t *testing.T, svc *appbuild.Services) {
 	ctx := context.Background()
 
 	srv, err := newRemoteMCPServer(svc, dataentry.MCPHost{
-		AttachmentLocker:  lock.NewMemoryLocker(),
 		AttachmentUploads: attachment.NewLimiter(attachment.DefaultMaxUploads),
 	})
 	if err != nil {

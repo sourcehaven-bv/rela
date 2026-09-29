@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/attachment"
+	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
@@ -77,9 +78,10 @@ type MCPHost struct {
 	// be built; a configured scan then rejects the upload.
 	AttachmentRunner attachment.CommandRunner
 
-	// AttachmentLocker is the App's attachment lock, so MCP attachment writes
-	// and web uploads to one property exclude each other.
-	AttachmentLocker attachment.Locker
+	// Attachments is the manager's attachment surface the App uses, so MCP
+	// attachment writes, web uploads, copies and face deletes on one
+	// property exclude each other.
+	Attachments entitymanager.Attachments
 
 	// AttachmentUploads is the App's upload bound, so MCP and web uploads
 	// share one budget.
@@ -94,7 +96,7 @@ func mcpHost(a *App) MCPHost {
 			return s.Meta, maxAttachmentBytes(s)
 		},
 		AttachmentRunner:  a.attachmentRunner,
-		AttachmentLocker:  a.attachmentLocker,
+		Attachments:       a.attachmentOwner,
 		AttachmentUploads: a.attachmentUploads,
 	}
 }

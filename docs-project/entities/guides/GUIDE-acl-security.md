@@ -1285,6 +1285,13 @@ other surfaces and how each counts hidden entities.
   "summary" line) discloses it to any principal who may row-read the entity.
   Covering the body would be a new cross-path mechanism; it is deliberately
   out of scope (RR-ATFNM1).
+- **Attachment names across faces.** Attachment bytes are stored once per
+  entity, so file names are unique per entity rather than per face. When a
+  writer on one face uploads a file whose name another face already uses,
+  the upload is renamed (`report.pdf` becomes `report (1).pdf`). The writer
+  learns that some face of the entity holds a file of that name. It cannot
+  list, read or download that file. This is an accepted one-bit channel, of
+  the same kind as the id conflict above (BUG-CTUW2N).
 
 For threat-modelling purposes today: per-entity GET, write, include,
 list, pagination, global-search, the SSE event stream, and the

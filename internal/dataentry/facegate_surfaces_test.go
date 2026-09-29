@@ -156,34 +156,28 @@ func TestFaceGrant_IncludedNeighboursAreFaceGated(t *testing.T) {
 	}
 }
 
-// Attachments are keyed by bare id, and on a faced type AttachFile finds no
-// row there (BUG-CTUW2N), so only the gate pin runs today.
+// A file on the draft face is served through the draft address only, and
+// only to a principal who may read draft (BUG-CTUW2N).
 func TestFaceGrant_AttachmentDownloadIsFaceGated(t *testing.T) {
-	for _, fx := range faceGateFixtures("BUG-CTUW2N") {
-		t.Run(fx.name, func(t *testing.T) {
-			if fx.skip != "" {
-				t.Skip(fx.skip)
-			}
-			assertAttachmentDownloadFaceGated(t, fx.build(t))
-		})
-	}
-}
-
-func assertAttachmentDownloadFaceGated(t *testing.T, app *App) {
-	t.Helper()
 	ctx := context.Background()
+	app := facedTicketApp(t)
+	seedDeclaredFaceTicket(ctx, t, app)
 	if err := app.store.AttachFile(ctx, "TKT-1", "screenshot", "a.txt",
 		strings.NewReader("draft bytes")); err != nil {
 		t.Fatalf("attach: %v", err)
+	}
+	if _, err := app.attachmentOwner.StampAttachments(principalCtx("bob"),
+		entity.Ref{ID: "TKT-1", Face: "draft"}, "screenshot", "attachments/TKT-1/screenshot/a.txt"); err != nil {
+		t.Fatalf("stamp draft: %v", err)
 	}
 	viewer, admin := publishedOnly(t, app)
 
 	download := func(ctx context.Context, d *acl.Declarative) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodGet,
-			"/api/v1/tickets/TKT-1/_attachments/screenshot/a.txt", http.NoBody)
+			"/api/v1/tickets/TKT-1@draft/_attachments/screenshot/a.txt", http.NoBody)
 		req = req.WithContext(gateCtxFor(ctx, t, d))
 		rec := httptest.NewRecorder()
-		app.attachments.handleV1GetAttachment(rec, req, "ticket", "TKT-1", "screenshot", "a.txt")
+		app.attachments.handleV1GetAttachment(rec, req, "ticket", "TKT-1@draft", "screenshot", "a.txt")
 		return rec
 	}
 

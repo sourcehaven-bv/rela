@@ -12,7 +12,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/attachment"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/lock"
+	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/openapi"
@@ -241,7 +241,9 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 		redactor: appRedactor(app),
 		visible:  app.visibleReader,
 	}
-	app.attachmentLocker = lock.For(svc.Store())
+	if owner, err := entitymanager.AttachmentsOf(svc.EntityManager()); err == nil {
+		app.attachmentOwner = owner
+	}
 	app.attachmentUploads = attachment.NewLimiter(attachment.DefaultMaxUploads)
 	// attachmentHandler mirrors production wiring: closures for the swappable
 	// acl/audit/field-resolver fields (attachment ACL tests reassign app.acl
@@ -249,15 +251,14 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 	app.attachments = &attachmentHandler{
 		schema:     app.State,
 		store:      svc.Store(),
-		manager:    svc.EntityManager(),
 		runner:     func() attachment.CommandRunner { return app.attachmentRunner },
 		reader:     app.reader,
 		serializer: app.serializer,
 		acl:        func() acl.ACL { return app.acl },
 		audit:      func() audit.Audit { return app.auditSink },
 		fields:     func() FieldVerdictResolver { return app.fieldResolver },
-		gateRead:   app.gateReadOrNotFound,
-		locker:     app.attachmentLocker,
+		visible:    app.visibleReader,
+		owner:      app.attachmentOwner,
 		uploads:    app.attachmentUploads,
 		provision:  newProvisionSeam(app),
 	}

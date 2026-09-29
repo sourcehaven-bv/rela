@@ -1,4 +1,4 @@
-import { type Page, type Locator, expect } from "@playwright/test";
+import { type Page, type Locator, type Response, expect } from "@playwright/test";
 import { BasePage } from "./base.page";
 
 export class FormPage extends BasePage {
@@ -1143,14 +1143,34 @@ export class FormPage extends BasePage {
     plural: string,
     expectedUploads: number,
   ): Promise<{ id: string }> {
-    const uploads = Array.from({ length: expectedUploads }, () =>
-      this.page.waitForResponse(
-        (r) =>
-          r.url().includes("/_attachments/") && r.request().method() === "PUT",
-      ),
-    );
-    const created = await this.submitAndExpectCreate(plural);
-    await Promise.all(uploads);
-    return created;
+    // One waitForResponse per upload would not do: every waiter resolves on
+    // the FIRST matching response, so the second upload went unawaited.
+    // A failed upload rejects at once rather than counting towards done.
+    let seen = 0;
+    let done!: () => void;
+    let fail!: (err: Error) => void;
+    const allUploaded = new Promise<void>((resolve, reject) => {
+      done = resolve;
+      fail = reject;
+    });
+    const onResponse = (r: Response) => {
+      if (!r.url().includes("/_attachments/") || r.request().method() !== "PUT") {
+        return;
+      }
+      if (!r.ok()) {
+        fail(new Error(`attachment upload failed: ${r.status()} ${r.url()}`));
+        return;
+      }
+      seen += 1;
+      if (seen >= expectedUploads) done();
+    };
+    this.page.on("response", onResponse);
+    try {
+      const created = await this.submitAndExpectCreate(plural);
+      await allUploaded;
+      return created;
+    } finally {
+      this.page.off("response", onResponse);
+    }
   }
 }

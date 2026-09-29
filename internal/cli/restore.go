@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -16,8 +17,9 @@ import (
 // it is re-created.
 //
 // Scope: entity content + properties only. The entity's relation set as-of the
-// version is NOT restored (relation history is a separate capability). Restore
-// is a pgstore-only capability.
+// version is NOT restored (relation history is a separate capability), and
+// file values keep their live value (BUG-CTUW2N): an old value may name bytes
+// that are gone. Restore needs a versioning backend (PostgreSQL or SQLite).
 //
 // Note: the CLI is a full-trust operator surface — per-field write ACL is
 // enforced at the data-entry HTTP boundary, not here (consistent with every
@@ -44,18 +46,23 @@ func (c *RestoreCmd) Run(ctx context.Context, svc *writeServices) error {
 		return fmt.Errorf("read version %d for %q: %w", c.Version, c.ID, err)
 	}
 
-	// Build the entity to write from the snapshot.
-	target := entity.New(c.ID, snap.Type)
-	target.Content = snap.Content
-	target.Properties = snap.Properties
-
 	// Update if the entity currently exists, else re-create it. Between this
 	// read and the write another writer could delete/recreate the entity,
 	// flipping the correct branch (TOCTOU); the manager then returns
 	// ErrNotFound (update raced a delete) or ErrEntityAlreadyExists (create
 	// raced a recreate). Map either to a clear "state changed, retry" message
 	// rather than a baffling raw error.
-	_, getErr := svc.Store.GetEntity(ctx, c.ID)
+	live, getErr := svc.Store.GetEntity(ctx, c.ID)
+	if getErr != nil {
+		live = nil
+	}
+
+	// Build the entity to write from the snapshot, keeping the live file
+	// values (none on a re-create).
+	target := entity.New(c.ID, snap.Type)
+	target.Content = snap.Content
+	target.Properties = entitymanager.CarryFileValues(svc.Meta, snap.Type, snap.Properties, live)
+
 	switch {
 	case getErr == nil:
 		if _, err := svc.EntityManager.UpdateEntity(ctx, target); err != nil {

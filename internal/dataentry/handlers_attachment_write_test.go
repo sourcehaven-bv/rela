@@ -41,8 +41,6 @@ func multipartBody(t *testing.T, fileName string, data []byte) (body *bytes.Buff
 
 // putAttachmentAs invokes the upload handler directly with the gate ctx.
 // Type/plural are the fixture's "ticket"/"tickets" (newTestAppV1).
-//
-//nolint:unparam // entityID is conceptually variable; tests use one fixture.
 func putAttachmentAs(ctx context.Context, t *testing.T, app *App, d *acl.Declarative,
 	entityID, property, fileName string, data []byte,
 ) *httptest.ResponseRecorder {

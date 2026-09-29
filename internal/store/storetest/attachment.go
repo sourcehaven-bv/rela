@@ -49,6 +49,33 @@ func RunAttachmentTests(t *testing.T, f Factory) {
 		assert.Equal(t, "image data", string(data))
 	})
 
+	// A faced family has no zero-face row (DEC-NPZICR). Bytes are keyed
+	// per bare id, so any face makes the id exist, and the bytes outlive a
+	// single face's delete while another face remains (BUG-CTUW2N).
+	t.Run("AttachFacedFamily", func(t *testing.T) {
+		s := f(t)
+		for _, face := range []string{"nl", "en"} {
+			e := entity.New("P-1", "page")
+			p, err := entity.ParseFace(face)
+			require.NoError(t, err)
+			e.Face = p
+			require.NoError(t, s.CreateEntity(ctx(), e))
+		}
+
+		require.NoError(t, s.AttachFile(ctx(), "P-1", "file", "a.txt", strings.NewReader("a")))
+		infos, err := s.ListAttachments(ctx(), "P-1")
+		require.NoError(t, err)
+		require.Len(t, infos, 1)
+
+		nl, err := entity.ParseFace("nl")
+		require.NoError(t, err)
+		_, err = s.DeleteEntityState(ctx(), "P-1", nl)
+		require.NoError(t, err)
+		infos, err = s.ListAttachments(ctx(), "P-1")
+		require.NoError(t, err)
+		assert.Len(t, infos, 1, "bytes survive while a face remains")
+	})
+
 	t.Run("AttachEntityNotFound", func(t *testing.T) {
 		s := f(t)
 		err := s.AttachFile(ctx(), "NOPE", "prop", "f.txt", strings.NewReader("x"))

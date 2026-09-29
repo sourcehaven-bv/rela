@@ -374,7 +374,7 @@ func TestReassembly_ClosesSearchCloserExactlyOnce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Assemble origin: %v", err)
 	}
-	successor, err := base.ForReassembly().Assemble(
+	successor, err := base.ForReassembly(origin).Assemble(
 		origin.Store(), origin.Searcher(), origin.VisibleSearcher(), nil)
 	if err != nil {
 		t.Fatalf("Assemble successor: %v", err)
@@ -400,7 +400,7 @@ func TestReassembly_ClosesSearchCloserExactlyOnce(t *testing.T) {
 func TestReassembly_SkipsStoreOpenOnlySteps(t *testing.T) {
 	base := newSharedBase(t)
 
-	reassembly := base.ForReassembly()
+	reassembly := base.ForReassembly(&appbuild.Services{})
 	if !reassembly.IsReassembly() {
 		t.Error("ForReassembly() must mark the base as re-assembling")
 	}

@@ -789,6 +789,21 @@ instead.
 A `file` property can hold one attachment (the default) or several, when
 its metamodel `max` is set above 1 (see `docs/metamodel.md`).
 
+On an entity type with faces, `{id}` in every route below is an address,
+such as `POL-1@draft`. The bytes are stored once per entity and shared by
+its faces, but each face lists and serves only the files its own property
+value names. A file uploaded on `POL-1@draft` is therefore not visible
+through `POL-1@published` until a copy carries the reference. A bare id of
+a faced entity addresses no face and answers `404`. The ACL grant for the
+addressed face applies: `update` on `policy@draft` to upload or delete,
+`read` on it to download.
+
+Only the attachment endpoints change a file property's value. A `PATCH` or
+`PUT` of the entity that changes a file value, or clears it, fails with
+`422`. A save that sends the current value back unchanged, or leaves the
+property out, succeeds. The value is what grants a face its files, so an
+ordinary write could otherwise point one face at another face's file.
+
 ### Metadata on per-entity GET
 
 Per-entity responses carry an `_attachments` map keyed by property name.
@@ -909,8 +924,10 @@ when persisting the property.
 DELETE /api/v1/{plural}/{id}/_attachments/{property}/{fileName}
 ```
 
-Removes one file and re-stamps the property from the remaining files;
-returns `204`. Idempotent (deleting a missing file still re-stamps and
-succeeds). Same `update`-permission inheritance as upload. The bytes are
-removed, then the property is persisted, so a persist failure leaves
-orphaned bytes rather than a property pointing at a missing file.
+Removes one file from the addressed face's property and returns `204`.
+Idempotent: deleting a file the face does not reference changes nothing
+and succeeds. Same `update`-permission inheritance as upload. The property
+is persisted first. The bytes are removed afterwards, and only when no
+other face of the entity still references the file, so a failure leaves
+unreferenced bytes rather than a property pointing at a missing file.
+Deleting a whole face also removes the bytes no remaining face references.

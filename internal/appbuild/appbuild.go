@@ -46,6 +46,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/jobs"
+	"github.com/Sourcehaven-BV/rela/internal/lock"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
@@ -151,13 +152,17 @@ type Services struct {
 	visibleSearcher search.VisibleSearcher
 	userState       userstate.Store
 	entityManager   *entitymanager.Manager
-	tracer          tracer.Tracer
-	validator       validator.Validator
-	templater       templating.Templater
-	cfgLoader       config.Loader
-	stateKV         state.KV
-	migState        datamigration.StateStore
-	schedulerState  schedulerstate.Store
+	// attachLocker is the manager's attachment lock. A re-assembly reuses it
+	// (see [SharedBase.ForReassembly]) so writes under the old and the new
+	// schema still exclude each other.
+	attachLocker   lock.Locker
+	tracer         tracer.Tracer
+	validator      validator.Validator
+	templater      templating.Templater
+	cfgLoader      config.Loader
+	stateKV        state.KV
+	migState       datamigration.StateStore
+	schedulerState schedulerstate.Store
 	// jobQueue is the background-job seam (TKT-YOED3R). Its backend is a
 	// per-tier choice made by the recipe: ephemeral in-process on fs/mem,
 	// durable PostgreSQL on the postgres build. Torn down in Close.
@@ -1495,6 +1500,18 @@ type SharedBase struct {
 	// store, so [assemble] skips the store-open-only steps. Set by
 	// [SharedBase.ForReassembly]; false for a base that will open its own store.
 	reassembly bool
+	// attachLocker is the predecessor's attachment lock, reused by a
+	// re-assembly. Nil for a first assembly, which takes lock.For(store).
+	attachLocker lock.Locker
+}
+
+// attachmentLocker is the predecessor's attachment lock on a re-assembly,
+// and a fresh lock for st otherwise.
+func (b *SharedBase) attachmentLocker(st store.Store) lock.Locker {
+	if b.attachLocker != nil {
+		return b.attachLocker
+	}
+	return lock.For(st)
 }
 
 // IsReassembly reports whether this base is marked to re-assemble against an
@@ -1511,9 +1528,17 @@ func (b *SharedBase) IsReassembly() bool { return b.reassembly }
 //
 // Use it for EVERY assembly after the first against a given store. A base
 // used to open a store must not be marked.
-func (b *SharedBase) ForReassembly() *SharedBase {
+//
+// prev is the assembly being succeeded. The successor's entity manager reuses
+// its attachment lock: an in-memory lock only excludes holders of the same
+// instance, so a fresh one would let an upload under the old schema race a
+// face delete under the new one.
+//
+// Nil: rejected by use — prev is dereferenced.
+func (b *SharedBase) ForReassembly(prev *Services) *SharedBase {
 	next := *b
 	next.reassembly = true
+	next.attachLocker = prev.attachLocker
 	return &next
 }
 
@@ -1690,7 +1715,7 @@ func buildEntityManager(
 	templater entitymanager.TemplateLoader, resolvedACL acl.ACL,
 	autoEngine *automation.Engine, cascadeRunner *autocascade.Runner,
 	readDeps lua.ReadDeps, versions store.VersionService, tw TransitionWiring,
-	computedSet *computed.Set,
+	computedSet *computed.Set, attachLocker lock.Locker,
 ) (*entitymanager.Manager, error) {
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		AliasRewriter:           aliases,
@@ -1723,6 +1748,10 @@ func buildEntityManager(
 		CopyGuard:      tw.Guard,
 		CopyReadGate:   tw.ReadGate,
 		CopyVisibility: tw.Visibility,
+		// One lock instance shared with every attachment service built
+		// from this manager (entitymanager.AttachmentsOf), so the copy
+		// engine, face deletes and uploads exclude each other.
+		AttachmentLocker: attachLocker,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("build entitymanager: %w", err)
@@ -1985,8 +2014,9 @@ func assemble(
 
 	// Upstream's parameter order (readDeps after cascadeRunner) with the
 	// comment fanout wrapping the alias rewriter.
+	attachLocker := base.attachmentLocker(st)
 	mgr, err := buildEntityManager(base, st, newAliasFanout(aliases, commentSvc), templater, resolvedACL,
-		autoEngine, cascadeRunner, readDeps, versions, tw, computedSet)
+		autoEngine, cascadeRunner, readDeps, versions, tw, computedSet, attachLocker)
 	// coverage-ignore-start: defensive: buildStateKV only errors when NewRootedFS fails on a non-empty CacheDir, which
 	// requires filepath.Abs to
 	// fail — unreachable with valid inputs (see the scupper in buildStateKV)
@@ -2033,11 +2063,13 @@ func assemble(
 	// per-assembled, like the search closer.
 	background := startBackgroundServices(base, st, stateKV, migState, cfgLoader, versions)
 
-	return newServices(
+	assembled := newServices(
 		base, st, background, searcher, visible, searchCloser, mgr, tr, val,
 		templater, cfgLoader, stateKV, migState, jobQueue, aliases, commentSvc, versions,
 		resolvedACL, aclDeclarative, fieldRedactor, schedState,
-	), nil
+	)
+	assembled.attachLocker = attachLocker
+	return assembled, nil
 }
 
 // newServices bundles the assembled collaborators into the Services value.

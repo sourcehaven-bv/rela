@@ -21,7 +21,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/git"
-	"github.com/Sourcehaven-BV/rela/internal/lock"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/migration"
@@ -377,11 +376,12 @@ type App struct {
 	kv        state.KV
 	acl       acl.ACL
 
-	// attachmentLocker serializes attachment writers to one (entity,
-	// property), for web uploads and remote MCP tools alike. Built once from
-	// the store by [lock.For], so on postgres it also excludes other
-	// processes.
-	attachmentLocker attachment.Locker
+	// attachmentOwner is the manager's attachment surface: the one write
+	// that may change a file value, and the lock serializing writers to one
+	// entity's attachments for web uploads, remote MCP tools, the copy engine
+	// and face deletes alike. The zero value (a manager without a file
+	// property in its metamodel) fails every attachment write.
+	attachmentOwner entitymanager.Attachments
 
 	// attachmentUploads bounds concurrent uploads in this process, web and
 	// remote MCP together.
@@ -912,6 +912,13 @@ func NewApp(
 	if em == nil {
 		return nil, errors.New("dataentry.NewApp: entityManager is required")
 	}
+	// The manager owns the attachment lock, so every writer shares one
+	// instance. A manager built for a metamodel without file properties
+	// has none; the zero value then fails any attachment write.
+	attachmentOwner, ownerErr := entitymanager.AttachmentsOf(em)
+	if ownerErr != nil && metamodel.HasFileProperties(meta) {
+		return nil, fmt.Errorf("dataentry.NewApp: %w", ownerErr)
+	}
 	if searcher == nil {
 		return nil, errors.New("dataentry.NewApp: searcher is required")
 	}
@@ -995,9 +1002,9 @@ func NewApp(
 		scriptEngine:    scriptEngine,
 		fieldResolver:   fieldResolver,
 		auditSink:       auditSink,
-		// attachmentLocker must be set before the attachment handler copies
+		// attachmentOwner must be set before the attachment handler copies
 		// it below.
-		attachmentLocker:  lock.For(st),
+		attachmentOwner:   attachmentOwner,
 		attachmentUploads: attachment.NewLimiter(attachment.DefaultMaxUploads),
 	}
 	// documentService needs scriptEngine (for Lua renders) and a closure
@@ -1231,20 +1238,16 @@ func NewApp(
 	// on App after construction (same rationale as affordanceService); the
 	// store/manager handles are fixed for App's lifetime.
 	app.attachments = &attachmentHandler{
-		schema: app.State,
-		store:  st,
-		// The concrete manager, not app.entityManager: each sub-handler
-		// narrows to its OWN interface at its own field, so App's stays
-		// exactly what App calls (TKT-IVSJV6).
-		manager:    em,
+		schema:     app.State,
+		store:      st,
 		runner:     func() attachment.CommandRunner { return app.attachmentRunner },
 		reader:     app.reader,
+		visible:    app.visibleReader,
 		serializer: app.serializer,
 		acl:        func() acl.ACL { return app.acl },
 		audit:      func() audit.Audit { return app.auditSink },
 		fields:     func() FieldVerdictResolver { return app.fieldResolver },
-		gateRead:   app.gateReadOrNotFound,
-		locker:     app.attachmentLocker,
+		owner:      app.attachmentOwner,
 		uploads:    app.attachmentUploads,
 		provision:  newProvisionSeam(app),
 	}

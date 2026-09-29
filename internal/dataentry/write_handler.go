@@ -1205,9 +1205,14 @@ func (h *writeHandler) handleV1CloneEntity(
 		return
 	}
 
-	// Clone properties
+	// Clone properties. File values stay behind: they name the source's
+	// bytes, which the clone does not have, and only the attachments API
+	// may set a file value (BUG-CTUW2N).
 	props := make(map[string]any)
 	maps.Copy(props, entity.Properties)
+	for _, prop := range metamodel.FileProperties(s.Meta, typeName) {
+		delete(props, prop)
+	}
 
 	// The clone lands on the SOURCE's face, not the bare coordinate
 	// (BUG-HC6I2T): a clone of a draft is a draft. The source face is read

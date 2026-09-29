@@ -660,8 +660,12 @@ the property (see the metamodel reference) to allow several.
 
 **Arguments:**
 
-- `entity-id` - Target entity ID
+- `entity-id` - Target entity ID, or `ID@face` for a type with faces
 - `file...` - One or more files to attach (supports glob patterns)
+
+On a type with faces, the file belongs to the addressed face; see
+[content-states.md](content-states.md#attachments-and-export-on-a-face). A bare
+id of a faced entity is refused, and the message names its faces.
 
 **Flags:**
 
@@ -693,7 +697,8 @@ Shows the property name, path, and size for each attachment.
 
 **Arguments:**
 
-- `entity-id` - Entity ID to list attachments for
+- `entity-id` - Entity ID to list attachments for, or `ID@face` for a type
+  with faces. A face lists only its own files.
 
 **Examples:**
 
@@ -712,15 +717,15 @@ Remove an attachment from an entity property.
 rela detach <entity-id> <property> [--file <name>]
 ```
 
-Deletes the underlying file from the attachment store and re-stamps the
-property. When the property holds a single attachment, `--file` may be
+Removes the file from the property and deletes the underlying bytes when no
+other face of the entity still references them. When the property holds a single attachment, `--file` may be
 omitted. When it holds several (a `file` property with `max > 1`), pass
 `--file` to select which one — `rela attachments <entity-id>` lists the
 names.
 
 **Arguments:**
 
-- `entity-id` - Entity ID
+- `entity-id` - Entity ID, or `ID@face` for a type with faces
 - `property` - Property name containing the attachment
 
 **Flags:**

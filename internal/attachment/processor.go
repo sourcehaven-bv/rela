@@ -97,7 +97,7 @@ func (NoopProcessor) Process(_ context.Context, _ ProcessContext, r io.Reader) (
 // returns the reader to persist, the (possibly-updated) file name, and any
 // error. When the processor is the no-op (or needs no buffering) the original
 // reader is threaded straight through, unbuffered. (The service still spools
-// it to a temporary file before taking the property lock; see
+// it to a temporary file before taking the attachment lock; see
 // spoolAttachment.)
 //
 // maxBytes bounds the buffer so a processor that needs the full file cannot be

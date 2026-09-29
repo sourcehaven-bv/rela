@@ -127,7 +127,7 @@ func (m *Manager) gated() *Manager {
 // There is deliberately no assertion against a package-local write
 // interface: the wide EntityManager one was deleted in TKT-IVSJV6, and its
 // replacements are declared at each CONSUMER (lua.Mutator,
-// attachment.EntityPatcher, mcp.EntityWriter, and the unexported ones in
+// attachment.Stamper, mcp.EntityWriter, and the unexported ones in
 // internal/cli and internal/dataentry). Asserting against them here would
 // re-import every consumer and reinstate the coupling the split removed;
 // each is checked where it is used, at its own wiring site.
@@ -278,6 +278,16 @@ type Deps struct {
 	// out explicitly. This used to say "required in spirit and nil-tolerant
 	// in practice", which is exactly the gap [requireCopyGates] closes.
 	CopyReadGate CopyReadGate
+
+	// AttachmentLocker serializes changes to one (entity, file property)
+	// between the attachment service, the copy engine and DeleteEntityFace;
+	// see [AttachmentLocker].
+	//
+	// Nil: accepted only when the metamodel declares no `file` property,
+	// because then there are no references to count. Rejected otherwise:
+	// without the lock a copy racing a delete could leave a reference to
+	// deleted bytes.
+	AttachmentLocker AttachmentLocker
 }
 
 // FieldWriteGate answers whether the ctx principal may write the named
@@ -470,6 +480,10 @@ func New(d Deps) (*Manager, error) {
 	}
 	if err := requireCopyGates(d); err != nil {
 		return nil, err
+	}
+	if d.AttachmentLocker == nil && metamodel.HasFileProperties(d.Meta) {
+		return nil, errors.New(
+			"entitymanager: New: AttachmentLocker is required when the metamodel declares a file property")
 	}
 	return &Manager{deps: d}, nil
 }
@@ -754,6 +768,9 @@ func (m *Manager) CreateEntity(
 	}); err != nil {
 		return nil, err
 	}
+	if err := rejectFileCreate(m.deps.Meta, e.Type, e.Properties); err != nil {
+		return nil, err
+	}
 	if opts.ID != "" {
 		if def, ok := m.deps.Meta.GetEntityDef(e.Type); ok && !def.IsManualID() {
 			return nil, customIDNotAllowedError(e.Type, def, opts.ID)
@@ -872,6 +889,9 @@ func (m *Manager) ValidateCreate(
 	if err := m.deps.requireCreateFaceFor(e.Type, opts.Face); err != nil {
 		return nil, nil, err
 	}
+	if err := rejectFileCreate(m.deps.Meta, e.Type, e.Properties); err != nil {
+		return nil, nil, err
+	}
 	return buildCandidateEntity(ctx, m.deps, e.Type, createCoreOpts{
 		ID:              opts.ID,
 		IDPrefix:        opts.Prefix,
@@ -944,11 +964,50 @@ func (m *Manager) UpdateEntity(ctx context.Context, e *entity.Entity) (*entity.U
 	if err := rejectComputedChanges(m.deps, oldEntity, e); err != nil {
 		return nil, err
 	}
+	if err := rejectFileChanges(m.deps.Meta, oldEntity, e); err != nil {
+		return nil, err
+	}
+	if len(metamodel.FileProperties(m.deps.Meta, e.Type)) > 0 {
+		return updateKeepingFileValues(ctx, m, e, oldEntity)
+	}
 
 	// Unconditional: UpdateEntity is the whole-entity save, whose caller owns
 	// every field. A caller wanting compare-and-swap uses PatchEntity with
 	// entity.Patch.ExpectedVersion.
 	return m.updateCore(ctx, e, oldEntity, "")
+}
+
+// updateKeepingFileValues is the write half of [Manager.UpdateEntity] for a
+// type with file properties. The caller's file values have passed the
+// file-property rule against old; they are replaced by the stored values
+// (see [pinStoredFileValues]) and the write is conditional on old's version.
+// A stamp that lands between the read and the write is therefore retried
+// against the new row rather than reverted, which would leave the face
+// naming bytes the attachment service has already deleted. The rest of the
+// save stays last-writer-wins: each retry writes the caller's other values
+// again.
+func updateKeepingFileValues(
+	ctx context.Context, m *Manager, e, old *entity.Entity,
+) (*entity.UpdateResult, error) {
+	first := true
+	return patchWithRetry(ctx, true, func(bool) (*entity.UpdateResult, error) {
+		if !first {
+			fresh, err := m.deps.Store.GetEntityState(ctx, e.ID, e.Face)
+			if err != nil {
+				if errors.Is(err, store.ErrNotFound) {
+					return nil, fmt.Errorf("%w: %s", ErrEntityNotFound, e.ID)
+				}
+				return nil, err
+			}
+			if err := rejectComputedChanges(m.deps, fresh, e); err != nil {
+				return nil, err
+			}
+			old = fresh
+		}
+		first = false
+		pinStoredFileValues(m.deps.Meta, old, e, "")
+		return m.updateCore(ctx, e, old, string(store.VersionOf(old)))
+	})
 }
 
 // PatchEntity applies a TARGETED set of property changes to one entity:
@@ -1011,9 +1070,20 @@ func (m *Manager) PatchEntity(
 	if id == "" {
 		return nil, errors.New("entitymanager: PatchEntity: id is empty")
 	}
-	pinToRead := p.ExpectedVersion == ""
+	return patchWithRetry(ctx, p.ExpectedVersion == "", func(pinToRead bool) (*entity.UpdateResult, error) {
+		return m.patchEntityOnce(ctx, id, p, pinToRead, "")
+	})
+}
+
+// patchWithRetry runs one patch attempt, and with pinToRead retries it a
+// bounded number of times when another writer lands between its read and
+// its write. A free function so [Attachments.StampAttachments] shares the
+// loop without adding a Manager method.
+func patchWithRetry(
+	ctx context.Context, pinToRead bool, once func(pinToRead bool) (*entity.UpdateResult, error),
+) (*entity.UpdateResult, error) {
 	for attempt := 1; ; attempt++ {
-		res, err := m.patchEntityOnce(ctx, id, p, pinToRead)
+		res, err := once(pinToRead)
 		if pinToRead && isVersionConflict(err) && attempt < casRetryAttempts {
 			if berr := casBackoff(ctx, attempt); berr != nil {
 				return nil, berr
@@ -1026,9 +1096,10 @@ func (m *Manager) PatchEntity(
 
 // patchEntityOnce is one attempt of [Manager.PatchEntity]. With pinToRead the
 // write is conditional on the version of the row it read, rather than on
-// p.ExpectedVersion.
+// p.ExpectedVersion. fileProp names the one file property the write may
+// change; only [Attachments.StampAttachments] passes one.
 func (m *Manager) patchEntityOnce(
-	ctx context.Context, id string, p entity.Patch, pinToRead bool,
+	ctx context.Context, id string, p entity.Patch, pinToRead bool, fileProp string,
 ) (*entity.UpdateResult, error) {
 	// RAW read, deliberately ungated: this is write-prep, and the merge
 	// base must be the complete stored entity or hidden properties would
@@ -1087,9 +1158,13 @@ func (m *Manager) patchEntityOnce(
 	if err := rejectComputedPatch(m.deps, stored.Type, p.Properties, p.MetaUnset); err != nil {
 		return nil, err
 	}
+	if err := rejectFilePatch(m.deps.Meta, stored, p, fileProp); err != nil {
+		return nil, err
+	}
 
 	updated := stored.Clone()
 	p.Apply(updated)
+	pinStoredFileValues(m.deps.Meta, stored, updated, fileProp)
 
 	expected := p.ExpectedVersion
 	if pinToRead {
@@ -1839,6 +1914,13 @@ func (m *Manager) DeleteEntityFace(
 		summary = fmt.Sprintf("deleted face %s (cascade: %d relations)", face, len(res.DeletedRelations))
 	}
 	m.recordEntityAudit(ctx, audit.OpDeleteEntity, current, summary)
+
+	// The face's references are gone; bytes no remaining face references
+	// go with them (ruling 4, RR-0SD5ER). A whole-family delete needs no
+	// such step: the store removes every byte with the last face.
+	if len(metamodel.FileProperties(m.deps.Meta, current.Type)) > 0 {
+		releaseUnreferencedFiles(ctx, m.deps, id)
+	}
 
 	return &entity.DeleteResult{
 		DeletedEntities:  []*entity.Entity{current},

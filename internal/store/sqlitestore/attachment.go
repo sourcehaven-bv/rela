@@ -50,10 +50,11 @@ func (s *Store) AttachFile(ctx context.Context, entityID, property, fileName str
 	// Existence is checked in the same statement as the insert: an
 	// INSERT..SELECT whose source is the entities row writes zero rows when
 	// the entity is absent, so the check cannot race a concurrent delete the
-	// way a separate SELECT-then-INSERT could.
+	// way a separate SELECT-then-INSERT could. A faced id has one row per
+	// face; LIMIT 1 makes any face count as existence exactly once.
 	const q = `
 		INSERT INTO attachments (entity_id, property, file_name, data, size, updated_at)
-		SELECT id, ?, ?, ?, ?, ? FROM entities WHERE id = ?
+		SELECT id, ?, ?, ?, ?, ? FROM entities WHERE id = ? LIMIT 1
 		ON CONFLICT (entity_id, property, file_name)
 		DO UPDATE SET data = excluded.data,
 		              size = excluded.size,
@@ -114,7 +115,7 @@ func (s *Store) DeleteAttachment(ctx context.Context, entityID, property, fileNa
 // attachments, which yields an empty slice.
 func (s *Store) ListAttachments(ctx context.Context, entityID string) ([]store.AttachmentInfo, error) {
 	var exists int
-	err := s.q().QueryRowContext(ctx, `SELECT 1 FROM entities WHERE id = ?`, entityID).Scan(&exists)
+	err := s.q().QueryRowContext(ctx, `SELECT 1 FROM entities WHERE id = ? LIMIT 1`, entityID).Scan(&exists)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}

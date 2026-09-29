@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
+	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
@@ -61,6 +63,10 @@ var (
 	// ErrCopySourceMissing means the source face does not exist. Distinct
 	// from a denial: the caller asked to copy something that is not there.
 	ErrCopySourceMissing = errors.New("entitymanager: copy source face does not exist")
+
+	// ErrCopyFileReference: a copy would give the target face a file
+	// reference the source face does not hold (see confineFileValues).
+	ErrCopyFileReference = errors.New("entitymanager: copy would mint a file reference")
 
 	// ErrCopyTargetRequired: a cross-entity copy names its target id.
 	ErrCopyTargetRequired = errors.New("entitymanager: cross-entity copy requires a target id")
@@ -152,6 +158,19 @@ func (ce *copyEngine) copyState(ctx context.Context, req CopyRequest) (*CopyResu
 	if !ok {
 		return nil, fmt.Errorf("%w: %q", ErrUnknownCopy, req.Definition)
 	}
+
+	// A copy writes the target face's file values, so it holds the target
+	// entity's attachment lock from the reads to the sweep after the write
+	// (RR-0SD5ER). Taken before planning: a same-entity copy reads the
+	// source face's references, which a delete landing before the write
+	// could release; a cross-entity copy writes back the target's own value,
+	// which an upload landing before the write would otherwise revert.
+	release, err := ce.lockCopyTarget(ctx, req, def)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
 	plan, err := ce.planCopy(ctx, req, def)
 	if err != nil {
 		return nil, err
@@ -193,7 +212,38 @@ func (ce *copyEngine) copyState(ctx context.Context, req CopyRequest) (*CopyResu
 
 	// AFTER the commit — see the godoc.
 	ce.recordCopyAudit(ctx, plan, result)
+
+	// Still under the lock taken above: names the target face no longer
+	// references lose their bytes when no other face references them.
+	if len(metamodel.FileProperties(ce.m.deps.Meta, plan.to.Type)) > 0 {
+		cctx, cancel := cleanupContext(ctx)
+		defer cancel()
+		if derr := sweepUnreferencedFiles(cctx, ce.m.deps.Store, plan.targetID); derr != nil {
+			slog.Warn("entitymanager: unreferenced attachment bytes left behind",
+				"entity", plan.targetID, "err", derr)
+		}
+	}
 	return &result, nil
+}
+
+// lockCopyTarget takes the attachment lock of the entity a copy writes, when
+// its type has a file property. A malformed target or id takes no lock:
+// planning refuses it with its own error, which a lock error would
+// otherwise mask.
+func (ce *copyEngine) lockCopyTarget(ctx context.Context, req CopyRequest, def metamodel.CopyDef) (func(), error) {
+	noLock := func() {}
+	to, perr := metamodel.ParseCopyTarget(def.To)
+	if perr != nil || len(metamodel.FileProperties(ce.m.deps.Meta, to.Type)) == 0 {
+		return noLock, nil //nolint:nilerr // planning reports the malformed target
+	}
+	targetID := req.SourceID
+	if !def.IsSameEntity() {
+		targetID = req.TargetID
+	}
+	if entity.ValidateID(targetID) != nil {
+		return noLock, nil //nolint:nilerr // planning reports the malformed id
+	}
+	return acquireAttachmentLock(ctx, ce.m.deps.AttachmentLocker, targetID)
 }
 
 // copyPlan is a resolved, authorized copy: the exact bytes to write and where.
@@ -537,6 +587,9 @@ func (ce *copyEngine) buildCopyTarget(
 			delete(target.Properties, field)
 		}
 	}
+	if err := ce.confineFileValues(plan, src, target); err != nil {
+		return err
+	}
 
 	hard, _ := partitionValidationErrors(
 		ce.m.deps.Meta.ValidateEntity(target.ID, target.Type, target.Properties))
@@ -555,6 +608,44 @@ func (ce *copyEngine) buildCopyTarget(
 		return err
 	}
 	plan.edges = edges
+	return nil
+}
+
+// confineFileValues applies the file-property rule (see attachments.go) to a
+// copy target. A file value is the capability to download the named bytes,
+// which the entity's faces share, so a copy may only move a reference the
+// source face already holds:
+//
+//   - Same entity: each file property the copy writes (`fields: all`, or a
+//     mapped field) must name a subset of the SOURCE face's names for the
+//     SAME property. A template mapping another property into a file
+//     property would otherwise mint a reference to any name. A property the
+//     copy does not write keeps the target's own value, whatever it holds.
+//   - Cross entity: bytes are keyed per entity, so a copied name would point
+//     at the target's bytes, not the source's. File properties keep the
+//     target's own value.
+func (ce *copyEngine) confineFileValues(plan *copyPlan, src, target *entity.Entity) error {
+	for _, prop := range metamodel.FileProperties(ce.m.deps.Meta, target.Type) {
+		if _, mapped := plan.def.Fields[prop]; plan.def.IsSameEntity() && !plan.def.AllFields && !mapped {
+			continue
+		}
+		if !plan.def.IsSameEntity() {
+			delete(target.Properties, prop)
+			if plan.existing != nil {
+				if v, ok := plan.existing.Properties[prop]; ok {
+					target.Properties[prop] = v
+				}
+			}
+			continue
+		}
+		have := metamodel.FileNames(src.Properties[prop])
+		for _, name := range metamodel.FileNames(target.Properties[prop]) {
+			if !slices.Contains(have, name) {
+				return fmt.Errorf("%w: copy %q: file property %q may only carry the source face's own %q files",
+					ErrCopyFileReference, plan.name, prop, prop)
+			}
+		}
+	}
 	return nil
 }
 

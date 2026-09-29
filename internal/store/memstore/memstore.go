@@ -1167,7 +1167,9 @@ func (m *MemStore) attachFile(_ context.Context, entityID, property, fileName st
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if _, ok := m.entities[entityID]; !ok {
+	// Bytes are keyed per bare id and shared by the family: any face of
+	// the id makes it exist (BUG-CTUW2N).
+	if familySize(m.entities, entityID) == 0 {
 		return store.ErrNotFound
 	}
 
@@ -1210,7 +1212,7 @@ func (m *MemStore) ListAttachments(_ context.Context, entityID string) ([]store.
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	if _, ok := m.entities[entityID]; !ok {
+	if familySize(m.entities, entityID) == 0 {
 		return nil, store.ErrNotFound
 	}
 

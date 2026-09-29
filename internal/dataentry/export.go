@@ -210,25 +210,17 @@ func (h *exportHandler) handleV1ExportEntity(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// The id segment is an ADDRESS (`ID` or `ID@face`). Export renders the
-	// bare face only, because the `export_render:` override below renders
-	// by bare id, so a non-bare address is answered with the same not-found
-	// a missing entity gets. `_export` is not a world-capable path
-	// (refuseWorldIncapablePath 422s a named world first), so the world
-	// handed to the resolver is always the default one. Exporting a non-bare
-	// face is a follow-up (TKT-5SZG2L records the gap).
-	ref, refErr := entityPkg.ParseRef(entityID)
-	if refErr != nil || !ref.Face.IsDefault() {
-		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
-		return
-	}
-	entityID = ref.ID
-
+	// The id segment is an ADDRESS (`ID` or `ID@face`), and the export
+	// renders the face it addresses (BUG-CTUW2N). `_export` is not a
+	// world-capable path (refuseWorldIncapablePath 422s a named world
+	// first), so the world handed to the resolver is always the default one.
+	//
 	// ACL gate BEFORE any render (same as handleV1GetEntity): a deny is an
-	// indistinguishable 404, and the render never runs for a hidden entity.
-	// The resolver also owns the stored-type check (RR-SRZK6X) and returns
-	// a FIELD-REDACTED copy — the renderer below can never see a property
-	// the caller's `visible:` policy hides (the #1188 IB-review finding).
+	// indistinguishable 404, and the render never runs for a hidden entity or
+	// a hidden face. The resolver also owns the stored-type check (RR-SRZK6X)
+	// and returns a FIELD-REDACTED copy — the renderer below can never see a
+	// property the caller's `visible:` policy hides (the #1188 IB-review
+	// finding).
 	res, found, err := h.resolver.Address(ctx, worldFromContext(ctx).visibility(), typeName, entityID)
 	if err != nil {
 		writeGateError(w, r, err)
@@ -239,6 +231,9 @@ func (h *exportHandler) handleV1ExportEntity(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	entity := res.Entity
+	// Render and name the download after the row the gate admitted, not the
+	// request's spelling of it.
+	entityID = entityPkg.FormatStateRef(entity.ID, entity.Face)
 
 	// A per-type `export_render:` view config (RR-BM0KIJ: config-selected,
 	// never request-selected — no query param chooses the script) renders via
@@ -305,10 +300,10 @@ func (h *exportHandler) convertAndWrite(
 // [transform.EntityRenderer] is used.
 //
 // The entity was already resolved through the ACL read gate (the resolver on
-// typeName) in the caller, so the override runs only for an entity the caller
+// typeName) in the caller, so the override runs only for a face the caller
 // may read; the script is a fixed config value (not request input) and receives
-// the already-validated entityID. On any failure it writes the response and
-// returns ok=false.
+// the face's address (`ID` or `ID@face`), which the document machinery reads
+// by address. On any failure it writes the response and returns ok=false.
 func (h *exportHandler) exportRenderer(
 	w http.ResponseWriter, r *http.Request, typeName, entityID string, entity *entityPkg.Entity,
 ) (transform.Renderer, bool) {
@@ -321,11 +316,11 @@ func (h *exportHandler) exportRenderer(
 		}, true
 	}
 
-	// Defense-in-depth: the entityID reaches the document cache filename and (for
-	// a future command override) an sh -c {id}. It is already an existing entity
-	// id (the resolver matched it), but validate it the same way handleV1Documents
-	// does before any render.
-	if !isSafePathSegment(entityID) {
+	// Defense-in-depth: the address reaches the document cache filename and
+	// (for a future command override) an sh -c {id}. It was built from the
+	// stored row the resolver matched, but validate it the same way
+	// handleV1Documents does before any render.
+	if !isSafeStateRefSegment(entityID) {
 		writeV1Error(w, r, http.StatusBadRequest, "invalid_entity", "Invalid entity id", "")
 		return nil, false
 	}

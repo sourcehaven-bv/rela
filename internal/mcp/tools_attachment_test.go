@@ -23,7 +23,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/attachment"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/lock"
+	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -35,6 +35,8 @@ const (
 	lockedID  = "DOC-LOCKED"
 	vaultID   = "VLT-001"
 	missingID = "VLT-999"
+	// sheetID is a faced entity, stored at faces a and b.
+	sheetID = "SHT-001"
 )
 
 // pngBytes is the PNG signature plus padding: enough for content sniffing.
@@ -52,6 +54,8 @@ func attachmentMeta() *metamodel.Metamodel {
 		Entities: map[string]metamodel.EntityDef{
 			"doc":   {Label: "Doc", IDPrefix: "DOC", Properties: fileProps},
 			"vault": {Label: "Vault", IDPrefix: "VLT", Properties: fileProps},
+			"sheet": {Label: "Sheet", IDPrefix: "SHT", Properties: fileProps,
+				Faces: map[string]metamodel.FaceDef{"a": {}, "b": {}}},
 		},
 	}
 }
@@ -82,6 +86,13 @@ func newAttachFixture(t *testing.T, opts attachOpts) attachFixture {
 			t.Fatalf("seed %s: %v", e.ID, err)
 		}
 	}
+	for _, face := range []entity.Face{"a", "b"} {
+		sheet := newEntity(sheetID, "sheet", "sheet")
+		sheet.Face = face
+		if err := st.CreateEntity(ctx, sheet); err != nil {
+			t.Fatalf("seed %s@%s: %v", sheetID, face, err)
+		}
+	}
 
 	buildOpts := []appbuildtest.Option{appbuildtest.WithStore(st)}
 	if opts.policy != nil {
@@ -98,7 +109,11 @@ func newAttachFixture(t *testing.T, opts attachOpts) attachFixture {
 	if limit == 0 {
 		limit = store.MaxAttachmentBytes
 	}
-	snap, err := NewAttachmentSnapshot(svc.Store(), svc.EntityManager(), lock.NewMemoryLocker(), svc.ACL(), meta, nil, limit)
+	owner, err := entitymanager.AttachmentsOf(svc.EntityManager())
+	if err != nil {
+		t.Fatalf("AttachmentsOf: %v", err)
+	}
+	snap, err := NewAttachmentSnapshot(svc.Store(), owner, svc.ACL(), meta, nil, limit)
 	if err != nil {
 		t.Fatalf("NewAttachmentSnapshot: %v", err)
 	}
@@ -346,8 +361,43 @@ func TestAttachments_InlineReadCap(t *testing.T) {
 	if err := f.svc.Store().AttachFile(ctx, docID, "file", "big.txt", bytes.NewReader(big)); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
+	// A read serves only files the value references, so stamp it too.
+	owner, err := entitymanager.AttachmentsOf(f.svc.EntityManager())
+	if err != nil {
+		t.Fatalf("AttachmentsOf: %v", err)
+	}
+	stampCtx := principal.With(ctx, principal.Principal{User: "tester", Tool: principal.ToolMCP})
+	if _, err := owner.StampAttachments(stampCtx, entity.Ref{ID: docID}, "file",
+		"attachments/"+docID+"/file/big.txt"); err != nil {
+		t.Fatalf("stamp: %v", err)
+	}
 	res := f.call(ctx, t, "read_attachment", map[string]any{"id": docID, "property": "file", "file_name": "big.txt"})
 	mustFail(t, res, "inline read limit")
+}
+
+// The tools address one face: an upload on a lists and serves on a only,
+// and a bare id on a faced entity is refused, naming the faces.
+func TestAttachments_PerFace(t *testing.T) {
+	t.Parallel()
+	f := newAttachFixture(t, attachOpts{})
+	ctx := context.Background()
+
+	mustSucceed(t, f.attach(ctx, t, sheetID+"@a", "file", "a.txt", []byte("on a")))
+	if got := fileNames(f.list(ctx, t, sheetID+"@a")); len(got) != 1 || got[0] != "file/a.txt" {
+		t.Errorf("face a lists %v, want [file/a.txt]", got)
+	}
+	if got := f.list(ctx, t, sheetID+"@b"); len(got) != 0 {
+		t.Errorf("face b lists %v, want nothing", fileNames(got))
+	}
+	mustSucceed(t, f.call(ctx, t, "read_attachment",
+		map[string]any{"id": sheetID + "@a", "property": "file", "file_name": "a.txt"}))
+	mustFail(t, f.call(ctx, t, "read_attachment",
+		map[string]any{"id": sheetID + "@b", "property": "file", "file_name": "a.txt"}), "not found")
+
+	// The answer cannot name the faces without revealing the entity, so a
+	// bare id gets the same hint as a missing one.
+	mustFail(t, f.attach(ctx, t, sheetID, "file", "bare.txt", []byte("x")), "ID@face")
+	mustFail(t, f.attach(ctx, t, missingID, "file", "bare.txt", []byte("x")), "ID@face")
 }
 
 func TestAttachments_UploadTooLarge(t *testing.T) {

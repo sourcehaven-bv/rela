@@ -11,11 +11,11 @@ import (
 	"net/url"
 	"slices"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
+	"github.com/Sourcehaven-BV/rela/internal/attachment"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
@@ -1248,10 +1248,9 @@ func (svc affordanceService) attachEntityAffordances(ctx context.Context, e *ent
 	// are omitted from `_attachments` — otherwise the hidden-field boundary
 	// the rest of the response maintains would leak the file's metadata and a
 	// working download href.
-	// Attachments hang off the ENTITY, not the face — every store keys them
-	// by bare id — so their hrefs are built from the bare address even when
-	// `_self` names a face. A faced href would 404 on the download route.
-	attachments := svc.computeAttachments(ctx, e, bareSelfHref(result.Self), verdicts)
+	// Bytes are keyed per entity, but a face lists only the names its own
+	// value references (BUG-CTUW2N), so the hrefs carry the face address.
+	attachments := svc.computeAttachments(ctx, e, result.Self, verdicts)
 	result.Attachments = &attachments
 }
 
@@ -1290,7 +1289,7 @@ func (svc affordanceService) computeAttachments(
 		}
 		return out
 	}
-	for _, info := range infos {
+	for _, info := range attachment.FaceAttachments(e, infos) {
 		// A property hidden from this viewer by field-visibility policy must
 		// not leak its files (metadata or a working download href) — mirror
 		// the hidden-field boundary the rest of the response maintains.
@@ -1401,13 +1400,6 @@ func (svc affordanceService) computeFaces(
 		return out[i].Face < out[j].Face
 	})
 	return out
-}
-
-// bareSelfHref strips the face from a `_self` href (`.../POL-1@published` →
-// `.../POL-1`). Neither a plural nor an id may contain the separator, so the
-// first one is the face's.
-func bareSelfHref(self string) string {
-	return strings.SplitN(self, entityPkg.StateRefSeparator, 2)[0]
 }
 
 // faceRef spells the explicit address of e's face at the stored coordinate:

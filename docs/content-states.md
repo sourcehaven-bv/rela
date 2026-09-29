@@ -862,6 +862,39 @@ history. Editing the draft versions `POL-1@draft`, and invoking `publish`
 versions `POL-1@published`. The history page in the web app names the face it
 shows, and restoring a version restores that face only.
 
+### Attachments and export on a face
+
+A file belongs to the face it was uploaded on. Attaching a file to
+`POL-1@draft` does not show it on `POL-1@published`. Every attachment surface
+takes an address:
+
+- The HTTP API: `PUT /api/v1/policies/POL-1@draft/_attachments/evidence`.
+- The command line: `rela attach POL-1@draft evidence.pdf`. A bare id of a
+  faced entity is refused, and the message names its faces.
+- The MCP tools: `"id": "POL-1@draft"`.
+
+The bytes are stored once per entity. A face lists and serves only the files
+its own file property names. A copy that carries the file property, such as
+`publish` with `fields: all`, gives the target face a reference to the same
+bytes, so nothing is duplicated. A copy can only carry files the source face
+already references.
+
+Deleting a file from one face keeps the bytes while another face still
+references them. The last reference takes the bytes with it, and so does
+deleting a face that held the last reference.
+
+Only the attachment surfaces, copies, sync and data migrations change a file
+property. An ordinary update that changes or clears a file value is refused
+with `422`, because the value decides which files a face may serve. Restoring
+a version keeps the face's current file values, and duplicating an entity
+leaves them out. An automation cannot write a file property either: a
+schema whose automation names one in `set:` or `create_entity` fails to
+load.
+
+Export takes an address as well: `GET /api/v1/policies/POL-1@draft/_export`
+exports the draft. The read grant for that face applies, so a reader granted
+`policy@published` gets a not-found for the draft.
+
 ## What Worlds Do Not Cover Yet
 
 The limits below are deliberate. A surface joins the world-aware set only when
