@@ -2,7 +2,7 @@
 id: IMPL-385KRJ
 type: implementation-checklist
 title: 'Implementation: Faced types: attachment upload/download and entity export 404 on ID@face; file bytes shared across faces'
-status: in-progress
+status: pending
 ---
 
 <!-- @managed: claude-workflow v1 -->

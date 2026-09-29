@@ -10,7 +10,7 @@ why2: TKT-SLFURL (#1527) decided attachments and export are per entity and serve
 why3: 'BUG-HC6I2T (#1557) removed bare_face: a faced type stores no zero-coordinate row. It changed what a bare id means but did not revisit the callers that relied on the bare row existing (bareEntityID callers, export guard). The export comment still points at TKT-5SZG2L, which is done and never recorded the gap.'
 why4: No test drives an attachment or an export on a faced type. The attachment tests and e2e/tests/attachments-create.spec.ts use faceless types, so the 404 was invisible to CI. The attachment service also models files per entity (listing + stampValue), a model that only holds while an entity has one row.
 why5: 'Systemic: face support is added per route with no inventory of which features must be face aware and no shared test matrix. A change to face semantics (bare_face removal) cannot find its affected callers, and each face-blind surface is found by a user. This is the fifth occurrence of the shape (BUG-64MU2Q, BUG-OOZBBK, BUG-VFHUWO, BUG-R1PQY9).'
-status: in-progress
+status: ready
 ---
 
 ## Problem
