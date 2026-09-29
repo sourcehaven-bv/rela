@@ -29,18 +29,20 @@ type DeleteCmd struct {
 //
 // --cascade guards the family delete only. The edges tailed at a face are
 // that face's content, as its properties are, so a face delete always takes
-// them; the data-entry app and the Lua binding do the same.
+// them; the data-entry app and the Lua binding do the same. Deleting the last
+// face removes the entity, so it takes every incident edge, and the prompt
+// counts them.
 func (c *DeleteCmd) Run(ctx context.Context, svc *writeServices) error {
 	ref, err := entity.ParseRef(c.ID)
 	if err != nil {
 		return &entityNotFoundError{ID: c.ID}
 	}
-	target, err := deleteTarget(ctx, svc.Store, ref)
+	target, wholeEntity, err := deleteTarget(ctx, svc.Store, ref)
 	if err != nil {
 		return classifyReadError(c.ID, err)
 	}
 
-	totalRelations, err := svc.Store.CountRelations(ctx, deleteScope(ref))
+	totalRelations, err := svc.Store.CountRelations(ctx, deleteScope(ref, wholeEntity))
 	if err != nil {
 		return fmt.Errorf("count relations of %s: %w", c.ID, err)
 	}
@@ -91,27 +93,34 @@ func (c *DeleteCmd) Run(ctx context.Context, svc *writeServices) error {
 }
 
 // deleteTarget reads the row a delete of ref names, for the confirmation
-// prompt. A face address reads that face. A bare id reads the family and
-// returns its first row: a faced type stores no bare row, and the family
-// delete removes every face anyway.
-func deleteTarget(ctx context.Context, st store.Store, ref entity.Ref) (*entity.Entity, error) {
-	if !ref.Face.IsDefault() {
-		return st.GetEntity(ctx, entity.Ref{ID: ref.ID, Face: ref.Face})
-	}
+// prompt, and reports whether the delete removes the whole entity. A face
+// address reads that face; it removes the entity when it is the family's
+// last face. A bare id reads the family and returns its first row: a faced
+// type stores no bare row, and the family delete removes every face anyway.
+func deleteTarget(ctx context.Context, st store.Store, ref entity.Ref) (*entity.Entity, bool, error) {
 	family, err := store.Family(ctx, st, ref.ID)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	if len(family) == 0 {
-		return nil, store.ErrNotFound
+	if ref.Face.IsDefault() {
+		if len(family) == 0 {
+			return nil, false, store.ErrNotFound
+		}
+		return family[0], true, nil
 	}
-	return family[0], nil
+	for _, e := range family {
+		if e.Face == ref.Face {
+			return e, len(family) == 1, nil
+		}
+	}
+	return nil, false, store.ErrNotFound
 }
 
 // deleteScope is the set of edges a delete of ref removes: every incident
-// edge for a family, the outgoing edges tailed at the face for a face.
-func deleteScope(ref entity.Ref) store.RelationQuery {
-	if ref.Face.IsDefault() {
+// edge when the entity goes, the outgoing edges tailed at the face when only
+// the face goes (see store.EntityWriter.DeleteFace).
+func deleteScope(ref entity.Ref, wholeEntity bool) store.RelationQuery {
+	if wholeEntity {
 		return store.RelationQuery{EntityID: ref.ID, Direction: store.DirectionBoth}
 	}
 	face := ref.Face

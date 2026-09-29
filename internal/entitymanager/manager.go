@@ -1837,7 +1837,9 @@ func relationKey(r *entity.Relation) string {
 // DeleteEntity sweeps the whole family and every incident edge on both sides,
 // whereas a face owns only the OUTGOING edges tailed at that face — incoming
 // edges point at the entity, not at one of its states, and survive while any
-// face remains (see [store.EntityWriter.DeleteFace] for the rule). The bare face is refused
+// face remains (see [store.EntityWriter.DeleteFace] for the rule). Deleting
+// the family's LAST face removes the entity, so every incident edge goes with
+// it and each is authorized like a DeleteEntity cascade (RR-2466U1). The bare face is refused
 // here rather than delegated, because "delete the bare face" is either the
 // whole entity (when no other face exists) or undefined (when one does), and
 // neither is what a caller who spelled a face meant.
@@ -1871,6 +1873,7 @@ func (m *Manager) DeleteEntityFace(
 	var (
 		res      *store.DeleteResult
 		outgoing []*entity.Relation
+		lastFace bool
 	)
 	txErr := m.deps.Store.Tx(ctx, func(tx store.Store) error {
 		// Re-read the face under the transaction (BUG-J3PBFN). The read above
@@ -1895,19 +1898,41 @@ func (m *Manager) DeleteEntityFace(
 		}
 		current = inTx
 
-		// Only the edges TAILED AT THIS FACE go with it; the query's FromFace
-		// is an equality match on the tail, so the bare face's edges and the
-		// other faces' edges are not collected and not authorized here.
-		tail := face
-		var cErr error
-		outgoing, cErr = collectRelations(ctx, tx, store.RelationQuery{
-			EntityID: id, Direction: store.DirectionOutgoing, FromFace: &tail,
-		})
+		// Read under the transaction, so the store's own last-face check,
+		// which runs under the same serialization, reaches the same answer.
+		siblings, sErr := store.FamilyHeaders(ctx, tx, id)
+		if sErr != nil {
+			return fmt.Errorf("read the faces of %q: %w", id, sErr)
+		}
+		lastFace = len(siblings) == 1
+
+		// A face that is not the last takes only the edges TAILED AT IT; the
+		// query's FromFace is an equality match on the tail, so the other
+		// faces' edges are not collected and not authorized here. The last
+		// face takes every incident edge, as a family delete does.
+		var (
+			incoming []*entity.Relation
+			cErr     error
+		)
+		outQuery := store.RelationQuery{EntityID: id, Direction: store.DirectionOutgoing}
+		if !lastFace {
+			tail := face
+			outQuery.FromFace = &tail
+		}
+		outgoing, cErr = collectRelations(ctx, tx, outQuery)
 		if cErr != nil {
 			return fmt.Errorf("collect outgoing relations for %q: %w", entity.FormatStateRef(id, face), cErr)
 		}
-		if len(outgoing) > 0 {
-			if aErr := m.authorizeCascadeRelations(ctx, tx, id, nil, outgoing); aErr != nil {
+		if lastFace {
+			incoming, cErr = collectRelations(ctx, tx, store.RelationQuery{
+				EntityID: id, Direction: store.DirectionIncoming,
+			})
+			if cErr != nil {
+				return fmt.Errorf("collect incoming relations for %q: %w", id, cErr)
+			}
+		}
+		if len(incoming)+len(outgoing) > 0 {
+			if aErr := m.authorizeCascadeRelations(ctx, tx, id, incoming, outgoing); aErr != nil {
 				return aErr
 			}
 		}
@@ -1926,6 +1951,10 @@ func (m *Manager) DeleteEntityFace(
 	// as DeleteEntity orders them and for the same reasons.
 	m.recordEntityVersion(ctx, store.VersionOpDelete, current, "")
 	notifyAliasesOfFaceDelete(ctx, m.deps.AliasRewriter, id, face)
+	if lastFace {
+		// The entity is gone, not just a face of it.
+		m.notifyAliasesOfDelete(ctx, id)
+	}
 	ref := entity.FormatStateRef(id, face)
 	cascadeCtx := ctx
 	if len(res.DeletedRelations) > 0 {

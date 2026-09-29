@@ -38,6 +38,9 @@ relations:
     from: [policy]
     to: [control]
     scope: content
+  covers:
+    from: [control]
+    to: [policy]
 `
 
 // faceEdgePolicy: drafter may delete the draft face and so its edges;
@@ -47,6 +50,8 @@ const faceEdgePolicy = `
 role_relations:
   implements:
     requires_permission: manage-implements
+  covers:
+    requires_permission: manage-covers
 roles:
   drafter:
     read: ["*"]
@@ -57,7 +62,7 @@ roles:
     delete: ["policy@draft"]
   admin:
     read: ["*"]
-    permissions: [manage-implements]
+    permissions: [manage-implements, manage-covers]
     delete: ["policy@draft", "policy@published", "control"]
 assignments:
   drafter: drafter

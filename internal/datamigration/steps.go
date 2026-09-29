@@ -578,7 +578,8 @@ func applyFaceMove(ctx context.Context, s store.Store, e *entity.Entity, to stri
 	// store.EntityWriter.DeleteFace contract). The CreateEntity above copies the
 	// row's content, not its edges, so without re-creating them a move
 	// silently destroys every relation the row owned. Incoming edges are
-	// entity-level and survive the delete untouched.
+	// entity-level and survive the delete untouched, because the destination
+	// row created above keeps the family alive: this is never the last face.
 	//
 	// DeleteResult names exactly what went, which is why the result is read
 	// rather than discarded: the store reports what it destroyed and this is
