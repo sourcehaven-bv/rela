@@ -5,7 +5,7 @@ title: E2E fixture and test matrix for faces and worlds
 kind: chore
 priority: high
 effort: l
-status: backlog
+status: done
 description: No e2e test declares faces or worlds; add a faced fixture project and cover attachments, export, documents, comments, history, relations, delete and copies.
 ---
 

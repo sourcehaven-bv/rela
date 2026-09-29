@@ -73,6 +73,29 @@ The inline metamodel (`METAMODEL_YAML`) defines three entity types:
 `implements`, `fixes`. No automations or validation rules — if a test needs
 those, extend the YAML in `fixtures.ts`.
 
+### Faced project (faces and worlds)
+
+Specs for faces and worlds use a second project, because declaring worlds in
+`METAMODEL_YAML` would change what every other spec reads.
+
+- `faced-project.ts` holds the data and `writeFacedProject(dir)`. It has no
+  Playwright import, so a Node that strips types can run it to write the
+  project for manual probing (the command is in its header). It defines `policy` (faces `draft` and `published`, a `file`
+  property), the faceless `control`, a content-scoped (`implements`) and an
+  identity-scoped (`owned-by`) relation, worlds `published` (the
+  `default_world`) and `editorial`, a `publish` copy, a `cat` transform, an
+  anchored document, and an `acl.yaml` with two users.
+- `faced-fixtures.ts` exports `facedTest`. It is `test` with the faced
+  project, the server running as `facedUser`, and a `facedApi` fixture with
+  face-aware helpers. Choose the principal per file or describe block with
+  `test.use({ facedUser: FACED_USERS.reader })`. `facedPgTest` is the same on
+  postgres; that store starts empty, so seed through `facedApi`.
+- Use `FACED_SEED`, `FACE` and `WORLD` rather than literal ids and titles.
+- `faces-backlog.spec.ts` holds `test.fixme` specs for known defects. Each
+  names its bug id and asserts the fixed behaviour, so a fix enables its test
+  by deleting `.fixme`. The history fixme lives in `faces-history.spec.ts`,
+  because it needs `facedPgTest`.
+
 Do **not** point the fixture at `tickets/` (the real design/issue tracker
 that rela dogfoods on itself). That's load-bearing production data for the
 project, not a test fixture.

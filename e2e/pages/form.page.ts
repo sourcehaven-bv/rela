@@ -1065,6 +1065,16 @@ export class FormPage extends BasePage {
     });
   }
 
+  /** Edit mode only: attach a file and wait for its upload to succeed, so a
+   *  following navigation cannot abort it. */
+  async attachFileAndWaitForUpload(property: string, name: string, contents: string) {
+    const upload = this.page.waitForResponse(
+      (r) => r.url().includes("/_attachments/") && r.request().method() === "PUT",
+    );
+    await this.attachFile(property, name, contents);
+    expect((await upload).ok()).toBeTruthy();
+  }
+
   /** Filenames currently listed on a `file` property — staged or uploaded. */
   async attachedFileNames(property: string): Promise<string[]> {
     await this.waitForFileWidget(property);
