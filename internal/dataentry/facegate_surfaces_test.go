@@ -23,39 +23,74 @@ import (
 // positive control on the same fixture under an unrestricted principal, so an
 // absence is the gate's doing and not an empty fixture.
 
-// seedDraftAndPublishedTicket seeds TKT-1 with a zero-coordinate row and a
-// published face.
-//
-// Its callers run on `newTestAppV1`, whose `ticket` type declares NO faces —
-// so the zero coordinate is that type's single state, which is what makes the
-// unsuffixed row legitimate here. The `published` row beside it is an
-// UNDECLARED face, deliberately: the face gate keys on the coordinate the
-// store holds, never on the metamodel, and that is what these tests exercise.
-// A type that DOES declare faces stores nothing at the zero coordinate
-// (BUG-HC6I2T); see seedDeclaredFaceTicket for that shape.
-func seedDraftAndPublishedTicket(ctx context.Context, t *testing.T, app *App) {
+// facedTicketApp is the shared fixture with its `ticket` type declaring the
+// faces these tests use, so ticket rows live only at declared faces, as they
+// do in production (BUG-HC6I2T). A fixture that also seeds a zero-face row
+// lets a zero-face read pass by finding a row production never has.
+func facedTicketApp(t *testing.T) *App {
 	t.Helper()
-	if err := app.store.CreateEntity(ctx, &entity.Entity{
-		ID: "TKT-1", Type: "ticket", Properties: map[string]any{"title": "SECRET DRAFT"},
-	}); err != nil {
-		t.Fatalf("seed draft face: %v", err)
-	}
-	if err := app.store.CreateEntity(ctx, &entity.Entity{
-		ID: "TKT-1", Type: "ticket", Face: "published",
-		Properties: map[string]any{"title": "published face"},
-	}); err != nil {
-		t.Fatalf("seed published face: %v", err)
+	app := newTestAppV1(t)
+	meta := app.State().Meta
+	td := meta.Entities["ticket"]
+	td.Faces = map[string]metamodel.FaceDef{"draft": {}, "published": {}, "review": {}}
+	meta.Entities["ticket"] = td
+	return app
+}
+
+// faceGateFixture is one shape of TKT-1 a face-gate test runs against.
+type faceGateFixture struct {
+	name string
+	// skip, when set, is the backlog bug whose fix makes the route work on
+	// this shape.
+	skip  string
+	build func(t *testing.T) *App
+}
+
+// faceGateFixtures returns the realistic faced fixture, skipped until
+// faceBlindBug is fixed, and a gate pin that runs today.
+//
+// The gate pin is NOT a realistic fixture. Its `ticket` type declares no
+// faces, so the zero-face row is that type's own state, and a `published`
+// row sits beside it at an undeclared face. The route's bare-id read finds
+// the zero-face row, so the face gate after it is still exercised and a
+// refactor that drops it fails. Delete the gate pin when faceBlindBug makes
+// the route address faces, and drop the skip on the faced case.
+func faceGateFixtures(faceBlindBug string) []faceGateFixture {
+	return []faceGateFixture{
+		{name: "declared faces", skip: "face-blind: " + faceBlindBug, build: func(t *testing.T) *App {
+			t.Helper()
+			ctx := context.Background()
+			app := facedTicketApp(t)
+			seedDeclaredFaceTicket(ctx, t, app)
+			return app
+		}},
+		{name: "gate pin: faceless type with a stray face", build: func(t *testing.T) *App {
+			t.Helper()
+			ctx := context.Background()
+			app := newTestAppV1(t)
+			for _, e := range []*entity.Entity{
+				{ID: "TKT-1", Type: "ticket", Properties: map[string]any{"title": "SECRET DRAFT"}},
+				{ID: "TKT-1", Type: "ticket", Face: "published", Properties: map[string]any{"title": "published face"}},
+			} {
+				if err := app.store.CreateEntity(ctx, e); err != nil {
+					t.Fatalf("seed %s@%q: %v", e.ID, e.Face, err)
+				}
+			}
+			return app
+		}},
 	}
 }
 
 // seedDeclaredFaceTicket seeds TKT-1 on a metamodel that DECLARES draft+published:
-// both rows sit at their declared coordinates and none at the zero one.
+// both rows sit at their declared coordinates and none at the zero one. The
+// draft's title is the secret the face-gate tests look for.
 func seedDeclaredFaceTicket(ctx context.Context, t *testing.T, app *App) {
 	t.Helper()
+	titles := map[entity.Face]string{"draft": "SECRET DRAFT", "published": "published face"}
 	for _, face := range []entity.Face{"draft", "published"} {
 		if err := app.store.CreateEntity(ctx, &entity.Entity{
 			ID: "TKT-1", Type: "ticket", Face: face,
-			Properties: map[string]any{"title": string(face) + " face"},
+			Properties: map[string]any{"title": titles[face]},
 		}); err != nil {
 			t.Fatalf("seed %s face: %v", face, err)
 		}
@@ -121,10 +156,22 @@ func TestFaceGrant_IncludedNeighboursAreFaceGated(t *testing.T) {
 	}
 }
 
+// Attachments are keyed by bare id, and on a faced type AttachFile finds no
+// row there (BUG-CTUW2N), so only the gate pin runs today.
 func TestFaceGrant_AttachmentDownloadIsFaceGated(t *testing.T) {
-	app := newTestAppV1(t)
+	for _, fx := range faceGateFixtures("BUG-CTUW2N") {
+		t.Run(fx.name, func(t *testing.T) {
+			if fx.skip != "" {
+				t.Skip(fx.skip)
+			}
+			assertAttachmentDownloadFaceGated(t, fx.build(t))
+		})
+	}
+}
+
+func assertAttachmentDownloadFaceGated(t *testing.T, app *App) {
+	t.Helper()
 	ctx := context.Background()
-	seedDraftAndPublishedTicket(ctx, t, app)
 	if err := app.store.AttachFile(ctx, "TKT-1", "screenshot", "a.txt",
 		strings.NewReader("draft bytes")); err != nil {
 		t.Fatalf("attach: %v", err)
@@ -155,24 +202,9 @@ func TestFaceGrant_AttachmentDownloadIsFaceGated(t *testing.T) {
 }
 
 func TestFaceGrant_FacesAffordanceOmitsUnreadableFaces(t *testing.T) {
-	// `_faces` enumerates DECLARED faces, so this needs a metamodel that
-	// declares them — the shared fixture's ticket has none.
-	meta, err := metamodel.Parse([]byte(`
-version: "1"
-entities:
-  ticket:
-    label: Ticket
-    id_prefix: TKT
-    faces:
-      draft: {}
-      published: {}
-    properties:
-      title: {type: string}
-`))
-	if err != nil {
-		t.Fatalf("metamodel.Parse: %v", err)
-	}
-	app := newAppFromParts(&Config{App: AppConfig{Name: "Faces", Description: "x"}}, meta, newFixture())
+	// `_faces` enumerates the faces the entity HAS, so the declared but
+	// unseeded `review` face is not offered.
+	app := facedTicketApp(t)
 	ctx := context.Background()
 	seedDeclaredFaceTicket(ctx, t, app)
 	viewer, admin := publishedOnly(t, app)
@@ -207,10 +239,21 @@ entities:
 	}
 }
 
+// The history route resolves a bare id to the zero face, which a faced type
+// does not have (BUG-4SYAA6), so only the gate pin runs today.
 func TestFaceGrant_HistoryIsFaceGatedUnderTheDefaultWorld(t *testing.T) {
-	app := newTestAppV1(t)
-	ctx := context.Background()
-	seedDraftAndPublishedTicket(ctx, t, app)
+	for _, fx := range faceGateFixtures("BUG-4SYAA6") {
+		t.Run(fx.name, func(t *testing.T) {
+			if fx.skip != "" {
+				t.Skip(fx.skip)
+			}
+			assertHistoryFaceGated(t, fx.build(t))
+		})
+	}
+}
+
+func assertHistoryFaceGated(t *testing.T, app *App) {
+	t.Helper()
 	app.versions = historyStore{
 		versions: map[string][]store.VersionSnapshot{
 			"TKT-1": {snapshot("ticket", "SECRET DRAFT BODY", map[string]any{"title": "SECRET DRAFT"})},
@@ -325,9 +368,9 @@ func TestEntityView_DeniedWorldIsIndistinguishableFromAnEmptyOne(t *testing.T) {
 // 404'd when the prime was a face the grant withheld — so a listed row had no
 // readable GET. Both now carry the allowlist into the world query.
 func TestFaceGrant_GetFallsThroughToThePermittedFace(t *testing.T) {
-	app := newTestAppV1(t)
+	app := facedTicketApp(t)
 	ctx := context.Background()
-	seedDraftAndPublishedTicket(ctx, t, app)
+	seedDeclaredFaceTicket(ctx, t, app)
 	if err := app.store.CreateEntity(ctx, &entity.Entity{
 		ID: "TKT-1", Type: "ticket", Face: "review",
 		Properties: map[string]any{"title": "SECRET REVIEW"},
@@ -366,20 +409,20 @@ func TestFaceGrant_GetFallsThroughToThePermittedFace(t *testing.T) {
 // the same fold as the GET that showed that face. Folding the world name made
 // every world-bound If-Match a permanent 412.
 func TestEntityETag_FoldsTheServedFaceNotTheWorld(t *testing.T) {
-	app := newTestAppV1(t)
+	app := facedTicketApp(t)
 	ctx := context.Background()
-	seedDraftAndPublishedTicket(ctx, t, app)
-	bare, _ := app.store.GetEntity(ctx, "TKT-1")
+	seedDeclaredFaceTicket(ctx, t, app)
+	draft, _ := app.store.GetEntityState(ctx, "TKT-1", "draft")
 	published, _ := app.store.GetEntityState(ctx, "TKT-1", "published")
 	scope := store.NewWorldScope(map[string]store.TypeResolution{
 		"ticket": {Chain: []entity.Face{"published"}, Fallback: store.FallbackDefaultState},
 	})
 	wctx := withWorld(ctx, worldHandle{name: "published", scope: scope})
 
-	if a, b := app.computeEntityETag(ctx, bare), app.computeEntityETag(wctx, bare); a != b {
+	if a, b := app.computeEntityETag(ctx, draft), app.computeEntityETag(wctx, draft); a != b {
 		t.Errorf("the same face under two worlds must share a validator: %s vs %s", a, b)
 	}
-	if a, b := app.computeEntityETag(ctx, bare), app.computeEntityETag(ctx, published); a == b {
+	if a, b := app.computeEntityETag(ctx, draft), app.computeEntityETag(ctx, published); a == b {
 		t.Errorf("two faces must not share a validator")
 	}
 }

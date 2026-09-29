@@ -359,6 +359,12 @@ above rather than by a clean `analyze all`.
   single-subject evaluation the caller explicitly requested (e.g. performable
   transitions for one field on one entity). See
   `internal/entitymanager/CLAUDE.md`.
+- **Don't add a zero-face read.** `store.Store.GetEntity(ctx, id)`,
+  `GetEntityState(ctx, id, "")`, `entityReader.getEntity` and `bareEntityID`
+  read the row with no face, which a faced type does not have (DEC-NPZICR).
+  `internal/archguard/zeroface_test.go` pins the existing reads per file in an
+  allowlist that may only shrink. Read an explicit address instead, and in
+  tests seed faced types only at their declared faces.
 
 ### Subsystem-specific rules (nested CLAUDE.md / godoc)
 
