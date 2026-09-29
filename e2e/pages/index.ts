@@ -19,3 +19,4 @@ export { CustomisationPage } from './customisation.page';
 export { PendingPage } from './pending.page';
 export { CommentsPage } from './comments.page';
 export { SidebarPage } from './sidebar.page';
+export { FacesPage } from './faces.page';
