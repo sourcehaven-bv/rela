@@ -130,7 +130,7 @@ test.describe('Faces backlog: duplicate and relations to a faced target (BUG-FYE
 test.describe('Faces backlog: content-scoped edges per face (untracked, found by TKT-WCMW47)', () => {
   // `_views` lists both faces' `implements` edges on either face, and the
   // faceless target shows an edge from a face the world does not serve.
-  test.fixme('the draft face shows only its own implements edge', async ({ appPage }) => {
+  test('the draft face shows only its own implements edge', async ({ appPage }) => {
     const faces = new FacesPage(appPage);
     await faces.openEntity('policy', POL1_DRAFT);
 
@@ -138,7 +138,7 @@ test.describe('Faces backlog: content-scoped edges per face (untracked, found by
     await expect(faces.relationCard(CTL.spare.id)).toHaveCount(0);
   });
 
-  test.fixme('a control does not show an edge from a face the world hides', async ({
+  test('a control does not show an edge from a face the world hides', async ({
     appPage,
   }) => {
     const faces = new FacesPage(appPage);
@@ -153,7 +153,7 @@ test.describe('Faces backlog: content-scoped edges per face (untracked, found by
   test.describe('as the published-only reader', () => {
     test.use({ facedUser: FACED_USERS.reader });
 
-    test.fixme('the published face does not show the draft face\'s edge', async ({ appPage }) => {
+    test('the published face does not show the draft face\'s edge', async ({ appPage }) => {
       const faces = new FacesPage(appPage);
       await faces.openEntity('policy', POL1_PUBLISHED);
 
@@ -161,7 +161,7 @@ test.describe('Faces backlog: content-scoped edges per face (untracked, found by
       await expect(faces.relationCard(CTL.badge.id)).toHaveCount(0);
     });
 
-    test.fixme('a control does not show an edge from an unreadable draft', async ({ appPage }) => {
+    test('a control does not show an edge from an unreadable draft', async ({ appPage }) => {
       const faces = new FacesPage(appPage);
       await faces.openEntity('control', CTL.badge.id, WORLD.published);
 
