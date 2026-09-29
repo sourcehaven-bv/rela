@@ -374,7 +374,23 @@ worlds:
 		"the only reachable scope after a failed compile is the untouched default world")
 }
 
-// TestDefault is the trivial-but-load-bearing accessor pin.
-func TestDefault(t *testing.T) {
-	assert.True(t, worlds.Default().IsDefaultWorld())
+// TestCompiled_Default pins the default-world seam: every Compiled value,
+// including the zero value and one with declared worlds, answers the
+// implicit default world, and Lookup of the default name agrees with it.
+// TKT-7IZHP0 changes what Default returns; this test changes with it.
+func TestCompiled_Default(t *testing.T) {
+	declared, err := worlds.Compile(parseSchema(t, facedSchema))
+	require.NoError(t, err)
+
+	for name, c := range map[string]worlds.Compiled{
+		"zero value":      {},
+		"declared worlds": declared,
+	} {
+		t.Run(name, func(t *testing.T) {
+			assert.True(t, c.Default().IsDefaultWorld())
+			looked, ok := c.Lookup(metamodel.DefaultWorldName)
+			require.True(t, ok)
+			assert.Equal(t, c.Default(), looked)
+		})
+	}
 }

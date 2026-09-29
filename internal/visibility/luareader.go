@@ -17,7 +17,7 @@ import (
 //
 // # Single-entity reads
 //
-// [ScriptReader.GetEntity] and [ScriptReader.Family] go through the wrapped
+// [ScriptReader.GetAddress] and [ScriptReader.Family] go through the wrapped
 // Reader's [Resolver]. A script names an entity by address and no type, so
 // the reader first reads the STORED type from one content-free header, then
 // calls the typed resolver with it. Claiming the stored type keeps the
@@ -116,12 +116,12 @@ func (s *ScriptReader) bind(ctx context.Context) context.Context {
 	return bound
 }
 
-// GetEntity reads the face addr names (`ID@face`), or the face the reader's
+// GetAddress reads the face addr names (`ID@face`), or the face the reader's
 // world resolves a bare id to, gated and redacted. Every miss, including a
 // denied entity and an address the grammar refuses, is [store.ErrNotFound],
 // so a script cannot tell hidden from absent. A gate failure is logged and
 // answered the same way, because it can only occur for an id that exists.
-func (s *ScriptReader) GetEntity(ctx context.Context, addr string) (*entity.Entity, error) {
+func (s *ScriptReader) GetAddress(ctx context.Context, addr string) (*entity.Entity, error) {
 	return s.res.addressAny(s.bind(ctx), s.world, addr)
 }
 

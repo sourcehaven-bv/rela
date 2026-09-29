@@ -223,9 +223,9 @@ func TestACLScript_RedactedVisibleToLua(t *testing.T) {
 	app.acl = d
 
 	reader := app.scriptReader(appRedactor(app))
-	e, err := reader.GetEntity(aliceCtx(), "TKT-001")
+	e, err := reader.GetAddress(aliceCtx(), "TKT-001")
 	if err != nil {
-		t.Fatalf("GetEntity: %v", err)
+		t.Fatalf("GetAddress: %v", err)
 	}
 
 	if got, ok := e.Properties["status"]; ok {

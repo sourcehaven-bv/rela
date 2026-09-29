@@ -140,7 +140,7 @@ func TestAction_EntityIDPermittedStillWorks(t *testing.T) {
 // otherwise read that field's value out of script scope — the action's own
 // response is the exfiltration path.
 //
-// visibility.ScriptReader.GetEntity filters the entity before it is handed
+// visibility.ScriptReader.GetAddress filters the entity before it is handed
 // over, so the hidden property is absent rather than merely unprinted.
 func TestAction_HiddenFieldRedacted(t *testing.T) {
 	app := newActionTestApp(t, map[string]string{

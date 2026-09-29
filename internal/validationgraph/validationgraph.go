@@ -32,7 +32,7 @@ import (
 //
 // Nil: rejected by [New].
 type Reader interface {
-	GetEntity(ctx context.Context, id string) (*entity.Entity, error)
+	GetAddress(ctx context.Context, addr string) (*entity.Entity, error)
 	ListRelations(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error]
 }
 
@@ -130,7 +130,7 @@ func (g *Graph) RelatedEntities(
 // flattening the two would turn "this check could not run" into a
 // content-shaped "has 0" violation. The gate must say it could not run.
 func (g *Graph) resolve(ctx context.Context, farID string) (validation.Related, error) {
-	e, err := g.r.GetEntity(ctx, farID)
+	e, err := g.r.GetAddress(ctx, farID)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		return validation.Related{ID: farID}, nil

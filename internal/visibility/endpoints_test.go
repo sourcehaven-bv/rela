@@ -129,8 +129,8 @@ func TestScriptReader_Resolves(t *testing.T) {
 	readers := map[string]struct {
 		get, world getter
 	}{
-		"script":       {sr.GetEntity, sr.WithWorld(pub).GetEntity},
-		"unrestricted": {unr.GetEntity, unr.WithWorld(pub).GetEntity},
+		"script":       {sr.GetAddress, sr.WithWorld(pub).GetAddress},
+		"unrestricted": {unr.GetAddress, unr.WithWorld(pub).GetAddress},
 	}
 	ctx := context.Background()
 	for name, rd := range readers {
@@ -222,8 +222,8 @@ func TestScriptReader_GateErrorIsAMiss(t *testing.T) {
 	}
 	ctx := context.Background()
 	for _, id := range []string{"TKT-1", "NOPE-1"} {
-		if _, err := sr.GetEntity(ctx, id); !errors.Is(err, store.ErrNotFound) {
-			t.Errorf("GetEntity(%s) err = %v, want ErrNotFound", id, err)
+		if _, err := sr.GetAddress(ctx, id); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("GetAddress(%s) err = %v, want ErrNotFound", id, err)
 		}
 		if _, ok, err := sr.Family(ctx, id); ok || err != nil {
 			t.Errorf("Family(%s) = (%v, %v), want a silent miss", id, ok, err)

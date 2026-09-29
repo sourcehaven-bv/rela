@@ -14,6 +14,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // The regression these tests pin (BUG-NEQRY2 / BUG-4KPN2M): a store
@@ -73,7 +74,7 @@ func newFailingService(t *testing.T, meta *metamodel.Metamodel, failAfter int, s
 		Meta:   meta,
 		Tracer: tr,
 		LuaReadDeps: lua.ReadDeps{
-			VisibleReader: st,
+			VisibleReader: visibility.Unrestricted(st),
 			Tracer:        tr,
 			Meta:          meta,
 		},

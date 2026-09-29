@@ -13,6 +13,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // addEntity / addRelation: terse seed helpers that panic on error.
@@ -48,7 +49,7 @@ func newServiceWith(t *testing.T, meta *metamodel.Metamodel, seed func(store.Sto
 		Meta:   meta,
 		Tracer: tr,
 		LuaReadDeps: lua.ReadDeps{
-			VisibleReader: st,
+			VisibleReader: visibility.Unrestricted(st),
 			Tracer:        tr,
 			Meta:          meta,
 		},
@@ -506,7 +507,7 @@ func TestCheckCardinality_CountErrorFailsLoudly(t *testing.T) {
 	broken := &failingCountStore{Store: st, err: countErr}
 	tr := tracer.New(broken)
 	svc, err := analysis.New(analysis.Deps{Store: broken, Meta: meta, Tracer: tr,
-		LuaReadDeps: lua.ReadDeps{VisibleReader: broken, Tracer: tr, Meta: meta}})
+		LuaReadDeps: lua.ReadDeps{VisibleReader: visibility.Unrestricted(broken), Tracer: tr, Meta: meta}})
 	if err != nil {
 		t.Fatalf("analysis.New: %v", err)
 	}

@@ -11,6 +11,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // relationWorkspace builds a memstore with a ticket + review-checklist
@@ -47,7 +48,7 @@ func relationWorkspace(
 			t.Fatalf("create relation %v: %v", r, err)
 		}
 	}
-	return lua.ReadDeps{VisibleReader: st, Tracer: tracer.New(st), Meta: meta}
+	return lua.ReadDeps{VisibleReader: visibility.Unrestricted(st), Tracer: tracer.New(st), Meta: meta}
 }
 
 // newWithGraph builds a Service wired exactly as production does: the same
@@ -86,7 +87,7 @@ func (g testGraph) RelatedEntities(
 			out = append(out, Related{ID: rel[2]})
 			continue
 		}
-		e, gErr := g.deps.VisibleReader.GetEntity(ctx, rel[2])
+		e, gErr := g.deps.VisibleReader.GetAddress(ctx, rel[2])
 		if gErr != nil || e == nil {
 			out = append(out, Related{ID: rel[2]})
 			continue

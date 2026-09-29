@@ -12,27 +12,21 @@ import (
 // redaction: every read goes straight to the store. Build one with
 // [Unrestricted].
 //
-// Why this type exists at all, given it does nothing: the Lua read surface
-// (internal/lua's EntityReader) is satisfied STRUCTURALLY by store.Store,
-// so a gated wiring and an ungated one are indistinguishable when reading
-// a struct literal — `VisibleReader: st` and `VisibleReader: gatedReader`
-// look equally deliberate. Three production sites were silently ungated
-// through exactly that blind spot (RR-R0G3DF). Naming the ungated choice
-// makes it greppable:
+// Why this type exists at all, given it does nothing: an ungated wiring
+// must be spelled out. Three production sites were once silently ungated
+// because a bare store satisfied the Lua read surface, so `VisibleReader: st`
+// looked as deliberate as a gated reader (RR-R0G3DF). The Lua read surface
+// (internal/lua's EntityReader) now reads through GetAddress, which
+// store.Store does not have, so the compiler refuses a bare store and an
+// ungated path must name this type:
 //
 //	grep -rn "visibility.Unrestricted" --include=*.go
 //
 // enumerates every ungated script read path in the tree, in one command.
 //
-// This is LEGIBILITY, not enforcement. The type system still accepts a
-// bare store.Store wherever this is accepted; nothing stops a future
-// wiring from skipping it. What it buys is that an ungated path can no
-// longer be created by accident or survive review unnoticed — it has to be
-// spelled out.
-//
-// Deliberately NOT a store.Store: it exposes the three read methods and
-// nothing else, so it cannot be passed where a full store is wanted (a
-// write path, say) and cannot silently widen back into one.
+// Deliberately NOT a store.Store: it exposes read methods only, so it
+// cannot be passed where a full store is wanted (a write path, say) and
+// cannot silently widen back into one.
 type UnrestrictedReader struct {
 	st    store.Store
 	res   *Resolver
@@ -47,7 +41,7 @@ type UnrestrictedReader struct {
 // actively dangerous: assigning a typed nil pointer into the
 // lua.EntityReader interface field produces a NON-nil interface, so lua's
 // `VisibleReader == nil` deny guard (runtime.go, RR-X9NVHI) is skipped and
-// the first read nil-derefs inside GetEntity. Nothing on the script paths
+// the first read nil-derefs inside GetAddress. Nothing on the script paths
 // recovers, so that panic takes the process down at request time rather
 // than raising the clean "no reader is configured" Lua error the deny path
 // produces. A nil store here is a wiring bug: failing loudly at
@@ -86,12 +80,12 @@ func (r *UnrestrictedReader) WithWorld(w World) *UnrestrictedReader {
 	return &c
 }
 
-// GetEntity implements the script read surface. It resolves addr exactly as
-// the gated [ScriptReader.GetEntity] does, through the allow-all [Resolver]:
+// GetAddress implements the script read surface. It resolves addr exactly as
+// the gated [ScriptReader.GetAddress] does, through the allow-all [Resolver]:
 // `ID@face` reads that face, a bare id resolves in the reader's world, and an
 // address the grammar refuses misses. Only the gate and the redaction are
 // absent.
-func (r *UnrestrictedReader) GetEntity(ctx context.Context, addr string) (*entity.Entity, error) {
+func (r *UnrestrictedReader) GetAddress(ctx context.Context, addr string) (*entity.Entity, error) {
 	return r.res.addressAny(ctx, r.world, addr)
 }
 

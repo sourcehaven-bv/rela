@@ -11,6 +11,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
 	"github.com/Sourcehaven-BV/rela/internal/validation"
 	"github.com/Sourcehaven-BV/rela/internal/validationgraph"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // atlasWorkspace models the shape that motivated direction/target_type: a
@@ -55,7 +56,7 @@ func atlasWorkspace(
 			t.Fatalf("create relation %v: %v", r, err)
 		}
 	}
-	return lua.ReadDeps{VisibleReader: st, Tracer: tracer.New(st), Meta: meta}
+	return lua.ReadDeps{VisibleReader: visibility.Unrestricted(st), Tracer: tracer.New(st), Meta: meta}
 }
 
 // newAtlasSvc wires a Service the way production does, including the real

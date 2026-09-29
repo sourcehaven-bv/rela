@@ -17,7 +17,7 @@ import (
 )
 
 // analyzeReader is the narrow, consumer-side ENTITY-read surface the analyze
-// checks need. It is satisfied structurally by store.Store AND by the ctx-gating
+// checks need. It is satisfied by the ctx-gating
 // visibility.ScriptReader / Unrestricted readers. Wiring a GATED reader here
 // (per TKT-3FL2S6, superseding DEC-O59WM4) makes the whole-graph scans read only
 // the requester's slice: a hidden entity produces no issue, and a visible
@@ -37,11 +37,11 @@ import (
 // The header type has no Content field, so this property is now enforced
 // by the compiler rather than by remembering.
 //
-// The per-ID GetEntity above stays: orphans and validation violations
+// The per-ID GetAddress in the orphan and validation checks stays: they
 // resolve a bounded set of ids (never a whole-store scan), and their
 // gated re-load is load-bearing for the leak TKT-3FL2S6 closed.
 type analyzeReader interface {
-	GetEntity(ctx context.Context, id string) (*entity.Entity, error)
+	GetAddress(ctx context.Context, addr string) (*entity.Entity, error)
 	ListEntityHeaders(ctx context.Context, q store.EntityQuery) iter.Seq2[store.EntityHeader, error]
 }
 
@@ -59,8 +59,8 @@ type relationCounter interface {
 //
 // reads is GATED per the requesting principal (TKT-3FL2S6, DEC-O59WM4
 // superseded); relCounts is the raw relation counter (structural, cannot leak);
-// the tracer is the gated decorator. Under NopACL, reads/tracer are the raw
-// store/tracer (no gating).
+// the tracer is the gated decorator. Under NopACL, reads is the ungated
+// visibility.Unrestricted reader and the tracer is the raw tracer.
 type analyzeService struct {
 	reads     analyzeReader
 	relCounts relationCounter
@@ -245,7 +245,7 @@ func (svc analyzeService) analyzeOrphans(ctx context.Context, meta *metamodel.Me
 	orphanIDs, _ := svc.tracer.FindOrphans(ctx)
 
 	// Each orphan id is re-loaded through the GATED reader before it can become
-	// an issue: a hidden entity's GetEntity returns not-found and is dropped, and
+	// an issue: a hidden entity's GetAddress returns not-found and is dropped, and
 	// a visible one is redacted. So even if the tracer yielded a raw id (it does
 	// not — svc.tracer is gated too), no hidden entity reaches the wire. Do NOT
 	// emit an issue straight from an orphan id/type without this gated re-load —
@@ -265,7 +265,7 @@ func (svc analyzeService) analyzeOrphans(ctx context.Context, meta *metamodel.Me
 		if len(orphans) > maxSectionIssues {
 			break
 		}
-		if e, err := st.GetEntity(ctx, id); err == nil {
+		if e, err := st.GetAddress(ctx, id); err == nil {
 			orphans = append(orphans, e)
 		}
 	}
@@ -613,7 +613,7 @@ func (svc analyzeService) analyzeValidations(ctx context.Context, meta *metamode
 		}
 		severity := rule.GetSeverity()
 		for _, v := range full.Violations {
-			e, err := st.GetEntity(ctx, v.EntityID)
+			e, err := st.GetAddress(ctx, v.EntityID)
 			if err != nil {
 				continue
 			}

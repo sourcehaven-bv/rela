@@ -733,7 +733,7 @@ type GatedGraphReader interface {
 // The split is deliberate, and matches the line `internal/dataentry` already
 // draws (`analyzeService.relCounts` is documented "raw (ungated) on purpose"):
 //
-//   - GetEntity / ListEntities / ListRelations go through `rows`, so a hidden
+//   - Resolve / ListEntities / ListRelations go through `rows`, so a hidden
 //     entity is absent and a hidden edge is not listed.
 //   - CountEntities / CountRelations go to the raw store. A count is
 //     STRUCTURAL: it says how many rows of a declared type exist, never which.
@@ -760,7 +760,7 @@ type gatedGraphReader struct {
 }
 
 func (g gatedGraphReader) Resolve(ctx context.Context, addr string) (*entity.Entity, error) {
-	return g.rows.GetEntity(ctx, addr)
+	return g.rows.GetAddress(ctx, addr)
 }
 
 func (g gatedGraphReader) Family(ctx context.Context, id string) (visibility.Family, bool, error) {

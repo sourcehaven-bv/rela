@@ -44,6 +44,9 @@ type readServices struct {
 	Config    config.Loader
 	Templater templating.Templater
 	FS        storage.FS
+	// World is the world `list` reads in when the user names none, from
+	// the compiled worlds' default-world seam.
+	World store.WorldScope
 }
 
 // writeServices is the read-write capability bundle. It embeds
@@ -186,6 +189,7 @@ func newCLIBundles(svc *appbuild.Services) (*cliBundles, error) {
 		Config:    svc.Config(),
 		Templater: svc.Templater(),
 		FS:        svc.FS(),
+		World:     appbuild.CompiledWorlds(svc).Default(),
 	}
 	write := writeServices{
 		readServices:  read,

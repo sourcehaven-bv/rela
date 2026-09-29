@@ -349,7 +349,7 @@ func (d denyEntityReader) Resolve(ctx context.Context, addr string) (*entity.Ent
 	if addr == d.deny {
 		return nil, errDenied
 	}
-	return visibility.Unrestricted(d.raw).GetEntity(ctx, addr)
+	return visibility.Unrestricted(d.raw).GetAddress(ctx, addr)
 }
 
 func (d denyEntityReader) Family(ctx context.Context, id string) (visibility.Family, bool, error) {

@@ -79,7 +79,7 @@ assignments:
 `
 	sr := schedulerReader(t, granted)
 
-	got, err := sr.GetEntity(schedulerCtx(), "TKT-1")
+	got, err := sr.GetAddress(schedulerCtx(), "TKT-1")
 	if err != nil {
 		t.Fatalf("granted scheduler read failed: %v", err)
 	}
@@ -102,7 +102,7 @@ assignments:
 `
 	sr := schedulerReader(t, ungranted)
 
-	_, err := sr.GetEntity(schedulerCtx(), "TKT-1")
+	_, err := sr.GetAddress(schedulerCtx(), "TKT-1")
 	if !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("ungranted scheduler read err = %v, want ErrNotFound", err)
 	}

@@ -96,7 +96,7 @@ type rawGraph struct {
 }
 
 func (g rawGraph) Resolve(ctx context.Context, addr string) (*entity.Entity, error) {
-	return g.GetEntity(ctx, addr)
+	return g.GetAddress(ctx, addr)
 }
 
 func (g rawGraph) GetRelation(ctx context.Context, from, relType, to string) (*entity.Relation, error) {

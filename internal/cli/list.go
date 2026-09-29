@@ -31,6 +31,7 @@ func (c *ListCmd) Run(ctx context.Context, svc *readServices) error {
 	if err != nil {
 		return err
 	}
+	q.World = svc.World
 
 	entities, err := collectListEntities(ctx, svc.Store, q)
 	if err != nil {

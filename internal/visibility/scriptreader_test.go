@@ -67,18 +67,18 @@ func newTicketOnlyScriptReader(t *testing.T, st store.Store) *visibility.ScriptR
 	return sr
 }
 
-func TestScriptReader_GetEntityGatesOnStoredType(t *testing.T) {
+func TestScriptReader_GetAddressGatesOnStoredType(t *testing.T) {
 	st := seedScriptWorld(t)
 	sr := newTicketOnlyScriptReader(t, st)
 	ctx := context.Background()
 
-	if _, err := sr.GetEntity(ctx, "TKT-1"); err != nil {
+	if _, err := sr.GetAddress(ctx, "TKT-1"); err != nil {
 		t.Errorf("readable entity: %v", err)
 	}
 	// A denied entity is reported as not-found, indistinguishable from a
 	// genuine miss — the oracle-free contract.
-	_, denied := sr.GetEntity(ctx, "SEC-1")
-	_, missing := sr.GetEntity(ctx, "NOPE")
+	_, denied := sr.GetAddress(ctx, "SEC-1")
+	_, missing := sr.GetAddress(ctx, "NOPE")
 	if denied == nil {
 		t.Error("hidden entity was returned")
 	}
@@ -165,8 +165,8 @@ func TestDenyReader_RefusesEverything(t *testing.T) {
 	var dr visibility.DenyReader
 	ctx := context.Background()
 
-	if _, err := dr.GetEntity(ctx, "TKT-1"); !errors.Is(err, visibility.ErrReaderUnavailable) {
-		t.Errorf("GetEntity err = %v, want ErrReaderUnavailable", err)
+	if _, err := dr.GetAddress(ctx, "TKT-1"); !errors.Is(err, visibility.ErrReaderUnavailable) {
+		t.Errorf("GetAddress err = %v, want ErrReaderUnavailable", err)
 	}
 	if errors.Is(visibility.ErrReaderUnavailable, store.ErrNotFound) {
 		t.Error("ErrReaderUnavailable must not be a not-found — a gate fault is not 'no such entity'")

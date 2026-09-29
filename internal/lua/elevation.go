@@ -303,7 +303,7 @@ func elevatedGetEntity(
 			return 0
 		}
 		reads.mark("get_entity")
-		e, err := er.GetEntity(ctxFn(), id)
+		e, err := er.GetAddress(ctxFn(), id)
 		if err != nil {
 			// Only a genuine MISS is nil. Any other error (store down, driver
 			// failure) RAISES — masking it as nil would make the documented

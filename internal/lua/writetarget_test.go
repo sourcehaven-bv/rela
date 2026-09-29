@@ -59,6 +59,6 @@ func TestWriteTargetReadable(t *testing.T) {
 // address with store.GetEntityAt.
 type rawAddressReader struct{ store.Store }
 
-func (r rawAddressReader) GetEntity(ctx context.Context, addr string) (*entity.Entity, error) {
+func (r rawAddressReader) GetAddress(ctx context.Context, addr string) (*entity.Entity, error) {
 	return store.GetEntityAt(ctx, r.Store, addr)
 }

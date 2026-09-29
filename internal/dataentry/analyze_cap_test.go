@@ -165,8 +165,8 @@ type countingAnalyzeReader struct {
 	rows  int
 }
 
-func (c *countingAnalyzeReader) GetEntity(ctx context.Context, id string) (*entity.Entity, error) {
-	return c.inner.GetEntity(ctx, id)
+func (c *countingAnalyzeReader) GetAddress(ctx context.Context, addr string) (*entity.Entity, error) {
+	return c.inner.GetAddress(ctx, addr)
 }
 
 func (c *countingAnalyzeReader) ListEntityHeaders(

@@ -12,6 +12,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/testutil"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // mockWorkspace is a test helper that produces lua.ReadDeps backed by
@@ -73,7 +74,7 @@ func newMockWorkspace() *mockWorkspace {
 // services returns lua.ReadDeps for the validation runtime.
 func (m *mockWorkspace) services(projectRoot string) lua.ReadDeps {
 	return lua.ReadDeps{
-		VisibleReader: m.store,
+		VisibleReader: visibility.Unrestricted(m.store),
 		Tracer:        tracer.New(m.store),
 		Meta:          m.meta,
 		ProjectRoot:   projectRoot,

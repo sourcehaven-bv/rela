@@ -14,13 +14,14 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 func testWriteDeps(projectRoot string) lua.WriteDeps {
 	st := memstore.New()
 	return lua.WriteDeps{
 		ReadDeps: lua.ReadDeps{
-			VisibleReader: st,
+			VisibleReader: visibility.Unrestricted(st),
 			Tracer:        tracer.New(st),
 			ProjectRoot:   projectRoot,
 		},
