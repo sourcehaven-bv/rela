@@ -175,3 +175,10 @@ func idsOf(list []comments.Comment) []string {
 	}
 	return out
 }
+
+// TestTimeFormatMatchesTheStore keeps the comments table's copy of the
+// fixed-width layout equal to the store's, which it repeats rather than
+// imports (BUG-HEIAVS).
+func TestTimeFormatMatchesTheStore(t *testing.T) {
+	require.Equal(t, sqlitedb.TimeFormat, sqlitecomments.TimeFormat)
+}

@@ -1,6 +1,10 @@
 package mcp
 
-import mcpgo "github.com/modelcontextprotocol/go-sdk/mcp"
+import (
+	"context"
+
+	mcpgo "github.com/modelcontextprotocol/go-sdk/mcp"
+)
 
 // registerTools registers the tool set. It is kept small on purpose: an MCP
 // server may be loaded into every session of a client, and each tool costs
@@ -12,6 +16,9 @@ func (s *Server) registerTools() {
 	addTool(s, toolListEntities(), s.handleListEntities)
 	addTool(s, toolShowEntity(), s.handleShowEntity)
 	addTool(s, toolSearchEntities(), s.handleSearchEntities)
+	addTool(s, toolListWorlds(), func(ctx context.Context, _ *mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+		return handleListWorlds(ctx, s.deps()), nil
+	})
 	addTool(s, toolCreateEntity(), s.handleCreateEntity)
 	addTool(s, toolUpdateEntity(), s.handleUpdateEntity)
 	addTool(s, toolDeleteEntity(), s.handleDeleteEntity)
@@ -68,14 +75,17 @@ func toolListEntities() *mcpgo.Tool {
 				"or related(entity, 'implements', { status = 'open' })")),
 		withNumber("limit", description("Max results (default 50)")),
 		withNumber("offset", description("Results to skip")),
+		withString("world", description(worldArgDescription)),
 	)
 }
 
 func toolShowEntity() *mcpgo.Tool {
 	return newTool("show_entity",
-		withDescription("Get one entity: properties, markdown content, and relations grouped by type"),
-		withString("id", required(), description("Entity ID")),
+		withDescription("Get one entity: properties, markdown content, and relations grouped by type. "+
+			"`other_faces` lists its other content states you may read, each with the ID@face ref that reads it"),
+		withString("id", required(), description("Entity ID, or ID@face to read one content state")),
 		withBoolean("content", description("Include the markdown body (default true)")),
+		withString("world", description(worldArgDescription)),
 	)
 }
 
@@ -85,6 +95,7 @@ func toolSearchEntities() *mcpgo.Tool {
 		withString("query", required(), description("Search text")),
 		withString("type", description("Restrict to entity type")),
 		withNumber("limit", description("Max results (default 20)")),
+		withString("world", description(worldArgDescription)),
 	)
 }
 
@@ -101,7 +112,7 @@ func toolCreateEntity() *mcpgo.Tool {
 func toolUpdateEntity() *mcpgo.Tool {
 	return newTool("update_entity",
 		withDescription("Update an entity. Only the named properties change; null removes one."),
-		withString("id", required(), description("Entity ID")),
+		withString("id", required(), description("Entity ID, or ID@face to update one content state")),
 		withObject("properties", description("Properties to set; null removes")),
 		withString("content", description("New markdown body (replaces the old one)")),
 	)
@@ -110,7 +121,7 @@ func toolUpdateEntity() *mcpgo.Tool {
 func toolDeleteEntity() *mcpgo.Tool {
 	return newTool("delete_entity",
 		withDescription("Delete an entity"),
-		withString("id", required(), description("Entity ID")),
+		withString("id", required(), description("Entity ID; deletes every face")),
 		withBoolean("cascade", description("Also delete its relations (default false)")),
 	)
 }

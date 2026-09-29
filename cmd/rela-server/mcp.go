@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -117,7 +118,11 @@ func remoteAttachmentDeps(svc *appbuild.Services, host dataentry.MCPHost) relamc
 // newRemoteMCPServer builds the remote MCP server. It does not pass
 // [relamcp.WithLuaTools]; see [wireRemoteMCP].
 func newRemoteMCPServer(svc *appbuild.Services, host dataentry.MCPHost) (*relamcp.Server, error) {
-	return relamcp.NewServer(remoteMCPDeps(svc, host), mcpServerVersion,
+	deps, err := remoteMCPDeps(svc, host)
+	if err != nil {
+		return nil, err
+	}
+	return relamcp.NewServer(deps, mcpServerVersion,
 		relamcp.WithPrincipal(principal.Principal{
 			User: principal.SystemUser(),
 			Tool: principal.ToolMCP,
@@ -128,8 +133,15 @@ func newRemoteMCPServer(svc *appbuild.Services, host dataentry.MCPHost) (*relamc
 // read handle, including search, comes from [appbuild.Services.GatedReads].
 // LuaWriteDeps and LuaCache stay zero because the remote server has no Lua
 // tools.
-func remoteMCPDeps(svc *appbuild.Services, host dataentry.MCPHost) relamcp.Deps {
-	reads := svc.GatedReads()
+//
+// Entity reads and searches resolve through the host's world source, the
+// operator's `app.default_world`, so a faced entity is visible to MCP exactly
+// as it is to the data-entry API (BUG-6XTX0G).
+func remoteMCPDeps(svc *appbuild.Services, host dataentry.MCPHost) (relamcp.Deps, error) {
+	reads, err := appbuild.WorldBound(svc.GatedReads(), host.ReadWorld)
+	if err != nil {
+		return relamcp.Deps{}, fmt.Errorf("binding MCP reads to a world: %w", err)
+	}
 	deps := relamcp.Deps{
 		Store:         reads.Reader,
 		Meta:          svc.Meta(),
@@ -141,12 +153,26 @@ func remoteMCPDeps(svc *appbuild.Services, host dataentry.MCPHost) relamcp.Deps 
 		Watcher:       noopWatcher{},
 		ProjectRoot:   svc.Paths().Root,
 		Attachments:   remoteAttachmentDeps(svc, host),
+		Worlds:        hostWorlds{host},
 	}
 	if reads.Traversals != nil {
 		deps.Traversals = reads.Traversals
 	}
-	return deps
+	return deps, nil
 }
+
+// hostWorlds adapts the host's world functions to [relamcp.WorldSelector].
+type hostWorlds struct{ host dataentry.MCPHost }
+
+func (w hostWorlds) SelectWorld(ctx context.Context, name string) (context.Context, error) {
+	return w.host.SelectWorld(ctx, name)
+}
+
+func (w hostWorlds) WorldReadable(ctx context.Context, name string) (bool, error) {
+	return w.host.WorldReadable(ctx, name)
+}
+
+func (w hostWorlds) DefaultWorld() string { return w.host.DefaultWorld() }
 
 // noopWatcher satisfies [relamcp.Watcher] for the HTTP transport, which has
 // no use for file-change callbacks.

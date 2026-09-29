@@ -33,6 +33,10 @@ func (s *Server) handleListEntities(
 	offset := args.GetInt("offset", 0)
 
 	d := snap.deps
+	ctx, refused := selectWorld(ctx, d.Worlds, args)
+	if refused != nil {
+		return refused, nil
+	}
 	types := snap.handlers.types
 	q := store.EntityQuery{}
 	if typeArg != "" {
@@ -155,13 +159,19 @@ func (s *Server) handleShowEntity(
 	id = trimID(id)
 
 	d := snap.deps
+	ctx, refused := selectWorld(ctx, d.Worlds, args)
+	if refused != nil {
+		return refused, nil
+	}
 	e, getErr := d.Store.GetEntity(ctx, id)
 	if getErr != nil {
-		return errorResult("entity not found: " + id), nil
+		return entityReadFailed("entity", id, getErr), nil
 	}
 
 	view := entityView{relations: true, content: args.GetBool("content", true)}
-	text, err := convertStoreEntity(ctx, e, d.Store, d.Meta, view)
+	ej := buildEntityJSON(ctx, e, d.Store, d.Meta, view)
+	ej.OtherFaces = otherFaces(ctx, d.Store, d.Meta, e)
+	text, err := marshalJSON(ej)
 	if err != nil {
 		return errorResult(err.Error()), nil
 	}
@@ -190,6 +200,10 @@ func (s *Server) handleSearchEntities(
 	}
 
 	d := snap.deps
+	ctx, refused := selectWorld(ctx, d.Worlds, args)
+	if refused != nil {
+		return refused, nil
+	}
 	var hits []search.Hit
 	for hit, searchErr := range d.Searcher.Search(ctx, q) {
 		if searchErr != nil {
@@ -320,7 +334,10 @@ func (s *Server) handleUpdateEntity(
 	st := d.Store
 	e, getErr := st.GetEntity(ctx, id)
 	if getErr != nil {
-		return errorResult("entity not found: " + id), nil
+		return entityReadFailed("entity", id, getErr), nil
+	}
+	if refused := faceAddressRequired(id, e); refused != nil {
+		return refused, nil
 	}
 
 	properties := extractPropertiesAllowNil(request)
@@ -415,11 +432,14 @@ func (s *Server) handleDeleteEntity(
 		return errorResult(err.Error()), nil
 	}
 	id = trimID(id)
+	if refused := wholeEntityRef(id); refused != nil {
+		return refused, nil
+	}
 	cascade := args.GetBool("cascade", false)
 
 	st := snap.deps.Store
 	if _, getErr := st.GetEntity(ctx, id); getErr != nil {
-		return errorResult("entity not found: " + id), nil
+		return entityReadFailed("entity", id, getErr), nil
 	}
 
 	// Every count reported here is of the relations the caller can see. The
@@ -452,6 +472,9 @@ func (s *Server) handleRenameEntity(
 		return errorResult(err.Error()), nil
 	}
 	oldID = trimID(oldID)
+	if refused := wholeEntityRef(oldID); refused != nil {
+		return refused, nil
+	}
 
 	newID, err := args.RequireString("new_id")
 	if err != nil {

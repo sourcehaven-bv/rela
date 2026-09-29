@@ -167,6 +167,7 @@ var toolCalls = map[string]struct {
 	"list_entities":   {args: `{"type":"requirement","filter":"entity.status == 'accepted'","limit":2}`},
 	"show_entity":     {args: `{"id":"REQ-001"}`},
 	"search_entities": {args: `{"query":"requirement","limit":5}`},
+	"list_worlds":     {args: `{}`},
 	"create_entity":   {args: `{"type":"requirement","properties":{"title":"Created via dispatch"}}`},
 	"update_entity":   {args: `{"id":"REQ-001","properties":{"status":"done"}}`},
 	"delete_entity":   {args: `{"id":"REQ-002","cascade":true}`},

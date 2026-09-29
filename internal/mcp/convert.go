@@ -15,12 +15,25 @@ import (
 
 // entityJSON represents an entity for JSON output in MCP responses.
 type entityJSON struct {
-	ID         string         `json:"id"`
-	Type       string         `json:"type"`
+	ID   string `json:"id"`
+	Type string `json:"type"`
+	// Face names the content state served, omitted for the default state.
+	// `ID@face` addresses this exact row in show_entity and update_entity.
+	Face       string         `json:"face,omitempty"`
 	Title      string         `json:"title,omitempty"`
 	Properties map[string]any `json:"properties,omitempty"`
 	Content    string         `json:"content,omitempty"`
 	Relations  *relationsJSON `json:"relations,omitempty"`
+	// OtherFaces lists the entity's other faces the caller may read, on
+	// show_entity only. Omitted when there are none.
+	OtherFaces []faceJSON `json:"other_faces,omitempty"`
+}
+
+// faceJSON names another face of an entity and the address that reads it.
+type faceJSON struct {
+	Face  string `json:"face"`
+	Label string `json:"label,omitempty"`
+	Ref   string `json:"ref"`
 }
 
 // relationsJSON groups outgoing and incoming relations.
@@ -76,9 +89,17 @@ type entityView struct {
 func convertStoreEntity(
 	ctx context.Context, e *entity.Entity, st GraphReader, meta *metamodel.Metamodel, view entityView,
 ) (string, error) {
+	return marshalJSON(buildEntityJSON(ctx, e, st, meta, view))
+}
+
+// buildEntityJSON is [convertStoreEntity] before marshaling.
+func buildEntityJSON(
+	ctx context.Context, e *entity.Entity, st GraphReader, meta *metamodel.Metamodel, view entityView,
+) entityJSON {
 	ej := entityJSON{
 		ID:         e.ID,
 		Type:       e.Type,
+		Face:       e.Face.String(),
 		Title:      derivedTitle(meta, e),
 		Properties: e.Properties,
 	}
@@ -86,9 +107,9 @@ func convertStoreEntity(
 		ej.Content = e.Content
 	}
 	if view.relations {
-		ej.Relations = buildStoreRelations(ctx, e.ID, st, meta)
+		ej.Relations = buildStoreRelations(ctx, e.ID, e.Face, st, meta)
 	}
-	return marshalJSON(ej)
+	return ej
 }
 
 // displayTitle returns the entity's display name as the metamodel defines it
@@ -151,7 +172,12 @@ func convertStoreEntitySummary(meta *metamodel.Metamodel, e *entity.Entity) enti
 	return summary
 }
 
-// buildStoreRelations builds relation JSON for an entity using the store.
+// buildStoreRelations builds relation JSON for one face of an entity.
+//
+// Outgoing edges are the ones tailed at face: a content-scoped edge belongs to
+// one face of its source, so an unfiltered read would present another face's
+// links as this one's (BUG-VFHUWO, the same rule as the data-entry entity
+// GET). Incoming edges stay entity-level, because heads are faceless.
 //
 // Neighbor visibility (RR-CFFL52): a relation is only reported when the
 // entity at its far end is READABLE through st. Listing the edge while
@@ -163,14 +189,14 @@ func convertStoreEntitySummary(meta *metamodel.Metamodel, e *entity.Entity) enti
 // under the stdio (NopACL) wiring every GetEntity succeeds and the output is
 // unchanged.
 func buildStoreRelations(
-	ctx context.Context, entityID string, st GraphReader, meta *metamodel.Metamodel,
+	ctx context.Context, entityID string, face entity.Face, st GraphReader, meta *metamodel.Metamodel,
 ) *relationsJSON {
 	rels := &relationsJSON{
 		Outgoing: make(map[string][]relationTargetJSON),
 		Incoming: make(map[string][]relationTargetJSON),
 	}
 
-	outQ := store.RelationQuery{EntityID: entityID, Direction: store.DirectionOutgoing}
+	outQ := store.RelationQuery{EntityID: entityID, Direction: store.DirectionOutgoing, FromFace: &face}
 	for r, err := range st.ListRelations(ctx, outQ) {
 		if err != nil {
 			break

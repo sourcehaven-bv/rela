@@ -20,7 +20,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
-	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 const depsMetamodel = `version: "1.0"
@@ -72,11 +71,14 @@ func TestRemoteMCPDeps_UsesGatedHandles(t *testing.T) {
 	}
 	defer svc.Close()
 
-	deps := remoteMCPDeps(svc, dataentry.MCPHost{})
-
-	if _, ok := deps.Searcher.(*visibility.Searcher); !ok {
-		t.Errorf("Searcher = %T, want *visibility.Searcher", deps.Searcher)
+	deps, err := remoteMCPDeps(svc, dataentry.MCPHost{ReadWorld: defaultWorldOnly})
+	if err != nil {
+		t.Fatalf("remoteMCPDeps: %v", err)
 	}
+
+	// Gating of each handle is asserted by behavior in
+	// TestRemoteMCPDeps_FacedEntitiesResolveThroughTheWorld: the handles are
+	// world-bound wrappers, so a type assertion here would name the wrapper.
 	if deps.Store == svc.Store() {
 		t.Error("Store is the raw store")
 	}
@@ -103,6 +105,7 @@ func assertNoLuaTools(t *testing.T, svc *appbuild.Services) {
 	srv, err := newRemoteMCPServer(svc, dataentry.MCPHost{
 		AttachmentLocker:  lock.NewMemoryLocker(),
 		AttachmentUploads: attachment.NewLimiter(attachment.DefaultMaxUploads),
+		ReadWorld:         defaultWorldOnly,
 	})
 	if err != nil {
 		t.Fatalf("newRemoteMCPServer: %v", err)

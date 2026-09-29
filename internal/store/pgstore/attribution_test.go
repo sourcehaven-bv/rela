@@ -29,7 +29,7 @@ func TestAttributionColumnsStamped(t *testing.T) {
 
 	// Entity create WITH attribution.
 	require.NoError(t, s.CreateEntity(attributedCtx("alice@example.com", "data-entry"),
-		mkEntity("ATTR-1", "ticket", "v1")))
+		mkEntity("ATTR-1", "v1")))
 	var user, tool *string
 	require.NoError(t, pool.QueryRow(ctx,
 		`SELECT last_edited_by_user, last_edited_by_tool FROM entities WHERE id = 'ATTR-1'`).
@@ -41,7 +41,7 @@ func TestAttributionColumnsStamped(t *testing.T) {
 
 	// Update WITHOUT attribution overwrites to NULL: the last write's
 	// authorship is honestly unknown.
-	require.NoError(t, s.UpdateEntity(ctx, mkEntity("ATTR-1", "ticket", "v2")))
+	require.NoError(t, s.UpdateEntity(ctx, mkEntity("ATTR-1", "v2")))
 	require.NoError(t, pool.QueryRow(ctx,
 		`SELECT last_edited_by_user, last_edited_by_tool FROM entities WHERE id = 'ATTR-1'`).
 		Scan(&user, &tool))
@@ -49,7 +49,7 @@ func TestAttributionColumnsStamped(t *testing.T) {
 	require.Nil(t, tool)
 
 	// Update WITH attribution re-stamps.
-	require.NoError(t, s.UpdateEntity(attributedCtx("bob", "cli"), mkEntity("ATTR-1", "ticket", "v3")))
+	require.NoError(t, s.UpdateEntity(attributedCtx("bob", "cli"), mkEntity("ATTR-1", "v3")))
 	require.NoError(t, pool.QueryRow(ctx,
 		`SELECT last_edited_by_user, last_edited_by_tool FROM entities WHERE id = 'ATTR-1'`).
 		Scan(&user, &tool))
@@ -57,7 +57,7 @@ func TestAttributionColumnsStamped(t *testing.T) {
 	require.Equal(t, "cli", *tool)
 
 	// Relations: create + update stamp the same columns.
-	require.NoError(t, s.CreateEntity(ctx, mkEntity("ATTR-2", "ticket", "peer")))
+	require.NoError(t, s.CreateEntity(ctx, mkEntity("ATTR-2", "peer")))
 	_, err = s.CreateRelation(attributedCtx("carol", "mcp"), "ATTR-1", "blocks", "ATTR-2",
 		&store.RelationData{Content: "why"})
 	require.NoError(t, err)
@@ -89,8 +89,8 @@ func TestSweepAttributesRealEditor(t *testing.T) {
 	ctx := context.Background()
 
 	require.NoError(t, s.CreateEntity(attributedCtx("alice@example.com", "data-entry"),
-		mkEntity("WHO-1", "ticket", "policy text")))
-	require.NoError(t, s.CreateEntity(ctx, mkEntity("WHO-2", "ticket", "peer")))
+		mkEntity("WHO-1", "policy text")))
+	require.NoError(t, s.CreateEntity(ctx, mkEntity("WHO-2", "peer")))
 	_, err = s.CreateRelation(attributedCtx("alice@example.com", "data-entry"),
 		"WHO-1", "blocks", "WHO-2", &store.RelationData{Content: "reason"})
 	require.NoError(t, err)
@@ -149,8 +149,8 @@ func TestSweepAttributesLastEditorOfBurst(t *testing.T) {
 	t.Cleanup(func() { _ = s.Close() })
 	ctx := context.Background()
 
-	require.NoError(t, s.CreateEntity(attributedCtx("alice", "cli"), mkEntity("BURST-1", "ticket", "v1")))
-	require.NoError(t, s.UpdateEntity(attributedCtx("bob", "data-entry"), mkEntity("BURST-1", "ticket", "v2")))
+	require.NoError(t, s.CreateEntity(attributedCtx("alice", "cli"), mkEntity("BURST-1", "v1")))
+	require.NoError(t, s.UpdateEntity(attributedCtx("bob", "data-entry"), mkEntity("BURST-1", "v2")))
 
 	_, err = pool.Exec(ctx, `UPDATE entities SET updated_at = now() - interval '1 hour' WHERE id = 'BURST-1'`)
 	require.NoError(t, err)

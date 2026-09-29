@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/sqlitedb"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/storeutil"
 )
@@ -26,7 +27,8 @@ const dropMarkedEdgesSQL = `DELETE FROM marked_relations WHERE from_id = ? OR to
 
 const (
 	entityRowColumns = "id, face, type, properties, content, updated_at, " +
-		"last_edited_by_user, last_edited_by_tool"
+		"last_edited_by_user, last_edited_by_tool, origin_kind, origin_source, origin_source_face, " +
+		"origin_source_type, origin_definition"
 	relationRowColumns = "from_id, from_face, rel_type, to_id, properties, content, updated_at, " +
 		"rel_record_id, last_edited_by_user, last_edited_by_tool"
 )
@@ -68,7 +70,7 @@ func (d softDeleter) MarkDeleted(ctx context.Context, id, by string) (*store.Del
 		}{
 			{`INSERT INTO marked_entities (` + entityRowColumns + `, deleted_at, deleted_by)
 			  SELECT ` + entityRowColumns + `, ?, ? FROM entities WHERE id = ?`,
-				[]any{time.Now().UTC().Format(timeFmt), by, id}},
+				[]any{sqlitedb.FormatTime(time.Now()), by, id}},
 			{`INSERT INTO marked_relations (owner_id, ` + relationRowColumns + `)
 			  SELECT ?, ` + relationRowColumns + ` FROM relations WHERE from_id = ? OR to_id = ?
 			  ON CONFLICT DO NOTHING`,
@@ -164,7 +166,7 @@ func (d softDeleter) ListMarked(ctx context.Context) ([]store.MarkedEntity, erro
 			out[n-1].Entities = append(out[n-1].Entities, e)
 			continue
 		}
-		t, err := time.Parse(timeFmt, at)
+		t, err := parseTime(at)
 		if err != nil {
 			return nil, fmt.Errorf("sqlitestore: parse deleted_at: %w", err)
 		}

@@ -1,14 +1,18 @@
 package dataentry
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/Sourcehaven-BV/rela/internal/attachment"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/worldreader"
 )
 
 // MCPPath is the mount point for the remote MCP endpoint.
@@ -84,6 +88,29 @@ type MCPHost struct {
 	// AttachmentUploads is the App's upload bound, so MCP and web uploads
 	// share one budget.
 	AttachmentUploads *attachment.Limiter
+
+	// ReadWorld resolves the world an MCP read runs in: the operator's
+	// browsing default (`app.default_world`), with the caller's world grant
+	// checked, exactly as for a data-entry API read that names no world
+	// (BUG-6XTX0G). Without it a faced entity is invisible to every MCP tool.
+	ReadWorld worldreader.Source
+
+	// SelectWorld binds the named world for every read on the returned ctx,
+	// for an MCP tool call that names one. It applies the same lookup and
+	// world grant as `?world=` on the data-entry API. Unlike that API it
+	// refuses a denied world with an error rather than an empty result: world
+	// names and their readability are already served by `list_worlds`, so
+	// the error discloses nothing, and an agent needs to know why a world
+	// shows nothing.
+	SelectWorld func(ctx context.Context, name string) (context.Context, error)
+
+	// WorldReadable reports whether the ctx principal may select name.
+	WorldReadable func(ctx context.Context, name string) (bool, error)
+
+	// DefaultWorld names the world a read that names none runs in:
+	// `app.default_world`, or "default" when none is configured. Read per
+	// call because the configuration hot-reloads.
+	DefaultWorld func() string
 }
 
 // mcpHost builds the [MCPHost] for this App.
@@ -96,7 +123,113 @@ func mcpHost(a *App) MCPHost {
 		AttachmentRunner:  a.attachmentRunner,
 		AttachmentLocker:  a.attachmentLocker,
 		AttachmentUploads: a.attachmentUploads,
+		ReadWorld:         mcpReadWorld(a),
+		SelectWorld: func(ctx context.Context, name string) (context.Context, error) {
+			return mcpSelectWorld(ctx, a, name)
+		},
+		WorldReadable: func(ctx context.Context, name string) (bool, error) {
+			return mcpWorldReadable(ctx, a, name)
+		},
+		DefaultWorld: func() string {
+			if name := configuredDefaultWorld(a); name != "" {
+				return name
+			}
+			return defaultWorldName
+		},
 	}
+}
+
+// mcpSelectedWorldKey carries the world an MCP tool call selected. Its value
+// is a [store.WorldScope] that has passed the lookup and the grant check.
+type mcpSelectedWorldKey struct{}
+
+// mcpSelectWorld resolves name for the ctx principal and binds it on the
+// returned ctx, where [mcpReadWorld] finds it.
+func mcpSelectWorld(ctx context.Context, a *App, name string) (context.Context, error) {
+	handle, err := resolveNamedWorld(ctx, a.worlds, name)
+	switch {
+	case errors.Is(err, errWorldUnknown):
+		return ctx, fmt.Errorf("no such world %q; list_worlds names the worlds", name)
+	case errors.Is(err, errWorldDenied):
+		return ctx, fmt.Errorf("world %q is not readable by you", name)
+	case err != nil:
+		return ctx, fmt.Errorf("resolving world %q: %w", name, err)
+	}
+	return context.WithValue(ctx, mcpSelectedWorldKey{}, handle.scope), nil
+}
+
+// mcpWorldReadable reports whether the ctx principal may select name. An
+// unknown world is not readable.
+func mcpWorldReadable(ctx context.Context, a *App, name string) (bool, error) {
+	_, err := resolveNamedWorld(ctx, a.worlds, name)
+	switch {
+	case errors.Is(err, errWorldUnknown), errors.Is(err, errWorldDenied):
+		return false, nil
+	case err != nil:
+		return false, err
+	}
+	return true, nil
+}
+
+// mcpReadWorld returns the world source for the remote MCP endpoint.
+//
+// The configuration is read per call, never captured, because the watcher
+// hot-reloads data-entry.yaml.
+//
+// A caller without a read grant on the configured world reads the default
+// world. On the data-entry API such a caller gets an empty result and can
+// still ask for `?world=default`, which needs no grant. Most MCP tools take
+// no world, so an empty result would lock the caller out of them, including
+// writes the ACL permits. Falling back discloses nothing: the
+// default world is the one any caller may read, and the row and face gates
+// still apply to every entity in it.
+//
+// A world the tool call selected through [MCPHost.SelectWorld] takes
+// precedence over the configured default.
+func mcpReadWorld(a *App) worldreader.Source {
+	return func(ctx context.Context) (store.WorldScope, error) {
+		if scope, ok := ctx.Value(mcpSelectedWorldKey{}).(store.WorldScope); ok {
+			return scope, nil
+		}
+		if memo, ok := ctx.Value(mcpWorldKey{}).(*mcpWorldMemo); ok {
+			memo.once.Do(func() { memo.scope, memo.err = resolveMCPWorld(ctx, a) })
+			return memo.scope, memo.err
+		}
+		return resolveMCPWorld(ctx, a)
+	}
+}
+
+// mcpWorldKey carries an [mcpWorldMemo] on an MCP request's ctx.
+type mcpWorldKey struct{}
+
+// mcpWorldMemo holds the world resolved for one MCP request. Every read in a
+// tool call then runs in the same world, even if the configuration reloads
+// part-way through, and the grant check runs once rather than once per read.
+type mcpWorldMemo struct {
+	once  sync.Once
+	scope store.WorldScope
+	err   error
+}
+
+// withMCPWorldMemo gives each request its own [mcpWorldMemo]. The stateless
+// transport serves one JSON-RPC exchange per request.
+func withMCPWorldMemo(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), mcpWorldKey{}, &mcpWorldMemo{})
+		h.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+func resolveMCPWorld(ctx context.Context, a *App) (store.WorldScope, error) {
+	name := configuredDefaultWorld(a)
+	handle, err := resolveNamedWorld(ctx, a.worlds, name)
+	switch {
+	case errors.Is(err, errWorldDenied):
+		return store.WorldScope{}, nil
+	case err != nil:
+		return store.WorldScope{}, fmt.Errorf("resolving app.default_world %q: %w", name, err)
+	}
+	return handle.scope, nil
 }
 
 // SetRemoteMCP enables the remote MCP endpoint, which is OFF by default.
@@ -141,7 +274,7 @@ func (a *App) SetRemoteMCP(factory MCPHandlerFactory) error {
 	if h == nil {
 		return errors.New("dataentry: the MCP handler factory returned a nil handler")
 	}
-	a.mcpHandler = h
+	a.mcpHandler = withMCPWorldMemo(h)
 	return nil
 }
 

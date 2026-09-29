@@ -198,6 +198,14 @@ func resolveAnchoredDocument(
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 		return resolvedDocument{}, false
 	}
+	// The face half of the read gate (BUG-6DBV6N): the row gate above is
+	// face-blind, so without this a principal holding only `type@published`
+	// renders the draft, and a `command:` renderer receives it raw. Same
+	// uniform 404, before the renderer runs.
+	if !faceReadable(r.Context(), docCfg.EntityType, ent.Face) {
+		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
+		return resolvedDocument{}, false
+	}
 	if ent.Type != docCfg.EntityType {
 		writeV1Error(w, r, http.StatusBadRequest, "entity_type_mismatch",
 			documentTypeMismatch(docName, docCfg.EntityType, entityID, ent.Type), "")

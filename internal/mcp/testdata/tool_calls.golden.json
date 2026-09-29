@@ -66,6 +66,12 @@
     "text": "{\"total\":1,\"has_more\":false,\"relations\":[{\"from\":\"DEC-001\",\"relation\":\"addresses\",\"to\":\"REQ-001\"}]}"
   },
   {
+    "tool": "list_worlds",
+    "args": "{}",
+    "isError": false,
+    "text": "{\"default_world\":\"default\",\"worlds\":[{\"name\":\"default\",\"readable\":true}],\"note\":\"this server does not resolve worlds; only `default` can be selected\"}"
+  },
+  {
     "tool": "lua_eval",
     "args": "{\"code\":\"return 1\"}",
     "isError": false,

@@ -179,8 +179,8 @@ func TestRelationVersionRenameAtomicPath(t *testing.T) {
 	ctx := context.Background()
 
 	// A live edge A--links-->X with a captured create version.
-	require.NoError(t, s.CreateEntity(ctx, mkEntity("A", "ticket", "")))
-	require.NoError(t, s.CreateEntity(ctx, mkEntity("X", "ticket", "")))
+	require.NoError(t, s.CreateEntity(ctx, mkEntity("A", "")))
+	require.NoError(t, s.CreateEntity(ctx, mkEntity("X", "")))
 	_, err = s.CreateRelation(ctx, "A", "links", "X", &store.RelationData{Content: "v1"})
 	require.NoError(t, err)
 	rid := relRecordID(ctx, t, pool, "A", "links", "X")
@@ -246,8 +246,8 @@ func TestRelationRenameDoesNotBumpUpdatedAt(t *testing.T) {
 	t.Cleanup(func() { _ = s.Close() })
 	ctx := context.Background()
 
-	require.NoError(t, s.CreateEntity(ctx, mkEntity("A", "ticket", "")))
-	require.NoError(t, s.CreateEntity(ctx, mkEntity("X", "ticket", "")))
+	require.NoError(t, s.CreateEntity(ctx, mkEntity("A", "")))
+	require.NoError(t, s.CreateEntity(ctx, mkEntity("X", "")))
 	_, err = s.CreateRelation(ctx, "A", "links", "X", &store.RelationData{Content: "v1"})
 	require.NoError(t, err)
 

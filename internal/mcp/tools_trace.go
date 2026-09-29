@@ -40,6 +40,9 @@ func (h traceHandler) handleTrace(
 		return errorResult(err.Error()), nil
 	}
 	id = trimID(id)
+	if refused := wholeEntityRef(id); refused != nil {
+		return refused, nil
+	}
 	maxDepth := args.GetInt("max_depth", 0)
 
 	traceFn, emptyMsg := h.tracer.TraceFrom, "No dependencies found"
@@ -60,7 +63,7 @@ func (h traceHandler) handleTrace(
 	// below, since it answers "is it in the store?" rather than "may this
 	// principal see it?".
 	if _, getErr := h.store.GetEntity(ctx, id); getErr != nil {
-		return errorResult("entity not found: " + id), nil
+		return entityReadFailed("entity", id, getErr), nil
 	}
 
 	result := traceFn(ctx, id, maxDepth)
@@ -89,13 +92,18 @@ func (h traceHandler) handleFindPath(
 		return errorResult(err.Error()), nil
 	}
 	to = trimID(to)
+	for _, ref := range []string{from, to} {
+		if refused := wholeEntityRef(ref); refused != nil {
+			return refused, nil
+		}
+	}
 
 	st := h.store
 	if _, fromErr := st.GetEntity(ctx, from); fromErr != nil {
-		return errorResult("source entity not found: " + from), nil
+		return entityReadFailed("source entity", from, fromErr), nil
 	}
 	if _, toErr := st.GetEntity(ctx, to); toErr != nil {
-		return errorResult("target entity not found: " + to), nil
+		return entityReadFailed("target entity", to, toErr), nil
 	}
 
 	path := h.tracer.FindPath(ctx, from, to)

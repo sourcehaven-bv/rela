@@ -30,10 +30,21 @@ export async function getTransforms(signal?: AbortSignal): Promise<TransformInfo
  * to it so the hardened forced-download response (Content-Disposition:
  * attachment) drives a file save. Plural is resolved the same way attachment
  * URLs are, from the schema-store-populated plural registry.
+ *
+ * `world` is the page's `?world=` (useWorld().worldParam), so the export
+ * resolves the entry's links in the world the page shows (BUG-PLZDPR).
  */
-export function entityExportUrl(entityType: string, id: string, transform: string): string {
+export function entityExportUrl(
+  entityType: string,
+  id: string,
+  transform: string,
+  world?: string
+): string {
   const q = new URLSearchParams({ transform })
-  return apiUrl(`/api/v1/${getPlural(entityType)}/${encodeURIComponent(id)}/_export?${q.toString()}`)
+  if (world) q.set('world', world)
+  return apiUrl(
+    `/api/v1/${getPlural(entityType)}/${encodeURIComponent(id)}/_export?${q.toString()}`
+  )
 }
 
 /**
