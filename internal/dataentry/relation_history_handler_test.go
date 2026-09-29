@@ -83,6 +83,9 @@ func (h relHistoryStore) ListRelationLifetimes(
 type perEndpointGate struct {
 	allow           map[string]bool
 	holdsPermission bool
+	// faces lists the readable faces per type; an absent type reads every
+	// face, as a bare grant does.
+	faces map[string][]entity.Face
 }
 
 func (g perEndpointGate) PermitsRead(_ context.Context, _, id string) (bool, error) {
@@ -97,8 +100,8 @@ func (g perEndpointGate) PermitsReadMany(_ context.Context, _ string, ids []stri
 	return m, nil
 }
 
-func (g perEndpointGate) ReadQuery(context.Context, string) acl.ReadQueryResult {
-	return acl.ReadQueryResult{}
+func (g perEndpointGate) ReadQuery(_ context.Context, typ string) acl.ReadQueryResult {
+	return acl.ReadQueryResult{Faces: g.faces[typ]}
 }
 
 func (g perEndpointGate) SearchScope(context.Context, []string) map[string]search.TypeScope {
@@ -298,6 +301,11 @@ func TestRelationHistory_DeletedRelationRequiresPermission(t *testing.T) {
 func TestRelationHistory_FacedAddressReadsItsOwnTail(t *testing.T) {
 	f := &fixture{}
 	f.AddNode(entity.New("DEC-1", "decision"))
+	// The tail is live on its face, so the endpoint gate applies rather than
+	// the deleted-relation permission.
+	published := entity.New("DEC-1", "decision")
+	published.Face = "published"
+	f.AddNode(published)
 	f.AddNode(entity.New("REQ-1", "requirement"))
 
 	app := newAppFromParts(nil, testMeta(), f)
@@ -394,5 +402,62 @@ func TestRelationHistory_BareAddressReadsTheDefaultTail(t *testing.T) {
 	}
 	if got.Relation.Content != "default tail body" {
 		t.Fatalf("a bare address must read the default tail: got %q", got.Relation.Content)
+	}
+}
+
+// A content tail on a face the reader may not read is the uniform 404 on both
+// the list and the version route, never the history (design 8.2).
+func TestRelationHistory_DeniedTailFaceIsNotFound(t *testing.T) {
+	f := &fixture{}
+	published := entity.New("DEC-1", "decision")
+	published.Face = "published"
+	f.AddNode(published)
+	f.AddNode(entity.New("REQ-1", "requirement"))
+	app := newAppFromParts(nil, testMeta(), f)
+	app.versions = relHistoryStore{versions: map[string][]store.RelationVersionSnapshot{
+		relKey("DEC-1", entity.Face("published"), "addresses", "REQ-1"): {{
+			RelationVersionMeta: store.RelationVersionMeta{
+				Version: 1, Op: store.VersionOpCreate, From: "DEC-1", Type: "addresses", To: "REQ-1",
+			},
+			Content: "published tail body",
+		}},
+	}}
+	gate := perEndpointGate{
+		allow: map[string]bool{"DEC-1": true, "REQ-1": true},
+		faces: map[string][]entity.Face{"decision": {"draft"}},
+	}
+	for _, path := range []string{
+		"/api/v1/_relation_history/decision/DEC-1@published/addresses/REQ-1",
+		"/api/v1/_relation_history/decision/DEC-1@published/addresses/REQ-1/1",
+	} {
+		req := httptest.NewRequest(http.MethodGet, path, http.NoBody)
+		req = req.WithContext(withReadGate(context.Background(), gate))
+		rec := httptest.NewRecorder()
+		handleV1RelationHistory(app, rec, req)
+		if rec.Code != http.StatusNotFound || strings.Contains(rec.Body.String(), "published tail body") {
+			t.Errorf("%s: denied tail face = %d %s, want 404", path, rec.Code, rec.Body)
+		}
+	}
+}
+
+// A version of a relation whose source is gone is served without meta: there
+// is no live row to redact against, so nothing is disclosed.
+func TestRelationHistory_GoneSourceServesNoMeta(t *testing.T) {
+	app := newAppFromParts(nil, testMeta(), &fixture{})
+	app.versions = relHistoryStore{versions: map[string][]store.RelationVersionSnapshot{
+		bareRelKey("GONE-A", "links", "GONE-B"): {{
+			RelationVersionMeta: store.RelationVersionMeta{
+				Version: 1, Op: store.VersionOpDelete, From: "GONE-A", Type: "links", To: "GONE-B",
+			},
+			Properties: map[string]any{"note": "SECRET NOTE"},
+		}},
+	}}
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/_relation_history/decision/GONE-A/links/GONE-B/1", http.NoBody)
+	req = req.WithContext(withReadGate(context.Background(), perEndpointGate{holdsPermission: true}))
+	rec := httptest.NewRecorder()
+	handleV1RelationHistory(app, rec, req)
+	if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), "SECRET NOTE") {
+		t.Errorf("gone source version = %d %s, want 200 without meta", rec.Code, rec.Body)
 	}
 }

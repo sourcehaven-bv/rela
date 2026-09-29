@@ -112,13 +112,16 @@ func isEmptyFace(e ast.Expr) bool {
 	return ok && lit.Kind == token.STRING && (lit.Value == `""` || lit.Value == "``")
 }
 
-// scanTree returns the zero-face reads per repo-relative file, for every
-// file with at least one.
-func scanTree(t *testing.T, root string) map[string][]token.Position {
+// matcher returns the position of every finding a guard makes in one file.
+type matcher func(fset *token.FileSet, file *ast.File) []token.Position
+
+// scanTree returns match's findings per repo-relative file under the given
+// roots, for every non-test file with at least one.
+func scanTree(t *testing.T, root string, roots []string, match matcher) map[string][]token.Position {
 	t.Helper()
 	got := map[string][]token.Position{}
 	fset := token.NewFileSet()
-	for _, sub := range scannedRoots {
+	for _, sub := range roots {
 		err := filepath.WalkDir(filepath.Join(root, sub), func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
 				return err
@@ -145,7 +148,7 @@ func scanTree(t *testing.T, root string) map[string][]token.Position {
 			if perr != nil {
 				return perr
 			}
-			if reads := zeroFaceReads(fset, file); len(reads) > 0 {
+			if reads := match(fset, file); len(reads) > 0 {
 				got[rel] = reads
 			}
 			return nil
@@ -158,37 +161,47 @@ func scanTree(t *testing.T, root string) map[string][]token.Position {
 }
 
 // alternatives is the advice every finding carries.
-const alternatives = "read an explicit address instead: store.GetEntityState(ctx, id, face), " +
-	"store.GetEntityAt(ctx, r, addr) with an ID@face address, visibleReader.getVisibleRef, " +
-	"entityReader.getEntityRef, or a visibility reader (ScriptReader, UnrestrictedReader). " +
+const alternatives = "read an explicit address instead: visibility.Resolver (in dataentry, visibleReader), " +
+	"entityReader.writePrepRow for write-prep, or a visibility reader (ScriptReader, UnrestrictedReader); " +
+	"outside dataentry, mcp and lua, store.GetEntityState(ctx, id, face) or store.GetEntityAt(ctx, r, addr) " +
+	"with an ID@face address also work. " +
 	"A faced type stores no zero-face row, so a bare-id read of it finds nothing (DEC-NPZICR). " +
 	"If you only moved an existing read between files, move its allowlist count with it"
 
-// diffAllowlist compares the scanned reads against the allowlist and returns
-// one message per file whose count differs, sorted by path. Growth messages
-// list the lines of every read in the file, since a count alone does not say
-// which one is new.
-func diffAllowlist(got map[string][]token.Position, allowed map[string]int) []string {
+// guard names what a shrink-only allowlist pins, for its failure messages.
+type guard struct {
+	what   string // the finding, e.g. "zero-face read"
+	list   string // the allowlist variable's name
+	advice string // what to do instead, appended to every growth message
+}
+
+var zeroFaceGuard = guard{what: "zero-face read", list: "zeroFaceAllowlist", advice: alternatives}
+
+// diffAllowlist compares the scanned findings against the allowlist and
+// returns one message per file whose count differs, sorted by path. Growth
+// messages list the lines of every finding in the file, since a count alone
+// does not say which one is new.
+func diffAllowlist(g guard, got map[string][]token.Position, allowed map[string]int) []string {
 	var msgs []string
 	for path, reads := range got {
 		n := len(reads)
 		want, listed := allowed[path]
 		switch {
 		case !listed:
-			msgs = append(msgs, fmt.Sprintf("%s: %d new zero-face read(s) in a file not on the allowlist (%s); %s",
-				path, n, lines(reads), alternatives))
+			msgs = append(msgs, fmt.Sprintf("%s: %d new %s(s) in a file not on the allowlist (%s); %s",
+				path, n, g.what, lines(reads), g.advice))
 		case n > want:
-			msgs = append(msgs, fmt.Sprintf("%s: %d zero-face reads (%s), allowlist permits %d; %s",
-				path, n, lines(reads), want, alternatives))
+			msgs = append(msgs, fmt.Sprintf("%s: %d %ss (%s), allowlist permits %d; %s",
+				path, n, g.what, lines(reads), want, g.advice))
 		case n < want:
-			msgs = append(msgs, fmt.Sprintf("%s: %d zero-face reads, allowlist says %d; "+
-				"lower the entry in zeroFaceAllowlist to %d (it may only shrink)", path, n, want, n))
+			msgs = append(msgs, fmt.Sprintf("%s: %d %ss, allowlist says %d; "+
+				"lower the entry in %s to %d (it may only shrink)", path, n, g.what, want, g.list, n))
 		}
 	}
 	for path, want := range allowed {
 		if _, found := got[path]; !found {
-			msgs = append(msgs, fmt.Sprintf("%s: no zero-face reads left, allowlist says %d; "+
-				"delete the entry from zeroFaceAllowlist", path, want))
+			msgs = append(msgs, fmt.Sprintf("%s: no %ss left, allowlist says %d; "+
+				"delete the entry from %s", path, g.what, want, g.list))
 		}
 	}
 	slices.Sort(msgs)
@@ -208,11 +221,11 @@ func lines(reads []token.Position) string {
 // listed reads; this stops new ones arriving meanwhile.
 func TestNoNewZeroFaceReads(t *testing.T) {
 	t.Parallel()
-	got := scanTree(t, repoRoot)
+	got := scanTree(t, repoRoot, scannedRoots, zeroFaceReads)
 	if len(got) == 0 {
 		t.Fatal("scanned no zero-face reads at all; the walk is probably rooted wrong")
 	}
-	for _, msg := range diffAllowlist(got, zeroFaceAllowlist) {
+	for _, msg := range diffAllowlist(zeroFaceGuard, got, zeroFaceAllowlist) {
 		t.Error(msg)
 	}
 }
@@ -238,7 +251,7 @@ func TestZeroFaceReads(t *testing.T) {
 		{"feed source getEntity arity", `s.getEntity(ctx, typ, id)`, 0},
 		{"bareEntityID call", `id, _ := bareEntityID(raw); _ = id`, 1},
 		{"bareEntityID value", `f := bareEntityID; _ = f`, 1},
-		{"getEntityRef is address-aware", `er.getEntityRef(ctx, ref)`, 0},
+		{"writePrepRow is address-aware", `er.writePrepRow(ctx, ref)`, 0},
 		{"GetEntityAt is address-aware", `store.GetEntityAt(ctx, st, addr)`, 0},
 		{"two reads", `st.GetEntity(ctx, a); st.GetEntity(ctx, b)`, 2},
 	}
@@ -305,7 +318,7 @@ func TestDiffAllowlist(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			msgs := diffAllowlist(tc.got, tc.allowed)
+			msgs := diffAllowlist(zeroFaceGuard, tc.got, tc.allowed)
 			if len(msgs) != len(tc.want) {
 				t.Fatalf("got %d messages %q, want %d", len(msgs), msgs, len(tc.want))
 			}
@@ -317,8 +330,8 @@ func TestDiffAllowlist(t *testing.T) {
 		})
 	}
 	// Growth must point at the fix, not at the allowlist.
-	msg := diffAllowlist(scan{"a.go": readsAt(7)}, nil)[0]
-	for _, want := range []string{"line 7", "DEC-NPZICR", "GetEntityState", "getVisibleRef", "getEntityRef"} {
+	msg := diffAllowlist(zeroFaceGuard, scan{"a.go": readsAt(7)}, nil)[0]
+	for _, want := range []string{"line 7", "DEC-NPZICR", "GetEntityState", "visibility.Resolver", "writePrepRow"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("growth message lacks %q: %s", want, msg)
 		}
@@ -344,11 +357,11 @@ func TestScanTree_FindsSyntheticViolation(t *testing.T) {
 	write("internal/_scratch/y.go", "package y\nfunc g() { st.GetEntity(ctx, id) }\n")
 	write("cmd/tool/main.go", "package main\nfunc main() { st.GetEntity(ctx, id) }\n")
 
-	got := scanTree(t, root)
+	got := scanTree(t, root, scannedRoots, zeroFaceReads)
 	if len(got) != 2 || len(got["internal/pkg/bad.go"]) != 1 || len(got["cmd/tool/main.go"]) != 1 {
 		t.Fatalf("scan = %v, want one read in each of internal/pkg/bad.go and cmd/tool/main.go", got)
 	}
-	if msgs := diffAllowlist(got, map[string]int{"cmd/tool/main.go": 1}); len(msgs) != 1 ||
+	if msgs := diffAllowlist(zeroFaceGuard, got, map[string]int{"cmd/tool/main.go": 1}); len(msgs) != 1 ||
 		!strings.HasPrefix(msgs[0], "internal/pkg/bad.go:") {
 
 		t.Errorf("want one finding for the unlisted file; got %q", msgs)

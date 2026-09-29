@@ -64,6 +64,10 @@ relations:
   implements:
     from: [policy]
     to: [feature]
+  # A FACED head: the target is named by bare id and has no zero-face row.
+  governs:
+    from: [feature]
+    to: [policy]
   cites:
     from: [policy]
     to: [feature]
@@ -167,30 +171,29 @@ func getRouted(t *testing.T, app *App, path string) (status int, got v1.Entity, 
 	return rec.Code, got, rec.Body.String()
 }
 
-func TestParseEntityRef(t *testing.T) {
+func TestIsExplicitAddress(t *testing.T) {
 	for _, tc := range []struct {
 		raw  string
-		want entityRef
-		ok   bool
+		want bool
 	}{
-		// An unsuffixed id names the zero coordinate, which for a faced
-		// type is no row at all — the request's world turns it into one.
-		{"POL-1", entityRef{ID: "POL-1"}, true},
-		{"POL-1@published", entityRef{ID: "POL-1", Face: "published", Explicit: true}, true},
+		// An unsuffixed id names the zero coordinate: the world resolves it.
+		{"POL-1", false},
+		{"POL-1@published", true},
 		// No face is privileged: `draft` is a coordinate like `published`.
-		{"POL-1@draft", entityRef{ID: "POL-1", Face: "draft", Explicit: true}, true},
-		// An undeclared name is taken as it is spelled; the store decides
-		// existence, so a row under a since-dropped face stays addressable.
-		{"POL-1@nope", entityRef{ID: "POL-1", Face: "nope", Explicit: true}, true},
-		{"POL-1@@", entityRef{}, false},
-		{"POL-1@Published", entityRef{}, false},
-		{"POL-1@a@b", entityRef{}, false},
-		{"not an id", entityRef{}, false},
+		{"POL-1@draft", true},
+		// An undeclared name is taken as it is spelled.
+		{"POL-1@nope", true},
+		// A malformed address names no face.
+		{"POL-1@@", false},
+		{"POL-1@Published", false},
+		{"POL-1@a@b", false},
+		{"not an id", false},
 	} {
-		got, ok := parseEntityRef(tc.raw)
-		if ok != tc.ok || got != tc.want {
-			t.Errorf("parseEntityRef(%q) = %+v, %v; want %+v, %v", tc.raw, got, ok, tc.want, tc.ok)
-		}
+		t.Run(tc.raw, func(t *testing.T) {
+			if got := isExplicitAddress(tc.raw); got != tc.want {
+				t.Errorf("isExplicitAddress(%q) = %v, want %v", tc.raw, got, tc.want)
+			}
+		})
 	}
 }
 

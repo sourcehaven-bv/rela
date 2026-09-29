@@ -77,7 +77,7 @@ type worldNeighbors struct {
 	relations *worldreader.RelationReader
 
 	// store resolves neighbor HEADS through the world. This is the same
-	// store path visibleReader.getWorldEntity uses — deliberately, so entity
+	// store path visibleReader.inWorld uses — deliberately, so entity
 	// resolution has ONE implementation and this type adds no second one.
 	store store.Store
 }
@@ -182,7 +182,7 @@ func (wn *worldNeighbors) worldScopedNeighbors(
 //
 // One ListEntities carrying the world scope, so the BACKEND resolves the
 // chain and the fallback verdict. This is the same route
-// visibleReader.getWorldEntity takes for the entry, which is what keeps
+// visibleReader.inWorld takes for the entry, which is what keeps
 // entity resolution to a single implementation: a chain walk written here
 // would be a second copy of the semantics that decide which face a reader
 // sees, free to drift from the store's.
@@ -747,7 +747,7 @@ func parseIncludeSpec(includes string) (wanted map[string]string, all bool) {
 // them would send a denied request down the default-world relation path while
 // a sibling site sent it down the world path.
 //
-// That is unreachable today — getVisible and scopedSortedEntities both bail on
+// That is unreachable today — the resolver and scopedSortedEntities both bail on
 // blocksAllReads() before any relation code runs — so this is latent rather
 // than live. It is still worth one named predicate: the alternative is three
 // call sites that happen to agree, held together by an invariant enforced

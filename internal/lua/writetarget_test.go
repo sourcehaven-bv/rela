@@ -2,6 +2,7 @@ package lua
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -24,11 +25,11 @@ func TestWriteTargetReadable(t *testing.T) {
 			t.Fatalf("seed %s: %v", e.Ref(), err)
 		}
 	}
-	// The first reader answers through Family; the raw store has no Family
-	// and takes the list fallback. Both must agree.
+	// A reader without Family is refused outright: every gated reader
+	// provides it, so its absence is a wiring bug, not a reason to read more.
 	readers := map[string]EntityReader{
-		"family":        visibility.Unrestricted(st),
-		"list fallback": rawAddressReader{st},
+		"family":    visibility.Unrestricted(st),
+		"no family": rawAddressReader{st},
 	}
 	for name, rd := range readers {
 		for _, tc := range []struct {
@@ -43,8 +44,12 @@ func TestWriteTargetReadable(t *testing.T) {
 			{"POL-1@", false},
 			{"", false},
 		} {
-			if got := writeTargetReadable(ctx, rd, tc.addr); got != tc.want {
-				t.Errorf("%s: writeTargetReadable(%q) = %v, want %v", name, tc.addr, got, tc.want)
+			want := tc.want
+			if name == "no family" && !strings.Contains(tc.addr, "@") {
+				want = false
+			}
+			if got := writeTargetReadable(ctx, rd, tc.addr); got != want {
+				t.Errorf("%s: writeTargetReadable(%q) = %v, want %v", name, tc.addr, got, want)
 			}
 		}
 	}

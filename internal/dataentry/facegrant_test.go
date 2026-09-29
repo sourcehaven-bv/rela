@@ -87,7 +87,7 @@ func TestFaceGrantParity_ListAndGetAgree(t *testing.T) {
 
 	// GET: the denied face is indistinguishable from a miss, and the granted
 	// one is served.
-	_, foundDraft, err := app.visibleReader.getVisible(gctx, "ticket", "TKT-1")
+	_, foundDraft, err := app.visibleReader.inWorld(gctx, "ticket", "TKT-1")
 	if err != nil {
 		t.Fatalf("get draft: %v", err)
 	}
@@ -132,7 +132,7 @@ func TestFaceGrant_BareGrantReadsEveryFace(t *testing.T) {
 	if faces := gate.ReadQuery(gctx, "ticket").Faces; faces != nil {
 		t.Fatalf("a bare grant must push NO face filter (nil = every face), got %v", faces)
 	}
-	if _, found, err := app.visibleReader.getVisible(gctx, "ticket", "TKT-2"); err != nil || !found {
+	if _, found, err := app.visibleReader.inWorld(gctx, "ticket", "TKT-2"); err != nil || !found {
 		t.Errorf("a bare grant must still read the entity: found=%v err=%v", found, err)
 	}
 }

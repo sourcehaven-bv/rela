@@ -384,7 +384,7 @@ func TestFaceGrant_GetFallsThroughToThePermittedFace(t *testing.T) {
 	get := func(ctx context.Context, d *acl.Declarative) (*entity.Entity, bool) {
 		t.Helper()
 		gctx := withWorld(gateCtxFor(ctx, t, d), worldHandle{name: "editorial", scope: editorial})
-		e, found, err := app.visibleReader.getVisible(gctx, "ticket", "TKT-1")
+		e, found, err := app.visibleReader.inWorld(gctx, "ticket", "TKT-1")
 		if err != nil {
 			t.Fatalf("getVisible: %v", err)
 		}

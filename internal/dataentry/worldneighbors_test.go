@@ -115,7 +115,7 @@ func TestWorldNeighbors_ExcludedHeadIsAbsent(t *testing.T) {
 	}
 
 	wctx := worldCtx(publishedScope("ticket", "feature"))
-	face, found, err := app.visibleReader.getVisible(wctx, "ticket", "TKT-1")
+	face, found, err := app.visibleReader.inWorld(wctx, "ticket", "TKT-1")
 	if err != nil || !found {
 		t.Fatalf("resolve entry: found=%v err=%v", found, err)
 	}
@@ -183,7 +183,7 @@ func TestWorldNeighbors_PerLinkFallback(t *testing.T) {
 	})
 	wctx := withWorld(context.Background(), worldHandle{name: "site-nl", scope: scope})
 
-	face, found, err := app.visibleReader.getVisible(wctx, "ticket", "TKT-1")
+	face, found, err := app.visibleReader.inWorld(wctx, "ticket", "TKT-1")
 	if err != nil || !found {
 		t.Fatalf("resolve entry: found=%v err=%v", found, err)
 	}
@@ -263,7 +263,7 @@ func TestWorldNeighbors_ContentEdgesAreFaceSpecific(t *testing.T) {
 	}
 
 	wctx := worldCtx(publishedScope("ticket", "feature"))
-	face, found, err := app.visibleReader.getVisible(wctx, "ticket", "TKT-1")
+	face, found, err := app.visibleReader.inWorld(wctx, "ticket", "TKT-1")
 	if err != nil || !found {
 		t.Fatalf("resolve entry: found=%v err=%v", found, err)
 	}
@@ -357,7 +357,7 @@ func TestWorldNeighbors_WorldResolvesBeforeGate(t *testing.T) {
 
 	wctx := withWorld(withReadGate(aliceCtx(), gate),
 		worldHandle{name: "published", scope: publishedScope("ticket", "feature")})
-	face, found, err := app.visibleReader.getVisible(wctx, "ticket", "TKT-1")
+	face, found, err := app.visibleReader.inWorld(wctx, "ticket", "TKT-1")
 	if err != nil || !found {
 		t.Fatalf("resolve entry: found=%v err=%v", found, err)
 	}
@@ -436,7 +436,7 @@ func TestWorldNeighbors_IncludeAgreesWithRelations(t *testing.T) {
 	}
 
 	wctx := worldCtx(publishedScope("ticket", "feature"))
-	face, found, err := app.visibleReader.getVisible(wctx, "ticket", "TKT-1")
+	face, found, err := app.visibleReader.inWorld(wctx, "ticket", "TKT-1")
 	if err != nil || !found {
 		t.Fatalf("resolve entry: found=%v err=%v", found, err)
 	}
@@ -488,7 +488,7 @@ func TestWorldNeighbors_DefaultWorldUnchanged(t *testing.T) {
 	}
 
 	// No world on the context at all — the zero handle, i.e. the default world.
-	e, found, err := app.visibleReader.getVisible(ctx, "ticket", "TKT-1")
+	e, found, err := app.visibleReader.inWorld(ctx, "ticket", "TKT-1")
 	if err != nil || !found {
 		t.Fatalf("get: found=%v err=%v", found, err)
 	}
@@ -691,7 +691,7 @@ func TestIncludeTrailingDot_MatchesPreRefactorOutput(t *testing.T) {
 	if _, err := app.store.CreateRelation(ctx, "TKT-1", "implements", "FEAT-1", nil); err != nil {
 		t.Fatalf("seed edge: %v", err)
 	}
-	e, found, err := app.visibleReader.getVisible(ctx, "ticket", "TKT-1")
+	e, found, err := app.visibleReader.inWorld(ctx, "ticket", "TKT-1")
 	if err != nil || !found {
 		t.Fatalf("get: found=%v err=%v", found, err)
 	}
@@ -746,7 +746,7 @@ func TestWorldETag_ReflectsWorldResolvedEdges(t *testing.T) {
 	seedFace(t, app, "FEAT-1", "feature", "published", "published f")
 
 	wctx := worldCtx(publishedScope("ticket", "feature"))
-	face, found, err := app.visibleReader.getVisible(wctx, "ticket", "TKT-1")
+	face, found, err := app.visibleReader.inWorld(wctx, "ticket", "TKT-1")
 	if err != nil || !found {
 		t.Fatalf("resolve entry: found=%v err=%v", found, err)
 	}
@@ -788,7 +788,7 @@ func TestWorldETag_DoesNotFoldDefaultWorldEdges(t *testing.T) {
 	})
 
 	wctx := worldCtx(publishedScope("ticket", "feature"))
-	face, found, err := app.visibleReader.getVisible(wctx, "ticket", "TKT-1")
+	face, found, err := app.visibleReader.inWorld(wctx, "ticket", "TKT-1")
 	if err != nil || !found {
 		t.Fatalf("resolve entry: found=%v err=%v", found, err)
 	}
@@ -845,7 +845,7 @@ func TestWorldNeighbors_SelfEdgeSurvives(t *testing.T) {
 	}
 
 	// Default world: the baseline this must not regress from.
-	e, found, err := app.visibleReader.getVisible(ctx, "ticket", "TKT-1")
+	e, found, err := app.visibleReader.inWorld(ctx, "ticket", "TKT-1")
 	if err != nil || !found {
 		t.Fatalf("default get: found=%v err=%v", found, err)
 	}
@@ -857,7 +857,7 @@ func TestWorldNeighbors_SelfEdgeSurvives(t *testing.T) {
 
 	// Single-entity GET under a world.
 	wctx := worldCtx(publishedScope("ticket"))
-	face, found, err := app.visibleReader.getVisible(wctx, "ticket", "TKT-1")
+	face, found, err := app.visibleReader.inWorld(wctx, "ticket", "TKT-1")
 	if err != nil || !found {
 		t.Fatalf("world get: found=%v err=%v", found, err)
 	}
@@ -930,7 +930,7 @@ func TestIncludeSpec_DefaultWorldParityWithPreRefactor(t *testing.T) {
 			t.Fatalf("seed %s-%s->%s: %v", e.from, e.typ, e.to, err)
 		}
 	}
-	entry, found, err := app.visibleReader.getVisible(ctx, "ticket", "TKT-1")
+	entry, found, err := app.visibleReader.inWorld(ctx, "ticket", "TKT-1")
 	if err != nil || !found {
 		t.Fatalf("get: found=%v err=%v", found, err)
 	}
@@ -996,7 +996,7 @@ func TestWorldETag_ResolutionFaultDoesNotForgeAValidValidator(t *testing.T) {
 	seedFace(t, app, "TKT-1", "ticket", "published", "published")
 
 	wctx := worldCtx(publishedScope("ticket", "feature"))
-	face, found, err := app.visibleReader.getVisible(wctx, "ticket", "TKT-1")
+	face, found, err := app.visibleReader.inWorld(wctx, "ticket", "TKT-1")
 	if err != nil || !found {
 		t.Fatalf("resolve entry: found=%v err=%v", found, err)
 	}
@@ -1028,7 +1028,7 @@ func TestWorldETag_UsesTheEdgesItIsGiven(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID: "TKT-1", Type: "ticket", Properties: map[string]any{"title": "t"},
 	})
-	e, found, err := app.visibleReader.getVisible(ctx, "ticket", "TKT-1")
+	e, found, err := app.visibleReader.inWorld(ctx, "ticket", "TKT-1")
 	if err != nil || !found {
 		t.Fatalf("get: found=%v err=%v", found, err)
 	}
@@ -1096,7 +1096,7 @@ func TestDefaultWorld_ContentEdgesAreFaceScoped(t *testing.T) {
 
 	// No world in context: the plain, pre-worlds request shape.
 	dctx := context.Background()
-	face, found, err := app.visibleReader.getVisible(dctx, "ticket", "TKT-1")
+	face, found, err := app.visibleReader.inWorld(dctx, "ticket", "TKT-1")
 	if err != nil || !found {
 		t.Fatalf("resolve entry: found=%v err=%v", found, err)
 	}
@@ -1150,7 +1150,7 @@ func TestDefaultWorld_IdentityEdgesAreFaceIndependent(t *testing.T) {
 	}
 
 	dctx := context.Background()
-	face, found, err := app.visibleReader.getVisible(dctx, "ticket", "TKT-1")
+	face, found, err := app.visibleReader.inWorld(dctx, "ticket", "TKT-1")
 	if err != nil || !found {
 		t.Fatalf("resolve entry: found=%v err=%v", found, err)
 	}
@@ -1206,7 +1206,7 @@ func TestDefaultWorld_ListRowContentEdgesAreFaceScoped(t *testing.T) {
 
 	// No world named: the plain list request shape.
 	dctx := context.Background()
-	row, found, err := app.visibleReader.getVisible(dctx, "ticket", "TKT-1")
+	row, found, err := app.visibleReader.inWorld(dctx, "ticket", "TKT-1")
 	if err != nil || !found {
 		t.Fatalf("resolve row: found=%v err=%v", found, err)
 	}

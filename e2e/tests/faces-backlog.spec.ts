@@ -57,7 +57,7 @@ test.describe('Faces backlog: attachments and export (BUG-CTUW2N)', () => {
 });
 
 test.describe('Faces backlog: anchored documents (BUG-8J3LSB)', () => {
-  test.fixme('the document on the draft face renders the draft', async ({ appPage }) => {
+  test('the document on the draft face renders the draft', async ({ appPage }) => {
     const faces = new FacesPage(appPage);
     await faces.openEntity('policy', POL1_DRAFT);
 

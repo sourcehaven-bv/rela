@@ -494,7 +494,7 @@ func notFoundHere() error {
 // response tells the client to discard its copy. Anything else — an I/O error,
 // a parse failure, a dead connection — is reported as retryable, so a transient
 // fault costs a retry instead of the user's data.
-// The probe goes to the STORE, not through the ACL read path: getVisible maps
+// The probe goes to the STORE, not through the ACL read path: the resolver maps
 // every store error to (nil,false,nil) on purpose, so that a denied read is
 // indistinguishable from a real miss — which is right for the read gate and
 // useless here, where telling those apart is the whole question. This asks only

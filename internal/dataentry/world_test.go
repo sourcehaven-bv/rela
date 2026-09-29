@@ -378,7 +378,6 @@ func TestWorldCapableRoutesDoNotUseUngatedReader(t *testing.T) {
 	// these two handlers are now written — see the worldBound branches).
 	worldCapableFuncs := map[string]bool{
 		"scopedSortedEntities": true,
-		"getWorldEntity":       true,
 		"handleV1ListEntities": true,
 		"handleV1GetEntity":    true,
 		"resolveV1Includes":    true,
@@ -797,7 +796,7 @@ func TestWorldListGetParity_ACLGatedPrincipal(t *testing.T) {
 
 	// GET under the same world, for each id.
 	for _, id := range []string{"TKT-100", "TKT-200"} {
-		got, found, gerr := app.visibleReader.getVisible(wctx, "ticket", id)
+		got, found, gerr := app.visibleReader.inWorld(wctx, "ticket", id)
 		if gerr != nil {
 			t.Fatalf("get %s: %v", id, gerr)
 		}

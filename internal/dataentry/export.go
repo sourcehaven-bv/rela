@@ -191,7 +191,7 @@ func (h *exportHandler) handleV1Transforms(w http.ResponseWriter, r *http.Reques
 // handleV1ExportEntity serves GET /api/v1/{plural}/{id}/_export?transform=<name>.
 //
 // It is a READ affordance downstream of the same ACL gate as the entity view:
-// the entity is resolved via visibleReader.getVisible (404 on deny,
+// the entity is resolved via the visibility resolver (404 on deny,
 // indistinguishable from a real miss), then rendered to markdown and converted
 // by the named transform. A request may only choose a registered transform name
 // — never a command, flag, or path. The response is hardened like an attachment
@@ -217,8 +217,8 @@ func (h *exportHandler) handleV1ExportEntity(w http.ResponseWriter, r *http.Requ
 	// (refuseWorldIncapablePath 422s a named world first), so the world
 	// handed to the resolver is always the default one. Exporting a non-bare
 	// face is a follow-up (TKT-5SZG2L records the gap).
-	ref, ok := parseEntityRef(entityID)
-	if !ok || !ref.Face.IsDefault() {
+	ref, refErr := entityPkg.ParseRef(entityID)
+	if refErr != nil || !ref.Face.IsDefault() {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 		return
 	}
@@ -304,7 +304,7 @@ func (h *exportHandler) convertAndWrite(
 // document instead of the built-in property renderer. Otherwise the built-in
 // [transform.EntityRenderer] is used.
 //
-// The entity was already resolved through the ACL read gate (getVisible on
+// The entity was already resolved through the ACL read gate (the resolver on
 // typeName) in the caller, so the override runs only for an entity the caller
 // may read; the script is a fixed config value (not request input) and receives
 // the already-validated entityID. On any failure it writes the response and
@@ -323,7 +323,7 @@ func (h *exportHandler) exportRenderer(
 
 	// Defense-in-depth: the entityID reaches the document cache filename and (for
 	// a future command override) an sh -c {id}. It is already an existing entity
-	// id (getVisible matched it), but validate it the same way handleV1Documents
+	// id (the resolver matched it), but validate it the same way handleV1Documents
 	// does before any render.
 	if !isSafePathSegment(entityID) {
 		writeV1Error(w, r, http.StatusBadRequest, "invalid_entity", "Invalid entity id", "")

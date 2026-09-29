@@ -130,7 +130,11 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 	app.fs = fs
 	app.paths = paths
 	app.store = svc.Store()
-	app.visibleReader = newVisibleReader(svc.Store())
+	visible, err := newVisibleReader(svc.Store())
+	if err != nil {
+		panic(err.Error())
+	}
+	app.visibleReader = visible
 	app.reader = entityReader{store: svc.Store()}
 	app.entityManager = svc.EntityManager()
 	app.searcher = svc.Searcher()
@@ -235,6 +239,7 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 		authz:    ungatedAuthorizer{},
 		files:    newCommandFileStore(),
 		redactor: appRedactor(app),
+		visible:  app.visibleReader,
 	}
 	app.attachmentLocker = lock.For(svc.Store())
 	app.attachmentUploads = attachment.NewLimiter(attachment.DefaultMaxUploads)
@@ -282,7 +287,7 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 		affordances: app.affordances,
 		acl:         func() acl.ACL { return app.acl },
 		audit:       func() audit.Audit { return app.auditSink },
-		gateRead:    app.gateReadOrNotFound,
+		visible:     app.visibleReader,
 		denyAfford:  app.denyAffordance,
 		computeETag: app.computeEntityETag,
 		faceEdges: func(ctx context.Context, e *entity.Entity) ([]*entity.Relation, map[string]bool, error) {

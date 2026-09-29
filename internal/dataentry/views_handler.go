@@ -41,6 +41,9 @@ type viewsHandler struct {
 	// passes through it, so a neighbor the principal cannot read is dropped
 	// and a survivor's hidden fields are redacted.
 	viewReader visibility.Reader
+	// visible resolves the single entity a view or side panel is anchored on,
+	// through the same resolver the entity GET uses.
+	visible visibleReader
 	// services returns the read bundle; view traversal and relation-column
 	// resolution read through it exactly as the App methods did.
 	services func() Services
@@ -88,29 +91,14 @@ func (h *viewsHandler) redactor() visibility.FieldRedactor {
 //
 // The id segment is an ADDRESS (`ID` or `ID@face`), the same grammar the
 // entity view accepts — the form that mounts this panel is opened on the
-// address of the row it edits. The row gate sees the bare id (ACL gate,
-// TKT-6N9O1Y: gated BEFORE any read so a denied principal gets a 404
-// indistinguishable from a missing id and the traversal never runs), and the
-// face half of a `type@face` grant is applied to the row that came back
-// (TKT-O7R2A1), with the same 404 so a denied face is indistinguishable from
-// an absent one.
+// address of the row it edits. The resolver runs the row gate on the bare id
+// and the face half of a `type@face` grant (TKT-6N9O1Y, TKT-O7R2A1) BEFORE the
+// traversal, so a denied principal, a denied face and a missing id all get
+// the same 404 and the traversal never runs.
 func (h *viewsHandler) sidePanelEntry(
 	w http.ResponseWriter, r *http.Request, entityType, entityID string,
 ) (*entityPkg.Entity, bool) {
-	ref, ok := parseEntityRef(entityID)
-	if !ok {
-		writeV1Error(w, r, http.StatusNotFound, "entity_not_found", "Entity not found", "")
-		return nil, false
-	}
-	if !h.gateRead(w, r, entityType, ref.ID) {
-		return nil, false
-	}
-	entry, found := h.reader.getEntityRef(r.Context(), ref)
-	if !found || !faceReadable(r.Context(), entry.Type, entry.Face) {
-		writeV1Error(w, r, http.StatusNotFound, "entity_not_found", "Entity not found", "")
-		return nil, false
-	}
-	return entry, true
+	return readAddressedOr404(w, r, h.visible, entityType, entityID)
 }
 
 // handleV1SidePanel handles GET /api/v1/_sidepanel/{formId}/{entityId}.
@@ -508,8 +496,8 @@ func (h *viewsHandler) handleV1Views(w http.ResponseWriter, r *http.Request) {
 	// The id segment is an ADDRESS (`ID` or `ID@face`), parsed once here so
 	// the row gate below sees the BARE id (it is face-blind by design and
 	// matches nothing on a suffixed string) and the engine sees the face.
-	ref, ok := parseEntityRef(entityID)
-	if !ok {
+	ref, refErr := entityPkg.ParseRef(entityID)
+	if refErr != nil {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 		return
 	}
@@ -553,6 +541,11 @@ func (h *viewsHandler) handleV1Views(w http.ResponseWriter, r *http.Request) {
 		// draft. Answer with the face that does exist plus a marker, so the
 		// page can offer a way through rather than a dead end (BUG-1).
 		h.writeWorldAbsentView(w, r, entityType, ref.ID)
+		return
+	}
+	var gerr *gateFaultError
+	if errors.As(err, &gerr) {
+		writeGateError(w, r, gerr.err)
 		return
 	}
 	if err != nil {

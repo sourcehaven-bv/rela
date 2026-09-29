@@ -109,7 +109,10 @@ func (h *writeHandler) validateRelationsModern(
 
 			// Soft conditions surfaced as warnings. The peer is whichever
 			// side the path entity is NOT on.
-			ws := h.collectEdgeWarnings(ctx, canonical, &relDef, ref, edgePath, incoming)
+			ws, err := h.collectEdgeWarnings(ctx, canonical, &relDef, ref, edgePath, incoming)
+			if err != nil {
+				return nil, err
+			}
 			warnings = append(warnings, ws...)
 		}
 	}
@@ -145,13 +148,20 @@ func sideLabel(incoming, pathSide bool) string {
 func (h *writeHandler) collectEdgeWarnings(
 	ctx context.Context, relType string, relDef *metamodel.RelationDef,
 	ref v1.ResourceIdentifier, edgePath string, incoming bool,
-) []Warning {
+) ([]Warning, error) {
 	var warnings []Warning
 	meta := h.schema().Meta
 	direction := directionLabel(incoming)
 
-	peer, err := h.store.GetEntity(ctx, ref.ID)
+	// The peer is named by bare id, so it names an entity, not a face: the
+	// check is whether some face of it is readable. A peer the caller may not
+	// read gets the same warning as an absent one, so neither its existence
+	// nor its type leaks through the warning codes.
+	peerType, err := h.visible.readableType(ctx, ref.ID)
 	if err != nil {
+		return nil, &gateFaultError{err: err}
+	}
+	if peerType == "" {
 		warnings = append(warnings, Warning{
 			Code:      "target_not_found",
 			Path:      edgePath + "/id",
@@ -159,11 +169,11 @@ func (h *writeHandler) collectEdgeWarnings(
 			Direction: direction,
 		})
 	} else {
-		if peer.Type != ref.Type {
+		if peerType != ref.Type {
 			warnings = append(warnings, Warning{
 				Code:      "target_type_mismatch",
 				Path:      edgePath + "/type",
-				Detail:    fmt.Sprintf("expected peer type %q, but %q is of type %q", ref.Type, ref.ID, peer.Type),
+				Detail:    fmt.Sprintf("expected peer type %q, but %q is of type %q", ref.Type, ref.ID, peerType),
 				Direction: direction,
 			})
 		}
@@ -175,11 +185,11 @@ func (h *writeHandler) collectEdgeWarnings(
 		if incoming {
 			peerSideAllowed = relDef.From
 		}
-		if !containsString(peerSideAllowed, peer.Type) {
+		if !containsString(peerSideAllowed, peerType) {
 			warnings = append(warnings, Warning{
 				Code:      "target_type_not_allowed",
 				Path:      edgePath,
-				Detail:    fmt.Sprintf("relation %q does not declare %q as an allowed %s type", relType, peer.Type, sideLabel(incoming, false)),
+				Detail:    fmt.Sprintf("relation %q does not declare %q as an allowed %s type", relType, peerType, sideLabel(incoming, false)),
 				Direction: direction,
 			})
 		}
@@ -237,8 +247,18 @@ func (h *writeHandler) collectEdgeWarnings(
 		}
 	}
 
-	return warnings
+	return warnings, nil
 }
+
+// gateFaultError marks a read-gate fault inside a larger operation (a relation
+// peer check, a view's entry read), so the handler answers it through
+// writeGateError instead of the operation's own error shape. That keeps the
+// raw error off the wire, and keeps a peer fault from becoming a
+// target_not_found warning that misreports a live peer as absent.
+type gateFaultError struct{ err error }
+
+func (e *gateFaultError) Error() string { return "read gate: " + e.err.Error() }
+func (e *gateFaultError) Unwrap() error { return e.err }
 
 // applyRelationsModern performs the diff and write phase of the modern
 // reconciler. Validation should have run already via
@@ -261,7 +281,7 @@ func (h *writeHandler) collectEdgeWarnings(
 //
 //nolint:gocognit // diffs desired vs. existing relation sets and issues add/remove ops per peer; the branches are the set-reconciliation cases, not shared logic to extract.
 func (h *writeHandler) applyRelationsModern(
-	ctx context.Context, addr entityRef, desired map[string]v1.RelationsUpdate,
+	ctx context.Context, addr entity.Ref, desired map[string]v1.RelationsUpdate,
 ) ([]Warning, error) {
 	entityID := addr.ID
 	if len(desired) == 0 {

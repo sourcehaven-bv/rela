@@ -50,15 +50,13 @@ func (er entityReader) getEntity(ctx context.Context, id string) (*entity.Entity
 	return e, true
 }
 
-// getEntityRef looks up the ROW an address names: the bare face for a bare
-// id, the named state for `ID@face`.
+// writePrepRow reads the raw row ref names, with no gate and no redaction.
 //
-// The write handlers used to hand the raw path segment to getEntity, which
-// works on fsstore and memstore only because their index key IS the state
-// reference (FormatStateRef), and never on pgstore, whose lookup is by
-// (id, face) column. Parsing the address and asking for the state by name
-// is the backend-independent spelling.
-func (er entityReader) getEntityRef(ctx context.Context, ref entityRef) (*entity.Entity, bool) {
+// It is for write-prep and liveness only, never for a response: a version
+// token or a splice base must hash the stored properties, and the history
+// routes must tell a live entity from a deleted one whether or not the caller
+// may read it. A read that serves a row goes through [visibleReader].
+func (er entityReader) writePrepRow(ctx context.Context, ref entity.Ref) (*entity.Entity, bool) {
 	e, err := er.store.GetEntityState(ctx, ref.ID, ref.Face)
 	if err != nil {
 		return nil, false
@@ -69,14 +67,10 @@ func (er entityReader) getEntityRef(ctx context.Context, ref entityRef) (*entity
 // entityType returns the type of the entity with the given ID, or empty
 // string if it can't be resolved. The relation GET handlers call it on a
 // relation endpoint's ID to emit a `type` field per edge, so SPA clients can
-// construct JSON:API §9 resource identifiers without guessing — but the
-// operation is just "look up an entity, return its type", nothing
-// relation-specific.
+// construct JSON:API §9 resource identifiers without guessing. The caller has
+// already gated the id (visibleRelationIDs); see [storedTypeOf].
 func (er entityReader) entityType(ctx context.Context, id string) string {
-	if e, ok := er.getEntity(ctx, id); ok {
-		return e.Type
-	}
-	return ""
+	return storedTypeOf(ctx, er.store, id)
 }
 
 // outgoingRelations returns all outgoing relations for id.
@@ -104,7 +98,7 @@ func (er entityReader) outgoingRelations(ctx context.Context, id string) []*enti
 // Identity-scoped edges are stored at the zero tail, so a faced address does
 // NOT see them here. Callers that need both tails ask twice — this method
 // answers exactly what the address names.
-func (er entityReader) outgoingRelationsOnFace(ctx context.Context, ref entityRef) []*entity.Relation {
+func (er entityReader) outgoingRelationsOnFace(ctx context.Context, ref entity.Ref) []*entity.Relation {
 	face := ref.Face
 	rels, err := listRelationsCtx(ctx, er.store, store.RelationQuery{
 		EntityID: ref.ID, Direction: store.DirectionOutgoing, FromFace: &face,

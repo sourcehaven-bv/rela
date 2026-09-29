@@ -6,7 +6,10 @@ import (
 	"sort"
 
 	"github.com/Sourcehaven-BV/rela/internal/canonical"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // handleV1GetRelationTarget serves a SINGLE relation's body — meta + content +
@@ -17,39 +20,46 @@ import (
 // relation-type listing returns peer rows keyed to a source entity and carries
 // no relation body or per-relation hash, which a faithful replica needs.
 //
-// Authorization mirrors the relation-history read (RR-SDDYZO): BOTH endpoints
-// must be readable, each gated on its LIVE type (never the URL segment). Field
-// meta redaction reuses visibleRelationMeta and FAILS CLOSED — if the source
-// endpoint is not live, no meta reaches the wire. The ETag is over the RAW
-// relation (canonical.HashRelation), never the redacted body, so it is a stable
-// If-Match token independent of the reader's field visibility (the entity-side
-// RR-IWXMDW invariant, applied to relations).
-// It is a package function taking *App (not an App method) so it does not add to
-// App's god-object method count — the pattern App's own doc records for
-// receiver-free handler helpers (plimsoll, TKT-N0IKN9).
+// Authorization gates BOTH endpoints, each on its stored type, never the URL
+// segment (RR-SDDYZO). The tail is gated per relationTailOr404: a
+// content-scoped edge tailed on a face the caller may not read is a 404
+// (design 8.2). The head is named by bare id, so the check is that some
+// face of it is readable. The head is gated BEFORE the edge is loaded: the
+// edge-miss 404 carries a different title, so gating after would tell a
+// caller whether an edge to a hidden entity exists.
+//
+// Field meta redaction reuses visibleRelationMeta against the source row the
+// gate resolved. The ETag is over the RAW relation (canonical.HashRelation),
+// never the redacted body, so it is a stable If-Match token independent of
+// the reader's field visibility (the entity-side RR-IWXMDW invariant, applied
+// to relations).
+//
+// It is a package function taking *App (not an App method) so it does not add
+// to App's god-object method count (plimsoll, TKT-N0IKN9).
 func handleV1GetRelationTarget(
-	a *App, w http.ResponseWriter, r *http.Request, typeName string, ref entityRef, relType, targetID string,
+	a *App, w http.ResponseWriter, r *http.Request, typeName, addr, relType, targetID string,
 ) {
 	ctx := r.Context()
-	entityID := ref.ID
 
-	// The path entity must exist and match the route type, or it is an
-	// indistinguishable 404 (same as a get on the wrong-typed id). Addressed
-	// by REF: on a faced type the bare id names no row at all (BUG-VFHUWO).
-	if src, ok := a.reader.getEntityRef(ctx, ref); !ok || src.Type != typeName {
-		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
+	mm := a.schema.Current().Meta
+	src, ok := relationTailOr404(w, r, a.visibleReader, mm, typeName, addr, relType)
+	if !ok {
 		return
 	}
-
-	// Dual-endpoint gate on the BARE ids: the row gate is face-blind.
-	if !authorizeRelationEndpointsReadable(a, w, r, entityID, targetID) {
+	if !familyReadableOr404(w, r, a.visibleReader, targetID) {
 		return
 	}
 
 	// The edge at the ADDRESSED TAIL. store.GetRelation reads the default
 	// tail only, so on a faced source it would miss the edge entirely, or
-	// return a different face's (BUG-VFHUWO).
-	rel, err := edgeOnFace(ctx, a.reader.store, entityID, ref.Face, relType, targetID)
+	// return a different face's (BUG-VFHUWO). An identity-scoped edge
+	// attaches to the entity, so its tail is always the zero face, whichever
+	// face of the source the address resolved to.
+	tail := src.Face
+	if !metamodel.IsContentScoped(mm, relType) {
+		tail = ""
+	}
+	rel, err := edgeOnFace(ctx, a.reader.store, src.ID, tail, relType, targetID)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			writeV1Error(w, r, http.StatusNotFound, "not_found", "Relation not found", "")
@@ -67,22 +77,49 @@ func handleV1GetRelationTarget(
 		return
 	}
 
-	// Redact meta, fail-closed: resolve the live SOURCE entity; if it is gone,
-	// emit no meta rather than raw meta (mirrors the relation-history handler).
-	source, live := a.reader.getEntityRef(ctx, ref)
-	var meta map[string]any
-	if live {
-		meta = a.affordances.visibleRelationMeta(ctx, source, relType, rel.Properties)
-	}
-
+	meta := a.affordances.visibleRelationMeta(ctx, src, relType, rel.Properties)
 	writeV1JSON(w, http.StatusOK, relationReadResponse{
-		From:     entityID,
+		From:     src.ID,
 		Type:     relType,
 		To:       targetID,
 		Meta:     meta,
 		Content:  rel.Content,
 		Redacted: redactedRelationKeys(rel.Properties, meta),
 	})
+}
+
+// relationTailOr404 reads the source row of a single-relation read (design
+// 8.2). A content-scoped edge, or any address naming a face, is face level:
+// the addressed row must be readable. An identity-scoped edge named by bare id
+// is entity level: the row the request's world selects when it is readable,
+// otherwise the first readable face, so a faced source with no zero-face row
+// still answers. The returned row decides field redaction only; the edge is
+// always read at the zero tail.
+func relationTailOr404(
+	w http.ResponseWriter, r *http.Request, vr visibleReader, meta *metamodel.Metamodel,
+	typeName, addr, relType string,
+) (*entity.Entity, bool) {
+	ref, err := entity.ParseRef(addr)
+	if err != nil || !ref.Face.IsDefault() || metamodel.IsContentScoped(meta, relType) {
+		return readAddressedOr404(w, r, vr, typeName, addr)
+	}
+	ctx := r.Context()
+	src, found, err := vr.inWorld(ctx, typeName, ref.ID)
+	if err == nil && !found {
+		var fam visibility.Family
+		if fam, found, err = vr.family(ctx, typeName, ref.ID); err == nil && found {
+			src, found, err = vr.ref(ctx, typeName, entity.Ref{ID: ref.ID, Face: fam.Faces[0]})
+		}
+	}
+	if err != nil {
+		writeGateError(w, r, err)
+		return nil, false
+	}
+	if !found {
+		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
+		return nil, false
+	}
+	return src, true
 }
 
 // relationReadResponse is the single-relation read wire shape the sync client
@@ -94,42 +131,6 @@ type relationReadResponse struct {
 	Meta     map[string]any `json:"meta,omitempty"`
 	Content  string         `json:"content,omitempty"`
 	Redacted *[]string      `json:"_redacted,omitempty"`
-}
-
-// authorizeRelationEndpointsReadable gates a single-relation read on BOTH
-// endpoints being live and readable, each on its real (live) type. A denial on
-// either endpoint is an indistinguishable 404. A not-live endpoint means the
-// relation's endpoints are (partly) gone — for a live-relation read that is the
-// same 404 (the sync read is a live-world read, unlike history which has the
-// deleted-relation PermHistoryRead path).
-func authorizeRelationEndpointsReadable(
-	a *App, w http.ResponseWriter, r *http.Request, from, to string,
-) bool {
-	ctx := r.Context()
-	gate := readGateFromContext(ctx)
-
-	fromEntity, fromLive := a.reader.getEntity(ctx, from)
-	toEntity, toLive := a.reader.getEntity(ctx, to)
-	if !fromLive || !toLive {
-		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
-		return false
-	}
-
-	fromOK, err := gate.PermitsRead(ctx, fromEntity.Type, from)
-	if err != nil {
-		writeGateError(w, r, err)
-		return false
-	}
-	toOK, err := gate.PermitsRead(ctx, toEntity.Type, to)
-	if err != nil {
-		writeGateError(w, r, err)
-		return false
-	}
-	if !fromOK || !toOK {
-		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
-		return false
-	}
-	return true
 }
 
 // redactedRelationKeys returns the sorted names of meta keys present in the raw

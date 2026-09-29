@@ -22,6 +22,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // testMeta returns the metamodel used for testing.
@@ -111,7 +112,7 @@ func (m *mockWorkspace) seedRelation(r *entity.Relation) {
 func (m *mockWorkspace) services(projectRoot string) WriteDeps {
 	return WriteDeps{
 		ReadDeps: ReadDeps{
-			VisibleReader: m.store,
+			VisibleReader: visibility.Unrestricted(m.store),
 			Tracer:        tracer.New(m.store),
 			Searcher:      &mockSearcher{ws: m},
 			Meta:          m.meta,
@@ -2495,13 +2496,12 @@ func (s *ctxSpySearcher) Search(ctx context.Context, q search.Query) iter.Seq2[s
 }
 
 // spiedDeps wraps the real workspace's WriteDeps with ctx-recording spies.
-func spiedDeps(realDeps WriteDeps, rec *ctxRecorder) WriteDeps {
+// The spy reads the mock's raw store, so the calls it records are the store
+// calls the bindings make; these tests only read.
+func spiedDeps(ws *mockWorkspace, realDeps WriteDeps, rec *ctxRecorder) WriteDeps {
 	return WriteDeps{
 		ReadDeps: ReadDeps{
-			// The fixture's VisibleReader is backed by the mock store, so it
-			// satisfies store.Store; assert rather than carry a second raw
-			// handle just for the spy.
-			VisibleReader: &ctxSpyStore{Store: realDeps.VisibleReader.(store.Store), rec: rec},
+			VisibleReader: &ctxSpyStore{Store: ws.store, rec: rec},
 			Tracer:        &ctxSpyTracer{inner: realDeps.Tracer, rec: rec},
 			Searcher:      &ctxSpySearcher{inner: realDeps.Searcher, rec: rec},
 			Meta:          realDeps.Meta,
@@ -2552,7 +2552,7 @@ func TestReadBindings_UseCallerContext(t *testing.T) {
 			}
 
 			rec := &ctxRecorder{}
-			deps := spiedDeps(ws.services(t.TempDir()), rec)
+			deps := spiedDeps(ws, ws.services(t.TempDir()), rec)
 
 			parent := context.WithValue(context.Background(), ctxMarkerKey{}, "parent-marker")
 
@@ -2589,7 +2589,7 @@ func TestReadBindings_FallbackWhenNoParentContext(t *testing.T) {
 	t.Parallel()
 	ws := newMockWorkspace(t)
 	rec := &ctxRecorder{}
-	deps := spiedDeps(ws.services(t.TempDir()), rec)
+	deps := spiedDeps(ws, ws.services(t.TempDir()), rec)
 
 	var buf bytes.Buffer
 	r := NewWriter(deps, &buf) // no WithContext

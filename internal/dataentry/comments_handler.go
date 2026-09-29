@@ -78,8 +78,8 @@ func (h *commentsHandler) handleV1Comments(w http.ResponseWriter, r *http.Reques
 	// segment to a bare-id reader resolves on memstore/fsstore only because
 	// their index key is the same string, and matches nothing on the database
 	// backends or under a query-shaped read grant.
-	ref, refOK := parseEntityRef(entityID)
-	if !isSafePathSegment(typeName) || !isSafeStateRefSegment(entityID) || !refOK {
+	ref, refErr := entity.ParseRef(entityID)
+	if !isSafePathSegment(typeName) || !isSafeStateRefSegment(entityID) || refErr != nil {
 		writeV1Error(w, r, http.StatusBadRequest, "invalid_path",
 			"Invalid entity type or id", "")
 		return
@@ -532,7 +532,7 @@ func (h *commentsHandler) gateCommentMutation(
 // and its address, face included.
 type commentAddress struct {
 	typeName string
-	ref      entityRef
+	ref      entity.Ref
 }
 
 // gateCommentTarget resolves the target entity, reporting whether the request
@@ -553,7 +553,9 @@ func (h *commentsHandler) gateCommentTarget(
 	w http.ResponseWriter, r *http.Request, addr commentAddress,
 ) (comments.Target, *entity.Entity, bool) {
 	target := comments.Target{Type: addr.typeName, ID: addr.ref.ID, Face: addr.ref.Face}
-	ent, found, err := h.visibleReader.getVisibleRef(r.Context(), addr.typeName, addr.ref)
+	// The resolver also checks the stored type against the route's, so a
+	// type mismatch is the same miss as an absent id (ruling 9.2).
+	ent, found, err := h.visibleReader.addressRef(r.Context(), addr.typeName, addr.ref)
 	if err != nil {
 		writeGateError(w, r, err)
 		return target, nil, false
@@ -812,7 +814,7 @@ func (h *commentsHandler) commentAccept(
 	// The splice base and version token come from the RAW row at the face the
 	// gate resolved. The visible entity may have redacted properties, and a
 	// version token hashed over redacted properties never matches the store.
-	raw, found := h.reader.getEntityRef(ctx, entityRef{ID: target.ID, Face: target.Face})
+	raw, found := h.reader.writePrepRow(ctx, entity.Ref{ID: target.ID, Face: target.Face})
 	if !found {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 		return
