@@ -270,3 +270,42 @@ func TestSelection_NilConditionIsAnError(t *testing.T) {
 		t.Fatalf("guarded = %#v, want off", got)
 	}
 }
+
+func TestProgram_ResultLiterals(t *testing.T) {
+	env := selectionEnv(t)
+	tests := []struct {
+		src  string
+		want []predicate.Value
+	}{
+		{"'a'", []predicate.Value{predicate.NewString("a")}},
+		{"entity.method == 'x' and 'a' or 'b'", []predicate.Value{predicate.NewString("a"), predicate.NewString("b")}},
+		{"entity.flag and (entity.score > 1 and 'a' or entity.opt) or 'c'",
+			[]predicate.Value{predicate.NewString("a"), predicate.NewString("c")}},
+		{"entity.opt or 'd'", []predicate.Value{predicate.NewString("d")}},
+		{"entity.opt", nil},
+		{"nil", []predicate.Value{predicate.NewNil()}},
+		{"'x' .. entity.opt", nil},
+	}
+	for _, tc := range tests {
+		t.Run(tc.src, func(t *testing.T) {
+			prog, err := predicate.CompileValue(env, tc.src, predicate.ValueProfile(predicate.StringType))
+			if err != nil {
+				t.Fatalf("CompileValue: %v", err)
+			}
+			if got := prog.ResultLiterals(); !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("ResultLiterals = %#v, want %#v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestProgram_ResultLiteralsAfterCoercion(t *testing.T) {
+	prog, err := predicate.CompileValue(selectionEnv(t), "entity.flag and 1 or 2", predicate.ValueProfile(predicate.IntType))
+	if err != nil {
+		t.Fatalf("CompileValue: %v", err)
+	}
+	want := []predicate.Value{predicate.NewInt(1), predicate.NewInt(2)}
+	if got := prog.ResultLiterals(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("ResultLiterals = %#v, want %#v", got, want)
+	}
+}

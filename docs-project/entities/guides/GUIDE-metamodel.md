@@ -715,7 +715,11 @@ applies to `'low'` only.
 Dependencies are inferred from the compiled expression. Computed properties may
 depend on other computed properties; rela evaluates them in dependency order.
 A self-reference or indirect cycle is a schema-load error. The expression's
-static result type must match the property's declared type. Computed list and
+static result type must match the property's declared type. For an enum
+property, every string literal the expression can produce must be one of the
+enum's values; `'hgh'` in a branch is a schema-load error, not a failed write.
+Other checks, such as a custom type's `validations:`, still apply when the value
+is written. Computed list and
 file properties are not supported, and `default` cannot be combined with
 `computed`.
 

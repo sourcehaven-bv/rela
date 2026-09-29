@@ -162,3 +162,56 @@ func TestEvaluate_SelectionOnUnsetBoolFails(t *testing.T) {
 		t.Fatal("want an evaluation error for an unset boolean condition")
 	}
 }
+
+// A literal result outside the enum fails at load, naming the literal;
+// valid mappings, attribute branches and plain strings are unaffected.
+func TestCompile_EnumLiterals(t *testing.T) {
+	levels := []string{"low", "medium", "high"}
+	enumProp := func(expr string) metamodel.PropertyDef {
+		return metamodel.PropertyDef{Type: metamodel.PropertyTypeEnum, Values: levels, Computed: expr}
+	}
+	tests := []struct {
+		name string
+		prop metamodel.PropertyDef
+		bad  string
+	}{
+		{"bad branch", enumProp("entity.method == 'passkey' and 'hgh' or 'low'"), "hgh"},
+		{"bad default", enumProp("entity.method == 'passkey' and 'high' or 'lo'"), "lo"},
+		{"bad literal root", enumProp("'hgh'"), "hgh"},
+		{"bad nested branch", enumProp("entity.method == 'a' and (entity.method == 'b' and 'hgh' or 'low') or 'high'"), "hgh"},
+		{"bad custom type literal", metamodel.PropertyDef{Type: "assurance", Computed: "entity.method == 'passkey' and 'hgh' or 'low'"}, "hgh"},
+		{"valid mapping", enumProp("entity.method == 'passkey' and 'high' or 'low'"), ""},
+		{"condition literals are not results", enumProp("entity.method == 'passkey' and 'high' or entity.base"), ""},
+		{"attribute branch", enumProp("entity.base or 'low'"), ""},
+		{"plain string", metamodel.PropertyDef{Type: metamodel.PropertyTypeString, Computed: "entity.method == 'x' and 'anything' or 'else'"}, ""},
+		{"custom type without values", metamodel.PropertyDef{Type: "free", Computed: "'anything'"}, ""},
+		{"all bad literals reported", enumProp("entity.method == 'a' and 'hgh' or 'lo'"), `hgh", "lo`},
+		// Inline values count only on type: enum, as in write validation.
+		{"string with inline values", metamodel.PropertyDef{
+			Type: metamodel.PropertyTypeString, Values: levels, Computed: "'other'",
+		}, ""},
+		// Concatenation is not folded; the check covers literals only.
+		{"concatenated constant", enumProp("'hg' .. 'h'"), ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			m := meta(map[string]metamodel.PropertyDef{
+				"method": {Type: metamodel.PropertyTypeString},
+				"base":   {Type: metamodel.PropertyTypeEnum, Values: levels},
+				"level":  tc.prop,
+			})
+			m.Types = map[string]metamodel.CustomType{"assurance": {Values: levels}, "free": {}}
+			_, err := computed.Compile(m)
+			if tc.bad == "" {
+				if err != nil {
+					t.Fatalf("Compile: %v", err)
+				}
+				return
+			}
+			want := `property "level" computed: "` + tc.bad + `"`
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("err = %v, want it to contain %q", err, want)
+			}
+		})
+	}
+}
