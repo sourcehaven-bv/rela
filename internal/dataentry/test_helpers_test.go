@@ -157,7 +157,7 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 		panic(err.Error())
 	}
 	app.validator = val
-	app.analyze = analyzeService{reads: gatedReader, relCounts: svc.Store(), tracer: lateGatedTracer{app: app}, validator: app.validator}
+	app.analyze = analyzeService{reads: gatedReader, tracer: lateGatedTracer{app: app}, validator: app.validator}
 	app.templater = svc.Templater()
 	app.cfgLoader = svc.Config()
 	app.kv = svc.State()

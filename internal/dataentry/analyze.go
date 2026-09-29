@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"iter"
+	"log/slog"
 	"sort"
 	"strings"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
+	"github.com/Sourcehaven-BV/rela/internal/schema"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
 	"github.com/Sourcehaven-BV/rela/internal/validator"
@@ -24,11 +26,14 @@ import (
 // entity comes back REDACTED, so its value cannot reach an issue title or a
 // validation message. The leak closes by construction, not by filtering output.
 //
-// Only entity reads: analyze never mutates. Relation COUNTS (cardinality) go
-// through a separate counter that stays on the raw store — a count is a
-// structural fact, not a value, so it cannot leak; under-visibility only makes
-// cardinality potentially false-positive, which is correctness (guarded by the
-// roles annotation, arc step 2), not a disclosure.
+// Read-only: analyze never mutates. Cardinality counts are folded from the
+// edges ListRelationsStrict yields, which the gated reader filters to edges whose
+// both endpoints the requester may read (TKT-5LW875). A count is therefore
+// computed after the gate, never before it, and cannot reveal a hidden
+// neighbor. Under partial visibility it may report a min violation the
+// requester cannot resolve; that is a less-visible answer, not a disclosure.
+// A gate fault fails the check instead of thinning the edges, so a fault
+// never reads as a missing relation.
 // The whole-store scans go through ListEntityHeaders, never ListEntities:
 // no analyze check reads an entity BODY (grep this file for `.Content` —
 // there are none), so loading bodies to discard them made a scan's peak
@@ -43,12 +48,8 @@ import (
 type analyzeReader interface {
 	GetAddress(ctx context.Context, addr string) (*entity.Entity, error)
 	ListEntityHeaders(ctx context.Context, q store.EntityQuery) iter.Seq2[store.EntityHeader, error]
-}
-
-// relationCounter counts relations for the cardinality check. Raw (ungated) on
-// purpose — see analyzeReader.
-type relationCounter interface {
-	CountRelations(ctx context.Context, q store.RelationQuery) (int, error)
+	ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error]
+	ListRelationsStrict(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error]
 }
 
 // analyzeService runs the read-only graph-analysis checks (orphans,
@@ -58,12 +59,11 @@ type relationCounter interface {
 // per the project's snapshot rule) rather than reaching back into App.
 //
 // reads is GATED per the requesting principal (TKT-3FL2S6, DEC-O59WM4
-// superseded); relCounts is the raw relation counter (structural, cannot leak);
-// the tracer is the gated decorator. Under NopACL, reads is the ungated
+// superseded), and so is every count derived from it; the tracer is the gated
+// decorator. Under NopACL, reads is the ungated
 // visibility.Unrestricted reader and the tracer is the raw tracer.
 type analyzeService struct {
 	reads     analyzeReader
-	relCounts relationCounter
 	tracer    tracer.Tracer
 	validator validator.Validator
 }
@@ -432,147 +432,58 @@ func (svc analyzeService) analyzeGaps(ctx context.Context, meta *metamodel.Metam
 	return capIssues(section)
 }
 
-// analyzeCardinality checks relation cardinality constraints.
+// analyzeCardinality checks relation cardinality constraints through
+// [schema.CheckCardinality], the same checker the CLI and MCP use.
 //
-// Coverage follows schema.CheckCardinality (BUG-95W7MV): the outgoing bound
-// of a content-scoped relation is a claim about one face and is counted and
-// reported per face; every other bound is a claim about the family and is
-// counted once per id. Subjects are listed over every face, so a faced type
-// is never absent.
+// Coverage follows it (BUG-95W7MV): the outgoing bound of a content-scoped
+// relation is a claim about one face and is counted and reported per face;
+// every other bound is a claim about the family and is counted once per id.
+//
+// Every read goes through svc.reads, the requester's gated reader, so the
+// subjects are the rows the requester may read and each count covers only
+// edges whose both endpoints the requester may read (TKT-5LW875).
 func (svc analyzeService) analyzeCardinality(ctx context.Context, meta *metamodel.Metamodel) AnalysisSection {
 	section := AnalysisSection{
 		Name:        "Cardinality",
 		Description: "Relation cardinality constraint violations",
 	}
 
-	// Sort relation names for deterministic output
-	relNames := make([]string, 0, len(meta.Relations))
-	for name := range meta.Relations {
-		relNames = append(relNames, name)
-	}
-	natsort.Strings(relNames)
-
-	// listEntities lists headers of a given type over every face, sorted by
-	// ID. GATED: only the requester's visible rows are considered, so a
-	// hidden entity's title cannot reach a cardinality issue.
-	//
-	// Materialized once per TYPE. Each entry is a body-free header, and a
-	// type's rows are iterated once per bound being checked.
-	cache := map[string][]store.EntityHeader{}
-	listEntities := func(t string) []store.EntityHeader {
-		if out, ok := cache[t]; ok {
-			return out
+	findings, err := schema.CheckCardinalityFindings(ctx, svc.reads, meta, nil)
+	if err != nil {
+		// A partial answer would read as a clean graph, so say the check
+		// did not run. The cause stays in the server log.
+		if ctx.Err() == nil {
+			slog.Warn("analyze: cardinality check failed", "err", err)
 		}
-		var out []store.EntityHeader
-		for h, err := range svc.reads.ListEntityHeaders(ctx, store.EntityQuery{Type: t, AllStates: true}) {
-			if err != nil {
-				break
-			}
-			out = append(out, h)
-		}
-		sortHeadersByID(out)
-		cache[t] = out
-		return out
-	}
-
-	// countRelations counts relations of a specific type for an entity, on
-	// one tail face when face is non-nil. RAW (ungated): a count is a
-	// structural fact, not a value — it cannot leak. Under partial
-	// visibility this may over/under-count and produce a false cardinality
-	// violation (guarded by the roles annotation, arc step 2).
-	countRelations := func(entityID string, face *entity.Face, relType string, direction store.Direction) int {
-		n, _ := svc.relCounts.CountRelations(ctx, store.RelationQuery{
-			EntityID: entityID, Type: relType, Direction: direction, FromFace: face,
+		section.Issues = append(section.Issues, AnalysisIssue{
+			Message:  "Cardinality could not be checked; see the server log",
+			Severity: "error",
 		})
-		return n
+		return section
 	}
 
-	for _, relName := range relNames {
-		relDef := meta.Relations[relName]
-		incomingLabel := relName
-		if relDef.Inverse != nil && relDef.Inverse.GetID() != "" {
-			incomingLabel = relDef.Inverse.GetID()
-		}
-		perFaceOut := relDef.Scope.IsContent()
-		bounds := []cardinalityBound{
-			{relDef.From, store.DirectionOutgoing, perFaceOut, relDef.MinOutgoing, true, relName},
-			{relDef.From, store.DirectionOutgoing, perFaceOut, relDef.MaxOutgoing, false, relName},
-			{relDef.To, store.DirectionIncoming, false, relDef.MinIncoming, true, incomingLabel},
-			{relDef.To, store.DirectionIncoming, false, relDef.MaxIncoming, false, incomingLabel},
-		}
-		for _, b := range bounds {
-			if b.limit == nil || (b.isMin && *b.limit <= 0) {
-				continue
-			}
-			section.Issues = append(section.Issues, b.issues(meta, relName, listEntities, countRelations)...)
-		}
+	for _, f := range findings {
+		section.Issues = append(section.Issues, AnalysisIssue{
+			EntityID:   f.EntityID,
+			Face:       f.Face,
+			EntityType: f.Subject.Type,
+			Title:      safeHeaderTitle(meta, f.Subject),
+			Message:    cardinalityMessage(f.CardinalityViolation),
+			Severity:   "error",
+		})
 	}
 
 	return capIssues(section)
 }
 
-// cardinalityBound is one min or max bound on one side of a relation, as
-// [analyzeService.analyzeCardinality] checks it.
-type cardinalityBound struct {
-	types     []string
-	direction store.Direction
-	perFace   bool
-	limit     *int
-	isMin     bool
-	label     string
-}
-
-// issues checks the bound on every subject of its types. A per-face bound
-// checks each row; any other bound checks each id once.
-func (b cardinalityBound) issues(
-	meta *metamodel.Metamodel, relName string,
-	list func(string) []store.EntityHeader,
-	count func(string, *entity.Face, string, store.Direction) int,
-) []AnalysisIssue {
-	var out []AnalysisIssue
-	for _, subjectType := range b.types {
-		seen := map[string]bool{}
-		for _, e := range list(subjectType) {
-			var face *entity.Face
-			if b.perFace {
-				f := e.Face
-				face = &f
-			} else if seen[e.ID] {
-				continue
-			}
-			seen[e.ID] = true
-			msg, violated := b.check(count(e.ID, face, relName, b.direction))
-			if !violated {
-				continue
-			}
-			issue := AnalysisIssue{
-				EntityID:   e.ID,
-				EntityType: e.Type,
-				Title:      safeHeaderTitle(meta, e),
-				Message:    msg,
-				Severity:   "error",
-			}
-			if b.perFace {
-				issue.Face = e.Face
-			}
-			out = append(out, issue)
-		}
+// cardinalityMessage renders v as an issue message. It is
+// [schema.CardinalityViolation.Message] as a sentence of its own, which the
+// analyze view has always started with a capital.
+func cardinalityMessage(v schema.CardinalityViolation) string {
+	if v.IsMin() {
+		return "Must " + strings.TrimPrefix(v.Message(), "must ")
 	}
-	return out
-}
-
-// check reports whether n violates the bound, with the issue message.
-func (b cardinalityBound) check(n int) (string, bool) {
-	if b.isMin {
-		if n < *b.limit {
-			return fmt.Sprintf("Must have at least %d '%s' relation(s), has %d", *b.limit, b.label, n), true
-		}
-		return "", false
-	}
-	if n > *b.limit {
-		return fmt.Sprintf("Has more than %d '%s' relation(s): %d", *b.limit, b.label, n), true
-	}
-	return "", false
+	return "Has " + strings.TrimPrefix(v.Message(), "has ")
 }
 
 // analyzeProperties validates all entity properties against the metamodel.

@@ -59,3 +59,10 @@ func (r *AllowAllReader) FilterHeaders(
 func (r *AllowAllReader) FilterRelations(_ context.Context, rels []*entity.Relation) []*entity.Relation {
 	return rels
 }
+
+// FilterRelationsStrict implements [Reader]: pass-through, never an error.
+func (r *AllowAllReader) FilterRelationsStrict(
+	_ context.Context, rels []*entity.Relation,
+) ([]*entity.Relation, error) {
+	return rels, nil
+}

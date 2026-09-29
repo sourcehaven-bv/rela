@@ -493,6 +493,10 @@ deps:
       # does not hand dataentry the predicate engine; dataentry only picks the
       # gate (the request gate for rules, the raw store for transitions).
       - relresolve
+      # The one cardinality checker the CLI and MCP also use (TKT-5LW875).
+      # The analyze view passes its gated reader, so the counts it reports
+      # are folded from visible edges only.
+      - schema
       - script
       - search
       - searchparser

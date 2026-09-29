@@ -126,6 +126,27 @@ func (r *PolicyReader) FilterRelations(ctx context.Context, rels []*entity.Relat
 	return out
 }
 
+// FilterRelationsStrict implements [Reader] through
+// [Resolver.EndpointsReadableErr].
+func (r *PolicyReader) FilterRelationsStrict(
+	ctx context.Context, rels []*entity.Relation,
+) ([]*entity.Relation, error) {
+	if len(rels) == 0 {
+		return nil, nil
+	}
+	readable, err := r.res.EndpointsReadableErr(ctx, rels)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*entity.Relation, 0, len(rels))
+	for i, rel := range rels {
+		if readable[i] {
+			out = append(out, rel)
+		}
+	}
+	return out, nil
+}
+
 // permittedIDs runs one PermitsReadMany per distinct type and returns the
 // union allowed-id set. A gate error drops that whole type fail-closed —
 // a read-ACL failure must never widen visibility — and is logged loud so

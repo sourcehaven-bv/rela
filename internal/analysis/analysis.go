@@ -418,7 +418,9 @@ func (s *Service) FindGaps(ctx context.Context, opts Options) ([]GapResult, erro
 // scan all types and do report such a file, which is why the CI
 // invocation runs all three.
 func (s *Service) CheckCardinality(ctx context.Context, opts Options) ([]CardinalityViolation, error) {
-	return schema.CheckCardinality(ctx, s.deps.Store, s.deps.Meta, opts.Scope)
+	// Operator trust: the CLI counts every edge, through the same code path
+	// a gated surface uses (TKT-5LW875).
+	return schema.CheckCardinality(ctx, schema.Ungated(s.deps.Store), s.deps.Meta, opts.Scope)
 }
 
 // --- Custom validations ---
