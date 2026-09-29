@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/store"
+
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
@@ -31,10 +33,18 @@ func TestPolicyReaderConformance(t *testing.T) {
 func TestVisibleTracerConformance(t *testing.T) {
 	visibilitytest.RunTracerTests(t, func(
 		t *testing.T, base tracer.Tracer,
-		gate visibility.RowGate, redact visibility.FieldRedactor, get visibility.EntityGetter,
+		gate visibility.RowGate, redact visibility.FieldRedactor, st store.Store,
 	) tracer.Tracer {
 		t.Helper()
-		tr, err := visibility.NewVisibleTracer(base, gate, redact, get)
+		res, err := visibility.NewResolver(gate, redact, st)
+		if err != nil {
+			t.Fatalf("NewResolver: %v", err)
+		}
+		gatable, ok := base.(visibility.EdgeGatable)
+		if !ok {
+			t.Fatalf("base tracer %T cannot gate edges", base)
+		}
+		tr, err := visibility.NewVisibleTracer(gatable, res, st, store.WorldScope{})
 		if err != nil {
 			t.Fatalf("NewVisibleTracer: %v", err)
 		}
@@ -87,9 +97,13 @@ func TestAllowAllReader(t *testing.T) {
 // every constructor in the package.
 func TestConstructorsRejectNil(t *testing.T) {
 	st := memstore.New()
-	base := tracer.New(st)
+	base := tracer.New(st, store.WorldScope{})
 	gate := visibility.NopGate{}
 	redact := visibility.NopRedactor{}
+	res, err := visibility.NewResolver(gate, redact, st)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	cases := []struct {
 		name string
@@ -99,10 +113,9 @@ func TestConstructorsRejectNil(t *testing.T) {
 		{"PolicyReader nil redact", func() error { _, err := visibility.NewPolicyReader(gate, nil, st); return err }},
 		{"PolicyReader nil get", func() error { _, err := visibility.NewPolicyReader(gate, redact, nil); return err }},
 		{"AllowAllReader nil get", func() error { _, err := visibility.NewAllowAllReader(nil); return err }},
-		{"VisibleTracer nil base", func() error { _, err := visibility.NewVisibleTracer(nil, gate, redact, st); return err }},
-		{"VisibleTracer nil gate", func() error { _, err := visibility.NewVisibleTracer(base, nil, redact, st); return err }},
-		{"VisibleTracer nil redact", func() error { _, err := visibility.NewVisibleTracer(base, gate, nil, st); return err }},
-		{"VisibleTracer nil get", func() error { _, err := visibility.NewVisibleTracer(base, gate, redact, nil); return err }},
+		{"VisibleTracer nil base", func() error { _, err := visibility.NewVisibleTracer(nil, res, st, store.WorldScope{}); return err }},
+		{"VisibleTracer nil resolver", func() error { _, err := visibility.NewVisibleTracer(base, nil, st, store.WorldScope{}); return err }},
+		{"VisibleTracer nil relations", func() error { _, err := visibility.NewVisibleTracer(base, res, nil, store.WorldScope{}); return err }},
 		{"DeclarativeGate nil", func() error { _, err := visibility.NewDeclarativeGate(nil); return err }},
 		{"PolicyRedactor nil", func() error { _, err := visibility.NewPolicyRedactor(nil); return err }},
 	}

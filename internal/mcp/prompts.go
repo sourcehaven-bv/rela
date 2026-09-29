@@ -144,32 +144,13 @@ func (h promptHandler) handleReviewOrphansPrompt(
 ) (*mcpgo.GetPromptResult, error) {
 	entityType := request.Params.Arguments["type"]
 
-	orphanIDs, _ := h.tracer.FindOrphans(ctx)
-
-	st := h.store
 	var resolved string
 	if entityType != "" {
 		resolved = h.types.resolveType(entityType)
 	}
-
-	type orphanSummary struct {
-		ID     string `json:"id"`
-		Type   string `json:"type"`
-		Title  string `json:"title,omitempty"`
-		Status string `json:"status,omitempty"`
-	}
-	summaries := make([]orphanSummary, 0)
-	for _, id := range orphanIDs {
-		e, err := st.Resolve(ctx, id)
-		if err != nil {
-			continue
-		}
-		if resolved != "" && e.Type != resolved {
-			continue
-		}
-		summaries = append(summaries, orphanSummary{
-			ID: e.ID, Type: e.Type, Title: displayTitle(h.meta, e), Status: e.Status(),
-		})
+	summaries, err := orphanSummaries(ctx, h.tracer, h.store, h.meta, resolved)
+	if err != nil {
+		return nil, err
 	}
 
 	orphanText, err := marshalJSON(summaries)

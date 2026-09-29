@@ -113,7 +113,7 @@ func (m *mockWorkspace) services(projectRoot string) WriteDeps {
 	return WriteDeps{
 		ReadDeps: ReadDeps{
 			VisibleReader: visibility.Unrestricted(m.store),
-			Tracer:        tracer.New(m.store),
+			Tracer:        tracer.New(m.store, store.WorldScope{}),
 			Searcher:      &mockSearcher{ws: m},
 			Meta:          m.meta,
 			ProjectRoot:   projectRoot,
@@ -2472,7 +2472,7 @@ func (t *ctxSpyTracer) FindPath(ctx context.Context, fromID, toID string) []trac
 	return t.inner.FindPath(ctx, fromID, toID)
 }
 
-func (t *ctxSpyTracer) FindOrphans(ctx context.Context) ([]string, error) {
+func (t *ctxSpyTracer) FindOrphans(ctx context.Context) ([]tracer.Orphan, error) {
 	return t.inner.FindOrphans(ctx)
 }
 

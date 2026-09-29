@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/store"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -31,7 +33,7 @@ func seedGraph(t *testing.T) *tracer.GenericTracer {
 	s.CreateRelation(ctx(), "A", "implements", "B", nil)
 	s.CreateRelation(ctx(), "B", "requires", "C", nil)
 
-	return tracer.New(s)
+	return tracer.New(s, store.WorldScope{})
 }
 
 func TestTraceFrom(t *testing.T) {
@@ -144,7 +146,7 @@ func TestFindOrphans(t *testing.T) {
 	orphans, err := tr.FindOrphans(ctx())
 	require.NoError(t, err)
 	require.Len(t, orphans, 1)
-	assert.Equal(t, "D", orphans[0])
+	assert.Equal(t, tracer.Orphan{ID: "D", Type: orphans[0].Type, Title: "Orphan D"}, orphans[0])
 }
 
 func TestHasCycle_NoCycle(t *testing.T) {
@@ -159,6 +161,6 @@ func TestHasCycle_WithCycle(t *testing.T) {
 	s.CreateRelation(ctx(), "X", "dep", "Y", nil)
 	s.CreateRelation(ctx(), "Y", "dep", "X", nil)
 
-	tr := tracer.New(s)
+	tr := tracer.New(s, store.WorldScope{})
 	assert.True(t, tr.HasCycle(ctx(), "X"))
 }

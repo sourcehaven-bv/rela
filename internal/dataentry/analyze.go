@@ -70,7 +70,11 @@ type analyzeService struct {
 
 // AnalysisIssue represents a single validation issue, optionally linked to an entity.
 type AnalysisIssue struct {
-	EntityID   string // Empty for non-entity issues (e.g., ID gaps)
+	EntityID string // Empty for non-entity issues (e.g., ID gaps)
+	// Face names the row an issue is about when it was judged per face
+	// (BUG-95W7MV). Empty for a faceless entity and for a family-level
+	// finding.
+	Face       entity.Face
 	EntityType string
 	Title      string
 	Message    string
@@ -242,7 +246,10 @@ func (svc analyzeService) analyzeOrphans(ctx context.Context, meta *metamodel.Me
 		Description: "Entities with no incoming or outgoing relations",
 	}
 
-	orphanIDs, _ := svc.tracer.FindOrphans(ctx)
+	// The tracer is gated: an orphan is judged over the edges and faces
+	// this principal may read, and Faces lists only readable faces
+	// (RR-VN71BT). A family counts once, on any face (BUG-95W7MV).
+	found, _ := svc.tracer.FindOrphans(ctx)
 
 	// Each orphan id is re-loaded through the GATED reader before it can become
 	// an issue: a hidden entity's GetAddress returns not-found and is dropped, and
@@ -258,24 +265,29 @@ func (svc analyzeService) analyzeOrphans(ctx context.Context, meta *metamodel.Me
 	// (TKT-1ESTYJ). Sorting first keeps WHICH orphans get reported
 	// deterministic and id-ordered rather than dependent on how far the load
 	// got.
-	natsort.Strings(orphanIDs)
-	var orphans []*entity.Entity
+	//
+	// A faced family has no row at the bare id, so it is re-loaded at its
+	// first readable face and reported with its faces.
+	sort.Slice(found, func(i, j int) bool { return natsort.Less(found[i].ID, found[j].ID) })
 	st := svc.reads
-	for _, id := range orphanIDs {
-		if len(orphans) > maxSectionIssues {
+	for _, o := range found {
+		if len(section.Issues) > maxSectionIssues {
 			break
 		}
-		if e, err := st.GetAddress(ctx, id); err == nil {
-			orphans = append(orphans, e)
+		addr, msg := o.ID, "No relations"
+		if len(o.Faces) > 0 {
+			addr = entity.FormatStateRef(o.ID, o.Faces[0])
+			msg = "No relations on any face (" + joinFaces(o.Faces) + ")"
 		}
-	}
-
-	for _, e := range orphans {
+		e, err := st.GetAddress(ctx, addr)
+		if err != nil {
+			continue
+		}
 		section.Issues = append(section.Issues, AnalysisIssue{
 			EntityID:   e.ID,
 			EntityType: e.Type,
 			Title:      safeDisplayTitle(meta, e),
-			Message:    "No relations",
+			Message:    msg,
 			Severity:   "warning",
 		})
 	}
@@ -295,8 +307,11 @@ func (svc analyzeService) analyzeDuplicates(ctx context.Context, meta *metamodel
 	// row scanned, so the grouping must see the whole set. Grouping HEADERS
 	// rather than entities is what makes that affordable — the map holds
 	// ids and properties, never bodies.
+	//
+	// Every face row takes part, but rows of one id are never duplicates of
+	// each other: a group counts only when it spans two ids (BUG-95W7MV).
 	titleGroups := make(map[string][]store.EntityHeader)
-	for h, err := range svc.reads.ListEntityHeaders(ctx, store.EntityQuery{}) {
+	for h, err := range svc.reads.ListEntityHeaders(ctx, store.EntityQuery{AllStates: true}) {
 		if err != nil {
 			break
 		}
@@ -309,7 +324,7 @@ func (svc analyzeService) analyzeDuplicates(ctx context.Context, meta *metamodel
 	// Collect groups with duplicates, sorted by title
 	var titles []string
 	for title, group := range titleGroups {
-		if len(group) > 1 {
+		if distinctHeaderIDs(group) > 1 {
 			titles = append(titles, title)
 		}
 	}
@@ -320,11 +335,12 @@ func (svc analyzeService) analyzeDuplicates(ctx context.Context, meta *metamodel
 		sortHeadersByID(group)
 		ids := make([]string, len(group))
 		for i, h := range group {
-			ids[i] = h.ID
+			ids[i] = entity.FormatStateRef(h.ID, h.Face)
 		}
 		for _, h := range group {
 			section.Issues = append(section.Issues, AnalysisIssue{
 				EntityID:   h.ID,
+				Face:       h.Face,
 				EntityType: h.Type,
 				Title:      safeHeaderTitle(meta, h),
 				Message:    fmt.Sprintf("Duplicate title (shared by %s)", strings.Join(ids, ", ")),
@@ -358,12 +374,18 @@ func (svc analyzeService) analyzeGaps(ctx context.Context, meta *metamodel.Metam
 		}
 	}
 
-	// Group IDs by prefix
+	// Group IDs by prefix. Every face is scanned so a faced type is never
+	// absent; each id counts once (BUG-95W7MV).
 	prefixGroups := make(map[string][]int)
-	for h, err := range svc.reads.ListEntityHeaders(ctx, store.EntityQuery{}) {
+	seen := make(map[string]bool)
+	for h, err := range svc.reads.ListEntityHeaders(ctx, store.EntityQuery{AllStates: true}) {
 		if err != nil {
 			break
 		}
+		if seen[h.ID] {
+			continue
+		}
+		seen[h.ID] = true
 		parsed, err := entity.ParseEntityID(h.ID)
 		if err != nil || parsed.Prefix == "" {
 			continue
@@ -412,7 +434,11 @@ func (svc analyzeService) analyzeGaps(ctx context.Context, meta *metamodel.Metam
 
 // analyzeCardinality checks relation cardinality constraints.
 //
-//nolint:gocognit,funlen // cardinality analysis enumerates min/max bounds across every relation def and direction; the branches are the distinct violation cases, not extractable shared logic.
+// Coverage follows schema.CheckCardinality (BUG-95W7MV): the outgoing bound
+// of a content-scoped relation is a claim about one face and is counted and
+// reported per face; every other bound is a claim about the family and is
+// counted once per id. Subjects are listed over every face, so a faced type
+// is never absent.
 func (svc analyzeService) analyzeCardinality(ctx context.Context, meta *metamodel.Metamodel) AnalysisSection {
 	section := AnalysisSection{
 		Name:        "Cardinality",
@@ -426,121 +452,127 @@ func (svc analyzeService) analyzeCardinality(ctx context.Context, meta *metamode
 	}
 	natsort.Strings(relNames)
 
-	// listEntities lists headers of a given type, sorted by ID. GATED: only the
-	// requester's visible entities are considered, so a hidden entity's title
-	// cannot reach a cardinality issue.
+	// listEntities lists headers of a given type over every face, sorted by
+	// ID. GATED: only the requester's visible rows are considered, so a
+	// hidden entity's title cannot reach a cardinality issue.
 	//
-	// Materializes per TYPE rather than per store — each entry is a body-free
-	// header, and the caller iterates a type's rows several times (once per
-	// bound being checked), so re-scanning would cost more than it saves.
+	// Materialized once per TYPE. Each entry is a body-free header, and a
+	// type's rows are iterated once per bound being checked.
+	cache := map[string][]store.EntityHeader{}
 	listEntities := func(t string) []store.EntityHeader {
+		if out, ok := cache[t]; ok {
+			return out
+		}
 		var out []store.EntityHeader
-		for h, err := range svc.reads.ListEntityHeaders(ctx, store.EntityQuery{Type: t}) {
+		for h, err := range svc.reads.ListEntityHeaders(ctx, store.EntityQuery{Type: t, AllStates: true}) {
 			if err != nil {
 				break
 			}
 			out = append(out, h)
 		}
 		sortHeadersByID(out)
+		cache[t] = out
 		return out
 	}
 
-	// countRelations counts relations of a specific type for an entity. RAW
-	// (ungated): a count is a structural fact, not a value — it cannot leak.
-	// Under partial visibility this may over/under-count and produce a false
-	// cardinality violation (guarded by the roles annotation, arc step 2).
-	countRelations := func(entityID, relType string, direction store.Direction) int {
+	// countRelations counts relations of a specific type for an entity, on
+	// one tail face when face is non-nil. RAW (ungated): a count is a
+	// structural fact, not a value — it cannot leak. Under partial
+	// visibility this may over/under-count and produce a false cardinality
+	// violation (guarded by the roles annotation, arc step 2).
+	countRelations := func(entityID string, face *entity.Face, relType string, direction store.Direction) int {
 		n, _ := svc.relCounts.CountRelations(ctx, store.RelationQuery{
-			EntityID: entityID, Type: relType, Direction: direction,
+			EntityID: entityID, Type: relType, Direction: direction, FromFace: face,
 		})
 		return n
 	}
 
 	for _, relName := range relNames {
 		relDef := meta.Relations[relName]
-
-		// Check min_outgoing
-		if relDef.MinOutgoing != nil && *relDef.MinOutgoing > 0 {
-			for _, sourceType := range relDef.From {
-				for _, e := range listEntities(sourceType) {
-					count := countRelations(e.ID, relName, store.DirectionOutgoing)
-					if count < *relDef.MinOutgoing {
-						section.Issues = append(section.Issues, AnalysisIssue{
-							EntityID:   e.ID,
-							EntityType: e.Type,
-							Title:      safeHeaderTitle(meta, e),
-							Message:    fmt.Sprintf("Must have at least %d '%s' relation(s), has %d", *relDef.MinOutgoing, relName, count),
-							Severity:   "error",
-						})
-					}
-				}
-			}
+		incomingLabel := relName
+		if relDef.Inverse != nil && relDef.Inverse.GetID() != "" {
+			incomingLabel = relDef.Inverse.GetID()
 		}
-
-		// Check max_outgoing
-		if relDef.MaxOutgoing != nil {
-			for _, sourceType := range relDef.From {
-				for _, e := range listEntities(sourceType) {
-					count := countRelations(e.ID, relName, store.DirectionOutgoing)
-					if count > *relDef.MaxOutgoing {
-						section.Issues = append(section.Issues, AnalysisIssue{
-							EntityID:   e.ID,
-							EntityType: e.Type,
-							Title:      safeHeaderTitle(meta, e),
-							Message:    fmt.Sprintf("Has more than %d '%s' relation(s): %d", *relDef.MaxOutgoing, relName, count),
-							Severity:   "error",
-						})
-					}
-				}
-			}
+		perFaceOut := relDef.Scope.IsContent()
+		bounds := []cardinalityBound{
+			{relDef.From, store.DirectionOutgoing, perFaceOut, relDef.MinOutgoing, true, relName},
+			{relDef.From, store.DirectionOutgoing, perFaceOut, relDef.MaxOutgoing, false, relName},
+			{relDef.To, store.DirectionIncoming, false, relDef.MinIncoming, true, incomingLabel},
+			{relDef.To, store.DirectionIncoming, false, relDef.MaxIncoming, false, incomingLabel},
 		}
-
-		// Check min_incoming
-		if relDef.MinIncoming != nil && *relDef.MinIncoming > 0 {
-			for _, targetType := range relDef.To {
-				for _, e := range listEntities(targetType) {
-					count := countRelations(e.ID, relName, store.DirectionIncoming)
-					if count < *relDef.MinIncoming {
-						relLabel := relName
-						if relDef.Inverse != nil && relDef.Inverse.GetID() != "" {
-							relLabel = relDef.Inverse.GetID()
-						}
-						section.Issues = append(section.Issues, AnalysisIssue{
-							EntityID:   e.ID,
-							EntityType: e.Type,
-							Title:      safeHeaderTitle(meta, e),
-							Message:    fmt.Sprintf("Must have at least %d '%s' relation(s), has %d", *relDef.MinIncoming, relLabel, count),
-							Severity:   "error",
-						})
-					}
-				}
+		for _, b := range bounds {
+			if b.limit == nil || (b.isMin && *b.limit <= 0) {
+				continue
 			}
-		}
-
-		// Check max_incoming
-		if relDef.MaxIncoming != nil {
-			for _, targetType := range relDef.To {
-				for _, e := range listEntities(targetType) {
-					count := countRelations(e.ID, relName, store.DirectionIncoming)
-					if count > *relDef.MaxIncoming {
-						relLabel := relName
-						if relDef.Inverse != nil && relDef.Inverse.GetID() != "" {
-							relLabel = relDef.Inverse.GetID()
-						}
-						section.Issues = append(section.Issues, AnalysisIssue{
-							EntityID:   e.ID,
-							EntityType: e.Type,
-							Title:      safeHeaderTitle(meta, e),
-							Message:    fmt.Sprintf("Has more than %d '%s' relation(s): %d", *relDef.MaxIncoming, relLabel, count),
-							Severity:   "error",
-						})
-					}
-				}
-			}
+			section.Issues = append(section.Issues, b.issues(meta, relName, listEntities, countRelations)...)
 		}
 	}
 
 	return capIssues(section)
+}
+
+// cardinalityBound is one min or max bound on one side of a relation, as
+// [analyzeService.analyzeCardinality] checks it.
+type cardinalityBound struct {
+	types     []string
+	direction store.Direction
+	perFace   bool
+	limit     *int
+	isMin     bool
+	label     string
+}
+
+// issues checks the bound on every subject of its types. A per-face bound
+// checks each row; any other bound checks each id once.
+func (b cardinalityBound) issues(
+	meta *metamodel.Metamodel, relName string,
+	list func(string) []store.EntityHeader,
+	count func(string, *entity.Face, string, store.Direction) int,
+) []AnalysisIssue {
+	var out []AnalysisIssue
+	for _, subjectType := range b.types {
+		seen := map[string]bool{}
+		for _, e := range list(subjectType) {
+			var face *entity.Face
+			if b.perFace {
+				f := e.Face
+				face = &f
+			} else if seen[e.ID] {
+				continue
+			}
+			seen[e.ID] = true
+			msg, violated := b.check(count(e.ID, face, relName, b.direction))
+			if !violated {
+				continue
+			}
+			issue := AnalysisIssue{
+				EntityID:   e.ID,
+				EntityType: e.Type,
+				Title:      safeHeaderTitle(meta, e),
+				Message:    msg,
+				Severity:   "error",
+			}
+			if b.perFace {
+				issue.Face = e.Face
+			}
+			out = append(out, issue)
+		}
+	}
+	return out
+}
+
+// check reports whether n violates the bound, with the issue message.
+func (b cardinalityBound) check(n int) (string, bool) {
+	if b.isMin {
+		if n < *b.limit {
+			return fmt.Sprintf("Must have at least %d '%s' relation(s), has %d", *b.limit, b.label, n), true
+		}
+		return "", false
+	}
+	if n > *b.limit {
+		return fmt.Sprintf("Has more than %d '%s' relation(s): %d", *b.limit, b.label, n), true
+	}
+	return "", false
 }
 
 // analyzeProperties validates all entity properties against the metamodel.
@@ -555,13 +587,17 @@ func (svc analyzeService) analyzeProperties(ctx context.Context, meta *metamodel
 	// previous shape drained every entity into a slice purely to sort it —
 	// sorting the (far smaller) issue list afterwards is equivalent, since
 	// each entity contributes a contiguous run of issues in ID order.
-	for h, err := range svc.reads.ListEntityHeaders(ctx, store.EntityQuery{}) {
+	//
+	// Every face row is validated: each holds its own values, and a faced
+	// type has no default row (BUG-95W7MV).
+	for h, err := range svc.reads.ListEntityHeaders(ctx, store.EntityQuery{AllStates: true}) {
 		if err != nil {
 			break
 		}
 		for _, verr := range meta.ValidateEntity(h.ID, h.Type, h.Properties) {
 			section.Issues = append(section.Issues, AnalysisIssue{
 				EntityID:   h.ID,
+				Face:       h.Face,
 				EntityType: h.Type,
 				Title:      safeHeaderTitle(meta, h),
 				Message:    verr.Error(),
@@ -698,8 +734,12 @@ func safeDisplayTitle(meta *metamodel.Metamodel, e *entity.Entity) string {
 }
 
 // sortHeadersByID is [sortStoreEntitiesByID] for content-free headers.
+// Rows of one id are ordered by face.
 func sortHeadersByID(headers []store.EntityHeader) {
 	sort.Slice(headers, func(i, j int) bool {
+		if headers[i].ID == headers[j].ID {
+			return headers[i].Face < headers[j].Face
+		}
 		return natsort.Less(headers[i].ID, headers[j].ID)
 	})
 }
@@ -739,4 +779,22 @@ func normalizeTitle(s string) string {
 	s = strings.TrimSpace(s)
 	fields := strings.Fields(s)
 	return strings.Join(fields, " ")
+}
+
+// distinctHeaderIDs counts the ids among headers.
+func distinctHeaderIDs(headers []store.EntityHeader) int {
+	ids := make(map[string]struct{}, len(headers))
+	for _, h := range headers {
+		ids[h.ID] = struct{}{}
+	}
+	return len(ids)
+}
+
+// joinFaces renders a face list for an issue message.
+func joinFaces(faces []entity.Face) string {
+	names := make([]string, len(faces))
+	for i, f := range faces {
+		names[i] = string(f)
+	}
+	return strings.Join(names, ", ")
 }

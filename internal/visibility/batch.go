@@ -173,14 +173,32 @@ func (r *Resolver) scanHeaders(
 	if len(ids) == 0 {
 		return map[string]map[entity.Face]store.EntityHeader{}, nil
 	}
-	stored := make(map[string][]store.EntityHeader, len(ids))
-	q := store.EntityQuery{IDs: ids, AllStates: true}
+	stored, err := r.storedHeaders(ctx, store.EntityQuery{IDs: ids, AllStates: true})
+	if err != nil {
+		return nil, err
+	}
+	return r.gateHeaders(ctx, stored, onGateErr)
+}
+
+// storedHeaders reads the headers q selects, grouped by id.
+func (r *Resolver) storedHeaders(ctx context.Context, q store.EntityQuery) (map[string][]store.EntityHeader, error) {
+	stored := make(map[string][]store.EntityHeader, len(q.IDs))
 	for h, err := range store.ListEntityHeaders(ctx, r.load, q) {
 		if err != nil {
 			return nil, err
 		}
 		stored[h.ID] = append(stored[h.ID], h)
 	}
+	return stored, nil
+}
+
+// gateHeaders keeps, per id, the headers of the faces the principal may
+// read: one PermitsReadMany and one face-set lookup per stored type. A
+// family stored under two types is dropped. onGateErr is as for
+// scanHeaders.
+func (r *Resolver) gateHeaders(
+	ctx context.Context, stored map[string][]store.EntityHeader, onGateErr func(typ string, err error) error,
+) (map[string]map[entity.Face]store.EntityHeader, error) {
 	byType := make(map[string][]string)
 	for id, hs := range stored {
 		if typ, ok := singleType(hs); ok {

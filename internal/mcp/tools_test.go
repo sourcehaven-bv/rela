@@ -1000,7 +1000,7 @@ func TestHandleAnalyzeOrphans(t *testing.T) {
 	}
 	text := getResultText(t, result)
 	// REQ-002, REQ-003 are orphans (no relations)
-	if !strings.Contains(text, `"check":"orphans","count":2`) {
+	if !strings.Contains(text, `"check":"orphans","coverage":`) || !strings.Contains(text, `"count":2`) {
 		t.Errorf("expected two orphan entities, got %s", text)
 	}
 }

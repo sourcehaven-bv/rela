@@ -13,7 +13,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/errors"
-	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/output"
@@ -45,7 +44,17 @@ func resolveAnalyzeOpts() (*analysis.Options, error) {
 
 // writeAnalysisJSON writes an analysis result if JSON output is enabled.
 func writeAnalysisJSON(count int, details any, successMsg, issuesFmt string) bool {
+	return writeCoveredAnalysis("", count, details, successMsg, issuesFmt)
+}
+
+// writeCoveredAnalysis is [writeAnalysisJSON] for a check whose findings
+// on a faced type need their coverage stated (BUG-95W7MV). In text mode it
+// prints the coverage header instead and returns false.
+func writeCoveredAnalysis(coverage string, count int, details any, successMsg, issuesFmt string) bool {
 	if out.Format != "json" {
+		if coverage != "" {
+			out.WriteMessage("Coverage: %s", coverage)
+		}
 		return false
 	}
 	status := "success"
@@ -55,9 +64,22 @@ func writeAnalysisJSON(count int, details any, successMsg, issuesFmt string) boo
 		message = fmt.Sprintf(issuesFmt, count)
 	}
 	_ = out.WriteAnalysisResult(output.AnalysisResult{
-		Status: status, Message: message, Count: count, Details: details,
+		Status: status, Message: message, Coverage: coverage, Count: count, Details: details,
 	})
 	return true
+}
+
+// faceSuffix renders a family's faces for text output, or "" for a
+// faceless entity.
+func faceSuffix(faces []entity.Face) string {
+	if len(faces) == 0 {
+		return ""
+	}
+	names := make([]string, len(faces))
+	for i, f := range faces {
+		names[i] = string(f)
+	}
+	return " [faces: " + strings.Join(names, ", ") + "]"
 }
 
 // reportPartialScan renders the incomplete-scan condition for an
@@ -97,10 +119,11 @@ func (c *AnalyzeOrphansCmd) Run(ctx context.Context, analyzer *analysis.Service)
 		return err
 	}
 	orphans, scanErr := analyzer.FindOrphansWithScope(ctx, *opts)
-	filter.SortByID(orphans, storeEntityRecord, false)
 
 	orphansMsg := "No orphan entities found"
-	if writeAnalysisJSON(len(orphans), orphans, orphansMsg, "Found %d orphan entities") {
+	if writeCoveredAnalysis(analysis.CoverageFamily, len(orphans), orphans, orphansMsg,
+		"Found %d orphan entities") {
+
 		return reportPartialScan(scanErr)
 	}
 
@@ -111,8 +134,12 @@ func (c *AnalyzeOrphansCmd) Run(ctx context.Context, analyzer *analysis.Service)
 		return reportPartialScan(scanErr)
 	}
 	out.WriteWarning("Found %d orphan entities:", len(orphans))
-	if err := out.WriteEntities(orphans); err != nil {
-		return err
+	for _, o := range orphans {
+		title := ""
+		if o.Title != "" {
+			title = " " + o.Title
+		}
+		out.WriteMessage("  - %s (%s)%s%s", o.ID, o.Type, title, faceSuffix(o.Faces))
 	}
 	return reportPartialScan(scanErr)
 }
@@ -128,7 +155,9 @@ func (c *AnalyzeDuplicatesCmd) Run(ctx context.Context, analyzer *analysis.Servi
 	}
 	duplicates, scanErr := analyzer.FindDuplicates(ctx, *opts)
 
-	if out.Format == "json" {
+	if out.Format != "json" {
+		out.WriteMessage("Coverage: %s", analysis.CoverageEveryFace)
+	} else {
 		type duplicateGroup struct {
 			Title    string           `json:"title"`
 			Entities []*entity.Entity `json:"entities"`
@@ -137,7 +166,7 @@ func (c *AnalyzeDuplicatesCmd) Run(ctx context.Context, analyzer *analysis.Servi
 		for _, group := range duplicates {
 			details = append(details, duplicateGroup{Title: group.Title, Entities: group.Entities})
 		}
-		writeAnalysisJSON(len(duplicates), details,
+		writeCoveredAnalysis(analysis.CoverageEveryFace, len(duplicates), details,
 			"No duplicate titles found", "Found %d groups of potential duplicates")
 		return reportPartialScan(scanErr)
 	}
@@ -153,7 +182,7 @@ func (c *AnalyzeDuplicatesCmd) Run(ctx context.Context, analyzer *analysis.Servi
 		out.WriteMessage("")
 		out.WriteMessage("  Title: %s", group.Title)
 		for _, e := range group.Entities {
-			out.WriteMessage("    - %s (%s)", e.ID, e.Type)
+			out.WriteMessage("    - %s (%s)", entity.FormatStateRef(e.ID, e.Face), e.Type)
 		}
 	}
 	return reportPartialScan(scanErr)
@@ -171,20 +200,23 @@ func (c *AnalyzeUniqueCmd) Run(ctx context.Context, analyzer *analysis.Service) 
 	}
 	violations, scanErr := analyzer.FindUniqueViolations(ctx, *opts)
 
-	if out.Format == "json" {
+	if out.Format != "json" {
+		out.WriteMessage("Coverage: %s", analysis.CoveragePerFace)
+	} else {
 		type uniqueViolation struct {
 			EntityType string           `json:"entity_type"`
 			Property   string           `json:"property"`
+			Face       entity.Face      `json:"face,omitempty"`
 			Value      string           `json:"value"`
 			Entities   []*entity.Entity `json:"entities"`
 		}
 		details := make([]uniqueViolation, 0, len(violations))
 		for _, v := range violations {
 			details = append(details, uniqueViolation{
-				EntityType: v.EntityType, Property: v.Property, Value: v.Value, Entities: v.Entities,
+				EntityType: v.EntityType, Property: v.Property, Face: v.Face, Value: v.Value, Entities: v.Entities,
 			})
 		}
-		writeAnalysisJSON(len(violations), details,
+		writeCoveredAnalysis(analysis.CoveragePerFace, len(violations), details,
 			"No unique constraint violations found", "Found %d unique constraint violations")
 		return reportPartialScan(scanErr)
 	}
@@ -198,7 +230,11 @@ func (c *AnalyzeUniqueCmd) Run(ctx context.Context, analyzer *analysis.Service) 
 	out.WriteWarning("Found %d unique constraint violations:", len(violations))
 	for _, v := range violations {
 		out.WriteMessage("")
-		out.WriteMessage("  %s.%s = %q shared by:", v.EntityType, v.Property, v.Value)
+		face := ""
+		if v.Face != "" {
+			face = fmt.Sprintf(" (face %s)", v.Face)
+		}
+		out.WriteMessage("  %s.%s = %q%s shared by:", v.EntityType, v.Property, v.Value, face)
 		for _, e := range v.Entities {
 			out.WriteMessage("    - %s", e.ID)
 		}
@@ -217,7 +253,9 @@ func (c *AnalyzeGapsCmd) Run(ctx context.Context, analyzer *analysis.Service) er
 	}
 	allGaps, scanErr := analyzer.FindGaps(ctx, *opts)
 	gapsMsg := "No ID sequence gaps found"
-	if writeAnalysisJSON(len(allGaps), allGaps, gapsMsg, "Found gaps in %d ID sequences") {
+	if writeCoveredAnalysis(analysis.CoverageFamily, len(allGaps), allGaps, gapsMsg,
+		"Found gaps in %d ID sequences") {
+
 		return reportPartialScan(scanErr)
 	}
 
@@ -248,12 +286,14 @@ func (c *AnalyzeCardinalityCmd) Run(ctx context.Context, analyzer *analysis.Serv
 		return err
 	}
 	cardMsg := "All cardinality constraints satisfied"
-	if writeAnalysisJSON(len(violations), violations, cardMsg, "Found %d cardinality violations") {
+	if writeCoveredAnalysis(analysis.CoverageCardinality, len(violations), violations, cardMsg,
+		"Found %d cardinality violations") {
+
 		return nil
 	}
 
 	for _, v := range violations {
-		out.WriteWarning("%s %s", v.EntityID, v.Message())
+		out.WriteWarning("%s %s", entity.FormatStateRef(v.EntityID, v.Face), v.Message())
 	}
 	if len(violations) == 0 {
 		out.WriteSuccess("All cardinality constraints satisfied")
@@ -449,6 +489,7 @@ func writePropertyValidationJSON(
 		entityResults = append(entityResults, output.PropertyValidationResult{
 			EntityID:   ee.EntityID,
 			EntityType: ee.EntityType,
+			Face:       ee.Face,
 			Errors:     errStrings,
 		})
 	}
@@ -479,7 +520,7 @@ func writePropertyValidationJSON(
 		details["relations"] = relationResults
 	}
 	return out.WriteAnalysisResult(output.AnalysisResult{
-		Status: status, Message: message, Count: errorCount, Details: details,
+		Status: status, Message: message, Coverage: analysis.CoverageEachRow, Count: errorCount, Details: details,
 	})
 }
 
@@ -488,6 +529,7 @@ func writePropertyValidationText(
 	allRelationErrors []schema.RelationPropertyError,
 	errorCount int,
 ) error {
+	out.WriteMessage("Coverage: %s", analysis.CoverageEachRow)
 	if errorCount == 0 {
 		out.WriteSuccess("All entity and relation properties are valid")
 		return nil
@@ -497,7 +539,7 @@ func writePropertyValidationText(
 		out.WriteMessage("")
 		out.WriteMessage("Entities (%d):", len(allEntityErrors))
 		for _, ee := range allEntityErrors {
-			out.WriteMessage("  %s (%s):", ee.EntityID, ee.EntityType)
+			out.WriteMessage("  %s (%s):", entity.FormatStateRef(ee.EntityID, ee.Face), ee.EntityType)
 			for _, err := range ee.Errors {
 				out.WriteMessage("    - %s", err.Error())
 			}

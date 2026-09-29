@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"iter"
+	"reflect"
+	"slices"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -260,11 +262,15 @@ func TestVisibleTracer_IsFaceGated(t *testing.T) {
 	if _, err := st.CreateRelation(ctx, "TKT-1", "blocks", "TKT-2", nil); err != nil {
 		t.Fatal(err)
 	}
-	base := tracer.New(st)
+	base := tracer.New(st, store.WorldScope{})
 
 	// Control: with every face permitted the trace carries the draft title,
 	// so the absence below is the gate's doing and not an empty fixture.
-	open, err := NewVisibleTracer(base, faceRowGate{}, NopRedactor{}, st)
+	openRes, err := NewResolver(faceRowGate{}, NopRedactor{}, st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	open, err := NewVisibleTracer(base, openRes, st, store.WorldScope{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -272,9 +278,13 @@ func TestVisibleTracer_IsFaceGated(t *testing.T) {
 		t.Fatalf("precondition: an unrestricted trace must show the draft; got %+v", res)
 	}
 
-	gated, err := NewVisibleTracer(base,
+	gatedRes, err := NewResolver(
 		faceRowGate{permitted: map[string][]entity.Face{"ticket": {"published"}}},
 		NopRedactor{}, st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gated, err := NewVisibleTracer(base, gatedRes, st, store.WorldScope{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -282,5 +292,142 @@ func TestVisibleTracer_IsFaceGated(t *testing.T) {
 	if res != nil {
 		t.Errorf("a published-only principal must see nothing of a draft-only "+
 			"trace; got root %q with %d children", res.Title, len(res.Children))
+	}
+}
+
+// A principal who cannot read one face of a family (A4, BUG-95W7MV): the
+// hidden face is absent from every face list, and an edge hung from it
+// neither connects the family nor appears in a trace or path.
+func TestVisibleTracer_HiddenFace(t *testing.T) {
+	ctx := context.Background()
+	st := memstore.New()
+	for _, e := range []*entity.Entity{
+		{ID: "POL-1", Type: "policy", Face: "draft", Properties: map[string]any{"title": "Draft"}},
+		{ID: "POL-1", Type: "policy", Face: published, Properties: map[string]any{"title": "Published"}},
+		{ID: "CTL-1", Type: "control", Properties: map[string]any{"title": "Control"}},
+	} {
+		if err := st.CreateEntity(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := st.CreateRelation(ctx, "POL-1", "implements", "CTL-1",
+		&store.RelationData{FromFace: "draft"}); err != nil {
+		t.Fatal(err)
+	}
+	base := tracer.New(st, store.WorldScope{})
+	build := func(g faceRowGate) *VisibleTracer {
+		t.Helper()
+		res, err := NewResolver(g, NopRedactor{}, st)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tr, err := NewVisibleTracer(base, res, st, store.WorldScope{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return tr
+	}
+	open := build(faceRowGate{})
+	gated := build(faceRowGate{permitted: map[string][]entity.Face{"policy": {published}}})
+
+	t.Run("orphans", func(t *testing.T) {
+		// Control: with every face readable the draft edge connects both.
+		if got, err := open.FindOrphans(ctx); err != nil || len(got) != 0 {
+			t.Fatalf("open orphans = %+v, %v; want none", got, err)
+		}
+		got, err := gated.FindOrphans(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := []tracer.Orphan{
+			{ID: "CTL-1", Type: "control", Title: "Control"},
+			{ID: "POL-1", Type: "policy", Faces: []entity.Face{published}},
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("gated orphans = %+v, want %+v", got, want)
+		}
+	})
+
+	t.Run("trace", func(t *testing.T) {
+		if res := open.TraceFrom(ctx, "POL-1", 3); res == nil || len(res.Children) != 1 ||
+			!reflect.DeepEqual(res.Faces, []entity.Face{"draft", published}) {
+
+			t.Fatalf("open trace = %+v; want both faces and the draft edge", res)
+		}
+		res := gated.TraceFrom(ctx, "POL-1", 3)
+		if res == nil {
+			t.Fatal("the published face is readable, so the family must trace")
+		}
+		if !reflect.DeepEqual(res.Faces, []entity.Face{published}) {
+			t.Errorf("faces = %v, want [published]", res.Faces)
+		}
+		if len(res.Children) != 0 {
+			t.Errorf("an edge hung from the hidden draft leaked: %+v", res.Children[0])
+		}
+		if up := gated.TraceTo(ctx, "CTL-1", 3); up == nil || len(up.Children) != 0 {
+			t.Errorf("TraceTo leaked the draft edge: %+v", up)
+		}
+	})
+
+	t.Run("path", func(t *testing.T) {
+		if steps := open.FindPath(ctx, "POL-1", "CTL-1"); len(steps) != 2 {
+			t.Fatalf("open path = %+v; want 2 steps", steps)
+		}
+		if steps := gated.FindPath(ctx, "POL-1", "CTL-1"); steps != nil {
+			t.Errorf("path over the hidden draft edge leaked: %+v", steps)
+		}
+	})
+}
+
+// The traversal follows only readable edges, so a visible node first
+// reachable through a hidden one still shows its visible subtree. A
+// post-hoc filter lost it: the base expands each id once, under the hidden
+// branch that is then pruned, and the visible occurrence was a bare leaf.
+//
+// From R, outgoing edges are walked first: R -> H -> X -> Y would expand X
+// under the hidden H. X -> R (incoming to R) is the visible route.
+func TestVisibleTracer_TraversalSkipsHiddenEdges(t *testing.T) {
+	ctx := context.Background()
+	st := memstore.New()
+	for _, e := range []*entity.Entity{
+		{ID: "R", Type: "note"},
+		{ID: "H", Type: "policy", Face: "draft"},
+		{ID: "X", Type: "note"},
+		{ID: "Y", Type: "note"},
+	} {
+		if err := st.CreateEntity(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, r := range [][2]string{{"R", "H"}, {"H", "X"}, {"X", "R"}, {"X", "Y"}} {
+		if _, err := st.CreateRelation(ctx, r[0], "links", r[1], nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	res, err := NewResolver(faceRowGate{permitted: map[string][]entity.Face{"policy": {published}}}, NopRedactor{}, st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr, err := NewVisibleTracer(tracer.New(st, store.WorldScope{}), res, st, store.WorldScope{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	root := tr.TraceFrom(ctx, "R", 0)
+	if root == nil || len(root.Children) != 1 || root.Children[0].ID != "X" {
+		t.Fatalf("trace = %+v, want R with the single visible child X", root)
+	}
+	var kids []string
+	for _, c := range root.Children[0].Children {
+		kids = append(kids, c.ID)
+	}
+	if !slices.Contains(kids, "Y") {
+		t.Fatalf("X lost its visible child Y: children %v", kids)
+	}
+	if steps := tr.FindPath(ctx, "R", "Y"); len(steps) != 3 {
+		t.Errorf("path R..Y = %+v, want the visible route R, X, Y", steps)
+	}
+	if tr.HasCycle(ctx, "X") {
+		t.Error("the only cycle through X passes through the hidden H")
 	}
 }

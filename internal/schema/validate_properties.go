@@ -12,9 +12,13 @@ import (
 
 // PropertyError aggregates metamodel validation errors for a single
 // entity in the store.
+//
+// Face names the row: each face holds its own property values, so each is
+// validated and reported on its own.
 type PropertyError struct {
 	EntityID   string
 	EntityType string
+	Face       entity.Face
 	Errors     []*metamodel.ValidationError
 }
 
@@ -48,6 +52,7 @@ func ValidateEntityProperties(
 			out = append(out, PropertyError{
 				EntityID:   e.ID,
 				EntityType: e.Type,
+				Face:       e.Face,
 				Errors:     errs,
 			})
 		}

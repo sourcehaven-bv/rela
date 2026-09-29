@@ -170,7 +170,8 @@ func New(meta *metamodel.Metamodel, opts ...Option) *appbuild.Services {
 
 	searchBackend := newSearchBackend()
 	st := resolveStore(cfg.store, searchBackend)
-	tr := tracer.New(st)
+	// The zero scope is the default world; the fixture compiles no worlds.
+	tr := tracer.New(st, store.WorldScope{})
 	searcher := resolveSearcher(st, searchBackend)
 	readDeps := buildReadDeps(st, tr, searcher, meta, cfg.paths)
 

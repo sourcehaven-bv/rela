@@ -3,7 +3,7 @@
     "tool": "analyze",
     "args": "{\"check\":\"orphans\"}",
     "isError": false,
-    "text": "{\"check\":\"orphans\",\"count\":2,\"results\":[{\"id\":\"REQ-002\",\"type\":\"requirement\",\"title\":\"Second requirement\",\"status\":\"draft\"},{\"id\":\"REQ-003\",\"type\":\"requirement\",\"title\":\"Third requirement\",\"status\":\"accepted\"}]}"
+    "text": "{\"check\":\"orphans\",\"coverage\":\"families (one finding per id, over every face)\",\"count\":2,\"results\":[{\"id\":\"REQ-002\",\"type\":\"requirement\",\"title\":\"Second requirement\",\"status\":\"draft\"},{\"id\":\"REQ-003\",\"type\":\"requirement\",\"title\":\"Third requirement\",\"status\":\"accepted\"}]}"
   },
   {
     "tool": "attach_file",

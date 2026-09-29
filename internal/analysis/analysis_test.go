@@ -43,7 +43,7 @@ func newServiceWith(t *testing.T, meta *metamodel.Metamodel, seed func(store.Sto
 	if seed != nil {
 		seed(st)
 	}
-	tr := tracer.New(st)
+	tr := tracer.New(st, store.WorldScope{})
 	svc, err := analysis.New(analysis.Deps{
 		Store:  st,
 		Meta:   meta,
@@ -505,7 +505,7 @@ func TestCheckCardinality_CountErrorFailsLoudly(t *testing.T) {
 
 	countErr := errors.New("backend down")
 	broken := &failingCountStore{Store: st, err: countErr}
-	tr := tracer.New(broken)
+	tr := tracer.New(broken, store.WorldScope{})
 	svc, err := analysis.New(analysis.Deps{Store: broken, Meta: meta, Tracer: tr,
 		LuaReadDeps: lua.ReadDeps{VisibleReader: visibility.Unrestricted(broken), Tracer: tr, Meta: meta}})
 	if err != nil {
@@ -659,7 +659,7 @@ func TestService_New_RejectsNilDeps(t *testing.T) {
 	// the next nil-check fires.
 	meta := &metamodel.Metamodel{}
 	st := memstore.New()
-	tr := tracer.New(st)
+	tr := tracer.New(st, store.WorldScope{})
 
 	cases := []struct {
 		name string

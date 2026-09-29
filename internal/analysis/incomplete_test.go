@@ -68,7 +68,7 @@ func newFailingService(t *testing.T, meta *metamodel.Metamodel, failAfter int, s
 		seed(base)
 	}
 	st := &errAfterNStore{Store: base, n: failAfter, err: errParse}
-	tr := tracer.New(st)
+	tr := tracer.New(st, store.WorldScope{})
 	svc, err := analysis.New(analysis.Deps{
 		Store:  st,
 		Meta:   meta,

@@ -16,6 +16,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
+	"github.com/Sourcehaven-BV/rela/internal/worlds"
 )
 
 // buildTimeout bounds a whole manual build (all islands together, via a child
@@ -183,12 +184,16 @@ func Build(ctx context.Context, src string, opts Options) (string, error) {
 		defer func() { _ = opts.APIClient.Close() }()
 	}
 
+	compiledWorlds, err := worlds.Compile(opts.Meta)
+	if err != nil {
+		return "", fmt.Errorf("compiling worlds: %w", err)
+	}
 	st := memstore.New()
 	dr := &docRuntime{
 		meta:   opts.Meta,
 		policy: opts.Policy,
 		store:  st,
-		tracer: tracer.New(st),
+		tracer: tracer.New(st, compiledWorlds.Default()),
 		strict: opts.Strict,
 		out:    &strings.Builder{},
 		ctx:    ctx,

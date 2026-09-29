@@ -3,7 +3,10 @@ package visibility
 import (
 	"context"
 	"errors"
+	"iter"
 	"log/slog"
+	"maps"
+	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -16,42 +19,69 @@ import (
 // visibility applied to the results) — with hidden = nonexistent
 // semantics:
 //
-//   - a hidden trace node is pruned WITH its entire subtree (if the node
-//     doesn't exist for you, nothing reached through it does either);
-//   - a path through a hidden intermediate is withheld, indistinguishable
-//     from no-path;
-//   - hidden orphans are dropped;
-//   - HasCycle on a hidden start behaves as on a nonexistent start.
+//   - the base traverses only edges whose ends and tail face are readable
+//     ([Resolver.EndpointsReadable]), so nothing is reached through a
+//     hidden node or over an edge hung from a hidden face, and a visible
+//     node keeps its visible subtree whatever the traversal order;
+//   - a hidden root, or a path with a hidden step, yields nil, exactly
+//     like an unknown id or no path;
+//   - HasCycle on a hidden start behaves as on a nonexistent start, and a
+//     cycle counts only over readable edges.
 //
-// Surviving nodes are still field-redacted: a visible entity can carry
-// hidden properties, and TraceResult.Properties / .Title are built from
-// the raw entity. Redaction always builds FRESH property maps — the base
-// tracer's maps alias live store state (RR-6IL3X7) — and applies the ID
-// title-fallback when the node's title property is hidden (RR-5N4K35).
+// A node is a family (BUG-95W7MV). Every node is re-read from headers through
+// the [Resolver]'s batch gate, so its Faces list only the faces the principal
+// may read, and its Title and Properties come from the face the world selects
+// AMONG those faces, redacted (RR-VN71BT). The base tree's own titles and
+// face lists are never passed through: they were read without a principal.
+// A redacted title falls back to the id (RR-5N4K35); property maps are always
+// fresh (RR-6IL3X7).
+//
+// FindOrphans is the exception to post-hoc filtering: an orphan is a fold
+// over edges, and folding raw edges would let a hidden edge turn a visible
+// family from orphan into non-orphan. It gates families and edges first and
+// folds after (the gate-before-fold rule), without calling the base.
 type VisibleTracer struct {
-	base   tracer.Tracer
-	gate   RowGate
-	redact FieldRedactor
-	get    EntityGetter
+	base  tracer.Tracer
+	res   *Resolver
+	rels  relationLister
+	world store.WorldScope
+}
+
+// EdgeGatable is a tracer that can follow only the edges a gate admits.
+// [NewVisibleTracer] requires it: filtering a tree after an ungated
+// traversal loses visible descendants whose node was first reached over a
+// hidden edge, because the traversal expands each id once. Satisfied by
+// *tracer.GenericTracer.
+type EdgeGatable interface {
+	WithEdgeGate(gate tracer.EdgeGate) tracer.Tracer
+}
+
+// relationLister is the whole-store edge scan [VisibleTracer.FindOrphans]
+// folds over. Satisfied by store.Store.
+type relationLister interface {
+	ListRelations(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error]
 }
 
 // NewVisibleTracer builds the decorator. All collaborators are required.
+// base traverses only the edges [Resolver.EndpointsReadable] admits, so a
+// trace, path or cycle never passes through a hidden node or an edge hung
+// from a hidden face. res supplies the gate, the redactor and the header
+// reads; world selects a node's title face, and wiring passes
+// worlds.Compiled.Default().
 func NewVisibleTracer(
-	base tracer.Tracer, gate RowGate, redact FieldRedactor, get EntityGetter,
+	base EdgeGatable, res *Resolver, rels relationLister, world store.WorldScope,
 ) (*VisibleTracer, error) {
 	if base == nil {
 		return nil, errors.New("visibility: NewVisibleTracer: base must be non-nil")
 	}
-	if gate == nil {
-		return nil, errors.New("visibility: NewVisibleTracer: gate must be non-nil")
+	if res == nil {
+		return nil, errors.New("visibility: NewVisibleTracer: resolver must be non-nil")
 	}
-	if redact == nil {
-		return nil, errors.New("visibility: NewVisibleTracer: redact must be non-nil")
+	if rels == nil {
+		return nil, errors.New("visibility: NewVisibleTracer: relation lister must be non-nil")
 	}
-	if get == nil {
-		return nil, errors.New("visibility: NewVisibleTracer: get must be non-nil")
-	}
-	return &VisibleTracer{base: base, gate: gate, redact: redact, get: get}, nil
+	gated := base.WithEdgeGate(res.EndpointsReadable)
+	return &VisibleTracer{base: gated, res: res, rels: rels, world: world}, nil
 }
 
 // TraceFrom implements [tracer.Tracer].
@@ -64,240 +94,204 @@ func (t *VisibleTracer) TraceTo(ctx context.Context, id string, maxDepth int) *t
 	return t.filterTree(ctx, t.base.TraceTo(ctx, id, maxDepth))
 }
 
-// filterTree gates every node of the returned tree with ONE
-// PermitsReadMany per distinct type, then rebuilds the tree pruning
-// hidden nodes (and their subtrees) and redacting the survivors. A nil
-// or hidden root yields nil — the same shape the base tracer returns for
+// filterTree presents every node of the returned tree through one batched
+// gate, then rebuilds the tree pruning hidden nodes (and their subtrees). A
+// nil or hidden root yields nil — the same shape the base tracer returns for
 // an unknown id.
 func (t *VisibleTracer) filterTree(ctx context.Context, root *tracer.TraceResult) *tracer.TraceResult {
 	if root == nil {
 		return nil
 	}
-	byType := map[string][]string{}
-	collectNodeIDs(root, byType, map[string]bool{})
-	visible := t.permittedIDs(ctx, byType)
-	return t.rebuild(ctx, root, visible)
+	seen := map[string]bool{}
+	var ids []string
+	collectNodeIDs(root, &ids, seen)
+	return rebuild(root, t.present(ctx, ids))
 }
 
-// collectNodeIDs walks the tree gathering distinct node ids grouped by
-// entity type (tree nodes carry Type), for the batched gate probe.
-func collectNodeIDs(n *tracer.TraceResult, byType map[string][]string, seen map[string]bool) {
+// collectNodeIDs walks the tree gathering distinct node ids.
+func collectNodeIDs(n *tracer.TraceResult, ids *[]string, seen map[string]bool) {
 	if n == nil {
 		return
 	}
 	if !seen[n.ID] {
 		seen[n.ID] = true
-		byType[n.Type] = append(byType[n.Type], n.ID)
+		*ids = append(*ids, n.ID)
 	}
 	for _, c := range n.Children {
-		collectNodeIDs(c, byType, seen)
+		collectNodeIDs(c, ids, seen)
 	}
 }
 
-// rebuild returns a filtered COPY of the tree: hidden nodes prune their
-// whole subtree; surviving nodes are redacted onto fresh structs (the
-// base tree's Properties maps alias live store state and are never
-// mutated).
-func (t *VisibleTracer) rebuild(
-	ctx context.Context, n *tracer.TraceResult, visible map[string]bool,
-) *tracer.TraceResult {
-	if n == nil || !visible[n.ID] {
+// rebuild returns a filtered COPY of the tree: hidden nodes, and nodes
+// reached over a hidden edge, prune their whole subtree; surviving nodes
+// take their type, faces, title and properties from nodes (the base tree's
+// are never mutated).
+func rebuild(n *tracer.TraceResult, nodes map[string]tracer.Node) *tracer.TraceResult {
+	if n == nil {
+		return nil
+	}
+	v, ok := nodes[n.ID]
+	if !ok || !tailReadable(n.Tail, nodes) {
 		return nil
 	}
 	out := *n
+	out.Type, out.Faces, out.Title, out.Properties = v.Type, v.Faces, v.Title, v.Properties
 	out.Children = nil
-	t.redactNode(ctx, &out)
 	for _, c := range n.Children {
-		if fc := t.rebuild(ctx, c, visible); fc != nil {
+		if fc := rebuild(c, nodes); fc != nil {
 			out.Children = append(out.Children, fc)
 		}
 	}
 	return &out
 }
 
-// redactNode strips hidden properties from one (visible) node onto a
-// fresh map and applies the ID title-fallback when the title property is
-// hidden. Verdicts are computed against a synthetic entity built from
-// the node's own fields — the tree carries the full raw property map, so
-// `when:` predicates see the same values a store load would provide.
-func (t *VisibleTracer) redactNode(ctx context.Context, n *tracer.TraceResult) {
-	synth := &entity.Entity{ID: n.ID, Type: n.Type, Properties: n.Properties}
-	hidden := t.redact.HiddenProperties(ctx, synth)
+// present reads the readable faces of ids in one header query and presents
+// each readable family as a node with [tracer.NodeOf], then redacts the
+// served face once. An id absent from the result is hidden or missing. A
+// failed read presents nothing (fail-closed, logged by readableHeaders).
+func (t *VisibleTracer) present(ctx context.Context, ids []string) map[string]tracer.Node {
+	readable, ok := t.res.readableHeaders(ctx, ids)
+	if !ok {
+		return nil
+	}
+	nodes := make(map[string]tracer.Node, len(readable))
+	var probes []*entity.Entity
+	for id, byFace := range readable {
+		n, ok := tracer.NodeOf(t.world, slices.Collect(maps.Values(byFace)))
+		if !ok {
+			continue
+		}
+		nodes[id] = n
+		if n.Served {
+			probes = append(probes, nodeEntity(id, n))
+		}
+	}
+	ctx = PrimeTraversals(ctx, t.res.redact, probes)
+	for id, n := range nodes {
+		if n.Served {
+			nodes[id] = t.redactNode(ctx, id, n)
+		}
+	}
+	return nodes
+}
+
+// nodeEntity is the entity a node's served face describes, for field
+// verdicts. The node carries the raw property map of that face, so `when:`
+// predicates see what a store load would provide.
+func nodeEntity(id string, n tracer.Node) *entity.Entity {
+	return &entity.Entity{ID: id, Type: n.Type, Face: n.Face, Properties: n.Properties}
+}
+
+// redactNode strips hidden properties from a served node onto a fresh map
+// and applies the ID title-fallback when the title property is hidden.
+func (t *VisibleTracer) redactNode(ctx context.Context, id string, n tracer.Node) tracer.Node {
+	hidden := t.res.redact.HiddenProperties(ctx, nodeEntity(id, n))
 	if len(hidden) == 0 {
-		return
+		n.Properties = maps.Clone(n.Properties)
+		return n
 	}
 	n.Properties = filterProps(n.Properties, hidden)
 	if _, h := hidden["title"]; h {
-		// TraceResult.Title is the literal `title` property baked in at
-		// build time — the secondary channel redaction must also close.
-		n.Title = n.ID
+		// Title is the literal `title` property — the secondary channel
+		// redaction must also close.
+		n.Title = id
 	}
+	return n
 }
 
-// FindPath implements [tracer.Tracer]. Any hidden step withholds the
-// WHOLE path — revealing "a path exists through something you cannot
-// see" is itself a leak — returning nil exactly like the base's no-path
-// result. (Withholding takes marginally longer than a genuine no-path
-// BFS miss; accepted residual, impractical to exploit in-memory.)
+// FindPath implements [tracer.Tracer]. The base searches readable edges
+// only, so it finds a visible path where one exists. A step that is still
+// hidden when presented (a gate that changed between the two reads)
+// withholds the WHOLE path, returning nil like the base's no-path result.
 func (t *VisibleTracer) FindPath(ctx context.Context, fromID, toID string) []tracer.PathStep {
 	steps := t.base.FindPath(ctx, fromID, toID)
 	if len(steps) == 0 {
 		return nil
 	}
-	byType := map[string][]string{}
-	seen := map[string]bool{}
+	ids := make([]string, 0, len(steps))
 	for _, s := range steps {
-		if !seen[s.ID] {
-			seen[s.ID] = true
-			byType[s.Type] = append(byType[s.Type], s.ID)
-		}
+		ids = append(ids, s.ID)
 	}
-	visible := t.permittedIDs(ctx, byType)
-	for _, s := range steps {
-		if !visible[s.ID] {
-			return nil
-		}
-	}
-
+	nodes := t.present(ctx, ids)
 	out := make([]tracer.PathStep, len(steps))
-	copy(out, steps)
-	for i := range out {
-		if !t.redactStepTitle(ctx, &out[i]) {
+	for i, s := range steps {
+		n, ok := nodes[s.ID]
+		if !ok || !tailReadable(s.Tail, nodes) {
 			return nil
+		}
+		out[i] = tracer.PathStep{
+			ID: s.ID, Type: n.Type, Title: n.Title, Faces: n.Faces, Relation: s.Relation, Tail: s.Tail,
 		}
 	}
 	return out
 }
 
-// redactStepTitle applies the ID title-fallback to one path step. Steps
-// carry no property map, so the entity is loaded to evaluate the field
-// verdict against real values (a synthetic entity without properties
-// could flip a `when:` predicate open). Returns false — withhold the
-// path — when the entity cannot be loaded (fail-closed).
-func (t *VisibleTracer) redactStepTitle(ctx context.Context, s *tracer.PathStep) bool {
-	e, err := t.get.GetEntityState(ctx, s.ID, "")
-	if err != nil {
-		return false
+// tailReadable reports whether an edge with tail may be shown: a
+// content-scoped edge hangs from one face, which must be among its tail
+// family's readable faces ([Resolver.EndpointsReadable]'s rule). An
+// entity-level tail, or the zero tail of a root, needs nothing more than
+// the node itself.
+func tailReadable(tail tracer.Tail, nodes map[string]tracer.Node) bool {
+	if tail.Face.IsDefault() {
+		return true
 	}
-	hidden := t.redact.HiddenProperties(ctx, e)
-	if _, h := hidden["title"]; h {
-		s.Title = s.ID
-	}
-	return true
+	return slices.Contains(nodes[tail.ID].Faces, tail.Face)
 }
 
-// FindOrphans implements [tracer.Tracer]: the base's orphan ids minus
-// the hidden ones. Each id's TYPE is resolved (the gate needs it) via
-// VisibleTracer.typesOf, then ids are gated with one PermitsReadMany
-// per distinct type (RR-MYLUSZ). A vanished entity drops fail-closed.
-func (t *VisibleTracer) FindOrphans(ctx context.Context) ([]string, error) {
-	ids, err := t.base.FindOrphans(ctx)
+// FindOrphans implements [tracer.Tracer] by folding only what the principal
+// may read: families reduced to their readable faces, and edges whose both
+// ends and tail face are readable ([tracer.FoldOrphans], the same rule as
+// [Resolver.EndpointsReadable]). A hidden edge therefore cannot rescue a
+// visible family from the report, and a hidden face never appears in an
+// orphan's Faces (RR-VN71BT).
+//
+// Two whole-store reads (headers, relations), one PermitsReadMany and one
+// face-set lookup per type, then one batched presentation of the orphans
+// for their redacted titles. A failed read is returned; a gate error hides
+// that type fail-closed, logged.
+func (t *VisibleTracer) FindOrphans(ctx context.Context) ([]tracer.Orphan, error) {
+	stored, err := t.res.storedHeaders(ctx, store.EntityQuery{AllStates: true})
 	if err != nil {
 		return nil, err
 	}
-	byType := t.typesOf(ctx, ids)
-	visible := t.permittedIDs(ctx, byType)
-
-	out := make([]string, 0, len(ids))
-	for _, id := range ids {
-		if visible[id] {
-			out = append(out, id)
+	readable, err := t.res.gateHeaders(ctx, stored, func(typ string, err error) error {
+		slog.Warn("visibility: tracer orphan gate failed; dropping type fail-closed",
+			"type", typ, "err", err)
+		return nil
+	})
+	if err != nil { // coverage-ignore: the callback above never aborts
+		return nil, err
+	}
+	fams := make(map[string]tracer.Family, len(readable))
+	for _, byFace := range readable {
+		for _, h := range byFace {
+			tracer.AddHeader(fams, h)
 		}
+	}
+	out, err := tracer.FoldOrphans(fams, t.rels.ListRelations(ctx, store.RelationQuery{}))
+	if err != nil || len(out) == 0 {
+		return out, err
+	}
+	ids := make([]string, len(out))
+	for i, o := range out {
+		ids[i] = o.ID
+	}
+	nodes := t.present(ctx, ids)
+	for i := range out {
+		out[i].Title = nodes[out[i].ID].Title
 	}
 	return out, nil
-}
-
-// typesOf resolves each id's entity type, grouped for a per-type gate
-// probe.
-//
-// Prefers a batched header read: resolving 20k orphan ids one GetEntity at
-// a time loaded 20k full entities — bodies included — to read one string
-// field from each, which on a content-heavy project cost more than the
-// orphan scan itself (TKT-1ESTYJ). Headers carry Type and no body.
-//
-// Falls back to per-id GetEntity when the getter cannot list headers,
-// preserving the original behavior exactly. Both paths DROP an id whose
-// entity cannot be resolved, so a vanished entity stays fail-closed: it
-// never reaches byType, so permittedIDs never marks it visible.
-func (t *VisibleTracer) typesOf(ctx context.Context, ids []string) map[string][]string {
-	byType := map[string][]string{}
-	if len(ids) == 0 {
-		return byType
-	}
-
-	if er, ok := t.get.(store.EntityReader); ok {
-		for h, err := range store.ListEntityHeaders(ctx, er, store.EntityQuery{IDs: ids}) {
-			if err != nil {
-				// Fail closed: a partial scan must not silently narrow the
-				// orphan set to "whatever we managed to read". Fall back to
-				// the per-id path, which drops only the ids it cannot load.
-				return t.typesOfPerID(ctx, ids)
-			}
-			byType[h.Type] = append(byType[h.Type], h.ID)
-		}
-		return byType
-	}
-	return t.typesOfPerID(ctx, ids)
-}
-
-func (t *VisibleTracer) typesOfPerID(ctx context.Context, ids []string) map[string][]string {
-	byType := map[string][]string{}
-	for _, id := range ids {
-		e, gerr := t.get.GetEntityState(ctx, id, "")
-		if gerr != nil {
-			continue
-		}
-		byType[e.Type] = append(byType[e.Type], id)
-	}
-	return byType
 }
 
 // HasCycle implements [tracer.Tracer]. A hidden (or missing, or
 // gate-erroring) start returns false — the same result the base returns
 // for a nonexistent start, so the bool is not an existence oracle for
-// the start node. Note the documented residual: a VISIBLE start still
-// reports a cycle whose loop passes through hidden nodes.
+// the start node. The base follows readable edges only, so a cycle through
+// a hidden node or a hidden face's edge is not reported.
 func (t *VisibleTracer) HasCycle(ctx context.Context, startID string) bool {
-	e, err := t.get.GetEntityState(ctx, startID, "")
-	if err != nil {
-		return false
-	}
-	ok, gerr := t.gate.PermitsRead(ctx, e.Type, startID)
-	if gerr != nil {
-		slog.Warn("visibility: HasCycle gate failed; answering false fail-closed",
-			"type", e.Type, "err", gerr)
-		return false
-	}
-	if !ok {
+	readable, ok := t.res.readableHeaders(ctx, []string{startID})
+	if !ok || len(readable[startID]) == 0 {
 		return false
 	}
 	return t.base.HasCycle(ctx, startID)
-}
-
-// permittedIDs mirrors PolicyReader.permittedIDs for the decorator's own
-// gate probes: one PermitsReadMany per distinct type, fail-closed
-// type-drop on error, loud log.
-func (t *VisibleTracer) permittedIDs(ctx context.Context, byType map[string][]string) map[string]bool {
-	allowed := make(map[string]bool)
-	for typeName, ids := range byType {
-		// The base tracer reads every node's DEFAULT face (store.GetEntity),
-		// so a `type@face` grant that excludes the default face hides the
-		// whole type here — the row gate alone would surface draft titles
-		// and properties to a published-only principal.
-		if !FaceAllowed(ctx, t.gate, typeName, "") {
-			continue
-		}
-		perm, err := t.gate.PermitsReadMany(ctx, typeName, ids)
-		if err != nil {
-			slog.Warn("visibility: tracer PermitsReadMany failed; dropping type fail-closed",
-				"type", typeName, "candidates", len(ids), "err", err)
-			continue
-		}
-		for id, ok := range perm {
-			if ok {
-				allowed[id] = true
-			}
-		}
-	}
-	return allowed
 }

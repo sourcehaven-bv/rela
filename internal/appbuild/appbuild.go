@@ -452,7 +452,7 @@ func (s *Services) LuaReadDeps() lua.ReadDeps {
 func (s *Services) luaReadDepsFor(redactor visibility.FieldRedactor) lua.ReadDeps {
 	deps := s.LuaReadDeps()
 	deps.VisibleReader = scriptEntityReader(s.store, s.aclDeclarative, redactor)
-	deps.Tracer = scriptTracer(s.tracer, s.store, s.aclDeclarative, redactor)
+	deps.Tracer = scriptTracer(s.tracer, s.store, s.aclDeclarative, redactor, s.worlds.Default())
 	return deps
 }
 
@@ -532,9 +532,11 @@ func refuseTraversal(context.Context, string, acl.TraversalHop) (*store.Relation
 // in the visibility decorator when a Declarative policy exists. The trace
 // bindings are identical either way — gating is entirely inside the
 // decorator (hidden nodes pruned with their subtrees, paths through hidden
-// intermediates withheld, titles falling back to IDs).
+// intermediates withheld, titles falling back to IDs). world selects a
+// node's title face, as for the base tracer.
 func scriptTracer(
 	tr tracer.Tracer, st store.Store, d *acl.Declarative, redactor visibility.FieldRedactor,
+	world store.WorldScope,
 ) tracer.Tracer {
 	if d == nil {
 		return tr
@@ -547,7 +549,17 @@ func scriptTracer(
 		slog.Error("appbuild: ACL gate unavailable; traversal REFUSED", "err", err)
 		return visibility.DenyTracer{}
 	}
-	vt, err := visibility.NewVisibleTracer(tr, gate, redactor, st)
+	res, err := visibility.NewResolver(gate, redactor, st)
+	if err != nil {
+		slog.Error("appbuild: resolver unavailable; traversal REFUSED", "err", err)
+		return visibility.DenyTracer{}
+	}
+	gatable, ok := tr.(visibility.EdgeGatable)
+	if !ok {
+		slog.Error("appbuild: tracer cannot gate edges; traversal REFUSED", "tracer", fmt.Sprintf("%T", tr))
+		return visibility.DenyTracer{}
+	}
+	vt, err := visibility.NewVisibleTracer(gatable, res, st, world)
 	if err != nil {
 		slog.Error("appbuild: visible tracer unavailable; traversal REFUSED", "err", err)
 		return visibility.DenyTracer{}
@@ -632,7 +644,7 @@ func (s *Services) ScheduledLuaWriteDeps() lua.WriteDeps {
 // still carries all of its meta.
 func (s *Services) GatedReads() GatedReadBundle {
 	reader, gate := scriptReads(s.store, s.aclDeclarative, s.fieldRedactor)
-	tr := scriptTracer(s.tracer, s.store, s.aclDeclarative, s.fieldRedactor)
+	tr := scriptTracer(s.tracer, s.store, s.aclDeclarative, s.fieldRedactor, s.worlds.Default())
 
 	deps := s.LuaReadDeps()
 	deps.VisibleReader = reader
@@ -1849,11 +1861,11 @@ func resolveACLAndRedactor(
 func cascadeReadDeps(
 	st store.Store, tr tracer.Tracer, searcher search.Searcher,
 	meta *metamodel.Metamodel, projectRoot string,
-	d *acl.Declarative, redactor visibility.FieldRedactor,
+	d *acl.Declarative, redactor visibility.FieldRedactor, world store.WorldScope,
 ) lua.ReadDeps {
 	return lua.ReadDeps{
 		VisibleReader: scriptEntityReader(st, d, redactor),
-		Tracer:        scriptTracer(tr, st, d, redactor),
+		Tracer:        scriptTracer(tr, st, d, redactor, world),
 		Searcher:      searcher,
 		Meta:          meta,
 		ProjectRoot:   projectRoot,
@@ -1936,7 +1948,7 @@ func assemble(
 	}
 	// coverage-ignore-end
 
-	tr := tracer.New(st)
+	tr := tracer.New(st, base.worlds.Default())
 	templater := templating.NewFSTemplater(cfg.FS, cfg.Paths)
 	cfgLoader := overrides.projectConfig
 	if cfgLoader == nil {
@@ -1946,7 +1958,7 @@ func assemble(
 	// Build the static lua read deps once — the ScriptRunner (automation
 	// cascades) is constructed with these.
 	readDeps := cascadeReadDeps(st, tr, searcher, base.meta, cfg.Paths.Root,
-		aclDeclarative, fieldRedactor)
+		aclDeclarative, fieldRedactor, base.worlds.Default())
 
 	tw, err := CompileTransitions(base.meta, st, resolvedACL)
 	if err != nil {

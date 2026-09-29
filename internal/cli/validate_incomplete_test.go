@@ -105,7 +105,7 @@ func runChecksWithStore(t *testing.T, meta *metamodel.Metamodel, st *truncatingS
 	an, err := analysis.New(analysis.Deps{
 		Store:       svc.Store(),
 		Meta:        svc.Meta(),
-		Tracer:      tracer.New(svc.Store()),
+		Tracer:      tracer.New(svc.Store(), store.WorldScope{}),
 		LuaReadDeps: svc.LuaReadDeps(),
 	})
 	if err != nil {
