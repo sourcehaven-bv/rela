@@ -285,7 +285,7 @@ CREATE TABLE IF NOT EXISTS entities (
 	last_edited_by_tool TEXT,
 	PRIMARY KEY (id, face)
 ) STRICT;
-CREATE INDEX IF NOT EXISTS entities_type_idx ON entities(type);
+` + entitiesTypeIDFaceIndexDDL + `
 -- Entity IDs are case-insensitive IDENTITIES (BUG-3RCWNS): "abc" and "ABC"
 -- cannot coexist. Enforced as a unique index on lower(id) rather than by
 -- changing the column collation, exactly as pgstore does — the primary key
@@ -351,6 +351,18 @@ CREATE INDEX IF NOT EXISTS attachments_entity_idx ON attachments(entity_id);
 ` + migrationStateDDL + `
 ` + versionSchemaSQL + `
 `
+
+// entitiesTypeIDFaceIndexDDL serves a type page in every face selection
+// (TKT-KQXVF7). Each list shape orders by (id, face), and a world picks one
+// row per id, so (type, id, face) lets a page walk the index in order: the
+// implicit-face page filters face inside it, and the all-faces, explicit-face
+// and world pages read it as is. It replaced entities_type_idx (type), which
+// made every type page sort the whole type.
+//
+// Shared between schemaSQL (fresh databases) and the v7→v8 migration
+// (existing ones), for the same reason projectFilesDDL is.
+const entitiesTypeIDFaceIndexDDL = `
+CREATE INDEX IF NOT EXISTS entities_type_id_face_idx ON entities(type, id, face);`
 
 // projectFilesDDL carries the operator-authored config — schema.yaml,
 // data-entry.yaml, acl.yaml, scripts/, templates/, custom/ — so a single

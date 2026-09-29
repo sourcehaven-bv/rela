@@ -28,8 +28,8 @@ func (s *Store) HighestID(ctx context.Context, prefix string) (int, error) {
 	// twice does not change the answer. Scoping to `face = ''` saw a type
 	// declaring faces not at all, so the generator minted one id for every
 	// entity of it (BUG-HC6I2T).
-	rows, err := s.q().QueryContext(ctx,
-		`SELECT DISTINCT id FROM entities WHERE id LIKE ? ESCAPE '\'`, likePrefix(pfx))
+	sqlText, args := buildHighestIDSQL(prefix)
+	rows, err := s.q().QueryContext(ctx, sqlText, args...)
 	if err != nil {
 		return 0, fmt.Errorf("sqlitestore: highest id for %q: %w", prefix, err)
 	}
@@ -41,12 +41,12 @@ func (s *Store) HighestID(ctx context.Context, prefix string) (int, error) {
 		if err := rows.Scan(&id); err != nil {
 			return 0, fmt.Errorf("sqlitestore: highest id for %q: %w", prefix, err)
 		}
-		// SQLite's LIKE is case-INSENSITIVE for ASCII by default, so the scan
-		// above also matches "feat-9" for prefix "FEAT-". Folding is the right
-		// answer here — IDs are case-insensitive identities (see the
-		// entities_id_lower_key index) — but it must be deliberate rather than
-		// LIKE's default doing it silently, and the guard also stops a
-		// non-length-preserving fold from slicing at the wrong offset.
+		// The range folds ASCII case, so the scan above also matches "feat-9"
+		// for prefix "FEAT-". Folding is the right answer here: IDs are
+		// case-insensitive identities (see the entities_id_lower_key index).
+		// This guard states the fold in Go rather than leaving it to SQLite's
+		// lower(), and stops a non-length-preserving fold from slicing at the
+		// wrong offset.
 		if !strings.EqualFold(id[:min(len(pfx), len(id))], pfx) {
 			continue
 		}
@@ -64,11 +64,20 @@ func (s *Store) HighestID(ctx context.Context, prefix string) (int, error) {
 	return highest, nil
 }
 
-// likePrefix escapes LIKE wildcards so a prefix containing % or _ matches
-// literally rather than as a pattern.
-func likePrefix(prefix string) string {
-	r := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
-	return r.Replace(prefix) + "%"
+// buildHighestIDSQL selects the ids that start with prefix + "-", ASCII case folded,
+// as a range on lower(id) that entities_id_lower_key serves (TKT-KQXVF7).
+//
+// It replaced `id LIKE ? ESCAPE`, which scanned the table: SQLite's LIKE folds
+// case, so it cannot use a BINARY index on id, and it is not written as
+// lower(id), so it cannot use the lower(id) index either. The range selects
+// the same rows. lower() changes ASCII letters only, and LIKE folds ASCII
+// only. Both bounds go through lower() in SQL, so the query and the index
+// fold with one function, and a prefix holding % or _ needs no escaping.
+//
+// The exclusive upper bound is prefix + ".", "." being the byte after "-".
+func buildHighestIDSQL(prefix string) (sqlText string, args []any) {
+	return `SELECT DISTINCT id FROM entities WHERE lower(id) >= lower(?) AND lower(id) < lower(?)`,
+		[]any{prefix + "-", prefix + "."}
 }
 
 // PropertyValues returns the distinct values of a property, most frequent

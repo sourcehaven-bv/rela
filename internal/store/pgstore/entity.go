@@ -37,13 +37,15 @@ func (s *Store) GetEntity(ctx context.Context, id string) (*entity.Entity, error
 	return s.GetEntityState(ctx, id, "")
 }
 
+// getEntityStateSQL reads one face row by its primary key (id, face).
+const getEntityStateSQL = `SELECT id, type, face, properties, content, updated_at
+	FROM entities WHERE id = $1 AND face = $2`
+
 // GetEntityState returns the content state addressed by (id, p); the
 // zero face is the default state. ErrNotFound covers a missing state
 // even when sibling states exist.
 func (s *Store) GetEntityState(ctx context.Context, id string, p entity.Face) (*entity.Entity, error) {
-	const q = `SELECT id, type, face, properties, content, updated_at
-	           FROM entities WHERE id = $1 AND face = $2`
-	e, err := scanEntity(s.db.QueryRow(ctx, q, id, p))
+	e, err := scanEntity(s.db.QueryRow(ctx, getEntityStateSQL, id, p))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
@@ -59,7 +61,7 @@ func (s *Store) ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2
 	if err := checkQueryScope(q); err != nil {
 		return func(yield func(*entity.Entity, error) bool) { yield(nil, err) }
 	}
-	sql, args := buildEntityListSQL(q, "")
+	sql, args := buildEntityListSQL(q, "", 0)
 	return func(yield func(*entity.Entity, error) bool) {
 		rows, err := s.db.Query(ctx, sql, args...)
 		if err != nil {
@@ -127,19 +129,9 @@ func (s *Store) ListEntitiesPage(ctx context.Context, q store.EntityQuery) (stor
 	if err := checkQueryScope(q); err != nil {
 		return store.Page[*entity.Entity]{}, err
 	}
-	cursorKey, err := storeutil.DecodeCursor(q.Cursor)
+	sql, args, err := entityPageSQL(q)
 	if err != nil {
 		return store.Page[*entity.Entity]{}, err
-	}
-
-	// Fetch limit+1 to detect whether a further page exists.
-	fetch := q.Limit
-	if fetch > 0 {
-		fetch++
-	}
-	sql, args := buildEntityListSQL(q, cursorKey)
-	if fetch > 0 {
-		sql += fmt.Sprintf(" LIMIT %d", fetch)
 	}
 
 	rows, err := s.db.Query(ctx, sql, args...)
@@ -208,6 +200,36 @@ func buildEntityCountSQL(q store.EntityQuery) (sql string, args []any) {
 	return "SELECT count(DISTINCT id) FROM entities" + scope, args
 }
 
+// entityPageSQL is the query [Store.ListEntitiesPage] sends for q: the
+// cursor decoded and limit+1 rows fetched, the extra row telling whether a
+// further page exists.
+func entityPageSQL(q store.EntityQuery) (sql string, args []any, err error) {
+	cursorKey, err := storeutil.DecodeCursor(q.Cursor)
+	if err != nil {
+		return "", nil, err
+	}
+	fetch := q.Limit
+	if fetch > 0 {
+		fetch++
+	}
+	sql, args = buildEntityListSQL(q, cursorKey, fetch)
+	return sql, args, nil
+}
+
+// buildHighestIDSQL selects the ids that start with prefix + "-", as a range the
+// primary key serves (migration 0018).
+//
+// A range, not `id LIKE $1`: the planner turns LIKE into an index range only
+// when it sees the pattern, and pgx prepares statements, so after five
+// executions PostgreSQL plans them generically with the pattern unknown and
+// scans the table. entities.id is COLLATE "C", so >= and < compare bytes, the
+// primary key (id, face) is in that order, and the rows are exactly the ids
+// with prefix + "-" as a byte prefix. The exclusive upper bound is prefix +
+// ".", "." being the byte after "-".
+func buildHighestIDSQL(prefix string) (sql string, args []any) {
+	return `SELECT DISTINCT id FROM entities WHERE id >= $1 AND id < $2`, []any{prefix + "-", prefix + "."}
+}
+
 // HighestID returns the highest numeric suffix among IDs of the form
 // "<prefix>-<n>", or 0. Matching memstore/fsstore: non-numeric suffixes are
 // skipped and gaps are ignored. The parse is done in Go (not SQL) to keep the
@@ -219,8 +241,8 @@ func (s *Store) HighestID(ctx context.Context, prefix string) (int, error) {
 	// twice is harmless. The old `face = ''` predicate saw a faced type not
 	// at all, so the generator minted one id for every entity of it
 	// (BUG-HC6I2T).
-	const q = `SELECT DISTINCT id FROM entities WHERE id LIKE $1`
-	rows, err := s.db.Query(ctx, q, pfx+"%")
+	q, args := buildHighestIDSQL(prefix)
+	rows, err := s.db.Query(ctx, q, args...)
 	if err != nil {
 		return 0, err
 	}
@@ -1044,18 +1066,19 @@ func scanEntityHeader(row scanner) (store.EntityHeader, error) {
 // they key on the JOINED "id@face" string, and '@' (0x40) sorts after
 // the digits (0x30-0x39), so plain string order puts PAGE-10's family
 // inside PAGE-1's. Changing either side's ordering breaks the other.
-func buildEntityListSQL(q store.EntityQuery, keysetAfter string) (sql string, args []any) {
-	return buildEntitySelectSQL(q, keysetAfter, "id, type, face, properties, content, updated_at")
+func buildEntityListSQL(q store.EntityQuery, keysetAfter string, limit int) (sql string, args []any) {
+	return buildEntitySelectSQL(q, keysetAfter, "id, type, face, properties, content, updated_at", limit)
 }
 
 // buildEntityHeaderListSQL mirrors buildEntityListSQL WITHOUT the content
 // column. Column order must stay in sync with scanEntityHeader.
 func buildEntityHeaderListSQL(q store.EntityQuery, keysetAfter string) (sql string, args []any) {
-	return buildEntitySelectSQL(q, keysetAfter, "id, type, face, properties, updated_at")
+	return buildEntitySelectSQL(q, keysetAfter, "id, type, face, properties, updated_at", 0)
 }
 
 // buildEntitySelectSQL is the shared body of the two list builders: the
-// same scope and ordering over a different column list.
+// same scope and ordering over a different column list. limit, when
+// positive, is the number of rows to return; zero returns every row.
 //
 // For the DEFAULT world it is the historical flat SELECT, allocating and
 // costing exactly what it did before worlds existed — a project that
@@ -1070,11 +1093,20 @@ func buildEntityHeaderListSQL(q store.EntityQuery, keysetAfter string) (sql stri
 // PRIMES, not over candidate rows. Applying it inside would let a cursor
 // land mid-family and resolve a prime from a partial view, which is the
 // wrong-prime hazard storeutil.PaginateWorldPrimes exists to avoid.
-func buildEntitySelectSQL(q store.EntityQuery, keysetAfter, columns string) (sql string, args []any) {
+//
+// A page also bounds the DISTINCT ON itself (TKT-KQXVF7). Without that the
+// planner costs the subquery as if every prime were read, so it sorts the
+// whole type rather than walking entities_type_id_face_idx in id order and
+// stopping. The bound is exact. `id >= cursor id` inside drops whole
+// families only, so it cannot split one. Primes come out one per id in id
+// order, and the outer keyset removes at most one of them, the cursor's own
+// family, so the first limit rows the outer query keeps are among the first
+// limit+1 primes.
+func buildEntitySelectSQL(q store.EntityQuery, keysetAfter, columns string, limit int) (sql string, args []any) {
 	q.World = effectiveWorld(q.World, q.Type)
 	if q.World.IsDefaultWorld() {
 		where, wargs := entityWhere(q, keysetAfter)
-		return `SELECT ` + columns + ` FROM entities` + where + ` ORDER BY id ASC, face ASC`, wargs
+		return `SELECT ` + columns + ` FROM entities` + where + ` ORDER BY id ASC, face ASC` + limitClause(limit), wargs
 	}
 
 	// ONE worldSQL call produces both expressions, so the coordinate
@@ -1082,21 +1114,36 @@ func buildEntitySelectSQL(q store.EntityQuery, keysetAfter, columns string) (sql
 	// the same ones the candidate predicate uses.
 	rank, candidate := worldSQL(q.World, "", &args)
 	scope := entityScopeWhere(q, candidate, &args)
-	inner := `SELECT DISTINCT ON (id) ` + columns + ` FROM entities` + scope +
-		` ORDER BY id ASC, (` + rank + `) ASC, face ASC`
 
-	outer := `SELECT ` + columns + ` FROM (` + inner + `) p`
+	// Cursor semantics match the default-world path: an unparseable
+	// cursor RESTARTS rather than comparing against garbage.
+	var keyset string
 	if keysetAfter != "" {
-		// Cursor semantics match the default-world path: an unparseable
-		// cursor RESTARTS rather than comparing against garbage.
 		if cursorID, cursorPtr, err := entity.ParseStateRef(keysetAfter); err == nil {
 			args = append(args, cursorID)
 			idArg := len(args)
 			args = append(args, string(cursorPtr))
-			outer += fmt.Sprintf(" WHERE (p.id, p.face) > ($%d, $%d)", idArg, len(args))
+			keyset = fmt.Sprintf(" WHERE (p.id, p.face) > ($%d, $%d)", idArg, len(args))
+			scope += fmt.Sprintf(" AND id >= $%d", idArg)
 		}
 	}
-	return outer + ` ORDER BY id ASC, face ASC`, args
+	inner := `SELECT DISTINCT ON (id) ` + columns + ` FROM entities` + scope +
+		` ORDER BY id ASC, (` + rank + `) ASC, face ASC`
+	if limit > 0 {
+		inner += limitClause(limit + 1)
+	}
+	return `SELECT ` + columns + ` FROM (` + inner + `) p` + keyset +
+		` ORDER BY id ASC, face ASC` + limitClause(limit), args
+}
+
+// limitClause is " LIMIT n" for a positive n and empty otherwise.
+// Interpolated rather than bound: n is an int the store computed, and a
+// literal lets the planner cost the page as the fraction it is.
+func limitClause(n int) string {
+	if n <= 0 {
+		return ""
+	}
+	return fmt.Sprintf(" LIMIT %d", n)
 }
 
 // entityScopeWhere builds the WHERE clause for a WORLD-scoped listing:

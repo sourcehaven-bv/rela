@@ -21,13 +21,14 @@ func (s *Store) GetEntity(ctx context.Context, id string) (*entity.Entity, error
 	return s.GetEntityState(ctx, id, "")
 }
 
+// getEntityStateSQL reads one face row by its primary key (id, face).
+const getEntityStateSQL = `SELECT ` + entityColumns + ` FROM entities WHERE id = ? AND face = ?`
+
 // GetEntityState returns the content state addressed by (id, p); the zero face
 // is the default state. ErrNotFound covers a missing state even when sibling
 // states of the same id exist.
 func (s *Store) GetEntityState(ctx context.Context, id string, p entity.Face) (*entity.Entity, error) {
-	row := s.q().QueryRowContext(ctx,
-		`SELECT `+entityColumns+` FROM entities WHERE id = ? AND face = ?`, id, string(p))
-	e, err := scanEntity(row)
+	e, err := scanEntity(s.q().QueryRowContext(ctx, getEntityStateSQL, id, string(p)))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("sqlitestore: get %s: %w", entity.FormatStateRef(id, p), store.ErrNotFound)
 	}
