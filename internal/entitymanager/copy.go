@@ -617,9 +617,11 @@ func (ce *copyEngine) buildCopyTarget(
 // source face already holds:
 //
 //   - Same entity: each file property the copy writes (`fields: all`, or a
-//     mapped field) must name a subset of the SOURCE face's names for the
-//     SAME property. A template mapping another property into a file
-//     property would otherwise mint a reference to any name. A property the
+//     mapped field) must name a subset of the SOURCE face's files (name and
+//     storage key) for the SAME property. A template mapping another
+//     property into a file property would otherwise mint a reference to any
+//     bytes. The carried entries keep their keys, so the faces share the
+//     bytes. A property the
 //     copy does not write keeps the target's own value, whatever it holds.
 //   - Cross entity: bytes are keyed per entity, so a copied name would point
 //     at the target's bytes, not the source's. File properties keep the
@@ -638,9 +640,12 @@ func (ce *copyEngine) confineFileValues(plan *copyPlan, src, target *entity.Enti
 			}
 			continue
 		}
-		have := metamodel.FileNames(src.Properties[prop])
-		for _, name := range metamodel.FileNames(target.Properties[prop]) {
-			if !slices.Contains(have, name) {
+		// Compare storage keys, not only names: a mapped value could keep a
+		// source name and forge the token of another face's bytes.
+		have := metamodel.FileRefs(src.Properties[prop])
+		for _, ref := range metamodel.FileRefs(target.Properties[prop]) {
+			held := func(h metamodel.FileRef) bool { return h.Name == ref.Name && h.Key == ref.Key }
+			if !slices.ContainsFunc(have, held) {
 				return fmt.Errorf("%w: copy %q: file property %q may only carry the source face's own %q files",
 					ErrCopyFileReference, plan.name, prop, prop)
 			}

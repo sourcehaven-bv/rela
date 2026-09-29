@@ -147,7 +147,17 @@ func TestService_AttachAndList(t *testing.T) {
 		t.Errorf("FileName = %q, want design.pdf", result.FileName)
 	}
 
-	onDisk := filepath.Join(f.root, "attachments", "T-1", "spec", "design.pdf")
+	// The bytes live under the storage key the stamped value names:
+	// "<token>-design.pdf", never the bare display name.
+	stored, err := f.st.GetEntityState(context.Background(), "T-1", "")
+	if err != nil {
+		t.Fatalf("read entity: %v", err)
+	}
+	key, ok := attachment.StorageKey(stored, "spec", "design.pdf")
+	if !ok || !strings.HasSuffix(key, "-design.pdf") || key == "design.pdf" {
+		t.Fatalf("storage key = %q (referenced %v), want <token>-design.pdf", key, ok)
+	}
+	onDisk := filepath.Join(f.root, "attachments", "T-1", "spec", key)
 	got, err := os.ReadFile(onDisk)
 	if err != nil {
 		t.Fatalf("read attachment: %v", err)
@@ -170,7 +180,7 @@ func TestService_AttachAndList(t *testing.T) {
 	if info.Property != "spec" {
 		t.Errorf("Property = %q", info.Property)
 	}
-	if !strings.Contains(info.Path, "attachments/T-1/spec/design.pdf") {
+	if !strings.HasPrefix(info.Path, "attachments/T-1/spec/") || !strings.HasSuffix(info.Path, "/design.pdf") {
 		t.Errorf("Path = %q", info.Path)
 	}
 	if info.ContentType != "application/pdf" {
@@ -295,7 +305,9 @@ func TestService_ReplaceFailureKeepsExisting(t *testing.T) {
 	}
 
 	// The original must still be present and readable.
-	rc, readErr := f.st.ReadAttachment(ctx, "T-1", "spec", "ok.pdf")
+	stored, err := f.st.GetEntityState(ctx, "T-1", "")
+	require(err, "read entity")
+	rc, readErr := f.svc.Open(ctx, stored, "spec", "ok.pdf")
 	if readErr != nil {
 		t.Fatalf("original attachment was destroyed by a failed replace: %v", readErr)
 	}

@@ -7,6 +7,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"testing"
 	"time"
 
@@ -128,7 +129,8 @@ func TestAttachmentUpload_RoundTrips(t *testing.T) {
 
 	// Property stamped on the entity.
 	e := mustGet(t, app, "TKT-001")
-	if got := e.GetString("screenshot"); got != "attachments/TKT-001/screenshot/shot.txt" {
+	stamped := regexp.MustCompile(`^attachments/TKT-001/screenshot/[0-9a-f]{16}/shot\.txt$`)
+	if got := e.GetString("screenshot"); !stamped.MatchString(got) {
 		t.Errorf("property = %q, want the stamped attachment path", got)
 	}
 }

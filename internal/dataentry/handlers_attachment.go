@@ -79,9 +79,9 @@ func (h *attachmentHandler) handleV1AttachmentFileRoute(
 // Bytes are shared by the entity's faces, so the face gate is the face's
 // own property value: the file name must be one it references, else the
 // same 404 (BUG-CTUW2N). A face therefore never serves another face's
-// upload. The stored directory prefix is not trusted (only base names
-// count), and the fileName from the URL is only ever a store key, never a
-// filesystem path; the store's ValidateFileName rejects separators.
+// upload. The fileName from the URL is a display name: it is resolved to a
+// storage key through the face's own value ([attachment.StorageKey]), never
+// used as a key or a filesystem path itself.
 func (h *attachmentHandler) handleV1GetAttachment(
 	w http.ResponseWriter, r *http.Request, typeName, addr, property, fileName string,
 ) {
@@ -97,14 +97,13 @@ func (h *attachmentHandler) handleV1GetAttachment(
 	// type, visible to this viewer, and must reference the file on THIS
 	// face. Anything else 404s — we never reveal whether some other (or
 	// hidden) property, path or face's file exists.
-	if !isFileProperty(s, typeName, property) || h.isPropertyHidden(ctx, entity, property) ||
-		!attachment.References(entity, property, fileName) {
-
+	key, referenced := attachment.StorageKey(entity, property, fileName)
+	if !isFileProperty(s, typeName, property) || h.isPropertyHidden(ctx, entity, property) || !referenced {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 		return
 	}
 
-	rc, err := h.store.ReadAttachment(ctx, entity.ID, property, fileName)
+	rc, err := h.store.ReadAttachment(ctx, entity.ID, property, key)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")

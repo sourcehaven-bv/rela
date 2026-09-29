@@ -865,10 +865,10 @@ GET <_attachments[property][i].href>
 Streams one attachment's bytes. **Access inherits the owning entity's read
 permission** — a caller who cannot read the entity gets `404` (never
 `403`, and byte-identical to a genuinely missing attachment, so existence
-is not leaked). The bytes resolve from `(id, property, fileName)` only; no
-caller-supplied path reaches the filesystem (the store rejects separators
-in the file name), so there is no path-traversal surface and a renamed
-entity resolves by its current id.
+is not leaked). `fileName` must be a name the addressed face's own file
+property holds; the bytes resolve through that value's storage key, never
+from a caller-supplied path, so there is no path-traversal surface and a
+renamed entity resolves by its current id.
 
 Response headers: `Content-Type` (inferred from the filename),
 `Content-Disposition: inline; filename="…"` (sanitized), plus
@@ -889,9 +889,10 @@ on the property's `max`:
 
 - **`max == 1`** (default): the upload **replaces** the existing file.
 - **`max > 1`**: the upload **appends**, up to `max`. A file whose
-  (normalized) name already exists is **auto-suffixed** (`report.pdf` →
-  `report (1).pdf`) so it never overwrites a sibling. Uploading past the cap
-  returns `409 attachment_limit`.
+  (normalized) name the face already holds is **auto-suffixed**
+  (`report.pdf` → `report (1).pdf`) so it never overwrites a sibling. Only
+  the addressed face's names count: another face's file of the same name
+  has its own bytes. Uploading past the cap returns `409 attachment_limit`.
 
 Concurrent uploads and deletes to the same property take turns, so the cap
 and the replace hold under concurrency. The write permission is checked again

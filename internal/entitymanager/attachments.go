@@ -17,13 +17,13 @@ import (
 // File-property values are owned by the attachment paths (BUG-CTUW2N,
 // RR-EV48RR).
 //
-// Attachment bytes are keyed per entity, (id, property, name), and shared by
-// every face of the entity. A face's file-property value is what grants it
-// the bytes it names: listing and download only serve names in the
-// addressed face's own value. So the value is a capability, and an ordinary
-// write must not be able to set it. Otherwise a writer on one face could
-// name a file another face uploaded, and download it through the face it
-// can write.
+// Attachment bytes are keyed per entity, (id, property, storage key), and
+// shared by every face of the entity. A face's file-property value is what
+// grants it the bytes it names: listing and download only serve the keys in
+// the addressed face's own value ([metamodel.FileRefs]). So the value is a
+// capability, and an ordinary write must not be able to set it. Otherwise a
+// writer on one face could name a file another face uploaded, and download
+// it through the face it can write.
 //
 // The rule: CreateEntity, UpdateEntity and PatchEntity leave every file
 // property unchanged (on create: absent), comparing normalized base names so
@@ -85,7 +85,9 @@ func fileWriteError(entityType string, names []string) error {
 }
 
 // sameFileNames reports whether two file-property values reference the same
-// names.
+// names. It ignores storage keys, so it is safe only because every caller
+// then pins the stored value ([pinStoredFileValues]): a same-named entry
+// with a forged token passes this check but never lands.
 func sameFileNames(a, b any) bool {
 	return slices.Equal(metamodel.FileNames(a), metamodel.FileNames(b))
 }
@@ -200,7 +202,7 @@ var errAttachmentsUnavailable = errors.New(
 // StampAttachments sets the file property prop of the face ref to value. It
 // is PatchEntity with the file-property rule lifted for prop only: it runs
 // the same authorization, field gate, validation, automation and audit. The
-// caller holds the attachment lock for (ref.ID, prop) and keeps the bytes
+// caller holds the attachment lock for ref.ID and keeps the bytes
 // consistent with the value.
 func (a Attachments) StampAttachments(
 	ctx context.Context, ref entity.Ref, prop string, value any,
@@ -266,12 +268,13 @@ func sweepUnreferencedFiles(ctx context.Context, st store.Store, id string) erro
 	}
 	var errs []error
 	for _, info := range infos {
-		if familyReferences(family, info.Property, info.FileName) {
+		key := info.FileName
+		if familyReferences(family, info.Property, key) {
 			continue
 		}
-		derr := st.DeleteAttachment(ctx, id, info.Property, info.FileName)
+		derr := st.DeleteAttachment(ctx, id, info.Property, key)
 		if derr != nil && !errors.Is(derr, store.ErrNotFound) {
-			errs = append(errs, fmt.Errorf("delete attachment %s/%s/%s: %w", id, info.Property, info.FileName, derr))
+			errs = append(errs, fmt.Errorf("delete attachment %s/%s/%s: %w", id, info.Property, key, derr))
 		}
 	}
 	return errors.Join(errs...)
@@ -296,11 +299,11 @@ func releaseUnreferencedFiles(ctx context.Context, deps Deps, id string) {
 	}
 }
 
-// familyReferences reports whether any face in family references name on
-// prop.
-func familyReferences(family []*entity.Entity, prop, name string) bool {
+// familyReferences reports whether any face in family references the
+// storage key on prop.
+func familyReferences(family []*entity.Entity, prop, key string) bool {
 	for _, f := range family {
-		if slices.Contains(metamodel.FileNames(f.Properties[prop]), name) {
+		if slices.Contains(metamodel.FileKeys(f.Properties[prop]), key) {
 			return true
 		}
 	}
