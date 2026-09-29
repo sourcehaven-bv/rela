@@ -188,7 +188,7 @@ func seedStore(t *testing.T) store.Store {
 
 func getEntity(t *testing.T, st store.Store, id string) *entity.Entity {
 	t.Helper()
-	e, err := st.GetEntity(t.Context(), id)
+	e, err := st.GetEntity(t.Context(), entity.Ref{ID: id})
 	if err != nil {
 		t.Fatalf("GetEntity(%s): %v", id, err)
 	}

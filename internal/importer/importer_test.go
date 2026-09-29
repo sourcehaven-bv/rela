@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
+
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -321,7 +323,7 @@ func TestImportEntities(t *testing.T) {
 		t.Errorf("Store entities = %d, want 2", n)
 	}
 
-	e, err := st.GetEntity(ctx(), "REQ-001")
+	e, err := st.GetEntity(ctx(), entity.Ref{ID: "REQ-001"})
 	if err != nil {
 		t.Error("REQ-001 not found in store")
 	} else if e.Title() != "First requirement" {
@@ -456,7 +458,7 @@ func TestImportUpdate(t *testing.T) {
 	}
 
 	// Check title was updated
-	e, _ := st.GetEntity(ctx(), "REQ-001")
+	e, _ := st.GetEntity(ctx(), entity.Ref{ID: "REQ-001"})
 	if e.Title() != "Updated" {
 		t.Errorf("Title = %q, want %q", e.Title(), "Updated")
 	}
@@ -509,7 +511,7 @@ func TestImportDefaultStatus(t *testing.T) {
 		t.Fatalf("Import() error = %v", err)
 	}
 
-	e, _ := st.GetEntity(ctx(), "REQ-001")
+	e, _ := st.GetEntity(ctx(), entity.Ref{ID: "REQ-001"})
 	status := e.GetString("status")
 	if status != "draft" {
 		t.Errorf("Status = %q, want %q", status, "draft")
@@ -536,7 +538,7 @@ func TestImportFile_JSON(t *testing.T) {
 	if result.EntitiesCreated != 1 {
 		t.Errorf("EntitiesCreated = %d, want 1", result.EntitiesCreated)
 	}
-	e, err := st.GetEntity(ctx(), "REQ-001")
+	e, err := st.GetEntity(ctx(), entity.Ref{ID: "REQ-001"})
 	if err != nil {
 		t.Fatalf("entity not created: %v", err)
 	}

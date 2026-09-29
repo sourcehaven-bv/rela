@@ -280,7 +280,7 @@ func TestMCPServices_ReloadReusesStoreAndSearcher(t *testing.T) {
 	assert.Same(t, before, svc.svc.Store(), "reload must reuse the open store, not reopen it")
 
 	// The store stays usable and keeps this session's writes.
-	got, err := svc.svc.Store().GetEntity(ctx, "ITEM-1")
+	got, err := svc.svc.Store().GetEntity(ctx, entity.Ref{ID: "ITEM-1"})
 	require.NoError(t, err, "store unusable after reload")
 	assert.Equal(t, "ITEM-1", got.ID)
 

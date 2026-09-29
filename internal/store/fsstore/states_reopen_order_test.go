@@ -110,7 +110,7 @@ func TestReopenPreservesStateKeyOrdering(t *testing.T) {
 
 			// The default-world delete path must not panic. This is the
 			// symptom that has nothing to do with worlds.
-			_, err := s.DeleteEntity(ctx, "PAGE-1", false)
+			_, err := s.DeleteFamily(ctx, "PAGE-1", false)
 			require.NoError(t, err, "delete after reopen")
 
 			n, err := s.CountEntities(ctx, store.EntityQuery{Type: "thing", Faces: store.InWorld(store.DefaultWorld())})

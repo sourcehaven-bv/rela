@@ -121,7 +121,7 @@ func TestPull_BothDirty_Conflict(t *testing.T) {
 		t.Fatalf("conflicts=%d applied=%d, want 1/0", rep.Conflicts, rep.Applied)
 	}
 	// Local copy preserved.
-	got, _ := h.st.GetEntity(ctx, id)
+	got, _ := h.st.GetEntity(ctx, entity.Ref{ID: id})
 	if got.Properties["title"] != "local" {
 		t.Fatalf("local clobbered: title=%v, want local", got.Properties["title"])
 	}
@@ -134,7 +134,7 @@ func TestPull_BothDirty_Conflict(t *testing.T) {
 	if _, err := h.engine.ForcePull(ctx, id); err != nil {
 		t.Fatalf("force pull: %v", err)
 	}
-	got, _ = h.st.GetEntity(ctx, id)
+	got, _ = h.st.GetEntity(ctx, entity.Ref{ID: id})
 	if got.Properties["title"] != "remote" {
 		t.Fatalf("force pull title=%v, want remote", got.Properties["title"])
 	}

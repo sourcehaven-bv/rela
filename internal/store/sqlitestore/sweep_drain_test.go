@@ -65,7 +65,7 @@ func TestSweepDrainsABacklogLargerThanOneBatch(t *testing.T) {
 	var missing []string
 	for i := range total {
 		id := fmt.Sprintf("FEAT-%02d", i)
-		versions, err := svc.ListVersions(ctx, id)
+		versions, err := svc.ListVersions(ctx, entity.Ref{ID: id})
 		require.NoError(t, err)
 		if len(versions) == 0 {
 			missing = append(missing, id)
@@ -93,7 +93,7 @@ func TestSweepIsIdleWhenNothingChanged(t *testing.T) {
 
 	require.NoError(t, s.SweepNow(ctx, fixedProjection{}, immediateSweep(10)))
 	svc := s.VersionStore()
-	first, err := svc.ListVersions(ctx, "FEAT-1")
+	first, err := svc.ListVersions(ctx, entity.Ref{ID: "FEAT-1"})
 	require.NoError(t, err)
 	require.Len(t, first, 1, "the first tick must capture the new entity")
 
@@ -103,7 +103,7 @@ func TestSweepIsIdleWhenNothingChanged(t *testing.T) {
 	for range 3 {
 		require.NoError(t, s.SweepNow(ctx, fixedProjection{}, immediateSweep(10)))
 	}
-	after, err := svc.ListVersions(ctx, "FEAT-1")
+	after, err := svc.ListVersions(ctx, entity.Ref{ID: "FEAT-1"})
 	require.NoError(t, err)
 	require.Len(t, after, 1, "an unchanged entity was captured more than once")
 }
@@ -119,14 +119,14 @@ func TestSweepCapturesAnEditAfterCapture(t *testing.T) {
 	require.NoError(t, s.CreateEntity(ctx, e))
 	require.NoError(t, s.SweepNow(ctx, fixedProjection{}, immediateSweep(10)))
 
-	updated, err := s.GetEntity(ctx, "FEAT-1")
+	updated, err := s.GetEntity(ctx, entity.Ref{ID: "FEAT-1"})
 	require.NoError(t, err)
 	updated.SetString("title", "after")
 	require.NoError(t, s.UpdateEntity(ctx, updated))
 
 	require.NoError(t, s.SweepNow(ctx, fixedProjection{}, immediateSweep(10)))
 
-	versions, err := s.VersionStore().ListVersions(ctx, "FEAT-1")
+	versions, err := s.VersionStore().ListVersions(ctx, entity.Ref{ID: "FEAT-1"})
 	require.NoError(t, err)
 	require.Len(t, versions, 2,
 		"the edit was not captured: the dirty gate is excluding rows that changed")

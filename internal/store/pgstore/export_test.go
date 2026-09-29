@@ -105,9 +105,8 @@ func BuildEntityListSQLForTest(t *testing.T, q store.EntityQuery) (sqlText strin
 	return sqlText, args
 }
 
-// GetEntityStateSQLForTest is the SQL [Store.GetEntityState] issues.
-// Test-only.
-const GetEntityStateSQLForTest = getEntityStateSQL
+// GetEntitySQLForTest is the SQL [Store.GetEntity] issues. Test-only.
+const GetEntitySQLForTest = getEntitySQL
 
 // BuildHighestIDSQLForTest exposes the SQL [Store.HighestID] issues for
 // prefix. Test-only.

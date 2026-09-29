@@ -48,7 +48,7 @@ func (f familyDeleteFixture) facesAt(t *testing.T, id string) []entity.Face {
 		case err == nil:
 			faces = append(faces, face)
 		case !errors.Is(err, store.ErrNotFound):
-			t.Fatalf("GetEntityState %s@%s: %v", id, face, err)
+			t.Fatalf("GetEntity %s@%s: %v", id, face, err)
 		}
 	}
 	return faces
@@ -237,15 +237,15 @@ func TestFamilyRename_EveryFaceCapturedAndAudited(t *testing.T) {
 	}
 }
 
-// RenameEntity on the Tx view stands in for the store's rename, so
+// RenameFamily on the Tx view stands in for the store's rename, so
 // injectBeforeStoreWrite also adds the face just before a family rename.
-func (tx *faceInjectingTx) RenameEntity(ctx context.Context, oldID, newID string) (*store.RenameResult, error) {
+func (tx *faceInjectingTx) RenameFamily(ctx context.Context, oldID, newID string) (*store.RenameResult, error) {
 	if tx.parent.at == injectBeforeStoreWrite {
 		if err := tx.CreateEntity(ctx, policyFace("published")); err != nil {
 			tx.parent.t.Errorf("inject published face: %v", err)
 		}
 	}
-	return tx.Store.RenameEntity(ctx, oldID, newID)
+	return tx.Store.RenameFamily(ctx, oldID, newID)
 }
 
 // A face that appears after the first authorization is still authorized

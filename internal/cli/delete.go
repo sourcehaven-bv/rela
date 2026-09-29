@@ -98,16 +98,14 @@ func deleteTarget(ctx context.Context, st store.Store, ref entity.Ref) (*entity.
 	if !ref.Face.IsDefault() {
 		return st.GetEntity(ctx, entity.Ref{ID: ref.ID, Face: ref.Face})
 	}
-	q := store.EntityQuery{IDs: []string{ref.ID}, Faces: store.AllFaces()}
-	for e, err := range st.ListEntities(ctx, q) {
-		if err != nil {
-			return nil, err
-		}
-		if e.ID == ref.ID {
-			return e, nil
-		}
+	family, err := store.Family(ctx, st, ref.ID)
+	if err != nil {
+		return nil, err
 	}
-	return nil, store.ErrNotFound
+	if len(family) == 0 {
+		return nil, store.ErrNotFound
+	}
+	return family[0], nil
 }
 
 // deleteScope is the set of edges a delete of ref removes: every incident

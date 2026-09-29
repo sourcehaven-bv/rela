@@ -33,7 +33,7 @@ type gatedReader struct{ raw store.Store }
 // miss, so the gated path leaks no existence oracle. Returning (nil, nil)
 // would violate the EntityReader contract and nil-deref the binding.
 func (g gatedReader) GetAddress(ctx context.Context, addr string) (*entity.Entity, error) {
-	e, err := store.GetEntityAt(ctx, g.raw, addr)
+	e, err := readAddress(ctx, g.raw, addr)
 	if err != nil {
 		return nil, err
 	}
@@ -101,7 +101,7 @@ func (g gatedReader) ListRelations(ctx context.Context, q store.RelationQuery) i
 type failingElevatedReader struct{ raw store.Store }
 
 func (f failingElevatedReader) GetAddress(ctx context.Context, addr string) (*entity.Entity, error) {
-	return store.GetEntityAt(ctx, f.raw, addr)
+	return readAddress(ctx, f.raw, addr)
 }
 
 func (f failingElevatedReader) ListEntities(

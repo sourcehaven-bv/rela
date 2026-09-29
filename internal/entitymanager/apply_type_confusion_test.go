@@ -120,7 +120,7 @@ assignments:
 	}
 
 	// The stored entity must be UNCHANGED: still a secret, original title.
-	got, err := st.GetEntity(context.Background(), "SECRET-1")
+	got, err := st.GetEntity(context.Background(), entity.Ref{ID: "SECRET-1"})
 	if err != nil {
 		t.Fatalf("GetEntity(SECRET-1): %v", err)
 	}
@@ -200,7 +200,7 @@ assignments:
 	}); updErr != nil {
 		t.Fatalf("legitimate same-type update was rejected: %v", updErr)
 	}
-	got, err := st.GetEntity(context.Background(), "NOTE-1")
+	got, err := st.GetEntity(context.Background(), entity.Ref{ID: "NOTE-1"})
 	if err != nil {
 		t.Fatalf("GetEntity(NOTE-1): %v", err)
 	}

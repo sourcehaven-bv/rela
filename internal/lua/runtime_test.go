@@ -124,7 +124,7 @@ func (m *mockWorkspace) services(projectRoot string) WriteDeps {
 
 // GetEntity returns an entity from the underlying store (test helper).
 func (m *mockWorkspace) GetEntity(id string) (*entity.Entity, bool) {
-	e, err := m.store.GetEntity(context.Background(), id)
+	e, err := m.store.GetEntity(context.Background(), entity.Ref{ID: id})
 	if err != nil {
 		return nil, false
 	}
@@ -226,7 +226,7 @@ func (m *mockManager) UpdateEntity(
 func (m *mockManager) PatchEntity(
 	ctx context.Context, id string, p entity.Patch,
 ) (*entity.UpdateResult, error) {
-	stored, err := m.ws.store.GetEntity(ctx, id)
+	stored, err := m.ws.store.GetEntity(ctx, entity.Ref{ID: id})
 	if err != nil {
 		// Structural marker, matching the production manager — the binding
 		// detects not-found via the interface, not the message.
@@ -251,11 +251,11 @@ func (m *mockManager) DeleteEntity(
 	ctx context.Context, id string, cascade bool,
 ) (*entity.DeleteResult, error) {
 	m.familyDeletes++
-	current, err := m.ws.store.GetEntity(ctx, id)
+	current, err := m.ws.store.GetEntity(ctx, entity.Ref{ID: id})
 	if err != nil {
 		return nil, fmt.Errorf("entity not found: %s", id)
 	}
-	if _, err := m.ws.store.DeleteEntity(ctx, id, cascade); err != nil {
+	if _, err := m.ws.store.DeleteFamily(ctx, id, cascade); err != nil {
 		return nil, err
 	}
 	return &entity.DeleteResult{
@@ -2440,7 +2440,7 @@ type ctxSpyStore struct {
 
 func (s *ctxSpyStore) GetAddress(ctx context.Context, addr string) (*entity.Entity, error) {
 	s.rec.record(ctx, "Store.GetAddress")
-	return store.GetEntityAt(ctx, s.Store, addr)
+	return readAddress(ctx, s.Store, addr)
 }
 
 func (s *ctxSpyStore) ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error] {

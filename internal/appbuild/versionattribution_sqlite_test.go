@@ -37,7 +37,7 @@ func TestSQLiteSweptVersionCreditsThePrincipal(t *testing.T) {
 
 	var metas []store.VersionMeta
 	require.Eventually(t, func() bool {
-		metas, err = svc.Versions().ListVersions(context.Background(), id)
+		metas, err = svc.Versions().ListVersions(context.Background(), entity.Ref{ID: id})
 		return err == nil && len(metas) == 1
 	}, 5*time.Second, 20*time.Millisecond, "the sweep never captured %s", id)
 	require.Equal(t, editor.User, metas[0].PrincipalUser)

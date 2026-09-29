@@ -50,7 +50,7 @@ func TestUnrestricted_IsPassThrough(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetAddress: %v", err)
 		}
-		want, err := st.GetEntity(ctx, "TKT-1")
+		want, err := st.GetEntity(ctx, entity.Ref{ID: "TKT-1"})
 		if err != nil {
 			t.Fatalf("store.GetEntity: %v", err)
 		}

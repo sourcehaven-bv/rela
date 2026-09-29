@@ -285,7 +285,7 @@ func TestDelete_CascadeSourceFallback(t *testing.T) {
 				case !tc.wantAllow && !errors.As(err, &forbidden):
 					t.Fatalf("DeleteEntity %s as admin = %v, want *acl.ForbiddenError", ctl.ID, err)
 				}
-				_, gErr := f.st.GetEntity(ctx, ctl.ID)
+				_, gErr := f.st.GetEntity(ctx, ctl.Ref())
 				if gone := errors.Is(gErr, store.ErrNotFound); gone != tc.wantAllow {
 					t.Errorf("%s gone = %v, want %v (err %v)", ctl.ID, gone, tc.wantAllow, gErr)
 				}

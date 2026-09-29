@@ -72,7 +72,7 @@ func TestTxCrossStoreSerialization(t *testing.T) {
 			s := stores[w%2]
 			for range loops {
 				if txErr := s.Tx(ctx, func(tx store.Store) error {
-					e, gerr := tx.GetEntity(ctx, "STRS-CTR")
+					e, gerr := tx.GetEntity(ctx, entity.Ref{ID: "STRS-CTR"})
 					if gerr != nil {
 						return gerr
 					}
@@ -95,7 +95,7 @@ func TestTxCrossStoreSerialization(t *testing.T) {
 	}
 
 	// Read through the OTHER store to also prove cross-store visibility.
-	got, err := s2.GetEntity(ctx, "STRS-CTR")
+	got, err := s2.GetEntity(ctx, entity.Ref{ID: "STRS-CTR"})
 	require.NoError(t, err)
 	require.Equal(t, strconv.Itoa(workers*loops), got.GetString("n"),
 		"lost update across stores: advisory lock is not serializing sessions")

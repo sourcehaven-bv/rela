@@ -41,7 +41,7 @@ func historyAddress(
 		return ref, nil
 	}
 	if len(faces) == 0 {
-		zero, err := versions.ListVersions(ctx, entity.Ref{ID: ref.ID})
+		zero, err := versions.ListVersions(ctx, ref)
 		if err != nil {
 			return entity.Ref{}, fmt.Errorf("read history for %q: %w", ref.ID, err)
 		}

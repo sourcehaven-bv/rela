@@ -29,7 +29,7 @@ import "encoding/json"
 //
 // Faces are INCLUDED, and A5 does not argue against them (TKT-O0A8FO). A face
 // is not part of the id: entity.Entity.Face is its own field, addressed as a
-// separate parameter (store.GetEntityState(ctx, id, face)); the `GUIDE-1@nl`
+// separate field of entity.Ref (store.GetEntity(ctx, ref)); the `GUIDE-1@nl`
 // spelling is a display and URL convention. So a face rename is an in-place
 // field rewrite of the kind rename_entity_type already performs, not the id
 // rewrite A5 says no step can do.

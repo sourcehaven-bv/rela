@@ -20,10 +20,10 @@ import (
 //
 // `ID@face` is the boundary serialization of a state reference, and
 // fsstore/memstore key their index on exactly that string
-// (stateKey = entity.FormatStateRef). Because FormatStateRef(id, "") returns
-// the id verbatim, `GetEntity("POL-1@published")` resolves to the SAME row as
-// `GetEntityState("POL-1", "published")` — it returns the published face, with
-// `Face` correctly populated.
+// (stateKey = entity.FormatStateRef). Because FormatStateRef(id, "") returned
+// the id verbatim, the old `GetEntity("POL-1@published")` resolved to the SAME
+// row as the published face — it returned that face, with `Face` correctly
+// populated.
 //
 // The write path then dropped that face on the floor: every
 // `acl.EntitySubject` literal in entitymanager was built `{Type, ID}` with no

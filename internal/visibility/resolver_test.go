@@ -382,7 +382,7 @@ func TestResolver_Family(t *testing.T) {
 			if st.Reads() != tc.wantReads {
 				t.Errorf("store reads = %d (%s), want %d", st.Reads(), st, tc.wantReads)
 			}
-			if calls := st.Calls(); calls["ListEntities"]+calls["GetEntityState"]+calls["GetEntity"] != 0 {
+			if calls := st.Calls(); calls["ListEntities"]+calls["GetEntity"] != 0 {
 				t.Errorf("Family loaded a body: %s", st)
 			}
 		})
@@ -459,7 +459,7 @@ func queryFaces(s visibility.FaceSet, want []entity.Face, wantOK bool) bool {
 // failingLoader fails every read with err.
 type failingLoader struct{ err error }
 
-func (f failingLoader) GetEntityState(context.Context, string, entity.Face) (*entity.Entity, error) {
+func (f failingLoader) GetEntity(context.Context, entity.Ref) (*entity.Entity, error) {
 	return nil, f.err
 }
 

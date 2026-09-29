@@ -4,7 +4,6 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"strings"
 	"testing"
 )
 
@@ -25,12 +24,12 @@ var directReadGuard = guard{
 // directReads returns the position of every read the 8.5 rule forbids on a
 // gated surface:
 //
-//   - `x.GetEntityState` with three arguments, whatever the face;
-//   - `x.GetEntityAt` called or taken as a value, whatever the receiver;
+//   - `x.GetEntity` with two arguments, whatever the address: the store's
+//     single-row read (the resolver's reads have other names);
 //   - an `EntityQuery{...}` composite literal (bare or qualified) that sets
 //     the `IDs` key, the id-batch form of ListEntities / ListEntityHeaders.
 //
-// The match is syntactic, like zeroFaceReads. Not caught: a query whose IDs
+// The match is syntactic, like bareRefs. Not caught: a query whose IDs
 // are assigned after the literal (`q.IDs = ids`), an unkeyed (positional)
 // EntityQuery literal, which go vet already rejects for an imported struct,
 // and a read hidden behind a helper in another package. Review is the
@@ -49,12 +48,10 @@ func directReads(fset *token.FileSet, file *ast.File) []token.Position {
 		switch n := n.(type) {
 		case *ast.SelectorExpr:
 			switch n.Sel.Name {
-			case "GetEntityState":
-				if call := calls[n]; call != nil && len(call.Args) == 3 {
+			case "GetEntity":
+				if call := calls[n]; call != nil && len(call.Args) == 2 {
 					reads = append(reads, fset.Position(n.Sel.Pos()))
 				}
-			case "GetEntityAt":
-				reads = append(reads, fset.Position(n.Sel.Pos()))
 			}
 		case *ast.CompositeLit:
 			if isEntityQuery(n.Type) && setsKey(n, "IDs") {
@@ -98,27 +95,14 @@ func TestNoNewDirectReads(t *testing.T) {
 	if len(got) == 0 {
 		t.Fatal("scanned no direct reads at all; the walk is probably rooted wrong")
 	}
-	counts := make(map[string]int, len(directReadAllowlist))
-	for path, e := range directReadAllowlist {
-		counts[path] = e.n
-	}
-	for _, msg := range diffAllowlist(directReadGuard, got, counts) {
-		t.Error(msg)
-	}
+	checkAllowlist(t, directReadGuard, got, directReadAllowlist)
 }
 
 // Every entry must say why it may read directly: the allowlist is the
 // record of which reads are write-prep and which are still to migrate.
 func TestDirectReadAllowlist_HasReasons(t *testing.T) {
 	t.Parallel()
-	for path, e := range directReadAllowlist {
-		if strings.TrimSpace(e.reason) == "" {
-			t.Errorf("%s: allowlist entry has no reason", path)
-		}
-		if e.n <= 0 {
-			t.Errorf("%s: allowlist count %d; delete the entry instead", path, e.n)
-		}
-	}
+	checkReasons(t, directReadAllowlist)
 }
 
 func TestDirectReads(t *testing.T) {
@@ -128,11 +112,9 @@ func TestDirectReads(t *testing.T) {
 		body string
 		want int
 	}{
-		{"GetEntityState any face", `st.GetEntityState(ctx, id, face)`, 1},
-		{"GetEntityState zero face", `st.GetEntityState(ctx, id, "")`, 1},
-		{"GetEntityState other arity", `c.GetEntityState(ctx, id)`, 0},
-		{"GetEntityAt call", `store.GetEntityAt(ctx, st, addr)`, 1},
-		{"GetEntityAt value", `f := store.GetEntityAt; _ = f`, 1},
+		{"GetEntity any face", `st.GetEntity(ctx, entity.Ref{ID: id, Face: face})`, 1},
+		{"GetEntity own ref", `st.GetEntity(ctx, e.Ref())`, 1},
+		{"GetEntity other arity", `c.GetEntity(ctx, "tickets", id)`, 0},
 		{"qualified query with IDs", `st.ListEntities(ctx, store.EntityQuery{IDs: ids})`, 1},
 		{"bare query with IDs", `q := EntityQuery{Type: "x", IDs: ids}; _ = q`, 1},
 		{"query without IDs", `st.ListEntityHeaders(ctx, store.EntityQuery{Type: "x"})`, 0},
@@ -162,11 +144,11 @@ func TestScanTree_DirectReadsScopedToGatedSurfaces(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	for rel, src := range map[string]string{
-		"internal/mcp/a.go":       "package mcp\nfunc f() { store.GetEntityAt(ctx, st, a) }\n",
-		"internal/lua/b.go":       "package lua\nfunc f() { st.GetEntityState(ctx, id, face) }\n",
+		"internal/mcp/a.go":       "package mcp\nfunc f() { st.GetEntity(ctx, ref) }\n",
+		"internal/lua/b.go":       "package lua\nfunc f() { st.GetEntity(ctx, ref) }\n",
 		"internal/dataentry/c.go": "package dataentry\nvar q = store.EntityQuery{IDs: ids}\n",
-		"internal/cli/d.go":       "package cli\nfunc f() { store.GetEntityAt(ctx, st, a) }\n",
-		"internal/mcp/a_test.go":  "package mcp\nfunc g() { store.GetEntityAt(ctx, st, a) }\n",
+		"internal/cli/d.go":       "package cli\nfunc f() { st.GetEntity(ctx, ref) }\n",
+		"internal/mcp/a_test.go":  "package mcp\nfunc g() { st.GetEntity(ctx, ref) }\n",
 	} {
 		if err := mkdirAllWrite(root+"/"+rel, src); err != nil {
 			t.Fatal(err)

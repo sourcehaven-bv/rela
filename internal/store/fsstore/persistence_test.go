@@ -73,7 +73,7 @@ func TestPersistence_EntitiesSurviveReopen(t *testing.T) {
 	s2 := openStore(t, fs)
 	defer s2.Close()
 
-	got, err := s2.GetEntity(ctx, "REQ-1")
+	got, err := s2.GetEntity(ctx, entity.Ref{ID: "REQ-1"})
 	require.NoError(t, err)
 	assert.Equal(t, "REQ-1", got.ID)
 	assert.Equal(t, "requirement", got.Type)
@@ -117,7 +117,7 @@ func TestPersistence_TypeChangeLeavesNoOrphanFile(t *testing.T) {
 	s2 := openStore(t, fs)
 	defer s2.Close()
 
-	got, err := s2.GetEntity(ctx, "REQ-1")
+	got, err := s2.GetEntity(ctx, entity.Ref{ID: "REQ-1"})
 	require.NoError(t, err)
 	assert.Equal(t, "artifact", got.Type, "type change lost on reopen")
 
@@ -156,48 +156,27 @@ func TestPersistence_AttachmentsSurviveReopen(t *testing.T) {
 
 	s1 := openStore(t, fs)
 	require.NoError(t, s1.CreateEntity(ctx, entity.New("DOC-1", "document")))
-	require.NoError(t, s1.AttachFile(ctx, "DOC-1", "diagram", "arch.png", bytes.NewReader([]byte("PNG-DATA"))))
+	require.NoError(t, s1.AttachFamilyFile(ctx, "DOC-1", "diagram", "arch.png", bytes.NewReader([]byte("PNG-DATA"))))
 	// A file literally named "*.new" must survive the reopen — the index
 	// loader must not mistake it for an interrupted-write temp file
 	// (RR-BN2MDO).
-	require.NoError(t, s1.AttachFile(ctx, "DOC-1", "diagram", "notes.new", bytes.NewReader([]byte("NEW-DATA"))))
+	require.NoError(t, s1.AttachFamilyFile(ctx, "DOC-1", "diagram", "notes.new", bytes.NewReader([]byte("NEW-DATA"))))
 	require.NoError(t, s1.Close())
 
 	s2 := openStore(t, fs)
 	defer s2.Close()
 
-	rc, err := s2.ReadAttachment(ctx, "DOC-1", "diagram", "arch.png")
+	rc, err := s2.ReadFamilyAttachment(ctx, "DOC-1", "diagram", "arch.png")
 	require.NoError(t, err)
 	data, _ := io.ReadAll(rc)
 	rc.Close()
 	assert.Equal(t, "PNG-DATA", string(data))
 
-	rcNew, err := s2.ReadAttachment(ctx, "DOC-1", "diagram", "notes.new")
+	rcNew, err := s2.ReadFamilyAttachment(ctx, "DOC-1", "diagram", "notes.new")
 	require.NoError(t, err, `a "*.new"-named attachment must survive a store reopen`)
 	dataNew, _ := io.ReadAll(rcNew)
 	rcNew.Close()
 	assert.Equal(t, "NEW-DATA", string(dataNew))
-}
-
-func TestPersistence_PropertyCacheSurvivesReopen(t *testing.T) {
-	fs := storage.NewMemFS()
-	ctx := context.Background()
-
-	s1 := openStore(t, fs)
-	for i, status := range []string{"open", "open", "closed"} {
-		e := entity.New("T-"+string(rune('1'+i)), "ticket")
-		e.Properties["status"] = status
-		require.NoError(t, s1.CreateEntity(ctx, e))
-	}
-	require.NoError(t, s1.Close())
-
-	s2 := openStore(t, fs)
-	defer s2.Close()
-
-	vals, err := s2.PropertyValues(ctx, "status", 0)
-	require.NoError(t, err)
-	assert.Contains(t, vals, "open")
-	assert.Contains(t, vals, "closed")
 }
 
 func TestPersistence_ExternalEntityModification(t *testing.T) {
@@ -227,7 +206,7 @@ Updated body.
 	s2 := openStore(t, fs)
 	defer s2.Close()
 
-	got, err := s2.GetEntity(ctx, "REQ-1")
+	got, err := s2.GetEntity(ctx, entity.Ref{ID: "REQ-1"})
 	require.NoError(t, err)
 	assert.Equal(t, "approved", got.Properties["status"])
 	assert.Equal(t, "Externally added title", got.Properties["title"])
@@ -257,7 +236,7 @@ We decided to use Go.
 	s2 := openStore(t, fs)
 	defer s2.Close()
 
-	got, err := s2.GetEntity(ctx, "DEC-1")
+	got, err := s2.GetEntity(ctx, entity.Ref{ID: "DEC-1"})
 	require.NoError(t, err)
 	assert.Equal(t, "decision", got.Type)
 	assert.Equal(t, "accepted", got.Properties["status"])
@@ -314,40 +293,12 @@ func TestPersistence_ExternalEntityDeleted(t *testing.T) {
 	s2 := openStore(t, fs)
 	defer s2.Close()
 
-	_, err := s2.GetEntity(ctx, "DEL-1")
+	_, err := s2.GetEntity(ctx, entity.Ref{ID: "DEL-1"})
 	require.ErrorIs(t, err, store.ErrNotFound)
 
 	count, err := s2.CountEntities(ctx, store.EntityQuery{Faces: store.InWorld(store.DefaultWorld())})
 	require.NoError(t, err)
 	assert.Equal(t, 1, count)
-}
-
-func TestPersistence_PropertyCacheRebuildAfterExternalEdit(t *testing.T) {
-	fs := storage.NewMemFS()
-	ctx := context.Background()
-
-	// Create entities and close (which flushes the property cache).
-	s1 := openStore(t, fs)
-	e := entity.New("T-1", "ticket")
-	e.Properties["priority"] = "low"
-	require.NoError(t, s1.CreateEntity(ctx, e))
-	require.NoError(t, s1.Close())
-
-	// Modify the entity externally — the property cache is now stale.
-	require.NoError(t, fs.WriteFile("/entities/tickets/T-1.md", []byte(`---
-id: T-1
-type: ticket
-priority: critical
----
-`), 0644))
-
-	// Reopen — the store should detect staleness and rebuild the cache.
-	s2 := openStore(t, fs)
-	defer s2.Close()
-
-	vals, err := s2.PropertyValues(ctx, "priority", 0)
-	require.NoError(t, err)
-	assert.Equal(t, []string{"critical"}, vals)
 }
 
 func TestPersistence_UpdateSurvivedReopen(t *testing.T) {
@@ -368,7 +319,7 @@ func TestPersistence_UpdateSurvivedReopen(t *testing.T) {
 	s2 := openStore(t, fs)
 	defer s2.Close()
 
-	got, err := s2.GetEntity(ctx, "REQ-1")
+	got, err := s2.GetEntity(ctx, entity.Ref{ID: "REQ-1"})
 	require.NoError(t, err)
 	assert.Equal(t, "approved", got.Properties["status"])
 	assert.Equal(t, "Approved content.", strings.TrimSpace(got.Content))
@@ -380,14 +331,14 @@ func TestPersistence_DeleteSurvivedReopen(t *testing.T) {
 
 	s1 := openStore(t, fs)
 	require.NoError(t, s1.CreateEntity(ctx, entity.New("REQ-1", "requirement")))
-	_, err := s1.DeleteEntity(ctx, "REQ-1", false)
+	_, err := s1.DeleteFamily(ctx, "REQ-1", false)
 	require.NoError(t, err)
 	require.NoError(t, s1.Close())
 
 	s2 := openStore(t, fs)
 	defer s2.Close()
 
-	_, err = s2.GetEntity(ctx, "REQ-1")
+	_, err = s2.GetEntity(ctx, entity.Ref{ID: "REQ-1"})
 	require.ErrorIs(t, err, store.ErrNotFound)
 
 	count, err := s2.CountEntities(ctx, store.EntityQuery{Faces: store.InWorld(store.DefaultWorld())})
@@ -407,7 +358,7 @@ func TestPersistence_RenameSurvivedReopen(t *testing.T) {
 	_, err := s1.CreateRelation(ctx, "SOL-1", "implements", "REQ-OLD", nil)
 	require.NoError(t, err)
 
-	_, err = s1.RenameEntity(ctx, "REQ-OLD", "REQ-NEW")
+	_, err = s1.RenameFamily(ctx, "REQ-OLD", "REQ-NEW")
 	require.NoError(t, err)
 	require.NoError(t, s1.Close())
 
@@ -415,11 +366,11 @@ func TestPersistence_RenameSurvivedReopen(t *testing.T) {
 	defer s2.Close()
 
 	// Old ID is gone.
-	_, err = s2.GetEntity(ctx, "REQ-OLD")
+	_, err = s2.GetEntity(ctx, entity.Ref{ID: "REQ-OLD"})
 	require.ErrorIs(t, err, store.ErrNotFound)
 
 	// New ID exists with same properties.
-	got, err := s2.GetEntity(ctx, "REQ-NEW")
+	got, err := s2.GetEntity(ctx, entity.Ref{ID: "REQ-NEW"})
 	require.NoError(t, err)
 	assert.Equal(t, "Keep this", got.Properties["title"])
 

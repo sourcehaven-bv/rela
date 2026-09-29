@@ -284,16 +284,14 @@ func (e *Engine) pluralForLocalEntity(ctx context.Context, id string) (string, e
 // entity, which has no zero-face row (DEC-NPZICR), is found by its bare id.
 // No stored face is [store.ErrNotFound].
 func (e *Engine) localType(ctx context.Context, id string) (string, error) {
-	q := store.EntityQuery{IDs: []string{id}, Faces: store.AllFaces()}
-	for h, err := range store.ListEntityHeaders(ctx, e.store, q) {
-		if err != nil {
-			return "", err
-		}
-		if h.ID == id {
-			return h.Type, nil
-		}
+	headers, err := store.FamilyHeaders(ctx, e.store, id)
+	if err != nil {
+		return "", err
 	}
-	return "", store.ErrNotFound
+	if len(headers) == 0 {
+		return "", store.ErrNotFound
+	}
+	return headers[0].Type, nil
 }
 
 // recordCreate handles a push-create outcome: the primary minted an id, so the

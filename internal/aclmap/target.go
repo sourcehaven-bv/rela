@@ -27,14 +27,11 @@ func (e *Engine) target(ctx context.Context, addr string) (resolvedTarget, error
 	}
 	t := resolvedTarget{ref: ref}
 	faceFound := false
-	q := store.EntityQuery{IDs: []string{ref.ID}, Faces: store.AllFaces()}
-	for h, err := range store.ListEntityHeaders(ctx, e.src, q) {
-		if err != nil {
-			return resolvedTarget{}, fmt.Errorf("aclmap: load entity %q: %w", ref.ID, err)
-		}
-		if h.ID != ref.ID {
-			continue
-		}
+	headers, err := store.FamilyHeaders(ctx, e.src, ref.ID)
+	if err != nil {
+		return resolvedTarget{}, fmt.Errorf("aclmap: load entity %q: %w", ref.ID, err)
+	}
+	for _, h := range headers {
 		t.typ = h.Type
 		t.faces = append(t.faces, h.Face)
 		if h.Face == ref.Face {

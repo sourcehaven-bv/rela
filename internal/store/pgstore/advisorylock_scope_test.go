@@ -2,6 +2,7 @@ package pgstore_test
 
 import (
 	"context"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"testing"
 	"time"
 
@@ -243,7 +244,7 @@ func TestSweepCapturesWhileAnotherSchemaHoldsLock(t *testing.T) {
 		})
 
 	require.Eventually(t, func() bool {
-		metas, e := sB.VersionStore().ListVersions(ctx, "TENANT-B-1")
+		metas, e := sB.VersionStore().ListVersions(ctx, entity.Ref{ID: "TENANT-B-1"})
 		return e == nil && len(metas) == 1
 	}, 5*time.Second, 25*time.Millisecond,
 		"schema B must capture its own versions while schema A holds ITS version lock; "+

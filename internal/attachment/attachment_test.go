@@ -374,7 +374,7 @@ func TestService_DetachFile(t *testing.T) {
 	if removed, err := f.svc.DetachFile(ctx, e, gallery, "gallery", ""); err != nil || removed != "b.pdf" {
 		t.Fatalf("unnamed detach: removed=%q err=%v", removed, err)
 	}
-	got, err := f.st.GetEntity(ctx, "T-1")
+	got, err := f.st.GetEntity(ctx, entity.Ref{ID: "T-1"})
 	if err != nil {
 		t.Fatalf("get entity: %v", err)
 	}
@@ -409,7 +409,7 @@ func TestService_StampPreservesOtherProperties(t *testing.T) {
 	if e.GetString("spec") != "" {
 		t.Error("WriteAttachment modified the caller's entity")
 	}
-	got, err := f.st.GetEntity(ctx, "T-1")
+	got, err := f.st.GetEntity(ctx, entity.Ref{ID: "T-1"})
 	if err != nil {
 		t.Fatalf("get entity: %v", err)
 	}

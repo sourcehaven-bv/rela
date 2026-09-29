@@ -96,10 +96,10 @@ func TestDerivedUnique_DuplicateInsertRejected(t *testing.T) {
 	require.ErrorIs(t, err, store.ErrConflict)
 
 	// Exactly one row.
-	got, err := s.GetEntity(ctx, "P-1")
+	got, err := s.GetEntity(ctx, entity.Ref{ID: "P-1"})
 	require.NoError(t, err)
 	require.Equal(t, "a@x.com", got.GetString("email"))
-	_, err = s.GetEntity(ctx, "P-2")
+	_, err = s.GetEntity(ctx, entity.Ref{ID: "P-2"})
 	require.ErrorIs(t, err, store.ErrNotFound)
 }
 

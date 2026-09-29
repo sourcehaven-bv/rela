@@ -162,7 +162,7 @@ func TestFileProperty_GenericWriteRule(t *testing.T) {
 func TestFileProperty_EchoKeepsStoredValue(t *testing.T) {
 	ctx := context.Background()
 	mgr, d := newFileRuleManager(t)
-	before, err := d.Store.GetEntity(ctx, "DOC-1")
+	before, err := d.Store.GetEntity(ctx, entity.Ref{ID: "DOC-1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,7 +179,7 @@ func TestFileProperty_EchoKeepsStoredValue(t *testing.T) {
 	if _, err = mgr.UpdateEntity(ctx, e); err != nil {
 		t.Fatalf("update: %v", err)
 	}
-	after, err := d.Store.GetEntity(ctx, "DOC-1")
+	after, err := d.Store.GetEntity(ctx, entity.Ref{ID: "DOC-1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +204,7 @@ func TestStampAttachments_ChangesOnlyTheNamedProperty(t *testing.T) {
 	if _, err = owner.StampAttachments(ctx, entity.Ref{ID: "DOC-1"}, "spec", "attachments/DOC-1/spec/b.txt"); err != nil {
 		t.Fatalf("stamp: %v", err)
 	}
-	got, err := d.Store.GetEntity(ctx, "DOC-1")
+	got, err := d.Store.GetEntity(ctx, entity.Ref{ID: "DOC-1"})
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
@@ -255,9 +255,9 @@ type stampAfterRead struct {
 	stamp func()
 }
 
-func (s *stampAfterRead) GetEntityState(ctx context.Context, id string, f entity.Face) (*entity.Entity, error) {
-	e, err := s.Store.GetEntity(ctx, entity.Ref{ID: id, Face: f})
-	if err == nil && id == "DOC-1" {
+func (s *stampAfterRead) GetEntity(ctx context.Context, ref entity.Ref) (*entity.Entity, error) {
+	e, err := s.Store.GetEntity(ctx, ref)
+	if err == nil && ref.ID == "DOC-1" {
 		s.once.Do(s.stamp)
 	}
 	return e, err
@@ -272,7 +272,7 @@ func TestUpdateEntity_DoesNotRevertAConcurrentStamp(t *testing.T) {
 	inner := d.Store
 	const stamped = "attachments/DOC-1/spec/new.txt"
 	hooked := &stampAfterRead{Store: inner, stamp: func() {
-		e, err := inner.GetEntity(ctx, "DOC-1")
+		e, err := inner.GetEntity(ctx, entity.Ref{ID: "DOC-1"})
 		if err != nil {
 			t.Errorf("stamp read: %v", err)
 			return
@@ -298,7 +298,7 @@ func TestUpdateEntity_DoesNotRevertAConcurrentStamp(t *testing.T) {
 	}}); err != nil {
 		t.Fatalf("update: %v", err)
 	}
-	got, err := inner.GetEntity(ctx, "DOC-1")
+	got, err := inner.GetEntity(ctx, entity.Ref{ID: "DOC-1"})
 	if err != nil {
 		t.Fatal(err)
 	}

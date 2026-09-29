@@ -14,7 +14,8 @@ import (
 
 // historyStore is a canned version-history service, so the handler's
 // HistoryReader path can be exercised without a pgstore. Keyed by entity id; each
-// snapshot carries a type so cross-type checks can be tested. It embeds
+// snapshot carries a type so cross-type checks can be tested. A named face
+// keys as `ID@face`, the zero face by the bare id. It embeds
 // stubVersionService to satisfy the whole store.VersionService umbrella and
 // overrides only the two reader methods these tests exercise; assign it to
 // App.versions.
@@ -23,8 +24,8 @@ type historyStore struct {
 	versions map[string][]store.VersionSnapshot
 }
 
-func (h historyStore) ListVersions(_ context.Context, id string) ([]store.VersionMeta, error) {
-	snaps := h.versions[id]
+func (h historyStore) ListVersions(_ context.Context, ref entity.Ref) ([]store.VersionMeta, error) {
+	snaps := h.versions[entity.FormatStateRef(ref.ID, ref.Face)]
 	metas := make([]store.VersionMeta, 0, len(snaps))
 	for _, s := range snaps {
 		metas = append(metas, s.VersionMeta)
@@ -32,26 +33,13 @@ func (h historyStore) ListVersions(_ context.Context, id string) ([]store.Versio
 	return metas, nil
 }
 
-func (h historyStore) GetVersion(_ context.Context, id string, version int) (*store.VersionSnapshot, error) {
-	snaps := h.versions[id]
+func (h historyStore) GetVersion(_ context.Context, ref entity.Ref, version int) (*store.VersionSnapshot, error) {
+	snaps := h.versions[entity.FormatStateRef(ref.ID, ref.Face)]
 	if version < 1 || version > len(snaps) {
 		return nil, store.ErrNotFound
 	}
 	s := snaps[version-1]
 	return &s, nil
-}
-
-// ListStateVersions reads the lineage of id at face p, keyed as `ID@face`
-// (the zero face keys by the bare id, like ListVersions).
-func (h historyStore) ListStateVersions(ctx context.Context, id string, p entity.Face) ([]store.VersionMeta, error) {
-	return h.ListVersions(ctx, entity.FormatStateRef(id, p))
-}
-
-// GetStateVersion is [historyStore.ListStateVersions] for one version.
-func (h historyStore) GetStateVersion(
-	ctx context.Context, id string, p entity.Face, version int,
-) (*store.VersionSnapshot, error) {
-	return h.GetVersion(ctx, entity.FormatStateRef(id, p), version)
 }
 
 // snapshot builds a version-1 create snapshot. Version is fixed at 1 (every

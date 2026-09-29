@@ -114,9 +114,9 @@ func TestFSFactoryObserversReceiveWrites(t *testing.T) {
 		ID:   "POL-1",
 		Type: "policy",
 	}))
-	_, err = s.RenameEntity(ctx, "POL-1", "POL-2")
+	_, err = s.RenameFamily(ctx, "POL-1", "POL-2")
 	require.NoError(t, err)
-	_, err = s.DeleteEntity(ctx, "POL-2", false)
+	_, err = s.DeleteFamily(ctx, "POL-2", false)
 	require.NoError(t, err)
 
 	// Contract per store.EntityObserver:

@@ -51,7 +51,7 @@ func TestGitCrypt_GetEntityReturnsInaccessibleEntity(t *testing.T) {
 	s := openStore(t, fs)
 	defer s.Close()
 
-	got, err := s.GetEntity(ctx, "REQ-2")
+	got, err := s.GetEntity(ctx, entity.Ref{ID: "REQ-2"})
 	require.NoError(t, err, "encrypted file should load as an inaccessible entity, not error")
 	assert.Equal(t, "REQ-2", got.ID)
 	assert.Equal(t, "requirement", got.Type)
@@ -150,7 +150,7 @@ func TestGitCrypt_PropertylessEntityType_StillLocks(t *testing.T) {
 	require.NoError(t, err)
 	defer s.Close()
 
-	got, err := s.GetEntity(context.Background(), "B-1")
+	got, err := s.GetEntity(context.Background(), entity.Ref{ID: "B-1"})
 	require.NoError(t, err)
 	assert.True(t, got.IsLocked(), "encrypted entity with no schema properties must still be locked")
 	require.Len(t, got.Inaccessible, 1)
@@ -218,7 +218,7 @@ func TestGitCrypt_HalfEncrypted_CleartextRelationToEncryptedEntity(t *testing.T)
 	require.NoError(t, err)
 	assert.False(t, rel.IsLocked(), "cleartext relation file should be readable")
 
-	target, err := s.GetEntity(ctx, "REQ-1")
+	target, err := s.GetEntity(ctx, entity.Ref{ID: "REQ-1"})
 	require.NoError(t, err)
 	assert.True(t, target.IsLocked(), "encrypted target entity has Inaccessible populated")
 }

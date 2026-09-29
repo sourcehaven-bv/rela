@@ -89,7 +89,7 @@ func attachmentsOf(ctx context.Context, t *testing.T, app *App, d *acl.Declarati
 func storedContents(t *testing.T, app *App) []string {
 	t.Helper()
 	ctx := context.Background()
-	infos, err := app.store.ListAttachments(ctx, "TKT-1")
+	infos, err := app.store.ListFamilyAttachments(ctx, "TKT-1")
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("ListAttachments: %v", err)
 	}
@@ -98,7 +98,7 @@ func storedContents(t *testing.T, app *App) []string {
 		if info.Property != "screenshot" {
 			continue
 		}
-		rc, err := app.store.ReadAttachment(ctx, "TKT-1", "screenshot", info.FileName)
+		rc, err := app.store.ReadFamilyAttachment(ctx, "TKT-1", "screenshot", info.FileName)
 		if err != nil {
 			t.Fatalf("ReadAttachment %s: %v", info.FileName, err)
 		}
@@ -208,7 +208,7 @@ func TestFacedAttachment_UploadRevealsNoOtherFaceName(t *testing.T) {
 func TestFacedAttachment_LegacyValueServes(t *testing.T) {
 	app, d := facedAttachmentApp(t, faceEditors(t, "bob"))
 	bob := principalCtx("bob")
-	if err := app.store.AttachFile(bob, "TKT-1", "screenshot", "old.txt", strings.NewReader("legacy")); err != nil {
+	if err := app.store.AttachFamilyFile(bob, "TKT-1", "screenshot", "old.txt", strings.NewReader("legacy")); err != nil {
 		t.Fatalf("seed bytes: %v", err)
 	}
 	if _, err := app.attachmentOwner.StampAttachments(bob, entity.Ref{ID: "TKT-1", Face: "draft"},
@@ -409,7 +409,7 @@ func TestHistoryRestore_KeepsLiveFileValues(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("restore = %d (%s)", rec.Code, rec.Body)
 	}
-	got, err := app.store.GetEntity(context.Background(), "TKT-001")
+	got, err := app.store.GetEntity(context.Background(), entity.Ref{ID: "TKT-001"})
 	if err != nil {
 		t.Fatalf("GetEntity: %v", err)
 	}

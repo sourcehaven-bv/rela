@@ -130,8 +130,8 @@ func FuzzDifferential(f *testing.F) {
 				assertSameError(t, err1, err2, "CreateEntity %s", id)
 
 			case 1: // GetEntity
-				got1, err1 := mem.GetEntity(bg, "E-1")
-				got2, err2 := fss.GetEntity(bg, "E-1")
+				got1, err1 := mem.GetEntity(bg, entity.Ref{ID: "E-1"})
+				got2, err2 := fss.GetEntity(bg, entity.Ref{ID: "E-1"})
 				assertSameError(t, err1, err2, "GetEntity E-1")
 				if err1 == nil {
 					assertSameEntity(t, got1, got2)
@@ -159,8 +159,8 @@ func FuzzDifferential(f *testing.F) {
 				assertSameError(t, err1, err2, "CreateRelation E-1→E-3")
 
 			case 5: // DeleteEntity (cascade)
-				_, err1 := mem.DeleteEntity(bg, "E-2", true)
-				_, err2 := fss.DeleteEntity(bg, "E-2", true)
+				_, err1 := mem.DeleteFamily(bg, "E-2", true)
+				_, err2 := fss.DeleteFamily(bg, "E-2", true)
 				assertSameError(t, err1, err2, "DeleteEntity E-2")
 
 			case 6: // ListRelations
@@ -177,8 +177,8 @@ func FuzzDifferential(f *testing.F) {
 				}
 
 			case 7: // RenameEntity
-				_, err1 := mem.RenameEntity(bg, "E-3", "E-RENAMED")
-				_, err2 := fss.RenameEntity(bg, "E-3", "E-RENAMED")
+				_, err1 := mem.RenameFamily(bg, "E-3", "E-RENAMED")
+				_, err2 := fss.RenameFamily(bg, "E-3", "E-RENAMED")
 				assertSameError(t, err1, err2, "RenameEntity E-3→E-RENAMED")
 
 			case 8: // DeleteRelation
@@ -186,24 +186,22 @@ func FuzzDifferential(f *testing.F) {
 				err2 := fss.DeleteRelation(bg, "E-1", "blocks", "E-2")
 				assertSameError(t, err1, err2, "DeleteRelation")
 
-			case 9: // PropertyValues
-				vals1, err1 := mem.PropertyValues(bg, "status", 0)
-				vals2, err2 := fss.PropertyValues(bg, "status", 0)
-				assertSameError(t, err1, err2, "PropertyValues status")
+			case 9: // HighestID
+				h1, err1 := mem.HighestID(bg, "E")
+				h2, err2 := fss.HighestID(bg, "E")
+				assertSameError(t, err1, err2, "HighestID E")
 				if err1 == nil {
-					sort.Strings(vals1)
-					sort.Strings(vals2)
-					assert.Equal(t, vals1, vals2, "PropertyValues mismatch")
+					assert.Equal(t, h1, h2, "HighestID mismatch")
 				}
 
 			case 10: // AttachFile + ReadAttachment
 				data := "attachment-content"
-				err1 := mem.AttachFile(bg, "E-1", "diagram", "pic.png", strings.NewReader(data))
-				err2 := fss.AttachFile(bg, "E-1", "diagram", "pic.png", strings.NewReader(data))
+				err1 := mem.AttachFamilyFile(bg, "E-1", "diagram", "pic.png", strings.NewReader(data))
+				err2 := fss.AttachFamilyFile(bg, "E-1", "diagram", "pic.png", strings.NewReader(data))
 				assertSameError(t, err1, err2, "AttachFile")
 				if err1 == nil {
-					rc1, e1 := mem.ReadAttachment(bg, "E-1", "diagram", "pic.png")
-					rc2, e2 := fss.ReadAttachment(bg, "E-1", "diagram", "pic.png")
+					rc1, e1 := mem.ReadFamilyAttachment(bg, "E-1", "diagram", "pic.png")
+					rc2, e2 := fss.ReadFamilyAttachment(bg, "E-1", "diagram", "pic.png")
 					assertSameError(t, e1, e2, "ReadAttachment")
 					if e1 == nil {
 						d1, _ := io.ReadAll(rc1)

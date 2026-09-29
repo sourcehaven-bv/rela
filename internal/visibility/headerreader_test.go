@@ -131,7 +131,7 @@ func TestScriptReader_ListEntityHeadersDoesNotMutateStore(t *testing.T) {
 	for range sr.ListEntityHeaders(ctx, store.EntityQuery{Faces: store.InWorld(store.DefaultWorld())}) { //nolint:revive // draining
 	}
 
-	got, err := st.GetEntity(ctx, "TKT-1")
+	got, err := st.GetEntity(ctx, entity.Ref{ID: "TKT-1"})
 	if err != nil {
 		t.Fatalf("GetEntity: %v", err)
 	}

@@ -49,5 +49,5 @@ func Family(ctx context.Context, r EntityLister, id string) ([]*entity.Entity, e
 
 // familyQuery selects every face of one id.
 func familyQuery(id string) EntityQuery {
-	return EntityQuery{IDs: []string{id}, AllStates: true}
+	return EntityQuery{IDs: []string{id}, Faces: AllFaces()}
 }

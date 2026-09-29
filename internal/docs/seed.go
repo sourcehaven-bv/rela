@@ -459,14 +459,12 @@ func seedRowOf(ctx context.Context, st seedEditStore, id string) (*entity.Entity
 		}
 		base = ref.ID
 	}
+	family, err := store.Family(ctx, st, base)
+	if err != nil {
+		return nil, err
+	}
 	var first *entity.Entity
-	for e, err := range st.ListEntities(ctx, store.EntityQuery{IDs: []string{base}, Faces: store.AllFaces()}) {
-		if err != nil {
-			return nil, err
-		}
-		if e.ID != base {
-			continue
-		}
+	for _, e := range family {
 		if e.Face.IsDefault() {
 			return e, nil
 		}

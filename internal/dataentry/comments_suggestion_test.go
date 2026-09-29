@@ -55,7 +55,7 @@ func accept(t *testing.T, app *App, path, id, user string) *httptest.ResponseRec
 
 func storedBody(t *testing.T, app *App) string {
 	t.Helper()
-	e, err := app.store.GetEntity(t.Context(), "TKT-001")
+	e, err := app.store.GetEntity(t.Context(), entity.Ref{ID: "TKT-001"})
 	require.NoError(t, err)
 	return e.Content
 }
@@ -548,7 +548,7 @@ func TestCommentSuggestion_AcceptPreservesHiddenProperty(t *testing.T) {
 	rec = postCommentsAs(t, app, d, suggestPath+"/"+c.ID+"/accept", "", "bob")
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 
-	e, err := app.store.GetEntity(t.Context(), "TKT-001")
+	e, err := app.store.GetEntity(t.Context(), entity.Ref{ID: "TKT-001"})
 	require.NoError(t, err)
 	require.Contains(t, e.Content, suggestReplace)
 	require.Equal(t, "open", e.Properties["status"], "the hidden property must survive the accept")

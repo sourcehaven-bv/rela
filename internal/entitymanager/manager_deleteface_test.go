@@ -75,7 +75,7 @@ func TestDeleteEntityFace_RemovesOnlyTheFaceAndItsTail(t *testing.T) {
 	if _, gErr := st.GetEntity(ctx, entity.Ref{ID: "REQ-1", Face: published}); gErr == nil {
 		t.Error("the published face must be gone")
 	}
-	if _, gErr := st.GetEntity(ctx, "REQ-1"); gErr != nil {
+	if _, gErr := st.GetEntity(ctx, entity.Ref{ID: "REQ-1"}); gErr != nil {
 		t.Errorf("the bare face must survive: %v", gErr)
 	}
 	remaining := 0
@@ -136,7 +136,7 @@ func TestDeleteEntityFace_RefusesTheBareFace(t *testing.T) {
 	if _, dErr := mgr.DeleteEntityFace(ctx, "REQ-1", ""); dErr == nil {
 		t.Fatal("deleting the bare face through DeleteEntityFace must be refused")
 	}
-	if _, gErr := st.GetEntity(ctx, "REQ-1"); gErr != nil {
+	if _, gErr := st.GetEntity(ctx, entity.Ref{ID: "REQ-1"}); gErr != nil {
 		t.Errorf("a refused delete must leave the entity: %v", gErr)
 	}
 	if _, dErr := mgr.DeleteEntityFace(ctx, "REQ-1", "published"); dErr == nil {

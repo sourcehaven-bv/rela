@@ -55,12 +55,12 @@ import (
 // included — only to drop the body immediately, which is the cost the
 // capability exists to remove. Interface-driven like the Tx split above.
 //
-// (43 → 45 / 29 → 30 with content states, TKT-DOFYR1: GetEntityState
-// joined the mandated store.Store interface; rekeyFamily serves the
+// (43 → 45 / 29 → 30 with content states, TKT-DOFYR1: a per-face read
+// (GetEntity on a Ref since TKT-KQXVF7) joined the mandated store.Store interface; rekeyFamily serves the
 // family-wide rename that contract requires.)
 //
 // (+2 methods / +2 exported with per-face delete, TKT-C1XUA8:
-// DeleteEntityState and DeleteRelationState joined the mandated
+// DeleteFace (then DeleteEntityState) and DeleteRelationState joined the mandated
 // store.Store interface. Required-interface exception, not accreted
 // API — the counts ratchet only if store.Store itself narrows.)
 //

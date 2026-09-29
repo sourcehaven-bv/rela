@@ -60,7 +60,7 @@ func RunStateTests(t *testing.T, f Factory) {
 		assert.Equal(t, ptr(t, "draft"), draft.Face)
 		assert.Equal(t, "draft face", draft.GetString("title"))
 
-		// GetEntityState with the zero face ≡ GetEntity.
+		// The zero face of the same id is its own row.
 		def, err := s.GetEntity(ctx(), entity.Ref{ID: "PAGE-1"})
 		require.NoError(t, err)
 		assert.Equal(t, "default face", def.GetString("title"))
@@ -340,9 +340,9 @@ func RunStateTests(t *testing.T, f Factory) {
 	// --- Per-face delete (TKT-C1XUA8) -----------------------------------
 	//
 	// The contract these pin is the OPPOSITE of DeleteCascadesTheFamily
-	// above, and the pair is deliberate: DeleteEntity addresses the bare id
-	// and sweeps the family; DeleteEntityState addresses one face and leaves
-	// the family standing. A backend that implemented the second as the
+	// above, and the pair is deliberate: DeleteFamily addresses the bare id
+	// and sweeps the family; DeleteFace addresses one face and leaves the
+	// rest of the family standing. A backend that implemented the second as the
 	// first would pass neither.
 
 	t.Run("DeleteStateLeavesSiblingFacesStanding", func(t *testing.T) {

@@ -478,7 +478,7 @@ role_relations:
 	}
 
 	// Verify TKT-001's title actually changed (the allow path landed).
-	got, err := store.GetEntity(context.Background(), tkt1ID)
+	got, err := store.GetEntity(context.Background(), entity.Ref{ID: tkt1ID})
 	if err != nil {
 		t.Fatalf("post-update GetEntity(TKT-001): %v", err)
 	}

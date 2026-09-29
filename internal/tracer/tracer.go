@@ -239,15 +239,9 @@ func FamilyFaces(faces []entity.Face) []entity.Face {
 
 // node reads every stored face header of id in one query.
 func (t *GenericTracer) node(ctx context.Context, id string) (Node, bool) {
-	var headers []store.EntityHeader
-	q := store.EntityQuery{IDs: []string{id}, Faces: store.AllFaces()}
-	for h, err := range store.ListEntityHeaders(ctx, t.r, q) {
-		if err != nil {
-			return Node{}, false
-		}
-		if h.ID == id {
-			headers = append(headers, h)
-		}
+	headers, err := store.FamilyHeaders(ctx, t.r, id)
+	if err != nil {
+		return Node{}, false
 	}
 	return NodeOf(t.world, headers)
 }

@@ -594,7 +594,7 @@ const maxFreeTextSearchResults = 1000
 // bytes for a hit scored against the world's prime — the wrong-face serve this
 // whole arc exists to prevent. Returning ids removes the opportunity rather
 // than documenting it. (search.Service already loads the right face internally
-// via GetEntityState; a consumer re-read here would only undo that.)
+// by its Ref; a consumer re-read here would only undo that.)
 //
 // Free function taking svc rather than an App method: it needs one
 // collaborator, and App sits at its plimsoll method cap.

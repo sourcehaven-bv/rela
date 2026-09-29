@@ -170,7 +170,7 @@ func (f facedFixture) hasBytes(t *testing.T, id string) bool {
 // specKeys returns the storage keys that have bytes on id's spec property.
 func (f facedFixture) specKeys(t *testing.T, id string) []string {
 	t.Helper()
-	infos, err := f.st.ListAttachments(context.Background(), id)
+	infos, err := f.st.ListFamilyAttachments(context.Background(), id)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("list bytes of %s: %v", id, err)
 	}
@@ -508,7 +508,7 @@ func TestFaced_LegacyValueStillServes(t *testing.T) {
 	f := newFacedFixture(t)
 	ctx := context.Background()
 	f.seedReview(t)
-	if err := f.st.AttachFile(ctx, "PAGE-1", "spec", "old.txt", strings.NewReader("legacy")); err != nil {
+	if err := f.st.AttachFamilyFile(ctx, "PAGE-1", "spec", "old.txt", strings.NewReader("legacy")); err != nil {
 		t.Fatal(err)
 	}
 	owner, err := entitymanager.AttachmentsOf(f.mgr)
@@ -537,7 +537,7 @@ func (f facedFixture) stampRaw(t *testing.T, prop string, keys []string, value a
 	t.Helper()
 	ctx := context.Background()
 	for _, k := range keys {
-		if err := f.st.AttachFile(ctx, "PAGE-1", prop, k, strings.NewReader(k)); err != nil {
+		if err := f.st.AttachFamilyFile(ctx, "PAGE-1", prop, k, strings.NewReader(k)); err != nil {
 			t.Fatal(err)
 		}
 	}

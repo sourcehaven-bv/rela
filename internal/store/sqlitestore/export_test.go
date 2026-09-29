@@ -40,9 +40,9 @@ func (s *Store) ExplainEntityPage(ctx context.Context, q store.EntityQuery) (str
 	return s.explain(ctx, sqlText, args)
 }
 
-// ExplainGetEntityState is ExplainGraphQuery for GetEntityState(id, face).
-func (s *Store) ExplainGetEntityState(ctx context.Context, id string, face entity.Face) (string, error) {
-	return s.explain(ctx, getEntityStateSQL, []any{id, string(face)})
+// ExplainGetEntity is ExplainGraphQuery for GetEntity(ref).
+func (s *Store) ExplainGetEntity(ctx context.Context, ref entity.Ref) (string, error) {
+	return s.explain(ctx, getEntitySQL, []any{ref.ID, string(ref.Face)})
 }
 
 // BuildHighestIDSQLForTest exposes the SQL [Store.HighestID] issues for

@@ -358,18 +358,15 @@ func (s *Store) deleteEntityLocked(
 	return result, nil
 }
 
-// DeleteEntityState removes ONE content state (face) and only the edges that
-// belong to it (TKT-C1XUA8).
+// DeleteFace removes ONE face row and the edges [store.EntityWriter.DeleteFace]
+// says belong to it (TKT-C1XUA8, RR-2466U1): the outgoing edges tailed at the
+// face, or every incident edge when it is the family's last face.
 //
-// Contrast DeleteEntity above, which sweeps the whole family and every incident
-// edge on BOTH sides. Reusing that here would make discarding a draft destroy
-// the published face and cut every inbound link unrelated entities hold on it —
-// so this deletes by (id, face), and among relations only the OUTGOING edges
-// whose tail is this face. Incoming edges survive: heads are entity-level
-// (design doc §2.3), so an inbound edge points at the ENTITY, not at one of its
-// faces.
+// Contrast DeleteFamily above, which sweeps the whole family. Reusing that here
+// would make discarding a draft destroy the published face and cut every
+// inbound link unrelated entities hold on it.
 //
-// Transacted for the same reason DeleteEntity is: it issues several statements
+// Transacted for the same reason DeleteFamily is: it issues several statements
 // plus a check-then-act on the sibling count.
 func (s *Store) DeleteFace(ctx context.Context, ref entity.Ref) (*store.DeleteResult, error) {
 	if !storeutil.Addressable(ref) {

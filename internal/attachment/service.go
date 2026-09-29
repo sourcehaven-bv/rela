@@ -368,16 +368,7 @@ func (s *Service) references(ctx context.Context, e *entity.Entity, property str
 
 // family returns every stored face of id, raw. IDs-scoped, never a scan.
 func (s *Service) family(ctx context.Context, id string) ([]*entity.Entity, error) {
-	var family []*entity.Entity
-	for e, err := range s.deps.Store.ListEntities(ctx, store.EntityQuery{IDs: []string{id}, Faces: store.AllFaces()}) {
-		if err != nil {
-			return nil, err
-		}
-		if e.ID == id {
-			family = append(family, e)
-		}
-	}
-	return family, nil
+	return store.Family(ctx, s.deps.Store, id)
 }
 
 // dropUnreferenced deletes the bytes of storage keys no other face

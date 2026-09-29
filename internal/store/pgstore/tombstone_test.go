@@ -40,7 +40,7 @@ func TestDeleteWritesEntityTombstone(t *testing.T) {
 	// cursor just below the create so the delete is clearly past it
 	cursor := before[len(before)-1].Seq
 
-	_, err = st.DeleteEntity(ctx, "REQ-1", false)
+	_, err = st.DeleteFamily(ctx, "REQ-1", false)
 	require.NoError(t, err)
 
 	entries, err := st.ManifestSince(ctx, cursor)
@@ -97,7 +97,7 @@ func TestCascadeDeleteTombstonesRelations(t *testing.T) {
 	require.NoError(t, err)
 	cursor := pre[len(pre)-1].Seq
 
-	_, err = st.DeleteEntity(ctx, "DEC-1", true) // cascade
+	_, err = st.DeleteFamily(ctx, "DEC-1", true) // cascade
 	require.NoError(t, err)
 
 	entries, err := st.ManifestSince(ctx, cursor)
@@ -130,7 +130,7 @@ func TestManifestDeleteThenRecreate(t *testing.T) {
 	ctx := context.Background()
 
 	mustCreateEntity(t, st, "REQ-1", "requirement")
-	_, err := st.DeleteEntity(ctx, "REQ-1", false)
+	_, err := st.DeleteFamily(ctx, "REQ-1", false)
 	require.NoError(t, err)
 	mustCreateEntity(t, st, "REQ-1", "requirement") // recreate same id
 
@@ -164,7 +164,7 @@ func TestRenameTombstonesOldIdentities(t *testing.T) {
 	require.NoError(t, err)
 	cursor := pre[len(pre)-1].Seq
 
-	_, err = st.RenameEntity(ctx, "DEC-1", "DEC-2")
+	_, err = st.RenameFamily(ctx, "DEC-1", "DEC-2")
 	require.NoError(t, err)
 
 	entries, err := st.ManifestSince(ctx, cursor)
@@ -239,7 +239,7 @@ func TestCatchUpRecoversMissedDelete(t *testing.T) {
 	// Now disable the live NOTIFY so the delete can ONLY arrive via catch-up.
 	pgstore.SetNotifyDisabledForTest(t, true)
 
-	_, err := a.DeleteEntity(ctx, "REQ-1", false)
+	_, err := a.DeleteFamily(ctx, "REQ-1", false)
 	require.NoError(t, err)
 
 	// The catch-up must deliver a Delete event for REQ-1.

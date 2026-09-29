@@ -189,7 +189,7 @@ func TestRelationVersionRenameAtomicPath(t *testing.T) {
 	require.NoError(t, s.VersionStore().WriteRelationVersion(ctx, c))
 
 	// Rename A->A2 through the REAL atomic store path.
-	_, err = s.RenameEntity(ctx, "A", "A2")
+	_, err = s.RenameFamily(ctx, "A", "A2")
 	require.NoError(t, err)
 
 	// The relation kept its rel_record_id — continuous single lineage, no fork.
@@ -255,7 +255,7 @@ func TestRelationRenameDoesNotBumpUpdatedAt(t *testing.T) {
 	require.NoError(t, pool.QueryRow(ctx,
 		`SELECT updated_at::text FROM relations WHERE from_id='A' AND rel_type='links' AND to_id='X'`).Scan(&before))
 
-	_, err = s.RenameEntity(ctx, "A", "A2")
+	_, err = s.RenameFamily(ctx, "A", "A2")
 	require.NoError(t, err)
 
 	var after string

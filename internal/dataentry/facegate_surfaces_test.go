@@ -118,7 +118,7 @@ func TestFaceGrant_AttachmentDownloadIsFaceGated(t *testing.T) {
 	ctx := context.Background()
 	app := facedTicketApp(t)
 	seedDeclaredFaceTicket(ctx, t, app)
-	if err := app.store.AttachFile(ctx, "TKT-1", "screenshot", "a.txt",
+	if err := app.store.AttachFamilyFile(ctx, "TKT-1", "screenshot", "a.txt",
 		strings.NewReader("draft bytes")); err != nil {
 		t.Fatalf("attach: %v", err)
 	}

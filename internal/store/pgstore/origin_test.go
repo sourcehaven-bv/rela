@@ -2,6 +2,7 @@ package pgstore_test
 
 import (
 	"context"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"testing"
 	"time"
 
@@ -56,12 +57,12 @@ func TestSweep_CapturedVersionCarriesCopyOrigin(t *testing.T) {
 	startFastSweep(t, s)
 
 	require.Eventually(t, func() bool {
-		a, e1 := s.VersionStore().ListVersions(ctx, "POL-2")
-		b, e2 := s.VersionStore().ListVersions(ctx, "POL-3")
+		a, e1 := s.VersionStore().ListVersions(ctx, entity.Ref{ID: "POL-2"})
+		b, e2 := s.VersionStore().ListVersions(ctx, entity.Ref{ID: "POL-3"})
 		return e1 == nil && e2 == nil && len(a) == 1 && len(b) == 1
 	}, 5*time.Second, 25*time.Millisecond, "both entities should be captured once")
 
-	copied, err := s.VersionStore().ListVersions(ctx, "POL-2")
+	copied, err := s.VersionStore().ListVersions(ctx, entity.Ref{ID: "POL-2"})
 	require.NoError(t, err)
 	require.Equal(t, copyOrigin, copied[0].Origin,
 		"a copy's version must carry the mechanism AND its source; without this "+
@@ -71,7 +72,7 @@ func TestSweep_CapturedVersionCarriesCopyOrigin(t *testing.T) {
 	// the compatibility guarantee for every client switching on VersionOp.
 	require.Equal(t, store.VersionOpCreate, copied[0].Op)
 
-	hand, err := s.VersionStore().ListVersions(ctx, "POL-3")
+	hand, err := s.VersionStore().ListVersions(ctx, entity.Ref{ID: "POL-3"})
 	require.NoError(t, err)
 	require.True(t, hand[0].Origin.IsZero(),
 		"a hand edit must carry NO origin — the absence is the marking, and the "+
@@ -81,7 +82,7 @@ func TestSweep_CapturedVersionCarriesCopyOrigin(t *testing.T) {
 
 	// The full snapshot read must agree with the timeline read — they are two
 	// different queries and either could drift on its own.
-	snap, err := s.VersionStore().GetVersion(ctx, "POL-2", 1)
+	snap, err := s.VersionStore().GetVersion(ctx, entity.Ref{ID: "POL-2"}, 1)
 	require.NoError(t, err)
 	require.Equal(t, copyOrigin, snap.Origin)
 }
@@ -105,7 +106,7 @@ func TestOriginIsClearedByASubsequentHandEdit(t *testing.T) {
 	startFastSweep(t, s)
 
 	require.Eventually(t, func() bool {
-		v, e := s.VersionStore().ListVersions(ctx, "POL-4")
+		v, e := s.VersionStore().ListVersions(ctx, entity.Ref{ID: "POL-4"})
 		return e == nil && len(v) == 1
 	}, 5*time.Second, 25*time.Millisecond)
 
@@ -113,11 +114,11 @@ func TestOriginIsClearedByASubsequentHandEdit(t *testing.T) {
 	require.NoError(t, s.UpdateEntity(ctx, mkEntity("POL-4", "policy", "hand-edited body")))
 
 	require.Eventually(t, func() bool {
-		v, e := s.VersionStore().ListVersions(ctx, "POL-4")
+		v, e := s.VersionStore().ListVersions(ctx, entity.Ref{ID: "POL-4"})
 		return e == nil && len(v) == 2
 	}, 5*time.Second, 25*time.Millisecond, "the hand edit should be captured too")
 
-	versions, err := s.VersionStore().ListVersions(ctx, "POL-4")
+	versions, err := s.VersionStore().ListVersions(ctx, entity.Ref{ID: "POL-4"})
 	require.NoError(t, err)
 	require.Equal(t, copyOrigin, versions[0].Origin, "v1 was the copy")
 	require.True(t, versions[1].Origin.IsZero(),
@@ -146,7 +147,7 @@ func TestSyncCaptureCarriesOrigin(t *testing.T) {
 		Origin:     copyOrigin,
 	}))
 
-	versions, err := s.VersionStore().ListVersions(ctx, "POL-5")
+	versions, err := s.VersionStore().ListVersions(ctx, entity.Ref{ID: "POL-5"})
 	require.NoError(t, err)
 	require.Len(t, versions, 1)
 	require.Equal(t, copyOrigin, versions[0].Origin)

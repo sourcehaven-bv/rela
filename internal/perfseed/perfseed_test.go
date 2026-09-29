@@ -5,9 +5,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"io"
 	"testing"
+
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 
 	"github.com/stretchr/testify/require"
 

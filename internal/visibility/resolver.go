@@ -204,16 +204,10 @@ func (r *Resolver) Family(ctx context.Context, entityType, id string) (Family, b
 // headersOf reads every stored face header of id. A failed read is logged
 // and answered as a miss, like every other resolver load (RR-FE1EGP).
 func (r *Resolver) headersOf(ctx context.Context, entityType, id string) ([]store.EntityHeader, bool) {
-	q := store.EntityQuery{IDs: []string{id}, Faces: store.AllFaces()}
-	var out []store.EntityHeader
-	for h, err := range store.ListEntityHeaders(ctx, r.load, q) {
-		if err != nil {
-			warnLoad("family", entityType, entity.Ref{ID: id}, err)
-			return nil, false
-		}
-		if h.ID == id {
-			out = append(out, h)
-		}
+	out, err := store.FamilyHeaders(ctx, r.load, id)
+	if err != nil {
+		warnLoad("family", entityType, id, err)
+		return nil, false
 	}
 	return out, true
 }
@@ -265,7 +259,7 @@ func (r *Resolver) loadRef(ctx context.Context, entityType string, ref entity.Re
 	e, err := r.load.GetEntity(ctx, entity.Ref{ID: ref.ID, Face: ref.Face})
 	if err != nil {
 		if !errors.Is(err, store.ErrNotFound) {
-			warnLoad("ref", entityType, ref, err)
+			warnLoad("ref", entityType, ref.String(), err)
 		}
 		return nil, false
 	}
@@ -283,7 +277,7 @@ func (r *Resolver) loadInWorld(
 	q := store.EntityQuery{IDs: []string{id}, Faces: store.InWorld(scope), FaceIn: faceIn}
 	for e, err := range r.load.ListEntities(ctx, q) {
 		if err != nil {
-			warnLoad("world", entityType, entity.Ref{ID: id}, err)
+			warnLoad("world", entityType, id, err)
 			return nil, false
 		}
 		if e != nil && e.ID == id {
@@ -306,8 +300,8 @@ func (r *Resolver) serve(
 }
 
 // warnLoad records a load failure that the resolver answers as a miss. It
-// names the address and never a property value.
-func warnLoad(mode, entityType string, ref entity.Ref, err error) {
+// names the address (an id, or `ID@face`) and never a property value.
+func warnLoad(mode, entityType, addr string, err error) {
 	slog.Warn("visibility: resolver load failed; answering not-found",
-		"mode", mode, "type", entityType, "id", ref.ID, "face", ref.Face.String(), "err", err)
+		"mode", mode, "type", entityType, "addr", addr, "err", err)
 }

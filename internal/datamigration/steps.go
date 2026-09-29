@@ -575,7 +575,7 @@ func applyFaceMove(ctx context.Context, s store.Store, e *entity.Entity, to stri
 	}
 	// Deleting a face takes its OUTGOING edges with it — they were written
 	// against that face and nothing else can own them (see the
-	// store.DeleteEntityState contract). The CreateEntity above copies the
+	// store.EntityWriter.DeleteFace contract). The CreateEntity above copies the
 	// row's content, not its edges, so without re-creating them a move
 	// silently destroys every relation the row owned. Incoming edges are
 	// entity-level and survive the delete untouched.

@@ -255,7 +255,7 @@ func (w *World) CanSee(actor, entityType, entityID string) bool {
 func (w *World) assertExists(helper, entityType string, ids []string) {
 	w.t.Helper()
 	for _, id := range ids {
-		e, err := w.store.GetEntity(w.ctx, id)
+		e, err := w.store.GetEntity(w.ctx, entity.Ref{ID: id})
 		if err != nil || e == nil {
 			w.t.Fatalf("%s: entity %q does not exist in the store (likely a typo in the test ID)", helper, id)
 		}
@@ -272,7 +272,7 @@ func (w *World) assertExists(helper, entityType string, ids []string) {
 func (w *World) Attribution(actor, entityID, role string) []acl.Source {
 	w.t.Helper()
 	req := w.requestFor(actor)
-	e, err := w.store.GetEntity(w.ctx, entityID)
+	e, err := w.store.GetEntity(w.ctx, entity.Ref{ID: entityID})
 	if err != nil {
 		w.t.Fatalf("Attribution(%q, %q): GetEntity: %v", actor, entityID, err)
 	}

@@ -959,8 +959,8 @@ func (m *Manager) UpdateEntity(ctx context.Context, e *entity.Entity) (*entity.U
 	}
 
 	// The pre-image is read at the face this write AUTHORIZED against, not
-	// at the zero coordinate. GetEntity(id) is GetEntityState(id, zero), so
-	// the old spelling decided against e.Face and then read a different row
+	// at the zero coordinate. The old spelling read GetEntity(id), the zero
+	// face, so it decided against e.Face and then read a different row
 	// — the same authorize-here/write-there split BUG-HC6I2T removed from
 	// the create path, and on a faced type it simply never found anything.
 	oldEntity, getErr := m.deps.Store.GetEntity(ctx, entity.Ref{ID: e.ID, Face: e.Face})
@@ -1120,10 +1120,9 @@ func (m *Manager) patchEntityOnce(
 	// a raw store handle of their own.
 	//
 	// The id may be the fused boundary form ("POL-1@published"), so it is
-	// PARSED rather than handed to GetEntity whole: GetEntity is
-	// GetEntityState(id, zero) in every backend, and a type declaring faces
-	// stores no row at the zero coordinate, so the faced form would resolve
-	// nothing (BUG-HC6I2T). The authorization below already reads the face
+	// PARSED rather than used as a bare id: a bare id addresses the zero
+	// face, and a type declaring faces stores no row at the zero
+	// coordinate, so the faced form would resolve nothing (BUG-HC6I2T). The authorization below already reads the face
 	// off the stored row, so resolving it here is what makes that correct
 	// rather than accidentally right for unfaced types only.
 	stored, getErr := m.getEntityByRef(ctx, id)
@@ -1683,16 +1682,7 @@ func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*e
 //
 // IDs-scoped, never a full scan, like lookupFamily.
 func familyRows(ctx context.Context, st store.Store, id string) ([]*entity.Entity, error) {
-	var family []*entity.Entity
-	for e, err := range st.ListEntities(ctx, store.EntityQuery{IDs: []string{id}, Faces: store.AllFaces()}) {
-		if err != nil {
-			return nil, err
-		}
-		if e.ID == id {
-			family = append(family, e)
-		}
-	}
-	return family, nil
+	return store.Family(ctx, st, id)
 }
 
 // familyAuthorization is the set of (type, face) subjects one family-wide
@@ -1846,8 +1836,8 @@ func relationKey(r *entity.Relation) string {
 // It is [Manager.DeleteEntity]'s sibling, not a narrower spelling of it:
 // DeleteEntity sweeps the whole family and every incident edge on both sides,
 // whereas a face owns only the OUTGOING edges tailed at that face — incoming
-// edges point at the entity, not at one of its states, and survive (see
-// [store.Store.DeleteEntityState] for the rule). The bare face is refused
+// edges point at the entity, not at one of its states, and survive while any
+// face remains (see [store.EntityWriter.DeleteFace] for the rule). The bare face is refused
 // here rather than delegated, because "delete the bare face" is either the
 // whole entity (when no other face exists) or undefined (when one does), and
 // neither is what a caller who spelled a face meant.

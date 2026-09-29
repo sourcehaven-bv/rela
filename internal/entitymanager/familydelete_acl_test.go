@@ -146,7 +146,7 @@ func (f familyDeleteFixture) facesLeft(t *testing.T) []entity.Face {
 		case err == nil:
 			faces = append(faces, face)
 		case !errors.Is(err, store.ErrNotFound):
-			t.Fatalf("GetEntityState POL-1@%s: %v", face, err)
+			t.Fatalf("GetEntity POL-1@%s: %v", face, err)
 		}
 	}
 	return faces
@@ -322,7 +322,7 @@ type faceInjectingTx struct {
 	parent *faceInjectingStore
 }
 
-func (tx *faceInjectingTx) DeleteEntity(
+func (tx *faceInjectingTx) DeleteFamily(
 	ctx context.Context, id string, cascade bool,
 ) (*store.DeleteResult, error) {
 	if tx.parent.at == injectBeforeStoreWrite {
@@ -330,7 +330,7 @@ func (tx *faceInjectingTx) DeleteEntity(
 			tx.parent.t.Errorf("inject published face: %v", err)
 		}
 	}
-	return tx.Store.DeleteEntity(ctx, id, cascade)
+	return tx.Store.DeleteFamily(ctx, id, cascade)
 }
 
 // A face that appears after the first authorization is still authorized

@@ -102,7 +102,7 @@ func (c *RestoreCmd) Run(ctx context.Context, svc *writeServices) error {
 			}
 			return fmt.Errorf("restore (re-create) %q to v%d: %w", ref, c.Version, err)
 		}
-	default: // coverage-ignore: defensive: memstore.GetEntityState returns only nil or store.ErrNotFound, so a
+	default: // coverage-ignore: defensive: memstore.GetEntity returns only nil or store.ErrNotFound, so a
 		// non-NotFound error here is unreachable
 		return fmt.Errorf("restore %q: check current state: %w", ref, getErr)
 	}

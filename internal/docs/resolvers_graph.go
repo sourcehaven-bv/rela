@@ -449,15 +449,13 @@ func (dr *docRuntime) facesOf(typ, id string) ([]entity.Face, error) {
 	}
 	// Every stored face in one header read, then the bare-id row first and
 	// each declared face that exists on this entity in name order.
+	headers, err := store.FamilyHeaders(dr.ctx, dr.store, id)
+	if err != nil {
+		return nil, err
+	}
 	stored := map[entity.Face]bool{}
-	q := store.EntityQuery{IDs: []string{id}, Faces: store.AllFaces()}
-	for h, err := range store.ListEntityHeaders(dr.ctx, dr.store, q) {
-		if err != nil {
-			return nil, err
-		}
-		if h.ID == id {
-			stored[h.Face] = true
-		}
+	for _, h := range headers {
+		stored[h.Face] = true
 	}
 	var zero entity.Face
 	if stored[zero] {

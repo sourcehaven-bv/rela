@@ -75,19 +75,17 @@ func readAddress(ctx context.Context, st addressLoader, world store.WorldScope, 
 // storedFamily returns the type of id and every face it has a live row at,
 // sorted, from one content-free header read. No face means no such entity.
 func storedFamily(ctx context.Context, st store.EntityLister, id string) (string, []entity.Face, error) {
+	headers, err := store.FamilyHeaders(ctx, st, id)
+	if err != nil {
+		return "", nil, fmt.Errorf("read the faces of %q: %w", id, err)
+	}
 	var (
 		typ   string
 		faces []entity.Face
 	)
-	q := store.EntityQuery{IDs: []string{id}, Faces: store.AllFaces()}
-	for h, err := range store.ListEntityHeaders(ctx, st, q) {
-		if err != nil {
-			return "", nil, fmt.Errorf("read the faces of %q: %w", id, err)
-		}
-		if h.ID == id {
-			typ = h.Type
-			faces = append(faces, h.Face)
-		}
+	for _, h := range headers {
+		typ = h.Type
+		faces = append(faces, h.Face)
 	}
 	slices.Sort(faces)
 	return typ, faces, nil

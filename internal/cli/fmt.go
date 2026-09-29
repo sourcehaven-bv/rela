@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 
 	"github.com/Sourcehaven-BV/rela/internal/errors"
@@ -58,25 +59,25 @@ func (c *FmtCmd) formatEntities(
 	q store.EntityQuery,
 	dryRun bool,
 ) (int, error) {
-	var entityIDs []string
+	var refs []entity.Ref
 	for e, err := range st.ListEntities(ctx, q) {
 		if err != nil { // coverage-ignore: defensive: memstore.ListEntities iterator never yields a non-nil error
 			return 0, err
 		}
-		entityIDs = append(entityIDs, e.ID)
+		refs = append(refs, e.Ref())
 	}
 	modified := 0
-	for _, id := range entityIDs {
-		changed, err := f.FormatEntity(ctx, entity.Ref{ID: id}, dryRun)
+	for _, ref := range refs {
+		changed, err := f.FormatEntity(ctx, ref, dryRun)
 		if err != nil {
-			out.WriteWarning("Failed to format %s: %v", id, err)
+			out.WriteWarning("Failed to format %s: %v", ref, err)
 			continue
 		}
 		if !changed {
 			continue
 		}
 		modified++
-		c.reportFmtItem(id)
+		c.reportFmtItem(ref.String())
 	}
 	return modified, nil
 }

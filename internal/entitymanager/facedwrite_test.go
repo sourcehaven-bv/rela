@@ -107,7 +107,7 @@ func TestCreate_AuthorizesTheFaceItWrites(t *testing.T) {
 	if gate.asked[0] != stored.Face {
 		t.Errorf("authorized face %q but wrote face %q", gate.asked[0], stored.Face)
 	}
-	if _, bareErr := st.GetEntity(ctx, res.Entity.ID); bareErr == nil {
+	if _, bareErr := st.GetEntity(ctx, entity.Ref{ID: res.Entity.ID}); bareErr == nil {
 		t.Error("a faced type must write no row at the zero coordinate")
 	}
 }
@@ -190,7 +190,7 @@ entities:
 
 // UpdateEntity had the same authorize-here/read-there split as the create
 // path: it authorized against e.Face and then read its pre-image with
-// GetEntity, which is GetEntityState(id, ZERO). On a faced type that row does
+// GetEntity at the zero face. On a faced type that row does
 // not exist, so every faced update returned not-found.
 func TestUpdate_ReadsThePreImageAtTheAuthorizedFace(t *testing.T) {
 	mgr, _ := facedWriteManager(t, acl.NopACL{})
@@ -364,7 +364,7 @@ entities:
 // TestPatch_AddressesTheFaceTheRefNames pins that PatchEntity resolves the
 // fused boundary form rather than always asking the zero coordinate.
 //
-// Store.GetEntity is GetEntityState(id, zero) in every backend, so before this
+// A bare-id read addresses the zero face in every backend, so before this
 // a patch of `POL-1@concept` reported "not found" for a row that plainly
 // exists — and on a faceless type it worked, which is what kept the gap hidden.
 //

@@ -71,7 +71,7 @@ func TestStoreEventBridgeMapsEntityEvents(t *testing.T) {
 	require.NoError(t, st.UpdateEntity(ctx, upd))
 	waitForEntityChange(t, ch, "ticket")
 
-	_, err := st.DeleteEntity(ctx, "TKT-1", false)
+	_, err := st.DeleteFamily(ctx, "TKT-1", false)
 	require.NoError(t, err)
 	waitForEntityChange(t, ch, "ticket")
 }

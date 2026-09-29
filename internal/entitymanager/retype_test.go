@@ -35,7 +35,7 @@ func TestUpdateEntity_TypeIsImmutable(t *testing.T) {
 	if !errors.Is(err, entitymanager.ErrTypeImmutable) {
 		t.Fatalf("want ErrTypeImmutable, got %v", err)
 	}
-	got, gerr := st.GetEntity(ctx, "TKT-1")
+	got, gerr := st.GetEntity(ctx, entity.Ref{ID: "TKT-1"})
 	if gerr != nil || got.Type != "ticket" || got.Properties["title"] != "p" {
 		t.Errorf("the row must be untouched; got %+v (err %v)", got, gerr)
 	}

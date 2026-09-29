@@ -265,7 +265,7 @@ func TestScriptReads_UpdatePreservesHiddenProperties(t *testing.T) {
 	// `salary` must survive untouched in the store.
 	runAsAlice(t, deps, `rela.update_entity("P-1", {name = "Ann Updated"})`)
 
-	after, err := st.GetEntity(context.Background(), "P-1")
+	after, err := st.GetEntity(context.Background(), entity.Ref{ID: "P-1"})
 	if err != nil {
 		t.Fatalf("load after update: %v", err)
 	}
@@ -297,7 +297,7 @@ func (m *storeMutator) UpdateEntity(ctx context.Context, e *entity.Entity) (*ent
 func (m *storeMutator) PatchEntity(
 	ctx context.Context, id string, p entity.Patch,
 ) (*entity.UpdateResult, error) {
-	stored, err := m.st.GetEntity(ctx, id)
+	stored, err := m.st.GetEntity(ctx, entity.Ref{ID: id})
 	if err != nil {
 		return nil, fmt.Errorf("entity not found: %s", id)
 	}
@@ -553,7 +553,7 @@ func TestScriptWrites_HiddenTargetIsNotFound(t *testing.T) {
 	if hidden, absent := run("SEC-1"), run("NOPE-1"); hidden != absent {
 		t.Errorf("hidden and absent are distinguishable:\n hidden: %s\n absent: %s", hidden, absent)
 	}
-	after, err := st.GetEntity(context.Background(), "SEC-1")
+	after, err := st.GetEntity(context.Background(), entity.Ref{ID: "SEC-1"})
 	if err != nil {
 		t.Fatalf("load SEC-1: %v", err)
 	}

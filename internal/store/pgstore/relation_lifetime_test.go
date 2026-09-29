@@ -352,7 +352,7 @@ func TestListRelationLifetimes_RenamedAwayNotListedUnderOldKey(t *testing.T) {
 	require.NoError(t, vs.WriteRelationVersion(ctx, c))
 
 	// Rename RA->RA2 (atomic): the lineage's final row now carries (RA2,links,RX).
-	_, err = s.RenameEntity(ctx, "RA", "RA2")
+	_, err = s.RenameFamily(ctx, "RA", "RA2")
 	require.NoError(t, err)
 	ren := newRelVersionInput(0, "RA2", "links", "RX", "v1")
 	ren.Op = store.VersionOpRename

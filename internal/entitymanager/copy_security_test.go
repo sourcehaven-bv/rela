@@ -204,7 +204,7 @@ func TestCopy_CrossEntityReadsThroughCallersGate_NoLaundering(t *testing.T) {
 		t.Fatalf("spawn: %v", err)
 	}
 
-	target, err := st.GetEntity(ctx, "TKT-2")
+	target, err := st.GetEntity(ctx, entity.Ref{ID: "TKT-2"})
 	if err != nil {
 		t.Fatalf("read target: %v", err)
 	}

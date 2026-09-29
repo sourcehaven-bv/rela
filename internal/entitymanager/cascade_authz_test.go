@@ -138,7 +138,7 @@ func TestCascadeDelete_DeniedLeavesEverythingIntact(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	if _, err := st.GetEntity(ctx, "REQ-1"); err != nil {
+	if _, err := st.GetEntity(ctx, entity.Ref{ID: "REQ-1"}); err != nil {
 		t.Errorf("REQ-1 was deleted despite the denial: %v", err)
 	}
 	if _, err := st.GetRelation(ctx, "DEC-1", "addresses", "REQ-1"); err != nil {
@@ -161,7 +161,7 @@ func TestCascadeDelete_AllowedWhenEveryRelationIsDeletable(t *testing.T) {
 	if len(res.DeletedRelations) != 1 {
 		t.Errorf("DeletedRelations = %d, want 1", len(res.DeletedRelations))
 	}
-	if _, gErr := st.GetEntity(context.Background(), "REQ-1"); gErr == nil {
+	if _, gErr := st.GetEntity(context.Background(), entity.Ref{ID: "REQ-1"}); gErr == nil {
 		t.Error("REQ-1 still exists after an allowed cascade")
 	}
 }

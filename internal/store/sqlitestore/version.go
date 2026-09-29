@@ -284,7 +284,7 @@ func lineageArgs(id string, face entity.Face) []any {
 //
 // The caller must DEDUP BY ROW: a rename diamond can match one row twice.
 // SELECT DISTINCT does that where vseq is projected; where it is not, GROUP BY
-// ev.vseq is the equivalent (see GetStateVersion, which explains why the two
+// ev.vseq is the equivalent (see GetVersion, which explains why the two
 // are not interchangeable there).
 const lineageJoin = `
 		JOIN lin ON lin.entity_id = ev.entity_id

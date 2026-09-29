@@ -82,11 +82,8 @@ func (c *TracePathCmd) Run(ctx context.Context, svc *readServices) error {
 // level, and a faced type has no row at the bare id (BUG-95W7MV). A failed
 // read is returned, so it is not reported as a missing entity.
 func familyExists(ctx context.Context, st store.EntityLister, id string) (bool, error) {
-	q := store.EntityQuery{IDs: []string{id}, Faces: store.AllFaces()}
-	for _, err := range store.ListEntityHeaders(ctx, st, q) {
-		return err == nil, err
-	}
-	return false, nil
+	headers, err := store.FamilyHeaders(ctx, st, id)
+	return len(headers) > 0, err
 }
 
 // requireFamily is [familyExists] as the not-found error the trace commands

@@ -144,15 +144,15 @@ type attachMeta struct {
 // the interface size as the non-interface public methods
 // (FormatEntity/Relation, Start/StopWatching) move to composed helpers.
 //
-// (95 → 102 / 33 → 34 with content states, TKT-DOFYR1: GetEntityState
-// joined the mandated store.Store interface, and the state-family
+// (95 → 102 / 33 → 34 with content states, TKT-DOFYR1: a per-face read
+// (GetEntity on a Ref since TKT-KQXVF7) joined the mandated store.Store interface, and the state-family
 // helpers — loadEntityMeta/loadRelationMeta/relationFileKeyMeta/
 // stateFamily/emitFamilyDeleted/rewriteRelationFiles — serve that
 // contract change. Interface growth, not internal sprawl; keep
 // ratcheting the pre-existing surplus down per TKT-N0IKN9.)
 //
 // (+2 methods / +2 exported with per-face delete, TKT-C1XUA8:
-// DeleteEntityState and DeleteRelationState joined the mandated
+// DeleteFace (then DeleteEntityState) and DeleteRelationState joined the mandated
 // store.Store interface. Required-interface exception, not accreted
 // API — the counts ratchet only if store.Store itself narrows.)
 //

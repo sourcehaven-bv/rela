@@ -84,114 +84,42 @@ func TestHistoryFace_AbsentWhenTheWorldResolvesNothing(t *testing.T) {
 	}
 }
 
-// stubHistory records which face-scoped calls it received, so a test can prove
-// the face reached the store rather than being dropped on the way.
+// stubHistory records the face each history read carried, so a test can
+// prove the face reached the store rather than being dropped on the way.
 type stubHistory struct {
 	gotList entityPkg.Face
 	gotGet  entityPkg.Face
-	// unscopedCalls counts reads through the plain HistoryReader shape — the
-	// default-face path.
-	unscopedCalls int
 }
 
-func (s *stubHistory) ListVersions(context.Context, string) ([]store.VersionMeta, error) {
-	s.unscopedCalls++
+func (s *stubHistory) ListVersions(_ context.Context, ref entityPkg.Ref) ([]store.VersionMeta, error) {
+	s.gotList = ref.Face
 	return nil, nil
 }
 
-func (s *stubHistory) GetVersion(context.Context, string, int) (*store.VersionSnapshot, error) {
-	s.unscopedCalls++
+func (s *stubHistory) GetVersion(_ context.Context, ref entityPkg.Ref, _ int) (*store.VersionSnapshot, error) {
+	s.gotGet = ref.Face
 	return &store.VersionSnapshot{}, nil
 }
 
-func (s *stubHistory) ListStateVersions(
-	_ context.Context, _ string, p entityPkg.Face,
-) ([]store.VersionMeta, error) {
-	s.gotList = p
-	return nil, nil
-}
-
-func (s *stubHistory) GetStateVersion(
-	_ context.Context, _ string, p entityPkg.Face, _ int,
-) (*store.VersionSnapshot, error) {
-	s.gotGet = p
-	return &store.VersionSnapshot{}, nil
-}
-
-// TestFaceHistoryReader_ScopesBothReadsToTheFace pins that BOTH history reads
-// carry the face. A timeline scoped to the face while the snapshot silently
+// TestHistoryReads_CarryTheFace pins that BOTH history reads carry the
+// subject's face. A timeline scoped to the face while the snapshot silently
 // read the default one would be the worst shape: the list would look right and
 // clicking a row would show another face's content.
-func TestFaceHistoryReader_ScopesBothReadsToTheFace(t *testing.T) {
+func TestHistoryReads_CarryTheFace(t *testing.T) {
+	app := newTestAppV1(t)
 	stub := &stubHistory{}
-	scoped, ok := faceHistoryReader(stub, entityPkg.Face("published"))
-	if !ok {
-		t.Fatal("a StateHistoryReader-capable backend must be narrowable")
-	}
-	if _, err := scoped.ListVersions(context.Background(), "TKT-1"); err != nil {
-		t.Fatalf("ListVersions: %v", err)
-	}
-	if _, err := scoped.GetVersion(context.Background(), "TKT-1", 1); err != nil {
-		t.Fatalf("GetVersion: %v", err)
-	}
-	if stub.gotList != entityPkg.Face("published") {
+	ref := entityPkg.Ref{ID: "TKT-1", Face: entityPkg.Face("published")}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/_history/ticket/TKT-1", http.NoBody)
+	req = req.WithContext(withReadGate(req.Context(), fakeGate{holdsPermission: true}))
+
+	serveHistoryTimeline(httptest.NewRecorder(), req, stub, "ticket", ref, false)
+	serveHistoryVersion(app, httptest.NewRecorder(), req, stub, "ticket", ref, "1")
+
+	if stub.gotList != ref.Face {
 		t.Errorf("the timeline read must carry the face; got %q", stub.gotList)
 	}
-	if stub.gotGet != entityPkg.Face("published") {
-		t.Errorf("the snapshot read must carry the face too — a scoped timeline "+
-			"over unscoped snapshots would show another face's content behind a "+
-			"correct-looking list; got %q", stub.gotGet)
-	}
-	if stub.unscopedCalls != 0 {
-		t.Errorf("a face-scoped reader must never fall through to the unscoped "+
-			"calls; got %d", stub.unscopedCalls)
-	}
-}
-
-// TestFaceHistoryReader_DefaultFaceStaysUnscoped pins the byte-identical
-// default path: the zero face IS the default face, so it must not be
-// wrapped — the adapter would otherwise require StateHistoryReader on every
-// backend that has history at all.
-func TestFaceHistoryReader_DefaultFaceStaysUnscoped(t *testing.T) {
-	stub := &stubHistory{}
-	scoped, ok := faceHistoryReader(stub, "")
-	if !ok {
-		t.Fatal("the default face must always be readable")
-	}
-	if _, err := scoped.ListVersions(context.Background(), "TKT-1"); err != nil {
-		t.Fatalf("ListVersions: %v", err)
-	}
-	if stub.unscopedCalls != 1 || stub.gotList != "" {
-		t.Errorf("the default face must read through the plain HistoryReader; "+
-			"unscoped=%d faceScoped=%q", stub.unscopedCalls, stub.gotList)
-	}
-}
-
-// plainHistory implements HistoryReader ONLY — the fs/mem-shaped backend that
-// has no per-face capability.
-type plainHistory struct{}
-
-func (plainHistory) ListVersions(context.Context, string) ([]store.VersionMeta, error) {
-	return nil, nil
-}
-
-func (plainHistory) GetVersion(context.Context, string, int) (*store.VersionSnapshot, error) {
-	return &store.VersionSnapshot{}, nil
-}
-
-// TestFaceHistoryReader_RefusesWhenTheBackendCannotScope is the fail-closed
-// half. A backend without the face-scoped capability must REFUSE a face-scoped
-// read, never fall back to the default face — that fallback is precisely the
-// wrong-record bug, and it would be invisible because the response looks
-// perfectly well-formed.
-func TestFaceHistoryReader_RefusesWhenTheBackendCannotScope(t *testing.T) {
-	if _, ok := faceHistoryReader(plainHistory{}, entityPkg.Face("published")); ok {
-		t.Error("a backend with no StateHistoryReader must not silently serve " +
-			"the DEFAULT face's history under a world")
-	}
-	// It must still serve the default face, which needs no narrowing.
-	if _, ok := faceHistoryReader(plainHistory{}, ""); !ok {
-		t.Error("the default face needs no face-scoped capability")
+	if stub.gotGet != ref.Face {
+		t.Errorf("the snapshot read must carry the face too; got %q", stub.gotGet)
 	}
 }
 
@@ -218,28 +146,6 @@ func TestHistoryRouteAcceptsAWorld(t *testing.T) {
 	if rec.Code != http.StatusNotImplemented {
 		t.Errorf("this backend has no version history, so the honest answer is "+
 			"the named 501; got %d %s", rec.Code, rec.Body)
-	}
-}
-
-// TestFaceHistoryReader_ReachesThroughTheVersionServiceInterface guards the
-// wiring shape BUG-2's fix depends on.
-//
-// `App.versions` is a [store.VersionService] — an interface — and the face
-// narrowing type-asserts the value inside it to [store.StateHistoryReader]. A
-// Go type assertion on an interface value tests the DYNAMIC type, so this works
-// only because the concrete value (pgstore's *VersionStore) implements both.
-//
-// Worth pinning because the failure mode is silent and remote: nothing here
-// breaks, and instead every world-scoped history request on the one backend
-// that HAS history refuses with 501. That would read as "the feature is not
-// built" rather than "the wiring lost a capability".
-func TestFaceHistoryReader_ReachesThroughTheVersionServiceInterface(t *testing.T) {
-	// A value satisfying both capabilities, held behind the narrow interface
-	// the handler actually has — the same shape appbuild hands the App.
-	var held store.HistoryReader = &stubHistory{}
-	if _, ok := faceHistoryReader(held, entityPkg.Face("published")); !ok {
-		t.Error("the face narrowing must see through the HistoryReader " +
-			"interface to the concrete type's StateHistoryReader methods")
 	}
 }
 
@@ -321,7 +227,7 @@ func TestHistoryTimeline_LabelsHowTheFaceWasChosen(t *testing.T) {
 			req = req.WithContext(withReadGate(worldCtx(scope), fakeGate{holdsPermission: true}))
 			rec := httptest.NewRecorder()
 
-			serveHistoryTimeline(rec, req, &stubHistory{}, "policy", "POL-1", tc.face, false)
+			serveHistoryTimeline(rec, req, &stubHistory{}, "policy", entityPkg.Ref{ID: "POL-1", Face: tc.face}, false)
 
 			if rec.Code != http.StatusOK {
 				t.Fatalf("timeline: got %d, want 200; body=%s", rec.Code, rec.Body)

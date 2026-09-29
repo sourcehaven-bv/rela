@@ -5,6 +5,7 @@ package pgstore_test
 import (
 	"bytes"
 	"context"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"log/slog"
 	"sync"
 	"testing"
@@ -34,7 +35,7 @@ func TestQueryTracer_FromPoolEmits(t *testing.T) {
 	// Drive one query through the store. The listener's own queries also
 	// log here, so assert on this query's argument, which only it carries.
 	const id = "tracer-pool-probe"
-	_, _ = st.GetEntity(context.Background(), id)
+	_, _ = st.GetEntity(context.Background(), entity.Ref{ID: id})
 
 	out := buf.String()
 	require.Contains(t, out, "pgstore: query",
@@ -51,13 +52,13 @@ func TestQueryTracer_FromPoolRecordsStats(t *testing.T) {
 	st := openWriter(t, freshFeedSchema(t))
 
 	ctx, stats := store.WithQueryStats(context.Background())
-	_, _ = st.GetEntity(ctx, "nonexistent")
+	_, _ = st.GetEntity(ctx, entity.Ref{ID: "nonexistent"})
 	require.EqualValues(t, 1, stats.Queries(), "GetEntity is one round-trip")
 	require.Positive(t, stats.Duration().Nanoseconds())
 
 	before := stats.Queries()
 	require.NoError(t, st.Tx(ctx, func(view store.Store) error {
-		_, _ = view.GetEntity(ctx, "nonexistent")
+		_, _ = view.GetEntity(ctx, entity.Ref{ID: "nonexistent"})
 		return nil
 	}))
 	require.Greater(t, stats.Queries(), before+1,
@@ -65,7 +66,7 @@ func TestQueryTracer_FromPoolRecordsStats(t *testing.T) {
 
 	// A context without stats must not disturb another request's counters.
 	after := stats.Queries()
-	_, _ = st.GetEntity(context.Background(), "nonexistent")
+	_, _ = st.GetEntity(context.Background(), entity.Ref{ID: "nonexistent"})
 	require.Equal(t, after, stats.Queries())
 }
 

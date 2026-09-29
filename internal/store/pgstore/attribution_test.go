@@ -2,6 +2,7 @@ package pgstore_test
 
 import (
 	"context"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"testing"
 	"time"
 
@@ -105,11 +106,11 @@ func TestSweepAttributesRealEditor(t *testing.T) {
 		pgstore.SweepConfig{Interval: 50 * time.Millisecond, Idle: time.Minute, MaxStaleness: time.Hour, Batch: 100})
 
 	require.Eventually(t, func() bool {
-		metas, e := s.VersionStore().ListVersions(ctx, "WHO-1")
+		metas, e := s.VersionStore().ListVersions(ctx, entity.Ref{ID: "WHO-1"})
 		return e == nil && len(metas) == 1
 	}, 3*time.Second, 25*time.Millisecond)
 
-	metas, err := s.VersionStore().ListVersions(ctx, "WHO-1")
+	metas, err := s.VersionStore().ListVersions(ctx, entity.Ref{ID: "WHO-1"})
 	require.NoError(t, err)
 	require.Equal(t, store.VersionOpCreate, metas[0].Op)
 	require.Equal(t, "alice@example.com", metas[0].PrincipalUser)
@@ -130,10 +131,10 @@ func TestSweepAttributesRealEditor(t *testing.T) {
 	// WHO-2 was written WITHOUT attribution: its swept version must fall back
 	// to the system principal, never a fabricated identity (AC5, RR-U964M0).
 	require.Eventually(t, func() bool {
-		metas, e := s.VersionStore().ListVersions(ctx, "WHO-2")
+		metas, e := s.VersionStore().ListVersions(ctx, entity.Ref{ID: "WHO-2"})
 		return e == nil && len(metas) == 1
 	}, 3*time.Second, 25*time.Millisecond)
-	fallback, err := s.VersionStore().ListVersions(ctx, "WHO-2")
+	fallback, err := s.VersionStore().ListVersions(ctx, entity.Ref{ID: "WHO-2"})
 	require.NoError(t, err)
 	require.Empty(t, fallback[0].PrincipalUser)
 	require.Equal(t, "version-sweep", fallback[0].PrincipalTool)
@@ -159,11 +160,11 @@ func TestSweepAttributesLastEditorOfBurst(t *testing.T) {
 		pgstore.SweepConfig{Interval: 50 * time.Millisecond, Idle: time.Minute, MaxStaleness: time.Hour, Batch: 100})
 
 	require.Eventually(t, func() bool {
-		metas, e := s.VersionStore().ListVersions(ctx, "BURST-1")
+		metas, e := s.VersionStore().ListVersions(ctx, entity.Ref{ID: "BURST-1"})
 		return e == nil && len(metas) == 1
 	}, 3*time.Second, 25*time.Millisecond)
 
-	metas, err := s.VersionStore().ListVersions(ctx, "BURST-1")
+	metas, err := s.VersionStore().ListVersions(ctx, entity.Ref{ID: "BURST-1"})
 	require.NoError(t, err)
 	require.Equal(t, "bob", metas[0].PrincipalUser)
 	require.Equal(t, "data-entry", metas[0].PrincipalTool)

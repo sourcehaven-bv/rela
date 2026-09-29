@@ -399,7 +399,7 @@ func writeJSONErr(w http.ResponseWriter, code int, reason string) {
 type memApplier struct{ st *memstore.MemStore }
 
 func (a memApplier) ApplyEntity(ctx context.Context, e *entity.Entity) (*entity.UpdateResult, error) {
-	if _, err := a.st.GetEntity(ctx, e.ID); err == nil {
+	if _, err := a.st.GetEntity(ctx, e.Ref()); err == nil {
 		return nil, a.st.UpdateEntity(ctx, e)
 	}
 	return nil, a.st.CreateEntity(ctx, e)
@@ -414,7 +414,7 @@ func (a memApplier) ApplyRelation(ctx context.Context, r *entity.Relation) (*ent
 }
 
 func (a memApplier) DeleteEntity(ctx context.Context, id string, cascade bool) (*entity.DeleteResult, error) {
-	if _, err := a.st.DeleteEntity(ctx, id, cascade); err != nil {
+	if _, err := a.st.DeleteFamily(ctx, id, cascade); err != nil {
 		return nil, err
 	}
 	return &entity.DeleteResult{}, nil
@@ -427,7 +427,7 @@ func (a memApplier) DeleteRelation(ctx context.Context, from, relType, to string
 func (a memApplier) RenameEntity(
 	ctx context.Context, oldID, newID string, _ entity.RenameOptions,
 ) (*entity.RenameResult, error) {
-	res, err := a.st.RenameEntity(ctx, oldID, newID)
+	res, err := a.st.RenameFamily(ctx, oldID, newID)
 	if err != nil {
 		return nil, err
 	}

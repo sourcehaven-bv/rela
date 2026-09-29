@@ -58,9 +58,10 @@ func IsStateRef(id string) bool {
 
 // Addressable reports whether ref can name a stored row at all: a non-empty
 // bare id and a face that is either the implicit face or passes
-// [entity.ParseFace]. A row is only ever written at such an address, so a
-// ref that fails this matches nothing, and every backend answers it with
-// ErrNotFound before it reaches a map key, a path or a query parameter. That
+// [entity.ParseFace]. Every face a project can declare passes that grammar
+// (it is checked when the metamodel loads), so a ref that fails this names no
+// row, and every backend answers it with ErrNotFound before it reaches a map
+// key, a path or a query parameter. That
 // keeps a malformed face (`../x`, `a@b`, a NUL byte) from becoming a path or
 // an encoding error on one backend and a miss on another (RR-6NZ4YD).
 func Addressable(ref entity.Ref) bool {

@@ -44,7 +44,7 @@ func (r *Resolver) addressAny(ctx context.Context, w World, addr string) (*entit
 	}
 	res, ok, err := r.Address(ctx, w, typ, addr)
 	if err != nil {
-		warnGate("address", typ, ref, err)
+		warnGate("address", typ, ref.String(), err)
 		return nil, store.ErrNotFound
 	}
 	if !ok {
@@ -68,7 +68,7 @@ func (r *Resolver) familyAny(ctx context.Context, id string) (Family, bool, erro
 	typ := headers[0].Type
 	faces, ok, err := r.admit(ctx, World{}, typ, id)
 	if err != nil {
-		warnGate("family", typ, entity.Ref{ID: id}, err)
+		warnGate("family", typ, id, err)
 		return Family{}, false, nil
 	}
 	if !ok {
@@ -78,7 +78,7 @@ func (r *Resolver) familyAny(ctx context.Context, id string) (Family, bool, erro
 }
 
 // warnGate logs a gate failure the untyped helpers answer as a miss.
-func warnGate(mode, entityType string, ref entity.Ref, err error) {
+func warnGate(mode, entityType, addr string, err error) {
 	slog.Warn("visibility: gate failed on an untyped read; answering not-found",
-		"mode", mode, "type", entityType, "id", ref.ID, "face", ref.Face.String(), "err", err)
+		"mode", mode, "type", entityType, "addr", addr, "err", err)
 }
