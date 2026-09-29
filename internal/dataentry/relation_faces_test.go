@@ -3,6 +3,7 @@ package dataentry
 import (
 	"context"
 	"errors"
+	"iter"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -230,6 +231,42 @@ func TestRelationPeerGateFault_FailsTheWrite(t *testing.T) {
 		strings.Contains(rec.Body.String(), "secret") {
 
 		t.Errorf("gate fault = %d %s, want an opaque 500 acl_query_failed", rec.Code, rec.Body)
+	}
+}
+
+// listFailingStore fails every entity listing, so the peer batch's header
+// read fails. It hides any header projection of the wrapped store.
+type listFailingStore struct{ store.Store }
+
+func (listFailingStore) ListEntities(context.Context, store.EntityQuery) iter.Seq2[*entity.Entity, error] {
+	return func(yield func(*entity.Entity, error) bool) { yield(nil, errors.New(`pq: relation "secret" missing`)) }
+}
+
+// A failed peer header read fails the write like a gate fault, instead of
+// reporting a live peer as target_not_found.
+func TestRelationPeerReadFault_FailsTheWrite(t *testing.T) {
+	app := newTestAppV1(t)
+	vr, err := newVisibleReader(listFailingStore{app.store})
+	if err != nil {
+		t.Fatal(err)
+	}
+	app.write.visible = vr
+	desired := map[string]v1.RelationsUpdate{"implements": {
+		DataPresent: true,
+		Data:        []v1.ResourceIdentifier{{Type: "feature", ID: "FEAT-001"}},
+	}}
+	_, err = app.write.validateRelationsModern(context.Background(), "TKT-001", "ticket", desired)
+	var gerr *gateFaultError
+	if !errors.As(err, &gerr) {
+		t.Fatalf("validateRelationsModern err = %v, want a gateFaultError", err)
+	}
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/tickets/TKT-001", http.NoBody)
+	rec := httptest.NewRecorder()
+	app.write.writeRelationsValidationError(rec, req, err)
+	if rec.Code != http.StatusInternalServerError || strings.Contains(rec.Body.String(), "secret") ||
+		strings.Contains(rec.Body.String(), "FEAT-001") {
+
+		t.Errorf("read fault = %d %s, want an opaque 500", rec.Code, rec.Body)
 	}
 }
 

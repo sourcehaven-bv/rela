@@ -213,7 +213,7 @@ test.describe('Faces backlog: family delete under a draft-only grant (BUG-1YN750
   // editor's delete grant names `policy@draft` only, so it must be refused.
   // POL-2 is published first so it has two faces and no edges, which keeps
   // the refusal on the face grant alone.
-  test.fixme('a draft-only deleter cannot remove the published face', async ({
+  test('a draft-only deleter cannot remove the published face', async ({
     appPage,
     facedApi,
   }) => {
@@ -224,7 +224,7 @@ test.describe('Faces backlog: family delete under a draft-only grant (BUG-1YN750
     // Fixed behaviour: the action runs and the delete is refused. A script
     // that silently succeeds, or a success toast, is the bug.
     await faces.runAction('Retire');
-    await faces.expectErrorToast();
+    await faces.expectActionRefused();
 
     expect(await facedApi.getPolicy(`${POL2.id}@${FACE.published}`)).not.toBeNull();
     expect(await facedApi.getPolicy(`${POL2.id}@${FACE.draft}`)).not.toBeNull();

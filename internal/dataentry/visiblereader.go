@@ -142,6 +142,13 @@ func (vr visibleReader) readableType(ctx context.Context, id string) (string, er
 	return typ, nil
 }
 
+// readableTypes is [visibleReader.readableType] for many ids at once; see
+// [visibility.Resolver.ReadableTypes]. A failed read or gate is returned,
+// never folded into a miss.
+func (vr visibleReader) readableTypes(ctx context.Context, ids []string) (map[string]string, error) {
+	return vr.resolver.ReadableTypes(ctx, ids)
+}
+
 // storedType is [storedTypeOf] over this reader's store.
 func (vr visibleReader) storedType(ctx context.Context, id string) string {
 	return storedTypeOf(ctx, vr.store, id)

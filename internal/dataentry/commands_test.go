@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -709,6 +710,20 @@ func TestHandleCommandExec(t *testing.T) {
 		app.commands.handleCommandExec(w, r)
 		if w.Code != http.StatusNotFound {
 			t.Errorf("expected 404, got %d", w.Code)
+		}
+	})
+
+	// A gate fault keeps the command's 404, but is logged (ruling 7.2).
+	t.Run("gate error is logged", func(t *testing.T) {
+		r := httptest.NewRequest(http.MethodPost, "/api/command/test-echo?entity_id=TKT-001", http.NoBody)
+		r = r.WithContext(withReadGate(r.Context(), fakeGate{permitsErr: errors.New("gate down")}))
+		w := httptest.NewRecorder()
+		logged := captureWarn(t, func() { app.commands.handleCommandExec(w, r) })
+		if w.Code != http.StatusNotFound {
+			t.Errorf("expected 404, got %d", w.Code)
+		}
+		if !strings.Contains(logged, "gate failed") || !strings.Contains(logged, "gate down") {
+			t.Errorf("the gate error was not logged: %s", logged)
 		}
 	})
 

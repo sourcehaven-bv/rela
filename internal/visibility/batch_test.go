@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -281,6 +282,81 @@ func TestResolver_ResolveHeadersRowGateErrorHidesOnlyItsType(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "gate failed") {
 		t.Errorf("the failure was not logged: %s", buf)
+	}
+}
+
+// TestResolver_ReadableTypes checks that the typed batch returns a fault
+// instead of folding it into a miss, and that it reports the stored type of a
+// family whose only readable face is not the one a caller might ask for.
+func TestResolver_ReadableTypes(t *testing.T) {
+	t.Run("a gate error is returned", func(t *testing.T) {
+		r := mustResolver(t, typeErrGate{failType: "policy"}, visibility.NopRedactor{}, resolverStore(t))
+		got, err := r.ReadableTypes(context.Background(), []string{"POL-1", "TKT-1"})
+		if err == nil || got != nil {
+			t.Errorf("got %v, %v; want nil and the gate error", got, err)
+		}
+	})
+	t.Run("a read error is returned", func(t *testing.T) {
+		r := mustResolver(t, visibility.NopGate{}, visibility.NopRedactor{}, failingLoader{err: errors.New("disk")})
+		if _, err := r.ReadableTypes(context.Background(), []string{"TKT-1"}); err == nil {
+			t.Error("a failed header read was not returned")
+		}
+	})
+	t.Run("types of readable families only", func(t *testing.T) {
+		gate := resolverGate{
+			faces: map[string]visibility.FaceSet{"policy": visibility.SomeFaces(facePublished)},
+			deny:  map[string]bool{"FEAT-1": true},
+		}
+		r := mustResolver(t, gate, visibility.NopRedactor{}, resolverStore(t))
+		got, err := r.ReadableTypes(context.Background(), []string{"POL-1", "TKT-1", "FEAT-1", "TKT-404", ""})
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := map[string]string{"POL-1": "policy", "TKT-1": "ticket"}
+		if !maps.Equal(got, want) {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	})
+	t.Run("the lenient batch still folds a gate error into a miss", func(t *testing.T) {
+		captureWarn(t)
+		r := mustResolver(t, typeErrGate{failType: "policy"}, visibility.NopRedactor{}, resolverStore(t))
+		polDraft := entity.Ref{ID: "POL-1", Face: faceDraft}
+		got := r.ResolveHeaders(context.Background(), visibility.World{}, []entity.Ref{polDraft, {ID: "TKT-1"}})
+		if _, ok := got[polDraft]; ok || !got[entity.Ref{ID: "TKT-1"}].Served() {
+			t.Errorf("got %v, want the policy ref hidden and the ticket served", got)
+		}
+	})
+}
+
+// TestResolver_ReadableTypesBudget pins the typed batch to one header query
+// and one gate round per type, at 10 ids and at 50.
+func TestResolver_ReadableTypesBudget(t *testing.T) {
+	for _, n := range []int{10, 50} {
+		t.Run(strconv.Itoa(n), func(t *testing.T) {
+			ctx := context.Background()
+			base := memstore.New()
+			var ids []string
+			for i := range n {
+				id := fmt.Sprintf("TKT-%d", i)
+				if err := base.CreateEntity(ctx, &entity.Entity{ID: id, Type: "ticket"}); err != nil {
+					t.Fatal(err)
+				}
+				ids = append(ids, id)
+			}
+			st := storetest.NewCounting(base)
+			gate := &countingGate{}
+			r := mustResolver(t, gate, visibility.NopRedactor{}, st)
+			got, err := r.ReadableTypes(ctx, ids)
+			if err != nil || len(got) != n {
+				t.Fatalf("got %d types, %v; want %d", len(got), err, n)
+			}
+			if calls := st.Calls(); st.Reads() != 1 || calls["ListEntityHeaders"] != 1 {
+				t.Errorf("reads = %s, want exactly one ListEntityHeaders", st)
+			}
+			if gate.many != 1 || gate.single != 0 {
+				t.Errorf("gate calls = %d many, %d single; want 1 and 0", gate.many, gate.single)
+			}
+		})
 	}
 }
 
