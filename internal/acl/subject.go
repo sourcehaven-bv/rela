@@ -150,7 +150,18 @@ type RelationSubject struct {
 	// addresses the default one, and a bare-type grant covers exactly
 	// that. An identity-scoped edge is entity-level and always leaves
 	// this zero.
+	//
+	// A named FromFace also narrows `relation_grants:`: the grant satisfies
+	// the write only when the principal may update that face (D4).
 	FromFace entity.Face
+
+	// FamilyFaces lists every stored face of a faced source for an edge
+	// at the zero tail. Such an edge belongs to the entity as a whole,
+	// so the source-type verb must be granted on each face, as a family
+	// rename or delete requires (D4, TKT-KQXVF7). Empty means a single
+	// check at FromFace, which is every faceless source and every edge
+	// with a named tail.
+	FamilyFaces []entity.Face
 }
 
 func (RelationSubject) isSubject() {} // coverage-ignore: sealing marker: never called at runtime; exists only so

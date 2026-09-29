@@ -121,8 +121,9 @@ type Mutator interface {
 	UpdateEntity(ctx context.Context, e *entity.Entity) (*entity.UpdateResult, error)
 	PatchEntity(ctx context.Context, id string, p entity.Patch) (*entity.UpdateResult, error)
 	DeleteEntity(ctx context.Context, id string, cascade bool) (*entity.DeleteResult, error)
+	DeleteEntityFace(ctx context.Context, id string, face entity.Face) (*entity.DeleteResult, error)
 	CreateRelation(ctx context.Context, from, relType, to string, opts entity.RelationOptions) (*entity.Relation, error)
-	DeleteRelation(ctx context.Context, from, relType, to string) error
+	DeleteRelationState(ctx context.Context, from string, face entity.Face, relType, to string) error
 }
 
 // NotFoundError is an OPTIONAL capability a [Mutator]'s returned error may

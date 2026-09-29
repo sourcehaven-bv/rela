@@ -32,7 +32,12 @@ func (r *recordingMutator) CreateRelation(_ context.Context, from, relType, to s
 	r.relations = append(r.relations, from+"--"+relType+"-->"+to)
 	return entity.NewRelation(from, relType, to), nil
 }
-func (r *recordingMutator) DeleteRelation(context.Context, string, string, string) error { return nil }
+func (r *recordingMutator) DeleteEntityFace(context.Context, string, entity.Face) (*entity.DeleteResult, error) {
+	return &entity.DeleteResult{}, nil
+}
+func (r *recordingMutator) DeleteRelationState(context.Context, string, entity.Face, string, string) error {
+	return nil
+}
 
 // writerWithElevated builds a writer runtime whose WriteDeps carry an
 // ElevatedManager (so rela.bypass_acl is registered).

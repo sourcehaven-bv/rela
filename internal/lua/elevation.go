@@ -242,7 +242,12 @@ func registerElevatedWrites(
 			return 0
 		}
 		from, relType, to := s.CheckString(1), s.CheckString(2), s.CheckString(3)
-		if err := em.DeleteRelation(ctxFn(), from, relType, to); err != nil {
+		opts, optErr := parseWriteOpts(s, argPosCreateRelationOpts, deleteRelationOptKeys, deleteRelationOptSet)
+		if optErr != nil {
+			s.RaiseError("bypass_acl delete_relation error: %s", optErr.Error())
+			return 0
+		}
+		if err := em.DeleteRelationState(ctxFn(), from, opts.Face, relType, to); err != nil {
 			s.RaiseError("bypass_acl delete_relation error: %s", err.Error())
 			return 0
 		}
@@ -255,7 +260,7 @@ func registerElevatedWrites(
 		}
 		id := s.CheckString(1)
 		cascade := s.OptBool(2, false)
-		if _, err := em.DeleteEntity(ctxFn(), id, cascade); err != nil {
+		if err := deleteByAddress(ctxFn(), em, id, cascade); err != nil {
 			s.RaiseError("bypass_acl delete_entity error: %s", err.Error())
 			return 0
 		}

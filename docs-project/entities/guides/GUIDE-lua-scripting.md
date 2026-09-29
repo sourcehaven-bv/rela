@@ -347,9 +347,9 @@ rela.get_relations(e.id)               -- NOT a filter: a bare id is not a
 |----------|-------------|---------|
 | `rela.create_entity(type, props, content?, id?, opts?)` | Create entity | table, warnings? |
 | `rela.update_entity(id, props, content?)` | Update entity | table, warnings? |
-| `rela.delete_entity(id, cascade?)` | Delete entity | boolean |
+| `rela.delete_entity(id, cascade?)` | Delete entity; `ID@face` deletes one face and its edges | boolean |
 | `rela.create_relation(from, type, to, opts?)` | Create relation | table |
-| `rela.delete_relation(from, type, to)` | Delete relation | boolean |
+| `rela.delete_relation(from, type, to, opts?)` | Delete relation; `opts.face` names a content edge's tail | boolean |
 | `rela.refresh()` | Reload graph from disk | boolean |
 
 #### Writing to a content state (face)
@@ -400,17 +400,15 @@ sibling on the same face as something it just read. Relations have no
 
 #### Addressing a face on the other write bindings
 
-The three id-addressed bindings differ, and the differences matter:
+| Binding | Addressing a face |
+|---------|-------------------|
+| `rela.update_entity` | `ID@face` selects that face |
+| `rela.delete_entity` | `ID@face` deletes that face and the edges tailed at it; a bare id deletes every face |
+| `rela.create_relation`, `rela.delete_relation` | `opts.face` names the edge's tail; `from` and `to` must be bare ids |
 
-| Binding | A `ID@face` address |
-|---------|---------------------|
-| `rela.update_entity` | Selects that face — intended behaviour |
-| `rela.delete_entity` | **Deletes the whole entity**, every face — intended behaviour |
-| `rela.delete_relation` | Ignored; removes the **default** face's edge and reports success — **known defect, BUG-YVU8CP** |
-
-The first two rows describe the design. The third is a bug awaiting a fix, not
-a contract: do not build on it. A per-face delete is not currently expressible
-from Lua.
+A face delete always removes the edges tailed at that face, whatever
+`cascade` says: they are that face's content, as its properties are.
+`cascade` guards the family delete only.
 
 #### Validation warnings (multi-return)
 
@@ -489,7 +487,7 @@ end)
 | Method | Purpose |
 |--------|---------|
 | `admin.create_relation(from, type, to, opts?)` | Link, skipping the ACL deny |
-| `admin.delete_relation(from, type, to)` | Unlink, skipping the ACL deny |
+| `admin.delete_relation(from, type, to, opts?)` | Unlink, skipping the ACL deny |
 | `admin.delete_entity(id, cascade?)` | Remove, skipping the ACL deny |
 | `admin.get_entity(id)` | Read **raw** — full properties, no redaction |
 | `admin.list_entities(type)` | Every entity of `type`, ungated |

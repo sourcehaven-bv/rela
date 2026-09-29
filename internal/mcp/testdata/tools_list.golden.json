@@ -101,7 +101,7 @@
           "type": "string"
         },
         "from": {
-          "description": "Source entity ID",
+          "description": "Source entity ID; ID@face for a content-scoped relation",
           "type": "string"
         },
         "properties": {
@@ -153,15 +153,15 @@
   },
   {
     "name": "delete_entity",
-    "description": "Delete an entity",
+    "description": "Delete an entity, or one face of it",
     "inputSchema": {
       "properties": {
         "cascade": {
-          "description": "Also delete its relations (default false)",
+          "description": "Also delete its relations (default false). An ID@face delete always removes the edges tailed at that face",
           "type": "boolean"
         },
         "id": {
-          "description": "Entity ID",
+          "description": "Entity ID; ID@face deletes that face and its edges",
           "type": "string"
         }
       },
@@ -177,7 +177,7 @@
     "inputSchema": {
       "properties": {
         "from": {
-          "description": "Source entity ID",
+          "description": "Source entity ID; ID@face for a content-scoped relation",
           "type": "string"
         },
         "to": {

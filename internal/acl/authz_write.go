@@ -89,32 +89,66 @@ func (r *Request) authorizeRelationWrite(ctx context.Context, op Op, s RelationS
 	// an empty FromType would silently turn "source unresolvable ⇒ deny" into
 	// "⇒ allow" — the grant keys on the caller-supplied relation type, which is
 	// always populated, so nothing else would be checked.
+	//
+	// A relation grant does not reach into a face the principal cannot update
+	// (D4, TKT-KQXVF7). A named tail means a `scope: content` edge, which is
+	// part of that face's content, so the grant must not stand in for write
+	// access to `policy@published` when the principal has none.
+	tailBlocked := false
 	if s.FromType != "" {
 		perm, ok := r.d.policy.relationPermissionFor(s.Type, op)
 		if ok && r.grantsPermission(attrs, perm) {
-			return Decision{
-				Allow:        true,
-				RuleKind:     "relation-grant",
-				RuleID:       perm,
-				Attributions: attrs,
+			if r.canUpdateTail(attrs, s) {
+				return Decision{
+					Allow:        true,
+					RuleKind:     "relation-grant",
+					RuleID:       perm,
+					Attributions: attrs,
+				}
 			}
+			tailBlocked = true
 		}
 	}
 
 	// The SOURCE's face, so a `scope: content` edge is authorized against the
 	// state it actually belongs to (BUG-64MU2Q): a principal granted
 	// `policy@draft` must not write the published face's edges. The zero face
-	// is the default state, which is what every identity-scoped edge and every
-	// faceless type addresses — so existing grants keep their meaning.
+	// is the default state, which every faceless type addresses, so existing
+	// grants keep their meaning.
+	//
+	// An identity-scoped edge from a faced source lists the family's faces in
+	// FamilyFaces, and every one must allow the verb: the edge belongs to the
+	// entity as a whole, as a family rename or delete does (D4).
 	//
 	// Only the source has a face; entity.Relation has no ToFace, so there is
 	// no target-side state to authorize.
-	d := r.decideFromAttrs(attrs, op, s.FromType, s.FromFace,
-		"no role grants %s on relations from type %q")
-	if !d.Allow {
-		d.Reason = r.explainRelationDenial(d.Reason, s, op)
+	faces := s.FamilyFaces
+	if len(faces) == 0 {
+		faces = []entity.Face{s.FromFace}
+	}
+	var d Decision
+	for _, face := range faces {
+		d = r.decideFromAttrs(attrs, op, s.FromType, face,
+			"no role grants %s on relations from type %q")
+		if !d.Allow {
+			if !face.IsDefault() {
+				d.Reason = fmt.Sprintf("%s at face %q", d.Reason, face)
+			}
+			d.Reason = r.explainRelationDenial(d.Reason, s, op, tailBlocked)
+			return d
+		}
 	}
 	return d
+}
+
+// canUpdateTail reports whether the principal may update the face a
+// content-scoped edge belongs to. The zero tail is an identity edge or a
+// faceless source, which a relation grant covers without a face check.
+func (r *Request) canUpdateTail(attrs []RoleAttribution, s RelationSubject) bool {
+	if s.FromFace.IsDefault() {
+		return true
+	}
+	return r.decideFromAttrs(attrs, OpUpdate, s.FromType, s.FromFace, "%s %s").Allow
 }
 
 // explainRelationDenial appends the relation_grants path to a denial reason
@@ -124,10 +158,14 @@ func (r *Request) authorizeRelationWrite(ctx context.Context, op Op, s RelationS
 //
 // That is the incident's second root cause in miniature: the gate knew exactly
 // why it said no, and said something else.
-func (r *Request) explainRelationDenial(reason string, s RelationSubject, op Op) string {
+func (r *Request) explainRelationDenial(reason string, s RelationSubject, op Op, tailBlocked bool) string {
 	perm, ok := r.d.policy.relationPermissionFor(s.Type, op)
 	if !ok {
 		return reason
+	}
+	if tailBlocked {
+		return fmt.Sprintf("%s; relation_grants.%s grants permission %q, but the edge belongs to "+
+			"face %q, which no role lets you update", reason, s.Type, perm, s.FromFace)
 	}
 	if s.FromType == "" {
 		return fmt.Sprintf("%s; relation_grants.%s would accept permission %q, but the "+

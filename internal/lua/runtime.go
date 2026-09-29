@@ -1996,6 +1996,10 @@ func relationQuery(s *lua.LState) (store.RelationQuery, error) {
 }
 
 // luaDeleteEntity implements rela.delete_entity(id, cascade?) -> boolean
+//
+// A bare id deletes the whole family. `ID@face` deletes that face and the
+// edges tailed at it, whatever cascade says: a face owns those edges
+// (BUG-J3PBFN).
 func (r *Runtime) luaDeleteEntity(ls *lua.LState) int {
 	id := ls.CheckString(1)
 	if id == "" {
@@ -2009,13 +2013,40 @@ func (r *Runtime) luaDeleteEntity(ls *lua.LState) int {
 	if rd, ok := r.reader(ls, "rela.delete_entity"); !ok || !gateWriteTarget(ctx, ls, rd, id) {
 		return 0
 	}
-	if _, err := r.deps.EntityManager.DeleteEntity(ctx, id, cascade); err != nil {
+	if err := deleteByAddress(ctx, r.deps.EntityManager, id, cascade); err != nil {
 		ls.RaiseError("delete entity error: %s", err.Error())
 		return 0
 	}
 
 	ls.Push(lua.LTrue)
 	return 1
+}
+
+// deleteByAddress routes a delete by address: a bare id to the family delete,
+// `ID@face` to the face delete.
+func deleteByAddress(ctx context.Context, em Mutator, addr string, cascade bool) error {
+	ref, err := entity.ParseRef(addr)
+	if err != nil {
+		return err
+	}
+	if ref.Face.IsDefault() {
+		_, err = em.DeleteEntity(ctx, ref.ID, cascade)
+		return err
+	}
+	_, err = em.DeleteEntityFace(ctx, ref.ID, ref.Face)
+	return err
+}
+
+// relationSource checks the endpoints of a relation write and returns the
+// address the source's read gate must check. Both endpoints are bare ids: a
+// target has no face, and the tail is named by opts.face, never fused into
+// from. The gate checks the tail face itself, so a script cannot probe a face
+// it cannot read by writing or deleting an edge on it.
+func relationSource(from, to string, tail entity.Face) (string, error) {
+	if strings.Contains(from, entity.StateRefSeparator) || strings.Contains(to, entity.StateRefSeparator) {
+		return "", errors.New("from and to must be bare entity ids; name the tail with opts.face")
+	}
+	return entity.FormatStateRef(from, tail), nil
 }
 
 // luaCreateRelation implements rela.create_relation(from, type, to, opts?) -> table
@@ -2045,8 +2076,13 @@ func (r *Runtime) luaCreateRelation(ls *lua.LState) int {
 		return 0
 	}
 
+	source, endErr := relationSource(from, to, opts.Face)
+	if endErr != nil {
+		ls.RaiseError("create relation error: %s", endErr.Error())
+		return 0
+	}
 	ctx := r.callerCtx()
-	if rd, ok := r.reader(ls, "rela.create_relation"); !ok || !gateWriteTarget(ctx, ls, rd, from, to) {
+	if rd, ok := r.reader(ls, "rela.create_relation"); !ok || !gateWriteTarget(ctx, ls, rd, source, to) {
 		return 0
 	}
 	rel, err := r.deps.EntityManager.CreateRelation(
@@ -2061,7 +2097,11 @@ func (r *Runtime) luaCreateRelation(ls *lua.LState) int {
 	return 1
 }
 
-// luaDeleteRelation implements rela.delete_relation(from, type, to) -> boolean
+// luaDeleteRelation implements rela.delete_relation(from, type, to, opts?) -> boolean
+//
+// opts is an optional table taking `face`, the tail of a `scope: content`
+// edge, as create_relation does. The tail is part of the edge's identity, so
+// without it only the default-tail edge is addressed (BUG-J3PBFN).
 func (r *Runtime) luaDeleteRelation(ls *lua.LState) int {
 	from := ls.CheckString(1)
 	relType := ls.CheckString(2)
@@ -2072,11 +2112,22 @@ func (r *Runtime) luaDeleteRelation(ls *lua.LState) int {
 		return 0
 	}
 
-	ctx := r.callerCtx()
-	if rd, ok := r.reader(ls, "rela.delete_relation"); !ok || !gateWriteTarget(ctx, ls, rd, from, to) {
+	opts, optErr := parseWriteOpts(ls, argPosCreateRelationOpts, deleteRelationOptKeys, deleteRelationOptSet)
+	if optErr != nil {
+		ls.RaiseError("delete relation error: %s", optErr.Error())
 		return 0
 	}
-	if err := r.deps.EntityManager.DeleteRelation(ctx, from, relType, to); err != nil {
+
+	source, endErr := relationSource(from, to, opts.Face)
+	if endErr != nil {
+		ls.RaiseError("delete relation error: %s", endErr.Error())
+		return 0
+	}
+	ctx := r.callerCtx()
+	if rd, ok := r.reader(ls, "rela.delete_relation"); !ok || !gateWriteTarget(ctx, ls, rd, source, to) {
+		return 0
+	}
+	if err := r.deps.EntityManager.DeleteRelationState(ctx, from, opts.Face, relType, to); err != nil {
 		ls.RaiseError("delete relation error: %s", err.Error())
 		return 0
 	}
