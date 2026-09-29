@@ -5,7 +5,7 @@ title: entity.Ref and one gated resolver in internal/visibility
 kind: enhancement
 priority: high
 effort: l
-status: planning
+status: ready
 description: 'Stage 1 of RES-Y6JA37: a typed face address and a single resolver (explicit/world/family) that always applies row and face gates; dataentry, mcp and lua migrate onto it.'
 ---
 
