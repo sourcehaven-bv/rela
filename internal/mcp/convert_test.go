@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
+	"github.com/Sourcehaven-BV/rela/internal/store/storetest"
 	"github.com/Sourcehaven-BV/rela/internal/testutil"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
 )
@@ -843,5 +845,38 @@ func TestExtractPropertiesAllowNil_JSONNullArg(t *testing.T) {
 	props := extractPropertiesAllowNil(req)
 	if props != nil {
 		t.Errorf("expected nil for JSON 'null' as properties arg, got %v", props)
+	}
+}
+
+// TestBuildStoreRelations_ReadBudget (RR-XD7YN9): the neighbor titles cost
+// the same store reads at 10 edges as at 50, and never load a body.
+func TestBuildStoreRelations_ReadBudget(t *testing.T) {
+	t.Parallel()
+	reads := func(n int) int {
+		base := memstore.New()
+		sol := &entity.Entity{ID: "SOL-1", Type: "solution", Properties: map[string]any{"title": "S"}}
+		seedEntity(t, base, sol)
+		for i := range n {
+			id := fmt.Sprintf("REQ-%03d", i)
+			seedEntity(t, base, &entity.Entity{ID: id, Type: "requirement", Properties: map[string]any{"title": "t" + id}})
+			seedRelation(t, base, "SOL-1", "addresses", id)
+		}
+		st := storetest.NewCounting(base)
+		rels := buildStoreRelations(context.Background(), sol, graphOf(st), testMeta())
+		if rels == nil || len(rels.Outgoing["addresses"]) != n {
+			t.Fatalf("outgoing = %+v, want %d edges", rels, n)
+		}
+		for _, target := range rels.Outgoing["addresses"] {
+			if target.Title != "t"+target.ID {
+				t.Fatalf("target %+v lacks its title", target)
+			}
+		}
+		if calls := st.Calls(); calls["ListEntities"]+calls["GetEntityState"]+calls["GetEntity"] != 0 {
+			t.Errorf("a neighbor title loaded a body: %s", st)
+		}
+		return st.Reads()
+	}
+	if at10, at50 := reads(10), reads(50); at10 != at50 {
+		t.Errorf("reads grow with edges: %d at 10, %d at 50", at10, at50)
 	}
 }

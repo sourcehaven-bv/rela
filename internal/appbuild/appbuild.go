@@ -471,12 +471,14 @@ func scriptEntityReader(
 }
 
 // scriptEntityReaderFamily is the script read surface plus the entity-level
-// read the MCP write tools ask before they name an id. Every reader
+// read the MCP write tools ask before they name an id, and the batch header
+// read MCP uses for neighbor titles. Every reader
 // [scriptReads] returns implements it: [visibility.ScriptReader],
 // [visibility.UnrestrictedReader] and [visibility.DenyReader].
 type scriptEntityReaderFamily interface {
 	lua.EntityReader
 	Family(ctx context.Context, id string) (visibility.Family, bool, error)
+	ResolveHeaders(ctx context.Context, refs []entity.Ref) map[entity.Ref]visibility.ResolvedHeader
 }
 
 // scriptReads returns the principal-bound script reader and the traversal gate
@@ -708,9 +710,11 @@ func gatedSearcher(
 // Resolve takes an entity ADDRESS (`ID` or `ID@face`) and reads the face it
 // names, or the face the reader's world resolves a bare id to. Family answers
 // which faces of a bare id the caller may read, from headers only.
+// ResolveHeaders answers both questions for a batch of addresses.
 type GatedGraphReader interface {
 	Resolve(ctx context.Context, addr string) (*entity.Entity, error)
 	Family(ctx context.Context, id string) (visibility.Family, bool, error)
+	ResolveHeaders(ctx context.Context, refs []entity.Ref) map[entity.Ref]visibility.ResolvedHeader
 	ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error]
 	GetRelation(ctx context.Context, from, relType, to string) (*entity.Relation, error)
 	ListRelations(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error]
@@ -756,6 +760,12 @@ func (g gatedGraphReader) Resolve(ctx context.Context, addr string) (*entity.Ent
 
 func (g gatedGraphReader) Family(ctx context.Context, id string) (visibility.Family, bool, error) {
 	return g.rows.Family(ctx, id)
+}
+
+func (g gatedGraphReader) ResolveHeaders(
+	ctx context.Context, refs []entity.Ref,
+) map[entity.Ref]visibility.ResolvedHeader {
+	return g.rows.ResolveHeaders(ctx, refs)
 }
 
 func (g gatedGraphReader) ListEntities(

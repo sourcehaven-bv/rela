@@ -120,6 +120,11 @@ type GraphReader interface {
 	// questions: does the entity exist for this caller, before a write or a
 	// traversal names it.
 	Family(ctx context.Context, id string) (visibility.Family, bool, error)
+
+	// ResolveHeaders answers Resolve and Family for a batch of addresses,
+	// from headers only, in a cost that does not grow with len(refs)
+	// ([visibility.Resolver.ResolveHeaders]). A miss is absent.
+	ResolveHeaders(ctx context.Context, refs []entity.Ref) map[entity.Ref]visibility.ResolvedHeader
 	ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error]
 	GetRelation(ctx context.Context, from, relType, to string) (*entity.Relation, error)
 	ListRelations(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error]

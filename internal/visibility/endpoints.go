@@ -2,10 +2,8 @@ package visibility
 
 import (
 	"context"
-	"log/slog"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // EndpointsReadable reports, for each relation in rels, whether the ctx
@@ -35,11 +33,10 @@ func (r *Resolver) EndpointsReadable(ctx context.Context, rels []*entity.Relatio
 	if len(ids) == 0 {
 		return out
 	}
-	stored, ok := r.storedFaces(ctx, ids)
+	readable, ok := r.readableHeaders(ctx, ids)
 	if !ok {
 		return out
 	}
-	readable := r.readableFaces(ctx, stored)
 	for i, rel := range rels {
 		if rel == nil {
 			continue
@@ -49,7 +46,7 @@ func (r *Resolver) EndpointsReadable(ctx context.Context, rels []*entity.Relatio
 		if rel.FromFace.IsDefault() {
 			tail = len(readable[rel.From]) > 0
 		} else {
-			tail = readable[rel.From][rel.FromFace]
+			_, tail = readable[rel.From][rel.FromFace]
 		}
 		out[i] = head && tail
 	}
@@ -72,80 +69,4 @@ func endpointIDs(rels []*entity.Relation) []string {
 		}
 	}
 	return ids
-}
-
-// endpointFaces is what the header read found for one endpoint id.
-type endpointFaces struct {
-	typ   string
-	faces []entity.Face
-}
-
-// storedFaces reads the type and every stored face of ids, in one header
-// query. ok is false when the read failed.
-func (r *Resolver) storedFaces(ctx context.Context, ids []string) (map[string]*endpointFaces, bool) {
-	stored := make(map[string]*endpointFaces, len(ids))
-	q := store.EntityQuery{IDs: ids, AllStates: true}
-	for h, err := range store.ListEntityHeaders(ctx, r.load, q) {
-		if err != nil {
-			slog.Warn("visibility: relation endpoint read failed; hiding the relations",
-				"endpoints", len(ids), "err", err)
-			return nil, false
-		}
-		ef := stored[h.ID]
-		if ef == nil {
-			ef = &endpointFaces{typ: h.Type}
-			stored[h.ID] = ef
-		}
-		if h.Type != ef.typ {
-			// One id stored under two types is corrupt data. Neither claim
-			// can be trusted, so the endpoint is hidden.
-			ef.faces = nil
-			ef.typ = ""
-			continue
-		}
-		ef.faces = append(ef.faces, h.Face)
-	}
-	return stored, true
-}
-
-// readableFaces returns, per endpoint id, the set of its stored faces the
-// principal may read. An id missing from the result is unreadable.
-func (r *Resolver) readableFaces(
-	ctx context.Context, stored map[string]*endpointFaces,
-) map[string]map[entity.Face]bool {
-	byType := make(map[string][]string)
-	for id, ef := range stored {
-		if ef.typ != "" {
-			byType[ef.typ] = append(byType[ef.typ], id)
-		}
-	}
-	out := make(map[string]map[entity.Face]bool, len(stored))
-	for typ, ids := range byType {
-		perm, err := r.gate.PermitsReadMany(ctx, typ, ids)
-		if err != nil {
-			slog.Warn("visibility: PermitsReadMany failed; hiding the type's endpoints fail-closed",
-				"type", typ, "candidates", len(ids), "err", err)
-			continue
-		}
-		faces, err := ReadableFaces(ctx, r.gate, typ)
-		if err != nil {
-			slog.Warn("visibility: readable faces failed; hiding the type's endpoints fail-closed",
-				"type", typ, "err", err)
-			continue
-		}
-		for _, id := range ids {
-			if !perm[id] {
-				continue
-			}
-			for _, f := range stored[id].faces {
-				if faces.Contains(f) {
-					if out[id] == nil {
-						out[id] = make(map[entity.Face]bool)
-					}
-					out[id][f] = true
-				}
-			}
-		}
-	}
-	return out
 }

@@ -359,6 +359,18 @@ func (d denyEntityReader) Family(ctx context.Context, id string) (visibility.Fam
 	return visibility.Unrestricted(d.raw).Family(ctx, id)
 }
 
+func (d denyEntityReader) ResolveHeaders(
+	ctx context.Context, refs []entity.Ref,
+) map[entity.Ref]visibility.ResolvedHeader {
+	out := visibility.Unrestricted(d.raw).ResolveHeaders(ctx, refs)
+	for ref := range out {
+		if ref.ID == d.deny {
+			delete(out, ref)
+		}
+	}
+	return out
+}
+
 func (d denyEntityReader) ListEntities(
 	ctx context.Context, q store.EntityQuery,
 ) iter.Seq2[*entity.Entity, error] {
