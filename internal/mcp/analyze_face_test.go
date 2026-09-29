@@ -237,3 +237,41 @@ func TestAnalyzeCardinality_CountsVisibleEdgesOnly(t *testing.T) {
 		t.Fatalf("LEAK: a count over a hidden neighbor: %s", hidden)
 	}
 }
+
+// TestReadRelationResource_TailFace pins the relation resource's `{from}`
+// segment (TKT-KQXVF7). `ID@face` names a content edge's tail, a bare ID
+// names the identity edge, and a tail the caller cannot read is not found.
+func TestReadRelationResource_TailFace(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		read    []string
+		from    string
+		wantErr bool
+	}{
+		{"tail readable", everyFace, "POL-1@draft", false},
+		{"bare id misses the content edge", everyFace, "POL-1", true},
+		{"tail face hidden", publishedOnly, "POL-1@draft", true},
+		{"malformed from", everyFace, "POL-1@", true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s, ctx := facedGatedServer(t, tc.read)
+			res, err := group(s, selSchemaRes).handleReadRelation(ctx,
+				readResourceReq("rela://relation/"+tc.from+"/cites/CTL-1"))
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("read %s: want not-found, got %s", tc.from, res.Contents[0].Text)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("read %s: %v", tc.from, err)
+			}
+			if !strings.Contains(res.Contents[0].Text, `"draft"`) {
+				t.Errorf("relation %s lost its tail: %s", tc.from, res.Contents[0].Text)
+			}
+		})
+	}
+}

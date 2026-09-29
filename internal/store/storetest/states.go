@@ -473,9 +473,42 @@ func RunStateTests(t *testing.T, f Factory) {
 		assert.ErrorIs(t, err, store.ErrNotFound)
 	})
 
+	// --- Per-tail relation read (TKT-KQXVF7) -----------------------------
+
+	t.Run("GetRelationAddressesTheTailNotTheTriple", func(t *testing.T) {
+		s := f(t)
+		mustCreate(t, s, newState(t, "PAGE-24", "page", "", "default"))
+		mustCreate(t, s, newState(t, "PAGE-24", "page", "published", "published"))
+		mustCreate(t, s, newState(t, "SPEC-12", "page", "", "target"))
+
+		pub := ptr(t, "published")
+		idKey := entity.RelationKey{From: "PAGE-24", Type: "references", To: "SPEC-12"}
+		pubKey := entity.RelationKey{From: "PAGE-24", FromFace: pub, Type: "references", To: "SPEC-12"}
+		_, err := s.CreateRelation(ctx(), idKey, &store.RelationData{Content: "identity edge"})
+		require.NoError(t, err)
+		_, err = s.CreateRelation(ctx(), pubKey, &store.RelationData{Content: "published edge"})
+		require.NoError(t, err)
+
+		got, err := s.GetRelation(ctx(), pubKey)
+		require.NoError(t, err)
+		assert.Equal(t, pub, got.FromFace)
+		assert.Equal(t, "published edge", got.Content)
+
+		got, err = s.GetRelation(ctx(), idKey)
+		require.NoError(t, err)
+		assert.True(t, got.FromFace.IsDefault())
+		assert.Equal(t, "identity edge", got.Content)
+
+		// A tail with no edge is absent, not a fallback to a sibling.
+		_, err = s.GetRelation(ctx(), entity.RelationKey{
+			From: "PAGE-24", FromFace: ptr(t, "draft"), Type: "references", To: "SPEC-12",
+		})
+		assert.ErrorIs(t, err, store.ErrNotFound)
+	})
+
 	// --- Per-tail relation delete (TKT-C1XUA8) ---------------------------
 
-	t.Run("DeleteRelationStateAddressesTheTailNotTheTriple", func(t *testing.T) {
+	t.Run("DeleteRelationAddressesTheTailNotTheTriple", func(t *testing.T) {
 		s := f(t)
 		mustCreate(t, s, newState(t, "PAGE-25", "page", "", "default"))
 		mustCreate(t, s, newState(t, "PAGE-25", "page", "published", "published"))
@@ -487,10 +520,9 @@ func RunStateTests(t *testing.T, f Factory) {
 		_, err = s.CreateRelation(ctx(), entity.RelationKey{From: "PAGE-25", FromFace: pub, Type: "references", To: "SPEC-6"}, &store.RelationData{})
 		require.NoError(t, err)
 
-		// Delete the PUBLISHED-tail edge. The regression this guards: every
-		// backend's DeleteRelation is default-tail-only, so a caller dropping
-		// the tail deleted the DEFAULT edge and reported success while the
-		// published edge survived — the wrong edge, silently.
+		// Delete the PUBLISHED-tail edge. The regression this guards: a
+		// delete that ignored the tail removed the DEFAULT edge and reported
+		// success while the published edge survived.
 		require.NoError(t, s.DeleteRelation(ctx(), entity.RelationKey{From: "PAGE-25", FromFace: pub, Type: "references", To: "SPEC-6"}))
 
 		remaining := collectRelations(t, s, store.RelationQuery{From: "PAGE-25"})
@@ -499,7 +531,7 @@ func RunStateTests(t *testing.T, f Factory) {
 			"the default-tail edge must survive deletion of its published-tail sibling")
 	})
 
-	t.Run("DeleteRelationStateZeroFaceMatchesDeleteRelation", func(t *testing.T) {
+	t.Run("DeleteRelationZeroFaceIsTheIdentityEdge", func(t *testing.T) {
 		s := f(t)
 		mustCreate(t, s, newState(t, "PAGE-26", "page", "", "default"))
 		mustCreate(t, s, newState(t, "PAGE-26", "page", "draft", "draft"))
@@ -510,8 +542,8 @@ func RunStateTests(t *testing.T, f Factory) {
 		_, err = s.CreateRelation(ctx(), entity.RelationKey{From: "PAGE-26", FromFace: ptr(t, "draft"), Type: "references", To: "SPEC-7"}, &store.RelationData{})
 		require.NoError(t, err)
 
-		// The zero face is the general form's default-tail address, so it
-		// must behave exactly as DeleteRelation does — same edge, same result.
+		// The zero face addresses the identity edge only; the draft-tail
+		// sibling is a different relation.
 		require.NoError(t, s.DeleteRelation(ctx(), entity.RelationKey{From: "PAGE-26", Type: "references", To: "SPEC-7"}))
 
 		remaining := collectRelations(t, s, store.RelationQuery{From: "PAGE-26"})
@@ -519,7 +551,7 @@ func RunStateTests(t *testing.T, f Factory) {
 		assert.Equal(t, ptr(t, "draft"), remaining[0].FromFace)
 	})
 
-	t.Run("DeleteRelationStateNotFound", func(t *testing.T) {
+	t.Run("DeleteRelationTailNotFound", func(t *testing.T) {
 		s := f(t)
 		mustCreate(t, s, newState(t, "PAGE-27", "page", "", "default"))
 		mustCreate(t, s, newState(t, "SPEC-8", "page", "", "target"))
@@ -536,7 +568,7 @@ func RunStateTests(t *testing.T, f Factory) {
 
 	// --- Per-tail relation update (BUG-64MU2Q) ---------------------------
 
-	t.Run("UpdateRelationStateAddressesTheTailNotTheTriple", func(t *testing.T) {
+	t.Run("UpdateRelationAddressesTheTailNotTheTriple", func(t *testing.T) {
 		s := f(t)
 		mustCreate(t, s, newState(t, "PAGE-28", "page", "", "default"))
 		mustCreate(t, s, newState(t, "PAGE-28", "page", "published", "published"))
@@ -549,9 +581,8 @@ func RunStateTests(t *testing.T, f Factory) {
 		require.NoError(t, err)
 
 		// Update the PUBLISHED-tail edge. The regression this guards mirrors
-		// the delete one above: UpdateRelation is default-tail-only, so a
-		// caller dropping the tail wrote its properties onto the DEFAULT
-		// edge and reported success — the wrong edge, silently.
+		// the delete one above: an update that ignored the tail wrote its
+		// properties onto the DEFAULT edge and reported success.
 		updated, err := s.UpdateRelation(ctx(), entity.RelationKey{From: "PAGE-28", FromFace: pub, Type: "references", To: "SPEC-9"}, store.RelationData{Content: "published edge v2"})
 		require.NoError(t, err)
 		assert.Equal(t, pub, updated.FromFace,
@@ -569,7 +600,7 @@ func RunStateTests(t *testing.T, f Factory) {
 			"the default-tail edge must be untouched by a write to its published-tail sibling")
 	})
 
-	t.Run("UpdateRelationStateZeroFaceMatchesUpdateRelation", func(t *testing.T) {
+	t.Run("UpdateRelationZeroFaceIsTheIdentityEdge", func(t *testing.T) {
 		s := f(t)
 		mustCreate(t, s, newState(t, "PAGE-29", "page", "", "default"))
 		mustCreate(t, s, newState(t, "PAGE-29", "page", "draft", "draft"))
@@ -581,8 +612,8 @@ func RunStateTests(t *testing.T, f Factory) {
 		_, err = s.CreateRelation(ctx(), entity.RelationKey{From: "PAGE-29", FromFace: draft, Type: "references", To: "SPEC-10"}, &store.RelationData{Content: "draft edge"})
 		require.NoError(t, err)
 
-		// The zero face is the general form's default-tail address, so it
-		// must behave exactly as UpdateRelation does — same edge, same result.
+		// The zero face addresses the identity edge only; the draft-tail
+		// sibling is a different relation.
 		updated, err := s.UpdateRelation(ctx(), entity.RelationKey{From: "PAGE-29", Type: "references", To: "SPEC-10"}, store.RelationData{Content: "default edge v2"})
 		require.NoError(t, err)
 		assert.True(t, updated.FromFace.IsDefault())
@@ -593,7 +624,7 @@ func RunStateTests(t *testing.T, f Factory) {
 			"the draft-tail edge must be untouched by a default-tail write")
 	})
 
-	t.Run("UpdateRelationStateNotFound", func(t *testing.T) {
+	t.Run("UpdateRelationTailNotFound", func(t *testing.T) {
 		s := f(t)
 		mustCreate(t, s, newState(t, "PAGE-30", "page", "", "default"))
 		mustCreate(t, s, newState(t, "SPEC-11", "page", "", "target"))
