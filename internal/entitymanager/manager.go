@@ -1372,8 +1372,19 @@ type cascadeCapture struct {
 // at the call site for why that separation is load-bearing rather than
 // stylistic.
 func (m *Manager) deleteEntityInTx(
-	ctx context.Context, tx store.Store, id string, cascade bool,
+	ctx context.Context, tx store.Store, id string, cascade bool, authorized familyAuthorization,
 ) (*store.DeleteResult, *cascadeCapture, error) {
+	// Re-read the family under the transaction and authorize any face that
+	// appeared since the caller's check: the store deletes the family it
+	// re-derives here, not the one the caller saw (BUG-1YN750).
+	family, fErr := familyRows(ctx, tx, id)
+	if fErr != nil {
+		return nil, nil, fmt.Errorf("list faces of %q: %w", id, fErr)
+	}
+	if aErr := m.authorizeFamilyDelete(ctx, family, authorized); aErr != nil {
+		return nil, nil, aErr
+	}
+
 	incoming, cErr := collectIncidentRelations(ctx, tx, id, store.DirectionIncoming)
 	if cErr != nil {
 		return nil, nil, fmt.Errorf("collect incoming relations for %q: %w", id, cErr)
@@ -1417,7 +1428,17 @@ func (m *Manager) deleteEntityInTx(
 		return res, &cascadeCapture{incoming: incoming, outgoing: outgoing},
 			fmt.Errorf("delete entity: %w", delErr)
 	}
-	return res, &cascadeCapture{incoming: incoming, outgoing: outgoing}, nil
+	// The store's own scan is the final word on what went. A face it removed
+	// that the re-read above did not see is authorized now. On pg/sqlite a
+	// denial rolls the delete back. On fs the watcher indexes an external
+	// file edit without taking the Tx lock, so a face can land between the
+	// re-read and the delete, and fs cannot roll back: res is returned with
+	// the error so the caller can record what really went (issue #929).
+	capture := &cascadeCapture{incoming: incoming, outgoing: outgoing}
+	if aErr := m.authorizeFamilyDelete(ctx, res.DeletedEntities, authorized); aErr != nil {
+		return res, capture, aErr
+	}
+	return res, capture, nil
 }
 
 // DeleteEntity removes an entity and its incident relations.
@@ -1425,30 +1446,27 @@ func (m *Manager) deleteEntityInTx(
 // entity has any incident relations, returns [ErrHasRelations]
 // without deleting anything.
 func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*entity.DeleteResult, error) {
-	// anyFaceOf, not GetEntity: a delete addresses the whole FAMILY, and
-	// GetEntity(id) is GetEntityState(id, zero) — a coordinate a type
-	// declaring faces has no row at, so every faced entity was undeletable
-	// (BUG-HC6I2T). Only the type and face are read from the result, and the
-	// type is the same at every face.
+	// Every face, not one: a delete addresses the whole FAMILY, so it is
+	// authorized on each face it removes (BUG-1YN750). Authorizing the one row
+	// anyFaceOf returned let a principal holding delete on `policy@draft` only
+	// remove `policy@published` as well.
 	//
 	// Fails closed on a non-not-found error: collapsing every failure into
 	// ErrEntityNotFound would let a transient store error skip the ACL check
 	// below, since that branch returns before authorizing (existence is
 	// itself a secret). Only a genuine miss is reported as missing.
-	current, err := anyFaceOf(ctx, m.deps.Store, id)
+	family, err := familyRows(ctx, m.deps.Store, id)
 	if err != nil {
-		if !errors.Is(err, store.ErrNotFound) {
-			return nil, err
-		}
+		return nil, err
+	}
+	if len(family) == 0 {
 		return nil, fmt.Errorf("%w: %s", ErrEntityNotFound, id)
 	}
 	// ACL check happens after the lookup so the request carries the
 	// real entity type; a deny on a non-existent entity would be more
 	// confusing than the ErrEntityNotFound returned above.
-	if aclErr := m.authorizeAndAudit(ctx, acl.WriteRequest{
-		Op:      acl.OpDelete,
-		Subject: acl.NewEntitySubject(current.Type, id, current.Face),
-	}); aclErr != nil {
+	authorized := make(familyAuthorization, len(family))
+	if aclErr := m.authorizeFamilyDelete(ctx, family, authorized); aclErr != nil {
 		return nil, aclErr
 	}
 
@@ -1462,21 +1480,13 @@ func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*e
 	// leave a window in which a concurrent writer adds an edge that is then
 	// deleted with no authorization at all, which is exactly the "back door
 	// to destroying edge types you cannot delete directly" this gate exists
-	// to close.
+	// to close. The family's faces are re-authorized there for the same
+	// reason.
 	//
 	// Reads inside the callback go through the OUTER handle (that is what
 	// acl.StoreGraph holds). fsstore's readers never take txMu, so this does
 	// not deadlock — pinned by TestTx_ReadsViaOuterHandleDoNotDeadlock.
 	// Writes must use the tx view, per the Tx contract.
-	// The critical section — collect, authorize, delete — runs inside ONE Tx.
-	//
-	// Both backends RE-DERIVE the incident set inside their own lock/tx
-	// (fsstore rebuilds from its live index, pgstore re-reads inside the
-	// transaction) and delete THAT set, not the one handed to them.
-	// Authorizing a snapshot taken outside the lock would leave a window in
-	// which a concurrent writer adds an edge that is then deleted with no
-	// authorization at all — the "back door to destroying edge types you
-	// cannot delete directly" this gate exists to close.
 	//
 	// Everything EXTERNAL stays out of the callback: version capture, alias
 	// notification and audit all run below, after the transaction closes.
@@ -1492,7 +1502,7 @@ func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*e
 	)
 	txErr := m.deps.Store.Tx(ctx, func(tx store.Store) error {
 		var dErr error
-		res, captured, dErr = m.deleteEntityInTx(ctx, tx, id, cascade)
+		res, captured, dErr = m.deleteEntityInTx(ctx, tx, id, cascade, authorized)
 		return dErr
 	})
 	if txErr != nil {
@@ -1504,8 +1514,9 @@ func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*e
 		//
 		// Same label and same emitter as the success path below, so a partial
 		// and a complete cascade are indistinguishable in the log except by
-		// how many rows they produced. No delete-entity record: the entity
-		// survived, and claiming otherwise would be the opposite error.
+		// how many rows they produced. A delete-entity record is written only
+		// for a face the store reports removing and that is really gone; a
+		// face that survived gets none.
 		m.recordPartialCascade(ctx, id, res, captured)
 		return nil, txErr
 	}
@@ -1515,7 +1526,13 @@ func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*e
 	// an in-transaction capture would have produced; only the timing differs.
 	// A crash between commit and here loses the delete markers — the same
 	// non-atomicity the pre-Tx code carried and documented, not a regression.
-	m.recordEntityVersion(ctx, store.VersionOpDelete, current, "")
+	//
+	// One capture per face the store reports removing: each face is its own
+	// version lineage (entity_versions keys on face), so capturing one face
+	// left every other face's history without a delete marker.
+	for _, e := range res.DeletedEntities {
+		m.recordEntityVersion(ctx, store.VersionOpDelete, e, "")
+	}
 
 	// Tell id-keyed subscribers the entity is gone. They decide what to do:
 	// the CalDAV alias service RETAINS its reference, as the tombstone that
@@ -1548,19 +1565,111 @@ func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*e
 		m.recordRelationAudit(cascadeCtx, audit.OpDeleteRelation, rel, "deleted")
 	}
 
-	deleteSummary := "deleted"
-	if cascade && len(res.DeletedRelations) > 0 {
-		deleteSummary = fmt.Sprintf("deleted (cascade: %d relations)", len(res.DeletedRelations))
+	cascaded := 0
+	if cascade {
+		cascaded = len(res.DeletedRelations)
 	}
-	m.recordEntityAudit(ctx, audit.OpDeleteEntity, current, deleteSummary)
+	m.recordFamilyDeleteAudit(ctx, res.DeletedEntities, cascaded)
 
 	return &entity.DeleteResult{
-		DeletedEntities:  []*entity.Entity{current},
+		DeletedEntities:  res.DeletedEntities,
 		DeletedRelations: res.DeletedRelations,
 	}, nil
 }
 
-// recordPartialCascade records the relations a FAILED cascade delete had
+// familyRows returns every stored face of the entity family id, in the
+// store's stable order. An empty result means the family does not exist.
+//
+// IDs-scoped, never a full scan, like anyFaceOf.
+func familyRows(ctx context.Context, st store.Store, id string) ([]*entity.Entity, error) {
+	var family []*entity.Entity
+	for e, err := range st.ListEntities(ctx, store.EntityQuery{IDs: []string{id}, AllStates: true}) {
+		if err != nil {
+			return nil, err
+		}
+		if e.ID == id {
+			family = append(family, e)
+		}
+	}
+	return family, nil
+}
+
+// familyAuthorization is the set of (type, face) delete subjects one family
+// delete has already authorized. The type is part of the key because it is
+// part of the ACL subject: a state stored under a different type is a
+// different subject and is authorized on its own.
+type familyAuthorization map[familyFace]bool
+
+type familyFace struct {
+	typ  string
+	face entity.Face
+}
+
+// authorizeFamilyDelete authorizes [acl.OpDelete] on every row of family
+// whose subject is not yet in authorized, and adds each allowed subject to
+// it. It stops at the first denial, so a denied family delete leaves exactly
+// one denied-write record, as a single-face denial does.
+//
+// Under bypass_acl each face is a separate bypassed write, so each gets its
+// own acl-bypass record. When this runs inside the Tx a denial writes its
+// denied-write record there, as authorizeCascadeRelations does.
+func (m *Manager) authorizeFamilyDelete(
+	ctx context.Context, family []*entity.Entity, authorized familyAuthorization,
+) error {
+	for _, e := range family {
+		key := familyFace{typ: e.Type, face: e.Face}
+		if authorized[key] {
+			continue
+		}
+		if err := m.authorizeAndAudit(ctx, acl.WriteRequest{
+			Op:      acl.OpDelete,
+			Subject: acl.NewEntitySubject(e.Type, e.ID, e.Face),
+		}); err != nil {
+			return err
+		}
+		authorized[key] = true
+	}
+	return nil
+}
+
+// recordFamilyDeleteAudit writes one delete-entity record per removed face.
+// The audit subject has no face field, so a faced row names its face in the
+// summary, as DeleteEntityFace does. The cascade count describes the family
+// delete as a whole, so it goes on the first record only; repeating it would
+// read as that many relations per face.
+func (m *Manager) recordFamilyDeleteAudit(ctx context.Context, deleted []*entity.Entity, cascaded int) {
+	for i, e := range deleted {
+		summary := "deleted"
+		if !e.Face.IsDefault() {
+			summary = "deleted face " + string(e.Face)
+		}
+		if i == 0 && cascaded > 0 {
+			summary = fmt.Sprintf("%s (cascade: %d relations)", summary, cascaded)
+		}
+		m.recordEntityAudit(ctx, audit.OpDeleteEntity, e, summary)
+	}
+}
+
+// facesStillStored reports whether any row in deleted is still in the store,
+// which after a failed Tx means the backend rolled the delete back. A read
+// error counts as still stored: recording a delete that did not happen is
+// the worse error for a log whose value is that it does not lie.
+func facesStillStored(ctx context.Context, st store.Store, deleted []*entity.Entity) bool {
+	for _, e := range deleted {
+		_, err := st.GetEntityState(ctx, e.ID, e.Face)
+		if err == nil {
+			return true
+		}
+		if !errors.Is(err, store.ErrNotFound) {
+			slog.Error("entitymanager: cannot tell whether a failed delete removed a face",
+				"id", e.ID, "face", e.Face, "error", err)
+			return true
+		}
+	}
+	return false
+}
+
+// recordPartialCascade records the relations and faces a FAILED delete had
 // already removed from disk, so BOTH logs reflect what genuinely happened
 // rather than nothing at all (TKT-A23L87 / issue #929).
 //
@@ -1570,8 +1679,8 @@ func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*e
 // here would leave the log asserting a deletion that history denies, and the
 // rows are already off disk so no sweep could backfill them.
 //
-// Driven by res.DeletedRelations, not by the captured incident set: only the
-// relations the store actually removed may be recorded. The capture supplies
+// Driven by res.DeletedRelations and res.DeletedEntities, not by the captured
+// incident set: only the rows the store actually removed may be recorded. The capture supplies
 // the pre-delete snapshots those ids need.
 //
 // Nil-safe throughout: a transactional backend returns nil on error, and a
@@ -1579,7 +1688,20 @@ func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*e
 func (m *Manager) recordPartialCascade(
 	ctx context.Context, id string, res *store.DeleteResult, captured *cascadeCapture,
 ) {
-	if res == nil || len(res.DeletedRelations) == 0 {
+	if res == nil {
+		return
+	}
+	// A face-authorization denial after the store delete returns the full
+	// result on every backend. pg/sqlite then roll back, so nothing may be
+	// recorded; fs cannot, so what it removed is recorded as removed.
+	if facesStillStored(ctx, m.deps.Store, res.DeletedEntities) {
+		return
+	}
+	for _, e := range res.DeletedEntities {
+		m.recordEntityVersion(ctx, store.VersionOpDelete, e, "")
+	}
+	m.recordFamilyDeleteAudit(ctx, res.DeletedEntities, len(res.DeletedRelations))
+	if len(res.DeletedRelations) == 0 {
 		return
 	}
 	cascadeTB := "cascade:delete-entity:" + id

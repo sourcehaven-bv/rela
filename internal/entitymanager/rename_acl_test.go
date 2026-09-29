@@ -3,6 +3,7 @@ package entitymanager_test
 import (
 	"context"
 	"errors"
+	"iter"
 	"sync/atomic"
 	"testing"
 
@@ -15,9 +16,9 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
 
-// flakyGetStore returns a non-not-found error from GetEntity and counts
-// mutating store calls, so a test can assert that a rename gated behind
-// a failed pre-fetch never reaches the actual rename writes.
+// flakyGetStore returns a non-not-found error from GetEntity and
+// ListEntities and counts mutating store calls, so a test can assert that a
+// write gated behind a failed pre-fetch never reaches the actual writes.
 type flakyGetStore struct {
 	store.Store
 	err     error
@@ -27,6 +28,10 @@ type flakyGetStore struct {
 
 func (s *flakyGetStore) GetEntity(_ context.Context, _ string) (*entity.Entity, error) {
 	return nil, s.err
+}
+
+func (s *flakyGetStore) ListEntities(context.Context, store.EntityQuery) iter.Seq2[*entity.Entity, error] {
+	return func(yield func(*entity.Entity, error) bool) { yield(nil, s.err) }
 }
 
 func (s *flakyGetStore) DeleteEntity(ctx context.Context, id string, cascade bool) (*store.DeleteResult, error) {
@@ -91,8 +96,8 @@ func TestRename_NotFoundStillReturnsTypedError(t *testing.T) {
 // TestDelete_FailsClosedOnNonNotFoundFetchError pins the same fail-closed
 // property for DeleteEntity that the rename test pins for RenameEntity.
 //
-// Both resolve the target through anyFaceOf, whose first lookup is a plain
-// GetEntity. If a non-not-found error there were swallowed, the entity would
+// Rename resolves the target through anyFaceOf; delete lists the whole family
+// (BUG-1YN750). If a non-not-found error there were swallowed, the entity would
 // look missing, and the not-found branch skips the ACL check by design — so a
 // transient store error would silently turn an ACL-gated delete into an
 // ungated one. Rename had this test; delete did not, which is how the same
