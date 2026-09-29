@@ -47,7 +47,6 @@ var zeroFaceAllowlist = map[string]int{
 	"internal/dataentry/api_v1.go":                   2,
 	"internal/dataentry/app.go":                      2,
 	"internal/dataentry/caldav_write.go":             2,
-	"internal/dataentry/document.go":                 2,
 	"internal/dataentry/entityreader.go":             2,
 	"internal/dataentry/export.go":                   1,
 	"internal/dataentry/export_list.go":              1,
