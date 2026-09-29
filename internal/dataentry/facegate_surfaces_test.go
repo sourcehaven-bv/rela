@@ -37,50 +37,6 @@ func facedTicketApp(t *testing.T) *App {
 	return app
 }
 
-// faceGateFixture is one shape of TKT-1 a face-gate test runs against.
-type faceGateFixture struct {
-	name string
-	// skip, when set, is the backlog bug whose fix makes the route work on
-	// this shape.
-	skip  string
-	build func(t *testing.T) *App
-}
-
-// faceGateFixtures returns the realistic faced fixture, skipped until
-// faceBlindBug is fixed, and a gate pin that runs today.
-//
-// The gate pin is NOT a realistic fixture. Its `ticket` type declares no
-// faces, so the zero-face row is that type's own state, and a `published`
-// row sits beside it at an undeclared face. The route's bare-id read finds
-// the zero-face row, so the face gate after it is still exercised and a
-// refactor that drops it fails. Delete the gate pin when faceBlindBug makes
-// the route address faces, and drop the skip on the faced case.
-func faceGateFixtures(faceBlindBug string) []faceGateFixture {
-	return []faceGateFixture{
-		{name: "declared faces", skip: "face-blind: " + faceBlindBug, build: func(t *testing.T) *App {
-			t.Helper()
-			ctx := context.Background()
-			app := facedTicketApp(t)
-			seedDeclaredFaceTicket(ctx, t, app)
-			return app
-		}},
-		{name: "gate pin: faceless type with a stray face", build: func(t *testing.T) *App {
-			t.Helper()
-			ctx := context.Background()
-			app := newTestAppV1(t)
-			for _, e := range []*entity.Entity{
-				{ID: "TKT-1", Type: "ticket", Properties: map[string]any{"title": "SECRET DRAFT"}},
-				{ID: "TKT-1", Type: "ticket", Face: "published", Properties: map[string]any{"title": "published face"}},
-			} {
-				if err := app.store.CreateEntity(ctx, e); err != nil {
-					t.Fatalf("seed %s@%q: %v", e.ID, e.Face, err)
-				}
-			}
-			return app
-		}},
-	}
-}
-
 // seedDeclaredFaceTicket seeds TKT-1 on a metamodel that DECLARES draft+published:
 // both rows sit at their declared coordinates and none at the zero one. The
 // draft's title is the secret the face-gate tests look for.
@@ -233,24 +189,14 @@ func TestFaceGrant_FacesAffordanceOmitsUnreadableFaces(t *testing.T) {
 	}
 }
 
-// The history route resolves a bare id to the zero face, which a faced type
-// does not have (BUG-4SYAA6), so only the gate pin runs today.
+// The history route addresses the draft face's lineage as `TKT-1@draft`
+// (BUG-4SYAA6), and serves it only to a principal who may read draft.
 func TestFaceGrant_HistoryIsFaceGatedUnderTheDefaultWorld(t *testing.T) {
-	for _, fx := range faceGateFixtures("BUG-4SYAA6") {
-		t.Run(fx.name, func(t *testing.T) {
-			if fx.skip != "" {
-				t.Skip(fx.skip)
-			}
-			assertHistoryFaceGated(t, fx.build(t))
-		})
-	}
-}
-
-func assertHistoryFaceGated(t *testing.T, app *App) {
-	t.Helper()
+	app := facedTicketApp(t)
+	seedDeclaredFaceTicket(context.Background(), t, app)
 	app.versions = historyStore{
 		versions: map[string][]store.VersionSnapshot{
-			"TKT-1": {snapshot("ticket", "SECRET DRAFT BODY", map[string]any{"title": "SECRET DRAFT"})},
+			"TKT-1@draft": {snapshot("ticket", "SECRET DRAFT BODY", map[string]any{"title": "SECRET DRAFT"})},
 		},
 	}
 	viewer, admin := publishedOnly(t, app)
@@ -264,14 +210,14 @@ func assertHistoryFaceGated(t *testing.T, app *App) {
 	}
 
 	app.acl = admin
-	if rec := history(principalCtx("bob"), admin, "TKT-1/1"); rec.Code != http.StatusOK ||
+	if rec := history(principalCtx("bob"), admin, "TKT-1@draft/1"); rec.Code != http.StatusOK ||
 		!strings.Contains(rec.Body.String(), "SECRET DRAFT BODY") {
 
 		t.Fatalf("precondition: an unrestricted principal reads the snapshot; got %d %s", rec.Code, rec.Body)
 	}
 
 	app.acl = viewer
-	for _, path := range []string{"TKT-1", "TKT-1/1"} {
+	for _, path := range []string{"TKT-1@draft", "TKT-1@draft/1", "TKT-1", "TKT-1/1"} {
 		rec := history(aliceCtx(), viewer, path)
 		if rec.Code != http.StatusNotFound {
 			t.Errorf("%s: the DRAFT face's history served to a ticket@published principal: got %d; body=%s",

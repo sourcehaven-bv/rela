@@ -93,7 +93,7 @@ Specs for faces and worlds use a second project, because declaring worlds in
 - Use `FACED_SEED`, `FACE` and `WORLD` rather than literal ids and titles.
 - `faces-backlog.spec.ts` holds `test.fixme` specs for known defects. Each
   names its bug id and asserts the fixed behaviour, so a fix enables its test
-  by deleting `.fixme`. The history fixme lives in `faces-history.spec.ts`,
+  by deleting `.fixme`. The per-face history spec lives in `faces-history.spec.ts`,
   because it needs `facedPgTest`.
 
 Do **not** point the fixture at `tickets/` (the real design/issue tracker

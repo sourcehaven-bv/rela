@@ -786,7 +786,7 @@ A world reaches the following routes:
 | --- | --- |
 | `/api/v1/{plural}` and `/api/v1/{plural}/{id}` | Yes, including `?q=` search and `?include=` neighbours |
 | `/api/v1/_views/{type}/{id}` | Yes. A view's `where:` clauses evaluate against the resolved face |
-| `/api/v1/_history/{type}/{id}` | Yes. Versioning is per face on PostgreSQL, so the history is the served face's |
+| `/api/v1/_history/{type}/{id}` | Yes. Versioning is per face on the database backends, so the history is the served face's. `{id}` may be `ID@face` |
 | `/api/v1/_next_action` | Yes, as the display world for `visible_worlds` |
 | `/api/v1/_search` | Yes. The command palette, search page and entity picker send the page's world. Dashboard cards count in the default world |
 | `/api/v1/_position` | Yes. Prev/next within a search or list runs in the same world as the results it steps through |
@@ -863,10 +863,25 @@ It detects only. To move rows between faces, use the `rename_face` step of the
 [data migration system](data-migration.md#renaming-a-content-state); to adopt
 bare rows into a face, use `migrate_face`.
 
-If your project uses the PostgreSQL backend, each face keeps its own version
-history. Editing the draft versions `POL-1@draft`, and invoking `publish`
-versions `POL-1@published`. The history page in the web app names the face it
-shows, and restoring a version restores that face only.
+If your project uses the PostgreSQL or SQLite backend, each face keeps its own
+version history. Editing the draft versions `POL-1@draft`, and invoking
+`publish` versions `POL-1@published`. The history page in the web app names the
+face it shows, and restoring a version restores that face only.
+
+Every history surface takes an address:
+
+- `GET /api/v1/_history/policy/POL-1@draft` reads the draft's history, and
+  `POST .../POL-1@draft/3/restore` restores it. A bare id is resolved the way
+  the entity endpoint resolves it.
+- `rela history POL-1@draft`, `rela restore POL-1@draft 3` and
+  `rela history-purge POL-1@draft ...` name the face on the command line. A
+  bare id of a faced entity is refused, and the error lists its faces.
+- Restoring a version of a deleted face re-creates that face at the same id.
+  The restore is authorized as a create on `policy@draft`, or as an update when
+  the face still exists. If another writer re-creates the face during the
+  restore, the restore is refused with a conflict and the new face is kept.
+- A purge reaches one face. `--all` erases the draft's history and leaves the
+  published face's history intact.
 
 ### Attachments and export on a face
 
@@ -935,7 +950,7 @@ visible change rather than a forgotten call site.
 - `guard.when` on a copy and `edits:` on a world are parsed but not
   implemented. The first is refused at load, the second is accepted and
   ignored.
-- Version history is available on the PostgreSQL backend only.
+- Version history is available on the PostgreSQL and SQLite backends only.
 
 ## Conclusion
 

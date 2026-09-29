@@ -464,12 +464,17 @@ purpose); on other builds this reports that the backend does not support
 history.
 
 ```bash
-rela history <id> [--version N]
+rela history <address> [--version N]
 ```
 
 **Arguments:**
 
-- `id` - Entity ID (may name a live or an already-deleted entity)
+- `address` - Entity ID, or `ID@face` for a type with faces. It may name a live
+  or an already-deleted entity.
+
+Each face of an entity has its own history, so on a type that declares
+`faces:` the address must name the face (`rela history POL-1@draft`). A bare id
+of a faced entity is refused, and the error lists the faces the id has.
 
 **Flags:**
 
@@ -496,18 +501,19 @@ diff <(rela history TKT-42 --version 3) <(rela history TKT-42 --version 5)
 ### rela restore
 
 Restore an entity's content and properties to a past version. **PostgreSQL
-build only.** The restore is applied as a normal write — authorized, validated,
+and SQLite builds.** The restore is applied as a normal write — authorized, validated,
 audited, and itself recorded as a new version (history is never rewritten). If
-the entity was deleted, it is re-created.
+the entity was deleted, it is re-created at the same id.
 
 ```bash
-rela restore <id> <version>
+rela restore <address> <version>
 ```
 
 **Arguments:**
 
-- `id` - Entity ID to restore
-- `version` - The version ordinal to restore to (see `rela history <id>`)
+- `address` - Entity ID, or `ID@face` for a type with faces. A restore writes
+  the named face only; a deleted face is re-created at that face.
+- `version` - The version ordinal to restore to (see `rela history <address>`)
 
 Only entity content and properties are restored; the entity's relations
 as-of that version are versioned separately (see `rela relation-history`).
@@ -591,12 +597,15 @@ history. **PostgreSQL and SQLite builds.** Operator-only: the trust boundary is
 shell access to the database (no ACL check), like `rela db migrate`.
 
 ```bash
-rela history-purge <id> (--vseq N | --content-hash H | --all) --reason "..." [--commit] [--yes] [--force-live]
+rela history-purge <address> (--vseq N | --content-hash H | --all) --reason "..." [--commit] [--yes] [--force-live]
 ```
 
 **Arguments / flags:**
 
-- `id` — the entity whose history to purge
+- `address` — the entity whose history to purge: its ID, or `ID@face` for a
+  type with faces. A purge reaches the history of ONE face; `--all` purges that
+  face's fenced lineage and leaves the other faces' histories intact. A bare id
+  of a faced entity is refused.
 - `--vseq N` — purge the single version row with this vseq (from `rela history`)
 - `--content-hash H` — purge every row in the lineage with this content hash
   (erase a value everywhere it was captured; verifiable afterward)
@@ -627,7 +636,9 @@ rela history-purge TKT-42 --content-hash abc123 --reason "erase SSN per DPO-42" 
 
 The relation analog of `rela history-purge`, addressing a relation by its
 three-part key. Same flags, guardrails, and irreversibility. **PostgreSQL and
-SQLite builds.**
+SQLite builds.** Write the `from` as `ID@face` to purge the edge whose tail is
+that face; a bare `from` addresses the default tail. The purge never reaches
+another tail's history.
 
 ```bash
 rela relation-history-purge <from> <type> <to> (--vseq N | --content-hash H | --all) --reason "..." [--commit] [--yes] [--force-live]

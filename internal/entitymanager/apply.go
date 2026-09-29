@@ -76,6 +76,34 @@ func resolveUpsertOp(getErr error, createAudit, updateAudit string) (upsertOp, e
 // The audited op (create vs. update) is chosen from whether the entity already
 // exists; a flaky existence probe fails closed (see [resolveUpsertOp]).
 func (m *Manager) ApplyEntity(ctx context.Context, e *entity.Entity) (*entity.UpdateResult, error) {
+	return applyEntity(ctx, m, e, false)
+}
+
+// RecreateEntity brings a deleted row back at its own id and face: the
+// history restore of a deleted face (BUG-4SYAA6). It is [Manager.ApplyEntity]
+// with the intent fixed to CREATE. A row already at that address is
+// [ErrEntityAlreadyExists], never an update: the caller decided "deleted" from
+// an earlier read, and a face recreated since then must not be overwritten by
+// a whole-record write that skipped the per-field write gate.
+//
+// It is a package function rather than a method for the reason given on
+// [CopiesForSource]: Manager's method count is pinned. [Recreator] adapts it
+// for consumers that need a method.
+func RecreateEntity(ctx context.Context, m *Manager, e *entity.Entity) (*entity.UpdateResult, error) {
+	return applyEntity(ctx, m, e, true)
+}
+
+// Recreator adapts [RecreateEntity] to a method-shaped dependency.
+type Recreator struct{ M *Manager }
+
+// RecreateEntity calls [RecreateEntity] on the wrapped manager.
+func (r Recreator) RecreateEntity(ctx context.Context, e *entity.Entity) (*entity.UpdateResult, error) {
+	return RecreateEntity(ctx, r.M, e)
+}
+
+// applyEntity is the body of [Manager.ApplyEntity] and [RecreateEntity].
+// createOnly refuses the update branch.
+func applyEntity(ctx context.Context, m *Manager, e *entity.Entity, createOnly bool) (*entity.UpdateResult, error) {
 	ctx = withStoreAttribution(ctx)
 	if e == nil {
 		return nil, errors.New("entitymanager: ApplyEntity: entity is nil")
@@ -101,6 +129,9 @@ func (m *Manager) ApplyEntity(ctx context.Context, e *entity.Entity) (*entity.Up
 	op, err := resolveUpsertOp(getErr, audit.OpCreateEntity, audit.OpUpdateEntity)
 	if err != nil {
 		return nil, fmt.Errorf("entitymanager: ApplyEntity: existence check for %s: %w", e.ID, err)
+	}
+	if createOnly && op.aclOp == acl.OpUpdate {
+		return nil, fmt.Errorf("%w: %s", ErrEntityAlreadyExists, entity.FormatStateRef(e.ID, e.Face))
 	}
 
 	// On UPDATE, the authorization subject must be bound to the RESOURCE, not

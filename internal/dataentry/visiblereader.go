@@ -166,25 +166,39 @@ func storedTypeOf(ctx context.Context, st store.EntityLister, id string) string 
 
 // storedFacesOf is [storedTypeOf] plus every stored face of id. The same
 // caveat applies: no gate runs, so the faces decide liveness, never what is
-// served.
+// served. A read error is logged and answered as "nothing stored", which is
+// safe only where "nothing stored" leads to a refusal; a caller that grants
+// more to a missing row than to a live one uses [loadStoredFaces].
 func storedFacesOf(ctx context.Context, st store.EntityLister, id string) (string, []entitypkg.Face) {
-	if id == "" {
+	typ, faces, err := loadStoredFaces(ctx, st, id)
+	if err != nil {
+		slog.Warn("dataentry: reading an entity's stored faces failed", "id", id, "err", err)
 		return "", nil
+	}
+	return typ, faces
+}
+
+// loadStoredFaces is [storedFacesOf] that returns the read error. The
+// history surfaces need it: they open a deleted face's history on a global
+// permission, so answering a failed read as "deleted" would fail open onto a
+// live face the caller cannot see.
+func loadStoredFaces(ctx context.Context, st store.EntityLister, id string) (string, []entitypkg.Face, error) {
+	if id == "" {
+		return "", nil, nil
 	}
 	var typ string
 	var faces []entitypkg.Face
 	q := store.EntityQuery{IDs: []string{id}, AllStates: true}
 	for h, err := range store.ListEntityHeaders(ctx, st, q) {
 		if err != nil {
-			slog.Warn("dataentry: reading an entity's stored faces failed", "id", id, "err", err)
-			return "", nil
+			return "", nil, err
 		}
 		if h.ID == id {
 			typ = h.Type
 			faces = append(faces, h.Face)
 		}
 	}
-	return typ, faces
+	return typ, faces, nil
 }
 
 // rowOf drops the provenance a [visibility.Resolved] carries. The data-entry
@@ -240,8 +254,8 @@ func familyReadableOr404(w http.ResponseWriter, r *http.Request, vr visibleReade
 //
 // Single-entity reads get this check from the resolver. It remains for the
 // list-side paths, which gate a batch of rows they already hold (headers,
-// neighbors, view collections), and for the history route until it moves onto
-// the resolver (BUG-4SYAA6).
+// neighbors, view collections), and for the history of a DELETED face, which
+// has no row for the resolver to find (see resolveHistorySubject).
 //
 // An empty Faces slice means "every face"; see [acl.ReadQueryResult.Faces]
 // for why a bare grant widens rather than narrows. It delegates to

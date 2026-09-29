@@ -2,105 +2,154 @@ package dataentry
 
 import (
 	"context"
+	"net/http"
+	"slices"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
-// historyFace resolves WHICH FACE of an entity the request's world is asking
-// about, and reports whether a face-scoped read is possible at all (BUG-2).
+// historySubject is the face lineage one history request reads, resolved
+// once at the top of the request (BUG-4SYAA6).
 //
-// # Why history needs this
+// A lineage is keyed by (id, face): a draft and its published face have
+// separate histories. So the subject is an [entityPkg.Ref], never a bare id,
+// and every read and write the request makes is scoped to that face.
+type historySubject struct {
+	// ref is the id and the face whose lineage is read.
+	ref entityPkg.Ref
+	// live is the face's raw row when it exists and the principal may read
+	// it, and nil for a deleted face. It is write-prep for a restore and is
+	// never served.
+	live *entityPkg.Entity
+	// worldAbsent reports that the request's world resolves no face, so
+	// there is no timeline in that world. The response is an empty
+	// timeline, not a 404: the entity view answers the same question with
+	// `_world_absent`.
+	worldAbsent bool
+}
+
+// resolveHistorySubject decides which face lineage the address names and
+// whether this principal may read it. ok=false is the uniform not-found; an
+// error is a gate failure.
 //
-// Content versioning is PER-FACE: `entity_versions` is keyed by the content
-// state and TKT-C1XUA8 added per-face capture, so a draft and its published
-// face have genuinely different histories. A world-bound page that showed the
-// DEFAULT face's history was not merely dropping a query param — it presented
-// the wrong record as the right one, with nothing on screen naming the face it
-// belonged to.
+// A live face is resolved by the [visibility.Resolver], exactly as the
+// entity GET resolves the same address: a named face literally, a bare id
+// through the request's world. The two surfaces therefore agree on what an
+// address names and on who may read it, and a hidden face is the same 404 as
+// an absent one.
 //
-// # The face is read back, never re-derived
+// A miss is then split, from a raw header read, into two cases the resolver
+// deliberately cannot tell apart:
 //
-// The face is taken from the entity the world RESOLVED, exactly as
-// [worldProvenance] takes it: the store did the resolution, this reads the
-// answer. Re-walking the chain here would be a second implementation of the
-// semantics that decide which face a reader sees, free to drift from the
-// store's — the mistake this arc has now refused in four places.
+//   - The addressed face is live but the gates refused it: hidden, another
+//     type, a denied world, or a bare id of a faced type in the default
+//     world. That is the uniform 404.
+//   - The face has no live row. A deleted face has no per-entity verdict
+//     left to evaluate, so its history needs the global
+//     acl.PermHistoryRead plus the face half of the read grant. A
+//     non-holder gets the same 404 as for an id that never existed. When
+//     sibling faces still live, the caller must also pass the entity's row
+//     gate on one of them.
 //
-// # Absence and denial are the caller's problem, deliberately
+// A failed stored-faces read is an error, never "deleted": the deleted-face
+// rule grants on a global permission, so a read fault must not reach it.
 //
-// This does NOT gate. `authorizeHistoryRead` runs before it and applies the
-// same world-independent row gate a live GET applies (guard rule 1), so a
-// caller reaching here is already cleared to read the entity. What this
-// reports is only which coordinate to read, plus `ok=false` when the world
-// resolves NO face — in which case there is no history to show, because in
-// that world the entity has no content state at all.
-//
-// Returns the zero face under the default world, which IS the default
-// face's coordinate — so the default-world call is byte-identical to the
-// pre-BUG-2 [store.HistoryReader] read.
-//
-// # Deleted entities
-//
-// The default-world arm returns before touching the store, which is what keeps
-// DELETED-entity history working: such an entity has surviving versions but no
-// live row, and `authorizeHistoryRead` admits it on the global
-// acl.PermHistoryRead. Probing the store for it would report `ok=false` and
-// silently empty a timeline the caller is entitled to.
-//
-// Under a NON-default world the same probe reports absence, and that is the
-// right answer rather than the same bug: a world resolves faces of live rows,
-// so a deleted entity has no face in one. Its history is reachable by asking
-// for it without a world — which is also the only spelling under which "the
-// history of a thing that no longer exists" is well-defined.
-func historyFace(
-	ctx context.Context, st store.Store, entityID string,
-) (p entityPkg.Face, ok bool, err error) {
-	h := worldFromContext(ctx)
-	if h.denied {
-		// Same answer as a permitted world holding no face of this entity —
-		// an empty timeline — so the denial is not distinguishable here
-		// either. The handle's scope is the zero scope, so without this a
-		// denied world served the DEFAULT face's history.
-		return "", false, nil
+// A bare id in a non-default world that resolves no readable face is
+// worldAbsent when the principal may read some face of the entity: the
+// entity exists for this caller, it just has no face in this world. A denied
+// world answers the same way, so a denial looks like an empty world.
+func resolveHistorySubject(
+	ctx context.Context, vr visibleReader, typeName string, ref entityPkg.Ref,
+) (historySubject, bool, error) {
+	e, ok, err := vr.addressRef(ctx, typeName, ref)
+	if err != nil {
+		return historySubject{}, false, err
 	}
-	scope := h.scope
-	if scope.IsDefaultWorld() {
-		return "", true, nil
+	if ok {
+		return historySubject{ref: e.Ref(), live: e}, true, nil
 	}
-	for e, ierr := range st.ListEntities(ctx, store.EntityQuery{
-		IDs:   []string{entityID},
-		World: scope,
-	}) {
-		if ierr != nil {
-			// An infrastructure failure is NOT "this entity has no face in
-			// this world" (RR-4TFZNL) — reporting it as absence would render a
-			// backend outage as an empty timeline.
-			return "", false, ierr
+
+	world := worldFromContext(ctx)
+	bareInWorld := ref.Face.IsDefault() && !world.isDefault()
+	storedType, stored, err := loadStoredFaces(ctx, vr.store, ref.ID)
+	if err != nil {
+		return historySubject{}, false, err
+	}
+	if len(stored) > 0 {
+		switch {
+		case bareInWorld:
+			if _, readable, ferr := vr.family(ctx, typeName, ref.ID); ferr != nil || !readable {
+				return historySubject{}, false, ferr
+			}
+			return historySubject{ref: ref, worldAbsent: true}, true, nil
+		case ref.Face.IsDefault(), storedType != typeName, slices.Contains(stored, ref.Face):
+			return historySubject{}, false, nil
 		}
-		return e.Face, true, nil
+		// A named face that was deleted while its siblings live on takes
+		// the deleted-face rule below, and the entity still has a row gate
+		// to evaluate: the caller must be able to read one of its live
+		// faces, as for any other read of a live entity.
+		if _, readable, ferr := vr.family(ctx, typeName, ref.ID); ferr != nil || !readable {
+			return historySubject{}, false, ferr
+		}
 	}
-	return "", false, nil
+
+	if !readGateFromContext(ctx).HoldsPermission(ctx, acl.PermHistoryRead) {
+		return historySubject{}, false, nil
+	}
+	if bareInWorld {
+		// A world resolves faces of live rows, so a deleted entity has none
+		// in it. Its history is read by naming the face, or without a world.
+		return historySubject{ref: ref, worldAbsent: true}, true, nil
+	}
+	if world.blocksAllReads() {
+		// A named face in a denied world is refused, as the live face is.
+		// Answering a deleted one differently would tell the two apart.
+		return historySubject{}, false, nil
+	}
+	if !faceReadable(ctx, typeName, ref.Face) {
+		return historySubject{}, false, nil
+	}
+	return historySubject{ref: ref}, true, nil
+}
+
+// historySubjectOr404 is [resolveHistorySubject] that writes the response
+// itself on a miss or a gate error.
+func historySubjectOr404(
+	w http.ResponseWriter, r *http.Request, vr visibleReader, typeName string, ref entityPkg.Ref,
+) (historySubject, bool) {
+	subject, ok, err := resolveHistorySubject(r.Context(), vr, typeName, ref)
+	if err != nil {
+		writeGateError(w, r, err)
+		return historySubject{}, false
+	}
+	if !ok {
+		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
+		return historySubject{}, false
+	}
+	return subject, true
 }
 
 // faceHistoryReader narrows a history reader to ONE FACE, or returns the
-// unscoped reader when the request is in the default world.
+// unscoped reader for the zero face.
 //
 // The face-scoped capability ([store.StateHistoryReader]) is OPTIONAL and
 // asserted separately from [store.HistoryReader], mirroring how every other
 // optional store capability is reached. A backend that captures per-face
 // versions but does not implement the face-scoped reader would otherwise
-// silently serve the default face's history under a world — the exact
-// wrong-record failure BUG-2 is about — so the assertion FAILS the request
-// rather than falling back.
+// silently serve the zero face's history for a named face, a wrong record
+// presented as the right one, so the assertion FAILS the request rather
+// than falling back.
 //
-// Nil: never returned with a nil error.
+// Nil: never returned with ok=true.
 func faceHistoryReader(
 	reader store.HistoryReader, p entityPkg.Face,
 ) (store.HistoryReader, bool) {
 	if p == "" {
-		// The default face. The zero-face call IS HistoryReader (see the
-		// StateHistoryReader doc), so there is nothing to narrow.
+		// The zero face IS HistoryReader (see the StateHistoryReader doc),
+		// so there is nothing to narrow.
 		return reader, true
 	}
 	sh, ok := reader.(store.StateHistoryReader)
@@ -111,8 +160,8 @@ func faceHistoryReader(
 }
 
 // stateHistoryAdapter presents one FACE of an entity's history through the
-// unscoped [store.HistoryReader] shape, so the timeline and snapshot handlers
-// need no world-aware branch of their own.
+// unscoped [store.HistoryReader] shape, so the timeline, snapshot and restore
+// handlers need no face-aware branch of their own.
 //
 // Binding the face at construction rather than threading it through every
 // call site is what keeps the handlers from being able to forget it: once a

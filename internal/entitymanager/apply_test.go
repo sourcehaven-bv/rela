@@ -495,3 +495,36 @@ func TestApplyEntity_NoStatusAppliesAsIs(t *testing.T) {
 		t.Fatalf("ApplyEntity backfilled a status default %q; it must persist as-is", got.GetString("status"))
 	}
 }
+
+// TestRecreateEntity_IsCreateOnly: RecreateEntity lands a missing row at its
+// own id, like ApplyEntity, but refuses an existing one instead of replacing
+// it, so a restore that raced a recreate cannot overwrite the live row.
+func TestRecreateEntity_IsCreateOnly(t *testing.T) {
+	st := memstore.New()
+	mgr := newApplyManager(t, st, audit.Nop{})
+	ctx := context.Background()
+
+	e := &entity.Entity{
+		ID: "REQ-back", Type: "requirement",
+		Properties: map[string]any{"title": "Restored", "status": "draft"},
+	}
+	if _, err := entitymanager.RecreateEntity(ctx, mgr, e); err != nil {
+		t.Fatalf("RecreateEntity of a missing row: %v", err)
+	}
+
+	again := &entity.Entity{
+		ID: "REQ-back", Type: "requirement",
+		Properties: map[string]any{"title": "Overwritten", "status": "draft"},
+	}
+	_, err := entitymanager.Recreator{M: mgr}.RecreateEntity(ctx, again)
+	if !errors.Is(err, entitymanager.ErrEntityAlreadyExists) {
+		t.Fatalf("RecreateEntity of a live row = %v, want ErrEntityAlreadyExists", err)
+	}
+	got, err := st.GetEntity(ctx, "REQ-back")
+	if err != nil {
+		t.Fatalf("GetEntity: %v", err)
+	}
+	if got.GetString("title") != "Restored" {
+		t.Errorf("title = %q; a refused recreate must leave the live row alone", got.GetString("title"))
+	}
+}

@@ -7,10 +7,10 @@ import { HistoryPage } from '../pages';
  * RELA_E2E_DATABASE_URL. The postgres store starts empty, so the test seeds
  * through the API.
  */
-test.describe('Faces backlog: history on a face (BUG-4SYAA6)', () => {
+test.describe('History on a face (BUG-4SYAA6)', () => {
   test.skip(!POSTGRES_E2E_ENABLED, 'requires a postgres backend (set RELA_E2E_DATABASE_URL)');
 
-  test.fixme('restoring an old version of the draft face restores that face only', async ({
+  test('restoring an old version of the draft face restores that face only', async ({
     appPage,
     api,
     facedApi,

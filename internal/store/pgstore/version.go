@@ -255,7 +255,7 @@ func (v *VersionStore) ListStateVersions(
 ) ([]store.VersionMeta, error) {
 	sel := lineageCTE + `
 		SELECT DISTINCT ev.vseq, ev.op, ev.prev_id, ev.type, ev.content_hash, ev.schema_hash,
-		       ev.principal_user, ev.principal_tool, ev.triggered_by,
+		       ev.principal_user, ev.principal_tool, ev.triggered_by, ev.face,
 		       ev.origin_kind, ev.origin_source, ev.origin_source_face,
 		       ev.origin_source_type, ev.origin_definition,
 		       ev.created_at
@@ -308,7 +308,7 @@ func (v *VersionStore) GetStateVersion(
 	}
 	sel := lineageCTE + `
 		SELECT ev.op, ev.prev_id, ev.type, ev.content_hash, ev.schema_hash,
-		       ev.principal_user, ev.principal_tool, ev.triggered_by,
+		       ev.principal_user, ev.principal_tool, ev.triggered_by, ev.face,
 		       ev.origin_kind, ev.origin_source, ev.origin_source_face,
 		       ev.origin_source_type, ev.origin_definition,
 		       ev.created_at,
@@ -323,12 +323,13 @@ func (v *VersionStore) GetStateVersion(
 		snap  store.VersionSnapshot
 		op    string
 		prev  *string
+		face  string
 		props []byte
 		oc    originCols
 	)
-	scanArgs := make([]any, 0, 12+originColumnCount)
+	scanArgs := make([]any, 0, 13+originColumnCount)
 	scanArgs = append(scanArgs, &op, &prev, &snap.Type, &snap.ContentHash, &snap.SchemaHash,
-		&snap.PrincipalUser, &snap.PrincipalTool, &snap.TriggeredBy)
+		&snap.PrincipalUser, &snap.PrincipalTool, &snap.TriggeredBy, &face)
 	scanArgs = append(scanArgs, oc.scanTargets()...)
 	scanArgs = append(scanArgs, &snap.CreatedAt, &snap.Content, &props, &snap.Projection)
 	err := row.Scan(scanArgs...)
@@ -339,6 +340,7 @@ func (v *VersionStore) GetStateVersion(
 		return nil, err
 	}
 	snap.Version = version
+	snap.Face = entity.Face(face)
 	snap.Op = store.VersionOp(op)
 	snap.Origin = scanOrigin(oc)
 	if prev != nil {
@@ -359,18 +361,20 @@ func scanVersionMeta(row scanner) (store.VersionMeta, error) {
 		vseq    int64
 		op      string
 		prev    *string
+		face    string
 		oc      originCols
 		created time.Time
 	)
-	scanArgs := make([]any, 0, 10+originColumnCount)
+	scanArgs := make([]any, 0, 11+originColumnCount)
 	scanArgs = append(scanArgs, &vseq, &op, &prev, &m.Type, &m.ContentHash, &m.SchemaHash,
-		&m.PrincipalUser, &m.PrincipalTool, &m.TriggeredBy)
+		&m.PrincipalUser, &m.PrincipalTool, &m.TriggeredBy, &face)
 	scanArgs = append(scanArgs, oc.scanTargets()...)
 	scanArgs = append(scanArgs, &created)
 	if err := row.Scan(scanArgs...); err != nil {
 		return store.VersionMeta{}, err
 	}
 	m.Op = store.VersionOp(op)
+	m.Face = entity.Face(face)
 	m.Origin = scanOrigin(oc)
 	if prev != nil {
 		m.PrevID = *prev

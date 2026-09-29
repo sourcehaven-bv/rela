@@ -166,7 +166,7 @@ func (v *VersionStore) PurgeRelationVersions(
 		return &store.PurgeResult{}, nil // unknown key
 	}
 
-	liveHash, liveExists, err := v.liveRelationHash(ctx, req.From, req.Type, req.To)
+	liveHash, liveExists, err := v.liveRelationHash(ctx, req.From, req.FromFace, req.Type, req.To)
 	if err != nil {
 		return nil, err
 	}
@@ -174,10 +174,7 @@ func (v *VersionStore) PurgeRelationVersions(
 	// the live row belongs to, and reading that after the delete has already
 	// committed would be answering a question about a world the delete has
 	// changed — as well as leaving the erasure un-tombstoned if the read fails.
-	// Default tail: RelationVersionPurgeRequest names no face, so purge
-	// addresses the default-tail edge (TKT-JAROC3 leaves purging a
-	// state-tailed edge to the operator's explicit RecordID).
-	liveID, err := v.liveRecordID(ctx, req.From, entity.Face(""), req.Type, req.To)
+	liveID, err := v.liveRecordID(ctx, req.From, req.FromFace, req.Type, req.To)
 	if err != nil {
 		return nil, err
 	}
@@ -218,7 +215,7 @@ func (v *VersionStore) PurgeRelationVersions(
 			return deleted, false, nil
 		}
 		if terr := writeRelationPurgeTombstone(
-			ctx, tx, req.From, req.Type, req.To, liveID, liveHash); terr != nil {
+			ctx, tx, req.From, req.FromFace, req.Type, req.To, liveID, liveHash); terr != nil {
 			return 0, false, terr
 		}
 		return deleted, true, nil
@@ -244,8 +241,8 @@ func (v *VersionStore) resolvePurgeLineage(
 	if req.AllLifetimes && req.RecordID != 0 {
 		return nil, nil, errors.New("sqlitestore: RecordID and AllLifetimes are mutually exclusive")
 	}
-	// Default tail, as above: the purge request names no face.
-	lifetimes, err := v.ListRelationLifetimes(ctx, req.From, entity.Face(""), req.Type, req.To)
+	// The tail is part of the key: only the named tail's lifetimes.
+	lifetimes, err := v.ListRelationLifetimes(ctx, req.From, req.FromFace, req.Type, req.To)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -276,7 +273,7 @@ func (v *VersionStore) resolvePurgeLineage(
 		return ids, nil, nil
 
 	case req.RecordID != 0:
-		ok, verr := v.recordIDIsHeadOfKey(ctx, req.RecordID, req.From, req.Type, req.To)
+		ok, verr := v.recordIDIsHeadOfKey(ctx, req.RecordID, req.From, req.FromFace, req.Type, req.To)
 		if verr != nil {
 			return nil, nil, verr
 		}
@@ -377,24 +374,21 @@ func (v *VersionStore) liveEntityHash(
 // liveRelationHash returns the content hash of the live default-tail relation
 // row for this key, and whether it exists.
 func (v *VersionStore) liveRelationHash(
-	ctx context.Context, from, relType, to string,
+	ctx context.Context, from string, fromFace entity.Face, relType, to string,
 ) (hash string, exists bool, err error) {
 	r, gErr := scanRelation(v.db.QueryRowContext(ctx,
 		`SELECT from_id, from_face, rel_type, to_id, properties, content, updated_at
-		 FROM relations WHERE from_id = ? AND rel_type = ? AND to_id = ? AND from_face = ''`,
-		from, relType, to))
+		 FROM relations WHERE from_id = ? AND rel_type = ? AND to_id = ? AND from_face = ?`,
+		from, relType, to, string(fromFace)))
 	if errors.Is(gErr, sql.ErrNoRows) {
 		return "", false, nil
 	}
 	if gErr != nil {
 		return "", false, gErr
 	}
-	// FromFace is carried from the row rather than left zero, mirroring the
-	// entity hash above. The query pins from_face = '' so the zero value would
-	// be right today — which is exactly the problem: it would be right by
-	// coincidence, and contentHashOfRelation folds the tail into the hash, so
-	// relaxing that predicate later would silently produce a hash that
-	// suppresses a DIFFERENT lineage's sweep capture.
+	// FromFace is carried from the row, mirroring the entity hash above:
+	// contentHashOfRelation folds the tail into the hash, so a hash computed
+	// for another tail would suppress a DIFFERENT lineage's sweep capture.
 	return contentHashOfRelation(store.RelationVersionInput{
 		From: r.From, FromFace: r.FromFace, Type: r.Type, To: r.To,
 		Content: r.Content, Properties: r.Properties,
@@ -508,7 +502,8 @@ func writeEntityPurgeTombstone(
 // writeRelationPurgeTombstone is [writeEntityPurgeTombstone] for a relation
 // lineage.
 func writeRelationPurgeTombstone(
-	ctx context.Context, db querier, from, relType, to string, recordID int64, liveHash string,
+	ctx context.Context, db querier, from string, fromFace entity.Face, relType, to string,
+	recordID int64, liveHash string,
 ) error {
 	now := timestampNow()
 	if err := ensureSchemaVersion(ctx, db, purgeSchemaHash, purgeSchemaProjection, now); err != nil {
@@ -516,10 +511,10 @@ func writeRelationPurgeTombstone(
 	}
 	_, err := db.ExecContext(ctx, `
 		INSERT INTO relation_versions
-		    (rel_record_id, op, from_id, rel_type, to_id, content, properties,
+		    (rel_record_id, op, from_id, from_face, rel_type, to_id, content, properties,
 		     content_hash, schema_hash, principal_user, principal_tool, triggered_by, created_at)
-		VALUES (?, 'purge', ?, ?, ?, '', '{}', ?, ?, '', 'version-purge', '', ?)`,
-		recordID, from, relType, to, liveHash, purgeSchemaHash, now)
+		VALUES (?, 'purge', ?, ?, ?, ?, '', '{}', ?, ?, '', 'version-purge', '', ?)`,
+		recordID, from, string(fromFace), relType, to, liveHash, purgeSchemaHash, now)
 	if err != nil {
 		return fmt.Errorf("sqlitestore: write relation purge tombstone: %w", err)
 	}

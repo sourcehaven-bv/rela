@@ -172,13 +172,22 @@ func authorizeRelationHistoryRead(
 	gate := readGateFromContext(ctx)
 	vr := a.visibleReader
 
-	fromType, fromFaces := storedFacesOf(ctx, vr.store, from.ID)
+	// A failed read must not look like a deleted endpoint, which opens the
+	// history on the global permission.
+	fromType, fromFaces, err := loadStoredFaces(ctx, vr.store, from.ID)
+	if err != nil {
+		writeGateError(w, r, err)
+		return false
+	}
 	fromLive := fromType != "" && (from.Face.IsDefault() || slices.Contains(fromFaces, from.Face))
-	toType := vr.storedType(ctx, to)
+	toType, _, err := loadStoredFaces(ctx, vr.store, to)
+	if err != nil {
+		writeGateError(w, r, err)
+		return false
+	}
 
 	if fromLive && toType != "" {
 		var fromOK bool
-		var err error
 		if from.Face.IsDefault() {
 			_, fromOK, err = vr.family(ctx, fromType, from.ID)
 		} else {

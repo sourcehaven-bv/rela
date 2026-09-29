@@ -137,6 +137,7 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 	app.visibleReader = visible
 	app.reader = entityReader{store: svc.Store()}
 	app.entityManager = svc.EntityManager()
+	app.recreator = entitymanager.Recreator{M: svc.EntityManager()}
 	app.searcher = svc.Searcher()
 	app.visibleSearcher = svc.VisibleSearcher()
 	app.tracer = svc.Tracer()

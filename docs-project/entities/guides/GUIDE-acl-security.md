@@ -1380,6 +1380,12 @@ is read-gated on the same principles as everything else:
   access to. Grant it only to trusted audit/compliance roles. A **non-holder**
   requesting a deleted entity's history gets the same 404 as a nonexistent id,
   so the permission boundary does not itself leak which deleted entities exist.
+  On a type with faces the history is per face, and a deleted face also needs
+  the face half of the read grant: `history:read` plus `read: [policy@draft]`
+  opens the history of a deleted `POL-1@draft`, and `read: [policy@published]`
+  alone does not. When other faces of the entity still exist, the caller must
+  also be able to read one of them, as for any read of a live entity. A
+  deleted face with no recorded history is the same 404.
 
 ### Historical field redaction fails closed (`history:read-redacted`)
 
@@ -1571,9 +1577,10 @@ in advance. Deferred until the traversal is read-gate scoped.
 
 Restore (`POST /api/v1/_history/<type>/<id>/<version>/restore`) is a **write**,
 not a read: it is authorized as an ordinary update (or create, if the entity was
-deleted), runs the per-field write gate on exactly the fields that change (so it
-cannot set or clear a field the principal lacks write access to), and is audited
-and re-versioned like any edit.
+deleted) on the restored face (`type@face` on a type with faces), runs the
+per-field write gate on exactly the fields that change (so it cannot set or
+clear a field the principal lacks write access to), and is audited and
+re-versioned like any edit.
 
 Not point-in-time: history read uses the *current* ACL, not the ACL as-of each
 version. Reading a live entity's history exposes its **entire** history from

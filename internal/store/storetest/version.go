@@ -184,6 +184,29 @@ func runFaceHistoryTests(t *testing.T, f Factory) {
 		require.Len(t, defList, 1, "the draft face must not appear in the default face's history")
 	})
 
+	t.Run("VersionsRecordTheirFace", func(t *testing.T) {
+		v := versionsOf(t, f(t))
+		for _, face := range []entity.Face{"", "draft"} {
+			writeVersion(t, v, store.VersionInput{
+				EntityID: "FEAT-1", Face: face, Op: store.VersionOpDelete,
+				Type: "feature", Content: "last words at " + face.String(),
+			})
+		}
+
+		// A deleted face has no live row left to say where it lived, so the
+		// snapshot must: restoring it recreates the face it names (TKT-7R0ABK).
+		for _, face := range []entity.Face{"", "draft"} {
+			metas, err := v.ListStateVersions(ctx(), "FEAT-1", face)
+			require.NoError(t, err)
+			require.Len(t, metas, 1)
+			require.Equal(t, face, metas[0].Face, "timeline row of face %q", face)
+
+			snap, err := v.GetStateVersion(ctx(), "FEAT-1", face, 1)
+			require.NoError(t, err)
+			require.Equal(t, face, snap.Face, "snapshot of face %q", face)
+		}
+	})
+
 	t.Run("ListVersionsIsTheDefaultFace", func(t *testing.T) {
 		v := versionsOf(t, f(t))
 		writeVersion(t, v, store.VersionInput{
@@ -769,6 +792,97 @@ func runPurgeTests(t *testing.T, f Factory) {
 		draft, err := v.ListStateVersions(ctx(), "FEAT-1", "draft")
 		require.NoError(t, err)
 		require.Len(t, draft, 1, "a content-hash purge must not reach into a sibling face")
+	})
+
+	t.Run("RelationPurgeIsScopedToOneTail", func(t *testing.T) {
+		s := f(t)
+		v := versionsOf(t, s)
+		for _, e := range []*entity.Entity{
+			{ID: seedFrom, Type: "feature"},
+			{ID: seedFrom, Type: "feature", Face: "draft"},
+			{ID: seedTo, Type: "feature"},
+		} {
+			require.NoError(t, s.CreateEntity(ctx(), e))
+		}
+		// One edge per tail on the same triple, each captured once while its
+		// live row still names the lineage, then deleted so the purge meets
+		// no live content.
+		for _, face := range []entity.Face{"", "draft"} {
+			_, err := s.CreateRelation(ctx(), seedFrom, seedType, seedTo, &store.RelationData{FromFace: face})
+			require.NoError(t, err)
+			require.NoError(t, v.WriteRelationVersion(ctx(), store.RelationVersionInput{
+				From: seedFrom, FromFace: face, Type: seedType, To: seedTo,
+				Op: store.VersionOpDelete, Content: "tail " + face.String(),
+				SchemaHash: "schema-1", Projection: []byte(`{"v":1}`),
+			}))
+			require.NoError(t, s.DeleteRelationState(ctx(), seedFrom, face, seedType, seedTo))
+		}
+
+		res, err := v.PurgeRelationVersions(ctx(), store.RelationVersionPurgeRequest{
+			From: seedFrom, FromFace: "draft", Type: seedType, To: seedTo,
+			Selector: store.PurgeSelector{All: true},
+		})
+		require.NoError(t, err)
+		require.Equal(t, 1, res.Purged)
+
+		draft, err := v.ListRelationVersions(ctx(), store.RelationHistoryQuery{
+			From: seedFrom, FromFace: "draft", Type: seedType, To: seedTo,
+		})
+		require.NoError(t, err)
+		require.Empty(t, draft, "the draft tail's history must be gone")
+
+		// The default tail is a different relation with its own lineage: a
+		// purge of the draft tail must not erase it (BUG-4SYAA6).
+		def, err := v.ListRelationVersions(ctx(), store.RelationHistoryQuery{
+			From: seedFrom, Type: seedType, To: seedTo,
+		})
+		require.NoError(t, err)
+		require.Len(t, def, 1, "a tail-scoped purge must not reach the sibling tail")
+	})
+
+	t.Run("RelationRecordIDIsBoundToItsTail", func(t *testing.T) {
+		s := f(t)
+		v := versionsOf(t, s)
+		for _, e := range []*entity.Entity{
+			{ID: seedFrom, Type: "feature"},
+			{ID: seedFrom, Type: "feature", Face: "draft"},
+			{ID: seedTo, Type: "feature"},
+		} {
+			require.NoError(t, s.CreateEntity(ctx(), e))
+		}
+		for _, face := range []entity.Face{"", "draft"} {
+			_, err := s.CreateRelation(ctx(), seedFrom, seedType, seedTo, &store.RelationData{FromFace: face})
+			require.NoError(t, err)
+			require.NoError(t, v.WriteRelationVersion(ctx(), store.RelationVersionInput{
+				From: seedFrom, FromFace: face, Type: seedType, To: seedTo,
+				Op: store.VersionOpDelete, Content: "tail " + face.String(),
+				SchemaHash: "schema-1", Projection: []byte(`{"v":1}`),
+			}))
+			require.NoError(t, s.DeleteRelationState(ctx(), seedFrom, face, seedType, seedTo))
+		}
+		lts, err := v.ListRelationLifetimes(ctx(), seedFrom, "draft", seedType, seedTo)
+		require.NoError(t, err)
+		require.Len(t, lts, 1)
+		draftRID := lts[0].RecordID
+
+		// The draft tail's record id, presented under the default tail's key,
+		// is not a handle for that key: the tail is part of it.
+		_, err = v.ListRelationVersions(ctx(), store.RelationHistoryQuery{
+			From: seedFrom, Type: seedType, To: seedTo, RecordID: draftRID,
+		})
+		require.ErrorIs(t, err, store.ErrNotFound, "a sibling tail's record id must not open its history")
+
+		_, err = v.PurgeRelationVersions(ctx(), store.RelationVersionPurgeRequest{
+			From: seedFrom, Type: seedType, To: seedTo, RecordID: draftRID,
+			Selector: store.PurgeSelector{All: true},
+		})
+		require.ErrorIs(t, err, store.ErrNotFound, "a sibling tail's record id must not reach its lineage")
+
+		draft, err := v.ListRelationVersions(ctx(), store.RelationHistoryQuery{
+			From: seedFrom, FromFace: "draft", Type: seedType, To: seedTo,
+		})
+		require.NoError(t, err)
+		require.Len(t, draft, 1, "the refused purge must leave the draft tail intact")
 	})
 
 	t.Run("RelationMultiLifetimeRequiresASelector", func(t *testing.T) {

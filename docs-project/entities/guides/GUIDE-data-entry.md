@@ -6217,7 +6217,7 @@ default-world data under it.
 | --- | --- |
 | `/api/v1/{plural}` and `/api/v1/{plural}/{id}` | Yes, including `?q=` search and `?include=` neighbours |
 | `/api/v1/_views/{type}/{id}` | Yes. A view's `where:` clauses evaluate against the resolved face |
-| `/api/v1/_history/{type}/{id}` | Yes. Versioning is per face on PostgreSQL, so the history is the served face's own |
+| `/api/v1/_history/{type}/{id}` | Yes. Versioning is per face on the database backends, so the history is the served face's own. `{id}` may be `ID@face` |
 | `/api/v1/_next_action` | Yes, as the display world for `visible_worlds` |
 | `/api/v1/_search` | Yes. The command palette, search page and entity picker send the page's world. Dashboard cards count in the default world |
 | `/api/v1/_position` | Yes. Prev/next within a search or list runs in the same world as the results it steps through |
@@ -6236,7 +6236,8 @@ History under a world is the history of the face the world resolves. A backend
 that has history but cannot scope it per face answers `501
 history_face_unsupported` rather than serving the default face's record.
 Restoring a version is a write, so a world on a restore is refused like any
-other write.
+other write. Name the face in the address instead: `ID@face` reads and
+restores that face's history, including a face that was deleted.
 
 ## Best Practices
 
