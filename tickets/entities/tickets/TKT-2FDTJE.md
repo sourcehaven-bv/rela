@@ -127,3 +127,17 @@ visibility seam is a pass-through under NopACL)
 re-justified in writing against the visibility-wrapped traversal
 - `docs/acl-security.md`'s "What a command permission actually confers" table
 is updated to describe the scoped behavior
+
+## Progress (2026-09-29)
+
+Done elsewhere; not yet the whole ticket:
+
+- Entity context: the row is resolved through the visibility resolver (row
+gate, face gate, field redaction), BUG-G2BASF.
+- Entity-context relations: every edge is peer-gated with one batched
+`EndpointsReadableErr` call, and an outgoing content-scoped edge travels only
+with the served face. A read fault fails the command. BUG-BZQQDP.
+- `docs/acl-security.md` table updated for the entity context.
+
+Remaining: the list context (`listFromStoreByTypes` is still a raw read), the
+NopACL byte-identical regression test, and the view-deferral decision.

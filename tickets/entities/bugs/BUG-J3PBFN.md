@@ -32,3 +32,12 @@ type that declares faces.
 - `findExistingRelationTarget` in `internal/entitymanager/core.go` and `internal/entitymanager/apply.go` read at the zero face and miss faced entities.
 - `DeleteEntityFace` reads the face outside the transaction.
 - `relation_grants` evaluation ignores faces.
+
+## Stage 2 scope (moved from BUG-BZQQDP)
+
+- Unlink over CLI, MCP and Lua, and a zero `RelationOptions{}`, call the
+  default-tail `DeleteRelation`, so a content-scoped edge on a face cannot be
+  removed through them. The data-entry relation routes already address the
+  tail. Stage 2 makes the tail part of every relation call (`RelationKey` on
+  `Get/Create/Update/DeleteRelation`, TKT-KQXVF7 PR 7), which fixes these
+  callers.
