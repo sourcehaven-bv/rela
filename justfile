@@ -31,6 +31,23 @@ build-server-e2e: build-frontend-e2e
     @mkdir -p {{build_dir}}
     CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o {{build_dir}}/rela-server ./cmd/rela-server
 
+# Build rela-server with call tracing injected via a build overlay (tools/seqtrace/README.md)
+seqtrace-build tags="": build-frontend
+    go run ./tools/seqtrace/cmd/seqtrace overlay -out .ignored/seqtrace -tags={{tags}}
+    go build -tags={{tags}} -overlay .ignored/seqtrace/overlay.json -o .ignored/seqtrace/rela-server ./cmd/rela-server
+
+# Run the traced rela-server. The default root records HTTP requests only.
+seqtrace-run project root="internal/dataentry\\.requestStats\\.":
+    SEQTRACE_OUT=.ignored/seqtrace/trace.jsonl SEQTRACE_ROOT='{{root}}' .ignored/seqtrace/rela-server -project {{project}}
+
+# Draw Mermaid sequence diagrams from the last trace (flags: see the README)
+seqtrace-diagram *args:
+    go run ./tools/seqtrace/cmd/seqtrace diagram {{args}}
+
+# Trace a postgres + ACL deployment, built from a copy of this checkout, and draw its sequence diagrams
+seqtrace-demo:
+    tools/seqtrace/demo/run.sh
+
 # Build the desktop app
 build-desktop: build-frontend
     @echo "Building rela-desktop..."
