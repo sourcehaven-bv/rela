@@ -357,23 +357,57 @@ func (h *commandHandler) buildEntityInput(ctx context.Context, e *entity.Entity)
 	return &commandInput{
 		Context:   "entity",
 		Entity:    e,
-		Relations: relationsForEntity(ctx, h.services(), e.ID),
+		Relations: h.relationsForEntity(ctx, e),
 		Project:   h.projectInfo(),
 	}
 }
 
-// relationsForEntity loads every relation where id is either endpoint
-// and returns them as []*entity.Relation for the command-input payload.
-func relationsForEntity(ctx context.Context, svc Services, id string) []*entity.Relation {
-	rels := make([]*entity.Relation, 0)
-	q := store.RelationQuery{EntityID: id, Direction: store.DirectionBoth}
-	for r, err := range svc.Store.ListRelations(ctx, q) {
+// relationsForEntity returns the relations incident to e that may travel
+// with it to a command's stdin (BUG-BZQQDP, TKT-2FDTJE).
+//
+// Two rules apply, and the payload leaves the process, so both fail closed:
+//
+//   - An outgoing content-scoped edge travels only with the face that owns
+//     it ([ownedByFace]). e is served at one face; another face's content
+//     edge would present that face's content as e's.
+//   - Both endpoints must be readable, as [visibleReader.endpointsReadable]
+//     decides: the peer at some face, a content-scoped tail at its own face.
+//     A hidden peer's id must not reach the script.
+//
+// The cost is two store reads for any number of edges: one relation query
+// and one header batch for every endpoint.
+func (h *commandHandler) relationsForEntity(ctx context.Context, e *entity.Entity) []*entity.Relation {
+	meta := h.schema().Meta
+	var candidates []*entity.Relation
+	q := store.RelationQuery{EntityID: e.ID, Direction: store.DirectionBoth}
+	for r, err := range h.services().Store.ListRelations(ctx, q) {
 		if err != nil {
-			return rels
+			slog.Warn("dataentry: command relation read failed; sending no relations",
+				"entity", e.ID, "err", err)
+			return []*entity.Relation{}
 		}
-		rels = append(rels, r)
+		if r.From == e.ID && !ownedByFace(meta, r, e.Face) {
+			continue
+		}
+		candidates = append(candidates, r)
 	}
-	return rels
+	return readableRelations(ctx, h.visible, candidates)
+}
+
+// readableRelations keeps the relations whose endpoints the principal may
+// read, in order. The result is never nil, so the payload says "no edges"
+// rather than omitting the field.
+func readableRelations(ctx context.Context, vr visibleReader, rels []*entity.Relation) []*entity.Relation {
+	out := make([]*entity.Relation, 0, len(rels))
+	if len(rels) == 0 {
+		return out
+	}
+	for i, ok := range vr.endpointsReadable(ctx, rels) {
+		if ok {
+			out = append(out, rels[i])
+		}
+	}
+	return out
 }
 
 func (h *commandHandler) buildListInput(listID string, entities []*entity.Entity) *commandInput {
@@ -391,28 +425,7 @@ func (h *commandHandler) buildListInput(listID string, entities []*entity.Entity
 // a property hidden from the invoking principal is absent from the entity JSON
 // rather than raw. (Behavior change since BUG-9QL9XV: previously raw.)
 func (h *commandHandler) buildViewInput(ctx context.Context, viewID string, vr *viewResult) *commandInput {
-	// Collect all entity IDs in the result set.
-	idSet := map[string]bool{vr.Entry.ID: true}
-	for _, entities := range vr.Collections {
-		for _, e := range entities {
-			idSet[e.ID] = true
-		}
-	}
-
-	// Gather relations between entities in the result set.
-	svc := h.services()
-	var rels []*entity.Relation
-	for id := range idSet {
-		q := store.RelationQuery{EntityID: id, Direction: store.DirectionOutgoing}
-		for r, err := range svc.Store.ListRelations(ctx, q) {
-			if err != nil {
-				break
-			}
-			if idSet[r.To] {
-				rels = append(rels, r)
-			}
-		}
-	}
+	rels := h.viewRelations(ctx, vr)
 
 	collections := make(map[string][]*entity.Entity, len(vr.Collections))
 	maps.Copy(collections, vr.Collections)
@@ -425,6 +438,47 @@ func (h *commandHandler) buildViewInput(ctx context.Context, viewID string, vr *
 		Relations:   rels,
 		Project:     h.projectInfo(),
 	}
+}
+
+// viewRelations returns the edges between entities in the view result, in
+// ONE relation query for the whole set (TKT-1U8XYN), not one per entity.
+//
+// Every entity in vr is already row-gated and face-gated by executeView, and
+// an edge is kept only when both ends are in vr, so the peers need no second
+// gate. What executeView does not decide is which face owns an edge: a
+// content-scoped edge is kept only when its tail face is the face vr serves
+// its source at ([ownedByFace], BUG-BZQQDP).
+func (h *commandHandler) viewRelations(ctx context.Context, vr *viewResult) []*entity.Relation {
+	served := make(map[string][]entity.Face)
+	add := func(e *entity.Entity) {
+		if e != nil && !slices.Contains(served[e.ID], e.Face) {
+			served[e.ID] = append(served[e.ID], e.Face)
+		}
+	}
+	add(vr.Entry)
+	for _, entities := range vr.Collections {
+		for _, e := range entities {
+			add(e)
+		}
+	}
+	ids := slices.Sorted(maps.Keys(served))
+	meta := h.schema().Meta
+
+	var rels []*entity.Relation
+	q := store.RelationQuery{EntityIDs: ids, Direction: store.DirectionOutgoing}
+	for r, err := range h.services().Store.ListRelations(ctx, q) {
+		if err != nil {
+			slog.Warn("dataentry: command view relation read failed; sending no relations", "err", err)
+			return nil
+		}
+		if _, ok := served[r.To]; !ok {
+			continue
+		}
+		if slices.ContainsFunc(served[r.From], func(f entity.Face) bool { return ownedByFace(meta, r, f) }) {
+			rels = append(rels, r)
+		}
+	}
+	return rels
 }
 
 func (h *commandHandler) buildGlobalInput() *commandInput {

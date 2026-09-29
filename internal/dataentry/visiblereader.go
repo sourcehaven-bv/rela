@@ -149,6 +149,14 @@ func (vr visibleReader) readableTypes(ctx context.Context, ids []string) (map[st
 	return vr.resolver.ReadableTypes(ctx, ids)
 }
 
+// endpointsReadable reports, aligned with rels, whether the principal may
+// read both endpoints of each relation: the head at some face, a
+// content-scoped tail at its own face. It reads headers once for the whole
+// batch; see [visibility.Resolver.EndpointsReadable]. It fails closed.
+func (vr visibleReader) endpointsReadable(ctx context.Context, rels []*entitypkg.Relation) []bool {
+	return vr.resolver.EndpointsReadable(ctx, rels)
+}
+
 // storedType is [storedTypeOf] over this reader's store.
 func (vr visibleReader) storedType(ctx context.Context, id string) string {
 	return storedTypeOf(ctx, vr.store, id)
