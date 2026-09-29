@@ -4,9 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"strings"
 	"testing"
+
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/output"

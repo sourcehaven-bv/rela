@@ -78,7 +78,9 @@ func resolveLifetimeRecordID(
 	if lifetime <= 0 {
 		return 0, nil
 	}
-	lifetimes, err := reader.ListRelationLifetimes(ctx, entity.RelationKey{From: from, FromFace: fromFace, Type: relType, To: to})
+	lifetimes, err := reader.ListRelationLifetimes(ctx, entity.RelationKey{
+		From: from, FromFace: fromFace, Type: relType, To: to,
+	})
 	if err != nil {
 		return 0, fmt.Errorf("list lifetimes for %s--%s--%s: %w", from, relType, to, err)
 	}
@@ -91,7 +93,9 @@ func resolveLifetimeRecordID(
 func (c *RelationHistoryCmd) printLifetimes(
 	ctx context.Context, reader store.RelationHistoryReader, from string, fromFace entity.Face,
 ) error {
-	lifetimes, err := reader.ListRelationLifetimes(ctx, entity.RelationKey{From: from, FromFace: fromFace, Type: c.Type, To: c.To})
+	lifetimes, err := reader.ListRelationLifetimes(ctx, entity.RelationKey{
+		From: from, FromFace: fromFace, Type: c.Type, To: c.To,
+	})
 	if err != nil {
 		return fmt.Errorf("list lifetimes for %s--%s--%s: %w", c.From, c.Type, c.To, err)
 	}
@@ -224,16 +228,18 @@ func (c *RelationRestoreCmd) Run(ctx context.Context, svc *writeServices) error 
 	}
 
 	content := snap.Content
-	opts := entity.RelationOptions{Properties: snap.Properties, Content: &content}
+	// The restore writes back to the tail it read from; the default tail of
+	// a faced source is a different relation (TKT-JAROC3).
+	opts := entity.RelationOptions{Properties: snap.Properties, Content: &content, FromFace: fromFace}
 
-	_, getErr := svc.Store.GetRelation(ctx, entity.RelationKey{From: c.From, Type: c.Type, To: c.To})
+	_, getErr := svc.Store.GetRelation(ctx, q.Key)
 	switch {
 	case getErr == nil:
-		if _, err := svc.EntityManager.UpdateRelation(ctx, c.From, c.Type, c.To, opts); err != nil {
+		if _, err := svc.EntityManager.UpdateRelation(ctx, from, c.Type, c.To, opts); err != nil {
 			return fmt.Errorf("restore (update) %s--%s--%s to v%d: %w", c.From, c.Type, c.To, c.Version, err)
 		}
 	case errors.Is(getErr, store.ErrNotFound):
-		if _, err := svc.EntityManager.CreateRelation(ctx, c.From, c.Type, c.To, opts); err != nil {
+		if _, err := svc.EntityManager.CreateRelation(ctx, from, c.Type, c.To, opts); err != nil {
 			return fmt.Errorf("restore (re-create) %s--%s--%s to v%d: %w", c.From, c.Type, c.To, c.Version, err)
 		}
 	default: // coverage-ignore: defensive: memstore.GetRelation returns only nil or store.ErrNotFound, so a non-

@@ -98,7 +98,9 @@ func applyCopyEdges(ctx context.Context, view store.Store, plan *copyPlan) error
 	}
 
 	for _, e := range plan.edges {
-		_, err := view.CreateRelation(ctx, entity.RelationKey{From: plan.targetID, FromFace: tail, Type: e.relType, To: e.to}, &store.RelationData{})
+		_, err := view.CreateRelation(ctx, entity.RelationKey{
+			From: plan.targetID, FromFace: tail, Type: e.relType, To: e.to,
+		}, &store.RelationData{})
 		if err != nil && !errors.Is(err, store.ErrConflict) {
 			// A conflict is `merge` finding the edge already present, which is
 			// exactly what merge means.

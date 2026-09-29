@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -88,26 +89,25 @@ func (c *FmtCmd) formatRelations(
 	f store.Formatter,
 	dryRun bool,
 ) (int, error) {
-	type relKey struct{ from, typ, to string }
-	var relKeys []relKey
+	var relKeys []entity.RelationKey
 	for r, err := range st.ListRelations(ctx, store.RelationQuery{}) {
 		if err != nil { // coverage-ignore: defensive: memstore.ListRelations iterator never yields a non-nil error
 			return 0, err
 		}
-		relKeys = append(relKeys, relKey{r.From, r.Type, r.To})
+		relKeys = append(relKeys, r.Identity())
 	}
 	modified := 0
 	for _, k := range relKeys {
-		changed, err := f.FormatRelation(ctx, entity.RelationKey{From: k.from, Type: k.typ, To: k.to}, dryRun)
+		changed, err := f.FormatRelation(ctx, k, dryRun)
 		if err != nil {
-			out.WriteWarning("Failed to format relation %s--%s--%s: %v", k.from, k.typ, k.to, err)
+			out.WriteWarning("Failed to format relation %s: %v", k, err)
 			continue
 		}
 		if !changed {
 			continue
 		}
 		modified++
-		c.reportFmtItem(k.from + "--" + k.typ + "--" + k.to)
+		c.reportFmtItem(k.String())
 	}
 	return modified, nil
 }

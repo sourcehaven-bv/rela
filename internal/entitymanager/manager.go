@@ -2300,7 +2300,9 @@ func (m *Manager) CreateRelation(
 	// tails are two relations, so a faced create must not be rejected by
 	// the default face's edge (BUG-64MU2Q). Advisory either way — the
 	// store's atomic create below is the real guard.
-	if _, gErr := m.deps.Store.GetRelation(ctx, entity.RelationKey{From: from, FromFace: opts.FromFace, Type: relType, To: to}); gErr == nil {
+	if _, gErr := m.deps.Store.GetRelation(ctx, entity.RelationKey{
+		From: from, FromFace: opts.FromFace, Type: relType, To: to,
+	}); gErr == nil {
 		return nil, fmt.Errorf("%w: %s --%s--> %s", ErrRelationAlreadyExists,
 			entity.FormatStateRef(from, opts.FromFace), relType, to)
 	}
@@ -2340,7 +2342,9 @@ func (m *Manager) CreateRelation(
 		if err := m.assignManagedOrder(ctx, st, rel, relType); err != nil {
 			return err
 		}
-		_, err := st.CreateRelation(ctx, entity.RelationKey{From: from, FromFace: opts.FromFace, Type: relType, To: to}, &store.RelationData{
+		_, err := st.CreateRelation(ctx, entity.RelationKey{
+			From: from, FromFace: opts.FromFace, Type: relType, To: to,
+		}, &store.RelationData{
 			Properties: rel.Properties,
 			Content:    rel.Content,
 		})
@@ -2436,7 +2440,9 @@ func (m *Manager) UpdateRelation(
 		// UpdateRelation, not upsert: the read above established the triple
 		// exists (else ErrRelationNotFound), so this is unambiguously an
 		// update (BUG-ZWTDH9).
-		_, wErr := view.UpdateRelation(ctx, entity.RelationKey{From: from, FromFace: opts.FromFace, Type: relType, To: to}, store.RelationData{
+		_, wErr := view.UpdateRelation(ctx, entity.RelationKey{
+			From: from, FromFace: opts.FromFace, Type: relType, To: to,
+		}, store.RelationData{
 			Properties: rel.Properties,
 			Content:    rel.Content,
 		})
@@ -2499,7 +2505,9 @@ func (m *Manager) DeleteRelationState(
 	if getErr == nil {
 		m.recordRelationVersion(ctx, store.VersionOpDelete, rel, "", "", "")
 	}
-	if err := m.deps.Store.DeleteRelation(ctx, entity.RelationKey{From: from, FromFace: face, Type: relType, To: to}); err != nil {
+	if err := m.deps.Store.DeleteRelation(ctx, entity.RelationKey{
+		From: from, FromFace: face, Type: relType, To: to,
+	}); err != nil {
 		return fmt.Errorf("delete relation: %w", err)
 	}
 	if getErr == nil {

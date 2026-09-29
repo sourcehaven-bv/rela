@@ -2,7 +2,6 @@ package importer
 
 import (
 	"context"
-	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"strings"
 	"testing"
 

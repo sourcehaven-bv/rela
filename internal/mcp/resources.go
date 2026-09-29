@@ -4,8 +4,9 @@ package mcp
 import (
 	"context"
 	"fmt"
-	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"strings"
+
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 
 	mcpgo "github.com/modelcontextprotocol/go-sdk/mcp"
 )

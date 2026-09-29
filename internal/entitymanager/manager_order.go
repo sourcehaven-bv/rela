@@ -199,7 +199,7 @@ func maybeRenumberSide(
 		maps.Copy(props, p.rel.Properties)
 		props[prop] = p.newVal
 		data := store.RelationData{Properties: props, Content: p.rel.Content}
-		u, err := st.UpdateRelation(ctx, entity.RelationKey{From: p.rel.From, Type: p.rel.Type, To: p.rel.To}, data)
+		u, err := st.UpdateRelation(ctx, p.rel.Identity(), data)
 		if err != nil {
 			return nil, fmt.Errorf("renumber write failed for %s--%s--%s: %w", p.rel.From, p.rel.Type, p.rel.To, err)
 		}

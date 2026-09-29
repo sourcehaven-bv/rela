@@ -3,8 +3,9 @@ package acl
 import (
 	"context"
 	"errors"
-	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"log/slog"
+
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )

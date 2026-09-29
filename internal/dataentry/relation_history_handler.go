@@ -224,7 +224,9 @@ func serveRelationLifetimes(
 	w http.ResponseWriter, r *http.Request, reader store.RelationHistoryReader,
 	fromRef entityPkg.Ref, relType, to string,
 ) {
-	lifetimes, err := reader.ListRelationLifetimes(r.Context(), entityPkg.RelationKey{From: fromRef.ID, FromFace: fromRef.Face, Type: relType, To: to})
+	lifetimes, err := reader.ListRelationLifetimes(r.Context(), entityPkg.RelationKey{
+		From: fromRef.ID, FromFace: fromRef.Face, Type: relType, To: to,
+	})
 	if err != nil {
 		writeGateError(w, r, err)
 		return
@@ -393,7 +395,9 @@ func restoreRelationHistoryVersion(a *App,
 	ctx := r.Context()
 	// Restore reads from the newest lifetime (RecordID 0); the HTTP restore route
 	// does not expose an older-lifetime selector (the CLI does via --lifetime).
-	q := store.RelationHistoryQuery{Key: entityPkg.RelationKey{From: from, FromFace: fromRef.Face, Type: relType, To: to}}
+	q := store.RelationHistoryQuery{Key: entityPkg.RelationKey{
+		From: from, FromFace: fromRef.Face, Type: relType, To: to,
+	}}
 	snap, err := reader.GetRelationVersion(ctx, q, version)
 	if errors.Is(err, store.ErrNotFound) {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")

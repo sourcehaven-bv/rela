@@ -2,9 +2,10 @@ package analysis_test
 
 import (
 	"context"
-	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"strings"
 	"testing"
+
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 
 	"github.com/Sourcehaven-BV/rela/internal/analysis"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"

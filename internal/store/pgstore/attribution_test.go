@@ -2,7 +2,6 @@ package pgstore_test
 
 import (
 	"context"
-	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"testing"
 	"time"
 

@@ -1265,7 +1265,8 @@ type RelationHistoryReader interface {
 	// deleted lifetimes exist and obtains the RecordID handle to read one. Returns
 	// an empty slice for an unknown key.
 	//
-	// The key's FromFace scopes the enumeration to ONE tail (TKT-JAROC3). Tails are separate relations with separate lineages, so
+	// The key's FromFace scopes the enumeration to ONE tail (TKT-JAROC3).
+	// Tails are separate relations with separate lineages, so
 	// listing them together would offer a caller asking about the draft edge
 	// a handle to the published edge's history — and the two are indis-
 	// tinguishable in the response, which carries no face.
