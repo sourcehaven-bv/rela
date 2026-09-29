@@ -1189,11 +1189,9 @@ type RelationHistoryQuery struct {
 	// The zero tail reads the identity-scoped or faceless-source edge's
 	// history specifically, never "any tail".
 	//
-	// The tail is ignored when RecordID is non-zero: an explicit lineage
-	// handle already identifies one edge, and the store validates that
-	// handle against the key's triple. Supplying both a face and a
-	// mismatched RecordID is not an error, because the RecordID is the
-	// narrower address.
+	// A non-zero RecordID selects one lineage of the key, and the store
+	// validates it against the whole key, tail included: a RecordID that
+	// belongs to a sibling tail answers [ErrNotFound].
 	Key entity.RelationKey
 
 	RecordID int64 // 0 = newest lifetime

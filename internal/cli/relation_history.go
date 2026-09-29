@@ -82,7 +82,7 @@ func resolveLifetimeRecordID(
 		From: from, FromFace: fromFace, Type: relType, To: to,
 	})
 	if err != nil {
-		return 0, fmt.Errorf("list lifetimes for %s--%s--%s: %w", from, relType, to, err)
+		return 0, fmt.Errorf("list lifetimes for %s--%s--%s: %w", entity.FormatStateRef(from, fromFace), relType, to, err)
 	}
 	if lifetime > len(lifetimes) {
 		return 0, fmt.Errorf("no lifetime %d for %s--%s--%s (%d exist)", lifetime, from, relType, to, len(lifetimes))

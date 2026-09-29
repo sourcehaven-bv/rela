@@ -175,15 +175,16 @@ func maybeRenumberSide(
 		asValues[i] = *r
 	}
 	sorted := SortRelations(asValues, prop)
-	byKey := make(map[string]*entity.Relation, len(withValue))
+	// Keyed by the full identity: two tails of one triple are two siblings
+	// (TKT-KQXVF7), and a triple key would collapse them into one.
+	byKey := make(map[entity.RelationKey]*entity.Relation, len(withValue))
 	for _, r := range withValue {
-		byKey[r.From+"--"+r.Type+"--"+r.To] = r
+		byKey[r.Identity()] = r
 	}
 	plan := make([]planEntry, 0, len(sorted))
 	for i, s := range sorted {
 		newVal := float64(i + 1)
-		key := s.From + "--" + s.Type + "--" + s.To
-		r := byKey[key]
+		r := byKey[s.Identity()]
 		if cur, ok := FiniteOrder(r.Properties[prop]); ok && cur == newVal {
 			continue
 		}
@@ -201,7 +202,7 @@ func maybeRenumberSide(
 		data := store.RelationData{Properties: props, Content: p.rel.Content}
 		u, err := st.UpdateRelation(ctx, p.rel.Identity(), data)
 		if err != nil {
-			return nil, fmt.Errorf("renumber write failed for %s--%s--%s: %w", p.rel.From, p.rel.Type, p.rel.To, err)
+			return nil, fmt.Errorf("renumber write failed for %s: %w", p.rel.Key(), err)
 		}
 		updated = append(updated, u)
 	}
@@ -240,6 +241,8 @@ func (m *Manager) runRenumberAfterUpdate(ctx context.Context, from, to, relType 
 		return nil
 	}
 	if touchedOut {
+		// The outgoing list spans every tail of the source: renumbering is
+		// per source family, not per face.
 		q := store.RelationQuery{From: from, Type: relType}
 		if rErr := renumber(q, relDef.OutgoingOrderProperty()); rErr != nil {
 			slog.Error("renumber outgoing side failed", "from", from, "relType", relType, "err", rErr)

@@ -250,6 +250,7 @@ func TestReadRelationResource_TailFace(t *testing.T) {
 		wantErr bool
 	}{
 		{"tail readable", everyFace, "POL-1@draft", false},
+		{"percent-encoded tail", everyFace, "POL-1%40draft", false},
 		{"bare id misses the content edge", everyFace, "POL-1", true},
 		{"tail face hidden", publishedOnly, "POL-1@draft", true},
 		{"malformed from", everyFace, "POL-1@", true},

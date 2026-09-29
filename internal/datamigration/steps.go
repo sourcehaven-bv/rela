@@ -632,6 +632,11 @@ func enumValuesIn(p metamodel.ShapeProjection, typ, prop string) []string {
 
 // ---- rename_relation_type ----
 
+// renameRelationTypeStep moves every edge of one relation type to another,
+// keeping each edge's tail. The tail is copied verbatim: the shape projection
+// records no relation scope, so a rename between a content-scoped and an
+// identity-scoped type is not refused here and leaves tails the new type
+// does not expect.
 type renameRelationTypeStep struct {
 	From string `yaml:"from"`
 	To   string `yaml:"to"`

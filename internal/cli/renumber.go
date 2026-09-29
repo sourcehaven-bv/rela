@@ -52,7 +52,7 @@ func (c *RenumberCmd) Run(ctx context.Context, svc *writeServices) error {
 		for _, p := range plan {
 			cur, _ := metamodel.FiniteOrder(p.rel.Properties[p.prop])
 			out.WriteInfo("  %s --%s--> %s: %s %v -> %v",
-				p.rel.From, p.rel.Type, p.rel.To, p.prop, cur, p.newVal)
+				entity.FormatStateRef(p.rel.From, p.rel.FromFace), p.rel.Type, p.rel.To, p.prop, cur, p.newVal)
 		}
 		return nil
 	}
@@ -64,9 +64,12 @@ func (c *RenumberCmd) Run(ctx context.Context, svc *writeServices) error {
 	// See issue #886.
 	em := svc.EntityManager
 	for _, p := range plan {
-		opts := entity.RelationOptions{Properties: map[string]any{p.prop: p.newVal}}
+		opts := entity.RelationOptions{
+			Properties: map[string]any{p.prop: p.newVal},
+			FromFace:   p.rel.FromFace,
+		}
 		if _, err := em.UpdateRelation(ctx, p.rel.From, p.rel.Type, p.rel.To, opts); err != nil {
-			return fmt.Errorf("renumber write failed for %s--%s--%s: %w", p.rel.From, p.rel.Type, p.rel.To, err)
+			return fmt.Errorf("renumber write failed for %s: %w", p.rel.Key(), err)
 		}
 	}
 	out.WriteSuccess("Renumbered %d relation(s)", len(plan))
@@ -129,14 +132,15 @@ func buildRenumberPlan(
 			asValues[i] = *r
 		}
 		sorted := entitymanager.SortRelations(asValues, prop)
-		byKey := make(map[string]*entity.Relation, len(withValue))
+		// Keyed by the full identity: two tails of one triple are two
+		// siblings (TKT-KQXVF7).
+		byKey := make(map[entity.RelationKey]*entity.Relation, len(withValue))
 		for _, r := range withValue {
-			byKey[r.From+"--"+r.Type+"--"+r.To] = r
+			byKey[r.Identity()] = r
 		}
 		for i, s := range sorted {
 			newVal := float64(i + 1)
-			key := s.From + "--" + s.Type + "--" + s.To
-			r := byKey[key]
+			r := byKey[s.Identity()]
 			if cur, ok := metamodel.FiniteOrder(r.Properties[prop]); ok && cur == newVal {
 				continue
 			}

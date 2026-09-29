@@ -38,6 +38,8 @@ func NewStoreGraph(s store.Store) *StoreGraph { return &StoreGraph{S: s} }
 // request, and scanning the full outgoing-by-relType list per call
 // is a quadratic foot-cannon on densely-connected nodes.
 func (g *StoreGraph) HasEdge(ctx context.Context, from, relType, to string) bool {
+	// The zero tail on purpose: membership edges are identity-scoped, and
+	// this is the default-world seam (TKT-7IZHP0).
 	_, err := g.S.GetRelation(ctx, entity.RelationKey{From: from, Type: relType, To: to})
 	if err == nil {
 		return true

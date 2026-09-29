@@ -131,6 +131,7 @@ func (e *Engine) remapRelation(ctx context.Context, ch LocalChange, adopted map[
 	from := remapID(rel.From, adopted)
 	to := remapID(rel.To, adopted)
 
+	// Sync is a default-world protocol: its manifest selects the zero tail.
 	cur, err := e.store.GetRelation(ctx, entity.RelationKey{From: from, Type: rel.Type, To: to})
 	if err != nil {
 		return ch, false

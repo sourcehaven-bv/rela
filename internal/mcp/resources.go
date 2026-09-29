@@ -4,6 +4,7 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -124,6 +125,11 @@ func (h schemaResourceHandler) handleReadRelation(
 		return nil, fmt.Errorf("invalid relation URI: %s", uri)
 	}
 	fromID, relType, toID := segments[0], segments[1], segments[2]
+	// A client that expands the URI template percent-encodes `@`, so the
+	// from segment is decoded before it is parsed.
+	if decoded, unescErr := url.PathUnescape(fromID); unescErr == nil {
+		fromID = decoded
+	}
 	// The from segment names the tail: `ID` for an identity edge, `ID@face`
 	// for a content edge, as in the relation's text key.
 	tail, parseErr := entity.ParseRef(fromID)

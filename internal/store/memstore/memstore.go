@@ -914,18 +914,11 @@ func (m *MemStore) renameEntity(_ context.Context, oldID, newID string) (*store.
 
 // --- RelationReader ---
 
-// relationKey is the map key of the edge at k. The tail is part of a
-// relation's identity, so this is an address and not a filter: two tails on
-// one triple are two relations (TKT-C1XUA8).
-func relationKey(k entity.RelationKey) string {
-	return k.String()
-}
-
 func (m *MemStore) GetRelation(_ context.Context, k entity.RelationKey) (*entity.Relation, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	key := relationKey(k)
+	key := k.String()
 	r, ok := m.relations[key]
 	if !ok {
 		return nil, store.ErrNotFound
@@ -1057,7 +1050,7 @@ func (m *MemStore) updateRelation(
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	key := relationKey(k)
+	key := k.String()
 	r, ok := m.relations[key]
 	if !ok {
 		return nil, store.ErrNotFound
@@ -1092,7 +1085,7 @@ func (m *MemStore) deleteRelation(_ context.Context, k entity.RelationKey) error
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	key := relationKey(k)
+	key := k.String()
 	if _, ok := m.relations[key]; !ok {
 		return store.ErrNotFound
 	}
