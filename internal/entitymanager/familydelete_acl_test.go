@@ -82,12 +82,20 @@ func newFamilyDeleteFixture(
 	t *testing.T, b concBackend, wrap func(store.Store) store.Store, faces ...entity.Face,
 ) familyDeleteFixture {
 	t.Helper()
+	return newFacedPolicyFixture(t, b, wrap, familyDeletePolicy, faces...)
+}
+
+// newFacedPolicyFixture is newFamilyDeleteFixture with the ACL policy given.
+func newFacedPolicyFixture(
+	t *testing.T, b concBackend, wrap func(store.Store) store.Store, policy string, faces ...entity.Face,
+) familyDeleteFixture {
+	t.Helper()
 	st := b.open(t)
 	meta, err := metamodel.Parse([]byte(familyDeleteMetaYAML))
 	if err != nil {
 		t.Fatalf("metamodel.Parse: %v", err)
 	}
-	p, err := acl.LoadPolicyBytes([]byte(familyDeletePolicy))
+	p, err := acl.LoadPolicyBytes([]byte(policy))
 	if err != nil {
 		t.Fatalf("load policy: %v", err)
 	}
@@ -285,10 +293,10 @@ const (
 	// injectBeforeTx adds the face after the manager's first family read and
 	// before the transaction starts, so only the in-Tx re-read can see it.
 	injectBeforeTx injectAt = iota
-	// injectBeforeStoreDelete adds the face inside the transaction just
-	// before the store's delete. It stands in for the fs watcher indexing an
-	// external file edit: only the check of what the store removed sees it.
-	injectBeforeStoreDelete
+	// injectBeforeStoreWrite adds the face inside the transaction just before
+	// the store delete or rename. It stands in for the fs watcher indexing an
+	// external file edit: only the check of what the store wrote sees it.
+	injectBeforeStoreWrite
 )
 
 // faceInjectingStore adds POL-1@published at one point of a family delete.
@@ -317,7 +325,7 @@ type faceInjectingTx struct {
 func (tx *faceInjectingTx) DeleteEntity(
 	ctx context.Context, id string, cascade bool,
 ) (*store.DeleteResult, error) {
-	if tx.parent.at == injectBeforeStoreDelete {
+	if tx.parent.at == injectBeforeStoreWrite {
 		if err := tx.CreateEntity(ctx, policyFace("published")); err != nil {
 			tx.parent.t.Errorf("inject published face: %v", err)
 		}
@@ -335,7 +343,7 @@ func TestFamilyDelete_FaceAddedDuringDeleteIsAuthorized(t *testing.T) {
 			at   injectAt
 		}{
 			{"before-tx", injectBeforeTx},
-			{"before-store-delete", injectBeforeStoreDelete},
+			{"before-store-delete", injectBeforeStoreWrite},
 		} {
 			t.Run(b.name+"/"+tc.name, func(t *testing.T) {
 				wrap := func(st store.Store) store.Store {

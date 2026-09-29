@@ -1381,7 +1381,7 @@ func (m *Manager) deleteEntityInTx(
 	if fErr != nil {
 		return nil, nil, fmt.Errorf("list faces of %q: %w", id, fErr)
 	}
-	if aErr := m.authorizeFamilyDelete(ctx, family, authorized); aErr != nil {
+	if aErr := m.authorizeFamily(ctx, acl.OpDelete, id, family, authorized); aErr != nil {
 		return nil, nil, aErr
 	}
 
@@ -1435,7 +1435,7 @@ func (m *Manager) deleteEntityInTx(
 	// re-read and the delete, and fs cannot roll back: res is returned with
 	// the error so the caller can record what really went (issue #929).
 	capture := &cascadeCapture{incoming: incoming, outgoing: outgoing}
-	if aErr := m.authorizeFamilyDelete(ctx, res.DeletedEntities, authorized); aErr != nil {
+	if aErr := m.authorizeFamily(ctx, acl.OpDelete, id, res.DeletedEntities, authorized); aErr != nil {
 		return res, capture, aErr
 	}
 	return res, capture, nil
@@ -1466,7 +1466,7 @@ func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*e
 	// real entity type; a deny on a non-existent entity would be more
 	// confusing than the ErrEntityNotFound returned above.
 	authorized := make(familyAuthorization, len(family))
-	if aclErr := m.authorizeFamilyDelete(ctx, family, authorized); aclErr != nil {
+	if aclErr := m.authorizeFamily(ctx, acl.OpDelete, id, family, authorized); aclErr != nil {
 		return nil, aclErr
 	}
 
@@ -1594,10 +1594,10 @@ func familyRows(ctx context.Context, st store.Store, id string) ([]*entity.Entit
 	return family, nil
 }
 
-// familyAuthorization is the set of (type, face) delete subjects one family
-// delete has already authorized. The type is part of the key because it is
-// part of the ACL subject: a state stored under a different type is a
-// different subject and is authorized on its own.
+// familyAuthorization is the set of (type, face) subjects one family-wide
+// operation (delete or rename) has already authorized. The type is part of
+// the key because it is part of the ACL subject: a state stored under a
+// different type is a different subject and is authorized on its own.
 type familyAuthorization map[familyFace]bool
 
 type familyFace struct {
@@ -1605,16 +1605,20 @@ type familyFace struct {
 	face entity.Face
 }
 
-// authorizeFamilyDelete authorizes [acl.OpDelete] on every row of family
-// whose subject is not yet in authorized, and adds each allowed subject to
-// it. It stops at the first denial, so a denied family delete leaves exactly
-// one denied-write record, as a single-face denial does.
+// authorizeFamily authorizes op on every row of family whose subject is not
+// yet in authorized, and adds each allowed subject to it. It stops at the
+// first denial, so a denied family operation leaves exactly one denied-write
+// record, as a single-face denial does.
+//
+// The subject names id, the family the caller addressed, rather than each
+// row's own ID: a rename re-reads the family under its new id and still
+// authorizes the rename of the old one.
 //
 // Under bypass_acl each face is a separate bypassed write, so each gets its
 // own acl-bypass record. When this runs inside the Tx a denial writes its
 // denied-write record there, as authorizeCascadeRelations does.
-func (m *Manager) authorizeFamilyDelete(
-	ctx context.Context, family []*entity.Entity, authorized familyAuthorization,
+func (m *Manager) authorizeFamily(
+	ctx context.Context, op acl.Op, id string, family []*entity.Entity, authorized familyAuthorization,
 ) error {
 	for _, e := range family {
 		key := familyFace{typ: e.Type, face: e.Face}
@@ -1622,8 +1626,8 @@ func (m *Manager) authorizeFamilyDelete(
 			continue
 		}
 		if err := m.authorizeAndAudit(ctx, acl.WriteRequest{
-			Op:      acl.OpDelete,
-			Subject: acl.NewEntitySubject(e.Type, e.ID, e.Face),
+			Op:      op,
+			Subject: acl.NewEntitySubject(e.Type, id, e.Face),
 		}); err != nil {
 			return err
 		}
@@ -1835,85 +1839,153 @@ func (m *Manager) DeleteEntityFace(
 // of the post-rename state** (preserved verbatim from pre-refactor
 // workspace behavior).
 //
-// If opts.DryRun is true, no changes are persisted (and no audit
-// record is emitted — dry runs do not show up in the audit log).
+// If opts.DryRun is true, no changes are persisted and no rename record
+// is written. A dry run is authorized like the rename, so a denial still
+// writes its denied-write record.
 func (m *Manager) RenameEntity(
 	ctx context.Context, oldID, newID string, opts entity.RenameOptions,
 ) (*entity.RenameResult, error) {
-	// ACL needs the entity type, so we fetch first. Distinguish the two
-	// failure modes:
-	//   - not-found: skip ACL and fall through; renameEntity below
-	//     returns ErrEntityNotFound with a clearer message, and there is
-	//     nothing to authorize against.
-	//   - any other error (transient I/O, backend hiccup): fail closed.
-	//     Proceeding would run the rename with NO authorization at all —
-	//     a store read that flakes must not turn an ACL-gated operation
-	//     into an ungated one.
-	// anyFaceOf, not GetEntity: a rename re-keys the whole family, and
-	// GetEntity asks the zero coordinate — which a faced type has no row at.
-	// That put every faced rename on the not-found branch below, and that
-	// branch SKIPS AUTHORIZATION by design, so the rename ran ungated
-	// (BUG-HC6I2T). The fail-closed reasoning below only holds if a present
-	// entity is actually found.
-	current, getErr := anyFaceOf(ctx, m.deps.Store, oldID)
-	switch {
-	case getErr == nil:
-		if aclErr := m.authorizeAndAudit(ctx, acl.WriteRequest{
-			Op: acl.OpRename,
-			// Faceless on purpose: a rename re-keys the WHOLE entity family
-			// (fsstore.renameEntity walks stateFamily(oldID), and
-			// store.RenameEntity takes no Face), so there is no single face to
-			// name here. Naming one would assert a narrower scope than the
-			// operation has: authorizing the rename of one face while renaming
-			// all of them. The faceless constructor is the loud, greppable way
-			// to say that; it authorizes against the default face.
-			Subject: acl.NewFacelessEntitySubject(current.Type, oldID),
-		}); aclErr != nil {
-			return nil, aclErr
+	// Every face, not one: a rename re-keys the whole FAMILY (store.RenameEntity
+	// takes no face), so it is authorized on each face it moves (BUG-Y1RGTU).
+	// The faceless subject this replaced authorized the zero face, which a
+	// faced type does not store, so a bare `update: [policy]` grant renamed the
+	// published face along with the rest.
+	//
+	// Fails closed on a non-not-found error: proceeding would run the rename
+	// with no authorization at all. An empty family authorizes nothing and
+	// falls through to the ErrEntityNotFound the store reports; the Tx below
+	// authorizes any face that appears in between.
+	family, err := familyRows(ctx, m.deps.Store, oldID)
+	if err != nil {
+		return nil, fmt.Errorf("rename: load entity %q: %w", oldID, err)
+	}
+	authorized := make(familyAuthorization, len(family))
+	if aclErr := m.authorizeFamily(ctx, acl.OpRename, oldID, family, authorized); aclErr != nil {
+		return nil, aclErr
+	}
+	if opts.DryRun {
+		return renameEntity(ctx, m.deps.Store, oldID, newID, opts)
+	}
+
+	// Collect incident relations (with their content) BEFORE the rename,
+	// because the old endpoints are gone afterwards. They feed the per-relation
+	// rename versions familyRename.record captures.
+	r := familyRename{m: m, oldID: oldID, newID: newID, authorized: authorized}
+	if m.deps.RelationVersionRecorder != nil {
+		r.preRenameRels = collectRenameAffectedRelations(ctx, m.deps.Store, oldID)
+	}
+
+	// Authorize and rename inside ONE Tx, as DeleteEntity does: the store
+	// renames the family it finds under its own lock, not the one read above.
+	// Version capture, alias rewriting and audit stay outside the callback.
+	var (
+		res     *entity.RenameResult
+		renamed []*entity.Entity
+	)
+	txErr := m.deps.Store.Tx(ctx, func(tx store.Store) error {
+		var rErr error
+		res, renamed, rErr = r.inTx(ctx, tx)
+		return rErr
+	})
+	if txErr != nil {
+		// pg/sqlite rolled the rename back. fs and memstore cannot, so a
+		// denial after the store rename leaves it standing, and the logs must
+		// say so (the same reasoning as recordPartialCascade).
+		if res != nil && !familyStillStored(ctx, m.deps.Store, oldID) {
+			r.record(ctx, renamed)
 		}
-	case !errors.Is(getErr, store.ErrNotFound):
-		return nil, fmt.Errorf("rename: load entity %q: %w", oldID, getErr)
+		return nil, txErr
 	}
+	r.record(ctx, renamed)
+	return res, nil
+}
 
-	// Collect incident relations (with their content) BEFORE the rename: the
-	// rename rewrites each relation as create-new-triple + delete-old-triple at
-	// the store level, so afterward the old endpoints are gone. We capture the
-	// pre-rename state here to emit a `rename` version per relation below, so a
-	// renamed endpoint's relation history stays continuous instead of reading as
-	// a mass delete+create.
-	var preRenameRels []*entity.Relation
-	if !opts.DryRun && m.deps.RelationVersionRecorder != nil {
-		preRenameRels = collectRenameAffectedRelations(ctx, m.deps.Store, oldID)
+// familyRename is one non-dry-run RenameEntity: the ids, the faces
+// authorized so far, and the incident relations captured before the rename.
+// It keeps the rename's Tx body and its logging off Manager.
+type familyRename struct {
+	m             *Manager
+	oldID, newID  string
+	authorized    familyAuthorization
+	preRenameRels []*entity.Relation
+}
+
+// inTx is the rename's critical section. It re-authorizes the family read
+// under the transaction, renames it, and then authorizes any face the store
+// moved that the re-read did not see: on fs the watcher indexes an external
+// file edit without taking the Tx lock, so a face can land between the two.
+// It returns the rename result and the moved rows, also alongside an error
+// raised after the store rename, so the caller can record a rename a backend
+// could not roll back.
+//
+// The post-rename check still names oldID. On pg and sqlite the ACL's outer
+// handle sees the pre-rename graph, so a role conferred through a relation
+// still applies; on fs and memstore the relations are already re-keyed, so
+// such a role is lost and the face is denied. Both outcomes fail closed, and
+// the check only runs for a face no earlier check saw.
+func (r *familyRename) inTx(
+	ctx context.Context, tx store.Store,
+) (*entity.RenameResult, []*entity.Entity, error) {
+	family, err := familyRows(ctx, tx, r.oldID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("rename: load entity %q: %w", r.oldID, err)
 	}
-
-	res, err := renameEntity(ctx, m.deps.Store, oldID, newID, opts)
-	if err != nil || opts.DryRun {
-		return res, err
+	if aErr := r.m.authorizeFamily(ctx, acl.OpRename, r.oldID, family, r.authorized); aErr != nil {
+		return nil, nil, aErr
 	}
+	res, err := renameEntity(ctx, tx, r.oldID, r.newID, entity.RenameOptions{})
+	if err != nil {
+		return nil, nil, err
+	}
+	renamed, err := familyRows(ctx, tx, r.newID)
+	if err != nil {
+		return res, nil, fmt.Errorf("rename: load renamed entity %q: %w", r.newID, err)
+	}
+	if aErr := r.m.authorizeFamily(ctx, acl.OpRename, r.oldID, renamed, r.authorized); aErr != nil {
+		return res, renamed, aErr
+	}
+	return res, renamed, nil
+}
 
-	// Derive both before/after subjects from the post-rename entity:
-	// type is preserved by rename, so the post entity has the type
-	// for both records. A separate pre-fetch would create a window
-	// where audit silently no-ops if the pre-fetch fails but
-	// rename succeeds (concurrent insert / racy store).
-	postEntity, getErr := m.deps.Store.GetEntity(ctx, newID)
-	if getErr != nil {
+// familyStillStored reports whether any face of id is still stored. A read
+// error counts as stored, so a rename is never recorded on a guess.
+func familyStillStored(ctx context.Context, st store.Store, id string) bool {
+	family, err := familyRows(ctx, st, id)
+	if err != nil {
+		slog.Error("entitymanager: cannot tell whether a failed rename moved the entity",
+			"id", id, "error", err)
+		return true
+	}
+	return len(family) > 0
+}
+
+// record writes the audit records and versions of a rename that happened:
+// one rename record and one rename version per moved face, since each face
+// is its own version lineage, then the alias rewrite and the relation rename
+// versions, which are per family.
+func (r *familyRename) record(ctx context.Context, renamed []*entity.Entity) {
+	m, oldID, newID, preRenameRels := r.m, r.oldID, r.newID, r.preRenameRels
+	// No rows means the post-rename read failed (its error is what the
+	// caller returns). The per-face records need those rows; the alias rewrite
+	// and relation versions below do not, so they still run.
+	if len(renamed) == 0 {
 		slog.Error("audit.write_failed",
 			"stage", "rename-postfetch",
 			"new_id", newID,
-			"error", getErr)
-		return res, nil
+			"error", "renamed faces could not be read")
 	}
-	m.recordRenameAudit(ctx, oldID, postEntity)
-	// Capture the rename as a version event carrying the old id (prev_id), so a
-	// renamed entity's history is walkable back to its former id. Only the
-	// choke-point knows old->new; a later sweep sees the renamed entity as an
-	// ordinary update and cannot reconstruct this link.
-	m.recordEntityVersion(ctx, store.VersionOpRename, postEntity, oldID)
+	for _, e := range renamed {
+		m.recordRenameAudit(ctx, oldID, e)
+		// Capture the rename as a version event carrying the old id (prev_id),
+		// so a renamed entity's history is walkable back to its former id. Only
+		// the choke-point knows old->new; a later sweep sees the renamed entity
+		// as an ordinary update and cannot reconstruct this link.
+		m.recordEntityVersion(ctx, store.VersionOpRename, e, oldID)
+	}
 
 	// Rewrite id-keyed references for the same reason the version above carries
 	// prev_id: this is the only point that knows old->new.
-	m.rewriteAliasesForRename(ctx, oldID, postEntity.ID)
+	m.rewriteAliasesForRename(ctx, oldID, newID)
 
 	// Capture a `rename` version for each incident relation, on its NEW triple,
 	// carrying the pre-rename endpoints (prev_from/prev_to). The version's key is
@@ -1948,7 +2020,6 @@ func (m *Manager) RenameEntity(
 			m.recordRelationVersion(ctx, store.VersionOpRename, after, rel.From, rel.To, renameTB)
 		}
 	}
-	return res, nil
 }
 
 // collectRenameAffectedRelations gathers the incident relations of id (both

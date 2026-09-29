@@ -5,7 +5,13 @@ title: Rename authorizes the zero face but re-keys every face
 description: RenameEntity authorizes a faceless subject but renames every face, so a type-wide write grant renames faces it does not cover.
 priority: high
 effort: s
-status: backlog
+why1: RenameEntity authorized OpRename against acl.NewFacelessEntitySubject(type, oldID), the zero face, then called store.RenameEntity, which re-keys every face of the family.
+why2: The BUG-HC6I2T fix chose a faceless subject on purpose because a rename has no single face; the faceless constructor authorizes the default face, which a faced type does not store and which a bare type-wide grant covers.
+why3: Face-qualified write grants arrived after RenameEntity was written for one row per id; the check was not re-derived from the rows the store actually moves.
+why4: No rename test paired per-face update grants with a multi-face entity; rename ACL tests used unfaced types or NopACL, so zero-face and every-face authorization looked the same.
+why5: Family-wide operations were adapted to faces one call site at a time (DEC-NPZICR); nothing makes authorization cover exactly the rows a write touches, so delete (BUG-1YN750) and rename carried the same defect.
+prevention: Rename authorizes every face it moves via the shared authorizeFamily helper, before the Tx and again inside it, and audits and versions each face. Regression tests TestFamilyRename_* in internal/entitymanager/familyrename_acl_test.go run on memstore, fsstore, sqlite and postgres. DEC-NPZICR stages the structural fix.
+status: done
 ---
 
 ## Problem
