@@ -47,8 +47,7 @@ func directReads(fset *token.FileSet, file *ast.File) []token.Position {
 	ast.Inspect(file, func(n ast.Node) bool {
 		switch n := n.(type) {
 		case *ast.SelectorExpr:
-			switch n.Sel.Name {
-			case "GetEntity":
+			if n.Sel.Name == "GetEntity" {
 				if call := calls[n]; call != nil && len(call.Args) == 2 {
 					reads = append(reads, fset.Position(n.Sel.Pos()))
 				}

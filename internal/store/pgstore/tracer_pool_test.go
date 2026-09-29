@@ -5,10 +5,11 @@ package pgstore_test
 import (
 	"bytes"
 	"context"
-	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"log/slog"
 	"sync"
 	"testing"
+
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 
 	"github.com/stretchr/testify/require"
 

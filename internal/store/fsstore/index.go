@@ -88,18 +88,13 @@ func (s *FSStore) savePersistedIndex() error {
 // syncIndex reconciles all in-memory state with the filesystem:
 //  1. Entity index: dir mtime check → restore from cache or rescan dirs
 //  2. Relation index: dir mtime check → restore from cache or rescan dirs
-//  3. Scan all entity files for newest mtime (stat only, no reads)
-//  4. Prop cache: compare newest mtime → restore from cache or rebuild
 func (s *FSStore) syncIndex() error {
 	cached := s.loadPersistedIndex()
 
 	if err := s.syncEntities(cached); err != nil {
 		return err
 	}
-	if err := s.syncRelations(cached); err != nil {
-		return err
-	}
-	return nil
+	return s.syncRelations(cached)
 }
 
 // syncEntities builds the entity index from directory structure.

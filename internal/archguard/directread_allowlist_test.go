@@ -16,7 +16,7 @@ var directReadAllowlist = map[string]allowed{
 	"internal/dataentry/entityreader.go": {1, "readWritePrep: write-prep, liveness and relation-source policy read, never served"},
 	"internal/dataentry/gantt_handler.go": {1, "gantt root read: raw so the roll-up can run " +
 		"gate-then-redact-then-fold; the type verdict and visibility.Redact run before any value is served"},
-	"internal/dataentry/queryservice.go":{1, "loadHitHeaders: id-batch header load for search hits, " +
+	"internal/dataentry/queryservice.go": {1, "loadHitHeaders: id-batch header load for search hits, " +
 		"gated afterwards"},
 	"internal/dataentry/relation_visibility.go": {1, "visibleRelationIDs: id-batch header load for a " +
 		"page's neighbors, gated by visibleHeaderIDs"},

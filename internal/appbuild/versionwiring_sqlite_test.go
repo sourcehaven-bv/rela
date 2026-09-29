@@ -4,10 +4,11 @@ package appbuild
 
 import (
 	"context"
-	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 
 	"github.com/stretchr/testify/require"
 

@@ -2,9 +2,10 @@ package pgstore_test
 
 import (
 	"context"
-	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"testing"
 	"time"
+
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 
 	"github.com/stretchr/testify/require"
 
