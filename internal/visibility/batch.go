@@ -173,7 +173,7 @@ func (r *Resolver) scanHeaders(
 	if len(ids) == 0 {
 		return map[string]map[entity.Face]store.EntityHeader{}, nil
 	}
-	stored, err := r.storedHeaders(ctx, store.EntityQuery{IDs: ids, AllStates: true})
+	stored, err := r.storedHeaders(ctx, store.EntityQuery{IDs: ids, Faces: store.AllFaces()})
 	if err != nil {
 		return nil, err
 	}

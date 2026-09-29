@@ -399,7 +399,7 @@ func TestRecovery_SearchIndexRebuilt(t *testing.T) {
 	require.NoError(t, err)
 	defer s2.Close()
 
-	for e, err := range s2.ListEntities(ctx, store.EntityQuery{}) {
+	for e, err := range s2.ListEntities(ctx, store.EntityQuery{Faces: store.InWorld(store.DefaultWorld())}) {
 		require.NoError(t, err)
 		require.NoError(t, idx.EntityPut(e))
 	}

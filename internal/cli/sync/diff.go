@@ -23,7 +23,7 @@ func SnapshotLocal(ctx context.Context, st store.Store) (*LocalSnapshot, int, er
 	snap := &LocalSnapshot{Records: map[string]LocalRecord{}}
 	locked := 0
 
-	for e, err := range st.ListEntities(ctx, store.EntityQuery{}) {
+	for e, err := range st.ListEntities(ctx, store.EntityQuery{Faces: store.AllFaces()}) {
 		if err != nil {
 			return nil, locked, fmt.Errorf("list entities: %w", err)
 		}

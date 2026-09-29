@@ -628,7 +628,7 @@ func matchRelationFilterMany(
 	candidatesByType := map[string][]string{}
 	neighborFace := make(map[string]entityPkg.Face, len(neighborIDs))
 	for h, err := range store.ListEntityHeaders(ctx, svc.Store, store.EntityQuery{
-		IDs: neighborIDs, World: worldScopeFrom(ctx),
+		IDs: neighborIDs, Faces: store.InWorld(worldScopeFrom(ctx)),
 	}) {
 		if err != nil {
 			return nil, err

@@ -34,11 +34,15 @@ type Reader interface {
 	ListRelations(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error]
 }
 
-// CheckEndpointShape validates a query's EndpointMatch chains: nesting must
+// CheckEndpointShape validates a query's shape: it must carry a face
+// selection ([store.ErrInvalidQuery] otherwise), EndpointMatch nesting must
 // not exceed [DepthCap], and a NESTED hop must not carry an inheritance
 // expansion. Exported so every backend enforces the identical bound — see the
 // contract note on [store.RelationPredicate.EndpointMatch].
 func CheckEndpointShape(q store.GraphQuery) error {
+	if err := q.Faces.Validate(); err != nil {
+		return err
+	}
 	for _, p := range []*store.RelationPredicate{q.HasInbound, q.HasOutbound} {
 		if err := checkEndpointShape(p, 0); err != nil {
 			return err
@@ -294,13 +298,15 @@ func MatchingIDs(ctx context.Context, r Reader, q store.GraphQuery, ids []string
 		if mErr != nil {
 			return nil, mErr
 		}
-		out[e.ID] = ok
+		// Under AllFaces or AtFaces an id has several candidate rows; it
+		// matches when any of them does, as the SQL backends' `SELECT e.id`.
+		out[e.ID] = out[e.ID] || ok
 	}
 	return out, nil
 }
 
 // collectByType seeds the candidate set: the entities the query may
-// RETURN, so it carries the world (store.GraphQuery.World). The relation
+// RETURN, so it carries the selection (store.GraphQuery.Faces). The relation
 // walks in matches() deliberately do NOT — who an entity is related to
 // must not depend on the reader's world.
 //
@@ -316,12 +322,12 @@ func MatchingIDs(ctx context.Context, r Reader, q store.GraphQuery, ids []string
 // granted `read: [page@published]` would match the draft face here while the
 // plain list beside it correctly hid it.
 func collectByType(ctx context.Context, r Reader, q store.GraphQuery) ([]*entity.Entity, error) {
-	if len(q.Any) > 0 && !q.World.IsDefaultWorld() {
-		return collectBranchPrimes(ctx, r, q)
+	if w, ok := q.Faces.World(); ok && len(q.Any) > 0 && !w.IsDefaultWorld() {
+		return collectBranchPrimes(ctx, r, q, w)
 	}
 	var out []*entity.Entity
 	for e, err := range r.ListEntities(ctx, store.EntityQuery{
-		Type: q.EntityType, World: q.World, FaceIn: q.FaceIn,
+		Type: q.EntityType, Faces: q.Faces, FaceIn: q.FaceIn,
 	}) {
 		if err != nil {
 			return nil, err
@@ -344,12 +350,14 @@ func collectByType(ctx context.Context, r Reader, q store.GraphQuery) ([]*entity
 // filter is per (entity, face) and must run BEFORE that ranking — the SQL
 // backends put it in the same WHERE clause the world's DISTINCT ON ranks
 // over, and this is the in-Go equivalent.
-func collectBranchPrimes(ctx context.Context, r Reader, q store.GraphQuery) ([]*entity.Entity, error) {
+func collectBranchPrimes(
+	ctx context.Context, r Reader, q store.GraphQuery, w store.WorldScope,
+) ([]*entity.Entity, error) {
 	rows := map[string]*entity.Entity{}
 	var cands []store.WorldCandidate
 	branchHolds := map[string][]bool{} // per id, per branch: the relation half
 	for e, err := range r.ListEntities(ctx, store.EntityQuery{
-		Type: q.EntityType, AllStates: true, FaceIn: q.FaceIn,
+		Type: q.EntityType, Faces: store.AllFaces(), FaceIn: q.FaceIn,
 	}) {
 		if err != nil {
 			return nil, err
@@ -361,7 +369,7 @@ func collectBranchPrimes(ctx context.Context, r Reader, q store.GraphQuery) ([]*
 				ok := true
 				if br.HasInbound != nil {
 					var mErr error
-					ok, mErr = matchesPredicate(ctx, r, e, *br.HasInbound, store.DirectionIncoming)
+					ok, mErr = matchesPredicate(ctx, r, e, *br.HasInbound, store.DirectionIncoming, q.Faces)
 					if mErr != nil {
 						return nil, mErr
 					}
@@ -383,7 +391,7 @@ func collectBranchPrimes(ctx context.Context, r Reader, q store.GraphQuery) ([]*
 		rows[e.ID+entity.StateRefSeparator+e.Face.String()] = e
 		cands = append(cands, store.WorldCandidate{ID: e.ID, Type: e.Type, Face: e.Face})
 	}
-	primes := store.ResolveWorldPrimes(q.World, cands)
+	primes := store.ResolveWorldPrimes(w, cands)
 	out := make([]*entity.Entity, 0, len(primes))
 	for id, res := range primes {
 		if e, ok := rows[id+entity.StateRefSeparator+res.Face.String()]; ok {
@@ -408,13 +416,13 @@ func matches(ctx context.Context, r Reader, e *entity.Entity, q store.GraphQuery
 		return false, nil
 	}
 	if q.HasInbound != nil {
-		ok, err := matchesPredicate(ctx, r, e, *q.HasInbound, store.DirectionIncoming)
+		ok, err := matchesPredicate(ctx, r, e, *q.HasInbound, store.DirectionIncoming, q.Faces)
 		if err != nil || !ok {
 			return ok, err
 		}
 	}
 	if q.HasOutbound != nil {
-		ok, err := matchesPredicate(ctx, r, e, *q.HasOutbound, store.DirectionOutgoing)
+		ok, err := matchesPredicate(ctx, r, e, *q.HasOutbound, store.DirectionOutgoing, q.Faces)
 		if err != nil || !ok {
 			return ok, err
 		}
@@ -424,7 +432,7 @@ func matches(ctx context.Context, r Reader, e *entity.Entity, q store.GraphQuery
 		if rel.Incoming {
 			dir = store.DirectionIncoming
 		}
-		ok, err := matchesPredicate(ctx, r, e, rel.Pred, dir)
+		ok, err := matchesPredicate(ctx, r, e, rel.Pred, dir, q.Faces)
 		if err != nil || !ok {
 			return ok, err
 		}
@@ -433,7 +441,7 @@ func matches(ctx context.Context, r Reader, e *entity.Entity, q store.GraphQuery
 		// Under a world the candidates were already branch-filtered before
 		// ranking (collectBranchPrimes); re-checking the prime here is a
 		// no-op there and the whole check for the default world.
-		return matchesAny(ctx, r, e, q.Any)
+		return matchesAny(ctx, r, e, q.Any, q.Faces)
 	}
 	return true, nil
 }
@@ -457,13 +465,15 @@ func matchesNarrowing(e *entity.Entity, branches []store.NarrowBranch) bool {
 }
 
 // matchesAny reports whether at least one branch holds for e's stored face.
-func matchesAny(ctx context.Context, r Reader, e *entity.Entity, branches []store.GraphBranch) (bool, error) {
+func matchesAny(
+	ctx context.Context, r Reader, e *entity.Entity, branches []store.GraphBranch, sel store.FaceSelection,
+) (bool, error) {
 	for _, br := range branches {
 		if len(br.FaceIn) > 0 && !slices.Contains(br.FaceIn, e.Face) {
 			continue
 		}
 		if br.HasInbound != nil {
-			ok, err := matchesPredicate(ctx, r, e, *br.HasInbound, store.DirectionIncoming)
+			ok, err := matchesPredicate(ctx, r, e, *br.HasInbound, store.DirectionIncoming, sel)
 			if err != nil {
 				return false, err
 			}
@@ -545,11 +555,14 @@ func matchesOrdered(raw any, op store.PropOp, value string) bool {
 	return s <= value
 }
 
+// matchesPredicate evaluates one relation predicate for e. sel is the
+// selection an EndpointMatch inherits when it sets none of its own: the
+// query's [store.GraphQuery.Faces] at the top level.
 func matchesPredicate(
 	ctx context.Context, r Reader, e *entity.Entity,
-	p store.RelationPredicate, dir store.Direction,
+	p store.RelationPredicate, dir store.Direction, sel store.FaceSelection,
 ) (bool, error) {
-	return matchesPredicateAt(ctx, r, e, p, dir, 0)
+	return matchesPredicateAt(ctx, r, e, p, dir, sel, 0)
 }
 
 // matchesPredicateAt is [matchesPredicate] carrying the current
@@ -558,7 +571,7 @@ func matchesPredicate(
 // wrote literally, depth counts steps the store takes through one hop.
 func matchesPredicateAt(
 	ctx context.Context, r Reader, e *entity.Entity,
-	p store.RelationPredicate, dir store.Direction, nesting int,
+	p store.RelationPredicate, dir store.Direction, sel store.FaceSelection, nesting int,
 ) (bool, error) {
 	endpoints, err := expandSet(ctx, r, p.Endpoints, p.InheritThrough, p.Depth)
 	if err != nil {
@@ -585,7 +598,7 @@ func matchesPredicateAt(
 	anyEndpoint := len(p.Endpoints) == 0
 
 	found, err := hasMatchingRelation(
-		ctx, r, candidates, dir, typeSet, endpointSet, anyEndpoint, p.EndpointMatch, nesting)
+		ctx, r, candidates, dir, typeSet, endpointSet, anyEndpoint, p.EndpointMatch, sel, nesting)
 	if err != nil {
 		return false, err
 	}
@@ -604,15 +617,15 @@ func matchesPredicateAt(
 func hasMatchingRelation(
 	ctx context.Context, r Reader, candidates []string, dir store.Direction,
 	typeSet, endpointSet map[string]bool, anyEndpoint bool, match *store.EndpointPredicate,
-	nesting int,
+	sel store.FaceSelection, nesting int,
 ) (bool, error) {
 	q := store.RelationQuery{Direction: dir}
 	if match != nil {
-		// An endpoint match reads the DEFAULT state only — see
-		// [store.RelationPredicate.EndpointMatch]. matchesEndpoint already
-		// reads the endpoint's default face; pin the edge tail to match.
-		var defaultTail entity.Face
-		q.FromFace = &defaultTail
+		// An endpoint match follows identity-scoped edges only — see
+		// [store.RelationPredicate.EndpointMatch]. matchesEndpoint picks the
+		// endpoint's face from the selection.
+		identity := entity.Face("")
+		q.FromFace = &identity
 	}
 	for _, c := range candidates {
 		q.EntityID = c
@@ -633,7 +646,7 @@ func hasMatchingRelation(
 			if match == nil {
 				return true, nil
 			}
-			ok, err := matchesEndpoint(ctx, r, other, match, nesting)
+			ok, err := matchesEndpoint(ctx, r, other, match, sel, nesting)
 			if err != nil {
 				return false, err
 			}
@@ -653,7 +666,7 @@ func hasMatchingRelation(
 // same reading [matchesOrdered] gives an unset value, and the one the SQL
 // backends give via an inner JOIN.
 func matchesEndpoint(
-	ctx context.Context, r Reader, id string, p *store.EndpointPredicate, nesting int,
+	ctx context.Context, r Reader, id string, p *store.EndpointPredicate, sel store.FaceSelection, nesting int,
 ) (bool, error) {
 	// Bound the chain the CALLER wrote. Without this a hand-built query nests
 	// without limit: each level costs a lookup here and, on the SQL backends, a
@@ -680,28 +693,44 @@ func matchesEndpoint(
 				"graphquerynaive: inheritance expansion is not supported on a nested endpoint match")
 		}
 	}
-	var found *entity.Entity
-	for e, err := range r.ListEntities(ctx, store.EntityQuery{Type: p.EntityType, IDs: []string{id}}) {
+	// The endpoint's own selection wins; otherwise it inherits the enclosing
+	// one (design A6 and section 12). Under InWorld this reads at most the
+	// prime; under AllFaces or AtFaces every selected row, any of which may
+	// match.
+	if !p.Faces.IsZero() {
+		sel = p.Faces
+	}
+	for found, err := range r.ListEntities(ctx, store.EntityQuery{
+		Type: p.EntityType, IDs: []string{id}, Faces: sel,
+	}) {
 		if err != nil {
 			return false, err
 		}
-		found = e
-		break
+		ok, err := matchesEndpointRow(ctx, r, found, p, sel, nesting)
+		if err != nil || ok {
+			return ok, err
+		}
 	}
-	if found == nil {
-		return false, nil
-	}
+	return false, nil
+}
+
+// matchesEndpointRow tests one stored row of an endpoint against p: its own
+// properties, then the chained relation predicates, which inherit sel.
+func matchesEndpointRow(
+	ctx context.Context, r Reader, found *entity.Entity, p *store.EndpointPredicate,
+	sel store.FaceSelection, nesting int,
+) (bool, error) {
 	if !matchesProps(found, p.Props) {
 		return false, nil
 	}
 	if p.HasInbound != nil {
-		ok, err := matchesPredicateAt(ctx, r, found, *p.HasInbound, store.DirectionIncoming, nesting+1)
+		ok, err := matchesPredicateAt(ctx, r, found, *p.HasInbound, store.DirectionIncoming, sel, nesting+1)
 		if err != nil || !ok {
 			return false, err
 		}
 	}
 	if p.HasOutbound != nil {
-		ok, err := matchesPredicateAt(ctx, r, found, *p.HasOutbound, store.DirectionOutgoing, nesting+1)
+		ok, err := matchesPredicateAt(ctx, r, found, *p.HasOutbound, store.DirectionOutgoing, sel, nesting+1)
 		if err != nil || !ok {
 			return false, err
 		}
@@ -712,6 +741,11 @@ func matchesEndpoint(
 // expandSet returns seeds plus everything reachable via the given
 // relation types up to depth. BFS with visited-set; depth is bounded
 // by depthCap.
+//
+// It follows IDENTITY-scoped edges only (a "" tail). A seed is an id, not a
+// row, so the walk is entity-level for faced types too; but a content-scoped
+// edge belongs to one face of its source, and letting it confer inheritance
+// is deferred (stage-2 ruling D5): it fails toward less access.
 func expandSet(ctx context.Context, r Reader, seeds, through []string, depth int) ([]string, error) {
 	if len(seeds) == 0 {
 		return nil, nil
@@ -734,6 +768,7 @@ func expandSet(ctx context.Context, r Reader, seeds, through []string, depth int
 	for _, t := range through {
 		throughSet[t] = true
 	}
+	identity := entity.Face("")
 	frontier := append([]string(nil), order...)
 	for d := 0; d < depth && len(frontier) > 0; d++ {
 		var next []string
@@ -741,6 +776,7 @@ func expandSet(ctx context.Context, r Reader, seeds, through []string, depth int
 			for rel, err := range r.ListRelations(ctx, store.RelationQuery{
 				EntityID:  n,
 				Direction: store.DirectionOutgoing,
+				FromFace:  &identity,
 			}) {
 				if err != nil {
 					return order, err

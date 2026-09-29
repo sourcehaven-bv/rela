@@ -245,6 +245,7 @@ func (s *mcpServices) deps() relamcp.Deps {
 		LuaCache:      s.svc.ScriptEngine().LuaCache(),
 		Watcher:       s.watcher,
 		ProjectRoot:   s.svc.Paths().Root,
+		World:         reads.LuaReads.World,
 	}
 	if reads.Traversals != nil {
 		deps.Traversals = reads.Traversals

@@ -316,7 +316,8 @@ func TestParseRejectsMalformedLang(t *testing.T) {
 type worldReader struct{ worlds *[]store.WorldScope }
 
 func (r worldReader) ListEntities(_ context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error] {
-	*r.worlds = append(*r.worlds, q.World)
+	w, _ := q.Faces.World()
+	*r.worlds = append(*r.worlds, w)
 	return func(func(*entity.Entity, error) bool) {}
 }
 

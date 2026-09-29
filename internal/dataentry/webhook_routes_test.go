@@ -44,7 +44,7 @@ func postHook(t *testing.T, app *App, hookID, body string) *httptest.ResponseRec
 func listTickets(t *testing.T, app *App) []*entityPkg.Entity {
 	t.Helper()
 	var out []*entityPkg.Entity
-	for e, err := range app.store.ListEntities(context.Background(), store.EntityQuery{Type: "ticket"}) {
+	for e, err := range app.store.ListEntities(context.Background(), store.EntityQuery{Type: "ticket", Faces: store.InWorld(store.DefaultWorld())}) {
 		if err != nil {
 			t.Fatalf("list tickets: %v", err)
 		}

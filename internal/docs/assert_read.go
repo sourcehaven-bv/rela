@@ -215,7 +215,7 @@ func readEvidence(dr *docRuntime, who, target, face string, visible bool) eviden
 // seededIDs lists what WAS seeded for a type, for the unknown-id message.
 func seededIDs(dr *docRuntime, typ string) []string {
 	var ids []string
-	for e, err := range dr.store.ListEntities(dr.ctx, store.EntityQuery{Type: typ, AllStates: true}) {
+	for e, err := range dr.store.ListEntities(dr.ctx, store.EntityQuery{Type: typ, Faces: store.AllFaces()}) {
 		if err != nil {
 			return ids
 		}

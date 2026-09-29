@@ -329,7 +329,7 @@ func listNotes(t *testing.T, svc *appbuild.Services) []string {
 
 	ctx := context.Background()
 	var out []string
-	for e, err := range svc.Store().ListEntities(ctx, store.EntityQuery{Type: "note"}) {
+	for e, err := range svc.Store().ListEntities(ctx, store.EntityQuery{Type: "note", Faces: store.InWorld(store.DefaultWorld())}) {
 		require.NoError(t, err)
 		runs, _ := e.Properties["runs"].(string)
 		out = append(out, runs)

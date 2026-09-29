@@ -329,7 +329,7 @@ func (g *GC) Scan(ctx context.Context) (added []string, err error) {
 func scanEntities(
 	ctx context.Context, st store.Store, live metamodel.ShapeProjection, record func(key, kind string),
 ) error {
-	for e, err := range st.ListEntities(ctx, store.EntityQuery{}) {
+	for e, err := range st.ListEntities(ctx, store.EntityQuery{Faces: store.AllFaces()}) {
 		if err != nil {
 			return err
 		}

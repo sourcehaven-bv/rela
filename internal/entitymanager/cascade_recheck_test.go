@@ -93,7 +93,7 @@ func newRecheckManager(t *testing.T, autos []automation.Automation) (*entitymana
 func countHolders(t *testing.T, st store.Store) int {
 	t.Helper()
 	n := 0
-	for e, err := range st.ListEntities(context.Background(), store.EntityQuery{Type: "persoon"}) {
+	for e, err := range st.ListEntities(context.Background(), store.EntityQuery{Type: "persoon", Faces: store.InWorld(store.DefaultWorld())}) {
 		if err != nil {
 			t.Fatalf("list: %v", err)
 		}
@@ -208,7 +208,7 @@ func TestCascadeWrite_ValidAutomationValueStillLands(t *testing.T) {
 	}
 
 	found := false
-	for e, err := range st.ListEntities(context.Background(), store.EntityQuery{Type: "persoon"}) {
+	for e, err := range st.ListEntities(context.Background(), store.EntityQuery{Type: "persoon", Faces: store.InWorld(store.DefaultWorld())}) {
 		if err != nil {
 			t.Fatalf("list: %v", err)
 		}
@@ -304,7 +304,7 @@ func TestCascadeWrite_TransitionRecheckedAfterAutomation(t *testing.T) {
 	}
 	t.Logf("automation errors: %v", res.AutomationErrors)
 
-	for e, listErr := range st.ListEntities(context.Background(), store.EntityQuery{Type: "taak"}) {
+	for e, listErr := range st.ListEntities(context.Background(), store.EntityQuery{Type: "taak", Faces: store.InWorld(store.DefaultWorld())}) {
 		if listErr != nil {
 			t.Fatalf("list: %v", listErr)
 		}
@@ -371,7 +371,7 @@ relations: {}`, 1)
 	}
 
 	var child *entity.Entity
-	for e, err := range st.ListEntities(context.Background(), store.EntityQuery{Type: "item"}) {
+	for e, err := range st.ListEntities(context.Background(), store.EntityQuery{Type: "item", Faces: store.InWorld(store.DefaultWorld())}) {
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -25,7 +25,7 @@ func (c *FmtCmd) Run(ctx context.Context, svc *readServices) error {
 
 	dryRun := c.DryRun || c.Check
 
-	q := store.EntityQuery{}
+	q := store.EntityQuery{Faces: store.AllFaces()}
 	if c.Type != "" {
 		resolvedType, err := resolveEntityType(svc.Meta, c.Type)
 		if err != nil {

@@ -37,25 +37,30 @@ type GraphQuery struct {
 	HasInbound  *RelationPredicate // entity has matching relation FROM (expanded) endpoints
 	HasOutbound *RelationPredicate // entity has matching relation TO (expanded) endpoints
 
-	// World scopes the RESULT to each entity's prime under the compiled
-	// world, exactly as [EntityQuery.World] does. The zero value is the
-	// default world.
+	// Faces is the RESULT selection, exactly as [EntityQuery.Faces]: required,
+	// and the zero value is [ErrInvalidQuery] at execution. ACL-built
+	// GraphQuery values are templates that internal/visibility/pushdown.go
+	// completes from the request's EntityQuery, which is why the zero value
+	// is checked when the query runs rather than when it is built.
 	//
 	// It must live here as well as on EntityQuery, not only there: the
 	// ACL read path swaps an EntityQuery for a GraphQuery the moment a
 	// policy query exists (internal/visibility/pushdown.go), and the
-	// AllowAll principal takes the EntityQuery branch. A world carried
-	// on only one of the two would make the list path and the
-	// single-entity path disagree — and would do so precisely for the
-	// privileged principal.
+	// AllowAll principal takes the EntityQuery branch. A selection carried
+	// on only one of the two would make the list path and the single-entity
+	// path disagree — and would do so precisely for the privileged principal.
+	//
+	// Under InWorld one row per id is returned; under AllFaces and AtFaces
+	// one row per selected face, and GraphCount counts those rows.
 	//
 	// Scoping applies to the entities the query RETURNS. Relation
 	// predicates walk the graph's identity structure and are NOT
-	// world-resolved: who an entity is related to must not depend on the
-	// reader's world.
-	World WorldScope
+	// face-resolved: who an entity is related to must not depend on the
+	// reader's world. The one exception is an endpoint's own properties
+	// under [RelationPredicate.EndpointMatch]; see [EndpointPredicate.Faces].
+	Faces FaceSelection
 
-	// FaceIn is [EntityQuery.FaceIn], carried here for the same reason World
+	// FaceIn is [EntityQuery.FaceIn], carried here for the same reason Faces
 	// is: the ACL read path swaps an EntityQuery for a GraphQuery the moment
 	// a policy query exists, and the AllowAll principal takes the EntityQuery
 	// branch. A face set on only one of the two would make the list path and
@@ -455,12 +460,15 @@ type RelationPredicate struct {
 	// an ACL-folded expansion would gate the same principal differently from
 	// one that honored it; both refuse instead.
 	//
-	// A hop carrying an EndpointMatch reads the DEFAULT state only: the
-	// endpoint's default face, reached over a default-tailed edge. A named
-	// face belongs to a world the reader may not be granted, and the query's
-	// World scopes its RESULT rows, not the neighbors it filters on — so
-	// admitting a named face here would disclose that world's content
-	// through which candidates match. Every backend pins it (TKT-CXQEV0).
+	// A hop carrying an EndpointMatch follows identity-scoped edges only (a
+	// "" tail), and reads the endpoint at a face chosen by its selection
+	// (TKT-KQXVF7, design A6): the endpoint's own [EndpointPredicate.Faces]
+	// when set, else the enclosing hop's, else the query's
+	// [GraphQuery.Faces]. Under InWorld(w) the endpoint is w's prime for its
+	// own type; under AtFaces(fs) only its rows at fs are tested, so an
+	// endpoint with none of fs does not match; under AllFaces it matches when
+	// any of its rows does. InWorld of the default world is the historical
+	// reading: the "" face only.
 	//
 	// SECURITY: this predicate reads properties of entities the query does
 	// not RETURN, so a caller-supplied EndpointMatch is an inference channel
@@ -477,9 +485,23 @@ type RelationPredicate struct {
 // incoming relation predicate.
 //
 // Deliberately NOT [GraphQuery]: an endpoint match is a filter on a row the
-// query does not return, so it carries no paging, no ordering, no world and no
-// face set. Reusing GraphQuery would offer all four and silently ignore them.
+// query does not return, so it carries no paging, no ordering and no face
+// allowlist. Reusing GraphQuery would offer all three and silently ignore them.
 type EndpointPredicate struct {
+	// Faces, when set, is the face selection this endpoint (and every hop
+	// nested under it that sets none) is evaluated at, instead of the
+	// enclosing selection. The zero value inherits; see
+	// [RelationPredicate.EndpointMatch] for how each selection reads an
+	// endpoint.
+	//
+	// The ACL sets it on every hop it gates (acl.Request.GateTraversal) to
+	// InWorld of the REQUEST's world, so a row gate folded into an endpoint
+	// is evaluated where the request reads and never under a query's
+	// AllFaces or AtFaces selection, where "any face matches" could satisfy
+	// a gate the request's world does not (stage-2 design section 12,
+	// RR-QUXMAF).
+	Faces FaceSelection
+
 	// EntityType restricts the endpoint to one entity type. Empty means any
 	// type. This is what a chained traversal uses to resolve a relation whose
 	// declared target is a UNION of types: without it, a property reference

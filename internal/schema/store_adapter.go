@@ -30,10 +30,15 @@ type storeCounter struct {
 }
 
 // NewStoreCounter builds a [TypeCounter] whose counts run on ctx.
+//
+// The entity count is in stored rows across every face, so a family stored at
+// three faces counts three. The usage analysis only asks "none, few or many",
+// and a faced-only type must not read as unused, which a single-world count
+// would report.
 func NewStoreCounter(ctx context.Context, st TypeCounts) TypeCounter {
 	return &storeCounter{
 		countEntities: func(entityType string) int {
-			n, _ := st.CountEntities(ctx, store.EntityQuery{Type: entityType})
+			n, _ := st.CountEntities(ctx, store.EntityQuery{Type: entityType, Faces: store.AllFaces()})
 			return n
 		},
 		countRelations: func(relationType string) int {

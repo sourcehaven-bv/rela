@@ -151,6 +151,7 @@ func TestReconcileQuotedNameIsUsed(t *testing.T) {
 	plan := explain(t, s, store.GraphQuery{
 		EntityType: "task",
 		Props:      []store.PropPredicate{{Property: "it's a.b", Op: store.PropEqual, Value: "x", Scalar: true}},
+		Faces:      store.InWorld(store.DefaultWorld()),
 	})
 	require.Contains(t, plan, "rela_derived_query__")
 }

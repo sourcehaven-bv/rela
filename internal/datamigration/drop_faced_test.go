@@ -48,7 +48,7 @@ func TestDropEntities_FacedType(t *testing.T) {
 		t.Fatalf("apply: %v", err)
 	}
 
-	q := store.EntityQuery{IDs: []string{"PER-F"}, AllStates: true}
+	q := store.EntityQuery{IDs: []string{"PER-F"}, Faces: store.AllFaces()}
 	for e, err := range st.ListEntities(ctx, q) {
 		if err != nil {
 			t.Fatal(err)

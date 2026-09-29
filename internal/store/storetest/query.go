@@ -17,7 +17,7 @@ func RunQueryTests(t *testing.T, f Factory) {
 		seedEntities(t, s)
 
 		var ids []string
-		for e, err := range s.ListEntities(ctx(), store.EntityQuery{}) {
+		for e, err := range s.ListEntities(ctx(), store.EntityQuery{Faces: store.InWorld(store.DefaultWorld())}) {
 			require.NoError(t, err)
 			ids = append(ids, e.ID)
 		}
@@ -29,7 +29,7 @@ func RunQueryTests(t *testing.T, f Factory) {
 		seedEntities(t, s)
 
 		var ids []string
-		for e, err := range s.ListEntities(ctx(), store.EntityQuery{Type: "feature"}) {
+		for e, err := range s.ListEntities(ctx(), store.EntityQuery{Type: "feature", Faces: store.InWorld(store.DefaultWorld())}) {
 			require.NoError(t, err)
 			ids = append(ids, e.ID)
 		}
@@ -41,7 +41,7 @@ func RunQueryTests(t *testing.T, f Factory) {
 		seedEntities(t, s)
 
 		var ids []string
-		for e, err := range s.ListEntities(ctx(), store.EntityQuery{IDs: []string{"FEAT-001", "REQ-001"}}) {
+		for e, err := range s.ListEntities(ctx(), store.EntityQuery{IDs: []string{"FEAT-001", "REQ-001"}, Faces: store.InWorld(store.DefaultWorld())}) {
 			require.NoError(t, err)
 			ids = append(ids, e.ID)
 		}
@@ -53,7 +53,7 @@ func RunQueryTests(t *testing.T, f Factory) {
 		seedEntities(t, s)
 
 		var ids []string
-		q := store.EntityQuery{Type: "feature", IDs: []string{"FEAT-001", "REQ-001"}}
+		q := store.EntityQuery{Type: "feature", IDs: []string{"FEAT-001", "REQ-001"}, Faces: store.InWorld(store.DefaultWorld())}
 		for e, err := range s.ListEntities(ctx(), q) {
 			require.NoError(t, err)
 			ids = append(ids, e.ID)
@@ -66,15 +66,15 @@ func RunQueryTests(t *testing.T, f Factory) {
 		s := f(t)
 		seedEntities(t, s)
 
-		n, err := s.CountEntities(ctx(), store.EntityQuery{})
+		n, err := s.CountEntities(ctx(), store.EntityQuery{Faces: store.InWorld(store.DefaultWorld())})
 		require.NoError(t, err)
 		assert.Equal(t, 4, n)
 
-		n, err = s.CountEntities(ctx(), store.EntityQuery{Type: "feature"})
+		n, err = s.CountEntities(ctx(), store.EntityQuery{Type: "feature", Faces: store.InWorld(store.DefaultWorld())})
 		require.NoError(t, err)
 		assert.Equal(t, 3, n)
 
-		n, err = s.CountEntities(ctx(), store.EntityQuery{Type: "nonexistent"})
+		n, err = s.CountEntities(ctx(), store.EntityQuery{Type: "nonexistent", Faces: store.InWorld(store.DefaultWorld())})
 		require.NoError(t, err)
 		assert.Equal(t, 0, n)
 	})

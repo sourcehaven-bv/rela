@@ -30,7 +30,7 @@ func (s *Services) ScheduledForEachEntities(
 		return nil, 0, errors.New("appbuild: scheduled for_each has no visible reader")
 	}
 	ids = make([]string, 0, limit)
-	q := store.EntityQuery{Type: entityType, World: s.worlds.Default()}
+	q := store.EntityQuery{Type: entityType, Faces: store.InWorld(s.worlds.Default())}
 	for e, listErr := range deps.VisibleReader.ListEntities(ctx, q) {
 		if listErr != nil {
 			return nil, 0, listErr
@@ -65,7 +65,7 @@ func (s *Services) ScheduledForEachPrincipal(ctx context.Context, entityID strin
 	// reads the family's headers: a faced user type has no zero-face row
 	// (DEC-NPZICR).
 	var typ string
-	q := store.EntityQuery{IDs: []string{entityID}, AllStates: true}
+	q := store.EntityQuery{IDs: []string{entityID}, Faces: store.AllFaces()}
 	for h, err := range store.ListEntityHeaders(ctx, s.store, q) {
 		if err != nil {
 			return "", err

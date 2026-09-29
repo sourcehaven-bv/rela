@@ -494,7 +494,7 @@ func TestQueryBudget_EdgeWarningsAreSizeIndependent(t *testing.T) {
 	small, large, detail := readsFor(t, func(t *testing.T, app *App, d *acl.Declarative, ctx context.Context) {
 		t.Helper()
 		var data []v1.ResourceIdentifier
-		for e, err := range app.store.ListEntities(ctx, store.EntityQuery{Type: "ticket"}) {
+		for e, err := range app.store.ListEntities(ctx, store.EntityQuery{Type: "ticket", Faces: store.InWorld(store.DefaultWorld())}) {
 			if err != nil {
 				t.Fatal(err)
 			}

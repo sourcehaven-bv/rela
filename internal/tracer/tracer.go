@@ -240,7 +240,7 @@ func FamilyFaces(faces []entity.Face) []entity.Face {
 // node reads every stored face header of id in one query.
 func (t *GenericTracer) node(ctx context.Context, id string) (Node, bool) {
 	var headers []store.EntityHeader
-	q := store.EntityQuery{IDs: []string{id}, AllStates: true}
+	q := store.EntityQuery{IDs: []string{id}, Faces: store.AllFaces()}
 	for h, err := range store.ListEntityHeaders(ctx, t.r, q) {
 		if err != nil {
 			return Node{}, false
@@ -441,7 +441,7 @@ func clonePath(p []PathStep) []PathStep {
 // Headers, not entities: nothing here reads a body (TKT-1ESTYJ).
 func (t *GenericTracer) FindOrphans(ctx context.Context) ([]Orphan, error) {
 	fams := make(map[string]Family)
-	for h, err := range store.ListEntityHeaders(ctx, t.r, store.EntityQuery{AllStates: true}) {
+	for h, err := range store.ListEntityHeaders(ctx, t.r, store.EntityQuery{Faces: store.AllFaces()}) {
 		if err != nil {
 			return nil, err
 		}
@@ -456,7 +456,7 @@ func (t *GenericTracer) FindOrphans(ctx context.Context) ([]Orphan, error) {
 		ids[i] = o.ID
 	}
 	byID := make(map[string][]store.EntityHeader, len(ids))
-	for h, err := range store.ListEntityHeaders(ctx, t.r, store.EntityQuery{IDs: ids, AllStates: true}) {
+	for h, err := range store.ListEntityHeaders(ctx, t.r, store.EntityQuery{IDs: ids, Faces: store.AllFaces()}) {
 		if err != nil {
 			return nil, err
 		}

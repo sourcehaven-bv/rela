@@ -236,7 +236,7 @@ func TestWebhookConflict_ConcurrentCreateLosesOnUnique(t *testing.T) {
 
 	// The database must hold exactly one incident for the key.
 	var stored int
-	for e, listErr := range st.ListEntities(ctx, store.EntityQuery{Type: "incident"}) {
+	for e, listErr := range st.ListEntities(ctx, store.EntityQuery{Type: "incident", Faces: store.InWorld(store.DefaultWorld())}) {
 		require.NoError(t, listErr)
 		if e.Properties["alert_key"] == key {
 			stored++
@@ -326,7 +326,7 @@ func TestWebhookConflict_LoserRefindsAndProceeds(t *testing.T) {
 
 	// Exactly one entity, and every delivery reports the same id.
 	var stored []*entity.Entity
-	for e, listErr := range st.ListEntities(ctx, store.EntityQuery{Type: "incident"}) {
+	for e, listErr := range st.ListEntities(ctx, store.EntityQuery{Type: "incident", Faces: store.InWorld(store.DefaultWorld())}) {
 		require.NoError(t, listErr)
 		stored = append(stored, e)
 	}

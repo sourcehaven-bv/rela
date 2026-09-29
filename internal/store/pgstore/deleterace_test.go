@@ -80,7 +80,7 @@ func TestDeleteEntity_RacingStateCreateIsAtomicPerFamily(t *testing.T) {
 		// is legitimate: the delete won (nothing left), or the create won the
 		// lock and re-established the family (its own rows, intact).
 		var left []string
-		for e, err := range s.ListEntities(ctx, store.EntityQuery{IDs: []string{id}, AllStates: true}) {
+		for e, err := range s.ListEntities(ctx, store.EntityQuery{IDs: []string{id}, Faces: store.AllFaces()}) {
 			require.NoError(t, err)
 			left = append(left, e.ID+"@"+e.Face.String())
 		}

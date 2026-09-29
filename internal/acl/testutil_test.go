@@ -220,7 +220,9 @@ func (w *World) Visible(actor, entityType string) []string {
 			w.t.Fatalf("Visible(%q, %q): ReadQuery returned neither AllowAll, DenyAll, nor a Query — readQuery bug",
 				actor, entityType)
 		}
-		for e, err := range w.store.GraphQuery(w.ctx, *rqr.Query) {
+		q := *rqr.Query // a template: the caller chooses the face selection
+		q.Faces = store.AllFaces()
+		for e, err := range w.store.GraphQuery(w.ctx, q) {
 			if err != nil {
 				w.t.Fatalf("Visible(%q, %q): GraphQuery: %v", actor, entityType, err)
 			}
@@ -408,7 +410,7 @@ func (w *World) AssertAttribution(actor, entityID, role string, want ...acl.Sour
 func listAllOfType(ctx context.Context, t *testing.T, s store.Store, typ string) []*entity.Entity {
 	t.Helper()
 	var out []*entity.Entity
-	for e, err := range s.ListEntities(ctx, store.EntityQuery{Type: typ}) {
+	for e, err := range s.ListEntities(ctx, store.EntityQuery{Type: typ, Faces: store.InWorld(store.DefaultWorld())}) {
 		if err != nil {
 			t.Fatalf("listAllOfType(%q): %v", typ, err)
 		}

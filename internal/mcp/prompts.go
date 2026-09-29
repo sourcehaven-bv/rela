@@ -34,6 +34,7 @@ type promptHandler struct {
 	meta   *metamodel.Metamodel
 	tracer tracer.Tracer
 	types  typeResolver
+	world  store.WorldScope // [Deps.World]
 }
 
 func promptAnalyzeTraceability() *mcpgo.Prompt {
@@ -211,7 +212,7 @@ func (h promptHandler) handleSummarizeProjectPrompt(
 	var entityCounts strings.Builder
 	totalEntities := 0
 	for _, t := range entityTypes {
-		count, _ := st.CountEntities(ctx, store.EntityQuery{Type: t})
+		count, _ := st.CountEntities(ctx, store.EntityQuery{Type: t, Faces: store.InWorld(h.world)})
 		totalEntities += count
 		def, _ := meta.GetEntityDef(t)
 		label := t

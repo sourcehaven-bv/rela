@@ -172,11 +172,12 @@ type traversalGate interface {
 }
 
 // GateTraversal delegates to the request, which applies the row gate, the
-// field gate and the client ceiling per hop.
+// field gate and the client ceiling per hop, and reads each gated endpoint
+// in the request's world.
 func (g aclReadGate) GateTraversal(
 	ctx context.Context, candidateType string, hop acl.TraversalHop,
 ) (*store.RelationPredicate, error) {
-	return g.req.GateTraversal(ctx, candidateType, hop)
+	return g.req.GateTraversal(ctx, candidateType, worldScopeFrom(ctx), hop)
 }
 
 // GateTraversal under no ACL lowers the traversal ungated, matching this

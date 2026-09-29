@@ -985,6 +985,43 @@ func TestGantt_SubtreeDrillBoundsItsEdgeRead(t *testing.T) {
 	}
 }
 
+// A drill's store calls do not grow with the subtree's width: each closure
+// round is one query per source type, stamped with the request's world and
+// face ceiling (TKT-KQXVF7), never one per node.
+func TestGantt_SubtreeDrillQueryBudget(t *testing.T) {
+	calls := func(t *testing.T, children int) (int, string) {
+		t.Helper()
+		app := newGanttTestApp(t)
+		seedProject(app, "PRJ-A", "Root", nil)
+		for i := range children {
+			id := fmt.Sprintf("PRJ-C%03d", i)
+			seedProject(app, id, "Child", nil)
+			seedRelation(app, &entity.Relation{From: "PRJ-A", Type: "contains", To: id})
+			epic := fmt.Sprintf("EPIC-%03d", i)
+			seedEpic(app, epic, "Leaf", "2026-03-01", "2026-04-01")
+			seedRelation(app, &entity.Relation{From: id, Type: "has-epic", To: epic})
+		}
+		counting := storetest.NewCounting(app.gantt.store)
+		app.gantt.store = counting
+		rec := ganttGet(context.Background(), app, "plan?root=PRJ-A")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status %d: %s", rec.Code, rec.Body)
+		}
+		if n := len(decodeGantt(t, rec).Roots[0].Children); n != children {
+			t.Fatalf("drill returned %d children, want %d", n, children)
+		}
+		if c := counting.Calls(); c["GraphQuery"]+c["GraphQueryHeaders"] == 0 {
+			t.Fatalf("drill declined to the full build; the budget measures nothing (%s)", counting.String())
+		}
+		return counting.Reads(), counting.String()
+	}
+	small, detail := calls(t, 10)
+	large, _ := calls(t, 50)
+	if small != large {
+		t.Errorf("drill reads grow with subtree width: %d at 10 children, %d at 50 (%s)", small, large, detail)
+	}
+}
+
 // TestGantt_CycleMark pins the on_cycle:"mark" policy: a containment loop
 // renders in place with the back edge cut and the node it returns to flagged,
 // instead of blanking the view (error) or vanishing (prune).

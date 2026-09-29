@@ -308,7 +308,7 @@ func (s *renameFaceStep) Run(ctx context.Context, x *Exec) (StepResult, error) {
 	}
 
 	var moving []*entity.Entity
-	q := store.EntityQuery{Type: s.Entity, AllStates: true}
+	q := store.EntityQuery{Type: s.Entity, Faces: store.AllFaces()}
 	for e, err := range x.Store.ListEntities(ctx, q) {
 		if err != nil {
 			return res, err
@@ -1191,7 +1191,7 @@ func collectEntityFaces(
 	ctx context.Context, st store.Store, typ string,
 ) (ids []string, faces map[string][]*entity.Entity, err error) {
 	faces = map[string][]*entity.Entity{}
-	for e, err := range st.ListEntities(ctx, store.EntityQuery{Type: typ, AllStates: true}) {
+	for e, err := range st.ListEntities(ctx, store.EntityQuery{Type: typ, Faces: store.AllFaces()}) {
 		if err != nil {
 			return nil, nil, err
 		}

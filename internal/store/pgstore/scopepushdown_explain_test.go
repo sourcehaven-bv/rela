@@ -119,6 +119,7 @@ relations:
 		Related:    []store.DirectedRelation{{Incoming: hop.Incoming, Pred: *pred}},
 		OrderBy:    []store.OrderSpec{{Property: "title"}},
 		Limit:      50,
+		Faces:      store.InWorld(store.DefaultWorld()),
 	}
 	for _, countOnly := range []bool{false, true} {
 		sqlText, args := pgstore.BuildGraphQuerySQLForTest(q, countOnly)

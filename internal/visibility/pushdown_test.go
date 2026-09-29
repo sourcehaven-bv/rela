@@ -8,7 +8,9 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
 
 // countingRedactor records how many rows it redacted and strips "secret".
@@ -106,9 +108,9 @@ func TestListPushdown_QueryBranchUsesGraphQuery(t *testing.T) {
 	t.Parallel()
 	spy := seededSpy()
 	red := &countingRedactor{}
-	p := stubProvider{res: acl.ReadQueryResult{Query: &store.GraphQuery{EntityType: "ticket"}}}
+	p := stubProvider{res: acl.ReadQueryResult{Query: &store.GraphQuery{EntityType: "ticket", Faces: store.InWorld(store.DefaultWorld())}}}
 
-	seq, ok := listPushdown(context.Background(), p, spy, red.redact, store.EntityQuery{Type: "ticket"})
+	seq, ok := listPushdown(context.Background(), p, spy, red.redact, store.EntityQuery{Type: "ticket", Faces: store.InWorld(store.DefaultWorld())})
 	if !ok {
 		t.Fatal("pushdown declined a composable query")
 	}
@@ -141,7 +143,7 @@ func TestListPushdown_RedactsOnEveryBranch(t *testing.T) {
 		res  acl.ReadQueryResult
 	}{
 		{"AllowAll", acl.ReadQueryResult{AllowAll: true}},
-		{"Query", acl.ReadQueryResult{Query: &store.GraphQuery{EntityType: "ticket"}}},
+		{"Query", acl.ReadQueryResult{Query: &store.GraphQuery{EntityType: "ticket", Faces: store.InWorld(store.DefaultWorld())}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -149,7 +151,7 @@ func TestListPushdown_RedactsOnEveryBranch(t *testing.T) {
 			red := &countingRedactor{}
 			seq, ok := listPushdown(
 				context.Background(), stubProvider{res: tc.res}, spy, red.redact,
-				store.EntityQuery{Type: "ticket"})
+				store.EntityQuery{Type: "ticket", Faces: store.InWorld(store.DefaultWorld())})
 			if !ok {
 				t.Fatal("pushdown declined")
 			}
@@ -178,7 +180,7 @@ func TestListPushdown_DenyAllYieldsNothingWithoutTouchingTheStore(t *testing.T) 
 	red := &countingRedactor{}
 	seq, ok := listPushdown(
 		context.Background(), stubProvider{res: acl.ReadQueryResult{DenyAll: true}},
-		spy, red.redact, store.EntityQuery{Type: "ticket"})
+		spy, red.redact, store.EntityQuery{Type: "ticket", Faces: store.InWorld(store.DefaultWorld())})
 	if !ok {
 		t.Fatal("pushdown declined DenyAll")
 	}
@@ -206,7 +208,7 @@ func TestListPushdown_ScopeErrorFailsClosed(t *testing.T) {
 	boom := errors.New("gate down")
 	seq, ok := listPushdown(
 		context.Background(), stubProvider{err: boom}, spy, red.redact,
-		store.EntityQuery{Type: "ticket"})
+		store.EntityQuery{Type: "ticket", Faces: store.InWorld(store.DefaultWorld())})
 	if !ok {
 		t.Fatal("a scope error must be reported, not silently declined to the fallback")
 	}
@@ -228,14 +230,14 @@ func TestListPushdown_ScopeErrorFailsClosed(t *testing.T) {
 func TestListPushdown_DeclinesWhenNotApplicable(t *testing.T) {
 	t.Parallel()
 	red := &countingRedactor{}
-	q := store.EntityQuery{Type: "ticket"}
+	q := store.EntityQuery{Type: "ticket", Faces: store.InWorld(store.DefaultWorld())}
 	allow := stubProvider{res: acl.ReadQueryResult{AllowAll: true}}
 
 	if _, ok := listPushdown(context.Background(), nil, seededSpy(), red.redact, q); ok {
 		t.Error("pushdown ran without a provider")
 	}
 	if _, ok := listPushdown(
-		context.Background(), allow, seededSpy(), red.redact, store.EntityQuery{},
+		context.Background(), allow, seededSpy(), red.redact, store.EntityQuery{Faces: store.InWorld(store.DefaultWorld())},
 	); ok {
 		t.Error("pushdown ran for a type-less query; the ACL scope is composed per type")
 	}
@@ -245,5 +247,70 @@ func TestListPushdown_DeclinesWhenNotApplicable(t *testing.T) {
 		context.Background(), stubProvider{}, seededSpy(), red.redact, q,
 	); ok {
 		t.Error("pushdown accepted a zero ReadQueryResult instead of falling back")
+	}
+}
+
+// An AllFaces list through the pushdown, for a principal with a scoped,
+// face-restricted grant, returns exactly the face rows that satisfy the scope
+// and sit inside the grant's faces. This is the access delta of TKT-KQXVF7:
+// before face selections were required, the template ran in the default world
+// and a faced entity with no default row was never listed.
+func TestListPushdown_AllFacesScopedPrincipalGetsGrantedFaceRowsOnly(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st := memstore.New()
+	for _, e := range []*entity.Entity{
+		{ID: "POL-1", Type: "policy"},
+		{ID: "POL-2", Type: "policy", Face: "published"},
+		{ID: "POL-2", Type: "policy", Face: "draft"},
+		{ID: "POL-3", Type: "policy", Face: "published"},
+		{ID: "alice", Type: "user"},
+	} {
+		if err := st.CreateEntity(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, to := range []string{"POL-1", "POL-2"} {
+		if _, err := st.CreateRelation(ctx, "alice", "reviews", to, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	d, err := acl.NewDeclarative(&acl.Policy{
+		Roles:         map[string]acl.RoleDef{"reviewer": {Read: []string{"policy@published"}}},
+		RoleRelations: map[string]acl.RoleRelationDef{"reviews": {Confers: "reviewer"}},
+	}, acl.NewStoreGraph(st), st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := d.ForPrincipal(principal.Principal{User: "alice", Tool: principal.ToolDataEntry})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rqr := req.ReadQuery(ctx, "policy")
+	if rqr.Query == nil {
+		t.Fatalf("want a scoped verdict, got %+v", rqr)
+	}
+	identity := func(_ context.Context, e *entity.Entity) *entity.Entity { return e }
+	seq, ok := listPushdown(ctx, stubProvider{res: rqr}, st, identity,
+		store.EntityQuery{Type: "policy", Faces: store.AllFaces()})
+	if !ok {
+		t.Fatal("pushdown declined a composable query")
+	}
+	rows, err := drain(t, seq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, e := range rows {
+		got = append(got, e.ID+"@"+e.Face.String())
+	}
+	if len(got) != 1 || got[0] != "POL-2@published" {
+		t.Fatalf("rows = %v, want [POL-2@published]: POL-1 has no granted face, POL-2@draft is "+
+			"outside the grant's faces, POL-3 is outside the scope", got)
+	}
+	// The ACL result is a template: it carries no selection, and the
+	// pushdown stamps its own onto a copy.
+	if !rqr.Query.Faces.IsZero() {
+		t.Fatalf("template left with selection %s after pushdown", rqr.Query.Faces)
 	}
 }

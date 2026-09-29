@@ -118,7 +118,7 @@ type storeCounts struct {
 func storeSnapshot(t *testing.T, st store.Store) storeCounts {
 	t.Helper()
 	ctx := context.Background()
-	ec, err := st.CountEntities(ctx, store.EntityQuery{})
+	ec, err := st.CountEntities(ctx, store.EntityQuery{Faces: store.InWorld(store.DefaultWorld())})
 	if err != nil {
 		t.Fatalf("CountEntities: %v", err)
 	}

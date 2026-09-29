@@ -55,7 +55,7 @@ func (s *FSStore) ListEntities(_ context.Context, q store.EntityQuery) iter.Seq2
 	}
 	s.mu.RUnlock()
 
-	matches = keepPrimes(q.World, matches)
+	matches = keepPrimes(storeutil.RankingWorld(q), matches)
 
 	return func(yield func(*entity.Entity, error) bool) {
 		for _, m := range matches {
@@ -87,14 +87,14 @@ func (s *FSStore) ListEntitiesPage(_ context.Context, q store.EntityQuery) (stor
 	matches := func(id string) bool { return matchEntityQuery(s.entities[id], q, idSet) }
 
 	var keys storeutil.PageKeys
-	if q.World.IsDefaultWorld() {
+	if storeutil.RankingWorld(q).IsDefaultWorld() {
 		keys = storeutil.PaginateSortedKeysFunc(
 			s.entityOrder, cursorKey, q.Limit, matches, storeutil.CompareStateKeys)
 	} else {
 		// The world path buffers ONE family at a time and counts PRIMES
 		// against the limit — see storeutil.PaginateWorldPrimes.
 		keys = storeutil.PaginateWorldPrimes(
-			s.entityOrder, cursorKey, q.Limit, q.World, matches,
+			s.entityOrder, cursorKey, q.Limit, storeutil.RankingWorld(q), matches,
 			func(key string) (storeutil.WorldCandidate, bool) {
 				m, ok := s.entities[key]
 				if !ok {
@@ -158,7 +158,7 @@ func (s *FSStore) CountEntities(_ context.Context, q store.EntityQuery) (int, er
 	// The default world resolves every row to itself, so counting needs
 	// no buffer — and this is the common path for a project that never
 	// declares a face, which must stay allocation-free.
-	if q.World.IsDefaultWorld() {
+	if storeutil.RankingWorld(q).IsDefaultWorld() {
 		n := 0
 		for _, meta := range s.entities {
 			if matchEntityQuery(meta, q, idSet) {
@@ -176,7 +176,7 @@ func (s *FSStore) CountEntities(_ context.Context, q store.EntityQuery) (int, er
 	}
 	// Counts must be world-scoped, not raw: an unscoped tally tells a
 	// published-world surface how many unpublished drafts exist.
-	return len(keepPrimes(q.World, matches)), nil
+	return len(keepPrimes(storeutil.RankingWorld(q), matches)), nil
 }
 
 // keepPrimes resolves a world over matched index metadata, returning

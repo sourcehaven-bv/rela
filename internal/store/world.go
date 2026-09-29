@@ -8,11 +8,9 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 )
 
-// ErrInvalidQuery reports a query whose fields contradict each other, as
-// opposed to one that simply matches nothing. Today the only such pair is
-// AllStates together with a non-default World on an [EntityQuery]: raw
-// storage truth and world resolution are opposite intents, and silently
-// picking one is a precedence rule nobody remembers.
+// ErrInvalidQuery reports a query that cannot be answered as built, as
+// opposed to one that simply matches nothing: today, an [EntityQuery] or
+// [GraphQuery] whose [FaceSelection] is the zero value (TKT-KQXVF7).
 var ErrInvalidQuery = errors.New("store: invalid query")
 
 // Fallback is what a world does with an entity whose type declares

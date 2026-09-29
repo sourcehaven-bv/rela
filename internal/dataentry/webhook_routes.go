@@ -401,12 +401,15 @@ func (h *webhookRouter) findTarget(
 		want[prop] = value
 	}
 
-	reader := h.write.luaDeps().VisibleReader
+	deps := h.write.luaDeps()
+	reader := deps.VisibleReader
 	if reader == nil {
 		return nil, errors.New("dataentry: webhook: no visible reader configured")
 	}
 
-	for e, listErr := range reader.ListEntities(ctx, store.EntityQuery{Type: hook.Find.Type}) {
+	for e, listErr := range reader.ListEntities(ctx, store.EntityQuery{
+		Type: hook.Find.Type, Faces: store.InWorld(deps.World),
+	}) {
 		if listErr != nil {
 			return nil, fmt.Errorf("webhook find: %w", listErr)
 		}

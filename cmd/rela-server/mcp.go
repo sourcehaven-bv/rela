@@ -141,6 +141,7 @@ func remoteMCPDeps(svc *appbuild.Services, host dataentry.MCPHost) relamcp.Deps 
 		Watcher:       noopWatcher{},
 		ProjectRoot:   svc.Paths().Root,
 		Attachments:   remoteAttachmentDeps(svc, host),
+		World:         reads.LuaReads.World,
 	}
 	if reads.Traversals != nil {
 		deps.Traversals = reads.Traversals

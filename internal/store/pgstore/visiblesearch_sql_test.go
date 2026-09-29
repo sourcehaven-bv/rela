@@ -59,6 +59,7 @@ func TestBuildVisibleSearchSQL_Shape(t *testing.T) {
 				Endpoints: []string{"PRJ-1"}, OfTypes: []string{"belongs-to"},
 				InheritThrough: []string{"member-of"}, Depth: 2,
 			},
+			Faces: store.InWorld(store.DefaultWorld()),
 		}
 	}
 

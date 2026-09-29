@@ -61,7 +61,8 @@ func reconcile(t *testing.T, s *sqlitestore.Store, specs []store.DerivedObjectSp
 }
 
 // The endpoint closure walks relations by from_id through the primary key,
-// once per step, rather than scanning the table each iteration.
+// once per step, rather than scanning the table each iteration. The step
+// follows identity edges only (from_face = ”), which the key also serves.
 func TestGraphQueryExplainClosureUsesRelationIndex(t *testing.T) {
 	s := open(t)
 	seed(t, s, func(v store.Store) {
@@ -82,8 +83,9 @@ func TestGraphQueryExplainClosureUsesRelationIndex(t *testing.T) {
 			Endpoints: []string{"alice"}, OfTypes: []string{"owns"},
 			InheritThrough: []string{"member-of"}, Depth: 5,
 		},
+		Faces: store.InWorld(store.DefaultWorld()),
 	})
-	require.Contains(t, plan, "SEARCH r USING COVERING INDEX sqlite_autoindex_relations_1 (from_id=?)",
+	require.Contains(t, plan, "SEARCH r USING COVERING INDEX sqlite_autoindex_relations_1 (from_id=? AND from_face=?",
 		"the closure step does not walk relations by from_id")
 	requireNoTableScan(t, plan)
 }
@@ -103,6 +105,7 @@ func TestGraphQueryExplainUsesDerivedStaticQueryIndex(t *testing.T) {
 	plan := explain(t, s, store.GraphQuery{
 		EntityType: "task",
 		Props:      []store.PropPredicate{{Property: "status", Op: store.PropEqual, Value: "open", Scalar: true}},
+		Faces:      store.InWorld(store.DefaultWorld()),
 	})
 	require.Contains(t, plan, "rela_derived_query__")
 }
@@ -127,6 +130,7 @@ func TestGraphQueryExplainPagedListUsesDerivedListIndex(t *testing.T) {
 		Props:      []store.PropPredicate{{Property: "status", Op: store.PropEqual, Value: "open", Scalar: true}},
 		OrderBy:    []store.OrderSpec{{Property: "due"}},
 		Limit:      25,
+		Faces:      store.InWorld(store.DefaultWorld()),
 	})
 	require.Contains(t, plan, "rela_derived_list__")
 	require.NotContains(t, plan, "TEMP B-TREE", "the page sorts instead of walking the index")
@@ -152,6 +156,7 @@ func TestGraphQueryExplainRankedListUsesDerivedListIndex(t *testing.T) {
 		EntityType: "task",
 		OrderBy:    []store.OrderSpec{{Property: "stage", Values: values}},
 		Limit:      25,
+		Faces:      store.InWorld(store.DefaultWorld()),
 	})
 	require.Contains(t, plan, "rela_derived_list__")
 	require.NotContains(t, plan, "TEMP B-TREE")
@@ -203,6 +208,7 @@ relations:
 				Props:      []store.PropPredicate{{Property: "status", Op: store.PropEqual, Value: "rare", Scalar: true}},
 			},
 		},
+		Faces: store.InWorld(store.DefaultWorld()),
 	})
 	requireNoTableScan(t, plan)
 }
@@ -250,6 +256,7 @@ relations:
 				Props:      []store.PropPredicate{{Property: "status", Op: store.PropEqual, Value: "rare", Scalar: true}},
 			},
 		},
+		Faces: store.InWorld(store.DefaultWorld()),
 	}
 	requireNoTableScan(t, explain(t, s, q))
 
@@ -289,6 +296,7 @@ func TestInboundNamedEndpointExplainIsIndexOnly(t *testing.T) {
 			Endpoints:     []string{"PER-000007"},
 			EndpointMatch: &store.EndpointPredicate{EntityType: "persoon"},
 		},
+		Faces: store.InWorld(store.DefaultWorld()),
 	}
 	requireNoTableScan(t, explain(t, s, q))
 
@@ -347,6 +355,7 @@ func TestMatchingIDsEntityClosureSeedsFromThePage(t *testing.T) {
 			Endpoints: []string{"alice"}, OfTypes: []string{"owns"},
 			EntityInheritThrough: []string{"partOf"}, EntityDepth: 5,
 		},
+		Faces: store.InWorld(store.DefaultWorld()),
 	}
 	page := []string{"ITEM-000003", "ITEM-000009"}
 	plan, err := s.ExplainMatchingIDs(context.Background(), q, page)

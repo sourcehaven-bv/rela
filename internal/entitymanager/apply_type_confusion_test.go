@@ -133,7 +133,7 @@ assignments:
 
 	// A note by that ID must NOT have been created as a side effect.
 	notes := 0
-	for e, err := range st.ListEntities(context.Background(), store.EntityQuery{Type: "note"}) {
+	for e, err := range st.ListEntities(context.Background(), store.EntityQuery{Type: "note", Faces: store.InWorld(store.DefaultWorld())}) {
 		if err != nil {
 			continue
 		}

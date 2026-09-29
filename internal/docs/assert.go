@@ -234,7 +234,7 @@ func claimList(tbl *lua.LTable, key string) ([]string, error) {
 // stable and diffable.
 func (dr *docRuntime) entityIDs(typ string, scope store.WorldScope) ([]string, error) {
 	var ids []string
-	for e, err := range dr.store.ListEntities(dr.ctx, store.EntityQuery{Type: typ, World: scope}) {
+	for e, err := range dr.store.ListEntities(dr.ctx, store.EntityQuery{Type: typ, Faces: store.InWorld(scope)}) {
 		if err != nil {
 			return nil, err
 		}

@@ -242,7 +242,7 @@ func TestCascadeHostDelete_DeletesEveryFace(t *testing.T) {
 func familyFacesOf(t *testing.T, st store.Store, id string) []entity.Face {
 	t.Helper()
 	var faces []entity.Face
-	q := store.EntityQuery{IDs: []string{id}, AllStates: true}
+	q := store.EntityQuery{IDs: []string{id}, Faces: store.AllFaces()}
 	for e, err := range st.ListEntities(context.Background(), q) {
 		if err != nil {
 			t.Fatalf("ListEntities: %v", err)

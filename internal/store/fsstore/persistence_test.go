@@ -81,7 +81,7 @@ func TestPersistence_EntitiesSurviveReopen(t *testing.T) {
 	assert.Equal(t, "open", got.Properties["status"])
 	assert.Equal(t, "Some body text.", strings.TrimSpace(got.Content))
 
-	count, err := s2.CountEntities(ctx, store.EntityQuery{})
+	count, err := s2.CountEntities(ctx, store.EntityQuery{Faces: store.InWorld(store.DefaultWorld())})
 	require.NoError(t, err)
 	assert.Equal(t, 1, count)
 }
@@ -121,7 +121,7 @@ func TestPersistence_TypeChangeLeavesNoOrphanFile(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "artifact", got.Type, "type change lost on reopen")
 
-	count, err := s2.CountEntities(ctx, store.EntityQuery{})
+	count, err := s2.CountEntities(ctx, store.EntityQuery{Faces: store.InWorld(store.DefaultWorld())})
 	require.NoError(t, err)
 	assert.Equal(t, 1, count)
 }
@@ -262,7 +262,7 @@ We decided to use Go.
 	assert.Equal(t, "decision", got.Type)
 	assert.Equal(t, "accepted", got.Properties["status"])
 
-	count, err := s2.CountEntities(ctx, store.EntityQuery{})
+	count, err := s2.CountEntities(ctx, store.EntityQuery{Faces: store.InWorld(store.DefaultWorld())})
 	require.NoError(t, err)
 	assert.Equal(t, 1, count)
 }
@@ -317,7 +317,7 @@ func TestPersistence_ExternalEntityDeleted(t *testing.T) {
 	_, err := s2.GetEntity(ctx, "DEL-1")
 	require.ErrorIs(t, err, store.ErrNotFound)
 
-	count, err := s2.CountEntities(ctx, store.EntityQuery{})
+	count, err := s2.CountEntities(ctx, store.EntityQuery{Faces: store.InWorld(store.DefaultWorld())})
 	require.NoError(t, err)
 	assert.Equal(t, 1, count)
 }
@@ -390,7 +390,7 @@ func TestPersistence_DeleteSurvivedReopen(t *testing.T) {
 	_, err = s2.GetEntity(ctx, "REQ-1")
 	require.ErrorIs(t, err, store.ErrNotFound)
 
-	count, err := s2.CountEntities(ctx, store.EntityQuery{})
+	count, err := s2.CountEntities(ctx, store.EntityQuery{Faces: store.InWorld(store.DefaultWorld())})
 	require.NoError(t, err)
 	assert.Equal(t, 0, count)
 }

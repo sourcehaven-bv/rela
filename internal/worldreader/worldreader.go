@@ -32,8 +32,8 @@
 // Resolution reaches the store two ways, and both are required:
 //
 //   - as a DECORATOR, for the read paths that go through a reader; and
-//   - as a FIELD ON THE QUERY ([store.EntityQuery.World] /
-//     [store.GraphQuery.World]), because `internal/visibility`'s pushdown
+//   - as a FIELD ON THE QUERY ([store.EntityQuery.Faces] /
+//     [store.GraphQuery.Faces], an [store.InWorld] selection), because `internal/visibility`'s pushdown
 //     composes a GraphQuery and hands it straight to the raw store,
 //     reaching past every decorator.
 //

@@ -162,7 +162,7 @@ func personMeta() *metamodel.Metamodel {
 // entitiesOfType returns the mock workspace's entities of a given type.
 func (m *mockWorkspace) entitiesOfType(typ string) []*entity.Entity {
 	out := make([]*entity.Entity, 0)
-	for e, err := range m.store.ListEntities(context.Background(), store.EntityQuery{Type: typ}) {
+	for e, err := range m.store.ListEntities(context.Background(), store.EntityQuery{Type: typ, Faces: store.InWorld(store.DefaultWorld())}) {
 		if err != nil {
 			continue
 		}

@@ -24,6 +24,7 @@ type elevationBindings struct {
 	er       EntityReader           // nil: admin read methods present but raising
 	recorder ElevationRecorder      // nil: no post-closure read audit record
 	ctxFn    func() context.Context // the runtime's callerCtx
+	world    store.WorldScope       // ReadDeps.World: admin.list_entities lists in it
 }
 
 // luaBypassACL implements rela.bypass_acl(fn) (TKT-D8T148). It invokes fn with
@@ -59,7 +60,7 @@ func (b *elevationBindings) luaBypassACL(ls *lua.LState) int {
 	// reads accumulates the distinct elevated read bindings this closure
 	// used, for the single post-closure audit record (TKT-ACSBSA).
 	reads := &readUsage{}
-	admin := newElevatedHandle(ls, b.em, b.er, &live, reads, b.ctxFn)
+	admin := newElevatedHandle(ls, b.em, b.er, &live, reads, b.ctxFn, b.world)
 
 	// Invalidate on every exit path (normal return or Lua error). pcall keeps
 	// the runtime alive so we can flip `live` before re-raising.
@@ -119,7 +120,7 @@ func (b *elevationBindings) luaBypassACL(ls *lua.LState) int {
 // means misconfiguration".
 func newElevatedHandle(
 	ls *lua.LState, em Mutator, er EntityReader, live *bool, reads *readUsage,
-	ctxFn func() context.Context,
+	ctxFn func() context.Context, world store.WorldScope,
 ) *lua.LTable {
 	t := ls.NewTable()
 	guard := func(name string) bool {
@@ -165,7 +166,7 @@ func newElevatedHandle(
 	if em != nil {
 		registerElevatedWrites(ls, t, em, guard, ctxFn)
 	}
-	registerElevatedReads(ls, t, er, readGuard, ctxFn, reads)
+	registerElevatedReads(ls, t, er, readGuard, ctxFn, reads, world)
 	return t
 }
 
@@ -281,10 +282,10 @@ func registerElevatedWrites(
 // small and it keeps the two read paths physically separate.
 func registerElevatedReads(
 	ls *lua.LState, t *lua.LTable, er EntityReader, readGuard func(string) bool,
-	ctxFn func() context.Context, reads *readUsage,
+	ctxFn func() context.Context, reads *readUsage, world store.WorldScope,
 ) {
 	ls.SetField(t, "get_entity", ls.NewFunction(elevatedGetEntity(er, readGuard, ctxFn, reads)))
-	ls.SetField(t, "list_entities", ls.NewFunction(elevatedListEntities(er, readGuard, ctxFn, reads)))
+	ls.SetField(t, "list_entities", ls.NewFunction(elevatedListEntities(er, readGuard, ctxFn, reads, world)))
 	ls.SetField(t, "get_relations", ls.NewFunction(elevatedGetRelations(er, readGuard, ctxFn, reads)))
 }
 
@@ -339,7 +340,7 @@ func elevatedGetEntity(
 // (TKT-YWDGZD tracks paging for both).
 func elevatedListEntities(
 	er EntityReader, readGuard func(string) bool, ctxFn func() context.Context,
-	reads *readUsage,
+	reads *readUsage, world store.WorldScope,
 ) func(*lua.LState) int {
 	return func(s *lua.LState) int {
 		if !readGuard("list_entities") {
@@ -353,7 +354,7 @@ func elevatedListEntities(
 		reads.mark("list_entities")
 		result := s.NewTable()
 		idx := 1
-		for e, err := range er.ListEntities(ctxFn(), store.EntityQuery{Type: entityType}) {
+		for e, err := range er.ListEntities(ctxFn(), store.EntityQuery{Type: entityType, Faces: store.InWorld(world)}) {
 			if err != nil {
 				s.RaiseError("bypass_acl list_entities error: %s", err.Error())
 				return 0

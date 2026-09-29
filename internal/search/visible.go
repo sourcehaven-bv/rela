@@ -240,7 +240,7 @@ func (v *Visible) visibleHits(ctx context.Context, q Query, scope map[string]Typ
 		hits = append(hits, h)
 	}
 
-	allowed, err := v.allowedIDs(ctx, hits, scope)
+	allowed, err := v.allowedIDs(ctx, hits, scope, q.World)
 	if err != nil {
 		return nil, err
 	}
@@ -254,8 +254,11 @@ func (v *Visible) visibleHits(ctx context.Context, q Query, scope map[string]Typ
 }
 
 // allowedIDs resolves the scope verdict for every hit, batching
-// MatchingIDs probes per entity type.
-func (v *Visible) allowedIDs(ctx context.Context, hits []Hit, scope map[string]TypeScope) (map[string]bool, error) {
+// MatchingIDs probes per entity type. A scope query is an ACL template with no
+// face selection; it runs in the search's world, as pgstore evaluates it.
+func (v *Visible) allowedIDs(
+	ctx context.Context, hits []Hit, scope map[string]TypeScope, world store.WorldScope,
+) (map[string]bool, error) {
 	byType := make(map[string][]string)
 	for _, h := range hits {
 		byType[h.Type] = append(byType[h.Type], h.ID)
@@ -273,7 +276,9 @@ func (v *Visible) allowedIDs(ctx context.Context, hits []Hit, scope map[string]T
 			}
 			continue
 		}
-		m, err := v.gq.MatchingIDs(ctx, *ts.Query, ids)
+		probe := *ts.Query // copy: the scope is shared across requests
+		probe.Faces = store.InWorld(world)
+		m, err := v.gq.MatchingIDs(ctx, probe, ids)
 		if err != nil {
 			return nil, fmt.Errorf("%w: type %q: %w", ErrScope, typ, err)
 		}

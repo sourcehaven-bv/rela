@@ -311,7 +311,7 @@ func (svc analyzeService) analyzeDuplicates(ctx context.Context, meta *metamodel
 	// Every face row takes part, but rows of one id are never duplicates of
 	// each other: a group counts only when it spans two ids (BUG-95W7MV).
 	titleGroups := make(map[string][]store.EntityHeader)
-	for h, err := range svc.reads.ListEntityHeaders(ctx, store.EntityQuery{AllStates: true}) {
+	for h, err := range svc.reads.ListEntityHeaders(ctx, store.EntityQuery{Faces: store.AllFaces()}) {
 		if err != nil {
 			break
 		}
@@ -378,7 +378,7 @@ func (svc analyzeService) analyzeGaps(ctx context.Context, meta *metamodel.Metam
 	// absent; each id counts once (BUG-95W7MV).
 	prefixGroups := make(map[string][]int)
 	seen := make(map[string]bool)
-	for h, err := range svc.reads.ListEntityHeaders(ctx, store.EntityQuery{AllStates: true}) {
+	for h, err := range svc.reads.ListEntityHeaders(ctx, store.EntityQuery{Faces: store.AllFaces()}) {
 		if err != nil {
 			break
 		}
@@ -501,7 +501,7 @@ func (svc analyzeService) analyzeProperties(ctx context.Context, meta *metamodel
 	//
 	// Every face row is validated: each holds its own values, and a faced
 	// type has no default row (BUG-95W7MV).
-	for h, err := range svc.reads.ListEntityHeaders(ctx, store.EntityQuery{AllStates: true}) {
+	for h, err := range svc.reads.ListEntityHeaders(ctx, store.EntityQuery{Faces: store.AllFaces()}) {
 		if err != nil {
 			break
 		}

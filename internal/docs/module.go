@@ -94,7 +94,7 @@ func (dr *docRuntime) luaMD(ls *lua.LState) int {
 func (dr *docRuntime) luaCount(ls *lua.LState) int {
 	typ := argString(ls, "type")
 	n := 0
-	for _, err := range dr.store.ListEntities(dr.ctx, store.EntityQuery{Type: typ}) {
+	for _, err := range dr.store.ListEntities(dr.ctx, store.EntityQuery{Type: typ, Faces: store.AllFaces()}) {
 		if err != nil {
 			return dr.luaFail(ls, "count{type=%q}: %v", typ, err)
 		}

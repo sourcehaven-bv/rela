@@ -249,7 +249,7 @@ func TestResolver_WorldQueryCarriesTheFaceSet(t *testing.T) {
 			if (q.FaceIn == nil) != (tc.want == nil) || !slices.Equal(q.FaceIn, tc.want) {
 				t.Errorf("FaceIn = %#v, want %#v", q.FaceIn, tc.want)
 			}
-			if q.World.IsDefaultWorld() || !slices.Equal(q.IDs, []string{"POL-1"}) {
+			if w, ok := q.Faces.World(); !ok || w.IsDefaultWorld() || !slices.Equal(q.IDs, []string{"POL-1"}) {
 				t.Errorf("query = %+v, want the world and the one id", q)
 			}
 		})

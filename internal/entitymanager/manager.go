@@ -1684,7 +1684,7 @@ func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*e
 // IDs-scoped, never a full scan, like lookupFamily.
 func familyRows(ctx context.Context, st store.Store, id string) ([]*entity.Entity, error) {
 	var family []*entity.Entity
-	for e, err := range st.ListEntities(ctx, store.EntityQuery{IDs: []string{id}, AllStates: true}) {
+	for e, err := range st.ListEntities(ctx, store.EntityQuery{IDs: []string{id}, Faces: store.AllFaces()}) {
 		if err != nil {
 			return nil, err
 		}

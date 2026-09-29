@@ -126,7 +126,7 @@ func familyTypes(ctx context.Context, st store.Store, ids []string) map[string]s
 	if len(ids) == 0 {
 		return types
 	}
-	for h, err := range store.ListEntityHeaders(ctx, st, store.EntityQuery{IDs: ids, AllStates: true}) {
+	for h, err := range store.ListEntityHeaders(ctx, st, store.EntityQuery{IDs: ids, Faces: store.AllFaces()}) {
 		if err != nil {
 			break
 		}

@@ -146,9 +146,8 @@ func TestGanttNodes_KeepTheirFace(t *testing.T) {
 	}
 }
 
-// The drill closure selects no face, so on a faced source type it would load
-// faces the grant withholds. It declines to the full build, which reads with
-// the grant's face set.
+// The drill reads its root by id with no face, which a faced source type does
+// not have, so it declines to the full build (see ganttHasFacedSource).
 func TestGanttSubtree_DeclinesForFacedSources(t *testing.T) {
 	app := facedGanttApp(t)
 	s := app.schema.Current()

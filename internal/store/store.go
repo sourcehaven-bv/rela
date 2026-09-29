@@ -283,52 +283,30 @@ type EntityQuery struct {
 	Cursor string   // pagination cursor from a previous page (empty = start); ignored by ListEntities
 	Limit  int      // max entities per page (0 = no limit); ignored by ListEntities
 
-	// AllStates widens the query to every content state row, as RAW
-	// storage truth (TKT-DOFYR1). The zero value (false) returns only
-	// default-state rows — exactly today's semantics, so every existing
-	// construction site keeps its behavior unchanged.
-	//
-	// This is NOT world resolution and never will be. Worlds arrive in
-	// Step 2 (TKT-WAV8XP) as a separate compiled predicate; AllStates is
-	// the storage-inspection escape hatch for infrastructure that must
-	// see rows exactly as they are stored — undeclared-face
-	// detection, observer backfill (TKT-9OJ3S0) — not for read paths
-	// choosing which face of an entity to show. The one read-path use is
-	// visibility.Resolver.Family, which reads HEADERS only and drops every
-	// face the principal may not read before anything leaves it.
-	AllStates bool
+	// Faces is the CALLER's face selection: [InWorld], [AllFaces] or
+	// [AtFaces]. It is required; the zero value is [ErrInvalidQuery] on every
+	// backend (TKT-KQXVF7), because a default is how faced types went
+	// missing. It is caller-owned; [EntityQuery.FaceIn] is the ACL's.
+	Faces FaceSelection
 
 	// FaceIn narrows the result to these content states — a SET filter,
-	// semantically distinct from World's ranked chain (TKT-O7R2A1).
+	// semantically distinct from an InWorld selection's ranked chain
+	// (TKT-O7R2A1). It is AUTHORIZATION-owned: a role's face grants compile
+	// to it. [EntityQuery.Faces] is the caller's selection it composes with.
 	//
 	// Nil means every face, which is what every pre-faces caller passes, so
 	// the historical query shape is untouched.
 	//
-	// Composes WITH World rather than replacing it: the world picks each
-	// entity's prime by rank, and this narrows the CANDIDATES that ranking
-	// runs over. Applied before the rank, so an entity whose top-choice face
-	// is excluded falls through to the next candidate the caller may see
-	// rather than vanishing — the same "select, and fall back" the chain
-	// already means.
+	// Composes WITH every selection rather than replacing it: under InWorld
+	// the world picks each entity's prime by rank, and this narrows the
+	// CANDIDATES that ranking runs over. Applied before the rank, so an
+	// entity whose top-choice face is excluded falls through to the next
+	// candidate the caller may see rather than vanishing — the same "select,
+	// and fall back" the chain already means. Under AllFaces and AtFaces it
+	// is intersected with the rows the selection admits.
 	//
-	// The ACL read path is the first consumer: a role's face grants compile
-	// to this set. A backend that ignores it FAILS OPEN, so the conformance
-	// suite pins it.
+	// A backend that ignores it FAILS OPEN, so the conformance suite pins it.
 	FaceIn []entity.Face
-
-	// World resolves each entity to at most one of its content states —
-	// the "prime" — per the compiled per-type ranked chain and fallback
-	// verdict (TKT-WAV8XP). The ZERO VALUE is the default world: every
-	// entity contributes its default state, byte-identical to the
-	// pre-worlds behavior, which is what keeps every existing
-	// construction site unchanged and costs a faceless project
-	// nothing.
-	//
-	// World and AllStates are MUTUALLY EXCLUSIVE: AllStates is raw
-	// storage truth and world resolution is its opposite, so a query
-	// setting both is rejected with [ErrInvalidQuery] rather than
-	// silently resolved by a precedence rule nobody would remember.
-	World WorldScope
 }
 
 // Page holds a single page of results from a paginated list call.
@@ -636,7 +614,7 @@ type EntityHeader struct {
 	Type string
 
 	// Face identifies the content state this header describes; zero =
-	// default state (TKT-DOFYR1). Populated so AllStates header scans can
+	// default state (TKT-DOFYR1). Populated so AllFaces header scans can
 	// tell a family's rows apart.
 	Face entity.Face
 

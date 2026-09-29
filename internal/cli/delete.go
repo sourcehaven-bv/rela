@@ -98,7 +98,7 @@ func deleteTarget(ctx context.Context, st store.Store, ref entity.Ref) (*entity.
 	if !ref.Face.IsDefault() {
 		return st.GetEntityState(ctx, ref.ID, ref.Face)
 	}
-	q := store.EntityQuery{IDs: []string{ref.ID}, AllStates: true}
+	q := store.EntityQuery{IDs: []string{ref.ID}, Faces: store.AllFaces()}
 	for e, err := range st.ListEntities(ctx, q) {
 		if err != nil {
 			return nil, err

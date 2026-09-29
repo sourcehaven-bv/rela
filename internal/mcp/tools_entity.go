@@ -33,7 +33,7 @@ func (s *Server) handleListEntities(
 
 	d := snap.deps
 	types := snap.handlers.types
-	q := store.EntityQuery{}
+	q := store.EntityQuery{Faces: store.InWorld(d.World)}
 	if typeArg != "" {
 		resolved, _, err := types.resolveEntityType(typeArg)
 		if err != nil {
@@ -225,7 +225,7 @@ func hydrateHits(
 		ids = append(ids, h.ID)
 	}
 	found := make(map[entity.Ref]*entity.Entity, len(hits))
-	for e, err := range st.ListEntities(ctx, store.EntityQuery{IDs: ids, AllStates: true}) {
+	for e, err := range st.ListEntities(ctx, store.EntityQuery{IDs: ids, Faces: store.AllFaces()}) {
 		if err != nil {
 			return nil, err
 		}

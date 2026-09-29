@@ -244,7 +244,7 @@ func (imp *Importer) validateRelations(
 			known[ref.ID] = ed.Type
 		}
 	}
-	for h, err := range store.ListEntityHeaders(ctx, imp.store, store.EntityQuery{AllStates: true}) {
+	for h, err := range store.ListEntityHeaders(ctx, imp.store, store.EntityQuery{Faces: store.AllFaces()}) {
 		if err != nil {
 			return nil, fmt.Errorf("list entities: %w", err)
 		}

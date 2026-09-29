@@ -532,11 +532,11 @@ func ganttSubtreeVerdicts(
 }
 
 // ganttHasFacedSource reports whether any source type declares faces. The
-// drill closure (collectGanttRound) queries without a face selection, so on
-// a faced type it would load rows at every face, including faces the
-// principal's grant withholds, and pick one per id by read order. The full
-// build reads through scopedHeaders with the grant's face set, so the drill
-// declines to it (BUG-BZQQDP review). TKT-KQXVF7 gives the closure a world.
+// drill closure (collectGanttRound) reads in the request's world under the
+// grant's face ceiling, as the full build does, but the drill's ROOT is read
+// by id with no face, and a faced type has no such row: the drill would 404
+// a root the full build serves. It declines until that read names an
+// address (TKT-KQXVF7 entity flip).
 func ganttHasFacedSource(meta *metamodel.Metamodel, g dataentryconfig.Gantt) bool {
 	for typeName := range g.Sources {
 		if def, ok := meta.Entities[typeName]; ok && len(def.Faces) > 0 {
@@ -584,7 +584,10 @@ func (h *ganttHandler) buildGanttSubtree(
 		return nil, nil // global integrity policy needs the global build
 	}
 	if ganttHasFacedSource(s.Meta, g) {
-		return nil, nil // the closure is face-blind; see ganttHasFacedSource
+		return nil, nil // the root read has no face; see ganttHasFacedSource
+	}
+	if worldFromContext(ctx).blocksAllReads() {
+		return nil, nil // the full build answers a denied world with nothing
 	}
 	verdicts, verdictErr := ganttSubtreeVerdicts(ctx, g)
 	if verdicts == nil {
@@ -655,6 +658,10 @@ func (h *ganttHandler) collectGanttRound(
 				Depth:          ganttClosureRoundDepth,
 			},
 		}
+		// The same world and face ceiling the full build's scopedHeaders
+		// read applies, so both paths pick the same row per id.
+		rqr := readGateFromContext(ctx).ReadQuery(ctx, typeName)
+		q = stampScope(ctx, q, scopeRequest{Type: typeName, Faces: rqr.Faces})
 		// Headers: the gantt reads ids, types and properties, never a body
 		// (TKT-U9DYW4). Redaction happens here, exactly once per entity.
 		var fresh []*entity.Entity

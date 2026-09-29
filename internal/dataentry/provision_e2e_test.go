@@ -128,7 +128,7 @@ func provisionAppWithSubject(t *testing.T, subject string) (*App, store.Store) {
 func listPersonsBySub(t *testing.T, st store.Store) []*entity.Entity {
 	t.Helper()
 	var out []*entity.Entity
-	for e, err := range st.ListEntities(context.Background(), store.EntityQuery{Type: "person"}) {
+	for e, err := range st.ListEntities(context.Background(), store.EntityQuery{Type: "person", Faces: store.InWorld(store.DefaultWorld())}) {
 		if err != nil {
 			t.Fatalf("ListEntities: %v", err)
 		}
@@ -346,7 +346,7 @@ func TestProvision_ReservedSubjectNeverProvisioned(t *testing.T) {
 
 			// The load-bearing assertion: no person entity was minted carrying
 			// the reserved name as its join key.
-			for e, err := range st.ListEntities(context.Background(), store.EntityQuery{Type: "person"}) {
+			for e, err := range st.ListEntities(context.Background(), store.EntityQuery{Type: "person", Faces: store.InWorld(store.DefaultWorld())}) {
 				if err != nil {
 					t.Fatalf("ListEntities: %v", err)
 				}
@@ -387,7 +387,7 @@ func TestMaybeProvision_RefusesReservedSubjectDirectly(t *testing.T) {
 		t.Errorf("principal = %q, want the ctx returned unchanged",
 			principal.From(got).User)
 	}
-	for e, err := range st.ListEntities(context.Background(), store.EntityQuery{Type: "person"}) {
+	for e, err := range st.ListEntities(context.Background(), store.EntityQuery{Type: "person", Faces: store.InWorld(store.DefaultWorld())}) {
 		if err != nil {
 			t.Fatalf("ListEntities: %v", err)
 		}

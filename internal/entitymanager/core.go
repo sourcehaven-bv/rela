@@ -293,7 +293,7 @@ func generateID(ctx context.Context, deps Deps, entityType, prefix string, sprea
 // ErrEntityAlreadyExists (a create never overwrites), so a truncated
 // scan would surface as a spurious conflict rather than data loss — but
 // fail loudly here regardless, so the generator is never fed bad data.
-// AllStates, then deduped by bare id. Without it the scan sees only
+// AllFaces, then deduped by bare id. Without it the scan sees only
 // zero-coordinate rows, which a type declaring faces has none of — so the
 // generator saw an EMPTY id set for such a type and minted the same id for
 // every entity of it (BUG-HC6I2T). Counting a family once is what the query
@@ -302,7 +302,7 @@ func generateID(ctx context.Context, deps Deps, entityType, prefix string, sprea
 func collectAllIDs(ctx context.Context, st store.Store) ([]string, error) {
 	seen := make(map[string]struct{})
 	ids := make([]string, 0)
-	for e, err := range st.ListEntities(ctx, store.EntityQuery{AllStates: true}) {
+	for e, err := range st.ListEntities(ctx, store.EntityQuery{Faces: store.AllFaces()}) {
 		if err != nil {
 			return nil, err
 		}
@@ -574,7 +574,7 @@ func lookupFamily(ctx context.Context, st store.EntityLister, ref string) (entit
 		id = base
 	}
 	fam := entityFamily{id: id}
-	q := store.EntityQuery{IDs: []string{id}, AllStates: true}
+	q := store.EntityQuery{IDs: []string{id}, Faces: store.AllFaces()}
 	for h, err := range store.ListEntityHeaders(ctx, st, q) {
 		if err != nil {
 			return entityFamily{}, err

@@ -312,7 +312,7 @@ func buildVisibleSearchSQL(
 
 	var withParts, visParts []string
 	if !wildcardAllow {
-		withParts, visParts = buildVisibilityDisjunction(b, scope)
+		withParts, visParts = buildVisibilityDisjunction(b, scope, store.InWorld(q.World))
 		if len(visParts) == 0 {
 			return "", nil, false
 		}
@@ -385,8 +385,12 @@ func buildVisibleSearchSQL(
 // visibility clause: a bare type test for AllowAll entries, type test
 // + EXISTS chain for Query entries, nothing for deny entries. Scope
 // keys are visited in sorted order; CTE names get per-type prefixes
-// ("v<i>_in"/"v<i>_out") so two Query verdicts can't collide.
-func buildVisibilityDisjunction(b *sqlBuilder, scope map[string]search.TypeScope) (withParts, visParts []string) {
+// ("v<i>_in"/"v<i>_out") so two Query verdicts can't collide. sel is the
+// search's world: an EndpointMatch in a gate query that names no selection
+// of its own reads its endpoint there.
+func buildVisibilityDisjunction(
+	b *sqlBuilder, scope map[string]search.TypeScope, sel store.FaceSelection,
+) (withParts, visParts []string) {
 	types := make([]string, 0, len(scope))
 	for typ := range scope {
 		if typ != search.WildcardType {
@@ -409,12 +413,14 @@ func buildVisibilityDisjunction(b *sqlBuilder, scope map[string]search.TypeScope
 			var part strings.Builder
 			part.WriteString("(e.type = " + typeArg)
 			if ts.Query.HasInbound != nil {
-				w, ex := buildPredicateSQL(b, fmt.Sprintf("v%d_in", i), *ts.Query.HasInbound, typeArg, store.DirectionIncoming)
+				w, ex := buildPredicateSQL(b, fmt.Sprintf("v%d_in", i), *ts.Query.HasInbound, typeArg,
+					store.DirectionIncoming, sel)
 				withParts = append(withParts, w...)
 				part.WriteString(" AND EXISTS (" + ex + ")")
 			}
 			if ts.Query.HasOutbound != nil {
-				w, ex := buildPredicateSQL(b, fmt.Sprintf("v%d_out", i), *ts.Query.HasOutbound, typeArg, store.DirectionOutgoing)
+				w, ex := buildPredicateSQL(b, fmt.Sprintf("v%d_out", i), *ts.Query.HasOutbound, typeArg,
+					store.DirectionOutgoing, sel)
 				withParts = append(withParts, w...)
 				part.WriteString(" AND EXISTS (" + ex + ")")
 			}
@@ -422,12 +428,12 @@ func buildVisibilityDisjunction(b *sqlBuilder, scope map[string]search.TypeScope
 			// because skipping a field of the gate's query would widen it.
 			for j, rel := range ts.Query.Related {
 				w, ex := buildPredicateSQL(b, fmt.Sprintf("v%d_%s", i, relatedPrefix(j)), rel.Pred, typeArg,
-					relatedDirection(rel))
+					relatedDirection(rel), sel)
 				withParts = append(withParts, w...)
 				part.WriteString(" AND " + existsCond(ex, rel.Pred.Negate))
 			}
 			if len(ts.Query.Any) > 0 {
-				w, cond := buildAnySQL(b, fmt.Sprintf("v%d_any", i), ts.Query.Any, typeArg)
+				w, cond := buildAnySQL(b, fmt.Sprintf("v%d_any", i), ts.Query.Any, typeArg, sel)
 				withParts = append(withParts, w...)
 				part.WriteString(" AND " + cond)
 			}

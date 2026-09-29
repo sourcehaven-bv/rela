@@ -501,7 +501,8 @@ func visibleListByTypes(
 			// per-type — so this one path keeps the Go-side filter, which
 			// still runs over the result below.
 			out := make([]*entity.Entity, 0)
-			for e, err := range svc.Store.ListEntities(ctx, store.EntityQuery{World: worldScopeFrom(ctx)}) {
+			q := store.EntityQuery{Faces: store.InWorld(worldScopeFrom(ctx))}
+			for e, err := range svc.Store.ListEntities(ctx, q) {
 				if err != nil {
 					return nil, fmt.Errorf("%w: %w", errListLoad, err)
 				}
@@ -630,7 +631,9 @@ func listFromStoreByTypes(ctx context.Context, svc Services, types []string) []*
 	}
 	var out []*entity.Entity
 	for _, t := range types {
-		for e, err := range svc.Store.ListEntities(ctx, store.EntityQuery{Type: t}) {
+		for e, err := range svc.Store.ListEntities(ctx, store.EntityQuery{
+			Type: t, Faces: store.InWorld(worldScopeFrom(ctx)),
+		}) {
 			if err != nil {
 				return out
 			}
@@ -656,7 +659,7 @@ func listFromStoreByTypes(ctx context.Context, svc Services, types []string) []*
 // bigger slice.
 func listAllFromStore(ctx context.Context, svc Services) []*entity.Entity {
 	out := make([]*entity.Entity, 0)
-	for e, err := range svc.Store.ListEntities(ctx, store.EntityQuery{}) {
+	for e, err := range svc.Store.ListEntities(ctx, store.EntityQuery{Faces: store.InWorld(worldScopeFrom(ctx))}) {
 		if err != nil {
 			return out
 		}

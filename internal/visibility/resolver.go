@@ -204,7 +204,7 @@ func (r *Resolver) Family(ctx context.Context, entityType, id string) (Family, b
 // headersOf reads every stored face header of id. A failed read is logged
 // and answered as a miss, like every other resolver load (RR-FE1EGP).
 func (r *Resolver) headersOf(ctx context.Context, entityType, id string) ([]store.EntityHeader, bool) {
-	q := store.EntityQuery{IDs: []string{id}, AllStates: true}
+	q := store.EntityQuery{IDs: []string{id}, Faces: store.AllFaces()}
 	var out []store.EntityHeader
 	for h, err := range store.ListEntityHeaders(ctx, r.load, q) {
 		if err != nil {
@@ -280,7 +280,7 @@ func (r *Resolver) loadInWorld(
 	if !ok {
 		return nil, false
 	}
-	q := store.EntityQuery{IDs: []string{id}, World: scope, FaceIn: faceIn}
+	q := store.EntityQuery{IDs: []string{id}, Faces: store.InWorld(scope), FaceIn: faceIn}
 	for e, err := range r.load.ListEntities(ctx, q) {
 		if err != nil {
 			warnLoad("world", entityType, entity.Ref{ID: id}, err)

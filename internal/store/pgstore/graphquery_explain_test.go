@@ -72,6 +72,7 @@ func TestGraphQueryExplainUsesIndex(t *testing.T) {
 			InheritThrough: []string{"member-of"},
 			Depth:          5,
 		},
+		Faces: store.InWorld(store.DefaultWorld()),
 	}
 
 	plan := explainGraphQuery(t, pool, q)
@@ -117,6 +118,7 @@ func TestGraphQueryExplainUsesDerivedStaticQueryIndex(t *testing.T) {
 		Props: []store.PropPredicate{{
 			Property: "status", Op: store.PropEqual, Value: "open", Scalar: true,
 		}},
+		Faces: store.InWorld(store.DefaultWorld()),
 	})
 	t.Logf("plan:\n%s", plan)
 	if !strings.Contains(plan, "rela_derived_query__") {
@@ -171,6 +173,7 @@ func TestGraphQueryExplainPagedListUsesDerivedListIndex(t *testing.T) {
 		Props:      []store.PropPredicate{{Property: "status", Op: store.PropEqual, Value: "open", Scalar: true}},
 		OrderBy:    []store.OrderSpec{{Property: "due"}},
 		Limit:      25,
+		Faces:      store.InWorld(store.DefaultWorld()),
 	})
 	t.Logf("plan:\n%s", plan)
 	if !strings.Contains(plan, "rela_derived_list__") {
@@ -248,6 +251,7 @@ func TestEndpointMatchExplainUsesDerivedIndex(t *testing.T) {
 				}},
 			},
 		},
+		Faces: store.InWorld(store.DefaultWorld()),
 	})
 	t.Logf("plan:\n%s", plan)
 	if !strings.Contains(plan, "rela_derived_query__") {
@@ -313,6 +317,7 @@ func TestInboundNamedEndpointExplainIsIndexed(t *testing.T) {
 			Endpoints:     []string{"PER-000007"},
 			EndpointMatch: &store.EndpointPredicate{EntityType: "persoon"},
 		},
+		Faces: store.InWorld(store.DefaultWorld()),
 	}
 	plan := explainGraphQuery(t, pool, q)
 	t.Logf("plan:\n%s", plan)
@@ -407,6 +412,7 @@ relations:
 				}},
 			},
 		},
+		Faces: store.InWorld(store.DefaultWorld()),
 	}
 	plan := explainGraphQuery(t, pool, q)
 	t.Logf("plan:\n%s", plan)

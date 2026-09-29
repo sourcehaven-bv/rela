@@ -46,7 +46,7 @@ func RunGraphDifferential(t *testing.T, f Factory) {
 	ref := memstore.New()
 	seedGraphDiff(t, ref)
 	c := context.Background()
-	ids := []string{"GRP-1", "NOPE-1"}
+	ids := []string{"GRP-1", "NOPE-1", graphDiffFacedOnly}
 	for i := range graphDiffItems {
 		ids = append(ids, fmt.Sprintf("ITM-%02d", i))
 	}
@@ -110,7 +110,8 @@ func diffGraphQuery(c context.Context, ref, s store.Store, q store.GraphQuery, i
 	if wantMatched != gotMatched {
 		return fmt.Sprintf("GraphCount matched: naive %d, store %d", wantMatched, gotMatched)
 	}
-	knownTotalDivergence := len(q.Any) > 0 && !q.World.IsDefaultWorld() // BUG-OQQE8D
+	_, inWorld := q.Faces.World()
+	knownTotalDivergence := len(q.Any) > 0 && inWorld && !q.Faces.IsDefaultWorld() // BUG-OQQE8D
 	if wantTotal != gotTotal && !knownTotalDivergence {
 		return fmt.Sprintf("GraphCount total: naive %d, store %d", wantTotal, gotTotal)
 	}
@@ -257,7 +258,21 @@ func seedGraphDiff(t *testing.T, s store.Store) {
 			rel(fmt.Sprintf("GRP-%d", i%4+1), "owns", id, "")
 		}
 	}
+
+	// A family with no default row, joined to the graph by identity edges,
+	// and a content-tailed closure edge: the entity closure seeds per id and
+	// follows "" tails only (stage-2 ruling D5).
+	only := entity.New(graphDiffFacedOnly, "item")
+	only.Face = published
+	only.Properties = map[string]any{"status": "open", "title": "faced-only", "prio": 1}
+	require.NoError(t, s.CreateEntity(c, only))
+	rel(graphDiffFacedOnly, "childOf", "ITM-02", "")
+	rel(graphDiffFacedOnly, "implements", "GRP-1", "")
+	rel("ITM-03", "childOf", "ITM-10", draft)
 }
+
+// graphDiffFacedOnly is the seeded item that exists only at a named face.
+const graphDiffFacedOnly = "ITM-FO"
 
 func pick[T any](rng *rand.Rand, xs []T) T { return xs[rng.IntN(len(xs))] }
 
@@ -304,13 +319,44 @@ func genRelation(rng *rand.Rand, nested bool) store.RelationPredicate {
 			hop := genRelation(rng, true)
 			m.HasOutbound = &hop
 		}
+		if rng.IntN(3) == 0 {
+			// An endpoint's own selection overrides the query's; a faced
+			// endpoint type ("item") is where the modes differ.
+			m.Faces = genSelection(rng, []entity.Face{"", "draft", "published"})
+		}
 		p.EndpointMatch = m
 	}
 	return p
 }
 
+// genSelection picks one of the face selection modes: the default world,
+// three non-default worlds, every face, or a face set (possibly empty).
+func genSelection(rng *rand.Rand, faces []entity.Face) store.FaceSelection {
+	switch rng.IntN(6) {
+	case 1:
+		return store.InWorld(store.NewWorldScope(map[string]store.TypeResolution{
+			"item": {Chain: []entity.Face{"published"}, Fallback: store.FallbackDefaultState},
+		}))
+	case 2:
+		return store.InWorld(store.NewWorldScope(map[string]store.TypeResolution{
+			"item": {Chain: []entity.Face{"draft", "published"}, Fallback: store.FallbackExclude},
+		}))
+	case 3:
+		// A world that does not scope the queried type collapses to default.
+		return store.InWorld(store.NewWorldScope(map[string]store.TypeResolution{
+			"group": {Chain: []entity.Face{"draft"}, Fallback: store.FallbackExclude},
+		}))
+	case 4:
+		return store.AllFaces()
+	case 5:
+		return store.AtFaces(pickSome(rng, faces, 2)...)
+	default:
+		return store.InWorld(store.DefaultWorld())
+	}
+}
+
 func genGraphQuery(rng *rand.Rand) store.GraphQuery {
-	q := store.GraphQuery{EntityType: "item"}
+	q := store.GraphQuery{EntityType: "item"} // Faces is drawn below
 	for range rng.IntN(3) {
 		q.Props = append(q.Props, genProp(rng))
 	}
@@ -341,21 +387,7 @@ func genGraphQuery(rng *rand.Rand) store.GraphQuery {
 			q.Narrowing = append(q.Narrowing, store.NarrowBranch{Props: []store.PropPredicate{genProp(rng)}})
 		}
 	}
-	switch rng.IntN(4) {
-	case 1:
-		q.World = store.NewWorldScope(map[string]store.TypeResolution{
-			"item": {Chain: []entity.Face{"published"}, Fallback: store.FallbackDefaultState},
-		})
-	case 2:
-		q.World = store.NewWorldScope(map[string]store.TypeResolution{
-			"item": {Chain: []entity.Face{"draft", "published"}, Fallback: store.FallbackExclude},
-		})
-	case 3:
-		// A world that does not scope the queried type collapses to default.
-		q.World = store.NewWorldScope(map[string]store.TypeResolution{
-			"group": {Chain: []entity.Face{"draft"}, Fallback: store.FallbackExclude},
-		})
-	}
+	q.Faces = genSelection(rng, faces)
 	if rng.IntN(5) == 0 {
 		q.FaceIn = pickSome(rng, faces, 2)
 	}

@@ -55,7 +55,7 @@ func headerEntity(h store.EntityHeader) *entityPkg.Entity {
 }
 
 // loadRows reads the rows keys name, grouped by face: default-face rows in
-// one IDs query, each other face in one AllStates query narrowed to that
+// one IDs query, each other face in one AtFaces query at that
 // face on the way out. Returns only rows that exist.
 func loadRows(
 	ctx context.Context, st store.EntityLister, keys []entityPkg.Ref,
@@ -71,13 +71,10 @@ func loadRows(
 	}
 	out := make(map[entityPkg.Ref]*entityPkg.Entity, len(seen))
 	for face, ids := range byFace {
-		q := store.EntityQuery{IDs: ids, AllStates: !face.IsDefault()}
+		q := store.EntityQuery{IDs: ids, Faces: store.AtFaces(face)}
 		for e, err := range st.ListEntities(ctx, q) {
 			if err != nil {
 				return nil, err
-			}
-			if e.Face != face {
-				continue // AllStates over-returns the family's other faces
 			}
 			out[e.Ref()] = e
 		}

@@ -162,7 +162,8 @@ func buildSection(
 		section.Columns = append([]string(nil), declared.Columns...)
 	}
 	var tally sectionTally
-	for ent, err := range reader.ListEntities(ctx, store.EntityQuery{Type: declared.EntityType, World: world}) {
+	q := store.EntityQuery{Type: declared.EntityType, Faces: store.InWorld(world)}
+	for ent, err := range reader.ListEntities(ctx, q) {
 		if err != nil {
 			return mailrender.Section{}, sectionTally{}, err
 		}

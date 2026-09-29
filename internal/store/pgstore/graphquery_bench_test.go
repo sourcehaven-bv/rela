@@ -39,6 +39,7 @@ func BenchmarkGraphQuery(b *testing.B) {
 					InheritThrough: []string{"member-of"},
 					Depth:          5,
 				},
+				Faces: store.InWorld(store.DefaultWorld()),
 			}
 			b.ResetTimer()
 			for range b.N {

@@ -52,7 +52,7 @@ func (s *Store) ListEntitiesPage(
 	if q.Limit > 0 && len(items) > q.Limit {
 		items = items[:q.Limit]
 		last := items[q.Limit-1]
-		// The cursor is the STATE key so AllStates pagination resumes
+		// The cursor is the STATE key so AllFaces pagination resumes
 		// mid-family; for default-only queries it degenerates to the
 		// historical bare id.
 		next = storeutil.EncodeCursor(entity.FormatStateRef(last.ID, last.Face))
