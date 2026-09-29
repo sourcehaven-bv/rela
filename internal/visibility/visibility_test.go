@@ -15,10 +15,10 @@ import (
 // production PolicyReader.
 func TestPolicyReaderConformance(t *testing.T) {
 	visibilitytest.RunReaderTests(t, func(
-		t *testing.T, gate visibility.RowGate, redact visibility.FieldRedactor, get visibility.EntityGetter,
+		t *testing.T, gate visibility.RowGate, redact visibility.FieldRedactor, load visibility.Loader,
 	) visibility.Reader {
 		t.Helper()
-		r, err := visibility.NewPolicyReader(gate, redact, get)
+		r, err := visibility.NewPolicyReader(gate, redact, load)
 		if err != nil {
 			t.Fatalf("NewPolicyReader: %v", err)
 		}
@@ -57,7 +57,8 @@ func TestAllowAllReader(t *testing.T) {
 	}
 
 	t.Run("PassThroughGet", func(t *testing.T) {
-		e, ok, gerr := r.Get(ctx, "ticket", "T-1")
+		res, ok, gerr := r.Resolver().Address(ctx, visibility.World{}, "ticket", "T-1")
+		e := res.Entity
 		if gerr != nil || !ok {
 			t.Fatalf("Get = (ok=%v, err=%v)", ok, gerr)
 		}
@@ -66,8 +67,8 @@ func TestAllowAllReader(t *testing.T) {
 		}
 	})
 	t.Run("StoredTypeCheckStillHolds", func(t *testing.T) {
-		if e, ok, gerr := r.Get(ctx, "person", "T-1"); e != nil || ok || gerr != nil {
-			t.Fatalf("cross-type Get = (%v,%v,%v), want miss", e, ok, gerr)
+		if res, ok, gerr := r.Resolver().Address(ctx, visibility.World{}, "person", "T-1"); res.Entity != nil || ok || gerr != nil {
+			t.Fatalf("cross-type read = (%v,%v,%v), want miss", res.Entity, ok, gerr)
 		}
 	})
 	t.Run("PassThroughFilters", func(t *testing.T) {

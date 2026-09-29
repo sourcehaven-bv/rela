@@ -46,13 +46,13 @@ func TestReaders_ResolveAnAddressToItsFace(t *testing.T) {
 	unrestricted := visibility.Unrestricted(st)
 
 	type get func(addr string) (*entity.Entity, error)
-	viaReader := func(r visibility.Reader) get {
+	viaReader := func(r interface{ Resolver() *visibility.Resolver }) get {
 		return func(addr string) (*entity.Entity, error) {
-			e, ok, gerr := r.Get(ctx, "ticket", addr)
+			res, ok, gerr := r.Resolver().Address(ctx, visibility.World{}, "ticket", addr)
 			if gerr != nil || !ok {
 				return nil, gerr
 			}
-			return e, nil
+			return res.Entity, nil
 		}
 	}
 	for _, tc := range []struct {

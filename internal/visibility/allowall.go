@@ -2,7 +2,7 @@ package visibility
 
 import (
 	"context"
-	"errors"
+	"fmt"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -20,34 +20,25 @@ import (
 // analog of WriteDeps.ElevatedManager, TKT-D8T148). Wire it deliberately
 // and visibly.
 //
-// The one non-pass-through behavior it keeps is the [Reader.Get]
-// stored-type contract: a type-mismatched claim is a miss. That check is
-// part of Reader semantics (RR-SRZK6X), not of policy, so every
-// implementation enforces it identically.
+// Its single-entity read is [NewAllowAllResolver] over the same loader,
+// which keeps the one non-pass-through behavior: a type-mismatched claim is
+// a miss. That check is part of the read contract (RR-SRZK6X), not of
+// policy, so every implementation enforces it identically.
 type AllowAllReader struct {
-	get EntityGetter
+	res *Resolver
 }
 
-// NewAllowAllReader builds an AllowAllReader over get (required).
-func NewAllowAllReader(get EntityGetter) (*AllowAllReader, error) {
-	if get == nil {
-		return nil, errors.New("visibility: NewAllowAllReader: get must be non-nil")
-	}
-	return &AllowAllReader{get: get}, nil
-}
-
-// Get implements [Reader]: plain load plus the stored-type check.
-func (r *AllowAllReader) Get(ctx context.Context, entityType, addr string) (*entity.Entity, bool, error) {
-	id, face := parseAddress(addr)
-	e, err := r.get.GetEntityState(ctx, id, face)
+// NewAllowAllReader builds an AllowAllReader over load (required).
+func NewAllowAllReader(load Loader) (*AllowAllReader, error) {
+	res, err := NewAllowAllResolver(load)
 	if err != nil {
-		return nil, false, nil //nolint:nilerr // store miss == not-found, by design
+		return nil, fmt.Errorf("visibility: NewAllowAllReader: %w", err)
 	}
-	if e.Type != entityType {
-		return nil, false, nil
-	}
-	return e, true, nil
+	return &AllowAllReader{res: res}, nil
 }
+
+// Resolver returns the ungated single-entity read over this reader's loader.
+func (r *AllowAllReader) Resolver() *Resolver { return r.res }
 
 // Filter implements [Reader]: pass-through, input returned unchanged.
 func (r *AllowAllReader) Filter(_ context.Context, candidates []*entity.Entity) []*entity.Entity {

@@ -10,6 +10,7 @@ import (
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // WorldParam is the query parameter that selects a world on the read API:
@@ -83,6 +84,15 @@ func (w worldHandle) isDefault() bool { return !w.denied && w.scope.IsDefaultWor
 
 // blocksAllReads reports a handle that must yield nothing at all.
 func (w worldHandle) blocksAllReads() bool { return w.denied }
+
+// visibility converts the handle to the world a [visibility.Resolver] reads
+// in. It is the one place the request's world crosses into that package.
+func (w worldHandle) visibility() visibility.World {
+	if w.denied {
+		return visibility.DeniedWorld()
+	}
+	return visibility.WorldOf(w.scope)
+}
 
 type worldCtxKey struct{}
 

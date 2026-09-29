@@ -689,16 +689,23 @@ func HeaderOf(e *entity.Entity) EntityHeader {
 	}
 }
 
+// EntityLister is the one read [ListEntityHeaders] needs. Every
+// [EntityReader] satisfies it; it exists so a consumer holding a narrower
+// read surface than a whole reader can still list headers.
+type EntityLister interface {
+	ListEntities(ctx context.Context, q EntityQuery) iter.Seq2[*entity.Entity, error]
+}
+
 // ListEntityHeaders lists content-free entity headers from any reader.
 //
 // Uses the reader's native [HeaderReader] when it has one, so the body never
-// leaves the backend; otherwise falls back to [EntityReader.ListEntities] and
+// leaves the backend; otherwise falls back to [EntityLister.ListEntities] and
 // projects each row as it is yielded. The fallback bounds RETENTION (rows are
 // converted and released one at a time, never accumulated) but not transfer —
 // a backend without the capability still reads bodies off disk or the wire.
 // Do not describe the fallback as bounding I/O.
 func ListEntityHeaders(
-	ctx context.Context, r EntityReader, q EntityQuery,
+	ctx context.Context, r EntityLister, q EntityQuery,
 ) iter.Seq2[EntityHeader, error] {
 	if hr, ok := r.(HeaderReader); ok {
 		return hr.ListEntityHeaders(ctx, q)

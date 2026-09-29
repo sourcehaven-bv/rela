@@ -2,7 +2,7 @@ package visibility
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"log/slog"
 	"maps"
 	"slices"
@@ -13,61 +13,28 @@ import (
 
 // PolicyReader is the policy-enforcing [Reader]: row-gate first, then
 // field-redact a copy. Semantics are hoisted from dataentry's
-// visibleReader/copyVisibleProperties (TKT-N26KLB) with one deliberate
-// strengthening: the stored-type check lives here, in the package, never
-// in consumers (RR-SRZK6X).
+// visibleReader/copyVisibleProperties (TKT-N26KLB). Its single-entity read
+// is the [Resolver] it holds, built from the same gate and redactor, so the
+// list half and the single-entity half cannot disagree about policy.
 type PolicyReader struct {
 	gate   RowGate
 	redact FieldRedactor
-	get    EntityGetter
+	res    *Resolver
 }
 
 // NewPolicyReader builds a PolicyReader. All collaborators are required
 // (constructors-reject-nil rule).
-func NewPolicyReader(gate RowGate, redact FieldRedactor, get EntityGetter) (*PolicyReader, error) {
-	if gate == nil {
-		return nil, errors.New("visibility: NewPolicyReader: gate must be non-nil")
+func NewPolicyReader(gate RowGate, redact FieldRedactor, load Loader) (*PolicyReader, error) {
+	res, err := NewResolver(gate, redact, load)
+	if err != nil {
+		return nil, fmt.Errorf("visibility: NewPolicyReader: %w", err)
 	}
-	if redact == nil {
-		return nil, errors.New("visibility: NewPolicyReader: redact must be non-nil")
-	}
-	if get == nil {
-		return nil, errors.New("visibility: NewPolicyReader: get must be non-nil")
-	}
-	return &PolicyReader{gate: gate, redact: redact, get: get}, nil
+	return &PolicyReader{gate: gate, redact: redact, res: res}, nil
 }
 
-// Get implements [Reader]. Gate BEFORE load (hidden == missing, RR-NGMI),
-// then verify the stored type matches the caller's claim (RR-SRZK6X),
-// then redact a copy.
-func (r *PolicyReader) Get(ctx context.Context, entityType, addr string) (*entity.Entity, bool, error) {
-	id, face := parseAddress(addr)
-	ok, err := r.gate.PermitsRead(ctx, entityType, id)
-	if err != nil {
-		return nil, false, err
-	}
-	if !ok {
-		return nil, false, nil
-	}
-	e, gerr := r.get.GetEntityState(ctx, id, face)
-	if gerr != nil {
-		// Store miss == not-found; indistinguishable from a deny by design.
-		return nil, false, nil //nolint:nilerr // store miss == not-found, by design
-	}
-	if e.Type != entityType {
-		// The gate authorized the CLAIMED type; acting on a different
-		// stored type would be the BUG-ZWTDH9 escalation. Same
-		// indistinguishable miss.
-		return nil, false, nil
-	}
-	// The face gate, necessarily AFTER the load: an entity's face is not known
-	// until the row exists. Same indistinguishable miss, so a denied face
-	// cannot be used to discover which faces exist.
-	if !FaceAllowed(ctx, r.gate, entityType, e.Face) {
-		return nil, false, nil
-	}
-	return r.redacted(ctx, e), true, nil
-}
+// Resolver returns the single-entity read over this reader's gate, redactor
+// and loader.
+func (r *PolicyReader) Resolver() *Resolver { return r.res }
 
 // Filter implements [Reader]: batched row-gate per type (one
 // PermitsReadMany per distinct type, RR-FRK1 shape), fail-closed
@@ -158,7 +125,7 @@ func (r *PolicyReader) FilterRelations(ctx context.Context, rels []*entity.Relat
 				continue
 			}
 			seen[id] = true
-			e, err := r.get.GetEntityState(ctx, id, "")
+			e, err := r.res.load.GetEntityState(ctx, id, "")
 			if err != nil {
 				continue // missing endpoint: stays out of allowed → relation hidden
 			}
@@ -231,7 +198,7 @@ func (r *PolicyReader) redacted(ctx context.Context, e *entity.Entity) *entity.E
 // godoc for the copy semantics and the body-redaction TODO).
 //
 // Exported for consumers that hold an already-ROW-GATED, already-loaded
-// entity where a type-claimed [Reader.Get] doesn't fit — e.g. redacting a
+// entity where a type-claimed [Resolver] read doesn't fit — e.g. redacting a
 // visible neighbor before deriving its display title (the RR-5N4K35
 // title-leak class). Redact performs NO row-gate of its own: callers own
 // that decision.

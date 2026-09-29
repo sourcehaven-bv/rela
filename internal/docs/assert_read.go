@@ -42,7 +42,7 @@ import (
 //
 // # hidden{} is the load-bearing one
 //
-// A denied read is indistinguishable from a missing row: Reader.Get returns
+// A denied read is indistinguishable from a missing row: Resolver.Address returns
 // (nil, false, nil) for both. That is the security property, and it is also
 // what makes `hidden{}` easy to pass for the wrong reason — a typo'd id is
 // hidden too. So an id that exists in NO face is refused: a claim about
@@ -107,7 +107,7 @@ func luaReadClaim(dr *docRuntime, ls *lua.LState, wantVisible bool) int {
 	}
 
 	ctx := principal.With(dr.ctx, principal.Principal{User: who, Tool: principal.ToolCLI})
-	_, visible, gerr := reader.Get(ctx, typ, target)
+	_, visible, gerr := reader.Address(ctx, visibility.World{}, typ, target)
 	if gerr != nil {
 		return dr.luaFail(ls, "%s{id=%q}: the read gate errored: %v", verb, target, gerr)
 	}
@@ -134,9 +134,10 @@ func readTarget(id, face string) string {
 
 // readerFor builds the gated reader over the seeded graph.
 //
-// Mirrors appbuild.scriptEntityReader: a DeclarativeGate over the evaluator,
-// wrapped in a PolicyReader — the same two types the application wires, so a
-// claim fails if the row gate or the face gate stops being consulted.
+// A DeclarativeGate over the evaluator, read through a visibility.Resolver:
+// the same gate the application wires and the same single-entity read every
+// gated route uses, so a claim fails if the row gate or the face gate stops
+// being consulted.
 //
 // # Why the redactor is a no-op, and what that costs
 //
@@ -150,7 +151,7 @@ func readTarget(id, face string) string {
 // pass vacuously against a NopRedactor. Field redaction is asserted through
 // api{} instead, which goes over HTTP against a real server that has the
 // genuine redactor wired.
-func readerFor(dr *docRuntime) (visibility.Reader, error) {
+func readerFor(dr *docRuntime) (*visibility.Resolver, error) {
 	d, err := acl.NewDeclarative(dr.policy, acl.NewStoreGraph(dr.store), dr.store)
 	if err != nil {
 		return nil, fmt.Errorf("building the evaluator failed: %w", err)
@@ -159,7 +160,7 @@ func readerFor(dr *docRuntime) (visibility.Reader, error) {
 	if err != nil {
 		return nil, fmt.Errorf("building the read gate failed: %w", err)
 	}
-	reader, err := visibility.NewPolicyReader(gate, visibility.NopRedactor{}, dr.store)
+	reader, err := visibility.NewResolver(gate, visibility.NopRedactor{}, dr.store)
 	if err != nil {
 		return nil, fmt.Errorf("building the reader failed: %w", err)
 	}

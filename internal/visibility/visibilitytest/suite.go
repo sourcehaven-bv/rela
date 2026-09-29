@@ -37,10 +37,30 @@ import (
 
 // ReaderMaker builds the Reader under test from the suite's collaborators.
 // Production impls compose exactly these three; a wiring under test (PR
-// 2/3) adapts its own construction to this shape.
+// 2/3) adapts its own construction to this shape. The Reader must also
+// expose its single-entity read as `Resolver() *visibility.Resolver`, as
+// [visibility.PolicyReader] and [visibility.AllowAllReader] do.
 type ReaderMaker func(
-	t *testing.T, gate visibility.RowGate, redact visibility.FieldRedactor, get visibility.EntityGetter,
+	t *testing.T, gate visibility.RowGate, redact visibility.FieldRedactor, load visibility.Loader,
 ) visibility.Reader
+
+// resolving is the single-entity half a Reader under test exposes.
+type resolving interface {
+	Resolver() *visibility.Resolver
+}
+
+// getOne reads one entity through r's resolver in the default world.
+func getOne(
+	ctx context.Context, t *testing.T, r visibility.Reader, typ, id string,
+) (*entity.Entity, bool, error) {
+	t.Helper()
+	rr, ok := r.(resolving)
+	if !ok {
+		t.Fatalf("%T exposes no Resolver", r)
+	}
+	res, found, err := rr.Resolver().Address(ctx, visibility.World{}, typ, id)
+	return res.Entity, found, err
+}
 
 // TracerMaker builds the visibility-decorated tracer under test over the
 // suite's base tracer and collaborators.
@@ -238,8 +258,8 @@ func testHiddenEqualsMissing(t *testing.T, mk ReaderMaker) {
 	r := mk(t, w.gate, w.redact, w.store)
 	ctx := ctxFor("bob")
 
-	eHidden, okHidden, errHidden := r.Get(ctx, "secret", "SEC-1")
-	eMissing, okMissing, errMissing := r.Get(ctx, "secret", "SEC-404")
+	eHidden, okHidden, errHidden := getOne(ctx, t, r, "secret", "SEC-1")
+	eMissing, okMissing, errMissing := getOne(ctx, t, r, "secret", "SEC-404")
 	if eHidden != nil || okHidden || errHidden != nil {
 		t.Fatalf("hidden Get = (%v,%v,%v), want (nil,false,nil)", eHidden, okHidden, errHidden)
 	}
@@ -257,13 +277,13 @@ func testStoredTypeMismatch(t *testing.T, mk ReaderMaker) {
 	// CLAIM — the stored entity is a secret he cannot read. The in-package
 	// stored-type check must turn this into a miss (RR-SRZK6X, the
 	// BUG-ZWTDH9 read-side analog).
-	e, ok, err := r.Get(ctxFor("bob"), "project", "SEC-1")
+	e, ok, err := getOne(ctxFor("bob"), t, r, "project", "SEC-1")
 	if e != nil || ok || err != nil {
 		t.Fatalf("cross-type Get = (%v,%v,%v), want (nil,false,nil)", e, ok, err)
 	}
 	// Even a fully-privileged principal gets a miss on a wrong claim: the
 	// check is Reader semantics, not policy.
-	e, ok, err = r.Get(ctxFor("alice"), "project", "P-1")
+	e, ok, err = getOne(ctxFor("alice"), t, r, "project", "P-1")
 	if e != nil || ok || err != nil {
 		t.Fatalf("alice cross-type Get = (%v,%v,%v), want (nil,false,nil)", e, ok, err)
 	}
@@ -275,7 +295,7 @@ func testRedactsOnCopy(t *testing.T, mk ReaderMaker) {
 	r := mk(t, w.gate, w.redact, w.store)
 	beforeProps := maps.Clone(mustGet(t, w.store, "P-1").Properties)
 
-	e, ok, err := r.Get(ctxFor("bob"), "person", "P-1")
+	e, ok, err := getOne(ctxFor("bob"), t, r, "person", "P-1")
 	if err != nil || !ok {
 		t.Fatalf("Get person P-1 = (ok=%v, err=%v)", ok, err)
 	}
@@ -296,7 +316,7 @@ func testHiddenTitleFallback(t *testing.T, mk ReaderMaker) {
 	w := newWorld(t)
 	r := mk(t, w.gate, w.redact, w.store)
 
-	e, ok, err := r.Get(ctxFor("carol"), "person", "P-1")
+	e, ok, err := getOne(ctxFor("carol"), t, r, "person", "P-1")
 	if err != nil || !ok {
 		t.Fatalf("Get person P-1 = (ok=%v, err=%v)", ok, err)
 	}
@@ -410,7 +430,7 @@ func testBindScopesOperation(t *testing.T, mk ReaderMaker) {
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
-	e, ok, err := r.Get(bound, "person", "P-1")
+	e, ok, err := getOne(bound, t, r, "person", "P-1")
 	if err != nil || !ok {
 		t.Fatalf("Get through bound ctx = (ok=%v, err=%v)", ok, err)
 	}
@@ -434,7 +454,7 @@ func testUnstampedPrincipal(t *testing.T, mk ReaderMaker) {
 	r := mk(t, w.gate, w.redact, w.store)
 
 	// No principal on ctx → ForPrincipal rejects → gate error → deny.
-	e, ok, err := r.Get(context.Background(), "project", "PRJ-1")
+	e, ok, err := getOne(context.Background(), t, r, "project", "PRJ-1")
 	if err == nil {
 		t.Fatalf("unstamped Get = (%v,%v,nil), want gate error (fail closed, never open)", e, ok)
 	}
@@ -451,7 +471,7 @@ func testHideEverythingRedactor(t *testing.T, mk ReaderMaker) {
 	w := newWorld(t)
 	r := mk(t, w.gate, hideAllRedactor{}, w.store)
 
-	e, ok, err := r.Get(ctxFor("alice"), "person", "P-1")
+	e, ok, err := getOne(ctxFor("alice"), t, r, "person", "P-1")
 	if err != nil || !ok {
 		t.Fatalf("Get = (ok=%v, err=%v)", ok, err)
 	}
@@ -467,7 +487,7 @@ func testReaderNopParity(t *testing.T, mk ReaderMaker) {
 	ctx := context.Background() // parity must hold even without a principal
 
 	raw := mustGet(t, w.store, "P-1")
-	e, ok, err := r.Get(ctx, "person", "P-1")
+	e, ok, err := getOne(ctx, t, r, "person", "P-1")
 	if err != nil || !ok {
 		t.Fatalf("nop Get = (ok=%v, err=%v)", ok, err)
 	}
@@ -491,7 +511,7 @@ func testReaderRaceSmoke(t *testing.T, mk ReaderMaker) {
 		go func(user string) {
 			defer wg.Done()
 			ctx := ctxFor(user) // independent ctx per goroutine: fresh acl.Request per call
-			_, _, _ = r.Get(ctx, "person", "P-1")
+			_, _, _ = getOne(ctx, t, r, "person", "P-1")
 			_ = r.Filter(ctx, []*entity.Entity{mustGet(t, w.store, "PRJ-1")})
 		}([]string{"alice", "bob", "carol"}[i%3])
 	}
