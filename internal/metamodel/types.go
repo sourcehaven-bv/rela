@@ -1190,6 +1190,26 @@ func (s RelationScope) IsContent() bool { return s == ScopeContent }
 // against one that doesn't.
 func (s RelationScope) IsIdentity() bool { return !s.IsContent() }
 
+// IsContentScoped reports whether edges of relType attach to one state of
+// their source. It is the ONE place that answers this for a relation type
+// name; every consumer delegates here so the answer cannot drift between
+// surfaces (BUG-ISJHML). An undeclared type is identity-scoped, matching
+// the zero [RelationScope].
+//
+// A package-level function because Metamodel's exported API is capped.
+//
+// Nil: accepted — a nil m answers true. A content-scoped verdict only ever
+// withholds an edge from faces that do not own it, so an unknown schema
+// fails toward showing less, never toward presenting one state's edges as
+// another's.
+func IsContentScoped(m *Metamodel, relType string) bool {
+	if m == nil {
+		return true
+	}
+	def, ok := m.GetRelationDef(relType)
+	return ok && def.Scope.IsContent()
+}
+
 // OrderableMode controls which side(s) of a relation type are user-orderable.
 type OrderableMode string
 

@@ -42,7 +42,7 @@ func face(t *testing.T, s string) entity.Face {
 
 // NeighborsForPage must equal Neighbors row by row — same edges, same order —
 // while issuing one identity query plus one content query per distinct face
-// on the page (TKT-1U8XYN).
+// on the page plus one incoming content query (TKT-1U8XYN).
 func TestNeighborsForPage_EqualsPerRowNeighbors(t *testing.T) {
 	published, nl := face(t, "published"), face(t, "nl")
 	rel := func(from string, tail entity.Face, typ, to string) *entity.Relation {
@@ -74,8 +74,10 @@ func TestNeighborsForPage_EqualsPerRowNeighbors(t *testing.T) {
 		got, err := rr.NeighborsForPage(context.Background(), rows, dir)
 		require.NoError(t, err)
 		require.Len(t, got, len(rows))
-		// identity query + one content query per distinct face (published, "", nl)
-		require.Equal(t, 4, lister.queries, "direction %v", dir)
+		// identity query, one outgoing content query per distinct face
+		// (published, "", nl) and one incoming content query.
+		want := map[store.Direction]int{store.DirectionBoth: 5, store.DirectionOutgoing: 4, store.DirectionIncoming: 2}
+		require.Equal(t, want[dir], lister.queries, "direction %v", dir)
 
 		for i, res := range rows {
 			want, err := rr.Neighbors(context.Background(), res, dir)

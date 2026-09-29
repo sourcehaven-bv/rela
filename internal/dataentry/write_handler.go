@@ -453,8 +453,10 @@ func (h *writeHandler) handleV1CreateEntity(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	rels := h.reader.outgoingRelations(r.Context(), created.ID)
-	result := h.serializer.forWire(r.Context(), created, rels, h.schema().Meta, plural)
+	// The created face's own edges, not every face's (BUG-ISJHML).
+	meta := h.schema().Meta
+	rels := edgesOwnedBy(meta, h.reader.outgoingRelations(r.Context(), created.ID), created.Face)
+	result := h.serializer.forWire(r.Context(), created, rels, meta, plural)
 	if len(relWarnings) > 0 {
 		result.Warnings = append(result.Warnings, relWarnings...)
 	}

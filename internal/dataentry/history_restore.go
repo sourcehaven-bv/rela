@@ -173,7 +173,9 @@ func writeRestoreResult(a *App,
 	if def, ok := meta.GetEntityDef(e.Type); ok {
 		plural = def.GetPlural(e.Type)
 	}
-	wire := a.serializer.forWire(r.Context(), e, a.reader.outgoingRelations(r.Context(), e.ID), meta, plural)
+	// The restored face's own edges, not every face's (BUG-ISJHML).
+	rels := edgesOwnedBy(meta, a.reader.outgoingRelations(r.Context(), e.ID), e.Face)
+	wire := a.serializer.forWire(r.Context(), e, rels, meta, plural)
 	writeV1JSON(w, http.StatusOK, map[string]any{
 		"restored_from_version": restoredFrom,
 		"entity":                wire,

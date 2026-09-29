@@ -7,6 +7,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
@@ -277,8 +278,14 @@ func (h *viewsHandler) applyViewTraverse(
 	// resolution. Collect the whole rule's ids first, then resolve once.
 	maxRecursionDepth := 10
 	sourceIDs := make([]string, 0, len(sources))
+	// The face each source is SERVED at, which decides which of its
+	// content-scoped edges it owns (BUG-ISJHML). An explicitly addressed entry
+	// keeps its addressed face here, where re-resolving it through the world
+	// would pick a different one.
+	sourceFaces := make(map[string]entity.Face, len(sources))
 	for _, src := range sources {
 		sourceIDs = append(sourceIDs, src.ID)
+		sourceFaces[src.ID] = src.Face
 	}
 	var foundIDs []string
 	// byParent is the parent→child edge map, retained only for the flat walk.
@@ -290,12 +297,12 @@ func (h *viewsHandler) applyViewTraverse(
 		if maxD <= 0 {
 			maxD = maxRecursionDepth
 		}
-		foundIDs = h.traverseViewBreadthFirst(ctx, sourceIDs, rule, maxD, w)
+		foundIDs = h.traverseViewBreadthFirst(ctx, sourceIDs, sourceFaces, rule, maxD, w)
 	} else {
 		// One relation query for every source at once (TKT-1U8XYN), in the
 		// same order the per-source loop produced: sources in collection
 		// order, each source's edges in store order.
-		foundIDs, byParent = h.traverseViewMany(ctx, sourceIDs, rule)
+		foundIDs, byParent = h.traverseViewMany(ctx, sourceIDs, sourceFaces, rule, w)
 	}
 
 	// ONE resolution for the whole rule application, not one per hop.
@@ -391,8 +398,15 @@ func mergeViewParents(result *viewResult, collectAs string, byParent map[string]
 // that needs parent attribution gets it without a second query. Keyed by
 // SOURCE id, holding ids only; see [viewResult.Parents] for why those ids are
 // not yet authorized.
+//
+// A content-scoped edge is followed only when its tail face is the face its
+// source is served at (BUG-ISJHML): the walking entity's face for an outgoing
+// rule, the neighbor's face in world w for an incoming one. faces supplies
+// the served face of ids already in hand; any other tail is resolved through
+// w, the same resolution [viewsHandler.loadViewEntities] applies to the
+// neighbor it will load.
 func (h *viewsHandler) traverseViewMany(
-	ctx context.Context, sourceIDs []string, rule ViewTraverse,
+	ctx context.Context, sourceIDs []string, faces map[string]entity.Face, rule ViewTraverse, w viewWorld,
 ) (found []string, byParent map[string][]string) {
 	if len(sourceIDs) == 0 {
 		return nil, nil
@@ -410,10 +424,17 @@ func (h *viewsHandler) traverseViewMany(
 	}
 	bySource := make(map[string][]string, len(sourceIDs))
 	q := store.RelationQuery{EntityIDs: sourceIDs, Type: relType, Direction: direction}
+	var edges []*entity.Relation
 	for r, err := range h.store.ListRelations(ctx, q) {
 		if err != nil {
 			break
 		}
+		edges = append(edges, r)
+	}
+	if metamodel.IsContentScoped(h.schema().Meta, relType) {
+		edges = h.ownedEdges(ctx, edges, faces, w)
+	}
+	for _, r := range edges {
 		sourceID, targetID := r.From, r.To
 		if !useTarget {
 			sourceID, targetID = r.To, r.From
@@ -437,7 +458,8 @@ func (h *viewsHandler) traverseViewMany(
 // when it loads the collection, exactly as it did for the former depth-first
 // walk, and the recursive tests pin the SET of ids, not their order.
 func (h *viewsHandler) traverseViewBreadthFirst(
-	ctx context.Context, sourceIDs []string, rule ViewTraverse, maxDepth int, w viewWorld,
+	ctx context.Context, sourceIDs []string, faces map[string]entity.Face,
+	rule ViewTraverse, maxDepth int, w viewWorld,
 ) []string {
 	visited := make(map[string]bool, len(sourceIDs))
 	frontier := make([]string, 0, len(sourceIDs))
@@ -453,7 +475,7 @@ func (h *viewsHandler) traverseViewBreadthFirst(
 		// Edge map discarded: this walk reports ids level by level and a node
 		// reached at two depths has no single parent here, so retaining it
 		// would be a partial answer worse than none. See [viewResult.Parents].
-		found, _ := h.traverseViewMany(ctx, frontier, rule)
+		found, _ := h.traverseViewMany(ctx, frontier, faces, rule, w)
 		all = append(all, found...)
 
 		// SOURCE-GATE the frontier (BUG-9Z20WH). An id the principal cannot
@@ -484,6 +506,62 @@ func (h *viewsHandler) traverseViewBreadthFirst(
 		frontier = h.readableViewIDs(ctx, next, w)
 	}
 	return all
+}
+
+// ownedEdges keeps the content-scoped edges whose tail face is the face their
+// source is served at (BUG-ISJHML). faces holds the served face of ids already
+// in hand; every other source is resolved through world w in ONE header
+// batch.
+//
+// FAIL CLOSED: if that batch fails, every edge whose source needed it is
+// dropped and the fault is logged; a source this world does not resolve owns
+// no edge here. Dropping reads the same as a denied or absent neighbor, so no
+// verdict leaks.
+func (h *viewsHandler) ownedEdges(
+	ctx context.Context, edges []*entity.Relation, faces map[string]entity.Face, w viewWorld,
+) []*entity.Relation {
+	// unknown maps each source not in faces to its resolved face; an entry
+	// stays unresolved (ok=false) until the batch answers for it.
+	unknown := make(map[string]*entity.Face)
+	var ids []string
+	for _, r := range edges {
+		if _, ok := faces[r.From]; ok {
+			continue
+		}
+		if _, seen := unknown[r.From]; !seen {
+			unknown[r.From] = nil
+			ids = append(ids, r.From)
+		}
+	}
+	if len(ids) > 0 && !w.denied {
+		for hdr, err := range store.ListEntityHeaders(ctx, h.store, store.EntityQuery{
+			IDs: ids, World: w.scope,
+		}) {
+			if err != nil {
+				slog.Warn("dataentry: view traversal: resolving edge sources failed; "+
+					"their content-scoped edges dropped", "world", w.name, "sources", len(ids), "err", err)
+				clear(unknown)
+				break
+			}
+			f := hdr.Face
+			unknown[hdr.ID] = &f
+		}
+	}
+	out := edges[:0:0]
+	for _, r := range edges {
+		f, ok := faces[r.From]
+		if !ok {
+			resolved := unknown[r.From]
+			if resolved == nil {
+				continue
+			}
+			f = *resolved
+		}
+		if r.FromFace == f {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // readableViewIDs filters ids down to those the request principal may read,

@@ -605,7 +605,9 @@ func TestWorldEdgesForWire_DropsUnresolvedAndHidden(t *testing.T) {
 				heads["FEAT-1"] = &entity.Entity{ID: "FEAT-1", Type: "feature"}
 			}
 			visible := map[string]bool{"FEAT-1": tc.visible}
-			out, in := worldEdgesForWire([]*entity.Relation{edge("FEAT-1")}, "TKT-1", heads, visible)
+			self := &entity.Entity{ID: "TKT-1", Type: "ticket"}
+			owns := func(*entity.Relation, entity.Face) bool { return true }
+			out, in := worldEdgesForWire([]*entity.Relation{edge("FEAT-1")}, self, heads, visible, owns)
 			if len(in) != 0 {
 				t.Errorf("an edge FROM the entry is outgoing, not incoming; got %d", len(in))
 			}

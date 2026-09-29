@@ -280,18 +280,27 @@ func visibleWorldNeighbors(
 // them, which is correct — a neighbor absent because the world excludes it
 // and one absent because the ACL hid it must look the same, or the response
 // becomes an oracle for whichever is the rarer cause.
+//
+// A content-scoped edge is also dropped unless its SOURCE is served at the
+// edge's tail face (BUG-ISJHML): self's own face for an outgoing edge, the
+// face this world resolved the neighbor to for an incoming one. owns is
+// [worldreader.RelationReader.Owns]. Without it an edge from POL-1@draft
+// appeared as an incoming neighbor on its target in the published world,
+// telling a published-only reader what the draft cites. The drop is silent
+// like the other two, so it adds no verdict to the wire.
 func worldEdgesForWire(
-	edges []*entityPkg.Relation, selfID string,
+	edges []*entityPkg.Relation, self *entityPkg.Entity,
 	heads map[string]*entityPkg.Entity, visible map[string]bool,
+	owns func(*entityPkg.Relation, entityPkg.Face) bool,
 ) (outgoing, incoming []*entityPkg.Relation) {
 	for _, edge := range edges {
 		switch {
-		case edge.From == selfID:
-			if headOnWire(edge.To, heads, visible) {
+		case edge.From == self.ID:
+			if owns(edge, self.Face) && headOnWire(edge.To, heads, visible) {
 				outgoing = append(outgoing, edge)
 			}
-		case edge.To == selfID:
-			if headOnWire(edge.From, heads, visible) {
+		case edge.To == self.ID:
+			if sourceServes(edge, heads, owns) && headOnWire(edge.From, heads, visible) {
 				incoming = append(incoming, edge)
 			}
 		default:
@@ -299,10 +308,20 @@ func worldEdgesForWire(
 			// direction for this entity. Logged rather than guessed: a
 			// silent drop here would look like a world exclusion.
 			slog.Warn("dataentry: world neighbors: edge names neither endpoint; dropped",
-				"entity", selfID, "from", edge.From, "type", edge.Type, "to", edge.To)
+				"entity", self.ID, "from", edge.From, "type", edge.Type, "to", edge.To)
 		}
 	}
 	return outgoing, incoming
+}
+
+// sourceServes reports whether this world serves edge's SOURCE at the face
+// that owns the edge. A source the world does not resolve serves nothing.
+func sourceServes(
+	edge *entityPkg.Relation, heads map[string]*entityPkg.Entity,
+	owns func(*entityPkg.Relation, entityPkg.Face) bool,
+) bool {
+	src, ok := heads[edge.From]
+	return ok && owns(edge, src.Face)
 }
 
 // headOnWire reports whether a neighbor id may be emitted: the world must
@@ -407,7 +426,7 @@ func worldOutgoingForEntity(
 	// order makes the served result set depend on what the ACL denied, which
 	// is the existence oracle guard rule 1 exists to close.
 	visible = visibleWorldNeighbors(ctx, visReader, heads)
-	outgoing, _ = worldEdgesForWire(edges, e.ID, heads, visible)
+	outgoing, _ = worldEdgesForWire(edges, e, heads, visible, wn.relations.Owns)
 	return outgoing, visible, nil
 }
 
@@ -501,7 +520,7 @@ func worldNeighborsForPage(
 	// Pass 3: split each row's edges by direction, dropping heads this world
 	// does not resolve and heads the principal may not read.
 	for i, e := range entities {
-		outgoing[i], incoming[i] = worldEdgesForWire(edgesByRow[i], e.ID, heads, visible)
+		outgoing[i], incoming[i] = worldEdgesForWire(edgesByRow[i], e, heads, visible, wn.relations.Owns)
 	}
 	return outgoing, incoming, visible, nil
 }
@@ -629,6 +648,11 @@ func worldCandidates(
 		if !resolved {
 			// No face in this world — not a candidate. Same verdict
 			// worldEdgesForWire reaches for the relations map.
+			continue
+		}
+		// The face that owns a content-scoped edge must be the one served
+		// for its source, as in worldEdgesForWire (BUG-ISJHML).
+		if src, ok := heads[edge.From]; !ok || !wn.relations.Owns(edge, src.Face) {
 			continue
 		}
 		candidates = append(candidates, head)

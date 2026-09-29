@@ -15,15 +15,10 @@ import (
 // interface satisfied at the wiring site.
 type metamodelScopes struct{ meta *metamodel.Metamodel }
 
+// IsContentScoped delegates to [metamodel.IsContentScoped], the single
+// owner of the dispatch.
 func (c metamodelScopes) IsContentScoped(relType string) bool {
-	if c.meta == nil {
-		return false
-	}
-	def, ok := c.meta.GetRelationDef(relType)
-	if !ok {
-		return false
-	}
-	return def.Scope.IsContent()
+	return metamodel.IsContentScoped(c.meta, relType)
 }
 
 // RelationScopes returns svc's relation scope classifier, for surfaces that

@@ -371,8 +371,9 @@ func exportFilename(entityID, produces string) string {
 // paths apply). Grouped by relation display label, in label order.
 func (h *exportHandler) entityRelationGroups(ctx context.Context, e *entityPkg.Entity) []transform.RelationGroup {
 	meta := h.meta()
-	outgoing := h.reader.outgoingRelations(ctx, e.ID)
-	incoming := h.reader.incomingRelations(ctx, e.ID)
+	// Only the edges the exported face owns (BUG-ISJHML).
+	outgoing := edgesOwnedBy(meta, h.reader.outgoingRelations(ctx, e.ID), e.Face)
+	incoming := incomingOwnedAtZero(meta, h.reader.incomingRelations(ctx, e.ID), e)
 
 	neighborIDs := neighborIDsOf(outgoing, incoming)
 	visible := visibleRelationIDs(ctx, h.reader, h.visibleReader, neighborIDs)
