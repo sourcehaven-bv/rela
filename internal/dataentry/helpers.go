@@ -501,7 +501,8 @@ func visibleListByTypes(
 			// per-type — so this one path keeps the Go-side filter, which
 			// still runs over the result below.
 			out := make([]*entity.Entity, 0)
-			for e, err := range svc.Store.ListEntities(ctx, store.EntityQuery{Faces: store.InWorld(worldScopeFrom(ctx))}) {
+			q := store.EntityQuery{Faces: store.InWorld(worldScopeFrom(ctx))}
+			for e, err := range svc.Store.ListEntities(ctx, q) {
 				if err != nil {
 					return nil, fmt.Errorf("%w: %w", errListLoad, err)
 				}

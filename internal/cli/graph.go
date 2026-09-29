@@ -26,10 +26,16 @@ func (c *GraphCmd) Run(ctx context.Context, svc *readServices) error {
 	st := svc.Store
 	meta := svc.Meta
 
+	// Every face, one node per id: the graph is of entities, and a faced
+	// entity has no default row to stand for it. Rows arrive ordered by
+	// (id, face), so the first row of a family is its node.
 	var entities []*entity.Entity
-	for e, err := range st.ListEntities(ctx, store.EntityQuery{}) {
+	for e, err := range st.ListEntities(ctx, store.EntityQuery{Faces: store.AllFaces()}) {
 		if err != nil { // coverage-ignore: defensive: memstore.ListEntities iterator never yields a non-nil error
 			return err
+		}
+		if n := len(entities); n > 0 && entities[n-1].ID == e.ID {
+			continue
 		}
 		entities = append(entities, e)
 	}

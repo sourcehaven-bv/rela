@@ -9,6 +9,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // ErrUnstampedPrincipal is the sentinel returned by Declarative.ForPrincipal
@@ -156,16 +157,20 @@ func (r *Request) PermitsRead(ctx context.Context, entityType, entityID string) 
 // the row verdict AND the face allowlist a `type@face` grant compiles to
 // ([ReadQueryResult.Faces]). PermitsRead alone is face-blind — it answers for
 // the id, and a caller holding a specific face in hand must not treat that as
-// permission to show it. A nil Faces set permits every face.
+// permission to show it. A nil Faces set permits every face. A scoped verdict
+// is evaluated against the row at face itself.
 func (r *Request) PermitsReadFace(
 	ctx context.Context, entityType, entityID string, face entity.Face,
 ) (bool, error) {
-	ok, err := r.PermitsRead(ctx, entityType, entityID)
-	if err != nil || !ok {
+	rqr := r.readQuery(ctx, entityType)
+	if len(rqr.Faces) > 0 && !slices.Contains(rqr.Faces, face) {
+		return false, nil
+	}
+	m, err := r.matching(ctx, rqr, store.AtFaces(face), []string{entityID})
+	if err != nil {
 		return false, err
 	}
-	faces := r.readQuery(ctx, entityType).Faces
-	return len(faces) == 0 || slices.Contains(faces, face), nil
+	return m[entityID], nil
 }
 
 // PermitsReadMany returns a permissions map keyed by every input id
@@ -178,8 +183,19 @@ func (r *Request) PermitsReadFace(
 //   - AllowAll → every id maps to true.
 //   - DenyAll  → empty map (every lookup returns false zero-value).
 //   - Query    → store.MatchingIDs result, verbatim.
+//
+// A scoped verdict is evaluated against each id's default-world row, as it
+// was before face selections were required: the gate answers for a bare id,
+// and widening it to other faces waits for TKT-7IZHP0.
 func (r *Request) PermitsReadMany(ctx context.Context, entityType string, ids []string) (map[string]bool, error) {
-	rqr := r.readQuery(ctx, entityType)
+	return r.matching(ctx, r.readQuery(ctx, entityType), store.InWorld(store.DefaultWorld()), ids)
+}
+
+// matching answers rqr for ids, running a scoped verdict's template query
+// under sel. The template is copied: it is shared by every call.
+func (r *Request) matching(
+	ctx context.Context, rqr ReadQueryResult, sel store.FaceSelection, ids []string,
+) (map[string]bool, error) {
 	switch {
 	case rqr.AllowAll:
 		m := make(map[string]bool, len(ids))
@@ -195,7 +211,9 @@ func (r *Request) PermitsReadMany(ctx context.Context, entityType string, ids []
 	case rqr.Query == nil:
 		return nil, errors.New("acl: PermitsReadMany: readQuery returned zero ReadQueryResult")
 	}
-	return r.d.graphQueryer.MatchingIDs(ctx, *rqr.Query, ids)
+	q := *rqr.Query
+	q.Faces = sel
+	return r.d.graphQueryer.MatchingIDs(ctx, q, ids)
 }
 
 // Principal returns the principal bound at construction. Helper for

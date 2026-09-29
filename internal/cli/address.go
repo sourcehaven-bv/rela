@@ -79,7 +79,8 @@ func storedFamily(ctx context.Context, st store.EntityLister, id string) (string
 		typ   string
 		faces []entity.Face
 	)
-	for h, err := range store.ListEntityHeaders(ctx, st, store.EntityQuery{IDs: []string{id}, Faces: store.AllFaces()}) {
+	q := store.EntityQuery{IDs: []string{id}, Faces: store.AllFaces()}
+	for h, err := range store.ListEntityHeaders(ctx, st, q) {
 		if err != nil {
 			return "", nil, fmt.Errorf("read the faces of %q: %w", id, err)
 		}

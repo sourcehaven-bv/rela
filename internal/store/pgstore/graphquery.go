@@ -651,32 +651,10 @@ func buildPredicateSQL(
 		endpointSrc = "SELECT id FROM " + cteName
 	}
 
-	// entitySrc: SQL expression yielding (id, root) pairs for the
-	// candidate-entity expansion. Without EntityInheritThrough each
-	// entity maps to itself; with it, a recursive CTE that walks
-	// ancestors and remembers the original root entity ID.
 	entityJoin := "e.id"
-	if len(p.EntityInheritThrough) > 0 && p.EntityDepth > 0 {
-		entityThroughArg := b.arg(p.EntityInheritThrough)
-		entityDepthArg := b.arg(cappedDepth(p.EntityDepth))
-		cteName := prefix + "_entity_closure"
-		with = append(with, fmt.Sprintf(`%s(id, root, depth) AS (
-    -- IDENTITY ANCHOR (TKT-WAV8XP Q5). The seed is ENTITY-level: one row
-    -- per id of the type, whatever faces it has, so a faced candidate
-    -- inherits exactly as an unfaced one does. It stays UN-WORLDED on
-    -- purpose: role/containment climbing is world-insensitive, so who an
-    -- entity inherits from must not change with the reader's world.
-    -- Shared between the graph-query and visible-search paths via
-    -- buildPredicateSQL, so a world arm here would leak into search too.
-    SELECT DISTINCT e0.id, e0.id, 0 FROM entities e0 WHERE e0.type = %s
-    UNION
-    SELECT r.to_id, c.root, c.depth + 1
-    FROM relations r
-    JOIN %s c ON r.from_id = c.id
-    WHERE r.from_face = '' AND r.rel_type = ANY(%s)
-      AND c.depth < %s
-)`, cteName, typeArg, cteName, entityThroughArg, entityDepthArg))
-		entityJoin = fmt.Sprintf("(SELECT id FROM %s WHERE root = e.id)", cteName)
+	if cte, join := entityClosureSQL(b, prefix, p, typeArg); cte != "" {
+		with = append(with, cte)
+		entityJoin = join
 	}
 
 	// Direction picks which side of the relation matches the endpoint.
@@ -743,6 +721,35 @@ func buildPredicateSQL(
 	}
 
 	return with, existsSB.String()
+}
+
+// entityClosureSQL returns the candidate-entity expansion of p: a recursive
+// CTE yielding (id, root) pairs and the expression the EXISTS clause joins
+// the candidate through. Both are empty when p does not climb.
+func entityClosureSQL(b *sqlBuilder, prefix string, p store.RelationPredicate, typeArg string) (cte, join string) {
+	if len(p.EntityInheritThrough) > 0 && p.EntityDepth > 0 {
+		entityThroughArg := b.arg(p.EntityInheritThrough)
+		entityDepthArg := b.arg(cappedDepth(p.EntityDepth))
+		cteName := prefix + "_entity_closure"
+		cte = fmt.Sprintf(`%s(id, root, depth) AS (
+    -- IDENTITY ANCHOR (TKT-WAV8XP Q5). The seed is ENTITY-level: one row
+    -- per id of the type, whatever faces it has, so a faced candidate
+    -- inherits exactly as an unfaced one does. It stays UN-WORLDED on
+    -- purpose: role/containment climbing is world-insensitive, so who an
+    -- entity inherits from must not change with the reader's world.
+    -- Shared between the graph-query and visible-search paths via
+    -- buildPredicateSQL, so a world arm here would leak into search too.
+    SELECT DISTINCT e0.id, e0.id, 0 FROM entities e0 WHERE e0.type = %s
+    UNION
+    SELECT r.to_id, c.root, c.depth + 1
+    FROM relations r
+    JOIN %s c ON r.from_id = c.id
+    WHERE r.from_face = '' AND r.rel_type = ANY(%s)
+      AND c.depth < %s
+)`, cteName, typeArg, cteName, entityThroughArg, entityDepthArg)
+		join = fmt.Sprintf("(SELECT id FROM %s WHERE root = e.id)", cteName)
+	}
+	return cte, join
 }
 
 // endpointHopCond is the leading conjunct of an endpoint-match hop: the edge

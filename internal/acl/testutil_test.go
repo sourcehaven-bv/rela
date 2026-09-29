@@ -220,7 +220,9 @@ func (w *World) Visible(actor, entityType string) []string {
 			w.t.Fatalf("Visible(%q, %q): ReadQuery returned neither AllowAll, DenyAll, nor a Query — readQuery bug",
 				actor, entityType)
 		}
-		for e, err := range w.store.GraphQuery(w.ctx, *rqr.Query) {
+		q := *rqr.Query // a template: the caller chooses the face selection
+		q.Faces = store.AllFaces()
+		for e, err := range w.store.GraphQuery(w.ctx, q) {
 			if err != nil {
 				w.t.Fatalf("Visible(%q, %q): GraphQuery: %v", actor, entityType, err)
 			}

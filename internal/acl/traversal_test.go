@@ -452,7 +452,6 @@ func TestFoldsIntoEndpoint(t *testing.T) {
 		EntityType: "concept",
 		Props:      []store.PropPredicate{{Property: "status", Op: store.PropEqual, Value: "x"}},
 		HasInbound: &store.RelationPredicate{OfTypes: []string{"editor-of"}},
-		Faces:      store.InWorld(store.DefaultWorld()),
 	}
 	if !foldsIntoEndpoint(ok) {
 		t.Fatal("EntityType, Props and HasInbound must fold")

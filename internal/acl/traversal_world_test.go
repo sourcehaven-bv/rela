@@ -28,16 +28,16 @@ func TestGateTraversal_AllFacesQueryCannotSatisfyHopOutsideRequestWorld(t *testi
 		if status != "" {
 			e.SetString("status", status)
 		}
-		if err := st.CreateEntity(ctx, e); err != nil {
-			t.Fatal(err)
+		if cerr := st.CreateEntity(ctx, e); cerr != nil {
+			t.Fatal(cerr)
 		}
 	}
 	mk("alice", "user", "", "")
 	mk("TKT-1", "ticket", "", "")
 	mk("CON-1", "concept", "", "closed")
 	mk("CON-1", "concept", draft, "open")
-	if _, err := st.CreateRelation(ctx, "TKT-1", "caused-by", "CON-1", nil); err != nil {
-		t.Fatal(err)
+	if _, rerr := st.CreateRelation(ctx, "TKT-1", "caused-by", "CON-1", nil); rerr != nil {
+		t.Fatal(rerr)
 	}
 	d, err := NewDeclarative(&Policy{
 		Roles:       map[string]RoleDef{"reader": {Read: []string{"ticket", "concept"}}},
@@ -57,14 +57,14 @@ func TestGateTraversal_AllFacesQueryCannotSatisfyHopOutsideRequestWorld(t *testi
 
 	matches := func(t *testing.T, world store.WorldScope, sel store.FaceSelection) bool {
 		t.Helper()
-		pred, err := requestFor(t, d, "alice").GateTraversal(ctx, "ticket", world, hop)
-		if err != nil {
-			t.Fatalf("GateTraversal: %v", err)
+		pred, gerr := requestFor(t, d, "alice").GateTraversal(ctx, "ticket", world, hop)
+		if gerr != nil {
+			t.Fatalf("GateTraversal: %v", gerr)
 		}
-		ids, err := st.MatchingIDs(ctx, store.GraphQuery{EntityType: "ticket", Faces: sel, HasOutbound: pred},
+		ids, gerr := st.MatchingIDs(ctx, store.GraphQuery{EntityType: "ticket", Faces: sel, HasOutbound: pred},
 			[]string{"TKT-1"})
-		if err != nil {
-			t.Fatalf("MatchingIDs: %v", err)
+		if gerr != nil {
+			t.Fatalf("MatchingIDs: %v", gerr)
 		}
 		return ids["TKT-1"]
 	}
