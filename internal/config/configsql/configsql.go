@@ -27,8 +27,9 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/config"
 )
 
-// timeFmt is the on-disk timestamp format, matching what the store writes to
-// its own rows: RFC3339Nano, timezone retained.
+// timeFmt is the on-disk timestamp format: RFC3339Nano, timezone retained.
+// It differs from the store's fixed-width sqlitedb.TimeFormat on purpose: this
+// column is only read back, never compared in SQL, so its width does not matter.
 const timeFmt = time.RFC3339Nano
 
 // Loader reads config from the project_files table. It implements

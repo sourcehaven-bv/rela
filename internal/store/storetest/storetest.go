@@ -236,5 +236,10 @@ func RunAll(t *testing.T, f Factory, sf SearchFactory, vsf VisibleSearchFactory,
 				"store declared Capabilities.Versioning but no Capabilities.SweepNow driver")
 			RunSweepAttributionTests(t, f, caps.SweepNow)
 		})
+		t.Run("SweepOrigin", func(t *testing.T) {
+			require.NotNil(t, caps.SweepNow,
+				"store declared Capabilities.Versioning but no Capabilities.SweepNow driver")
+			RunSweepOriginTests(t, f, caps.SweepNow)
+		})
 	}
 }

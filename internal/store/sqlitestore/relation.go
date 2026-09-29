@@ -12,6 +12,7 @@ import (
 	"modernc.org/sqlite"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/sqlitedb"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/storeutil"
 )
@@ -208,7 +209,7 @@ func (s *Store) CreateRelation(
 		(from_id, from_face, rel_type, to_id, properties, content, updated_at,
 		 last_edited_by_user, last_edited_by_tool, rel_record_id)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT next FROM rel_record_seq WHERE id = 1))`,
-		from, string(face), relType, to, props, content, now.Format(timeFmt),
+		from, string(face), relType, to, props, content, sqlitedb.FormatTime(now),
 		editorUser, editorTool); err != nil {
 		if isUniqueViolation(err) {
 			return nil, fmt.Errorf("sqlitestore: create relation: %w", store.ErrConflict)
@@ -274,7 +275,7 @@ func (s *Store) UpdateRelationState(
 	res, err := s.write(ctx, `UPDATE relations SET properties = ?, content = ?, updated_at = ?,
 		    last_edited_by_user = ?, last_edited_by_tool = ?
 		WHERE from_id = ? AND rel_type = ? AND to_id = ? AND from_face = ?`,
-		props, data.Content, time.Now().UTC().Format(timeFmt), editorUser, editorTool,
+		props, data.Content, sqlitedb.FormatTime(time.Now()), editorUser, editorTool,
 		from, relType, to, string(p))
 	if err != nil {
 		return nil, fmt.Errorf("sqlitestore: update relation: %w", err)
@@ -349,7 +350,7 @@ func scanRelation(sc scanner) (*entity.Relation, error) {
 	if r.Properties, err = unmarshalProps(props); err != nil {
 		return nil, fmt.Errorf("sqlitestore: relation %s--%s->%s: %w", r.From, r.Type, r.To, err)
 	}
-	t, err := time.Parse(timeFmt, updated)
+	t, err := parseTime(updated)
 	if err != nil {
 		return nil, fmt.Errorf("sqlitestore: parse relation updated_at: %w", err)
 	}
