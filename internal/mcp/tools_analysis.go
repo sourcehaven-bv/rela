@@ -92,7 +92,7 @@ func (s *Server) handleAnalyzeOrphans(
 
 	orphans := make([]entitySummary, 0)
 	for _, id := range orphanIDs {
-		e, err := d.Store.GetEntity(ctx, id)
+		e, err := d.Store.Resolve(ctx, id)
 		if err != nil {
 			continue
 		}

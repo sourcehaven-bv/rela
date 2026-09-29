@@ -194,16 +194,35 @@ func (r *Resolver) Family(ctx context.Context, entityType, id string) (Family, b
 	if err != nil || !ok {
 		return Family{}, false, err
 	}
+	headers, ok := r.headersOf(ctx, entityType, id)
+	if !ok {
+		return Family{}, false, nil
+	}
+	return familyOf(entityType, id, faces, headers)
+}
+
+// headersOf reads every stored face header of id. A failed read is logged
+// and answered as a miss, like every other resolver load (RR-FE1EGP).
+func (r *Resolver) headersOf(ctx context.Context, entityType, id string) ([]store.EntityHeader, bool) {
 	q := store.EntityQuery{IDs: []string{id}, AllStates: true}
+	var out []store.EntityHeader
+	for h, err := range store.ListEntityHeaders(ctx, r.load, q) {
+		if err != nil {
+			warnLoad("family", entityType, entity.Ref{ID: id}, err)
+			return nil, false
+		}
+		if h.ID == id {
+			out = append(out, h)
+		}
+	}
+	return out, true
+}
+
+// familyOf keeps the headers whose face is in faces. Every header must have
+// entityType, else the family is a miss.
+func familyOf(entityType, id string, faces FaceSet, headers []store.EntityHeader) (Family, bool, error) {
 	var readable []entity.Face
-	for h, lerr := range store.ListEntityHeaders(ctx, r.load, q) {
-		if lerr != nil {
-			warnLoad("family", entityType, entity.Ref{ID: id}, lerr)
-			return Family{}, false, nil
-		}
-		if h.ID != id {
-			continue
-		}
+	for _, h := range headers {
 		if h.Type != entityType {
 			return Family{}, false, nil
 		}

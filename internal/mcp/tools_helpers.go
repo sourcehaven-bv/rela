@@ -1,13 +1,16 @@
 package mcp
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 
 	mcpgo "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
@@ -209,4 +212,28 @@ func applyPagination[T any](items []T, offset, limit int) []T {
 		items = items[:limit]
 	}
 	return items
+}
+
+// readable reports whether the caller may read what addr names, through st.
+// A named face (`ID@face`) must itself be readable ([GraphReader.Resolve]). A
+// bare id needs SOME readable face ([GraphReader.Family]): writes and
+// traversals act on the entity, and a faced type has no row at the zero
+// coordinate. A hidden and a missing entity both answer false, so a handler
+// that checks this first cannot be used as an existence oracle. A gate
+// failure is logged and answers false.
+func readable(ctx context.Context, st GraphReader, addr string) bool {
+	ref, err := entity.ParseRef(addr)
+	if err != nil {
+		return false
+	}
+	if !ref.Face.IsDefault() {
+		e, rerr := st.Resolve(ctx, addr)
+		return rerr == nil && e != nil
+	}
+	_, ok, ferr := st.Family(ctx, ref.ID)
+	if ferr != nil {
+		slog.Warn("mcp: entity gate failed; answering not-found", "id", ref.ID, "err", ferr)
+		return false
+	}
+	return ok
 }

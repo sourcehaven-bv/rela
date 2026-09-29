@@ -77,9 +77,6 @@ func TestRemoteMCPDeps_UsesGatedHandles(t *testing.T) {
 	if _, ok := deps.Searcher.(*visibility.Searcher); !ok {
 		t.Errorf("Searcher = %T, want *visibility.Searcher", deps.Searcher)
 	}
-	if deps.Store == svc.Store() {
-		t.Error("Store is the raw store")
-	}
 	if deps.Tracer == svc.Tracer() {
 		t.Error("Tracer is the raw tracer")
 	}

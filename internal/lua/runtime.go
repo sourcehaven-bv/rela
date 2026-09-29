@@ -1713,8 +1713,10 @@ func (r *Runtime) luaSearch(ls *lua.LState) int {
 		// This hydration is ALSO the gate: hits the caller may not read fail
 		// here and are skipped, so no hidden entity or property reaches the
 		// script. Whether the hit list itself is gated depends on the wiring;
-		// see ReadDeps.Searcher.
-		e, err := rd.GetEntity(ctx, hit.ID)
+		// see ReadDeps.Searcher. A hit names the face it matched, so it is
+		// read at that face: a bare id would resolve through the world and
+		// could return a different face, or miss a faced one.
+		e, err := rd.GetEntity(ctx, entity.Ref{ID: hit.ID, Face: hit.Face}.String())
 		if err != nil {
 			// A denied hit arrives as ErrNotFound and is skipped silently —
 			// that is the gate working. Anything else is a real fault, and
@@ -1815,35 +1817,65 @@ func writtenEntityTable(ctx context.Context, ls *lua.LState, rd EntityReader, wr
 	}
 }
 
-// readFace reads one face of id through rd.
+// readFace reads one face of id through rd, by its explicit address.
 func readFace(ctx context.Context, rd EntityReader, id string, face entity.Face) (*entity.Entity, error) {
-	if face.IsDefault() {
-		return rd.GetEntity(ctx, id)
-	}
-	for e, err := range rd.ListEntities(ctx, store.EntityQuery{IDs: []string{id}, FaceIn: []entity.Face{face}}) {
-		if err != nil {
-			return nil, err
-		}
-		if e != nil && e.ID == id {
-			return e, nil
-		}
-	}
-	return nil, store.ErrNotFound
+	return rd.GetEntity(ctx, entity.Ref{ID: id, Face: face}.String())
 }
 
 // gateWriteTarget raises "entity not found" unless the caller may read every
-// id a write names. The manager answers "forbidden" for an entity that exists
-// but is hidden and "not found" for a missing one, so without this a script
-// could probe for hidden ids. This matches the data-entry write path, which
-// also reads the target through the gated reader first.
+// entity a write names. The manager answers "forbidden" for an entity that
+// exists but is hidden and "not found" for a missing one, so without this a
+// script could probe for hidden ids. This matches the data-entry write path,
+// which also reads the target through the gated reader first.
 func gateWriteTarget(ctx context.Context, ls *lua.LState, rd EntityReader, ids ...string) bool {
 	for _, id := range ids {
-		if !visibility.Readable(ctx, rd, id) {
+		if !writeTargetReadable(ctx, rd, id) {
 			ls.RaiseError("entity not found: %s", id)
 			return false
 		}
 	}
 	return true
+}
+
+// familyReader answers which faces of an id the caller may read, from headers
+// only. [visibility.ScriptReader] and [visibility.UnrestrictedReader] provide
+// it.
+type familyReader interface {
+	Family(ctx context.Context, id string) (visibility.Family, bool, error)
+}
+
+// writeTargetReadable reports whether rd lets the caller read the entity addr
+// names. A named face (`ID@face`) must itself be readable. A bare id needs
+// SOME readable face: a write acts on the entity, and a faced type has no row
+// at the zero coordinate, so asking for that row alone would refuse every
+// faced entity. A read error and an unparseable address count as unreadable.
+//
+// The bare-id check is [visibility.Resolver.Family] when rd provides it. A
+// reader that does not (a raw store in tests, and the data-entry wiring's
+// late-bound reader until it forwards Family) is asked through its own gated
+// list read instead, which answers the same question at a higher cost.
+func writeTargetReadable(ctx context.Context, rd EntityReader, addr string) bool {
+	ref, err := entity.ParseRef(addr)
+	if err != nil {
+		return false
+	}
+	if !ref.Face.IsDefault() {
+		e, gerr := readFace(ctx, rd, ref.ID, ref.Face)
+		return gerr == nil && e != nil
+	}
+	if fr, ok := rd.(familyReader); ok {
+		_, found, ferr := fr.Family(ctx, ref.ID)
+		return ferr == nil && found
+	}
+	for e, lerr := range rd.ListEntities(ctx, store.EntityQuery{IDs: []string{ref.ID}, AllStates: true}) {
+		if lerr != nil {
+			return false
+		}
+		if e != nil && e.ID == ref.ID {
+			return true
+		}
+	}
+	return false
 }
 
 // luaUpdateEntity implements rela.update_entity(id, properties, content?) -> (entity, warnings).

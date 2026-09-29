@@ -9,21 +9,21 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
-// ScriptReader adapts a [Reader] to the three-method read surface script
-// runtimes consume (internal/lua's EntityReader, satisfied structurally so
-// lua needs no dependency on this package). Every method row-gates and
-// field-redacts through the wrapped Reader, so a script sees exactly the
-// caller's view (DEC-O59WM4).
+// ScriptReader adapts a [Reader] to the read surface script runtimes
+// consume (internal/lua's EntityReader, satisfied structurally so lua needs
+// no dependency on this package). Every method row-gates and field-redacts
+// through the wrapped Reader's policy, so a script sees exactly the caller's
+// view (DEC-O59WM4).
 //
-// # Why load-then-Filter rather than a Resolver
+// # Single-entity reads
 //
-// A [Resolver] gates BEFORE the load and therefore needs the entity type up
-// front, but a script asks by bare ID (`rela.get_entity(id)`). Rather than
-// invent a type claim — which would reintroduce the BUG-ZWTDH9 cross-type
-// surface the Resolver's type check exists to close — ScriptReader loads raw
-// and then runs the result through [Reader.Filter], which gates on the entity's
-// STORED type. A denied entity comes back as a not-found error, which is
-// what the bindings already translate into nil.
+// [ScriptReader.GetEntity] and [ScriptReader.Family] go through the wrapped
+// Reader's [Resolver]. A script names an entity by address and no type, so
+// the reader first reads the STORED type from one content-free header, then
+// calls the typed resolver with it. Claiming the stored type keeps the
+// BUG-ZWTDH9 cross-type surface closed. A bare id resolves in the reader's
+// world ([ScriptReader.WithWorld]; the default world until TKT-7IZHP0), and
+// `ID@face` reads that face.
 //
 // # Allocation
 //
@@ -33,13 +33,13 @@ import (
 // roughly 3x the peak allocation of an ungated stream: the slice, the
 // filtered slice, and the redacted copies.
 //
-// Two costs the batching does NOT amortize (RR-3U1V80): the field redactor
-// runs PER ROW (one verdict resolution each), and FilterRelations performs
-// one entity load PER DISTINCT ENDPOINT — so a wide `get_relations` is an
-// N-load amplification, not just an N-allocation one. Bounding these
-// bindings is TKT-YWDGZD; this type does not paper over them.
+// The field redactor still runs PER ROW (one verdict resolution each), which
+// batching does not amortize (RR-3U1V80). Bounding these bindings is
+// TKT-YWDGZD; this type does not paper over it.
 type ScriptReader struct {
 	reader Reader
+	res    *Resolver
+	world  World
 	raw    store.Store
 	binder Binder
 
@@ -59,7 +59,8 @@ type Binder interface {
 
 // NewScriptReader wraps reader over the raw store. Both are required: raw
 // supplies the underlying rows, reader decides which of them (and which of
-// their properties) the caller may see.
+// their properties) the caller may see. reader's [Reader.Resolver] serves
+// the single-entity reads and must be non-nil.
 //
 // binder is optional but strongly recommended (RR-CCBZBH). Without it,
 // every gate probe AND every field-verdict resolution opens its own
@@ -75,7 +76,11 @@ func NewScriptReader(reader Reader, raw store.Store, binder Binder) (*ScriptRead
 	if raw == nil {
 		return nil, errors.New("visibility: NewScriptReader: raw store must be non-nil")
 	}
-	s := &ScriptReader{reader: reader, raw: raw, binder: binder}
+	res := reader.Resolver()
+	if res == nil {
+		return nil, errors.New("visibility: NewScriptReader: reader's Resolver must be non-nil")
+	}
+	s := &ScriptReader{reader: reader, res: res, raw: raw, binder: binder}
 	// The binder IS the gate in every production wiring, and DeclarativeGate
 	// composes the read scope as a store predicate. Deriving the provider
 	// from it rather than taking a fourth constructor argument keeps the two
@@ -86,6 +91,14 @@ func NewScriptReader(reader Reader, raw store.Store, binder Binder) (*ScriptRead
 		s.provider = p
 	}
 	return s, nil
+}
+
+// WithWorld returns a copy of s whose bare-id reads resolve in w. The wiring
+// sets it; the zero World is the default world.
+func (s *ScriptReader) WithWorld(w World) *ScriptReader {
+	c := *s
+	c.world = w
+	return &c
 }
 
 // bind opens (or reuses) the per-operation ACL scope. A bind failure —
@@ -103,21 +116,20 @@ func (s *ScriptReader) bind(ctx context.Context) context.Context {
 	return bound
 }
 
-// GetEntity loads by ID and gates on the STORED type. A denied entity is
-// reported as [store.ErrNotFound] — indistinguishable from a genuine miss,
-// preserving the oracle-free contract the rest of the package keeps.
+// GetEntity reads the face addr names (`ID@face`), or the face the reader's
+// world resolves a bare id to, gated and redacted. Every miss, including a
+// denied entity and an address the grammar refuses, is [store.ErrNotFound],
+// so a script cannot tell hidden from absent. A gate failure is logged and
+// answered the same way, because it can only occur for an id that exists.
 func (s *ScriptReader) GetEntity(ctx context.Context, addr string) (*entity.Entity, error) {
-	ctx = s.bind(ctx)
-	id, face := parseAddress(addr)
-	e, err := s.raw.GetEntityState(ctx, id, face)
-	if err != nil {
-		return nil, err
-	}
-	visible := s.reader.Filter(ctx, []*entity.Entity{e})
-	if len(visible) == 0 {
-		return nil, store.ErrNotFound
-	}
-	return visible[0], nil
+	return s.res.addressAny(s.bind(ctx), s.world, addr)
+}
+
+// Family reports which faces of the entity id the caller may read, reading
+// headers only. It answers the entity-level question a write asks before it
+// names an id: does a readable face of it exist. See [Resolver.Family].
+func (s *ScriptReader) Family(ctx context.Context, id string) (Family, bool, error) {
+	return s.res.familyAny(s.bind(ctx), id)
 }
 
 // ListEntities yields only the entities the caller may read, redacted.

@@ -99,7 +99,7 @@ func TestGatedReads_RedactsHiddenField(t *testing.T) {
 	}
 	defer svc.Close()
 
-	got, err := svc.GatedReads().Reader.GetEntity(bobCtx(principal.ToolMCP), "PERS-1")
+	got, err := svc.GatedReads().Reader.Resolve(bobCtx(principal.ToolMCP), "PERS-1")
 	if err != nil {
 		t.Fatalf("GetEntity: %v", err)
 	}
@@ -172,7 +172,7 @@ func TestNoPolicy_RedactorHidesNothing(t *testing.T) {
 	}
 	defer svc.Close()
 
-	got, err := svc.GatedReads().Reader.GetEntity(bobCtx(principal.ToolMCP), "PERS-1")
+	got, err := svc.GatedReads().Reader.Resolve(bobCtx(principal.ToolMCP), "PERS-1")
 	if err != nil {
 		t.Fatalf("GetEntity: %v", err)
 	}
@@ -215,7 +215,7 @@ assignments:
 	}
 	defer svc.Close()
 
-	got, err := svc.GatedReads().Reader.GetEntity(bobCtx(principal.ToolMCP), "PERS-1")
+	got, err := svc.GatedReads().Reader.Resolve(bobCtx(principal.ToolMCP), "PERS-1")
 	if err != nil {
 		t.Fatalf("GetEntity: %v", err)
 	}
