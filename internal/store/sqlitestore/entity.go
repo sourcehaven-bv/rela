@@ -341,6 +341,10 @@ func (s *Store) deleteEntityLocked(
 		}
 	}
 
+	if _, err := s.write(ctx, dropMarkedEdgesSQL, id, id); err != nil {
+		return nil, fmt.Errorf("sqlitestore: delete %s hidden relations: %w", id, err)
+	}
+
 	// Attachments are owned by the entity, so they go with it regardless of
 	// cascade — that flag governs RELATIONS, which have another endpoint and so
 	// need the caller's consent to remove.

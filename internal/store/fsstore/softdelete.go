@@ -342,6 +342,28 @@ func writePendingDeletes(s *FSStore, marked map[string]*fsMarked) error {
 	return s.rooted.WriteFile(path.Join(s.cacheKey, pendingDeletesFile), data, 0o644)
 }
 
+// dropMarkedEdges removes the hidden edges that touch id, files included, for
+// a hard delete or a rename of id. Otherwise a restore of the marked end would
+// bring back an edge to an entity that is gone, or to a new entity that took
+// its id. The file goes too, because a reopen rebuilds a family's hidden
+// edges from the relation files on disk. Called under s.mu.
+func dropMarkedEdges(s *FSStore, id string) error {
+	for _, fam := range s.marked {
+		for key, rm := range fam.relations {
+			if rm.From != id && rm.To != id {
+				continue
+			}
+			fileKey := s.layout.relationFileKeyMeta(rm)
+			if err := s.rooted.Remove(fileKey); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("remove hidden relation file %s: %w", rm.key(), err)
+			}
+			s.echoes.Forget(s.layout.absPath(fileKey))
+			delete(fam.relations, key)
+		}
+	}
+	return nil
+}
+
 // markedFamilyOf returns the marked family holding id, if any.
 func markedFamilyOf(s *FSStore, id string) (*fsMarked, bool) {
 	fam, ok := s.marked[id]

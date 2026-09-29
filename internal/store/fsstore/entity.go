@@ -520,6 +520,10 @@ func (s *FSStore) deleteEntity(_ context.Context, id string, cascade bool) (*sto
 	if !cascade && len(related) > 0 {
 		return nil, fmt.Errorf("%w: entity %s has %d relation(s)", store.ErrHasRelations, id, len(related))
 	}
+	// First, so a failure aborts before anything observable changes.
+	if err := dropMarkedEdges(s, id); err != nil {
+		return nil, err
+	}
 
 	// Load every state for the result and prop cache.
 	states := make([]*entity.Entity, 0, len(family))
@@ -846,6 +850,9 @@ func (s *FSStore) renameEntity(_ context.Context, oldID, newID string) (*store.R
 	// the new id is a conflict.
 	if idTaken(s.entities, newID, oldID) || markedTaken(s, newID, oldID) {
 		return nil, store.ErrConflict
+	}
+	if err := dropMarkedEdges(s, oldID); err != nil {
+		return nil, err
 	}
 
 	// Load, re-id, and write every state; remember the default state

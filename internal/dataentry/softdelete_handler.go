@@ -56,8 +56,9 @@ func (h *writeHandler) deleteWholeEntity(ctx context.Context, id string) error {
 // hidden while it is deleted. It reveals nothing: the deleter saw the entity
 // a moment ago.
 //
-// Write authorization is the manager's: a restore needs the delete grant on
-// the entity (see [entitymanager.RestoreEntity]), so a denial is a 403.
+// Write authorization is the manager's: a restore needs the delete grants the
+// delete needed, on the entity and on each relation that comes back (see
+// [entitymanager.RestoreEntity]), so a denial is a 403.
 func (h *writeHandler) handleV1RestoreEntity(w http.ResponseWriter, r *http.Request, typeName, entityID string) {
 	if r.Method != http.MethodPost {
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")

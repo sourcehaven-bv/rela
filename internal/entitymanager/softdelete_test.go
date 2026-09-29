@@ -198,12 +198,16 @@ entities:
 	require.NoError(t, err)
 }
 
-// Restore is authorized as a delete, against the local roles the entity had
-// when it was deleted. Those come from relations that are hidden while it is
-// marked, so this passes only because the check runs under the reveal.
-// alice's global linker role only covers the cascade check on the edge.
-func TestSoftDelete_RestoreUsesLocalRolesThroughReveal(t *testing.T) {
-	t.Parallel()
+// newRestoreACLFixture seeds a ticket assigned to alice, behind a manager
+// that enforces this policy:
+//
+//   - alice holds the ticket delete grant only locally, through the
+//     assigned-to edge, and a global role for the edge's own delete check;
+//   - bob holds no role;
+//   - carol may delete tickets globally but has no grant on person-sourced
+//     relations.
+func newRestoreACLFixture(t *testing.T) (*entitymanager.Manager, *memstore.MemStore, string) {
+	t.Helper()
 	meta, err := metamodel.Parse([]byte(`version: "1.0"
 entities:
   person:
@@ -230,8 +234,10 @@ relations:
 roles:
   assignee: { read: [ticket, assigned-to], delete: [ticket, assigned-to] }
   linker: { read: [person], delete: [person] }
+  ticket-admin: { read: [ticket], delete: [ticket] }
 assignments:
   alice: linker
+  carol: ticket-admin
 role_relations:
   assigned-to: { confers: assignee }
 `))
@@ -244,14 +250,13 @@ role_relations:
 	})
 	require.NoError(t, err)
 	ctx := context.Background()
-	for _, id := range []string{"alice", "bob"} {
+	for _, id := range []string{"alice", "bob", "carol"} {
 		_, err = seed.CreateEntity(ctx, entity.New(id, "person"), entity.CreateOptions{ID: id})
 		require.NoError(t, err)
 	}
 	tkt, err := seed.CreateEntity(ctx, entity.New("", "ticket"), entity.CreateOptions{})
 	require.NoError(t, err)
-	tktID := tkt.Entity.ID
-	_, err = seed.CreateRelation(ctx, "alice", "assigned-to", tktID, entity.RelationOptions{})
+	_, err = seed.CreateRelation(ctx, "alice", "assigned-to", tkt.Entity.ID, entity.RelationOptions{})
 	require.NoError(t, err)
 
 	declarative, err := acl.NewDeclarative(policy, acl.NewStoreGraph(st), st)
@@ -262,19 +267,55 @@ role_relations:
 		CopyReadGate: entitymanager.AllowAllCopyReadGate{}, CopyVisibility: allowAllCopyVisibility(t, st),
 	})
 	require.NoError(t, err)
+	return mgr, st, tkt.Entity.ID
+}
 
-	as := func(user string) context.Context {
-		return principal.With(ctx, principal.Principal{User: user, Tool: principal.ToolDataEntry})
-	}
-	_, err = entitymanager.SoftDeleteEntity(as("alice"), mgr, tktID)
+func userCtx(user string) context.Context {
+	return principal.With(context.Background(), principal.Principal{User: user, Tool: principal.ToolDataEntry})
+}
+
+// Restore is authorized as a delete, against the local roles the entity had
+// when it was deleted. Those come from relations that are hidden while it is
+// marked, so this passes only because the check runs under the reveal.
+func TestSoftDelete_RestoreUsesLocalRolesThroughReveal(t *testing.T) {
+	t.Parallel()
+	mgr, st, tktID := newRestoreACLFixture(t)
+
+	_, err := entitymanager.SoftDeleteEntity(userCtx("alice"), mgr, tktID)
 	require.NoError(t, err)
 
-	_, err = entitymanager.RestoreEntity(as("bob"), mgr, tktID)
+	_, err = entitymanager.RestoreEntity(userCtx("bob"), mgr, tktID)
 	var forbidden *acl.ForbiddenError
 	require.ErrorAs(t, err, &forbidden, "bob holds no role on the ticket")
 
-	_, err = entitymanager.RestoreEntity(as("alice"), mgr, tktID)
+	_, err = entitymanager.RestoreEntity(userCtx("alice"), mgr, tktID)
 	require.NoError(t, err, "alice's role comes from the hidden assigned-to edge")
-	_, err = st.GetRelation(ctx, "alice", "assigned-to", tktID)
+	_, err = st.GetRelation(context.Background(), "alice", "assigned-to", tktID)
 	require.NoError(t, err)
+}
+
+// A restore needs the relation grants the delete needed. carol may delete the
+// ticket itself, but not the person-sourced edge that would come back with
+// it, so she is refused and the ticket stays deleted.
+func TestSoftDelete_RestoreChecksRelationGrants(t *testing.T) {
+	t.Parallel()
+	mgr, st, tktID := newRestoreACLFixture(t)
+
+	_, err := entitymanager.SoftDeleteEntity(userCtx("carol"), mgr, tktID)
+	var forbidden *acl.ForbiddenError
+	require.ErrorAs(t, err, &forbidden, "the delete itself needs the edge grant")
+
+	_, err = entitymanager.SoftDeleteEntity(userCtx("alice"), mgr, tktID)
+	require.NoError(t, err)
+
+	_, err = entitymanager.RestoreEntity(userCtx("carol"), mgr, tktID)
+	require.ErrorAs(t, err, &forbidden, "carol has no delete grant on assigned-to from person")
+
+	_, found, err := entitymanager.FindSoftDeleted(context.Background(), mgr, tktID)
+	require.NoError(t, err)
+	assert.True(t, found, "a refused restore unmarks nothing")
+	_, err = st.GetEntity(context.Background(), tktID)
+	require.ErrorIs(t, err, store.ErrNotFound)
+	_, err = st.GetRelation(context.Background(), "alice", "assigned-to", tktID)
+	require.ErrorIs(t, err, store.ErrNotFound)
 }

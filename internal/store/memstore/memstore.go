@@ -703,6 +703,7 @@ func (m *MemStore) deleteEntity(_ context.Context, id string, cascade bool) (*st
 		delete(m.relations, key)
 		m.relationOrder = sortedRemove(m.relationOrder, key)
 	}
+	dropMarkedEdges(m.marked, id)
 
 	for _, fe := range family {
 		// Per-state type: the load path tolerates a mistyped state, so
@@ -886,6 +887,8 @@ func (m *MemStore) renameEntity(_ context.Context, oldID, newID string) (*store.
 		}
 		m.notifyRenamed(oldID, r)
 	}
+
+	dropMarkedEdges(m.marked, oldID)
 
 	// Update relations — clone each affected relation
 	relationsUpdated := 0

@@ -105,12 +105,15 @@ took its place.
 
 Undo covers only a delete of a whole entity from the web app. Deleting one
 content state (`ID@face`), and deletes from the CLI, MCP or Lua, are
-immediate and final. On the filesystem backend the list of waiting deletes is
+immediate and final. If one of those deletes or renames an entity at the
+other end of a relation, that relation is dropped, and an undo brings the
+entity back without it. On the filesystem backend the list of waiting deletes is
 kept in `.rela/pending-deletes.json`, so it survives a restart.
 
 The API behind Undo is `POST /api/v1/{plural}/{id}/restore`. It answers
 `204 No Content` on success and `404` when there is nothing to restore. A
-restore needs the same delete permission the delete needed. The caller must
+restore needs the same delete permissions the delete needed, on the entity
+and on each of its relations. The caller must
 also be able to read the entity, or be the user who deleted it; anyone else
 gets the same `404` as for an ID that was never deleted.
 

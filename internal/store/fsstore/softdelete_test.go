@@ -125,3 +125,37 @@ func TestSoftDelete_StaleEntryIsDropped(t *testing.T) {
 	assert.Empty(t, marked)
 	require.NoError(t, s2.CreateEntity(ctx, entity.New("REQ-1", "requirement")))
 }
+
+// A hidden edge dropped by a hard delete of its other end stays dropped after
+// a restart: its file is gone, so neither the cached index nor a rescan can
+// bring it back.
+func TestSoftDelete_DroppedEdgeStaysDroppedAfterReopen(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		close bool
+	}{
+		{name: "cached index", close: true},
+		{name: "rescan", close: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			fs := storage.NewMemFS()
+			s1 := seedMarked(t, fs)
+			_, err := s1.DeleteEntity(ctx, "SOL-1", true)
+			require.NoError(t, err)
+			if tc.close {
+				require.NoError(t, s1.Close())
+			}
+
+			s2 := openStore(t, fs)
+			defer s2.Close()
+			sol := entity.New("SOL-1", "solution")
+			sol.Properties["title"] = "New sol"
+			require.NoError(t, s2.CreateEntity(ctx, sol))
+			_, err = s2.SoftDelete().Unmark(ctx, "REQ-1")
+			require.NoError(t, err)
+			_, err = s2.GetRelation(ctx, "SOL-1", "implements", "REQ-1")
+			require.ErrorIs(t, err, store.ErrNotFound)
+		})
+	}
+}

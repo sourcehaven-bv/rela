@@ -209,6 +209,9 @@ func (s *Store) renameLocked(
 	if terr != nil {
 		return fmt.Errorf("sqlitestore: rename %s relations (to): %w", oldID, terr)
 	}
+	if _, err := s.write(ctx, dropMarkedEdgesSQL, oldID, oldID); err != nil {
+		return fmt.Errorf("sqlitestore: rename %s hidden relations: %w", oldID, err)
+	}
 	if _, err := s.write(ctx,
 		`UPDATE attachments SET entity_id = ? WHERE entity_id = ?`, newID, oldID); err != nil {
 		return fmt.Errorf("sqlitestore: rename %s attachments: %w", oldID, err)

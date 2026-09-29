@@ -22,6 +22,11 @@ import (
 // gives the rows a fresh seq, so the change feed and the manifest see a delete
 // followed by a create and need no knowledge of marks.
 
+// dropMarkedEdgesSQL removes the hidden edges that touch $1, for a hard delete
+// or a rename of $1. Otherwise a restore of the marked end would bring back an
+// edge to an entity that is gone, or to a new entity that took its id.
+const dropMarkedEdgesSQL = `DELETE FROM marked_relations WHERE from_id = $1 OR to_id = $1`
+
 // The marked rows read back as live-shaped rows.
 const (
 	markedEntitySelect = `SELECT e.id, e.type, e.face, e.properties, e.content, e.updated_at
@@ -69,11 +74,14 @@ func (d softDeleter) MarkDeleted(ctx context.Context, id, by string) (*store.Del
 	}{
 		{`INSERT INTO marked_entities (id, face, deleted_by, row)
 		  SELECT id, face, $2, to_jsonb(e) FROM entities e WHERE id = $1`, []any{id, by}},
-		{`INSERT INTO marked_relations (owner_id, from_id, from_face, rel_type, to_id, row)
-		  SELECT $1, from_id, from_face, rel_type, to_id, to_jsonb(r) FROM relations r
-		  WHERE from_id = $1 OR to_id = $1
+		// Delete first and copy what the DELETE returns. A DELETE waits for
+		// and re-checks a row that a concurrent hard delete of the other end
+		// holds, so an edge that delete removed is not copied here, where a
+		// plain SELECT could still see it and hide a copy.
+		{`WITH gone AS (DELETE FROM relations r WHERE from_id = $1 OR to_id = $1 RETURNING r.*)
+		  INSERT INTO marked_relations (owner_id, from_id, from_face, rel_type, to_id, row)
+		  SELECT $1, from_id, from_face, rel_type, to_id, to_jsonb(gone) FROM gone
 		  ON CONFLICT DO NOTHING`, []any{id}},
-		{`DELETE FROM relations WHERE from_id = $1 OR to_id = $1`, []any{id}},
 		{`DELETE FROM entities WHERE id = $1`, []any{id}},
 	} {
 		if _, err := tx.Exec(ctx, st.q, st.args...); err != nil {

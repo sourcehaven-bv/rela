@@ -606,6 +606,9 @@ func (s *Store) DeleteEntity(ctx context.Context, id string, cascade bool) (*sto
 	if _, err := tx.Exec(ctx, `DELETE FROM relations WHERE from_id = $1 OR to_id = $1`, id); err != nil {
 		return nil, err
 	}
+	if _, err := tx.Exec(ctx, dropMarkedEdgesSQL, id); err != nil {
+		return nil, err
+	}
 	if _, err := tx.Exec(ctx, `DELETE FROM attachments WHERE entity_id = $1`, id); err != nil {
 		return nil, err
 	}
@@ -881,6 +884,9 @@ func (s *Store) RenameEntity(ctx context.Context, oldID, newID string) (*store.R
 		return nil, err
 	}
 	updated += tag.RowsAffected()
+	if _, err := tx.Exec(ctx, dropMarkedEdgesSQL, oldID); err != nil {
+		return nil, err
+	}
 
 	if _, err := tx.Exec(ctx,
 		`UPDATE attachments SET entity_id = $2, seq = nextval('rela_seq') WHERE entity_id = $1`,

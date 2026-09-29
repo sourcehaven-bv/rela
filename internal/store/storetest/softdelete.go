@@ -344,6 +344,57 @@ func RunSoftDeleteTests(t *testing.T, f Factory, sf SearchFactory, attachments b
 		assert.ErrorIs(t, err, store.ErrNotFound, "an edge to a purged entity must not come back")
 	})
 
+	// A hard delete or a rename of the other end drops the hidden edge, so a
+	// restore cannot bring back an edge to an entity that is gone, or attach
+	// it to a new entity that took the freed id.
+	for _, tc := range []struct {
+		name   string
+		free   func(t *testing.T, s store.Store)
+		reuse  string
+		reType string
+	}{
+		{"HardDeleteOfOtherEndDropsHiddenEdge", func(t *testing.T, s store.Store) {
+			t.Helper()
+			_, err := s.DeleteEntity(ctx(), "REQ-001", true)
+			require.NoError(t, err)
+		}, "REQ-001", "requirement"},
+		{"RenameOfOtherEndDropsHiddenEdge", func(t *testing.T, s store.Store) {
+			t.Helper()
+			_, err := s.RenameEntity(ctx(), "FEAT-002", "FEAT-003")
+			require.NoError(t, err)
+		}, "FEAT-002", "feature"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := f(t)
+			seedSoftDelete(t, s, attachments)
+			sd := softDeleterOf(t, s)
+			_, err := sd.MarkDeleted(ctx(), "FEAT-009", "alice")
+			require.NoError(t, err)
+
+			tc.free(t, s)
+			fresh := entity.New(tc.reuse, tc.reType)
+			fresh.SetString("title", "Reused id")
+			require.NoError(t, s.CreateEntity(ctx(), fresh), "the freed id can be taken again")
+
+			res, err := sd.Unmark(ctx(), "FEAT-009")
+			require.NoError(t, err)
+			for _, r := range res.DeletedRelations {
+				assert.NotContains(t, []string{r.From, r.To}, tc.reuse, "restored edge %s--%s--%s", r.From, r.Type, r.To)
+			}
+			for _, r := range []*entity.Relation{
+				{From: "FEAT-009", Type: "implements", To: tc.reuse},
+				{From: tc.reuse, Type: "depends-on", To: "FEAT-009"},
+			} {
+				_, err = s.GetRelation(ctx(), r.From, r.Type, r.To)
+				assert.ErrorIs(t, err, store.ErrNotFound, "%s--%s--%s must not attach to the new %s",
+					r.From, r.Type, r.To, tc.reuse)
+			}
+			for _, key := range relationKeys(t, s.ListRelations(ctx(), store.RelationQuery{EntityID: "FEAT-009"})) {
+				assert.NotContains(t, key, tc.reuse)
+			}
+		})
+	}
+
 	t.Run("RevealIsNarrow", func(t *testing.T) {
 		s := f(t)
 		seedSoftDelete(t, s, attachments)

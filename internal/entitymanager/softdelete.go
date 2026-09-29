@@ -137,60 +137,75 @@ func FindSoftDeleted(ctx context.Context, m *Manager, id string) (SoftDeleted, b
 	if !ok {
 		return SoftDeleted{}, false, nil
 	}
+	me, ok, err := findMarked(ctx, sd, id)
+	if !ok || err != nil {
+		return SoftDeleted{}, false, err
+	}
+	return SoftDeleted{ID: me.ID, Type: me.Entities[0].Type, DeletedBy: me.DeletedBy}, true, nil
+}
+
+// findMarked returns the marked family of id, which holds at least one
+// entity when ok is true. Its default face, when it has one, comes first.
+func findMarked(ctx context.Context, sd store.SoftDeleteProvider, id string) (store.MarkedEntity, bool, error) {
 	marked, err := sd.SoftDelete().ListMarked(ctx)
 	if err != nil {
-		return SoftDeleted{}, false, err
+		return store.MarkedEntity{}, false, err
 	}
 	for _, me := range marked {
 		if me.ID == id && len(me.Entities) > 0 {
-			return SoftDeleted{ID: me.ID, Type: me.Entities[0].Type, DeletedBy: me.DeletedBy}, true, nil
+			return me, true, nil
 		}
 	}
-	return SoftDeleted{}, false, nil
+	return store.MarkedEntity{}, false, nil
 }
 
 // RestoreEntity undoes [SoftDeleteEntity]: the family and the relations that
 // were hidden with it come back unchanged. Returns [ErrEntityNotFound] when id
 // is not soft-deleted, including after it has been purged.
 //
-// It is authorized as a delete of the entity. A restore puts back exactly what
-// the delete removed, so the grant that allowed the removal is the one that
-// allows the undo. The check runs under [store.WithRevealed], because a local
-// role is resolved from the entity's own relations and those are hidden while
-// it is marked; without the reveal the restore would be judged without the
-// grants the delete was judged with.
+// It needs exactly the grants the delete needed: the delete grant on the
+// entity, and the delete grant on every relation that comes back with it (the
+// cascade check). A restore puts back what the delete removed, so a principal
+// who could not have removed an edge must not be able to put it back.
+//
+// The checks run under [store.WithRevealed], because the entity's relations
+// are hidden while it is marked: a local role is resolved from them, and the
+// cascade check has to see them. They run in the same transaction as the
+// unmark, for the reason SoftDeleteEntity collects and marks in one.
 //
 // The caller is responsible for the read gate: whether this principal may
 // learn that id exists at all. See the data-entry restore handler.
 func RestoreEntity(ctx context.Context, m *Manager, id string) (*entity.DeleteResult, error) {
-	sd, ok := m.deps.Store.(store.SoftDeleteProvider)
-	if !ok {
+	if _, ok := m.deps.Store.(store.SoftDeleteProvider); !ok {
 		return nil, ErrSoftDeleteUnsupported
 	}
-	found, ok, err := FindSoftDeleted(ctx, m, id)
-	if err != nil {
-		return nil, err
-	}
-	if !ok {
-		return nil, fmt.Errorf("%w: %s", ErrEntityNotFound, id)
-	}
-	if aclErr := m.authorizeAndAudit(store.WithRevealed(ctx, id), acl.WriteRequest{
-		Op:      acl.OpDelete,
-		Subject: acl.NewEntitySubject(found.Type, id, ""),
-	}); aclErr != nil {
-		return nil, aclErr
-	}
-
-	res, err := sd.SoftDelete().Unmark(ctx, id)
-	if errors.Is(err, store.ErrNotFound) {
-		// Purged between the lookup and the unmark.
-		return nil, fmt.Errorf("%w: %s", ErrEntityNotFound, id)
-	}
-	if err != nil {
-		if ok, mapped := mapUniquePropertyConflict(err); ok {
+	var res *store.DeleteResult
+	txErr := m.deps.Store.Tx(ctx, func(tx store.Store) error {
+		sd, ok := tx.(store.SoftDeleteProvider)
+		if !ok { // unreachable: every in-tree Tx view carries the capability of its store
+			return ErrSoftDeleteUnsupported
+		}
+		marked, ok, err := findMarked(ctx, sd, id)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return fmt.Errorf("%w: %s", ErrEntityNotFound, id)
+		}
+		if err := authorizeRestore(store.WithRevealed(ctx, id), m, tx, marked); err != nil {
+			return err
+		}
+		res, err = sd.SoftDelete().Unmark(ctx, id)
+		if errors.Is(err, store.ErrNotFound) {
+			return fmt.Errorf("%w: %s", ErrEntityNotFound, id)
+		}
+		return err
+	})
+	if txErr != nil {
+		if ok, mapped := mapUniquePropertyConflict(txErr); ok {
 			return nil, mapped
 		}
-		return nil, err
+		return nil, txErr
 	}
 
 	restoreCtx := audit.WithTriggeredBy(ctx, "restore-entity:"+id)
@@ -201,6 +216,48 @@ func RestoreEntity(ctx context.Context, m *Manager, id string) (*entity.DeleteRe
 		m.recordEntityAudit(ctx, audit.OpRestoreEntity, e, "restored")
 	}
 	return &entity.DeleteResult{DeletedEntities: res.DeletedEntities, DeletedRelations: res.DeletedRelations}, nil
+}
+
+// authorizeRestore runs the delete checks for a restore of marked. ctx must
+// reveal marked.ID.
+func authorizeRestore(ctx context.Context, m *Manager, tx store.Store, marked store.MarkedEntity) error {
+	head := marked.Entities[0]
+	if err := m.authorizeAndAudit(ctx, acl.WriteRequest{
+		Op:      acl.OpDelete,
+		Subject: acl.NewEntitySubject(head.Type, marked.ID, ""),
+	}); err != nil {
+		return err
+	}
+	incoming, err := collectIncidentRelations(ctx, tx, marked.ID, store.DirectionIncoming)
+	if err != nil {
+		return fmt.Errorf("collect incoming relations for %q: %w", marked.ID, err)
+	}
+	outgoing, err := collectIncidentRelations(ctx, tx, marked.ID, store.DirectionOutgoing)
+	if err != nil {
+		return fmt.Errorf("collect outgoing relations for %q: %w", marked.ID, err)
+	}
+	// The cascade check resolves each edge's source type with GetEntity. The
+	// marked entity is not readable, so an outgoing edge would resolve to no
+	// type and be refused; markedSource answers for it.
+	src := markedSource{Store: tx, head: head}
+	if err := m.authorizeCascadeRelations(ctx, src, marked.ID, incoming, outgoing); err != nil {
+		return fmt.Errorf("cannot restore %s: %w", marked.ID, err)
+	}
+	return nil
+}
+
+// markedSource answers GetEntity for one marked entity and passes every other
+// call through.
+type markedSource struct {
+	store.Store
+	head *entity.Entity
+}
+
+func (s markedSource) GetEntity(ctx context.Context, id string) (*entity.Entity, error) {
+	if id == s.head.ID {
+		return s.head, nil
+	}
+	return s.Store.GetEntity(ctx, id)
 }
 
 // PurgeSoftDeleted removes, for real, every soft-deleted entity marked before

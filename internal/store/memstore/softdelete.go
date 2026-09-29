@@ -35,6 +35,19 @@ func markedTaken(marked map[string]*markedFamily, id, except string) bool {
 	return false
 }
 
+// dropMarkedEdges removes the hidden edges that touch id, for a hard delete or
+// a rename of id. Otherwise a restore of the marked end would bring back an
+// edge to an entity that is gone, or to a new entity that took its id.
+func dropMarkedEdges(marked map[string]*markedFamily, id string) {
+	for _, fam := range marked {
+		for key, r := range fam.relations {
+			if r.From == id || r.To == id {
+				delete(fam.relations, key)
+			}
+		}
+	}
+}
+
 // SoftDelete implements [store.SoftDeleteProvider].
 func (m *MemStore) SoftDelete() store.SoftDeleter { return softDeleter{m: m} }
 

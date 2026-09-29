@@ -18,6 +18,12 @@ import (
 // failure leaves the family wholly live or wholly marked.
 
 // The live column lists, in the order the side tables repeat them.
+// dropMarkedEdgesSQL removes the hidden edges that touch an id, for a hard
+// delete or a rename of that id. Otherwise a restore of the marked end would
+// bring back an edge to an entity that is gone, or to a new entity that took
+// its id. Arguments: the id, twice.
+const dropMarkedEdgesSQL = `DELETE FROM marked_relations WHERE from_id = ? OR to_id = ?`
+
 const (
 	entityRowColumns = "id, face, type, properties, content, updated_at, " +
 		"last_edited_by_user, last_edited_by_tool"
