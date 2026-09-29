@@ -18,9 +18,9 @@ import (
 // mustAllowAll wraps a store in a pass-through visibility.Reader for mention
 // tests: these exercise scanning/resolution, not ACL, so the reader must not
 // gate or redact. ACL behavior for mentions is covered separately.
-func mustAllowAll(t *testing.T, get visibility.EntityGetter) visibility.Reader {
+func mustAllowAll(t *testing.T, load visibility.Loader) visibility.Reader {
 	t.Helper()
-	r, err := visibility.NewAllowAllReader(get)
+	r, err := visibility.NewAllowAllReader(load)
 	if err != nil {
 		t.Fatalf("NewAllowAllReader: %v", err)
 	}

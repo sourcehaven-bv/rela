@@ -13,7 +13,7 @@
 //
 //   - Gate BEFORE read: a denied row and a nonexistent row are
 //     indistinguishable (the RR-NGMI invariant — no existence oracle).
-//   - Stored type must equal the caller's claimed type: [Reader.Get]
+//   - Stored type must equal the caller's claimed type: a [Resolver]
 //     authorizes against the claimed type but verifies the loaded entity's
 //     actual type, returning not-found on mismatch (RR-SRZK6X; the
 //     read-side analog of BUG-ZWTDH9).
@@ -45,7 +45,6 @@ package visibility
 
 import (
 	"context"
-	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -98,19 +97,15 @@ type FaceGate interface {
 //
 // A gate that is not a [FaceGate], or one reporting no restriction, permits
 // every face.
+//
+// It answers the face half only, after a row verdict made elsewhere, so it
+// consults [FaceGate] and not [FaceSetGate]. Some callers reach it without a
+// type-level read grant (deleted-entity history under the history
+// permission), and the "none" a FaceSetGate reports for such a type would
+// newly hide what they serve. [ReadableFaces] is the read that stops on
+// "none".
 func FaceAllowed(ctx context.Context, gate RowGate, entityType string, face entity.Face) bool {
-	fg, ok := gate.(FaceGate)
-	if !ok {
-		return true
-	}
-	faces, err := fg.PermittedFaces(ctx, entityType)
-	if err != nil {
-		return false
-	}
-	if len(faces) == 0 {
-		return true
-	}
-	return slices.Contains(faces, face)
+	return faceGateSet(ctx, gate, entityType).Contains(face)
 }
 
 // FieldRedactor reports the property names hidden from the ctx principal
@@ -173,22 +168,12 @@ func parseAddress(addr string) (id string, face entity.Face) {
 	return id, face
 }
 
-// Reader is the row-gating, field-redacting entity read-out surface.
-// Implementations: [PolicyReader] (policy-enforcing) and [AllowAllReader]
-// (explicit pass-through capability for system jobs).
+// Reader is the row-gating, field-redacting read-out surface for
+// collections. Implementations: [PolicyReader] (policy-enforcing) and
+// [AllowAllReader] (explicit pass-through capability for system jobs). A
+// single entity is read through a [Resolver], which both implementations
+// expose.
 type Reader interface {
-	// Get returns the entity when the ctx principal may read it AND its
-	// stored type matches entityType. Denied, missing, and type-mismatched
-	// are indistinguishable: (nil, false, nil). Only a gate failure is an
-	// error — a store-load fault is deliberately swallowed into the same
-	// clean miss (the oracle-free contract requires it), so a backend
-	// outage reads as 404s; operators debugging phantom misses should
-	// check store health, not the gate. The returned entity's PROPERTIES
-	// are redacted (hidden names absent). Body redaction is out of scope:
-	// the `visible:` policy universe is metamodel-declared properties, so
-	// Content is not policy-hideable today and passes through verbatim.
-	Get(ctx context.Context, entityType, id string) (*entity.Entity, bool, error)
-
 	// Filter drops candidates the ctx principal may not read and redacts
 	// the survivors. Order is preserved; the returned slice is fresh; a
 	// gate error drops that whole type fail-closed (logged loud). Nil for

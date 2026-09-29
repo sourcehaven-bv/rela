@@ -3,6 +3,7 @@ package visibility
 import (
 	"context"
 	"errors"
+	"iter"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -71,6 +72,16 @@ func (plainRowGate) PermitsReadMany(
 // faceGetter serves one entity, at a face the test chooses.
 type faceGetter struct{ e *entity.Entity }
 
+func (g faceGetter) ListEntities(context.Context, store.EntityQuery) iter.Seq2[*entity.Entity, error] {
+	return func(func(*entity.Entity, error) bool) {}
+}
+
+// readFace reads e's own address through r's resolver, in the default world.
+func readFace(r *PolicyReader, e *entity.Entity) (*entity.Entity, bool, error) {
+	res, ok, err := r.Resolver().Address(context.Background(), World{}, "policy", e.Ref().String())
+	return res.Entity, ok, err
+}
+
 func (g faceGetter) GetEntityState(context.Context, string, entity.Face) (*entity.Entity, error) {
 	if g.e == nil {
 		return nil, errors.New("not found")
@@ -101,7 +112,7 @@ func TestFaceGate_GetDeniesAnUngrantedFace(t *testing.T) {
 		t.Fatalf("NewPolicyReader: %v", err)
 	}
 
-	got, ok, gerr := r.Get(context.Background(), "policy", "POL-1")
+	got, ok, gerr := readFace(r, draftPolicy())
 	if gerr != nil {
 		t.Fatalf("Get: %v", gerr)
 	}
@@ -123,7 +134,7 @@ func TestFaceGate_GetServesTheGrantedFace(t *testing.T) {
 		t.Fatalf("NewPolicyReader: %v", err)
 	}
 
-	got, ok, gerr := r.Get(context.Background(), "policy", "POL-1")
+	got, ok, gerr := readFace(r, publishedPolicy())
 	if gerr != nil {
 		t.Fatalf("Get: %v", gerr)
 	}
@@ -160,7 +171,7 @@ func TestFaceGate_EmptyGrantMeansEveryFace(t *testing.T) {
 			if err != nil {
 				t.Fatalf("NewPolicyReader: %v", err)
 			}
-			if _, ok, gerr := r.Get(context.Background(), "policy", "POL-1"); gerr != nil || !ok {
+			if _, ok, gerr := readFace(r, tc.e); gerr != nil || !ok {
 				t.Errorf("an unrestricted grant must read every face; ok=%v err=%v", ok, gerr)
 			}
 		})
@@ -175,7 +186,7 @@ func TestFaceGate_NonFaceGateIsUnrestricted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewPolicyReader: %v", err)
 	}
-	if _, ok, gerr := r.Get(context.Background(), "policy", "POL-1"); gerr != nil || !ok {
+	if _, ok, gerr := readFace(r, publishedPolicy()); gerr != nil || !ok {
 		t.Errorf("a gate without FaceGate must not restrict faces; ok=%v err=%v", ok, gerr)
 	}
 }
@@ -192,7 +203,7 @@ func TestFaceGate_GateErrorFailsClosed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewPolicyReader: %v", err)
 	}
-	if _, ok, _ := r.Get(context.Background(), "policy", "POL-1"); ok {
+	if _, ok, _ := readFace(r, publishedPolicy()); ok {
 		t.Error("a gate error must hide the row, not reveal it")
 	}
 }
@@ -232,7 +243,7 @@ func TestFaceGate_FilterAndHeadersAgreeWithGet(t *testing.T) {
 
 // TestVisibleTracer_IsFaceGated: the base tracer reads every node's DEFAULT
 // face, so the row gate alone surfaced draft titles and properties to a
-// principal granted only `ticket@published` — while PolicyReader.Get on the
+// principal granted only `ticket@published` — while a single-entity read on the
 // same entity correctly reported not-found. The decorator now applies the face
 // gate to the default face per type.
 func TestVisibleTracer_IsFaceGated(t *testing.T) {

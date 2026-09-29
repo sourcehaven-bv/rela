@@ -181,6 +181,17 @@ func (g DeclarativeGate) PermittedFaces(
 	return r.ReadQuery(ctx, entityType).Faces, nil
 }
 
+// ReadableFaces implements [FaceSetGate] from the same ReadQueryResult, so a
+// type the principal may not read at all is the empty set rather than the
+// "every face" an empty [DeclarativeGate.PermittedFaces] list means.
+func (g DeclarativeGate) ReadableFaces(ctx context.Context, entityType string) (FaceSet, error) {
+	r, err := g.request(ctx)
+	if err != nil {
+		return NoFaces(), err
+	}
+	return FaceSetOf(r.ReadQuery(ctx, entityType)), nil
+}
+
 // GateTraversal authorizes a `related(...)` traversal for the ctx principal
 // through the same per-operation acl.Request every other decision here uses
 // (TKT-205V2N). It gives surfaces with no data-entry read gate on ctx (a

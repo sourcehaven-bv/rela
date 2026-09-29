@@ -60,12 +60,14 @@ type exportHandler struct {
 	redactForCondition func(ctx context.Context, e *entityPkg.Entity) *entityPkg.Entity
 
 	// visReader is the row-gating + field-redacting read seam (DEC-ZBI39P):
-	// entity export reads through Get (which owns the stored-type check,
-	// RR-SRZK6X) and list-export rows through Filter, so a hidden field can
-	// never reach the markdown handed to a transform. redactor is the same
-	// field-verdict source exposed directly, for redacting already-gated
-	// neighbor entities before title derivation (visibility.Redact).
+	// list-export rows go through Filter, and entity export through resolver,
+	// which is built from the same gate and redactor and owns the stored-type
+	// check (RR-SRZK6X). A hidden field therefore never reaches the markdown
+	// handed to a transform. redactor is the same field-verdict source exposed
+	// directly, for redacting already-gated neighbor entities before title
+	// derivation (visibility.Redact).
 	visReader visibility.Reader
+	resolver  addressResolver
 	redactor  visibility.FieldRedactor
 
 	// visibleReader remains for the batched neighbor-ID gate
@@ -95,6 +97,11 @@ type exportHandler struct {
 	engine *transform.Engine
 }
 
+// addressResolver is the single-entity read the export handler needs.
+type addressResolver interface {
+	Address(ctx context.Context, w visibility.World, entityType, addr string) (visibility.Resolved, bool, error)
+}
+
 // newExportHandler builds the export handler with closures over the App
 // collaborators it needs. Called from both NewApp and the test app builder so
 // the wiring lives in one place.
@@ -113,6 +120,7 @@ func newExportHandler(app *App) (*exportHandler, error) {
 			return loadRowContent(ctx, app.Services().Store, rows)
 		},
 		visReader:      visReader,
+		resolver:       visReader.Resolver(),
 		redactor:       redactor,
 		documents:      app.documents,
 		scopedEntities: app.scopedSortedEntities,
@@ -203,10 +211,12 @@ func (h *exportHandler) handleV1ExportEntity(w http.ResponseWriter, r *http.Requ
 	}
 
 	// The id segment is an ADDRESS (`ID` or `ID@face`). Export renders the
-	// bare face only: the redacting reader below reads by bare id, so a
-	// non-bare address is answered with the same not-found a missing entity
-	// gets rather than with the bare face's document under a faced name.
-	// Exporting a non-bare face is a follow-up (TKT-5SZG2L records the gap).
+	// bare face only, because the `export_render:` override below renders
+	// by bare id, so a non-bare address is answered with the same not-found
+	// a missing entity gets. `_export` is not a world-capable path
+	// (refuseWorldIncapablePath 422s a named world first), so the world
+	// handed to the resolver is always the default one. Exporting a non-bare
+	// face is a follow-up (TKT-5SZG2L records the gap).
 	ref, ok := parseEntityRef(entityID)
 	if !ok || !ref.Face.IsDefault() {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
@@ -216,10 +226,10 @@ func (h *exportHandler) handleV1ExportEntity(w http.ResponseWriter, r *http.Requ
 
 	// ACL gate BEFORE any render (same as handleV1GetEntity): a deny is an
 	// indistinguishable 404, and the render never runs for a hidden entity.
-	// visReader.Get also owns the stored-type check (RR-SRZK6X) and returns
+	// The resolver also owns the stored-type check (RR-SRZK6X) and returns
 	// a FIELD-REDACTED copy — the renderer below can never see a property
 	// the caller's `visible:` policy hides (the #1188 IB-review finding).
-	entity, found, err := h.visReader.Get(ctx, typeName, entityID)
+	res, found, err := h.resolver.Address(ctx, worldFromContext(ctx).visibility(), typeName, entityID)
 	if err != nil {
 		writeGateError(w, r, err)
 		return
@@ -228,6 +238,7 @@ func (h *exportHandler) handleV1ExportEntity(w http.ResponseWriter, r *http.Requ
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 		return
 	}
+	entity := res.Entity
 
 	// A per-type `export_render:` view config (RR-BM0KIJ: config-selected,
 	// never request-selected — no query param chooses the script) renders via
