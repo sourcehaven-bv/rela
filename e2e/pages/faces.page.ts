@@ -151,9 +151,12 @@ export class FacesPage extends BasePage {
     return decodeURIComponent(new URL(this.page.url()).pathname).slice(prefix.length);
   }
 
-  /** The error toast a refused or failed action raises. */
-  async expectErrorToast() {
-    await expect(this.page.locator('[data-testid="toast-error"]').first()).toBeVisible();
+  /** The script-error dialog a refused script action raises, naming the
+   *  refusal. A failed script action reports there, not in a toast. */
+  async expectActionRefused() {
+    const dialog = this.page.getByRole('alertdialog', { name: 'Script error' });
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toContainText('forbidden');
   }
 
   /** Run a detail-page script action (an `actions:` entry with `available_on`). */

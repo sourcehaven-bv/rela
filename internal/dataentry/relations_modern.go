@@ -49,6 +49,17 @@ func (h *writeHandler) validateRelationsModern(
 		return nil, err
 	}
 
+	// The structural checks run first, so a request they reject pays no
+	// read. The edges' soft checks wait for one gated batch over every peer.
+	type edgeCheck struct {
+		relType  string
+		relDef   metamodel.RelationDef
+		ref      v1.ResourceIdentifier
+		path     string
+		incoming bool
+	}
+	var edges []edgeCheck
+
 	for bodyKey, upd := range desired {
 		if !upd.DataPresent {
 			return nil, &v1.WireError{
@@ -107,14 +118,24 @@ func (h *writeHandler) validateRelationsModern(
 				return nil, err
 			}
 
-			// Soft conditions surfaced as warnings. The peer is whichever
-			// side the path entity is NOT on.
-			ws, err := h.collectEdgeWarnings(ctx, canonical, &relDef, ref, edgePath, incoming)
-			if err != nil {
-				return nil, err
-			}
-			warnings = append(warnings, ws...)
+			edges = append(edges, edgeCheck{canonical, relDef, ref, edgePath, incoming})
 		}
+	}
+
+	// Soft conditions surfaced as warnings. The peer is whichever side the
+	// path entity is NOT on. Every peer is gated in one batch, so the cost
+	// does not grow with the number of edges.
+	ids := make([]string, len(edges))
+	for i, e := range edges {
+		ids[i] = e.ref.ID
+	}
+	peerTypes, err := h.visible.readableTypes(ctx, ids)
+	if err != nil {
+		return nil, &gateFaultError{err: err}
+	}
+	for _, e := range edges {
+		ws := h.collectEdgeWarnings(e.relType, &e.relDef, e.ref, peerTypes[e.ref.ID], e.path, e.incoming)
+		warnings = append(warnings, ws...)
 	}
 	return warnings, nil
 }
@@ -145,22 +166,20 @@ func sideLabel(incoming, pathSide bool) string {
 // the `ref` is the SOURCE side of the canonical edge (the path entity
 // is the target). Warning codes stay the same so client de-dup by
 // code keeps working; the `Direction` field disambiguates.
+//
+// peerType is the peer's stored type when the principal may read some face
+// of it, and "" otherwise ([visibleReader.readableTypes]). The peer is named
+// by bare id, so it names an entity, not a face. A peer the caller may not
+// read gets the same warning as an absent one, so neither its existence nor
+// its type leaks through the warning codes.
 func (h *writeHandler) collectEdgeWarnings(
-	ctx context.Context, relType string, relDef *metamodel.RelationDef,
-	ref v1.ResourceIdentifier, edgePath string, incoming bool,
-) ([]Warning, error) {
+	relType string, relDef *metamodel.RelationDef,
+	ref v1.ResourceIdentifier, peerType, edgePath string, incoming bool,
+) []Warning {
 	var warnings []Warning
 	meta := h.schema().Meta
 	direction := directionLabel(incoming)
 
-	// The peer is named by bare id, so it names an entity, not a face: the
-	// check is whether some face of it is readable. A peer the caller may not
-	// read gets the same warning as an absent one, so neither its existence
-	// nor its type leaks through the warning codes.
-	peerType, err := h.visible.readableType(ctx, ref.ID)
-	if err != nil {
-		return nil, &gateFaultError{err: err}
-	}
 	if peerType == "" {
 		warnings = append(warnings, Warning{
 			Code:      "target_not_found",
@@ -247,7 +266,7 @@ func (h *writeHandler) collectEdgeWarnings(
 		}
 	}
 
-	return warnings, nil
+	return warnings
 }
 
 // gateFaultError marks a read-gate fault inside a larger operation (a relation

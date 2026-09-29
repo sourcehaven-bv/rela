@@ -487,6 +487,38 @@ func assertScopePushedDown(t *testing.T, newStore func(*testing.T) store.Store) 
 	assertBudget(t, "pushed traversal scope list page", reads[0], reads[1], listPageBudget, detail)
 }
 
+// Validating a relations body whose edges name n peers. Before batching
+// (RR-TYJON4): two header reads per edge, a stored-type read and the family
+// gate.
+func TestQueryBudget_EdgeWarningsAreSizeIndependent(t *testing.T) {
+	small, large, detail := readsFor(t, func(t *testing.T, app *App, d *acl.Declarative, ctx context.Context) {
+		t.Helper()
+		var data []v1.ResourceIdentifier
+		for e, err := range app.store.ListEntities(ctx, store.EntityQuery{Type: "ticket"}) {
+			if err != nil {
+				t.Fatal(err)
+			}
+			data = append(data, v1.ResourceIdentifier{Type: "ticket", ID: e.ID})
+		}
+		// A peer that does not exist, so the warning path is exercised too.
+		data = append(data, v1.ResourceIdentifier{Type: "ticket", ID: "TKT-9999"})
+		// A second peer type, so the pin covers one gate round per type.
+		features := []v1.ResourceIdentifier{{Type: "feature", ID: "F1"}, {Type: "feature", ID: "F2"}}
+		desired := map[string]v1.RelationsUpdate{
+			"blocks":     {DataPresent: true, Data: data},
+			"implements": {DataPresent: true, Data: features},
+		}
+		ws, err := app.write.validateRelationsModern(gateCtxFor(ctx, t, d), "TKT-0001", "ticket", desired)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(ws) != 1 || ws[0].Code != "target_not_found" {
+			t.Fatalf("warnings = %+v, want one target_not_found", ws)
+		}
+	})
+	assertBudget(t, "edge warnings", small, large, edgeWarningsBudget, detail)
+}
+
 // Pinned budgets: the measured store-call count per request shape after
 // TKT-1U8XYN. Raise one only with a reason in the commit.
 const (
@@ -501,6 +533,9 @@ const (
 	// view: entry, two traverse passes, collection load, section columns +
 	// target headers, entry edges, membership walk.
 	viewSectionBudget = 11
+	// edge warnings: the test's own listing of the peers, ONE header read for
+	// every peer, and the membership walk.
+	edgeWarningsBudget = 4
 	// search: whole-type read, membership walk.
 	searchBudget = 3
 	// recursive view: entry, the fixpoint's relation queries, the collection

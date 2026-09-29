@@ -571,6 +571,12 @@ func (h *commandHandler) handleCommandExec(w http.ResponseWriter, r *http.Reques
 		// COMMAND may run, not which rows it may see.
 		entityDomain, found, gerr := h.visible.untypedAddress(r.Context(), entityID)
 		if gerr != nil || !found {
+			if gerr != nil {
+				// The 404 keeps the command's answer shape; the log keeps
+				// the fault visible to the operator.
+				slog.Warn("dataentry: command entity read gate failed; answering not-found",
+					"command", commandID, "entity_id", entityID, "err", gerr)
+			}
 			http.Error(w, "Entity not found: "+entityID, http.StatusNotFound)
 			return
 		}

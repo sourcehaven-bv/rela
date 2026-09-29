@@ -18,7 +18,6 @@ type ResolvedHeader struct {
 	// answers for the bare id only, never for a named face: for `ID@face`,
 	// [ResolvedHeader.Served] is the face-level answer.
 	Family bool
-
 	served bool
 }
 
@@ -59,6 +58,42 @@ func (r *Resolver) ResolveHeaders(
 	if !ok {
 		return nil
 	}
+	return r.resolved(ctx, w, refs, faces)
+}
+
+// ReadableTypes answers, for each id in ids, the entity's stored type when
+// the principal may read some face of it: the [Resolver.Family] question for
+// a caller that holds only ids. An id absent from the result is unreadable or
+// absent. It runs the same gates as [Resolver.ResolveHeaders] at the same
+// cost, but serves, primes and redacts nothing.
+//
+// Unlike [Resolver.ResolveHeaders], a failed header read or a gate error is
+// returned, and the result is nil. That is safe where the caller answers
+// every fault as a failed request (a 500, not a per-id answer), which then
+// says nothing about which id exists.
+func (r *Resolver) ReadableTypes(ctx context.Context, ids []string) (map[string]string, error) {
+	refs := make([]entity.Ref, len(ids))
+	for i, id := range ids {
+		refs[i] = entity.Ref{ID: id}
+	}
+	faces, err := r.scanHeaders(ctx, refIDs(refs), func(_ string, err error) error { return err })
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]string, len(faces))
+	for id, hs := range faces {
+		for _, h := range hs {
+			out[id] = h.Type // scanHeaders keeps only single-type families
+			break
+		}
+	}
+	return out, nil
+}
+
+// resolved builds the per-ref answer from the readable headers.
+func (r *Resolver) resolved(
+	ctx context.Context, w World, refs []entity.Ref, faces map[string]map[entity.Face]store.EntityHeader,
+) map[entity.Ref]ResolvedHeader {
 	served := servedHeaders(w, refs, faces)
 	probes := make([]*entity.Entity, 0, len(served))
 	for _, h := range served {
@@ -68,7 +103,8 @@ func (r *Resolver) ResolveHeaders(
 
 	out := make(map[entity.Ref]ResolvedHeader, len(refs))
 	for _, ref := range refs {
-		if len(faces[ref.ID]) == 0 {
+		readable := faces[ref.ID]
+		if len(readable) == 0 {
 			continue
 		}
 		res := ResolvedHeader{Family: true}
@@ -110,16 +146,38 @@ func refIDs(refs []entity.Ref) []string {
 // keeps, per id, the headers of the faces the principal may read. An id
 // missing from the result has no readable face. ok is false when the read
 // failed.
+//
+// A gate error is logged and hides every id of its type.
 func (r *Resolver) readableHeaders(
 	ctx context.Context, ids []string,
 ) (map[string]map[entity.Face]store.EntityHeader, bool) {
+	out, err := r.scanHeaders(ctx, ids, func(typ string, err error) error {
+		warnGate("batch", typ, entity.Ref{}, err)
+		return nil
+	})
+	if err != nil {
+		slog.Warn("visibility: header read failed; answering not-found",
+			"ids", len(ids), "err", err)
+		return nil, false
+	}
+	return out, true
+}
+
+// scanHeaders is the shared core of the batch reads. It returns a failed
+// header read as an error. A gate error for one type goes to onGateErr: a nil
+// return hides that type's ids and carries on, a non-nil one aborts the scan
+// with that error.
+func (r *Resolver) scanHeaders(
+	ctx context.Context, ids []string, onGateErr func(typ string, err error) error,
+) (map[string]map[entity.Face]store.EntityHeader, error) {
+	if len(ids) == 0 {
+		return map[string]map[entity.Face]store.EntityHeader{}, nil
+	}
 	stored := make(map[string][]store.EntityHeader, len(ids))
 	q := store.EntityQuery{IDs: ids, AllStates: true}
 	for h, err := range store.ListEntityHeaders(ctx, r.load, q) {
 		if err != nil {
-			slog.Warn("visibility: header read failed; answering not-found",
-				"ids", len(ids), "err", err)
-			return nil, false
+			return nil, err
 		}
 		stored[h.ID] = append(stored[h.ID], h)
 	}
@@ -131,8 +189,11 @@ func (r *Resolver) readableHeaders(
 	}
 	out := make(map[string]map[entity.Face]store.EntityHeader, len(stored))
 	for typ, typeIDs := range byType {
-		perm, faces, ok := r.typeGate(ctx, typ, typeIDs)
-		if !ok {
+		perm, faces, err := r.typeGate(ctx, typ, typeIDs)
+		if err != nil {
+			if abort := onGateErr(typ, err); abort != nil {
+				return nil, abort
+			}
 			continue
 		}
 		for _, id := range typeIDs {
@@ -150,7 +211,7 @@ func (r *Resolver) readableHeaders(
 			}
 		}
 	}
-	return out, true
+	return out, nil
 }
 
 // singleType returns the type every header in hs is stored under. A family
@@ -165,20 +226,17 @@ func singleType(hs []store.EntityHeader) (string, bool) {
 	return typ, true
 }
 
-// typeGate runs the row gate over ids and reads the readable faces of typ. A
-// gate error is logged and hides every id of the type.
-func (r *Resolver) typeGate(ctx context.Context, typ string, ids []string) (map[string]bool, FaceSet, bool) {
+// typeGate runs the row gate over ids and reads the readable faces of typ.
+func (r *Resolver) typeGate(ctx context.Context, typ string, ids []string) (map[string]bool, FaceSet, error) {
 	perm, err := r.gate.PermitsReadMany(ctx, typ, ids)
 	if err != nil {
-		warnGate("batch", typ, entity.Ref{}, err)
-		return nil, FaceSet{}, false
+		return nil, FaceSet{}, err
 	}
 	faces, err := ReadableFaces(ctx, r.gate, typ)
 	if err != nil {
-		warnGate("batch", typ, entity.Ref{}, err)
-		return nil, FaceSet{}, false
+		return nil, FaceSet{}, err
 	}
-	return perm, faces, true
+	return perm, faces, nil
 }
 
 // servedHeaders picks, per ref, the header of the face it serves. A named
