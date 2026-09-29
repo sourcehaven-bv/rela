@@ -54,26 +54,20 @@ func headerEntity(h store.EntityHeader) *entityPkg.Entity {
 	}
 }
 
-// rowKey addresses one (id, face) row.
-type rowKey struct {
-	id   string
-	face entityPkg.Face
-}
-
 // loadRows reads the rows keys name, grouped by face: default-face rows in
 // one IDs query, each other face in one AllStates query narrowed to that
 // face on the way out. Returns only rows that exist.
-func loadRows(ctx context.Context, st store.Store, keys []rowKey) (map[rowKey]*entityPkg.Entity, error) {
+func loadRows(ctx context.Context, st store.Store, keys []entityPkg.Ref) (map[entityPkg.Ref]*entityPkg.Entity, error) {
 	byFace := make(map[entityPkg.Face][]string)
-	seen := make(map[rowKey]struct{}, len(keys))
+	seen := make(map[entityPkg.Ref]struct{}, len(keys))
 	for _, k := range keys {
 		if _, dup := seen[k]; dup {
 			continue
 		}
 		seen[k] = struct{}{}
-		byFace[k.face] = append(byFace[k.face], k.id)
+		byFace[k.Face] = append(byFace[k.Face], k.ID)
 	}
-	out := make(map[rowKey]*entityPkg.Entity, len(seen))
+	out := make(map[entityPkg.Ref]*entityPkg.Entity, len(seen))
 	for face, ids := range byFace {
 		q := store.EntityQuery{IDs: ids, AllStates: !face.IsDefault()}
 		for e, err := range st.ListEntities(ctx, q) {
@@ -83,7 +77,7 @@ func loadRows(ctx context.Context, st store.Store, keys []rowKey) (map[rowKey]*e
 			if e.Face != face {
 				continue // AllStates over-returns the family's other faces
 			}
-			out[rowKey{e.ID, e.Face}] = e
+			out[e.Ref()] = e
 		}
 	}
 	return out, nil
@@ -99,16 +93,16 @@ func loadRowContent(ctx context.Context, st store.Store, rows []*entityPkg.Entit
 	if len(rows) == 0 {
 		return nil
 	}
-	keys := make([]rowKey, 0, len(rows))
+	keys := make([]entityPkg.Ref, 0, len(rows))
 	for _, r := range rows {
-		keys = append(keys, rowKey{r.ID, r.Face})
+		keys = append(keys, r.Ref())
 	}
 	loaded, err := loadRows(ctx, st, keys)
 	if err != nil {
 		return err
 	}
 	for _, r := range rows {
-		if full, ok := loaded[rowKey{r.ID, r.Face}]; ok {
+		if full, ok := loaded[r.Ref()]; ok {
 			r.Content = full.Content
 		}
 	}

@@ -712,7 +712,7 @@ func resolutionRule(scope store.WorldScope, entityType string, p entity.Face) st
 func resolutionRuleAt(
 	scope store.WorldScope, entityType string, p entity.Face,
 ) (rule string, position *int) {
-	r, pos := store.ResolutionAt(scope, entityType, p)
+	r, pos := scope.RuleAt(entityType, p)
 	if r == store.ResolutionChain {
 		return r.String(), &pos
 	}
