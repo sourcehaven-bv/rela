@@ -1209,8 +1209,10 @@ func (a *App) handleV1EntityRelations(w http.ResponseWriter, r *http.Request, ty
 			// The relation grant lives on the SOURCE entity type (edge.From for an
 			// incoming edge — the peer). Resolved fail-closed at strip time.
 			pendingStrips = append(pendingStrips, typedStrip{
-				relationMetaStrip: relationMetaStrip{rel: rel, incoming: true, peerID: edge.From},
-				relType:           edge.Type,
+				relationMetaStrip: relationMetaStrip{
+					rel: rel, incoming: true, peer: entityPkg.Ref{ID: edge.From, Face: edge.FromFace},
+				},
+				relType: edge.Type,
 			})
 		}
 		relations[inverseName] = append(relations[inverseName], rel)
@@ -1241,11 +1243,12 @@ func (a *App) handleV1EntityRelations(w http.ResponseWriter, r *http.Request, ty
 // The strip runs AFTER sortRelationGroup because the sort reads the managed order
 // property out of `meta`, so redacting a (possibly hidden) order key first would
 // break ordering. An outgoing edge's source is the path entity; an incoming edge's
-// source is the peer (peerID), resolved fail-closed at strip time.
+// source is the peer's row at the edge's tail (peer), resolved fail-closed at
+// strip time.
 type relationMetaStrip struct {
 	rel      map[string]any
 	incoming bool
-	peerID   string // incoming only: the source (from) entity id
+	peer     entityPkg.Ref // incoming only: the source (from) row, at the edge's tail
 }
 
 // buildRelationTypeRows builds the single-relation-type wire rows (id/type[/meta])
@@ -1273,7 +1276,7 @@ func buildRelationTypeRows(
 			rel["meta"] = edge.Properties
 			s := relationMetaStrip{rel: rel, incoming: incoming}
 			if incoming {
-				s.peerID = peerID
+				s.peer = entityPkg.Ref{ID: edge.From, Face: edge.FromFace}
 			}
 			strips = append(strips, s)
 		}

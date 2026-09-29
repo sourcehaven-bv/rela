@@ -106,6 +106,11 @@ func (h *syncHandler) filterVisibleManifest(
 ) ([]synctypes.ManifestEntry, error) {
 	gate := readGateFromContext(ctx)
 
+	srcTypes, err := h.relationSourceTypes(ctx, entries)
+	if err != nil {
+		return nil, err
+	}
+
 	// Resolve the gating (type, id) for each entry, collecting ids per type.
 	type gateKey struct{ typ, id string }
 	keys := make([]gateKey, len(entries))
@@ -115,11 +120,7 @@ func (h *syncHandler) filterVisibleManifest(
 		id := e.IDA
 		if e.Kind == "r" {
 			// A relation gates on its source entity (IDA = From).
-			if src, err := h.store.GetEntity(ctx, e.IDA); err == nil {
-				typ = src.Type
-			} else {
-				typ = ""
-			}
+			typ = srcTypes[e.IDA]
 		}
 		keys[i] = gateKey{typ: typ, id: id}
 		idsByType[typ] = append(idsByType[typ], id)
@@ -170,4 +171,28 @@ func manifestKey(e synctypes.ManifestEntry) string {
 		return e.IDA + "/" + e.IDB + "/" + e.IDC
 	}
 	return e.IDA
+}
+
+// relationSourceTypes resolves, in one header read over every stored face, the
+// type of each relation entry's source entity (IDA), keyed by id. A source that
+// is gone is absent, so it gates as the empty type. The type is the family's,
+// so a faced source, which has no zero-face row, still resolves.
+func (h *syncHandler) relationSourceTypes(
+	ctx context.Context, entries []synctypes.ManifestEntry,
+) (map[string]string, error) {
+	var ids []string
+	for _, e := range entries {
+		if e.Kind == "r" {
+			ids = append(ids, e.IDA)
+		}
+	}
+	fams, err := loadStoredFamilies(ctx, h.store, ids)
+	if err != nil {
+		return nil, err
+	}
+	types := make(map[string]string, len(fams))
+	for id, fam := range fams {
+		types[id] = fam.typ
+	}
+	return types, nil
 }

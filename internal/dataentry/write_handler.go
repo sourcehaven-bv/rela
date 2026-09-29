@@ -310,13 +310,40 @@ func (h *writeHandler) gateCreateRelationAffordances(
 	if desired == nil {
 		return true
 	}
-	if denial := h.affordances.validateRelationsModernAffordances(
-		r.Context(), "", candidate, desired,
-	); denial != nil {
-		h.denyAfford(r.Context(), w, candidate, *denial)
+	err := h.affordances.validateRelationsModernAffordances(r.Context(), "", candidate, desired)
+	return h.relationGateOK(w, r, candidate, err)
+}
+
+// relationGateOK answers the request itself for a failed
+// [affordanceService.validateRelationsModernAffordances]: a 403 for a denial,
+// with subject as its audit subject, and a 500 for a read fault. It reports
+// whether the request may continue.
+func (h *writeHandler) relationGateOK(
+	w http.ResponseWriter, r *http.Request, subject *entityPkg.Entity, err error,
+) bool {
+	if err == nil {
+		return true
+	}
+	var denial *AffordanceDenialError
+	if errors.As(err, &denial) {
+		h.denyAfford(r.Context(), w, subject, *denial)
 		return false
 	}
-	return true
+	writeV1Error(w, r, http.StatusInternalServerError, "read_failed", "Failed to read relation source", err.Error())
+	return false
+}
+
+// relationSourcesOr500 is [affordanceService.relationSources] that answers the
+// request itself when a source row cannot be read.
+func (h *writeHandler) relationSourcesOr500(
+	w http.ResponseWriter, r *http.Request, pathEntity *entityPkg.Entity, peer entityPkg.Ref, direction string,
+) ([]*entityPkg.Entity, bool) {
+	sources, err := h.affordances.relationSources(r.Context(), pathEntity, peer, direction)
+	if err != nil {
+		writeV1Error(w, r, http.StatusInternalServerError, "read_failed", "Failed to read relation source", err.Error())
+		return nil, false
+	}
+	return sources, true
 }
 
 // writeCreateRelations runs the two relation phases for a create: validate, then
@@ -738,10 +765,8 @@ func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Reque
 		// would have silently landed on the default one — and it advised
 		// "edit it on the bare face", an address a faced type does not
 		// have, so the refusal was a dead end from any client.
-		if denial := h.affordances.validateRelationsModernAffordances(
-			r.Context(), ref.ID, entity, req.Relations.Modern,
-		); denial != nil {
-			h.denyAfford(r.Context(), w, entity, *denial)
+		err := h.affordances.validateRelationsModernAffordances(r.Context(), ref.ID, entity, req.Relations.Modern)
+		if !h.relationGateOK(w, r, entity, err) {
 			return
 		}
 	}
@@ -1014,14 +1039,18 @@ func (h *writeHandler) handleV1CreateRelation(
 	// Affordance gates: creatable + meta-writable, evaluated against
 	// the SOURCE of the new edge (not necessarily the path entity —
 	// for incoming-direction creates the path entity is the target).
-	source := h.affordances.relationSourceEntity(r.Context(), entity, req.ID, req.Direction)
-	// Audit subject is the source of the new edge, matching the
-	// entity whose policy gated the write.
-	if denial := h.affordances.validateRelationOp(r.Context(), source, relType, RelationOpCreate); denial != nil {
+	sources, ok := h.relationSourcesOr500(w, r, entity, newIncomingEdgeSource(req.ID), req.Direction)
+	if !ok {
+		return
+	}
+	// Audit subject is the source row whose policy denied the write.
+	source, denial := h.affordances.relationOpDenial(r.Context(), sources, relType, RelationOpCreate)
+	if denial != nil {
 		h.denyAfford(r.Context(), w, source, *denial)
 		return
 	}
-	if denial := h.affordances.validateRelationMetaWrite(r.Context(), source, relType, req.Meta, nil); denial != nil {
+	source, denial = h.affordances.relationMetaDenial(r.Context(), sources, relType, req.Meta, nil)
+	if denial != nil {
 		h.denyAfford(r.Context(), w, source, *denial)
 		return
 	}
@@ -1085,8 +1114,24 @@ func (h *writeHandler) handleV1UpdateRelation(
 	// the edge (the path entity for outgoing; the peer for incoming).
 	// The edge already exists (PATCH is meta-only), so the create /
 	// remove gates don't apply.
-	source := h.affordances.relationSourceEntity(r.Context(), entity, targetID, req.Direction)
-	if denial := h.affordances.validateRelationMetaWrite(r.Context(), source, relType, req.Meta, nil); denial != nil {
+	from, to := resolveRelationEndpoints(entity.ID, targetID, req.Direction)
+
+	// The addressed tail when the caller named one on the edge's SOURCE,
+	// else the existing edge's own — see tailOfExistingEdge. `from == ref.ID`
+	// is the ownership test: on the incoming path the source is the peer, so
+	// the addressed face is not this edge's to take. The affordance gate
+	// reads the source at this tail too.
+	tail, err := tailOfExistingEdge(r.Context(), h.store, from, relType, to, ref.Face, from == ref.ID)
+	if err != nil {
+		writeV1Error(w, r, http.StatusInternalServerError, "read_failed", "Failed to read relation", err.Error())
+		return
+	}
+
+	sources, ok := h.relationSourcesOr500(w, r, entity, entityPkg.Ref{ID: from, Face: tail}, req.Direction)
+	if !ok {
+		return
+	}
+	if source, denial := h.affordances.relationMetaDenial(r.Context(), sources, relType, req.Meta, nil); denial != nil {
 		h.denyAfford(r.Context(), w, source, *denial)
 		return
 	}
@@ -1111,14 +1156,6 @@ func (h *writeHandler) handleV1UpdateRelation(
 			}
 		}
 	}
-
-	from, to := resolveRelationEndpoints(entity.ID, targetID, req.Direction)
-
-	// The addressed tail when the caller named one on the edge's SOURCE,
-	// else the existing edge's own — see tailOfExistingEdge. `from == ref.ID`
-	// is the ownership test: on the incoming path the source is the peer, so
-	// the addressed face is not this edge's to take.
-	tail := tailOfExistingEdge(r.Context(), h.store, from, relType, to, ref.Face, from == ref.ID)
 
 	rel, err := h.manager.UpdateRelation(r.Context(), from, relType, to, entityPkg.RelationOptions{
 		Properties: req.Meta,
@@ -1166,19 +1203,28 @@ func (h *writeHandler) handleV1DeleteRelation(
 	// incoming). Per-relation-type uniform — a removable=false
 	// verdict applies to every link of this type.
 	direction := r.URL.Query().Get("direction")
-	source := h.affordances.relationSourceEntity(r.Context(), entity, targetID, direction)
-	if denial := h.affordances.validateRelationOp(r.Context(), source, relType, RelationOpRemove); denial != nil {
-		h.denyAfford(r.Context(), w, source, *denial)
-		return
-	}
-
 	from, to := resolveRelationEndpoints(entity.ID, targetID, direction)
 
 	// Addressed by its OWN tail — see tailOfExistingEdge. Dropping the tail
 	// deletes a DIFFERENT edge (the default face's) and reports success.
 	// DeleteRelationState with the zero face IS DeleteRelation, so the
-	// faceless and identity-scoped cases are unchanged.
-	tail := tailOfExistingEdge(r.Context(), h.store, from, relType, to, ref.Face, from == ref.ID)
+	// faceless and identity-scoped cases are unchanged. The affordance gate
+	// reads the source at this tail too.
+	tail, err := tailOfExistingEdge(r.Context(), h.store, from, relType, to, ref.Face, from == ref.ID)
+	if err != nil {
+		writeV1Error(w, r, http.StatusInternalServerError, "read_failed", "Failed to read relation", err.Error())
+		return
+	}
+
+	sources, ok := h.relationSourcesOr500(w, r, entity, entityPkg.Ref{ID: from, Face: tail}, direction)
+	if !ok {
+		return
+	}
+	source, denial := h.affordances.relationOpDenial(r.Context(), sources, relType, RelationOpRemove)
+	if denial != nil {
+		h.denyAfford(r.Context(), w, source, *denial)
+		return
+	}
 
 	if err := h.manager.DeleteRelationState(r.Context(), from, tail, relType, to); err != nil {
 		if writeForbiddenIfACLDenied(w, err) {

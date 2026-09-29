@@ -57,7 +57,9 @@ func headerEntity(h store.EntityHeader) *entityPkg.Entity {
 // loadRows reads the rows keys name, grouped by face: default-face rows in
 // one IDs query, each other face in one AllStates query narrowed to that
 // face on the way out. Returns only rows that exist.
-func loadRows(ctx context.Context, st store.Store, keys []entityPkg.Ref) (map[entityPkg.Ref]*entityPkg.Entity, error) {
+func loadRows(
+	ctx context.Context, st store.EntityLister, keys []entityPkg.Ref,
+) (map[entityPkg.Ref]*entityPkg.Entity, error) {
 	byFace := make(map[entityPkg.Face][]string)
 	seen := make(map[entityPkg.Ref]struct{}, len(keys))
 	for _, k := range keys {
@@ -79,6 +81,28 @@ func loadRows(ctx context.Context, st store.Store, keys []entityPkg.Ref) (map[en
 			}
 			out[e.Ref()] = e
 		}
+	}
+	return out, nil
+}
+
+// loadDefaultFaceRows is [loadRows] for bare ids: each id's default-face row,
+// keyed by id. It is the row the default world selects, so it suits a caller
+// that serves only the default world. An id with no such row is absent; on a
+// read error the result is empty.
+func loadDefaultFaceRows(
+	ctx context.Context, st store.EntityLister, ids []string,
+) (map[string]*entityPkg.Entity, error) {
+	keys := make([]entityPkg.Ref, len(ids))
+	for i, id := range ids {
+		keys[i] = entityPkg.Ref{ID: id}
+	}
+	loaded, err := loadRows(ctx, st, keys)
+	if err != nil {
+		return map[string]*entityPkg.Entity{}, err
+	}
+	out := make(map[string]*entityPkg.Entity, len(loaded))
+	for ref, e := range loaded {
+		out[ref.ID] = e
 	}
 	return out, nil
 }

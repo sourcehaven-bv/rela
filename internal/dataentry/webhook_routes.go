@@ -543,7 +543,7 @@ func (h *webhookRouter) applySteps(
 	contentChanged := false
 
 	if webhookNeedsBody(hook) {
-		fresh, err := h.rawStore.GetEntity(ctx, target.ID)
+		fresh, err := entityReader{store: h.rawStore}.readWritePrep(ctx, target.Ref())
 		if err != nil {
 			return fmt.Errorf("webhook re-read body: %w", err)
 		}

@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/transform"
@@ -18,7 +19,7 @@ import (
 // `export` (a JSON/CSV/YAML data dump), `render` produces a presentation
 // document converted by an external tool.
 type RenderCmd struct {
-	ID string `arg:"" help:"Entity ID to render."`
+	ID string `arg:"" help:"Entity address to render: ID, or ID@face for a type with faces."`
 	// No short flags: -o is the global --output and kong rejects the collision.
 	Transform string `required:"" help:"Registered transform name (e.g. pdf, docx)."`
 	Out       string `required:"" help:"Output file path."`
@@ -32,7 +33,7 @@ func (c *RenderCmd) Run(ctx context.Context, svc *readServices) error {
 			c.Transform, transformNames(reg))
 	}
 
-	e, err := store.GetEntityAt(ctx, svc.Store, c.ID)
+	e, err := readAddress(ctx, svc.Store, svc.World, c.ID)
 	if err != nil {
 		return fmt.Errorf("entity %q: %w", c.ID, err)
 	}
@@ -59,24 +60,30 @@ func (c *RenderCmd) Run(ctx context.Context, svc *readServices) error {
 
 // relationGroups resolves the entity's outgoing relations into display groups
 // (relation label + neighbor display titles) for the entity renderer. The CLI
-// runs as the operator (no ACL scoping), so it shows all neighbors. Neighbor
-// titles are memoized so a neighbor referenced by several relation types loads
-// once.
+// runs as the operator (no ACL scoping), so it shows all neighbors. A
+// neighbor's title comes from the face the CLI's world selects, loaded for
+// every neighbor in one query; a neighbor the world resolves to no face shows
+// its id.
 func (c *RenderCmd) relationGroups(ctx context.Context, svc *readServices, id string) []transform.RelationGroup {
-	byType := map[string][]string{}
-	titleByID := map[string]string{}
+	var rels []*entity.Relation
 	q := store.RelationQuery{EntityID: id, Direction: store.DirectionOutgoing}
 	for rel, err := range svc.Store.ListRelations(ctx, q) {
 		if err != nil {
 			break
 		}
-		title, ok := titleByID[rel.To]
-		if !ok {
-			title = rel.To
-			if node, gerr := svc.Store.GetEntity(ctx, rel.To); gerr == nil {
-				title = transform.DisplayTitle(svc.Meta, node)
-			}
-			titleByID[rel.To] = title
+		rels = append(rels, rel)
+	}
+	ids := make([]string, 0, len(rels))
+	for _, rel := range rels {
+		ids = append(ids, rel.To)
+	}
+	rows := rowsInWorld(ctx, svc.Store, svc.World, ids)
+
+	byType := map[string][]string{}
+	for _, rel := range rels {
+		title := rel.To
+		if node, ok := rows[rel.To]; ok {
+			title = transform.DisplayTitle(svc.Meta, node)
 		}
 		byType[rel.Type] = append(byType[rel.Type], title)
 	}

@@ -1,22 +1,19 @@
 package dataentry
 
 import (
-	"context"
 	"net/http"
 
-	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // --- Consumer-side interfaces (declared at the call site per CLAUDE.md) ---
 
-// syncStore is the read surface the manifest filter needs from the store: a
-// single entity get, used to resolve a relation entry's source type for the
+// syncStore is the read surface the manifest filter needs from the store: an
+// entity listing, used to resolve relation entries' source types for the
 // row-level read gate. The manifest capability itself is resolved by
 // type-asserting the concrete store in newSyncHandler (only pgstore satisfies
 // manifestProvider).
-type syncStore interface {
-	GetEntity(ctx context.Context, id string) (*entity.Entity, error)
-}
+type syncStore = store.EntityLister
 
 // syncHandler serves the sync CHANGE FEED under /api/sync/manifest (fs-client ↔
 // pg-server replication, FEAT-NJ9FEN). The record read/write channel it used to

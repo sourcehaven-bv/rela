@@ -61,15 +61,22 @@ func (s *Services) ScheduledForEachPrincipal(ctx context.Context, entityID strin
 	if s == nil || s.store == nil {
 		return "", errors.New("appbuild: scheduled for_each has no store")
 	}
-	e, err := s.store.GetEntity(ctx, entityID)
-	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			return "", nil
+	// A principal is an entity, not one of its faces, so the type check
+	// reads the family's headers: a faced user type has no zero-face row
+	// (DEC-NPZICR).
+	var typ string
+	q := store.EntityQuery{IDs: []string{entityID}, AllStates: true}
+	for h, err := range store.ListEntityHeaders(ctx, s.store, q) {
+		if err != nil {
+			return "", err
 		}
-		return "", err
+		if h.ID == entityID {
+			typ = h.Type
+			break
+		}
 	}
-	if s.aclPolicy == nil || s.aclPolicy.UserEntityType == "" || e.Type != s.aclPolicy.UserEntityType {
+	if typ == "" || s.aclPolicy == nil || s.aclPolicy.UserEntityType == "" || typ != s.aclPolicy.UserEntityType {
 		return "", nil
 	}
-	return e.ID, nil
+	return entityID, nil
 }

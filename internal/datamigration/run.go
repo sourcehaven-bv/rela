@@ -346,6 +346,7 @@ func newCapturer(v VersionCapture, meta *metamodel.Metamodel, tool, triggeredBy 
 func (c *capturer) entityDelete(ctx context.Context, e *entity.Entity) error {
 	err := c.w.WriteVersion(ctx, store.VersionInput{
 		EntityID:      e.ID,
+		Face:          e.Face,
 		Op:            store.VersionOpDelete,
 		Type:          e.Type,
 		Content:       e.Content,
@@ -365,6 +366,7 @@ func (c *capturer) entityDelete(ctx context.Context, e *entity.Entity) error {
 func (c *capturer) relationDelete(ctx context.Context, rel *entity.Relation) error {
 	err := c.w.WriteRelationVersion(ctx, store.RelationVersionInput{
 		From:          rel.From,
+		FromFace:      rel.FromFace,
 		Type:          rel.Type,
 		To:            rel.To,
 		Op:            store.VersionOpDelete,

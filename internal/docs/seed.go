@@ -264,7 +264,6 @@ func ApplySeedWith(ctx context.Context, st store.Store, patcher SeedPatcher, ops
 // the seed bindings can pass their own seedWriter-shaped handle rather than a
 // full store.Store.
 type seedEditStore interface {
-	GetEntity(ctx context.Context, id string) (*entity.Entity, error)
 	GetEntityState(ctx context.Context, id string, p entity.Face) (*entity.Entity, error)
 	ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error]
 	UpdateEntity(ctx context.Context, e *entity.Entity) error
@@ -450,26 +449,37 @@ func sortedFaceNames(def *metamodel.EntityDef) []string {
 // faces. The seed surfaces here (`link`, `edit`, `hidden`, the type lookup)
 // want the ENTITY, and the facts they read from it are the same at every face.
 //
-// Nil: returns (nil, store.ErrNotFound) when the id has no row at all.
+// An `ID@face` id reads that face and only that face: a claim about a face
+// that does not exist must not quietly hold of another one. A bare id reads
+// every face of the id in one query, and the zero face wins when present,
+// since it is a faceless type's only face.
+//
+// Nil: returns (nil, store.ErrNotFound) when the address names no row.
 func seedRowOf(ctx context.Context, st seedEditStore, id string) (*entity.Entity, error) {
-	if e, err := st.GetEntity(ctx, id); err == nil {
-		return e, nil
-	}
-	base, face, perr := entity.ParseStateRef(id)
-	if perr == nil && !face.IsDefault() {
-		if e, err := st.GetEntityState(ctx, base, face); err == nil {
-			return e, nil
+	base := id
+	if ref, perr := entity.ParseRef(id); perr == nil {
+		if !ref.Face.IsDefault() {
+			return st.GetEntityState(ctx, ref.ID, ref.Face)
 		}
-	} else {
-		base = id
+		base = ref.ID
 	}
+	var first *entity.Entity
 	for e, err := range st.ListEntities(ctx, store.EntityQuery{IDs: []string{base}, AllStates: true}) {
 		if err != nil {
 			return nil, err
 		}
-		if e.ID == base {
+		if e.ID != base {
+			continue
+		}
+		if e.Face.IsDefault() {
 			return e, nil
 		}
+		if first == nil {
+			first = e
+		}
+	}
+	if first != nil {
+		return first, nil
 	}
 	return nil, store.ErrNotFound
 }

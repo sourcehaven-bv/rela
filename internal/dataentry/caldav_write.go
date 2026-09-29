@@ -501,9 +501,13 @@ func notFoundHere() error {
 // "does this row exist?", never returning content, so it discloses nothing the
 // caller has not already proven it may write to (the alias binds this href to
 // this entity, and the write itself is separately authorized).
+//
+// The entity is gone when no face of it is stored: a faced type has no
+// zero-face row (DEC-NPZICR), so probing the zero face alone would call a live
+// faced entity deleted.
 func (b *caldavBackend) entityIsGone(ctx context.Context, _ *caldavMapper, entityID string) bool {
-	_, err := b.app.Services().Store.GetEntity(ctx, entityID)
-	return errors.Is(err, store.ErrNotFound)
+	_, faces, err := loadStoredFaces(ctx, b.app.Services().Store, entityID)
+	return err == nil && len(faces) == 0
 }
 
 // staleWriteResponse answers a PUT whose alias points at an entity that is gone.
@@ -733,8 +737,9 @@ func (b *caldavBackend) entityIDFor(ctx context.Context, collection, href string
 	if !ok {
 		return "", false
 	}
-	e, err := b.app.Services().Store.GetEntity(ctx, id)
-	if err != nil || e.Type != m.cfg.EntityType {
+	// The type is the family's, read over every stored face: a faced type has
+	// no zero-face row. A read error answers "" and so refuses.
+	if typ := storedTypeOf(ctx, b.app.Services().Store, id); typ == "" || typ != m.cfg.EntityType {
 		return "", false
 	}
 	return id, true

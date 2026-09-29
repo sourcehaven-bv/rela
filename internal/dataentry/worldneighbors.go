@@ -589,25 +589,35 @@ func defaultWorldCandidates(
 		// extracted out of includeCandidates, which is the guard working.
 		return nil, nestedFor
 	}
+	var outgoing, incoming []*entityPkg.Relation
+	var ids []string
 	for _, edge := range reader.outgoingRelations(ctx, e.ID) {
-		nested, want := wanted[edge.Type]
-		if !all && !want {
-			continue
+		if _, want := wanted[edge.Type]; all || want {
+			outgoing = append(outgoing, edge)
+			ids = append(ids, edge.To)
 		}
-		target, found := reader.getEntity(ctx, edge.To)
+	}
+	if all {
+		incoming = reader.incomingRelations(ctx, e.ID)
+		for _, edge := range incoming {
+			ids = append(ids, edge.From)
+		}
+	}
+	// One batch for every peer. With no worlds wired, the default face is
+	// the only face.
+	rows := reader.defaultWorldRows(ctx, ids)
+	for _, edge := range outgoing {
+		target, found := rows[edge.To]
 		if !found {
 			continue
 		}
 		candidates = append(candidates, target)
-		if nested != "" {
+		if nested := wanted[edge.Type]; nested != "" {
 			nestedFor[target.ID] = nested
 		}
 	}
-	if !all {
-		return candidates, nestedFor
-	}
-	for _, edge := range reader.incomingRelations(ctx, e.ID) {
-		if source, found := reader.getEntity(ctx, edge.From); found {
+	for _, edge := range incoming {
+		if source, found := rows[edge.From]; found {
 			candidates = append(candidates, source)
 		}
 	}

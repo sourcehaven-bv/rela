@@ -589,7 +589,9 @@ func (h *writeHandler) writeUpdateRelation(
 //
 // Returns the zero face when neither rule finds one, which leaves the caller
 // addressing the default tail and lets the manager's own not-found answer
-// stand rather than inventing a distinct error here.
+// stand rather than inventing a distinct error here. A read fault is returned:
+// it is not evidence of a default-tail edge, and the affordance gate reads the
+// source at this tail.
 //
 // addressed is the face the request named (zero when it named none); owned
 // reports whether the addressed entity is this edge's SOURCE — false on the
@@ -597,22 +599,19 @@ func (h *writeHandler) writeUpdateRelation(
 func tailOfExistingEdge(
 	ctx context.Context, st store.Store,
 	from, relType, to string, addressed entity.Face, owned bool,
-) entity.Face {
+) (entity.Face, error) {
 	if owned && !addressed.IsDefault() {
-		return addressed
+		return addressed, nil
 	}
 	for rel, err := range st.ListRelations(ctx, store.RelationQuery{From: from, Type: relType, To: to}) {
 		if err != nil {
-			// A read fault is not evidence of a default-tail edge. The zero
-			// face is the safe answer: the write then addresses the default
-			// edge and fails not-found rather than hitting another face's.
-			return entity.Face("")
+			return "", err
 		}
 		if rel.From == from && rel.Type == relType && rel.To == to {
-			return rel.FromFace
+			return rel.FromFace, nil
 		}
 	}
-	return entity.Face("")
+	return "", nil
 }
 
 // edgeOnFace reads the edge of this triple whose TAIL is exactly tail.

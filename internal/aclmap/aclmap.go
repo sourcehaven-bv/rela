@@ -28,14 +28,13 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
-// EntitySource is the narrow read access the engine needs: fetch one
-// entity (existence gate + type lookup), list entities of a type
-// (resolvable user principals), and list relations of a type (to find
-// role-relation edge sources — principals granted a role by a graph
-// edge). Declared here, at the consumer, rather than depending on the
+// EntitySource is the narrow read access the engine needs: list entities
+// (the existence gate and type lookup read every face's header by id, and
+// resolvable user principals are listed by type), and list relations of a
+// type (to find role-relation edge sources — principals granted a role by a
+// graph edge). Declared here, at the consumer, rather than depending on the
 // full store.Store; *store.Store satisfies it.
 type EntitySource interface {
-	GetEntity(ctx context.Context, id string) (*entity.Entity, error)
 	ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error]
 	ListRelations(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error]
 }

@@ -447,17 +447,26 @@ func (dr *docRuntime) facesOf(typ, id string) ([]entity.Face, error) {
 	if !ok {
 		return nil, fmt.Errorf("no such entity type %q", typ)
 	}
-	// The bare-id row, then each declared face that exists on this entity.
-	if _, err := dr.store.GetEntityState(dr.ctx, id, entity.Face("")); err == nil {
-		out = append(out, entity.Face(""))
+	// Every stored face in one header read, then the bare-id row first and
+	// each declared face that exists on this entity in name order.
+	stored := map[entity.Face]bool{}
+	q := store.EntityQuery{IDs: []string{id}, AllStates: true}
+	for h, err := range store.ListEntityHeaders(dr.ctx, dr.store, q) {
+		if err != nil {
+			return nil, err
+		}
+		if h.ID == id {
+			stored[h.Face] = true
+		}
+	}
+	var zero entity.Face
+	if stored[zero] {
+		out = append(out, zero)
 	}
 	for _, name := range sortedFaceNames(def) {
-		stored := entity.Face(name)
-		if stored.IsDefault() {
-			continue // already emitted as the bare-id row
-		}
-		if _, err := dr.store.GetEntityState(dr.ctx, id, stored); err == nil {
-			out = append(out, stored)
+		face := entity.Face(name)
+		if !face.IsDefault() && stored[face] {
+			out = append(out, face)
 		}
 	}
 	return out, nil

@@ -20,12 +20,12 @@ var directReadAllowlist = map[string]allowed{
 		"neighbors, face-gated and row-gated afterwards"},
 	"internal/dataentry/document.go": {1, "loadEntry reads the entry row the document route already " +
 		"gated; the render plumbing is shared with export, which moves in PR 4"},
-	"internal/dataentry/entityreader.go": {1, "writePrepRow: write-prep and liveness read, never served"},
+	"internal/dataentry/entityreader.go": {1, "readWritePrep: write-prep, liveness and relation-source policy read, never served"},
 	"internal/dataentry/queryservice.go": {1, "loadHitHeaders: id-batch header load for search hits, " +
 		"gated afterwards"},
 	"internal/dataentry/relation_visibility.go": {1, "visibleRelationIDs: id-batch header load for a " +
 		"page's neighbors, gated by visibleHeaderIDs"},
-	"internal/dataentry/rowcontent.go": {1, "loadRows: id-batch body load for rows already gated"},
+	"internal/dataentry/rowcontent.go": {1, "loadRows: id-batch raw row load; every caller gates or redacts before serving"},
 	"internal/dataentry/views.go": {3, "view collections: id-batch body and header loads, " +
 		"gated afterwards"},
 	"internal/dataentry/views_handler.go": {2, "visibleTitles: id-batch header load for relation " +
