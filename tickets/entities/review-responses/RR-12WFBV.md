@@ -4,7 +4,7 @@ type: review-response
 title: Ref text codec edge cases unspecified
 finding: Behaviour of empty input and ID@ and @face and marshalling a zero Ref is not defined
 severity: minor
-resolution: 'Design section 8.8 (PR 1): ParseRef/UnmarshalText reject empty input and @face and ID@; MarshalText on the zero Ref errors; table-driven tests plus a JSON map-key round trip.'
+resolution: 'Already covered by merged PR 1 (#1712): ParseRef rejects empty input and @face and ID@; MarshalText refuses a non-canonical or zero Ref; ref_test.go pins each case and the JSON round trip. Noted in design section 8.8.'
 status: addressed
 ---
 
