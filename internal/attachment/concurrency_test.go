@@ -11,6 +11,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/attachment"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/lock"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
@@ -42,7 +43,7 @@ const raceEntity = "T-1"
 // propertyFiles returns the files the service lists for prop on raceEntity.
 func propertyFiles(t *testing.T, f attachmentFixture, prop string) []string {
 	t.Helper()
-	infos, err := f.svc.List(context.Background(), raceEntity)
+	infos, err := f.svc.List(context.Background(), entity.Ref{ID: raceEntity})
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -166,7 +167,7 @@ func TestService_CallerDeadlineIsNotErrBusy(t *testing.T) {
 		t.Fatalf("create entity: %v", err)
 	}
 	held := lock.NewMemoryLocker()
-	release, err := held.Acquire(context.Background(), "attachment/T-1/spec")
+	release, err := held.Acquire(context.Background(), entitymanager.AttachmentLockKey(raceEntity))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -25,6 +25,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/lock"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
@@ -52,6 +53,22 @@ type testConfig struct {
 	audit       audit.Audit
 	acl         acl.ACL
 	declarative *acl.Declarative
+}
+
+// auditOrNop is the configured audit sink, or [audit.Nop] when none was set.
+func (c *testConfig) auditOrNop() audit.Audit {
+	if c.audit == nil {
+		return audit.Nop{}
+	}
+	return c.audit
+}
+
+// aclOrNop is the configured ACL, or [acl.NopACL] when none was set.
+func (c *testConfig) aclOrNop() acl.ACL {
+	if c.acl == nil {
+		return acl.NopACL{}
+	}
+	return c.acl
 }
 
 // WithStore replaces the default empty memstore with a caller-supplied
@@ -162,14 +179,7 @@ func New(meta *metamodel.Metamodel, opts ...Option) *appbuild.Services {
 	cfgLoader := config.NewFSLoader(cfg.fs, cfg.paths.Root)
 	stateKV := mustBuildStateKV(cfg.fs, cfg.paths)
 	scriptEngine := script.NewEngine()
-	auditSink := cfg.audit
-	if auditSink == nil {
-		auditSink = audit.Nop{}
-	}
-	aclImpl := cfg.acl
-	if aclImpl == nil {
-		aclImpl = acl.NopACL{}
-	}
+	auditSink, aclImpl := cfg.auditOrNop(), cfg.aclOrNop()
 
 	tw, err := appbuild.CompileTransitions(meta, st, aclImpl)
 	if err != nil {
@@ -222,9 +232,10 @@ func New(meta *metamodel.Metamodel, opts ...Option) *appbuild.Services {
 		// its source ungated — the forgotten-wiring state entitymanager.New
 		// now refuses (#1437). Taking all three from tw makes the posture
 		// follow the ACL, exactly as in production.
-		CopyGuard:      tw.Guard,
-		CopyReadGate:   tw.ReadGate,
-		CopyVisibility: tw.Visibility,
+		CopyGuard:        tw.Guard,
+		CopyReadGate:     tw.ReadGate,
+		CopyVisibility:   tw.Visibility,
+		AttachmentLocker: lock.For(st),
 	})
 	if err != nil {
 		panic(fmt.Sprintf("appbuildtest.New: build entitymanager: %v", err))

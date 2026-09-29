@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -23,7 +24,9 @@ import (
 // audited, and captured as a new version.
 //
 // Scope: entity content + properties only. The entity's relation set as-of the
-// version is NOT restored (relation history is a separate capability).
+// version is NOT restored (relation history is a separate capability), and
+// neither are file values: a restore keeps the live ones (BUG-CTUW2N), since
+// an old value may name bytes that are gone or that another face now owns.
 func restoreHistoryVersion(a *App,
 	w http.ResponseWriter, r *http.Request, reader store.HistoryReader,
 	typeName, entityID, versionStr string,
@@ -75,18 +78,19 @@ func restoreOntoLive(a *App,
 	w http.ResponseWriter, r *http.Request, live *entityPkg.Entity, snap *store.VersionSnapshot, typeName string,
 ) {
 	ctx := r.Context()
+	props := entitymanager.CarryFileValues(a.Meta(), typeName, snap.Properties, live)
 
 	// Property diff: keys the snapshot sets to a new/changed value, and keys the
 	// live entity has that the snapshot does not (to be unset).
 	setKeys := make(map[string]any)
-	for k, v := range snap.Properties {
+	for k, v := range props {
 		if cur, ok := live.Properties[k]; !ok || !reflect.DeepEqual(cur, v) {
 			setKeys[k] = v
 		}
 	}
 	var unsetKeys []string
 	for k := range live.Properties {
-		if _, ok := snap.Properties[k]; !ok {
+		if _, ok := props[k]; !ok {
 			unsetKeys = append(unsetKeys, k)
 		}
 	}
@@ -102,7 +106,7 @@ func restoreOntoLive(a *App,
 	// Build the target: live entity with the snapshot's content + properties.
 	target := entityPkg.New(live.ID, live.Type)
 	target.Content = snap.Content
-	target.Properties = cloneProps(snap.Properties)
+	target.Properties = props
 
 	if _, err := a.entityManager.UpdateEntity(ctx, target); err != nil {
 		if writeForbiddenIfACLDenied(w, err) {
@@ -133,7 +137,8 @@ func restoreRecreate(a *App,
 	ctx := r.Context()
 	target := entityPkg.New(entityID, snap.Type)
 	target.Content = snap.Content
-	target.Properties = cloneProps(snap.Properties)
+	// No live value to keep: file values are left out, as on any create.
+	target.Properties = entitymanager.CarryFileValues(a.Meta(), snap.Type, snap.Properties, nil)
 
 	// Gate every snapshot property as a field write against the (would-be)
 	// entity, so a field the principal cannot write blocks the resurrection.

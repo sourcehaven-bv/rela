@@ -6,17 +6,22 @@ import (
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/attachment"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/output"
 )
 
 // AttachmentsCmd lists all file attachments for an entity.
 type AttachmentsCmd struct {
-	EntityID string `arg:"" name:"entity-id" help:"Target entity ID."`
+	EntityID string `arg:"" name:"entity-id" help:"Target entity ID, or ID@face for a faced type."`
 }
 
 // Run dispatches `rela attachments <entity-id>`.
 func (c *AttachmentsCmd) Run(ctx context.Context, att *attachment.Service) error {
-	infos, err := att.List(ctx, c.EntityID)
+	ref, err := entity.ParseRef(c.EntityID)
+	if err != nil {
+		return err
+	}
+	infos, err := att.List(ctx, ref)
 	if err != nil {
 		return err
 	}

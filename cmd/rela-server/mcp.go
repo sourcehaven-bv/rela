@@ -99,14 +99,14 @@ func wireRemoteMCP(app *dataentry.App, svc *appbuild.Services, f *serverFlags) e
 // remoteAttachmentDeps wires the MCP attachment tools onto the web upload
 // path's policy: the App's live schema (so an operator's edit to `accept:`,
 // `scan:` or `max_attachment_bytes` applies to MCP uploads immediately), its
-// command runner, and its attachment locker. The snapshot is rebuilt per tool
+// command runner, and the manager's attachment surface (stamp and lock). The snapshot is rebuilt per tool
 // call, which costs one struct allocation.
 func remoteAttachmentDeps(svc *appbuild.Services, host dataentry.MCPHost) relamcp.AttachmentDeps {
 	return relamcp.AttachmentDeps{
 		Snapshot: func() (relamcp.AttachmentSnapshot, error) {
 			meta, limit := host.AttachmentPolicy()
 			return relamcp.NewAttachmentSnapshot(
-				svc.Store(), svc.EntityManager(), host.AttachmentLocker, svc.ACL(), meta, host.AttachmentRunner, limit)
+				svc.Store(), host.Attachments, svc.ACL(), meta, host.AttachmentRunner, limit)
 		},
 		Uploads:    host.AttachmentUploads,
 		Authorizer: svc.ACL(),

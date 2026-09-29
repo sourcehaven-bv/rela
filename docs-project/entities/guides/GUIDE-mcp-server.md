@@ -176,7 +176,10 @@ The full raw metamodel is the `rela://metamodel` resource.
 
 ### Attachment Tools
 
-These tools work on the files held by `file`-type properties.
+These tools work on the files held by `file`-type properties. On a type with
+faces, `id` is an address such as `POL-1@draft`, and each tool works on that
+face only: a face lists and serves only its own files. A bare id of a faced
+entity answers "entity not found", with a hint to use `ID@face`.
 
 | Tool | Description | Parameters |
 |------|-------------|------------|

@@ -21,19 +21,6 @@ import (
 // and gets the same not-found a missing row does: a distinct 400 would only
 // tell a caller which strings are worth probing.
 
-// bareEntityID parses an address and returns its BARE id, for the surfaces
-// that are addressed per entity rather than per row: attachments (files are
-// keyed by entity id in every store). ok=false for an address the grammar
-// rejects, rendered as the uniform not-found by the caller. The attachment
-// routes move onto the resolver in BUG-CTUW2N, which deletes this.
-func bareEntityID(raw string) (string, bool) {
-	ref, err := entity.ParseRef(raw)
-	if err != nil {
-		return "", false
-	}
-	return ref.ID, true
-}
-
 // isExplicitAddress reports whether the address names a face. A malformed
 // address names none.
 func isExplicitAddress(raw string) bool {

@@ -12,7 +12,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/datamigration"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/lock"
+	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
@@ -132,11 +132,15 @@ type cliBundles struct {
 // appbuild.Services. Used by the kong wiring in production and by CLI
 // test fixtures.
 func newCLIBundles(svc *appbuild.Services) (*cliBundles, error) {
+	owner, err := entitymanager.AttachmentsOf(svc.EntityManager())
+	if err != nil { // coverage-ignore: defensive: appbuild always wires the manager's attachment lock
+		return nil, fmt.Errorf("attachment service: %w", err)
+	}
 	att, err := attachment.New(attachment.Deps{
 		Store:         svc.Store(),
 		Meta:          svc.Meta(),
-		EntityManager: svc.EntityManager(),
-		Locker:        lock.For(svc.Store()),
+		EntityManager: owner,
+		Locker:        owner,
 		Authorizer:    attachment.AllowAllWrites{}, // operator shell: no ACL
 		// Native MIME allowlist on the CLI attach path too (runner nil →
 		// no external scan/transform until the cmd: harness is wired).

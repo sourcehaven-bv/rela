@@ -44,7 +44,9 @@ func (s *FSStore) attachFile(_ context.Context, entityID, property, fileName str
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if _, ok := s.entities[entityID]; !ok {
+	// Bytes are keyed per bare id and shared by the family: any face of
+	// the id makes it exist (BUG-CTUW2N).
+	if s.familySize(entityID) == 0 {
 		return store.ErrNotFound
 	}
 
@@ -157,7 +159,7 @@ func (s *FSStore) ListAttachments(_ context.Context, entityID string) ([]store.A
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	if _, ok := s.entities[entityID]; !ok {
+	if s.familySize(entityID) == 0 {
 		return nil, store.ErrNotFound
 	}
 

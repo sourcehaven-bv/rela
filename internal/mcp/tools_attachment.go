@@ -142,22 +142,26 @@ type WriteAuthorizer interface {
 // through it. The tools only reach it after the gated entity read has
 // admitted the caller.
 //
-// locker serializes writers to one (entity, property). Pass the locker every
-// other attachment writer in the process uses, so MCP and web writes to one
+// owner stamps file values and serializes writers to one (entity,
+// property). Pass the manager's entitymanager.Attachments, which every other
+// attachment writer in the process shares, so MCP and web writes to one
 // property exclude each other. authz re-authorizes each write under that lock;
 // pass the same authorizer as [AttachmentDeps.Authorizer].
 func NewAttachmentSnapshot(
-	st store.Store, em attachment.EntityPatcher, locker attachment.Locker, authz WriteAuthorizer,
+	st store.Store, owner AttachmentOwner, authz WriteAuthorizer,
 	meta *metamodel.Metamodel, runner attachment.CommandRunner, limit int64,
 ) (AttachmentSnapshot, error) {
 	if authz == nil {
 		return AttachmentSnapshot{}, errors.New("mcp: NewAttachmentSnapshot: authz is required")
 	}
+	if owner == nil {
+		return AttachmentSnapshot{}, errors.New("mcp: NewAttachmentSnapshot: owner is required")
+	}
 	svc, err := attachment.New(attachment.Deps{
 		Store:         st,
 		Meta:          meta,
-		EntityManager: em,
-		Locker:        locker,
+		EntityManager: owner,
+		Locker:        owner,
 		Authorizer:    attachmentAuthorizer{authz},
 		Processor:     attachment.NewPolicyProcessor(meta, runner),
 	})
@@ -165,6 +169,13 @@ func NewAttachmentSnapshot(
 		return AttachmentSnapshot{}, err
 	}
 	return AttachmentSnapshot{Meta: meta, Service: svc, MaxUploadBytes: min(limit, MaxUploadBytes)}, nil
+}
+
+// AttachmentOwner is the write surface [NewAttachmentSnapshot] needs: the
+// stamp that may change a file value, and the lock that serializes it.
+type AttachmentOwner interface {
+	attachment.Stamper
+	attachment.Locker
 }
 
 // attachmentAuthorizer adapts a [WriteAuthorizer] to the attachment
@@ -198,8 +209,8 @@ func (d AttachmentDeps) validate() error {
 
 // attachmentReader is what the read tools need from the attachment service.
 type attachmentReader interface {
-	List(ctx context.Context, entityID string) ([]attachment.Info, error)
-	Open(ctx context.Context, entityID, property, fileName string) (io.ReadCloser, error)
+	ListFace(ctx context.Context, e *entity.Entity) ([]attachment.Info, error)
+	Open(ctx context.Context, e *entity.Entity, property, fileName string) (io.ReadCloser, error)
 }
 
 // attachmentWriter is what the write tools need from the attachment service.
@@ -234,10 +245,18 @@ func attachmentNotFound(id, property, fileName string) *mcpgo.CallToolResult {
 // gatedEntity reads id through the gated store. A hidden and a nonexistent
 // entity both answer "entity not found". Any other read failure is logged and
 // answered generically, so an outage is not mistaken for a missing entity.
+//
+// A bare id of a faced entity has no row, so it misses too. The answer
+// cannot name the entity's faces without revealing that it exists, so a
+// bare id gets the same generic hint whether or not the entity is faced.
 func (h attachmentHandler) gatedEntity(ctx context.Context, id string) (*entity.Entity, *mcpgo.CallToolResult) {
 	e, err := h.store.Resolve(ctx, id)
 	switch {
 	case errors.Is(err, store.ErrNotFound) || (err == nil && e == nil):
+		if ref, perr := entity.ParseRef(id); perr == nil && ref.Face.IsDefault() {
+			return nil, errorResult("entity not found: " + id +
+				" (an entity with content states is addressed as ID@face)")
+		}
 		return nil, errorResult("entity not found: " + id)
 	case err != nil:
 		slog.Warn("mcp: attachment entity read failed", "err", err, "entity", id)
@@ -342,7 +361,7 @@ func (h attachmentHandler) handleListAttachments(
 	}
 
 	var files attachmentReader = snap.Service
-	infos, err := files.List(ctx, e.ID)
+	infos, err := files.ListFace(ctx, e)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		slog.Warn("mcp: list attachments failed", "err", err, "entity", e.ID)
 		return errorResult("listing attachments failed"), nil
@@ -428,7 +447,7 @@ func (h attachmentHandler) handleReadAttachment(
 	}
 
 	var files attachmentReader = snap.Service
-	rc, err := files.Open(ctx, e.ID, property, fileName)
+	rc, err := files.Open(ctx, e, property, fileName)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			return attachmentNotFound(id, property, fileName), nil

@@ -7,17 +7,22 @@ import (
 	"path/filepath"
 
 	"github.com/Sourcehaven-BV/rela/internal/attachment"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 )
 
 // AttachCmd attaches one or more files to an entity property.
 type AttachCmd struct {
 	Property string   `short:"P" help:"Property to attach file(s) to (defaults to first file-type property)."`
-	EntityID string   `arg:"" name:"entity-id" help:"Target entity ID."`
+	EntityID string   `arg:"" name:"entity-id" help:"Target entity ID, or ID@face for a faced type."`
 	Files    []string `arg:"" help:"File path(s) (globs supported)."`
 }
 
 // Run dispatches `rela attach <entity-id> <file>...`.
 func (c *AttachCmd) Run(ctx context.Context, att *attachment.Service) error {
+	ref, err := entity.ParseRef(c.EntityID)
+	if err != nil {
+		return err
+	}
 	var attached int
 	for _, filePath := range c.Files {
 		matches, err := filepath.Glob(filePath)
@@ -32,7 +37,7 @@ func (c *AttachCmd) Run(ctx context.Context, att *attachment.Service) error {
 			if err != nil {
 				return fmt.Errorf("invalid path %q: %w", match, err)
 			}
-			result, err := att.Attach(ctx, c.EntityID, absPath, c.Property)
+			result, err := att.Attach(ctx, ref, absPath, c.Property)
 			if err != nil {
 				if errors.Is(err, attachment.ErrAtCapacity) {
 					return fmt.Errorf("cannot attach %q: property is full — detach a file first (rela attachments %s)",

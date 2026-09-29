@@ -51,7 +51,7 @@ entities:
 type attachmentFixture struct {
 	svc  *attachment.Service
 	st   store.Store
-	mgr  attachment.EntityPatcher
+	mgr  attachment.Stamper
 	meta *metamodel.Metamodel
 	root string
 }
@@ -100,21 +100,27 @@ func setupAttachmentService(t *testing.T) attachmentFixture {
 		ACL:         acl.NopACL{},
 		Transitions: statemachine.EmptySet(),
 		FieldGate:   entitymanager.AllowAllFieldGate{},
+
+		AttachmentLocker: lock.NewMemoryLocker(),
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)
 	}
+	owner, err := entitymanager.AttachmentsOf(mgr)
+	if err != nil {
+		t.Fatalf("AttachmentsOf: %v", err)
+	}
 	svc, err := attachment.New(attachment.Deps{
 		Store:         st,
 		Meta:          meta,
-		EntityManager: mgr,
-		Locker:        lock.NewMemoryLocker(),
+		EntityManager: owner,
+		Locker:        owner,
 		Authorizer:    attachment.AllowAllWrites{},
 	})
 	if err != nil {
 		t.Fatalf("attachment.New: %v", err)
 	}
-	return attachmentFixture{svc: svc, st: st, mgr: mgr, meta: meta, root: root}
+	return attachmentFixture{svc: svc, st: st, mgr: owner, meta: meta, root: root}
 }
 
 func TestService_AttachAndList(t *testing.T) {
@@ -133,7 +139,7 @@ func TestService_AttachAndList(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := f.svc.Attach(context.Background(), "T-1", srcPath, "spec")
+	result, err := f.svc.Attach(context.Background(), entity.Ref{ID: "T-1"}, srcPath, "spec")
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -150,7 +156,7 @@ func TestService_AttachAndList(t *testing.T) {
 		t.Errorf("payload on disk = %q, want %q", got, payload)
 	}
 
-	infos, err := f.svc.List(context.Background(), "T-1")
+	infos, err := f.svc.List(context.Background(), entity.Ref{ID: "T-1"})
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -178,7 +184,7 @@ func TestService_Attach_UnknownEntity(t *testing.T) {
 	src := filepath.Join(srcDir, "x.bin")
 	_ = os.WriteFile(src, []byte("x"), 0o644)
 
-	_, err := f.svc.Attach(context.Background(), "T-MISSING", src, "spec")
+	_, err := f.svc.Attach(context.Background(), entity.Ref{ID: "T-MISSING"}, src, "spec")
 	if err == nil {
 		t.Fatal("expected error for missing entity")
 	}
@@ -203,7 +209,7 @@ func TestService_Attach_NonFileProperty(t *testing.T) {
 	src := filepath.Join(srcDir, "x.bin")
 	_ = os.WriteFile(src, []byte("x"), 0o644)
 
-	_, err := f.svc.Attach(context.Background(), "T-2", src, "title")
+	_, err := f.svc.Attach(context.Background(), entity.Ref{ID: "T-2"}, src, "title")
 	if err == nil {
 		t.Fatal("expected error for non-file property")
 	}
@@ -222,10 +228,10 @@ func TestService_New_RejectsNilDeps(t *testing.T) {
 		{"nil meta", attachment.Deps{Store: storeStub{}}, "Meta is required"},
 		{"nil em", attachment.Deps{Store: storeStub{}, Meta: &metamodel.Metamodel{}}, "EntityManager is required"},
 		{"nil locker", attachment.Deps{
-			Store: storeStub{}, Meta: &metamodel.Metamodel{}, EntityManager: &countingPatcher{},
+			Store: storeStub{}, Meta: &metamodel.Metamodel{}, EntityManager: &countingStamper{},
 		}, "Locker is required"},
 		{"nil authorizer", attachment.Deps{
-			Store: storeStub{}, Meta: &metamodel.Metamodel{}, EntityManager: &countingPatcher{},
+			Store: storeStub{}, Meta: &metamodel.Metamodel{}, EntityManager: &countingStamper{},
 			Locker: lock.NewMemoryLocker(),
 		}, "Authorizer is required"},
 	}
@@ -403,15 +409,17 @@ func TestService_StampPreservesOtherProperties(t *testing.T) {
 	}
 }
 
-// countingPatcher counts entity writes.
-type countingPatcher struct {
-	attachment.EntityPatcher
+// countingStamper counts entity writes.
+type countingStamper struct {
+	attachment.Stamper
 	n int
 }
 
-func (c *countingPatcher) PatchEntity(ctx context.Context, id string, p entity.Patch) (*entity.UpdateResult, error) {
+func (c *countingStamper) StampAttachments(
+	ctx context.Context, ref entity.Ref, prop string, value any,
+) (*entity.UpdateResult, error) {
 	c.n++
-	return c.EntityPatcher.PatchEntity(ctx, id, p)
+	return c.Stamper.StampAttachments(ctx, ref, prop, value)
 }
 
 // TestService_DeleteAbsentFileDoesNotWrite pins that a retried delete leaves
@@ -423,7 +431,7 @@ func TestService_DeleteAbsentFileDoesNotWrite(t *testing.T) {
 	if err := f.st.CreateEntity(ctx, e); err != nil {
 		t.Fatalf("create entity: %v", err)
 	}
-	counter := &countingPatcher{EntityPatcher: f.mgr}
+	counter := &countingStamper{Stamper: f.mgr}
 	svc, err := attachment.New(attachment.Deps{
 		Store: f.st, Meta: f.meta, EntityManager: counter, Locker: lock.NewMemoryLocker(),
 		Authorizer: attachment.AllowAllWrites{},
@@ -440,15 +448,18 @@ func TestService_DeleteAbsentFileDoesNotWrite(t *testing.T) {
 		}
 	}
 	if counter.n != 0 {
-		t.Fatalf("PatchEntity called %d times for absent files, want 0", counter.n)
+		t.Fatalf("StampAttachments called %d times for absent files, want 0", counter.n)
 	}
 
 	// A stale value naming a file that is gone is still repaired.
 	e.Properties["spec"] = "attachments/T-1/spec/gone.pdf"
+	if err := f.st.UpdateEntity(ctx, e); err != nil {
+		t.Fatalf("seed stale value: %v", err)
+	}
 	if _, err := svc.DetachFile(ctx, e, metamodel.PropertyDef{Type: metamodel.PropertyTypeFile}, "spec", "gone.pdf"); err != nil {
 		t.Fatalf("detach stale file: %v", err)
 	}
 	if counter.n != 1 {
-		t.Fatalf("PatchEntity called %d times for a stale value, want 1", counter.n)
+		t.Fatalf("StampAttachments called %d times for a stale value, want 1", counter.n)
 	}
 }

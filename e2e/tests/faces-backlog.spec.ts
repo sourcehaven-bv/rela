@@ -16,7 +16,7 @@ const POL1_DRAFT = `${POL1.id}@${FACE.draft}`;
 const POL1_PUBLISHED = `${POL1.id}@${FACE.published}`;
 
 test.describe('Faces backlog: attachments and export (BUG-CTUW2N)', () => {
-  test.fixme('a file attached to the draft face stays on the draft face', async ({ appPage }) => {
+  test('a file attached to the draft face stays on the draft face', async ({ appPage }) => {
     const faces = new FacesPage(appPage);
     const form = new FormPage(appPage);
     await form.navigateToEditForm('policy', POL1_DRAFT);
@@ -29,7 +29,7 @@ test.describe('Faces backlog: attachments and export (BUG-CTUW2N)', () => {
     await faces.expectBodyNotContains('draft-evidence.txt');
   });
 
-  test.fixme('Publish carries the draft face\'s attachment to the published face', async ({
+  test('Publish carries the draft face\'s attachment to the published face', async ({
     appPage,
     facedApi,
   }) => {
@@ -44,7 +44,7 @@ test.describe('Faces backlog: attachments and export (BUG-CTUW2N)', () => {
     await faces.expectBodyContains('schedule.txt');
   });
 
-  test.fixme('export of the draft face renders the draft', async ({ appPage }) => {
+  test('export of the draft face renders the draft', async ({ appPage }) => {
     const faces = new FacesPage(appPage);
     await faces.openEntity('policy', POL1_DRAFT);
 
@@ -171,10 +171,12 @@ test.describe('Faces backlog: content-scoped edges per face (untracked, found by
   });
 });
 
-test.describe('Faces backlog: export as the published-only reader (BUG-CTUW2N)', () => {
+// The server exports an addressed face (BUG-CTUW2N), and the export button
+// sends the face the world served rather than the bare id (BUG-FYEEVX).
+test.describe('Faces backlog: export as the published-only reader (BUG-FYEEVX)', () => {
   test.use({ facedUser: FACED_USERS.reader });
 
-  test.fixme('export renders the published face and never the draft', async ({ appPage }) => {
+  test('export renders the published face and never the draft', async ({ appPage }) => {
     const faces = new FacesPage(appPage);
     await faces.openEntity('policy', POL1.id, WORLD.published);
 

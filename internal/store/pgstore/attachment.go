@@ -41,7 +41,7 @@ func (s *Store) AttachFile(ctx context.Context, entityID, property, fileName str
 	defer tx.Rollback(ctx) //nolint:errcheck // rollback after commit is a no-op
 
 	var exists bool
-	if err := tx.QueryRow(ctx, `SELECT true FROM entities WHERE id = $1`, entityID).Scan(&exists); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT true FROM entities WHERE id = $1 LIMIT 1`, entityID).Scan(&exists); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return store.ErrNotFound
 		}
@@ -97,7 +97,7 @@ func (s *Store) DeleteAttachment(ctx context.Context, entityID, property, fileNa
 // the entity does not exist.
 func (s *Store) ListAttachments(ctx context.Context, entityID string) ([]store.AttachmentInfo, error) {
 	var exists bool
-	err := s.db.QueryRow(ctx, `SELECT true FROM entities WHERE id = $1`, entityID).Scan(&exists)
+	err := s.db.QueryRow(ctx, `SELECT true FROM entities WHERE id = $1 LIMIT 1`, entityID).Scan(&exists)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}

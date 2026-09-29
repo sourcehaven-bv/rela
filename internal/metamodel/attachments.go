@@ -2,6 +2,9 @@ package metamodel
 
 import (
 	"fmt"
+	"path"
+	"slices"
+	"sort"
 	"strings"
 )
 
@@ -172,6 +175,79 @@ func (p AttachmentPolicy) HasUnconfiguredScan() bool {
 				continue // explicitly opted out — a conscious choice
 			}
 			if len(prop.ScanCmd) == 0 && !globalCmd {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// FileNames returns the file names a `file` property value references: the
+// sorted, de-duplicated `path.Base` of each stamped path. The value may be a
+// string, a []string or a []any (a list loaded from YAML or JSON); anything
+// else, and empty entries, reference nothing.
+//
+// Only the base name counts. Bytes are keyed (entity, property, name), so
+// the stored directory prefix carries no authority and is not trusted
+// (BUG-CTUW2N). A face's own value is what grants it the bytes it names.
+func FileNames(v any) []string {
+	var raw []string
+	switch t := v.(type) {
+	case string:
+		raw = []string{t}
+	case []string:
+		raw = t
+	case []any:
+		for _, x := range t {
+			if s, ok := x.(string); ok {
+				raw = append(raw, s)
+			}
+		}
+	}
+	names := make([]string, 0, len(raw))
+	for _, s := range raw {
+		if s == "" {
+			continue
+		}
+		base := path.Base(strings.ReplaceAll(s, `\`, "/"))
+		if base == "." || base == "/" || base == ".." {
+			continue
+		}
+		names = append(names, base)
+	}
+	sort.Strings(names)
+	return slices.Compact(names)
+}
+
+// FileProperties returns the sorted names of the `file` properties declared
+// on entityType, or nil when the type is unknown or declares none.
+func FileProperties(m *Metamodel, entityType string) []string {
+	if m == nil {
+		return nil
+	}
+	def, ok := m.GetEntityDef(entityType)
+	if !ok {
+		return nil
+	}
+	var names []string
+	for name, prop := range def.Properties {
+		if prop.Type == PropertyTypeFile {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
+// HasFileProperties reports whether any entity type declares a `file`
+// property.
+func HasFileProperties(m *Metamodel) bool {
+	if m == nil {
+		return false
+	}
+	for _, def := range m.Entities {
+		for _, prop := range def.Properties {
+			if prop.Type == PropertyTypeFile {
 				return true
 			}
 		}
