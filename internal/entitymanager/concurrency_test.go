@@ -93,6 +93,7 @@ func openConcFSStore(t *testing.T) store.Store {
 		Schemas: map[string]store.EntityTypeSchema{
 			"note":   {Plural: "notes"},
 			"person": {Plural: "persons"},
+			"policy": {Plural: "policies"},
 		},
 	})
 	require.NoError(t, err)
