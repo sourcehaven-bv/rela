@@ -74,6 +74,17 @@ func RunAttachmentTests(t *testing.T, f Factory) {
 		infos, err = s.ListFamilyAttachments(ctx(), "P-1")
 		require.NoError(t, err)
 		assert.Len(t, infos, 1, "bytes survive while a face remains")
+
+		// The last face takes the bytes with it, and a family with no face
+		// cannot be attached to.
+		en, err := entity.ParseFace("en")
+		require.NoError(t, err)
+		_, err = s.DeleteFace(ctx(), entity.Ref{ID: "P-1", Face: en})
+		require.NoError(t, err)
+		_, err = s.ReadFamilyAttachment(ctx(), "P-1", "file", "a.txt")
+		assert.ErrorIs(t, err, store.ErrNotFound, "bytes go with the last face")
+		err = s.AttachFamilyFile(ctx(), "P-1", "file", "b.txt", strings.NewReader("b"))
+		assert.ErrorIs(t, err, store.ErrNotFound, "no face, no family to attach to")
 	})
 
 	t.Run("AttachEntityNotFound", func(t *testing.T) {
