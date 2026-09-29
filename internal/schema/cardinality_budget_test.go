@@ -158,3 +158,56 @@ func (h hideRelationsTo) ListRelations(
 		}
 	}
 }
+
+// TestCheckCardinality_ScopeCountsBothDirections pins the scope pushdown: a
+// scoped run asks only for edges touching a scoped id, and that must include
+// an edge whose other end is out of scope, on either side.
+func TestCheckCardinality_ScopeCountsBothDirections(t *testing.T) {
+	st := memstore.New()
+	seedBudget(t, st, 2) // TKT-000 affects CON-000; TKT-001 and CON-001 have none
+	for _, tc := range []struct {
+		name    string
+		scope   string
+		wantMin []string
+	}{
+		{name: "incoming edge from an out-of-scope tail", scope: "CON-000"},
+		{name: "outgoing edge to an out-of-scope head", scope: "TKT-000"},
+		{name: "no edge", scope: "CON-001", wantMin: []string{"CON-001"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			violations, err := schema.CheckCardinality(context.Background(), schema.Ungated(st), budgetMeta(),
+				map[string]bool{tc.scope: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got []string
+			for _, v := range violations {
+				got = append(got, v.EntityID)
+			}
+			if fmt.Sprint(got) != fmt.Sprint(tc.wantMin) {
+				t.Errorf("violations = %v, want %v", got, tc.wantMin)
+			}
+		})
+	}
+}
+
+// nilRelationReader yields a nil relation, as a faulty reader might.
+type nilRelationReader struct{ store.Store }
+
+func (nilRelationReader) ListRelations(
+	context.Context, store.RelationQuery,
+) iter.Seq2[*entity.Relation, error] {
+	return func(yield func(*entity.Relation, error) bool) { yield(nil, nil) }
+}
+
+// TestCheckCardinality_NilEdgeAborts: a nil row fails the check instead of
+// being skipped, which would lower a count and invent a min violation.
+func TestCheckCardinality_NilEdgeAborts(t *testing.T) {
+	st := memstore.New()
+	seedBudget(t, st, 2)
+	violations, err := schema.CheckCardinality(context.Background(), schema.Ungated(nilRelationReader{st}),
+		budgetMeta(), nil)
+	if err == nil || len(violations) != 0 {
+		t.Fatalf("got %v, %v; want an error and no violations", violations, err)
+	}
+}

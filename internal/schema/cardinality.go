@@ -185,11 +185,13 @@ type CardinalityFinding struct {
 // Cost is independent of the number of subjects: one ListRelationsStrict query
 // per relation with an active bound (serving both directions, and narrowed to
 // the scope ids when a scope is given), one header scan per subject type, and
-// an in-memory count per subject (TKT-5LW875). Edges are folded as they
-// stream, never held.
+// an in-memory count per subject (TKT-5LW875). This function folds edges as
+// they stream; a gated reader may still buffer one relation type's edges to
+// judge their endpoints in one batch.
 //
 // Output is ordered by relation name, then outgoing before incoming, min
-// before max, then subject id and face, all in natural order.
+// before max, then subject type in declared order, then subject id and face.
+// Relation names and ids are in natural order.
 //
 // A read error fails the run loudly with a wrapped error and NO violations.
 // Reporting around a failed read would fabricate violations: a backend outage
@@ -273,7 +275,9 @@ func countEdges(
 			return counts, fmt.Errorf("schema: list %q relations: %w", relName, err)
 		}
 		if rel == nil {
-			continue // fail-closed like the visibility filters: never panic on a nil row
+			// Skipping it would thin the count and invent a min violation,
+			// which is the failure the strict read exists to prevent.
+			return counts, fmt.Errorf("schema: list %q relations: nil row", relName)
 		}
 		for i, spec := range specs {
 			counts[i][spec.key(rel)]++

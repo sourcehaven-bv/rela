@@ -801,6 +801,14 @@ func (g gatedGraphReader) ListRelations(
 	return g.rows.ListRelations(ctx, q)
 }
 
+// ListEntityHeaders forwards to the gated row reader's header path, so a
+// subject scan (cardinality analysis) reads no entity bodies.
+func (g gatedGraphReader) ListEntityHeaders(
+	ctx context.Context, q store.EntityQuery,
+) iter.Seq2[store.EntityHeader, error] {
+	return store.ListEntityHeaders(ctx, g.rows, q)
+}
+
 func (g gatedGraphReader) ListRelationsStrict(
 	ctx context.Context, q store.RelationQuery,
 ) iter.Seq2[*entity.Relation, error] {
