@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -47,10 +48,20 @@ func planRename(ctx context.Context, st store.Store, oldID, newID string) (*enti
 	if err := entity.ValidateID(newID); err != nil {
 		return nil, fmt.Errorf("invalid new ID: %w", err)
 	}
-	if _, err := st.GetEntity(ctx, oldID); err != nil {
+	// The whole family, not the zero face: a faced type stores no row there,
+	// so a zero-face read reported every faced entity missing.
+	family, err := familyRows(ctx, st, oldID)
+	if err != nil {
+		return nil, err
+	}
+	if len(family) == 0 {
 		return nil, fmt.Errorf("%w: %s", ErrEntityNotFound, oldID)
 	}
-	if _, err := st.GetEntity(ctx, newID); err == nil {
+	taken, err := idTakenByOther(ctx, st, newID, oldID)
+	if err != nil {
+		return nil, err
+	}
+	if taken {
 		return nil, fmt.Errorf("%w: %s", ErrEntityAlreadyExists, newID)
 	}
 
@@ -64,6 +75,26 @@ func planRename(ctx context.Context, st store.Store, oldID, newID string) (*enti
 		updated++
 	}
 	return &entity.RenameResult{OldID: oldID, NewID: newID, RelationsUpdated: updated}, nil
+}
+
+// idTakenByOther reports whether any stored face has an id equal to id under
+// case folding, other than the family except (the entity being renamed, so
+// abc -> ABC is allowed). It matches the stores' own conflict rule, so a dry
+// run refuses exactly the renames the store refuses.
+//
+// It scans content-free headers. A dry run is an explicit operator request
+// for one entity, not a collection read, and no store query folds ids.
+func idTakenByOther(ctx context.Context, st store.Store, id, except string) (bool, error) {
+	folded, exceptFolded := strings.ToLower(id), strings.ToLower(except)
+	for h, err := range store.ListEntityHeaders(ctx, st, store.EntityQuery{AllStates: true}) {
+		if err != nil {
+			return false, err
+		}
+		if f := strings.ToLower(h.ID); f == folded && f != exceptFolded {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // translateRenameErr maps the store's rename sentinels into

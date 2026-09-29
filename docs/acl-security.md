@@ -237,6 +237,14 @@ face exists. The refusal is necessary, because deleting only the readable faces
 would change what the operation does. Treat this as an accepted membership
 channel, not as a face that is fully concealed.
 
+#### Renaming an entity needs update on every face
+
+A rename changes the id of every face an entity has, so it is authorized like
+a bare-id delete: update on each face, and refused with nothing renamed if any
+face is denied. A type-wide `update: [policy]` grant covers only the unfaced
+row, so it cannot rename a faced policy. The refusal carries the same one-bit
+membership channel as the delete.
+
 #### World grants select a lens
 
 A `world:` grant does **not** keep a role away from a face. It scopes which
