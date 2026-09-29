@@ -62,8 +62,11 @@ type ganttHandler struct {
 
 // ganttNode is one entity in the build, carrying parsed dates and tree links.
 type ganttNode struct {
-	id        string
-	entType   string
+	id      string
+	entType string
+	// face is the face the node's row was loaded at; it decides which
+	// content-scoped edges the node owns.
+	face      entity.Face
 	title     string
 	color     string
 	start     *time.Time // own declared window (planned)
@@ -199,7 +202,7 @@ func (h *ganttHandler) buildGanttForest(
 	if gerr != nil {
 		return nil, gerr
 	}
-	f, _, gerr := h.finishGanttForest(ctx, g, nodes, "")
+	f, _, gerr := h.finishGanttForest(ctx, s.Meta, g, nodes, "")
 	return f, gerr
 }
 
@@ -209,9 +212,10 @@ func (h *ganttHandler) buildGanttForest(
 // for the full build; set, it arms the external-parent detection whose true
 // return tells the fast path to decline (see buildGanttSubtree).
 func (h *ganttHandler) finishGanttForest(
-	ctx context.Context, g dataentryconfig.Gantt, nodes map[string]*ganttNode, subtreeRoot string,
+	ctx context.Context, meta *metamodel.Metamodel, g dataentryconfig.Gantt,
+	nodes map[string]*ganttNode, subtreeRoot string,
 ) (*ganttForest, bool, *ganttError) {
-	parent, allParents, multiParent, external, gerr := h.linkGanttParents(ctx, g, nodes, subtreeRoot)
+	parent, allParents, multiParent, external, gerr := h.linkGanttParents(ctx, meta, g, nodes, subtreeRoot)
 	if gerr != nil {
 		return nil, false, gerr
 	}
@@ -402,7 +406,7 @@ func (h *ganttHandler) loadGanttType(
 		out := make([]*entity.Entity, 0, len(hdrs))
 		for _, hdr := range hdrs {
 			red := visibility.RedactHeader(ctx, h.redactor(), hdr)
-			out = append(out, &entity.Entity{ID: red.ID, Type: red.Type, Properties: red.Properties})
+			out = append(out, &entity.Entity{ID: red.ID, Type: red.Type, Face: red.Face, Properties: red.Properties})
 		}
 		return out, nil
 	default:
@@ -463,9 +467,18 @@ func (h *ganttHandler) addGanttNodes(
 				continue
 			}
 		}
+		if prev, dup := nodes[red.ID]; dup && prev.face != red.Face {
+			// A node knows one face, and ganttEdgesForType decides edge
+			// ownership by it, so two faces of one id would make the tree
+			// depend on read order. Refuse rather than pick one.
+			slog.Error("gantt: two faces of one entity in the node set",
+				"entity", red.ID, "faces", []entity.Face{prev.face, red.Face})
+			return &ganttError{http.StatusInternalServerError, "internal", "Ambiguous entity face", ""}
+		}
 		nodes[red.ID] = &ganttNode{
 			id:        red.ID,
 			entType:   typeName,
+			face:      red.Face,
 			title:     ganttTitle(red, src, entDef),
 			color:     src.Color,
 			start:     ganttDate(red, src.Start, entDef),
@@ -518,6 +531,21 @@ func ganttSubtreeVerdicts(
 	return verdicts, nil
 }
 
+// ganttHasFacedSource reports whether any source type declares faces. The
+// drill closure (collectGanttRound) queries without a face selection, so on
+// a faced type it would load rows at every face, including faces the
+// principal's grant withholds, and pick one per id by read order. The full
+// build reads through scopedHeaders with the grant's face set, so the drill
+// declines to it (BUG-BZQQDP review). TKT-KQXVF7 gives the closure a world.
+func ganttHasFacedSource(meta *metamodel.Metamodel, g dataentryconfig.Gantt) bool {
+	for typeName := range g.Sources {
+		if def, ok := meta.Entities[typeName]; ok && len(def.Faces) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // buildGanttSubtree is the ?root= fast path (TKT-5LUGYP, closes RR-FJWAZS):
 // resolve the drilled subtree with per-type GraphQuery pushdown instead of
 // building and discarding the global forest.
@@ -555,6 +583,9 @@ func (h *ganttHandler) buildGanttSubtree(
 	if g.MultiParent == "error" {
 		return nil, nil // global integrity policy needs the global build
 	}
+	if ganttHasFacedSource(s.Meta, g) {
+		return nil, nil // the closure is face-blind; see ganttHasFacedSource
+	}
 	verdicts, verdictErr := ganttSubtreeVerdicts(ctx, g)
 	if verdicts == nil {
 		return nil, verdictErr // scoped verdict (nil,nil) or a real error
@@ -591,7 +622,7 @@ func (h *ganttHandler) buildGanttSubtree(
 		frontier = next
 	}
 
-	f, external, gerr := h.finishGanttForest(ctx, g, nodes, rootID)
+	f, external, gerr := h.finishGanttForest(ctx, s.Meta, g, nodes, rootID)
 	if gerr != nil {
 		return nil, gerr
 	}
@@ -636,7 +667,9 @@ func (h *ganttHandler) collectGanttRound(
 				continue
 			}
 			red := visibility.RedactHeader(ctx, h.redactor(), hdr)
-			fresh = append(fresh, &entity.Entity{ID: red.ID, Type: red.Type, Properties: red.Properties})
+			fresh = append(fresh, &entity.Entity{
+				ID: red.ID, Type: red.Type, Face: red.Face, Properties: red.Properties,
+			})
 			next = append(next, hdr.ID)
 		}
 		if gerr := h.addGanttNodes(s, g, typeName, fresh, nodes); gerr != nil {
@@ -668,7 +701,8 @@ func (h *ganttHandler) collectGanttRound(
 // shape parent selection could differ from the full build's, so the fast
 // path must decline rather than guess.
 func (h *ganttHandler) linkGanttParents(
-	ctx context.Context, g dataentryconfig.Gantt, nodes map[string]*ganttNode, subtreeRoot string,
+	ctx context.Context, meta *metamodel.Metamodel, g dataentryconfig.Gantt,
+	nodes map[string]*ganttNode, subtreeRoot string,
 ) (parent map[string]string, allParents map[string][]string, multiParent []string, external bool, gerr *ganttError) {
 	parent = map[string]string{}
 	// allParents records every candidate edge, not just the winner, so the
@@ -678,7 +712,7 @@ func (h *ganttHandler) linkGanttParents(
 	// see different edge sets.
 	allParents = map[string][]string{}
 	for _, relType := range g.Hierarchy {
-		edges, ext, gerr := h.ganttEdgesForType(ctx, relType, nodes, subtreeRoot)
+		edges, ext, gerr := h.ganttEdgesForType(ctx, meta, relType, nodes, subtreeRoot)
 		if gerr != nil {
 			return nil, nil, nil, false, gerr
 		}
@@ -825,8 +859,16 @@ func (b *ganttBudget) take() bool {
 // ganttEdgesForType streams one relation type's edges, keeping those whose
 // endpoints are both in the gated node set. In subtree mode it reports
 // external=true for the shapes linkGanttParents' doc describes.
+//
+// A content-scoped edge is kept only when its tail is the face its parent
+// node was loaded at ([ownedByFace], BUG-BZQQDP). Another face's edge would
+// place a child, and fold its dates, under a face that does not own the
+// edge. The check runs here, before the fold, so the roll-up only ever sees
+// owned edges. The subtree closure walks edges without this check, so in
+// subtree mode a disowned edge inside the set declines to the full build
+// rather than leaving the child without its parent.
 func (h *ganttHandler) ganttEdgesForType(
-	ctx context.Context, relType string, nodes map[string]*ganttNode, subtreeRoot string,
+	ctx context.Context, meta *metamodel.Metamodel, relType string, nodes map[string]*ganttNode, subtreeRoot string,
 ) (edges [][2]string, external bool, gerr *ganttError) {
 	q := store.RelationQuery{Type: relType}
 	if subtreeRoot != "" {
@@ -858,6 +900,12 @@ func (h *ganttHandler) ganttEdgesForType(
 			}
 		}
 		if nodes[rel.From] == nil || nodes[rel.To] == nil {
+			continue
+		}
+		if !ownedByFace(meta, rel, nodes[rel.From].face) {
+			if subtreeRoot != "" {
+				return nil, true, nil
+			}
 			continue
 		}
 		edges = append(edges, [2]string{rel.From, rel.To})

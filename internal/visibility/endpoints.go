@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // EndpointsReadable reports, for each relation in rels, whether the ctx
@@ -28,15 +29,38 @@ import (
 // Fails closed: a failed header read hides every relation, and a gate error
 // hides every endpoint of that type. Both are logged.
 func (r *Resolver) EndpointsReadable(ctx context.Context, rels []*entity.Relation) []bool {
-	out := make([]bool, len(rels))
 	ids := endpointIDs(rels)
 	if len(ids) == 0 {
-		return out
+		return make([]bool, len(rels))
 	}
 	readable, ok := r.readableHeaders(ctx, ids)
 	if !ok {
-		return out
+		return make([]bool, len(rels))
 	}
+	return endpointVerdicts(rels, readable)
+}
+
+// EndpointsReadableErr is [Resolver.EndpointsReadable] for a caller that must
+// not act on a partial answer: a failed header read or a gate error is
+// returned, and the result is nil. That is safe where the caller answers
+// every fault as a failed request, never per relation, as
+// [Resolver.ReadableTypes] explains.
+func (r *Resolver) EndpointsReadableErr(ctx context.Context, rels []*entity.Relation) ([]bool, error) {
+	ids := endpointIDs(rels)
+	if len(ids) == 0 {
+		return make([]bool, len(rels)), nil
+	}
+	readable, err := r.scanHeaders(ctx, ids, func(_ string, err error) error { return err })
+	if err != nil {
+		return nil, err
+	}
+	return endpointVerdicts(rels, readable), nil
+}
+
+// endpointVerdicts applies the head and tail rules of
+// [Resolver.EndpointsReadable] to the readable faces of every endpoint.
+func endpointVerdicts(rels []*entity.Relation, readable map[string]map[entity.Face]store.EntityHeader) []bool {
+	out := make([]bool, len(rels))
 	for i, rel := range rels {
 		if rel == nil {
 			continue

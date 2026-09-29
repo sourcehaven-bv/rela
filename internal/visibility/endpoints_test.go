@@ -47,11 +47,50 @@ func TestEndpointsReadable(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := mustResolver(t, tc.gate, visibility.NopRedactor{}, resolverStore(t))
-			got := r.EndpointsReadable(context.Background(), []*entity.Relation{tc.rel})
+			rels := []*entity.Relation{tc.rel}
+			got := r.EndpointsReadable(context.Background(), rels)
 			if len(got) != 1 || got[0] != tc.want {
 				t.Fatalf("EndpointsReadable = %v, want [%v]", got, tc.want)
 			}
+			// The strict form agrees wherever the gate does not fail.
+			if tc.gate.faceErr != nil {
+				return
+			}
+			strict, err := r.EndpointsReadableErr(context.Background(), rels)
+			if err != nil || len(strict) != 1 || strict[0] != tc.want {
+				t.Fatalf("EndpointsReadableErr = %v, %v, want [%v]", strict, err, tc.want)
+			}
 		})
+	}
+}
+
+// TestEndpointsReadableErr_ReturnsFaults: a failed header read or a gate
+// error is returned, never folded into "unreadable".
+func TestEndpointsReadableErr_ReturnsFaults(t *testing.T) {
+	rels := []*entity.Relation{{From: "TKT-1", To: "FEAT-1"}}
+	for _, tc := range []struct {
+		name string
+		r    *visibility.Resolver
+	}{
+		{"header read", mustResolver(t, visibility.NopGate{}, visibility.NopRedactor{},
+			failingLoader{err: errors.New("disk")})},
+		{"gate", mustResolver(t, resolverGate{faceErr: errors.New("down")}, visibility.NopRedactor{},
+			resolverStore(t))},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := tc.r.EndpointsReadableErr(context.Background(), rels)
+			if err == nil || got != nil {
+				t.Fatalf("EndpointsReadableErr = %v, %v, want nil and an error", got, err)
+			}
+		})
+	}
+	st := resolverStore(t)
+	r := mustResolver(t, resolverGate{}, visibility.NopRedactor{}, st)
+	if got, err := r.EndpointsReadableErr(context.Background(), nil); err != nil || len(got) != 0 {
+		t.Fatalf("empty input = %v, %v", got, err)
+	}
+	if st.Reads() != 0 {
+		t.Errorf("empty input reads = %s, want none", st)
 	}
 }
 

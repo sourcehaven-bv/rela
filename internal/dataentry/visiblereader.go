@@ -149,6 +149,30 @@ func (vr visibleReader) readableTypes(ctx context.Context, ids []string) (map[st
 	return vr.resolver.ReadableTypes(ctx, ids)
 }
 
+// readableRelations keeps, in order, the relations whose endpoints the
+// principal may read: the head at some face, a content-scoped tail at its own
+// face ([visibility.Resolver.EndpointsReadableErr]). It reads headers once for
+// the whole batch. A failed read or gate is returned, never folded into "no
+// readable relations", for a caller that must not act on a partial answer.
+func (vr visibleReader) readableRelations(
+	ctx context.Context, rels []*entitypkg.Relation,
+) ([]*entitypkg.Relation, error) {
+	if len(rels) == 0 {
+		return nil, nil
+	}
+	ok, err := vr.resolver.EndpointsReadableErr(ctx, rels)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*entitypkg.Relation, 0, len(rels))
+	for i, rel := range rels {
+		if ok[i] {
+			out = append(out, rel)
+		}
+	}
+	return out, nil
+}
+
 // storedType is [storedTypeOf] over this reader's store.
 func (vr visibleReader) storedType(ctx context.Context, id string) string {
 	return storedTypeOf(ctx, vr.store, id)
