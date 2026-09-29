@@ -192,8 +192,12 @@ type cardinalityViolation struct {
 // through an analysis.Service because MCP reads through a gated GraphReader,
 // not a store.Store, and must not depend on `internal/analysis`.
 //
+// Counts cover only the edges Deps.Store yields, and the gated reader yields
+// an edge only when the caller may read both endpoints, so a count cannot
+// reveal a hidden neighbor (TKT-5LW875).
+//
 // A store error fails the TOOL CALL rather than being reported as an empty
-// or partial result: a failed count reads as 0, which for a min bound is
+// or partial result: a failed read counts as 0, which for a min bound is
 // indistinguishable from genuinely missing relations, so reporting around
 // one would invent violations out of a backend outage.
 //

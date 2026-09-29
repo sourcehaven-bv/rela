@@ -170,6 +170,12 @@ type Reader interface {
 	// fail-closed on gate error or a missing endpoint. Relations carry no
 	// field-level redaction today; row-gating is the whole contract.
 	FilterRelations(ctx context.Context, rels []*entity.Relation) []*entity.Relation
+
+	// FilterRelationsStrict is FilterRelations for a caller that folds the
+	// result into an aggregate. A gate fault is returned as an error instead
+	// of hiding the affected relations: a count over a silently thinned set
+	// would report missing edges that exist (TKT-5LW875).
+	FilterRelationsStrict(ctx context.Context, rels []*entity.Relation) ([]*entity.Relation, error)
 }
 
 // HeaderFilterer is [Reader.Filter] for content-free [store.EntityHeader] values

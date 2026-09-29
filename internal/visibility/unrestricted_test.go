@@ -119,10 +119,12 @@ func TestUnrestricted_ExposesOnlyTheReadSurface(t *testing.T) {
 	// answers. WithWorld returns a copy that resolves bare ids in another
 	// world; it reads nothing and writes nothing. ResolveHeaders (TKT-2528AB
 	// PR 5b) is GetAddress and Family for a batch, projected to headers.
+	// ListRelationsStrict (TKT-5LW875) is ListRelations itself here: with no
+	// gate there is no fault to report.
 	want := map[string]bool{
 		"GetAddress": true, "ListEntities": true, "ListRelations": true,
 		"ListEntityHeaders": true, "Family": true, "WithWorld": true,
-		"ResolveHeaders": true,
+		"ResolveHeaders": true, "ListRelationsStrict": true,
 	}
 
 	typ := reflect.TypeOf(visibility.Unrestricted(seedStore(t)))

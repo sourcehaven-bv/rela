@@ -308,8 +308,68 @@ func (resolverlessReader) FilterRelations(context.Context, []*entity.Relation) [
 	return nil
 }
 
+func (resolverlessReader) FilterRelationsStrict(context.Context, []*entity.Relation) ([]*entity.Relation, error) {
+	return nil, nil
+}
+
 func TestNewScriptReader_RequiresAResolver(t *testing.T) {
 	if _, err := visibility.NewScriptReader(resolverlessReader{}, memstore.New(), nil); err == nil {
 		t.Fatal("a reader without a Resolver was accepted")
+	}
+}
+
+// TestScriptReader_ListRelationsStrictReturnsGateFaults pins TKT-5LW875: the
+// tolerant read hides the edges a faulted gate cannot judge, and the strict
+// read returns the fault. An aggregate folds from the strict read, so a
+// fault fails the count instead of reading as a missing relation.
+func TestScriptReader_ListRelationsStrictReturnsGateFaults(t *testing.T) {
+	ctx := context.Background()
+	st := resolverStore(t)
+	if _, err := st.CreateRelation(ctx, "TKT-1", "implements", "FEAT-1", nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name    string
+		gate    visibility.RowGate
+		wantErr bool
+	}{
+		{name: "readable", gate: resolverGate{}},
+		{name: "gate fault", gate: resolverGate{faceErr: errors.New("down")}, wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pr, err := visibility.NewPolicyReader(tc.gate, visibility.NopRedactor{}, st)
+			if err != nil {
+				t.Fatal(err)
+			}
+			sr, err := visibility.NewScriptReader(pr, st, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			tolerant, strict := 0, 0
+			var strictErr error
+			for _, err := range sr.ListRelations(ctx, store.RelationQuery{}) {
+				if err != nil {
+					t.Fatalf("tolerant read: %v", err)
+				}
+				tolerant++
+			}
+			for _, err := range sr.ListRelationsStrict(ctx, store.RelationQuery{}) {
+				if err != nil {
+					strictErr = err
+					break
+				}
+				strict++
+			}
+			if tc.wantErr {
+				if tolerant != 0 || strictErr == nil {
+					t.Fatalf("tolerant=%d strictErr=%v, want the tolerant read to hide and the strict read to fail",
+						tolerant, strictErr)
+				}
+				return
+			}
+			if strictErr != nil || tolerant != 1 || strict != 1 {
+				t.Fatalf("tolerant=%d strict=%d err=%v, want 1, 1, nil", tolerant, strict, strictErr)
+			}
+		})
 	}
 }

@@ -484,6 +484,7 @@ type scriptEntityReaderFamily interface {
 	lua.EntityReader
 	Family(ctx context.Context, id string) (visibility.Family, bool, error)
 	ResolveHeaders(ctx context.Context, refs []entity.Ref) map[entity.Ref]visibility.ResolvedHeader
+	ListRelationsStrict(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error]
 }
 
 // scriptReads returns the principal-bound script reader and the traversal gate
@@ -735,6 +736,7 @@ type GatedGraphReader interface {
 	ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error]
 	GetRelation(ctx context.Context, from, relType, to string) (*entity.Relation, error)
 	ListRelations(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error]
+	ListRelationsStrict(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error]
 	CountEntities(ctx context.Context, q store.EntityQuery) (int, error)
 	CountRelations(ctx context.Context, q store.RelationQuery) (int, error)
 }
@@ -742,15 +744,17 @@ type GatedGraphReader interface {
 // gatedGraphReader composes the ACL-gated row reader with the raw store for
 // the two operations the gated reader does not provide.
 //
-// The split is deliberate, and matches the line `internal/dataentry` already
-// draws (`analyzeService.relCounts` is documented "raw (ungated) on purpose"):
+// The split is deliberate:
 //
 //   - Resolve / ListEntities / ListRelations go through `rows`, so a hidden
 //     entity is absent and a hidden edge is not listed.
 //   - CountEntities / CountRelations go to the raw store. A count is
 //     STRUCTURAL: it says how many rows of a declared type exist, never which.
 //     Entity *existence* is the secret the row gate protects; an aggregate
-//     tally of a type the metamodel already publishes is not.
+//     tally of a type the metamodel already publishes is not. A count scoped
+//     to ONE entity is different, since it reveals that entity's hidden
+//     neighbors; cardinality analysis therefore folds its counts from
+//     ListRelationsStrict instead (TKT-5LW875).
 //   - GetRelation answers not-found unless both endpoints have a readable
 //     face ([visibility.Resolver.Family]), then reads the raw store. The
 //     store returns the edge at the default tail, which is entity level, so
@@ -795,6 +799,20 @@ func (g gatedGraphReader) ListRelations(
 	ctx context.Context, q store.RelationQuery,
 ) iter.Seq2[*entity.Relation, error] {
 	return g.rows.ListRelations(ctx, q)
+}
+
+// ListEntityHeaders forwards to the gated row reader's header path, so a
+// subject scan (cardinality analysis) reads no entity bodies.
+func (g gatedGraphReader) ListEntityHeaders(
+	ctx context.Context, q store.EntityQuery,
+) iter.Seq2[store.EntityHeader, error] {
+	return store.ListEntityHeaders(ctx, g.rows, q)
+}
+
+func (g gatedGraphReader) ListRelationsStrict(
+	ctx context.Context, q store.RelationQuery,
+) iter.Seq2[*entity.Relation, error] {
+	return g.rows.ListRelationsStrict(ctx, q)
 }
 
 func (g gatedGraphReader) GetRelation(

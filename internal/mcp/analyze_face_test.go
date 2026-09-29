@@ -208,3 +208,32 @@ func TestAnalyzeUnique_PerFace(t *testing.T) {
 		t.Fatalf("LEAK: a hidden draft value in %s", text)
 	}
 }
+
+// TKT-5LW875: a cardinality count is folded from the edges the principal may
+// read. POL-1's draft cites CTL-1, and cites allows none. A principal who can
+// read POL-1 but not CTL-1 sees no edge, so neither a violation nor a count
+// that reveals the hidden control.
+func TestAnalyzeCardinality_CountsVisibleEdgesOnly(t *testing.T) {
+	t.Parallel()
+	run := func(read []string) string {
+		s, ctx := facedGatedServer(t, read)
+		meta := s.state.current().deps.Meta
+		def := meta.Relations["cites"]
+		zero := 0
+		def.MaxOutgoing = &zero
+		meta.Relations["cites"] = def
+		res, err := s.handleAnalyzeCardinality(ctx, makeToolRequest(map[string]any{}))
+		if err != nil || isErrorResult(res) {
+			t.Fatalf("analyze cardinality: %v %v", err, res)
+		}
+		return getResultText(t, res)
+	}
+	all := run(everyFace)
+	if !strings.Contains(all, "POL-1") || !strings.Contains(all, "has more than 0 'cites' relation(s): 1") {
+		t.Fatalf("POL-1's draft cites CTL-1, want a max violation: %s", all)
+	}
+	hidden := run([]string{"policy@draft", "policy@published"})
+	if strings.Contains(hidden, "POL-1") || strings.Contains(hidden, "CTL-1") {
+		t.Fatalf("LEAK: a count over a hidden neighbor: %s", hidden)
+	}
+}

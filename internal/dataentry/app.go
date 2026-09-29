@@ -664,6 +664,26 @@ func (r lateGatedReader) ListRelations(ctx context.Context, q store.RelationQuer
 	return r.reader().ListRelations(ctx, q)
 }
 
+// errNoStrictRelations reports a gated reader without the strict relation
+// read. Every reader gatedScriptReader returns has it, so this is a wiring
+// bug; the tolerant read is never substituted, because a count over edges a
+// faulted gate hid would invent missing relations.
+var errNoStrictRelations = errors.New("dataentry: reader has no strict relation read")
+
+// ListRelationsStrict is ListRelations with gate faults returned as errors
+// ([visibility.ScriptReader.ListRelationsStrict]).
+func (r lateGatedReader) ListRelationsStrict(
+	ctx context.Context, q store.RelationQuery,
+) iter.Seq2[*entity.Relation, error] {
+	sr, ok := r.reader().(interface {
+		ListRelationsStrict(context.Context, store.RelationQuery) iter.Seq2[*entity.Relation, error]
+	})
+	if !ok {
+		return func(yield func(*entity.Relation, error) bool) { yield(nil, errNoStrictRelations) }
+	}
+	return sr.ListRelationsStrict(ctx, q)
+}
+
 // familyReader is the header-only "which faces of this id may the caller
 // read" check a script write target needs.
 type familyReader interface {
@@ -1100,11 +1120,10 @@ func NewApp(
 	}
 	app.validator = val
 
-	// analyzeService entity reads route through the same gated reader; relation
-	// COUNTS stay raw (structural, cannot leak).
+	// analyzeService reads, relation counts included, route through the same
+	// gated reader.
 	app.analyze = analyzeService{
 		reads:     gatedReader,
-		relCounts: st,
 		tracer:    lateGatedTracer{app: app},
 		validator: val,
 	}

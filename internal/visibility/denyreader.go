@@ -83,6 +83,13 @@ func (DenyReader) ListRelations(
 	}
 }
 
+// ListRelationsStrict implements the script read surface: always refuses.
+func (d DenyReader) ListRelationsStrict(
+	ctx context.Context, q store.RelationQuery,
+) iter.Seq2[*entity.Relation, error] {
+	return d.ListRelations(ctx, q)
+}
+
 // DenyTracer refuses every traversal, the [DenyReader] counterpart for the
 // tracer handle. Same rationale (RR-GKCZO5): when a policy is configured
 // but the decorator cannot be built, an unattended job must not silently

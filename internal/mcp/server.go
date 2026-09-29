@@ -98,9 +98,10 @@ type Deps struct {
 // It is split deliberately. The three ENTITY/RELATION reads are the gated
 // surface: they return rows, so a wiring may substitute a decorator that
 // hides some. The two COUNTS are [GraphCounter], kept separate because a
-// count is structural — it discloses how many rows of a declared type exist,
-// not which ones — and `internal/dataentry` already draws this exact line
-// (`analyzeService.relCounts` is "raw (ungated) on purpose").
+// type-wide count is structural: it discloses how many rows of a declared type
+// exist, not which ones. A count about ONE entity is not structural, since it
+// reveals that entity's hidden neighbors, so cardinality analysis folds its
+// counts from ListRelationsStrict instead (TKT-5LW875).
 //
 // A raw `store.Store` does NOT satisfy it: Resolve and Family are resolver
 // reads, which the visibility readers provide. That keeps a raw read of the
@@ -128,6 +129,11 @@ type GraphReader interface {
 	ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error]
 	GetRelation(ctx context.Context, from, relType, to string) (*entity.Relation, error)
 	ListRelations(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error]
+
+	// ListRelationsStrict is ListRelations with a gate fault returned as an
+	// error instead of hiding the edges it touches. Aggregates fold from it,
+	// so a fault never reads as a missing relation (TKT-5LW875).
+	ListRelationsStrict(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error]
 }
 
 // TraversalBinder answers the `related(...)` calls of a list_entities filter

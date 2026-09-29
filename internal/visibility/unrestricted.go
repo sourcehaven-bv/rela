@@ -122,3 +122,10 @@ func (r *UnrestrictedReader) ListRelations(
 ) iter.Seq2[*entity.Relation, error] {
 	return r.st.ListRelations(ctx, q)
 }
+
+// ListRelationsStrict is ListRelations: there is no gate to fault.
+func (r *UnrestrictedReader) ListRelationsStrict(
+	ctx context.Context, q store.RelationQuery,
+) iter.Seq2[*entity.Relation, error] {
+	return r.st.ListRelations(ctx, q)
+}

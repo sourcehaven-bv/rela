@@ -383,6 +383,12 @@ func (d denyEntityReader) ListRelations(
 	return d.raw.ListRelations(ctx, q)
 }
 
+func (d denyEntityReader) ListRelationsStrict(
+	ctx context.Context, q store.RelationQuery,
+) iter.Seq2[*entity.Relation, error] {
+	return d.raw.ListRelations(ctx, q)
+}
+
 func (d denyEntityReader) GetRelation(
 	ctx context.Context, from, relType, to string,
 ) (*entity.Relation, error) {

@@ -142,7 +142,7 @@ func TestAnalyzeProperties_StopsScanningAtCap(t *testing.T) {
 		})
 	}
 	svc := newAnalyzeService(t, g, meta)
-	counter := &countingAnalyzeReader{inner: svc.reads}
+	counter := &countingAnalyzeReader{analyzeReader: svc.reads}
 	svc.reads = counter
 
 	section := svc.analyzeProperties(context.Background(), meta)
@@ -161,18 +161,18 @@ func TestAnalyzeProperties_StopsScanningAtCap(t *testing.T) {
 // countingAnalyzeReader counts rows yielded, so a test can assert the
 // analyzer stopped scanning rather than merely trimmed its output.
 type countingAnalyzeReader struct {
-	inner analyzeReader
-	rows  int
+	analyzeReader
+	rows int
 }
 
 func (c *countingAnalyzeReader) GetAddress(ctx context.Context, addr string) (*entity.Entity, error) {
-	return c.inner.GetAddress(ctx, addr)
+	return c.analyzeReader.GetAddress(ctx, addr)
 }
 
 func (c *countingAnalyzeReader) ListEntityHeaders(
 	ctx context.Context, q store.EntityQuery,
 ) iter.Seq2[store.EntityHeader, error] {
-	src := c.inner.ListEntityHeaders(ctx, q)
+	src := c.analyzeReader.ListEntityHeaders(ctx, q)
 	return func(yield func(store.EntityHeader, error) bool) {
 		for h, err := range src {
 			c.rows++

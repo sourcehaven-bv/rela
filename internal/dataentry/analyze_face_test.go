@@ -168,4 +168,38 @@ func TestAnalyze_FacedTypes(t *testing.T) {
 			t.Fatalf("published-only cardinality = %v, want %v (no hidden face)", keys(got), want)
 		}
 	})
+
+	// TKT-5LW875: a count is folded from the edges the principal may read.
+	// POL-1 implements FEAT-1; a principal who can read POL-1 but not FEAT-1
+	// must see POL-1 with no implements edge, not a count that reveals it.
+	t.Run("cardinality counts visible edges only", func(t *testing.T) {
+		implementsMin := func(app *App) *App {
+			meta := app.State().Meta
+			def := meta.Relations["implements"]
+			one := 1
+			def.MinOutgoing = &one
+			meta.Relations["implements"] = def
+			return app
+		}
+		got, _ := analyzeIssues(t, implementsMin(analyzeFaceApp(t, all)), "Cardinality")
+		if _, ok := got["POL-1"]; ok {
+			t.Fatalf("POL-1 has a readable implements edge, got a violation: %v", got)
+		}
+		if _, ok := got["POL-2"]; !ok {
+			t.Fatalf("POL-2 has no implements edge, want a violation: %v", got)
+		}
+
+		noFeature := []string{"policy@draft", "policy@published", "world:published"}
+		got, body := analyzeIssues(t, implementsMin(analyzeFaceApp(t, noFeature)), "Cardinality")
+		iss, ok := got["POL-1"]
+		if !ok {
+			t.Fatalf("POL-1's only edge leads to a hidden entity, want a violation: %v", got)
+		}
+		if !strings.HasSuffix(iss.Message, "has 0") {
+			t.Errorf("message %q must count the visible edges only", iss.Message)
+		}
+		if strings.Contains(body, "FEAT-1") {
+			t.Errorf("LEAK: hidden neighbor FEAT-1 in the response")
+		}
+	})
 }

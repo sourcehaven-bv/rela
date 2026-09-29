@@ -5,7 +5,7 @@ title: 'Cardinality analysis: batch relation counts and count visible edges only
 kind: enhancement
 priority: medium
 effort: m
-status: backlog
+status: done
 ---
 
 ## Description

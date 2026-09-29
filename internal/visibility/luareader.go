@@ -292,3 +292,32 @@ func (s *ScriptReader) ListRelations(
 		}
 	}
 }
+
+// ListRelationsStrict is [ScriptReader.ListRelations] for an aggregate: a
+// gate fault is yielded as an error instead of hiding the relations it
+// touches (see [Reader.FilterRelationsStrict]).
+func (s *ScriptReader) ListRelationsStrict(
+	ctx context.Context, q store.RelationQuery,
+) iter.Seq2[*entity.Relation, error] {
+	bound := s.bind(ctx)
+	return func(yield func(*entity.Relation, error) bool) {
+		var batch []*entity.Relation
+		for rel, err := range s.raw.ListRelations(bound, q) {
+			if err != nil {
+				yield(nil, err)
+				return
+			}
+			batch = append(batch, rel)
+		}
+		kept, err := s.reader.FilterRelationsStrict(bound, batch)
+		if err != nil {
+			yield(nil, err)
+			return
+		}
+		for _, rel := range kept {
+			if !yield(rel, nil) {
+				return
+			}
+		}
+	}
+}
