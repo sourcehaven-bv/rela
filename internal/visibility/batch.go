@@ -45,10 +45,15 @@ func (h ResolvedHeader) Served() bool { return h.served }
 // Every miss is absent from the result, whatever its cause. A failed header
 // read and a gate error are logged and answered as misses: the gate runs
 // only for ids the read found, so an error would tell an existing id from a
-// missing one (see untyped.go).
+// missing one (see untyped.go). An unset world is a wiring bug: it is logged
+// and serves nothing, as [Resolver.InWorld] refuses it.
 func (r *Resolver) ResolveHeaders(
 	ctx context.Context, w World, refs []entity.Ref,
 ) map[entity.Ref]ResolvedHeader {
+	if !w.denied && !w.scope.IsSet() {
+		slog.ErrorContext(ctx, "visibility: ResolveHeaders with an unset world (use WorldOf)")
+		return nil
+	}
 	refs = wellFormed(refs)
 	ids := refIDs(refs)
 	if len(ids) == 0 {

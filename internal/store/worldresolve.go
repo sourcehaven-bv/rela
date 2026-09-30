@@ -111,8 +111,12 @@ type WorldResolved struct {
 // decision about ABSENCE, so an id whose candidates are only partly present
 // can resolve to the wrong prime rather than merely a stale one. Decisions
 // are made AFTER the whole candidate set is seen, never streaming per row.
+//
+// An unset w resolves nothing: the zero scope is a wiring bug, and reading
+// it as the trivial world would fail open once the default world is not
+// trivial.
 func ResolveWorldPrimes(w WorldScope, candidates []WorldCandidate) map[string]WorldResolved {
-	if len(candidates) == 0 {
+	if len(candidates) == 0 || !w.IsSet() {
 		return nil
 	}
 

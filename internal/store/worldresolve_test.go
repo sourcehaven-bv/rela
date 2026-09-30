@@ -200,3 +200,12 @@ func TestWorldCandidate_Ref(t *testing.T) {
 		})
 	}
 }
+
+// TestResolveWorldPrimes_UnsetScopeResolvesNothing pins that the zero scope
+// fails closed instead of reading as the trivial world.
+func TestResolveWorldPrimes_UnsetScopeResolvesNothing(t *testing.T) {
+	t.Parallel()
+	cands := []store.WorldCandidate{{ID: "TKT-1", Type: "ticket"}}
+	assert.Empty(t, store.ResolveWorldPrimes(store.WorldScope{}, cands))
+	assert.Len(t, store.ResolveWorldPrimes(store.TrivialScope(), cands), 1)
+}

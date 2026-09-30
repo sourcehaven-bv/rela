@@ -10,7 +10,6 @@ import (
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
-	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // viewWorld is the world a view executes in, passed EXPLICITLY to
@@ -89,7 +88,7 @@ func (w viewWorld) isDefault() bool { return !w.denied && w.scope.IsTrivial() }
 
 // viewEntry resolves the view's ENTRY entity to its face in world w.
 //
-// It reads through the same [visibility.Resolver] the entity GET uses, with
+// It reads through the same visibility.Resolver the entity GET uses, with
 // the view's world passed explicitly: an explicit address, or any address in
 // the default world, is read literally; a bare id in another world is
 // resolved by the backend, ACL trimming the candidate faces before the world
@@ -483,7 +482,7 @@ func (h *viewsHandler) writeWorldAbsentView(
 //
 // Faces are chosen in a stable order so two requests describe the same row:
 // the implicit face first, then the declared faces in declaration order. The readable
-// set comes from [visibility.Resolver.Family], which never lists a face the
+// set comes from visibility.Resolver.Family, which never lists a face the
 // principal may not read.
 //
 // Nil: returns (nil, store.ErrNotFound) when no row is readable.
@@ -498,11 +497,15 @@ func (h *viewsHandler) readableFaceOf(
 		return nil, store.ErrNotFound
 	}
 	declared := h.schema().Meta.Entities[entityType].Faces
+	// Ref reads the named face whatever the world, except that a denied world
+	// blocks it. This page must answer the same under a denied world as under
+	// an empty one, so it reads in the default world, never the request's.
+	world := defaultWorldHandle().visibility()
 	for _, face := range fam.Faces {
 		if _, isDeclared := declared[string(face)]; !face.IsImplicit() && !isDeclared {
 			continue
 		}
-		e, found, rerr := h.visible.refIn(ctx, visibility.World{}, entityType,
+		e, found, rerr := h.visible.refIn(ctx, world, entityType,
 			entityPkg.Ref{ID: entityID, Face: face})
 		if rerr != nil {
 			return nil, rerr
