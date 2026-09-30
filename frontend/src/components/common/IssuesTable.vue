@@ -239,18 +239,18 @@ function onMessageClick(key: string, issue: AnalyzeIssue, ev: Event) {
 .issues-table th {
   text-align: left;
   padding: 10px 16px;
-  background: var(--hover-bg);
+  background: var(--rl-color-bg-hover);
   font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: var(--muted-text);
-  border-bottom: 1px solid var(--border-color);
+  color: var(--rl-color-text-muted);
+  border-bottom: 1px solid var(--rl-color-border);
 }
 
 .issues-table td {
   padding: 12px 16px;
-  border-bottom: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--rl-color-border);
   font-size: 14px;
 }
 
@@ -268,7 +268,7 @@ function onMessageClick(key: string, issue: AnalyzeIssue, ev: Event) {
  * block display + margin instead. */
 .entity-title {
   display: block;
-  color: var(--accent-color, #6366f1);
+  color: var(--rl-color-accent, #6366f1);
   font-weight: 500;
   /* Now a real RouterLink: suppress the default underline so the resting look
      is unchanged; the :hover rule below still underlines. */
@@ -286,7 +286,7 @@ function onMessageClick(key: string, issue: AnalyzeIssue, ev: Event) {
 }
 
 .entity-title.clickable:focus-visible {
-  outline: 2px solid var(--accent-color, #6366f1);
+  outline: 2px solid var(--rl-color-accent, #6366f1);
   outline-offset: 2px;
   border-radius: 2px;
 }
@@ -297,7 +297,7 @@ function onMessageClick(key: string, issue: AnalyzeIssue, ev: Event) {
 }
 
 .message-toggle:focus-visible {
-  outline: 2px solid var(--accent-color, #6366f1);
+  outline: 2px solid var(--rl-color-accent, #6366f1);
   outline-offset: 2px;
   border-radius: 2px;
 }
@@ -306,7 +306,7 @@ function onMessageClick(key: string, issue: AnalyzeIssue, ev: Event) {
   display: inline-block;
   margin-right: 4px;
   font-size: 11px;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   transition: transform 0.15s;
 }
 
@@ -315,14 +315,14 @@ function onMessageClick(key: string, issue: AnalyzeIssue, ev: Event) {
 }
 
 .issue-detail-row td {
-  background: var(--hover-bg);
+  background: var(--rl-color-bg-hover);
   padding: 8px 20px 12px;
 }
 
 .detail-label {
   font-size: 12px;
   font-weight: 600;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   margin-bottom: 4px;
 }
 
@@ -334,7 +334,7 @@ function onMessageClick(key: string, issue: AnalyzeIssue, ev: Event) {
 .detail-list li {
   font-family: monospace;
   font-size: 13px;
-  color: var(--text-color);
+  color: var(--rl-color-text);
 }
 
 .entity-id {
@@ -342,27 +342,27 @@ function onMessageClick(key: string, issue: AnalyzeIssue, ev: Event) {
   margin-top: 2px;
   font-family: monospace;
   font-size: 12px;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
 }
 
 .entity-empty {
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   font-size: 14px;
 }
 
 .type-badge {
   display: inline-block;
   padding: 4px 8px;
-  background: var(--hover-bg);
+  background: var(--rl-color-bg-hover);
   border-radius: 4px;
   font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
 }
 
 .message-cell {
-  color: var(--text-color);
+  color: var(--rl-color-text);
   overflow-wrap: anywhere;
   word-break: break-word;
 }
@@ -373,7 +373,7 @@ function onMessageClick(key: string, issue: AnalyzeIssue, ev: Event) {
   display: block;
   margin-top: 4px;
   font-size: 12px;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   line-height: 1.4;
 }
 
@@ -386,13 +386,13 @@ function onMessageClick(key: string, issue: AnalyzeIssue, ev: Event) {
 }
 
 .severity-badge.error {
-  background: color-mix(in srgb, var(--error-color) 15%, transparent);
-  color: var(--error-color);
+  background: color-mix(in srgb, var(--rl-color-danger) 15%, transparent);
+  color: var(--rl-color-danger);
 }
 
 .severity-badge.warning {
-  background: color-mix(in srgb, var(--warning-color) 15%, transparent);
-  color: var(--warning-color);
+  background: color-mix(in srgb, var(--rl-color-status-amber) 15%, transparent);
+  color: var(--rl-color-status-amber);
 }
 
 .issues-table-wrapper {
@@ -411,7 +411,7 @@ function onMessageClick(key: string, issue: AnalyzeIssue, ev: Event) {
 
 .issue-card {
   padding: 12px 16px;
-  border-bottom: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--rl-color-border);
   transition: background 0.15s;
 }
 
@@ -432,7 +432,7 @@ function onMessageClick(key: string, issue: AnalyzeIssue, ev: Event) {
 
 .issue-card-head .entity-title {
   font-size: 14px;
-  color: var(--accent-color, #6366f1);
+  color: var(--rl-color-accent, #6366f1);
 }
 
 .issue-card-meta {
@@ -441,7 +441,7 @@ function onMessageClick(key: string, issue: AnalyzeIssue, ev: Event) {
 
 .issue-card-message {
   font-size: 13px;
-  color: var(--text-color);
+  color: var(--rl-color-text);
   line-height: 1.4;
   overflow-wrap: anywhere;
   word-break: break-word;
@@ -450,7 +450,7 @@ function onMessageClick(key: string, issue: AnalyzeIssue, ev: Event) {
 .issue-card-detail {
   margin-top: 8px;
   padding: 8px 12px;
-  background: var(--hover-bg);
+  background: var(--rl-color-bg-hover);
   border-radius: 4px;
 }
 

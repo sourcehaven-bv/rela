@@ -282,3 +282,30 @@ func TestVerifyAssertion_MatchesVerifySubject(t *testing.T) {
 		})
 	}
 }
+
+// org_name is optional (TKT-MJTD12): Pratique omits it when the org has no
+// display name, and other proxies do not model it at all.
+func TestVerifyAssertion_OrgName(t *testing.T) {
+	v, mint, srv := testIssuer(t)
+	defer srv.Close()
+
+	for _, tc := range []struct {
+		name string
+		over map[string]any
+		want string
+	}{
+		{"present", map[string]any{"org_name": "Acme Corp"}, "Acme Corp"},
+		{"absent", nil, ""},
+		{"not a string", map[string]any{"org_name": 42}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := v.VerifyAssertion(context.Background(), mint(assertionClaims(tc.over)))
+			if err != nil {
+				t.Fatalf("VerifyAssertion: %v", err)
+			}
+			if got.OrgName != tc.want {
+				t.Errorf("OrgName = %q, want %q", got.OrgName, tc.want)
+			}
+		})
+	}
+}

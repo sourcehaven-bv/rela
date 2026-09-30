@@ -1,7 +1,7 @@
-import { defineConfig, devices } from '@playwright/test';
+import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
-  testDir: './tests',
+  testDir: "./tests",
   timeout: 30000,
   expect: { timeout: 5000 },
   fullyParallel: true,
@@ -25,18 +25,32 @@ export default defineConfig({
   // runs, not one.
   workers: process.env.CI ? 2 : undefined,
   reporter: process.env.CI
-    ? [['line'], ['html', { open: 'never' }]]
-    : [['list'], ['html', { open: 'never' }]],
+    ? [["line"], ["html", { open: "never" }]]
+    : [["list"], ["html", { open: "never" }]],
   use: {
-    trace: 'on-first-retry',
-    screenshot: 'only-on-failure',
+    trace: "on-first-retry",
+    screenshot: "only-on-failure",
     actionTimeout: 5000,
     navigationTimeout: 10000,
   },
   projects: [
     {
-      name: 'chromium',
-      use: { ...devices['Desktop Chrome'] },
+      name: "chromium",
+      use: { ...devices["Desktop Chrome"] },
+      // The mobile spec drives a phone viewport of its own; running it here
+      // too would assert the desktop layout against mobile expectations.
+      testIgnore: /mobile-layout\.spec\.ts/,
+    },
+    /*
+     * A real phone viewport, scoped to the layout spec rather than applied to
+     * the whole suite. The app shell switches to a drawer, an off-canvas
+     * sidebar and safe-area insets below 768px, and none of that is reachable
+     * from Desktop Chrome or from jsdom — which has no layout engine at all.
+     */
+    {
+      name: "mobile",
+      use: { ...devices["Pixel 7"] },
+      testMatch: /mobile-layout\.spec\.ts/,
     },
   ],
 });

@@ -6,7 +6,7 @@
    the regions identically — a scoped copy per view drifts. No :deep() here: the
    descendant selectors apply directly outside a scoped block. */
 .view-info {
-  color: var(--text-color);
+  color: var(--rl-color-text);
   font-size: 14px;
   line-height: 1.6;
 }
@@ -39,7 +39,7 @@
 }
 
 .view-info a {
-  color: var(--accent-color);
+  color: var(--rl-color-accent);
   text-decoration: none;
 }
 

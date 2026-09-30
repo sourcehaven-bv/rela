@@ -8,8 +8,13 @@ import { _setEntityPluralForTest } from '@/api/entities'
 import type { Entity, ListResponse } from '@/types'
 
 // TKT-3CSZRG: list rows are real links so cmd/ctrl/middle-click opens a new tab.
-// The row is a <tr> (which cannot be an anchor), so the link lives in the first
-// cell and is stretched over the row by CSS.
+//
+// The anchor lives in RlTable's `name` slot and the library stretches ONE
+// overlay over the whole row, so a click anywhere on the row is the anchor's
+// own activation. rela no longer intercepts row clicks at all: the modifier
+// handling that used to be `shouldDeferToBrowser` is now the browser's
+// default action on a real link, which is why the tests below assert the
+// ANCHOR and its href rather than a click that does or does not route.
 
 const listEntitiesMock = vi.fn()
 vi.mock('@/api', async (orig) => ({
@@ -80,7 +85,7 @@ describe('EntityList row links (new-tab affordance)', () => {
     seedEntities([{ id: 'TKT-1', type: entityType, properties: { title: 'First' } }])
     const wrapper = await mountList()
 
-    const link = wrapper.find('.entity-row .row-link')
+    const link = wrapper.find('.rl-table-row__primary a')
     expect(link.exists()).toBe(true)
     expect(link.element.tagName).toBe('A')
     expect(link.attributes('href')).toBeTruthy()
@@ -93,22 +98,27 @@ describe('EntityList row links (new-tab affordance)', () => {
     seedEntities([{ id: 'TKT-1', type: entityType, properties: { title: 'First' } }])
     const wrapper = await mountList()
 
-    const href = wrapper.find('.entity-row .row-link').attributes('href')
+    const href = wrapper.find('.rl-table-row__primary a').attributes('href')
 
-    await wrapper.find('.entity-row').trigger('click')
-    expect(routerPush).toHaveBeenCalledTimes(1)
-    const pushed = routerPush.mock.calls[0][0] as { path: string; query: Record<string, string> }
+    // The keyboard path (j/k then Enter) still pushes programmatically, and it
+    // must land where the anchor points. Both read `rowTargets`, so asserting
+    // the href against that map pins the two to one source — which is the
+    // regression this guards: building the href separately drops the scope.
+    const target = (wrapper.vm as unknown as {
+      rowTargets: Map<string, { path: string; query: Record<string, string> }>
+    }).rowTargets.get('TKT-1')
+    expect(target, 'row should resolve a target').toBeTruthy()
 
     const params = new URLSearchParams()
-    for (const [k, v] of Object.entries(pushed.query)) params.append(k, String(v))
-    expect(href).toBe(`${pushed.path}?${params.toString()}`)
+    for (const [k, v] of Object.entries(target!.query)) params.append(k, String(v))
+    expect(href).toBe(`${target!.path}?${params.toString()}`)
   })
 
   it('includes the list scope in the href, not just the bare entity path', async () => {
     seedEntities([{ id: 'TKT-1', type: entityType, properties: { title: 'First' } }])
     const wrapper = await mountList()
 
-    const href = wrapper.find('.entity-row .row-link').attributes('href') ?? ''
+    const href = wrapper.find('.rl-table-row__primary a').attributes('href') ?? ''
     expect(href).toContain('/entity/ticket/TKT-1')
     expect(href).toContain(`from=${listId}`)
     // Encoding-agnostic: the test stub and vue-router disagree on whether `:`
@@ -117,13 +127,17 @@ describe('EntityList row links (new-tab affordance)', () => {
     expect(href).toMatch(new RegExp(`scope=list(:|%3A)${listId}`))
   })
 
-  it('a plain left-click still navigates in-SPA', async () => {
+  it('navigates through the anchor rather than a click handler', async () => {
+    // Previously rela pushed the route from a handler on the <tr>. The row now
+    // carries a real RouterLink stretched over it, so navigation is the link's
+    // own: nothing intercepts the click, which is what makes cmd-click,
+    // middle-click and "copy link address" work without special cases.
     seedEntities([{ id: 'TKT-1', type: entityType, properties: { title: 'First' } }])
     const wrapper = await mountList()
 
-    await wrapper.find('.entity-row').trigger('click')
-
-    expect(routerPush).toHaveBeenCalledTimes(1)
+    const link = wrapper.find('.rl-table-row__primary a')
+    expect(link.exists()).toBe(true)
+    expect(link.attributes('href')).toBeTruthy()
   })
 
   it.each([
@@ -132,14 +146,17 @@ describe('EntityList row links (new-tab affordance)', () => {
     ['shift', { shiftKey: true }],
     ['alt', { altKey: true }],
     ['middle button', { button: 1 }],
-  ])('defers a %s click to the browser instead of routing in place', async (_n, init) => {
+  ])('leaves a %s click to the browser instead of routing in place', async (_n, init) => {
+    // The original bug was a row handler that called router.push on EVERY
+    // click, so a cmd-click routed in place instead of opening a tab. Nothing
+    // intercepts row clicks now, so the guarantee holds structurally — but it
+    // is asserted rather than assumed, because re-adding a row click handler
+    // is exactly how it would regress.
     seedEntities([{ id: 'TKT-1', type: entityType, properties: { title: 'First' } }])
     const wrapper = await mountList()
 
-    await wrapper.find('.entity-row').trigger('click', init)
+    await wrapper.find('.rl-table-row').trigger('click', init)
 
-    // No router.push: the browser acts on the row's own anchor, opening a tab
-    // or window. Routing in place here is exactly the bug being fixed.
     expect(routerPush).not.toHaveBeenCalled()
   })
 
@@ -149,8 +166,10 @@ describe('EntityList row links (new-tab affordance)', () => {
     seedEntities([{ id: 'TKT-1', type: '', properties: { title: 'First' } }])
     const wrapper = await mountList()
 
-    expect(wrapper.find('.entity-row .row-link').exists()).toBe(false)
-    await wrapper.find('.entity-row').trigger('click')
+    expect(wrapper.find('.rl-table-row__primary a').exists()).toBe(false)
+    // The title still renders as plain text; clicking it must do nothing
+    // rather than fall back to a handler that pushes an invalid path.
+    await wrapper.find('.rl-table-row').trigger('click')
     expect(routerPush).not.toHaveBeenCalled()
   })
 
@@ -186,7 +205,7 @@ describe('EntityList row links (new-tab affordance)', () => {
 
       // resolveLinkTarget rejects it to '', so the row falls back to the safe
       // entity route rather than binding an attacker-chosen scheme.
-      const href = wrapper.find('.entity-row .row-link').attributes('href') ?? ''
+      const href = wrapper.find('.rl-table-row__primary a').attributes('href') ?? ''
       expect(href).toContain('/entity/ticket/TKT-1')
       for (const a of wrapper.findAll('a')) {
         const value = a.attributes('href') ?? ''
@@ -201,7 +220,7 @@ describe('EntityList row links (new-tab affordance)', () => {
       seedEntities([{ id: 'TKT-1', type: entityType, properties: { title: 'First' } }])
       const wrapper = await mountList()
 
-      const href = wrapper.find('.entity-row .row-link').attributes('href') ?? ''
+      const href = wrapper.find('.rl-table-row__primary a').attributes('href') ?? ''
       expect(href).toContain('/document/spec/TKT-1')
     })
   })

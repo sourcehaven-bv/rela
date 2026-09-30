@@ -1416,6 +1416,57 @@ kanbans:
 # ══════════════════════════════════════════════════
 # Dashboard
 # ══════════════════════════════════════════════════
+calendars:
+  shipped:
+    title: "Shipped"
+    header: "Tickets and bugs on the day they were done, with decisions on the day they were taken."
+    sources:
+      - entity_type: ticket
+        label: "Tickets"
+        where: ["status=done"]
+        date: completed
+        color: blue
+      - entity_type: bug
+        label: "Bugs"
+        where: ["status=done"]
+        date: completed
+        color: red
+      - entity_type: decision
+        label: "Decisions"
+        date: date
+        color: violet
+    event:
+      fields:
+        - property: kind
+          show_label: false
+        - relation: implements
+          label: "Feature"
+        - relation: fixes
+          label: "Feature"
+gantts:
+  lifecycle:
+    title: "Ticket lifecycle"
+    header: "Each ticket or bug with one bar per workflow phase."
+    hierarchy: [has-planning, has-bug-analysis, has-implementation, has-review, has-docs]
+    default_depth: 2
+    sources:
+      ticket: { start: started, end: completed, where: ["started!="] }
+      bug: { start: started, end: completed, where: ["started!="] }
+      planning-checklist: { start: started, end: completed, where: ["started!="], color: blue }
+      bug-analysis-checklist: { start: started, end: completed, where: ["started!="], color: red }
+      implementation-checklist: { start: started, end: completed, where: ["started!="], color: green }
+      review-checklist: { start: started, end: completed, where: ["started!="], color: amber }
+      docs-checklist: { start: started, end: completed, where: ["started!="], color: violet }
+    tooltip:
+      fields:
+        - property: status
+        - property: started
+          label: "Started"
+        - property: completed
+          label: "Completed"
+    filter_controls:
+      - property: status
+        widget: multi-select
 dashboard:
   title: "Rela Development"
   description: "Overview of architecture, features, and ideas"
@@ -1469,55 +1520,118 @@ dashboard:
         - property: status
       limit: 5
 # ══════════════════════════════════════════════════
-# Navigation
+# Spaces
 # ══════════════════════════════════════════════════
-navigation:
-  - label: "Dashboard"
-    dashboard: true
-  - group: "Open work"
-    items:
-      - entities: ticket
-        query_scope: open_work
-  - group: "Ideation"
-    items:
-      - label: "All Ideas"
-        list: all_ideas
-      - label: "Active Ideas"
-        list: active_ideas
-      - label: "Game Changers"
-        list: game_changers
-      - label: "Idea Pipeline"
-        kanban: idea_board
-      - label: "Ideas by Category"
-        kanban: idea_by_category
-      - label: "Future Concepts"
-        list: future_concepts
-      - label: "Concepts Pipeline"
-        kanban: future_concept_board
-  - group: "Planning"
-    items:
+spaces:
+  - id: delivery
+    label: "Delivery"
+    icon: rocket
+    create: [ticket, bug]
+    navigation:
+      - label: "Dashboard"
+        dashboard: true
+      - group: "Open work"
+        items:
+          - entities: ticket
+            query_scope: open_work
+      - group: "Work"
+        items:
+          - label: "Active Tickets"
+            list: active_tickets
+            icon: inbox
+            status:
+              - tone: error
+                label: "{count} blocked"
+                condition: "entity.status == 'blocked'"
+              - tone: info
+                label: "{count} in progress"
+                condition: "entity.status == 'in-progress'"
+          - label: "All Tickets"
+            list: all_tickets
+            status:
+              - tone: warning
+                label: "{count} in review"
+                condition: "entity.status == 'review'"
+          - label: "Bugs"
+            list: all_bugs
+            icon: bug
+            status:
+              - tone: error
+                label: "{count} critical"
+                condition: "entity.priority == 'critical' and entity.status ~= 'done' and entity.status ~= 'wont-fix'"
+              - tone: new
+                label: "{count} ready"
+                condition: "entity.status == 'ready'"
+      - group: "Boards"
+        items:
+          - label: "Ticket Board"
+            kanban: ticket_board
+          - label: "Bug Board"
+            kanban: bug_board
+      - group: "Timeline"
+        items:
+          - label: "Shipped"
+            calendar: shipped
+          - label: "Ticket Lifecycle"
+            gantt: lifecycle
+  - id: roadmap
+    label: "Roadmap"
+    icon: milestone
+    create: [feature]
+    navigation:
       - label: "Features"
         list: all_features
+        status:
+          - tone: info
+            label: "{count} in progress"
+            condition: "entity.status == 'in-progress'"
       - label: "Feature Roadmap"
         kanban: feature_board
-  - group: "Work"
-    items:
-      - label: "Active Tickets"
-        list: active_tickets
-      - label: "All Tickets"
-        list: all_tickets
-      - label: "Ticket Board"
-        kanban: ticket_board
-      - label: "Bugs"
-        list: all_bugs
-      - label: "Bug Board"
-        kanban: bug_board
-  - group: "Architecture"
-    collapsed: true
-    items:
+  - id: ideas
+    label: "Ideas"
+    icon: idea
+    create: [idea, future-concept]
+    navigation:
+      - group: "Ideas"
+        items:
+          - label: "All Ideas"
+            list: all_ideas
+            status:
+              - tone: new
+                label: "{count} to triage"
+                condition: "entity.status == 'captured'"
+          - label: "Active Ideas"
+            list: active_ideas
+            open: flyout
+          - label: "Game Changers"
+            list: game_changers
+            icon: star
+          - label: "Idea Pipeline"
+            kanban: idea_board
+          - label: "Ideas by Category"
+            kanban: idea_by_category
+      - group: "Future Concepts"
+        items:
+          - label: "Future Concepts"
+            list: future_concepts
+            status:
+              - tone: new
+                label: "{count} to triage"
+                condition: "entity.status == 'captured'"
+          - label: "Concepts Pipeline"
+            kanban: future_concept_board
+  - id: architecture
+    label: "Architecture"
+    icon: layers
+    create: [concept, decision]
+    navigation:
       - label: "Concepts"
         list: all_concepts
       - label: "Decisions"
         list: all_decisions
-  - label: "Graph"
-    graph: true
+        status:
+          - tone: warning
+            label: "{count} proposed"
+            condition: "entity.status == 'proposed'"
+      - label: "Graph"
+        graph: true

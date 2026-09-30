@@ -83,13 +83,13 @@ const text = computed(() => {
   line-height: 1.5;
   vertical-align: middle;
   white-space: nowrap;
-  border: 1px solid var(--border-color);
-  color: var(--muted-text);
+  border: 1px solid var(--rl-color-border);
+  color: var(--rl-color-text-muted);
 }
 
 .is-fallback {
-  border-color: color-mix(in srgb, var(--warning-color) 60%, transparent);
-  background: color-mix(in srgb, var(--warning-color) 18%, transparent);
-  color: var(--text-color);
+  border-color: color-mix(in srgb, var(--rl-color-status-amber) 60%, transparent);
+  background: color-mix(in srgb, var(--rl-color-status-amber) 18%, transparent);
+  color: var(--rl-color-text);
 }
 </style>

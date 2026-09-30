@@ -230,7 +230,7 @@ func listShapes(cfg *dataentryconfig.Config, meta *metamodel.Metamodel) []dataen
 	for _, list := range cfg.Lists {
 		out = append(out, list)
 	}
-	for _, nav := range dataentryconfig.NavEntitiesEntries(cfg.Navigation) {
+	for _, nav := range dataentryconfig.AllNavEntitiesEntries(cfg) {
 		out = append(out, dataentryconfig.List{
 			EntityType: nav.Entities,
 			QueryScope: nav.QueryScope,

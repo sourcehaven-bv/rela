@@ -9,6 +9,8 @@ import {
 import { isCancelledFetch } from '@/composables/usePageData'
 import { useNavigationPending } from '@/composables/useNavigationPending'
 import { relaBase } from '@/api/base'
+import { getSidebar } from '@/api/schema'
+import { spaceOf, useSpaceStore, withSpace } from '@/stores/space'
 
 const routes: RouteRecordRaw[] = [
   {
@@ -112,12 +114,69 @@ const routes: RouteRecordRaw[] = [
     props: true,
   },
   {
+    // A page of `pages:` with its tab bar (TKT-ITQ0HL). Without a tab it
+    // opens the first tab the principal may see; see PageView.
+    path: '/p/:page/:tab?',
+    name: 'page',
+    component: () => import('@/views/PageView.vue'),
+    props: true,
+  },
+  {
+    // A tab of an entity page, which shows one entity (the anchor). The
+    // two-segment form `/p/<page>/<entity>` matches the route above; PageView
+    // reads its second segment as the entity and opens the first tab.
+    path: '/p/:page/:entity/:tab',
+    name: 'entity-page',
+    component: () => import('@/views/PageView.vue'),
+    props: true,
+  },
+  {
     path: '/app/:id',
     name: 'app',
     component: () => import('@/views/AppHostView.vue'),
     props: true,
   },
 ]
+
+/*
+ * Every page also answers under a space prefix, `/s/<space>/...` (TKT-GNKR5H).
+ *
+ * An alias rather than a second set of routes, so a page keeps one route name
+ * and one component whichever way it was reached. The space itself is read by
+ * the space store; no view needs the param.
+ */
+for (const record of routes) {
+  if (record.path === '/') continue
+  const own = record.alias === undefined ? [] : [record.alias].flat()
+  record.alias = [...own, ...[record.path, ...own].map((path) => `/s/:space${path}`)]
+}
+routes.push({
+  // A bare space opens its home page.
+  path: '/s/:space',
+  // Never rendered: the guard always redirects.
+  component: { render: () => null },
+  /*
+   * A guard rather than a `redirect`, because on a cold load the sidebar has
+   * not filled the space store yet, and a redirect would send every space to
+   * `/dashboard`. The sidebar waits for the router to be ready, so this asks
+   * the server itself instead of waiting for the sidebar.
+   */
+  beforeEnter: async (to) => {
+    const id = String(to.params.space)
+    const store = useSpaceStore()
+    let spaces = store.spaces
+    if (!store.enabled) {
+      try {
+        spaces = (await getSidebar(id)).spaces ?? []
+      } catch {
+        spaces = []
+      }
+    }
+    const home = spaces.find((s) => s.id === id)?.home
+    // A home of "/" would land back on this route and redirect forever.
+    return withSpace(home && home !== '/' ? home : '/dashboard', id)
+  },
+})
 
 const router = createRouter({
   history: createWebHistory(relaBase()),
@@ -251,6 +310,25 @@ function scrollToAnchorWhenReady(hash: string, abort: () => boolean) {
 //
 // See https://router.vuejs.org/api/#onerror-2 and
 // https://router.vuejs.org/guide/advanced/navigation-failures.html.
+/*
+ * Keeps navigation inside the current space.
+ *
+ * Links throughout the SPA are built as plain paths (`/entity/...`,
+ * `/list/...`). Rather than teach each of them about spaces, an unprefixed
+ * path is sent to the same path in the current space, so a cross-link or a
+ * search result opens where the user already is. With no spaces configured
+ * the store is empty and nothing is rewritten.
+ *
+ * The redirect keeps the navigation's own push or replace. Forcing replace
+ * would overwrite the page the user came from, so Back and a form's Cancel
+ * would skip it.
+ */
+router.beforeEach((to) => {
+  const space = useSpaceStore()
+  if (!space.enabled || !space.current || spaceOf(to.path)) return
+  return { path: withSpace(to.path, space.current), query: to.query, hash: to.hash }
+})
+
 router.onError((err, to, from) => {
   if (
     isNavigationFailure(err, NavigationFailureType.cancelled) ||

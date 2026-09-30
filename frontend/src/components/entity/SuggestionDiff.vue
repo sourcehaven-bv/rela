@@ -30,7 +30,7 @@ defineProps<{
   flex-direction: column;
   gap: 3px;
   margin: 0 0 6px;
-  font-family: var(--font-mono, monospace);
+  font-family: var(--rl-font-family-mono, monospace);
   font-size: var(--font-size-sm);
 }
 .sgd-old,
@@ -42,16 +42,16 @@ defineProps<{
   overflow-wrap: anywhere;
 }
 .sgd-old {
-  background: color-mix(in srgb, var(--error-color) 12%, transparent);
-  color: var(--text-color);
+  background: color-mix(in srgb, var(--rl-color-danger) 12%, transparent);
+  color: var(--rl-color-text);
 }
 .sgd-new {
-  background: color-mix(in srgb, var(--success-color) 14%, transparent);
-  color: var(--text-color);
+  background: color-mix(in srgb, var(--rl-color-success-fg) 14%, transparent);
+  color: var(--rl-color-text);
   text-decoration: none;
 }
 .sgd-delete {
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   font-family: inherit;
   font-style: italic;
 }

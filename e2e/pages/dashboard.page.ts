@@ -13,7 +13,7 @@ export class DashboardPage extends BasePage {
     super(page);
     this.view = page.locator('.dashboard-view');
     this.header = page.locator('.dashboard-header');
-    this.loadingState = page.locator('.dashboard-view .loading-state');
+    this.loadingState = page.locator('.dashboard-view .rl-status-region--pending');
     this.cards = page.locator('.dashboard-card');
     this.grid = page.locator('.dashboard-grid');
   }

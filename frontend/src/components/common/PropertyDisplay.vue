@@ -138,7 +138,7 @@ function isLong(prop: PropertyItem): boolean {
 }
 
 .property-inaccessible {
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   font-style: italic;
   cursor: help;
 }

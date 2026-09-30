@@ -129,7 +129,7 @@ export class RelationHistoryPage extends BasePage {
   /** The "backend does not support version history" state (fsstore). */
   async expectUnsupported() {
     await expect(
-      this.page.locator(".loading-state", { hasText: /does not support/i }),
+      this.page.locator(".rl-status-region--info", { hasText: /does not support/i }),
     ).toBeVisible();
   }
 }

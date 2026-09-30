@@ -260,7 +260,7 @@ describe('DynamicForm — attachments on create', () => {
     const { wrapper } = await mountCreate()
     await stage(wrapper, 'screenshot', textFile('gone.txt'))
 
-    await wrapper.find('#field-screenshot .file-remove').trigger('click')
+    await wrapper.find('#field-screenshot .rl-attachment-card__remove').trigger('click')
     await flushPromises()
 
     await submit(wrapper)
@@ -386,7 +386,7 @@ describe('DynamicForm — attachments on create', () => {
   })
 
   it('ignores a second submit while one is in flight (RR-HJLLUF)', async () => {
-    // handleKeydown calls handleSubmit() directly, bypassing PendingButton's
+    // handleKeydown calls handleSubmit() directly, bypassing RlButton's
     // own guard, and the in-flight window now spans the create POST plus N
     // uploads. Without the re-entrancy guard this yields two entities and two
     // sets of uploads.

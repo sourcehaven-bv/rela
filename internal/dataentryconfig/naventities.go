@@ -66,6 +66,7 @@ func navEntryDestinations(nav NavigationEntry) []string {
 		{"settings", nav.Settings},
 		{"action", nav.Action != ""},
 		{"document", nav.Document != ""},
+		{"page", nav.Page != ""},
 		{"group", nav.IsGroup()},
 	} {
 		if k.set {
@@ -136,7 +137,7 @@ func validateNavEntities(cfg *Config, meta *metamodel.Metamodel) []string {
 		return nil
 	}
 	var errs []string
-	for _, nav := range NavEntitiesEntries(cfg.Navigation) {
+	for _, nav := range AllNavEntitiesEntries(cfg) {
 		def, ok := meta.GetEntityDef(nav.Entities)
 		if !ok {
 			errs = append(errs, fmt.Sprintf(
@@ -149,9 +150,20 @@ func validateNavEntities(cfg *Config, meta *metamodel.Metamodel) []string {
 	return errs
 }
 
-// NavEntitiesEntries returns every `entities:` entry, at any depth the
-// navigation allows. Exported for the derived-index planner, which must see
-// exactly the entries the sidebar serves.
+// AllNavEntitiesEntries is [NavEntitiesEntries] over every navigation tree:
+// the top-level one and each space's. Exported for the derived-index planner,
+// which must see exactly the entries the sidebar serves.
+func AllNavEntitiesEntries(cfg *Config) []NavigationEntry {
+	trees := NavigationTrees(cfg)
+	out := make([]NavigationEntry, 0, len(trees))
+	for _, tree := range trees {
+		out = append(out, NavEntitiesEntries(tree.Entries)...)
+	}
+	return out
+}
+
+// NavEntitiesEntries returns every `entities:` entry in one navigation tree,
+// at any depth the navigation allows.
 func NavEntitiesEntries(navs []NavigationEntry) []NavigationEntry {
 	var out []NavigationEntry
 	for _, nav := range navs {

@@ -50,5 +50,11 @@ export const entityKeys = {
   // while still sharing the `list(type)` invalidation prefix.
   listParams: (type: string, params?: ListParams) =>
     ['entities', type, 'list', canonicalListParams(params)] as const,
+  // A whole collection read through listAllEntities, capped at maxRows (a
+  // grouped list). Its own segment, because the same params read one page
+  // elsewhere (the sidebar flyout) and the two results must not share an
+  // entry. Still under the `list(type)` prefix, so SSE invalidation reaches it.
+  listAll: (type: string, params: ListParams | undefined, maxRows: number) =>
+    ['entities', type, 'list', canonicalListParams(params), 'all', String(maxRows)] as const,
   detail: (type: string, id: string) => ['entities', type, 'detail', id] as const,
 }

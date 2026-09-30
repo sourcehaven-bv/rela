@@ -44,9 +44,14 @@ describe('CommandModal confirm integration', () => {
     return { wrapper, runCommand: (cmd: Command) => cmdVm.runCommand(cmd) }
   }
 
+  // The confirm dialog is an RlConfirmDialog (rela-components) now, so it is
+  // an [role="alertdialog"] with its buttons in RlModal's footer. Matched by
+  // role rather than by rela's old .modal-actions class.
   function modalActionButtons(): HTMLButtonElement[] {
     return Array.from(
-      document.querySelectorAll<HTMLButtonElement>('.modal-actions button')
+      document.querySelectorAll<HTMLButtonElement>(
+        '[role="alertdialog"] .rl-modal__footer button'
+      )
     )
   }
 
@@ -95,7 +100,7 @@ describe('CommandModal confirm integration', () => {
     void runCommand(cmd)
     await flushPromises()
 
-    const modal = document.querySelector<HTMLElement>('.modal')
+    const modal = document.querySelector<HTMLElement>('[role="alertdialog"]')
     expect(modal).not.toBeNull()
     expect(modal?.textContent).toContain('Destroy World?')
     expect(modal?.textContent).toContain('This will end civilization. Proceed?')
@@ -143,7 +148,7 @@ describe('CommandModal confirm integration', () => {
     await flushPromises()
 
     expect(fetchSpy).not.toHaveBeenCalled()
-    expect(document.querySelector('.modal-overlay')).toBeNull()
+    expect(document.querySelector('[role="alertdialog"]')).toBeNull()
     wrapper.unmount()
   })
 })

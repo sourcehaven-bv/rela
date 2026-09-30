@@ -1,3 +1,4 @@
+import type { StatusColor } from 'rela-components/types'
 import type { SortSpec } from './schema'
 import type { ScriptError } from './scriptError'
 
@@ -29,6 +30,8 @@ export interface Config {
   dashboard?: DashboardConfig
   actions?: Record<string, ActionConfig>
   navigation: NavigationEntry[]
+  /** Tabbed screens keyed by page id (TKT-ITQ0HL). Absent without `pages:`. */
+  pages?: Record<string, PageConfig>
   documents?: Record<string, DocumentConfig>
   apps?: Record<string, AppEntry>
   /**
@@ -269,6 +272,33 @@ export interface ListConfig {
   edit_form?: string
   page_size?: number
   actions?: string[]
+  /** Splits the list into sections. Absent means a flat, paged list. */
+  group_by?: ListGroupBy
+}
+
+/** The relative date buckets, in the order their sections appear. */
+export type DateBucket = 'overdue' | 'today' | 'tomorrow' | 'next_7_days' | 'later' | 'no_date'
+
+/**
+ * A list's `group_by:`. The server always sends the mapping form, with
+ * `max_rows` already defaulted, so the SPA holds no copy of the default.
+ */
+export interface ListGroupBy {
+  property: string
+  /** Restyles enum values. Every declared value still gets a section. */
+  groups?: ListGroup[]
+  /** Sorts a date property into relative sections. Exclusive with `groups`. */
+  buckets?: 'relative'
+  /** Bucket titles by bucket key; a key left out keeps the English default. */
+  labels?: Partial<Record<DateBucket, string>>
+  /** How many rows a grouped list loads. A grouped list is not paged. */
+  max_rows: number
+}
+
+export interface ListGroup {
+  value: string
+  label?: string
+  color?: StatusColor
 }
 
 /**
@@ -333,6 +363,8 @@ export interface ListColumn {
   property?: string
   relation?: string
   direction?: 'outgoing' | 'incoming'
+  /** Shows the face each row was served in, by its label. */
+  face?: boolean
   label?: string
   sortable?: boolean
   link?: string
@@ -763,6 +795,8 @@ export interface NavigationEntry {
   action?: string
   /** Names a standalone document (one configured without an entity_type). */
   document?: string
+  /** Names a page under `pages:`. */
+  page?: string
   /** Global named permission required for this entry to appear in the sidebar.
    *  The SPA does not act on it — the server already omits filtered entries
    *  from /_sidebar, which is what the menu is built from. Present here only
@@ -778,6 +812,13 @@ export interface NavigationEntry {
   // Group fields
   group?: string
   collapsed?: boolean
+  /** Fills the group with one entry per row of a list. */
+  items_from?: {
+    list: string
+    page?: string
+    limit?: number
+    initial?: { property?: string; relation?: string; direction?: 'outgoing' | 'incoming' }
+  }
   items?: NavigationEntry[]
 }
 
@@ -799,6 +840,20 @@ export interface SidebarItem {
    * become one link each. `label` and `href` are empty on such an item; the
    * rows supply both. */
   entities?: SidebarEntities
+  /** Set when the entry slides its list out of the sidebar instead of
+   *  navigating (`open: flyout`). `href` still names the list's page. */
+  flyout?: { list: string }
+  /**
+   * Set when the entry declares `status:` rules. Keys the entry's marker in
+   * `/_nav_status`, which carries the per-principal counts this config must not.
+   */
+  status_key?: string
+  /**
+   * The letter badge of an entry generated from a list row (`items_from:`).
+   * Never on the wire from `/_sidebar`: it comes per principal from
+   * `/_nav_items`.
+   */
+  initial?: string
 }
 
 /** The list query behind an `entities:` sidebar entry, in the list
@@ -815,6 +870,21 @@ export interface SidebarGroup {
   group?: string
   collapsed?: boolean
   items: SidebarItem[]
+  /**
+   * Set on a group that declares `items_from:`. Its entries are entity
+   * titles, so the sidebar carries none: `items` is empty and the group is
+   * filled from `/_nav_items` under this key.
+   */
+  items_key?: string
+  /** The entity page each generated entry opens. Absent: the entry opens the entity. */
+  items_page?: string
+  /** The list the generated entries come from, for a link to all of its rows. */
+  items_list?: string
+  /**
+   * Set when the group offers to create a row of its list (`items_from.create`)
+   * and the principal may. The server re-authorizes the create.
+   */
+  items_create?: SidebarCreate
 }
 
 export interface SidebarData {
@@ -837,6 +907,105 @@ export interface SidebarData {
    * A UI hint only: the create POST re-authorizes.
    */
   inline_create?: Record<string, string>
+  /**
+   * The spaces this principal may enter, in config order (TKT-GNKR5H).
+   * Absent when the config declares no `spaces:`.
+   */
+  spaces?: SidebarSpace[]
+  /** The space the server resolved for this request; `navigation` is its. */
+  space?: string
+  /** The current space's Create menu: types the principal may create. */
+  create?: SidebarCreate[]
+  /**
+   * Every page of `pages:`, keyed by page id, with the tabs this principal
+   * may see (TKT-ITQ0HL). Absent when the config declares no pages.
+   */
+  pages?: Record<string, SidebarPage>
+}
+
+/**
+ * A page of `pages:` as `/_config` serves it: every tab, gated ones included.
+ * The tabs a principal may see come from the sidebar's `pages`.
+ */
+export interface PageConfig {
+  label: string
+  icon?: string
+  entity_type?: string
+  badge?: string
+  tabs: Array<{
+    id: string
+    label: string
+    icon?: string
+    permission?: string
+    list?: string
+    kanban?: string
+    calendar?: string
+    gantt?: string
+    dashboard?: boolean
+    document?: string
+    scope?: { root?: boolean; relation?: string; direction?: 'outgoing' | 'incoming' }
+  }>
+}
+
+/** The kind of view a page tab shows; the route name of its standalone view. */
+export type PageTabView = 'list' | 'kanban' | 'calendar' | 'gantt' | 'document' | 'dashboard'
+
+/** One tab of a page that this principal may see. */
+export interface SidebarPageTab {
+  id: string
+  label: string
+  icon?: string
+  view: PageTabView
+  /** The id of the view the tab shows. Absent for the dashboard. */
+  target?: string
+  /**
+   * How a tab of an entity page narrows to the page's entity: `relation`
+   * keeps the rows the entity reaches over `relation` in `direction` (from
+   * the entity's side), `root` starts a gantt at the entity. The server
+   * applies the narrowing from its own config; the SPA only names the tab.
+   */
+  scope?: 'relation' | 'root'
+  relation?: string
+  direction?: 'outgoing' | 'incoming'
+}
+
+/** A page with the tabs this principal may see, in config order. */
+export interface SidebarPage {
+  label: string
+  icon?: string
+  /**
+   * Set on an entity page, which shows one entity of this type and is
+   * addressed as `/p/<page>/<entity>/<tab>`.
+   */
+  entity_type?: string
+  /** The entity's property the header shows as a pill beside its title. */
+  badge?: string
+  tabs: SidebarPageTab[]
+}
+
+/**
+ * The entity page tab a view is shown in: the page and tab ids the server
+ * resolves the scope from, and the anchor entity.
+ */
+export interface PageScope {
+  page: string
+  tab: string
+  entity: string
+}
+
+/** One entry of the space switcher. `home` is an unprefixed SPA path. */
+export interface SidebarSpace {
+  id: string
+  label: string
+  icon?: string
+  home: string
+}
+
+/** One row of a space's Create menu. */
+export interface SidebarCreate {
+  type: string
+  label: string
+  form: string
 }
 
 // Document config, mirroring the Go `dataentryconfig.DocumentConfig` that

@@ -312,14 +312,14 @@ func TestEditFormForType(t *testing.T) {
 	app, _ := testAppInstance()
 
 	t.Run("returns edit form", func(t *testing.T) {
-		got := app.views.editFormForType("ticket")
+		got := editFormForType(app.views.schema().Cfg, "ticket")
 		if got != "edit-ticket" {
 			t.Errorf("expected edit-ticket, got %s", got)
 		}
 	})
 
 	t.Run("returns empty for unknown type", func(t *testing.T) {
-		got := app.views.editFormForType("nonexistent")
+		got := editFormForType(app.views.schema().Cfg, "nonexistent")
 		if got != "" {
 			t.Errorf("expected empty, got %s", got)
 		}
@@ -330,7 +330,7 @@ func TestEditFormForType(t *testing.T) {
 		app2.Cfg().Forms = map[string]Form{
 			"default-form": {EntityType: "ticket", Mode: ""},
 		}
-		got := app2.views.editFormForType("ticket")
+		got := editFormForType(app2.views.schema().Cfg, "ticket")
 		if got != "default-form" {
 			t.Errorf("expected default-form, got %s", got)
 		}

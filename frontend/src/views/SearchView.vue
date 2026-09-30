@@ -8,10 +8,15 @@ import { entityDisplayTitle } from '@/utils/entityDisplay'
 import { isInputFocused } from '@/utils/dom'
 import { useBackTarget } from '@/composables/useBackTarget'
 import { useWorld } from '@/composables/useWorld'
+import { useDetailPanel } from '@/composables/useDetailPanel'
+import EntityDetailPanel from '@/components/entity/EntityDetailPanel.vue'
 import BackButton from '@/components/common/BackButton.vue'
 import AdHocFilterMenu from '@/components/lists/AdHocFilterMenu.vue'
-import PendingButton from '@/components/common/PendingButton.vue'
 import type { Entity } from '@/types'
+import RlButton from 'rela-components/components/common/RlButton.vue'
+import RlIconButton from 'rela-components/components/common/RlIconButton.vue'
+import RlEmptyState from 'rela-components/components/feedback/RlEmptyState.vue'
+import RlKbd from 'rela-components/components/data/RlKbd.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -277,6 +282,69 @@ function navigateToResult(index: number) {
   router.push(resultTarget(entity))
 }
 
+/*
+ * A plain click opens the result in the detail panel beside the results, the
+ * way a list row does, so the reader can scan several hits without losing the
+ * result set. Modified clicks stay the link's own (new tab, new window), and
+ * Enter still opens the entity's own page.
+ *
+ * The open result lives in `?selected=`, so a back step and a shared link
+ * restore it. A `replace`: browsing hits is not a place change.
+ */
+const panel = useDetailPanel()
+
+const selectedResultId = computed(() => {
+  const raw = route.query.selected
+  const value = Array.isArray(raw) ? raw[raw.length - 1] : raw
+  return typeof value === 'string' && value !== '' ? value : null
+})
+
+function openResult(entity: Entity, event: MouseEvent) {
+  if (event.defaultPrevented) return
+  if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+  if (event.button !== 0) return
+  // Capture phase, so RouterLink's own handler does not navigate.
+  event.preventDefault()
+  event.stopPropagation()
+  if (entity.id === selectedResultId.value) return
+  void router.replace({ query: { ...route.query, selected: entity.id } })
+}
+
+function closeResult() {
+  const next = { ...route.query }
+  delete next.selected
+  void router.replace({ query: next })
+}
+
+// Waits for the hit to be in the results, like EntityList: a `?selected=` no
+// result matches is a stale link, not a request to show that entity.
+const selectedResult = computed(() => {
+  const id = selectedResultId.value
+  if (!id) return null
+  return results.value.find((e) => e.id === id) ?? null
+})
+
+watch(
+  selectedResult,
+  (entity) => {
+    if (!entity) {
+      panel.clear()
+      return
+    }
+    panel.show({
+      component: EntityDetailPanel,
+      props: {
+        entityType: entity.type,
+        entityId: entity.id,
+        onClose: closeResult,
+        onExpand: () => router.push(resultTarget(entity)),
+      },
+      mode: 'inline',
+    })
+  },
+  { immediate: true },
+)
+
 // Clear selection when results change
 watch(results, () => {
   selectedIndex.value = -1
@@ -295,10 +363,18 @@ onBeforeUnmount(() => {
   document.removeEventListener('keydown', handleKeydown)
 })
 
-// Initialize from URL params
+// Initialize from URL params. `selected` is left out of the key: opening a
+// result in the panel changes the URL, and must not re-run the search.
+const searchParamsKey = computed(() => {
+  const rest = { ...route.query }
+  delete rest.selected
+  return JSON.stringify(rest)
+})
+
 watch(
-  () => route.query,
-  (newQuery) => {
+  searchParamsKey,
+  () => {
+    const newQuery = route.query
     // Restore text query
     if (newQuery.q && typeof newQuery.q === 'string') {
       query.value = newQuery.q
@@ -353,15 +429,12 @@ watch(
         <BackButton v-if="backTarget" :target="backTarget" />
         <h1>Search</h1>
       </div>
-      <button
-        type="button"
-        class="help-btn"
-        :class="{ active: showHelp }"
-        title="Show search syntax help"
+      <RlIconButton
+        icon="help"
+        label="Search syntax help"
+        :pressed="showHelp"
         @click="showHelp = !showHelp"
-      >
-        ?
-      </button>
+      />
     </header>
 
     <!-- Search syntax help panel -->
@@ -375,7 +448,7 @@ watch(
 
         <div class="help-section">
           <h4>Add Filters</h4>
-          <p>Click <strong>+ Filter</strong> or press <kbd>F</kbd> to filter by entity type or property values.</p>
+          <p>Click <strong>+ Filter</strong> or press <RlKbd keys="F" /> to filter by entity type or property values.</p>
         </div>
 
         <div class="help-section">
@@ -386,11 +459,11 @@ watch(
         <div class="help-section shortcuts-section">
           <h4>Keyboard Shortcuts</h4>
           <ul class="shortcut-list">
-            <li><kbd>F</kbd> Open filter menu</li>
-            <li><kbd>Tab</kbd> / <kbd>&darr;</kbd> Enter results</li>
-            <li><kbd>j</kbd> / <kbd>k</kbd> Navigate results</li>
-            <li><kbd>Enter</kbd> / <kbd>o</kbd> Open selected</li>
-            <li><kbd>/</kbd> Focus search input</li>
+            <li><RlKbd keys="F" /> Open filter menu</li>
+            <li><RlKbd keys="Tab or &darr;" separator="or" /> Enter results</li>
+            <li><RlKbd keys="j or k" separator="or" /> Navigate results</li>
+            <li><RlKbd keys="Enter or o" separator="or" /> Open selected</li>
+            <li><RlKbd keys="/" /> Focus search input</li>
           </ul>
         </div>
       </div>
@@ -415,13 +488,14 @@ watch(
           @apply="handleAdHocApply"
         />
 
-        <PendingButton
-          class="btn btn-primary"
-          :pending="loading"
-          label="Search"
+        <RlButton
+          variant="primary"
+          :loading="loading"
           pending-label="Searching…"
           @click="search"
-        />
+        >
+          Search
+        </RlButton>
       </div>
 
       <!-- Active filters chips -->
@@ -446,16 +520,34 @@ watch(
          previous results stay on screen while the next query runs rather
          than being replaced by a spinner — the keep-previous-content rule.
          A re-search therefore never blanks the list. -->
-    <div v-if="searched && !loading && results.length === 0" class="empty-state">
-      <p>No results found for "{{ query }}"</p>
-    </div>
+    <RlEmptyState
+      v-if="searched && !loading && results.length === 0"
+      class="empty-state"
+      icon="search"
+      :title="`No results found for \u201c${query}\u201d`"
+    />
+
+    <!-- Before the first query: say what search covers, so the page is not blank. -->
+    <RlEmptyState
+      v-else-if="!searched && !loading"
+      class="search-intro"
+      icon="search"
+      title="Search entities"
+      description="Find entities by title or content, and narrow the results with filters."
+    />
 
     <section v-else-if="results.length > 0" class="search-results" aria-labelledby="search-results-heading">
       <p id="search-results-heading" class="results-count">{{ results.length }} result{{ results.length !== 1 ? 's' : '' }} found</p>
 
       <ul class="results-list">
         <li v-for="(entity, index) in results" :key="entity.id" class="result-row">
-          <RouterLink class="result-item" :class="{ selected: index === selectedIndex }" :to="resultTarget(entity)">
+          <RouterLink
+            class="result-item"
+            :class="{ selected: index === selectedIndex, open: entity.id === selectedResultId }"
+            :to="resultTarget(entity)"
+            :aria-current="entity.id === selectedResultId ? 'true' : undefined"
+            @click.capture="openResult(entity, $event)"
+          >
             <span class="result-type">{{ getEntityTypeLabel(entity.type) }}</span>
             <span class="result-id">{{ entity.id }}</span>
             <span class="result-title">{{ getEntityLabel(entity) }}</span>
@@ -489,33 +581,10 @@ watch(
   margin: 0;
 }
 
-.help-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  background: var(--bg-color, #f8fafc);
-  border: 1px solid var(--border-color, #e2e8f0);
-  border-radius: 50%;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--muted-text);
-  cursor: pointer;
-  transition: all 0.15s;
-}
-
-.help-btn:hover,
-.help-btn.active {
-  background: var(--accent-color);
-  border-color: var(--accent-color);
-  color: white;
-}
 
 .help-panel {
-  background: var(--hover-bg);
-  border: 1px solid var(--border-color);
+  background: var(--rl-color-bg-hover);
+  border: 1px solid var(--rl-color-border);
   border-radius: 8px;
   padding: 20px;
   margin-bottom: 24px;
@@ -524,7 +593,7 @@ watch(
 .help-panel h3 {
   margin: 0 0 16px;
   font-size: 16px;
-  color: var(--text-color);
+  color: var(--rl-color-text);
 }
 
 .help-content {
@@ -534,8 +603,8 @@ watch(
 }
 
 .help-section {
-  background: var(--card-bg);
-  border: 1px solid var(--border-color);
+  background: var(--rl-color-bg-raised);
+  border: 1px solid var(--rl-color-border);
   border-radius: 6px;
   padding: 14px;
 }
@@ -544,7 +613,7 @@ watch(
   margin: 0 0 8px;
   font-size: 13px;
   font-weight: 600;
-  color: var(--text-color);
+  color: var(--rl-color-text);
   text-transform: uppercase;
   letter-spacing: 0.3px;
 }
@@ -552,25 +621,8 @@ watch(
 .help-section p {
   margin: 0 0 10px;
   font-size: 13px;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   line-height: 1.4;
-}
-
-.help-section kbd {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 20px;
-  height: 20px;
-  padding: 0 5px;
-  background: var(--card-bg);
-  border: 1px solid var(--border-color);
-  border-radius: 4px;
-  font-family: inherit;
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--text-color);
-  box-shadow: 0 1px 0 var(--border-color);
 }
 
 .shortcut-list {
@@ -584,25 +636,8 @@ watch(
   align-items: center;
   gap: 8px;
   font-size: 13px;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   padding: 4px 0;
-}
-
-.shortcut-list kbd {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 24px;
-  height: 22px;
-  padding: 0 6px;
-  background: var(--card-bg);
-  border: 1px solid var(--border-color);
-  border-radius: 4px;
-  font-family: inherit;
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--text-color);
-  box-shadow: 0 1px 0 var(--border-color);
 }
 
 .search-form {
@@ -615,7 +650,9 @@ watch(
   align-items: stretch;
 }
 
-.search-input-row .btn {
+/* Match the input beside it. `:deep` because the library's button styles are
+ * scoped, so a bare `.rl-button` here would match nothing. */
+.search-input-row :deep(.rl-button) {
   height: 42px;
   padding-top: 0;
   padding-bottom: 0;
@@ -625,19 +662,19 @@ watch(
   flex: 1;
   height: 42px;
   padding: 0 14px;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--rl-color-border);
   border-radius: 6px;
   font-size: 15px;
-  background: var(--input-bg);
-  color: var(--text-color);
+  background: var(--rl-color-bg-raised);
+  color: var(--rl-color-text);
 }
 
 .search-input:focus {
   outline: none;
-  border-color: var(--accent-color, #6366f1);
+  border-color: var(--rl-color-accent, #6366f1);
   box-shadow:
-    0 0 0 2px var(--focus-ring-gap),
-    0 0 0 4px var(--focus-ring);
+    0 0 0 2px var(--rl-color-bg),
+    0 0 0 4px var(--rl-color-focus);
 }
 
 /* Filter dropdown styles live on AdHocFilterMenu (scoped). */
@@ -653,7 +690,7 @@ watch(
 
 .filters-label {
   font-size: 13px;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   font-weight: 500;
 }
 
@@ -662,11 +699,11 @@ watch(
   align-items: center;
   gap: 6px;
   padding: 4px 8px 4px 10px;
-  background: color-mix(in srgb, var(--accent-color) 15%, transparent);
-  border: 1px solid color-mix(in srgb, var(--accent-color) 30%, transparent);
+  background: color-mix(in srgb, var(--rl-color-accent) 15%, transparent);
+  border: 1px solid color-mix(in srgb, var(--rl-color-accent) 30%, transparent);
   border-radius: 16px;
   font-size: 13px;
-  color: var(--accent-color);
+  color: var(--rl-color-accent);
 }
 
 .chip-remove {
@@ -676,7 +713,7 @@ watch(
   font-size: 16px;
   line-height: 1;
   padding: 0 2px;
-  color: var(--accent-color);
+  color: var(--rl-color-accent);
   opacity: 0.7;
 }
 
@@ -689,28 +726,27 @@ watch(
   border: none;
   cursor: pointer;
   font-size: 13px;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   padding: 4px 8px;
 }
 
 .clear-filters:hover {
-  color: var(--error-color);
+  color: var(--rl-color-danger);
   text-decoration: underline;
 }
 
-/* Uses global .btn, .btn-secondary, .btn-primary, .loading-state, .spinner from App.vue */
-
-.empty-state {
+/* RlEmptyState centres its own icon, heading and text; the panel it sits in
+   is this view's. */
+.empty-state,
+.search-intro {
   padding: 48px 24px;
-  text-align: center;
-  color: var(--muted-text);
-  background: var(--hover-bg);
+  background: var(--rl-color-bg-hover);
   border-radius: 8px;
 }
 
 .results-count {
   margin-bottom: 16px;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   font-size: 14px;
 }
 
@@ -738,8 +774,8 @@ watch(
   align-items: center;
   gap: 12px;
   padding: 12px 16px;
-  background: var(--card-bg);
-  border: 1px solid var(--border-color);
+  background: var(--rl-color-bg-raised);
+  border: 1px solid var(--rl-color-border);
   border-radius: 8px;
   text-decoration: none;
   color: inherit;
@@ -748,26 +784,32 @@ watch(
 }
 
 .result-item:hover {
-  border-color: var(--accent-color);
+  border-color: var(--rl-color-accent);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
 }
 
 .result-item.selected {
-  background: color-mix(in srgb, var(--accent-color) 15%, transparent);
-  border-color: var(--accent-color);
-  outline: 2px solid var(--accent-color);
+  background: color-mix(in srgb, var(--rl-color-accent) 15%, transparent);
+  border-color: var(--rl-color-accent);
+  outline: 2px solid var(--rl-color-accent);
   outline-offset: -2px;
 }
 
+/* The result showing in the detail panel. */
+.result-item.open {
+  background: color-mix(in srgb, var(--rl-color-accent) 10%, transparent);
+  border-color: var(--rl-color-accent);
+}
+
 .result-item.selected:hover {
-  background: color-mix(in srgb, var(--accent-color) 25%, transparent);
+  background: color-mix(in srgb, var(--rl-color-accent) 25%, transparent);
 }
 
 .result-type {
   font-size: 11px;
   text-transform: uppercase;
-  color: var(--muted-text);
-  background: var(--hover-bg);
+  color: var(--rl-color-text-muted);
+  background: var(--rl-color-bg-hover);
   padding: 4px 8px;
   border-radius: 4px;
   font-weight: 500;
@@ -776,13 +818,13 @@ watch(
 .result-id {
   font-family: monospace;
   font-size: 13px;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
 }
 
 .result-title {
   flex: 1;
   font-size: 15px;
-  color: var(--text-color);
+  color: var(--rl-color-text);
 }
 
 @media (max-width: 768px) {
@@ -798,7 +840,7 @@ watch(
 }
 
 @media (max-width: 480px) {
-  /* .main-content drops to 12px horizontal padding at this breakpoint;
+  /* The shell's main pane drops to 12px horizontal padding at this breakpoint;
      the sticky header's full-bleed negative margin must match or it
      pokes past the screen edge and triggers horizontal scroll. */
   .search-header {

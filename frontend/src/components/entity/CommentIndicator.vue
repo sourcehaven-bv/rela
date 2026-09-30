@@ -10,6 +10,7 @@ import {
   type CommentAnchor,
 } from '@/api/comments'
 import { getErrorMessage } from '@/api/errors'
+import RlButton from 'rela-components/components/common/RlButton.vue'
 
 /**
  * A comment affordance anchored to one field (TKT-FIO205).
@@ -244,21 +245,21 @@ function formatDate(iso: string): string {
           <template v-if="editingId === c.id">
             <textarea v-model="editBody" class="ci-input" rows="3" />
             <div class="ci-acts">
-              <button class="ci-mini ci-mini--primary" @click="saveEdit(c)">Save</button>
-              <button class="ci-mini" @click="editingId = null">Cancel</button>
+              <RlButton variant="primary" size="sm" @click="saveEdit(c)">Save</RlButton>
+              <RlButton variant="secondary" size="sm" @click="editingId = null">Cancel</RlButton>
             </div>
           </template>
 
           <template v-else>
             <p class="ci-body">{{ c.body }}</p>
             <div class="ci-acts">
-              <button v-if="c.editable" class="ci-mini" @click="toggleResolved(c)">
+              <RlButton v-if="c.editable" variant="secondary" size="sm" @click="toggleResolved(c)">
                 {{ c.resolved ? 'Reopen' : 'Resolve' }}
-              </button>
-              <button v-if="c.editable" class="ci-mini" @click="startEdit(c)">Edit</button>
-              <button v-if="c.deletable" class="ci-mini ci-mini--danger" @click="remove(c)">
+              </RlButton>
+              <RlButton v-if="c.editable" variant="secondary" size="sm" @click="startEdit(c)">Edit</RlButton>
+              <RlButton v-if="c.deletable" variant="secondary" size="sm" tone="danger" @click="remove(c)">
                 Delete
-              </button>
+              </RlButton>
             </div>
           </template>
         </li>
@@ -279,13 +280,14 @@ function formatDate(iso: string): string {
         />
         <div class="ci-composer-row">
           <span class="ci-hint">⌘↵ to post</span>
-          <button
+          <RlButton
             type="submit"
-            class="ci-mini ci-mini--primary"
+            variant="primary"
+            size="sm"
             :disabled="submitting || !body.trim()"
           >
             {{ submitting ? 'Adding…' : 'Comment' }}
-          </button>
+          </RlButton>
         </div>
       </form>
     </div>
@@ -310,7 +312,7 @@ function formatDate(iso: string): string {
   background: none;
   cursor: pointer;
   font: 600 var(--font-size-sm) / 1 inherit;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
 }
 .ci-btn svg {
   width: 11px;
@@ -318,19 +320,19 @@ function formatDate(iso: string): string {
 }
 
 .ci-btn--has {
-  background: color-mix(in srgb, var(--accent-color) 12%, transparent);
-  border-color: color-mix(in srgb, var(--accent-color) 30%, transparent);
-  color: var(--accent-color);
+  background: color-mix(in srgb, var(--rl-color-accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--rl-color-accent) 30%, transparent);
+  color: var(--rl-color-accent);
 }
 .ci-btn--done {
-  background: color-mix(in srgb, var(--success-color) 14%, transparent);
-  border-color: color-mix(in srgb, var(--success-color) 32%, transparent);
-  color: var(--success-color);
+  background: color-mix(in srgb, var(--rl-color-status-green) 14%, transparent);
+  border-color: color-mix(in srgb, var(--rl-color-status-green) 32%, transparent);
+  color: var(--rl-color-status-green);
 }
 .ci-btn--detached {
-  background: color-mix(in srgb, var(--warning-color) 22%, transparent);
-  border-color: color-mix(in srgb, var(--warning-color) 45%, transparent);
-  color: var(--text-color);
+  background: color-mix(in srgb, var(--rl-color-status-amber) 22%, transparent);
+  border-color: color-mix(in srgb, var(--rl-color-status-amber) 45%, transparent);
+  color: var(--rl-color-text);
 }
 
 /* Empty fields stay quiet until the row is hovered or the control is focused.
@@ -354,8 +356,8 @@ function formatDate(iso: string): string {
 .ci-btn:focus-visible {
   outline: none;
   box-shadow:
-    0 0 0 2px var(--focus-ring-gap),
-    0 0 0 4px var(--focus-ring);
+    0 0 0 2px var(--rl-color-bg),
+    0 0 0 4px var(--rl-color-focus);
 }
 
 /* ── Popover ─────────────────────────────────────────────────── */
@@ -365,8 +367,8 @@ function formatDate(iso: string): string {
   top: calc(100% + 6px);
   left: 0;
   width: 340px;
-  background: var(--card-bg);
-  border: 1px solid var(--border-color);
+  background: var(--rl-color-bg-raised);
+  border: 1px solid var(--rl-color-border);
   border-radius: var(--radius-lg, 8px);
   box-shadow: var(--shadow-lg, 0 10px 30px rgba(0, 0, 0, 0.16));
   text-align: left;
@@ -393,18 +395,18 @@ function formatDate(iso: string): string {
   align-items: center;
   justify-content: space-between;
   padding: 8px 12px;
-  border-bottom: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--rl-color-border);
   font-size: var(--font-size-sm);
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
 }
 .ci-pop-head code {
-  color: var(--text-color);
+  color: var(--rl-color-text);
 }
 .ci-x {
   border: 0;
   background: none;
   cursor: pointer;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   font-size: var(--font-size-sm);
 }
 
@@ -417,7 +419,7 @@ function formatDate(iso: string): string {
 }
 .ci-cmt {
   padding: 10px 12px;
-  border-bottom: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--rl-color-border);
 }
 .ci-cmt:last-child {
   border-bottom: 0;
@@ -432,17 +434,17 @@ function formatDate(iso: string): string {
   align-items: center;
   gap: 6px;
   font-size: var(--font-size-sm);
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   margin-bottom: 3px;
 }
 .ci-meta b {
-  color: var(--text-color);
+  color: var(--rl-color-text);
 }
 .ci-detached {
   padding: 1px 6px;
   border-radius: 4px;
-  background: var(--warning-color);
-  color: var(--text-color);
+  background: var(--rl-color-status-amber);
+  color: var(--rl-color-text);
 }
 
 .ci-body {
@@ -456,56 +458,29 @@ function formatDate(iso: string): string {
   display: flex;
   gap: 5px;
 }
-.ci-mini {
-  font: var(--font-size-sm) / 1.4 inherit;
-  padding: 2px 8px;
-  border-radius: var(--radius-sm, 4px);
-  border: 1px solid var(--border-color);
-  background: var(--bg-color);
-  color: var(--text-color);
-  cursor: pointer;
-}
-.ci-mini--primary {
-  background: var(--accent-color);
-  border-color: var(--accent-color);
-  color: #fff;
-}
-.ci-mini--danger {
-  color: var(--error-color);
-}
-.ci-mini:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-.ci-mini:focus-visible {
-  outline: none;
-  box-shadow:
-    0 0 0 2px var(--focus-ring-gap),
-    0 0 0 4px var(--focus-ring);
-}
 
 .ci-composer {
   padding: 10px 12px;
-  border-top: 1px solid var(--border-color);
-  background: var(--bg-color);
+  border-top: 1px solid var(--rl-color-border);
+  background: var(--rl-color-bg);
 }
 .ci-input {
   width: 100%;
   padding: 6px 8px;
   resize: vertical;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--rl-color-border);
   border-radius: var(--radius-sm, 5px);
-  background: var(--input-bg);
-  color: var(--text-color);
+  background: var(--rl-color-bg-raised);
+  color: var(--rl-color-text);
   font: inherit;
   font-size: var(--font-size-base);
 }
 .ci-input:focus {
   outline: none;
-  border-color: var(--accent-color);
+  border-color: var(--rl-color-accent);
   box-shadow:
-    0 0 0 2px var(--focus-ring-gap),
-    0 0 0 4px var(--focus-ring);
+    0 0 0 2px var(--rl-color-bg),
+    0 0 0 4px var(--rl-color-focus);
 }
 .ci-composer-row {
   display: flex;
@@ -515,7 +490,7 @@ function formatDate(iso: string): string {
 }
 .ci-hint {
   font-size: var(--font-size-sm);
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
 }
 
 /* On a narrow viewport the popover cannot sit beside a field at all — the

@@ -1,0 +1,71 @@
+/*
+ * The shared input box.
+ *
+ * Text fields, selects, textareas and the search box all draw the same
+ * border, radius, padding and focus ring, so a form row looks like one
+ * control repeated rather than four that happen to sit together. Declared
+ * globally rather than per component because several components render a
+ * native element that scoped styles cannot reach from a parent.
+ */
+.rl-control {
+  width: 100%;
+  min-height: var(--rl-control-height);
+  padding: 0 var(--rl-space-3);
+  border: 1px solid var(--rl-color-border-strong);
+  border-radius: var(--rl-radius-md);
+  background: var(--rl-color-bg);
+  color: var(--rl-color-text);
+  font-family: inherit;
+  font-size: var(--rl-font-size-md);
+  line-height: var(--rl-line-height-normal);
+  transition: border-color var(--rl-duration-fast) var(--rl-ease),
+    box-shadow var(--rl-duration-fast) var(--rl-ease);
+}
+
+.rl-control::placeholder { color: var(--rl-color-text-subtle); }
+
+.rl-control:hover:not(:disabled):not([aria-invalid='true']) {
+  border-color: var(--rl-color-text-subtle);
+}
+
+/*
+ * The ring is drawn outside the box, so the border underneath it is recoloured
+ * too. Otherwise a grey line shows through the middle of a blue ring.
+ */
+.rl-control:focus-visible {
+  outline: none;
+  border-color: var(--rl-focus-ring-color, var(--rl-color-focus));
+  box-shadow:
+    0 0 0 var(--rl-focus-ring-gap) var(--rl-color-bg),
+    0 0 0 calc(var(--rl-focus-ring-gap) + var(--rl-focus-ring-width))
+      var(--rl-focus-ring-color, var(--rl-color-focus));
+}
+
+.rl-control[aria-invalid='true'] {
+  --rl-focus-ring-color: var(--rl-color-error-ring);
+  border-color: var(--rl-color-error-ring);
+}
+
+.rl-control:disabled {
+  background: var(--rl-color-bg-hover);
+  color: var(--rl-color-text-subtle);
+  cursor: not-allowed;
+}
+
+/* Sizes match the button scale so a field and a button align in a row. */
+.rl-control--sm { min-height: var(--rl-control-height-sm); font-size: var(--rl-font-size-sm); padding: 0 var(--rl-space-2); }
+.rl-control--lg { min-height: var(--rl-control-height-lg); font-size: var(--rl-font-size-lg); }
+
+/* A multi-line control needs vertical padding; a single-line one centres. */
+.rl-control--multiline {
+  padding: var(--rl-space-2) var(--rl-space-3);
+  resize: vertical;
+}
+
+@media (pointer: coarse) {
+  /*
+   * iOS zooms the page when a field under 16px takes focus, so touch gets the
+   * larger text regardless of the size prop.
+   */
+  .rl-control { min-height: var(--rl-tap-target); font-size: var(--rl-font-size-lg); }
+}

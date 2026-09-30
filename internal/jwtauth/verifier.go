@@ -163,6 +163,7 @@ type AssertionClaims struct {
 	Email   string   // the "email" claim, if present
 	OrgID   string   // the "org_id" claim — the tenant the session is scoped to
 	OrgSlug string   // the "org_slug" claim — human-readable tenant name
+	OrgName string   // the "org_name" claim — the org's display name
 	Roles   []string // the "roles" claim — bare role names, scoped to OrgID
 
 	// PrincipalType is the "principal_type" claim — what KIND of caller this
@@ -224,6 +225,7 @@ func (v *Verifier) VerifyAssertion(ctx context.Context, raw string) (AssertionCl
 		Email:         stringClaim(claims, "email"),
 		OrgID:         stringClaim(claims, "org_id"),
 		OrgSlug:       stringClaim(claims, "org_slug"),
+		OrgName:       stringClaim(claims, "org_name"),
 		Roles:         stringSliceClaim(claims, "roles"),
 		PrincipalType: stringClaim(claims, "principal_type"),
 		Scopes:        scopeClaim(claims, "scope"),

@@ -17,10 +17,6 @@ vi.mock('@/stores', async (orig) => {
   }
 })
 
-// TagSelect wraps SlimSelect, whose MutationObserver doesn't mount under jsdom
-// (same reason wrapperWidgets.test.ts stubs it).
-const stubs = { TagSelect: true }
-
 const GEBIEDEN_CONFIG: ListConfig = {
   entity: 'kader',
   columns: [],
@@ -37,7 +33,6 @@ const KADER_TYPE: EntityType = {
 function mountBar(filters = {}) {
   return mount(FilterBar, {
     props: { config: GEBIEDEN_CONFIG, entityType: KADER_TYPE, filters },
-    global: { stubs },
   })
 }
 
@@ -49,12 +44,11 @@ describe('FilterBar — multi-enum filter (BUG-AMK38R)', () => {
     fetchListMock.mockResolvedValue({ data: [], meta: {} })
   })
 
-  it('renders a TagSelect, not a native <select multiple>', async () => {
+  it('renders an RlMultiSelect, not a native <select multiple>', async () => {
     const wrapper = mountBar()
     await flushPromises()
 
-    expect(wrapper.findComponent({ name: 'TagSelect' }).exists()).toBe(true)
-    // The native multi-select listbox is what this replaced.
+    expect(wrapper.findComponent({ name: 'RlMultiSelect' }).exists()).toBe(true)
     expect(wrapper.find('select[multiple]').exists()).toBe(false)
   })
 
@@ -62,15 +56,19 @@ describe('FilterBar — multi-enum filter (BUG-AMK38R)', () => {
     const wrapper = mountBar()
     await flushPromises()
 
-    const tag = wrapper.findComponent({ name: 'TagSelect' })
-    expect(tag.props('options')).toEqual(['Governance', 'Technologie', 'Privacy'])
+    const tag = wrapper.findComponent({ name: 'RlMultiSelect' })
+    expect((tag.props('options') as { value: string }[]).map((o) => o.value)).toEqual([
+      'Governance',
+      'Technologie',
+      'Privacy',
+    ])
   })
 
   it('emits a single selection under `=`, which is comma-safe', async () => {
     const wrapper = mountBar()
     await flushPromises()
 
-    wrapper.findComponent({ name: 'TagSelect' }).vm.$emit('update:modelValue', ['Governance'])
+    wrapper.findComponent({ name: 'RlMultiSelect' }).vm.$emit('update:modelValue', ['Governance'])
     await flushPromises()
 
     const emitted = wrapper.emitted('filter')
@@ -87,7 +85,7 @@ describe('FilterBar — multi-enum filter (BUG-AMK38R)', () => {
     await flushPromises()
 
     wrapper
-      .findComponent({ name: 'TagSelect' })
+      .findComponent({ name: 'RlMultiSelect' })
       .vm.$emit('update:modelValue', ['Governance', 'Privacy'])
     await flushPromises()
 
@@ -101,7 +99,7 @@ describe('FilterBar — multi-enum filter (BUG-AMK38R)', () => {
     const wrapper = mountBar({ gebieden: { value: 'Governance', op: 'in' } })
     await flushPromises()
 
-    wrapper.findComponent({ name: 'TagSelect' }).vm.$emit('update:modelValue', [])
+    wrapper.findComponent({ name: 'RlMultiSelect' }).vm.$emit('update:modelValue', [])
     await flushPromises()
 
     const emitted = wrapper.emitted('filter')!
@@ -112,7 +110,7 @@ describe('FilterBar — multi-enum filter (BUG-AMK38R)', () => {
     const wrapper = mountBar({ gebieden: { value: 'Governance,Privacy', op: 'in' } })
     await flushPromises()
 
-    const tag = wrapper.findComponent({ name: 'TagSelect' })
+    const tag = wrapper.findComponent({ name: 'RlMultiSelect' })
     expect(tag.props('modelValue')).toEqual(['Governance', 'Privacy'])
   })
 })

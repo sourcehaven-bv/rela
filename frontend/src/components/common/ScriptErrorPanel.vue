@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 
 import type { ScriptError } from '../../types/scriptError'
+import RlButton from 'rela-components/components/common/RlButton.vue'
 
 const props = defineProps<{ error: ScriptError }>()
 
@@ -94,7 +95,7 @@ async function copyCorrelationId(): Promise<void> {
     <footer v-if="error.correlation_id" class="se-footer">
       <span class="se-corr-label">Correlation ID:</span>
       <code class="se-corr">{{ error.correlation_id }}</code>
-      <button type="button" class="se-copy" @click="copyCorrelationId">Copy</button>
+      <RlButton variant="secondary" size="sm" @click="copyCorrelationId">Copy</RlButton>
     </footer>
   </div>
 </template>
@@ -105,7 +106,7 @@ async function copyCorrelationId(): Promise<void> {
   flex-direction: column;
   gap: 12px;
   font-family: var(--font-family, system-ui, sans-serif);
-  color: var(--text-color);
+  color: var(--rl-color-text);
 }
 
 .se-header {
@@ -118,11 +119,11 @@ async function copyCorrelationId(): Promise<void> {
 .se-surface {
   display: inline-block;
   padding: 2px 8px;
-  background: var(--card-bg);
-  border: 1px solid var(--border-color);
+  background: var(--rl-color-bg-raised);
+  border: 1px solid var(--rl-color-border);
   border-radius: 999px;
   font-size: 12px;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
 }
 
 .se-path {
@@ -132,10 +133,10 @@ async function copyCorrelationId(): Promise<void> {
 
 .se-entity {
   padding: 2px 8px;
-  background: var(--card-bg);
+  background: var(--rl-color-bg-raised);
   border-radius: 4px;
   font-size: 12px;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
 }
 
 .se-message {
@@ -151,8 +152,8 @@ async function copyCorrelationId(): Promise<void> {
 }
 
 .se-source {
-  background: var(--card-bg);
-  border: 1px solid var(--border-color);
+  background: var(--rl-color-bg-raised);
+  border: 1px solid var(--rl-color-border);
   border-radius: 4px;
   overflow: auto;
   max-height: 240px;
@@ -179,7 +180,7 @@ async function copyCorrelationId(): Promise<void> {
   display: inline-block;
   width: 32px;
   margin-right: 12px;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   text-align: right;
   user-select: none;
 }
@@ -200,7 +201,7 @@ async function copyCorrelationId(): Promise<void> {
 
 .se-func {
   margin-left: 8px;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   font-size: 12px;
 }
 
@@ -209,8 +210,8 @@ async function copyCorrelationId(): Promise<void> {
   padding: 8px 12px;
   max-height: 200px;
   overflow: auto;
-  background: var(--card-bg);
-  border: 1px solid var(--border-color);
+  background: var(--rl-color-bg-raised);
+  border: 1px solid var(--rl-color-border);
   border-radius: 4px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 12px;
@@ -226,7 +227,7 @@ async function copyCorrelationId(): Promise<void> {
 }
 
 .se-args dt {
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
@@ -241,29 +242,16 @@ async function copyCorrelationId(): Promise<void> {
   align-items: center;
   gap: 8px;
   font-size: 12px;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
 }
 
 .se-corr {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
-.se-copy {
-  padding: 2px 8px;
-  border: 1px solid var(--border-color);
-  background: var(--card-bg);
-  border-radius: 4px;
-  font-size: 11px;
-  cursor: pointer;
-}
-
-.se-copy:hover {
-  background: var(--hover-bg, var(--border-color));
-}
-
 details summary {
   cursor: pointer;
   font-size: 13px;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
 }
 </style>

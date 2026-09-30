@@ -300,6 +300,12 @@ entities:
       prevention:
         type: string
         description: How to prevent similar bugs
+      started:
+        type: date
+        description: "Set by automation when work starts"
+      completed:
+        type: date
+        description: "Set by automation when status becomes done"
       status:
         type: bug_status
         required: true
@@ -330,6 +336,12 @@ entities:
       tags:
         type: ticket_tag
         list: true
+      started:
+        type: date
+        description: "Set by automation when work starts"
+      completed:
+        type: date
+        description: "Set by automation when status becomes done"
       status:
         type: ticket_status
         required: true
@@ -610,6 +622,12 @@ entities:
         type: string
         required: true
         default: "Planning"
+      started:
+        type: date
+        description: "Set by automation when the phase starts"
+      completed:
+        type: date
+        description: "Set by automation when the checklist is done"
       status:
         type: checklist_status
         required: true
@@ -629,6 +647,12 @@ entities:
         type: string
         required: true
         default: "Bug Analysis"
+      started:
+        type: date
+        description: "Set by automation when the phase starts"
+      completed:
+        type: date
+        description: "Set by automation when the checklist is done"
       status:
         type: checklist_status
         required: true
@@ -648,6 +672,12 @@ entities:
         type: string
         required: true
         default: "Implementation"
+      started:
+        type: date
+        description: "Set by automation when the phase starts"
+      completed:
+        type: date
+        description: "Set by automation when the checklist is done"
       status:
         type: checklist_status
         required: true
@@ -666,6 +696,12 @@ entities:
         type: string
         required: true
         default: "Review"
+      started:
+        type: date
+        description: "Set by automation when the phase starts"
+      completed:
+        type: date
+        description: "Set by automation when the checklist is done"
       status:
         type: checklist_status
         required: true
@@ -684,6 +720,12 @@ entities:
         type: string
         required: true
         default: "Documentation"
+      started:
+        type: date
+        description: "Set by automation when the phase starts"
+      completed:
+        type: date
+        description: "Set by automation when the checklist is done"
       status:
         type: checklist_status
         required: true
@@ -2153,6 +2195,7 @@ automations:
           properties:
             title: "Planning: {{new.title}}"
             status: in-progress
+            started: "{{today}}"
           relation: has-planning
           if_exists: skip
   - name: ticket-implementation-checklist
@@ -2167,6 +2210,7 @@ automations:
           properties:
             title: "Implementation: {{new.title}}"
             status: in-progress
+            started: "{{today}}"
           relation: has-implementation
           if_exists: skip
   - name: ticket-review-checklist
@@ -2181,6 +2225,7 @@ automations:
           properties:
             title: "Review: {{new.title}}"
             status: in-progress
+            started: "{{today}}"
           relation: has-review
           if_exists: skip
   # --- Bug Workflow ---
@@ -2196,6 +2241,7 @@ automations:
           properties:
             title: "Analysis: {{new.title}}"
             status: in-progress
+            started: "{{today}}"
           relation: has-bug-analysis
           if_exists: skip
   - name: bug-implementation-checklist
@@ -2210,6 +2256,7 @@ automations:
           properties:
             title: "Implementation: {{new.title}}"
             status: in-progress
+            started: "{{today}}"
           relation: has-implementation
           if_exists: skip
   - name: bug-review-checklist
@@ -2224,5 +2271,80 @@ automations:
           properties:
             title: "Review: {{new.title}}"
             status: in-progress
+            started: "{{today}}"
           relation: has-review
           if_exists: skip
+  # --- Lifecycle dates (calendar and gantt views) ---
+  - name: ticket-started-planning
+    description: Record when work on a ticket starts
+    on:
+      entity: [ticket]
+      property: status
+      becomes: planning
+      when:
+        - "started="
+    do:
+      - set: started
+        value: "{{today}}"
+  - name: ticket-started-in-progress
+    description: Record when work starts on a ticket that skipped planning
+    on:
+      entity: [ticket]
+      property: status
+      becomes: in-progress
+      when:
+        - "started="
+    do:
+      - set: started
+        value: "{{today}}"
+  - name: bug-started-analyzing
+    description: Record when work on a bug starts
+    on:
+      entity: [bug]
+      property: status
+      becomes: analyzing
+      when:
+        - "started="
+    do:
+      - set: started
+        value: "{{today}}"
+  - name: bug-started-in-progress
+    description: Record when work starts on a bug that skipped analysis
+    on:
+      entity: [bug]
+      property: status
+      becomes: in-progress
+      when:
+        - "started="
+    do:
+      - set: started
+        value: "{{today}}"
+  - name: work-completed
+    description: Record when a ticket or bug is done
+    on:
+      entity: [ticket, bug]
+      property: status
+      becomes: done
+    do:
+      - set: completed
+        value: "{{today}}"
+  - name: docs-checklist-started
+    description: Record when a manually created docs checklist starts
+    on:
+      entity: [docs-checklist]
+      property: status
+      becomes: in-progress
+      when:
+        - "started="
+    do:
+      - set: started
+        value: "{{today}}"
+  - name: checklist-completed
+    description: Record when a checklist is done
+    on:
+      entity: [planning-checklist, bug-analysis-checklist, implementation-checklist, review-checklist, docs-checklist]
+      property: status
+      becomes: done
+    do:
+      - set: completed
+        value: "{{today}}"

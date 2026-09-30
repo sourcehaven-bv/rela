@@ -1,13 +1,38 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, toRef } from 'vue'
+import { useModalStack } from '@/composables/modalStack'
+// RlModal brings Escape, the focus trap, focus restore and the scroll lock,
+// none of which this dialog had — it even listed "Esc  Close modal" in its own
+// table without implementing it.
+import RlModal from 'rela-components/components/overlay/RlModal.vue'
+import RlKbd from 'rela-components/components/data/RlKbd.vue'
 
-defineProps<{
+const props = defineProps<{
   open: boolean
 }>()
+
+// rela's separate registry, which is what stops the global shortcut handler
+// acting while this is up. Notably absent before: pressing "?" over the
+// shortcut list re-triggered the very handler that opened it.
+useModalStack(toRef(props, 'open'))
 
 const emit = defineEmits<{
   close: []
 }>()
+
+/**
+ * Which separator a shortcut string uses.
+ *
+ * Each entry below uses exactly one, and RlKbd takes one at a time — it splits
+ * on the separator and reads it out, so `G then D` is announced as three
+ * tokens rather than as the unpronounceable string "GthenD". Defaulting to
+ * `+` is safe: a single key has nothing to split on.
+ */
+function separatorFor(keys: string): '+' | 'then' | 'or' {
+  if (keys.includes(' then ')) return 'then'
+  if (keys.includes(' or ')) return 'or'
+  return '+'
+}
 
 const isMac = computed(() => /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent))
 const mod = computed(() => (isMac.value ? '\u2318' : 'Ctrl'))
@@ -57,97 +82,32 @@ const shortcuts = computed(() => [
     ],
   },
 ])
-
-function handleOverlayClick(e: MouseEvent) {
-  if (e.target === e.currentTarget) {
-    emit('close')
-  }
-}
 </script>
 
 <template>
-  <Teleport to="body">
-    <div v-if="open" class="shortcuts-overlay" @click="handleOverlayClick">
-      <div class="shortcuts-modal">
-        <div class="shortcuts-header">
-          <h3>Keyboard Shortcuts</h3>
-          <button class="close-btn" @click="emit('close')">&times;</button>
-        </div>
-        <div class="shortcuts-body">
-          <div v-for="section in shortcuts" :key="section.group" class="shortcuts-group">
-            <h4>{{ section.group }}</h4>
-            <div v-for="item in section.items" :key="item.description" class="shortcut-row">
-              <span class="shortcut-description">{{ item.description }}</span>
-              <div class="shortcut-keys">
-                <template v-for="(part, idx) in item.keys.split(' ')" :key="idx">
-                  <span v-if="part === 'or' || part === 'then' || part === '+'" class="key-separator">
-                    {{ part }}
-                  </span>
-                  <kbd v-else>{{ part }}</kbd>
-                </template>
-              </div>
-            </div>
-          </div>
+  <RlModal :open="open" title="Keyboard Shortcuts" size="lg" @close="emit('close')">
+    <div class="shortcuts-body">
+      <div v-for="section in shortcuts" :key="section.group" class="shortcuts-group">
+        <h4>{{ section.group }}</h4>
+        <div v-for="item in section.items" :key="item.description" class="shortcut-row">
+          <span class="shortcut-description">{{ item.description }}</span>
+          <!--
+            RlKbd owns the splitting, the key chrome and the separator. It also
+            gives the combination an accessible name, which the hand-rolled
+            version had no way to do: a screen reader met a bare glyph.
+          -->
+          <RlKbd class="shortcut-keys" :keys="item.keys" :separator="separatorFor(item.keys)" />
         </div>
       </div>
     </div>
-  </Teleport>
+  </RlModal>
 </template>
 
 <style scoped>
-.shortcuts-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.5);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-}
-
-.shortcuts-modal {
-  background: var(--card-bg);
-  border-radius: 12px;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
-  max-width: 600px;
-  width: 90%;
-  max-height: 80vh;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-}
-
-.shortcuts-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 16px 20px;
-  border-bottom: 1px solid var(--border-color, #e2e8f0);
-}
-
-.shortcuts-header h3 {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 600;
-}
-
-.close-btn {
-  background: none;
-  border: none;
-  font-size: 24px;
-  color: var(--muted-text);
-  cursor: pointer;
-  padding: 0;
-  line-height: 1;
-}
-
-.close-btn:hover {
-  color: var(--text-color);
-}
+/* The overlay, panel, title row and close button are all RlModal's now. */
 
 .shortcuts-body {
-  padding: 20px;
-  overflow-y: auto;
+  /* RlModal's body already pads and scrolls; this only sets the columns. */
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
   gap: 24px;
@@ -158,7 +118,7 @@ function handleOverlayClick(e: MouseEvent) {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   margin: 0 0 12px;
 }
 
@@ -172,30 +132,12 @@ function handleOverlayClick(e: MouseEvent) {
 
 .shortcut-description {
   font-size: 13px;
-  color: var(--text-color);
+  color: var(--rl-color-text);
 }
 
+/* RlKbd lays out its own keys and styles both them and the separator; only
+   the refusal to shrink beside a long description is this dialog's. */
 .shortcut-keys {
-  display: flex;
-  align-items: center;
-  gap: 4px;
   flex-shrink: 0;
-}
-
-.shortcut-keys kbd {
-  display: inline-block;
-  padding: 2px 6px;
-  font-size: 11px;
-  font-family: ui-monospace, monospace;
-  background: var(--hover-bg);
-  border: 1px solid var(--border-color);
-  border-radius: 4px;
-  color: var(--text-color);
-}
-
-.key-separator {
-  font-size: 11px;
-  color: var(--muted-text);
-  margin: 0 2px;
 }
 </style>

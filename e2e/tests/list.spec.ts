@@ -1,5 +1,6 @@
 import { test, expect } from './fixtures';
 import { ListPage } from '../pages/list.page';
+import { FormPage } from '../pages/form.page';
 
 test.describe('List View', () => {
   test.describe('Display', () => {
@@ -49,16 +50,14 @@ test.describe('List View', () => {
   });
 
   test.describe('Sorting', () => {
-    test('can sort by title ascending', async ({ appPage }) => {
+    test('can sort a column ascending', async ({ appPage }) => {
       const listPage = new ListPage(appPage);
 
       await listPage.navigateToList('features');
 
-      // Click title header to sort
-      await listPage.sortByColumn('title');
+      await listPage.sortByColumn('status');
 
-      // Check sort indicator
-      await listPage.expectSortIndicator('title', 'asc');
+      await listPage.expectSortIndicator('status', 'asc');
     });
 
     test('can toggle sort direction', async ({ appPage }) => {
@@ -67,10 +66,30 @@ test.describe('List View', () => {
       await listPage.navigateToList('features');
 
       // Sort ascending first
+      await listPage.sortByColumn('status');
+      await listPage.expectSortIndicator('status', 'asc');
+
+      // Click again to sort descending
+      await listPage.sortByColumn('status');
+      await listPage.expectSortIndicator('status', 'desc');
+    });
+
+    /*
+     * The title column sorts like any other.
+     *
+     * Briefly it did not: RlTable's first column is the row's NAME cell, and
+     * its header was plain text with no control. `name-column` gives that
+     * header a real column, so the title — the column users reach for first
+     * — is sortable again.
+     */
+    test('can sort by the title column', async ({ appPage }) => {
+      const listPage = new ListPage(appPage);
+
+      await listPage.navigateToList('features');
+
       await listPage.sortByColumn('title');
       await listPage.expectSortIndicator('title', 'asc');
 
-      // Click again to sort descending
       await listPage.sortByColumn('title');
       await listPage.expectSortIndicator('title', 'desc');
     });
@@ -117,6 +136,17 @@ test.describe('List View', () => {
       await listPage.expectRowContains('approved');
     });
 
+    test('picking two values keeps rows matching either (OR)', async ({ appPage }) => {
+      const listPage = new ListPage(appPage);
+
+      await listPage.navigateToList('features');
+      await listPage.setFilterByIndex(0, ['approved', 'draft']);
+
+      await listPage.expectRowContains('Dashboard Analytics');
+      await listPage.expectRowContains('User Authentication');
+      await listPage.expectRowNotVisible('Export Data');
+    });
+
     test('can clear filters', async ({ appPage }) => {
       const listPage = new ListPage(appPage);
 
@@ -139,8 +169,8 @@ test.describe('List View', () => {
 
       const filterCount = await listPage.filterControlCount();
       if (filterCount >= 2) {
-        await listPage.setFilterByIndex(0, { index: 1 });
-        await listPage.setFilterByIndex(1, { index: 1 });
+        await listPage.setFilterByIndex(0, { index: 0 });
+        await listPage.setFilterByIndex(1, { index: 0 });
       }
 
       // Results should be filtered
@@ -184,6 +214,24 @@ test.describe('List View', () => {
   });
 
   test.describe('Navigation', () => {
+    /*
+     * The first row is not covered by the sticky column header.
+     *
+     * rela's list is headerless (`show-section-header={false}`), which moves
+     * the column header's sticky offset to 0. When that offset and the
+     * section header disagree, the header floats over the first row: the row
+     * renders correctly and passes every DOM assertion while being
+     * unclickable. This asserts the property directly rather than relying on
+     * a navigation test to notice a timeout.
+     */
+    test('the first row is not covered by the sticky header', async ({ appPage }) => {
+      const listPage = new ListPage(appPage);
+
+      await listPage.navigateToList('features');
+
+      expect(await listPage.firstRowIsClickable()).toBe(true);
+    });
+
     test('clicking row navigates to entity', async ({ appPage }) => {
       const listPage = new ListPage(appPage);
 
@@ -195,14 +243,51 @@ test.describe('List View', () => {
       await expect(appPage).not.toHaveURL(/\/list\/features$/);
     });
 
-    test('create button navigates to form', async ({ appPage }) => {
+    test('create button opens the form in a dialog', async ({ appPage }) => {
       const listPage = new ListPage(appPage);
 
       await listPage.navigateToList('features');
+      await listPage.openCreateDialog();
 
-      await listPage.clickCreateButton();
+      await expect(appPage).toHaveURL(/\/list\/features/);
+    });
 
-      await expect(appPage).toHaveURL(/\/form\/feature/);
+    test('the Add button below the rows opens the create dialog', async ({ appPage }) => {
+      const listPage = new ListPage(appPage);
+
+      await listPage.navigateToList('features');
+      await listPage.clickAddBelowRows();
+
+      await expect(listPage.createDialog).toBeVisible();
+      await expect(appPage).toHaveURL(/\/list\/features/);
+    });
+
+    test('selecting rows shows the bulk bar with the list actions', async ({ appPage }) => {
+      const listPage = new ListPage(appPage);
+
+      await listPage.navigateToList('bugs_triage');
+      await listPage.selectRowByTitle('Login form validation');
+      await listPage.selectRowByTitle('Memory leak in list view');
+
+      const bar = listPage.bulkBar;
+      await expect(bar).toContainText('2');
+      await expect(listPage.bulkActions).toHaveText(/Approve/);
+
+      await listPage.clearSelection();
+      await expect(bar).toBeHidden();
+    });
+
+    test('creating from the dialog opens the new entity in the panel', async ({ appPage }) => {
+      const listPage = new ListPage(appPage);
+      const formPage = new FormPage(appPage);
+
+      await listPage.navigateToList('features');
+      await listPage.openCreateDialog();
+      await formPage.fillField('title', 'Dialog Created Feature');
+      await listPage.submitCreateDialog();
+
+      await expect(listPage.createDialog).toBeHidden();
+      await expect(listPage.detailPanelHeading).toContainText('Dialog Created Feature');
     });
   });
 
@@ -215,17 +300,17 @@ test.describe('List View', () => {
       await listPage.focusTable();
       await listPage.pressKey('ArrowDown');
 
-      await expect(listPage.selectedRow).toBeVisible();
+      await expect(listPage.cursorRow).toBeVisible();
     });
 
-    test('N key opens create form', async ({ appPage }) => {
+    test('N key opens the create dialog', async ({ appPage }) => {
       const listPage = new ListPage(appPage);
 
       await listPage.navigateToList('features');
 
       await listPage.pressKey('n');
 
-      await expect(appPage).toHaveURL(/\/form\/feature/);
+      await expect(listPage.createDialog).toBeVisible();
     });
   });
 });

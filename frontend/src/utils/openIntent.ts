@@ -1,11 +1,10 @@
 // Predicate for "this click is not ours to handle — let the browser have it".
 //
-// Used by the ONE surface that must keep a click handler alongside a real link:
-// the list table row. A `<tr>` cannot be (or contain, at the row level) an
-// `<a>`, so the row keeps `@click` for plain navigation while a stretched
-// anchor in the title cell provides the link affordance. Everywhere else in the
-// SPA the element IS a RouterLink, which applies vue-router's own `guardEvent`
-// and needs nothing from here.
+// Used where a handler takes over a real link's PLAIN click and must leave
+// every other click to the link: a list row opening the detail panel, New
+// opening the create dialog, a sidebar entry opening its flyout. A RouterLink
+// with no such handler applies vue-router's own `guardEvent` and needs
+// nothing from here.
 //
 // Deliberately NOT named `wantsNewTab`: `defaultPrevented` means a nested
 // control already handled the event and NOTHING should happen — the opposite of

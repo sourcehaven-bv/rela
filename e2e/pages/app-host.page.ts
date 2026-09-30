@@ -87,20 +87,29 @@ export class AppHostPage extends BasePage {
     await this.editorToolbar.locator(`[data-command="${command}"]`).click();
   }
 
-  /** Whether a toolbar command reads as active at the cursor. */
-  async editorCommandActive(command: string): Promise<boolean> {
-    const cls = await this.editorToolbar
-      .locator(`[data-command="${command}"]`)
-      .getAttribute('class');
-    return (cls ?? '').includes('is-active');
+  /** Assert whether a toolbar command reads as active at the cursor.
+   *
+   * A retrying assertion rather than a one-shot read, because the toolbar is
+   * recomputed from ProseMirror's `appendTransaction` — so the class lands a
+   * tick after the click that moved the selection, not with it. Reading the
+   * attribute once raced that gap and reported the pre-click state.
+   */
+  async expectEditorCommandActive(command: string, active: boolean) {
+    const button = this.editorToolbar.locator(`[data-command="${command}"]`);
+    if (active) await expect(button).toHaveClass(/is-active/);
+    else await expect(button).not.toHaveClass(/is-active/);
   }
 
-  /** Whether a toolbar command reads as unavailable where the cursor is. */
-  async editorCommandUnavailable(command: string): Promise<boolean> {
-    const v = await this.editorToolbar
-      .locator(`[data-command="${command}"]`)
-      .getAttribute('aria-disabled');
-    return v === 'true';
+  /** Assert whether a toolbar command reads as unavailable where the cursor is.
+   *
+   * Retrying for the same reason as `expectEditorCommandActive`: the disabled
+   * state is recomputed on the same deferred path.
+   */
+  async expectEditorCommandUnavailable(command: string, unavailable: boolean) {
+    await expect(this.editorToolbar.locator(`[data-command="${command}"]`)).toHaveAttribute(
+      'aria-disabled',
+      unavailable ? 'true' : 'false'
+    );
   }
 
   /** Whether a toolbar command carries the NATIVE disabled attribute.

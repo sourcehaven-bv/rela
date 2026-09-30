@@ -13,11 +13,11 @@ import {
 } from '@/utils/markdown'
 import type { DocumentConfig } from '@/types'
 import { getErrorMessage, getScriptError, shouldDropHeldContent } from '@/api/errors'
-import PendingButton from '@/components/common/PendingButton.vue'
+import RlButton from 'rela-components/components/common/RlButton.vue'
 import DOMPurify from 'dompurify'
 import { useDelayedPending } from '@/composables/useDelayedPending'
 import { PENDING_TIMINGS } from '@/composables/pendingTimings'
-
+import RlStatusRegion from 'rela-components/components/feedback/RlStatusRegion.vue'
 
 const props = defineProps<{
   entityType: string
@@ -254,21 +254,22 @@ function getDocTitle(name: string, config: DocumentConfig): string {
             {{ getDocTitle(doc.name, doc.config) }}
           </option>
         </select>
-        <PendingButton
-          class="btn btn-sm btn-secondary"
-          :pending="loading"
-          label="Refresh"
+        <RlButton
+          variant="secondary"
+          size="sm"
+          :loading="loading"
           pending-label="Refreshing…"
           title="Refresh document"
           @click="loadDocument(true)"
-        />
+        >
+          Refresh
+        </RlButton>
       </div>
     </header>
 
-    <div v-if="showBlockLoader" class="loading-state">
-      <div class="spinner" />
-      <span>Rendering document...</span>
-    </div>
+    <RlStatusRegion v-if="showBlockLoader" size="sm" pending-label="Rendering">
+      Rendering document...
+    </RlStatusRegion>
 
     <div v-else-if="docContent" class="document-content">
       <div v-if="isCached" class="cached-badge">cached</div>
@@ -295,8 +296,8 @@ function getDocTitle(name: string, config: DocumentConfig): string {
 
 <style scoped>
 .documents-panel {
-  background: var(--card-bg);
-  border: 1px solid var(--border-color);
+  background: var(--rl-color-bg-raised);
+  border: 1px solid var(--rl-color-border);
   border-radius: 8px;
   margin-bottom: 24px;
   overflow: hidden;
@@ -307,13 +308,13 @@ function getDocTitle(name: string, config: DocumentConfig): string {
   align-items: center;
   justify-content: space-between;
   padding: 16px 24px;
-  border-bottom: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--rl-color-border);
 }
 
 .panel-header h2 {
   margin: 0;
   font-size: 18px;
-  color: var(--text-color);
+  color: var(--rl-color-text);
 }
 
 .header-controls {
@@ -324,52 +325,22 @@ function getDocTitle(name: string, config: DocumentConfig): string {
 
 .doc-select {
   padding: 6px 12px;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--rl-color-border);
   border-radius: 6px;
-  background: var(--input-bg);
-  color: var(--text-color);
+  background: var(--rl-color-bg-raised);
+  color: var(--rl-color-text);
   font-size: 14px;
   cursor: pointer;
 }
 
 .doc-select:focus {
   outline: none;
-  border-color: var(--accent-color);
+  border-color: var(--rl-color-accent);
   box-shadow:
-    0 0 0 2px var(--focus-ring-gap),
-    0 0 0 4px var(--focus-ring);
+    0 0 0 2px var(--rl-color-bg),
+    0 0 0 4px var(--rl-color-focus);
 }
 
-.btn {
-  padding: 8px 16px;
-  border-radius: 6px;
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-  border: none;
-  transition: all 0.15s;
-}
-
-.btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.btn-sm {
-  padding: 6px 12px;
-  font-size: 13px;
-}
-
-.btn-secondary {
-  background: var(--border-color, #e2e8f0);
-  color: var(--text-color, #1e293b);
-}
-
-.btn-secondary:hover:not(:disabled) {
-  filter: brightness(0.9);
-}
-
-.loading-state,
 .empty-state {
   display: flex;
   flex-direction: column;
@@ -377,27 +348,10 @@ function getDocTitle(name: string, config: DocumentConfig): string {
   justify-content: center;
   padding: 48px;
   gap: 16px;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
 }
 
-.spinner {
-  width: 24px;
-  height: 24px;
-  border: 2px solid var(--border-color);
-  border-top-color: var(--accent-color);
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
-}
 
-.spinner-sm {
-  display: inline-block;
-  width: 14px;
-  height: 14px;
-  border: 2px solid var(--border-color);
-  border-top-color: var(--accent-color);
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
-}
 
 .document-content {
   position: relative;
@@ -409,10 +363,10 @@ function getDocTitle(name: string, config: DocumentConfig): string {
   top: 12px;
   right: 12px;
   padding: 2px 8px;
-  background: var(--hover-bg);
+  background: var(--rl-color-bg-hover);
   border-radius: 4px;
   font-size: 11px;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   text-transform: uppercase;
 }
 
@@ -421,13 +375,4 @@ function getDocTitle(name: string, config: DocumentConfig): string {
    surface via the `.md-body` class on the `.document-body` container — see
    styles/markdown-content.css. */
 
-/* Reduced motion. This is a SCOPED style, so styles/pending.css cannot
-   reach .spinner-sm — a scoped selector carries a [data-v-*] attribute and
-   outranks an unscoped rule. The suppression has to live beside the
-   declaration. */
-@media (prefers-reduced-motion: reduce) {
-  .spinner-sm {
-    animation: none;
-  }
-}
 </style>

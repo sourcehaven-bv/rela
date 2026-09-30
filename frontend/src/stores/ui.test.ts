@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
+import { nextTick } from 'vue'
 import { useUIStore } from './ui'
+import { useToasts } from 'rela-components/components/feedback/useToasts'
 
 describe('UI Store', () => {
   let store: ReturnType<typeof useUIStore>
@@ -22,6 +24,35 @@ describe('UI Store', () => {
 
       expect(store.darkMode).toBe(!initialDark)
       expect(store.themeMode).toBe(store.darkMode ? 'dark' : 'light')
+    })
+
+    /**
+     * rela's own palette keys off `:root.dark` alone, so an absent class means
+     * light. The rela-components palette does NOT: as well as `.dark` it
+     * honours the OS through
+     * `@media (prefers-color-scheme: dark) { :root:not(.light) }`.
+     *
+     * So an explicit Light choice has to be written positively, or a user on a
+     * dark-OS machine who picked Light gets rela's chrome light and every Rl
+     * component dark. `system` must NOT write it: there the OS preference is
+     * the answer, and the class would override what it is meant to follow.
+     */
+    it('states an explicit light choice positively, for the Rl palette', async () => {
+      const root = document.documentElement
+
+      store.setThemeMode('light')
+      await nextTick()
+      expect(root.classList.contains('light')).toBe(true)
+      expect(root.classList.contains('dark')).toBe(false)
+
+      store.setThemeMode('dark')
+      await nextTick()
+      expect(root.classList.contains('light')).toBe(false)
+      expect(root.classList.contains('dark')).toBe(true)
+
+      store.setThemeMode('system')
+      await nextTick()
+      expect(root.classList.contains('light')).toBe(false)
     })
   })
 
@@ -105,20 +136,35 @@ describe('UI Store', () => {
       })
     })
 
-    it('auto-dismisses toast after timeout', () => {
+    // The timer itself belongs to RlToast (it pauses on hover and focus), so
+    // the store's job is to hand the timeout over as the toast's duration.
+    it('forwards the timeout to the library queue as the duration', () => {
       store.showToast('info', 'Test message', 3000)
-      expect(store.toasts).toHaveLength(1)
-
-      vi.advanceTimersByTime(3000)
-      expect(store.toasts).toHaveLength(0)
+      expect(useToasts().toasts.value[0]).toMatchObject({
+        title: 'Test message',
+        tone: 'info',
+        duration: 3000,
+      })
     })
 
-    it('does not auto-dismiss when timeout is 0', () => {
-      store.showToast('info', 'Persistent message', 0)
-      expect(store.toasts).toHaveLength(1)
+    it('maps error to the danger tone', () => {
+      store.error('Broken')
+      expect(useToasts().toasts.value[0].tone).toBe('danger')
+      expect(store.toasts[0].type).toBe('error')
+    })
 
-      vi.advanceTimersByTime(60000)
-      expect(store.toasts).toHaveLength(1)
+    it('passes an action through to the library toast', () => {
+      const onAction = vi.fn()
+      store.showToast('success', 'Deleted 2 items', 10000, { label: 'Undo', onAction })
+      const action = useToasts().toasts.value[0].action
+      expect(action?.label).toBe('Undo')
+      action?.onAction()
+      expect(onAction).toHaveBeenCalledOnce()
+    })
+
+    it('shows toasts raised straight on the library queue', () => {
+      useToasts().warning('From the library')
+      expect(store.toasts[0]).toMatchObject({ type: 'warning', message: 'From the library' })
     })
 
     it('dismisses toast manually', () => {
@@ -204,6 +250,31 @@ describe('UI Store', () => {
       store.setDatetimeTimezone('')
       expect(store.datetimeTimezone).toBe('')
       expect(localStorage.getItem('datetimeTimezone')).toBeNull()
+    })
+  })
+
+  describe('sidebar width', () => {
+    beforeEach(() => localStorage.removeItem('sidebarWidth'))
+
+    it('stores a dragged width, clamped to the shell bounds', () => {
+      store.setSidebarWidth(333.4)
+      expect(store.sidebarWidth).toBe(333)
+      expect(localStorage.getItem('sidebarWidth')).toBe('333')
+
+      store.setSidebarWidth(9000)
+      expect(store.sidebarWidth).toBe(420)
+      store.setSidebarWidth(10)
+      expect(store.sidebarWidth).toBe(200)
+    })
+
+    it('restores a stored width and ignores a bad one', () => {
+      localStorage.setItem('sidebarWidth', '300')
+      setActivePinia(createPinia())
+      expect(useUIStore().sidebarWidth).toBe(300)
+
+      localStorage.setItem('sidebarWidth', 'wide')
+      setActivePinia(createPinia())
+      expect(useUIStore().sidebarWidth).toBe(260)
     })
   })
 })

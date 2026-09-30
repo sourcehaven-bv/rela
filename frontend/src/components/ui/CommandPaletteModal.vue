@@ -25,6 +25,7 @@ import { useWorld } from '@/composables/useWorld'
 import { entityDetailHref } from '@/utils/entityRoute'
 import { shouldDeferToBrowser } from '@/utils/openIntent'
 import type { Entity } from '@/types'
+import RlSpinner from 'rela-components/components/common/RlSpinner.vue'
 
 // Perceptually-instant on a fast connection; tune up if the API is slow.
 const DEBOUNCE_MS = 150
@@ -275,7 +276,12 @@ const showNoMatches = computed(
             :aria-expanded="results.length > 0"
             :aria-activedescendant="activeDescendant"
           />
-          <span v-if="loading" class="cmdk-spinner" aria-hidden="true" />
+          <!--
+            Silenced deliberately. RlSpinner is role="status", and this sits in
+            a combobox that announces its own results — a live region firing on
+            every keystroke would talk over the listbox.
+          -->
+          <RlSpinner v-if="loading" class="cmdk-spinner" :size="16" aria-hidden="true" />
         </div>
 
         <div v-if="showEmptyHint" class="cmdk-hint">Type to search entities</div>
@@ -339,7 +345,7 @@ const showNoMatches = computed(
 }
 
 .cmdk-modal {
-  background: var(--card-bg);
+  background: var(--rl-color-bg-raised);
   border-radius: 12px;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25);
   width: 90%;
@@ -352,7 +358,7 @@ const showNoMatches = computed(
 
 .cmdk-input-wrap {
   position: relative;
-  border-bottom: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--rl-color-border);
 }
 
 .cmdk-input {
@@ -361,39 +367,31 @@ const showNoMatches = computed(
   border: none;
   outline: none;
   background: transparent;
-  color: var(--text-color);
+  color: var(--rl-color-text);
   font-size: 16px;
   font-family: inherit;
 }
 
+/* RlSpinner owns the glyph, the animation and its reduced-motion fallback;
+   only the placement inside the search field is ours. It animates an inner
+   element, so this transform no longer has to be restated in a keyframe. */
 .cmdk-spinner {
   position: absolute;
   top: 50%;
   right: 16px;
   transform: translateY(-50%);
-  width: 16px;
-  height: 16px;
-  border: 2px solid var(--border-color);
-  border-top-color: var(--accent-color);
-  border-radius: 50%;
-  animation: cmdk-spin 0.8s linear infinite;
-}
-
-@keyframes cmdk-spin {
-  to {
-    transform: translateY(-50%) rotate(360deg);
-  }
+  color: var(--rl-color-accent);
 }
 
 .cmdk-hint {
   padding: 24px 18px;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   font-size: 14px;
   text-align: center;
 }
 
 .cmdk-error {
-  color: var(--error-color);
+  color: var(--rl-color-danger);
 }
 
 .cmdk-results {
@@ -421,7 +419,7 @@ const showNoMatches = computed(
 }
 
 .cmdk-option-active {
-  background: var(--hover-bg);
+  background: var(--rl-color-bg-hover);
 }
 
 .cmdk-type {
@@ -429,20 +427,20 @@ const showNoMatches = computed(
   text-transform: uppercase;
   letter-spacing: 0.04em;
   padding: 2px 8px;
-  background: var(--hover-bg);
-  color: var(--muted-text);
+  background: var(--rl-color-bg-hover);
+  color: var(--rl-color-text-muted);
   border-radius: 4px;
   font-weight: 500;
   flex-shrink: 0;
 }
 
 .cmdk-option-active .cmdk-type {
-  background: var(--card-bg);
+  background: var(--rl-color-bg-raised);
 }
 
 .cmdk-title {
   flex: 1;
-  color: var(--text-color);
+  color: var(--rl-color-text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -451,17 +449,7 @@ const showNoMatches = computed(
 .cmdk-id {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 12px;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   flex-shrink: 0;
-}
-
-/* Reduced motion. This is a SCOPED style, so styles/pending.css cannot
-   reach .cmdk-spinner — a scoped selector carries a [data-v-*] attribute and
-   outranks an unscoped rule. The suppression has to live beside the
-   declaration. */
-@media (prefers-reduced-motion: reduce) {
-  .cmdk-spinner {
-    animation: none;
-  }
 }
 </style>

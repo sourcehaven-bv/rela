@@ -52,14 +52,25 @@ test.describe('Kanban Board', () => {
   });
 
   test.describe('Card Interaction', () => {
-    test('clicking card opens entity', async ({ appPage }) => {
+    test('clicking a card opens it in the detail panel', async ({ appPage }) => {
       const kanbanPage = new KanbanPage(appPage);
 
       await kanbanPage.navigateToKanban('feature-board');
 
       await kanbanPage.clickCard('User Authentication');
 
-      // Should navigate to form or entity view
+      // The panel floats over the board; the board stays on screen.
+      await expect(appPage).toHaveURL(/\/kanban\/feature-board\?.*selected=/);
+      await expect(kanbanPage.detailPanelHeading).toContainText('User Authentication');
+      await expect(kanbanPage.columns.first()).toBeVisible();
+    });
+
+    test('expanding the panel opens the card page', async ({ appPage }) => {
+      const kanbanPage = new KanbanPage(appPage);
+
+      await kanbanPage.navigateToKanban('feature-board');
+      await kanbanPage.openCardPage('User Authentication');
+
       await expect(appPage).toHaveURL(/\/form\/|\/entity\//);
     });
 
@@ -97,10 +108,20 @@ test.describe('Kanban Board', () => {
       const formPage = new FormPage(appPage);
 
       await kanbanPage.navigateToKanban('feature-board');
-      await kanbanPage.dragCardToColumn('Dashboard Analytics', 'Done');
-      await kanbanPage.clickCard('Dashboard Analytics');
+      await kanbanPage.dragCardToColumn('Dashboard Analytics', 'In Progress');
+      await kanbanPage.expectCardInColumn('Dashboard Analytics', 'In Progress');
+      await kanbanPage.openCardPage('Dashboard Analytics');
 
-      await formPage.expectFieldValue('status', 'done');
+      await formPage.expectFieldValue('status', 'in_progress');
+    });
+
+    test('moves a card with the keyboard, even to an off-screen column', async ({ appPage }) => {
+      const kanbanPage = new KanbanPage(appPage);
+
+      await kanbanPage.navigateToKanban('feature-board');
+      await kanbanPage.moveCardByKeyboard('Dashboard Analytics', 'Done');
+
+      await kanbanPage.expectCardInColumn('Dashboard Analytics', 'Done');
     });
   });
 
@@ -144,14 +165,14 @@ test.describe('Kanban Board', () => {
   });
 
   test.describe('Create from Kanban', () => {
-    test('create button opens form', async ({ appPage }) => {
+    test('create button opens the form in a dialog', async ({ appPage }) => {
       const kanbanPage = new KanbanPage(appPage);
 
       await kanbanPage.navigateToKanban('feature-board');
 
       await kanbanPage.clickCreate();
 
-      await expect(appPage).toHaveURL(/\/form\/feature/);
+      await expect(appPage).toHaveURL(/\/kanban\/feature-board/);
     });
 
     test('can create entity from kanban and see it on board', async ({ appPage }) => {
@@ -162,16 +183,14 @@ test.describe('Kanban Board', () => {
 
       await kanbanPage.clickCreate();
 
-      // Fill form
       await formPage.fillField('title', 'Kanban Created Feature');
       await formPage.selectField('status', 'approved');
-      await formPage.submit();
+      await kanbanPage.submitCreateDialog();
 
-      // Navigate back to kanban
-      await kanbanPage.navigateToKanban('feature-board');
-
-      // Should see the new card in Approved column
+      // The board stays; the new card lands in its column and opens in the panel.
+      await expect(kanbanPage.createDialog).toBeHidden();
       await kanbanPage.expectCardInColumn('Kanban Created Feature', 'Approved');
+      await expect(kanbanPage.detailPanelHeading).toContainText('Kanban Created Feature');
     });
   });
 

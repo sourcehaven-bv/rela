@@ -493,6 +493,9 @@ func (h *exportHandler) memoNeighborTitle(
 func columnCell(
 	meta *metamodel.Metamodel, e *entityPkg.Entity, c dataentryconfig.ListColumn, rels listRelationTitles,
 ) string {
+	if c.Face {
+		return faceLabel(meta, e)
+	}
 	if c.Relation != "" {
 		if byCol := rels[e.ID]; byCol != nil {
 			return strings.Join(byCol[relColKey(c)], ", ")
@@ -515,10 +518,27 @@ func columnLabel(c dataentryconfig.ListColumn) string {
 	if c.Label != "" {
 		return c.Label
 	}
+	if c.Face {
+		return "Face"
+	}
 	if c.Relation != "" {
 		return c.Relation
 	}
 	return c.Property
+}
+
+// faceLabel is the declared label of the face e was served in, falling back
+// to the face name. An entity outside any face has none.
+func faceLabel(meta *metamodel.Metamodel, e *entityPkg.Entity) string {
+	if e.Face == "" {
+		return ""
+	}
+	if def, ok := meta.Entities[e.Type]; ok {
+		if f, ok := def.Faces[string(e.Face)]; ok && f.Label != "" {
+			return f.Label
+		}
+	}
+	return string(e.Face)
 }
 
 // listCondition resolves the effective list's compiled `condition:`, or nil

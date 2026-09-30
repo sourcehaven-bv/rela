@@ -11,7 +11,7 @@ export class KanbanPage extends BasePage {
   constructor(page: Page) {
     super(page);
     this.board = page.locator('.kanban-board');
-    this.columns = page.locator('.kanban-column');
+    this.columns = page.locator('.rl-board-column');
     this.cards = page.locator('.kanban-card');
     this.createButton = page.locator('button:has-text("+ New"), button:has-text("New")');
     this.filterBar = page.locator('.filter-bar');
@@ -36,11 +36,29 @@ export class KanbanPage extends BasePage {
   }
 
   getColumn(name: string): Locator {
-    return this.columns.filter({ has: this.page.locator('.column-title, .column-header').filter({ hasText: name }) });
+    return this.columns.filter({ has: this.page.locator('.rl-section-heading').filter({ hasText: name }) });
   }
 
+  /** The detail panel a plain card click opens over the board. */
+  get detailPanel(): Locator {
+    return this.page.locator('.entity-detail-panel');
+  }
+
+  /** The open panel's title heading. */
+  get detailPanelHeading(): Locator {
+    return this.detailPanel.getByRole('heading').first();
+  }
+
+  /** Open a card in the detail panel with a plain click. */
   async clickCard(cardTitle: string) {
     await this.cards.filter({ hasText: cardTitle }).click();
+    await expect(this.detailPanel).toBeVisible();
+  }
+
+  /** Go to a card's own page: open the panel, then expand it. */
+  async openCardPage(cardTitle: string) {
+    await this.clickCard(cardTitle);
+    await this.detailPanel.getByRole('button', { name: 'Expand' }).click();
     await this.page.waitForURL(/\/entity\/|\/form\//);
   }
 
@@ -51,58 +69,81 @@ export class KanbanPage extends BasePage {
     return popupPromise;
   }
 
-  async clickCardById(cardId: string) {
-    await this.cards.filter({ hasText: cardId }).click();
-    await this.page.waitForURL(/\/entity\/|\/form\//);
-  }
-
-  /** Perform HTML5 drag-and-drop by dispatching native drag events and wait for
-   *  the resulting PATCH response. Playwright's high-level dragTo doesn't always
-   *  dispatch `drop` on Vue @drop listeners for native draggable elements. */
-  private async dragCardToColumnLocator(card: Locator, columnCards: Locator) {
+  /** Drag a card onto a column with the real pointer and wait for the
+   *  resulting PATCH response. */
+  private async dragCardToColumnLocator(card: Locator, column: Locator) {
     const patchPromise = this.page.waitForResponse(
       r => /\/api\/v1\/[^/]+\/[^/]+$/.test(r.url()) && r.request().method() === 'PATCH',
       { timeout: 5000 },
     ).catch(() => null);
-    await card.evaluate((sourceEl, targetSelector) => {
-      const dt = new DataTransfer();
-      sourceEl.dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: dt }));
-      const target = document.querySelector(targetSelector) as HTMLElement | null;
-      if (!target) throw new Error(`drop target not found: ${targetSelector}`);
-      target.dispatchEvent(new DragEvent('dragenter', { bubbles: true, dataTransfer: dt }));
-      target.dispatchEvent(new DragEvent('dragover', { bubbles: true, dataTransfer: dt }));
-      target.dispatchEvent(new DragEvent('drop', { bubbles: true, dataTransfer: dt }));
-      sourceEl.dispatchEvent(new DragEvent('dragend', { bubbles: true, dataTransfer: dt }));
-    }, await columnCards.evaluate(el => {
-      // Build a stable selector using id or a generated data attribute
-      if (!el.id) el.id = `dnd-target-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-      return `#${el.id}`;
-    }));
+    // Stepped moves rather than dragTo: the browser needs a few pointer moves
+    // to start a native drag, and one jump to the target can race it.
+    const from = (await card.boundingBox())!;
+    const to = (await column.boundingBox())!;
+    const start = { x: from.x + from.width / 2, y: from.y + from.height / 2 };
+    const end = { x: to.x + to.width / 2, y: to.y + Math.min(to.height / 2, 120) };
+    await this.page.mouse.move(start.x, start.y);
+    await this.page.mouse.down();
+    await this.page.mouse.move(start.x + 5, start.y + 5, { steps: 2 });
+    await this.page.mouse.move(end.x, end.y, { steps: 10 });
+    await this.page.mouse.up();
     await patchPromise;
   }
 
   async dragCardToColumn(cardTitle: string, targetColumnName: string) {
     const card = this.cards.filter({ hasText: cardTitle });
     const targetColumn = this.getColumn(targetColumnName);
-    await this.dragCardToColumnLocator(card, targetColumn.locator('.column-cards'));
+    await this.dragCardToColumnLocator(card, targetColumn);
   }
 
   async dragCardByIdToColumn(cardId: string, targetColumnName: string) {
     const card = this.cards.filter({ hasText: cardId });
     const targetColumn = this.getColumn(targetColumnName);
-    await this.dragCardToColumnLocator(card, targetColumn.locator('.column-cards'));
+    await this.dragCardToColumnLocator(card, targetColumn);
   }
 
-  /** Pick a value in the filter control labelled `label` (the board renders
-   *  the list's FilterBar, whose <label for> names each control). */
+  /** Move a card with the board's keyboard path: pick it up, arrow to the
+   *  target column, drop. Waits for the resulting PATCH response. */
+  async moveCardByKeyboard(cardTitle: string, targetColumnName: string) {
+    const titles = await this.columns.locator('.rl-section-heading').allInnerTexts();
+    const card = this.cards.filter({ hasText: cardTitle });
+    const from = await this.columns.evaluateAll(
+      (cols, el) => cols.findIndex((c) => c.contains(el)),
+      await card.elementHandle(),
+    );
+    const to = titles.findIndex((t) => t.includes(targetColumnName));
+    const patchPromise = this.page.waitForResponse(
+      r => /\/api\/v1\/[^/]+\/[^/]+$/.test(r.url()) && r.request().method() === 'PATCH',
+    );
+    await card.locator('xpath=..').focus();
+    await this.page.keyboard.press('Enter');
+    const key = to > from ? 'ArrowRight' : 'ArrowLeft';
+    for (let i = 0; i < Math.abs(to - from); i++) await this.page.keyboard.press(key);
+    await this.page.keyboard.press('Enter');
+    await patchPromise;
+  }
+
+  /** Pick a value in the filter control labelled `label`. The board renders
+   *  the list's FilterBar, so it is found the way the list page finds it. */
   async setFilter(label: string, value: string) {
-    await this.filterBar.getByLabel(label, { exact: true }).selectOption(value);
+    const control = this.filterBar.locator('.filter-item').filter({ hasText: new RegExp(label, 'i') });
+    await this.pickFilterOption(control, value);
     await this.waitForSpinnerToDisappear();
+  }
+
+  /** The create dialog New opens over the board. */
+  get createDialog(): Locator {
+    return this.page.getByRole('dialog');
   }
 
   async clickCreate() {
     await this.createButton.click();
-    await this.page.waitForLoadState('domcontentloaded');
+    await expect(this.createDialog).toBeVisible();
+  }
+
+  /** Press the dialog's Create, not "Create & add another". */
+  async submitCreateDialog() {
+    await this.createDialog.getByRole('button', { name: /^Create(?! &)/ }).click();
   }
 
   async expectColumnCount(count: number) {
@@ -110,7 +151,7 @@ export class KanbanPage extends BasePage {
   }
 
   async expectColumnLabel(label: string) {
-    await expect(this.page.locator('.column-title').filter({ hasText: label })).toBeVisible();
+    await expect(this.page.locator('.rl-section-heading').filter({ hasText: label })).toBeVisible();
   }
 
   async expectFirstCardSeverityVisible() {
@@ -133,13 +174,13 @@ export class KanbanPage extends BasePage {
 
   async expectColumnCardCount(columnName: string, count: number) {
     const column = this.getColumn(columnName);
-    const countBadge = column.locator('.column-count');
+    const countBadge = column.locator('.rl-count');
     await expect(countBadge).toHaveText(String(count));
   }
 
   async expectColumnCountVisible(columnName: string) {
     const column = this.getColumn(columnName);
-    await expect(column.locator('.column-count')).toBeVisible();
+    await expect(column.locator('.rl-count')).toBeVisible();
   }
 
   async expectEmptyColumn(columnName: string) {

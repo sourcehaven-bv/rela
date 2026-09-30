@@ -69,7 +69,8 @@ export interface Entity {
   _transitions?: Record<string, TransitionOption[]>
   // Provenance of the face this response served (TKT-WRLDAPI). Present on
   // per-entity GETs under any world INCLUDING the default one, where it reads
-  // `{name:'default', via:'unscoped'}`. Absent on list rows and on the
+  // `{name:'default', via:'unscoped'}`. On list rows it is present under a
+  // non-default world only. Absent on the
   // `_views` ENTRY — under `_views` only COLLECTION entities carry it
   // (internal/dataentry/sections.go is the single call site), so a detail page
   // wanting entry provenance reads it from the entity GET.
@@ -393,6 +394,15 @@ export interface ListParams {
    * nothing, which the server answers with a 400.
    */
   query_scope?: string
+  /**
+   * The entity page tab this read is shown in, and its anchor entity. The
+   * server narrows the rows to those the anchor reaches over the tab's
+   * `scope:` relation, taken from its own config: the request only names the
+   * tab. All three or none. See `pageScopeParams`.
+   */
+  scope_page?: string
+  scope_tab?: string
+  anchor?: string
   [key: `filter[${string}]`]: string | undefined
 }
 

@@ -1,0 +1,307 @@
+/*
+ * The dark palette.
+ *
+ * Only the colour tokens are redeclared. Spacing, type, radius and layout are
+ * the same in both themes, so they stay in `tokens.css` and are never
+ * duplicated here.
+ *
+ * Read this file with `tokens.css` open. Every token below exists there too,
+ * and a new colour token added there needs a dark value adding here.
+ *
+ * Contrast is held to the same targets as the light theme: text at 4.5:1 on
+ * every surface it lands on, non-text indicators at 3:1.
+ *
+ *
+ * How the theme is selected
+ * -------------------------
+ * `.dark` is the explicit opt-in and works whatever the OS is set to.
+ * `prefers-color-scheme` adds the OS preference, but only where nothing has
+ * asked for light: `.light` turns the dark theme back off on a dark system,
+ * so an app can offer all three of system, light and dark.
+ *
+ * Source order matters. The class block comes second and is no less specific
+ * than the media-query block, so `.dark` still wins on a light system.
+ *
+ * The two blocks carry the same declarations. A selector list cannot hold an
+ * `@media` rule, so the palette is repeated rather than shared, and the
+ * repeat is what `npm run check:theme` guards: it fails if the two copies
+ * ever drift apart, or if a colour token in `tokens.css` has no dark value.
+ */
+
+/* The OS preference, unless something has explicitly asked for light. */
+@media (prefers-color-scheme: dark) {
+  :root:not(.light) {
+    color-scheme: dark;
+
+    /* Neutrals. Raised surfaces get lighter, not darker, as they come forward. */
+    --rl-color-bg: #0d0d0f;
+    --rl-color-bg-sunken: #000000;
+    --rl-color-bg-hover: #1c1c20;
+    --rl-color-bg-active: #26262c;
+    /*
+     * Barely lifted off the page, because near black a fill difference cannot
+     * do this job and an edge can. At 0.65 over #0d0d0f the page behind a
+     * modal is #050505, so even a much lighter surface only reached 1.65:1
+     * against it, short of the 3:1 a light page gets from its scrim. Paying
+     * for that with a grey panel meant every control on it, painted
+     * `--rl-color-bg`, read as a hole punched through the surface.
+     *
+     * So the border does the separating, as it already largely did, and the
+     * fill stays dark enough that a control sits on its panel rather than in
+     * it. The remaining lift is there to back the edge up, not to carry it.
+     */
+    --rl-color-bg-raised: #161619;
+    /* The edge on a raised surface: 2.5:1 against the page behind it. */
+    --rl-color-border-raised: #4e4e58;
+    /* The same edge, for surfaces that sit on a scrim. */
+    --rl-color-border-scrimmed: #4e4e58;
+
+    /*
+     * Stays light: the switch thumb contrasts with its track, not with the
+     * page, so it does not follow the raised surface down.
+     */
+    --rl-color-knob: #e8e8ea;
+
+    /*
+     * Rises above the track, where `--rl-color-bg` sank below it: the chip was
+     * darker than the `#1c1c20` track it sits on, and the shadow that carries
+     * the lift in the light theme is black on near-black here, so the selected
+     * option had no cue left at all. 1.36:1 against the track, above the 1.10:1
+     * the light theme gets between its own chip and track.
+     */
+    --rl-color-chip-raised: #33333b;
+    --rl-color-border: #2a2a30;
+    --rl-color-border-strong: #3d3d45;
+
+    /* Text */
+    --rl-color-text: #f2f2f0;
+    --rl-color-text-muted: #9ca0a7;
+    /* Equal to muted, for the same reason the light theme gives. */
+    --rl-color-text-subtle: #9ca0a7;
+    /*
+     * Inverse text sits on a light fill. The tooltip paints `--rl-color-text`
+     * as its background and this on top, so the two must always be opposites:
+     * flipping one without the other makes the tooltip unreadable.
+     */
+    --rl-color-text-inverse: #0d0d0f;
+
+    /*
+     * Accent. Lightened from the light theme's #2563eb, which reaches only
+     * 2.6:1 on this background. Hover moves further up rather than down,
+     * because on a dark surface brighter is what reads as raised.
+     */
+    --rl-color-accent: #7ba7f8;
+    --rl-color-accent-hover: #a2c2fb;
+    /* Selection fill: the accent hue, deep enough to keep body text at AA. */
+    --rl-color-bg-selected: #16233c;
+
+    /*
+     * Danger. The light theme uses one token for both the solid fill and the
+     * text-only variant, and that survives the flip: this tone reads as text on
+     * every dark surface at 6.6:1 or better, and carries the now-dark inverse
+     * text at 8.5:1 when it is itself the fill.
+     */
+    --rl-color-danger: #f98d8d;
+    --rl-color-danger-hover: #fcb4b4;
+    --rl-color-danger-bg: #3a1618;
+    --rl-color-danger-bg-hover: #4d1d20;
+
+    /* Message surfaces: deep tinted fills with a light foreground at 4.5:1. */
+    --rl-color-info-bg: #14233d;
+    --rl-color-info-fg: #9dc0fb;
+    --rl-color-success-bg: #102a1a;
+    --rl-color-success-fg: #7cd79a;
+    --rl-color-warning-bg: #2e1f0a;
+    --rl-color-warning-fg: #f0b871;
+
+    /* Status dots. Non-text, so these need 3:1 rather than 4.5:1. */
+    --rl-color-status-green: #4ade80;
+    --rl-color-status-amber: #fbbf24;
+    --rl-color-status-red: #f87171;
+    --rl-color-status-grey: #9ca3af;
+    --rl-color-status-blue: #7ba7f8;
+
+    /* Tag palette: the light theme's soft fill inverted into a deep one. */
+    --rl-tag-grey-bg: #26262c;
+    --rl-tag-grey-fg: #b8bcc3;
+    --rl-tag-blue-bg: #16253f;
+    --rl-tag-blue-fg: #9dc0fb;
+    --rl-tag-green-bg: #102a1a;
+    --rl-tag-green-fg: #7cd79a;
+    --rl-tag-amber-bg: #2e1f0a;
+    --rl-tag-amber-fg: #f0b871;
+    --rl-tag-red-bg: #3a1618;
+    --rl-tag-red-fg: #f98d8d;
+    --rl-tag-purple-bg: #251a3d;
+    --rl-tag-purple-fg: #c4a9f7;
+
+    /* Accents used by single components */
+    --rl-color-starred: #e2b13c;
+    --rl-color-focus: #7ba7f8;
+    --rl-color-error-ring: #f98d8d;
+
+    /*
+     * Attachment type colours. The glyph on top is `--rl-color-text-inverse`,
+     * which is dark here, so these are lightened until the glyph clears 4.5:1
+     * rather than darkened as the light theme's values were.
+     */
+    --rl-color-file-pdf: #e0484e;
+    --rl-color-file-doc: #5b8def;
+    --rl-color-file-sheet: #2a9d6f;
+    --rl-color-file-image: #9b7bef;
+    --rl-color-file-other: #8b8f96;
+
+    /*
+     * Elevation. A shadow tuned for a white page is invisible on a dark one, so
+     * these deepen towards black; the border tokens do most of the work of
+     * separating a raised surface from what is behind it.
+     */
+    --rl-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
+    --rl-shadow-md: 0 4px 12px rgba(0, 0, 0, 0.6);
+    --rl-shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.7);
+
+    /* The scrim deepens, since it now covers an already-dark page. */
+    --rl-color-scrim: rgba(0, 0, 0, 0.65);
+  }
+}
+
+/*
+ * The explicit opt-in, and the only way to theme a subtree rather than the
+ * whole document.
+ */
+.dark {
+  color-scheme: dark;
+
+  /* Neutrals. Raised surfaces get lighter, not darker, as they come forward. */
+  --rl-color-bg: #0d0d0f;
+  --rl-color-bg-sunken: #000000;
+  --rl-color-bg-hover: #1c1c20;
+  --rl-color-bg-active: #26262c;
+  /*
+   * Barely lifted off the page, because near black a fill difference cannot
+   * do this job and an edge can. At 0.65 over #0d0d0f the page behind a
+   * modal is #050505, so even a much lighter surface only reached 1.65:1
+   * against it, short of the 3:1 a light page gets from its scrim. Paying
+   * for that with a grey panel meant every control on it, painted
+   * `--rl-color-bg`, read as a hole punched through the surface.
+   *
+   * So the border does the separating, as it already largely did, and the
+   * fill stays dark enough that a control sits on its panel rather than in
+   * it. The remaining lift is there to back the edge up, not to carry it.
+   */
+  --rl-color-bg-raised: #161619;
+  /* The edge on a raised surface: 2.5:1 against the page behind it. */
+  --rl-color-border-raised: #4e4e58;
+  /* The same edge, for surfaces that sit on a scrim. */
+  --rl-color-border-scrimmed: #4e4e58;
+
+  /*
+   * Stays light: the switch thumb contrasts with its track, not with the
+   * page, so it does not follow the raised surface down.
+   */
+  --rl-color-knob: #e8e8ea;
+
+  /* See the note in the media-query block above. */
+  --rl-color-chip-raised: #33333b;
+  --rl-color-border: #2a2a30;
+  --rl-color-border-strong: #3d3d45;
+
+  /* Text */
+  --rl-color-text: #f2f2f0;
+  --rl-color-text-muted: #9ca0a7;
+  /* Equal to muted, for the same reason the light theme gives. */
+  --rl-color-text-subtle: #9ca0a7;
+  /*
+   * Inverse text sits on a light fill. The tooltip paints `--rl-color-text`
+   * as its background and this on top, so the two must always be opposites:
+   * flipping one without the other makes the tooltip unreadable.
+   */
+  --rl-color-text-inverse: #0d0d0f;
+
+  /*
+   * Accent. Lightened from the light theme's #2563eb, which reaches only
+   * 2.6:1 on this background. Hover moves further up rather than down,
+   * because on a dark surface brighter is what reads as raised.
+   */
+  --rl-color-accent: #7ba7f8;
+  --rl-color-accent-hover: #a2c2fb;
+  /* Selection fill: the accent hue, deep enough to keep body text at AA. */
+  --rl-color-bg-selected: #16233c;
+
+  /*
+   * Danger. The light theme uses one token for both the solid fill and the
+   * text-only variant, and that survives the flip: this tone reads as text on
+   * every dark surface at 6.6:1 or better, and carries the now-dark inverse
+   * text at 8.5:1 when it is itself the fill.
+   */
+  --rl-color-danger: #f98d8d;
+  --rl-color-danger-hover: #fcb4b4;
+  --rl-color-danger-bg: #3a1618;
+  --rl-color-danger-bg-hover: #4d1d20;
+
+  /* Message surfaces: deep tinted fills with a light foreground at 4.5:1. */
+  --rl-color-info-bg: #14233d;
+  --rl-color-info-fg: #9dc0fb;
+  --rl-color-success-bg: #102a1a;
+  --rl-color-success-fg: #7cd79a;
+  --rl-color-warning-bg: #2e1f0a;
+  --rl-color-warning-fg: #f0b871;
+
+  /* Status dots. Non-text, so these need 3:1 rather than 4.5:1. */
+  --rl-color-status-green: #4ade80;
+  --rl-color-status-amber: #fbbf24;
+  --rl-color-status-red: #f87171;
+  --rl-color-status-grey: #9ca3af;
+  --rl-color-status-blue: #7ba7f8;
+
+  /* Tag palette: the light theme's soft fill inverted into a deep one. */
+  --rl-tag-grey-bg: #26262c;
+  --rl-tag-grey-fg: #b8bcc3;
+  --rl-tag-blue-bg: #16253f;
+  --rl-tag-blue-fg: #9dc0fb;
+  --rl-tag-green-bg: #102a1a;
+  --rl-tag-green-fg: #7cd79a;
+  --rl-tag-amber-bg: #2e1f0a;
+  --rl-tag-amber-fg: #f0b871;
+  --rl-tag-red-bg: #3a1618;
+  --rl-tag-red-fg: #f98d8d;
+  --rl-tag-purple-bg: #251a3d;
+  --rl-tag-purple-fg: #c4a9f7;
+
+  /* Accents used by single components */
+  --rl-color-starred: #e2b13c;
+  --rl-color-focus: #7ba7f8;
+  --rl-color-error-ring: #f98d8d;
+
+  /*
+   * Attachment type colours. The glyph on top is `--rl-color-text-inverse`,
+   * which is dark here, so these are lightened until the glyph clears 4.5:1
+   * rather than darkened as the light theme's values were.
+   */
+  --rl-color-file-pdf: #e0484e;
+  --rl-color-file-doc: #5b8def;
+  --rl-color-file-sheet: #2a9d6f;
+  --rl-color-file-image: #9b7bef;
+  --rl-color-file-other: #8b8f96;
+
+  /*
+   * Elevation. A shadow tuned for a white page is invisible on a dark one, so
+   * these deepen towards black; the border tokens do most of the work of
+   * separating a raised surface from what is behind it.
+   */
+  --rl-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --rl-shadow-md: 0 4px 12px rgba(0, 0, 0, 0.6);
+  --rl-shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.7);
+
+  /* The scrim deepens, since it now covers an already-dark page. */
+  --rl-color-scrim: rgba(0, 0, 0, 0.65);
+}
+
+/*
+ * A dark subtree rather than a dark document still has to paint its own
+ * background, or the light page shows through behind it.
+ */
+.dark {
+  color: var(--rl-color-text);
+  background: var(--rl-color-bg);
+}

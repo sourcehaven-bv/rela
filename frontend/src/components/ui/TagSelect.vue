@@ -66,11 +66,11 @@ function handleUpdate(value: string[]) {
 <style>
 /* Ensure SlimSelect styles integrate well with the form */
 .ss-main {
-  border: 1px solid var(--border-color, #e2e8f0);
+  border: 1px solid var(--rl-color-border, #e2e8f0);
   border-radius: 6px;
   min-height: 38px;
-  background: var(--input-bg);
-  color: var(--text-color);
+  background: var(--rl-color-bg-raised);
+  color: var(--rl-color-text);
   /* SlimSelect ships a 16px default, but every other rela control (inputs,
      selects, the form widgets this sits beside) is --font-size-base. Without
      this the picker's placeholder and chips read a size larger than the
@@ -80,47 +80,47 @@ function handleUpdate(value: string[]) {
 }
 
 .ss-main:focus-within {
-  border-color: var(--accent-color, #6366f1);
+  border-color: var(--rl-color-accent, #6366f1);
   box-shadow:
-    0 0 0 2px var(--focus-ring-gap),
-    0 0 0 4px var(--focus-ring);
+    0 0 0 2px var(--rl-color-bg),
+    0 0 0 4px var(--rl-color-focus);
 }
 
 .ss-content {
-  border: 1px solid var(--border-color, #e2e8f0);
+  border: 1px solid var(--rl-color-border, #e2e8f0);
   border-radius: 6px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-  background: var(--card-bg);
+  background: var(--rl-color-bg-raised);
 }
 
 .ss-option {
-  color: var(--text-color);
+  color: var(--rl-color-text);
 }
 
 .ss-option.ss-highlighted {
-  background: var(--hover-bg);
+  background: var(--rl-color-bg-hover);
 }
 
 .ss-option.ss-selected {
-  background: color-mix(in srgb, var(--accent-color) 20%, transparent);
-  color: var(--accent-color);
+  background: color-mix(in srgb, var(--rl-color-accent) 20%, transparent);
+  color: var(--rl-color-accent);
 }
 
 .ss-value {
-  background: color-mix(in srgb, var(--accent-color) 20%, transparent);
-  color: var(--accent-color);
+  background: color-mix(in srgb, var(--rl-color-accent) 20%, transparent);
+  color: var(--rl-color-accent);
 }
 
 .ss-value-delete {
-  color: var(--accent-color);
+  color: var(--rl-color-accent);
 }
 
 .ss-value-delete:hover {
-  color: var(--error-color, #dc2626);
+  color: var(--rl-color-danger, #dc2626);
 }
 
 .ss-search input {
-  background: var(--input-bg);
-  color: var(--text-color);
+  background: var(--rl-color-bg-raised);
+  color: var(--rl-color-text);
 }
 </style>

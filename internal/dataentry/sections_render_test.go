@@ -73,12 +73,11 @@ func TestBuildSectionEntityData_ResolvesRender(t *testing.T) {
 	}
 }
 
-// A synthesized default view (for an entity type with no `views:` entry) sets
-// no Render, so every field resolves to display like any other unset config.
-// This is deliberate: display-by-default holds regardless of whether the view
-// was authored or generated. An operator who wants inline edit on such a type
-// authors an explicit view with `render: input`.
-func TestBuildDefaultViewConfig_RendersDisplayByDefault(t *testing.T) {
+// A synthesized default view (for an entity type with no `views:` entry)
+// renders its properties as input. The operator authored no view, so there is
+// no display choice to honor, and the ACL verdict still decides writability.
+// An operator who wants such a type read-only authors an explicit view.
+func TestBuildDefaultViewConfig_RendersInputByDefault(t *testing.T) {
 	view, ok := buildDefaultViewConfig(newDefaultViewMetamodel(), "feature")
 	if !ok {
 		t.Fatal("buildDefaultViewConfig(feature) returned !ok")
@@ -93,12 +92,9 @@ func TestBuildDefaultViewConfig_RendersDisplayByDefault(t *testing.T) {
 	if propsSection == nil {
 		t.Fatal("no properties section in the synthesized view")
 	}
-	if propsSection.Render != "" {
-		t.Errorf("section Render = %q, want empty (inherit → display)", propsSection.Render)
-	}
 	for _, f := range propsSection.Fields {
-		if got := resolveFieldRender(propsSection.Render, f.Render); got != dataentryconfig.RenderDisplay {
-			t.Errorf("field %q resolves to %q, want %q", f.Property, got, dataentryconfig.RenderDisplay)
+		if got := resolveFieldRender(propsSection.Render, f.Render); got != dataentryconfig.RenderInput {
+			t.Errorf("field %q resolves to %q, want %q", f.Property, got, dataentryconfig.RenderInput)
 		}
 	}
 }

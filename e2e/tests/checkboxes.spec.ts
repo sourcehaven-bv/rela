@@ -59,25 +59,25 @@ test.describe('Checkbox toggling', () => {
     // which flipped loading.value=true → v-if="loading" branch → entire
     // entity-detail tree torn down and rebuilt (visible flicker). The
     // PATCH-based reactive flow mutates only viewData.entry.content +
-    // the entry-content section, so the EntityDetail's .loading-state
-    // spinner must never appear during a toggle.
+    // the entry-content section, so the EntityDetail's wait region must
+    // never appear during a toggle.
     //
     // Install a MutationObserver inside the page BEFORE the click so a
     // sub-frame loading flip can't slip between polls. Scoped to
-    // `.entity-detail > .loading-state` (direct child) so we don't catch
-    // unrelated DocumentsPanel / SidePanel / HelpModal spinners that share
-    // the same CSS class.
+    // `.entity-detail > .rl-status-region` (direct child) so we don't catch
+    // unrelated DocumentsPanel / SidePanel / HelpModal regions, which render
+    // the same component deeper in the tree.
     await appPage.evaluate(() => {
       const w = window as unknown as { __entityDetailLoadingSeen?: boolean };
       w.__entityDetailLoadingSeen = false;
       const observer = new MutationObserver(() => {
-        if (document.querySelector('.entity-detail > .loading-state')) {
+        if (document.querySelector('.entity-detail > .rl-status-region')) {
           w.__entityDetailLoadingSeen = true;
         }
       });
       observer.observe(document.body, { childList: true, subtree: true });
       // Also capture state at install time (in case it's already showing).
-      if (document.querySelector('.entity-detail > .loading-state')) {
+      if (document.querySelector('.entity-detail > .rl-status-region')) {
         w.__entityDetailLoadingSeen = true;
       }
     });

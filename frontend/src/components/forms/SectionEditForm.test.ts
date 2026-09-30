@@ -1,7 +1,7 @@
 // Unit tests for SectionEditForm — covers per-cell render gating,
 // scheduleFieldSave / scheduleUnset routing, owner-identity guard
 // on onPropertyApplied, verdict-flip toast via onVerdictFlip,
-// and per-field error pill via FieldShell.
+// and the per-field error under the value.
 //
 // Mocks `entitiesStore.update` at the store level so PATCH timing is
 // driven by fake timers, mirroring useAutoSave.test.ts.
@@ -12,6 +12,8 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { useEntitiesStore } from '@/stores/entities'
 import SectionEditForm, { type SectionEditField } from './SectionEditForm.vue'
+import InlinePropertyValue from './InlinePropertyValue.vue'
+import RlDetailField from 'rela-components/components/task/RlDetailField.vue'
 import { ApiError } from '@/api/errors'
 import type { Entity, PropertyDef, AttachmentInfo } from '@/types'
 
@@ -27,7 +29,7 @@ function makeFields(overrides: Partial<SectionEditField>[] = []): SectionEditFie
     { property: 'title', label: 'Title', kind: 'schema', propertyDef: TEXT_DEF, render: 'input' },
     { property: 'status', label: 'Status', kind: 'schema', propertyDef: ENUM_DEF, render: 'input' },
   ]
-  return defaults.map((d, i) => ({ ...d, ...(overrides[i] ?? {}) } as SectionEditField))
+  return defaults.map((d, i) => ({ ...d, ...(overrides[i] ?? {}) }) as SectionEditField)
 }
 
 function mountForm(opts: {
@@ -81,27 +83,28 @@ describe('SectionEditForm', () => {
     vi.restoreAllMocks()
   })
 
-  it('renders one row per field; writable cells wrap widget in FieldShell, non-writable do not', () => {
-    const fields = makeFields([
-      { verdict: { writable: true } },
-      { verdict: { writable: false } },
-    ])
+  it('renders one row per field; only writable cells are editable', () => {
+    const fields = makeFields([{ verdict: { writable: true } }, { verdict: { writable: false } }])
     makeStoreMock()
     const { wrapper } = mountForm({ fields })
-    const items = wrapper.findAll('.property-item')
-    expect(items).toHaveLength(2)
-    // Writable cell has a .form-field (FieldShell's root class); non-writable does not.
-    expect(items[0].find('.form-field').exists()).toBe(true)
-    expect(items[1].find('.form-field').exists()).toBe(false)
+    expect(wrapper.findAll('.property-row')).toHaveLength(2)
+    const values = wrapper.findAllComponents(InlinePropertyValue)
+    expect(values.map((v) => v.props('writable'))).toEqual([true, false])
   })
 
-  it('scheduleFieldSave fires on update:modelValue from a writable widget', async () => {
+  it('scheduleFieldSave fires when an edit to a writable field is kept', async () => {
     const fields = makeFields([{ verdict: { writable: true } }])
     const updateMock = makeStoreMock()
     const { wrapper } = mountForm({ fields: [fields[0]] })
+    await wrapper.find('.property-row button').trigger('click')
     const widget = wrapper.findComponent({ name: 'TextWidget' })
-    expect(widget.exists()).toBe(true)
+    expect(widget.props('mode')).toBe('edit')
     widget.vm.$emit('update:modelValue', 'New Title')
+    await nextTick()
+    // Typing alone saves nothing; the edit is a draft until kept.
+    await vi.advanceTimersByTimeAsync(900)
+    expect(updateMock).not.toHaveBeenCalled()
+    await wrapper.find('.property-row input').trigger('keydown', { key: 'Enter' })
     await vi.advanceTimersByTimeAsync(900)
     await flushPromises()
     expect(updateMock).toHaveBeenCalledTimes(1)
@@ -115,8 +118,8 @@ describe('SectionEditForm', () => {
       fields: [fields[0]],
       initialValues: { title: 'Original' },
     })
-    const widget = wrapper.findComponent({ name: 'TextWidget' })
-    widget.vm.$emit('update:modelValue', '')
+    const value = wrapper.findComponent(InlinePropertyValue)
+    value.vm.$emit('update', '')
     await vi.advanceTimersByTimeAsync(900)
     await flushPromises()
     expect(updateMock).toHaveBeenCalledTimes(1)
@@ -137,8 +140,8 @@ describe('SectionEditForm', () => {
       initialValues: { title: 'Original' },
       onPropertyApplied,
     })
-    const widget = wrapper.findComponent({ name: 'TextWidget' })
-    widget.vm.$emit('update:modelValue', '')
+    const value = wrapper.findComponent(InlinePropertyValue)
+    value.vm.$emit('update', '')
     await vi.advanceTimersByTimeAsync(900)
     await flushPromises()
     // The PATCH unsets, the server response has properties: {}, so the
@@ -164,8 +167,8 @@ describe('SectionEditForm', () => {
       entityId: 'TKT-001',
       onPropertyApplied,
     })
-    const widget = wrapper.findComponent({ name: 'TextWidget' })
-    widget.vm.$emit('update:modelValue', 'New')
+    const value = wrapper.findComponent(InlinePropertyValue)
+    value.vm.$emit('update', 'New')
     await vi.advanceTimersByTimeAsync(900)
     await flushPromises()
     const titleCall = onPropertyApplied.mock.calls.find((c) => c[0] === 'title')
@@ -188,8 +191,8 @@ describe('SectionEditForm', () => {
       fields: [fields[0]],
       onPropertyApplied,
     })
-    const widget = wrapper.findComponent({ name: 'TextWidget' })
-    widget.vm.$emit('update:modelValue', 'New')
+    const value = wrapper.findComponent(InlinePropertyValue)
+    value.vm.$emit('update', 'New')
     await vi.advanceTimersByTimeAsync(900)
     await flushPromises()
     expect(onPropertyApplied).toHaveBeenCalled()
@@ -203,8 +206,8 @@ describe('SectionEditForm', () => {
     const initial = makeFields([{ verdict: { writable: true } }])
     const updateMock = makeStoreMock()
     const { wrapper, onError, onVerdictFlip } = mountForm({ fields: [initial[0]] })
-    const widget = wrapper.findComponent({ name: 'TextWidget' })
-    widget.vm.$emit('update:modelValue', 'pending edit')
+    const value = wrapper.findComponent(InlinePropertyValue)
+    value.vm.$emit('update', 'pending edit')
     // Don't advance timers — keep the edit pending.
     await nextTick()
     // Flip the verdict.
@@ -253,8 +256,8 @@ describe('SectionEditForm', () => {
   it('render: input with a writable verdict renders the edit arm (AC 2)', () => {
     const fields = makeFields([{ render: 'input', verdict: { writable: true } }])
     const { wrapper } = mountForm({ fields: [fields[0]] })
-    expect(wrapper.find('.form-field').exists()).toBe(true)
-    expect(wrapper.findComponent({ name: 'TextWidget' }).props('mode')).toBe('edit')
+    expect(wrapper.findComponent(InlinePropertyValue).props('writable')).toBe(true)
+    expect(wrapper.findComponent({ name: 'RlInlineEdit' }).exists()).toBe(true)
   })
 
   it('mixes input and display arms within one section (AC 6)', () => {
@@ -263,10 +266,8 @@ describe('SectionEditForm', () => {
       { render: 'display', verdict: { writable: true } },
     ])
     const { wrapper } = mountForm({ fields })
-    const items = wrapper.findAll('.property-item')
-    expect(items).toHaveLength(2)
-    expect(items[0].find('.form-field').exists()).toBe(true)
-    expect(items[1].find('.form-field').exists()).toBe(false)
+    const values = wrapper.findAllComponents(InlinePropertyValue)
+    expect(values.map((v) => v.props('writable'))).toEqual([true, false])
   })
 
   it('a display-flagged machine field skips the StatusControl (AC 7)', () => {
@@ -307,25 +308,51 @@ describe('SectionEditForm', () => {
       fields: [fields[0]],
       initialValues: { title: 'x'.repeat(61) },
     })
-    expect(wrapper.find('.property-item').classes()).toContain('property-long')
+    expect(wrapper.findComponent(RlDetailField).props('stacked')).toBe(true)
   })
 
-  it('does not force full width on an edit-arm field', () => {
-    // An edit widget sizes itself; stretching it would widen every textarea.
+  it('stacks a long value on an editable field too, since it reads as its value', () => {
     const fields = makeFields([{ render: 'input', verdict: { writable: true } }])
     const { wrapper } = mountForm({
       fields: [fields[0]],
       initialValues: { title: 'x'.repeat(61) },
     })
-    expect(wrapper.find('.property-item').classes()).not.toContain('property-long')
+    expect(wrapper.findComponent(RlDetailField).props('stacked')).toBe(true)
+  })
+
+  it('keeps a short value beside its label', () => {
+    const fields = makeFields([{ render: 'input', verdict: { writable: true } }])
+    const { wrapper } = mountForm({ fields: [fields[0]], initialValues: { title: 'short' } })
+    expect(wrapper.findComponent(RlDetailField).props('stacked')).toBe(false)
+  })
+
+  it('shows a value changed elsewhere', async () => {
+    const fields = makeFields([{ verdict: { writable: true } }])
+    makeStoreMock()
+    const { wrapper } = mountForm({ fields: [fields[0]], initialValues: { title: 'Original' } })
+    await wrapper.setProps({ initialValues: { title: 'Renamed in the heading' } })
+    expect(wrapper.findComponent(InlinePropertyValue).props('value')).toBe('Renamed in the heading')
+  })
+
+  it('keeps a pending edit when a value changes elsewhere', async () => {
+    const fields = makeFields([{ verdict: { writable: true } }])
+    const updateMock = makeStoreMock()
+    const { wrapper } = mountForm({ fields: [fields[0]], initialValues: { title: 'Original' } })
+    wrapper.findComponent(InlinePropertyValue).vm.$emit('update', 'Mine')
+    await nextTick()
+    await wrapper.setProps({ initialValues: { title: 'Theirs' } })
+    expect(wrapper.findComponent(InlinePropertyValue).props('value')).toBe('Mine')
+    await vi.advanceTimersByTimeAsync(900)
+    await flushPromises()
+    expect(updateMock.mock.calls[0][2]).toEqual({ properties: { title: 'Mine' } })
   })
 
   it('commitImmediately runs on unmount', async () => {
     const fields = makeFields([{ verdict: { writable: true } }])
     const updateMock = makeStoreMock()
     const { wrapper } = mountForm({ fields: [fields[0]] })
-    const widget = wrapper.findComponent({ name: 'TextWidget' })
-    widget.vm.$emit('update:modelValue', 'pending')
+    const value = wrapper.findComponent(InlinePropertyValue)
+    value.vm.$emit('update', 'pending')
     // Don't advance timers; unmount immediately.
     wrapper.unmount()
     await vi.runAllTimersAsync()
@@ -334,19 +361,19 @@ describe('SectionEditForm', () => {
     expect(updateMock.mock.calls[0][2]).toEqual({ properties: { title: 'pending' } })
   })
 
-  it('per-field error pill renders inside FieldShell on 422 server response', async () => {
+  it('per-field error renders under the value on 422 server response', async () => {
     const fields = makeFields([{ verdict: { writable: true } }])
     const store = useEntitiesStore()
     vi.spyOn(store, 'update').mockRejectedValueOnce(
-      new ApiError('invalid value', { kind: 'http', status: 422, original: null }),
+      new ApiError('invalid value', { kind: 'http', status: 422, original: null })
     )
     const { wrapper } = mountForm({ fields: [fields[0]] })
-    const widget = wrapper.findComponent({ name: 'TextWidget' })
-    widget.vm.$emit('update:modelValue', 'bad')
+    const value = wrapper.findComponent(InlinePropertyValue)
+    value.vm.$emit('update', 'bad')
     await vi.advanceTimersByTimeAsync(900)
     await vi.runOnlyPendingTimersAsync()
     await flushPromises()
-    const errorPill = wrapper.find('.field-error')
+    const errorPill = wrapper.find('.inline-property-error')
     expect(errorPill.exists()).toBe(true)
     expect(errorPill.text()).toBe('invalid value')
   })
@@ -386,7 +413,7 @@ describe('SectionEditForm', () => {
     expect(widget.props('entityType')).toBe('ticket')
     expect(widget.props('entityId')).toBe('TKT-001')
     // The preview renders from the forwarded metadata.
-    expect(wrapper.find('img.file-preview').exists()).toBe(true)
+    expect(wrapper.find('img.rl-attachment-card__preview').exists()).toBe(true)
   })
 
   // TKT-U62DVR: heading-row placement of the auto-save indicator.
@@ -471,7 +498,13 @@ describe('widget override (TKT-3R7RF3)', () => {
   it('omitting the override keeps the type default', () => {
     const { wrapper } = mountForm({
       fields: [
-        { property: 'title', label: 'Title', kind: 'schema', propertyDef: TEXT_DEF, render: 'input' },
+        {
+          property: 'title',
+          label: 'Title',
+          kind: 'schema',
+          propertyDef: TEXT_DEF,
+          render: 'input',
+        },
       ],
     })
     expect(wrapper.findComponent({ name: 'TextWidget' }).exists()).toBe(true)

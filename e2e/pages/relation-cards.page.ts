@@ -1,5 +1,5 @@
-import { type Page, type Locator, expect } from '@playwright/test';
-import { BasePage } from './base.page';
+import { type Page, type Locator, expect } from "@playwright/test";
+import { BasePage } from "./base.page";
 
 /** Helpers for the `widget: cards` relation UI on an edit form. Each widget
  *  renders as `.relation-cards`; each linked target as `.relation-card` with
@@ -12,21 +12,25 @@ export class RelationCardsPage extends BasePage {
   async navigateToEdit(formId: string, entityId: string) {
     await this.navigateTo(`/form/${formId}/${entityId}`);
     await this.waitForSpinnerToDisappear();
-    await expect(this.page.locator('.relation-cards').first()).toBeVisible();
+    await expect(this.page.locator(".relation-cards").first()).toBeVisible();
   }
 
   get widgets(): Locator {
-    return this.page.locator('.relation-cards');
+    return this.page.locator(".relation-cards");
   }
 
   widgetByLabel(label: string): Locator {
-    return this.page.locator('.relation-cards').filter({ has: this.page.locator(`.section-label:has-text("${label}")`) });
+    return this.page.locator(".relation-cards").filter({
+      has: this.page.locator(`.section-label:has-text("${label}")`),
+    });
   }
 
   cardByTargetId(targetId: string): Locator {
-    return this.page.locator('.relation-card', {
-      has: this.page.locator(`.entity-id:has-text("${targetId}")`),
-    }).first();
+    return this.page
+      .locator(".relation-card", {
+        has: this.page.locator(`.entity-id:has-text("${targetId}")`),
+      })
+      .first();
   }
 
   async widgetCount(): Promise<number> {
@@ -34,50 +38,99 @@ export class RelationCardsPage extends BasePage {
   }
 
   async sectionLabels(): Promise<string[]> {
-    return this.page.locator('.relation-cards .section-label').allTextContents();
+    return this.page
+      .locator(".relation-cards .section-label")
+      .allTextContents();
   }
 
   async cardCount(widget: Locator): Promise<number> {
-    return widget.locator('.relation-card').count();
+    return widget.locator(".relation-card").count();
   }
 
   async cardPropertyLabels(card: Locator): Promise<string[]> {
-    return card.locator('.card-properties .prop-label').allTextContents();
+    return card.locator(".card-properties .prop-label").allTextContents();
   }
 
   async getTextInputValue(card: Locator): Promise<string> {
-    return card.locator('.card-properties input.inline-edit').first().inputValue();
+    return card
+      .locator(".card-properties input.inline-edit")
+      .first()
+      .inputValue();
   }
 
   async editTextInput(card: Locator, value: string) {
-    await card.locator('.card-properties input.inline-edit').first().fill(value);
+    await card
+      .locator(".card-properties input.inline-edit")
+      .first()
+      .fill(value);
   }
 
   /** True if at least one widget shows an unsaved badge. */
   async hasAnyUnsavedBadge(): Promise<boolean> {
-    return this.page.locator('.pending-badge').first().isVisible();
+    return this.page.locator(".pending-badge").first().isVisible();
   }
 
   async expectUnsavedBadgeOn(widget: Locator) {
-    await expect(widget.locator('.pending-badge')).toBeVisible();
+    await expect(widget.locator(".pending-badge")).toBeVisible();
   }
 
   async expectNoUnsavedBadgeOn(widget: Locator) {
-    await expect(widget.locator('.pending-badge')).toHaveCount(0);
+    await expect(widget.locator(".pending-badge")).toHaveCount(0);
   }
 
   async clickRemoveFirstCardIn(widget: Locator) {
-    await widget.locator('.relation-card .remove-btn').first().click();
+    await widget.locator(".relation-card .remove-btn").first().click();
   }
 
   async getFirstCardEntityId(widget: Locator): Promise<string> {
-    const text = await widget.locator('.relation-card .entity-id').first().textContent();
-    return text?.trim() ?? '';
+    const text = await widget
+      .locator(".relation-card .entity-id")
+      .first()
+      .textContent();
+    return text?.trim() ?? "";
   }
 
   async expectCardHasClass(card: Locator, cls: string | RegExp) {
     const matcher = cls instanceof RegExp ? cls : new RegExp(cls);
     await expect(card).toHaveClass(matcher);
+  }
+
+  /**
+   * Open a widget's picker, type a query with the response HELD, and run
+   * `body` while the in-field spinner is on screen.
+   *
+   * This spinner is absolutely centred inside the search input, which is why
+   * it is the right place to measure the centring guarantee — the cold-load
+   * spinners elsewhere sit in a flex row and would not exercise it. It shows
+   * only while a request is outstanding, a few frames against a local
+   * server, so the response is stalled rather than raced.
+   */
+  async withStalledPickerSearch(
+    widget: Locator,
+    body: (spinner: Locator) => Promise<void>,
+  ) {
+    const pattern = "**/api/v1/_search**";
+    /*
+     * The search is never answered — the spinner's geometry is what is under
+     * test, not the results. Deliberately NOT "hold the route, then continue
+     * on the way out": unrouting while a handler is still parked leaves it
+     * with a dead route and throws `Route is already handled!`, failing the
+     * test after its assertions have already passed.
+     */
+    await this.page.route(pattern, () => {});
+    try {
+      // `.first()`: the seed form configures `blocks` both outgoing and
+      // incoming, so a label-matched widget locator can resolve to two.
+      await widget.locator(".add-btn").first().click();
+      const search = widget.locator(".search-input").first();
+      await expect(search).toBeVisible();
+      await search.fill("a");
+      const spinner = widget.locator(".search-spinner").first();
+      await expect(spinner).toBeVisible();
+      await body(spinner);
+    } finally {
+      await this.page.unroute(pattern);
+    }
   }
 
   /** Click "+ Add" on a widget, search by `searchText` (bleve indexes titles,
@@ -90,29 +143,35 @@ export class RelationCardsPage extends BasePage {
     searchText: string,
     reason: string,
   ): Promise<Locator> {
-    await widget.locator('.add-btn').click();
-    const search = widget.locator('.search-input');
+    await widget.locator(".add-btn").click();
+    const search = widget.locator(".search-input");
     await expect(search).toBeVisible();
     await search.fill(searchText);
-    const result = widget.locator('.search-result', { hasText: targetId });
+    const result = widget.locator(".search-result", { hasText: targetId });
     await expect(result).toBeVisible();
     await result.click();
 
-    const meta = widget.locator('.new-meta-fields');
+    const meta = widget.locator(".new-meta-fields");
     await expect(meta).toBeVisible();
     await meta.locator('input[type="text"]').first().fill(reason);
 
-    const link = widget.locator('.btn-primary', { hasText: 'Link' });
+    // By role and name: the button moved to the shared component library, so a
+    // variant class is no longer a stable handle for it.
+    const link = widget.getByRole("button", { name: "Link" });
     await expect(link).toBeEnabled();
     await link.click();
 
     return widget
-      .locator('.relation-card', { has: this.page.locator(`.entity-id:has-text("${targetId}")`) })
+      .locator(".relation-card", {
+        has: this.page.locator(`.entity-id:has-text("${targetId}")`),
+      })
       .first();
   }
 
   get saveButton(): Locator {
-    return this.page.locator('button[type="submit"], button:has-text("Save")').first();
+    return this.page
+      .locator('button[type="submit"], button:has-text("Save")')
+      .first();
   }
 
   async saveAndWaitForNavigation() {
@@ -132,10 +191,12 @@ export class RelationCardsPage extends BasePage {
   }
 
   async expectCheckboxVisibleIn(widget: Locator) {
-    await expect(widget.locator('input[type="checkbox"]').first()).toBeVisible();
+    await expect(
+      widget.locator('input[type="checkbox"]').first(),
+    ).toBeVisible();
   }
 
   async expectNoPendingBadges() {
-    await expect(this.page.locator('.pending-badge')).toHaveCount(0);
+    await expect(this.page.locator(".pending-badge")).toHaveCount(0);
   }
 }

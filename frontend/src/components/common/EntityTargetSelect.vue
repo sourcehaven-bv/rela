@@ -237,12 +237,12 @@ onBeforeUnmount(() => {
 
 .entity-target-select select {
   padding: 6px 10px;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--rl-color-border);
   border-radius: 4px;
   font-size: 14px;
   min-width: 150px;
-  background: var(--input-bg);
-  color: var(--text-color);
+  background: var(--rl-color-bg-raised);
+  color: var(--rl-color-text);
 }
 
 .typeahead-input {
@@ -253,27 +253,27 @@ onBeforeUnmount(() => {
 
 .typeahead-input input {
   padding: 6px 26px 6px 10px;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--rl-color-border);
   border-radius: 4px;
   font-size: 14px;
   min-width: 150px;
   width: 100%;
-  background: var(--input-bg);
-  color: var(--text-color);
+  background: var(--rl-color-bg-raised);
+  color: var(--rl-color-text);
 }
 
 .typeahead-input input.has-selection::placeholder {
-  color: var(--text-color);
+  color: var(--rl-color-text);
   opacity: 1;
 }
 
 .typeahead-input input:focus,
 .entity-target-select select:focus {
   outline: none;
-  border-color: var(--accent-color);
+  border-color: var(--rl-color-accent);
   box-shadow:
-    0 0 0 2px var(--focus-ring-gap),
-    0 0 0 4px var(--focus-ring);
+    0 0 0 2px var(--rl-color-bg),
+    0 0 0 4px var(--rl-color-focus);
 }
 
 .clear-selection {
@@ -281,7 +281,7 @@ onBeforeUnmount(() => {
   right: 6px;
   background: none;
   border: none;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   font-size: 16px;
   line-height: 1;
   cursor: pointer;
@@ -289,7 +289,7 @@ onBeforeUnmount(() => {
 }
 
 .clear-selection:hover {
-  color: var(--error-color, #ef4444);
+  color: var(--rl-color-danger, #ef4444);
 }
 
 .dropdown {
@@ -297,8 +297,8 @@ onBeforeUnmount(() => {
   top: 100%;
   left: 0;
   right: 0;
-  background: var(--card-bg);
-  border: 1px solid var(--border-color);
+  background: var(--rl-color-bg-raised);
+  border: 1px solid var(--rl-color-border);
   border-radius: 6px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
   margin-top: 4px;
@@ -311,24 +311,24 @@ onBeforeUnmount(() => {
   padding: 8px 12px;
   cursor: pointer;
   font-size: 14px;
-  color: var(--text-color);
+  color: var(--rl-color-text);
   transition: background 0.15s;
 }
 
 .dropdown-item:hover,
 .dropdown-item[aria-selected='true'] {
-  background: var(--hover-bg);
+  background: var(--rl-color-bg-hover);
 }
 
 .dropdown-item.all-option {
-  color: var(--muted-text);
-  border-bottom: 1px solid var(--border-color);
+  color: var(--rl-color-text-muted);
+  border-bottom: 1px solid var(--rl-color-border);
 }
 
 .dropdown-empty {
   padding: 12px;
   text-align: center;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   font-size: 13px;
 }
 </style>

@@ -12,3 +12,17 @@ export function isInputFocused(): boolean {
   if (el.closest && el.closest('.CodeMirror')) return true
   return false
 }
+
+// Input types where Delete and Backspace edit nothing, so a shortcut may take
+// them. A row checkbox is the common case: ticking one moves focus to it.
+const NON_TEXT_INPUTS = new Set(['checkbox', 'radio', 'button', 'submit', 'reset'])
+
+/**
+ * Like isInputFocused, but a focused checkbox, radio or button does not count:
+ * for keys such as Delete and Backspace, only a place that edits text does.
+ */
+export function isTextEntryFocused(): boolean {
+  const el = document.activeElement
+  if (el instanceof HTMLInputElement) return !NON_TEXT_INPUTS.has(el.type)
+  return isInputFocused()
+}

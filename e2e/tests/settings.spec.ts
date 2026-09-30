@@ -193,7 +193,7 @@ test.describe('Settings', () => {
 
       await settingsPage.navigateToSettings();
 
-      await settingsPage.expectAppInfo('Lists', '3'); // features, bugs, tasks
+      await settingsPage.expectAppInfo('Lists', '4'); // bugs_triage, features, bugs, tasks
     });
   });
 });

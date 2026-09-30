@@ -62,7 +62,7 @@ import (
 //
 // # Verified assertion claims
 //
-// orgID, orgSlug, roles, principalType and scopes carry claims from a
+// orgID, orgSlug, orgName, roles, principalType and scopes carry claims from a
 // CRYPTOGRAPHICALLY VERIFIED identity assertion. They are unexported on
 // purpose: [VerifiedFrom] (and its [Verified] wrapper) is the only way to
 // populate them, so no composite literal anywhere in the tree can forge a role.
@@ -71,7 +71,8 @@ import (
 // header, say) would be a complete authorization bypass. The compiler enforces
 // the trust boundary here rather than leaving it to a code reviewer's memory.
 //
-// Read them via [Principal.OrgID], [Principal.OrgSlug], [Principal.Roles],
+// Read them via [Principal.OrgID], [Principal.OrgSlug], [Principal.OrgName],
+// [Principal.Roles],
 // [Principal.PrincipalType], [Principal.Scopes], [Principal.Email].
 //
 // The two attenuation claims run the OPPOSITE direction from roles: principalType
@@ -93,6 +94,7 @@ type Principal struct {
 
 	orgID         string
 	orgSlug       string
+	orgName       string
 	roles         []string
 	principalType string
 	scopes        []string
@@ -110,6 +112,10 @@ type Claims struct {
 	OrgID   string
 	OrgSlug string
 	Roles   []string
+
+	// OrgName is the verified `org_name` claim: the org's display name. Display
+	// only (the account menu, TKT-MJTD12); nothing in internal/acl evaluates it.
+	OrgName string
 
 	// PrincipalType selects a client-attenuation baseline in acl.yaml. Note
 	// the asymmetry with Roles: a role ADDS capability, a principal type only
@@ -140,6 +146,7 @@ func VerifiedFrom(user, tool string, c Claims) Principal {
 		Tool:          tool,
 		orgID:         c.OrgID,
 		orgSlug:       c.OrgSlug,
+		orgName:       c.OrgName,
 		principalType: c.PrincipalType,
 		email:         c.Email,
 	}
@@ -187,6 +194,11 @@ func (p Principal) OrgID() string { return p.orgID }
 // OrgSlug returns the verified `org_slug` claim, or "" when absent. The same
 // attribution-only caveat as [Principal.OrgID] applies.
 func (p Principal) OrgSlug() string { return p.orgSlug }
+
+// OrgName returns the verified `org_name` claim, the org's display name, or ""
+// when absent. Display only; the same attribution-only caveat as
+// [Principal.OrgID] applies.
+func (p Principal) OrgName() string { return p.orgName }
 
 // Roles returns the verified `roles` claim — bare role names scoped to
 // [Principal.OrgID]. Empty for every non-assertion entry point (CLI, MCP,
@@ -276,6 +288,7 @@ func (p Principal) Sanitized(clean func(string) string) Principal {
 		RawUser:       clean(p.RawUser),
 		orgID:         clean(p.orgID),
 		orgSlug:       clean(p.orgSlug),
+		orgName:       clean(p.orgName),
 		principalType: clean(p.principalType),
 		email:         clean(p.email),
 	}
@@ -303,6 +316,7 @@ func (p Principal) Equal(q Principal) bool {
 		p.RawUser == q.RawUser &&
 		p.orgID == q.orgID &&
 		p.orgSlug == q.orgSlug &&
+		p.orgName == q.orgName &&
 		p.principalType == q.principalType &&
 		p.email == q.email &&
 		slices.Equal(p.roles, q.roles) &&
@@ -318,6 +332,7 @@ type principalJSON struct {
 	RawUser       string   `json:"raw_user,omitempty"`
 	OrgID         string   `json:"org_id,omitempty"`
 	OrgSlug       string   `json:"org_slug,omitempty"`
+	OrgName       string   `json:"org_name,omitempty"`
 	Roles         []string `json:"roles,omitempty"`
 	PrincipalType string   `json:"principal_type,omitempty"`
 	Scopes        []string `json:"scopes,omitempty"`
@@ -334,6 +349,7 @@ func (p Principal) MarshalJSON() ([]byte, error) {
 		RawUser:       p.RawUser,
 		OrgID:         p.orgID,
 		OrgSlug:       p.orgSlug,
+		OrgName:       p.orgName,
 		Roles:         p.roles,
 		PrincipalType: p.principalType,
 		Scopes:        p.scopes,
@@ -359,6 +375,7 @@ func (p *Principal) UnmarshalJSON(data []byte) error {
 		RawUser:       w.RawUser,
 		orgID:         w.OrgID,
 		orgSlug:       w.OrgSlug,
+		orgName:       w.OrgName,
 		roles:         w.Roles,
 		principalType: w.PrincipalType,
 		scopes:        w.Scopes,

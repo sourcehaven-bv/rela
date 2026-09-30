@@ -20,7 +20,7 @@ export default tseslint.config(
 
   // Global ignores
   {
-    ignores: ['dist/**', 'node_modules/**', '*.d.ts'],
+    ignores: ['dist/**', 'node_modules/**', '*.d.ts', 'packages/**'],
   },
 
   // Browser globals for app source (document, console, HTMLElement, etc.)
@@ -82,6 +82,20 @@ export default tseslint.config(
       ],
       'vue/attributes-order': 'error',
       'vue/order-in-components': 'error',
+
+      /* A component used in a template but never imported. Vue resolves an
+         unknown tag at RUNTIME, so this fails only when the branch renders —
+         and neither `vue-tsc` nor the build says a word. Caught one real case
+         (an RlEmptyState used without its import) that typecheck, lint and a
+         full unit run all passed over.
+
+         `ignorePatterns` covers the tags that are genuinely not components:
+         `rela-*` custom elements, and RouterView/RouterLink, which the router
+         registers globally. */
+      'vue/no-undef-components': [
+        'error',
+        { ignorePatterns: ['rela-.*', 'router-.*', 'Router.*'] },
+      ],
 
       // Security: Warn on v-html usage (XSS risk)
       'vue/no-v-html': 'warn',
@@ -169,7 +183,7 @@ export default tseslint.config(
 
   // Config files and Node scripts - Node environment (vite.config.js etc.)
   {
-    files: ['*.config.js', '*.config.ts', 'scripts/**/*.js'],
+    files: ['*.config.js', '*.config.ts', 'scripts/**/*.js', 'scripts/**/*.mjs'],
     languageOptions: {
       globals: {
         ...globals.node,

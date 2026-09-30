@@ -1,102 +1,47 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, watch } from 'vue'
+/**
+ * The single script-error dialog, mounted once in App.vue and driven by the
+ * store rather than by a parent's `open` prop.
+ *
+ * Built on `RlModal`, which owns the scrim, the Tab trap, the scroll lock and
+ * the shared overlay stack. Two things stay rela's responsibility:
+ *
+ *  - **Focus restore.** `RlModal` restores focus itself, but to whatever held
+ *    it when the dialog opened. That is the wrong element here: a script error
+ *    is usually raised from a list action whose row is optimistically removed
+ *    before the dialog appears, so the captured element is already detached and
+ *    `.focus()` on it silently drops focus to `<body>`. The store captures the
+ *    real trigger and checks `document.contains` before restoring, so the
+ *    dialog is left to close and the store does the restoring.
+ *
+ *  - **`useModalStack`.** rela's stack is a different registry from the
+ *    library's: `isAnyModalOpen()` gates GLOBAL KEYBOARD SHORTCUTS, and a
+ *    dialog that registers only with the library's stack is invisible to it,
+ *    so shortcuts keep firing underneath. Both must be called.
+ */
+import { computed } from 'vue'
 
 import { useScriptErrorStore } from '../../stores/scriptError'
+import { useModalStack } from '@/composables/modalStack'
+import RlModal from 'rela-components/components/overlay/RlModal.vue'
 
 import ScriptErrorPanel from './ScriptErrorPanel.vue'
 
 const store = useScriptErrorStore()
-const closeBtn = ref<HTMLButtonElement | null>(null)
 
-function onKeydown(e: KeyboardEvent): void {
-  if (e.key === 'Escape' && store.current) {
-    e.preventDefault()
-    store.dismiss()
-  }
-}
+const open = computed(() => store.current !== null)
 
-onMounted(() => {
-  document.addEventListener('keydown', onKeydown)
-})
-
-onUnmounted(() => {
-  document.removeEventListener('keydown', onKeydown)
-})
-
-// Move focus to the close button when the dialog opens. Restoring focus to
-// the trigger element is the store's job so it survives this component
-// being remounted.
-watch(
-  () => store.current,
-  (val) => {
-    if (val) {
-      // Wait for the DOM to render the dialog before focusing.
-      requestAnimationFrame(() => closeBtn.value?.focus())
-    }
-  },
-)
+useModalStack(open)
 </script>
 
 <template>
-  <div
-    v-if="store.current"
-    class="modal-overlay"
+  <RlModal
+    :open="open"
+    title="Script error"
     role="alertdialog"
-    aria-modal="true"
-    aria-labelledby="script-error-title"
-    @click.self="store.dismiss()"
+    size="lg"
+    @close="store.dismiss()"
   >
-    <div class="modal script-error-modal">
-      <div class="se-modal-header">
-        <h3 id="script-error-title">Script error</h3>
-        <button
-          ref="closeBtn"
-          type="button"
-          class="se-close"
-          aria-label="Close"
-          @click="store.dismiss()"
-        >
-          ×
-        </button>
-      </div>
-      <ScriptErrorPanel :error="store.current" />
-    </div>
-  </div>
+    <ScriptErrorPanel v-if="store.current" :error="store.current" />
+  </RlModal>
 </template>
-
-<style scoped>
-.script-error-modal {
-  max-width: 720px;
-  width: 90%;
-  max-height: 85vh;
-  overflow: auto;
-}
-
-.se-modal-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 16px;
-}
-
-.se-modal-header h3 {
-  margin: 0;
-}
-
-.se-close {
-  width: 32px;
-  height: 32px;
-  border: none;
-  background: transparent;
-  font-size: 24px;
-  line-height: 1;
-  color: var(--muted-text);
-  cursor: pointer;
-  border-radius: 4px;
-}
-
-.se-close:hover {
-  background: var(--card-bg);
-  color: var(--text-color);
-}
-</style>

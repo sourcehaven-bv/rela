@@ -25,8 +25,12 @@
  * of several translations gets the button — which is correct, because for
  * them it is not a choice.
  */
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { computed } from 'vue'
 import type { CopyOffer } from '@/types'
+import RlButton from 'rela-components/components/common/RlButton.vue'
+import RlIcon from 'rela-components/components/common/RlIcon.vue'
+import RlMenu from 'rela-components/components/overlay/RlMenu.vue'
+import RlMenuItem from 'rela-components/components/overlay/RlMenuItem.vue'
 
 const props = defineProps<{
   offers?: CopyOffer[]
@@ -36,8 +40,6 @@ const props = defineProps<{
 
 const emit = defineEmits<{ invoke: [offer: CopyOffer] }>()
 
-const open = ref(false)
-const rootRef = ref<HTMLElement | null>(null)
 
 // Absent `_copies` (server computed no offers) and `[]` (this face genuinely
 // offers none) both render nothing, so they need no distinction HERE — but
@@ -55,90 +57,38 @@ function labelOf(o: CopyOffer): string {
   return o.label || o.name
 }
 
-onMounted(() => document.addEventListener('click', onDocClick))
-onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
 
-function onDocClick(e: MouseEvent) {
-  if (rootRef.value && !rootRef.value.contains(e.target as Node)) open.value = false
-}
 
 function choose(o: CopyOffer) {
-  open.value = false
   emit('invoke', o)
 }
 </script>
 
 <template>
-  <button
+  <RlButton
     v-if="single"
-    class="btn btn-secondary copy-single"
+    variant="secondary"
+    class="copy-single"
     :disabled="busy"
     @click="choose(single)"
   >
     {{ labelOf(single) }}
-  </button>
+  </RlButton>
 
-  <div v-else-if="allowed.length > 1" ref="rootRef" class="copy-menu">
-    <button
-      class="btn btn-secondary"
-      :disabled="busy"
-      :aria-expanded="open"
-      aria-haspopup="menu"
-      @click="open = !open"
-    >
-      Copy to ▾
-    </button>
-    <ul v-if="open" class="copy-menu-list" role="menu">
-      <li v-for="o in allowed" :key="o.name" role="none">
-        <button
-          role="menuitem"
-          class="copy-menu-item"
-          :title="o.targetFace"
-          @click="choose(o)"
-        >
-          {{ labelOf(o) }}
-        </button>
-      </li>
-    </ul>
-  </div>
+  <!-- See the note in FaceMenu: RlMenu owns the open state and positioning. -->
+  <RlMenu v-else-if="allowed.length > 1" class="copy-menu">
+    <template #trigger="{ toggle, attrs }">
+      <RlButton variant="secondary" :disabled="busy" v-bind="attrs" @click="toggle">
+        Copy to
+        <template #trailing>
+          <RlIcon name="chevron-down" :size="14" aria-hidden="true" />
+        </template>
+      </RlButton>
+    </template>
+
+    <RlMenuItem v-for="o in allowed" :key="o.name" :title="o.targetFace" @click="choose(o)">
+      {{ labelOf(o) }}
+    </RlMenuItem>
+  </RlMenu>
 </template>
 
-<style scoped>
-.copy-menu {
-  position: relative;
-  display: inline-block;
-}
-
-.copy-menu-list {
-  position: absolute;
-  right: 0;
-  top: calc(100% + 4px);
-  z-index: 20;
-  min-width: 12rem;
-  margin: 0;
-  padding: 0.25rem;
-  list-style: none;
-  background: var(--card-bg);
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
-}
-
-.copy-menu-item {
-  display: block;
-  width: 100%;
-  padding: 0.4rem 0.6rem;
-  text-align: left;
-  background: none;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  color: var(--text-color);
-  font-size: 0.9rem;
-}
-
-.copy-menu-item:hover,
-.copy-menu-item:focus {
-  background: var(--hover-bg);
-}
-</style>

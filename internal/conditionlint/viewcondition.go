@@ -23,6 +23,12 @@ const (
 	// ViewConditionAction is an action's `when:` (TKT-VVS16W). Its key ID is
 	// [dataentryconfig.ActionConditionID]: one program per listed type.
 	ViewConditionAction ViewConditionKind = "actions"
+
+	// ViewConditionNavStatus is a rule of a navigation entry's `status:`,
+	// keyed by dataentryconfig.NavStatusConditionID. It is compiled against
+	// the entity type of the list the entry opens, since the rule counts that
+	// list's rows.
+	ViewConditionNavStatus ViewConditionKind = "nav_status"
 )
 
 // ViewConditionKey identifies one compiled view condition.
@@ -35,7 +41,8 @@ type ViewConditionKey struct {
 func (k ViewConditionKey) String() string { return fmt.Sprintf("%s[%q]", k.Kind, k.ID) }
 
 // CompileViewConditions compiles the `condition:` of every list and kanban,
-// and the `when:` of every detail-page action.
+// the `when:` of every detail-page action, and every rule of a navigation
+// entry's `status:`.
 //
 // Like [CompileNextActions] and unlike [Lint], this is AUTHORITATIVE: the
 // programs returned here are the ones evaluated on the read path, so an
@@ -66,12 +73,23 @@ func CompileViewConditions(
 	programs = make(map[ViewConditionKey]*predicate.Program)
 
 	for id, v := range cfg.Lists {
-		compileOne(ev, meta, ViewConditionKey{ViewConditionList, id},
-			v.EntityType, v.Condition, programs, &problems)
+		key := ViewConditionKey{ViewConditionList, id}
+		compileOne(ev, meta, key, key.String(), v.EntityType, v.Condition, programs, &problems)
 	}
 	for id, v := range cfg.Kanbans {
-		compileOne(ev, meta, ViewConditionKey{ViewConditionKanban, id},
-			v.EntityType, v.Condition, programs, &problems)
+		key := ViewConditionKey{ViewConditionKanban, id}
+		compileOne(ev, meta, key, key.String(), v.EntityType, v.Condition, programs, &problems)
+	}
+	for _, ns := range dataentryconfig.NavStatusEntries(cfg) {
+		entityType := cfg.Lists[ns.List].EntityType
+		for i, rule := range ns.Entry.Status {
+			key := ViewConditionKey{ViewConditionNavStatus, dataentryconfig.NavStatusConditionID(ns.Key, i)}
+			name := fmt.Sprintf("navigation[%q].status[%d]", ns.Entry.Label, i)
+			if ns.Space != "" {
+				name = fmt.Sprintf("spaces[%s].%s", ns.Space, name)
+			}
+			compileOne(ev, meta, key, name, entityType, rule.Condition, programs, &problems)
+		}
 	}
 	compileActionConditions(ev, meta, cfg, programs, &problems)
 
@@ -218,14 +236,25 @@ func entityTypeFor(cfg *dataentryconfig.Config, key ViewConditionKey) string {
 	case ViewConditionAction:
 		_, et, _ := dataentryconfig.SplitActionConditionID(key.ID)
 		return et
+	case ViewConditionNavStatus:
+		for _, ns := range dataentryconfig.NavStatusEntries(cfg) {
+			for i := range ns.Entry.Status {
+				if dataentryconfig.NavStatusConditionID(ns.Key, i) == key.ID {
+					return cfg.Lists[ns.List].EntityType
+				}
+			}
+		}
 	}
 	return ""
 }
 
 // compileOne compiles a single surface's condition, appending a diagnostic
 // rather than returning early so one bad view does not hide the next.
+//
+// name is how a diagnostic refers to the surface: the key itself for a view,
+// the entry label and rule index for a navigation status rule.
 func compileOne(
-	ev *predicatefns.Evaluator, meta *metamodel.Metamodel, key ViewConditionKey, entityType, condition string,
+	ev *predicatefns.Evaluator, meta *metamodel.Metamodel, key ViewConditionKey, name, entityType, condition string,
 	programs map[ViewConditionKey]*predicate.Program, problems *[]string,
 ) {
 	if condition == "" {
@@ -235,18 +264,17 @@ func compileOne(
 		// Structural validation reports the missing entity_type separately;
 		// say why the condition specifically cannot be checked rather than
 		// compiling against nothing and reporting a confusing attribute error.
-		*problems = append(*problems, fmt.Sprintf(
-			"%s: condition requires entity_type to be set", key))
+		*problems = append(*problems, name+": condition requires entity_type to be set")
 		return
 	}
 	prog, err := ev.CompileWithCurrentUser(entityType, condition)
 	if err != nil {
 		*problems = append(*problems, fmt.Sprintf(
-			"%s: condition does not compile against entity type %q: %v", key, entityType, err))
+			"%s: condition does not compile against entity type %q: %v", name, entityType, err))
 		return
 	}
 	if err := predicatefns.ValidateTraversals(meta, entityType, prog); err != nil {
-		*problems = append(*problems, fmt.Sprintf("%s: %v", key, err))
+		*problems = append(*problems, fmt.Sprintf("%s: %v", name, err))
 		return
 	}
 	programs[key] = prog

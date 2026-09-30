@@ -50,19 +50,19 @@ defineProps<{
   gap: var(--space-xs) var(--space-md);
   margin-bottom: var(--space-md);
   padding: var(--space-sm) var(--space-md);
-  background: color-mix(in srgb, var(--accent-color) 10%, transparent);
-  border: 1px solid color-mix(in srgb, var(--accent-color) 30%, transparent);
+  background: color-mix(in srgb, var(--rl-color-accent) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--rl-color-accent) 30%, transparent);
   border-radius: var(--radius-md);
 }
 
 .world-banner--absent {
-  border-color: color-mix(in srgb, var(--warning-color) 60%, transparent);
-  background: color-mix(in srgb, var(--warning-color) 12%, transparent);
+  border-color: color-mix(in srgb, var(--rl-color-status-amber) 60%, transparent);
+  background: color-mix(in srgb, var(--rl-color-status-amber) 12%, transparent);
 }
 
 .world-banner__label {
   font-size: var(--font-size-base);
-  color: var(--text-color);
+  color: var(--rl-color-text);
 }
 
 /* Grows to take the row's remaining width, and wraps under the label when
@@ -71,7 +71,7 @@ defineProps<{
 .world-banner__note {
   flex: 1 1 24rem;
   font-size: var(--font-size-sm);
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
 }
 
 .world-banner__actions {

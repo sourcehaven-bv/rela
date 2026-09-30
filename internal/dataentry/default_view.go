@@ -3,6 +3,7 @@ package dataentry
 import (
 	"sort"
 
+	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
@@ -23,7 +24,10 @@ func findViewByEntityType(views map[string]ViewConfig, entityType string) (ViewC
 // something to render.
 //
 // Sections in order:
-//  1. properties — every property in EntityDef.PropertyOrder
+//  1. properties — every property in EntityDef.PropertyOrder, editable in
+//     place. The operator wrote no view, so there is no display choice to
+//     honor; the ACL verdict still decides which fields are writable. The
+//     title property is left out: the page heading shows and edits it.
 //  2. content   — the entity's markdown body
 //  3. one section per outgoing relation whose From[] includes entityType
 //  4. one section per incoming relation whose To[] includes entityType
@@ -41,16 +45,21 @@ func buildDefaultViewConfig(meta *metamodel.Metamodel, entityType string) (ViewC
 		Entry: ViewEntry{Type: entityType},
 	}
 
-	// Properties section — only emitted when the entity has any.
-	if len(entDef.PropertyOrder) > 0 {
-		fields := make([]ViewSectionField, 0, len(entDef.PropertyOrder))
-		for _, prop := range entDef.PropertyOrder {
-			fields = append(fields, ViewSectionField{Property: prop})
+	// Properties section — only emitted when a property is left to show.
+	primary := entDef.GetPrimaryProperty()
+	fields := make([]ViewSectionField, 0, len(entDef.PropertyOrder))
+	for _, prop := range entDef.PropertyOrder {
+		if prop == primary {
+			continue
 		}
+		fields = append(fields, ViewSectionField{Property: prop})
+	}
+	if len(fields) > 0 {
 		view.Sections = append(view.Sections, ViewSection{
 			Heading: "Properties",
 			Source:  "entry",
 			Display: "properties",
+			Render:  dataentryconfig.RenderInput,
 			Fields:  fields,
 		})
 	}

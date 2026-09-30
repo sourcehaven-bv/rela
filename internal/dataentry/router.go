@@ -517,6 +517,7 @@ func resolvePrincipalEntity(
 	out := principal.VerifiedFrom(id, p.Tool, principal.Claims{
 		OrgID:         p.OrgID(),
 		OrgSlug:       p.OrgSlug(),
+		OrgName:       p.OrgName(),
 		Roles:         p.Roles(),
 		PrincipalType: p.PrincipalType(),
 		Scopes:        p.Scopes(),
@@ -614,6 +615,10 @@ type AssertedIdentity struct {
 	OrgID   string
 	OrgSlug string
 	Roles   []string
+
+	// OrgName is the verified `org_name` claim, the org's display name. Shown
+	// by the account menu (GET /api/v1/_me); nothing in the ACL evaluates it.
+	OrgName string
 
 	// PrincipalType and Scopes drive client attenuation (TKT-IAC8TX): the
 	// former selects a ceiling in acl.yaml, the latter re-opens pieces of it.
@@ -748,6 +753,7 @@ func verifiedPrincipal(id AssertedIdentity, tool string) (principal.Principal, r
 	return principal.VerifiedFrom(user, tool, principal.Claims{
 		OrgID:   sanitizeUser(id.OrgID),
 		OrgSlug: sanitizeUser(id.OrgSlug),
+		OrgName: sanitizeUser(id.OrgName),
 		Roles:   roles,
 		// A principal_type that sanitizes to "" matches no baseline, which means
 		// unrestricted. That is the correct failure direction: the ceiling is a

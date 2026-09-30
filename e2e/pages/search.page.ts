@@ -105,6 +105,21 @@ export class SearchPage extends BasePage {
     await this.page.waitForLoadState('domcontentloaded');
   }
 
+  /** The detail panel a clicked result opens in. */
+  get detailPanel(): Locator {
+    return this.page.locator('.entity-detail-panel');
+  }
+
+  /** The panel's expand control, which leaves for the entity's own page. */
+  async expandPanel() {
+    await this.detailPanel.getByRole('button', { name: 'Expand' }).click();
+  }
+
+  /** The hamburger that brings an off-canvas sidebar back. */
+  get navToggle(): Locator {
+    return this.page.getByRole('button', { name: 'Toggle navigation' });
+  }
+
   async getResultCount(): Promise<number> {
     return this.resultItems.count();
   }

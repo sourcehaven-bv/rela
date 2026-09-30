@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"sort"
 
+	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -150,7 +151,12 @@ func newExportHandler(app *App) (*exportHandler, error) {
 		redactForCondition: app.redactedForSuggestion,
 		findListForType: func(entityType string) string {
 			s := app.State()
-			return findListByEntityType(s, s.Cfg.Navigation, entityType)
+			for _, tree := range dataentryconfig.NavigationTrees(s.Cfg) {
+				if list := findListByEntityType(s, tree.Entries, entityType); list != "" {
+					return list
+				}
+			}
+			return ""
 		},
 		engine: transform.NewEngine(),
 	}, nil

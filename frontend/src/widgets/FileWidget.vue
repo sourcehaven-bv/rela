@@ -9,6 +9,11 @@ import {
   AttachmentError,
 } from '@/api/attachments'
 import { apiUrl } from '@/api/base'
+import { useConfirm } from '@/composables/useConfirm'
+import RlAttachmentCard from 'rela-components/components/task/RlAttachmentCard.vue'
+import RlAttachmentList from 'rela-components/components/task/RlAttachmentList.vue'
+import { attachmentKind } from 'rela-components/components/task/attachmentKind'
+import type { Attachment } from 'rela-components/types'
 
 const props = defineProps<WidgetProps>()
 
@@ -20,6 +25,8 @@ const emit = defineEmits<{
   // property changed. The host form owns the list — see `stagedFiles`.
   'update:staged-files': [files: File[]]
 }>()
+
+const { confirm } = useConfirm()
 
 const files = computed<AttachmentInfo[]>(() => props.attachments ?? [])
 const staged = computed<File[]>(() => props.stagedFiles ?? [])
@@ -125,10 +132,25 @@ function isImage(att: AttachmentInfo): boolean {
   return att.contentType?.startsWith('image/') ?? false
 }
 
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+function persistedCard(att: AttachmentInfo): Attachment {
+  const href = apiUrl(att.href)
+  return {
+    id: att.id,
+    name: att.filename,
+    kind: attachmentKind(att.filename, att.contentType),
+    href,
+    preview: isImage(att) ? href : undefined,
+  }
+}
+
+function stagedCard(file: File, index: number): Attachment {
+  return {
+    id: `staged-${index}`,
+    name: file.name,
+    kind: attachmentKind(file.name, file.type),
+    action: 'Pending save',
+    preview: stagedPreviewUrl(file),
+  }
 }
 
 async function doUpload(file: File) {
@@ -155,6 +177,15 @@ function uploadErrorMessage(err: unknown): string {
 
 async function doDelete(att: AttachmentInfo) {
   if (busy.value) return
+  // Deleting removes the stored file for good, so it asks first. Unstaging a
+  // pending file does not: nothing has been saved yet.
+  const ok = await confirm({
+    title: 'Delete attachment?',
+    message: `'${att.filename}' will be deleted. This cannot be undone.`,
+    confirmLabel: 'Delete',
+    danger: true,
+  })
+  if (!ok) return
   busy.value = true
   uploadError.value = ''
   try {
@@ -192,59 +223,33 @@ function onDrop(event: DragEvent) {
 
 <template>
   <div :id="id" class="file-widget">
-    <!-- The current files (display in any mode). -->
-    <ul v-if="files.length" class="file-list">
-      <li v-for="att in files" :key="att.id" class="file-item">
-        <a
-          v-if="isImage(att)"
-          :href="apiUrl(att.href)"
-          target="_blank"
-          rel="noopener"
-          class="file-preview-link"
-        >
-          <img :src="apiUrl(att.href)" :alt="att.filename" class="file-preview" />
-        </a>
-        <div class="file-meta">
-          <a :href="apiUrl(att.href)" :download="att.filename" class="file-name">{{ att.filename }}</a>
-          <span class="file-size">{{ formatSize(att.size) }}</span>
-          <button
-            v-if="canEdit"
-            type="button"
-            class="file-remove"
-            :disabled="busy"
-            @click="doDelete(att)"
-          >
-            Remove
-          </button>
-        </div>
-      </li>
-    </ul>
+    <!-- The current files (display in any mode), then the staged ones
+         (create mode only). A staged file has nothing to download yet, so its
+         card has no link, and its preview comes from a local object URL.
+         Staged cards are keyed by index, not by file content (RR-C6CXU1):
+         name+size+mtime collides for two copies of the same file, which is
+         reachable, since the picker is reset after each pick. -->
+    <RlAttachmentList v-if="files.length || staged.length" class="file-list">
+      <RlAttachmentCard
+        v-for="att in files"
+        :key="att.id"
+        class="file-item"
+        :attachment="persistedCard(att)"
+        :removable="canEdit"
+        :busy="busy"
+        @remove="doDelete(att)"
+      />
+      <RlAttachmentCard
+        v-for="(file, i) in staged"
+        :key="`staged-${i}`"
+        class="file-item file-item-staged"
+        :attachment="stagedCard(file, i)"
+        removable
+        @remove="unstageFileAt(i)"
+      />
+    </RlAttachmentList>
 
-    <!-- Staged (not yet uploaded) files — create mode only. Same markup as
-         the persisted list, but the name is plain text: there is nothing to
-         download yet, and the preview comes from a local object URL. -->
-    <ul v-if="staged.length" class="file-list file-list-staged">
-      <!-- Keyed by index, not by file content (RR-C6CXU1): name+size+mtime
-           collides for two copies of the same file, which is reachable — the
-           picker is reset after each pick so the same file can be chosen
-           twice. The list is small and only appended to or filtered. -->
-      <li v-for="(file, i) in staged" :key="i" class="file-item">
-        <img
-          v-if="stagedPreviewUrl(file)"
-          :src="stagedPreviewUrl(file)"
-          :alt="file.name"
-          class="file-preview"
-        />
-        <div class="file-meta">
-          <span class="file-name">{{ file.name }}</span>
-          <span class="file-size">{{ formatSize(file.size) }}</span>
-          <span class="file-staged-badge">Pending save</span>
-          <button type="button" class="file-remove" @click="unstageFileAt(i)">Remove</button>
-        </div>
-      </li>
-    </ul>
-
-    <span v-else-if="!files.length && mode !== 'edit'" class="file-empty">No file attached</span>
+    <span v-else-if="mode !== 'edit'" class="file-empty">No file attached</span>
 
     <!-- Add / replace control (edit mode, with room). -->
     <div
@@ -291,77 +296,6 @@ function onDrop(event: DragEvent) {
   gap: 8px;
 }
 
-.file-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.file-item {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.file-preview-link {
-  display: inline-block;
-  max-width: 320px;
-}
-
-.file-preview {
-  max-width: 320px;
-  max-height: 240px;
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
-  object-fit: contain;
-}
-
-.file-meta {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-}
-
-.file-name {
-  color: var(--accent-color, #6366f1);
-  text-decoration: none;
-  font-size: 14px;
-}
-
-.file-name:hover {
-  text-decoration: underline;
-}
-
-.file-size {
-  color: var(--text-muted, #6b7280);
-  font-size: 12px;
-}
-
-.file-remove {
-  margin-left: auto;
-  border: none;
-  background: none;
-  color: var(--error-color, #ef4444);
-  font-size: 13px;
-  cursor: pointer;
-}
-
-.file-remove:disabled {
-  cursor: not-allowed;
-  opacity: 0.5;
-}
-
-/* A staged file is not yet persisted; the badge says so without relying on
-   colour alone. */
-.file-staged-badge {
-  font-size: var(--font-size-sm, 12px);
-  color: var(--text-muted, #6b7280);
-  font-style: italic;
-}
-
 .file-empty {
   color: var(--text-muted, #6b7280);
   font-size: 14px;
@@ -379,15 +313,15 @@ function onDrop(event: DragEvent) {
   align-items: center;
   gap: 12px;
   padding: 10px 12px;
-  border: 1px dashed var(--border-color);
+  border: 1px dashed var(--rl-color-border);
   border-radius: 6px;
-  background: var(--input-bg);
+  background: var(--rl-color-bg-raised);
 }
 
 /* A surface tint, not a focus ring — stays translucent (see ConflictsView). */
 .file-dropzone.is-dragover {
-  border-color: var(--accent-color, #6366f1);
-  background: color-mix(in srgb, var(--accent-color) 6%, transparent);
+  border-color: var(--rl-color-accent, #6366f1);
+  background: color-mix(in srgb, var(--rl-color-accent) 6%, transparent);
 }
 
 .file-dropzone.is-busy {
@@ -406,7 +340,7 @@ function onDrop(event: DragEvent) {
 }
 
 .file-pick span {
-  color: var(--accent-color, #6366f1);
+  color: var(--rl-color-accent, #6366f1);
   font-size: 14px;
 }
 
@@ -424,19 +358,19 @@ function onDrop(event: DragEvent) {
 .file-progress {
   height: 4px;
   border-radius: 2px;
-  background: var(--hover-bg, #e5e7eb);
+  background: var(--rl-color-bg-hover, #e5e7eb);
   overflow: hidden;
 }
 
 .file-progress-bar {
   height: 100%;
-  background: var(--accent-color, #6366f1);
+  background: var(--rl-color-accent, #6366f1);
   transition: width 0.1s linear;
 }
 
 .file-error {
   margin: 0;
-  color: var(--error-color, #ef4444);
+  color: var(--rl-color-danger, #ef4444);
   font-size: 12px;
 }
 </style>

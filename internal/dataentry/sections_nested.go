@@ -322,7 +322,7 @@ func (h *viewsHandler) buildSectionRow(
 ) SectionRowData {
 	eDef, _ := s.Meta.GetEntityDef(e.Type)
 	row := SectionRowData{
-		EntityID: e.ID, EntityType: e.Type, EditFormID: h.editFormForType(e.Type),
+		EntityID: e.ID, EntityType: e.Type, EditFormID: editFormForType(h.schema().Cfg, e.Type),
 		Self: rowSelfHref(s.Meta, e),
 	}
 	for ci, col := range columns {

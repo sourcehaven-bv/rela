@@ -6,6 +6,8 @@ import { isCancelledFetch } from '@/composables/usePageData'
 import type { SidePanelSection, SidePanelEntity, SidePanelAddTarget } from '@/types'
 import { buildCreateLinkQuery } from '@/utils/createLink'
 import Badge from '@/components/common/Badge.vue'
+import RlAddButton from 'rela-components/components/common/RlAddButton.vue'
+import RlStatusRegion from 'rela-components/components/feedback/RlStatusRegion.vue'
 
 const props = defineProps<{
   formId: string
@@ -94,13 +96,9 @@ onMounted(() => loadSidePanel())
 
 <template>
   <aside v-if="hasSections || loading" class="side-panel">
-    <div v-if="loading" class="loading-state">
-      <div class="spinner"/>
-    </div>
+    <RlStatusRegion v-if="loading" size="sm">Loading side panel…</RlStatusRegion>
 
-    <div v-else-if="error" class="error-state">
-      {{ error }}
-    </div>
+    <RlStatusRegion v-else-if="error" tone="error" size="sm">{{ error }}</RlStatusRegion>
 
     <template v-else>
       <div
@@ -187,24 +185,28 @@ onMounted(() => loadSidePanel())
 
           <!-- Add button -->
           <div v-if="section.addInfo?.targets?.length" class="section-actions">
+            <!--
+              `btn-add`, kept as a class, is what SidePanel.test.ts reaches for
+              to tell this apart from the section HEADER button, which contains
+              the same label text.
+            -->
             <template v-if="section.addInfo.targets.length === 1">
-              <button
+              <RlAddButton
                 class="btn-add"
+                block
+                :label="section.addInfo.targets[0].label"
                 @click="createNewForSection(section, section.addInfo.targets[0])"
-              >
-                + {{ section.addInfo.targets[0].label }}
-              </button>
+              />
             </template>
             <template v-else>
-              <div class="btn-group">
-                <button
+              <div class="add-target-row">
+                <RlAddButton
                   v-for="target in section.addInfo.targets"
                   :key="target.entityType"
                   class="btn-add btn-add-sm"
+                  :label="target.label"
                   @click="createNewForSection(section, target)"
-                >
-                  + {{ target.label }}
-                </button>
+                />
               </div>
             </template>
           </div>
@@ -218,37 +220,16 @@ onMounted(() => loadSidePanel())
 .side-panel {
   width: 280px;
   min-width: 280px;
-  background: var(--bg-color);
+  background: var(--rl-color-bg);
   padding: 16px;
   overflow-y: auto;
   max-height: calc(100vh - 64px);
 }
 
-.loading-state {
-  display: flex;
-  justify-content: center;
-  padding: 24px;
-}
-
-.spinner {
-  width: 24px;
-  height: 24px;
-  border: 2px solid var(--border-color);
-  border-top-color: var(--accent-color);
-  border-radius: var(--radius-circle);
-  animation: spin 1s linear infinite;
-}
-
-.error-state {
-  padding: 16px;
-  color: var(--error-color, #ef4444);
-  font-size: var(--font-size-base);
-}
-
 .panel-section {
   margin-bottom: 16px;
-  background: var(--card-bg);
-  border: 1px solid var(--border-color);
+  background: var(--rl-color-bg-raised);
+  border: 1px solid var(--rl-color-border);
   border-radius: var(--radius-lg);
   overflow: hidden;
 }
@@ -264,18 +245,18 @@ onMounted(() => loadSidePanel())
   cursor: pointer;
   font-size: var(--font-size-base);
   font-weight: 600;
-  color: var(--text-color);
+  color: var(--rl-color-text);
   text-align: left;
   transition: background 0.15s;
 }
 
 .section-header:hover {
-  background: var(--hover-bg);
+  background: var(--rl-color-bg-hover);
 }
 
 .collapse-icon {
   font-size: 16px;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
 }
 
 .section-content {
@@ -284,7 +265,7 @@ onMounted(() => loadSidePanel())
 
 .empty-state {
   font-size: var(--font-size-dense);
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   font-style: italic;
 }
 
@@ -335,8 +316,8 @@ onMounted(() => loadSidePanel())
 .entity-card {
   display: block;
   padding: 12px;
-  background: var(--hover-bg);
-  border: 1px solid var(--border-color);
+  background: var(--rl-color-bg-hover);
+  border: 1px solid var(--rl-color-border);
   border-radius: var(--radius-md);
   cursor: pointer;
   transition: all 0.15s;
@@ -345,7 +326,7 @@ onMounted(() => loadSidePanel())
 }
 
 .entity-card:hover {
-  border-color: var(--accent-color);
+  border-color: var(--rl-color-accent);
   filter: brightness(0.95);
 }
 
@@ -356,13 +337,13 @@ onMounted(() => loadSidePanel())
 .card-id {
   font-size: var(--font-size-xs);
   font-family: monospace;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
 }
 
 .card-title {
   font-size: var(--font-size-base);
   font-weight: 500;
-  color: var(--text-color);
+  color: var(--rl-color-text);
   margin-bottom: 8px;
 }
 
@@ -380,39 +361,25 @@ onMounted(() => loadSidePanel())
 }
 
 .field-label {
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
 }
 
 .field-value {
-  color: var(--text-color);
+  color: var(--rl-color-text);
 }
 
 /* Section actions */
 .section-actions {
   margin-top: 12px;
   padding-top: 12px;
-  border-top: 1px solid var(--border-color);
+  border-top: 1px solid var(--rl-color-border);
 }
 
-.btn-add {
-  width: 100%;
-  padding: 8px 12px;
-  background: var(--hover-bg);
-  border: 1px dashed var(--border-color);
-  border-radius: var(--radius-md);
-  color: var(--muted-text);
-  font-size: var(--font-size-dense);
-  cursor: pointer;
-  transition: all 0.15s;
-}
-
-.btn-add:hover {
-  background: var(--card-bg);
-  border-color: var(--accent-color);
-  color: var(--accent-color);
-}
-
-.btn-group {
+/*
+ * RlAddButton draws the control; what is left is how several of them share a
+ * row when a section can add more than one target type.
+ */
+.add-target-row {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-sm);

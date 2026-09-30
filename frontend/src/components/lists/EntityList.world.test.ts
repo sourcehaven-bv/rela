@@ -4,6 +4,7 @@ import type { VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { PiniaColada } from '@pinia/colada'
 import EntityList from './EntityList.vue'
+import { withPageHeader } from '@/composables/pageHeaderTestHost'
 import { useSchemaStore } from '@/stores/schema'
 import { _setEntityPluralForTest } from '@/api/entities'
 import type { Entity, ListResponse } from '@/types'
@@ -29,7 +30,7 @@ vi.mock('@/api', async (orig) => ({
   deleteEntity: (...args: unknown[]) => deleteEntityMock(...args),
 }))
 // The confirm dialog is a host-bound singleton (App.vue); here it answers
-// yes, so the delete test reaches the write it is about.
+// yes, so a confirmed bulk action reaches its write.
 vi.mock('@/composables/useConfirm', () => ({
   useConfirm: () => ({ confirm: async () => true }),
 }))
@@ -133,7 +134,10 @@ describe('EntityList world binding', () => {
   async function mountList(opts: { relationColumn?: boolean; faces?: boolean } = {}) {
     seedSchema(opts)
     seedEntities([policy])
-    const wrapper = mount(EntityList, {
+    // Mounted with its hoisted header, which the app shell paints above the
+    // list. Without the host the header's search box renders nowhere and the
+    // assertions below would read as "search is hidden".
+    const wrapper = mount(withPageHeader(EntityList), {
       props: { listId },
       attachTo: document.body,
       global: { plugins: [pinia, PiniaColada] },
@@ -156,6 +160,37 @@ describe('EntityList world binding', () => {
     expect(listEntitiesMock).toHaveBeenCalled()
     expect(wrapper.text()).toContain('Access Control Policy')
   }
+
+  describe('face column', () => {
+    it('shows the label of the face each row was served in', async () => {
+      seedSchema({ faces: true })
+      const schemaStore = useSchemaStore()
+      schemaStore.lists.set(listId, {
+        ...schemaStore.lists.get(listId),
+        columns: [{ property: 'title', label: 'Title' }, { face: true, label: 'Status' }],
+      } as never)
+      schemaStore.entityTypes.set(entityType, {
+        ...schemaStore.entityTypes.get(entityType),
+        faces: { draft: { label: 'Concept' }, published: { label: 'Vastgesteld' } },
+      } as never)
+      seedEntities([
+        { ...policy, _world: { name: 'actueel', face: 'published', via: 'select', chain_position: 0 } },
+        { ...policy, id: 'POL-2', _world: { name: 'actueel', face: 'draft', via: 'select', chain_position: 1 } },
+      ] as never)
+      const wrapper = mount(withPageHeader(EntityList), {
+        props: { listId },
+        attachTo: document.body,
+        global: { plugins: [pinia, PiniaColada] },
+      })
+      mounted.push(wrapper)
+      await flushPromises()
+
+      expect(wrapper.text()).toContain('Status')
+      const cells = wrapper.findAll('.list-cell').map((c) => c.text())
+      expect(cells).toContain('Vastgesteld')
+      expect(cells).toContain('Concept')
+    })
+  })
 
   describe('default world', () => {
     it('sends no world param and offers search', async () => {
@@ -524,7 +559,7 @@ describe('EntityList world binding', () => {
       })
       await flushPromises()
 
-      const link = wrapper.find('a.row-link')
+      const link = wrapper.find('.rl-table-row__primary a')
       expect(link.exists()).toBe(true)
       expect(link.attributes('href')).toContain('/entity/')
       expect(link.attributes('href')).toContain('world=editorial')
@@ -541,7 +576,7 @@ describe('EntityList world binding', () => {
       })
       await flushPromises()
 
-      const link = wrapper.find('a.row-link')
+      const link = wrapper.find('.rl-table-row__primary a')
       expect(link.exists()).toBe(true)
       expect(link.attributes('href')).toContain('/entity/')
       expect(link.attributes('href')).not.toContain('world=')
@@ -550,7 +585,7 @@ describe('EntityList world binding', () => {
 
   // BUG-Y0GNSB follow-up (point 4): EntityList's write affordances were
   // world-blind. `canCreate` had a world term but `canDelete`/`canUpdate` did
-  // not, so a world-bound list still offered row delete, the Delete/Backspace
+  // not, so a world-bound list still offered delete, the Delete/Backspace
   // shortcut, and the bulk-action bar.
   //
   // Why that mattered enough to guard client-side: a bare write carries no
@@ -606,50 +641,55 @@ describe('EntityList world binding', () => {
       return wrapper
     }
 
-    it('offers delete and the action bar under the DEFAULT world', async () => {
+    // The action bar only renders once a row is SELECTED (`v-if=hasSelection`),
+    // so the assertion has to select first.
+    async function selectFirstRow(wrapper: VueWrapper) {
+      const box = wrapper.find('.rl-table-row__check input[type="checkbox"]')
+      expect(box.exists()).toBe(true)
+      await box.setValue(true)
+      await flushPromises()
+    }
+
+    // Delete sits in the bulk bar, so each case selects the row first.
+    it('offers Delete under the DEFAULT world', async () => {
       const wrapper = await mountWith({})
       rendersProof(wrapper)
-      expect(wrapper.find('.delete-btn').exists()).toBe(true)
+      await selectFirstRow(wrapper)
+      expect(wrapper.find('[data-testid="bulk-delete"]').exists()).toBe(true)
     })
 
-    it('keeps the row delete button under a world when _actions permits it', async () => {
+    it('keeps Delete under a world when _actions permits it', async () => {
       const wrapper = await mountWith({ world: 'published' })
       rendersProof(wrapper)
-      expect(wrapper.find('.delete-btn').exists()).toBe(true)
+      await selectFirstRow(wrapper)
+      expect(wrapper.find('[data-testid="bulk-delete"]').exists()).toBe(true)
     })
 
-    it('withdraws the row delete button when the served face is not deletable', async () => {
+    it('withdraws Delete when the served face is not deletable', async () => {
       // Same fixture, the server's verdict flipped: the difference is the
-      // verdict and nothing else.
+      // verdict and nothing else. The row stays selectable for the action.
       const wrapper = await mountWith({ world: 'published' }, [
         { ...deletable, _actions: { update: true, delete: false } },
       ])
       rendersProof(wrapper)
-      expect(wrapper.find('.delete-btn').exists()).toBe(false)
+      await selectFirstRow(wrapper)
+      expect(wrapper.find('[data-testid="bulk-delete"]').exists()).toBe(false)
     })
 
     it('deletes by the row\'s ADDRESS, face included', async () => {
       deleteEntityMock.mockReset().mockResolvedValue(undefined)
       const wrapper = await mountWith({ world: 'published' })
       rendersProof(wrapper)
-      await wrapper.find('.delete-btn').trigger('click')
+      await selectFirstRow(wrapper)
+      await wrapper.find('[data-testid="bulk-delete"]').trigger('click')
       await flushPromises()
       expect(deleteEntityMock).toHaveBeenCalledWith(entityType, 'POL-1@published')
     })
 
-    // The action bar only renders once a row is SELECTED (`v-if=hasSelection`),
-    // so the assertion has to select first.
-    async function selectFirstRow(wrapper: VueWrapper) {
-      const box = wrapper.find('.select-cell input[type="checkbox"]')
-      expect(box.exists()).toBe(true)
-      await box.setValue(true)
-      await flushPromises()
-    }
-
     it('shows the bulk-action bar under the DEFAULT world', async () => {
       const wrapper = await mountWith({})
       await selectFirstRow(wrapper)
-      const buttons = wrapper.findAll('.action-header-btn')
+      const buttons = wrapper.findAll('[data-testid="bulk-action"]')
       expect(buttons.length).toBeGreaterThan(0)
       expect((buttons[0].element as HTMLElement).style.display).not.toBe('none')
     })
@@ -657,7 +697,7 @@ describe('EntityList world binding', () => {
     it('keeps the bulk-action bar under a world when _actions permits it', async () => {
       const wrapper = await mountWith({ world: 'published' })
       await selectFirstRow(wrapper)
-      const buttons = wrapper.findAll('.action-header-btn')
+      const buttons = wrapper.findAll('[data-testid="bulk-action"]')
       expect(buttons.length).toBeGreaterThan(0)
       expect((buttons[0].element as HTMLElement).style.display).not.toBe('none')
     })
@@ -667,7 +707,7 @@ describe('EntityList world binding', () => {
         { ...deletable, _actions: { update: false, delete: true } },
       ])
       await selectFirstRow(wrapper)
-      const buttons = wrapper.findAll('.action-header-btn')
+      const buttons = wrapper.findAll('[data-testid="bulk-action"]')
       expect(buttons.length).toBeGreaterThan(0)
       for (const b of buttons) {
         expect((b.element as HTMLElement).style.display).toBe('none')

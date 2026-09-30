@@ -2,7 +2,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { PiniaColada } from '@pinia/colada'
+import { defineComponent, h } from 'vue'
 import KanbanView from './KanbanView.vue'
+import { usePageHeaderOutlet } from '@/composables/usePageHeader'
 import { useSchemaStore } from '@/stores/schema'
 import { _setEntityPluralForTest } from '@/api/entities'
 import type { Entity, EntityWorld, ListResponse } from '@/types'
@@ -14,6 +16,13 @@ import type { Entity, EntityWorld, ListResponse } from '@/types'
 // gesture failed only AFTER the card had visibly moved.
 
 const listAllEntitiesMock = vi.fn()
+
+// The header is painted by the app shell, so the view's actions are read off
+// the page-header outlet rather than the view's own DOM.
+function headerActions() {
+  const actions = usePageHeaderOutlet().content.value?.actions
+  return mount(defineComponent({ render: () => h('div', actions?.()) }))
+}
 vi.mock('@/api', async (orig) => ({
   ...(await orig<typeof import('@/api')>()),
   listAllEntities: (...args: unknown[]) => listAllEntitiesMock(...args),
@@ -187,7 +196,7 @@ describe('KanbanView write affordances under a world', () => {
   it('keeps cards draggable under a world when _actions permits it', async () => {
     mockRoute.query = { world: 'site-nl' }
     const wrapper = await mountBoard([card('PRC-1', 'Herstellen vanaf back-up')])
-    expect(wrapper.find('.kanban-card').attributes('draggable')).toBe('true')
+    expect(wrapper.find('.rl-board-card').classes()).toContain('rl-board-card--draggable')
   })
 
   it('refuses the drag for a card whose served face is not writable', async () => {
@@ -198,18 +207,22 @@ describe('KanbanView write affordances under a world', () => {
     const c = card('PRC-1', 'Herstellen vanaf back-up')
     c._actions = { update: false, create: true }
     const wrapper = await mountBoard([c])
-    expect(wrapper.find('.kanban-card').attributes('draggable')).toBe('false')
+    expect(wrapper.find('.rl-board-card').classes()).not.toContain('rl-board-card--draggable')
   })
 
+  // The button's `+` is now a real icon rather than a literal character, so
+  // these assert the affordance is offered rather than the glyph it draws
+  // with. The header's actions slot holds it; a withdrawn create leaves it
+  // empty.
   it('keeps the create button under a world when _actions permits it', async () => {
     mockRoute.query = { world: 'site-nl' }
-    const wrapper = await mountBoard([card('PRC-1', 'Herstellen vanaf back-up')])
-    expect(wrapper.text()).toContain('+ New')
+    await mountBoard([card('PRC-1', 'Herstellen vanaf back-up')])
+    expect(headerActions().text()).toContain('New')
   })
 
   it('shows the create button in the default world', async () => {
-    const wrapper = await mountBoard([card('PRC-1', 'Restore from backup')])
-    expect(wrapper.text()).toContain('+ New')
+    await mountBoard([card('PRC-1', 'Restore from backup')])
+    expect(headerActions().text()).toContain('New')
   })
 
   // A card with `edit_form` opens the form on the card's ADDRESS, so an edit

@@ -1,0 +1,355 @@
+/**
+ * The editing surface.
+ *
+ * Unscoped on purpose: ProseMirror builds the document DOM itself, so a
+ * scoped stylesheet's attribute would never reach it. Every rule is therefore
+ * nested under `.rl-markdown-editor`, which is the one class this file may
+ * match at the top level.
+ *
+ * The prose rules (headings, lists, tables, quotes, code) are here because the
+ * editor has to look like the document it is editing. An app that already owns
+ * a stylesheet for rendered markdown should pass its marker class through the
+ * editor's `contentClass` prop and let that sheet win instead: two sets of
+ * prose rules over the same markup is exactly the drift worth avoiding.
+ */
+
+.rl-markdown-editor {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--rl-color-border);
+  border-radius: var(--rl-radius-md);
+  background: var(--rl-color-bg);
+  color: var(--rl-color-text);
+  font-family: var(--rl-font-family);
+  transition: border-color var(--rl-duration-fast) var(--rl-ease);
+}
+
+.rl-markdown-editor:focus-within {
+  border-color: var(--rl-color-focus);
+}
+
+.rl-markdown-editor__body {
+  position: relative;
+  /* The gutter the block handle sits in, so it lands beside the text rather
+     than on top of the first characters. */
+  padding-left: var(--rl-space-6);
+}
+
+.rl-markdown-editor .ProseMirror {
+  min-height: 220px;
+  padding: var(--rl-space-4) var(--rl-space-4) var(--rl-space-4) 0;
+  outline: none;
+  line-height: var(--rl-line-height-relaxed);
+}
+
+/* A trailing empty paragraph must keep its height, or the click target for
+   "start typing below the table" collapses to nothing. */
+.rl-markdown-editor .ProseMirror p:empty::after {
+  content: '';
+  display: inline-block;
+}
+
+.rl-markdown-editor .ProseMirror > :first-child {
+  margin-top: 0;
+}
+
+.rl-markdown-editor .ProseMirror > :last-child {
+  margin-bottom: 0;
+}
+
+/* ── Prose ───────────────────────────────────────────────────────────────── */
+
+.rl-markdown-editor .ProseMirror p {
+  margin: 0 0 var(--rl-space-3);
+}
+
+.rl-markdown-editor .ProseMirror h1,
+.rl-markdown-editor .ProseMirror h2,
+.rl-markdown-editor .ProseMirror h3,
+.rl-markdown-editor .ProseMirror h4,
+.rl-markdown-editor .ProseMirror h5,
+.rl-markdown-editor .ProseMirror h6 {
+  margin: var(--rl-space-5) 0 var(--rl-space-2);
+  font-weight: var(--rl-font-weight-semibold);
+  line-height: var(--rl-line-height-tight);
+}
+
+.rl-markdown-editor .ProseMirror h1 { font-size: var(--rl-font-size-2xl); }
+.rl-markdown-editor .ProseMirror h2 { font-size: var(--rl-font-size-xl); }
+.rl-markdown-editor .ProseMirror h3 { font-size: var(--rl-font-size-lg); }
+.rl-markdown-editor .ProseMirror h4,
+.rl-markdown-editor .ProseMirror h5,
+.rl-markdown-editor .ProseMirror h6 { font-size: var(--rl-font-size-md); }
+
+.rl-markdown-editor .ProseMirror ul,
+.rl-markdown-editor .ProseMirror ol {
+  margin: 0 0 var(--rl-space-3);
+  padding-left: var(--rl-space-5);
+}
+
+.rl-markdown-editor .ProseMirror li > p {
+  margin: 0;
+}
+
+/*
+ * An indent and a large opening quote mark in the gutter. Not a sunken fill:
+ * code blocks already have one, and a quote would read as code.
+ */
+.rl-markdown-editor .ProseMirror blockquote {
+  position: relative;
+  margin: 0 0 var(--rl-space-3);
+  padding-left: var(--rl-space-5);
+  color: var(--rl-color-text-muted);
+}
+
+.rl-markdown-editor .ProseMirror blockquote::before {
+  /* Empty alt text: the mark is decoration, and the element is already
+     announced as a quote. The first declaration is for engines without it. */
+  content: '\201C';
+  content: '\201C' / '';
+  position: absolute;
+  top: -0.05em;
+  left: 0;
+  color: var(--rl-color-text-subtle);
+  /* A serif mark: in most UI sans faces it is two near-straight ticks. */
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 2.4em;
+  line-height: 1;
+}
+
+.rl-markdown-editor .ProseMirror code {
+  padding: 1px 4px;
+  border-radius: var(--rl-radius-sm);
+  background: var(--rl-color-bg-sunken);
+  font-family: var(--rl-font-family-mono);
+  font-size: 0.9em;
+}
+
+.rl-markdown-editor .ProseMirror pre {
+  margin: 0 0 var(--rl-space-3);
+  padding: var(--rl-space-3);
+  overflow-x: auto;
+  border-radius: var(--rl-radius-md);
+  background: var(--rl-color-bg-sunken);
+}
+
+/* The fence already carries the block's background, so the span inside it
+   must not paint a second one. */
+.rl-markdown-editor .ProseMirror pre code {
+  padding: 0;
+  background: transparent;
+}
+
+.rl-markdown-editor .ProseMirror hr {
+  margin: var(--rl-space-4) 0;
+  border: none;
+  border-top: 1px solid var(--rl-color-border);
+}
+
+.rl-markdown-editor .ProseMirror a {
+  color: var(--rl-color-accent);
+}
+
+.rl-markdown-editor .ProseMirror table {
+  width: 100%;
+  margin: 0 0 var(--rl-space-3);
+  border-collapse: collapse;
+  /* ProseMirror's table plugin writes explicit column widths, which only take
+     effect under a fixed layout. */
+  table-layout: fixed;
+}
+
+.rl-markdown-editor .ProseMirror th,
+.rl-markdown-editor .ProseMirror td {
+  padding: var(--rl-space-1) var(--rl-space-2);
+  border: 1px solid var(--rl-color-border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.rl-markdown-editor .ProseMirror th {
+  background: var(--rl-color-bg-sunken);
+  font-weight: var(--rl-font-weight-semibold);
+}
+
+/* ── Interactive tables ──────────────────────────────────────────────────── */
+
+/* ProseMirror adds column resize handles and a selected-cell overlay that a
+   read-only rendering never shows. */
+.rl-markdown-editor .ProseMirror .selectedCell {
+  position: relative;
+}
+
+.rl-markdown-editor .ProseMirror .selectedCell::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--rl-color-accent) 18%, transparent);
+  pointer-events: none;
+}
+
+.rl-markdown-editor .ProseMirror .column-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -2px;
+  bottom: 0;
+  width: 4px;
+  background: var(--rl-color-accent);
+  pointer-events: none;
+}
+
+/* The gap cursor, shown when the caret sits between two block nodes. The
+   plugin ships a hardcoded black rule that is invisible in dark mode. */
+.rl-markdown-editor .ProseMirror-gapcursor::after {
+  border-top-color: var(--rl-color-text);
+}
+
+/* ── Task lists ──────────────────────────────────────────────────────────── */
+
+/* The checkbox comes from the node view in `taskListItem.ts`, which injects a
+   real input. These rules lay the row out around it.
+
+   No `[data-checked='true']` styling: a completed item is not dimmed or
+   struck through, because a rendered view of the same markdown would not do
+   that either. */
+/* `list-style: none` alone, with no negative margin: the item keeps the same
+   content box as a bullet sibling, so a mixed list stays on one left edge and
+   the checkbox takes the place the marker would have used. */
+.rl-markdown-editor .ProseMirror li[data-item-type='task'] {
+  list-style: none;
+}
+
+.rl-markdown-editor .ProseMirror li[data-item-type='task'] > input {
+  margin-right: var(--rl-space-1);
+  vertical-align: top;
+}
+
+.rl-markdown-editor .ProseMirror li[data-item-type='task'] > div {
+  /* Without this the wrapper is a full-width block and the text lands UNDER
+     the checkbox, reading as an empty task above a stray paragraph. */
+  display: inline-block;
+  vertical-align: top;
+  /* Fill the rest of the row so a wrapped second line stays aligned with the
+     first rather than running back beneath the box. */
+  width: calc(100% - 22px);
+}
+
+.rl-markdown-editor .ProseMirror li[data-item-type='task'] > div > p {
+  margin: 0;
+}
+
+/* ── Placeholder ─────────────────────────────────────────────────────────── */
+
+/* A real element rather than a `::before` fed by `attr()`: the text would have
+   to reach the pseudo-element through an inline `style`, which a strict
+   `style-src` content security policy blocks outright.
+
+   Being a real element is also what makes the alignment fiddly. It is a
+   sibling of `.ProseMirror`, not a descendant, so it inherits none of the
+   typography the empty paragraph it stands in for gets. It has to restate the
+   line-height, or its shorter line box puts the placeholder text above the
+   caret sitting beside it. `top` and `left` match the padding that block
+   carries for the same reason: this is one paragraph drawn twice, and the two
+   copies have to agree. */
+.rl-markdown-editor__placeholder {
+  position: absolute;
+  top: var(--rl-space-4);
+  left: 0;
+  line-height: var(--rl-line-height-relaxed);
+  color: var(--rl-color-text-subtle);
+  pointer-events: none;
+}
+
+/* ── Block drag handle ───────────────────────────────────────────────────── */
+
+/* Positioned by BlockProvider against the hovered block. Hidden until then, so
+   the gutter stays quiet while the user reads. */
+.rl-markdown-editor__block-handle {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: var(--rl-z-sticky-raised);
+  display: flex;
+  align-items: center;
+}
+
+.rl-markdown-editor__block-handle[data-show='false'] {
+  display: none;
+}
+
+.rl-markdown-editor__grip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 22px;
+  border-radius: var(--rl-radius-sm);
+  color: var(--rl-color-text-subtle);
+  cursor: grab;
+  opacity: 0.55;
+  transition:
+    background var(--rl-duration-fast) var(--rl-ease),
+    opacity var(--rl-duration-fast) var(--rl-ease);
+}
+
+.rl-markdown-editor__grip:hover {
+  background: var(--rl-color-bg-hover);
+  opacity: 1;
+}
+
+.rl-markdown-editor__grip:active {
+  cursor: grabbing;
+}
+
+/* ── Overlay anchor ──────────────────────────────────────────────────────── */
+
+/* What a Milkdown SlashProvider positions. Floating UI writes `left`/`top`
+   here, so this is what must be absolutely positioned — styling the menu
+   inside it instead leaves the coordinates on a static wrapper, and the menu
+   renders in normal flow at the bottom of the editor rather than at the
+   cursor. */
+/* On the menu layer, because what this anchors IS a menu — a slash command list
+   or a mention picker at the cursor. It was an arbitrary 10000 before, which
+   outranked every token on the ladder including the toast layer. */
+.rl-markdown-editor__overlay-anchor {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: var(--rl-z-menu);
+}
+
+.rl-markdown-editor__overlay-anchor[data-show='false'] {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rl-markdown-editor,
+  .rl-markdown-editor__grip {
+    transition: none;
+  }
+}
+
+/*
+ * Read-only: the document and nothing else. The box, the min-height and the
+ * caret all belong to a field being filled in, so rendered markdown shown as
+ * prose drops them and sits in the page like the text it is.
+ */
+.rl-markdown-editor--readonly {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+}
+
+.rl-markdown-editor--readonly:focus-within { border-color: transparent; }
+
+.rl-markdown-editor--readonly .rl-markdown-editor__content {
+  min-height: 0;
+  padding: 0;
+  cursor: inherit;
+}
+
+.rl-markdown-editor--readonly .rl-markdown-editor__content:focus,
+.rl-markdown-editor--readonly .rl-markdown-editor__content:focus-visible {
+  outline: none;
+}

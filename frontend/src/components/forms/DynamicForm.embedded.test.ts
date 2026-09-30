@@ -95,6 +95,7 @@ async function mountCreate(
     embeddedLink?: { relation: string; peer: string; linkAs: 'from' | 'to' }
     embeddedTemplate?: string
     embeddedWorld?: string
+    embeddedAddAnother?: boolean
   } = {}
 ) {
   const schema = useSchemaStore()
@@ -137,6 +138,29 @@ describe('DynamicForm — embedded mode', () => {
     await flushPromises()
 
     expect(wrapper.emitted('inline-created')?.[0]?.[0]).toEqual(CREATED)
+    expect(push).not.toHaveBeenCalled()
+  })
+
+  it('hides "Create & add another" unless the host opts in', async () => {
+    // A relation field links exactly one entity, so it must not offer more.
+    const { wrapper: plain } = await mountCreate({ embedded: true })
+    expect(plain.text()).not.toContain('add another')
+
+    const { wrapper } = await mountCreate({ embedded: true, embeddedAddAnother: true })
+    expect(wrapper.text()).toContain('Create & add another')
+  })
+
+  it('"Create & add another" in a dialog reports the entity and stays open', async () => {
+    const { wrapper, create } = await mountCreate({ embedded: true, embeddedAddAnother: true })
+
+    const again = wrapper.findAll('button').find((b) => b.text().includes('add another'))!
+    await again.trigger('click')
+    await flushPromises()
+
+    expect(create).toHaveBeenCalledTimes(1)
+    expect(wrapper.emitted('inline-created-another')?.[0]?.[0]).toEqual(CREATED)
+    // Not the close-the-dialog event, and no navigation.
+    expect(wrapper.emitted('inline-created')).toBeUndefined()
     expect(push).not.toHaveBeenCalled()
   })
 

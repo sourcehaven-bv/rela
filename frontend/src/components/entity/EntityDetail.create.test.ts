@@ -123,18 +123,18 @@ describe('EntityDetail create affordance', () => {
 
   it('renders the button only for a section the server opted in', async () => {
     const withCreate = await mountDetail(viewWithCreateSection(createAffordance()))
-    expect(withCreate.find('button.btn-section-create').exists()).toBe(true)
+    expect(withCreate.find('.section-create button').exists()).toBe(true)
 
     // The paired positive/negative: same mount shape, affordance absent.
     const without = await mountDetail(viewWithCreateSection(undefined))
     expect(without.find('.view-section').exists()).toBe(true) // did render
-    expect(without.find('button.btn-section-create').exists()).toBe(false)
+    expect(without.find('.section-create button').exists()).toBe(false)
   })
 
   it('opens the modal with the pre-link as a PROP, not a navigation', async () => {
     const wrapper = await mountDetail(viewWithCreateSection(createAffordance()))
 
-    await wrapper.find('button.btn-section-create').trigger('click')
+    await wrapper.find('.section-create button').trigger('click')
     await flushPromises()
 
     const modal = wrapper.findComponent(modalStub)
@@ -154,7 +154,7 @@ describe('EntityDetail create affordance', () => {
     // "help" with, producing a duplicate edge and a false failure toast.
     const wrapper = await mountDetail(viewWithCreateSection(createAffordance()))
 
-    await wrapper.find('button.btn-section-create').trigger('click')
+    await wrapper.find('.section-create button').trigger('click')
     await flushPromises()
 
     const created: Entity = { id: 'TKT-009', type: 'ticket', properties: {} }
@@ -174,7 +174,7 @@ describe('EntityDetail create affordance', () => {
     const wrapper = await mountDetail(viewWithCreateSection(createAffordance()))
     const before = fetchViewMock.mock.calls.length
 
-    await wrapper.find('button.btn-section-create').trigger('click')
+    await wrapper.find('.section-create button').trigger('click')
     await flushPromises()
     wrapper.findComponent(modalStub).vm.$emit('created', {
       id: 'TKT-010',

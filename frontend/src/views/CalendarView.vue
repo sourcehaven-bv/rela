@@ -28,6 +28,7 @@ import { actionAllowed } from '@/utils/affordancesWarning'
 import { entityRef } from '@/utils/entityRef'
 import { useWorld } from '@/composables/useWorld'
 import { renderMarkdown } from '@/utils/markdown'
+import RlStatusRegion from 'rela-components/components/feedback/RlStatusRegion.vue'
 import { buildFilterKey, parseWhereClause } from '@/utils/filters'
 import { viewHeaderMarkdown, viewFooterMarkdown } from '@/types/config'
 import type { CalendarConfig, CalendarSourceConfig } from '@/types/config'
@@ -53,6 +54,9 @@ import {
   type CalendarDay,
   type CalendarView as ViewKind,
 } from '@/utils/calendarGrid'
+import RlButton from 'rela-components/components/common/RlButton.vue'
+import RlIconButton from 'rela-components/components/common/RlIconButton.vue'
+import RlSegmentedControl from 'rela-components/components/data/RlSegmentedControl.vue'
 
 const props = defineProps<{ id: string }>()
 
@@ -74,6 +78,21 @@ const view = computed<ViewKind>({
   },
   set: (v) => {
     void router.replace({ query: { ...router.currentRoute.value.query, view: v } })
+  },
+})
+
+// RlSegmentedControl is string-typed, so this narrows on the way back in
+// rather than letting an arbitrary string reach the URL. `view`'s getter
+// already validates what it reads, so a bad value could only round-trip as
+// the default -- but it would still be written to the query string.
+const viewOptions = [
+  { value: 'month', label: 'Month' },
+  { value: 'week', label: 'Week' },
+]
+const viewChoice = computed<string>({
+  get: () => view.value,
+  set: (v) => {
+    if (v === 'month' || v === 'week') view.value = v
   },
 })
 
@@ -572,17 +591,22 @@ function onDragEnd() {
         <h1>{{ config?.title || props.id }}</h1>
       </div>
       <div class="header-actions">
-        <button v-if="config?.create_form && canCreate()" class="btn btn-primary" @click="createNew">
-          + New
-        </button>
+        <RlButton
+          v-if="config?.create_form && canCreate()"
+          variant="primary"
+          icon="plus"
+          @click="createNew"
+        >
+          New
+        </RlButton>
       </div>
     </header>
 
     <div class="calendar-toolbar">
       <div class="calendar-nav">
-        <button class="btn" aria-label="Previous period" @click="go(-1)">‹</button>
-        <button class="btn" @click="goToday">Today</button>
-        <button class="btn" aria-label="Next period" @click="go(1)">›</button>
+        <RlIconButton icon="chevron-left" label="Previous period" @click="go(-1)" />
+        <RlButton variant="secondary" @click="goToday">Today</RlButton>
+        <RlIconButton icon="chevron-right" label="Next period" @click="go(1)" />
         <span class="calendar-period">{{ periodLabel }}</span>
         <!-- A quiet hint, not a spinner over the grid: the previous period
              stays readable while the next one loads. -->
@@ -591,22 +615,11 @@ function onDragEnd() {
         </span>
       </div>
       <div class="calendar-views">
-        <button
-          class="btn"
-          :class="{ active: view === 'month' }"
-          :aria-pressed="view === 'month'"
-          @click="view = 'month'"
-        >
-          Month
-        </button>
-        <button
-          class="btn"
-          :class="{ active: view === 'week' }"
-          :aria-pressed="view === 'week'"
-          @click="view = 'week'"
-        >
-          Week
-        </button>
+        <RlSegmentedControl
+          v-model="viewChoice"
+          label="Calendar range"
+          :options="viewOptions"
+        />
       </div>
     </div>
 
@@ -626,8 +639,8 @@ function onDragEnd() {
       Some long events may not be shown; increase <code>max_span</code> for this calendar's sources.
     </div>
 
-    <div v-if="loadError" class="error-state">{{ loadError }}</div>
-    <div v-else-if="initialLoad" class="loading-state">Loading…</div>
+    <RlStatusRegion v-if="loadError" tone="error">{{ loadError }}</RlStatusRegion>
+    <RlStatusRegion v-else-if="initialLoad">Loading…</RlStatusRegion>
 
     <CalendarGrid
       v-else
@@ -700,17 +713,12 @@ function onDragEnd() {
 }
 
 .calendar-refreshing {
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   font-size: var(--font-size-sm);
-}
-
-.calendar-views .btn.active {
-  background: var(--accent-color);
-  color: #fff;
 }
 
 .calendar-empty {
   margin-top: var(--space-md);
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
 }
 </style>
