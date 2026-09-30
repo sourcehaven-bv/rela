@@ -451,6 +451,7 @@ type TransitionEnforcer interface {
 		guard statemachine.Guard, lookup statemachine.GraphLookup,
 	) error
 	EnforceCreate(ctx context.Context, e *entity.Entity) error
+	EnforceRestore(ctx context.Context, e *entity.Entity, guard statemachine.Guard) error
 }
 
 // New constructs a Manager and validates required collaborators.
@@ -648,7 +649,7 @@ func isAffordanceProbe(ctx context.Context) bool {
 // the same 403 path — and audit row — as any other authorization denial;
 // legality and precondition failures pass through unchanged and surface as 422
 // validation-class errors at the HTTP boundary. Returns nil for a nil input.
-func (m *Manager) mapTransitionError(ctx context.Context, subject acl.Subject, err error) error {
+func (m *Manager) mapTransitionError(ctx context.Context, op acl.Op, subject acl.Subject, err error) error {
 	if err == nil {
 		return nil
 	}
@@ -660,7 +661,7 @@ func (m *Manager) mapTransitionError(ctx context.Context, subject acl.Subject, e
 			RuleID:   ge.Permission, // the specific right, queryable in audit (RR-F30CZ/N1)
 			Reason:   err.Error(),
 		}
-		m.recordDeniedWrite(ctx, decision, acl.WriteRequest{Op: acl.OpUpdate, Subject: subject})
+		m.recordDeniedWrite(ctx, decision, acl.WriteRequest{Op: op, Subject: subject})
 		return &acl.ForbiddenError{Decision: decision}
 	}
 	return err
@@ -1262,7 +1263,7 @@ func (m *Manager) updateCore(
 	if err := m.deps.Transitions.EnforceUpdate(
 		ctx, oldEntity, e, m.deps.TransitionGuard, m.deps.TransitionGraph,
 	); err != nil {
-		return nil, m.mapTransitionError(ctx, acl.NewEntitySubject(e.Type, e.ID, e.Face), err)
+		return nil, m.mapTransitionError(ctx, acl.OpUpdate, acl.NewEntitySubject(e.Type, e.ID, e.Face), err)
 	}
 
 	// Enforce `unique: true` natural-key constraints against the final

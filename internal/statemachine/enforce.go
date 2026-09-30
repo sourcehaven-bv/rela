@@ -105,6 +105,96 @@ func (s *Set) bindTraversals(
 	return edgeTraversal{fn: bound(e.ID)}
 }
 
+// EnforceRestore checks every state-machine property of a history restore:
+// an entity brought back at a recorded value rather than created (BUG-KK1UXH).
+// The entry rule does not apply, since the record existed. Instead each value
+// must be one the acting principal could have reached by transitions: some
+// path of declared edges from the entry value to it, every edge on the path
+// unguarded or guarded by a permission the principal holds. Otherwise
+// delete-then-restore would reach a state a guard keeps the principal out of.
+//
+// A value no path of declared edges reaches is refused with [ErrIllegalEntry]
+// (422); that covers a value the schema no longer declares, which no
+// transition could ever leave again. A value reachable only through a guard
+// the principal lacks yields a [GuardError] (403) naming the first such edge
+// in (from, to) order.
+//
+// What it does not check, by design:
+//
+//   - `when:` preconditions. They judge a move from a prior state against the
+//     current graph, and a restore has neither; the cascade delete has also
+//     removed the relations a precondition would typically count.
+//   - Legality of the move from the state the entity had when it was
+//     deleted. A restore may bring back an earlier version, which is a move
+//     no declared edge makes. The trust boundary for that is the right to
+//     delete the entity and read its deleted history.
+//
+// The guard's served-vs-inert behavior is the [Guard]'s own, as in
+// [Set.EnforceUpdate]; a nil guard makes every guarded edge fail closed. The
+// guard is asked about an entity that is currently deleted, so a grant that
+// came from the entity's own relations is gone; that fails toward refusal.
+func (s *Set) EnforceRestore(ctx context.Context, e *entity.Entity, guard Guard) error {
+	if s.Empty() || e == nil {
+		return nil
+	}
+	held := map[string]bool{}
+	holds := func(ed edge) bool {
+		if ed.guard == "" {
+			return true
+		}
+		v, ok := held[ed.guard]
+		if !ok {
+			v = guard != nil && guard.HoldsPermission(ctx, e.ID, ed.guard)
+			held[ed.guard] = v
+		}
+		return v
+	}
+	props := s.propType[e.Type]
+	for _, prop := range sortedKeys(props) {
+		m := s.machines[props[prop]]
+		got := e.GetString(prop)
+		if got == "" || got == m.entry || m.entry == "" {
+			// m.entry == "" is unreachable for a compiled Set, as in EnforceCreate.
+			continue
+		}
+		if _, ok := m.reach(func(edge) bool { return true })[got]; !ok {
+			return fmt.Errorf("%w: %s=%q on restore; no declared transition path from %q reaches it",
+				ErrIllegalEntry, prop, got, m.entry)
+		}
+		permitted := m.reach(holds)
+		if _, ok := permitted[got]; ok {
+			continue
+		}
+		// got is reachable, but not through held guards alone, so some edge
+		// leaving the permitted region carries an unheld guard.
+		for _, k := range m.sortedKeys() {
+			if _, in := permitted[k.from]; in && !holds(m.edges[k]) {
+				return &GuardError{Prop: prop, From: k.from, To: k.to, Permission: m.edges[k].guard}
+			}
+		}
+	}
+	return nil
+}
+
+// reach returns the states reachable from the entry value, itself included,
+// over the edges follow admits.
+func (m *Machine) reach(follow func(edge) bool) map[string]struct{} {
+	seen := map[string]struct{}{m.entry: {}}
+	keys := m.sortedKeys()
+	for grew := true; grew; {
+		grew = false
+		for _, k := range keys {
+			_, fromSeen := seen[k.from]
+			_, toSeen := seen[k.to]
+			if fromSeen && !toSeen && follow(m.edges[k]) {
+				seen[k.to] = struct{}{}
+				grew = true
+			}
+		}
+	}
+	return seen
+}
+
 // EnforceCreate checks the entry value of every state-machine property on a
 // newly created entity. A create has no prior state, so there is no edge to
 // traverse; the rule is that a machine property must enter at its entry value

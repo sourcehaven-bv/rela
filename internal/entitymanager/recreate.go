@@ -24,6 +24,9 @@ import (
 //     automation is suppressed.
 //   - It runs NO automation and NO cascade: whatever the original create
 //     derived already exists or was deleted on its own terms.
+//   - It does NOT apply the state machines' entry rule: the row may come back
+//     at any state the principal could have reached by declared transitions
+//     (BUG-KK1UXH).
 //
 // It is create-only. A row already at that address is
 // [ErrEntityAlreadyExists], never an update: the caller decided "deleted" from
@@ -106,12 +109,22 @@ func RecreateEntity(ctx context.Context, m *Manager, e *entity.Entity) (*entity.
 		return nil, newValidationError(hard)
 	}
 
-	// Enforce the enum state machines' entry rule (RR-NB135), as before sync
-	// was removed. A restore therefore cannot bring back a row whose status is
-	// past the entry value; whether restore should be exempt is BUG-KK1UXH.
+	// The state machines' ENTRY rule is deliberately not applied
+	// (BUG-KK1UXH): it governs a new record, and a restore brings back one
+	// that existed, so a deleted `done` ticket comes back `done`. The
+	// transition guards still bind: some path of declared edges from the
+	// entry value must reach the restored value with every guard on it held,
+	// or delete-then-restore would reach a state a guard keeps the principal
+	// out of. `when:` preconditions are not evaluated, because a restore has
+	// no prior state for them to judge. See [statemachine.Set.EnforceRestore].
 	// RecreateEntity runs no automation, so this is the final pre-write state.
-	if err := m.deps.Transitions.EnforceCreate(ctx, e); err != nil {
-		return nil, err
+	//
+	// The exemption is narrow because this function is: only history restore
+	// reaches it (the dataentry handler and `rela restore`), and
+	// internal/archguard/recreate_test.go pins its callers. Every ordinary
+	// create keeps EnforceCreate in createCore.
+	if err := m.deps.Transitions.EnforceRestore(ctx, e, m.deps.TransitionGuard); err != nil {
+		return nil, m.mapTransitionError(ctx, acl.OpCreate, acl.NewEntitySubject(e.Type, e.ID, e.Face), err)
 	}
 
 	// `unique: true` natural keys are enforced atomically with the write.

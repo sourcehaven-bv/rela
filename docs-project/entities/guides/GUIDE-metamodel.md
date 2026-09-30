@@ -295,7 +295,7 @@ types:
 | Field | Meaning |
 | ----- | ------- |
 | `from` / `to` | Source and target values; both must be declared in `values`. |
-| `initial` | The only value a **create** may set (else `default`). New entities are pinned to it — a create cannot enter a guarded mid-lifecycle state. |
+| `initial` | The only value a **create** may set (else `default`). New entities are pinned to it — a create cannot enter a guarded mid-lifecycle state. A history restore of a deleted entity is not a create in this sense: it comes back at the chosen version's value, provided a chain of declared transitions leads from `initial` to that value and the caller holds every `guard:` on it. |
 | `guard` | An ACL permission the acting principal must hold for the move. Enforced on served paths; inert on a direct CLI write with no policy. |
 | `when` | A predicate (same language as validations, evaluated against the entity + graph) that must hold for the move. |
 | `label` | **Optional** display text for the move (the *action*, e.g. "Start progress"), used by the data-entry status control. Display-only — the stored value is still `to`. Absent → the UI falls back to the target value's display label, then the raw value. |

@@ -51,6 +51,15 @@ func facedHistoryApp(t *testing.T, policy func(st store.Store) *acl.Declarative)
 			Faces:         map[string]metamodel.FaceDef{"draft": {}, "published": {}, "review": {}},
 		},
 	}}
+	return facedHistoryAppWith(t, meta, facedHistory(), policy)
+}
+
+// facedHistoryAppWith is facedHistoryApp over the given metamodel and
+// history. meta must declare the faced ticket type the seed rows use.
+func facedHistoryAppWith(
+	t *testing.T, meta *metamodel.Metamodel, history historyStore, policy func(st store.Store) *acl.Declarative,
+) (*App, *acl.Declarative) {
+	t.Helper()
 	fs := storage.NewMemFS()
 	paths := &project.Context{Root: "/project", CacheDir: "/project/.rela"}
 	if err := fs.MkdirAll(paths.CacheDir, 0o755); err != nil {
@@ -75,7 +84,7 @@ func facedHistoryApp(t *testing.T, policy func(st store.Store) *acl.Declarative)
 	rebindApp(app, fs, paths, svc)
 	app.acl = d
 	app.schema.Publish(&Schema{Cfg: &Config{}, Meta: meta})
-	app.versions = facedHistory()
+	app.versions = history
 	return app, d
 }
 

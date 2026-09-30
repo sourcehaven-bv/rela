@@ -525,7 +525,12 @@ diff <(rela history TKT-42 --version 3) <(rela history TKT-42 --version 5)
 Restore an entity's content and properties to a past version. **PostgreSQL
 and SQLite builds.** The restore is applied as a normal write — authorized, validated,
 audited, and itself recorded as a new version (history is never rewritten). If
-the entity was deleted, it is re-created at the same id.
+the entity was deleted, it is re-created at the same id, at the state of the
+chosen version. A state machine's `initial` rule applies to new entities, not
+to a restore, so a deleted `done` ticket comes back `done`. The value must
+still be reachable: a chain of declared transitions must lead from the
+`initial` value to it, and the caller must hold every `guard:` on that chain.
+A value no chain of transitions reaches is refused.
 
 ```bash
 rela restore <address> <version>

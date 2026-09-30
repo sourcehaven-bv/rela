@@ -14,6 +14,20 @@ won't be emitted.
 | Caller legitimately owns the whole entity (form save rendering every field) | `UpdateEntity` |
 | Bringing a deleted face back at its own id (history restore) | `RecreateEntity` |
 
+`RecreateEntity` runs no automation and does not apply the state machines'
+entry rule (BUG-KK1UXH): a restore brings back a record that existed, at the
+state of the chosen version. It applies `statemachine.Set.EnforceRestore`
+instead. That check refuses a value no path of declared edges reaches from
+the entry value (422). It also requires one such path on which the principal
+holds every guard (403), so delete-then-restore cannot reach a guarded state.
+It does not check `when:` (a restore has no prior state), nor the legality of
+the move from the deleted state: restoring an earlier version is a backward
+move no edge declares, and the trust boundary for it is the right to delete
+the entity and read its deleted history. The exemption is only
+safe while restore is the sole caller, so
+`internal/archguard/recreate_test.go` pins every entry point and call site.
+Never use it for an ordinary create.
+
 **Default to `PatchEntity`.** It takes an `entity.Patch` (`Properties`
 upserts, `MetaUnset` removes, `Content` is a `*string` tri-state), does its
 own write-prep read, and merges against the raw stored entity. Properties

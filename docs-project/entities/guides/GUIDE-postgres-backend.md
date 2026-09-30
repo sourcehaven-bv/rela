@@ -395,7 +395,11 @@ Access control: reading the history of a **live** entity requires the same read
 permission as reading the entity itself. Reading the history of a **deleted**
 entity requires the global `history:read` permission — see
 [ACL security](acl-security.md). Restore is a normal write: it is authorized,
-validated, and audited like any edit, and produces a new version.
+validated, and audited like any edit, and produces a new version. A restored
+deleted entity keeps the state-machine value of the chosen version; the
+`initial` rule is for new entities only. The value must still be one you could
+reach: a chain of declared transitions must lead from the `initial` value to
+it, and you must hold every `guard:` on that chain.
 
 Faces: on a type that declares `faces:`, each face has its own history. The
 CLI, the API and purge all take an `ID@face` address, and a bare id of a faced
