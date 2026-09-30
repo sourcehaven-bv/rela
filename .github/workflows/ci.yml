@@ -900,6 +900,9 @@ jobs:
           # reads to EOF) and this one fails only on a cold module cache.
           go list -deps ./cmd/rela-docs                    | grep 'chromedp/chromedp' >/dev/null
           go list -deps -tags postgres ./cmd/rela-docs     | grep 'chromedp/chromedp' >/dev/null
+          echo "no release build links the seqtrace runtime (overlay builds only):"
+          ! go list -deps ./cmd/rela ./cmd/rela-server                | grep -q 'tools/seqtrace'
+          ! go list -deps -tags postgres ./cmd/rela ./cmd/rela-server | grep -q 'tools/seqtrace'
           echo "no build but the sqlite one links the sqlite driver:"
           ! go list -deps ./cmd/rela-server                | grep -q 'modernc.org/sqlite'
           ! go list -deps ./cmd/rela                       | grep -q 'modernc.org/sqlite'

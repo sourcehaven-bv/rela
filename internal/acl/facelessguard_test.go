@@ -72,7 +72,8 @@ func TestFacelessSubjectsAreArguedFor(t *testing.T) {
 			return err
 		}
 		if d.IsDir() {
-			if name := d.Name(); name == ".git" || name == "node_modules" || name == "vendor" {
+			// .ignored holds scratch copies of the source (seqtrace keeps one).
+			if name := d.Name(); name == ".git" || name == ".ignored" || name == "node_modules" || name == "vendor" {
 				return filepath.SkipDir
 			}
 			return nil
