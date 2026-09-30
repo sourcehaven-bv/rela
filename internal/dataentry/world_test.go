@@ -100,7 +100,7 @@ func TestWorldCapablePath(t *testing.T) {
 		{"/api/v1/_relation_history/decision/DEC-1/addresses/REQ-1", false,
 			"relation history is a separate, unscoped surface — gated on BOTH " +
 				"endpoints with its own lineage rules"},
-		{"/api/sync/manifest", false, "outside the versioned API"},
+		{"/api/git/status", false, "outside the versioned API"},
 		{"/api/v1/", false, "the bare mount carries no data"},
 	}
 	for _, tc := range tests {
@@ -1069,7 +1069,7 @@ func TestDefaultWorld_UnconfiguredIsUnchanged(t *testing.T) {
 //
 // `worldCapablePath` is a deny-by-default allowlist: most routes refuse a
 // non-default world with a 422. Blanket-applying the configured default would
-// therefore turn every bare request to relations/attachments/exports/sync into
+// therefore turn every bare request to relations/attachments/exports into
 // a 422 the moment an operator set `app.default_world` — breaking the
 // deployment wholesale rather than fixing the cliff it was set to fix.
 //

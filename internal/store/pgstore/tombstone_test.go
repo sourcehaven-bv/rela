@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -12,15 +13,62 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store/pgstore"
 )
 
-func newTombstoneStore(t *testing.T) *pgstore.Store {
+// tombstoneStore pairs a store with its pool so a test can read the change
+// log (live rows plus the deletions table) that the catch-up scans.
+type tombstoneStore struct {
+	*pgstore.Store
+	pool *pgxpool.Pool
+}
+
+func newTombstoneStore(t *testing.T) tombstoneStore {
 	t.Helper()
 	pool := newScopedPool(t)
 	st, err := pgstore.New(pool)
 	require.NoError(t, err)
-	return st
+	return tombstoneStore{Store: st, pool: pool}
 }
 
-func mustCreateEntity(t *testing.T, st *pgstore.Store, id, typ string) {
+// change is one row of the change log: a live entity or relation row
+// (Deleted=false) or a deletion tombstone (Deleted=true).
+type change struct {
+	Kind, IDA, IDB, IDC, Typ string
+	Deleted                  bool
+	Seq                      int64
+}
+
+// changesSince returns every change with seq > cursor, in seq order, read
+// straight from the tables the watcher catch-up scans. It checks what the
+// writes record, not what the catch-up emits: it has no face handling and is
+// not the catch-up query. TestCatchUpRecoversMissedDelete covers the real
+// catch-up path.
+func (s tombstoneStore) changesSince(ctx context.Context, cursor int64) ([]change, error) {
+	const q = `
+		SELECT kind, a, b, c, typ, deleted, seq FROM (
+			SELECT 'e' AS kind, id AS a, '' AS b, '' AS c, type AS typ, false AS deleted, seq FROM entities
+			UNION ALL
+			SELECT 'r', from_id, rel_type, to_id, '', false, seq FROM relations
+			UNION ALL
+			SELECT kind, id_a, id_b, id_c, typ, true, seq FROM deletions
+		) t
+		WHERE seq > $1
+		ORDER BY seq`
+	rows, err := s.pool.Query(ctx, q, cursor)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []change
+	for rows.Next() {
+		var c change
+		if err := rows.Scan(&c.Kind, &c.IDA, &c.IDB, &c.IDC, &c.Typ, &c.Deleted, &c.Seq); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+func mustCreateEntity(t *testing.T, st tombstoneStore, id, typ string) {
 	t.Helper()
 	e := entity.New(id, typ)
 	e.SetString("title", "t")
@@ -28,14 +76,14 @@ func mustCreateEntity(t *testing.T, st *pgstore.Store, id, typ string) {
 }
 
 // TestDeleteWritesEntityTombstone: deleting an entity records a tombstone with a
-// fresh seq, and that tombstone surfaces in the manifest after the live row is
+// fresh seq, and that tombstone surfaces in the change log after the live row is
 // gone.
 func TestDeleteWritesEntityTombstone(t *testing.T) {
 	st := newTombstoneStore(t)
 	ctx := context.Background()
 
 	mustCreateEntity(t, st, "REQ-1", "requirement")
-	before, err := st.ManifestSince(ctx, 0)
+	before, err := st.changesSince(ctx, 0)
 	require.NoError(t, err)
 	// cursor just below the create so the delete is clearly past it
 	cursor := before[len(before)-1].Seq
@@ -43,7 +91,7 @@ func TestDeleteWritesEntityTombstone(t *testing.T) {
 	_, err = st.DeleteFamily(ctx, "REQ-1", false)
 	require.NoError(t, err)
 
-	entries, err := st.ManifestSince(ctx, cursor)
+	entries, err := st.changesSince(ctx, cursor)
 	require.NoError(t, err)
 	require.Len(t, entries, 1, "expected exactly the delete tombstone since the create")
 	tomb := entries[0]
@@ -65,13 +113,13 @@ func TestDeleteWritesRelationTombstone(t *testing.T) {
 	_, err := st.CreateRelation(ctx, entity.RelationKey{From: "DEC-1", Type: "addresses", To: "REQ-1"}, &store.RelationData{})
 	require.NoError(t, err)
 
-	pre, err := st.ManifestSince(ctx, 0)
+	pre, err := st.changesSince(ctx, 0)
 	require.NoError(t, err)
 	cursor := pre[len(pre)-1].Seq
 
 	require.NoError(t, st.DeleteRelation(ctx, entity.RelationKey{From: "DEC-1", Type: "addresses", To: "REQ-1"}))
 
-	entries, err := st.ManifestSince(ctx, cursor)
+	entries, err := st.changesSince(ctx, cursor)
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 	tomb := entries[0]
@@ -93,14 +141,14 @@ func TestCascadeDeleteTombstonesRelations(t *testing.T) {
 	_, err := st.CreateRelation(ctx, entity.RelationKey{From: "DEC-1", Type: "addresses", To: "REQ-1"}, &store.RelationData{})
 	require.NoError(t, err)
 
-	pre, err := st.ManifestSince(ctx, 0)
+	pre, err := st.changesSince(ctx, 0)
 	require.NoError(t, err)
 	cursor := pre[len(pre)-1].Seq
 
 	_, err = st.DeleteFamily(ctx, "DEC-1", true) // cascade
 	require.NoError(t, err)
 
-	entries, err := st.ManifestSince(ctx, cursor)
+	entries, err := st.changesSince(ctx, cursor)
 	require.NoError(t, err)
 
 	var entTomb, relTomb int
@@ -117,15 +165,15 @@ func TestCascadeDeleteTombstonesRelations(t *testing.T) {
 	require.Equal(t, 1, relTomb, "one relation tombstone for the cascaded relation")
 }
 
-// TestManifestDeleteThenRecreate: deleting then recreating the same id yields a
+// TestChangesDeleteThenRecreate: deleting then recreating the same id yields a
 // tombstone AND the new live row (the recreate), in seq order.
 //
 // The original create's live row is GONE (the recreate is a new row at the same
-// primary key, with a higher seq), so the manifest from seq 0 shows the
+// primary key, with a higher seq), so the change log from seq 0 shows the
 // tombstone for the delete plus the current live row — the original create
-// leaves no trace at its old seq. That is correct: a manifest reflects current
-// live rows + all tombstones, not historical row versions.
-func TestManifestDeleteThenRecreate(t *testing.T) {
+// leaves no trace at its old seq. That is correct: the change log reflects
+// current live rows + all tombstones, not historical row versions.
+func TestChangesDeleteThenRecreate(t *testing.T) {
 	st := newTombstoneStore(t)
 	ctx := context.Background()
 
@@ -134,7 +182,7 @@ func TestManifestDeleteThenRecreate(t *testing.T) {
 	require.NoError(t, err)
 	mustCreateEntity(t, st, "REQ-1", "requirement") // recreate same id
 
-	entries, err := st.ManifestSince(ctx, 0)
+	entries, err := st.changesSince(ctx, 0)
 	require.NoError(t, err)
 
 	// In seq order: tombstone(delete) then live(recreate). The original create's
@@ -149,8 +197,8 @@ func TestManifestDeleteThenRecreate(t *testing.T) {
 
 // TestRenameTombstonesOldIdentities is the regression for the code-review
 // finding: a rename re-keys the entity and its relations in place, so to an
-// id-keyed sync client the OLD id and OLD relation triples are removed. They
-// must be tombstoned, or the client keeps ghost entities/edges forever.
+// id-keyed catch-up reader the OLD id and OLD relation triples are removed.
+// They must be tombstoned, or a peer keeps ghost entities/edges forever.
 func TestRenameTombstonesOldIdentities(t *testing.T) {
 	st := newTombstoneStore(t)
 	ctx := context.Background()
@@ -160,14 +208,14 @@ func TestRenameTombstonesOldIdentities(t *testing.T) {
 	_, err := st.CreateRelation(ctx, entity.RelationKey{From: "DEC-1", Type: "addresses", To: "REQ-1"}, &store.RelationData{})
 	require.NoError(t, err)
 
-	pre, err := st.ManifestSince(ctx, 0)
+	pre, err := st.changesSince(ctx, 0)
 	require.NoError(t, err)
 	cursor := pre[len(pre)-1].Seq
 
 	_, err = st.RenameFamily(ctx, "DEC-1", "DEC-2")
 	require.NoError(t, err)
 
-	entries, err := st.ManifestSince(ctx, cursor)
+	entries, err := st.changesSince(ctx, cursor)
 	require.NoError(t, err)
 
 	// Expect, among the entries since the cursor:
@@ -195,7 +243,7 @@ func TestRenameTombstonesOldIdentities(t *testing.T) {
 }
 
 // TestSeqIndexesExist verifies migration 0003 created the seq B-tree indexes
-// the manifest/catch-up "WHERE seq > X ORDER BY seq" scans depend on. (Whether
+// the catch-up "WHERE seq > X ORDER BY seq" scans depend on. (Whether
 // the planner *uses* them is data-size dependent and not asserted here — on a
 // tiny test table the planner correctly prefers a seqscan; the durable
 // guarantee is that the indexes exist for production-scale tables.)

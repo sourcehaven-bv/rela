@@ -127,8 +127,8 @@ func ValidateProperty(prop string) error {
 //
 // The backends must agree, because entities move between them: migrating a
 // project that holds both "abc" and "ABC" into fsstore would silently drop
-// one, and `rela sync` between a byte-exact and a case-folding store has no
-// defined convergence. Enforcing identity in the shared layer is what keeps
+// one, and an export/import between a byte-exact and a case-folding store has
+// no defined convergence. Enforcing identity in the shared layer is what keeps
 // the backends substitutable (FEAT-CO4YP); the conformance suite pins it via
 // CreateRejectsCaseVariantID.
 //

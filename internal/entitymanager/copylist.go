@@ -92,10 +92,10 @@ type CopyOffer struct {
 //
 // # Why a package function and not a method
 //
-// Manager carries a `//plimsoll:max-methods=40` load line, and the project
+// Manager carries a `//plimsoll:max-methods` load line, and the project
 // rule is to split the type rather than raise the number — so a copy-affordance
 // query, which needs only the manager's metamodel and its planning path, does
-// not become a forty-first method on the write god-object. The same reasoning
+// not become one more method on the write god-object. The same reasoning
 // keeps copyInvocable a function. Consumers that need this as an interface
 // method wrap it; see [CopyAffordances].
 func CopiesForSource(

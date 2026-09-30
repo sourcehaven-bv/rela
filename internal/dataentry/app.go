@@ -115,10 +115,11 @@ type appEntityWriter interface {
 // 40-method load line — extract the API/serialization/relation services into
 // their own types. Ratchet this number DOWN as methods move out; never up
 // EXCEPT for a new required route handler (App owns one method per registered
-// HTTP route by the router's design). The sync route cluster (16 methods) moved
-// to syncHandler (170 → 154); the command cluster (11 methods) moved to
-// commandHandler (154 → 143); the attachment cluster (12 methods) moved to
-// attachmentHandler / package functions (143 → 131); the write nucleus —
+// HTTP route by the router's design). The sync route cluster (16 methods)
+// moved to syncHandler (170 → 154; sync itself was later removed); the
+// command cluster (11 methods) moved to commandHandler (154 → 143); the
+// attachment cluster (12 methods) moved to attachmentHandler / package
+// functions (143 → 131); the write nucleus —
 // entity/relation CRUD, clone, conflict-resolve, and the modern relations
 // reconciler (18 methods) — moved to writeHandler (131 → 114); the Lua
 // action handler joined it (115 → 114, from a base that had absorbed the
@@ -351,10 +352,6 @@ type App struct {
 	// settings owns the per-user default values (create-form/relation defaults).
 	// Self-synchronized; extracted from the schema snapshot.
 	settings *settingsService
-	// sync owns the /api/sync/ route cluster (fs-client ↔ pg-server
-	// replication). Extracted from App (TKT-R68TV8); holds narrow store/deleter
-	// surfaces.
-	sync *syncHandler
 	// commands owns the user-configured command surface (SSE shell-exec,
 	// file/URL launchers, command resolution). Extracted from App (TKT-R68TV8);
 	// holds narrow closures over the schema snapshot, Services bundle, project
@@ -1158,16 +1155,6 @@ func NewApp(
 		return nil, fmt.Errorf("load user logo: %w", logoErr)
 	}
 	app.logo = logo
-
-	// syncHandler owns the /api/sync/manifest change feed (fs-client ↔ pg-server
-	// replication). The record read/write channel was retired in TKT-8P1TM7 (the
-	// sync client now uses /api/v1), so the handler holds only App's store (to
-	// resolve a relation entry's source type for the read gate); the manifest
-	// capability is resolved from the concrete store (nil on fs/memory builds,
-	// where the endpoint degrades to 501). It has no write path, so the
-	// unmatched_principal provision seam (TKT-ANUJDS) is wired only into the v1
-	// write handler now, not here.
-	app.sync = newSyncHandler(st)
 
 	// viewsHandler owns the read-only view-assembly surface (view traversal,
 	// section building, /_views, /_sidepanel, /_sidebar). Fixed service

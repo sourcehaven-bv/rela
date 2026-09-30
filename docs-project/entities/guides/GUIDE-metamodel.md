@@ -720,7 +720,7 @@ file properties are not supported, and `default` cannot be combined with
 `computed`.
 
 Computed values are materialized during every entity create, update, patch and
-sync apply. They are stored and indexed exactly like authored properties, so
+history restore. They are stored and indexed exactly like authored properties, so
 normal filtering, sorting, search and views require no special syntax. Attempts
 to set or unset them through the CLI, MCP, Lua or data-entry API are rejected;
 data-entry reports `_fields.<name>.writable: false` and renders the value as
@@ -1800,15 +1800,12 @@ entities:
 
 ## After Modifying the Metamodel
 
-After editing `schema.yaml`:
+rela reads `schema.yaml` on every run, so there is no rebuild step. After
+editing it, check the result:
 
 ```bash
-# Rebuild the cache
-rela sync
-
-# Verify with
-rela tui
-# Press 'm' to see the updated metamodel
+rela schema     # show the loaded metamodel
+rela validate   # check the project configuration files
 ```
 
 Note: Existing entities remain valid. The metamodel only affects creation and validation of new entities and relations.

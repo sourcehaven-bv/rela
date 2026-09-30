@@ -8,7 +8,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/attachment"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
-	syncclient "github.com/Sourcehaven-BV/rela/internal/cli/sync"
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/datamigration"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -62,26 +61,9 @@ type writeServices struct {
 	readServices
 	EntityManager entityWriter
 
-	// SyncApplier is the id-preserving, automation-suppressed write path
-	// `rela sync` needs (syncclient.LocalApplier). It is a SEPARATE typed
-	// field, not a type assertion on EntityManager, for two reasons.
-	//
-	// First, it is a genuinely distinct capability: ApplyEntity/ApplyRelation
-	// land a remote record verbatim, which is not part of the human-intent
-	// write surface the other subcommands use — so it is its own dependency,
-	// declared as one (CLAUDE.md: define a typed dependency rather than a
-	// type-assertion back-channel).
-	//
-	// Second, the assertion it replaces failed OPEN: it set the applier to nil
-	// on a miss, and `sync push` dereferences it on the create-id-adoption path
-	// (push.go, `newID != ch.Key`), so a miss was a panic rather than the
-	// "only breaks pull" the old comment claimed. The wiring site holds the
-	// concrete *entitymanager.Manager, so assigning this field is checked by
-	// the compiler and the failure mode is gone (TKT-IVSJV6).
-	SyncApplier syncclient.LocalApplier
 	// Recreator brings a deleted face back at its own id on `rela restore`,
-	// create-only: unlike SyncApplier.ApplyEntity it never falls through to a
-	// whole-record update when the face was recreated in the meantime.
+	// create-only: it never falls through to a whole-record update when the
+	// face was recreated in the meantime.
 	Recreator    entityRecreator
 	Validator    validator.Validator
 	Audit        audit.Audit
@@ -100,12 +82,6 @@ type writeServices struct {
 // Eight of the manager's nine write methods. ValidateCreate is absent because
 // no subcommand dry-runs a create — the CLI either writes or it doesn't, and
 // the advisory path exists for the data-entry form.
-//
-// Note `rela sync pull` additionally type-asserts this value to
-// syncclient.LocalApplier for the id-preserving applier — see buildSyncEngine.
-// Those methods stay off this interface deliberately: they are a distinct
-// capability (apply a remote record verbatim), not part of the human-intent
-// write surface the other subcommands use.
 type entityWriter interface {
 	CreateEntity(ctx context.Context, e *entity.Entity, opts entity.CreateOptions) (*entity.CreateResult, error)
 	UpdateEntity(ctx context.Context, e *entity.Entity) (*entity.UpdateResult, error)
@@ -195,7 +171,6 @@ func newCLIBundles(svc *appbuild.Services) (*cliBundles, error) {
 	write := writeServices{
 		readServices:  read,
 		EntityManager: svc.EntityManager(),
-		SyncApplier:   svc.EntityManager(),
 		Recreator:     entitymanager.Recreator{M: svc.EntityManager()},
 		Validator:     svc.Validator(),
 		Audit:         svc.Audit(),

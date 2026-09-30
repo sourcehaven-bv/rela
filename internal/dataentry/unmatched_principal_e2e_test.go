@@ -19,11 +19,10 @@ import (
 // unmatched_principal: reject — end-to-end (TKT-0C3II2).
 //
 // The load-bearing test is TestReject_DeniesEveryWritePath: it drives an
-// unmatched verified assertion through the REAL router to a CRUD write, a sync
-// write, AND a Lua-action write, and asserts all three are denied. Its absence
-// is exactly the gap a design review found — a per-CRUD-handler check would
-// leave sync/action bypassable — so this pins that reject is enforced at the
-// shared write-authz choke point (Declarative.AuthorizeWrite), not per-handler.
+// unmatched verified assertion through the REAL router to the CRUD write paths
+// and asserts each is denied. A per-CRUD-handler check would leave other write
+// paths bypassable, so this pins that reject is enforced at the shared
+// write-authz choke point (Declarative.AuthorizeWrite), not per-handler.
 
 const unmatchedHeader = "X-Auth-Assertion"
 
@@ -127,11 +126,8 @@ func TestReject_DeniesEveryWritePath(t *testing.T) {
 	router := app.NewRouter()
 
 	// Each of these is a distinct data-entry WRITE path an unmatched verified
-	// principal can reach; all must be denied. A per-handler check would miss
-	// sync and action — this is the anti-bypass test.
-	// CRUD and sync have DISTINCT write handlers, so each must be verified
-	// independently — a per-handler reject check (the rejected design) would
-	// have covered CRUD but missed sync. The Lua-action path is not listed
+	// principal can reach; all must be denied. This is the anti-bypass test.
+	// The Lua-action path is not listed
 	// separately because its writes go through the SAME a.entityManager as CRUD
 	// (App.luaWriteDeps.EntityManager, app.go), so AuthorizeWrite — and thus
 	// reject — covers it by construction; TestReject_ActionSharesWriteAuthz pins

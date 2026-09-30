@@ -484,9 +484,9 @@ func (imp *Importer) requireTail(relType, fromType string, face entity.Face) err
 //     a pgstore operator holds the connection string. Anything the guard would
 //     stop, the same person can do with a text editor.
 //
-// This DIVERGES from the sync path, which enforces (RR-NB135), and the
-// difference is the point rather than an oversight: sync is an ongoing channel
-// carrying a peer's NEW transitions, where entry-state rules are meaningful.
+// This DIVERGES from the served write paths, which enforce (RR-NB135), and
+// the difference is the point rather than an oversight: a served write carries
+// a principal's NEW transitions, where entry-state rules are meaningful.
 // Import is a one-shot operator load of historical fact.
 //
 // What would change the answer: a non-CLI caller. If import ever becomes

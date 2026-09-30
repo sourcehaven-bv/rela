@@ -12,7 +12,7 @@ won't be emitted.
 |---|---|
 | Changing a SUBSET of properties | `PatchEntity` |
 | Caller legitimately owns the whole entity (form save rendering every field) | `UpdateEntity` |
-| Whole-record replace from a trusted replica (sync channel) | `ApplyEntity` |
+| Bringing a deleted face back at its own id (history restore) | `RecreateEntity` |
 
 **Default to `PatchEntity`.** It takes an `entity.Patch` (`Properties`
 upserts, `MetaUnset` removes, `Content` is a `*string` tri-state), does its

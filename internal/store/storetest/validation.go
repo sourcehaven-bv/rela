@@ -80,7 +80,7 @@ func RunValidationTests(t *testing.T, f Factory) {
 	// tests on purpose. fsstore on a case-insensitive filesystem (macOS,
 	// Windows) folds "abc" and "ABC" onto one file, while memstore and pgstore
 	// (id TEXT COLLATE "C") keep them as two rows. Entities move between
-	// backends via migration and `rela sync`, so a project holding both would
+	// backends via migration and import, so a project holding both would
 	// silently lose one on import. The backends must agree on identity, and
 	// only a shared test can enforce that.
 	//

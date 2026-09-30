@@ -41,7 +41,6 @@ components:
 
   # CLI layer
   cli:              { in: internal/cli }
-  clisync:          { in: internal/cli/sync }
   docscli:          { in: internal/docscli }
 
   # Web / UI layer
@@ -123,7 +122,6 @@ components:
   migration:        { in: internal/migration }
   markdown:         { in: internal/markdown }
   canonical:        { in: internal/canonical }
-  sync:             { in: internal/sync }
   frontmatter:      { in: internal/frontmatter }
   filter:           { in: internal/filter }
   queryplan:        { in: internal/queryplan }
@@ -372,7 +370,6 @@ deps:
       - autocascade
       - automation
       - bleveindex
-      - clisync
       - cmdexec
       - config
       - configsql
@@ -426,14 +423,6 @@ deps:
       - glamour
       - huh
       - tablewriter
-
-  clisync:
-    mayDependOn:
-      - canonical
-      - entity
-      - entitymanager
-      - storage
-      - store
 
   # Web / UI layer
   # apiwire is a leaf: it may use the domain types and the data-entry config
@@ -504,7 +493,6 @@ deps:
       - statemachine
       - storage
       - store
-      - sync
       - templating
       - tracer
       - transform
@@ -1415,14 +1403,13 @@ deps:
       - search
       - store
       - storeutil
-      - sync
     canUse:
       - pgx
   sqlitestore:
     mayDependOn:
-      # Still narrower than pgstore: no userstate, no sync. This backend keeps
-      # the filesystem KV on purpose (TKT-L1A3PH) and has no sync manifest, and
-      # each further entry should have to justify widening this list.
+      # Still narrower than pgstore: no userstate. This backend keeps the
+      # filesystem KV on purpose (TKT-L1A3PH), and each further entry should
+      # have to justify widening this list.
       - entity
       - graphquerynaive
       - sqlitedb

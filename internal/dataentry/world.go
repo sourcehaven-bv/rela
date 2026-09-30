@@ -250,7 +250,7 @@ func resolveWorld(r *http.Request, lookup WorldLookup, configured string) (world
 // internal/dataentry reaches entity content through roughly forty store call
 // sites across a dozen files — the list pipeline, the ungated entityReader
 // used for relations and serialization, view traversal, document render,
-// feeds, CalDAV, sync, commands. Teaching all of them in one change would be
+// feeds, CalDAV, commands. Teaching all of them in one change would be
 // a large diff in which a single missed site is a silent leak, and "silence
 // in the direction of serving the wrong face" is the failure this arc keeps
 // hitting.
@@ -267,7 +267,7 @@ func resolveWorld(r *http.Request, lookup WorldLookup, configured string) (world
 // collection list (`/{plural}`), the single-entity GET (`/{plural}/{id}`) and
 // exactly five underscore routes named one at a time below — `_views`,
 // `_history`, `_next_action`, `_search` and `_position`. Every other
-// underscore endpoint (analyze, documents, feeds, sync) is refused, along
+// underscore endpoint (analyze, documents, feeds) is refused, along
 // with every sub-resource of an entity (relations, attachments, export),
 // because each reaches content through a path that is still world-blind.
 //
@@ -279,7 +279,7 @@ func resolveWorld(r *http.Request, lookup WorldLookup, configured string) (world
 func worldCapablePath(path string) bool {
 	trimmed := strings.TrimPrefix(path, "/api/v1/")
 	if trimmed == path {
-		// Not under the versioned API (e.g. /api/sync/...). Refuse.
+		// Not under the versioned API (e.g. /api/git/...). Refuse.
 		return false
 	}
 	trimmed = strings.Trim(trimmed, "/")
@@ -511,7 +511,7 @@ func attachWorld(next http.Handler, a *App) http.Handler {
 		// The operator's browsing default applies only where the path can
 		// actually serve a non-default world. Without this clause, merely
 		// setting `app.default_world` would turn every bare request to a
-		// non-world-capable route — relations, attachments, exports, sync —
+		// non-world-capable route — relations, attachments, exports —
 		// into a 422 `world_unsupported`, breaking the deployment wholesale
 		// rather than fixing the cliff it was set to fix.
 		//

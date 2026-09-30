@@ -1,7 +1,7 @@
 ---
 id: BUG-7MB1D5
 type: bug
-title: Gantt, feeds, CalDAV, webhooks, command context and sync are empty for faced types
+title: Gantt, feeds, CalDAV, webhooks and command context are empty for faced types
 description: These surfaces query default rows only; a faced source type returns nothing with no error or config warning.
 priority: medium
 effort: m
@@ -19,7 +19,7 @@ nothing, with no error:
 - CalDAV (`caldav_write.go:505,736`)
 - custom webhooks (`webhook_routes.go:409,546`)
 - the command list context (`helpers.go:633`)
-- sync (`pgstore/manifest.go:28-55`, `dataentry/sync.go:168`)
+- ~~sync~~ (removed with the sync feature, TKT-7IZHP0 PR 10)
 
 Nothing at config load warns that a faced type is the source of a surface that
 cannot see faces.

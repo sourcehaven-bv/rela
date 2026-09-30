@@ -30,7 +30,7 @@ import (
 // a save that echoes the stored value passes. A change fails with
 // [FileWriteError]. The trusted paths that may change a value are the
 // attachment service (through [Attachments.StampAttachments]), the copy
-// engine, sync ApplyEntity and data migration. Automation-derived values
+// engine, RecreateEntity and data migration. Automation-derived values
 // are applied after this check, so the automation engine refuses, at load,
 // an automation whose `set:` or `create_entity` names a file property.
 //
