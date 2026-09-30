@@ -1960,6 +1960,15 @@ type backendOverrides struct {
 	schedulerState schedulerstate.Store
 }
 
+// configLoader returns the recipe's config loader, or the filesystem loader
+// when the recipe supplies none.
+func (o backendOverrides) configLoader(cfg Config) config.Loader {
+	if o.projectConfig != nil {
+		return o.projectConfig
+	}
+	return config.NewFSLoader(cfg.FS, cfg.Paths.Root)
+}
+
 // assemble builds the services bundle from an opened store.
 //
 // Overrides are passed in rather than derived here because they come from a
@@ -1997,10 +2006,7 @@ func assemble(
 		return nil, fmt.Errorf("appbuild: tracer: %w", err)
 	}
 	templater := templating.NewFSTemplater(cfg.FS, cfg.Paths)
-	cfgLoader := overrides.projectConfig
-	if cfgLoader == nil {
-		cfgLoader = config.NewFSLoader(cfg.FS, cfg.Paths.Root)
-	}
+	cfgLoader := overrides.configLoader(cfg)
 
 	// Build the static lua read deps once — the ScriptRunner (automation
 	// cascades) is constructed with these.

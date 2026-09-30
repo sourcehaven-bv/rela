@@ -34,9 +34,11 @@ entities:
 		assert.True(t, c.Families().IsTrivial())
 	})
 
+	withoutWorlds, _, found := strings.Cut(facedSchema, "worlds:")
+	require.True(t, found, "facedSchema must declare worlds")
 	for name, schema := range map[string]string{
 		"with worlds":    facedSchema,
-		"without worlds": facedSchema[:strings.Index(facedSchema, "worlds:")],
+		"without worlds": withoutWorlds,
 	} {
 		t.Run(name, func(t *testing.T) {
 			c, err := worlds.Compile(parseSchema(t, schema))

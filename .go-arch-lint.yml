@@ -8,6 +8,7 @@ exclude:
   - internal/testutil
   - internal/store/storetest
   - internal/entitymanager/entitymanagertest
+  - internal/tracer/tracertest
   - internal/visibility/visibilitytest
   - internal/state/statetest
   - internal/lock/locktest

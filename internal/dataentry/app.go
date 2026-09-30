@@ -604,13 +604,16 @@ func appRedactor(a *App) visibility.FieldRedactor {
 // appbuild's guard: it would convert a caught bug into a silent downgrade,
 // and delete the fault path failclosed_test.go exercises.
 func (a *App) scriptReader(redactor visibility.FieldRedactor) lua.EntityReader {
-	return gatedScriptReader(a.acl, a.store, redactor, a.faceOrder())
+	return gatedScriptReader(a.acl, a.store, redactor, faceOrderOption(a))
 }
 
-// faceOrder is the resolver option every App-wired resolver takes, so a
+// faceOrderOption is the resolver option every App-wired resolver takes, so a
 // Family lists faces in the live metamodel's declaration order on every read
 // tier.
-func (a *App) faceOrder() visibility.ResolverOption {
+//
+// A free function rather than an App method: App is at its plimsoll method
+// load line.
+func faceOrderOption(a *App) visibility.ResolverOption {
 	return visibility.WithFaceOrder((&appFaceOrder{app: a}).of)
 }
 
@@ -845,7 +848,7 @@ func (a *App) scriptTracer(redactor visibility.FieldRedactor) tracer.Tracer {
 		slog.Error("dataentry: ACL gate unavailable; traversal REFUSED", "err", err)
 		return visibility.DenyTracer{}
 	}
-	res, err := visibility.NewResolver(gate, redactor, a.store, a.faceOrder())
+	res, err := visibility.NewResolver(gate, redactor, a.store, faceOrderOption(a))
 	if err != nil {
 		slog.Error("dataentry: resolver unavailable; traversal REFUSED", "err", err)
 		return visibility.DenyTracer{}
@@ -1093,7 +1096,7 @@ func NewApp(
 	app.documents = newDocumentService(st, kv, paths.Root, scriptEngine, app.luaWriteDeps,
 		func() documentElevation {
 			return documentElevation{
-				Reader:   visibility.Unrestricted(st, app.faceOrder()),
+				Reader:   visibility.Unrestricted(st, faceOrderOption(app)),
 				Recorder: elevationRecorder(app.auditSink),
 			}
 		})
