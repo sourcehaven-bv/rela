@@ -20,8 +20,13 @@ var parseRefGuard = guard{
 }
 
 // parseRefEdges are the repo-relative trees whose files take addresses from
-// callers: HTTP handlers, MCP tools, Lua bindings and CLI commands.
-var parseRefEdges = []string{"internal/dataentry/", "internal/mcp/", "internal/lua/", "internal/cli/"}
+// callers: HTTP handlers, MCP tools, Lua bindings and CLI commands, plus the
+// operator-facing packages that read addresses from files and reports (the
+// ACL map, the importer and the docs assertions).
+var parseRefEdges = []string{
+	"internal/dataentry/", "internal/mcp/", "internal/lua/", "internal/cli/",
+	"internal/aclmap/", "internal/importer/", "internal/docs/",
+}
 
 // parseRefCalls returns the position of every `x.ParseRef` selector, called
 // or taken as a value, whatever x's import name.

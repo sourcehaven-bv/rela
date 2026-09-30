@@ -444,11 +444,11 @@ func (s *seedBindings) typeOf(id string) string {
 // Nil: returns (nil, store.ErrNotFound) when the address names no row.
 func seedRowOf(ctx context.Context, st seedEditStore, id string) (*entity.Entity, error) {
 	base := id
-	if ref, perr := entity.ParseRef(id); perr == nil {
-		if !ref.Face.IsImplicit() {
-			return st.GetEntity(ctx, entity.Ref{ID: ref.ID, Face: ref.Face})
+	if addr, perr := entity.ParseAddress(id); perr == nil {
+		if ref, named := addr.Named(); named {
+			return st.GetEntity(ctx, ref)
 		}
-		base = ref.ID
+		base = addr.ID()
 	}
 	family, err := store.Family(ctx, st, base)
 	if err != nil {

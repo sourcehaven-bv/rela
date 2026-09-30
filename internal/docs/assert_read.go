@@ -91,7 +91,7 @@ func luaReadClaim(dr *docRuntime, ls *lua.LState, wantVisible bool) int {
 	}
 
 	target := readTarget(id, face)
-	if _, perr := entity.ParseRef(target); perr != nil {
+	if _, perr := entity.ParseAddress(target); perr != nil {
 		// The resolver answers an address it cannot parse as a miss, which
 		// hidden{} would accept against any policy. Refuse it instead.
 		return dr.luaFail(ls, "%s{id=%q}: not a valid entity address: %v", verb, target, perr)

@@ -114,13 +114,14 @@ var trivialScopeGuard = guard{
 // the store defines it and internal/worlds compiles the configured worlds from it.
 var trivialScopeExempt = []string{"internal/store/", "internal/worlds/"}
 
-// trivialScopeCalls returns the position of every `store.TrivialScope` selector,
-// called or taken as a value.
+// trivialScopeCalls returns the position of every `x.TrivialScope` selector,
+// called or taken as a value, whatever x's import name. It matches the way
+// parseRefCalls does, so an aliased store import cannot slip past it.
 func trivialScopeCalls(fset *token.FileSet, file *ast.File) []token.Position {
 	var found []token.Position
 	ast.Inspect(file, func(n ast.Node) bool {
 		if sel, ok := n.(*ast.SelectorExpr); ok && sel.Sel.Name == "TrivialScope" {
-			if id, ok := sel.X.(*ast.Ident); ok && id.Name == "store" {
+			if _, ok := sel.X.(*ast.Ident); ok {
 				found = append(found, fset.Position(sel.Sel.Pos()))
 			}
 		}
@@ -225,7 +226,8 @@ func TestTrivialScopeCalls(t *testing.T) {
 	}{
 		{"call", `_ = store.InWorld(store.TrivialScope())`, 1},
 		{"method value", `f := store.TrivialScope; _ = f`, 1},
-		{"other receiver", `_ = w.TrivialScope()`, 0},
+		{"aliased package", `_ = storepkg.TrivialScope()`, 1},
+		{"method on a value", `_ = x.y.TrivialScope()`, 0},
 		{"compiled default", `_ = compiled.Default()`, 0},
 	}
 	for _, tc := range cases {
