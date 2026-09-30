@@ -2,7 +2,6 @@ package dataentry
 
 import (
 	"context"
-	"iter"
 	"slices"
 	"testing"
 
@@ -293,50 +292,34 @@ func TestWorldNeighbors_ContentEdgesAreFaceSpecific(t *testing.T) {
 	}
 }
 
-// TestWorldNeighbors_WorldResolvesBeforeGate is the ORDERING test RULING 10
-// governs, and it is written to be mutation-sensitive in a specific way.
+// TestWorldNeighbors_DeniedPrimeFallsThrough pins the order the neighbour
+// seam resolves heads in (TKT-7IZHP0): the ACL trims each neighbour's faces,
+// then the world ranks what is left. The world prefers draft; alice may read
+// features at published only.
 //
-// # Why this ordering is a security property, not a preference
+//   - FEAT-BOTH has both faces. Its draft is denied, so the link is served
+//     at published rather than dropped, as GET and the list serve it.
+//   - FEAT-DRAFT has only a draft. No face is readable, so the link is
+//     absent, exactly as a neighbour the world excludes.
 //
-// Guard rule 1: world resolution must be PRINCIPAL-INDEPENDENT. If the ACL
-// gate ran first, the set of ids handed to the world would depend on what the
-// principal may read — so a neighbor's presence would confound two facts
-// ("no face in this world" and "you may not read it") in a way the caller
-// could pull apart by comparing across principals.
-//
-// # The injection point, and why it is this one
-//
-// The assertion is that the WORLD-RESOLUTION query sees the id of a neighbor
-// the principal cannot read. That is the only observation that distinguishes
-// the two orderings: under gate-first, that id is filtered out BEFORE
-// resolveHeads runs, so the query never sees it. Asserting only on the final
-// wire output would prove nothing — the neighbor is absent under BOTH
-// orderings (gated out either way), which is exactly the "passes trivially"
-// shape RULING 10 names.
-//
-// Mutation-checked: moving visibleWorldNeighbors ahead of resolveHeads in
-// worldOutgoingForEntity fails this test and no other.
-func TestWorldNeighbors_WorldResolvesBeforeGate(t *testing.T) {
+// Mutation-checked: resolving heads through the world alone (the old
+// world-first order) drops FEAT-BOTH and fails this test.
+func TestWorldNeighbors_DeniedPrimeFallsThrough(t *testing.T) {
 	app := withWorldNeighbors(t, newTestAppV1(t))
 	ctx := context.Background()
-
 	seedEntity(app, &entity.Entity{
 		ID: "TKT-1", Type: "ticket", Properties: map[string]any{"title": "entry"},
 	})
-	seedFace(t, app, "TKT-1", "ticket", "published", "published entry")
-	// FEAT-HIDDEN is published, so the WORLD resolves it happily; the ACL is
-	// what removes it. That separation is what the test turns on.
-	seedEntity(app, &entity.Entity{
-		ID: "FEAT-HIDDEN", Type: "feature", Properties: map[string]any{"title": "secret"},
-	})
-	seedFace(t, app, "FEAT-HIDDEN", "feature", "published", "published secret")
-	if _, err := app.store.CreateRelation(ctx, entity.RelationKey{From: "TKT-1", Type: "implements", To: "FEAT-HIDDEN"}, nil); err != nil {
-		t.Fatalf("seed edge: %v", err)
+	seedFace(t, app, "FEAT-BOTH", "feature", "draft", "SECRET DRAFT")
+	seedFace(t, app, "FEAT-BOTH", "feature", "published", "published feature")
+	seedFace(t, app, "FEAT-DRAFT", "feature", "draft", "SECRET ONLY DRAFT")
+	for _, to := range []string{"FEAT-BOTH", "FEAT-DRAFT"} {
+		if _, err := app.store.CreateRelation(ctx, entity.RelationKey{From: "TKT-1", Type: "implements", To: to}, nil); err != nil {
+			t.Fatalf("seed edge: %v", err)
+		}
 	}
-
-	// A principal who may read tickets but NOT features.
 	d := mustNewACL(t, &acl.Policy{
-		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
+		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket", "feature@published"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
 	req, rerr := d.ForPrincipal(principal.Principal{User: "alice", Tool: principal.ToolDataEntry})
@@ -347,14 +330,12 @@ func TestWorldNeighbors_WorldResolvesBeforeGate(t *testing.T) {
 	if gerr != nil {
 		t.Fatalf("newACLReadGate: %v", gerr)
 	}
+	wctx := withWorld(withReadGate(aliceCtx(), gate), worldHandle{name: "preview", scope: store.NewWorldScope(
+		map[string]store.TypeResolution{"feature": {
+			Chain:    []entity.Face{"draft", "published"},
+			Fallback: store.FallbackExclude,
+		}})})
 
-	// Observe the ids the WORLD resolution is asked about, by wrapping the
-	// store the neighbor seam reads through.
-	spy := &headSpyStore{Store: app.store}
-	app.worldNeighbors.store = spy
-
-	wctx := withWorld(withReadGate(aliceCtx(), gate),
-		worldHandle{name: "published", scope: publishedScope("ticket", "feature")})
 	face, found, err := app.visibleReader.inWorld(wctx, "ticket", "TKT-1")
 	if err != nil || !found {
 		t.Fatalf("resolve entry: found=%v err=%v", found, err)
@@ -363,44 +344,31 @@ func TestWorldNeighbors_WorldResolvesBeforeGate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("worldOutgoingForEntity: %v", err)
 	}
-
-	// THE ordering assertion.
-	if !spy.asked("FEAT-HIDDEN") {
-		t.Errorf("the world must resolve a neighbor BEFORE the ACL gate sees "+
-			"it (guard rule 1: resolution is principal-independent). "+
-			"FEAT-HIDDEN never reached the world-resolution query, which "+
-			"means the gate ran first. Asked about: %v", spy.ids)
-	}
-	// And the gate still removes it — world-first must not widen anything.
-	if visible["FEAT-HIDDEN"] {
-		t.Error("resolving before the gate must not let a hidden neighbor " +
-			"through; the gate still decides what reaches the wire")
-	}
+	var linked []string
 	for _, edge := range outgoing {
-		if edge.To == "FEAT-HIDDEN" {
-			t.Error("a neighbor the principal may not read must be absent from the wire")
+		linked = append(linked, edge.To)
+	}
+	if !slices.Equal(linked, []string{"FEAT-BOTH"}) {
+		t.Errorf("links = %v, want [FEAT-BOTH]: the denied draft prime falls through to "+
+			"published, and a draft-only neighbour has no readable face", linked)
+	}
+	if !visible["FEAT-BOTH"] || visible["FEAT-DRAFT"] {
+		t.Errorf("visible = %v, want FEAT-BOTH only", visible)
+	}
+
+	// The included head is the published face, never the denied draft.
+	cands, _, err := worldCandidates(wctx, app.worldNeighbors, face, map[string]string{"implements": ""}, false)
+	if err != nil {
+		t.Fatalf("worldCandidates: %v", err)
+	}
+	for _, c := range cands {
+		if c.ID == "FEAT-DRAFT" || c.Face != "published" {
+			t.Errorf("include candidate %s@%s, want only FEAT-BOTH@published", c.ID, c.Face)
 		}
 	}
-}
-
-// headSpyStore records the ids passed to the world head-resolution query.
-// It wraps rather than replaces the store so every other read behaves
-// normally — a stub returning nothing would make the test pass for the wrong
-// reason.
-type headSpyStore struct {
-	store.Store
-	ids []string
-}
-
-func (s *headSpyStore) ListEntities(
-	ctx context.Context, q store.EntityQuery,
-) iter.Seq2[*entity.Entity, error] {
-	s.ids = append(s.ids, q.IDs...)
-	return s.Store.ListEntities(ctx, q)
-}
-
-func (s *headSpyStore) asked(id string) bool {
-	return slices.Contains(s.ids, id)
+	if len(cands) != 1 {
+		t.Errorf("include candidates = %d, want 1", len(cands))
+	}
 }
 
 // TestWorldNeighbors_IncludeAgreesWithRelations pins the invariant RR-HJV8CP

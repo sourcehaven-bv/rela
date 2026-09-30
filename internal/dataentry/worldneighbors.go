@@ -55,19 +55,22 @@ import (
 // cannot do this itself, because the edge is genuinely there — it is the
 // HEAD that this world does not resolve.
 //
-// # Ordering: world, THEN gate. Non-negotiable.
+// # Ordering: the ACL trims, THEN the world ranks
 //
-// [worldScopedNeighbors] resolves heads before the ACL row gate runs, never
-// after. This is guard rule 1 (see the [worldreader] package doc) applied one
-// layer out: resolution must be PRINCIPAL-INDEPENDENT.
+// A head is the prime among the faces the principal may read, as for every
+// other bare-id read (TKT-7IZHP0, design section 2.3): the per-face row gate
+// trims each neighbour's candidate faces, then the world ranks what is left.
+// A neighbour whose world-preferred face is denied therefore falls through to
+// the next readable face in the chain, instead of vanishing from the links
+// while the same principal can GET it, list it and find it in search.
 //
-// Gate-first would be an existence oracle. If the gate ran before the world,
-// a head the principal may not read would be dropped early — and under a
-// fallback chain the world would then have nothing to resolve, so the
-// RESULT SET a caller sees would differ depending on what the ACL denied
-// them. World-first means a denied neighbor is absent for exactly one
-// reason (the gate said no), indistinguishable from a neighbor that has no
-// face in this world. Pinned by TestWorldNeighbors_WorldResolvesBeforeGate.
+// This is not the existence oracle the old world-first order guarded
+// against. Only served rows come out, and a served row is one the principal
+// may read, so the answer depends on what the ACL denied only among faces
+// the caller cannot see. A neighbour with no readable face in this world is
+// absent, indistinguishable from one the world excludes. Pinned by
+// TestWorldNeighbors_DeniedPrimeFallsThrough and
+// TestFaceGateParity_SurfacesAgreeUnderOneWorld.
 type worldNeighbors struct {
 	// relations is the world-scoped relation capability. It is a
 	// *worldreader.RelationReader rather than a store handle DELIBERATELY:
@@ -76,10 +79,10 @@ type worldNeighbors struct {
 	// package the raw nil-tail query the dispatch is written to prevent.
 	relations *worldreader.RelationReader
 
-	// store resolves neighbor HEADS through the world. This is the same
-	// store path visibleReader.inWorld uses — deliberately, so entity
-	// resolution has ONE implementation and this type adds no second one.
-	store store.Store
+	// heads resolves neighbour HEADS: the ACL-trimmed, world-ranked face of
+	// each id (visibleReader.servedIDs), the same resolution the list and
+	// the single-entity read use, so this type adds no second one.
+	heads visibleReader
 }
 
 // SetWorldNeighbors enables world-scoped LINK resolution (`?world=` on a
@@ -102,9 +105,10 @@ type worldNeighbors struct {
 // supplied by the wiring site because the dispatch it feeds
 // ([worldreader.RelationReader]) must not be reimplemented here.
 //
-// Nil: rejected — a nil app, store or classifier returns an error rather than
-// silently leaving link resolution off, which would present as "this world
-// has no links" on every page.
+// Nil: rejected — a nil app, store or classifier, or an app without a
+// visible reader, returns an error rather than silently leaving link
+// resolution off, which would present as "this world has no links" on every
+// page.
 func SetWorldNeighbors(a *App, s store.Store, classes worldreader.ScopeClassifier) error {
 	if a == nil {
 		return errors.New("dataentry: SetWorldNeighbors: app must be non-nil")
@@ -116,7 +120,10 @@ func SetWorldNeighbors(a *App, s store.Store, classes worldreader.ScopeClassifie
 	if err != nil {
 		return fmt.Errorf("dataentry: SetWorldNeighbors: %w", err)
 	}
-	a.worldNeighbors = &worldNeighbors{relations: rr, store: s}
+	if a.visibleReader.resolver == nil {
+		return errors.New("dataentry: SetWorldNeighbors: app has no visible reader")
+	}
+	a.worldNeighbors = &worldNeighbors{relations: rr, heads: a.visibleReader}
 	return nil
 }
 
@@ -132,8 +139,9 @@ func SetWorldNeighbors(a *App, s store.Store, classes worldreader.ScopeClassifie
 // point read per neighbor. A hub entity with fifty links must not cost fifty
 // round-trips (the RR-FRK1 shape, applied to world resolution).
 //
-// The ACL row gate is NOT applied here. Callers gate the returned heads —
-// world first, then gate, per the type doc.
+// The heads are already the principal's readable faces (see the type doc).
+// Callers still gate them with visibleWorldNeighbors, which re-checks each
+// served face and costs no store read.
 func (wn *worldNeighbors) worldScopedNeighbors(
 	ctx context.Context, res worldreader.Resolved, dir store.Direction,
 ) (edges []*entityPkg.Relation, heads map[string]*entityPkg.Entity, err error) {
@@ -154,10 +162,7 @@ func (wn *worldNeighbors) worldScopedNeighbors(
 
 	ids := headIDsOf(edges, res.Entity.ID)
 	if len(ids) > 0 {
-		heads, err = wn.resolveHeads(ctx, ids)
-		if err != nil {
-			return nil, nil, err
-		}
+		heads = wn.resolveHeads(ctx, ids)
 	} else {
 		heads = make(map[string]*entityPkg.Entity, 1)
 	}
@@ -178,40 +183,22 @@ func (wn *worldNeighbors) worldScopedNeighbors(
 	return edges, heads, nil
 }
 
-// resolveHeads resolves neighbor ids to their face in the request's world.
+// resolveHeads resolves neighbour ids to the face the principal is served
+// in the request's world: the ACL trims each id's faces, then the world
+// ranks what is left ([visibility.Resolver.ResolveIDs]). One batched header
+// read and one gate query per type, whatever the number of ids.
 //
-// One ListEntities carrying the world scope, so the BACKEND resolves the
-// chain and the fallback verdict. This is the same route
-// visibleReader.inWorld takes for the entry, which is what keeps
-// entity resolution to a single implementation: a chain walk written here
-// would be a second copy of the semantics that decide which face a reader
-// sees, free to drift from the store's.
-//
-// An id absent from the result is a neighbor this world excludes. That is a
-// normal outcome, not an error — under `otherwise: exclude` it IS the
-// publication bit.
-//
-// An iterator error is returned, never swallowed into a short map. Truncating
-// here would silently drop links and read as "this world excludes them",
-// which is a backend outage wearing the costume of a correct answer — the
-// mistake resolveWorld refuses to make one file over (RR-4TFZNL).
-func (wn *worldNeighbors) resolveHeads(
-	ctx context.Context, ids []string,
-) (map[string]*entityPkg.Entity, error) {
-	// Heads are gated and linked, never rendered, so they are read as
-	// content-free headers (rowcontent.go) — a page's neighbor set can be
-	// hundreds of rows whose bodies nothing here would look at.
-	out := make(map[string]*entityPkg.Entity, len(ids))
-	for h, err := range store.ListEntityHeaders(ctx, wn.store, store.EntityQuery{
-		IDs:   ids,
-		Faces: store.InWorld(worldScopeFrom(ctx)),
-	}) {
-		if err != nil {
-			return nil, fmt.Errorf("resolving neighbor heads: %w", err)
-		}
-		out[h.ID] = headerEntity(h)
+// An id absent from the result has no readable face this world serves.
+// That is a normal outcome, not an error: under `otherwise: exclude` it IS
+// the publication bit. A store failure also yields no heads, so it fails
+// closed toward fewer links; the resolver logs it.
+func (wn *worldNeighbors) resolveHeads(ctx context.Context, ids []string) map[string]*entityPkg.Entity {
+	served := wn.heads.servedIDs(ctx, ids)
+	out := make(map[string]*entityPkg.Entity, len(served))
+	for id, h := range served {
+		out[id] = headerEntity(h)
 	}
-	return out, nil
+	return out
 }
 
 // headIDsOf collects the DISTINCT neighbor ids an edge set names, from
@@ -422,9 +409,6 @@ func worldOutgoingForEntity(
 	if err != nil {
 		return nil, nil, err
 	}
-	// World FIRST, gate SECOND. See the worldNeighbors type doc: the reverse
-	// order makes the served result set depend on what the ACL denied, which
-	// is the existence oracle guard rule 1 exists to close.
 	visible = visibleWorldNeighbors(ctx, visReader, heads)
 	outgoing, _ = worldEdgesForWire(edges, e, heads, visible, wn.relations.Owns)
 	return outgoing, visible, nil
@@ -492,14 +476,11 @@ func worldNeighborsForPage(
 		}
 	}
 
-	// Pass 2: ONE world resolution over the page's whole neighbor set, then
-	// ONE gate pass. World first, gate second — see the worldNeighbors doc.
+	// Pass 2: ONE resolution over the page's whole neighbour set (the ACL
+	// trims, the world ranks; see the worldNeighbors doc), then ONE gate pass.
 	var heads map[string]*entityPkg.Entity
 	if len(headIDs) > 0 {
-		heads, err = wn.resolveHeads(ctx, headIDs)
-		if err != nil {
-			return nil, nil, nil, err
-		}
+		heads = wn.resolveHeads(ctx, headIDs)
 	}
 	if heads == nil {
 		heads = make(map[string]*entityPkg.Entity, len(entities))
