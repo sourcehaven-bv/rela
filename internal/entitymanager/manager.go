@@ -2011,21 +2011,17 @@ func faceDeleteEdges(
 }
 
 // requireAuthorizedEdges reports an error when deleted holds an edge that is
-// in neither authorized set. Edges are matched on (from, from face, type, to).
+// in neither authorized set. Edges are matched on their full identity,
+// tail face included.
 func requireAuthorizedEdges(deleted []*entity.Relation, authorized ...[]*entity.Relation) error {
-	type key struct {
-		from     string
-		fromFace entity.Face
-		typ, to  string
-	}
-	ok := make(map[key]bool)
+	ok := make(map[entity.RelationKey]bool)
 	for _, set := range authorized {
 		for _, r := range set {
-			ok[key{r.From, r.FromFace, r.Type, r.To}] = true
+			ok[r.Identity()] = true
 		}
 	}
 	for _, r := range deleted {
-		if !ok[key{r.From, r.FromFace, r.Type, r.To}] {
+		if !ok[r.Identity()] {
 			return fmt.Errorf("delete face: the store removed %s --%s--> %s, which was not authorized",
 				entity.FormatStateRef(r.From, r.FromFace), r.Type, r.To)
 		}

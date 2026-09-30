@@ -80,8 +80,8 @@ import (
 // DeleteRelationState folded into UpdateRelation and DeleteRelation, which
 // now take an entity.RelationKey that carries the tail.
 //
-//plimsoll:max-methods=52
-//plimsoll:max-exported-methods=32
+//plimsoll:max-methods=48
+//plimsoll:max-exported-methods=30
 type MemStore struct {
 	// txMu serializes an open Tx against ordinary writers: Tx holds it
 	// for the whole callback, every exported write method takes it

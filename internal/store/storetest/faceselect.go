@@ -52,7 +52,7 @@ func RunFaceSelectionTests(t *testing.T, f Factory) {
 		for i, doc := range []string{"DOC-1", "DOC-2", "DOC-3"} {
 			own := entity.New([]string{"OWN-1", "OWN-2", "OWN-3"}[i], "owner")
 			require.NoError(t, s.CreateEntity(ctx(), own))
-			_, err := s.CreateRelation(ctx(), own.ID, "owns", doc, nil)
+			_, err := s.CreateRelation(ctx(), entity.RelationKey{From: own.ID, Type: "owns", To: doc}, nil)
 			require.NoError(t, err)
 		}
 		return s
@@ -236,11 +236,8 @@ func RunFaceSelectionTests(t *testing.T, f Factory) {
 		}
 		rel := func(from, typ, to string, face entity.Face) {
 			t.Helper()
-			var data *store.RelationData
-			if face != "" {
-				data = &store.RelationData{FromFace: face}
-			}
-			_, err := s.CreateRelation(ctx(), from, typ, to, data)
+			k := entity.RelationKey{From: from, FromFace: face, Type: typ, To: to}
+			_, err := s.CreateRelation(ctx(), k, nil)
 			require.NoError(t, err, "%s --%s--> %s", from, typ, to)
 		}
 		mk("alice", "user", def)

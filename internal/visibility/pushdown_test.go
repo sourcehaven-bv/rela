@@ -271,7 +271,7 @@ func TestListPushdown_AllFacesScopedPrincipalGetsGrantedFaceRowsOnly(t *testing.
 		}
 	}
 	for _, to := range []string{"POL-1", "POL-2"} {
-		if _, err := st.CreateRelation(ctx, "alice", "reviews", to, nil); err != nil {
+		if _, err := st.CreateRelation(ctx, entity.RelationKey{From: "alice", Type: "reviews", To: to}, nil); err != nil {
 			t.Fatal(err)
 		}
 	}

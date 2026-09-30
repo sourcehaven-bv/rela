@@ -24,7 +24,7 @@ func (r *recordingFormatter) FormatEntity(_ context.Context, ref entity.Ref, _ b
 	return false, nil
 }
 
-func (r *recordingFormatter) FormatRelation(context.Context, string, string, string, bool) (bool, error) {
+func (r *recordingFormatter) FormatRelation(context.Context, entity.RelationKey, bool) (bool, error) {
 	return false, nil
 }
 

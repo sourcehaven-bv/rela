@@ -21,7 +21,7 @@ func lastFaceFixture(t *testing.T, b concBackend) faceEdgeFixture {
 	if _, err := f.st.DeleteFace(ctx, entity.Ref{ID: "POL-1", Face: "published"}); err != nil {
 		t.Fatalf("seed: delete POL-1@published: %v", err)
 	}
-	if _, err := f.st.CreateRelation(ctx, "CTL-2", "covers", "POL-1", nil); err != nil {
+	if _, err := f.st.CreateRelation(ctx, entity.RelationKey{From: "CTL-2", Type: "covers", To: "POL-1"}, nil); err != nil {
 		t.Fatalf("seed CTL-2 covers POL-1: %v", err)
 	}
 	return f
@@ -101,7 +101,7 @@ func TestDeleteEntityFace_NotLastKeepsInboundEdges(t *testing.T) {
 	for _, b := range concBackends {
 		t.Run(b.name, func(t *testing.T) {
 			f := newFaceEdgeFixture(t, b)
-			if _, err := f.st.CreateRelation(context.Background(), "CTL-2", "covers", "POL-1", nil); err != nil {
+			if _, err := f.st.CreateRelation(context.Background(), entity.RelationKey{From: "CTL-2", Type: "covers", To: "POL-1"}, nil); err != nil {
 				t.Fatalf("seed CTL-2 covers POL-1: %v", err)
 			}
 			// drafter cannot delete a covers edge, so success also shows the

@@ -824,27 +824,38 @@ func (g gatedGraphReader) ListRelationsStrict(
 func (g gatedGraphReader) GetRelation(
 	ctx context.Context, k entity.RelationKey,
 ) (*entity.Relation, error) {
-	if g.gateEndpoints && (!g.faceReadable(ctx, k.Tail()) || !g.faceReadable(ctx, entity.Ref{ID: k.To})) {
+	if g.gateEndpoints && (!g.tailReadable(ctx, k.Tail()) || !g.familyReadable(ctx, k.To)) {
 		return nil, store.ErrNotFound
 	}
 	return g.raw.GetRelation(ctx, k)
 }
 
-// faceReadable reports whether the caller may read ref. The zero face asks
-// about the family: an identity-scoped edge and a head are entity level, so
-// any readable face admits them. A named face must itself be readable, since
-// a content-scoped edge belongs to its tail face. A gate failure is logged
-// and hides, like every other gated read.
-func (g gatedGraphReader) faceReadable(ctx context.Context, ref entity.Ref) bool {
-	fam, ok, err := g.rows.Family(ctx, ref.ID)
+// tailReadable reports whether the caller may read an edge's tail. The zero
+// face is an identity-scoped edge, which is entity level, so any readable
+// face admits it. A named face must itself be readable, since a
+// content-scoped edge belongs to its tail face.
+func (g gatedGraphReader) tailReadable(ctx context.Context, tail entity.Ref) bool {
+	faces, ok := g.readableFaces(ctx, tail.ID)
+	return ok && (tail.Face.IsDefault() || slices.Contains(faces, tail.Face))
+}
+
+// familyReadable reports whether the caller may read any face of id. A head
+// is entity level, so this is its whole gate.
+func (g gatedGraphReader) familyReadable(ctx context.Context, id string) bool {
+	_, ok := g.readableFaces(ctx, id)
+	return ok
+}
+
+// readableFaces returns the faces of id the caller may read, and false when
+// there are none. A gate failure is logged and hides, like every other gated
+// read.
+func (g gatedGraphReader) readableFaces(ctx context.Context, id string) ([]entity.Face, bool) {
+	fam, ok, err := g.rows.Family(ctx, id)
 	if err != nil {
-		slog.Warn("appbuild: relation endpoint gate failed; answering not-found", "id", ref.ID, "err", err)
-		return false
+		slog.Warn("appbuild: relation endpoint gate failed; answering not-found", "id", id, "err", err)
+		return nil, false
 	}
-	if !ok {
-		return false
-	}
-	return ref.Face.IsDefault() || slices.Contains(fam.Faces, ref.Face)
+	return fam.Faces, ok
 }
 
 func (g gatedGraphReader) CountEntities(ctx context.Context, q store.EntityQuery) (int, error) {

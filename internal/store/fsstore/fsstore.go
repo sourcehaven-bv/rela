@@ -185,8 +185,8 @@ type attachMeta struct {
 // DeleteRelationState folded into UpdateRelation and DeleteRelation, which
 // now take an entity.RelationKey that carries the tail.
 //
-//plimsoll:max-methods=94
-//plimsoll:max-exported-methods=35
+//plimsoll:max-methods=89
+//plimsoll:max-exported-methods=33
 type FSStore struct {
 	// rooted is the validated-key I/O surface. Every read, write,
 	// directory op, and remove that operates on files under the

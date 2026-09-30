@@ -95,13 +95,13 @@ func RunFamilyTests(t *testing.T, f Factory) {
 		seed(t, s, "DOC-10", "draft", "published")
 		seed(t, s, "SRC-1", "")
 		seed(t, s, "DST-1", "")
-		_, err := s.CreateRelation(ctx(), "SRC-1", "links", "DOC-10", nil)
+		_, err := s.CreateRelation(ctx(), entity.RelationKey{From: "SRC-1", Type: "links", To: "DOC-10"}, nil)
 		require.NoError(t, err)
-		_, err = s.CreateRelation(ctx(), "DOC-10", "references", "DST-1",
-			&store.RelationData{FromFace: "draft"})
+		_, err = s.CreateRelation(ctx(),
+			entity.RelationKey{From: "DOC-10", FromFace: "draft", Type: "references", To: "DST-1"}, nil)
 		require.NoError(t, err)
-		_, err = s.CreateRelation(ctx(), "DOC-10", "references", "DST-1",
-			&store.RelationData{FromFace: "published"})
+		_, err = s.CreateRelation(ctx(),
+			entity.RelationKey{From: "DOC-10", FromFace: "published", Type: "references", To: "DST-1"}, nil)
 		require.NoError(t, err)
 
 		res, err := s.DeleteFace(ctx(), entity.Ref{ID: "DOC-10", Face: "published"})
@@ -124,7 +124,7 @@ func RunFamilyTests(t *testing.T, f Factory) {
 		s := f(t)
 		seed(t, s, "DOC-11", "")
 		seed(t, s, "SRC-2", "")
-		_, err := s.CreateRelation(ctx(), "SRC-2", "links", "DOC-11", nil)
+		_, err := s.CreateRelation(ctx(), entity.RelationKey{From: "SRC-2", Type: "links", To: "DOC-11"}, nil)
 		require.NoError(t, err)
 
 		res, err := s.DeleteFace(ctx(), entity.Ref{ID: "DOC-11"})
