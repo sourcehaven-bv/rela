@@ -99,7 +99,7 @@ func TestCompile_NilMetamodel(t *testing.T) {
 func TestCompile_ChainsAndFallback(t *testing.T) {
 	c, err := worlds.Compile(parseSchema(t, facedSchema))
 	require.NoError(t, err)
-	assert.Equal(t, []string{"editorial", "published"}, c.Names())
+	assert.Equal(t, []string{"published", "editorial"}, c.Names(), "declaration order, not sorted")
 
 	t.Run("rule 1: a faceless type is ABSENT, not excluded", func(t *testing.T) {
 		for _, name := range []string{"published", "editorial"} {

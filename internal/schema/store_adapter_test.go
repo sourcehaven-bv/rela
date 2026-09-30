@@ -6,11 +6,12 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
 
 // Compile-time check that StoreCounter satisfies TypeCounter.
-var _ TypeCounter = NewStoreCounter(context.Background(), memstore.New())
+var _ TypeCounter = NewStoreCounter(context.Background(), memstore.New(), store.TrivialScope())
 
 func TestStoreCounter_Analyze(t *testing.T) {
 	s := memstore.New()
@@ -36,7 +37,7 @@ func TestStoreCounter_Analyze(t *testing.T) {
 
 	// Run Analyze with StoreCounter — same metamodel as newTestMetamodel()
 	meta := newTestMetamodel()
-	counter := NewStoreCounter(ctx, s)
+	counter := NewStoreCounter(ctx, s, store.TrivialScope())
 	result := Analyze(meta, counter, nil, 0)
 
 	// unused-type has no instances
@@ -83,7 +84,7 @@ func TestStoreCounter_LowUsage(t *testing.T) {
 		Types: map[string]metamodel.CustomType{},
 	}
 
-	counter := NewStoreCounter(ctx, s)
+	counter := NewStoreCounter(ctx, s, store.TrivialScope())
 	result := Analyze(meta, counter, nil, 1)
 
 	// decision has 1 instance → low usage at threshold=1

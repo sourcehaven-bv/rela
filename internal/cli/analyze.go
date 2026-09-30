@@ -888,7 +888,7 @@ func runAnalyzeAllSections(
 
 // AnalyzeSchemaCmd analyzes metamodel schema usage.
 type AnalyzeSchemaCmd struct {
-	Threshold int  `default:"0" help:"Show types with instance count <= threshold (0 = only unused)."`
+	Threshold int  `default:"0" help:"Show types with at most this many entities or relations (0 = only unused). An entity counts once, whatever faces it stores."`
 	Cleanup   bool `help:"Remove unused types from metamodel and config files."`
 	DryRun    bool `name:"dry-run" help:"Preview cleanup changes without modifying files."`
 }
@@ -899,7 +899,7 @@ func (c *AnalyzeSchemaCmd) Run(svc *readServices) error {
 		return stderrors.New("--threshold must be non-negative")
 	}
 	dataEntry := loadDataEntryConfig(svc)
-	counter := schema.NewStoreCounter(context.Background(), svc.Store)
+	counter := schema.NewStoreCounter(context.Background(), svc.Store, svc.Families)
 	analysisResult := schema.Analyze(svc.Meta, counter, dataEntry, c.Threshold)
 
 	if c.Cleanup {

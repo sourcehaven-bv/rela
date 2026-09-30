@@ -32,6 +32,7 @@ package worlds
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -47,6 +48,11 @@ import (
 // also what Compile returns for a nil metamodel or one with no `worlds:`.
 type Compiled struct {
 	byName map[string]store.WorldScope
+	// order is the declared world names in declaration order.
+	order []string
+	// families is the scope [Compiled.Families] returns; unset in the zero
+	// value, which has no faced type.
+	families store.WorldScope
 }
 
 // Default returns the world a surface uses when the request names none.
@@ -73,15 +79,24 @@ func (c Compiled) Lookup(name string) (scope store.WorldScope, ok bool) {
 	return scope, ok
 }
 
-// Names returns the declared world names in sorted order, NOT including
-// the implicit default world.
-func (c Compiled) Names() []string {
-	out := make([]string, 0, len(c.byName))
-	for name := range c.byName {
-		out = append(out, name)
+// Names returns the declared world names in declaration order (RR-V3UH7K),
+// NOT including the implicit default world.
+func (c Compiled) Names() []string { return slices.Clone(c.order) }
+
+// Families returns the scope that selects one row per entity: each faced
+// type ranks its faces in declaration order and excludes an entity with
+// none of them; a faceless type reads its implicit face. It does not depend
+// on the declared worlds.
+//
+// It is for internal code that needs "whichever face exists" with no world,
+// such as a per-type usage count (TKT-7IZHP0 design §3.4). It is never a
+// selectable world and never an ACL lens: a caller that shows content to a
+// principal must still restrict to the faces that principal may read.
+func (c Compiled) Families() store.WorldScope {
+	if !c.families.IsSet() {
+		return store.TrivialScope()
 	}
-	sort.Strings(out)
-	return out
+	return c.families
 }
 
 // Compile turns a metamodel's declarations into compiled world scopes.
@@ -109,18 +124,33 @@ func Compile(m *metamodel.Metamodel) (Compiled, error) {
 	if err := joinErrors(errs); err != nil {
 		return Compiled{}, err
 	}
+	families := compileFamilies(m, faces)
 	if len(m.Worlds) == 0 {
 		// No worlds declared: nothing to compile, but the face
 		// grammar still had to hold — a project may declare states
 		// before it declares any world that selects them.
-		return Compiled{}, nil
+		return Compiled{families: families}, nil
 	}
 
 	byName := make(map[string]store.WorldScope, len(m.Worlds))
 	for _, name := range sortedWorldNames(m) {
 		byName[name] = compileWorld(m, m.Worlds[name], faces)
 	}
-	return Compiled{byName: byName}, nil
+	return Compiled{byName: byName, order: metamodel.WorldOrderOf(m), families: families}, nil
+}
+
+// compileFamilies builds the [Compiled.Families] scope: every faced type
+// ranks its declared faces in declaration order, with an exclude fallback.
+// A metamodel with no faced type yields the trivial scope.
+func compileFamilies(m *metamodel.Metamodel, faces map[string]map[string]entity.Face) store.WorldScope {
+	byType := make(map[string]store.TypeResolution, len(faces))
+	for typeName := range faces {
+		byType[typeName] = store.TypeResolution{
+			Chain:    resolveChain(metamodel.FaceOrderOf(m, typeName), faces[typeName]),
+			Fallback: store.FallbackExclude,
+		}
+	}
+	return store.NewWorldScope(byType)
 }
 
 // validateWorldNames checks every declared world name against the same
@@ -193,7 +223,7 @@ func declaredFaces(m *metamodel.Metamodel) (map[string]map[string]entity.Face, [
 			continue
 		}
 		parsed := make(map[string]entity.Face, len(def.Faces))
-		for _, name := range sortedFaceNames(def) {
+		for _, name := range metamodel.FaceOrderOf(m, typeName) {
 			if _, err := entity.ParseFace(name); err != nil {
 				errs = append(errs, fmt.Errorf(
 					"entity %q: invalid face name %q: %w", typeName, name, err))
@@ -289,15 +319,6 @@ func sortedWorldNames(m *metamodel.Metamodel) []string {
 func sortedTypeNames(m *metamodel.Metamodel) []string {
 	out := make([]string, 0, len(m.Entities))
 	for name := range m.Entities {
-		out = append(out, name)
-	}
-	sort.Strings(out)
-	return out
-}
-
-func sortedFaceNames(def metamodel.EntityDef) []string {
-	out := make([]string, 0, len(def.Faces))
-	for name := range def.Faces {
 		out = append(out, name)
 	}
 	sort.Strings(out)

@@ -50,6 +50,7 @@ func newTestDeps(t *testing.T, meta *metamodel.Metamodel, st store.Store) Deps {
 		ProjectRoot: t.TempDir(),
 		Attachments: testAttachmentDeps(t, svc, meta, audit.Nop{}),
 		World:       store.TrivialScope(),
+		Families:    store.TrivialScope(),
 	}
 }
 

@@ -472,7 +472,7 @@ func (s *Server) handleAnalyzeSchema(
 
 	dataEntry := s.loadDataEntryConfig(ctx)
 
-	counter := schema.NewStoreCounter(ctx, snap.deps.Store)
+	counter := schema.NewStoreCounter(ctx, snap.deps.Store, snap.deps.Families)
 	analysis := schema.Analyze(snap.deps.Meta, counter, dataEntry, threshold)
 
 	if !analysis.HasIssues() {

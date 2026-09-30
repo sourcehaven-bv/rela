@@ -7,7 +7,6 @@ import (
 	"maps"
 	"math/rand/v2"
 	"slices"
-	"sort"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -422,11 +421,11 @@ func (d Deps) requireCreateFaceFor(entityType string, face entity.Face) error {
 	}
 	if face.IsImplicit() {
 		return fmt.Errorf("%w: %s declares %s", ErrFaceRequired,
-			entityType, strings.Join(sortedFaceNames(def), ", "))
+			entityType, strings.Join(metamodel.FaceOrderOf(d.Meta, entityType), ", "))
 	}
 	if _, declared := def.Faces[face.String()]; !declared {
 		return fmt.Errorf("%w: %s declares %s, not %q", ErrFaceNotDeclared,
-			entityType, strings.Join(sortedFaceNames(def), ", "), face)
+			entityType, strings.Join(metamodel.FaceOrderOf(d.Meta, entityType), ", "), face)
 	}
 	return nil
 }
@@ -516,20 +515,9 @@ func (d Deps) requireRelationFaceFor(relType, fromType string, face entity.Face)
 	}
 	if _, declared := def.Faces[face.String()]; !declared {
 		return fmt.Errorf("%w: source type %s declares %s, not %q", ErrFaceNotDeclared,
-			fromType, strings.Join(sortedFaceNames(def), ", "), face)
+			fromType, strings.Join(metamodel.FaceOrderOf(d.Meta, fromType), ", "), face)
 	}
 	return nil
-}
-
-// sortedFaceNames lists a type's declared faces in a stable order, so an
-// error message names them the same way twice.
-func sortedFaceNames(def *metamodel.EntityDef) []string {
-	names := make([]string, 0, len(def.Faces))
-	for name := range def.Faces {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
 }
 
 // entityFamily is the entity-level view of one id: its type and the faces it

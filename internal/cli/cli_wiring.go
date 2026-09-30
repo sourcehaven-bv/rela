@@ -46,6 +46,9 @@ type readServices struct {
 	// World is the world `list` reads in when the user names none, from
 	// the compiled worlds' default-world seam.
 	World store.WorldScope
+	// Families selects one row per entity whichever face it stores, for
+	// per-type counts (worlds.Compiled.Families). Never a read world.
+	Families store.WorldScope
 }
 
 // writeServices is the read-write capability bundle. It embeds
@@ -167,6 +170,7 @@ func newCLIBundles(svc *appbuild.Services) (*cliBundles, error) {
 		Templater: svc.Templater(),
 		FS:        svc.FS(),
 		World:     appbuild.CompiledWorlds(svc).Default(),
+		Families:  appbuild.CompiledWorlds(svc).Families(),
 	}
 	write := writeServices{
 		readServices:  read,

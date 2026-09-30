@@ -92,6 +92,10 @@ type Deps struct {
 	// schema resource's counts, the overview prompt, search) read in. It is
 	// required; wiring passes worlds.Compiled.Default.
 	World store.WorldScope
+	// Families selects one row per entity whichever face it stores, for the
+	// schema analysis counts. It is required; wiring passes
+	// worlds.Compiled.Families. It is never a read world.
+	Families store.WorldScope
 }
 
 // GraphReader is the read capability MCP requires of its store — the exact
@@ -222,6 +226,8 @@ func (d Deps) validate() error {
 		return errors.New("mcp: Deps.ProjectRoot is required")
 	case !d.World.IsSet():
 		return errors.New("mcp: Deps.World is required (worlds.Compiled.Default)")
+	case !d.Families.IsSet():
+		return errors.New("mcp: Deps.Families is required (worlds.Compiled.Families)")
 	}
 	return d.Attachments.validate()
 }
