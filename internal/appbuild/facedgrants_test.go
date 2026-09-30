@@ -82,7 +82,9 @@ func TestPrepare_FacedGroupTypeFailsBoot(t *testing.T) {
 		svc.Close()
 		t.Fatal("expected boot to fail on a faced group type")
 	}
-	if want := `membership_relation "member-of": group type "board" declares faces (draft)`; !strings.Contains(err.Error(), want) {
+	want := `is the default membership relation; set ` + "`membership_relation:`" +
+		` if this is not your membership relation): group type "board" declares faces (draft)`
+	if !strings.Contains(err.Error(), want) {
 		t.Errorf("error %q does not contain %q", err, want)
 	}
 }
@@ -139,11 +141,31 @@ func TestValidateACLPolicy(t *testing.T) {
 		PrincipalProperty:  "email",
 		MembershipRelation: "undeclared-membership",
 		Roles: map[string]acl.RoleDef{
-			"editor": {Read: []string{"*"}, Update: []string{"*", "pol@draft", "policy@published"}},
+			"editor": {Read: []string{"*"}, Update: []string{"*", "policy@draft", "policy@published"}},
 		},
 	}
 	if vErr := appbuild.ValidateACLPolicy(ok, meta); vErr != nil {
 		t.Errorf("a face-qualified policy must validate, got %v", vErr)
+	}
+
+	alias := &acl.Policy{
+		MembershipRelation: "undeclared-membership",
+		Roles:              map[string]acl.RoleDef{"editor": {Read: []string{"*"}, Update: []string{"pol@draft"}}},
+	}
+	err = appbuild.ValidateACLPolicy(alias, meta)
+	if err == nil || !strings.Contains(err.Error(), `must use the canonical type name: "policy@draft"`) {
+		t.Errorf("an alias write grant on a faced type must be refused, got %v", err)
+	}
+
+	emptyFaces, err := metamodel.Parse([]byte(strings.Replace(facedMetamodel,
+		"    faces:\n      draft: { label: Draft }\n    properties:\n      title: { type: string }\nrelations:",
+		"    faces: {}\n    properties:\n      title: { type: string }\nrelations:", 1)))
+	if err != nil {
+		t.Fatalf("load metamodel: %v", err)
+	}
+	board := &acl.Policy{Roles: map[string]acl.RoleDef{"editor": {Read: []string{"*"}, Update: []string{"board"}}}}
+	if vErr := appbuild.ValidateACLPolicy(board, emptyFaces); vErr != nil {
+		t.Errorf("`faces: {}` declares no faces, so a bare grant must load, got %v", vErr)
 	}
 
 	inherit := &acl.Policy{MembershipRelation: "undeclared-membership", InheritRolesThrough: []string{"cites"}}

@@ -1217,23 +1217,6 @@ func loadACLPolicy(projectRoot string) (*acl.Policy, error) {
 	return policy, nil
 }
 
-// buildACL constructs the production ACL from a policy + a store. The
-// store backs the [acl.Graph] adapter the resolver needs for member-of
-// walks and ancestor probes. A nil policy yields [acl.NopACL]
-// (allow-all) — the absence of acl.yaml is taken as "no access control
-// intended," which is different from a malformed acl.yaml (handled in
-// [loadACLPolicy]).
-//
-// Returns both the [acl.ACL] interface (consumed by entitymanager) and
-// the concrete *acl.Declarative (consumed by the affordance resolver).
-// When the result is a Declarative, both returns reference the same
-// value — making the "write authz and affordance verdicts share one
-// resolver" invariant textual rather than implicit-via-type-assertion.
-// For NopACL the second return is nil.
-//
-// An error from [acl.NewDeclarative] is propagated, not downgraded:
-// the operator wrote a policy and the resolver couldn't accept it; the
-// server must fail to boot rather than silently allow-all.
 // ValidateACLPolicy enforces the schema-dependent invariants of an ACL policy
 // ([acl.Policy.ValidateAgainstMetamodel]): identity keys, declared relation
 // types, faced write grants, and the identity structure the resolver walks.
@@ -1295,6 +1278,23 @@ func (v metamodelView) PropertyInfo(entityType, property string) acl.PropertyInf
 	return acl.PropertyInfo{Exists: true, Unique: pd.Unique, List: pd.List}
 }
 
+// buildACL constructs the production ACL from a policy + a store. The
+// store backs the [acl.Graph] adapter the resolver needs for member-of
+// walks and ancestor probes. A nil policy yields [acl.NopACL]
+// (allow-all) — the absence of acl.yaml is taken as "no access control
+// intended," which is different from a malformed acl.yaml (handled in
+// [loadACLPolicy]).
+//
+// Returns both the [acl.ACL] interface (consumed by entitymanager) and
+// the concrete *acl.Declarative (consumed by the affordance resolver).
+// When the result is a Declarative, both returns reference the same
+// value — making the "write authz and affordance verdicts share one
+// resolver" invariant textual rather than implicit-via-type-assertion.
+// For NopACL the second return is nil.
+//
+// An error from [acl.NewDeclarative] is propagated, not downgraded:
+// the operator wrote a policy and the resolver couldn't accept it; the
+// server must fail to boot rather than silently allow-all.
 func buildACL(policy *acl.Policy, st store.Store) (acl.ACL, *acl.Declarative, error) {
 	if policy == nil {
 		return acl.NopACL{}, nil, nil
@@ -1699,14 +1699,16 @@ func prepare(cfg Config, opts []Option) (*SharedBase, error) {
 		return nil, fmt.Errorf("load metamodel: %w", err)
 	}
 
-	// Compile the declared worlds here, at assembly, so a bad face name is
-	// a startup failure rather than a lurking runtime one. The loader checks
-	// world STRUCTURE; the face GRAMMAR is checked here because metamodel
-	// may not import entity under arch-lint (TKT-WAV8XP, internal/worlds).
+	// The policy is checked against the schema once per base, before any
+	// store opens, so every recipe fails the boot the same way.
 	if vErr := validateResolvedPolicy(resolvedACL, aclPolicy, meta); vErr != nil {
 		return nil, vErr
 	}
 
+	// Compile the declared worlds here, at assembly, so a bad face name is
+	// a startup failure rather than a lurking runtime one. The loader checks
+	// world STRUCTURE; the face GRAMMAR is checked here because metamodel
+	// may not import entity under arch-lint (TKT-WAV8XP, internal/worlds).
 	compiledWorlds, err := worlds.Compile(meta)
 	if err != nil {
 		return nil, fmt.Errorf("compile worlds: %w", err)
@@ -1752,7 +1754,7 @@ func validateResolvedPolicy(injected acl.ACL, loaded *acl.Policy, meta *metamode
 		return nil
 	}
 	if err := ValidateACLPolicy(policy, meta); err != nil {
-		return fmt.Errorf("appbuild: validate acl policy against metamodel: %w", err)
+		return fmt.Errorf("appbuild: acl.yaml does not match the schema: %w", err)
 	}
 	return nil
 }

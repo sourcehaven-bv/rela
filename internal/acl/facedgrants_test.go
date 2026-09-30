@@ -53,11 +53,34 @@ func TestValidateAgainstMetamodel_FacedWriteGrants(t *testing.T) {
 			},
 		},
 		{
+			name: "an alias with a face is refused: grant matching does not resolve aliases",
+			role: acl.RoleDef{Read: []string{"*"}, Update: []string{"pol@draft"}},
+			wantErr: []string{
+				`roles.editor.update: "pol@draft" names the type through the alias "pol"`,
+				`must use the canonical type name: "policy@draft"`,
+			},
+		},
+		{
 			name: "a wildcard beside the bare grant adds a note",
 			role: acl.RoleDef{Read: []string{"*"}, Update: []string{"*", "policy"}},
 			wantErr: []string{
 				`roles.editor.update: "policy"`,
 				`note: "*" in this list reaches only types without faces, so it does not cover "policy"`,
+			},
+		},
+		{
+			name: "a face on the wildcard does not suppress the note",
+			role: acl.RoleDef{Read: []string{"*"}, Update: []string{"*", "*@draft", "policy"}},
+			wantErr: []string{
+				`note: "*" in this list reaches only types without faces`,
+			},
+		},
+		{
+			name: "an alias face grant does not suppress the note",
+			role: acl.RoleDef{Read: []string{"*"}, Update: []string{"*", "pol@draft", "policy"}},
+			wantErr: []string{
+				`"pol@draft" names the type through the alias`,
+				`note: "*" in this list reaches only types without faces`,
 			},
 		},
 		{
@@ -155,6 +178,7 @@ func TestValidateAgainstMetamodel_IdentityStructure(t *testing.T) {
 		policy  acl.Policy
 		rels    map[string]acl.RelationInfo
 		wantErr []string
+		count   int // number of joined errors; 0 skips the check
 	}{
 		{
 			name:    "faced user type",
@@ -166,10 +190,14 @@ func TestValidateAgainstMetamodel_IdentityStructure(t *testing.T) {
 			policy: acl.Policy{UserEntityType: "person"},
 		},
 		{
-			name:    "faced group type on the default membership relation",
-			policy:  acl.Policy{},
-			rels:    map[string]acl.RelationInfo{"member-of": {From: []string{"person"}, To: []string{"fteam"}}},
-			wantErr: []string{`membership_relation "member-of": group type "fteam" declares faces`},
+			name:   "faced group type on the default membership relation",
+			policy: acl.Policy{},
+			rels:   map[string]acl.RelationInfo{"member-of": {From: []string{"person"}, To: []string{"fteam"}}},
+			wantErr: []string{
+				`membership_relation "member-of" ("member-of" is the default membership relation; ` +
+					"set `membership_relation:` if this is not your membership relation): " +
+					`group type "fteam" declares faces`,
+			},
 		},
 		{
 			name:    "faced member type on a configured membership relation",
@@ -183,7 +211,7 @@ func TestValidateAgainstMetamodel_IdentityStructure(t *testing.T) {
 			rels: map[string]acl.RelationInfo{
 				"member-of": {Content: true, From: []string{"person"}, To: []string{"team"}},
 			},
-			wantErr: []string{`membership_relation "member-of": relation "member-of" is declared ` + "`scope: content`"},
+			wantErr: []string{`relation "member-of" is declared ` + "`scope: content`"},
 		},
 		{
 			name:   "an undeclared membership relation is skipped",
@@ -235,6 +263,33 @@ func TestValidateAgainstMetamodel_IdentityStructure(t *testing.T) {
 			wantErr: []string{`inherit_roles_through "in-folder": relation "in-folder" is declared ` + "`scope: content`"},
 		},
 		{
+			name:   "an undeclared containment relation is skipped",
+			policy: acl.Policy{InheritRolesThrough: []string{"nosuch"}},
+		},
+		{
+			name: "a role relation that is also the membership relation is reported once",
+			policy: acl.Policy{
+				Roles:              map[string]acl.RoleDef{"member": {}},
+				MembershipRelation: "in-team",
+				RoleRelations:      map[string]acl.RoleRelationDef{"in-team": {Confers: "member"}},
+			},
+			rels:    map[string]acl.RelationInfo{"in-team": {From: []string{"fperson"}, To: []string{"team"}}},
+			wantErr: []string{`membership_relation "in-team": member type "fperson" declares faces`},
+			count:   1,
+		},
+		{
+			name: "a faced group type is not also reported by the write-grant check",
+			policy: acl.Policy{
+				Roles: map[string]acl.RoleDef{"admin": {Read: []string{"*"}, Create: []string{"fteam", "policy"}}},
+			},
+			rels: map[string]acl.RelationInfo{"member-of": {From: []string{"person"}, To: []string{"fteam"}}},
+			wantErr: []string{
+				`group type "fteam" declares faces`,
+				`roles.admin.create: "policy" names a type that declares faces`,
+			},
+			count: 2,
+		},
+		{
 			name:   "identity-scoped containment of a faced child loads",
 			policy: acl.Policy{InheritRolesThrough: []string{"in-folder"}},
 			rels:   map[string]acl.RelationInfo{"in-folder": {From: []string{"policy"}, To: []string{"folder"}}},
@@ -257,6 +312,9 @@ func TestValidateAgainstMetamodel_IdentityStructure(t *testing.T) {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("error %q does not contain %q", err, want)
 				}
+			}
+			if got := len(strings.Split(err.Error(), "\n")); tc.count > 0 && got != tc.count {
+				t.Errorf("got %d errors, want %d:\n%v", got, tc.count, err)
 			}
 		})
 	}

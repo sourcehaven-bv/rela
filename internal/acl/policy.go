@@ -1480,8 +1480,8 @@ func (p *Policy) ValidateAgainstMetamodel(meta MetamodelView) error {
 	if err := p.validateRelationTypesDeclared(meta); err != nil {
 		return err
 	}
-	errs := p.validateIdentityStructure(meta)
-	errs = append(errs, p.validateFacedWriteGrants(meta)...)
+	errs, refused := p.validateIdentityStructure(meta)
+	errs = append(errs, p.validateFacedWriteGrants(meta, refused)...)
 	if len(errs) > 0 {
 		return errors.Join(errs...)
 	}

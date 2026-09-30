@@ -224,14 +224,19 @@ editor:
 ```
 
 A bare type in `create`, `update` or `delete` that declares `faces:` is refused
-when `acl.yaml` loads. The same rule applies to a type alias. The server, every
-CLI command, `rela acl audit` and the docs builder refuse to start, and the
-error names the role, the verb, the grant and what to write instead:
+when `acl.yaml` loads. The server, every CLI command, `rela acl audit` and the
+docs builder refuse to start, and the error names the role, the verb, the grant
+and what to write instead:
 
 ```text
 acl: roles.editor.update: "policy" names a type that declares faces; a write
 grant must name the face: "policy@draft", "policy@published"
 ```
+
+A write grant on a faced type must also use the canonical type name, not an
+alias. Grant matching compares type names as written, so `update: [pol@draft]`
+for a type `policy` with alias `pol` would grant nothing. It is refused, and the
+error names `policy@draft` instead.
 
 Every offending grant is reported at once. Read grants are not affected: a bare
 `read: [policy]` covers every face.

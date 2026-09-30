@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 )
 
 // RelationInfo describes a relation type to [Policy.ValidateAgainstMetamodel].
@@ -25,7 +27,7 @@ type RelationInfo struct {
 //
 // A bare grant addresses the implicit face, and a faced type stores no row
 // there, so the grant authorizes nothing. It used to load clean and fail as a
-// denial with no visible cause (aclaudit B12). Refusing it at load turns that
+// denial with no visible cause (formerly aclaudit B12). Refusing it at load turns that
 // into a message naming the grant and its replacement.
 //
 // `*` is not refused: it ranges over types and grants each one's implicit
@@ -33,10 +35,19 @@ type RelationInfo struct {
 // a refused entry, the message says so, because an operator deleting the bare
 // entry may otherwise believe the wildcard covers the faces.
 //
+// An alias of a faced type is refused too, bare or with a face. Grant
+// matching compares type names literally and does not resolve aliases, so
+// `alias@face` would load clean and grant nothing. The message names the
+// canonical form.
+//
 // Read grants are not checked: a bare read grant covers every face.
 //
+// Types in refused were already reported by
+// Policy.validateIdentityStructure; the fix there is to remove their faces,
+// so suggesting face-named grants for them would contradict it.
+//
 // Every offending entry is reported, not only the first.
-func (p *Policy) validateFacedWriteGrants(meta MetamodelView) []error {
+func (p *Policy) validateFacedWriteGrants(meta MetamodelView, refused map[string]bool) []error {
 	var errs []error
 	for _, name := range sortedRoleNames(p.Roles) {
 		role := p.Roles[name]
@@ -46,50 +57,63 @@ func (p *Policy) validateFacedWriteGrants(meta MetamodelView) []error {
 		}{
 			{"create", role.Create}, {"update", role.Update}, {"delete", role.Delete},
 		} {
-			errs = append(errs, facedWriteGrantErrors(meta, name, verb.name, verb.list)...)
+			errs = append(errs, facedWriteGrantErrors(meta, refused, name, verb.name, verb.list)...)
 		}
 	}
 	return errs
 }
 
 // facedWriteGrantErrors checks one role's grant list for one verb.
-func facedWriteGrantErrors(meta MetamodelView, role, verb string, list []string) []error {
+func facedWriteGrantErrors(meta MetamodelView, refused map[string]bool, role, verb string, list []string) []error {
 	var errs []error
 	seen := map[string]bool{}
 	hasWildcard := slices.Contains(list, "*")
 	for _, entry := range list {
-		if entry == "*" || isStateGrant(entry) || seen[entry] {
+		if entry == "*" || seen[entry] {
 			continue
 		}
 		seen[entry] = true
-		canonical, faces := meta.FaceNames(entry)
-		if len(faces) == 0 {
+		typeName, face, faced := strings.Cut(entry, entity.StateRefSeparator)
+		canonical, faces := meta.FaceNames(typeName)
+		if len(faces) == 0 || refused[canonical] {
 			continue
 		}
-		suggestions := make([]string, len(faces))
-		for i, f := range faces {
-			suggestions[i] = fmt.Sprintf("%q", canonical+"@"+f)
-		}
-		msg := fmt.Sprintf("acl: roles.%s.%s: %q names a type that declares faces; "+
-			"a write grant must name the face: %s",
-			role, verb, entry, strings.Join(suggestions, ", "))
-		if hasWildcard && !namesAnyFace(meta, list, canonical) {
-			msg += fmt.Sprintf(" (note: %q in this list reaches only types without faces, "+
-				"so it does not cover %q)", "*", canonical)
+		var msg string
+		switch {
+		case typeName != canonical && faced:
+			msg = fmt.Sprintf("acl: roles.%s.%s: %q names the type through the alias %q; "+
+				"a write grant must use the canonical type name: %q",
+				role, verb, entry, typeName, canonical+entity.StateRefSeparator+face)
+		case faced:
+			continue
+		default:
+			msg = fmt.Sprintf("acl: roles.%s.%s: %q names a type that declares faces; "+
+				"a write grant must name the face: %s",
+				role, verb, entry, faceSuggestions(canonical, faces))
+			if hasWildcard && !namesAnyFace(list, canonical) {
+				msg += fmt.Sprintf(" (note: %q in this list reaches only types without faces, "+
+					"so it does not cover %q)", "*", canonical)
+			}
 		}
 		errs = append(errs, errors.New(msg))
 	}
 	return errs
 }
 
-// namesAnyFace reports whether list holds a `type@face` entry for canonical,
-// through the canonical name or an alias.
-func namesAnyFace(meta MetamodelView, list []string, canonical string) bool {
+func faceSuggestions(canonical string, faces []string) string {
+	suggestions := make([]string, len(faces))
+	for i, f := range faces {
+		suggestions[i] = fmt.Sprintf("%q", canonical+entity.StateRefSeparator+f)
+	}
+	return strings.Join(suggestions, ", ")
+}
+
+// namesAnyFace reports whether list holds a `type@face` entry for canonical.
+// Only the canonical name counts: an alias entry is refused on its own and
+// grants nothing.
+func namesAnyFace(list []string, canonical string) bool {
 	for _, entry := range list {
-		if !isStateGrant(entry) {
-			continue
-		}
-		if c, _ := meta.FaceNames(grantTypeOf(entry)); c == canonical {
+		if isStateGrant(entry) && grantTypeOf(entry) == canonical {
 			return true
 		}
 	}
@@ -119,10 +143,18 @@ func namesAnyFace(meta MetamodelView, list []string, canonical string) bool {
 //
 // A relation the schema does not declare is skipped: it can hold no edges,
 // and `member-of` is walked by default whether or not it is declared.
-func (p *Policy) validateIdentityStructure(meta MetamodelView) []error {
-	var errs []error
+//
+// Role holders are refused conservatively: every declared source type of a
+// conferring relation must be faceless, even one that holds no edges today.
+//
+// The second result holds the canonical names of the types refused here, so
+// Policy.validateFacedWriteGrants does not report them a second time with a
+// contradicting fix.
+func (p *Policy) validateIdentityStructure(meta MetamodelView) (errs []error, refused map[string]bool) {
+	refused = map[string]bool{}
 	if userType := strings.TrimSpace(p.UserEntityType); userType != "" {
-		if _, faces := meta.FaceNames(userType); len(faces) > 0 {
+		if canonical, faces := meta.FaceNames(userType); len(faces) > 0 {
+			refused[canonical] = true
 			errs = append(errs, fmt.Errorf(
 				"acl: user_entity_type %q declares faces (%s); a principal must resolve to one "+
 					"identity, so the user type must be faceless: remove its `faces:` block or name "+
@@ -133,9 +165,13 @@ func (p *Policy) validateIdentityStructure(meta MetamodelView) []error {
 	membership := p.EffectiveMembershipRelation()
 	if info := meta.RelationInfo(membership); info.Exists {
 		key := fmt.Sprintf("membership_relation %q", membership)
+		if p.MembershipRelation == "" {
+			key += fmt.Sprintf(" (%q is the default membership relation; set `membership_relation:` "+
+				"if this is not your membership relation)", membership)
+		}
 		errs = append(errs, contentScopeError(key, membership, info)...)
-		errs = append(errs, facedEndpointErrors(meta, key, "member", info.From)...)
-		errs = append(errs, facedEndpointErrors(meta, key, "group", info.To)...)
+		errs = append(errs, facedEndpointErrors(meta, refused, key, "member", info.From)...)
+		errs = append(errs, facedEndpointErrors(meta, refused, key, "group", info.To)...)
 	}
 
 	for _, relType := range sortedKeys(p.RoleRelations) {
@@ -148,7 +184,7 @@ func (p *Policy) validateIdentityStructure(meta MetamodelView) []error {
 		}
 		key := "role_relations." + relType
 		errs = append(errs, contentScopeError(key, relType, info)...)
-		errs = append(errs, facedEndpointErrors(meta, key, "role holder", info.From)...)
+		errs = append(errs, facedEndpointErrors(meta, refused, key, "role holder", info.From)...)
 	}
 
 	for _, relType := range p.InheritRolesThrough {
@@ -157,7 +193,7 @@ func (p *Policy) validateIdentityStructure(meta MetamodelView) []error {
 				relType, info)...)
 		}
 	}
-	return errs
+	return errs, refused
 }
 
 func contentScopeError(key, relType string, info RelationInfo) []error {
@@ -171,8 +207,9 @@ func contentScopeError(key, relType string, info RelationInfo) []error {
 }
 
 // facedEndpointErrors reports each faced type among types, once per canonical
-// type. side names the role the type plays ("member", "group", "role holder").
-func facedEndpointErrors(meta MetamodelView, key, side string, types []string) []error {
+// type, and adds it to refused. side names the role the type plays ("member",
+// "group", "role holder").
+func facedEndpointErrors(meta MetamodelView, refused map[string]bool, key, side string, types []string) []error {
 	var errs []error
 	seen := map[string]bool{}
 	for _, t := range types {
@@ -181,6 +218,7 @@ func facedEndpointErrors(meta MetamodelView, key, side string, types []string) [
 			continue
 		}
 		seen[canonical] = true
+		refused[canonical] = true
 		errs = append(errs, fmt.Errorf(
 			"acl: %s: %s type %q declares faces (%s); ACL users, groups and members must be "+
 				"faceless so a principal resolves to one identity: remove its `faces:` block, or "+
