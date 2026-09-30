@@ -292,7 +292,7 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 		denyAfford:  app.denyAffordance,
 		computeETag: app.computeEntityETag,
 		faceEdges: func(ctx context.Context, e *entity.Entity) ([]*entity.Relation, map[string]bool, error) {
-			return servedFaceEdges(ctx, app.reader, app.worldNeighbors, app.visibleReader, e)
+			return servedFaceEdges(ctx, app.reader, app.worldNeighbors, e)
 		},
 		currentEdgesByPeer: app.currentEdgesByPeerOnFace,
 		engine:             func() *script.Engine { return app.scriptEngine },

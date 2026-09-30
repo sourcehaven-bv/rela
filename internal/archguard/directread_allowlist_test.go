@@ -9,8 +9,6 @@ package archguard
 // afterwards, because a resolver call per row is the per-row lookup that
 // ticket removed. They leave the list when the resolver gains a batch form.
 var directReadAllowlist = map[string]allowed{
-	"internal/dataentry/api_v1.go": {1, "relation title filter: id-batch header load for a page's " +
-		"neighbors, face-gated and row-gated afterwards"},
 	"internal/dataentry/document.go": {1, "loadEntry reads the entry row the document route already " +
 		"gated; the render plumbing is shared with export, which moves in PR 4"},
 	"internal/dataentry/entityreader.go": {1, "readWritePrep: write-prep, liveness and relation-source policy read, never served"},
@@ -27,8 +25,6 @@ var directReadAllowlist = map[string]allowed{
 		"gated afterwards"},
 	"internal/dataentry/visiblereader.go": {1, "storedFacesOf: type and face lookup that decides " +
 		"liveness and the gate's type, never what is served"},
-	"internal/dataentry/worldneighbors.go": {1, "resolveHeads: id-batch head resolution in the " +
-		"request's world, gated afterwards"},
 	"internal/mcp/tools_entity.go": {1, "hydrateHits: id-batch body load for search hits " +
 		"through the gated GraphReader, keyed by the hit's face"},
 }

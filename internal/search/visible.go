@@ -239,6 +239,17 @@ func (v *Visible) visibleHits(ctx context.Context, q Query, scope map[string]Typ
 	inner := q
 	inner.Limit = 0
 	inner.Admit = adm.admit
+	if callerAdmit := q.Admit; callerAdmit != nil {
+		// A caller's own admission narrows the scope's further; it never
+		// replaces it.
+		inner.Admit = func(c []Candidate) ([]Candidate, error) {
+			admitted, err := adm.admit(c)
+			if err != nil {
+				return nil, err
+			}
+			return callerAdmit(admitted)
+		}
+	}
 	var hits []Hit
 	for h, err := range v.inner.Search(ctx, inner) {
 		if err != nil {

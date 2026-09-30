@@ -79,17 +79,37 @@ func (r *Resolver) ResolveHeaders(
 // ReadableFacesMany and one face-set lookup per stored type, and one
 // traversal prime for the served rows.
 func (r *Resolver) ResolveIDs(ctx context.Context, w World, ids []string) map[string]store.EntityHeader {
+	served, err := r.ResolveIDsErr(ctx, w, ids)
+	if err != nil {
+		slog.Warn("visibility: header read failed; answering not-found",
+			"ids", len(ids), "err", err)
+		return nil
+	}
+	return served
+}
+
+// ResolveIDsErr is [Resolver.ResolveIDs] for a caller that must not read a
+// store fault as "nothing is served": a failed header read is returned. It
+// is the same for every id, so it tells an existing id from a missing one
+// no better than a success would. A gate error for one type still hides
+// that type's ids and is logged, as in ResolveIDs, because the gate runs
+// only for ids the read found. An unset world is logged and serves
+// nothing.
+func (r *Resolver) ResolveIDsErr(ctx context.Context, w World, ids []string) (map[string]store.EntityHeader, error) {
 	if !w.denied && !w.scope.IsSet() {
 		slog.ErrorContext(ctx, "visibility: ResolveIDs with an unset world (use WorldOf)")
-		return nil
+		return map[string]store.EntityHeader{}, nil
 	}
 	ids = distinctIDs(ids)
 	if len(ids) == 0 || w.denied {
-		return nil
+		return map[string]store.EntityHeader{}, nil
 	}
-	faces, ok := r.readableHeaders(ctx, ids)
-	if !ok {
+	faces, err := r.scanHeaders(ctx, ids, func(typ string, err error) error {
+		warnGate("batch", typ, "", err)
 		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	served := worldPrimes(w.scope, ids, faces)
 	probes := make([]*entity.Entity, 0, len(served))
@@ -100,7 +120,7 @@ func (r *Resolver) ResolveIDs(ctx context.Context, w World, ids []string) map[st
 	for id, h := range served {
 		served[id] = RedactHeader(ctx, r.redact, h)
 	}
-	return served
+	return served, nil
 }
 
 // ReadableTypes answers, for each id in ids, the entity's stored type when

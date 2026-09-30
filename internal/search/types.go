@@ -214,9 +214,11 @@ const WildcardType = "*"
 //   - zero value → deny the type (an explicit deny entry is equivalent
 //     to the type being absent from the map).
 //
-// Faces is the face allowlist of the grant, as [store.GraphQuery.FaceIn]:
-// nil admits every face, a non-nil list only the faces it names (so an
-// empty list admits none). It applies with either meaning above. Like the
+// Faces is the face allowlist of the grant: nil admits every face, a
+// non-empty list only the faces it names. An empty non-nil list is refused
+// by [ValidateScope], because [store.GraphQuery.FaceIn] reads an empty list
+// as "every face" and a backend that forwarded it would fail open. It
+// applies with either meaning above. Like the
 // verdict itself it trims the candidate faces BEFORE the world ranks them,
 // so a denied prime falls through to a readable face, as on lists and the
 // single-entity read. A [WildcardType] entry must leave it nil.
@@ -235,9 +237,16 @@ func (ts TypeScope) AdmitsFace(f entity.Face) bool {
 }
 
 // ValidateScope rejects the scope-map shapes every [VisibleSearcher]
-// refuses: a [WildcardType] entry carrying a Query (a GraphQuery targets one
-// entity type) or a face allowlist. The error wraps [ErrScope].
+// refuses: an entry with an empty non-nil face allowlist (see
+// [TypeScope.Faces]), and a [WildcardType] entry carrying a Query (a
+// GraphQuery targets one entity type) or a face allowlist. The error wraps
+// [ErrScope].
 func ValidateScope(scope map[string]TypeScope) error {
+	for typ, ts := range scope {
+		if ts.Faces != nil && len(ts.Faces) == 0 {
+			return fmt.Errorf("%w: scope entry %q has an empty face allowlist", ErrScope, typ)
+		}
+	}
 	ws, ok := scope[WildcardType]
 	if !ok {
 		return nil
@@ -361,8 +370,8 @@ type Query struct {
 
 	// Admit, when set, trims each entity's candidate faces before World
 	// ranks them ([AdmitFunc]). It is server-derived (the visibility
-	// wrapper sets it from the ACL scope), never wire-supplied. Nil admits
-	// every face.
+	// wrapper sets it from the ACL scope, and runs a caller's own Admit on
+	// what the scope admitted), never wire-supplied. Nil admits every face.
 	Admit AdmitFunc
 }
 

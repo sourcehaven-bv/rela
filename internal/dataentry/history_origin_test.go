@@ -148,3 +148,40 @@ func TestOriginWire_DirectEditRendersNothing(t *testing.T) {
 func (g originGate) ReadableFacesMany(ctx context.Context, typ string, ids []string) (acl.FaceVerdicts, error) {
 	return visibilitytest.IDVerdicts(g.permitsReadMany(ctx, typ, ids))
 }
+
+// publishedOriginGate is originGate whose verdict admits only the published
+// face of every id it allows.
+type publishedOriginGate struct{ originGate }
+
+func (g publishedOriginGate) ReadableFacesMany(_ context.Context, _ string, ids []string) (acl.FaceVerdicts, error) {
+	byID := make(map[string]acl.FaceVerdict, len(ids))
+	for _, id := range ids {
+		if g.allow[id] {
+			byID[id] = acl.FacesVerdict("published")
+		}
+	}
+	return acl.PerEntityVerdicts(byID), nil
+}
+
+// TestGateOriginSources_FaceLabelNeedsThatFace pins that a label naming a
+// face is shown only when that face is readable. `POL-1@draft` would tell a
+// reader who may read only the published face that the draft exists.
+func TestGateOriginSources_FaceLabelNeedsThatFace(t *testing.T) {
+	metas := []store.VersionMeta{
+		{Version: 1, Origin: store.Origin{
+			Kind: store.OriginCopy, Source: "POL-1", SourceFace: "draft", SourceType: "policy",
+		}},
+		{Version: 2, Origin: store.Origin{
+			Kind: store.OriginCopy, Source: "POL-1", SourceFace: "published", SourceType: "policy",
+		}},
+	}
+	gate := publishedOriginGate{originGate{allow: map[string]bool{"POL-1": true}}}
+
+	got := gateOriginSources(context.Background(), gate, metas)
+	if label, present := got[0]; present {
+		t.Errorf("draft source labeled %q for a published-only reader", label)
+	}
+	if got[1] != "POL-1@published" {
+		t.Errorf("published source = %q, want %q", got[1], "POL-1@published")
+	}
+}

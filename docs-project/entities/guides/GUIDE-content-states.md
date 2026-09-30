@@ -354,9 +354,11 @@ the same not-found response as a missing one.
 
 Under a world, the grant trims the candidates before the world ranks them: a
 `policy@published` reader in a world that prefers `review` and falls back to
-`published` is served the published face. Every read path agrees on this: the
-single-entity read, lists, `?include=` neighbours, the links in a response's
-`relations`, and search. The world is a view onto the part of the graph the
+`published` is served the published face. The single-entity read, lists,
+`?include=` neighbours, the links in a response's `relations`, relation
+filters, and search all work this way. Views do not yet: a view drops a
+neighbour whose preferred face is denied instead of falling through, which
+shows less, never more. The world is a view onto the part of the graph the
 reader may see. An entity with no readable face in the world is absent, and
 that absence looks the same as an entity the world excludes.
 

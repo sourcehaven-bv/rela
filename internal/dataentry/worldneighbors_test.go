@@ -118,7 +118,7 @@ func TestWorldNeighbors_ExcludedHeadIsAbsent(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("resolve entry: found=%v err=%v", found, err)
 	}
-	outgoing, visible, err := worldOutgoingForEntity(wctx, app.worldNeighbors, app.visibleReader, face)
+	outgoing, visible, err := worldOutgoingForEntity(wctx, app.worldNeighbors, face)
 	if err != nil {
 		t.Fatalf("worldOutgoingForEntity: %v", err)
 	}
@@ -268,7 +268,7 @@ func TestWorldNeighbors_ContentEdgesAreFaceSpecific(t *testing.T) {
 		t.Fatalf("precondition: the entry must resolve to the PUBLISHED face, "+
 			"or the content-tail assertions below test the wrong tail; got %q", face.Face)
 	}
-	outgoing, _, err := worldOutgoingForEntity(wctx, app.worldNeighbors, app.visibleReader, face)
+	outgoing, _, err := worldOutgoingForEntity(wctx, app.worldNeighbors, face)
 	if err != nil {
 		t.Fatalf("worldOutgoingForEntity: %v", err)
 	}
@@ -340,7 +340,7 @@ func TestWorldNeighbors_DeniedPrimeFallsThrough(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("resolve entry: found=%v err=%v", found, err)
 	}
-	outgoing, visible, err := worldOutgoingForEntity(wctx, app.worldNeighbors, app.visibleReader, face)
+	outgoing, visible, err := worldOutgoingForEntity(wctx, app.worldNeighbors, face)
 	if err != nil {
 		t.Fatalf("worldOutgoingForEntity: %v", err)
 	}
@@ -406,7 +406,7 @@ func TestWorldNeighbors_IncludeAgreesWithRelations(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("resolve entry: found=%v err=%v", found, err)
 	}
-	outgoing, visible, err := worldOutgoingForEntity(wctx, app.worldNeighbors, app.visibleReader, face)
+	outgoing, visible, err := worldOutgoingForEntity(wctx, app.worldNeighbors, face)
 	if err != nil {
 		t.Fatalf("worldOutgoingForEntity: %v", err)
 	}
@@ -827,7 +827,7 @@ func TestWorldNeighbors_SelfEdgeSurvives(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("world get: found=%v err=%v", found, err)
 	}
-	out, vis, err := worldOutgoingForEntity(wctx, app.worldNeighbors, app.visibleReader, face)
+	out, vis, err := worldOutgoingForEntity(wctx, app.worldNeighbors, face)
 	if err != nil {
 		t.Fatalf("worldOutgoingForEntity: %v", err)
 	}
@@ -840,7 +840,7 @@ func TestWorldNeighbors_SelfEdgeSurvives(t *testing.T) {
 	// The LIST path batches across rows and does its own seeding, so it needs
 	// its own assertion rather than inheriting this one.
 	outRows, _, visRows, err := worldNeighborsForPage(
-		wctx, app.worldNeighbors, app.visibleReader, []*entity.Entity{face})
+		wctx, app.worldNeighbors, []*entity.Entity{face})
 	if err != nil {
 		t.Fatalf("worldNeighborsForPage: %v", err)
 	}
@@ -1069,7 +1069,7 @@ func TestDefaultWorld_ContentEdgesAreFaceScoped(t *testing.T) {
 		t.Fatalf("the default world must serve the DEFAULT face; got face %q", face.Face)
 	}
 
-	outgoing, _, err := servedFaceEdges(dctx, app.reader, app.worldNeighbors, app.visibleReader, face)
+	outgoing, _, err := servedFaceEdges(dctx, app.reader, app.worldNeighbors, face)
 	if err != nil {
 		t.Fatalf("servedFaceEdges: %v", err)
 	}
@@ -1119,7 +1119,7 @@ func TestDefaultWorld_IdentityEdgesAreFaceIndependent(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("resolve entry: found=%v err=%v", found, err)
 	}
-	outgoing, _, err := servedFaceEdges(dctx, app.reader, app.worldNeighbors, app.visibleReader, face)
+	outgoing, _, err := servedFaceEdges(dctx, app.reader, app.worldNeighbors, face)
 	if err != nil {
 		t.Fatalf("servedFaceEdges: %v", err)
 	}

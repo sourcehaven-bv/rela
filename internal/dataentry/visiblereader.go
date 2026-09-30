@@ -366,6 +366,13 @@ func (vr visibleReader) servedIDs(ctx context.Context, ids []string) map[string]
 	return vr.resolver.ResolveIDs(ctx, worldFromContext(ctx).visibility(), ids)
 }
 
+// servedIDsErr is servedIDs for a caller that must not read a store fault
+// as "nothing is served": a failed header read is returned
+// ([visibility.Resolver.ResolveIDsErr]).
+func (vr visibleReader) servedIDsErr(ctx context.Context, ids []string) (map[string]store.EntityHeader, error) {
+	return vr.resolver.ResolveIDsErr(ctx, worldFromContext(ctx).visibility(), ids)
+}
+
 // filterVisible drops every candidate the principal cannot read, batching the
 // gate probe by entity type — one ReadableFacesMany per distinct type, turning
 // a worst case of O(N) per-id probes into O(distinct-types) (RR-FRK1). A

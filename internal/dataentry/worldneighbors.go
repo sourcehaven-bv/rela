@@ -139,9 +139,8 @@ func SetWorldNeighbors(a *App, s store.Store, classes worldreader.ScopeClassifie
 // point read per neighbor. A hub entity with fifty links must not cost fifty
 // round-trips (the RR-FRK1 shape, applied to world resolution).
 //
-// The heads are already the principal's readable faces (see the type doc).
-// Callers still gate them with visibleWorldNeighbors, which re-checks each
-// served face and costs no store read.
+// The heads are already the principal's readable faces (see the type doc),
+// so they are the gate's verdict as well as the world's.
 func (wn *worldNeighbors) worldScopedNeighbors(
 	ctx context.Context, res worldreader.Resolved, dir store.Direction,
 ) (edges []*entityPkg.Relation, heads map[string]*entityPkg.Entity, err error) {
@@ -162,7 +161,10 @@ func (wn *worldNeighbors) worldScopedNeighbors(
 
 	ids := headIDsOf(edges, res.Entity.ID)
 	if len(ids) > 0 {
-		heads = wn.resolveHeads(ctx, ids)
+		heads, err = wn.resolveHeads(ctx, ids)
+		if err != nil {
+			return nil, nil, err
+		}
 	} else {
 		heads = make(map[string]*entityPkg.Entity, 1)
 	}
@@ -190,15 +192,22 @@ func (wn *worldNeighbors) worldScopedNeighbors(
 //
 // An id absent from the result has no readable face this world serves.
 // That is a normal outcome, not an error: under `otherwise: exclude` it IS
-// the publication bit. A store failure also yields no heads, so it fails
-// closed toward fewer links; the resolver logs it.
-func (wn *worldNeighbors) resolveHeads(ctx context.Context, ids []string) map[string]*entityPkg.Entity {
-	served := wn.heads.servedIDs(ctx, ids)
+// the publication bit.
+//
+// A failed header read is returned, never folded into a short map.
+// Truncating here would silently drop links and read as "this world
+// excludes them", which is a backend outage wearing the costume of a
+// correct answer (RR-4TFZNL).
+func (wn *worldNeighbors) resolveHeads(ctx context.Context, ids []string) (map[string]*entityPkg.Entity, error) {
+	served, err := wn.heads.servedIDsErr(ctx, ids)
+	if err != nil {
+		return nil, fmt.Errorf("resolving neighbor heads: %w", err)
+	}
 	out := make(map[string]*entityPkg.Entity, len(served))
 	for id, h := range served {
 		out[id] = headerEntity(h)
 	}
-	return out
+	return out, nil
 }
 
 // headIDsOf collects the DISTINCT neighbor ids an edge set names, from
@@ -228,31 +237,15 @@ func headIDsOf(edges []*entityPkg.Relation, selfID string) []string {
 	return ids
 }
 
-// visibleWorldNeighbors runs the ACL row gate over already-world-resolved
-// heads and returns the id set that may appear on the wire.
-//
-// This is the world-path counterpart of [visibleRelationIDs], and the split
-// is deliberate rather than duplication: visibleRelationIDs loads its
-// candidates through the ungated, DEFAULT-world entityReader, which is
-// exactly what a world-bound response must not do. Here the candidates are
-// already the world's faces, so this only gates them.
-//
-// Gating happens AFTER resolution, never before — see the [worldNeighbors]
-// type doc for why the order is load-bearing.
-func visibleWorldNeighbors(
-	ctx context.Context, visible visibleReader, heads map[string]*entityPkg.Entity,
-) map[string]bool {
-	if len(heads) == 0 {
-		return map[string]bool{}
-	}
-	candidates := make([]*entityPkg.Entity, 0, len(heads))
-	for _, e := range heads {
-		candidates = append(candidates, e)
-	}
-	vis := visible.filterVisible(ctx, candidates)
-	out := make(map[string]bool, len(vis))
-	for _, e := range vis {
-		out[e.ID] = true
+// visibleWorldNeighbors returns the id set that may appear on the wire: every
+// resolved head. resolveHeads already applied the per-face row gate and the
+// type's face grant before the world ranked, and the seeded entry rows were
+// gated when the entry was read, so a second gate pass would repeat a query
+// and could not remove anything.
+func visibleWorldNeighbors(heads map[string]*entityPkg.Entity) map[string]bool {
+	out := make(map[string]bool, len(heads))
+	for id := range heads {
+		out[id] = true
 	}
 	return out
 }
@@ -393,13 +386,13 @@ func ruleFromName(name string) worldreader.Rule {
 // is reachable only in a deployment that never called [SetWorldNeighbors],
 // not through any request path.
 //
-// A package FUNCTION taking its three seams explicitly, not an App method:
+// A package FUNCTION taking its seams explicitly, not an App method:
 // App is pinned at its plimsoll method cap, and every world helper in this
 // package has taken the same shape for that reason. It also reads better —
 // the seams a world-scoped link read depends on are named in the signature
 // rather than reached through a god object.
 func worldOutgoingForEntity(
-	ctx context.Context, wn *worldNeighbors, visReader visibleReader, e *entityPkg.Entity,
+	ctx context.Context, wn *worldNeighbors, e *entityPkg.Entity,
 ) (outgoing []*entityPkg.Relation, visible map[string]bool, err error) {
 	if wn == nil {
 		return nil, nil, nil
@@ -409,7 +402,7 @@ func worldOutgoingForEntity(
 	if err != nil {
 		return nil, nil, err
 	}
-	visible = visibleWorldNeighbors(ctx, visReader, heads)
+	visible = visibleWorldNeighbors(heads)
 	outgoing, _ = worldEdgesForWire(edges, e, heads, visible, wn.relations.Owns)
 	return outgoing, visible, nil
 }
@@ -443,8 +436,7 @@ func worldOutgoingForEntity(
 // edges too, keyed by the relation's inverse name, so a `direction: incoming`
 // relation column has a wire key to resolve against.
 func worldNeighborsForPage(
-	ctx context.Context, wn *worldNeighbors, visReader visibleReader,
-	entities []*entityPkg.Entity,
+	ctx context.Context, wn *worldNeighbors, entities []*entityPkg.Entity,
 ) (outgoing, incoming [][]*entityPkg.Relation, visible map[string]bool, err error) {
 	outgoing = make([][]*entityPkg.Relation, len(entities))
 	incoming = make([][]*entityPkg.Relation, len(entities))
@@ -480,7 +472,10 @@ func worldNeighborsForPage(
 	// trims, the world ranks; see the worldNeighbors doc), then ONE gate pass.
 	var heads map[string]*entityPkg.Entity
 	if len(headIDs) > 0 {
-		heads = wn.resolveHeads(ctx, headIDs)
+		heads, err = wn.resolveHeads(ctx, headIDs)
+		if err != nil {
+			return nil, nil, nil, err
+		}
 	}
 	if heads == nil {
 		heads = make(map[string]*entityPkg.Entity, len(entities))
@@ -496,7 +491,7 @@ func worldNeighborsForPage(
 	for _, e := range entities {
 		heads[e.ID] = e
 	}
-	visible = visibleWorldNeighbors(ctx, visReader, heads)
+	visible = visibleWorldNeighbors(heads)
 
 	// Pass 3: split each row's edges by direction, dropping heads this world
 	// does not resolve and heads the principal may not read.
@@ -765,10 +760,9 @@ func worldBoundRelations(ctx context.Context) bool {
 // a validator that a later If-None-Match matches against a body that does have
 // edges. The caller folds a sentinel instead. See the call site.
 func etagEdges(
-	ctx context.Context, reader entityReader, wn *worldNeighbors,
-	visReader visibleReader, e *entityPkg.Entity,
+	ctx context.Context, reader entityReader, wn *worldNeighbors, e *entityPkg.Entity,
 ) ([]*entityPkg.Relation, error) {
-	edges, _, err := servedFaceEdges(ctx, reader, wn, visReader, e)
+	edges, _, err := servedFaceEdges(ctx, reader, wn, e)
 	return edges, err
 }
 
@@ -820,8 +814,7 @@ func etagEdges(
 // Returns the edges plus the gated neighbor-id set (nil on the unwired
 // path, where the caller's pre-existing gating applies unchanged).
 func servedFaceEdges(
-	ctx context.Context, reader entityReader, wn *worldNeighbors,
-	visReader visibleReader, e *entityPkg.Entity,
+	ctx context.Context, reader entityReader, wn *worldNeighbors, e *entityPkg.Entity,
 ) (outgoing []*entityPkg.Relation, visible map[string]bool, err error) {
 	if wn == nil {
 		if !worldScopeFrom(ctx).IsTrivial() {
@@ -833,7 +826,7 @@ func servedFaceEdges(
 		}
 		return reader.outgoingRelations(ctx, e.ID), nil, nil
 	}
-	return worldOutgoingForEntity(ctx, wn, visReader, e)
+	return worldOutgoingForEntity(ctx, wn, e)
 }
 
 // servedFacePageEdges is [servedFaceEdges] for a whole list page: each row's
@@ -860,7 +853,7 @@ func servedFacePageEdges(
 	visReader visibleReader, entities []*entityPkg.Entity,
 ) (outgoing, incoming [][]*entityPkg.Relation, visible map[string]bool, err error) {
 	if wn != nil {
-		return worldNeighborsForPage(ctx, wn, visReader, entities)
+		return worldNeighborsForPage(ctx, wn, entities)
 	}
 	// ONE relation query for the whole page (TKT-1U8XYN): every edge touching
 	// any row, split per row by which endpoint is the row. An edge between two

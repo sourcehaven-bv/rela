@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -155,4 +156,65 @@ func titleOf(t *testing.T, body []byte) string {
 		t.Fatalf("decode: %v", err)
 	}
 	return e.Title
+}
+
+// TestFaceGateParity_RelationFilterComparesTheServedFace pins that a
+// relation filter compares the title of the face the principal is served,
+// not the face the world prefers. alice owns TKT-8, which confers the draft
+// grant, and reviews TKT-1, which confers only the published one. The
+// type-level union is {draft, published} and TKT-1 has some readable face,
+// so neither check alone rules out TKT-1's draft. Matching on the draft
+// title would let alice test guesses against a face she may not read
+// (BUG-ISJHML).
+func TestFaceGateParity_RelationFilterComparesTheServedFace(t *testing.T) {
+	app := facedTicketApp(t)
+	ctx := context.Background()
+	seedFace(t, app, "TKT-1", "ticket", "draft", "secret draft title")
+	seedFace(t, app, "TKT-1", "ticket", "published", "public title")
+	seedFace(t, app, "TKT-8", "ticket", "draft", "own draft")
+	seedFace(t, app, "TKT-9", "ticket", "published", "anchor")
+	for _, k := range []entity.RelationKey{
+		{From: "TKT-9", Type: "blocks", To: "TKT-1"},
+		{From: "alice", Type: "owns", To: "TKT-8"},
+		{From: "alice", Type: "reviews", To: "TKT-1"},
+		{From: "alice", Type: "reviews", To: "TKT-9"},
+	} {
+		if _, err := app.store.CreateRelation(ctx, k, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	d := mustNewACL(t, &acl.Policy{
+		Roles: map[string]acl.RoleDef{
+			"owner":    {Read: []string{"ticket@draft"}},
+			"reviewer": {Read: []string{"ticket@published"}},
+		},
+		RoleRelations: map[string]acl.RoleRelationDef{
+			"owns":    {Confers: "owner"},
+			"reviews": {Confers: "reviewer"},
+		},
+	}, app.store)
+	app.acl = d
+	wctx := withWorld(gateCtxFor(aliceCtx(), t, d), worldHandle{name: "draft-first", scope: store.NewWorldScope(
+		map[string]store.TypeResolution{"ticket": {
+			Chain:    []entity.Face{"draft", "published"},
+			Fallback: store.FallbackExclude,
+		}})})
+	rows := []*entity.Entity{{ID: "TKT-9", Type: "ticket", Face: "published"}}
+
+	for _, tc := range []struct {
+		want  string
+		match bool
+	}{
+		{"secret draft title", false},
+		{"public title", true},
+	} {
+		matched, err := matchRelationFilterMany(wctx, app.Services(), app.visibleReader, rows,
+			"blocks", dataentryconfig.DirectionOutgoing, tc.want)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if matched["TKT-9"] != tc.match {
+			t.Errorf("filter[blocks]=%q matched = %v, want %v", tc.want, matched["TKT-9"], tc.match)
+		}
+	}
 }

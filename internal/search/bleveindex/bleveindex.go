@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -516,6 +517,11 @@ func (idx *Index) SearchAdmitted(
 	if limit > 0 && (!w.IsTrivial() || admit != nil) {
 		req.Size = limit * facesOverfetchFactor
 	}
+	if admit != nil {
+		// Admission needs each candidate's type. In the trivial world the
+		// hits are the whole candidate set, so they carry it themselves.
+		req.Fields = []string{"type", "face"}
+	}
 
 	result, err := idx.index.Search(req)
 	// coverage-ignore-start: defensive: bleve index.Search never errors for a well-formed disjunction request; concrete
@@ -607,11 +613,14 @@ func (idx *Index) resolveHits(
 	return out, nil
 }
 
-// resolveAdmittedHits is resolveHits with admit applied: the
-// families of every matched id are read, admitted in one call, and ranked
-// together; a hit survives when its face is the prime of its admitted
-// family. The trivial fast path does not apply, because admission needs
-// each candidate's type.
+// resolveAdmittedHits is resolveHits with admit applied: the candidate
+// faces of every matched id are admitted in one call and ranked together;
+// a hit survives when its face is the prime of its admitted family.
+//
+// The cost does not grow with the hit count. In the trivial world only the
+// implicit face can be a prime, so the matched implicit faces are the
+// whole candidate set and no family is read. Otherwise every family is
+// read in one batched query (familiesCandidates).
 func (idx *Index) resolveAdmittedHits(
 	hits searchpkg.DocumentMatchCollection, w store.WorldScope, admit search.AdmitFunc,
 ) ([]search.Face, error) {
@@ -620,23 +629,30 @@ func (idx *Index) resolveAdmittedHits(
 		face entity.Face
 	}
 	parsed := make([]faceHit, 0, len(hits))
-	families := make(map[string]bool, len(hits))
+	var ids []string
 	var cands []search.Candidate
+	seenID := make(map[string]bool, len(hits))
 	for _, hit := range hits {
 		id, ptr, err := entity.ParseStateRef(hit.ID)
 		if err != nil {
 			id, ptr = hit.ID, entity.Face("")
 		}
 		parsed = append(parsed, faceHit{id: id, face: ptr})
-		if families[id] {
-			continue
+		if w.IsTrivial() {
+			if ptr.IsImplicit() && !seenID[id] {
+				typ, _ := hit.Fields["type"].(string)
+				cands = append(cands, search.Candidate{ID: id, Type: typ, Face: ptr})
+			}
+		} else if !seenID[id] {
+			ids = append(ids, id)
 		}
-		families[id] = true
-		fam, err := idx.familyCandidates(id)
-		if err != nil {
+		seenID[id] = true
+	}
+	if !w.IsTrivial() {
+		var err error
+		if cands, err = idx.familiesCandidates(ids); err != nil {
 			return nil, err
 		}
-		cands = append(cands, fam...)
 	}
 	admitted, err := admit(cands)
 	if err != nil {
@@ -682,26 +698,45 @@ func (idx *Index) resolveFamily(
 
 // familyCandidates reads every indexed face of id as resolution candidates.
 func (idx *Index) familyCandidates(id string) ([]search.Candidate, error) {
-	q := bleve.NewTermQuery(id)
-	q.SetField("id")
-	req := bleve.NewSearchRequest(q)
-	req.Size = maxFacesPerEntity
-	req.Fields = []string{"type", "face"}
-	result, err := idx.index.Search(req)
-	if err != nil {
-		return nil, fmt.Errorf("bleveindex: family of %s: %w", id, err)
-	}
+	return idx.familiesCandidates([]string{id})
+}
 
-	cands := make([]search.Candidate, 0, len(result.Hits))
-	for _, h := range result.Hits {
-		typ, _ := h.Fields["type"].(string)
-		ptr, _ := h.Fields["face"].(string)
-		cands = append(cands, search.Candidate{
-			ID: id, Type: typ, Face: entity.Face(ptr),
-		})
+// familiesCandidates reads every indexed face of every id in ids as
+// resolution candidates: one query per familyBatch ids, so a search's
+// family reads do not grow one query per hit. Each id contributes at most
+// maxFacesPerEntity faces, as in faceKeys.
+func (idx *Index) familiesCandidates(ids []string) ([]search.Candidate, error) {
+	var cands []search.Candidate
+	for chunk := range slices.Chunk(ids, familyBatch) {
+		terms := make([]query.Query, 0, len(chunk))
+		for _, id := range chunk {
+			q := bleve.NewTermQuery(id)
+			q.SetField("id")
+			terms = append(terms, q)
+		}
+		req := bleve.NewSearchRequest(bleve.NewDisjunctionQuery(terms...))
+		req.Size = len(chunk) * maxFacesPerEntity
+		req.Fields = []string{"id", "type", "face"}
+		result, err := idx.index.Search(req)
+		if err != nil {
+			return nil, fmt.Errorf("bleveindex: families of %d ids: %w", len(chunk), err)
+		}
+		for _, h := range result.Hits {
+			id, _ := h.Fields["id"].(string)
+			typ, _ := h.Fields["type"].(string)
+			ptr, _ := h.Fields["face"].(string)
+			cands = append(cands, search.Candidate{
+				ID: id, Type: typ, Face: entity.Face(ptr),
+			})
+		}
 	}
 	return cands, nil
 }
+
+// familyBatch is how many ids one family query covers. It keeps a single
+// disjunction, and the result it may return, bounded when a search matches
+// thousands of entities.
+const familyBatch = 256
 
 // Close flushes anything still pending and releases resources held by the
 // index.

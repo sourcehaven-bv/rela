@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -89,11 +90,18 @@ func gateOriginSources(ctx context.Context, gate readGate, metas []store.Version
 		if o.Source == "" || o.SourceType == "" {
 			continue
 		}
-		// The source is named by id, so it is labeled when some face of it
-		// is readable.
-		if verdicts, ok := allowed[o.SourceType]; ok && !verdicts.For(o.Source).None() {
-			out[i] = o.SourceLabel()
+		// A label naming a face needs that face readable: `X@draft` would
+		// otherwise tell a published-only reader that the draft exists. A
+		// label naming the id alone needs some face readable.
+		verdicts, ok := allowed[o.SourceType]
+		if !ok {
+			continue
 		}
+		verdict := verdicts.For(o.Source)
+		if verdict.None() || (o.SourceFace != "" && !verdict.Contains(entityPkg.Face(o.SourceFace))) {
+			continue
+		}
+		out[i] = o.SourceLabel()
 	}
 	return out
 }

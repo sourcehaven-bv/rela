@@ -433,19 +433,28 @@ func RunFacedVisibleSearchTests(t *testing.T, vsf VisibleSearchFactory) {
 		requireFaces(t, map[string]entity.Face{"POL-1": draft, "POL-2": draft}, got)
 	})
 
-	t.Run("WildcardFaceAllowlistIsInvalid", func(t *testing.T) {
-		s, _, vs := vsf(t)
-		seed(t, s)
-		scope := map[string]search.TypeScope{search.WildcardType: {AllowAll: true, Faces: []entity.Face{published}}}
-		var streamErr error
-		for _, err := range vs.SearchVisible(ctx(), search.Query{Text: "alpha", World: world}, scope) {
-			if err != nil {
-				streamErr = err
-				break
+	for name, scope := range map[string]map[string]search.TypeScope{
+		// A GraphQuery targets one type, and a face allowlist on the
+		// default verdict would apply to types the grant never named.
+		"WildcardFaceAllowlistIsInvalid": {search.WildcardType: {AllowAll: true, Faces: []entity.Face{published}}},
+		// store.GraphQuery.FaceIn reads an empty list as every face, so a
+		// backend forwarding it would fail open.
+		"EmptyFaceAllowlistIsInvalid/allowAll": {"policy": {AllowAll: true, Faces: []entity.Face{}}},
+		"EmptyFaceAllowlistIsInvalid/query":    {"policy": {Query: reviewerOnPublished(), Faces: []entity.Face{}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, _, vs := vsf(t)
+			seed(t, s)
+			var streamErr error
+			for _, err := range vs.SearchVisible(ctx(), search.Query{Text: "alpha", World: world}, scope) {
+				if err != nil {
+					streamErr = err
+					break
+				}
 			}
-		}
-		require.ErrorIs(t, streamErr, search.ErrScope)
-	})
+			require.ErrorIs(t, streamErr, search.ErrScope)
+		})
+	}
 }
 
 // VisibleFieldSearchFactory returns a fresh store, the ungated searcher, and
