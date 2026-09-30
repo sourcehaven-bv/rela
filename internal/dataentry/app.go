@@ -79,16 +79,15 @@ type appEntityWriter interface {
 	PatchEntity(ctx context.Context, id string, p entity.Patch) (*entity.UpdateResult, error)
 	DeleteEntity(ctx context.Context, id string, cascade bool) (*entity.DeleteResult, error)
 	CreateRelation(
-		ctx context.Context, from, relType, to string, opts entity.RelationOptions,
+		ctx context.Context, key entity.RelationKey, opts entity.RelationOptions,
 	) (*entity.Relation, error)
 	UpdateRelation(
-		ctx context.Context, from, relType, to string, opts entity.RelationOptions,
+		ctx context.Context, key entity.RelationKey, opts entity.RelationOptions,
 	) (*entity.Relation, error)
-	DeleteRelation(ctx context.Context, from, relType, to string) error
-	// The two face-addressed deletes are here for the script runtime's
-	// Mutator, which App hands a.entityManager as.
+	DeleteRelation(ctx context.Context, key entity.RelationKey) error
+	// DeleteEntityFace is here for the script runtime's Mutator, which App
+	// hands a.entityManager as.
 	DeleteEntityFace(ctx context.Context, id string, face entity.Face, cascade bool) (*entity.DeleteResult, error)
-	DeleteRelationState(ctx context.Context, from string, face entity.Face, relType, to string) error
 }
 
 // App is the central application struct for the data-entry server.

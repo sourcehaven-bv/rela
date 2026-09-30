@@ -191,9 +191,9 @@ type EntityWriter interface {
 		ctx context.Context, oldID, newID string, opts entity.RenameOptions,
 	) (*entity.RenameResult, error)
 	CreateRelation(
-		ctx context.Context, from, relType, to string, opts entity.RelationOptions,
+		ctx context.Context, key entity.RelationKey, opts entity.RelationOptions,
 	) (*entity.Relation, error)
-	DeleteRelationState(ctx context.Context, from string, face entity.Face, relType, to string) error
+	DeleteRelation(ctx context.Context, key entity.RelationKey) error
 }
 
 // validate rejects a Deps missing any field whose zero value would

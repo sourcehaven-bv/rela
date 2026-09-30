@@ -52,20 +52,16 @@ type entityMutator interface {
 	// addressed to `ID@face` means. See entitymanager.Manager.DeleteEntityFace.
 	DeleteEntityFace(ctx context.Context, id string, face entityPkg.Face, cascade bool) (*entityPkg.DeleteResult, error)
 	CreateRelation(
-		ctx context.Context, from, relType, to string, opts entityPkg.RelationOptions,
+		ctx context.Context, key entityPkg.RelationKey, opts entityPkg.RelationOptions,
 	) (*entityPkg.Relation, error)
 	UpdateRelation(
-		ctx context.Context, from, relType, to string, opts entityPkg.RelationOptions,
+		ctx context.Context, key entityPkg.RelationKey, opts entityPkg.RelationOptions,
 	) (*entityPkg.Relation, error)
-	DeleteRelation(ctx context.Context, from, relType, to string) error
-	// DeleteRelationState removes the edge whose SOURCE face is exactly
-	// face — what a relation removal addressed to `ID@face` means for a
-	// `scope: content` type. The zero face is the default-tail edge, so
-	// this also covers every identity-scoped and faceless removal.
-	// See entitymanager.Manager.DeleteRelationState.
-	DeleteRelationState(
-		ctx context.Context, from string, face entityPkg.Face, relType, to string,
-	) error
+	// DeleteRelation removes the edge key names, tail included: what a
+	// relation removal addressed to `ID@face` means for a `scope: content`
+	// type. The zero tail is the implicit-tail edge, so this also covers
+	// every identity-scoped and faceless removal.
+	DeleteRelation(ctx context.Context, key entityPkg.RelationKey) error
 
 	// PatchEntity is how the webhook pipeline writes: it names only the
 	// properties a hook actually sets, so a property the hook does not mention
@@ -1069,9 +1065,9 @@ func (h *writeHandler) handleV1CreateRelation(
 		}
 	}
 
-	_, err := h.manager.CreateRelation(
-		r.Context(), from, relType, to,
-		entityPkg.RelationOptions{Properties: req.Meta, FromFace: newTail},
+	_, err := h.manager.CreateRelation(r.Context(),
+		entityPkg.RelationKey{From: from, FromFace: newTail, Type: relType, To: to},
+		entityPkg.RelationOptions{Properties: req.Meta},
 	)
 	if err != nil {
 		if writeForbiddenIfACLDenied(w, err) {
@@ -1157,10 +1153,9 @@ func (h *writeHandler) handleV1UpdateRelation(
 		}
 	}
 
-	rel, err := h.manager.UpdateRelation(r.Context(), from, relType, to, entityPkg.RelationOptions{
-		Properties: req.Meta,
-		FromFace:   tail,
-	})
+	rel, err := h.manager.UpdateRelation(r.Context(),
+		entityPkg.RelationKey{From: from, FromFace: tail, Type: relType, To: to},
+		entityPkg.RelationOptions{Properties: req.Meta})
 	if err != nil {
 		if writeForbiddenIfACLDenied(w, err) {
 			return
@@ -1226,7 +1221,8 @@ func (h *writeHandler) handleV1DeleteRelation(
 		return
 	}
 
-	if err := h.manager.DeleteRelationState(r.Context(), from, tail, relType, to); err != nil {
+	if err := h.manager.DeleteRelation(r.Context(),
+		entityPkg.RelationKey{From: from, FromFace: tail, Type: relType, To: to}); err != nil {
 		if writeForbiddenIfACLDenied(w, err) {
 			return
 		}

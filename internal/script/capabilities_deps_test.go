@@ -32,13 +32,13 @@ func (nopMutator) PatchEntity(context.Context, string, entity.Patch) (*entity.Up
 func (nopMutator) DeleteEntity(context.Context, string, bool) (*entity.DeleteResult, error) {
 	return nil, errNoMutate
 }
-func (nopMutator) CreateRelation(context.Context, string, string, string, entity.RelationOptions) (*entity.Relation, error) {
+func (nopMutator) CreateRelation(context.Context, entity.RelationKey, entity.RelationOptions) (*entity.Relation, error) {
 	return nil, errNoMutate
 }
 func (nopMutator) DeleteEntityFace(context.Context, string, entity.Face, bool) (*entity.DeleteResult, error) {
 	return nil, errNoMutate
 }
-func (nopMutator) DeleteRelationState(context.Context, string, entity.Face, string, string) error {
+func (nopMutator) DeleteRelation(context.Context, entity.RelationKey) error {
 	return errNoMutate
 }
 

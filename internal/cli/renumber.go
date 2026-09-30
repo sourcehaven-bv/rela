@@ -64,11 +64,8 @@ func (c *RenumberCmd) Run(ctx context.Context, svc *writeServices) error {
 	// See issue #886.
 	em := svc.EntityManager
 	for _, p := range plan {
-		opts := entity.RelationOptions{
-			Properties: map[string]any{p.prop: p.newVal},
-			FromFace:   p.rel.FromFace,
-		}
-		if _, err := em.UpdateRelation(ctx, p.rel.From, p.rel.Type, p.rel.To, opts); err != nil {
+		opts := entity.RelationOptions{Properties: map[string]any{p.prop: p.newVal}}
+		if _, err := em.UpdateRelation(ctx, p.rel.Identity(), opts); err != nil {
 			return fmt.Errorf("renumber write failed for %s: %w", p.rel.Key(), err)
 		}
 	}

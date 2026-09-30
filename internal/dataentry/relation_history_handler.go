@@ -412,12 +412,12 @@ func restoreRelationHistoryVersion(a *App,
 	opts := entityPkg.RelationOptions{
 		Properties: cloneProps(snap.Properties),
 		Content:    &content,
-		// The restore writes back to the TAIL it read from. Without this a
-		// faced edge's history would restore onto the DEFAULT tail — a
-		// different relation — leaving the edge the caller addressed
-		// untouched and minting a second one beside it (TKT-JAROC3).
-		FromFace: fromRef.Face,
 	}
+	// The restore writes back to the TAIL it read from. Without it a faced
+	// edge's history would restore onto the DEFAULT tail, a different
+	// relation, leaving the edge the caller addressed untouched and minting
+	// a second one beside it (TKT-JAROC3).
+	key := entityPkg.RelationKey{From: from, FromFace: fromRef.Face, Type: relType, To: to}
 
 	// If the relation currently exists, update it; else re-create. Both go
 	// through the entitymanager, which authorizes, validates endpoints, and
@@ -426,14 +426,12 @@ func restoreRelationHistoryVersion(a *App,
 	// Liveness is probed on the addressed tail for the same reason: a probe
 	// of the default tail would find a live faced edge absent and take the
 	// create branch.
-	_, liveErr := a.store.GetRelation(ctx, entityPkg.RelationKey{
-		From: from, FromFace: fromRef.Face, Type: relType, To: to,
-	})
+	_, liveErr := a.store.GetRelation(ctx, key)
 	var writeErr error
 	if liveErr == nil {
-		_, writeErr = a.entityManager.UpdateRelation(ctx, from, relType, to, opts)
+		_, writeErr = a.entityManager.UpdateRelation(ctx, key, opts)
 	} else {
-		_, writeErr = a.entityManager.CreateRelation(ctx, from, relType, to, opts)
+		_, writeErr = a.entityManager.CreateRelation(ctx, key, opts)
 	}
 	if writeErr != nil {
 		if writeForbiddenIfACLDenied(w, writeErr) {

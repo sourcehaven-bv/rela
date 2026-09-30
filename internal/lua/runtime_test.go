@@ -266,7 +266,7 @@ func (m *mockManager) DeleteEntity(
 }
 
 func (m *mockManager) CreateRelation(
-	ctx context.Context, from, relType, to string, opts entity.RelationOptions,
+	ctx context.Context, key entity.RelationKey, opts entity.RelationOptions,
 ) (*entity.Relation, error) {
 	content := ""
 	if opts.Content != nil {
@@ -279,9 +279,9 @@ func (m *mockManager) CreateRelation(
 			Content:    content,
 		}
 	}
-	m.lastRelationFace = opts.FromFace
+	m.lastRelationFace = key.FromFace
 	m.relationCalls++
-	return m.ws.store.CreateRelation(ctx, entity.RelationKey{From: from, FromFace: opts.FromFace, Type: relType, To: to}, data)
+	return m.ws.store.CreateRelation(ctx, key, data)
 }
 
 func (m *mockManager) DeleteEntityFace(
@@ -296,12 +296,10 @@ func (m *mockManager) DeleteEntityFace(
 	return &entity.DeleteResult{DeletedEntities: res.DeletedEntities, DeletedRelations: res.DeletedRelations}, nil
 }
 
-func (m *mockManager) DeleteRelationState(
-	ctx context.Context, from string, face entity.Face, relType, to string,
-) error {
-	m.unlinkedFace = face
+func (m *mockManager) DeleteRelation(ctx context.Context, key entity.RelationKey) error {
+	m.unlinkedFace = key.FromFace
 	m.relationUnlinked++
-	return m.ws.store.DeleteRelation(ctx, entity.RelationKey{From: from, FromFace: face, Type: relType, To: to})
+	return m.ws.store.DeleteRelation(ctx, key)
 }
 
 // mockSearcher is a naive title-substring searcher used by lua tests.

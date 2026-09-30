@@ -321,7 +321,7 @@ func (m *storeMutator) DeleteEntity(context.Context, string, bool) (*entity.Dele
 }
 
 func (m *storeMutator) CreateRelation(
-	context.Context, string, string, string, entity.RelationOptions,
+	context.Context, entity.RelationKey, entity.RelationOptions,
 ) (*entity.Relation, error) {
 	return nil, errors.New("not used by this test")
 }
@@ -330,7 +330,7 @@ func (m *storeMutator) DeleteEntityFace(context.Context, string, entity.Face, bo
 	return nil, errors.New("not used by this test")
 }
 
-func (m *storeMutator) DeleteRelationState(context.Context, string, entity.Face, string, string) error {
+func (m *storeMutator) DeleteRelation(context.Context, entity.RelationKey) error {
 	return errors.New("not used by this test")
 }
 

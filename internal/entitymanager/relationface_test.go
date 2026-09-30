@@ -157,8 +157,8 @@ func TestCreateRelation_FaceMustMatchScope(t *testing.T) {
 			seedRelationFaceGraph(t, mgr)
 			ctx := context.Background()
 
-			_, err := mgr.CreateRelation(ctx, tc.from, tc.relType, tc.to,
-				entity.RelationOptions{FromFace: tc.face})
+			_, err := mgr.CreateRelation(ctx, entity.RelationKey{From: tc.from, FromFace: tc.face, Type: tc.relType, To: tc.to},
+				entity.RelationOptions{})
 
 			if tc.wantErr == nil {
 				if err != nil {
@@ -219,7 +219,7 @@ func TestCreateRelation_ZeroTailStillWorksForFacelessCallers(t *testing.T) {
 			mgr, _ := relationFaceManager(t)
 			seedRelationFaceGraph(t, mgr)
 			rel, err := mgr.CreateRelation(context.Background(),
-				"POL-1", "citeert", "SRC-1", tc.opts)
+				entity.RelationKey{From: "POL-1", Type: "citeert", To: "SRC-1"}, tc.opts)
 			if err != nil {
 				t.Fatalf("a caller that cannot name a face must keep working, got: %v", err)
 			}
@@ -252,8 +252,8 @@ func TestCreateRelation_FaceCheckPrecedesACL(t *testing.T) {
 	seedRelationFaceGraph(t, mgr)
 	gate.relationCalls = 0
 
-	_, err = mgr.CreateRelation(context.Background(), "POL-1", "geschreven-door", "SRC-1",
-		entity.RelationOptions{FromFace: "concept"})
+	_, err = mgr.CreateRelation(context.Background(), entity.RelationKey{From: "POL-1", FromFace: "concept", Type: "geschreven-door", To: "SRC-1"},
+		entity.RelationOptions{})
 	if !errors.Is(err, entitymanager.ErrFaceNotDeclared) {
 		t.Fatalf("CreateRelation error = %v, want ErrFaceNotDeclared", err)
 	}
@@ -276,4 +276,78 @@ func (a *recordingACL) AuthorizeWrite(_ context.Context, req acl.WriteRequest) a
 		a.relationCalls++
 	}
 	return acl.Decision{Allow: true}
+}
+
+// TestRelationWrites_RefuseMalformedTail pins the tail grammar: a tail that
+// entity.ParseFace rejects is refused on create, update and delete alike,
+// before any lookup. Delete checks only the grammar, so an edge filed under
+// an older schema stays deletable.
+func TestRelationWrites_RefuseMalformedTail(t *testing.T) {
+	key := entity.RelationKey{From: "POL-1", FromFace: "Bad Face", Type: "citeert", To: "SRC-1"}
+	tests := []struct {
+		name  string
+		write func(*entitymanager.Manager) error
+	}{
+		{"create", func(m *entitymanager.Manager) error {
+			_, err := m.CreateRelation(context.Background(), key, entity.RelationOptions{})
+			return err
+		}},
+		{"update", func(m *entitymanager.Manager) error {
+			_, err := m.UpdateRelation(context.Background(), key, entity.RelationOptions{})
+			return err
+		}},
+		{"delete", func(m *entitymanager.Manager) error {
+			return m.DeleteRelation(context.Background(), key)
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			mgr, _ := relationFaceManager(t)
+			seedRelationFaceGraph(t, mgr)
+			if err := tc.write(mgr); !errors.Is(err, entitymanager.ErrFaceNotDeclared) {
+				t.Fatalf("error = %v, want ErrFaceNotDeclared", err)
+			}
+		})
+	}
+}
+
+// TestCreateRelation_RefusesTailOnUndeclaredSourceType pins that a source
+// whose type the schema no longer declares has no faces, so a named tail
+// names nothing.
+func TestCreateRelation_RefusesTailOnUndeclaredSourceType(t *testing.T) {
+	mgr, st := relationFaceManager(t)
+	seedRelationFaceGraph(t, mgr)
+	if err := st.CreateEntity(context.Background(), entity.New("OLD-1", "verouderd")); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	_, err := mgr.CreateRelation(context.Background(),
+		entity.RelationKey{From: "OLD-1", FromFace: "concept", Type: "citeert", To: "SRC-1"},
+		entity.RelationOptions{})
+	if !errors.Is(err, entitymanager.ErrFaceNotDeclared) {
+		t.Fatalf("error = %v, want ErrFaceNotDeclared", err)
+	}
+}
+
+// TestDeleteRelation_ByKeyRemovesOnlyThatTail pins that the key's tail picks
+// the edge: deleting the concept-tailed edge leaves the identity edge.
+func TestDeleteRelation_ByKeyRemovesOnlyThatTail(t *testing.T) {
+	mgr, st := relationFaceManager(t)
+	seedRelationFaceGraph(t, mgr)
+	ctx := context.Background()
+	tailed := entity.RelationKey{From: "POL-1", FromFace: "concept", Type: "citeert", To: "SRC-1"}
+	identity := entity.RelationKey{From: "POL-1", FromFace: entity.ImplicitFace, Type: "citeert", To: "SRC-1"}
+	for _, k := range []entity.RelationKey{tailed, identity} {
+		if _, err := mgr.CreateRelation(ctx, k, entity.RelationOptions{}); err != nil {
+			t.Fatalf("seed %+v: %v", k, err)
+		}
+	}
+	if err := mgr.DeleteRelation(ctx, tailed); err != nil {
+		t.Fatalf("DeleteRelation: %v", err)
+	}
+	if _, err := st.GetRelation(ctx, tailed); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("tailed edge: err = %v, want ErrNotFound", err)
+	}
+	if _, err := st.GetRelation(ctx, identity); err != nil {
+		t.Errorf("identity edge must survive: %v", err)
+	}
 }

@@ -32,7 +32,8 @@ func (c *UnlinkCmd) Run(ctx context.Context, svc *writeServices) error {
 	if !exists {
 		return fmt.Errorf("relation not found: %s --%s--> %s", c.From, c.Relation, c.To)
 	}
-	if err := svc.EntityManager.DeleteRelationState(ctx, from.ID, from.Face, c.Relation, c.To); err != nil {
+	key := entity.RelationKey{From: from.ID, FromFace: from.Face, Type: c.Relation, To: c.To}
+	if err := svc.EntityManager.DeleteRelation(ctx, key); err != nil {
 		return err
 	}
 	out.WriteSuccess("Removed link: %s --%s--> %s", c.From, c.Relation, c.To)

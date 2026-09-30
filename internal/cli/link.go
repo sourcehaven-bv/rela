@@ -15,8 +15,10 @@ type LinkCmd struct {
 
 // Run dispatches `rela link <from> <relation> <to>`.
 func (c *LinkCmd) Run(ctx context.Context, svc *writeServices) error {
-	_, err := svc.EntityManager.CreateRelation(
-		ctx, c.From, c.Relation, c.To, entity.RelationOptions{})
+	// `rela link` takes no face yet (TKT-2RQMV4), so it writes the
+	// implicit-tail edge.
+	key := entity.RelationKey{From: c.From, FromFace: entity.ImplicitFace, Type: c.Relation, To: c.To}
+	_, err := svc.EntityManager.CreateRelation(ctx, key, entity.RelationOptions{})
 	if err != nil {
 		return err
 	}

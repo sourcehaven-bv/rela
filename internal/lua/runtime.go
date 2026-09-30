@@ -2088,9 +2088,9 @@ func (r *Runtime) luaCreateRelation(ls *lua.LState) int {
 	if rd, ok := r.reader(ls, "rela.create_relation"); !ok || !gateWriteTarget(ctx, ls, rd, source, to) {
 		return 0
 	}
-	rel, err := r.deps.EntityManager.CreateRelation(
-		ctx, from, relType, to,
-		entity.RelationOptions{FromFace: opts.Face, Content: opts.Content})
+	rel, err := r.deps.EntityManager.CreateRelation(ctx,
+		entity.RelationKey{From: from, FromFace: opts.Face, Type: relType, To: to},
+		entity.RelationOptions{Content: opts.Content})
 	if err != nil {
 		ls.RaiseError("create relation error: %s", err.Error())
 		return 0
@@ -2130,7 +2130,8 @@ func (r *Runtime) luaDeleteRelation(ls *lua.LState) int {
 	if rd, ok := r.reader(ls, "rela.delete_relation"); !ok || !gateWriteTarget(ctx, ls, rd, source, to) {
 		return 0
 	}
-	if err := r.deps.EntityManager.DeleteRelationState(ctx, from, opts.Face, relType, to); err != nil {
+	key := entity.RelationKey{From: from, FromFace: opts.Face, Type: relType, To: to}
+	if err := r.deps.EntityManager.DeleteRelation(ctx, key); err != nil {
 		ls.RaiseError("delete relation error: %s", err.Error())
 		return 0
 	}

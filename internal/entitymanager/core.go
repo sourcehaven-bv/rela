@@ -478,6 +478,9 @@ func (d Deps) requireCreateFaceFor(entityType string, face entity.Face) error {
 // Nil: never returns an error for a zero face on an identity-scoped type,
 // which is the overwhelmingly common case.
 func (d Deps) requireRelationFaceFor(relType, fromType string, face entity.Face) error {
+	if err := validTail(face); err != nil {
+		return err
+	}
 	relDef, ok := d.Meta.GetRelationDef(relType)
 	if !ok {
 		// Unknown relation type: ValidateRelation reports it with a better
@@ -498,6 +501,12 @@ func (d Deps) requireRelationFaceFor(relType, fromType string, face entity.Face)
 	}
 	def, defOK := d.Meta.GetEntityDef(fromType)
 	if !defOK {
+		// A source whose type the schema no longer declares has no faces
+		// to name. The zero tail stays valid, as for a faceless type.
+		if !face.IsImplicit() {
+			return fmt.Errorf("%w: source type %s is not declared, so %q names nothing",
+				ErrFaceNotDeclared, fromType, face)
+		}
 		return nil
 	}
 	if len(def.Faces) == 0 {
@@ -577,6 +586,20 @@ func lookupFamily(ctx context.Context, st store.EntityLister, ref string) (entit
 	}
 	slices.Sort(fam.faces)
 	return fam, nil
+}
+
+// validTail refuses a relation tail that is not a face name. A tail reaches
+// the store as part of the relation key, so text that no face could carry
+// must stop here rather than become a stored coordinate (TKT-7IZHP0). The
+// zero tail is the implicit face and always valid.
+func validTail(face entity.Face) error {
+	if face.IsImplicit() {
+		return nil
+	}
+	if _, err := entity.ParseFace(face.String()); err != nil {
+		return fmt.Errorf("%w: relation tail: %w", ErrFaceNotDeclared, err)
+	}
+	return nil
 }
 
 // relationWriteSubject builds the authorization subject for a relation write from
