@@ -108,9 +108,9 @@ func TestListPushdown_QueryBranchUsesGraphQuery(t *testing.T) {
 	t.Parallel()
 	spy := seededSpy()
 	red := &countingRedactor{}
-	p := stubProvider{res: acl.ReadQueryResult{Query: &store.GraphQuery{EntityType: "ticket", Faces: store.InWorld(store.DefaultWorld())}}}
+	p := stubProvider{res: acl.ReadQueryResult{Query: &store.GraphQuery{EntityType: "ticket", Faces: store.InWorld(store.TrivialScope())}}}
 
-	seq, ok := listPushdown(context.Background(), p, spy, red.redact, store.EntityQuery{Type: "ticket", Faces: store.InWorld(store.DefaultWorld())})
+	seq, ok := listPushdown(context.Background(), p, spy, red.redact, store.EntityQuery{Type: "ticket", Faces: store.InWorld(store.TrivialScope())})
 	if !ok {
 		t.Fatal("pushdown declined a composable query")
 	}
@@ -143,7 +143,7 @@ func TestListPushdown_RedactsOnEveryBranch(t *testing.T) {
 		res  acl.ReadQueryResult
 	}{
 		{"AllowAll", acl.ReadQueryResult{AllowAll: true}},
-		{"Query", acl.ReadQueryResult{Query: &store.GraphQuery{EntityType: "ticket", Faces: store.InWorld(store.DefaultWorld())}}},
+		{"Query", acl.ReadQueryResult{Query: &store.GraphQuery{EntityType: "ticket", Faces: store.InWorld(store.TrivialScope())}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -151,7 +151,7 @@ func TestListPushdown_RedactsOnEveryBranch(t *testing.T) {
 			red := &countingRedactor{}
 			seq, ok := listPushdown(
 				context.Background(), stubProvider{res: tc.res}, spy, red.redact,
-				store.EntityQuery{Type: "ticket", Faces: store.InWorld(store.DefaultWorld())})
+				store.EntityQuery{Type: "ticket", Faces: store.InWorld(store.TrivialScope())})
 			if !ok {
 				t.Fatal("pushdown declined")
 			}
@@ -180,7 +180,7 @@ func TestListPushdown_DenyAllYieldsNothingWithoutTouchingTheStore(t *testing.T) 
 	red := &countingRedactor{}
 	seq, ok := listPushdown(
 		context.Background(), stubProvider{res: acl.ReadQueryResult{DenyAll: true}},
-		spy, red.redact, store.EntityQuery{Type: "ticket", Faces: store.InWorld(store.DefaultWorld())})
+		spy, red.redact, store.EntityQuery{Type: "ticket", Faces: store.InWorld(store.TrivialScope())})
 	if !ok {
 		t.Fatal("pushdown declined DenyAll")
 	}
@@ -208,7 +208,7 @@ func TestListPushdown_ScopeErrorFailsClosed(t *testing.T) {
 	boom := errors.New("gate down")
 	seq, ok := listPushdown(
 		context.Background(), stubProvider{err: boom}, spy, red.redact,
-		store.EntityQuery{Type: "ticket", Faces: store.InWorld(store.DefaultWorld())})
+		store.EntityQuery{Type: "ticket", Faces: store.InWorld(store.TrivialScope())})
 	if !ok {
 		t.Fatal("a scope error must be reported, not silently declined to the fallback")
 	}
@@ -230,14 +230,14 @@ func TestListPushdown_ScopeErrorFailsClosed(t *testing.T) {
 func TestListPushdown_DeclinesWhenNotApplicable(t *testing.T) {
 	t.Parallel()
 	red := &countingRedactor{}
-	q := store.EntityQuery{Type: "ticket", Faces: store.InWorld(store.DefaultWorld())}
+	q := store.EntityQuery{Type: "ticket", Faces: store.InWorld(store.TrivialScope())}
 	allow := stubProvider{res: acl.ReadQueryResult{AllowAll: true}}
 
 	if _, ok := listPushdown(context.Background(), nil, seededSpy(), red.redact, q); ok {
 		t.Error("pushdown ran without a provider")
 	}
 	if _, ok := listPushdown(
-		context.Background(), allow, seededSpy(), red.redact, store.EntityQuery{Faces: store.InWorld(store.DefaultWorld())},
+		context.Background(), allow, seededSpy(), red.redact, store.EntityQuery{Faces: store.InWorld(store.TrivialScope())},
 	); ok {
 		t.Error("pushdown ran for a type-less query; the ACL scope is composed per type")
 	}

@@ -34,8 +34,9 @@ type Reader interface {
 	ListRelations(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error]
 }
 
-// CheckEndpointShape validates a query's shape: it must carry a face
-// selection ([store.ErrInvalidQuery] otherwise), EndpointMatch nesting must
+// CheckEndpointShape validates a query's shape: it must carry a valid face
+// selection, as must any endpoint that sets its own ([store.ErrInvalidQuery]
+// otherwise), EndpointMatch nesting must
 // not exceed [DepthCap], and a NESTED hop must not carry an inheritance
 // expansion. Exported so every backend enforces the identical bound — see the
 // contract note on [store.RelationPredicate.EndpointMatch].
@@ -67,6 +68,14 @@ func checkEndpointShape(p *store.RelationPredicate, nesting int) error {
 	}
 	if nesting >= depthCap {
 		return fmt.Errorf("graphquerynaive: endpoint match nested deeper than %d hops", depthCap)
+	}
+	// An endpoint's own selection is optional (zero inherits the enclosing
+	// one), but a set one must be valid: InWorld of an unset scope would
+	// otherwise reach the SQL builders as a trivial world.
+	if !p.EndpointMatch.Faces.IsZero() {
+		if err := p.EndpointMatch.Faces.Validate(); err != nil {
+			return err
+		}
 	}
 	for _, next := range []*store.RelationPredicate{
 		p.EndpointMatch.HasInbound, p.EndpointMatch.HasOutbound,
@@ -322,7 +331,7 @@ func MatchingIDs(ctx context.Context, r Reader, q store.GraphQuery, ids []string
 // granted `read: [page@published]` would match the draft face here while the
 // plain list beside it correctly hid it.
 func collectByType(ctx context.Context, r Reader, q store.GraphQuery) ([]*entity.Entity, error) {
-	if w, ok := q.Faces.World(); ok && len(q.Any) > 0 && !w.IsDefaultWorld() {
+	if w, ok := q.Faces.World(); ok && len(q.Any) > 0 && !w.IsTrivial() {
 		return collectBranchPrimes(ctx, r, q, w)
 	}
 	var out []*entity.Entity

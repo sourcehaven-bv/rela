@@ -262,7 +262,7 @@ func (s *FSStore) handleEntityRemoval(path string) {
 	// the default face — evicting the whole entity because a sibling
 	// state's file vanished would drop a document that is still live.
 	s.notifyFaceDelete(meta.ID, meta.Face)
-	if meta.Face.IsDefault() {
+	if meta.Face.IsImplicit() {
 		s.notifyLastFaceDelete(meta.ID)
 	}
 	s.emit(store.Event{Op: store.EventEntityDeleted, EntityType: meta.Type, EntityID: meta.ID, Face: meta.Face})

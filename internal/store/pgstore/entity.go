@@ -182,7 +182,7 @@ func (s *Store) CountEntities(ctx context.Context, q store.EntityQuery) (int, er
 // surface how many unpublished drafts exist.
 func buildEntityCountSQL(q store.EntityQuery) (sql string, args []any) {
 	w := effectiveWorld(storeutil.RankingWorld(q), q.Type)
-	if w.IsDefaultWorld() {
+	if w.IsTrivial() {
 		where, wargs := entityWhere(q, "")
 		return "SELECT count(*) FROM entities" + where, wargs
 	}
@@ -323,7 +323,7 @@ func (s *Store) CreateEntity(ctx context.Context, e *entity.Entity) error {
 		// answers the type question regardless of how many are locked.
 		//
 		// Runs for EVERY face including the zero coordinate. Gating it on
-		// `!e.Face.IsDefault()` was complete only while every family
+		// `!e.Face.IsImplicit()` was complete only while every family
 		// necessarily had a zero-coordinate row; a family created
 		// named-face-first would then take a zero-coordinate write with no
 		// type check at all.
@@ -437,7 +437,7 @@ func (s *Store) updateEntityIf(
 		}
 	}
 
-	if !e.Face.IsDefault() {
+	if !e.Face.IsImplicit() {
 		// Row-family invariant: a non-default state cannot be re-typed
 		// away from its family (TKT-DOFYR1, design doc §6).
 		var curType string
@@ -779,7 +779,7 @@ func rekeyStateFamily(
 			newID, st.Face, entitySearchText(st)); err != nil {
 			return nil, nil, err
 		}
-		if st.Face.IsDefault() {
+		if st.Face.IsImplicit() {
 			renamed = st
 		}
 	}
@@ -906,7 +906,7 @@ func (s *Store) RenameFamily(ctx context.Context, oldID, newID string) (*store.R
 		notifyRenamed(s, oldID, renamed)
 	}
 	for _, st := range renamedStates {
-		if st.Face.IsDefault() {
+		if st.Face.IsImplicit() {
 			continue
 		}
 		notifyRenamed(s, oldID, st)
@@ -1052,7 +1052,7 @@ func buildEntityHeaderListSQL(q store.EntityQuery, keysetAfter string) (sql stri
 //
 // For the DEFAULT world it is the historical flat SELECT, allocating and
 // costing exactly what it did before worlds existed — a project that
-// never declares a face must pay nothing (store.WorldScope.IsDefaultWorld).
+// never declares a face must pay nothing (store.WorldScope.IsTrivial).
 //
 // For a real world it becomes DISTINCT ON (id) over the candidate rows,
 // ordered by (id, rank), which picks each family's prime in one pass.
@@ -1074,7 +1074,7 @@ func buildEntityHeaderListSQL(q store.EntityQuery, keysetAfter string) (sql stri
 // limit+1 primes.
 func buildEntitySelectSQL(q store.EntityQuery, keysetAfter, columns string, limit int) (sql string, args []any) {
 	w := effectiveWorld(storeutil.RankingWorld(q), q.Type)
-	if w.IsDefaultWorld() {
+	if w.IsTrivial() {
 		where, wargs := entityWhere(q, keysetAfter)
 		return `SELECT ` + columns + ` FROM entities` + where + ` ORDER BY id ASC, face ASC` + limitClause(limit), wargs
 	}

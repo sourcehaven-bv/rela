@@ -69,11 +69,11 @@ func Unrestricted(st store.Store) *UnrestrictedReader {
 	if err != nil { // coverage-ignore: invariant: st is non-nil here, the resolver's only requirement
 		panic("visibility.Unrestricted: " + err.Error())
 	}
-	return &UnrestrictedReader{st: st, res: res}
+	return &UnrestrictedReader{st: st, res: res, world: trivialWorld()}
 }
 
-// WithWorld returns a copy of r whose bare-id reads resolve in w. The wiring
-// sets it; the zero World is the default world.
+// WithWorld returns a copy of r whose bare-id reads resolve in w. Until the
+// wiring sets it, bare ids resolve in the trivial scope.
 func (r *UnrestrictedReader) WithWorld(w World) *UnrestrictedReader {
 	c := *r
 	c.world = w

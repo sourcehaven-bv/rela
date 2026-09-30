@@ -89,9 +89,8 @@ type Deps struct {
 	ProjectRoot  string
 	Attachments  AttachmentDeps
 	// World is the world the list and count surfaces (list_entities, the
-	// schema resource's counts, the overview prompt) read in. The zero value
-	// is the default world; wiring passes worlds.Compiled.Default, so
-	// TKT-7IZHP0 changes no call site.
+	// schema resource's counts, the overview prompt, search) read in. It is
+	// required; wiring passes worlds.Compiled.Default.
 	World store.WorldScope
 }
 
@@ -221,6 +220,8 @@ func (d Deps) validate() error {
 		return errors.New("mcp: Deps.Watcher is required")
 	case d.ProjectRoot == "":
 		return errors.New("mcp: Deps.ProjectRoot is required")
+	case !d.World.IsSet():
+		return errors.New("mcp: Deps.World is required (worlds.Compiled.Default)")
 	}
 	return d.Attachments.validate()
 }

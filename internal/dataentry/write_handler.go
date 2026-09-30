@@ -909,7 +909,7 @@ func (h *writeHandler) handleV1DeleteEntity(w http.ResponseWriter, r *http.Reque
 	ref := entity.Ref()
 
 	var err error
-	if ref.Face.IsDefault() {
+	if ref.Face.IsImplicit() {
 		_, err = h.manager.DeleteEntity(r.Context(), ref.ID, true)
 	} else {
 		_, err = h.manager.DeleteEntityFace(r.Context(), ref.ID, ref.Face, true)

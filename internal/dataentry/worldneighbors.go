@@ -749,7 +749,7 @@ func parseIncludeSpec(includes string) (wanted map[string]string, all bool) {
 // worldBoundRelations reports whether this request's relation reads must go
 // through the world-scoped seam rather than the ungated, default-world reader.
 //
-// # Why this is not `worldScopeFrom(ctx).IsDefaultWorld()`
+// # Why this is not `worldScopeFrom(ctx).IsTrivial()`
 //
 // A DENIED world handle carries a ZERO scope (see [worldHandle]), so the raw
 // scope says "default world" while the handle says otherwise. The two
@@ -843,7 +843,7 @@ func servedFaceEdges(
 	visReader visibleReader, e *entityPkg.Entity,
 ) (outgoing []*entityPkg.Relation, visible map[string]bool, err error) {
 	if wn == nil {
-		if !worldScopeFrom(ctx).IsDefaultWorld() {
+		if !worldScopeFrom(ctx).IsTrivial() {
 			// A world-bound request on a build with no neighbor wiring: the
 			// bare-id read would return the UNION of every face's edges
 			// beside a world-resolved entry — the mixed-face response this

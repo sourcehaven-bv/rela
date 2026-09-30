@@ -262,7 +262,7 @@ func assertInvisible(t *testing.T, ctx context.Context, svc *appbuild.Services, 
 func assertOnlyOwnEntities(t *testing.T, ctx context.Context, svc *appbuild.Services, wantID string) {
 	t.Helper()
 	var ids []string
-	for e, err := range svc.Store().ListEntities(ctx, store.EntityQuery{Type: "ticket", Faces: store.InWorld(store.DefaultWorld())}) {
+	for e, err := range svc.Store().ListEntities(ctx, store.EntityQuery{Type: "ticket", Faces: store.InWorld(store.TrivialScope())}) {
 		if err != nil {
 			t.Fatalf("list: %v", err)
 		}

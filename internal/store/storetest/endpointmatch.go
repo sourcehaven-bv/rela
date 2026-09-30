@@ -52,7 +52,7 @@ func RunEndpointMatchTests(t *testing.T, f Factory) {
 					},
 				},
 			},
-			Faces: store.InWorld(store.DefaultWorld()),
+			Faces: store.InWorld(store.TrivialScope()),
 		})
 		require.Equal(t, []string{"TKT-1"}, got)
 	})
@@ -71,7 +71,7 @@ func RunEndpointMatchTests(t *testing.T, f Factory) {
 				OfTypes:       []string{"caused-by"},
 				EndpointMatch: &store.EndpointPredicate{EntityType: "decision"},
 			},
-			Faces: store.InWorld(store.DefaultWorld()),
+			Faces: store.InWorld(store.TrivialScope()),
 		})
 		require.Equal(t, []string{"TKT-2"}, got)
 	})
@@ -88,7 +88,7 @@ func RunEndpointMatchTests(t *testing.T, f Factory) {
 				OfTypes:       []string{"caused-by"},
 				EndpointMatch: &store.EndpointPredicate{},
 			},
-			Faces: store.InWorld(store.DefaultWorld()),
+			Faces: store.InWorld(store.TrivialScope()),
 		})
 		require.Equal(t, []string{"TKT-1", "TKT-2"}, got)
 	})
@@ -110,7 +110,7 @@ func RunEndpointMatchTests(t *testing.T, f Factory) {
 					},
 				},
 			},
-			Faces: store.InWorld(store.DefaultWorld()),
+			Faces: store.InWorld(store.TrivialScope()),
 		})
 		require.Empty(t, got)
 	})
@@ -131,7 +131,7 @@ func RunEndpointMatchTests(t *testing.T, f Factory) {
 					},
 				},
 			},
-			Faces: store.InWorld(store.DefaultWorld()),
+			Faces: store.InWorld(store.TrivialScope()),
 		})
 		require.Equal(t, []string{"TKT-2", "TKT-3"}, got)
 	})
@@ -160,7 +160,7 @@ func RunEndpointMatchTests(t *testing.T, f Factory) {
 					},
 				},
 			},
-			Faces: store.InWorld(store.DefaultWorld()),
+			Faces: store.InWorld(store.TrivialScope()),
 		})
 		require.Equal(t, []string{"TKT-1"}, got)
 	})
@@ -188,7 +188,7 @@ func RunEndpointMatchTests(t *testing.T, f Factory) {
 					},
 				},
 			},
-			Faces: store.InWorld(store.DefaultWorld()),
+			Faces: store.InWorld(store.TrivialScope()),
 		})
 		require.Error(t, err, "a nested inheritance expansion must be refused, not silently ignored")
 	})
@@ -215,7 +215,7 @@ func RunEndpointMatchTests(t *testing.T, f Factory) {
 					},
 				},
 			},
-			Faces: store.InWorld(store.DefaultWorld()),
+			Faces: store.InWorld(store.TrivialScope()),
 		})
 		// Only TKT-1 reaches an alice-owned concept, so the negation keeps the
 		// other two. Critically it must NOT be all three.
@@ -240,7 +240,7 @@ func RunEndpointMatchTests(t *testing.T, f Factory) {
 			HasOutbound: &store.RelationPredicate{
 				OfTypes: []string{"caused-by"}, EndpointMatch: inner,
 			},
-			Faces: store.InWorld(store.DefaultWorld()),
+			Faces: store.InWorld(store.TrivialScope()),
 		})
 		require.Error(t, err, "nesting past the cap must be refused")
 	})
@@ -255,7 +255,7 @@ func RunEndpointMatchTests(t *testing.T, f Factory) {
 		got := runGraphQuery(t, s, store.GraphQuery{
 			EntityType:  "ticket",
 			HasOutbound: &store.RelationPredicate{OfTypes: []string{"caused-by"}},
-			Faces:       store.InWorld(store.DefaultWorld()),
+			Faces:       store.InWorld(store.TrivialScope()),
 		})
 		require.Equal(t, []string{"TKT-1", "TKT-2", "TKT-3"}, got)
 	})
@@ -298,7 +298,7 @@ func runInboundEndpointMatchTests(t *testing.T, f Factory) {
 		got := runGraphQuery(t, s, store.GraphQuery{
 			EntityType: "feature",
 			HasInbound: &store.RelationPredicate{OfTypes: []string{"implements"}, EndpointMatch: openTicket()},
-			Faces:      store.InWorld(store.DefaultWorld()),
+			Faces:      store.InWorld(store.TrivialScope()),
 		})
 		// FEAT-3's edge has no FROM row, so it cannot match: a pushed-down
 		// INNER JOIN drops it, and the Go path must agree.
@@ -313,7 +313,7 @@ func runInboundEndpointMatchTests(t *testing.T, f Factory) {
 			HasInbound: &store.RelationPredicate{
 				OfTypes: []string{"implements"}, Negate: true, EndpointMatch: openTicket(),
 			},
-			Faces: store.InWorld(store.DefaultWorld()),
+			Faces: store.InWorld(store.TrivialScope()),
 		})
 		require.Equal(t, []string{"FEAT-2", "FEAT-3", "FEAT-4"}, got)
 	})
@@ -347,7 +347,7 @@ func runInboundEndpointMatchTests(t *testing.T, f Factory) {
 			got := runGraphQuery(t, s, store.GraphQuery{
 				EntityType: "feature",
 				HasInbound: namedTicket(tc.endpoint, tc.negate),
-				Faces:      store.InWorld(store.DefaultWorld()),
+				Faces:      store.InWorld(store.TrivialScope()),
 			})
 			if tc.want == nil {
 				require.Empty(t, got)
@@ -372,7 +372,7 @@ func runInboundEndpointMatchTests(t *testing.T, f Factory) {
 					},
 				},
 			},
-			Faces: store.InWorld(store.DefaultWorld()),
+			Faces: store.InWorld(store.TrivialScope()),
 		})
 		require.Equal(t, []string{"CON-1"}, got)
 	})
@@ -393,7 +393,7 @@ func runInboundEndpointMatchTests(t *testing.T, f Factory) {
 					},
 				},
 			},
-			Faces: store.InWorld(store.DefaultWorld()),
+			Faces: store.InWorld(store.TrivialScope()),
 		})
 		require.Equal(t, []string{"TKT-open"}, got)
 	})
@@ -417,7 +417,7 @@ func runInboundEndpointMatchTests(t *testing.T, f Factory) {
 		got := runGraphQuery(t, s, store.GraphQuery{
 			EntityType: "feature",
 			HasInbound: &store.RelationPredicate{OfTypes: []string{"implements"}, EndpointMatch: openTicket()},
-			Faces:      store.InWorld(store.DefaultWorld()),
+			Faces:      store.InWorld(store.TrivialScope()),
 		})
 		require.Empty(t, got, "only the draft face is open; the default face is done")
 	})
@@ -437,7 +437,7 @@ func runInboundEndpointMatchTests(t *testing.T, f Factory) {
 		got := runGraphQuery(t, s, store.GraphQuery{
 			EntityType: "feature",
 			HasInbound: &store.RelationPredicate{OfTypes: []string{"implements"}, EndpointMatch: openTicket()},
-			Faces:      store.InWorld(store.DefaultWorld()),
+			Faces:      store.InWorld(store.TrivialScope()),
 		})
 		require.Empty(t, got, "the only edge is tailed on the draft face")
 	})
@@ -462,7 +462,7 @@ func runInboundEndpointMatchTests(t *testing.T, f Factory) {
 			HasOutbound: &store.RelationPredicate{
 				OfTypes: []string{"implements"}, EndpointMatch: &store.EndpointPredicate{EntityType: "feature"},
 			},
-			Faces: store.InWorld(store.DefaultWorld()),
+			Faces: store.InWorld(store.TrivialScope()),
 		})
 		require.Equal(t, []string{"TKT-2"}, got, "TKT-1's only edge is tailed on its draft face")
 	})
@@ -492,7 +492,7 @@ func runInboundEndpointMatchTests(t *testing.T, f Factory) {
 						},
 					},
 				},
-				Faces: store.InWorld(store.DefaultWorld()),
+				Faces: store.InWorld(store.TrivialScope()),
 			}
 		}
 		require.Empty(t, runGraphQuery(t, s, chain()), "the only reports edge is tailed on the draft face")
@@ -507,7 +507,7 @@ func runInboundEndpointMatchTests(t *testing.T, f Factory) {
 		got, err := s.MatchingIDs(ctx(), store.GraphQuery{
 			EntityType: "feature",
 			HasInbound: &store.RelationPredicate{OfTypes: []string{"implements"}, EndpointMatch: openTicket()},
-			Faces:      store.InWorld(store.DefaultWorld()),
+			Faces:      store.InWorld(store.TrivialScope()),
 		}, []string{"FEAT-1", "FEAT-2", "FEAT-3", "FEAT-4"})
 		require.NoError(t, err)
 		require.True(t, got["FEAT-1"], "FEAT-1 has an open implementing ticket")

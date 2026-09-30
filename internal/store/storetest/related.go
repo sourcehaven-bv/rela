@@ -64,7 +64,7 @@ func RunRelatedTests(t *testing.T, f Factory) {
 		seed(t, s)
 		got := runGraphQuery(t, s, store.GraphQuery{
 			EntityType: "feature", Related: []store.DirectedRelation{implementedBy(true)},
-			Faces: store.InWorld(store.DefaultWorld()),
+			Faces: store.InWorld(store.TrivialScope()),
 		})
 		require.Equal(t, []string{"FEAT-1", "FEAT-2"}, got)
 	})
@@ -76,13 +76,13 @@ func RunRelatedTests(t *testing.T, f Factory) {
 		// zero direction as "both" would return FEAT-1 and FEAT-2 here.
 		got := runGraphQuery(t, s, store.GraphQuery{
 			EntityType: "feature", Related: []store.DirectedRelation{implementedBy(false)},
-			Faces: store.InWorld(store.DefaultWorld()),
+			Faces: store.InWorld(store.TrivialScope()),
 		})
 		require.Empty(t, got)
 
 		got = runGraphQuery(t, s, store.GraphQuery{
 			EntityType: "ticket", Related: []store.DirectedRelation{implementedBy(false)},
-			Faces: store.InWorld(store.DefaultWorld()),
+			Faces: store.InWorld(store.TrivialScope()),
 		})
 		require.Equal(t, []string{"TKT-1", "TKT-2"}, got)
 	})
@@ -94,7 +94,7 @@ func RunRelatedTests(t *testing.T, f Factory) {
 		got := runGraphQuery(t, s, store.GraphQuery{
 			EntityType: "ticket",
 			Related:    []store.DirectedRelation{implementedBy(false), causedByOpen},
-			Faces:      store.InWorld(store.DefaultWorld()),
+			Faces:      store.InWorld(store.TrivialScope()),
 		})
 		require.Equal(t, []string{"TKT-1"}, got)
 	})
@@ -111,7 +111,7 @@ func RunRelatedTests(t *testing.T, f Factory) {
 			EntityType: "feature",
 			HasInbound: &store.RelationPredicate{OfTypes: []string{"owns"}, Endpoints: []string{"USR-1"}},
 			Related:    []store.DirectedRelation{implementedBy(true)},
-			Faces:      store.InWorld(store.DefaultWorld()),
+			Faces:      store.InWorld(store.TrivialScope()),
 		})
 		require.Equal(t, []string{"FEAT-1"}, got)
 	})
@@ -124,7 +124,7 @@ func RunRelatedTests(t *testing.T, f Factory) {
 		got := runGraphQuery(t, s, store.GraphQuery{
 			EntityType: "ticket",
 			Related:    []store.DirectedRelation{implementedBy(false), negated},
-			Faces:      store.InWorld(store.DefaultWorld()),
+			Faces:      store.InWorld(store.TrivialScope()),
 		})
 		require.Equal(t, []string{"TKT-2"}, got)
 	})
@@ -140,7 +140,7 @@ func RunRelatedTests(t *testing.T, f Factory) {
 			OrderBy: []store.OrderSpec{{Property: "rank"}},
 			Limit:   1,
 			Offset:  1,
-			Faces:   store.InWorld(store.DefaultWorld()),
+			Faces:   store.InWorld(store.TrivialScope()),
 		}
 		var page []string
 		for h, err := range store.GraphQueryHeaders(context.Background(), s, q) {
@@ -173,7 +173,7 @@ func RunRelatedTests(t *testing.T, f Factory) {
 					HasInbound: &store.RelationPredicate{InheritThrough: []string{"owns"}},
 				},
 			}}},
-			Faces: store.InWorld(store.DefaultWorld()),
+			Faces: store.InWorld(store.TrivialScope()),
 		}
 		for _, err := range s.GraphQuery(context.Background(), q) {
 			require.Error(t, err)

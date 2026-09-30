@@ -84,7 +84,7 @@ func (s *Store) CreateEntity(ctx context.Context, e *entity.Entity) error {
 	if err := storeutil.ValidateID(e.ID); err != nil {
 		return fmt.Errorf("sqlitestore: create: %w", err)
 	}
-	if e.Face.IsDefault() {
+	if e.Face.IsImplicit() {
 		return s.createEntityLocked(ctx, e)
 	}
 	return s.Tx(ctx, func(tx store.Store) error {
@@ -103,7 +103,7 @@ func (s *Store) createEntityLocked(ctx context.Context, e *entity.Entity) error 
 	// siblings at all and only a DIVERGENT type is refused.
 	//
 	// Runs for EVERY face including the zero coordinate. Gating it on
-	// `!e.Face.IsDefault()` was complete only while every family necessarily
+	// `!e.Face.IsImplicit()` was complete only while every family necessarily
 	// had a zero-coordinate row: a family created named-face-first would then
 	// take a zero-coordinate write with no type check at all.
 	var famType string
@@ -152,7 +152,7 @@ func (s *Store) UpdateEntity(ctx context.Context, e *entity.Entity) error {
 	// its family (TKT-DOFYR1, design doc §6). The default face carries the
 	// family's type, so re-typing IT is the legitimate whole-family retype the
 	// storetest UpdateChangesType case covers.
-	if !e.Face.IsDefault() {
+	if !e.Face.IsImplicit() {
 		var curType string
 		err := s.q().QueryRowContext(ctx,
 			`SELECT type FROM entities WHERE id = ? AND face = ?`, e.ID, string(e.Face)).Scan(&curType)

@@ -47,13 +47,13 @@ import (
 // silently the moment this function emits a new column.
 
 func effectiveWorld(w store.WorldScope, entityType string) store.WorldScope {
-	if entityType == "" || w.IsDefaultWorld() {
+	if entityType == "" || w.IsTrivial() {
 		return w
 	}
 	if _, scoped := w.For(entityType); scoped {
 		return w
 	}
-	return store.DefaultWorld()
+	return store.TrivialScope()
 }
 
 // effectiveWorld collapses a world to the default world for a query bound

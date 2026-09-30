@@ -54,7 +54,7 @@ func (s *Service) Resolve(ctx context.Context, ref entity.Ref) (*entity.Entity, 
 	if err == nil {
 		return e, nil
 	}
-	if errors.Is(err, store.ErrNotFound) && ref.Face.IsDefault() {
+	if errors.Is(err, store.ErrNotFound) && ref.Face.IsImplicit() {
 		family, ferr := s.family(ctx, ref.ID)
 		if ferr != nil {
 			return nil, fmt.Errorf("get entity %s: %w", ref, ferr)

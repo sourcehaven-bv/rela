@@ -9,6 +9,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
@@ -112,8 +113,12 @@ func luaReadClaim(dr *docRuntime, ls *lua.LState, wantVisible bool) int {
 		return dr.luaFail(ls, "%s: %v", verb, err)
 	}
 
+	defaultScope, err := dr.worldScope("")
+	if err != nil {
+		return dr.luaFail(ls, "%s: %v", verb, err)
+	}
 	ctx := principal.With(dr.ctx, principal.Principal{User: who, Tool: principal.ToolCLI})
-	_, visible, gerr := reader.Address(ctx, visibility.World{}, typ, target)
+	_, visible, gerr := reader.Address(ctx, visibility.WorldOf(defaultScope), typ, target)
 	if gerr != nil {
 		return dr.luaFail(ls, "%s{id=%q}: the read gate errored: %v", verb, target, gerr)
 	}
@@ -166,7 +171,8 @@ func readerFor(dr *docRuntime) (*visibility.Resolver, error) {
 	if err != nil {
 		return nil, fmt.Errorf("building the read gate failed: %w", err)
 	}
-	reader, err := visibility.NewResolver(gate, visibility.NopRedactor{}, dr.store)
+	reader, err := visibility.NewResolver(gate, visibility.NopRedactor{}, dr.store,
+		visibility.WithFaceOrder(func(typ string) []string { return metamodel.FaceOrderOf(dr.meta.Entities[typ]) }))
 	if err != nil {
 		return nil, fmt.Errorf("building the reader failed: %w", err)
 	}

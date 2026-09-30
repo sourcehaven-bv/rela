@@ -243,7 +243,7 @@ func TestGatedReads_RedactsOnListPath(t *testing.T) {
 
 	seen := 0
 	for e, err := range svc.GatedReads().Reader.ListEntities(
-		bobCtx(principal.ToolMCP), store.EntityQuery{Type: "person", Faces: store.InWorld(store.DefaultWorld())},
+		bobCtx(principal.ToolMCP), store.EntityQuery{Type: "person", Faces: store.InWorld(store.TrivialScope())},
 	) {
 		if err != nil {
 			t.Fatalf("ListEntities: %v", err)
@@ -391,7 +391,7 @@ assignments:
 func searchIDs(ctx context.Context, t *testing.T, s search.Searcher, text string) []string {
 	t.Helper()
 	var ids []string
-	for h, err := range s.Search(ctx, search.Query{Text: text}) {
+	for h, err := range s.Search(ctx, search.Query{Text: text, World: store.TrivialScope()}) {
 		if err != nil {
 			t.Fatalf("Search(%q): %v", text, err)
 		}

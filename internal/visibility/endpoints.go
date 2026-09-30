@@ -67,7 +67,7 @@ func endpointVerdicts(rels []*entity.Relation, readable map[string]map[entity.Fa
 		}
 		head := len(readable[rel.To]) > 0
 		var tail bool
-		if rel.FromFace.IsDefault() {
+		if rel.FromFace.IsImplicit() {
 			tail = len(readable[rel.From]) > 0
 		} else {
 			_, tail = readable[rel.From][rel.FromFace]

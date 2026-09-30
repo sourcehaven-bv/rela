@@ -72,7 +72,7 @@ func TestUnrestricted_IsPassThrough(t *testing.T) {
 
 	t.Run("ListEntities yields every entity", func(t *testing.T) {
 		var ids []string
-		for e, err := range r.ListEntities(ctx, store.EntityQuery{Faces: store.InWorld(store.DefaultWorld())}) {
+		for e, err := range r.ListEntities(ctx, store.EntityQuery{Faces: store.InWorld(store.TrivialScope())}) {
 			if err != nil {
 				t.Fatalf("ListEntities: %v", err)
 			}

@@ -1707,7 +1707,7 @@ func (r *Runtime) luaSearch(ls *lua.LState) int {
 	result := ls.NewTable()
 	i := 1
 	ctx := r.callerCtx()
-	for hit, err := range r.deps.Searcher.Search(ctx, search.Query{Text: query, Limit: limit}) {
+	for hit, err := range r.deps.Searcher.Search(ctx, search.Query{Text: query, Limit: limit, World: r.deps.World}) {
 		if err != nil {
 			ls.RaiseError("search error: %s", err.Error())
 			return 0
@@ -1860,7 +1860,7 @@ func writeTargetReadable(ctx context.Context, rd EntityReader, addr string) bool
 	if err != nil {
 		return false
 	}
-	if !ref.Face.IsDefault() {
+	if !ref.Face.IsImplicit() {
 		e, gerr := readFace(ctx, rd, ref.ID, ref.Face)
 		return gerr == nil && e != nil
 	}
@@ -2032,7 +2032,7 @@ func deleteByAddress(ctx context.Context, em Mutator, addr string, cascade bool)
 	if err != nil {
 		return err
 	}
-	if ref.Face.IsDefault() {
+	if ref.Face.IsImplicit() {
 		_, err = em.DeleteEntity(ctx, ref.ID, cascade)
 		return err
 	}

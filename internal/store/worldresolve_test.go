@@ -107,7 +107,7 @@ func TestResolveWorldPrimes(t *testing.T) {
 			policyScope(store.FallbackDefaultState, published),
 			[]store.WorldCandidate{{ID: "POL-4", Type: "policy", Face: entity.Face("")}})
 		require.Contains(t, got, "POL-4")
-		assert.True(t, got["POL-4"].Face.IsDefault())
+		assert.True(t, got["POL-4"].Face.IsImplicit())
 		assert.Equal(t, store.ResolutionFallbackDefault, got["POL-4"].Via)
 	})
 
@@ -119,7 +119,7 @@ func TestResolveWorldPrimes(t *testing.T) {
 			policyScope(store.FallbackExclude, published),
 			[]store.WorldCandidate{{ID: "CTL-1", Type: "control", Face: entity.Face("")}})
 		require.Contains(t, got, "CTL-1")
-		assert.True(t, got["CTL-1"].Face.IsDefault())
+		assert.True(t, got["CTL-1"].Face.IsImplicit())
 		assert.Equal(t, store.ResolutionUnscoped, got["CTL-1"].Via)
 	})
 
@@ -199,4 +199,13 @@ func TestWorldCandidate_Ref(t *testing.T) {
 			assert.Equal(t, tc.want, tc.c.Ref())
 		})
 	}
+}
+
+// TestResolveWorldPrimes_UnsetScopeResolvesNothing pins that the zero scope
+// fails closed instead of reading as the trivial world.
+func TestResolveWorldPrimes_UnsetScopeResolvesNothing(t *testing.T) {
+	t.Parallel()
+	cands := []store.WorldCandidate{{ID: "TKT-1", Type: "ticket"}}
+	assert.Empty(t, store.ResolveWorldPrimes(store.WorldScope{}, cands))
+	assert.Len(t, store.ResolveWorldPrimes(store.TrivialScope(), cands), 1)
 }

@@ -34,10 +34,11 @@ type FaceSelection struct {
 	faces []entity.Face
 }
 
-// InWorld resolves each entity to at most one face, ranked by w. The zero
-// WorldScope is a valid w: it resolves every type to the "" face. Callers
-// without a request world take one from worlds.Compiled.Default, never from
-// [DefaultWorld] directly; a guard in internal/archguard pins the exceptions.
+// InWorld resolves each entity to at most one face, ranked by w. w must be
+// constructed: InWorld of the unset zero [WorldScope] is [ErrInvalidQuery]
+// at execution, like the zero selection. Callers without a request world
+// take one from worlds.Compiled, never from [TrivialScope] directly; a guard
+// in internal/archguard pins the exceptions.
 func InWorld(w WorldScope) FaceSelection { return FaceSelection{mode: selectWorld, world: w} }
 
 // AllFaces returns every face row, as raw storage truth. Several rows per id
@@ -78,11 +79,11 @@ func (s FaceSelection) Faces() (faces []entity.Face, ok bool) {
 // IsAll reports whether s is [AllFaces].
 func (s FaceSelection) IsAll() bool { return s.mode == selectAll }
 
-// IsDefaultWorld reports whether s is InWorld of the default world: every
-// type at the "" face. Backends branch on it for the flat single-row-per-id
+// IsTrivial reports whether s is InWorld of the trivial scope: every type at
+// the implicit face. Backends branch on it for the flat single-row-per-id
 // fast path.
-func (s FaceSelection) IsDefaultWorld() bool {
-	return s.mode == selectWorld && s.world.IsDefaultWorld()
+func (s FaceSelection) IsTrivial() bool {
+	return s.mode == selectWorld && s.world.IsTrivial()
 }
 
 // Admits reports whether a row at face f can be returned under s before any
@@ -101,11 +102,16 @@ func (s FaceSelection) Admits(f entity.Face) bool {
 	}
 }
 
-// Validate returns [ErrInvalidQuery] for the zero selection.
+// Validate returns [ErrInvalidQuery] for the zero selection and for InWorld
+// of an unset [WorldScope].
 func (s FaceSelection) Validate() error {
 	if s.IsZero() {
 		return fmt.Errorf("%w: no face selection (use store.InWorld, store.AllFaces or store.AtFaces)",
 			ErrInvalidQuery)
+	}
+	if s.mode == selectWorld && !s.world.IsSet() {
+		return fmt.Errorf("%w: InWorld of an unset world scope (build one with worlds.Compile, "+
+			"store.NewWorldScope or store.TrivialScope)", ErrInvalidQuery)
 	}
 	return nil
 }
@@ -114,8 +120,11 @@ func (s FaceSelection) Validate() error {
 func (s FaceSelection) String() string {
 	switch s.mode {
 	case selectWorld:
-		if s.world.IsDefaultWorld() {
-			return "in-world(default)"
+		if !s.world.IsSet() {
+			return "in-world(unset)"
+		}
+		if s.world.IsTrivial() {
+			return "in-world(trivial)"
 		}
 		types := s.world.Types()
 		slices.Sort(types)

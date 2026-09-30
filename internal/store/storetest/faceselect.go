@@ -58,26 +58,49 @@ func RunFaceSelectionTests(t *testing.T, f Factory) {
 		return s
 	}
 
-	t.Run("ZeroSelectionIsInvalid", func(t *testing.T) {
+	// The zero selection and InWorld of the unset zero WorldScope are both
+	// refused (TKT-KQXVF7; TKT-7IZHP0 design A4). An unset scope must not
+	// read as the trivial one, or a forgotten World field would silently
+	// serve every entity at its implicit face.
+	var unsetScope store.WorldScope
+	for name, sel := range map[string]store.FaceSelection{
+		"ZeroSelectionIsInvalid":   {},
+		"UnsetWorldScopeIsInvalid": store.InWorld(unsetScope),
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := seed(t)
+			eq := store.EntityQuery{Type: "doc", Faces: sel}
+			gq := store.GraphQuery{EntityType: "doc", Faces: sel}
+
+			assert.ErrorIs(t, firstErr(s.ListEntities(ctx(), eq)), store.ErrInvalidQuery, "ListEntities")
+			_, err := s.ListEntitiesPage(ctx(), eq)
+			assert.ErrorIs(t, err, store.ErrInvalidQuery, "ListEntitiesPage")
+			_, err = s.CountEntities(ctx(), eq)
+			assert.ErrorIs(t, err, store.ErrInvalidQuery, "CountEntities")
+			assert.ErrorIs(t, firstErr(store.ListEntityHeaders(ctx(), s, eq)), store.ErrInvalidQuery,
+				"ListEntityHeaders, native where the backend has it")
+			assert.ErrorIs(t, firstErr(store.ListEntityHeaders(ctx(), listerOnly{s}, eq)), store.ErrInvalidQuery,
+				"ListEntityHeaders, generic fallback")
+
+			assert.ErrorIs(t, firstErr(s.GraphQuery(ctx(), gq)), store.ErrInvalidQuery, "GraphQuery")
+			assert.ErrorIs(t, firstErr(store.GraphQueryHeaders(ctx(), s, gq)), store.ErrInvalidQuery,
+				"GraphQueryHeaders")
+			_, _, err = s.GraphCount(ctx(), gq)
+			assert.ErrorIs(t, err, store.ErrInvalidQuery, "GraphCount")
+			_, err = s.MatchingIDs(ctx(), gq, []string{"DOC-1"})
+			assert.ErrorIs(t, err, store.ErrInvalidQuery, "MatchingIDs")
+		})
+	}
+
+	t.Run("UnsetWorldScopeOnAnEndpointIsInvalid", func(t *testing.T) {
 		s := seed(t)
-		eq := store.EntityQuery{Type: "doc"}
-		gq := store.GraphQuery{EntityType: "doc"}
-
-		assert.ErrorIs(t, firstErr(s.ListEntities(ctx(), eq)), store.ErrInvalidQuery, "ListEntities")
-		_, err := s.ListEntitiesPage(ctx(), eq)
-		assert.ErrorIs(t, err, store.ErrInvalidQuery, "ListEntitiesPage")
-		_, err = s.CountEntities(ctx(), eq)
-		assert.ErrorIs(t, err, store.ErrInvalidQuery, "CountEntities")
-		assert.ErrorIs(t, firstErr(store.ListEntityHeaders(ctx(), s, eq)), store.ErrInvalidQuery,
-			"ListEntityHeaders, native where the backend has it")
-		assert.ErrorIs(t, firstErr(store.ListEntityHeaders(ctx(), listerOnly{s}, eq)), store.ErrInvalidQuery,
-			"ListEntityHeaders, generic fallback")
-
+		gq := store.GraphQuery{EntityType: "owner", Faces: store.InWorld(store.TrivialScope()),
+			HasOutbound: &store.RelationPredicate{
+				OfTypes:       []string{"owns"},
+				EndpointMatch: &store.EndpointPredicate{Faces: store.InWorld(unsetScope)},
+			}}
 		assert.ErrorIs(t, firstErr(s.GraphQuery(ctx(), gq)), store.ErrInvalidQuery, "GraphQuery")
-		assert.ErrorIs(t, firstErr(store.GraphQueryHeaders(ctx(), s, gq)), store.ErrInvalidQuery, "GraphQueryHeaders")
-		_, _, err = s.GraphCount(ctx(), gq)
-		assert.ErrorIs(t, err, store.ErrInvalidQuery, "GraphCount")
-		_, err = s.MatchingIDs(ctx(), gq, []string{"DOC-1"})
+		_, err := s.MatchingIDs(ctx(), gq, []string{"OWN-1"})
 		assert.ErrorIs(t, err, store.ErrInvalidQuery, "MatchingIDs")
 	})
 
@@ -142,9 +165,9 @@ func RunFaceSelectionTests(t *testing.T, f Factory) {
 			faceIn []entity.Face
 			want   []string
 		}{
-			{"default world, ceiling excludes its face", store.InWorld(store.DefaultWorld()),
+			{"default world, ceiling excludes its face", store.InWorld(store.TrivialScope()),
 				[]entity.Face{draft}, nil},
-			{"default world, ceiling admits its face", store.InWorld(store.DefaultWorld()),
+			{"default world, ceiling admits its face", store.InWorld(store.TrivialScope()),
 				[]entity.Face{def}, []string{"DOC-1@", "DOC-3@"}},
 			{"draft world falls back under the ceiling", store.InWorld(draftWorld),
 				[]entity.Face{def}, []string{"DOC-1@", "DOC-3@"}},
@@ -175,19 +198,19 @@ func RunFaceSelectionTests(t *testing.T, f Factory) {
 			endpoint store.FaceSelection // zero: inherit the query's
 			want     []string
 		}{
-			{"inherits the default world", store.InWorld(store.DefaultWorld()), store.FaceSelection{},
+			{"inherits the default world", store.InWorld(store.TrivialScope()), store.FaceSelection{},
 				[]string{"OWN-3"}},
 			{"inherits AllFaces: any face of the endpoint", store.AllFaces(), store.FaceSelection{},
 				owners},
 			{"inherits AtFaces", store.AtFaces(def), store.FaceSelection{},
 				[]string{"OWN-3"}},
-			{"own AllFaces overrides the query's world", store.InWorld(store.DefaultWorld()), store.AllFaces(),
+			{"own AllFaces overrides the query's world", store.InWorld(store.TrivialScope()), store.AllFaces(),
 				owners},
 			{"own AtFaces: an endpoint without the face does not match", store.AllFaces(), store.AtFaces(published),
 				nil},
 			{"own world ranks the endpoint", store.AllFaces(), store.InWorld(draftWorld),
 				owners},
-			{"own default world overrides AllFaces", store.AllFaces(), store.InWorld(store.DefaultWorld()),
+			{"own default world overrides AllFaces", store.AllFaces(), store.InWorld(store.TrivialScope()),
 				[]string{"OWN-3"}},
 			// DOC-1's published prime is closed although its draft row is
 			// open, and DOC-2 has no published or default row: ranking, not

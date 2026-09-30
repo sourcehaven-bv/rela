@@ -74,7 +74,7 @@ func TestGenerator_ShapeMatchesProfile(t *testing.T) {
 	ids := map[string]bool{}
 	demo := map[string]bool{}
 	for e := range g.Entities() {
-		if e.Face.IsDefault() {
+		if e.Face.IsImplicit() {
 			byType[e.Type]++ // one entity per default row; faces are counted below
 		} else {
 			faces[e.Type+"@"+e.Face.String()]++
@@ -147,7 +147,7 @@ func TestLoad_WritesEverythingIntoStore(t *testing.T) {
 	// edges hang off that face, not the draft.
 	pub := 0
 	for e := range g.Entities() {
-		if e.Type != "policy" || e.Face.IsDefault() {
+		if e.Type != "policy" || e.Face.IsImplicit() {
 			continue
 		}
 		got, err := st.GetEntity(ctx, entity.Ref{ID: e.ID, Face: e.Face})

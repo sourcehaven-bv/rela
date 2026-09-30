@@ -19,7 +19,7 @@ import (
 )
 
 // stubWorlds is a WorldLookup over a fixed name set. The scopes are
-// non-default only in the sense that matters here — IsDefaultWorld() is
+// non-default only in the sense that matters here — IsTrivial() is
 // false — which is what the refusal and stamping logic branch on.
 type stubWorlds struct {
 	names map[string]bool
@@ -30,7 +30,7 @@ type stubWorlds struct {
 
 func (s stubWorlds) Lookup(name string) (store.WorldScope, bool) {
 	if !s.names[name] {
-		return store.WorldScope{}, false
+		return store.TrivialScope(), false
 	}
 	if s.resolveDefault {
 		// A world that resolves `ticket` to its DEFAULT state, so an entity
@@ -43,7 +43,7 @@ func (s stubWorlds) Lookup(name string) (store.WorldScope, bool) {
 			"ticket": {Fallback: store.FallbackDefaultState},
 		}), true
 	}
-	// A resolution for one type is enough to make IsDefaultWorld() false,
+	// A resolution for one type is enough to make IsTrivial() false,
 	// which is what every branch under test keys on. FallbackExclude is the
 	// public-world shape: an entity with no matching state contributes
 	// nothing.
@@ -460,7 +460,7 @@ func TestWorldCapableRoutesDoNotUseUngatedReader(t *testing.T) {
 			scanned++
 			// A reader call is acceptable only inside a function that also
 			// consults the world — i.e. it is guarded by an
-			// IsDefaultWorld()/blocksAllReads() branch, or the whole
+			// IsTrivial()/blocksAllReads() branch, or the whole
 			// endpoint is refused for a non-default world. Requiring the
 			// world to be MENTIONED is a coarse check, but it is the one
 			// that fails loudly when someone adds an unguarded read.
@@ -525,7 +525,7 @@ func TestWorldCapableRoutesDoNotUseUngatedReader(t *testing.T) {
 					"a world-bound response would pair a resolved entity with "+
 					"draft relations and draft neighbors — the mixed-face bug "+
 					"that reads as correct. Guard the call on "+
-					"worldScopeFrom(ctx).IsDefaultWorld(), or refuse the route.",
+					"worldScopeFrom(ctx).IsTrivial(), or refuse the route.",
 					fn.Name.Name, name)
 			}
 			return false

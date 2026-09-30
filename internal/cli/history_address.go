@@ -29,7 +29,7 @@ func historyAddress(
 	if err != nil {
 		return entity.Ref{}, fmt.Errorf("invalid entity address %q: %w", raw, err)
 	}
-	if !ref.Face.IsDefault() {
+	if !ref.Face.IsImplicit() {
 		return ref, nil
 	}
 

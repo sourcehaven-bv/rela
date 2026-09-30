@@ -22,16 +22,24 @@ func TestFaceSelection_Modes(t *testing.T) {
 	assert.False(t, zero.Admits(""), "the zero selection admits nothing")
 	assert.Equal(t, "unset", zero.String())
 
-	def := store.InWorld(store.DefaultWorld())
+	def := store.InWorld(store.TrivialScope())
 	require.NoError(t, def.Validate())
-	assert.True(t, def.IsDefaultWorld())
-	assert.Equal(t, "in-world(default)", def.String())
+	assert.True(t, def.IsTrivial())
+	assert.Equal(t, "in-world(trivial)", def.String())
+
+	// InWorld of the unset zero scope is refused like the zero selection
+	// (TKT-7IZHP0 design A4).
+	var unsetScope store.WorldScope
+	unset := store.InWorld(unsetScope)
+	assert.False(t, unset.IsZero(), "the selection mode is set; its world is not")
+	require.ErrorIs(t, unset.Validate(), store.ErrInvalidQuery)
+	assert.Equal(t, "in-world(unset)", unset.String())
 
 	in := store.InWorld(world)
 	w, ok := in.World()
 	assert.True(t, ok)
-	assert.False(t, w.IsDefaultWorld())
-	assert.False(t, in.IsDefaultWorld())
+	assert.False(t, w.IsTrivial())
+	assert.False(t, in.IsTrivial())
 	assert.True(t, in.Admits(draft), "ranking decides per family, after admission")
 	assert.Equal(t, "in-world(doc)", in.String())
 	_, ok = in.Faces()

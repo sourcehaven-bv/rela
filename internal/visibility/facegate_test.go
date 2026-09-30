@@ -80,7 +80,7 @@ func (g faceGetter) ListEntities(context.Context, store.EntityQuery) iter.Seq2[*
 
 // readFace reads e's own address through r's resolver, in the default world.
 func readFace(r *PolicyReader, e *entity.Entity) (*entity.Entity, bool, error) {
-	res, ok, err := r.Resolver().Address(context.Background(), World{}, "policy", e.Ref().String())
+	res, ok, err := r.Resolver().Address(context.Background(), WorldOf(store.TrivialScope()), "policy", e.Ref().String())
 	return res.Entity, ok, err
 }
 
@@ -262,7 +262,7 @@ func TestVisibleTracer_IsFaceGated(t *testing.T) {
 	if _, err := st.CreateRelation(ctx, entity.RelationKey{From: "TKT-1", Type: "blocks", To: "TKT-2"}, nil); err != nil {
 		t.Fatal(err)
 	}
-	base := tracer.New(st, store.WorldScope{})
+	base := tracer.New(st, store.TrivialScope())
 
 	// Control: with every face permitted the trace carries the draft title,
 	// so the absence below is the gate's doing and not an empty fixture.
@@ -270,9 +270,12 @@ func TestVisibleTracer_IsFaceGated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	open, err := NewVisibleTracer(base, openRes, st, store.WorldScope{})
+	open, err := NewVisibleTracer(base, openRes, st, store.TrivialScope())
 	if err != nil {
 		t.Fatal(err)
+	}
+	if _, unsetErr := NewVisibleTracer(base, openRes, st, store.WorldScope{}); unsetErr == nil {
+		t.Fatal("NewVisibleTracer with an unset world = nil error, want a refusal")
 	}
 	if res := open.TraceFrom(ctx, "TKT-1", 3); res == nil || res.Title != "SECRET DRAFT" {
 		t.Fatalf("precondition: an unrestricted trace must show the draft; got %+v", res)
@@ -284,7 +287,7 @@ func TestVisibleTracer_IsFaceGated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	gated, err := NewVisibleTracer(base, gatedRes, st, store.WorldScope{})
+	gated, err := NewVisibleTracer(base, gatedRes, st, store.TrivialScope())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -313,14 +316,14 @@ func TestVisibleTracer_HiddenFace(t *testing.T) {
 	if _, err := st.CreateRelation(ctx, entity.RelationKey{From: "POL-1", FromFace: "draft", Type: "implements", To: "CTL-1"}, &store.RelationData{}); err != nil {
 		t.Fatal(err)
 	}
-	base := tracer.New(st, store.WorldScope{})
+	base := tracer.New(st, store.TrivialScope())
 	build := func(g faceRowGate) *VisibleTracer {
 		t.Helper()
 		res, err := NewResolver(g, NopRedactor{}, st)
 		if err != nil {
 			t.Fatal(err)
 		}
-		tr, err := NewVisibleTracer(base, res, st, store.WorldScope{})
+		tr, err := NewVisibleTracer(base, res, st, store.TrivialScope())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -407,7 +410,7 @@ func TestVisibleTracer_TraversalSkipsHiddenEdges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tr, err := NewVisibleTracer(tracer.New(st, store.WorldScope{}), res, st, store.WorldScope{})
+	tr, err := NewVisibleTracer(tracer.New(st, store.TrivialScope()), res, st, store.TrivialScope())
 	if err != nil {
 		t.Fatal(err)
 	}

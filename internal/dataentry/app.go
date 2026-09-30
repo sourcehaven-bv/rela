@@ -608,6 +608,22 @@ func (a *App) scriptReader(redactor visibility.FieldRedactor) lua.EntityReader {
 	return gatedScriptReader(a.acl, a.store, redactor)
 }
 
+// appFaceOrder reads a type's face declaration order from the LIVE App's
+// metamodel, so a schema reload is honored. NewApp sets app once it has built
+// the App; before that the order is empty and faces sort by token.
+type appFaceOrder struct{ app *App }
+
+func (o *appFaceOrder) of(entityType string) []string {
+	if o.app == nil {
+		return nil
+	}
+	meta := o.app.Meta()
+	if meta == nil {
+		return nil
+	}
+	return metamodel.FaceOrderOf(meta.Entities[entityType])
+}
+
 // lateGatedReader is a lua.EntityReader that resolves the gated reader from the
 // LIVE App on every call, so a reassignment of a.acl / a.fieldResolver (tests
 // rebind these after construction; a policy reload can too) is honored rather
@@ -1022,7 +1038,8 @@ func NewApp(
 	// Build style map from config styles
 	styleMap, styledTypes := buildStyleMap(cfg, meta)
 
-	visible, err := newVisibleReader(st)
+	faceOrder := &appFaceOrder{}
+	visible, err := newVisibleReader(st, faceOrder.of)
 	if err != nil {
 		return nil, err
 	}
@@ -1053,6 +1070,7 @@ func NewApp(
 		attachmentOwner:   attachmentOwner,
 		attachmentUploads: attachment.NewLimiter(attachment.DefaultMaxUploads),
 	}
+	faceOrder.app = app
 	// documentService needs scriptEngine (for Lua renders) and a closure
 	// that yields fresh lua.WriteDeps (so metamodel reloads propagate).
 	// Constructed after app because luaWriteDeps is a method on App.
@@ -1111,6 +1129,10 @@ func NewApp(
 		Searcher:      searcher,
 		Meta:          meta,
 		ProjectRoot:   paths.Root,
+		// SetWorlds runs after NewApp, so this is the default world's scope
+		// from a nil lookup. TKT-7IZHP0 PR 5a rewires it to the configured
+		// default world.
+		World: defaultWorldScope(app.worlds),
 	}
 	val, valErr := newGatedValidator(gatedReader, scriptTraversalGate(app), meta, readDeps, st)
 	if valErr != nil {
@@ -1130,7 +1152,8 @@ func NewApp(
 	// view pipeline (DEC-ZBI39P). Wired here — after app.affordances — because
 	// the redactor closes over it. Same construction as the export handler's
 	// visReader: ctx-resolved gate, affordance-backed redactor, raw store.
-	viewReader, viewReaderErr := visibility.NewPolicyReader(ctxRowGate{}, appRedactor(app), app.store)
+	viewReader, viewReaderErr := visibility.NewPolicyReader(ctxRowGate{}, appRedactor(app), app.store,
+		visibility.WithFaceOrder(faceOrder.of))
 	if viewReaderErr != nil {
 		return nil, fmt.Errorf("dataentry: wire view reader: %w", viewReaderErr)
 	}

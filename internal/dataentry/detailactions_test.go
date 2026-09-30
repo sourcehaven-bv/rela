@@ -176,7 +176,7 @@ func (d detailApp) offered(t *testing.T, user, typeName, plural, address string)
 func (d detailApp) markers(t *testing.T) []string {
 	t.Helper()
 	var out []string
-	for e, err := range d.store.ListEntities(context.Background(), store.EntityQuery{Type: "note", Faces: store.InWorld(store.DefaultWorld())}) {
+	for e, err := range d.store.ListEntities(context.Background(), store.EntityQuery{Type: "note", Faces: store.InWorld(store.TrivialScope())}) {
 		if err != nil {
 			t.Fatal(err)
 		}

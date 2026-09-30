@@ -414,13 +414,13 @@ func (d Deps) requireCreateFaceFor(entityType string, face entity.Face) error {
 		return fmt.Errorf("unknown entity type: %s", entityType)
 	}
 	if len(def.Faces) == 0 {
-		if !face.IsDefault() {
+		if !face.IsImplicit() {
 			return fmt.Errorf("%w: %s declares no faces, so %q names nothing",
 				ErrFaceNotDeclared, entityType, face)
 		}
 		return nil
 	}
-	if face.IsDefault() {
+	if face.IsImplicit() {
 		return fmt.Errorf("%w: %s declares %s", ErrFaceRequired,
 			entityType, strings.Join(sortedFaceNames(def), ", "))
 	}
@@ -488,7 +488,7 @@ func (d Deps) requireRelationFaceFor(relType, fromType string, face entity.Face)
 	// Branch through IsIdentity/IsContent, never by comparing to a constant:
 	// identity scope has two spellings ("" and "identity").
 	if relDef.Scope.IsIdentity() {
-		if !face.IsDefault() {
+		if !face.IsImplicit() {
 			return fmt.Errorf("%w: relation %s is scope: identity, so it attaches to the "+
 				"entity rather than to %q", ErrFaceNotDeclared, relType, face)
 		}
@@ -502,7 +502,7 @@ func (d Deps) requireRelationFaceFor(relType, fromType string, face entity.Face)
 		return nil
 	}
 	if len(def.Faces) == 0 {
-		if !face.IsDefault() {
+		if !face.IsImplicit() {
 			return fmt.Errorf("%w: source type %s declares no faces, so %q names nothing",
 				ErrFaceNotDeclared, fromType, face)
 		}
@@ -511,7 +511,7 @@ func (d Deps) requireRelationFaceFor(relType, fromType string, face entity.Face)
 	// A zero tail is ACCEPTED on a faced source — see the doc block. It means
 	// the identity coordinate, which is a real and readable edge, not a
 	// missing row.
-	if face.IsDefault() {
+	if face.IsImplicit() {
 		return nil
 	}
 	if _, declared := def.Faces[face.String()]; !declared {
@@ -545,7 +545,7 @@ type entityFamily struct {
 // isFaced reports whether the family stores any named face.
 func (f entityFamily) isFaced() bool {
 	for _, face := range f.faces {
-		if !face.IsDefault() {
+		if !face.IsImplicit() {
 			return true
 		}
 	}
@@ -603,7 +603,7 @@ func relationWriteSubject(
 	relType string, source entityFamily, from string, tail entity.Face,
 ) acl.RelationSubject {
 	s := acl.RelationSubject{Type: relType, FromType: source.typ, FromID: from, FromFace: tail}
-	if tail.IsDefault() && source.isFaced() {
+	if tail.IsImplicit() && source.isFaced() {
 		s.FamilyFaces = source.faces
 	}
 	return s

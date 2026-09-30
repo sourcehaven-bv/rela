@@ -123,7 +123,7 @@ func TestNewMCPServices_WritesReachSearchIndex(t *testing.T) {
 	}))
 
 	hits := make([]string, 0, 1)
-	for hit, hitErr := range deps.Searcher.Search(ctx, search.Query{Text: "Synchronous"}) {
+	for hit, hitErr := range deps.Searcher.Search(ctx, search.Query{Text: "Synchronous", World: store.TrivialScope()}) {
 		require.NoError(t, hitErr)
 		hits = append(hits, hit.ID)
 	}
@@ -286,7 +286,7 @@ func TestMCPServices_ReloadReusesStoreAndSearcher(t *testing.T) {
 
 	// And the search index is the same one, still holding the pre-reload write.
 	hits := make([]string, 0, 1)
-	for hit, hitErr := range deps.Searcher.Search(ctx, search.Query{Text: "Written"}) {
+	for hit, hitErr := range deps.Searcher.Search(ctx, search.Query{Text: "Written", World: store.TrivialScope()}) {
 		require.NoError(t, hitErr)
 		hits = append(hits, hit.ID)
 	}

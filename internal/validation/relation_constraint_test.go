@@ -50,7 +50,7 @@ func relationWorkspace(
 			t.Fatalf("create relation %v: %v", r, err)
 		}
 	}
-	return lua.ReadDeps{VisibleReader: visibility.Unrestricted(st), Tracer: tracer.New(st, store.WorldScope{}), Meta: meta}
+	return lua.ReadDeps{VisibleReader: visibility.Unrestricted(st), Tracer: tracer.New(st, store.TrivialScope()), Meta: meta, World: store.TrivialScope()}
 }
 
 // newWithGraph builds a Service wired exactly as production does: the same
@@ -255,7 +255,7 @@ func TestRelationConstraint_NoReader(t *testing.T) {
 			Severity: "error",
 		}},
 	}
-	svc := New(meta, lua.ReadDeps{}) // no VisibleReader
+	svc := New(meta, lua.ReadDeps{World: store.TrivialScope()}) // no VisibleReader
 	res := svc.Check(context.Background(), []*entity.Entity{tkt("done")}, nil)
 	if len(res.LoadErrors) == 0 {
 		t.Fatal("a missing reader must be reported as a LoadError, not silently pass the gate")

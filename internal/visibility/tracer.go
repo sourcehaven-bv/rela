@@ -80,6 +80,9 @@ func NewVisibleTracer(
 	if rels == nil {
 		return nil, errors.New("visibility: NewVisibleTracer: relation lister must be non-nil")
 	}
+	if !world.IsSet() {
+		return nil, errors.New("visibility: NewVisibleTracer: world must be set (store.TrivialScope for the trivial world)")
+	}
 	gated := base.WithEdgeGate(res.EndpointsReadable)
 	return &VisibleTracer{base: gated, res: res, rels: rels, world: world}, nil
 }
@@ -232,7 +235,7 @@ func (t *VisibleTracer) FindPath(ctx context.Context, fromID, toID string) []tra
 // entity-level tail, or the zero tail of a root, needs nothing more than
 // the node itself.
 func tailReadable(tail tracer.Tail, nodes map[string]tracer.Node) bool {
-	if tail.Face.IsDefault() {
+	if tail.Face.IsImplicit() {
 		return true
 	}
 	return slices.Contains(nodes[tail.ID].Faces, tail.Face)

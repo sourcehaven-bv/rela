@@ -179,7 +179,7 @@ func authorizeRelationHistoryRead(
 		writeGateError(w, r, err)
 		return false
 	}
-	fromLive := fromType != "" && (from.Face.IsDefault() || slices.Contains(fromFaces, from.Face))
+	fromLive := fromType != "" && (from.Face.IsImplicit() || slices.Contains(fromFaces, from.Face))
 	toType, _, err := loadStoredFaces(ctx, vr.store, to)
 	if err != nil {
 		writeGateError(w, r, err)
@@ -188,7 +188,7 @@ func authorizeRelationHistoryRead(
 
 	if fromLive && toType != "" {
 		var fromOK bool
-		if from.Face.IsDefault() {
+		if from.Face.IsImplicit() {
 			_, fromOK, err = vr.family(ctx, fromType, from.ID)
 		} else {
 			_, fromOK, err = vr.ref(ctx, fromType, from)

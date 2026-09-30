@@ -29,6 +29,9 @@ var validTopLevelKeys = map[string]bool{
 	"worlds":      true,
 	"copies":      true,
 	"comments":    true,
+	// default_world names the world a request uses when it names none
+	// (TKT-7IZHP0).
+	"default_world": true,
 }
 
 // knownTypos maps common misspellings to the correct key name.
@@ -195,7 +198,8 @@ func parseRaw(data []byte) (*Metamodel, error) {
 
 // extractPropertyOrder parses the YAML using yaml.Node to extract property key order
 // for each entity definition. This allows WriteEntity to output properties in the
-// same order as defined in the metamodel.
+// same order as defined in the metamodel. The same pass records the declaration
+// order of each type's faces and of the worlds (declorder.go).
 func extractPropertyOrder(data []byte, m *Metamodel) error {
 	var root yaml.Node
 	if err := yaml.Unmarshal(data, &root); err != nil { // coverage-ignore: defensive: same bytes already unmarshaled
@@ -212,14 +216,12 @@ func extractPropertyOrder(data []byte, m *Metamodel) error {
 		return nil
 	}
 
-	// Find the "entities" key
-	for i := 0; i < len(doc.Content)-1; i += 2 {
-		keyNode := doc.Content[i]
-		valueNode := doc.Content[i+1]
-		if keyNode.Value == "entities" && valueNode.Kind == yaml.MappingNode {
-			extractEntityPropertyOrder(valueNode, m)
-			break
-		}
+	if entitiesNode, ok := mappingValue(doc, "entities"); ok && entitiesNode.Kind == yaml.MappingNode {
+		extractEntityPropertyOrder(entitiesNode, m)
+		recordFaceOrder(entitiesNode, m.Entities)
+	}
+	if worldsNode, ok := mappingValue(doc, "worlds"); ok && worldsNode.Kind == yaml.MappingNode {
+		m.worldOrder = mappingKeys(worldsNode)
 	}
 	return nil
 }
@@ -280,6 +282,8 @@ func validate(m *Metamodel) error {
 	validationErrors = append(validationErrors, validateTransforms(m)...)
 	validationErrors = append(validationErrors, validateCopies(m)...)
 	validationErrors = append(validationErrors, validateWorlds(m)...)
+	validationErrors = append(validationErrors, validateDefaultWorld(m)...)
+	validationErrors = append(validationErrors, validateDeclOrder(m)...)
 	validationErrors = append(validationErrors, validateQueryScopes(m)...)
 	validationErrors = append(validationErrors, validateValidationFaces(m)...)
 	validationErrors = append(validationErrors, validateValidationRelations(m)...)

@@ -80,7 +80,7 @@ func TestBuildTableListAndDetail(t *testing.T) {
 
 	msg, _, err := mailtemplate.Build(t.Context(), model(), reader{entities: []*entity.Entity{
 		{ID: "T-1", Type: "task", Properties: map[string]any{"title": "Visible", "status": "open"}, Content: "Agenda"},
-	}}, store.DefaultWorld(), cfg.Templates["digest"], time.Date(2026, 8, 26, 0, 0, 0, 0, time.UTC))
+	}}, store.TrivialScope(), cfg.Templates["digest"], time.Date(2026, 8, 26, 0, 0, 0, 0, time.UTC))
 	require.NoError(t, err)
 	require.Equal(t, "Tasks 2026-08-26", msg.Subject)
 	require.Equal(t, [][]string{{"Visible"}}, msg.Sections[0].Rows)
@@ -92,7 +92,7 @@ func TestBuildTableListAndDetail(t *testing.T) {
 func TestBuildCannotExposeRowsMissingFromReader(t *testing.T) {
 	t.Parallel()
 	tmpl := mailtemplate.Template{Subject: "Digest", AddressProperty: "email", Sections: []mailtemplate.Section{{EntityType: "task", Columns: []string{"title"}}}}
-	msg, _, err := mailtemplate.Build(t.Context(), model(), reader{}, store.DefaultWorld(), tmpl, time.Now())
+	msg, _, err := mailtemplate.Build(t.Context(), model(), reader{}, store.TrivialScope(), tmpl, time.Now())
 	require.NoError(t, err)
 	require.Empty(t, msg.Sections[0].Rows)
 }
@@ -125,7 +125,7 @@ func TestBuildCountsContributionsNotMatches(t *testing.T) {
 			}
 			msg, contributed, err := mailtemplate.Build(t.Context(), model(), reader{entities: []*entity.Entity{
 				{ID: "T-1", Type: "task", Properties: map[string]any{"title": "Visible"}, Content: tc.content},
-			}}, store.DefaultWorld(), tmpl, time.Now())
+			}}, store.TrivialScope(), tmpl, time.Now())
 			require.NoError(t, err)
 			require.Equal(t, tc.contributed, contributed)
 
@@ -143,7 +143,7 @@ func TestBuildReportsZeroContributionsWhenNothingMatches(t *testing.T) {
 		Subject: "Digest", AddressProperty: "email",
 		Sections: []mailtemplate.Section{{EntityType: "task", Columns: []string{"title"}}},
 	}
-	_, contributed, err := mailtemplate.Build(t.Context(), model(), reader{}, store.DefaultWorld(), tmpl, time.Now())
+	_, contributed, err := mailtemplate.Build(t.Context(), model(), reader{}, store.TrivialScope(), tmpl, time.Now())
 	require.NoError(t, err)
 	require.Zero(t, contributed)
 }
@@ -161,7 +161,7 @@ func TestBuildCountsContributionsAcrossSections(t *testing.T) {
 	}
 	_, contributed, err := mailtemplate.Build(t.Context(), model(), reader{entities: []*entity.Entity{
 		{ID: "T-1", Type: "task", Properties: map[string]any{"title": "Open one", "status": "open"}},
-	}}, store.DefaultWorld(), tmpl, time.Now())
+	}}, store.TrivialScope(), tmpl, time.Now())
 	require.NoError(t, err)
 	require.Equal(t, 1, contributed, "one empty section must not mask the other's content")
 }
@@ -272,7 +272,7 @@ func TestTemplateLangReachesMessage(t *testing.T) {
 
 	build := func(name string) *mailrender.Message {
 		msg, _, buildErr := mailtemplate.Build(
-			context.Background(), model(), reader{}, store.DefaultWorld(), cfg.Templates[name], time.Now())
+			context.Background(), model(), reader{}, store.TrivialScope(), cfg.Templates[name], time.Now())
 		require.NoError(t, buildErr)
 		return msg
 	}

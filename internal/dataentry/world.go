@@ -78,10 +78,16 @@ type worldHandle struct {
 	denied bool
 }
 
-// isDefault reports whether this handle is the default world. The zero
-// handle is the default world, which is what makes an unstamped context and
-// an explicit `?world=default` behave identically.
-func (w worldHandle) isDefault() bool { return !w.denied && w.scope.IsDefaultWorld() }
+// defaultWorldHandle is the handle of the default world: the trivial scope,
+// every entity at its implicit face. An unstamped context and an explicit
+// `?world=default` both get it, which is what makes them behave identically.
+//
+// The zero handle is NOT this: its scope is unset, and a query built from it
+// fails with store.ErrInvalidQuery (TKT-7IZHP0 design A4).
+func defaultWorldHandle() worldHandle { return worldHandle{scope: store.TrivialScope()} }
+
+// isDefault reports whether this handle is the default world.
+func (w worldHandle) isDefault() bool { return !w.denied && w.scope.IsTrivial() }
 
 // blocksAllReads reports a handle that must yield nothing at all.
 func (w worldHandle) blocksAllReads() bool { return w.denied }
@@ -111,8 +117,8 @@ func withWorld(ctx context.Context, w worldHandle) context.Context {
 	return context.WithValue(ctx, worldCtxKey{}, w)
 }
 
-// worldFromContext returns the request's world handle, or the zero handle
-// (the default world) when none was bound.
+// worldFromContext returns the request's world handle, or
+// [defaultWorldHandle] when none was bound.
 //
 // Defaulting to the DEFAULT world rather than erroring is correct here and is
 // not a fail-open: the default world is today's graph, so an unstamped
@@ -120,7 +126,10 @@ func withWorld(ctx context.Context, w worldHandle) context.Context {
 // world can only ever arrive by passing the grant check in
 // [resolveWorld].
 func worldFromContext(ctx context.Context) worldHandle {
-	w, _ := ctx.Value(worldCtxKey{}).(worldHandle)
+	w, ok := ctx.Value(worldCtxKey{}).(worldHandle)
+	if !ok {
+		return defaultWorldHandle()
+	}
 	return w
 }
 
@@ -148,12 +157,15 @@ func (a *App) SetWorlds(w WorldLookup) {
 
 // defaultWorldScope is the scope of the default world in w, the world a
 // surface uses when the request names none. A nil lookup, or one without the
-// default world, yields the zero scope, which is the default world today.
+// default world, yields the trivial scope, which is the default world today.
 func defaultWorldScope(w WorldLookup) store.WorldScope {
 	if w == nil {
-		return store.WorldScope{}
+		return defaultWorldHandle().scope
 	}
-	scope, _ := w.Lookup(defaultWorldName)
+	scope, ok := w.Lookup(defaultWorldName)
+	if !ok {
+		return defaultWorldHandle().scope
+	}
 	return scope
 }
 
@@ -222,7 +234,7 @@ func resolveWorld(r *http.Request, lookup WorldLookup, configured string) (world
 	if name == "" || name == defaultWorldName {
 		// The default world needs no grant beyond the ordinary read gates
 		// that already run per entity: it IS today's graph.
-		return worldHandle{}, nil
+		return defaultWorldHandle(), nil
 	}
 	if lookup == nil {
 		return worldHandle{}, errWorldUnknown
@@ -597,8 +609,10 @@ func attachWorld(next http.Handler, a *App) http.Handler {
 			//
 			// Continuing is only safe on a route that can honor a world at
 			// all, which is what the guard above establishes.
+			// The scope is the default one only so the handle is valid;
+			// `denied` makes every read seam find nothing regardless.
 			next.ServeHTTP(w, r.WithContext(withWorld(r.Context(),
-				worldHandle{name: requested, denied: true})))
+				worldHandle{name: requested, scope: defaultWorldHandle().scope, denied: true})))
 			return
 		case err != nil:
 			// Infrastructure failure, not a denial.

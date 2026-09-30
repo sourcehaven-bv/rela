@@ -51,7 +51,7 @@ func RunStateTests(t *testing.T, f Factory) {
 		got, err := s.GetEntity(ctx(), entity.Ref{ID: "PAGE-1"})
 		require.NoError(t, err)
 		assert.Equal(t, "default face", got.GetString("title"))
-		assert.True(t, got.Face.IsDefault())
+		assert.True(t, got.Face.IsImplicit())
 
 		// The pair addresses the state; the id stays bare on the result.
 		draft, err := s.GetEntity(ctx(), entity.Ref{ID: "PAGE-1", Face: ptr(t, "draft")})
@@ -148,7 +148,7 @@ func RunStateTests(t *testing.T, f Factory) {
 		})
 
 		// The ZERO coordinate is checked too. The probe used to be gated on
-		// `!e.Face.IsDefault()`, which was complete while every family had a
+		// `!e.Face.IsImplicit()`, which was complete while every family had a
 		// zero-coordinate row to be checked against; with no face privileged
 		// (BUG-HC6I2T) a family can be created named-face-first, and then the
 		// zero-coordinate create ran no type check at all.
@@ -198,12 +198,12 @@ func RunStateTests(t *testing.T, f Factory) {
 		mustCreate(t, s, newState(t, "PAGE-9", "page", "", "other"))
 
 		// The zero-value query is today's semantics: default states only.
-		defaults := collectIter(t, s.ListEntities(ctx(), store.EntityQuery{Type: "page", Faces: store.InWorld(store.DefaultWorld())}))
+		defaults := collectIter(t, s.ListEntities(ctx(), store.EntityQuery{Type: "page", Faces: store.InWorld(store.TrivialScope())}))
 		require.Len(t, defaults, 2)
 		for _, e := range defaults {
-			assert.True(t, e.Face.IsDefault())
+			assert.True(t, e.Face.IsImplicit())
 		}
-		n, err := s.CountEntities(ctx(), store.EntityQuery{Type: "page", Faces: store.InWorld(store.DefaultWorld())})
+		n, err := s.CountEntities(ctx(), store.EntityQuery{Type: "page", Faces: store.InWorld(store.TrivialScope())})
 		require.NoError(t, err)
 		assert.Equal(t, 2, n)
 
@@ -267,7 +267,7 @@ func RunStateTests(t *testing.T, f Factory) {
 			From: "PAGE-10", Type: "references", FromFace: &zero,
 		})
 		require.Len(t, defOnly, 1)
-		assert.True(t, defOnly[0].FromFace.IsDefault())
+		assert.True(t, defOnly[0].FromFace.IsImplicit())
 
 		// A face value matches that tail exactly — including through
 		// the fs INDEXED query path (From+Type set), the silent-miss
@@ -392,7 +392,7 @@ func RunStateTests(t *testing.T, f Factory) {
 		// case the tail-dropping bug got wrong: it deleted this one.
 		remaining := collectRelations(t, s, store.RelationQuery{From: "PAGE-21"})
 		require.Len(t, remaining, 1)
-		assert.True(t, remaining[0].FromFace.IsDefault(),
+		assert.True(t, remaining[0].FromFace.IsImplicit(),
 			"the default face's edge must survive its sibling's deletion")
 
 		// Inbound edges survive: an entity elsewhere still points here.
@@ -496,7 +496,7 @@ func RunStateTests(t *testing.T, f Factory) {
 
 		got, err = s.GetRelation(ctx(), idKey)
 		require.NoError(t, err)
-		assert.True(t, got.FromFace.IsDefault())
+		assert.True(t, got.FromFace.IsImplicit())
 		assert.Equal(t, "identity edge", got.Content)
 
 		// A tail with no edge is absent, not a fallback to a sibling.
@@ -527,7 +527,7 @@ func RunStateTests(t *testing.T, f Factory) {
 
 		remaining := collectRelations(t, s, store.RelationQuery{From: "PAGE-25"})
 		require.Len(t, remaining, 1)
-		assert.True(t, remaining[0].FromFace.IsDefault(),
+		assert.True(t, remaining[0].FromFace.IsImplicit(),
 			"the default-tail edge must survive deletion of its published-tail sibling")
 	})
 
@@ -616,7 +616,7 @@ func RunStateTests(t *testing.T, f Factory) {
 		// sibling is a different relation.
 		updated, err := s.UpdateRelation(ctx(), entity.RelationKey{From: "PAGE-29", Type: "references", To: "SPEC-10"}, store.RelationData{Content: "default edge v2"})
 		require.NoError(t, err)
-		assert.True(t, updated.FromFace.IsDefault())
+		assert.True(t, updated.FromFace.IsImplicit())
 
 		edges := collectRelations(t, s, store.RelationQuery{From: "PAGE-29", FromFace: &draft})
 		require.Len(t, edges, 1)

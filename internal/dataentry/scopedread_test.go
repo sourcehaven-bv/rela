@@ -40,7 +40,7 @@ func TestScopedHeaders_NarrowingsApplyToBothVerdictBranches(t *testing.T) {
 	// An ACL-gated verdict that permits the whole type: it differs from
 	// AllowAll only in WHICH BRANCH it takes, so any difference in the
 	// result is the branch skew this test hunts.
-	gated := acl.ReadQueryResult{Query: &store.GraphQuery{EntityType: "ticket", Faces: store.InWorld(store.DefaultWorld())}}
+	gated := acl.ReadQueryResult{Query: &store.GraphQuery{EntityType: "ticket", Faces: store.InWorld(store.TrivialScope())}}
 	allowAll := acl.ReadQueryResult{AllowAll: true}
 
 	tests := []struct {
@@ -169,7 +169,7 @@ func TestScopedHeaders_DoesNotMutateTheACLQuery(t *testing.T) {
 	seedEntity(app, &entity.Entity{ID: "TKT-1", Type: "ticket",
 		Properties: map[string]any{"status": "open"}})
 
-	shared := &store.GraphQuery{EntityType: "ticket", Faces: store.InWorld(store.DefaultWorld())}
+	shared := &store.GraphQuery{EntityType: "ticket", Faces: store.InWorld(store.TrivialScope())}
 	rqr := acl.ReadQueryResult{Query: shared}
 
 	_, _, err := scopedHeaders(context.Background(), app.Services(), rqr, scopeRequest{
@@ -272,7 +272,7 @@ func TestScopedHeaders_ScopeFiltersOnBothBranches(t *testing.T) {
 		}),
 	}
 
-	gated := acl.ReadQueryResult{Query: &store.GraphQuery{EntityType: "ticket", Faces: store.InWorld(store.DefaultWorld())}}
+	gated := acl.ReadQueryResult{Query: &store.GraphQuery{EntityType: "ticket", Faces: store.InWorld(store.TrivialScope())}}
 	allowAll := acl.ReadQueryResult{AllowAll: true}
 
 	gotAllowAll := idsOf(context.Background(), t, app, allowAll, notDone)

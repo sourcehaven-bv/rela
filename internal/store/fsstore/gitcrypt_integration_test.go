@@ -82,7 +82,7 @@ func TestGitCrypt_ListEntitiesIncludesInaccessibleAlongsideCleartext(t *testing.
 	defer s.Close()
 
 	var cleartext, encrypted []*entity.Entity
-	for got, err := range s.ListEntities(ctx, store.EntityQuery{Faces: store.InWorld(store.DefaultWorld())}) {
+	for got, err := range s.ListEntities(ctx, store.EntityQuery{Faces: store.InWorld(store.TrivialScope())}) {
 		require.NoError(t, err, "encrypted file must not surface as iterator error")
 		if got.IsLocked() {
 			encrypted = append(encrypted, got)
@@ -191,7 +191,7 @@ type: unknown
 	s := openStore(t, fs)
 	defer s.Close()
 
-	count, err := s.CountEntities(context.Background(), store.EntityQuery{Faces: store.InWorld(store.DefaultWorld())})
+	count, err := s.CountEntities(context.Background(), store.EntityQuery{Faces: store.InWorld(store.TrivialScope())})
 	require.NoError(t, err)
 	assert.Equal(t, 0, count, "entity in unknown-type directory should be skipped")
 }

@@ -1,8 +1,10 @@
 package visibility
 
 import (
+	"cmp"
 	"context"
 	"errors"
+	"fmt"
 	"iter"
 	"log/slog"
 	"slices"
@@ -24,8 +26,14 @@ type Loader interface {
 	ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error]
 }
 
-// World is the world a single-entity read is made in. The zero value is the
-// default world and is readable.
+// World is the world a single-entity read is made in. Build one with
+// [WorldOf] or [DeniedWorld].
+//
+// The zero value has an unset scope. [Resolver.Ref] and [Resolver.Family]
+// accept it, because they read no world (the scope only labels provenance
+// there); [Resolver.InWorld] refuses it with [store.ErrInvalidQuery]
+// (TKT-7IZHP0 design A4), so a forgotten world cannot pass for the trivial
+// one.
 type World struct {
 	scope  store.WorldScope
 	denied bool
@@ -33,6 +41,11 @@ type World struct {
 
 // WorldOf is the world that scope compiles to.
 func WorldOf(scope store.WorldScope) World { return World{scope: scope} }
+
+// trivialWorld is the world a script reader starts in until its wiring calls
+// WithWorld: the trivial scope, every entity at its implicit face. TKT-7IZHP0
+// PR 5a makes the wiring pass the configured default world and removes this.
+func trivialWorld() World { return World{scope: store.TrivialScope()} }
 
 // DeniedWorld is a world that exists but that the principal holds no read
 // grant for. Every read in it misses, whatever address it names.
@@ -58,8 +71,11 @@ type Resolved struct {
 type Family struct {
 	ID   string
 	Type string
-	// Faces holds the readable faces, sorted by face token, so the order is
-	// deterministic on every backend. It is never empty on a hit.
+	// Faces holds the readable faces in declaration order when the
+	// resolver was built [WithFaceOrder], so the order is the schema's and
+	// the same on every backend; without it, in token order. A caller that
+	// picks a face by position (Faces[0]) must use a resolver built with the
+	// option. It is never empty on a hit.
 	Faces []entity.Face
 }
 
@@ -86,14 +102,39 @@ type Family struct {
 // The policy and allow-all capabilities are the same type with different
 // collaborators; see [NewResolver] and [NewAllowAllResolver].
 type Resolver struct {
-	gate   RowGate
-	redact FieldRedactor
-	load   Loader
+	gate      RowGate
+	redact    FieldRedactor
+	load      Loader
+	faceOrder FaceOrder
+}
+
+// FaceOrder returns an entity type's declared face names in declaration
+// order (metamodel.FaceOrderOf). visibility may not import the metamodel, so
+// the wiring site supplies it.
+type FaceOrder func(entityType string) []string
+
+// ResolverOption configures an optional part of a [Resolver].
+type ResolverOption func(*Resolver) error
+
+// WithFaceOrder orders [Family.Faces] by order: the implicit face first, then
+// the declared faces in declaration order, then any stored face the order
+// does not name, by token. Without it the declared faces are ordered by
+// token. The design (TKT-7IZHP0 §3.1) makes declaration order the order every
+// face listing uses.
+// Nil: rejected — an absent option is how a caller asks for token order.
+func WithFaceOrder(order FaceOrder) ResolverOption {
+	return func(r *Resolver) error {
+		if order == nil {
+			return errors.New("visibility: WithFaceOrder: order must be non-nil")
+		}
+		r.faceOrder = order
+		return nil
+	}
 }
 
 // NewResolver builds a policy-enforcing Resolver. All collaborators are
 // required.
-func NewResolver(gate RowGate, redact FieldRedactor, load Loader) (*Resolver, error) {
+func NewResolver(gate RowGate, redact FieldRedactor, load Loader, opts ...ResolverOption) (*Resolver, error) {
 	if gate == nil {
 		return nil, errors.New("visibility: NewResolver: gate must be non-nil")
 	}
@@ -103,7 +144,13 @@ func NewResolver(gate RowGate, redact FieldRedactor, load Loader) (*Resolver, er
 	if load == nil {
 		return nil, errors.New("visibility: NewResolver: load must be non-nil")
 	}
-	return &Resolver{gate: gate, redact: redact, load: load}, nil
+	r := &Resolver{gate: gate, redact: redact, load: load}
+	for _, opt := range opts {
+		if err := opt(r); err != nil {
+			return nil, err
+		}
+	}
+	return r, nil
 }
 
 // NewAllowAllResolver builds the ungated Resolver: [NopGate] and
@@ -126,7 +173,7 @@ func (r *Resolver) Address(ctx context.Context, w World, entityType, addr string
 		// An address that cannot name a row names none: the same miss.
 		return Resolved{}, false, nil //nolint:nilerr // a malformed address is a miss, not a fault
 	}
-	if ref.Face.IsDefault() {
+	if ref.Face.IsImplicit() {
 		return r.InWorld(ctx, w, entityType, ref.ID)
 	}
 	return r.Ref(ctx, w, entityType, ref)
@@ -158,12 +205,16 @@ func (r *Resolver) Ref(ctx context.Context, w World, entityType string, ref enti
 // and the principal's readable faces: the ACL trims the candidates first and
 // the world ranks what is left, exactly as the list path does.
 func (r *Resolver) InWorld(ctx context.Context, w World, entityType, id string) (Resolved, bool, error) {
+	if !w.denied && !w.scope.IsSet() {
+		return Resolved{}, false, fmt.Errorf("%w: visibility: InWorld with an unset world (use WorldOf)",
+			store.ErrInvalidQuery)
+	}
 	faces, ok, err := r.admit(ctx, w, entityType, id)
 	if err != nil || !ok {
 		return Resolved{}, false, err
 	}
 	var e *entity.Entity
-	if w.scope.IsDefaultWorld() {
+	if w.scope.IsTrivial() {
 		if !faces.Contains("") {
 			return Resolved{}, false, nil
 		}
@@ -198,7 +249,7 @@ func (r *Resolver) Family(ctx context.Context, entityType, id string) (Family, b
 	if !ok {
 		return Family{}, false, nil
 	}
-	return familyOf(entityType, id, faces, headers)
+	return r.familyOf(entityType, id, faces, headers)
 }
 
 // headersOf reads every stored face header of id. A failed read is logged
@@ -214,7 +265,7 @@ func (r *Resolver) headersOf(ctx context.Context, entityType, id string) ([]stor
 
 // familyOf keeps the headers whose face is in faces. Every header must have
 // entityType, else the family is a miss.
-func familyOf(entityType, id string, faces FaceSet, headers []store.EntityHeader) (Family, bool, error) {
+func (r *Resolver) familyOf(entityType, id string, faces FaceSet, headers []store.EntityHeader) (Family, bool, error) {
 	var readable []entity.Face
 	for _, h := range headers {
 		if h.Type != entityType {
@@ -227,8 +278,37 @@ func familyOf(entityType, id string, faces FaceSet, headers []store.EntityHeader
 	if len(readable) == 0 {
 		return Family{}, false, nil
 	}
-	slices.Sort(readable)
+	r.sortFaces(entityType, readable)
 	return Family{ID: id, Type: entityType, Faces: readable}, true, nil
+}
+
+// sortFaces orders faces as [WithFaceOrder] documents.
+func (r *Resolver) sortFaces(entityType string, faces []entity.Face) {
+	if r.faceOrder == nil {
+		slices.Sort(faces)
+		return
+	}
+	order := r.faceOrder(entityType)
+	rank := make(map[entity.Face]int, len(order))
+	for i, name := range order {
+		rank[entity.Face(name)] = i + 1
+	}
+	undeclared := len(order) + 1
+	key := func(f entity.Face) int {
+		if f.IsImplicit() {
+			return 0
+		}
+		if n, ok := rank[f]; ok {
+			return n
+		}
+		return undeclared
+	}
+	slices.SortFunc(faces, func(a, b entity.Face) int {
+		if d := cmp.Compare(key(a), key(b)); d != 0 {
+			return d
+		}
+		return cmp.Compare(a, b)
+	})
 }
 
 // admit applies the gates that run before any load: the world, the row gate

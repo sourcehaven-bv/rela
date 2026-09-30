@@ -38,7 +38,7 @@ type searchWorlds struct{}
 
 func (searchWorlds) Lookup(name string) (store.WorldScope, bool) {
 	if name != "published" {
-		return store.WorldScope{}, false
+		return store.TrivialScope(), false
 	}
 	return store.NewWorldScope(map[string]store.TypeResolution{
 		"ticket": {

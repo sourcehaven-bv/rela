@@ -57,7 +57,7 @@ func (l *storePrincipalLookup) LookupEntityByProperty(
 	// own security review (TKT-7IZHP0).
 	for h, err := range store.GraphQueryHeaders(ctx, l.s, store.GraphQuery{
 		EntityType: entityType,
-		Faces:      store.InWorld(store.DefaultWorld()),
+		Faces:      store.InWorld(store.TrivialScope()),
 		Props:      []store.PropPredicate{{Property: property, Op: store.PropEqual, Value: value, Scalar: true}},
 	}) {
 		if err != nil {

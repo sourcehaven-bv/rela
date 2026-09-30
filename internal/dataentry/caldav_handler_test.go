@@ -1689,7 +1689,7 @@ func TestDynamicCollections_FailedLinkRemovesTheOrphan(t *testing.T) {
 func countStoredEntities(t *testing.T, app *App, typ string) int {
 	t.Helper()
 	n := 0
-	for e, err := range app.Services().Store.ListEntities(t.Context(), store.EntityQuery{Type: typ, Faces: store.InWorld(store.DefaultWorld())}) {
+	for e, err := range app.Services().Store.ListEntities(t.Context(), store.EntityQuery{Type: typ, Faces: store.InWorld(store.TrivialScope())}) {
 		if err != nil {
 			t.Fatalf("ListEntities: %v", err)
 		}
@@ -1790,7 +1790,7 @@ func TestDynamicCollections_FailedCreateStillCompensates(t *testing.T) {
 
 	// No orphan left behind in the entity type.
 	var orphans int
-	for e, eErr := range app.store.ListEntities(t.Context(), store.EntityQuery{Type: "task", Faces: store.InWorld(store.DefaultWorld())}) {
+	for e, eErr := range app.store.ListEntities(t.Context(), store.EntityQuery{Type: "task", Faces: store.InWorld(store.TrivialScope())}) {
 		if eErr != nil {
 			t.Fatalf("ListEntities: %v", eErr)
 		}

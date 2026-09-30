@@ -113,7 +113,7 @@ func TestReopenPreservesStateKeyOrdering(t *testing.T) {
 			_, err := s.DeleteFamily(ctx, "PAGE-1", false)
 			require.NoError(t, err, "delete after reopen")
 
-			n, err := s.CountEntities(ctx, store.EntityQuery{Type: "thing", Faces: store.InWorld(store.DefaultWorld())})
+			n, err := s.CountEntities(ctx, store.EntityQuery{Type: "thing", Faces: store.InWorld(store.TrivialScope())})
 			require.NoError(t, err)
 			assert.Equal(t, 2, n, "default-state count after deleting one family")
 		})

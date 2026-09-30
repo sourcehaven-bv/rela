@@ -33,7 +33,7 @@ func (c *ShowCmd) Run(ctx context.Context, svc *readServices) error {
 		incoming = append(incoming, r)
 	}
 	outQ := store.RelationQuery{EntityID: e.ID, Direction: store.DirectionOutgoing}
-	if !e.Face.IsDefault() {
+	if !e.Face.IsImplicit() {
 		// An outgoing edge is tailed at one face; show that face's own.
 		outQ.FromFace = &e.Face
 	}

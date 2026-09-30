@@ -78,7 +78,7 @@ var ErrTraversalUnsupported = errors.New("acl: traversal cannot be gated")
 // stampScope). The endpoint side is not affected: a gated hop carries the
 // request's world itself (see [Request.GateTraversal]).
 func TraversalQuery(candidateType string, hop TraversalHop, p *store.RelationPredicate) store.GraphQuery {
-	q := store.GraphQuery{EntityType: candidateType, Faces: store.InWorld(store.DefaultWorld())}
+	q := store.GraphQuery{EntityType: candidateType, Faces: store.InWorld(store.TrivialScope())}
 	if hop.Incoming {
 		q.HasInbound = p
 	} else {

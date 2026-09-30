@@ -42,12 +42,20 @@ type visibleReader struct {
 	resolver *visibility.Resolver
 }
 
-// newVisibleReader constructs a visibleReader over s.
-func newVisibleReader(s store.Store) (visibleReader, error) {
+// newVisibleReader constructs a visibleReader over s whose [visibility.Family]
+// lists faces in order (the schema's declaration order; see appFaceOrder).
+// The order is required rather than an option because readableFaceOf and the
+// relation read pick a face by position, so a reader built without it would
+// serve a different face than production.
+// Nil: rejected, for s and order alike.
+func newVisibleReader(s store.Store, order visibility.FaceOrder) (visibleReader, error) {
 	if s == nil {
 		return visibleReader{}, errors.New("dataentry: newVisibleReader: store must be non-nil")
 	}
-	res, err := visibility.NewResolver(ctxRowGate{}, visibility.NopRedactor{}, s)
+	if order == nil {
+		return visibleReader{}, errors.New("dataentry: newVisibleReader: face order must be non-nil")
+	}
+	res, err := visibility.NewResolver(ctxRowGate{}, visibility.NopRedactor{}, s, visibility.WithFaceOrder(order))
 	if err != nil {
 		return visibleReader{}, fmt.Errorf("dataentry: newVisibleReader: %w", err)
 	}
@@ -66,7 +74,7 @@ func (vr visibleReader) address(ctx context.Context, entityType, addr string) (*
 func (vr visibleReader) addressRef(
 	ctx context.Context, entityType string, ref entitypkg.Ref,
 ) (*entitypkg.Entity, bool, error) {
-	if ref.Face.IsDefault() {
+	if ref.Face.IsImplicit() {
 		return vr.inWorld(ctx, entityType, ref.ID)
 	}
 	return vr.ref(ctx, entityType, ref)
@@ -264,7 +272,7 @@ func loadDefaultFaceHeaders(
 		if err != nil {
 			return map[string]*entitypkg.Entity{}, err
 		}
-		if h.Face.IsDefault() {
+		if h.Face.IsImplicit() {
 			out[h.ID] = headerEntity(h)
 		}
 	}

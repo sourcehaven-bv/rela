@@ -71,7 +71,7 @@ func resolveHistorySubject(
 	}
 
 	world := worldFromContext(ctx)
-	bareInWorld := ref.Face.IsDefault() && !world.isDefault()
+	bareInWorld := ref.Face.IsImplicit() && !world.isDefault()
 	storedType, stored, err := loadStoredFaces(ctx, vr.store, ref.ID)
 	if err != nil {
 		return historySubject{}, false, err
@@ -83,7 +83,7 @@ func resolveHistorySubject(
 				return historySubject{}, false, ferr
 			}
 			return historySubject{ref: ref, worldAbsent: true}, true, nil
-		case ref.Face.IsDefault(), storedType != typeName, slices.Contains(stored, ref.Face):
+		case ref.Face.IsImplicit(), storedType != typeName, slices.Contains(stored, ref.Face):
 			return historySubject{}, false, nil
 		}
 		// A named face that was deleted while its siblings live on takes

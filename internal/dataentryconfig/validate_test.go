@@ -2427,6 +2427,7 @@ func TestValidateApp_DefaultWorld(t *testing.T) {
 			"site-nl":   {Select: []string{"nl", "en"}, Otherwise: "default"},
 		},
 	}
+	withSchemaDefault := &metamodel.Metamodel{Version: "1.0", Worlds: meta.Worlds, DefaultWorld: "published"}
 
 	tests := []struct {
 		name    string
@@ -2450,6 +2451,15 @@ func TestValidateApp_DefaultWorld(t *testing.T) {
 			name:  "set with no metamodel is refused rather than assumed valid",
 			world: "published", meta: nil,
 			wantErr: "no metamodel is available",
+		},
+		// schema.yaml's default_world is the source; app.default_world is a
+		// deprecated alias that must match it (TKT-7IZHP0 D3).
+		{name: "alias matching schema default_world accepted", world: "published", meta: withSchemaDefault},
+		{name: "alias unset beside schema default_world accepted", world: "", meta: withSchemaDefault},
+		{
+			name:  "alias contradicting schema default_world refused",
+			world: "site-nl", meta: withSchemaDefault,
+			wantErr: `"site-nl" contradicts default_world "published"`,
 		},
 	}
 

@@ -54,7 +54,7 @@ func getOne(
 	ctx context.Context, t *testing.T, r ResolvingReader, typ, id string,
 ) (*entity.Entity, bool, error) {
 	t.Helper()
-	res, found, err := r.Resolver().Address(ctx, visibility.World{}, typ, id)
+	res, found, err := r.Resolver().Address(ctx, visibility.WorldOf(store.TrivialScope()), typ, id)
 	return res.Entity, found, err
 }
 
@@ -184,7 +184,7 @@ func newWorld(t *testing.T) *world {
 	if err != nil {
 		t.Fatalf("NewPolicyRedactor: %v", err)
 	}
-	return &world{store: st, base: tracer.New(st, store.WorldScope{}), gate: gate, redact: redact}
+	return &world{store: st, base: tracer.New(st, store.TrivialScope()), gate: gate, redact: redact}
 }
 
 // storeLookup implements affordances.RelationLookup over the store.

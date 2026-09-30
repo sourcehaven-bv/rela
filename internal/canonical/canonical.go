@@ -70,7 +70,7 @@ func HashEntity(e entity.Entity) string {
 	// baselines, schema_versions dedup) for faceless projects. No
 	// ambiguity arises — the face grammar forbids the empty string,
 	// so "" never appears as a real field value (TKT-DOFYR1).
-	if !e.Face.IsDefault() {
+	if !e.Face.IsImplicit() {
 		w.field("face", string(e.Face))
 	}
 	w.field("type", e.Type)
@@ -88,7 +88,7 @@ func HashRelation(r entity.Relation) string {
 	w.field("from", r.From)
 	// Written only when non-zero, for the same reasons as HashEntity's
 	// face field.
-	if !r.FromFace.IsDefault() {
+	if !r.FromFace.IsImplicit() {
 		w.field("from_face", string(r.FromFace))
 	}
 	w.field("relation", r.Type)

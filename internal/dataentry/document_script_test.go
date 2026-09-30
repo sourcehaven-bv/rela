@@ -443,8 +443,9 @@ print(got)
 		return lua.WriteDeps{
 			ReadDeps: lua.ReadDeps{
 				VisibleReader: visibility.Unrestricted(st),
-				Tracer:        tracer.New(st, store.WorldScope{}),
+				Tracer:        tracer.New(st, store.TrivialScope()),
 				ProjectRoot:   projectRoot,
+				World:         store.TrivialScope(),
 			},
 			EntityManager: entitymanagertest.PanicOnUse{},
 		}

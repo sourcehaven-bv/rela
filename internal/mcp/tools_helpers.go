@@ -226,7 +226,7 @@ func readable(ctx context.Context, st GraphReader, addr string) bool {
 	if err != nil {
 		return false
 	}
-	if !ref.Face.IsDefault() {
+	if !ref.Face.IsImplicit() {
 		e, rerr := st.Resolve(ctx, addr)
 		return rerr == nil && e != nil
 	}

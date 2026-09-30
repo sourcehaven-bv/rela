@@ -95,7 +95,7 @@ func TestWorldParity_ComposedQueryBranchCarriesTheWorld(t *testing.T) {
 	red := &countingRedactor{}
 	// A composed ACL query: this is what an ACL-GATED principal produces,
 	// and the branch the bug lived on.
-	p := stubProvider{res: acl.ReadQueryResult{Query: &store.GraphQuery{EntityType: "ticket", Faces: store.InWorld(store.DefaultWorld())}}}
+	p := stubProvider{res: acl.ReadQueryResult{Query: &store.GraphQuery{EntityType: "ticket", Faces: store.InWorld(store.TrivialScope())}}}
 
 	world := testWorld()
 	_, ok := listPushdown(context.Background(), p, spy, red.redact,
@@ -108,7 +108,7 @@ func TestWorldParity_ComposedQueryBranchCarriesTheWorld(t *testing.T) {
 	}
 
 	got := spy.graphQueries[0]
-	if worldOf(got.Faces).IsDefaultWorld() {
+	if worldOf(got.Faces).IsTrivial() {
 		t.Fatal("the composed GraphQuery reached the store with the DEFAULT world: " +
 			"a world-scoped list silently degraded to unscoped for an ACL-gated " +
 			"principal — drafts leak and `otherwise: exclude` stops excluding (RR-GQWRLD)")
@@ -144,7 +144,7 @@ func TestWorldParity_AllowAllBranchCarriesTheWorld(t *testing.T) {
 	if len(spy.entityQueries) != 1 {
 		t.Fatalf("ListEntities calls = %d, want 1", len(spy.entityQueries))
 	}
-	if worldOf(spy.entityQueries[0].Faces).IsDefaultWorld() {
+	if worldOf(spy.entityQueries[0].Faces).IsTrivial() {
 		t.Fatal("the AllowAll branch dropped the world")
 	}
 }
@@ -159,7 +159,7 @@ func TestWorldParity_BothBranchesAgree(t *testing.T) {
 
 	composedSpy := &worldCapturingSpy{}
 	red := &countingRedactor{}
-	composed := stubProvider{res: acl.ReadQueryResult{Query: &store.GraphQuery{EntityType: "ticket", Faces: store.InWorld(store.DefaultWorld())}}}
+	composed := stubProvider{res: acl.ReadQueryResult{Query: &store.GraphQuery{EntityType: "ticket", Faces: store.InWorld(store.TrivialScope())}}}
 	if _, ok := listPushdown(context.Background(), composed, composedSpy, red.redact,
 		store.EntityQuery{Type: "ticket", Faces: store.InWorld(world)}); !ok {
 		t.Fatal("composed branch declined")
@@ -207,13 +207,13 @@ func TestWorldParity_DefaultWorldStaysDefault(t *testing.T) {
 	t.Parallel()
 	spy := &worldCapturingSpy{}
 	red := &countingRedactor{}
-	p := stubProvider{res: acl.ReadQueryResult{Query: &store.GraphQuery{EntityType: "ticket", Faces: store.InWorld(store.DefaultWorld())}}}
+	p := stubProvider{res: acl.ReadQueryResult{Query: &store.GraphQuery{EntityType: "ticket", Faces: store.InWorld(store.TrivialScope())}}}
 
 	if _, ok := listPushdown(context.Background(), p, spy, red.redact,
-		store.EntityQuery{Type: "ticket", Faces: store.InWorld(store.DefaultWorld())}); !ok {
+		store.EntityQuery{Type: "ticket", Faces: store.InWorld(store.TrivialScope())}); !ok {
 		t.Fatal("pushdown declined")
 	}
-	if !worldOf(spy.graphQueries[0].Faces).IsDefaultWorld() {
+	if !worldOf(spy.graphQueries[0].Faces).IsTrivial() {
 		t.Error("a world-free query must reach the store world-free")
 	}
 }

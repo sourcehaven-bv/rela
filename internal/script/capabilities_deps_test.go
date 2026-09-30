@@ -9,6 +9,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // nopMutator satisfies lua.Mutator so a writer runtime can be built. These
@@ -88,6 +89,7 @@ if rela.secrets.db_dsn ~= nil then error("UNGRANTED secret leaked") end
 		ReadDeps: lua.ReadDeps{
 			ProjectRoot:  root,
 			Capabilities: lua.Capabilities{HTTP: true, Secrets: []string{"slack"}},
+			World:        store.TrivialScope(),
 		},
 		EntityManager: nopMutator{},
 	}
@@ -107,7 +109,7 @@ if ai ~= nil then error("ai present without a grant") end
 if rela.secrets.slack ~= nil then error("secret present without a grant") end
 `)
 	deps := lua.WriteDeps{
-		ReadDeps:      lua.ReadDeps{ProjectRoot: root},
+		ReadDeps:      lua.ReadDeps{ProjectRoot: root, World: store.TrivialScope()},
 		EntityManager: nopMutator{},
 	}
 	if err := NewEngine().ExecuteFile(context.Background(), "probe.lua", deps, nil, nil); err != nil {
@@ -129,6 +131,7 @@ if rela.secrets.db_dsn ~= "SECRET-DSN" then error("explicit secret did not apply
 		ReadDeps: lua.ReadDeps{
 			ProjectRoot:  root,
 			Capabilities: lua.Capabilities{HTTP: true, Secrets: []string{"slack"}},
+			World:        store.TrivialScope(),
 		},
 		EntityManager: nopMutator{},
 	}

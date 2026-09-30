@@ -20,7 +20,7 @@ func orphanTracer(t *testing.T, st store.Store, gate RowGate) *VisibleTracer {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tr, err := NewVisibleTracer(tracer.New(st, store.WorldScope{}), res, st, store.WorldScope{})
+	tr, err := NewVisibleTracer(tracer.New(st, store.TrivialScope()), res, st, store.TrivialScope())
 	if err != nil {
 		t.Fatal(err)
 	}

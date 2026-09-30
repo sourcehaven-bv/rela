@@ -801,7 +801,7 @@ func CheckSwapRelationEndpoints(ctx context.Context, s Store, relType string) (i
 func checkSwappable(rels []*entity.Relation, relType string) error {
 	existing := make(map[string]bool, len(rels))
 	for _, r := range rels {
-		if !r.FromFace.IsDefault() {
+		if !r.FromFace.IsImplicit() {
 			return fmt.Errorf(
 				"%w: %s is tailed at face %q — a reversed state-tailed edge has nowhere to put "+
 					"the face, since a head is entity-level by construction",

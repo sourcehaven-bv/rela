@@ -2576,6 +2576,16 @@ func validateApp(cfg *Config, meta *metamodel.Metamodel) []string {
 				w, strings.Join(declared, ", ")))
 		}
 	}
+	// schema.yaml's default_world is the source (TKT-7IZHP0 D3);
+	// app.default_world is a deprecated alias for it and must not contradict
+	// it. Unset in schema.yaml, the alias keeps its old meaning until the
+	// worlds compiler reads default_world (TKT-7IZHP0 PR 5a).
+	if w := cfg.App.DefaultWorld; w != "" && meta != nil && meta.DefaultWorld != "" && w != meta.DefaultWorld {
+		errs = append(errs, fmt.Sprintf(
+			"app.default_world: %q contradicts default_world %q in schema.yaml; app.default_world is a "+
+				"deprecated alias for it and must match, or be removed",
+			w, meta.DefaultWorld))
+	}
 	if raw := cfg.App.PlantUMLServerURL; raw != "" {
 		u, err := url.Parse(raw)
 		switch {

@@ -5923,6 +5923,11 @@ only on read requests and only on the routes listed under
 `?world=default` explicitly still selects the unresolved default world. Naming
 an undeclared world here is a startup error.
 
+`schema.yaml` also accepts a top-level `default_world:` key (see
+[Metamodel](metamodel.md#the-default_world-key)). It is validated but not yet
+applied: `app.default_world` still decides where a request lands. When both
+keys are set they must name the same world, or the app refuses to start.
+
 ### Creating into another world (`create_world`)
 
 When a list is shown in a world that does not select the face a new entity is

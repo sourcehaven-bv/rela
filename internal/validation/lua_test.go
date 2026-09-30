@@ -77,9 +77,10 @@ func newMockWorkspace() *mockWorkspace {
 func (m *mockWorkspace) services(projectRoot string) lua.ReadDeps {
 	return lua.ReadDeps{
 		VisibleReader: visibility.Unrestricted(m.store),
-		Tracer:        tracer.New(m.store, store.WorldScope{}),
+		Tracer:        tracer.New(m.store, store.TrivialScope()),
 		Meta:          m.meta,
 		ProjectRoot:   projectRoot,
+		World:         store.TrivialScope(),
 	}
 }
 

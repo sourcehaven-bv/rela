@@ -18,6 +18,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	scriptpkg "github.com/Sourcehaven-BV/rela/internal/script"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
@@ -428,6 +429,7 @@ end)`
 				ReadDeps: lua.ReadDeps{
 					VisibleReader: visibility.DenyReader{},
 					ProjectRoot:   root,
+					World:         store.TrivialScope(),
 				},
 				EntityManager: denyMutator{},
 			}
@@ -490,6 +492,7 @@ func TestUnelevatedRender_CannotReachHiddenEntity(t *testing.T) {
 				ReadDeps: lua.ReadDeps{
 					VisibleReader: visibility.DenyReader{},
 					ProjectRoot:   root,
+					World:         store.TrivialScope(),
 				},
 				EntityManager: denyMutator{},
 			}

@@ -106,7 +106,7 @@ func TestScriptEntityReader_NoPolicyIsPassThrough(t *testing.T) {
 		}
 	}
 
-	if got := scriptTracer(tracer.New(st, store.WorldScope{}), st, nil, nil, store.WorldScope{}); got == nil {
+	if got := scriptTracer(tracer.New(st, store.TrivialScope()), st, nil, nil, store.TrivialScope()); got == nil {
 		t.Error("scriptTracer returned nil with no policy")
 	}
 }
@@ -117,7 +117,7 @@ func TestScriptTracer_GatesOnActingIdentity(t *testing.T) {
 	if _, err := st.CreateRelation(context.Background(), entity.RelationKey{From: "TKT-1", Type: "relates", To: "SEC-1"}, nil); err != nil {
 		t.Fatalf("seed relation: %v", err)
 	}
-	tr := scriptTracer(tracer.New(st, store.WorldScope{}), st, mustDeclarative(t, st), nil, store.WorldScope{})
+	tr := scriptTracer(tracer.New(st, store.TrivialScope()), st, mustDeclarative(t, st), nil, store.TrivialScope())
 
 	ctx := principal.With(context.Background(), principal.Principal{
 		User: "alice", Tool: principal.ToolDataEntry,

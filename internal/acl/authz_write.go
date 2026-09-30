@@ -131,7 +131,7 @@ func (r *Request) authorizeRelationWrite(ctx context.Context, op Op, s RelationS
 		d = r.decideFromAttrs(attrs, op, s.FromType, face,
 			"no role grants %s on relations from type %q")
 		if !d.Allow {
-			if !face.IsDefault() {
+			if !face.IsImplicit() {
 				d.Reason = fmt.Sprintf("%s at face %q", d.Reason, face)
 			}
 			d.Reason = r.explainRelationDenial(d.Reason, s, op, tailBlocked)
@@ -145,7 +145,7 @@ func (r *Request) authorizeRelationWrite(ctx context.Context, op Op, s RelationS
 // content-scoped edge belongs to. The zero tail is an identity edge or a
 // faceless source, which a relation grant covers without a face check.
 func (r *Request) canUpdateTail(attrs []RoleAttribution, s RelationSubject) bool {
-	if s.FromFace.IsDefault() {
+	if s.FromFace.IsImplicit() {
 		return true
 	}
 	return r.decideFromAttrs(attrs, OpUpdate, s.FromType, s.FromFace, "%s %s").Allow

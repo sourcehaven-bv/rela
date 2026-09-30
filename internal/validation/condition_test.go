@@ -7,6 +7,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // condMeta declares a date-bearing type plus a rule slot the tests fill
@@ -44,7 +45,7 @@ func TestThenCondition(t *testing.T) {
 		ThenCondition: "entity.owner ~= nil and entity.owner ~= ''",
 		Severity:      "error",
 	})
-	svc := New(meta, lua.ReadDeps{})
+	svc := New(meta, lua.ReadDeps{World: store.TrivialScope()})
 
 	entities := []*entity.Entity{
 		taak("T-1", map[string]any{"status": "open", "owner": "alice"}),
@@ -74,7 +75,7 @@ func TestWhenCondition(t *testing.T) {
 		Then:          []string{"owner!="},
 		Severity:      "error",
 	})
-	svc := New(meta, lua.ReadDeps{})
+	svc := New(meta, lua.ReadDeps{World: store.TrivialScope()})
 
 	entities := []*entity.Entity{
 		// selected by both when: and when_condition:, and violates then:
@@ -105,7 +106,7 @@ func TestConditionAbsent_Unchanged(t *testing.T) {
 		Then:        []string{"owner!="},
 		Severity:    "error",
 	})
-	svc := New(meta, lua.ReadDeps{})
+	svc := New(meta, lua.ReadDeps{World: store.TrivialScope()})
 
 	entities := []*entity.Entity{
 		taak("T-1", map[string]any{"status": "open", "owner": "alice"}),
@@ -153,7 +154,7 @@ func TestMalformedConditionIsReported(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			svc := New(condMeta(tc.rule), lua.ReadDeps{})
+			svc := New(condMeta(tc.rule), lua.ReadDeps{World: store.TrivialScope()})
 			entities := []*entity.Entity{
 				taak("T-1", map[string]any{"status": "open"}),
 			}

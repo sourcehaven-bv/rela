@@ -68,7 +68,7 @@ func Addressable(ref entity.Ref) bool {
 	if ref.ID == "" || IsStateRef(ref.ID) || strings.ContainsRune(ref.ID, 0) {
 		return false
 	}
-	if ref.Face.IsDefault() {
+	if ref.Face.IsImplicit() {
 		return true
 	}
 	_, err := entity.ParseFace(string(ref.Face))
@@ -427,8 +427,8 @@ func ValidateEntityQuery(q store.EntityQuery) error {
 //
 // The zero selection matches nothing; callers validate first.
 func MatchEntityQuery(entityType, id string, p entity.Face, q store.EntityQuery, idSet map[string]bool) bool {
-	if q.Faces.IsDefaultWorld() {
-		if !p.IsDefault() {
+	if q.Faces.IsTrivial() {
+		if !p.IsImplicit() {
 			return false
 		}
 	} else if !q.Faces.Admits(p) {
@@ -453,7 +453,7 @@ func MatchEntityQuery(entityType, id string, p entity.Face, q store.EntityQuery,
 // RankingWorld returns the world q's rows are ranked by: the world of an
 // InWorld selection, and the default world (which ranks nothing) for AllFaces
 // and AtFaces, whose rows are returned as matched. The fs, mem and sqlite
-// listings branch on its IsDefaultWorld to buffer whole families only when a
+// listings branch on its IsTrivial to buffer whole families only when a
 // world needs resolving.
 func RankingWorld(q store.EntityQuery) store.WorldScope {
 	w, _ := q.Faces.World()

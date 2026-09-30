@@ -282,7 +282,7 @@ func graphSource(b *sqlBuilder, q store.GraphQuery, typeArg, ids string) (with [
 // is a result row.
 func graphScope(b *sqlBuilder, q store.GraphQuery) (scope, rank string) {
 	if w, ok := q.Faces.World(); ok {
-		if w = effectiveWorld(w, q.EntityType); !w.IsDefaultWorld() {
+		if w = effectiveWorld(w, q.EntityType); !w.IsTrivial() {
 			rank, scope = worldSQL(b, w, "e")
 			return scope, rank
 		}
@@ -300,7 +300,7 @@ func graphScope(b *sqlBuilder, q store.GraphQuery) (scope, rank string) {
 // one family never tie on rank (a chain lists each face once), so the strict
 // comparison picks exactly one row.
 func endpointFaceCond(b *sqlBuilder, alias string, sel store.FaceSelection) string {
-	if w, ok := sel.World(); ok && !w.IsDefaultWorld() {
+	if w, ok := sel.World(); ok && !w.IsTrivial() {
 		rival := alias + "_w"
 		rank, cand := worldSQL(b, w, alias)
 		rivalRank, rivalCand := worldSQL(b, w, rival)

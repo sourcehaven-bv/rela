@@ -12,6 +12,21 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
+// TestLinearSearch_UnsetWorldIsInvalid pins that the backend itself refuses
+// an unset world, below the Service's query validation.
+func TestLinearSearch_UnsetWorldIsInvalid(t *testing.T) {
+	idx := search.NewLinearSearch()
+	e := entity.New("REQ-1", "requirement")
+	e.SetString("title", "alpha")
+	require.NoError(t, idx.EntityPut(e))
+
+	_, err := idx.Search("alpha", 0, store.WorldScope{})
+	require.ErrorIs(t, err, store.ErrInvalidQuery)
+	hits, err := idx.Search("alpha", 0, store.TrivialScope())
+	require.NoError(t, err)
+	assert.Len(t, hits, 1)
+}
+
 // TestLinearSearch_EntityRenamed pins the single-event rename
 // contract on the in-memory backend: EntityRenamed must drop the
 // old key and insert the renamed entity in one critical section so
@@ -102,7 +117,7 @@ func TestLinearSearch_NoMatchesEmpty(t *testing.T) {
 // default world.
 func searchIDs(t *testing.T, b search.Backend, text string, limit int) []string {
 	t.Helper()
-	faces, err := b.Search(text, limit, store.DefaultWorld())
+	faces, err := b.Search(text, limit, store.TrivialScope())
 	if err != nil {
 		t.Fatalf("Search(%q, %d): %v", text, limit, err)
 	}

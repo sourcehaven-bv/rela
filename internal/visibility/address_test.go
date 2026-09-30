@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
@@ -48,7 +49,7 @@ func TestReaders_ResolveAnAddressToItsFace(t *testing.T) {
 	type get func(addr string) (*entity.Entity, error)
 	viaReader := func(r interface{ Resolver() *visibility.Resolver }) get {
 		return func(addr string) (*entity.Entity, error) {
-			res, ok, gerr := r.Resolver().Address(ctx, visibility.World{}, "ticket", addr)
+			res, ok, gerr := r.Resolver().Address(ctx, visibility.WorldOf(store.TrivialScope()), "ticket", addr)
 			if gerr != nil || !ok {
 				return nil, gerr
 			}

@@ -381,7 +381,7 @@ func TestViewEntry_ExcludedEntryIsNotFound(t *testing.T) {
 //
 // Every change in item 4b sits behind a default-world branch, and a branch
 // written the wrong way round would route ordinary traffic through the world
-// path — where a zero WorldScope resolves everything to its default face and
+// path — where the trivial scope resolves everything to its default face and
 // would LOOK correct while taking a different route with different error
 // handling and different batching.
 func TestExecuteView_DefaultWorldUnchanged(t *testing.T) {

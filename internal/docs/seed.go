@@ -456,7 +456,7 @@ func sortedFaceNames(def *metamodel.EntityDef) []string {
 func seedRowOf(ctx context.Context, st seedEditStore, id string) (*entity.Entity, error) {
 	base := id
 	if ref, perr := entity.ParseRef(id); perr == nil {
-		if !ref.Face.IsDefault() {
+		if !ref.Face.IsImplicit() {
 			return st.GetEntity(ctx, entity.Ref{ID: ref.ID, Face: ref.Face})
 		}
 		base = ref.ID
@@ -467,7 +467,7 @@ func seedRowOf(ctx context.Context, st seedEditStore, id string) (*entity.Entity
 	}
 	var first *entity.Entity
 	for _, e := range family {
-		if e.Face.IsDefault() {
+		if e.Face.IsImplicit() {
 			return e, nil
 		}
 		if first == nil {

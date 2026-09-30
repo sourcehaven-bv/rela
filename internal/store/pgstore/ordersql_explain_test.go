@@ -89,7 +89,7 @@ func TestEnumOrderExplainUsesDerivedIndexUnderGenericPlan(t *testing.T) {
 				EntityType: "ticket",
 				OrderBy:    []store.OrderSpec{{Property: "status", Values: declared, Descending: tc.desc}},
 				Limit:      25,
-				Faces:      store.InWorld(store.DefaultWorld()),
+				Faces:      store.InWorld(store.TrivialScope()),
 			})
 			t.Logf("plan:\n%s", plan)
 

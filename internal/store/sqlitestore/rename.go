@@ -172,7 +172,7 @@ func (s *Store) renameLocked(
 		renamedStates = append(renamedStates, r)
 	}
 	sort.SliceStable(renamedStates, func(i, j int) bool {
-		return renamedStates[i].Face.IsDefault() && !renamedStates[j].Face.IsDefault()
+		return renamedStates[i].Face.IsImplicit() && !renamedStates[j].Face.IsImplicit()
 	})
 	for _, r := range renamedStates {
 		s.notifyRenamed(oldID, r)

@@ -93,7 +93,7 @@ func TestFaceReadExplain(t *testing.T) {
 	familySQL, familyArgs := pgstore.BuildEntityListSQLForTest(t, store.EntityQuery{IDs: family, Faces: store.AllFaces()})
 
 	for _, tc := range []shape{
-		page("default-face page", store.EntityQuery{Type: "task", Limit: 100, Faces: store.InWorld(store.DefaultWorld())}, false),
+		page("default-face page", store.EntityQuery{Type: "task", Limit: 100, Faces: store.InWorld(store.TrivialScope())}, false),
 		page("all-faces page", store.EntityQuery{Type: "policy", Faces: store.AllFaces(), Limit: 100}, false),
 		page("world page", store.EntityQuery{Type: "policy", Faces: store.InWorld(published), Limit: 100}, false),
 		page("world page after a cursor", store.EntityQuery{

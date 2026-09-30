@@ -23,9 +23,9 @@ type PolicyReader struct {
 }
 
 // NewPolicyReader builds a PolicyReader. All collaborators are required
-// (constructors-reject-nil rule).
-func NewPolicyReader(gate RowGate, redact FieldRedactor, load Loader) (*PolicyReader, error) {
-	res, err := NewResolver(gate, redact, load)
+// (constructors-reject-nil rule); opts configure its [Resolver].
+func NewPolicyReader(gate RowGate, redact FieldRedactor, load Loader, opts ...ResolverOption) (*PolicyReader, error) {
+	res, err := NewResolver(gate, redact, load, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("visibility: NewPolicyReader: %w", err)
 	}

@@ -100,7 +100,7 @@ func (e *Engine) CanRelation(
 		FromID:   from.ref.ID,
 		FromFace: from.ref.Face,
 	}
-	if from.ref.Face.IsDefault() {
+	if from.ref.Face.IsImplicit() {
 		subject.FamilyFaces = from.familyFaces()
 	}
 

@@ -244,7 +244,7 @@ func (listFailingStore) ListEntities(context.Context, store.EntityQuery) iter.Se
 // reporting a live peer as target_not_found.
 func TestRelationPeerReadFault_FailsTheWrite(t *testing.T) {
 	app := newTestAppV1(t)
-	vr, err := newVisibleReader(listFailingStore{app.store})
+	vr, err := newVisibleReader(listFailingStore{app.store}, tokenFaceOrder)
 	if err != nil {
 		t.Fatal(err)
 	}

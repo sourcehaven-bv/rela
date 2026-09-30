@@ -51,7 +51,7 @@ func RunVisibleSearchTests(t *testing.T, vsf VisibleSearchFactory) {
 				Endpoints: []string{"PRJ-1"},
 				OfTypes:   []string{"belongs-to"},
 			},
-			Faces: store.InWorld(store.DefaultWorld()),
+			Faces: store.InWorld(store.TrivialScope()),
 		}
 	}
 	// ticketsInPRJ1Transitive additionally walks the ticket's own
@@ -65,7 +65,7 @@ func RunVisibleSearchTests(t *testing.T, vsf VisibleSearchFactory) {
 				EntityInheritThrough: []string{"belongs-to"},
 				EntityDepth:          3,
 			},
-			Faces: store.InWorld(store.DefaultWorld()),
+			Faces: store.InWorld(store.TrivialScope()),
 		}
 	}
 
@@ -76,7 +76,7 @@ func RunVisibleSearchTests(t *testing.T, vsf VisibleSearchFactory) {
 			"project": allow, "epic": allow, "ticket": allow,
 			"doc": allow, "memo": allow, "ghost": allow,
 		}
-		q := search.Query{Text: "alpha"}
+		q := search.Query{Text: "alpha", World: store.TrivialScope()}
 		base := collectHits(t, ungated.Search(ctx(), q))
 		got := collectHits(t, vs.SearchVisible(ctx(), q, scope))
 		require.Equal(t, base, got, "fully-open scope must be invisible")
@@ -87,7 +87,7 @@ func RunVisibleSearchTests(t *testing.T, vsf VisibleSearchFactory) {
 		s, ungated, vs := vsf(t)
 		seedVisibleSearchWorld(t, s)
 		scope := map[string]search.TypeScope{"ticket": allow}
-		q := search.Query{Text: "alpha"}
+		q := search.Query{Text: "alpha", World: store.TrivialScope()}
 		base := collectHits(t, ungated.Search(ctx(), q))
 		got := collectHits(t, vs.SearchVisible(ctx(), q, scope))
 		requireVisibleSubset(t, base, got, "TKT-1", "TKT-2", "TKT-3")
@@ -100,7 +100,7 @@ func RunVisibleSearchTests(t *testing.T, vsf VisibleSearchFactory) {
 		s, ungated, vs := vsf(t)
 		seedVisibleSearchWorld(t, s)
 		scope := map[string]search.TypeScope{"ticket": {Query: ticketsInPRJ1()}}
-		q := search.Query{Text: "alpha"}
+		q := search.Query{Text: "alpha", World: store.TrivialScope()}
 		base := collectHits(t, ungated.Search(ctx(), q))
 		got := collectHits(t, vs.SearchVisible(ctx(), q, scope))
 		requireVisibleSubset(t, base, got, "TKT-1")
@@ -115,7 +115,7 @@ func RunVisibleSearchTests(t *testing.T, vsf VisibleSearchFactory) {
 			"ticket": {Query: ticketsInPRJ1()},
 			// memo, ghost: denied by absence
 		}
-		q := search.Query{Text: "alpha"}
+		q := search.Query{Text: "alpha", World: store.TrivialScope()}
 		base := collectHits(t, ungated.Search(ctx(), q))
 		got := collectHits(t, vs.SearchVisible(ctx(), q, scope))
 		requireVisibleSubset(t, base, got, "DOC-1", "TKT-1")
@@ -126,7 +126,7 @@ func RunVisibleSearchTests(t *testing.T, vsf VisibleSearchFactory) {
 		s, ungated, vs := vsf(t)
 		seedVisibleSearchWorld(t, s)
 		scope := map[string]search.TypeScope{"ticket": {Query: ticketsInPRJ1()}}
-		q := search.Query{Text: "alpha"}
+		q := search.Query{Text: "alpha", World: store.TrivialScope()}
 
 		// Precondition: the backend's top-ranked hit for this query is
 		// hidden under the scope. If a ranking change ever makes TKT-1
@@ -148,7 +148,7 @@ func RunVisibleSearchTests(t *testing.T, vsf VisibleSearchFactory) {
 		s, ungated, vs := vsf(t)
 		seedVisibleSearchWorld(t, s)
 		scope := map[string]search.TypeScope{"ticket": {Query: ticketsInPRJ1Transitive()}}
-		q := search.Query{Text: "alpha"}
+		q := search.Query{Text: "alpha", World: store.TrivialScope()}
 		base := collectHits(t, ungated.Search(ctx(), q))
 		got := collectHits(t, vs.SearchVisible(ctx(), q, scope))
 		requireVisibleSubset(t, base, got, "TKT-1", "TKT-3")
@@ -159,7 +159,7 @@ func RunVisibleSearchTests(t *testing.T, vsf VisibleSearchFactory) {
 		s, ungated, vs := vsf(t)
 		seedVisibleSearchWorld(t, s)
 		scope := map[string]search.TypeScope{"doc": allow, "ticket": allow}
-		q := search.Query{Text: "alpha", Types: []string{"memo", "doc"}}
+		q := search.Query{Text: "alpha", Types: []string{"memo", "doc"}, World: store.TrivialScope()}
 		base := collectHits(t, ungated.Search(ctx(), q))
 		got := collectHits(t, vs.SearchVisible(ctx(), q, scope))
 		// memo is in Types but not in scope; ticket is in scope but
@@ -172,7 +172,7 @@ func RunVisibleSearchTests(t *testing.T, vsf VisibleSearchFactory) {
 		s, ungated, vs := vsf(t)
 		seedVisibleSearchWorld(t, s)
 		scope := map[string]search.TypeScope{search.WildcardType: allow}
-		q := search.Query{Text: "alpha"}
+		q := search.Query{Text: "alpha", World: store.TrivialScope()}
 		base := collectHits(t, ungated.Search(ctx(), q))
 		got := collectHits(t, vs.SearchVisible(ctx(), q, scope))
 		require.Equal(t, base, got, "wildcard-allow must behave as fully open")
@@ -184,7 +184,7 @@ func RunVisibleSearchTests(t *testing.T, vsf VisibleSearchFactory) {
 		s, ungated, vs := vsf(t)
 		seedVisibleSearchWorld(t, s)
 		scope := map[string]search.TypeScope{"ticket": allow}
-		q := search.Query{Text: "alpha"}
+		q := search.Query{Text: "alpha", World: store.TrivialScope()}
 		base := collectHits(t, ungated.Search(ctx(), q))
 		got := collectHits(t, vs.SearchVisible(ctx(), q, scope))
 		requireVisibleSubset(t, base, got, "TKT-1", "TKT-2", "TKT-3")
@@ -197,10 +197,26 @@ func RunVisibleSearchTests(t *testing.T, vsf VisibleSearchFactory) {
 	t.Run("EmptyScopeDeniesEverything", func(t *testing.T) {
 		s, _, vs := vsf(t)
 		seedVisibleSearchWorld(t, s)
-		got := collectHits(t, vs.SearchVisible(ctx(), search.Query{Text: "alpha"}, nil))
+		got := collectHits(t, vs.SearchVisible(ctx(), search.Query{Text: "alpha", World: store.TrivialScope()}, nil))
 		require.Empty(t, got, "nil scope must deny everything (fail-closed)")
-		got = collectHits(t, vs.SearchVisible(ctx(), search.Query{Text: "alpha"}, map[string]search.TypeScope{}))
+		got = collectHits(t, vs.SearchVisible(ctx(), search.Query{Text: "alpha", World: store.TrivialScope()}, map[string]search.TypeScope{}))
 		require.Empty(t, got, "empty scope must deny everything (fail-closed)")
+	})
+
+	// An unset world is refused rather than read as the trivial world
+	// (TKT-7IZHP0 design A4).
+	t.Run("UnsetWorldIsInvalid", func(t *testing.T) {
+		s, _, vs := vsf(t)
+		seedVisibleSearchWorld(t, s)
+		scope := map[string]search.TypeScope{"ticket": allow}
+		var streamErr error
+		for _, err := range vs.SearchVisible(ctx(), search.Query{Text: "alpha"}, scope) {
+			if err != nil {
+				streamErr = err
+				break
+			}
+		}
+		require.ErrorIs(t, streamErr, store.ErrInvalidQuery)
 	})
 
 	t.Run("WildcardQueryIsInvalid", func(t *testing.T) {
@@ -210,7 +226,7 @@ func RunVisibleSearchTests(t *testing.T, vsf VisibleSearchFactory) {
 			search.WildcardType: {Query: ticketsInPRJ1()},
 		}
 		var streamErr error
-		for _, err := range vs.SearchVisible(ctx(), search.Query{Text: "alpha"}, scope) {
+		for _, err := range vs.SearchVisible(ctx(), search.Query{Text: "alpha", World: store.TrivialScope()}, scope) {
 			if err != nil {
 				streamErr = err
 				break
@@ -232,6 +248,7 @@ func RunVisibleSearchTests(t *testing.T, vsf VisibleSearchFactory) {
 		q := search.Query{
 			Text:    "alpha",
 			Filters: []search.PropertyFilter{{Property: "status", Value: "open", Op: search.FilterEq}},
+			World:   store.TrivialScope(),
 		}
 
 		// Expected: the first Limit hits of the OPEN-filtered ungated
@@ -240,7 +257,7 @@ func RunVisibleSearchTests(t *testing.T, vsf VisibleSearchFactory) {
 		// closed ticket outranks an open one (true on the linear and
 		// bleve runs; pgstore's SQL-side LIMIT placement is pinned
 		// deterministically by its own builder unit test).
-		base := collectHits(t, ungated.Search(ctx(), search.Query{Text: "alpha", Types: []string{"ticket"}}))
+		base := collectHits(t, ungated.Search(ctx(), search.Query{Text: "alpha", Types: []string{"ticket"}, World: store.TrivialScope()}))
 		require.GreaterOrEqual(t, len(base), 3, "fixture sanity: all three tickets must match")
 		var want []string
 		for _, h := range base {
@@ -266,6 +283,7 @@ func RunVisibleSearchTests(t *testing.T, vsf VisibleSearchFactory) {
 		q := search.Query{
 			Text:    "alpha",
 			Filters: []search.PropertyFilter{{Property: "status", Value: "1", Op: search.FilterGt}},
+			World:   store.TrivialScope(),
 		}
 		var hits int
 		var streamErr error
@@ -286,10 +304,11 @@ func RunVisibleSearchTests(t *testing.T, vsf VisibleSearchFactory) {
 		s, _, vs := vsf(t)
 		seedVisibleSearchWorld(t, s)
 		scope := map[string]search.TypeScope{"ticket": allow}
-		plain := collectHits(t, vs.SearchVisible(ctx(), search.Query{Text: "alpha"}, scope))
+		plain := collectHits(t, vs.SearchVisible(ctx(), search.Query{Text: "alpha", World: store.TrivialScope()}, scope))
 		sorted := collectHits(t, vs.SearchVisible(ctx(), search.Query{
-			Text: "alpha",
-			Sort: []search.SortClause{{Field: "title", Direction: search.SortDesc}},
+			Text:  "alpha",
+			Sort:  []search.SortClause{{Field: "title", Direction: search.SortDesc}},
+			World: store.TrivialScope(),
 		}, scope))
 		require.Equal(t, plain, sorted, "q.Sort must be ignored by every implementation")
 	})
@@ -298,7 +317,7 @@ func RunVisibleSearchTests(t *testing.T, vsf VisibleSearchFactory) {
 		s, ungated, vs := vsf(t)
 		seedVisibleSearchWorld(t, s)
 		scope := map[string]search.TypeScope{"ticket": allow}
-		q := search.Query{Text: ""}
+		q := search.Query{Text: "", World: store.TrivialScope()}
 		base := collectHits(t, ungated.Search(ctx(), q))
 		got := collectHits(t, vs.SearchVisible(ctx(), q, scope))
 		// Empty-text listing order is backend-defined; pin membership
@@ -340,7 +359,7 @@ func RunVisibleFieldSearchTests(t *testing.T, vsf VisibleFieldSearchFactory) {
 		s, _, vs := vsf(t)
 		seedVisibleFieldWorld(t, s)
 		// "zeta777" lives only in TKT-1's hidden `code` property.
-		q := search.Query{Text: "zeta777"}
+		q := search.Query{Text: "zeta777", World: store.TrivialScope()}
 		got := collectHits(t, vs.SearchVisibleFields(ctx(), q, allowTickets, hideCode))
 		require.Empty(t, got, "a hit matching only a hidden field must be dropped (oracle closed)")
 	})
@@ -348,7 +367,7 @@ func RunVisibleFieldSearchTests(t *testing.T, vsf VisibleFieldSearchFactory) {
 	t.Run("HiddenOnlyMatchSurvivesWhenVisible", func(t *testing.T) {
 		s, _, vs := vsf(t)
 		seedVisibleFieldWorld(t, s)
-		q := search.Query{Text: "zeta777"}
+		q := search.Query{Text: "zeta777", World: store.TrivialScope()}
 		// No hidden fields: the property is visible, so the hit stands.
 		got := collectHits(t, vs.SearchVisibleFields(ctx(), q, allowTickets, nil))
 		requireSameIDSet(t, []string{"TKT-1"}, got)
@@ -359,7 +378,7 @@ func RunVisibleFieldSearchTests(t *testing.T, vsf VisibleFieldSearchFactory) {
 		seedVisibleFieldWorld(t, s)
 		// "alpha" matches TKT-1's visible title AND (hypothetically) other
 		// fields; with `code` hidden the title match alone keeps the hit.
-		q := search.Query{Text: "alpha"}
+		q := search.Query{Text: "alpha", World: store.TrivialScope()}
 		got := collectHits(t, vs.SearchVisibleFields(ctx(), q, allowTickets, hideCode))
 		require.True(t, hitInSet(got, "TKT-1"),
 			"a hit matching a visible field must survive even when another matched field is hidden")
@@ -372,7 +391,7 @@ func RunVisibleFieldSearchTests(t *testing.T, vsf VisibleFieldSearchFactory) {
 		// id/content are never in the hidden set. A hit that matches by id
 		// survives even though its `code` property is hidden — id is never
 		// property-gated by construction of the hidden set.
-		q := search.Query{Text: "TKT-1"}
+		q := search.Query{Text: "TKT-1", World: store.TrivialScope()}
 		got := collectHits(t, vs.SearchVisibleFields(ctx(), q, allowTickets, hideCode))
 		require.True(t, hitInSet(got, "TKT-1"), "an id match must survive: id is never property-gated")
 	})
@@ -383,7 +402,7 @@ func RunVisibleFieldSearchTests(t *testing.T, vsf VisibleFieldSearchFactory) {
 		boom := func(_ context.Context, _ search.Hit, _ *entity.Entity) (map[string]struct{}, error) {
 			return nil, errors.New("acl resolution boom")
 		}
-		q := search.Query{Text: "zeta777"}
+		q := search.Query{Text: "zeta777", World: store.TrivialScope()}
 		var streamErr error
 		hits := 0
 		for _, err := range vs.SearchVisibleFields(ctx(), q, allowTickets, boom) {
@@ -401,7 +420,7 @@ func RunVisibleFieldSearchTests(t *testing.T, vsf VisibleFieldSearchFactory) {
 		s, _, vs := vsf(t)
 		seedVisibleFieldWorld(t, s)
 		// Scope denies tickets entirely: field filter never even runs.
-		q := search.Query{Text: "zeta777"}
+		q := search.Query{Text: "zeta777", World: store.TrivialScope()}
 		got := collectHits(t, vs.SearchVisibleFields(ctx(), q, map[string]search.TypeScope{}, nil))
 		require.Empty(t, got, "empty scope denies everything before field filtering")
 	})
@@ -415,7 +434,7 @@ func RunVisibleFieldSearchTests(t *testing.T, vsf VisibleFieldSearchFactory) {
 		require.NoError(t, s.CreateEntity(ctx(), e), "create TKT-9")
 		// The query matches the entity body (content), which is never
 		// property-gated, so hiding `code` must not drop it.
-		q := search.Query{Text: "uniquebodytoken"}
+		q := search.Query{Text: "uniquebodytoken", World: store.TrivialScope()}
 		got := collectHits(t, vs.SearchVisibleFields(ctx(), q, allowTickets, hideCode))
 		require.True(t, hitInSet(got, "TKT-9"),
 			"a content match must survive: content is never property-gated")
@@ -433,7 +452,7 @@ func RunVisibleFieldSearchTests(t *testing.T, vsf VisibleFieldSearchFactory) {
 		hideIDAndContent := func(_ context.Context, _ search.Hit, _ *entity.Entity) (map[string]struct{}, error) {
 			return map[string]struct{}{search.FieldID: {}, search.FieldContent: {}}, nil
 		}
-		q := search.Query{Text: "singularcontentword"}
+		q := search.Query{Text: "singularcontentword", World: store.TrivialScope()}
 		got := collectHits(t, vs.SearchVisibleFields(ctx(), q, allowTickets, hideIDAndContent))
 		require.True(t, hitInSet(got, "TKT-9"),
 			"id/content are never property-gated even if a caller mis-lists them")

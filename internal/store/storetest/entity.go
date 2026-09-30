@@ -130,10 +130,10 @@ func RunEntityTests(t *testing.T, f Factory) {
 		require.NoError(t, err)
 		assert.Equal(t, "issue", got.Type)
 
-		oldCount, err := s.CountEntities(ctx(), store.EntityQuery{Type: "ticket", Faces: store.InWorld(store.DefaultWorld())})
+		oldCount, err := s.CountEntities(ctx(), store.EntityQuery{Type: "ticket", Faces: store.InWorld(store.TrivialScope())})
 		require.NoError(t, err)
 		assert.Equal(t, 0, oldCount, "old type still lists the entity")
-		newCount, err := s.CountEntities(ctx(), store.EntityQuery{Type: "issue", Faces: store.InWorld(store.DefaultWorld())})
+		newCount, err := s.CountEntities(ctx(), store.EntityQuery{Type: "issue", Faces: store.InWorld(store.TrivialScope())})
 		require.NoError(t, err)
 		assert.Equal(t, 1, newCount, "new type does not list the entity")
 	})
@@ -284,7 +284,7 @@ func RunEntityTests(t *testing.T, f Factory) {
 		}
 
 		var ids []string
-		for e, err := range s.ListEntities(ctx(), store.EntityQuery{Faces: store.InWorld(store.DefaultWorld())}) {
+		for e, err := range s.ListEntities(ctx(), store.EntityQuery{Faces: store.InWorld(store.TrivialScope())}) {
 			require.NoError(t, err)
 			ids = append(ids, e.ID)
 		}
@@ -298,7 +298,7 @@ func RunEntityTests(t *testing.T, f Factory) {
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("C", "t")))
 
 		var ids []string
-		for e, err := range s.ListEntities(ctx(), store.EntityQuery{Faces: store.InWorld(store.DefaultWorld())}) {
+		for e, err := range s.ListEntities(ctx(), store.EntityQuery{Faces: store.InWorld(store.TrivialScope())}) {
 			require.NoError(t, err)
 			ids = append(ids, e.ID)
 			if len(ids) == 1 {
@@ -314,11 +314,11 @@ func RunEntityTests(t *testing.T, f Factory) {
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("B", "feature")))
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("C", "req")))
 
-		n, err := s.CountEntities(ctx(), store.EntityQuery{IDs: []string{"A", "C"}, Faces: store.InWorld(store.DefaultWorld())})
+		n, err := s.CountEntities(ctx(), store.EntityQuery{IDs: []string{"A", "C"}, Faces: store.InWorld(store.TrivialScope())})
 		require.NoError(t, err)
 		assert.Equal(t, 2, n)
 
-		n, err = s.CountEntities(ctx(), store.EntityQuery{Type: "feature", IDs: []string{"A", "C"}, Faces: store.InWorld(store.DefaultWorld())})
+		n, err = s.CountEntities(ctx(), store.EntityQuery{Type: "feature", IDs: []string{"A", "C"}, Faces: store.InWorld(store.TrivialScope())})
 		require.NoError(t, err)
 		assert.Equal(t, 1, n)
 	})

@@ -31,7 +31,7 @@ const entityColumns = "id, type, face, properties, content, updated_at"
 //
 // For the DEFAULT world this is the historical flat SELECT, costing exactly
 // what it did before worlds existed — a project that never declares a face must
-// pay nothing (store.WorldScope.IsDefaultWorld).
+// pay nothing (store.WorldScope.IsTrivial).
 //
 // For a real world it becomes a windowed pick of each family's best-ranked
 // candidate. Resolution cannot be a row predicate — see worldSQL — so the shape
@@ -44,7 +44,7 @@ const entityColumns = "id, type, face, properties, content, updated_at"
 func buildEntitySelectSQL(q store.EntityQuery, keysetAfter, columns string) (sqlText string, args []any) {
 	b := &sqlBuilder{}
 	w := storeutil.RankingWorld(q)
-	if w.IsDefaultWorld() {
+	if w.IsTrivial() {
 		where := entityWhere(b, q, keysetAfter)
 		return `SELECT ` + columns + ` FROM entities` + where + ` ORDER BY id, face`, b.args
 	}
@@ -163,7 +163,7 @@ func entityWhere(b *sqlBuilder, q store.EntityQuery, keysetAfter string) string 
 func buildEntityCountSQL(q store.EntityQuery) (sqlText string, args []any) {
 	b := &sqlBuilder{}
 	w := storeutil.RankingWorld(q)
-	if w.IsDefaultWorld() {
+	if w.IsTrivial() {
 		return "SELECT count(*) FROM entities" + entityWhere(b, q, ""), b.args
 	}
 	_, candidate := worldSQL(b, w, "")

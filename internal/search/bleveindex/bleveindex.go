@@ -438,8 +438,12 @@ var boostedFields = []struct {
 // like a family with no published face and resolve to the draft, which is
 // exactly the false hit this discards.
 //
-// The zero WorldScope skips all of that — see the fast path below.
+// The trivial scope skips all of that (see the fast path below); an unset
+// scope is refused.
 func (idx *Index) Search(text string, limit int, w store.WorldScope) ([]search.Face, error) {
+	if !w.IsSet() {
+		return nil, fmt.Errorf("%w: search with an unset world", store.ErrInvalidQuery)
+	}
 	words := strings.Fields(text)
 	if len(words) == 0 {
 		return nil, nil
@@ -496,7 +500,7 @@ func (idx *Index) Search(text string, limit int, w store.WorldScope) ([]search.F
 	// collapse onto one entity and others are discarded as non-prime. Sizing
 	// to the caller's limit would then return short. The default world needs
 	// no headroom — one document per entity is already the prime.
-	if limit > 0 && !w.IsDefaultWorld() {
+	if limit > 0 && !w.IsTrivial() {
 		req.Size = limit * facesOverfetchFactor
 	}
 
@@ -552,10 +556,10 @@ func (idx *Index) resolveHits(
 			continue
 		}
 
-		if w.IsDefaultWorld() {
+		if w.IsTrivial() {
 			// Rule 1 for everything: the default face, and nothing to
 			// resolve. Non-default faces are not primes in this world.
-			if !ptr.IsDefault() {
+			if !ptr.IsImplicit() {
 				continue
 			}
 			seen[id] = struct{}{}

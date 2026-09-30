@@ -49,7 +49,7 @@ func (s *Store) SearchVisible(
 	ctx context.Context, q search.Query, scope map[string]search.TypeScope,
 ) iter.Seq2[search.Hit, error] {
 	return func(yield func(search.Hit, error) bool) {
-		if err := search.ValidateFilters(q.Filters); err != nil {
+		if err := search.ValidateQuery(q); err != nil {
 			yield(search.Hit{}, err)
 			return
 		}
@@ -121,7 +121,7 @@ func (s *Store) SearchVisibleFields(
 	ctx context.Context, q search.Query, scope map[string]search.TypeScope, hidden search.HiddenFieldsFunc,
 ) iter.Seq2[search.Hit, error] {
 	return func(yield func(search.Hit, error) bool) {
-		if err := search.ValidateFilters(q.Filters); err != nil {
+		if err := search.ValidateQuery(q); err != nil {
 			yield(search.Hit{}, err)
 			return
 		}
@@ -348,7 +348,7 @@ func buildVisibleSearchSQL(
 	// internal/worldreader fixes for the read path. Gating first would let
 	// what the ACL denied change WHICH face the world resolves to, which is
 	// the existence oracle that ordering exists to close.
-	if q.World.IsDefaultWorld() {
+	if q.World.IsTrivial() {
 		sb.WriteString("SELECT " + visibleSearchColumns + " FROM entities e WHERE e.face = ''")
 	} else {
 		rank, candidate := worldSQL(q.World, "e", &b.args)

@@ -64,7 +64,7 @@ func (a faceAdoption) plan(ctx context.Context, st store.Store) (*adoptionPlan, 
 		if err != nil {
 			return nil, err
 		}
-		if !e.Face.IsDefault() {
+		if !e.Face.IsImplicit() {
 			continue
 		}
 		v, ok := e.Properties[a.property].(string)

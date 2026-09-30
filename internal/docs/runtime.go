@@ -88,6 +88,7 @@ type Options struct {
 //plimsoll:max-methods=29
 type docRuntime struct {
 	meta   *metamodel.Metamodel
+	worlds worlds.Compiled // compiled once from meta
 	policy *acl.Policy
 	store  *memstore.MemStore
 	tracer tracer.Tracer
@@ -191,6 +192,7 @@ func Build(ctx context.Context, src string, opts Options) (string, error) {
 	st := memstore.New()
 	dr := &docRuntime{
 		meta:   opts.Meta,
+		worlds: compiledWorlds,
 		policy: opts.Policy,
 		store:  st,
 		tracer: tracer.New(st, compiledWorlds.Default()),
@@ -245,6 +247,7 @@ func Build(ctx context.Context, src string, opts Options) (string, error) {
 		VisibleReader: visibility.Unrestricted(st),
 		Tracer:        dr.tracer,
 		Meta:          opts.Meta,
+		World:         compiledWorlds.Default(),
 	}
 	// Use the BUILD's tier deadline, not the bare Tier-A buildTimeout, as the
 	// per-island cap. gopher-lua's SetContext aborts an island on its own

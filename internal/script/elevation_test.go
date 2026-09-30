@@ -160,7 +160,7 @@ func TestRun_ElevationRequiresBothKeys(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			exec := &depsCapturingExecutor{}
-			r := NewLuaScriptRunnerWithElevatedReads(exec, lua.ReadDeps{}, elevation)
+			r := NewLuaScriptRunnerWithElevatedReads(exec, lua.ReadDeps{World: store.TrivialScope()}, elevation)
 
 			err := r.Run(context.Background(), autocascade.ScriptAction{
 				Code:           "print('x')",
@@ -210,7 +210,7 @@ func TestRun_NoElevatedReaderWhenNoneSupplied(t *testing.T) {
 	t.Parallel()
 	exec := &depsCapturingExecutor{}
 	// NewLuaScriptRunner is the no-read-elevation constructor.
-	r := NewLuaScriptRunner(exec, lua.ReadDeps{})
+	r := NewLuaScriptRunner(exec, lua.ReadDeps{World: store.TrivialScope()})
 
 	err := r.Run(context.Background(), autocascade.ScriptAction{
 		Code:           "print('x')",

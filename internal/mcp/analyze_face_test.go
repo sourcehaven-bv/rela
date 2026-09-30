@@ -82,6 +82,7 @@ func facedGatedServer(t *testing.T, read []string, extra ...*entity.Entity) (*Se
 		Watcher:       nopWatcher{},
 		ProjectRoot:   t.TempDir(),
 		Attachments:   testAttachmentDeps(t, svc, meta, audit.Nop{}),
+		World:         store.TrivialScope(),
 	})
 	return srv, principal.With(ctx, principal.Principal{User: "alice", Tool: principal.ToolMCP})
 }

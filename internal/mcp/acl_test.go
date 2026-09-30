@@ -116,6 +116,7 @@ func gatedServer(t *testing.T) (*Server, context.Context) {
 		Watcher:       nopWatcher{},
 		ProjectRoot:   t.TempDir(),
 		Attachments:   testAttachmentDeps(t, svc, meta, audit.Nop{}),
+		World:         store.TrivialScope(),
 	}
 
 	srv := &Server{logger: slog.New(slog.DiscardHandler)}

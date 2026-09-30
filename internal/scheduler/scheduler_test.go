@@ -15,6 +15,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/schedulerstate"
 	"github.com/Sourcehaven-BV/rela/internal/script"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 var t0 = time.Date(2026, 4, 10, 14, 0, 0, 0, time.UTC)
@@ -467,7 +468,7 @@ func TestRun_RealEngineRunsScript(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "scripts"), 0o750))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "scripts", "task.lua"), []byte("local x = 1\n"), 0o600))
 	ws.luaDepsProvider = func() lua.WriteDeps {
-		return lua.WriteDeps{ReadDeps: lua.ReadDeps{ProjectRoot: root}, EntityManager: stubMutator{}}
+		return lua.WriteDeps{ReadDeps: lua.ReadDeps{ProjectRoot: root, World: store.TrivialScope()}, EntityManager: stubMutator{}}
 	}
 	s, q, _ := newTestScheduler(t, ws, t0, TaskConfig{Name: "t", Script: "task.lua", Every: dailySchedule()})
 

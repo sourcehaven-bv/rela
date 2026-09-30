@@ -1738,7 +1738,7 @@ func (m *Manager) authorizeFamily(
 func (m *Manager) recordFamilyDeleteAudit(ctx context.Context, deleted []*entity.Entity, cascaded int) {
 	for i, e := range deleted {
 		summary := "deleted"
-		if !e.Face.IsDefault() {
+		if !e.Face.IsImplicit() {
 			summary = "deleted face " + string(e.Face)
 		}
 		if i == 0 && cascaded > 0 {
@@ -1868,7 +1868,7 @@ func readFaceToDelete(ctx context.Context, st store.Store, id string, face entit
 func (m *Manager) DeleteEntityFace(
 	ctx context.Context, id string, face entity.Face, cascade bool,
 ) (*entity.DeleteResult, error) {
-	if face.IsDefault() {
+	if face.IsImplicit() {
 		return nil, fmt.Errorf("delete face: %s names the bare face; delete the entity instead", id)
 	}
 	// Fails closed, as in DeleteEntity: the ACL check is below.

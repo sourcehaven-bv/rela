@@ -140,7 +140,7 @@ func TestResolver_GateOrder(t *testing.T) {
 			return r.Address(context.Background(), w, typ, a)
 		}
 	}
-	def := visibility.World{}
+	def := visibility.WorldOf(store.TrivialScope())
 	pub := visibility.WorldOf(publishedWorld())
 
 	for _, tc := range []struct {
@@ -224,6 +224,23 @@ func TestResolver_GateOrder(t *testing.T) {
 	}
 }
 
+// TestResolver_InWorldRefusesAnUnsetWorld pins design A4 at the resolver: the
+// zero World is refused before any read, while a denied world still misses
+// quietly.
+func TestResolver_InWorldRefusesAnUnsetWorld(t *testing.T) {
+	st := resolverStore(t)
+	r := mustResolver(t, visibility.NopGate{}, visibility.NopRedactor{}, st)
+	if _, _, err := r.InWorld(context.Background(), visibility.World{}, "ticket", "TKT-1"); !errors.Is(err, store.ErrInvalidQuery) {
+		t.Errorf("InWorld(unset) err = %v, want ErrInvalidQuery", err)
+	}
+	if _, ok, err := r.InWorld(context.Background(), visibility.DeniedWorld(), "ticket", "TKT-1"); ok || err != nil {
+		t.Errorf("InWorld(denied) = (%v, %v), want a quiet miss", ok, err)
+	}
+	if st.Reads() != 0 {
+		t.Errorf("neither call may read the store: %s", st)
+	}
+}
+
 // TestResolver_WorldQueryCarriesTheFaceSet pins the RR-Z23T2T shape: FaceIn is
 // nil only for "every face", and the list of readable faces otherwise.
 func TestResolver_WorldQueryCarriesTheFaceSet(t *testing.T) {
@@ -249,7 +266,7 @@ func TestResolver_WorldQueryCarriesTheFaceSet(t *testing.T) {
 			if (q.FaceIn == nil) != (tc.want == nil) || !slices.Equal(q.FaceIn, tc.want) {
 				t.Errorf("FaceIn = %#v, want %#v", q.FaceIn, tc.want)
 			}
-			if w, ok := q.Faces.World(); !ok || w.IsDefaultWorld() || !slices.Equal(q.IDs, []string{"POL-1"}) {
+			if w, ok := q.Faces.World(); !ok || w.IsTrivial() || !slices.Equal(q.IDs, []string{"POL-1"}) {
 				t.Errorf("query = %+v, want the world and the one id", q)
 			}
 		})
@@ -266,11 +283,11 @@ func TestResolver_LoadFailureIsAMissAndOneWarning(t *testing.T) {
 		run  func(r *visibility.Resolver) bool
 	}{
 		{"ref", func(r *visibility.Resolver) bool {
-			_, ok, err := r.Address(context.Background(), visibility.World{}, "policy", "POL-1@draft")
+			_, ok, err := r.Address(context.Background(), visibility.WorldOf(store.TrivialScope()), "policy", "POL-1@draft")
 			return ok || err != nil
 		}},
 		{"default world", func(r *visibility.Resolver) bool {
-			_, ok, err := r.Address(context.Background(), visibility.World{}, "ticket", "TKT-1")
+			_, ok, err := r.Address(context.Background(), visibility.WorldOf(store.TrivialScope()), "ticket", "TKT-1")
 			return ok || err != nil
 		}},
 		{"world", func(r *visibility.Resolver) bool {
@@ -296,7 +313,7 @@ func TestResolver_LoadFailureIsAMissAndOneWarning(t *testing.T) {
 	t.Run("not found logs nothing", func(t *testing.T) {
 		buf := captureWarn(t)
 		r := mustResolver(t, visibility.NopGate{}, visibility.NopRedactor{}, resolverStore(t))
-		if _, ok, _ := r.Address(context.Background(), visibility.World{}, "policy", "POL-9@draft"); ok {
+		if _, ok, _ := r.Address(context.Background(), visibility.WorldOf(store.TrivialScope()), "policy", "POL-9@draft"); ok {
 			t.Fatal("a missing row read")
 		}
 		if buf.Len() != 0 {
@@ -333,7 +350,7 @@ func TestResolver_RedactsOnceAndReportsTheRule(t *testing.T) {
 		t.Error("redaction mutated the stored row")
 	}
 
-	res, ok, _ = r.Address(context.Background(), visibility.World{}, "ticket", "TKT-1")
+	res, ok, _ = r.Address(context.Background(), visibility.WorldOf(store.TrivialScope()), "ticket", "TKT-1")
 	if !ok || res.Via != store.ResolutionUnscoped || res.ChainPosition != 0 {
 		t.Errorf("default world provenance = (%v, %d, ok=%v), want (unscoped, 0)", res.Via, res.ChainPosition, ok)
 	}
@@ -422,11 +439,11 @@ func TestAllowAllResolver_ReadsEveryFaceAndChecksType(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	res, ok, err := r.Address(ctx, visibility.World{}, "policy", "POL-1@draft")
+	res, ok, err := r.Address(ctx, visibility.WorldOf(store.TrivialScope()), "policy", "POL-1@draft")
 	if err != nil || !ok || res.Entity.Properties["salary"] != 1 {
 		t.Fatalf("allow-all read = (%v, %v, %v), want the unredacted draft", res.Entity, ok, err)
 	}
-	if _, ok, _ := r.Address(ctx, visibility.World{}, "policy", "TKT-1"); ok {
+	if _, ok, _ := r.Address(ctx, visibility.WorldOf(store.TrivialScope()), "policy", "TKT-1"); ok {
 		t.Error("allow-all must keep the stored-type check")
 	}
 }

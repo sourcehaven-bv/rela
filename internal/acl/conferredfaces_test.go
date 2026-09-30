@@ -70,10 +70,10 @@ func TestReadQuery_ConferredRolesKeepTheirOwnFaces(t *testing.T) {
 		return m["POL-1"]
 	}
 
-	if !reads(t, "bob", store.DefaultWorld()) {
+	if !reads(t, "bob", store.TrivialScope()) {
 		t.Error("the owner's role reads every face, so bob reads the bare row")
 	}
-	if reads(t, "alice", store.DefaultWorld()) {
+	if reads(t, "alice", store.TrivialScope()) {
 		t.Error("the reviewer's role grants published ONLY: alice must not read the bare " +
 			"row through the union of the owner's faces")
 	}

@@ -107,7 +107,8 @@ type addressResolver interface {
 // the wiring lives in one place.
 func newExportHandler(app *App) (*exportHandler, error) {
 	redactor := appRedactor(app)
-	visReader, err := visibility.NewPolicyReader(ctxRowGate{}, redactor, app.store)
+	visReader, err := visibility.NewPolicyReader(ctxRowGate{}, redactor, app.store,
+		visibility.WithFaceOrder((&appFaceOrder{app: app}).of))
 	if err != nil {
 		return nil, fmt.Errorf("dataentry: newExportHandler: %w", err)
 	}

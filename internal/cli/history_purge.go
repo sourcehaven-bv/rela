@@ -265,7 +265,7 @@ func auditPurge(
 ) {
 	// Summarize the targeted vseqs compactly (count + range), not an enumeration.
 	summary := fmt.Sprintf("purged=%d reason=%q", res.Purged, reason)
-	if !face.IsDefault() {
+	if !face.IsImplicit() {
 		summary += fmt.Sprintf(" face=%q", face)
 	}
 	if len(res.Targets) > 0 {

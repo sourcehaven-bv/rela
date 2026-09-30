@@ -819,7 +819,7 @@ func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeN
 		// on every row would be noise that also implies a world was applied.
 		// Same choice loadViewEntities' provenanceFor makes, for the same
 		// reason (see [viewWorld.provenanceFor]).
-		if !worldScopeFrom(r.Context()).IsDefaultWorld() {
+		if !worldScopeFrom(r.Context()).IsTrivial() {
 			v1Entity.World = worldProvenance(r.Context(), e)
 		}
 		data = append(data, v1Entity)
@@ -1867,7 +1867,7 @@ func (a *App) handleV1Search(w http.ResponseWriter, r *http.Request) {
 		row := a.serializer.forWireRelated(pageCtx, e, nil, nil, nil, a.Meta(), plural)
 		// Same provenance a list row carries, and nil in the default world
 		// for the same reason (see handleV1ListEntities).
-		if !worldScopeFrom(r.Context()).IsDefaultWorld() {
+		if !worldScopeFrom(r.Context()).IsTrivial() {
 			row.World = worldProvenance(r.Context(), e)
 		}
 		data = append(data, row)

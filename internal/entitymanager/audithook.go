@@ -78,7 +78,7 @@ func (m *Manager) recordRenameAudit(ctx context.Context, oldID string, after *en
 		return
 	}
 	summary := "renamed"
-	if !after.Face.IsDefault() {
+	if !after.Face.IsImplicit() {
 		summary = "renamed face " + string(after.Face)
 	}
 	m.deps.Audit.Record(audit.Record{

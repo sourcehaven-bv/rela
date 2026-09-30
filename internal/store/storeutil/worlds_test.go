@@ -254,9 +254,10 @@ func TestValidateEntityQuery(t *testing.T) {
 	})
 
 	t.Run("every constructed selection is fine", func(t *testing.T) {
-		// The zero WorldScope is the DEFAULT world, not "no world".
+		// The trivial scope is a world like any other; only an unset
+		// scope is refused.
 		for _, q := range []store.EntityQuery{
-			{Faces: store.InWorld(store.DefaultWorld())},
+			{Faces: store.InWorld(store.TrivialScope())},
 			{Faces: store.InWorld(world)},
 			{Faces: store.AllFaces()},
 			{Faces: store.AtFaces()},
@@ -274,8 +275,8 @@ func TestMatchEntityQuery(t *testing.T) {
 	def := entity.Face("")
 
 	t.Run("default-only unless AllFaces or a world", func(t *testing.T) {
-		assert.True(t, storeutil.MatchEntityQuery("page", "PAGE-1", def, store.EntityQuery{Faces: store.InWorld(store.DefaultWorld())}, nil))
-		assert.False(t, storeutil.MatchEntityQuery("page", "PAGE-1", draft, store.EntityQuery{Faces: store.InWorld(store.DefaultWorld())}, nil),
+		assert.True(t, storeutil.MatchEntityQuery("page", "PAGE-1", def, store.EntityQuery{Faces: store.InWorld(store.TrivialScope())}, nil))
+		assert.False(t, storeutil.MatchEntityQuery("page", "PAGE-1", draft, store.EntityQuery{Faces: store.InWorld(store.TrivialScope())}, nil),
 			"a state row is not in the default world")
 		assert.True(t, storeutil.MatchEntityQuery(
 			"page", "PAGE-1", draft, store.EntityQuery{Faces: store.AllFaces()}, nil))
@@ -292,7 +293,7 @@ func TestMatchEntityQuery(t *testing.T) {
 	})
 
 	t.Run("type and id filters still apply", func(t *testing.T) {
-		q := store.EntityQuery{Type: "page", Faces: store.InWorld(store.DefaultWorld())}
+		q := store.EntityQuery{Type: "page", Faces: store.InWorld(store.TrivialScope())}
 		assert.False(t, storeutil.MatchEntityQuery("ticket", "TKT-1", def, q, nil))
 
 		idSet := map[string]bool{"PAGE-1": true}

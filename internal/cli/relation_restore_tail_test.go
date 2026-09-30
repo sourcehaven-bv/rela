@@ -67,7 +67,7 @@ func TestRelationRestore_FacedTail(t *testing.T) {
 
 	hist := &oneVersionHistory{}
 	w := &recordingRelationWriter{}
-	svc := &writeServices{readServices: readServices{Store: st, Versions: hist}, EntityManager: w}
+	svc := &writeServices{readServices: readServices{Store: st, Versions: hist, World: store.TrivialScope()}, EntityManager: w}
 	cmd := &RelationRestoreCmd{From: "POL-1@draft", Type: "cites", To: "CTL-1", Version: 1}
 	if err := cmd.Run(ctx, svc); err != nil {
 		t.Fatalf("restore: %v", err)

@@ -62,7 +62,7 @@ func seedReader(t *testing.T) visibleReader {
 			t.Fatalf("seed %s: %v", e.ID, err)
 		}
 	}
-	vr, err := newVisibleReader(st)
+	vr, err := newVisibleReader(st, tokenFaceOrder)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,9 +119,16 @@ func TestVisibleReader_InWorld(t *testing.T) {
 	})
 }
 
+// tokenFaceOrder declares no order, so faces list by token. It is for tests
+// whose schema order does not matter.
+func tokenFaceOrder(string) []string { return nil }
+
 func TestNewVisibleReader_RejectsNilStore(t *testing.T) {
-	if _, err := newVisibleReader(nil); err == nil {
+	if _, err := newVisibleReader(nil, tokenFaceOrder); err == nil {
 		t.Fatal("newVisibleReader(nil) = nil error, want a refusal")
+	}
+	if _, err := newVisibleReader(memstore.New(), nil); err == nil {
+		t.Fatal("newVisibleReader with a nil order = nil error, want a refusal")
 	}
 }
 
