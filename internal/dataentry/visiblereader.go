@@ -42,12 +42,13 @@ type visibleReader struct {
 	resolver *visibility.Resolver
 }
 
-// newVisibleReader constructs a visibleReader over s.
-func newVisibleReader(s store.Store) (visibleReader, error) {
+// newVisibleReader constructs a visibleReader over s. opts configure its
+// resolver; NewApp passes the schema's face order.
+func newVisibleReader(s store.Store, opts ...visibility.ResolverOption) (visibleReader, error) {
 	if s == nil {
 		return visibleReader{}, errors.New("dataentry: newVisibleReader: store must be non-nil")
 	}
-	res, err := visibility.NewResolver(ctxRowGate{}, visibility.NopRedactor{}, s)
+	res, err := visibility.NewResolver(ctxRowGate{}, visibility.NopRedactor{}, s, opts...)
 	if err != nil {
 		return visibleReader{}, fmt.Errorf("dataentry: newVisibleReader: %w", err)
 	}

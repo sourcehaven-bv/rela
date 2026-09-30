@@ -482,7 +482,7 @@ func (h *viewsHandler) writeWorldAbsentView(
 // came back, which is the disclosure the face grant withholds (TKT-O7R2A1).
 //
 // Faces are chosen in a stable order so two requests describe the same row:
-// the zero face first, then the declared faces sorted by name. The readable
+// the implicit face first, then the declared faces in declaration order. The readable
 // set comes from [visibility.Resolver.Family], which never lists a face the
 // principal may not read.
 //

@@ -5917,6 +5917,11 @@ only on read requests and only on the routes listed under
 `?world=default` explicitly still selects the unresolved default world. Naming
 an undeclared world here is a startup error.
 
+`schema.yaml` also accepts a top-level `default_world:` key beside `worlds:`.
+It must name a declared world, or `default` when the schema declares none. When
+both keys are set they must name the same world. Either mismatch is a startup
+error.
+
 ### Creating into another world (`create_world`)
 
 When a list is shown in a world that does not select the face a new entity is

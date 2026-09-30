@@ -63,6 +63,14 @@ type Metamodel struct {
 	// a declaration under that name could only shadow or contradict it.
 	Worlds map[string]WorldDef `yaml:"worlds,omitempty"`
 
+	// DefaultWorld names the world a request uses when it names none
+	// (TKT-7IZHP0 design §21 D3). With worlds declared it must name one of
+	// them; unset means the first declared world. With none declared it may
+	// only be [DefaultWorldName]. Validated at load; the worlds compiler
+	// reads it from TKT-7IZHP0 PR 5a on. `app.default_world` in
+	// data-entry.yaml is a deprecated alias that must match it.
+	DefaultWorld string `yaml:"default_world,omitempty"`
+
 	// Copies declares named copy definitions — mapped writes of one content
 	// state into another (TKT-C1XUA8). See [CopyDef]; a request invokes one
 	// BY NAME and can never submit its own mapping.
@@ -71,6 +79,7 @@ type Metamodel struct {
 	// Computed lookups (not from YAML)
 	aliasMap      map[string]string // alias -> canonical name
 	inverseOwners map[string]string // inverse name -> owning canonical relation name
+	worldOrder    []string          // world names in YAML order; see [WorldOrderOf]
 }
 
 // InverseOwner returns the canonical relation type that declares the
@@ -331,6 +340,9 @@ type EntityDef struct {
 	// needs no special handling — and why a project that never writes
 	// this key behaves byte-identically to the pre-worlds system.
 	Faces map[string]FaceDef `yaml:"faces,omitempty"`
+	// faceOrder is Faces' keys in YAML order, recorded at load; see
+	// [FaceOrderOf].
+	faceOrder []string
 
 	// QueryScopes declares named, reusable membership predicates over this
 	// type — the rule deciding whether a row belongs in a collection at all.

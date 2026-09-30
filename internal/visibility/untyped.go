@@ -74,7 +74,7 @@ func (r *Resolver) familyAny(ctx context.Context, id string) (Family, bool, erro
 	if !ok {
 		return Family{}, false, nil
 	}
-	return familyOf(typ, id, faces, headers)
+	return r.familyOf(typ, id, faces, headers)
 }
 
 // warnGate logs a gate failure the untyped helpers answer as a miss.
