@@ -200,7 +200,10 @@ export function formatCellValue(
       return formatDatetime(value, tz) ?? String(value)
     }
     if (propDef?.type === 'boolean') {
-      return value ? 'Yes' : 'No'
+      // A view table cell carries the server's string form, where "false" is
+      // truthy; read it as the boolean it spells.
+      const b = typeof value === 'string' ? value === 'true' : Boolean(value)
+      return b ? 'Yes' : 'No'
     }
     if (propDef?.type === 'rrule') {
       const single = Array.isArray(value) ? value[0] : value

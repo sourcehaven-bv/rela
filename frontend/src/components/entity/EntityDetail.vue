@@ -35,9 +35,9 @@ import {
 } from '@/utils/markdown'
 import { makeRefResolver } from '@/utils/entityRefResolver'
 import BackButton from '@/components/common/BackButton.vue'
-import Badge from '@/components/common/Badge.vue'
 import InaccessibleField from '@/components/common/InaccessibleField.vue'
 import PropertyDisplay from '@/components/common/PropertyDisplay.vue'
+import ViewTableCell from '@/components/entity/ViewTableCell.vue'
 import type { PropertyItem } from '@/components/common/PropertyDisplay.vue'
 import { ChevronRight } from 'lucide-vue-next'
 import { defaultRegistry } from '@/widgets/registry'
@@ -1709,10 +1709,6 @@ function handleRowPropertyApplied(
   viewData.value = { ...view, sections: nextSections }
 }
 
-function shouldUseBadge(value: string, propType?: string): boolean {
-  return !!propType && !!value
-}
-
 function scrollToSection(sectionId: string) {
   const el = document.getElementById(sectionId)
   if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
@@ -2523,26 +2519,18 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                             )
                           "
                         >
-                          <template v-for="(val, vidx) in cell.values" :key="vidx">
-                            <Badge
-                              v-if="shouldUseBadge(val, cell.propType)"
-                              :value="val"
-                              :property="cell.propType"
-                            />
-                            <span v-else>{{ val }}</span>
-                            <span v-if="vidx < cell.values.length - 1">, </span>
-                          </template>
+                          <ViewTableCell
+                            :values="cell.values"
+                            :property="section.columns?.[idx]?.property"
+                            :entity-type="row.entityType"
+                          />
                         </a>
                         <template v-else>
-                          <template v-for="(val, vidx) in cell.values" :key="vidx">
-                            <Badge
-                              v-if="shouldUseBadge(val, cell.propType)"
-                              :value="val"
-                              :property="cell.propType"
-                            />
-                            <span v-else>{{ val }}</span>
-                            <span v-if="vidx < cell.values.length - 1">, </span>
-                          </template>
+                          <ViewTableCell
+                            :values="cell.values"
+                            :property="section.columns?.[idx]?.property"
+                            :entity-type="row.entityType"
+                          />
                         </template>
                       </td>
                       <td class="actions-cell">
@@ -2589,26 +2577,18 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                         )
                       "
                     >
-                      <template v-for="(val, vidx) in cell.values" :key="vidx">
-                        <Badge
-                          v-if="shouldUseBadge(val, cell.propType)"
-                          :value="val"
-                          :property="cell.propType"
-                        />
-                        <span v-else>{{ val }}</span>
-                        <span v-if="vidx < cell.values.length - 1">, </span>
-                      </template>
+                      <ViewTableCell
+                        :values="cell.values"
+                        :property="section.columns?.[idx]?.property"
+                        :entity-type="row.entityType"
+                      />
                     </a>
                     <template v-else>
-                      <template v-for="(val, vidx) in cell.values" :key="vidx">
-                        <Badge
-                          v-if="shouldUseBadge(val, cell.propType)"
-                          :value="val"
-                          :property="cell.propType"
-                        />
-                        <span v-else>{{ val }}</span>
-                        <span v-if="vidx < cell.values.length - 1">, </span>
-                      </template>
+                      <ViewTableCell
+                        :values="cell.values"
+                        :property="section.columns?.[idx]?.property"
+                        :entity-type="row.entityType"
+                      />
                     </template>
                   </td>
                   <td class="actions-cell">
