@@ -9,7 +9,6 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
@@ -171,8 +170,7 @@ func readerFor(dr *docRuntime) (*visibility.Resolver, error) {
 	if err != nil {
 		return nil, fmt.Errorf("building the read gate failed: %w", err)
 	}
-	reader, err := visibility.NewResolver(gate, visibility.NopRedactor{}, dr.store,
-		visibility.WithFaceOrder(func(typ string) []string { return metamodel.FaceOrderOf(dr.meta.Entities[typ]) }))
+	reader, err := visibility.NewResolver(gate, visibility.NopRedactor{}, dr.store, faceOrder(dr.meta))
 	if err != nil {
 		return nil, fmt.Errorf("building the reader failed: %w", err)
 	}

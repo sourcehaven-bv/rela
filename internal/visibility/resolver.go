@@ -157,11 +157,19 @@ func NewResolver(gate RowGate, redact FieldRedactor, load Loader, opts ...Resolv
 // [NopRedactor] over load. It is a capability handed out at a wiring site,
 // like [AllowAllReader]. It keeps the stored-type check, which is part of
 // the read contract rather than of policy.
-func NewAllowAllResolver(load Loader) (*Resolver, error) {
+//
+// opts configure it as they configure [NewResolver].
+func NewAllowAllResolver(load Loader, opts ...ResolverOption) (*Resolver, error) {
 	if load == nil {
 		return nil, errors.New("visibility: NewAllowAllResolver: load must be non-nil")
 	}
-	return &Resolver{gate: NopGate{}, redact: NopRedactor{}, load: load}, nil
+	r := &Resolver{gate: NopGate{}, redact: NopRedactor{}, load: load}
+	for _, opt := range opts {
+		if err := opt(r); err != nil {
+			return nil, err
+		}
+	}
+	return r, nil
 }
 
 // Address resolves a wire address. A named face (`ID@face`) is read with
@@ -288,18 +296,16 @@ func (r *Resolver) sortFaces(entityType string, faces []entity.Face) {
 		slices.Sort(faces)
 		return
 	}
+	// A linear scan, not a rank map: a type declares a handful of faces, so
+	// the scan is cheaper than building a map on every call (RR-TLQPK6).
 	order := r.faceOrder(entityType)
-	rank := make(map[entity.Face]int, len(order))
-	for i, name := range order {
-		rank[entity.Face(name)] = i + 1
-	}
 	undeclared := len(order) + 1
 	key := func(f entity.Face) int {
 		if f.IsImplicit() {
 			return 0
 		}
-		if n, ok := rank[f]; ok {
-			return n
+		if i := slices.Index(order, string(f)); i >= 0 {
+			return i + 1
 		}
 		return undeclared
 	}

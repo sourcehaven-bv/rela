@@ -22,14 +22,24 @@ import (
 // otherwise, so the fallback cannot silently stand in for a YAML order that
 // an included file failed to report.
 
-// FaceOrderOf returns def's face names in declaration order, as a copy.
-// Without a recorded order it returns the sorted names; a faceless type
-// returns nil.
-func FaceOrderOf(def EntityDef) []string {
-	if def.faceOrder != nil {
-		return slices.Clone(def.faceOrder)
+// FaceOrderOf returns entityType's face names in declaration order, as a
+// copy. Without a recorded order it returns the sorted names; a faceless or
+// unknown type returns nil. An alias resolves to its canonical type.
+//
+// It reads the two fields it needs through the map rather than taking an
+// EntityDef, which would copy the whole definition on every call (RR-TLQPK6).
+// Nil: accepted, returns nil.
+func FaceOrderOf(m *Metamodel, entityType string) []string {
+	if m == nil {
+		return nil
 	}
-	return sortedNames(def.Faces)
+	if _, ok := m.Entities[entityType]; !ok {
+		entityType = m.ResolveAlias(entityType)
+	}
+	if order := m.Entities[entityType].faceOrder; order != nil {
+		return slices.Clone(order)
+	}
+	return sortedNames(m.Entities[entityType].Faces)
 }
 
 // WorldOrderOf returns m's declared world names in declaration order, as a

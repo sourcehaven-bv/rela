@@ -248,7 +248,7 @@ func Build(ctx context.Context, src string, opts Options) (string, error) {
 	// build just seeded itself, and runs at the operator trust boundary
 	// (whoever builds the docs already has the project). No ACL applies.
 	readDeps := rlua.ReadDeps{
-		VisibleReader: visibility.Unrestricted(st),
+		VisibleReader: visibility.Unrestricted(st, faceOrder(opts.Meta)),
 		Tracer:        dr.tracer,
 		Meta:          opts.Meta,
 		World:         compiledWorlds.Default(),
@@ -455,4 +455,13 @@ func (dr *docRuntime) luaFail(ls *lua.LState, format string, args ...any) int {
 	dr.pending = &BuildError{Kind: "resolve", Msg: fmt.Sprintf(format, args...)}
 	ls.RaiseError("%s", dr.pending.Msg)
 	return 0
+}
+
+// faceOrder is the resolver option that lists a type's faces in m's
+// declaration order (TKT-7IZHP0 design §3.1).
+// Nil: accepted — a nil m lists faces by token.
+func faceOrder(m *metamodel.Metamodel) visibility.ResolverOption {
+	return visibility.WithFaceOrder(func(entityType string) []string {
+		return metamodel.FaceOrderOf(m, entityType)
+	})
 }

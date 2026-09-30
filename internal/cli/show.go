@@ -17,7 +17,7 @@ type ShowCmd struct {
 func (c *ShowCmd) Run(ctx context.Context, svc *readServices) error {
 	st := svc.Store
 
-	e, err := readAddress(ctx, st, svc.World, c.ID)
+	e, err := readAddress(ctx, st, svc.Meta, svc.World, c.ID)
 	if err != nil {
 		return classifyReadError(c.ID, err)
 	}

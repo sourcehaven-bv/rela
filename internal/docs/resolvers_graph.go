@@ -447,12 +447,11 @@ func (dr *docRuntime) buildResolutionGraph(
 // facesOf lists the faces one entity actually has, bare-id row first.
 func (dr *docRuntime) facesOf(typ, id string) ([]entity.Face, error) {
 	var out []entity.Face
-	def, ok := dr.meta.GetEntityDef(typ)
-	if !ok {
+	if _, ok := dr.meta.GetEntityDef(typ); !ok {
 		return nil, fmt.Errorf("no such entity type %q", typ)
 	}
 	// Every stored face in one header read, then the bare-id row first and
-	// each declared face that exists on this entity in name order.
+	// each declared face that exists on this entity in declaration order.
 	headers, err := store.FamilyHeaders(dr.ctx, dr.store, id)
 	if err != nil {
 		return nil, err
@@ -465,7 +464,7 @@ func (dr *docRuntime) facesOf(typ, id string) ([]entity.Face, error) {
 	if stored[zero] {
 		out = append(out, zero)
 	}
-	for _, name := range sortedFaceNames(def) {
+	for _, name := range metamodel.FaceOrderOf(dr.meta, typ) {
 		face := entity.Face(name)
 		if !face.IsImplicit() && stored[face] {
 			out = append(out, face)

@@ -605,7 +605,14 @@ func appRedactor(a *App) visibility.FieldRedactor {
 // appbuild's guard: it would convert a caught bug into a silent downgrade,
 // and delete the fault path failclosed_test.go exercises.
 func (a *App) scriptReader(redactor visibility.FieldRedactor) lua.EntityReader {
-	return gatedScriptReader(a.acl, a.store, redactor)
+	return gatedScriptReader(a.acl, a.store, redactor, a.faceOrder())
+}
+
+// faceOrder is the resolver option every App-wired resolver takes, so a
+// Family lists faces in the live metamodel's declaration order on every read
+// tier.
+func (a *App) faceOrder() visibility.ResolverOption {
+	return visibility.WithFaceOrder((&appFaceOrder{app: a}).of)
 }
 
 // appFaceOrder reads a type's face declaration order from the LIVE App's
@@ -621,7 +628,7 @@ func (o *appFaceOrder) of(entityType string) []string {
 	if meta == nil {
 		return nil
 	}
-	return metamodel.FaceOrderOf(meta.Entities[entityType])
+	return metamodel.FaceOrderOf(meta, entityType)
 }
 
 // lateGatedReader is a lua.EntityReader that resolves the gated reader from the
@@ -775,19 +782,21 @@ func elevationRecorder(sink audit.Audit) lua.ElevationRecorder {
 // Declarative policy it row-gates + field-redacts, resolving the principal from
 // ctx per call; a construction fault REFUSES (DenyReader) rather than reading
 // ungated. Same policy the per-request App.scriptReader wraps.
-func gatedScriptReader(aclImpl acl.ACL, store store.Store, redactor visibility.FieldRedactor) lua.EntityReader {
+func gatedScriptReader(
+	aclImpl acl.ACL, store store.Store, redactor visibility.FieldRedactor, order visibility.ResolverOption,
+) lua.EntityReader {
 	d, ok := aclImpl.(*acl.Declarative)
 	if !ok || d == nil {
 		// Named so the NopACL path is greppable alongside every other
 		// ungated read site (TKT-1WV50C).
-		return visibility.Unrestricted(store)
+		return visibility.Unrestricted(store, order)
 	}
 	gate, err := visibility.NewDeclarativeGate(d)
 	if err != nil {
 		slog.Error("dataentry: ACL gate unavailable; script reads REFUSED", "err", err)
 		return visibility.DenyReader{}
 	}
-	reader, err := visibility.NewPolicyReader(gate, redactor, store)
+	reader, err := visibility.NewPolicyReader(gate, redactor, store, order)
 	if err != nil {
 		slog.Error("dataentry: policy reader unavailable; script reads REFUSED", "err", err)
 		return visibility.DenyReader{}
@@ -837,7 +846,7 @@ func (a *App) scriptTracer(redactor visibility.FieldRedactor) tracer.Tracer {
 		slog.Error("dataentry: ACL gate unavailable; traversal REFUSED", "err", err)
 		return visibility.DenyTracer{}
 	}
-	res, err := visibility.NewResolver(gate, redactor, a.store)
+	res, err := visibility.NewResolver(gate, redactor, a.store, a.faceOrder())
 	if err != nil {
 		slog.Error("dataentry: resolver unavailable; traversal REFUSED", "err", err)
 		return visibility.DenyTracer{}
@@ -1085,7 +1094,7 @@ func NewApp(
 	app.documents = newDocumentService(st, kv, paths.Root, scriptEngine, app.luaWriteDeps,
 		func() documentElevation {
 			return documentElevation{
-				Reader:   visibility.Unrestricted(st),
+				Reader:   visibility.Unrestricted(st, app.faceOrder()),
 				Recorder: elevationRecorder(app.auditSink),
 			}
 		})
