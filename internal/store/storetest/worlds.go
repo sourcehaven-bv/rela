@@ -403,7 +403,7 @@ func RunWorldTests(t *testing.T, f Factory) {
 		assert.Equal(t, 1, matched, "GraphCount matched")
 		assert.Equal(t, 1, total, "GraphCount total counts world-scoped candidates")
 
-		ids, err := s.MatchingIDs(ctx(), q, []string{"GQ-1", "GQ-2"})
+		ids, err := store.MatchingIDs(ctx(), s, q, []string{"GQ-1", "GQ-2"})
 		require.NoError(t, err)
 		assert.Equal(t, map[string]bool{"GQ-1": true, "GQ-2": false}, ids,
 			"an entity the world excludes must not match")
@@ -509,7 +509,7 @@ func RunWorldTests(t *testing.T, f Factory) {
 		}
 		assert.Equal(t, []string{"P-2@published"}, got,
 			"only rows in the allowlisted face may match; P-1 has no published face")
-		m, err := s.MatchingIDs(ctx(), denied, []string{"P-1", "P-2"})
+		m, err := store.MatchingIDs(ctx(), s, denied, []string{"P-1", "P-2"})
 		require.NoError(t, err)
 		assert.Equal(t, map[string]bool{"P-1": false, "P-2": true}, m,
 			"MatchingIDs is the per-id read verdict; P-1 must be denied")
@@ -520,7 +520,7 @@ func RunWorldTests(t *testing.T, f Factory) {
 		// case would pass against a backend that returns nothing for every
 		// FaceIn.
 		bare := store.GraphQuery{EntityType: "page", Faces: store.InWorld(world), FaceIn: []entity.Face{""}}
-		m, err = s.MatchingIDs(ctx(), bare, []string{"P-1", "P-2"})
+		m, err = store.MatchingIDs(ctx(), s, bare, []string{"P-1", "P-2"})
 		require.NoError(t, err)
 		assert.Equal(t, map[string]bool{"P-1": true, "P-2": true}, m)
 	})
@@ -612,7 +612,7 @@ func RunWorldTests(t *testing.T, f Factory) {
 		} {
 			t.Run(tc.name, func(t *testing.T) {
 				q := store.GraphQuery{EntityType: "page", Faces: store.InWorld(tc.world), Any: branches(tc.who)}
-				m, err := s.MatchingIDs(ctx(), q, []string{"P-1"})
+				m, err := store.MatchingIDs(ctx(), s, q, []string{"P-1"})
 				require.NoError(t, err)
 				assert.Equal(t, tc.want, m["P-1"], "MatchingIDs")
 				var got []string
@@ -689,7 +689,7 @@ func RunWorldTests(t *testing.T, f Factory) {
 				require.NoError(t, err)
 				assert.Equal(t, 2, n)
 
-				ids, err := s.MatchingIDs(ctx(), q, []string{"PF-1", "PF-2", "PF-3"})
+				ids, err := store.MatchingIDs(ctx(), s, q, []string{"PF-1", "PF-2", "PF-3"})
 				require.NoError(t, err)
 				assert.False(t, ids["PF-1"])
 				assert.True(t, ids["PF-2"])
@@ -715,7 +715,7 @@ func RunWorldTests(t *testing.T, f Factory) {
 			n, err := store.CountMatched(ctx(), s, q)
 			require.NoError(t, err)
 			assert.Equal(t, 2, n)
-			ids, err := s.MatchingIDs(ctx(), q, []string{"PF-1", "PF-2", "PF-3"})
+			ids, err := store.MatchingIDs(ctx(), s, q, []string{"PF-1", "PF-2", "PF-3"})
 			require.NoError(t, err)
 			assert.True(t, ids["PF-1"])
 			assert.True(t, ids["PF-2"])

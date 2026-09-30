@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -39,7 +40,7 @@ func (h ResolvedHeader) Served() bool { return h.served }
 // [Resolver.Address].
 //
 // The cost does not depend on len(refs): one header query for every id, then
-// one PermitsReadMany and one face-set lookup per stored type, then one
+// one ReadableFacesMany and one face-set lookup per stored type, then one
 // traversal prime for the served rows.
 //
 // Every miss is absent from the result, whatever its cause. A failed header
@@ -64,6 +65,42 @@ func (r *Resolver) ResolveHeaders(
 		return nil
 	}
 	return r.resolved(ctx, w, refs, faces)
+}
+
+// ResolveIDs is [Resolver.ResolveHeaders] for bare ids, keyed by id: it
+// serves, per id, the redacted header of the face w resolves it to among the
+// faces the principal may read. The ACL trims the candidates first and the
+// world ranks what is left, so a denied prime falls through to a readable
+// face instead of hiding the entity. An id absent from the result is served
+// nothing, whatever the cause; faults are logged and answered as misses, as
+// in ResolveHeaders.
+//
+// The cost does not depend on len(ids): one header query, one
+// ReadableFacesMany and one face-set lookup per stored type, and one
+// traversal prime for the served rows.
+func (r *Resolver) ResolveIDs(ctx context.Context, w World, ids []string) map[string]store.EntityHeader {
+	if !w.denied && !w.scope.IsSet() {
+		slog.ErrorContext(ctx, "visibility: ResolveIDs with an unset world (use WorldOf)")
+		return nil
+	}
+	ids = distinctIDs(ids)
+	if len(ids) == 0 || w.denied {
+		return nil
+	}
+	faces, ok := r.readableHeaders(ctx, ids)
+	if !ok {
+		return nil
+	}
+	served := worldPrimes(w.scope, ids, faces)
+	probes := make([]*entity.Entity, 0, len(served))
+	for _, h := range served {
+		probes = append(probes, headerProbe(h))
+	}
+	ctx = PrimeTraversals(ctx, r.redact, probes)
+	for id, h := range served {
+		served[id] = RedactHeader(ctx, r.redact, h)
+	}
+	return served
 }
 
 // ReadableTypes answers, for each id in ids, the entity's stored type when
@@ -203,9 +240,9 @@ func (r *Resolver) storedHeaders(ctx context.Context, q store.EntityQuery) (map[
 }
 
 // gateHeaders keeps, per id, the headers of the faces the principal may
-// read: one PermitsReadMany and one face-set lookup per stored type. A
-// family stored under two types is dropped. onGateErr is as for
-// scanHeaders.
+// read: one ReadableFacesMany and one face-set lookup per stored type. A
+// face is kept only when its own row passes the verdict. A family stored
+// under two types is dropped. onGateErr is as for scanHeaders.
 func (r *Resolver) gateHeaders(
 	ctx context.Context, stored map[string][]store.EntityHeader, onGateErr func(typ string, err error) error,
 ) (map[string]map[entity.Face]store.EntityHeader, error) {
@@ -217,7 +254,7 @@ func (r *Resolver) gateHeaders(
 	}
 	out := make(map[string]map[entity.Face]store.EntityHeader, len(stored))
 	for typ, typeIDs := range byType {
-		perm, faces, err := r.typeGate(ctx, typ, typeIDs)
+		verdicts, faces, err := r.typeGate(ctx, typ, typeIDs)
 		if err != nil {
 			if abort := onGateErr(typ, err); abort != nil {
 				return nil, abort
@@ -225,11 +262,9 @@ func (r *Resolver) gateHeaders(
 			continue
 		}
 		for _, id := range typeIDs {
-			if !perm[id] {
-				continue
-			}
+			verdict := verdicts.For(id)
 			for _, h := range stored[id] {
-				if !faces.Contains(h.Face) {
+				if !verdict.Contains(h.Face) || !faces.Contains(h.Face) {
 					continue
 				}
 				if out[id] == nil {
@@ -255,16 +290,16 @@ func singleType(hs []store.EntityHeader) (string, bool) {
 }
 
 // typeGate runs the row gate over ids and reads the readable faces of typ.
-func (r *Resolver) typeGate(ctx context.Context, typ string, ids []string) (map[string]bool, FaceSet, error) {
-	perm, err := r.gate.PermitsReadMany(ctx, typ, ids)
+func (r *Resolver) typeGate(ctx context.Context, typ string, ids []string) (acl.FaceVerdicts, FaceSet, error) {
+	verdicts, err := r.gate.ReadableFacesMany(ctx, typ, ids)
 	if err != nil {
-		return nil, FaceSet{}, err
+		return acl.FaceVerdicts{}, FaceSet{}, err
 	}
 	faces, err := ReadableFaces(ctx, r.gate, typ)
 	if err != nil {
-		return nil, FaceSet{}, err
+		return acl.FaceVerdicts{}, FaceSet{}, err
 	}
-	return perm, faces, nil
+	return verdicts, faces, nil
 }
 
 // servedHeaders picks, per ref, the header of the face it serves. A named
@@ -277,8 +312,7 @@ func servedHeaders(
 	if w.denied {
 		return out
 	}
-	var candidates []store.WorldCandidate
-	offered := make(map[string]bool)
+	var bare []string
 	for _, ref := range refs {
 		if !ref.Face.IsImplicit() {
 			if h, ok := faces[ref.ID][ref.Face]; ok {
@@ -286,22 +320,35 @@ func servedHeaders(
 			}
 			continue
 		}
-		if offered[ref.ID] {
-			continue
-		}
-		offered[ref.ID] = true
-		for _, h := range faces[ref.ID] {
-			candidates = append(candidates, store.WorldCandidate{ID: h.ID, Type: h.Type, Face: h.Face})
-		}
+		bare = append(bare, ref.ID)
 	}
-	primes := store.ResolveWorldPrimes(w.scope, candidates)
+	primes := worldPrimes(w.scope, distinctIDs(bare), faces)
 	for _, ref := range refs {
 		if !ref.Face.IsImplicit() {
 			continue
 		}
-		if p, ok := primes[ref.ID]; ok {
-			out[ref] = faces[ref.ID][p.Face]
+		if h, ok := primes[ref.ID]; ok {
+			out[ref] = h
 		}
+	}
+	return out
+}
+
+// worldPrimes returns, per id, the header of the face scope ranks first
+// among the readable faces of id. ids must be distinct.
+func worldPrimes(
+	scope store.WorldScope, ids []string, faces map[string]map[entity.Face]store.EntityHeader,
+) map[string]store.EntityHeader {
+	var candidates []store.WorldCandidate
+	for _, id := range ids {
+		for _, h := range faces[id] {
+			candidates = append(candidates, store.WorldCandidate{ID: h.ID, Type: h.Type, Face: h.Face})
+		}
+	}
+	primes := store.ResolveWorldPrimes(scope, candidates)
+	out := make(map[string]store.EntityHeader, len(primes))
+	for id, p := range primes {
+		out[id] = faces[id][p.Face]
 	}
 	return out
 }

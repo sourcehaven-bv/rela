@@ -388,10 +388,10 @@ func testFilterRelations(t *testing.T, mk ReaderMaker) {
 	if len(out) != 1 || out[0].From != "PRJ-1" || out[0].To != "P-1" {
 		t.Fatalf("FilterRelations = %v, want only PRJ-1→P-1", out)
 	}
-	// Batched endpoint gating: one PermitsReadMany per distinct endpoint
+	// Batched endpoint gating: one ReadableFacesMany per distinct endpoint
 	// type (project, secret, person = 3), not per endpoint.
 	if counting.many > 3 {
-		t.Fatalf("FilterRelations made %d PermitsReadMany calls, want ≤3 (one per distinct type)", counting.many)
+		t.Fatalf("FilterRelations made %d ReadableFacesMany calls, want ≤3 (one per distinct type)", counting.many)
 	}
 	if got := r.FilterRelations(ctxFor("bob"), nil); got != nil {
 		t.Fatalf("FilterRelations(nil) = %v, want nil", got)
@@ -704,7 +704,7 @@ func testTracerNopParity(t *testing.T, mk TracerMaker) {
 
 // --- suite stubs -----------------------------------------------------------
 
-// erroringGate fails PermitsRead/Many for one type and delegates the rest.
+// erroringGate fails the row gate for one type and delegates the rest.
 type erroringGate struct {
 	inner    visibility.RowGate
 	failType string
@@ -717,13 +717,13 @@ func (g *erroringGate) PermitsRead(ctx context.Context, entityType, id string) (
 	return g.inner.PermitsRead(ctx, entityType, id)
 }
 
-func (g *erroringGate) PermitsReadMany(
+func (g *erroringGate) ReadableFacesMany(
 	ctx context.Context, entityType string, ids []string,
-) (map[string]bool, error) {
+) (acl.FaceVerdicts, error) {
 	if entityType == g.failType {
-		return nil, errGate
+		return acl.FaceVerdicts{}, errGate
 	}
-	return g.inner.PermitsReadMany(ctx, entityType, ids)
+	return g.inner.ReadableFacesMany(ctx, entityType, ids)
 }
 
 var errGate = &gateError{}
@@ -732,7 +732,7 @@ type gateError struct{}
 
 func (*gateError) Error() string { return "visibilitytest: deliberate gate failure" }
 
-// countingGate counts PermitsReadMany calls (batching assertions).
+// countingGate counts ReadableFacesMany calls (batching assertions).
 type countingGate struct {
 	inner visibility.RowGate
 	many  int
@@ -742,11 +742,11 @@ func (g *countingGate) PermitsRead(ctx context.Context, entityType, id string) (
 	return g.inner.PermitsRead(ctx, entityType, id)
 }
 
-func (g *countingGate) PermitsReadMany(
+func (g *countingGate) ReadableFacesMany(
 	ctx context.Context, entityType string, ids []string,
-) (map[string]bool, error) {
+) (acl.FaceVerdicts, error) {
 	g.many++
-	return g.inner.PermitsReadMany(ctx, entityType, ids)
+	return g.inner.ReadableFacesMany(ctx, entityType, ids)
 }
 
 // hideAllRedactor hides every property — the FieldRedactor fail-closed
@@ -800,4 +800,20 @@ func keys(m map[string]bool) string {
 		out = append(out, k)
 	}
 	return strings.Join(out, ",")
+}
+
+// IDVerdicts adapts a face-blind test verdict to [visibility.RowGate]: each
+// permitted id reads every face, and every other id reads none. It is for
+// test doubles whose policy does not depend on the face.
+func IDVerdicts(permitted map[string]bool, err error) (acl.FaceVerdicts, error) {
+	if err != nil {
+		return acl.FaceVerdicts{}, err
+	}
+	byID := make(map[string]acl.FaceVerdict, len(permitted))
+	for id, ok := range permitted {
+		if ok {
+			byID[id] = acl.AllFacesVerdict()
+		}
+	}
+	return acl.PerEntityVerdicts(byID), nil
 }

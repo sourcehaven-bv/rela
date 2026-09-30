@@ -69,17 +69,17 @@ func (g *graphSpy) seq() iter.Seq2[*entity.Entity, error] {
 	}
 }
 
-// GraphCount and MatchingIDs complete store.GraphQueryer. Neither is on the
+// GraphCount and MatchingFaces complete store.GraphQueryer. Neither is on the
 // pushdown path (it uses GraphQuery only), so they are inert here — a
 // non-zero return would misrepresent them as participating.
 func (g *graphSpy) GraphCount(context.Context, store.GraphQuery) (matched, total int, err error) {
 	return 0, 0, nil
 }
 
-func (g *graphSpy) MatchingIDs(
+func (g *graphSpy) MatchingFaces(
 	context.Context, store.GraphQuery, []string,
-) (map[string]bool, error) {
-	return map[string]bool{}, nil
+) (map[string][]entity.Face, error) {
+	return map[string][]entity.Face{}, nil
 }
 
 func seededSpy() *graphSpy {

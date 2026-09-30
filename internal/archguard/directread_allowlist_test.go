@@ -18,8 +18,6 @@ var directReadAllowlist = map[string]allowed{
 		"gate-then-redact-then-fold; the type verdict and visibility.Redact run before any value is served"},
 	"internal/dataentry/queryservice.go": {1, "loadHitHeaders: id-batch header load for search hits, " +
 		"gated afterwards"},
-	"internal/dataentry/relation_visibility.go": {1, "visibleRelationIDs: id-batch header load for a " +
-		"page's neighbors, gated by visibleHeaderIDs"},
 	"internal/dataentry/rowcontent.go": {1, "loadRows: id-batch raw row load; every caller gates or redacts before serving"},
 	"internal/dataentry/views.go": {3, "view collections: id-batch body and header loads, " +
 		"gated afterwards"},

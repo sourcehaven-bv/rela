@@ -7,6 +7,7 @@ import (
 	"maps"
 	"slices"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -36,9 +37,15 @@ func NewPolicyReader(gate RowGate, redact FieldRedactor, load Loader, opts ...Re
 // and loader.
 func (r *PolicyReader) Resolver() *Resolver { return r.res }
 
+// ResolveIDs is [Resolver.ResolveIDs] over this reader's gate and redactor.
+func (r *PolicyReader) ResolveIDs(ctx context.Context, w World, ids []string) map[string]store.EntityHeader {
+	return r.res.ResolveIDs(ctx, w, ids)
+}
+
 // Filter implements [Reader]: batched row-gate per type (one
-// PermitsReadMany per distinct type, RR-FRK1 shape), fail-closed
-// type-drop on gate error, then redaction of every survivor. Order is
+// ReadableFacesMany per distinct type, RR-FRK1 shape), fail-closed
+// type-drop on gate error, then redaction of every survivor. A row survives
+// only when its own face passes the verdict. Order is
 // preserved and a fresh slice returned; nil for empty input.
 func (r *PolicyReader) Filter(ctx context.Context, candidates []*entity.Entity) []*entity.Entity {
 	if len(candidates) == 0 {
@@ -51,11 +58,11 @@ func (r *PolicyReader) Filter(ctx context.Context, candidates []*entity.Entity) 
 		}
 		byType[c.Type] = append(byType[c.Type], c.ID)
 	}
-	allowed := r.permittedIDs(ctx, byType)
+	allowed := r.permittedFaces(ctx, byType)
 
 	out := make([]*entity.Entity, 0, len(candidates))
 	for _, c := range candidates {
-		if c != nil && allowed[c.ID] && FaceAllowed(ctx, r.gate, c.Type, c.Face) {
+		if c != nil && allowed[c.ID].Contains(c.Face) && FaceAllowed(ctx, r.gate, c.Type, c.Face) {
 			out = append(out, c)
 		}
 	}
@@ -69,7 +76,7 @@ func (r *PolicyReader) Filter(ctx context.Context, candidates []*entity.Entity) 
 // FilterHeaders implements [HeaderFilterer]: the [PolicyReader.Filter] contract applied
 // to content-free headers.
 //
-// Identical gating — one PermitsReadMany per distinct type, order preserved,
+// Identical gating — one ReadableFacesMany per distinct type, order preserved,
 // fresh slice, fail-closed on gate error — because it is the SAME policy on
 // the same (id, type) pairs. The row gate never consults an entity's body,
 // so dropping the body cannot change a verdict.
@@ -89,12 +96,12 @@ func (r *PolicyReader) FilterHeaders(
 	for _, c := range candidates {
 		byType[c.Type] = append(byType[c.Type], c.ID)
 	}
-	allowed := r.permittedIDs(ctx, byType)
+	allowed := r.permittedFaces(ctx, byType)
 
 	out := make([]store.EntityHeader, 0, len(candidates))
 	probes := make([]*entity.Entity, 0, len(candidates))
 	for _, c := range candidates {
-		if allowed[c.ID] && FaceAllowed(ctx, r.gate, c.Type, c.Face) {
+		if allowed[c.ID].Contains(c.Face) && FaceAllowed(ctx, r.gate, c.Type, c.Face) {
 			out = append(out, c)
 			probes = append(probes, headerProbe(c))
 		}
@@ -147,22 +154,23 @@ func (r *PolicyReader) FilterRelationsStrict(
 	return out, nil
 }
 
-// permittedIDs runs one PermitsReadMany per distinct type and returns the
-// union allowed-id set. A gate error drops that whole type fail-closed —
-// a read-ACL failure must never widen visibility — and is logged loud so
+// permittedFaces runs one ReadableFacesMany per distinct type and returns,
+// per id, the faces whose row passes the verdict. An id absent from the
+// result reads no face. A gate error drops that whole type fail-closed — a
+// read-ACL failure must never widen visibility — and is logged loud so
 // operators see the cause rather than silently thinner results.
-func (r *PolicyReader) permittedIDs(ctx context.Context, byType map[string][]string) map[string]bool {
-	allowed := make(map[string]bool)
+func (r *PolicyReader) permittedFaces(ctx context.Context, byType map[string][]string) map[string]acl.FaceVerdict {
+	allowed := make(map[string]acl.FaceVerdict)
 	for typeName, ids := range byType {
-		perm, err := r.gate.PermitsReadMany(ctx, typeName, ids)
+		verdicts, err := r.gate.ReadableFacesMany(ctx, typeName, ids)
 		if err != nil {
-			slog.Warn("visibility: PermitsReadMany failed; dropping type fail-closed",
+			slog.Warn("visibility: ReadableFacesMany failed; dropping type fail-closed",
 				"type", typeName, "candidates", len(ids), "err", err)
 			continue
 		}
-		for id, ok := range perm {
-			if ok {
-				allowed[id] = true
+		for _, id := range ids {
+			if v := verdicts.For(id); !v.None() {
+				allowed[id] = v
 			}
 		}
 	}

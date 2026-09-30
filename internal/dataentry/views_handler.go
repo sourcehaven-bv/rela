@@ -952,13 +952,30 @@ func (h *viewsHandler) relationColumnTargets(
 	return targets, targetIDs
 }
 
+// idResolver is the batch bare-id read visibleTitles prefers: per id, the
+// redacted header of the face the world serves among the faces the principal
+// may read ([visibility.PolicyReader.ResolveIDs]).
+type idResolver interface {
+	ResolveIDs(ctx context.Context, w visibility.World, ids []string) map[string]store.EntityHeader
+}
+
 // visibleTitles resolves ids to display titles for the ids the principal may
 // read, in one header batch gated through the viewReader; ids the gate drops
 // (or the store no longer has) are absent from the result.
+//
+// When the viewReader can resolve bare ids, the ACL trims each id's faces
+// before the request's world ranks them, so a denied prime falls through to
+// a readable face. Otherwise the world picks the row first and the gate
+// checks that row's face.
 func (h *viewsHandler) visibleTitles(ctx context.Context, svc Services, ids []string) map[string]string {
-	// The request's world picks the row each title comes from. The bare-id
-	// gate (PermitsReadMany) still evaluates a scoped verdict on the
-	// default-world row until TKT-7IZHP0.
+	if r, ok := h.viewReader.(idResolver); ok {
+		served := r.ResolveIDs(ctx, worldFromContext(ctx).visibility(), ids)
+		titles := make(map[string]string, len(served))
+		for id, hd := range served {
+			titles[id] = svc.Meta.DisplayTitle(hd.ID, hd.Type, hd.Properties)
+		}
+		return titles
+	}
 	sel := store.InWorld(worldScopeFrom(ctx))
 	var headers []store.EntityHeader
 	for hd, err := range store.ListEntityHeaders(ctx, svc.Store, store.EntityQuery{IDs: ids, Faces: sel}) {

@@ -8,6 +8,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/visibility/visibilitytest"
 )
 
 // originGate is a readGate that permits reading exactly the ids in allow, and
@@ -25,7 +26,7 @@ func (g originGate) PermitsRead(_ context.Context, _, id string) (bool, error) {
 	return g.allow[id], g.err
 }
 
-func (g originGate) PermitsReadMany(_ context.Context, _ string, ids []string) (map[string]bool, error) {
+func (g originGate) permitsReadMany(_ context.Context, _ string, ids []string) (map[string]bool, error) {
 	if g.calls != nil {
 		*g.calls++
 	}
@@ -142,4 +143,8 @@ func TestOriginWire_DirectEditRendersNothing(t *testing.T) {
 	if got := originWire(store.Origin{}, ""); got != nil {
 		t.Errorf("a direct edit must render no origin block; got %v", got)
 	}
+}
+
+func (g originGate) ReadableFacesMany(ctx context.Context, typ string, ids []string) (acl.FaceVerdicts, error) {
+	return visibilitytest.IDVerdicts(g.permitsReadMany(ctx, typ, ids))
 }

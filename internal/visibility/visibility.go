@@ -46,19 +46,26 @@ package visibility
 import (
 	"context"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
-// RowGate answers entity-level read-permission questions for the principal
+// RowGate answers row-level read-permission questions for the principal
 // carried on ctx. Consumer-side contract of the acl read gate; the
 // production adapter is [DeclarativeGate], the permit-all one is [NopGate].
 //
+// A row is one stored face of an entity, so the gate answers per face:
+// ReadableFacesMany says, per id, which faces pass the read verdict. A face
+// whose row fails the verdict stays hidden even when another face of the
+// same id passes. PermitsRead is the bare-id question: whether SOME face is
+// readable. It must agree with ReadableFacesMany.
+//
 // Neither method verifies existence — they answer "the policy permits
-// reading this id IF it exists" (same contract as acl.Request).
+// reading this row IF it exists" (same contract as acl.Request).
 type RowGate interface {
 	PermitsRead(ctx context.Context, entityType, id string) (bool, error)
-	PermitsReadMany(ctx context.Context, entityType string, ids []string) (map[string]bool, error)
+	ReadableFacesMany(ctx context.Context, entityType string, ids []string) (acl.FaceVerdicts, error)
 }
 
 // FaceGate is the OPTIONAL content-state half of a [RowGate] (TKT-O7R2A1).

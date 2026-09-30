@@ -63,7 +63,7 @@ func TestReadQuery_ConferredRolesKeepTheirOwnFaces(t *testing.T) {
 		q := *rqr.Query
 		q.Faces = store.InWorld(world)
 		q.FaceIn = rqr.Faces
-		m, err := st.MatchingIDs(ctx, q, []string{"POL-1"})
+		m, err := store.MatchingIDs(ctx, st, q, []string{"POL-1"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -84,8 +84,8 @@ func TestReadQuery_ConferredRolesKeepTheirOwnFaces(t *testing.T) {
 
 // PermitsReadFace evaluates a scoped verdict against the row at the face it
 // is asked about, so a faced entity with no default row is readable at a
-// face its grant reaches. PermitsRead answers for the bare id in the default
-// world and keeps denying it until TKT-7IZHP0.
+// face its grant reaches. PermitsRead answers for the bare id: whether any
+// face is readable, so it agrees with the face answer (TKT-7IZHP0).
 func TestPermitsReadFace_ScopedVerdictReadsTheFaceRow(t *testing.T) {
 	ctx := context.Background()
 	st := memstore.New()
@@ -128,9 +128,10 @@ func TestPermitsReadFace_ScopedVerdictReadsTheFaceRow(t *testing.T) {
 			if err != nil || got != tc.wantFace {
 				t.Errorf("PermitsReadFace = %v, %v; want %v", got, err, tc.wantFace)
 			}
+			wantBare := tc.user == "bob"
 			bare, err := req.PermitsRead(ctx, "policy", "POL-2")
-			if err != nil || bare {
-				t.Errorf("PermitsRead = %v, %v; want false: no default-world row", bare, err)
+			if err != nil || bare != wantBare {
+				t.Errorf("PermitsRead = %v, %v; want %v: some face is readable", bare, err, wantBare)
 			}
 		})
 	}

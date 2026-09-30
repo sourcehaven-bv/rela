@@ -278,7 +278,7 @@ func (v *Visible) allowedIDs(
 		}
 		probe := *ts.Query // copy: the scope is shared across requests
 		probe.Faces = store.InWorld(world)
-		m, err := v.gq.MatchingIDs(ctx, probe, ids)
+		m, err := store.MatchingIDs(ctx, v.gq, probe, ids)
 		if err != nil {
 			return nil, fmt.Errorf("%w: type %q: %w", ErrScope, typ, err)
 		}

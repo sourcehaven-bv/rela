@@ -297,10 +297,10 @@ func (h *viewsHandler) loadViewEntities(
 //
 // # Both halves of the verdict
 //
-// The row gate is face-BLIND, so it is paired with [faceReadable] — these
-// entities carry their resolved Face, and a principal granted only
-// `policy@published` must not be handed a draft row (TKT-O7R2A1). Same pairing
-// visibleHeaderIDs uses.
+// The row gate answers per face, and these entities carry their resolved
+// Face, so each is kept only when the verdict holds on that face's row. The
+// type-level face grant ([faceReadable]) is checked too: a principal granted
+// only `policy@published` must not be handed a draft row (TKT-O7R2A1).
 //
 // Grouping walks `ids` rather than ranging the map, so the per-type id slices
 // are deterministic across requests.
@@ -322,7 +322,7 @@ func (h *viewsHandler) gateLoadedEntities(
 	}
 	gate := readGateFromContext(ctx)
 	for typ, typeIDs := range idsByType {
-		verdicts, err := gate.PermitsReadMany(ctx, typ, typeIDs)
+		verdicts, err := gate.ReadableFacesMany(ctx, typ, typeIDs)
 		if err != nil {
 			slog.Warn("dataentry: view traversal: collection read gate failed; "+
 				"dropping type", "type", typ, "ids", len(typeIDs), "err", err)
@@ -336,7 +336,7 @@ func (h *viewsHandler) gateLoadedEntities(
 			if !ok {
 				continue
 			}
-			if !verdicts[id] || !faceReadable(ctx, e.Type, e.Face) {
+			if !verdicts.For(id).Contains(e.Face) || !faceReadable(ctx, e.Type, e.Face) {
 				delete(byID, id)
 			}
 		}

@@ -3,6 +3,7 @@ package dataentry
 import (
 	"context"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -54,7 +55,7 @@ func originWire(o store.Origin, visibleSource string) map[string]any {
 //
 // # Batched, not per row
 //
-// Probes are grouped by source type and issued through PermitsReadMany, so a
+// Probes are grouped by source type and issued through ReadableFacesMany, so a
 // long timeline costs one probe per distinct type rather than one per version.
 // A probe error is treated as DENY (the label is withheld) rather than
 // surfaced: failing closed here loses a decoration, while failing open leaks
@@ -71,9 +72,9 @@ func gateOriginSources(ctx context.Context, gate readGate, metas []store.Version
 		return nil
 	}
 
-	allowed := map[string]map[string]bool{}
+	allowed := map[string]acl.FaceVerdicts{}
 	for typ, ids := range byType {
-		verdicts, err := gate.PermitsReadMany(ctx, typ, ids)
+		verdicts, err := gate.ReadableFacesMany(ctx, typ, ids)
 		if err != nil {
 			// Fail closed: no verdicts for this type means no source labels
 			// for it. See the godoc.
@@ -88,7 +89,9 @@ func gateOriginSources(ctx context.Context, gate readGate, metas []store.Version
 		if o.Source == "" || o.SourceType == "" {
 			continue
 		}
-		if allowed[o.SourceType][o.Source] {
+		// The source is named by id, so it is labelled when some face of it
+		// is readable.
+		if verdicts, ok := allowed[o.SourceType]; ok && !verdicts.For(o.Source).None() {
 			out[i] = o.SourceLabel()
 		}
 	}

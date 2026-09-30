@@ -702,19 +702,20 @@ func relationFilterEdges(
 	return edges, neighborIDs, nil
 }
 
-// readableCandidates gates candidate ids with one probe per type. A type
+// readableCandidates gates candidate ids with one probe per type. A
+// neighbor is readable when some face of it is, the bare-id answer. A type
 // whose probe fails contributes nothing: a relation filter only ever
 // narrows on an unreadable neighbor.
 func readableCandidates(ctx context.Context, byType map[string][]string) map[string]bool {
 	readable := make(map[string]bool)
 	gate := readGateFromContext(ctx)
 	for typ, cids := range byType {
-		perm, err := gate.PermitsReadMany(ctx, typ, cids)
+		verdicts, err := gate.ReadableFacesMany(ctx, typ, cids)
 		if err != nil {
 			continue
 		}
 		for _, id := range cids {
-			if perm[id] {
+			if !verdicts.For(id).None() {
 				readable[id] = true
 			}
 		}
@@ -1149,7 +1150,7 @@ func (a *App) handleV1EntityRelations(w http.ResponseWriter, r *http.Request, ty
 	// replicated here, in handleV1GetRelationType, and in the list path — a
 	// shared chokepoint (P3) would collapse the three; deferred to avoid
 	// churning the list path in a security fix.
-	visibleNeighbors := visibleRelationIDs(r.Context(), a.reader, a.visibleReader,
+	visibleNeighbors := visibleRelationIDs(r.Context(), a.visibleReader,
 		neighborIDsOf(outgoing, incoming))
 
 	relations := make(map[string][]map[string]any)
@@ -1369,7 +1370,7 @@ func (a *App) handleV1GetRelationType(w http.ResponseWriter, r *http.Request, ty
 		}
 		peerIDs = append(peerIDs, peerID)
 	}
-	visibleNeighbors := visibleRelationIDs(r.Context(), a.reader, a.visibleReader, peerIDs)
+	visibleNeighbors := visibleRelationIDs(r.Context(), a.visibleReader, peerIDs)
 
 	relations, pendingStrips := buildRelationTypeRows(r.Context(), a.reader, edges, relType, incoming, visibleNeighbors)
 

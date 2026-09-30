@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"iter"
+	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 )
@@ -130,7 +131,7 @@ type GraphQuery struct {
 	// OrderBy, Limit and Offset page a ROW query (GraphQuery,
 	// GraphQueryHeaders) inside the backend (TKT-1U8XYN), so a list page
 	// costs one bounded read instead of a whole-type scan sorted and sliced
-	// in Go. GraphCount and MatchingIDs IGNORE all three — a count answers
+	// in Go. GraphCount and MatchingFaces IGNORE all three — a count answers
 	// for the matched set, and a page must never change it.
 	//
 	// OrderBy sorts by the STRING form of each property, byte-wise (the
@@ -534,19 +535,65 @@ type GraphQueryer interface {
 	// (total - matched) for "filtered by" counts.
 	GraphCount(ctx context.Context, q GraphQuery) (matched, total int, err error)
 
-	// MatchingIDs answers: "of these candidate ids, which ones satisfy
-	// q's predicates?" Returns a map keyed by every candidate id with
-	// the boolean value indicating match (true) or no-match (false).
-	// All input ids appear in the result regardless of outcome, so
-	// callers can distinguish "absent because no-match" from "absent
-	// because no answer."
+	// MatchingFaces answers: "of these candidate ids, which stored face
+	// rows satisfy q?" It runs q, with its selection, FaceIn and Any
+	// branches, restricted to ids, and returns each matching (id, face)
+	// row. Under InWorld that is at most one face per id (the prime); under
+	// AllFaces or AtFaces it is every selected row that matches.
 	//
-	// q is passed by value: implementations MUST NOT mutate it, and
-	// the caller is free to reuse the input on the next call. ids is
-	// the candidate set; an empty slice yields an empty map.
+	// An id with no matching row is absent from the map, and a present id
+	// has at least one face. Faces are distinct and sorted by token; a
+	// caller that needs another order sorts them itself.
 	//
-	// Use this rather than threading id filters through GraphQuery —
-	// it's the single-entity-visibility and batched-include shape used
-	// by the ACL read gate.
-	MatchingIDs(ctx context.Context, q GraphQuery, ids []string) (map[string]bool, error)
+	// q is passed by value: implementations MUST NOT mutate it, and the
+	// caller is free to reuse the input on the next call. ids is the
+	// candidate set; an empty slice yields an empty map. OrderBy, Limit and
+	// Offset are ignored, as for GraphCount.
+	//
+	// It is the per-face read verdict the ACL row gate uses
+	// (acl.Request.ReadableFacesMany), and [MatchingIDs] projects it for
+	// callers that need ids only. Backends implement this method alone, so
+	// the two answers cannot drift.
+	MatchingFaces(ctx context.Context, q GraphQuery, ids []string) (map[string][]entity.Face, error)
+}
+
+// FaceMatcher is the [GraphQueryer.MatchingFaces] half of the graph queryer,
+// for a consumer that needs nothing else.
+type FaceMatcher interface {
+	MatchingFaces(ctx context.Context, q GraphQuery, ids []string) (map[string][]entity.Face, error)
+}
+
+// MatchingIDs answers "of these candidate ids, which ones satisfy q?" on any
+// [FaceMatcher]: an id matches when any of its selected rows does. The map is
+// keyed by every input id, true for a match and false otherwise, so a caller
+// can tell "no match" from "not asked".
+//
+// It projects [GraphQueryer.MatchingFaces]; backends do not implement it.
+func MatchingIDs(ctx context.Context, fm FaceMatcher, q GraphQuery, ids []string) (map[string]bool, error) {
+	faces, err := fm.MatchingFaces(ctx, q, ids)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		out[id] = len(faces[id]) > 0
+	}
+	return out, nil
+}
+
+// SortedFaces returns faces deduplicated and sorted by token, the order
+// [GraphQueryer.MatchingFaces] promises. Backends that collect rows in
+// another order finish with it.
+func SortedFaces(faces []entity.Face) []entity.Face {
+	out := slices.Clone(faces)
+	slices.Sort(out)
+	return slices.Compact(out)
+}
+
+// IDMatcher is [MatchingIDs] bound to fm, for a consumer that takes the
+// match as a function value.
+func IDMatcher(fm FaceMatcher) func(ctx context.Context, q GraphQuery, ids []string) (map[string]bool, error) {
+	return func(ctx context.Context, q GraphQuery, ids []string) (map[string]bool, error) {
+		return MatchingIDs(ctx, fm, q, ids)
+	}
 }

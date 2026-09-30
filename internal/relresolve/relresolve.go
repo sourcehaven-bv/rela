@@ -254,7 +254,7 @@ func NewStoreBinder(meta *metamodel.Metamodel, gate Gate, st store.GraphQueryer)
 	if st == nil {
 		return nil, errors.New("relresolve: NewStoreBinder: store is required")
 	}
-	return NewBinder(meta, gate, st.MatchingIDs)
+	return NewBinder(meta, gate, store.IDMatcher(st))
 }
 
 // Bind answers every traversal in progs for the candidate ids of entityType

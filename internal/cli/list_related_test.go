@@ -8,6 +8,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/store/storetest"
 )
@@ -76,7 +77,7 @@ func TestListFilter_Related(t *testing.T) {
 		{"related(entity, 'owned-by', {name='bob'})", nil},
 	} {
 		t.Run(tc.filter, func(t *testing.T) {
-			got, err := applyListFilters(context.Background(), all, nil, tc.filter, "ticket", meta, st.MatchingIDs)
+			got, err := applyListFilters(context.Background(), all, nil, tc.filter, "ticket", meta, store.IDMatcher(st))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -95,7 +96,7 @@ func TestListFilter_RelatedInvalidPath(t *testing.T) {
 	meta := relatedFilterMeta(t)
 	st, all := seedOwned(t, 1)
 	for _, f := range []string{"related(entity, 'nope')", "related(entity, 'owned-by', {nope='x'})"} {
-		if _, err := applyListFilters(context.Background(), all, nil, f, "ticket", meta, st.MatchingIDs); err == nil {
+		if _, err := applyListFilters(context.Background(), all, nil, f, "ticket", meta, store.IDMatcher(st)); err == nil {
 			t.Errorf("%s: want an error", f)
 		}
 	}
@@ -107,10 +108,10 @@ func TestListFilter_RelatedBudget(t *testing.T) {
 	meta := relatedFilterMeta(t)
 	calls := func(n int, filter string) int {
 		st, all := seedOwned(t, n)
-		if _, err := applyListFilters(context.Background(), all, nil, filter, "ticket", meta, st.MatchingIDs); err != nil {
+		if _, err := applyListFilters(context.Background(), all, nil, filter, "ticket", meta, store.IDMatcher(st)); err != nil {
 			t.Fatal(err)
 		}
-		return st.Calls()["MatchingIDs"]
+		return st.Calls()["MatchingFaces"]
 	}
 	const f = "related(entity, 'owned-by') and not related(entity, 'owned-by', {name='bob'})"
 	if a, b := calls(10, f), calls(50, f); a != 2 || b != 2 {

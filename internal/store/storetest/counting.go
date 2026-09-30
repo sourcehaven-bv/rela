@@ -162,9 +162,11 @@ func (c *Counting) GraphCount(ctx context.Context, q store.GraphQuery) (matched,
 	return c.Store.GraphCount(ctx, q)
 }
 
-func (c *Counting) MatchingIDs(ctx context.Context, q store.GraphQuery, ids []string) (map[string]bool, error) {
-	c.hit("MatchingIDs")
-	return c.Store.MatchingIDs(ctx, q, ids)
+func (c *Counting) MatchingFaces(
+	ctx context.Context, q store.GraphQuery, ids []string,
+) (map[string][]entity.Face, error) {
+	c.hit("MatchingFaces")
+	return c.Store.MatchingFaces(ctx, q, ids)
 }
 
 // GraphQueryHeaders forwards to the wrapped store's native header query, or

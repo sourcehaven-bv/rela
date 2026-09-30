@@ -5,11 +5,13 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
+	"github.com/Sourcehaven-BV/rela/internal/visibility/visibilitytest"
 )
 
 // seedScriptWorld builds a small graph: two tickets and one secret, with a
@@ -44,7 +46,7 @@ func (g typeGate) PermitsRead(_ context.Context, entityType, _ string) (bool, er
 	return entityType == g.allow, nil
 }
 
-func (g typeGate) PermitsReadMany(
+func (g typeGate) permitsReadMany(
 	_ context.Context, entityType string, ids []string,
 ) (map[string]bool, error) {
 	out := make(map[string]bool, len(ids))
@@ -52,6 +54,11 @@ func (g typeGate) PermitsReadMany(
 		out[id] = entityType == g.allow
 	}
 	return out, nil
+}
+
+// ReadableFacesMany implements the row gate over permitsReadMany.
+func (g typeGate) ReadableFacesMany(ctx context.Context, entityType string, ids []string) (acl.FaceVerdicts, error) {
+	return visibilitytest.IDVerdicts(g.permitsReadMany(ctx, entityType, ids))
 }
 
 func newTicketOnlyScriptReader(t *testing.T, st store.Store) *visibility.ScriptReader {

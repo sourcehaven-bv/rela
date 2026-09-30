@@ -2,10 +2,8 @@ package dataentry
 
 import (
 	"context"
-	"log/slog"
 
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // neighborIDsOf collects the DISTINCT neighbor entity IDs referenced by a
@@ -48,9 +46,10 @@ func neighborIDsOf(outgoing, incoming []*entityPkg.Relation) []string {
 //
 //   - Pass ALL neighbor IDs for the whole page at once (both directions, every
 //     row — see neighborIDsOf). The visibility probe is batched by entity type
-//     via visibleReader.filterVisible: ONE PermitsReadMany per distinct neighbor
-//     type for the entire page, NOT one gate call per id (RR-FRK1). Do NOT call
-//     this per-row or per-id inside a loop; collect the page's IDs first.
+//     via visibleReader.servedIDs: ONE header read, then ONE ReadableFacesMany
+//     per distinct neighbor type for the entire page, NOT one gate call per id
+//     (RR-FRK1). Do NOT call this per-row or per-id inside a loop; collect the
+//     page's IDs first.
 //   - An entity's visibility is direction-independent, so one pass covers both
 //     outgoing targets and incoming sources.
 //   - The returned map contains only IDs that resolved to a loadable, readable
@@ -67,31 +66,22 @@ func neighborIDsOf(outgoing, incoming []*entityPkg.Relation) []string {
 // stays off App's receiver (keeps App under its plimsoll method cap) while the
 // reuse contract above is unchanged.
 func visibleRelationIDs(
-	ctx context.Context, reader entityReader, visible visibleReader, neighborIDs []string,
+	ctx context.Context, visible visibleReader, neighborIDs []string,
 ) map[string]bool {
+	out := map[string]bool{}
 	if len(neighborIDs) == 0 {
-		return map[string]bool{}
+		return out
 	}
 	// ONE content-free read for the page's neighbor set (TKT-1U8XYN): the
-	// gate needs each neighbor's type and id, never its body, and a header
-	// batch is what store.EntityQuery.IDs exists for. An id the store no
-	// longer has (a dangling edge) is simply absent, as the per-id lookup's
-	// not-found was.
+	// gate needs each neighbor's type and faces, never its body. An id the
+	// store no longer has (a dangling edge) is simply absent.
 	//
-	// The request's world picks each neighbor's row: world first, gate
-	// second, the read path's order. The bare-id gate (PermitsReadMany)
-	// still evaluates a scoped verdict on the default-world row until
-	// TKT-7IZHP0.
-	candidates := make([]store.EntityHeader, 0, len(neighborIDs))
-	for h, err := range store.ListEntityHeaders(ctx, reader.store, store.EntityQuery{
-		IDs: neighborIDs, Faces: store.InWorld(worldScopeFrom(ctx)),
-	}) {
-		if err != nil {
-			slog.Warn("dataentry: visibleRelationIDs: header batch failed; neighbors dropped fail-closed",
-				"neighbors", len(neighborIDs), "err", err)
-			return map[string]bool{}
-		}
-		candidates = append(candidates, h)
+	// The ACL trims each neighbor's faces first and the request's world
+	// ranks what is left, as the list path does, so a neighbor whose served
+	// face is denied still appears when the world serves another face the
+	// principal may read. The type-level face grant is part of that trim.
+	for id := range visible.servedIDs(ctx, neighborIDs) {
+		out[id] = true
 	}
-	return visible.visibleHeaderIDs(ctx, candidates)
+	return out
 }

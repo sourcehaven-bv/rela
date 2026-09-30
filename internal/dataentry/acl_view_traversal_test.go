@@ -350,10 +350,10 @@ func TestACLViewTraversal_SourceGateMatchesLoaderResolution(t *testing.T) {
 }
 
 // TestACLViewTraversal_FrontierAppliesFaceGate pins the second half of the
-// frontier verdict. PermitsReadMany is face-BLIND, so without faceReadable a
-// principal granted only `policy@published` could walk THROUGH a draft-only
-// entity to reach its descendants — the same reachability leak one coordinate
-// down (TKT-O7R2A1).
+// frontier verdict. A principal granted only `policy@published` must not walk
+// THROUGH a draft-only entity to reach its descendants — the same
+// reachability leak one coordinate down (TKT-O7R2A1). The per-face row gate
+// answers this itself; faceReadable stays as the second half.
 //
 // The world here SELECTS the draft face deliberately. Under the default world
 // a faced entity has no row at all (BUG-HC6I2T), so the id is dropped for
@@ -381,13 +381,12 @@ func TestACLViewTraversal_FrontierAppliesFaceGate(t *testing.T) {
 
 	// Preconditions. If either is lost the test no longer proves the face gate
 	// does the work, so they are assertions rather than assumptions.
-	rowVerdicts, err := readGateFromContext(ctx).PermitsReadMany(ctx, "policy", ids)
+	rowVerdicts, err := readGateFromContext(ctx).ReadableFacesMany(ctx, "policy", ids)
 	if err != nil {
 		t.Fatalf("row gate probe: %v", err)
 	}
-	if !rowVerdicts["POL-DRAFT"] {
-		t.Fatal("precondition lost: the row gate no longer permits the draft-only " +
-			"entity, so the face gate is not what would be doing the work")
+	if v := rowVerdicts.For("POL-DRAFT"); v.Contains("draft") || !v.Contains("published") {
+		t.Fatalf("row gate verdict = %v; want published only", v.Faces())
 	}
 	var resolved bool
 	for hdr, herr := range store.ListEntityHeaders(ctx, app.store,

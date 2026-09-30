@@ -890,5 +890,5 @@ func servedFacePageEdges(
 	for i := range entities {
 		neighborIDs = append(neighborIDs, neighborIDsOf(outgoing[i], incoming[i])...)
 	}
-	return outgoing, incoming, visibleRelationIDs(ctx, reader, visReader, neighborIDs), nil
+	return outgoing, incoming, visibleRelationIDs(ctx, visReader, neighborIDs), nil
 }

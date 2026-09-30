@@ -21,9 +21,9 @@ import (
 //
 //   - PermitsRead(ctx, type, id) — single-entity probe. Used by GET,
 //     write paths, and per-id include checks.
-//   - PermitsReadMany(ctx, type, ids) — batched probe returning a
-//     permission map. Used by the ?include= filter and any future
-//     list consumer.
+//   - ReadableFacesMany(ctx, type, ids) — batched probe returning, per
+//     id, the faces whose row passes the read verdict. Used by the
+//     ?include= filter, the neighbor gates and every batch consumer.
 //   - ReadQuery(ctx, type) — list-scope verdict. Used by the list
 //     pipeline (scopedSortedEntities) to decide
 //     between unfiltered (AllowAll), empty (DenyAll), and a composed
@@ -45,7 +45,7 @@ import (
 // configured.
 type readGate interface {
 	PermitsRead(ctx context.Context, entityType, entityID string) (bool, error)
-	PermitsReadMany(ctx context.Context, entityType string, ids []string) (map[string]bool, error)
+	ReadableFacesMany(ctx context.Context, entityType string, ids []string) (acl.FaceVerdicts, error)
 	ReadQuery(ctx context.Context, entityType string) acl.ReadQueryResult
 	SearchScope(ctx context.Context, types []string) map[string]search.TypeScope
 	// HoldsPermission reports whether the principal holds a global named
@@ -86,8 +86,10 @@ func (g aclReadGate) PermitsRead(ctx context.Context, entityType, entityID strin
 	return g.req.PermitsRead(ctx, entityType, entityID)
 }
 
-func (g aclReadGate) PermitsReadMany(ctx context.Context, entityType string, ids []string) (map[string]bool, error) {
-	return g.req.PermitsReadMany(ctx, entityType, ids)
+func (g aclReadGate) ReadableFacesMany(
+	ctx context.Context, entityType string, ids []string,
+) (acl.FaceVerdicts, error) {
+	return g.req.ReadableFacesMany(ctx, entityType, ids)
 }
 
 func (g aclReadGate) ReadQuery(ctx context.Context, entityType string) acl.ReadQueryResult {
@@ -132,12 +134,8 @@ func (nopReadGate) PermitsRead(context.Context, string, string) (bool, error) {
 	return true, nil
 }
 
-func (nopReadGate) PermitsReadMany(_ context.Context, _ string, ids []string) (map[string]bool, error) {
-	m := make(map[string]bool, len(ids))
-	for _, id := range ids {
-		m[id] = true
-	}
-	return m, nil
+func (nopReadGate) ReadableFacesMany(context.Context, string, []string) (acl.FaceVerdicts, error) {
+	return acl.UniformVerdicts(acl.AllFacesVerdict()), nil
 }
 
 func (nopReadGate) ReadQuery(context.Context, string) acl.ReadQueryResult {

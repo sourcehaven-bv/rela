@@ -145,10 +145,10 @@ func TestQueryScope_RelatedToCurrentUser(t *testing.T) {
 				t.Fatalf("rows = %v, want %v", got, tc.want)
 			}
 			calls := counting.Calls()
-			if tc.pushed && (calls["CountMatched"] != 1 || calls["MatchingIDs"] != 0) {
+			if tc.pushed && (calls["CountMatched"] != 1 || calls["MatchingFaces"] != 0) {
 				t.Errorf("expected the scope to be answered by the store query: %s", counting)
 			}
-			if !tc.pushed && calls["MatchingIDs"] != 1 {
+			if !tc.pushed && calls["MatchingFaces"] != 1 {
 				t.Errorf("expected one batched traversal query on the Go path: %s", counting)
 			}
 		})
@@ -180,7 +180,7 @@ func TestQueryScope_RelatedToCurrentUserWithoutIdentityFails(t *testing.T) {
 				if strings.Contains(rec.Body.String(), "TAAK-") {
 					t.Fatalf("the error leaked rows: %s", rec.Body)
 				}
-				if n := counting.Calls()["MatchingIDs"] + counting.Calls()["CountMatched"]; n != 0 {
+				if n := counting.Calls()["MatchingFaces"] + counting.Calls()["CountMatched"]; n != 0 {
 					t.Errorf("the traversal reached the store without an identity: %s", counting)
 				}
 			})

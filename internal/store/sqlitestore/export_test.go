@@ -24,9 +24,9 @@ func (s *Store) ExplainGraphQuery(ctx context.Context, q store.GraphQuery) (stri
 	return s.explain(ctx, sqlText, args)
 }
 
-// ExplainMatchingIDs is ExplainGraphQuery for MatchingIDs over ids.
-func (s *Store) ExplainMatchingIDs(ctx context.Context, q store.GraphQuery, ids []string) (string, error) {
-	sqlText, args, _ := buildMatchingIDsSQL(q, ids)
+// ExplainMatchingFaces is ExplainGraphQuery for MatchingFaces over ids.
+func (s *Store) ExplainMatchingFaces(ctx context.Context, q store.GraphQuery, ids []string) (string, error) {
+	sqlText, args, _ := buildMatchingFacesSQL(q, ids)
 	return s.explain(ctx, sqlText, args)
 }
 

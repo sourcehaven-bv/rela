@@ -61,10 +61,10 @@ func (s *worldCapturingSpy) GraphCount(
 	return 0, 0, nil
 }
 
-func (s *worldCapturingSpy) MatchingIDs(
+func (s *worldCapturingSpy) MatchingFaces(
 	context.Context, store.GraphQuery, []string,
-) (map[string]bool, error) {
-	return map[string]bool{}, nil
+) (map[string][]entity.Face, error) {
+	return map[string][]entity.Face{}, nil
 }
 
 func (s *worldCapturingSpy) seq() iter.Seq2[*entity.Entity, error] {

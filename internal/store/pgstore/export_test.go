@@ -114,10 +114,10 @@ func BuildHighestIDSQLForTest(prefix string) (sqlText string, args []any) {
 	return buildHighestIDSQL(prefix)
 }
 
-// BuildMatchingIDsSQLForTest exposes the SQL [Store.MatchingIDs] issues, so
-// EXPLAIN tests can check the shape the traversal path actually runs.
-func BuildMatchingIDsSQLForTest(q store.GraphQuery, ids []string) (sqlText string, args []any) {
-	return buildMatchingIDsSQL(q, ids)
+// BuildMatchingFacesSQLForTest exposes the SQL [Store.MatchingFaces] issues,
+// so EXPLAIN tests can check the shape the traversal path actually runs.
+func BuildMatchingFacesSQLForTest(q store.GraphQuery, ids []string) (sqlText string, args []any) {
+	return buildMatchingFacesSQL(q, ids)
 }
 
 // SweepNow runs exactly one reconciliation tick synchronously, so a test can

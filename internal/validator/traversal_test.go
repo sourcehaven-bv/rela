@@ -18,7 +18,7 @@ import (
 )
 
 func binder(meta *metamodel.Metamodel, st store.GraphQueryer) *relresolve.Binder {
-	b, err := relresolve.NewBinder(meta, relresolve.Ungated, st.MatchingIDs)
+	b, err := relresolve.NewBinder(meta, relresolve.Ungated, store.IDMatcher(st))
 	if err != nil {
 		panic(err)
 	}
@@ -75,9 +75,11 @@ type countingMatch struct {
 	calls int
 }
 
-func (c *countingMatch) MatchingIDs(ctx context.Context, q store.GraphQuery, ids []string) (map[string]bool, error) {
+func (c *countingMatch) MatchingFaces(
+	ctx context.Context, q store.GraphQuery, ids []string,
+) (map[string][]entity.Face, error) {
 	c.calls++
-	return c.GraphQueryer.MatchingIDs(ctx, q, ids)
+	return c.GraphQueryer.MatchingFaces(ctx, q, ids)
 }
 
 func TestCheckRule_Traversal(t *testing.T) {
@@ -113,7 +115,7 @@ func TestCheckRule_TraversalBudgetIsRowIndependent(t *testing.T) {
 				t.Fatalf("violations = %d, want %d", len(ids), n/2)
 			}
 			if cm.calls != 1 {
-				t.Fatalf("MatchingIDs calls = %d, want 1", cm.calls)
+				t.Fatalf("MatchingFaces calls = %d, want 1", cm.calls)
 			}
 		})
 	}
@@ -131,7 +133,7 @@ func TestCheckRule_TraversalErrorIsLoadErrorNotSkip(t *testing.T) {
 	refuse := func(context.Context, string, acl.TraversalHop) (*store.RelationPredicate, error) {
 		return nil, acl.ErrTraversalUnsupported
 	}
-	b, err := relresolve.NewBinder(meta, refuse, st.MatchingIDs)
+	b, err := relresolve.NewBinder(meta, refuse, store.IDMatcher(st))
 	if err != nil {
 		t.Fatal(err)
 	}

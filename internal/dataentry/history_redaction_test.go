@@ -15,6 +15,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/visibility/visibilitytest"
 )
 
 // permGate is a readGate that grants a configurable SET of named permissions
@@ -27,7 +28,7 @@ type permGate struct {
 
 func (g permGate) PermitsRead(context.Context, string, string) (bool, error) { return true, nil }
 
-func (g permGate) PermitsReadMany(_ context.Context, _ string, ids []string) (map[string]bool, error) {
+func (g permGate) permitsReadMany(_ context.Context, _ string, ids []string) (map[string]bool, error) {
 	m := make(map[string]bool, len(ids))
 	for _, id := range ids {
 		m[id] = true
@@ -404,4 +405,8 @@ func TestHistoryReveal_NoACL_NotAudited(t *testing.T) {
 		t.Errorf("no-ACL history read must not be recorded as a reveal (nothing is redacted, "+
 			"so nothing is revealed), got %d: %+v", len(recs), recs)
 	}
+}
+
+func (g permGate) ReadableFacesMany(ctx context.Context, typ string, ids []string) (acl.FaceVerdicts, error) {
+	return visibilitytest.IDVerdicts(g.permitsReadMany(ctx, typ, ids))
 }

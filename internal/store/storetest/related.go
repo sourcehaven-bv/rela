@@ -153,7 +153,7 @@ func RunRelatedTests(t *testing.T, f Factory) {
 		require.NoError(t, err)
 		require.Equal(t, 2, n, "the count ignores paging but honors the entry")
 
-		ids, err := s.MatchingIDs(context.Background(), q, []string{"FEAT-1", "FEAT-2", "FEAT-3"})
+		ids, err := store.MatchingIDs(context.Background(), s, q, []string{"FEAT-1", "FEAT-2", "FEAT-3"})
 		require.NoError(t, err)
 		// A backend may report a non-match as false or omit it; only the
 		// truth of each id is the contract.

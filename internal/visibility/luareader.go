@@ -143,7 +143,7 @@ func (s *ScriptReader) ResolveHeaders(ctx context.Context, refs []entity.Ref) ma
 //
 // Prefers ACL PUSHDOWN: when the gate can compose the caller's scope as a
 // store predicate, the store never materializes rows the caller may not see
-// and there is no per-type PermitsReadMany probe. Field redaction still runs
+// and there is no per-type ReadableFacesMany probe. Field redaction still runs
 // per yielded row — the pushdown replaces the row gate, not the field gate
 // (RR-1W1G6K).
 //
@@ -179,7 +179,7 @@ func (s *ScriptReader) ListEntities(
 
 // headerGateChunk is how many headers ListEntityHeaders gates at once.
 //
-// The row gate is deliberately BATCHED — one PermitsReadMany per distinct
+// The row gate is deliberately BATCHED — one ReadableFacesMany per distinct
 // type per chunk rather than one probe per row — so gating cannot stream a
 // row at a time without turning an O(types) probe count into O(rows). This
 // chunk is the compromise: peak retention is bounded by the chunk, not by

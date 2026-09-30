@@ -119,18 +119,21 @@ func diffGraphQuery(c context.Context, ref, s store.Store, q store.GraphQuery, i
 		return fmt.Sprintf("CountMatched: naive %d, store %d (%v)", wantMatched, n, cerr)
 	}
 
-	wantIDs, err := graphquerynaive.MatchingIDs(c, ref, unpaged, ids)
+	wantFaces, err := graphquerynaive.MatchingFaces(c, ref, unpaged, ids)
 	if err != nil {
-		return "naive MatchingIDs: " + err.Error()
+		return "naive MatchingFaces: " + err.Error()
 	}
-	gotIDs, err := s.MatchingIDs(c, unpaged, ids)
+	gotFaces, err := s.MatchingFaces(c, unpaged, ids)
 	if err != nil {
-		return "MatchingIDs: " + err.Error()
+		return "MatchingFaces: " + err.Error()
 	}
 	for _, id := range ids {
-		if wantIDs[id] != gotIDs[id] {
-			return fmt.Sprintf("MatchingIDs[%s]: naive %v, store %v", id, wantIDs[id], gotIDs[id])
+		if !slices.Equal(wantFaces[id], gotFaces[id]) {
+			return fmt.Sprintf("MatchingFaces[%s]: naive %v, store %v", id, wantFaces[id], gotFaces[id])
 		}
+	}
+	if len(gotFaces) != len(wantFaces) {
+		return fmt.Sprintf("MatchingFaces: naive %d ids, store %d ids", len(wantFaces), len(gotFaces))
 	}
 	return ""
 }

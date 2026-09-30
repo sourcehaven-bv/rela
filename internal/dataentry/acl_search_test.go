@@ -184,7 +184,7 @@ func TestACLSearch_DenyAllShortCircuit(t *testing.T) {
 	}
 }
 
-// failingMatchingIDsStore makes every MatchingIDs call fail with a
+// failingMatchingIDsStore makes every MatchingFaces call fail with a
 // synthetic backend error, simulating an ACL scope-evaluation failure
 // inside the visible-search pipeline.
 type failingMatchingIDsStore struct {
@@ -192,12 +192,14 @@ type failingMatchingIDsStore struct {
 	err error
 }
 
-func (s failingMatchingIDsStore) MatchingIDs(context.Context, store.GraphQuery, []string) (map[string]bool, error) {
+func (s failingMatchingIDsStore) MatchingFaces(
+	context.Context, store.GraphQuery, []string,
+) (map[string][]entity.Face, error) {
 	return nil, s.err
 }
 
 // typedHitSearcher yields fully-typed hits so the visible wrapper has
-// something to probe MatchingIDs with.
+// something to probe MatchingFaces with.
 type typedHitSearcher struct{ hits []search.Hit }
 
 func (s typedHitSearcher) Search(context.Context, search.Query) iter.Seq2[search.Hit, error] {

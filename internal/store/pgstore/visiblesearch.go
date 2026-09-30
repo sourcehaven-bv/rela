@@ -23,7 +23,7 @@ var _ search.VisibleSearcher = (*Store)(nil)
 // [search.VisibleSearcher]: visibility is composed into the search
 // statement itself, so hidden rows are never returned, the LIMIT
 // applies post-visibility (no cap starvation), and there is no
-// per-type MatchingIDs round trip.
+// per-type MatchingFaces round trip.
 //
 // Shape: the trgm-accelerated LIKE from [SearchBackend.Search] ANDed
 // with a per-type visibility disjunction — a bare type test for

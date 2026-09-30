@@ -97,7 +97,7 @@ func listPushdown(
 	case rqr.Query == nil:
 		// Neither allow, deny, nor query: an unrepresentable state. Treat as
 		// a fault and fall back rather than guessing, mirroring
-		// acl.PermitsReadMany, which errors here.
+		// acl.Request.ReadableFacesMany, which errors here.
 		return nil, false
 	}
 	// Carry the WORLD from the EntityQuery onto the composed GraphQuery

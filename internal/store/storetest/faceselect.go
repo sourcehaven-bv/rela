@@ -87,7 +87,7 @@ func RunFaceSelectionTests(t *testing.T, f Factory) {
 				"GraphQueryHeaders")
 			_, _, err = s.GraphCount(ctx(), gq)
 			assert.ErrorIs(t, err, store.ErrInvalidQuery, "GraphCount")
-			_, err = s.MatchingIDs(ctx(), gq, []string{"DOC-1"})
+			_, err = store.MatchingIDs(ctx(), s, gq, []string{"DOC-1"})
 			assert.ErrorIs(t, err, store.ErrInvalidQuery, "MatchingIDs")
 		})
 	}
@@ -100,7 +100,7 @@ func RunFaceSelectionTests(t *testing.T, f Factory) {
 				EndpointMatch: &store.EndpointPredicate{Faces: store.InWorld(unsetScope)},
 			}}
 		assert.ErrorIs(t, firstErr(s.GraphQuery(ctx(), gq)), store.ErrInvalidQuery, "GraphQuery")
-		_, err := s.MatchingIDs(ctx(), gq, []string{"OWN-1"})
+		_, err := store.MatchingIDs(ctx(), s, gq, []string{"OWN-1"})
 		assert.ErrorIs(t, err, store.ErrInvalidQuery, "MatchingIDs")
 	})
 
@@ -236,7 +236,7 @@ func RunFaceSelectionTests(t *testing.T, f Factory) {
 				}
 				slices.Sort(got)
 				assert.Equal(t, tc.want, got, "GraphQuery")
-				ids, err := s.MatchingIDs(ctx(), q, owners)
+				ids, err := store.MatchingIDs(ctx(), s, q, owners)
 				require.NoError(t, err)
 				for _, id := range owners {
 					assert.Equal(t, slices.Contains(tc.want, id), ids[id], "MatchingIDs[%s]", id)

@@ -248,7 +248,7 @@ func tailReadable(tail tracer.Tail, nodes map[string]tracer.Node) bool {
 // visible family from the report, and a hidden face never appears in an
 // orphan's Faces (RR-VN71BT).
 //
-// Two whole-store reads (headers, relations), one PermitsReadMany and one
+// Two whole-store reads (headers, relations), one ReadableFacesMany and one
 // face-set lookup per type, then one batched presentation of the orphans
 // for their redacted titles. A failed read is returned; a gate error hides
 // that type fail-closed, logged.
