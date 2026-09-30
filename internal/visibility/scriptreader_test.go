@@ -48,17 +48,17 @@ func (g typeGate) PermitsRead(_ context.Context, entityType, _ string) (bool, er
 
 func (g typeGate) permitsReadMany(
 	_ context.Context, entityType string, ids []string,
-) (map[string]bool, error) {
+) map[string]bool {
 	out := make(map[string]bool, len(ids))
 	for _, id := range ids {
 		out[id] = entityType == g.allow
 	}
-	return out, nil
+	return out
 }
 
 // ReadableFacesMany implements the row gate over permitsReadMany.
 func (g typeGate) ReadableFacesMany(ctx context.Context, entityType string, ids []string) (acl.FaceVerdicts, error) {
-	return visibilitytest.IDVerdicts(g.permitsReadMany(ctx, entityType, ids))
+	return visibilitytest.IDVerdicts(g.permitsReadMany(ctx, entityType, ids), nil)
 }
 
 func newTicketOnlyScriptReader(t *testing.T, st store.Store) *visibility.ScriptReader {

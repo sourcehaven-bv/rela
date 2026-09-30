@@ -12,8 +12,8 @@ import (
 
 // TestQueryBudget_ScopedVerdictListPageIsSizeIndependent is the list page
 // under a scoped read verdict: P1 reads tickets only through a conferring
-// `watches` edge, so the row gate and the neighbour gate (visibleRelationIDs,
-// whose TKT-0001 neighbour is a ticket) both run MatchingFaces. Each must
+// `watches` edge, so the row gate and the neighbor gate (visibleRelationIDs,
+// whose TKT-0001 neighbor is a ticket) both run MatchingFaces. Each must
 // stay one query per batch, at 10 rows and at 50.
 //
 // GetRelation is excluded: the per-row write affordances resolve the

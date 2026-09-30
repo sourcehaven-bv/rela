@@ -93,12 +93,12 @@ func (g perEndpointGate) PermitsRead(_ context.Context, _, id string) (bool, err
 	return g.allow[id], nil
 }
 
-func (g perEndpointGate) permitsReadMany(_ context.Context, _ string, ids []string) (map[string]bool, error) {
+func (g perEndpointGate) permitsReadMany(_ context.Context, _ string, ids []string) map[string]bool {
 	m := make(map[string]bool, len(ids))
 	for _, id := range ids {
 		m[id] = g.allow[id]
 	}
-	return m, nil
+	return m
 }
 
 func (g perEndpointGate) ReadQuery(_ context.Context, typ string) acl.ReadQueryResult {
@@ -464,5 +464,5 @@ func TestRelationHistory_GoneSourceServesNoMeta(t *testing.T) {
 }
 
 func (g perEndpointGate) ReadableFacesMany(ctx context.Context, typ string, ids []string) (acl.FaceVerdicts, error) {
-	return visibilitytest.IDVerdicts(g.permitsReadMany(ctx, typ, ids))
+	return visibilitytest.IDVerdicts(g.permitsReadMany(ctx, typ, ids), nil)
 }

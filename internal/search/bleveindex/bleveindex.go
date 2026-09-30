@@ -607,7 +607,7 @@ func (idx *Index) resolveHits(
 	return out, nil
 }
 
-// resolveAdmittedHits is [Index.resolveHits] with admit applied: the
+// resolveAdmittedHits is resolveHits with admit applied: the
 // families of every matched id are read, admitted in one call, and ranked
 // together; a hit survives when its face is the prime of its admitted
 // family. The trivial fast path does not apply, because admission needs

@@ -15,7 +15,7 @@ import (
 
 // TestFaceGateParity_SurfacesAgreeUnderOneWorld pins that the per-face row
 // gate (TKT-7IZHP0) answers the same on every read surface: the single
-// GET, the list, `?include=` neighbours and search. The world prefers draft
+// GET, the list, `?include=` neighbors and search. The world prefers draft
 // and falls back to published; alice may read tickets at published only.
 //
 //   - TKT-1 has both faces. Its draft is denied, so every surface serves
@@ -83,8 +83,8 @@ func TestFaceGateParity_SurfacesAgreeUnderOneWorld(t *testing.T) {
 			if got := titleOf(t, rec.Body.Bytes()); got != "alpha published" {
 				t.Errorf("GET TKT-1 served %q, want the published face", got)
 			}
-			if rec := getEntityAs(wctx, t, app, d, "ticket", "tickets", "TKT-2", ""); rec.Code != http.StatusNotFound {
-				t.Errorf("GET TKT-2: %d, want 404 (its only face is denied)", rec.Code)
+			if miss := getEntityAs(wctx, t, app, d, "ticket", "tickets", "TKT-2", ""); miss.Code != http.StatusNotFound {
+				t.Errorf("GET TKT-2: %d, want 404 (its only face is denied)", miss.Code)
 			}
 
 			want := map[string]string{"TKT-1": "alpha published"}

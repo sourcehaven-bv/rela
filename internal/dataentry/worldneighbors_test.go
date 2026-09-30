@@ -292,15 +292,15 @@ func TestWorldNeighbors_ContentEdgesAreFaceSpecific(t *testing.T) {
 	}
 }
 
-// TestWorldNeighbors_DeniedPrimeFallsThrough pins the order the neighbour
-// seam resolves heads in (TKT-7IZHP0): the ACL trims each neighbour's faces,
+// TestWorldNeighbors_DeniedPrimeFallsThrough pins the order the neighbor
+// seam resolves heads in (TKT-7IZHP0): the ACL trims each neighbor's faces,
 // then the world ranks what is left. The world prefers draft; alice may read
 // features at published only.
 //
 //   - FEAT-BOTH has both faces. Its draft is denied, so the link is served
 //     at published rather than dropped, as GET and the list serve it.
 //   - FEAT-DRAFT has only a draft. No face is readable, so the link is
-//     absent, exactly as a neighbour the world excludes.
+//     absent, exactly as a neighbor the world excludes.
 //
 // Mutation-checked: resolving heads through the world alone (the old
 // world-first order) drops FEAT-BOTH and fails this test.
@@ -350,7 +350,7 @@ func TestWorldNeighbors_DeniedPrimeFallsThrough(t *testing.T) {
 	}
 	if !slices.Equal(linked, []string{"FEAT-BOTH"}) {
 		t.Errorf("links = %v, want [FEAT-BOTH]: the denied draft prime falls through to "+
-			"published, and a draft-only neighbour has no readable face", linked)
+			"published, and a draft-only neighbor has no readable face", linked)
 	}
 	if !visible["FEAT-BOTH"] || visible["FEAT-DRAFT"] {
 		t.Errorf("visible = %v, want FEAT-BOTH only", visible)

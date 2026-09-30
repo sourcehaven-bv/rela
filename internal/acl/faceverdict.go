@@ -2,6 +2,7 @@ package acl
 
 import (
 	"context"
+	"maps"
 	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -81,9 +82,7 @@ func UniformVerdicts(v FaceVerdict) FaceVerdicts {
 // does not hold. The map is copied.
 func PerEntityVerdicts(byID map[string]FaceVerdict) FaceVerdicts {
 	out := make(map[string]FaceVerdict, len(byID))
-	for id, v := range byID {
-		out[id] = v
-	}
+	maps.Copy(out, byID)
 	return FaceVerdicts{perEntity: out}
 }
 

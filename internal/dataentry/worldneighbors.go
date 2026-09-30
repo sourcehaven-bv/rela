@@ -59,15 +59,15 @@ import (
 //
 // A head is the prime among the faces the principal may read, as for every
 // other bare-id read (TKT-7IZHP0, design section 2.3): the per-face row gate
-// trims each neighbour's candidate faces, then the world ranks what is left.
-// A neighbour whose world-preferred face is denied therefore falls through to
+// trims each neighbor's candidate faces, then the world ranks what is left.
+// A neighbor whose world-preferred face is denied therefore falls through to
 // the next readable face in the chain, instead of vanishing from the links
 // while the same principal can GET it, list it and find it in search.
 //
 // This is not the existence oracle the old world-first order guarded
 // against. Only served rows come out, and a served row is one the principal
 // may read, so the answer depends on what the ACL denied only among faces
-// the caller cannot see. A neighbour with no readable face in this world is
+// the caller cannot see. A neighbor with no readable face in this world is
 // absent, indistinguishable from one the world excludes. Pinned by
 // TestWorldNeighbors_DeniedPrimeFallsThrough and
 // TestFaceGateParity_SurfacesAgreeUnderOneWorld.
@@ -79,7 +79,7 @@ type worldNeighbors struct {
 	// package the raw nil-tail query the dispatch is written to prevent.
 	relations *worldreader.RelationReader
 
-	// heads resolves neighbour HEADS: the ACL-trimmed, world-ranked face of
+	// heads resolves neighbor HEADS: the ACL-trimmed, world-ranked face of
 	// each id (visibleReader.servedIDs), the same resolution the list and
 	// the single-entity read use, so this type adds no second one.
 	heads visibleReader
@@ -183,7 +183,7 @@ func (wn *worldNeighbors) worldScopedNeighbors(
 	return edges, heads, nil
 }
 
-// resolveHeads resolves neighbour ids to the face the principal is served
+// resolveHeads resolves neighbor ids to the face the principal is served
 // in the request's world: the ACL trims each id's faces, then the world
 // ranks what is left ([visibility.Resolver.ResolveIDs]). One batched header
 // read and one gate query per type, whatever the number of ids.
@@ -476,7 +476,7 @@ func worldNeighborsForPage(
 		}
 	}
 
-	// Pass 2: ONE resolution over the page's whole neighbour set (the ACL
+	// Pass 2: ONE resolution over the page's whole neighbor set (the ACL
 	// trims, the world ranks; see the worldNeighbors doc), then ONE gate pass.
 	var heads map[string]*entityPkg.Entity
 	if len(headIDs) > 0 {

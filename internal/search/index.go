@@ -201,31 +201,13 @@ func (s *Service) listAll(ctx context.Context, q Query) iter.Seq2[Hit, error] {
 // primes, and emits them in scan order.
 func (s *Service) listAdmitted(ctx context.Context, q Query) iter.Seq2[Hit, error] {
 	return func(yield func(Hit, error) bool) {
-		types := toSet(q.Types)
-		rows := make(map[store.WorldCandidate]*entity.Entity)
-		seenID := make(map[string]bool)
-		var order []string
-		var cands []Candidate
-		for e, err := range s.reader.ListEntities(ctx, store.EntityQuery{Faces: store.AllFaces()}) {
-			if err != nil {
-				yield(Hit{}, err)
-				return
-			}
-			if len(types) > 0 && !types[e.Type] {
-				continue
-			}
-			c := Candidate{ID: e.ID, Type: e.Type, Face: e.Face}
-			if _, seen := rows[c]; seen {
-				continue
-			}
-			if !seenID[e.ID] {
-				seenID[e.ID] = true
-				order = append(order, e.ID)
-			}
-			rows[c] = e
-			cands = append(cands, c)
+		scan, err := s.scanFaces(ctx, toSet(q.Types))
+		if err != nil {
+			yield(Hit{}, err)
+			return
 		}
-		admitted, err := q.Admit(cands)
+		rows, order := scan.rows, scan.order
+		admitted, err := q.Admit(scan.cands)
 		if err != nil {
 			yield(Hit{}, err)
 			return
@@ -256,6 +238,40 @@ func (s *Service) listAdmitted(ctx context.Context, q Query) iter.Seq2[Hit, erro
 			emitted++
 		}
 	}
+}
+
+// faceScan is every stored face row of the scanned types: rows by
+// candidate, candidates in scan order, and ids in first-seen order.
+type faceScan struct {
+	rows  map[store.WorldCandidate]*entity.Entity
+	cands []Candidate
+	order []string
+}
+
+// scanFaces reads every face of every entity whose type is in types (all
+// types when types is empty) in one scan.
+func (s *Service) scanFaces(ctx context.Context, types map[string]bool) (faceScan, error) {
+	scan := faceScan{rows: make(map[store.WorldCandidate]*entity.Entity)}
+	seenID := make(map[string]bool)
+	for e, err := range s.reader.ListEntities(ctx, store.EntityQuery{Faces: store.AllFaces()}) {
+		if err != nil {
+			return faceScan{}, err
+		}
+		if len(types) > 0 && !types[e.Type] {
+			continue
+		}
+		c := Candidate{ID: e.ID, Type: e.Type, Face: e.Face}
+		if _, seen := scan.rows[c]; seen {
+			continue
+		}
+		if !seenID[e.ID] {
+			seenID[e.ID] = true
+			scan.order = append(scan.order, e.ID)
+		}
+		scan.rows[c] = e
+		scan.cands = append(scan.cands, c)
+	}
+	return scan, nil
 }
 
 func toSet(ss []string) map[string]bool {

@@ -89,15 +89,15 @@ type idGate struct{ id string }
 
 func (g idGate) PermitsRead(_ context.Context, _, id string) (bool, error) { return id == g.id, nil }
 
-func (g idGate) permitsReadMany(_ context.Context, _ string, ids []string) (map[string]bool, error) {
+func (g idGate) permitsReadMany(_ context.Context, _ string, ids []string) map[string]bool {
 	out := make(map[string]bool, len(ids))
 	for _, id := range ids {
 		out[id] = id == g.id
 	}
-	return out, nil
+	return out
 }
 
 // ReadableFacesMany implements the row gate over permitsReadMany.
 func (g idGate) ReadableFacesMany(ctx context.Context, entityType string, ids []string) (acl.FaceVerdicts, error) {
-	return visibilitytest.IDVerdicts(g.permitsReadMany(ctx, entityType, ids))
+	return visibilitytest.IDVerdicts(g.permitsReadMany(ctx, entityType, ids), nil)
 }

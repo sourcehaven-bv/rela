@@ -28,12 +28,12 @@ type permGate struct {
 
 func (g permGate) PermitsRead(context.Context, string, string) (bool, error) { return true, nil }
 
-func (g permGate) permitsReadMany(_ context.Context, _ string, ids []string) (map[string]bool, error) {
+func (g permGate) permitsReadMany(_ context.Context, _ string, ids []string) map[string]bool {
 	m := make(map[string]bool, len(ids))
 	for _, id := range ids {
 		m[id] = true
 	}
-	return m, nil
+	return m
 }
 
 func (g permGate) ReadQuery(context.Context, string) acl.ReadQueryResult {
@@ -408,5 +408,5 @@ func TestHistoryReveal_NoACL_NotAudited(t *testing.T) {
 }
 
 func (g permGate) ReadableFacesMany(ctx context.Context, typ string, ids []string) (acl.FaceVerdicts, error) {
-	return visibilitytest.IDVerdicts(g.permitsReadMany(ctx, typ, ids))
+	return visibilitytest.IDVerdicts(g.permitsReadMany(ctx, typ, ids), nil)
 }

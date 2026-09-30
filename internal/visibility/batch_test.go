@@ -266,18 +266,18 @@ func (g *countingGate) PermitsRead(context.Context, string, string) (bool, error
 	return true, nil
 }
 
-func (g *countingGate) permitsReadMany(_ context.Context, _ string, ids []string) (map[string]bool, error) {
+func (g *countingGate) permitsReadMany(_ context.Context, _ string, ids []string) map[string]bool {
 	g.many++
 	out := make(map[string]bool, len(ids))
 	for _, id := range ids {
 		out[id] = true
 	}
-	return out, nil
+	return out
 }
 
 // ReadableFacesMany implements the row gate over permitsReadMany.
 func (g *countingGate) ReadableFacesMany(ctx context.Context, entityType string, ids []string) (acl.FaceVerdicts, error) {
-	return visibilitytest.IDVerdicts(g.permitsReadMany(ctx, entityType, ids))
+	return visibilitytest.IDVerdicts(g.permitsReadMany(ctx, entityType, ids), nil)
 }
 
 // typeErrGate is resolverGate whose row gate fails for one type.

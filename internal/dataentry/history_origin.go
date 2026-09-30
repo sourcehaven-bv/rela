@@ -89,7 +89,7 @@ func gateOriginSources(ctx context.Context, gate readGate, metas []store.Version
 		if o.Source == "" || o.SourceType == "" {
 			continue
 		}
-		// The source is named by id, so it is labelled when some face of it
+		// The source is named by id, so it is labeled when some face of it
 		// is readable.
 		if verdicts, ok := allowed[o.SourceType]; ok && !verdicts.For(o.Source).None() {
 			out[i] = o.SourceLabel()

@@ -3,6 +3,7 @@ package acl
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -16,7 +17,7 @@ import (
 // published only, so each policy is readable at published and not at draft.
 func TestReadableFacesMany_OneQueryPerBatch(t *testing.T) {
 	for _, n := range []int{10, 50} {
-		t.Run(fmt.Sprint(n), func(t *testing.T) {
+		t.Run(strconv.Itoa(n), func(t *testing.T) {
 			ctx := context.Background()
 			base := memstore.New()
 			mustCreate := func(e *entity.Entity) {
