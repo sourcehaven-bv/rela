@@ -157,7 +157,7 @@ func (v metaView) RelationInfo(t string) acl.RelationInfo {
 	return acl.RelationInfo{Exists: true, Content: def.Scope.IsContent(), From: def.From, To: def.To}
 }
 
-func (v metaView) FaceNames(t string) (string, []string) {
+func (v metaView) FaceNames(t string) (canonical string, faces []string) {
 	def, ok := v.m.Entities[t]
 	if !ok {
 		return t, nil

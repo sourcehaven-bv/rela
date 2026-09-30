@@ -127,10 +127,10 @@ func TestValidateACLPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load metamodel: %v", err)
 	}
-	if err := appbuild.ValidateACLPolicy(nil, meta); err == nil {
+	if appbuild.ValidateACLPolicy(nil, meta) == nil {
 		t.Error("a nil policy must be rejected")
 	}
-	if err := appbuild.ValidateACLPolicy(&acl.Policy{}, nil); err == nil {
+	if appbuild.ValidateACLPolicy(&acl.Policy{}, nil) == nil {
 		t.Error("a nil metamodel must be rejected")
 	}
 
@@ -142,8 +142,8 @@ func TestValidateACLPolicy(t *testing.T) {
 			"editor": {Read: []string{"*"}, Update: []string{"*", "pol@draft", "policy@published"}},
 		},
 	}
-	if err := appbuild.ValidateACLPolicy(ok, meta); err != nil {
-		t.Errorf("a face-qualified policy must validate, got %v", err)
+	if vErr := appbuild.ValidateACLPolicy(ok, meta); vErr != nil {
+		t.Errorf("a face-qualified policy must validate, got %v", vErr)
 	}
 
 	inherit := &acl.Policy{MembershipRelation: "undeclared-membership", InheritRolesThrough: []string{"cites"}}

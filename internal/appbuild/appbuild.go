@@ -1263,8 +1263,8 @@ func (v metamodelView) HasEntityType(entityType string) bool {
 	return v.m.HasEntityType(entityType)
 }
 
-func (v metamodelView) FaceNames(entityType string) (string, []string) {
-	canonical := v.m.ResolveAlias(entityType)
+func (v metamodelView) FaceNames(entityType string) (canonical string, faces []string) {
+	canonical = v.m.ResolveAlias(entityType)
 	def, ok := v.m.GetEntityDef(entityType)
 	if !ok {
 		return canonical, nil
@@ -1703,8 +1703,8 @@ func prepare(cfg Config, opts []Option) (*SharedBase, error) {
 	// a startup failure rather than a lurking runtime one. The loader checks
 	// world STRUCTURE; the face GRAMMAR is checked here because metamodel
 	// may not import entity under arch-lint (TKT-WAV8XP, internal/worlds).
-	if err := validateResolvedPolicy(resolvedACL, aclPolicy, meta); err != nil {
-		return nil, err
+	if vErr := validateResolvedPolicy(resolvedACL, aclPolicy, meta); vErr != nil {
+		return nil, vErr
 	}
 
 	compiledWorlds, err := worlds.Compile(meta)

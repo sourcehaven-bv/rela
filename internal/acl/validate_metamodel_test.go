@@ -29,7 +29,7 @@ func (m fakeMeta) RelationInfo(t string) acl.RelationInfo {
 	return acl.RelationInfo{Exists: slices.Contains(m.relations, t)}
 }
 
-func (m fakeMeta) FaceNames(t string) (string, []string) {
+func (m fakeMeta) FaceNames(t string) (canonical string, faces []string) {
 	if c, ok := m.aliases[t]; ok {
 		t = c
 	}
