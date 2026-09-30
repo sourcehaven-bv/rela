@@ -53,8 +53,8 @@ func (s *Store) SearchVisible(
 			yield(search.Hit{}, err)
 			return
 		}
-		if ws, ok := scope[search.WildcardType]; ok && ws.Query != nil {
-			yield(search.Hit{}, fmt.Errorf("%w: wildcard scope entry cannot carry a GraphQuery", search.ErrScope))
+		if err := search.ValidateScope(scope); err != nil {
+			yield(search.Hit{}, err)
 			return
 		}
 
@@ -83,7 +83,7 @@ func (s *Store) SearchVisible(
 			if q.Limit > 0 && emitted >= q.Limit {
 				return
 			}
-			if !yield(search.Hit{ID: e.ID, Type: e.Type, Title: e.Title()}, nil) {
+			if !yield(search.Hit{ID: e.ID, Type: e.Type, Title: e.Title(), Face: e.Face}, nil) {
 				return
 			}
 			emitted++
@@ -125,8 +125,8 @@ func (s *Store) SearchVisibleFields(
 			yield(search.Hit{}, err)
 			return
 		}
-		if ws, ok := scope[search.WildcardType]; ok && ws.Query != nil {
-			yield(search.Hit{}, fmt.Errorf("%w: wildcard scope entry cannot carry a GraphQuery", search.ErrScope))
+		if err := search.ValidateScope(scope); err != nil {
+			yield(search.Hit{}, err)
 			return
 		}
 
@@ -236,7 +236,7 @@ type searchCandidate struct {
 func judgeWithoutBody(
 	ctx context.Context, q search.Query, e *entity.Entity, hidden search.HiddenFieldsFunc,
 ) (searchCandidate, error) {
-	c := searchCandidate{hit: search.Hit{ID: e.ID, Type: e.Type, Title: e.Title()}, e: e}
+	c := searchCandidate{hit: search.Hit{ID: e.ID, Type: e.Type, Title: e.Title(), Face: e.Face}, e: e}
 	if hidden == nil || q.Text == "" {
 		return c, nil
 	}
@@ -343,17 +343,22 @@ func buildVisibleSearchSQL(
 	// makes the row gate world-INDEPENDENT, so a draft leaking through this
 	// scope would not be caught downstream.
 	//
-	// The ACL visibility clause is applied to the RESOLVED row, after the
-	// prime is chosen — world first, gate second, the same order
-	// internal/worldreader fixes for the read path. Gating first would let
-	// what the ACL denied change WHICH face the world resolves to, which is
-	// the existence oracle that ordering exists to close.
+	// The ACL visibility clause trims the CANDIDATE faces before the world
+	// ranks them (TKT-7IZHP0), as on lists and the single-entity read: a
+	// principal whose grant denies the prime is served the next readable
+	// face rather than losing the entity. The verdict is evaluated per face
+	// row, and only the resolved rows come out, so a face the world ranked
+	// out is never counted or matched.
+	visCond := ""
+	if !wildcardAllow {
+		visCond = " AND (" + strings.Join(visParts, " OR ") + ")"
+	}
 	if q.World.IsTrivial() {
-		sb.WriteString("SELECT " + visibleSearchColumns + " FROM entities e WHERE e.face = ''")
+		sb.WriteString("SELECT " + visibleSearchColumns + " FROM entities e WHERE e.face = ''" + visCond)
 	} else {
 		rank, candidate := worldSQL(q.World, "e", &b.args)
 		sb.WriteString("SELECT " + visibleSearchColumns + " FROM (" +
-			"SELECT DISTINCT ON (id) * FROM entities e WHERE " + candidate +
+			"SELECT DISTINCT ON (id) * FROM entities e WHERE " + candidate + visCond +
 			" ORDER BY id ASC, (" + rank + ") ASC, face ASC) e WHERE true")
 	}
 
@@ -368,9 +373,6 @@ func buildVisibleSearchSQL(
 	}
 	if len(q.Types) > 0 {
 		sb.WriteString(" AND e.type = ANY(" + b.arg(q.Types) + ")")
-	}
-	if !wildcardAllow {
-		sb.WriteString(" AND (" + strings.Join(visParts, " OR ") + ")")
 	}
 	sb.WriteString(orderBy)
 	if q.Limit > 0 && len(q.Filters) == 0 {
@@ -401,9 +403,17 @@ func buildVisibilityDisjunction(
 
 	for i, typ := range types {
 		ts := scope[typ]
+		faceCond := ""
+		if len(ts.Faces) > 0 {
+			vals := make([]string, len(ts.Faces))
+			for j, f := range ts.Faces {
+				vals[j] = f.String()
+			}
+			faceCond = " AND e.face = ANY(" + b.arg(vals) + ")"
+		}
 		switch {
 		case ts.AllowAll:
-			visParts = append(visParts, "e.type = "+b.arg(typ))
+			visParts = append(visParts, "(e.type = "+b.arg(typ)+faceCond+")")
 		case ts.Query != nil:
 			// The scope-map key, not ts.Query.EntityType, drives the
 			// type test: the seam contract makes the consumer keep
@@ -411,7 +421,7 @@ func buildVisibilityDisjunction(
 			// mismatched Query can only ever narrow its own type.
 			typeArg := b.arg(typ)
 			var part strings.Builder
-			part.WriteString("(e.type = " + typeArg)
+			part.WriteString("(e.type = " + typeArg + faceCond)
 			if ts.Query.HasInbound != nil {
 				w, ex := buildPredicateSQL(b, fmt.Sprintf("v%d_in", i), *ts.Query.HasInbound, typeArg,
 					store.DirectionIncoming, sel)

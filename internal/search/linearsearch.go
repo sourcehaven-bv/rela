@@ -142,6 +142,13 @@ func (l *LinearSearch) advanceLastModified(t time.Time) {
 // The trivial scope resolves every entity to its implicit face via rule 1,
 // which is exactly the pre-worlds result set. An unset scope is refused.
 func (l *LinearSearch) Search(text string, limit int, w store.WorldScope) ([]Face, error) {
+	return l.SearchAdmitted(text, limit, w, nil)
+}
+
+// SearchAdmitted implements [AdmittingBackend]: [LinearSearch.Search] with
+// admit trimming the whole index's candidate faces before the world ranks
+// them, in one call.
+func (l *LinearSearch) SearchAdmitted(text string, limit int, w store.WorldScope, admit AdmitFunc) ([]Face, error) {
 	if !w.IsSet() {
 		return nil, fmt.Errorf("%w: search with an unset world", store.ErrInvalidQuery)
 	}
@@ -151,6 +158,12 @@ func (l *LinearSearch) Search(text string, limit int, w store.WorldScope) ([]Fac
 	cands := make([]Candidate, 0, len(l.entities))
 	for k, e := range l.entities {
 		cands = append(cands, Candidate{ID: k.id, Type: e.Type, Face: k.face})
+	}
+	if admit != nil {
+		var err error
+		if cands, err = admit(cands); err != nil {
+			return nil, err
+		}
 	}
 	primes := ResolvePrimes(w, cands)
 
@@ -195,8 +208,11 @@ func (l *LinearSearch) MatchedFields(e *entity.Entity, text string) map[string]s
 	return MatchTextFields(e, text)
 }
 
-// compile-time check: LinearSearch reports match provenance.
-var _ FieldMatcher = (*LinearSearch)(nil)
+// compile-time checks: LinearSearch reports match provenance and admits.
+var (
+	_ FieldMatcher     = (*LinearSearch)(nil)
+	_ AdmittingBackend = (*LinearSearch)(nil)
+)
 
 func (l *LinearSearch) Close() error {
 	return nil

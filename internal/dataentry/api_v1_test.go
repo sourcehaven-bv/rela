@@ -415,12 +415,45 @@ func (f *fakeSearcher) Search(_ context.Context, q search.Query) iter.Seq2[searc
 			yield(search.Hit{}, f.err)
 			return
 		}
-		for _, h := range f.hits {
+		hits, err := admitHits(q, f.hits)
+		if err != nil {
+			yield(search.Hit{}, err)
+			return
+		}
+		for _, h := range hits {
 			if !yield(h, nil) {
 				return
 			}
 		}
 	}
+}
+
+// admitHits applies q.Admit to a fake searcher's hits, as a real backend
+// admits candidate faces before ranking. The fakes hold one face per hit,
+// so admitting the hits is the same thing.
+func admitHits(q search.Query, hits []search.Hit) ([]search.Hit, error) {
+	if q.Admit == nil {
+		return hits, nil
+	}
+	cands := make([]search.Candidate, 0, len(hits))
+	for _, h := range hits {
+		cands = append(cands, search.Candidate{ID: h.ID, Type: h.Type, Face: h.Face})
+	}
+	admitted, err := q.Admit(cands)
+	if err != nil {
+		return nil, err
+	}
+	keep := make(map[search.Candidate]bool, len(admitted))
+	for _, c := range admitted {
+		keep[c] = true
+	}
+	var out []search.Hit
+	for _, h := range hits {
+		if keep[search.Candidate{ID: h.ID, Type: h.Type, Face: h.Face}] {
+			out = append(out, h)
+		}
+	}
+	return out, nil
 }
 
 func TestV1ListEntitiesSearchQuery(t *testing.T) {

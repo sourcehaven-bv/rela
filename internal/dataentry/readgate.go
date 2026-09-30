@@ -106,19 +106,19 @@ func (g aclReadGate) PermitsWorld(ctx context.Context, world string) (bool, erro
 
 // SearchScope maps per-type ReadQuery verdicts onto the
 // search.TypeScope shape: AllowAll and Query verdicts become entries,
-// DenyAll types are simply absent (absence IS the deny in the seam's
-// fail-closed lookup), and no wildcard is ever emitted — an entity
-// type outside the metamodel cannot be granted by a policy, so it
-// must not be visible through search either.
+// each with the grant's face allowlist, DenyAll types are simply absent
+// (absence IS the deny in the seam's fail-closed lookup), and no wildcard
+// is ever emitted — an entity type outside the metamodel cannot be
+// granted by a policy, so it must not be visible through search either.
 func (g aclReadGate) SearchScope(ctx context.Context, types []string) map[string]search.TypeScope {
 	scope := make(map[string]search.TypeScope, len(types))
 	for _, typ := range types {
 		rqr := g.req.ReadQuery(ctx, typ)
 		switch {
 		case rqr.AllowAll:
-			scope[typ] = search.TypeScope{AllowAll: true}
+			scope[typ] = search.TypeScope{AllowAll: true, Faces: rqr.Faces}
 		case rqr.Query != nil:
-			scope[typ] = search.TypeScope{Query: rqr.Query}
+			scope[typ] = search.TypeScope{Query: rqr.Query, Faces: rqr.Faces}
 		}
 	}
 	return scope

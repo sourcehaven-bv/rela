@@ -441,6 +441,19 @@ var boostedFields = []struct {
 // The trivial scope skips all of that (see the fast path below); an unset
 // scope is refused.
 func (idx *Index) Search(text string, limit int, w store.WorldScope) ([]search.Face, error) {
+	return idx.SearchAdmitted(text, limit, w, nil)
+}
+
+// compile-time check: the bleve index admits faces before ranking.
+var _ search.AdmittingBackend = (*Index)(nil)
+
+// SearchAdmitted implements [search.AdmittingBackend]: [Index.Search] with
+// admit trimming each matched entity's family before the world ranks it.
+// The families of every matched id are admitted in ONE call, so the cost of
+// admission does not grow with the number of hits.
+func (idx *Index) SearchAdmitted(
+	text string, limit int, w store.WorldScope, admit search.AdmitFunc,
+) ([]search.Face, error) {
 	if !w.IsSet() {
 		return nil, fmt.Errorf("%w: search with an unset world", store.ErrInvalidQuery)
 	}
@@ -500,7 +513,7 @@ func (idx *Index) Search(text string, limit int, w store.WorldScope) ([]search.F
 	// collapse onto one entity and others are discarded as non-prime. Sizing
 	// to the caller's limit would then return short. The default world needs
 	// no headroom — one document per entity is already the prime.
-	if limit > 0 && !w.IsTrivial() {
+	if limit > 0 && (!w.IsTrivial() || admit != nil) {
 		req.Size = limit * facesOverfetchFactor
 	}
 
@@ -513,7 +526,12 @@ func (idx *Index) Search(text string, limit int, w store.WorldScope) ([]search.F
 	}
 	// coverage-ignore-end
 
-	faces, err := idx.resolveHits(result.Hits, w)
+	var faces []search.Face
+	if admit != nil {
+		faces, err = idx.resolveAdmittedHits(result.Hits, w, admit)
+	} else {
+		faces, err = idx.resolveHits(result.Hits, w)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -589,11 +607,81 @@ func (idx *Index) resolveHits(
 	return out, nil
 }
 
+// resolveAdmittedHits is [Index.resolveHits] with admit applied: the
+// families of every matched id are read, admitted in one call, and ranked
+// together; a hit survives when its face is the prime of its admitted
+// family. The trivial fast path does not apply, because admission needs
+// each candidate's type.
+func (idx *Index) resolveAdmittedHits(
+	hits searchpkg.DocumentMatchCollection, w store.WorldScope, admit search.AdmitFunc,
+) ([]search.Face, error) {
+	type faceHit struct {
+		id   string
+		face entity.Face
+	}
+	parsed := make([]faceHit, 0, len(hits))
+	families := make(map[string]bool, len(hits))
+	var cands []search.Candidate
+	for _, hit := range hits {
+		id, ptr, err := entity.ParseStateRef(hit.ID)
+		if err != nil {
+			id, ptr = hit.ID, entity.Face("")
+		}
+		parsed = append(parsed, faceHit{id: id, face: ptr})
+		if families[id] {
+			continue
+		}
+		families[id] = true
+		fam, err := idx.familyCandidates(id)
+		if err != nil {
+			return nil, err
+		}
+		cands = append(cands, fam...)
+	}
+	admitted, err := admit(cands)
+	if err != nil {
+		return nil, err
+	}
+	primes := search.ResolvePrimes(w, admitted)
+	out := make([]search.Face, 0, len(primes))
+	seen := make(map[string]struct{}, len(primes))
+	for _, h := range parsed {
+		if _, dup := seen[h.id]; dup {
+			continue
+		}
+		res, ok := primes[h.id]
+		if !ok || res.Face != h.face {
+			// Excluded, not admitted, or a match on a face that is not the
+			// prime of the admitted family: absent, as in resolveHits.
+			continue
+		}
+		seen[h.id] = struct{}{}
+		out = append(out, search.Face{
+			ID:            h.id,
+			Face:          res.Face,
+			Via:           res.Via,
+			ChainPosition: res.ChainPosition,
+		})
+	}
+	return out, nil
+}
+
 // resolveFamily reads every indexed face of id and asks the world which one
 // is the prime. ok=false means this world excludes the entity.
 func (idx *Index) resolveFamily(
 	id string, w store.WorldScope,
 ) (res search.Resolved, ok bool, err error) {
+	cands, err := idx.familyCandidates(id)
+	if err != nil {
+		return search.Resolved{}, false, err
+	}
+	primes := search.ResolvePrimes(w, cands)
+	res, ok = primes[id]
+	return res, ok, nil
+}
+
+// familyCandidates reads every indexed face of id as resolution candidates.
+func (idx *Index) familyCandidates(id string) ([]search.Candidate, error) {
 	q := bleve.NewTermQuery(id)
 	q.SetField("id")
 	req := bleve.NewSearchRequest(q)
@@ -601,7 +689,7 @@ func (idx *Index) resolveFamily(
 	req.Fields = []string{"type", "face"}
 	result, err := idx.index.Search(req)
 	if err != nil {
-		return search.Resolved{}, false, fmt.Errorf("bleveindex: family of %s: %w", id, err)
+		return nil, fmt.Errorf("bleveindex: family of %s: %w", id, err)
 	}
 
 	cands := make([]search.Candidate, 0, len(result.Hits))
@@ -612,9 +700,7 @@ func (idx *Index) resolveFamily(
 			ID: id, Type: typ, Face: entity.Face(ptr),
 		})
 	}
-	primes := search.ResolvePrimes(w, cands)
-	res, ok = primes[id]
-	return res, ok, nil
+	return cands, nil
 }
 
 // Close flushes anything still pending and releases resources held by the
