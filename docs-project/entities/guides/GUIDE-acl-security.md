@@ -217,10 +217,10 @@ policy:
 `POL-1@draft` and `POL-1@published` are the only rows that exist. The grants
 therefore behave as follows:
 
-| Grant | Reaches the draft face? |
+| Grant | Result |
 | --- | --- |
-| `update: [policy]` | **no**, it matches nothing and denies everything |
-| `update: [policy@draft]` | **yes**, this is the correct grant |
+| `update: [policy]` | **load error**: the grant would match nothing |
+| `update: [policy@draft]` | reaches the draft face; this is the correct grant |
 
 Name every face the role may write:
 
@@ -229,17 +229,48 @@ editor:
   update: [policy@draft]
 ```
 
-The bare form is the dangerous spelling because it reads like a permission. It
-fails closed, denying rather than over-permitting, so the symptom is an editor
-who cannot save with no error naming a face. `rela acl audit` reports it as
-`B12-bare-grant-on-faced-type` at severity High, with the fix spelled out.
+A bare type in `create`, `update` or `delete` that declares `faces:` is refused
+when `acl.yaml` loads. The same rule applies to a type alias. The server, every
+CLI command, `rela acl audit` and the docs builder refuse to start, and the
+error names the role, the verb, the grant and what to write instead:
+
+```text
+acl: roles.editor.update: "policy" names a type that declares faces; a write
+grant must name the face: "policy@draft", "policy@published"
+```
+
+Every offending grant is reported at once. Read grants are not affected: a bare
+`read: [policy]` covers every face.
 
 Note that `*` is a wildcard over **types**, never over faces. `update: ["*"]`
-grants each type's unnamed state, so it reaches faceless types only. A role
-that must write a faced type needs that type's faces listed explicitly, even if
-it already holds the wildcard. This is deliberate: the alternative would mean
-every existing admin grant silently acquiring authority over `published` the
-moment a type declared its first face.
+grants each type's unnamed state, so it reaches faceless types only. It names no
+type, so it is not refused. A role that must write a faced type needs that
+type's faces listed explicitly, even if it already holds the wildcard. When a
+refused grant sits in a list that also holds `*`, the error adds a note saying
+so. This is deliberate: the alternative would mean every existing admin grant
+silently acquiring authority over `published` the moment a type declared its
+first face.
+
+#### Users, groups and role relations must be faceless
+
+The resolver maps a principal to one user entity and walks relations between
+entity ids to find groups and local roles. Faces would break both. A faced user
+type lets two faces of one id carry different identity values, and a faced
+group lets an unpublished face confer a role. So these are load errors:
+
+- `user_entity_type` names a type that declares `faces:`.
+- The membership relation (`membership_relation`, default `member-of`)
+  connects a type that declares `faces:`, as member or as group.
+- A `role_relations` entry with `confers:` has a faced source type. The source
+  is the role holder, a user or a group.
+- The membership relation, a `role_relations` entry with `confers:`, or an
+  `inherit_roles_through` relation is declared `scope: content`. These edges
+  attach to the entity, not to one face.
+
+The resource a role is conferred on may declare faces. An `owns` relation from
+`person` to `policy` confers its role on the whole policy, and the role's
+face-named write grants decide which faces it may write. A relation the schema
+does not declare is not checked, since it can hold no edges.
 
 #### Deleting an entity needs delete on every face
 

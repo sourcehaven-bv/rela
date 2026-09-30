@@ -382,18 +382,20 @@ grants. If a role must be kept away from drafts, name the face it may read, as
 `reader` does.
 
 **Warning:** A write grant names the face **as stored**, and a faced type
-stores nothing at the bare coordinate. A bare `update: [policy]` therefore
-reaches no row at all: it reads like "may update policies" and denies every
-face. Name each face the role may write:
+stores nothing at the bare coordinate. A bare `update: [policy]` would reach no
+row at all, so it is a load error: `acl.yaml` is refused, and the message names
+the grant and the face-qualified grants to write instead. Name each face the
+role may write:
 
 ```yaml
 editor:
   update: [policy@draft, policy@published]
 ```
 
-`rela acl audit` reports the bare form as `B12-bare-grant-on-faced-type`
-(severity High). It fails closed, so the symptom is a denial with no visible
-cause, which is exactly why the audit names it.
+The user type, group types and the relations the ACL walks for roles must stay
+faceless and identity-scoped. The
+[ACL: Security Hardening guide](acl-security.md#users-groups-and-role-relations-must-be-faceless)
+lists the rules.
 
 The `role_relations` block at the top is not optional once a non-default world
 grant exists. A role that can read `world:editorial` is worth stealing, so a
@@ -846,10 +848,10 @@ Next, audit the access policy:
 rela acl audit
 ```
 
-Look for `B10-undeclared-world`, `B11-undeclared-face` and
-`B12-bare-grant-on-faced-type` findings, which mark grants that will silently
-match nothing. The last one is the mistake warned about in Step 4: a bare
-`update: [policy]` on a type that declares faces.
+Look for `B10-undeclared-world` and `B11-undeclared-face` findings, which
+mark grants that will silently match nothing. The mistake warned about in
+Step 4, a bare `update: [policy]` on a type that declares faces, never reaches
+the audit: `acl.yaml` fails to load and the error names the grant.
 
 Finally, check the stored faces against the schema:
 

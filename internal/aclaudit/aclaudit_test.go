@@ -26,7 +26,6 @@ func (m fakeMetamodel) HasFace(t, face string) bool {
 	return slices.Contains(m.faces[t], face)
 }
 
-
 func (m fakeMetamodel) GetRelation(name string) (RelationView, bool) {
 	from, ok := m.relations[name]
 	if !ok {
