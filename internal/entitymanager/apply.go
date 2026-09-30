@@ -319,7 +319,7 @@ func (m *Manager) ApplyRelation(ctx context.Context, r *entity.Relation) (*entit
 
 	// Addressed by tail as well as triple: two edges on one triple with
 	// different tails are two relations (BUG-64MU2Q).
-	_, getErr := getRelationOnFace(ctx, m.deps.Store, r.From, r.FromFace, r.Type, r.To)
+	_, getErr := m.deps.Store.GetRelation(ctx, r.Identity())
 	op, err := resolveUpsertOp(getErr, audit.OpCreateRelation, audit.OpUpdateRelation)
 	if err != nil {
 		return nil, fmt.Errorf("entitymanager: ApplyRelation: existence check for %s: %w", r.Key(), err)
@@ -351,9 +351,9 @@ func (m *Manager) ApplyRelation(ctx context.Context, r *entity.Relation) (*entit
 // persistApplyEntity: no create-then-update fallback, so a create-intent
 // write that races a concurrent create is rejected, not silently merged.
 func (m *Manager) persistApplyRelation(ctx context.Context, op acl.Op, r *entity.Relation) error {
-	data := store.RelationData{Properties: r.Properties, Content: r.Content, FromFace: r.FromFace}
+	data := store.RelationData{Properties: r.Properties, Content: r.Content}
 	if op == acl.OpCreate {
-		if _, err := m.deps.Store.CreateRelation(ctx, r.From, r.Type, r.To, &data); err != nil {
+		if _, err := m.deps.Store.CreateRelation(ctx, r.Identity(), &data); err != nil {
 			if errors.Is(err, store.ErrConflict) {
 				return fmt.Errorf("%w: %s --%s--> %s", ErrRelationAlreadyExists, entity.FormatStateRef(r.From, r.FromFace), r.Type, r.To)
 			}
@@ -365,7 +365,7 @@ func (m *Manager) persistApplyRelation(ctx context.Context, op acl.Op, r *entity
 	// which run in one Tx; otherwise that update would write back the row it
 	// read and drop this one.
 	err := m.deps.Store.Tx(ctx, func(view store.Store) error {
-		_, err := view.UpdateRelationState(ctx, r.From, r.FromFace, r.Type, r.To, data)
+		_, err := view.UpdateRelation(ctx, r.Identity(), data)
 		return err
 	})
 	if err != nil {

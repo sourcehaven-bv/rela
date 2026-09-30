@@ -29,7 +29,7 @@ func addEntity(s store.Store, id, entityType string, props map[string]any) {
 }
 
 func addRelation(s store.Store, from, relType, to string) {
-	if _, err := s.CreateRelation(context.Background(), from, relType, to, nil); err != nil {
+	if _, err := s.CreateRelation(context.Background(), entity.RelationKey{From: from, Type: relType, To: to}, nil); err != nil {
 		panic(err)
 	}
 }

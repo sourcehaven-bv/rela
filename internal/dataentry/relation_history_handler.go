@@ -123,7 +123,7 @@ func handleV1RelationHistory(a *App, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := store.RelationHistoryQuery{
-		From: from, FromFace: fromRef.Face, Type: relType, To: to, RecordID: recordID,
+		Key: entityPkg.RelationKey{From: from, FromFace: fromRef.Face, Type: relType, To: to}, RecordID: recordID,
 	}
 
 	if len(parts) >= 5 && parts[4] != "" {
@@ -224,7 +224,9 @@ func serveRelationLifetimes(
 	w http.ResponseWriter, r *http.Request, reader store.RelationHistoryReader,
 	fromRef entityPkg.Ref, relType, to string,
 ) {
-	lifetimes, err := reader.ListRelationLifetimes(r.Context(), fromRef.ID, fromRef.Face, relType, to)
+	lifetimes, err := reader.ListRelationLifetimes(r.Context(), entityPkg.RelationKey{
+		From: fromRef.ID, FromFace: fromRef.Face, Type: relType, To: to,
+	})
 	if err != nil {
 		writeGateError(w, r, err)
 		return
@@ -284,7 +286,7 @@ func serveRelationHistoryTimeline(
 		versions = append(versions, row)
 	}
 	writeV1JSON(w, http.StatusOK, map[string]any{
-		"from": q.From, "type": q.Type, "to": q.To, "versions": versions,
+		"from": q.Key.From, "type": q.Key.Type, "to": q.Key.To, "versions": versions,
 	})
 }
 
@@ -342,7 +344,7 @@ func serveRelationHistoryVersion(
 	// not readable) serves no meta, which fails closed.
 	vr := a.visibleReader
 	if srcType := vr.storedType(ctx, snap.From); srcType != "" {
-		srcRef := entityPkg.Ref{ID: snap.From, Face: q.FromFace}
+		srcRef := entityPkg.Ref{ID: snap.From, Face: q.Key.FromFace}
 		src, live, gateErr := vr.ref(ctx, srcType, srcRef)
 		if gateErr != nil {
 			writeGateError(w, r, gateErr)
@@ -358,9 +360,9 @@ func serveRelationHistoryVersion(
 		"content": snap.Content, "meta": meta,
 	}
 	writeV1JSON(w, http.StatusOK, map[string]any{
-		"from":       q.From,
-		"type":       q.Type,
-		"to":         q.To,
+		"from":       q.Key.From,
+		"type":       q.Key.Type,
+		"to":         q.Key.To,
 		"version":    snap.Version,
 		"op":         snap.Op,
 		"created_at": snap.CreatedAt,
@@ -393,7 +395,9 @@ func restoreRelationHistoryVersion(a *App,
 	ctx := r.Context()
 	// Restore reads from the newest lifetime (RecordID 0); the HTTP restore route
 	// does not expose an older-lifetime selector (the CLI does via --lifetime).
-	q := store.RelationHistoryQuery{From: from, FromFace: fromRef.Face, Type: relType, To: to}
+	q := store.RelationHistoryQuery{Key: entityPkg.RelationKey{
+		From: from, FromFace: fromRef.Face, Type: relType, To: to,
+	}}
 	snap, err := reader.GetRelationVersion(ctx, q, version)
 	if errors.Is(err, store.ErrNotFound) {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
@@ -419,10 +423,12 @@ func restoreRelationHistoryVersion(a *App,
 	// through the entitymanager, which authorizes, validates endpoints, and
 	// audits. A missing endpoint surfaces as ErrEntityNotFound → 409.
 	//
-	// Liveness is probed on the addressed tail for the same reason:
-	// store.GetRelation reads the default tail, so a live faced edge would
-	// look absent and take the create branch.
-	_, liveErr := edgeOnFace(ctx, a.store, from, fromRef.Face, relType, to)
+	// Liveness is probed on the addressed tail for the same reason: a probe
+	// of the default tail would find a live faced edge absent and take the
+	// create branch.
+	_, liveErr := a.store.GetRelation(ctx, entityPkg.RelationKey{
+		From: from, FromFace: fromRef.Face, Type: relType, To: to,
+	})
 	var writeErr error
 	if liveErr == nil {
 		_, writeErr = a.entityManager.UpdateRelation(ctx, from, relType, to, opts)

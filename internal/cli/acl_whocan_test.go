@@ -68,7 +68,7 @@ func seedWhoCanGraph(t *testing.T, svc *readServices) {
 		{"INC-042", "belongs-to", "FOLDER-Q3"},
 	}
 	for _, r := range rels {
-		if _, err := st.CreateRelation(ctx, r.from, r.typ, r.to, nil); err != nil {
+		if _, err := st.CreateRelation(ctx, entity.RelationKey{From: r.from, Type: r.typ, To: r.to}, nil); err != nil {
 			t.Fatalf("seed relation %s--%s-->%s: %v", r.from, r.typ, r.to, err)
 		}
 	}

@@ -194,42 +194,41 @@ func TestPurgeRelationMultiLifetimeRefusalDeletesNothing(t *testing.T) {
 
 	recID := func() int64 {
 		id, err := v.(interface {
-			RelationRecordID(ctx context.Context, from, relType, to string) (int64, error)
-		}).RelationRecordID(ctx, "FEAT-1", "rel", "FEAT-2")
+			RelationRecordID(ctx context.Context, k entity.RelationKey) (int64, error)
+		}).RelationRecordID(ctx, entity.RelationKey{From: "FEAT-1", Type: "rel", To: "FEAT-2"})
 		require.NoError(t, err)
 		return id
 	}
 	writeRel := func(rid int64, op store.VersionOp, body string) {
 		require.NoError(t, v.WriteRelationVersion(ctx, store.RelationVersionInput{
-			RecordID: rid, From: "FEAT-1", Type: "rel", To: "FEAT-2", Op: op,
+			RecordID: rid, Key: entity.RelationKey{From: "FEAT-1", Type: "rel", To: "FEAT-2"}, Op: op,
 			Content: body, SchemaHash: "s1", Projection: []byte(`{"v":1}`),
 		}))
 	}
 
 	// Lifetime 1, then delete+recreate for lifetime 2.
-	_, err := s.CreateRelation(ctx, "FEAT-1", "rel", "FEAT-2", &store.RelationData{})
+	_, err := s.CreateRelation(ctx, entity.RelationKey{From: "FEAT-1", Type: "rel", To: "FEAT-2"}, &store.RelationData{})
 	require.NoError(t, err)
 	rid1 := recID()
 	writeRel(rid1, store.VersionOpUpdate, "first life")
 	writeRel(rid1, store.VersionOpDelete, "")
-	require.NoError(t, s.DeleteRelation(ctx, "FEAT-1", "rel", "FEAT-2"))
+	require.NoError(t, s.DeleteRelation(ctx, entity.RelationKey{From: "FEAT-1", Type: "rel", To: "FEAT-2"}))
 
-	_, err = s.CreateRelation(ctx, "FEAT-1", "rel", "FEAT-2", &store.RelationData{})
+	_, err = s.CreateRelation(ctx, entity.RelationKey{From: "FEAT-1", Type: "rel", To: "FEAT-2"}, &store.RelationData{})
 	require.NoError(t, err)
 	rid2 := recID()
 	writeRel(rid2, store.VersionOpUpdate, "second life")
 	require.NotEqual(t, rid1, rid2, "delete+recreate must mint a fresh lineage")
 
 	res, err := v.PurgeRelationVersions(ctx, store.RelationVersionPurgeRequest{
-		From: "FEAT-1", Type: "rel", To: "FEAT-2",
-		Selector: store.PurgeSelector{All: true}, Reason: "r", ForceLive: true,
+		Key: entity.RelationKey{From: "FEAT-1", Type: "rel", To: "FEAT-2"}, Selector: store.PurgeSelector{All: true}, Reason: "r", ForceLive: true,
 	})
 	require.NoError(t, err)
 	require.True(t, res.MultiLifetimeRefused,
 		"a multi-lifetime key purged without naming a lifetime: a false erasure guarantee")
 	require.Zero(t, res.Purged, "the refusal still deleted rows")
 
-	lts, err := v.ListRelationLifetimes(ctx, "FEAT-1", entity.Face(""), "rel", "FEAT-2")
+	lts, err := v.ListRelationLifetimes(ctx, entity.RelationKey{From: "FEAT-1", FromFace: entity.Face(""), Type: "rel", To: "FEAT-2"})
 	require.NoError(t, err)
 	require.Len(t, lts, 2, "the refused purge removed a lifetime")
 }

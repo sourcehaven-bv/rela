@@ -28,7 +28,7 @@ func TestDeleteEntity_RelationRemoveError_FailsSecure(t *testing.T) {
 	s1 := openStore(t, mem)
 	require.NoError(t, s1.CreateEntity(ctx, entity.New("REQ-1", "requirement")))
 	require.NoError(t, s1.CreateEntity(ctx, entity.New("SOL-1", "solution")))
-	_, err := s1.CreateRelation(ctx, "SOL-1", "implements", "REQ-1", nil)
+	_, err := s1.CreateRelation(ctx, entity.RelationKey{From: "SOL-1", Type: "implements", To: "REQ-1"}, nil)
 	require.NoError(t, err)
 	require.NoError(t, s1.Close())
 
@@ -53,7 +53,7 @@ func TestDeleteEntity_RelationRemoveError_FailsSecure(t *testing.T) {
 	// entity. The relation is still present too.
 	_, err = s2.GetEntity(ctx, entity.Ref{ID: "REQ-1"})
 	require.NoError(t, err, "entity must survive a failed cascade delete")
-	_, err = s2.GetRelation(ctx, "SOL-1", "implements", "REQ-1")
+	_, err = s2.GetRelation(ctx, entity.RelationKey{From: "SOL-1", Type: "implements", To: "REQ-1"})
 	require.NoError(t, err, "relation must survive a failed cascade delete")
 }
 
@@ -77,7 +77,7 @@ func TestDeleteEntity_PartialCascade_ReportsWhatWasRemoved(t *testing.T) {
 	require.NoError(t, s1.CreateEntity(ctx, entity.New("SOL-1", "solution")))
 	require.NoError(t, s1.CreateEntity(ctx, entity.New("SOL-2", "solution")))
 	for _, from := range []string{"SOL-1", "SOL-2"} {
-		_, err := s1.CreateRelation(ctx, from, "implements", "REQ-1", nil)
+		_, err := s1.CreateRelation(ctx, entity.RelationKey{From: from, Type: "implements", To: "REQ-1"}, nil)
 		require.NoError(t, err)
 	}
 	require.NoError(t, s1.Close())
@@ -110,9 +110,9 @@ func TestDeleteEntity_PartialCascade_ReportsWhatWasRemoved(t *testing.T) {
 		"the entity survived, so claiming it was deleted would be the opposite error")
 
 	// Reality check: the removal really did stick, and the rest survived.
-	_, err = s2.GetRelation(ctx, "SOL-1", "implements", "REQ-1")
+	_, err = s2.GetRelation(ctx, entity.RelationKey{From: "SOL-1", Type: "implements", To: "REQ-1"})
 	require.Error(t, err, "SOL-1's relation file was removed and stays removed")
-	_, err = s2.GetRelation(ctx, "SOL-2", "implements", "REQ-1")
+	_, err = s2.GetRelation(ctx, entity.RelationKey{From: "SOL-2", Type: "implements", To: "REQ-1"})
 	require.NoError(t, err, "SOL-2's relation must survive")
 	_, err = s2.GetEntity(ctx, entity.Ref{ID: "REQ-1"})
 	require.NoError(t, err, "the entity must survive a failed cascade delete")
@@ -128,7 +128,7 @@ func TestDeleteEntity_PartialCascade_FirstRelationFails(t *testing.T) {
 	s1 := openStore(t, mem)
 	require.NoError(t, s1.CreateEntity(ctx, entity.New("REQ-1", "requirement")))
 	require.NoError(t, s1.CreateEntity(ctx, entity.New("SOL-1", "solution")))
-	_, err := s1.CreateRelation(ctx, "SOL-1", "implements", "REQ-1", nil)
+	_, err := s1.CreateRelation(ctx, entity.RelationKey{From: "SOL-1", Type: "implements", To: "REQ-1"}, nil)
 	require.NoError(t, err)
 	require.NoError(t, s1.Close())
 
@@ -163,7 +163,7 @@ func TestDeleteFace_LastFacePartialCascade_ReportsWhatWasRemoved(t *testing.T) {
 	require.NoError(t, s1.CreateEntity(ctx, entity.New("SOL-1", "solution")))
 	require.NoError(t, s1.CreateEntity(ctx, entity.New("SOL-2", "solution")))
 	for _, from := range []string{"SOL-1", "SOL-2"} {
-		_, err := s1.CreateRelation(ctx, from, "implements", "REQ-1", nil)
+		_, err := s1.CreateRelation(ctx, entity.RelationKey{From: from, Type: "implements", To: "REQ-1"}, nil)
 		require.NoError(t, err)
 	}
 	require.NoError(t, s1.Close())
@@ -189,9 +189,9 @@ func TestDeleteFace_LastFacePartialCascade_ReportsWhatWasRemoved(t *testing.T) {
 	assert.Equal(t, "SOL-1", res.DeletedRelations[0].From)
 	assert.Empty(t, res.DeletedEntities)
 
-	_, err = s2.GetRelation(ctx, "SOL-1", "implements", "REQ-1")
+	_, err = s2.GetRelation(ctx, entity.RelationKey{From: "SOL-1", Type: "implements", To: "REQ-1"})
 	require.Error(t, err, "the index must not list a removed relation")
-	_, err = s2.GetRelation(ctx, "SOL-2", "implements", "REQ-1")
+	_, err = s2.GetRelation(ctx, entity.RelationKey{From: "SOL-2", Type: "implements", To: "REQ-1"})
 	require.NoError(t, err)
 	_, err = s2.GetEntity(ctx, entity.Ref{ID: "REQ-1"})
 	require.NoError(t, err, "the face survives a failed delete")
@@ -322,7 +322,7 @@ to: A-2
 	s2 := openStore(t, fs)
 	defer s2.Close()
 
-	rel, err := s2.GetRelation(ctx, "A-1", "depends", "A-2")
+	rel, err := s2.GetRelation(ctx, entity.RelationKey{From: "A-1", Type: "depends", To: "A-2"})
 	require.NoError(t, err)
 	assert.Equal(t, "A-1", rel.From)
 }
@@ -339,7 +339,7 @@ func TestRecovery_PartialRename_BothFilesExist(t *testing.T) {
 	e.Properties["title"] = "Important"
 	require.NoError(t, s1.CreateEntity(ctx, e))
 	require.NoError(t, s1.CreateEntity(ctx, entity.New("SOL-1", "solution")))
-	_, err := s1.CreateRelation(ctx, "SOL-1", "implements", "REQ-OLD", nil)
+	_, err := s1.CreateRelation(ctx, entity.RelationKey{From: "SOL-1", Type: "implements", To: "REQ-OLD"}, nil)
 	require.NoError(t, err)
 	require.NoError(t, s1.Close())
 
@@ -371,10 +371,10 @@ to: REQ-NEW
 	require.NoError(t, err, "new entity should be accessible")
 
 	// Both relation variants accessible.
-	_, err = s2.GetRelation(ctx, "SOL-1", "implements", "REQ-OLD")
+	_, err = s2.GetRelation(ctx, entity.RelationKey{From: "SOL-1", Type: "implements", To: "REQ-OLD"})
 	require.NoError(t, err, "old relation should still exist")
 
-	_, err = s2.GetRelation(ctx, "SOL-1", "implements", "REQ-NEW")
+	_, err = s2.GetRelation(ctx, entity.RelationKey{From: "SOL-1", Type: "implements", To: "REQ-NEW"})
 	require.NoError(t, err, "new relation should exist")
 }
 
@@ -389,9 +389,9 @@ func TestRecovery_PartialCascadeDelete(t *testing.T) {
 	require.NoError(t, s1.CreateEntity(ctx, entity.New("REQ-1", "requirement")))
 	require.NoError(t, s1.CreateEntity(ctx, entity.New("SOL-1", "solution")))
 	require.NoError(t, s1.CreateEntity(ctx, entity.New("SOL-2", "solution")))
-	_, err := s1.CreateRelation(ctx, "SOL-1", "implements", "REQ-1", nil)
+	_, err := s1.CreateRelation(ctx, entity.RelationKey{From: "SOL-1", Type: "implements", To: "REQ-1"}, nil)
 	require.NoError(t, err)
-	_, err = s1.CreateRelation(ctx, "SOL-2", "implements", "REQ-1", nil)
+	_, err = s1.CreateRelation(ctx, entity.RelationKey{From: "SOL-2", Type: "implements", To: "REQ-1"}, nil)
 	require.NoError(t, err)
 	require.NoError(t, s1.Close())
 
@@ -409,12 +409,12 @@ func TestRecovery_PartialCascadeDelete(t *testing.T) {
 	require.ErrorIs(t, err, store.ErrNotFound)
 
 	// The surviving orphaned relation is still loadable.
-	rel, err := s2.GetRelation(ctx, "SOL-2", "implements", "REQ-1")
+	rel, err := s2.GetRelation(ctx, entity.RelationKey{From: "SOL-2", Type: "implements", To: "REQ-1"})
 	require.NoError(t, err)
 	assert.Equal(t, "REQ-1", rel.To)
 
 	// The deleted relation is gone.
-	_, err = s2.GetRelation(ctx, "SOL-1", "implements", "REQ-1")
+	_, err = s2.GetRelation(ctx, entity.RelationKey{From: "SOL-1", Type: "implements", To: "REQ-1"})
 	require.ErrorIs(t, err, store.ErrNotFound)
 }
 

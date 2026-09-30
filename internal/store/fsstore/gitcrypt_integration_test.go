@@ -105,7 +105,7 @@ func TestGitCrypt_GetRelationReturnsInaccessibleRelation(t *testing.T) {
 	seedAndClose(t, fs, func(s *fsstore.FSStore) {
 		require.NoError(t, s.CreateEntity(ctx, entity.New("REQ-1", "requirement")))
 		require.NoError(t, s.CreateEntity(ctx, entity.New("SOL-1", "solution")))
-		_, err := s.CreateRelation(ctx, "SOL-1", "implements", "REQ-1", nil)
+		_, err := s.CreateRelation(ctx, entity.RelationKey{From: "SOL-1", Type: "implements", To: "REQ-1"}, nil)
 		require.NoError(t, err)
 	})
 	writeEncrypted(t, fs, "/relations/SOL-1--implements--REQ-1.md")
@@ -113,7 +113,7 @@ func TestGitCrypt_GetRelationReturnsInaccessibleRelation(t *testing.T) {
 	s := openStore(t, fs)
 	defer s.Close()
 
-	got, err := s.GetRelation(ctx, "SOL-1", "implements", "REQ-1")
+	got, err := s.GetRelation(ctx, entity.RelationKey{From: "SOL-1", Type: "implements", To: "REQ-1"})
 	require.NoError(t, err, "encrypted relation should load with Inaccessible populated, not error")
 	assert.Equal(t, "SOL-1", got.From)
 	assert.Equal(t, "implements", got.Type)
@@ -206,7 +206,7 @@ func TestGitCrypt_HalfEncrypted_CleartextRelationToEncryptedEntity(t *testing.T)
 	seedAndClose(t, fs, func(s *fsstore.FSStore) {
 		require.NoError(t, s.CreateEntity(ctx, entity.New("REQ-1", "requirement")))
 		require.NoError(t, s.CreateEntity(ctx, entity.New("SOL-1", "solution")))
-		_, err := s.CreateRelation(ctx, "SOL-1", "implements", "REQ-1", nil)
+		_, err := s.CreateRelation(ctx, entity.RelationKey{From: "SOL-1", Type: "implements", To: "REQ-1"}, nil)
 		require.NoError(t, err)
 	})
 	writeEncrypted(t, fs, "/entities/requirements/REQ-1.md")
@@ -214,7 +214,7 @@ func TestGitCrypt_HalfEncrypted_CleartextRelationToEncryptedEntity(t *testing.T)
 	s := openStore(t, fs)
 	defer s.Close()
 
-	rel, err := s.GetRelation(ctx, "SOL-1", "implements", "REQ-1")
+	rel, err := s.GetRelation(ctx, entity.RelationKey{From: "SOL-1", Type: "implements", To: "REQ-1"})
 	require.NoError(t, err)
 	assert.False(t, rel.IsLocked(), "cleartext relation file should be readable")
 

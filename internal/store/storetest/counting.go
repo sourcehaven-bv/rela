@@ -132,9 +132,9 @@ func (c *Counting) HighestID(ctx context.Context, prefix string) (int, error) {
 	return c.Store.HighestID(ctx, prefix)
 }
 
-func (c *Counting) GetRelation(ctx context.Context, from, relType, to string) (*entity.Relation, error) {
+func (c *Counting) GetRelation(ctx context.Context, k entity.RelationKey) (*entity.Relation, error) {
 	c.hit("GetRelation")
-	return c.Store.GetRelation(ctx, from, relType, to)
+	return c.Store.GetRelation(ctx, k)
 }
 
 func (c *Counting) ListRelations(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error] {

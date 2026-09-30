@@ -48,8 +48,7 @@ func mixedFacedService(t *testing.T) *analysis.Service {
 				t.Fatalf("seed %s@%s: %v", e.ID, e.Face, err)
 			}
 		}
-		if _, err := st.CreateRelation(ctx, "POL-2", "implements", "CTL-1",
-			&store.RelationData{FromFace: "draft"}); err != nil {
+		if _, err := st.CreateRelation(ctx, entity.RelationKey{From: "POL-2", FromFace: "draft", Type: "implements", To: "CTL-1"}, &store.RelationData{}); err != nil {
 			t.Fatalf("seed edge: %v", err)
 		}
 	})
@@ -139,8 +138,7 @@ func TestCheckCardinality_NamesTheFace(t *testing.T) {
 		_ = st.CreateEntity(ctx, &entity.Entity{ID: "POL-1", Type: "policy", Face: "draft"})
 		_ = st.CreateEntity(ctx, &entity.Entity{ID: "POL-1", Type: "policy", Face: "published"})
 		_ = st.CreateEntity(ctx, &entity.Entity{ID: "CTL-1", Type: "control"})
-		if _, err := st.CreateRelation(ctx, "POL-1", "implements", "CTL-1",
-			&store.RelationData{FromFace: "draft"}); err != nil {
+		if _, err := st.CreateRelation(ctx, entity.RelationKey{From: "POL-1", FromFace: "draft", Type: "implements", To: "CTL-1"}, &store.RelationData{}); err != nil {
 			t.Fatalf("seed edge: %v", err)
 		}
 	})

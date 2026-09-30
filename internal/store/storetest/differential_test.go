@@ -112,7 +112,7 @@ func FuzzDifferential(f *testing.F) {
 			e3.SetString("status", "open")
 			require.NoError(t, s.CreateEntity(bg, e3))
 
-			_, err := s.CreateRelation(bg, "E-1", "blocks", "E-2", nil)
+			_, err := s.CreateRelation(bg, entity.RelationKey{From: "E-1", Type: "blocks", To: "E-2"}, nil)
 			require.NoError(t, err)
 		}
 
@@ -154,8 +154,8 @@ func FuzzDifferential(f *testing.F) {
 				assertSameError(t, err1, err2, "UpdateEntity E-1")
 
 			case 4: // CreateRelation
-				_, err1 := mem.CreateRelation(bg, "E-1", "needs", "E-3", nil)
-				_, err2 := fss.CreateRelation(bg, "E-1", "needs", "E-3", nil)
+				_, err1 := mem.CreateRelation(bg, entity.RelationKey{From: "E-1", Type: "needs", To: "E-3"}, nil)
+				_, err2 := fss.CreateRelation(bg, entity.RelationKey{From: "E-1", Type: "needs", To: "E-3"}, nil)
 				assertSameError(t, err1, err2, "CreateRelation E-1→E-3")
 
 			case 5: // DeleteEntity (cascade)
@@ -182,8 +182,8 @@ func FuzzDifferential(f *testing.F) {
 				assertSameError(t, err1, err2, "RenameEntity E-3→E-RENAMED")
 
 			case 8: // DeleteRelation
-				err1 := mem.DeleteRelation(bg, "E-1", "blocks", "E-2")
-				err2 := fss.DeleteRelation(bg, "E-1", "blocks", "E-2")
+				err1 := mem.DeleteRelation(bg, entity.RelationKey{From: "E-1", Type: "blocks", To: "E-2"})
+				err2 := fss.DeleteRelation(bg, entity.RelationKey{From: "E-1", Type: "blocks", To: "E-2"})
 				assertSameError(t, err1, err2, "DeleteRelation")
 
 			case 9: // HighestID

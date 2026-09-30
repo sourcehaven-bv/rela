@@ -64,7 +64,7 @@ func FuzzRelationKeyCollision(f *testing.F, factory FuzzFactory) {
 			return
 		}
 
-		r, err := s.CreateRelation(bg, from, relType, to, nil)
+		r, err := s.CreateRelation(bg, entity.RelationKey{From: from, Type: relType, To: to}, nil)
 		if storeutil.ValidateRelationType(relType) != nil {
 			assert.Error(t, err)
 			return
@@ -73,7 +73,7 @@ func FuzzRelationKeyCollision(f *testing.F, factory FuzzFactory) {
 			return
 		}
 
-		got, err := s.GetRelation(bg, from, relType, to)
+		got, err := s.GetRelation(bg, entity.RelationKey{From: from, Type: relType, To: to})
 		require.NoError(t, err)
 		assert.Equal(t, r.Key(), got.Key())
 	})
@@ -136,10 +136,10 @@ func FuzzRenameKeyCollapse(f *testing.F, factory FuzzFactory) {
 			return
 		}
 
-		if _, err := s.CreateRelation(bg, id1, relType, id2, nil); err != nil {
+		if _, err := s.CreateRelation(bg, entity.RelationKey{From: id1, Type: relType, To: id2}, nil); err != nil {
 			return
 		}
-		if _, err := s.CreateRelation(bg, id1, relType, id3, nil); err != nil {
+		if _, err := s.CreateRelation(bg, entity.RelationKey{From: id1, Type: relType, To: id3}, nil); err != nil {
 			return
 		}
 
@@ -176,7 +176,7 @@ func FuzzConcurrentOps(f *testing.F, factory FuzzFactory) {
 		for _, id := range []string{"E-1", "E-2", "E-3"} {
 			_ = s.CreateEntity(bg, entity.New(id, "ticket"))
 		}
-		_, _ = s.CreateRelation(bg, "E-1", "blocks", "E-2", nil)
+		_, _ = s.CreateRelation(bg, entity.RelationKey{From: "E-1", Type: "blocks", To: "E-2"}, nil)
 
 		var wg sync.WaitGroup
 		wg.Add(len(ops))
@@ -212,7 +212,7 @@ func FuzzConcurrentOps(f *testing.F, factory FuzzFactory) {
 				case 7: // Close (tests double-close safety)
 					_ = s.Close()
 				case 8: // CreateRelation
-					_, _ = s.CreateRelation(bg, "E-1", "needs", "E-3", nil)
+					_, _ = s.CreateRelation(bg, entity.RelationKey{From: "E-1", Type: "needs", To: "E-3"}, nil)
 				case 9: // ListRelations
 					for _, err := range s.ListRelations(bg, store.RelationQuery{}) {
 						_ = err

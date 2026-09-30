@@ -26,7 +26,7 @@ func fixture(t *testing.T) *validationgraph.Graph {
 			t.Fatalf("create %s: %v", e.ID, err)
 		}
 	}
-	if _, err := st.CreateRelation(ctx, "A", "has-review", "B", nil); err != nil {
+	if _, err := st.CreateRelation(ctx, entity.RelationKey{From: "A", Type: "has-review", To: "B"}, nil); err != nil {
 		t.Fatalf("create relation: %v", err)
 	}
 	g, err := validationgraph.New(visibility.Unrestricted(st))
@@ -116,7 +116,7 @@ func TestRelatedEntities_UnreadableTargetSurvivesAsUnresolved(t *testing.T) {
 	}
 	// memstore permits an edge to an absent entity, which is exactly the
 	// dangling-reference case.
-	if _, err := st.CreateRelation(ctx, "A", "has-review", "GONE", nil); err != nil {
+	if _, err := st.CreateRelation(ctx, entity.RelationKey{From: "A", Type: "has-review", To: "GONE"}, nil); err != nil {
 		t.Skipf("backend refuses a dangling edge (%v); nothing to assert here", err)
 	}
 	g, err := validationgraph.New(visibility.Unrestricted(st))
@@ -195,7 +195,7 @@ func TestRelatedEntities_NoFarReadsWhenNotRequested(t *testing.T) {
 		}
 	}
 	for _, to := range []string{"B", "C"} {
-		if _, err := st.CreateRelation(ctx, "A", "has-review", to, nil); err != nil {
+		if _, err := st.CreateRelation(ctx, entity.RelationKey{From: "A", Type: "has-review", To: to}, nil); err != nil {
 			t.Fatalf("create relation to %s: %v", to, err)
 		}
 	}

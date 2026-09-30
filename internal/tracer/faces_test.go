@@ -27,7 +27,7 @@ func seedFaced(t *testing.T) *memstore.MemStore {
 	} {
 		require.NoError(t, st.CreateEntity(ctx(), e))
 	}
-	_, err := st.CreateRelation(ctx(), "POL-1", "implements", "CTL-1", &store.RelationData{FromFace: "draft"})
+	_, err := st.CreateRelation(ctx(), entity.RelationKey{From: "POL-1", FromFace: "draft", Type: "implements", To: "CTL-1"}, &store.RelationData{})
 	require.NoError(t, err)
 	return st
 }
@@ -81,7 +81,7 @@ func TestFindOrphans_EdgeOnMissingFaceConnectsNothing(t *testing.T) {
 	st := memstore.New()
 	require.NoError(t, st.CreateEntity(ctx(), &entity.Entity{ID: "POL-1", Type: "policy", Face: "draft"}))
 	require.NoError(t, st.CreateEntity(ctx(), &entity.Entity{ID: "CTL-1", Type: "control"}))
-	_, err := st.CreateRelation(ctx(), "POL-1", "implements", "CTL-1", &store.RelationData{FromFace: "published"})
+	_, err := st.CreateRelation(ctx(), entity.RelationKey{From: "POL-1", FromFace: "published", Type: "implements", To: "CTL-1"}, &store.RelationData{})
 	require.NoError(t, err)
 
 	got, err := tracer.New(st, store.WorldScope{}).FindOrphans(ctx())

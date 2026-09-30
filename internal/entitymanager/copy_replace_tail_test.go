@@ -117,13 +117,11 @@ func TestCopyReplace_DeletesTheTargetTail(t *testing.T) {
 	reviewTail := entity.Face("review")
 	// Two edges differing ONLY by tail — these are two distinct relations.
 	// The SOURCE (live) face points at NEW-1; this is what gets copied.
-	if _, cerr := st.CreateRelation(ctx, "PAGE-1", "references", "NEW-1",
-		&store.RelationData{FromFace: liveTail}); cerr != nil {
+	if _, cerr := st.CreateRelation(ctx, entity.RelationKey{From: "PAGE-1", FromFace: liveTail, Type: "references", To: "NEW-1"}, &store.RelationData{}); cerr != nil {
 		t.Fatalf("seed live-tail edge: %v", cerr)
 	}
 	// The TARGET (review) face points at OLD-1; `replace` must remove this.
-	if _, cerr := st.CreateRelation(ctx, "PAGE-1", "references", "OLD-1",
-		&store.RelationData{FromFace: reviewTail}); cerr != nil {
+	if _, cerr := st.CreateRelation(ctx, entity.RelationKey{From: "PAGE-1", FromFace: reviewTail, Type: "references", To: "OLD-1"}, &store.RelationData{}); cerr != nil {
 		t.Fatalf("seed review-tail edge: %v", cerr)
 	}
 

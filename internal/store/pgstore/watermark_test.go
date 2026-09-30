@@ -95,13 +95,13 @@ func TestEntityTypeWatermark_RelationDeleteDoesNotMoveEntityType(t *testing.T) {
 
 	mustCreateEntity(t, st, "REQ-1", "requirement")
 	mustCreateEntity(t, st, "REQ-2", "requirement")
-	_, err := st.CreateRelation(ctx, "REQ-1", "relates-to", "REQ-2", nil)
+	_, err := st.CreateRelation(ctx, entity.RelationKey{From: "REQ-1", Type: "relates-to", To: "REQ-2"}, nil)
 	require.NoError(t, err)
 
 	before, err := st.EntityTypeWatermark(ctx, "requirement")
 	require.NoError(t, err)
 
-	require.NoError(t, st.DeleteRelation(ctx, "REQ-1", "relates-to", "REQ-2"))
+	require.NoError(t, st.DeleteRelation(ctx, entity.RelationKey{From: "REQ-1", Type: "relates-to", To: "REQ-2"}))
 
 	after, err := st.EntityTypeWatermark(ctx, "requirement")
 	require.NoError(t, err)

@@ -579,12 +579,10 @@ copies:
 	}); err != nil {
 		t.Fatalf("seed published: %v", err)
 	}
-	if _, err := st.CreateRelation(ctx, "PAGE-1", "cites", "SPEC-12",
-		&store.RelationData{FromFace: draft}); err != nil {
+	if _, err := st.CreateRelation(ctx, entity.RelationKey{From: "PAGE-1", FromFace: draft, Type: "cites", To: "SPEC-12"}, &store.RelationData{}); err != nil {
 		t.Fatalf("seed draft edge: %v", err)
 	}
-	if _, err := st.CreateRelation(ctx, "PAGE-1", "cites", "SPEC-9",
-		&store.RelationData{FromFace: published}); err != nil {
+	if _, err := st.CreateRelation(ctx, entity.RelationKey{From: "PAGE-1", FromFace: published, Type: "cites", To: "SPEC-9"}, &store.RelationData{}); err != nil {
 		t.Fatalf("seed published edge: %v", err)
 	}
 

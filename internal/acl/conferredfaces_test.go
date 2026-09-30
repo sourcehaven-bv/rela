@@ -28,7 +28,7 @@ func TestReadQuery_ConferredRolesKeepTheirOwnFaces(t *testing.T) {
 		}
 	}
 	for _, r := range [][3]string{{"bob", "owns", "POL-1"}, {"alice", "reviews", "POL-1"}} {
-		if _, err := st.CreateRelation(ctx, r[0], r[1], r[2], nil); err != nil {
+		if _, err := st.CreateRelation(ctx, entity.RelationKey{From: r[0], Type: r[1], To: r[2]}, nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -97,7 +97,7 @@ func TestPermitsReadFace_ScopedVerdictReadsTheFaceRow(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := st.CreateRelation(ctx, "bob", "owns", "POL-2", nil); err != nil {
+	if _, err := st.CreateRelation(ctx, entity.RelationKey{From: "bob", Type: "owns", To: "POL-2"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	d, err := NewDeclarative(&Policy{

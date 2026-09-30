@@ -76,8 +76,12 @@ import (
 // CAS precondition has to be evaluated atomically with the write, so it
 // cannot live anywhere but on the type that owns the write.
 //
-//plimsoll:max-methods=52
-//plimsoll:max-exported-methods=32
+// -2 exported (TKT-KQXVF7): UpdateRelationState and
+// DeleteRelationState folded into UpdateRelation and DeleteRelation, which
+// now take an entity.RelationKey that carries the tail.
+//
+//plimsoll:max-methods=48
+//plimsoll:max-exported-methods=30
 type MemStore struct {
 	// txMu serializes an open Tx against ordinary writers: Tx holds it
 	// for the whole callback, every exported write method takes it
@@ -910,26 +914,11 @@ func (m *MemStore) renameEntity(_ context.Context, oldID, newID string) (*store.
 
 // --- RelationReader ---
 
-// tailKey addresses the edge of a triple carrying EXACTLY tail p. The tail
-// is part of a relation's identity, so this is an address and not a filter:
-// two tails on one triple are two relations (TKT-C1XUA8).
-func tailKey(from string, p entity.Face, relType, to string) string {
-	return (&entity.Relation{From: from, FromFace: p, Type: relType, To: to}).Key()
-}
-
-// defaultTailKey addresses the DEFAULT-tail edge of a triple. Get and
-// update are default-tail-only (TKT-DOFYR1) — see
-// store.RelationData.FromFace. Delete has the general form
-// deleteRelationState since TKT-C1XUA8.
-func defaultTailKey(from, relType, to string) string {
-	return tailKey(from, "", relType, to)
-}
-
-func (m *MemStore) GetRelation(_ context.Context, from, relType, to string) (*entity.Relation, error) {
+func (m *MemStore) GetRelation(_ context.Context, k entity.RelationKey) (*entity.Relation, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	key := defaultTailKey(from, relType, to)
+	key := k.String()
 	r, ok := m.relations[key]
 	if !ok {
 		return nil, store.ErrNotFound
@@ -999,14 +988,14 @@ func (m *MemStore) CountRelations(_ context.Context, q store.RelationQuery) (int
 // --- RelationWriter ---
 
 func (m *MemStore) createRelation(
-	_ context.Context, from, relType, to string, data *store.RelationData,
+	_ context.Context, k entity.RelationKey, data *store.RelationData,
 ) (*entity.Relation, error) {
-	for _, id := range []string{from, to} {
+	for _, id := range []string{k.From, k.To} {
 		if err := validateID(id); err != nil {
 			return nil, err
 		}
 	}
-	if err := storeutil.ValidateRelationType(relType); err != nil {
+	if err := storeutil.ValidateRelationType(k.Type); err != nil {
 		return nil, err
 	}
 	if data != nil {
@@ -1018,15 +1007,15 @@ func (m *MemStore) createRelation(
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	r := entity.NewRelation(from, relType, to)
+	r := entity.NewRelation(k.From, k.Type, k.To)
+	r.FromFace = k.FromFace // tail face is identity (TKT-DOFYR1)
 	r.UpdatedAt = time.Now()
 	if data != nil {
-		r.FromFace = data.FromFace // tail face is identity (TKT-DOFYR1)
 		r.Content = data.Content
 		if data.Properties != nil {
 			r.Properties = make(map[string]any, len(data.Properties))
-			for k, v := range data.Properties {
-				r.Properties[k] = entity.CloneValue(v)
+			for pk, v := range data.Properties {
+				r.Properties[pk] = entity.CloneValue(v)
 			}
 		}
 	}
@@ -1041,25 +1030,19 @@ func (m *MemStore) createRelation(
 
 	m.emit(store.Event{
 		Op:           store.EventRelationCreated,
-		RelationType: relType,
-		From:         from,
-		To:           to,
-		Face:         r.FromFace,
+		RelationType: k.Type,
+		From:         k.From,
+		To:           k.To,
+		Face:         k.FromFace,
 	})
 	return r.Clone(), nil
 }
 
+// updateRelation writes the edge with EXACTLY this key, tail included. The
+// tail is part of a relation's identity, so addressing the wrong one updates
+// a different edge rather than failing (BUG-64MU2Q).
 func (m *MemStore) updateRelation(
-	ctx context.Context, from, relType, to string, data store.RelationData,
-) (*entity.Relation, error) {
-	return m.updateRelationState(ctx, from, "", relType, to, data)
-}
-
-// updateRelationState writes the edge with EXACTLY this tail. The tail is
-// part of a relation's identity, so addressing the wrong one updates a
-// different edge rather than failing (BUG-64MU2Q).
-func (m *MemStore) updateRelationState(
-	_ context.Context, from string, p entity.Face, relType, to string, data store.RelationData,
+	_ context.Context, k entity.RelationKey, data store.RelationData,
 ) (*entity.Relation, error) {
 	if err := storeutil.ValidateProperties(data.Properties); err != nil {
 		return nil, err
@@ -1067,7 +1050,7 @@ func (m *MemStore) updateRelationState(
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	key := tailKey(from, p, relType, to)
+	key := k.String()
 	r, ok := m.relations[key]
 	if !ok {
 		return nil, store.ErrNotFound
@@ -1077,8 +1060,8 @@ func (m *MemStore) updateRelationState(
 	updated.Content = data.Content
 	if data.Properties != nil {
 		updated.Properties = make(map[string]any, len(data.Properties))
-		for k, v := range data.Properties {
-			updated.Properties[k] = entity.CloneValue(v)
+		for pk, v := range data.Properties {
+			updated.Properties[pk] = entity.CloneValue(v)
 		}
 	} else {
 		updated.Properties = nil
@@ -1088,28 +1071,21 @@ func (m *MemStore) updateRelationState(
 
 	m.emit(store.Event{
 		Op:           store.EventRelationUpdated,
-		RelationType: relType,
-		From:         from,
-		To:           to,
-		Face:         p,
+		RelationType: k.Type,
+		From:         k.From,
+		To:           k.To,
+		Face:         k.FromFace,
 	})
 	return updated.Clone(), nil
 }
 
-func (m *MemStore) deleteRelation(ctx context.Context, from, relType, to string) error {
-	return m.deleteRelationState(ctx, from, "", relType, to)
-}
-
-// deleteRelationState removes the edge with EXACTLY this tail. The tail is
-// part of a relation's identity, so addressing the wrong one deletes a
-// different edge rather than failing (TKT-C1XUA8).
-func (m *MemStore) deleteRelationState(
-	_ context.Context, from string, p entity.Face, relType, to string,
-) error {
+// deleteRelation removes the edge with EXACTLY this key, tail included
+// (TKT-C1XUA8).
+func (m *MemStore) deleteRelation(_ context.Context, k entity.RelationKey) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	key := tailKey(from, p, relType, to)
+	key := k.String()
 	if _, ok := m.relations[key]; !ok {
 		return store.ErrNotFound
 	}
@@ -1118,10 +1094,10 @@ func (m *MemStore) deleteRelationState(
 
 	m.emit(store.Event{
 		Op:           store.EventRelationDeleted,
-		RelationType: relType,
-		From:         from,
-		To:           to,
-		Face:         p,
+		RelationType: k.Type,
+		From:         k.From,
+		To:           k.To,
+		Face:         k.FromFace,
 	})
 	return nil
 }

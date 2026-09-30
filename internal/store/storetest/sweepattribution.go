@@ -69,20 +69,18 @@ func RunSweepAttributionTests(t *testing.T, f Factory, sweepNow func(t *testing.
 		v := versionsOf(t, s)
 		require.NoError(t, s.CreateEntity(ctx(), newEntity("FEAT-1", "from")))
 		require.NoError(t, s.CreateEntity(ctx(), newEntity("FEAT-2", "to")))
-		_, err := s.CreateRelation(attributed("carol", "mcp"), "FEAT-1", "depends-on", "FEAT-2",
-			&store.RelationData{Content: "why"})
+		_, err := s.CreateRelation(attributed("carol", "mcp"), entity.RelationKey{From: "FEAT-1", Type: "depends-on", To: "FEAT-2"}, &store.RelationData{Content: "why"})
 		require.NoError(t, err)
 		sweepNow(t, s)
 
-		q := store.RelationHistoryQuery{From: "FEAT-1", Type: "depends-on", To: "FEAT-2"}
+		q := store.RelationHistoryQuery{Key: entity.RelationKey{From: "FEAT-1", Type: "depends-on", To: "FEAT-2"}}
 		metas, err := v.ListRelationVersions(ctx(), q)
 		require.NoError(t, err)
 		require.Len(t, metas, 1)
 		require.Equal(t, "carol", metas[0].PrincipalUser)
 		require.Equal(t, "mcp", metas[0].PrincipalTool)
 
-		_, err = s.UpdateRelation(ctx(), "FEAT-1", "depends-on", "FEAT-2",
-			store.RelationData{Content: "changed"})
+		_, err = s.UpdateRelation(ctx(), entity.RelationKey{From: "FEAT-1", Type: "depends-on", To: "FEAT-2"}, store.RelationData{Content: "changed"})
 		require.NoError(t, err)
 		sweepNow(t, s)
 		metas, err = v.ListRelationVersions(ctx(), q)
@@ -109,7 +107,7 @@ func RunSweepAttributionTests(t *testing.T, f Factory, sweepNow func(t *testing.
 				v := versionsOf(t, s)
 				require.NoError(t, s.CreateEntity(ctx(), newEntity("FEAT-1", "from")))
 				require.NoError(t, s.CreateEntity(ctx(), newEntity("FEAT-2", "to")))
-				_, err := s.CreateRelation(attributed("carol", "mcp"), "FEAT-1", "depends-on", "FEAT-2", nil)
+				_, err := s.CreateRelation(attributed("carol", "mcp"), entity.RelationKey{From: "FEAT-1", Type: "depends-on", To: "FEAT-2"}, nil)
 				require.NoError(t, err)
 				sweepNow(t, s)
 
@@ -123,7 +121,7 @@ func RunSweepAttributionTests(t *testing.T, f Factory, sweepNow func(t *testing.
 				sweepNow(t, s)
 
 				metas, err := v.ListRelationVersions(ctx(),
-					store.RelationHistoryQuery{From: "FEAT-2", Type: "depends-on", To: "FEAT-1"})
+					store.RelationHistoryQuery{Key: entity.RelationKey{From: "FEAT-2", Type: "depends-on", To: "FEAT-1"}})
 				require.NoError(t, err)
 				require.NotEmpty(t, metas)
 				last := metas[len(metas)-1]

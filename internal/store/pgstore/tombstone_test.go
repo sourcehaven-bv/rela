@@ -62,14 +62,14 @@ func TestDeleteWritesRelationTombstone(t *testing.T) {
 
 	mustCreateEntity(t, st, "DEC-1", "decision")
 	mustCreateEntity(t, st, "REQ-1", "requirement")
-	_, err := st.CreateRelation(ctx, "DEC-1", "addresses", "REQ-1", &store.RelationData{})
+	_, err := st.CreateRelation(ctx, entity.RelationKey{From: "DEC-1", Type: "addresses", To: "REQ-1"}, &store.RelationData{})
 	require.NoError(t, err)
 
 	pre, err := st.ManifestSince(ctx, 0)
 	require.NoError(t, err)
 	cursor := pre[len(pre)-1].Seq
 
-	require.NoError(t, st.DeleteRelation(ctx, "DEC-1", "addresses", "REQ-1"))
+	require.NoError(t, st.DeleteRelation(ctx, entity.RelationKey{From: "DEC-1", Type: "addresses", To: "REQ-1"}))
 
 	entries, err := st.ManifestSince(ctx, cursor)
 	require.NoError(t, err)
@@ -90,7 +90,7 @@ func TestCascadeDeleteTombstonesRelations(t *testing.T) {
 
 	mustCreateEntity(t, st, "DEC-1", "decision")
 	mustCreateEntity(t, st, "REQ-1", "requirement")
-	_, err := st.CreateRelation(ctx, "DEC-1", "addresses", "REQ-1", &store.RelationData{})
+	_, err := st.CreateRelation(ctx, entity.RelationKey{From: "DEC-1", Type: "addresses", To: "REQ-1"}, &store.RelationData{})
 	require.NoError(t, err)
 
 	pre, err := st.ManifestSince(ctx, 0)
@@ -157,7 +157,7 @@ func TestRenameTombstonesOldIdentities(t *testing.T) {
 
 	mustCreateEntity(t, st, "DEC-1", "decision")
 	mustCreateEntity(t, st, "REQ-1", "requirement")
-	_, err := st.CreateRelation(ctx, "DEC-1", "addresses", "REQ-1", &store.RelationData{})
+	_, err := st.CreateRelation(ctx, entity.RelationKey{From: "DEC-1", Type: "addresses", To: "REQ-1"}, &store.RelationData{})
 	require.NoError(t, err)
 
 	pre, err := st.ManifestSince(ctx, 0)

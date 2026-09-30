@@ -58,7 +58,7 @@ func seedViewGraph(t *testing.T, app *App) {
 	})
 
 	for _, to := range []string{"FEAT-PUB", "FEAT-DRAFT"} {
-		if _, err := app.store.CreateRelation(ctx, "TKT-1", "implements", to, nil); err != nil {
+		if _, err := app.store.CreateRelation(ctx, entity.RelationKey{From: "TKT-1", Type: "implements", To: to}, nil); err != nil {
 			t.Fatalf("seed edge to %s: %v", to, err)
 		}
 	}

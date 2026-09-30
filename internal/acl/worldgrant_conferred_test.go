@@ -25,7 +25,7 @@ func TestPermitsWorld_ConferredRoleOpensTheWorldGlobally(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := st.CreateRelation(ctx, "alice", "owns", "POL-1", nil); err != nil {
+	if _, err := st.CreateRelation(ctx, entity.RelationKey{From: "alice", Type: "owns", To: "POL-1"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	p := &acl.Policy{

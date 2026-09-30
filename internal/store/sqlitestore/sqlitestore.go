@@ -126,8 +126,12 @@ const timeFmt = time.RFC3339Nano
 // they must live on this type. The SQL they run is built by free functions in
 // graphsql.go.
 //
-//plimsoll:max-methods=56
-//plimsoll:max-exported-methods=37
+// -2 exported (TKT-KQXVF7): UpdateRelationState and
+// DeleteRelationState folded into UpdateRelation and DeleteRelation, which
+// now take an entity.RelationKey that carries the tail.
+//
+//plimsoll:max-methods=53
+//plimsoll:max-exported-methods=35
 type Store struct {
 	db *sql.DB
 

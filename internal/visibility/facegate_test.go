@@ -259,7 +259,7 @@ func TestVisibleTracer_IsFaceGated(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := st.CreateRelation(ctx, "TKT-1", "blocks", "TKT-2", nil); err != nil {
+	if _, err := st.CreateRelation(ctx, entity.RelationKey{From: "TKT-1", Type: "blocks", To: "TKT-2"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	base := tracer.New(st, store.WorldScope{})
@@ -310,8 +310,7 @@ func TestVisibleTracer_HiddenFace(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := st.CreateRelation(ctx, "POL-1", "implements", "CTL-1",
-		&store.RelationData{FromFace: "draft"}); err != nil {
+	if _, err := st.CreateRelation(ctx, entity.RelationKey{From: "POL-1", FromFace: "draft", Type: "implements", To: "CTL-1"}, &store.RelationData{}); err != nil {
 		t.Fatal(err)
 	}
 	base := tracer.New(st, store.WorldScope{})
@@ -400,7 +399,7 @@ func TestVisibleTracer_TraversalSkipsHiddenEdges(t *testing.T) {
 		}
 	}
 	for _, r := range [][2]string{{"R", "H"}, {"H", "X"}, {"X", "R"}, {"X", "Y"}} {
-		if _, err := st.CreateRelation(ctx, r[0], "links", r[1], nil); err != nil {
+		if _, err := st.CreateRelation(ctx, entity.RelationKey{From: r[0], Type: "links", To: r[1]}, nil); err != nil {
 			t.Fatal(err)
 		}
 	}

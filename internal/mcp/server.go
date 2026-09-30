@@ -132,7 +132,10 @@ type GraphReader interface {
 	// ([visibility.Resolver.ResolveHeaders]). A miss is absent.
 	ResolveHeaders(ctx context.Context, refs []entity.Ref) map[entity.Ref]visibility.ResolvedHeader
 	ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error]
-	GetRelation(ctx context.Context, from, relType, to string) (*entity.Relation, error)
+	// GetRelation reads the edge at k, tail included. It answers not-found
+	// unless the caller may read both endpoints and, for a content edge, the
+	// tail face itself.
+	GetRelation(ctx context.Context, k entity.RelationKey) (*entity.Relation, error)
 	ListRelations(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error]
 
 	// ListRelationsStrict is ListRelations with a gate fault returned as an

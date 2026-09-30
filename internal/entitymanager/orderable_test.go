@@ -248,7 +248,7 @@ func TestUpdateRelation_BothMode_SidesIndependent(t *testing.T) {
 		t.Fatalf("update: %v", err)
 	}
 
-	got, err := st.GetRelation(ctx, recipe.ID, "has-step", step.ID)
+	got, err := st.GetRelation(ctx, entity.RelationKey{From: recipe.ID, Type: "has-step", To: step.ID})
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
@@ -290,7 +290,7 @@ func TestUpdateRelation_RejectsNonFiniteOrder(t *testing.T) {
 				t.Fatalf("expected update to fail for value %v, got nil error", tt.value)
 			}
 
-			got, getErr := st.GetRelation(ctx, recipe.ID, "has-step", step.ID)
+			got, getErr := st.GetRelation(ctx, entity.RelationKey{From: recipe.ID, Type: "has-step", To: step.ID})
 			if getErr != nil {
 				t.Fatalf("get: %v", getErr)
 			}

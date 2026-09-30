@@ -280,7 +280,7 @@ func (r *recordingCapture) WriteVersion(context.Context, store.VersionInput) err
 func (r *recordingCapture) WriteRelationVersion(
 	_ context.Context, in store.RelationVersionInput,
 ) error {
-	r.relations = append(r.relations, in.From+"--"+in.Type+"--"+in.To)
+	r.relations = append(r.relations, in.Key.From+"--"+in.Key.Type+"--"+in.Key.To)
 	return nil
 }
 

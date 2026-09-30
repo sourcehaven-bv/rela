@@ -51,14 +51,14 @@ func (s *FSStore) FormatEntity(ctx context.Context, ref entity.Ref, dryRun bool)
 
 // FormatRelation reads the persisted relation file, formats the canonical version,
 // and compares. If they differ and !dryRun, it rewrites the file.
-func (s *FSStore) FormatRelation(ctx context.Context, from, relType, to string, dryRun bool) (bool, error) {
-	r, err := s.GetRelation(ctx, from, relType, to)
+func (s *FSStore) FormatRelation(ctx context.Context, k entity.RelationKey, dryRun bool) (bool, error) {
+	r, err := s.GetRelation(ctx, k)
 	if err != nil {
 		return false, fmt.Errorf("get relation: %w", err)
 	}
 
 	s.mu.RLock()
-	key := s.layout.relationFileKey(from, relType, to)
+	key := s.layout.relationFileKeyMeta(relationMeta{From: k.From, Type: k.Type, To: k.To, FromFace: k.FromFace})
 	s.mu.RUnlock()
 
 	formatted, err := formatRelation(r)
@@ -80,7 +80,7 @@ func (s *FSStore) FormatRelation(ctx context.Context, from, relType, to string, 
 	}
 
 	data := store.RelationData{Content: r.Content, Properties: r.Properties}
-	if _, err := s.UpdateRelation(ctx, from, relType, to, data); err != nil {
+	if _, err := s.UpdateRelation(ctx, k, data); err != nil {
 		return false, err
 	}
 	return true, nil

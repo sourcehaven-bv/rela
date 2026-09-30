@@ -1083,7 +1083,7 @@ func TestAudit_PartialCascadeDelete_AuditsWhatWasRemoved(t *testing.T) {
 			t.Fatalf("seed %s: %v", e.ID, err)
 		}
 	}
-	rel, rerr := backing.CreateRelation(bg, "REQ-1", "has-checklist", "CL-1", nil)
+	rel, rerr := backing.CreateRelation(bg, entity.RelationKey{From: "REQ-1", Type: "has-checklist", To: "CL-1"}, nil)
 	if rerr != nil {
 		t.Fatalf("seed relation: %v", rerr)
 	}
@@ -1161,7 +1161,7 @@ func TestAudit_PartialCascadeDelete_ReplacePathAlsoAudits(t *testing.T) {
 		}
 	}
 	// The existing edge the replace action will find and supersede.
-	if _, err := backing.CreateRelation(bg, "REQ-1", "has-checklist", "CL-1", nil); err != nil {
+	if _, err := backing.CreateRelation(bg, entity.RelationKey{From: "REQ-1", Type: "has-checklist", To: "CL-1"}, nil); err != nil {
 		t.Fatalf("seed relation: %v", err)
 	}
 

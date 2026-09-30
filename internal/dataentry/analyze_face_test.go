@@ -57,8 +57,7 @@ func analyzeFaceApp(t *testing.T, read []string) *App {
 		{"POL-1", "implements", "FEAT-1", ""},
 		{"POL-2", "cites", "FEAT-2", "draft"},
 	} {
-		if _, err := app.store.CreateRelation(ctx, e.from, e.typ, e.to,
-			&store.RelationData{FromFace: e.tail}); err != nil {
+		if _, err := app.store.CreateRelation(ctx, entity.RelationKey{From: e.from, FromFace: e.tail, Type: e.typ, To: e.to}, &store.RelationData{}); err != nil {
 			t.Fatalf("seed edge: %v", err)
 		}
 	}

@@ -84,7 +84,7 @@ func seedEntity(t *testing.T, st store.Store, e *entity.Entity) {
 // seedRelation creates a relation in the store.
 func seedRelation(t *testing.T, st store.Store, from, relType, to string) {
 	t.Helper()
-	if _, err := st.CreateRelation(context.Background(), from, relType, to, nil); err != nil {
+	if _, err := st.CreateRelation(context.Background(), entity.RelationKey{From: from, Type: relType, To: to}, nil); err != nil {
 		t.Fatalf("CreateRelation(%s--%s--%s): %v", from, relType, to, err)
 	}
 }
@@ -478,7 +478,7 @@ func TestBuildStoreRelations_FaceOwnership(t *testing.T) {
 	for _, e := range []*entity.Entity{draft, published, req} {
 		seedEntity(t, st, e)
 	}
-	if _, err := st.CreateRelation(ctx, "SOL-1", "cites", "REQ-1", &store.RelationData{FromFace: "draft"}); err != nil {
+	if _, err := st.CreateRelation(ctx, entity.RelationKey{From: "SOL-1", FromFace: "draft", Type: "cites", To: "REQ-1"}, &store.RelationData{}); err != nil {
 		t.Fatal(err)
 	}
 	seedRelation(t, st, "SOL-1", "addresses", "REQ-1")

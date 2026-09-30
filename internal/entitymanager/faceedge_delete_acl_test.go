@@ -117,8 +117,7 @@ func newFaceEdgeFixture(t *testing.T, b concBackend) faceEdgeFixture {
 		}
 	}
 	for face, to := range map[entity.Face]string{"draft": "CTL-1", "published": "CTL-2"} {
-		if _, rErr := st.CreateRelation(ctx, "POL-1", "implements", to,
-			&store.RelationData{FromFace: face}); rErr != nil {
+		if _, rErr := st.CreateRelation(ctx, entity.RelationKey{From: "POL-1", FromFace: face, Type: "implements", To: to}, &store.RelationData{}); rErr != nil {
 			t.Fatalf("seed POL-1@%s implements %s: %v", face, to, rErr)
 		}
 	}
@@ -276,8 +275,7 @@ func TestDelete_CascadeSourceFallback(t *testing.T) {
 				if err := f.st.CreateEntity(ctx, ctl); err != nil {
 					t.Fatalf("seed CTL-9: %v", err)
 				}
-				if _, err := f.st.CreateRelation(ctx, tc.from, "implements", ctl.ID,
-					&store.RelationData{FromFace: tc.tail}); err != nil {
+				if _, err := f.st.CreateRelation(ctx, entity.RelationKey{From: tc.from, FromFace: tc.tail, Type: "implements", To: ctl.ID}, &store.RelationData{}); err != nil {
 					t.Skipf("%s refuses the seed edge: %v", b.name, err)
 				}
 

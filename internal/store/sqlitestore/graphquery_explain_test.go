@@ -38,7 +38,7 @@ func mustCreate(t *testing.T, s store.Store, e *entity.Entity) {
 
 func mustRelate(t *testing.T, s store.Store, from, typ, to string) {
 	t.Helper()
-	_, err := s.CreateRelation(context.Background(), from, typ, to, nil)
+	_, err := s.CreateRelation(context.Background(), entity.RelationKey{From: from, Type: typ, To: to}, nil)
 	require.NoError(t, err)
 }
 

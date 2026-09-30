@@ -44,7 +44,7 @@ type SeedOp struct {
 // into update/delete without widening this interface first.
 type seedWriter interface {
 	CreateEntity(ctx context.Context, e *entity.Entity) error
-	CreateRelation(ctx context.Context, from, relType, to string, data *store.RelationData) (*entity.Relation, error)
+	CreateRelation(ctx context.Context, k entity.RelationKey, data *store.RelationData) (*entity.Relation, error)
 	// GetEntity reads back ONE face of what seeding wrote. face() and edit()
 	// need it — face() to resolve the type of an id it is given, edit() to
 	// confirm the entity exists and to return the edited result.
@@ -149,8 +149,9 @@ func (s *seedBindings) luaLink(ls *lua.LState) int {
 		tail = entity.Face(fromFace)
 	}
 
-	if _, err := s.store.CreateRelation(s.ctx, from, relType, to,
-		&store.RelationData{FromFace: tail}); err != nil {
+	if _, err := s.store.CreateRelation(s.ctx, entity.RelationKey{
+		From: from, FromFace: tail, Type: relType, To: to,
+	}, &store.RelationData{}); err != nil {
 		return s.fail(ls, "link(%q,%q,%q): %v", from, relType, to, err)
 	}
 	s.ops = append(s.ops, SeedOp{
@@ -246,8 +247,9 @@ func ApplySeedWith(ctx context.Context, st store.Store, patcher SeedPatcher, ops
 		case "link":
 			// Face carries the edge's source tail, so a content-scoped edge
 			// replays onto the same face it was seeded on.
-			if _, err := st.CreateRelation(ctx, op.From, op.RelType, op.To,
-				&store.RelationData{FromFace: op.Face}); err != nil {
+			if _, err := st.CreateRelation(ctx, entity.RelationKey{
+				From: op.From, FromFace: op.Face, Type: op.RelType, To: op.To,
+			}, &store.RelationData{}); err != nil {
 				return err
 			}
 		}

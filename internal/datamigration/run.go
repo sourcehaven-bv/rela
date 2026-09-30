@@ -365,10 +365,7 @@ func (c *capturer) entityDelete(ctx context.Context, e *entity.Entity) error {
 
 func (c *capturer) relationDelete(ctx context.Context, rel *entity.Relation) error {
 	err := c.w.WriteRelationVersion(ctx, store.RelationVersionInput{
-		From:          rel.From,
-		FromFace:      rel.FromFace,
-		Type:          rel.Type,
-		To:            rel.To,
+		Key:           rel.Identity(),
 		Op:            store.VersionOpDelete,
 		Content:       rel.Content,
 		Properties:    rel.Properties,

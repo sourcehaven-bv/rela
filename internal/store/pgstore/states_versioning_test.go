@@ -107,10 +107,9 @@ func TestSweep_CapturesStateTailedRelations(t *testing.T) {
 	require.NoError(t, s.CreateEntity(ctx, draft))
 	require.NoError(t, s.CreateEntity(ctx, mkEntity("SPEC-1", "ticket", "target")))
 
-	_, err = s.CreateRelation(ctx, "PAGE-2", "references", "SPEC-1", nil)
+	_, err = s.CreateRelation(ctx, entity.RelationKey{From: "PAGE-2", Type: "references", To: "SPEC-1"}, nil)
 	require.NoError(t, err)
-	_, err = s.CreateRelation(ctx, "PAGE-2", "references", "SPEC-1",
-		&store.RelationData{FromFace: p})
+	_, err = s.CreateRelation(ctx, entity.RelationKey{From: "PAGE-2", FromFace: p, Type: "references", To: "SPEC-1"}, &store.RelationData{})
 	require.NoError(t, err)
 
 	// Distinct rel_record_ids for the two tails of one triple.
@@ -139,7 +138,7 @@ func TestSweep_CapturesStateTailedRelations(t *testing.T) {
 	// The default-tail edge is captured…
 	require.Eventually(t, func() bool {
 		metas, e := s.VersionStore().ListRelationVersions(ctx,
-			store.RelationHistoryQuery{From: "PAGE-2", Type: "references", To: "SPEC-1"})
+			store.RelationHistoryQuery{Key: entity.RelationKey{From: "PAGE-2", Type: "references", To: "SPEC-1"}})
 		return e == nil && len(metas) == 1
 	}, 3*time.Second, 25*time.Millisecond, "default-tail edge should be captured")
 
@@ -169,7 +168,7 @@ func TestSweep_CapturesStateTailedRelations(t *testing.T) {
 	// The default-tail lineage stays at exactly one row: the two faces must
 	// not have interleaved.
 	metas, err := s.VersionStore().ListRelationVersions(ctx,
-		store.RelationHistoryQuery{From: "PAGE-2", Type: "references", To: "SPEC-1"})
+		store.RelationHistoryQuery{Key: entity.RelationKey{From: "PAGE-2", Type: "references", To: "SPEC-1"}})
 	require.NoError(t, err)
 	require.Len(t, metas, 1, "the default-tail lineage must hold only its own row")
 }

@@ -48,13 +48,13 @@ func TestGraphQueryExplainUsesIndex(t *testing.T) {
 	// candidate entities, ~10% owned by the group.
 	require.NoError(t, s.CreateEntity(ctx, entity.New("alice", "person")))
 	require.NoError(t, s.CreateEntity(ctx, entity.New("engineering", "team")))
-	_, err = s.CreateRelation(ctx, "alice", "member-of", "engineering", nil)
+	_, err = s.CreateRelation(ctx, entity.RelationKey{From: "alice", Type: "member-of", To: "engineering"}, nil)
 	require.NoError(t, err)
 	for i := range n {
 		id := fmt.Sprintf("TKT-%06d", i)
 		require.NoError(t, s.CreateEntity(ctx, entity.New(id, "ticket")))
 		if i%10 == 0 {
-			_, err = s.CreateRelation(ctx, "engineering", "owns", id, nil)
+			_, err = s.CreateRelation(ctx, entity.RelationKey{From: "engineering", Type: "owns", To: id}, nil)
 			require.NoError(t, err)
 		}
 	}
@@ -234,7 +234,7 @@ func TestEndpointMatchExplainUsesDerivedIndex(t *testing.T) {
 	for i := range tickets {
 		id := fmt.Sprintf("TKT-%06d", i)
 		require.NoError(t, s.CreateEntity(ctx, entity.New(id, "ticket")))
-		_, err = s.CreateRelation(ctx, id, "caused-by", fmt.Sprintf("CON-%06d", i%concepts), nil)
+		_, err = s.CreateRelation(ctx, entity.RelationKey{From: id, Type: "caused-by", To: fmt.Sprintf("CON-%06d", i%concepts)}, nil)
 		require.NoError(t, err)
 	}
 	_, err = pool.Exec(ctx, "ANALYZE entities; ANALYZE relations")
@@ -304,7 +304,7 @@ func TestInboundNamedEndpointExplainIsIndexed(t *testing.T) {
 	for i := range 5000 {
 		id := fmt.Sprintf("TAAK-%06d", i)
 		require.NoError(t, s.CreateEntity(ctx, entity.New(id, "taak")))
-		_, err = s.CreateRelation(ctx, fmt.Sprintf("PER-%06d", i%50), "verantwoordelijk_voor", id, nil)
+		_, err = s.CreateRelation(ctx, entity.RelationKey{From: fmt.Sprintf("PER-%06d", i%50), Type: "verantwoordelijk_voor", To: id}, nil)
 		require.NoError(t, err)
 	}
 	_, err = pool.Exec(ctx, "ANALYZE entities; ANALYZE relations")
@@ -395,7 +395,7 @@ relations:
 		e := entity.New(id, "ticket")
 		e.Properties["status"] = status
 		require.NoError(t, s.CreateEntity(ctx, e))
-		_, err = s.CreateRelation(ctx, id, "implements", fmt.Sprintf("FEAT-%06d", i%features), nil)
+		_, err = s.CreateRelation(ctx, entity.RelationKey{From: id, Type: "implements", To: fmt.Sprintf("FEAT-%06d", i%features)}, nil)
 		require.NoError(t, err)
 	}
 	_, err = pool.Exec(ctx, "ANALYZE entities; ANALYZE relations")

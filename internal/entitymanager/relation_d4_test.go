@@ -78,7 +78,7 @@ func newD4Manager(t *testing.T, b concBackend) (*entitymanager.Manager, store.St
 			t.Fatalf("seed: %v", err)
 		}
 	}
-	if _, err := st.CreateRelation(ctx, "POL-1", "owns", "CTL-1", nil); err != nil {
+	if _, err := st.CreateRelation(ctx, entity.RelationKey{From: "POL-1", Type: "owns", To: "CTL-1"}, nil); err != nil {
 		t.Fatalf("seed owns: %v", err)
 	}
 	return mgr, st

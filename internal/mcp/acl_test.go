@@ -80,7 +80,7 @@ func gatedServer(t *testing.T) (*Server, context.Context) {
 			t.Fatalf("seed %s: %v", e.ID, err)
 		}
 	}
-	if _, err := st.CreateRelation(ctx, visibleID, "relates-to", hiddenID, nil); err != nil {
+	if _, err := st.CreateRelation(ctx, entity.RelationKey{From: visibleID, Type: "relates-to", To: hiddenID}, nil); err != nil {
 		t.Fatalf("seed relation: %v", err)
 	}
 
@@ -321,7 +321,7 @@ func TestACL_BuildStoreRelations_WithholdsUnreadableEdge(t *testing.T) {
 	if err := st.CreateEntity(ctx, newEntity(hiddenID, "feature", hiddenTitle)); err != nil {
 		t.Fatalf("seed hidden: %v", err)
 	}
-	if _, err := st.CreateRelation(ctx, visibleID, "relates-to", hiddenID, nil); err != nil {
+	if _, err := st.CreateRelation(ctx, entity.RelationKey{From: visibleID, Type: "relates-to", To: hiddenID}, nil); err != nil {
 		t.Fatalf("seed relation: %v", err)
 	}
 
@@ -390,9 +390,9 @@ func (d denyEntityReader) ListRelationsStrict(
 }
 
 func (d denyEntityReader) GetRelation(
-	ctx context.Context, from, relType, to string,
+	ctx context.Context, k entity.RelationKey,
 ) (*entity.Relation, error) {
-	return d.raw.GetRelation(ctx, from, relType, to)
+	return d.raw.GetRelation(ctx, k)
 }
 
 func (d denyEntityReader) CountEntities(ctx context.Context, q store.EntityQuery) (int, error) {

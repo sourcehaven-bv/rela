@@ -89,7 +89,7 @@ func (s *Store) SwapRelationEndpoints(ctx context.Context, relType string) (int,
 	// exist before, and the one at the old triple no longer does, so an
 	// id-keyed consumer that heard only "updated" would keep a ghost edge in
 	// the old direction forever. This also makes the three backends agree: the
-	// generic fallback goes through CreateRelation/DeleteRelationState and so
+	// generic fallback goes through CreateRelation/DeleteRelation and so
 	// emits exactly this pair, and it matches the tombstones written above.
 	evs := make([]store.Event, 0, 2*len(oldTriples))
 	for _, r := range oldTriples {

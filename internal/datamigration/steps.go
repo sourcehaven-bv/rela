@@ -595,10 +595,11 @@ func applyFaceMove(ctx context.Context, s store.Store, e *entity.Entity, to stri
 			// the wrong tail would invent an edge rather than preserve it.
 			continue
 		}
-		if _, err := s.CreateRelation(ctx, e.ID, rel.Type, rel.To, &store.RelationData{
+		if _, err := s.CreateRelation(ctx, entity.RelationKey{
+			From: e.ID, FromFace: entity.Face(to), Type: rel.Type, To: rel.To,
+		}, &store.RelationData{
 			Properties: rel.Properties,
 			Content:    rel.Content,
-			FromFace:   entity.Face(to),
 		}); err != nil {
 			return fmt.Errorf("%s: carry relation %q to %q across to face %q: %w",
 				e.ID, rel.Type, rel.To, to, err)
@@ -631,6 +632,11 @@ func enumValuesIn(p metamodel.ShapeProjection, typ, prop string) []string {
 
 // ---- rename_relation_type ----
 
+// renameRelationTypeStep moves every edge of one relation type to another,
+// keeping each edge's tail. The tail is copied verbatim: the shape projection
+// records no relation scope, so a rename between a content-scoped and an
+// identity-scoped type is not refused here and leaves tails the new type
+// does not expect.
 type renameRelationTypeStep struct {
 	From string `yaml:"from"`
 	To   string `yaml:"to"`
@@ -669,7 +675,9 @@ func (s *renameRelationTypeStep) Run(ctx context.Context, x *Exec) (StepResult, 
 	}
 	for _, r := range rels {
 		data := &store.RelationData{Properties: r.Properties, Content: r.Content}
-		if _, err := x.Store.CreateRelation(ctx, r.From, s.To, r.To, data); err != nil {
+		renamed := r.Identity()
+		renamed.Type = s.To
+		if _, err := x.Store.CreateRelation(ctx, renamed, data); err != nil {
 			if !errors.Is(err, store.ErrConflict) {
 				return res, fmt.Errorf("create %s--%s--%s: %w", r.From, s.To, r.To, err)
 			}
@@ -678,7 +686,7 @@ func (s *renameRelationTypeStep) Run(ctx context.Context, x *Exec) (StepResult, 
 		if err := x.captureRelationDelete(ctx, r); err != nil {
 			return res, err
 		}
-		if err := x.Store.DeleteRelation(ctx, r.From, s.From, r.To); err != nil && !errors.Is(err, store.ErrNotFound) {
+		if err := x.Store.DeleteRelation(ctx, r.Identity()); err != nil && !errors.Is(err, store.ErrNotFound) {
 			return res, fmt.Errorf("delete %s--%s--%s: %w", r.From, s.From, r.To, err)
 		}
 	}
@@ -1161,7 +1169,7 @@ func (s *dropRelationsStep) Run(ctx context.Context, x *Exec) (StepResult, error
 		if capErr := x.captureRelationDelete(ctx, r); capErr != nil {
 			return res, capErr
 		}
-		delErr := x.Store.DeleteRelation(ctx, r.From, r.Type, r.To)
+		delErr := x.Store.DeleteRelation(ctx, r.Identity())
 		if delErr != nil && !errors.Is(delErr, store.ErrNotFound) {
 			return res, delErr
 		}

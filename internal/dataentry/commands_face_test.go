@@ -80,8 +80,7 @@ func TestCommandEntityInput_PeerGated(t *testing.T) {
 		{"POL-2", "relates-to", "POL-1", "draft"},     // tail on a face alice cannot read
 		{"POL-1", "relates-to", "POL-1", "published"}, // readable self-edge
 	} {
-		if _, err := app.store.CreateRelation(bg, r.from, r.typ, r.to,
-			&store.RelationData{FromFace: r.tail}); err != nil {
+		if _, err := app.store.CreateRelation(bg, entity.RelationKey{From: r.from, FromFace: r.tail, Type: r.typ, To: r.to}, &store.RelationData{}); err != nil {
 			t.Fatalf("seed %s %s %s: %v", r.from, r.typ, r.to, err)
 		}
 	}
@@ -102,7 +101,7 @@ func TestCommandEntityInput_PeerGated(t *testing.T) {
 func TestCommandViewInput_ContentEdgesOnlyWithTheirFace(t *testing.T) {
 	app, _ := contentEdgeApp(t, contentEdgeReaders[0])
 	bg := context.Background()
-	if _, err := app.store.CreateRelation(bg, "POL-1", "implements", "FEAT-DRAFT", nil); err != nil {
+	if _, err := app.store.CreateRelation(bg, entity.RelationKey{From: "POL-1", Type: "implements", To: "FEAT-DRAFT"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	view := ViewConfig{
@@ -176,7 +175,7 @@ func TestCommandInputs_ReadFaultFailsTheBuild(t *testing.T) {
 func TestCommandViewInput_IDAtTwoFaces(t *testing.T) {
 	app, _ := contentEdgeApp(t, contentEdgeReaders[0])
 	bg := context.Background()
-	if _, err := app.store.CreateRelation(bg, "POL-1", "implements", "FEAT-DRAFT", nil); err != nil {
+	if _, err := app.store.CreateRelation(bg, entity.RelationKey{From: "POL-1", Type: "implements", To: "FEAT-DRAFT"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	row := func(id string, face entity.Face) *entity.Entity {
@@ -231,7 +230,7 @@ func TestCommandInputs_RelationReadBudget(t *testing.T) {
 			}); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := app.store.CreateRelation(bg, "POL-1", "implements", id, nil); err != nil {
+			if _, err := app.store.CreateRelation(bg, entity.RelationKey{From: "POL-1", Type: "implements", To: id}, nil); err != nil {
 				t.Fatal(err)
 			}
 		}

@@ -114,7 +114,7 @@ func TestScriptEntityReader_NoPolicyIsPassThrough(t *testing.T) {
 // TestScriptTracer_GatesOnActingIdentity pins the traversal helper.
 func TestScriptTracer_GatesOnActingIdentity(t *testing.T) {
 	st := seedCascadeWorld(t)
-	if _, err := st.CreateRelation(context.Background(), "TKT-1", "relates", "SEC-1", nil); err != nil {
+	if _, err := st.CreateRelation(context.Background(), entity.RelationKey{From: "TKT-1", Type: "relates", To: "SEC-1"}, nil); err != nil {
 		t.Fatalf("seed relation: %v", err)
 	}
 	tr := scriptTracer(tracer.New(st, store.WorldScope{}), st, mustDeclarative(t, st), nil, store.WorldScope{})

@@ -55,7 +55,7 @@ func facedGatedServer(t *testing.T, read []string, extra ...*entity.Entity) (*Se
 			t.Fatalf("seed %s@%s: %v", e.ID, e.Face, err)
 		}
 	}
-	if _, err := st.CreateRelation(ctx, "POL-1", "cites", "CTL-1", &store.RelationData{FromFace: "draft"}); err != nil {
+	if _, err := st.CreateRelation(ctx, entity.RelationKey{From: "POL-1", FromFace: "draft", Type: "cites", To: "CTL-1"}, &store.RelationData{}); err != nil {
 		t.Fatalf("seed relation: %v", err)
 	}
 	d, err := acl.NewDeclarative(&acl.Policy{
@@ -235,5 +235,44 @@ func TestAnalyzeCardinality_CountsVisibleEdgesOnly(t *testing.T) {
 	hidden := run([]string{"policy@draft", "policy@published"})
 	if strings.Contains(hidden, "POL-1") || strings.Contains(hidden, "CTL-1") {
 		t.Fatalf("LEAK: a count over a hidden neighbor: %s", hidden)
+	}
+}
+
+// TestReadRelationResource_TailFace pins the relation resource's `{from}`
+// segment (TKT-KQXVF7). `ID@face` names a content edge's tail, a bare ID
+// names the identity edge, and a tail the caller cannot read is not found.
+func TestReadRelationResource_TailFace(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		read    []string
+		from    string
+		wantErr bool
+	}{
+		{"tail readable", everyFace, "POL-1@draft", false},
+		{"percent-encoded tail", everyFace, "POL-1%40draft", false},
+		{"bare id misses the content edge", everyFace, "POL-1", true},
+		{"tail face hidden", publishedOnly, "POL-1@draft", true},
+		{"malformed from", everyFace, "POL-1@", true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s, ctx := facedGatedServer(t, tc.read)
+			res, err := group(s, selSchemaRes).handleReadRelation(ctx,
+				readResourceReq("rela://relation/"+tc.from+"/cites/CTL-1"))
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("read %s: want not-found, got %s", tc.from, res.Contents[0].Text)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("read %s: %v", tc.from, err)
+			}
+			if !strings.Contains(res.Contents[0].Text, `"draft"`) {
+				t.Errorf("relation %s lost its tail: %s", tc.from, res.Contents[0].Text)
+			}
+		})
 	}
 }

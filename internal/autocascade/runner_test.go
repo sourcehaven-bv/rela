@@ -94,7 +94,7 @@ func (h *stubHost) WriteRelation(ctx context.Context, r *entity.Relation) error 
 		return h.writeRelErr
 	}
 	if h.store != nil {
-		if _, err := h.store.CreateRelation(ctx, r.From, r.Type, r.To, nil); err != nil {
+		if _, err := h.store.CreateRelation(ctx, entity.RelationKey{From: r.From, Type: r.Type, To: r.To}, nil); err != nil {
 			return err
 		}
 	}

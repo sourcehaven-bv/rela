@@ -89,7 +89,7 @@ func applyCopyEdges(ctx context.Context, view store.Store, plan *copyPlan) error
 			// DeleteRelation deletes the DEFAULT face's edge on the same
 			// triple — a face this copy has no business touching — and
 			// reports success, while the edge being replaced survives.
-			derr := view.DeleteRelationState(ctx, rel.From, rel.FromFace, rel.Type, rel.To)
+			derr := view.DeleteRelation(ctx, rel.Identity())
 			if derr != nil && !errors.Is(derr, store.ErrNotFound) {
 				return fmt.Errorf("entitymanager: copy %q: replace edges: %w",
 					plan.name, derr)
@@ -98,8 +98,9 @@ func applyCopyEdges(ctx context.Context, view store.Store, plan *copyPlan) error
 	}
 
 	for _, e := range plan.edges {
-		_, err := view.CreateRelation(ctx, plan.targetID, e.relType, e.to,
-			&store.RelationData{FromFace: tail})
+		_, err := view.CreateRelation(ctx, entity.RelationKey{
+			From: plan.targetID, FromFace: tail, Type: e.relType, To: e.to,
+		}, &store.RelationData{})
 		if err != nil && !errors.Is(err, store.ErrConflict) {
 			// A conflict is `merge` finding the edge already present, which is
 			// exactly what merge means.

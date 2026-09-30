@@ -359,7 +359,7 @@ func TestImportWithRelations(t *testing.T) {
 		t.Errorf("RelationsCreated = %d, want 1", result.RelationsCreated)
 	}
 
-	if _, err := st.GetRelation(ctx(), "DEC-001", "addresses", "REQ-001"); err != nil {
+	if _, err := st.GetRelation(ctx(), entity.RelationKey{From: "DEC-001", Type: "addresses", To: "REQ-001"}); err != nil {
 		t.Error("Relation DEC-001 --addresses--> REQ-001 not found in store")
 	}
 }
@@ -591,7 +591,7 @@ func TestImportFile_CSVWithRelations(t *testing.T) {
 		t.Errorf("EntitiesCreated = %d (want 2), RelationsCreated = %d (want 1)",
 			result.EntitiesCreated, result.RelationsCreated)
 	}
-	if _, err := st.GetRelation(ctx(), "DEC-001", "addresses", "REQ-001"); err != nil {
+	if _, err := st.GetRelation(ctx(), entity.RelationKey{From: "DEC-001", Type: "addresses", To: "REQ-001"}); err != nil {
 		t.Errorf("relation not created: %v", err)
 	}
 }

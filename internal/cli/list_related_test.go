@@ -55,7 +55,7 @@ func seedOwned(t *testing.T, n int) (*storetest.Counting, []*entity.Entity) {
 			t.Fatal(err)
 		}
 		if i%2 == 0 {
-			if _, err := st.CreateRelation(ctx, e.ID, "owned-by", alice.ID, nil); err != nil {
+			if _, err := st.CreateRelation(ctx, entity.RelationKey{From: e.ID, Type: "owned-by", To: alice.ID}, nil); err != nil {
 				t.Fatal(err)
 			}
 		}

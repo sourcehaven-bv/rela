@@ -46,7 +46,7 @@ func seedBudget(t *testing.T, st store.Store, n int) {
 			}
 		}
 		if i%2 == 0 {
-			if _, err := st.CreateRelation(ctx, tkt, "affects", con, nil); err != nil {
+			if _, err := st.CreateRelation(ctx, entity.RelationKey{From: tkt, Type: "affects", To: con}, nil); err != nil {
 				t.Fatalf("seed relation: %v", err)
 			}
 		}

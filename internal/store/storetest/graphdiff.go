@@ -231,7 +231,7 @@ func seedGraphDiff(t *testing.T, s store.Store) {
 	}
 
 	rel := func(from, typ, to string, face entity.Face) {
-		_, err := s.CreateRelation(c, from, typ, to, &store.RelationData{FromFace: face})
+		_, err := s.CreateRelation(c, entity.RelationKey{From: from, FromFace: face, Type: typ, To: to}, &store.RelationData{})
 		require.NoError(t, err)
 	}
 	// Groups form a chain with a cycle, for the endpoint closure.

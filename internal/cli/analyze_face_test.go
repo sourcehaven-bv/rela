@@ -48,7 +48,7 @@ func facedCLIBundles(t *testing.T) *cliBundles {
 			t.Fatalf("seed %s@%s: %v", e.ID, e.Face, err)
 		}
 	}
-	if _, err := ss.s.CreateRelation(ctx, "POL-1", "cites", "NOTE-1", &store.RelationData{FromFace: "draft"}); err != nil {
+	if _, err := ss.s.CreateRelation(ctx, entity.RelationKey{From: "POL-1", FromFace: "draft", Type: "cites", To: "NOTE-1"}, &store.RelationData{}); err != nil {
 		t.Fatal(err)
 	}
 	return ss.build(t)

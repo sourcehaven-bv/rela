@@ -141,7 +141,7 @@ func (v *VersionStore) PurgeRelationVersions(
 		return &store.PurgeResult{}, nil // nothing to purge (unknown key)
 	}
 
-	liveHash, liveExists, err := v.liveRelationHash(ctx, conn, req.From, req.FromFace, req.Type, req.To)
+	liveHash, liveExists, err := v.liveRelationHash(ctx, conn, req.Key)
 	if err != nil {
 		return nil, err
 	}
@@ -172,13 +172,13 @@ func (v *VersionStore) PurgeRelationVersions(
 	if liveExists && req.ForceLive {
 		// The live row's lineage is the newest lifetime; tombstone it so the sweep
 		// doesn't re-capture the purged content. (AllLifetimes includes it.)
-		liveID, lerr := v.liveRecordID(ctx, req.From, req.FromFace, req.Type, req.To)
+		liveID, lerr := v.liveRecordID(ctx, req.Key)
 		if lerr != nil {
 			return nil, lerr
 		}
 		if liveID != 0 {
 			if err := writeRelationPurgeTombstone(
-				ctx, conn, req.From, req.FromFace, req.Type, req.To, liveID, liveHash,
+				ctx, conn, req.Key, liveID, liveHash,
 			); err != nil {
 				return nil, err
 			}
@@ -204,7 +204,7 @@ func (v *VersionStore) resolvePurgeLineage(
 		return nil, nil, errors.New("pgstore: RecordID and AllLifetimes are mutually exclusive")
 	}
 	// The tail is part of the key: only the named tail's lifetimes.
-	lifetimes, err := v.ListRelationLifetimes(ctx, req.From, req.FromFace, req.Type, req.To)
+	lifetimes, err := v.ListRelationLifetimes(ctx, req.Key)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -236,7 +236,7 @@ func (v *VersionStore) resolvePurgeLineage(
 		return ids, nil, nil
 
 	case req.RecordID != 0:
-		ok, verr := v.recordIDIsHeadOfKey(ctx, req.RecordID, req.From, req.FromFace, req.Type, req.To)
+		ok, verr := v.recordIDIsHeadOfKey(ctx, req.RecordID, req.Key)
 		if verr != nil {
 			return nil, nil, verr
 		}
@@ -330,12 +330,12 @@ func (v *VersionStore) liveEntityHash(
 }
 
 func (v *VersionStore) liveRelationHash(
-	ctx context.Context, q DBTX, from string, fromFace entity.Face, relType, to string,
+	ctx context.Context, q DBTX, k entity.RelationKey,
 ) (hash string, exists bool, err error) {
 	r, gErr := scanRelation(q.QueryRow(ctx,
 		`SELECT from_id, from_face, rel_type, to_id, properties, content, updated_at
 		 FROM relations WHERE from_id=$1 AND rel_type=$2 AND to_id=$3 AND from_face=$4`,
-		from, relType, to, string(fromFace)))
+		k.From, k.Type, k.To, string(k.FromFace)))
 	if errors.Is(gErr, pgx.ErrNoRows) {
 		return "", false, nil
 	}
@@ -346,8 +346,7 @@ func (v *VersionStore) liveRelationHash(
 	// contentHashOfRelation folds the tail into the hash, so a hash computed
 	// for another tail would suppress a DIFFERENT lineage's sweep capture.
 	return contentHashOfRelation(store.RelationVersionInput{
-		From: r.From, FromFace: r.FromFace, Type: r.Type, To: r.To,
-		Content: r.Content, Properties: r.Properties,
+		Key: r.Identity(), Content: r.Content, Properties: r.Properties,
 	}), true, nil
 }
 
@@ -452,8 +451,7 @@ func writeEntityPurgeTombstone(
 }
 
 func writeRelationPurgeTombstone(
-	ctx context.Context, q DBTX, from string, fromFace entity.Face, relType, to string,
-	recordID int64, liveHash string,
+	ctx context.Context, q DBTX, k entity.RelationKey, recordID int64, liveHash string,
 ) error {
 	if err := ensureSchemaVersion(ctx, q, purgeSchemaHash, purgeSchemaProjection); err != nil {
 		return err
@@ -463,7 +461,7 @@ func writeRelationPurgeTombstone(
 		    (rel_record_id, op, from_id, from_face, rel_type, to_id, content, properties,
 		     content_hash, schema_hash, principal_user, principal_tool, triggered_by)
 		VALUES ($1, 'purge', $2, $3, $4, $5, '', '{}'::jsonb, $6, $7, '', 'version-purge', '')`,
-		recordID, from, string(fromFace), relType, to, liveHash, purgeSchemaHash)
+		recordID, k.From, string(k.FromFace), k.Type, k.To, liveHash, purgeSchemaHash)
 	return err
 }
 

@@ -80,7 +80,7 @@ func TestFaceGrant_IncludedNeighboursAreFaceGated(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID: "FEAT-1", Type: "feature", Properties: map[string]any{"title": "SECRET FEATURE"},
 	})
-	if _, err := app.store.CreateRelation(ctx, "TKT-1", "implements", "FEAT-1", nil); err != nil {
+	if _, err := app.store.CreateRelation(ctx, entity.RelationKey{From: "TKT-1", Type: "implements", To: "FEAT-1"}, nil); err != nil {
 		t.Fatalf("seed relation: %v", err)
 	}
 	viewer := mustNewACL(t, &acl.Policy{

@@ -431,8 +431,7 @@ func runInboundEndpointMatchTests(t *testing.T, f Factory) {
 		draft.Properties["status"] = "open"
 		require.NoError(t, s.CreateEntity(ctx(), draft))
 		// Only the draft state implements the feature.
-		_, err := s.CreateRelation(ctx(), "TKT-1", "implements", "FEAT-1",
-			&store.RelationData{FromFace: draftFace(t)})
+		_, err := s.CreateRelation(ctx(), entity.RelationKey{From: "TKT-1", FromFace: draftFace(t), Type: "implements", To: "FEAT-1"}, &store.RelationData{})
 		require.NoError(t, err)
 
 		got := runGraphQuery(t, s, store.GraphQuery{
@@ -454,8 +453,7 @@ func runInboundEndpointMatchTests(t *testing.T, f Factory) {
 		draft := entity.New("TKT-1", "ticket")
 		draft.Face = draftFace(t)
 		require.NoError(t, s.CreateEntity(ctx(), draft))
-		_, err := s.CreateRelation(ctx(), "TKT-1", "implements", "FEAT-1",
-			&store.RelationData{FromFace: draftFace(t)})
+		_, err := s.CreateRelation(ctx(), entity.RelationKey{From: "TKT-1", FromFace: draftFace(t), Type: "implements", To: "FEAT-1"}, &store.RelationData{})
 		require.NoError(t, err)
 		mustRel(t, s, "TKT-2", "implements", "FEAT-1")
 
@@ -479,8 +477,7 @@ func runInboundEndpointMatchTests(t *testing.T, f Factory) {
 		draft.Face = draftFace(t)
 		require.NoError(t, s.CreateEntity(ctx(), draft))
 		mustRel(t, s, "TKT-1", "implements", "FEAT-1")
-		_, err := s.CreateRelation(ctx(), "USR-1", "reports", "TKT-1",
-			&store.RelationData{FromFace: draftFace(t)})
+		_, err := s.CreateRelation(ctx(), entity.RelationKey{From: "USR-1", FromFace: draftFace(t), Type: "reports", To: "TKT-1"}, &store.RelationData{})
 		require.NoError(t, err)
 
 		chain := func() store.GraphQuery {

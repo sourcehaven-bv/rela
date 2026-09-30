@@ -250,7 +250,7 @@ func TestConcurrency_RelationUpdatesToDisjointKeysAllLand(t *testing.T) {
 			for i, err := range errs {
 				require.NoError(t, err, "update %d", i)
 			}
-			rel, err := st.GetRelation(ctx, a.ID, "links", b.ID)
+			rel, err := st.GetRelation(ctx, entity.RelationKey{From: a.ID, Type: "links", To: b.ID})
 			require.NoError(t, err)
 			for i := range n {
 				assert.Equal(t, "v", rel.Properties[fmt.Sprintf("k%d", i)], "update %d was lost", i)

@@ -2887,8 +2887,7 @@ func seedBlocksReverseFixture(t *testing.T, app *App) (sourceID, targetID string
 	seedEntity(app, &entity.Entity{ID: targetID, Type: "feature", Properties: map[string]any{"title": "target"}})
 	if _, err := app.store.CreateRelation(
 		t.Context(),
-		sourceID, "blocks", targetID,
-		&store.RelationData{Properties: map[string]any{"reason": "test block"}},
+		entity.RelationKey{From: sourceID, Type: "blocks", To: targetID}, &store.RelationData{Properties: map[string]any{"reason": "test block"}},
 	); err != nil {
 		t.Fatalf("seed blocks relation: %v", err)
 	}
@@ -3324,7 +3323,7 @@ func TestV1UpdateEntity_Relations_UnknownTarget(t *testing.T) {
 		t.Fatalf("response missing target_not_found/FEAT-999, got: %s", rec.Body.String())
 	}
 	// The edge must NOT have been written to the store.
-	if _, err := app.store.GetRelation(t.Context(), "TKT-001", "implements", "FEAT-999"); err == nil {
+	if _, err := app.store.GetRelation(t.Context(), entity.RelationKey{From: "TKT-001", Type: "implements", To: "FEAT-999"}); err == nil {
 		t.Fatal("dangling-peer edge was persisted; want no store mutation")
 	}
 }
@@ -5204,7 +5203,7 @@ func TestHandleV1DryRunCreate_UnknownType(t *testing.T) {
 //
 //nolint:unparam // see preceding doc comment
 func bindEdge(app *App, from, relType, to string) {
-	if _, err := app.store.CreateRelation(context.Background(), from, relType, to, nil); err != nil {
+	if _, err := app.store.CreateRelation(context.Background(), entity.RelationKey{From: from, Type: relType, To: to}, nil); err != nil {
 		panic(err)
 	}
 }

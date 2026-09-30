@@ -134,8 +134,8 @@ type RelationOptions struct {
 	// on the same triple with different tails are two relations. Dropping
 	// this field on an update therefore does not address "roughly the
 	// right edge" — it addresses the default face's, which is a different
-	// one. `store.RelationWriter.DeleteRelationState` documents the same
-	// reasoning on the delete path.
+	// one. `store.RelationWriter` documents the same reasoning for the
+	// store, where `entity.RelationKey` carries the tail.
 	//
 	// There is no ToFace: targets are faceless by construction, which is
 	// what makes cross-world dangling references inexpressible.

@@ -407,10 +407,10 @@ func (a memApplier) ApplyEntity(ctx context.Context, e *entity.Entity) (*entity.
 
 func (a memApplier) ApplyRelation(ctx context.Context, r *entity.Relation) (*entity.Relation, error) {
 	data := store.RelationData{Properties: r.Properties, Content: r.Content}
-	if _, err := a.st.GetRelation(ctx, r.From, r.Type, r.To); err == nil {
-		return a.st.UpdateRelation(ctx, r.From, r.Type, r.To, data)
+	if _, err := a.st.GetRelation(ctx, entity.RelationKey{From: r.From, Type: r.Type, To: r.To}); err == nil {
+		return a.st.UpdateRelation(ctx, entity.RelationKey{From: r.From, Type: r.Type, To: r.To}, data)
 	}
-	return a.st.CreateRelation(ctx, r.From, r.Type, r.To, &data)
+	return a.st.CreateRelation(ctx, entity.RelationKey{From: r.From, Type: r.Type, To: r.To}, &data)
 }
 
 func (a memApplier) DeleteEntity(ctx context.Context, id string, cascade bool) (*entity.DeleteResult, error) {
@@ -421,7 +421,7 @@ func (a memApplier) DeleteEntity(ctx context.Context, id string, cascade bool) (
 }
 
 func (a memApplier) DeleteRelation(ctx context.Context, from, relType, to string) error {
-	return a.st.DeleteRelation(ctx, from, relType, to)
+	return a.st.DeleteRelation(ctx, entity.RelationKey{From: from, Type: relType, To: to})
 }
 
 func (a memApplier) RenameEntity(

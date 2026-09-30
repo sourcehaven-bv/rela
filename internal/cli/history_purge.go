@@ -139,7 +139,7 @@ func (c *RelationHistoryPurgeCmd) Run(ctx context.Context, svc *writeServices) e
 		return err
 	}
 	req := store.RelationVersionPurgeRequest{
-		From: from, FromFace: fromFace, Type: c.Type, To: c.To,
+		Key:           entity.RelationKey{From: from, FromFace: fromFace, Type: c.Type, To: c.To},
 		Selector:      store.PurgeSelector{Vseq: c.Vseq, ContentHash: c.ContentHash, All: c.All},
 		RecordID:      recordID,
 		AllLifetimes:  c.AllLifetimes,

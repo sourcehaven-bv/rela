@@ -577,9 +577,9 @@ func RunWorldTests(t *testing.T, f Factory) {
 		mustCreate(t, s, newState(t, "P-1", "page", "published", "published"))
 		mustCreate(t, s, newState(t, "U-owner", "user", "", "owner"))
 		mustCreate(t, s, newState(t, "U-reviewer", "user", "", "reviewer"))
-		_, err := s.CreateRelation(ctx(), "U-owner", "owns", "P-1", nil)
+		_, err := s.CreateRelation(ctx(), entity.RelationKey{From: "U-owner", Type: "owns", To: "P-1"}, nil)
 		require.NoError(t, err)
-		_, err = s.CreateRelation(ctx(), "U-reviewer", "reviews", "P-1", nil)
+		_, err = s.CreateRelation(ctx(), entity.RelationKey{From: "U-reviewer", Type: "reviews", To: "P-1"}, nil)
 		require.NoError(t, err)
 
 		branches := func(who string) []store.GraphBranch {

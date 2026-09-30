@@ -409,8 +409,7 @@ func TestFacedAddress_PatchWritesTheNamedFace(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed draft-only target: %v", err)
 	}
-	if _, err := app.store.CreateRelation(ctx, "POL-1", "cites", "FEAT-2",
-		&store.RelationData{FromFace: "draft"}); err != nil {
+	if _, err := app.store.CreateRelation(ctx, entity.RelationKey{From: "POL-1", FromFace: "draft", Type: "cites", To: "FEAT-2"}, &store.RelationData{}); err != nil {
 		t.Fatalf("seed draft-tailed edge: %v", err)
 	}
 	rec = patchEntityAs(bob, t, app, d, "policy", "policys", "POL-1@published",
@@ -691,8 +690,7 @@ func TestFacedAddress_IncomingEdgeAddressedByItsOwnTail(t *testing.T) {
 	bob := principal.With(ctx, principal.Principal{User: "bob", Tool: principal.ToolDataEntry})
 
 	// A content-scoped edge tailed at the DRAFT face.
-	if _, err := app.store.CreateRelation(ctx, "POL-1", "cites", "FEAT-1",
-		&store.RelationData{FromFace: "draft"}); err != nil {
+	if _, err := app.store.CreateRelation(ctx, entity.RelationKey{From: "POL-1", FromFace: "draft", Type: "cites", To: "FEAT-1"}, &store.RelationData{}); err != nil {
 		t.Fatalf("seed draft-tailed edge: %v", err)
 	}
 
@@ -744,12 +742,10 @@ func TestFacedAddress_RelationsSubTreeReachesItsOwnTail(t *testing.T) {
 			t.Fatalf("seed %s: %v", id, err)
 		}
 	}
-	if _, err := app.store.CreateRelation(ctx, "POL-1", "cites", "FEAT-DRAFT",
-		&store.RelationData{FromFace: "draft"}); err != nil {
+	if _, err := app.store.CreateRelation(ctx, entity.RelationKey{From: "POL-1", FromFace: "draft", Type: "cites", To: "FEAT-DRAFT"}, &store.RelationData{}); err != nil {
 		t.Fatalf("seed draft-tailed edge: %v", err)
 	}
-	if _, err := app.store.CreateRelation(ctx, "POL-1", "cites", "FEAT-PUB",
-		&store.RelationData{FromFace: "published"}); err != nil {
+	if _, err := app.store.CreateRelation(ctx, entity.RelationKey{From: "POL-1", FromFace: "published", Type: "cites", To: "FEAT-PUB"}, &store.RelationData{}); err != nil {
 		t.Fatalf("seed published-tailed edge: %v", err)
 	}
 
@@ -810,11 +806,9 @@ func TestFacedAddress_SingleRelationPatchHitsItsOwnTail(t *testing.T) {
 	// ONE triple, TWO tails — the case a tail discovered from the triple
 	// cannot distinguish.
 	for _, face := range []entity.Face{"published", "draft"} {
-		if _, err := app.store.CreateRelation(ctx, "POL-1", "cites", "FEAT-1",
-			&store.RelationData{
-				FromFace:   face,
-				Properties: map[string]any{"note": string(face) + " original"},
-			}); err != nil {
+		if _, err := app.store.CreateRelation(ctx, entity.RelationKey{From: "POL-1", FromFace: face, Type: "cites", To: "FEAT-1"}, &store.RelationData{
+			Properties: map[string]any{"note": string(face) + " original"},
+		}); err != nil {
 			t.Fatalf("seed %s-tailed edge: %v", face, err)
 		}
 	}
@@ -837,7 +831,7 @@ func TestFacedAddress_SingleRelationPatchHitsItsOwnTail(t *testing.T) {
 
 	noteAt := func(face entity.Face) string {
 		t.Helper()
-		rel, err := edgeOnFace(ctx, app.store, "POL-1", face, "cites", "FEAT-1")
+		rel, err := app.store.GetRelation(ctx, entity.RelationKey{From: "POL-1", FromFace: face, Type: "cites", To: "FEAT-1"})
 		if err != nil {
 			t.Fatalf("read %s-tailed edge: %v", face, err)
 		}

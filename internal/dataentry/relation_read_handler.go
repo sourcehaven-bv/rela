@@ -59,7 +59,9 @@ func handleV1GetRelationTarget(
 	if !metamodel.IsContentScoped(mm, relType) {
 		tail = ""
 	}
-	rel, err := edgeOnFace(ctx, a.reader.store, src.ID, tail, relType, targetID)
+	rel, err := a.reader.store.GetRelation(ctx, entity.RelationKey{
+		From: src.ID, FromFace: tail, Type: relType, To: targetID,
+	})
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			writeV1Error(w, r, http.StatusNotFound, "not_found", "Relation not found", "")

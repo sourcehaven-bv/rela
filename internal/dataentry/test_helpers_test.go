@@ -75,7 +75,7 @@ func seedFromFixture(st store.Store, f *fixture) {
 		}
 	}
 	for _, r := range f.relations {
-		if _, err := st.CreateRelation(ctx, r.From, r.Type, r.To, nil); err != nil {
+		if _, err := st.CreateRelation(ctx, entity.RelationKey{From: r.From, Type: r.Type, To: r.To}, nil); err != nil {
 			panic(err)
 		}
 	}
@@ -83,7 +83,7 @@ func seedFromFixture(st store.Store, f *fixture) {
 
 // seedRelation is the relation counterpart to seedEntity.
 func seedRelation(app *App, r *entity.Relation) {
-	if _, err := app.store.CreateRelation(context.Background(), r.From, r.Type, r.To, nil); err != nil {
+	if _, err := app.store.CreateRelation(context.Background(), entity.RelationKey{From: r.From, Type: r.Type, To: r.To}, nil); err != nil {
 		panic(err)
 	}
 }
@@ -349,7 +349,7 @@ func reseedStore(dst, src store.Store) {
 		if err != nil {
 			continue
 		}
-		if _, err := dst.CreateRelation(ctx, r.From, r.Type, r.To, nil); err != nil {
+		if _, err := dst.CreateRelation(ctx, entity.RelationKey{From: r.From, Type: r.Type, To: r.To}, nil); err != nil {
 			panic(err)
 		}
 	}

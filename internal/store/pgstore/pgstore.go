@@ -153,8 +153,12 @@ type DBTX interface {
 // are: endpoints are a relation's identity, so a loop above the store must be
 // create-then-delete, which forks version lineage and destroys a self-edge.
 //
-//plimsoll:max-exported-methods=47
-//plimsoll:max-methods=57
+// -2 exported (TKT-KQXVF7): UpdateRelationState and
+// DeleteRelationState folded into UpdateRelation and DeleteRelation, which
+// now take an entity.RelationKey that carries the tail.
+//
+//plimsoll:max-exported-methods=45
+//plimsoll:max-methods=55
 type Store struct {
 	db           DBTX
 	searchTitles SearchTitles

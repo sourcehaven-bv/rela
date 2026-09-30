@@ -192,7 +192,7 @@ func RunPaginationTests(t *testing.T, f Factory) {
 			{"FEAT-002", "relates-to", "REQ-001"},
 			{"FEAT-013", "relates-to", "REQ-001"},
 		} {
-			_, err := s.CreateRelation(ctx(), rel.from, rel.typ, rel.to, nil)
+			_, err := s.CreateRelation(ctx(), entity.RelationKey{From: rel.from, Type: rel.typ, To: rel.to}, nil)
 			require.NoError(t, err)
 		}
 
@@ -215,9 +215,9 @@ func RunPaginationTests(t *testing.T, f Factory) {
 	t.Run("RelationsLastPageHasEmptyCursor", func(t *testing.T) {
 		s := f(t)
 		seedEntities(t, s)
-		_, err := s.CreateRelation(ctx(), "FEAT-001", "relates-to", "REQ-001", nil)
+		_, err := s.CreateRelation(ctx(), entity.RelationKey{From: "FEAT-001", Type: "relates-to", To: "REQ-001"}, nil)
 		require.NoError(t, err)
-		_, err = s.CreateRelation(ctx(), "FEAT-002", "relates-to", "REQ-001", nil)
+		_, err = s.CreateRelation(ctx(), entity.RelationKey{From: "FEAT-002", Type: "relates-to", To: "REQ-001"}, nil)
 		require.NoError(t, err)
 
 		page, err := s.ListRelationsPage(ctx(), store.RelationQuery{Limit: 2})
@@ -229,9 +229,9 @@ func RunPaginationTests(t *testing.T, f Factory) {
 	t.Run("RelationsRespectsDirectionFilter", func(t *testing.T) {
 		s := f(t)
 		seedEntities(t, s)
-		_, err := s.CreateRelation(ctx(), "FEAT-001", "relates-to", "REQ-001", nil)
+		_, err := s.CreateRelation(ctx(), entity.RelationKey{From: "FEAT-001", Type: "relates-to", To: "REQ-001"}, nil)
 		require.NoError(t, err)
-		_, err = s.CreateRelation(ctx(), "REQ-001", "requires", "FEAT-002", nil)
+		_, err = s.CreateRelation(ctx(), entity.RelationKey{From: "REQ-001", Type: "requires", To: "FEAT-002"}, nil)
 		require.NoError(t, err)
 
 		page, err := s.ListRelationsPage(ctx(), store.RelationQuery{

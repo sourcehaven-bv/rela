@@ -163,7 +163,7 @@ func RunEntityTests(t *testing.T, f Factory) {
 		s := f(t)
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("A", "feature")))
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("B", "req")))
-		_, err := s.CreateRelation(ctx(), "A", "requires", "B", nil)
+		_, err := s.CreateRelation(ctx(), entity.RelationKey{From: "A", Type: "requires", To: "B"}, nil)
 		require.NoError(t, err)
 
 		result, err := s.DeleteFamily(ctx(), "A", true)
@@ -176,7 +176,7 @@ func RunEntityTests(t *testing.T, f Factory) {
 		s := f(t)
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("A", "feature")))
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("B", "req")))
-		_, err := s.CreateRelation(ctx(), "A", "requires", "B", nil)
+		_, err := s.CreateRelation(ctx(), entity.RelationKey{From: "A", Type: "requires", To: "B"}, nil)
 		require.NoError(t, err)
 
 		result, err := s.DeleteFamily(ctx(), "B", true)
@@ -184,7 +184,7 @@ func RunEntityTests(t *testing.T, f Factory) {
 		assert.Len(t, result.DeletedRelations, 1)
 		assert.Equal(t, "requires", result.DeletedRelations[0].Type)
 
-		_, err = s.GetRelation(ctx(), "A", "requires", "B")
+		_, err = s.GetRelation(ctx(), entity.RelationKey{From: "A", Type: "requires", To: "B"})
 		assert.ErrorIs(t, err, store.ErrNotFound)
 	})
 
@@ -192,7 +192,7 @@ func RunEntityTests(t *testing.T, f Factory) {
 		s := f(t)
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("A", "feature")))
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("B", "req")))
-		_, err := s.CreateRelation(ctx(), "A", "requires", "B", nil)
+		_, err := s.CreateRelation(ctx(), entity.RelationKey{From: "A", Type: "requires", To: "B"}, nil)
 		require.NoError(t, err)
 
 		_, err = s.DeleteFamily(ctx(), "A", false)
@@ -225,23 +225,23 @@ func RunEntityTests(t *testing.T, f Factory) {
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("A", "feature")))
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("B", "req")))
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("C", "req")))
-		s.CreateRelation(ctx(), "A", "requires", "B", nil)
-		s.CreateRelation(ctx(), "C", "blocks", "A", nil)
+		s.CreateRelation(ctx(), entity.RelationKey{From: "A", Type: "requires", To: "B"}, nil)
+		s.CreateRelation(ctx(), entity.RelationKey{From: "C", Type: "blocks", To: "A"}, nil)
 
 		result, err := s.RenameFamily(ctx(), "A", "A2")
 		require.NoError(t, err)
 		assert.Equal(t, 2, result.RelationsUpdated)
 
-		_, err = s.GetRelation(ctx(), "A", "requires", "B")
+		_, err = s.GetRelation(ctx(), entity.RelationKey{From: "A", Type: "requires", To: "B"})
 		assert.ErrorIs(t, err, store.ErrNotFound)
-		_, err = s.GetRelation(ctx(), "C", "blocks", "A")
+		_, err = s.GetRelation(ctx(), entity.RelationKey{From: "C", Type: "blocks", To: "A"})
 		assert.ErrorIs(t, err, store.ErrNotFound)
 
-		r1, err := s.GetRelation(ctx(), "A2", "requires", "B")
+		r1, err := s.GetRelation(ctx(), entity.RelationKey{From: "A2", Type: "requires", To: "B"})
 		require.NoError(t, err)
 		assert.Equal(t, "A2", r1.From)
 
-		r2, err := s.GetRelation(ctx(), "C", "blocks", "A2")
+		r2, err := s.GetRelation(ctx(), entity.RelationKey{From: "C", Type: "blocks", To: "A2"})
 		require.NoError(t, err)
 		assert.Equal(t, "A2", r2.To)
 	})
@@ -328,13 +328,13 @@ func RunEntityTests(t *testing.T, f Factory) {
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("A", "t")))
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("B", "t")))
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("C", "t")))
-		s.CreateRelation(ctx(), "B", "links", "C", nil)
+		s.CreateRelation(ctx(), entity.RelationKey{From: "B", Type: "links", To: "C"}, nil)
 
 		result, err := s.RenameFamily(ctx(), "A", "A2")
 		require.NoError(t, err)
 		assert.Equal(t, 0, result.RelationsUpdated)
 
-		r, err := s.GetRelation(ctx(), "B", "links", "C")
+		r, err := s.GetRelation(ctx(), entity.RelationKey{From: "B", Type: "links", To: "C"})
 		require.NoError(t, err)
 		assert.Equal(t, "B", r.From)
 	})

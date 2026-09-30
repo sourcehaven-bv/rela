@@ -943,7 +943,7 @@ func RunGraphHeaderTests(t *testing.T, f Factory) {
 // mustRel creates a relation; fails the test on error.
 func mustRel(t *testing.T, s store.Store, from, relType, to string) {
 	t.Helper()
-	_, err := s.CreateRelation(ctx(), from, relType, to, nil)
+	_, err := s.CreateRelation(ctx(), entity.RelationKey{From: from, Type: relType, To: to}, nil)
 	require.NoError(t, err, "%s --%s--> %s", from, relType, to)
 }
 

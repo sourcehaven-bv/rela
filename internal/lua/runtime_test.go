@@ -105,7 +105,7 @@ func (m *mockWorkspace) seedEntity(e *entity.Entity) {
 
 // seedRelation adds a relation to the mock's memstore.
 func (m *mockWorkspace) seedRelation(r *entity.Relation) {
-	_, _ = m.store.CreateRelation(context.Background(), r.From, r.Type, r.To, nil)
+	_, _ = m.store.CreateRelation(context.Background(), entity.RelationKey{From: r.From, Type: r.Type, To: r.To}, nil)
 }
 
 // services returns a lua.WriteDeps bound to the mock's store, with projectRoot set.
@@ -271,16 +271,15 @@ func (m *mockManager) CreateRelation(
 		content = *opts.Content
 	}
 	var data *store.RelationData
-	if len(opts.Properties) > 0 || content != "" || !opts.FromFace.IsDefault() {
+	if len(opts.Properties) > 0 || content != "" {
 		data = &store.RelationData{
 			Properties: opts.Properties,
 			Content:    content,
-			FromFace:   opts.FromFace,
 		}
 	}
 	m.lastRelationFace = opts.FromFace
 	m.relationCalls++
-	return m.ws.store.CreateRelation(ctx, from, relType, to, data)
+	return m.ws.store.CreateRelation(ctx, entity.RelationKey{From: from, FromFace: opts.FromFace, Type: relType, To: to}, data)
 }
 
 func (m *mockManager) DeleteEntityFace(
@@ -300,7 +299,7 @@ func (m *mockManager) DeleteRelationState(
 ) error {
 	m.unlinkedFace = face
 	m.relationUnlinked++
-	return m.ws.store.DeleteRelationState(ctx, from, face, relType, to)
+	return m.ws.store.DeleteRelation(ctx, entity.RelationKey{From: from, FromFace: face, Type: relType, To: to})
 }
 
 // mockSearcher is a naive title-substring searcher used by lua tests.

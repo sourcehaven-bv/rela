@@ -23,11 +23,6 @@ func (s *FSStore) loadEntityMeta(m entityMeta) (*entity.Entity, error) {
 	return e, nil
 }
 
-// loadRelation reads a single relation from disk.
-func (s *FSStore) loadRelation(from, relType, to string) (*entity.Relation, error) {
-	return s.codec.readRelationFile(s.layout.relationFileKey(from, relType, to), from, relType, to)
-}
-
 // loadRelationMeta reads the relation an index meta describes, stamping
 // the identity-bearing tail face from the index.
 func (s *FSStore) loadRelationMeta(m relationMeta) (*entity.Relation, error) {

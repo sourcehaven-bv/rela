@@ -236,7 +236,7 @@ end
 // TestElevatedCreateRelation_TakesAFace is AC 7's elevated half, and the
 // reason RR-3NNWNK made the manager check a prerequisite: authorizeAndAudit
 // returns early under bypassACL, so on this path the manager check is the
-// ONLY thing between a Lua string and store.RelationData.FromFace. The
+// ONLY thing between a Lua string and the stored edge's tail. The
 // binding must reach it, and it must reject there.
 //
 // Asserts at the manager boundary rather than on a returned table:

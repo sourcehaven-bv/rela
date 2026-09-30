@@ -133,7 +133,7 @@ func TestPersistence_RelationsSurviveReopen(t *testing.T) {
 	s1 := openStore(t, fs)
 	require.NoError(t, s1.CreateEntity(ctx, entity.New("REQ-1", "requirement")))
 	require.NoError(t, s1.CreateEntity(ctx, entity.New("SOL-1", "solution")))
-	_, err := s1.CreateRelation(ctx, "SOL-1", "implements", "REQ-1", &store.RelationData{
+	_, err := s1.CreateRelation(ctx, entity.RelationKey{From: "SOL-1", Type: "implements", To: "REQ-1"}, &store.RelationData{
 		Content: "This solution implements the requirement.",
 	})
 	require.NoError(t, err)
@@ -142,7 +142,7 @@ func TestPersistence_RelationsSurviveReopen(t *testing.T) {
 	s2 := openStore(t, fs)
 	defer s2.Close()
 
-	rel, err := s2.GetRelation(ctx, "SOL-1", "implements", "REQ-1")
+	rel, err := s2.GetRelation(ctx, entity.RelationKey{From: "SOL-1", Type: "implements", To: "REQ-1"})
 	require.NoError(t, err)
 	assert.Equal(t, "SOL-1", rel.From)
 	assert.Equal(t, "implements", rel.Type)
@@ -270,7 +270,7 @@ Externally created relation.
 	s2 := openStore(t, fs)
 	defer s2.Close()
 
-	rel, err := s2.GetRelation(ctx, "A-1", "depends-on", "A-2")
+	rel, err := s2.GetRelation(ctx, entity.RelationKey{From: "A-1", Type: "depends-on", To: "A-2"})
 	require.NoError(t, err)
 	assert.Equal(t, "A-1", rel.From)
 	assert.Equal(t, "depends-on", rel.Type)
@@ -355,7 +355,7 @@ func TestPersistence_RenameSurvivedReopen(t *testing.T) {
 	e.Properties["title"] = "Keep this"
 	require.NoError(t, s1.CreateEntity(ctx, e))
 	require.NoError(t, s1.CreateEntity(ctx, entity.New("SOL-1", "solution")))
-	_, err := s1.CreateRelation(ctx, "SOL-1", "implements", "REQ-OLD", nil)
+	_, err := s1.CreateRelation(ctx, entity.RelationKey{From: "SOL-1", Type: "implements", To: "REQ-OLD"}, nil)
 	require.NoError(t, err)
 
 	_, err = s1.RenameFamily(ctx, "REQ-OLD", "REQ-NEW")
@@ -375,7 +375,7 @@ func TestPersistence_RenameSurvivedReopen(t *testing.T) {
 	assert.Equal(t, "Keep this", got.Properties["title"])
 
 	// Relation updated to new ID.
-	rel, err := s2.GetRelation(ctx, "SOL-1", "implements", "REQ-NEW")
+	rel, err := s2.GetRelation(ctx, entity.RelationKey{From: "SOL-1", Type: "implements", To: "REQ-NEW"})
 	require.NoError(t, err)
 	assert.Equal(t, "REQ-NEW", rel.To)
 }

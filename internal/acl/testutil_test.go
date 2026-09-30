@@ -151,7 +151,7 @@ func (w *World) Build(t *testing.T) *World {
 		}
 	}
 	for _, r := range w.relations {
-		if _, cErr := ms.CreateRelation(w.ctx, r.from, r.typ, r.to, nil); cErr != nil {
+		if _, cErr := ms.CreateRelation(w.ctx, entity.RelationKey{From: r.from, Type: r.typ, To: r.to}, nil); cErr != nil {
 			t.Fatalf("World.Build: create relation %s --%s--> %s: %v", r.from, r.typ, r.to, cErr)
 		}
 	}

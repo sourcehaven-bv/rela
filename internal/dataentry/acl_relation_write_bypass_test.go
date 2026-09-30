@@ -47,7 +47,7 @@ func TestReadOnlyACL_DanglingPeerRelationWrite_Refused(t *testing.T) {
 	}
 
 	// The edge must not exist in the store.
-	if _, err := app.store.GetRelation(t.Context(), "TKT-001", "belongs_to", "CMP-999"); err == nil {
+	if _, err := app.store.GetRelation(t.Context(), entity.RelationKey{From: "TKT-001", Type: "belongs_to", To: "CMP-999"}); err == nil {
 		t.Fatal("dangling-peer edge persisted under ReadOnlyACL; ACL/audit bypass")
 	}
 
@@ -88,7 +88,7 @@ func TestReadOnlyACL_ExistingPeerRelationWrite_Forbidden(t *testing.T) {
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("expected 403, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if _, err := app.store.GetRelation(t.Context(), "TKT-001", "belongs_to", "CMP-001"); err == nil {
+	if _, err := app.store.GetRelation(t.Context(), entity.RelationKey{From: "TKT-001", Type: "belongs_to", To: "CMP-001"}); err == nil {
 		t.Fatal("edge persisted despite ReadOnlyACL deny")
 	}
 }
@@ -115,7 +115,7 @@ func TestDanglingPeerRelationWrite_AllowedACL_422(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "target_not_found") {
 		t.Errorf("expected target_not_found in body, got %s", rec.Body.String())
 	}
-	if _, err := app.store.GetRelation(t.Context(), "TKT-001", "belongs_to", "CMP-999"); err == nil {
+	if _, err := app.store.GetRelation(t.Context(), entity.RelationKey{From: "TKT-001", Type: "belongs_to", To: "CMP-999"}); err == nil {
 		t.Fatal("dangling-peer edge persisted despite hard 422")
 	}
 }

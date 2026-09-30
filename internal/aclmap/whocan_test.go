@@ -64,7 +64,7 @@ func buildWorld(t *testing.T, policyYAML string, ents []ent, rels []rel) *world 
 		}
 	}
 	for _, r := range rels {
-		if _, cErr := ms.CreateRelation(ctx, r.from, r.typ, r.to, nil); cErr != nil {
+		if _, cErr := ms.CreateRelation(ctx, entity.RelationKey{From: r.from, Type: r.typ, To: r.to}, nil); cErr != nil {
 			t.Fatalf("create relation %s--%s-->%s: %v", r.from, r.typ, r.to, cErr)
 		}
 	}
@@ -124,7 +124,7 @@ func buildWorldWithMeta(t *testing.T, meta *metamodel.Metamodel, policyYAML stri
 		}
 	}
 	for _, r := range rels {
-		if _, cErr := ms.CreateRelation(ctx, r.from, r.typ, r.to, nil); cErr != nil {
+		if _, cErr := ms.CreateRelation(ctx, entity.RelationKey{From: r.from, Type: r.typ, To: r.to}, nil); cErr != nil {
 			t.Fatalf("create relation %s--%s-->%s: %v", r.from, r.typ, r.to, cErr)
 		}
 	}

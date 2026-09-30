@@ -36,7 +36,7 @@ func TestGateTraversal_AllFacesQueryCannotSatisfyHopOutsideRequestWorld(t *testi
 	mk("TKT-1", "ticket", "", "")
 	mk("CON-1", "concept", "", "closed")
 	mk("CON-1", "concept", draft, "open")
-	if _, rerr := st.CreateRelation(ctx, "TKT-1", "caused-by", "CON-1", nil); rerr != nil {
+	if _, rerr := st.CreateRelation(ctx, entity.RelationKey{From: "TKT-1", Type: "caused-by", To: "CON-1"}, nil); rerr != nil {
 		t.Fatal(rerr)
 	}
 	d, err := NewDeclarative(&Policy{

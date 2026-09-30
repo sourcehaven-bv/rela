@@ -40,7 +40,7 @@ func seedFamilies(t *testing.T, n int) *memstore.MemStore {
 			}
 		}
 		if i%4 == 1 {
-			if _, err := st.CreateRelation(ctx, fmt.Sprintf("POL-%d", i-1), "links", fmt.Sprintf("POL-%d", i), nil); err != nil {
+			if _, err := st.CreateRelation(ctx, entity.RelationKey{From: fmt.Sprintf("POL-%d", i-1), Type: "links", To: fmt.Sprintf("POL-%d", i)}, nil); err != nil {
 				t.Fatal(err)
 			}
 		}

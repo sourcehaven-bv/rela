@@ -242,7 +242,7 @@ func dropRelationProperty(ctx context.Context, x *Exec, relType, prop string) (S
 		}
 		delete(r.Properties, prop)
 		data := store.RelationData{Properties: r.Properties, Content: r.Content}
-		if _, err := x.Store.UpdateRelation(ctx, r.From, r.Type, r.To, data); err != nil {
+		if _, err := x.Store.UpdateRelation(ctx, r.Identity(), data); err != nil {
 			return res, err
 		}
 	}

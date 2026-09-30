@@ -504,8 +504,9 @@ func (h *writeHandler) writeCreateRelation(
 	// Soft condition (type-allowlist mismatch): write directly through
 	// the store, skipping the workspace's pre-write validation. Safe
 	// because the EntityManager already ran the ACL above.
-	data := &store.RelationData{Properties: finalProps, Content: finalContent, FromFace: tail}
-	if _, sErr := h.store.CreateRelation(ctx, from, relType, to, data); sErr != nil {
+	data := &store.RelationData{Properties: finalProps, Content: finalContent}
+	k := entity.RelationKey{From: from, FromFace: tail, Type: relType, To: to}
+	if _, sErr := h.store.CreateRelation(ctx, k, data); sErr != nil {
 		return &relationError{
 			RelType: relType, Target: ref.ID, Op: "create",
 			Reason: "create_failed", Err: sErr,
@@ -554,13 +555,13 @@ func (h *writeHandler) writeUpdateRelation(
 	// UpdateRelation, so a concurrent update cannot land in between and be
 	// overwritten by the merge of the row read before it.
 	txErr := h.store.Tx(ctx, func(view store.Store) error {
-		current, readErr := edgeOnFace(ctx, view, from, tail, relType, to)
+		current, readErr := view.GetRelation(ctx, entity.RelationKey{From: from, FromFace: tail, Type: relType, To: to})
 		if readErr != nil && !errors.Is(readErr, store.ErrNotFound) {
 			return readErr
 		}
 		finalProps, finalContent, _ := mergeEdgeMeta(current, ref)
 		data := store.RelationData{Properties: finalProps, Content: finalContent}
-		_, sErr := view.UpdateRelationState(ctx, from, tail, relType, to, data)
+		_, sErr := view.UpdateRelation(ctx, entity.RelationKey{From: from, FromFace: tail, Type: relType, To: to}, data)
 		return sErr
 	})
 	if txErr != nil {
@@ -612,32 +613,6 @@ func tailOfExistingEdge(
 		}
 	}
 	return "", nil
-}
-
-// edgeOnFace reads the edge of this triple whose TAIL is exactly tail.
-//
-// Package-level rather than a method because two unrelated surfaces need it —
-// the relation write path's read-merge-write and relation-history restore —
-// and the store has no face-aware relation get (`store.GetRelation` is the
-// default tail by contract). A second copy of this query is how one of them
-// ends up addressing the wrong edge.
-//
-// Nil: returns (nil, store.ErrNotFound) when no edge carries this tail; never
-// (nil, nil). The callers act on the returned value, so "no such edge" must be
-// distinguishable from "the read failed".
-func edgeOnFace(
-	ctx context.Context, st store.Store, from string, tail entity.Face, relType, to string,
-) (*entity.Relation, error) {
-	q := store.RelationQuery{From: from, FromFace: &tail, Type: relType, To: to}
-	for rel, err := range st.ListRelations(ctx, q) {
-		if err != nil {
-			return nil, err
-		}
-		if rel.From == from && rel.FromFace == tail && rel.Type == relType && rel.To == to {
-			return rel, nil
-		}
-	}
-	return nil, store.ErrNotFound
 }
 
 // isMissingPeerCondition reports whether the EntityManager error is a

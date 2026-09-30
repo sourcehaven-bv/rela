@@ -72,7 +72,8 @@ func (e *Engine) spliceEntity(ctx context.Context, key string, fe *FetchedEntity
 func (e *Engine) spliceRelation(
 	ctx context.Context, from, relType, to string, fr *FetchedRelation,
 ) (*entity.Relation, error) {
-	prior, err := e.store.GetRelation(ctx, from, relType, to)
+	// Sync is a default-world protocol: its manifest selects the zero tail.
+	prior, err := e.store.GetRelation(ctx, entity.RelationKey{From: from, Type: relType, To: to})
 	switch {
 	case err == nil:
 	case errors.Is(err, store.ErrNotFound):

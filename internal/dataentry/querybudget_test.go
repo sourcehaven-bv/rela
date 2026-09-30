@@ -198,12 +198,12 @@ func newBudgetAppOn(t *testing.T, n int, base store.Store) (*App, *storetest.Cou
 	mk("PRG1", "program", "Program one")
 	for i := 1; i <= budgetEpics(n); i++ {
 		mk(fmt.Sprintf("EP%d", i), "epic", fmt.Sprintf("Epic %d", i))
-		_, err := counting.CreateRelation(ctx, fmt.Sprintf("EP%d", i), "in-program", "PRG1", nil)
+		_, err := counting.CreateRelation(ctx, entity.RelationKey{From: fmt.Sprintf("EP%d", i), Type: "in-program", To: "PRG1"}, nil)
 		must(err)
 	}
 	for i := 1; i <= 3; i++ {
 		mk(fmt.Sprintf("P%d", i), "person", fmt.Sprintf("Person %d", i))
-		_, err := counting.CreateRelation(ctx, fmt.Sprintf("P%d", i), "member-of", "T1", nil)
+		_, err := counting.CreateRelation(ctx, entity.RelationKey{From: fmt.Sprintf("P%d", i), Type: "member-of", To: "T1"}, nil)
 		must(err)
 	}
 	for i := 1; i <= 5; i++ {
@@ -215,20 +215,20 @@ func newBudgetAppOn(t *testing.T, n int, base store.Store) (*App, *storetest.Cou
 		e.SetString("title", "Ticket "+id)
 		e.SetString("status", []string{"open", "done"}[i%2])
 		must(counting.CreateEntity(ctx, e))
-		_, err := counting.CreateRelation(ctx, id, "implements", fmt.Sprintf("F%d", i%5+1), nil)
+		_, err := counting.CreateRelation(ctx, entity.RelationKey{From: id, Type: "implements", To: fmt.Sprintf("F%d", i%5+1)}, nil)
 		must(err)
-		_, err = counting.CreateRelation(ctx, id, "assigned-to", fmt.Sprintf("P%d", i%3+1), nil)
+		_, err = counting.CreateRelation(ctx, entity.RelationKey{From: id, Type: "assigned-to", To: fmt.Sprintf("P%d", i%3+1)}, nil)
 		must(err)
 		if i > 1 {
-			_, err = counting.CreateRelation(ctx, id, "blocks", "TKT-0001", nil)
+			_, err = counting.CreateRelation(ctx, entity.RelationKey{From: id, Type: "blocks", To: "TKT-0001"}, nil)
 			must(err)
 		}
 		// Every ticket is tracked by E1, so the recursive view's first level
 		// holds n rows — the size the budget must be independent of.
-		_, err = counting.CreateRelation(ctx, id, "tracked-by", "E1", nil)
+		_, err = counting.CreateRelation(ctx, entity.RelationKey{From: id, Type: "tracked-by", To: "E1"}, nil)
 		must(err)
 		// Spread across the nested view's epics, so both levels grow with n.
-		_, err = counting.CreateRelation(ctx, id, "in-epic", fmt.Sprintf("EP%d", (i-1)/budgetTicketsPerEpic+1), nil)
+		_, err = counting.CreateRelation(ctx, entity.RelationKey{From: id, Type: "in-epic", To: fmt.Sprintf("EP%d", (i-1)/budgetTicketsPerEpic+1)}, nil)
 		must(err)
 	}
 
@@ -627,7 +627,7 @@ func TestQueryBudget_NestedRelationColumnsResolveOverEmittedRowsOnly(t *testing.
 
 	mk("T1", "team", "Team one")
 	mk("P1", "person", "Person one")
-	_, err := breadth.CreateRelation(ctx, "P1", "member-of", "T1", nil)
+	_, err := breadth.CreateRelation(ctx, entity.RelationKey{From: "P1", Type: "member-of", To: "T1"}, nil)
 	must(err)
 	mk("PRG1", "program", "Program one")
 
@@ -649,7 +649,7 @@ func TestQueryBudget_NestedRelationColumnsResolveOverEmittedRowsOnly(t *testing.
 	for p := 1; p <= parents; p++ {
 		epic := fmt.Sprintf("EP%d", p)
 		mk(epic, "epic", epic)
-		_, err := breadth.CreateRelation(ctx, epic, "in-program", "PRG1", nil)
+		_, err := breadth.CreateRelation(ctx, entity.RelationKey{From: epic, Type: "in-program", To: "PRG1"}, nil)
 		must(err)
 		for c := range childrenPerParent {
 			id := fmt.Sprintf("TKT-%d-%d", p, c)
@@ -657,9 +657,9 @@ func TestQueryBudget_NestedRelationColumnsResolveOverEmittedRowsOnly(t *testing.
 			e.SetString("title", id)
 			e.SetString("status", "open")
 			must(breadth.CreateEntity(ctx, e))
-			_, err := breadth.CreateRelation(ctx, id, "in-epic", epic, nil)
+			_, err := breadth.CreateRelation(ctx, entity.RelationKey{From: id, Type: "in-epic", To: epic}, nil)
 			must(err)
-			_, err = breadth.CreateRelation(ctx, id, "assigned-to", "P1", nil)
+			_, err = breadth.CreateRelation(ctx, entity.RelationKey{From: id, Type: "assigned-to", To: "P1"}, nil)
 			must(err)
 			visibleChildren++
 		}

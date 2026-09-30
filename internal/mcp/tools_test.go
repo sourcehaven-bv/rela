@@ -64,7 +64,7 @@ func makeTestFixture(t *testing.T) (*metamodel.Metamodel, *memstore.MemStore) {
 			t.Fatalf("seed entity %s: %v", e.ID, err)
 		}
 	}
-	if _, err := st.CreateRelation(ctx, "DEC-001", "addresses", "REQ-001", nil); err != nil {
+	if _, err := st.CreateRelation(ctx, entity.RelationKey{From: "DEC-001", Type: "addresses", To: "REQ-001"}, nil); err != nil {
 		t.Fatalf("seed relation: %v", err)
 	}
 
@@ -772,7 +772,7 @@ func TestHandleListRelations_Pagination(t *testing.T) {
 	t.Parallel()
 	s, st := makeTestServerWithStore(t)
 	// Add another relation for pagination testing
-	if _, err := st.CreateRelation(context.Background(), "DEC-001", "addresses", "REQ-002", nil); err != nil {
+	if _, err := st.CreateRelation(context.Background(), entity.RelationKey{From: "DEC-001", Type: "addresses", To: "REQ-002"}, nil); err != nil {
 		t.Fatalf("seed relation: %v", err)
 	}
 
