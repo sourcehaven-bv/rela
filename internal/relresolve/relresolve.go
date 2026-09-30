@@ -40,7 +40,7 @@ import (
 type Gate = func(ctx context.Context, candidateType string, hop acl.TraversalHop) (*store.RelationPredicate, error)
 
 // Match reports, for every id in ids, whether it satisfies q. It is
-// [store.GraphQueryer.MatchingIDs], possibly wrapped to stamp a world or
+// [store.MatchingIDs], possibly wrapped to stamp a world or
 // face restriction onto q. An alias for the same reason as [Gate].
 type Match = func(ctx context.Context, q store.GraphQuery, ids []string) (map[string]bool, error)
 
@@ -247,7 +247,7 @@ func NewBinder(meta *metamodel.Metamodel, gate Gate, match Match) (*Binder, erro
 	return &Binder{meta: meta, gate: gate, match: match}, nil
 }
 
-// NewStoreBinder is [NewBinder] answering through st.MatchingIDs. Nil:
+// NewStoreBinder is [NewBinder] answering through [store.MatchingIDs] on st. Nil:
 // rejected — taking the method value of a nil interface would panic before
 // NewBinder could refuse it.
 func NewStoreBinder(meta *metamodel.Metamodel, gate Gate, st store.GraphQueryer) (*Binder, error) {

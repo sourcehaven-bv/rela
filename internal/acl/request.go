@@ -281,7 +281,7 @@ func isBlankOrUnknown(s string) bool {
 // # Why this returns an error
 //
 // A world grant is a READ capability, and the read paths in this package
-// carry errors on purpose ([Request.PermitsRead], [Request.PermitsReadMany],
+// carry errors on purpose ([Request.PermitsRead], [Request.ReadableFacesMany],
 // visibility's listPushdown). Resolving the principal's roles walks the
 // graph, and a store failure there yields a PARTIAL role set — which would
 // silently answer "no" for a principal who genuinely holds the grant.

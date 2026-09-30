@@ -534,7 +534,7 @@ func relationFilterClassifier(
 // edged rows (no title-match inference channel). Neighbors are gated in one
 // batch per relation param via matchRelationFilter → visibleNeighborTitles.
 // NOTE: when the sibling helper App.visibleRelationIDs (TKT-ODHV2D) merges,
-// this should converge on it; today it uses the same readGate.PermitsReadMany
+// this should converge on it; today it uses the same readGate.ReadableFacesMany
 // batching pattern inline.
 //
 // Cost (RR-38K7K9): this runs over the entire type's visible set BEFORE
@@ -926,7 +926,7 @@ func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName
 
 	// The path segment is an ADDRESS — `ID` or `ID@face` (TKT-SLFURL). The
 	// resolver applies PermitsRead BEFORE the store read, so a hidden id and
-	// a nonexistent id spend the same MatchingIDs roundtrip — otherwise the
+	// a nonexistent id spend the same MatchingFaces roundtrip — otherwise the
 	// timing difference (in-memory lookup ~1µs vs. DB roundtrip ~1ms) is an
 	// id-enumeration side channel that defeats the indistinguishable-404-body
 	// invariant (RR-NGMI). Every miss, including a malformed address, a
@@ -1086,7 +1086,7 @@ func writeListPipelineError(w http.ResponseWriter, r *http.Request, err error) {
 	}
 }
 
-// writeGateError maps a readGate.PermitsRead / PermitsReadMany error
+// writeGateError maps a readGate.PermitsRead / ReadableFacesMany error
 // to the right HTTP shape: client-disconnect emits nothing,
 // deadline-exceeded is 504, everything else is 500 with the
 // acl_query_failed code (RR-89XK). Centralized so every gate call
@@ -2041,7 +2041,7 @@ func (a *App) resolveV1Includes(ctx context.Context, entity *entityPkg.Entity, i
 
 // filterVisibleIncludes drops any candidate the principal cannot read,
 // batched by entity type. For each distinct type ONE gate call
-// (PermitsReadMany over every candidate of that type) — turning a
+// (ReadableFacesMany over every candidate of that type) — turning a
 // worst case of O(N) per-id probes into O(distinct-types). RR-FRK1.
 //
 // On gate error: drop the whole type's candidates (fail-closed) and

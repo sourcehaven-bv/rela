@@ -335,7 +335,7 @@ type FieldVisibleSearcher interface {
 }
 
 // ErrScope marks a SearchVisible failure that occurred while evaluating
-// the visibility scope (GraphQuery/MatchingIDs execution), as opposed
+// the visibility scope (GraphQuery/MatchingFaces execution), as opposed
 // to a plain search-backend failure. Consumers route ErrScope failures
 // through their ACL-error path. Implementations that cannot separate
 // the two phases (pgstore runs one combined statement) wrap the whole
