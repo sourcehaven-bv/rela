@@ -21,4 +21,4 @@ status: done
 ## External Documentation
 
 - [x] ~~Changelog entry added~~ (N/A: the project keeps no changelog file; the migration 18 lock note is in docs/postgres-backend.md)
-- [x] API docs updated: docs/postgres-backend.md describes the migration 18 write lock and advises a maintenance window or `rela db migrate` as a deploy step; docs/acl-security.md updated for per-face gating
+- [x] API docs updated: docs/postgres-backend.md (via GUIDE-postgres-backend) describes the migration 18 write lock and advises a maintenance window or `rela db migrate` as a deploy step; docs/acl-security.md updated for per-face gating
