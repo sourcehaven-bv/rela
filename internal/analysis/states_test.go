@@ -11,7 +11,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/fsstore"
-	"github.com/Sourcehaven-BV/rela/internal/tracer"
+	"github.com/Sourcehaven-BV/rela/internal/tracer/tracertest"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
@@ -154,7 +154,7 @@ func TestCheckStates_ToleratedDiskShapes(t *testing.T) {
 		"page":   {Label: "Page"},
 		"ticket": {Label: "Ticket"},
 	}}
-	tr := tracer.New(st, store.TrivialScope())
+	tr := tracertest.Must(st, store.TrivialScope())
 	svc, err := analysis.New(analysis.Deps{Store: st, Meta: meta, Tracer: tr,
 		LuaReadDeps: lua.ReadDeps{VisibleReader: visibility.Unrestricted(st), Tracer: tr, Meta: meta, World: store.TrivialScope()}})
 	if err != nil {

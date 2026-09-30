@@ -11,7 +11,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
-	"github.com/Sourcehaven-BV/rela/internal/tracer"
+	"github.com/Sourcehaven-BV/rela/internal/tracer/tracertest"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
@@ -34,7 +34,7 @@ func newFSService(t *testing.T, files map[string]string) *analysis.Service {
 
 	st := memstore.New()
 	meta := &metamodel.Metamodel{Entities: map[string]metamodel.EntityDef{}}
-	tr := tracer.New(st, store.TrivialScope())
+	tr := tracertest.Must(st, store.TrivialScope())
 	svc, err := analysis.New(analysis.Deps{
 		Store: st, Meta: meta, Tracer: tr, FS: fs, Paths: paths,
 		LuaReadDeps: lua.ReadDeps{VisibleReader: visibility.Unrestricted(st), Tracer: tr, Meta: meta, World: store.TrivialScope()},
@@ -216,7 +216,7 @@ func TestCheckRelationFilenames_NoFS(t *testing.T) {
 
 	st := memstore.New()
 	meta := &metamodel.Metamodel{Entities: map[string]metamodel.EntityDef{}}
-	tr := tracer.New(st, store.TrivialScope())
+	tr := tracertest.Must(st, store.TrivialScope())
 	svc, err := analysis.New(analysis.Deps{
 		Store: st, Meta: meta, Tracer: tr,
 		LuaReadDeps: lua.ReadDeps{VisibleReader: visibility.Unrestricted(st), Tracer: tr, Meta: meta, World: store.TrivialScope()},

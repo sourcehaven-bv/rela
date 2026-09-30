@@ -10,6 +10,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
+	"github.com/Sourcehaven-BV/rela/internal/tracer/tracertest"
 )
 
 // A faced type has no row at the bare id, so a tracer that read only the
@@ -34,7 +35,7 @@ func seedFaced(t *testing.T) *memstore.MemStore {
 
 func TestTrace_FacedNodeIsAFamily(t *testing.T) {
 	st := seedFaced(t)
-	tr := tracer.New(st, store.TrivialScope())
+	tr := tracertest.Must(st, store.TrivialScope())
 
 	res := tr.TraceFrom(ctx(), "POL-1", 2)
 	require.NotNil(t, res, "a faced entity must trace")
@@ -59,7 +60,7 @@ func TestTrace_FacedNodeIsAFamily(t *testing.T) {
 func TestTrace_WorldSelectsTheServedFace(t *testing.T) {
 	st := seedFaced(t)
 	w := store.NewWorldScope(map[string]store.TypeResolution{"policy": {Chain: []entity.Face{"published", "draft"}}})
-	res := tracer.New(st, w).TraceFrom(ctx(), "POL-1", 1)
+	res := tracertest.Must(st, w).TraceFrom(ctx(), "POL-1", 1)
 	require.NotNil(t, res)
 	assert.Equal(t, "Pub", res.Title)
 	assert.Equal(t, []entity.Face{"draft", "published"}, res.Faces)
@@ -67,7 +68,7 @@ func TestTrace_WorldSelectsTheServedFace(t *testing.T) {
 
 func TestFindOrphans_FacedFamilies(t *testing.T) {
 	st := seedFaced(t)
-	got, err := tracer.New(st, store.TrivialScope()).FindOrphans(ctx())
+	got, err := tracertest.Must(st, store.TrivialScope()).FindOrphans(ctx())
 	require.NoError(t, err)
 	assert.Equal(t, []tracer.Orphan{
 		{ID: "NOTE-1", Type: "note"},
@@ -84,7 +85,7 @@ func TestFindOrphans_EdgeOnMissingFaceConnectsNothing(t *testing.T) {
 	_, err := st.CreateRelation(ctx(), entity.RelationKey{From: "POL-1", FromFace: "published", Type: "implements", To: "CTL-1"}, &store.RelationData{})
 	require.NoError(t, err)
 
-	got, err := tracer.New(st, store.TrivialScope()).FindOrphans(ctx())
+	got, err := tracertest.Must(st, store.TrivialScope()).FindOrphans(ctx())
 	require.NoError(t, err)
 	assert.Len(t, got, 2)
 }

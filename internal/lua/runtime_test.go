@@ -22,6 +22,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
+	"github.com/Sourcehaven-BV/rela/internal/tracer/tracertest"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
@@ -113,7 +114,7 @@ func (m *mockWorkspace) services(projectRoot string) WriteDeps {
 	return WriteDeps{
 		ReadDeps: ReadDeps{
 			VisibleReader: visibility.Unrestricted(m.store),
-			Tracer:        tracer.New(m.store, store.TrivialScope()),
+			Tracer:        tracertest.Must(m.store, store.TrivialScope()),
 			Searcher:      &mockSearcher{ws: m},
 			Meta:          m.meta,
 			ProjectRoot:   projectRoot,

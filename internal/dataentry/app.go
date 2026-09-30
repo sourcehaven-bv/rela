@@ -1015,7 +1015,10 @@ func NewApp(
 	// visible only on whichever node served the POST (TKT-VC27L3).
 	kv := stateKV
 	// The default world until SetWorlds supplies the lookup and rebuilds it.
-	trc := tracer.New(st, defaultWorldScope(nil))
+	trc, err := tracer.New(st, defaultWorldScope(nil))
+	if err != nil {
+		return nil, fmt.Errorf("dataentry: tracer: %w", err)
+	}
 	templater := templating.NewFSTemplater(fs, paths)
 	// The validator (val) is built AFTER app.affordances below — its reader is
 	// now GATED (TKT-3FL2S6, superseding DEC-O59WM4), which needs the redactor

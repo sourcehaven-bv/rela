@@ -9,6 +9,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
+	"github.com/Sourcehaven-BV/rela/internal/tracer/tracertest"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 	"github.com/Sourcehaven-BV/rela/internal/visibility/visibilitytest"
 )
@@ -97,7 +98,7 @@ func TestAllowAllReader(t *testing.T) {
 // every constructor in the package.
 func TestConstructorsRejectNil(t *testing.T) {
 	st := memstore.New()
-	base := tracer.New(st, store.TrivialScope())
+	base := tracertest.Must(st, store.TrivialScope())
 	gate := visibility.NopGate{}
 	redact := visibility.NopRedactor{}
 	res, err := visibility.NewResolver(gate, redact, st)

@@ -10,7 +10,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/store/storetest"
-	"github.com/Sourcehaven-BV/rela/internal/tracer"
+	"github.com/Sourcehaven-BV/rela/internal/tracer/tracertest"
 )
 
 // orphanTracer builds a VisibleTracer over st for gate.
@@ -20,7 +20,7 @@ func orphanTracer(t *testing.T, st store.Store, gate RowGate) *VisibleTracer {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tr, err := NewVisibleTracer(tracer.New(st, store.TrivialScope()), res, st, store.TrivialScope())
+	tr, err := NewVisibleTracer(tracertest.Must(st, store.TrivialScope()), res, st, store.TrivialScope())
 	if err != nil {
 		t.Fatal(err)
 	}

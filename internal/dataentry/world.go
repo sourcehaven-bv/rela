@@ -152,7 +152,11 @@ func worldScopeFrom(ctx context.Context) store.WorldScope {
 // world (BUG-95W7MV): NewApp built it before any world lookup existed.
 func (a *App) SetWorlds(w WorldLookup) {
 	a.worlds = w
-	a.tracer = tracer.New(a.store, defaultWorldScope(w))
+	tr, err := tracer.New(a.store, defaultWorldScope(w))
+	if err != nil { // coverage-ignore: invariant: NewApp rejected a nil store and defaultWorldScope is always set
+		panic("dataentry: SetWorlds: " + err.Error())
+	}
+	a.tracer = tr
 }
 
 // defaultWorldScope is the scope of the default world in w, the world a

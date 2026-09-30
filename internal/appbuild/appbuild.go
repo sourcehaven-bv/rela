@@ -1989,7 +1989,10 @@ func assemble(
 	}
 	// coverage-ignore-end
 
-	tr := tracer.New(st, base.worlds.Default())
+	tr, err := tracer.New(st, base.worlds.Default())
+	if err != nil { // coverage-ignore: invariant: the store is built above and the default world is set
+		return nil, fmt.Errorf("appbuild: tracer: %w", err)
+	}
 	templater := templating.NewFSTemplater(cfg.FS, cfg.Paths)
 	cfgLoader := overrides.projectConfig
 	if cfgLoader == nil {

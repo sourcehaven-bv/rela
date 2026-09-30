@@ -13,7 +13,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
-	"github.com/Sourcehaven-BV/rela/internal/tracer"
+	"github.com/Sourcehaven-BV/rela/internal/tracer/tracertest"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
@@ -68,7 +68,7 @@ func newFailingService(t *testing.T, meta *metamodel.Metamodel, failAfter int, s
 		seed(base)
 	}
 	st := &errAfterNStore{Store: base, n: failAfter, err: errParse}
-	tr := tracer.New(st, store.TrivialScope())
+	tr := tracertest.Must(st, store.TrivialScope())
 	svc, err := analysis.New(analysis.Deps{
 		Store:  st,
 		Meta:   meta,
