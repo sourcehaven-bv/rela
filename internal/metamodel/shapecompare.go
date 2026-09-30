@@ -278,8 +278,27 @@ func compareRelationShapes(r *ShapeReport, from, to map[string]RelationShape) {
 		} else if !fromRel.Content && toRel.Content {
 			r.add(TierAdditive, "relation_content_added", subject, fmt.Sprintf("relation %q now supports body content", name))
 		}
+		compareRelationScope(r, subject, name, fromRel.Scope, toRel.Scope)
 
 		compareProperties(r, name, fromRel.Properties, toRel.Properties, func(s string) string { return "rel:" + s })
+	}
+}
+
+// compareRelationScope reports a content/identity scope change as drift.
+// It is not TierMigration because no declarative step rewrites relation
+// tails, so demanding a migration would leave the store unable to adopt the
+// schema at all. Edges keep the tail they were filed under, which the new
+// scope does not expect, and the operator is told.
+func compareRelationScope(r *ShapeReport, subject, name string, from, to RelationScope) {
+	switch {
+	case from.IsContent() && to.IsIdentity():
+		r.add(TierDrift, "relation_scope_changed", subject, fmt.Sprintf(
+			"relation %q scope changed content → identity: edges filed on a face keep that tail, "+
+				"which identity-scoped reads do not expect", name))
+	case from.IsIdentity() && to.IsContent():
+		r.add(TierDrift, "relation_scope_changed", subject, fmt.Sprintf(
+			"relation %q scope changed identity → content: existing edges stay on the entity "+
+				"(zero tail) and hang from no face", name))
 	}
 }
 

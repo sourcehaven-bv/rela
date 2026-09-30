@@ -633,10 +633,9 @@ func enumValuesIn(p metamodel.ShapeProjection, typ, prop string) []string {
 // ---- rename_relation_type ----
 
 // renameRelationTypeStep moves every edge of one relation type to another,
-// keeping each edge's tail. The tail is copied verbatim: the shape projection
-// records no relation scope, so a rename between a content-scoped and an
-// identity-scoped type is not refused here and leaves tails the new type
-// does not expect.
+// keeping each edge's tail. The tail is copied verbatim, so Validate refuses
+// a rename between a content-scoped and an identity-scoped type: the copied
+// tails would be ones the new type does not expect.
 type renameRelationTypeStep struct {
 	From string `yaml:"from"`
 	To   string `yaml:"to"`
@@ -649,13 +648,30 @@ func (s *renameRelationTypeStep) Validate(from, to metamodel.ShapeProjection) er
 	if s.From == "" || s.To == "" {
 		return errors.New("from and to are required")
 	}
-	if _, ok := from.Relations[s.From]; !ok {
+	fromRel, ok := from.Relations[s.From]
+	if !ok {
 		return fmt.Errorf("relation type %q is not in the from-schema", s.From)
 	}
-	if _, ok := to.Relations[s.To]; !ok {
+	toRel, ok := to.Relations[s.To]
+	if !ok {
 		return fmt.Errorf("relation type %q is not in the to-schema", s.To)
 	}
+	if fromRel.Scope.IsContent() != toRel.Scope.IsContent() {
+		return fmt.Errorf("relation type %q is %s-scoped and %q is %s-scoped: a rename copies "+
+			"each edge's tail, which the new scope does not expect. Rename between types of the "+
+			"same scope, and change the scope as a separate schema edit; the stored tails then "+
+			"need a data migration that rewrites them, which no declarative step performs yet",
+			s.From, scopeWord(fromRel.Scope), s.To, scopeWord(toRel.Scope))
+	}
 	return nil
+}
+
+// scopeWord names a relation scope for a message.
+func scopeWord(s metamodel.RelationScope) string {
+	if s.IsContent() {
+		return "content"
+	}
+	return "identity"
 }
 
 func (s *renameRelationTypeStep) Run(ctx context.Context, x *Exec) (StepResult, error) {

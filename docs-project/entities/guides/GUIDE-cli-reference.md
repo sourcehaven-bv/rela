@@ -1387,6 +1387,8 @@ Shows:
 - Custom types (enums) not referenced by any property
 - Types with few instances (when `--threshold` is set)
 
+An entity counts once, however many faces it stores.
+
 **Flags:**
 
 | Flag          | Description                                                   |

@@ -80,15 +80,21 @@ type PropertyShape struct {
 
 // RelationShape is the data-shape projection of one relation type.
 type RelationShape struct {
-	From        []string                 `json:"from,omitempty"`
-	To          []string                 `json:"to,omitempty"`
-	Symmetric   bool                     `json:"symmetric,omitempty"`
-	MinOutgoing *int                     `json:"min_outgoing,omitempty"`
-	MaxOutgoing *int                     `json:"max_outgoing,omitempty"`
-	MinIncoming *int                     `json:"min_incoming,omitempty"`
-	MaxIncoming *int                     `json:"max_incoming,omitempty"`
-	Content     bool                     `json:"content,omitempty"`
-	Properties  map[string]PropertyShape `json:"properties,omitempty"`
+	From        []string `json:"from,omitempty"`
+	To          []string `json:"to,omitempty"`
+	Symmetric   bool     `json:"symmetric,omitempty"`
+	MinOutgoing *int     `json:"min_outgoing,omitempty"`
+	MaxOutgoing *int     `json:"max_outgoing,omitempty"`
+	MinIncoming *int     `json:"min_incoming,omitempty"`
+	MaxIncoming *int     `json:"max_incoming,omitempty"`
+	Content     bool     `json:"content,omitempty"`
+	// Scope is ScopeContent or empty. Both identity spellings project to
+	// empty, so writing out `scope: identity` is not a shape change. A
+	// stored edge's tail is a coordinate like an entity's face: a
+	// content-scoped edge hangs from one face, an identity-scoped edge from
+	// the entity. Scope is therefore part of the shape.
+	Scope      RelationScope            `json:"scope,omitempty"`
+	Properties map[string]PropertyShape `json:"properties,omitempty"`
 }
 
 // ShapeProjection returns the data-shape projection of the metamodel.
@@ -120,6 +126,9 @@ func (m *Metamodel) ShapeProjection() ShapeProjection {
 			MinIncoming: cloneIntPtr(def.MinIncoming),
 			MaxIncoming: cloneIntPtr(def.MaxIncoming),
 			Content:     def.Content,
+		}
+		if def.Scope.IsContent() {
+			rs.Scope = ScopeContent
 		}
 		if len(def.Properties) > 0 {
 			rs.Properties = make(map[string]PropertyShape, len(def.Properties))
@@ -195,6 +204,13 @@ func (p ShapeProjection) Hash() string {
 		h.optInt(rs.MinIncoming)
 		h.optInt(rs.MaxIncoming)
 		h.boolean(rs.Content)
+		// Hashed only when content-scoped, so a schema without content-scoped
+		// relations keeps the hash it had before Scope joined the shape. The
+		// tag byte cannot be mistaken for the property count that follows,
+		// whose first byte is zero.
+		if rs.Scope.IsContent() {
+			h.tag('C')
+		}
 		hashPropertyShapes(h, rs.Properties)
 	}
 
