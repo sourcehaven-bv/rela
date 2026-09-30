@@ -1234,21 +1234,53 @@ func loadACLPolicy(projectRoot string) (*acl.Policy, error) {
 // An error from [acl.NewDeclarative] is propagated, not downgraded:
 // the operator wrote a policy and the resolver couldn't accept it; the
 // server must fail to boot rather than silently allow-all.
+// ValidateACLPolicy enforces the schema-dependent invariants of an ACL policy
+// ([acl.Policy.ValidateAgainstMetamodel]): identity keys, declared relation
+// types, faced write grants, and the identity structure the resolver walks.
+//
+// It is the one entry point every loader uses — [prepare] for every recipe,
+// and the `rela acl` commands and the docs builder — so a policy that fails
+// here fails everywhere, and `rela acl audit` cannot report clean on a policy
+// the server refuses.
+//
+// Nil: rejected — a nil policy or metamodel returns an error.
+func ValidateACLPolicy(policy *acl.Policy, meta *metamodel.Metamodel) error {
+	if policy == nil || meta == nil {
+		return errors.New("appbuild: ValidateACLPolicy: policy and metamodel are required")
+	}
+	return policy.ValidateAgainstMetamodel(metamodelView{meta})
+}
+
 // metamodelView adapts *metamodel.Metamodel to acl.MetamodelView. The acl
 // package deliberately does not depend on internal/metamodel
-// (.go-arch-lint.yml), so it declares the narrow view it needs and the
-// wiring site — which imports both — supplies this adapter. Uniqueness is
-// computed from the already-exported EntityDef accessors, keeping it out
-// of Metamodel's public API (plimsoll load line).
+// (.go-arch-lint.yml), so it declares the narrow view it needs and this
+// adapter supplies it. Uniqueness is computed from the already-exported
+// EntityDef accessors, keeping it out of Metamodel's public API (plimsoll
+// load line).
 type metamodelView struct{ m *metamodel.Metamodel }
 
 func (v metamodelView) HasEntityType(entityType string) bool {
 	return v.m.HasEntityType(entityType)
 }
 
-func (v metamodelView) HasRelationType(relationType string) bool {
-	_, ok := v.m.Relations[relationType]
-	return ok
+func (v metamodelView) FaceNames(entityType string) (string, []string) {
+	canonical := v.m.ResolveAlias(entityType)
+	def, ok := v.m.GetEntityDef(entityType)
+	if !ok {
+		return canonical, nil
+	}
+	return canonical, metamodel.FaceOrderOf(*def)
+}
+
+func (v metamodelView) RelationInfo(relationType string) acl.RelationInfo {
+	def, ok := v.m.GetRelationDef(relationType)
+	if !ok {
+		return acl.RelationInfo{}
+	}
+	return acl.RelationInfo{
+		Exists: true, Content: def.Scope.IsContent(),
+		From: def.From, To: def.To,
+	}
 }
 
 func (v metamodelView) PropertyInfo(entityType, property string) acl.PropertyInfo {
@@ -1263,18 +1295,11 @@ func (v metamodelView) PropertyInfo(entityType, property string) acl.PropertyInf
 	return acl.PropertyInfo{Exists: true, Unique: pd.Unique, List: pd.List}
 }
 
-func buildACL(policy *acl.Policy, meta *metamodel.Metamodel, st store.Store) (acl.ACL, *acl.Declarative, error) {
+func buildACL(policy *acl.Policy, st store.Store) (acl.ACL, *acl.Declarative, error) {
 	if policy == nil {
 		return acl.NopACL{}, nil, nil
 	}
-	// Schema-dependent policy validation (principal_property references a
-	// real, unique property; user_entity_type is a declared type). Run
-	// here rather than in acl.LoadPolicy because the acl package
-	// deliberately does not depend on metamodel; a mistake must fail the
-	// boot, not silently mis-resolve identities at runtime.
-	if err := policy.ValidateAgainstMetamodel(metamodelView{meta}); err != nil {
-		return nil, nil, fmt.Errorf("appbuild: validate acl policy against metamodel: %w", err)
-	}
+	// Schema-dependent validation already ran in prepare (validateResolvedPolicy).
 	warnUngatedMembership(policy)
 	// `st` is passed twice: once via NewStoreGraph (the Graph
 	// adapter the resolver uses for member-of / ancestor walks), and
@@ -1678,6 +1703,10 @@ func prepare(cfg Config, opts []Option) (*SharedBase, error) {
 	// a startup failure rather than a lurking runtime one. The loader checks
 	// world STRUCTURE; the face GRAMMAR is checked here because metamodel
 	// may not import entity under arch-lint (TKT-WAV8XP, internal/worlds).
+	if err := validateResolvedPolicy(resolvedACL, aclPolicy, meta); err != nil {
+		return nil, err
+	}
+
 	compiledWorlds, err := worlds.Compile(meta)
 	if err != nil {
 		return nil, fmt.Errorf("compile worlds: %w", err)
@@ -1707,6 +1736,27 @@ func prepare(cfg Config, opts []Option) (*SharedBase, error) {
 	}, nil
 }
 
+// validateResolvedPolicy runs [ValidateACLPolicy] on whichever policy prepare
+// settled on: the loaded acl.yaml, or the policy of an injected
+// *acl.Declarative ([WithACL]). Running it here, once per [SharedBase], is
+// what makes a policy the metamodel rejects a boot failure on every recipe.
+//
+// An injected ACL that is not a *acl.Declarative (NopACL, ReadOnlyACL, a test
+// double) carries no policy and is exempt.
+func validateResolvedPolicy(injected acl.ACL, loaded *acl.Policy, meta *metamodel.Metamodel) error {
+	policy := loaded
+	if d, ok := injected.(*acl.Declarative); ok {
+		policy = d.Policy()
+	}
+	if policy == nil {
+		return nil
+	}
+	if err := ValidateACLPolicy(policy, meta); err != nil {
+		return fmt.Errorf("appbuild: validate acl policy against metamodel: %w", err)
+	}
+	return nil
+}
+
 // assemble runs the build-agnostic back half: it takes the opened store
 // + searcher (built by the per-scenario openBackend) and wires every
 // remaining collaborator — automation, tracer, templater, config loader,
@@ -1729,7 +1779,7 @@ func prepare(cfg Config, opts []Option) (*SharedBase, error) {
 // parse would silently disable authorization.
 func resolveACL(base *SharedBase, st store.Store) (acl.ACL, *acl.Declarative, error) {
 	if base.acl == nil {
-		return buildACL(base.aclPolicy, base.meta, st)
+		return buildACL(base.aclPolicy, st)
 	}
 	// RR-36UL: when WithACL was passed a *acl.Declarative, surface it as the
 	// declarative value too so the affordance resolver path picks it up.

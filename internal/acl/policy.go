@@ -1406,8 +1406,13 @@ type MetamodelView interface {
 	// PropertyInfo describes property on entityType (existence, unique,
 	// list). A missing type or property yields PropertyInfo{Exists:false}.
 	PropertyInfo(entityType, property string) PropertyInfo
-	// HasRelationType reports whether relationType is declared.
-	HasRelationType(relationType string) bool
+	// FaceNames returns the canonical name of entityType (resolving
+	// aliases) and the faces it declares, in declaration order. A
+	// faceless or undeclared type yields no faces.
+	FaceNames(entityType string) (canonical string, faces []string)
+	// RelationInfo describes relationType. An undeclared type yields
+	// RelationInfo{Exists:false}.
+	RelationInfo(relationType string) RelationInfo
 }
 
 // ValidateAgainstMetamodel enforces the schema-dependent invariants that
@@ -1436,6 +1441,13 @@ type MetamodelView interface {
 //
 // user_entity_type set WITHOUT principal_property is NOT an error — it is
 // meaningful on its own (the type a membership edge originates from).
+//
+// Then, collected and reported together (TKT-7IZHP0):
+//
+//   - a write grant naming a faced type without a face (see
+//     Policy.validateFacedWriteGrants);
+//   - a faced user, member or group type, or a content-scoped relation the
+//     ACL walks for roles (see Policy.validateIdentityStructure).
 func (p *Policy) ValidateAgainstMetamodel(meta MetamodelView) error {
 	if meta == nil {
 		return errors.New("acl: ValidateAgainstMetamodel: metamodel view must be non-nil")
@@ -1468,6 +1480,11 @@ func (p *Policy) ValidateAgainstMetamodel(meta MetamodelView) error {
 	if err := p.validateRelationTypesDeclared(meta); err != nil {
 		return err
 	}
+	errs := p.validateIdentityStructure(meta)
+	errs = append(errs, p.validateFacedWriteGrants(meta)...)
+	if len(errs) > 0 {
+		return errors.Join(errs...)
+	}
 	return p.validateProvisionerGrant(userType)
 }
 
@@ -1479,7 +1496,7 @@ func (p *Policy) ValidateAgainstMetamodel(meta MetamodelView) error {
 // ever surface it.
 func (p *Policy) validateRelationTypesDeclared(meta MetamodelView) error {
 	for _, relType := range slices.Sorted(maps.Keys(p.RelationWriteGrants)) {
-		if !meta.HasRelationType(relType) {
+		if !meta.RelationInfo(relType).Exists {
 			return fmt.Errorf(
 				"acl: relation_grants.%s is not a declared relation type", relType)
 		}
