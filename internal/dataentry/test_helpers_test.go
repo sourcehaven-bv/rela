@@ -304,14 +304,6 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 	}
 }
 
-// rebindSyncHandler rebuilds app.sync over the app's CURRENT store/manager.
-// Production resolves the sync capabilities once at construction (the store is
-// fixed for App's lifetime); a test that swaps app.store after construction to
-// inject a fake manifest/apply source must call this so the handler re-resolves
-// against the swapped store.
-func rebindSyncHandler(app *App) {
-}
-
 // rebindVisibleSearcher re-derives the generic visible-search wrapper
 // over the app's CURRENT searcher+store pair. Tests that inject a fake
 // via `app.searcher = ...` and exercise an executeQuery consumer

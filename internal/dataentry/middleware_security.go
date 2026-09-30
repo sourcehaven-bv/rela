@@ -379,11 +379,12 @@ func isCSRFExempt(r *http.Request) bool {
 	}
 	// Non-browser clients read and write through the authorized /api/v1 data
 	// routes and /api/v1/_schema. Those paths can't be a static prefix
-	// ({plural} varies per entity type), so match them explicitly. The exemption is STILL conditioned on the provably-non-
-	// browser signals below (no Sec-Fetch-Site, no Cookie, no Origin), which a
-	// browser cannot forge — so a browser fetch() of a v1 data route stays
-	// same-origin gated exactly as before. This does NOT blanket-exempt /api/v1:
-	// only the specific data + schema shapes match.
+	// ({plural} varies per entity type), so match them explicitly. The
+	// exemption is STILL conditioned on the provably-non-browser signals below
+	// (no Sec-Fetch-Site, no Cookie, no Origin), which a browser cannot forge,
+	// so a browser fetch() of a v1 data route stays same-origin gated. This
+	// does NOT blanket-exempt /api/v1: only the specific data + schema shapes
+	// match.
 	if !exemptPath && isNonBrowserExemptV1Path(r.URL.Path) {
 		exemptPath = true
 	}

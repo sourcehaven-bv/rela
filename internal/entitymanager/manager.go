@@ -74,7 +74,10 @@ type TemplateLoader interface {
 // DeleteRelationState. Pinned here rather than split: the pair belongs on the
 // type that owns the write path.
 //
-//plimsoll:max-methods=41
+// -4 (TKT-UA1W1L): removing sync dropped ApplyEntity, ApplyRelation and
+// their two helpers.
+//
+//plimsoll:max-methods=37
 type Manager struct {
 	deps Deps
 
