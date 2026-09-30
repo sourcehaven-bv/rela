@@ -105,7 +105,7 @@ func CompareShapes(from, to ShapeProjection) ShapeReport {
 	var r ShapeReport
 
 	compareEntityShapes(&r, from.Entities, to.Entities)
-	compareRelationShapes(&r, from.Relations, to.Relations)
+	compareRelationShapes(&r, from.Relations, to.Relations, from.RelationScopes && to.RelationScopes)
 	compareNamedTypes(&r, from.Types, to.Types)
 
 	return r
@@ -229,7 +229,7 @@ func compareFaces(r *ShapeReport, typeName string, from, to EntityShape) {
 	}
 }
 
-func compareRelationShapes(r *ShapeReport, from, to map[string]RelationShape) {
+func compareRelationShapes(r *ShapeReport, from, to map[string]RelationShape, scopes bool) {
 	for _, name := range sortedKeys(from) {
 		if _, ok := to[name]; !ok {
 			r.add(TierDrift, "relation_type_removed", "rel:"+name,
@@ -278,7 +278,9 @@ func compareRelationShapes(r *ShapeReport, from, to map[string]RelationShape) {
 		} else if !fromRel.Content && toRel.Content {
 			r.add(TierAdditive, "relation_content_added", subject, fmt.Sprintf("relation %q now supports body content", name))
 		}
-		compareRelationScope(r, subject, name, fromRel.Scope, toRel.Scope)
+		if scopes {
+			compareRelationScope(r, subject, name, fromRel.Scope, toRel.Scope)
+		}
 
 		compareProperties(r, name, fromRel.Properties, toRel.Properties, func(s string) string { return "rel:" + s })
 	}

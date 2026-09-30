@@ -472,8 +472,14 @@ func (s *Server) handleAnalyzeSchema(
 
 	dataEntry := s.loadDataEntryConfig(ctx)
 
-	counter := schema.NewStoreCounter(ctx, snap.deps.Store, snap.deps.Families)
+	counter, err := schema.NewStoreCounter(ctx, snap.deps.Store, snap.deps.Families)
+	if err != nil {
+		return errorResult(err.Error()), nil
+	}
 	analysis := schema.Analyze(snap.deps.Meta, counter, dataEntry, threshold)
+	if err := counter.Err(); err != nil {
+		return errorResult(err.Error()), nil
+	}
 
 	if !analysis.HasIssues() {
 		return textResult("All schema types are in use"), nil

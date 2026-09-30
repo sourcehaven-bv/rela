@@ -389,7 +389,13 @@ A relation's `scope` decides which tail its stored edges hang from. A
 edge hangs from the entity. Changing the scope does not move any stored edge:
 each keeps the tail it was filed under. The gate reports the change as drift,
 because the edges stay readable, but they are not where the new scope expects
-them.
+them. After a change to identity scope, an edge that still hangs from a face
+can be deleted but not updated, because identity-scoped writes refuse a face
+tail.
+
+A project whose recorded shape predates scopes in the projection gets no scope
+delta on its first start after the upgrade. The recorded shape cannot say what
+the scope was, so the gate adopts the new shape without a notice.
 
 `rename_relation_type` copies each edge's tail as it is, so it refuses to
 rename between a content-scoped and an identity-scoped type. Rename between

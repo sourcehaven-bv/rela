@@ -40,6 +40,12 @@ type ShapeProjection struct {
 	Relations map[string]RelationShape `json:"relations"`
 	// Types maps each named custom (enum) type to its ordered value list.
 	Types map[string][]string `json:"types"`
+	// RelationScopes records that this projection carries RelationShape.Scope.
+	// A projection recorded before Scope joined the shape decodes every
+	// relation as identity-scoped, which is wrong for a content-scoped one, so
+	// CompareShapes compares scopes only when both sides record them. Not
+	// hashed: it describes the record's format, not the data.
+	RelationScopes bool `json:"relation_scopes,omitempty"`
 }
 
 // EntityShape is the data-shape projection of one entity type.
@@ -105,6 +111,8 @@ func (m *Metamodel) ShapeProjection() ShapeProjection {
 		Entities:  make(map[string]EntityShape, len(m.Entities)),
 		Relations: make(map[string]RelationShape, len(m.Relations)),
 		Types:     make(map[string][]string, len(m.Types)),
+
+		RelationScopes: true,
 	}
 	for name, def := range m.Entities {
 		es := EntityShape{
@@ -205,7 +213,10 @@ func (p ShapeProjection) Hash() string {
 		h.optInt(rs.MaxIncoming)
 		h.boolean(rs.Content)
 		// Hashed only when content-scoped, so a schema without content-scoped
-		// relations keeps the hash it had before Scope joined the shape. The
+		// relations keeps the hash it had before Scope joined the shape. One
+		// with them moves its hash once on upgrade; the gate then finds no
+		// delta, because CompareShapes skips scopes against an older record,
+		// and adopts silently. The
 		// tag byte cannot be mistaken for the property count that follows,
 		// whose first byte is zero.
 		if rs.Scope.IsContent() {

@@ -471,9 +471,12 @@ func (d Deps) requireCreateFaceFor(entityType string, face entity.Face) error {
 // inherit requireCreateFaceFor.
 //
 // fromType is best-effort at the call sites (empty when the source does not
-// exist yet, mirroring the authorization subject), so an unresolvable source
-// is validated on the relation scope alone rather than refused here — the
-// peer-existence checks that follow are what report a missing endpoint.
+// exist, mirroring the authorization subject), so a missing source is
+// validated on the relation scope alone rather than refused here; the
+// peer-existence checks that follow report it. A source that exists but whose
+// type the schema no longer declares has no faces, so a named tail on it is
+// refused. That applies to updates too: such an edge can be deleted, not
+// rewritten.
 //
 // Nil: never returns an error for a zero face on an identity-scoped type,
 // which is the overwhelmingly common case.
@@ -597,7 +600,7 @@ func validTail(face entity.Face) error {
 		return nil
 	}
 	if _, err := entity.ParseFace(face.String()); err != nil {
-		return fmt.Errorf("%w: relation tail: %w", ErrFaceNotDeclared, err)
+		return fmt.Errorf("%w: relation tail %q is not a valid face name: %w", ErrFaceNotDeclared, face, err)
 	}
 	return nil
 }

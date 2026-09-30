@@ -29,7 +29,7 @@ func TestStoreCounter_CountsFamilies(t *testing.T) {
 		"policy": {Chain: []entity.Face{"draft", "published"}, Fallback: store.FallbackExclude},
 	})
 
-	counter := NewStoreCounter(ctx, st, families)
+	counter := mustCounter(t, st, families)
 	if got := counter.CountByEntityType("policy"); got != 2 {
 		t.Errorf("policy count = %d, want 2 entities (3 face rows)", got)
 	}

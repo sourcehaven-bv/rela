@@ -71,10 +71,26 @@ func readAddress(
 	if !ref.Face.IsImplicit() || slices.Contains(faces, "") {
 		return nil, fmt.Errorf("%w: %s", store.ErrNotFound, addr)
 	}
-	// The resolver's Family lists the faces in declaration order.
-	if fam, ok, ferr := res.Family(ctx, typ, ref.ID); ferr == nil && ok {
-		faces = fam.Faces
+	// Declared faces in declaration order, then any undeclared ones by
+	// token, as the resolver lists a Family. faces holds no implicit face
+	// here: that case returned above.
+	rank := map[entity.Face]int{}
+	for i, name := range metamodel.FaceOrderOf(meta, typ) {
+		rank[entity.Face(name)] = i
 	}
+	slices.SortStableFunc(faces, func(a, b entity.Face) int {
+		ra, aok := rank[a]
+		rb, bok := rank[b]
+		switch {
+		case aok && bok:
+			return ra - rb
+		case aok:
+			return -1
+		case bok:
+			return 1
+		}
+		return strings.Compare(a.String(), b.String())
+	})
 	named := make([]string, len(faces))
 	for i, face := range faces {
 		named[i] = entity.FormatStateRef(ref.ID, face)

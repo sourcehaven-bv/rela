@@ -656,7 +656,9 @@ func (s *renameRelationTypeStep) Validate(from, to metamodel.ShapeProjection) er
 	if !ok {
 		return fmt.Errorf("relation type %q is not in the to-schema", s.To)
 	}
-	if fromRel.Scope.IsContent() != toRel.Scope.IsContent() {
+	// A projection recorded before scopes joined the shape cannot tell, so
+	// the check needs both sides to record them.
+	if from.RelationScopes && to.RelationScopes && fromRel.Scope.IsContent() != toRel.Scope.IsContent() {
 		return fmt.Errorf("relation type %q is %s-scoped and %q is %s-scoped: a rename copies "+
 			"each edge's tail, which the new scope does not expect. Rename between types of the "+
 			"same scope, and change the scope as a separate schema edit; the stored tails then "+

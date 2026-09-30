@@ -13,7 +13,7 @@ import (
 // expect.
 func TestRenameRelationType_RefusesScopeChange(t *testing.T) {
 	shape := func(name string, scope metamodel.RelationScope) metamodel.ShapeProjection {
-		return metamodel.ShapeProjection{Relations: map[string]metamodel.RelationShape{
+		return metamodel.ShapeProjection{RelationScopes: true, Relations: map[string]metamodel.RelationShape{
 			name: {From: []string{"page"}, To: []string{"spec"}, Scope: scope},
 		}}
 	}
@@ -48,5 +48,18 @@ func TestRenameRelationType_RefusesScopeChange(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestRenameRelationType_OldProjectionsSkipScopeCheck pins that a migration
+// file recorded before scopes joined the shape is not refused: its
+// projections read every relation as identity-scoped, which says nothing.
+func TestRenameRelationType_OldProjectionsSkipScopeCheck(t *testing.T) {
+	from := metamodel.ShapeProjection{Relations: map[string]metamodel.RelationShape{"cites": {}}}
+	to := metamodel.ShapeProjection{RelationScopes: true, Relations: map[string]metamodel.RelationShape{
+		"refs": {Scope: metamodel.ScopeContent},
+	}}
+	if err := (&renameRelationTypeStep{From: "cites", To: "refs"}).Validate(from, to); err != nil {
+		t.Fatalf("Validate: %v", err)
 	}
 }
