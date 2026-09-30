@@ -214,6 +214,7 @@ func RunAll(t *testing.T, f Factory, sf SearchFactory, vsf VisibleSearchFactory,
 	// capability: every backend resolves an InWorld selection (TKT-WAV8XP).
 	t.Run("Worlds", func(t *testing.T) { RunWorldTests(t, f) })
 	t.Run("FaceSelection", func(t *testing.T) { RunFaceSelectionTests(t, f) })
+	t.Run("MatchingFaces", func(t *testing.T) { RunMatchingFacesTests(t, f) })
 	if caps.Observers != nil {
 		t.Run("Observers", func(t *testing.T) { RunObserverTests(t, caps.Observers) })
 	}
