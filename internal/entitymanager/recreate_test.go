@@ -42,7 +42,7 @@ func TestRecreateEntity_PreservesExplicitSequentialID(t *testing.T) {
 	mgr := newRecreateManager(t, st, audit.Nop{})
 
 	e := &entity.Entity{
-		ID:         "REQ-fromPeer",
+		ID:         "REQ-restored",
 		Type:       "requirement",
 		Properties: map[string]any{"title": "Restored requirement", "status": "draft"},
 	}
@@ -50,7 +50,7 @@ func TestRecreateEntity_PreservesExplicitSequentialID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RecreateEntity: %v", err)
 	}
-	if res.Entity.ID != "REQ-fromPeer" {
+	if res.Entity.ID != "REQ-restored" {
 		t.Fatalf("ID not preserved: got %q", res.Entity.ID)
 	}
 
@@ -64,7 +64,7 @@ func TestRecreateEntity_PreservesExplicitSequentialID(t *testing.T) {
 		t.Fatal("expected CreateEntity to reject an explicit ID for a sequential id_type")
 	}
 
-	got, err := st.GetEntity(context.Background(), entity.Ref{ID: "REQ-fromPeer"})
+	got, err := st.GetEntity(context.Background(), entity.Ref{ID: "REQ-restored"})
 	if err != nil {
 		t.Fatalf("GetEntity: %v", err)
 	}

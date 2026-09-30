@@ -115,10 +115,11 @@ type appEntityWriter interface {
 // 40-method load line — extract the API/serialization/relation services into
 // their own types. Ratchet this number DOWN as methods move out; never up
 // EXCEPT for a new required route handler (App owns one method per registered
-// HTTP route by the router's design). The sync route cluster (16 methods) moved
-// to syncHandler (170 → 154; sync itself was later removed); the command
-// cluster (11 methods) moved to commandHandler (154 → 143); the attachment cluster (12 methods) moved to
-// attachmentHandler / package functions (143 → 131); the write nucleus —
+// HTTP route by the router's design). The sync route cluster (16 methods)
+// moved to syncHandler (170 → 154; sync itself was later removed); the
+// command cluster (11 methods) moved to commandHandler (154 → 143); the
+// attachment cluster (12 methods) moved to attachmentHandler / package
+// functions (143 → 131); the write nucleus —
 // entity/relation CRUD, clone, conflict-resolve, and the modern relations
 // reconciler (18 methods) — moved to writeHandler (131 → 114); the Lua
 // action handler joined it (115 → 114, from a base that had absorbed the

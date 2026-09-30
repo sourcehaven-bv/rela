@@ -224,7 +224,7 @@ func sortedKeys(m map[string]bool) []string {
 //
 // Scope note: this guards the TWO sites that leaked, not a package-wide "no raw
 // store reads" lint. A blanket ban would need a large, drift-prone allowlist
-// (analyze tools, sync, write-prep diffing that must stay raw per "never redact
+// (analyze tools, write-prep diffing that must stay raw per "never redact
 // a read that feeds a write") and would fight every change.
 func TestViewTraversalIsSourceGated(t *testing.T) {
 	for _, tc := range []struct {

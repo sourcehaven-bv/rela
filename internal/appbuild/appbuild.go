@@ -302,9 +302,8 @@ func (s *Services) UserState() userstate.Store { return s.userState }
 // implementation, and handing out the concrete type lets each consumer
 // declare its own narrow write interface at its call site (CLAUDE.md
 // "interfaces at the call site") and be satisfied structurally, with no
-// wiring change here. It is also what lets internal/cli assert the
-// id-preserving sync applier against a concrete type rather than
-// interface-to-interface (TKT-IVSJV6).
+// wiring change here. It is also what lets internal/cli wrap it in
+// [entitymanager.Recreator] for history restore.
 func (s *Services) EntityManager() *entitymanager.Manager { return s.entityManager }
 
 // ACL returns the authorization gate wired into entitymanager. Exposed

@@ -324,6 +324,67 @@ func TestRecreate_AuthorizesTheFaceItWrites(t *testing.T) {
 	}
 }
 
+// RecreateEntity applies the same face rule as the other create paths: no row
+// at an undeclared face, and none at the zero coordinate of a faced type.
+func TestRecreate_EnforcesTheFaceRule(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		face entity.Face
+		want error
+	}{
+		{"undeclared face", entity.Face("nonsuch"), entitymanager.ErrFaceNotDeclared},
+		{"zero face of a faced type", "", entitymanager.ErrFaceRequired},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mgr, st := facedWriteManager(t, acl.NopACL{})
+			ctx := context.Background()
+
+			_, err := entitymanager.RecreateEntity(ctx, mgr, &entity.Entity{
+				ID: "POL-1", Type: "beleid", Face: tc.face,
+				Properties: map[string]any{"title": "x"},
+			})
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("got %v, want %v", err, tc.want)
+			}
+			if _, gerr := st.GetEntity(ctx, entity.Ref{ID: "POL-1", Face: tc.face}); gerr == nil {
+				t.Error("the refused recreate wrote a row")
+			}
+		})
+	}
+}
+
+// A recreate whose unique value another entity already holds in that face is
+// a validation error, not ErrEntityAlreadyExists: the id is free, the value is
+// not.
+func TestRecreate_EnforcesUnique(t *testing.T) {
+	mgr, st := facedWriteManager(t, acl.NopACL{})
+	ctx := context.Background()
+
+	if err := st.CreateEntity(ctx, &entity.Entity{
+		ID: "POL-1", Type: "beleid", Face: entity.Face("concept"),
+		Properties: map[string]any{"title": "holder", "code": "ISMS-1"},
+	}); err != nil {
+		t.Fatalf("seed the holder: %v", err)
+	}
+
+	_, err := entitymanager.RecreateEntity(ctx, mgr, &entity.Entity{
+		ID: "POL-2", Type: "beleid", Face: entity.Face("concept"),
+		Properties: map[string]any{"title": "restored", "code": "ISMS-1"},
+	})
+	if err == nil {
+		t.Fatal("a recreate took a unique value another entity holds")
+	}
+	if errors.Is(err, entitymanager.ErrEntityAlreadyExists) {
+		t.Fatalf("a unique collision reported as an id collision: %v", err)
+	}
+	if !isValidationError(err) {
+		t.Fatalf("want *ValidationError, got %T: %v", err, err)
+	}
+	if _, gerr := st.GetEntity(ctx, entity.Ref{ID: "POL-2", Face: entity.Face("concept")}); gerr == nil {
+		t.Error("the refused recreate wrote the row")
+	}
+}
+
 // ID generation counted each family once by scanning the ZERO coordinate. A
 // type declaring faces stores no row there (BUG-HC6I2T), so the generator saw
 // an EMPTY id set and minted the same id for every entity of that type — two

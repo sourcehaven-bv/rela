@@ -38,6 +38,67 @@ entities:
         type: string
 `
 
+// facedConfusionMetamodel is typeConfusionMetamodel with faces: two prefixless
+// manual-id types that share face names, so nothing but the store stops a
+// recreate from joining an existing family under another type.
+const facedConfusionMetamodel = `version: "1.0"
+entities:
+  secret:
+    label: Secret
+    plural: secrets
+    id_type: manual
+    faces:
+      concept: {label: Concept}
+      vastgesteld: {label: Vastgesteld}
+    properties:
+      title: {type: string}
+  note:
+    label: Note
+    plural: notes
+    id_type: manual
+    faces:
+      concept: {label: Concept}
+      vastgesteld: {label: Vastgesteld}
+    properties:
+      title: {type: string}
+`
+
+// A recreate of a free face whose sibling face holds another type must not
+// land: one id is one entity, with one type. The store refuses the write, so
+// the recreate fails and the family keeps its type.
+func TestRecreateEntity_SiblingFaceOfAnotherTypeIsRefused(t *testing.T) {
+	meta, err := metamodel.Parse([]byte(facedConfusionMetamodel))
+	if err != nil {
+		t.Fatalf("metamodel.Parse: %v", err)
+	}
+	st := memstore.New()
+	mgr, err := entitymanager.New(entitymanager.Deps{
+		Store: st, Meta: meta, Templater: nopTemplater{}, Audit: audit.Nop{},
+		ACL: acl.NopACL{}, Transitions: statemachine.EmptySet(),
+		FieldGate: entitymanager.AllowAllFieldGate{},
+	})
+	if err != nil {
+		t.Fatalf("entitymanager.New: %v", err)
+	}
+	ctx := context.Background()
+	if err := st.CreateEntity(ctx, &entity.Entity{
+		ID: "X-1", Type: "secret", Face: entity.Face("concept"),
+		Properties: map[string]any{"title": "secret draft"},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	if _, err := entitymanager.RecreateEntity(ctx, mgr, &entity.Entity{
+		ID: "X-1", Type: "note", Face: entity.Face("vastgesteld"),
+		Properties: map[string]any{"title": "note"},
+	}); err == nil {
+		t.Fatal("a recreate joined a family of another type")
+	}
+	if _, gerr := st.GetEntity(ctx, entity.Ref{ID: "X-1", Face: entity.Face("vastgesteld")}); gerr == nil {
+		t.Error("the refused recreate wrote the row")
+	}
+}
+
 func typeConfusionMeta(t *testing.T) *metamodel.Metamodel {
 	t.Helper()
 	m, err := metamodel.Parse([]byte(typeConfusionMetamodel))

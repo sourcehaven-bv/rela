@@ -331,7 +331,7 @@ linters:
       # contextcheck flags every r.Context() after the reassignment as
       # "non-inherited" — it cannot trace the derivation through the *http.Request
       # swap — and propagates that up to the dispatchers that call these handlers
-      # (api_v1.go, sync.go). The seam is pinned structurally by
+      # (api_v1.go). The seam is pinned structurally by
       # TestProvisionSeam_EveryWriteHandlerUsesWithProvision and end-to-end by the
       # provision e2e tests, so the guarantee is tested, not asserted. Path
       # exclusion rather than ~15 //nolint comments so the reasoning lives in one
@@ -346,7 +346,7 @@ linters:
       - linters:
           - contextcheck
         path: internal/dataentry/(api_v1|acl_write_test|handlers_attachment_write_test)\.go
-        text: handleV1(CreateEntity|UpdateEntity|DeleteEntity|CreateRelation|UpdateRelation|DeleteRelation|CloneEntity|Action|ConflictResolve|PutAttachment|DeleteAttachment)|handleSyncDelete|handleSyncPut
+        text: handleV1(CreateEntity|UpdateEntity|DeleteEntity|CreateRelation|UpdateRelation|DeleteRelation|CloneEntity|Action|ConflictResolve|PutAttachment|DeleteAttachment)
       - linters:
           - contextcheck
         path: internal/dataentry/comments_handler\.go

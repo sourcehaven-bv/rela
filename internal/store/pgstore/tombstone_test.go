@@ -36,8 +36,11 @@ type change struct {
 	Seq                      int64
 }
 
-// changesSince returns every change with seq > cursor, in seq order, over the
-// same table set the watcher catch-up scans.
+// changesSince returns every change with seq > cursor, in seq order, read
+// straight from the tables the watcher catch-up scans. It checks what the
+// writes record, not what the catch-up emits: it has no face handling and is
+// not the catch-up query. TestCatchUpRecoversMissedDelete covers the real
+// catch-up path.
 func (s tombstoneStore) changesSince(ctx context.Context, cursor int64) ([]change, error) {
 	const q = `
 		SELECT kind, a, b, c, typ, deleted, seq FROM (

@@ -209,8 +209,6 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 	// on nil args, which the literals above cannot produce — same clean-boot
 	// swallow as the logo/palette stores.
 	app.viewReader, _ = visibility.NewPolicyReader(ctxRowGate{}, appRedactor(app), svc.Store())
-	// Rebuild the sync handler (manifest-only) over the rebound store. The record
-	// write path was retired in TKT-8P1TM7, so there is no provision seam here.
 	// The SAME constructor production uses, not a copy of it. The literal
 	// that stood here called itself a mirror of NewApp's wiring and then
 	// drifted from it — a field added in production was missing here, leaving

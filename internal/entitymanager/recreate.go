@@ -32,6 +32,10 @@ import (
 // write is a direct CreateEntity, so a concurrent create that lands between
 // the probe and the write is rejected the same way (BUG-ZWTDH9).
 //
+// The existence probe runs before authorization on purpose, so an existing
+// face is refused without an ACL check. That answer is not an existence
+// oracle: every caller has already gated the history read that named the id.
+//
 // Validation includes the metamodel's ID-prefix check, which is a HARD
 // error, so an ID matching no declared prefix is refused.
 //
@@ -65,7 +69,8 @@ func RecreateEntity(ctx context.Context, m *Manager, e *entity.Entity) (*entity.
 	case getErr == nil:
 		return nil, fmt.Errorf("%w: %s", ErrEntityAlreadyExists, entity.FormatStateRef(e.ID, e.Face))
 	case !errors.Is(getErr, store.ErrNotFound):
-		return nil, fmt.Errorf("entitymanager: RecreateEntity: existence check for %s: %w", e.ID, getErr)
+		return nil, fmt.Errorf("entitymanager: RecreateEntity: existence check for %s: %w",
+			entity.FormatStateRef(e.ID, e.Face), getErr)
 	}
 
 	// The same face rule the other create paths enforce
@@ -101,9 +106,10 @@ func RecreateEntity(ctx context.Context, m *Manager, e *entity.Entity) (*entity.
 		return nil, newValidationError(hard)
 	}
 
-	// Enforce the enum state machines' entry rule (RR-NB135): this is a
-	// served write with a real principal. RecreateEntity runs no automation,
-	// so this is the final pre-write state.
+	// Enforce the enum state machines' entry rule (RR-NB135), as before sync
+	// was removed. A restore therefore cannot bring back a row whose status is
+	// past the entry value; whether restore should be exempt is BUG-KK1UXH.
+	// RecreateEntity runs no automation, so this is the final pre-write state.
 	if err := m.deps.Transitions.EnforceCreate(ctx, e); err != nil {
 		return nil, err
 	}
@@ -132,7 +138,7 @@ func persistRecreate(ctx context.Context, st store.Store, e *entity.Entity) erro
 			return mapped
 		}
 		if errors.Is(err, store.ErrConflict) {
-			return fmt.Errorf("%w: %s", ErrEntityAlreadyExists, e.ID)
+			return fmt.Errorf("%w: %s", ErrEntityAlreadyExists, entity.FormatStateRef(e.ID, e.Face))
 		}
 		return fmt.Errorf("entitymanager: RecreateEntity: %w", err)
 	}

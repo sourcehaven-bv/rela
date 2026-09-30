@@ -1401,7 +1401,7 @@ func (a *App) handleV1RelationTarget(
 	// through the visible reader before acting on a row.
 	switch r.Method {
 	case http.MethodGet:
-		// Single-relation body read for sync (RR-SYNCR1): meta + content +
+		// Single-relation body read (RR-SYNCR1): meta + content +
 		// _redacted + a relation-level ETag, dual-endpoint gated.
 		handleV1GetRelationTarget(a, w, r, typeName, entityID, relType, targetID)
 	case http.MethodPatch:

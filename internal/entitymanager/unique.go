@@ -19,7 +19,8 @@ import (
 // [metamodel.Metamodel.ValidateEntity] — createCore (create), UpdateEntity
 // (update), and RecreateEntity (history restore). excludeSelfID names the
 // entity's own ID so a re-save of an unchanged value does not collide with
-// itself; pass "" on the create path.
+// itself or with its own sibling faces. Pass "" when the create mints a new
+// id; RecreateEntity keeps its id and passes it.
 //
 // The check queries other entities and so cannot live in the pure,
 // per-entity ValidateEntity. Violations are returned as
