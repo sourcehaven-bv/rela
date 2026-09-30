@@ -2,6 +2,7 @@ package pgstore
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -65,6 +66,9 @@ func (b *SearchBackend) EntityRenamed(string, *entity.Entity) error { return nil
 // calls Search with empty text (it uses listAll), so this just stays
 // consistent with substring semantics ("" is a substring of everything).
 func (b *SearchBackend) Search(text string, limit int, w store.WorldScope) ([]search.Face, error) {
+	if !w.IsSet() {
+		return nil, fmt.Errorf("%w: search with an unset world", store.ErrInvalidQuery)
+	}
 	needle := strings.ToLower(text)
 	sql, args := buildSearchSQL(needle, limit, w, b.titles)
 
@@ -138,7 +142,7 @@ func faceFor(id, entityType string, p entity.Face, rank int, w store.WorldScope)
 //
 // The DEFAULT world keeps the historical query verbatim — `face = ”`, no
 // join, no window — so a project that never declares a face pays nothing
-// for this feature. That is the [store.WorldScope.IsDefaultWorld] fast-path
+// for this feature. That is the [store.WorldScope.IsTrivial] fast-path
 // contract.
 //
 // A non-default world resolves per FAMILY, not per row. `face IN (a, b)`

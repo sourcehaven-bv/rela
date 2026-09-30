@@ -152,8 +152,9 @@ type Backend interface {
 	// a limit counting entities fall out for free — no PARTITION BY, no
 	// over-fetch-and-group. Implementations must preserve it.
 	//
-	// The zero WorldScope is the default world and must reduce to
-	// exactly the pre-worlds query, allocating nothing.
+	// The trivial scope ([store.TrivialScope]) must reduce to exactly
+	// the pre-worlds query, allocating nothing. An unset scope is
+	// [store.ErrInvalidQuery].
 	Search(text string, limit int, world store.WorldScope) ([]Face, error)
 }
 

@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 const twoWorlds = `worlds:
@@ -240,5 +242,144 @@ entities:
 	var rootErr *IncludeHasRootFieldError
 	if !errors.As(err, &rootErr) || rootErr.Field != "default_world" {
 		t.Fatalf("Load err = %v, want an IncludeHasRootFieldError for default_world", err)
+	}
+}
+
+// anchoredSchema declares faces through YAML anchors, aliases and merge keys,
+// which the decoder resolves and the order extraction must resolve the same
+// way.
+const anchoredSchema = `version: "1.0"
+entities:
+  page:
+    label: Page
+    id_prefix: PAGE
+    properties:
+      title: {type: string}
+    faces: &pf
+      published: {}
+      draft: {}
+  note:
+    label: Note
+    id_prefix: NOTE
+    properties:
+      title: {type: string}
+    faces: *pf
+  memo:
+    label: Memo
+    id_prefix: MEMO
+    properties:
+      title: {type: string}
+    faces:
+      <<: *pf
+      archived: {}
+  brief: &brief
+    label: Brief
+    id_prefix: BRF
+    properties:
+      title: {type: string}
+    faces:
+      review: {}
+      draft: {}
+  letter:
+    <<: *brief
+    label: Letter
+    id_prefix: LTR
+  digest:
+    label: Digest
+    id_prefix: DIG
+    properties:
+      title: {type: string}
+    faces:
+      <<: [*pf, {review: {}}]
+      draft: {}
+`
+
+// TestDeclOrder_AnchorsAliasesAndMergeKeys pins that anchors, aliases and
+// merge keys load, and that each order names exactly the decoded faces, in
+// document position.
+func TestDeclOrder_AnchorsAliasesAndMergeKeys(t *testing.T) {
+	t.Parallel()
+	m, err := Parse([]byte(anchoredSchema))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	for typ, want := range map[string][]string{
+		"page":   {"published", "draft"},
+		"note":   {"published", "draft"},
+		"memo":   {"published", "draft", "archived"},
+		"brief":  {"review", "draft"},
+		"letter": {"review", "draft"},
+		"digest": {"published", "draft", "review"},
+	} {
+		if got := FaceOrderOf(m.Entities[typ]); !slices.Equal(got, want) {
+			t.Errorf("FaceOrderOf(%s) = %v, want %v", typ, got, want)
+		}
+	}
+}
+
+// TestDeclOrder_AnchorsInIncludedFile pins the same resolution for an
+// included file, whose order is recorded by a separate pass.
+func TestDeclOrder_AnchorsInIncludedFile(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	createFile(t, filepath.Join(dir, "metamodel.yaml"), `
+version: "1.0"
+includes:
+  - part.yaml
+entities:
+  ticket:
+    label: Ticket
+    id_prefix: TKT
+    properties:
+      title: {type: string}
+`)
+	createFile(t, filepath.Join(dir, "part.yaml"), `
+entities:
+  page:
+    label: Page
+    id_prefix: PAGE
+    properties:
+      title: {type: string}
+    faces: &pf
+      review: {}
+      draft: {}
+  memo:
+    label: Memo
+    id_prefix: MEMO
+    properties:
+      title: {type: string}
+    faces:
+      <<: *pf
+      archived: {}
+`)
+	m, _, err := Load(filepath.Join(dir, "metamodel.yaml"), testMetaFS)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got, want := FaceOrderOf(m.Entities["memo"]), []string{"review", "draft", "archived"}; !slices.Equal(got, want) {
+		t.Errorf("FaceOrderOf(memo) = %v, want %v", got, want)
+	}
+}
+
+// TestMappingEntries_ExplicitKeyWinsOverMerged pins the decoder's precedence
+// for a key both merged and set explicitly: the explicit value, at the
+// merged key's first position.
+func TestMappingEntries_ExplicitKeyWinsOverMerged(t *testing.T) {
+	t.Parallel()
+	var root yaml.Node
+	src := "base: &b {x: 1, y: 2}\nm:\n  <<: *b\n  y: 3\n  z: 4\n"
+	if err := yaml.Unmarshal([]byte(src), &root); err != nil {
+		t.Fatal(err)
+	}
+	doc, ok := documentMapping(&root)
+	if !ok {
+		t.Fatal("no document mapping")
+	}
+	m, _ := mappingValue(doc, "m")
+	if got, want := mappingKeys(m), []string{"x", "y", "z"}; !slices.Equal(got, want) {
+		t.Errorf("mappingKeys = %v, want %v", got, want)
+	}
+	if y, _ := mappingValue(m, "y"); y == nil || y.Value != "3" {
+		t.Errorf("y = %v, want the explicit 3", y)
 	}
 }

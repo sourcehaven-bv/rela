@@ -80,6 +80,9 @@ func NewVisibleTracer(
 	if rels == nil {
 		return nil, errors.New("visibility: NewVisibleTracer: relation lister must be non-nil")
 	}
+	if !world.IsSet() {
+		return nil, errors.New("visibility: NewVisibleTracer: world must be set (store.TrivialScope for the trivial world)")
+	}
 	gated := base.WithEdgeGate(res.EndpointsReadable)
 	return &VisibleTracer{base: gated, res: res, rels: rels, world: world}, nil
 }

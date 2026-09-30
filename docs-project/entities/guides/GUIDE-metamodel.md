@@ -1503,6 +1503,24 @@ a world:
 - is called `default` in any capitalization, or has a name outside the face
   grammar.
 
+#### The `default_world` key
+
+A top-level `default_world:` key beside `worlds:` names the world a request
+uses when it names none:
+
+```yaml
+default_world: published
+```
+
+It must name a declared world, or `default` when the schema declares no worlds.
+Anything else, a different capitalization included, fails the load. The key
+may appear only in the root schema file, not in an included one.
+
+The key is validated but not yet applied. Until it is, the data-entry app's
+`app.default_world` decides where a request lands, and the two must agree when
+both are set (see
+[Data entry](data-entry.md#browsing-default-appdefault_world)).
+
 ### `primary_for:` — only when two worlds lead the same face
 
 A face switcher in the web app ("go to the Dutch version") has to name a

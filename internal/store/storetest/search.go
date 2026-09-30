@@ -193,6 +193,18 @@ func RunSearchTests(t *testing.T, sf SearchFactory) {
 		assert.Len(t, ids, 1)
 	})
 
+	// An unset world is a wiring bug, refused rather than read as the
+	// trivial world (TKT-7IZHP0 design A4). Text and no-text queries take
+	// different paths, so both are pinned.
+	t.Run("UnsetWorldIsInvalid", func(t *testing.T) {
+		s, searcher := sf(t)
+		seedSearchData(t, s)
+		for _, text := range []string{"", "alpha"} {
+			err := searchError(searcher.Search(ctx(), search.Query{Text: text}))
+			require.ErrorIs(t, err, store.ErrInvalidQuery, "text %q", text)
+		}
+	})
+
 	t.Run("NoMatch", func(t *testing.T) {
 		s, searcher := sf(t)
 		seedSearchData(t, s)

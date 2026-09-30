@@ -203,6 +203,22 @@ func RunVisibleSearchTests(t *testing.T, vsf VisibleSearchFactory) {
 		require.Empty(t, got, "empty scope must deny everything (fail-closed)")
 	})
 
+	// An unset world is refused rather than read as the trivial world
+	// (TKT-7IZHP0 design A4).
+	t.Run("UnsetWorldIsInvalid", func(t *testing.T) {
+		s, _, vs := vsf(t)
+		seedVisibleSearchWorld(t, s)
+		scope := map[string]search.TypeScope{"ticket": allow}
+		var streamErr error
+		for _, err := range vs.SearchVisible(ctx(), search.Query{Text: "alpha"}, scope) {
+			if err != nil {
+				streamErr = err
+				break
+			}
+		}
+		require.ErrorIs(t, streamErr, store.ErrInvalidQuery)
+	})
+
 	t.Run("WildcardQueryIsInvalid", func(t *testing.T) {
 		s, _, vs := vsf(t)
 		seedVisibleSearchWorld(t, s)

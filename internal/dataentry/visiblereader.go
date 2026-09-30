@@ -42,13 +42,20 @@ type visibleReader struct {
 	resolver *visibility.Resolver
 }
 
-// newVisibleReader constructs a visibleReader over s. opts configure its
-// resolver; NewApp passes the schema's face order.
-func newVisibleReader(s store.Store, opts ...visibility.ResolverOption) (visibleReader, error) {
+// newVisibleReader constructs a visibleReader over s whose [visibility.Family]
+// lists faces in order (the schema's declaration order; see appFaceOrder).
+// The order is required rather than an option because readableFaceOf and the
+// relation read pick a face by position, so a reader built without it would
+// serve a different face than production.
+// Nil: rejected, for s and order alike.
+func newVisibleReader(s store.Store, order visibility.FaceOrder) (visibleReader, error) {
 	if s == nil {
 		return visibleReader{}, errors.New("dataentry: newVisibleReader: store must be non-nil")
 	}
-	res, err := visibility.NewResolver(ctxRowGate{}, visibility.NopRedactor{}, s, opts...)
+	if order == nil {
+		return visibleReader{}, errors.New("dataentry: newVisibleReader: face order must be non-nil")
+	}
+	res, err := visibility.NewResolver(ctxRowGate{}, visibility.NopRedactor{}, s, visibility.WithFaceOrder(order))
 	if err != nil {
 		return visibleReader{}, fmt.Errorf("dataentry: newVisibleReader: %w", err)
 	}

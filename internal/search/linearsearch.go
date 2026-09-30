@@ -1,6 +1,7 @@
 package search
 
 import (
+	"fmt"
 	"sync"
 	"time"
 
@@ -138,9 +139,12 @@ func (l *LinearSearch) advanceLastModified(t time.Time) {
 // one Face per id by construction — no grouping pass, and `limit` counts
 // entities for free.
 //
-// The zero WorldScope is the default world: every entity resolves to its
-// default face via rule 1, which is exactly the pre-worlds result set.
+// The trivial scope resolves every entity to its implicit face via rule 1,
+// which is exactly the pre-worlds result set. An unset scope is refused.
 func (l *LinearSearch) Search(text string, limit int, w store.WorldScope) ([]Face, error) {
+	if !w.IsSet() {
+		return nil, fmt.Errorf("%w: search with an unset world", store.ErrInvalidQuery)
+	}
 	l.mu.RLock()
 	defer l.mu.RUnlock()
 

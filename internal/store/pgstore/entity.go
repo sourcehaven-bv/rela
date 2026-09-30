@@ -1052,7 +1052,7 @@ func buildEntityHeaderListSQL(q store.EntityQuery, keysetAfter string) (sql stri
 //
 // For the DEFAULT world it is the historical flat SELECT, allocating and
 // costing exactly what it did before worlds existed — a project that
-// never declares a face must pay nothing (store.WorldScope.IsDefaultWorld).
+// never declares a face must pay nothing (store.WorldScope.IsTrivial).
 //
 // For a real world it becomes DISTINCT ON (id) over the candidate rows,
 // ordered by (id, rank), which picks each family's prime in one pass.

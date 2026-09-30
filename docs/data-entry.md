@@ -5917,10 +5917,10 @@ only on read requests and only on the routes listed under
 `?world=default` explicitly still selects the unresolved default world. Naming
 an undeclared world here is a startup error.
 
-`schema.yaml` also accepts a top-level `default_world:` key beside `worlds:`.
-It must name a declared world, or `default` when the schema declares none. When
-both keys are set they must name the same world. Either mismatch is a startup
-error.
+`schema.yaml` also accepts a top-level `default_world:` key (see
+[Metamodel](metamodel.md#the-default_world-key)). It is validated but not yet
+applied: `app.default_world` still decides where a request lands. When both
+keys are set they must name the same world, or the app refuses to start.
 
 ### Creating into another world (`create_world`)
 

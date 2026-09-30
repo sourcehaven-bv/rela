@@ -187,7 +187,7 @@ func TestSearch_OneHitPerEntity(t *testing.T) {
 }
 
 // TestSearch_DefaultWorldIsThePreWorldsResult pins the compatibility
-// contract: the zero WorldScope must return exactly what the pre-worlds
+// contract: the trivial scope must return exactly what the pre-worlds
 // search did — the default face of each entity, and nothing else.
 //
 // A non-default face must not leak in merely because it is now indexed.

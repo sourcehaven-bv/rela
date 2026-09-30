@@ -71,9 +71,11 @@ type Resolved struct {
 type Family struct {
 	ID   string
 	Type string
-	// Faces holds the readable faces in declaration order (see
-	// [WithFaceOrder]), so the order is the schema's and the same on every
-	// backend. It is never empty on a hit.
+	// Faces holds the readable faces in declaration order when the
+	// resolver was built [WithFaceOrder], so the order is the schema's and
+	// the same on every backend; without it, in token order. A caller that
+	// picks a face by position (Faces[0]) must use a resolver built with the
+	// option. It is never empty on a hit.
 	Faces []entity.Face
 }
 

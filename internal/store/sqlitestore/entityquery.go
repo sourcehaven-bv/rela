@@ -31,7 +31,7 @@ const entityColumns = "id, type, face, properties, content, updated_at"
 //
 // For the DEFAULT world this is the historical flat SELECT, costing exactly
 // what it did before worlds existed — a project that never declares a face must
-// pay nothing (store.WorldScope.IsDefaultWorld).
+// pay nothing (store.WorldScope.IsTrivial).
 //
 // For a real world it becomes a windowed pick of each family's best-ranked
 // candidate. Resolution cannot be a row predicate — see worldSQL — so the shape

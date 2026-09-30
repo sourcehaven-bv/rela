@@ -438,8 +438,12 @@ var boostedFields = []struct {
 // like a family with no published face and resolve to the draft, which is
 // exactly the false hit this discards.
 //
-// The zero WorldScope skips all of that — see the fast path below.
+// The trivial scope skips all of that (see the fast path below); an unset
+// scope is refused.
 func (idx *Index) Search(text string, limit int, w store.WorldScope) ([]search.Face, error) {
+	if !w.IsSet() {
+		return nil, fmt.Errorf("%w: search with an unset world", store.ErrInvalidQuery)
+	}
 	words := strings.Fields(text)
 	if len(words) == 0 {
 		return nil, nil

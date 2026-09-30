@@ -9,7 +9,6 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
-	"github.com/Sourcehaven-BV/rela/internal/worlds"
 )
 
 // shows{} asserts what a manual's prose claims, against the seeded graph.
@@ -147,10 +146,7 @@ func showsEvidence(typ, world string, got, absent []string, faced bool) evidence
 // like a world where nothing is published, so a typo would make `absent=` pass
 // for the wrong reason — the vacuous-pass shape this whole feature refuses.
 func (dr *docRuntime) worldScope(name string) (store.WorldScope, error) {
-	compiled, err := worlds.Compile(dr.meta)
-	if err != nil {
-		return store.WorldScope{}, fmt.Errorf("compiling worlds: %w", err)
-	}
+	compiled := dr.worlds
 	if name == "" || name == metamodel.DefaultWorldName {
 		return compiled.Default(), nil
 	}

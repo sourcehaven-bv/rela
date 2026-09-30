@@ -58,23 +58,83 @@ func sortedNames[V any](m map[string]V) []string {
 	return out
 }
 
-// mappingKeys returns the keys of a YAML mapping node in document order.
-func mappingKeys(n *yaml.Node) []string {
-	keys := make([]string, 0, len(n.Content)/2)
+// resolveAlias follows an alias node to the node it names.
+func resolveAlias(n *yaml.Node) *yaml.Node {
+	for n != nil && n.Kind == yaml.AliasNode {
+		n = n.Alias
+	}
+	return n
+}
+
+// mappingEntry is one key of a mapping as the decoder sees it.
+type mappingEntry struct {
+	key string
+	val *yaml.Node
+}
+
+// mappingEntries returns the entries of a mapping node the way yaml.v3
+// decodes them into a map: aliases are followed and `<<` merge keys are
+// expanded in place. A key is listed once, at its first position in the
+// document. Its value is the explicit one when the mapping sets the key
+// itself, else the first merged one, which is the decoder's precedence.
+// A node that is not a mapping has no entries.
+func mappingEntries(n *yaml.Node) []mappingEntry {
+	n = resolveAlias(n)
+	if n == nil || n.Kind != yaml.MappingNode {
+		return nil
+	}
+	var out []mappingEntry
+	index := make(map[string]int)
+	explicit := make(map[string]bool)
+	add := func(key string, val *yaml.Node, isExplicit bool) {
+		i, seen := index[key]
+		switch {
+		case !seen:
+			index[key] = len(out)
+			out = append(out, mappingEntry{key: key, val: val})
+		case isExplicit && !explicit[key]:
+			out[i].val = val
+		}
+		if isExplicit {
+			explicit[key] = true
+		}
+	}
 	for i := 0; i+1 < len(n.Content); i += 2 {
-		keys = append(keys, n.Content[i].Value)
+		key, val := n.Content[i], n.Content[i+1]
+		if key.ShortTag() != "!!merge" {
+			add(key.Value, val, true)
+			continue
+		}
+		sources := []*yaml.Node{val}
+		if v := resolveAlias(val); v != nil && v.Kind == yaml.SequenceNode {
+			sources = v.Content
+		}
+		for _, src := range sources {
+			for _, e := range mappingEntries(src) {
+				add(e.key, e.val, false)
+			}
+		}
+	}
+	return out
+}
+
+// mappingKeys returns the keys of a mapping node in document order, with
+// aliases followed and merge keys expanded (see mappingEntries).
+func mappingKeys(n *yaml.Node) []string {
+	entries := mappingEntries(n)
+	keys := make([]string, 0, len(entries))
+	for _, e := range entries {
+		keys = append(keys, e.key)
 	}
 	return keys
 }
 
-// mappingValue returns the value node under key in a mapping node.
+// mappingValue returns the value node under key in a mapping node, with the
+// alias followed.
 func mappingValue(n *yaml.Node, key string) (*yaml.Node, bool) {
-	if n == nil || n.Kind != yaml.MappingNode {
-		return nil, false
-	}
-	for i := 0; i+1 < len(n.Content); i += 2 {
-		if n.Content[i].Value == key {
-			return n.Content[i+1], true
+	for _, e := range mappingEntries(n) {
+		if e.key == key {
+			return resolveAlias(e.val), true
 		}
 	}
 	return nil, false
@@ -85,28 +145,26 @@ func documentMapping(root *yaml.Node) (*yaml.Node, bool) {
 	if root.Kind != yaml.DocumentNode || len(root.Content) == 0 {
 		return nil, false
 	}
-	doc := root.Content[0]
-	return doc, doc.Kind == yaml.MappingNode
+	doc := resolveAlias(root.Content[0])
+	return doc, doc != nil && doc.Kind == yaml.MappingNode
 }
 
 // recordFaceOrder stores, on every entity in entities, the order of the
-// `faces:` keys its definition declares in the `entities:` node.
+// `faces:` keys its definition declares in the `entities:` node. Anchors,
+// aliases and merge keys resolve as the decoder resolves them, so the order
+// names exactly the faces that were decoded.
 func recordFaceOrder(entitiesNode *yaml.Node, entities map[string]EntityDef) {
-	if entitiesNode == nil || entitiesNode.Kind != yaml.MappingNode {
-		return
-	}
-	for i := 0; i+1 < len(entitiesNode.Content); i += 2 {
-		name := entitiesNode.Content[i].Value
-		def, ok := entities[name]
+	for _, e := range mappingEntries(entitiesNode) {
+		def, ok := entities[e.key]
 		if !ok {
 			continue
 		}
-		faces, ok := mappingValue(entitiesNode.Content[i+1], "faces")
+		faces, ok := mappingValue(e.val, "faces")
 		if !ok || faces.Kind != yaml.MappingNode {
 			continue
 		}
 		def.faceOrder = mappingKeys(faces)
-		entities[name] = def
+		entities[e.key] = def
 	}
 }
 

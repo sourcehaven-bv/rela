@@ -254,7 +254,8 @@ func TestValidateEntityQuery(t *testing.T) {
 	})
 
 	t.Run("every constructed selection is fine", func(t *testing.T) {
-		// The zero WorldScope is the DEFAULT world, not "no world".
+		// The trivial scope is a world like any other; only an unset
+		// scope is refused.
 		for _, q := range []store.EntityQuery{
 			{Faces: store.InWorld(store.TrivialScope())},
 			{Faces: store.InWorld(world)},

@@ -224,6 +224,23 @@ func TestResolver_GateOrder(t *testing.T) {
 	}
 }
 
+// TestResolver_InWorldRefusesAnUnsetWorld pins design A4 at the resolver: the
+// zero World is refused before any read, while a denied world still misses
+// quietly.
+func TestResolver_InWorldRefusesAnUnsetWorld(t *testing.T) {
+	st := resolverStore(t)
+	r := mustResolver(t, visibility.NopGate{}, visibility.NopRedactor{}, st)
+	if _, _, err := r.InWorld(context.Background(), visibility.World{}, "ticket", "TKT-1"); !errors.Is(err, store.ErrInvalidQuery) {
+		t.Errorf("InWorld(unset) err = %v, want ErrInvalidQuery", err)
+	}
+	if _, ok, err := r.InWorld(context.Background(), visibility.DeniedWorld(), "ticket", "TKT-1"); ok || err != nil {
+		t.Errorf("InWorld(denied) = (%v, %v), want a quiet miss", ok, err)
+	}
+	if st.Reads() != 0 {
+		t.Errorf("neither call may read the store: %s", st)
+	}
+}
+
 // TestResolver_WorldQueryCarriesTheFaceSet pins the RR-Z23T2T shape: FaceIn is
 // nil only for "every face", and the list of readable faces otherwise.
 func TestResolver_WorldQueryCarriesTheFaceSet(t *testing.T) {

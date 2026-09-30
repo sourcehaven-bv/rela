@@ -106,7 +106,15 @@ func policyPublishedScope() store.WorldScope {
 // the manager and the affordance service authorize against it.
 func facedApp(t *testing.T, d func(st store.Store) *acl.Declarative) (*App, *acl.Declarative) {
 	t.Helper()
-	meta := facedMeta(t)
+	return facedAppWith(t, facedMeta(t), policyPublishedScope(), d)
+}
+
+// facedAppWith is facedApp over meta, with world as the configured default
+// world.
+func facedAppWith(
+	t *testing.T, meta *metamodel.Metamodel, world store.WorldScope, d func(st store.Store) *acl.Declarative,
+) (*App, *acl.Declarative) {
+	t.Helper()
 	fs := storage.NewMemFS()
 	paths := &project.Context{Root: "/project", CacheDir: "/project/.rela"}
 	if err := fs.MkdirAll(paths.CacheDir, 0o755); err != nil {
@@ -131,7 +139,7 @@ func facedApp(t *testing.T, d func(st store.Store) *acl.Declarative) (*App, *acl
 		app.acl = decl
 	}
 	app.schema.Publish(&Schema{Cfg: cfg, Meta: meta})
-	app.SetWorlds(fixedWorlds{scope: policyPublishedScope()})
+	app.SetWorlds(fixedWorlds{scope: world})
 	// Neighbor resolution wired as production does (rela-server main): the
 	// face-scoped edge seam the write response now uses falls back to the
 	// bare-id UNION without it, which is the mixed-face shape under test.

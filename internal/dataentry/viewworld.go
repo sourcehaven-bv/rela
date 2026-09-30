@@ -41,12 +41,12 @@ import (
 // omission, and `TestExecuteViewCallersDeclareTheirWorld` fails if a new
 // caller appears that does not make one.
 //
-// # The zero value is the default world
+// # The zero value is unset
 //
-// A zero viewWorld is the default world, which is what makes a faceless
-// project and every pre-item-4b caller behave identically. That is safe
-// BECAUSE it is also inert: the zero scope resolves every entity to its
-// default state, exactly as `store.GetEntity` did.
+// A zero viewWorld carries an unset scope, which every read refuses with
+// store.ErrInvalidQuery (TKT-7IZHP0 design A4). Build one with
+// defaultViewWorld or from the request's world handle; the trivial scope
+// resolves every entity to its implicit face, as `store.GetEntity` did.
 type viewWorld struct {
 	// name is the declared world name, for provenance labeling. Empty means
 	// the default world.
@@ -231,7 +231,7 @@ func (h *viewsHandler) loadViewEntities(
 	byID := make(map[string]*entityPkg.Entity, len(ids))
 
 	// ONE batched read for every world, the default one included
-	// (TKT-1U8XYN): the default world's query carries a zero WorldScope, so
+	// (TKT-1U8XYN): the default world's query carries the trivial scope, so
 	// the store serves default rows exactly as the former per-id GetEntity
 	// loop did, without a round-trip per collected id. An id the store no
 	// longer has is simply absent, as the per-id not-found was.

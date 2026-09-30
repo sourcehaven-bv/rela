@@ -48,6 +48,7 @@ func TestNewServer_RejectsIncompleteDeps(t *testing.T) {
 		"Config":        func(d *Deps) { d.Config = nil },
 		"Watcher":       func(d *Deps) { d.Watcher = nil },
 		"ProjectRoot":   func(d *Deps) { d.ProjectRoot = "" },
+		"World":         func(d *Deps) { d.World = store.WorldScope{} },
 	}
 	for field, zero := range mutators {
 		t.Run(field, func(t *testing.T) {

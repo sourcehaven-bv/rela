@@ -467,8 +467,8 @@ func TestWorldNeighbors_IncludeAgreesWithRelations(t *testing.T) {
 // faceless request must behave exactly as it did before item 4.
 //
 // Worth its own test because every change here is guarded by an
-// IsDefaultWorld() branch, and a branch written the wrong way round would
-// send ordinary traffic through the world path — where a zero WorldScope
+// IsTrivial() branch, and a branch written the wrong way round would
+// send ordinary traffic through the world path — where the trivial scope
 // resolves everything to its default face and would LOOK correct while
 // taking a different route with different error handling.
 func TestWorldNeighbors_DefaultWorldUnchanged(t *testing.T) {

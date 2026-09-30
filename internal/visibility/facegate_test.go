@@ -274,6 +274,9 @@ func TestVisibleTracer_IsFaceGated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, unsetErr := NewVisibleTracer(base, openRes, st, store.WorldScope{}); unsetErr == nil {
+		t.Fatal("NewVisibleTracer with an unset world = nil error, want a refusal")
+	}
 	if res := open.TraceFrom(ctx, "TKT-1", 3); res == nil || res.Title != "SECRET DRAFT" {
 		t.Fatalf("precondition: an unrestricted trace must show the draft; got %+v", res)
 	}

@@ -1039,7 +1039,7 @@ func NewApp(
 	styleMap, styledTypes := buildStyleMap(cfg, meta)
 
 	faceOrder := &appFaceOrder{}
-	visible, err := newVisibleReader(st, visibility.WithFaceOrder(faceOrder.of))
+	visible, err := newVisibleReader(st, faceOrder.of)
 	if err != nil {
 		return nil, err
 	}
@@ -1152,7 +1152,8 @@ func NewApp(
 	// view pipeline (DEC-ZBI39P). Wired here — after app.affordances — because
 	// the redactor closes over it. Same construction as the export handler's
 	// visReader: ctx-resolved gate, affordance-backed redactor, raw store.
-	viewReader, viewReaderErr := visibility.NewPolicyReader(ctxRowGate{}, appRedactor(app), app.store)
+	viewReader, viewReaderErr := visibility.NewPolicyReader(ctxRowGate{}, appRedactor(app), app.store,
+		visibility.WithFaceOrder(faceOrder.of))
 	if viewReaderErr != nil {
 		return nil, fmt.Errorf("dataentry: wire view reader: %w", viewReaderErr)
 	}
