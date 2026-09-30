@@ -72,6 +72,12 @@ time proportional to the entity table — seconds at twenty thousand rows,
 longer on a large one. Run `rela db migrate` as a deploy step if that pause
 must not land on the first web request.
 
+Migration 18 rebuilds the entity read index so it serves every face. The
+build holds a lock that blocks writes to the entity table, but not reads,
+until the migration commits: seconds at twenty thousand rows, longer on a
+large table. Plan a maintenance window, or run `rela db migrate` as a deploy
+step, when the table is large.
+
 ### Applying migrations explicitly
 
 If you would rather apply the schema as a separate, controlled step
