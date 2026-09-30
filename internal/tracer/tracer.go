@@ -229,7 +229,7 @@ func NodeOf(w store.WorldScope, headers []store.EntityHeader) (Node, bool) {
 // implicit one: a faceless entity lists no faces, so output for a faceless
 // project does not change.
 func FamilyFaces(faces []entity.Face) []entity.Face {
-	if len(faces) == 0 || (len(faces) == 1 && faces[0].IsDefault()) {
+	if len(faces) == 0 || (len(faces) == 1 && faces[0].IsImplicit()) {
 		return nil
 	}
 	out := slices.Clone(faces)
@@ -521,7 +521,7 @@ func edgeCounts(fams map[string]Family, r *entity.Relation) bool {
 	if _, ok := fams[r.To]; !ok {
 		return false
 	}
-	return r.FromFace.IsDefault() || slices.Contains(from.Faces, r.FromFace)
+	return r.FromFace.IsImplicit() || slices.Contains(from.Faces, r.FromFace)
 }
 
 func (t *GenericTracer) HasCycle(ctx context.Context, startID string) bool {

@@ -223,7 +223,7 @@ func TestCreateRelation_ZeroTailStillWorksForFacelessCallers(t *testing.T) {
 			if err != nil {
 				t.Fatalf("a caller that cannot name a face must keep working, got: %v", err)
 			}
-			if !rel.FromFace.IsDefault() {
+			if !rel.FromFace.IsImplicit() {
 				t.Errorf("FromFace = %q, want the zero face", rel.FromFace)
 			}
 		})

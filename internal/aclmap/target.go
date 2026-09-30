@@ -38,7 +38,7 @@ func (e *Engine) target(ctx context.Context, addr string) (resolvedTarget, error
 			faceFound = true
 		}
 	}
-	if t.typ == "" || (!ref.Face.IsDefault() && !faceFound) {
+	if t.typ == "" || (!ref.Face.IsImplicit() && !faceFound) {
 		return resolvedTarget{}, fmt.Errorf("%w: %s", ErrEntityNotFound, addr)
 	}
 	return t, nil
@@ -56,7 +56,7 @@ type resolvedTarget struct {
 // faceless one, whose only row is the zero face.
 func (t resolvedTarget) familyFaces() []entity.Face {
 	for _, f := range t.faces {
-		if !f.IsDefault() {
+		if !f.IsImplicit() {
 			return t.faces
 		}
 	}
@@ -70,7 +70,7 @@ func (e *Engine) entityTarget(ctx context.Context, addr string) (id, typ string,
 	if err != nil {
 		return "", "", err
 	}
-	if !t.ref.Face.IsDefault() {
+	if !t.ref.Face.IsImplicit() {
 		return "", "", fmt.Errorf("%w: %s", ErrFaceAddress, t.ref.ID)
 	}
 	return t.ref.ID, t.typ, nil

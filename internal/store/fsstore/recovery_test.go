@@ -445,18 +445,18 @@ func TestRecovery_SearchIndexRebuilt(t *testing.T) {
 	require.NoError(t, err)
 	defer s2.Close()
 
-	for e, err := range s2.ListEntities(ctx, store.EntityQuery{Faces: store.InWorld(store.DefaultWorld())}) {
+	for e, err := range s2.ListEntities(ctx, store.EntityQuery{Faces: store.InWorld(store.TrivialScope())}) {
 		require.NoError(t, err)
 		require.NoError(t, idx.EntityPut(e))
 	}
 
 	searcher := search.New(s2, idx)
 
-	results := collectSearch(t, searcher, search.Query{Text: "authentication"})
+	results := collectSearch(t, searcher, search.Query{Text: "authentication", World: store.TrivialScope()})
 	require.Len(t, results, 1)
 	assert.Equal(t, "REQ-1", results[0].ID)
 
-	results = collectSearch(t, searcher, search.Query{Text: "migration"})
+	results = collectSearch(t, searcher, search.Query{Text: "migration", World: store.TrivialScope()})
 	require.Len(t, results, 1)
 	assert.Equal(t, "REQ-2", results[0].ID)
 }

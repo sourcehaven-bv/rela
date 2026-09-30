@@ -9,6 +9,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -85,7 +86,7 @@ func newMailRuntime(t *testing.T, sender MailSender) (*Runtime, *strings.Builder
 		// are named for.
 		opts = append(opts, WithMailSender(allowAnySender{sender}))
 	}
-	rt := NewReader(ReadDeps{}, &sb, opts...)
+	rt := NewReader(ReadDeps{World: store.TrivialScope()}, &sb, opts...)
 	t.Cleanup(rt.Close)
 	return rt, &sb
 }
@@ -290,7 +291,7 @@ func TestMailSend_DeniedWithoutCapability(t *testing.T) {
 
 	sender := &recordingMailSender{}
 	var sb strings.Builder
-	rt := NewReader(ReadDeps{}, &sb, WithMailSender(allowAnySender{sender}))
+	rt := NewReader(ReadDeps{World: store.TrivialScope()}, &sb, WithMailSender(allowAnySender{sender}))
 	t.Cleanup(rt.Close)
 
 	require.NoError(t, rt.RunString(`
@@ -327,7 +328,7 @@ func TestMailSend_SendsWithCapability(t *testing.T) {
 	t.Parallel()
 
 	sender := &recordingMailSender{}
-	rt := NewReader(ReadDeps{}, &bytes.Buffer{},
+	rt := NewReader(ReadDeps{World: store.TrivialScope()}, &bytes.Buffer{},
 		WithMailSender(allowAnySender{sender}),
 		WithCapabilities(Capabilities{Mail: true}))
 	t.Cleanup(rt.Close)
@@ -358,7 +359,7 @@ func TestMailSend_SecretsExfiltrationIsDenied(t *testing.T) {
 	t.Parallel()
 
 	sender := &recordingMailSender{}
-	rt := NewReader(ReadDeps{}, &bytes.Buffer{},
+	rt := NewReader(ReadDeps{World: store.TrivialScope()}, &bytes.Buffer{},
 		WithMailSender(sender),
 		WithSecrets(map[string]string{"smtp_password": "hunter2"}),
 		WithCapabilities(Capabilities{Secrets: []string{"smtp_password"}}))
@@ -388,7 +389,7 @@ func TestMailSend_DeniedOutranksNotConfigured(t *testing.T) {
 	t.Parallel()
 
 	var sb strings.Builder
-	rt := NewReader(ReadDeps{}, &sb) // no sender, no capability
+	rt := NewReader(ReadDeps{World: store.TrivialScope()}, &sb) // no sender, no capability
 	t.Cleanup(rt.Close)
 
 	require.NoError(t, rt.RunString(`
@@ -413,7 +414,7 @@ func TestMailSend_DeniedBeforeArgumentParsing(t *testing.T) {
 	t.Parallel()
 
 	var sb strings.Builder
-	rt := NewReader(ReadDeps{}, &sb, WithMailSender(&recordingMailSender{}))
+	rt := NewReader(ReadDeps{World: store.TrivialScope()}, &sb, WithMailSender(&recordingMailSender{}))
 	t.Cleanup(rt.Close)
 
 	// `to` is missing entirely, which a granted runtime would raise on.

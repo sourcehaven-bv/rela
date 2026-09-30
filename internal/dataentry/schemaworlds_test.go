@@ -366,7 +366,7 @@ func TestResolutionRule(t *testing.T) {
 			// The zero scope applies no per-type resolution, so every entity
 			// arrives via its default state — matching worldreader.Rule,
 			// which reports the default world identically.
-			scope: store.DefaultWorld(), entityType: "blog-post", face: "",
+			scope: store.TrivialScope(), entityType: "blog-post", face: "",
 			want: ruleUnscoped,
 			why:  "the default world applies no resolution at all",
 		},

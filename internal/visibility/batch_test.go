@@ -139,7 +139,7 @@ func TestResolver_ResolveHeadersTypeAndRedaction(t *testing.T) {
 	load := extraRowLoader{Loader: base, extra: &entity.Entity{ID: "MIX-1", Type: "ticket", Face: facePublished}}
 	r := mustResolver(t, visibility.NopGate{}, primer, load)
 
-	got := r.ResolveHeaders(ctx, visibility.World{}, []entity.Ref{
+	got := r.ResolveHeaders(ctx, visibility.WorldOf(store.TrivialScope()), []entity.Ref{
 		{ID: "MIX-1", Face: faceDraft}, {ID: "TKT-1"}, {ID: "TKT-2"},
 	})
 	if _, ok := got[entity.Ref{ID: "MIX-1", Face: faceDraft}]; ok {
@@ -163,7 +163,7 @@ func TestResolver_ResolveHeadersTypeAndRedaction(t *testing.T) {
 func TestResolver_ResolveHeadersEmptyInput(t *testing.T) {
 	st := resolverStore(t)
 	r := mustResolver(t, visibility.NopGate{}, visibility.NopRedactor{}, st)
-	if got := r.ResolveHeaders(context.Background(), visibility.World{}, []entity.Ref{{}}); len(got) != 0 {
+	if got := r.ResolveHeaders(context.Background(), visibility.WorldOf(store.TrivialScope()), []entity.Ref{{}}); len(got) != 0 {
 		t.Errorf("got %v, want no hits", got)
 	}
 	if st.Reads() != 0 {
@@ -174,7 +174,7 @@ func TestResolver_ResolveHeadersEmptyInput(t *testing.T) {
 func TestResolver_ResolveHeadersReadFailureIsAMiss(t *testing.T) {
 	buf := captureWarn(t)
 	r := mustResolver(t, visibility.NopGate{}, visibility.NopRedactor{}, failingLoader{err: errors.New("disk")})
-	if got := r.ResolveHeaders(context.Background(), visibility.World{}, []entity.Ref{{ID: "TKT-1"}}); len(got) != 0 {
+	if got := r.ResolveHeaders(context.Background(), visibility.WorldOf(store.TrivialScope()), []entity.Ref{{ID: "TKT-1"}}); len(got) != 0 {
 		t.Errorf("got %v, want no hits", got)
 	}
 	if !strings.Contains(buf.String(), "header read failed") {
@@ -201,7 +201,7 @@ func TestResolver_ResolveHeadersBudget(t *testing.T) {
 			st := storetest.NewCounting(base)
 			gate := &countingGate{}
 			r := mustResolver(t, gate, visibility.NopRedactor{}, st)
-			if got := r.ResolveHeaders(ctx, visibility.World{}, refs); len(got) != n {
+			if got := r.ResolveHeaders(ctx, visibility.WorldOf(store.TrivialScope()), refs); len(got) != n {
 				t.Fatalf("got %d hits, want %d", len(got), n)
 			}
 			if calls := st.Calls(); st.Reads() != 1 || calls["ListEntityHeaders"] != 1 {
@@ -271,7 +271,7 @@ func TestResolver_ResolveHeadersRowGateErrorHidesOnlyItsType(t *testing.T) {
 	buf := captureWarn(t)
 	st := resolverStore(t)
 	r := mustResolver(t, typeErrGate{failType: "policy"}, visibility.NopRedactor{}, st)
-	got := r.ResolveHeaders(context.Background(), visibility.World{}, []entity.Ref{
+	got := r.ResolveHeaders(context.Background(), visibility.WorldOf(store.TrivialScope()), []entity.Ref{
 		{ID: "POL-1", Face: faceDraft}, {ID: "TKT-1"},
 	})
 	if _, ok := got[entity.Ref{ID: "POL-1", Face: faceDraft}]; ok {
@@ -321,7 +321,7 @@ func TestResolver_ReadableTypes(t *testing.T) {
 		captureWarn(t)
 		r := mustResolver(t, typeErrGate{failType: "policy"}, visibility.NopRedactor{}, resolverStore(t))
 		polDraft := entity.Ref{ID: "POL-1", Face: faceDraft}
-		got := r.ResolveHeaders(context.Background(), visibility.World{}, []entity.Ref{polDraft, {ID: "TKT-1"}})
+		got := r.ResolveHeaders(context.Background(), visibility.WorldOf(store.TrivialScope()), []entity.Ref{polDraft, {ID: "TKT-1"}})
 		if _, ok := got[polDraft]; ok || !got[entity.Ref{ID: "TKT-1"}].Served() {
 			t.Errorf("got %v, want the policy ref hidden and the ticket served", got)
 		}
@@ -366,7 +366,7 @@ func TestResolver_ResolveHeadersRefusesMalformedRefs(t *testing.T) {
 	st := resolverStore(t)
 	r := mustResolver(t, visibility.NopGate{}, visibility.NopRedactor{}, st)
 	bad := entity.Ref{ID: "TKT-1@draft"}
-	got := r.ResolveHeaders(context.Background(), visibility.World{}, []entity.Ref{bad, {ID: "TKT-1"}})
+	got := r.ResolveHeaders(context.Background(), visibility.WorldOf(store.TrivialScope()), []entity.Ref{bad, {ID: "TKT-1"}})
 	if _, ok := got[bad]; ok {
 		t.Error("a malformed ref was answered")
 	}

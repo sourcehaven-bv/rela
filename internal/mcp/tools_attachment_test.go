@@ -137,6 +137,7 @@ func newAttachFixture(t *testing.T, opts attachOpts) attachFixture {
 			Authorizer: svc.ACL(),
 			Audit:      sink,
 		},
+		World: store.TrivialScope(),
 	}
 	srv, err := NewServer(deps, "test", WithPrincipal(principal.Principal{User: "tester", Tool: principal.ToolMCP}))
 	if err != nil {

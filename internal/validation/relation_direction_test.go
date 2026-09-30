@@ -58,7 +58,7 @@ func atlasWorkspace(
 			t.Fatalf("create relation %v: %v", r, err)
 		}
 	}
-	return lua.ReadDeps{VisibleReader: visibility.Unrestricted(st), Tracer: tracer.New(st, store.WorldScope{}), Meta: meta}
+	return lua.ReadDeps{VisibleReader: visibility.Unrestricted(st), Tracer: tracer.New(st, store.TrivialScope()), Meta: meta, World: store.TrivialScope()}
 }
 
 // newAtlasSvc wires a Service the way production does, including the real

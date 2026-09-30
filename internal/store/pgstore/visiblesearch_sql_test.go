@@ -18,7 +18,7 @@ func TestBuildVisibleSearchSQL_LimitPlacement(t *testing.T) {
 	scope := map[string]search.TypeScope{"ticket": {AllowAll: true}}
 
 	t.Run("no filters: LIMIT pushed into SQL", func(t *testing.T) {
-		sqlText, args, ok := buildVisibleSearchSQL(search.Query{Text: "alpha", Limit: 7}, scope, nil)
+		sqlText, args, ok := buildVisibleSearchSQL(search.Query{Text: "alpha", Limit: 7, World: store.TrivialScope()}, scope, nil)
 		if !ok {
 			t.Fatal("expected a query")
 		}
@@ -35,6 +35,7 @@ func TestBuildVisibleSearchSQL_LimitPlacement(t *testing.T) {
 			Text:    "alpha",
 			Limit:   7,
 			Filters: []search.PropertyFilter{{Property: "status", Value: "open", Op: search.FilterEq}},
+			World:   store.TrivialScope(),
 		}
 		sqlText, _, ok := buildVisibleSearchSQL(q, scope, nil)
 		if !ok {
@@ -59,23 +60,23 @@ func TestBuildVisibleSearchSQL_Shape(t *testing.T) {
 				Endpoints: []string{"PRJ-1"}, OfTypes: []string{"belongs-to"},
 				InheritThrough: []string{"member-of"}, Depth: 2,
 			},
-			Faces: store.InWorld(store.DefaultWorld()),
+			Faces: store.InWorld(store.TrivialScope()),
 		}
 	}
 
 	t.Run("empty scope: no query", func(t *testing.T) {
-		if _, _, ok := buildVisibleSearchSQL(search.Query{Text: "x"}, nil, nil); ok {
+		if _, _, ok := buildVisibleSearchSQL(search.Query{Text: "x", World: store.TrivialScope()}, nil, nil); ok {
 			t.Error("nil scope must not produce a query")
 		}
 		deny := map[string]search.TypeScope{"ticket": {}}
-		if _, _, ok := buildVisibleSearchSQL(search.Query{Text: "x"}, deny, nil); ok {
+		if _, _, ok := buildVisibleSearchSQL(search.Query{Text: "x", World: store.TrivialScope()}, deny, nil); ok {
 			t.Error("zero-value-only scope must not produce a query")
 		}
 	})
 
 	t.Run("wildcard allow: no visibility clause", func(t *testing.T) {
 		scope := map[string]search.TypeScope{search.WildcardType: {AllowAll: true}}
-		sqlText, _, ok := buildVisibleSearchSQL(search.Query{Text: "x"}, scope, nil)
+		sqlText, _, ok := buildVisibleSearchSQL(search.Query{Text: "x", World: store.TrivialScope()}, scope, nil)
 		if !ok {
 			t.Fatal("expected a query")
 		}
@@ -91,7 +92,7 @@ func TestBuildVisibleSearchSQL_Shape(t *testing.T) {
 			"doc":    {Query: docPred},
 			"ticket": {Query: pred()},
 		}
-		sqlText, _, ok := buildVisibleSearchSQL(search.Query{Text: "x"}, scope, nil)
+		sqlText, _, ok := buildVisibleSearchSQL(search.Query{Text: "x", World: store.TrivialScope()}, scope, nil)
 		if !ok {
 			t.Fatal("expected a query")
 		}

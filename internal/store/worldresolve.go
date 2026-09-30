@@ -136,7 +136,7 @@ func ResolveWorldPrimes(w WorldScope, candidates []WorldCandidate) map[string]Wo
 			f = &family{typ: c.Type}
 			fams[c.ID] = f
 		}
-		if c.Face.IsDefault() {
+		if c.Face.IsImplicit() {
 			f.haveDefault = true
 			f.typ = c.Type
 		}

@@ -199,7 +199,7 @@ func TestTransition_IllegalEntry_DoesNotPersist(t *testing.T) {
 	// No snapshot row must exist — the check runs before the store write, so a
 	// rejected illegal entry never persists (and thus never emits a store event).
 	count := 0
-	for range st.ListEntities(context.Background(), store.EntityQuery{Type: "snapshot", Faces: store.InWorld(store.DefaultWorld())}) {
+	for range st.ListEntities(context.Background(), store.EntityQuery{Type: "snapshot", Faces: store.InWorld(store.TrivialScope())}) {
 		count++
 	}
 	if count != 0 {

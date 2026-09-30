@@ -188,7 +188,7 @@ func (r *Request) PermitsReadFace(
 // was before face selections were required: the gate answers for a bare id,
 // and widening it to other faces waits for TKT-7IZHP0.
 func (r *Request) PermitsReadMany(ctx context.Context, entityType string, ids []string) (map[string]bool, error) {
-	return r.matching(ctx, r.readQuery(ctx, entityType), store.InWorld(store.DefaultWorld()), ids)
+	return r.matching(ctx, r.readQuery(ctx, entityType), store.InWorld(store.TrivialScope()), ids)
 }
 
 // matching answers rqr for ids, running a scoped verdict's template query

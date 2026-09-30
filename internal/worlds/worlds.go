@@ -50,14 +50,14 @@ type Compiled struct {
 }
 
 // Default returns the world a surface uses when the request names none.
-// Today that is the implicit default world, [store.DefaultWorld]: every type
+// Today that is the implicit default world, [store.TrivialScope]: every type
 // at its implicit face. Always available, declared or not.
 //
 // This is the one seam for that choice. Surfaces with no request world take
-// their world from here, never from store.DefaultWorld directly, so
+// their world from here, never from store.TrivialScope directly, so
 // TKT-7IZHP0 can change this body without revisiting a call site. Today that
 // is CLI list, scheduled for_each and scheduled mail.
-func (c Compiled) Default() store.WorldScope { return store.DefaultWorld() }
+func (c Compiled) Default() store.WorldScope { return store.TrivialScope() }
 
 // Lookup returns the compiled scope for a world name.
 //

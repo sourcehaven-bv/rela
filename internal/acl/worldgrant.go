@@ -266,7 +266,7 @@ func GrantsVerbOnState(role RoleDef, op Op, target string, p entity.Face) bool {
 	}
 	for _, entry := range list {
 		if entry == "*" {
-			if p.IsDefault() {
+			if p.IsImplicit() {
 				return true
 			}
 			continue

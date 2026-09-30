@@ -56,15 +56,15 @@ func RunGraphPositionTests(t *testing.T, f Factory) {
 	})
 
 	queries := map[string]store.GraphQuery{
-		"id order":   {EntityType: "ticket", Faces: store.InWorld(store.DefaultWorld())},
-		"due asc":    {EntityType: "ticket", OrderBy: []store.OrderSpec{{Property: "due"}}, Faces: store.InWorld(store.DefaultWorld())},
-		"due desc":   {EntityType: "ticket", OrderBy: []store.OrderSpec{{Property: "due", Descending: true}}, Faces: store.InWorld(store.DefaultWorld())},
-		"two keys":   {EntityType: "ticket", OrderBy: []store.OrderSpec{{Property: "status", Descending: true}, {Property: "due"}}, Faces: store.InWorld(store.DefaultWorld())},
-		"filtered":   {EntityType: "ticket", Props: []store.PropPredicate{{Property: "status", Value: "open"}}, OrderBy: []store.OrderSpec{{Property: "due"}}, Faces: store.InWorld(store.DefaultWorld())},
-		"paged":      {EntityType: "ticket", OrderBy: []store.OrderSpec{{Property: "due"}}, Limit: 2, Offset: 3, Faces: store.InWorld(store.DefaultWorld())},
+		"id order":   {EntityType: "ticket", Faces: store.InWorld(store.TrivialScope())},
+		"due asc":    {EntityType: "ticket", OrderBy: []store.OrderSpec{{Property: "due"}}, Faces: store.InWorld(store.TrivialScope())},
+		"due desc":   {EntityType: "ticket", OrderBy: []store.OrderSpec{{Property: "due", Descending: true}}, Faces: store.InWorld(store.TrivialScope())},
+		"two keys":   {EntityType: "ticket", OrderBy: []store.OrderSpec{{Property: "status", Descending: true}, {Property: "due"}}, Faces: store.InWorld(store.TrivialScope())},
+		"filtered":   {EntityType: "ticket", Props: []store.PropPredicate{{Property: "status", Value: "open"}}, OrderBy: []store.OrderSpec{{Property: "due"}}, Faces: store.InWorld(store.TrivialScope())},
+		"paged":      {EntityType: "ticket", OrderBy: []store.OrderSpec{{Property: "due"}}, Limit: 2, Offset: 3, Faces: store.InWorld(store.TrivialScope())},
 		"world":      {EntityType: "ticket", Faces: store.InWorld(draftWorld), OrderBy: []store.OrderSpec{{Property: "due"}}},
 		"world only": {EntityType: "ticket", Faces: store.InWorld(draftOnly)},
-		"single row": {EntityType: "note", Faces: store.InWorld(store.DefaultWorld())},
+		"single row": {EntityType: "note", Faces: store.InWorld(store.TrivialScope())},
 	}
 
 	for name, q := range queries {
@@ -104,7 +104,7 @@ func RunGraphPositionTests(t *testing.T, f Factory) {
 	t.Run("empty result", func(t *testing.T) {
 		s := f(t)
 		seed(t, s)
-		q := store.GraphQuery{EntityType: "ticket", Props: []store.PropPredicate{{Property: "status", Value: "no-such-status"}}, Faces: store.InWorld(store.DefaultWorld())}
+		q := store.GraphQuery{EntityType: "ticket", Props: []store.PropPredicate{{Property: "status", Value: "no-such-status"}}, Faces: store.InWorld(store.TrivialScope())}
 		_, found, err := store.GraphPosition(ctx(), s, q, "T-0")
 		require.NoError(t, err)
 		require.False(t, found)
@@ -113,7 +113,7 @@ func RunGraphPositionTests(t *testing.T, f Factory) {
 	t.Run("unmatched id of the type is not found", func(t *testing.T) {
 		s := f(t)
 		seed(t, s)
-		q := store.GraphQuery{EntityType: "ticket", Props: []store.PropPredicate{{Property: "status", Value: "open"}}, Faces: store.InWorld(store.DefaultWorld())}
+		q := store.GraphQuery{EntityType: "ticket", Props: []store.PropPredicate{{Property: "status", Value: "open"}}, Faces: store.InWorld(store.TrivialScope())}
 		_, found, err := store.GraphPosition(ctx(), s, q, "T-1") // status done
 		require.NoError(t, err)
 		require.False(t, found)

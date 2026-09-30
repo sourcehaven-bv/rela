@@ -34,10 +34,10 @@ func newFSService(t *testing.T, files map[string]string) *analysis.Service {
 
 	st := memstore.New()
 	meta := &metamodel.Metamodel{Entities: map[string]metamodel.EntityDef{}}
-	tr := tracer.New(st, store.WorldScope{})
+	tr := tracer.New(st, store.TrivialScope())
 	svc, err := analysis.New(analysis.Deps{
 		Store: st, Meta: meta, Tracer: tr, FS: fs, Paths: paths,
-		LuaReadDeps: lua.ReadDeps{VisibleReader: visibility.Unrestricted(st), Tracer: tr, Meta: meta},
+		LuaReadDeps: lua.ReadDeps{VisibleReader: visibility.Unrestricted(st), Tracer: tr, Meta: meta, World: store.TrivialScope()},
 	})
 	if err != nil {
 		t.Fatalf("analysis.New: %v", err)
@@ -216,10 +216,10 @@ func TestCheckRelationFilenames_NoFS(t *testing.T) {
 
 	st := memstore.New()
 	meta := &metamodel.Metamodel{Entities: map[string]metamodel.EntityDef{}}
-	tr := tracer.New(st, store.WorldScope{})
+	tr := tracer.New(st, store.TrivialScope())
 	svc, err := analysis.New(analysis.Deps{
 		Store: st, Meta: meta, Tracer: tr,
-		LuaReadDeps: lua.ReadDeps{VisibleReader: visibility.Unrestricted(st), Tracer: tr, Meta: meta},
+		LuaReadDeps: lua.ReadDeps{VisibleReader: visibility.Unrestricted(st), Tracer: tr, Meta: meta, World: store.TrivialScope()},
 	})
 	if err != nil {
 		t.Fatalf("analysis.New: %v", err)

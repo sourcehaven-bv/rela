@@ -9,6 +9,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/search"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // entityOnlySearcher is a VisibleSearcher that does NOT implement
@@ -63,7 +64,7 @@ func TestSearchVisibleHits_FailsClosedWithoutFieldSearcher(t *testing.T) {
 	var gotErr error
 	var hits int
 	for _, err := range searchVisibleHits(
-		context.Background(), vs, aff, search.Query{Text: "anything"}, nil,
+		context.Background(), vs, aff, search.Query{Text: "anything", World: store.TrivialScope()}, nil,
 	) {
 		if err != nil {
 			gotErr = err
@@ -104,7 +105,7 @@ func TestSearchVisibleHits_NoRedactionNeededStillWorks(t *testing.T) {
 
 	var hits int
 	for _, err := range searchVisibleHits(
-		context.Background(), vs, aff, search.Query{Text: "anything"}, nil,
+		context.Background(), vs, aff, search.Query{Text: "anything", World: store.TrivialScope()}, nil,
 	) {
 		if err != nil {
 			t.Fatalf("no redaction is in play, so this must not error: %v", err)

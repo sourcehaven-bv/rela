@@ -25,7 +25,7 @@ import (
 // address names none.
 func isExplicitAddress(raw string) bool {
 	ref, err := entity.ParseRef(raw)
-	return err == nil && !ref.Face.IsDefault()
+	return err == nil && !ref.Face.IsImplicit()
 }
 
 // addressedProvenance labels a face served because the CALLER NAMED IT, as

@@ -100,26 +100,26 @@ func TestNoNewUnselectedGraphQueries(t *testing.T) {
 	}
 }
 
-// defaultWorldGuard is the vocabulary of the DefaultWorld rule.
-var defaultWorldGuard = guard{
-	what: "store.DefaultWorld call",
-	list: "defaultWorldAllowlist",
+// trivialScopeGuard is the vocabulary of the TrivialScope rule.
+var trivialScopeGuard = guard{
+	what: "store.TrivialScope call",
+	list: "trivialScopeAllowlist",
 	advice: "take the world from the request (dataentry worldScopeFrom), the wiring " +
 		"(worlds.Compiled.Default, lua.ReadDeps.World, mcp.Deps.World, appbuild) or the caller. " +
-		"A hard-coded default world stops meaning the configured default when TKT-7IZHP0 lets a " +
-		"project declare one, and every call site would have to be found again",
+		"A hard-coded trivial scope is not the configured default world once a project declares " +
+		"default_world (TKT-7IZHP0), and every call site would have to be found again",
 }
 
-// defaultWorldExempt are the repo-relative trees that own the default world:
-// the store defines it and internal/worlds compiles the configured one.
-var defaultWorldExempt = []string{"internal/store/", "internal/worlds/"}
+// trivialScopeExempt are the repo-relative trees that own the trivial scope:
+// the store defines it and internal/worlds compiles the configured worlds from it.
+var trivialScopeExempt = []string{"internal/store/", "internal/worlds/"}
 
-// defaultWorldCalls returns the position of every `x.DefaultWorld` selector,
+// trivialScopeCalls returns the position of every `store.TrivialScope` selector,
 // called or taken as a value.
-func defaultWorldCalls(fset *token.FileSet, file *ast.File) []token.Position {
+func trivialScopeCalls(fset *token.FileSet, file *ast.File) []token.Position {
 	var found []token.Position
 	ast.Inspect(file, func(n ast.Node) bool {
-		if sel, ok := n.(*ast.SelectorExpr); ok && sel.Sel.Name == "DefaultWorld" {
+		if sel, ok := n.(*ast.SelectorExpr); ok && sel.Sel.Name == "TrivialScope" {
 			if id, ok := sel.X.(*ast.Ident); ok && id.Name == "store" {
 				found = append(found, fset.Position(sel.Sel.Pos()))
 			}
@@ -129,23 +129,23 @@ func defaultWorldCalls(fset *token.FileSet, file *ast.File) []token.Position {
 	return found
 }
 
-// TestNoNewDefaultWorldCalls pins every store.DefaultWorld call outside the
-// packages that own it to defaultWorldAllowlist, exactly.
-func TestNoNewDefaultWorldCalls(t *testing.T) {
+// TestNoNewTrivialScopeCalls pins every store.TrivialScope call outside the
+// packages that own it to trivialScopeAllowlist, exactly.
+func TestNoNewTrivialScopeCalls(t *testing.T) {
 	t.Parallel()
-	got := scanTree(t, repoRoot, scannedRoots, defaultWorldCalls)
+	got := scanTree(t, repoRoot, scannedRoots, trivialScopeCalls)
 	for path := range got {
-		for _, prefix := range defaultWorldExempt {
+		for _, prefix := range trivialScopeExempt {
 			if strings.HasPrefix(path, prefix) {
 				delete(got, path)
 			}
 		}
 	}
-	counts := make(map[string]int, len(defaultWorldAllowlist))
-	for path, e := range defaultWorldAllowlist {
+	counts := make(map[string]int, len(trivialScopeAllowlist))
+	for path, e := range trivialScopeAllowlist {
 		counts[path] = e.n
 	}
-	for _, msg := range diffAllowlist(defaultWorldGuard, got, counts) {
+	for _, msg := range diffAllowlist(trivialScopeGuard, got, counts) {
 		t.Error(msg)
 	}
 }
@@ -157,7 +157,7 @@ func TestFaceSelectionAllowlists_HaveReasons(t *testing.T) {
 	for name, list := range map[string]map[string]allowed{
 		"unselectedQueryAllowlist":      unselectedQueryAllowlist,
 		"unselectedGraphQueryAllowlist": unselectedGraphQueryAllowlist,
-		"defaultWorldAllowlist":         defaultWorldAllowlist,
+		"trivialScopeAllowlist":         trivialScopeAllowlist,
 	} {
 		for path, e := range list {
 			if strings.TrimSpace(e.reason) == "" {
@@ -216,22 +216,22 @@ func TestUnselectedQueries(t *testing.T) {
 	}
 }
 
-func TestDefaultWorldCalls(t *testing.T) {
+func TestTrivialScopeCalls(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name string
 		body string
 		want int
 	}{
-		{"call", `_ = store.InWorld(store.DefaultWorld())`, 1},
-		{"method value", `f := store.DefaultWorld; _ = f`, 1},
-		{"other receiver", `_ = w.DefaultWorld()`, 0},
+		{"call", `_ = store.InWorld(store.TrivialScope())`, 1},
+		{"method value", `f := store.TrivialScope; _ = f`, 1},
+		{"other receiver", `_ = w.TrivialScope()`, 0},
 		{"compiled default", `_ = compiled.Default()`, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if got := defaultWorldCalls(parseBody(t, tc.body)); len(got) != tc.want {
+			if got := trivialScopeCalls(parseBody(t, tc.body)); len(got) != tc.want {
 				t.Errorf("found = %v, want %d", got, tc.want)
 			}
 		})

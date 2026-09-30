@@ -102,7 +102,7 @@ func TestLinearSearch_NoMatchesEmpty(t *testing.T) {
 // default world.
 func searchIDs(t *testing.T, b search.Backend, text string, limit int) []string {
 	t.Helper()
-	faces, err := b.Search(text, limit, store.DefaultWorld())
+	faces, err := b.Search(text, limit, store.TrivialScope())
 	if err != nil {
 		t.Fatalf("Search(%q, %d): %v", text, limit, err)
 	}

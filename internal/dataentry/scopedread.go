@@ -175,7 +175,7 @@ func scopedHeaders(
 	case rqr.AllowAll && len(req.Props) == 0 && len(req.ScopeProps) == 0:
 		// No extra conjuncts, so the cheaper type-scan serves it. Stamping
 		// the world here as well as on the branches below is the RR-GQWRLD
-		// invariant; note store.DefaultWorld() is the zero value, so a
+		// invariant; note store.TrivialScope() is the zero value, so a
 		// surface with no world in ctx pays nothing for this.
 		for h, err := range store.ListEntityHeaders(ctx, svc.Store, store.EntityQuery{
 			Type:   req.Type,

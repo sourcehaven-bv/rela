@@ -19,13 +19,13 @@ var unselectedGraphQueryAllowlist = map[string]allowed{
 	"internal/dataentry/scopedread.go":    {1, "completed by stampScope before it runs"},
 }
 
-// defaultWorldAllowlist pins the store.DefaultWorld calls outside the store
-// and internal/worlds (see defaultWorldCalls). It may only shrink.
+// trivialScopeAllowlist pins the store.TrivialScope calls outside the store
+// and internal/worlds (see trivialScopeCalls). It may only shrink.
 //
 // Each entry keeps today's default-world behavior until TKT-7IZHP0 decides,
 // with its own security review, how identity reads and bare-id gates treat
 // faced types.
-var defaultWorldAllowlist = map[string]allowed{
+var trivialScopeAllowlist = map[string]allowed{
 	"internal/acl/principallookup.go": {1, "principal lookup reads identity in the default world " +
 		"until TKT-7IZHP0"},
 	"internal/acl/request.go": {1, "the bare-id row gate evaluates a scoped verdict on the default-world " +
@@ -36,4 +36,8 @@ var defaultWorldAllowlist = map[string]allowed{
 		"transition verdicts, which read the default world until TKT-7IZHP0"},
 	"internal/aclmap/enumerate.go": {1, "principal enumeration mirrors the principal lookup's " +
 		"default world until TKT-7IZHP0"},
+	"internal/dataentry/world.go": {1, "defaultWorldHandle serves an unstamped request until " +
+		"TKT-7IZHP0 PR 5a switches it to the configured default world"},
+	"internal/visibility/resolver.go": {1, "trivialWorld is the script and unrestricted readers' " +
+		"start world until TKT-7IZHP0 PR 5a wires WithWorld everywhere"},
 }

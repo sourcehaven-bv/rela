@@ -82,7 +82,7 @@ func (s *FSStore) ListEntitiesPage(_ context.Context, q store.EntityQuery) (stor
 	matches := func(id string) bool { return matchEntityQuery(s.entities[id], q, idSet) }
 
 	var keys storeutil.PageKeys
-	if storeutil.RankingWorld(q).IsDefaultWorld() {
+	if storeutil.RankingWorld(q).IsTrivial() {
 		keys = storeutil.PaginateSortedKeysFunc(
 			s.entityOrder, cursorKey, q.Limit, matches, storeutil.CompareStateKeys)
 	} else {
@@ -153,7 +153,7 @@ func (s *FSStore) CountEntities(_ context.Context, q store.EntityQuery) (int, er
 	// The default world resolves every row to itself, so counting needs
 	// no buffer — and this is the common path for a project that never
 	// declares a face, which must stay allocation-free.
-	if storeutil.RankingWorld(q).IsDefaultWorld() {
+	if storeutil.RankingWorld(q).IsTrivial() {
 		n := 0
 		for _, meta := range s.entities {
 			if matchEntityQuery(meta, q, idSet) {
@@ -177,7 +177,7 @@ func (s *FSStore) CountEntities(_ context.Context, q store.EntityQuery) (int, er
 // keepPrimes resolves a world over matched index metadata, returning
 // only each entity's prime. A no-op for the default world.
 func keepPrimes(w store.WorldScope, metas []entityMeta) []entityMeta {
-	if w.IsDefaultWorld() || len(metas) == 0 {
+	if w.IsTrivial() || len(metas) == 0 {
 		return metas
 	}
 	cands := make([]storeutil.WorldCandidate, len(metas))
@@ -282,7 +282,7 @@ func (s *FSStore) createEntity(_ context.Context, e *entity.Entity) error {
 	defer s.mu.Unlock()
 
 	key := stateKey(e.ID, e.Face)
-	if e.Face.IsDefault() {
+	if e.Face.IsImplicit() {
 		// Case-folded: on a case-insensitive filesystem (macOS, Windows)
 		// "ABC" and "abc" are the same file, so a byte-exact check here
 		// would let the write silently overwrite the existing entity
@@ -356,7 +356,7 @@ func (s *FSStore) updateEntityIf(
 	}
 	// Row-family invariant: a non-default state cannot be re-typed away
 	// from its family (TKT-DOFYR1, design doc §6).
-	if !e.Face.IsDefault() && e.Type != meta.Type {
+	if !e.Face.IsImplicit() && e.Type != meta.Type {
 		return "", storeutil.StateTypeMismatchError(e.ID, e.Face, e.Type, meta.Type)
 	}
 
@@ -839,7 +839,7 @@ func (s *FSStore) renameEntity(_ context.Context, oldID, newID string) (*store.R
 			return nil, err
 		}
 		renamedStates = append(renamedStates, renamed)
-		if renamed.Face.IsDefault() {
+		if renamed.Face.IsImplicit() {
 			renamedDefault = renamed
 		}
 	}
@@ -889,7 +889,7 @@ func (s *FSStore) renameEntity(_ context.Context, oldID, newID string) (*store.R
 		s.notifyRenamed(oldID, renamedDefault)
 	}
 	for _, renamed := range renamedStates {
-		if renamed.Face.IsDefault() {
+		if renamed.Face.IsImplicit() {
 			continue // already announced above
 		}
 		s.notifyRenamed(oldID, renamed)

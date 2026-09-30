@@ -58,7 +58,7 @@ func (r *Resolver) addressAny(ctx context.Context, w World, addr string) (*entit
 // an entity id, so it is a miss. It never returns an error; the error result
 // keeps the signature of [Resolver.Family].
 func (r *Resolver) familyAny(ctx context.Context, id string) (Family, bool, error) {
-	if ref, err := entity.ParseRef(id); err != nil || !ref.Face.IsDefault() {
+	if ref, err := entity.ParseRef(id); err != nil || !ref.Face.IsImplicit() {
 		return Family{}, false, nil //nolint:nilerr // a refused address is a miss, not a failure (9.3)
 	}
 	headers, ok := r.headersOf(ctx, "", id)

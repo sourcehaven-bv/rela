@@ -1111,6 +1111,10 @@ func NewApp(
 		Searcher:      searcher,
 		Meta:          meta,
 		ProjectRoot:   paths.Root,
+		// SetWorlds runs after NewApp, so this is the default world's scope
+		// from a nil lookup. TKT-7IZHP0 PR 5a rewires it to the configured
+		// default world.
+		World: defaultWorldScope(app.worlds),
 	}
 	val, valErr := newGatedValidator(gatedReader, scriptTraversalGate(app), meta, readDeps, st)
 	if valErr != nil {

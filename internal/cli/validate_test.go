@@ -136,7 +136,7 @@ func TestRunValidationChecks_JSONOutput(t *testing.T) {
 
 	buf := withOutput(t, output.FormatJSON)
 
-	tr := tracer.New(svc.Store(), store.WorldScope{})
+	tr := tracer.New(svc.Store(), store.TrivialScope())
 	an, err := analysis.New(analysis.Deps{
 		Store:       svc.Store(),
 		Meta:        svc.Meta(),

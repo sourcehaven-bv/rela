@@ -3,6 +3,7 @@ package visibility
 import (
 	"context"
 	"errors"
+	"fmt"
 	"iter"
 	"log/slog"
 	"slices"
@@ -24,8 +25,14 @@ type Loader interface {
 	ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error]
 }
 
-// World is the world a single-entity read is made in. The zero value is the
-// default world and is readable.
+// World is the world a single-entity read is made in. Build one with
+// [WorldOf] or [DeniedWorld].
+//
+// The zero value has an unset scope. [Resolver.Ref] and [Resolver.Family]
+// accept it, because they read no world (the scope only labels provenance
+// there); [Resolver.InWorld] refuses it with [store.ErrInvalidQuery]
+// (TKT-7IZHP0 design A4), so a forgotten world cannot pass for the trivial
+// one.
 type World struct {
 	scope  store.WorldScope
 	denied bool
@@ -33,6 +40,11 @@ type World struct {
 
 // WorldOf is the world that scope compiles to.
 func WorldOf(scope store.WorldScope) World { return World{scope: scope} }
+
+// trivialWorld is the world a script reader starts in until its wiring calls
+// WithWorld: the trivial scope, every entity at its implicit face. TKT-7IZHP0
+// PR 5a makes the wiring pass the configured default world and removes this.
+func trivialWorld() World { return World{scope: store.TrivialScope()} }
 
 // DeniedWorld is a world that exists but that the principal holds no read
 // grant for. Every read in it misses, whatever address it names.
@@ -126,7 +138,7 @@ func (r *Resolver) Address(ctx context.Context, w World, entityType, addr string
 		// An address that cannot name a row names none: the same miss.
 		return Resolved{}, false, nil //nolint:nilerr // a malformed address is a miss, not a fault
 	}
-	if ref.Face.IsDefault() {
+	if ref.Face.IsImplicit() {
 		return r.InWorld(ctx, w, entityType, ref.ID)
 	}
 	return r.Ref(ctx, w, entityType, ref)
@@ -158,12 +170,16 @@ func (r *Resolver) Ref(ctx context.Context, w World, entityType string, ref enti
 // and the principal's readable faces: the ACL trims the candidates first and
 // the world ranks what is left, exactly as the list path does.
 func (r *Resolver) InWorld(ctx context.Context, w World, entityType, id string) (Resolved, bool, error) {
+	if !w.denied && !w.scope.IsSet() {
+		return Resolved{}, false, fmt.Errorf("%w: visibility: InWorld with an unset world (use WorldOf)",
+			store.ErrInvalidQuery)
+	}
 	faces, ok, err := r.admit(ctx, w, entityType, id)
 	if err != nil || !ok {
 		return Resolved{}, false, err
 	}
 	var e *entity.Entity
-	if w.scope.IsDefaultWorld() {
+	if w.scope.IsTrivial() {
 		if !faces.Contains("") {
 			return Resolved{}, false, nil
 		}

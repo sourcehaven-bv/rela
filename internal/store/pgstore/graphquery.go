@@ -769,7 +769,7 @@ func endpointHopCond(b *sqlBuilder, endpointAlias string, sel store.FaceSelectio
 // same id beats. Candidates of one family never tie on rank (a chain lists
 // each face once), so the strict comparison picks exactly one row.
 func endpointFaceCond(b *sqlBuilder, alias string, sel store.FaceSelection) string {
-	if w, ok := sel.World(); ok && !w.IsDefaultWorld() {
+	if w, ok := sel.World(); ok && !w.IsTrivial() {
 		rival := alias + "_w"
 		rank, cand := worldSQL(w, alias, &b.args)
 		rivalRank, rivalCand := worldSQL(w, rival, &b.args)
@@ -914,7 +914,7 @@ func graphWorldScope(b *sqlBuilder, q store.GraphQuery) (where, distinctOn, rank
 	if ok {
 		w = effectiveWorld(w, q.EntityType)
 	}
-	if !ok || w.IsDefaultWorld() {
+	if !ok || w.IsTrivial() {
 		base := faceSelectionCond(q.Faces, "e", &b.args)
 		if base == "" {
 			base = "TRUE"

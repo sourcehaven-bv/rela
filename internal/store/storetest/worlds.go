@@ -215,8 +215,8 @@ func RunWorldTests(t *testing.T, f Factory) {
 		mustCreate(t, s, newState(t, "PAGE-1", "page", "", "default face"))
 		mustCreate(t, s, newState(t, "PAGE-1", "page", "published", "published face"))
 
-		bare := titles(t, s, store.EntityQuery{Type: "page", Faces: store.InWorld(store.DefaultWorld())})
-		zero := titles(t, s, store.EntityQuery{Type: "page", Faces: store.InWorld(store.DefaultWorld())})
+		bare := titles(t, s, store.EntityQuery{Type: "page", Faces: store.InWorld(store.TrivialScope())})
+		zero := titles(t, s, store.EntityQuery{Type: "page", Faces: store.InWorld(store.TrivialScope())})
 		assert.Equal(t, map[string]string{"PAGE-1": "default face"}, bare)
 		assert.Equal(t, bare, zero, "the zero WorldScope must not change any result")
 	})
@@ -229,7 +229,7 @@ func RunWorldTests(t *testing.T, f Factory) {
 		mustCreate(t, s, newState(t, "TKT-2", "ticket", "", "two"))
 
 		want := map[string]string{"TKT-1": "one", "TKT-2": "two"}
-		assert.Equal(t, want, titles(t, s, store.EntityQuery{Type: "ticket", Faces: store.InWorld(store.DefaultWorld())}))
+		assert.Equal(t, want, titles(t, s, store.EntityQuery{Type: "ticket", Faces: store.InWorld(store.TrivialScope())}))
 		assert.Equal(t, want, titles(t, s, store.EntityQuery{
 			Type:  "ticket",
 			Faces: store.InWorld(scope(t, "page", store.FallbackExclude, "published")),
@@ -260,7 +260,7 @@ func RunWorldTests(t *testing.T, f Factory) {
 		}
 		require.Len(t, got, 1)
 		assert.Equal(t, "the published face", got[0].GetString("title"))
-		assert.False(t, got[0].Face.IsDefault(),
+		assert.False(t, got[0].Face.IsImplicit(),
 			"the resolved row must be the STATE row, not the default face")
 		assert.Equal(t, ptr(t, "published"), got[0].Face)
 	})
@@ -416,7 +416,7 @@ func RunWorldTests(t *testing.T, f Factory) {
 	// This is the shape internal/worlds newly emits for a world that selects a
 	// `bare_face` face by name (BUG-DFLTCHAIN). It is a CROSS-BACKEND
 	// contract because the two implementations reach the answer differently:
-	// storeutil.WorldPrimes has an explicit `Face.IsDefault()` branch that
+	// storeutil.WorldPrimes has an explicit `Face.IsImplicit()` branch that
 	// must fall THROUGH to the rank loop rather than short-circuit, while
 	// pgstore builds a CASE whose arms rank the coordinates — and under
 	// `otherwise: default` that CASE ends up with two arms matching the same
@@ -599,10 +599,10 @@ func RunWorldTests(t *testing.T, f Factory) {
 		}{
 			// The owner's role grants the bare face only, so under the default
 			// world (bare rows) the owner reads P-1 ...
-			{"owner reads the bare face in the default world", "U-owner", store.DefaultWorld(), true},
+			{"owner reads the bare face in the default world", "U-owner", store.TrivialScope(), true},
 			// ... and the reviewer, whose role grants only published, does NOT
 			// — even though a union of both roles' faces would include it.
-			{"reviewer cannot read the bare face", "U-reviewer", store.DefaultWorld(), false},
+			{"reviewer cannot read the bare face", "U-reviewer", store.TrivialScope(), false},
 			// Under a world selecting published, the reviewer reads the
 			// published prime ...
 			{"reviewer reads the published prime", "U-reviewer", published, true},

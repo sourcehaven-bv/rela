@@ -62,7 +62,7 @@ func readAddress(ctx context.Context, st addressLoader, world store.WorldScope, 
 	if ok {
 		return got.Entity, nil
 	}
-	if !ref.Face.IsDefault() || slices.Contains(faces, "") {
+	if !ref.Face.IsImplicit() || slices.Contains(faces, "") {
 		return nil, fmt.Errorf("%w: %s", store.ErrNotFound, addr)
 	}
 	named := make([]string, len(faces))
@@ -128,7 +128,7 @@ func requireAddressExists(ctx context.Context, st store.EntityLister, addr strin
 	if err != nil {
 		return err
 	}
-	if len(faces) == 0 || (!ref.Face.IsDefault() && !slices.Contains(faces, ref.Face)) {
+	if len(faces) == 0 || (!ref.Face.IsImplicit() && !slices.Contains(faces, ref.Face)) {
 		return fmt.Errorf("entity %q not found", addr)
 	}
 	return nil

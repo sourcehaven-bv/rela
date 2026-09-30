@@ -49,7 +49,7 @@ func TestSearchAfterMixedCaseRename(t *testing.T) {
 // backend to one contract.
 func searchIDs(t *testing.T, b *pgstore.SearchBackend, text string) []string {
 	t.Helper()
-	faces, err := b.Search(text, 0, store.DefaultWorld())
+	faces, err := b.Search(text, 0, store.TrivialScope())
 	require.NoError(t, err)
 	ids := make([]string, 0, len(faces))
 	for _, f := range faces {
@@ -77,7 +77,7 @@ func TestSearch_RanksTitleMatchAboveBodyMention(t *testing.T) {
 	title.Content = strings.Repeat("unrelated prose. ", 80)
 	require.NoError(t, st.CreateEntity(ctx, title))
 
-	faces, err := backend.Search("telemetry", 10, store.DefaultWorld())
+	faces, err := backend.Search("telemetry", 10, store.TrivialScope())
 	require.NoError(t, err)
 	ids := make([]string, 0, len(faces))
 	for _, f := range faces {
@@ -111,7 +111,7 @@ func TestSearch_RanksByConfiguredTitle(t *testing.T) {
 	mk("P-1", "person", "name", "Telemetry Tom", "")
 	mk("X-1", "misc", "label", "telemetry", "") // type absent from the map: ranks by id
 
-	faces, err := backend.Search("Telemetry", 10, store.DefaultWorld())
+	faces, err := backend.Search("Telemetry", 10, store.TrivialScope())
 	require.NoError(t, err)
 	ids := make([]string, 0, len(faces))
 	for _, f := range faces {
@@ -121,7 +121,7 @@ func TestSearch_RanksByConfiguredTitle(t *testing.T) {
 
 	var gated []string
 	scope := map[string]search.TypeScope{search.WildcardType: {AllowAll: true}}
-	for hit, err := range st.SearchVisible(ctx, search.Query{Text: "Telemetry", Limit: 10}, scope) {
+	for hit, err := range st.SearchVisible(ctx, search.Query{Text: "Telemetry", Limit: 10, World: store.TrivialScope()}, scope) {
 		require.NoError(t, err)
 		gated = append(gated, hit.ID)
 	}

@@ -112,8 +112,12 @@ func luaReadClaim(dr *docRuntime, ls *lua.LState, wantVisible bool) int {
 		return dr.luaFail(ls, "%s: %v", verb, err)
 	}
 
+	defaultScope, err := dr.worldScope("")
+	if err != nil {
+		return dr.luaFail(ls, "%s: %v", verb, err)
+	}
 	ctx := principal.With(dr.ctx, principal.Principal{User: who, Tool: principal.ToolCLI})
-	_, visible, gerr := reader.Address(ctx, visibility.World{}, typ, target)
+	_, visible, gerr := reader.Address(ctx, visibility.WorldOf(defaultScope), typ, target)
 	if gerr != nil {
 		return dr.luaFail(ls, "%s{id=%q}: the read gate errored: %v", verb, target, gerr)
 	}

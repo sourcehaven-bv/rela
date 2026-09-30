@@ -44,7 +44,7 @@ const entityColumns = "id, type, face, properties, content, updated_at"
 func buildEntitySelectSQL(q store.EntityQuery, keysetAfter, columns string) (sqlText string, args []any) {
 	b := &sqlBuilder{}
 	w := storeutil.RankingWorld(q)
-	if w.IsDefaultWorld() {
+	if w.IsTrivial() {
 		where := entityWhere(b, q, keysetAfter)
 		return `SELECT ` + columns + ` FROM entities` + where + ` ORDER BY id, face`, b.args
 	}
@@ -163,7 +163,7 @@ func entityWhere(b *sqlBuilder, q store.EntityQuery, keysetAfter string) string 
 func buildEntityCountSQL(q store.EntityQuery) (sqlText string, args []any) {
 	b := &sqlBuilder{}
 	w := storeutil.RankingWorld(q)
-	if w.IsDefaultWorld() {
+	if w.IsTrivial() {
 		return "SELECT count(*) FROM entities" + entityWhere(b, q, ""), b.args
 	}
 	_, candidate := worldSQL(b, w, "")

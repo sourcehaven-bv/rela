@@ -33,7 +33,7 @@ func seedGraph(t *testing.T) *tracer.GenericTracer {
 	s.CreateRelation(ctx(), entity.RelationKey{From: "A", Type: "implements", To: "B"}, nil)
 	s.CreateRelation(ctx(), entity.RelationKey{From: "B", Type: "requires", To: "C"}, nil)
 
-	return tracer.New(s, store.WorldScope{})
+	return tracer.New(s, store.TrivialScope())
 }
 
 func TestTraceFrom(t *testing.T) {
@@ -161,6 +161,6 @@ func TestHasCycle_WithCycle(t *testing.T) {
 	s.CreateRelation(ctx(), entity.RelationKey{From: "X", Type: "dep", To: "Y"}, nil)
 	s.CreateRelation(ctx(), entity.RelationKey{From: "Y", Type: "dep", To: "X"}, nil)
 
-	tr := tracer.New(s, store.WorldScope{})
+	tr := tracer.New(s, store.TrivialScope())
 	assert.True(t, tr.HasCycle(ctx(), "X"))
 }

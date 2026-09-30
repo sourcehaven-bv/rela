@@ -156,7 +156,7 @@ type reviewWorlds struct{}
 
 func (reviewWorlds) Lookup(name string) (store.WorldScope, bool) {
 	if name != "rv" {
-		return store.WorldScope{}, false
+		return store.TrivialScope(), false
 	}
 	return store.NewWorldScope(map[string]store.TypeResolution{
 		"ticket": {

@@ -290,7 +290,7 @@ func TestImportDryRun(t *testing.T) {
 	}
 
 	// Check that store is empty (dry run)
-	n, _ := st.CountEntities(ctx(), store.EntityQuery{Faces: store.InWorld(store.DefaultWorld())})
+	n, _ := st.CountEntities(ctx(), store.EntityQuery{Faces: store.InWorld(store.TrivialScope())})
 	if n != 0 {
 		t.Errorf("Expected empty store in dry run, found %d entities", n)
 	}
@@ -318,7 +318,7 @@ func TestImportEntities(t *testing.T) {
 		t.Errorf("EntitiesCreated = %d, want 2", result.EntitiesCreated)
 	}
 
-	n, _ := st.CountEntities(ctx(), store.EntityQuery{Faces: store.InWorld(store.DefaultWorld())})
+	n, _ := st.CountEntities(ctx(), store.EntityQuery{Faces: store.InWorld(store.TrivialScope())})
 	if n != 2 {
 		t.Errorf("Store entities = %d, want 2", n)
 	}

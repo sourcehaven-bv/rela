@@ -155,7 +155,7 @@ func convertStoreEntitySummary(meta *metamodel.Metamodel, e *entity.Entity) enti
 		Title:  displayTitle(meta, e),
 		Status: e.Status(),
 	}
-	if !e.Face.IsDefault() {
+	if !e.Face.IsImplicit() {
 		summary.Face = e.Face.String()
 	}
 	return summary
@@ -261,7 +261,7 @@ func neighbor(
 		title := titleOrEmpty(h.ID, meta.DisplayTitle(h.ID, h.Type, h.Properties))
 		return relationTargetJSON{ID: addr, Title: title}, true
 	}
-	if !ref.Face.IsDefault() || !res.Family {
+	if !ref.Face.IsImplicit() || !res.Family {
 		return relationTargetJSON{}, false
 	}
 	return relationTargetJSON{ID: ref.ID}, true

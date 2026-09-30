@@ -139,20 +139,20 @@ func showsEvidence(typ, world string, got, absent []string, faced bool) evidence
 
 // worldScope compiles a declared world name to the scope a store query takes.
 //
-// An empty name is the default world — the zero WorldScope, which every backend
-// reads as "no resolution applied: every entity at its default face". That is a
-// real answer, not a missing one, so it is not an error.
+// An empty name is the default world, from the compiled worlds' seam
+// ([worlds.Compiled.Default]). That is a real answer, not a missing one, so it
+// is not an error.
 //
 // An UNDECLARED name is an error. A world that resolves nothing looks exactly
 // like a world where nothing is published, so a typo would make `absent=` pass
 // for the wrong reason — the vacuous-pass shape this whole feature refuses.
 func (dr *docRuntime) worldScope(name string) (store.WorldScope, error) {
-	if name == "" || name == metamodel.DefaultWorldName {
-		return store.WorldScope{}, nil
-	}
 	compiled, err := worlds.Compile(dr.meta)
 	if err != nil {
 		return store.WorldScope{}, fmt.Errorf("compiling worlds: %w", err)
+	}
+	if name == "" || name == metamodel.DefaultWorldName {
+		return compiled.Default(), nil
 	}
 	scope, ok := compiled.Lookup(name)
 	if !ok {

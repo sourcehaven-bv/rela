@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // capProbe reports what a runtime exposes so a test can assert on
@@ -32,7 +34,7 @@ func runCapProbe(t *testing.T, writer bool, opts ...Option) string {
 		ws := newMockWorkspace(t)
 		rt = NewWriter(ws.services(t.TempDir()), &buf, all...)
 	} else {
-		rt = NewReader(ReadDeps{}, &buf, all...)
+		rt = NewReader(ReadDeps{World: store.TrivialScope()}, &buf, all...)
 	}
 	defer rt.Close()
 

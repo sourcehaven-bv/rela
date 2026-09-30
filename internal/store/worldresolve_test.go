@@ -107,7 +107,7 @@ func TestResolveWorldPrimes(t *testing.T) {
 			policyScope(store.FallbackDefaultState, published),
 			[]store.WorldCandidate{{ID: "POL-4", Type: "policy", Face: entity.Face("")}})
 		require.Contains(t, got, "POL-4")
-		assert.True(t, got["POL-4"].Face.IsDefault())
+		assert.True(t, got["POL-4"].Face.IsImplicit())
 		assert.Equal(t, store.ResolutionFallbackDefault, got["POL-4"].Via)
 	})
 
@@ -119,7 +119,7 @@ func TestResolveWorldPrimes(t *testing.T) {
 			policyScope(store.FallbackExclude, published),
 			[]store.WorldCandidate{{ID: "CTL-1", Type: "control", Face: entity.Face("")}})
 		require.Contains(t, got, "CTL-1")
-		assert.True(t, got["CTL-1"].Face.IsDefault())
+		assert.True(t, got["CTL-1"].Face.IsImplicit())
 		assert.Equal(t, store.ResolutionUnscoped, got["CTL-1"].Via)
 	})
 

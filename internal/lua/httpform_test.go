@@ -10,6 +10,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -345,7 +346,7 @@ if err then error(err.message) end`))
 func TestHTTPForm_RequiresHTTPCapability(t *testing.T) {
 	t.Parallel()
 
-	rt := NewReader(ReadDeps{}, &bytes.Buffer{})
+	rt := NewReader(ReadDeps{World: store.TrivialScope()}, &bytes.Buffer{})
 	t.Cleanup(rt.Close)
 	require.NoError(t, rt.RunString(`assert(http == nil, "http must be absent without the capability")`))
 }

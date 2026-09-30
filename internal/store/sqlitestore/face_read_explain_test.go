@@ -64,7 +64,7 @@ func TestFaceReadExplain(t *testing.T) {
 		sorts []string
 	}{
 		{"default-face page", func() (string, error) {
-			return s.ExplainEntityPage(ctx, store.EntityQuery{Type: "task", Limit: 100, Faces: store.InWorld(store.DefaultWorld())})
+			return s.ExplainEntityPage(ctx, store.EntityQuery{Type: "task", Limit: 100, Faces: store.InWorld(store.TrivialScope())})
 		}, pageIndex, nil},
 		{"all-faces page", func() (string, error) {
 			return s.ExplainEntityPage(ctx, store.EntityQuery{Type: "policy", Faces: store.AllFaces(), Limit: 100})

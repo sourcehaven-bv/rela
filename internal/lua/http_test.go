@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // newHTTPRuntime builds a Runtime for HTTP module testing. The http module
@@ -17,7 +19,7 @@ import (
 func newHTTPRuntime(t *testing.T) *Runtime {
 	t.Helper()
 	var buf bytes.Buffer
-	rt := NewReader(ReadDeps{}, &buf, WithCapabilities(Capabilities{HTTP: true}))
+	rt := NewReader(ReadDeps{World: store.TrivialScope()}, &buf, WithCapabilities(Capabilities{HTTP: true}))
 	t.Cleanup(rt.Close)
 	return rt
 }

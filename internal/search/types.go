@@ -300,9 +300,8 @@ type Query struct {
 	Limit   int              // max results (0 = no limit)
 
 	// World is the resolution scope: which face of each entity this
-	// search looks at. The zero value is the default world, which is
-	// byte-identical to the pre-worlds behavior — every existing
-	// construction site keeps working untouched.
+	// search looks at. It is required: the unset zero value is
+	// [store.ErrInvalidQuery] (see [ValidateQuery]).
 	//
 	// Limit counts ENTITIES, and that is structural rather than
 	// enforced: a world resolves at most one prime per entity, so the

@@ -113,10 +113,11 @@ func (m *mockWorkspace) services(projectRoot string) WriteDeps {
 	return WriteDeps{
 		ReadDeps: ReadDeps{
 			VisibleReader: visibility.Unrestricted(m.store),
-			Tracer:        tracer.New(m.store, store.WorldScope{}),
+			Tracer:        tracer.New(m.store, store.TrivialScope()),
 			Searcher:      &mockSearcher{ws: m},
 			Meta:          m.meta,
 			ProjectRoot:   projectRoot,
+			World:         store.TrivialScope(),
 		},
 		EntityManager: &mockManager{ws: m},
 	}
@@ -139,7 +140,7 @@ func (m *mockWorkspace) Meta() *metamodel.Metamodel {
 // entityCount returns the number of entities currently in the mock's store.
 func (m *mockWorkspace) entityCount(ctx context.Context) int {
 	n := 0
-	for _, err := range m.store.ListEntities(ctx, store.EntityQuery{Faces: store.InWorld(store.DefaultWorld())}) {
+	for _, err := range m.store.ListEntities(ctx, store.EntityQuery{Faces: store.InWorld(store.TrivialScope())}) {
 		if err != nil {
 			continue
 		}
@@ -313,7 +314,7 @@ func (s *mockSearcher) Search(ctx context.Context, q search.Query) iter.Seq2[sea
 	return func(yield func(search.Hit, error) bool) {
 		query := strings.ToLower(q.Text)
 		count := 0
-		for e, err := range s.ws.store.ListEntities(ctx, store.EntityQuery{Faces: store.InWorld(store.DefaultWorld())}) {
+		for e, err := range s.ws.store.ListEntities(ctx, store.EntityQuery{Faces: store.InWorld(store.TrivialScope())}) {
 			if err != nil {
 				continue
 			}
@@ -2529,6 +2530,7 @@ func spiedDeps(ws *mockWorkspace, realDeps WriteDeps, rec *ctxRecorder) WriteDep
 			Searcher:      &ctxSpySearcher{inner: realDeps.Searcher, rec: rec},
 			Meta:          realDeps.Meta,
 			ProjectRoot:   realDeps.ProjectRoot,
+			World:         store.TrivialScope(),
 		},
 		EntityManager: realDeps.EntityManager,
 	}
@@ -2804,7 +2806,7 @@ func TestNewWriter_PanicsOnNilEntityManager(t *testing.T) {
 
 	var buf bytes.Buffer
 	// EntityManager left nil — must panic.
-	_ = NewWriter(WriteDeps{ReadDeps: ReadDeps{ProjectRoot: "/tmp"}}, &buf)
+	_ = NewWriter(WriteDeps{ReadDeps: ReadDeps{ProjectRoot: "/tmp", World: store.TrivialScope()}}, &buf)
 }
 
 // TestWriterRuntime_MutationBindingsPresent is the positive counterpart:

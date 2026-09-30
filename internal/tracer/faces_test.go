@@ -34,7 +34,7 @@ func seedFaced(t *testing.T) *memstore.MemStore {
 
 func TestTrace_FacedNodeIsAFamily(t *testing.T) {
 	st := seedFaced(t)
-	tr := tracer.New(st, store.WorldScope{})
+	tr := tracer.New(st, store.TrivialScope())
 
 	res := tr.TraceFrom(ctx(), "POL-1", 2)
 	require.NotNil(t, res, "a faced entity must trace")
@@ -67,7 +67,7 @@ func TestTrace_WorldSelectsTheServedFace(t *testing.T) {
 
 func TestFindOrphans_FacedFamilies(t *testing.T) {
 	st := seedFaced(t)
-	got, err := tracer.New(st, store.WorldScope{}).FindOrphans(ctx())
+	got, err := tracer.New(st, store.TrivialScope()).FindOrphans(ctx())
 	require.NoError(t, err)
 	assert.Equal(t, []tracer.Orphan{
 		{ID: "NOTE-1", Type: "note"},
@@ -84,7 +84,7 @@ func TestFindOrphans_EdgeOnMissingFaceConnectsNothing(t *testing.T) {
 	_, err := st.CreateRelation(ctx(), entity.RelationKey{From: "POL-1", FromFace: "published", Type: "implements", To: "CTL-1"}, &store.RelationData{})
 	require.NoError(t, err)
 
-	got, err := tracer.New(st, store.WorldScope{}).FindOrphans(ctx())
+	got, err := tracer.New(st, store.TrivialScope()).FindOrphans(ctx())
 	require.NoError(t, err)
 	assert.Len(t, got, 2)
 }

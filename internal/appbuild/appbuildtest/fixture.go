@@ -41,6 +41,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
 	"github.com/Sourcehaven-BV/rela/internal/validator"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
+	"github.com/Sourcehaven-BV/rela/internal/worlds"
 )
 
 // Option configures a [*appbuild.Services] built via [New].
@@ -170,10 +171,14 @@ func New(meta *metamodel.Metamodel, opts ...Option) *appbuild.Services {
 
 	searchBackend := newSearchBackend()
 	st := resolveStore(cfg.store, searchBackend)
-	// The zero scope is the default world; the fixture compiles no worlds.
-	tr := tracer.New(st, store.WorldScope{})
+	compiledWorlds, err := worlds.Compile(meta)
+	if err != nil {
+		panic("appbuildtest.New: compile worlds: " + err.Error())
+	}
+	world := compiledWorlds.Default()
+	tr := tracer.New(st, world)
 	searcher := resolveSearcher(st, searchBackend)
-	readDeps := buildReadDeps(st, tr, searcher, meta, cfg.paths)
+	readDeps := buildReadDeps(st, tr, searcher, meta, cfg.paths, world)
 
 	autoEngine, cascadeRunner := buildAutomation(meta, st)
 	templater := templating.NewFSTemplater(cfg.fs, cfg.paths)
@@ -348,7 +353,7 @@ func resolveSearcher(st store.Store, backend *bleveindex.Index) search.Searcher 
 }
 
 func buildReadDeps(st store.Store, tr tracer.Tracer, searcher search.Searcher,
-	meta *metamodel.Metamodel, paths *project.Context) lua.ReadDeps {
+	meta *metamodel.Metamodel, paths *project.Context, world store.WorldScope) lua.ReadDeps {
 	root := ""
 	if paths != nil {
 		root = paths.Root
@@ -361,6 +366,7 @@ func buildReadDeps(st store.Store, tr tracer.Tracer, searcher search.Searcher,
 		Searcher:      searcher,
 		Meta:          meta,
 		ProjectRoot:   root,
+		World:         world,
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/search"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
@@ -129,38 +130,38 @@ func TestSearcher_Gating(t *testing.T) {
 		{
 			name:  "type without a grant is not searchable",
 			reads: map[string]acl.ReadQueryResult{"ticket": allowAll},
-			query: search.Query{Text: "alpha"},
+			query: search.Query{Text: "alpha", World: store.TrivialScope()},
 			want:  []string{"TKT-1"},
 		},
 		{
 			name:  "type outside the metamodel is not searchable",
 			reads: map[string]acl.ReadQueryResult{"ticket": allowAll, "feature": allowAll, "ghost": allowAll},
-			query: search.Query{Text: "alpha"},
+			query: search.Query{Text: "alpha", World: store.TrivialScope()},
 			want:  []string{"FEAT-1", "TKT-1"},
 		},
 		{
 			name:   "match on a hidden property only is dropped",
 			reads:  map[string]acl.ReadQueryResult{"person": allowAll},
 			hidden: hideProps{"salary"},
-			query:  search.Query{Text: "zebra99"},
+			query:  search.Query{Text: "zebra99", World: store.TrivialScope()},
 			want:   []string{},
 		},
 		{
 			name:  "match on a property that is not hidden is kept",
 			reads: map[string]acl.ReadQueryResult{"person": allowAll},
-			query: search.Query{Text: "zebra99"},
+			query: search.Query{Text: "zebra99", World: store.TrivialScope()},
 			want:  []string{"PERS-1"},
 		},
 		{
 			name:  "query types narrow the scope",
 			reads: map[string]acl.ReadQueryResult{"ticket": allowAll, "feature": allowAll},
-			query: search.Query{Text: "alpha", Types: []string{"feature"}},
+			query: search.Query{Text: "alpha", Types: []string{"feature"}, World: store.TrivialScope()},
 			want:  []string{"FEAT-1"},
 		},
 		{
 			name:  "no grant at all yields nothing",
 			reads: nil,
-			query: search.Query{Text: "alpha"},
+			query: search.Query{Text: "alpha", World: store.TrivialScope()},
 			want:  []string{},
 		},
 	}
@@ -239,7 +240,7 @@ func TestSearcher_FaceGate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewSearcher: %v", err)
 	}
-	hits, err := collect(t, s.Search(context.Background(), search.Query{Text: "x"}))
+	hits, err := collect(t, s.Search(context.Background(), search.Query{Text: "x", World: store.TrivialScope()}))
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -257,7 +258,7 @@ func TestSearcher_ClampsLimit(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewSearcher: %v", err)
 		}
-		if _, err := collect(t, s.Search(context.Background(), search.Query{Text: "x", Limit: limit})); err != nil {
+		if _, err := collect(t, s.Search(context.Background(), search.Query{Text: "x", Limit: limit, World: store.TrivialScope()})); err != nil {
 			t.Fatalf("Search: %v", err)
 		}
 		if got.Limit != visibility.MaxSearchLimit {
@@ -284,7 +285,7 @@ func TestSearcher_FailsClosed(t *testing.T) {
 			if err != nil {
 				t.Fatalf("NewSearcher: %v", err)
 			}
-			hits, err := collect(t, s.Search(context.Background(), search.Query{Text: "x"}))
+			hits, err := collect(t, s.Search(context.Background(), search.Query{Text: "x", World: store.TrivialScope()}))
 			if !errors.Is(err, boom) {
 				t.Errorf("err = %v, want boom", err)
 			}

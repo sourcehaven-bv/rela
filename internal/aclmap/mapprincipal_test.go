@@ -206,7 +206,7 @@ func assertClassification(
 	}
 	// Is there a sibling of this type the runtime denies this verb on?
 	entitySpecific := false
-	for sib, sErr := range w.store.ListEntities(ctx, store.EntityQuery{Type: typ, Faces: store.InWorld(store.DefaultWorld())}) {
+	for sib, sErr := range w.store.ListEntities(ctx, store.EntityQuery{Type: typ, Faces: store.InWorld(store.TrivialScope())}) {
 		if sErr != nil {
 			t.Fatalf("list %s: %v", typ, sErr)
 		}

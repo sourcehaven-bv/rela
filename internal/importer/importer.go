@@ -423,12 +423,12 @@ func (imp *Importer) validateRelationData(rd *RelationData, known knownEntities)
 // type stores no bare row, so a bare id would write a row no face owns.
 func requireFace(typ string, def *metamodel.EntityDef, face entity.Face) error {
 	if len(def.Faces) == 0 {
-		if !face.IsDefault() {
+		if !face.IsImplicit() {
 			return fmt.Errorf("type %s declares no faces, so %q names nothing", typ, face)
 		}
 		return nil
 	}
-	if face.IsDefault() {
+	if face.IsImplicit() {
 		return fmt.Errorf("type %s declares faces; write the id as ID@face", typ)
 	}
 	if _, ok := def.Faces[face.String()]; !ok {
@@ -442,7 +442,7 @@ func requireFace(typ string, def *metamodel.EntityDef, face entity.Face) error {
 // must be a face its source type declares. A source with no known type is
 // checked on the relation scope alone.
 func (imp *Importer) requireTail(relType, fromType string, face entity.Face) error {
-	if face.IsDefault() {
+	if face.IsImplicit() {
 		return nil
 	}
 	relDef, ok := imp.meta.GetRelationDef(relType)

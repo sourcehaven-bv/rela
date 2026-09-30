@@ -4998,7 +4998,7 @@ func dryRunCreateRaw(t *testing.T, app *App, body string) (code int, resp *httpt
 func countStoreEntities(t *testing.T, app *App) int {
 	t.Helper()
 	n := 0
-	for _, err := range app.store.ListEntities(context.Background(), store.EntityQuery{Faces: store.InWorld(store.DefaultWorld())}) {
+	for _, err := range app.store.ListEntities(context.Background(), store.EntityQuery{Faces: store.InWorld(store.TrivialScope())}) {
 		if err != nil {
 			continue
 		}

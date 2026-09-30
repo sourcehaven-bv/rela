@@ -253,7 +253,7 @@ func (h attachmentHandler) gatedEntity(ctx context.Context, id string) (*entity.
 	e, err := h.store.Resolve(ctx, id)
 	switch {
 	case errors.Is(err, store.ErrNotFound) || (err == nil && e == nil):
-		if ref, perr := entity.ParseRef(id); perr == nil && ref.Face.IsDefault() {
+		if ref, perr := entity.ParseRef(id); perr == nil && ref.Face.IsImplicit() {
 			return nil, errorResult("entity not found: " + id +
 				" (an entity with content states is addressed as ID@face)")
 		}

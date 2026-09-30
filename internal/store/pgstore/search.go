@@ -114,7 +114,7 @@ func (b *SearchBackend) Search(text string, limit int, w store.WorldScope) ([]se
 // makes with its ok result.
 func faceFor(id, entityType string, p entity.Face, rank int, w store.WorldScope) search.Face {
 	f := search.Face{ID: id, Face: p}
-	if w.IsDefaultWorld() {
+	if w.IsTrivial() {
 		f.Via = search.RuleUnscoped
 		return f
 	}
@@ -123,7 +123,7 @@ func faceFor(id, entityType string, p entity.Face, rank int, w store.WorldScope)
 		f.Via = search.RuleUnscoped
 		return f
 	}
-	if p.IsDefault() && rank >= len(res.Chain) {
+	if p.IsImplicit() && rank >= len(res.Chain) {
 		f.Via = search.RuleFallbackDefault
 		return f
 	}
@@ -171,7 +171,7 @@ func buildSearchSQL(needle string, limit int, w store.WorldScope, titles SearchT
 		return col + ` LIKE '%' || $` + strconv.Itoa(len(args)) + ` || '%' ESCAPE '\'`
 	}
 
-	if w.IsDefaultWorld() {
+	if w.IsTrivial() {
 		sqlText = `SELECT id, face, type, 0 FROM entities WHERE ` +
 			textPred("search_text") + ` AND face = ''`
 	} else {

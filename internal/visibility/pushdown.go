@@ -210,5 +210,5 @@ func (g DeclarativeGate) GateTraversal(
 	if err != nil {
 		return nil, err
 	}
-	return r.GateTraversal(ctx, candidateType, store.DefaultWorld(), hop)
+	return r.GateTraversal(ctx, candidateType, store.TrivialScope(), hop)
 }

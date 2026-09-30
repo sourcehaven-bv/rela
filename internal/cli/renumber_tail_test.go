@@ -42,7 +42,7 @@ func TestRenumber_FacedTails(t *testing.T) {
 	}}
 
 	w := &recordingRelationWriter{}
-	svc := &writeServices{readServices: readServices{Store: st, Meta: meta}, EntityManager: w}
+	svc := &writeServices{readServices: readServices{Store: st, Meta: meta, World: store.TrivialScope()}, EntityManager: w}
 	if err := (&RenumberCmd{}).Run(ctx, svc); err != nil {
 		t.Fatalf("renumber: %v", err)
 	}

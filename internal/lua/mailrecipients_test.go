@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/stretchr/testify/require"
 )
 
@@ -29,7 +30,7 @@ func sendTo(t *testing.T, policy RecipientPolicy, addr string) (*recordingMailSe
 	t.Helper()
 	rec := &recordingMailSender{}
 	sender := policySender{recordingMailSender: rec, policy: policy}
-	rt := NewReader(ReadDeps{}, &bytes.Buffer{},
+	rt := NewReader(ReadDeps{World: store.TrivialScope()}, &bytes.Buffer{},
 		WithMailSender(sender),
 		// The caps.Mail gate (TKT-JVHSOZ) and the recipient allowlist are
 		// independent controls and a send must pass BOTH. Granted here so
@@ -139,7 +140,7 @@ func TestRecipients_DenialDoesNotLeakTheAllowlist(t *testing.T) {
 // operator's blessing.
 func TestRecipients_SenderWithoutPolicyDenies(t *testing.T) {
 	sender := &recordingMailSender{} // deliberately NOT a policySender
-	rt := NewReader(ReadDeps{}, &bytes.Buffer{}, WithMailSender(sender),
+	rt := NewReader(ReadDeps{World: store.TrivialScope()}, &bytes.Buffer{}, WithMailSender(sender),
 		WithCapabilities(Capabilities{Mail: true}))
 	t.Cleanup(rt.Close)
 

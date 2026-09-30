@@ -601,7 +601,7 @@ func tailOfExistingEdge(
 	ctx context.Context, st store.Store,
 	from, relType, to string, addressed entity.Face, owned bool,
 ) (entity.Face, error) {
-	if owned && !addressed.IsDefault() {
+	if owned && !addressed.IsImplicit() {
 		return addressed, nil
 	}
 	for rel, err := range st.ListRelations(ctx, store.RelationQuery{From: from, Type: relType, To: to}) {

@@ -318,7 +318,11 @@ func (dr *docRuntime) luaResolution(ls *lua.LState) int {
 		return dr.luaFail(ls, "resolution: %v", err)
 	}
 
-	ids, err := dr.entityIDs(typ, store.WorldScope{})
+	defaultScope, err := dr.worldScope("")
+	if err != nil {
+		return dr.luaFail(ls, "resolution: %v", err)
+	}
+	ids, err := dr.entityIDs(typ, defaultScope)
 	if err != nil {
 		return dr.luaFail(ls, "resolution: %v", err)
 	}
@@ -463,7 +467,7 @@ func (dr *docRuntime) facesOf(typ, id string) ([]entity.Face, error) {
 	}
 	for _, name := range sortedFaceNames(def) {
 		face := entity.Face(name)
-		if !face.IsDefault() && stored[face] {
+		if !face.IsImplicit() && stored[face] {
 			out = append(out, face)
 		}
 	}
@@ -515,7 +519,7 @@ func (dr *docRuntime) resolutionRelations(
 				}
 				edges = append(edges, mermaid.Edge{
 					FromKey: nodeKey(id, f), ToKey: to,
-					Label: r.Type, Dashed: tail.IsDefault(),
+					Label: r.Type, Dashed: tail.IsImplicit(),
 				})
 			}
 		}

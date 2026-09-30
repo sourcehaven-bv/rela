@@ -275,7 +275,7 @@ func servedHeaders(
 	var candidates []store.WorldCandidate
 	offered := make(map[string]bool)
 	for _, ref := range refs {
-		if !ref.Face.IsDefault() {
+		if !ref.Face.IsImplicit() {
 			if h, ok := faces[ref.ID][ref.Face]; ok {
 				out[ref] = h
 			}
@@ -291,7 +291,7 @@ func servedHeaders(
 	}
 	primes := store.ResolveWorldPrimes(w.scope, candidates)
 	for _, ref := range refs {
-		if !ref.Face.IsDefault() {
+		if !ref.Face.IsImplicit() {
 			continue
 		}
 		if p, ok := primes[ref.ID]; ok {

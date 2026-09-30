@@ -79,7 +79,7 @@ func (s *Service) MatchedFields(e *entity.Entity, text string) map[string]struct
 }
 
 func (s *Service) Search(ctx context.Context, q Query) iter.Seq2[Hit, error] {
-	if err := ValidateFilters(q.Filters); err != nil {
+	if err := ValidateQuery(q); err != nil {
 		return func(yield func(Hit, error) bool) {
 			yield(Hit{}, err)
 		}

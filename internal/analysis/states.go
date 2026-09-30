@@ -182,7 +182,7 @@ func (s *Service) faceStatusOf(entityType string, p entity.Face) faceStatus {
 	if !ok {
 		return faceUnknownType
 	}
-	if p.IsDefault() {
+	if p.IsImplicit() {
 		if len(def.Faces) == 0 {
 			return faceOK
 		}

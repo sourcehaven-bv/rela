@@ -200,14 +200,14 @@ func TestSearch_DefaultWorldIsThePreWorldsResult(t *testing.T) {
 	face(t, l, "POL-1", "draft", "draft text")
 	face(t, l, "POL-2", "draft", "draft text")
 
-	faces, err := l.Search("text", 0, store.DefaultWorld())
+	faces, err := l.Search("text", 0, store.TrivialScope())
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
 	if len(faces) != 1 || faces[0].ID != "POL-1" {
 		t.Fatalf("the default world serves DEFAULT faces only; got %v", faces)
 	}
-	if !faces[0].Face.IsDefault() {
+	if !faces[0].Face.IsImplicit() {
 		t.Errorf("hit face = %q, want the default coordinate", faces[0].Face)
 	}
 	if faces[0].Via != search.RuleUnscoped {

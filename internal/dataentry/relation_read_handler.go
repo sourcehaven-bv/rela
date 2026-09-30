@@ -102,7 +102,7 @@ func relationTailOr404(
 	typeName, addr, relType string,
 ) (*entity.Entity, bool) {
 	ref, err := entity.ParseRef(addr)
-	if err != nil || !ref.Face.IsDefault() || metamodel.IsContentScoped(meta, relType) {
+	if err != nil || !ref.Face.IsImplicit() || metamodel.IsContentScoped(meta, relType) {
 		return readAddressedOr404(w, r, vr, typeName, addr)
 	}
 	ctx := r.Context()

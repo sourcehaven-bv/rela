@@ -835,7 +835,7 @@ func (g gatedGraphReader) GetRelation(
 // content-scoped edge belongs to its tail face.
 func (g gatedGraphReader) tailReadable(ctx context.Context, tail entity.Ref) bool {
 	faces, ok := g.readableFaces(ctx, tail.ID)
-	return ok && (tail.Face.IsDefault() || slices.Contains(faces, tail.Face))
+	return ok && (tail.Face.IsImplicit() || slices.Contains(faces, tail.Face))
 }
 
 // familyReadable reports whether the caller may read any face of id. A head

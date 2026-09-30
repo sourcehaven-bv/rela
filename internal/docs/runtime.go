@@ -245,6 +245,7 @@ func Build(ctx context.Context, src string, opts Options) (string, error) {
 		VisibleReader: visibility.Unrestricted(st),
 		Tracer:        dr.tracer,
 		Meta:          opts.Meta,
+		World:         compiledWorlds.Default(),
 	}
 	// Use the BUILD's tier deadline, not the bare Tier-A buildTimeout, as the
 	// per-island cap. gopher-lua's SetContext aborts an island on its own

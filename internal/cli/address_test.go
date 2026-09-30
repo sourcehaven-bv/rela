@@ -34,7 +34,7 @@ func addressFixture(t *testing.T) *memstore.MemStore {
 func TestReadAddress(t *testing.T) {
 	t.Parallel()
 	st := addressFixture(t)
-	var world store.WorldScope // the default world
+	world := store.TrivialScope() // the default world
 
 	tests := []struct {
 		name      string
@@ -80,7 +80,7 @@ func TestReadAddress(t *testing.T) {
 func TestRowsInWorld(t *testing.T) {
 	t.Parallel()
 	st := addressFixture(t)
-	var world store.WorldScope
+	world := store.TrivialScope()
 
 	got := rowsInWorld(context.Background(), st, world, []string{"REQ-1", "PG-1", "NOPE-1"})
 	if e := got["REQ-1"]; e == nil || e.Title() != "req" {
@@ -146,7 +146,7 @@ func TestRequireAddressExists(t *testing.T) {
 // the entity as not found.
 func TestShowFacedBareID(t *testing.T) {
 	st := addressFixture(t)
-	svc := &readServices{Store: st}
+	svc := &readServices{Store: st, World: store.TrivialScope()}
 	withOutput(t, output.FormatTable)
 
 	err := (&ShowCmd{ID: "PG-1"}).Run(context.Background(), svc)

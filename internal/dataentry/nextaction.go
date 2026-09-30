@@ -204,10 +204,10 @@ func nextActionSourceWorld(
 	name := src.SourceWorld
 	if name == "" || name == defaultWorldName {
 		// The default world is today's graph and needs no grant beyond the
-		// per-entity gates that already run. Bind the zero handle explicitly
+		// per-entity gates that already run. Bind the default handle explicitly
 		// so a request that arrived with `?world=published` cannot leak its
 		// scope into a source that never named one.
-		return withWorld(ctx, worldHandle{}), true, nil
+		return withWorld(ctx, defaultWorldHandle()), true, nil
 	}
 	if lookup == nil {
 		// Worlds were never wired, so no name can resolve. Skip rather than

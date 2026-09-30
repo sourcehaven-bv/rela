@@ -75,11 +75,11 @@ func TestGateTraversal_AllFacesQueryCannotSatisfyHopOutsideRequestWorld(t *testi
 		sel   store.FaceSelection
 		want  bool
 	}{
-		{"default world, AllFaces query", store.DefaultWorld(), store.AllFaces(), false},
-		{"default world, AtFaces(draft) query", store.DefaultWorld(), store.AtFaces(draft), false},
-		{"default world, InWorld query", store.DefaultWorld(), store.InWorld(store.DefaultWorld()), false},
+		{"default world, AllFaces query", store.TrivialScope(), store.AllFaces(), false},
+		{"default world, AtFaces(draft) query", store.TrivialScope(), store.AtFaces(draft), false},
+		{"default world, InWorld query", store.TrivialScope(), store.InWorld(store.TrivialScope()), false},
 		{"draft world, AllFaces query", draftWorld, store.AllFaces(), true},
-		{"draft world, default-world query", draftWorld, store.InWorld(store.DefaultWorld()), true},
+		{"draft world, default-world query", draftWorld, store.InWorld(store.TrivialScope()), true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := matches(t, tc.world, tc.sel); got != tc.want {
@@ -91,7 +91,7 @@ func TestGateTraversal_AllFacesQueryCannotSatisfyHopOutsideRequestWorld(t *testi
 	// Control: the same hop with its endpoint selection cleared inherits the
 	// AllFaces query and matches through the draft face. This is the
 	// widening the stamp removes; without it the cases above prove nothing.
-	pred, err := requestFor(t, d, "alice").GateTraversal(ctx, "ticket", store.DefaultWorld(), hop)
+	pred, err := requestFor(t, d, "alice").GateTraversal(ctx, "ticket", store.TrivialScope(), hop)
 	if err != nil {
 		t.Fatal(err)
 	}

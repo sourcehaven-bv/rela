@@ -1097,7 +1097,7 @@ func TestDefaultWorld_ContentEdgesAreFaceScoped(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("resolve entry: found=%v err=%v", found, err)
 	}
-	if !face.Face.IsDefault() {
+	if !face.Face.IsImplicit() {
 		t.Fatalf("the default world must serve the DEFAULT face; got face %q", face.Face)
 	}
 

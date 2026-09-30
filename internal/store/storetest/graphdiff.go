@@ -111,7 +111,7 @@ func diffGraphQuery(c context.Context, ref, s store.Store, q store.GraphQuery, i
 		return fmt.Sprintf("GraphCount matched: naive %d, store %d", wantMatched, gotMatched)
 	}
 	_, inWorld := q.Faces.World()
-	knownTotalDivergence := len(q.Any) > 0 && inWorld && !q.Faces.IsDefaultWorld() // BUG-OQQE8D
+	knownTotalDivergence := len(q.Any) > 0 && inWorld && !q.Faces.IsTrivial() // BUG-OQQE8D
 	if wantTotal != gotTotal && !knownTotalDivergence {
 		return fmt.Sprintf("GraphCount total: naive %d, store %d", wantTotal, gotTotal)
 	}
@@ -351,7 +351,7 @@ func genSelection(rng *rand.Rand, faces []entity.Face) store.FaceSelection {
 	case 5:
 		return store.AtFaces(pickSome(rng, faces, 2)...)
 	default:
-		return store.InWorld(store.DefaultWorld())
+		return store.InWorld(store.TrivialScope())
 	}
 }
 

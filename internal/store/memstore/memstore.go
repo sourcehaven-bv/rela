@@ -224,7 +224,7 @@ func entityRemove(s []string, key string) []string {
 // worldKeep resolves a world over matched entities, returning only each
 // entity's prime. A no-op for the default world (TKT-WAV8XP).
 func worldKeep(w store.WorldScope, matched []*entity.Entity) []*entity.Entity {
-	if w.IsDefaultWorld() || len(matched) == 0 {
+	if w.IsTrivial() || len(matched) == 0 {
 		return matched
 	}
 	cands := make([]storeutil.WorldCandidate, len(matched))
@@ -397,7 +397,7 @@ func (m *MemStore) ListEntitiesPage(_ context.Context, q store.EntityQuery) (sto
 	matches := func(id string) bool { return matchEntityQuery(m.entities[id], q, idSet) }
 
 	var keys storeutil.PageKeys
-	if storeutil.RankingWorld(q).IsDefaultWorld() {
+	if storeutil.RankingWorld(q).IsTrivial() {
 		keys = storeutil.PaginateSortedKeysFunc(
 			m.entityOrder, cursorKey, q.Limit, matches, storeutil.CompareStateKeys)
 	} else {
@@ -464,7 +464,7 @@ func (m *MemStore) CountEntities(_ context.Context, q store.EntityQuery) (int, e
 	// The default world resolves every row to itself, so counting needs
 	// no buffer — and this is the common path for a project that never
 	// declares a face, which must stay allocation-free.
-	if storeutil.RankingWorld(q).IsDefaultWorld() {
+	if storeutil.RankingWorld(q).IsTrivial() {
 		n := 0
 		for _, e := range m.entities {
 			if matchEntityQuery(e, q, idSet) {
@@ -523,7 +523,7 @@ func (m *MemStore) createEntity(_ context.Context, e *entity.Entity) error {
 	defer m.mu.Unlock()
 
 	key := entity.FormatStateRef(e.ID, e.Face)
-	if e.Face.IsDefault() {
+	if e.Face.IsImplicit() {
 		// Case-folded so "ABC" conflicts with an existing "abc" — on fsstore
 		// they are one file, and the backends must agree on identity
 		// (BUG-3RCWNS).
@@ -596,7 +596,7 @@ func (m *MemStore) updateEntityIf(
 	}
 	// Row-family invariant: a non-default state cannot be re-typed away
 	// from its family (TKT-DOFYR1, design doc §6).
-	if !e.Face.IsDefault() && e.Type != existing.Type {
+	if !e.Face.IsImplicit() && e.Type != existing.Type {
 		return "", storeutil.StateTypeMismatchError(e.ID, e.Face, e.Type, existing.Type)
 	}
 
@@ -841,7 +841,7 @@ func (m *MemStore) renameEntity(_ context.Context, oldID, newID string) (*store.
 	renamedStates := m.rekeyFamily(family, newID)
 	var renamedDefault *entity.Entity
 	for _, r := range renamedStates {
-		if r.Face.IsDefault() {
+		if r.Face.IsImplicit() {
 			renamedDefault = r
 		}
 	}
@@ -853,7 +853,7 @@ func (m *MemStore) renameEntity(_ context.Context, oldID, newID string) (*store.
 		m.notifyRenamed(oldID, renamedDefault)
 	}
 	for _, r := range renamedStates {
-		if r.Face.IsDefault() {
+		if r.Face.IsImplicit() {
 			continue // already announced above
 		}
 		m.notifyRenamed(oldID, r)

@@ -78,7 +78,7 @@ entities:
 
 	scope, ok := c.Lookup(metamodel.DefaultWorldName)
 	require.True(t, ok, "the default world is always available")
-	assert.True(t, scope.IsDefaultWorld())
+	assert.True(t, scope.IsTrivial())
 	assert.Nil(t, scope.Types(), "the default world allocates no per-type map")
 
 	// And an undeclared name fails closed rather than degrading.
@@ -91,7 +91,7 @@ func TestCompile_NilMetamodel(t *testing.T) {
 	require.NoError(t, err)
 	scope, ok := c.Lookup(metamodel.DefaultWorldName)
 	require.True(t, ok)
-	assert.True(t, scope.IsDefaultWorld())
+	assert.True(t, scope.IsTrivial())
 }
 
 // TestCompile_ChainsAndFallback covers the three resolution rules as they
@@ -370,7 +370,7 @@ worlds:
 	// built from a schema whose face names did not parse.
 	scope, ok := compiled.Lookup(metamodel.DefaultWorldName)
 	require.True(t, ok, "the default world is implicit and always resolves")
-	assert.True(t, scope.IsDefaultWorld(),
+	assert.True(t, scope.IsTrivial(),
 		"the only reachable scope after a failed compile is the untouched default world")
 }
 
@@ -387,7 +387,7 @@ func TestCompiled_Default(t *testing.T) {
 		"declared worlds": declared,
 	} {
 		t.Run(name, func(t *testing.T) {
-			assert.True(t, c.Default().IsDefaultWorld())
+			assert.True(t, c.Default().IsTrivial())
 			looked, ok := c.Lookup(metamodel.DefaultWorldName)
 			require.True(t, ok)
 			assert.Equal(t, c.Default(), looked)

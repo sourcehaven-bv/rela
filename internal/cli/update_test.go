@@ -9,6 +9,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager/entitymanagertest"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // update_test.go covers only CLI-level concerns. The property flag
@@ -138,7 +139,7 @@ func TestUpdateCmd_ClearBodyConflictsWithBody(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			p := &capturingPatcher{}
 			err := tc.cmd.Run(context.Background(), &writeServices{
-				readServices:  readServices{},
+				readServices:  readServices{World: store.TrivialScope()},
 				EntityManager: p,
 			})
 			if err == nil {
@@ -166,7 +167,7 @@ func TestUpdateCmd_EmptyBodyFileIsHonored(t *testing.T) {
 	p := &capturingPatcher{}
 	err := (&UpdateCmd{ID: "TASK-1", BodyFile: path}).Run(
 		context.Background(), &writeServices{
-			readServices:  readServices{},
+			readServices:  readServices{World: store.TrivialScope()},
 			EntityManager: p,
 		})
 	if err != nil {
@@ -186,7 +187,7 @@ func TestUpdateCmd_NoUpdatesSpecified(t *testing.T) {
 	p := &capturingPatcher{}
 
 	err := (&UpdateCmd{ID: "TASK-1"}).Run(context.Background(), &writeServices{
-		readServices:  readServices{},
+		readServices:  readServices{World: store.TrivialScope()},
 		EntityManager: p,
 	})
 	if err == nil {
@@ -206,7 +207,7 @@ func buildPatch(t *testing.T, cmd UpdateCmd) entity.Patch {
 	captureOut(t)
 	p := &capturingPatcher{}
 	if err := cmd.Run(context.Background(), &writeServices{
-		readServices:  readServices{},
+		readServices:  readServices{World: store.TrivialScope()},
 		EntityManager: p,
 	}); err != nil {
 		t.Fatalf("Run: %v", err)

@@ -94,7 +94,7 @@ func entitiesByType(app *App, entityType string) []*entity.Entity {
 	out := make([]*entity.Entity, 0)
 	for e, err := range app.store.ListEntities(
 		context.Background(),
-		store.EntityQuery{Type: entityType, Faces: store.InWorld(store.DefaultWorld())},
+		store.EntityQuery{Type: entityType, Faces: store.InWorld(store.TrivialScope())},
 	) {
 		if err != nil {
 			continue
@@ -152,6 +152,7 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 		Searcher:      svc.Searcher(),
 		Meta:          svc.Meta(),
 		ProjectRoot:   paths.Root,
+		World:         store.TrivialScope(),
 	}, svc.Store())
 	if err != nil {
 		panic(err.Error())
@@ -325,7 +326,7 @@ func reseedStore(dst, src store.Store) {
 		return
 	}
 	ctx := context.Background()
-	for e, err := range src.ListEntities(ctx, store.EntityQuery{Faces: store.InWorld(store.DefaultWorld())}) {
+	for e, err := range src.ListEntities(ctx, store.EntityQuery{Faces: store.InWorld(store.TrivialScope())}) {
 		if err != nil {
 			continue
 		}

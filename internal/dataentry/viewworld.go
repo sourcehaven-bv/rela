@@ -52,11 +52,11 @@ type viewWorld struct {
 	// name is the declared world name, for provenance labeling. Empty means
 	// the default world.
 	name string
-	// scope is the compiled resolution this world applies. The zero scope is
-	// the default world.
+	// scope is the compiled resolution this world applies. It is always set;
+	// the default world's is the trivial scope.
 	scope store.WorldScope
 	// denied marks a declared world this principal may not read. The handle's
-	// scope is the ZERO scope, so without this bit a denied world would
+	// scope is the default world's, so without this bit a denied world would
 	// resolve as the default one and serve the default face's view — which
 	// both discloses the denial (a permitted empty world answers
 	// `_world_absent`) and shows content under a world the caller was refused.
@@ -71,7 +71,7 @@ type viewWorld struct {
 // says "this surface serves the default world"; `executeView(ctx, cfg, id,
 // viewWorld{})` says nothing, and a reader cannot tell whether the author
 // considered worlds at all.
-func defaultViewWorld() viewWorld { return viewWorld{} }
+func defaultViewWorld() viewWorld { return viewWorld(defaultWorldHandle()) }
 
 // viewWorldFromRequest builds the world for a world-capable view route.
 //
@@ -84,8 +84,8 @@ func viewWorldFromRequest(ctx context.Context) viewWorld {
 }
 
 // isDefault reports whether this is the default world. A denied world is
-// never the default one, whatever its (zero) scope says.
-func (w viewWorld) isDefault() bool { return !w.denied && w.scope.IsDefaultWorld() }
+// never the default one, whatever its scope says.
+func (w viewWorld) isDefault() bool { return !w.denied && w.scope.IsTrivial() }
 
 // viewEntry resolves the view's ENTRY entity to its face in world w.
 //
@@ -143,7 +143,7 @@ func (h *viewsHandler) viewEntry(
 		return nil, errNoFaceInWorld
 	}
 	world := worldHandle(w).visibility()
-	if w.isDefault() || !entry.Face.IsDefault() {
+	if w.isDefault() || !entry.Face.IsImplicit() {
 		// A denied face is reported as the ordinary not-found, so it stays
 		// indistinguishable from an absent one (TKT-O7R2A1).
 		e, ok, err := h.visible.refIn(ctx, world, entityType, entry)
@@ -499,7 +499,7 @@ func (h *viewsHandler) readableFaceOf(
 	}
 	declared := h.schema().Meta.Entities[entityType].Faces
 	for _, face := range fam.Faces {
-		if _, isDeclared := declared[string(face)]; !face.IsDefault() && !isDeclared {
+		if _, isDeclared := declared[string(face)]; !face.IsImplicit() && !isDeclared {
 			continue
 		}
 		e, found, rerr := h.visible.refIn(ctx, visibility.World{}, entityType,

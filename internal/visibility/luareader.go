@@ -22,7 +22,7 @@ import (
 // the reader first reads the STORED type from one content-free header, then
 // calls the typed resolver with it. Claiming the stored type keeps the
 // BUG-ZWTDH9 cross-type surface closed. A bare id resolves in the reader's
-// world ([ScriptReader.WithWorld]; the default world until TKT-7IZHP0), and
+// world ([ScriptReader.WithWorld]; the trivial scope until TKT-7IZHP0), and
 // `ID@face` reads that face.
 //
 // # Allocation
@@ -80,7 +80,7 @@ func NewScriptReader(reader Reader, raw store.Store, binder Binder) (*ScriptRead
 	if res == nil {
 		return nil, errors.New("visibility: NewScriptReader: reader's Resolver must be non-nil")
 	}
-	s := &ScriptReader{reader: reader, res: res, raw: raw, binder: binder}
+	s := &ScriptReader{reader: reader, res: res, world: trivialWorld(), raw: raw, binder: binder}
 	// The binder IS the gate in every production wiring, and DeclarativeGate
 	// composes the read scope as a store predicate. Deriving the provider
 	// from it rather than taking a fourth constructor argument keeps the two
@@ -93,8 +93,8 @@ func NewScriptReader(reader Reader, raw store.Store, binder Binder) (*ScriptRead
 	return s, nil
 }
 
-// WithWorld returns a copy of s whose bare-id reads resolve in w. The wiring
-// sets it; the zero World is the default world.
+// WithWorld returns a copy of s whose bare-id reads resolve in w. Until the
+// wiring sets it, bare ids resolve in the trivial scope.
 func (s *ScriptReader) WithWorld(w World) *ScriptReader {
 	c := *s
 	c.world = w

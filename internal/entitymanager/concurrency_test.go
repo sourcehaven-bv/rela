@@ -197,7 +197,7 @@ func TestConcurrency_UniqueValueAdmitsOneCreate(t *testing.T) {
 			assert.Equal(t, 1, ok, "exactly one create may claim the value")
 
 			count := 0
-			for _, err := range st.ListEntities(context.Background(), store.EntityQuery{Type: "person", Faces: store.InWorld(store.DefaultWorld())}) {
+			for _, err := range st.ListEntities(context.Background(), store.EntityQuery{Type: "person", Faces: store.InWorld(store.TrivialScope())}) {
 				require.NoError(t, err)
 				count++
 			}

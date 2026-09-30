@@ -30,7 +30,7 @@ type stubWorlds struct {
 
 func (s stubWorlds) Lookup(name string) (store.WorldScope, bool) {
 	if !s.names[name] {
-		return store.WorldScope{}, false
+		return store.TrivialScope(), false
 	}
 	if s.resolveDefault {
 		// A world that resolves `ticket` to its DEFAULT state, so an entity
@@ -525,7 +525,7 @@ func TestWorldCapableRoutesDoNotUseUngatedReader(t *testing.T) {
 					"a world-bound response would pair a resolved entity with "+
 					"draft relations and draft neighbors — the mixed-face bug "+
 					"that reads as correct. Guard the call on "+
-					"worldScopeFrom(ctx).IsDefaultWorld(), or refuse the route.",
+					"worldScopeFrom(ctx).IsTrivial(), or refuse the route.",
 					fn.Name.Name, name)
 			}
 			return false

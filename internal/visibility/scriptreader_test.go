@@ -92,14 +92,14 @@ func TestScriptReader_ListEntitiesFilters(t *testing.T) {
 	sr := newTicketOnlyScriptReader(t, st)
 
 	var tickets, secrets int
-	for e, err := range sr.ListEntities(context.Background(), store.EntityQuery{Type: "ticket", Faces: store.InWorld(store.DefaultWorld())}) {
+	for e, err := range sr.ListEntities(context.Background(), store.EntityQuery{Type: "ticket", Faces: store.InWorld(store.TrivialScope())}) {
 		if err != nil {
 			t.Fatalf("list tickets: %v", err)
 		}
 		_ = e
 		tickets++
 	}
-	for range sr.ListEntities(context.Background(), store.EntityQuery{Type: "secret", Faces: store.InWorld(store.DefaultWorld())}) {
+	for range sr.ListEntities(context.Background(), store.EntityQuery{Type: "secret", Faces: store.InWorld(store.TrivialScope())}) {
 		secrets++
 	}
 	if tickets != 2 {
@@ -117,7 +117,7 @@ func TestScriptReader_ListEntitiesEarlyReturn(t *testing.T) {
 	sr := newTicketOnlyScriptReader(t, st)
 
 	seen := 0
-	for range sr.ListEntities(context.Background(), store.EntityQuery{Type: "ticket", Faces: store.InWorld(store.DefaultWorld())}) {
+	for range sr.ListEntities(context.Background(), store.EntityQuery{Type: "ticket", Faces: store.InWorld(store.TrivialScope())}) {
 		seen++
 		break
 	}
@@ -175,7 +175,7 @@ func TestDenyReader_RefusesEverything(t *testing.T) {
 	if got := dr.ResolveHeaders(ctx, []entity.Ref{{ID: "TKT-1"}}); len(got) != 0 {
 		t.Errorf("ResolveHeaders = %v, want no hits", got)
 	}
-	for _, err := range dr.ListEntities(ctx, store.EntityQuery{Type: "ticket", Faces: store.InWorld(store.DefaultWorld())}) {
+	for _, err := range dr.ListEntities(ctx, store.EntityQuery{Type: "ticket", Faces: store.InWorld(store.TrivialScope())}) {
 		if !errors.Is(err, visibility.ErrReaderUnavailable) {
 			t.Errorf("ListEntities err = %v, want ErrReaderUnavailable", err)
 		}

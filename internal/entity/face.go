@@ -32,9 +32,15 @@ import (
 //     unusual-but-canonical value unchanged.
 type Face string
 
-// IsDefault reports whether p addresses the default state (the zero
-// value). A faceless entity is its own default state (§2.1).
-func (p Face) IsDefault() bool { return p == "" }
+// ImplicitFace is the face every entity of a faceless type lives at, and the
+// face a relation tail names when it is identity-scoped. It is the zero value;
+// naming it keeps "the implicit face" apart from "the caller named no face",
+// which is an unresolved [Address], never a Face (TKT-7IZHP0 design §2).
+const ImplicitFace Face = ""
+
+// IsImplicit reports whether p is [ImplicitFace]. A faceless entity lives
+// there; a faced type has no row there.
+func (p Face) IsImplicit() bool { return p == ImplicitFace }
 
 // String returns the canonical serialized coordinate. It exists for
 // boundaries — filenames, the pg column, change-feed payloads — which
@@ -108,7 +114,7 @@ func ParseStateRef(s string) (id string, p Face, err error) {
 // bare id. The id is assumed valid and p canonical (both only exist
 // via their parse functions); Format performs no re-validation.
 func FormatStateRef(id string, p Face) string {
-	if p.IsDefault() {
+	if p.IsImplicit() {
 		return id
 	}
 	return id + StateRefSeparator + string(p)

@@ -66,7 +66,7 @@ func (vr visibleReader) address(ctx context.Context, entityType, addr string) (*
 func (vr visibleReader) addressRef(
 	ctx context.Context, entityType string, ref entitypkg.Ref,
 ) (*entitypkg.Entity, bool, error) {
-	if ref.Face.IsDefault() {
+	if ref.Face.IsImplicit() {
 		return vr.inWorld(ctx, entityType, ref.ID)
 	}
 	return vr.ref(ctx, entityType, ref)
@@ -264,7 +264,7 @@ func loadDefaultFaceHeaders(
 		if err != nil {
 			return map[string]*entitypkg.Entity{}, err
 		}
-		if h.Face.IsDefault() {
+		if h.Face.IsImplicit() {
 			out[h.ID] = headerEntity(h)
 		}
 	}

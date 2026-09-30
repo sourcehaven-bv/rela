@@ -603,7 +603,7 @@ copies:
 			atTarget++
 		case rel.FromFace == draft && rel.To == "SPEC-12":
 			stale++
-		case rel.FromFace.IsDefault():
+		case rel.FromFace.IsImplicit():
 			atZero++
 		}
 	}

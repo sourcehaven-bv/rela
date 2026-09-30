@@ -51,7 +51,7 @@ func (c *DeleteCmd) Run(ctx context.Context, svc *writeServices) error {
 
 	if !c.Force {
 		fmt.Printf("Delete %s '%s'", target.Type, svc.Meta.DisplayTitle(target.ID, target.Type, target.Properties))
-		if !ref.Face.IsDefault() {
+		if !ref.Face.IsImplicit() {
 			fmt.Printf(" at face %s", ref.Face)
 		}
 		if totalRelations > 0 {
@@ -72,7 +72,7 @@ func (c *DeleteCmd) Run(ctx context.Context, svc *writeServices) error {
 	}
 
 	var result *entity.DeleteResult
-	if ref.Face.IsDefault() {
+	if ref.Face.IsImplicit() {
 		result, err = svc.EntityManager.DeleteEntity(ctx, ref.ID, c.Cascade)
 	} else {
 		result, err = svc.EntityManager.DeleteEntityFace(ctx, ref.ID, ref.Face, c.Cascade)
@@ -101,7 +101,7 @@ func deleteTarget(ctx context.Context, st store.Store, ref entity.Ref) (*entity.
 	if err != nil {
 		return nil, false, err
 	}
-	if ref.Face.IsDefault() {
+	if ref.Face.IsImplicit() {
 		if len(family) == 0 {
 			return nil, false, store.ErrNotFound
 		}

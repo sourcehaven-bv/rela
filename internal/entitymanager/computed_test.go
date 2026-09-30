@@ -130,7 +130,7 @@ func TestComputed_MaterializedValueReachesSearchIndex(t *testing.T) {
 	}
 	// The default world: computed properties are indexed on the entity's own
 	// face, so an unscoped search resolves it.
-	faces, err := idx.Search("computed-marker", 0, store.WorldScope{})
+	faces, err := idx.Search("computed-marker", 0, store.TrivialScope())
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}

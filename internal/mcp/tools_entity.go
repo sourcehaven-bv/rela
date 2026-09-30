@@ -179,7 +179,7 @@ func (s *Server) handleSearchEntities(
 	entityType := args.GetString("type", "")
 	limit := limitArg(args, defaultSearchLimit)
 
-	q := search.Query{Text: query, Limit: limit}
+	q := search.Query{Text: query, Limit: limit, World: snap.deps.World}
 	if entityType != "" {
 		resolved, _, resolveErr := snap.handlers.types.resolveEntityType(entityType)
 		if resolveErr != nil {
@@ -439,7 +439,7 @@ func (s *Server) handleDeleteEntity(
 	}
 
 	var delErr error
-	if ref.Face.IsDefault() {
+	if ref.Face.IsImplicit() {
 		_, delErr = snap.deps.EntityManager.DeleteEntity(ctx, ref.ID, cascade)
 	} else {
 		_, delErr = snap.deps.EntityManager.DeleteEntityFace(ctx, ref.ID, ref.Face, cascade)
@@ -520,7 +520,7 @@ func visibleRelationCount(ctx context.Context, st GraphReader, id string) int {
 // bare id always does, a face does when it is the only face the caller can
 // read.
 func wholeEntityDelete(ctx context.Context, st GraphReader, ref entity.Ref) bool {
-	if ref.Face.IsDefault() {
+	if ref.Face.IsImplicit() {
 		return true
 	}
 	fam, found, err := st.Family(ctx, ref.ID)
