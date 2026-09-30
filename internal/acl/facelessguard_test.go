@@ -53,8 +53,8 @@ var facelessCall = regexp.MustCompile(`\bNewFacelessEntitySubject\(`)
 //
 // A [acl.NewEntitySubject] call passing the WRONG face expression — for
 // instance the caller-supplied body face where the stored one is
-// authoritative. No scan can answer that; ApplyEntity's ErrFaceImmutable guard
-// and internal/dataentry's TestFacedIDWrite_* cover it.
+// authoritative. No scan can answer that; the update path's ErrFaceImmutable
+// guard and internal/dataentry's TestFacedIDWrite_* cover it.
 func TestFacelessSubjectsAreArguedFor(t *testing.T) {
 	t.Parallel()
 

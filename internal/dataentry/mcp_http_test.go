@@ -232,7 +232,7 @@ func TestRemoteMCP_NonMCPPathKeepsDataEntryTool(t *testing.T) {
 }
 
 // The CSRF exemption must be conditioned on the request being provably
-// non-browser, exactly like the sync/feeds/caldav entries. A browser-shaped
+// non-browser, exactly like the feeds/caldav entries. A browser-shaped
 // request to the MCP endpoint must still face the same-origin check.
 func TestRemoteMCP_CSRFExemptionOnlyForNonBrowser(t *testing.T) {
 	tests := []struct {

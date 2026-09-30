@@ -1,10 +1,10 @@
 // Package canonical produces a deterministic, backend-independent content
 // hash for an [entity.Entity] or [entity.Relation].
 //
-// The hash is the load-bearing token of the sync feature (FEAT-NJ9FEN): a
-// record edited on the filesystem (fsstore) and the same record stored in
-// Postgres (pgstore) must hash to the same value, or every conditional push
-// fails its If-Match precondition and every pull reports a phantom diff.
+// Content versioning dedups on it and the single-relation read serves it as
+// an ETag. A record stored on the filesystem (fsstore) and the same record
+// stored in a database (pgstore, sqlitestore) must hash to the same value, or
+// an unchanged record reads as changed.
 //
 // # Why this is hard
 //

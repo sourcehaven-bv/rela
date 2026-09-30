@@ -211,7 +211,6 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 	app.viewReader, _ = visibility.NewPolicyReader(ctxRowGate{}, appRedactor(app), svc.Store())
 	// Rebuild the sync handler (manifest-only) over the rebound store. The record
 	// write path was retired in TKT-8P1TM7, so there is no provision seam here.
-	app.sync = newSyncHandler(svc.Store())
 	// The SAME constructor production uses, not a copy of it. The literal
 	// that stood here called itself a mirror of NewApp's wiring and then
 	// drifted from it — a field added in production was missing here, leaving
@@ -311,7 +310,6 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 // inject a fake manifest/apply source must call this so the handler re-resolves
 // against the swapped store.
 func rebindSyncHandler(app *App) {
-	app.sync = newSyncHandler(app.store)
 }
 
 // rebindVisibleSearcher re-derives the generic visible-search wrapper

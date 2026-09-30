@@ -15,10 +15,10 @@ import (
 // handleV1GetRelationTarget serves a SINGLE relation's body — meta + content +
 // the `_redacted` names — with a relation-level ETag (RR-SYNCR1, TKT-8P1TM7).
 //
-// It exists so the sync client can fetch a relation through the authorized
-// /api/v1 read path (retiring the parallel /api/sync relation GET): the SPA's
-// relation-type listing returns peer rows keyed to a source entity and carries
-// no relation body or per-relation hash, which a faithful replica needs.
+// It is the GET of the single-relation resource that PATCH and DELETE also
+// address: the relation-type listing returns peer rows keyed to a source
+// entity and carries no relation body or per-relation hash. It was added for
+// the sync client (since removed) and stays as part of the public v1 API.
 //
 // Authorization gates BOTH endpoints, each on its stored type, never the URL
 // segment (RR-SDDYZO). The tail is gated per relationTailOr404: a
@@ -124,8 +124,8 @@ func relationTailOr404(
 	return src, true
 }
 
-// relationReadResponse is the single-relation read wire shape the sync client
-// decodes (v1RelationResponse mirrors its meta/content/_redacted fields).
+// relationReadResponse is the single-relation read wire shape
+// (v1RelationResponse mirrors its meta/content/_redacted fields).
 type relationReadResponse struct {
 	From     string         `json:"from"`
 	Type     string         `json:"type"`

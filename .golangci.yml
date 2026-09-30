@@ -148,9 +148,9 @@ linters:
         # new G703 finding is a real path-containment question.
         #
         # G704 (SSRF) is ENABLED: its two findings were reviewed and are
-        # operator-configured destinations (.rela/ai.yaml base_url; the
-        # `rela sync --remote` flag), annotated with narrow nolint
-        # directives naming the trust boundary at each call site.
+        # operator-configured destinations (.rela/ai.yaml base_url),
+        # annotated with narrow nolint directives naming the trust boundary
+        # at each call site.
         #
         # G705 (XSS) is ENABLED: the data-entry HTML/feed sinks were audited
         # and fixed — the entity-help fragment now renders through
@@ -342,10 +342,10 @@ linters:
       # the specific withProvision handlers so the rest of those files stays checked.
       - linters:
           - contextcheck
-        path: internal/dataentry/(write_handler|actions|sync_handler|sync_handlers|attachment_handler|handlers_attachment)\.go
+        path: internal/dataentry/(write_handler|actions|attachment_handler|handlers_attachment)\.go
       - linters:
           - contextcheck
-        path: internal/dataentry/(api_v1|sync|acl_write_test|handlers_attachment_write_test)\.go
+        path: internal/dataentry/(api_v1|acl_write_test|handlers_attachment_write_test)\.go
         text: handleV1(CreateEntity|UpdateEntity|DeleteEntity|CreateRelation|UpdateRelation|DeleteRelation|CloneEntity|Action|ConflictResolve|PutAttachment|DeleteAttachment)|handleSyncDelete|handleSyncPut
       - linters:
           - contextcheck

@@ -17,9 +17,9 @@ import (
 //
 // It is called at every entity-write choke point right after
 // [metamodel.Metamodel.ValidateEntity] — createCore (create), UpdateEntity
-// (update), and ApplyEntity (sync). excludeSelfID names the entity's own
-// ID so a re-save of an unchanged value does not collide with itself; pass
-// "" on the create path.
+// (update), and RecreateEntity (history restore). excludeSelfID names the
+// entity's own ID so a re-save of an unchanged value does not collide with
+// itself; pass "" on the create path.
 //
 // The check queries other entities and so cannot live in the pure,
 // per-entity ValidateEntity. Violations are returned as

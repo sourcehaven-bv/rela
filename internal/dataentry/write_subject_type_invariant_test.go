@@ -45,9 +45,6 @@ import (
 //     to smuggle a different type through. The invariant is enforced by
 //     construction; the test pins that a cross-type attempt (wrong plural/type
 //     segment for the id) does not authorize-and-write against the claimed type.
-//   - sync PUT (putEntity -> ApplyEntity): the body carries `type` (it is an
-//     upsert). The apply path rejects a body type that differs from the stored
-//     type (ErrTypeImmutable -> 422). Covered directly here.
 func TestWriteSubjectTypeInvariant(t *testing.T) {
 	// Policy: mallory may write type `note`, and read both `note` and `secret`.
 	// She may NOT write `secret`. Every case below targets an existing SECRET-1
@@ -129,9 +126,7 @@ assignments:
 	}
 }
 
-// --- helpers (moved here from the retired sync_type_confusion_test.go, which
-// tested the now-removed /api/sync record channel; the write-subject-type
-// invariant still exercises the surviving write surfaces) ---
+// --- helpers ---
 
 func secretNoteMeta() *metamodel.Metamodel {
 	return &metamodel.Metamodel{
@@ -181,7 +176,7 @@ func buildSecretNoteApp(t *testing.T, policyYAML, user string) *App {
 	app.broker = newEventBroker()
 	app.acl = d
 	app.SetPrincipalResolver(func(*http.Request) principal.Principal {
-		return principal.Principal{User: user, Tool: principal.ToolSync}
+		return principal.Principal{User: user, Tool: principal.ToolDataEntry}
 	})
 	return app
 }

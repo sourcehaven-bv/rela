@@ -9,13 +9,46 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
 
+// typeConfusionMetamodel declares two manual-id entity types with no id_prefix,
+// so the ID-prefix structural guard (a HARD validation error for prefixed,
+// sequential types) does NOT fire — this is exactly the shape the BUG-ZWTDH9
+// exploit relies on: a `manual` id_type target that skips the prefix check, so
+// the ONLY defense against re-typing is the write layer under test.
+const typeConfusionMetamodel = `version: "1.0"
+entities:
+  secret:
+    label: Secret
+    plural: secrets
+    id_type: manual
+    properties:
+      title:
+        type: string
+  note:
+    label: Note
+    plural: notes
+    id_type: manual
+    properties:
+      title:
+        type: string
+`
+
+func typeConfusionMeta(t *testing.T) *metamodel.Metamodel {
+	t.Helper()
+	m, err := metamodel.Parse([]byte(typeConfusionMetamodel))
+	if err != nil {
+		t.Fatalf("metamodel.Parse: %v", err)
+	}
+	return m
+}
+
 // raceCreateStore models the postgres multi-writer TOCTOU that BUG-ZWTDH9's
-// residual rode on: ApplyEntity's existence probe (GetEntity) observes the id
+// residual rode on: RecreateEntity's existence probe (GetEntity) observes the id
 // as ABSENT — so the intent resolves to CREATE — but a concurrent writer lands
 // the id between the probe and the durable write, so CreateEntity conflicts.
 //
@@ -39,23 +72,23 @@ func (s *raceCreateStore) UpdateEntity(ctx context.Context, e *entity.Entity) er
 	return s.Store.UpdateEntity(ctx, e)
 }
 
-// GetEntity reports the row as absent so ApplyEntity resolves CREATE intent,
+// GetEntity reports the row as absent so RecreateEntity proceeds to the create,
 // while the wrapped store separately holds the seeded winner for verification.
 func (s *raceCreateStore) GetEntity(_ context.Context, _ entity.Ref) (*entity.Entity, error) {
 	return nil, store.ErrNotFound
 }
 
-// TestApplyEntity_CreateConflict_RejectsAndDoesNotClobber pins that a
-// create-intent ApplyEntity whose durable CreateEntity conflicts (a concurrent
+// TestRecreateEntity_CreateConflict_RejectsAndDoesNotClobber pins that a
+// RecreateEntity whose durable CreateEntity conflicts (a concurrent
 // create of the same id) is REJECTED with ErrEntityAlreadyExists and never
 // falls through to an UpdateEntity. This closes both residuals at once: the
 // lost-update clobber (a racing create is not blindly overwritten) and the
 // type-re-type vector (a create-intent write that conflicts can no longer
 // become a blind, re-typing update on the postgres multi-writer backend).
-func TestApplyEntity_CreateConflict_RejectsAndDoesNotClobber(t *testing.T) {
+func TestRecreateEntity_CreateConflict_RejectsAndDoesNotClobber(t *testing.T) {
 	inner := memstore.New()
 	// The "winner": a secret-typed entity a concurrent writer already landed.
-	// The apply under test claims the SAME id with a DIFFERENT type — the
+	// The recreate under test claims the SAME id with a DIFFERENT type — the
 	// re-type attempt must not land.
 	meta := typeConfusionMeta(t)
 	if err := inner.CreateEntity(context.Background(), &entity.Entity{
@@ -73,15 +106,15 @@ func TestApplyEntity_CreateConflict_RejectsAndDoesNotClobber(t *testing.T) {
 		t.Fatalf("entitymanager.New: %v", err)
 	}
 
-	// Create-intent apply (probe says absent) that races a concurrent create.
-	_, applyErr := mgr.ApplyEntity(context.Background(), &entity.Entity{
+	// A recreate (probe says absent) that races a concurrent create.
+	_, recreateErr := entitymanager.RecreateEntity(context.Background(), mgr, &entity.Entity{
 		ID: "SECRET-1", Type: "note", Properties: map[string]any{"title": "loser re-types to note"},
 	})
-	if applyErr == nil {
-		t.Fatal("create-conflict apply succeeded — a racing create was silently overwritten (lost-update residual)")
+	if recreateErr == nil {
+		t.Fatal("create-conflict recreate succeeded — a racing create was silently overwritten (lost-update residual)")
 	}
-	if !errors.Is(applyErr, entitymanager.ErrEntityAlreadyExists) {
-		t.Fatalf("expected ErrEntityAlreadyExists, got %T: %v", applyErr, applyErr)
+	if !errors.Is(recreateErr, entitymanager.ErrEntityAlreadyExists) {
+		t.Fatalf("expected ErrEntityAlreadyExists, got %T: %v", recreateErr, recreateErr)
 	}
 	if st.updateCalls != 0 {
 		t.Fatalf("create fell through to UpdateEntity %d time(s) — the upsert fallback re-appeared", st.updateCalls)
@@ -100,11 +133,11 @@ func TestApplyEntity_CreateConflict_RejectsAndDoesNotClobber(t *testing.T) {
 	}
 }
 
-// TestApplyEntity_SameTypeCreateConflict_NoClobber is the same-type variant:
+// TestRecreateEntity_SameTypeCreateConflict_NoClobber is the same-type variant:
 // two concurrent creates of the SAME id and SAME type. There is no re-typing
 // here, only the lost-update question — the loser must still be rejected, not
 // silently overwrite the winner's content.
-func TestApplyEntity_SameTypeCreateConflict_NoClobber(t *testing.T) {
+func TestRecreateEntity_SameTypeCreateConflict_NoClobber(t *testing.T) {
 	inner := memstore.New()
 	meta := typeConfusionMeta(t)
 	if err := inner.CreateEntity(context.Background(), &entity.Entity{
@@ -122,11 +155,11 @@ func TestApplyEntity_SameTypeCreateConflict_NoClobber(t *testing.T) {
 		t.Fatalf("entitymanager.New: %v", err)
 	}
 
-	_, applyErr := mgr.ApplyEntity(context.Background(), &entity.Entity{
+	_, recreateErr := entitymanager.RecreateEntity(context.Background(), mgr, &entity.Entity{
 		ID: "NOTE-1", Type: "note", Properties: map[string]any{"title": "loser"},
 	})
-	if !errors.Is(applyErr, entitymanager.ErrEntityAlreadyExists) {
-		t.Fatalf("expected ErrEntityAlreadyExists, got %T: %v", applyErr, applyErr)
+	if !errors.Is(recreateErr, entitymanager.ErrEntityAlreadyExists) {
+		t.Fatalf("expected ErrEntityAlreadyExists, got %T: %v", recreateErr, recreateErr)
 	}
 	if st.updateCalls != 0 {
 		t.Fatalf("same-type create fell through to UpdateEntity %d time(s) — must never clobber", st.updateCalls)
@@ -137,59 +170,5 @@ func TestApplyEntity_SameTypeCreateConflict_NoClobber(t *testing.T) {
 	}
 	if got.GetString("title") != "winner" {
 		t.Fatalf("winner title overwritten to %q; a same-type racing create was clobbered", got.GetString("title"))
-	}
-}
-
-// raceUpdateStore models the mirror race: ApplyEntity's probe observes the id
-// as PRESENT (resolving UPDATE intent), but the row vanishes (a concurrent
-// delete) before the durable UpdateEntity, which returns store.ErrNotFound.
-type raceUpdateStore struct {
-	store.Store
-	createCalls int
-	stored      *entity.Entity
-}
-
-func (s *raceUpdateStore) GetEntity(_ context.Context, _ entity.Ref) (*entity.Entity, error) {
-	return s.stored, nil
-}
-
-func (s *raceUpdateStore) CreateEntity(ctx context.Context, e *entity.Entity) error {
-	s.createCalls++
-	return s.Store.CreateEntity(ctx, e)
-}
-
-func (s *raceUpdateStore) UpdateEntity(_ context.Context, _ *entity.Entity) error {
-	return store.ErrNotFound
-}
-
-// TestApplyEntity_UpdateVanished_RejectsWithoutCreating pins that an
-// update-intent apply whose row vanished concurrently surfaces as
-// ErrEntityNotFound and never falls through to a CreateEntity (which would
-// resurrect a deleted record). The old upsert did the opposite direction, but
-// the invariant is symmetric: an update never becomes a create.
-func TestApplyEntity_UpdateVanished_RejectsWithoutCreating(t *testing.T) {
-	meta := typeConfusionMeta(t)
-	st := &raceUpdateStore{
-		Store:  memstore.New(),
-		stored: &entity.Entity{ID: "NOTE-1", Type: "note", Properties: map[string]any{"title": "v1"}},
-	}
-	mgr, err := entitymanager.New(entitymanager.Deps{
-		FieldGate: entitymanager.AllowAllFieldGate{},
-		Store:     st, Meta: meta, Templater: nopTemplater{}, Audit: audit.Nop{}, ACL: acl.NopACL{}, Transitions: statemachine.EmptySet(),
-	})
-	if err != nil {
-		t.Fatalf("entitymanager.New: %v", err)
-	}
-
-	// Same type as stored (so the type-immutability guard passes) → resolves
-	// UPDATE intent → durable UpdateEntity returns ErrNotFound.
-	_, applyErr := mgr.ApplyEntity(context.Background(), &entity.Entity{
-		ID: "NOTE-1", Type: "note", Properties: map[string]any{"title": "v2"},
-	})
-	if !errors.Is(applyErr, entitymanager.ErrEntityNotFound) {
-		t.Fatalf("expected ErrEntityNotFound, got %T: %v", applyErr, applyErr)
-	}
-	if st.createCalls != 0 {
-		t.Fatalf("update fell through to CreateEntity %d time(s) — an update must never become a create", st.createCalls)
 	}
 }

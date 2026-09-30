@@ -600,9 +600,9 @@ func (s *Store) DeleteFamily(ctx context.Context, id string, cascade bool) (*sto
 			Face: r.FromFace,
 		})
 	}
-	// Record a tombstone for each deletion in the same tx, so the durable
-	// "what changed since cursor X" manifest can report removals that the live
-	// rows no longer reflect (FEAT-NJ9FEN).
+	// Record a tombstone for each deletion in the same tx, so the change-feed
+	// catch-up ("what changed since seq X") can report removals that the live
+	// rows no longer reflect.
 	if err := s.writeTombstonesForEvents(ctx, tx, evs); err != nil {
 		return nil, err
 	}
@@ -836,9 +836,9 @@ func (s *Store) RenameFamily(ctx context.Context, oldID, newID string) (*store.R
 
 	// Capture the relation triples that reference oldID BEFORE re-keying them.
 	// A rename changes a relation's primary key (from_id/to_id), so to an
-	// id-keyed sync client the OLD triple is removed and the NEW one is created.
-	// We tombstone the old triples below so the manifest reports the removal —
-	// otherwise the client keeps a ghost edge forever (FEAT-NJ9FEN).
+	// id-keyed change-feed reader the OLD triple is removed and the NEW one is
+	// created. We tombstone the old triples below so the catch-up reports the
+	// removal — otherwise a peer keeps a ghost edge forever.
 	oldTriples, err := scanRelations(ctx, tx,
 		`SELECT from_id, from_face, rel_type, to_id, properties, content, updated_at
 		 FROM relations WHERE from_id = $1 OR to_id = $1

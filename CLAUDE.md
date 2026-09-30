@@ -157,9 +157,8 @@ above rather than by a clean `analyze all`.
   `TestScriptReads_UpdatePreservesHiddenProperties`.
 
   `UpdateEntity` still exists for callers that legitimately own the whole entity
-  (a form save that renders every field). `ApplyEntity` is the whole-record
-  replace the sync channel needs. If you are writing a _subset_, you want
-  `PatchEntity`.
+  (a form save that renders every field). If you are writing a _subset_, you
+  want `PatchEntity`.
 - **Background jobs: the queue knows nothing about schedules, and never runs
   before a transaction closes.** External side effects (mail, HTTP, AI) belong
   on `jobs.Queue` rather than inline on a write path. Two rules keep the seam

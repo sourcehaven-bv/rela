@@ -234,8 +234,8 @@ func (s *Store) DeleteRelation(ctx context.Context, k entity.RelationKey) error 
 		return store.ErrNotFound
 	}
 
-	// Record a tombstone in the same tx so the durable manifest can report the
-	// removal after the live row is gone (FEAT-NJ9FEN).
+	// Record a tombstone in the same tx so the change-feed catch-up can report
+	// the removal after the live row is gone.
 	if err := s.writeRelationTombstone(ctx, tx, k.From, k.FromFace, k.Type, k.To); err != nil {
 		return err
 	}

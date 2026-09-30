@@ -150,7 +150,7 @@ func (s *security) requireSameOrigin(next http.Handler) http.Handler {
 		}
 
 		// A provably non-browser request (no cookie, no origin) on a
-		// non-browser-exempt path (the sync API) skips the same-origin check —
+		// non-browser-exempt path skips the same-origin check —
 		// it cannot be a CSRF, which always carries a cookie. See isCSRFExempt.
 		if isCSRFExempt(r) {
 			next.ServeHTTP(w, r)
@@ -213,26 +213,25 @@ var sensitivePathPrefixes = []string{
 // relaxed for requests that are provably NOT browser-credentialed — see
 // [isCSRFExempt]. The Host check always still runs.
 //
-// The sync API (FEAT-NJ9FEN) is a machine-to-machine client (the rela CLI). A
-// non-browser client legitimately sends no Origin and would otherwise be
-// rejected as `origin_missing`. We must NOT blanket-exempt the path: the app has
-// no application-layer auth (identity is the proxy-set X-Forwarded-User), so if
-// the fronting OAuth proxy authenticates the browser by SESSION COOKIE, a
-// malicious page could cross-origin fetch() /api/sync/ with credentials and ride
-// the victim's session — textbook CSRF. The Host check does not stop that (the
-// attacker hits the real hostname). So the exemption is conditioned on the
-// request carrying NO cookie and NO browser origin (see isCSRFExempt), which a
-// CSRF request always carries and a CLI never does.
+// Non-browser API clients (the CLI, curl, calendar pollers, scripts) legitimately
+// send no Origin and would otherwise be rejected as `origin_missing`. We must
+// NOT blanket-exempt a path: the app has no application-layer auth (identity is
+// the proxy-set X-Forwarded-User), so if the fronting OAuth proxy authenticates
+// the browser by SESSION COOKIE, a malicious page could cross-origin fetch() an
+// exempt path with credentials and ride the victim's session — textbook CSRF.
+// The Host check does not stop that (the attacker hits the real hostname). So
+// the exemption is conditioned on the request carrying NO cookie and NO browser
+// origin (see isCSRFExempt), which a CSRF request always carries and a
+// non-browser client never does.
 //
 // WHY THE HEURISTIC IS NEEDED AT ALL — and when it retires.
 // The deployment model fronts rela with an identity-aware reverse proxy that
 // serves BOTH auth modes on this same path: a browser bearing the proxy's
-// session COOKIE, and the CLI bearing `Authorization: Bearer`. Header-trust
-// proxies like oauth2-proxy (the documented default — see
-// .ignored/sync-entra-oauth2proxy-notes.md), Authelia, Vouch, or a Traefik
+// session COOKIE, and a non-browser client bearing `Authorization: Bearer`. Header-trust
+// proxies like oauth2-proxy (the documented default), Authelia, Vouch, or a Traefik
 // ForwardAuth all NORMALIZE both into the same X-Forwarded-User and forward no
-// reliable "this was bearer vs cookie" signal, so the app cannot distinguish CLI
-// from browser by what the proxy sets — it must infer it from the
+// reliable "this was bearer vs cookie" signal, so the app cannot distinguish a
+// non-browser client from a browser by what the proxy sets — it must infer it from the
 // browser-attached signals in isCSRFExempt. The heuristic is therefore a direct
 // consequence of the trust-the-forwarded-header model, not of any one proxy.
 // It becomes removable when EITHER the operator strips inbound Cookie on this
@@ -244,10 +243,9 @@ var sensitivePathPrefixes = []string{
 // one of those lands, this exemption + isCSRFExempt is load-bearing; do not
 // remove it.
 var nonBrowserExemptPrefixes = []string{
-	"/api/sync/",
 	// Calendar feeds (TKT-RDM9M5) are fetched by non-browser pollers (Apple
 	// dataaccessd, Google's fetcher) that send no Cookie / Origin / Sec-Fetch-*.
-	// Like the sync API, the exemption is conditioned on isCSRFExempt (provably
+	// The exemption is conditioned on isCSRFExempt (provably
 	// non-browser), so a browser fetch() of a feed still hits the same-origin
 	// check. Feed responses are read-only and ACL-scoped to the request principal.
 	"/api/v1/_feeds/",
@@ -279,10 +277,10 @@ var nonBrowserExemptPrefixes = []string{
 	// MCPPath, not a subtree. isCSRFExempt uses HasPrefix, so this also
 	// covers any future `/api/v1/_mcp/...` sub-route.
 	MCPPath,
-	// NOTE: the sync CLI's /api/v1 data + schema routes are also non-browser
-	// exempt, but they can't be a static prefix ({plural} varies per type), so
-	// they're matched by isSyncExemptV1Path (folded into isCSRFExempt) rather
-	// than listed here (TKT-8P1TM7). Same conditioning applies.
+	// NOTE: the /api/v1 data + schema routes are also non-browser exempt, but
+	// they can't be a static prefix ({plural} varies per type), so they're
+	// matched by isNonBrowserExemptV1Path (folded into isCSRFExempt) rather
+	// than listed here. Same conditioning applies.
 }
 
 // insensitivePathPrefixes carves exceptions OUT of the sensitive prefixes above.
@@ -302,9 +300,11 @@ var insensitivePathPrefixes = []string{
 	"/api/v1/_apps/",
 }
 
-// isSyncExemptV1Path reports whether an /api/v1 path is one the sync CLI uses
-// (TKT-8P1TM7), so the same provably-non-browser CSRF relaxation that covers
-// /api/sync/ applies. It matches:
+// isNonBrowserExemptV1Path reports whether an /api/v1 path is one a
+// non-browser API client (curl, a script) uses, so the same
+// provably-non-browser CSRF relaxation as nonBrowserExemptPrefixes applies.
+// It was introduced for the sync CLI (TKT-8P1TM7, since removed) and is kept
+// because documented curl usage of the data API relies on it. It matches:
 //
 //   - /api/v1/_schema — the schema handshake
 //   - /api/v1/{plural}[/...] — the entity/relation data routes, where {plural}
@@ -316,7 +316,7 @@ var insensitivePathPrefixes = []string{
 // widen the exemption to anything a browser reaches — and even for the data
 // routes the exemption still requires the no-cookie/no-origin/no-Sec-Fetch shape
 // that only a non-browser client produces.
-func isSyncExemptV1Path(path string) bool {
+func isNonBrowserExemptV1Path(path string) bool {
 	const base = "/api/v1/"
 	if !strings.HasPrefix(path, base) {
 		return false
@@ -359,7 +359,7 @@ func isSensitivePath(path string) bool {
 // override it — so its PRESENCE means a real browser made this request, and the
 // exemption must not apply (the request falls through to the normal same-origin
 // check, which correctly allows same-origin and rejects cross-site). A
-// non-browser client (the rela sync CLI, curl, server-side HTTP) never sends it.
+// non-browser client (the rela CLI, curl, server-side HTTP) never sends it.
 //
 // Cookie and Origin/Referer are kept as defense-in-depth for the (rare,
 // pre-2020) browser that predates Fetch Metadata: such a browser still sends a
@@ -377,15 +377,14 @@ func isCSRFExempt(r *http.Request) bool {
 			break
 		}
 	}
-	// The sync CLI (TKT-8P1TM7) reads and writes through the authorized /api/v1
-	// data routes and /api/v1/_schema — not a private /api/sync/ channel. Those
-	// paths can't be a static prefix ({plural} varies per entity type), so match
-	// them explicitly. The exemption is STILL conditioned on the provably-non-
+	// Non-browser clients read and write through the authorized /api/v1 data
+	// routes and /api/v1/_schema. Those paths can't be a static prefix
+	// ({plural} varies per entity type), so match them explicitly. The exemption is STILL conditioned on the provably-non-
 	// browser signals below (no Sec-Fetch-Site, no Cookie, no Origin), which a
 	// browser cannot forge — so a browser fetch() of a v1 data route stays
 	// same-origin gated exactly as before. This does NOT blanket-exempt /api/v1:
-	// only the specific data + schema shapes the sync client uses match.
-	if !exemptPath && isSyncExemptV1Path(r.URL.Path) {
+	// only the specific data + schema shapes match.
+	if !exemptPath && isNonBrowserExemptV1Path(r.URL.Path) {
 		exemptPath = true
 	}
 	if !exemptPath {

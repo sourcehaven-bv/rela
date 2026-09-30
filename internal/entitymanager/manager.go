@@ -1137,7 +1137,7 @@ func (m *Manager) patchEntityOnce(
 	// values are unavailable, so merging onto it and saving would persist
 	// the shell OVER the encrypted content — the same erasure this
 	// primitive exists to prevent, via encryption instead of redaction
-	// (RR-0QWLRC). Matches ApplyEntity's guard.
+	// (RR-0QWLRC). Matches RecreateEntity's guard.
 	if stored.IsLocked() {
 		return nil, fmt.Errorf("entitymanager: PatchEntity: entity %s has inaccessible fields", id)
 	}
@@ -1208,7 +1208,7 @@ func (m *Manager) patchEntityOnce(
 func (m *Manager) updateCore(
 	ctx context.Context, e, oldEntity *entity.Entity, expectedVersion string,
 ) (*entity.UpdateResult, error) {
-	// Type is immutable on update, on EVERY path and not only ApplyEntity's:
+	// Type is immutable on update, on EVERY path:
 	// the store checks a non-default face's type against its family but not
 	// the bare row's, so a retype here would split the family — the bare row
 	// one type, its sibling faces another, and on fsstore two files under two

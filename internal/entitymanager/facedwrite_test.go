@@ -268,44 +268,59 @@ func TestUnique_TwoFacesOfOneEntityDoNotCollide(t *testing.T) {
 	}
 }
 
-// ApplyEntity (the sync upsert) decided create-vs-update from a probe at the
-// ZERO coordinate, so on a faced type it always resolved as CREATE. That made
-// the update branch — and the ErrFaceImmutable guard it carries — unreachable,
-// and left the body free to name the face it was authorized against.
-//
-// The probe now addresses the row the body names, so the op, the subject and
-// the write all describe one row.
-func TestApply_ProbesTheFaceTheBodyNames(t *testing.T) {
+// RecreateEntity probes the row the body names, not the ZERO coordinate. A
+// probe at the zero coordinate always misses on a faced type, so an existing
+// face would be recreated over rather than refused. The existing face must
+// come back as ErrEntityAlreadyExists, before any authorization.
+func TestRecreate_ProbesTheFaceTheBodyNames(t *testing.T) {
 	gate := &conceptOnlyACL{}
 	mgr, st := facedWriteManager(t, gate)
 	ctx := context.Background()
 
-	// An existing row at the face this principal may NOT write.
 	if err := st.CreateEntity(ctx, &entity.Entity{
-		ID: "POL-1", Type: "beleid", Face: entity.Face("vastgesteld"),
-		Properties: map[string]any{"title": "adopted"},
+		ID: "POL-1", Type: "beleid", Face: entity.Face("concept"),
+		Properties: map[string]any{"title": "draft"},
 	}); err != nil {
-		t.Fatalf("seed the adopted face: %v", err)
+		t.Fatalf("seed the concept face: %v", err)
 	}
 
-	_, err := mgr.ApplyEntity(ctx, &entity.Entity{
+	_, err := entitymanager.RecreateEntity(ctx, mgr, &entity.Entity{
+		ID: "POL-1", Type: "beleid", Face: entity.Face("concept"),
+		Properties: map[string]any{"title": "overwritten"},
+	})
+	if !errors.Is(err, entitymanager.ErrEntityAlreadyExists) {
+		t.Fatalf("recreating a live face = %v, want ErrEntityAlreadyExists", err)
+	}
+
+	got, gerr := st.GetEntity(ctx, entity.Ref{ID: "POL-1", Face: entity.Face("concept")})
+	if gerr != nil {
+		t.Fatalf("the refusal removed the row: %v", gerr)
+	}
+	if title := got.GetString("title"); title != "draft" {
+		t.Errorf("the live row's content changed to %q", title)
+	}
+}
+
+// RecreateEntity authorizes against the face the body names: a principal
+// holding only beleid@concept may not recreate the adopted face.
+func TestRecreate_AuthorizesTheFaceItWrites(t *testing.T) {
+	gate := &conceptOnlyACL{}
+	mgr, st := facedWriteManager(t, gate)
+	ctx := context.Background()
+
+	_, err := entitymanager.RecreateEntity(ctx, mgr, &entity.Entity{
 		ID: "POL-1", Type: "beleid", Face: entity.Face("vastgesteld"),
 		Properties: map[string]any{"title": "hijacked"},
 	})
 	var forbidden *acl.ForbiddenError
 	if !errors.As(err, &forbidden) {
-		t.Fatalf("a denied face must be refused through the sync path too, got %v", err)
+		t.Fatalf("a denied face must be refused, got %v", err)
 	}
 	if len(gate.asked) == 0 || gate.asked[len(gate.asked)-1] != entity.Face("vastgesteld") {
 		t.Errorf("authorized against %q, want the face the body named", gate.asked)
 	}
-
-	got, gerr := st.GetEntity(ctx, entity.Ref{ID: "POL-1", Face: entity.Face("vastgesteld")})
-	if gerr != nil {
-		t.Fatalf("the refusal removed the row: %v", gerr)
-	}
-	if title := got.GetString("title"); title != "adopted" {
-		t.Errorf("the denied row's content changed to %q", title)
+	if _, gerr := st.GetEntity(ctx, entity.Ref{ID: "POL-1", Face: entity.Face("vastgesteld")}); gerr == nil {
+		t.Error("the denied recreate wrote the row")
 	}
 }
 

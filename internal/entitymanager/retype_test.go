@@ -13,7 +13,7 @@ import (
 // TestUpdateEntity_TypeIsImmutable: the store checks a row's type against its
 // family only on create, so an update that retyped a row split the family (on
 // fsstore, two files under two type directories). The manager now refuses a
-// retype on EVERY update path, not only the sync upsert.
+// retype on EVERY update path.
 //
 // The subject is the FACELESS `ticket` type. Manager.UpdateEntity authorizes
 // on the body's face but reads the pre-image with store.GetEntity, which

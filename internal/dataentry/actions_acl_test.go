@@ -63,7 +63,7 @@ func TestAction_EntityIDRespectsReadGate(t *testing.T) {
 // Authorizing against a claimed type is a cross-type escalation: name a type
 // you may read (feature), an id of a type you may not (ticket), and an
 // AllowAll verdict on the claim would grant the id. BUG-ZWTDH9 was this same
-// defect on the sync channel.
+// defect on the (since removed) sync channel.
 func TestAction_EntityIDCrossTypeEscalation(t *testing.T) {
 	app := newActionTestApp(t, map[string]string{
 		"echo.lua": `
