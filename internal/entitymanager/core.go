@@ -310,6 +310,20 @@ func collectAllIDs(ctx context.Context, st store.Store) ([]string, error) {
 		seen[e.ID] = struct{}{}
 		ids = append(ids, e.ID)
 	}
+	// A soft-deleted id is still taken: the store refuses to create it until
+	// the purge, so the generator must not hand it out.
+	if sd, ok := st.(store.SoftDeleteProvider); ok {
+		marked, err := sd.SoftDelete().ListMarked(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for _, me := range marked {
+			if _, dup := seen[me.ID]; !dup {
+				seen[me.ID] = struct{}{}
+				ids = append(ids, me.ID)
+			}
+		}
+	}
 	return ids, nil
 }
 

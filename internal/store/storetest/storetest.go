@@ -68,6 +68,11 @@ type Capabilities struct {
 	// update is attributed to is contract, not mechanism, and a backend whose
 	// sweep cannot be driven cannot show it keeps that contract (BUG-07DNNY).
 	SweepNow func(t *testing.T, s store.Store)
+
+	// SoftDelete declares that the backend implements
+	// [store.SoftDeleteProvider]. Setting it runs [RunSoftDeleteTests], which
+	// fails rather than skips when the capability is missing.
+	SoftDelete bool
 }
 
 func ctx() context.Context { return context.Background() }
@@ -241,5 +246,8 @@ func RunAll(t *testing.T, f Factory, sf SearchFactory, vsf VisibleSearchFactory,
 				"store declared Capabilities.Versioning but no Capabilities.SweepNow driver")
 			RunSweepOriginTests(t, f, caps.SweepNow)
 		})
+	}
+	if caps.SoftDelete {
+		t.Run("SoftDelete", func(t *testing.T) { RunSoftDeleteTests(t, f, sf, caps.Attachments) })
 	}
 }

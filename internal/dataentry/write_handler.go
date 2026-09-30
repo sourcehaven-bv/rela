@@ -100,9 +100,12 @@ type entityMutator interface {
 // the attachment service. A process-wide mutex could not provide it anyway
 // once several rela-server processes share one database.
 type writeHandler struct {
-	schema      func() *Schema
-	store       store.Store
-	manager     entityMutator
+	schema  func() *Schema
+	store   store.Store
+	manager entityMutator
+	// softDeletes backs the Undo toast; nil when the store cannot
+	// soft-delete. See softDeleter.
+	softDeletes softDeleter
 	reader      entityReader
 	serializer  entitySerializer
 	affordances affordanceService
@@ -907,7 +910,7 @@ func (h *writeHandler) handleV1DeleteEntity(w http.ResponseWriter, r *http.Reque
 
 	var err error
 	if ref.Face.IsDefault() {
-		_, err = h.manager.DeleteEntity(r.Context(), ref.ID, true)
+		err = h.deleteWholeEntity(r.Context(), ref.ID)
 	} else {
 		_, err = h.manager.DeleteEntityFace(r.Context(), ref.ID, ref.Face)
 	}

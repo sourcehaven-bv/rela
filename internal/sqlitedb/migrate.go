@@ -12,7 +12,7 @@ import (
 // schemaVersion is the shape of the tables this binary expects. Bump it
 // whenever schemaSQL changes shape, and append the step that carries an
 // existing database forward to [migrations].
-const schemaVersion = 9
+const schemaVersion = 10
 
 // SchemaVersion reports the table shape this binary expects, so the CLI can
 // show a real number rather than prose.
@@ -130,6 +130,12 @@ var migrations = []migration{
 		// as a direct edit. No backfill: NULL is the "direct edit" encoding.
 		to:    9,
 		apply: addColumns(originColumns),
+	},
+	{
+		// v9 → v10: the soft-delete side tables behind the data-entry Undo.
+		// Pure CREATE IF NOT EXISTS, a no-op where schemaSQL already made them.
+		to:    10,
+		apply: sqlSteps(softDeleteDDL),
 	},
 }
 

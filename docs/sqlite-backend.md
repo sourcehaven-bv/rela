@@ -143,6 +143,13 @@ instead of migrating it. `unique: true` does not produce an index on this
 build: the single-writer lock above is what makes the application-level check
 sound.
 
+## Undoable deletes
+
+A web-app delete can be undone for a short while (see the data entry guide).
+While it waits, the deleted rows sit in `marked_entities` and
+`marked_relations` inside `rela.db`, so they survive a restart like the rest
+of the data.
+
 ## Migrating between backends
 
 There is no automated migration between backends yet. The data lives in

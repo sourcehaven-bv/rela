@@ -219,7 +219,9 @@ func (s *Store) HighestID(ctx context.Context, prefix string) (int, error) {
 	// twice is harmless. The old `face = ''` predicate saw a faced type not
 	// at all, so the generator minted one id for every entity of it
 	// (BUG-HC6I2T).
-	const q = `SELECT DISTINCT id FROM entities WHERE id LIKE $1`
+	// marked_entities too: a soft-deleted id may yet come back.
+	const q = `SELECT id FROM entities WHERE id LIKE $1
+	           UNION SELECT id FROM marked_entities WHERE id LIKE $1`
 	rows, err := s.db.Query(ctx, q, pfx+"%")
 	if err != nil {
 		return 0, err
@@ -315,6 +317,13 @@ func (s *Store) CreateEntity(ctx context.Context, e *entity.Entity) error {
 	// with it too.
 	if lockErr := lockFamily(ctx, tx, e.ID); lockErr != nil {
 		return lockErr
+	}
+	// A soft-deleted id stays held until it is purged. Checked under the
+	// family lock, which MarkDeleted also takes.
+	if held, heldErr := markedIDTaken(ctx, tx, e.ID, ""); heldErr != nil {
+		return heldErr
+	} else if held {
+		return store.ErrConflict
 	}
 
 	{
@@ -597,6 +606,9 @@ func (s *Store) DeleteEntity(ctx context.Context, id string, cascade bool) (*sto
 	if _, err := tx.Exec(ctx, `DELETE FROM relations WHERE from_id = $1 OR to_id = $1`, id); err != nil {
 		return nil, err
 	}
+	if _, err := tx.Exec(ctx, dropMarkedEdgesSQL, id); err != nil {
+		return nil, err
+	}
 	if _, err := tx.Exec(ctx, `DELETE FROM attachments WHERE entity_id = $1`, id); err != nil {
 		return nil, err
 	}
@@ -794,6 +806,33 @@ func rekeyStateFamily(
 	return states, renamed, nil
 }
 
+// renameTargetFree returns store.ErrConflict when newID is taken by another
+// entity or held by a soft-deleted one.
+func renameTargetFree(ctx context.Context, tx pgx.Tx, newID, oldID string) error {
+	// lower(...) so a rename onto an existing entity's case-variant conflicts
+	// (BUG-3RCWNS); `id <> $2` lets an entity change its OWN casing
+	// (abc -> ABC), which is a legitimate rename and not a self-collision.
+	// Matches the entities_id_lower_key index, so this uses it.
+	var exists bool
+	err := tx.QueryRow(ctx,
+		`SELECT true FROM entities WHERE lower(id) = lower($1) AND id <> $2`,
+		newID, oldID).Scan(&exists)
+	if err == nil {
+		return store.ErrConflict
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	held, err := markedIDTaken(ctx, tx, newID, oldID)
+	if err != nil {
+		return err
+	}
+	if held {
+		return store.ErrConflict
+	}
+	return nil
+}
+
 // RenameEntity changes an entity's ID, rewriting every relation endpoint and
 // re-keying attachments atomically. Returns store.ErrNotFound if oldID is
 // absent, store.ErrConflict if newID exists.
@@ -816,17 +855,8 @@ func (s *Store) RenameEntity(ctx context.Context, oldID, newID string) (*store.R
 	if err != nil {
 		return nil, err
 	}
-	// lower(...) so a rename onto an existing entity's case-variant conflicts
-	// (BUG-3RCWNS); `id <> $2` lets an entity change its OWN casing
-	// (abc -> ABC), which is a legitimate rename and not a self-collision.
-	// Matches the entities_id_lower_key index, so this uses it.
-	err = tx.QueryRow(ctx,
-		`SELECT true FROM entities WHERE lower(id) = lower($1) AND id <> $2`,
-		newID, oldID).Scan(&exists)
-	if err == nil {
-		return nil, store.ErrConflict
-	}
-	if !errors.Is(err, pgx.ErrNoRows) {
+	err = renameTargetFree(ctx, tx, newID, oldID)
+	if err != nil {
 		return nil, err
 	}
 
@@ -867,6 +897,9 @@ func (s *Store) RenameEntity(ctx context.Context, oldID, newID string) (*store.R
 		return nil, err
 	}
 	updated += tag.RowsAffected()
+	if _, err := tx.Exec(ctx, dropMarkedEdgesSQL, oldID); err != nil {
+		return nil, err
+	}
 
 	if _, err := tx.Exec(ctx,
 		`UPDATE attachments SET entity_id = $2, seq = nextval('rela_seq') WHERE entity_id = $1`,

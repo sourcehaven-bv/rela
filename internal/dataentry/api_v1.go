@@ -197,15 +197,7 @@ func (a *App) handleV1DynamicRoutes(w http.ResponseWriter, r *http.Request) {
 
 	plural := parts[0]
 
-	// Find entity type by plural
-	var typeName string
-	for name, def := range a.State().Meta.Entities {
-		if def.GetPlural(name) == plural {
-			typeName = name
-			break
-		}
-	}
-
+	typeName := entityTypeForPlural(a.State().Meta, plural)
 	if typeName == "" {
 		writeV1Error(w, r, http.StatusNotFound, "unknown_type", "Unknown entity type", "")
 		return
@@ -225,12 +217,14 @@ func (a *App) handleV1DynamicRoutes(w http.ResponseWriter, r *http.Request) {
 			a.handleV1SingleEntity(w, r, typeName, plural, parts[1])
 		}
 	case 3:
-		// /{plural}/{id}/relations or /{plural}/{id}/_export
+		// /{plural}/{id}/relations, /{plural}/{id}/_export or /{plural}/{id}/restore
 		switch parts[2] {
 		case "relations":
 			a.handleV1EntityRelations(w, r, typeName, parts[1])
 		case "_export":
 			a.export.handleV1ExportEntity(w, r, typeName, parts[1])
+		case "restore":
+			a.write.handleV1RestoreEntity(w, r, typeName, parts[1])
 		default:
 			writeV1Error(w, r, http.StatusNotFound, "not_found", "Resource not found", "")
 		}
@@ -2948,4 +2942,15 @@ func sectionEntityToV1(e SectionEntityData) v1.ViewEntity {
 	v1Ent.World = e.World
 	v1Ent.Self = e.Self
 	return v1Ent
+}
+
+// entityTypeForPlural returns the entity type whose plural is plural, or ""
+// when none matches.
+func entityTypeForPlural(meta *metamodel.Metamodel, plural string) string {
+	for name, def := range meta.Entities {
+		if def.GetPlural(name) == plural {
+			return name
+		}
+	}
+	return ""
 }

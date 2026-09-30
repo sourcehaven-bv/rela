@@ -29,7 +29,9 @@ func (s *Store) HighestID(ctx context.Context, prefix string) (int, error) {
 	// declaring faces not at all, so the generator minted one id for every
 	// entity of it (BUG-HC6I2T).
 	rows, err := s.q().QueryContext(ctx,
-		`SELECT DISTINCT id FROM entities WHERE id LIKE ? ESCAPE '\'`, likePrefix(pfx))
+		// marked_entities too: a soft-deleted id may yet come back.
+		`SELECT id FROM entities WHERE id LIKE ?1 ESCAPE '\'
+		 UNION SELECT id FROM marked_entities WHERE id LIKE ?1 ESCAPE '\'`, likePrefix(pfx))
 	if err != nil {
 		return 0, fmt.Errorf("sqlitestore: highest id for %q: %w", prefix, err)
 	}
@@ -180,6 +182,15 @@ func (s *Store) renameLocked(
 		newID, oldID).Scan(&taken); err != nil {
 		return fmt.Errorf("sqlitestore: rename %s: %w", oldID, err)
 	}
+	if taken == 0 {
+		held, err := markedIDTaken(ctx, s, newID, oldID)
+		if err != nil {
+			return fmt.Errorf("sqlitestore: rename %s: %w", oldID, err)
+		}
+		if held {
+			taken = 1
+		}
+	}
 	if taken > 0 {
 		return fmt.Errorf("sqlitestore: rename %s to %s: %w", oldID, newID, store.ErrConflict)
 	}
@@ -197,6 +208,9 @@ func (s *Store) renameLocked(
 	toRes, terr := s.write(ctx, `UPDATE relations SET to_id = ? WHERE to_id = ?`, newID, oldID)
 	if terr != nil {
 		return fmt.Errorf("sqlitestore: rename %s relations (to): %w", oldID, terr)
+	}
+	if _, err := s.write(ctx, dropMarkedEdgesSQL, oldID, oldID); err != nil {
+		return fmt.Errorf("sqlitestore: rename %s hidden relations: %w", oldID, err)
 	}
 	if _, err := s.write(ctx,
 		`UPDATE attachments SET entity_id = ? WHERE entity_id = ?`, newID, oldID); err != nil {

@@ -1235,9 +1235,10 @@ func NewApp(
 	// shared read/write helpers (gateRead/denyAfford/computeETag) as closures
 	// so both paths stay behaviorally identical.
 	app.write = &writeHandler{
-		schema:  app.State,
-		store:   st,
-		manager: em, // concrete; writeHandler narrows to entityMutator
+		schema:      app.State,
+		store:       st,
+		manager:     em, // concrete; writeHandler narrows to entityMutator
+		softDeletes: softDeletesFor(em),
 
 		reader:      app.reader,
 		serializer:  app.serializer,

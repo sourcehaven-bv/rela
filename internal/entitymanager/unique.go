@@ -71,18 +71,12 @@ func checkUniqueProperties(
 	// second half true. Whether an operator can ask for the stronger
 	// per-entity reading is TKT-HXT2P9.
 	var violations []*metamodel.ValidationError
-	q := store.EntityQuery{Type: e.Type, AllStates: true}
-	for other, err := range st.ListEntities(ctx, q) {
-		if err != nil {
-			// A partial scan cannot prove uniqueness — fail the write loud
-			// rather than admit a possible duplicate.
-			return fmt.Errorf("entitymanager: unique check for %s: %w", e.ID, err)
-		}
+	compare := func(other *entity.Entity) {
 		if other.Face != e.Face {
-			continue
+			return
 		}
 		if other.ID == excludeSelfID || other.ID == e.ID {
-			continue
+			return
 		}
 		for _, up := range toCheck {
 			if other.GetString(up.name) == up.value {
@@ -102,6 +96,30 @@ func checkUniqueProperties(
 						"property %q must be unique for type %q; another entity already has this value",
 						up.name, e.Type),
 				})
+			}
+		}
+	}
+	q := store.EntityQuery{Type: e.Type, AllStates: true}
+	for other, err := range st.ListEntities(ctx, q) {
+		if err != nil {
+			// A partial scan cannot prove uniqueness — fail the write loud
+			// rather than admit a possible duplicate.
+			return fmt.Errorf("entitymanager: unique check for %s: %w", e.ID, err)
+		}
+		compare(other)
+	}
+	// A soft-deleted entity keeps its values reserved, so an undo cannot be
+	// refused because someone took the value in the meantime.
+	if sd, ok := st.(store.SoftDeleteProvider); ok {
+		marked, err := sd.SoftDelete().ListMarked(ctx)
+		if err != nil {
+			return fmt.Errorf("entitymanager: unique check for %s: %w", e.ID, err)
+		}
+		for _, me := range marked {
+			for _, other := range me.Entities {
+				if other.Type == e.Type {
+					compare(other)
+				}
 			}
 		}
 	}

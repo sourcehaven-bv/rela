@@ -16,6 +16,7 @@ import (
 // per call). The whole suite is skipped when RELA_TEST_DATABASE_URL is unset.
 func TestConformance(t *testing.T) {
 	storetest.RunAll(t, factory, searchFactory, visibleSearchFactory, storetest.Capabilities{
+		SoftDelete: true,
 		Observers: func(t *testing.T, obs ...store.EntityObserver) store.Store {
 			t.Helper()
 			opts := make([]pgstore.Option, 0, len(obs))

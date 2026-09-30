@@ -224,6 +224,9 @@ func (s *FSStore) reconcileEntityPath(path string) {
 	}
 
 	s.echoes.Recorded(path, rawData)
+	if watchMarkedEntity(s, entityMeta{ID: e.ID, Type: e.Type, Face: e.Face}, false) {
+		return // soft-deleted: the edit stays hidden with its family
+	}
 
 	key := stateKey(e.ID, e.Face)
 	existing, known := s.entities[key]
@@ -261,6 +264,9 @@ func (s *FSStore) handleEntityRemoval(path string) {
 	// The stem IS the state key ("id" or "id@face").
 	meta, known := s.entities[stem]
 	if !known {
+		if id, face, err := entity.ParseStateRef(stem); err == nil {
+			watchMarkedEntity(s, entityMeta{ID: id, Face: face}, true)
+		}
 		return
 	}
 
@@ -354,6 +360,9 @@ func (s *FSStore) reconcileRelationPath(path string) {
 	s.echoes.Recorded(path, data)
 
 	_, known := s.relations[key]
+	if !known && watchMarkedRelation(s, rm, false) {
+		return // touches a soft-deleted entity: stays hidden with it
+	}
 	if !known {
 		s.relations[key] = rm
 		s.relationOrder = storeutil.SortedInsert(s.relationOrder, key)
@@ -372,6 +381,7 @@ func (s *FSStore) handleRelationRemoval(path, key string, rm relationMeta) {
 	s.echoes.Forget(path)
 
 	if _, known := s.relations[key]; !known {
+		watchMarkedRelation(s, rm, true)
 		return
 	}
 	delete(s.relations, key)

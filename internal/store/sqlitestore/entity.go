@@ -134,19 +134,30 @@ func (s *Store) createEntityLocked(ctx context.Context, e *entity.Entity) error 
 
 	editorUser, editorTool := store.AttributionColumns(ctx)
 	o := originColumns(store.OriginFrom(ctx))
-	_, err = s.write(ctx, `INSERT INTO entities (id, face, type, properties, content, updated_at,
+	// The NOT EXISTS keeps a soft-deleted id held until it is purged. It sits
+	// in the INSERT itself so no mark can land between probe and write.
+	res, err := s.write(ctx, `INSERT INTO entities (id, face, type, properties, content, updated_at,
 		                      last_edited_by_user, last_edited_by_tool,
 		                      origin_kind, origin_source, origin_source_face,
 		                      origin_source_type, origin_definition)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+		WHERE NOT EXISTS (SELECT 1 FROM marked_entities WHERE lower(id) = lower(?))`,
 		e.ID, string(e.Face), e.Type, props, e.Content, sqlitedb.FormatTime(updated), editorUser, editorTool,
-		o.kind, o.source, o.sourceFace, o.sourceType, o.definition)
+		o.kind, o.source, o.sourceFace, o.sourceType, o.definition, e.ID)
+	var inserted int64
+	if err == nil {
+		inserted, err = res.RowsAffected()
+	}
 	if err != nil {
 		if isUniqueViolation(err) {
 			return fmt.Errorf("sqlitestore: create %s: %w",
 				entity.FormatStateRef(e.ID, e.Face), store.ErrConflict)
 		}
 		return fmt.Errorf("sqlitestore: create %s: %w", e.ID, err)
+	}
+	if inserted == 0 {
+		return fmt.Errorf("sqlitestore: create %s: soft-deleted id: %w",
+			entity.FormatStateRef(e.ID, e.Face), store.ErrConflict)
 	}
 
 	s.notifyPut(e)
@@ -337,6 +348,10 @@ func (s *Store) deleteEntityLocked(
 		if _, err := s.write(ctx, `DELETE FROM relations WHERE from_id = ? OR to_id = ?`, id, id); err != nil {
 			return nil, fmt.Errorf("sqlitestore: delete %s relations: %w", id, err)
 		}
+	}
+
+	if _, err := s.write(ctx, dropMarkedEdgesSQL, id, id); err != nil {
+		return nil, fmt.Errorf("sqlitestore: delete %s hidden relations: %w", id, err)
 	}
 
 	// Attachments are owned by the entity, so they go with it regardless of
