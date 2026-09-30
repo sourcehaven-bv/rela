@@ -41,7 +41,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
 	"github.com/Sourcehaven-BV/rela/internal/validator"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
-	"github.com/Sourcehaven-BV/rela/internal/worlds"
 )
 
 // Option configures a [*appbuild.Services] built via [New].
@@ -171,11 +170,8 @@ func New(meta *metamodel.Metamodel, opts ...Option) *appbuild.Services {
 
 	searchBackend := newSearchBackend()
 	st := resolveStore(cfg.store, searchBackend)
-	compiledWorlds, err := worlds.Compile(meta)
-	if err != nil {
-		panic("appbuildtest.New: compile worlds: " + err.Error())
-	}
-	world := compiledWorlds.Default()
+	// The trivial scope is the default world; the fixture compiles no worlds.
+	world := store.TrivialScope()
 	tr := tracer.New(st, world)
 	searcher := resolveSearcher(st, searchBackend)
 	readDeps := buildReadDeps(st, tr, searcher, meta, cfg.paths, world)

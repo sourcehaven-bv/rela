@@ -4,8 +4,9 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/stretchr/testify/require"
+
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // The recipients allowlist bounds where mail.send may deliver (TKT-USQNA3 /

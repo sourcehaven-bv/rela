@@ -5,9 +5,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 func newDateTestRuntime(t *testing.T) (*Runtime, *strings.Builder) {

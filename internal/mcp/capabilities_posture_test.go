@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/lua"
-	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // TestLuaToolsHoldNoAmbientCapabilities enforces, rather than merely documents,
@@ -32,7 +31,7 @@ func TestLuaToolsHoldNoAmbientCapabilities(t *testing.T) {
 	// Guard the field the tools actually read. If someone populates
 	// Deps.LuaWriteDeps.Capabilities at a wiring site, this fails and they are
 	// forced to reckon with lua_eval inheriting it.
-	d := Deps{World: store.TrivialScope()}
+	d := Deps{}
 	if d.LuaWriteDeps.Capabilities.Any() {
 		t.Errorf("Deps.LuaWriteDeps carries an ambient capability grant (%+v). "+
 			"lua_eval/lua_run execute client-supplied code and must reach no "+

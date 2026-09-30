@@ -22,7 +22,7 @@ var parseRefAllowlist = map[string]allowed{
 		"is Address.Named. Read: PR 5b"},
 	"internal/dataentry/relation_read_handler.go": {1, "relation read FROM address; a bare id takes the " +
 		"identity-tail path. Read: PR 5b"},
-	"internal/dataentry/views.go": {2, "executeView and executeViewWhole parse the entry id. Read: PR 5b"},
+	"internal/dataentry/views.go":         {2, "executeView and executeViewWhole parse the entry id. Read: PR 5b"},
 	"internal/dataentry/visiblereader.go": {1, "untypedAddress, the untyped read by address. Read: PR 5b"},
 	"internal/dataentry/export_document.go": {1, "document export id segment, also the reserved-segment " +
 		"refusal. Read: PR 5b"},
@@ -30,7 +30,7 @@ var parseRefAllowlist = map[string]allowed{
 	// mcp
 	"internal/mcp/tools_relation.go": {2, "relation tools: the FROM argument names the tail of the edge " +
 		"key, a serialized coordinate. Write: PR 7"},
-	"internal/mcp/tools_helpers.go": {1, "readable, the pre-write existence gate on an address. Write: PR 7"},
+	"internal/mcp/tools_helpers.go":    {1, "readable, the pre-write existence gate on an address. Write: PR 7"},
 	"internal/mcp/tools_attachment.go": {1, "the not-found hint asks whether a face was named. Write: PR 7"},
 	"internal/mcp/resources.go": {1, "relation resource FROM segment names the edge tail, a serialized " +
 		"coordinate. Read: PR 5b"},
@@ -46,9 +46,9 @@ var parseRefAllowlist = map[string]allowed{
 		"resolve a bare id in a world. Read: PR 5a"},
 	"internal/cli/acl_can.go": {1, "rejects a face address for the no-policy path; asks only whether a " +
 		"face was named. Read: PR 5a"},
-	"internal/cli/delete.go": {1, "delete: bare id deletes the family, ID@face one face. Write: PR 7"},
-	"internal/cli/attach.go": {1, "attach target address. Write: PR 7"},
-	"internal/cli/detach.go": {1, "detach target address. Write: PR 7"},
+	"internal/cli/delete.go":          {1, "delete: bare id deletes the family, ID@face one face. Write: PR 7"},
+	"internal/cli/attach.go":          {1, "attach target address. Write: PR 7"},
+	"internal/cli/detach.go":          {1, "detach target address. Write: PR 7"},
 	"internal/cli/history_address.go": {1, "history address; history is per face row. Read: PR 5a"},
 	"internal/cli/unlink.go": {1, "unlink FROM names the tail of the edge key, a serialized " +
 		"coordinate. Write: PR 7"},

@@ -36,6 +36,8 @@ var trivialScopeAllowlist = map[string]allowed{
 		"transition verdicts, which read the default world until TKT-7IZHP0"},
 	"internal/aclmap/enumerate.go": {1, "principal enumeration mirrors the principal lookup's " +
 		"default world until TKT-7IZHP0"},
+	"internal/appbuild/appbuildtest/fixture.go": {1, "test fixture: compiles no worlds (appbuildtest may " +
+		"not import internal/worlds), so its reads serve the trivial default world"},
 	"internal/dataentry/world.go": {1, "defaultWorldHandle serves an unstamped request until " +
 		"TKT-7IZHP0 PR 5a switches it to the configured default world"},
 	"internal/visibility/resolver.go": {1, "trivialWorld is the script and unrestricted readers' " +
