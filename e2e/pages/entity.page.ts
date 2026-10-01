@@ -159,6 +159,59 @@ export class EntityPage extends BasePage {
     return this.sectionFieldRow(heading, property).locator(`#inline-${property}`);
   }
 
+  /** Assert every field in a section keeps its label and value inside its
+   *  own grid cell: the value column has width, and neither runs past the
+   *  cell edge into the neighbouring field (BUG-S67G88). Polled, so a layout
+   *  that settles after the first paint is measured once it has settled.
+   *  Geometry, so e2e-only. */
+  async expectSectionFieldsFitTheirCells(heading: string) {
+    const rows = this.sectionByHeading(heading).locator('.property-row');
+    await expect(rows.first()).toBeVisible();
+    await expect(async () => {
+      const offenders = await rows.evaluateAll((els) =>
+        els.flatMap((row) => {
+          const name = row.getAttribute('data-property');
+          const label = row.querySelector('.rl-detail-field__label');
+          const value = row.querySelector('.rl-detail-field__value');
+          if (!label || !value) return [`${name}: missing label or value`];
+          const cell = row.getBoundingClientRect();
+          const problems: string[] = [];
+          if (value.getBoundingClientRect().width < 1) problems.push('value has no width');
+          if (value.getBoundingClientRect().right > cell.right + 0.5) problems.push('value runs past its cell');
+          if (value.scrollWidth > value.clientWidth + 1) problems.push('value content overflows');
+          if (label.getBoundingClientRect().right > cell.right + 0.5) problems.push('label runs past its cell');
+          return problems.map((p) => `${name}: ${p}`);
+        })
+      );
+      expect(offenders).toEqual([]);
+    }).toPass();
+  }
+
+  /** Width in px of a field's grid cell. Lets a layout test prove it is
+   *  measuring the narrow case it means to, rather than passing because the
+   *  cells happen to be wide. */
+  async sectionFieldCellWidth(heading: string, property: string): Promise<number> {
+    const box = await this.sectionFieldRow(heading, property).boundingBox();
+    if (!box) throw new Error(`no row for ${property} in ${heading}`);
+    return box.width;
+  }
+
+  /** Open a text field's inline editor and return the editor's box and its
+   *  cell's, so a test can check the editor keeps its minimum width where
+   *  there is room and stays inside a narrow cell (BUG-S67G88). Closes the
+   *  editor again with Escape, which drops the edit. */
+  async measureSectionFieldEditor(heading: string, property: string) {
+    const row = this.sectionFieldRow(heading, property);
+    await row.locator('.rl-inline-edit__trigger').click();
+    const editor = row.locator('.inline-property-control');
+    await expect(editor).toBeVisible();
+    const [editorBox, cellBox] = await Promise.all([editor.boundingBox(), row.boundingBox()]);
+    await this.page.keyboard.press('Escape');
+    await expect(editor).toBeHidden();
+    if (!editorBox || !cellBox) throw new Error(`no box for ${property} editor`);
+    return { editorWidth: editorBox.width, editorRight: editorBox.x + editorBox.width, cellRight: cellBox.x + cellBox.width };
+  }
+
   /** Assert a property edits as a TEXTAREA — the load-bearing widget-override
    *  case (TKT-3R7RF3). A string property's type default is TextWidget's
    *  `<input>`, so a textarea here can only come from `widget: textarea`. The

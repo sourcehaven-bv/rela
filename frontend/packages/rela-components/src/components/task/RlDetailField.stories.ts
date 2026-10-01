@@ -208,3 +208,33 @@ export const Stacked: Story = {
     `,
   }),
 }
+
+/**
+ * Fields in grid cells of a third and a sixth of a row. A field lays out
+ * against its own width, not the screen's: once a label beside the value
+ * would leave the value too little room, the value moves under its label.
+ */
+export const NarrowCells: Story = {
+  render: () => ({
+    components: { RlDetailField },
+    setup: () => ({
+      fields: [
+        { id: 'd', label: 'Due date', type: 'date' as const, value: '26 Sep 2026', span: 10 },
+        { id: 's', label: 'Status', type: 'status' as const, value: 'In progress', status: 'green' as const, span: 2 },
+        { id: 'c', label: 'Contribution to objectives', type: 'tag' as const, tags: [{ id: 'c1', label: 'Conditional', color: 'red' as const }], span: 4 },
+        { id: 'l', label: 'Likelihood', type: 'tag' as const, tags: [{ id: 'l1', label: 'Certain', color: 'red' as const }], span: 4 },
+        { id: 'w', label: 'Effort', type: 'tag' as const, tags: [{ id: 'w1', label: 'Three days', color: 'amber' as const }], span: 4 },
+      ],
+    }),
+    template: `
+      <dl style="display:grid; grid-template-columns:repeat(12, minmax(0, 1fr)); gap:12px 24px; margin:0; max-width:720px">
+        <RlDetailField
+          v-for="f in fields"
+          :key="f.id"
+          :field="f"
+          :style="{ gridColumn: 'span ' + f.span }"
+        />
+      </dl>
+    `,
+  }),
+}
