@@ -135,8 +135,11 @@ type MetamodelReader interface {
 	EnumOptions(t, field string) ([]string, bool)
 	// HasWorld reports whether name is a DECLARED world. The implicit
 	// default world is not declared and reports false; callers that accept
-	// it must say so themselves (see checkUndeclaredWorlds).
+	// it must say so themselves (see worldExists).
 	HasWorld(name string) bool
+	// DeclaresWorlds reports whether the metamodel declares any world. When
+	// it does, the generated default world does not exist (TKT-7IZHP0 D11).
+	DeclaresWorlds() bool
 	// HasFace reports whether entity type t declares the content state
 	// named face.
 	HasFace(t, face string) bool

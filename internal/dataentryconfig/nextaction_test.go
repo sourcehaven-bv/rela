@@ -452,9 +452,16 @@ func TestValidateNextActions_WorldNames(t *testing.T) {
 			meta:   metaWithWorlds(),
 		},
 		{
-			name:   "the reserved default name is always legal",
+			// TKT-7IZHP0 D11: beside declared worlds, `default` names nothing.
+			name:    "the reserved default name is refused beside declared worlds",
+			mutate:  func(c *Config) { setQuipWorlds(c, "default", nil) },
+			meta:    metaWithWorlds(),
+			wantSub: `source_world: world "default" does not exist when worlds are declared`,
+		},
+		{
+			name:   "the reserved default name is legal when no worlds are declared",
 			mutate: func(c *Config) { setQuipWorlds(c, "default", []string{"default"}) },
-			meta:   metaWithWorlds(),
+			meta:   &metamodel.Metamodel{Version: "1.0"},
 		},
 		{
 			name:   "both keys unset is the common case",
@@ -465,7 +472,7 @@ func TestValidateNextActions_WorldNames(t *testing.T) {
 			name:    "unknown source_world is rejected",
 			mutate:  func(c *Config) { setQuipWorlds(c, "drafts", nil) },
 			meta:    metaWithWorlds(),
-			wantSub: `source_world "drafts" is not a declared world`,
+			wantSub: `source_world: world "drafts" is not declared`,
 		},
 		{
 			name:    "the rejection lists what IS declared",
@@ -477,7 +484,7 @@ func TestValidateNextActions_WorldNames(t *testing.T) {
 			name:    "unknown visible_worlds entry is rejected",
 			mutate:  func(c *Config) { setQuipWorlds(c, "", []string{"editorial", "drafts"}) },
 			meta:    metaWithWorlds(),
-			wantSub: `visible_worlds[1] "drafts" is not a declared world`,
+			wantSub: `visible_worlds[1]: world "drafts" is not declared`,
 		},
 		{
 			// Same shape as app.default_world: a name that cannot be checked

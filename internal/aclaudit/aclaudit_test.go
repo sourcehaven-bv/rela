@@ -22,6 +22,8 @@ func (m fakeMetamodel) HasEntityType(t string) bool { return m.types[t] }
 
 func (m fakeMetamodel) HasWorld(name string) bool { return m.worlds[name] }
 
+func (m fakeMetamodel) DeclaresWorlds() bool { return len(m.worlds) > 0 }
+
 func (m fakeMetamodel) HasFace(t, face string) bool {
 	return slices.Contains(m.faces[t], face)
 }
@@ -758,17 +760,23 @@ func TestB10_UndeclaredWorld(t *testing.T) {
 		worlds: map[string]bool{"published": true},
 	}
 	tests := []struct {
-		name    string
-		read    []string
-		wantB10 bool
+		name     string
+		read     []string
+		wantB10  bool
+		noWorlds bool // audit against a metamodel declaring no world
 	}{
-		{"declared world is fine", []string{"world:published"}, false},
-		{"undeclared world is flagged", []string{"world:pubished"}, true},
+		{"declared world is fine", []string{"world:published"}, false, false},
+		{"undeclared world is flagged", []string{"world:pubished"}, true, false},
 		{
-			name: "the implicit default world needs no declaration",
-			read: []string{"world:default"}, wantB10: false,
+			// TKT-7IZHP0 D11: beside declared worlds, `default` names nothing.
+			name: "the default world is flagged beside declared worlds",
+			read: []string{"world:default"}, wantB10: true,
 		},
-		{"a bare type grant is not a world grant", []string{"page"}, false},
+		{
+			name: "the generated default world needs no declaration",
+			read: []string{"world:default"}, noWorlds: true,
+		},
+		{"a bare type grant is not a world grant", []string{"page"}, false, false},
 		{
 			name: "one good and one bad world: only the bad one fires",
 			read: []string{"world:published", "world:nope"}, wantB10: true,
@@ -780,7 +788,11 @@ func TestB10_UndeclaredWorld(t *testing.T) {
 			if err := p.Validate(); err != nil {
 				t.Fatalf("Validate: %v", err)
 			}
-			got := slices.Contains(findingRules(Audit(p, meta, nil)), "B10-undeclared-world")
+			m := meta
+			if tc.noWorlds {
+				m.worlds = nil
+			}
+			got := slices.Contains(findingRules(Audit(p, m, nil)), "B10-undeclared-world")
 			if got != tc.wantB10 {
 				t.Errorf("B10 fired = %v, want %v (read: %v)", got, tc.wantB10, tc.read)
 			}
