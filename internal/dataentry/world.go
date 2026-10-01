@@ -162,7 +162,8 @@ func (a *App) SetWorlds(w WorldLookup) {
 		panic("dataentry: SetWorlds: " + err.Error())
 	}
 	a.tracer = tr
-	if err := wireValidation(a, a.Meta(), world); err != nil { // coverage-ignore: invariant: NewApp built the same validator
+	// coverage-ignore: invariant: NewApp built the same validator
+	if err := wireValidation(a, a.Meta(), world); err != nil {
 		panic("dataentry: SetWorlds: " + err.Error())
 	}
 }
