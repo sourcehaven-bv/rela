@@ -50,7 +50,7 @@ func relationWorkspace(
 			t.Fatalf("create relation %v: %v", r, err)
 		}
 	}
-	return lua.ReadDeps{VisibleReader: visibility.Unrestricted(st), Tracer: tracertest.Must(st, store.TrivialScope()), Meta: meta, World: store.TrivialScope()}
+	return lua.ReadDeps{VisibleReader: visibility.Unrestricted(st).WithWorld(visibility.WorldOf(store.TrivialScope())), Tracer: tracertest.Must(st, store.TrivialScope()), Meta: meta, World: store.TrivialScope()}
 }
 
 // newWithGraph builds a Service wired exactly as production does: the same

@@ -24,11 +24,11 @@ func readFixturePolicy() *acl.Policy {
 	}
 }
 
-// readSeed gives POL-1 both faces and POL-2 only the bare draft, so a claim can
+// readSeed gives POL-1 both faces and POL-2 only the draft, so a claim can
 // distinguish "this face is concealed" from "this entity is concealed".
-const readSeed = `create("policy", { id = "POL-1", title = "Access Control" })
+const readSeed = `face("policy", "POL-1", "draft", { title = "Access Control" })
 face("policy", "POL-1", "published", { title = "Access Control" })
-create("policy", { id = "POL-2", title = "Unpublished draft" })
+face("policy", "POL-2", "draft", { title = "Unpublished draft" })
 `
 
 func TestReadIsland(t *testing.T) {
@@ -45,11 +45,11 @@ func TestReadIsland(t *testing.T) {
 			// The claim the feature exists to support, and the one no other
 			// verb in this package could make.
 			name: "the draft face is hidden from the reader",
-			body: `hidden{who="pub", type="policy", id="POL-1"}`,
+			body: `hidden{who="pub", type="policy", id="POL-1", face="draft"}`,
 		},
 		{
 			name: "an editor reads the draft the reader cannot",
-			body: `reads{who="ed", type="policy", id="POL-1"}`,
+			body: `reads{who="ed", type="policy", id="POL-1", face="draft"}`,
 		},
 		{
 			name: "a draft-only policy is entirely hidden from the reader",
@@ -59,7 +59,7 @@ func TestReadIsland(t *testing.T) {
 			// If someone widens `reader` to a bare `policy` grant, the face
 			// gate stops applying and this manual stops building.
 			name:    "claiming the reader sees the draft fails",
-			body:    `reads{who="pub", type="policy", id="POL-1"}`,
+			body:    `reads{who="pub", type="policy", id="POL-1", face="draft"}`,
 			wantErr: "the row is HIDDEN from them",
 		},
 		{

@@ -108,6 +108,7 @@ func newACLWorld(t *testing.T) (store.Store, lua.WriteDeps) {
 	if err != nil {
 		t.Fatalf("NewScriptReader: %v", err)
 	}
+	scriptReader = scriptReader.WithWorld(visibility.WorldOf(store.TrivialScope()))
 	visRes, err := visibility.NewResolver(gate, redactor, st)
 	if err != nil {
 		t.Fatalf("NewResolver: %v", err)
@@ -497,7 +498,7 @@ end
 // A false here means "not withheld", never "withheld but unreported".
 func TestScriptReads_UngatedRuntimeReportsNothingRedacted(t *testing.T) {
 	st, deps := newACLWorld(t)
-	deps.VisibleReader = visibility.Unrestricted(st)
+	deps.VisibleReader = visibility.Unrestricted(st).WithWorld(visibility.WorldOf(store.TrivialScope()))
 
 	out := runAsAlice(t, deps, `
 local p = rela.get_entity("P-1")

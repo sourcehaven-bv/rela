@@ -97,10 +97,10 @@ type Family struct {
 // The policy and allow-all capabilities are the same type with different
 // collaborators; see [NewResolver] and [NewAllowAllResolver].
 type Resolver struct {
-	gate      RowGate
-	redact    FieldRedactor
-	load      Loader
-	families  Families
+	gate     RowGate
+	redact   FieldRedactor
+	load     Loader
+	families Families
 }
 
 // Families returns the scope that ranks each faced type's faces in
@@ -216,6 +216,11 @@ func (r *Resolver) InWorld(ctx context.Context, w World, entityType, id string) 
 	faces, ok, err := r.admit(ctx, w, entityType, id)
 	if err != nil || !ok {
 		return Resolved{}, false, err
+	}
+	// The trivial scope serves only the implicit face, so a principal who
+	// may not read it gets a miss without a store read.
+	if w.scope.IsTrivial() && !faces.Contains(entity.ImplicitFace) {
+		return Resolved{}, false, nil
 	}
 	e, ok := r.loadInWorld(ctx, w.scope, entityType, id, faces)
 	if !ok {

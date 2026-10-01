@@ -435,7 +435,7 @@ func TestMailSend_OnWriterRuntime(t *testing.T) {
 	t.Parallel()
 
 	sender := &recordingMailSender{}
-	rt := NewWriter(WriteDeps{EntityManager: &recordingMutator{}}, &bytes.Buffer{},
+	rt := NewWriter(WriteDeps{ReadDeps: ReadDeps{World: store.TrivialScope()}, EntityManager: &recordingMutator{}}, &bytes.Buffer{},
 		WithMailSender(allowAnySender{sender}),
 		WithCapabilities(Capabilities{Mail: true}))
 	t.Cleanup(rt.Close)

@@ -44,7 +44,7 @@ func TestAssertionsRenderEvidence(t *testing.T) {
 		},
 		{
 			name: "hidden states that the row exists but is concealed",
-			body: `hidden{ who = "pub", type = "policy", id = "POL-1" }`,
+			body: `hidden{ who = "pub", type = "policy", id = "POL-1", face = "draft" }`,
 			want: []string{"cannot see", "role `reader`", "identical to one for an id"},
 		},
 		{

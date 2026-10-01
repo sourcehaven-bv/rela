@@ -50,7 +50,7 @@ func newServiceWith(t *testing.T, meta *metamodel.Metamodel, seed func(store.Sto
 		Meta:   meta,
 		Tracer: tr,
 		LuaReadDeps: lua.ReadDeps{
-			VisibleReader: visibility.Unrestricted(st),
+			VisibleReader: visibility.Unrestricted(st).WithWorld(visibility.WorldOf(store.TrivialScope())),
 			Tracer:        tr,
 			Meta:          meta,
 			World:         store.TrivialScope(),
@@ -511,7 +511,7 @@ func TestCheckCardinality_CountErrorFailsLoudly(t *testing.T) {
 	broken := &failingCountStore{Store: st, err: countErr}
 	tr := tracertest.Must(broken, store.TrivialScope())
 	svc, err := analysis.New(analysis.Deps{Store: broken, Meta: meta, Tracer: tr,
-		LuaReadDeps: lua.ReadDeps{VisibleReader: visibility.Unrestricted(broken), Tracer: tr, Meta: meta, World: store.TrivialScope()}})
+		LuaReadDeps: lua.ReadDeps{VisibleReader: visibility.Unrestricted(broken).WithWorld(visibility.WorldOf(store.TrivialScope())), Tracer: tr, Meta: meta, World: store.TrivialScope()}})
 	if err != nil {
 		t.Fatalf("analysis.New: %v", err)
 	}

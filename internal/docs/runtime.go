@@ -251,9 +251,9 @@ func Build(ctx context.Context, src string, opts Options) (string, error) {
 	readDeps := rlua.ReadDeps{
 		VisibleReader: visibility.Unrestricted(st, familiesOption(compiledWorlds)).
 			WithWorld(visibility.WorldOf(compiledWorlds.DefaultWorld())),
-		Tracer:        dr.tracer,
-		Meta:          opts.Meta,
-		World:         compiledWorlds.DefaultWorld(),
+		Tracer: dr.tracer,
+		Meta:   opts.Meta,
+		World:  compiledWorlds.DefaultWorld(),
 	}
 	// Use the BUILD's tier deadline, not the bare Tier-A buildTimeout, as the
 	// per-island cap. gopher-lua's SetContext aborts an island on its own

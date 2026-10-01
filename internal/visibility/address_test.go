@@ -46,7 +46,8 @@ func TestReaders_ResolveAnAddressToItsFace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewScriptReader: %v", err)
 	}
-	unrestricted := visibility.Unrestricted(st)
+	script = script.WithWorld(visibility.WorldOf(store.TrivialScope()))
+	unrestricted := visibility.Unrestricted(st).WithWorld(visibility.WorldOf(store.TrivialScope()))
 
 	type get func(addr string) (*entity.Entity, error)
 	viaReader := func(r interface{ Resolver() *visibility.Resolver }) get {

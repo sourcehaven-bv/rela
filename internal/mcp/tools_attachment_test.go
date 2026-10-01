@@ -378,7 +378,7 @@ func TestAttachments_InlineReadCap(t *testing.T) {
 }
 
 // The tools address one face: an upload on a lists and serves on a only,
-// and a bare id on a faced entity is refused, naming the faces.
+// a bare id reads in the default world, and a bare-id write is refused.
 func TestAttachments_PerFace(t *testing.T) {
 	t.Parallel()
 	f := newAttachFixture(t, attachOpts{})
@@ -396,8 +396,14 @@ func TestAttachments_PerFace(t *testing.T) {
 	mustFail(t, f.call(ctx, t, "read_attachment",
 		map[string]any{"id": sheetID + "@b", "property": "file", "file_name": "a.txt"}), "not found")
 
-	// The answer cannot name the faces without revealing the entity, so a
-	// bare id gets the same hint as a missing one.
+	// A bare id READS in the generated default world, which serves face a
+	// first (TKT-7IZHP0 §3.2).
+	if got := fileNames(f.list(ctx, t, sheetID)); len(got) != 1 || got[0] != "file/a.txt" {
+		t.Errorf("bare id lists %v, want face a's [file/a.txt]", got)
+	}
+	// A write names its face, so a bare id is refused with the same hint as
+	// a missing one: the answer cannot name the faces without revealing the
+	// entity.
 	mustFail(t, f.attach(ctx, t, sheetID, "file", "bare.txt", []byte("x")), "ID@face")
 	mustFail(t, f.attach(ctx, t, missingID, "file", "bare.txt", []byte("x")), "ID@face")
 }

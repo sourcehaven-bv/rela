@@ -351,20 +351,20 @@ func (d denyEntityReader) Resolve(ctx context.Context, addr string) (*entity.Ent
 	if addr == d.deny {
 		return nil, errDenied
 	}
-	return visibility.Unrestricted(d.raw).GetAddress(ctx, addr)
+	return visibility.Unrestricted(d.raw).WithWorld(visibility.WorldOf(store.TrivialScope())).GetAddress(ctx, addr)
 }
 
 func (d denyEntityReader) Family(ctx context.Context, id string) (visibility.Family, bool, error) {
 	if id == d.deny {
 		return visibility.Family{}, false, nil
 	}
-	return visibility.Unrestricted(d.raw).Family(ctx, id)
+	return visibility.Unrestricted(d.raw).WithWorld(visibility.WorldOf(store.TrivialScope())).Family(ctx, id)
 }
 
 func (d denyEntityReader) ResolveHeaders(
 	ctx context.Context, refs []entity.Ref,
 ) map[entity.Ref]visibility.ResolvedHeader {
-	out := visibility.Unrestricted(d.raw).ResolveHeaders(ctx, refs)
+	out := visibility.Unrestricted(d.raw).WithWorld(visibility.WorldOf(store.TrivialScope())).ResolveHeaders(ctx, refs)
 	for ref := range out {
 		if ref.ID == d.deny {
 			delete(out, ref)

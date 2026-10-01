@@ -113,7 +113,7 @@ func (m *mockWorkspace) seedRelation(r *entity.Relation) {
 func (m *mockWorkspace) services(projectRoot string) WriteDeps {
 	return WriteDeps{
 		ReadDeps: ReadDeps{
-			VisibleReader: visibility.Unrestricted(m.store),
+			VisibleReader: visibility.Unrestricted(m.store).WithWorld(visibility.WorldOf(store.TrivialScope())),
 			Tracer:        tracertest.Must(m.store, store.TrivialScope()),
 			Searcher:      &mockSearcher{ws: m},
 			Meta:          m.meta,

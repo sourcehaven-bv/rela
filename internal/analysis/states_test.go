@@ -156,7 +156,7 @@ func TestCheckStates_ToleratedDiskShapes(t *testing.T) {
 	}}
 	tr := tracertest.Must(st, store.TrivialScope())
 	svc, err := analysis.New(analysis.Deps{Store: st, Meta: meta, Tracer: tr,
-		LuaReadDeps: lua.ReadDeps{VisibleReader: visibility.Unrestricted(st), Tracer: tr, Meta: meta, World: store.TrivialScope()}})
+		LuaReadDeps: lua.ReadDeps{VisibleReader: visibility.Unrestricted(st).WithWorld(visibility.WorldOf(store.TrivialScope())), Tracer: tr, Meta: meta, World: store.TrivialScope()}})
 	if err != nil {
 		t.Fatal(err)
 	}

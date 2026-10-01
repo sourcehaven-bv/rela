@@ -55,6 +55,7 @@ func schedulerReader(t *testing.T, policyYAML string) *visibility.ScriptReader {
 	if err != nil {
 		t.Fatalf("NewScriptReader: %v", err)
 	}
+	sr = sr.WithWorld(visibility.WorldOf(store.TrivialScope()))
 	return sr
 }
 

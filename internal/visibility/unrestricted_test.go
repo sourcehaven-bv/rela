@@ -42,7 +42,7 @@ func seedStore(t *testing.T) store.Store {
 // to Unrestricted would be a behavior change rather than a rename.
 func TestUnrestricted_IsPassThrough(t *testing.T) {
 	st := seedStore(t)
-	r := visibility.Unrestricted(st)
+	r := visibility.Unrestricted(st).WithWorld(visibility.WorldOf(store.TrivialScope()))
 	ctx := context.Background()
 
 	t.Run("GetAddress matches the store", func(t *testing.T) {
@@ -127,7 +127,7 @@ func TestUnrestricted_ExposesOnlyTheReadSurface(t *testing.T) {
 		"ResolveHeaders": true, "ListRelationsStrict": true,
 	}
 
-	typ := reflect.TypeOf(visibility.Unrestricted(seedStore(t)))
+	typ := reflect.TypeOf(visibility.Unrestricted(seedStore(t)).WithWorld(visibility.WorldOf(store.TrivialScope())))
 	got := make(map[string]bool, typ.NumMethod())
 	for m := range typ.Methods() {
 		got[m.Name] = true
@@ -148,7 +148,7 @@ func TestUnrestricted_ExposesOnlyTheReadSurface(t *testing.T) {
 	}
 
 	// It must also not be usable anywhere a full store is expected.
-	var r any = visibility.Unrestricted(seedStore(t))
+	var r any = visibility.Unrestricted(seedStore(t)).WithWorld(visibility.WorldOf(store.TrivialScope()))
 	if _, ok := r.(store.Store); ok {
 		t.Error("UnrestrictedReader satisfies store.Store — it has widened back " +
 			"into a full store handle and no longer narrows the surface")
@@ -193,7 +193,7 @@ func TestUnrestricted_SatisfiesReadSurfaceNonNil(t *testing.T) {
 	// and the linter (correctly) rejects it. What is being pinned is that
 	// the interface holds a non-nil POINTER — the property that would break
 	// if Unrestricted ever returned a typed nil again.
-	var r entityReader = visibility.Unrestricted(seedStore(t))
+	var r entityReader = visibility.Unrestricted(seedStore(t)).WithWorld(visibility.WorldOf(store.TrivialScope()))
 	if reflect.ValueOf(r).IsNil() {
 		t.Fatal("the interface holds a NIL face — a caller's `== nil` deny " +
 			"check would report 'wired' and the first read would nil-deref")

@@ -11,6 +11,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
@@ -27,7 +28,7 @@ func newAnalyzeService(t *testing.T, f *fixture, meta *metamodel.Metamodel) anal
 	}
 	svc := appbuildtest.New(meta, appbuildtest.WithFS(fs, ctx))
 	seedFromFixture(svc.Store(), f)
-	return analyzeService{reads: visibility.Unrestricted(svc.Store()), tracer: svc.Tracer(), validator: svc.Validator()}
+	return analyzeService{reads: visibility.Unrestricted(svc.Store()).WithWorld(visibility.WorldOf(store.TrivialScope())), tracer: svc.Tracer(), validator: svc.Validator()}
 }
 
 func TestAnalyzeOrphans(t *testing.T) {

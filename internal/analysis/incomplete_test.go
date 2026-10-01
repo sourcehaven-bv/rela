@@ -74,7 +74,7 @@ func newFailingService(t *testing.T, meta *metamodel.Metamodel, failAfter int, s
 		Meta:   meta,
 		Tracer: tr,
 		LuaReadDeps: lua.ReadDeps{
-			VisibleReader: visibility.Unrestricted(st),
+			VisibleReader: visibility.Unrestricted(st).WithWorld(visibility.WorldOf(store.TrivialScope())),
 			Tracer:        tr,
 			Meta:          meta,
 			World:         store.TrivialScope(),

@@ -181,7 +181,7 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 		app.documents = newDocumentService(app.store, app.kv, "/", app.scriptEngine, app.luaWriteDeps,
 			func() documentElevation {
 				return documentElevation{
-					Reader:   visibility.Unrestricted(app.store),
+					Reader:   visibility.Unrestricted(app.store).WithWorld(visibility.WorldOf(store.TrivialScope())),
 					Recorder: elevationRecorder(app.auditSink),
 				}
 			})
