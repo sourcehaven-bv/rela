@@ -172,7 +172,10 @@ func New(meta *metamodel.Metamodel, opts ...Option) *appbuild.Services {
 	st := resolveStore(cfg.store, searchBackend)
 	// The trivial scope is the default world; the fixture compiles no worlds.
 	world := store.TrivialScope()
-	tr := tracer.New(st, world)
+	tr, err := tracer.New(st, world)
+	if err != nil {
+		panic("appbuildtest: tracer: " + err.Error())
+	}
 	searcher := resolveSearcher(st, searchBackend)
 	readDeps := buildReadDeps(st, tr, searcher, meta, cfg.paths, world)
 

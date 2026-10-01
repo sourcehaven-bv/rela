@@ -35,7 +35,7 @@ check. It is not an identity a migration is addressed by.
 The projection covers a content hash of the
 data-shape-relevant slice of the metamodel — entity properties (type,
 required, list, format, values, default, computed expression), named enum value lists, and
-relation types (endpoints, cardinality, symmetry, content flag, relation
+relation types (endpoints, cardinality, symmetry, content flag, scope, relation
 properties). Everything else — labels, descriptions, colors, views, forms,
 automations, validations, id prefixes — is excluded, so cosmetic edits never
 demand a migration.
@@ -66,7 +66,7 @@ difference:
 | Tier | Examples | What happens |
 |---|---|---|
 | **additive** | new entity/relation type, new optional property, new enum value, loosened cardinality, default changes | adopted silently |
-| **drift** | deleted property, deleted entity/relation type, deleted enum value, new *required* or computed property, changed computed expression | adopted, with a logged notice per delta |
+| **drift** | deleted property, deleted entity/relation type, deleted enum value, new *required* or computed property, changed computed expression, relation `scope` change | adopted, with a logged notice per delta |
 | **needs-migration** | property type/format change, `list` flip, enum value replacement, endpoint/cardinality narrowing, symmetry flip | **not** adopted — the gate warns and points at `rela migrate gen` |
 
 **Who writes.** The gate always *classifies*; only the `rela migrate`
@@ -180,7 +180,7 @@ recovery mechanism, so a step that finds nothing left to do does nothing.
 |---|---|
 | `rename_property: {entity, from, to}` | moves the value to the new key (only where the old key exists) |
 | `rename_entity_type: {from, to}` | rewrites `type:` on every entity of the old type (IDs are unchanged) |
-| `rename_relation_type: {from, to}` | recreates each relation under the new type, then deletes the old (relation history starts a new lifetime) |
+| `rename_relation_type: {from, to}` | recreates each relation under the new type, then deletes the old (relation history starts a new lifetime); refused when the two types differ in `scope` |
 | `reverse_relation: {type}` | swaps `from` and `to` on every stored edge of a relation type, after you swap the endpoints in `schema.yaml` |
 | `rename_face: {entity, from, to}` | moves every row stored at one content state to another (IDs are unchanged) |
 | `migrate_face: {entity, property, mapping}` | moves existing rows onto the face they belong to when a type gains its first faces; **required** in any file spanning that change |
@@ -381,6 +381,26 @@ keeps its lineage — history before and after the reversal reads as one
 continuous lifetime. The filesystem backend encodes the endpoints in the
 relation's FILENAME, so there it is a genuine move (and there is no version
 history to preserve).
+
+### Changing a relation's scope
+
+A relation's `scope` decides which tail its stored edges hang from. A
+`scope: content` edge hangs from one face of its source; an identity-scoped
+edge hangs from the entity. Changing the scope does not move any stored edge:
+each keeps the tail it was filed under. The gate reports the change as drift,
+because the edges stay readable, but they are not where the new scope expects
+them. After a change to identity scope, an edge that still hangs from a face
+can be deleted but not updated, because identity-scoped writes refuse a face
+tail.
+
+A project whose recorded shape predates scopes in the projection gets no scope
+delta on its first start after the upgrade. The recorded shape cannot say what
+the scope was, so the gate adopts the new shape without a notice.
+
+`rename_relation_type` copies each edge's tail as it is, so it refuses to
+rename between a content-scoped and an identity-scoped type. Rename between
+types of the same scope, and change the scope as a separate schema edit. No
+declarative step rewrites relation tails yet.
 
 ### The Lua escape hatch
 

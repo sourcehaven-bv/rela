@@ -13,6 +13,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
+	"github.com/Sourcehaven-BV/rela/internal/tracer/tracertest"
 )
 
 // A face grant is the second half of a read permission, and it can only be
@@ -251,7 +252,7 @@ func TestVisibleTracer_IsFaceGated(t *testing.T) {
 	if _, err := st.CreateRelation(ctx, entity.RelationKey{From: "TKT-1", Type: "blocks", To: "TKT-2"}, nil); err != nil {
 		t.Fatal(err)
 	}
-	base := tracer.New(st, store.TrivialScope())
+	base := tracertest.Must(st, store.TrivialScope())
 
 	// Control: with every face permitted the trace carries the draft title,
 	// so the absence below is the gate's doing and not an empty fixture.
@@ -305,7 +306,7 @@ func TestVisibleTracer_HiddenFace(t *testing.T) {
 	if _, err := st.CreateRelation(ctx, entity.RelationKey{From: "POL-1", FromFace: "draft", Type: "implements", To: "CTL-1"}, &store.RelationData{}); err != nil {
 		t.Fatal(err)
 	}
-	base := tracer.New(st, store.TrivialScope())
+	base := tracertest.Must(st, store.TrivialScope())
 	build := func(g faceRowGate) *VisibleTracer {
 		t.Helper()
 		res, err := NewResolver(g, NopRedactor{}, st)
@@ -399,7 +400,7 @@ func TestVisibleTracer_TraversalSkipsHiddenEdges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tr, err := NewVisibleTracer(tracer.New(st, store.TrivialScope()), res, st, store.TrivialScope())
+	tr, err := NewVisibleTracer(tracertest.Must(st, store.TrivialScope()), res, st, store.TrivialScope())
 	if err != nil {
 		t.Fatal(err)
 	}

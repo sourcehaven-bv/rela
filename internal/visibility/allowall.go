@@ -28,9 +28,10 @@ type AllowAllReader struct {
 	res *Resolver
 }
 
-// NewAllowAllReader builds an AllowAllReader over load (required).
-func NewAllowAllReader(load Loader) (*AllowAllReader, error) {
-	res, err := NewAllowAllResolver(load)
+// NewAllowAllReader builds an AllowAllReader over load (required); opts
+// configure its [Resolver].
+func NewAllowAllReader(load Loader, opts ...ResolverOption) (*AllowAllReader, error) {
+	res, err := NewAllowAllResolver(load, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("visibility: NewAllowAllReader: %w", err)
 	}

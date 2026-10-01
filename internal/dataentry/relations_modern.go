@@ -400,7 +400,8 @@ func (h *writeHandler) applyRelationsModern(
 				continue
 			}
 			from, to := edgeEndpoints(entityID, peerID, incoming)
-			err := em.DeleteRelationState(ctx, from, tailOf(current[peerID]), canonical, to)
+			err := em.DeleteRelation(ctx,
+				entity.RelationKey{From: from, FromFace: tailOf(current[peerID]), Type: canonical, To: to})
 			if errors.Is(err, store.ErrNotFound) {
 				continue // a concurrent request deleted it first
 			}
@@ -486,9 +487,9 @@ func (h *writeHandler) writeCreateRelation(
 	opts := entity.RelationOptions{
 		Properties: finalProps,
 		Content:    ref.Content,
-		FromFace:   tail,
 	}
-	_, err := h.manager.CreateRelation(ctx, from, relType, to, opts)
+	k := entity.RelationKey{From: from, FromFace: tail, Type: relType, To: to}
+	_, err := h.manager.CreateRelation(ctx, k, opts)
 	if err == nil {
 		return nil
 	}
@@ -505,7 +506,6 @@ func (h *writeHandler) writeCreateRelation(
 	// the store, skipping the workspace's pre-write validation. Safe
 	// because the EntityManager already ran the ACL above.
 	data := &store.RelationData{Properties: finalProps, Content: finalContent}
-	k := entity.RelationKey{From: from, FromFace: tail, Type: relType, To: to}
 	if _, sErr := h.store.CreateRelation(ctx, k, data); sErr != nil {
 		return &relationError{
 			RelType: relType, Target: ref.ID, Op: "create",
@@ -527,9 +527,8 @@ func (h *writeHandler) writeUpdateRelation(
 		Properties: ref.Meta,
 		MetaUnset:  ref.MetaUnset,
 		Content:    ref.Content,
-		FromFace:   tail,
 	}
-	_, err := h.manager.UpdateRelation(ctx, from, relType, to, opts)
+	_, err := h.manager.UpdateRelation(ctx, entity.RelationKey{From: from, FromFace: tail, Type: relType, To: to}, opts)
 	if err == nil {
 		return nil
 	}

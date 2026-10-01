@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/output"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
@@ -57,7 +58,7 @@ func TestReadAddress(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := readAddress(context.Background(), st, world, tc.addr)
+			got, err := readAddress(context.Background(), st, nil, world, tc.addr)
 			if tc.wantErr != nil {
 				if !errors.Is(err, tc.wantErr) {
 					t.Fatalf("readAddress(%q) err = %v, want %v", tc.addr, err, tc.wantErr)
@@ -74,6 +75,38 @@ func TestReadAddress(t *testing.T) {
 				t.Errorf("readAddress(%q) title = %q, want %q", tc.addr, got.Title(), tc.wantTitle)
 			}
 		})
+	}
+}
+
+// TestReadAddress_FacesMessageUsesDeclarationOrder pins that the faces a bare
+// id lists come in the schema's declaration order, not by name (RR-V3UH7K).
+func TestReadAddress_FacesMessageUsesDeclarationOrder(t *testing.T) {
+	t.Parallel()
+	meta, err := metamodel.Parse([]byte(`
+entities:
+  requirement:
+    label: Requirement
+    id_prefix: REQ
+    properties:
+      title: {type: string}
+  page:
+    label: Page
+    id_prefix: PG
+    faces:
+      published: {}
+      draft: {}
+    properties:
+      title: {type: string}
+`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	_, err = readAddress(context.Background(), addressFixture(t), meta, store.TrivialScope(), "PG-1")
+	if !errors.Is(err, errFaceRequired) {
+		t.Fatalf("err = %v, want %v", err, errFaceRequired)
+	}
+	if want := "PG-1@published, PG-1@draft"; !strings.Contains(err.Error(), want) {
+		t.Errorf("error %q does not list %q", err, want)
 	}
 }
 
@@ -104,7 +137,7 @@ func TestReadAddress_WorldSelectsAFace(t *testing.T) {
 	st := addressFixture(t)
 	world := store.NewWorldScope(map[string]store.TypeResolution{"page": {Chain: []entity.Face{"draft"}}})
 
-	got, err := readAddress(context.Background(), st, world, "PG-1")
+	got, err := readAddress(context.Background(), st, nil, world, "PG-1")
 	if err != nil {
 		t.Fatalf("readAddress(PG-1): %v", err)
 	}

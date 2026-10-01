@@ -7,7 +7,6 @@ import (
 	"maps"
 	"math/rand/v2"
 	"slices"
-	"sort"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -422,11 +421,11 @@ func (d Deps) requireCreateFaceFor(entityType string, face entity.Face) error {
 	}
 	if face.IsImplicit() {
 		return fmt.Errorf("%w: %s declares %s", ErrFaceRequired,
-			entityType, strings.Join(sortedFaceNames(def), ", "))
+			entityType, strings.Join(metamodel.FaceOrderOf(d.Meta, entityType), ", "))
 	}
 	if _, declared := def.Faces[face.String()]; !declared {
 		return fmt.Errorf("%w: %s declares %s, not %q", ErrFaceNotDeclared,
-			entityType, strings.Join(sortedFaceNames(def), ", "), face)
+			entityType, strings.Join(metamodel.FaceOrderOf(d.Meta, entityType), ", "), face)
 	}
 	return nil
 }
@@ -472,13 +471,19 @@ func (d Deps) requireCreateFaceFor(entityType string, face entity.Face) error {
 // inherit requireCreateFaceFor.
 //
 // fromType is best-effort at the call sites (empty when the source does not
-// exist yet, mirroring the authorization subject), so an unresolvable source
-// is validated on the relation scope alone rather than refused here — the
-// peer-existence checks that follow are what report a missing endpoint.
+// exist, mirroring the authorization subject), so a missing source is
+// validated on the relation scope alone rather than refused here; the
+// peer-existence checks that follow report it. A source that exists but whose
+// type the schema no longer declares has no faces, so a named tail on it is
+// refused. That applies to updates too: such an edge can be deleted, not
+// rewritten.
 //
 // Nil: never returns an error for a zero face on an identity-scoped type,
 // which is the overwhelmingly common case.
 func (d Deps) requireRelationFaceFor(relType, fromType string, face entity.Face) error {
+	if err := validTail(face); err != nil {
+		return err
+	}
 	relDef, ok := d.Meta.GetRelationDef(relType)
 	if !ok {
 		// Unknown relation type: ValidateRelation reports it with a better
@@ -499,6 +504,12 @@ func (d Deps) requireRelationFaceFor(relType, fromType string, face entity.Face)
 	}
 	def, defOK := d.Meta.GetEntityDef(fromType)
 	if !defOK {
+		// A source whose type the schema no longer declares has no faces
+		// to name. The zero tail stays valid, as for a faceless type.
+		if !face.IsImplicit() {
+			return fmt.Errorf("%w: source type %s is not declared, so %q names nothing",
+				ErrFaceNotDeclared, fromType, face)
+		}
 		return nil
 	}
 	if len(def.Faces) == 0 {
@@ -516,20 +527,9 @@ func (d Deps) requireRelationFaceFor(relType, fromType string, face entity.Face)
 	}
 	if _, declared := def.Faces[face.String()]; !declared {
 		return fmt.Errorf("%w: source type %s declares %s, not %q", ErrFaceNotDeclared,
-			fromType, strings.Join(sortedFaceNames(def), ", "), face)
+			fromType, strings.Join(metamodel.FaceOrderOf(d.Meta, fromType), ", "), face)
 	}
 	return nil
-}
-
-// sortedFaceNames lists a type's declared faces in a stable order, so an
-// error message names them the same way twice.
-func sortedFaceNames(def *metamodel.EntityDef) []string {
-	names := make([]string, 0, len(def.Faces))
-	for name := range def.Faces {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
 }
 
 // entityFamily is the entity-level view of one id: its type and the faces it
@@ -589,6 +589,20 @@ func lookupFamily(ctx context.Context, st store.EntityLister, ref string) (entit
 	}
 	slices.Sort(fam.faces)
 	return fam, nil
+}
+
+// validTail refuses a relation tail that is not a face name. A tail reaches
+// the store as part of the relation key, so text that no face could carry
+// must stop here rather than become a stored coordinate (TKT-7IZHP0). The
+// zero tail is the implicit face and always valid.
+func validTail(face entity.Face) error {
+	if face.IsImplicit() {
+		return nil
+	}
+	if _, err := entity.ParseFace(face.String()); err != nil {
+		return fmt.Errorf("%w: relation tail %q is not a valid face name: %w", ErrFaceNotDeclared, face, err)
+	}
+	return nil
 }
 
 // relationWriteSubject builds the authorization subject for a relation write from

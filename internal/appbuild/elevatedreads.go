@@ -3,6 +3,7 @@ package appbuild
 import (
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
@@ -20,9 +21,10 @@ import (
 // a script runtime can reach — the always-present write-prep handle is gone.
 func cascadeScriptRunner(
 	engine *script.Engine, readDeps lua.ReadDeps, st store.Store, sink audit.Audit,
+	order visibility.ResolverOption,
 ) *script.LuaScriptRunner {
 	return script.NewLuaScriptRunnerWithElevatedReads(engine, readDeps, script.ReadElevation{
-		Reader:   visibility.Unrestricted(st),
+		Reader:   visibility.Unrestricted(st, order),
 		Recorder: NewElevationAuditor(sink),
 	})
 }
@@ -47,4 +49,14 @@ func NewElevationAuditor(sink audit.Audit) lua.ElevationRecorder {
 		return nil
 	}
 	return audit.NewElevationRecorder(sink)
+}
+
+// faceOrder is the resolver option that lists a type's faces in m's
+// declaration order (TKT-7IZHP0 design §3.1). Every resolver appbuild wires
+// takes it, so a Family reads the same on every read tier.
+// Nil: accepted — a nil m lists faces by token.
+func faceOrder(m *metamodel.Metamodel) visibility.ResolverOption {
+	return visibility.WithFaceOrder(func(entityType string) []string {
+		return metamodel.FaceOrderOf(m, entityType)
+	})
 }

@@ -190,12 +190,16 @@ func Build(ctx context.Context, src string, opts Options) (string, error) {
 		return "", fmt.Errorf("compiling worlds: %w", err)
 	}
 	st := memstore.New()
+	tr, err := tracer.New(st, compiledWorlds.Default())
+	if err != nil { // coverage-ignore: invariant: a fresh store and a compiled world are both set
+		return "", fmt.Errorf("docs: tracer: %w", err)
+	}
 	dr := &docRuntime{
 		meta:   opts.Meta,
 		worlds: compiledWorlds,
 		policy: opts.Policy,
 		store:  st,
-		tracer: tracer.New(st, compiledWorlds.Default()),
+		tracer: tr,
 		strict: opts.Strict,
 		out:    &strings.Builder{},
 		ctx:    ctx,
@@ -244,7 +248,7 @@ func Build(ctx context.Context, src string, opts Options) (string, error) {
 	// build just seeded itself, and runs at the operator trust boundary
 	// (whoever builds the docs already has the project). No ACL applies.
 	readDeps := rlua.ReadDeps{
-		VisibleReader: visibility.Unrestricted(st),
+		VisibleReader: visibility.Unrestricted(st, faceOrder(opts.Meta)),
 		Tracer:        dr.tracer,
 		Meta:          opts.Meta,
 		World:         compiledWorlds.Default(),
@@ -451,4 +455,13 @@ func (dr *docRuntime) luaFail(ls *lua.LState, format string, args ...any) int {
 	dr.pending = &BuildError{Kind: "resolve", Msg: fmt.Sprintf(format, args...)}
 	ls.RaiseError("%s", dr.pending.Msg)
 	return 0
+}
+
+// faceOrder is the resolver option that lists a type's faces in m's
+// declaration order (TKT-7IZHP0 design §3.1).
+// Nil: accepted — a nil m lists faces by token.
+func faceOrder(m *metamodel.Metamodel) visibility.ResolverOption {
+	return visibility.WithFaceOrder(func(entityType string) []string {
+		return metamodel.FaceOrderOf(m, entityType)
+	})
 }

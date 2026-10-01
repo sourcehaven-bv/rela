@@ -30,16 +30,16 @@ type recordingRelationWriter struct {
 }
 
 func (w *recordingRelationWriter) CreateRelation(
-	_ context.Context, from, relType, to string, opts entity.RelationOptions,
+	_ context.Context, key entity.RelationKey, _ entity.RelationOptions,
 ) (*entity.Relation, error) {
-	w.creates = append(w.creates, entity.RelationKey{From: from, FromFace: opts.FromFace, Type: relType, To: to})
+	w.creates = append(w.creates, key)
 	return &entity.Relation{}, nil
 }
 
 func (w *recordingRelationWriter) UpdateRelation(
-	_ context.Context, from, relType, to string, opts entity.RelationOptions,
+	_ context.Context, key entity.RelationKey, _ entity.RelationOptions,
 ) (*entity.Relation, error) {
-	w.updates = append(w.updates, entity.RelationKey{From: from, FromFace: opts.FromFace, Type: relType, To: to})
+	w.updates = append(w.updates, key)
 	return &entity.Relation{}, nil
 }
 

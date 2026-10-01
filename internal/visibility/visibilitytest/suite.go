@@ -184,7 +184,11 @@ func newWorld(t *testing.T) *world {
 	if err != nil {
 		t.Fatalf("NewPolicyRedactor: %v", err)
 	}
-	return &world{store: st, base: tracer.New(st, store.TrivialScope()), gate: gate, redact: redact}
+	base, err := tracer.New(st, store.TrivialScope())
+	if err != nil {
+		t.Fatalf("tracer.New: %v", err)
+	}
+	return &world{store: st, base: base, gate: gate, redact: redact}
 }
 
 // storeLookup implements affordances.RelationLookup over the store.

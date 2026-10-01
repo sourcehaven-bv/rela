@@ -5,6 +5,6 @@ package archguard
 // shrink. A tail-less key addresses the identity edge; each entry says why
 // that edge is the right one.
 var taillessKeyAllowlist = map[string]allowed{
-	"internal/acl/storegraph.go": {1, "HasEdge: membership edges are identity-scoped, and this " +
-		"is the ACL's default-world seam (TKT-7IZHP0)"},
+	"internal/acl/storegraph.go": {1, "HasEdge: membership edges are identity-scoped, " +
+		"so the identity edge is the one the ACL walks"},
 }

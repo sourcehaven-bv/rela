@@ -19,6 +19,7 @@ package tracer
 import (
 	"cmp"
 	"context"
+	"errors"
 	"iter"
 	"slices"
 
@@ -115,8 +116,18 @@ type reader interface {
 // New creates a generic Tracer backed by a store's entity and relation
 // readers. world selects the face a node's title and properties come from;
 // wiring passes worlds.Compiled.Default().
-func New(r reader, world store.WorldScope) *GenericTracer {
-	return &GenericTracer{r: r, world: world}
+//
+// Both are required. An unset world is refused here rather than at the first
+// traversal, where it would resolve no node and every trace would come back
+// empty (TKT-7IZHP0 design A4).
+func New(r reader, world store.WorldScope) (*GenericTracer, error) {
+	if r == nil {
+		return nil, errors.New("tracer: New: reader must be non-nil")
+	}
+	if !world.IsSet() {
+		return nil, errors.New("tracer: New: world must be set; pass the configured default world")
+	}
+	return &GenericTracer{r: r, world: world}, nil
 }
 
 // GenericTracer implements Tracer by reading from the store.

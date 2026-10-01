@@ -10,7 +10,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
-	"github.com/Sourcehaven-BV/rela/internal/tracer"
+	"github.com/Sourcehaven-BV/rela/internal/tracer/tracertest"
 	"github.com/Sourcehaven-BV/rela/internal/validation"
 	"github.com/Sourcehaven-BV/rela/internal/validationgraph"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
@@ -58,7 +58,7 @@ func atlasWorkspace(
 			t.Fatalf("create relation %v: %v", r, err)
 		}
 	}
-	return lua.ReadDeps{VisibleReader: visibility.Unrestricted(st), Tracer: tracer.New(st, store.TrivialScope()), Meta: meta, World: store.TrivialScope()}
+	return lua.ReadDeps{VisibleReader: visibility.Unrestricted(st), Tracer: tracertest.Must(st, store.TrivialScope()), Meta: meta, World: store.TrivialScope()}
 }
 
 // newAtlasSvc wires a Service the way production does, including the real

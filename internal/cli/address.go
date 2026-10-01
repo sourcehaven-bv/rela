@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
@@ -38,8 +39,11 @@ type addressLoader interface {
 // away without a change here.
 //
 // An id with no stored face is [store.ErrNotFound], as is an `ID@face` whose
-// face does not exist.
-func readAddress(ctx context.Context, st addressLoader, world store.WorldScope, addr string) (*entity.Entity, error) {
+// face does not exist. The faces message lists them in meta's declaration
+// order.
+func readAddress(
+	ctx context.Context, st addressLoader, meta *metamodel.Metamodel, world store.WorldScope, addr string,
+) (*entity.Entity, error) {
 	ref, err := entity.ParseRef(addr)
 	if err != nil {
 		return nil, fmt.Errorf("invalid entity address %q: %w", addr, err)
@@ -51,7 +55,9 @@ func readAddress(ctx context.Context, st addressLoader, world store.WorldScope, 
 	if len(faces) == 0 {
 		return nil, fmt.Errorf("%w: %s", store.ErrNotFound, addr)
 	}
-	res, err := visibility.NewAllowAllResolver(st)
+	res, err := visibility.NewAllowAllResolver(st, visibility.WithFaceOrder(func(entityType string) []string {
+		return metamodel.FaceOrderOf(meta, entityType)
+	}))
 	if err != nil { // coverage-ignore: defensive: NewAllowAllResolver only fails on a nil loader
 		return nil, err
 	}
@@ -65,6 +71,26 @@ func readAddress(ctx context.Context, st addressLoader, world store.WorldScope, 
 	if !ref.Face.IsImplicit() || slices.Contains(faces, "") {
 		return nil, fmt.Errorf("%w: %s", store.ErrNotFound, addr)
 	}
+	// Declared faces in declaration order, then any undeclared ones by
+	// token, as the resolver lists a Family. faces holds no implicit face
+	// here: that case returned above.
+	rank := map[entity.Face]int{}
+	for i, name := range metamodel.FaceOrderOf(meta, typ) {
+		rank[entity.Face(name)] = i
+	}
+	slices.SortStableFunc(faces, func(a, b entity.Face) int {
+		ra, aok := rank[a]
+		rb, bok := rank[b]
+		switch {
+		case aok && bok:
+			return ra - rb
+		case aok:
+			return -1
+		case bok:
+			return 1
+		}
+		return strings.Compare(a.String(), b.String())
+	})
 	named := make([]string, len(faces))
 	for i, face := range faces {
 		named[i] = entity.FormatStateRef(ref.ID, face)

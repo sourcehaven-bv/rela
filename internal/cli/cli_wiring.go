@@ -46,6 +46,9 @@ type readServices struct {
 	// World is the world `list` reads in when the user names none, from
 	// the compiled worlds' default-world seam.
 	World store.WorldScope
+	// Families selects one row per entity whichever face it stores, for
+	// per-type counts (worlds.Compiled.Families). Never a read world.
+	Families store.WorldScope
 }
 
 // writeServices is the read-write capability bundle. It embeds
@@ -92,12 +95,12 @@ type entityWriter interface {
 		ctx context.Context, oldID, newID string, opts entity.RenameOptions,
 	) (*entity.RenameResult, error)
 	CreateRelation(
-		ctx context.Context, from, relType, to string, opts entity.RelationOptions,
+		ctx context.Context, key entity.RelationKey, opts entity.RelationOptions,
 	) (*entity.Relation, error)
 	UpdateRelation(
-		ctx context.Context, from, relType, to string, opts entity.RelationOptions,
+		ctx context.Context, key entity.RelationKey, opts entity.RelationOptions,
 	) (*entity.Relation, error)
-	DeleteRelationState(ctx context.Context, from string, face entity.Face, relType, to string) error
+	DeleteRelation(ctx context.Context, key entity.RelationKey) error
 }
 
 // cliBundles is everything the kong wiring binds for command Run methods:
@@ -167,6 +170,7 @@ func newCLIBundles(svc *appbuild.Services) (*cliBundles, error) {
 		Templater: svc.Templater(),
 		FS:        svc.FS(),
 		World:     appbuild.CompiledWorlds(svc).Default(),
+		Families:  appbuild.CompiledWorlds(svc).Families(),
 	}
 	write := writeServices{
 		readServices:  read,

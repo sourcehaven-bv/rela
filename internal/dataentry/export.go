@@ -108,7 +108,7 @@ type addressResolver interface {
 func newExportHandler(app *App) (*exportHandler, error) {
 	redactor := appRedactor(app)
 	visReader, err := visibility.NewPolicyReader(ctxRowGate{}, redactor, app.store,
-		visibility.WithFaceOrder((&appFaceOrder{app: app}).of))
+		faceOrderOption(app))
 	if err != nil {
 		return nil, fmt.Errorf("dataentry: newExportHandler: %w", err)
 	}

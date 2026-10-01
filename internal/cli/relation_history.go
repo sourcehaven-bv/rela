@@ -230,16 +230,16 @@ func (c *RelationRestoreCmd) Run(ctx context.Context, svc *writeServices) error 
 	content := snap.Content
 	// The restore writes back to the tail it read from; the default tail of
 	// a faced source is a different relation (TKT-JAROC3).
-	opts := entity.RelationOptions{Properties: snap.Properties, Content: &content, FromFace: fromFace}
+	opts := entity.RelationOptions{Properties: snap.Properties, Content: &content}
 
 	_, getErr := svc.Store.GetRelation(ctx, q.Key)
 	switch {
 	case getErr == nil:
-		if _, err := svc.EntityManager.UpdateRelation(ctx, from, c.Type, c.To, opts); err != nil {
+		if _, err := svc.EntityManager.UpdateRelation(ctx, q.Key, opts); err != nil {
 			return fmt.Errorf("restore (update) %s--%s--%s to v%d: %w", c.From, c.Type, c.To, c.Version, err)
 		}
 	case errors.Is(getErr, store.ErrNotFound):
-		if _, err := svc.EntityManager.CreateRelation(ctx, from, c.Type, c.To, opts); err != nil {
+		if _, err := svc.EntityManager.CreateRelation(ctx, q.Key, opts); err != nil {
 			return fmt.Errorf("restore (re-create) %s--%s--%s to v%d: %w", c.From, c.Type, c.To, c.Version, err)
 		}
 	default: // coverage-ignore: defensive: memstore.GetRelation returns only nil or store.ErrNotFound, so a non-

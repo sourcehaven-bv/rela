@@ -240,7 +240,9 @@ func (b *caldavBackend) attachToDriver(ctx context.Context, collection, entityID
 	if dyn.Direction.IsIncoming() {
 		from, to = driverID, entityID
 	}
-	_, err := b.app.entityManager.CreateRelation(ctx, from, dyn.Relation, to, entitypkg.RelationOptions{})
+	// A membership edge attaches to the entity as such: the implicit tail.
+	key := entitypkg.RelationKey{From: from, FromFace: entitypkg.ImplicitFace, Type: dyn.Relation, To: to}
+	_, err := b.app.entityManager.CreateRelation(ctx, key, entitypkg.RelationOptions{})
 	// Already a member: the normal case on every edit, since an ordinary
 	// check-off re-asserts the membership it already has. Idempotent, never an
 	// error.
@@ -577,7 +579,8 @@ func (b *caldavBackend) unlinkFromDriver(
 	if err != nil {
 		return false, false, err
 	}
-	if delErr := b.app.entityManager.DeleteRelation(ctx, from, dyn.Relation, to); delErr != nil {
+	key := entitypkg.RelationKey{From: from, FromFace: entitypkg.ImplicitFace, Type: dyn.Relation, To: to}
+	if delErr := b.app.entityManager.DeleteRelation(ctx, key); delErr != nil {
 		return false, false, caldavWriteError(delErr)
 	}
 	if !last || !b.disposeOnLastUnlink(dyn) {

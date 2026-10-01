@@ -13,7 +13,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/output"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/testutil"
-	"github.com/Sourcehaven-BV/rela/internal/tracer"
+	"github.com/Sourcehaven-BV/rela/internal/tracer/tracertest"
 )
 
 // validate_test.go covers only the CLI concerns:
@@ -136,7 +136,7 @@ func TestRunValidationChecks_JSONOutput(t *testing.T) {
 
 	buf := withOutput(t, output.FormatJSON)
 
-	tr := tracer.New(svc.Store(), store.TrivialScope())
+	tr := tracertest.Must(svc.Store(), store.TrivialScope())
 	an, err := analysis.New(analysis.Deps{
 		Store:       svc.Store(),
 		Meta:        svc.Meta(),

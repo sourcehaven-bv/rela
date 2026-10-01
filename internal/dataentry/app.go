@@ -79,16 +79,15 @@ type appEntityWriter interface {
 	PatchEntity(ctx context.Context, id string, p entity.Patch) (*entity.UpdateResult, error)
 	DeleteEntity(ctx context.Context, id string, cascade bool) (*entity.DeleteResult, error)
 	CreateRelation(
-		ctx context.Context, from, relType, to string, opts entity.RelationOptions,
+		ctx context.Context, key entity.RelationKey, opts entity.RelationOptions,
 	) (*entity.Relation, error)
 	UpdateRelation(
-		ctx context.Context, from, relType, to string, opts entity.RelationOptions,
+		ctx context.Context, key entity.RelationKey, opts entity.RelationOptions,
 	) (*entity.Relation, error)
-	DeleteRelation(ctx context.Context, from, relType, to string) error
-	// The two face-addressed deletes are here for the script runtime's
-	// Mutator, which App hands a.entityManager as.
+	DeleteRelation(ctx context.Context, key entity.RelationKey) error
+	// DeleteEntityFace is here for the script runtime's Mutator, which App
+	// hands a.entityManager as.
 	DeleteEntityFace(ctx context.Context, id string, face entity.Face, cascade bool) (*entity.DeleteResult, error)
-	DeleteRelationState(ctx context.Context, from string, face entity.Face, relType, to string) error
 }
 
 // App is the central application struct for the data-entry server.
@@ -605,7 +604,17 @@ func appRedactor(a *App) visibility.FieldRedactor {
 // appbuild's guard: it would convert a caught bug into a silent downgrade,
 // and delete the fault path failclosed_test.go exercises.
 func (a *App) scriptReader(redactor visibility.FieldRedactor) lua.EntityReader {
-	return gatedScriptReader(a.acl, a.store, redactor)
+	return gatedScriptReader(a.acl, a.store, redactor, faceOrderOption(a))
+}
+
+// faceOrderOption is the resolver option every App-wired resolver takes, so a
+// Family lists faces in the live metamodel's declaration order on every read
+// tier.
+//
+// A free function rather than an App method: App is at its plimsoll method
+// load line.
+func faceOrderOption(a *App) visibility.ResolverOption {
+	return visibility.WithFaceOrder((&appFaceOrder{app: a}).of)
 }
 
 // appFaceOrder reads a type's face declaration order from the LIVE App's
@@ -621,7 +630,7 @@ func (o *appFaceOrder) of(entityType string) []string {
 	if meta == nil {
 		return nil
 	}
-	return metamodel.FaceOrderOf(meta.Entities[entityType])
+	return metamodel.FaceOrderOf(meta, entityType)
 }
 
 // lateGatedReader is a lua.EntityReader that resolves the gated reader from the
@@ -775,19 +784,21 @@ func elevationRecorder(sink audit.Audit) lua.ElevationRecorder {
 // Declarative policy it row-gates + field-redacts, resolving the principal from
 // ctx per call; a construction fault REFUSES (DenyReader) rather than reading
 // ungated. Same policy the per-request App.scriptReader wraps.
-func gatedScriptReader(aclImpl acl.ACL, store store.Store, redactor visibility.FieldRedactor) lua.EntityReader {
+func gatedScriptReader(
+	aclImpl acl.ACL, store store.Store, redactor visibility.FieldRedactor, order visibility.ResolverOption,
+) lua.EntityReader {
 	d, ok := aclImpl.(*acl.Declarative)
 	if !ok || d == nil {
 		// Named so the NopACL path is greppable alongside every other
 		// ungated read site (TKT-1WV50C).
-		return visibility.Unrestricted(store)
+		return visibility.Unrestricted(store, order)
 	}
 	gate, err := visibility.NewDeclarativeGate(d)
 	if err != nil {
 		slog.Error("dataentry: ACL gate unavailable; script reads REFUSED", "err", err)
 		return visibility.DenyReader{}
 	}
-	reader, err := visibility.NewPolicyReader(gate, redactor, store)
+	reader, err := visibility.NewPolicyReader(gate, redactor, store, order)
 	if err != nil {
 		slog.Error("dataentry: policy reader unavailable; script reads REFUSED", "err", err)
 		return visibility.DenyReader{}
@@ -837,7 +848,7 @@ func (a *App) scriptTracer(redactor visibility.FieldRedactor) tracer.Tracer {
 		slog.Error("dataentry: ACL gate unavailable; traversal REFUSED", "err", err)
 		return visibility.DenyTracer{}
 	}
-	res, err := visibility.NewResolver(gate, redactor, a.store)
+	res, err := visibility.NewResolver(gate, redactor, a.store, faceOrderOption(a))
 	if err != nil {
 		slog.Error("dataentry: resolver unavailable; traversal REFUSED", "err", err)
 		return visibility.DenyTracer{}
@@ -1015,7 +1026,10 @@ func NewApp(
 	// visible only on whichever node served the POST (TKT-VC27L3).
 	kv := stateKV
 	// The default world until SetWorlds supplies the lookup and rebuilds it.
-	trc := tracer.New(st, defaultWorldScope(nil))
+	trc, err := tracer.New(st, defaultWorldScope(nil))
+	if err != nil {
+		return nil, fmt.Errorf("dataentry: tracer: %w", err)
+	}
 	templater := templating.NewFSTemplater(fs, paths)
 	// The validator (val) is built AFTER app.affordances below — its reader is
 	// now GATED (TKT-3FL2S6, superseding DEC-O59WM4), which needs the redactor
@@ -1082,7 +1096,7 @@ func NewApp(
 	app.documents = newDocumentService(st, kv, paths.Root, scriptEngine, app.luaWriteDeps,
 		func() documentElevation {
 			return documentElevation{
-				Reader:   visibility.Unrestricted(st),
+				Reader:   visibility.Unrestricted(st, faceOrderOption(app)),
 				Recorder: elevationRecorder(app.auditSink),
 			}
 		})

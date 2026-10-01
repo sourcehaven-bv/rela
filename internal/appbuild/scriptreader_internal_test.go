@@ -12,7 +12,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
-	"github.com/Sourcehaven-BV/rela/internal/tracer"
+	"github.com/Sourcehaven-BV/rela/internal/tracer/tracertest"
 )
 
 // scriptEntityReader / scriptTracer back BOTH the Services accessors and
@@ -62,7 +62,7 @@ func seedCascadeWorld(t *testing.T) *memstore.MemStore {
 // entity she cannot see stays invisible to the automation (DEC-O59WM4).
 func TestScriptEntityReader_GatesOnActingIdentity(t *testing.T) {
 	st := seedCascadeWorld(t)
-	rd := scriptEntityReader(st, mustDeclarative(t, st), nil)
+	rd := scriptEntityReader(st, mustDeclarative(t, st), nil, faceOrder(nil))
 
 	ctx := principal.With(context.Background(), principal.Principal{
 		User: "alice", Tool: principal.ToolDataEntry,
@@ -90,7 +90,7 @@ func TestScriptEntityReader_NoPolicyIsPassThrough(t *testing.T) {
 	st := seedCascadeWorld(t)
 	ctx := context.Background()
 
-	rd := scriptEntityReader(st, nil, nil)
+	rd := scriptEntityReader(st, nil, nil, faceOrder(nil))
 	if rd == nil {
 		t.Fatal("scriptEntityReader returned nil with no policy")
 	}
@@ -106,7 +106,7 @@ func TestScriptEntityReader_NoPolicyIsPassThrough(t *testing.T) {
 		}
 	}
 
-	if got := scriptTracer(tracer.New(st, store.TrivialScope()), st, nil, nil, store.TrivialScope()); got == nil {
+	if got := scriptTracer(tracertest.Must(st, store.TrivialScope()), st, nil, nil, store.TrivialScope(), faceOrder(nil)); got == nil {
 		t.Error("scriptTracer returned nil with no policy")
 	}
 }
@@ -117,7 +117,7 @@ func TestScriptTracer_GatesOnActingIdentity(t *testing.T) {
 	if _, err := st.CreateRelation(context.Background(), entity.RelationKey{From: "TKT-1", Type: "relates", To: "SEC-1"}, nil); err != nil {
 		t.Fatalf("seed relation: %v", err)
 	}
-	tr := scriptTracer(tracer.New(st, store.TrivialScope()), st, mustDeclarative(t, st), nil, store.TrivialScope())
+	tr := scriptTracer(tracertest.Must(st, store.TrivialScope()), st, mustDeclarative(t, st), nil, store.TrivialScope(), faceOrder(nil))
 
 	ctx := principal.With(context.Background(), principal.Principal{
 		User: "alice", Tool: principal.ToolDataEntry,

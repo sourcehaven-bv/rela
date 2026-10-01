@@ -20,7 +20,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/state"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
-	"github.com/Sourcehaven-BV/rela/internal/tracer"
+	"github.com/Sourcehaven-BV/rela/internal/tracer/tracertest"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
@@ -443,7 +443,7 @@ print(got)
 		return lua.WriteDeps{
 			ReadDeps: lua.ReadDeps{
 				VisibleReader: visibility.Unrestricted(st),
-				Tracer:        tracer.New(st, store.TrivialScope()),
+				Tracer:        tracertest.Must(st, store.TrivialScope()),
 				ProjectRoot:   projectRoot,
 				World:         store.TrivialScope(),
 			},

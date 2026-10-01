@@ -96,7 +96,7 @@ func TestCreateRelation_ZeroTailOnFacedSourceNeedsEveryFace(t *testing.T) {
 			}{{"bare", false}, {"drafter", false}, {"editor", true}} {
 				t.Run(tc.user, func(t *testing.T) {
 					mgr, _ := newD4Manager(t, b)
-					_, err := mgr.CreateRelation(asUser(tc.user), "POL-1", "implements", "CTL-1",
+					_, err := mgr.CreateRelation(asUser(tc.user), entity.RelationKey{From: "POL-1", Type: "implements", To: "CTL-1"},
 						entity.RelationOptions{})
 					if tc.allow && err != nil {
 						t.Fatalf("CreateRelation: %v", err)

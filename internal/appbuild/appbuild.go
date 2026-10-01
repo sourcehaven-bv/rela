@@ -418,7 +418,7 @@ func (s *Services) LuaReadDeps() lua.ReadDeps {
 		root = s.paths.Root
 	}
 	return lua.ReadDeps{
-		VisibleReader: visibility.Unrestricted(s.store),
+		VisibleReader: visibility.Unrestricted(s.store, faceOrder(s.meta)),
 		Tracer:        s.tracer,
 		Searcher:      s.searcher,
 		Meta:          s.meta,
@@ -452,8 +452,8 @@ func (s *Services) LuaReadDeps() lua.ReadDeps {
 // raw store.
 func (s *Services) luaReadDepsFor(redactor visibility.FieldRedactor) lua.ReadDeps {
 	deps := s.LuaReadDeps()
-	deps.VisibleReader = scriptEntityReader(s.store, s.aclDeclarative, redactor)
-	deps.Tracer = scriptTracer(s.tracer, s.store, s.aclDeclarative, redactor, s.worlds.Default())
+	deps.VisibleReader = scriptEntityReader(s.store, s.aclDeclarative, redactor, faceOrder(s.meta))
+	deps.Tracer = scriptTracer(s.tracer, s.store, s.aclDeclarative, redactor, s.worlds.Default(), faceOrder(s.meta))
 	return deps
 }
 
@@ -470,9 +470,9 @@ func (s *Services) luaReadDepsFor(redactor visibility.FieldRedactor) lua.ReadDep
 // operator who configured a policy has stated intent; honoring it by
 // failing loudly beats ignoring it by failing open.
 func scriptEntityReader(
-	st store.Store, d *acl.Declarative, redactor visibility.FieldRedactor,
+	st store.Store, d *acl.Declarative, redactor visibility.FieldRedactor, order visibility.ResolverOption,
 ) lua.EntityReader {
-	reader, _ := scriptReads(st, d, redactor)
+	reader, _ := scriptReads(st, d, redactor, order)
 	return reader
 }
 
@@ -493,15 +493,17 @@ type scriptEntityReaderFamily interface {
 // [relresolve.Ungated], policy reads get the ctx principal's gate, and a
 // refused reader gets a gate that refuses too. Deriving both in one place is
 // what keeps a validation rule's traversal from seeing more than its reads.
+// order is [faceOrder] of the metamodel, so a Family lists faces in
+// declaration order on every tier.
 func scriptReads(
-	st store.Store, d *acl.Declarative, redactor visibility.FieldRedactor,
+	st store.Store, d *acl.Declarative, redactor visibility.FieldRedactor, order visibility.ResolverOption,
 ) (scriptReader scriptEntityReaderFamily, traversalGate relresolve.Gate) {
 	if d == nil {
 		// Named, not bare: this is the NopACL path and the single largest
 		// ungated read surface in the tree, so it must show up in
 		// `grep -rn visibility.Unrestricted` like every other one
 		// (TKT-1WV50C).
-		return visibility.Unrestricted(st), relresolve.Ungated
+		return visibility.Unrestricted(st, order), relresolve.Ungated
 	}
 	if redactor == nil {
 		redactor = visibility.NopRedactor{}
@@ -511,7 +513,7 @@ func scriptReads(
 		slog.Error("appbuild: ACL gate unavailable; script reads REFUSED", "err", err)
 		return visibility.DenyReader{}, refuseTraversal
 	}
-	reader, err := visibility.NewPolicyReader(gate, redactor, st)
+	reader, err := visibility.NewPolicyReader(gate, redactor, st, order)
 	if err != nil {
 		slog.Error("appbuild: policy reader unavailable; script reads REFUSED", "err", err)
 		return visibility.DenyReader{}, refuseTraversal
@@ -538,7 +540,7 @@ func refuseTraversal(context.Context, string, acl.TraversalHop) (*store.Relation
 // node's title face, as for the base tracer.
 func scriptTracer(
 	tr tracer.Tracer, st store.Store, d *acl.Declarative, redactor visibility.FieldRedactor,
-	world store.WorldScope,
+	world store.WorldScope, order visibility.ResolverOption,
 ) tracer.Tracer {
 	if d == nil {
 		return tr
@@ -551,7 +553,7 @@ func scriptTracer(
 		slog.Error("appbuild: ACL gate unavailable; traversal REFUSED", "err", err)
 		return visibility.DenyTracer{}
 	}
-	res, err := visibility.NewResolver(gate, redactor, st)
+	res, err := visibility.NewResolver(gate, redactor, st, order)
 	if err != nil {
 		slog.Error("appbuild: resolver unavailable; traversal REFUSED", "err", err)
 		return visibility.DenyTracer{}
@@ -645,8 +647,8 @@ func (s *Services) ScheduledLuaWriteDeps() lua.WriteDeps {
 // visibility.PolicyReader implements only FilterRelations, so a surviving edge
 // still carries all of its meta.
 func (s *Services) GatedReads() GatedReadBundle {
-	reader, gate := scriptReads(s.store, s.aclDeclarative, s.fieldRedactor)
-	tr := scriptTracer(s.tracer, s.store, s.aclDeclarative, s.fieldRedactor, s.worlds.Default())
+	reader, gate := scriptReads(s.store, s.aclDeclarative, s.fieldRedactor, faceOrder(s.meta))
+	tr := scriptTracer(s.tracer, s.store, s.aclDeclarative, s.fieldRedactor, s.worlds.Default(), faceOrder(s.meta))
 
 	deps := s.LuaReadDeps()
 	deps.VisibleReader = reader
@@ -1770,15 +1772,16 @@ func buildEntityManager(
 	computedSet *computed.Set, attachLocker lock.Locker,
 ) (*entitymanager.Manager, error) {
 	mgr, err := entitymanager.New(entitymanager.Deps{
-		AliasRewriter:           aliases,
-		Store:                   st,
-		Meta:                    base.meta,
-		Templater:               templater,
-		Audit:                   base.cfg.Audit,
-		ACL:                     resolvedACL,
-		Automations:             autoEngine,
-		Cascade:                 cascadeRunner,
-		ScriptRunner:            cascadeScriptRunner(base.cfg.ScriptEngine, readDeps, st, base.cfg.Audit),
+		AliasRewriter: aliases,
+		Store:         st,
+		Meta:          base.meta,
+		Templater:     templater,
+		Audit:         base.cfg.Audit,
+		ACL:           resolvedACL,
+		Automations:   autoEngine,
+		Cascade:       cascadeRunner,
+		ScriptRunner: cascadeScriptRunner(base.cfg.ScriptEngine, readDeps, st, base.cfg.Audit,
+			faceOrder(base.meta)),
 		VersionRecorder:         versionRecorderFor(versions),
 		RelationVersionRecorder: relationVersionRecorderFor(versions),
 		Computed:                computedSet,
@@ -1904,8 +1907,8 @@ func cascadeReadDeps(
 	d *acl.Declarative, redactor visibility.FieldRedactor, world store.WorldScope,
 ) lua.ReadDeps {
 	return lua.ReadDeps{
-		VisibleReader: scriptEntityReader(st, d, redactor),
-		Tracer:        scriptTracer(tr, st, d, redactor, world),
+		VisibleReader: scriptEntityReader(st, d, redactor, faceOrder(meta)),
+		Tracer:        scriptTracer(tr, st, d, redactor, world, faceOrder(meta)),
 		Searcher:      searcher,
 		Meta:          meta,
 		ProjectRoot:   projectRoot,
@@ -1957,6 +1960,15 @@ type backendOverrides struct {
 	schedulerState schedulerstate.Store
 }
 
+// configLoader returns the recipe's config loader, or the filesystem loader
+// when the recipe supplies none.
+func (o backendOverrides) configLoader(cfg Config) config.Loader {
+	if o.projectConfig != nil {
+		return o.projectConfig
+	}
+	return config.NewFSLoader(cfg.FS, cfg.Paths.Root)
+}
+
 // assemble builds the services bundle from an opened store.
 //
 // Overrides are passed in rather than derived here because they come from a
@@ -1989,12 +2001,12 @@ func assemble(
 	}
 	// coverage-ignore-end
 
-	tr := tracer.New(st, base.worlds.Default())
-	templater := templating.NewFSTemplater(cfg.FS, cfg.Paths)
-	cfgLoader := overrides.projectConfig
-	if cfgLoader == nil {
-		cfgLoader = config.NewFSLoader(cfg.FS, cfg.Paths.Root)
+	tr, err := tracer.New(st, base.worlds.Default())
+	if err != nil { // coverage-ignore: invariant: the store is built above and the default world is set
+		return nil, fmt.Errorf("appbuild: tracer: %w", err)
 	}
+	templater := templating.NewFSTemplater(cfg.FS, cfg.Paths)
+	cfgLoader := overrides.configLoader(cfg)
 
 	// Build the static lua read deps once — the ScriptRunner (automation
 	// cascades) is constructed with these.

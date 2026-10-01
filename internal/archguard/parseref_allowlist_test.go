@@ -53,4 +53,13 @@ var parseRefAllowlist = map[string]allowed{
 	"internal/cli/unlink.go": {1, "unlink FROM names the tail of the edge key, a serialized " +
 		"coordinate. Write: PR 7"},
 	"internal/cli/attachments.go": {1, "attachments listing address. Read: PR 5a"},
+
+	// aclmap
+	"internal/aclmap/target.go": {1, "the operator's report address; the parsed Ref is also the tail of " +
+		"the relation subject can-relation builds, a serialized coordinate. A bare id is the entity as a " +
+		"whole, checked against every stored face. Moves with PR 6"},
+
+	// importer
+	"internal/importer/importer.go": {5, "import files carry serialized stored keys, not user addresses: " +
+		"a bare id in a file is the implicit face, the row it was exported from (design G21)"},
 }

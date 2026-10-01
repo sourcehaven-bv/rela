@@ -107,7 +107,7 @@ func TestDeleteEntity_CascadeAuditsReportedRelations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create decision: %v", err)
 	}
-	if _, relErr := mgr.CreateRelation(ctx, decRes.Entity.ID, "addresses", reqRes.Entity.ID, entity.RelationOptions{}); relErr != nil {
+	if _, relErr := mgr.CreateRelation(ctx, entity.RelationKey{From: decRes.Entity.ID, Type: "addresses", To: reqRes.Entity.ID}, entity.RelationOptions{}); relErr != nil {
 		t.Fatalf("create relation: %v", relErr)
 	}
 

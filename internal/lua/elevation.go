@@ -230,8 +230,8 @@ func registerElevatedWrites(
 			s.RaiseError("bypass_acl create_relation error: %s", optErr.Error())
 			return 0
 		}
-		if _, err := em.CreateRelation(ctxFn(), from, relType, to,
-			entity.RelationOptions{FromFace: opts.Face, Content: opts.Content}); err != nil {
+		key := entity.RelationKey{From: from, FromFace: opts.Face, Type: relType, To: to}
+		if _, err := em.CreateRelation(ctxFn(), key, entity.RelationOptions{Content: opts.Content}); err != nil {
 			s.RaiseError("bypass_acl create_relation error: %s", err.Error())
 			return 0
 		}
@@ -248,7 +248,8 @@ func registerElevatedWrites(
 			s.RaiseError("bypass_acl delete_relation error: %s", optErr.Error())
 			return 0
 		}
-		if err := em.DeleteRelationState(ctxFn(), from, opts.Face, relType, to); err != nil {
+		key := entity.RelationKey{From: from, FromFace: opts.Face, Type: relType, To: to}
+		if err := em.DeleteRelation(ctxFn(), key); err != nil {
 			s.RaiseError("bypass_acl delete_relation error: %s", err.Error())
 			return 0
 		}

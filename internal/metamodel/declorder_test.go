@@ -28,10 +28,10 @@ func TestDeclOrder_FromYAML(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
-	if got, want := FaceOrderOf(m.Entities["policy"]), []string{"draft", "review", "published"}; !slices.Equal(got, want) {
+	if got, want := FaceOrderOf(m, "policy"), []string{"draft", "review", "published"}; !slices.Equal(got, want) {
 		t.Errorf("FaceOrderOf(policy) = %v, want %v", got, want)
 	}
-	if got := FaceOrderOf(m.Entities["ticket"]); got != nil {
+	if got := FaceOrderOf(m, "ticket"); got != nil {
 		t.Errorf("FaceOrderOf(ticket) = %v, want nil for a faceless type", got)
 	}
 	if got, want := WorldOrderOf(m), []string{"published", "editorial"}; !slices.Equal(got, want) {
@@ -39,9 +39,9 @@ func TestDeclOrder_FromYAML(t *testing.T) {
 	}
 
 	// The accessors return copies.
-	FaceOrderOf(m.Entities["policy"])[0] = "mutated"
+	FaceOrderOf(m, "policy")[0] = "mutated"
 	WorldOrderOf(m)[0] = "mutated"
-	if FaceOrderOf(m.Entities["policy"])[0] != "draft" || WorldOrderOf(m)[0] != "published" {
+	if FaceOrderOf(m, "policy")[0] != "draft" || WorldOrderOf(m)[0] != "published" {
 		t.Error("mutating a returned order changed the metamodel")
 	}
 }
@@ -50,9 +50,22 @@ func TestDeclOrder_FromYAML(t *testing.T) {
 // metamodel built in Go, which records no order.
 func TestDeclOrder_GoBuiltFallsBackToSortedNames(t *testing.T) {
 	t.Parallel()
-	def := EntityDef{Faces: map[string]FaceDef{"review": {}, "draft": {}, "published": {}}}
-	if got, want := FaceOrderOf(def), []string{"draft", "published", "review"}; !slices.Equal(got, want) {
+	built := &Metamodel{Entities: map[string]EntityDef{
+		"policy": {Faces: map[string]FaceDef{"review": {}, "draft": {}, "published": {}}},
+	}}
+	if got, want := FaceOrderOf(built, "policy"), []string{"draft", "published", "review"}; !slices.Equal(got, want) {
 		t.Errorf("FaceOrderOf = %v, want %v", got, want)
+	}
+	built.Entities["policy"] = EntityDef{Aliases: []string{"pol"}, Faces: built.Entities["policy"].Faces}
+	built.InitAliases()
+	if got, want := FaceOrderOf(built, "pol"), []string{"draft", "published", "review"}; !slices.Equal(got, want) {
+		t.Errorf("FaceOrderOf(alias) = %v, want %v", got, want)
+	}
+	if got := FaceOrderOf(built, "nosuch"); got != nil {
+		t.Errorf("FaceOrderOf(unknown type) = %v, want nil", got)
+	}
+	if got := FaceOrderOf(nil, "policy"); got != nil {
+		t.Errorf("FaceOrderOf(nil metamodel) = %v, want nil", got)
 	}
 	m := &Metamodel{Worlds: map[string]WorldDef{"b": {}, "a": {}}}
 	if got, want := WorldOrderOf(m), []string{"a", "b"}; !slices.Equal(got, want) {
@@ -108,10 +121,10 @@ entities:
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if got, want := FaceOrderOf(m.Entities["page"]), []string{"published", "draft"}; !slices.Equal(got, want) {
+	if got, want := FaceOrderOf(m, "page"), []string{"published", "draft"}; !slices.Equal(got, want) {
 		t.Errorf("FaceOrderOf(page) = %v, want %v", got, want)
 	}
-	if got, want := FaceOrderOf(m.Entities["policy"]), []string{"review", "draft", "published"}; !slices.Equal(got, want) {
+	if got, want := FaceOrderOf(m, "policy"), []string{"review", "draft", "published"}; !slices.Equal(got, want) {
 		t.Errorf("FaceOrderOf(policy) = %v, want %v", got, want)
 	}
 }
@@ -311,7 +324,7 @@ func TestDeclOrder_AnchorsAliasesAndMergeKeys(t *testing.T) {
 		"letter": {"review", "draft"},
 		"digest": {"published", "draft", "review"},
 	} {
-		if got := FaceOrderOf(m.Entities[typ]); !slices.Equal(got, want) {
+		if got := FaceOrderOf(m, typ); !slices.Equal(got, want) {
 			t.Errorf("FaceOrderOf(%s) = %v, want %v", typ, got, want)
 		}
 	}
@@ -356,7 +369,7 @@ entities:
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if got, want := FaceOrderOf(m.Entities["memo"]), []string{"review", "draft", "archived"}; !slices.Equal(got, want) {
+	if got, want := FaceOrderOf(m, "memo"), []string{"review", "draft", "archived"}; !slices.Equal(got, want) {
 		t.Errorf("FaceOrderOf(memo) = %v, want %v", got, want)
 	}
 }

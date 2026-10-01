@@ -95,13 +95,13 @@ func (s *Server) handleCreateRelation(
 	// content-scoped edge (BUG-J3PBFN).
 	from, _ := entity.ParseRef(fromID)
 
+	key := entity.RelationKey{From: from.ID, FromFace: from.Face, Type: relType, To: toID}
 	opts := entity.RelationOptions{
 		Properties: extractProperties(request),
 		Content:    nilIfEmpty(args.GetString("content", "")),
-		FromFace:   from.Face,
 	}
 
-	if _, createErr := snap.deps.EntityManager.CreateRelation(ctx, from.ID, relType, toID, opts); createErr != nil {
+	if _, createErr := snap.deps.EntityManager.CreateRelation(ctx, key, opts); createErr != nil {
 		return errorResult(createErr.Error()), nil
 	}
 
@@ -139,7 +139,8 @@ func (s *Server) handleDeleteRelation(
 			fmt.Sprintf("relation not found: %s --%s--> %s", fromID, relType, toID)), nil
 	}
 
-	delErr := snap.deps.EntityManager.DeleteRelationState(ctx, from.ID, from.Face, relType, toID)
+	delErr := snap.deps.EntityManager.DeleteRelation(ctx,
+		entity.RelationKey{From: from.ID, FromFace: from.Face, Type: relType, To: toID})
 	if delErr != nil {
 		return errorResult(delErr.Error()), nil
 	}

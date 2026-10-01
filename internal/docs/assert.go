@@ -159,14 +159,10 @@ func (dr *docRuntime) worldScope(name string) (store.WorldScope, error) {
 	return scope, nil
 }
 
-// declaredWorlds lists the schema's world names for a failure message.
+// declaredWorlds lists the schema's world names for a failure message, in
+// declaration order.
 func declaredWorlds(dr *docRuntime) []string {
-	out := make([]string, 0, len(dr.meta.Worlds))
-	for name := range dr.meta.Worlds {
-		out = append(out, name)
-	}
-	sort.Strings(out)
-	return out
+	return metamodel.WorldOrderOf(dr.meta)
 }
 
 // describeSubject names what a failure is about: the type, and the world when

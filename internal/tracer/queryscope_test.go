@@ -10,6 +10,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
+	"github.com/Sourcehaven-BV/rela/internal/tracer/tracertest"
 )
 
 // TestTraceFrom_IgnoresQueryScopes is AC6 for the tracer (TKT-EVR2TU).
@@ -44,7 +45,7 @@ func TestTraceFrom_IgnoresQueryScopes(t *testing.T) {
 	_, err := s.CreateRelation(t.Context(), entity.RelationKey{From: "DEC-1", Type: "implements", To: "REQ-1"}, nil)
 	require.NoError(t, err)
 
-	result := tracer.New(s, store.TrivialScope()).TraceFrom(t.Context(), "DEC-1", 0)
+	result := tracertest.Must(s, store.TrivialScope()).TraceFrom(t.Context(), "DEC-1", 0)
 	require.NotNil(t, result)
 
 	if !tracedIDs(result)["REQ-1"] {
@@ -67,7 +68,7 @@ func TestFindOrphans_IgnoresQueryScopes(t *testing.T) {
 	orphan.SetString("status", "gearchiveerd")
 	require.NoError(t, s.CreateEntity(t.Context(), orphan))
 
-	orphans, err := tracer.New(s, store.TrivialScope()).FindOrphans(t.Context())
+	orphans, err := tracertest.Must(s, store.TrivialScope()).FindOrphans(t.Context())
 	require.NoError(t, err)
 
 	found := false

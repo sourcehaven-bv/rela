@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"iter"
-	"sort"
 	"strings"
 
 	lua "github.com/yuin/gopher-lua"
@@ -327,7 +326,7 @@ func (s *seedBindings) luaFace(ls *lua.LState) int {
 	if _, declared := def.Faces[coord]; !declared {
 		return s.fail(ls, "face(%q, %q, %q): %q is not a declared face of %q "+
 			"(schema.yaml declares: %s)", typ, id, coord, coord, typ,
-			strings.Join(sortedFaceNames(def), ", "))
+			strings.Join(metamodel.FaceOrderOf(s.meta, typ), ", "))
 	}
 
 	// face(type, id, coord, props?, body?) — the two optional arguments trail
@@ -428,16 +427,6 @@ func (s *seedBindings) typeOf(id string) string {
 	return e.Type
 }
 
-// sortedFaceNames lists a type's declared face names for a failure message.
-func sortedFaceNames(def *metamodel.EntityDef) []string {
-	out := make([]string, 0, len(def.Faces))
-	for name := range def.Faces {
-		out = append(out, name)
-	}
-	sort.Strings(out)
-	return out
-}
-
 // seedRowOf finds any stored row of a seeded id, whatever face it was seeded
 // at.
 //
@@ -455,11 +444,11 @@ func sortedFaceNames(def *metamodel.EntityDef) []string {
 // Nil: returns (nil, store.ErrNotFound) when the address names no row.
 func seedRowOf(ctx context.Context, st seedEditStore, id string) (*entity.Entity, error) {
 	base := id
-	if ref, perr := entity.ParseRef(id); perr == nil {
-		if !ref.Face.IsImplicit() {
-			return st.GetEntity(ctx, entity.Ref{ID: ref.ID, Face: ref.Face})
+	if addr, perr := entity.ParseAddress(id); perr == nil {
+		if ref, named := addr.Named(); named {
+			return st.GetEntity(ctx, ref)
 		}
-		base = ref.ID
+		base = addr.ID()
 	}
 	family, err := store.Family(ctx, st, base)
 	if err != nil {

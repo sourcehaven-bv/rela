@@ -267,6 +267,24 @@ func TestReverseRelation_ValidateRefusals(t *testing.T) {
 			wantErr: "overlapping endpoints",
 		},
 		{
+			name: "content-scoped type",
+			from: func() *metamodel.Metamodel {
+				m := metaV1()
+				r := m.Relations["assigned-to"]
+				r.Scope = metamodel.ScopeContent
+				m.Relations["assigned-to"] = r
+				return m
+			},
+			to: func() *metamodel.Metamodel {
+				m := reversedMeta()
+				r := m.Relations["assigned-to"]
+				r.Scope = metamodel.ScopeContent
+				m.Relations["assigned-to"] = r
+				return m
+			},
+			wantErr: "content-scoped",
+		},
+		{
 			name:    "schema does not declare a swap",
 			from:    metaV1,
 			to:      func() *metamodel.Metamodel { return swapped(metaV1()) },

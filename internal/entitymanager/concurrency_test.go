@@ -237,12 +237,12 @@ func TestConcurrency_RelationUpdatesToDisjointKeysAllLand(t *testing.T) {
 			ctx := context.Background()
 			a := mustCreateNote(t, mgr, "a")
 			b := mustCreateNote(t, mgr, "b")
-			_, err := mgr.CreateRelation(ctx, a.ID, "links", b.ID, entity.RelationOptions{})
+			_, err := mgr.CreateRelation(ctx, entity.RelationKey{From: a.ID, Type: "links", To: b.ID}, entity.RelationOptions{})
 			require.NoError(t, err)
 
 			const n = 8
 			errs := race(n, func(i int) error {
-				_, updErr := mgr.UpdateRelation(ctx, a.ID, "links", b.ID, entity.RelationOptions{
+				_, updErr := mgr.UpdateRelation(ctx, entity.RelationKey{From: a.ID, Type: "links", To: b.ID}, entity.RelationOptions{
 					Properties: map[string]any{fmt.Sprintf("k%d", i): "v"},
 				})
 				return updErr
@@ -275,7 +275,7 @@ func TestConcurrency_ManagedOrderIsDistinct(t *testing.T) {
 				targets[i] = mustCreateNote(t, mgr, fmt.Sprintf("item %d", i)).ID
 			}
 			errs := race(n, func(i int) error {
-				_, err := mgr.CreateRelation(ctx, owner, "lists", targets[i], entity.RelationOptions{})
+				_, err := mgr.CreateRelation(ctx, entity.RelationKey{From: owner, Type: "lists", To: targets[i]}, entity.RelationOptions{})
 				return err
 			})
 			for i, err := range errs {

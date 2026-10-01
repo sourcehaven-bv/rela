@@ -61,12 +61,15 @@ type UnrestrictedReader struct {
 //
 // If a new call site does not clearly fall into one of those, it probably
 // wants the ACL-bound reader instead — see [NewScriptReader].
-func Unrestricted(st store.Store) *UnrestrictedReader {
+//
+// opts configure its [Resolver]; a wiring site with a metamodel passes
+// [WithFaceOrder]. A bad option panics for the same reason a nil store does.
+func Unrestricted(st store.Store, opts ...ResolverOption) *UnrestrictedReader {
 	if st == nil {
 		panic("visibility.Unrestricted: store must be non-nil")
 	}
-	res, err := NewAllowAllResolver(st)
-	if err != nil { // coverage-ignore: invariant: st is non-nil here, the resolver's only requirement
+	res, err := NewAllowAllResolver(st, opts...)
+	if err != nil {
 		panic("visibility.Unrestricted: " + err.Error())
 	}
 	return &UnrestrictedReader{st: st, res: res, world: trivialWorld()}

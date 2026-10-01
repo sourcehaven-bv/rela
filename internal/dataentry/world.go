@@ -152,18 +152,23 @@ func worldScopeFrom(ctx context.Context) store.WorldScope {
 // world (BUG-95W7MV): NewApp built it before any world lookup existed.
 func (a *App) SetWorlds(w WorldLookup) {
 	a.worlds = w
-	a.tracer = tracer.New(a.store, defaultWorldScope(w))
+	tr, err := tracer.New(a.store, defaultWorldScope(w))
+	if err != nil { // coverage-ignore: invariant: store is non-nil and the scope is always set
+		panic("dataentry: SetWorlds: " + err.Error())
+	}
+	a.tracer = tr
 }
 
 // defaultWorldScope is the scope of the default world in w, the world a
 // surface uses when the request names none. A nil lookup, or one without the
 // default world, yields the trivial scope, which is the default world today.
+// So does an unset scope from a lookup, so the result is always set.
 func defaultWorldScope(w WorldLookup) store.WorldScope {
 	if w == nil {
 		return defaultWorldHandle().scope
 	}
 	scope, ok := w.Lookup(defaultWorldName)
-	if !ok {
+	if !ok || !scope.IsSet() {
 		return defaultWorldHandle().scope
 	}
 	return scope

@@ -13,7 +13,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/testutil"
-	"github.com/Sourcehaven-BV/rela/internal/tracer"
+	"github.com/Sourcehaven-BV/rela/internal/tracer/tracertest"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
@@ -77,7 +77,7 @@ func newMockWorkspace() *mockWorkspace {
 func (m *mockWorkspace) services(projectRoot string) lua.ReadDeps {
 	return lua.ReadDeps{
 		VisibleReader: visibility.Unrestricted(m.store),
-		Tracer:        tracer.New(m.store, store.TrivialScope()),
+		Tracer:        tracertest.Must(m.store, store.TrivialScope()),
 		Meta:          m.meta,
 		ProjectRoot:   projectRoot,
 		World:         store.TrivialScope(),
