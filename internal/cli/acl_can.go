@@ -83,8 +83,10 @@ func (c *ACLCanCmd) Run(ctx context.Context, svc *readServices) error {
 // a green exit on nothing (the same gate engine.Can enforces under a
 // policy).
 func (c *ACLCanCmd) runNoPolicy(ctx context.Context, svc *readServices) error {
-	if ref, err := entity.ParseRef(c.Entity); err == nil && !ref.Face.IsImplicit() {
-		return fmt.Errorf("%w: %s", aclmap.ErrFaceAddress, ref.ID)
+	if addr, err := entity.ParseAddress(c.Entity); err == nil {
+		if _, named := addr.Named(); named {
+			return fmt.Errorf("%w: %s", aclmap.ErrFaceAddress, addr.ID())
+		}
 	}
 	if err := requireAddressExists(ctx, svc.Store, c.Entity); err != nil {
 		return err
