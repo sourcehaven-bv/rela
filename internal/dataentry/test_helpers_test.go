@@ -130,7 +130,7 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 	app.fs = fs
 	app.paths = paths
 	app.store = svc.Store()
-	visible, err := newVisibleReader(svc.Store(), (&appFaceOrder{app: app}).of)
+	visible, err := newVisibleReader(svc.Store(), (&appFamilies{app: app}).scope)
 	if err != nil {
 		panic(err.Error())
 	}

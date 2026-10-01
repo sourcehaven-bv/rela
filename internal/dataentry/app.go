@@ -604,33 +604,28 @@ func appRedactor(a *App) visibility.FieldRedactor {
 // appbuild's guard: it would convert a caught bug into a silent downgrade,
 // and delete the fault path failclosed_test.go exercises.
 func (a *App) scriptReader(redactor visibility.FieldRedactor) lua.EntityReader {
-	return gatedScriptReader(a.acl, a.store, redactor, faceOrderOption(a))
+	return gatedScriptReader(a.acl, a.store, redactor, familiesOption(a), defaultWorldScope(a.worlds))
 }
 
-// faceOrderOption is the resolver option every App-wired resolver takes, so a
-// Family lists faces in the live metamodel's declaration order on every read
-// tier.
+// familiesOption is the resolver option every App-wired resolver takes, so a
+// Family lists faces in declaration order on every read tier (G18).
 //
 // A free function rather than an App method: App is at its plimsoll method
 // load line.
-func faceOrderOption(a *App) visibility.ResolverOption {
-	return visibility.WithFaceOrder((&appFaceOrder{app: a}).of)
+func familiesOption(a *App) visibility.ResolverOption {
+	return visibility.WithFamilies((&appFamilies{app: a}).scope)
 }
 
-// appFaceOrder reads a type's face declaration order from the LIVE App's
-// metamodel, so a schema reload is honored. NewApp sets app once it has built
-// the App; before that the order is empty and faces sort by token.
-type appFaceOrder struct{ app *App }
+// appFamilies resolves the families scope from the LIVE App, so worlds set
+// after construction are honored. NewApp sets app once it has built the App;
+// before that faces sort by token.
+type appFamilies struct{ app *App }
 
-func (o *appFaceOrder) of(entityType string) []string {
+func (o *appFamilies) scope() store.WorldScope {
 	if o.app == nil {
-		return nil
+		return familiesScope(nil, nil)
 	}
-	meta := o.app.Meta()
-	if meta == nil {
-		return nil
-	}
-	return metamodel.FaceOrderOf(meta, entityType)
+	return familiesScope(o.app.worlds, o.app.Meta())
 }
 
 // lateGatedReader is a lua.EntityReader that resolves the gated reader from the
@@ -786,12 +781,13 @@ func elevationRecorder(sink audit.Audit) lua.ElevationRecorder {
 // ungated. Same policy the per-request App.scriptReader wraps.
 func gatedScriptReader(
 	aclImpl acl.ACL, store store.Store, redactor visibility.FieldRedactor, order visibility.ResolverOption,
+	world store.WorldScope,
 ) lua.EntityReader {
 	d, ok := aclImpl.(*acl.Declarative)
 	if !ok || d == nil {
 		// Named so the NopACL path is greppable alongside every other
 		// ungated read site (TKT-1WV50C).
-		return visibility.Unrestricted(store, order)
+		return visibility.Unrestricted(store, order).WithWorld(visibility.WorldOf(world))
 	}
 	gate, err := visibility.NewDeclarativeGate(d)
 	if err != nil {
@@ -808,7 +804,7 @@ func gatedScriptReader(
 		slog.Error("dataentry: script reader unavailable; script reads REFUSED", "err", err)
 		return visibility.DenyReader{}
 	}
-	return sr
+	return sr.WithWorld(visibility.WorldOf(world))
 }
 
 // scriptTraversalGate authorizes a validation rule's traversal under the same
@@ -848,7 +844,7 @@ func (a *App) scriptTracer(redactor visibility.FieldRedactor) tracer.Tracer {
 		slog.Error("dataentry: ACL gate unavailable; traversal REFUSED", "err", err)
 		return visibility.DenyTracer{}
 	}
-	res, err := visibility.NewResolver(gate, redactor, a.store, faceOrderOption(a))
+	res, err := visibility.NewResolver(gate, redactor, a.store, familiesOption(a))
 	if err != nil {
 		slog.Error("dataentry: resolver unavailable; traversal REFUSED", "err", err)
 		return visibility.DenyTracer{}
@@ -1052,8 +1048,8 @@ func NewApp(
 	// Build style map from config styles
 	styleMap, styledTypes := buildStyleMap(cfg, meta)
 
-	faceOrder := &appFaceOrder{}
-	visible, err := newVisibleReader(st, faceOrder.of)
+	families := &appFamilies{}
+	visible, err := newVisibleReader(st, families.scope)
 	if err != nil {
 		return nil, err
 	}
@@ -1084,7 +1080,7 @@ func NewApp(
 		attachmentOwner:   attachmentOwner,
 		attachmentUploads: attachment.NewLimiter(attachment.DefaultMaxUploads),
 	}
-	faceOrder.app = app
+	families.app = app
 	// documentService needs scriptEngine (for Lua renders) and a closure
 	// that yields fresh lua.WriteDeps (so metamodel reloads propagate).
 	// Constructed after app because luaWriteDeps is a method on App.
@@ -1096,7 +1092,8 @@ func NewApp(
 	app.documents = newDocumentService(st, kv, paths.Root, scriptEngine, app.luaWriteDeps,
 		func() documentElevation {
 			return documentElevation{
-				Reader:   visibility.Unrestricted(st, faceOrderOption(app)),
+				Reader: visibility.Unrestricted(st, familiesOption(app)).
+					WithWorld(visibility.WorldOf(defaultWorldScope(app.worlds))),
 				Recorder: elevationRecorder(app.auditSink),
 			}
 		})
@@ -1136,30 +1133,11 @@ func NewApp(
 	// NopACL it is the raw store. The trigger entity the validator loads
 	// (validator.New's first arg) and its rule bodies' cross-entity lookups
 	// (ReadDeps.VisibleReader) both go through it.
-	gatedReader := lateGatedReader{app: app}
-	readDeps := lua.ReadDeps{
-		VisibleReader: gatedReader,
-		Tracer:        lateGatedTracer{app: app},
-		Searcher:      searcher,
-		Meta:          meta,
-		ProjectRoot:   paths.Root,
-		// SetWorlds runs after NewApp, so this is the default world's scope
-		// from a nil lookup. TKT-7IZHP0 PR 5a rewires it to the configured
-		// default world.
-		World: defaultWorldScope(app.worlds),
-	}
-	val, valErr := newGatedValidator(gatedReader, scriptTraversalGate(app), meta, readDeps, st)
-	if valErr != nil {
+	//
+	// SetWorlds runs after NewApp, so this wires the default world of a nil
+	// lookup, and SetWorlds rewires it to the schema's default world.
+	if valErr := wireValidation(app, meta, defaultWorldScope(nil)); valErr != nil {
 		return nil, valErr
-	}
-	app.validator = val
-
-	// analyzeService reads, relation counts included, route through the same
-	// gated reader.
-	app.analyze = analyzeService{
-		reads:     gatedReader,
-		tracer:    lateGatedTracer{app: app},
-		validator: val,
 	}
 
 	// viewReader row-gates + field-redacts entities on their way out of the
@@ -1167,7 +1145,7 @@ func NewApp(
 	// the redactor closes over it. Same construction as the export handler's
 	// visReader: ctx-resolved gate, affordance-backed redactor, raw store.
 	viewReader, viewReaderErr := visibility.NewPolicyReader(ctxRowGate{}, appRedactor(app), app.store,
-		visibility.WithFaceOrder(faceOrder.of))
+		visibility.WithFamilies(families.scope))
 	if viewReaderErr != nil {
 		return nil, fmt.Errorf("dataentry: wire view reader: %w", viewReaderErr)
 	}
@@ -1583,6 +1561,38 @@ func newViewsHandler(app *App, st store.Store, logo *logoStore) *viewsHandler {
 			return edges, err
 		},
 	}
+}
+
+// wireValidation builds app's validator and analyze service over the gated
+// reads, with world as the scripts' default world (RR-HKVULG). NewApp calls
+// it and [App.SetWorlds] calls it again, because the schema's default world
+// is only known once the worlds are set.
+//
+// A free function rather than an App method: App is at its plimsoll method
+// load line.
+func wireValidation(app *App, meta *metamodel.Metamodel, world store.WorldScope) error {
+	gatedReader := lateGatedReader{app: app}
+	readDeps := lua.ReadDeps{
+		VisibleReader: gatedReader,
+		Tracer:        lateGatedTracer{app: app},
+		Searcher:      app.searcher,
+		Meta:          meta,
+		ProjectRoot:   app.paths.Root,
+		World:         world,
+	}
+	val, err := newGatedValidator(gatedReader, scriptTraversalGate(app), meta, readDeps, app.store)
+	if err != nil {
+		return err
+	}
+	app.validator = val
+	// analyzeService reads, relation counts included, route through the same
+	// gated reader.
+	app.analyze = analyzeService{
+		reads:     gatedReader,
+		tracer:    lateGatedTracer{app: app},
+		validator: val,
+	}
+	return nil
 }
 
 // newGatedValidator builds the request-path validator. gate must answer rule

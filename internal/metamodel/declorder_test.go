@@ -194,13 +194,13 @@ func TestDefaultWorldKey(t *testing.T) {
 		{name: "a declared world", worlds: twoWorlds, value: "editorial"},
 		{name: "the generated world without worlds", value: "default"},
 		{name: "an undeclared world", worlds: twoWorlds, value: "publsihed",
-			wantErr: `default_world: "publsihed" is not a declared world (declared, in order: [published editorial])`},
+			wantErr: `default_world: world "publsihed" is not declared (declared, in order: published, editorial)`},
 		{name: "the generated world beside declared worlds", worlds: twoWorlds, value: "default",
-			wantErr: `default_world: "default" is not a declared world`},
+			wantErr: `default_world: world "default" does not exist when worlds are declared`},
 		{name: "a world when none is declared", value: "published",
-			wantErr: `default_world: "published" is not a world; no worlds are declared`},
+			wantErr: `default_world: world "published" does not exist; no worlds are declared`},
 		{name: "case matters", worlds: twoWorlds, value: "Published",
-			wantErr: `default_world: "Published" is not a declared world`},
+			wantErr: `default_world: world "Published" is not declared`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

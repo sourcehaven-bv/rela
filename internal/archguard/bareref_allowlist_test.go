@@ -9,9 +9,6 @@ package archguard
 // resolver picks the face the request's world selects. Each entry says which
 // of the two it is and why it is right.
 var bareRefAllowlist = map[string]allowed{
-	"internal/visibility/resolver.go": {1, "InWorld's default-world branch reads the implicit face, " +
-		"the default world's answer for a bare id until TKT-7IZHP0 generates a default world " +
-		"for faced types"},
 	"internal/dataentry/rowcontent.go": {1, "loadDefaultFaceRows: the default world's rows for " +
 		"entityReader, whose routes serve only the default world (TKT-7IZHP0)"},
 	"internal/dataentry/gantt_handler.go": {1, "gantt root read: every source type is faceless " +

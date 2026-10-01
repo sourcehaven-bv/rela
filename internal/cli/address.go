@@ -10,14 +10,14 @@ import (
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // errFaceRequired is returned when a bare id names an entity that the world
-// resolves to no face: a faced type in the default world until TKT-7IZHP0.
-// The message names the entity's faces so the operator can pick one.
+// resolves to no face, such as a faced entity whose faces the default world
+// does not serve. The message names the entity's faces so the operator can
+// pick one.
 var errFaceRequired = errors.New("address one face")
 
 // addressLoader is the raw read [readAddress] needs. Satisfied by
@@ -30,72 +30,64 @@ type addressLoader interface {
 // readAddress reads the row an entity address names, as the operator: the
 // CLI applies no ACL, so it reads through the allow-all resolver.
 //
-// `ID@face` reads that face. A bare id resolves in world, which is the
-// default world from the compiled worlds (readServices.World). The default
-// world reads the implicit face, which a faced type does not have
-// (DEC-NPZICR), so a bare id of a faced entity fails with [errFaceRequired]
-// and a message naming its faces, as `rela attach` does. When TKT-7IZHP0
-// generates a default world, the same bare id resolves and the error goes
-// away without a change here.
+// `ID@face` reads that face. A bare id resolves in world, the default world
+// (readServices.World): the first face in it that the entity has. When the
+// default world serves none of the entity's faces, the read fails with
+// [errFaceRequired] and a message naming its faces, as `rela attach` does.
 //
 // An id with no stored face is [store.ErrNotFound], as is an `ID@face` whose
-// face does not exist. The faces message lists them in meta's declaration
-// order.
+// face does not exist. families (readServices.Families) orders the faces in
+// the message, as the resolver orders a Family (G18).
 func readAddress(
-	ctx context.Context, st addressLoader, meta *metamodel.Metamodel, world store.WorldScope, addr string,
+	ctx context.Context, st addressLoader, families, world store.WorldScope, addr string,
 ) (*entity.Entity, error) {
-	ref, err := entity.ParseRef(addr)
+	parsed, err := entity.ParseAddress(addr)
 	if err != nil {
 		return nil, fmt.Errorf("invalid entity address %q: %w", addr, err)
 	}
-	typ, faces, err := storedFamily(ctx, st, ref.ID)
+	typ, faces, err := storedFamily(ctx, st, parsed.ID())
 	if err != nil {
 		return nil, err
 	}
 	if len(faces) == 0 {
 		return nil, fmt.Errorf("%w: %s", store.ErrNotFound, addr)
 	}
-	res, err := visibility.NewAllowAllResolver(st, visibility.WithFaceOrder(func(entityType string) []string {
-		return metamodel.FaceOrderOf(meta, entityType)
-	}))
+	res, err := visibility.NewAllowAllResolver(st,
+		visibility.WithFamilies(func() store.WorldScope { return families }))
 	if err != nil { // coverage-ignore: defensive: NewAllowAllResolver only fails on a nil loader
 		return nil, err
 	}
-	got, ok, err := res.Address(ctx, visibility.WorldOf(world), typ, ref.String())
+	got, ok, err := res.Address(ctx, visibility.WorldOf(world), typ, parsed.String())
 	if err != nil { // coverage-ignore: defensive: the allow-all gate never fails
 		return nil, err
 	}
 	if ok {
 		return got.Entity, nil
 	}
-	if !ref.Face.IsImplicit() || slices.Contains(faces, "") {
+	if _, named := parsed.Named(); named || slices.Contains(faces, entity.ImplicitFace) {
 		return nil, fmt.Errorf("%w: %s", store.ErrNotFound, addr)
 	}
-	// Declared faces in declaration order, then any undeclared ones by
-	// token, as the resolver lists a Family. faces holds no implicit face
-	// here: that case returned above.
-	rank := map[entity.Face]int{}
-	for i, name := range metamodel.FaceOrderOf(meta, typ) {
-		rank[entity.Face(name)] = i
+	// Faces in chain order, then any the chain does not name by token, as
+	// the resolver lists a Family. faces holds no implicit face here: that
+	// case returned above.
+	chain, _ := families.For(typ)
+	rank := func(f entity.Face) int {
+		if i := slices.Index(chain.Chain, f); i >= 0 {
+			return i
+		}
+		return len(chain.Chain)
 	}
 	slices.SortStableFunc(faces, func(a, b entity.Face) int {
-		ra, aok := rank[a]
-		rb, bok := rank[b]
-		switch {
-		case aok && bok:
-			return ra - rb
-		case aok:
-			return -1
-		case bok:
-			return 1
+		if d := rank(a) - rank(b); d != 0 {
+			return d
 		}
 		return strings.Compare(a.String(), b.String())
 	})
 	named := make([]string, len(faces))
 	for i, face := range faces {
-		named[i] = entity.FormatStateRef(ref.ID, face)
+		named[i] = entity.FormatStateRef(parsed.ID(), face)
 	}
-	return nil, fmt.Errorf("%w: %s has faces; name one: %s", errFaceRequired, ref.ID, strings.Join(named, ", "))
+	return nil, fmt.Errorf("%w: %s has faces; name one: %s", errFaceRequired, parsed.ID(), strings.Join(named, ", "))
 }
 
 // storedFamily returns the type of id and every face it has a live row at,
@@ -120,9 +112,8 @@ func storedFamily(ctx context.Context, st store.EntityLister, id string) (string
 // rowsInWorld loads, content-free, the rows world selects for ids in one
 // query and returns them by id. The CLI uses it for neighbor titles, which
 // come from the face the world selects (TKT-KQXVF7 design section 5.3). A
-// neighbor the world resolves to no face, such as a faced type in the default
-// world until TKT-7IZHP0, is absent, and the caller shows its id. A failed
-// read is logged and degrades the same way.
+// neighbor the world resolves to no face is absent, and the caller shows its
+// id. A failed read is logged and degrades the same way.
 func rowsInWorld(
 	ctx context.Context, st store.EntityLister, world store.WorldScope, ids []string,
 ) map[string]*entity.Entity {
@@ -146,15 +137,16 @@ func rowsInWorld(
 // branch of the `acl` commands, which the aclmap engine answers the same way
 // under a policy.
 func requireAddressExists(ctx context.Context, st store.EntityLister, addr string) error {
-	ref, err := entity.ParseRef(addr)
+	parsed, err := entity.ParseAddress(addr)
 	if err != nil {
 		return fmt.Errorf("invalid entity address %q: %w", addr, err)
 	}
-	_, faces, err := storedFamily(ctx, st, ref.ID)
+	_, faces, err := storedFamily(ctx, st, parsed.ID())
 	if err != nil {
 		return err
 	}
-	if len(faces) == 0 || (!ref.Face.IsImplicit() && !slices.Contains(faces, ref.Face)) {
+	ref, named := parsed.Named()
+	if len(faces) == 0 || (named && !slices.Contains(faces, ref.Face)) {
 		return fmt.Errorf("entity %q not found", addr)
 	}
 	return nil

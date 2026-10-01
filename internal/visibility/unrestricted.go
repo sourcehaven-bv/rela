@@ -63,7 +63,7 @@ type UnrestrictedReader struct {
 // wants the ACL-bound reader instead — see [NewScriptReader].
 //
 // opts configure its [Resolver]; a wiring site with a metamodel passes
-// [WithFaceOrder]. A bad option panics for the same reason a nil store does.
+// [WithFamilies]. A bad option panics for the same reason a nil store does.
 func Unrestricted(st store.Store, opts ...ResolverOption) *UnrestrictedReader {
 	if st == nil {
 		panic("visibility.Unrestricted: store must be non-nil")
@@ -72,11 +72,11 @@ func Unrestricted(st store.Store, opts ...ResolverOption) *UnrestrictedReader {
 	if err != nil {
 		panic("visibility.Unrestricted: " + err.Error())
 	}
-	return &UnrestrictedReader{st: st, res: res, world: trivialWorld()}
+	return &UnrestrictedReader{st: st, res: res}
 }
 
 // WithWorld returns a copy of r whose bare-id reads resolve in w. Until the
-// wiring sets it, bare ids resolve in the trivial scope.
+// wiring sets it, the world is unset and a bare-id read fails closed.
 func (r *UnrestrictedReader) WithWorld(w World) *UnrestrictedReader {
 	c := *r
 	c.world = w

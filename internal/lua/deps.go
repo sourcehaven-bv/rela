@@ -102,7 +102,7 @@ type ReadDeps struct {
 
 	// World is the world script list reads resolve in: rela.list_entities,
 	// admin.list_entities and rela.md.entity_refs list each entity at the
-	// face this world serves. Wiring passes worlds.Compiled.Default. The
+	// face this world serves. Wiring passes worlds.Compiled.DefaultWorld. The
 	// zero value is unset, and a list read in it fails with
 	// store.ErrInvalidQuery rather than reading the trivial world.
 	World store.WorldScope

@@ -13,6 +13,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	rlua "github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
@@ -190,7 +191,7 @@ func Build(ctx context.Context, src string, opts Options) (string, error) {
 		return "", fmt.Errorf("compiling worlds: %w", err)
 	}
 	st := memstore.New()
-	tr, err := tracer.New(st, compiledWorlds.Default())
+	tr, err := tracer.New(st, compiledWorlds.DefaultWorld())
 	if err != nil { // coverage-ignore: invariant: a fresh store and a compiled world are both set
 		return "", fmt.Errorf("docs: tracer: %w", err)
 	}
@@ -248,10 +249,11 @@ func Build(ctx context.Context, src string, opts Options) (string, error) {
 	// build just seeded itself, and runs at the operator trust boundary
 	// (whoever builds the docs already has the project). No ACL applies.
 	readDeps := rlua.ReadDeps{
-		VisibleReader: visibility.Unrestricted(st, faceOrder(opts.Meta)),
+		VisibleReader: visibility.Unrestricted(st, familiesOption(compiledWorlds)).
+			WithWorld(visibility.WorldOf(compiledWorlds.DefaultWorld())),
 		Tracer:        dr.tracer,
 		Meta:          opts.Meta,
-		World:         compiledWorlds.Default(),
+		World:         compiledWorlds.DefaultWorld(),
 	}
 	// Use the BUILD's tier deadline, not the bare Tier-A buildTimeout, as the
 	// per-island cap. gopher-lua's SetContext aborts an island on its own
@@ -457,11 +459,9 @@ func (dr *docRuntime) luaFail(ls *lua.LState, format string, args ...any) int {
 	return 0
 }
 
-// faceOrder is the resolver option that lists a type's faces in m's
-// declaration order (TKT-7IZHP0 design §3.1).
-// Nil: accepted — a nil m lists faces by token.
-func faceOrder(m *metamodel.Metamodel) visibility.ResolverOption {
-	return visibility.WithFaceOrder(func(entityType string) []string {
-		return metamodel.FaceOrderOf(m, entityType)
-	})
+// familiesOption is the resolver option that lists a type's faces in
+// declaration order, from w's families scope (TKT-7IZHP0 design §3.1, G18).
+func familiesOption(w worlds.Compiled) visibility.ResolverOption {
+	families := w.Families()
+	return visibility.WithFamilies(func() store.WorldScope { return families })
 }

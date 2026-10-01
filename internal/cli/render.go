@@ -33,7 +33,7 @@ func (c *RenderCmd) Run(ctx context.Context, svc *readServices) error {
 			c.Transform, transformNames(reg))
 	}
 
-	e, err := readAddress(ctx, svc.Store, svc.Meta, svc.World, c.ID)
+	e, err := readAddress(ctx, svc.Store, svc.Families, svc.World, c.ID)
 	if err != nil {
 		return fmt.Errorf("entity %q: %w", c.ID, err)
 	}

@@ -194,7 +194,10 @@ worlds:
       projection: "Only what is in force"
       stand_in: "{face}"
     on_absent:
-      redirect: default
+      redirect: drafts
+  drafts:
+    select: draft
+    otherwise: default
 `
 	m, err := Parse([]byte(doc))
 	if err != nil {
@@ -219,7 +222,7 @@ worlds:
 		"Messages": def.Messages.Absent == "Not here yet" &&
 			def.Messages.Projection == "Only what is in force" &&
 			def.Messages.StandIn == "{face}",
-		"OnAbsent": def.OnAbsent.Redirect == "default",
+		"OnAbsent": def.OnAbsent.Redirect == "drafts",
 	}
 	for name, ok := range checks {
 		if !ok {

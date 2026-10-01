@@ -38,6 +38,4 @@ var trivialScopeAllowlist = map[string]allowed{
 		"not import internal/worlds), so its reads serve the trivial default world"},
 	"internal/dataentry/world.go": {1, "defaultWorldHandle serves an unstamped request until " +
 		"TKT-7IZHP0 PR 5a switches it to the configured default world"},
-	"internal/visibility/resolver.go": {1, "trivialWorld is the script and unrestricted readers' " +
-		"start world until TKT-7IZHP0 PR 5a wires WithWorld everywhere"},
 }

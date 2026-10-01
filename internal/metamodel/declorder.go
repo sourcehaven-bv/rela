@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -248,24 +249,56 @@ func isPermutation[V any](order []string, m map[string]V) bool {
 // validateDefaultWorld checks the top-level `default_world:` key: the world a
 // request uses when it names none (TKT-7IZHP0 design §21 D3). With worlds
 // declared it must name one of them; with none it may only be the generated
-// default world. Unset is always valid. PR 1 validates the key; the worlds
-// compiler starts reading it in PR 5a.
+// default world. Unset is always valid; [EffectiveDefaultWorld] then picks.
 func validateDefaultWorld(m *Metamodel) []string {
 	w := m.DefaultWorld
 	if w == "" {
 		return nil
 	}
-	if len(m.Worlds) == 0 {
-		if w == DefaultWorldName {
+	if err := CheckWorldName(m, w); err != nil {
+		return []string{"default_world: " + err.Error()}
+	}
+	return nil
+}
+
+// EffectiveDefaultWorld returns the name of the world a request uses when it
+// names none (TKT-7IZHP0 design §21 D3): the `default_world:` key when set,
+// else the first declared world, else the generated [DefaultWorldName].
+// Nil: accepted, returns [DefaultWorldName].
+func EffectiveDefaultWorld(m *Metamodel) string {
+	if m == nil {
+		return DefaultWorldName
+	}
+	if m.DefaultWorld != "" {
+		return m.DefaultWorld
+	}
+	if order := WorldOrderOf(m); len(order) > 0 {
+		return order[0]
+	}
+	return DefaultWorldName
+}
+
+// CheckWorldName returns an error unless name names a world of m. With
+// worlds declared, only they exist: [DefaultWorldName] is generated only when
+// none is declared, so naming it then is an error, never a silent mapping to
+// the default world (TKT-7IZHP0 design D11). The message lists the declared
+// worlds in order.
+// Nil: accepted — a nil m declares no worlds.
+func CheckWorldName(m *Metamodel, name string) error {
+	declared := WorldOrderOf(m)
+	if len(declared) == 0 {
+		if name == DefaultWorldName {
 			return nil
 		}
-		return []string{fmt.Sprintf(
-			"default_world: %q is not a world; no worlds are declared, so the only world is the generated %q",
-			w, DefaultWorldName)}
+		return fmt.Errorf("world %q does not exist; no worlds are declared, so the only world is the generated %q",
+			name, DefaultWorldName)
 	}
-	if _, ok := m.Worlds[w]; ok {
+	if _, ok := m.Worlds[name]; ok {
 		return nil
 	}
-	return []string{fmt.Sprintf(
-		"default_world: %q is not a declared world (declared, in order: %v)", w, WorldOrderOf(m))}
+	if name == DefaultWorldName {
+		return fmt.Errorf("world %q does not exist when worlds are declared; name a declared world (%s)",
+			name, strings.Join(declared, ", "))
+	}
+	return fmt.Errorf("world %q is not declared (declared, in order: %s)", name, strings.Join(declared, ", "))
 }

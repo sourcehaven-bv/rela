@@ -105,7 +105,7 @@ var trivialScopeGuard = guard{
 	what: "store.TrivialScope call",
 	list: "trivialScopeAllowlist",
 	advice: "take the world from the request (dataentry worldScopeFrom), the wiring " +
-		"(worlds.Compiled.Default, lua.ReadDeps.World, mcp.Deps.World, appbuild) or the caller. " +
+		"(worlds.Compiled.DefaultWorld, lua.ReadDeps.World, mcp.Deps.World, appbuild) or the caller. " +
 		"A hard-coded trivial scope is not the configured default world once a project declares " +
 		"default_world (TKT-7IZHP0), and every call site would have to be found again",
 }
