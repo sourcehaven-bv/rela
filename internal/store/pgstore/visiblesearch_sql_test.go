@@ -1,6 +1,8 @@
 package pgstore
 
 import (
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -8,40 +10,41 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
-// TestBuildVisibleSearchSQL_LimitPlacement pins the load-bearing LIMIT
-// rule deterministically (no database): with Go-side q.Filters pending,
-// the SQL LIMIT must be omitted — a LIMIT below the filter would spend
-// the row budget on rows MatchFilters is about to drop, re-opening the
-// starvation gap the post-visibility contract closes. Without filters,
-// the LIMIT is pushed down.
-func TestBuildVisibleSearchSQL_LimitPlacement(t *testing.T) {
+// TestBuildVisibleSearchSQL_Keyset pins the page shape deterministically (no
+// database): every statement is one LIMITed page, and a resumed page carries
+// the keyset of the result's order (rank, then id; id alone without text).
+func TestBuildVisibleSearchSQL_Keyset(t *testing.T) {
 	scope := map[string]search.TypeScope{"ticket": {AllowAll: true}}
 
-	t.Run("no filters: LIMIT pushed into SQL", func(t *testing.T) {
-		sqlText, args, ok := buildVisibleSearchSQL(search.Query{Text: "alpha", Limit: 7}, scope, nil)
+	t.Run("first page: LIMIT, no keyset", func(t *testing.T) {
+		sqlText, args, ok := buildVisibleSearchSQL(search.Query{Text: "alpha"}, scope, nil, nil, 7)
 		if !ok {
 			t.Fatal("expected a query")
 		}
-		if !strings.Contains(sqlText, " LIMIT ") {
-			t.Errorf("LIMIT missing from SQL: %s", sqlText)
+		if !strings.HasSuffix(sqlText, " LIMIT $"+strconv.Itoa(len(args))) || args[len(args)-1] != 7 {
+			t.Errorf("want a trailing LIMIT 7: %s %v", sqlText, args)
 		}
-		if args[len(args)-1] != 7 {
-			t.Errorf("last arg = %v, want the limit 7", args[len(args)-1])
+		if strings.Contains(sqlText, "e.id >") {
+			t.Errorf("first page must carry no keyset: %s", sqlText)
 		}
 	})
 
-	t.Run("with filters: LIMIT stays above MatchFilters", func(t *testing.T) {
-		q := search.Query{
-			Text:    "alpha",
-			Limit:   7,
-			Filters: []search.PropertyFilter{{Property: "status", Value: "open", Op: search.FilterEq}},
+	t.Run("text: resumes after rank and id", func(t *testing.T) {
+		after := &visibleKey{rank: 0.5, id: "T-9"}
+		sqlText, args, _ := buildVisibleSearchSQL(search.Query{Text: "alpha"}, scope, nil, after, 7)
+		if !strings.Contains(sqlText, " OR (") || !strings.Contains(sqlText, "e.id >") {
+			t.Errorf("want a (rank, id) keyset: %s", sqlText)
 		}
-		sqlText, _, ok := buildVisibleSearchSQL(q, scope, nil)
-		if !ok {
-			t.Fatal("expected a query")
+		if !slices.Contains(args, any(float32(0.5))) || !slices.Contains(args, any("T-9")) {
+			t.Errorf("keyset args missing: %v", args)
 		}
-		if strings.Contains(sqlText, " LIMIT ") {
-			t.Errorf("SQL LIMIT must be omitted when Go-side filters remain: %s", sqlText)
+	})
+
+	t.Run("no text: resumes after id", func(t *testing.T) {
+		after := &visibleKey{id: "T-9"}
+		sqlText, _, _ := buildVisibleSearchSQL(search.Query{}, scope, nil, after, 7)
+		if !strings.Contains(sqlText, "AND e.id > $") || strings.Contains(sqlText, " OR (") {
+			t.Errorf("want an id-only keyset: %s", sqlText)
 		}
 	})
 }
@@ -63,18 +66,18 @@ func TestBuildVisibleSearchSQL_Shape(t *testing.T) {
 	}
 
 	t.Run("empty scope: no query", func(t *testing.T) {
-		if _, _, ok := buildVisibleSearchSQL(search.Query{Text: "x"}, nil, nil); ok {
+		if _, _, ok := buildVisibleSearchSQL(search.Query{Text: "x"}, nil, nil, nil, 1); ok {
 			t.Error("nil scope must not produce a query")
 		}
 		deny := map[string]search.TypeScope{"ticket": {}}
-		if _, _, ok := buildVisibleSearchSQL(search.Query{Text: "x"}, deny, nil); ok {
+		if _, _, ok := buildVisibleSearchSQL(search.Query{Text: "x"}, deny, nil, nil, 1); ok {
 			t.Error("zero-value-only scope must not produce a query")
 		}
 	})
 
 	t.Run("wildcard allow: no visibility clause", func(t *testing.T) {
 		scope := map[string]search.TypeScope{search.WildcardType: {AllowAll: true}}
-		sqlText, _, ok := buildVisibleSearchSQL(search.Query{Text: "x"}, scope, nil)
+		sqlText, _, ok := buildVisibleSearchSQL(search.Query{Text: "x"}, scope, nil, nil, 1)
 		if !ok {
 			t.Fatal("expected a query")
 		}
@@ -90,7 +93,7 @@ func TestBuildVisibleSearchSQL_Shape(t *testing.T) {
 			"doc":    {Query: docPred},
 			"ticket": {Query: pred()},
 		}
-		sqlText, _, ok := buildVisibleSearchSQL(search.Query{Text: "x"}, scope, nil)
+		sqlText, _, ok := buildVisibleSearchSQL(search.Query{Text: "x"}, scope, nil, nil, 1)
 		if !ok {
 			t.Fatal("expected a query")
 		}

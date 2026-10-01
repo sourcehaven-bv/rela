@@ -223,6 +223,7 @@ func RunAll(t *testing.T, f Factory, sf SearchFactory, vsf VisibleSearchFactory,
 	t.Run("Validation", func(t *testing.T) { RunValidationTests(t, f) })
 	t.Run("Freshness", func(t *testing.T) { RunFreshnessTests(t, f) })
 	t.Run("Tx", func(t *testing.T) { RunTxTests(t, f) })
+	t.Run("IteratorNesting", func(t *testing.T) { RunIteratorNestingTests(t, f, vsf) })
 
 	// The transaction tier is declared, not inferred. RunTxRollbackTests used
 	// to be reachable only by calling it separately, so a backend with genuine

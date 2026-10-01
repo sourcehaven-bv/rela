@@ -65,6 +65,12 @@ type neoqQueue struct {
 // worker forever, not a latency target.
 const handlerTimeout = 15 * time.Minute
 
+// handlerCancelGrace is how much earlier than [handlerTimeout] dispatch
+// cancels the handler's own context. A handler that honors cancellation then
+// returns its error while neoq still waits for it, so the attempt is recorded
+// as the handler's failure rather than abandoned as a timeout.
+const handlerCancelGrace = 30 * time.Second
+
 // payloadKindKey is the payload field carrying [Job.Kind] through neoq.
 //
 // Prefixed to avoid colliding with a caller's own payload keys — the whole
@@ -418,6 +424,13 @@ func (q *neoqQueue) dispatch(ctx context.Context) error {
 	if hasDeadline {
 		job.Deadline = deadline
 	}
+
+	// The cap must reach the handler as a deadline. neoq's JobTimeout only
+	// abandons a handler: handler.Exec derives a timeout context but passes
+	// the PARENT to Handle, so a wedged handler keeps running, and keeps any
+	// pool connection it holds, after neoq has given up on it (BUG-9TGOH1).
+	ctx, cancel := context.WithTimeout(ctx, handlerTimeout-handlerCancelGrace)
+	defer cancel()
 
 	if err := h(ctx, job); err != nil {
 		// Logged at Warn, not Error: a failure that the retry policy will

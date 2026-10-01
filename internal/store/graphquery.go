@@ -499,7 +499,8 @@ type EndpointPredicate struct {
 
 // GraphQueryer is the read-side interface for graph-shape queries.
 // Embedded into Store; surfaces independently so backend
-// implementations can be written and tested without the full Store.
+// implementations can be written and tested without the full Store. Its
+// iterators follow [EntityReader]'s rule on resources held across yield.
 type GraphQueryer interface {
 	// GraphQuery returns an iterator over entities matching q. The
 	// iterator yields (*entity.Entity, nil) for each match; on error
