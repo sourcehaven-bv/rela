@@ -17,6 +17,7 @@ type CreateCmd struct {
 	Status   string   `short:"s" help:"Entity status (defaults to entity type's default)."`
 	Priority string   `short:"p" help:"Entity priority."`
 	ID       string   `name:"id" help:"Custom entity ID (auto-generated if not provided)."`
+	Face     string   `help:"Face to create; required for a type that declares faces."`
 	Property []string `short:"P" help:"Set a property (format: key=value, can be repeated)."`
 	Body     string   `short:"b" help:"Markdown body content for the entity."`
 	BodyFile string   `name:"body-file" short:"B" help:"Read body content from file (use - for stdin)."`
@@ -57,7 +58,7 @@ func (c *CreateCmd) Run(ctx context.Context, svc *writeServices) error {
 			Properties: props,
 			Content:    bodyContent,
 		},
-		entitypkg.CreateOptions{ID: c.ID},
+		entitypkg.CreateOptions{ID: c.ID, Face: entitypkg.Face(c.Face)},
 	)
 	if err != nil {
 		return err

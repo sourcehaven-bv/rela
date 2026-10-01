@@ -75,7 +75,8 @@ func (a *aclBindings) luaAuthz(ls *lua.LState, wantAllow bool) int {
 	if !validOp(op) {
 		return a.luaFail(ls, "%s{op=%q}: unknown op — one of create, update, delete, rename", verb, op)
 	}
-	face, msg := claimFace(verb, typ, faceArg, metamodel.FaceOrderOf(a.meta, typ))
+	declared := metamodel.FaceOrderOf(a.meta, typ)
+	faces, msg := claimFaces(verb, acl.Op(op), typ, faceArg, declared)
 	if msg != "" {
 		return a.luaFail(ls, "%s", msg)
 	}
@@ -118,18 +119,25 @@ func (a *aclBindings) luaAuthz(ls *lua.LState, wantAllow bool) int {
 	}
 
 	ctx := principal.With(a.ctx, principal.Principal{User: who, Tool: principal.ToolCLI})
-	dec := d.AuthorizeWrite(ctx, acl.WriteRequest{
-		Op: acl.Op(op),
-		// The claim's face, checked by claimFace: the implicit face for a
-		// faceless type, a declared face for a faced one.
-		Subject: acl.NewEntitySubject(typ, id, face),
-	})
+	// The claim holds when every face in it is allowed, as the manager
+	// authorizes a family operation on every face it touches; the first
+	// refusal is the decision reported.
+	var dec acl.Decision
+	for _, face := range faces {
+		dec = d.AuthorizeWrite(ctx, acl.WriteRequest{
+			Op:      acl.Op(op),
+			Subject: acl.NewEntitySubject(typ, id, face),
+		})
+		if !dec.Allow {
+			break
+		}
+	}
 
 	// The type is shown with its face, so a reader sees which face the claim
-	// is about. A faceless type renders as before.
+	// is about. A faceless type and a family claim render as the bare type.
 	claimed := typ
-	if !face.IsImplicit() {
-		claimed = typ + entity.StateRefSeparator + face.String()
+	if len(faces) == 1 && !faces[0].IsImplicit() {
+		claimed = typ + entity.StateRefSeparator + faces[0].String()
 	}
 	if msg := checkAuthz(verb, who, op, claimed, wantAllow, because, dec); msg != "" {
 		return a.luaFail(ls, "%s", msg)
@@ -232,32 +240,51 @@ func reasonMatches(dec acl.Decision, because string) bool {
 	return len(because) >= minReasonFragment && strings.Contains(dec.Reason, because)
 }
 
-// claimFace resolves the face an authorization claim is about, or returns a
-// failure message.
+// claimFaces resolves the faces an authorization claim is about, or returns
+// a failure message. The claim holds only if it holds on every one.
 //
-// A faced type stores no row at the implicit face, so a claim that names no
-// face asks about a row that cannot exist. A refuses{} there would pass
-// against any policy, so a faced type requires `face=`. A faceless type
-// refuses one, since it has no face to name.
-func claimFace(verb, typ, faceArg string, declared []string) (face entity.Face, failure string) {
+// A faceless type has the implicit face and refuses `face=`, since it has no
+// face to name. On a faced type the faces follow the manager (BUG-GJUBSA): a
+// rename moves the whole family, so it is about every declared face and
+// refuses `face=`; a delete without `face=` is the family delete, about every
+// declared face, and with one is that face's delete; create and update write
+// one face, so they require `face=`. A claim naming no face there would ask
+// about a row that cannot exist, and a refuses{} would pass against any
+// policy.
+func claimFaces(
+	verb string, op acl.Op, typ, faceArg string, declared []string,
+) (faces []entity.Face, failure string) {
 	if len(declared) == 0 {
 		if faceArg != "" {
-			return "", fmt.Sprintf("%s{type=%q, face=%q}: %q declares no faces, so the claim "+
+			return nil, fmt.Sprintf("%s{type=%q, face=%q}: %q declares no faces, so the claim "+
 				"has no face to name. Remove `face=`", verb, typ, faceArg, typ)
 		}
-		return entity.ImplicitFace, ""
+		return []entity.Face{entity.ImplicitFace}, ""
 	}
-	if faceArg == "" {
-		return "", fmt.Sprintf("%s{type=%q}: %q declares faces (%s) and stores no row without one, "+
+	family := func() []entity.Face {
+		out := make([]entity.Face, len(declared))
+		for i, f := range declared {
+			out[i] = entity.Face(f)
+		}
+		return out
+	}
+	switch {
+	case op == acl.OpRename && faceArg != "":
+		return nil, fmt.Sprintf("%s{type=%q, face=%q}: a rename moves every face of %q, so it "+
+			"names no face. Remove `face=`", verb, typ, faceArg, typ)
+	case op == acl.OpRename, op == acl.OpDelete && faceArg == "":
+		return family(), ""
+	case faceArg == "":
+		return nil, fmt.Sprintf("%s{type=%q}: %q declares faces (%s) and stores no row without one, "+
 			"so a claim that names no face would hold against any policy. Add face=, one of: %s",
 			verb, typ, typ, strings.Join(declared, ", "), strings.Join(declared, ", "))
 	}
 	face, err := entity.ParseFace(faceArg)
 	if err != nil || !slices.Contains(declared, faceArg) {
-		return "", fmt.Sprintf("%s{type=%q, face=%q}: not a face of %q. Declared faces: %s",
+		return nil, fmt.Sprintf("%s{type=%q, face=%q}: not a face of %q. Declared faces: %s",
 			verb, typ, faceArg, typ, strings.Join(declared, ", "))
 	}
-	return face, ""
+	return []entity.Face{face}, ""
 }
 
 func validOp(op string) bool {

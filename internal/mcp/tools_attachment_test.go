@@ -401,11 +401,11 @@ func TestAttachments_PerFace(t *testing.T) {
 	if got := fileNames(f.list(ctx, t, sheetID)); len(got) != 1 || got[0] != "file/a.txt" {
 		t.Errorf("bare id lists %v, want face a's [file/a.txt]", got)
 	}
-	// A write names its face, so a bare id is refused with the same hint as
-	// a missing one: the answer cannot name the faces without revealing the
-	// entity.
-	mustFail(t, f.attach(ctx, t, sheetID, "file", "bare.txt", []byte("x")), "ID@face")
-	mustFail(t, f.attach(ctx, t, missingID, "file", "bare.txt", []byte("x")), "ID@face")
+	// A write edits one face. The bare id has two readable faces in the
+	// default world, so it is refused naming them; the caller may read both,
+	// so naming them reveals nothing (TKT-7IZHP0 §6).
+	mustFail(t, f.attach(ctx, t, sheetID, "file", "bare.txt", []byte("x")), sheetID+"@a, "+sheetID+"@b")
+	mustFail(t, f.attach(ctx, t, missingID, "file", "bare.txt", []byte("x")), "entity not found")
 }
 
 func TestAttachments_UploadTooLarge(t *testing.T) {

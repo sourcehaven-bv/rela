@@ -2,6 +2,7 @@ package dataentry
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"iter"
@@ -9,6 +10,7 @@ import (
 	"net/http"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	entitypkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
@@ -320,6 +322,62 @@ func readAddressedOr404(
 		return nil, false
 	}
 	return e, true
+}
+
+// writeTargetOr404 resolves a write's path address to the one face it
+// edits ([visibility.Resolver.WriteTarget]) in the request's world, and
+// reads that face. A miss is the uniform 404; a bare id that does not pick
+// exactly one face is a 422 `face_required` listing the readable faces.
+func writeTargetOr404(
+	w http.ResponseWriter, r *http.Request, vr visibleReader, entityType, addr string,
+) (*entitypkg.Entity, bool) {
+	parsed, err := entitypkg.ParseAddress(addr)
+	if err != nil {
+		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
+		return nil, false
+	}
+	world := worldFromContext(r.Context()).visibility()
+	ref, ok, err := vr.resolver.WriteTarget(r.Context(), world, entityType, parsed)
+	var amb *visibility.AmbiguousAddressError
+	switch {
+	case errors.As(err, &amb):
+		writeFaceRequired(w, r, amb)
+		return nil, false
+	case err != nil:
+		writeGateError(w, r, err)
+		return nil, false
+	case !ok:
+		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
+		return nil, false
+	}
+	e, ok, err := rowOf(vr.resolver.Ref(r.Context(), world, entityType, ref))
+	if err != nil {
+		writeGateError(w, r, err)
+		return nil, false
+	}
+	if !ok {
+		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
+		return nil, false
+	}
+	return e, true
+}
+
+// writeFaceRequired answers a bare address that names no single face.
+func writeFaceRequired(w http.ResponseWriter, r *http.Request, amb *visibility.AmbiguousAddressError) {
+	faces := make([]string, len(amb.Faces))
+	for i, f := range amb.Faces {
+		faces[i] = entitypkg.FormatStateRef(amb.ID, f)
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(http.StatusUnprocessableEntity)
+	_ = json.NewEncoder(w).Encode(v1.Error{
+		Type:     "https://rela.dev/errors/face_required",
+		Title:    "Address one face",
+		Status:   http.StatusUnprocessableEntity,
+		Detail:   amb.Error(),
+		Instance: r.URL.Path,
+		Faces:    faces,
+	})
 }
 
 // familyReadableOr404 reports whether the principal may read some face of

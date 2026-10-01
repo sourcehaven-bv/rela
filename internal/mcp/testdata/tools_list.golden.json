@@ -70,6 +70,10 @@
           "description": "Markdown body",
           "type": "string"
         },
+        "face": {
+          "description": "Face to create; required for a type that declares faces",
+          "type": "string"
+        },
         "id": {
           "description": "Custom ID (only for types with id_type manual)",
           "type": "string"
@@ -471,7 +475,7 @@
           "type": "string"
         },
         "id": {
-          "description": "Entity ID",
+          "description": "Entity ID, or ID@face for one face of a faced type",
           "type": "string"
         },
         "properties": {

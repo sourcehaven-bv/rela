@@ -3,13 +3,16 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
 	mcpgo "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 func (s *Server) handleListRelations(
@@ -91,9 +94,10 @@ func (s *Server) handleCreateRelation(
 			return errorResult("entity not found: " + id), nil
 		}
 	}
-	// readable accepted fromID, so it parses. `ID@face` names the tail of a
-	// content-scoped edge (BUG-J3PBFN).
-	from, _ := entity.ParseRef(fromID)
+	from, tailErr := relationTail(ctx, snap.deps.Store, snap.deps.Meta, fromID, relType)
+	if tailErr != nil {
+		return errorResult(tailErr.Error()), nil
+	}
 
 	key := entity.RelationKey{From: from.ID, FromFace: from.Face, Type: relType, To: toID}
 	opts := entity.RelationOptions{
@@ -130,11 +134,11 @@ func (s *Server) handleDeleteRelation(
 	}
 	toID = trimID(toID)
 
-	// The tail is part of the edge's identity: `ID@face` names the
-	// content-scoped edge on that face, a bare id the default-tail edge
-	// (BUG-J3PBFN).
-	from, parseErr := entity.ParseRef(fromID)
-	if parseErr != nil || !edgeVisible(ctx, snap.deps.Store, from, relType, toID) {
+	from, tailErr := relationTail(ctx, snap.deps.Store, snap.deps.Meta, fromID, relType)
+	if amb, ok := errors.AsType[*visibility.AmbiguousAddressError](tailErr); ok {
+		return errorResult(amb.Error()), nil
+	}
+	if tailErr != nil || !edgeVisible(ctx, snap.deps.Store, from, relType, toID) {
 		return errorResult(
 			fmt.Sprintf("relation not found: %s --%s--> %s", fromID, relType, toID)), nil
 	}
@@ -147,6 +151,33 @@ func (s *Server) handleDeleteRelation(
 
 	return textResult(
 		fmt.Sprintf("Removed link: %s --%s--> %s", fromID, relType, toID)), nil
+}
+
+// relationTail is the tail an edge of relType from addr hangs on; the tail
+// is part of the edge's identity (BUG-J3PBFN). A content-scoped edge
+// belongs to one face: `ID@face` names it, and a bare id resolves to it as
+// a write does ([GraphReader.WriteTarget]), so a miss is "entity not
+// found" and an ambiguous id names its faces. An identity-scoped edge
+// hangs on the entity, at the implicit face; a named face there is kept so
+// the write path refuses it.
+func relationTail(
+	ctx context.Context, st GraphReader, meta *metamodel.Metamodel, addr, relType string,
+) (entity.Ref, error) {
+	if metamodel.IsContentScoped(meta, relType) {
+		ref, err := st.WriteTarget(ctx, addr)
+		if _, ok := errors.AsType[*visibility.AmbiguousAddressError](err); ok {
+			return entity.Ref{}, err
+		}
+		if err != nil {
+			return entity.Ref{}, errors.New("entity not found: " + addr)
+		}
+		return ref, nil
+	}
+	ref, err := entity.ParseRef(addr)
+	if err != nil {
+		return entity.Ref{}, errors.New("entity not found: " + addr)
+	}
+	return ref, nil
 }
 
 // edgeVisible reports whether the gated store serves the edge tailed at from.

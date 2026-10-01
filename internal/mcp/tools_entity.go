@@ -19,6 +19,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/relresolve"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 func (s *Server) handleListEntities(
@@ -254,6 +255,7 @@ func (s *Server) handleCreateEntity(
 	}
 	content := args.GetString("content", "")
 	customID := args.GetString("id", "")
+	face := entity.Face(args.GetString("face", ""))
 
 	// Resolve type
 	resolvedType, _, resolveErr := snap.handlers.types.resolveEntityType(typeName)
@@ -275,7 +277,7 @@ func (s *Server) handleCreateEntity(
 			Properties: properties,
 			Content:    content,
 		},
-		entity.CreateOptions{ID: customID},
+		entity.CreateOptions{ID: customID, Face: face},
 	)
 	if createErr != nil {
 		return errorResult(createErr.Error()), nil
@@ -311,7 +313,14 @@ func (s *Server) handleUpdateEntity(
 
 	d := snap.deps
 	st := d.Store
-	e, getErr := st.Resolve(ctx, id)
+	target, targetErr := st.WriteTarget(ctx, id)
+	if amb, ok := errors.AsType[*visibility.AmbiguousAddressError](targetErr); ok {
+		return errorResult(amb.Error()), nil
+	}
+	if targetErr != nil {
+		return errorResult("entity not found: " + id), nil
+	}
+	e, getErr := st.Resolve(ctx, target.String())
 	if getErr != nil {
 		return errorResult("entity not found: " + id), nil
 	}
@@ -351,7 +360,7 @@ func (s *Server) handleUpdateEntity(
 		patch.Content = &content
 	}
 
-	updateResult, updateErr := snap.deps.EntityManager.PatchEntity(ctx, id, patch)
+	updateResult, updateErr := snap.deps.EntityManager.PatchEntity(ctx, target.String(), patch)
 	if updateErr != nil {
 		return errorResult(updateErr.Error()), nil
 	}

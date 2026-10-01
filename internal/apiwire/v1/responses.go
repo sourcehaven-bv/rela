@@ -673,6 +673,10 @@ type Error struct {
 	Detail   string       `json:"detail,omitempty"`
 	Instance string       `json:"instance,omitempty"`
 	Errors   []FieldError `json:"errors,omitempty"`
+	// Faces lists the addresses (`ID@face`) a `face_required` refusal of a
+	// bare id offers: the faces of the entity the caller may read, in
+	// declaration order. A client retries with one of them.
+	Faces []string `json:"faces,omitempty"`
 }
 
 // FieldError represents a validation error on a specific field.

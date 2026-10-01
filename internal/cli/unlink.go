@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -17,13 +18,16 @@ type UnlinkCmd struct {
 
 // Run dispatches `rela unlink <from> <relation> <to>`.
 //
-// The tail is part of a relation's identity, so `ID@face` names the
-// content-scoped edge on that face and a bare id the default-tail edge
-// (BUG-J3PBFN).
+// The tail is part of a relation's identity (BUG-J3PBFN): a content-scoped
+// edge hangs on one face, which `ID@face` names or a bare id resolves to as
+// a write does; an identity-scoped edge hangs on the implicit face.
 func (c *UnlinkCmd) Run(ctx context.Context, svc *writeServices) error {
-	from, err := entity.ParseRef(c.From)
-	if err != nil {
+	from, err := relationTail(ctx, &svc.readServices, c.From, c.Relation)
+	if errors.Is(err, store.ErrNotFound) {
 		return fmt.Errorf("relation not found: %s --%s--> %s", c.From, c.Relation, c.To)
+	}
+	if err != nil {
+		return err
 	}
 	exists, err := relationExists(ctx, svc.Store, from, c.Relation, c.To)
 	if err != nil {

@@ -1864,6 +1864,35 @@ func gateWriteTarget(ctx context.Context, ls *lua.LState, rd EntityReader, ids .
 	return true
 }
 
+// writeTargeter resolves an address to the one face a write edits.
+// [visibility.ScriptReader] and [visibility.UnrestrictedReader] provide it.
+type writeTargeter interface {
+	WriteTarget(ctx context.Context, addr string) (entity.Ref, error)
+}
+
+// resolveWriteTarget resolves addr to the face a face-level write edits
+// ([visibility.Resolver.WriteTarget]), raising on failure. A miss raises
+// "entity not found"; a bare id that picks no single face raises naming the
+// faces the caller may read. A reader without WriteTarget is refused: every
+// gated reader provides it, so its absence is a wiring bug.
+func resolveWriteTarget(ctx context.Context, ls *lua.LState, rd EntityReader, addr string) (entity.Ref, bool) {
+	wt, ok := rd.(writeTargeter)
+	if !ok {
+		ls.RaiseError("entity not found: %s", addr)
+		return entity.Ref{}, false
+	}
+	ref, err := wt.WriteTarget(ctx, addr)
+	if amb, isAmb := errors.AsType[*visibility.AmbiguousAddressError](err); isAmb {
+		ls.RaiseError("%s", amb.Error())
+		return entity.Ref{}, false
+	}
+	if err != nil {
+		ls.RaiseError("entity not found: %s", addr)
+		return entity.Ref{}, false
+	}
+	return ref, true
+}
+
 // familyReader answers which faces of an id the caller may read, from headers
 // only. [visibility.ScriptReader] and [visibility.UnrestrictedReader] provide
 // it.
@@ -1933,11 +1962,16 @@ func (r *Runtime) luaUpdateEntity(ls *lua.LState) int {
 		patch.Content = &content
 	}
 
-	if rd, ok := r.reader(ls, "rela.update_entity"); !ok || !gateWriteTarget(ctx, ls, rd, id) {
+	rd, ok := r.reader(ls, "rela.update_entity")
+	if !ok {
+		return 0
+	}
+	target, ok := resolveWriteTarget(ctx, ls, rd, id)
+	if !ok {
 		return 0
 	}
 
-	result, err := r.deps.EntityManager.PatchEntity(ctx, id, patch)
+	result, err := r.deps.EntityManager.PatchEntity(ctx, target.String(), patch)
 	if err != nil {
 		// Preserve the pre-TKT-80EWGM message for a missing entity: scripts
 		// match on it. The check is STRUCTURAL (see [NotFoundError]) — a

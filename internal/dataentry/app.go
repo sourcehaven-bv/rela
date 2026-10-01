@@ -702,6 +702,21 @@ func (r lateGatedReader) ListRelationsStrict(
 	return sr.ListRelationsStrict(ctx, q)
 }
 
+// writeTargeter resolves the one face a script write edits.
+type writeTargeter interface {
+	WriteTarget(ctx context.Context, addr string) (entity.Ref, error)
+}
+
+// WriteTarget forwards to the live gated reader, refused like Family when
+// the reader lacks it.
+func (r lateGatedReader) WriteTarget(ctx context.Context, addr string) (entity.Ref, error) {
+	wt, ok := r.reader().(writeTargeter)
+	if !ok {
+		return entity.Ref{}, errors.New("dataentry: script reader has no WriteTarget")
+	}
+	return wt.WriteTarget(ctx, addr)
+}
+
 // familyReader is the header-only "which faces of this id may the caller
 // read" check a script write target needs.
 type familyReader interface {

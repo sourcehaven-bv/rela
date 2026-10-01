@@ -157,9 +157,34 @@ var perCollectionVerbs = []string{"create"}
 func (svc affordanceService) computeActions(ctx context.Context, e *entityPkg.Entity) map[string]bool {
 	out := make(map[string]bool, len(perItemVerbs))
 	for _, v := range perItemVerbs {
+		if v == "rename" {
+			out[v] = svc.renameAllowed(ctx, e)
+			continue
+		}
 		out[v] = svc.acl().AuthorizeWrite(ctx, translateVerb(v, e.Type, e.ID, e.Face)).Allow
 	}
 	return out
+}
+
+// renameAllowed is the rename verdict for e. A rename moves the whole
+// family, so the manager authorizes it on every stored face (BUG-GJUBSA),
+// and so does this: the served face alone would offer a rename the write
+// refuses. Delete stays per face, because a DELETE on `ID@face` removes
+// that face only. A failed family read answers false.
+func (svc affordanceService) renameAllowed(ctx context.Context, e *entityPkg.Entity) bool {
+	if e.Face.IsImplicit() || svc.sourceFamily == nil {
+		return svc.acl().AuthorizeWrite(ctx, translateVerb("rename", e.Type, e.ID, e.Face)).Allow
+	}
+	family, err := svc.sourceFamily(ctx, e.ID)
+	if err != nil || len(family) == 0 {
+		return false
+	}
+	for _, f := range family {
+		if !svc.acl().AuthorizeWrite(ctx, translateVerb("rename", f.Type, f.ID, f.Face)).Allow {
+			return false
+		}
+	}
+	return true
 }
 
 // computeCollectionActions returns the collection-scope verb verdict

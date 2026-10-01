@@ -27,6 +27,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // MaxUploadBytes is the largest file attach_file accepts. It is lower than the
@@ -529,19 +530,19 @@ func attachmentContent(entityID, property, fileName string, data []byte) mcpgo.C
 func (h attachmentHandler) writePreflight(
 	ctx context.Context, snap AttachmentSnapshot, id, property, fileName string,
 ) (*entity.Entity, metamodel.PropertyDef, *mcpgo.CallToolResult) {
-	e, failed := h.gatedEntity(ctx, id)
+	// A write edits one face: a bare id names it only when exactly one
+	// readable face is in the default world, else the answer lists the
+	// readable faces (TKT-7IZHP0 §6).
+	target, terr := h.store.WriteTarget(ctx, id)
+	if amb, ok := errors.AsType[*visibility.AmbiguousAddressError](terr); ok {
+		return nil, metamodel.PropertyDef{}, errorResult(amb.Error())
+	}
+	if terr != nil {
+		return nil, metamodel.PropertyDef{}, errorResult("entity not found: " + id)
+	}
+	e, failed := h.gatedEntity(ctx, target.String())
 	if failed != nil {
 		return nil, metamodel.PropertyDef{}, failed
-	}
-	// A bare id reads in the default world, which picks a face for the
-	// reader. A write names the face it changes, so a bare id that resolved
-	// to a named face is refused with the same hint as a miss: the caller
-	// can read the entity, so the hint reveals nothing.
-	if addr, perr := entity.ParseAddress(id); perr == nil {
-		if _, named := addr.Named(); !named && !e.Face.IsImplicit() {
-			return nil, metamodel.PropertyDef{}, errorResult("entity not found: " + id +
-				" (an entity with content states is addressed as ID@face)")
-		}
 	}
 	propDef, err := fileProperty(snap.Meta, e, property)
 	if err != nil {

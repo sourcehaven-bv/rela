@@ -366,3 +366,29 @@ rela.delete_relation("TICK-1", "blocks", "TICK-2", { face = "published" })
 		t.Errorf("fused from reached the manager %d time(s)", mgr.relationUnlinked)
 	}
 }
+
+// TestUpdateEntity_FacedBareIDNamesItsFaces pins rela.update_entity's write
+// target (TKT-7IZHP0 §6): a bare id that picks no single face raises naming
+// the faces.
+func TestUpdateEntity_FacedBareIDNamesItsFaces(t *testing.T) {
+	ws := newMockWorkspace(t)
+	for _, f := range []entity.Face{"draft", "published"} {
+		ws.seedEntity(&entity.Entity{ID: "TKT-9", Type: "ticket", Face: f, Properties: map[string]any{"title": "T"}})
+	}
+	mgr := &mockManager{ws: ws}
+	deps := ws.services(t.TempDir())
+	deps.EntityManager = mgr
+	var buf bytes.Buffer
+	r := NewWriter(deps, &buf)
+	defer r.Close()
+
+	err := r.RunString(`rela.update_entity("TKT-9", {title = "new"})`)
+	if err == nil {
+		t.Fatal("update of a faced bare id succeeded; want it refused")
+	}
+	for _, want := range []string{"TKT-9@draft", "TKT-9@published"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not name %s", err, want)
+		}
+	}
+}

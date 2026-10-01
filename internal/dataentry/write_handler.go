@@ -691,13 +691,15 @@ func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Reque
 	s := h.schema()
 
 	// The path segment is an ADDRESS, `ID` or `ID@face`. A write names the
-	// row it edits by address and never by world, which is why attachWorld
-	// refuses `?world=` on this method: the face rides here.
+	// row it edits by address and never by a requested world, which is why
+	// attachWorld refuses `?world=` on this method: the face rides here. A
+	// bare id edits the one face the default world admits and the caller
+	// may read, else 422 `face_required` (TKT-7IZHP0 §6).
 	//
 	// The resolver read runs BEFORE body parse, If-Match and IsLocked (RR-FGUZ,
 	// RR-NGMI), so "exists but hidden" and "denied face" answer the same 404 as
 	// "absent". A 400, 403, 412 or 422 here would be an existence oracle.
-	entity, found := readAddressedOr404(w, r, h.visible, typeName, entityID)
+	entity, found := writeTargetOr404(w, r, h.visible, typeName, entityID)
 	if !found {
 		return
 	}

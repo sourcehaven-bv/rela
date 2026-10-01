@@ -10,6 +10,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager/entitymanagertest"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
 
 // update_test.go covers only CLI-level concerns. The property flag
@@ -167,7 +168,7 @@ func TestUpdateCmd_EmptyBodyFileIsHonored(t *testing.T) {
 	p := &capturingPatcher{}
 	err := (&UpdateCmd{ID: "TASK-1", BodyFile: path}).Run(
 		context.Background(), &writeServices{
-			readServices:  readServices{World: store.TrivialScope()},
+			readServices:  taskStore(t),
 			EntityManager: p,
 		})
 	if err != nil {
@@ -207,7 +208,7 @@ func buildPatch(t *testing.T, cmd UpdateCmd) entity.Patch {
 	captureOut(t)
 	p := &capturingPatcher{}
 	if err := cmd.Run(context.Background(), &writeServices{
-		readServices:  readServices{World: store.TrivialScope()},
+		readServices:  taskStore(t),
 		EntityManager: p,
 	}); err != nil {
 		t.Fatalf("Run: %v", err)
@@ -219,4 +220,15 @@ func buildPatch(t *testing.T, cmd UpdateCmd) entity.Patch {
 		t.Errorf("patched id = %q, want %q", p.gotID, cmd.ID)
 	}
 	return p.gotPatch
+}
+
+// taskStore is the read bundle the update tests write through: TASK-1
+// exists, so the command's write-target resolution finds it.
+func taskStore(t *testing.T) readServices {
+	t.Helper()
+	st := memstore.New()
+	if err := st.CreateEntity(context.Background(), entity.New("TASK-1", "task")); err != nil {
+		t.Fatal(err)
+	}
+	return readServices{Store: st, World: store.TrivialScope()}
 }

@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
@@ -88,6 +89,54 @@ func readAddress(
 		named[i] = entity.FormatStateRef(parsed.ID(), face)
 	}
 	return nil, fmt.Errorf("%w: %s has faces; name one: %s", errFaceRequired, parsed.ID(), strings.Join(named, ", "))
+}
+
+// writeTarget resolves addr to the one face a face-level write edits, as
+// the operator, through [visibility.Resolver.WriteTarget] in world (the
+// default world). `ID@face` names that face; a bare id names the one face
+// the world admits for the entity, else [errFaceRequired] naming its faces.
+// An absent entity or face is [store.ErrNotFound].
+func writeTarget(
+	ctx context.Context, st addressLoader, families, world store.WorldScope, addr string,
+) (entity.Ref, error) {
+	parsed, err := entity.ParseAddress(addr)
+	if err != nil {
+		return entity.Ref{}, fmt.Errorf("invalid entity address %q: %w", addr, err)
+	}
+	typ, _, err := storedFamily(ctx, st, parsed.ID())
+	if err != nil {
+		return entity.Ref{}, err
+	}
+	res, err := visibility.NewAllowAllResolver(st,
+		visibility.WithFamilies(func() store.WorldScope { return families }))
+	if err != nil { // coverage-ignore: defensive: NewAllowAllResolver only fails on a nil loader
+		return entity.Ref{}, err
+	}
+	ref, ok, err := res.WriteTarget(ctx, visibility.WorldOf(world), typ, parsed)
+	var amb *visibility.AmbiguousAddressError
+	switch {
+	case errors.As(err, &amb):
+		return entity.Ref{}, fmt.Errorf("%w: %s", errFaceRequired, amb.Error())
+	case err != nil: // coverage-ignore: defensive: the allow-all gate never fails
+		return entity.Ref{}, err
+	case !ok:
+		return entity.Ref{}, fmt.Errorf("%w: %s", store.ErrNotFound, addr)
+	}
+	return ref, nil
+}
+
+// relationTail is the tail face an edge of relType from addr hangs on. A
+// content-scoped edge belongs to one face, resolved as [writeTarget] does;
+// an identity-scoped edge hangs on the entity, at the implicit face.
+func relationTail(ctx context.Context, svc *readServices, addr, relType string) (entity.Ref, error) {
+	if metamodel.IsContentScoped(svc.Meta, relType) {
+		return writeTarget(ctx, svc.Store, svc.Families, svc.World, addr)
+	}
+	parsed, err := entity.ParseAddress(addr)
+	if err != nil {
+		return entity.Ref{}, fmt.Errorf("invalid entity address %q: %w", addr, err)
+	}
+	return entity.Ref{ID: parsed.ID(), Face: entity.ImplicitFace}, nil
 }
 
 // storedFamily returns the type of id and every face it has a live row at,

@@ -130,6 +130,12 @@ type GraphReader interface {
 	// traversal names it.
 	Family(ctx context.Context, id string) (visibility.Family, bool, error)
 
+	// WriteTarget resolves addr to the one face a face-level write edits
+	// ([visibility.Resolver.WriteTarget]). Every miss is
+	// [store.ErrNotFound]; a bare id that picks no single face is a
+	// [*visibility.AmbiguousAddressError] naming the readable faces.
+	WriteTarget(ctx context.Context, addr string) (entity.Ref, error)
+
 	// ResolveHeaders answers Resolve and Family for a batch of addresses,
 	// from headers only, in a cost that does not grow with len(refs)
 	// ([visibility.Resolver.ResolveHeaders]). A miss is absent.

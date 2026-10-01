@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 
 	"github.com/Sourcehaven-BV/rela/internal/attachment"
-	"github.com/Sourcehaven-BV/rela/internal/entity"
 )
 
 // AttachCmd attaches one or more files to an entity property.
@@ -18,8 +17,8 @@ type AttachCmd struct {
 }
 
 // Run dispatches `rela attach <entity-id> <file>...`.
-func (c *AttachCmd) Run(ctx context.Context, att *attachment.Service) error {
-	ref, err := entity.ParseRef(c.EntityID)
+func (c *AttachCmd) Run(ctx context.Context, svc *readServices, att *attachment.Service) error {
+	ref, err := writeTarget(ctx, svc.Store, svc.Families, svc.World, c.EntityID)
 	if err != nil {
 		return err
 	}

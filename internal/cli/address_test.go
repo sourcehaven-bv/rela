@@ -204,3 +204,47 @@ func TestShowFacedBareID(t *testing.T) {
 		t.Fatalf("show PG-1 = %v, want an error naming PG-1@draft", err)
 	}
 }
+
+// TestWriteTarget pins the CLI's bare-id write rule (TKT-7IZHP0 §6): one
+// face the default world admits is the target; none or several is
+// errFaceRequired naming the faces.
+func TestWriteTarget(t *testing.T) {
+	t.Parallel()
+	st := addressFixture(t)
+	published := store.NewWorldScope(map[string]store.TypeResolution{
+		"page": {Chain: []entity.Face{"published"}, Fallback: store.FallbackExclude},
+	})
+	ranked := store.NewWorldScope(map[string]store.TypeResolution{
+		"page": {Chain: []entity.Face{"published", "draft"}, Fallback: store.FallbackExclude},
+	})
+	tests := []struct {
+		name    string
+		world   store.WorldScope
+		addr    string
+		want    entity.Ref
+		wantErr error
+	}{
+		{name: "faceless", world: published, addr: "REQ-1", want: entity.Ref{ID: "REQ-1"}},
+		{name: "one candidate", world: published, addr: "PG-1", want: entity.Ref{ID: "PG-1", Face: "published"}},
+		{name: "two candidates", world: ranked, addr: "PG-1", wantErr: errFaceRequired},
+		{name: "no candidate", world: store.TrivialScope(), addr: "PG-1", wantErr: errFaceRequired},
+		{name: "named face", world: published, addr: "PG-1@draft", want: entity.Ref{ID: "PG-1", Face: "draft"}},
+		{name: "missing face", world: published, addr: "PG-1@review", wantErr: store.ErrNotFound},
+		{name: "missing entity", world: published, addr: "NOPE-1", wantErr: store.ErrNotFound},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := writeTarget(context.Background(), st, store.TrivialScope(), tc.world, tc.addr)
+			if tc.wantErr != nil {
+				if !errors.Is(err, tc.wantErr) {
+					t.Fatalf("writeTarget(%q) err = %v, want %v", tc.addr, err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil || got != tc.want {
+				t.Fatalf("writeTarget(%q) = %v, %v; want %v", tc.addr, got, err, tc.want)
+			}
+		})
+	}
+}

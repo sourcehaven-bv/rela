@@ -366,3 +366,41 @@ func TestEntityETag_FoldsTheServedFaceNotTheWorld(t *testing.T) {
 		t.Errorf("two faces must not share a validator")
 	}
 }
+
+// TestFaceGrant_RenameAffordanceIsFamilyWide pins BUG-GJUBSA: a rename moves
+// every face, so `_actions.rename` holds only when the principal may rename
+// every face, as the manager requires. Update stays per served face.
+func TestFaceGrant_RenameAffordanceIsFamilyWide(t *testing.T) {
+	app := facedTicketApp(t)
+	seedDeclaredFaceTicket(context.Background(), t, app)
+	actions := func(update []string) map[string]bool {
+		t.Helper()
+		d := mustNewACL(t, &acl.Policy{
+			Roles:       map[string]acl.RoleDef{"editor": {Read: []string{"*"}, Update: update}},
+			Assignments: map[string]string{"alice": "editor"},
+		}, app.store)
+		app.acl = d
+		rec := getEntityAs(aliceCtx(), t, app, d, "ticket", "tickets", "TKT-1@published", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET = %d", rec.Code)
+		}
+		var body struct {
+			Actions map[string]bool `json:"_actions"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		return body.Actions
+	}
+
+	if got := actions([]string{"ticket@draft", "ticket@published"}); !got["rename"] || !got["update"] {
+		t.Fatalf("precondition: update on every face offers rename and update; got %v", got)
+	}
+	got := actions([]string{"ticket@published"})
+	if got["rename"] {
+		t.Errorf("rename offered with update on the published face only; the manager refuses it")
+	}
+	if !got["update"] {
+		t.Errorf("update on the served published face must stay offered; got %v", got)
+	}
+}

@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"github.com/Sourcehaven-BV/rela/internal/attachment"
-	"github.com/Sourcehaven-BV/rela/internal/entity"
 )
 
 // DetachCmd removes an attachment from an entity property. When the
@@ -16,8 +15,8 @@ type DetachCmd struct {
 }
 
 // Run dispatches `rela detach <entity-id> <property> [--file <name>]`.
-func (c *DetachCmd) Run(ctx context.Context, att *attachment.Service) error {
-	ref, err := entity.ParseRef(c.EntityID)
+func (c *DetachCmd) Run(ctx context.Context, svc *readServices, att *attachment.Service) error {
+	ref, err := writeTarget(ctx, svc.Store, svc.Families, svc.World, c.EntityID)
 	if err != nil {
 		return err
 	}

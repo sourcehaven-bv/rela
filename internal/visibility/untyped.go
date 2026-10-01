@@ -2,6 +2,7 @@ package visibility
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -51,6 +52,33 @@ func (r *Resolver) addressAny(ctx context.Context, w World, addr string) (*entit
 		return nil, store.ErrNotFound
 	}
 	return res.Entity, nil
+}
+
+// writeTargetAny is [Resolver.WriteTarget] for a caller that does not know
+// the type. Every miss is [store.ErrNotFound]; a bare id that picks no single
+// face is the resolver's [*AmbiguousAddressError], which lists only faces the
+// caller may read.
+func (r *Resolver) writeTargetAny(ctx context.Context, w World, addr string) (entity.Ref, error) {
+	parsed, err := entity.ParseAddress(addr)
+	if err != nil {
+		return entity.Ref{}, store.ErrNotFound
+	}
+	typ, ok := r.storedType(ctx, parsed.ID())
+	if !ok {
+		return entity.Ref{}, store.ErrNotFound
+	}
+	ref, ok, err := r.WriteTarget(ctx, w, typ, parsed)
+	if _, ambiguous := errors.AsType[*AmbiguousAddressError](err); ambiguous {
+		return entity.Ref{}, err
+	}
+	if err != nil {
+		warnGate("write target", typ, addr, err)
+		return entity.Ref{}, store.ErrNotFound
+	}
+	if !ok {
+		return entity.Ref{}, store.ErrNotFound
+	}
+	return ref, nil
 }
 
 // familyAny is [Resolver.Family] for a caller that does not know the type,

@@ -361,6 +361,13 @@ func (d denyEntityReader) Family(ctx context.Context, id string) (visibility.Fam
 	return visibility.Unrestricted(d.raw).WithWorld(visibility.WorldOf(store.TrivialScope())).Family(ctx, id)
 }
 
+func (d denyEntityReader) WriteTarget(ctx context.Context, addr string) (entity.Ref, error) {
+	if addr == d.deny {
+		return entity.Ref{}, store.ErrNotFound
+	}
+	return visibility.Unrestricted(d.raw).WithWorld(visibility.WorldOf(store.TrivialScope())).WriteTarget(ctx, addr)
+}
+
 func (d denyEntityReader) ResolveHeaders(
 	ctx context.Context, refs []entity.Ref,
 ) map[entity.Ref]visibility.ResolvedHeader {

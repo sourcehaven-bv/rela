@@ -39,6 +39,11 @@ func (DenyReader) GetAddress(context.Context, string) (*entity.Entity, error) {
 	return nil, ErrReaderUnavailable
 }
 
+// WriteTarget implements the script read surface: always refuses.
+func (DenyReader) WriteTarget(context.Context, string) (entity.Ref, error) {
+	return entity.Ref{}, ErrReaderUnavailable
+}
+
 // Family implements the script read surface: always refuses.
 func (DenyReader) Family(context.Context, string) (Family, bool, error) {
 	return Family{}, false, ErrReaderUnavailable

@@ -5,9 +5,11 @@ package archguard
 //
 // Each site parses a caller's address as a Ref, so a bare id becomes the
 // implicit face. For a faceless type that is the right row; for a faced type
-// it is a row that does not exist. The reads move to entity.ParseAddress when
-// every read route binds a world (TKT-7IZHP0 PR 5b), the writes when bare-id
-// writes resolve through the resolver (PR 7). Each entry names which.
+// it is a row that does not exist. Face-level writes resolve a bare id
+// through visibility.Resolver.WriteTarget instead. What is left either keys a
+// stored coordinate (an edge tail, a lineage, a family-or-face delete) and
+// stays, or is a read that moves to entity.ParseAddress (TKT-7IZHP0 PR 5b).
+// Each entry names which.
 var parseRefAllowlist = map[string]allowed{
 	// dataentry
 	"internal/dataentry/comments_handler.go": {1, "comment route id segment; the thread keys on the " +
@@ -28,29 +30,25 @@ var parseRefAllowlist = map[string]allowed{
 		"refusal. Read: PR 5b"},
 
 	// mcp
-	"internal/mcp/tools_relation.go": {2, "relation tools: the FROM argument names the tail of the edge " +
-		"key, a serialized coordinate. Write: PR 7"},
-	"internal/mcp/tools_helpers.go":    {1, "readable, the pre-write existence gate on an address. Write: PR 7"},
-	"internal/mcp/tools_attachment.go": {1, "the not-found hint asks whether a face was named. Write: PR 7"},
+	"internal/mcp/tools_relation.go": {1, "relationTail: an identity-scoped edge hangs on the entity, so " +
+		"its FROM is parsed, not resolved to a face. Stays"},
+	"internal/mcp/tools_helpers.go":    {1, "readable, the pre-write existence gate on an address. Stays"},
+	"internal/mcp/tools_attachment.go": {1, "the read not-found hint asks whether a face was named. Stays"},
 	"internal/mcp/resources.go": {1, "relation resource FROM segment names the edge tail, a serialized " +
 		"coordinate. Read: PR 5b"},
 	"internal/mcp/tools_entity.go": {1, "delete_entity: bare id deletes the family, ID@face one face. " +
-		"Write: PR 7"},
+		"Stays"},
 
 	// lua
 	"internal/lua/runtime.go": {2, "writeTargetReadable and deleteByAddress: the write gate and the " +
-		"family-or-face delete. Write: PR 7"},
+		"family-or-face delete. Stays"},
 
 	// cli
-	"internal/cli/delete.go": {1, "delete: bare id deletes the family, ID@face one face. Write: PR 7"},
-	"internal/cli/attach.go": {1, "attach target address. Write: PR 7"},
-	"internal/cli/detach.go": {1, "detach target address. Write: PR 7"},
+	"internal/cli/delete.go": {1, "delete: bare id deletes the family, ID@face one face. Stays"},
 	"internal/cli/history_address.go": {1, "history, restore and purge address a stored lineage, keyed " +
 		"by (id, face), not a world read: a bare id is the zero-face lineage, and a faced id is refused " +
 		"with its faces named (BUG-4SYAA6). Choosing a face by world would purge or restore a face the " +
 		"operator did not name. Stays"},
-	"internal/cli/unlink.go": {1, "unlink FROM names the tail of the edge key, a serialized " +
-		"coordinate. Write: PR 7"},
 
 	// aclmap
 	"internal/aclmap/target.go": {1, "the operator's report address; the parsed Ref is also the tail of " +

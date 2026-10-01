@@ -484,6 +484,7 @@ func scriptEntityReader(
 type scriptEntityReaderFamily interface {
 	lua.EntityReader
 	Family(ctx context.Context, id string) (visibility.Family, bool, error)
+	WriteTarget(ctx context.Context, addr string) (entity.Ref, error)
 	ResolveHeaders(ctx context.Context, refs []entity.Ref) map[entity.Ref]visibility.ResolvedHeader
 	ListRelationsStrict(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error]
 }
@@ -736,6 +737,9 @@ func gatedSearcher(
 type GatedGraphReader interface {
 	Resolve(ctx context.Context, addr string) (*entity.Entity, error)
 	Family(ctx context.Context, id string) (visibility.Family, bool, error)
+	// WriteTarget resolves addr to the one face a face-level write edits
+	// ([visibility.Resolver.WriteTarget]).
+	WriteTarget(ctx context.Context, addr string) (entity.Ref, error)
 	ResolveHeaders(ctx context.Context, refs []entity.Ref) map[entity.Ref]visibility.ResolvedHeader
 	ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error]
 	// GetRelation reads the edge at k, tail included. It answers not-found
@@ -789,6 +793,10 @@ func (g gatedGraphReader) Resolve(ctx context.Context, addr string) (*entity.Ent
 
 func (g gatedGraphReader) Family(ctx context.Context, id string) (visibility.Family, bool, error) {
 	return g.rows.Family(ctx, id)
+}
+
+func (g gatedGraphReader) WriteTarget(ctx context.Context, addr string) (entity.Ref, error) {
+	return g.rows.WriteTarget(ctx, addr)
 }
 
 func (g gatedGraphReader) ResolveHeaders(

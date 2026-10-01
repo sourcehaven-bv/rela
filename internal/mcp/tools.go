@@ -95,13 +95,14 @@ func toolCreateEntity() *mcpgo.Tool {
 		withObject("properties", required(), description("Property map")),
 		withString("content", description("Markdown body")),
 		withString("id", description("Custom ID (only for types with id_type manual)")),
+		withString("face", description("Face to create; required for a type that declares faces")),
 	)
 }
 
 func toolUpdateEntity() *mcpgo.Tool {
 	return newTool("update_entity",
 		withDescription("Update an entity. Only the named properties change; null removes one."),
-		withString("id", required(), description("Entity ID")),
+		withString("id", required(), description("Entity ID, or ID@face for one face of a faced type")),
 		withObject("properties", description("Properties to set; null removes")),
 		withString("content", description("New markdown body (replaces the old one)")),
 	)

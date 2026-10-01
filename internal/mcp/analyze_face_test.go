@@ -278,3 +278,39 @@ func TestReadRelationResource_TailFace(t *testing.T) {
 		})
 	}
 }
+
+// TestUpdateEntity_FacedBareIDNamesReadableFaces pins update_entity's write
+// target (TKT-7IZHP0 §6): a bare id with several readable faces in the
+// default world is refused, naming them. With one readable face, that face
+// is the target, so the write reaches its ACL check (alice may not update).
+func TestUpdateEntity_FacedBareIDNamesReadableFaces(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		read    []string
+		want    string
+		wantNot string
+	}{
+		{name: "every face readable", read: everyFace, want: "POL-1@draft, POL-1@published"},
+		{name: "published only", read: []string{"policy@published", "control"}, want: "forbidden", wantNot: "draft"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s, ctx := facedGatedServer(t, tc.read)
+			result, err := s.handleUpdateEntity(ctx, makeToolRequest(map[string]any{
+				"id": "POL-1", "properties": map[string]any{"title": "new"},
+			}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			text := getResultText(t, result)
+			if !isErrorResult(result) || !strings.Contains(text, tc.want) {
+				t.Fatalf("result = %q, want an error naming %q", text, tc.want)
+			}
+			if tc.wantNot != "" && strings.Contains(text, tc.wantNot) {
+				t.Errorf("result %q names %q, which the caller cannot read", text, tc.wantNot)
+			}
+		})
+	}
+}
