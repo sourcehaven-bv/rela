@@ -1,6 +1,12 @@
-<!-- This file is auto-generated from docs-project/entities/. Do not edit directly. -->
-
-# Data Classification
+---
+id: GUIDE-classification
+type: guide
+title: Data Classification
+status: published
+order: 25
+audience: intermediate
+summary: "Label what data each field holds in classification.yaml, lint and sync it, and see what each role can read of it"
+---
 
 `classification.yaml` records what kind of data each field in your schema
 holds: a name, a contact detail, a health note, or nothing sensitive at all.

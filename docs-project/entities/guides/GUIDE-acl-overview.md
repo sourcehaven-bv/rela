@@ -696,6 +696,16 @@ log, sees the role set the resolver considered, and can fix either
 the policy (give alice editor) or the graph (add alice to a group
 that has it).
 
+## What each role can read of labeled data
+
+When the project has a `classification.yaml`, `rela acl audit` also lists
+what each role can read of the data it labels: fields with a label, and
+fields a role can combine into a derived label, per record or per person.
+Each role is checked alone and through every client baseline and scope,
+with every `when:` counted as granted. These findings are low severity and
+never change the exit code; `--no-classification` leaves them out. See
+[Data Classification](classification.md#rela-acl-audit).
+
 ## Where to read next
 
 - [GUIDE-acl-security] — hardening notes for operators: member-of
