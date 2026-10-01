@@ -23,7 +23,7 @@ func testWriteDeps(projectRoot string) lua.WriteDeps {
 	st := memstore.New()
 	return lua.WriteDeps{
 		ReadDeps: lua.ReadDeps{
-			VisibleReader: visibility.Unrestricted(st),
+			VisibleReader: visibility.Unrestricted(st).WithWorld(visibility.WorldOf(store.TrivialScope())),
 			Tracer:        tracertest.Must(st, store.TrivialScope()),
 			ProjectRoot:   projectRoot,
 			World:         store.TrivialScope(),

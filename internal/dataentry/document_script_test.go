@@ -442,7 +442,7 @@ print(got)
 	deps := func() lua.WriteDeps {
 		return lua.WriteDeps{
 			ReadDeps: lua.ReadDeps{
-				VisibleReader: visibility.Unrestricted(st),
+				VisibleReader: visibility.Unrestricted(st).WithWorld(visibility.WorldOf(store.TrivialScope())),
 				Tracer:        tracertest.Must(st, store.TrivialScope()),
 				ProjectRoot:   projectRoot,
 				World:         store.TrivialScope(),

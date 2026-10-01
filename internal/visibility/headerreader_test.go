@@ -84,6 +84,7 @@ func TestScriptReader_ListEntityHeadersRedactsFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewScriptReader: %v", err)
 	}
+	sr = sr.WithWorld(visibility.WorldOf(store.TrivialScope()))
 
 	n := 0
 	for h, err := range sr.ListEntityHeaders(ctx, store.EntityQuery{Faces: store.InWorld(store.TrivialScope())}) {
@@ -127,6 +128,7 @@ func TestScriptReader_ListEntityHeadersDoesNotMutateStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewScriptReader: %v", err)
 	}
+	sr = sr.WithWorld(visibility.WorldOf(store.TrivialScope()))
 
 	for range sr.ListEntityHeaders(ctx, store.EntityQuery{Faces: store.InWorld(store.TrivialScope())}) { //nolint:revive // draining
 	}

@@ -162,7 +162,8 @@ func TestScriptReader_Resolves(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	unr := visibility.Unrestricted(st)
+	sr = sr.WithWorld(visibility.WorldOf(store.TrivialScope()))
+	unr := visibility.Unrestricted(st).WithWorld(visibility.WorldOf(store.TrivialScope()))
 	pub := visibility.WorldOf(publishedWorld())
 	type getter func(context.Context, string) (*entity.Entity, error)
 	readers := map[string]struct {
@@ -218,10 +219,11 @@ func TestScriptReader_Family(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	sr = sr.WithWorld(visibility.WorldOf(store.TrivialScope()))
 	type familyFn func(context.Context, string) (visibility.Family, bool, error)
 	for name, family := range map[string]familyFn{
 		"script":       sr.Family,
-		"unrestricted": visibility.Unrestricted(st).Family,
+		"unrestricted": visibility.Unrestricted(st).WithWorld(visibility.WorldOf(store.TrivialScope())).Family,
 	} {
 		t.Run(name, func(t *testing.T) {
 			ctx := context.Background()
@@ -259,6 +261,7 @@ func TestScriptReader_GateErrorIsAMiss(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	sr = sr.WithWorld(visibility.WorldOf(store.TrivialScope()))
 	ctx := context.Background()
 	for _, id := range []string{"TKT-1", "NOPE-1"} {
 		if _, err := sr.GetAddress(ctx, id); !errors.Is(err, store.ErrNotFound) {
@@ -281,6 +284,7 @@ func TestScriptReader_FamilyReadsHeadersOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	sr = sr.WithWorld(visibility.WorldOf(store.TrivialScope()))
 	if _, ok, err := sr.Family(context.Background(), "POL-1"); !ok || err != nil {
 		t.Fatalf("Family = (%v, %v)", ok, err)
 	}
@@ -345,6 +349,7 @@ func TestScriptReader_ListRelationsStrictReturnsGateFaults(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			sr = sr.WithWorld(visibility.WorldOf(store.TrivialScope()))
 			tolerant, strict := 0, 0
 			var strictErr error
 			for _, err := range sr.ListRelations(ctx, store.RelationQuery{}) {

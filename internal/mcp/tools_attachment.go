@@ -246,9 +246,10 @@ func attachmentNotFound(id, property, fileName string) *mcpgo.CallToolResult {
 // entity both answer "entity not found". Any other read failure is logged and
 // answered generically, so an outage is not mistaken for a missing entity.
 //
-// A bare id of a faced entity has no row, so it misses too. The answer
-// cannot name the entity's faces without revealing that it exists, so a
-// bare id gets the same generic hint whether or not the entity is faced.
+// A bare id resolves in the default world. When that world serves none of
+// the entity's faces it misses too. The answer cannot name the entity's
+// faces without revealing that it exists, so a bare id gets the same generic
+// hint whether or not the entity is faced.
 func (h attachmentHandler) gatedEntity(ctx context.Context, id string) (*entity.Entity, *mcpgo.CallToolResult) {
 	e, err := h.store.Resolve(ctx, id)
 	switch {
@@ -531,6 +532,16 @@ func (h attachmentHandler) writePreflight(
 	e, failed := h.gatedEntity(ctx, id)
 	if failed != nil {
 		return nil, metamodel.PropertyDef{}, failed
+	}
+	// A bare id reads in the default world, which picks a face for the
+	// reader. A write names the face it changes, so a bare id that resolved
+	// to a named face is refused with the same hint as a miss: the caller
+	// can read the entity, so the hint reveals nothing.
+	if addr, perr := entity.ParseAddress(id); perr == nil {
+		if _, named := addr.Named(); !named && !e.Face.IsImplicit() {
+			return nil, metamodel.PropertyDef{}, errorResult("entity not found: " + id +
+				" (an entity with content states is addressed as ID@face)")
+		}
 	}
 	propDef, err := fileProperty(snap.Meta, e, property)
 	if err != nil {

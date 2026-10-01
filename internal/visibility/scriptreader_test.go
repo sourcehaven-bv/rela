@@ -71,6 +71,7 @@ func newTicketOnlyScriptReader(t *testing.T, st store.Store) *visibility.ScriptR
 	if err != nil {
 		t.Fatalf("NewScriptReader: %v", err)
 	}
+	sr = sr.WithWorld(visibility.WorldOf(store.TrivialScope()))
 	return sr
 }
 

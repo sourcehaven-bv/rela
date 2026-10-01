@@ -89,7 +89,7 @@ func (nopWatcher) Resume()            {}
 // no acl.yaml: rows through [visibility.Unrestricted], counts and single
 // relations from the store.
 func graphOf(st store.Store) GraphReader {
-	return rawGraph{UnrestrictedReader: visibility.Unrestricted(st), st: st}
+	return rawGraph{UnrestrictedReader: visibility.Unrestricted(st).WithWorld(visibility.WorldOf(store.TrivialScope())), st: st}
 }
 
 type rawGraph struct {

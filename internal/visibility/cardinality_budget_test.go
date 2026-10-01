@@ -8,6 +8,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/schema"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/store/storetest"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
@@ -53,6 +54,7 @@ func TestScriptReader_CardinalityReadBudget(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		sr = sr.WithWorld(visibility.WorldOf(store.TrivialScope()))
 		counting.Reset()
 		found, err := schema.CheckCardinality(ctx, sr, meta, nil)
 		if err != nil {

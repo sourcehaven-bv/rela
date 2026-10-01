@@ -83,7 +83,7 @@ func TestScriptEntityReader_GatesOnActingIdentity(t *testing.T) {
 // pre-ACL.
 //
 // Asserted behaviorally, not by identity with the raw store. Since
-// TKT-1WV50C the helper returns visibility.Unrestricted(st) so that the
+// TKT-1WV50C the helper returns visibility.Unrestricted(st).WithWorld(visibility.WorldOf(store.TrivialScope())) so that the
 // NopACL path — the largest ungated surface in the tree — shows up in
 // `grep -rn visibility.Unrestricted`. That is a naming change, not a
 // behavior change, and this test pins the behavior.
