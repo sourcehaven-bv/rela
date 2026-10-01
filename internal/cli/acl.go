@@ -39,6 +39,8 @@ type ACLAuditCmd struct {
 	// above that level is present. "any" == "nit" (every finding).
 	FailOn   string `help:"Exit non-zero when a finding at or above this severity is present: critical|high|medium|low|any. Empty = advisory (always exit 0)." enum:",critical,high,medium,low,any" default:""`
 	ExitCode bool   `help:"Alias for --fail-on=high (fail CI on critical or high findings)."`
+	// NoClassification skips the classification.yaml findings (TKT-8UCV32).
+	NoClassification bool `help:"Skip the findings about labeled data each role can read (classification.yaml)."`
 }
 
 // Run executes `rela acl audit`.
@@ -67,6 +69,17 @@ func (c *ACLAuditCmd) Run(svc *readServices) error {
 	}
 
 	findings := aclaudit.Audit(policy, &metamodelReader{m: svc.Meta}, perms)
+	// The gate sees only the policy findings. Classification findings list
+	// access the operator may well intend, and nothing can suppress one, so
+	// counting them would make --fail-on=any fail every build.
+	failing := aclaudit.HasAtLeast(findings, threshold)
+	if !c.NoClassification {
+		cf, err := auditClassification(context.Background(), svc.Paths.Root, policy, svc.Meta)
+		if err != nil {
+			return err
+		}
+		findings = aclaudit.Sort(append(findings, cf...))
+	}
 
 	if out.Format == "json" {
 		writeAuditJSON(findings)
@@ -74,7 +87,7 @@ func (c *ACLAuditCmd) Run(svc *readServices) error {
 		writeAuditText(findings)
 	}
 
-	if gate && aclaudit.HasAtLeast(findings, threshold) {
+	if gate && failing {
 		return errors.NewExitError(1)
 	}
 	return nil
@@ -116,11 +129,13 @@ func writeAuditText(findings []aclaudit.Finding) {
 // auditFindingJSON is the per-finding JSON shape (severity as a label, not the
 // internal int).
 type auditFindingJSON struct {
-	Rule     string `json:"rule"`
-	Severity string `json:"severity"`
-	Subject  string `json:"subject"`
-	Detail   string `json:"detail"`
-	Fix      string `json:"fix"`
+	Rule     string   `json:"rule"`
+	Severity string   `json:"severity"`
+	Subject  string   `json:"subject"`
+	Detail   string   `json:"detail"`
+	Fix      string   `json:"fix"`
+	Label    string   `json:"label,omitempty"`
+	Fields   []string `json:"fields,omitempty"`
 }
 
 // writeAuditJSON emits findings via the shared AnalysisResult envelope.
@@ -129,7 +144,7 @@ func writeAuditJSON(findings []aclaudit.Finding) {
 	for _, f := range findings {
 		details = append(details, auditFindingJSON{
 			Rule: f.Rule, Severity: f.Severity.String(), Subject: f.Subject,
-			Detail: f.Detail, Fix: f.Fix,
+			Detail: f.Detail, Fix: f.Fix, Label: f.Label, Fields: f.Fields,
 		})
 	}
 	status, message := "success", "ACL audit: no findings"

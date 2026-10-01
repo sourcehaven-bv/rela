@@ -107,6 +107,10 @@ type Finding struct {
 	Detail string `json:"detail"`
 	// Fix is a one-line remediation hint.
 	Fix string `json:"fix"`
+	// Label and Fields are set by findings about labeled data: the label
+	// and the "type.field" references it covers. Empty otherwise.
+	Label  string   `json:"label,omitempty"`
+	Fields []string `json:"fields,omitempty"`
 }
 
 // RelationView is the narrow metamodel view of a relation type the audit
@@ -197,6 +201,13 @@ func Audit(p *acl.Policy, meta MetamodelReader, perms PermissionConsumer) []Find
 	if meta != nil {
 		f = append(f, tierB(p, meta)...)
 	}
+	return Sort(f)
+}
+
+// Sort orders findings by severity, then rule, then subject, keeping the
+// relative order of ties, and returns f. A caller that adds findings from
+// another source sorts the merged list with it.
+func Sort(f []Finding) []Finding {
 	sort.SliceStable(f, func(i, j int) bool {
 		if f[i].Severity != f[j].Severity {
 			return f[i].Severity < f[j].Severity

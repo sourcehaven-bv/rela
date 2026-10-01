@@ -335,6 +335,19 @@ above rather than by a clean `analyze all`.
   asserting the count is the same at 10 and 50 rows. Measure on the postgres
   backend with `rela-server -verbose` (`Server-Timing`, one `request` log line
   each) against `prototypes/perf/project` seeded by `rela dev seed`.
+- **Data classification describes; it never drives behavior** (TKT-8UCV32).
+  `classification.yaml` labels what data each field holds, and
+  `internal/classification` parses, lints and syncs it. Only `internal/cli`
+  may import that package (arch-lint enforces it), and nothing reads it at
+  runtime: no redaction, no access decision, no refusal keyed off a label.
+  Behavior a label might suggest (searchable, logged, exported) is declared
+  in core config. `rela acl audit` lists what each role can read of labeled
+  data, and those findings never count toward `--fail-on`. Classification
+  warns and never blocks, because whether labeled data may flow somewhere
+  depends on context only the operator has. A field's two
+  explicit states, `none` and `needs-review`, keep "not sensitive" apart from
+  "not looked at"; do not add an implicit default. See
+  `docs/classification.md`.
 - **Boundaries are enforced.** `just arch-lint` checks package import rules; run
   it before PR.
 
@@ -419,6 +432,7 @@ Domain and storage:
 | `internal/calfeed`       | Pure calendar-feed model + iCalendar/JSON serializers (event-granular; no store/vendor)          |
 | `internal/mailrender`    | Pure message model → sanitized, CSS-inlined branded HTML + text/plain (leaf; no store/metamodel) |
 | `internal/mail`          | Outbound email: `Sender` seam, SMTP + memory transports, `.rela/mail.yaml`, best-effort outbox   |
+| `internal/classification` | Parse/lint/sync `classification.yaml`, the descriptive data-classification overlay (leaf; CLI only) |
 | `internal/search`        | Full-text + structured search (bleve + linear)                                                   |
 | `internal/visibility`    | Read-side ACL wrappers: row-gate + field-redact readers, tracer decorator (DEC-ZBI39P)           |
 | `internal/entitymanager` | Write path: automations, validation, audit, policy                                               |
@@ -712,8 +726,10 @@ Rules when touching this:
   marker, never lineage continuity. Read/restore is gated on **both** endpoints
   (FROM ∧ TO) — the FROM
   entity only _owns_ the UI placement, it is not the auth boundary (a TO-side
-  oracle otherwise). Relations have NO field-level redaction today; relation
-  history exposes exactly what a live relation GET does. `RelationHistoryReader`/
+  oracle otherwise). Relation meta fields are redacted by a role's
+  `relations:` `visible:` grants (`RelationFieldVerdicts`, applied in
+  `internal/dataentry`), never by a client ceiling; relation history exposes
+  exactly what a live relation GET does. `RelationHistoryReader`/
   `RelationVersionWriter` are SEPARATE optional capabilities, type-asserted
   independently of the entity ones.
 - **Version purge** (TKT-BW6UUL; both database backends) is the audited, irreversible

@@ -51,7 +51,7 @@ var (
 
 // CLI is the kong-parsed root.
 //
-// 47 exported fields (4 global flags + 43 subcommands) — a documented
+// 49 exported fields (4 global flags + 45 subcommands) — a documented
 // structural exception to the 20-field load line, not a ratchet target
 // (TKT-NS3XPE). The count is dictated by kong's one-field-per-subcommand
 // binding convention: the subcommand fields are dispatched by kong and read
@@ -71,7 +71,10 @@ var (
 // tooling (`dev seed` today), so later developer commands nest under it
 // rather than adding fields here.
 //
-//plimsoll:max-fields=48
+// Raised 48 → 49 for `classification` (TKT-8UCV32), a sub-struct holding
+// sync and lint, so later verbs (report) nest under it.
+//
+//plimsoll:max-fields=49
 type CLI struct {
 	// Global flags.
 	Project string `help:"Project directory (default: auto-detect from cwd)." env:"RELA_PROJECT"`
@@ -106,6 +109,8 @@ type CLI struct {
 	Dev        DevCmd        `cmd:"" help:"Developer tooling (seed generated data)."`
 	Flow       FlowCmd       `cmd:"" help:"Run an interactive Lua flow."`
 	Validate   ValidateCmd   `cmd:"" help:"Validate project configuration files."`
+
+	Classification ClassificationCmd `cmd:"" help:"Maintain classification.yaml, the data classification overlay."`
 
 	Show      ShowCmd      `cmd:"" help:"Show entity details."`
 	List      ListCmd      `cmd:"" help:"List entities."`

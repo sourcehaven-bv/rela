@@ -40,6 +40,11 @@ override:
   - path: ^internal/mail$
     threshold: 85
 
+  # Data classification overlay (TKT-8UCV32): a parser and a file rewriter
+  # whose mistakes silently mislabel data, so pinned above the default floor.
+  - path: ^internal/classification$
+    threshold: 85
+
   # Below the default floor — explicit lower floors so the gap is
   # visible. Raise these as tests are added; don't lower without reason.
   - path: ^internal/git$
