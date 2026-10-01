@@ -58,7 +58,7 @@ available without the `doc.` prefix.
 | `worlds_matrix{}` | a role × world table: which worlds each role may ask for |
 | `description()` | the metamodel's top-level `description:` (echo-friendly) |
 | `shows{type, contains\|absent\|exactly}` | **asserts** which entities of a type exist (emits nothing) |
-| `refuses{who, op, type, because, unassigned}` / `permits{...}` | **asserts** an authorization outcome (emits nothing) |
+| `refuses{who, op, type, face, because, unassigned}` / `permits{...}` | **asserts** an authorization outcome (emits nothing) |
 | `api{path, status, error, as, has, absent, identical_to}` | **asserts** an API contract against a real server |
 | `h1/h2/h3(text)`, `md(text)` | structural Markdown emitted from Lua |
 
@@ -172,6 +172,12 @@ the gate were never consulted. This is the deliberate exception to the
 claim about real behaviour. Add `because = "..."` to also pin *why* a decision
 came out that way — a deny arriving from an unintended rule is a green check
 over a real regression.
+
+For a type that declares `faces:`, name the face the claim is about with
+`face = "..."`. It is required there: a faced type has no row without a face,
+so a claim that names none would ask about a row that cannot exist, and a
+`refuses{}` would pass against any policy. A type without faces takes no
+`face`. An undeclared face is an error.
 
 ### API assertions
 

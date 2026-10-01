@@ -242,9 +242,9 @@ func (p *Policy) GrantsAnyNonDefaultWorldRead() bool {
 // doc §8.2, fail closed):
 //
 //   - `update: ["page"]` grants the DEFAULT state of page, and nothing
-//     else. An operator who adds faces to an existing type finds their
-//     existing grants now cover one face — the correct fail-closed reading,
-//     and the reason it is documented as a migration note.
+//     else. On a type that declares faces that state holds no row, so
+//     Policy.ValidateAgainstMetamodel refuses such a grant at load; here
+//     it still matches only the default state, which fails closed.
 //   - `update: ["page@draft"]` grants the draft face only; it does NOT
 //     grant published, nor the default state.
 //   - `update: ["*"]` grants every type's DEFAULT state. It is a wildcard

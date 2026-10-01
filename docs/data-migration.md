@@ -236,14 +236,13 @@ Removing faces is the mirror: rows sitting at named faces belong to no declared
 face afterwards, and the type's single state is a coordinate none of them
 occupies.
 
-Two consequences are worth checking at the same time, because neither produces
-a load error:
+Two consequences are worth checking at the same time:
 
-- **Write grants in `acl.yaml` stop matching.** A bare `update: [policy]`
-  addresses the zero coordinate, so once `policy` declares faces the grant
-  reaches nothing. Rewrite it to name each face — `update: [policy@draft]` —
-  and run `rela acl audit`, which reports the bare form as
-  `B12-bare-grant-on-faced-type`.
+- **Write grants in `acl.yaml` must name the face.** A bare `update: [policy]`
+  addresses the zero coordinate, so once `policy` declares faces it is a load
+  error, which names the grant. Rewrite it to name each face:
+  `update: [policy@draft]`. A faced user or group type is refused the same
+  way.
 - **Creates must name a face.** A `POST` that omits one is refused with
   `face_required` once the type is faced. See the
   [Content States guide](content-states.md) for the request shape.

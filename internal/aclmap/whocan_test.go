@@ -149,9 +149,16 @@ func (v metaView) HasEntityType(t string) bool {
 	return ok
 }
 
-func (v metaView) HasRelationType(t string) bool {
-	_, ok := v.m.Relations[t]
-	return ok
+func (v metaView) RelationInfo(t string) acl.RelationInfo {
+	def, ok := v.m.Relations[t]
+	if !ok {
+		return acl.RelationInfo{}
+	}
+	return acl.RelationInfo{Exists: true, Content: def.Scope.IsContent(), From: def.From, To: def.To}
+}
+
+func (v metaView) FaceNames(t string) (canonical string, faces []string) {
+	return v.m.ResolveAlias(t), metamodel.FaceOrderOf(v.m, t)
 }
 
 func (v metaView) PropertyInfo(entityType, property string) acl.PropertyInfo {

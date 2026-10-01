@@ -12,8 +12,8 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/aclmap"
+	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
-	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/output"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
@@ -177,7 +177,7 @@ func buildACLEngine(svc *readServices) (*aclmap.Engine, error) {
 		}
 		return nil, fmt.Errorf("load acl.yaml: %w", err)
 	}
-	if vErr := policy.ValidateAgainstMetamodel(aclMetamodelView{svc.Meta}); vErr != nil {
+	if vErr := appbuild.ValidateACLPolicy(policy, svc.Meta); vErr != nil {
 		return nil, fmt.Errorf("acl.yaml invalid for this project: %w", vErr)
 	}
 	decl, err := acl.NewDeclarative(policy, acl.NewStoreGraph(svc.Store), svc.Store,
@@ -190,43 +190,6 @@ func buildACLEngine(svc *readServices) (*aclmap.Engine, error) {
 		return nil, fmt.Errorf("build access engine: %w", err)
 	}
 	return engine, nil
-}
-
-// aclMetamodelView adapts *metamodel.Metamodel to acl.MetamodelView for
-// the who-can policy gate. Mirrors appbuild's metamodelView; kept here
-// so the CLI doesn't reach into appbuild internals.
-type aclMetamodelView struct {
-	m *metamodel.Metamodel
-}
-
-func (v aclMetamodelView) HasEntityType(entityType string) bool {
-	if v.m == nil {
-		return false
-	}
-	return v.m.HasEntityType(entityType)
-}
-
-func (v aclMetamodelView) HasRelationType(relationType string) bool {
-	if v.m == nil {
-		return false
-	}
-	_, ok := v.m.Relations[relationType]
-	return ok
-}
-
-func (v aclMetamodelView) PropertyInfo(entityType, property string) acl.PropertyInfo {
-	if v.m == nil {
-		return acl.PropertyInfo{}
-	}
-	def, ok := v.m.GetEntityDef(entityType)
-	if !ok {
-		return acl.PropertyInfo{}
-	}
-	pd, ok := def.Properties[property]
-	if !ok {
-		return acl.PropertyInfo{}
-	}
-	return acl.PropertyInfo{Exists: true, Unique: pd.Unique, List: pd.List}
 }
 
 // recordACLQuery writes the audit row for an effective-access query.

@@ -26,8 +26,6 @@ func (m fakeMetamodel) HasFace(t, face string) bool {
 	return slices.Contains(m.faces[t], face)
 }
 
-func (m fakeMetamodel) HasFaces(t string) bool { return len(m.faces[t]) > 0 }
-
 func (m fakeMetamodel) GetRelation(name string) (RelationView, bool) {
 	from, ok := m.relations[name]
 	if !ok {
@@ -852,43 +850,6 @@ func TestB1_DoesNotFlagWellFormedGrantSyntax(t *testing.T) {
 	}
 	if got := findingRules(Audit(p, meta, nil)); len(got) != 0 {
 		t.Errorf("a fully well-formed policy must produce no findings; got %v", got)
-	}
-}
-
-// TestB12_BareGrantOnAFacedType pins the spelling the audit used to wave
-// through: a type that declares faces stores no row at the bare coordinate,
-// so `update: [policy]` reaches neither face. Fail-closed at runtime, so the
-// only symptom is a denial nobody can explain.
-func TestB12_BareGrantOnAFacedType(t *testing.T) {
-	meta := fakeMetamodel{
-		types: map[string]bool{"policy": true, "page": true},
-		faces: map[string][]string{"policy": {"draft", "published"}},
-	}
-	for _, tc := range []struct {
-		name    string
-		update  []string
-		wantB12 bool
-	}{
-		{"a bare grant on a faced type is flagged", []string{"policy"}, true},
-		{"naming the face is the correct spelling", []string{"policy@draft"}, false},
-		{"a bare grant on a faceless type is fine", []string{"page"}, false},
-		{"the wildcard is never flagged", []string{"*"}, false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			p := &acl.Policy{Roles: map[string]acl.RoleDef{
-				"r": {Update: tc.update, Read: []string{"*"}},
-			}}
-			if err := p.Validate(); err != nil {
-				t.Fatalf("Validate: %v", err)
-			}
-			rules := findingRules(Audit(p, meta, nil))
-			if got := slices.Contains(rules, "B12-bare-grant-on-faced-type"); got != tc.wantB12 {
-				t.Errorf("B12 = %v, want %v; findings: %v", got, tc.wantB12, rules)
-			}
-			if slices.Contains(rules, "B11-undeclared-face") {
-				t.Errorf("a DECLARED face must not also trip B11; findings: %v", rules)
-			}
-		})
 	}
 }
 

@@ -9,14 +9,31 @@ import (
 )
 
 // fakeMeta is a minimal acl.MetamodelView for validation tests. types maps
-// entity type → property name → its PropertyInfo.
+// entity type → property name → its PropertyInfo. faces maps a type to its
+// faces in declaration order; aliases maps an alias to its canonical type.
+// relations lists declared relation types with no details; relInfo declares
+// one with scope and endpoints.
 type fakeMeta struct {
 	types     map[string]map[string]acl.PropertyInfo
 	relations []string
+	faces     map[string][]string
+	aliases   map[string]string
+	relInfo   map[string]acl.RelationInfo
 }
 
-func (m fakeMeta) HasRelationType(t string) bool {
-	return slices.Contains(m.relations, t)
+func (m fakeMeta) RelationInfo(t string) acl.RelationInfo {
+	if info, ok := m.relInfo[t]; ok {
+		info.Exists = true
+		return info
+	}
+	return acl.RelationInfo{Exists: slices.Contains(m.relations, t)}
+}
+
+func (m fakeMeta) FaceNames(t string) (canonical string, faces []string) {
+	if c, ok := m.aliases[t]; ok {
+		t = c
+	}
+	return t, m.faces[t]
 }
 
 func (m fakeMeta) HasEntityType(t string) bool {

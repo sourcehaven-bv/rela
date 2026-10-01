@@ -124,3 +124,54 @@ func TestCheckAuthzBecause(t *testing.T) {
 		}
 	})
 }
+
+// TestAuthzClaimFace pins the face= rule on permits{}/refuses{}. A faced type
+// stores no row at the implicit face, so a claim that names no face would ask
+// about a row that cannot exist, and a refuses{} there would hold against any
+// policy (TKT-7IZHP0).
+func TestAuthzClaimFace(t *testing.T) {
+	tests := []struct {
+		name    string
+		body    string
+		wantErr string
+	}{
+		{
+			name: "a named face is authorized at that face",
+			body: `permits{who="ed", op="update", type="policy", face="draft"}`,
+		},
+		{
+			name: "a face the role does not hold is refused",
+			body: `refuses{who="ed", op="update", type="policy", face="published"}`,
+		},
+		{
+			name:    "a faced type without face= is an error",
+			body:    `refuses{who="pub", op="update", type="policy"}`,
+			wantErr: `"policy" declares faces (draft, published) and stores no row without one`,
+		},
+		{
+			name:    "an undeclared face is an error",
+			body:    `permits{who="ed", op="update", type="policy", face="drfat"}`,
+			wantErr: `face="drfat"}: not a face of "policy". Declared faces: draft, published`,
+		},
+		{
+			name:    "face= on a faceless type is an error",
+			body:    `refuses{who="pub", op="update", type="control", face="draft"}`,
+			wantErr: `"control" declares no faces`,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			src := "```rela\n" + readSeed + tc.body + "\n```\n"
+			_, err := Build(context.Background(), src, Options{Meta: worldFixtureMeta(t), Policy: readFixturePolicy()})
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("want error containing %q, got %v", tc.wantErr, err)
+			}
+		})
+	}
+}

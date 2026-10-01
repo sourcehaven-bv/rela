@@ -2,12 +2,15 @@ package docs
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
 	lua "github.com/yuin/gopher-lua"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
 
@@ -45,7 +48,7 @@ func (a *aclBindings) luaAuthz(ls *lua.LState, wantAllow bool) int {
 		return a.luaFail(ls, `%s: expects a table, e.g. %s{who="auditor", op="update", type="policy"}`, verb, verb)
 	}
 
-	if rejectUnknownKeys(a, ls, verb, tbl, "who", "op", "type", "id", "because", "unassigned", "emit") {
+	if rejectUnknownKeys(a, ls, verb, tbl, "who", "op", "type", "id", "face", "because", "unassigned", "emit") {
 		return 0
 	}
 	show := fieldBoolDefault(ls, tbl, "emit", true)
@@ -54,6 +57,7 @@ func (a *aclBindings) luaAuthz(ls *lua.LState, wantAllow bool) int {
 	op := fieldString(ls, tbl, "op")
 	typ := fieldString(ls, tbl, "type")
 	id := fieldString(ls, tbl, "id")
+	faceArg := fieldString(ls, tbl, "face")
 	because := fieldString(ls, tbl, "because")
 	unassigned := fieldBool(ls, tbl, "unassigned")
 
@@ -70,6 +74,10 @@ func (a *aclBindings) luaAuthz(ls *lua.LState, wantAllow bool) int {
 	}
 	if !validOp(op) {
 		return a.luaFail(ls, "%s{op=%q}: unknown op — one of create, update, delete, rename", verb, op)
+	}
+	face, msg := claimFace(verb, typ, faceArg, metamodel.FaceOrderOf(a.meta, typ))
+	if msg != "" {
+		return a.luaFail(ls, "%s", msg)
 	}
 	// A principal with no assignment has no grants, so it is refused BY
 	// CONSTRUCTION — which makes every refuses{} with a misspelled `who` green
@@ -112,20 +120,22 @@ func (a *aclBindings) luaAuthz(ls *lua.LState, wantAllow bool) int {
 	ctx := principal.With(a.ctx, principal.Principal{User: who, Tool: principal.ToolCLI})
 	dec := d.AuthorizeWrite(ctx, acl.WriteRequest{
 		Op: acl.Op(op),
-		// Faceless: the allows{}/refuses{} Lua surface takes who/op/type/id
-		// and has no `face` field, so a doc claim has no face to name and is
-		// asserted against the default one. Adding `face=` to the surface
-		// would make faced claims expressible; until then the faceless
-		// constructor says out loud that this claim covers the default face
-		// only, rather than implying a face it never asked for.
-		Subject: acl.NewFacelessEntitySubject(typ, id),
+		// The claim's face, checked by claimFace: the implicit face for a
+		// faceless type, a declared face for a faced one.
+		Subject: acl.NewEntitySubject(typ, id, face),
 	})
 
-	if msg := checkAuthz(verb, who, op, typ, wantAllow, because, dec); msg != "" {
+	// The type is shown with its face, so a reader sees which face the claim
+	// is about. A faceless type renders as before.
+	claimed := typ
+	if !face.IsImplicit() {
+		claimed = typ + entity.StateRefSeparator + face.String()
+	}
+	if msg := checkAuthz(verb, who, op, claimed, wantAllow, because, dec); msg != "" {
 		return a.luaFail(ls, "%s", msg)
 	}
 
-	emitEvidence(a.emit, show, authzEvidence(a, who, op, typ, wantAllow, dec))
+	emitEvidence(a.emit, show, authzEvidence(a, who, op, claimed, wantAllow, dec))
 	return 0
 }
 
@@ -220,6 +230,34 @@ func reasonMatches(dec acl.Decision, because string) bool {
 	}
 	const minReasonFragment = 8
 	return len(because) >= minReasonFragment && strings.Contains(dec.Reason, because)
+}
+
+// claimFace resolves the face an authorization claim is about, or returns a
+// failure message.
+//
+// A faced type stores no row at the implicit face, so a claim that names no
+// face asks about a row that cannot exist. A refuses{} there would pass
+// against any policy, so a faced type requires `face=`. A faceless type
+// refuses one, since it has no face to name.
+func claimFace(verb, typ, faceArg string, declared []string) (face entity.Face, failure string) {
+	if len(declared) == 0 {
+		if faceArg != "" {
+			return "", fmt.Sprintf("%s{type=%q, face=%q}: %q declares no faces, so the claim "+
+				"has no face to name. Remove `face=`", verb, typ, faceArg, typ)
+		}
+		return entity.ImplicitFace, ""
+	}
+	if faceArg == "" {
+		return "", fmt.Sprintf("%s{type=%q}: %q declares faces (%s) and stores no row without one, "+
+			"so a claim that names no face would hold against any policy. Add face=, one of: %s",
+			verb, typ, typ, strings.Join(declared, ", "), strings.Join(declared, ", "))
+	}
+	face, err := entity.ParseFace(faceArg)
+	if err != nil || !slices.Contains(declared, faceArg) {
+		return "", fmt.Sprintf("%s{type=%q, face=%q}: not a face of %q. Declared faces: %s",
+			verb, typ, faceArg, typ, strings.Join(declared, ", "))
+	}
+	return face, ""
 }
 
 func validOp(op string) bool {

@@ -991,6 +991,10 @@ deps:
   docscli:
     mayDependOn:
       - acl
+      # appbuild: only for ValidateACLPolicy, the one schema check every
+      # acl.yaml loader shares. docscapture already depends on appbuild, so
+      # this adds nothing to the rela-docs binary.
+      - appbuild
       - docs
       - docscapture
       - metamodel
