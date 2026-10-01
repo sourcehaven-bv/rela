@@ -229,6 +229,15 @@ type Freshness interface {
 // implementations MUST return the same order across calls when the
 // underlying data has not changed, so cursors remain valid between pages.
 // The default order is ascending by ID.
+//
+// An iterator MUST NOT hold a backend resource (a pooled connection, an
+// open cursor, a lock) while it yields. Callers make store calls inside the
+// loop body: visibility redaction checks ACL edges for every row. A backend
+// that held its connection across yield would need a second one per
+// concurrent iteration and deadlock once iterations outnumber its pool
+// (BUG-9TGOH1). Read a batch, release it, then yield. The same holds for any
+// callback a read method invokes. Pinned by storetest's IteratorNesting
+// suite.
 type EntityReader interface {
 	// GetEntity returns a single entity by ID.
 	// Returns ErrNotFound if the entity does not exist.

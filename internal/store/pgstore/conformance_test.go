@@ -14,7 +14,11 @@ import (
 // Conformance: pgstore must satisfy the full store.Store contract. The factory
 // and searchFactory live in testdb_test.go (they provision an isolated schema
 // per call). The whole suite is skipped when RELA_TEST_DATABASE_URL is unset.
+//
+// The suites run with a two-row iterator page, so every listing the
+// conformance fixtures make crosses page boundaries (BUG-9TGOH1).
 func TestConformance(t *testing.T) {
+	pgstore.SetIteratorPageSizeForTest(t, 2)
 	storetest.RunAll(t, factory, searchFactory, visibleSearchFactory, storetest.Capabilities{
 		SoftDelete: true,
 		Observers: func(t *testing.T, obs ...store.EntityObserver) store.Store {
@@ -52,10 +56,12 @@ func TestConformance(t *testing.T) {
 // suite against the pgstore-native FieldVisibleSearcher (TKT-GGQ0JT).
 // DB-gated on RELA_TEST_DATABASE_URL like the rest of the suite.
 func TestGraphDifferential(t *testing.T) {
+	pgstore.SetIteratorPageSizeForTest(t, 2)
 	storetest.RunGraphDifferential(t, factory)
 }
 
 func TestVisibleFieldConformance(t *testing.T) {
+	pgstore.SetIteratorPageSizeForTest(t, 2)
 	storetest.RunVisibleFieldSearchTests(t, fieldVisibleSearchFactory)
 }
 
