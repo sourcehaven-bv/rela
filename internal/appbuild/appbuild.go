@@ -1247,12 +1247,7 @@ func (v metamodelView) HasEntityType(entityType string) bool {
 }
 
 func (v metamodelView) FaceNames(entityType string) (canonical string, faces []string) {
-	canonical = v.m.ResolveAlias(entityType)
-	def, ok := v.m.GetEntityDef(entityType)
-	if !ok {
-		return canonical, nil
-	}
-	return canonical, metamodel.FaceOrderOf(*def)
+	return v.m.ResolveAlias(entityType), metamodel.FaceOrderOf(v.m, entityType)
 }
 
 func (v metamodelView) RelationInfo(relationType string) acl.RelationInfo {

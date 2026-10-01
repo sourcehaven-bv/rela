@@ -270,14 +270,18 @@ Read the reader's row carefully. It is not a plain ✓: the grant is written
 A bare `policy` grant would read every face, drafts included, which is the
 distinction the next section turns into an assertion.
 
-Writing is the narrower grant. An editor may change a policy; neither the
-reader nor the translator may, though the translator owns guides:
+Writing is the narrower grant, and it names faces. An editor may change a
+policy draft but not the published face, which only the `publish` action
+reaches. Neither the reader nor the translator may change a policy, though the
+translator owns the guides in both languages:
 
 ```rela
-permits{ who = "edith@example.com", op = "update", type = "policy" }
-refuses{ who = "raj@example.com",   op = "update", type = "policy" }
-refuses{ who = "tine@example.com",  op = "update", type = "policy" }
-permits{ who = "tine@example.com",  op = "update", type = "guide" }
+permits{ who = "edith@example.com", op = "update", type = "policy", face = "draft" }
+refuses{ who = "edith@example.com", op = "update", type = "policy", face = "published" }
+refuses{ who = "raj@example.com",   op = "update", type = "policy", face = "draft" }
+refuses{ who = "tine@example.com",  op = "update", type = "policy", face = "draft" }
+permits{ who = "tine@example.com",  op = "update", type = "guide",  face = "en" }
+permits{ who = "tine@example.com",  op = "update", type = "guide",  face = "nl" }
 ```
 
 ### The grant that keeps drafts unpublished

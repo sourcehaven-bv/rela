@@ -158,11 +158,7 @@ func (v metaView) RelationInfo(t string) acl.RelationInfo {
 }
 
 func (v metaView) FaceNames(t string) (canonical string, faces []string) {
-	def, ok := v.m.Entities[t]
-	if !ok {
-		return t, nil
-	}
-	return t, metamodel.FaceOrderOf(def)
+	return v.m.ResolveAlias(t), metamodel.FaceOrderOf(v.m, t)
 }
 
 func (v metaView) PropertyInfo(entityType, property string) acl.PropertyInfo {

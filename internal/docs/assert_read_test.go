@@ -17,7 +17,7 @@ import (
 func readFixturePolicy() *acl.Policy {
 	return &acl.Policy{
 		Roles: map[string]acl.RoleDef{
-			"editor": {Read: []string{"*"}, Update: []string{"*"}},
+			"editor": {Read: []string{"*"}, Update: []string{"*", "policy@draft"}},
 			"reader": {Read: []string{"policy@published", "control"}},
 		},
 		Assignments: map[string]string{"ed": "editor", "pub": "reader"},
