@@ -430,10 +430,11 @@ type World struct {
 	// server too old to compute it. `default: false`, by contrast, is noise
 	// on every declared world.
 	Readable bool `json:"readable"`
-	// Default marks the implicit default world — today's graph, total by
-	// construction, always present and always selectable. Spelled as a flag
-	// rather than left for the client to infer from the reserved name, so a
-	// selector can label it without hardcoding the string.
+	// Default marks the default world: schema.yaml's `default_world:`, else
+	// the first declared world, else the generated `default` world. A
+	// request that names no world reads in it, and it is always selectable.
+	// Spelled as a flag so a selector can label it without knowing the
+	// name.
 	Default bool `json:"default,omitempty"`
 }
 
@@ -639,12 +640,12 @@ type AppConfig struct {
 	// the on switch for ```plantuml diagram rendering.
 	PlantUMLServerURL string `json:"plantuml_server_url,omitempty"`
 	// DefaultWorld names the world a request lands in when no `?world=` is
-	// given. Empty means the default world (raw stored faces).
+	// given: schema.yaml's `default_world:`, else the first declared world.
+	// Empty when the schema declares no worlds, so the generated default
+	// world, which ranks nothing, serves every request.
 	//
-	// A browsing default, not a grant: the world's read permission is
-	// re-checked per request exactly as for an explicit `?world=`, so this
-	// can only change which face a bare URL resolves to, never who may see
-	// it. Validated at load against the declared worlds.
+	// The default world needs no world grant; the per-entity and per-face
+	// gates still decide what it shows.
 	DefaultWorld string `json:"default_world,omitempty"`
 	// HistoryEnabled reports whether THIS DEPLOYMENT can serve version
 	// history. Content versioning is a postgres-only, OPTIONAL store

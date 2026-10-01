@@ -5,7 +5,7 @@ import { planPrefillRouting } from './prefillRouting'
 import { useSchemaStore, useEntitiesStore, useUIStore } from '@/stores'
 import { isCancelledFetch } from '@/composables/usePageData'
 import { readReturnTo } from '@/utils/returnPath'
-import { useWorld, DEFAULT_WORLD } from '@/composables/useWorld'
+import { useWorld } from '@/composables/useWorld'
 import { actionAllowed } from '@/utils/affordancesWarning'
 import { entityRef, refBareId, refFace } from '@/utils/entityRef'
 import { worldText } from '@/utils/worldText'
@@ -583,18 +583,10 @@ async function loadEntity(force = false) {
 
   try {
     // The entity id is an ADDRESS — `POL-1` or `POL-1@published` — and the
-    // form edits exactly the row it names: what you look at is what you edit
-    // is what you save. So the fetch is pinned to the DEFAULT world, where
-    // every address is literal. Fetching in the ambient world instead let a
-    // configured `default_world` resolve a bare id AWAY from the row the
-    // Edit button was pressed on, and the form then refused the served face
-    // "for permissions" (atlas worlds issue 7).
-    const entity = await entitiesStore.fetchEntity(
-      formConfig.value.entity,
-      props.entityId,
-      force,
-      DEFAULT_WORLD
-    )
+    // form edits exactly the row it names. An address with a face is
+    // literal in every world, so the fetch uses the default world. The Edit
+    // button must pass the face it was pressed on (atlas worlds issue 7).
+    const entity = await entitiesStore.fetchEntity(formConfig.value.entity, props.entityId, force)
     // Route-guard: if the server says this row is not updatable, render an
     // inline "not editable" message instead of the form. The EntityDetail
     // Edit button already hides for the same verdict, so this branch fires

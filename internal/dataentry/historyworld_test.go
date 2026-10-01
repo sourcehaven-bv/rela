@@ -163,7 +163,7 @@ func TestHistoryRouteAcceptsAWorld(t *testing.T) {
 	seedEntity(app, &entityPkg.Entity{
 		ID: "TKT-R", Type: "ticket", Properties: map[string]any{"title": "t"},
 	})
-	app.SetWorlds(stubWorlds{names: map[string]bool{"published": true}})
+	app.setWorlds(stubWorlds{names: map[string]bool{"published": true}})
 
 	rec := viewRecord(t, app, "/api/v1/_history/ticket/TKT-R?world=published")
 	if rec.Code == http.StatusUnprocessableEntity {

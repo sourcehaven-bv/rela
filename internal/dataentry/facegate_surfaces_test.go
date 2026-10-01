@@ -271,7 +271,7 @@ func TestEntityView_DeniedWorldIsIndistinguishableFromAnEmptyOne(t *testing.T) {
 		}, app.store)
 		// The world EXCLUDES everything (no resolveDefault), so for the
 		// granted principal TKT-1 genuinely has no face in it.
-		app.SetWorlds(stubWorlds{names: map[string]bool{"published": true}})
+		app.setWorlds(stubWorlds{names: map[string]bool{"published": true}})
 		app.SetPrincipalResolver(func(*http.Request) principal.Principal {
 			return principal.Principal{User: "alice", Tool: principal.ToolDataEntry}
 		})

@@ -464,7 +464,7 @@ function hasFaces(entityType: string): boolean {
 // The world the candidate query reads in: the URL's, else the operator's
 // default. '' is the default world.
 function ambientWorld(): string {
-  return world.value || DEFAULT_WORLD
+  return world.value || schemaStore.defaultWorld || DEFAULT_WORLD
 }
 
 function offWorldKey(entity: Entity): string {

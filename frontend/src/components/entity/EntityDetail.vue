@@ -923,15 +923,9 @@ function goToFace(f: Face) {
   // and prev/next working, and the world stays what it was: an explicit
   // address is literal under any world, so switching face never has to switch
   // world.
+  // A bare address names the implicit face of a faceless type, which every
+  // world serves, so the world never has to change.
   const query = { ...route.query }
-  if (!ref.includes('@')) {
-    // A bare address is literal only in the default world (under any other,
-    // the world resolves it). That is the ONE case where the face switch has
-    // to name the world — spelled `default` when a configured default would
-    // otherwise apply, dropped when it would not, exactly as setWorld does.
-    if (schemaStore.defaultWorld) query.world = DEFAULT_WORLD
-    else delete query.world
-  }
   router.push({ path: `/entity/${props.entityType}/${ref}`, query })
 }
 

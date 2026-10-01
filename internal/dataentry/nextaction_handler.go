@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/nextaction"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/userstate"
@@ -314,7 +315,7 @@ func nextActionDisplayWorld(ctx context.Context) string {
 	if name := worldFromContext(ctx).name; name != "" {
 		return name
 	}
-	return defaultWorldName
+	return metamodel.DefaultWorldName
 }
 
 func (a *App) nextActionEngine(displayWorld string) (*nextaction.Engine, NextActionRequestScope, bool) {

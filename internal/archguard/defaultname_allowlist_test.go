@@ -10,15 +10,15 @@ package archguard
 // declared worlds); PR 6 moves the ACL grant rule. Each entry names which.
 var defaultNameAllowlist = map[string]allowed{
 	// dataentry: HTTP world selection, PR 5b.
-	"internal/dataentry/world.go": {5, "the private constant and resolveWorld, attachWorld and " +
-		"defaultWorldScope's name lookup. PR 5b"},
+	"internal/dataentry/world.go": {4, "effectiveDefaultWorld with no schema loaded, " +
+		"defaultWorldScope's lookup for a WorldLookup without DefaultWorld, and provenance " +
+		"on an unstamped context"},
+	"internal/acl/policy.go": {1, "Policy.DefaultWorld before ValidateAgainstMetamodel " +
+		"has supplied the schema's"},
 	"internal/dataentry/entityref.go": {1, "an entity link's world name defaults to \"default\". " +
 		"PR 5b"},
 	"internal/dataentry/nextaction_handler.go": {1, "the browsing world of a next-action request. " +
 		"PR 5b"},
-	"internal/dataentry/nextaction.go": {1, "a next-action source in the default world reads " +
-		"unscoped. PR 5b"},
-	"internal/dataentry/schemaworlds.go": {1, "/_schema lists the default world as readable. PR 5b"},
 	"internal/dataentry/write_handler.go": {1, "create body `world: \"default\"`; becomes 400 " +
 		"unknown_world beside declared worlds (design 10.5). PR 5b"},
 
@@ -27,9 +27,6 @@ var defaultNameAllowlist = map[string]allowed{
 		"which PR 5b names. PR 5b"},
 
 	// acl: the world grant rule, PR 6.
-	"internal/acl/ceilingcompile.go": {3, "the default world passes a ceiling unless denied by " +
-		"name. PR 6"},
-	"internal/acl/membershiprefusal.go": {1, "the default world needs no grant. PR 6"},
 
 	// aclaudit explains the reserved name; it does not resolve it.
 	"internal/aclaudit/tier_b.go": {6, "B10 names the default world to explain why a grant on " +

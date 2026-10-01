@@ -36,8 +36,9 @@ import { computed, type Ref } from 'vue'
 import { useRoute, useRouter, type LocationQuery, type LocationQueryRaw } from 'vue-router'
 import { useSchemaStore } from '@/stores/schema'
 
-// DEFAULT_WORLD is the reserved name the API accepts as an explicit way to
-// spell the implicit default world (`defaultWorldName`, dataentry/world.go).
+// DEFAULT_WORLD is the name of the generated default world, which exists only
+// when the schema declares no worlds. A schema that declares worlds has no
+// world by this name, and the API answers `?world=default` with a 400.
 export const DEFAULT_WORLD = 'default'
 
 function readWorldParam(value: unknown): string {
@@ -57,11 +58,9 @@ export interface UseWorld {
   /** True when a non-default world is active. */
   isWorldBound: Readonly<Ref<boolean>>
   /**
-   * The value to send as the API's `world` param. `undefined` for the default
-   * world, so callers can spread it into a params object without emitting an
-   * empty `?world=` — unless the operator configured `default_world`, in which
-   * case an ABSENT param means the configured world to the server and the only
-   * spelling of "the bare faces" is an explicit `default`.
+   * The value to send as the API's `world` param. `undefined` for the
+   * generated default world, so callers can spread it into a params object
+   * without emitting an empty `?world=`.
    */
   worldParam: Readonly<Ref<string | undefined>>
   /** Select a world. `''` (or DEFAULT_WORLD) returns to the default world. */
@@ -118,17 +117,10 @@ export function useWorld(): UseWorld {
     () => world.value !== '' && world.value !== DEFAULT_WORLD,
   )
 
-  // `undefined` for the default world so a params spread emits no `?world=` —
-  // EXCEPT when a default is configured. The server applies `default_world`
-  // to a request with NO param, so on such a deployment dropping the param
-  // does not mean "the bare faces", it means "the configured world". This
-  // used to drop it: "Go to draft" wrote `?world=default` into the URL, the
-  // page treated itself as the writable default world, and the request
-  // fetched the PUBLISHED face — every write guard off over published bytes.
-  const worldParam = computed(() => {
-    if (isWorldBound.value) return world.value
-    return schemaStore.defaultWorld ? DEFAULT_WORLD : undefined
-  })
+  // `undefined` for the generated default world so a params spread emits no
+  // `?world=`. A page is unbound only when the schema declares no worlds, so
+  // there is no other world an absent param could mean.
+  const worldParam = computed(() => (isWorldBound.value ? world.value : undefined))
 
   function setWorld(next: string) {
     if (next === world.value) return
@@ -163,10 +155,8 @@ export function useWorld(): UseWorld {
 export function worldQuery(next: string, base: LocationQuery, defaultWorld: string): LocationQueryRaw {
   const query: LocationQueryRaw = { ...base }
   const norm = (w: string) => (w === DEFAULT_WORLD ? '' : w)
-  if (norm(next) === norm(defaultWorld)) {
+  if (norm(next) === '' || norm(next) === norm(defaultWorld)) {
     delete query.world
-  } else if (norm(next) === '') {
-    query.world = DEFAULT_WORLD
   } else {
     query.world = next
   }

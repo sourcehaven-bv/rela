@@ -187,11 +187,9 @@ func TestAnchoredDocument_FaceGate(t *testing.T) {
 	})
 }
 
-// TestAnchoredDocument_BareIDRouted routes requests through the real router,
-// with `app.default_world` set. `_documents` is not a world-capable path, so
-// the default world does not resolve a bare id there: a bare id of a faced
-// type names the zero face, which a faced type does not store, and answers
-// the uniform 404. The addressed face renders.
+// TestAnchoredDocument_BareIDRouted routes requests through the real router.
+// Every route binds the default world, so a bare id resolves to the face that
+// world serves (published here). The addressed face renders too.
 func TestAnchoredDocument_BareIDRouted(t *testing.T) {
 	app, d := facedDocumentApp(t)
 	app.acl = d
@@ -203,7 +201,14 @@ func TestAnchoredDocument_BareIDRouted(t *testing.T) {
 		app.NewRouter().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/_documents/"+path, http.NoBody))
 		return rec
 	}
-	assertUniform404(t, get("policy_report/POL-1"), get("policy_report/POL-9"))
+	if rec := get("policy_report/POL-1"); rec.Code != http.StatusOK ||
+		!strings.Contains(rec.Body.String(), "TITLE: PUBLISHED TEXT") {
+
+		t.Errorf("bare id = %d, want 200 with the published title (%s)", rec.Code, rec.Body)
+	}
+	if rec := get("policy_report/POL-9"); rec.Code != http.StatusNotFound {
+		t.Errorf("unknown bare id = %d, want 404", rec.Code)
+	}
 	rec := get("policy_report/POL-1@published")
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "TITLE: PUBLISHED TEXT") {
 		t.Errorf("addressed face = %d, want 200 with the published title (%s)", rec.Code, rec.Body)

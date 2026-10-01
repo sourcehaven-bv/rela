@@ -1626,7 +1626,7 @@ func (b *SharedBase) ForReassembly(prev *Services) *SharedBase {
 // compiled at boot so an invalid face name fails startup rather than the
 // first request that needs a world.
 //
-// Consumed through [CompiledWorlds], which the data-entry app's `SetWorlds`
+// Consumed through [CompiledWorlds], which the data-entry app's `NewApp`
 // uses to resolve a `?world=` name to its scope (TKT-WAV8XP PR-D).
 func (b *SharedBase) Worlds() worlds.Compiled { return b.worlds }
 

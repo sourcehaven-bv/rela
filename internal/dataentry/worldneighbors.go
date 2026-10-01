@@ -92,14 +92,14 @@ type worldNeighbors struct {
 // world code has taken this shape throughout: App carries a
 // `//plimsoll:max-methods=87` directive pinning it at its current count, and
 // the project rule is to split the type rather than raise the number. The
-// world feature has added ONE method to App so far ([App.SetWorlds]) and four
+// world feature has added ONE method to App so far (setWorlds) and four
 // package functions (resolveWorld, attachWorld, worldCapablePath, and this),
 // which is the discipline recorded on the App type doc.
 //
 // Not calling this is a valid state: relations then behave as they did before
 // TKT-WRLDAPI item 4 — present under the default world, absent under any
 // other. That is safe but incomplete, which is why the composition root wires
-// it whenever it wires [App.SetWorlds].
+// it whenever it calls [NewApp].
 //
 // classes classifies a relation type as content- or identity-scoped; it is
 // supplied by the wiring site because the dispatch it feeds
@@ -743,7 +743,7 @@ func parseIncludeSpec(includes string) (wanted map[string]string, all bool) {
 // world seam resolves nothing for a request that may read nothing, whereas the
 // ungated reader would happily return default-world edges.
 func worldBoundRelations(ctx context.Context) bool {
-	return !worldFromContext(ctx).isDefault()
+	return !worldFromContext(ctx).ranksNothing()
 }
 
 // etagEdges returns the outgoing edges a cache validator must hash for e

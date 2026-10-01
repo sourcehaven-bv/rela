@@ -800,7 +800,7 @@ describe('EntityDetail world binding', () => {
       expect(routerPush).toHaveBeenCalledWith({ path: '/entity/policy/POL-1', query: {} })
     })
 
-    it('spells the default world explicitly when landing there under a configured default', async () => {
+    it('drops the param when landing in the generated default world', async () => {
       useSchemaStore().defaultWorld = 'published'
       invokeCopyMock.mockResolvedValue(copyResult())
       mockRoute.query = {}
@@ -808,7 +808,7 @@ describe('EntityDetail world binding', () => {
         _copies: [promoteOffer({ onSuccess: { landing: { mode: 'world', world: 'default' } } })],
       }))
       await clickPromote(w)
-      expect(routerPush).toHaveBeenCalledWith({ path: '/entity/policy/POL-1', query: { world: 'default' } })
+      expect(routerPush).toHaveBeenCalledWith({ path: '/entity/policy/POL-1', query: {} })
     })
 
     it('reloads in place rather than navigating to `@undefined` for a face landing with no face', async () => {
@@ -1270,10 +1270,9 @@ describe('EntityDetail world binding', () => {
       })
     })
 
-    it('names the default world for a row with NO explicit address', async () => {
-      // A row at the zero coordinate — the single state of a type declaring
-      // no faces. Its bare address is literal only in the default world,
-      // spelled `default` when a configured default would otherwise apply.
+    it('keeps the world for a row with NO explicit address', async () => {
+      // A row at the implicit face, the single state of a type declaring no
+      // faces. Every world serves it, so the world stays.
       useSchemaStore().defaultWorld = 'published'
       mockRoute.query = { world: 'site-nl' }
       const w = await mountDetail(viewResponse({
@@ -1283,19 +1282,8 @@ describe('EntityDetail world binding', () => {
       const btn = w.findAll('button').find((b) => b.text().includes('View English'))
       await btn!.trigger('click')
       expect(routerPush).toHaveBeenCalledWith({
-        path: '/entity/policy/POL-1', query: { world: 'default' },
+        path: '/entity/policy/POL-1', query: { world: 'site-nl' },
       })
-    })
-
-    it('DROPS the param for such a bare face when no default world is configured', async () => {
-      mockRoute.query = { world: 'site-nl' }
-      const w = await mountDetail(viewResponse({
-        _faces: [{ face: '', label: 'English', ref: 'POL-1' }],
-      }))
-      rendersProof(w)
-      const btn = w.findAll('button').find((b) => b.text().includes('View English'))
-      await btn!.trigger('click')
-      expect(routerPush).toHaveBeenCalledWith({ path: '/entity/policy/POL-1', query: {} })
     })
 
     it('spells a non-bare address itself for an older server that sends no ref', async () => {

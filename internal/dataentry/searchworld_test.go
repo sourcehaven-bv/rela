@@ -12,6 +12,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -41,6 +42,7 @@ func seedSearchWorld(t *testing.T, configured bool) *App {
 		cfg := *state.Cfg
 		cfg.App.DefaultWorld = "published"
 		state.Cfg = &cfg
+		state.Meta = withDeclaredDefaultWorld(state.Meta, "published")
 		app.schema.Publish(&state)
 	}
 	return app
@@ -155,6 +157,10 @@ func TestSearch_DeniedWorldFindsNothing(t *testing.T) {
 type reviewWorlds struct{}
 
 func (reviewWorlds) Lookup(name string) (store.WorldScope, bool) {
+	if name == metamodel.DefaultWorldName {
+		// The generated default world of a metamodel that declares none.
+		return store.TrivialScope(), true
+	}
 	if name != "rv" {
 		return store.TrivialScope(), false
 	}
@@ -187,7 +193,7 @@ func TestSearch_FaceGrantIsHonored(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID: "TKT-2", Type: "ticket", Properties: map[string]any{"title": secret + " only draft"},
 	})
-	app.SetWorlds(reviewWorlds{})
+	app.setWorlds(reviewWorlds{})
 
 	search := func(t *testing.T, user string, read []string, path string) string {
 		t.Helper()

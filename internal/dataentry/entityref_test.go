@@ -139,7 +139,7 @@ func facedAppWith(
 		app.acl = decl
 	}
 	app.schema.Publish(&Schema{Cfg: cfg, Meta: meta})
-	app.SetWorlds(fixedWorlds{scope: world})
+	app.setWorlds(fixedWorlds{scope: world})
 	// Neighbor resolution wired as production does (rela-server main): the
 	// face-scoped edge seam the write response now uses falls back to the
 	// bare-id UNION without it, which is the mixed-face shape under test.

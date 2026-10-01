@@ -29,10 +29,10 @@ describe('widenWorlds', () => {
     expect(widenWorlds(w, 'published')).toEqual(['archive', 'editorial'])
   })
 
-  it('skips a world the server flags as the default, whatever its name', () => {
+  it('keeps a declared default world, which serves faces like any other', () => {
     const w = worlds({ published: true, base: true })
     w.set('base', { readable: true, default: true } as WorldInfo)
-    expect(widenWorlds(w, 'published')).toEqual([])
+    expect(widenWorlds(w, 'published')).toEqual(['base'])
   })
 
   it('names every readable declared world when the ambient world is the default', () => {

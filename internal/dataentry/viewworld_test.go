@@ -98,7 +98,7 @@ func collectionIDs(result *viewResult) []string {
 // code can produce, whereas a reader who only checked the face would not
 // notice if the wrong row were returned.
 //
-// Mutation-checked: `viewWorld.isDefault() → true` fails this.
+// Mutation-checked: `viewWorld.ranksNothing() → true` fails this.
 func TestExecuteView_EntryResolvesToTheWorldsFace(t *testing.T) {
 	app := newTestAppV1(t)
 	seedViewGraph(t, app)

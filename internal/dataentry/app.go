@@ -150,7 +150,7 @@ type appEntityWriter interface {
 // positional NewApp parameter. The compiling and matching themselves stay OFF
 // App entirely — conditionlint owns them and appbuild bridges — so the feature
 // cost one method, not a subsystem.
-// TKT-DN37J2 adds [App.SetWorlds] on the same terms, and the same discipline
+// TKT-DN37J2 adds setWorlds on the same terms, and the same discipline
 // held for the rest: `resolveWorld`, `attachWorld` and `worldCapablePath` are
 // all package functions taking what they need, so request-level world
 // selection cost ONE method rather than four.
@@ -174,7 +174,7 @@ type appEntityWriter interface {
 // this struct. The load line doing its job is worth recording, because the
 // habit it interrupts is the one that produced the pre-extraction 104.
 //
-// The merge of FEAT-9CD2MX with develop adds SetWorlds on top of develop's
+// The merge of FEAT-9CD2MX with develop adds setWorlds on top of develop's
 // extractions (86 → 87). Neither side grew it carelessly — the worlds side
 // cost exactly one method and said why above — but the integration is where
 // the count actually moves, so it is recorded here rather than in either
@@ -187,7 +187,7 @@ type appEntityWriter interface {
 //
 // SetComments is also App's 21st EXPORTED method, one past the default line of
 // 20. It is a wiring setter in the established shape (SetCalDAVAliases,
-// SetUserState, SetWorlds), and the alternative — reaching into App from
+// SetUserState, setWorlds), and the alternative — reaching into App from
 // appbuild to assign the field — would trade a named seam for a hidden one.
 // The routes themselves are on commentsHandler, so the public surface grew by
 // exactly the one setter. Ratchet target, as above.
@@ -240,9 +240,9 @@ type App struct {
 	// (a collection with no way to remember client-created resources would
 	// duplicate every to-do on the next sync).
 	caldavAliases *caldavalias.Service
-	// worlds resolves a `?world=` name to its compiled scope. Nil until
-	// [App.SetWorlds] is called, in which case the App serves the default
-	// world only and refuses any other `?world=` — see world.go.
+	// worlds resolves a `?world=` name to its compiled scope. [NewApp]
+	// requires it. Only a test App built without NewApp leaves it nil, and
+	// that App serves the generated default world only — see world.go.
 	worlds WorldLookup
 	// copies serves the copy surface (list-by-source, invoke-by-name).
 	// Constructed in NewApp from the entity manager, which is required, so
@@ -964,6 +964,7 @@ func NewApp(
 	auditSink audit.Audit,
 	stateKV state.KV,
 	commandAuthz commandAuthorizer,
+	worlds WorldLookup,
 ) (*App, error) {
 	// Reject nil required collaborators up front rather than letting a
 	// downstream handler panic on the first request that exercises them.
@@ -972,6 +973,9 @@ func NewApp(
 	// only when they participate in the construction below.
 	if meta == nil {
 		return nil, errors.New("dataentry.NewApp: meta is required")
+	}
+	if worlds == nil {
+		return nil, errors.New("dataentry.NewApp: worlds are required")
 	}
 	if st == nil {
 		return nil, errors.New("dataentry.NewApp: store is required")
@@ -1021,7 +1025,7 @@ func NewApp(
 	// those back to this node's .rela/ — the bug where an uploaded logo is
 	// visible only on whichever node served the POST (TKT-VC27L3).
 	kv := stateKV
-	// The default world until SetWorlds supplies the lookup and rebuilds it.
+	// The default world until setWorlds supplies the lookup and rebuilds it.
 	trc, err := tracer.New(st, defaultWorldScope(nil))
 	if err != nil {
 		return nil, fmt.Errorf("dataentry: tracer: %w", err)
@@ -1134,8 +1138,8 @@ func NewApp(
 	// (validator.New's first arg) and its rule bodies' cross-entity lookups
 	// (ReadDeps.VisibleReader) both go through it.
 	//
-	// SetWorlds runs after NewApp, so this wires the default world of a nil
-	// lookup, and SetWorlds rewires it to the schema's default world.
+	// setWorlds runs after NewApp, so this wires the default world of a nil
+	// lookup, and setWorlds rewires it to the schema's default world.
 	if valErr := wireValidation(app, meta, defaultWorldScope(nil)); valErr != nil {
 		return nil, valErr
 	}
@@ -1342,6 +1346,7 @@ func NewApp(
 			"docs", "docs/attachment-security.md")
 	}
 
+	app.setWorlds(worlds)
 	return app, nil
 }
 
@@ -1565,7 +1570,7 @@ func newViewsHandler(app *App, st store.Store, logo *logoStore) *viewsHandler {
 
 // wireValidation builds app's validator and analyze service over the gated
 // reads, with world as the scripts' default world (RR-HKVULG). NewApp calls
-// it and [App.SetWorlds] calls it again, because the schema's default world
+// it and setWorlds calls it again, because the schema's default world
 // is only known once the worlds are set.
 //
 // A free function rather than an App method: App is at its plimsoll method

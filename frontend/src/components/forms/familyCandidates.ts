@@ -17,14 +17,14 @@ import type { Entity, WorldInfo } from '@/types'
 
 /**
  * The declared worlds to query besides the ambient one, sorted so the merge
- * cannot depend on map order. The default world is skipped: it serves only the
- * bare face, which a faced type does not have. A world the reader may not
+ * cannot depend on map order. The generated default world is skipped: it
+ * serves only the implicit face, which a faced type does not have. A world the reader may not
  * select is skipped too; the server would answer it with an empty list anyway.
  */
 export function widenWorlds(worlds: Map<string, WorldInfo>, ambient: string): string[] {
   const out: string[] = []
   for (const [name, info] of worlds) {
-    if (info.default || name === DEFAULT_WORLD || name === ambient) continue
+    if (name === DEFAULT_WORLD || name === ambient) continue
     if (info.readable === false) continue
     out.push(name)
   }

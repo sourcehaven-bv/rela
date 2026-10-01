@@ -71,7 +71,7 @@ func resolveHistorySubject(
 	}
 
 	world := worldFromContext(ctx)
-	bareInWorld := ref.Face.IsImplicit() && !world.isDefault()
+	bareInWorld := ref.Face.IsImplicit() && !world.ranksNothing()
 	storedType, stored, err := loadStoredFaces(ctx, vr.store, ref.ID)
 	if err != nil {
 		return historySubject{}, false, err

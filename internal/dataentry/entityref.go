@@ -5,6 +5,7 @@ import (
 
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
 // An entity ADDRESS arrives in a URL path segment as the bare id or as
@@ -47,7 +48,7 @@ func addressedProvenance(ctx context.Context, e *entity.Entity) *v1.EntityWorld 
 	}
 	name := worldFromContext(ctx).name
 	if name == "" {
-		name = defaultWorldName
+		name = metamodel.DefaultWorldName
 	}
 	return &v1.EntityWorld{
 		Name: name,

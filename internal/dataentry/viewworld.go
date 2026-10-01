@@ -82,9 +82,9 @@ func viewWorldFromRequest(ctx context.Context) viewWorld {
 	return viewWorld(h)
 }
 
-// isDefault reports whether this is the default world. A denied world is
-// never the default one, whatever its scope says.
-func (w viewWorld) isDefault() bool { return !w.denied && w.scope.IsTrivial() }
+// ranksNothing reports whether w reads every entity at its implicit face;
+// see worldHandle.ranksNothing.
+func (w viewWorld) ranksNothing() bool { return !w.denied && w.scope.IsTrivial() }
 
 // viewEntry resolves the view's ENTRY entity to its face in world w.
 //
@@ -142,7 +142,7 @@ func (h *viewsHandler) viewEntry(
 		return nil, errNoFaceInWorld
 	}
 	world := worldHandle(w).visibility()
-	if w.isDefault() || !entry.Face.IsImplicit() {
+	if w.ranksNothing() || !entry.Face.IsImplicit() {
 		// A denied face is reported as the ordinary not-found, so it stays
 		// indistinguishable from an absent one (TKT-O7R2A1).
 		e, ok, err := h.visible.refIn(ctx, world, entityType, entry)
@@ -381,7 +381,7 @@ func (h *viewsHandler) gateLoadedEntities(
 //
 // e must be non-nil; callers hold a resolved entity by construction.
 func (w viewWorld) provenanceFor(e *entityPkg.Entity) *v1.EntityWorld {
-	if w.isDefault() || e == nil {
+	if w.ranksNothing() || e == nil {
 		return nil
 	}
 	rule, position := resolutionRuleAt(w.scope, e.Type, e.Face)

@@ -9,8 +9,8 @@ import (
 )
 
 // schemaWorlds builds the `worlds` block of `/api/v1/_schema` (TKT-WRLDAPI
-// item 1): every DECLARED world, plus the implicit `default` world, each
-// marked with whether THIS caller may select it.
+// item 1): every declared world, or the generated `default` world when none
+// is declared, each marked with whether THIS caller may select it.
 //
 // # Why enumerate at all
 //
@@ -48,43 +48,21 @@ import (
 func schemaWorlds(ctx context.Context, meta *metamodel.Metamodel) map[string]v1.World {
 	gate := readGateFromContext(ctx)
 
-	// The default world is always present and always selectable. Emitted
-	// explicitly rather than left implicit so a client need not hardcode the
-	// reserved name to offer it.
-	//
-	// Readable is a CONSTANT true here, and deliberately not a gate call:
-	// this endpoint reports what the REQUEST PATH does, and `resolveWorld`
-	// short-circuits `default` (and an absent parameter) before any grant
-	// check. Asking the gate here would make the selector disagree with the
-	// server about a request the server will in fact serve.
-	//
-	// # A known gap this constant inherits, stated plainly
-	//
-	// The gate CAN express a default-world denial, contrary to what an
-	// earlier revision of this comment claimed. `acl.roleGrantsWorldRead`
-	// has an explicit default arm (any read grant covers the default world),
-	// and `compiledCeiling.permitsWorld` implements `deny_worlds: [default]`
-	// — its godoc calls itself MANDATORY precisely because that denial
-	// cannot be expressed any other way.
-	//
-	// `resolveWorld` never consults either, so `deny_worlds: [default]` is
-	// currently inert on this API. That is a PRE-EXISTING gap in the request
-	// path, not one introduced here, and this enumeration deliberately
-	// mirrors the gap rather than papering over it: reporting the default
-	// world unreadable while every request for it succeeds would be the
-	// selector lying in the other direction.
-	//
-	// The two are ONE decision and must not drift. When the request path
-	// starts honoring a default-world denial, this must switch to asking
-	// the gate in the same change — and the test named for this
-	// (TestSchemaWorlds_DefaultWorldAgreesWithTheRequestPath) is what will
-	// fail to remind you.
-	out := map[string]v1.World{
-		defaultWorldName: {Readable: true, Default: true},
+	// The default world is readable with any read grant (D2), so Readable
+	// is a constant true for it rather than a gate call. It is the
+	// generated `default` world when no worlds are declared, else a
+	// declared one, which the loop below then marks.
+	defaultName := metamodel.EffectiveDefaultWorld(meta)
+	out := map[string]v1.World{}
+	if len(meta.Worlds) == 0 {
+		out[defaultName] = v1.World{Readable: true, Default: true}
 	}
 
 	for name, def := range meta.Worlds {
-		readable, err := gate.PermitsWorld(ctx, name)
+		readable, err := name == defaultName, error(nil)
+		if !readable {
+			readable, err = gate.PermitsWorld(ctx, name)
+		}
 		if err != nil {
 			// Fail closed on an infrastructure failure. Reporting readable on
 			// an unanswerable grant check is the fail-open direction: the
@@ -108,6 +86,7 @@ func schemaWorlds(ctx context.Context, meta *metamodel.Metamodel) map[string]v1.
 			Messages:   worldMessagesWire(def.Messages),
 			OnAbsent:   worldOnAbsentWire(def.OnAbsent),
 			Readable:   readable,
+			Default:    name == defaultName,
 		}
 	}
 	return out
