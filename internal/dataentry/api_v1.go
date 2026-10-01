@@ -1713,7 +1713,7 @@ func (a *App) handleV1Config(w http.ResponseWriter, r *http.Request) {
 			Name:              s.Cfg.App.Name,
 			Description:       s.Cfg.App.Description,
 			PlantUMLServerURL: s.Cfg.App.PlantUMLServerURL,
-			DefaultWorld:      s.Cfg.App.DefaultWorld,
+			DefaultWorld:      browsingDefaultWorld(s),
 			// The same nil check the history handler gates on, so the
 			// affordance and the endpoint cannot disagree.
 			HistoryEnabled: a.versions != nil,

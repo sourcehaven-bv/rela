@@ -37,7 +37,7 @@ func newFSService(t *testing.T, files map[string]string) *analysis.Service {
 	tr := tracertest.Must(st, store.TrivialScope())
 	svc, err := analysis.New(analysis.Deps{
 		Store: st, Meta: meta, Tracer: tr, FS: fs, Paths: paths,
-		LuaReadDeps: lua.ReadDeps{VisibleReader: visibility.Unrestricted(st), Tracer: tr, Meta: meta, World: store.TrivialScope()},
+		LuaReadDeps: lua.ReadDeps{VisibleReader: visibility.Unrestricted(st).WithWorld(visibility.WorldOf(store.TrivialScope())), Tracer: tr, Meta: meta, World: store.TrivialScope()},
 	})
 	if err != nil {
 		t.Fatalf("analysis.New: %v", err)
@@ -219,7 +219,7 @@ func TestCheckRelationFilenames_NoFS(t *testing.T) {
 	tr := tracertest.Must(st, store.TrivialScope())
 	svc, err := analysis.New(analysis.Deps{
 		Store: st, Meta: meta, Tracer: tr,
-		LuaReadDeps: lua.ReadDeps{VisibleReader: visibility.Unrestricted(st), Tracer: tr, Meta: meta, World: store.TrivialScope()},
+		LuaReadDeps: lua.ReadDeps{VisibleReader: visibility.Unrestricted(st).WithWorld(visibility.WorldOf(store.TrivialScope())), Tracer: tr, Meta: meta, World: store.TrivialScope()},
 	})
 	if err != nil {
 		t.Fatalf("analysis.New: %v", err)

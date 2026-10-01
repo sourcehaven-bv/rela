@@ -42,17 +42,15 @@ var parseRefAllowlist = map[string]allowed{
 		"family-or-face delete. Write: PR 7"},
 
 	// cli
-	"internal/cli/address.go": {2, "readAddress and requireAddressExists, the CLI read helpers that " +
-		"resolve a bare id in a world. Read: PR 5a"},
-	"internal/cli/acl_can.go": {1, "rejects a face address for the no-policy path; asks only whether a " +
-		"face was named. Read: PR 5a"},
-	"internal/cli/delete.go":          {1, "delete: bare id deletes the family, ID@face one face. Write: PR 7"},
-	"internal/cli/attach.go":          {1, "attach target address. Write: PR 7"},
-	"internal/cli/detach.go":          {1, "detach target address. Write: PR 7"},
-	"internal/cli/history_address.go": {1, "history address; history is per face row. Read: PR 5a"},
+	"internal/cli/delete.go": {1, "delete: bare id deletes the family, ID@face one face. Write: PR 7"},
+	"internal/cli/attach.go": {1, "attach target address. Write: PR 7"},
+	"internal/cli/detach.go": {1, "detach target address. Write: PR 7"},
+	"internal/cli/history_address.go": {1, "history, restore and purge address a stored lineage, keyed " +
+		"by (id, face), not a world read: a bare id is the zero-face lineage, and a faced id is refused " +
+		"with its faces named (BUG-4SYAA6). Choosing a face by world would purge or restore a face the " +
+		"operator did not name. Stays"},
 	"internal/cli/unlink.go": {1, "unlink FROM names the tail of the edge key, a serialized " +
 		"coordinate. Write: PR 7"},
-	"internal/cli/attachments.go": {1, "attachments listing address. Read: PR 5a"},
 
 	// aclmap
 	"internal/aclmap/target.go": {1, "the operator's report address; the parsed Ref is also the tail of " +

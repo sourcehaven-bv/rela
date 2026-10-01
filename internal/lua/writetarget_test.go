@@ -28,7 +28,7 @@ func TestWriteTargetReadable(t *testing.T) {
 	// A reader without Family is refused outright: every gated reader
 	// provides it, so its absence is a wiring bug, not a reason to read more.
 	readers := map[string]EntityReader{
-		"family":    visibility.Unrestricted(st),
+		"family":    visibility.Unrestricted(st).WithWorld(visibility.WorldOf(store.TrivialScope())),
 		"no family": rawAddressReader{st},
 	}
 	for name, rd := range readers {

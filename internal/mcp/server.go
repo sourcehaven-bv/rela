@@ -90,7 +90,7 @@ type Deps struct {
 	Attachments  AttachmentDeps
 	// World is the world the list and count surfaces (list_entities, the
 	// schema resource's counts, the overview prompt, search) read in. It is
-	// required; wiring passes worlds.Compiled.Default.
+	// required; wiring passes worlds.Compiled.DefaultWorld.
 	World store.WorldScope
 	// Families selects one row per entity whichever face it stores, for the
 	// schema analysis counts. It is required; wiring passes
@@ -225,7 +225,7 @@ func (d Deps) validate() error {
 	case d.ProjectRoot == "":
 		return errors.New("mcp: Deps.ProjectRoot is required")
 	case !d.World.IsSet():
-		return errors.New("mcp: Deps.World is required (worlds.Compiled.Default)")
+		return errors.New("mcp: Deps.World is required (worlds.Compiled.DefaultWorld)")
 	case !d.Families.IsSet():
 		return errors.New("mcp: Deps.Families is required (worlds.Compiled.Families)")
 	}

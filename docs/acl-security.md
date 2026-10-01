@@ -265,8 +265,8 @@ resolution — but every face remains reachable there by addressing it directly
 as `POL-1@draft`, so only a face grant stands between that caller and a
 draft.
 
-A caller who omits `?world=` may still be in a world. `app.default_world` in
-`data-entry.yaml` sets the world a bare request lands in, and the server
+A caller who omits `?world=` may still be in a world. `default_world:` in
+`schema.yaml` sets the world a bare request lands in, and the server
 applies it to the API and the web app alike. It is still not a gate. It selects
 a face, and the `world:` grant is re-checked for it exactly as for an explicit
 `?world=`, so pointing the default at a world a role may not read yields that
@@ -660,8 +660,9 @@ content, say so with the grants: name the faces in `read:`, or use
 **`deny_worlds: [default]` does nothing at all.** The request path resolves the
 default world before the ceiling is consulted, so the entry loads cleanly and
 is silently inert. Treat it as unimplemented rather than as a control you have
-configured. `rela acl audit` will not warn you, because `B10-undeclared-world`
-skips the default world and the entry produces no finding.
+configured. In a schema that declares worlds there is no world named
+`default`, so `rela acl audit` reports the entry as `B10-undeclared-world`. In
+a schema without worlds it produces no finding.
 
 The default world is not a special case here. It is the lens you get when you
 name none, and it applies no resolution at all. Denying it would not mean "deny

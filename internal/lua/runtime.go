@@ -397,9 +397,27 @@ func WithCache(c *Cache) Option {
 // registered; calling them from Lua raises "attempt to call a nil value".
 //
 // The Lua VM is sandboxed with only safe libraries loaded (no io, os, or debug).
+//
+// d.World must be set: a reader with an unset world would fail every list
+// read at run time, so the wiring mistake panics here instead (RR-HKVULG).
+// A runtime with no graph access at all is [NewDetached].
 func NewReader(d ReadDeps, stdout io.Writer, opts ...Option) *Runtime {
 	return newRuntime(WriteDeps{ReadDeps: d}, stdout, false, opts...)
 }
+
+// NewDetached creates a read-only Runtime with NO graph collaborators: no
+// store reader, tracer, searcher or metamodel, and no world. The graph
+// bindings are registered against nothing, so they raise rather than read.
+// It is for a script that must never touch the graph, such as a mail send
+// script, which gets an already-rendered message.
+func NewDetached(stdout io.Writer, opts ...Option) *Runtime {
+	return newRuntime(WriteDeps{ReadDeps: ReadDeps{World: detachedWorld}}, stdout, false, opts...)
+}
+
+// detachedWorld is the world of a [NewDetached] runtime. It has no reader to
+// query, so the scope never reaches a store; it is set only so the runtime
+// passes the unset-world check every other runtime must pass.
+var detachedWorld = store.NewWorldScope(nil)
 
 // NewWriter creates a read-write Runtime. All read bindings plus mutation
 // bindings (create_entity, update_entity, delete_entity, create_relation,
@@ -417,6 +435,12 @@ func newRuntime(deps WriteDeps, stdout io.Writer, allowWrites bool, opts ...Opti
 	// or start-time panic with a clear message.
 	if allowWrites && deps.EntityManager == nil {
 		panic("lua.NewWriter: WriteDeps.EntityManager is required for a writer runtime")
+	}
+	// Same reasoning for the world: an unset one fails every list read with
+	// store.ErrInvalidQuery, far from the wiring site that forgot it. Wiring
+	// passes worlds.Compiled.DefaultWorld (RR-HKVULG).
+	if !deps.World.IsSet() {
+		panic("lua: ReadDeps.World is unset; wire the default world (worlds.Compiled.DefaultWorld)")
 	}
 
 	// Create sandboxed Lua state - skip default libraries for security

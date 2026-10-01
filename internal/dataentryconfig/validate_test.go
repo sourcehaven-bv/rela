@@ -2436,16 +2436,27 @@ func TestValidateApp_DefaultWorld(t *testing.T) {
 		wantErr string
 	}{
 		{name: "unset is fine", world: "", meta: meta},
-		{name: "declared world accepted", world: "published", meta: meta},
+		{name: "the first declared world, which the schema lands in, is accepted", world: "published", meta: meta},
 		{
-			// `default` is implicit and total — never declared under `worlds:`,
-			// so it must be accepted without being found there.
-			name: "the reserved default world is accepted", world: "default", meta: meta,
+			// TKT-7IZHP0 D11: beside declared worlds, `default` names nothing.
+			name: "the reserved default world is refused beside declared worlds", world: "default", meta: meta,
+			wantErr: `world "default" does not exist when worlds are declared`,
+		},
+		{
+			name: "the reserved default world is accepted when none is declared", world: "default",
+			meta: &metamodel.Metamodel{Version: "1.0"},
 		},
 		{
 			name:  "a typo is refused, and the error names what IS declared",
 			world: "publsihed", meta: meta,
-			wantErr: `"publsihed" is not a declared world`,
+			wantErr: `world "publsihed" is not declared (declared, in order: published, site-nl)`,
+		},
+		{
+			// RR-26WKZX: with schema default_world unset, the schema lands in
+			// the first declared world, so naming another one contradicts it.
+			name:  "a declared world other than the effective default is refused",
+			world: "site-nl", meta: meta,
+			wantErr: `"site-nl" contradicts the schema's default world "published"`,
 		},
 		{
 			name:  "set with no metamodel is refused rather than assumed valid",
@@ -2459,7 +2470,7 @@ func TestValidateApp_DefaultWorld(t *testing.T) {
 		{
 			name:  "alias contradicting schema default_world refused",
 			world: "site-nl", meta: withSchemaDefault,
-			wantErr: `"site-nl" contradicts default_world "published"`,
+			wantErr: `"site-nl" contradicts the schema's default world "published"`,
 		},
 	}
 
@@ -3070,13 +3081,14 @@ func TestValidateLists_CreateWorld(t *testing.T) {
 		{name: "unset is fine — the form opens in the list's own world"},
 		{name: "a declared world is accepted", createWorld: "editorial"},
 		{
-			// `default` is implicit and total, never listed under `worlds:`.
-			name: "the reserved default world is accepted", createWorld: "default",
+			// TKT-7IZHP0 D11: beside declared worlds, `default` names nothing.
+			name: "the reserved default world is refused", createWorld: "default",
+			wantErr: `create_world: world "default" does not exist when worlds are declared`,
 		},
 		{
 			name:        "a typo is refused, and the error names what IS declared",
 			createWorld: "editorail",
-			wantErr:     `create_world "editorail" is not a declared world`,
+			wantErr:     `create_world: world "editorail" is not declared`,
 		},
 	}
 

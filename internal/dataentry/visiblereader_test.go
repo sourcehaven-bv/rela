@@ -8,6 +8,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/search"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/visibility/visibilitytest"
 )
@@ -63,7 +64,7 @@ func seedReader(t *testing.T) visibleReader {
 			t.Fatalf("seed %s: %v", e.ID, err)
 		}
 	}
-	vr, err := newVisibleReader(st, tokenFaceOrder)
+	vr, err := newVisibleReader(st, tokenFamilies)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,12 +121,12 @@ func TestVisibleReader_InWorld(t *testing.T) {
 	})
 }
 
-// tokenFaceOrder declares no order, so faces list by token. It is for tests
+// tokenFamilies ranks no face, so faces list by token. It is for tests
 // whose schema order does not matter.
-func tokenFaceOrder(string) []string { return nil }
+func tokenFamilies() store.WorldScope { return store.TrivialScope() }
 
 func TestNewVisibleReader_RejectsNilStore(t *testing.T) {
-	if _, err := newVisibleReader(nil, tokenFaceOrder); err == nil {
+	if _, err := newVisibleReader(nil, tokenFamilies); err == nil {
 		t.Fatal("newVisibleReader(nil) = nil error, want a refusal")
 	}
 	if _, err := newVisibleReader(memstore.New(), nil); err == nil {

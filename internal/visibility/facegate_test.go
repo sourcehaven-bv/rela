@@ -64,8 +64,13 @@ func (plainRowGate) ReadableFacesMany(context.Context, string, []string) (acl.Fa
 // faceGetter serves one entity, at a face the test chooses.
 type faceGetter struct{ e *entity.Entity }
 
+// ListEntities yields the one row, as a store does for a bare-id world read.
 func (g faceGetter) ListEntities(context.Context, store.EntityQuery) iter.Seq2[*entity.Entity, error] {
-	return func(func(*entity.Entity, error) bool) {}
+	return func(yield func(*entity.Entity, error) bool) {
+		if g.e != nil {
+			yield(g.e, nil)
+		}
+	}
 }
 
 // readFace reads e's own address through r's resolver, in the default world.

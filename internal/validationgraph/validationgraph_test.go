@@ -29,7 +29,7 @@ func fixture(t *testing.T) *validationgraph.Graph {
 	if _, err := st.CreateRelation(ctx, entity.RelationKey{From: "A", Type: "has-review", To: "B"}, nil); err != nil {
 		t.Fatalf("create relation: %v", err)
 	}
-	g, err := validationgraph.New(visibility.Unrestricted(st))
+	g, err := validationgraph.New(visibility.Unrestricted(st).WithWorld(visibility.WorldOf(store.TrivialScope())))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestRelatedEntities_UnreadableTargetSurvivesAsUnresolved(t *testing.T) {
 	if _, err := st.CreateRelation(ctx, entity.RelationKey{From: "A", Type: "has-review", To: "GONE"}, nil); err != nil {
 		t.Skipf("backend refuses a dangling edge (%v); nothing to assert here", err)
 	}
-	g, err := validationgraph.New(visibility.Unrestricted(st))
+	g, err := validationgraph.New(visibility.Unrestricted(st).WithWorld(visibility.WorldOf(store.TrivialScope())))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -199,7 +199,7 @@ func TestRelatedEntities_NoFarReadsWhenNotRequested(t *testing.T) {
 			t.Fatalf("create relation to %s: %v", to, err)
 		}
 	}
-	cr := &countingReader{inner: visibility.Unrestricted(st)}
+	cr := &countingReader{inner: visibility.Unrestricted(st).WithWorld(visibility.WorldOf(store.TrivialScope()))}
 	g, err := validationgraph.New(cr)
 	if err != nil {
 		t.Fatalf("New: %v", err)

@@ -9,6 +9,7 @@ import (
 
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
@@ -150,21 +151,48 @@ func worldScopeFrom(ctx context.Context) store.WorldScope {
 //
 // It also rebuilds the base tracer, whose node titles come from the default
 // world (BUG-95W7MV): NewApp built it before any world lookup existed.
+//
+// It also rewires the validator, whose scripts resolve bare ids in the
+// default world (RR-HKVULG).
 func (a *App) SetWorlds(w WorldLookup) {
 	a.worlds = w
-	tr, err := tracer.New(a.store, defaultWorldScope(w))
+	world := defaultWorldScope(w)
+	tr, err := tracer.New(a.store, world)
 	if err != nil { // coverage-ignore: invariant: store is non-nil and the scope is always set
 		panic("dataentry: SetWorlds: " + err.Error())
 	}
 	a.tracer = tr
+	// coverage-ignore: invariant: NewApp built the same validator
+	if err := wireValidation(a, a.Meta(), world); err != nil {
+		panic("dataentry: SetWorlds: " + err.Error())
+	}
+}
+
+// defaultWorlder is the optional capability of a [WorldLookup] that names
+// the schema's default world (worlds.Compiled.DefaultWorld).
+type defaultWorlder interface {
+	DefaultWorld() store.WorldScope
+}
+
+// familiesProvider is the optional capability of a [WorldLookup] that
+// supplies the families scope, which ranks each faced type's faces in
+// declaration order (worlds.Compiled.Families, G18).
+type familiesProvider interface {
+	Families() store.WorldScope
 }
 
 // defaultWorldScope is the scope of the default world in w, the world a
-// surface uses when the request names none. A nil lookup, or one without the
-// default world, yields the trivial scope, which is the default world today.
-// So does an unset scope from a lookup, so the result is always set.
+// non-HTTP surface uses: the lookup's DefaultWorld when it offers one, else
+// its `default` entry. A nil lookup, or an unset scope, yields the trivial
+// scope, so the result is always set.
 func defaultWorldScope(w WorldLookup) store.WorldScope {
 	if w == nil {
+		return defaultWorldHandle().scope
+	}
+	if dw, ok := w.(defaultWorlder); ok {
+		if scope := dw.DefaultWorld(); scope.IsSet() {
+			return scope
+		}
 		return defaultWorldHandle().scope
 	}
 	scope, ok := w.Lookup(defaultWorldName)
@@ -172,6 +200,32 @@ func defaultWorldScope(w WorldLookup) store.WorldScope {
 		return defaultWorldHandle().scope
 	}
 	return scope
+}
+
+// familiesScope is the families scope a resolver orders faces by: the
+// lookup's own when it offers one, else one built from meta's face
+// declaration order. The fallback serves an App whose wiring set no worlds
+// (tests), and orders faces exactly as the compiled families scope would.
+func familiesScope(w WorldLookup, meta *metamodel.Metamodel) store.WorldScope {
+	if fp, ok := w.(familiesProvider); ok {
+		return fp.Families()
+	}
+	byType := map[string]store.TypeResolution{}
+	if meta == nil {
+		return store.NewWorldScope(byType)
+	}
+	for typ := range meta.Entities {
+		order := metamodel.FaceOrderOf(meta, typ)
+		if len(order) == 0 {
+			continue
+		}
+		chain := make([]entity.Face, len(order))
+		for i, name := range order {
+			chain[i] = entity.Face(name)
+		}
+		byType[typ] = store.TypeResolution{Chain: chain, Fallback: store.FallbackExclude}
+	}
+	return store.NewWorldScope(byType)
 }
 
 // resolveWorld resolves the request's `?world=` parameter into a handle,
@@ -493,8 +547,25 @@ func configuredDefaultWorld(a *App) string {
 	if a == nil {
 		return ""
 	}
-	state := a.State()
-	if state == nil || state.Cfg == nil {
+	return browsingDefaultWorld(a.State())
+}
+
+// browsingDefaultWorld is the world a bare HTTP read lands in: schema.yaml's
+// `default_world:` key, else the deprecated `app.default_world` alias, else
+// "" (the default world). Config load refuses an alias that contradicts the
+// schema, so the order only matters when one of the two is unset.
+//
+// Only an explicitly set key counts. Landing in the first declared world when
+// neither is set is the D2 landing rule, which PR 5b binds together with its
+// grant rule.
+func browsingDefaultWorld(state *Schema) string {
+	if state == nil {
+		return ""
+	}
+	if state.Meta != nil && state.Meta.DefaultWorld != "" {
+		return state.Meta.DefaultWorld
+	}
+	if state.Cfg == nil {
 		return ""
 	}
 	return state.Cfg.App.DefaultWorld

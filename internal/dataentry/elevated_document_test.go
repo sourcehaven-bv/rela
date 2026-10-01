@@ -436,7 +436,7 @@ end)`
 		},
 		func() documentElevation {
 			return documentElevation{
-				Reader:   visibility.Unrestricted(st),
+				Reader:   visibility.Unrestricted(st).WithWorld(visibility.WorldOf(store.TrivialScope())),
 				Recorder: elevationRecorder(sink),
 			}
 		})
@@ -498,7 +498,7 @@ func TestUnelevatedRender_CannotReachHiddenEntity(t *testing.T) {
 			}
 		},
 		func() documentElevation {
-			return documentElevation{Reader: visibility.Unrestricted(st), Recorder: elevationRecorder(sink)}
+			return documentElevation{Reader: visibility.Unrestricted(st).WithWorld(visibility.WorldOf(store.TrivialScope())), Recorder: elevationRecorder(sink)}
 		})
 
 	// Elevated:false — the capability is available to the service but this

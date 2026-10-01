@@ -216,7 +216,7 @@ func New(meta *metamodel.Metamodel, opts ...Option) *appbuild.Services {
 		// without an allow_acl_bypass action + an ElevatedProvider Mutator.
 		ScriptRunner: script.NewLuaScriptRunnerWithElevatedReads(
 			scriptEngine, readDeps, script.ReadElevation{
-				Reader:   visibility.Unrestricted(st),
+				Reader:   visibility.Unrestricted(st).WithWorld(visibility.WorldOf(world)),
 				Recorder: appbuild.NewElevationAuditor(auditSink),
 			},
 		),
@@ -360,7 +360,7 @@ func buildReadDeps(st store.Store, tr tracer.Tracer, searcher search.Searcher,
 	// Test fixture: unrestricted reads (no ACL wiring here). Production
 	// identity-bearing paths use Services.luaReadDepsFor instead.
 	return lua.ReadDeps{
-		VisibleReader: visibility.Unrestricted(st),
+		VisibleReader: visibility.Unrestricted(st).WithWorld(visibility.WorldOf(world)),
 		Tracer:        tr,
 		Searcher:      searcher,
 		Meta:          meta,

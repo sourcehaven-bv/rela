@@ -170,7 +170,7 @@ func readerFor(dr *docRuntime) (*visibility.Resolver, error) {
 	if err != nil {
 		return nil, fmt.Errorf("building the read gate failed: %w", err)
 	}
-	reader, err := visibility.NewResolver(gate, visibility.NopRedactor{}, dr.store, faceOrder(dr.meta))
+	reader, err := visibility.NewResolver(gate, visibility.NopRedactor{}, dr.store, familiesOption(dr.worlds))
 	if err != nil {
 		return nil, fmt.Errorf("building the reader failed: %w", err)
 	}

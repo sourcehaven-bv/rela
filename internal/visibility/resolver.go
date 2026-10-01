@@ -42,11 +42,6 @@ type World struct {
 // WorldOf is the world that scope compiles to.
 func WorldOf(scope store.WorldScope) World { return World{scope: scope} }
 
-// trivialWorld is the world a script reader starts in until its wiring calls
-// WithWorld: the trivial scope, every entity at its implicit face. TKT-7IZHP0
-// PR 5a makes the wiring pass the configured default world and removes this.
-func trivialWorld() World { return World{scope: store.TrivialScope()} }
-
 // DeniedWorld is a world that exists but that the principal holds no read
 // grant for. Every read in it misses, whatever address it names.
 func DeniedWorld() World { return World{denied: true} }
@@ -72,7 +67,7 @@ type Family struct {
 	ID   string
 	Type string
 	// Faces holds the readable faces in declaration order when the
-	// resolver was built [WithFaceOrder], so the order is the schema's and
+	// resolver was built [WithFamilies], so the order is the schema's and
 	// the same on every backend; without it, in token order. A caller that
 	// picks a face by position (Faces[0]) must use a resolver built with the
 	// option. It is never empty on a hit.
@@ -102,32 +97,34 @@ type Family struct {
 // The policy and allow-all capabilities are the same type with different
 // collaborators; see [NewResolver] and [NewAllowAllResolver].
 type Resolver struct {
-	gate      RowGate
-	redact    FieldRedactor
-	load      Loader
-	faceOrder FaceOrder
+	gate     RowGate
+	redact   FieldRedactor
+	load     Loader
+	families Families
 }
 
-// FaceOrder returns an entity type's declared face names in declaration
-// order (metamodel.FaceOrderOf). visibility may not import the metamodel, so
-// the wiring site supplies it.
-type FaceOrder func(entityType string) []string
+// Families returns the scope that ranks each faced type's faces in
+// declaration order (worlds.Compiled.Families). visibility may not import
+// the worlds compiler, so the wiring site supplies it. It is a function so a
+// wiring site whose worlds arrive after construction can bind late.
+type Families func() store.WorldScope
 
 // ResolverOption configures an optional part of a [Resolver].
 type ResolverOption func(*Resolver) error
 
-// WithFaceOrder orders [Family.Faces] by order: the implicit face first, then
-// the declared faces in declaration order, then any stored face the order
-// does not name, by token. Without it the declared faces are ordered by
-// token. The design (TKT-7IZHP0 §3.1) makes declaration order the order every
-// face listing uses.
+// WithFamilies orders [Family.Faces] by the chain families gives the type:
+// the implicit face first, then the faces in chain order, then any stored
+// face the chain does not name, by token. Without it the faces are ordered
+// by token. The design (TKT-7IZHP0 §3.1, G18) makes declaration order the
+// order every face listing uses, and the families scope is where that order
+// is compiled.
 // Nil: rejected — an absent option is how a caller asks for token order.
-func WithFaceOrder(order FaceOrder) ResolverOption {
+func WithFamilies(families Families) ResolverOption {
 	return func(r *Resolver) error {
-		if order == nil {
-			return errors.New("visibility: WithFaceOrder: order must be non-nil")
+		if families == nil {
+			return errors.New("visibility: WithFamilies: families must be non-nil")
 		}
-		r.faceOrder = order
+		r.families = families
 		return nil
 	}
 }
@@ -207,11 +204,10 @@ func (r *Resolver) Ref(ctx context.Context, w World, entityType string, ref enti
 
 // InWorld resolves a bare id to the face w selects for it.
 //
-// The default world reads the implicit face "". A faced type has no row
-// there, so it misses until the default world is generated (TKT-7IZHP0).
-// Any other world reads through one ListEntities query carrying the world
-// and the faces of id the principal may read: the ACL trims the candidates
-// first and the world ranks what is left, exactly as the list path does.
+// Every world, the default one included, reads through one ListEntities
+// query carrying the world and the faces of id the principal may read: the
+// ACL trims the candidates first and the world ranks what is left, exactly
+// as the list path does. An unset world fails closed.
 func (r *Resolver) InWorld(ctx context.Context, w World, entityType, id string) (Resolved, bool, error) {
 	if !w.denied && !w.scope.IsSet() {
 		return Resolved{}, false, fmt.Errorf("%w: visibility: InWorld with an unset world (use WorldOf)",
@@ -221,18 +217,12 @@ func (r *Resolver) InWorld(ctx context.Context, w World, entityType, id string) 
 	if err != nil || !ok {
 		return Resolved{}, false, err
 	}
-	var e *entity.Entity
-	if w.scope.IsTrivial() {
-		if !faces.Contains("") {
-			return Resolved{}, false, nil
-		}
-		// The implicit face "" is the default world's answer for a bare id
-		// until TKT-7IZHP0 generates a default world for faced types; that
-		// ticket removes this read.
-		e, ok = r.loadRef(ctx, entityType, entity.Ref{ID: id})
-	} else {
-		e, ok = r.loadInWorld(ctx, w.scope, entityType, id, faces)
+	// The trivial scope serves only the implicit face, so a principal who
+	// may not read it gets a miss without a store read.
+	if w.scope.IsTrivial() && !faces.Contains(entity.ImplicitFace) {
+		return Resolved{}, false, nil
 	}
+	e, ok := r.loadInWorld(ctx, w.scope, entityType, id, faces)
 	if !ok {
 		return Resolved{}, false, nil
 	}
@@ -290,21 +280,22 @@ func (r *Resolver) familyOf(entityType, id string, faces FaceSet, headers []stor
 	return Family{ID: id, Type: entityType, Faces: readable}, true, nil
 }
 
-// sortFaces orders faces as [WithFaceOrder] documents.
+// sortFaces orders faces as [WithFamilies] documents.
 func (r *Resolver) sortFaces(entityType string, faces []entity.Face) {
-	if r.faceOrder == nil {
+	if r.families == nil {
 		slices.Sort(faces)
 		return
 	}
 	// A linear scan, not a rank map: a type declares a handful of faces, so
 	// the scan is cheaper than building a map on every call (RR-TLQPK6).
-	order := r.faceOrder(entityType)
+	res, _ := r.families().For(entityType)
+	order := res.Chain
 	undeclared := len(order) + 1
 	key := func(f entity.Face) int {
 		if f.IsImplicit() {
 			return 0
 		}
-		if i := slices.Index(order, string(f)); i >= 0 {
+		if i := slices.Index(order, f); i >= 0 {
 			return i + 1
 		}
 		return undeclared

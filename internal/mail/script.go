@@ -29,7 +29,8 @@ import (
 //
 // # The script has NO graph access, by construction
 //
-// The runtime is built with a ZERO [lua.ReadDeps] and is a READER, so:
+// The runtime is built by [lua.NewDetached], a READER with no graph
+// collaborators, so:
 //
 //   - rela.get_entity, rela.list_entities, rela.search and every traversal
 //     binding are registered against nil collaborators and raise rather than
@@ -236,11 +237,11 @@ func (s *ScriptSender) buildRuntime(ctx context.Context) (*lua.Runtime, error) {
 		opts = append(opts, lua.WithSecrets(sec))
 	}
 
-	// A ZERO ReadDeps: no store, no tracer, no searcher, no metamodel. The
+	// A DETACHED runtime: no store, no tracer, no searcher, no metamodel. The
 	// graph bindings are registered but have nothing behind them, so they
-	// raise. NewReader, never NewWriter — a writer would additionally register
+	// raise. It is a reader, never a writer, which would additionally register
 	// create/update/delete.
-	return lua.NewReader(lua.ReadDeps{}, s.stdout, opts...), nil
+	return lua.NewDetached(s.stdout, opts...), nil
 }
 
 // messageTable renders m as the Lua `message` global.

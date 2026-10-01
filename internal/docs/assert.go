@@ -139,7 +139,7 @@ func showsEvidence(typ, world string, got, absent []string, faced bool) evidence
 // worldScope compiles a declared world name to the scope a store query takes.
 //
 // An empty name is the default world, from the compiled worlds' seam
-// ([worlds.Compiled.Default]). That is a real answer, not a missing one, so it
+// ([worlds.Compiled.DefaultWorld]). That is a real answer, not a missing one, so it
 // is not an error.
 //
 // An UNDECLARED name is an error. A world that resolves nothing looks exactly
@@ -147,22 +147,16 @@ func showsEvidence(typ, world string, got, absent []string, faced bool) evidence
 // for the wrong reason — the vacuous-pass shape this whole feature refuses.
 func (dr *docRuntime) worldScope(name string) (store.WorldScope, error) {
 	compiled := dr.worlds
-	if name == "" || name == metamodel.DefaultWorldName {
-		return compiled.Default(), nil
+	if name == "" {
+		return compiled.DefaultWorld(), nil
 	}
 	scope, ok := compiled.Lookup(name)
 	if !ok {
 		return store.WorldScope{}, fmt.Errorf(
-			"no world named %q is declared (schema.yaml declares: %s)",
-			name, strings.Join(declaredWorlds(dr), ", "))
+			"no world named %q exists (worlds: %s)",
+			name, strings.Join(compiled.Names(), ", "))
 	}
 	return scope, nil
-}
-
-// declaredWorlds lists the schema's world names for a failure message, in
-// declaration order.
-func declaredWorlds(dr *docRuntime) []string {
-	return metamodel.WorldOrderOf(dr.meta)
 }
 
 // describeSubject names what a failure is about: the type, and the world when

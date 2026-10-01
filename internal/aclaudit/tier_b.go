@@ -38,9 +38,10 @@ func tierB(p *acl.Policy, m MetamodelReader) []Finding {
 // means the failure mode is a silent denial rather than a leak: exactly the
 // shape an operator needs a linter to explain.
 //
-// The implicit DEFAULT world is accepted without being declared — it is
-// total, always exists, and `read: [world:default]` is a legal way to spell
-// what a bare read grant already means.
+// The generated DEFAULT world is accepted without being declared, but only
+// in a project that declares no world: there it is the only world. Beside
+// declared worlds it does not exist (TKT-7IZHP0 D11), so naming it is
+// flagged like any other unknown name.
 func checkUndeclaredWorlds(p *acl.Policy, m MetamodelReader) []Finding {
 	var f []Finding
 	for _, name := range sortedRoleNames(p) {
@@ -58,10 +59,14 @@ func checkUndeclaredWorlds(p *acl.Policy, m MetamodelReader) []Finding {
 			}
 		}
 		for _, world := range worlds {
-			if world == acl.DefaultWorldName || m.HasWorld(world) || seen[world] {
+			if worldExists(m, world) || seen[world] {
 				continue
 			}
 			seen[world] = true
+			if f2, isDefault := defaultBesideDeclared(name, world, m); isDefault {
+				f = append(f, f2)
+				continue
+			}
 			if f2, isCaseVariant := defaultWorldCaseVariant(name, world); isCaseVariant {
 				f = append(f, f2)
 				continue
@@ -77,6 +82,34 @@ func checkUndeclaredWorlds(p *acl.Policy, m MetamodelReader) []Finding {
 		}
 	}
 	return f
+}
+
+// worldExists reports whether world names a world of m. The generated
+// default world exists only while no world is declared (TKT-7IZHP0 D11).
+func worldExists(m MetamodelReader, world string) bool {
+	if world == acl.DefaultWorldName {
+		return !m.DeclaresWorlds()
+	}
+	return m.HasWorld(world)
+}
+
+// defaultBesideDeclared reports a reference to the default world in a project
+// that declares worlds, where it names nothing (TKT-7IZHP0 D11).
+//
+// Its own message for the same reason as defaultWorldCaseVariant: the
+// ordinary remedy, "declare it", is refused by the schema loader. The entry
+// fails closed at runtime, so the finding explains a denial, not a leak.
+func defaultBesideDeclared(subject, world string, m MetamodelReader) (Finding, bool) {
+	if world != acl.DefaultWorldName || !m.DeclaresWorlds() {
+		return Finding{}, false
+	}
+	return Finding{
+		Rule: "B10-undeclared-world", Severity: High, Subject: subject,
+		Detail: fmt.Sprintf("%q names world %q, which does not exist when worlds are declared; "+
+			"the entry matches nothing", subject, world),
+		Fix: "name a declared world instead; the default world is generated only for a " +
+			"project that declares none",
+	}, true
 }
 
 // defaultWorldCaseVariant reports a world grant that spells the default

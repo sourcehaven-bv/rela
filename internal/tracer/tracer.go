@@ -115,7 +115,7 @@ type reader interface {
 
 // New creates a generic Tracer backed by a store's entity and relation
 // readers. world selects the face a node's title and properties come from;
-// wiring passes worlds.Compiled.Default().
+// wiring passes worlds.Compiled.DefaultWorld().
 //
 // Both are required. An unset world is refused here rather than at the first
 // traversal, where it would resolve no node and every trace would come back

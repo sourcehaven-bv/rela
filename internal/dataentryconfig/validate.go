@@ -1065,17 +1065,8 @@ func validateLists(cfg *Config, meta *metamodel.Metamodel) []string {
 		// (§9.4), so there is no combination to reject. The real gate is ACL —
 		// the button renders only if the principal may read the target world,
 		// which is per-principal and therefore not a load-time question.
-		if w := list.CreateWorld; w != "" && w != metamodel.DefaultWorldName {
-			if _, ok := meta.Worlds[w]; !ok {
-				declared := make([]string, 0, len(meta.Worlds))
-				for name := range meta.Worlds {
-					declared = append(declared, name)
-				}
-				sort.Strings(declared)
-				errs = append(errs, fmt.Sprintf(
-					"list %q: create_world %q is not a declared world (schema.yaml declares: %s)",
-					listID, w, strings.Join(declared, ", ")))
-			}
+		if msg := checkDeclaredWorld(fmt.Sprintf("list %q", listID), "create_world", list.CreateWorld, meta); msg != "" {
+			errs = append(errs, msg)
 		}
 
 		// Validate columns
@@ -2558,51 +2549,59 @@ func validateCommands(cfg *Config, meta *metamodel.Metamodel) []string {
 // "PlantUML as a local sidecar" deployment stays valid; anywhere else, the
 // operator can use TLS.
 func validateApp(cfg *Config, meta *metamodel.Metamodel) []string {
-	var errs []string
-	// A typo here would silently serve the DEFAULT world to every request and
-	// look exactly like the feature was never configured — no error, no
-	// warning, just the wrong faces. So an undeclared name fails the load.
-	if w := cfg.App.DefaultWorld; w != "" && w != metamodel.DefaultWorldName {
-		if meta == nil {
-			errs = append(errs, "app.default_world: set, but no metamodel is available to validate it against")
-		} else if _, ok := meta.Worlds[w]; !ok {
-			declared := make([]string, 0, len(meta.Worlds))
-			for name := range meta.Worlds {
-				declared = append(declared, name)
-			}
-			sort.Strings(declared)
-			errs = append(errs, fmt.Sprintf(
-				"app.default_world: %q is not a declared world (schema.yaml declares: %s)",
-				w, strings.Join(declared, ", ")))
+	errs := validateDefaultWorldAlias(cfg.App.DefaultWorld, meta)
+	return append(errs, validatePlantUMLURL(cfg.App.PlantUMLServerURL)...)
+}
+
+// validateDefaultWorldAlias checks app.default_world, the deprecated alias of
+// schema.yaml's default_world (TKT-7IZHP0 D3).
+//
+// The schema decides the default world: its default_world key, else the
+// first declared world, else the generated "default". The alias may only
+// restate that answer. A name that differs fails the load, whether it is a
+// typo or a real world, because the HTTP surface and every non-HTTP reader
+// would otherwise land in different worlds, and nothing would look broken.
+func validateDefaultWorldAlias(w string, meta *metamodel.Metamodel) []string {
+	if w == "" {
+		return nil
+	}
+	if meta == nil {
+		if w == metamodel.DefaultWorldName {
+			return nil
 		}
+		return []string{"app.default_world: set, but no metamodel is available to validate it against"}
 	}
-	// schema.yaml's default_world is the source (TKT-7IZHP0 D3);
-	// app.default_world is a deprecated alias for it and must not contradict
-	// it. Unset in schema.yaml, the alias keeps its old meaning until the
-	// worlds compiler reads default_world (TKT-7IZHP0 PR 5a).
-	if w := cfg.App.DefaultWorld; w != "" && meta != nil && meta.DefaultWorld != "" && w != meta.DefaultWorld {
-		errs = append(errs, fmt.Sprintf(
-			"app.default_world: %q contradicts default_world %q in schema.yaml; app.default_world is a "+
-				"deprecated alias for it and must match, or be removed",
-			w, meta.DefaultWorld))
+	if err := metamodel.CheckWorldName(meta, w); err != nil {
+		return []string{"app.default_world: " + err.Error()}
 	}
-	if raw := cfg.App.PlantUMLServerURL; raw != "" {
-		u, err := url.Parse(raw)
-		switch {
-		case err != nil:
-			errs = append(errs, fmt.Sprintf("app.plantuml_server_url: not a valid URL: %v", err))
-		case u.Scheme != "http" && u.Scheme != "https":
-			errs = append(errs, fmt.Sprintf(
-				"app.plantuml_server_url: scheme must be http or https, got %q", u.Scheme))
-		case u.Host == "":
-			errs = append(errs, "app.plantuml_server_url: must include a host")
-		case u.Scheme == "http" && !isLoopbackHost(u.Hostname()):
-			errs = append(errs, fmt.Sprintf(
-				"app.plantuml_server_url: http:// sends diagram source in cleartext; "+
-					"use https:// (http is allowed only for loopback), got host %q", u.Hostname()))
-		}
+	if eff := metamodel.EffectiveDefaultWorld(meta); w != eff {
+		return []string{fmt.Sprintf(
+			"app.default_world: %q contradicts the schema's default world %q; app.default_world is a "+
+				"deprecated alias for default_world in schema.yaml and must match it, or be removed",
+			w, eff)}
 	}
-	return errs
+	return nil
+}
+
+// validatePlantUMLURL checks app.plantuml_server_url; see validateApp.
+func validatePlantUMLURL(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+	u, err := url.Parse(raw)
+	switch {
+	case err != nil:
+		return []string{fmt.Sprintf("app.plantuml_server_url: not a valid URL: %v", err)}
+	case u.Scheme != "http" && u.Scheme != "https":
+		return []string{fmt.Sprintf("app.plantuml_server_url: scheme must be http or https, got %q", u.Scheme)}
+	case u.Host == "":
+		return []string{"app.plantuml_server_url: must include a host"}
+	case u.Scheme == "http" && !isLoopbackHost(u.Hostname()):
+		return []string{fmt.Sprintf(
+			"app.plantuml_server_url: http:// sends diagram source in cleartext; "+
+				"use https:// (http is allowed only for loopback), got host %q", u.Hostname())}
+	}
+	return nil
 }
 
 // isLoopbackHost reports whether host (a URL's Hostname(), so already stripped

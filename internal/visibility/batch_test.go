@@ -483,6 +483,7 @@ func TestScriptReader_ResolveHeadersBudget(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			sr = sr.WithWorld(visibility.WorldOf(store.TrivialScope()))
 			if got := sr.ResolveHeaders(ctx, refs); len(got) != 2*n {
 				t.Fatalf("got %d hits, want %d", len(got), 2*n)
 			}

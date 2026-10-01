@@ -235,7 +235,7 @@ app:
 | ------------- | -------------------------------- |
 | `name`        | Application title in the header  |
 | `description` | Subtitle shown below the title   |
-| `default_world` | World a request lands in when the URL carries no `?world=`. See [Worlds in the web app and API](#worlds-in-the-web-app-and-api) |
+| `default_world` | Deprecated alias for the schema's `default_world:`; must name the same world. See [Worlds in the web app and API](#worlds-in-the-web-app-and-api) |
 
 ### PlantUML diagrams
 
@@ -5900,19 +5900,20 @@ A project that declares no worlds is unaffected by everything below.
 
 ### Browsing default (`app.default_world`)
 
-`default_world` in the `app:` block names the world a request lands in when the
-URL carries no `?world=`:
+A request whose URL carries no `?world=` lands in the world named by the
+top-level `default_world:` key in `schema.yaml` (see
+[Metamodel](metamodel.md#the-default_world-key)):
 
 ```yaml
-app:
-  name: "Handbook"
-  default_world: published
+default_world: published
 ```
 
-Without it, browsing lands in the default world, which applies no resolution
-and so shows none of a faced type's rows at all. For a project using faces
-`default_world` is effectively required, and a handbook should land readers in
-the world holding the published text.
+A handbook should land readers in the world holding the published text.
+
+`default_world` in the `app:` block of `data-entry.yaml` is the older spelling
+and is deprecated. It must name the schema's default world: the schema key when
+set, else the first declared world. Any other value fails the load. Remove it
+once `schema.yaml` carries the key.
 
 `default_world` is presentation, not policy. It grants nothing: the world's
 read grant is re-checked on every request exactly as for an explicit `?world=`,
@@ -5920,13 +5921,7 @@ so pointing it at a world a role may not read yields that world's ordinary
 empty result. The server applies it to `curl` and to the browser alike, but
 only on read requests and only on the routes listed under
 [Routes that serve a world](#routes-that-serve-a-world). Passing
-`?world=default` explicitly still selects the unresolved default world. Naming
-an undeclared world here is a startup error.
-
-`schema.yaml` also accepts a top-level `default_world:` key (see
-[Metamodel](metamodel.md#the-default_world-key)). It is validated but not yet
-applied: `app.default_world` still decides where a request lands. When both
-keys are set they must name the same world, or the app refuses to start.
+`?world=default` explicitly still selects the unresolved default world.
 
 ### Creating into another world (`create_world`)
 

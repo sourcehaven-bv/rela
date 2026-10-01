@@ -188,6 +188,11 @@ func (r *metamodelReader) HasWorld(name string) bool {
 	return ok
 }
 
+// DeclaresWorlds reports whether the metamodel declares any world.
+func (r *metamodelReader) DeclaresWorlds() bool {
+	return r.m != nil && len(r.m.Worlds) > 0
+}
+
 // HasFace reports whether entity type t declares the content state named
 // face. Resolves aliases via GetEntityDef, so a grant written against a
 // type alias answers about the canonical type. A type with no `faces:`
