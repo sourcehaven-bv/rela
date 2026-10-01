@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/attachment"
-	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/output"
 )
 
@@ -15,13 +14,14 @@ type AttachmentsCmd struct {
 	EntityID string `arg:"" name:"entity-id" help:"Target entity ID, or ID@face for a faced type."`
 }
 
-// Run dispatches `rela attachments <entity-id>`.
-func (c *AttachmentsCmd) Run(ctx context.Context, att *attachment.Service) error {
-	ref, err := entity.ParseRef(c.EntityID)
+// Run dispatches `rela attachments <entity-id>`. A bare id reads in the
+// schema's default world, like `rela show`; `ID@face` names one face.
+func (c *AttachmentsCmd) Run(ctx context.Context, svc *readServices, att *attachment.Service) error {
+	e, err := readAddress(ctx, svc.Store, svc.Families, svc.World, c.EntityID)
 	if err != nil {
-		return err
+		return classifyReadError(c.EntityID, err)
 	}
-	infos, err := att.List(ctx, ref)
+	infos, err := att.List(ctx, e.Ref())
 	if err != nil {
 		return err
 	}
