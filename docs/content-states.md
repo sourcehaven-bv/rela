@@ -225,13 +225,14 @@ an internal one usually wants `default`. Guessing wrong would mean a
 `published` world quietly serving a draft, which is exactly the failure this
 feature exists to prevent, so the schema has to say which one it means.
 
-Every project also has an implicit **default world**. It applies no
-resolution: every entity appears with its single unnamed state, exactly as a
-project without worlds behaves. It needs no declaration, and the name `default`
-is reserved so nothing can shadow it. Because a faced type has no such state,
-its rows are reached under the default world only by addressing a face
-explicitly as `ID@face`; browsing a faced type there shows nothing. Declare a
-world for every axis you expect people to browse.
+A schema that declares no worlds gets one generated world, named `default`. It
+holds every entity once: a faceless type at its only state, a faced type at the
+first face it has, in the order the type declares its faces. Once you declare
+worlds, only they exist. There is no `default` world beside them, and naming
+one anywhere in the configuration is a load error rather than a quiet
+reference to some other world. The name `default` stays reserved, so no
+declared world can take it. Declare a world for every axis you expect people to
+browse.
 
 The schema loader rejects a world that declares neither `select:` nor
 `overrides:`, a chain naming a face no type declares, an override naming a type
@@ -557,23 +558,23 @@ app presents it.
 
 ## Step 6 — Configuring the Web App
 
-The web app reads the world from the URL and applies the operator's browsing
-default when the URL names none. Two keys in `data-entry.yaml` control this.
-
-Set the browsing default in the `app:` block:
+The web app reads the world from the URL and applies the schema's default world
+when the URL names none. Set it with a top-level key in `schema.yaml`:
 
 ```yaml
-app:
-  name: "Handbook"
-  default_world: published
+default_world: published
 ```
 
 `default_world` names the world a request lands in when it carries no
-`?world=`. Without it, browsing lands in the default world, which applies no
-resolution and therefore shows no policies at all — every policy row sits under
-a face name. For a faced project `default_world` is effectively required, and
-for a handbook the world to land in is `published`, so readers see the adopted
-text and editors reach drafts deliberately by selecting `editorial`.
+`?world=`. For a handbook the world to land in is `published`, so readers see
+the adopted text and editors reach drafts deliberately by selecting
+`editorial`. Without the key the default world is the first world declared
+under `worlds:`. Lua scripts, the MCP server, the CLI, scheduled tasks and
+validation read in the same world.
+
+`app.default_world` in `data-entry.yaml` is the older spelling. It is now a
+deprecated alias that must name the same world as the schema, and a
+contradiction fails the load. Remove it once `schema.yaml` carries the key.
 
 `default_world` is presentation, not policy. It grants nothing: the world's
 read grant is re-checked on every request exactly as for an explicit `?world=`,

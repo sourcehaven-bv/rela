@@ -1446,7 +1446,7 @@ worlds:
 | `otherwise` | **Required.** What happens to an entity whose type declares faces but that has none the chain names: `exclude` leaves it out of the world, `default` shows its unnamed state — which a faced type does not have, so `default` excludes it too. |
 | `banner` | Optional text the web app shows on every page in this world. Empty shows no announcement. |
 | `messages` | Optional. The web app's wording for what this world changes on a screen: `absent` (a detail page for an entity with no face here; placeholders `{face}`, `{world}`, `{title}`), `projection` (a list or board note on a faced type; `{world}` only, since a list has no single entity), `stand_in` (the badge on a row served a stand-in; `{face}`, `{world}`). A placeholder a surface cannot fill is left as written. The app has no default sentence; an undeclared entry shows nothing. |
-| `on_absent` | Optional. `redirect: <world>` sends a reader who opens an entity with no face in this world to that world (or `default`) instead of showing the page. |
+| `on_absent` | Optional. `redirect: <world>` sends a reader who opens an entity with no face in this world to that declared world instead of showing the page. |
 | `primary_for` | Optional. The faces this world is the canonical home of. Needed only when two worlds lead with the same face for a type. See below. |
 | `edits` | Accepted and validated as a declared face name. Not used yet. |
 
@@ -1472,12 +1472,16 @@ an internal one usually wants `default`. Guessing wrong would mean a
 `published` world quietly serving a draft, so the schema has to say which one
 it means.
 
-Every project also has an implicit **default world**, which applies no
-resolution and serves each entity's unnamed state. A faced type has none, so
-its rows are reached there only by addressing a face as `ID@face`. It needs no
-declaration, it always exists, and the name `default` is reserved so nothing
-can shadow it. Reading any other world
-requires a `world:<name>` grant in `acl.yaml`; see the
+A schema that declares **no** worlds gets one generated world, named
+`default`. It holds every entity once: a faceless type at its only state, a
+faced type at the first face it has, in the order the type declares its faces.
+A schema that declares worlds has only those worlds. There is no `default`
+world beside them, and naming one anywhere in the configuration is a load
+error (see [Load-time checks on worlds](#load-time-checks-on-worlds)). The
+name `default` is reserved, so no declared world can take it.
+
+Reading a declared world requires a `world:<name>` grant in `acl.yaml`; see
+the
 [ACL: Authorization Overview](acl-overview.md#scoping-a-grant-to-a-content-state).
 
 #### Load-time checks on worlds
@@ -1497,6 +1501,15 @@ a world:
 - is called `default` in any capitalization, or has a name outside the face
   grammar.
 
+Beside declared worlds, every place that names a world refuses `default`,
+because no world has that name: `on_absent.redirect`, a copy's
+`landing.world`, `default_world:`, and in `data-entry.yaml` a list's
+`create_world`, a next action's `source_world` and `visible_worlds`, and
+`app.default_world`. The configuration is used as written, so `default` is
+never quietly read as some other world. In `acl.yaml`, a `world:default` grant
+or a `default` entry in `worlds`/`deny_worlds` loads but matches nothing, and
+`rela acl audit` reports it as B10.
+
 #### The `default_world` key
 
 A top-level `default_world:` key beside `worlds:` names the world a request
@@ -1510,9 +1523,18 @@ It must name a declared world, or `default` when the schema declares no worlds.
 Anything else, a different capitalization included, fails the load. The key
 may appear only in the root schema file, not in an included one.
 
-The key is validated but not yet applied. Until it is, the data-entry app's
-`app.default_world` decides where a request lands, and the two must agree when
-both are set (see
+Without the key, the default world is the first world declared under
+`worlds:`, or the generated `default` world when none is declared.
+
+Lua scripts, the MCP server, the CLI, scheduled tasks, validation and the
+documentation builder all read in this world. A scheduled task reads under its
+principal's grants, so a bare id resolves to the first face in the default
+world that the principal may read.
+
+The data-entry web app lands a request without `?world=` in the world this key
+names. `app.default_world` in `data-entry.yaml` is a deprecated alias: it must
+name the same world as this key, or as the first declared world when this key
+is unset, and otherwise the configuration does not load (see
 [Data entry](data-entry.md#browsing-default-appdefault_world)).
 
 ### `primary_for:` — only when two worlds lead the same face
