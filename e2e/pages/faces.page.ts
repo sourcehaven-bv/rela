@@ -60,6 +60,43 @@ export class FacesPage extends BasePage {
     await expect(this.page.locator('.world-banner--absent')).toBeVisible();
   }
 
+  // ── World switcher (WorldSwitcher.vue) ────────────────────────────
+
+  worldSwitcher(): Locator {
+    return this.page.getByTestId('world-switcher');
+  }
+
+  async selectWorld(name: string) {
+    await this.worldSwitcher().selectOption(name);
+    await this.waitForSpinnerToDisappear();
+  }
+
+  async expectSelectedWorld(name: string) {
+    await expect(this.worldSwitcher()).toHaveValue(name);
+  }
+
+  /** The `?world=` the URL carries, or null when it carries none. */
+  worldParam(): string | null {
+    return new URL(this.page.url()).searchParams.get('world');
+  }
+
+  // ── Create-form face picker (DynamicForm.vue) ─────────────────────
+
+  createFacePicker(): Locator {
+    return this.page.getByTestId('create-face');
+  }
+
+  /** The labels of the faces the picker offers, without its placeholder. */
+  async createFaceOptions(): Promise<string[]> {
+    await expect(this.createFacePicker()).toBeVisible();
+    return this.createFacePicker().locator('option:not([disabled])').allTextContents()
+      .then((labels) => labels.map((l) => l.trim()));
+  }
+
+  async expectNoCreateFacePicker() {
+    await expect(this.createFacePicker()).toHaveCount(0);
+  }
+
   // ── Face switcher ──────────────────────────────────────────────────
 
   /** Switch to another face. One other face renders a single button

@@ -26,11 +26,11 @@
  *
  * ## The empty string is the default world
  *
- * `''` means "no `?world=`", which the API reads as the default world. The API
- * also accepts the explicit spelling `?world=default`; both normalize to the
- * default world in the entity cache (see `worldKey` in `stores/entities.ts`),
- * but this composable keeps whatever the URL said so a deep link round-trips
- * unchanged rather than being silently rewritten.
+ * `''` means "no `?world=`", which the API reads as the default world:
+ * `default_world:`, else the first declared world, else the generated
+ * `default` world when the schema declares none. `?world=default` is valid
+ * only in that last case; a schema with declared worlds answers it with a 400,
+ * and App.vue drops it from the URL (see unknownWorldQuery).
  */
 import { computed, type Ref } from 'vue'
 import { useRoute, useRouter, type LocationQuery, type LocationQueryRaw } from 'vue-router'
@@ -88,8 +88,7 @@ export function useWorld(): UseWorld {
   // default face. For an ISMS that is the whole point: browsing shows what is
   // in force, and a draft is reached by naming an editorial world.
   //
-  // An explicit `?world=` always wins, including `?world=default`, which is
-  // how a reader gets to the raw faces when a default is configured.
+  // An explicit `?world=` always wins.
   //
   // This is presentation only. The world's read grant is re-checked per
   // request exactly as for an explicit param, so a configured default can
@@ -139,13 +138,11 @@ export function useWorld(): UseWorld {
  * copy landing in another world) uses it directly, so the two cannot
  * drift — the first copy of this logic had already lost the page reset.
  *
- * Dropping the param lands on the operator's default world, so it is only
- * the way to reach `next` when `next` IS that default. Otherwise the param
- * has to be written explicitly — including `?world=default`, which is how a
- * reader reaches the raw faces on a deployment that configures one. '' and
- * DEFAULT_WORLD name the SAME world, so both are normalised before
- * comparing; otherwise DEFAULT_WORLD on a deployment with no configured
- * default writes ?world=default instead of dropping the param.
+ * Dropping the param lands on the default world, so it is only the way to
+ * reach `next` when `next` IS that default. Otherwise the param is written
+ * explicitly. '' and DEFAULT_WORLD name the same world on a schema that
+ * declares none, so both are normalised before comparing; otherwise
+ * DEFAULT_WORLD would write ?world=default instead of dropping the param.
  *
  * Changing world resets pagination: page 3 of the draft world is not page 3
  * of the published world — the published world may hold fewer entities than
@@ -162,4 +159,28 @@ export function worldQuery(next: string, base: LocationQuery, defaultWorld: stri
   }
   delete query.page
   return query
+}
+
+/**
+ * The query to replace the URL with when its `?world=` names no world this
+ * server serves, or null when the URL is fine.
+ *
+ * The API answers such a request with a 400 on every route, so a stale
+ * bookmark (`?world=default` on a schema that now declares worlds) would
+ * break every page. Dropping the parameter lands the user in the default
+ * world, which is what a bare URL means. A repeated `?world=` is dropped
+ * for the same reason. Returns null until the schema has loaded, because an
+ * empty world map cannot tell a stale name from an unloaded one.
+ */
+export function unknownWorldQuery(
+  query: LocationQuery,
+  worlds: ReadonlyMap<string, unknown>,
+): LocationQueryRaw | null {
+  const value = query.world
+  if (value === undefined || worlds.size === 0) return null
+  if (typeof value === 'string' && (value === '' || worlds.has(value))) return null
+  const next: LocationQueryRaw = { ...query }
+  delete next.world
+  delete next.page
+  return next
 }

@@ -2,8 +2,8 @@
 import { ref, computed, type Component } from 'vue'
 import { RouterLink, useRouter, type RouteLocationRaw } from 'vue-router'
 import { useQuery, useMutation, useQueryCache } from '@pinia/colada'
-import { useSchemaStore, useUIStore } from '@/stores'
-import { listAllEntities, updateEntity, getErrorMessage } from '@/api'
+import { useEntitiesStore, useSchemaStore, useUIStore } from '@/stores'
+import { listAllEntities, getErrorMessage } from '@/api'
 import { entityKeys } from '@/queries/entities'
 import { beginOptimistic, rollbackOptimistic, settleOptimistic } from '@/queries/optimisticList'
 import type {
@@ -395,12 +395,16 @@ interface MoveCardVars {
   updates: Record<string, string>
 }
 
+const entitiesStore = useEntitiesStore()
+
 const { mutate: moveCard } = useMutation({
   mutation: ({ entity, updates }: MoveCardVars) => {
     const config = kanbanConfig.value
     if (!config) throw new Error(`unknown kanban view: ${props.id}`)
-    // To the card's ADDRESS, face included — see utils/entityRef.
-    return updateEntity(config.entity, entityRef(entity), { properties: updates })
+    // To the card's ADDRESS, face included — see utils/entityRef. Through the
+    // entities store so the edit form, which reads its cache, sees the move
+    // without waiting for the SSE invalidation.
+    return entitiesStore.update(config.entity, entityRef(entity), { properties: updates })
   },
   onMutate({ entity, updates }: MoveCardVars) {
     return beginOptimistic(

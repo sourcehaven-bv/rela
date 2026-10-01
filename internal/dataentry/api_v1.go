@@ -1408,10 +1408,11 @@ func (a *App) handleV1Schema(w http.ResponseWriter, r *http.Request) {
 
 	s := a.State()
 	schema := v1.Schema{
-		Entities:  make(map[string]v1.EntityType),
-		Relations: make(map[string]v1.RelationType),
-		Types:     make(map[string]v1.CustomType),
-		Worlds:    schemaWorlds(r.Context(), s.Meta),
+		Entities:   make(map[string]v1.EntityType),
+		Relations:  make(map[string]v1.RelationType),
+		Types:      make(map[string]v1.CustomType),
+		Worlds:     schemaWorlds(r.Context(), s.Meta),
+		WorldOrder: metamodel.WorldOrderOf(s.Meta),
 	}
 
 	for name, def := range s.Meta.Entities {

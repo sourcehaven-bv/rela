@@ -404,3 +404,23 @@ func TestFaceGrant_RenameAffordanceIsFamilyWide(t *testing.T) {
 		t.Errorf("update on the served published face must stay offered; got %v", got)
 	}
 }
+
+// TestFaceGrant_CollectionCreateIsPerFace pins the collection create verdict
+// of a faced type: one `create@<face>` key per declared face, and `create`
+// true when any face is creatable. A faced type has no implicit face, so
+// asking only about it hid the create button from every face-granted role.
+func TestFaceGrant_CollectionCreateIsPerFace(t *testing.T) {
+	app := facedTicketApp(t)
+	app.acl = mustNewACL(t, &acl.Policy{
+		Roles:       map[string]acl.RoleDef{"editor": {Read: []string{"*"}, Create: []string{"ticket@draft"}}},
+		Assignments: map[string]string{"alice": "editor"},
+	}, app.store)
+
+	got := app.affordances.computeCollectionActions(aliceCtx(), "ticket")
+	want := map[string]bool{"create": true, "create@draft": true, "create@published": false}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("_actions[%s] = %v, want %v (all: %v)", k, got[k], v, got)
+		}
+	}
+}

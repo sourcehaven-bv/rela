@@ -85,6 +85,7 @@ func schemaWorlds(ctx context.Context, meta *metamodel.Metamodel) map[string]v1.
 			Banner:     def.Banner,
 			Messages:   worldMessagesWire(def.Messages),
 			OnAbsent:   worldOnAbsentWire(def.OnAbsent),
+			Create:     def.Create,
 			Readable:   readable,
 			Default:    name == defaultName,
 		}

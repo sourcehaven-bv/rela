@@ -344,6 +344,15 @@ The closed set of verbs in phase 1, matching `acl.Op` exactly:
 | `delete` | per-item | `OpDelete` |
 | `rename` | per-item | `OpRename` |
 
+For a type that declares faces, the collection map also carries one
+`create@<face>` key per declared face, and `create` is true when any of
+them is. A faced type has no implicit face to create on, so `create` alone
+cannot say where a create may land. The SPA's create form reads these keys
+to offer a face picker when the form's world declares no `create:` face.
+
+`rename` on a faced entity is true only when the principal may update every
+stored face: a rename moves the whole family.
+
 `transition:<state>` and `relation:<type>:add/remove` will follow once
 the ACL layer learns to represent them (gated on a separate ACL v0.5
 work item). Until then the SPA continues to render workflow controls

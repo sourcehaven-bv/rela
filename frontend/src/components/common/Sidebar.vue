@@ -20,6 +20,7 @@ import SidebarEntityQuery from './SidebarEntityQuery.vue'
 import { useEvents } from '@/composables/useEvents'
 import { useSidebarEmptyGroups } from '@/composables/useSidebarEmptyGroups'
 import ProjectSwitcher from './ProjectSwitcher.vue'
+import WorldSwitcher from './WorldSwitcher.vue'
 import { apiUrl } from '@/api/base'
 
 const schemaStore = useSchemaStore()
@@ -182,9 +183,10 @@ async function handleAction(item: SidebarItem, ev?: Event) {
       </button>
     </div>
 
-    <!-- Only renders when the host has more than one project open. -->
+    <!-- Each switcher renders only when there is more than one choice. -->
     <div v-if="!uiStore.sidebarCollapsed" class="sidebar-switcher">
       <ProjectSwitcher />
+      <WorldSwitcher />
     </div>
 
     <!-- Fixed top items: Search and Analysis -->
@@ -376,6 +378,9 @@ async function handleAction(item: SidebarItem, ev?: Event) {
 }
 
 .sidebar-switcher {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
   padding: 0 12px 8px;
 }
 

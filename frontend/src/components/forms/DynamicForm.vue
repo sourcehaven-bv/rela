@@ -16,6 +16,7 @@ import {
   optionVerdictsFor as optionVerdictsForVerdict,
 } from '@/utils/affordances'
 import { isClearedForType } from '@/utils/formValue'
+import { useCreateFace } from '@/composables/useCreateFace'
 import { useEntityIDControls } from '@/composables/useEntityIDControls'
 import { useConfirm } from '@/composables/useConfirm'
 import { useHiddenFieldPolicy, clearWhenHiddenOf } from '@/composables/useHiddenFieldPolicy'
@@ -358,6 +359,23 @@ const mentionSelf = computed(() =>
 const formMode = computed(() => (isEdit.value ? 'edit' : 'create') as 'create' | 'edit')
 
 const idControls = useEntityIDControls(entityType, formMode)
+
+// The world a create is issued from. An embedded form takes it from its host,
+// explicitly; see the payload comment in handleSubmit.
+const createWorld = computed(() => (props.embedded ? props.embeddedWorld : worldParam.value))
+// A faced type created from a world without `create:` asks for a face.
+const createFace = useCreateFace(
+  computed(() => formConfig.value?.entity),
+  entityType,
+  computed(() => !isEdit.value && !(props.embedded && props.embeddedFace)),
+  createWorld,
+)
+// Where a create lands: a pinned face, a picked face, or the world's `create:`.
+function createTargetFields(): { face?: string; world?: string } {
+  if (props.embedded && props.embeddedFace) return { face: props.embeddedFace }
+  if (createFace.needsFace.value) return createFace.face.value ? { face: createFace.face.value } : {}
+  return createWorld.value ? { world: createWorld.value } : {}
+}
 const { showManualIDInput, showPrefixPicker, prefixOptions, manualId, selectedPrefix } = idControls
 
 const showReadOnlyID = computed(() => isEdit.value && entityType.value?.id_type === 'manual')
@@ -928,7 +946,7 @@ async function refreshStagedAffordances() {
         properties: { ...formData.value },
         content: content.value || undefined,
         // Same face the submit will write, so the verdict matches the create.
-        world: worldParam.value || undefined,
+        ...createTargetFields(),
       },
       controller.signal
     )
@@ -975,6 +993,9 @@ function scheduleStagedAffordances() {
     void refreshStagedAffordances()
   }, STAGED_DRYRUN_DEBOUNCE_MS)
 }
+
+// A picked face changes which face the verdicts are about.
+watch(() => createFace.face.value, () => scheduleStagedAffordances())
 
 /**
  * Applies a template's properties, content and relations to the form.
@@ -1765,9 +1786,12 @@ async function handleSubmit(mode: SubmitMode = 'navigate') {
     // stated contract rather than a coincidence that a later refactor of
     // `embedded` could silently break, the way the empty-query rule would
     // otherwise suggest the world is dropped too.
-    const createWorld = props.embedded ? props.embeddedWorld : worldParam.value
-    if (props.embedded && props.embeddedFace) payload.face = props.embeddedFace
-    else if (createWorld) payload.world = createWorld
+    if (createFace.needsFace.value && !createFace.face.value) {
+      uiStore.error('Choose a face for the new entity.')
+      saving.value = false
+      return
+    }
+    Object.assign(payload, createTargetFields())
     Object.assign(payload, idControls.buildPayloadFields())
     const entity = await entitiesStore.create(formConfig.value.entity, payload)
     createdEntityId.value = entity.id
@@ -2616,6 +2640,20 @@ defineExpose({
         <div v-if="showManualIDInput" class="form-field id-field">
           <label>ID <span class="required">*</span></label>
           <input v-model="manualId" type="text" required placeholder="Unique ID..." />
+        </div>
+        <div v-if="createFace.needsFace.value" class="form-field id-field">
+          <label for="create-face">Face <span class="required">*</span></label>
+          <select
+            id="create-face"
+            v-model="createFace.face.value"
+            data-testid="create-face"
+            required
+          >
+            <option value="" disabled>Choose a face...</option>
+            <option v-for="f in createFace.faces.value" :key="f" :value="f">
+              {{ entityType?.faces?.[f]?.label || f }}
+            </option>
+          </select>
         </div>
         <div v-if="showPrefixPicker" class="form-field id-field">
           <label>Prefix <span class="required">*</span></label>

@@ -188,11 +188,27 @@ func (svc affordanceService) renameAllowed(ctx context.Context, e *entityPkg.Ent
 }
 
 // computeCollectionActions returns the collection-scope verb verdict
-// map for an entity type — currently just `create`.
+// map for an entity type, currently just `create`.
+//
+// A faced type has no implicit face to create on, so its `create` is true
+// when any declared face is creatable, and each face gets its own
+// `create@<face>` key. A create form uses those keys to offer the faces the
+// principal may create when its world declares no `create:` face.
 func (svc affordanceService) computeCollectionActions(ctx context.Context, entityType string) map[string]bool {
 	out := make(map[string]bool, len(perCollectionVerbs))
+	faces := metamodel.FaceOrderOf(svc.meta(), entityType)
 	for _, v := range perCollectionVerbs {
-		out[v] = svc.acl().AuthorizeWrite(ctx, translateVerb(v, entityType, "", "")).Allow
+		if len(faces) == 0 {
+			out[v] = svc.acl().AuthorizeWrite(ctx, translateVerb(v, entityType, "", "")).Allow
+			continue
+		}
+		allowed := false
+		for _, f := range faces {
+			ok := svc.acl().AuthorizeWrite(ctx, translateVerb(v, entityType, "", entityPkg.Face(f))).Allow
+			out[v+"@"+f] = ok
+			allowed = allowed || ok
+		}
+		out[v] = allowed
 	}
 	return out
 }

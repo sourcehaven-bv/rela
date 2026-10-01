@@ -36,6 +36,8 @@ export const useSchemaStore = defineStore('schema', () => {
   // why `worldReadable` below treats an unknown world as readable rather
   // than hiding an affordance against a map that was never populated.
   const worlds = ref<Map<string, WorldInfo>>(new Map())
+  // The declared worlds in schema.yaml order. Empty when none are declared.
+  const worldOrder = ref<string[]>([])
   // The operator's browsing default: the world a request lands in when the
   // URL names none. '' means the raw default faces. See AppConfig.DefaultWorld.
   const defaultWorld = ref<string>('')
@@ -404,6 +406,7 @@ export const useSchemaStore = defineStore('schema', () => {
       relationTypes.value = new Map(Object.entries(schemaData.relations || {}))
       customTypes.value = new Map(Object.entries(schemaData.types || {}))
       worlds.value = new Map(Object.entries(schemaData.worlds || {}))
+      worldOrder.value = schemaData.world_order || []
 
       // Feed the API layer's plural registry so it doesn't have to import
       // this store (B1a). Mirror the server's GetPlural fallback (type+'s')
@@ -489,6 +492,7 @@ export const useSchemaStore = defineStore('schema', () => {
     relationTypes,
     customTypes,
     worlds,
+    worldOrder,
     forms,
     lists,
     views,

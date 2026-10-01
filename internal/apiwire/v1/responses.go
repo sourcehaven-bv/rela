@@ -341,6 +341,10 @@ type Schema struct {
 	// has no other worlds" from "this server is too old to tell me", and an
 	// omitted key cannot say the first.
 	Worlds map[string]World `json:"worlds,omitempty"`
+	// WorldOrder lists the declared worlds in schema.yaml order, which a JSON
+	// object cannot carry. A world switcher lists them in this order. Absent
+	// when the schema declares no worlds.
+	WorldOrder []string `json:"world_order,omitempty"`
 }
 
 // World is the JSON representation of one declared world — a named
@@ -415,6 +419,10 @@ type World struct {
 	// OnAbsent is the behavior for an entity with no face in this world.
 	// Mirrors metamodel.WorldOnAbsent.
 	OnAbsent *WorldOnAbsent `json:"on_absent,omitempty"`
+	// Create is the face a create issued from this world lands on
+	// (`worlds.<name>.create`). Empty when the world declares none; a create
+	// form on a faced type then asks for a face.
+	Create string `json:"create,omitempty"`
 	// Readable reports whether THIS caller may select the world via
 	// `?world=`. False means a request naming it is served an empty result
 	// rather than a 403 — so a client that respects this flag shows the user
