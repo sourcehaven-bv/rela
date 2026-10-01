@@ -11,11 +11,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/store/storetest"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
+	"github.com/Sourcehaven-BV/rela/internal/visibility/visibilitytest"
 )
 
 // TestResolver_ResolveHeaders walks the gates of the batch read. Each case
@@ -264,26 +266,36 @@ func (g *countingGate) PermitsRead(context.Context, string, string) (bool, error
 	return true, nil
 }
 
-func (g *countingGate) PermitsReadMany(_ context.Context, _ string, ids []string) (map[string]bool, error) {
+func (g *countingGate) permitsReadMany(_ context.Context, _ string, ids []string) map[string]bool {
 	g.many++
 	out := make(map[string]bool, len(ids))
 	for _, id := range ids {
 		out[id] = true
 	}
-	return out, nil
+	return out
 }
 
-// typeErrGate is resolverGate whose PermitsReadMany fails for one type.
+// ReadableFacesMany implements the row gate over permitsReadMany.
+func (g *countingGate) ReadableFacesMany(ctx context.Context, entityType string, ids []string) (acl.FaceVerdicts, error) {
+	return visibilitytest.IDVerdicts(g.permitsReadMany(ctx, entityType, ids), nil)
+}
+
+// typeErrGate is resolverGate whose row gate fails for one type.
 type typeErrGate struct {
 	resolverGate
 	failType string
 }
 
-func (g typeErrGate) PermitsReadMany(ctx context.Context, typ string, ids []string) (map[string]bool, error) {
+func (g typeErrGate) permitsReadMany(ctx context.Context, typ string, ids []string) (map[string]bool, error) {
 	if typ == g.failType {
 		return nil, errors.New("row gate down")
 	}
-	return g.resolverGate.PermitsReadMany(ctx, typ, ids)
+	return g.resolverGate.permitsReadMany(ctx, typ, ids)
+}
+
+// ReadableFacesMany implements the row gate over permitsReadMany.
+func (g typeErrGate) ReadableFacesMany(ctx context.Context, entityType string, ids []string) (acl.FaceVerdicts, error) {
+	return visibilitytest.IDVerdicts(g.permitsReadMany(ctx, entityType, ids))
 }
 
 // TestResolver_ResolveHeadersRowGateErrorHidesOnlyItsType checks that a row

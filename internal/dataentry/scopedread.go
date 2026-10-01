@@ -258,7 +258,7 @@ func applyScope(
 		return nil, fmt.Errorf("%w: query scope on %q has no evaluator", errListLoad, req.Type)
 	}
 	match := func(ctx context.Context, q store.GraphQuery, ids []string) (map[string]bool, error) {
-		return svc.Store.MatchingIDs(ctx, stampScope(ctx, q, req), ids)
+		return store.MatchingIDs(ctx, svc.Store, stampScope(ctx, q, req), ids)
 	}
 	out, err := req.ScopeFilter(ctx, req.Scope, req.Type, headers,
 		traversalGateFromContext(ctx).GateTraversal, match)

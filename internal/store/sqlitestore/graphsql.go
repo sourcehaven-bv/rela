@@ -492,13 +492,13 @@ func buildGraphTotalSQL(q store.GraphQuery) (sqlText string, args []any) {
 	return "SELECT " + agg + " FROM entities e WHERE e.type = " + typeArg + " AND " + scope, b.args
 }
 
-// buildMatchingIDsSQL is the graph statement restricted to ids, selecting
-// only the id.
-func buildMatchingIDsSQL(q store.GraphQuery, ids []string) (sqlText string, args []any, ok bool) {
+// buildMatchingFacesSQL is the graph statement restricted to ids, selecting
+// only the id and face.
+func buildMatchingFacesSQL(q store.GraphQuery, ids []string) (sqlText string, args []any, ok bool) {
 	b := &sqlBuilder{}
 	typeArg := b.arg(q.EntityType)
 	with, source := graphSource(b, q, typeArg, b.jsonList(ids))
-	return withClause(with) + "SELECT e.id FROM " + source, b.args, !b.unsafe
+	return withClause(with) + "SELECT e.id, e.face FROM " + source, b.args, !b.unsafe
 }
 
 // buildPredicateSQL emits (CTE definitions, EXISTS body) for one relation

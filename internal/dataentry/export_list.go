@@ -384,7 +384,7 @@ func (h *exportHandler) resolveListRelations(
 
 	// ONE batched visibility gate for the whole export, and ONE row load for
 	// every distinct visible neighbor (titles memoized in titleFor).
-	visible := visibleRelationIDs(ctx, h.reader, h.visibleReader, allPeerIDs)
+	visible := visibleRelationIDs(ctx, h.visibleReader, allPeerIDs)
 	titleFor := h.memoNeighborTitle(ctx, meta, visible)
 
 	for _, pc := range perCell {

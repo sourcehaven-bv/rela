@@ -589,8 +589,8 @@ func (g worldGate) PermitsWorld(_ context.Context, world string) (bool, error) {
 
 func (worldGate) PermitsRead(context.Context, string, string) (bool, error) { return true, nil }
 
-func (worldGate) PermitsReadMany(ctx context.Context, entityType string, ids []string) (map[string]bool, error) {
-	return nopReadGate{}.PermitsReadMany(ctx, entityType, ids)
+func (worldGate) ReadableFacesMany(ctx context.Context, entityType string, ids []string) (acl.FaceVerdicts, error) {
+	return nopReadGate{}.ReadableFacesMany(ctx, entityType, ids)
 }
 
 func (worldGate) ReadQuery(ctx context.Context, entityType string) acl.ReadQueryResult {

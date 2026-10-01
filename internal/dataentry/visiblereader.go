@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	entitypkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
@@ -355,56 +356,34 @@ func faceReadable(ctx context.Context, entityType string, face entitypkg.Face) b
 	return visibility.FaceAllowed(ctx, ctxRowGate{}, entityType, face)
 }
 
+// servedIDs resolves bare ids in the request's world to the face that world
+// serves among the faces the principal may read
+// ([visibility.Resolver.ResolveIDs]). The ACL trims each id's faces first
+// and the world ranks what is left, so a denied prime falls through to a
+// readable face. An id absent from the result is served nothing. The rows
+// are raw (the reader's redactor is the nop one); only ids and faces leave.
+func (vr visibleReader) servedIDs(ctx context.Context, ids []string) map[string]store.EntityHeader {
+	return vr.resolver.ResolveIDs(ctx, worldFromContext(ctx).visibility(), ids)
+}
+
+// servedIDsErr is servedIDs for a caller that must not read a store fault
+// as "nothing is served": a failed header read is returned
+// ([visibility.Resolver.ResolveIDsErr]).
+func (vr visibleReader) servedIDsErr(ctx context.Context, ids []string) (map[string]store.EntityHeader, error) {
+	return vr.resolver.ResolveIDsErr(ctx, worldFromContext(ctx).visibility(), ids)
+}
+
 // filterVisible drops every candidate the principal cannot read, batching the
-// gate probe by entity type — one PermitsReadMany per distinct type, turning a
-// worst case of O(N) per-id probes into O(distinct-types) (RR-FRK1). Order is
-// preserved and a fresh slice is returned (RR-I2SI). On a gate error for a
+// gate probe by entity type — one ReadableFacesMany per distinct type, turning
+// a worst case of O(N) per-id probes into O(distinct-types) (RR-FRK1). A
+// candidate is kept only when the verdict holds on its own face's row. Order
+// is preserved and a fresh slice is returned (RR-I2SI). On a gate error for a
 // type, that whole type is dropped fail-closed (RR-7TIU) — a read-ACL failure
 // must never widen visibility — and logged loud so operators see the cause
 // rather than a silently-empty include block.
 //
 // This is the extraction of the former App.filterVisibleIncludes; behavior is
 // preserved, including the nil return for empty input.
-// visibleHeaderIDs is the row-gate half of filterVisible over content-free
-// headers: the set of candidate ids the principal may read, probed once per
-// distinct type. No redaction is involved because only ids leave here — the
-// caller uses the set to decide which neighbor ids may appear in a
-// relations map, never to serve a property.
-func (vr visibleReader) visibleHeaderIDs(ctx context.Context, candidates []store.EntityHeader) map[string]bool {
-	out := make(map[string]bool, len(candidates))
-	if len(candidates) == 0 {
-		return out
-	}
-	gate := readGateFromContext(ctx)
-	byType := make(map[string][]string)
-	for _, c := range candidates {
-		byType[c.Type] = append(byType[c.Type], c.ID)
-	}
-	allowed := make(map[string]bool, len(candidates))
-	for typeName, ids := range byType {
-		perm, err := gate.PermitsReadMany(ctx, typeName, ids)
-		if err != nil {
-			slog.Warn("dataentry: visibleReader.visibleHeaderIDs: PermitsReadMany failed; dropping type",
-				"type", typeName, "candidates", len(ids), "err", err)
-			continue
-		}
-		for id, ok := range perm {
-			if ok {
-				allowed[id] = true
-			}
-		}
-	}
-	// The face grant is the other half of filterVisible's gate (TKT-O7R2A1);
-	// a header carries its Face, so applying it here keeps the two gates
-	// from drifting whichever face selection a caller passes.
-	for _, c := range candidates {
-		if allowed[c.ID] && faceReadable(ctx, c.Type, c.Face) {
-			out[c.ID] = true
-		}
-	}
-	return out
-}
-
 func (vr visibleReader) filterVisible(ctx context.Context, candidates []*entitypkg.Entity) []*entitypkg.Entity {
 	if len(candidates) == 0 {
 		return nil
@@ -416,36 +395,35 @@ func (vr visibleReader) filterVisible(ctx context.Context, candidates []*entityp
 		byType[c.Type] = append(byType[c.Type], c)
 	}
 
-	allowed := make(map[string]bool, len(candidates))
+	allowed := make(map[string]acl.FaceVerdict, len(candidates))
 	for typeName, group := range byType {
 		ids := make([]string, 0, len(group))
 		for _, c := range group {
 			ids = append(ids, c.ID)
 		}
-		perm, err := gate.PermitsReadMany(ctx, typeName, ids)
+		verdicts, err := gate.ReadableFacesMany(ctx, typeName, ids)
 		if err != nil {
-			slog.Warn("dataentry: visibleReader.filterVisible: PermitsReadMany failed; dropping type",
+			slog.Warn("dataentry: visibleReader.filterVisible: ReadableFacesMany failed; dropping type",
 				"type", typeName,
 				"candidates", len(ids),
 				"err", err)
 			continue
 		}
-		for id, ok := range perm {
-			if ok {
-				allowed[id] = true
-			}
+		for _, id := range ids {
+			allowed[id] = verdicts.For(id)
 		}
 	}
 
-	// Preserve original candidate order; allocate a fresh slice. The face
-	// half is owed HERE too (TKT-O7R2A1): the row gate is face-blind, and a
-	// neighbor arrives as a resolved face — under a world, possibly a
-	// within-chain fallback to a face a `type@face` grant withholds. Without
-	// this a principal granted only `feature@published` saw a draft-only
-	// neighbor's title through `?include=` while its own GET 404'd.
+	// Preserve original candidate order; allocate a fresh slice. A neighbor
+	// arrives as a resolved face — under a world, possibly a within-chain
+	// fallback to a face a `type@face` grant withholds — so both the verdict
+	// on that face's row and the type-level face grant must hold
+	// (TKT-O7R2A1). Without the face half a principal granted only
+	// `feature@published` saw a draft-only neighbor's title through
+	// `?include=` while its own GET 404'd.
 	out := make([]*entitypkg.Entity, 0, len(candidates))
 	for _, c := range candidates {
-		if allowed[c.ID] && faceReadable(ctx, c.Type, c.Face) {
+		if allowed[c.ID].Contains(c.Face) && faceReadable(ctx, c.Type, c.Face) {
 			out = append(out, c)
 		}
 	}

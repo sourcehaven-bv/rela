@@ -478,7 +478,7 @@ func assertScopePushedDown(t *testing.T, newStore func(*testing.T) store.Store) 
 		// The scoped count is the pushed path's signature: the Go path counts
 		// its slice in memory and answers the traversal with MatchingIDs.
 		calls := counting.Calls()
-		if calls["MatchingIDs"] != 0 || calls["CountMatched"] != 1 {
+		if calls["MatchingFaces"] != 0 || calls["CountMatched"] != 1 {
 			t.Errorf("n=%d: the scope was not pushed down: %s", n, counting)
 		}
 		reads = append(reads, counting.Reads())

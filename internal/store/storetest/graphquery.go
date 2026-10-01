@@ -471,7 +471,7 @@ func RunGraphQueryTests(t *testing.T, f Factory) {
 		seedEntityWithProps(t, s, "task", "T-1", map[string]any{"status": "doing"})
 		seedEntityWithProps(t, s, "task", "T-2", map[string]any{"status": "todo"})
 
-		got, err := s.MatchingIDs(context.Background(), store.GraphQuery{
+		got, err := store.MatchingIDs(context.Background(), s, store.GraphQuery{
 			EntityType: "task",
 			Props: []store.PropPredicate{
 				{Property: "status", Op: store.PropEqual, Value: "doing"},
@@ -697,7 +697,7 @@ func RunGraphQueryTests(t *testing.T, f Factory) {
 		mustRel(t, s, "alice", "owns", "TKT-1")
 		mustRel(t, s, "alice", "owns", "TKT-2")
 
-		got, err := s.MatchingIDs(ctx(), store.GraphQuery{
+		got, err := store.MatchingIDs(ctx(), s, store.GraphQuery{
 			EntityType: "ticket",
 			HasInbound: &store.RelationPredicate{
 				Endpoints: []string{"alice"},
@@ -718,7 +718,7 @@ func RunGraphQueryTests(t *testing.T, f Factory) {
 		s := f(t)
 		seedGraphQueryEntities(t, s, "ticket", "TKT-1")
 
-		got, err := s.MatchingIDs(ctx(), store.GraphQuery{
+		got, err := store.MatchingIDs(ctx(), s, store.GraphQuery{
 			EntityType: "ticket",
 			Faces:      store.InWorld(store.TrivialScope()),
 		}, []string{"TKT-1", "nonexistent"})
@@ -730,7 +730,7 @@ func RunGraphQueryTests(t *testing.T, f Factory) {
 		s := f(t)
 		seedGraphQueryEntities(t, s, "ticket", "TKT-1", "TKT-2")
 
-		got, err := s.MatchingIDs(ctx(), store.GraphQuery{
+		got, err := store.MatchingIDs(ctx(), s, store.GraphQuery{
 			EntityType: "ticket",
 			Faces:      store.InWorld(store.TrivialScope()),
 		}, nil)
@@ -745,7 +745,7 @@ func RunGraphQueryTests(t *testing.T, f Factory) {
 		seedGraphQueryEntities(t, s, "ticket", "TKT-1")
 		seedGraphQueryEntities(t, s, "feature", "FEAT-1")
 
-		got, err := s.MatchingIDs(ctx(), store.GraphQuery{
+		got, err := store.MatchingIDs(ctx(), s, store.GraphQuery{
 			EntityType: "ticket",
 			Faces:      store.InWorld(store.TrivialScope()),
 		}, []string{"TKT-1", "FEAT-1"})

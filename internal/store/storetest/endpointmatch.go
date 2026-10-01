@@ -504,7 +504,7 @@ func runInboundEndpointMatchTests(t *testing.T, f Factory) {
 	t.Run("MatchingIDs_answers_an_inbound_match", func(t *testing.T) {
 		s := f(t)
 		seed(t, s)
-		got, err := s.MatchingIDs(ctx(), store.GraphQuery{
+		got, err := store.MatchingIDs(ctx(), s, store.GraphQuery{
 			EntityType: "feature",
 			HasInbound: &store.RelationPredicate{OfTypes: []string{"implements"}, EndpointMatch: openTicket()},
 			Faces:      store.InWorld(store.TrivialScope()),

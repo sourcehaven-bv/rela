@@ -28,8 +28,6 @@ var unselectedGraphQueryAllowlist = map[string]allowed{
 var trivialScopeAllowlist = map[string]allowed{
 	"internal/acl/principallookup.go": {1, "principal lookup reads identity in the default world " +
 		"until TKT-7IZHP0"},
-	"internal/acl/request.go": {1, "the bare-id row gate evaluates a scoped verdict on the default-world " +
-		"row until TKT-7IZHP0"},
 	"internal/acl/traversal.go": {1, "TraversalQuery walks membership and inheritance in the " +
 		"default world until TKT-7IZHP0"},
 	"internal/visibility/pushdown.go": {1, "the declarative traversal gate serves validation and " +

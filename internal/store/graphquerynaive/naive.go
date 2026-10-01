@@ -278,19 +278,20 @@ func Count(ctx context.Context, r Reader, q store.GraphQuery) (matched, total in
 	return matched, total, nil
 }
 
-// MatchingIDs returns a map keyed by every input id with bool value
-// indicating whether that id satisfies q's predicates. Ids not in the
-// store, or in the store but of the wrong type, map to false. The
-// returned map always has len(ids) keys (after dedup).
-func MatchingIDs(ctx context.Context, r Reader, q store.GraphQuery, ids []string) (map[string]bool, error) {
+// MatchingFaces returns, per input id, the faces of its selected rows that
+// satisfy q's predicates, as [store.GraphQueryer.MatchingFaces] documents.
+// Ids not in the store, of the wrong type, or with no matching row are
+// absent.
+func MatchingFaces(ctx context.Context, r Reader, q store.GraphQuery, ids []string) (map[string][]entity.Face, error) {
 	if err := CheckEndpointShape(q); err != nil {
 		return nil, err
 	}
-	out := make(map[string]bool, len(ids))
+	out := make(map[string][]entity.Face)
+	want := make(map[string]bool, len(ids))
 	for _, id := range ids {
-		out[id] = false
+		want[id] = true
 	}
-	if len(out) == 0 {
+	if len(want) == 0 {
 		return out, nil
 	}
 	// The same candidates Run ranks, so an Any branch's face set trims the
@@ -300,16 +301,19 @@ func MatchingIDs(ctx context.Context, r Reader, q store.GraphQuery, ids []string
 		return nil, err
 	}
 	for _, e := range cands {
-		if _, want := out[e.ID]; !want {
+		if !want[e.ID] {
 			continue
 		}
 		ok, mErr := matches(ctx, r, e, q)
 		if mErr != nil {
 			return nil, mErr
 		}
-		// Under AllFaces or AtFaces an id has several candidate rows; it
-		// matches when any of them does, as the SQL backends' `SELECT e.id`.
-		out[e.ID] = out[e.ID] || ok
+		if ok {
+			out[e.ID] = append(out[e.ID], e.Face)
+		}
+	}
+	for id, faces := range out {
+		out[id] = store.SortedFaces(faces)
 	}
 	return out, nil
 }

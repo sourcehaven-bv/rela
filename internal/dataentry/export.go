@@ -383,7 +383,7 @@ func (h *exportHandler) entityRelationGroups(ctx context.Context, e *entityPkg.E
 	incoming := incomingOwnedAtZero(meta, h.reader.incomingRelations(ctx, e.ID), e)
 
 	neighborIDs := neighborIDsOf(outgoing, incoming)
-	visible := visibleRelationIDs(ctx, h.reader, h.visibleReader, neighborIDs)
+	visible := visibleRelationIDs(ctx, h.visibleReader, neighborIDs)
 
 	visibleIDs := make([]string, 0, len(visible))
 	for id, ok := range visible {

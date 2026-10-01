@@ -21,7 +21,7 @@ import (
 //     head.
 //
 // It reads headers only, in ONE store query for every endpoint of every
-// relation, then runs one PermitsReadMany and one face-set lookup per
+// relation, then runs one ReadableFacesMany and one face-set lookup per
 // distinct endpoint type. The cost is therefore independent of len(rels)
 // (RR-S4S8ZG). There is no claimed type: each endpoint is gated on the type
 // it is stored under.

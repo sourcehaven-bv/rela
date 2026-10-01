@@ -416,11 +416,11 @@ func searchVisibleHits(
 }
 
 // faceGatedHits drops hits whose matched face a `type@face` grant withholds.
-// The search scope carries the row verdict only (search.TypeScope has no face
-// set), so a `ticket@published` principal otherwise gets draft-face hits with
-// draft titles from a search the entity GET would 404. Applied at the edge
-// rather than pushed into every searcher: it is one predicate over a field the
-// hit already carries.
+// The search scope carries the face allowlist and every searcher trims by it
+// before the world ranks, so this is the fail-closed check at the edge: a
+// `ticket@published` principal must never get a draft-face hit with a draft
+// title from a search the entity GET would 404. It is one predicate over a
+// field the hit already carries.
 func faceGatedHits(ctx context.Context, hits iter.Seq2[search.Hit, error]) iter.Seq2[search.Hit, error] {
 	return func(yield func(search.Hit, error) bool) {
 		for h, err := range hits {
@@ -551,18 +551,16 @@ func visibleEntitiesOfType(
 	ts search.TypeScope, props []store.PropPredicate,
 ) ([]*entity.Entity, error) {
 	// A search TypeScope is an ACL read verdict in a different shape: same
-	// AllowAll/Query pair, minus DenyAll (ResolveTypeScope has already
-	// denied by omission) and minus Faces. Restating it lets this path share
-	// the one verdict switch (scopedread.go) rather than reimplementing it —
-	// which is how the RR-GQWRLD world bug reached two sites.
-	rqr := acl.ReadQueryResult{AllowAll: ts.AllowAll, Query: ts.Query}
-	// The face allowlist comes from the gate directly, because TypeScope
-	// cannot carry it. Without it a `type@face` grant is ignored here and the
-	// world ranks withheld faces too, serving their titles (BUG-SMPOZB
-	// review). It narrows the candidates before the world ranks them, as on
-	// the list path.
-	faces := readGateFromContext(ctx).ReadQuery(ctx, typ).Faces
-	entities, _, err := scopedEntities(ctx, svc, rqr, scopeRequest{Type: typ, Props: props, Faces: faces})
+	// AllowAll/Query pair and face allowlist, minus DenyAll
+	// (ResolveTypeScope has already denied by omission). Restating it lets
+	// this path share the one verdict switch (scopedread.go) rather than
+	// reimplementing it — which is how the RR-GQWRLD world bug reached two
+	// sites. Without the face allowlist a `type@face` grant is ignored here
+	// and the world ranks withheld faces too, serving their titles
+	// (BUG-SMPOZB review). It narrows the candidates before the world ranks
+	// them, as on the list path.
+	rqr := acl.ReadQueryResult{AllowAll: ts.AllowAll, Query: ts.Query, Faces: ts.Faces}
+	entities, _, err := scopedEntities(ctx, svc, rqr, scopeRequest{Type: typ, Props: props, Faces: ts.Faces})
 	return entities, err
 }
 

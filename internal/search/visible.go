@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -22,7 +23,7 @@ type fieldMatchProvenance interface {
 // Visible is the generic VisibleSearcher: it wraps any Searcher and
 // filters its hits through a store.GraphQueryer. This is the
 // implementation for the simple backends (bleve, LinearSearch), which
-// only ever pair with in-process stores where MatchingIDs is cheap.
+// only ever pair with in-process stores where MatchingFaces is cheap.
 //
 // Candidates are fetched UNCAPPED (inner Limit 0) and q.Limit is
 // applied after visibility filtering, per the VisibleSearcher
@@ -211,10 +212,15 @@ func MatchHasVisibleField(matched, hidden map[string]struct{}) bool {
 	return false
 }
 
-// visibleHits collects the full candidate stream and drops every hit
-// the scope denies, preserving backend order. Collected (not streamed)
-// because visibility probes are batched per type, which needs the hits
-// grouped before any MatchingIDs call.
+// visibleHits runs the search with the scope as its admission step and keeps
+// the hits whose face was admitted, preserving backend order.
+//
+// The scope trims each entity's candidate faces BEFORE the world ranks them
+// ([Query.Admit]), as on lists and the single-entity read: a principal
+// whose grant denies the prime is served the next readable face rather than
+// losing the entity. The hit filter afterwards is the fail-closed half: a
+// hit whose face was never admitted (an inner searcher that ignores Admit)
+// is dropped, never served.
 func (v *Visible) visibleHits(ctx context.Context, q Query, scope map[string]TypeScope) ([]Hit, error) {
 	// Validate up front for parity with the pgstore-native impl: both
 	// implementations reject an unsupported filter with the same
@@ -225,68 +231,99 @@ func (v *Visible) visibleHits(ctx context.Context, q Query, scope map[string]Typ
 	if len(scope) == 0 {
 		return nil, nil // nothing is visible; do not touch the backend
 	}
-	if ts, ok := scope[WildcardType]; ok && ts.Query != nil {
-		return nil, fmt.Errorf("%w: wildcard scope entry cannot carry a GraphQuery", ErrScope)
+	if err := ValidateScope(scope); err != nil {
+		return nil, err
 	}
 
+	adm := &admission{ctx: ctx, gq: v.gq, scope: scope, admitted: make(map[faceKey]struct{})}
 	inner := q
 	inner.Limit = 0
+	inner.Admit = adm.admit
+	if callerAdmit := q.Admit; callerAdmit != nil {
+		// A caller's own admission narrows the scope's further; it never
+		// replaces it.
+		inner.Admit = func(c []Candidate) ([]Candidate, error) {
+			admitted, err := adm.admit(c)
+			if err != nil {
+				return nil, err
+			}
+			return callerAdmit(admitted)
+		}
+	}
 	var hits []Hit
 	for h, err := range v.inner.Search(ctx, inner) {
 		if err != nil {
-			// Plain search failure — deliberately NOT ErrScope.
+			// A plain search failure stays a plain failure; an admission
+			// failure arrives already wrapped in ErrScope.
 			return nil, err
 		}
 		hits = append(hits, h)
 	}
 
-	allowed, err := v.allowedIDs(ctx, hits, scope, q.World)
-	if err != nil {
-		return nil, err
-	}
 	visible := hits[:0]
 	for _, h := range hits {
-		if allowed[h.ID] {
+		if _, ok := adm.admitted[faceKey{id: h.ID, face: h.Face}]; ok {
 			visible = append(visible, h)
 		}
 	}
 	return visible, nil
 }
 
-// allowedIDs resolves the scope verdict for every hit, batching
-// MatchingIDs probes per entity type. A scope query is an ACL template with no
-// face selection; it runs in the search's world, as pgstore evaluates it.
-func (v *Visible) allowedIDs(
-	ctx context.Context, hits []Hit, scope map[string]TypeScope, world store.WorldScope,
-) (map[string]bool, error) {
-	byType := make(map[string][]string)
-	for _, h := range hits {
-		byType[h.Type] = append(byType[h.Type], h.ID)
-	}
+// admission is the [AdmitFunc] a [Visible] search runs with, and the record
+// of what it admitted.
+type admission struct {
+	ctx      context.Context //nolint:containedctx // one search's admission step; never outlives it
+	gq       store.GraphQueryer
+	scope    map[string]TypeScope
+	admitted map[faceKey]struct{}
+}
 
-	allowed := make(map[string]bool, len(hits))
-	for typ, ids := range byType {
-		ts, ok := ResolveTypeScope(scope, typ)
-		if !ok {
-			continue // denied type: drop its hits
+// admit keeps the candidates the scope admits. A Query verdict is evaluated
+// per face row with one MatchingFaces probe per entity type, over every
+// face and trimmed to the scope's face allowlist, so its cost does not grow
+// with the number of candidates. The probe reads the rows the ACL gate
+// reads (acl.Request.ReadableFacesMany), so search and the bare-id read
+// agree per face.
+func (a *admission) admit(cands []Candidate) ([]Candidate, error) {
+	byType := make(map[string][]string)
+	seen := make(map[string]bool, len(cands))
+	for _, c := range cands {
+		if seen[c.ID] {
+			continue
 		}
-		if ts.AllowAll {
-			for _, id := range ids {
-				allowed[id] = true
-			}
+		seen[c.ID] = true
+		byType[c.Type] = append(byType[c.Type], c.ID)
+	}
+	matched := make(map[string]map[string][]entity.Face, len(byType))
+	for typ, ids := range byType {
+		ts, ok := ResolveTypeScope(a.scope, typ)
+		if !ok || ts.AllowAll {
 			continue
 		}
 		probe := *ts.Query // copy: the scope is shared across requests
-		probe.Faces = store.InWorld(world)
-		m, err := v.gq.MatchingIDs(ctx, probe, ids)
+		probe.Faces = store.AllFaces()
+		probe.FaceIn = ts.Faces
+		m, err := a.gq.MatchingFaces(a.ctx, probe, ids)
 		if err != nil {
 			return nil, fmt.Errorf("%w: type %q: %w", ErrScope, typ, err)
 		}
-		for id, ok := range m {
-			if ok {
-				allowed[id] = true
-			}
-		}
+		matched[typ] = m
 	}
-	return allowed, nil
+	out := make([]Candidate, 0, len(cands))
+	for _, c := range cands {
+		ts, ok := ResolveTypeScope(a.scope, c.Type)
+		if !ok {
+			continue // denied type
+		}
+		if ts.AllowAll {
+			if !ts.AdmitsFace(c.Face) {
+				continue
+			}
+		} else if !slices.Contains(matched[c.Type][c.ID], c.Face) {
+			continue
+		}
+		a.admitted[faceKey{id: c.ID, face: c.Face}] = struct{}{}
+		out = append(out, c)
+	}
+	return out, nil
 }

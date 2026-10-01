@@ -242,19 +242,19 @@ func TestViewTraversalIsSourceGated(t *testing.T) {
 			// needle like "h.readableViewIDs(ctx, next)" breaks when someone
 			// renames the local, and the cheapest path to green is then
 			// editing the needle rather than checking the gate.
-			needles: []string{"readableViewIDs(", "PermitsReadMany", "faceReadable("},
+			needles: []string{"readableViewIDs(", "ReadableFacesMany", "faceReadable("},
 			why: "the recursive walk expands its frontier without source-gating it, so a " +
 				"hidden intermediary can again act as a stepping-stone to a descendant " +
 				"reachable only through it. Filtering on the way out does NOT close this: " +
 				"the descendant is readable in its own right. Both halves of the verdict " +
-				"are required — PermitsReadMany is face-blind, so faceReadable is what " +
-				"stops a walk THROUGH a face-denied row (TKT-O7R2A1)",
+				"are required — the per-face row verdict and the type-level face grant " +
+				"(faceReadable) each stop a walk THROUGH a face-denied row (TKT-O7R2A1)",
 		},
 		{
 			name:    "collection load",
 			file:    "viewworld.go",
 			anchor:  "func (h *viewsHandler) loadViewEntities(",
-			needles: []string{"readGateFromContext(ctx)", "PermitsReadMany", "faceReadable("},
+			needles: []string{"readGateFromContext(ctx)", "ReadableFacesMany", "faceReadable("},
 			why: "traversal-collected entities are loaded off the raw store without a " +
 				"source gate, so a hidden entity can enter a collection (and reach the " +
 				"where: filter). The face half is required for the same reason as above",

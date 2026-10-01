@@ -12,11 +12,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/store/storetest"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
+	"github.com/Sourcehaven-BV/rela/internal/visibility/visibilitytest"
 )
 
 const (
@@ -27,28 +29,34 @@ const (
 // resolverGate is a RowGate and FaceSetGate whose verdicts a test sets.
 type resolverGate struct {
 	deny    map[string]bool // ids the row gate refuses
-	err     error           // returned by PermitsRead
+	err     error           // returned by the row gate
 	faces   map[string]visibility.FaceSet
 	faceErr error // returned by ReadableFaces
 	rowHits *int
 }
 
-func (g resolverGate) PermitsRead(_ context.Context, _, id string) (bool, error) {
+func (g resolverGate) PermitsRead(ctx context.Context, typ, id string) (bool, error) {
+	m, err := g.permitsReadMany(ctx, typ, []string{id})
+	return m[id], err
+}
+
+func (g resolverGate) permitsReadMany(_ context.Context, _ string, ids []string) (map[string]bool, error) {
 	if g.rowHits != nil {
 		*g.rowHits++
 	}
 	if g.err != nil {
-		return false, g.err
+		return nil, g.err
 	}
-	return !g.deny[id], nil
-}
-
-func (g resolverGate) PermitsReadMany(_ context.Context, _ string, ids []string) (map[string]bool, error) {
 	out := make(map[string]bool, len(ids))
 	for _, id := range ids {
 		out[id] = !g.deny[id]
 	}
 	return out, nil
+}
+
+// ReadableFacesMany implements the row gate over permitsReadMany.
+func (g resolverGate) ReadableFacesMany(ctx context.Context, entityType string, ids []string) (acl.FaceVerdicts, error) {
+	return visibilitytest.IDVerdicts(g.permitsReadMany(ctx, entityType, ids))
 }
 
 func (g resolverGate) ReadableFaces(_ context.Context, entityType string) (visibility.FaceSet, error) {

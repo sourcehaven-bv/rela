@@ -131,3 +131,37 @@ func faceListSet(faces []entity.Face) FaceSet {
 	}
 	return SomeFaces(faces...)
 }
+
+// VerdictSet is the face set one [acl.FaceVerdict] reads.
+func VerdictSet(v acl.FaceVerdict) FaceSet {
+	switch {
+	case v.All():
+		return AllFaces()
+	case v.None():
+		return NoFaces()
+	default:
+		return SomeFaces(v.Faces()...)
+	}
+}
+
+// Intersect returns the faces both sets hold.
+func (s FaceSet) Intersect(o FaceSet) FaceSet {
+	switch {
+	case s.all:
+		return o.clone()
+	case o.all:
+		return s.clone()
+	}
+	var out []entity.Face
+	for _, f := range s.faces {
+		if slices.Contains(o.faces, f) {
+			out = append(out, f)
+		}
+	}
+	return FaceSet{faces: out}
+}
+
+// clone returns s with its own face list.
+func (s FaceSet) clone() FaceSet {
+	return FaceSet{all: s.all, faces: slices.Clone(s.faces)}
+}

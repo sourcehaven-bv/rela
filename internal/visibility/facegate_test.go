@@ -8,6 +8,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
@@ -38,14 +39,8 @@ func (g faceRowGate) PermitsRead(context.Context, string, string) (bool, error) 
 	return true, nil
 }
 
-func (g faceRowGate) PermitsReadMany(
-	_ context.Context, _ string, ids []string,
-) (map[string]bool, error) {
-	out := make(map[string]bool, len(ids))
-	for _, id := range ids {
-		out[id] = true
-	}
-	return out, nil
+func (g faceRowGate) ReadableFacesMany(context.Context, string, []string) (acl.FaceVerdicts, error) {
+	return acl.UniformVerdicts(acl.AllFacesVerdict()), nil
 }
 
 func (g faceRowGate) PermittedFaces(_ context.Context, entityType string) ([]entity.Face, error) {
@@ -61,14 +56,8 @@ type plainRowGate struct{}
 
 func (plainRowGate) PermitsRead(context.Context, string, string) (bool, error) { return true, nil }
 
-func (plainRowGate) PermitsReadMany(
-	_ context.Context, _ string, ids []string,
-) (map[string]bool, error) {
-	out := make(map[string]bool, len(ids))
-	for _, id := range ids {
-		out[id] = true
-	}
-	return out, nil
+func (plainRowGate) ReadableFacesMany(context.Context, string, []string) (acl.FaceVerdicts, error) {
+	return acl.UniformVerdicts(acl.AllFacesVerdict()), nil
 }
 
 // faceGetter serves one entity, at a face the test chooses.

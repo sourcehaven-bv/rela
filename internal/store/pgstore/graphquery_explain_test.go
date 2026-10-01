@@ -292,7 +292,7 @@ func traversalExplainProgram(t *testing.T) *predicate.Program {
 // related(entity, rel, { id = current_user.id }) shape (TKT-NXELMW): the bound
 // user id is an inbound Endpoints entry and the traversed type an
 // EndpointMatch. It needs no derived index; the relation key serves it, so
-// neither the query nor a page's MatchingIDs may scan relations.
+// neither the query nor a page's MatchingFaces may scan relations.
 func TestInboundNamedEndpointExplainIsIndexed(t *testing.T) {
 	pool := newScopedPool(t)
 	s, err := pgstore.New(pool)
@@ -329,7 +329,7 @@ func TestInboundNamedEndpointExplainIsIndexed(t *testing.T) {
 	for i := range page {
 		page[i] = fmt.Sprintf("TAAK-%06d", i)
 	}
-	sqlText, args := pgstore.BuildMatchingIDsSQLForTest(q, page)
+	sqlText, args := pgstore.BuildMatchingFacesSQLForTest(q, page)
 	rows, err := pool.Query(ctx, "EXPLAIN "+sqlText, args...)
 	require.NoError(t, err)
 	var lines []string
@@ -341,9 +341,9 @@ func TestInboundNamedEndpointExplainIsIndexed(t *testing.T) {
 	rows.Close()
 	require.NoError(t, rows.Err())
 	idsPlan := strings.Join(lines, "\n")
-	t.Logf("MatchingIDs plan:\n%s", idsPlan)
+	t.Logf("MatchingFaces plan:\n%s", idsPlan)
 	if strings.Contains(idsPlan, "Seq Scan on entities") || strings.Contains(idsPlan, "Seq Scan on relations") {
-		t.Fatalf("MatchingIDs for a named inbound endpoint scans a table:\n%s", idsPlan)
+		t.Fatalf("MatchingFaces for a named inbound endpoint scans a table:\n%s", idsPlan)
 	}
 }
 
@@ -421,14 +421,14 @@ relations:
 			"traversed-FROM type:\n%s", plan)
 	}
 
-	// The data-entry query scope issues MatchingIDs for one page of
+	// The data-entry query scope issues MatchingFaces for one page of
 	// candidates, not the bare GraphQuery above. Whichever side the planner
 	// drives from, it must not scan every entity row to answer a page.
 	page := make([]string, 50)
 	for i := range page {
 		page[i] = fmt.Sprintf("FEAT-%06d", i)
 	}
-	sqlText, args := pgstore.BuildMatchingIDsSQLForTest(q, page)
+	sqlText, args := pgstore.BuildMatchingFacesSQLForTest(q, page)
 	rows, err := pool.Query(ctx, "EXPLAIN "+sqlText, args...)
 	require.NoError(t, err)
 	var lines []string
@@ -440,8 +440,8 @@ relations:
 	rows.Close()
 	require.NoError(t, rows.Err())
 	idsPlan := strings.Join(lines, "\n")
-	t.Logf("MatchingIDs plan:\n%s", idsPlan)
+	t.Logf("MatchingFaces plan:\n%s", idsPlan)
 	if strings.Contains(idsPlan, "Seq Scan on entities") || strings.Contains(idsPlan, "Seq Scan on relations") {
-		t.Fatalf("MatchingIDs for one page scans a whole table:\n%s", idsPlan)
+		t.Fatalf("MatchingFaces for one page scans a whole table:\n%s", idsPlan)
 	}
 }

@@ -15,6 +15,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/visibility/visibilitytest"
 )
 
 // TestACLGet_TypeLevelReadGrant pins AC1: a role with `read: [ticket]`
@@ -250,7 +251,7 @@ func (g fakeGate) PermitsRead(context.Context, string, string) (bool, error) {
 	return false, g.permitsErr
 }
 
-func (g fakeGate) PermitsReadMany(_ context.Context, _ string, ids []string) (map[string]bool, error) {
+func (g fakeGate) permitsReadMany(_ context.Context, _ string, ids []string) (map[string]bool, error) {
 	if g.permitsErr != nil {
 		return nil, g.permitsErr
 	}
@@ -347,4 +348,8 @@ func getEntityAsWithHeaders(ctx context.Context, t *testing.T, app *App, d *acl.
 	rec := httptest.NewRecorder()
 	app.handleV1GetEntity(rec, req, typeName, plural, entityID)
 	return rec
+}
+
+func (g fakeGate) ReadableFacesMany(ctx context.Context, typ string, ids []string) (acl.FaceVerdicts, error) {
+	return visibilitytest.IDVerdicts(g.permitsReadMany(ctx, typ, ids))
 }

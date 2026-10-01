@@ -9,7 +9,6 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
-	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // ErrUnstampedPrincipal is the sentinel returned by Declarative.ForPrincipal
@@ -128,92 +127,37 @@ func (r *Request) ReadQuery(ctx context.Context, entityType string) ReadQueryRes
 	return r.readQuery(ctx, entityType)
 }
 
-// PermitsRead reports whether this Request's principal is permitted
-// to read entityID of type entityType under the active policy. Used
-// by the dataentry per-entity GET gate (and writes-to-hidden 404
-// parity) to answer one-shot ACL questions without invoking a full
-// list query.
+// errReadQueryZero reports a ReadQueryResult with none of its three states
+// set, which readQuery never returns.
+var errReadQueryZero = errors.New("acl: read gate: readQuery returned zero ReadQueryResult")
+
+// PermitsRead reports whether the principal may read SOME stored face of
+// entityID: [Request.ReadableFacesMany] for one id. It is the 404 decision
+// for a bare id, which names the family rather than one face.
 //
-// Semantics:
-//
-//   - AllowAll → (true, nil) immediately; existence/type are NOT
-//     verified. Callers that need existence MUST follow up with
-//     getEntity — this method answers "permits read", not "exists".
-//   - DenyAll  → (false, nil) immediately.
-//   - Query    → MatchingIDs with {entityID}; map[entityID] → result.
-//
-// Returns any backing error verbatim so the caller can map it to the
-// right HTTP status (typically 500; context.Canceled → no response;
-// context.DeadlineExceeded → 504).
+// A global grant answers true without verifying existence; callers that need
+// existence read the row afterwards. A backing error is returned verbatim so
+// the caller can map it to the right HTTP status.
 func (r *Request) PermitsRead(ctx context.Context, entityType, entityID string) (bool, error) {
-	m, err := r.PermitsReadMany(ctx, entityType, []string{entityID})
+	vs, err := r.ReadableFacesMany(ctx, entityType, []string{entityID})
 	if err != nil {
 		return false, err
 	}
-	return m[entityID], nil
+	return !vs.For(entityID).None(), nil
 }
 
-// PermitsReadFace is [Request.PermitsRead] for ONE stored face of the entity:
-// the row verdict AND the face allowlist a `type@face` grant compiles to
-// ([ReadQueryResult.Faces]). PermitsRead alone is face-blind — it answers for
-// the id, and a caller holding a specific face in hand must not treat that as
-// permission to show it. A nil Faces set permits every face. A scoped verdict
-// is evaluated against the row at face itself.
+// PermitsReadFace reports whether the principal may read the row of entityID
+// at face: the verdict on that row AND the face allowlist a `type@face` grant
+// compiles to ([ReadQueryResult.Faces]). It is [Request.ReadableFacesMany]
+// asked about one face, so the two cannot disagree.
 func (r *Request) PermitsReadFace(
 	ctx context.Context, entityType, entityID string, face entity.Face,
 ) (bool, error) {
-	rqr := r.readQuery(ctx, entityType)
-	if len(rqr.Faces) > 0 && !slices.Contains(rqr.Faces, face) {
-		return false, nil
-	}
-	m, err := r.matching(ctx, rqr, store.AtFaces(face), []string{entityID})
+	vs, err := r.ReadableFacesMany(ctx, entityType, []string{entityID})
 	if err != nil {
 		return false, err
 	}
-	return m[entityID], nil
-}
-
-// PermitsReadMany returns a permissions map keyed by every input id
-// (true = principal may read, false = denied) for the given type. Used
-// by the dataentry include filter and any future batched gate. All
-// input ids appear in the result map regardless of outcome.
-//
-// Semantics mirror [Request.PermitsRead]:
-//
-//   - AllowAll → every id maps to true.
-//   - DenyAll  → empty map (every lookup returns false zero-value).
-//   - Query    → store.MatchingIDs result, verbatim.
-//
-// A scoped verdict is evaluated against each id's default-world row, as it
-// was before face selections were required: the gate answers for a bare id,
-// and widening it to other faces waits for TKT-7IZHP0.
-func (r *Request) PermitsReadMany(ctx context.Context, entityType string, ids []string) (map[string]bool, error) {
-	return r.matching(ctx, r.readQuery(ctx, entityType), store.InWorld(store.TrivialScope()), ids)
-}
-
-// matching answers rqr for ids, running a scoped verdict's template query
-// under sel. The template is copied: it is shared by every call.
-func (r *Request) matching(
-	ctx context.Context, rqr ReadQueryResult, sel store.FaceSelection, ids []string,
-) (map[string]bool, error) {
-	switch {
-	case rqr.AllowAll:
-		m := make(map[string]bool, len(ids))
-		for _, id := range ids {
-			m[id] = true
-		}
-		return m, nil
-	case rqr.DenyAll:
-		return map[string]bool{}, nil
-	// coverage-ignore: defensive: readQuery always sets exactly one of AllowAll/DenyAll/Query, so once AllowAll and
-	// DenyAll are false Query
-	// is non-nil — a zero ReadQueryResult cannot occur
-	case rqr.Query == nil:
-		return nil, errors.New("acl: read gate: readQuery returned zero ReadQueryResult")
-	}
-	q := *rqr.Query
-	q.Faces = sel
-	return r.d.graphQueryer.MatchingIDs(ctx, q, ids)
+	return vs.For(entityID).Contains(face), nil
 }
 
 // Principal returns the principal bound at construction. Helper for
@@ -337,7 +281,7 @@ func isBlankOrUnknown(s string) bool {
 // # Why this returns an error
 //
 // A world grant is a READ capability, and the read paths in this package
-// carry errors on purpose ([Request.PermitsRead], [Request.PermitsReadMany],
+// carry errors on purpose ([Request.PermitsRead], [Request.ReadableFacesMany],
 // visibility's listPushdown). Resolving the principal's roles walks the
 // graph, and a store failure there yields a PARTIAL role set — which would
 // silently answer "no" for a principal who genuinely holds the grant.

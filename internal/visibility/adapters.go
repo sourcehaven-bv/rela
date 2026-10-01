@@ -71,15 +71,15 @@ func (g DeclarativeGate) PermitsRead(ctx context.Context, entityType, id string)
 	return r.PermitsRead(ctx, entityType, id)
 }
 
-// PermitsReadMany implements [RowGate].
-func (g DeclarativeGate) PermitsReadMany(
+// ReadableFacesMany implements [RowGate].
+func (g DeclarativeGate) ReadableFacesMany(
 	ctx context.Context, entityType string, ids []string,
-) (map[string]bool, error) {
+) (acl.FaceVerdicts, error) {
 	r, err := g.request(ctx)
 	if err != nil {
-		return nil, err
+		return acl.FaceVerdicts{}, err
 	}
-	return r.PermitsReadMany(ctx, entityType, ids)
+	return r.ReadableFacesMany(ctx, entityType, ids)
 }
 
 // PolicyRedactor adapts *affordances.PolicyResolver to [FieldRedactor]:
@@ -127,13 +127,9 @@ type NopGate struct{}
 // PermitsRead implements [RowGate].
 func (NopGate) PermitsRead(context.Context, string, string) (bool, error) { return true, nil }
 
-// PermitsReadMany implements [RowGate].
-func (NopGate) PermitsReadMany(_ context.Context, _ string, ids []string) (map[string]bool, error) {
-	m := make(map[string]bool, len(ids))
-	for _, id := range ids {
-		m[id] = true
-	}
-	return m, nil
+// ReadableFacesMany implements [RowGate]: every face of every id.
+func (NopGate) ReadableFacesMany(context.Context, string, []string) (acl.FaceVerdicts, error) {
+	return acl.UniformVerdicts(acl.AllFacesVerdict()), nil
 }
 
 // NopRedactor is the hide-nothing [FieldRedactor] for wirings without an

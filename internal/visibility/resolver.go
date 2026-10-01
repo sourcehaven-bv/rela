@@ -202,8 +202,8 @@ func (r *Resolver) Ref(ctx context.Context, w World, entityType string, ref enti
 // The default world reads the implicit face "". A faced type has no row
 // there, so it misses until the default world is generated (TKT-7IZHP0).
 // Any other world reads through one ListEntities query carrying the world
-// and the principal's readable faces: the ACL trims the candidates first and
-// the world ranks what is left, exactly as the list path does.
+// and the faces of id the principal may read: the ACL trims the candidates
+// first and the world ranks what is left, exactly as the list path does.
 func (r *Resolver) InWorld(ctx context.Context, w World, entityType, id string) (Resolved, bool, error) {
 	if !w.denied && !w.scope.IsSet() {
 		return Resolved{}, false, fmt.Errorf("%w: visibility: InWorld with an unset world (use WorldOf)",
@@ -311,23 +311,27 @@ func (r *Resolver) sortFaces(entityType string, faces []entity.Face) {
 	})
 }
 
-// admit applies the gates that run before any load: the world, the row gate
-// on the bare id, and the readable-face set.
+// admit applies the gates that run before any load: the world, then the
+// faces of id whose row passes the read verdict, within the readable faces
+// of the type. The answer is per face, so a verdict that holds on one face
+// row and not on another admits only the first.
 func (r *Resolver) admit(ctx context.Context, w World, entityType, id string) (FaceSet, bool, error) {
 	if w.denied || id == "" {
 		return FaceSet{}, false, nil
 	}
-	ok, err := r.gate.PermitsRead(ctx, entityType, id)
+	verdicts, err := r.gate.ReadableFacesMany(ctx, entityType, []string{id})
 	if err != nil {
 		return FaceSet{}, false, err
 	}
-	if !ok {
+	faces := VerdictSet(verdicts.For(id))
+	if faces.IsNone() {
 		return FaceSet{}, false, nil
 	}
-	faces, err := ReadableFaces(ctx, r.gate, entityType)
+	typeFaces, err := ReadableFaces(ctx, r.gate, entityType)
 	if err != nil {
 		return FaceSet{}, false, err
 	}
+	faces = faces.Intersect(typeFaces)
 	if faces.IsNone() {
 		return FaceSet{}, false, nil
 	}

@@ -37,7 +37,7 @@ func (c *ListCmd) Run(ctx context.Context, svc *readServices) error {
 		return err
 	}
 
-	entities, err = applyListFilters(ctx, entities, c.Where, c.Filter, entityTypeName, meta, svc.Store.MatchingIDs)
+	entities, err = applyListFilters(ctx, entities, c.Where, c.Filter, entityTypeName, meta, store.IDMatcher(svc.Store))
 	if err != nil {
 		return err
 	}

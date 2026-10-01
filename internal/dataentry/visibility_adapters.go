@@ -3,6 +3,7 @@ package dataentry
 import (
 	"context"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
@@ -22,9 +23,11 @@ func (ctxRowGate) PermitsRead(ctx context.Context, entityType, id string) (bool,
 	return readGateFromContext(ctx).PermitsRead(ctx, entityType, id)
 }
 
-// PermitsReadMany implements [visibility.RowGate].
-func (ctxRowGate) PermitsReadMany(ctx context.Context, entityType string, ids []string) (map[string]bool, error) {
-	return readGateFromContext(ctx).PermitsReadMany(ctx, entityType, ids)
+// ReadableFacesMany implements [visibility.RowGate].
+func (ctxRowGate) ReadableFacesMany(
+	ctx context.Context, entityType string, ids []string,
+) (acl.FaceVerdicts, error) {
+	return readGateFromContext(ctx).ReadableFacesMany(ctx, entityType, ids)
 }
 
 // PermittedFaces implements [visibility.FaceGate], from the same ctx-resolved

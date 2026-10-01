@@ -534,7 +534,7 @@ func relationFilterClassifier(
 // edged rows (no title-match inference channel). Neighbors are gated in one
 // batch per relation param via matchRelationFilter → visibleNeighborTitles.
 // NOTE: when the sibling helper App.visibleRelationIDs (TKT-ODHV2D) merges,
-// this should converge on it; today it uses the same readGate.PermitsReadMany
+// this should converge on it; today it uses the same readGate.ReadableFacesMany
 // batching pattern inline.
 //
 // Cost (RR-38K7K9): this runs over the entire type's visible set BEFORE
@@ -578,7 +578,8 @@ func (a *App) applyRelationFilters(
 		}
 
 		direction, _ := cfg.RelationFilterDirection(typeName, relation)
-		matched, merr := matchRelationFilterMany(ctx, a.Services(), entities, relation, direction, want)
+		matched, merr := matchRelationFilterMany(
+			ctx, a.Services(), a.visibleReader, entities, relation, direction, want)
 		if merr != nil {
 			return nil, fmt.Errorf("%w: relation filter %q: %w", errListLoad, relation, merr)
 		}
@@ -607,7 +608,7 @@ func (a *App) applyRelationFilters(
 // empty map reads as "no row matches", which for a `ne` filter admits EVERY
 // row — a backend fault would silently widen a filter whose job is to narrow.
 func matchRelationFilterMany(
-	ctx context.Context, svc Services, rows []*entityPkg.Entity,
+	ctx context.Context, svc Services, visible visibleReader, rows []*entityPkg.Entity,
 	relation string, direction dataentryconfig.Direction, want string,
 ) (map[string]bool, error) {
 	matched := make(map[string]bool, len(rows))
@@ -619,37 +620,25 @@ func matchRelationFilterMany(
 		return matched, err
 	}
 
-	// Which neighbors carry the wanted title, by type — then gate per type.
-	// A neighbor is read at the face the request's world serves and must
-	// pass the face gate before its title is compared: matching on another
-	// face's title, or on a face the reader may not read, turns the filter
-	// into an oracle on that face (BUG-ISJHML). The served face is kept so an
-	// incoming content-scoped edge counts only when that face owns it.
-	candidatesByType := map[string][]string{}
-	neighborFace := make(map[string]entityPkg.Face, len(neighborIDs))
-	for h, err := range store.ListEntityHeaders(ctx, svc.Store, store.EntityQuery{
-		IDs: neighborIDs, Faces: store.InWorld(worldScopeFrom(ctx)),
-	}) {
-		if err != nil {
-			return nil, err
-		}
-		if !faceReadable(ctx, h.Type, h.Face) {
-			continue
-		}
-		neighborFace[h.ID] = h.Face
-		if svc.Meta.DisplayTitle(h.ID, h.Type, h.Properties) == want {
-			candidatesByType[h.Type] = append(candidatesByType[h.Type], h.ID)
-		}
+	// Each neighbor is read at the face the principal is served: the ACL
+	// trims its faces, then the world ranks what is left (servedIDsErr).
+	// Only that face's title is compared. Comparing another face's title,
+	// or a face the reader may not read, turns the filter into an oracle on
+	// that face (BUG-ISJHML), and a per-id "some face is readable" verdict
+	// is not enough to rule that out once grants differ per face. The
+	// served face is also the one an incoming content-scoped edge must be
+	// owned by.
+	served, err := visible.servedIDsErr(ctx, neighborIDs)
+	if err != nil {
+		return nil, err
 	}
-	readable := readableCandidates(ctx, candidatesByType)
 	for _, re := range edges {
-		if !readable[re.targetID] {
+		h, ok := served[re.targetID]
+		if !ok || svc.Meta.DisplayTitle(h.ID, h.Type, h.Properties) != want {
 			continue
 		}
-		if direction.IsIncoming() {
-			if f, ok := neighborFace[re.targetID]; !ok || !ownedByFace(svc.Meta, re.rel, f) {
-				continue
-			}
+		if direction.IsIncoming() && !ownedByFace(svc.Meta, re.rel, h.Face) {
+			continue
 		}
 		matched[re.rowID] = true
 	}
@@ -700,26 +689,6 @@ func relationFilterEdges(
 		}
 	}
 	return edges, neighborIDs, nil
-}
-
-// readableCandidates gates candidate ids with one probe per type. A type
-// whose probe fails contributes nothing: a relation filter only ever
-// narrows on an unreadable neighbor.
-func readableCandidates(ctx context.Context, byType map[string][]string) map[string]bool {
-	readable := make(map[string]bool)
-	gate := readGateFromContext(ctx)
-	for typ, cids := range byType {
-		perm, err := gate.PermitsReadMany(ctx, typ, cids)
-		if err != nil {
-			continue
-		}
-		for _, id := range cids {
-			if perm[id] {
-				readable[id] = true
-			}
-		}
-	}
-	return readable
 }
 
 // parseRelationFilterKey parses a `filter[<rel>]` or `filter[<rel>][<op>]` key
@@ -925,7 +894,7 @@ func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName
 
 	// The path segment is an ADDRESS — `ID` or `ID@face` (TKT-SLFURL). The
 	// resolver applies PermitsRead BEFORE the store read, so a hidden id and
-	// a nonexistent id spend the same MatchingIDs roundtrip — otherwise the
+	// a nonexistent id spend the same MatchingFaces roundtrip — otherwise the
 	// timing difference (in-memory lookup ~1µs vs. DB roundtrip ~1ms) is an
 	// id-enumeration side channel that defeats the indistinguishable-404-body
 	// invariant (RR-NGMI). Every miss, including a malformed address, a
@@ -955,7 +924,7 @@ func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName
 	// mixed-face response that reads as correct because the entity looks
 	// right and only its links are wrong.
 	outgoing, visibleNeighbors, werr := servedFaceEdges(
-		ctx, a.reader, a.worldNeighbors, a.visibleReader, entity)
+		ctx, a.reader, a.worldNeighbors, entity)
 	if werr != nil {
 		// A neighbor-resolution fault is an infrastructure failure, not an
 		// empty link set. Rendering it as "this world links to nothing"
@@ -1085,7 +1054,7 @@ func writeListPipelineError(w http.ResponseWriter, r *http.Request, err error) {
 	}
 }
 
-// writeGateError maps a readGate.PermitsRead / PermitsReadMany error
+// writeGateError maps a readGate.PermitsRead / ReadableFacesMany error
 // to the right HTTP shape: client-disconnect emits nothing,
 // deadline-exceeded is 504, everything else is 500 with the
 // acl_query_failed code (RR-89XK). Centralized so every gate call
@@ -1149,7 +1118,7 @@ func (a *App) handleV1EntityRelations(w http.ResponseWriter, r *http.Request, ty
 	// replicated here, in handleV1GetRelationType, and in the list path — a
 	// shared chokepoint (P3) would collapse the three; deferred to avoid
 	// churning the list path in a security fix.
-	visibleNeighbors := visibleRelationIDs(r.Context(), a.reader, a.visibleReader,
+	visibleNeighbors := visibleRelationIDs(r.Context(), a.visibleReader,
 		neighborIDsOf(outgoing, incoming))
 
 	relations := make(map[string][]map[string]any)
@@ -1369,7 +1338,7 @@ func (a *App) handleV1GetRelationType(w http.ResponseWriter, r *http.Request, ty
 		}
 		peerIDs = append(peerIDs, peerID)
 	}
-	visibleNeighbors := visibleRelationIDs(r.Context(), a.reader, a.visibleReader, peerIDs)
+	visibleNeighbors := visibleRelationIDs(r.Context(), a.visibleReader, peerIDs)
 
 	relations, pendingStrips := buildRelationTypeRows(r.Context(), a.reader, edges, relType, incoming, visibleNeighbors)
 
@@ -2040,7 +2009,7 @@ func (a *App) resolveV1Includes(ctx context.Context, entity *entityPkg.Entity, i
 
 // filterVisibleIncludes drops any candidate the principal cannot read,
 // batched by entity type. For each distinct type ONE gate call
-// (PermitsReadMany over every candidate of that type) — turning a
+// (ReadableFacesMany over every candidate of that type) — turning a
 // worst case of O(N) per-id probes into O(distinct-types). RR-FRK1.
 //
 // On gate error: drop the whole type's candidates (fail-closed) and
@@ -2356,7 +2325,7 @@ func addPaginationLinks(w http.ResponseWriter, _ *http.Request, page, perPage, t
 // the edges they served should use [entityETagWithEdges] instead — see the
 // duplication note at the single-entity GET's call site.
 func (a *App) computeEntityETag(ctx context.Context, e *entityPkg.Entity) string {
-	edges, err := etagEdges(ctx, a.reader, a.worldNeighbors, a.visibleReader, e)
+	edges, err := etagEdges(ctx, a.reader, a.worldNeighbors, e)
 	if err != nil {
 		return etagUnresolved(ctx, e)
 	}

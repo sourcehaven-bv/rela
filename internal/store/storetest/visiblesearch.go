@@ -327,6 +327,134 @@ func RunVisibleSearchTests(t *testing.T, vsf VisibleSearchFactory) {
 			require.True(t, hitInSet(base, h.ID), "visible hit missing from ungated baseline")
 		}
 	})
+
+	RunFacedVisibleSearchTests(t, vsf)
+}
+
+// RunFacedVisibleSearchTests pins the per-face half of the scope
+// (TKT-7IZHP0): the verdict and the face allowlist trim each entity's
+// candidate faces BEFORE the world ranks them. A denied prime falls
+// through to a readable face, as on lists and the single-entity read, and
+// a face the scope denies is never matched or served.
+//
+// The world prefers draft and falls back to published. POL-1 holds both
+// faces, POL-2 only a draft, and the term "sketch" appears only in POL-1's
+// draft.
+func RunFacedVisibleSearchTests(t *testing.T, vsf VisibleSearchFactory) {
+	t.Helper()
+	draft, published := entity.Face("draft"), entity.Face("published")
+	world := store.NewWorldScope(map[string]store.TypeResolution{
+		"policy": {Chain: []entity.Face{draft, published}, Fallback: store.FallbackExclude},
+	})
+	seed := func(t *testing.T, s store.Store) {
+		t.Helper()
+		for _, e := range []struct {
+			id    string
+			face  entity.Face
+			title string
+		}{
+			{"POL-1", draft, "alpha sketch"},
+			{"POL-1", published, "alpha final"},
+			{"POL-2", draft, "alpha other"},
+			{"U-rev", "", "reviewer"},
+		} {
+			ent := entity.New(e.id, "policy")
+			if e.id == "U-rev" {
+				ent = entity.New(e.id, "user")
+			}
+			ent.Face = e.face
+			ent.SetString("title", e.title)
+			require.NoError(t, s.CreateEntity(ctx(), ent), "create %s@%s", e.id, e.face)
+		}
+		mustRel(t, s, "U-rev", "reviews", "POL-1")
+		mustRel(t, s, "U-rev", "reviews", "POL-2")
+	}
+	requireFaces := func(t *testing.T, want map[string]entity.Face, hits []search.Hit) {
+		t.Helper()
+		got := make(map[string]entity.Face, len(hits))
+		for _, h := range hits {
+			got[h.ID] = h.Face
+		}
+		require.Equal(t, want, got)
+	}
+	reviewerOnPublished := func() *store.GraphQuery {
+		return &store.GraphQuery{
+			EntityType: "policy",
+			Any: []store.GraphBranch{{
+				HasInbound: &store.RelationPredicate{Endpoints: []string{"U-rev"}, OfTypes: []string{"reviews"}},
+				FaceIn:     []entity.Face{published},
+			}},
+		}
+	}
+
+	t.Run("FaceAllowlistFallsThroughToReadableFace", func(t *testing.T) {
+		s, _, vs := vsf(t)
+		seed(t, s)
+		scope := map[string]search.TypeScope{"policy": {AllowAll: true, Faces: []entity.Face{published}}}
+		got := collectHits(t, vs.SearchVisible(ctx(), search.Query{Text: "alpha", World: world}, scope))
+		requireFaces(t, map[string]entity.Face{"POL-1": published}, got)
+	})
+
+	t.Run("QueryVerdictIsPerFaceRow", func(t *testing.T) {
+		s, _, vs := vsf(t)
+		seed(t, s)
+		scope := map[string]search.TypeScope{"policy": {Query: reviewerOnPublished()}}
+		got := collectHits(t, vs.SearchVisible(ctx(), search.Query{Text: "alpha", World: world}, scope))
+		requireFaces(t, map[string]entity.Face{"POL-1": published}, got)
+	})
+
+	t.Run("DeniedFaceIsNeverMatched", func(t *testing.T) {
+		s, _, vs := vsf(t)
+		seed(t, s)
+		for name, scope := range map[string]map[string]search.TypeScope{
+			"allowlist": {"policy": {AllowAll: true, Faces: []entity.Face{published}}},
+			"verdict":   {"policy": {Query: reviewerOnPublished()}},
+		} {
+			t.Run(name, func(t *testing.T) {
+				got := collectHits(t, vs.SearchVisible(ctx(), search.Query{Text: "sketch", World: world}, scope))
+				require.Empty(t, got, "the term is only in the draft face, which the scope denies")
+			})
+		}
+	})
+
+	t.Run("EmptyTextServesTheAdmittedPrime", func(t *testing.T) {
+		s, _, vs := vsf(t)
+		seed(t, s)
+		scope := map[string]search.TypeScope{"policy": {AllowAll: true, Faces: []entity.Face{published}}}
+		got := collectHits(t, vs.SearchVisible(ctx(), search.Query{World: world, Types: []string{"policy"}}, scope))
+		requireFaces(t, map[string]entity.Face{"POL-1": published}, got)
+	})
+
+	t.Run("AllFacesAdmittedServesTheWorldPrime", func(t *testing.T) {
+		s, _, vs := vsf(t)
+		seed(t, s)
+		scope := map[string]search.TypeScope{"policy": {AllowAll: true}}
+		got := collectHits(t, vs.SearchVisible(ctx(), search.Query{Text: "alpha", World: world}, scope))
+		requireFaces(t, map[string]entity.Face{"POL-1": draft, "POL-2": draft}, got)
+	})
+
+	for name, scope := range map[string]map[string]search.TypeScope{
+		// A GraphQuery targets one type, and a face allowlist on the
+		// default verdict would apply to types the grant never named.
+		"WildcardFaceAllowlistIsInvalid": {search.WildcardType: {AllowAll: true, Faces: []entity.Face{published}}},
+		// store.GraphQuery.FaceIn reads an empty list as every face, so a
+		// backend forwarding it would fail open.
+		"EmptyFaceAllowlistIsInvalid/allowAll": {"policy": {AllowAll: true, Faces: []entity.Face{}}},
+		"EmptyFaceAllowlistIsInvalid/query":    {"policy": {Query: reviewerOnPublished(), Faces: []entity.Face{}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, _, vs := vsf(t)
+			seed(t, s)
+			var streamErr error
+			for _, err := range vs.SearchVisible(ctx(), search.Query{Text: "alpha", World: world}, scope) {
+				if err != nil {
+					streamErr = err
+					break
+				}
+			}
+			require.ErrorIs(t, streamErr, search.ErrScope)
+		})
+	}
 }
 
 // VisibleFieldSearchFactory returns a fresh store, the ungated searcher, and

@@ -9,6 +9,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
+	"github.com/Sourcehaven-BV/rela/internal/visibility/visibilitytest"
 )
 
 // configGate is a configurable readGate test double for visibleReader unit
@@ -26,7 +27,7 @@ func (g configGate) PermitsRead(_ context.Context, _ /*entityType*/, id string) 
 	return g.permits[id], nil
 }
 
-func (g configGate) PermitsReadMany(_ context.Context, _ string, ids []string) (map[string]bool, error) {
+func (g configGate) permitsReadMany(_ context.Context, _ string, ids []string) (map[string]bool, error) {
 	if g.err != nil {
 		return nil, g.err
 	}
@@ -225,4 +226,8 @@ func ids(es []*entity.Entity) []string {
 		out[i] = e.ID
 	}
 	return out
+}
+
+func (g configGate) ReadableFacesMany(ctx context.Context, typ string, ids []string) (acl.FaceVerdicts, error) {
+	return visibilitytest.IDVerdicts(g.permitsReadMany(ctx, typ, ids))
 }

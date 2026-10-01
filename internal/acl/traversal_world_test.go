@@ -61,7 +61,7 @@ func TestGateTraversal_AllFacesQueryCannotSatisfyHopOutsideRequestWorld(t *testi
 		if gerr != nil {
 			t.Fatalf("GateTraversal: %v", gerr)
 		}
-		ids, gerr := st.MatchingIDs(ctx, store.GraphQuery{EntityType: "ticket", Faces: sel, HasOutbound: pred},
+		ids, gerr := store.MatchingIDs(ctx, st, store.GraphQuery{EntityType: "ticket", Faces: sel, HasOutbound: pred},
 			[]string{"TKT-1"})
 		if gerr != nil {
 			t.Fatalf("MatchingIDs: %v", gerr)
@@ -96,7 +96,7 @@ func TestGateTraversal_AllFacesQueryCannotSatisfyHopOutsideRequestWorld(t *testi
 		t.Fatal(err)
 	}
 	pred.EndpointMatch.Faces = store.FaceSelection{}
-	ids, err := st.MatchingIDs(ctx, store.GraphQuery{EntityType: "ticket", Faces: store.AllFaces(), HasOutbound: pred},
+	ids, err := store.MatchingIDs(ctx, st, store.GraphQuery{EntityType: "ticket", Faces: store.AllFaces(), HasOutbound: pred},
 		[]string{"TKT-1"})
 	if err != nil {
 		t.Fatal(err)

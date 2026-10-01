@@ -247,7 +247,7 @@ func TestContentEdges_IncomingRelationFilterMatchesTheServedFace(t *testing.T) {
 			for _, id := range []string{"FEAT-DRAFT", "FEAT-PUB", "FEAT-1"} {
 				rows = append(rows, &entity.Entity{ID: id, Type: "feature"})
 			}
-			matched, err := matchRelationFilterMany(ctx, app.Services(), rows,
+			matched, err := matchRelationFilterMany(ctx, app.Services(), app.visibleReader, rows,
 				"cites", dataentryconfig.DirectionIncoming, title)
 			if err != nil {
 				t.Fatal(err)
@@ -268,7 +268,7 @@ func TestContentEdges_IncomingRelationFilterMatchesTheServedFace(t *testing.T) {
 				map[string]store.TypeResolution{
 					"policy": {Chain: []entity.Face{"draft"}, Fallback: store.FallbackExclude},
 				})})
-			matched, err = matchRelationFilterMany(draftCtx, app.Services(), rows,
+			matched, err = matchRelationFilterMany(draftCtx, app.Services(), app.visibleReader, rows,
 				"cites", dataentryconfig.DirectionIncoming, title)
 			if err != nil {
 				t.Fatal(err)
@@ -327,7 +327,7 @@ func TestContentEdges_BareIdSurfacesServeOnlyTheOwningFace(t *testing.T) {
 			{"FEAT-DRAFT", false},
 			{"FEAT-PUB", true},
 		} {
-			got, err := matchRelationFilterMany(ctx, app.Services(), []*entity.Entity{pub},
+			got, err := matchRelationFilterMany(ctx, app.Services(), app.visibleReader, []*entity.Entity{pub},
 				"cites", dataentryconfig.DirectionOutgoing, tc.want)
 			if err != nil {
 				t.Fatal(err)

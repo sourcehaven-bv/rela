@@ -354,8 +354,13 @@ the same not-found response as a missing one.
 
 Under a world, the grant trims the candidates before the world ranks them: a
 `policy@published` reader in a world that prefers `review` and falls back to
-`published` is served the published face, on lists and on the single-entity
-read alike. The world is a view onto the part of the graph the reader may see.
+`published` is served the published face. The single-entity read, lists,
+`?include=` neighbours, the links in a response's `relations`, relation
+filters, and search all work this way. Views do not yet: a view drops a
+neighbour whose preferred face is denied instead of falling through, which
+shows less, never more. The world is a view onto the part of the graph the
+reader may see. An entity with no readable face in the world is absent, and
+that absence looks the same as an entity the world excludes.
 
 Reads and writes default differently, and the difference is deliberate:
 
@@ -807,10 +812,12 @@ Analysis is deliberately unscoped. It reports on the health of the whole graph
 a caller may read, and a world that hides a broken draft would make the graph
 look clean precisely where it is not.
 
-Search under a world matches the text of the face the world resolves, and an
-entity the world excludes has nothing to match. Searching the `published` world
-for a word that appears only in a draft returns exactly what searching for a
-nonsense word returns.
+Search under a world matches the text of the face the world resolves for the
+caller, and an entity the world excludes has nothing to match. Searching the
+`published` world for a word that appears only in a draft returns exactly what
+searching for a nonsense word returns. The same holds for a face the caller may
+not read: search never matches its text, and serves the next readable face in
+the world instead, as the other read paths do.
 
 You have verified the schema, the grants, and the copy from outside the web
 app. The last step checks the stored data itself.

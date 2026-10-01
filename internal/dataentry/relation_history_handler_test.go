@@ -12,6 +12,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/visibility/visibilitytest"
 )
 
 // relHistoryStore is a canned relation-version-history service so the
@@ -92,12 +93,12 @@ func (g perEndpointGate) PermitsRead(_ context.Context, _, id string) (bool, err
 	return g.allow[id], nil
 }
 
-func (g perEndpointGate) PermitsReadMany(_ context.Context, _ string, ids []string) (map[string]bool, error) {
+func (g perEndpointGate) permitsReadMany(_ context.Context, _ string, ids []string) map[string]bool {
 	m := make(map[string]bool, len(ids))
 	for _, id := range ids {
 		m[id] = g.allow[id]
 	}
-	return m, nil
+	return m
 }
 
 func (g perEndpointGate) ReadQuery(_ context.Context, typ string) acl.ReadQueryResult {
@@ -460,4 +461,8 @@ func TestRelationHistory_GoneSourceServesNoMeta(t *testing.T) {
 	if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), "SECRET NOTE") {
 		t.Errorf("gone source version = %d %s, want 200 without meta", rec.Code, rec.Body)
 	}
+}
+
+func (g perEndpointGate) ReadableFacesMany(ctx context.Context, typ string, ids []string) (acl.FaceVerdicts, error) {
+	return visibilitytest.IDVerdicts(g.permitsReadMany(ctx, typ, ids), nil)
 }

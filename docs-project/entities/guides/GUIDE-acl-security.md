@@ -171,6 +171,17 @@ single-entity read, `?include=` neighbours, views, and search alike. A denied
 face produces the same not-found response as a face that does not exist, so a
 grant cannot be used to discover which faces an entity has.
 
+The gate judges each face on its own. For a conferred role, a face is readable
+only through a relation whose grant names that face. When a request reads an
+entity by its bare id, the gate first removes the faces the principal may not
+read, and the world then picks among the rest. A principal whose grant denies
+the face the world prefers is served the next readable face in the world's
+chain. The single-entity read, lists, `?include=` neighbours, the links in a
+response and search all resolve an entity this way, so they agree. An entity
+with no readable face is absent everywhere. Views that traverse from an entry
+still drop a neighbour whose preferred face is denied; they will switch to the
+same rule in a later release.
+
 **The default differs between reads and writes, deliberately.**
 
 | Grant | Covers |

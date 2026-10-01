@@ -253,6 +253,6 @@ func pageMatch(st store.GraphQueryer) relresolve.Match {
 		if st == nil {
 			return nil, errors.New("view condition: no store to answer related()")
 		}
-		return st.MatchingIDs(ctx, stampScope(ctx, q, scopeRequest{}), ids)
+		return store.MatchingIDs(ctx, st, stampScope(ctx, q, scopeRequest{}), ids)
 	}
 }

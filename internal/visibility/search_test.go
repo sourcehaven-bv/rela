@@ -13,6 +13,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
+	"github.com/Sourcehaven-BV/rela/internal/visibility/visibilitytest"
 )
 
 // fakeScoper grants per type from a fixed table. A type absent from reads is
@@ -47,12 +48,17 @@ func (f fakeScoper) PermittedFaces(ctx context.Context, typ string) ([]entity.Fa
 
 func (f fakeScoper) PermitsRead(context.Context, string, string) (bool, error) { return true, nil }
 
-func (f fakeScoper) PermitsReadMany(_ context.Context, _ string, ids []string) (map[string]bool, error) {
+func (f fakeScoper) permitsReadMany(_ context.Context, _ string, ids []string) map[string]bool {
 	m := make(map[string]bool, len(ids))
 	for _, id := range ids {
 		m[id] = true
 	}
-	return m, nil
+	return m
+}
+
+// ReadableFacesMany implements the row gate over permitsReadMany.
+func (f fakeScoper) ReadableFacesMany(ctx context.Context, entityType string, ids []string) (acl.FaceVerdicts, error) {
+	return visibilitytest.IDVerdicts(f.permitsReadMany(ctx, entityType, ids), nil)
 }
 
 // hideProps hides the named properties on every entity.

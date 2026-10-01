@@ -214,7 +214,7 @@ relations:
 }
 
 // The incoming-hop twin: the endpoint is the relation's FROM side. The
-// MatchingIDs statement a query scope issues for one page must not scan a
+// MatchingFaces statement a query scope issues for one page must not scan a
 // table either.
 func TestInboundEndpointMatchExplainIsIndexOnly(t *testing.T) {
 	s := open(t)
@@ -264,18 +264,18 @@ relations:
 	for i := range page {
 		page[i] = fmt.Sprintf("FEAT-%06d", i)
 	}
-	plan, err := s.ExplainMatchingIDs(context.Background(), q, page)
+	plan, err := s.ExplainMatchingFaces(context.Background(), q, page)
 	require.NoError(t, err)
-	t.Logf("MatchingIDs plan:\n%s", plan)
+	t.Logf("MatchingFaces plan:\n%s", plan)
 	requireNoTableScan(t, plan)
 	// A walk of the type index is a SEARCH, so the scan check alone misses it.
 	require.Contains(t, strings.SplitN(plan, "\n", 2)[0], "sqlite_autoindex_entities_1 (id=?",
-		"MatchingIDs is not driven by the page's id list")
+		"MatchingFaces is not driven by the page's id list")
 }
 
 // The related(entity, rel, { id = current_user.id }) shape (TKT-NXELMW): the
 // bound user id is an inbound Endpoints entry and the traversed type an
-// EndpointMatch. Neither the full query nor a page's MatchingIDs may scan a
+// EndpointMatch. Neither the full query nor a page's MatchingFaces may scan a
 // table, and no derived index is needed for it.
 func TestInboundNamedEndpointExplainIsIndexOnly(t *testing.T) {
 	s := open(t)
@@ -304,9 +304,9 @@ func TestInboundNamedEndpointExplainIsIndexOnly(t *testing.T) {
 	for i := range page {
 		page[i] = fmt.Sprintf("TAAK-%06d", i)
 	}
-	plan, err := s.ExplainMatchingIDs(context.Background(), q, page)
+	plan, err := s.ExplainMatchingFaces(context.Background(), q, page)
 	require.NoError(t, err)
-	t.Logf("MatchingIDs plan:\n%s", plan)
+	t.Logf("MatchingFaces plan:\n%s", plan)
 	requireNoTableScan(t, plan)
 }
 
@@ -336,7 +336,7 @@ func compileScope(t *testing.T, src string) *predicate.Program {
 
 // An entity-inheritance closure for one page starts from the page's ids, not
 // from every entity of the type.
-func TestMatchingIDsEntityClosureSeedsFromThePage(t *testing.T) {
+func TestMatchingFacesEntityClosureSeedsFromThePage(t *testing.T) {
 	s := open(t)
 	seed(t, s, func(v store.Store) {
 		mustCreate(t, v, entity.New("alice", "person"))
@@ -358,13 +358,13 @@ func TestMatchingIDsEntityClosureSeedsFromThePage(t *testing.T) {
 		Faces: store.InWorld(store.TrivialScope()),
 	}
 	page := []string{"ITEM-000003", "ITEM-000009"}
-	plan, err := s.ExplainMatchingIDs(context.Background(), q, page)
+	plan, err := s.ExplainMatchingFaces(context.Background(), q, page)
 	require.NoError(t, err)
 	t.Logf("plan:\n%s", plan)
 	require.NotContains(t, plan, "entities_type_id_face_idx (type=?)", "the closure seeds from the whole type")
 	requireNoTableScan(t, plan)
 
-	got, err := s.MatchingIDs(context.Background(), q, page)
+	got, err := store.MatchingIDs(context.Background(), s, q, page)
 	require.NoError(t, err)
 	require.Equal(t, map[string]bool{"ITEM-000003": true, "ITEM-000009": false}, got)
 }

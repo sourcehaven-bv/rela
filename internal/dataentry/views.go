@@ -566,10 +566,11 @@ func (h *viewsHandler) ownedEdges(
 //
 // # Both halves of the verdict
 //
-// A row gate is face-BLIND, so it is paired with [faceReadable], exactly as
-// visibleHeaderIDs pairs them (TKT-O7R2A1). Without the face half a principal
-// granted only `policy@published` could walk THROUGH a draft-only entity to
-// reach its descendants — the same reachability leak this gate exists to close,
+// The row gate answers per face, and each id is gated at the face the world
+// serves, together with the type-level face grant [faceReadable]
+// (TKT-O7R2A1). Without the face half a principal granted only
+// `policy@published` could walk THROUGH a draft-only entity to reach its
+// descendants — the same reachability leak this gate exists to close,
 // re-opened one coordinate down.
 //
 // Ids are resolved to their type and face with a content-free HEADER scan,
@@ -623,7 +624,7 @@ func (h *viewsHandler) readableViewIDs(ctx context.Context, ids []string, w view
 	gate := readGateFromContext(ctx)
 	permitted := make(map[string]bool, len(ordered))
 	for typ, typeIDs := range byType {
-		verdicts, err := gate.PermitsReadMany(ctx, typ, typeIDs)
+		verdicts, err := gate.ReadableFacesMany(ctx, typ, typeIDs)
 		if err != nil {
 			// Fail closed: none of this type is expandable. Logged loud so
 			// operators see the cause rather than a silently-short chain.
@@ -632,7 +633,7 @@ func (h *viewsHandler) readableViewIDs(ctx context.Context, ids []string, w view
 			continue
 		}
 		for _, id := range typeIDs {
-			if verdicts[id] {
+			if verdicts.For(id).Contains(hdrs[id].face) {
 				permitted[id] = true
 			}
 		}

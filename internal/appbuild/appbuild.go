@@ -1276,8 +1276,8 @@ func buildACL(policy *acl.Policy, meta *metamodel.Metamodel, st store.Store) (ac
 	warnUngatedMembership(policy)
 	// `st` is passed twice: once via NewStoreGraph (the Graph
 	// adapter the resolver uses for member-of / ancestor walks), and
-	// once as the GraphQueryer (executes store.MatchingIDs for
-	// Request.PermitsRead / PermitsReadMany). The store.Store
+	// once as the GraphQueryer (executes MatchingFaces for
+	// Request.PermitsRead / ReadableFacesMany). The store.Store
 	// interface embeds both — RR-U06D. A future backend or
 	// store-wrapping decorator (audit, metrics) MUST forward
 	// GraphQueryer or this compiles while the read gate silently uses

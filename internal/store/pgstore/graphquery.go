@@ -151,56 +151,58 @@ func buildGraphTotalSQL(q store.GraphQuery) (sqlText string, args []any) {
 	return "SELECT " + agg + " FROM entities e WHERE e.type = " + typeArg + " AND " + scope, b.args
 }
 
-// MatchingIDs runs the predicate query restricted to the candidate id
-// set via `e.id = ANY($ids)`, returning a map keyed by every input id
-// (true = matched, false = no-match). Push-down: a single SQL round
-// trip regardless of |ids|.
-func (s *Store) MatchingIDs(ctx context.Context, q store.GraphQuery, ids []string) (map[string]bool, error) {
+// MatchingFaces runs the predicate query restricted to the candidate id set
+// via `e.id = ANY($ids)` and returns each matching (id, face) row, per
+// [store.GraphQueryer.MatchingFaces]. Push-down: a single SQL round trip
+// regardless of |ids|.
+func (s *Store) MatchingFaces(
+	ctx context.Context, q store.GraphQuery, ids []string,
+) (map[string][]entity.Face, error) {
 	if err := checkGraphQueryScope(q); err != nil {
 		return nil, err
 	}
-	out := make(map[string]bool, len(ids))
-	for _, id := range ids {
-		out[id] = false
-	}
-	if len(out) == 0 {
+	out := make(map[string][]entity.Face)
+	if len(ids) == 0 {
 		return out, nil
 	}
-	sqlText, args := buildMatchingIDsSQL(q, ids)
+	sqlText, args := buildMatchingFacesSQL(q, ids)
 	rows, err := s.db.Query(ctx, sqlText, args...)
 	if err != nil {
-		return nil, fmt.Errorf("pgstore: matching ids: %w", err)
+		return nil, fmt.Errorf("pgstore: matching faces: %w", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, fmt.Errorf("pgstore: matching ids scan: %w", err)
+		var id, face string
+		if err := rows.Scan(&id, &face); err != nil {
+			return nil, fmt.Errorf("pgstore: matching faces scan: %w", err)
 		}
-		out[id] = true
+		out[id] = append(out[id], entity.Face(face))
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("pgstore: matching ids: %w", err)
+		return nil, fmt.Errorf("pgstore: matching faces: %w", err)
+	}
+	for id, faces := range out {
+		out[id] = store.SortedFaces(faces)
 	}
 	return out, nil
 }
 
-// buildMatchingIDsSQL builds the same query shape as
-// [buildGraphQuerySQL] but selects only `e.id` and restricts the
+// buildMatchingFacesSQL builds the same query shape as
+// [buildGraphQuerySQL] but selects only `e.id, e.face` and restricts the
 // candidate set via `e.id = ANY(:ids)`. Parameterised — ids never
 // reaches the SQL text.
-func buildMatchingIDsSQL(q store.GraphQuery, ids []string) (sqlText string, args []any) {
+func buildMatchingFacesSQL(q store.GraphQuery, ids []string) (sqlText string, args []any) {
 	b := &sqlBuilder{}
 	typeArg := b.arg(q.EntityType)
 	// World-scoped RESULT rows (TKT-WAV8XP PR-C); relation traversal
 	// stays tail-unscoped to match graphquerynaive over ListRelations,
 	// and the recursive CTE seeds stay un-worlded on purpose (Q5).
 	with, source := graphSource(b, q, typeArg, "e.id = ANY("+b.arg(ids)+")")
-	return withClause(with) + "SELECT e.id FROM " + source, b.args
+	return withClause(with) + "SELECT e.id, e.face FROM " + source, b.args
 }
 
 // buildPredicateParts emits the CTE definitions and the WHERE-clause
-// conjuncts shared by [buildMatchingIDsSQL] and [buildGraphQuerySQL] —
+// conjuncts shared by [buildMatchingFacesSQL] and [buildGraphQuerySQL] —
 // relation predicates (as EXISTS / NOT EXISTS) and property predicates
 // (as jsonb comparisons). Kept in one place so the two query shapes
 // cannot drift.
@@ -466,7 +468,7 @@ func equalsCond(b *sqlBuilder, txt, jsn, value string) string {
 // **SQL injection safety.** Every caller-supplied value
 // (q.EntityType, RelationPredicate.Endpoints / OfTypes /
 // InheritThrough / EntityInheritThrough, Depth, EntityDepth, and the
-// MatchingIDs candidate id slice) flows through [sqlBuilder.arg],
+// MatchingFaces candidate id slice) flows through [sqlBuilder.arg],
 // which returns a positional placeholder (`$N`) and appends the
 // value to args. The Sprintf calls in this file substitute only:
 //
