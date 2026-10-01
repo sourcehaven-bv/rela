@@ -184,6 +184,50 @@ func TestGraphQueryExplainPagedListUsesDerivedListIndex(t *testing.T) {
 	}
 }
 
+// A faced type in a world that ranks nothing for it reads one face, so its
+// page is a range scan on the same derived list index (TKT-7IZHP0 A9): no
+// DISTINCT ON, no sort.
+func TestGraphQueryExplainFlatWorldPageUsesDerivedListIndex(t *testing.T) {
+	const n = 5000
+	pool := newScopedPool(t)
+	s, err := pgstore.New(pool)
+	require.NoError(t, err)
+	ctx := context.Background()
+	spec := []store.DerivedObjectSpec{{
+		Kind: store.DerivedListIndex, Type: "page", Properties: []string{"status"}, OrderBy: []string{"due"},
+	}}
+	_, err = s.Reconcile(ctx, spec, store.ReconcileOptions{})
+	require.NoError(t, err)
+
+	for i := range n {
+		e := entity.New(fmt.Sprintf("PG-%06d", i), "page")
+		e.Face = []entity.Face{"draft", "published"}[i%2]
+		e.Properties["status"] = []string{"open", "done"}[(i/2)%2]
+		e.Properties["due"] = fmt.Sprintf("2026-%02d-%02d", 1+i%12, 1+i%28)
+		require.NoError(t, s.CreateEntity(ctx, e))
+	}
+	_, err = pool.Exec(ctx, "ANALYZE entities")
+	require.NoError(t, err)
+
+	world := store.NewWorldScope(map[string]store.TypeResolution{
+		"page": {Chain: []entity.Face{"published"}, Fallback: store.FallbackExclude},
+	})
+	plan := explainGraphQuery(t, pool, store.GraphQuery{
+		EntityType: "page",
+		Props:      []store.PropPredicate{{Property: "status", Op: store.PropEqual, Value: "open", Scalar: true}},
+		OrderBy:    []store.OrderSpec{{Property: "due"}},
+		Limit:      25,
+		Faces:      store.InWorld(world),
+	})
+	t.Logf("plan:\n%s", plan)
+	if !strings.Contains(plan, "rela_derived_list__") {
+		t.Fatalf("derived list index is not used:\n%s", plan)
+	}
+	if strings.Contains(plan, "Sort") || strings.Contains(plan, "Unique") {
+		t.Fatalf("a flat world still ranks or sorts:\n%s", plan)
+	}
+}
+
 // TestEndpointMatchExplainUsesDerivedIndex pins the finding that made the
 // propCond alias refactor mandatory (TKT-RELTRV).
 //

@@ -281,13 +281,12 @@ func graphSource(b *sqlBuilder, q store.GraphQuery, typeArg, ids string) (with [
 // by. Under AllFaces and AtFaces no rank is returned and every selected row
 // is a result row.
 func graphScope(b *sqlBuilder, q store.GraphQuery) (scope, rank string) {
-	if w, ok := q.Faces.World(); ok {
-		if w = effectiveWorld(w, q.EntityType); !w.IsTrivial() {
-			rank, scope = worldSQL(b, w, "e")
-			return scope, rank
-		}
+	sel := q.Faces.Lowered(q.EntityType)
+	if w, ok := sel.World(); ok && !w.IsTrivial() {
+		rank, scope = worldSQL(b, w, "e")
+		return scope, rank
 	}
-	if scope = faceSelectionCond(b, q.Faces, "e"); scope == "" {
+	if scope = faceSelectionCond(b, sel, "e"); scope == "" {
 		scope = "1"
 	}
 	return scope, ""

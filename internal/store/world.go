@@ -191,6 +191,27 @@ func (w WorldScope) For(entityType string) (res TypeResolution, ok bool) {
 	return TypeResolution{Chain: slices.Clone(res.Chain), Fallback: res.Fallback}, true
 }
 
+// FlatFaces returns the faces a row of entityType may hold in w when the
+// world admits at most one of them per entity, and ok=false when it ranks
+// two or more (TKT-7IZHP0 A9). A flat type needs no per-family ranking: its
+// selection is the plain set `face IN faces`, which a `(type, face, ...)`
+// index serves as a range scan. An unscoped type is flat at the implicit
+// face; an empty chain under `otherwise: exclude` is flat at no face.
+func (w WorldScope) FlatFaces(entityType string) (faces []entity.Face, ok bool) {
+	res, scoped := w.byType[entityType]
+	if !scoped {
+		return []entity.Face{entity.ImplicitFace}, true
+	}
+	faces = slices.Clone(res.Chain)
+	if res.Fallback == FallbackDefaultState && !slices.Contains(faces, entity.ImplicitFace) {
+		faces = append(faces, entity.ImplicitFace)
+	}
+	if len(faces) > 1 {
+		return nil, false
+	}
+	return faces, true
+}
+
 // Types returns the entity types w declares a resolution for. The order
 // is unspecified. Intended for backends composing a multi-type query and
 // for diagnostics; single-type paths use [WorldScope.For].

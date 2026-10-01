@@ -43,6 +43,7 @@ const entityColumns = "id, type, face, properties, content, updated_at"
 // storeutil.PaginateWorldPrimes exists to avoid on the other backends.
 func buildEntitySelectSQL(q store.EntityQuery, keysetAfter, columns string) (sqlText string, args []any) {
 	b := &sqlBuilder{}
+	q.Faces = q.Faces.Lowered(q.Type)
 	w := storeutil.RankingWorld(q)
 	if w.IsTrivial() {
 		where := entityWhere(b, q, keysetAfter)
@@ -162,6 +163,7 @@ func entityWhere(b *sqlBuilder, q store.EntityQuery, keysetAfter string) string 
 // how many unpublished drafts exist.
 func buildEntityCountSQL(q store.EntityQuery) (sqlText string, args []any) {
 	b := &sqlBuilder{}
+	q.Faces = q.Faces.Lowered(q.Type)
 	w := storeutil.RankingWorld(q)
 	if w.IsTrivial() {
 		return "SELECT count(*) FROM entities" + entityWhere(b, q, ""), b.args
@@ -187,7 +189,11 @@ func faceSelectionCond(b *sqlBuilder, sel store.FaceSelection, alias string) str
 			return "0"
 		case 1:
 			// Equality, not IN (json_each): the hot single-face reads keep
-			// the plan the per-face index was built for.
+			// the plan the per-face index was built for. The implicit face
+			// is a literal so a partial index guarded on it still matches.
+			if faces[0] == entity.ImplicitFace {
+				return col + " = ''"
+			}
 			return col + " = " + b.arg(string(faces[0]))
 		}
 		vals := make([]string, len(faces))

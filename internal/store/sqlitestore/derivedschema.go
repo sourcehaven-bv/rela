@@ -185,9 +185,10 @@ func ownedIndexes(ctx context.Context, conn querier) (map[string]string, error) 
 }
 
 // queryIndexDDL derives the index serving a static query's scalar equality
-// filters: keyed on the type and each property's `->>`, partial on the default
-// face and on each property holding a string, which is exactly what
-// scalarEqualCond tests.
+// filters: keyed on the type, the face and each property's `->>`, partial on
+// each property holding a string, which is exactly what scalarEqualCond
+// tests. face is a key column, not a guard, for the reason
+// pgstore's createListIndexDDL gives (TKT-7IZHP0 A9).
 //
 // The trailing id gives the rows in the query's ORDER BY id. It is what keeps
 // SQLite choosing this index (TKT-KQXVF7): the planner runs without
@@ -199,8 +200,8 @@ func queryIndexDDL(spec store.DerivedObjectSpec) (name, ddl string, ok bool) {
 		return "", "", false
 	}
 	b := &sqlBuilder{}
-	cols := []string{"type"}
-	guards := []string{"face = ''"}
+	cols := []string{"type", "face"}
+	var guards []string
 	for _, p := range spec.Properties {
 		path := b.jsonPath(p)
 		cols = append(cols, rawExpr("", path))
@@ -214,13 +215,13 @@ func queryIndexDDL(spec store.DerivedObjectSpec) (name, ddl string, ok bool) {
 
 // listIndexDDL derives the index serving a list page: the type, the equality
 // properties, then each sort key as orderKeySQL spells it, then the id
-// tiebreak, partial on the default face.
+// tiebreak. face follows type as a key column (see queryIndexDDL).
 func listIndexDDL(spec store.DerivedObjectSpec) (name, ddl string, ok bool) {
 	if spec.Type == "" || len(spec.OrderBy) == 0 {
 		return "", "", false
 	}
 	b := &sqlBuilder{}
-	cols := []string{"type"}
+	cols := []string{"type", "face"}
 	for _, p := range spec.Properties {
 		cols = append(cols, rawExpr("", b.jsonPath(p)))
 	}
@@ -234,14 +235,16 @@ func listIndexDDL(spec store.DerivedObjectSpec) (name, ddl string, ok bool) {
 	}
 	cols = append(cols, "id")
 	name = derivedListPrefix + specHash(spec)
-	return name, `CREATE INDEX "` + name + `" ON entities (` + strings.Join(cols, ", ") + `) WHERE face = ''`,
-		!b.unsafe
+	return name, `CREATE INDEX "` + name + `" ON entities (` + strings.Join(cols, ", ") + `)`, !b.unsafe
 }
 
 // specHash names an index by everything that shapes it, as pgstore's index
 // names do, so a changed spec gets a new name.
 func specHash(spec store.DerivedObjectSpec) string {
 	h := sha256.New()
+	// The column layout is part of the name, so a layout change rebuilds
+	// rather than keeps an index the reconciler still names (TKT-7IZHP0 A9).
+	_, _ = h.Write([]byte("face-key"))
 	_, _ = h.Write([]byte(spec.Type))
 	for _, p := range spec.Properties {
 		_, _ = h.Write([]byte{0})

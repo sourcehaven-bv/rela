@@ -72,3 +72,42 @@ func TestFaceSelection_Modes(t *testing.T) {
 	assert.Empty(t, none)
 	assert.False(t, store.AtFaces().Admits(""), "an empty set matches nothing")
 }
+
+// Lowered flattens a world to a face set exactly where the world ranks
+// nothing for the queried type (TKT-7IZHP0 A9), and leaves everything else.
+func TestFaceSelection_Lowered(t *testing.T) {
+	world := store.NewWorldScope(map[string]store.TypeResolution{
+		"page": {Chain: []entity.Face{"published"}, Fallback: store.FallbackExclude},
+		"doc":  {Chain: []entity.Face{"published", "draft"}, Fallback: store.FallbackExclude},
+		"note": {Chain: []entity.Face{"published"}, Fallback: store.FallbackDefaultState},
+		"stub": {Fallback: store.FallbackDefaultState},
+		"gone": {Fallback: store.FallbackExclude},
+	})
+	sel := store.InWorld(world)
+	for _, tc := range []struct {
+		typ       string
+		wantFlat  bool
+		wantFaces []entity.Face
+	}{
+		{"page", true, []entity.Face{"published"}},
+		{"doc", false, nil},
+		{"note", false, nil},
+		{"stub", true, []entity.Face{entity.ImplicitFace}},
+		{"gone", true, []entity.Face{}},
+		{"ticket", true, []entity.Face{entity.ImplicitFace}},
+		{"", false, nil},
+	} {
+		t.Run(tc.typ, func(t *testing.T) {
+			got := sel.Lowered(tc.typ)
+			faces, flat := got.Faces()
+			assert.Equal(t, tc.wantFlat, flat, got.String())
+			if tc.wantFlat {
+				assert.Equal(t, tc.wantFaces, faces)
+			} else {
+				_, isWorld := got.World()
+				assert.True(t, isWorld, "a ranked world must stay a world")
+			}
+		})
+	}
+	assert.True(t, store.AllFaces().Lowered("page").IsAll())
+}

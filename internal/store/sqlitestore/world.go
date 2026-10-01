@@ -119,19 +119,6 @@ func worldSQL(b *sqlBuilder, w store.WorldScope, alias string) (rank, candidate 
 	return rank, candidate
 }
 
-// effectiveWorld collapses a world to the default world for a query bound to
-// ONE entity type the world does not scope, as pgstore's does (TKT-1U8XYN):
-// every row of such a type is its own prime, so the window would only cost.
-func effectiveWorld(w store.WorldScope, entityType string) store.WorldScope {
-	if entityType == "" || w.IsTrivial() {
-		return w
-	}
-	if _, scoped := w.For(entityType); scoped {
-		return w
-	}
-	return store.TrivialScope()
-}
-
 // sqlBuilder accumulates bound values and hands out numbered placeholders
 // (?N). Numbered rather than positional because a builder appends arguments
 // in construction order, not in the order they appear in the statement text.

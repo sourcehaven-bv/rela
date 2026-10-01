@@ -136,6 +136,36 @@ func TestGraphQueryExplainPagedListUsesDerivedListIndex(t *testing.T) {
 	require.NotContains(t, plan, "TEMP B-TREE", "the page sorts instead of walking the index")
 }
 
+// A faced type in a world that ranks nothing for it reads one face, so its
+// page walks the same derived list index (TKT-7IZHP0 A9): no window, no sort.
+func TestGraphQueryExplainFlatWorldPageUsesDerivedListIndex(t *testing.T) {
+	s := open(t)
+	reconcile(t, s, []store.DerivedObjectSpec{{
+		Kind: store.DerivedListIndex, Type: "page", Properties: []string{"status"}, OrderBy: []string{"due"},
+	}})
+	seed(t, s, func(v store.Store) {
+		for i := range 2000 {
+			e := entity.New(fmt.Sprintf("PG-%06d", i), "page")
+			e.Face = []entity.Face{"draft", "published"}[i%2]
+			e.Properties["status"] = []string{"open", "done"}[(i/2)%2]
+			e.Properties["due"] = fmt.Sprintf("2026-%02d-%02d", 1+i%12, 1+i%28)
+			mustCreate(t, v, e)
+		}
+	})
+	world := store.NewWorldScope(map[string]store.TypeResolution{
+		"page": {Chain: []entity.Face{"published"}, Fallback: store.FallbackExclude},
+	})
+	plan := explain(t, s, store.GraphQuery{
+		EntityType: "page",
+		Props:      []store.PropPredicate{{Property: "status", Op: store.PropEqual, Value: "open", Scalar: true}},
+		OrderBy:    []store.OrderSpec{{Property: "due"}},
+		Limit:      25,
+		Faces:      store.InWorld(world),
+	})
+	require.Contains(t, plan, "rela_derived_list__")
+	require.NotContains(t, plan, "TEMP B-TREE", "a flat world still ranks or sorts")
+}
+
 // An enum-ranked sort reaches the list index too: the rank CASE is spelled the
 // same way in the query and in the DDL.
 func TestGraphQueryExplainRankedListUsesDerivedListIndex(t *testing.T) {

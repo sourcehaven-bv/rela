@@ -181,7 +181,8 @@ func (s *Store) CountEntities(ctx context.Context, q store.EntityQuery) (int, er
 // the publication bit, so an unscoped tally would tell a published-world
 // surface how many unpublished drafts exist.
 func buildEntityCountSQL(q store.EntityQuery) (sql string, args []any) {
-	w := effectiveWorld(storeutil.RankingWorld(q), q.Type)
+	q.Faces = q.Faces.Lowered(q.Type)
+	w := storeutil.RankingWorld(q)
 	if w.IsTrivial() {
 		where, wargs := entityWhere(q, "")
 		return "SELECT count(*) FROM entities" + where, wargs
@@ -1073,7 +1074,8 @@ func buildEntityHeaderListSQL(q store.EntityQuery, keysetAfter string) (sql stri
 // family, so the first limit rows the outer query keeps are among the first
 // limit+1 primes.
 func buildEntitySelectSQL(q store.EntityQuery, keysetAfter, columns string, limit int) (sql string, args []any) {
-	w := effectiveWorld(storeutil.RankingWorld(q), q.Type)
+	q.Faces = q.Faces.Lowered(q.Type)
+	w := storeutil.RankingWorld(q)
 	if w.IsTrivial() {
 		where, wargs := entityWhere(q, keysetAfter)
 		return `SELECT ` + columns + ` FROM entities` + where + ` ORDER BY id ASC, face ASC` + limitClause(limit), wargs
@@ -1155,7 +1157,11 @@ func faceSelectionCond(sel store.FaceSelection, alias string, args *[]any) strin
 			return "false"
 		case 1:
 			// Equality, not = ANY: the hot single-face reads keep the plan
-			// the per-face index was built for.
+			// the per-face index was built for. The implicit face is a
+			// literal so a partial index guarded on it still matches.
+			if faces[0] == entity.ImplicitFace {
+				return col + " = ''"
+			}
 			*args = append(*args, faces[0].String())
 			return fmt.Sprintf("%s = $%d", col, len(*args))
 		}
