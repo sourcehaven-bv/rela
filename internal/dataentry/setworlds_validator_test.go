@@ -15,7 +15,7 @@ import (
 type defaultWorldStub struct{ scope store.WorldScope }
 
 func (s defaultWorldStub) Lookup(string) (store.WorldScope, bool) { return s.scope, true }
-func (s defaultWorldStub) DefaultWorld() store.WorldScope          { return s.scope }
+func (s defaultWorldStub) DefaultWorld() store.WorldScope         { return s.scope }
 
 // TestSetWorlds_RewiresValidatorWorld pins RR-HKVULG for the request-path
 // validator: NewApp builds it before the worlds exist, so SetWorlds must
@@ -81,4 +81,35 @@ func ruleMessages(t *testing.T, app *App, rule metamodel.ValidationRule) string 
 		messages = append(messages, v.Message)
 	}
 	return strings.Join(messages, "; ")
+}
+
+// TestBrowsingDefaultWorld pins that schema.yaml's default_world reaches the
+// HTTP landing world once app.default_world is removed, so moving the key
+// into the schema changes nothing a browser sees.
+func TestBrowsingDefaultWorld(t *testing.T) {
+	t.Parallel()
+	withAlias := func(w string) *Config {
+		c := &Config{}
+		c.App.DefaultWorld = w
+		return c
+	}
+	tests := []struct {
+		name  string
+		state *Schema
+		want  string
+	}{
+		{"no state", nil, ""},
+		{"nothing set", &Schema{Cfg: &Config{}, Meta: &metamodel.Metamodel{}}, ""},
+		{"schema key", &Schema{Cfg: &Config{}, Meta: &metamodel.Metamodel{DefaultWorld: "published"}}, "published"},
+		{"alias only", &Schema{Cfg: withAlias("published"), Meta: &metamodel.Metamodel{}}, "published"},
+		{"no config", &Schema{Meta: &metamodel.Metamodel{DefaultWorld: "published"}}, "published"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := browsingDefaultWorld(tc.state); got != tc.want {
+				t.Errorf("browsingDefaultWorld = %q, want %q", got, tc.want)
+			}
+		})
+	}
 }
