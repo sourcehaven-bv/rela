@@ -169,7 +169,7 @@ func newCLIBundles(svc *appbuild.Services) (*cliBundles, error) {
 		Config:    svc.Config(),
 		Templater: svc.Templater(),
 		FS:        svc.FS(),
-		World:     appbuild.CompiledWorlds(svc).Default(),
+		World:     appbuild.CompiledWorlds(svc).DefaultWorld(),
 		Families:  appbuild.CompiledWorlds(svc).Families(),
 	}
 	write := writeServices{

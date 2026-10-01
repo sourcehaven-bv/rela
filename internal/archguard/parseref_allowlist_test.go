@@ -42,8 +42,6 @@ var parseRefAllowlist = map[string]allowed{
 		"family-or-face delete. Write: PR 7"},
 
 	// cli
-	"internal/cli/address.go": {2, "readAddress and requireAddressExists, the CLI read helpers that " +
-		"resolve a bare id in a world. Read: PR 5a"},
 	"internal/cli/acl_can.go": {1, "rejects a face address for the no-policy path; asks only whether a " +
 		"face was named. Read: PR 5a"},
 	"internal/cli/delete.go":          {1, "delete: bare id deletes the family, ID@face one face. Write: PR 7"},

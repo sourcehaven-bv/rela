@@ -275,7 +275,7 @@ func TestCommandInputs_RelationReadBudget(t *testing.T) {
 // resolver at st, so a counting wrapper sees every read the payload makes.
 func rebindCommandStore(t *testing.T, app *App, st store.Store) {
 	t.Helper()
-	vr, err := newVisibleReader(st, tokenFaceOrder)
+	vr, err := newVisibleReader(st, tokenFamilies)
 	if err != nil {
 		t.Fatal(err)
 	}

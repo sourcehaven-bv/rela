@@ -146,7 +146,7 @@ func TestWorlds_ValidationRejects(t *testing.T) {
     select: published
     otherwise: exclude
 `),
-			wantSubstr: []string{`world "default"`, "reserved", "implicit and total"},
+			wantSubstr: []string{`world "default"`, "reserved", "generates for a project that declares none"},
 		},
 		{
 			// A world named `Default` is not the reserved lowercase one, but
@@ -157,7 +157,7 @@ func TestWorlds_ValidationRejects(t *testing.T) {
     select: published
     otherwise: exclude
 `),
-			wantSubstr: []string{`world "Default"`, "reserved", "implicit and total"},
+			wantSubstr: []string{`world "Default"`, "reserved", "generates for a project that declares none"},
 		},
 		{
 			// Forgetting `select:` (or slipping its indentation) resolves
@@ -314,7 +314,7 @@ func TestOtherwise_IsValid(t *testing.T) {
 }
 
 // TestWorlds_OnAbsentRedirectValidated: a redirect target is a declared world
-// or the implicit default, never a name that would 400 on arrival, and never
+// (never `default` beside them, D11), never a name that would 400 on arrival, and never
 // a chain that returns to a world it has visited — the self-loop and the
 // two-world round trip alike (TKT-5SZG2L, RR-5TDYWW).
 func TestWorlds_OnAbsentRedirectValidated(t *testing.T) {
@@ -323,12 +323,12 @@ func TestWorlds_OnAbsentRedirectValidated(t *testing.T) {
 		name, target string
 		wantErr      string
 	}{
-		{"default is always a valid target", "default", ""},
+		{"default does not exist beside declared worlds", "default", `world "default" does not exist when worlds are declared`},
 		{"a declared world is a valid target", "editorial", ""},
 		{"self loops", "published", "published → published), which would redirect forever"},
 		{"a two-world cycle loops", "roundtrip", "published → roundtrip → published), which would redirect forever"},
 		{"a chain that ends in a declared world is fine", "editorial", ""},
-		{"undeclared world", "nope", `names world "nope", which is not declared`},
+		{"undeclared world", "nope", `world "nope" is not declared`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

@@ -11,6 +11,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/output"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
+	"github.com/Sourcehaven-BV/rela/internal/worlds"
 )
 
 // addressFixture stores a faceless requirement REQ-1 and a faced page PG-1
@@ -58,7 +59,7 @@ func TestReadAddress(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := readAddress(context.Background(), st, nil, world, tc.addr)
+			got, err := readAddress(context.Background(), st, store.TrivialScope(), world, tc.addr)
 			if tc.wantErr != nil {
 				if !errors.Is(err, tc.wantErr) {
 					t.Fatalf("readAddress(%q) err = %v, want %v", tc.addr, err, tc.wantErr)
@@ -101,12 +102,28 @@ entities:
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	_, err = readAddress(context.Background(), addressFixture(t), meta, store.TrivialScope(), "PG-1")
+	compiled, err := worlds.Compile(meta)
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	// A world that serves no face of a page, so the bare id lists its faces.
+	_, err = readAddress(context.Background(), addressFixture(t), compiled.Families(), store.TrivialScope(), "PG-1")
 	if !errors.Is(err, errFaceRequired) {
 		t.Fatalf("err = %v, want %v", err, errFaceRequired)
 	}
 	if want := "PG-1@published, PG-1@draft"; !strings.Contains(err.Error(), want) {
 		t.Errorf("error %q does not list %q", err, want)
+	}
+
+	// The generated default world serves the first declared face the
+	// entity has (TKT-7IZHP0 §3.2), so the same bare id now resolves.
+	got, err := readAddress(context.Background(), addressFixture(t), compiled.Families(),
+		compiled.DefaultWorld(), "PG-1")
+	if err != nil {
+		t.Fatalf("readAddress(PG-1) in the generated world: %v", err)
+	}
+	if got.Title() != "live page" {
+		t.Errorf("title = %q, want the published face", got.Title())
 	}
 }
 
@@ -119,7 +136,7 @@ func TestRowsInWorld(t *testing.T) {
 	if e := got["REQ-1"]; e == nil || e.Title() != "req" {
 		t.Errorf("REQ-1 = %+v, want the faceless row", e)
 	}
-	// The default world resolves no face of a faced type until TKT-7IZHP0,
+	// The trivial scope resolves no face of a faced type,
 	// so the caller shows its id rather than an arbitrary face's title.
 	if e, ok := got["PG-1"]; ok {
 		t.Errorf("PG-1 = %+v, want absent in the default world", e)
@@ -137,7 +154,7 @@ func TestReadAddress_WorldSelectsAFace(t *testing.T) {
 	st := addressFixture(t)
 	world := store.NewWorldScope(map[string]store.TypeResolution{"page": {Chain: []entity.Face{"draft"}}})
 
-	got, err := readAddress(context.Background(), st, nil, world, "PG-1")
+	got, err := readAddress(context.Background(), st, store.TrivialScope(), world, "PG-1")
 	if err != nil {
 		t.Fatalf("readAddress(PG-1): %v", err)
 	}

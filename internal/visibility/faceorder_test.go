@@ -6,14 +6,15 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // TestResolver_FamilyInDeclarationOrder pins that Family.Faces follows the
-// schema's face order when the wiring supplies one (TKT-7IZHP0 §3.1): the
-// implicit face first, then declaration order, then undeclared faces by
-// token. Without the option the order is by token.
+// families scope's chain when the wiring supplies one (TKT-7IZHP0 §3.1, G18):
+// the implicit face first, then chain order, then faces the chain does not
+// name by token. Without the option the order is by token.
 func TestResolver_FamilyInDeclarationOrder(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -23,19 +24,17 @@ func TestResolver_FamilyInDeclarationOrder(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	order := func(entityType string) []string {
-		if entityType != "policy" {
-			return nil
-		}
-		return []string{"review", "published", "draft"}
-	}
+	families := store.NewWorldScope(map[string]store.TypeResolution{
+		"policy": {Chain: []entity.Face{"review", "published", "draft"}, Fallback: store.FallbackExclude},
+	})
+	order := func() store.WorldScope { return families }
 
 	cases := []struct {
 		name string
 		opts []visibility.ResolverOption
 		want []entity.Face
 	}{
-		{name: "declaration order", opts: []visibility.ResolverOption{visibility.WithFaceOrder(order)},
+		{name: "declaration order", opts: []visibility.ResolverOption{visibility.WithFamilies(order)},
 			want: []entity.Face{"", "review", "published", "draft", "archived", "zombie"}},
 		{name: "token order without the option",
 			want: []entity.Face{"", "archived", "draft", "published", "review", "zombie"}},
@@ -58,11 +57,11 @@ func TestResolver_FamilyInDeclarationOrder(t *testing.T) {
 	}
 }
 
-func TestWithFaceOrder_RejectsNil(t *testing.T) {
+func TestWithFamilies_RejectsNil(t *testing.T) {
 	t.Parallel()
 	_, err := visibility.NewResolver(visibility.NopGate{}, visibility.NopRedactor{}, memstore.New(),
-		visibility.WithFaceOrder(nil))
+		visibility.WithFamilies(nil))
 	if err == nil {
-		t.Fatal("NewResolver accepted WithFaceOrder(nil)")
+		t.Fatal("NewResolver accepted WithFamilies(nil)")
 	}
 }

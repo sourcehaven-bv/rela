@@ -418,12 +418,12 @@ func (s *Services) LuaReadDeps() lua.ReadDeps {
 		root = s.paths.Root
 	}
 	return lua.ReadDeps{
-		VisibleReader: visibility.Unrestricted(s.store, faceOrder(s.meta)),
+		VisibleReader: unrestrictedReader(s.store, s.worlds),
 		Tracer:        s.tracer,
 		Searcher:      s.searcher,
 		Meta:          s.meta,
 		ProjectRoot:   root,
-		World:         s.worlds.Default(),
+		World:         s.worlds.DefaultWorld(),
 	}
 }
 
@@ -452,8 +452,8 @@ func (s *Services) LuaReadDeps() lua.ReadDeps {
 // raw store.
 func (s *Services) luaReadDepsFor(redactor visibility.FieldRedactor) lua.ReadDeps {
 	deps := s.LuaReadDeps()
-	deps.VisibleReader = scriptEntityReader(s.store, s.aclDeclarative, redactor, faceOrder(s.meta))
-	deps.Tracer = scriptTracer(s.tracer, s.store, s.aclDeclarative, redactor, s.worlds.Default(), faceOrder(s.meta))
+	deps.VisibleReader = scriptEntityReader(s.store, s.aclDeclarative, redactor, s.worlds)
+	deps.Tracer = scriptTracer(s.tracer, s.store, s.aclDeclarative, redactor, s.worlds)
 	return deps
 }
 
@@ -470,9 +470,9 @@ func (s *Services) luaReadDepsFor(redactor visibility.FieldRedactor) lua.ReadDep
 // operator who configured a policy has stated intent; honoring it by
 // failing loudly beats ignoring it by failing open.
 func scriptEntityReader(
-	st store.Store, d *acl.Declarative, redactor visibility.FieldRedactor, order visibility.ResolverOption,
+	st store.Store, d *acl.Declarative, redactor visibility.FieldRedactor, w worlds.Compiled,
 ) lua.EntityReader {
-	reader, _ := scriptReads(st, d, redactor, order)
+	reader, _ := scriptReads(st, d, redactor, w)
 	return reader
 }
 
@@ -493,17 +493,17 @@ type scriptEntityReaderFamily interface {
 // [relresolve.Ungated], policy reads get the ctx principal's gate, and a
 // refused reader gets a gate that refuses too. Deriving both in one place is
 // what keeps a validation rule's traversal from seeing more than its reads.
-// order is [faceOrder] of the metamodel, so a Family lists faces in
-// declaration order on every tier.
+// w supplies the face order ([familiesOption]), so a Family lists faces in
+// declaration order on every tier, and the default world bare ids resolve in.
 func scriptReads(
-	st store.Store, d *acl.Declarative, redactor visibility.FieldRedactor, order visibility.ResolverOption,
+	st store.Store, d *acl.Declarative, redactor visibility.FieldRedactor, w worlds.Compiled,
 ) (scriptReader scriptEntityReaderFamily, traversalGate relresolve.Gate) {
 	if d == nil {
 		// Named, not bare: this is the NopACL path and the single largest
 		// ungated read surface in the tree, so it must show up in
 		// `grep -rn visibility.Unrestricted` like every other one
 		// (TKT-1WV50C).
-		return visibility.Unrestricted(st, order), relresolve.Ungated
+		return unrestrictedReader(st, w), relresolve.Ungated
 	}
 	if redactor == nil {
 		redactor = visibility.NopRedactor{}
@@ -513,7 +513,7 @@ func scriptReads(
 		slog.Error("appbuild: ACL gate unavailable; script reads REFUSED", "err", err)
 		return visibility.DenyReader{}, refuseTraversal
 	}
-	reader, err := visibility.NewPolicyReader(gate, redactor, st, order)
+	reader, err := visibility.NewPolicyReader(gate, redactor, st, familiesOption(w))
 	if err != nil {
 		slog.Error("appbuild: policy reader unavailable; script reads REFUSED", "err", err)
 		return visibility.DenyReader{}, refuseTraversal
@@ -523,7 +523,7 @@ func scriptReads(
 		slog.Error("appbuild: script reader unavailable; script reads REFUSED", "err", err)
 		return visibility.DenyReader{}, refuseTraversal
 	}
-	return sr, gate.GateTraversal
+	return sr.WithWorld(visibility.WorldOf(w.DefaultWorld())), gate.GateTraversal
 }
 
 // refuseTraversal pairs with [visibility.DenyReader]: reads are refused, so
@@ -536,11 +536,10 @@ func refuseTraversal(context.Context, string, acl.TraversalHop) (*store.Relation
 // in the visibility decorator when a Declarative policy exists. The trace
 // bindings are identical either way — gating is entirely inside the
 // decorator (hidden nodes pruned with their subtrees, paths through hidden
-// intermediates withheld, titles falling back to IDs). world selects a
-// node's title face, as for the base tracer.
+// intermediates withheld, titles falling back to IDs). w's default world
+// selects a node's title face, as for the base tracer.
 func scriptTracer(
-	tr tracer.Tracer, st store.Store, d *acl.Declarative, redactor visibility.FieldRedactor,
-	world store.WorldScope, order visibility.ResolverOption,
+	tr tracer.Tracer, st store.Store, d *acl.Declarative, redactor visibility.FieldRedactor, w worlds.Compiled,
 ) tracer.Tracer {
 	if d == nil {
 		return tr
@@ -553,7 +552,7 @@ func scriptTracer(
 		slog.Error("appbuild: ACL gate unavailable; traversal REFUSED", "err", err)
 		return visibility.DenyTracer{}
 	}
-	res, err := visibility.NewResolver(gate, redactor, st, order)
+	res, err := visibility.NewResolver(gate, redactor, st, familiesOption(w))
 	if err != nil {
 		slog.Error("appbuild: resolver unavailable; traversal REFUSED", "err", err)
 		return visibility.DenyTracer{}
@@ -563,7 +562,7 @@ func scriptTracer(
 		slog.Error("appbuild: tracer cannot gate edges; traversal REFUSED", "tracer", fmt.Sprintf("%T", tr))
 		return visibility.DenyTracer{}
 	}
-	vt, err := visibility.NewVisibleTracer(gatable, res, st, world)
+	vt, err := visibility.NewVisibleTracer(gatable, res, st, w.DefaultWorld())
 	if err != nil {
 		slog.Error("appbuild: visible tracer unavailable; traversal REFUSED", "err", err)
 		return visibility.DenyTracer{}
@@ -647,8 +646,8 @@ func (s *Services) ScheduledLuaWriteDeps() lua.WriteDeps {
 // visibility.PolicyReader implements only FilterRelations, so a surviving edge
 // still carries all of its meta.
 func (s *Services) GatedReads() GatedReadBundle {
-	reader, gate := scriptReads(s.store, s.aclDeclarative, s.fieldRedactor, faceOrder(s.meta))
-	tr := scriptTracer(s.tracer, s.store, s.aclDeclarative, s.fieldRedactor, s.worlds.Default(), faceOrder(s.meta))
+	reader, gate := scriptReads(s.store, s.aclDeclarative, s.fieldRedactor, s.worlds)
+	tr := scriptTracer(s.tracer, s.store, s.aclDeclarative, s.fieldRedactor, s.worlds)
 
 	deps := s.LuaReadDeps()
 	deps.VisibleReader = reader
@@ -1781,7 +1780,7 @@ func buildEntityManager(
 		Automations:   autoEngine,
 		Cascade:       cascadeRunner,
 		ScriptRunner: cascadeScriptRunner(base.cfg.ScriptEngine, readDeps, st, base.cfg.Audit,
-			faceOrder(base.meta)),
+			base.worlds),
 		VersionRecorder:         versionRecorderFor(versions),
 		RelationVersionRecorder: relationVersionRecorderFor(versions),
 		Computed:                computedSet,
@@ -1904,15 +1903,15 @@ func resolveACLAndRedactor(
 func cascadeReadDeps(
 	st store.Store, tr tracer.Tracer, searcher search.Searcher,
 	meta *metamodel.Metamodel, projectRoot string,
-	d *acl.Declarative, redactor visibility.FieldRedactor, world store.WorldScope,
+	d *acl.Declarative, redactor visibility.FieldRedactor, w worlds.Compiled,
 ) lua.ReadDeps {
 	return lua.ReadDeps{
-		VisibleReader: scriptEntityReader(st, d, redactor, faceOrder(meta)),
-		Tracer:        scriptTracer(tr, st, d, redactor, world, faceOrder(meta)),
+		VisibleReader: scriptEntityReader(st, d, redactor, w),
+		Tracer:        scriptTracer(tr, st, d, redactor, w),
 		Searcher:      searcher,
 		Meta:          meta,
 		ProjectRoot:   projectRoot,
-		World:         world,
+		World:         w.DefaultWorld(),
 	}
 }
 
@@ -2001,7 +2000,7 @@ func assemble(
 	}
 	// coverage-ignore-end
 
-	tr, err := tracer.New(st, base.worlds.Default())
+	tr, err := tracer.New(st, base.worlds.DefaultWorld())
 	if err != nil { // coverage-ignore: invariant: the store is built above and the default world is set
 		return nil, fmt.Errorf("appbuild: tracer: %w", err)
 	}
@@ -2011,7 +2010,7 @@ func assemble(
 	// Build the static lua read deps once — the ScriptRunner (automation
 	// cascades) is constructed with these.
 	readDeps := cascadeReadDeps(st, tr, searcher, base.meta, cfg.Paths.Root,
-		aclDeclarative, fieldRedactor, base.worlds.Default())
+		aclDeclarative, fieldRedactor, base.worlds)
 
 	tw, err := CompileTransitions(base.meta, st, resolvedACL)
 	if err != nil {

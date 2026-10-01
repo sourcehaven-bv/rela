@@ -56,19 +56,18 @@ type Metamodel struct {
 	// Worlds declares named resolution functions over content states
 	// (TKT-WAV8XP, design doc §4). Keyed by world name.
 	//
-	// ABSENT means the project has exactly the implicit DEFAULT world —
-	// every entity contributes its default state — which is today's
-	// graph, byte-identically. The name "default" is reserved
-	// ([DefaultWorldName]) because that world is implicit and total, so
-	// a declaration under that name could only shadow or contradict it.
+	// ABSENT means rela generates one world, [DefaultWorldName], that
+	// serves each faced type's faces in declaration order and every faceless
+	// type at its implicit face. When any world is declared, no `default`
+	// world exists. The name is reserved either way.
 	Worlds map[string]WorldDef `yaml:"worlds,omitempty"`
 
 	// DefaultWorld names the world a request uses when it names none
 	// (TKT-7IZHP0 design §21 D3). With worlds declared it must name one of
 	// them; unset means the first declared world. With none declared it may
-	// only be [DefaultWorldName]. Validated at load; the worlds compiler
-	// reads it from TKT-7IZHP0 PR 5a on. `app.default_world` in
-	// data-entry.yaml is a deprecated alias that must match it.
+	// only be [DefaultWorldName]. [EffectiveDefaultWorld] applies those
+	// rules. `app.default_world` in data-entry.yaml is a deprecated alias
+	// that must match the effective value.
 	DefaultWorld string `yaml:"default_world,omitempty"`
 
 	// Copies declares named copy definitions — mapped writes of one content
@@ -643,8 +642,9 @@ type WorldOnAbsent struct {
 	Redirect string `yaml:"redirect,omitempty"`
 }
 
-// DefaultWorldName is reserved: the default world is implicit and total,
-// so a declaration under this name could only shadow or contradict it.
+// DefaultWorldName is the name of the world rela generates when the schema
+// declares no worlds (TKT-7IZHP0). It is reserved: a world declared under it
+// is a load error, and when worlds are declared it names nothing.
 const DefaultWorldName = "default"
 
 // DefaultQueryScopeName is the query scope a presentation surface uses when

@@ -62,7 +62,7 @@ func (s *Services) RunScheduledTemplate(ctx context.Context, name, recipientID s
 	}
 
 	deps := s.ScheduledLuaWriteDeps()
-	model, contributed, err := mailtemplate.Build(ctx, s.meta, deps.VisibleReader, s.worlds.Default(), tmpl, time.Now())
+	model, contributed, err := mailtemplate.Build(ctx, s.meta, deps.VisibleReader, s.worlds.DefaultWorld(), tmpl, time.Now())
 	if err != nil {
 		return err
 	}
@@ -114,7 +114,7 @@ func skipBadAddress(ctx context.Context, recipientID, property string) error {
 // is false when the world selects none: no such entity, or a faced type the
 // default world does not resolve until TKT-7IZHP0.
 func (s *Services) defaultWorldRow(ctx context.Context, id string) (row *entity.Entity, found bool, err error) {
-	q := store.EntityQuery{IDs: []string{id}, Faces: store.InWorld(s.worlds.Default())}
+	q := store.EntityQuery{IDs: []string{id}, Faces: store.InWorld(s.worlds.DefaultWorld())}
 	for e, lerr := range s.store.ListEntities(ctx, q) {
 		if lerr != nil {
 			return nil, false, lerr

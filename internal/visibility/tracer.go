@@ -67,7 +67,7 @@ type relationLister interface {
 // trace, path or cycle never passes through a hidden node or an edge hung
 // from a hidden face. res supplies the gate, the redactor and the header
 // reads; world selects a node's title face, and wiring passes
-// worlds.Compiled.Default().
+// worlds.Compiled.DefaultWorld().
 func NewVisibleTracer(
 	base EdgeGatable, res *Resolver, rels relationLister, world store.WorldScope,
 ) (*VisibleTracer, error) {

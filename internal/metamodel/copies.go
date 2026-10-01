@@ -203,9 +203,9 @@ func validateCopyLanding(m *Metamodel, name string, def CopyDef, to CopyTarget) 
 	if l.World != "" && l.Face != "" {
 		return bad("names both a world and a face — pick one")
 	}
-	if l.World != "" && l.World != DefaultWorldName {
-		if _, ok := m.Worlds[l.World]; !ok {
-			return bad("names world %q, which is not declared", l.World)
+	if l.World != "" {
+		if err := CheckWorldName(m, l.World); err != nil {
+			return bad("names a world that does not exist: %v", err)
 		}
 	}
 	if l.Face != "" {
