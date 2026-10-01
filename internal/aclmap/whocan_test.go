@@ -157,6 +157,8 @@ func (v metaView) RelationInfo(t string) acl.RelationInfo {
 	return acl.RelationInfo{Exists: true, Content: def.Scope.IsContent(), From: def.From, To: def.To}
 }
 
+func (v metaView) DefaultWorld() string { return metamodel.EffectiveDefaultWorld(v.m) }
+
 func (v metaView) FaceNames(t string) (canonical string, faces []string) {
 	return v.m.ResolveAlias(t), metamodel.FaceOrderOf(v.m, t)
 }

@@ -125,8 +125,8 @@ func roleHasWorldToken(role RoleDef) bool {
 // re-check it. The ceiling's world DENIAL is applied separately by
 // [compiledCeiling.permitsWorld] — see that method for why a denial
 // cannot be expressed by clamping alone.
-func roleGrantsWorldRead(role RoleDef, world string) bool {
-	if world == "" || world == DefaultWorldName {
+func roleGrantsWorldRead(role RoleDef, world, defaultWorld string) bool {
+	if world == "" || world == defaultWorld {
 		// The default world is the absence of a world grant. Any read
 		// grant at all covers it; holding none covers nothing.
 		return len(role.Read) > 0
@@ -227,7 +227,7 @@ func sortedRoleNames(roles map[string]RoleDef) []string {
 func (p *Policy) GrantsAnyNonDefaultWorldRead() bool {
 	for _, role := range p.Roles {
 		for _, w := range role.Worlds {
-			if w != DefaultWorldName {
+			if w != p.DefaultWorld() {
 				return true
 			}
 		}

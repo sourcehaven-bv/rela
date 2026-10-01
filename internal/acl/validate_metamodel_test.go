@@ -1,6 +1,7 @@
 package acl_test
 
 import (
+	"cmp"
 	"slices"
 	"strings"
 	"testing"
@@ -19,6 +20,14 @@ type fakeMeta struct {
 	faces     map[string][]string
 	aliases   map[string]string
 	relInfo   map[string]acl.RelationInfo
+	world     string
+}
+
+func (m fakeMeta) DefaultWorld() string {
+	if m.world == "" {
+		return acl.DefaultWorldName
+	}
+	return m.world
 }
 
 func (m fakeMeta) RelationInfo(t string) acl.RelationInfo {
@@ -224,6 +233,34 @@ func TestValidateAgainstMetamodel_ProvisionRequiresGrant(t *testing.T) {
 			}
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestValidateAgainstMetamodel_DenyDefaultWorld(t *testing.T) {
+	tests := []struct {
+		name    string
+		world   string
+		deny    []string
+		wantErr bool
+	}{
+		{name: "generated default denied", deny: []string{"default"}, wantErr: true},
+		{name: "declared default denied", world: "published", deny: []string{"published"}, wantErr: true},
+		{name: "other world denied", world: "published", deny: []string{"editorial"}},
+		{name: "generated name not the default", world: "published", deny: []string{"default"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			p := &acl.Policy{ClientBaselines: map[string]acl.ClientBaseline{
+				"apps": {AppliesTo: []string{"app"}, Restriction: acl.Restriction{DenyWorlds: tc.deny}},
+			}}
+			err := p.ValidateAgainstMetamodel(fakeMeta{world: tc.world})
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, tc.wantErr)
+			}
+			if !tc.wantErr && p.DefaultWorld() != cmp.Or(tc.world, acl.DefaultWorldName) {
+				t.Errorf("DefaultWorld() = %q", p.DefaultWorld())
 			}
 		})
 	}

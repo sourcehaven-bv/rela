@@ -1249,6 +1249,10 @@ func (v metamodelView) FaceNames(entityType string) (canonical string, faces []s
 	return v.m.ResolveAlias(entityType), metamodel.FaceOrderOf(v.m, entityType)
 }
 
+func (v metamodelView) DefaultWorld() string {
+	return metamodel.EffectiveDefaultWorld(v.m)
+}
+
 func (v metamodelView) RelationInfo(relationType string) acl.RelationInfo {
 	def, ok := v.m.GetRelationDef(relationType)
 	if !ok {

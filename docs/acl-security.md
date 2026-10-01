@@ -693,19 +693,14 @@ nothing should be built as if it were. If you need a client kept away from
 content, say so with the grants: name the faces in `read:`, or use
 `deny_read`. Those run on every request path.
 
-**`deny_worlds: [default]` does nothing at all.** The request path resolves the
-default world before the ceiling is consulted, so the entry loads cleanly and
-is silently inert. Treat it as unimplemented rather than as a control you have
-configured. In a schema that declares worlds there is no world named
-`default`, so `rela acl audit` reports the entry as `B10-undeclared-world`. In
-a schema without worlds it produces no finding.
-
-The default world is not a special case here. It is the lens you get when you
-name none, and it applies no resolution at all. Denying it would not mean "deny
-the data" but "refuse to serve a request that picked no lens", and it would not
-even hide a face, since a face is addressable as `ID@face` under any lens. That
-is why nothing relies on it, and why the answer is to gate the faces rather
-than the lens.
+**`deny_worlds` cannot name the default world.** The default world is the
+schema's `default_world:`: the declared one, else the first declared world,
+else the generated `default`. Requests that name no world read in it, and so do
+the CLI, MCP, scripts and scheduled tasks. A ceiling that denied it would deny
+every read on those surfaces, so naming it in `deny_worlds` is a load error. A
+`worlds:` allowlist need not list it either: a ceiling narrows only the worlds
+it names. To keep a client away from content, name the faces in `read:` or use
+`deny_read`.
 
 ### Not a substitute for gating the client itself
 

@@ -193,6 +193,10 @@ type Policy struct {
 	// entity type under a role. See [RelationWriteGrant].
 	RelationWriteGrants map[string]RelationWriteGrant `yaml:"relation_grants"`
 
+	// defaultWorld is the schema's effective default_world, recorded by
+	// [Policy.ValidateAgainstMetamodel]. See [Policy.DefaultWorld].
+	defaultWorld string
+
 	// UnmatchedPrincipal decides what happens when a verified principal's
 	// identifier resolves to no [Policy.UserEntityType] entity (the
 	// principal_property lookup found no match). It governs the data-entry
@@ -1410,6 +1414,10 @@ type MetamodelView interface {
 	// aliases) and the faces it declares, in declaration order. A
 	// faceless or undeclared type yields no faces.
 	FaceNames(entityType string) (canonical string, faces []string)
+	// DefaultWorld returns the schema's effective default_world: the
+	// declared one, else the first declared world, else the generated
+	// [DefaultWorldName].
+	DefaultWorld() string
 	// RelationInfo describes relationType. An undeclared type yields
 	// RelationInfo{Exists:false}.
 	RelationInfo(relationType string) RelationInfo
@@ -1478,6 +1486,10 @@ func (p *Policy) ValidateAgainstMetamodel(meta MetamodelView) error {
 		}
 	}
 	if err := p.validateRelationTypesDeclared(meta); err != nil {
+		return err
+	}
+	p.defaultWorld = meta.DefaultWorld()
+	if err := p.validateDefaultWorldNotDenied(); err != nil {
 		return err
 	}
 	errs, refused := p.validateIdentityStructure(meta)
@@ -1552,4 +1564,40 @@ func isBlank(s string) bool {
 		}
 	}
 	return true
+}
+
+// DefaultWorld returns the world a request reads when it names none: the
+// schema's effective default_world. Every read grant covers it, and a client
+// ceiling cannot deny it. Before [Policy.ValidateAgainstMetamodel] has run it
+// is [DefaultWorldName], the name rela generates when no worlds are declared.
+func (p *Policy) DefaultWorld() string {
+	if p.defaultWorld == "" {
+		return DefaultWorldName
+	}
+	return p.defaultWorld
+}
+
+// validateDefaultWorldNotDenied rejects a ceiling whose deny_worlds names the
+// default world. Surfaces that do not take a world read in it, so denying it
+// would deny every read there; the denial must name types instead.
+func (p *Policy) validateDefaultWorldNotDenied() error {
+	name := p.DefaultWorld()
+	check := func(kind, key string, r Restriction) error {
+		if slices.Contains(r.DenyWorlds, name) {
+			return fmt.Errorf("acl: %s %q: deny_worlds names %q, the default world; "+
+				"that denies every read. Remove it, or deny the types instead", kind, key, name)
+		}
+		return nil
+	}
+	for _, key := range slices.Sorted(maps.Keys(p.ClientBaselines)) {
+		if err := check("client_baselines", key, p.ClientBaselines[key].Restriction); err != nil {
+			return err
+		}
+	}
+	for _, key := range slices.Sorted(maps.Keys(p.ScopeGrants)) {
+		if err := check("scope_grants", key, p.ScopeGrants[key].Restriction); err != nil {
+			return err
+		}
+	}
+	return nil
 }

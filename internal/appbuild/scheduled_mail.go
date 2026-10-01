@@ -112,8 +112,12 @@ func skipBadAddress(ctx context.Context, recipientID, property string) error {
 }
 
 // defaultWorldRow reads the raw row the default world selects for id. found
-// is false when the world selects none: no such entity, or a faced type the
-// default world does not resolve until TKT-7IZHP0.
+// is false when the world selects none.
+//
+// Raw, not through the task principal's visibility reader: the row only
+// addresses the envelope and is never rendered or returned to the principal,
+// and a recipient must be reachable even when the principal may not read the
+// face that holds the address.
 func (s *Services) defaultWorldRow(ctx context.Context, id string) (row *entity.Entity, found bool, err error) {
 	q := store.EntityQuery{IDs: []string{id}, Faces: store.InWorld(s.worlds.DefaultWorld())}
 	for e, lerr := range s.store.ListEntities(ctx, q) {

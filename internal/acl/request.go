@@ -314,7 +314,7 @@ func (r *Request) PermitsWorld(ctx context.Context, world string) (bool, error) 
 		if !ok {
 			continue
 		}
-		if roleGrantsWorldRead(role, world) {
+		if roleGrantsWorldRead(role, world, r.d.policy.DefaultWorld()) {
 			return true, nil
 		}
 	}
@@ -340,7 +340,7 @@ func (r *Request) permitsWorldThroughRelations(ctx context.Context, members []st
 	slices.Sort(rels)
 	for _, rel := range rels {
 		role, ok := r.roleFor(r.d.policy.RoleRelations[rel].Confers)
-		if !ok || !roleGrantsWorldRead(role, world) {
+		if !ok || !roleGrantsWorldRead(role, world, r.d.policy.DefaultWorld()) {
 			continue
 		}
 		for _, m := range members {
