@@ -15,6 +15,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -876,5 +877,59 @@ func TestWebhookPayloadInterpolate_ValueCannotForgeAHeading(t *testing.T) {
 	// Flattened, not dropped: losing an alert would be worse than one long line.
 	if !strings.Contains(got, "Injected") {
 		t.Errorf("value content was dropped rather than flattened: %q", got)
+	}
+}
+
+// TestWebhookRoutes_FindFace pins find.face (TKT-7IZHP0 §6): a hook on a
+// faced type finds, edits and creates at its configured face, and leaves the
+// entity's other faces alone.
+func TestWebhookRoutes_FindFace(t *testing.T) {
+	app := newHookTestApp(t, map[string]dataentryconfig.Webhook{
+		"resolve": {
+			Find: &dataentryconfig.WebhookFind{Type: "ticket", Face: "published", Match: []string{"title"}},
+			CreateIfMissing: &dataentryconfig.WebhookCreate{
+				Properties: map[string]string{"status": "open"},
+			},
+			Then: []dataentryconfig.WebhookStep{{Set: map[string]string{"status": "closed"}}},
+		},
+	})
+	meta := app.State().Meta
+	td := meta.Entities["ticket"]
+	td.Faces = map[string]metamodel.FaceDef{"draft": {}, "published": {}}
+	meta.Entities["ticket"] = td
+	ctx := context.Background()
+	for _, face := range []entityPkg.Face{"draft", "published"} {
+		if err := app.store.CreateEntity(ctx, &entityPkg.Entity{
+			ID: "TKT-1", Type: "ticket", Face: face, Properties: map[string]any{"title": "keepme", "status": "open"},
+		}); err != nil {
+			t.Fatalf("seed %s: %v", face, err)
+		}
+	}
+
+	if rec := postHook(t, app, "resolve", `{"title":"keepme"}`); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d (%s)", rec.Code, rec.Body.String())
+	}
+	status := func(face entityPkg.Face) any {
+		t.Helper()
+		got, err := app.store.GetEntity(ctx, entityPkg.Ref{ID: "TKT-1", Face: face})
+		if err != nil {
+			t.Fatalf("reload %s: %v", face, err)
+		}
+		return got.Properties["status"]
+	}
+	if got := status("published"); got != "closed" {
+		t.Errorf("published status = %v, want closed", got)
+	}
+	if got := status("draft"); got != "open" {
+		t.Errorf("draft status = %v, want open: the hook edits its face only", got)
+	}
+
+	rec := postHook(t, app, "resolve", `{"title":"fresh"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("create: status = %d (%s)", rec.Code, rec.Body.String())
+	}
+	created := decodeHookResult(t, rec)
+	if _, err := app.store.GetEntity(ctx, entityPkg.Ref{ID: created.EntityID, Face: "published"}); err != nil {
+		t.Errorf("created %s has no published face: %v", created.EntityID, err)
 	}
 }

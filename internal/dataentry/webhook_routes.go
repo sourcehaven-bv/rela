@@ -408,7 +408,7 @@ func (h *webhookRouter) findTarget(
 	}
 
 	for e, listErr := range reader.ListEntities(ctx, store.EntityQuery{
-		Type: hook.Find.Type, Faces: store.InWorld(deps.World),
+		Type: hook.Find.Type, Faces: webhookFaces(hook, deps.World),
 	}) {
 		if listErr != nil {
 			return nil, fmt.Errorf("webhook find: %w", listErr)
@@ -424,6 +424,16 @@ func (h *webhookRouter) findTarget(
 		}
 	}
 	return match, nil
+}
+
+// webhookFaces is the face selection a hook's find reads. A faced type is
+// read at find.face, the face the hook writes, which config load requires; a
+// faceless type in the hook's world.
+func webhookFaces(hook dataentryconfig.Webhook, world store.WorldScope) store.FaceSelection {
+	if hook.Find.Face != "" {
+		return store.AtFaces(entityPkg.Face(hook.Find.Face))
+	}
+	return store.InWorld(world)
 }
 
 // entityMatchesAll reports whether e has every wanted property value.
@@ -496,7 +506,11 @@ func (h *webhookRouter) createEntity(
 		e.Content = payload.interpolate(spec.Content)
 	}
 
-	res, err := h.write.manager.CreateEntity(ctx, e, entityPkg.CreateOptions{Variant: spec.Template})
+	opts := entityPkg.CreateOptions{Variant: spec.Template}
+	if hook.Find != nil && e.Type == hook.Find.Type {
+		opts.Face = entityPkg.Face(hook.Find.Face)
+	}
+	res, err := h.write.manager.CreateEntity(ctx, e, opts)
 	if err != nil {
 		return nil, fmt.Errorf("webhook create: %w", err)
 	}
@@ -582,7 +596,7 @@ func (h *webhookRouter) applySteps(
 		return nil
 	}
 
-	if _, err := h.write.manager.PatchEntity(ctx, target.ID, patch); err != nil {
+	if _, err := h.write.manager.PatchEntity(ctx, target.Ref().String(), patch); err != nil {
 		return fmt.Errorf("webhook apply: %w", err)
 	}
 	return nil

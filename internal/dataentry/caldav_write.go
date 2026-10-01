@@ -17,6 +17,7 @@ import (
 	entitypkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // PutCalendarObject applies a client write: an update to a mapped entity, or a
@@ -308,7 +309,15 @@ func (b *caldavBackend) updateFromTodo(
 	if err != nil {
 		return nil, err
 	}
-	res, err := b.app.entityManager.PatchEntity(ctx, entityID, patch)
+	addr, ambiguous, err := b.writeAddress(ctx, m, entityID)
+	if err != nil {
+		return nil, caldavWriteError(err)
+	}
+	if ambiguous {
+		// No face to write is a permanent refusal, answered as one.
+		return b.refusedWriteResponse(ctx, collection, href, m, in, entityID)
+	}
+	res, err := b.app.entityManager.PatchEntity(ctx, addr, patch)
 	if errors.Is(err, entitymanager.ErrEntityNotFound) || errors.Is(err, store.ErrNotFound) {
 		// The alias points at an entity the write could not find, which USUALLY
 		// means it was deleted in rela (the SPA, the CLI, a git pull) while this
@@ -604,8 +613,8 @@ func (b *caldavBackend) unlinkFromDriver(
 		}
 		return true, true, nil
 	}
-	if _, e := b.app.entityManager.PatchEntity(ctx, entityID, patch); e != nil {
-		return true, false, caldavWriteError(e)
+	if e := b.patchEntity(ctx, m, entityID, patch); e != nil {
+		return true, false, e
 	}
 	return true, true, nil
 }
@@ -702,8 +711,8 @@ func (b *caldavBackend) DeleteCalendarObject(ctx context.Context, p string) erro
 		return nil
 	}
 
-	if _, err := b.app.entityManager.PatchEntity(ctx, entityID, patch); err != nil {
-		return caldavWriteError(err)
+	if err := b.patchEntity(ctx, m, entityID, patch); err != nil {
+		return err
 	}
 	// The alias is KEPT, exactly as on the hard-delete path.
 	//
@@ -746,6 +755,53 @@ func (b *caldavBackend) entityIDFor(ctx context.Context, collection, href string
 		return "", false
 	}
 	return id, true
+}
+
+// writeAddress resolves entityID to the face a CalDAV write edits, in the
+// request's world (TKT-7IZHP0 A15). A client names no face, so the rule is the
+// one every bare-id write follows ([visibility.Resolver.WriteTarget]): exactly
+// one readable face in the world is the target. ambiguous reports none or
+// several. A miss returns entityID unchanged, so the write answers the
+// not-found its caller already handles.
+func (b *caldavBackend) writeAddress(
+	ctx context.Context, m *caldavMapper, entityID string,
+) (addr string, ambiguous bool, err error) {
+	parsed, err := entitypkg.ParseAddress(entityID)
+	if err != nil {
+		return entityID, false, nil //nolint:nilerr // an unparseable id is a miss, answered by the write
+	}
+	ref, ok, err := b.app.visibleReader.resolver.WriteTarget(
+		ctx, worldFromContext(ctx).visibility(), m.cfg.EntityType, parsed)
+	if _, isAmb := errors.AsType[*visibility.AmbiguousAddressError](err); isAmb {
+		return "", true, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	if !ok {
+		return entityID, false, nil
+	}
+	return ref.String(), false, nil
+}
+
+// patchEntity applies an on_delete patch to the face entityID resolves to. An
+// entity with no single face to write is refused with 403, like any other
+// permanent refusal (see [caldavWriteError]).
+func (b *caldavBackend) patchEntity(
+	ctx context.Context, m *caldavMapper, entityID string, patch entitypkg.Patch,
+) error {
+	addr, ambiguous, err := b.writeAddress(ctx, m, entityID)
+	if err != nil {
+		return caldavWriteError(err)
+	}
+	if ambiguous {
+		return webdav.NewHTTPError(http.StatusForbidden,
+			errors.New("caldav: this to-do has several faces; edit it in rela"))
+	}
+	if _, err := b.app.entityManager.PatchEntity(ctx, addr, patch); err != nil {
+		return caldavWriteError(err)
+	}
+	return nil
 }
 
 // resolveEntityID maps an href to a candidate entity id, without validating it.
