@@ -3,6 +3,7 @@ package acl
 import (
 	"context"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -51,13 +52,12 @@ func (l *storePrincipalLookup) LookupEntityByProperty(
 	// Headers, not rows: the lookup wants ids and nothing else, and the user
 	// entity may carry a body the resolver has no business reading.
 	//
-	// The default world, explicitly: who a principal IS is decided on the
-	// default rows only, as it was before selections existed. Widening it to
-	// faced principal types changes identity resolution and waits for its
-	// own security review (TKT-7IZHP0).
+	// The implicit face, exactly: a faced user type is a load error
+	// (Policy.ValidateAgainstMetamodel), so a principal has one row and one
+	// identity whatever world a request reads in.
 	for h, err := range store.GraphQueryHeaders(ctx, l.s, store.GraphQuery{
 		EntityType: entityType,
-		Faces:      store.InWorld(store.TrivialScope()),
+		Faces:      store.AtFaces(entity.ImplicitFace),
 		Props:      []store.PropPredicate{{Property: property, Op: store.PropEqual, Value: value, Scalar: true}},
 	}) {
 		if err != nil {

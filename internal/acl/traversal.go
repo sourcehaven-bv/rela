@@ -71,14 +71,16 @@ var ErrTraversalUnsupported = errors.New("acl: traversal cannot be gated")
 // direction. Built fresh rather than folded into an existing query, whose
 // ACL predicate may already occupy that slot.
 //
-// It selects the candidates in the default world, explicitly: that is what
-// the query did before selections existed, and widening it to faced
-// candidate types waits for its own security review (TKT-7IZHP0). A caller
-// that reads in another world stamps that world over this (the data-entry
-// stampScope). The endpoint side is not affected: a gated hop carries the
-// request's world itself (see [Request.GateTraversal]).
+// It selects the candidates at every face (TKT-7IZHP0 A12). The callers ask
+// about rows they already read, at whatever face they read them, and a
+// traversal follows identity-scoped relations only (content-scoped hops are
+// refused at load), whose edges are the same for every face of an id. So
+// an id matches exactly when its subject row does. Narrowing the selection
+// to a world would turn a subject read at a face the world does not serve
+// into "no match", which `not related(...)` reads as a pass. The endpoint
+// side carries its own world (see [Request.GateTraversal]).
 func TraversalQuery(candidateType string, hop TraversalHop, p *store.RelationPredicate) store.GraphQuery {
-	q := store.GraphQuery{EntityType: candidateType, Faces: store.InWorld(store.TrivialScope())}
+	q := store.GraphQuery{EntityType: candidateType, Faces: store.AllFaces()}
 	if hop.Incoming {
 		q.HasInbound = p
 	} else {

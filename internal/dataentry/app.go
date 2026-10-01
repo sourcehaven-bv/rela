@@ -789,7 +789,7 @@ func gatedScriptReader(
 		// ungated read site (TKT-1WV50C).
 		return visibility.Unrestricted(store, order).WithWorld(visibility.WorldOf(world))
 	}
-	gate, err := visibility.NewDeclarativeGate(d)
+	gate, err := visibility.NewDeclarativeGate(d, world)
 	if err != nil {
 		slog.Error("dataentry: ACL gate unavailable; script reads REFUSED", "err", err)
 		return visibility.DenyReader{}
@@ -818,7 +818,7 @@ func scriptTraversalGate(a *App) relresolve.Gate {
 		if !ok || d == nil {
 			return relresolve.Ungated(ctx, candidateType, hop)
 		}
-		gate, err := visibility.NewDeclarativeGate(d)
+		gate, err := visibility.NewDeclarativeGate(d, defaultWorldScope(a.worlds))
 		if err != nil {
 			// coverage-ignore: invariant: d is non-nil here
 			return nil, fmt.Errorf("%w: %w", acl.ErrTraversalUnsupported, err)
@@ -839,7 +839,7 @@ func (a *App) scriptTracer(redactor visibility.FieldRedactor) tracer.Tracer {
 	if !ok || d == nil {
 		return a.tracer
 	}
-	gate, err := visibility.NewDeclarativeGate(d)
+	gate, err := visibility.NewDeclarativeGate(d, defaultWorldScope(a.worlds))
 	if err != nil {
 		slog.Error("dataentry: ACL gate unavailable; traversal REFUSED", "err", err)
 		return visibility.DenyTracer{}

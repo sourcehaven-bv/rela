@@ -508,7 +508,7 @@ func scriptReads(
 	if redactor == nil {
 		redactor = visibility.NopRedactor{}
 	}
-	gate, err := visibility.NewDeclarativeGate(d)
+	gate, err := visibility.NewDeclarativeGate(d, w.DefaultWorld())
 	if err != nil {
 		slog.Error("appbuild: ACL gate unavailable; script reads REFUSED", "err", err)
 		return visibility.DenyReader{}, refuseTraversal
@@ -547,7 +547,7 @@ func scriptTracer(
 	if redactor == nil {
 		redactor = visibility.NopRedactor{}
 	}
-	gate, err := visibility.NewDeclarativeGate(d)
+	gate, err := visibility.NewDeclarativeGate(d, w.DefaultWorld())
 	if err != nil {
 		slog.Error("appbuild: ACL gate unavailable; traversal REFUSED", "err", err)
 		return visibility.DenyTracer{}
@@ -652,7 +652,9 @@ func (s *Services) GatedReads() GatedReadBundle {
 	deps := s.LuaReadDeps()
 	deps.VisibleReader = reader
 	deps.Tracer = tr
-	deps.Searcher = gatedSearcher(s.searcher, s.visibleSearcher, s.aclDeclarative, s.fieldRedactor, s.meta)
+	deps.Searcher = gatedSearcher(
+		s.searcher, s.visibleSearcher, s.aclDeclarative, s.fieldRedactor, s.meta, s.worlds.DefaultWorld(),
+	)
 
 	b, err := relresolve.NewStoreBinder(s.meta, gate, s.store)
 	if err != nil { // coverage-ignore: invariant: meta, gate and store are non-nil here
@@ -698,7 +700,7 @@ type GatedReadBundle struct {
 // degrading to raw hits (RR-GKCZO5).
 func gatedSearcher(
 	raw search.Searcher, vs search.VisibleSearcher, d *acl.Declarative,
-	redactor visibility.FieldRedactor, meta *metamodel.Metamodel,
+	redactor visibility.FieldRedactor, meta *metamodel.Metamodel, world store.WorldScope,
 ) search.Searcher {
 	if d == nil {
 		return raw
@@ -706,7 +708,7 @@ func gatedSearcher(
 	if redactor == nil {
 		redactor = visibility.NopRedactor{}
 	}
-	gate, err := visibility.NewDeclarativeGate(d)
+	gate, err := visibility.NewDeclarativeGate(d, world)
 	if err != nil {
 		slog.Error("appbuild: ACL gate unavailable; search REFUSED", "err", err)
 		return visibility.DenySearcher{}

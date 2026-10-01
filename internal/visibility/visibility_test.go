@@ -117,7 +117,7 @@ func TestConstructorsRejectNil(t *testing.T) {
 		{"VisibleTracer nil base", func() error { _, err := visibility.NewVisibleTracer(nil, res, st, store.TrivialScope()); return err }},
 		{"VisibleTracer nil resolver", func() error { _, err := visibility.NewVisibleTracer(base, nil, st, store.TrivialScope()); return err }},
 		{"VisibleTracer nil relations", func() error { _, err := visibility.NewVisibleTracer(base, res, nil, store.TrivialScope()); return err }},
-		{"DeclarativeGate nil", func() error { _, err := visibility.NewDeclarativeGate(nil); return err }},
+		{"DeclarativeGate nil", func() error { _, err := visibility.NewDeclarativeGate(nil, store.TrivialScope()); return err }},
 		{"PolicyRedactor nil", func() error { _, err := visibility.NewPolicyRedactor(nil); return err }},
 	}
 	for _, tc := range cases {

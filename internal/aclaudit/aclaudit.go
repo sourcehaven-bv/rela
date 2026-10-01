@@ -140,6 +140,10 @@ type MetamodelReader interface {
 	// DeclaresWorlds reports whether the metamodel declares any world. When
 	// it does, the generated default world does not exist (TKT-7IZHP0 D11).
 	DeclaresWorlds() bool
+	// DefaultWorld names the world an unqualified read lands in: the
+	// schema's default_world, else its first declared world, else the
+	// generated default world.
+	DefaultWorld() string
 	// HasFace reports whether entity type t declares the content state
 	// named face.
 	HasFace(t, face string) bool

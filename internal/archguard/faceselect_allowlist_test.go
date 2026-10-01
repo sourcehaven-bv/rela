@@ -22,20 +22,11 @@ var unselectedGraphQueryAllowlist = map[string]allowed{
 // trivialScopeAllowlist pins the store.TrivialScope calls outside the store
 // and internal/worlds (see trivialScopeCalls). It may only shrink.
 //
-// Each entry keeps today's default-world behavior until TKT-7IZHP0 decides,
-// with its own security review, how identity reads and bare-id gates treat
-// faced types.
+// Each entry names a site whose trivial scope is the generated default
+// world by construction.
 var trivialScopeAllowlist = map[string]allowed{
-	"internal/acl/principallookup.go": {1, "principal lookup reads identity in the default world " +
-		"until TKT-7IZHP0"},
-	"internal/acl/traversal.go": {1, "TraversalQuery walks membership and inheritance in the " +
-		"default world until TKT-7IZHP0"},
-	"internal/visibility/pushdown.go": {1, "the declarative traversal gate serves validation and " +
-		"transition verdicts, which read the default world until TKT-7IZHP0"},
-	"internal/aclmap/enumerate.go": {1, "principal enumeration mirrors the principal lookup's " +
-		"default world until TKT-7IZHP0"},
 	"internal/appbuild/appbuildtest/fixture.go": {1, "test fixture: compiles no worlds (appbuildtest may " +
 		"not import internal/worlds), so its reads serve the trivial default world"},
-	"internal/dataentry/world.go": {1, "defaultWorldHandle serves an unstamped request until " +
-		"TKT-7IZHP0 PR 5a switches it to the configured default world"},
+	"internal/dataentry/world.go": {1, "defaultWorldHandle: the generated default world, for a " +
+		"context no request stamped and an App built without worlds"},
 }

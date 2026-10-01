@@ -43,7 +43,7 @@ func schedulerReader(t *testing.T, policyYAML string) *visibility.ScriptReader {
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
-	gate, err := visibility.NewDeclarativeGate(d)
+	gate, err := visibility.NewDeclarativeGate(d, store.TrivialScope())
 	if err != nil {
 		t.Fatalf("NewDeclarativeGate: %v", err)
 	}

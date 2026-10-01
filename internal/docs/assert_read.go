@@ -166,7 +166,11 @@ func readerFor(dr *docRuntime) (*visibility.Resolver, error) {
 	if err != nil {
 		return nil, fmt.Errorf("building the evaluator failed: %w", err)
 	}
-	gate, err := visibility.NewDeclarativeGate(d)
+	defaultScope, err := dr.worldScope("")
+	if err != nil {
+		return nil, err
+	}
+	gate, err := visibility.NewDeclarativeGate(d, defaultScope)
 	if err != nil {
 		return nil, fmt.Errorf("building the read gate failed: %w", err)
 	}

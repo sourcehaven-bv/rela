@@ -92,7 +92,7 @@ func newACLWorld(t *testing.T) (store.Store, lua.WriteDeps) {
 	if err != nil {
 		t.Fatalf("affordances.New: %v", err)
 	}
-	gate, err := visibility.NewDeclarativeGate(d)
+	gate, err := visibility.NewDeclarativeGate(d, store.TrivialScope())
 	if err != nil {
 		t.Fatalf("NewDeclarativeGate: %v", err)
 	}

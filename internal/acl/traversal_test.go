@@ -354,6 +354,39 @@ func TestTraversalQuery_PlacesByDirection(t *testing.T) {
 	}
 }
 
+// TKT-7IZHP0 A12: the candidate selection spans every face, so a subject
+// held at a face no world would pick still matches on its identity edge.
+// Selecting a world instead would make it "no match", which `not related`
+// reads as a pass.
+func TestTraversalQuery_MatchesASubjectAtAnyFace(t *testing.T) {
+	ctx := context.Background()
+	st := memstore.New()
+	for _, e := range []*entity.Entity{
+		{ID: "PG-1", Type: "page", Face: "draft"},
+		{ID: "alice", Type: "user"},
+	} {
+		if err := st.CreateEntity(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	key := entity.RelationKey{From: "PG-1", Type: "owned-by", To: "alice"}
+	if _, err := st.CreateRelation(ctx, key, &store.RelationData{}); err != nil {
+		t.Fatal(err)
+	}
+	hop := TraversalHop{RelationTypes: []string{"owned-by"}, EntityType: "user"}
+	p, err := UngatedTraversal(hop)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.MatchingIDs(ctx, st, TraversalQuery("page", hop, p), []string{"PG-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got["PG-1"] {
+		t.Fatalf("PG-1@draft must match its identity edge, got %v", got)
+	}
+}
+
 // A chained hop goes in the endpoint's slot for ITS direction.
 func TestGateTraversal_ChainPlacesEachHopByDirection(t *testing.T) {
 	d, ctx := gateFixture(t, &Policy{

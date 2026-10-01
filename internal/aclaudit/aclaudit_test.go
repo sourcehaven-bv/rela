@@ -16,6 +16,7 @@ type fakeMetamodel struct {
 	fields    map[string]map[string][]string // type -> field -> enum options (nil = non-enum/declared field)
 	worlds    map[string]bool                // declared world names
 	faces     map[string][]string            // type -> declared content states
+	defWorld  string                         // the declared default world
 }
 
 func (m fakeMetamodel) HasEntityType(t string) bool { return m.types[t] }
@@ -23,6 +24,13 @@ func (m fakeMetamodel) HasEntityType(t string) bool { return m.types[t] }
 func (m fakeMetamodel) HasWorld(name string) bool { return m.worlds[name] }
 
 func (m fakeMetamodel) DeclaresWorlds() bool { return len(m.worlds) > 0 }
+
+func (m fakeMetamodel) DefaultWorld() string {
+	if len(m.worlds) == 0 {
+		return acl.DefaultWorldName
+	}
+	return m.defWorld
+}
 
 func (m fakeMetamodel) HasFace(t, face string) bool {
 	return slices.Contains(m.faces[t], face)
@@ -795,6 +803,36 @@ func TestB10_UndeclaredWorld(t *testing.T) {
 			got := slices.Contains(findingRules(Audit(p, m, nil)), "B10-undeclared-world")
 			if got != tc.wantB10 {
 				t.Errorf("B10 fired = %v, want %v (read: %v)", got, tc.wantB10, tc.read)
+			}
+		})
+	}
+}
+
+// A world grant on the default world grants nothing, since every read grant
+// reads there (TKT-7IZHP0 D2). It is advisory, never the B10 denial.
+func TestB10_RedundantDefaultWorldGrant(t *testing.T) {
+	declared := fakeMetamodel{worlds: map[string]bool{"published": true, "preview": true}, defWorld: "published"}
+	for _, tc := range []struct {
+		name string
+		meta fakeMetamodel
+		read []string
+		want bool
+	}{
+		{"the declared default world", declared, []string{"world:published"}, true},
+		{"another declared world", declared, []string{"world:preview"}, false},
+		{"the generated default world", fakeMetamodel{}, []string{"world:default"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := &acl.Policy{Roles: map[string]acl.RoleDef{"r": {Read: tc.read}}}
+			if err := p.Validate(); err != nil {
+				t.Fatalf("Validate: %v", err)
+			}
+			rules := findingRules(Audit(p, tc.meta, nil))
+			if got := slices.Contains(rules, "B10-redundant-default-world"); got != tc.want {
+				t.Errorf("redundant finding = %v, want %v (rules %v)", got, tc.want, rules)
+			}
+			if slices.Contains(rules, "B10-undeclared-world") {
+				t.Errorf("an existing world must not be reported undeclared: %v", rules)
 			}
 		})
 	}

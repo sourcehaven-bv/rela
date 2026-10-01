@@ -58,10 +58,17 @@ func checkUndeclaredWorlds(p *acl.Policy, m MetamodelReader) []Finding {
 			}
 		}
 		for _, world := range worlds {
-			if worldExists(m, world) || seen[world] {
+			if seen[world] {
 				continue
 			}
 			seen[world] = true
+			if world == m.DefaultWorld() {
+				f = append(f, redundantDefaultWorldGrant(name, world))
+				continue
+			}
+			if worldExists(m, world) {
+				continue
+			}
 			if f2, isDefault := defaultBesideDeclared(name, world, m); isDefault {
 				f = append(f, f2)
 				continue
@@ -81,6 +88,19 @@ func checkUndeclaredWorlds(p *acl.Policy, m MetamodelReader) []Finding {
 		}
 	}
 	return f
+}
+
+// redundantDefaultWorldGrant reports a world grant on the default world. Any
+// read grant already reads there (TKT-7IZHP0 D2), so the entry grants
+// nothing. Low: the policy behaves as written, but a reader may take the
+// entry as the reason other roles cannot read the default world.
+func redundantDefaultWorldGrant(role, world string) Finding {
+	return Finding{
+		Rule: "B10-redundant-default-world", Severity: Low, Subject: role,
+		Detail: fmt.Sprintf("role %q grants read on world %q, the default world; every read "+
+			"grant already reads the default world, so this entry grants nothing", role, world),
+		Fix: fmt.Sprintf("drop `world:%s` from the role's read list", world),
+	}
 }
 
 // worldExists reports whether world names a world of m. The generated

@@ -8,6 +8,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // DeclarativeGate adapts *acl.Declarative to [RowGate]. The per-principal
@@ -27,6 +28,9 @@ import (
 // binding makes the operation a single consistent, amortized scope.
 type DeclarativeGate struct {
 	d *acl.Declarative
+	// world is the world a gated hop reads its endpoints in when the
+	// surface has no request world: the schema's default world.
+	world store.WorldScope
 }
 
 // Bind opens one acl.Request for the ctx principal and attaches it to
@@ -45,12 +49,16 @@ func (g DeclarativeGate) Bind(ctx context.Context) (context.Context, error) {
 	return acl.WithRequest(ctx, r), nil
 }
 
-// NewDeclarativeGate wraps d (required).
-func NewDeclarativeGate(d *acl.Declarative) (DeclarativeGate, error) {
+// NewDeclarativeGate wraps d (required). world (required) is the schema's
+// default world, in which [DeclarativeGate.GateTraversal] reads endpoints.
+func NewDeclarativeGate(d *acl.Declarative, world store.WorldScope) (DeclarativeGate, error) {
 	if d == nil {
 		return DeclarativeGate{}, errors.New("visibility: NewDeclarativeGate: declarative must be non-nil")
 	}
-	return DeclarativeGate{d: d}, nil
+	if !world.IsSet() {
+		return DeclarativeGate{}, errors.New("visibility: NewDeclarativeGate: world must be set")
+	}
+	return DeclarativeGate{d: d, world: world}, nil
 }
 
 // request resolves the acl.Request for this call: ctx-attached when
