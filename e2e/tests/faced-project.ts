@@ -25,7 +25,7 @@ export const FACED_USERS = {
 
 export type FacedUser = (typeof FACED_USERS)[keyof typeof FACED_USERS];
 
-/** Declared worlds. `published` is the configured `default_world`. */
+/** Declared worlds. `published` is the schema's `default_world`. */
 export const WORLD = {
   published: "published",
   editorial: "editorial",
@@ -105,6 +105,8 @@ relations:
     to: [policy]
     inverse: mitigated-by
 
+default_world: ${WORLD.published}
+
 worlds:
   published:
     select: published
@@ -143,7 +145,6 @@ version: "1.0"
 
 app:
   name: "Faces E2E"
-  default_world: ${WORLD.published}
 
 lists:
   policies:

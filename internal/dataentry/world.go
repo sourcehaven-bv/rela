@@ -546,8 +546,25 @@ func configuredDefaultWorld(a *App) string {
 	if a == nil {
 		return ""
 	}
-	state := a.State()
-	if state == nil || state.Cfg == nil {
+	return browsingDefaultWorld(a.State())
+}
+
+// browsingDefaultWorld is the world a bare HTTP read lands in: schema.yaml's
+// `default_world:` key, else the deprecated `app.default_world` alias, else
+// "" (the default world). Config load refuses an alias that contradicts the
+// schema, so the order only matters when one of the two is unset.
+//
+// Only an explicitly set key counts. Landing in the first declared world when
+// neither is set is the D2 landing rule, which PR 5b binds together with its
+// grant rule.
+func browsingDefaultWorld(state *Schema) string {
+	if state == nil {
+		return ""
+	}
+	if state.Meta != nil && state.Meta.DefaultWorld != "" {
+		return state.Meta.DefaultWorld
+	}
+	if state.Cfg == nil {
 		return ""
 	}
 	return state.Cfg.App.DefaultWorld
