@@ -179,11 +179,14 @@ claim about real behaviour. Add `because = "..."` to also pin *why* a decision
 came out that way — a deny arriving from an unintended rule is a green check
 over a real regression.
 
-For a type that declares `faces:`, name the face the claim is about with
-`face = "..."`. It is required there: a faced type has no row without a face,
-so a claim that names none would ask about a row that cannot exist, and a
-`refuses{}` would pass against any policy. A type without faces takes no
-`face`. An undeclared face is an error.
+For a type that declares `faces:`, name the face a `create` or `update` claim
+is about with `face = "..."`. It is required there: a faced type has no row
+without a face, so a claim that names none would ask about a row that cannot
+exist, and a `refuses{}` would pass against any policy. A `rename` moves every
+face, so it takes no `face` and holds only if the principal may rename every
+declared face. A `delete` without `face` is the whole-entity delete and is
+checked the same way; with `face` it is that face's delete. A type without
+faces takes no `face`. An undeclared face is an error.
 
 ### API assertions
 

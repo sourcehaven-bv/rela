@@ -101,8 +101,8 @@ fetching each one. A summary of a faced entity also carries its `face`.
 | `list_entities` | List entity summaries, sorted by ID | `type?`, `filter?`, `limit?` (default 50), `offset?` |
 | `show_entity` | Get one entity with its relations | `id`, `content?` (default true) |
 | `search_entities` | Full-text search across entities | `query`, `type?`, `limit?` (default 20) |
-| `create_entity` | Create an entity | `type`, `properties`, `content?`, `id?` |
-| `update_entity` | Update named properties or the body | `id`, `properties?`, `content?` |
+| `create_entity` | Create an entity; a faced type needs `face` | `type`, `properties`, `content?`, `id?`, `face?` |
+| `update_entity` | Update named properties or the body of one face | `id`, `properties?`, `content?` |
 | `delete_entity` | Delete an entity | `id`, `cascade?` |
 | `rename_entity` | Change an entity's ID and its references | `id`, `new_id`, `dry_run?` |
 
@@ -125,6 +125,11 @@ related(entity, 'implements', { status = 'open' })
 
 In `update_entity`, a `null` property value removes the property, and an empty
 string is ignored.
+
+`update_entity` writes one face. Its `id` may name it (`POL-1@draft`). A bare
+id writes the one face the default world admits that the agent may read; when
+there are several, the error lists them, for example
+`POL-1 has faces; address one: POL-1@draft, POL-1@published`.
 
 ### Relation Tools
 
@@ -178,8 +183,10 @@ The full raw metamodel is the `rela://metamodel` resource.
 
 These tools work on the files held by `file`-type properties. On a type with
 faces, `id` is an address such as `POL-1@draft`, and each tool works on that
-face only: a face lists and serves only its own files. A bare id of a faced
-entity answers "entity not found", with a hint to use `ID@face`.
+face only: a face lists and serves only its own files. A bare id reads the
+face the default world selects. `attach_file` and `delete_attachment` write to
+the one face the default world admits for a bare id; when it admits several,
+the error names them so the agent can address one.
 
 | Tool | Description | Parameters |
 |------|-------------|------------|

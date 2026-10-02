@@ -49,13 +49,20 @@ the address is the entity ID, such as `REQ-001`. For a type with faces, write
 `ID@face`, such as `DOC-1@draft`, to name one face.
 
 A bare ID of an entity with faces reads the face the default world selects.
-Until the project declares a default world that ranks faces, it selects none,
-so the command stops and lists the faces to choose from:
+Without declared worlds, the generated default world tries the type's faces
+in declaration order. When the default world selects none of the entity's
+faces, the command stops and lists the faces to choose from:
 
 ```text
 $ rela show DOC-1
 address one face: DOC-1 has faces; name one: DOC-1@draft, DOC-1@published
 ```
+
+A command that writes (`update`, `attach`, `detach`, `link`, `unlink` on a
+content-scoped relation) does not pick a face by rank. A bare ID writes the one
+face the default world admits; when it admits several, or none, the command
+stops and lists them. `rela create --face` names the face of a new entity, and
+a faced type requires it.
 
 The `acl can` and `acl who-can` reports answer per entity, so they take the
 bare ID of a faced entity and refuse `ID@face`. `acl can-relation --from`

@@ -580,8 +580,7 @@ contradiction fails the load. Remove it once `schema.yaml` carries the key.
 read grant is re-checked on every request exactly as for an explicit `?world=`,
 so pointing it at a world a role may not read yields that world's ordinary
 empty result. The server applies it to `curl` and to the browser alike, but
-only on read requests and only on routes that can serve a world. An explicit
-`?world=default` still selects the unresolved default world. Naming an
+only on read requests and only on routes that can serve a world. Naming an
 undeclared world here is a startup error.
 
 Next, tell the policies list where its create button should land:
@@ -708,10 +707,11 @@ curl -s "http://localhost:8080/api/v1/policys?world=published"
 ```
 
 The list contains only policies that have a published face. Omitting the
-parameter serves the default world unless `default_world` is configured.
-Passing `?world=default` explicitly applies no resolution at all, which for a
-faced type means an empty list — a policy's rows all sit under face names, and
-the default world reaches none of them.
+parameter serves the default world: `default_world`, else the first declared
+world. A schema that declares worlds has no world named `default`, so
+`?world=default` is answered with `400 unknown_world`. Only a schema that
+declares no worlds has the generated `default` world, which serves each faced
+type's faces in declaration order.
 
 Read one entity in a world:
 
@@ -927,6 +927,53 @@ Export takes an address as well: `GET /api/v1/policies/POL-1@draft/_export`
 exports the draft. The read grant for that face applies, so a reader granted
 `policy@published` gets a not-found for the draft.
 
+## How a Write Finds Its Face
+
+Every create names a face: the HTTP API takes `face` or `world` in the body,
+the web app's create form asks for a face when its world declares no
+`create:`, `rela create` takes `--face`, the MCP `create_entity` tool takes
+`face`, and the Lua `create_entity` binding takes `{ face = ... }`. A create
+on a faced type that names none is refused with `422 face_required`, and the
+error lists the faces the type declares in `faces`.
+
+An update, delete, attach or relation write may name the face
+(`POL-1@draft`) or give a bare id. A bare id is resolved in the request's
+world: the faces of the entity that the principal may read and that the world
+admits are counted. Exactly one is the target. None or several is refused,
+and the error names the faces to choose from, for example
+`POL-1 has faces; address one: POL-1@draft, POL-1@published`. A write never
+lands on whichever face a world happens to rank first.
+
+Three writes act on the whole family rather than one face:
+
+- A **rename** moves every face, so it needs the update grant on every stored
+  face. The web app offers it only then.
+- A **delete** of a bare id deletes every face; `ID@face` deletes one.
+- A `rela-docs` `assert-acl` claim about a rename covers every face and
+  refuses `face=`; a delete claim with no face covers the family.
+
+## Upgrading from a Release Without Implicit Faces
+
+- `?world=default` is a `400 unknown_world` on a schema that declares worlds.
+  The web app drops an unknown `?world=` from the URL and lands in the default
+  world, so old bookmarks keep working.
+- Every route reads in the default world, including routes that refuse an
+  explicit `?world=`. Without `default_world` that is the first declared
+  world.
+- A bare-id write on an entity with several readable faces in the world is
+  refused instead of reaching the implicit face. Name the face.
+- A `face_required` error now carries `faces`.
+- A list's collection `_actions` carries `create@<face>` for a faced type,
+  and `create` is true when any face is creatable.
+- `/api/v1/_schema` carries `world_order`, and each world carries its
+  `create` face.
+- A webhook whose `find.type` is faced must name `find.face` (see
+  [Webhooks](webhooks.md#types-with-faces)).
+- The derived static-query indexes are keyed on the face and are rebuilt on
+  the first start.
+- `rela acl audit` reports a grant on an undeclared world as finding
+  `B10-undeclared-world`.
+
 ## What Worlds Do Not Cover Yet
 
 The limits below are deliberate. A surface joins the world-aware set only when
@@ -934,23 +981,14 @@ its whole read path has been scoped and tested, so widening the set is a
 visible change rather than a forgotten call site.
 
 - The command-line interface has no `--world` flag, and `rela list`, `rela
-  show`, and the export commands read the default world. The MCP server and
-  Lua scripts read the default world as well.
+  show`, and the export commands read the default world. The MCP server, Lua
+  scripts, the scheduler and mail read the default world as well.
 - Documents, calendar feeds, sync, attachments, exports, and the relation
   sub-resources of an entity refuse a world.
 - Restoring a version under a world is refused, like every other write with a
   world. Restoring a version onto a face that still exists works; restoring a
   face that was **deleted** is refused for a faced type, because a version
   snapshot does not yet report which face it captured.
-- Only the HTTP API can **create** into a face. The web app's create forms,
-  `rela create`, the MCP `create_entity` tool and the Lua `create` binding all
-  name no face, so they reach faceless types only; against a faced type they
-  are refused with `face_required`.
-- **Updates are not restricted this way.** Every write path that takes an id
-  takes an address, because the entity manager parses it — so
-  `rela update POL-1@draft`, `rela.update_entity("POL-1@draft", …)` and a
-  `PATCH` of `POL-1@draft` all reach the named face. The asymmetry is create
-  versus update, not API versus client.
 - `guard.when` on a copy and `edits:` on a world are parsed but not
   implemented. The first is refused at load, the second is accepted and
   ignored.
