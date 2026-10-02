@@ -5,7 +5,7 @@ title: 'Generated faces and worlds: implicit face, generated default world only 
 kind: enhancement
 priority: high
 effort: l
-status: ready
+status: done
 description: 'Stage 3 of RES-Y6JA37: implement DEC-NPZICR''s generation rules for faces, worlds and write grants.'
 ---
 

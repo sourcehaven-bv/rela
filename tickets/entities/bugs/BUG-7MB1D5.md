@@ -5,7 +5,13 @@ title: Gantt, feeds, CalDAV, webhooks and command context are empty for faced ty
 description: These surfaces query default rows only; a faced source type returns nothing with no error or config warning.
 priority: medium
 effort: m
-status: backlog
+why1: CalDAV writes and webhook finds addressed a bare id or the default rows; a faced type has no implicit row so they missed it.
+why2: These surfaces predate faces and were never given a world or a write target.
+why3: Faces were opt-in per surface, so each surface had to be found and fixed by hand; the inventory found them after the fact.
+why4: There was no single resolver for bare-id writes until WriteTarget.
+why5: The read and write seams accepted an address without a face, so face-blindness compiled and ran silently.
+prevention: Every route now binds the default world (gantt, feeds and command context read through it); CalDAV and webhook writes resolve through WriteTarget; webhook find.face is validated at load. Pinned by TestCalDAV_WriteAddress, TestWebhookRoutes_FindFace and TestValidateWebhooks_FindFace.
+status: done
 ---
 
 ## Problem

@@ -365,6 +365,13 @@ above rather than by a clean `analyze all`.
   `internal/archguard/bareref_test.go` pins every bare `entity.Ref` literal in
   non-test code to an allowlist with a reason per file, and the list may only
   shrink. In tests, seed faced types only at their declared faces.
+- **Don't pick a face for a bare-id write by rank.** A write that receives a
+  bare id resolves it through `visibility.Resolver.WriteTarget` (or a reader's
+  `WriteTarget`): exactly one readable face the world admits is the target,
+  otherwise `*visibility.AmbiguousAddressError` names the faces. A read may
+  take the face the world ranks first; a write may not, because the world's
+  first face is a presentation choice, not the author's intent. Rename and a
+  bare-id delete act on the whole family instead (`authorizeFamily`).
 
 ### Subsystem-specific rules (nested CLAUDE.md / godoc)
 

@@ -5,7 +5,13 @@ title: Rename affordance and doc ACL assertions decide rename and delete per fac
 description: The data-entry rename affordance and the doc ACL assertions decide rename and delete on one face while the manager authorizes every face.
 priority: medium
 effort: s
-status: backlog
+why1: computeActions asked the ACL about rename on the served face only and assert_acl evaluated rename and delete on the zero face.
+why2: 'Both were written when rename and delete were per-row operations; #1708 and #1714 made them family-wide in the manager only.'
+why3: The family rule lived in entitymanager.authorizeFamily with no shared predicate the affordance and the docs checker could call.
+why4: Affordance contract tests compare _actions with the write per face and had no case where the faces disagree.
+why5: A change to an authorization rule has no checklist of the surfaces that predict it (affordances, docs assertions, aclaudit).
+prevention: TestFaceGrant_RenameAffordanceIsFamilyWide and claimfaces_test.go pin the family rule on both surfaces; AM-family-ops-affordance-matches-manager tracks the measure.
+status: done
 ---
 
 ## Problem

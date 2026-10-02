@@ -24,3 +24,9 @@ Decide whether restore is exempt from the entry rule. If it is, skip
 `EnforceCreate` in `RecreateEntity` and invert
 `TestTransition_RecreateEntity_EnforcesEntry`. Consider whether a principal
 without the right to reach that state by transition may restore it.
+
+## Status (2026-10-02)
+
+Deferred by the owner during TKT-7IZHP0: restore of a deleted entity, including
+which face a version snapshot captured, needs its own design before a fix. It
+stays in the backlog.
