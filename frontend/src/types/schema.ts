@@ -117,6 +117,7 @@ export interface WorldMessages {
 }
 
 export interface PropertyDef {
+  label?: string
   type: 'string' | 'date' | 'datetime' | 'integer' | 'boolean' | 'enum' | 'file' | 'rrule'
   required?: boolean
   values?: string[]

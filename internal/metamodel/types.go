@@ -753,6 +753,7 @@ type PropertySchema interface {
 
 // PropertyDef defines a property on an entity or relation
 type PropertyDef struct {
+	Label       string            `yaml:"label,omitempty"`
 	Type        string            `yaml:"type"`
 	Required    bool              `yaml:"required,omitempty"`
 	Values      []string          `yaml:"values,omitempty"` // For inline enum types

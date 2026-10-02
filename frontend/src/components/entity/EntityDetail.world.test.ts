@@ -157,7 +157,11 @@ describe('EntityDetail world binding', () => {
     schemaStore.entityTypes.set(entityType, {
       name: entityType,
       label: 'Policy',
-      properties: { title: { type: 'string', values: null } },
+      properties: {
+        title: { type: 'string', values: null },
+        behandeling: { type: 'string', label: 'Behandelstrategie' },
+        summary: { type: 'string' },
+      },
     } as never)
     // The Edit button also requires an edit form to exist
     // (`v-if="editFormId && !isInaccessible && canUpdate"`). Without this the
@@ -234,6 +238,32 @@ describe('EntityDetail world binding', () => {
   }
 
   describe('the world rides the request', () => {
+    it('uses the schema property label on generic detail fields', async () => {
+      const w = await mountDetail({
+        entry: entry({
+          properties: {
+            title: 'Access Control Policy',
+            behandeling: 'mitigeren',
+            summary: 'Risk summary',
+          },
+        }),
+        sections: [section({
+          heading: 'Properties',
+          sectionId: 'props',
+          display: 'properties',
+          fields: [
+            { property: 'behandeling', label: 'behandeling', values: ['mitigeren'] },
+            { property: 'summary', label: 'Summary', values: ['Risk summary'] },
+          ],
+        })],
+      })
+      rendersProof(w)
+      expect(w.text()).toContain('Behandelstrategie')
+      expect(w.text()).toContain('Summary')
+      expect(w.text()).not.toContain('behandeling')
+      w.unmount()
+    })
+
     it('sends no world under the default world', async () => {
       const w = await mountDetail(viewResponse())
       rendersProof(w)

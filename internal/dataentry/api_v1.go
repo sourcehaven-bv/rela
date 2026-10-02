@@ -75,6 +75,7 @@ func toV1EntityType(
 
 func toV1PropertyDef(meta *metamodel.Metamodel, propDef metamodel.PropertyDef) v1.PropertyDef {
 	pd := v1.PropertyDef{
+		Label:       propDef.Label,
 		Type:        propDef.Type,
 		Required:    propDef.Required,
 		Default:     propDef.Default,
