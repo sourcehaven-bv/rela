@@ -1442,7 +1442,7 @@ function mapFieldsToProperties(fields: ViewSectionField[] | undefined): Property
     const def = entryType && field.property ? getPropertyDef(entryType, field.property) : undefined
     return {
       name,
-      label: field.label,
+      label: def?.label || field.label,
       value: entryDisplayValue(field),
       propType: field.propType,
       propertyDef: def,

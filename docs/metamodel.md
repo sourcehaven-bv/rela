@@ -627,6 +627,7 @@ entities:
 
 | Option           | Description                                                                           |
 | ---------------- | ------------------------------------------------------------------------------------- |
+| `label`          | Human-readable property name shown on generic entity detail pages; the property key remains the data identity |
 | `required: true` | Property must be provided                                                             |
 | `default`        | Default value for the property                                                        |
 | `format`         | Date format (Go layout string, e.g., `2006-01-02`)                                    |

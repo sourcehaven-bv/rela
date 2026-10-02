@@ -530,6 +530,7 @@ type FaceDef struct {
 
 // PropertyDef is the JSON representation of a property definition.
 type PropertyDef struct {
+	Label       string            `json:"label,omitempty"`
 	Type        string            `json:"type"`
 	Required    bool              `json:"required"`
 	Default     string            `json:"default,omitempty"`
