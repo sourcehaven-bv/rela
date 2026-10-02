@@ -6,7 +6,8 @@ kind: enhancement
 priority: medium
 effort: s
 started: "2026-10-02"
-status: review
+completed: "2026-10-02"
+status: done
 description: Use property labels from schema.yaml on generic entity detail pages.
 ---
 

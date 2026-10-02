@@ -3,7 +3,8 @@ id: PLAN-AKYHP4
 type: planning-checklist
 title: 'Planning: Schema property labels render on generic entity details'
 started: "2026-10-02"
-status: in-progress
+completed: "2026-10-02"
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
