@@ -1418,6 +1418,21 @@ views:
             widget: checkbox
           - property: title
             widget: textarea
+      # BUG-S67G88: inline-edit fields on a narrow span. A span-2 cell is
+      # narrower than the detail field's label column, so a label laid out
+      # beside its value left the value no width at all. view-section-render-
+      # mode.spec.ts measures that every label and value stays inside its cell.
+      - heading: "Narrow fields"
+        source: entry
+        display: properties
+        render: input
+        fields:
+          - property: status
+            span: 2
+          - property: assignee
+            span: 4
+          # Full width: the inline editor keeps its usual minimum width here.
+          - property: note
       # The entry's markdown body. Needed by the comment specs: a text-range
       # anchor has nothing to attach to unless the body actually renders.
       - source: entry

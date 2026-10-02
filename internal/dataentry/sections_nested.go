@@ -356,11 +356,7 @@ func fillPropertyCell(
 		}
 	}
 	cell.Widget = resolveWidget(pd, s.Meta)
-	if vs := e.GetAttributeStrings(property); vs != nil {
-		cell.Values = vs
-	} else if val := e.GetAttributeString(property); val != "" {
-		cell.Values = []string{val}
-	}
+	cell.Values = propertyToStrings(e.GetAttribute(property), pd.Type)
 }
 
 // entitySorter returns a possibly-reordered view of rows. It never mutates the

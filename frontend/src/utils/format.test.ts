@@ -137,13 +137,21 @@ describe('format', () => {
     it('formats a datetime cell in the passed display zone (honors the tz override, RR-K3WEW2)', () => {
       // 12:30 UTC in New York (UTC-4 in July) is 08:30 — the list column must
       // honor the effective zone threaded from EntityList, not the browser zone.
-      const out = formatCellValue('2026-07-13T12:30:00Z', 'starts_at', mockEntityType, 'America/New_York')
+      const out = formatCellValue(
+        '2026-07-13T12:30:00Z',
+        'starts_at',
+        mockEntityType,
+        'America/New_York'
+      )
       expect(out).toContain('8:30')
     })
 
     it('formats boolean property as Yes/No', () => {
       expect(formatCellValue(true, 'is_active', mockEntityType)).toBe('Yes')
       expect(formatCellValue(false, 'is_active', mockEntityType)).toBe('No')
+      // The string form a view table cell carries.
+      expect(formatCellValue('true', 'is_active', mockEntityType)).toBe('Yes')
+      expect(formatCellValue('false', 'is_active', mockEntityType)).toBe('No')
     })
 
     it('converts values to string without entity type', () => {
@@ -163,15 +171,13 @@ describe('format', () => {
       ]
 
       it.each(cases)('matches formatValue parity: %s', (_label, input) => {
-        expect(formatCellValue(input, 'schedule', mockEntityType)).toBe(
-          formatValue(input, 'rrule'),
-        )
+        expect(formatCellValue(input, 'schedule', mockEntityType)).toBe(formatValue(input, 'rrule'))
       })
 
       it('formats rrule wrapped in a single-element array', () => {
         const input = 'FREQ=DAILY'
         expect(formatCellValue([input], 'schedule', mockEntityType)).toBe(
-          formatValue(input, 'rrule'),
+          formatValue(input, 'rrule')
         )
       })
 

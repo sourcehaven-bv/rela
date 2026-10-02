@@ -4,8 +4,8 @@ type: automated-measure
 title: 'pgstore: every direct connection accepts a pool-tuned DSN'
 description: A test opens the store with a DSN carrying pool_max_conns (and other pool_* parameters) and asserts the change-feed listener connects and delivers a cross-process event. Fails for any direct pgx.Connect that forwards pool-only parameters to the server.
 kind: test
-location: internal/store/pgstore/listener_test.go (TestCrossProcessPropagation_PoolTunedDSN)
-status: active
+location: internal/store/pgstore (listener test with a pool-tuned DSN)
+status: proposed
 ---
 
 ## What it checks

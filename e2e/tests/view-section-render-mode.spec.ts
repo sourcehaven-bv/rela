@@ -1,4 +1,4 @@
-import { test } from './fixtures';
+import { test, expect } from './fixtures';
 import { EntityPage } from '../pages';
 import { SEED } from './fixtures';
 
@@ -12,8 +12,10 @@ import { SEED } from './fixtures';
 //
 // The fixture's `task` view (DATA_ENTRY_YAML in fixtures.ts) is deliberately
 // mixed:
-//   section[0] "Task"       display: properties, no render  → display default
-//   section[1] "Implements" display: list, render: input     → inline edit
+//   "Task"          display: properties, no render  → display default
+//   "Progress"      display: properties, render: input, widget overrides
+//   "Narrow fields" display: properties, render: input, span 2 / 4 / full
+//   "Implements"    display: list, render: input     → inline edit
 test.describe('View section render modes (TKT-HOIX1)', () => {
   test('renders a display section and an inline-edit section on one page', async ({
     appPage,
@@ -72,5 +74,39 @@ test.describe('View section render modes (TKT-HOIX1)', () => {
     // The list row's SectionEditForm carries real controls, proving
     // `render: input` reaches the edit arm rather than a disabled widget.
     await entity.expectListSectionRowControlEnabled();
+  });
+
+  // BUG-S67G88: a detail field put its fixed-width label beside its value
+  // whatever width it was given, so in a span-2 cell the value got none and
+  // in a span-4 cell a badge overflowed into the next field. Measured at two
+  // widths: at 1100px the span-2 cell is already narrower than that label,
+  // and at 780px the span-4 cell is too.
+  for (const width of [1100, 780]) {
+    test(`labels and values stay inside narrow span cells at ${width}px`, async ({ appPage }) => {
+      await appPage.setViewportSize({ width, height: 800 });
+      const entity = new EntityPage(appPage);
+      await entity.navigateToEntity('task', SEED.tasks.writeUnitTests);
+
+      // Guard against a vacuous pass: the case only exists while the cell is
+      // narrower than the 120px label column.
+      expect(await entity.sectionFieldCellWidth('Narrow fields', 'status')).toBeLessThan(120);
+      await entity.expectSectionFieldsFitTheirCells('Narrow fields');
+    });
+  }
+
+  test('an inline editor keeps its minimum width yet stays inside a narrow cell', async ({
+    appPage,
+  }) => {
+    await appPage.setViewportSize({ width: 780, height: 800 });
+    const entity = new EntityPage(appPage);
+    await entity.navigateToEntity('task', SEED.tasks.writeUnitTests);
+
+    // Full width: the editor keeps the 240px floor it has always had.
+    const wide = await entity.measureSectionFieldEditor('Narrow fields', 'note');
+    expect(wide.editorWidth).toBeGreaterThanOrEqual(240);
+
+    // A span-4 cell narrower than that floor: the editor fits the cell instead.
+    const narrow = await entity.measureSectionFieldEditor('Narrow fields', 'assignee');
+    expect(narrow.editorRight).toBeLessThanOrEqual(narrow.cellRight + 0.5);
   });
 });

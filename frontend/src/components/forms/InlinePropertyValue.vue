@@ -288,8 +288,10 @@ function floatingPanels(): Element[] {
 
 /* Sized to the row rather than the form grid, like the library's own detail
    field control. A wrapper, because some widgets render their visible control
-   beside their root (the tag picker hides its <select> and draws a sibling). */
+   beside their root (the tag picker hides its <select> and draws a sibling).
+   Capped at the width of the library's value column (its container), so a
+   narrow grid cell does not spill into its neighbour while editing. */
 .inline-property-control {
-  min-width: 240px;
+  min-width: min(240px, 100cqi);
 }
 </style>

@@ -228,40 +228,67 @@ function commit() {
 </template>
 
 <style scoped>
+/*
+ * Label beside value while the row is wide enough, value under label once it
+ * is not. The row answers to its own width, not the viewport's: a field in a
+ * grid cell (an authored `span:` of a third or less) is narrow on a wide
+ * screen too, and a fixed label beside the value would leave the value no
+ * room at all. Wrapping rather than a container query keeps the label and
+ * value direct children of the row, so a `dl` still groups its `dt` and `dd`.
+ */
 .rl-detail-field {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: var(--rl-space-4);
+  gap: var(--rl-space-1) var(--rl-space-4);
   min-height: 30px;
 }
 
+/* A fixed column beside a value, so labels line up from row to row. Alone on
+   its line it may shrink to the field, and a long word breaks rather than
+   pushing into the next field. */
 .rl-detail-field__label {
   display: flex;
+  flex: 0 1 120px;
   align-items: center;
-  gap: var(--rl-space-2);
-  width: 120px;
-}
-
-/* Takes the rest of the row, so a value has room to show itself rather than
-   shrinking to the width of its own text and clipping. */
-.rl-detail-field__value {
-  display: flex;
-  align-items: center;
-  flex: 1;
-  flex-wrap: wrap;
   gap: var(--rl-space-2);
   min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/*
+ * Takes the rest of the row, so a value has room to show itself rather than
+ * shrinking to the width of its own text and clipping. 160px is the narrowest
+ * column that holds a typical badge or picker; below it the value wraps under
+ * the label instead of squeezing, so a field narrower than 296px (label, gap,
+ * value) stacks.
+ *
+ * A container, so a control inside can cap its own minimum width at the
+ * field's (`100cqi`). A percentage cannot do that here: the inline edit is
+ * sized to its content, and a percentage of that resolves to nothing.
+ */
+.rl-detail-field__value {
+  container: rl-detail-field-value / inline-size;
+  display: flex;
+  align-items: center;
+  flex: 999 1 0;
+  flex-wrap: wrap;
+  gap: var(--rl-space-2);
+  min-width: min(160px, 100%);
 }
 
 /* Stacked: the label keeps its own line and the value takes the width below
    it, so long content is read across the row rather than down a column. */
 .rl-detail-field--stacked {
   flex-direction: column;
+  flex-wrap: nowrap;
   align-items: stretch;
   gap: var(--rl-space-1);
 }
 
-.rl-detail-field--stacked .rl-detail-field__label { width: auto; }
+/* A column has no width to share out, so neither side flexes. */
+.rl-detail-field--stacked .rl-detail-field__label,
+.rl-detail-field--stacked .rl-detail-field__value { flex: none; }
 
 /*
  * Stacked exists for content that has to wrap, so the value fills the row
@@ -284,11 +311,12 @@ function commit() {
 .rl-detail-field--stacked .rl-detail-field__nowrap { white-space: normal; }
 
 /* Sized to the row rather than the form grid: a detail value is not a form
-   field and should not push the row taller while it is being edited. */
-.rl-detail-field__control { min-width: 180px; }
+   field and should not push the row taller while it is being edited. Never
+   wider than the field, though, or it spills into its neighbour. */
+.rl-detail-field__control { min-width: min(180px, 100cqi); }
 
 @media (max-width: 767px) {
   .rl-detail-field { align-items: flex-start; }
-  .rl-detail-field__label { width: 96px; }
+  .rl-detail-field__label { flex-basis: 96px; }
 }
 </style>

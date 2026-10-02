@@ -4,16 +4,7 @@ type: bug
 title: pgstore change-feed listener fails when RELA_DATABASE_URL sets pool_max_conns
 description: The listener connects with pgx.Connect on the full DSN; Postgres rejects pool_max_conns as an unknown runtime parameter, so the cross-process change feed is silently disabled.
 priority: high
-effort: s
-why1: The change-feed listener opens its dedicated connection with pgx.Connect(ctx, dsn). pgx.ParseConfig treats every key it does not know as a server runtime parameter, so pool_max_conns is sent in the startup packet and Postgres refuses the connection (SQLSTATE 42704).
-why2: The pool and the listener parse the same DSN with different parsers. pgstore.NewPool uses pgxpool.ParseConfig, which removes the pool_* keys; the listener uses pgx.ParseConfig, which keeps them.
-why3: pgstore.Open receives the DSN as a raw string and leaves every consumer to parse it itself, so nothing ties the listener to the parse the pool already did.
-why4: The listener tests build their DSN by re-serializing host, port, user, dbname and search_path only, so no test ever passed a pool parameter through the listener.
-why5: The startup failure is deliberately non-fatal and only logged once, so a misparsed DSN degrades to a running store without a change feed and nothing in CI or at startup turns it into a failure.
-prevention: The listener parses its DSN with pgxpool.ParseConfig, the parser the pool uses, so one DSN string can no longer mean two things. TestListenerConnConfig_StripsPoolKeys runs without a database in the default test job, and TestCrossProcessPropagation_PoolTunedDSN runs the full feed on a pool-tuned DSN. The related DSN re-serialization defect is tracked as BUG-BR9CXF.
-started: "2026-10-01"
-completed: "2026-10-01"
-status: done
+status: backlog
 ---
 
 ## Summary
@@ -30,10 +21,7 @@ FATAL: unrecognized configuration parameter "pool_max_conns" (SQLSTATE 42704)
 
 The store then degrades with a single warning: "cross-process change feed
 unavailable; writes from other processes won't be observed live". Other nodes'
-writes are no longer seen live. The process also never publishes: the store
-resolves its schema only when the listener starts, and `Store.notify` sends
-nothing without one. Correctly configured peers then miss its writes until their
-safety catch-up runs.
+writes are no longer seen live.
 
 ## Impact
 
