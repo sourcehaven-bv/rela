@@ -60,8 +60,11 @@ present.
 
 ## Pull Request
 
-- [x] ~~Run `/pr` command to create PR and monitor CI~~ (deferred until ticket is done, as required by the workflow)
-- [x] ~~All CI checks pass~~ (N/A until PR exists)
-- [x] ~~PR URL documented below~~ (N/A until PR exists)
+- [x] Created PR after ticket reached `done` and monitored CI
+- [x] All CI checks pass
+- [x] PR URL documented below
 
-**PR:** To be completed after the ticket reaches `done`.
+**PR:** https://github.com/sourcehaven-bv/rela/pull/1754
+
+All required checks passed, including Test, E2E, Frontend, Postgres Backend, and
+Rela Tickets.
